@@ -280,16 +280,24 @@ Discovery discover(const QString& projectRoot)
         }
         result.installations.push_back({QDir::cleanPath(path), false});
     };
-    const auto dependencies = [&](const QJsonObject& object, const QString& base) {
+    const auto dependencies = [&](const QJsonObject& object, const QString& base, bool lockFile = false) {
         const QJsonObject values = object.value(QStringLiteral("dependencies")).toObject();
         for (auto it = values.begin(); it != values.end(); ++it) {
             if (!budget.consume(base)) return;
             const QString value = it.value().isString() ? it.value().toString()
                 : it.value().toObject().value(QStringLiteral("version")).toString();
+            const auto resolved = it.value().toObject();
+            const QString local = value.startsWith(QStringLiteral("file:"))
+                ? QUrl::fromPercentEncoding(value.mid(5).toUtf8()) : QString();
+            if (lockFile && sdkName(it.key())
+                && resolved.value(QStringLiteral("source")).toString() == QStringLiteral("embedded")
+                && resolved.value(QStringLiteral("depth")).toInt(-1) == 0
+                && safeRelativePath(local) && !local.contains(QLatin1Char('/'))
+                && !local.contains(QLatin1Char('\\')) && !local.startsWith(QLatin1Char('.')))
+                continue;
             if (sdkName(it.key()))
                 result.sdkReferences << QStringLiteral("%1: %2").arg(it.key(), value);
             if (value.startsWith(QStringLiteral("file:"))) {
-                const QString local = QUrl::fromPercentEncoding(value.mid(5).toUtf8());
                 const QString path = QDir::cleanPath(QDir(base).absoluteFilePath(local));
                 references.push_back({it.key(), path});
                 result.localPackagePaths << path;
@@ -356,7 +364,24 @@ Discovery discover(const QString& projectRoot)
         QJsonObject manifest;
         QString error;
         if (!readObject(path, &manifest, &error, budget)) result.errors << error;
-        else dependencies(manifest, QFileInfo(path).absolutePath());
+        else {
+            const bool lockFile = name == QStringLiteral("packages-lock.json");
+            dependencies(manifest, QFileInfo(path).absolutePath(), lockFile);
+            if (lockFile) {
+                const auto resolved = manifest.value(QStringLiteral("dependencies")).toObject();
+                for (auto it = resolved.begin(); it != resolved.end(); ++it) {
+                    if (!budget.consume(path)) break;
+                    const auto declared = it.value().toObject().value(QStringLiteral("dependencies")).toObject();
+                    for (auto dependency = declared.begin(); dependency != declared.end(); ++dependency) {
+                        if (!budget.consume(path)) break;
+                        if (!sdkName(dependency.key())) continue;
+                        result.sdkReferences << QStringLiteral("%1 -> %2: %3")
+                            .arg(it.key(), dependency.key(), dependency.value().toString());
+                        references.push_back({dependency.key(), {}});
+                    }
+                }
+            }
+        }
     }
     for (qsizetype i = 0; i < references.size(); ++i) {
         const auto reference = references[i];

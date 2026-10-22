@@ -250,9 +250,9 @@ set(HARKEN_EDITOR_LIB_SOURCES
     Source/Core/Actions/ActionSelectors.h
     Source/Core/Actions/ReadonlyActions.cpp
     # --- Source/Dialogs --- (split to harken_editor_dialogs in S10a)
-    # --- Source/Widgets/PreviewPanel --- (split to harken_editor_preview in S10a)
+    # --- Source/Widgets/ControlPanel --- (split to harken_editor_control in S10a)
     # --- Source/Widgets/Assistant --- (split to harken_editor_assistant in S10a)
-    # --- Source/Widgets/PackManager --- (split to harken_editor_pack in S10a)
+    # --- Source/Widgets/Publisher --- (split to harken_editor_publisher in S10a)
     # --- Source/Platform ---
     Source/Platform/NativeDropTarget_Win.h
     Source/Platform/ExternalDropDispatcher.h
@@ -282,7 +282,7 @@ endif()
 add_subdirectory(Source/RuntimeBridge)
 add_subdirectory(Source/Monitor)
 add_subdirectory(Source/Core)
-# S1a Blueprint Canvas — leaf lib (depends on Foundation only).
+# S1a Blueprint — leaf lib (depends on Foundation only).
 add_subdirectory(Source/Widgets/Blueprint)
 add_subdirectory(Source/Widgets/Common)
 # Output inspector Phase 2 — shared object selector popup (leaf lib, Foundation only).
@@ -315,12 +315,12 @@ add_subdirectory(Source/Widgets/Hierarchy)
 add_subdirectory(Source/Widgets/Inspector)
 # S10a splits: 7 leaf libs (Wizards merged into Dialogs)
 add_subdirectory(Source/Dialogs)
-add_subdirectory(Source/Widgets/PackManager)
+add_subdirectory(Source/Widgets/Publisher)
 add_subdirectory(Source/Widgets/LogPanel)
 add_subdirectory(Source/Widgets/Information)
 add_subdirectory(Source/Widgets/Assistant)
 add_subdirectory(Source/Widgets/TitleBar)
-add_subdirectory(Source/Widgets/PreviewPanel)
+add_subdirectory(Source/Widgets/ControlPanel)
 add_subdirectory(Source/Widgets/PlatformBar)
 
 add_library(harken_editor_lib OBJECT ${HARKEN_EDITOR_LIB_SOURCES})
@@ -346,12 +346,12 @@ target_link_libraries(harken_editor_lib PUBLIC harken_editor_hierarchy)
 target_link_libraries(harken_editor_lib PUBLIC harken_editor_inspector)
 # S10a splits
 target_link_libraries(harken_editor_lib PUBLIC harken_editor_dialogs)
-target_link_libraries(harken_editor_lib PUBLIC harken_editor_pack)
+target_link_libraries(harken_editor_lib PUBLIC harken_editor_publisher)
 target_link_libraries(harken_editor_lib PUBLIC harken_editor_logpanel)
 target_link_libraries(harken_editor_lib PUBLIC harken_editor_information)
 target_link_libraries(harken_editor_lib PUBLIC harken_editor_assistant)
 target_link_libraries(harken_editor_lib PUBLIC harken_editor_titlebar)
-target_link_libraries(harken_editor_lib PUBLIC harken_editor_preview)
+target_link_libraries(harken_editor_lib PUBLIC harken_editor_control)
 target_link_libraries(harken_editor_lib PUBLIC harken_editor_platformbar)
 
 set_target_properties(harken_editor_lib PROPERTIES

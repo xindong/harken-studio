@@ -304,7 +304,8 @@ public:
                            PreparedCommit* out,
                            const PackAttenuationBindingMapV1* attenuationBindings = nullptr,
                            const CanonicalPackSetLedgerV1* ledger = nullptr,
-                           bool clearInit = false);
+                           bool clearInit = false,
+                           const GameplayCatalogImage* gameplayCatalog = nullptr);
     void CommitPrepared(PreparedCommit* prepared) noexcept;
     void RestorePublished(std::shared_ptr<const PublishedView> previous) noexcept;
     VnResult ValidateLease(const PackPartitionLease& lease) const noexcept;

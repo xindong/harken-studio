@@ -23,15 +23,22 @@ struct UpdateStateRecord
     QString updatedAt;
 
     bool needsDownloadRecovery() const;
+    bool operator==(const UpdateStateRecord&) const = default;
 };
 
 class UpdateStateStore
 {
 public:
+    enum class WriteResult { Saved, Conflict, Failed };
+
     static QString filePath();
     static UpdateStateRecord load(const QString& product);
     static bool save(const UpdateStateRecord& record, const QDateTime& at);
     static bool clear(const QString& product);
+    static WriteResult replace(const UpdateStateRecord& expected,
+                               const UpdateStateRecord& record,
+                               const QDateTime& at);
+    static WriteResult clear(const UpdateStateRecord& expected);
 };
 
 }

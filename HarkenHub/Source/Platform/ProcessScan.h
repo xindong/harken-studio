@@ -19,6 +19,8 @@ QStringList runningExecutablesUnder(const QString& directory,
 
 QString executablePathForPid(qint64 pid);
 
+bool isProcessRunning(qint64 pid);
+
 bool terminateProcessById(qint64 pid);
 
 }

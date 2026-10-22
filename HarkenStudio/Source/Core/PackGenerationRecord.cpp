@@ -1,4 +1,5 @@
 #include "PackGenerationRecord.h"
+#include <algorithm>
 
 namespace VNX {
 
@@ -7,6 +8,7 @@ QJsonObject PackGenerationRecord::toJson() const
     return {{QStringLiteral("packName"), packName},
             {QStringLiteral("objectID"), static_cast<qint64>(objectID)},
             {QStringLiteral("source"), source},
+            {QStringLiteral("unitKey"), resolvedUnitKey()},
             {QStringLiteral("platform_id"), platform},
             {QStringLiteral("platform_name"), platformName},
             {QStringLiteral("base_platform"), ProjectPlatformSemantics::basePlatformName(basePlatform)},
@@ -20,6 +22,14 @@ QJsonObject PackGenerationRecord::toJson() const
             {QStringLiteral("elapsedMs"), elapsedMs}};
 }
 
+QString PackGenerationRecord::resolvedUnitKey() const
+{
+    if (!unitKey.isEmpty()) return unitKey;
+    if (source == QLatin1String("Action") && objectID != 0)
+        return QStringLiteral("a:") + QString::number(objectID);
+    return source + QLatin1Char(':') + packName;
+}
+
 PackGenerationRecordStore& PackGenerationRecordStore::instance()
 {
     static PackGenerationRecordStore store;
@@ -28,24 +38,52 @@ PackGenerationRecordStore& PackGenerationRecordStore::instance()
 
 void PackGenerationRecordStore::add(const PackGenerationRecord& record)
 {
+    for (auto& current : records_) {
+        if (current.platform == record.platform && current.language == record.language
+            && current.resolvedUnitKey() == record.resolvedUnitKey()) {
+            current = record;
+            emit changed();
+            return;
+        }
+    }
     records_.push_back(record);
+    emit changed();
 }
 
 void PackGenerationRecordStore::replace(const QVector<PackGenerationRecord>& records)
 {
-    records_ = records;
+    records_.clear();
+    for (const auto& record : records) {
+        auto existing = std::find_if(records_.begin(), records_.end(), [&](const auto& current) {
+            return current.platform == record.platform && current.language == record.language
+                && current.resolvedUnitKey() == record.resolvedUnitKey();
+        });
+        if (existing == records_.end()) records_.push_back(record);
+        else *existing = record;
+    }
+    emit changed();
 }
 
 void PackGenerationRecordStore::clear()
 {
+    const bool exporting = isExporting();
+    cancelExport();
+    activeRunId_ = 0;
+    cancel_.reset();
     records_.clear();
+    progress_.clear();
+    emit changed();
+    if (exporting) emit exportActivityChanged(false);
 }
 
-void PackGenerationRecordStore::invalidatePlatform(const QString& platformId)
+const PackGenerationRecord* PackGenerationRecordStore::find(
+    const QString& platform, const QString& language, const QString& unitKey) const
 {
-    for (auto& record : records_) {
-        if (record.platform == platformId) record.status = QStringLiteral("Needs rebuild");
-    }
+    const auto found = std::find_if(records_.cbegin(), records_.cend(), [&](const auto& record) {
+        return record.platform == platform && record.language == language
+            && record.resolvedUnitKey() == unitKey;
+    });
+    return found == records_.cend() ? nullptr : &*found;
 }
 
 QVector<PackGenerationRecord> PackGenerationRecordStore::records() const
@@ -53,14 +91,91 @@ QVector<PackGenerationRecord> PackGenerationRecordStore::records() const
     return records_;
 }
 
-void PackGenerationRecordStore::reconcilePlatforms(const QVector<ProjectPlatform>& platforms)
+quint64 PackGenerationRecordStore::beginProgress(const std::shared_ptr<std::atomic_bool>& cancel)
 {
-    for (auto& record : records_) {
-        const auto* definition = ProjectPlatformSemantics::find(platforms, QUuid::fromString(record.platform));
-        if (!definition || (!record.platformDefinition.isEmpty()
-            && definition->toJson() != record.platformDefinition))
-            record.status = QStringLiteral("Needs rebuild");
+    if (isExporting()) return 0;
+    activeRunId_ = ++nextRunId_;
+    cancel_ = cancel;
+    emit exportActivityChanged(true);
+    return activeRunId_;
+}
+
+void PackGenerationRecordStore::updateProgress(quint64 runId, const PackGenerationProgress& progress)
+{
+    if (!isCurrentRun(runId)) return;
+    auto existing = std::find_if(progress_.begin(), progress_.end(), [&](const auto& entry) {
+        return entry.progress.platform == progress.platform
+            && entry.progress.language == progress.language
+            && entry.progress.unitKey == progress.unitKey;
+    });
+    PackGenerationProgress next = progress;
+    next.percent = std::clamp(next.percent, 0, 100);
+    const bool newRun = existing == progress_.end() || existing->runId != runId;
+    if (existing == progress_.end()) {
+        progress_.push_back({next, runId});
+    } else {
+        if (existing->runId == runId) {
+            if (next.stage == PackGenerationStage::Queued
+                || existing->progress.stage == PackGenerationStage::Complete
+                || existing->progress.stage == PackGenerationStage::Failed
+                || existing->progress.stage == PackGenerationStage::Canceled)
+                return;
+            next.percent = std::max(next.percent, existing->progress.percent);
+        }
+        *existing = {next, runId};
     }
+    if (newRun && next.stage == PackGenerationStage::Queued) {
+        records_.erase(std::remove_if(records_.begin(), records_.end(), [&](const auto& record) {
+            return record.platform == next.platform && record.language == next.language
+                && record.resolvedUnitKey() == next.unitKey;
+        }), records_.end());
+    }
+    emit progressChanged(next.platform, next.language, next.unitKey);
+}
+
+void PackGenerationRecordStore::finishProgress(quint64 runId, bool canceled)
+{
+    if (!isCurrentRun(runId)) return;
+    QVector<PackGenerationProgress> unfinished;
+    for (auto& entry : progress_) {
+        if (entry.runId != runId
+            || entry.progress.stage == PackGenerationStage::Complete
+            || entry.progress.stage == PackGenerationStage::Failed
+            || entry.progress.stage == PackGenerationStage::Canceled)
+            continue;
+        entry.progress.stage = canceled ? PackGenerationStage::Canceled : PackGenerationStage::Failed;
+        unfinished.push_back(entry.progress);
+    }
+    activeRunId_ = 0;
+    cancel_.reset();
+    for (const auto& progress : unfinished)
+        emit progressChanged(progress.platform, progress.language, progress.unitKey);
+    emit exportActivityChanged(false);
+}
+
+const PackGenerationProgress* PackGenerationRecordStore::findProgress(
+    const QString& platform, const QString& language, const QString& unitKey) const
+{
+    const auto found = std::find_if(progress_.cbegin(), progress_.cend(), [&](const auto& entry) {
+        return entry.progress.platform == platform && entry.progress.language == language
+            && entry.progress.unitKey == unitKey;
+    });
+    return found == progress_.cend() ? nullptr : &found->progress;
+}
+
+bool PackGenerationRecordStore::isExporting() const
+{
+    return activeRunId_ != 0;
+}
+
+bool PackGenerationRecordStore::isCurrentRun(quint64 runId) const
+{
+    return runId != 0 && runId == activeRunId_;
+}
+
+void PackGenerationRecordStore::cancelExport()
+{
+    if (cancel_) cancel_->store(true, std::memory_order_relaxed);
 }
 
 }

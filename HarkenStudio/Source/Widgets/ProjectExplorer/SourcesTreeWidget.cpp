@@ -9,7 +9,10 @@
 #include "Core/ThemeManager.h"
 #include "Core/QtControlSkin.h"
 #include "Core/ShortcutManager.h"
-#include "Core/ToastManager.h"
+#include "Widgets/LogPanel/LogPanel.h"
+#include "Widgets/Common/ProportionalTreeWidget.h"
+#include "Widgets/Common/StatusTip.h"
+#include "Widgets/Common/TableWidget.h"
 #include "Widgets/Shared/RefIdMime.h"
 #include "Widgets/Shared/TreeRowStyle.h"
 #include "Widgets/Shared/InlineRenameEdit.h"
@@ -23,7 +26,6 @@
 #include <QDragLeaveEvent>
 #include <QDragMoveEvent>
 #include <QDropEvent>
-#include <QHeaderView>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -93,6 +95,18 @@ SourcesTreeWidget::SourcesTreeWidget(QWidget* parent)
         if (dropFolder_.isValid())
             expand(dropFolder_);
     });
+}
+
+bool SourcesTreeWidget::edit(const QModelIndex& index, EditTrigger trigger, QEvent* event)
+{
+    if (!QTreeWidget::edit(index, trigger, event)) return false;
+    if (!index.data(kSourceFolderRole).toBool()) {
+        if (auto* editor = qobject_cast<InlineRenameEdit*>(indexWidget(index))) {
+            const QString name = QFileInfo(index.data(kSourcePathRole).toString()).completeBaseName();
+            editor->setSelection(0, name.size());
+        }
+    }
+    return true;
 }
 
 QString SourcesTreeWidget::renameSource(const QString& path, const QString& name)
@@ -204,7 +218,7 @@ bool SourcesTreeWidget::importDroppedAudio(const QMimeData* mimeData, const QStr
         return false;
     const QStringList files = AudioImportGate::extractAudioFiles(mimeData);
     if (files.isEmpty()) {
-        showError(tr("No supported audio files were found in the dropped files or folders."));
+        showStatusTip(this, tr("No supported audio files were found in the dropped files or folders."));
         return false;
     }
     const QString projectRoot = AssetRegistry::instance().projectRoot();
@@ -225,7 +239,7 @@ bool SourcesTreeWidget::importDroppedAudio(const QMimeData* mimeData, const QStr
         const QString destination = SourceFileSystem::absolutePath(relative);
         if (destination.isEmpty() || (!folder.isEmpty() && !QFileInfo(destination).dir().exists())
             || QFileInfo(destination).isDir()) {
-            showError(tr("'%1' is not a valid destination for an audio file.").arg(relative));
+            showStatusTip(this, tr("'%1' is not a valid destination for an audio file.").arg(relative));
             return false;
         }
         QString key = relative;
@@ -268,13 +282,10 @@ bool SourcesTreeWidget::importDroppedAudio(const QMimeData* mimeData, const QStr
         "When several dropped files have the same name, choose one incoming version."), &dialog);
     summary->setWordWrap(true);
     layout->addWidget(summary);
-    auto* conflicts = new QTreeWidget(&dialog);
-    conflicts->setObjectName(QStringLiteral("sourceImportConflicts"));
-    conflicts->setHeaderLabels({tr("Replace"), tr("Incoming file")});
-    conflicts->setRootIsDecorated(false);
-    conflicts->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-    conflicts->header()->setSectionResizeMode(1, QHeaderView::Stretch);
-    layout->addWidget(conflicts, 1);
+    auto* table = new TableWidget(TableOptions::display(), &dialog);
+    auto* conflicts = table->createItemView(QStringLiteral("sourceImportConflicts"),
+        {tr("Replace"), tr("Incoming file")}, {2, 3});
+    layout->addWidget(table, 1);
     for (auto& group : groups) {
         if (group.files.size() == 1 && (!group.exists || group.hashes.first() == group.currentHash))
             continue;
@@ -325,9 +336,6 @@ bool SourcesTreeWidget::importDroppedAudio(const QMimeData* mimeData, const QStr
     if (selected.isEmpty())
         return true;
     auto* command = ImportAssetsCommand::pushImportSources(selected, folder, replacements);
-    if (command->failCount() > 0)
-        showError(tr("%1 audio file(s) could not be imported. See the log for details.")
-            .arg(command->failCount()));
     return command->successCount() > 0 || command->duplicateCount() > 0;
 }
 
@@ -515,7 +523,7 @@ void SourcesTreeWidget::drawRow(QPainter* painter, const QStyleOptionViewItem& o
 void SourcesTreeWidget::showError(const QString& message)
 {
     if (!message.isEmpty())
-        ToastManager::instance().showToast(message, 5000, ToastType::Error);
+        LogPanel::logError(LogCategory::File, message);
 }
 
 void SourcesTreeWidget::selectPath(const QString& path)

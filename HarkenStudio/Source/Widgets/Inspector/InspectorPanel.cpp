@@ -10,7 +10,6 @@
 #include "Core/PlatformContextService.h"
 #include "Core/ProjectManager.h"
 #include "Core/ThemeManager.h"
-#include "Core/ToastManager.h"
 #include "Core/AssetPipeline/PlatformProfile.h"
 #include "Core/AssetPipeline/WaveformCache.h"
 #include "Core/AudioEngine.h"
@@ -310,13 +309,6 @@ void InspectorPanelPrivate::wireAuthoringCommit(PropertyEditorEngine* engine)
                     result = ActionManager::instance().execute(
                         "set_item_property", actionArgs,
                         ActionSource::Internal, engine);
-                    if (result.success) {
-                        ToastManager::instance().showToast(
-                            QObject::tr("Range changed. %1 Grid cell(s) are now invalid and highlighted. Undo to restore the previous Range.")
-                                .arg(result.data.value(
-                                    QStringLiteral("invalid_reference_count")).toInt()),
-                            6000, ToastType::Warning);
-                    }
                 }
             }
             if (!result.success || field == QLatin1String("outputBusId")

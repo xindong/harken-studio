@@ -6,11 +6,10 @@ from — HarkenEngine/Source/Tooling/Remote/wire/harken_wire_table.json — and
 emits the C# P/Invoke projection plus its machine-verifiable ABI pins:
 
   <repo>/HarkenSDK/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs
-        blittable [StructLayout(Sequential)] mirrors of every public struct,
-        the callback delegate types, the VnResult enum, and every public
-        enum / #define constant.
+        blittable [StructLayout(Sequential)] mirrors of SDK structs,
+        callback delegates, results, enums and constants.
   <repo>/HarkenSDK/Unity/Harken/Runtime/Generated/HarkenNative.g.cs
-        internal [DllImport] declarations for the complete C API,
+        internal [DllImport] declarations for the SDK projection,
         with the native library name baked per platform at compile time
         (HarkenCore on macOS/Android/desktop, __Internal on iOS).
   <repo>/HarkenSDK/Unity/Harken/Runtime/Generated/HarkenAbi.g.cs
@@ -23,9 +22,9 @@ emits the C# P/Invoke projection plus its machine-verifiable ABI pins:
         mis-transcription in the table is a compile error, never a silent
         binding bug. Compiled into harken_runtime_tests.
 
-Managed visibility comes from sdk_api_surface.json, independently of the
-native table's ABI and wire metadata. New generated symbols require an explicit
-audience before generation succeeds.
+Managed projection and visibility come from sdk_api_surface.json, independently
+of the native table's ABI and wire metadata. Monitor contracts remain native;
+new SDK symbols require an explicit audience before generation succeeds.
 
 The single-source discipline mirrors the wire layer's: header <-> binding
 drift is structurally impossible because both are emitted from one table.
@@ -46,6 +45,7 @@ so transitively the generated C# mirror matches Harken.h exactly.
 """
 
 import argparse
+import copy
 import json
 import os
 import sys
@@ -178,10 +178,55 @@ def emit_field(struct_name, fname, spec, layouts):
     raise ValueError("unknown field spec: %r" % (spec,))
 
 
+def managed_projection(table, policy):
+    rules = policy["managed_projection"]["excluded_prefixes"]
+    projected = copy.deepcopy(table)
+    keep = lambda category, name: not name.startswith(tuple(rules[category]))
+    projected["types"] = {name: value for name, value in table["types"].items() if keep("types", name)}
+    projected["api"]["enums"] = {name: value for name, value in table["api"]["enums"].items() if keep("types", name)}
+    projected["api"]["callbacks"] = {name: value for name, value in table["api"]["callbacks"].items() if keep("types", name)}
+    projected["api"]["defines"] = {name: value for name, value in table["api"]["defines"].items() if keep("constants", name)}
+    projected["api"]["results"]["values"] = {
+        name: value for name, value in table["api"]["results"]["values"].items() if keep("results", name)}
+    for collection in ("functions", "binding_overloads"):
+        projected[collection] = [fn for fn in table.get(collection, [])
+                                 if keep("functions", fn["name"]) and keep("functions", fn.get("entryPoint", fn["name"]))]
+    excluded = (set(table["types"]) - set(projected["types"])) | (set(table["api"]["enums"]) - set(projected["api"]["enums"])) | (
+        set(table["api"]["callbacks"]) - set(projected["api"]["callbacks"]))
+
+    def require_type(name, owner):
+        if isinstance(name, str) and name in excluded:
+            raise ValueError("SDK projection crosses excluded native type: %s -> %s" % (owner, name))
+
+    def require_field(spec, owner):
+        if isinstance(spec, str):
+            require_type(spec, owner)
+        elif isinstance(spec, dict):
+            for kind, value in spec.items():
+                if kind == "array":
+                    require_field(value[0], owner)
+                elif kind == "union":
+                    for member in value:
+                        require_field(member, owner)
+                else:
+                    require_field(value, owner)
+
+    for name, desc in projected["types"].items():
+        for _, spec in desc["fields"]:
+            require_field(spec, name)
+    callbacks = [entry for name, entry in projected["api"]["callbacks"].items() if not name.startswith("_")]
+    for entry in projected["functions"] + projected["binding_overloads"] + callbacks:
+        for param in entry.get("params", []):
+            require_type(param.get("type"), entry.get("name", "callback"))
+            require_type(param.get("ctype", "").replace("const ", "").rstrip(" *"), entry.get("name", "callback"))
+    return projected
+
+
 def managed_policy(table):
     """Require an audience for every generated symbol, independent of native ABI."""
     with open(SDK_POLICY_PATH, encoding="utf-8") as stream:
         policy = json.load(stream)
+    table = managed_projection(table, policy)
     expected = {
         "types": {"VnResult", "VnConstants", "HarkenNative", "HarkenAbi"}
         | set(table["api"]["enums"]) | set(table["types"])
@@ -479,7 +524,7 @@ def emit_native(table, policy):
     lines.append("namespace %s" % NAMESPACE)
     lines.append("{")
     lines.append("    /// <summary>")
-    lines.append("    /// One-to-one P/Invoke projection of the Harken.h C ABI. Every method")
+    lines.append("    /// SDK P/Invoke projection of the Harken.h C ABI. Every method")
     lines.append("    /// maps to exactly one C function; the binding owns no engine")
     lines.append("    /// semantics (thin projection). AOT/IL2CPP-safe: no runtime code")
     lines.append("    /// generation, and the native library name is a compile-time constant")
@@ -668,11 +713,12 @@ def main():
 
     validate_params(table)
     policy = managed_policy(table)
+    managed = managed_projection(table, policy)
 
     outputs = {
-        os.path.join(CS_GEN_DIR, "HarkenTypes.g.cs"): emit_types(table, policy),
-        os.path.join(CS_GEN_DIR, "HarkenNative.g.cs"): emit_native(table, policy),
-        os.path.join(CS_GEN_DIR, "HarkenAbi.g.cs"): emit_abi_cs(table, policy),
+        os.path.join(CS_GEN_DIR, "HarkenTypes.g.cs"): emit_types(managed, policy),
+        os.path.join(CS_GEN_DIR, "HarkenNative.g.cs"): emit_native(managed, policy),
+        os.path.join(CS_GEN_DIR, "HarkenAbi.g.cs"): emit_abi_cs(managed, policy),
         os.path.join(CPP_GEN_DIR, "harken_binding_abi_pin.g.h"): emit_cpp_pin(table),
     }
 

@@ -25,6 +25,7 @@ class TransactionDiagnostics
 public:
     static std::vector<TransactionSummary> summarize();
     static QString failureMessage(const QString& transactionId, int exitCode = 2);
+    static QString localizeDetail(const QString& detail);
     static QJsonArray toJson(const std::vector<TransactionSummary>& summaries);
 };
 

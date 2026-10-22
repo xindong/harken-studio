@@ -2,14 +2,138 @@
   "schemaVersion": 1,
   "excludedPullRequests": {
     "versionOnly": [],
-    "noHubUserChange": [],
+    "noHubUserChange": [74, 85],
     "archivedReleases": []
   },
   "releases": [
     {
+      "version": "0.1.62",
+      "date": "2026-10-21",
+      "pullRequests": [82],
+      "contributors": ["liuxin2-sys"],
+      "changes": [
+        {
+          "category": "improved",
+          "text": "Unity SDK management no longer reports that a closed project is still open because of a leftover lock file. SDK checks, installation, updates, removal, moves, and recovery can proceed once the project is no longer in use."
+        },
+        {
+          "category": "improved",
+          "text": "When Hub cannot check whether a Unity project is in use, it reports the access error and affected path instead of claiming that Unity is running."
+        }
+      ]
+    },
+    {
+      "version": "0.1.61",
+      "date": "2026-10-21",
+      "pullRequests": [76, 80],
+      "contributors": ["liuxin2-sys"],
+      "changes": [
+        {
+          "category": "added",
+          "text": "Click the Project, Last Opened, or Version column header to sort the project list in ascending or descending order. Engine Integrations supports the same sorting for the HARKEN Project and Game Project columns. Each page remembers its sorting preference."
+        },
+        {
+          "category": "improved",
+          "text": "The project list shows minutes since the last launch, adds hours after one hour, and adds days after 24 hours instead of using vague labels such as Yesterday."
+        },
+        {
+          "category": "improved",
+          "text": "Unity SDK verification reports separately how many files differ from their contents at installation, are missing, or cannot be read, with guidance for each problem."
+        },
+        {
+          "category": "improved",
+          "text": "Studio installations retain recovery information if saving the installation record fails, and Hub checks interrupted installations on startup. Installations in progress are no longer shown as damaged. If recovery needs administrator access, choose Repair in Versions."
+        },
+        {
+          "category": "improved",
+          "text": "Studio repair checks for running programs in the installation folder before replacing files and explains which programs need to be closed."
+        },
+        {
+          "category": "improved",
+          "text": "Hub update installers are kept separately from temporary Studio installation files so Studio cleanup cannot remove a pending Hub update."
+        },
+        {
+          "category": "improved",
+          "text": "Unity SDK management no longer treats normal embedded-package records as dependency conflicts. Genuine dependency restrictions use neutral text, and successful SDK verification is shown in green in both languages."
+        },
+        {
+          "category": "improved",
+          "text": "SDK file replacement failures show the affected paths and system error, with guidance for write protection, permissions, files in use, and version-control checkout when applicable. Related Hub prompts and log messages support Chinese and English."
+        },
+        {
+          "category": "improved",
+          "text": "Unreal SDK checks detect missing, unreadable, or empty native libraries and core headers for the current platform before installation and when verifying an installed SDK."
+        },
+        {
+          "category": "improved",
+          "text": "With a Studio build that supports the new checks, project upgrades detect existing files that cannot be written before changing project data. Hub lists the affected files and explains how to restore write access."
+        }
+      ]
+    },
+    {
+      "version": "0.1.60",
+      "date": "2026-10-20",
+      "pullRequests": [70],
+      "contributors": ["liuxin2-sys"],
+      "changes": [
+        {
+          "category": "improved",
+          "text": "On Windows, new installations default to HarkenStudioHub directly under Program Files, and the main application and setup use the HarkenStudioHub name. Existing installation locations and older Studio launchers remain supported."
+        },
+        {
+          "category": "improved",
+          "text": "Windows desktop shortcuts and taskbar icons now display the H logo with crisp images for different icon sizes."
+        },
+        {
+          "category": "improved",
+          "text": "Project association prompts in Engine Integrations now refer only to Unity projects."
+        }
+      ]
+    },
+    {
+      "version": "0.1.59",
+      "date": "2026-10-19",
+      "pullRequests": [49, 56, 59, 61, 63],
+      "contributors": ["liuxin2-sys", "Probus-XD"],
+      "changes": [
+        {
+          "category": "improved",
+          "text": "Hub uses the gradient Harken Studio logo and matching H window and tray icons, and consistently displays Harken Studio Hub in menus, notifications, dialogs, and installer details."
+        },
+        {
+          "category": "improved",
+          "text": "Hub displays the Harken Studio logo above a separate Hub label, updates its window title and repository link, and removes the previous application icon."
+        },
+        {
+          "category": "improved",
+          "text": "Project format incompatibility messages show the selected Studio version and the project and Studio Schema versions from the compatibility check."
+        },
+        {
+          "category": "improved",
+          "text": "Hub and Studio updates preserve each other's progress when running together, and outdated operations cannot overwrite newer update state."
+        },
+        {
+          "category": "improved",
+          "text": "Manual and background Studio downloads can run together. Packages remain protected from competing downloads and cache cleanup until installation handoff finishes."
+        },
+        {
+          "category": "improved",
+          "text": "Updates and local build checks recover from temporary file locks on Windows without reporting unsaved state as complete."
+        },
+        {
+          "category": "improved",
+          "text": "Studio installation, repair, and removal recover when Windows briefly locks the installation index."
+        },
+        {
+          "category": "improved",
+          "text": "Reopening a project in a compatible Studio version activates its existing window, and Hub recognizes a successful handoff."
+        }
+      ]
+    },
+    {
       "version": "0.1.58",
       "date": "2026-10-15",
-      "pullRequests": [30, 31],
+      "pullRequests": [30, 31, 34],
       "contributors": [
         "liuxin2-sys"
       ],
@@ -28,7 +152,7 @@
         },
         {
           "category": "improved",
-          "text": "Windows now displays the application name as Harken Hub without an additional description."
+          "text": "Windows now displays the application name without an additional description."
         }
       ]
     },

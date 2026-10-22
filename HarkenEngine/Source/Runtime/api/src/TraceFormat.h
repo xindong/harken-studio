@@ -317,6 +317,7 @@ enum : std::uint16_t {
     kTraceCallQueryActionSeek = 133,
     kTraceCallReleaseActionSeek = 134,
     kTraceCallActivateCanonicalPackSet = 135,
+    kTraceCallSetGameplayCatalog = 136,
     kTraceCallSetValues = 192,
     kTraceCallSetEmitterValues = 193,
     kTraceCallClearEmitterValues = 194,

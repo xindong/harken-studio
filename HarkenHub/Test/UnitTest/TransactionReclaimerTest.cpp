@@ -3,6 +3,7 @@
 #include "Platform/PlatformPaths.h"
 #include "Transactions/HandoffArea.h"
 #include "Transactions/InstallExecutor.h"
+#include "Transactions/InstallIndex.h"
 #include "Transactions/TransactionDiagnostics.h"
 #include "Transactions/TransactionJournal.h"
 
@@ -85,6 +86,27 @@ TEST(TransactionReclaimer, FailedTransactionIsReclaimedImmediately)
               QStringLiteral("Package SHA-256 mismatch"));
     EXPECT_TRUE(VNH::TransactionDiagnostics::failureMessage(transactionId)
                     .contains(QStringLiteral("Package SHA-256 mismatch")));
+}
+
+TEST(TransactionReclaimer, InvalidInstallIndexDoesNotPreventFinishedHandoffCleanup)
+{
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    MachineRootGuard guard(dir.path());
+    const QString transactionId = placeTransaction(dir);
+    ASSERT_FALSE(transactionId.isEmpty());
+    ASSERT_TRUE(TransactionJournal::append(transactionId, QStringLiteral("HarkenStudio"),
+        QString(), QStringLiteral("Failed"), QStringLiteral("IndexCorrupted"), kNow));
+    QFile index(VNH::InstallIndex::filePath());
+    ASSERT_TRUE(index.open(QIODevice::WriteOnly));
+    index.write("{broken");
+    index.close();
+    const auto report = TransactionReclaimer::reclaimAtStartup(kNow);
+    EXPECT_FALSE(report.installRecoveryErrors.isEmpty());
+    EXPECT_EQ(report.reclaimedTransactionIds, QStringList{transactionId});
+    EXPECT_FALSE(handoffExists(transactionId));
+    ASSERT_TRUE(index.open(QIODevice::ReadOnly));
+    EXPECT_EQ(index.readAll(), "{broken");
 }
 
 TEST(TransactionReclaimer, YoungUnknownTransactionIsKept)

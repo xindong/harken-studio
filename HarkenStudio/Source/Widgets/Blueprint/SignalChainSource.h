@@ -65,7 +65,8 @@ public:
     void           loadBus(uint32_t busID);
     uint32_t       currentBusID() const { return currentBusID_; }
 
-    QString        lastError() const { return lastError_; }
+    QString        lastError() const { return lastResult_.error; }
+    const BlueprintConnectResult& lastConnectResult() const { return lastResult_; }
 
     static std::vector<BlueprintNodeDesc>
     nodesFromView(const SignalChainView& view, const std::array<bool, 3>& layers);
@@ -98,7 +99,7 @@ private:
     uint32_t      currentItemObjectID_ = 0;
     uint32_t      currentBusID_        = 0;
     std::optional<PlacementContext> placementContext_;
-    QString       lastError_;
+    BlueprintConnectResult lastResult_;
 };
 
 }

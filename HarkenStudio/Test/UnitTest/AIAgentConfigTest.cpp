@@ -13,7 +13,6 @@ TEST(AIAgentConfigTest, DefaultsAreAuthoritative)
     EXPECT_TRUE(config.baseUrl.isEmpty());
     EXPECT_TRUE(config.model.isEmpty());
     EXPECT_EQ(config.permissionProfile, QStringLiteral("ask"));
-    EXPECT_EQ(config.toolProfile, QStringLiteral("authoring"));
     EXPECT_EQ(config.contextWindowTokens, 128000);
     EXPECT_EQ(config.maxTokens, 1024);
     EXPECT_EQ(config.requestTimeoutMs, 30000);
@@ -25,7 +24,6 @@ TEST(AIAgentConfigTest, InvalidValuesUseSupportedFallbacksAndNormalize)
     config.baseUrl = QStringLiteral(" https://example.test/v1 ");
     config.model = QStringLiteral(" model ");
     config.permissionProfile = QStringLiteral(" BYPASS ");
-    config.toolProfile = QStringLiteral(" authoring ");
     config.contextWindowTokens = 100;
     config.maxTokens = 1;
     config.requestTimeoutMs = 999999;
@@ -34,7 +32,6 @@ TEST(AIAgentConfigTest, InvalidValuesUseSupportedFallbacksAndNormalize)
     EXPECT_EQ(effective.baseUrl, QStringLiteral("https://example.test/v1"));
     EXPECT_EQ(effective.model, QStringLiteral("model"));
     EXPECT_EQ(effective.permissionProfile, QStringLiteral("ask"));
-    EXPECT_EQ(effective.toolProfile, QStringLiteral("authoring"));
     EXPECT_EQ(effective.contextWindowTokens, 128000);
     EXPECT_EQ(effective.maxTokens, 1024);
     EXPECT_EQ(effective.requestTimeoutMs, 30000);
@@ -47,7 +44,6 @@ TEST(AIAgentConfigTest, StoreLoadsAndDetectsEqualityWithoutSecrets)
         if (key == QLatin1String("base_url")) return QVariant(QStringLiteral("https://example.test"));
         if (key == QLatin1String("model")) return QVariant(QStringLiteral("test-model"));
         if (key == QLatin1String("permission_mode")) return QVariant(QStringLiteral("read_only"));
-        if (key == QLatin1String("tool_profile")) return QVariant(QStringLiteral("pack"));
         if (key == QLatin1String("context_window_tokens")) return QVariant(8192);
         if (key == QLatin1String("max_tokens")) return QVariant(777);
         if (key == QLatin1String("request_timeout_ms")) return QVariant(5000);
@@ -82,7 +78,6 @@ TEST(AIAgentConfigTest, SavePersistsOrdinaryKeysOnly)
     config.baseUrl = QStringLiteral("https://example.test/v1");
     config.model = QStringLiteral("test-model");
     config.permissionProfile = QStringLiteral("ask");
-    config.toolProfile = QStringLiteral("authoring");
     config.contextWindowTokens = 65536;
     AIAgentConfigStore store;
     EXPECT_TRUE(store.save(config));
@@ -99,7 +94,7 @@ TEST(AIAgentConfigTest, SavePersistsOrdinaryKeysOnly)
     AIAgentConfigStore::setStorageOverrideForTesting(nullptr);
 }
 
-TEST(AIAgentConfigTest, EffectiveSnapshotPreservesInvalidToolProfileAsTextOnly)
+TEST(AIAgentConfigTest, UnrecognizedStoredSettingsDoNotChangeEffectiveConfig)
 {
     auto storage = std::make_shared<MemorySettingsStorage>();
     storage->beginGroup(QStringLiteral("ai"));
@@ -108,9 +103,7 @@ TEST(AIAgentConfigTest, EffectiveSnapshotPreservesInvalidToolProfileAsTextOnly)
     AIAgentConfigStore::setStorageOverrideForTesting(storage);
 
     const AIAgentConfig effective = AIAgentConfigStore().effectiveSnapshot();
-    EXPECT_EQ(effective.toolProfile, QStringLiteral("future_profile"));
-    EXPECT_FALSE(effective.typedToolProfile().has_value());
-    EXPECT_NE(effective.toolProfile, QStringLiteral("authoring"));
+    EXPECT_EQ(effective, AIAgentConfig::defaults().effectiveSnapshot());
 
     AIAgentConfigStore::setStorageOverrideForTesting(nullptr);
 }

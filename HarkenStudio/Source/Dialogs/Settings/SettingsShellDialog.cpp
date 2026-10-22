@@ -124,6 +124,7 @@ void SettingsShellDialog::updateApplyEnabled()
 
 void SettingsShellDialog::onApplyClicked()
 {
+    if (!validateBeforeApply()) return;
     QList<SettingsPage*> committed;
     for (SettingsPage* page : pages_)
     {
@@ -138,6 +139,11 @@ void SettingsShellDialog::onApplyClicked()
         committed.append(page);
     }
     accept();
+}
+
+bool SettingsShellDialog::validateBeforeApply()
+{
+    return true;
 }
 
 }

@@ -1,4 +1,5 @@
 #include "UI/EngineIntegrationsPage.h"
+#include "UI/ProjectsPage.h"
 #include "UI/IntegrationTaskDialog.h"
 
 #include "Integrations/EngineTargetStore.h"
@@ -8,7 +9,9 @@
 #include "UnityInstallation.h"
 #include "Platform/PlatformPaths.h"
 #include "Projects/ProjectStore.h"
+#include "Settings/HubSettings.h"
 #include "Support/StudioProtocolTestUtils.h"
+#include "Support/UnityProjectLock.h"
 #include "Transactions/InstallIndex.h"
 
 #include <gtest/gtest.h>
@@ -25,9 +28,11 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QHeaderView>
 #include <QLineEdit>
 #include <QLabel>
 #include <QMessageBox>
+#include <QMenu>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QScopeGuard>
@@ -44,6 +49,7 @@
 #include <QThread>
 #include <QTimer>
 #include <QTranslator>
+#include <QToolButton>
 #include <QTreeWidget>
 
 #include <memory>
@@ -313,6 +319,10 @@ TEST_F(EngineIntegrationsPageTest, UnrealUsesTheSameProjectAndSdkWorkflowInBothL
         writeFile(QDir(source).filePath("Runtime.bin"), "runtime");
         writeFile(QDir(source).filePath("Source/HarkenCore/Include/harken/Harken.h"), "#include <harken/ObjectId.h>\n");
         writeFile(QDir(source).filePath("Source/HarkenCore/Include/harken/ObjectId.h"), "header");
+        writeFile(source + "/Source/HarkenCore/Lib/Win64/HarkenCoreImport.lib", "import");
+        writeFile(source + "/Binaries/ThirdParty/HarkenCore/Win64/HarkenCore.dll", "runtime");
+        writeFile(source + "/Binaries/ThirdParty/HarkenCore/Mac/libHarkenCore.dylib", "runtime");
+        writeFile(source + "/Binaries/ThirdParty/HarkenCore/Linux/x86_64/libHarkenCore.so", "runtime");
         page.reset();
         QTranslator translator;
         if (chinese) {
@@ -429,6 +439,10 @@ TEST_F(EngineIntegrationsPageTest, UnrealUsesTheSameProjectAndSdkWorkflowInBothL
         writeFile(QDir(source).filePath("Runtime.bin"), "updated");
         writeFile(QDir(source).filePath("Source/HarkenCore/Include/harken/Harken.h"), "#include <harken/ObjectId.h>\n");
         writeFile(QDir(source).filePath("Source/HarkenCore/Include/harken/ObjectId.h"), "header");
+        writeFile(source + "/Source/HarkenCore/Lib/Win64/HarkenCoreImport.lib", "import");
+        writeFile(source + "/Binaries/ThirdParty/HarkenCore/Win64/HarkenCore.dll", "runtime");
+        writeFile(source + "/Binaries/ThirdParty/HarkenCore/Mac/libHarkenCore.dylib", "runtime");
+        writeFile(source + "/Binaries/ThirdParty/HarkenCore/Linux/x86_64/libHarkenCore.so", "runtime");
         writeFile(QDir(installed).filePath("Config/Custom.ini"), "custom");
         selectSdkFolder(source);
         primary()->click();
@@ -446,6 +460,100 @@ TEST_F(EngineIntegrationsPageTest, UnrealUsesTheSameProjectAndSdkWorkflowInBothL
         EXPECT_TRUE(page->findChild<QLineEdit*>("installedSdkPath")->text().isEmpty());
         capture("removed");
     }
+}
+
+TEST_F(EngineIntegrationsPageTest, SortedListKeepsSelectionAndActionTargets)
+{
+    for (const auto* number : {"10", "2"}) {
+        const QString suffix = QString::fromLatin1(number);
+        VNH::ProjectRecord project;
+        project.canonicalPath = dir.filePath("Project" + suffix + ".hsp");
+        project.displayName = "Project" + suffix;
+        writeFile(project.canonicalPath, "{}");
+        ASSERT_TRUE(projects.addProject(project));
+        VNH::EngineTargetRecord target;
+        target.targetId = suffix;
+        target.displayName = "Game" + (suffix == "10" ? QString("2") : QString("10"));
+        target.canonicalRoot = dir.filePath(target.displayName);
+        target.addedAt = "2026-10-21T00:00:00Z";
+        ASSERT_TRUE(targets.add(target));
+        VNH::IntegrationRecord integration;
+        integration.integrationId = suffix;
+        integration.harkenProjectPath = project.canonicalPath;
+        integration.engineTargetId = suffix;
+        integration.createdAt = target.addedAt;
+        integration.updatedAt = target.addedAt;
+        ASSERT_TRUE(integrations.add(integration, false));
+    }
+    page->refresh();
+    QTableWidget* table = nullptr;
+    for (auto* candidate : page->findChildren<QTableWidget*>())
+        if (candidate->columnCount() == 5) table = candidate;
+    ASSERT_NE(table, nullptr);
+    ASSERT_EQ(table->rowCount(), 2);
+    EXPECT_EQ(table->item(0, 0)->text(), "Project2");
+    table->selectRow(0);
+    const auto clickHeader = [&](int column) {
+        auto* header = table->horizontalHeader();
+        QTest::mouseClick(header->viewport(), Qt::LeftButton, Qt::NoModifier,
+                         QPoint(header->sectionViewportPosition(column) + header->sectionSize(column) / 2,
+                                header->height() / 2));
+        QCoreApplication::processEvents();
+        const auto selected = table->selectionModel()->selectedRows(0);
+        ASSERT_EQ(selected.size(), 1);
+        EXPECT_EQ(selected.front().data(Qt::UserRole).toString(), "2");
+    };
+    clickHeader(0);
+    EXPECT_EQ(table->item(0, 0)->text(), "Project10");
+    clickHeader(1);
+    EXPECT_EQ(table->item(0, 1)->text(), "Game2");
+    clickHeader(1);
+    EXPECT_EQ(table->item(0, 1)->text(), "Game10");
+    clickHeader(2);
+    EXPECT_EQ(table->horizontalHeader()->sortIndicatorSection(), 1);
+    EXPECT_EQ(table->horizontalHeader()->sortIndicatorOrder(), Qt::DescendingOrder);
+    page->refresh();
+    EXPECT_EQ(table->item(0, 1)->text(), "Game10");
+    ASSERT_EQ(table->selectionModel()->selectedRows(0).size(), 1);
+    EXPECT_EQ(table->selectionModel()->selectedRows(0).front().data(Qt::UserRole).toString(), "2");
+
+    ASSERT_TRUE(QTest::qWaitFor([]() {
+        const auto sort = VNH::HubSettings::tableSort(QStringLiteral("engineIntegrations"));
+        return sort.column == 1 && sort.order == Qt::DescendingOrder;
+    }, 5000));
+    VNH::EngineIntegrationsPage reopened(&integrations, &targets, &projects);
+    for (auto* candidate : reopened.findChildren<QTableWidget*>()) {
+        if (candidate->columnCount() != 5) continue;
+        EXPECT_EQ(candidate->horizontalHeader()->sortIndicatorSection(), 1);
+        EXPECT_EQ(candidate->horizontalHeader()->sortIndicatorOrder(), Qt::DescendingOrder);
+        EXPECT_EQ(candidate->item(0, 0)->data(Qt::UserRole).toString(), "2");
+    }
+    VNH::ProjectsPage projectsPage(&projects);
+    const auto* projectsTable = projectsPage.findChild<QTableWidget*>();
+    EXPECT_EQ(projectsTable->horizontalHeader()->sortIndicatorSection(), 0);
+    EXPECT_EQ(projectsTable->horizontalHeader()->sortIndicatorOrder(), Qt::AscendingOrder);
+
+    QTimer responder;
+    bool unlink = false;
+    QObject::connect(&responder, &QTimer::timeout, page.get(), [&]() {
+        if (auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget())) {
+            menu->setActiveAction(unlink ? menu->actions().last() : menu->actions().first());
+            QTest::keyClick(menu, Qt::Key_Return);
+        } else if (auto* message = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+            message->button(QMessageBox::Yes)->click();
+        }
+    });
+    responder.start(10);
+    table->cellWidget(0, 4)->findChild<QToolButton*>()->click();
+    EXPECT_EQ(field("Select a .hsp project file")->text(), dir.filePath("Project2.hsp"));
+    page->showList();
+    unlink = true;
+    table->cellWidget(0, 4)->findChild<QToolButton*>()->click();
+    ASSERT_EQ(integrations.list().size(), 1);
+    EXPECT_EQ(integrations.list().front().integrationId, "10");
+    EXPECT_TRUE(QFileInfo::exists(dir.filePath("Project2.hsp")));
+    EXPECT_EQ(projects.listProjects().size(), 2);
+    EXPECT_EQ(targets.list().size(), 2);
 }
 
 TEST_F(EngineIntegrationsPageTest, ExistingEditorReturnsBeforeVersionCheckAndKeepsStoredSdk)
@@ -703,9 +811,9 @@ TEST_F(EngineIntegrationsPageTest, RequiresClosedUnityBeforeCheckingAndRechecksA
     page->beginEditForProject(harkenPath, executablePath, unityPath);
     ASSERT_TRUE(waitForVersion());
     startSdkSelection();
-    const QString lockPath = QDir(unityPath).filePath("Temp/UnityLockfile");
     const QString installed = QDir(unityPath).filePath("Packages/com.harken.core");
-    writeFile(lockPath, "open");
+    HarkenHubTest::UnityProjectLock unityLock;
+    ASSERT_TRUE(unityLock.lock(unityPath));
     int confirmations = 0;
     bool reopenUnity = false;
     QTimer respond;
@@ -713,7 +821,7 @@ TEST_F(EngineIntegrationsPageTest, RequiresClosedUnityBeforeCheckingAndRechecksA
         auto* dialog = activeActionDialog();
         if (!dialog) return;
         ++confirmations;
-        if (reopenUnity) writeFile(lockPath, "opened after safety check");
+        if (reopenUnity) EXPECT_TRUE(unityLock.lock(unityPath));
         dialog->accept();
     });
     respond.start(10);
@@ -723,7 +831,7 @@ TEST_F(EngineIntegrationsPageTest, RequiresClosedUnityBeforeCheckingAndRechecksA
     EXPECT_TRUE(checkButton()->isEnabled());
     EXPECT_EQ(steps()->rowCount(), 1);
     EXPECT_FALSE(QDir(installed).exists());
-    ASSERT_TRUE(QFile::remove(lockPath));
+    ASSERT_TRUE(unityLock.unlock());
     checkButton()->click();
     EXPECT_TRUE(primary()->isEnabled());
     EXPECT_FALSE(QDir(installed).exists());
@@ -732,7 +840,7 @@ TEST_F(EngineIntegrationsPageTest, RequiresClosedUnityBeforeCheckingAndRechecksA
     EXPECT_EQ(confirmations, 1);
     EXPECT_FALSE(primary()->isEnabled());
     EXPECT_FALSE(QDir(installed).exists());
-    ASSERT_TRUE(QFile::remove(lockPath));
+    ASSERT_TRUE(unityLock.unlock());
     reopenUnity = false;
     checkButton()->click();
     EXPECT_TRUE(primary()->isEnabled());
@@ -1049,30 +1157,55 @@ TEST_F(EngineIntegrationsPageTest, CustomLocationPersistsAfterInstallAndSurvives
     EXPECT_TRUE(integrations.list().empty());
 }
 
-TEST_F(EngineIntegrationsPageTest, AmbiguousGameFolderOffersAnUnrealDescriptorPicker)
+TEST_F(EngineIntegrationsPageTest, AmbiguousGameFolderPreservesSelectionAndCanRecover)
 {
     for (const bool mixedEngines : {false, true}) {
-        const QString root = mixedEngines ? unityPath : dir.filePath("MultipleUnrealProjects");
+        const QString root = dir.filePath(mixedEngines ? "MixedProjects" : "MultipleUnrealProjects");
         const QString descriptor = QDir(root).filePath("Chosen.uproject");
         writeFile(descriptor, R"({"EngineAssociation":"5.6"})");
         if (!mixedEngines) writeFile(QDir(root).filePath("Other.uproject"), "{}");
-        page->beginEditForProject(harkenPath);
+        else {
+            for (const auto* folder : {"Assets", "Packages", "ProjectSettings"})
+                ASSERT_TRUE(QDir().mkpath(QDir(root).filePath(folder)));
+        }
+        page->beginEditForProject(harkenPath, executablePath, unityPath);
         ASSERT_TRUE(waitForVersion());
+        const auto targetCount = targets.list().size();
+        const QString selectedPath = page->findChild<QLineEdit*>("engineProjectPath")->text();
+        int warnings = 0;
+        QTimer dismiss;
+        QObject::connect(&dismiss, &QTimer::timeout, page.get(), [&]() {
+            auto* warning = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+            if (!warning) return;
+            ++warnings;
+            warning->accept();
+        });
+        dismiss.start(10);
         button("Select Game Project")->click();
         auto* folderPicker = page->findChild<QFileDialog*>();
         ASSERT_NE(folderPicker, nullptr);
         emit folderPicker->fileSelected(root);
         folderPicker->reject();
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
-        auto* descriptorPicker = page->findChild<QFileDialog*>("unrealProjectSelection");
-        ASSERT_NE(descriptorPicker, nullptr);
-        EXPECT_EQ(descriptorPicker->fileMode(), QFileDialog::ExistingFile);
-        EXPECT_TRUE(descriptorPicker->nameFilters().join(' ').contains("*.uproject"));
-        emit descriptorPicker->fileSelected(descriptor);
-        descriptorPicker->reject();
+        EXPECT_EQ(warnings, 1);
+        EXPECT_EQ(targets.list().size(), targetCount);
+        EXPECT_EQ(page->findChild<QLineEdit*>("engineProjectPath")->text(), selectedPath);
+        ASSERT_TRUE(QFile::remove(descriptor));
+        if (!mixedEngines) {
+            ASSERT_TRUE(QFile::remove(QDir(root).filePath("Other.uproject")));
+            for (const auto* folder : {"Assets", "Packages", "ProjectSettings"})
+                ASSERT_TRUE(QDir().mkpath(QDir(root).filePath(folder)));
+        }
+        button("Select Game Project")->click();
+        folderPicker = page->findChild<QFileDialog*>();
+        ASSERT_NE(folderPicker, nullptr);
+        emit folderPicker->fileSelected(root);
+        folderPicker->reject();
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
         ASSERT_TRUE(waitForVersion());
-        EXPECT_EQ(page->findChild<QLineEdit*>("engineProjectPath")->text(), descriptor);
+        EXPECT_EQ(warnings, 1);
+        EXPECT_EQ(targets.list().size(), targetCount + 1);
+        EXPECT_EQ(page->findChild<QLineEdit*>("engineProjectPath")->text(), root);
     }
 }
 
@@ -1219,8 +1352,8 @@ TEST_F(EngineIntegrationsPageTest, LocalizedGuidanceUsesSummaryUntilChecking)
         EXPECT_FALSE(page->findChild<QPushButton*>(QStringLiteral("changeSdkLocation"))->isEnabled());
         EXPECT_FALSE(page->findChild<QPushButton*>(QStringLiteral("uninstallSdk"))->isEnabled());
         EXPECT_FALSE(action("unlinkProjects")->isEnabled());
-        const QString unityLock = QDir(unityPath).filePath("Temp/UnityLockfile");
-        writeFile(unityLock, "open");
+        HarkenHubTest::UnityProjectLock unityLock;
+        ASSERT_TRUE(unityLock.lock(unityPath));
         check->click();
         EXPECT_FALSE(primary()->isEnabled());
         EXPECT_EQ(steps()->rowCount(), 1);
@@ -1231,7 +1364,7 @@ TEST_F(EngineIntegrationsPageTest, LocalizedGuidanceUsesSummaryUntilChecking)
             EXPECT_TRUE(sdkDialog->grab().save(QDir(screenshotRoot).filePath(
                 chinese ? QStringLiteral("sdk-check-failed-zh.png") : QStringLiteral("sdk-check-failed-en.png"))));
         }
-        ASSERT_TRUE(QFile::remove(unityLock));
+        ASSERT_TRUE(unityLock.unlock());
         check->click();
         if (!screenshotRoot.isEmpty()) {
             QCoreApplication::processEvents();
@@ -1641,7 +1774,7 @@ TEST_F(EngineIntegrationsPageTest, InstallUpdateUnlinkAndRelinkKeepSdkIdentity)
     EXPECT_TRUE(integrations.list().empty());
     EXPECT_EQ(page->findChild<QStackedWidget*>()->currentIndex(), 1);
     EXPECT_FALSE(field("Select a .hsp project file")->isReadOnly());
-    EXPECT_FALSE(field("Select a Unity or Unreal project")->isReadOnly());
+    EXPECT_FALSE(field("Select a Unity project")->isReadOnly());
     EXPECT_EQ(field("Select a .hsp project file")->text(), harkenPath);
     EXPECT_FALSE(primary()->isVisible());
     EXPECT_TRUE(page->findChild<QPushButton*>(QStringLiteral("linkProjects"))->isEnabled());

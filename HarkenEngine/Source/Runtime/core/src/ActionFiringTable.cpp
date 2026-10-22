@@ -167,6 +167,7 @@ bool ActionFiringTable::Reset(std::uint32_t capacity) {
 
 bool ActionFiringTable::PrepareResults(Row& row, std::uint32_t count) noexcept {
     std::vector<ActionFiringStepResult> results;
+    std::vector<std::uint64_t> monitorExecutedSteps;
     const auto resultCount = static_cast<std::size_t>(count);
     if (memguard::IsAudioTagged() || count > kHardActionStepCapacity ||
         resultCount > std::numeric_limits<std::size_t>::max() / sizeof(ActionFiringStepResult) ||
@@ -176,7 +177,9 @@ bool ActionFiringTable::PrepareResults(Row& row, std::uint32_t count) noexcept {
     }
     try {
         results.resize(resultCount);
+        monitorExecutedSteps.resize((resultCount + 63u) / 64u);
         row.results.swap(results);
+        row.monitorExecutedSteps.swap(monitorExecutedSteps);
         return true;
     } catch (const std::bad_alloc&) {
         ++refusalCount_;
@@ -189,6 +192,7 @@ std::uint64_t ActionFiringTable::ResultStorageBytes() const noexcept {
     for (std::uint32_t slot = 0; slot < rows_.ConstructedCount(); ++slot) {
         const auto& row = rows_[slot];
         bytes += row.results.capacity() * sizeof(ActionFiringStepResult);
+        bytes += row.monitorExecutedSteps.capacity() * sizeof(std::uint64_t);
         if (row.variableResultBacking != nullptr) bytes += sizeof(ActionVariableResultBacking);
     }
     return bytes;
@@ -496,6 +500,7 @@ bool ActionFiringTable::CommitPreparedChild(
     prepared->prepared_ = false;
     liveCount_ += committed;
     highWater_ = (std::max)(highWater_, liveCount_);
+    ObserveCommittedSubtree(handle);
     if (out != nullptr) out->identity_ = identity;
     return true;
 }
@@ -919,6 +924,7 @@ bool ActionFiringTable::TryFinalize(Row& row) noexcept {
         row.terminalReason = ActionTerminalReason::Natural;
         row.terminalResult = 0;
     }
+    ObserveActionTerminal(row);
     return row.parent == 0 || PropagateTerminal(row);
 }
 
@@ -940,6 +946,91 @@ bool ActionFiringTable::TryFinalizeSubtree(
         child = next;
     }
     return TryFinalize(*row);
+}
+
+MonitorLifecycleFacts ActionFiringTable::CaptureMonitorFacts(const Row& row) const noexcept {
+    MonitorLifecycleFacts facts{};
+    facts.playbackRequest = row.playbackRequest;
+    facts.emitterOrigin = row.emitterOrigin;
+    facts.controlCause = row.controlCause;
+    facts.projectId = row.owner.projectId;
+    facts.parentAction = row.parent;
+    facts.root = row.root;
+    facts.programSemanticFingerprint = row.programSemanticFingerprint;
+    facts.logicCommitSequence = row.acceptedLogicSequence;
+    return facts;
+}
+
+void ActionFiringTable::ObserveCommittedSubtree(ActionFiringHandle handle) noexcept {
+    const Row* row = Resolve(handle);
+    if (row == nullptr) return;
+    const auto facts = CaptureMonitorFacts(*row);
+    ObserveMonitorLifecycle(MonitorLifecyclePhase::ActionAccept, handle,
+        row->generation, row->worldGeneration, row->actionId, 0, handle,
+        0, 0, 0, facts);
+    for (std::uint32_t index = 0; index < row->directStepCount; ++index) {
+        if (row->results[index].monitorExecutionOnCommit)
+            ObserveStepExecution(handle, index);
+    }
+    for (ActionFiringHandle child = row->firstChild; child != 0;) {
+        const Row* childRow = Resolve(child);
+        if (childRow == nullptr) return;
+        ObserveCommittedSubtree(child);
+        child = childRow->nextSibling;
+    }
+}
+
+void ActionFiringTable::ObserveStepExecution(ActionFiringHandle handle, std::uint32_t index) noexcept {
+    Row* row = Resolve(handle);
+    if (row == nullptr || row->state != SlotState::Active || index >= row->directStepCount) return;
+    const std::uint64_t mask = UINT64_C(1) << (index % 64u);
+    auto& executed = row->monitorExecutedSteps[index / 64u];
+    if ((executed & mask) != 0) return;
+    executed |= mask;
+    const auto& result = row->results[index];
+    auto facts = CaptureMonitorFacts(*row);
+    facts.publishLegacy = false;
+    facts.stepIndex = result.authoredEventIndex;
+    facts.stepExecutionOrdinal = result.executionOrdinal;
+    facts.stepOpcode = result.opcode;
+    facts.stepTargetId = result.targetStableId;
+    facts.stepTargetKind = result.targetKind;
+    facts.relatedAction = result.childFiring;
+    ObserveMonitorLifecycle(MonitorLifecyclePhase::StepExecuted, handle,
+        row->generation, row->worldGeneration, row->actionId,
+        result.producedPlayableInstance, handle, 0, 0, 0, facts);
+}
+
+void ActionFiringTable::ObserveActionTerminal(Row& row) noexcept {
+    if (row.monitorTerminalPublished) return;
+    row.monitorTerminalPublished = true;
+    const auto handle = MakeHandle(static_cast<std::uint32_t>(&row - rows_.data()), row.generation);
+    auto facts = CaptureMonitorFacts(row);
+    facts.actionOutcome = static_cast<std::uint8_t>(row.outcome);
+    facts.terminalResult = row.terminalResult;
+    facts.terminalReason = static_cast<std::uint32_t>(row.terminalReason);
+    if (row.outcome == ActionFiringOutcome::Failed ||
+        row.outcome == ActionFiringOutcome::SucceededWithStepFailure) {
+        facts.terminalKind = 5;
+    } else if (row.terminalReason == ActionTerminalReason::StopRequested) {
+        facts.terminalKind = 2;
+    } else if (row.terminalReason == ActionTerminalReason::WorldReplaced ||
+               row.terminalReason == ActionTerminalReason::TransportReset) {
+        facts.terminalKind = 4;
+    } else if (row.outcome == ActionFiringOutcome::Cancelled) {
+        facts.terminalKind = 3;
+    } else {
+        facts.terminalKind = 1;
+    }
+    const bool reject = row.outcome == ActionFiringOutcome::Failed ||
+                        row.outcome == ActionFiringOutcome::Cancelled;
+    ObserveMonitorLifecycle(reject ? MonitorLifecyclePhase::ActionReject : MonitorLifecyclePhase::ActionResult,
+        handle, row.generation, row.worldGeneration, row.actionId, 0, handle,
+        facts.terminalReason, 0, 0, facts);
+    facts.publishLegacy = false;
+    ObserveMonitorLifecycle(MonitorLifecyclePhase::ActionTerminal, handle,
+        row.generation, row.worldGeneration, row.actionId, 0, handle,
+        facts.terminalReason, 0, 0, facts);
 }
 
 bool ActionFiringTable::Commit(
@@ -977,47 +1068,8 @@ bool ActionFiringTable::CommitTree(
     prepared->prepared_ = false;
     liveCount_ += committed;
     highWater_ = (std::max)(highWater_, liveCount_);
-    const bool ok = committed != 0 && TryFinalizeSubtree(rootHandle);
-    if (ok) {
-        MonitorLifecycleFacts facts{};
-        facts.playbackRequest = row->playbackRequest;
-        facts.emitterOrigin = row->emitterOrigin;
-        facts.controlCause = row->controlCause;
-        facts.projectId = row->owner.projectId;
-        facts.parentAction = row->parent;
-        facts.root = row->root;
-        facts.relatedAction = 0;
-        facts.programSemanticFingerprint = row->programSemanticFingerprint;
-        facts.logicCommitSequence = acceptedLogicSequence;
-        ObserveMonitorLifecycle(
-            MonitorLifecyclePhase::ActionAccept, rootHandle,
-            GenerationOf(rootHandle), row->worldGeneration, row->actionId, 0,
-            rootHandle, 0, 0, 0, facts);
-        Row* live = Resolve(rootHandle);
-        if (live != nullptr && live->state == SlotState::TerminalRetained) {
-            const bool reject =
-                live->outcome == ActionFiringOutcome::Failed ||
-                live->outcome == ActionFiringOutcome::Cancelled;
-            MonitorLifecycleFacts terminalFacts{};
-            terminalFacts.playbackRequest = live->playbackRequest;
-            terminalFacts.emitterOrigin = live->emitterOrigin;
-            terminalFacts.controlCause = live->controlCause;
-            terminalFacts.projectId = live->owner.projectId;
-            terminalFacts.parentAction = live->parent;
-            terminalFacts.root = live->root;
-            terminalFacts.relatedAction = rootHandle;
-            terminalFacts.programSemanticFingerprint = live->programSemanticFingerprint;
-            terminalFacts.logicCommitSequence = live->acceptedLogicSequence;
-            ObserveMonitorLifecycle(
-                reject ? MonitorLifecyclePhase::ActionReject
-                       : MonitorLifecyclePhase::ActionResult,
-                rootHandle, GenerationOf(rootHandle), live->worldGeneration,
-                live->actionId, 0, rootHandle,
-                static_cast<std::uint32_t>(live->terminalReason), 0, 0,
-                terminalFacts);
-        }
-    }
-    return ok;
+    ObserveCommittedSubtree(rootHandle);
+    return committed != 0 && TryFinalizeSubtree(rootHandle);
 }
 
 bool ActionFiringTable::UnlinkChild(
@@ -1094,6 +1146,8 @@ bool ActionFiringTable::Recycle(std::uint32_t slot, Row& row) noexcept {
     row.outcome = ActionFiringOutcome::Pending;
     row.terminalReason = ActionTerminalReason::None;
     row.terminalResult = 0;
+    row.monitorTerminalPublished = false;
+    std::vector<std::uint64_t>{}.swap(row.monitorExecutedSteps);
     row.parent = 0;
     row.root = 0;
     row.firstChild = 0;
@@ -1324,28 +1378,8 @@ bool ActionFiringTable::MarkTerminal(
         }
     }
     row->livePlayableCount = 0;
-    const bool ok = row->parent == 0 || PropagateTerminal(*row);
-    if (ok) {
-        const bool reject =
-            outcome == ActionFiringOutcome::Failed ||
-            outcome == ActionFiringOutcome::Cancelled;
-        MonitorLifecycleFacts facts{};
-        facts.playbackRequest = row->playbackRequest;
-        facts.emitterOrigin = row->emitterOrigin;
-        facts.controlCause = row->controlCause;
-        facts.projectId = row->owner.projectId;
-        facts.parentAction = row->parent;
-        facts.root = row->root;
-        facts.relatedAction = 0;
-        facts.programSemanticFingerprint = row->programSemanticFingerprint;
-        facts.logicCommitSequence = row->acceptedLogicSequence;
-        ObserveMonitorLifecycle(
-            reject ? MonitorLifecyclePhase::ActionReject
-                   : MonitorLifecyclePhase::ActionResult,
-            handle, GenerationOf(handle), row->worldGeneration, row->actionId,
-            0, handle, static_cast<std::uint32_t>(reason), 0, 0, facts);
-    }
-    return ok;
+    ObserveActionTerminal(*row);
+    return row->parent == 0 || PropagateTerminal(*row);
 }
 
 bool ActionFiringTable::ReleaseTerminalSubtree(

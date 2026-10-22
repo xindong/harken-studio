@@ -9,10 +9,6 @@ extern "C" {
 
 typedef uint64_t VnPreviewProjectHandle;
 
-/* Per-lane maxima since the preceding successful take on this engine.
- * consumeSerial identifies a consumption batch, not an audio block.
- * Lanes change windows independently. Only the Studio service pass consumes;
- * panels share its cache. Call on the logic thread. */
 typedef struct VnPreviewChannelPeaksV1 {
     uint32_t structSize;
     uint32_t mixChannelCount;

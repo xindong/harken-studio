@@ -43,6 +43,7 @@ protected:
         ProjectConfig config;
         config.name = QStringLiteral("PlatformCommands");
         config.location = directory.path();
+        config.platforms = {{QUuid::createUuid(), QStringLiteral("Windows"), BasePlatform::Windows}};
         ASSERT_TRUE(manager().createProject(config));
         ActionManager::instance().clearAllForTesting();
         registerProjectActions(ActionManager::instance(), &manager(), nullptr, {});
@@ -88,7 +89,7 @@ protected:
         QJsonArray groups;
         for (const auto& group : project().packGroups) groups.append(group.toJson());
         QJsonArray targeting;
-        for (const auto& row : project().actionPackTargeting) targeting.append(row.toJson());
+        for (const auto& row : manager().getActionPackTargeting()) targeting.append(row.toJson());
         QJsonArray deployments;
         for (const auto& row : project().deploymentProfiles)
             deployments.append(QJsonObject{{"id", row.profileId}, {"name", row.name},
@@ -96,8 +97,8 @@ protected:
                 {"languages", QJsonArray::fromStringList(row.languages)}});
         return {{"platforms", Platforms::platformsToJson(project().platforms)}, {"items", items},
             {"groups", groups}, {"targeting", targeting}, {"deployments", deployments},
-            {"current", project().packExportCurrentPlatformId},
-            {"selected", QJsonArray::fromStringList(project().packExportSelectedPlatformIds)}};
+            {"current", manager().getPackExportCurrentPlatform()},
+            {"selected", QJsonArray::fromStringList(manager().getPackExportSelectedPlatforms())}};
     }
     void setOverlay(PlatformOverrideLedgerV1& ledger, const QString& id, float value)
     {
@@ -140,8 +141,8 @@ TEST_F(ProjectPlatformCommand, CreatesEveryBaseAndIndependentSiblingsWithoutCopy
     EXPECT_EQ(sound->platformOverrides.find(QUuid(second)), nullptr);
     EXPECT_EQ(sources->sources.plain.platforms.size(), 1);
     EXPECT_FALSE(sources->sources.plain.active.isNull());
-    EXPECT_TRUE(project().packExportSelectedPlatformIds.contains(second));
-    EXPECT_EQ(project().packExportCurrentPlatformId, Platforms::idString(windows));
+    EXPECT_TRUE(manager().getPackExportSelectedPlatforms().contains(second));
+    EXPECT_EQ(manager().getPackExportCurrentPlatform(), Platforms::idString(windows));
     EXPECT_FALSE(project().packGroups[0].includesPlatform(second));
     EXPECT_TRUE(project().packGroups[1].includesPlatform(second));
     EXPECT_EQ(PlatformContextService::instance().context().primary, QUuid(first));
@@ -206,6 +207,64 @@ TEST_F(ProjectPlatformCommand, RejectsInvalidEditsAndNoOpsWithoutDirtyOrHistory)
               QStringLiteral("NO_PROJECT_OPEN"));
 }
 
+TEST_F(ProjectPlatformCommand, MembershipReplayPreservesLocalPreferencesForSurvivingPlatforms)
+{
+    const auto windows = Platforms::idString(project().platforms.first().id);
+    const auto mobile = create("Mobile");
+    const auto console = create("Console", "Linux");
+    auto* action = manager().createItem(nullptr, "Action", ProjectItem::Type::Action);
+    ASSERT_NE(action, nullptr);
+    const auto actionId = action->runtimeId();
+    manager().setProjectLanguagesInternal({"English", "Japanese"});
+    manager().setPackExportSelectedPlatformsInternal({mobile});
+    manager().setPackExportCurrentPlatformInternal(mobile);
+    manager().setActionPackTargetingInternal({
+        {actionId, false, {windows, console}, QStringLiteral("Japanese")},
+        {actionId, false, {mobile}, QStringLiteral("English")}});
+    undo().clear();
+    ASSERT_TRUE(run("delete_project_platform", {{"platform_id", mobile}}).success);
+
+    manager().setPackExportSelectedPlatformsInternal({console});
+    manager().setPackExportCurrentPlatformInternal(console);
+    manager().setActionPackTargetingInternal({{actionId, false, {console}},
+        {actionId, true, {}, QStringLiteral("Japanese")}});
+    ASSERT_EQ(undo().undoStack()->count(), 1);
+    ASSERT_TRUE(undo().undo());
+    const auto restored = manager().packExportSelection();
+    EXPECT_EQ(restored.selectedPlatformIds, (QStringList{console, mobile}));
+    EXPECT_EQ(restored.currentPlatformId, console);
+    for (const auto& language : {QString(), QStringLiteral("English")}) {
+        EXPECT_FALSE(restored.includesActionPack(actionId, windows, language));
+        EXPECT_TRUE(restored.includesActionPack(actionId, console, language));
+        EXPECT_TRUE(restored.includesActionPack(actionId, mobile, language));
+    }
+    EXPECT_TRUE(restored.includesActionPack(actionId, windows, "Japanese"));
+    EXPECT_TRUE(restored.includesActionPack(actionId, console, "Japanese"));
+    EXPECT_FALSE(restored.includesActionPack(actionId, mobile, "Japanese"));
+
+    manager().setPackExportSelectedPlatformsInternal({windows});
+    manager().setPackExportCurrentPlatformInternal(windows);
+    manager().setActionPackTargetingInternal({{actionId, false, {windows}}});
+    ASSERT_TRUE(undo().redo());
+    const auto removed = manager().packExportSelection();
+    EXPECT_EQ(removed.selectedPlatformIds, QStringList{windows});
+    EXPECT_EQ(removed.currentPlatformId, windows);
+    for (const auto& language : {QString(), QStringLiteral("English"), QStringLiteral("Japanese")}) {
+        EXPECT_TRUE(removed.includesActionPack(actionId, windows, language));
+        EXPECT_FALSE(removed.includesActionPack(actionId, console, language));
+    }
+    reopen();
+    EXPECT_EQ(manager().packExportSelection(), removed);
+
+    undo().clear();
+    const auto added = create("Added");
+    manager().setPackExportSelectedPlatformsInternal({console});
+    ASSERT_TRUE(undo().undo());
+    EXPECT_EQ(manager().getPackExportSelectedPlatforms(), QStringList{console});
+    ASSERT_TRUE(undo().redo());
+    EXPECT_EQ(manager().getPackExportSelectedPlatforms(), (QStringList{console, added}));
+}
+
 TEST_F(ProjectPlatformCommand, RenameAndProfilePersistPerInstanceWithoutMutatingGlobalProfiles)
 {
     const auto global = PlatformProfileManager::instance().toJson();
@@ -264,8 +323,8 @@ TEST_F(ProjectPlatformCommand, BaseChangeResetsStoredProfileAndPreservesReferenc
     sources->sources.plain.platforms[id].active = entry;
     auto* action = manager().createItem(nullptr, "Action", ProjectItem::Type::Action);
     ASSERT_NE(action, nullptr);
-    project().actionPackTargeting = {{action->runtimeId(), false, {id}, QStringLiteral("English")}};
-    project().packExportSelectedPlatformIds = {id};
+    manager().setActionPackTargetingInternal({{action->runtimeId(), false, {id}, QStringLiteral("English")}});
+    manager().setPackExportSelectedPlatformsInternal({id});
     PlatformContextService::instance().setSelected({QUuid(id)}, QUuid(id), false);
     undo().clear();
     const auto before = authoredState();
@@ -338,16 +397,17 @@ TEST_F(ProjectPlatformCommand, DeleteCleansEveryReferenceAtomicallyAndUndoRestor
     sources->sources.plain.platforms[low].active = firstEntry;
     sources->sources.plain.platforms[high].active = secondEntry;
     sources->sources.plain.active = firstEntry;
-    project().actionPackTargeting = {{action->runtimeId(), false, {low}, QStringLiteral("English")},
-                                     {action->runtimeId(), false, {high, low}, QStringLiteral("Japanese")}};
+    manager().setProjectLanguagesInternal({QStringLiteral("English"), QStringLiteral("Japanese")});
+    manager().setActionPackTargetingInternal({{action->runtimeId(), false, {low}, QStringLiteral("English")},
+                                     {action->runtimeId(), false, {high, low}, QStringLiteral("Japanese")}});
     ProjectData::DeploymentProfile deployment;
     deployment.profileId = "mobile";
     deployment.name = "Mobile";
     deployment.destination = "Device";
     deployment.platformIds = {low};
     project().deploymentProfiles = {deployment};
-    project().packExportCurrentPlatformId = low;
-    project().packExportSelectedPlatformIds = {low};
+    manager().setPackExportCurrentPlatformInternal(low);
+    manager().setPackExportSelectedPlatformsInternal({low});
     PlatformContextService::instance().setSelected({QUuid(low)}, QUuid(low), false);
     SoundSourceEditing::syncActiveProjection(*sound, QUuid(low), {});
     ASSERT_TRUE(manager().saveProject());
@@ -393,24 +453,26 @@ TEST_F(ProjectPlatformCommand, DeleteCleansEveryReferenceAtomicallyAndUndoRestor
     ASSERT_EQ(sources->sources.plain.platforms.size(), 1);
     EXPECT_TRUE(sources->sources.plain.platforms.contains(high));
     EXPECT_FALSE(sources->sources.plain.active.isNull());
-    EXPECT_EQ(project().actionPackTargeting[1].platformIds, QStringList{high});
-    EXPECT_FALSE(project().actionPackTargeting[0].allPlatforms);
-    EXPECT_TRUE(project().actionPackTargeting[0].platformIds.isEmpty());
+    EXPECT_EQ(manager().getActionPackTargeting()[1].platformIds, QStringList{high});
+    EXPECT_FALSE(manager().getActionPackTargeting()[0].allPlatforms);
+    EXPECT_TRUE(manager().getActionPackTargeting()[0].platformIds.isEmpty());
     EXPECT_TRUE(project().deploymentProfiles[0].platformIds.isEmpty());
-    EXPECT_TRUE(project().packExportSelectedPlatformIds.isEmpty());
-    EXPECT_EQ(project().packExportCurrentPlatformId, Platforms::idString(project().platforms.first().id));
+    EXPECT_TRUE(manager().getPackExportSelectedPlatforms().isEmpty());
+    EXPECT_EQ(manager().getPackExportCurrentPlatform(), Platforms::idString(project().platforms.first().id));
     EXPECT_FALSE(PlatformContextService::instance().context().all);
     EXPECT_EQ(PlatformContextService::instance().context().primary, project().platforms.first().id);
     const auto after = authoredState();
+    auto restored = before;
+    restored.insert("current", after.value("current"));
     ASSERT_TRUE(undo().undo());
-    EXPECT_EQ(authoredState(), before);
+    EXPECT_EQ(authoredState(), restored);
     EXPECT_EQ(sound->fieldGroups, groupFields);
     EXPECT_EQ(PlatformContextService::instance().context(), beforeContext);
     ASSERT_TRUE(undo().redo());
     EXPECT_EQ(authoredState(), after);
     ASSERT_TRUE(manager().saveProject());
     ASSERT_TRUE(undo().undo());
-    EXPECT_EQ(authoredState(), before);
+    EXPECT_EQ(authoredState(), restored);
     EXPECT_EQ(sound->fieldGroups, groupFields);
     QObject::disconnect(&manager(), nullptr, &observer, nullptr);
     QObject::disconnect(&PlatformContextService::instance(), nullptr, &observer, nullptr);
@@ -423,9 +485,9 @@ TEST_F(ProjectPlatformCommand, DeleteCleansEveryReferenceAtomicallyAndUndoRestor
     reopen();
     EXPECT_EQ(Platforms::find(project().platforms, QUuid(low)), nullptr);
     EXPECT_TRUE(Platforms::validateProject(project()));
-    EXPECT_TRUE(project().packExportSelectedPlatformIds.isEmpty());
-    EXPECT_FALSE(project().actionPackTargeting[0].allPlatforms);
-    EXPECT_TRUE(project().actionPackTargeting[0].platformIds.isEmpty());
+    EXPECT_TRUE(manager().getPackExportSelectedPlatforms().isEmpty());
+    EXPECT_FALSE(manager().getActionPackTargeting()[0].allPlatforms);
+    EXPECT_TRUE(manager().getActionPackTargeting()[0].platformIds.isEmpty());
 }
 
 TEST_F(ProjectPlatformCommand, LastPlatformIsProtectedAndRecreatedNameGetsNewIdentity)
@@ -453,12 +515,12 @@ TEST_F(ProjectPlatformCommand, RenameAndProfileReplayPreserveSubsequentContextAn
     ASSERT_TRUE(run("rename_project_platform", {{"platform_id", id}, {"name", "Mobile"}}).success);
     PlatformContextService::instance().setSelected({QUuid(id)}, QUuid(id), false);
     project().packGroups = {{"New", {}, false, {id}}};
-    project().packExportSelectedPlatformIds = {id};
+    manager().setPackExportSelectedPlatformsInternal({id});
     const auto context = PlatformContextService::instance().context();
     ASSERT_TRUE(undo().undo());
     EXPECT_EQ(Platforms::find(project().platforms, QUuid(id))->name, QStringLiteral("Android"));
     EXPECT_EQ(PlatformContextService::instance().context(), context);
-    EXPECT_EQ(project().packExportSelectedPlatformIds, QStringList{id});
+    EXPECT_EQ(manager().getPackExportSelectedPlatforms(), QStringList{id});
     ASSERT_EQ(project().packGroups.size(), 1);
     EXPECT_EQ(project().packGroups[0].platformIds, QStringList{id});
     ASSERT_TRUE(undo().redo());
@@ -659,7 +721,7 @@ TEST_F(ProjectPlatformCommand, BackgroundActivityNoLongerBlocksPlatformEdits)
     EXPECT_FALSE(ProjectPlatformActivity::instance().isBusy());
 }
 
-TEST_F(ProjectPlatformCommand, PlatformEditsInvalidateOnlyRelatedRecordsAndPreserveArtifacts)
+TEST_F(ProjectPlatformCommand, PlatformEditsPreserveSessionResultsAndArtifacts)
 {
     const auto id = create("Android");
     const auto windows = Platforms::idString(project().platforms.first().id);
@@ -671,12 +733,12 @@ TEST_F(ProjectPlatformCommand, PlatformEditsInvalidateOnlyRelatedRecordsAndPrese
     records.add({"Action", 1, "Action", id, {}, true, "Built", artifact.fileName(), {}, {}, 8, 10});
     records.add({"Action", 1, "Action", windows, {}, true, "Built", "Windows/Action.pack", {}, {}, 8, 10});
     ASSERT_TRUE(run("rename_project_platform", {{"platform_id", id}, {"name", "Android_Renamed"}}).success);
-    EXPECT_EQ(records.records()[0].status, QStringLiteral("Needs rebuild"));
+    EXPECT_EQ(records.records()[0].status, QStringLiteral("Built"));
     EXPECT_EQ(records.records()[0].outputPath, artifact.fileName());
     EXPECT_TRUE(records.records()[0].success);
     EXPECT_EQ(records.records()[1].status, QStringLiteral("Built"));
     ASSERT_TRUE(undo().undo());
-    EXPECT_EQ(records.records()[0].status, QStringLiteral("Needs rebuild"));
+    EXPECT_EQ(records.records()[0].status, QStringLiteral("Built"));
     ASSERT_TRUE(run("delete_project_platform", {{"platform_id", id}}).success);
     EXPECT_TRUE(artifact.exists());
     EXPECT_EQ(records.records().size(), 2);
@@ -699,7 +761,7 @@ TEST_F(ProjectPlatformCommand, SettingsBatchAtomicallyReplacesLastPlatformAndRes
     const auto dormantBefore = dormant;
     project().packGroups = {{"Explicit", {}, false, {id}}};
     auto* action = manager().createItem(nullptr, "Action", ProjectItem::Type::Action);
-    project().actionPackTargeting = {{action->runtimeId(), false, {id}}};
+    manager().setActionPackTargetingInternal({{action->runtimeId(), false, {id}}});
     PlatformContextService::instance().setSelected({QUuid(id)}, QUuid(id), false);
     SoundSourceEditing::syncActiveProjection(*sound, QUuid(id), {});
     undo().clear();
@@ -721,7 +783,7 @@ TEST_F(ProjectPlatformCommand, SettingsBatchAtomicallyReplacesLastPlatformAndRes
     EXPECT_TRUE(sound->comp<VSound>()->sources.localized["English"].platforms.isEmpty());
     EXPECT_EQ(sound->comp<VSound>()->sources.localized["English"].entries, dormantBefore.entries);
     EXPECT_EQ(sound->platformOverrides.find(QUuid(id)), nullptr);
-    EXPECT_EQ(project().packExportSelectedPlatformIds.size(), 2);
+    EXPECT_EQ(manager().getPackExportSelectedPlatforms().size(), 2);
     const auto after = authoredState();
     undo().undo();
     EXPECT_EQ(authoredState(), before);

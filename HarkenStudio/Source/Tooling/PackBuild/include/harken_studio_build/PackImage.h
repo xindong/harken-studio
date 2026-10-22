@@ -83,6 +83,9 @@ struct GameplayCatalogImage {
     std::vector<std::uint8_t> namePool;
 };
 
+PackResult ParseGameplayCatalog(const std::uint8_t* bytes, std::uint64_t size,
+                                GameplayCatalogImage* out);
+
 struct PackCanonicalImage {
     std::uint32_t packKind = 0;
     std::uint64_t packStableId = 0;

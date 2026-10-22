@@ -19,6 +19,8 @@
 
 `Tooling/Remote/wire/harken_wire_table.json` 同时供 ABI 与 SDK 生成使用，因此该表和 `gen_wire.py` 保留在 `Source/`。内部管道服务及其生成产物归入 `Tool/Remote/`，不把共享产品合同随开发工具一起迁走。
 
+SDK 生成通过 `sdk_api_surface.json` 的 `managed_projection` 排除 Monitor 专用类型、函数、常量与错误码；Monitor 合同服务于引擎与 Studio，不进入 SDK 声明或托管 ABI 校验。引擎自身的完整 ABI 校验仍覆盖 Monitor。
+
 ## 渲染与混音
 
 | 能力域 | 预期 | 现状 | 状态 |
@@ -59,6 +61,12 @@
 | Studio / 游戏远程连接 | 游戏进程内提供通信，Studio 连接运行中的引擎进行观测与控制 | `Runtime/remote/` 提供 TCP 通信与 UDP 发现，SDK 调用 `Vn_RemoteStart` 启动，Studio `RemoteConnection` 使用独立的 `Protocol.h`；本地试听仍通过进程内 C API | 已实现 |
 
 ## 对象与参数（运行时侧）
+
+Monitor 事件合同于 2026-10-21 补充：Studio 请求 execution schema 2，保留 V1 播放事实，V2 承载 Action 终态、Step 触发和 Variable 实际设置结果。Step 只在实际触发执行时报告一次，不具有独立的开始／结束日志；Object 指向操作目标，详情保留所属 Action。Action 完成等待相关播放及子 Action 结束，Variable 接纳与实际应用分别判定，各类结果不能互相推导。沿用原始 Request ID，不增加另一套播放身份。
+
+Monitor 的 Type 为 Action、Step、Playable、Variable、Game Object；Pack 加载／卸载暂不展示，Stop all／Stop emitter 只展示受影响对象的结果。Game Object 注册／注销由 Emitter 创建／销毁事实表达，Host 名称绑定不增加注册行；采集基线仅补身份，不伪造历史事件。无法归属业务对象的全局诊断保留在原诊断日志中。
+
+V1 会话仍按其版本收取事件；内部 typed 录制使用明确声明的 schema 2，继承拥有者的流与权限，完整保存新旧事实。源生产端丢失的 byteCount 统计尚未编码的源记录字节；下游丢失统计实际编码字节，避免混合 V1／V2 时按固定 wire 长度估算。
 
 Action、Variable 与 Emitter 消费边界于 2026-09-21 重新核对；其余行保留原核对日期。
 

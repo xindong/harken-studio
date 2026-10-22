@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Build the Harken Hub MSI installer (WiX v4+) and, when a setup stub is
-supplied, the self-contained HarkenHubSetup EXE from a deployed hub
+"""Build the Harken Studio Hub MSI installer (WiX v4+) and, when a setup stub is
+supplied, the self-contained HarkenStudioHubSetup EXE from a deployed hub
 directory."""
 
 from __future__ import annotations
@@ -21,12 +21,14 @@ from xml.sax.saxutils import quoteattr
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from release import collect_legal_texts, product_legal, release_evidence
 
-HUB_BINARY = "HarkenHub.exe"
+HUB_BINARY = "HarkenStudioHub.exe"
+LEGACY_HUB_BINARY = "HarkenHub.exe"
 BRIDGE_BINARY = "Updater/HarkenHubUpdateBridge.exe"
 FOREIGN_BINARIES = (
     "HarkenStudio.exe",
     "HarkenEditor.exe",
     "HarkenHubSetup.exe",
+    "HarkenStudioHubSetup.exe",
 )
 PAYLOAD_RESOURCE_NAME = "HARKENHUBMSI"
 RT_RCDATA = 10
@@ -56,16 +58,12 @@ def collect_payload(input_dir: Path) -> list[Path]:
     if not files:
         raise SystemExit(f"error: input directory is empty: {input_dir}")
     rel_names = {path.relative_to(input_dir).as_posix() for path in files}
-    if HUB_BINARY not in rel_names:
-        raise SystemExit(
-            f"error: input directory does not contain {HUB_BINARY} at "
-            f"its root: {input_dir}"
-        )
-    if BRIDGE_BINARY not in rel_names:
-        raise SystemExit(
-            f"error: input directory does not contain {BRIDGE_BINARY}: "
-            f"{input_dir}"
-        )
+    for required in (HUB_BINARY, LEGACY_HUB_BINARY, BRIDGE_BINARY):
+        if required not in rel_names:
+            raise SystemExit(
+                f"error: input directory does not contain {required}: "
+                f"{input_dir}"
+            )
     foreign = sorted(
         name
         for name in rel_names
@@ -169,7 +167,6 @@ def wix_command(
     product_wxs: Path,
     payload_wxs: Path,
     eula_rtf: Path,
-    icon_ico: Path,
     version: str,
     msi_path: Path,
     wix_exe: str,
@@ -187,8 +184,6 @@ def wix_command(
         f"HarkenVersion={version}",
         "-d",
         f"HarkenEulaRtf={eula_rtf}",
-        "-d",
-        f"HarkenIconIco={icon_ico}",
         "-d",
         f"HarkenHandoffSddl={HANDOFF_SDDL}",
         "-d",
@@ -270,12 +265,7 @@ def build_installer(
     script_dir = Path(__file__).resolve().parent
     product_wxs = Path(args.product_wxs or script_dir / "wix" / "HarkenHub.wxs")
     eula_rtf = Path(args.eula_rtf).resolve() if args.eula_rtf else None
-    icon_ico = Path(
-        args.icon_ico
-        or script_dir.parents[1]
-        / "HarkenHub" / "Resources" / "icons" / "HarkenHub.ico"
-    )
-    for required in (product_wxs, icon_ico) + ((eula_rtf,) if eula_rtf else ()):
+    for required in (product_wxs,) + ((eula_rtf,) if eula_rtf else ()):
         if not required.is_file():
             raise SystemExit(f"error: missing authoring input: {required}")
 
@@ -303,15 +293,15 @@ def build_installer(
         )
         release_evidence.retain_packaging_inputs(evidence, {
             "product.wxs": product_wxs, "payload.wxs": payload_wxs,
-            "license.rtf": eula_rtf, "icon.ico": icon_ico})
+            "license.rtf": eula_rtf})
 
         product_version = msi_version(args.version)
         msi_path = (
-            staging / f"HarkenHubSetup-{args.version}-{args.build_id}.msi"
+            staging / f"HarkenStudioHubSetup-{args.version}-{args.build_id}.msi"
         )
 
         command = wix_command(
-            product_wxs, payload_wxs, eula_rtf, icon_ico, product_version,
+            product_wxs, payload_wxs, eula_rtf, product_version,
             msi_path, args.wix_exe,
         )
         result = run(command)
@@ -347,7 +337,7 @@ def build_installer(
 
         if stub_exe is not None:
             exe_path = (
-                staging / f"HarkenHubSetup-{args.version}-{args.build_id}.exe"
+                staging / f"HarkenStudioHubSetup-{args.version}-{args.build_id}.exe"
             )
             embed(stub_exe, msi_path, exe_path)
             if not exe_path.is_file():
@@ -384,7 +374,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--build-dir", default="build")
     parser.add_argument("--product-wxs", default=None)
     parser.add_argument("--eula-rtf", default=None)
-    parser.add_argument("--icon-ico", default=None)
     parser.add_argument("--wix-exe", default="wix")
     parser.add_argument("--stub-exe", default=None)
     return parser.parse_args(argv)

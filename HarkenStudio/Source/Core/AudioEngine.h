@@ -350,6 +350,7 @@ signals:
 
 private slots:
     void onRuntimeServiceTimer();
+    void onMeterTimer();
     void onMonitorTimer();
 
 private:
@@ -417,6 +418,7 @@ private:
     QVector3D listenerUp_ = QVector3D(0, 1, 0);
 
     QTimer* runtimeServiceTimer_ = nullptr;
+    QTimer* meterTimer_ = nullptr;
     QTimer* monitorTimer_ = nullptr;
     int activeVoiceCount_ = 0;
     bool voiceCountKnown_ = false;

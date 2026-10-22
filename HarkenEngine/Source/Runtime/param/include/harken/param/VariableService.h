@@ -191,6 +191,11 @@ struct VariableAcceptResult {
     VnResult result = VN_INVALID_ARG;
     VariableCallObservation observation{};
     LogicCommitTicket ticket{};
+
+private:
+    friend class VariableServiceV1;
+    std::array<std::uint32_t, kVariableBatchWriteCapacity> writeSlots_{};
+    std::uint32_t writeCount_ = 0;
 };
 
 class VariableServiceV1;
@@ -483,6 +488,13 @@ public:
     bool SealPreparedActionSources(Engine& engine,
         const ActionFiringTable::PreparedChildIdentity& child) noexcept;
     void CancelPreparedWrite(PreparedVariableWriteToken* prepared) noexcept;
+    void BindMonitorRequest(const VariableAcceptResult& accepted,
+        const MonitorRequestContext& request,
+        const MonitorEmitterOrigin& emitterOrigin, VnObjectId projectId) noexcept;
+    void BindPreparedMonitorRequest(const PreparedVariableWriteToken& prepared,
+        const MonitorRequestContext& request,
+        const MonitorEmitterOrigin& emitterOrigin,
+        std::uint64_t actionFiring, VnObjectId projectId) noexcept;
 
     void BeginService(Engine& engine, std::uint64_t blocksRendered,
                       std::uint32_t blockFrames);
@@ -1092,7 +1104,15 @@ private:
     bool PrepareActionReadCutSourcesImpl(Engine& engine, VariableReadCutRef cut,
         const ActionOrderIdentity& identity);
 
+    struct MonitorWriteOrigin {
+        MonitorRequestContext request{};
+        MonitorEmitterOrigin emitterOrigin{};
+        VnObjectId projectId{};
+        std::uint64_t actionFiring = 0;
+    };
+
     struct WriteRow {
+        MonitorWriteOrigin monitorOrigin{};
         CurrentSliceBacking calendarBacking;
         bool used = false;
         bool reserved = false;

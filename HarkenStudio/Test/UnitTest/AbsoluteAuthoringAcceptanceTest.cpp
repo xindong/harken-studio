@@ -98,7 +98,6 @@ protected:
         context.origin = IPCServer::DispatchOrigin::AI;
         context.requestId = QStringLiteral("absolute-authoring-acceptance");
         context.permissionProfile = QStringLiteral("ask");
-        context.toolProfile = QStringLiteral("authoring");
         context.unrestricted = true;
         return server_.dispatchCommand(QStringLiteral("set_item_property"), args, context);
     }

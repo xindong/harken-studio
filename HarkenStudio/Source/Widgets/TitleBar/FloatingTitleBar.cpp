@@ -1,10 +1,6 @@
 #include "FloatingTitleBar.h"
-#include "Core/ThemeAssetCatalog.h"
-#include "Core/ThemeManager.h"
 #include <QEvent>
 #include <QHBoxLayout>
-#include <QLabel>
-#include <QPixmap>
 #include <QShowEvent>
 #include <QSizePolicy>
 
@@ -18,16 +14,6 @@ FloatingTitleBar::FloatingTitleBar(QWidget* parent) : QWidget(parent) {
     layout_->setContentsMargins(8, 0, 0, 0);
     layout_->setSpacing(6);
 
-    logoLabel_ = new QLabel(this);
-    logoLabel_->setObjectName("titleBarLogo");
-    const auto logo = ThemeManager::instance().resolveImage(
-        QString::fromLatin1(ThemeAssetIds::AppLogo),
-        ThemeAssetVariant{QSize(24, 24), devicePixelRatioF(), 0, QColor()});
-    if (logo.resource)
-        logoLabel_->setPixmap(QPixmap::fromImage(logo.resource->image));
-    logoLabel_->setFixedSize(24, 24);
-
-    layout_->addWidget(logoLabel_);
     layout_->addStretch();
 
     auto makeWinBtn = [this](const QString& name, TitleBarButtonKind kind, const QString& tip) {

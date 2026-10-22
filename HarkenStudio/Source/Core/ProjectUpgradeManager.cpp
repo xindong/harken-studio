@@ -87,6 +87,20 @@ FileSetMetrics writeSetMetrics(const QString& projectDirectory,
     return result;
 }
 
+QStringList nonWritableUpgradeFiles(const ProjectUpgradeAnalysis& analysis)
+{
+    QStringList paths;
+    for (const QString& relative : analysis.migrationPlan.writeSet) {
+        const QFileInfo entry(QDir(analysis.projectDirectory).filePath(relative));
+        if (!entry.isFile())
+            continue;
+        QFile file(entry.absoluteFilePath());
+        if (!entry.isWritable() || !file.open(QIODevice::ReadWrite | QIODevice::ExistingOnly))
+            paths.append(QDir::toNativeSeparators(entry.absoluteFilePath()));
+    }
+    return paths;
+}
+
 bool copyTree(const QString& sourceDirectory, const QString& destinationDirectory,
               const ProjectDataPolicy& dataPolicy,
               const FileSetMetrics& total,
@@ -401,6 +415,13 @@ ProjectUpgradeAnalysis ProjectUpgradeManager::analyze(
             analysis.blockingErrors.append(projectIssueCode(analysis.issue));
             return analysis;
         }
+        const QStringList nonWritableFiles = nonWritableUpgradeFiles(analysis);
+        if (!nonWritableFiles.isEmpty()) {
+            analysis.issue = ProjectIssue::ProjectUpgradeFilesNotWritable;
+            analysis.detail = nonWritableFiles.join(QLatin1Char('\n'));
+            analysis.blockingErrors = nonWritableFiles;
+            return analysis;
+        }
         analysis.projectVolume = ProjectVolume::classify(analysis.projectFilePath);
         if (analysis.projectVolume.kind == ProjectVolumeKind::Remote) {
             analysis.issue = ProjectIssue::ProjectVolumeUnsupported;
@@ -521,6 +542,17 @@ ProjectUpgradeResult ProjectUpgradeManager::execute(
         return result;
     }
 
+    const auto rejectNonWritableFiles = [&]() {
+        result.detail = nonWritableUpgradeFiles(analysis).join(QLatin1Char('\n'));
+        if (result.detail.isEmpty())
+            return false;
+        result.issue = ProjectIssue::ProjectUpgradeFilesNotWritable;
+        result.error = projectIssueCode(result.issue) + QLatin1Char(':') + result.detail;
+        return true;
+    };
+    if (rejectNonWritableFiles())
+        return result;
+
     const QString token = QUuid::createUuid().toString(QUuid::WithoutBraces);
     const QString stagingDirectory = analysis.projectDirectory +
                                      QStringLiteral(".harken-upgrade-staging-") + token;
@@ -602,6 +634,10 @@ ProjectUpgradeResult ProjectUpgradeManager::execute(
     if (!hasCommitSpace(analysis, stagingDirectory)) {
         result.issue = ProjectIssue::ProjectUpgradeSpaceInsufficient;
         result.error = projectIssueCode(result.issue);
+        QDir(stagingDirectory).removeRecursively();
+        return result;
+    }
+    if (rejectNonWritableFiles()) {
         QDir(stagingDirectory).removeRecursively();
         return result;
     }

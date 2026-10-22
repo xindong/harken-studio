@@ -7,6 +7,7 @@
 #include "RuntimeBridge/RemoteConnection.h"
 #include "Monitor/EventCaptureController.h"
 #include <QWindow>
+#include <QLocale>
 #include "Core/AudioEngine.h"
 #include "Core/RuntimeSyncCoordinator.h"
 #include "Core/CurrentWorldProjectAdapter.h"
@@ -20,6 +21,8 @@
 #include "Core/ShortcutManager.h"
 #include "Core/UndoCommands.h"
 #include "Core/ProjectPackExporter.h"
+#include "Core/PackArtifactCache.h"
+#include "Core/PackGenerationRecord.h"
 #include "Core/ProjectPlatformActivity.h"
 #include "Core/IPC/IPCServer.h"
 #include "Core/AI/AIAssistantService.h"
@@ -31,6 +34,7 @@
 #include "Core/PanelInstanceRegistry.h"
 #include "Core/EditorShellRegistry.h"
 #include "Core/LayoutController.h"
+#include "Core/WindowPlacement.h"
 #include "Core/BuiltinLayouts.h"
 #include "Core/NamedLayoutStore.h"
 #include "Core/SelectionRouter.h"
@@ -59,6 +63,7 @@
 #include "Dialogs/Settings/Pages/LayoutPage.h"
 #include "Dialogs/Settings/PreferencesDialog.h"
 #include "Dialogs/Settings/ProjectSettingsDialog.h"
+#include "Dialogs/Settings/Pages/ProjectPublishPage.h"
 #include "Widgets/ProjectExplorer/ProjectExplorer.h"
 #include "Widgets/Hierarchy/Hierarchy.h"
 #include "Widgets/Inspector/InspectorPanel.h"
@@ -76,16 +81,16 @@
 #include "Widgets/Blueprint/BlueprintPanel.h"
 #include "Dialogs/NewProjectDialog.h"
 #include "Dialogs/AboutDialog.h"
-#include "Widgets/Assistant/AIAssistantPanel.h"
-#include "Widgets/PackManager/PackManagerPanel.h"
-#include "Widgets/PreviewPanel/PreviewPanel.h"
+#include "Widgets/Assistant/AssistantPanel.h"
+#include "Widgets/Publisher/PublisherPanel.h"
+#include "Widgets/ControlPanel/ControlPanel.h"
 #include "Widgets/PlatformBar/PlatformBar.h"
 #include "Widgets/PlatformBar/PlaybackControls.h"
 #include "Monitor/MonitorAdapter.h"
 #include "Monitor/MonitorCaptureControlHost.h"
 #include "Monitor/MonitorHostContext.h"
 #include "Monitor/MonitorPerformanceLiveHost.h"
-#include "Widgets/Monitor/MonitorCatalogPanel.h"
+#include "Widgets/Monitor/MonitorPanel.h"
 #include "Widgets/Monitor/MonitorPanelKeys.h"
 #include "Widgets/Monitor/MonitorPerformancePanel.h"
 #include "Widgets/Monitor/MonitorBusesPanel.h"
@@ -114,7 +119,6 @@
 #include "Widgets/Monitor/MonitorVoicesSource.h"
 #include "Platform/ExternalDropDispatcher.h"
 #include "Core/AuditionManager.h"
-#include "Core/ToastManager.h"
 #include "Core/ThemeAssetCatalog.h"
 #include "Core/ThemeManager.h"
 #include "Core/QtAdsThemeAdapter.h"
@@ -129,6 +133,7 @@
 #include <QApplication>
 #include <QThread>
 #include <QCloseEvent>
+#include <QResizeEvent>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QMimeData>
@@ -255,7 +260,7 @@ MainWindow::MainWindow(
 {
     setWindowTitle("Harken Studio");
     setMinimumSize(800, 600);
-    resize(1800, 1100);
+    resize(kDefaultStudioWindowSize);
     setObjectName(QStringLiteral("MainWindow"));
     setAcceptDrops(true);
     qApp->installEventFilter(this);
@@ -457,6 +462,10 @@ void MainWindow::initializeStructure(
                 }
             });
             connect(ed, &GridEditorPanel::locateItem, this, &MainWindow::locateProjectItem);
+            connect(ed, &GridEditorPanel::auditionTargetRequested, this,
+                    [this](const QUuid& target) {
+                setAuditionTarget(ProjectManager::instance().findItemByGuid(target));
+            });
             connect(ed, &GridEditorPanel::sourceEditorRequested, this,
                     [this](const QUuid& soundGuid, const QUuid& entryId) {
                 openExternalEditor(ExternalEditorSelection::source(soundGuid, entryId));
@@ -532,8 +541,8 @@ void MainWindow::initializeStructure(
             });
             connect(editor, &TimelineEditorPanel::blueprintRequested, this,
                     [this](ProjectItem* subject, const PlacementContext& context) {
-                if (blueprintCanvasDock_)
-                    revealDock(blueprintCanvasDock_);
+                if (blueprintDock_)
+                    revealDock(blueprintDock_);
                 if (selectionRouter_)
                     selectionRouter_->selectItem(subject, false, context);
             });
@@ -650,12 +659,12 @@ void MainWindow::initializeStructure(
                 }
             };
             syncZoneBtn("leftSidebarToggleBtn", projectExplorerDock_);
-            syncZoneBtn("bottomPanelToggleBtn", previewDock_);
-            syncZoneBtn("rightSidebarToggleBtn", aiDock_);
+            syncZoneBtn("bottomPanelToggleBtn", controlDock_);
+            syncZoneBtn("rightSidebarToggleBtn", assistantDock_);
         }, Qt::QueuedConnection);
     });
     connect(layoutController_, &LayoutController::statusMessage, this, [this](const QString& text) {
-        if (statusLabel_) statusLabel_->setText(text);
+        if (statusButton_) setStatusMessage(text);
     });
     connect(layoutController_, &LayoutController::dockStateRestored, this, [this]() {
         if (!externalDropDispatcher_) return;
@@ -663,23 +672,21 @@ void MainWindow::initializeStructure(
                            [d = externalDropDispatcher_]() { d->refresh(); });
     });
     connect(selectionRouter_, &SelectionRouter::statusMessage, this, [this](const QString& text) {
-        if (statusLabel_) statusLabel_->setText(text);
+        if (statusButton_) setStatusMessage(text);
     });
     connect(selectionRouter_, &SelectionRouter::selectionChanged, this,
             [this](ProjectItem* item) {
         standaloneEditorSelection_ = item;
         pushSelectionToStandaloneEditors(item, StandaloneEditorPushReason::SelectionChanged);
-        refreshPlaybackResetEnabled(item);
-        if (previewPanel_)
-            previewPanel_->setItem(item);
+        setAuditionTarget(item);
     });
     {
         LayoutController::Docks d;
         d.dockManager          = dockManager_;
-        d.blueprintCanvasDock  = blueprintCanvasDock_;
+        d.blueprintDock        = blueprintDock_;
         d.projectExplorerDock  = projectExplorerDock_;
-        d.aiDock               = aiDock_;
-        d.previewDock = previewDock_;
+        d.assistantDock        = assistantDock_;
+        d.controlDock          = controlDock_;
         layoutController_->setDocks(d);
         layoutController_->setWindowDockResolver([this](const QString& typeId) -> ads::CDockWidget* {
             return workspaceWindowManager_ ? workspaceWindowManager_->singletonDock(typeId) : nullptr;
@@ -689,14 +696,14 @@ void MainWindow::initializeStructure(
         SelectionRouter::Views v;
         v.blueprintCanvas        = blueprintCanvas_;
         v.projectExplorer        = projectExplorer_;
-        v.blueprintCanvasDock    = blueprintCanvasDock_;
+        v.blueprintDock          = blueprintDock_;
         selectionRouter_->setViews(v);
     }
     {
         BusController::Views v;
         v.blueprintCanvas    = blueprintCanvas_;
         v.projectExplorer    = projectExplorer_;
-        v.blueprintCanvasDock = blueprintCanvasDock_;
+        v.blueprintDock      = blueprintDock_;
         busController_->setViews(v);
     }
     layoutController_->setInstanceSnapshotProvider([this]() -> QList<VNX::DockInstanceSpec> {
@@ -751,7 +758,7 @@ void MainWindow::initializeFinalState()
     if (initializeEmptyProject_)
         initEmptyProject();
     
-    statusLabel_->setText(tr("Ready"));
+    setStatusMessage(tr("Ready"));
     
     layoutController_->applyDefaultLayout();
     startupTrace(QStringLiteral("MainWindow: after applyDefaultLayout"));
@@ -784,6 +791,7 @@ void MainWindow::initializeFinalState()
     setMenuWidget(m_titleBar);
 
     setupTitleBarToggles();
+    updateWindowTitle();
 #endif
 }
 
@@ -806,6 +814,9 @@ void MainWindow::initializeDeferred(
 
 MainWindow::~MainWindow()
 {
+    PackGenerationRecordStore::instance().cancelExport();
+    for (const auto& thread : packExportThreads_)
+        if (thread) thread->wait();
     delete eventCaptureController_;
     eventCaptureController_ = nullptr;
     closeMonitorSession();
@@ -866,9 +877,6 @@ void MainWindow::setupAudioEngine()
     connect(&engine, &AudioEngine::errorOccurred, this, &MainWindow::onAudioError, Qt::QueuedConnection);
     connect(&engine, &AudioEngine::logMessage, this, [this](int level, const QString& msg) {
         LogPanel::logEngineMessage(level, msg);
-        if (level >= 1) {
-            statusLabel_->setText(msg);
-        }
     }, Qt::QueuedConnection);
     
     startupTrace(QStringLiteral("MainWindow: before AudioEngine::initialize"));
@@ -881,20 +889,20 @@ void MainWindow::setupAudioEngine()
     {
         if (engine.isSimulationMode())
         {
-            statusLabel_->setText(tr("Audio engine running in SIMULATION MODE (runtime not available)"));
+            setStatusMessage(tr("Audio engine running in SIMULATION MODE (runtime not available)"));
             if (auto* log = logPanel())
                 log->logWarning(LogCategory::Audio, tr("Audio runtime not available - audio playback disabled"));
         }
         else
         {
-            statusLabel_->setText(tr("Audio engine initialized"));
+            setStatusMessage(tr("Audio engine initialized"));
             if (auto* log = logPanel())
                 log->logInfo(LogCategory::Audio, tr("Audio runtime initialized successfully"));
         }
     }
     else
     {
-        statusLabel_->setText(tr("Audio engine failed to initialize"));
+        setStatusMessage(tr("Audio engine failed to initialize"));
         if (auto* log = logPanel())
             log->logError(LogCategory::Audio, tr("Failed to initialize audio engine"));
     }
@@ -925,8 +933,8 @@ void MainWindow::setupAudioEngine()
     aiService_->setDurableMemoryService(
         std::make_shared<AIDurableMemoryService>(
             std::make_shared<LocalAIDurableMemoryStore>()));
-    if (aiPanel_)
-        aiPanel_->setAssistantService(aiService_.get());
+    if (assistantPanel_)
+        assistantPanel_->setAssistantService(aiService_.get());
     connect(&ProjectManager::instance(), &ProjectManager::projectOpened,
             this, [this](ProjectData* project) {
         if (aiService_)
@@ -938,20 +946,20 @@ void MainWindow::setupAudioEngine()
             aiService_->setConversationScope(
                 aiConversationScope(nullptr));
         standaloneEditorSelection_ = nullptr;
-        refreshPlaybackResetEnabled(nullptr);
+        setAuditionTarget(nullptr);
     });
     connect(&ProjectManager::instance(), &ProjectManager::itemDeleted,
             this, [this](ProjectItem* item) {
         if (item == standaloneEditorSelection_)
             standaloneEditorSelection_ = nullptr;
-        if (item == playbackResetItem_)
-            refreshPlaybackResetEnabled(nullptr);
+        if (!auditionTargetGuid_.isNull() && !auditionTarget())
+            setAuditionTarget(nullptr);
     });
     connect(&ProjectManager::instance(), &ProjectManager::itemPropertyChanged,
             this, [this](ProjectItem* item, const QString& property, const QObject*) {
         if ((property == QStringLiteral("mode") || property == QStringLiteral("playType"))
-            && item == playbackResetItem_)
-            refreshPlaybackResetEnabled(item);
+            && item && item->guid == auditionTargetGuid_)
+            refreshPlaybackResetEnabled();
         if ((property == QStringLiteral("mode") || property == QStringLiteral("playType")) && item
             && item == currentStandaloneEditorSelection())
             pushSelectionToStandaloneEditors(item, StandaloneEditorPushReason::SelectionChanged);
@@ -1083,6 +1091,14 @@ void MainWindow::setupMenuBar()
     ShortcutManager::instance().bindAction(Shortcuts::Redo, redoAction_);
     editMenu->addAction(redoAction_);
 
+    editMenu->addSeparator();
+    auto& shortcuts = ShortcutManager::instance();
+    for (const QString& id : {Shortcuts::Cut, Shortcuts::Copy, Shortcuts::Paste,
+                              Shortcuts::Duplicate, Shortcuts::Delete})
+        shortcuts.createMenuAction(id, editMenu);
+    editMenu->addSeparator();
+    shortcuts.createMenuAction(Shortcuts::SelectAll, editMenu);
+
     QMenu* layoutsMenu = menuBar->addMenu(tr("&Layout"));
     layoutsMenu->setObjectName("layoutsMenu");
     layoutController_->setLayoutsMenu(layoutsMenu);
@@ -1098,7 +1114,7 @@ void MainWindow::setupMenuBar()
         auto sortKey = [](const QString& objName) -> int {
             static const QStringList editorKeys = {
                 "NodeGraph", "Inspector", "ExternalEditor", "GridEditor",
-                "PackManager"
+                "Publisher"
             };
             for (const QString& k : editorKeys)
                 if (objName.contains(k, Qt::CaseSensitive)) return 0;
@@ -1110,7 +1126,7 @@ void MainWindow::setupMenuBar()
             static const QStringList monitorKeys = monitorViewSortKeys();
             for (const QString& k : monitorKeys)
                 if (objName.contains(k, Qt::CaseSensitive)) return 2;
-            if (objName.contains("AI", Qt::CaseSensitive)) return 3;
+            if (objName.contains("Assistant", Qt::CaseSensitive)) return 3;
             return 4;
         };
 
@@ -1250,31 +1266,32 @@ void MainWindow::setupMainToolBar()
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged, button, refresh);
     refresh();
 
-    auto* monitorAction = new QAction(tr("Monitor"), toolbar);
-    monitorAction->setObjectName(QStringLiteral("monitorCaptureAction"));
-    monitorAction->setCheckable(true);
-    auto* monitorButton = toolbar->addLeadingAction(monitorAction, QStringLiteral("monitorCaptureButton"));
-    const auto refreshMonitor = [this, monitorAction, monitorButton] {
+    auto* captureAction = new QAction(tr("Start Capture"), toolbar);
+    captureAction->setObjectName(QStringLiteral("captureAction"));
+    captureAction->setCheckable(true);
+    auto* captureButton = toolbar->addLeadingAction(captureAction, QStringLiteral("captureButton"));
+    const auto refreshCapture = [this, captureAction, captureButton] {
         const bool capturing = eventCaptureController_->canStop();
-        monitorAction->setChecked(capturing);
-        monitorAction->setEnabled(capturing || eventCaptureController_->canStart());
-        monitorAction->setIcon(ThemeManager::instance().resolveIcon(QString::fromLatin1(
+        captureAction->setChecked(capturing);
+        captureAction->setEnabled(capturing || eventCaptureController_->canStart());
+        captureAction->setIcon(ThemeManager::instance().resolveIcon(QString::fromLatin1(
             ThemeAssetIds::MonitorCapture)).icon);
-        const QString action = capturing ? tr("Stop Monitor") : tr("Start Monitor");
-        monitorAction->setToolTip(tr("%1\n%2\n%3").arg(action,
+        const QString action = capturing ? tr("Stop Capture") : tr("Start Capture");
+        captureAction->setText(action);
+        captureAction->setToolTip(tr("%1\n%2\n%3").arg(action,
             capturing ? eventCaptureController_->targetText() : eventCaptureController_->availableTargetText(),
             eventCaptureController_->statusText()));
-        monitorButton->setAccessibleName(action);
-        monitorButton->setAccessibleDescription(eventCaptureController_->statusText());
+        captureButton->setAccessibleName(action);
+        captureButton->setAccessibleDescription(eventCaptureController_->statusText());
     };
-    connect(monitorAction, &QAction::triggered, this, [this, refreshMonitor] {
+    connect(captureAction, &QAction::triggered, this, [this, refreshCapture] {
         if (eventCaptureController_->canStop()) eventCaptureController_->stop();
         else eventCaptureController_->start();
-        refreshMonitor();
+        refreshCapture();
     });
-    connect(eventCaptureController_, &Monitor::EventCaptureController::stateChanged, monitorButton, refreshMonitor);
-    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, monitorButton, refreshMonitor);
-    refreshMonitor();
+    connect(eventCaptureController_, &Monitor::EventCaptureController::stateChanged, captureButton, refreshCapture);
+    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, captureButton, refreshCapture);
+    refreshCapture();
 }
 
 void MainWindow::setupTitleBarToggles()
@@ -1318,12 +1335,12 @@ void MainWindow::setupTitleBarToggles()
         QString::fromLatin1(ThemeAssetIds::SidebarBottomOn),
         QString::fromLatin1(ThemeAssetIds::SidebarBottomOff),
         "bottomPanelToggleBtn",
-        tr("Toggle Bottom Panel (Preview)"), &previewDock_);
+        tr("Toggle Bottom Panel (Control)"), &controlDock_);
     auto* rightToggle = makeSidebarToggle(
         QString::fromLatin1(ThemeAssetIds::SidebarRightOn),
         QString::fromLatin1(ThemeAssetIds::SidebarRightOff),
         "rightSidebarToggleBtn",
-        tr("Toggle Right Sidebar (AI Assistant)"), &aiDock_);
+        tr("Toggle Right Sidebar (Assistant)"), &assistantDock_);
 
     QTimer::singleShot(0, this, [this, leftToggle, bottomToggle, rightToggle]() {
         auto syncBtn = [](QToolButton* btn, ads::CDockWidget* rep) {
@@ -1338,8 +1355,8 @@ void MainWindow::setupTitleBarToggles()
             btn->blockSignals(false);
         };
         syncBtn(leftToggle, projectExplorerDock_);
-        syncBtn(bottomToggle, previewDock_);
-        syncBtn(rightToggle, aiDock_);
+        syncBtn(bottomToggle, controlDock_);
+        syncBtn(rightToggle, assistantDock_);
     });
 #endif
 }
@@ -1348,27 +1365,26 @@ void MainWindow::setupStatusBar()
 {
     QStatusBar* status = statusBar();
     
-    statusLabel_ = new QLabel(tr("Ready"));
-    statusLabel_->setObjectName(QStringLiteral("statusLabel"));
-    status->addWidget(statusLabel_, 1);
-
-    remoteStatusLabel_ = new QLabel(tr("Remote: Disconnected"), this);
-    remoteStatusLabel_->setObjectName(QStringLiteral("remoteStatusLabel"));
-    remoteStatusLabel_->setMaximumWidth(320);
-    status->addPermanentWidget(remoteStatusLabel_);
-    connect(remoteConnection_, &HarkenEditor::Bridge::RemoteConnection::stateChanged,
-            this, [this] {
-        using HarkenEditor::Bridge::RemoteConnectionState;
-        const auto target = remoteConnection_->target();
-        const QString caption = remoteConnection_->state() == RemoteConnectionState::Connected
-            ? tr("Remote: %1").arg(target.application)
-            : remoteConnection_->state() == RemoteConnectionState::Connecting
-                || remoteConnection_->state() == RemoteConnectionState::Handshaking
-                ? tr("Remote: Connecting")
-                : tr("Remote: Disconnected");
-        remoteStatusLabel_->setText(remoteStatusLabel_->fontMetrics().elidedText(
-            caption, Qt::ElideRight, 310));
-        remoteStatusLabel_->setToolTip(remoteConnection_->statusText());
+    statusButton_ = new QPushButton(status);
+    statusButton_->setObjectName(QStringLiteral("statusLogButton"));
+    statusButton_->setFlat(true);
+    statusButton_->setCursor(Qt::PointingHandCursor);
+    statusButton_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    status->addWidget(statusButton_, 1);
+    setStatusMessage(tr("Ready"));
+    connect(statusButton_, &QPushButton::clicked, this, [this]() {
+        const QString logType = QStringLiteral("Log");
+        const bool opened = workspaceWindowManager_->isSingletonVisible(logType)
+            ? workspaceWindowManager_->focusSingleton(logType)
+            : workspaceWindowManager_->showSingleton(logType);
+        if (!opened)
+            return;
+        auto* dock = workspaceWindowManager_->singletonDock(logType);
+        if (auto* floating = dock->floatingDockContainer()) {
+            floating->setWindowState(floating->windowState() & ~Qt::WindowMinimized);
+            floating->raise();
+            floating->activateWindow();
+        }
     });
 
     progressBar_ = new QProgressBar();
@@ -1379,9 +1395,16 @@ void MainWindow::setupStatusBar()
     progressBar_->hide();
     progressBar_->setProperty("shellRole", QStringLiteral("statusProgress"));
     status->addPermanentWidget(progressBar_);
+}
 
-
-    ToastManager::instance().setParentWidget(this);
+void MainWindow::setStatusMessage(const QString& message, LogEntry::Level level)
+{
+    statusBar()->clearMessage();
+    QString buttonText = message;
+    statusButton_->setText(buttonText.replace(QLatin1Char('&'), QStringLiteral("&&")));
+    statusButton_->setAccessibleName(message);
+    statusButton_->setToolTip(tr("%1\nOpen Log").arg(message));
+    QtControlSkin::setSemanticProperty(statusButton_, "logLevel", LogEntry::levelToString(level));
 }
 
 void MainWindow::setupCentralDocks()
@@ -1394,11 +1417,11 @@ void MainWindow::setupCentralDocks()
             panel->restoreState(state);
         });
 
-    blueprintCanvasDock_ = new ads::CDockWidget(tr("Blueprint Canvas"));
-    blueprintCanvasDock_->setObjectName(QStringLiteral("BlueprintCanvasDock"));
-    blueprintCanvasDock_->setWidget(blueprintPanel, ads::CDockWidget::ForceNoScrollArea);
+    blueprintDock_ = new ads::CDockWidget(tr("Blueprint"));
+    blueprintDock_->setObjectName(QStringLiteral("BlueprintDock"));
+    blueprintDock_->setWidget(blueprintPanel, ads::CDockWidget::ForceNoScrollArea);
 
-    previewPanel_ = new PreviewPanel(this);
+    controlPanel_ = new ControlPanel(this);
 }
 
 void MainWindow::showRemoteConnect()
@@ -1416,7 +1439,7 @@ void MainWindow::setupDockWidgets()
     initializeWorkspaceWindowManager();
 
     registerWorkspaceSingletonFactories();
-    dockManager_->addDockWidget(ads::TopDockWidgetArea, blueprintCanvasDock_);
+    dockManager_->addDockWidget(ads::TopDockWidgetArea, blueprintDock_);
     createPrimaryWorkspaceDocks();
     ensureWorkspaceSingletonShells();
     connectWorkspaceWindowSignals();
@@ -1535,14 +1558,14 @@ void MainWindow::registerWorkspaceSingletonFactories()
     if (!workspaceWindowManager_)
         return;
 
-    WorkspaceWindowManager::SingletonFactory previewFactory;
-    previewFactory.snapshotState = [](QWidget* content) {
-        return qobject_cast<PreviewPanel*>(content)->snapshotState();
+    WorkspaceWindowManager::SingletonFactory controlFactory;
+    controlFactory.snapshotState = [](QWidget* content) {
+        return qobject_cast<ControlPanel*>(content)->snapshotState();
     };
-    previewFactory.restoreState = [](QWidget* content, const QVariantMap& state) {
-        qobject_cast<PreviewPanel*>(content)->restoreState(state);
+    controlFactory.restoreState = [](QWidget* content, const QVariantMap& state) {
+        qobject_cast<ControlPanel*>(content)->restoreState(state);
     };
-    workspaceWindowManager_->registerSingletonFactory(QStringLiteral("Preview"), std::move(previewFactory));
+    workspaceWindowManager_->registerSingletonFactory(QStringLiteral("Control"), std::move(controlFactory));
 
     workspaceWindowManager_->registerSingletonFactory(QStringLiteral("Log"), {
         []() -> QWidget* { return new LogPanel(); },
@@ -1552,11 +1575,8 @@ void MainWindow::registerWorkspaceSingletonFactories()
             if (!panel)
                 return;
             panel->setAcceptDrops(true);
-            connect(panel, &LogPanel::errorLogged, [this](const QString& msg) {
-                statusLabel_->setText(tr("Error: %1").arg(msg));
-            });
-            connect(panel, &LogPanel::warningLogged, [this](const QString& msg) {
-                statusLabel_->setText(tr("Warning: %1").arg(msg));
+            connect(panel->model(), &LogModel::entryAdded, this, [this](const LogEntry& entry) {
+                setStatusMessage(entry.message, entry.level);
             });
         }
     });
@@ -1573,17 +1593,22 @@ void MainWindow::registerWorkspaceSingletonFactories()
             });
         }
     });
-    workspaceWindowManager_->registerSingletonFactory(QStringLiteral("ExportPacksManager"), {
-        [this]() -> QWidget* { return new PackManagerPanel(this); },
+    workspaceWindowManager_->registerSingletonFactory(QStringLiteral("Publisher"), {
+        [this]() -> QWidget* { return new PublisherPanel(this); },
         {},
         [this](QWidget* content) {
-            auto* panel = qobject_cast<PackManagerPanel*>(content);
+            auto* panel = qobject_cast<PublisherPanel*>(content);
             if (!panel)
                 return;
             panel->setAcceptDrops(true);
-            connect(panel, &PackManagerPanel::exportRequested,
+            connect(panel, &PublisherPanel::exportRequested,
                     this, &MainWindow::generateProjectPacks);
-            connect(panel, &PackManagerPanel::revealActionRequested,
+            connect(panel, &PublisherPanel::publishSettingsRequested, this, [this] {
+                ProjectSettingsDialog dialog(this);
+                dialog.showPage(QString::fromLatin1(kSettingsPagePublish));
+                dialog.exec();
+            });
+            connect(panel, &PublisherPanel::revealActionRequested,
                     this, [this](uint32_t objectID) {
                 if (auto* item =
                         ProjectManager::instance().findItemByObjectID(objectID))
@@ -1609,11 +1634,11 @@ void MainWindow::registerWorkspaceSingletonFactories()
             }
         }
     });
-    workspaceWindowManager_->registerSingletonFactory(QStringLiteral("MonitorCatalog"), {
-        []() -> QWidget* { return new MonitorCatalogPanel(); },
+    workspaceWindowManager_->registerSingletonFactory(QStringLiteral("Monitor"), {
+        []() -> QWidget* { return new MonitorPanel(); },
         {},
         [this](QWidget* content) {
-            if (auto* panel = qobject_cast<MonitorCatalogPanel*>(content))
+            if (auto* panel = qobject_cast<MonitorPanel*>(content))
             {
                 panel->setCaptureController(eventCaptureController_);
                 panel->setJumpLocator([this](harkenstudio::ObjectId stableId) {
@@ -1764,9 +1789,9 @@ void MainWindow::ensureWorkspaceSingletonShells()
 
     workspaceWindowManager_->ensureSingletons({
         QStringLiteral("Log"),
-        QStringLiteral("ExportPacksManager"),
+        QStringLiteral("Publisher"),
         QStringLiteral("Information"),
-        QStringLiteral("MonitorCatalog")
+        QStringLiteral("Monitor")
     });
 }
 
@@ -2120,12 +2145,12 @@ const TimeSeriesChartModel& MainWindow::monitorPerformanceChartModel() const
 
 void MainWindow::createPrimaryWorkspaceDocks()
 {
-    aiDock_ = new ads::CDockWidget(tr("AI Assistant"));
-    aiDock_->setObjectName("AIDock");
-    aiDock_->setMinimumSizeHintMode(ads::CDockWidget::MinimumSizeHintFromContent);
-    aiPanel_ = new AIAssistantPanel();
-    aiDock_->setWidget(aiPanel_);
-    dockManager_->addDockWidget(ads::RightDockWidgetArea, aiDock_);
+    assistantDock_ = new ads::CDockWidget(tr("Assistant"));
+    assistantDock_->setObjectName("AssistantDock");
+    assistantDock_->setMinimumSizeHintMode(ads::CDockWidget::MinimumSizeHintFromContent);
+    assistantPanel_ = new AssistantPanel();
+    assistantDock_->setWidget(assistantPanel_);
+    dockManager_->addDockWidget(ads::RightDockWidgetArea, assistantDock_);
 
     projectExplorerDock_ = new ads::CDockWidget(tr("Explorer"));
     projectExplorerDock_->setObjectName("ExplorerDock");
@@ -2135,27 +2160,27 @@ void MainWindow::createPrimaryWorkspaceDocks()
     dockManager_->addDockWidget(ads::LeftDockWidgetArea, projectExplorerDock_);
 
 
-    previewDock_ = new ads::CDockWidget(tr("Preview"));
-    previewDock_->setObjectName("PreviewDock");
-    previewDock_->setFeature(ads::CDockWidget::DockWidgetClosable, true);
-    previewDock_->setFeature(ads::CDockWidget::DockWidgetMovable, true);
-    previewDock_->setFeature(ads::CDockWidget::DockWidgetFloatable, true);
-    previewDock_->setMinimumSizeHintMode(ads::CDockWidget::MinimumSizeHintFromContent);
-    if (previewPanel_) {
-        WorkspaceDockFactory::setContent(previewDock_, previewPanel_, ads::CDockWidget::ForceNoScrollArea);
-        connect(previewPanel_, &PreviewPanel::contextChanged, this, [this] {
-            refreshBoundEditorDockTitles(tr("Preview"), {previewPanel_},
-                [](QWidget* panel) { return static_cast<PreviewPanel*>(panel)->boundItem(); });
+    controlDock_ = new ads::CDockWidget(tr("Control"));
+    controlDock_->setObjectName("ControlDock");
+    controlDock_->setFeature(ads::CDockWidget::DockWidgetClosable, true);
+    controlDock_->setFeature(ads::CDockWidget::DockWidgetMovable, true);
+    controlDock_->setFeature(ads::CDockWidget::DockWidgetFloatable, true);
+    controlDock_->setMinimumSizeHintMode(ads::CDockWidget::MinimumSizeHintFromContent);
+    if (controlPanel_) {
+        WorkspaceDockFactory::setContent(controlDock_, controlPanel_, ads::CDockWidget::ForceNoScrollArea);
+        connect(controlPanel_, &ControlPanel::contextChanged, this, [this] {
+            refreshBoundEditorDockTitles(tr("Control"), {controlPanel_},
+                [](QWidget* panel) { return static_cast<ControlPanel*>(panel)->boundItem(); });
         });
     }
-    dockManager_->addDockWidget(ads::BottomDockWidgetArea, previewDock_);
+    dockManager_->addDockWidget(ads::BottomDockWidgetArea, controlDock_);
 
     if (workspaceWindowManager_) {
         workspaceWindowManager_->registerSingletons({
-            {QStringLiteral("BlueprintCanvas"), blueprintCanvasDock_},
-            {QStringLiteral("AIAssistant"), aiDock_},
+            {QStringLiteral("Blueprint"), blueprintDock_},
+            {QStringLiteral("Assistant"), assistantDock_},
             {QStringLiteral("Explorer"), projectExplorerDock_},
-            {QStringLiteral("Preview"), previewDock_}
+            {QStringLiteral("Control"), controlDock_}
         });
     }
 }
@@ -2169,6 +2194,10 @@ void MainWindow::connectWorkspaceWindowSignals()
                 selectionRouter_, &SelectionRouter::onBlueprintSelectionCleared);
         connect(blueprintCanvas_, &BlueprintCanvasWidget::nodeDoubleClicked,
                 selectionRouter_, &SelectionRouter::onBlueprintNodeDoubleClicked);
+        connect(blueprintCanvas_, &BlueprintCanvasWidget::auditionTargetRequested,
+                this, [this](uint32_t objectID) {
+            setAuditionTarget(ProjectManager::instance().findItemByObjectID(objectID));
+        });
     }
 
     auditionManager_ = new HarkenEditor::AuditionManager(&AudioEngine::instance(), this);
@@ -2185,7 +2214,7 @@ void MainWindow::connectWorkspaceWindowSignals()
     }
     connect(auditionManager_, &HarkenEditor::AuditionManager::auditionStarted,
             this, [this](uint32_t, const QString& objectName) {
-        statusLabel_->setText(tr("Playing: %1").arg(objectName));
+        setStatusMessage(tr("Playing: %1").arg(objectName));
     });
     connect(auditionManager_, &HarkenEditor::AuditionManager::auditionStartFailed,
             this, [this](uint32_t, const QString& objectName,
@@ -2197,7 +2226,7 @@ void MainWindow::connectWorkspaceWindowSignals()
                  "synchronization (engine result %2).")
                   .arg(objectName)
                   .arg(engineResult);
-        statusLabel_->setText(message);
+        setStatusMessage(message);
         if (auto* log = logPanel()) {
             if (engineResult == 0)
                 log->logInfo(LogCategory::Audio, message);
@@ -2232,19 +2261,19 @@ void MainWindow::connectWorkspaceWindowSignals()
 
 void MainWindow::configureWorkspaceDockPolicies()
 {
-    if (aiPanel_)
-        aiPanel_->setAcceptDrops(true);
+    if (assistantPanel_)
+        assistantPanel_->setAcceptDrops(true);
     for (auto* p : allInspectorPanels())
         if (p) p->setAcceptDrops(true);
 
-    if (blueprintCanvasDock_)
-        layoutController_->setPlacementHint(blueprintCanvasDock_->objectName(),
+    if (blueprintDock_)
+        layoutController_->setPlacementHint(blueprintDock_->objectName(),
                                             PreferredOpenArea::CentralTab);
 
     ads::CDockWidget* informationDock = workspaceWindowManager_
         ? workspaceWindowManager_->singletonDock(QStringLiteral("Information"))
         : nullptr;
-    for (ads::CDockWidget* dock : {aiDock_, projectExplorerDock_, previewDock_,
+    for (ads::CDockWidget* dock : {assistantDock_, projectExplorerDock_, controlDock_,
                                    informationDock})
         if (dock)
             layoutController_->setPlacementHint(dock->objectName(),
@@ -2469,10 +2498,10 @@ LogPanel* MainWindow::logPanel() const
     return qobject_cast<LogPanel*>(workspaceSingletonContent(QStringLiteral("Log"), true));
 }
 
-PackManagerPanel* MainWindow::packManagerPanel() const
+PublisherPanel* MainWindow::publisherPanel() const
 {
-    return qobject_cast<PackManagerPanel*>(
-        workspaceSingletonContent(QStringLiteral("ExportPacksManager"), true));
+    return qobject_cast<PublisherPanel*>(
+        workspaceSingletonContent(QStringLiteral("Publisher"), true));
 }
 
 
@@ -2692,9 +2721,9 @@ QWidget* MainWindow::createStandaloneEditorPanelWithId(const QString& type, int 
             area = ads::BottomDockWidgetArea;
             anchorArea = inspectorArea;
             seedBelowHeight = !deferShow;
-        } else if (blueprintCanvasDock_ && !blueprintCanvasDock_->isClosed()) {
+        } else if (blueprintDock_ && !blueprintDock_->isClosed()) {
             area = ads::BottomDockWidgetArea;
-            anchorArea = blueprintCanvasDock_->dockAreaWidget();
+            anchorArea = blueprintDock_->dockAreaWidget();
         }
         layoutController_->setPlacementHint(dockObjectName, PreferredOpenArea::RestoreSaved);
     }
@@ -3011,7 +3040,7 @@ void MainWindow::locateProjectItem(uint32_t objectID)
             hierarchy->pingProjectItem(item);
         }
     }
-    if (blueprintCanvas_ && blueprintCanvasDock_ && !blueprintCanvasDock_->isClosed())
+    if (blueprintCanvas_ && blueprintDock_ && !blueprintDock_->isClosed())
         blueprintCanvas_->pingProjectItem(item);
 }
 
@@ -3485,6 +3514,8 @@ Hierarchy* MainWindow::createHierarchyPanelWithId(int id, bool deferShow, bool d
             selectionRouter_, &SelectionRouter::onProjectItemSelected);
     connect(panel, &Hierarchy::objectSelectionChanged,
             selectionRouter_, &SelectionRouter::onProjectItemsSelectionChanged);
+    connect(panel, &Hierarchy::auditionTargetRequested,
+            this, &MainWindow::setAuditionTarget);
     connect(panel, &Hierarchy::itemDoubleClicked,
             selectionRouter_, &SelectionRouter::onProjectItemDoubleClicked);
     connect(panel, &Hierarchy::audioFileSelected,
@@ -3562,6 +3593,8 @@ void MainWindow::connectSignals()
             selectionRouter_, &SelectionRouter::onProjectItemSelected);
     connect(projectExplorer_, &ProjectExplorer::objectSelectionChanged,
             selectionRouter_, &SelectionRouter::onProjectItemsSelectionChanged);
+    connect(projectExplorer_, &ProjectExplorer::auditionTargetRequested,
+            this, &MainWindow::setAuditionTarget);
     connect(projectExplorer_, &ProjectExplorer::itemDoubleClicked,
             selectionRouter_, &SelectionRouter::onProjectItemDoubleClicked);
     connect(projectExplorer_, &ProjectExplorer::audioFileSelected,
@@ -3682,8 +3715,8 @@ void MainWindow::connectSignals()
                 if (ipcServer_ && ipcServer_->isDispatchingCommand()) {
                     qWarning("[ProjectManager] error during IPC dispatch "
                              "(modal suppressed): %s", qUtf8Printable(error));
-                    if (statusLabel_)
-                        statusLabel_->setText(userError);
+                    if (statusButton_)
+                        setStatusMessage(userError, LogEntry::Error);
                     return;
                 }
                 QMessageBox::warning(this, tr("Error"), userError);
@@ -3691,23 +3724,85 @@ void MainWindow::connectSignals()
     connect(&ProjectManager::instance(), &ProjectManager::warningOccurred,
             this, [this](const QString& warning) {
                 LogPanel::logWarning(LogCategory::File, warning);
-                if (statusLabel_)
-                    statusLabel_->setText(warning);
             });
+}
+
+void MainWindow::finishStartupPresentation(bool shown)
+{
+    if (startupPresentationDone_)
+        return;
+    startupPresentationDone_ = true;
+    startupPresentationCompleting_ = false;
+    emit startupPresentationFinished(shown);
+}
+
+void MainWindow::completeStartupPresentation()
+{
+    if (startupPresentationDone_ || startupPresentationCompleting_)
+        return;
+    startupPresentationCompleting_ = true;
+    if (!isVisible() || !windowHandle()) {
+        finishStartupPresentation(false);
+        return;
+    }
+    if (!startupStateChanged_ && !isMaximized() && !isFullScreen() && !isMinimized()) {
+        resize(startupNormalSize_);
+        const QSize normalSize = centerWindowOnScreen(this, startupScreen_);
+        if (normalSize.isValid() && !normalSize.isEmpty())
+            normalWindowSize_ = normalSize;
+        if (startupState_ != Qt::WindowNoState)
+            setWindowState(startupState_);
+    }
+    finishStartupPresentation(true);
+}
+
+void MainWindow::resizeEvent(QResizeEvent* event)
+{
+    QMainWindow::resizeEvent(event);
+    if (startupPresentationDone_ && !isMaximized() && !isFullScreen() && !isMinimized())
+        normalWindowSize_ = size();
+}
+
+void MainWindow::prepareWindowForStartup(QScreen* screen)
+{
+    if (startupPresentationPrepared_)
+        return;
+    startupScreen_ = startupTargetScreen(screen);
+    QSettings settings;
+    settings.beginGroup("MainWindow");
+    const WindowPresentation presentation = readWindowPresentation(settings);
+    startupNormalSize_ = presentation.normalSize;
+    startupState_ = presentation.state;
+    normalWindowSize_ = presentation.normalSize;
+    setWindowState(Qt::WindowNoState);
+    if (startupScreen_)
+        setScreen(startupScreen_);
+    resize(startupNormalSize_);
+    if (startupScreen_) {
+        const QRect position = centeredWindowFrame(size(), startupScreen_->availableGeometry());
+        if (position.isValid())
+            move(position.topLeft());
+    }
+    startupPresentationPrepared_ = true;
 }
 
 void MainWindow::showEvent(QShowEvent* event)
 {
     QMainWindow::showEvent(event);
-    if (layoutController_->firstShowDone())
-        return;
-    layoutController_->setFirstShowDone(true);
-
-    dockManager_->setFocus(Qt::OtherFocusReason);
-    layoutController_->relayoutDockSplitters(false);
-    QTimer::singleShot(0, this, [this]() {
-        layoutController_->relayoutDockSplitters(!layoutController_->currentLayoutFromCache());
-    });
+    if (!startupPresentationPrepared_)
+        prepareWindowForStartup(screen());
+    if (!layoutController_->firstShowDone()) {
+        layoutController_->setFirstShowDone(true);
+        dockManager_->setFocus(Qt::OtherFocusReason);
+        layoutController_->relayoutDockSplitters(false);
+        QTimer::singleShot(0, this, [this]() {
+            layoutController_->relayoutDockSplitters(!layoutController_->currentLayoutFromCache());
+        });
+    }
+    if (!startupPresentationScheduled_ && !startupTargetScreen(startupScreen_)) {
+        startupPresentationScheduled_ = true;
+        QTimer::singleShot(0, this, [this]() { completeStartupPresentation(); });
+    }
 }
 
 
@@ -3738,9 +3833,6 @@ void MainWindow::loadSettings()
     QSettings settings;
     settings.beginGroup("MainWindow");
 
-    if (settings.contains("geometry"))
-        restoreGeometry(settings.value("geometry").toByteArray());
-
     if (settings.contains("windowState"))
         restoreState(settings.value("windowState").toByteArray());
 
@@ -3764,7 +3856,7 @@ void MainWindow::saveSettings()
 {
     QSettings settings;
     settings.beginGroup("MainWindow");
-    settings.setValue("geometry", saveGeometry());
+    saveWindowPresentation(settings, *this, normalWindowSize_);
     settings.setValue("windowState", saveState());
     settings.endGroup();
 }
@@ -3834,6 +3926,8 @@ void MainWindow::closeEvent(QCloseEvent* event)
         saveProjectLayout();
         saveSettings();
         event->accept();
+        if (startupPresentationPrepared_)
+            finishStartupPresentation(false);
     }
     else
     {
@@ -3844,6 +3938,23 @@ void MainWindow::closeEvent(QCloseEvent* event)
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 {
     const auto type = event->type();
+    if (startupPresentationPrepared_ && !startupPresentationDone_
+        && !startupPresentationCompleting_) {
+        if (watched == this && type == QEvent::WindowStateChange) {
+            startupStateChanged_ = true;
+            if (!startupPresentationScheduled_) {
+                startupPresentationScheduled_ = true;
+                QTimer::singleShot(0, this, [this]() { completeStartupPresentation(); });
+            }
+        }
+        if (watched == this && type == QEvent::Hide && !isMinimized())
+            finishStartupPresentation(false);
+        if (watched == windowHandle() && type == QEvent::Expose
+            && windowHandle()->isExposed() && !startupPresentationScheduled_) {
+            startupPresentationScheduled_ = true;
+            QTimer::singleShot(0, this, [this]() { completeStartupPresentation(); });
+        }
+    }
 
     if (type == QEvent::MouseButtonPress || type == QEvent::MouseButtonRelease
         || type == QEvent::Wheel) {
@@ -3889,17 +4000,21 @@ bool MainWindow::maybeSave()
 
 void MainWindow::updateWindowTitle()
 {
-    QString title = "Harken Studio";
+    QString projectName;
     
     ProjectData* proj = ProjectManager::instance().currentProject();
     if (proj && !proj->name.isEmpty())
     {
-        title += " - " + proj->name;
+        projectName = proj->name;
     }
     else if (!currentProjectPath_.isEmpty())
     {
-        title += " - " + QFileInfo(currentProjectPath_).baseName();
+        projectName = QFileInfo(currentProjectPath_).baseName();
     }
+
+    QString title = "Harken Studio";
+    if (!projectName.isEmpty())
+        title += " - " + projectName;
     
     if (projectModified_)
     {
@@ -3907,6 +4022,10 @@ void MainWindow::updateWindowTitle()
     }
     
     setWindowTitle(title);
+#ifdef HARKEN_HAS_QWINDOWKIT
+    if (m_titleBar)
+        m_titleBar->setProjectTitle(projectName, projectModified_);
+#endif
 }
 
 void MainWindow::setProjectModified(bool modified)
@@ -3987,7 +4106,7 @@ bool MainWindow::createProjectFromConfig(
     if (startupProgress)
         startupProgress(StartupPhase::RestoringWorkspace);
 
-    statusLabel_->setText(tr("New project created: %1").arg(currentProjectPath_));
+    setStatusMessage(tr("New project created: %1").arg(currentProjectPath_));
     LogPanel::logInfo(LogCategory::File, tr("New project created: %1").arg(currentProjectPath_));
     return true;
 }
@@ -4031,14 +4150,14 @@ void MainWindow::onNewProjectViaHub()
 {
     QString error;
     if (!HubLauncher::open(HubPage::NewProject, &error))
-        QMessageBox::warning(this, tr("Harken Hub"), error);
+        QMessageBox::warning(this, tr("Harken Studio Hub"), error);
 }
 
 void MainWindow::onOpenProjectViaHub()
 {
     QString error;
     if (!HubLauncher::open(HubPage::Projects, &error))
-        QMessageBox::warning(this, tr("Harken Hub"), error);
+        QMessageBox::warning(this, tr("Harken Studio Hub"), error);
 }
 
 void MainWindow::onSaveProject()
@@ -4055,7 +4174,7 @@ void MainWindow::onSaveProject()
 
         saveProjectLayout();
 
-        statusLabel_->setText(tr("Saved: %1").arg(currentProjectPath_));
+        setStatusMessage(tr("Saved: %1").arg(currentProjectPath_));
     }
     else
     {
@@ -4111,7 +4230,7 @@ void MainWindow::onSaveProjectAs()
     manager.m_projectInstance = std::move(acquisition.instance);
     setProjectModified(false);
     saveProjectLayout();
-    statusLabel_->setText(tr("Saved: %1").arg(currentProjectPath_));
+    setStatusMessage(tr("Saved: %1").arg(currentProjectPath_));
     updateWindowTitle();
 }
 
@@ -4146,12 +4265,10 @@ void MainWindow::recordPackGenerationResult(const QString& packName, uint32_t ob
                                             const QString& warnings,
                                             const QString& statusOverride,
                                             const QString& language,
-                                            const QJsonObject* platformDefinition)
+                                            const QJsonObject* platformDefinition,
+                                            const QString& unitKey)
 {
-    auto* panel = packManagerPanel();
-    if (!panel)
-        return;
-    PackManagerPanel::PackGenerationResult row;
+    PackGenerationRecord row;
     row.packName   = packName;
     row.objectID   = objectID;
     row.source     = source;
@@ -4165,30 +4282,48 @@ void MainWindow::recordPackGenerationResult(const QString& packName, uint32_t ob
     row.errors     = error;
     row.bytes      = bytes;
     row.elapsedMs  = elapsedMs;
+    row.unitKey = unitKey;
     if (platformDefinition && !platformDefinition->isEmpty()) {
         row.platformDefinition = *platformDefinition;
         row.platformName = platformDefinition->value(QStringLiteral("name")).toString();
         row.basePlatform = ProjectPlatformSemantics::parseBasePlatform(
             platformDefinition->value(QStringLiteral("basePlatform")).toString()).value();
     }
-    const auto* project = ProjectManager::instance().currentProject();
-    const auto* current = project
-        ? ProjectPlatformSemantics::find(project->platforms, QUuid(platform)) : nullptr;
-    if (!current || (!row.platformDefinition.isEmpty() && row.platformDefinition != current->toJson()))
-        row.status = tr("Needs rebuild");
-    panel->addGenerationResult(row);
+    PackGenerationRecordStore::instance().add(row);
+    QStringList details;
+    if (!row.platformName.isEmpty()) details << row.platformName;
+    if (!row.language.isEmpty()) details << row.language;
+    if (row.bytes > 0) details << QLocale().formattedDataSize(row.bytes);
+    if (row.elapsedMs >= 0) details << tr("%1 ms").arg(row.elapsedMs);
+    const QString suffix = details.isEmpty() ? QString()
+        : QStringLiteral(" (%1)").arg(details.join(QStringLiteral(", ")));
+    if (!row.success) {
+        LogPanel::logError(LogCategory::Pack,
+            tr("Export failed: %1%2 - %3").arg(row.packName, suffix,
+                row.errors.isEmpty() ? tr("(no detail)") : row.errors));
+    } else if (!row.warnings.isEmpty()) {
+        LogPanel::logWarning(LogCategory::Pack,
+            tr("%1: %2%3 - %4").arg(row.status, row.packName, suffix, row.warnings));
+    } else {
+        LogPanel::logInfo(LogCategory::Pack,
+            tr("%1: %2%3").arg(row.status, row.packName, suffix));
+    }
 }
 
 void MainWindow::generateProjectPacks(const QStringList& platforms,
                                       const QStringList& packPaths,
-                                      bool includeUnchecked)
+                                      bool includeUnchecked,
+                                      bool forceReexport, bool selfCleaning)
 {
+    auto& progressStore = PackGenerationRecordStore::instance();
+    if (progressStore.isExporting()) return;
     const auto projectLease = ProjectManager::instance().currentProjectLease();
     if (!projectLease) return;
     PropertyEditSession::finishAllActive(true);
     ProjectData exportProject = *projectLease;
+    auto exportSelection = ProjectManager::instance().packExportSelection();
     if (includeUnchecked) {
-        exportProject.actionPackTargeting.clear();
+        exportSelection.actionTargeting.clear();
         for (auto& group : exportProject.packGroups) {
             group.allPlatforms = true;
             group.platformIds.clear();
@@ -4202,10 +4337,7 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
     }
     const ProjectData* pmProject = &snapshot->project;
 
-    if (packGenerationInProgress_) return;
-    QScopedValueRollback<bool> generationGuard(packGenerationInProgress_, true);
     const auto platformActivity = ProjectPlatformActivity::acquire();
-    auto* packPanel = packManagerPanel();
 
     const QStringList genPlatforms = platforms;
     if (genPlatforms.isEmpty()) {
@@ -4220,9 +4352,6 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
             return;
         }
     }
-    if (packPanel)
-        packPanel->clearGenerationResults();
-
     const QString baseDir = PathUtils::packBuildOutputRoot(
         pmProject->projectPath, pmProject->packBuildOutputDir);
     if (PathUtils::isProjectRootDirectory(baseDir, pmProject->projectPath)
@@ -4257,7 +4386,7 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
         }
         if (readiness.errorCount > 0) {
             QString indexError;
-            if (!ProjectPackExporter::PublishPackIndex(baseDir, projectLease->platforms, genPlatforms, {}, &indexError))
+            if (!ProjectPackExporter::FinalizePackOutputs(baseDir, projectLease->platforms, genPlatforms, {}, &indexError))
                 LogPanel::logError(LogCategory::Pack, indexError);
             QMessageBox::critical(
                 this, tr("Export Readiness"),
@@ -4276,120 +4405,155 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
                   .arg(packPaths.size())
                   .arg(genPlatforms.join(QStringLiteral(", "))));
 
-    QProgressDialog progress(tr("Exporting packs..."), tr("Cancel"),
-                             0, genPlatforms.size() * 100, this);
-    progress.setWindowModality(Qt::ApplicationModal);
-    progress.setMinimumDuration(0);
-    progress.setValue(0);
-
-    bool canceled = false;
-    int failedCount = 0;
-    int builtCount = 0;
-    int platformIndex = 0;
-
-    QStringList succeededPlatforms;
-
-    for (const QString& platform : genPlatforms) {
-        const QString platformName = ProjectPlatformSemantics::find(pmProject->platforms, QUuid(platform))->name;
-        const QString platformDir = ProjectPackExporter::platformOutputDir(
-            baseDir, *ProjectPlatformSemantics::find(pmProject->platforms, QUuid::fromString(platform)));
-        if (progress.wasCanceled()) { canceled = true; break; }
-        QDir outputDir(platformDir);
-        outputDir.mkpath(".");
-
-        ProjectPackExporter exporter(this);
-        connect(&exporter, &ProjectPackExporter::unitProgressChanged, &progress,
-                [&progress, platformName, platformIndex](int done, int total,
-                                                     const QString& unitName) {
-            if (total > 0)
-                progress.setValue(platformIndex * 100 + (done * 100) / total);
-            progress.setLabelText(tr("%1 — %2 (%3/%4)")
-                                      .arg(platformName, unitName)
-                                      .arg(done + 1)
-                                      .arg(total));
-        });
-        ProjectPackExporter::ExportOptions opts;
-        opts.platform = platform;
-        opts.snapshot = snapshot;
-        opts.debugStrings = true;
-        for (const QString& unit : packPaths)
-            opts.onlyPackPaths.insert(unit);
-        opts.cancelCheck = [&progress]() { return progress.wasCanceled(); };
-
-        std::vector<ProjectPackExporter::PackBuildRecord> records;
-        auto result = exporter.ExportAllPacks(*pmProject, outputDir.path(), opts, &records);
-
-        if (result.success) succeededPlatforms.append(platform);
-        if (ProjectManager::instance().currentProject() != projectLease.get()) {
-            canceled = true;
-            break;
-        }
-        for (const auto& rec : records) {
-            recordPackGenerationResult(rec.packName, rec.objectID, rec.success,
-                                       rec.outputPath, rec.error, rec.fileSize,
-                                       rec.elapsedMs, rec.platform,
-                                       packBuildSourceLabel(rec.source),
-                                       rec.warnings.join(QStringLiteral("\n")),
-                                       QString(), rec.language, &rec.platformDefinition);
-            if (rec.success)
-                ++builtCount;
-            else
+    const auto cancel = std::make_shared<std::atomic_bool>(false);
+    const quint64 runId = progressStore.beginProgress(cancel);
+    if (runId == 0) return;
+    const QPointer<MainWindow> window(this);
+    auto* store = &progressStore;
+    ProjectPackExporter::beginBackgroundExport();
+    auto* thread = QThread::create(
+        [window, store, projectLease, snapshot, genPlatforms, packPaths,
+         exportSelection, baseDir, forceReexport, selfCleaning, cancel, runId,
+         platformActivity, outputLock]() {
+        struct ExportGate {
+            ~ExportGate() { ProjectPackExporter::endBackgroundExport(); }
+        } gate;
+        bool canceled = false;
+        int failedCount = 0;
+        int builtCount = 0;
+        int skippedCount = 0;
+        int removedCount = 0;
+        QStringList succeededPlatforms;
+        QVector<PackArtifactMetadata> publishedArtifacts;
+        ProjectPackExporter exporter;
+        for (const QString& platform : genPlatforms) {
+            if (cancel->load(std::memory_order_relaxed)) {
+                canceled = true;
+                break;
+            }
+            const auto& definition = *ProjectPlatformSemantics::find(
+                snapshot->project.platforms, QUuid(platform));
+            const QString platformDir = ProjectPackExporter::platformOutputDir(baseDir, definition);
+            ProjectPackExporter::ExportOptions opts;
+            opts.platform = platform;
+            opts.snapshot = snapshot;
+            opts.selection = exportSelection;
+            opts.debugStrings = true;
+            opts.forceReexport = forceReexport;
+            opts.selfCleaning = false;
+            opts.updateSelectedOnly = !packPaths.isEmpty();
+            for (const QString& unit : packPaths)
+                opts.onlyPackPaths.insert(unit);
+            opts.cancelCheck = [cancel] { return cancel->load(std::memory_order_relaxed); };
+            opts.progressCallback = [store, projectLease, runId](const PackGenerationProgress& progress) {
+                QMetaObject::invokeMethod(store, [store, projectLease, runId, progress] {
+                    if (ProjectManager::instance().currentProject() == projectLease.get())
+                        store->updateProgress(runId, progress);
+                }, Qt::QueuedConnection);
+            };
+            std::vector<ProjectPackExporter::PackBuildRecord> records;
+            const auto result = exporter.ExportAllPacks(snapshot->project, platformDir, opts, &records);
+            if (result.success) {
+                succeededPlatforms.append(platform);
+                publishedArtifacts.append(result.artifacts);
+                removedCount += result.removedPackCount;
+            }
+            for (const auto& rec : records) {
+                if (rec.success && rec.skipped)
+                    ++skippedCount;
+                else if (rec.success)
+                    ++builtCount;
+                else
+                    ++failedCount;
+            }
+            if (records.empty() && !result.canceled && !result.success)
                 ++failedCount;
+            QMetaObject::invokeMethod(store,
+                [window, store, projectLease, runId, platform, platformDir, definition, result, records,
+                 updateSelectedOnly = opts.updateSelectedOnly] {
+                if (!store->isCurrentRun(runId)
+                    || ProjectManager::instance().currentProject() != projectLease.get())
+                    return;
+                if (result.success)
+                    PackArtifactCache::instance().publish(platform, result.artifacts, updateSelectedOnly);
+                if (!window) return;
+                for (const auto& rec : records) {
+                    window->recordPackGenerationResult(rec.packName, rec.objectID, rec.success,
+                        rec.outputPath, rec.error, rec.fileSize, rec.elapsedMs, rec.platform,
+                        packBuildSourceLabel(rec.source), rec.warnings.join(QStringLiteral("\n")),
+                        rec.success && rec.skipped ? tr("Up to date") : QString(),
+                        rec.language, &rec.platformDefinition, rec.unitKey);
+                }
+                if (records.empty() && !result.canceled) {
+                    const auto platformJson = definition.toJson();
+                    window->recordPackGenerationResult(tr("All Packs"), 0, result.success,
+                        result.outputPath, result.error, result.fileSize, -1, platform,
+                        {}, {}, {}, {}, &platformJson);
+                }
+                if (!result.canceled && !result.success)
+                    LogPanel::logError(LogCategory::Pack,
+                        result.error.isEmpty() ? tr("Pack export failed") : result.error);
+                for (const QString& warning : result.warnings)
+                    LogPanel::logWarning(LogCategory::Pack, warning);
+                LogPanel::logInfo(LogCategory::Pack,
+                    tr("%1: exported %2 pack(s) to %3").arg(definition.name)
+                        .arg(static_cast<int>(records.size()))
+                        .arg(QDir::toNativeSeparators(platformDir)));
+            }, Qt::QueuedConnection);
+            canceled = result.canceled || cancel->load(std::memory_order_relaxed);
+            if (canceled) break;
         }
-        if (records.empty() && !result.canceled) {
-            if (!result.success) ++failedCount;
-            const auto definition = ProjectPlatformSemantics::find(pmProject->platforms, QUuid(opts.platform))->toJson();
-            recordPackGenerationResult(tr("All Packs"), 0, result.success,
-                                       result.outputPath, result.error, result.fileSize,
-                                       -1, opts.platform, {}, {}, {}, {}, &definition);
-        }
-
-        PackGenerationRecordStore::instance().reconcilePlatforms(projectLease->platforms);
-        if (result.canceled) {
-            canceled = true;
-        } else if (!result.success) {
-            LogPanel::logError(LogCategory::Pack,
-                result.error.isEmpty()
-                    ? tr("Pack export failed")
-                    : result.error);
-        }
-        for (const QString& warning : result.warnings)
-            LogPanel::logWarning(LogCategory::Pack, warning);
-
-        if (packPanel)
-            packPanel->refreshPackList();
-        LogPanel::logInfo(LogCategory::Pack,
-            tr("%1: exported %2 pack(s) to %3")
-                .arg(platformName)
-                .arg(static_cast<int>(records.size()))
-                .arg(QDir::toNativeSeparators(outputDir.path())));
-        ++platformIndex;
-        if (canceled) break;
-        progress.setValue(platformIndex * 100);
-    }
-
-    QString indexError;
-    if (!ProjectPackExporter::PublishPackIndex(baseDir, projectLease->platforms,
-            genPlatforms, succeededPlatforms, &indexError)) {
-        ++failedCount;
-        LogPanel::logError(LogCategory::Pack, indexError);
-    }
-
-    if (canceled) {
-        LogPanel::logWarning(LogCategory::Pack, tr("Pack export canceled"));
-        ToastManager::instance().showToast(
-            tr("Export canceled"), 3000, ToastType::Warning);
-    } else {
-        progress.setValue(genPlatforms.size() * 100);
-        if (failedCount > 0)
-            ToastManager::instance().showToast(
-                tr("Export finished — %1 pack(s) failed").arg(failedCount),
-                4000, ToastType::Error);
-        else
-            ToastManager::instance().showToast(
-                tr("Export finished — %1 pack(s) built").arg(builtCount),
-                3000, ToastType::Success);
-    }
+        QMetaObject::invokeMethod(store,
+            [window, store, projectLease, snapshot, runId, canceled, failedCount, builtCount,
+             skippedCount, removedCount, baseDir, packPaths, selfCleaning,
+             genPlatforms, succeededPlatforms, publishedArtifacts, platformActivity, outputLock]() mutable {
+            if (!store->isCurrentRun(runId)) return;
+            if (ProjectManager::instance().currentProject() != projectLease.get()) {
+                store->finishProgress(runId, true);
+                return;
+            }
+            QString publicationError;
+            if (!ProjectPackExporter::ValidatePackBuildPlatforms(snapshot->project.platforms,
+                    projectLease->platforms, succeededPlatforms, &publicationError)) {
+                ++failedCount;
+            } else if (packPaths.isEmpty() && !canceled && succeededPlatforms.size() == genPlatforms.size()) {
+                const auto publication = ProjectPackExporter::FinalizePackExport(
+                    baseDir, projectLease->platforms, genPlatforms, selfCleaning, publishedArtifacts);
+                if (publication.success) {
+                    removedCount += publication.removedPackCount;
+                    if (selfCleaning)
+                        PackArtifactCache::instance().removeUnselectedPlatforms(baseDir, genPlatforms);
+                } else {
+                    ++failedCount;
+                    publicationError = publication.error;
+                }
+            } else if (!ProjectPackExporter::FinalizePackOutputs(baseDir, projectLease->platforms,
+                           genPlatforms, succeededPlatforms, &publicationError, publishedArtifacts)) {
+                ++failedCount;
+            }
+            store->finishProgress(runId, canceled);
+            if (!window) return;
+            if (!publicationError.isEmpty())
+                LogPanel::logError(LogCategory::Pack, publicationError);
+            if (canceled) {
+                LogPanel::logWarning(LogCategory::Pack, tr("Pack export canceled"));
+            } else if (failedCount > 0) {
+                LogPanel::logError(LogCategory::Pack,
+                    tr("Export finished — %1 pack(s) failed").arg(failedCount));
+            } else {
+                QString message = tr("Export finished — %1 built, %2 up to date")
+                    .arg(builtCount).arg(skippedCount);
+                if (removedCount > 0) message += tr(", %1 removed").arg(removedCount);
+                LogPanel::logInfo(LogCategory::Pack, message);
+            }
+        }, Qt::QueuedConnection);
+    });
+    packExportThreads_.append(thread);
+    connect(thread, &QThread::finished, thread, &QThread::deleteLater);
+    connect(thread, &QThread::finished, this, [this, thread] {
+        packExportThreads_.removeAll(thread);
+    });
+    thread->start();
 }
 
 void MainWindow::setupUndoRedo()
@@ -4566,9 +4730,9 @@ bool MainWindow::resetCurrentLayout()
     if (!ok)
         return false;
     if (layoutController_->hasNamedLayout())
-        statusLabel_->setText(tr("Layout '%1' reloaded").arg(layoutController_->currentNamedLayout()));
+        setStatusMessage(tr("Layout '%1' reloaded").arg(layoutController_->currentNamedLayout()));
     else
-        statusLabel_->setText(tr("Layout reset to default"));
+        setStatusMessage(tr("Layout reset to default"));
     return true;
 }
 
@@ -4597,12 +4761,12 @@ void MainWindow::onPlayPressed()
     if (SourceEditorPanel* editor = focusedSourceEditorPanel()) {
         const bool wasPlaying = editor->isPreviewPlayheadActive();
         if (editor->handlePlayStopShortcut()) {
-            statusLabel_->setText(wasPlaying
+            setStatusMessage(wasPlaying
                                       ? tr("Stopped")
                                       : tr("Playing: %1").arg(editor->previewObjectName()));
             return;
         }
-        statusLabel_->setText(editor->sourceId() == 0
+        setStatusMessage(editor->sourceId() == 0
                                   ? tr("No audio source selected")
                                   : tr("Cannot play audio source"));
         return;
@@ -4622,16 +4786,16 @@ void MainWindow::onPlayRequested()
 
     if (engine.isSimulationMode())
     {
-        statusLabel_->setText(tr("Cannot play: audio runtime unavailable (simulation mode)"));
+        setStatusMessage(tr("Cannot play: audio runtime unavailable (simulation mode)"));
         if (auto* log = logPanel())
             log->logWarning(LogCategory::Audio, tr("Playback disabled in simulation mode"));
         return;
     }
 
-    ProjectItem* selectedItem = projectExplorer_->selectedItem();
+    ProjectItem* selectedItem = auditionTarget();
     if (!selectedItem)
     {
-        statusLabel_->setText(tr("No item selected"));
+        setStatusMessage(tr("No audition target selected"));
         return;
     }
 
@@ -4642,7 +4806,7 @@ void MainWindow::onPlayRequested()
             const QString message =
                 tr("Cannot play '%1': the Container is empty.")
                     .arg(selectedItem->name);
-            statusLabel_->setText(message);
+            setStatusMessage(message);
             if (auto* log = logPanel())
                 log->logInfo(LogCategory::Audio, message);
             return;
@@ -4657,7 +4821,7 @@ void MainWindow::onPlayRequested()
         {
             const auto audition = auditionManager_->getAudition(id);
             if (!audition.bIsPlaying) {
-                statusLabel_->setText(
+                setStatusMessage(
                     tr("Waiting for Runtime synchronization: %1")
                         .arg(selectedItem->name));
                 if (auto* log = logPanel())
@@ -4666,7 +4830,7 @@ void MainWindow::onPlayRequested()
                         tr("Preview queued while Runtime synchronizes: %1")
                             .arg(selectedItem->name));
             } else {
-                statusLabel_->setText(
+                setStatusMessage(
                     tr("Playing: %1").arg(selectedItem->name));
                 if (auto* log = logPanel())
                     log->logInfo(
@@ -4704,7 +4868,7 @@ void MainWindow::onPlayRequested()
             } else {
                 message = tr("No voice produced: %1").arg(selectedItem->name);
             }
-            statusLabel_->setText(message);
+            setStatusMessage(message);
             if (auto* log = logPanel()) {
                 if (failure == PlaybackFailure::NotPlayable) {
                     log->logInfo(LogCategory::Audio, message);
@@ -4723,21 +4887,36 @@ void MainWindow::onPlayRequested()
     }
     else
     {
-        statusLabel_->setText(tr("Selected item is not playable"));
+        setStatusMessage(tr("Selected item is not playable"));
     }
 }
 
 void MainWindow::onStopPressed()
 {
     auditionManager_->stopAll(100);
-    statusLabel_->setText(tr("Stopped"));
+    setStatusMessage(tr("Stopped"));
 }
 
-void MainWindow::refreshPlaybackResetEnabled(ProjectItem* item)
+ProjectItem* MainWindow::auditionTarget() const
 {
-    playbackResetItem_ = item;
+    return ProjectManager::instance().findItemByGuid(auditionTargetGuid_);
+}
+
+void MainWindow::setAuditionTarget(ProjectItem* item)
+{
+    auditionTargetGuid_ = item ? item->guid : QUuid();
+    if (playbackControls_)
+        playbackControls_->setAuditionTarget(item);
+    refreshPlaybackResetEnabled();
+    if (controlPanel_)
+        controlPanel_->setItem(item);
+}
+
+void MainWindow::refreshPlaybackResetEnabled()
+{
     if (!playbackControls_)
         return;
+    const auto* item = auditionTarget();
     const auto* selection = item ? item->comp<VSelection>() : nullptr;
     const bool enabled = item
         && item->type == ProjectItem::Type::Container
@@ -4750,8 +4929,8 @@ void MainWindow::refreshPlaybackResetEnabled(ProjectItem* item)
 
 void MainWindow::onResetPressed()
 {
-    ProjectItem* selectedItem = playbackResetItem_;
-    refreshPlaybackResetEnabled(selectedItem);
+    ProjectItem* selectedItem = auditionTarget();
+    refreshPlaybackResetEnabled();
     if (!playbackControls_ || !playbackControls_->isResetEnabled() || !selectedItem)
         return;
     const ActionResult result = ActionManager::instance().execute(
@@ -4760,24 +4939,24 @@ void MainWindow::onResetPressed()
           static_cast<qint64>(selectedItem->objectID)}},
         ActionSource::GUI, this);
     if (result.success) {
-        statusLabel_->setText(tr("Reset: %1").arg(selectedItem->name));
+        setStatusMessage(tr("Reset: %1").arg(selectedItem->name));
         return;
     }
     const QString message = result.errorMessage.isEmpty()
         ? tr("Reset failed: %1").arg(selectedItem->name)
         : result.errorMessage;
-    statusLabel_->setText(message);
+    setStatusMessage(message);
 }
 
 void MainWindow::onAudioError(const QString& error)
 {
-    statusLabel_->setText(tr("Audio Error: %1").arg(error));
+    setStatusMessage(tr("Audio Error: %1").arg(error), LogEntry::Error);
     QMessageBox::warning(this, tr("Audio Error"), error);
 }
 
 void MainWindow::onSaveProgress(int percent, const QString& message)
 {
-    statusLabel_->setText(QString("[%1%] %2").arg(percent).arg(message));
+    setStatusMessage(QString("[%1%] %2").arg(percent).arg(message));
 
     if (progressBar_) {
         if (percent <= 0) {
@@ -4823,7 +5002,7 @@ void MainWindow::syncWindowToOpenedProject(const QString& path)
 
     loadProjectLayout();
 
-    statusLabel_->setText(tr("Opened: %1").arg(QFileInfo(path).baseName()));
+    setStatusMessage(tr("Opened: %1").arg(QFileInfo(path).baseName()));
     LogPanel::logInfo(LogCategory::File, tr("Project opened: %1").arg(path));
 }
 
@@ -4843,7 +5022,7 @@ void MainWindow::finishPreparedProject(
     loadProjectLayout();
     if (startupProgress)
         startupProgress(StartupPhase::RestoringWorkspace);
-    statusLabel_->setText(created
+    setStatusMessage(created
                               ? tr("New project created: %1").arg(currentProjectPath_)
                               : tr("Opened: %1").arg(QFileInfo(path).baseName()));
 }

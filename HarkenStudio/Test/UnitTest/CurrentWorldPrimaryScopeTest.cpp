@@ -180,11 +180,11 @@ TEST_F(CurrentWorldPrimaryScope, DefaultWindowsInstanceCompilesCurrentWorldOnLiv
     config.name = QStringLiteral("UntargetedLiveWorld");
     config.location = tempDir.path();
     ASSERT_TRUE(pm.createProject(config));
-    ASSERT_EQ(pm.currentProject()->platforms.size(), 1);
+    ASSERT_EQ(pm.currentProject()->platforms.size(), 4);
     const auto id = pm.currentProject()->platforms.front().id;
     EXPECT_EQ(pm.currentProject()->platforms.front().basePlatform, BasePlatform::Windows);
     EXPECT_EQ(PlatformContextService::instance().context().selected,
-              QVector<ProjectPlatformId>{id});
+              occupiedTargetPlatforms(pm.getTargetPlatforms()));
     EXPECT_EQ(PlatformContextService::instance().context().primary, id);
 
     auto* project = pm.currentProject();

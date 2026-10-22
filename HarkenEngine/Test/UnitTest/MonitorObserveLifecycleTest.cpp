@@ -6,6 +6,8 @@
 #include "Common/PackFoundationFixture.h"
 #include "UnitTest/CanonicalPackSetActivate.h"
 #include "Common/TestUtil.h"
+#include "Common/MonitorExecutionTestSupport.h"
+#include "MonitorCaptureHub.h"
 #include "harken/core/ActionFiringTable.h"
 #include "harken/core/MonitorExecutionFact.h"
 #include "MonitorRecordPack.h"
@@ -1027,6 +1029,276 @@ TEST(MonitorObserve, LifecycleNoProducerLeavesQueueCursorUntouched) {
     EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(session));
 }
 
+TEST(MonitorActionActivity, ChildResultsRetainIndependentIdentityAndTerminalOrdering) {
+    using namespace harken;
+    using namespace harkentest::monitor;
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, engine.InitResult());
+    VnEmitterHandle emitter = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+    const auto session = OpenActivityEvents();
+    const MonitorRequestContext request{{harken::monitor::ExecutionEngineInstance(), 501},
+        MonitorRequestOrigin::NativeAPI, VN_MONITOR_OPERATION_POST_ACTION};
+    const auto origin = engine.Engine()->monitorEmitters.CaptureOrigin(emitter);
+    ActionFiringTable actions;
+    ASSERT_TRUE(actions.Reset(2));
+    PreparedActionFiring root, child;
+    const auto project = harkentest::ObjectId(100);
+    const auto owner = ActionFiringOwnerStamp::DirectWorld(7, project);
+    ASSERT_TRUE(actions.PrepareRoot(harkentest::ObjectId(101), owner, 2, &root, request, origin));
+    ASSERT_TRUE(actions.PrepareChild(root, harkentest::ObjectId(102), owner, 1, &child));
+    ActionFiringStepResult post;
+    post.monitorExecutionOnCommit = true;
+    post.state = ActionStepState::Active;
+    post.opcode = static_cast<std::uint32_t>(ActionOpcodeV1::PostAction);
+    post.targetKind = static_cast<std::uint32_t>(ActionTargetKindV1::Action);
+    post.targetStableId = harkentest::ObjectId(102);
+    post.childFiring = child.Handle();
+    ASSERT_TRUE(actions.SetPreparedStep(root, 0, post));
+    ActionFiringStepResult immediate;
+    immediate.monitorExecutionOnCommit = true;
+    immediate.state = ActionStepState::Succeeded;
+    immediate.opcode = static_cast<std::uint32_t>(ActionOpcodeV1::SetVariable);
+    immediate.targetKind = static_cast<std::uint32_t>(ActionTargetKindV1::Variable);
+    immediate.targetStableId = harkentest::ObjectId(103);
+    immediate.authoredEventIndex = 1;
+    immediate.executionOrdinal = 1;
+    ASSERT_TRUE(actions.SetPreparedStep(root, 1, immediate));
+    ActionFiringStepResult delayed = immediate;
+    delayed.monitorExecutionOnCommit = false;
+    delayed.state = ActionStepState::AwaitingMaterialization;
+    delayed.targetStableId = harkentest::ObjectId(104);
+    delayed.authoredEventIndex = 0;
+    delayed.executionOrdinal = 2;
+    ASSERT_TRUE(actions.SetPreparedStep(child, 0, delayed));
+    ASSERT_TRUE(actions.CommitTree(&root, 99));
+    auto records = ReadActivityEvents(session);
+    for (const auto& record : records)
+        EXPECT_NE(VN_MONITOR_FACT_ACTION_TERMINAL, record.fact.fact.factKind);
+    actions.ObserveStepExecution(child.Handle(), 0);
+    actions.ObserveStepExecution(child.Handle(), 0);
+    delayed.state = ActionStepState::Failed;
+    delayed.result = VN_INVALID_ARG;
+    delayed.terminalReason = ActionTerminalReason::RuntimeError;
+    ASSERT_TRUE(actions.TransitionStep(child.Handle(), 0, ActionStepState::AwaitingMaterialization, delayed));
+    const auto completed = ReadActivityEvents(session);
+    records.insert(records.end(), completed.begin(), completed.end());
+    std::set<std::uint64_t> accepted, terminal;
+    std::set<std::pair<std::uint64_t, std::uint32_t>> steps;
+    for (const auto& record : records) {
+        const auto& fact = record.fact.fact;
+        const auto& activity = record.fact.activity;
+        if (fact.factKind != VN_MONITOR_FACT_ACTION_ACCEPTED &&
+            fact.factKind != VN_MONITOR_FACT_ACTION_TERMINAL &&
+            fact.factKind != VN_MONITOR_FACT_STEP_EXECUTED) continue;
+        EXPECT_EQ(request.key.sequence, fact.playbackRequest.sequence);
+        EXPECT_EQ(emitter, fact.originEmitter);
+        EXPECT_EQ(project, fact.projectId);
+        EXPECT_EQ(root.Handle(), fact.root);
+        const auto handle = record.header.instanceHandle;
+        if (fact.factKind == VN_MONITOR_FACT_ACTION_ACCEPTED) {
+            EXPECT_TRUE(accepted.insert(handle).second);
+        } else if (fact.factKind == VN_MONITOR_FACT_ACTION_TERMINAL) {
+            EXPECT_TRUE(accepted.contains(handle));
+            EXPECT_TRUE(terminal.insert(handle).second);
+            EXPECT_EQ(VN_INVALID_ARG, fact.result);
+            EXPECT_EQ(VN_MONITOR_TERMINAL_FAILURE, fact.terminalKind);
+            EXPECT_EQ(handle == root.Handle()
+                ? static_cast<std::uint32_t>(ActionFiringOutcome::SucceededWithStepFailure)
+                : static_cast<std::uint32_t>(ActionFiringOutcome::Failed), activity.actionOutcome);
+        } else {
+            EXPECT_TRUE(accepted.contains(handle));
+            EXPECT_TRUE(steps.emplace(handle, activity.stepIndex).second);
+            if (activity.stepOpcode == static_cast<std::uint32_t>(ActionOpcodeV1::SetVariable)) {
+                EXPECT_EQ(handle == root.Handle() ? immediate.targetStableId : delayed.targetStableId,
+                    activity.stepTargetId);
+                EXPECT_EQ(handle == root.Handle() ? 1u : 2u, activity.stepExecutionOrdinal);
+            }
+        }
+    }
+    EXPECT_EQ(2u, accepted.size());
+    EXPECT_EQ(2u, terminal.size());
+    EXPECT_EQ(3u, steps.size());
+    ASSERT_TRUE(actions.MarkStopping(root.Handle(), ActionTerminalReason::StopRequested));
+    EXPECT_TRUE(ReadActivityEvents(session).empty());
+    ASSERT_EQ(VN_OK, Vn_MonitorCloseSession(session));
+}
+
+TEST(MonitorActionActivity, TerminalWaitsForPlayableRetirementAndKeepsOriginalRequest) {
+    using namespace harken;
+    using namespace harkentest::monitor;
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, engine.InitResult());
+    const auto session = OpenActivityEvents();
+    for (const bool stop : {false, true}) {
+        ActionFiringTable actions;
+        ASSERT_TRUE(actions.Reset(1));
+        const MonitorRequestContext request{{harken::monitor::ExecutionEngineInstance(), stop ? 602u : 601u},
+            MonitorRequestOrigin::NativeAPI, VN_MONITOR_OPERATION_POST_ACTION};
+        PreparedActionFiring prepared;
+        ASSERT_TRUE(actions.PrepareRoot(harkentest::ObjectId(110), 7, 1, &prepared, request));
+        ActionFiringStepResult play;
+        play.monitorExecutionOnCommit = true;
+        play.state = ActionStepState::Active;
+        play.opcode = static_cast<std::uint32_t>(ActionOpcodeV1::Play);
+        play.targetStableId = harkentest::ObjectId(111);
+        play.producedPlayableInstance = UINT64_C(1) << 32;
+        ASSERT_TRUE(actions.SetPreparedStep(prepared, 0, play));
+        ASSERT_TRUE(actions.Commit(&prepared, 101));
+        ASSERT_TRUE(actions.AddLivePlayableCount(prepared.Handle(), 1));
+        MonitorControlCause cause;
+        cause.request = {{request.key.engineInstance, 603}, MonitorRequestOrigin::NativeAPI,
+            VN_MONITOR_OPERATION_STOP_ALL};
+        if (stop) ASSERT_TRUE(actions.MarkStopping(prepared.Handle(), ActionTerminalReason::StopRequested, cause));
+        auto records = ReadActivityEvents(session);
+        for (const auto& record : records)
+            EXPECT_NE(VN_MONITOR_FACT_ACTION_TERMINAL, record.fact.fact.factKind);
+        ASSERT_TRUE(actions.CompletePlayable(prepared.Handle(), 0, 0,
+            stop ? ActionTerminalReason::StopRequested : ActionTerminalReason::Natural));
+        const auto completed = ReadActivityEvents(session);
+        records.insert(records.end(), completed.begin(), completed.end());
+        std::uint32_t terminalCount = 0;
+        std::uint32_t stepCount = 0;
+        for (const auto& record : records) {
+            if (record.fact.fact.factKind == VN_MONITOR_FACT_STEP_EXECUTED) ++stepCount;
+            if (record.fact.fact.factKind != VN_MONITOR_FACT_ACTION_TERMINAL) continue;
+            ++terminalCount;
+            EXPECT_EQ(request.key.sequence, record.fact.fact.playbackRequest.sequence);
+            EXPECT_EQ(stop ? VN_MONITOR_TERMINAL_REQUESTED_STOP : VN_MONITOR_TERMINAL_NATURAL_COMPLETION,
+                record.fact.fact.terminalKind);
+            EXPECT_EQ(stop ? cause.request.key.sequence : 0, record.fact.fact.controlRequest.sequence);
+        }
+        EXPECT_EQ(1u, terminalCount);
+        EXPECT_EQ(1u, stepCount);
+        EXPECT_FALSE(actions.CompletePlayable(prepared.Handle(), 0, 0, ActionTerminalReason::Natural));
+        EXPECT_TRUE(ReadActivityEvents(session).empty());
+    }
+    ASSERT_EQ(VN_OK, Vn_MonitorCloseSession(session));
+}
+
+TEST(MonitorActionActivity, DeferredExecutionAndActionHaveSeparateCompletionBoundaries) {
+    using namespace harken;
+    using namespace harkentest::monitor;
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, engine.InitResult());
+    const auto session = OpenActivityEvents();
+    ActionFiringTable actions;
+    ASSERT_TRUE(actions.Reset(1));
+    PreparedActionFiring prepared;
+    ASSERT_TRUE(actions.PrepareRoot(harkentest::ObjectId(120), 7, 1, &prepared));
+    ActionFiringStepResult step;
+    step.state = ActionStepState::AwaitingMaterialization;
+    step.opcode = static_cast<std::uint32_t>(ActionOpcodeV1::SetVariable);
+    step.targetKind = static_cast<std::uint32_t>(ActionTargetKindV1::Variable);
+    step.targetStableId = harkentest::ObjectId(121);
+    ASSERT_TRUE(actions.SetPreparedStep(prepared, 0, step));
+    ASSERT_TRUE(actions.AcquireDeferred(prepared.Handle()));
+    ASSERT_TRUE(actions.Commit(&prepared, 102));
+    ReadActivityEvents(session);
+    actions.ObserveStepExecution(prepared.Handle(), 0);
+    step.state = ActionStepState::Succeeded;
+    ASSERT_TRUE(actions.TransitionStep(prepared.Handle(), 0, ActionStepState::AwaitingMaterialization, step));
+    const auto executed = ReadActivityEvents(session);
+    ASSERT_EQ(1u, executed.size());
+    EXPECT_EQ(VN_MONITOR_FACT_STEP_EXECUTED, executed.front().fact.fact.factKind);
+    ASSERT_TRUE(actions.ReleaseDeferred(prepared.Handle()));
+    const auto completed = ReadActivityEvents(session);
+    std::uint32_t terminals = 0;
+    for (const auto& record : completed) {
+        EXPECT_NE(VN_MONITOR_FACT_STEP_EXECUTED, record.fact.fact.factKind);
+        if (record.fact.fact.factKind == VN_MONITOR_FACT_ACTION_TERMINAL) ++terminals;
+    }
+    EXPECT_EQ(1u, terminals);
+    ASSERT_EQ(VN_OK, Vn_MonitorCloseSession(session));
+}
+
+TEST(MonitorActionActivity, LargeActionStepsPublishOnceAcrossUpdatesAndRowReuse) {
+    using namespace harken;
+    using namespace harkentest::monitor;
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, engine.InitResult());
+    const auto session = OpenActivityEvents();
+    ActionFiringTable actions;
+    ASSERT_TRUE(actions.Reset(1));
+    const std::set<std::uint32_t> indices{0, 63, 64, 127, 128, 9999};
+    for (std::uint32_t reuse = 0; reuse < 2; ++reuse) {
+        PreparedActionFiring prepared;
+        ASSERT_TRUE(actions.PrepareRoot(harkentest::ObjectId(125), 7, 10000, &prepared));
+        for (const auto index : indices) {
+            ActionFiringStepResult step;
+            step.authoredEventIndex = index;
+            step.executionOrdinal = index;
+            step.state = ActionStepState::Active;
+            step.monitorExecutionOnCommit = true;
+            ASSERT_TRUE(actions.SetPreparedStep(prepared, index, step));
+        }
+        ASSERT_TRUE(actions.Commit(&prepared, 102 + reuse));
+        for (const auto index : indices) {
+            ActionFiringStepResult step;
+            ASSERT_TRUE(actions.CaptureStep(prepared.Handle(), index, &step));
+            ASSERT_TRUE(actions.UpdateStep(prepared.Handle(), index, step));
+            actions.ObserveStepExecution(prepared.Handle(), index);
+        }
+        std::set<std::uint32_t> observed;
+        for (const auto& record : ReadActivityEvents(session)) {
+            if (record.fact.fact.factKind != VN_MONITOR_FACT_STEP_EXECUTED) continue;
+            EXPECT_EQ(prepared.Handle(), record.header.instanceHandle);
+            EXPECT_TRUE(observed.insert(record.fact.activity.stepIndex).second);
+        }
+        EXPECT_EQ(indices, observed);
+        ASSERT_TRUE(actions.MarkTerminal(prepared.Handle()));
+        ASSERT_TRUE(actions.ReleaseRoot(prepared.Handle()));
+        ReadActivityEvents(session);
+    }
+    ASSERT_EQ(VN_OK, Vn_MonitorCloseSession(session));
+}
+
+TEST(MonitorActionActivity, AbandonedPreparationAndUntriggeredCancellationDoNotExecuteSteps) {
+    using namespace harken;
+    using namespace harkentest::monitor;
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, engine.InitResult());
+    const auto session = OpenActivityEvents();
+    ActionFiringTable actions;
+    ASSERT_TRUE(actions.Reset(1));
+    PreparedActionFiring prepared;
+    ASSERT_TRUE(actions.PrepareRoot(harkentest::ObjectId(130), 7, 1, &prepared));
+    ActionFiringStepResult step;
+    step.monitorExecutionOnCommit = true;
+    step.state = ActionStepState::Succeeded;
+    ASSERT_TRUE(actions.SetPreparedStep(prepared, 0, step));
+    ASSERT_TRUE(actions.Abandon(&prepared));
+    EXPECT_TRUE(ReadActivityEvents(session).empty());
+    ASSERT_TRUE(actions.PrepareRoot(harkentest::ObjectId(130), 7, 1, &prepared));
+    ASSERT_TRUE(actions.SetPreparedStep(prepared, 0, step));
+    ASSERT_TRUE(actions.Commit(&prepared, 103));
+    const auto immediate = ReadActivityEvents(session);
+    std::vector<std::uint16_t> order;
+    for (const auto& record : immediate) {
+        const auto kind = record.fact.fact.factKind;
+        if (kind == VN_MONITOR_FACT_ACTION_ACCEPTED || kind == VN_MONITOR_FACT_STEP_EXECUTED ||
+            kind == VN_MONITOR_FACT_ACTION_TERMINAL) order.push_back(kind);
+    }
+    EXPECT_EQ((std::vector<std::uint16_t>{VN_MONITOR_FACT_ACTION_ACCEPTED,
+        VN_MONITOR_FACT_STEP_EXECUTED, VN_MONITOR_FACT_ACTION_TERMINAL}), order);
+    ASSERT_TRUE(actions.ReleaseRoot(prepared.Handle()));
+    ASSERT_TRUE(actions.PrepareRoot(harkentest::ObjectId(130), 7, 1, &prepared));
+    step.monitorExecutionOnCommit = false;
+    step.state = ActionStepState::AwaitingMaterialization;
+    ASSERT_TRUE(actions.SetPreparedStep(prepared, 0, step));
+    ASSERT_TRUE(actions.Commit(&prepared, 104));
+    ASSERT_TRUE(actions.MarkStopping(prepared.Handle(), ActionTerminalReason::StopRequested));
+    actions.ObserveStepExecution(prepared.Handle(), 0);
+    const auto records = ReadActivityEvents(session);
+    std::uint32_t terminals = 0;
+    for (const auto& record : records) {
+        EXPECT_NE(VN_MONITOR_FACT_STEP_EXECUTED, record.fact.fact.factKind);
+        if (record.fact.fact.factKind == VN_MONITOR_FACT_ACTION_TERMINAL) ++terminals;
+    }
+    EXPECT_EQ(1u, terminals);
+    ASSERT_EQ(VN_OK, Vn_MonitorCloseSession(session));
+}
+
 TEST(MonitorObserve, LifecycleZeroStepActionEmitsAcceptThenResult) {
     harkentest::EngineSession engine(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
@@ -1345,7 +1617,7 @@ TEST(MonitorObserve, EventSessionV2RejectsBadVintagesAndPreservesLegacyConstrain
     desc.reserved1 = 1;
     EXPECT_EQ(VN_INVALID_ARG, open());
     desc.reserved1 = 0;
-    desc.requestedExecutionFactVersion = 2;
+    desc.requestedExecutionFactVersion = 3;
     EXPECT_EQ(VN_MONITOR_UNSUPPORTED, open());
     EXPECT_EQ(123u, handle);
     desc.requestedExecutionFactVersion = 0;

@@ -105,6 +105,12 @@ Presentation presentation(ProjectIssue issue, const QString& detail)
         if (!detail.isEmpty()) result.reason += QLatin1Char('\n') + detail;
         result.nextStep = hubText("Restore a valid version of the project and try again. No project was changed.");
         break;
+    case ProjectIssue::ProjectUpgradeFilesNotWritable:
+        result.reason = hubText("Some files needed for the project upgrade are read-only or not writable.");
+        result.nextStep = hubText("Check file write protection and access permissions, then try again. If your version control workflow requires checkout or unlocking, do that first. No project data was changed.");
+        if (!detail.isEmpty())
+            result.nextStep += QStringLiteral("\n\n") + hubText("Affected files:\n%1").arg(detail);
+        break;
     case ProjectIssue::InternalFailure:
         result.reason = hubText("Harken Studio could not finish checking this project.");
         result.nextStep = hubText("Try again. If the problem continues, contact support. The project was not changed by this attempt.");

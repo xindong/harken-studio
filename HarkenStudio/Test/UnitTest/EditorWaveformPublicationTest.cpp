@@ -22,6 +22,7 @@ using harkenhost::JsonWriter;
 using harkentest::packfoundation::ImageBuilder;
 
 std::vector<std::uint8_t> Partition(std::uint64_t id, ContainerWorldInstallViewV1 world) {
+    world.identity.projectId = {0x1111111111111111ULL, 0x1111111111111111ULL};
     world.identity.runtimeSemanticFingerprint = ComputeCurrentWorldFingerprintV5(world);
     std::vector<std::uint8_t> body;
     EXPECT_TRUE(EncodeCurrentWorldShippingBody(world, body));

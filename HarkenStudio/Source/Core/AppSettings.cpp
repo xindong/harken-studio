@@ -39,6 +39,8 @@ void AppSettings::load()
     
     PanelRegistry::forEach([this](const PanelInfo& panel) {
         QString key = QString("PanelFontSize_%1").arg(panel.key);
+        if (panel.id == PanelId::Assistant && !storage_->contains(key))
+            key = QStringLiteral("PanelFontSize_ai_assistant");
         int fontSize = storage_->value(key, panel.defaultFontSize).toInt();
         panelFontSizes_[static_cast<size_t>(panel.id)] = fontSize;
     });

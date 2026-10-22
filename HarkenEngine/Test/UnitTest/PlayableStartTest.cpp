@@ -4849,7 +4849,7 @@ TEST(PlayableStart, DirectStartRemainsAudibleWhenAudioOutrunsLogicService) {
     harken::Engine* engine = session.Engine();
     ASSERT_NE(engine, nullptr);
 
-    std::vector<float> samples(4096, 0.25f);
+    std::vector<float> samples(32, 0.25f);
     const VnPCMDesc pcm = harkentest::MonoDesc(samples, 48000);
     ASSERT_EQ(Vn_RegisterPCM(kSound, &pcm), VN_OK);
     const harken::PCMView media = engine->registry.Lookup(kSound);
@@ -4864,6 +4864,7 @@ TEST(PlayableStart, DirectStartRemainsAudibleWhenAudioOutrunsLogicService) {
     const std::uint64_t observedBlocks = engine->mixer.BlocksRendered();
     ASSERT_EQ(observedBlocks, 12u);
 
+    const auto capture = harkentest::monitor::OpenIdentityEvents();
     harken::PlayableStartRequest request{};
     request.root = image.Root();
     request.callerSeed = 77;
@@ -4903,7 +4904,34 @@ TEST(PlayableStart, DirectStartRemainsAudibleWhenAudioOutrunsLogicService) {
     ASSERT_NE(row, engine->playableServices.end());
     EXPECT_GT(row->startFrame,
               observedBlocks * engine->config.blockFrames);
-    EXPECT_TRUE(PumpUntilAudible(*engine));
+    ASSERT_TRUE(PumpUntilAudible(*engine));
+    engine->nullBackend.Pump(8);
+    std::vector<harkentest::monitor::IdentityRecord> records;
+    for (unsigned block = 0; block != 32; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine->nullBackend.Pump(1);
+        harkentest::monitor::CollectIdentityEvents(capture, records);
+        if (!engine->playableInstances.Classify(started.instance).live) break;
+    }
+    std::uint64_t soundInstance = 0;
+    unsigned starts = 0, retirements = 0;
+    for (const auto& record : records) {
+        if (record.fact.root != started.instance ||
+            record.fact.contentKind != VN_MONITOR_CONTENT_SOUND) continue;
+        if (record.fact.factKind == VN_MONITOR_FACT_PLAYABLE_STARTED) {
+            ++starts;
+            soundInstance = record.header.instanceHandle;
+        } else if (record.fact.factKind == VN_MONITOR_FACT_PLAYABLE_RETIRED) {
+            ++retirements;
+            EXPECT_EQ(1u, starts);
+            EXPECT_EQ(soundInstance, record.header.instanceHandle);
+            EXPECT_EQ(VN_MONITOR_TERMINAL_NATURAL_COMPLETION, record.fact.terminalKind);
+        }
+    }
+    EXPECT_EQ(1u, starts);
+    EXPECT_EQ(1u, retirements);
+    EXPECT_FALSE(engine->playableInstances.Classify(started.instance).live);
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(capture));
 }
 
 TEST(PlayableStart, DirectStartUsesCanonicalEntryResolverBeforeAdmission) {
@@ -16885,10 +16913,17 @@ TEST(PlayableStart, DirectTrackDefersFutureLeafAtItsAuthoredFrame) {
     image.placements[1].authoredDuration = INT64_C(8000000);
     image.track.scheduleSemanticFingerprint =
         harken::ComputeTrackScheduleFingerprintV1(image.track);
+    const auto capture = harkentest::monitor::OpenIdentityEvents();
     harken::PlayableStartRequest request{};
     request.root = image.Root();
+    request.playbackRequest = engine->monitorRequests.Begin(
+        harken::MonitorRequestOrigin::StudioPreview, VN_MONITOR_OPERATION_PLAY_PREVIEW);
     const auto started = harken::StartPlayable(*engine, image.world, request);
     ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
+    auto records = harkentest::monitor::ReadIdentityEvents(capture);
+    EXPECT_TRUE(std::none_of(records.begin(), records.end(), [](const auto& record) {
+        return record.fact.factKind == VN_MONITOR_FACT_PLAYABLE_STARTED;
+    }));
     ASSERT_EQ(1u, engine->timelineDeferred.Count());
     const auto row = std::find_if(
         engine->playableServices.begin(), engine->playableServices.end(),
@@ -16922,6 +16957,13 @@ TEST(PlayableStart, DirectTrackDefersFutureLeafAtItsAuthoredFrame) {
     bool checkedBeforeFuture = false;
     for (std::uint64_t block = 0; block < blockBudget; ++block) {
         ASSERT_EQ(VN_OK, Vn_Update());
+        const auto delivered = harkentest::monitor::ReadIdentityEvents(capture);
+        for (const auto& record : delivered) {
+            if (record.fact.factKind != VN_MONITOR_FACT_PLAYABLE_STARTED) continue;
+            EXPECT_NE(UINT64_MAX,
+                record.header.stableId == kSound ? firstHeard : secondHeard);
+        }
+        records.insert(records.end(), delivered.begin(), delivered.end());
         engine->nullBackend.Pump(1);
         if (!checkedBeforeFuture &&
             engine->mixer.BlocksRendered() * config.blockFrames +
@@ -16993,8 +17035,84 @@ TEST(PlayableStart, DirectTrackDefersFutureLeafAtItsAuthoredFrame) {
          ++block) {
         ASSERT_EQ(VN_OK, Vn_Update());
         engine->nullBackend.Pump(1);
+        harkentest::monitor::CollectIdentityEvents(capture, records);
     }
     EXPECT_FALSE(engine->playableInstances.Classify(started.instance).live);
+    harkentest::monitor::CollectIdentityEvents(capture, records);
+    std::array<unsigned, 2> startCounts{};
+    for (const auto& record : records) {
+        if (record.fact.factKind != VN_MONITOR_FACT_PLAYABLE_STARTED) continue;
+        ASSERT_TRUE(record.header.stableId == kSound || record.header.stableId == kSecondSound);
+        const auto index = record.header.stableId == kSound ? 0u : 1u;
+        ++startCounts[index];
+        EXPECT_EQ(VN_MONITOR_SUBJECT_PLAYABLE, record.fact.subjectNamespace);
+        EXPECT_EQ(VN_MONITOR_CONTENT_SOUND, record.fact.contentKind);
+        EXPECT_EQ(started.instance, record.fact.root);
+        EXPECT_EQ(started.instance, record.header.playableInstanceHandle);
+        EXPECT_NE(started.instance, record.header.instanceHandle);
+        EXPECT_EQ(request.playbackRequest.key.sequence, record.fact.playbackRequest.sequence);
+        EXPECT_EQ(index == 0 ? firstHeard : secondHeard, record.header.executeFrame);
+        const auto sameInstance = [&](const auto& candidate, unsigned kind) {
+            return candidate.fact.factKind == kind &&
+                candidate.header.instanceHandle == record.header.instanceHandle &&
+                candidate.header.stableId == record.header.stableId;
+        };
+        EXPECT_TRUE(std::any_of(records.begin(), records.end(), [&](const auto& candidate) {
+            return sameInstance(candidate, VN_MONITOR_FACT_PLAYABLE_ACTIVE);
+        }));
+        EXPECT_TRUE(std::any_of(records.begin(), records.end(), [&](const auto& candidate) {
+            return sameInstance(candidate, VN_MONITOR_FACT_PLAYABLE_RETIRED);
+        }));
+    }
+    EXPECT_EQ((std::array<unsigned, 2>{1u, 1u}), startCounts);
+
+    request.playbackRequest = engine->monitorRequests.Begin(
+        harken::MonitorRequestOrigin::StudioPreview, VN_MONITOR_OPERATION_PLAY_PREVIEW);
+    const auto cancelled = harken::StartPlayable(*engine, image.world, request);
+    ASSERT_EQ(harken::PlayableStartStatus::Accepted, cancelled.status);
+    records = harkentest::monitor::ReadIdentityEvents(capture);
+    EXPECT_TRUE(std::none_of(records.begin(), records.end(), [](const auto& record) {
+        return record.fact.factKind == VN_MONITOR_FACT_PLAYABLE_STARTED;
+    }));
+    bool firstStarted = false;
+    for (unsigned block = 0; block != 16 && !firstStarted; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine->nullBackend.Pump(1);
+        harkentest::monitor::CollectIdentityEvents(capture, records);
+        const auto* output = engine->nullBackend.LastBlock();
+        firstStarted = std::any_of(output, output + config.blockFrames * 2u,
+            [](float sample) { return sample > 0.00001f; });
+    }
+    ASSERT_TRUE(firstStarted);
+    ASSERT_EQ(harken::PlayableControlStatus::Ok,
+        harken::StopPlayable(*engine, cancelled.instance, 0));
+    for (std::uint64_t block = 0; block < blockBudget; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine->nullBackend.Pump(1);
+        harkentest::monitor::CollectIdentityEvents(capture, records);
+        const auto* output = engine->nullBackend.LastBlock();
+        EXPECT_TRUE(std::none_of(output, output + config.blockFrames * 2u,
+            [](float sample) { return sample < -0.00001f; }));
+    }
+    unsigned cancelledAudibleStarts = 0, cancelledFutureStarts = 0, cancelledFutureRetirements = 0;
+    for (const auto& record : records) {
+        if (record.fact.root != cancelled.instance) continue;
+        if (record.header.stableId == kSound) {
+            cancelledAudibleStarts += record.fact.factKind == VN_MONITOR_FACT_PLAYABLE_STARTED;
+        }
+        if (record.header.stableId != kSecondSound) continue;
+        cancelledFutureStarts += record.fact.factKind == VN_MONITOR_FACT_PLAYABLE_STARTED;
+        cancelledFutureRetirements += record.fact.factKind == VN_MONITOR_FACT_PLAYABLE_RETIRED;
+    }
+    EXPECT_EQ(1u, cancelledAudibleStarts);
+    EXPECT_EQ(0u, cancelledFutureStarts);
+    EXPECT_EQ(1u, cancelledFutureRetirements);
+    EXPECT_FALSE(engine->playableInstances.Classify(cancelled.instance).live);
+    EXPECT_EQ(0u, engine->voices.ActiveCount());
+    EXPECT_EQ(0u, engine->timelineDeferred.Count());
+    EXPECT_EQ(0u, engine->timelineArms.LiveCount());
+    EXPECT_FALSE(engine->runtimeRecreateRequired);
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(capture));
 }
 
 TEST(PlayableStart,

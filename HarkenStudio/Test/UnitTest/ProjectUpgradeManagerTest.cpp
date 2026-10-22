@@ -157,6 +157,150 @@ TEST(ProjectUpgradeManager, AnalysisBlocksUnfinishedTransactionRecovery)
     EXPECT_EQ(analysis.projectFilePath, projectPath);
 }
 
+TEST(ProjectUpgradeManager, UpgradeRejectsNonWritableDocumentsBeforeMutation)
+{
+    for (const QString& relative : {QStringLiteral("Baseline.hsp"),
+                                    QStringLiteral("Layers/Main.vp")}) {
+        SCOPED_TRACE(relative.toStdString());
+        QTemporaryDir directory;
+        ASSERT_TRUE(directory.isValid());
+        const QString projectPath = createBaselineProject(directory);
+        const QString protectedPath = directory.filePath(relative);
+        const QByteArray projectBefore = readBytes(projectPath);
+        const QByteArray protectedBefore = readBytes(protectedPath);
+        const auto permissions = QFile::permissions(protectedPath);
+        const auto restore = qScopeGuard([&]() { QFile::setPermissions(protectedPath, permissions); });
+        VNX::MigrationManager migrations;
+        VNX::ProjectMigrationStep step;
+        step.id = QStringLiteral("test-write-access");
+        step.fromSchema = VNX::kCurrentProjectSchemaVersion;
+        step.toSchema = VNX::kCurrentProjectSchemaVersion + 1;
+        step.writeSet = {QStringLiteral("<all-documents>")};
+        bool migrationStarted = false;
+        step.transform = [&](VNX::ProjectMigrationWorkspace& workspace, QStringList*, QString* error) {
+            migrationStarted = true;
+            for (const QString& path : workspace.writeSet()) {
+                QJsonObject document;
+                if (!workspace.readObject(path, &document, error))
+                    return false;
+                QJsonObject header = HarkenTest::projectHeader(document);
+                header.insert(QStringLiteral("schemaVersion"), VNX::kCurrentProjectSchemaVersion + 1);
+                document.insert(QStringLiteral("harkenDocument"), header);
+                if (!workspace.writeObject(path, document, error))
+                    return false;
+            }
+            return true;
+        };
+        ASSERT_TRUE(migrations.registerMigration(std::move(step)));
+        VNX::ProjectUpgradeManager manager(&migrations);
+        manager.setTargetSchemaForTesting(VNX::kCurrentProjectSchemaVersion + 1);
+        const auto approved = manager.analyzeForProjectOpen(projectPath);
+        ASSERT_TRUE(approved.ok);
+        ASSERT_TRUE(QFile::setPermissions(protectedPath,
+            permissions & ~(QFileDevice::WriteOwner | QFileDevice::WriteUser
+                            | QFileDevice::WriteGroup | QFileDevice::WriteOther)));
+        const auto blockedPermissions = QFile::permissions(protectedPath);
+        const auto blocked = manager.analyzeForProjectOpen(projectPath);
+        EXPECT_FALSE(blocked.ok);
+        EXPECT_EQ(blocked.issue, VNX::ProjectIssue::ProjectUpgradeFilesNotWritable);
+        EXPECT_TRUE(blocked.detail.contains(QDir::toNativeSeparators(protectedPath)));
+        const auto report = VNX::projectOpenAnalysisReport(blocked, QStringLiteral("request"));
+        EXPECT_EQ(report.value("errorCode").toString(), QStringLiteral("PROJECT_UPGRADE_FILES_NOT_WRITABLE"));
+        EXPECT_TRUE(report.value("technicalDetails").toString().contains(QDir::toNativeSeparators(protectedPath)));
+        bool copyingStarted = false;
+        const auto result = manager.execute(approved, {}, [&](const VNX::ProjectUpgradeProgress& progress) {
+            copyingStarted |= progress.phase == VNX::ProjectUpgradePhase::CopyingStaging;
+        });
+        EXPECT_FALSE(result.ok);
+        EXPECT_EQ(result.issue, VNX::ProjectIssue::ProjectUpgradeFilesNotWritable);
+        EXPECT_FALSE(copyingStarted);
+        EXPECT_FALSE(migrationStarted);
+        EXPECT_TRUE(result.backupPath.isEmpty());
+        EXPECT_FALSE(VNX::ProjectTransaction::recoveryRequired(projectPath));
+        EXPECT_EQ(readBytes(projectPath), projectBefore);
+        EXPECT_EQ(readBytes(protectedPath), protectedBefore);
+        EXPECT_EQ(QFile::permissions(protectedPath), blockedPermissions);
+        EXPECT_TRUE(VNX::ProjectUpgradeManager().analyzeForProjectOpen(projectPath).ok);
+        ASSERT_TRUE(QFile::setPermissions(protectedPath, permissions));
+        EXPECT_TRUE(manager.analyzeForProjectOpen(projectPath).ok);
+        migrations.setTreeValidatorForTesting([](const QString&, int, QString*) { return true; });
+        manager.setProjectTreeValidatorForTesting(
+            [](const QString&, const QJsonObject&, bool) { return QStringList{}; });
+        const auto changedWhileStaging = manager.execute(approved, [&](const QString&, QString*) {
+            EXPECT_TRUE(QFile::setPermissions(protectedPath, blockedPermissions));
+            return true;
+        });
+        EXPECT_TRUE(migrationStarted);
+        EXPECT_FALSE(changedWhileStaging.ok);
+        EXPECT_EQ(changedWhileStaging.issue, VNX::ProjectIssue::ProjectUpgradeFilesNotWritable)
+            << changedWhileStaging.error.toStdString();
+        EXPECT_TRUE(changedWhileStaging.backupPath.isEmpty());
+        EXPECT_FALSE(VNX::ProjectTransaction::recoveryRequired(projectPath));
+        EXPECT_EQ(readBytes(projectPath), projectBefore);
+        EXPECT_EQ(readBytes(protectedPath), protectedBefore);
+    }
+}
+
+TEST(ProjectUpgradeManager, ReadOnlyFilesOutsideTheWriteSetDoNotBlockUpgradeAnalysis)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString projectPath = createBaselineProject(directory);
+    const QString untouchedPath = directory.filePath(QStringLiteral("notes.txt"));
+    QFile untouched(untouchedPath);
+    ASSERT_TRUE(untouched.open(QIODevice::WriteOnly));
+    untouched.write("preserved data");
+    untouched.close();
+    const auto permissions = QFile::permissions(untouchedPath);
+    const auto restore = qScopeGuard([&]() { QFile::setPermissions(untouchedPath, permissions); });
+    ASSERT_TRUE(QFile::setPermissions(untouchedPath,
+        permissions & ~(QFileDevice::WriteOwner | QFileDevice::WriteUser
+                        | QFileDevice::WriteGroup | QFileDevice::WriteOther)));
+    VNX::MigrationManager migrations;
+    VNX::ProjectMigrationStep step;
+    step.id = QStringLiteral("test-affected-files-only");
+    step.fromSchema = VNX::kCurrentProjectSchemaVersion;
+    step.toSchema = VNX::kCurrentProjectSchemaVersion + 1;
+    step.writeSet = {QStringLiteral("<all-documents>")};
+    step.transform = [](VNX::ProjectMigrationWorkspace&, QStringList*, QString*) { return true; };
+    ASSERT_TRUE(migrations.registerMigration(std::move(step)));
+    VNX::ProjectUpgradeManager manager(&migrations);
+    manager.setTargetSchemaForTesting(VNX::kCurrentProjectSchemaVersion + 1);
+    const auto analysis = manager.analyzeForProjectOpen(projectPath);
+    EXPECT_TRUE(analysis.ok) << analysis.detail.toStdString();
+    EXPECT_EQ(readBytes(untouchedPath), QByteArrayLiteral("preserved data"));
+}
+
+TEST(ProjectSerializer, ReadOnlyUpgradeFailureRetainsTheAffectedFile)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString projectPath = createBaselineProject(directory);
+    for (const QString& relative : {QStringLiteral("Baseline.hsp"),
+                                    QStringLiteral("Layers/Main.vp"),
+                                    QStringLiteral("Busses/Root.vp")}) {
+        const QString path = directory.filePath(relative);
+        QJsonObject document = readJson(path);
+        QJsonObject header = HarkenTest::projectHeader(document);
+        header.insert(QStringLiteral("schemaVersion"), VNX::kCurrentProjectSchemaVersion - 1);
+        document.insert(QStringLiteral("harkenDocument"), header);
+        writeJson(path, document);
+    }
+    ASSERT_TRUE(VNX::ProjectUpgradeManager().analyzeForProjectOpen(projectPath).ok);
+    const auto permissions = QFile::permissions(projectPath);
+    const auto restore = qScopeGuard([&]() { QFile::setPermissions(projectPath, permissions); });
+    ASSERT_TRUE(QFile::setPermissions(projectPath,
+        permissions & ~(QFileDevice::WriteOwner | QFileDevice::WriteUser
+                        | QFileDevice::WriteGroup | QFileDevice::WriteOther)));
+    VNX::ProjectSerializer serializer;
+    VNX::ProjectData project;
+    EXPECT_FALSE(serializer.loadProject(projectPath, project, true));
+    EXPECT_TRUE(serializer.lastError().startsWith(QStringLiteral("PROJECT_UPGRADE_FILES_NOT_WRITABLE:")));
+    EXPECT_TRUE(serializer.lastError().contains(QDir::toNativeSeparators(projectPath)));
+    EXPECT_EQ(HarkenTest::projectHeader(readJson(projectPath)).value("schemaVersion").toInt(),
+              VNX::kCurrentProjectSchemaVersion - 1);
+}
+
 TEST(ProjectUpgradeManager, FailedAnalysisKeepsRequestedProjectPath)
 {
     QTemporaryDir directory;
@@ -221,6 +365,16 @@ TEST(ProjectUpgradeManager, InjectedMigrationRunsThroughValidationAndTransaction
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
     const QString projectPath = createBaselineProject(directory);
+    const QStringList backupFiles{
+        QStringLiteral("Other.hsp"), QStringLiteral("Backups/Old.hsp"),
+        QStringLiteral("Layers/Nested/Old.hsp")};
+    QMap<QString, QByteArray> backupBytes;
+    for (const QString& relative : backupFiles) {
+        const QString path = directory.filePath(relative);
+        ASSERT_TRUE(QDir().mkpath(QFileInfo(path).absolutePath()));
+        ASSERT_TRUE(QFile::copy(projectPath, path));
+        backupBytes.insert(relative, readBytes(path));
+    }
 
     const QStringList documents{QStringLiteral("Baseline.hsp"),
                                 QStringLiteral("Layers/Main.vp"),
@@ -251,9 +405,7 @@ TEST(ProjectUpgradeManager, InjectedMigrationRunsThroughValidationAndTransaction
     step.id = QStringLiteral("test-current-to-next");
     step.fromSchema = VNX::kCurrentProjectSchemaVersion;
     step.toSchema = VNX::kCurrentProjectSchemaVersion + 1;
-    step.writeSet = {QStringLiteral("<project-file>"),
-                     QStringLiteral("Layers/Main.vp"),
-                     QStringLiteral("Busses/Root.vp")};
+    step.writeSet = {QStringLiteral("<all-documents>")};
     step.transform = [](VNX::ProjectMigrationWorkspace& workspace,
                         QStringList*, QString* error) {
         for (const QString& path : workspace.writeSet()) {
@@ -279,6 +431,8 @@ TEST(ProjectUpgradeManager, InjectedMigrationRunsThroughValidationAndTransaction
     ASSERT_TRUE(analysis.ok)
         << analysis.blockingErrors.join(QStringLiteral("; ")).toStdString();
     ASSERT_TRUE(analysis.upgradeRequired);
+    for (const QString& relative : backupFiles)
+        EXPECT_FALSE(analysis.migrationPlan.writeSet.contains(relative));
     const VNX::ProjectUpgradeResult result = manager.execute(analysis);
     ASSERT_TRUE(result.ok) << result.error.toStdString();
     ASSERT_TRUE(result.changed);
@@ -291,9 +445,13 @@ TEST(ProjectUpgradeManager, InjectedMigrationRunsThroughValidationAndTransaction
         expected.insert(QStringLiteral("harkenDocument"), header);
         EXPECT_EQ(readJson(directory.filePath(path)), expected);
     }
+    for (const QString& relative : backupFiles)
+        EXPECT_EQ(readBytes(directory.filePath(relative)), backupBytes.value(relative));
     ASSERT_TRUE(manager.rollback(result));
     for (const QString& path : documents)
         EXPECT_EQ(readBytes(directory.filePath(path)), originals.value(path));
+    for (const QString& relative : backupFiles)
+        EXPECT_EQ(readBytes(directory.filePath(relative)), backupBytes.value(relative));
 }
 
 class ProjectPackOutputUpgradeTest : public testing::TestWithParam<QString>

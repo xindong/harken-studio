@@ -451,6 +451,8 @@ public:
         MonitorLifecycleFacts* out) const noexcept;
     bool CaptureMonitorFacts(PlayableInstanceHandle handle,
                              MonitorLifecycleFacts* out) const noexcept;
+    void ObserveStarted(PlayableInstanceHandle handle, std::uint64_t audioBlock,
+                        std::uint64_t frame) noexcept;
     bool CaptureRootMetadata(PlayableInstanceHandle handle,
                              PlayableRootMetadata* out) const noexcept;
 
@@ -582,6 +584,7 @@ private:
         MonitorContentIdentity contentIdentity{};
         MonitorContentIdentity monitorPreparedCandidateIdentity{};
         bool monitorPreparedCandidateObserved = false;
+        bool monitorStartedObserved = false;
         MonitorRequestContext playbackRequest{};
         MonitorEmitterOrigin emitterOrigin{};
         MonitorControlCause controlCause{};

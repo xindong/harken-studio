@@ -171,8 +171,7 @@ void SplitButton::updateDropdownAvailability()
         popup_->hide();
         if (dropdownButton_->hasFocus()) primaryButton_->setFocus(Qt::OtherFocusReason);
     }
-    divider_->setVisible(available);
-    dropdownButton_->setVisible(available);
+    dropdownButton_->setEnabled(available);
     if (primaryButton_->isEnabled() || !available) setFocusProxy(primaryButton_);
     else setFocusProxy(dropdownButton_);
     updateGeometry();

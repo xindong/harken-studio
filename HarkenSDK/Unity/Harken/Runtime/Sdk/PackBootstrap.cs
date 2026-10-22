@@ -774,6 +774,8 @@ namespace Harken
             }
 
             result = Packs.ActivateCanonicalPackSet(members, 1, out var report, out var rows);
+            if (result == VnResult.VN_OK && publication != null)
+                result = Packs.SetGameplayCatalog(new Pack(report.initHandle), publication);
             if (result != VnResult.VN_OK)
             {
                 VnResult term = HarkenEngine.Term();

@@ -1,13 +1,20 @@
 #include "ActionManager.h"
 #include "MainWindow.h"
+#include "Core/ThemeManager.h"
+#include "Core/WindowPlacement.h"
 #include "ProjectManager.h"
 #include "ProjectTypes.h"
 #include "UndoCommands.h"
+#include "Widgets/LogPanel/LogPanel.h"
 
 #include "Support/AITestSupport.h"
 #include "Support/ProjectPlatformTestUtils.h"
 
 #include <gtest/gtest.h>
+
+#include <DockAreaWidget.h>
+#include <DockManager.h>
+#include <DockWidget.h>
 
 #include <QAction>
 #include <QApplication>
@@ -16,6 +23,8 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScopeGuard>
+#include <QScreen>
+#include <QWindow>
 #include <QTemporaryDir>
 #include <QTimer>
 
@@ -142,4 +151,317 @@ TEST(MainWindowSettingsMenu, ExternalChangeChoiceKeepsOrDiscardsTheWholePendingP
     EXPECT_EQ(manager.findItemByGuid(actionGuid), nullptr);
     EXPECT_EQ(manager.currentProject()->findFolderByPath(QStringLiteral("Actions"), QStringLiteral("Pending")), nullptr);
     EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 0);
+}
+
+TEST(MainWindowLogFeedback, StatusSharesLogSeverityAndRevealsTheExistingPanel)
+{
+    TestSupport::ensureApp();
+    ActionManager::instance().clearAllForTesting();
+    auto window = std::make_unique<MainWindow>();
+    const auto cleanup = qScopeGuard([&] {
+        QObject::disconnect(&UndoRedoManager::instance(), nullptr, window.get(), nullptr);
+        window.reset();
+        ActionManager::instance().setTransactionCallbacks({});
+        ActionManager::instance().clearAllForTesting();
+        UndoRedoManager::instance().clear();
+        QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QApplication::processEvents();
+    });
+    window->show();
+    QApplication::processEvents();
+    ASSERT_TRUE(ThemeManager::instance().reloadTheme().ok());
+    auto* status = window->findChild<QPushButton*>(QStringLiteral("statusLogButton"));
+    auto* docks = window->findChild<ads::CDockManager*>();
+    ASSERT_NE(status, nullptr);
+    ASSERT_NE(docks, nullptr);
+    auto* log = docks->findDockWidget(QStringLiteral("LogDock"));
+    auto* blueprint = docks->findDockWidget(QStringLiteral("BlueprintDock"));
+    ASSERT_NE(log, nullptr);
+    ASSERT_NE(blueprint, nullptr);
+    QApplication::processEvents();
+
+    for (const auto level : {LogEntry::Trace, LogEntry::Debug, LogEntry::Info,
+                             LogEntry::Warning, LogEntry::Error, LogEntry::Critical,
+                             LogEntry::Info}) {
+        SCOPED_TRACE(static_cast<int>(level));
+        window->statusBar()->showMessage(QStringLiteral("Temporary status"));
+        const QString message = QStringLiteral("Status severity %1").arg(static_cast<int>(level));
+        LogPanel::log(level, LogCategory::GUI, message);
+        status->ensurePolished();
+        EXPECT_TRUE(status->isVisible());
+        EXPECT_TRUE(status->text().contains(message));
+        EXPECT_EQ(status->palette().color(QPalette::Active, QPalette::ButtonText),
+                  LogEntry::levelColor(level));
+        EXPECT_EQ(status->palette().color(QPalette::Inactive, QPalette::ButtonText),
+                  LogEntry::levelColor(level));
+    }
+
+    log->toggleView(false);
+    ASSERT_TRUE(log->isClosed());
+    status->click();
+    QApplication::processEvents();
+    EXPECT_FALSE(log->isClosed());
+    EXPECT_EQ(docks->findDockWidget(QStringLiteral("LogDock")), log);
+    ASSERT_TRUE(log->isInFloatingContainer());
+    QWidget* floatingWindow = log->window();
+    QApplication::setActiveWindow(window.get());
+    status->click();
+    QApplication::processEvents();
+    EXPECT_EQ(log->window(), floatingWindow);
+    EXPECT_EQ(QApplication::activeWindow(), floatingWindow);
+    EXPECT_EQ(log->dockAreaWidget()->currentDockWidget(), log);
+
+    docks->addDockWidget(ads::CenterDockWidgetArea, log, blueprint->dockAreaWidget());
+    blueprint->setAsCurrentTab();
+    status->click();
+    QApplication::processEvents();
+    EXPECT_FALSE(log->isInFloatingContainer());
+    EXPECT_EQ(log->dockAreaWidget()->currentDockWidget(), log);
+    EXPECT_EQ(docks->findDockWidget(QStringLiteral("LogDock")), log);
+}
+
+namespace {
+
+class MainWindowPlacement : public testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        TestSupport::ensureApp();
+        ActionManager::instance().clearAllForTesting();
+        QSettings settings;
+        settings.remove("MainWindow");
+    }
+
+    void destroyWindow()
+    {
+        if (window_) {
+            QObject::disconnect(&UndoRedoManager::instance(), nullptr, window_.get(), nullptr);
+            window_.reset();
+        }
+        ActionManager::instance().setTransactionCallbacks({});
+        ActionManager::instance().clearAllForTesting();
+        UndoRedoManager::instance().clear();
+        QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QApplication::processEvents();
+    }
+
+    void TearDown() override
+    {
+        destroyWindow();
+        QSettings settings;
+        settings.remove("MainWindow");
+    }
+
+    void settle()
+    {
+        QEventLoop loop;
+        QTimer::singleShot(30, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    void seed(const QSize& size, Qt::WindowState state)
+    {
+        QSettings settings;
+        settings.beginGroup("MainWindow");
+        settings.setValue("normalSize", size);
+        settings.setValue("presentationState", int(state));
+    }
+
+    void expectCentered()
+    {
+        const QRect available = window_->screen()->availableGeometry();
+        const QRect frame = window_->frameGeometry();
+        EXPECT_LE(qAbs(frame.center().x() - available.center().x()), 1);
+        EXPECT_LE(qAbs(frame.center().y() - available.center().y()), 1);
+    }
+
+    void roundTrip(Qt::WindowState mode, bool minimized = false)
+    {
+        QScreen* target = QGuiApplication::screens().last();
+        const QRect available = target->availableGeometry();
+        if (available.width() < 1200 || available.height() < 750)
+            GTEST_SKIP() << "Round-trip size requires a larger native work area";
+        QSize expected(1100, 650);
+        seed(expected, mode);
+        for (int cycle = 0; cycle < 2; ++cycle) {
+            window_ = std::make_unique<MainWindow>();
+            window_->prepareWindowForStartup(target);
+            window_->show();
+            settle();
+            EXPECT_EQ(persistentWindowState(window_->windowState()), mode);
+            EXPECT_EQ(window_->screen(), target);
+            window_->showNormal();
+            settle();
+            EXPECT_EQ(window_->size(), expected);
+            if (cycle == 0) {
+                expected = QSize(1120, 670);
+                window_->resize(expected);
+                settle();
+            }
+            window_->setWindowState(mode);
+            settle();
+            if (minimized) {
+                window_->showMinimized();
+                settle();
+            }
+            ASSERT_TRUE(window_->close());
+            QSettings settings;
+            settings.beginGroup("MainWindow");
+            EXPECT_EQ(settings.value("normalSize").toSize(), expected);
+            EXPECT_EQ(settings.value("presentationState").toInt(), int(mode));
+            EXPECT_FALSE(settings.contains("geometry"));
+            destroyWindow();
+        }
+    }
+
+    void watchPresentation()
+    {
+        QObject::connect(window_.get(), &MainWindow::startupPresentationFinished,
+                         window_.get(), [this](bool shown) { presentations_.append(shown); });
+    }
+
+    QList<bool> presentations_;
+    std::unique_ptr<MainWindow> window_;
+};
+
+}
+
+TEST_F(MainWindowPlacement, NoSavedPresentationUsesDefaultSize)
+{
+    window_ = std::make_unique<MainWindow>();
+    window_->prepareWindowForStartup(QGuiApplication::primaryScreen());
+    window_->show();
+    settle();
+    const QRect available = window_->screen()->availableGeometry();
+    if (!window_->isMaximized()) {
+        expectCentered();
+        EXPECT_GE(window_->width(), qMin(available.width() - 16, kDefaultStudioWindowSize.width()));
+    }
+    EXPECT_LE(window_->width(), qMax(available.width(), window_->minimumWidth()));
+}
+
+TEST_F(MainWindowPlacement, ReopenedWindowCentersAndDoesNotRecenterOnLaterShow)
+{
+    seed({1100, 650}, Qt::WindowNoState);
+    window_ = std::make_unique<MainWindow>();
+    window_->prepareWindowForStartup(QGuiApplication::primaryScreen());
+    window_->show();
+    settle();
+    if (window_->isMaximized())
+        GTEST_SKIP() << "Current work area cannot fit a normal main window";
+    expectCentered();
+    const QPoint position = window_->pos() + QPoint(17, 11);
+    window_->move(position);
+    settle();
+    const QPoint movedPosition = window_->pos();
+    window_->hide();
+    window_->show();
+    settle();
+    EXPECT_LE(qAbs(window_->pos().x() - movedPosition.x()), 1);
+    EXPECT_LE(qAbs(window_->pos().y() - movedPosition.y()), 1);
+    window_->close();
+    QSettings settings;
+    settings.beginGroup("MainWindow");
+    EXPECT_FALSE(settings.contains("geometry"));
+    EXPECT_EQ(settings.value("normalSize").toSize(), window_->size());
+}
+
+TEST_F(MainWindowPlacement, NormalCloseKeepsTheLastResizedClientSize)
+{
+    roundTrip(Qt::WindowNoState);
+}
+
+TEST_F(MainWindowPlacement, MaximizedCloseKeepsNormalSizeAcrossTwoReopens)
+{
+    roundTrip(Qt::WindowMaximized);
+}
+
+TEST_F(MainWindowPlacement, FullScreenCloseKeepsNormalSizeAcrossTwoReopens)
+{
+    roundTrip(Qt::WindowFullScreen);
+}
+
+TEST_F(MainWindowPlacement, MinimizedCloseKeepsTheUnderlyingMaximizedPreference)
+{
+    roundTrip(Qt::WindowMaximized, true);
+}
+
+TEST_F(MainWindowPlacement, DirectShowPreparesCenteredPresentationOnlyOnce)
+{
+    seed({1100, 650}, Qt::WindowNoState);
+    window_ = std::make_unique<MainWindow>();
+    window_->move(100000, 100000);
+    window_->show();
+    settle();
+    if (!window_->isMaximized())
+        expectCentered();
+    window_->showMaximized();
+    settle();
+    EXPECT_TRUE(window_->isMaximized());
+}
+
+TEST_F(MainWindowPlacement, PresentationFinishesOnceAndLaterShowsDoNotRestartIt)
+{
+    seed({1100, 650}, Qt::WindowNoState);
+    window_ = std::make_unique<MainWindow>();
+    watchPresentation();
+    window_->prepareWindowForStartup(nullptr);
+    window_->show();
+    settle();
+    EXPECT_EQ(presentations_, (QList<bool>{true}));
+    window_->hide();
+    window_->show();
+    settle();
+    EXPECT_EQ(presentations_, (QList<bool>{true}));
+}
+
+TEST_F(MainWindowPlacement, ClosingBeforeFirstExposureFinishesStartupAsCancelled)
+{
+    window_ = std::make_unique<MainWindow>();
+    watchPresentation();
+    window_->prepareWindowForStartup(nullptr);
+    ASSERT_TRUE(window_->close());
+    settle();
+    EXPECT_EQ(presentations_, (QList<bool>{false}));
+}
+
+TEST_F(MainWindowPlacement, HidingBeforePresentationDoesNotWaitForExposure)
+{
+    window_ = std::make_unique<MainWindow>();
+    watchPresentation();
+    window_->prepareWindowForStartup(nullptr);
+    window_->show();
+    window_->hide();
+    settle();
+    EXPECT_EQ(presentations_, (QList<bool>{false}));
+}
+
+TEST_F(MainWindowPlacement, UserMinimizingBeforeExposureKeepsTheirStateAndCompletes)
+{
+    window_ = std::make_unique<MainWindow>();
+    watchPresentation();
+    window_->prepareWindowForStartup(nullptr);
+    window_->showMinimized();
+    settle();
+    EXPECT_TRUE(window_->isMinimized());
+    EXPECT_EQ(presentations_, (QList<bool>{true}));
+}
+
+TEST_F(MainWindowPlacement, MinimumSizeLargerThanWorkAreaUsesMaximizedPresentation)
+{
+    if (QGuiApplication::platformName() != QStringLiteral("windows"))
+        GTEST_SKIP() << "Native Windows maximization required";
+    window_ = std::make_unique<MainWindow>();
+    QScreen* screen = QGuiApplication::screens().last();
+    const QRect available = screen->availableGeometry();
+    window_->setMinimumSize(available.size() + QSize(100, 100));
+    watchPresentation();
+    window_->prepareWindowForStartup(screen);
+    window_->show();
+    settle();
+    EXPECT_TRUE(window_->isMaximized());
+    EXPECT_EQ(window_->screen(), screen);
+    EXPECT_TRUE(available.contains(window_->geometry()));
+    EXPECT_EQ(presentations_, (QList<bool>{true}));
 }

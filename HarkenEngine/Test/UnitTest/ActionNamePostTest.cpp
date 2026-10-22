@@ -236,7 +236,7 @@ void LoadInitAndContent(VnPackHandle* initHandle, VnPackHandle* contentHandle) {
     *contentHandle = 0;
     const std::string initPath = WriteTemp(
         "name-init.pack",
-        BuildInitWithCatalog({MakeActive("Play_Fire", kActionId)}, {}));
+        BuildInitBare());
     const std::string contentPath = WriteTemp(
         "name-content.pack", BuildContentPack(1, kActionId, 0x3f000000u));
     VnCanonicalPackSetMemberV1 members[2]{};
@@ -259,6 +259,17 @@ void LoadInitAndContent(VnPackHandle* initHandle, VnPackHandle* contentHandle) {
     *contentHandle = rows[1].handle;
     ASSERT_NE(0u, *initHandle);
     ASSERT_NE(0u, *contentHandle);
+    PackGameplayCatalogHeader header;
+    header.projectGuid = kProjectGuid;
+    header.initPackStableId = kInitId;
+    header.initContentRevision = 1;
+    std::vector<std::uint8_t> catalog;
+    ASSERT_TRUE(EncodeGameplayCatalog(header, {MakeActive("Play_Fire", kActionId)}, {}, &catalog));
+    VnPackByteSpan span{};
+    span.structSize = sizeof(span);
+    span.bytes = catalog.data();
+    span.byteCount = catalog.size();
+    ASSERT_EQ(VN_OK, Vn_SetGameplayCatalog(*initHandle, &span));
 }
 
 VnActionPinnedDesc MakePin(const char* name, VnObjectId actionId) {
@@ -1184,6 +1195,9 @@ TEST(ActionNamePost, TraceStartActivateThenPostByNameJournals128After135) {
     ASSERT_LT(activateIndex, calls.size());
     ASSERT_LT(byNameIndex, calls.size());
     EXPECT_LT(activateIndex, byNameIndex);
+    const auto bound = std::find_if(calls.begin() + activateIndex, calls.begin() + byNameIndex,
+        [](const auto& call) { return call.callId == kTraceCallSetGameplayCatalog; });
+    EXPECT_NE(bound, calls.begin() + byNameIndex);
     std::uint32_t journalResult = 0xFFFFFFFFu;
     std::uint64_t journalFiring = 0;
     ASSERT_TRUE(ReadPostActionByName128SuccessTail(
@@ -1191,5 +1205,24 @@ TEST(ActionNamePost, TraceStartActivateThenPostByNameJournals128After135) {
     EXPECT_EQ(static_cast<std::uint32_t>(VN_OK), journalResult);
     EXPECT_EQ(postedFiring, journalFiring);
     EXPECT_NE(0u, journalFiring);
+    std::string command = std::string("\"") + HARKEN_HOST_PATH +
+        "\" trace-replay \"" + path + "\" 2>&1";
+#ifdef _WIN32
+    command = "\"" + command + "\"";
+    FILE* pipe = _popen(command.c_str(), "rt");
+#else
+    FILE* pipe = popen(command.c_str(), "r");
+#endif
+    ASSERT_NE(nullptr, pipe);
+    std::string output;
+    char chunk[512];
+    while (std::fgets(chunk, sizeof(chunk), pipe) != nullptr)
+        output += chunk;
+#ifdef _WIN32
+    const int exitCode = _pclose(pipe);
+#else
+    const int exitCode = pclose(pipe);
+#endif
+    EXPECT_EQ(0, exitCode) << output;
 }
 

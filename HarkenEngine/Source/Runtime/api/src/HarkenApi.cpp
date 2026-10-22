@@ -7269,6 +7269,9 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
     std::uint32_t acquiredEffectCount = 0;
     std::uint32_t postSourceTailFrames = 0;
     bool completionProgressBound = false;
+    harken::VoiceReleaseObserver releaseObserver{};
+    harken::SourceTerminalToken sourceTerminal{};
+    bool sourceRetirementHeld = false;
     harken::TimelineArmTable::PreparedCommitProof originalArmProof;
     harken::VoicePool::PreparedCommitProof originalVoiceProof;
     harken::OriginalSourceLifetimePin pendingVariableSource, pendingGroupSource;
@@ -7312,6 +7315,18 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         const bool withdrawn = engine.originalSourceSubmissions.WithdrawUnpublished(arm);
         assert(withdrawn);
         (void)withdrawn;
+        if (sourceRetirementHeld) {
+            const bool returned = sourceTerminal.Valid()
+                ? ReleaseUnpublishedSourceTerminal(engine, sourceTerminal)
+                : engine.voices.ReleaseObserved(releaseObserver) &&
+                    engine.playableInstances.ReleaseSourceRetirementHold(programGeneration);
+            if (!returned) {
+                engine.runtimeRecreateRequired = true;
+                status = VN_RUNTIME_RECREATE_REQUIRED;
+            } else {
+                sourceRetirementHeld = false;
+            }
+        }
         (void)engine.timelineArms.CancelPrepared(arm);
         if (prepareOnly) (void)engine.ledger.CancelPreparedPlayableOwned(ledgerSlot);
         else {
@@ -7564,12 +7579,10 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         !PrepareVariableAncestorWeights(engine, *variableWeightService, render)) {
         return rollback(VN_NO_VOICE);
     }
-    harken::VoiceReleaseObserver releaseObserver{};
     if (!engine.voices.CaptureReleaseObserver(render, &releaseObserver)) {
         return rollback(VN_NO_VOICE);
     }
     voicePreparation.originalRelease = releaseObserver;
-    harken::SourceTerminalToken sourceTerminal{};
     if (resourceService == nullptr) {
         const auto controller = std::find_if(engine.playableServices.begin(), engine.playableServices.end(),
             [playableRoot](const auto& candidate) {
@@ -7584,6 +7597,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         const auto epoch = engine.playableInstances.SourceRetirementEpoch(programGeneration);
         if (!engine.playableInstances.AcquireSourceRetirementHold(programGeneration, epoch))
             return rollback(VN_NO_VOICE);
+        sourceRetirementHeld = true;
         sourceTerminal = engine.sourceTerminals.Reserve(engine.playableInstances,
             programGeneration, epoch, render, releaseObserver, controller->rootInstance,
             {controller->identity.slot, controller->identity.generation,
@@ -7592,10 +7606,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         auto* originalSource = engine.sourceTerminals.Resolve(sourceTerminal);
         if (!sourceTerminal.Valid() || !engine.voices.BindSourceTerminal(render,
                 originalSource, sourceTerminal)) {
-            const auto refused = rollback(VN_NO_VOICE);
-            (void)engine.playableInstances.ReleaseSourceRetirementHold(programGeneration);
-            if (sourceTerminal.Valid()) (void)engine.sourceTerminals.Release(sourceTerminal);
-            return refused;
+            return rollback(VN_NO_VOICE);
         }
         voicePreparation.sourceTerminal = originalSource;
         voicePreparation.sourceTerminalToken = sourceTerminal;
@@ -11500,7 +11511,26 @@ bool ObserveActiveArrivalMembers(
     return engine.armGroups.Capture(record.group, snapshot);
 }
 
+void ObservePlayableStarts(harken::Engine& engine) noexcept {
+    const auto observedAudioSequence = engine.mixer.BlocksRendered();
+    for (std::uint32_t slot = 0, count = engine.timelineArms.ConstructedRowCount();
+         slot < count; ++slot) {
+        const auto* arm = engine.timelineArms.RowAt(slot);
+        if (arm == nullptr || arm->originalSourceSubmission == nullptr ||
+            arm->programGeneration == 0) continue;
+        const harken::TimelineArmToken token{
+            slot, arm->generation, arm->renderSlot, arm->renderGeneration};
+        harken::TimelineArmObservation onset{};
+        if (!engine.timelineArms.Observe(token, &onset) ||
+            onset.startedBlockSequence == 0 ||
+            onset.startedBlockSequence > observedAudioSequence) continue;
+        engine.playableInstances.ObserveStarted(
+            arm->programGeneration, onset.startedBlockSequence, arm->startFrame);
+    }
+}
+
 bool ObserveActiveArrivalsBeforeArmReclaim(harken::Engine& engine) noexcept {
+    ObservePlayableStarts(engine);
     bool complete = true;
     // Transient Start arms retire before their Sound; preserve their actual onset.
     std::uint32_t cursor = 0;
@@ -14053,6 +14083,7 @@ engine.runtimeRecreateRequired = true;
 bool RetirePlayableInstanceTree(harken::Engine& engine,
                                 harken::PlayableInstanceHandle handle,
                                 harken::PlayableTerminalKind terminalKind) noexcept {
+    ObservePlayableStarts(engine);
     for (std::uint32_t index = 0; index < engine.sourceTerminals.Capacity(); ++index) {
         auto& source = *engine.sourceTerminals.At(index);
         if (!source.occupied || !IsPlayableDescendant(engine, source.leaf, handle)) continue;
@@ -61392,12 +61423,15 @@ QueueCheckpointKey MakeQueueCheckpointResetKey(
 SelectionMemoryStatusV1 ApplySelectionMemoryReset(
     Engine& engine, const SelectionMemoryKeyV1& key,
     LogicCommitSequence sequence, std::uint32_t eventIndex,
-    std::uint64_t executeFrame, bool* outIdempotent) noexcept {
+    std::uint64_t executeFrame, bool* outIdempotent,
+    const MonitorControlCause& cause = {},
+    std::uint32_t stepIndex = UINT32_MAX) noexcept {
     PreparedSelectionResetV1 prepared{};
     const SelectionMemoryStatusV1 preparedStatus = engine.selectionMemory.PrepareReset(
         key, sequence, eventIndex, &prepared, executeFrame);
     if (preparedStatus != SelectionMemoryStatusV1::Ok) return preparedStatus;
     if (outIdempotent != nullptr) *outIdempotent = prepared.Idempotent();
+    engine.actionFirings.ObserveStepExecution(cause.actionFiring, stepIndex);
     return engine.selectionMemory.CommitPreparedReset(&prepared, sequence);
 }
 
@@ -61405,7 +61439,8 @@ QueueResetStatusV1 ApplyQueueReset(Engine& engine,
                                    const QueueResetTargetV1& target,
                                    LogicCommitSequence sequence,
                                    bool* outIdempotent,
-                                   const MonitorControlCause& cause = {}) noexcept {
+                                   const MonitorControlCause& cause = {},
+                                   std::uint32_t stepIndex = UINT32_MAX) noexcept {
     PreparedQueueResetSetV1 preparedQueue;
     const std::uint64_t completed = engine.mixer.BlocksRendered();
     if (engine.config.blockFrames == 0 ||
@@ -61428,6 +61463,7 @@ QueueResetStatusV1 ApplyQueueReset(Engine& engine,
         *outIdempotent = preparedQueue.MatchedCount() == 0 &&
                          preparedCheckpoint.Idempotent();
     }
+    engine.actionFirings.ObserveStepExecution(cause.actionFiring, stepIndex);
     const QueueResetStatusV1 committedQueue =
         engine.queueInstances.CommitPreparedReset(&preparedQueue, sequence, UINT64_MAX, cause);
     const QueueResetStatusV1 committedCheckpoint =
@@ -61794,6 +61830,7 @@ engine.runtimeRecreateRequired = true;
     };
     if (record.step.opcode == ActionOpcodeV1::Stop &&
         record.rootPlayable == 0) {
+        engine.actionFirings.ObserveStepExecution(record.firing, record.stepIndex);
         return finalize();
     }
     if (record.intendedBoundaryFrame != 0 &&
@@ -61919,6 +61956,7 @@ engine.runtimeRecreateRequired = true;
             static_cast<std::uint32_t>(attemptSlot);
         scratch.row->privateOrdinaryDeferredRollbackGeneration =
             scratch.storage.generation;
+        engine.actionFirings.ObserveStepExecution(record.firing, record.stepIndex);
         CommitImmediateActionPlays(&plan, 1, firing.acceptedLogicSequence);
         CommitImmediateActionCommandHead(&plan, 0, firing.acceptedLogicSequence);
         const bool startLive =
@@ -61954,6 +61992,7 @@ engine.runtimeRecreateRequired = true;
         }
     }
 
+    engine.actionFirings.ObserveStepExecution(record.firing, record.stepIndex);
     CommitImmediateActionPlays(&plan, 1, firing.acceptedLogicSequence);
     CommitImmediateActionCommandHead(&plan, 0, firing.acceptedLogicSequence);
     if (!plan.playCommitSucceeded) {
@@ -62159,6 +62198,18 @@ engine.runtimeRecreateRequired = true;
         const ActionFiringStepResult result = DeferredActionResult(
             record, ActionStepState::Failed, accepted.result,
             ActionDeferredTerminalReason(accepted.result));
+        MonitorVariableResultFacts facts{};
+        facts.request = firing.playbackRequest;
+        facts.emitterOrigin = firing.emitterOrigin;
+        facts.projectId = firing.owner.projectId;
+        facts.variableId = record.step.target.stableId;
+        facts.worldGeneration = observation.world;
+        facts.actionFiring = record.firing;
+        facts.executionOrdinal = record.executionOrdinal;
+        facts.result = accepted.result;
+        facts.value = std::bit_cast<float>(record.step.valueBits);
+        facts.emitterScope = record.step.scope == ActionScopeV1::Emitter;
+        ObserveMonitorVariableResult(facts);
         (void)engine.actionFirings.TransitionStep(
             record.firing, record.stepIndex,
             ActionStepState::AwaitingMaterialization, result);
@@ -62175,6 +62226,9 @@ engine.runtimeRecreateRequired = true;
             ActionStepState::AwaitingMaterialization, result);
         return FinalizeOrRetainActionDeferredClaim(engine, claim.token, recordToken, record);
     }
+    engine.variables.BindPreparedMonitorRequest(prepared, firing.playbackRequest,
+        firing.emitterOrigin, record.firing, firing.owner.projectId);
+    engine.actionFirings.ObserveStepExecution(record.firing, record.stepIndex);
     engine.variables.CommitPreparedWrite(&prepared, sequence);
     const ActionFiringStepResult result = DeferredActionResult(
         record, ActionStepState::Succeeded, VN_OK,
@@ -62242,6 +62296,7 @@ TimelineDeferredMaterializeStatus MaterializeActionDeferredReset(
                    : TimelineDeferredMaterializeStatus::NotOwned;
     };
     if (container->mode == ContainerModeV1::VariableControl) {
+        engine.actionFirings.ObserveStepExecution(record.firing, record.stepIndex);
         return finish(ActionStepState::NoOp, VN_OK, ActionTerminalReason::None);
     }
     const WorldGeneration world = record.targetPackLease.leaseToken != 0
@@ -62264,7 +62319,8 @@ TimelineDeferredMaterializeStatus MaterializeActionDeferredReset(
         bool idempotent = false;
         const SelectionMemoryStatusV1 status = ApplySelectionMemoryReset(
             engine, key, sequence, selectionEvent,
-            record.intendedBoundaryFrame, &idempotent);
+            record.intendedBoundaryFrame, &idempotent,
+            {firing.playbackRequest, record.firing, 0, record.executionOrdinal}, record.stepIndex);
         if (status == SelectionMemoryStatusV1::Capacity) return retry();
         if (status != SelectionMemoryStatusV1::Ok) {
             return finish(ActionStepState::Failed, VN_DEVICE_ERROR,
@@ -62285,7 +62341,7 @@ TimelineDeferredMaterializeStatus MaterializeActionDeferredReset(
         bool idempotent = false;
         const QueueResetStatusV1 status =
             ApplyQueueReset(engine, target, sequence, &idempotent,
-                {firing.playbackRequest, record.firing, 0, record.executionOrdinal});
+                {firing.playbackRequest, record.firing, 0, record.executionOrdinal}, record.stepIndex);
         if (status == QueueResetStatusV1::Backpressure) return retry();
         if (status != QueueResetStatusV1::Ok) {
             return finish(ActionStepState::Failed,
@@ -62456,6 +62512,7 @@ bool DrainCancelledActionDeferredClaims(Engine& engine) noexcept {
 } // namespace
 
 void TimelineServiceCoordinator::Service() {
+    ObservePlayableStarts(engine_);
     if (!ServiceRetainedImmediateRetryCleanup(engine_)) return;
     const std::uint64_t observedAudioSequence = engine_.mixer.BlocksRendered();
     const std::uint64_t blockFrames = engine_.config.blockFrames;
@@ -63393,6 +63450,32 @@ harken::VariableCallObservation ObserveVariableCall(
         engine.timelinePool.PublishCutoffFrame());
 }
 
+void ObserveRejectedVariableWrite(const harken::MonitorRequestContext& request,
+    VnVariableId variableId, float value, VnEmitterHandle emitter, VnResult result) noexcept {
+    if (result == VN_OK) return;
+    harken::MonitorVariableResultFacts facts{};
+    facts.request = request;
+    facts.variableId = variableId;
+    facts.value = value;
+    facts.result = result;
+    facts.emitterScope = emitter != 0;
+    if (const auto* engine = harken::detail::g_engine) {
+        facts.projectId = engine->CurrentProjectId();
+        facts.worldGeneration = engine->variables.CurrentWorldGeneration();
+        facts.emitterOrigin = engine->monitorEmitters.CaptureOrigin(emitter);
+    }
+    harken::ObserveMonitorVariableResult(facts);
+}
+
+VnResult RejectVariableRequest(VnVariableId variableId, float value,
+    VnEmitterHandle emitter, VnResult result) noexcept {
+    const auto request = harken::detail::BeginMonitorRequest(
+        harken::MonitorRequestOrigin::NativeAPI, emitter == 0
+            ? VN_MONITOR_OPERATION_SET_VALUE : VN_MONITOR_OPERATION_SET_EMITTER_VALUE);
+    ObserveRejectedVariableWrite(request, variableId, value, emitter, result);
+    return result;
+}
+
 void FillVariableTicket(const harken::VariableAcceptResult& accepted,
                         VnVariableTicketV1* outTicket) {
     if (outTicket == nullptr || accepted.result != VN_OK) {
@@ -63407,6 +63490,19 @@ bool VariableBatchDescUsable(const VnVariableBatchDescV1* desc) {
     return desc != nullptr &&
            desc->structSize == sizeof(VnVariableBatchDescV1) &&
            desc->reserved0 == 0 && desc->reserved1 == 0;
+}
+
+void ObserveRejectedVariableBatch(const harken::MonitorRequestContext& request,
+    const VnVariableBatchDescV1* desc, VnEmitterHandle emitter, VnResult result) noexcept {
+    if (result == VN_OK) return;
+    const auto count = VariableBatchDescUsable(desc) ? desc->writeCount : 0;
+    if (count > 0 && count <= VN_VARIABLE_BATCH_WRITE_CAPACITY && desc->writes) {
+        for (std::uint32_t i = 0; i < count; ++i)
+            ObserveRejectedVariableWrite(request, desc->writes[i].variableId,
+                desc->writes[i].value, emitter, result);
+    } else {
+        ObserveRejectedVariableWrite(request, {}, 0.0f, emitter, result);
+    }
 }
 
 void TraceVariableBatch(harken::TraceCallScribe& trace,
@@ -70581,10 +70677,11 @@ engine.runtimeRecreateRequired = true;
             return result;
         }
     }
-    const bool pathAlreadyEndsInSound =
-        pathContainerCount != 0 &&
-        pathLastChildKind == PlayableKind::Sound;
-    if (!directCompositeScheduleActive && queueInitialFrontier.schedule.leafCount <= 1u && !pathAlreadyEndsInSound &&
+    const bool soundInstancePrepared =
+        rootKind == PlayableKind::Sound ||
+        (pathContainerCount != 0 &&
+         pathLastChildKind == PlayableKind::Sound);
+    if (!directCompositeScheduleActive && queueInitialFrontier.schedule.leafCount <= 1u && !soundInstancePrepared &&
         current.kind == PlayableKindV1::Sound) {
         const auto parent = treeStep.PreparedInstanceHandle(
             treeStep.InstanceReservationCount() - 1u);
@@ -74806,6 +74903,8 @@ harken::ActionFiringStepResult MakeImmediateActionStepResult(
     const auto& firing =
         plan.engine->actionFiringPlanScratch[planned.firingIndex];
     harken::ActionFiringStepResult result{};
+    result.monitorExecutionOnCommit = !planned.deferred &&
+        !planned.cooldownSuppressed && !planned.quantizeSuppressed;
     result.state = state;
     result.result = VN_OK;
     result.opcode = static_cast<std::uint32_t>(authored.opcode);
@@ -76348,8 +76447,23 @@ bool PrepareImmediateActionVariableWrite(
                   harken::VariableWriterIdentityV1::Action);
     if (accepted.result != VN_OK) {
         plan.result = accepted.result;
+        harken::MonitorVariableResultFacts facts{};
+        facts.request = plan.playbackRequest;
+        facts.emitterOrigin = plan.emitterOrigin;
+        facts.projectId = plan.engine->actionFiringPlanScratch[planned.firingIndex].owner.projectId;
+        facts.variableId = planned.step->target.stableId;
+        facts.worldGeneration = observed.world;
+        facts.actionFiring = plan.engine->actionFiringPlanScratch[planned.firingIndex].handle;
+        facts.executionOrdinal = planned.executionOrdinal;
+        facts.result = accepted.result;
+        facts.value = std::bit_cast<float>(planned.step->valueBits);
+        facts.emitterScope = planned.step->scope == harken::ActionScopeV1::Emitter;
+        harken::ObserveMonitorVariableResult(facts);
         return false;
     }
+    plan.engine->variables.BindPreparedMonitorRequest(token, plan.playbackRequest,
+        plan.emitterOrigin, plan.engine->actionFiringPlanScratch[planned.firingIndex].handle,
+        plan.engine->actionFiringPlanScratch[planned.firingIndex].owner.projectId);
     const bool bound = plan.deferredParentFiring != 0
         ? plan.engine->variables.BindPreparedActionWriteOrder(token, *plan.engine, plan.deferredChildIdentity)
         : plan.engine->variables.BindPreparedActionWriteOrder(token, plan.originalSingleIssue);
@@ -85303,6 +85417,19 @@ bool PrepareImmediateActionCompositePlay(
     ObservePreparedContent(engine, scratch->playableTreeExecutor, scratch->instance.Handle(),
         scratch->packLeaseOwned ? MonitorContentFor(scratch->packPlaybackView, root)
                                 : MonitorContentFor(world, root));
+    for (std::uint32_t index = 0; index < materialized.leafCount; ++index) {
+        if (!scratch->playableTreeExecutor.PrepareInstance(engine.playableInstances,
+                harken::PlayableKind::Sound, scratch->instance.Handle())) {
+            (void)scratch->playableTreeExecutor.Cancel(engine.playableInstances);
+            (void)ReleaseImmediateActionPlayableLease(engine, scratch, &plan);
+            plan.result = VN_NO_VOICE;
+            return false;
+        }
+        const auto leafInstance = scratch->playableTreeExecutor.PreparedInstanceHandle(index);
+        ObservePreparedContent(engine, scratch->playableTreeExecutor, leafInstance,
+            scratch->packLeaseOwned ? MonitorContentFor(scratch->packPlaybackView, materialized.leaves[index].leaf)
+                                    : MonitorContentFor(world, materialized.leaves[index].leaf));
+    }
 
     if (!PreparePlayableServiceRow(engine, *row, scratch->instance.Handle(),
                                   scratch->instance.ScheduleEpoch(), nullptr, nullptr, &scratch->storage)) {
@@ -85415,23 +85542,34 @@ bool PrepareImmediateActionCompositePlay(
         : &row->schedule;
     row->runtimeProgram.payloads = payloads;
     row->schedule.events = events;
+    harken::StableStoragePreparation relationBacking;
+    if (!engine.PrepareMemberRelationWrite(materialized.leafCount, &relationBacking)) {
+        plan.result = VN_BACKPRESSURE;
+        (void)ReleaseImmediateActionPlay(engine, scratch, &plan);
+        return false;
+    }
+    const auto relationUse = relationBacking.Use();
     for (std::uint32_t index = 0;
          index < materialized.leafCount; ++index) {
         const std::size_t memberSlot = memberBase + index;
         const auto& source = materialized.leaves[index];
         const auto voice = row->capturedScheduleVoices[index].Input();
-        const std::uint64_t startFrame =
-            baseStartFrame + source.startOffsetFrames;
-        if (engine.AcquirePlayableMember(*row, index) == nullptr) {
-            plan.result = VN_BACKPRESSURE;
+        const auto leafInstance = scratch->playableTreeExecutor.PreparedInstanceHandle(index);
+        const auto leafEpoch = scratch->playableTreeExecutor.PreparedInstanceEpoch(index);
+        std::size_t physicalSlot = 0;
+        if (!PreparePlayableMemberStorage(engine, *row, memberSlot,
+                leafInstance, leafEpoch, &physicalSlot) || physicalSlot != memberSlot) {
+            plan.result = VN_NO_VOICE;
             (void)ReleaseImmediateActionPlay(engine, scratch, &plan);
             return false;
         }
+        const std::uint64_t startFrame =
+            baseStartFrame + source.startOffsetFrames;
         const TimelineVoiceInstallResult installed =
             InstallTimelineVoiceStart(
-                engine, voice, row->rootInstance, startFrame,
+                engine, voice, leafInstance, startFrame,
                 row->rootInstance, row->rootInstance, nullptr, nullptr, {}, UINT16_MAX,
-                nullptr, &scratch->voiceStarts[index], nullptr, nullptr,
+                nullptr, &scratch->voiceStarts[index], nullptr, row,
                 nullptr, row->pendingImmediateEntry, false, false, false,
                 nullptr, {}, false, 0);
         if (scratch->voiceStarts[index].prepared) scratch->voiceStartCount = index + 1u;
@@ -85447,6 +85585,8 @@ bool PrepareImmediateActionCompositePlay(
             installed.renderHandle;
         engine.MutablePlayableMember(memberSlot).startFrame = startFrame;
         engine.MutablePlayableMember(memberSlot).release = installed.releaseObserver;
+        engine.SetPlayableMemberCompletion(memberSlot,
+            {leafInstance, leafEpoch, installed.sourceTerminal});
         engine.MutablePlayableMember(memberSlot).monitorSelection = installed.monitorSelection;
         auto& payload = payloads[index];
         payload = {};
@@ -85493,6 +85633,7 @@ bool PrepareImmediateActionCompositePlay(
         return false;
     }
     if (!markerOnly) {
+        row->activeLeafInstance = scratch->playableTreeExecutor.PreparedInstanceHandle(0);
         row->leaf = engine.ReadPlayableMember(memberBase).leaf;
         row->arm = engine.ReadPlayableMember(memberBase).arm;
         if (materialized.leafCount == 1u) {
@@ -93125,11 +93266,13 @@ TimelineDeferredMaterializeStatus MaterializeActionDeferredPostAction(
             bundle.Abandon();
             return finish(ActionStepState::Failed, VN_BACKPRESSURE, ActionTerminalReason::Capacity);
         }
+        engine.actionFirings.ObserveStepExecution(record.firing, record.stepIndex);
         if (!bundle.CommitReserved(accepted)) {
             return finish(ActionStepState::Failed, VN_RUNTIME_RECREATE_REQUIRED, ActionTerminalReason::GenerationExhausted);
         }
         FinishImmediateActionNativeQueueResets(plan);
     } else if (plan.materializationSequence != 0) {
+        engine.actionFirings.ObserveStepExecution(record.firing, record.stepIndex);
         if (!bundle.CommitReserved(plan.materializationSequence)) {
             return finish(ActionStepState::Failed, VN_RUNTIME_RECREATE_REQUIRED,
                           ActionTerminalReason::GenerationExhausted);
@@ -93180,6 +93323,8 @@ bool CancelNativeQueueResetResourcesForTest(Engine& engine, std::uint32_t scratc
 namespace harken {
 void JournalCanonicalPackFileRef(TraceCallScribe& trace, const Engine& engine,
                                  const VnPackLoadDesc& load);
+VnResult SetGameplayCatalog(Engine& engine, VnPackHandle expectedInitHandle,
+                            const VnPackByteSpan* catalog);
 VnResult ActivateCanonicalPackSetV1(
     Engine& engine, const VnCanonicalPackSetActivationDescV1* descriptor,
     VnCanonicalPackSetActivationReportV1* outReport);
@@ -93278,7 +93423,8 @@ HARKEN_OPTIONAL_HOST_EXPORT VnResult Vn_MonitorRegisterHost(const VnMonitorHostR
     if (desc == nullptr || desc->structSize != sizeof(*desc) || desc->reserved0 != 0 ||
         desc->localSequence == 0 || desc->registrationRevision == 0 ||
         (desc->ownershipKind != VN_MONITOR_HOST_UNITY_EMITTER &&
-         desc->ownershipKind != VN_MONITOR_HOST_UNITY_SPATIAL_SOURCE)) return VN_INVALID_ARG;
+         desc->ownershipKind != VN_MONITOR_HOST_UNITY_SPATIAL_SOURCE &&
+         desc->ownershipKind != VN_MONITOR_HOST_STUDIO_DEFAULT_EMITTER)) return VN_INVALID_ARG;
     const auto gate = harken::monitor::GateControlEntry();
     if (gate != VN_OK) return gate;
     if (harken::detail::CanonicalSetMutationBlocked()) return VN_IN_USE;
@@ -93297,7 +93443,8 @@ HARKEN_OPTIONAL_HOST_EXPORT VnResult Vn_MonitorRegisterHostV2(const VnMonitorHos
     if (desc == nullptr || desc->structSize != sizeof(*desc) || desc->reserved0 != 0 ||
         desc->localSequence == 0 || desc->registrationRevision == 0 ||
         (desc->ownershipKind != VN_MONITOR_HOST_UNITY_EMITTER &&
-         desc->ownershipKind != VN_MONITOR_HOST_UNITY_SPATIAL_SOURCE)) return VN_INVALID_ARG;
+         desc->ownershipKind != VN_MONITOR_HOST_UNITY_SPATIAL_SOURCE &&
+         desc->ownershipKind != VN_MONITOR_HOST_STUDIO_DEFAULT_EMITTER)) return VN_INVALID_ARG;
     harken::MonitorHostDescription description{};
     if (!harken::MonitorHostDescription::Capture(*desc, description)) return VN_INVALID_ARG;
     const auto gate = harken::monitor::GateControlEntry();
@@ -94928,6 +95075,18 @@ VnResult Vn_UnloadPackEx(VnPackHandle handle, std::uint32_t flags) {
     harken::monitor::ObserveOperation(VN_MONITOR_OPERATION_UNLOAD_PACK, result,
                                      VN_MONITOR_ENTITY_NONE, {}, handle, flags);
     return result;
+}
+
+VnResult Vn_SetGameplayCatalog(VnPackHandle expectedInitHandle,
+                              const VnPackByteSpan* catalog) {
+    if (harken::detail::CanonicalSetMutationBlocked()) return VN_IN_USE;
+    try {
+        harken::Engine* engine = harken::detail::g_engine;
+        if (engine == nullptr || engine->callbackFatalSticky) return VN_NOT_INITIALIZED;
+        return harken::SetGameplayCatalog(*engine, expectedInitHandle, catalog);
+    } catch (...) {
+        return VN_DEVICE_ERROR;
+    }
 }
 
 VnResult Vn_ActivateCanonicalPackSetV1(
@@ -101158,7 +101317,8 @@ VnResult Vn_SetVoiceWidth(VnVoiceHandle handle, float width) {
         return VN_DEVICE_ERROR;
     }}
 
-static VnResult SetValueObserved(VnVariableId variableId, float value) {
+static VnResult SetValueObserved(VnVariableId variableId, float value,
+    const harken::MonitorRequestContext& request) {
     try {
     if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
     harken::Engine* engine = harken::detail::g_engine;
@@ -101188,6 +101348,9 @@ static VnResult SetValueObserved(VnVariableId variableId, float value) {
         .U64(accepted.ticket.sequence)
         .U32(static_cast<std::uint32_t>(accepted.result))
         .U32(0);
+    if (accepted.result == VN_OK)
+        engine->variables.BindMonitorRequest(accepted, request,
+            engine->monitorEmitters.CaptureOrigin(0), engine->CurrentProjectId());
     return accepted.result;
 
     } catch (const std::bad_alloc&) {
@@ -101197,7 +101360,8 @@ static VnResult SetValueObserved(VnVariableId variableId, float value) {
     }}
 
 static VnResult SetValuesObserved(const VnVariableBatchDescV1* desc,
-                      VnVariableTicketV1* outTicket) {
+                      VnVariableTicketV1* outTicket,
+                      const harken::MonitorRequestContext& request) {
     try {
     if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
     harken::Engine* engine = harken::detail::g_engine;
@@ -101228,6 +101392,9 @@ static VnResult SetValuesObserved(const VnVariableBatchDescV1* desc,
             engine->bindings, engine->busTargets);
     TraceVariableAccept(trace, accepted);
     FillVariableTicket(accepted, outTicket);
+    if (accepted.result == VN_OK)
+        engine->variables.BindMonitorRequest(accepted, request,
+            engine->monitorEmitters.CaptureOrigin(0), engine->CurrentProjectId());
     return accepted.result;
 
     } catch (const std::bad_alloc&) {
@@ -101236,8 +101403,9 @@ static VnResult SetValuesObserved(const VnVariableBatchDescV1* desc,
         return VN_DEVICE_ERROR;
     }}
 
-VnResult Vn_ResetValues(const VnVariableBatchDescV1* desc,
-                        VnVariableTicketV1* outTicket) {
+static VnResult ResetValuesObserved(const VnVariableBatchDescV1* desc,
+                        VnVariableTicketV1* outTicket,
+                        const harken::MonitorRequestContext& request) {
     try {
     if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
     harken::Engine* engine = harken::detail::g_engine;
@@ -101268,6 +101436,9 @@ VnResult Vn_ResetValues(const VnVariableBatchDescV1* desc,
             engine->bindings, engine->busTargets);
     TraceVariableAccept(trace, accepted);
     FillVariableTicket(accepted, outTicket);
+    if (accepted.result == VN_OK)
+        engine->variables.BindMonitorRequest(accepted, request,
+            engine->monitorEmitters.CaptureOrigin(0), engine->CurrentProjectId());
     return accepted.result;
 
     } catch (const std::bad_alloc&) {
@@ -102455,7 +102626,7 @@ static VnResult StopEmitterObserved(VnEmitterHandle handle, uint32_t fadeMs,
     }}
 
 static VnResult SetEmitterValueObserved(VnEmitterHandle handle, VnVariableId variableId,
-                            float value) {
+                            float value, const harken::MonitorRequestContext& request) {
     try {
     if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
     harken::Engine* engine = harken::detail::g_engine;
@@ -102495,6 +102666,9 @@ static VnResult SetEmitterValueObserved(VnEmitterHandle handle, VnVariableId var
         .U64(accepted.ticket.sequence)
         .U32(static_cast<std::uint32_t>(accepted.result))
         .U32(0);
+    if (accepted.result == VN_OK)
+        engine->variables.BindMonitorRequest(accepted, request,
+            engine->monitorEmitters.CaptureOrigin(handle), engine->CurrentProjectId());
     return accepted.result;
 
     } catch (const std::bad_alloc&) {
@@ -102505,7 +102679,8 @@ static VnResult SetEmitterValueObserved(VnEmitterHandle handle, VnVariableId var
 
 static VnResult SetEmitterValuesObserved(VnEmitterHandle emitter,
                              const VnVariableBatchDescV1* desc,
-                             VnVariableTicketV1* outTicket) {
+                             VnVariableTicketV1* outTicket,
+                             const harken::MonitorRequestContext& request) {
     try {
     if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
     harken::Engine* engine = harken::detail::g_engine;
@@ -102545,6 +102720,9 @@ static VnResult SetEmitterValuesObserved(VnEmitterHandle emitter,
     }();
     TraceVariableAccept(trace, accepted);
     FillVariableTicket(accepted, outTicket);
+    if (accepted.result == VN_OK)
+        engine->variables.BindMonitorRequest(accepted, request,
+            engine->monitorEmitters.CaptureOrigin(emitter), engine->CurrentProjectId());
     return accepted.result;
 
     } catch (const std::bad_alloc&) {
@@ -110658,7 +110836,8 @@ VnResult PrepareCanonicalOwners(
     PackVariablePublicationReason reason,
     PreparedCanonicalPublication* out,
     const PackAttenuationBindingMapV1* attenuationBindings = nullptr,
-    const PackComposition::CanonicalPackSetLedgerV1* ledger = nullptr) {
+    const PackComposition::CanonicalPackSetLedgerV1* ledger = nullptr,
+    const GameplayCatalogImage* gameplayCatalog = nullptr) {
     if (out == nullptr) {
         return VN_INVALID_ARG;
     }
@@ -110684,7 +110863,7 @@ VnResult PrepareCanonicalOwners(
         const VnResult composed = engine.packComposition.PrepareCommit(
             std::move(owners), catalog, initHandle, engine.config.maxActions,
             engine.serviceFrameClock, &prepared.composition, attenuationBindings, ledger,
-            reason == PackVariablePublicationReason::InitUnload);
+            reason == PackVariablePublicationReason::InitUnload, gameplayCatalog);
         if (composed != VN_OK) {
             const auto& facts = engine.packComposition.Facts();
             if (facts.conflictingStableId != VnObjectId{}) {
@@ -113232,6 +113411,36 @@ void JournalSuccessfulCanonicalPackSetActivation(
 
 }  // namespace
 
+VnResult SetGameplayCatalog(Engine& engine, VnPackHandle expectedInitHandle,
+                            const VnPackByteSpan* catalog) {
+    if (catalog == nullptr || catalog->structSize != sizeof(VnPackByteSpan) ||
+        catalog->reserved0 != 0 || catalog->bytes == nullptr || expectedInitHandle == 0)
+        return VN_INVALID_ARG;
+    if (engine.canonicalPackSetBusy) return VN_IN_USE;
+    CanonicalSetScope scope(engine);
+    const auto* published = engine.packComposition.Published();
+    if (published == nullptr || published->initHandle != expectedInitHandle)
+        return VN_STALE_HANDLE;
+    GameplayCatalogImage image;
+    const auto parsed = ParseGameplayCatalog(
+        static_cast<const std::uint8_t*>(catalog->bytes), catalog->byteCount, &image);
+    if (parsed != VN_OK) return parsed;
+    std::vector<PackComposition::CandidateOwner> owners;
+    owners.reserve(published->owners.size());
+    for (const auto& owner : published->owners)
+        owners.push_back(PackComposition::Keep(owner));
+    PreparedCanonicalPublication prepared;
+    const auto result = PrepareCanonicalOwners(engine, std::move(owners), nullptr,
+        expectedInitHandle, PackVariablePublicationReason::ContentMutation,
+        &prepared, nullptr, &published->ledger, &image);
+    if (result != VN_OK) return result;
+    CommitCanonicalOwners(engine, &prepared);
+    auto trace = ::TraceStateful(&engine, kTraceCallSetGameplayCatalog);
+    trace.U64(expectedInitHandle).U64(catalog->byteCount)
+        .Bytes(catalog->bytes, static_cast<std::size_t>(catalog->byteCount));
+    return VN_OK;
+}
+
 VnResult ActivateCanonicalPackSetV1(
     Engine& engine, const VnCanonicalPackSetActivationDescV1* descriptor,
     VnCanonicalPackSetActivationReportV1* outReport) {
@@ -114478,7 +114687,10 @@ VnResult Vn_StopEmitter(VnEmitterHandle handle, uint32_t fadeMs) {
 }
 
 VnResult Vn_SetValue(VnVariableId variableId, float value) {
-    const auto result = SetValueObserved(variableId, value);
+    const auto request = harken::detail::BeginMonitorRequest(
+        harken::MonitorRequestOrigin::NativeAPI, VN_MONITOR_OPERATION_SET_VALUE);
+    const auto result = SetValueObserved(variableId, value, request);
+    ObserveRejectedVariableWrite(request, variableId, value, 0, result);
     harken::monitor::ObserveOperation(VN_MONITOR_OPERATION_SET_VALUE, result,
         VN_MONITOR_ENTITY_NONE, variableId, 0, 0, 0, value);
     return result;
@@ -114491,7 +114703,8 @@ VnResult Vn_SetValueByName(const char* utf8Name, float value) {
     VnVariableResolved resolved{};
     resolved.structSize = sizeof(resolved);
     const auto result = Vn_ResolveVariableByName(&desc, &resolved);
-    return result == VN_OK ? Vn_SetValue(resolved.variableId, value) : result;
+    return result == VN_OK ? Vn_SetValue(resolved.variableId, value)
+                           : RejectVariableRequest({}, value, 0, result);
 }
 
 VnResult Vn_SetEmitterValueByName(VnEmitterHandle handle, const char* utf8Name, float value) {
@@ -114501,11 +114714,15 @@ VnResult Vn_SetEmitterValueByName(VnEmitterHandle handle, const char* utf8Name, 
     VnVariableResolved resolved{};
     resolved.structSize = sizeof(resolved);
     const auto result = Vn_ResolveVariableByName(&desc, &resolved);
-    return result == VN_OK ? Vn_SetEmitterValue(handle, resolved.variableId, value) : result;
+    return result == VN_OK ? Vn_SetEmitterValue(handle, resolved.variableId, value)
+                           : RejectVariableRequest({}, value, handle, result);
 }
 
 VnResult Vn_SetEmitterValue(VnEmitterHandle handle, VnVariableId variableId, float value) {
-    const auto result = SetEmitterValueObserved(handle, variableId, value);
+    const auto request = harken::detail::BeginMonitorRequest(
+        harken::MonitorRequestOrigin::NativeAPI, VN_MONITOR_OPERATION_SET_EMITTER_VALUE);
+    const auto result = SetEmitterValueObserved(handle, variableId, value, request);
+    ObserveRejectedVariableWrite(request, variableId, value, handle, result);
     harken::monitor::ObserveOperation(VN_MONITOR_OPERATION_SET_EMITTER_VALUE, result,
         VN_MONITOR_ENTITY_NONE, variableId, handle, 0, 0, value);
     return result;
@@ -114513,27 +114730,27 @@ VnResult Vn_SetEmitterValue(VnEmitterHandle handle, VnVariableId variableId, flo
 
 VnResult Vn_SetValueByLabelId(VnVariableId variableId, VnObjectId labelId,
                    VnEmitterHandle emitter) {
-    if (harken::detail::CanonicalSetMutationBlocked()) return VN_IN_USE;
+    if (harken::detail::CanonicalSetMutationBlocked()) return RejectVariableRequest(variableId, 0.0f, emitter, VN_IN_USE);
     const auto* engine = harken::detail::g_engine;
-    if (engine == nullptr || engine->callbackFatalSticky) return VN_NOT_INITIALIZED;
-    if (engine->runtimeTransportResetActive) return VN_BACKPRESSURE;
+    if (engine == nullptr || engine->callbackFatalSticky) return RejectVariableRequest(variableId, 0.0f, emitter, VN_NOT_INITIALIZED);
+    if (engine->runtimeTransportResetActive) return RejectVariableRequest(variableId, 0.0f, emitter, VN_BACKPRESSURE);
     float value = 0.0f;
     const auto result = engine->variables.ResolveLabel(variableId, labelId, &value);
-    if (result != VN_OK) return result;
+    if (result != VN_OK) return RejectVariableRequest(variableId, 0.0f, emitter, result);
     return emitter == 0 ? Vn_SetValue(variableId, value)
                         : Vn_SetEmitterValue(emitter, variableId, value);
 }
 
 VnResult Vn_SetValueByLabelName(VnVariableId variableId, const char* utf8Name,
                          VnEmitterHandle emitter) {
-    if (harken::detail::CanonicalSetMutationBlocked()) return VN_IN_USE;
+    if (harken::detail::CanonicalSetMutationBlocked()) return RejectVariableRequest(variableId, 0.0f, emitter, VN_IN_USE);
     const auto* engine = harken::detail::g_engine;
-    if (engine == nullptr || engine->callbackFatalSticky) return VN_NOT_INITIALIZED;
-    if (engine->runtimeTransportResetActive) return VN_BACKPRESSURE;
-    if (utf8Name == nullptr) return VN_INVALID_ARG;
+    if (engine == nullptr || engine->callbackFatalSticky) return RejectVariableRequest(variableId, 0.0f, emitter, VN_NOT_INITIALIZED);
+    if (engine->runtimeTransportResetActive) return RejectVariableRequest(variableId, 0.0f, emitter, VN_BACKPRESSURE);
+    if (utf8Name == nullptr) return RejectVariableRequest(variableId, 0.0f, emitter, VN_INVALID_ARG);
     float value = 0.0f;
     const auto result = engine->variables.ResolveLabel(variableId, std::string_view(utf8Name), &value);
-    if (result != VN_OK) return result;
+    if (result != VN_OK) return RejectVariableRequest(variableId, 0.0f, emitter, result);
     return emitter == 0 ? Vn_SetValue(variableId, value)
                         : Vn_SetEmitterValue(emitter, variableId, value);
 }
@@ -114592,7 +114809,10 @@ VnResult Vn_ResolveVariableByName(const VnPostActionByNameDesc* desc,
 }
 
 VnResult Vn_SetValues(const VnVariableBatchDescV1* desc, VnVariableTicketV1* outTicket) {
-    const auto result = SetValuesObserved(desc, outTicket);
+    const auto request = harken::detail::BeginMonitorRequest(
+        harken::MonitorRequestOrigin::NativeAPI, VN_MONITOR_OPERATION_SET_VALUES);
+    const auto result = SetValuesObserved(desc, outTicket, request);
+    ObserveRejectedVariableBatch(request, desc, 0, result);
     if (harken::monitor::EventCatalogEnabled()) {
         const auto count = VariableBatchDescUsable(desc) ? desc->writeCount : 0;
         if (count > 0 && count <= VN_VARIABLE_BATCH_WRITE_CAPACITY && desc->writes) {
@@ -114609,9 +114829,20 @@ VnResult Vn_SetValues(const VnVariableBatchDescV1* desc, VnVariableTicketV1* out
     return result;
 }
 
+VnResult Vn_ResetValues(const VnVariableBatchDescV1* desc, VnVariableTicketV1* outTicket) {
+    const auto request = harken::detail::BeginMonitorRequest(
+        harken::MonitorRequestOrigin::NativeAPI, VN_MONITOR_OPERATION_RESET_VALUES);
+    const auto result = ResetValuesObserved(desc, outTicket, request);
+    ObserveRejectedVariableBatch(request, desc, 0, result);
+    return result;
+}
+
 VnResult Vn_SetEmitterValues(VnEmitterHandle emitter, const VnVariableBatchDescV1* desc,
                              VnVariableTicketV1* outTicket) {
-    const auto result = SetEmitterValuesObserved(emitter, desc, outTicket);
+    const auto request = harken::detail::BeginMonitorRequest(
+        harken::MonitorRequestOrigin::NativeAPI, VN_MONITOR_OPERATION_SET_EMITTER_VALUES);
+    const auto result = SetEmitterValuesObserved(emitter, desc, outTicket, request);
+    ObserveRejectedVariableBatch(request, desc, emitter, result);
     if (harken::monitor::EventCatalogEnabled()) {
         const auto count = VariableBatchDescUsable(desc) ? desc->writeCount : 0;
         if (count > 0 && count <= VN_VARIABLE_BATCH_WRITE_CAPACITY && desc->writes) {

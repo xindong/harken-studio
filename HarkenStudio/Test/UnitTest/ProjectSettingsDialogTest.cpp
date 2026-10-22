@@ -3,16 +3,16 @@
 #include "Core/LanguageContextService.h"
 #include "Core/MemorySettingsStorage.h"
 #include "Core/PlatformContextService.h"
-#include "Dialogs/Settings/Pages/ProjectBuildPage.h"
+#include "Dialogs/Settings/Pages/ProjectConfigPage.h"
+#include "Dialogs/Settings/Pages/ProjectPublishPage.h"
 #include "Dialogs/Settings/ProjectSettingsDialog.h"
 #include "Dialogs/Settings/ProjectPlatformDialog.h"
+#include "Dialogs/Settings/ProjectPlatformEditor.h"
 #include "ProjectManager.h"
 #include "ProjectSerializer.h"
 #include "ProjectTypes.h"
 #include "UndoCommands.h"
-#include "Widgets/PackManager/PackManagerPanel.h"
-#include "Widgets/Common/ListFooter.h"
-#include "Widgets/Common/TableWidget.h"
+#include "Widgets/Publisher/PublisherPanel.h"
 #include "Widgets/PlatformBar/PlatformBar.h"
 
 #include "Support/AITestSupport.h"
@@ -30,7 +30,6 @@
 #include <QLineEdit>
 #include <QLabel>
 #include <QScrollBar>
-#include <QHeaderView>
 #include <QMouseEvent>
 #include <QKeyEvent>
 #include <QListWidget>
@@ -176,80 +175,77 @@ protected:
 
 }
 
-TEST_F(ProjectSettingsDialogTest, BuildPageShowsInstanceNamesBaseTypesAndStableIds)
+TEST_F(ProjectSettingsDialogTest, ConfigPageShowsInstanceNamesBaseTypesAndStableIds)
 {
     ProjectSettingsDialog dialog;
-    auto* list = dialog.findChild<QTreeWidget*>("projectPlatformList");
+    auto* list = dialog.findChild<QListWidget*>("projectPlatformList");
+    auto* editor = dialog.findChild<ProjectPlatformEditor*>();
     ASSERT_NE(list, nullptr);
-    ASSERT_EQ(list->topLevelItemCount(), 2);
+    ASSERT_NE(editor, nullptr);
+    ASSERT_EQ(list->count(), 2);
     const auto& platforms = ProjectManager::instance().currentProject()->platforms;
     for (int i = 0; i < 2; ++i) {
-        EXPECT_EQ(list->topLevelItem(i)->text(0), platforms.at(i).name);
-        EXPECT_EQ(list->topLevelItem(i)->text(1), ProjectPlatformSemantics::basePlatformName(platforms.at(i).basePlatform));
-        EXPECT_EQ(list->topLevelItem(i)->data(0, Qt::UserRole).toUuid(), platforms.at(i).id);
+        EXPECT_EQ(list->item(i)->text(), platforms.at(i).name);
+        EXPECT_EQ(list->item(i)->data(Qt::UserRole).toUuid(), platforms.at(i).id);
+        list->setCurrentRow(i);
+        EXPECT_EQ(editor->platform().id, platforms.at(i).id);
+        EXPECT_EQ(editor->findChild<QComboBox*>("projectPlatformBase")->currentText(),
+                  ProjectPlatformSemantics::basePlatformName(platforms.at(i).basePlatform));
     }
-    EXPECT_TRUE(dialog.findChildren<QCheckBox*>().isEmpty());
+    EXPECT_TRUE(list->findChildren<QCheckBox*>().isEmpty());
 }
 
 TEST_F(ProjectSettingsDialogTest, LastPlatformCannotBeDeletedFromTheDraft)
 {
     ProjectSettingsDialog dialog;
-    auto* list = dialog.findChild<QTreeWidget*>("projectPlatformList");
+    auto* list = dialog.findChild<QListWidget*>("projectPlatformList");
     auto* remove = dialog.findChild<QToolButton*>("projectPlatformDelete");
     ASSERT_NE(list, nullptr);
     ASSERT_NE(remove, nullptr);
-    list->setCurrentItem(list->topLevelItem(1));
+    list->setCurrentItem(list->item(1));
     remove->click();
-    EXPECT_EQ(list->topLevelItemCount(), 1);
+    EXPECT_EQ(list->count(), 1);
     EXPECT_FALSE(remove->isEnabled());
     EXPECT_EQ(ProjectManager::instance().currentProject()->platforms.size(), 2);
     EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 0);
 }
 
-TEST_F(ProjectSettingsDialogTest, PlatformSelectionStartsEmptyAndCancellationSurvivesRefresh)
+TEST_F(ProjectSettingsDialogTest, PlatformSelectionPreservesDraftsAndDeletionSelectsAdjacentPlatform)
 {
     ProjectSettingsDialog dialog;
     dialog.show();
-    auto* list = dialog.findChild<QTreeWidget*>("projectPlatformList");
+    auto* list = dialog.findChild<QListWidget*>("projectPlatformList");
     auto* remove = dialog.findChild<QToolButton*>("projectPlatformDelete");
-    auto* page = dialog.findChild<ProjectBuildPage*>();
-    auto* table = qobject_cast<TableWidget*>(list->parentWidget());
-    ASSERT_NE(table, nullptr);
-    list->setFocus(Qt::TabFocusReason);
-    QApplication::processEvents();
-    EXPECT_EQ(list->currentItem(), nullptr);
-    EXPECT_TRUE(list->selectedItems().isEmpty());
+    auto* editor = dialog.findChild<ProjectPlatformEditor*>();
+    auto* page = dialog.findChild<ProjectConfigPage*>();
+    ASSERT_NE(list, nullptr);
+    ASSERT_NE(editor, nullptr);
+    ASSERT_NE(remove, nullptr);
+    ASSERT_NE(page, nullptr);
+    ASSERT_EQ(list->currentRow(), 0);
+    const auto initialId = editor->platform().id;
+    auto* name = editor->findChild<QLineEdit*>("projectPlatformName");
+    name->setText("Windows Draft");
+    editor->findChild<QCheckBox*>("platformResample")->setChecked(true);
+    list->setCurrentRow(1);
+    EXPECT_EQ(name->text(), QStringLiteral("macOS"));
+    EXPECT_FALSE(editor->findChild<QCheckBox*>("platformResample")->isChecked());
+    name->setText("macOS Draft");
+    list->setCurrentRow(0);
+    EXPECT_EQ(editor->platform().id, initialId);
+    EXPECT_EQ(name->text(), QStringLiteral("Windows Draft"));
+    EXPECT_TRUE(editor->findChild<QCheckBox*>("platformResample")->isChecked());
+    EXPECT_EQ(ProjectManager::instance().currentProject()->platforms.first().name, QStringLiteral("Windows"));
+    remove->click();
+    EXPECT_EQ(list->count(), 1);
+    EXPECT_EQ(list->currentRow(), 0);
+    EXPECT_EQ(name->text(), QStringLiteral("macOS Draft"));
     EXPECT_FALSE(remove->isEnabled());
-    list->setCurrentItem(list->topLevelItem(1));
-    EXPECT_TRUE(remove->isEnabled());
-    const auto selectedId = list->currentItem()->data(0, Qt::UserRole);
+    const auto selectedId = list->currentItem()->data(Qt::UserRole);
     page->load();
     ASSERT_NE(list->currentItem(), nullptr);
-    EXPECT_EQ(list->currentItem()->data(0, Qt::UserRole), selectedId);
-    auto* footer = table->footer();
-    const QPoint point = footer->rect().center();
-    QMouseEvent press(QEvent::MouseButtonPress, point, footer->mapToGlobal(point),
-                      Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
-    QApplication::sendEvent(footer, &press);
-    EXPECT_EQ(list->currentItem(), nullptr);
-    EXPECT_FALSE(remove->isEnabled());
-    page->load();
-    QApplication::processEvents();
-    EXPECT_EQ(list->currentItem(), nullptr);
-    EXPECT_TRUE(list->selectedItems().isEmpty());
-    list->setCurrentItem(list->topLevelItem(0));
-    QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
-    QApplication::sendEvent(list, &escape);
-    EXPECT_TRUE(dialog.isVisible());
-    EXPECT_EQ(list->currentItem(), nullptr);
-    EXPECT_FALSE(remove->isEnabled());
-    list->setCurrentItem(list->topLevelItem(0));
-    remove->click();
-    QApplication::processEvents();
-    EXPECT_EQ(list->topLevelItemCount(), 1);
-    EXPECT_EQ(list->currentItem(), list->topLevelItem(0));
-    EXPECT_EQ(list->selectedItems(), (QList<QTreeWidgetItem*>{list->currentItem()}));
-    EXPECT_FALSE(remove->isEnabled());
+    EXPECT_EQ(list->currentItem()->data(Qt::UserRole), selectedId);
+    EXPECT_EQ(name->text(), QStringLiteral("macOS"));
 }
 
 TEST_F(ProjectSettingsDialogTest, LanguageFocusDoesNotSelectUntilUserInteractionAndCanBeCleared)
@@ -277,7 +273,8 @@ TEST_F(ProjectSettingsDialogTest, PolicyDeletionSelectsNextRowWhileResetClearsSe
     auto platform = ProjectManager::instance().currentProject()->platforms.first();
     platform.profile.performResample = true;
     platform.profile.sizePolicies = {{64, {}}, {128, {}}, {std::nullopt, {}}};
-    ProjectPlatformDialog dialog(platform, false);
+    ProjectPlatformEditor dialog;
+    dialog.setPlatform(platform);
     dialog.show();
     auto* list = dialog.findChild<QTreeWidget*>("platformSizePolicies");
     auto* remove = dialog.findChild<QToolButton*>("platformPolicyDelete");
@@ -305,7 +302,7 @@ TEST_F(ProjectSettingsDialogTest, PolicyDeletionSelectsNextRowWhileResetClearsSe
     EXPECT_FALSE(remove->isEnabled());
 }
 
-TEST_F(ProjectSettingsDialogTest, LanguageListHasNoLockedSfxRow)
+TEST_F(ProjectSettingsDialogTest, LanguageListStartsEmptyWithoutLockedSfxRow)
 {
     ProjectSettingsDialog dialog;
     dialog.show();
@@ -314,12 +311,12 @@ TEST_F(ProjectSettingsDialogTest, LanguageListHasNoLockedSfxRow)
     ASSERT_NE(add, nullptr);
     ASSERT_NE(remove, nullptr);
     EXPECT_EQ(dialog.findChild<QWidget*>(QStringLiteral("targetLanguageLockedRow")), nullptr);
-    EXPECT_EQ(targetLanguageValues(dialog), QStringList{QStringLiteral("English")});
+    EXPECT_TRUE(targetLanguageValues(dialog).isEmpty());
     EXPECT_FALSE(remove->isEnabled());
 
     add->click();
     QApplication::processEvents();
-    auto* edit = targetLanguageEdit(dialog, 1);
+    auto* edit = targetLanguageEdit(dialog, 0);
     ASSERT_NE(edit, nullptr);
     EXPECT_TRUE(edit->hasFocus());
 }
@@ -330,9 +327,9 @@ TEST_F(ProjectSettingsDialogTest, PlatformDeletionAppliesWithLanguagesAndOneUndo
     seedProjectLanguages(languages);
     ProjectSettingsDialog dialog;
     dialog.show();
-    auto* list = dialog.findChild<QTreeWidget*>("projectPlatformList");
+    auto* list = dialog.findChild<QListWidget*>("projectPlatformList");
     ASSERT_NE(list, nullptr);
-    list->setCurrentItem(list->topLevelItem(1));
+    list->setCurrentItem(list->item(1));
     dialog.findChild<QToolButton*>("projectPlatformDelete")->click();
     EXPECT_EQ(targetLanguageValues(dialog), languages);
     EXPECT_TRUE(applyButton(dialog)->isEnabled());
@@ -355,15 +352,15 @@ TEST_F(ProjectSettingsDialogTest, AddingLanguageOnlyDirtiesUntilApply)
     ASSERT_NE(apply, nullptr);
 
     add->click();
-    auto* edit = targetLanguageEdit(dialog, 1);
+    auto* edit = targetLanguageEdit(dialog, 0);
     ASSERT_NE(edit, nullptr);
     edit->setText(QStringLiteral("Japanese"));
     EXPECT_TRUE(apply->isEnabled());
-    EXPECT_EQ(ProjectManager::instance().getProjectLanguages(), QStringList{QStringLiteral("English")});
+    EXPECT_TRUE(ProjectManager::instance().getProjectLanguages().isEmpty());
 
     apply->click();
     EXPECT_EQ(ProjectManager::instance().getProjectLanguages(),
-              QStringList({QStringLiteral("English"), QStringLiteral("Japanese")}));
+              QStringList{QStringLiteral("Japanese")});
     EXPECT_FALSE(dialog.isVisible());
     EXPECT_EQ(dialog.result(), QDialog::Accepted);
 }
@@ -377,6 +374,7 @@ TEST_F(ProjectSettingsDialogTest, ApplyPersistsLanguagesAndClearsDirty)
     ASSERT_NE(add, nullptr);
     ASSERT_NE(apply, nullptr);
 
+    add->click();
     auto* first = targetLanguageEdit(dialog, 0);
     ASSERT_NE(first, nullptr);
     first->setText(QStringLiteral("English"));
@@ -450,7 +448,7 @@ TEST_F(ProjectSettingsDialogTest, RemoveSelectedLanguageApplies)
     EXPECT_FALSE(dialog.isVisible());
 }
 
-TEST_F(ProjectSettingsDialogTest, LastLanguageCannotBeDeletedFromTheDraft)
+TEST_F(ProjectSettingsDialogTest, LastLanguageDeletionAppliesAndCanBeUndone)
 {
     const QStringList languages{QStringLiteral("Japanese")};
     seedProjectLanguages(languages);
@@ -467,22 +465,27 @@ TEST_F(ProjectSettingsDialogTest, LastLanguageCannotBeDeletedFromTheDraft)
     ASSERT_NE(edit, nullptr);
 
     clickLanguageEditor(edit);
-    EXPECT_FALSE(remove->isEnabled());
+    EXPECT_TRUE(remove->isEnabled());
     remove->click();
-    EXPECT_EQ(targetLanguageValues(dialog), languages);
+    EXPECT_TRUE(targetLanguageValues(dialog).isEmpty());
     EXPECT_FALSE(remove->isEnabled());
-    EXPECT_FALSE(apply->isEnabled());
+    EXPECT_TRUE(apply->isEnabled());
     EXPECT_EQ(ProjectManager::instance().getProjectLanguages(), languages);
     EXPECT_EQ(service.language(), QStringLiteral("Japanese"));
     EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 0);
 
-    edit->clear();
-    acceptNextModalDialog();
     apply->click();
-    EXPECT_TRUE(dialog.isVisible());
+    EXPECT_FALSE(dialog.isVisible());
+    EXPECT_TRUE(ProjectManager::instance().getProjectLanguages().isEmpty());
+    EXPECT_TRUE(service.language().isEmpty());
+    EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 1);
+
+    ASSERT_TRUE(UndoRedoManager::instance().undo());
     EXPECT_EQ(ProjectManager::instance().getProjectLanguages(), languages);
     EXPECT_EQ(service.language(), QStringLiteral("Japanese"));
-    EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 0);
+    ASSERT_TRUE(UndoRedoManager::instance().redo());
+    EXPECT_TRUE(ProjectManager::instance().getProjectLanguages().isEmpty());
+    EXPECT_TRUE(service.language().isEmpty());
 }
 
 TEST_F(ProjectSettingsDialogTest, IllegalLanguageCharactersCannotBeTyped)
@@ -493,7 +496,7 @@ TEST_F(ProjectSettingsDialogTest, IllegalLanguageCharactersCannotBeTyped)
     ASSERT_NE(add, nullptr);
 
     add->click();
-    auto* edit = targetLanguageEdit(dialog, 1);
+    auto* edit = targetLanguageEdit(dialog, 0);
     ASSERT_NE(edit, nullptr);
     edit->insert(QStringLiteral("English"));
     EXPECT_EQ(edit->text(), QStringLiteral("English"));
@@ -507,6 +510,7 @@ TEST_F(ProjectSettingsDialogTest, IllegalLanguageCharactersCannotBeTyped)
 
 TEST_F(ProjectSettingsDialogTest, DuplicateLanguageRejectedOnApply)
 {
+    seedProjectLanguages({QStringLiteral("English")});
     ProjectSettingsDialog dialog;
     dialog.show();
     auto* add = addLanguageButton(dialog);
@@ -531,13 +535,14 @@ TEST_F(ProjectSettingsDialogTest, DuplicateLanguageRejectedOnApply)
     EXPECT_TRUE(apply->isEnabled());
 }
 
-TEST_F(ProjectSettingsDialogTest, InvalidLanguagesRejectApplyBeforeAnyPlatformChanges)
+TEST_F(ProjectSettingsDialogTest, InvalidConfigurationRejectsApplyBeforeAnySettingsChange)
 {
+    seedProjectLanguages({QStringLiteral("English")});
     ProjectSettingsDialog dialog;
     dialog.show();
     auto* add = addLanguageButton(dialog);
     auto* apply = applyButton(dialog);
-    auto* list = dialog.findChild<QTreeWidget*>("projectPlatformList");
+    auto* list = dialog.findChild<QListWidget*>("projectPlatformList");
     ASSERT_NE(add, nullptr);
     ASSERT_NE(apply, nullptr);
     ASSERT_NE(list, nullptr);
@@ -546,8 +551,9 @@ TEST_F(ProjectSettingsDialogTest, InvalidLanguagesRejectApplyBeforeAnyPlatformCh
     auto* edit = targetLanguageEdit(dialog, 1);
     ASSERT_NE(edit, nullptr);
     edit->setText(QStringLiteral("SFX"));
-    list->setCurrentItem(list->topLevelItem(1));
+    list->setCurrentItem(list->item(1));
     dialog.findChild<QToolButton*>("projectPlatformDelete")->click();
+    dialog.findChild<QLineEdit*>("packBuildOutputDirEdit")->setText("DraftPacks");
     acceptNextModalDialog();
     apply->click();
 
@@ -555,11 +561,27 @@ TEST_F(ProjectSettingsDialogTest, InvalidLanguagesRejectApplyBeforeAnyPlatformCh
     EXPECT_EQ(ProjectManager::instance().getProjectLanguages(), QStringList{QStringLiteral("English")});
     EXPECT_EQ(ProjectManager::instance().getTargetPlatforms(),
               HarkenTest::platformIdStrings({"Windows", "macOS"}));
+    EXPECT_TRUE(ProjectManager::instance().packBuildOutputDir().isEmpty());
+
+    edit->setText(QStringLiteral("German"));
+    auto* platformName = dialog.findChild<QLineEdit*>("projectPlatformName");
+    ASSERT_NE(platformName, nullptr);
+    platformName->clear();
+    acceptNextModalDialog();
+    apply->click();
+
+    EXPECT_TRUE(dialog.isVisible());
+    EXPECT_EQ(ProjectManager::instance().getProjectLanguages(), QStringList{QStringLiteral("English")});
+    EXPECT_EQ(ProjectManager::instance().getTargetPlatforms(),
+              HarkenTest::platformIdStrings({"Windows", "macOS"}));
+    EXPECT_TRUE(ProjectManager::instance().packBuildOutputDir().isEmpty());
+    EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 0);
 }
 
 TEST_F(ProjectSettingsDialogTest, IllegalCharactersCannotBeTyped)
 {
     ProjectSettingsDialog dialog;
+    ASSERT_TRUE(dialog.showPage(QString::fromLatin1(kSettingsPagePublish)));
     dialog.show();
     auto* edit = dialog.findChild<QLineEdit*>(QStringLiteral("packBuildOutputDirEdit"));
     ASSERT_NE(edit, nullptr);
@@ -576,11 +598,8 @@ TEST_F(ProjectSettingsDialogTest, IllegalCharactersCannotBeTyped)
 
 TEST_F(ProjectSettingsDialogTest, PackBuildDirectoryIsRelativeAndEmptyRestoresDefault)
 {
-    PackManagerPanel packs;
-    auto* output = packs.findChild<QLineEdit*>(QStringLiteral("packSettingsBuildOutputDirEdit"));
-    ASSERT_NE(output, nullptr);
-    EXPECT_TRUE(output->isReadOnly());
     ProjectSettingsDialog dialog;
+    ASSERT_TRUE(dialog.showPage(QString::fromLatin1(kSettingsPagePublish)));
     dialog.show();
     auto* edit = dialog.findChild<QLineEdit*>(QStringLiteral("packBuildOutputDirEdit"));
     auto* apply = applyButton(dialog);
@@ -601,11 +620,9 @@ TEST_F(ProjectSettingsDialogTest, PackBuildDirectoryIsRelativeAndEmptyRestoresDe
     const QDir projectRoot(QFileInfo(projectPath).absolutePath());
     EXPECT_EQ(PathUtils::packBuildOutputRoot(projectPath, pm.packBuildOutputDir()),
               projectRoot.filePath(QStringLiteral("Audio/Packs")));
-    EXPECT_EQ(output->text(), projectRoot.filePath(QStringLiteral("Audio/Packs")));
     UndoRedoManager::instance().undoStack()->undo();
     EXPECT_EQ(PathUtils::packBuildOutputRoot(projectPath, pm.packBuildOutputDir()),
               projectRoot.filePath(QStringLiteral("BuildPacks")));
-    EXPECT_EQ(output->text(), projectRoot.filePath(QStringLiteral("BuildPacks")));
     UndoRedoManager::instance().undoStack()->redo();
     ProjectSerializer serializer;
     ASSERT_TRUE(serializer.saveProject(projectPath, *pm.currentProject()));
@@ -616,6 +633,7 @@ TEST_F(ProjectSettingsDialogTest, PackBuildDirectoryIsRelativeAndEmptyRestoresDe
               projectRoot.filePath(QStringLiteral("Audio/Packs")));
 
     ProjectSettingsDialog reopen;
+    ASSERT_TRUE(reopen.showPage(QString::fromLatin1(kSettingsPagePublish)));
     reopen.show();
     auto* emptyEdit = reopen.findChild<QLineEdit*>(QStringLiteral("packBuildOutputDirEdit"));
     auto* reopenApply = applyButton(reopen);
@@ -632,6 +650,7 @@ TEST_F(ProjectSettingsDialogTest, PackBuildDirectoryIsRelativeAndEmptyRestoresDe
               projectRoot.filePath(QStringLiteral("BuildPacks")));
 
     ProjectSettingsDialog prefixDialog;
+    ASSERT_TRUE(prefixDialog.showPage(QString::fromLatin1(kSettingsPagePublish)));
     prefixDialog.show();
     auto* prefixEdit = prefixDialog.findChild<QLineEdit*>(QStringLiteral("packBuildOutputDirEdit"));
     ASSERT_NE(prefixEdit, nullptr);
@@ -650,6 +669,7 @@ TEST_F(ProjectSettingsDialogTest, ProjectRootAndObjectBucketPackBuildDirectories
                             QStringLiteral("Busses/Packs"), QStringLiteral("Variables/Packs"),
                             QStringLiteral("Attenuations/Packs")}) {
         ProjectSettingsDialog dialog;
+        ASSERT_TRUE(dialog.showPage(QString::fromLatin1(kSettingsPagePublish)));
         dialog.show();
         auto* edit = dialog.findChild<QLineEdit*>(QStringLiteral("packBuildOutputDirEdit"));
         ASSERT_NE(edit, nullptr);
@@ -664,8 +684,12 @@ TEST_F(ProjectSettingsDialogTest, ProjectRootAndObjectBucketPackBuildDirectories
 
 TEST_F(ProjectSettingsDialogTest, AbsolutePackBuildDirectoryCannotBeApplied)
 {
+    seedProjectLanguages({QStringLiteral("English")});
     ProjectSettingsDialog dialog;
+    ASSERT_TRUE(dialog.showPage(QString::fromLatin1(kSettingsPagePublish)));
     dialog.show();
+    addLanguageButton(dialog)->click();
+    targetLanguageEdit(dialog, 1)->setText("Japanese");
     auto* edit = dialog.findChild<QLineEdit*>(QStringLiteral("packBuildOutputDirEdit"));
     ASSERT_NE(edit, nullptr);
     edit->setText(tempDir_.filePath(QStringLiteral("Packs")));
@@ -673,48 +697,52 @@ TEST_F(ProjectSettingsDialogTest, AbsolutePackBuildDirectoryCannotBeApplied)
     applyButton(dialog)->click();
     EXPECT_TRUE(dialog.isVisible());
     EXPECT_TRUE(ProjectManager::instance().packBuildOutputDir().isEmpty());
+    EXPECT_EQ(ProjectManager::instance().getProjectLanguages(), QStringList{"English"});
 }
 
 namespace {
 void enterPlatform(ProjectSettingsDialog& settings, const QString& name, const QString& base,
                    double rate = 0, bool create = true)
 {
-    QTimer::singleShot(0, [=]() {
-        auto* modal = qobject_cast<QDialog*>(QApplication::activeModalWidget());
-        EXPECT_NE(modal, nullptr);
-        if (!modal) return;
-        auto* nameEdit = modal->findChild<QLineEdit*>("projectPlatformName");
-        if (!nameEdit) { modal->reject(); FAIL() << "Platform editor did not open"; }
-        nameEdit->setText(name);
-        auto* baseChoice = modal->findChild<QComboBox*>("projectPlatformBase");
-        if (baseChoice->currentText() != base) {
-            QTimer::singleShot(0, []() {
-                auto* confirmation = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
-                ASSERT_NE(confirmation, nullptr);
-                confirmation->button(QMessageBox::Yes)->click();
-            });
-            baseChoice->setCurrentText(base);
-        }
-        if (rate > 0) {
-            modal->findChild<QCheckBox*>("platformResample")->setChecked(true);
-            auto* policies = modal->findChild<QTreeWidget*>("platformSizePolicies");
-            policies->setCurrentItem(policies->topLevelItem(0));
-            QTimer::singleShot(0, [rate]() {
-                auto* range = qobject_cast<QDialog*>(QApplication::activeModalWidget());
-                ASSERT_NE(range, nullptr);
-                EXPECT_EQ(range->findChild<QCheckBox*>("platformResample"), nullptr);
-                range->findChild<QDoubleSpinBox*>("platformSampleRate")->setValue(rate);
-                range->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->click();
-            });
-            doubleClickCurrentRow(modal->findChild<QTreeWidget*>("platformSizePolicies"));
-        }
-        modal->findChild<QDialogButtonBox*>("projectPlatformDialogButtons")->button(QDialogButtonBox::Ok)->click();
-    });
-    if (create) settings.findChild<QToolButton*>("projectPlatformAdd")->click();
-    else {
-        auto* list = settings.findChild<QTreeWidget*>("projectPlatformList");
-        list->setCurrentItem(list->topLevelItem(0));
-        doubleClickCurrentRow(list);
+    if (create) {
+        QTimer::singleShot(0, [base]() {
+            auto* modal = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            ASSERT_NE(modal, nullptr);
+            auto* supported = modal->findChild<QListWidget*>("supportedPlatformList");
+            ASSERT_NE(supported, nullptr);
+            const auto choices = supported->findItems(base, Qt::MatchExactly);
+            ASSERT_EQ(choices.size(), 1);
+            supported->setCurrentItem(choices.front());
+            modal->findChild<QPushButton*>("addProjectPlatformButton")->click();
+        });
+        settings.findChild<QToolButton*>("projectPlatformAdd")->click();
+    } else {
+        settings.findChild<QListWidget*>("projectPlatformList")->setCurrentRow(0);
+    }
+    auto* editor = settings.findChild<ProjectPlatformEditor*>();
+    ASSERT_NE(editor, nullptr);
+    editor->findChild<QLineEdit*>("projectPlatformName")->setText(name);
+    auto* baseChoice = editor->findChild<QComboBox*>("projectPlatformBase");
+    if (baseChoice->currentText() != base) {
+        QTimer::singleShot(0, []() {
+            auto* confirmation = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+            ASSERT_NE(confirmation, nullptr);
+            confirmation->button(QMessageBox::Yes)->click();
+        });
+        baseChoice->setCurrentText(base);
+    }
+    if (rate > 0) {
+        editor->findChild<QCheckBox*>("platformResample")->setChecked(true);
+        auto* policies = editor->findChild<QTreeWidget*>("platformSizePolicies");
+        policies->setCurrentItem(policies->topLevelItem(0));
+        QTimer::singleShot(0, [rate]() {
+            auto* range = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            ASSERT_NE(range, nullptr);
+            EXPECT_EQ(range->findChild<QCheckBox*>("platformResample"), nullptr);
+            range->findChild<QDoubleSpinBox*>("platformSampleRate")->setValue(rate);
+            range->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->click();
+        });
+        doubleClickCurrentRow(policies);
     }
 }
 }
@@ -724,17 +752,17 @@ TEST_F(ProjectSettingsDialogTest, TwoAndroidDraftsApplyTogetherAndPersistTheirPr
     auto& manager = ProjectManager::instance();
     manager.closeProject();
     ProjectConfig config;
-    config.name = "DefaultPlatforms";
+    config.name = "SinglePlatform";
     config.location = tempDir_.path();
+    config.platforms = HarkenTest::platforms({"Windows"});
     ASSERT_TRUE(manager.createProject(config));
     PlatformBar bar(PlatformContextService::instance());
-    PackManagerPanel packs;
+    PublisherPanel packs;
     ProjectSettingsDialog dialog;
     dialog.show();
-    auto* list = dialog.findChild<QTreeWidget*>("projectPlatformList");
-    ASSERT_EQ(list->topLevelItemCount(), 1);
-    EXPECT_EQ(list->topLevelItem(0)->text(0), QStringLiteral("Windows"));
-    EXPECT_EQ(list->topLevelItem(0)->text(1), QStringLiteral("Windows"));
+    auto* list = dialog.findChild<QListWidget*>("projectPlatformList");
+    ASSERT_EQ(list->count(), 1);
+    EXPECT_EQ(list->item(0)->text(), QStringLiteral("Windows"));
     EXPECT_FALSE(dialog.findChild<QToolButton*>("projectPlatformDelete")->isEnabled());
     EXPECT_FALSE(bar.findChild<QToolButton*>("platformBarAll")->isHidden());
     enterPlatform(dialog, "Android_Low", "Android", 22050);
@@ -763,7 +791,10 @@ TEST_F(ProjectSettingsDialogTest, TwoAndroidDraftsApplyTogetherAndPersistTheirPr
     EXPECT_EQ(platforms->itemData(1).toUuid(), low.id);
     EXPECT_EQ(platforms->itemData(2).toUuid(), high.id);
     EXPECT_EQ(packs.generationPlatforms(), project->platformIds());
-    EXPECT_EQ(packs.findChild<QToolButton*>("packExportPlatform_" + ProjectPlatformSemantics::idString(high.id))->text(), high.name);
+    auto* exportPlatforms = packs.findChild<QComboBox*>("packPlatformCombo");
+    ASSERT_NE(exportPlatforms, nullptr);
+    EXPECT_EQ(exportPlatforms->itemText(exportPlatforms->findData(
+        ProjectPlatformSemantics::idString(high.id))), high.name);
     EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 1);
     const auto expected = ProjectPlatformSemantics::platformsToJson(project->platforms);
     ASSERT_TRUE(UndoRedoManager::instance().undo());
@@ -791,15 +822,9 @@ TEST_F(ProjectSettingsDialogTest, DisablingResampleAppliesWithoutLosingRatesAndS
     UndoRedoManager::instance().clear();
     ProjectSettingsDialog settings;
     settings.show();
-    auto* list = settings.findChild<QTreeWidget*>("projectPlatformList");
-    list->setCurrentItem(list->topLevelItem(0));
-    QTimer::singleShot(0, []() {
-        auto* modal = qobject_cast<QDialog*>(QApplication::activeModalWidget());
-        ASSERT_NE(modal, nullptr);
-        modal->findChild<QCheckBox*>("platformResample")->setChecked(false);
-        modal->findChild<QDialogButtonBox*>("projectPlatformDialogButtons")->button(QDialogButtonBox::Ok)->click();
-    });
-    doubleClickCurrentRow(settings.findChild<QTreeWidget*>("projectPlatformList"));
+    auto* list = settings.findChild<QListWidget*>("projectPlatformList");
+    list->setCurrentItem(list->item(0));
+    settings.findChild<QCheckBox*>("platformResample")->setChecked(false);
     EXPECT_TRUE(manager.currentProject()->platforms.first().profile.performResample);
     applyButton(settings)->click();
     const auto after = ProjectPlatformSemantics::platformsToJson(manager.currentProject()->platforms);
@@ -823,10 +848,10 @@ TEST_F(ProjectSettingsDialogTest, CancelDiscardsPlatformCreationRenameAndDeletio
     ProjectSettingsDialog dialog;
     dialog.show();
     enterPlatform(dialog, "Draft", "Android");
-    auto* list = dialog.findChild<QTreeWidget*>("projectPlatformList");
-    list->setCurrentItem(list->topLevelItem(0));
+    auto* list = dialog.findChild<QListWidget*>("projectPlatformList");
+    list->setCurrentItem(list->item(0));
     enterPlatform(dialog, "Renamed", "Windows", 0, false);
-    list->setCurrentItem(list->topLevelItem(1));
+    list->setCurrentItem(list->item(1));
     dialog.findChild<QToolButton*>("projectPlatformDelete")->click();
     dialog.findChild<QPushButton*>("settingsCancelButton")->click();
     EXPECT_FALSE(dialog.isVisible());
@@ -838,6 +863,7 @@ TEST_F(ProjectSettingsDialogTest, CancelDiscardsPlatformCreationRenameAndDeletio
 
 TEST_F(ProjectSettingsDialogTest, ConcurrentPlatformEditRejectsApplyBeforeOtherSettingsChange)
 {
+    seedProjectLanguages({QStringLiteral("English")});
     ProjectSettingsDialog dialog;
     dialog.show();
     enterPlatform(dialog, "Draft", "Android");
@@ -858,13 +884,14 @@ TEST_F(ProjectSettingsDialogTest, ConcurrentPlatformEditRejectsApplyBeforeOtherS
     EXPECT_EQ(ProjectManager::instance().currentProject()->platforms.first().name, QStringLiteral("External"));
     EXPECT_EQ(ProjectManager::instance().getProjectLanguages(), QStringList{"English"});
     EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 1);
-    EXPECT_EQ(dialog.findChild<QTreeWidget*>("projectPlatformList")->topLevelItemCount(), 3);
+    EXPECT_EQ(dialog.findChild<QListWidget*>("projectPlatformList")->count(), 3);
     EXPECT_EQ(targetLanguageValues(dialog), (QStringList{"English", "Japanese"}));
     EXPECT_TRUE(applyButton(dialog)->isEnabled());
 }
 
 TEST_F(ProjectSettingsDialogTest, ConcurrentPlatformEditCanReloadAllBuildDraftsWithoutApplyingThem)
 {
+    seedProjectLanguages({QStringLiteral("English")});
     ProjectSettingsDialog dialog;
     dialog.show();
     EXPECT_EQ(dialog.findChild<QAbstractButton*>("projectPlatformsReload"), nullptr);
@@ -872,6 +899,8 @@ TEST_F(ProjectSettingsDialogTest, ConcurrentPlatformEditCanReloadAllBuildDraftsW
     addLanguageButton(dialog)->click();
     targetLanguageEdit(dialog, 1)->setText("Japanese");
     dialog.findChild<QLineEdit*>("packBuildOutputDirEdit")->setText("DraftPacks");
+    dialog.findChild<QCheckBox*>("buildExportWaveformsCheckBox")->setChecked(true);
+    dialog.findChild<QLineEdit*>("buildWaveformOutputDirEdit")->setText("DraftWaveforms");
     auto& manager = ProjectManager::instance();
     const auto id = manager.currentProject()->platforms.first().id;
     ASSERT_TRUE(ActionManager::instance().execute("rename_project_platform",
@@ -890,15 +919,19 @@ TEST_F(ProjectSettingsDialogTest, ConcurrentPlatformEditCanReloadAllBuildDraftsW
     applyButton(dialog)->click();
     EXPECT_TRUE(dialog.isVisible());
     EXPECT_FALSE(applyButton(dialog)->isEnabled());
-    auto* list = dialog.findChild<QTreeWidget*>("projectPlatformList");
-    ASSERT_EQ(list->topLevelItemCount(), 2);
-    EXPECT_EQ(list->topLevelItem(0)->text(0), QStringLiteral("External"));
+    auto* list = dialog.findChild<QListWidget*>("projectPlatformList");
+    ASSERT_EQ(list->count(), 2);
+    EXPECT_EQ(list->item(0)->text(), QStringLiteral("External"));
     EXPECT_EQ(targetLanguageValues(dialog), QStringList{"English"});
     EXPECT_TRUE(dialog.findChild<QLineEdit*>("packBuildOutputDirEdit")->text().isEmpty());
+    EXPECT_FALSE(dialog.findChild<QCheckBox*>("buildExportWaveformsCheckBox")->isChecked());
+    EXPECT_TRUE(dialog.findChild<QLineEdit*>("buildWaveformOutputDirEdit")->text().isEmpty());
     EXPECT_EQ(manager.getProjectLanguages(), QStringList{"English"});
     EXPECT_TRUE(manager.packBuildOutputDir().isEmpty());
+    EXPECT_FALSE(manager.currentProject()->buildExportWaveforms);
+    EXPECT_TRUE(manager.currentProject()->buildWaveformOutputDir.isEmpty());
     EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 1);
-    list->setCurrentItem(list->topLevelItem(0));
+    list->setCurrentItem(list->item(0));
     enterPlatform(dialog, "After Reload", "Windows", 0, false);
     applyButton(dialog)->click();
     EXPECT_FALSE(dialog.isVisible());
@@ -919,7 +952,8 @@ TEST_F(ProjectSettingsDialogTest, ProfileSizePolicyEditingPreservesCodecFieldsAn
     infinite.config.format = ConversionSettings::Codec::HarkenPackOpus;
     profile.sizePolicies.push_back(infinite);
     definition.profile = profile;
-    ProjectPlatformDialog editor(definition, false);
+    ProjectPlatformEditor editor;
+    editor.setPlatform(definition);
     editor.show();
     auto* policies = editor.findChild<QTreeWidget*>("platformSizePolicies");
     policies->setCurrentItem(policies->topLevelItem(0));
@@ -932,7 +966,6 @@ TEST_F(ProjectSettingsDialogTest, ProfileSizePolicyEditingPreservesCodecFieldsAn
         modal->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->click();
     });
     doubleClickCurrentRow(editor.findChild<QTreeWidget*>("platformSizePolicies"));
-    editor.findChild<QDialogButtonBox*>("projectPlatformDialogButtons")->button(QDialogButtonBox::Ok)->click();
     const auto changed = editor.platform();
     EXPECT_TRUE(changed.profile.performResample);
     ASSERT_EQ(changed.profile.sizePolicies.size(), 2u);
@@ -943,9 +976,9 @@ TEST_F(ProjectSettingsDialogTest, ProfileSizePolicyEditingPreservesCodecFieldsAn
     AssetInfo source;
     source.metadata.fileSize = 128;
     EXPECT_EQ(PlatformProfileManager::effectiveSettingsForAsset(source, changed).targetSampleRate, 32000u);
-    ProjectPlatformDialog reset(changed, false);
+    ProjectPlatformEditor reset;
+    reset.setPlatform(changed);
     reset.findChild<QPushButton*>("projectPlatformReset")->click();
-    reset.findChild<QDialogButtonBox*>("projectPlatformDialogButtons")->button(QDialogButtonBox::Ok)->click();
     EXPECT_EQ(reset.platform().profile.toJson(), ProjectPlatformProfile::fromBasePlatform(definition.basePlatform).toJson());
     EXPECT_EQ(reset.platform().id, definition.id);
 }
@@ -953,7 +986,8 @@ TEST_F(ProjectSettingsDialogTest, ProfileSizePolicyEditingPreservesCodecFieldsAn
 TEST_F(ProjectSettingsDialogTest, UpperLimitsSortBySizeAndTheMasterSwitchPreservesTheirValues)
 {
     const auto definition = ProjectManager::instance().currentProject()->platforms.first();
-    ProjectPlatformDialog editor(definition, false);
+    ProjectPlatformEditor editor;
+    editor.setPlatform(definition);
     editor.show();
     auto* list = editor.findChild<QTreeWidget*>("platformSizePolicies");
     auto* enabled = editor.findChild<QCheckBox*>("platformResample");
@@ -1004,15 +1038,13 @@ TEST_F(ProjectSettingsDialogTest, UpperLimitsSortBySizeAndTheMasterSwitchPreserv
     doubleClickCurrentRow(editor.findChild<QTreeWidget*>("platformSizePolicies"));
     enabled->setChecked(false);
     EXPECT_FALSE(list->isEnabled());
-    EXPECT_EQ(editor.platform().toJson(), definition.toJson());
     QCoreApplication::processEvents();
     EXPECT_EQ(list->horizontalScrollBar()->maximum(), 0);
     for (const auto* widget : {static_cast<QWidget*>(list), static_cast<QWidget*>(enabled),
-             static_cast<QWidget*>(editor.findChild<QDialogButtonBox*>("projectPlatformDialogButtons"))}) {
+             static_cast<QWidget*>(editor.findChild<QPushButton*>("projectPlatformReset"))}) {
         const QRect bounds(widget->mapTo(&editor, QPoint(0, 0)), widget->size());
         EXPECT_TRUE(editor.rect().contains(bounds));
     }
-    editor.findChild<QDialogButtonBox*>("projectPlatformDialogButtons")->button(QDialogButtonBox::Ok)->click();
     const auto result = editor.platform();
     EXPECT_FALSE(result.profile.performResample);
     ASSERT_EQ(result.profile.sizePolicies.size(), 3u);
@@ -1020,67 +1052,47 @@ TEST_F(ProjectSettingsDialogTest, UpperLimitsSortBySizeAndTheMasterSwitchPreserv
     EXPECT_EQ(result.profile.sizePolicies[1].maxBytes, 12u * 1024 * 1024);
     EXPECT_EQ(result.profile.sizePolicies[1].config.targetSampleRate, 44100u);
     EXPECT_FALSE(result.profile.sizePolicies.back().maxBytes);
-    ProjectPlatformDialog reopened(result, false);
+    ProjectPlatformEditor reopened;
+    reopened.setPlatform(result);
     reopened.findChild<QCheckBox*>("platformResample")->setChecked(true);
     EXPECT_TRUE(reopened.findChild<QTreeWidget*>("platformSizePolicies")->isEnabled());
     reopened.findChild<QPushButton*>("projectPlatformReset")->click();
-    reopened.reject();
-    EXPECT_EQ(reopened.platform().toJson(), result.toJson());
+    EXPECT_EQ(reopened.platform().profile.toJson(),
+              ProjectPlatformProfile::fromBasePlatform(result.basePlatform).toJson());
+    EXPECT_EQ(reopened.platform().id, result.id);
+    EXPECT_EQ(editor.platform().toJson(), result.toJson());
 }
 
-TEST_F(ProjectSettingsDialogTest, PlatformTablesPreserveDraggedColumnsThroughResizeAndRefresh)
+TEST_F(ProjectSettingsDialogTest, SupportedPlatformSelectionPreviewsDefaultsWithoutChangingProject)
 {
-    const auto dragAndResize = [](QWidget& window, QTreeWidget* table) {
-        EXPECT_TRUE(table->parentWidget()->findChildren<QPushButton*>().isEmpty());
-        window.show();
-        QCoreApplication::processEvents();
-        auto* header = table->header();
-        const int before = table->columnWidth(0);
-        const QPoint edge(header->sectionViewportPosition(0) + before - 1, header->height() / 2);
-        auto* viewport = header->viewport();
-        const QPoint target = edge + QPoint(40, 0);
-        QMouseEvent press(QEvent::MouseButtonPress, edge, viewport->mapToGlobal(edge), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
-        QApplication::sendEvent(viewport, &press);
-        QMouseEvent move(QEvent::MouseMove, target, viewport->mapToGlobal(target), Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
-        QApplication::sendEvent(viewport, &move);
-        QMouseEvent release(QEvent::MouseButtonRelease, target, viewport->mapToGlobal(target), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
-        QApplication::sendEvent(viewport, &release);
-        QCoreApplication::processEvents();
-        EXPECT_GT(table->columnWidth(0), before + 25);
-        const double ratio = double(table->columnWidth(0)) / table->viewport()->width();
-        window.resize(window.width() + 240, window.height() + 80);
-        QCoreApplication::processEvents();
-        EXPECT_NEAR(table->columnWidth(0), ratio * table->viewport()->width(), 2);
-        EXPECT_NEAR(table->columnWidth(0) + table->columnWidth(1), table->viewport()->width(), 2);
-        auto* footer = table->parentWidget()->findChild<ListFooter*>();
-        EXPECT_NE(footer, nullptr);
-        if (footer) {
-            EXPECT_EQ(footer->geometry().top(), table->geometry().bottom() + 1);
-            EXPECT_EQ(footer->geometry().left(), table->geometry().left());
-            EXPECT_EQ(footer->width(), table->width());
-            EXPECT_GT(footer->addButton()->x(), footer->width() / 2);
-            EXPECT_GT(footer->removeButton()->x(), footer->addButton()->geometry().right());
-            EXPECT_TRUE(footer->rect().contains(footer->removeButton()->geometry()));
-        }
-        return ratio;
-    };
-    ProjectSettingsDialog settings;
-    auto* instances = settings.findChild<QTreeWidget*>("projectPlatformList");
-    ASSERT_NE(instances, nullptr);
-    const double instanceRatio = dragAndResize(settings, instances);
-    enterPlatform(settings, "Added", "Windows");
-    QCoreApplication::processEvents();
-    EXPECT_NEAR(instances->columnWidth(0), instanceRatio * instances->viewport()->width(), 2);
-
-    ProjectPlatformDialog platform(ProjectManager::instance().currentProject()->platforms.first(), false);
-    auto* enabled = platform.findChild<QCheckBox*>("platformResample");
-    enabled->setChecked(true);
-    auto* policies = platform.findChild<QTreeWidget*>("platformSizePolicies");
-    const double policyRatio = dragAndResize(platform, policies);
-    platform.findChild<QPushButton*>("projectPlatformReset")->click();
-    enabled->setChecked(true);
-    QCoreApplication::processEvents();
-    EXPECT_NEAR(policies->columnWidth(0), policyRatio * policies->viewport()->width(), 2);
+    const auto before = ProjectPlatformSemantics::platformsToJson(ProjectManager::instance().currentProject()->platforms);
+    ProjectPlatformDialog dialog;
+    dialog.show();
+    auto* list = dialog.findChild<QListWidget*>("supportedPlatformList");
+    auto* preview = dialog.findChild<ProjectPlatformEditor*>();
+    ASSERT_NE(list, nullptr);
+    ASSERT_NE(preview, nullptr);
+    const QStringList names{"Windows", "Android", "Linux", "macOS", "iOS"};
+    ASSERT_EQ(list->count(), names.size());
+    for (int i = 0; i < list->count(); ++i) {
+        EXPECT_EQ(list->item(i)->text(), names[i]);
+        list->setCurrentRow(i);
+        const auto platform = preview->platform();
+        EXPECT_EQ(ProjectPlatformSemantics::basePlatformName(platform.basePlatform), names[i]);
+        EXPECT_EQ(platform.profile.toJson(), ProjectPlatformProfile::fromBasePlatform(platform.basePlatform).toJson());
+        auto* name = preview->findChild<QLineEdit*>("projectPlatformName");
+        EXPECT_TRUE(name->isReadOnly() || !name->isEnabled());
+        EXPECT_FALSE(preview->findChild<QComboBox*>("projectPlatformBase")->isEnabled());
+        EXPECT_FALSE(preview->findChild<QCheckBox*>("platformResample")->isEnabled());
+        EXPECT_FALSE(preview->findChild<QToolButton*>("platformPolicyAdd")->isEnabled());
+        EXPECT_FALSE(preview->findChild<QToolButton*>("platformPolicyDelete")->isEnabled());
+        EXPECT_FALSE(preview->findChild<QPushButton*>("projectPlatformReset")->isVisible());
+    }
+    dialog.findChild<QPushButton*>("addProjectPlatformButton")->click();
+    EXPECT_EQ(dialog.result(), QDialog::Accepted);
+    EXPECT_EQ(dialog.platform().basePlatform, BasePlatform::iOS);
+    EXPECT_EQ(ProjectPlatformSemantics::platformsToJson(ProjectManager::instance().currentProject()->platforms), before);
+    EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 0);
 }
 
 TEST_F(ProjectSettingsDialogTest, SizeLimitEditorRejectsEquivalentUnitsAndProtectsInfinite)
@@ -1088,7 +1100,8 @@ TEST_F(ProjectSettingsDialogTest, SizeLimitEditorRejectsEquivalentUnitsAndProtec
     auto definition = ProjectManager::instance().currentProject()->platforms.first();
     definition.profile.performResample = true;
     definition.profile.sizePolicies = {{64, {}}, {128, {}}, {std::nullopt, {}}};
-    ProjectPlatformDialog editor(definition, false);
+    ProjectPlatformEditor editor;
+    editor.setPlatform(definition);
     editor.show();
     auto* list = editor.findChild<QTreeWidget*>("platformSizePolicies");
     QTimer::singleShot(0, []() {
@@ -1141,7 +1154,6 @@ TEST_F(ProjectSettingsDialogTest, SizeLimitEditorRejectsEquivalentUnitsAndProtec
         modal->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->click();
     });
     doubleClickCurrentRow(editor.findChild<QTreeWidget*>("platformSizePolicies"));
-    editor.findChild<QDialogButtonBox*>("projectPlatformDialogButtons")->button(QDialogButtonBox::Ok)->click();
     const auto result = editor.platform();
     EXPECT_EQ(result.profile.sizePolicies.back().config.targetSampleRate, 32000u);
     EXPECT_TRUE(ProjectPlatformSemantics::validatePlatforms({result}));
@@ -1152,7 +1164,8 @@ TEST_F(ProjectSettingsDialogTest, ExistingBaseChangeRequiresConfirmationAndRepla
     auto definition = ProjectManager::instance().currentProject()->platforms.first();
     definition.profile.performResample = true;
     definition.profile.sizePolicies.front().config.targetSampleRate = 32000;
-    ProjectPlatformDialog dialog(definition, false);
+    ProjectPlatformEditor dialog;
+    dialog.setPlatform(definition);
     dialog.show();
     EXPECT_EQ(dialog.findChild<QCheckBox*>("projectPlatformCustomProfile"), nullptr);
     EXPECT_EQ(dialog.findChild<QCheckBox*>("platformNormalize"), nullptr);
@@ -1185,7 +1198,6 @@ TEST_F(ProjectSettingsDialogTest, ExistingBaseChangeRequiresConfirmationAndRepla
     EXPECT_EQ(policies->topLevelItem(0)->text(1), QStringLiteral("48000 Hz"));
     EXPECT_FALSE(dialog.findChild<QCheckBox*>("platformResample")->isChecked());
     EXPECT_EQ(policies->topLevelItemCount(), 1);
-    dialog.findChild<QDialogButtonBox*>("projectPlatformDialogButtons")->button(QDialogButtonBox::Ok)->click();
     EXPECT_EQ(dialog.platform().basePlatform, BasePlatform::Android);
     EXPECT_EQ(dialog.platform().profile.toJson(), ProjectPlatformProfile::fromBasePlatform(BasePlatform::Android).toJson());
     EXPECT_EQ(dialog.platform().id, definition.id);

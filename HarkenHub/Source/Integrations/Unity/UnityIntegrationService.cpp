@@ -2,6 +2,7 @@
 #include "Integrations/Unity/UnityIntegrationService.h"
 #include "Integrations/IntegrationProgress.h"
 #include "Integrations/Unity/UnityInstallation.h"
+#include "Integrations/Unity/UnityProjectAccess.h"
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -374,8 +375,7 @@ bool prepareInstallation(const UnityIntegrationService::Request& request,
         || !lockUnityProject(root, lock, error)) return false;
     if (!UnityInstallation::validateTarget(root, *target, error, request.removeIntegration)) return false;
     if ((!request.checkOnly || request.removeIntegration)
-        && QFileInfo::exists(QDir(root).filePath(QStringLiteral("Temp/UnityLockfile")))) {
-        *error = QStringLiteral("Close Unity before installing, updating or removing the SDK.");
+        && !checkUnityProjectClosed(root, error)) {
         return false;
     }
     return true;
@@ -740,10 +740,7 @@ bool emptyMigrationDestination(const QString& path, QString* error)
 
 bool validateMigration(const QString& project, const QString& from, const QString& to, QString* error)
 {
-    if (QFileInfo::exists(QDir(project).filePath(QStringLiteral("Temp/UnityLockfile")))) {
-        *error = QStringLiteral("Close Unity before migrating or recovering the SDK.");
-        return false;
-    }
+    if (!checkUnityProjectClosed(project, error)) return false;
     if (!UnityInstallation::validateTarget(project, from, error)
         || !UnityInstallation::validatePath(from + QStringLiteral(".meta"), error)) return false;
     if (UnityInstallation::containsPath(from, to) || UnityInstallation::containsPath(to, from)) {
@@ -838,10 +835,7 @@ bool recoverSdkMigration(const QString& project, const QJsonObject& record, bool
         if (error->isEmpty()) *error = QStringLiteral("The SDK migration record is invalid. Restore the verified backup manually.");
         return false;
     }
-    if (QFileInfo::exists(QDir(project).filePath(QStringLiteral("Temp/UnityLockfile")))) {
-        *error = QStringLiteral("Close Unity before migrating or recovering the SDK.");
-        return false;
-    }
+    if (!checkUnityProjectClosed(project, error)) return false;
     if (!validatePath(from + QStringLiteral(".meta"), error)
         || !validatePath(to + QStringLiteral(".meta"), error)) return false;
     const auto sourceOwnership = previousManagedFiles(from);
@@ -2325,22 +2319,26 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             step.cause = safetyError;
             return;
         }
-        if (hadTarget && !VNH::renameIntegrationDirectory(packages.filePath(targetName), packages.filePath(backupName))) {
+        QString moveError;
+        if (hadTarget && !VNH::renameIntegrationDirectory(packages.filePath(targetName), packages.filePath(backupName), &moveError)) {
             QDir(stageRoot).removeRecursively();
             step.status = StepStatus::Failed;
             step.summary = QStringLiteral("Could not back up the existing Unity SDK.");
-            step.cause = targetSdk;
-            step.remediation = QStringLiteral("Close Unity and any process locking %1, then retry.").arg(targetSdk);
+            step.cause = moveError;
+            step.remediation = QStringLiteral("Check file write protection, directory permissions and processes holding files open at %1. If checkout or unlocking is required, do that first, then retry. The existing SDK was not changed.").arg(targetSdk);
             return;
         }
         if (hadTarget) updateBackupRoot = packages.filePath(backupName);
-        if (!VNH::renameIntegrationDirectory(packages.filePath(stageName), packages.filePath(targetName))) {
-            const bool restored = !hadTarget || VNH::renameIntegrationDirectory(packages.filePath(backupName), packages.filePath(targetName));
+        if (!VNH::renameIntegrationDirectory(packages.filePath(stageName), packages.filePath(targetName), &moveError)) {
+            QString restoreError;
+            const bool restored = !hadTarget || VNH::renameIntegrationDirectory(packages.filePath(backupName), packages.filePath(targetName), &restoreError);
             QDir(stageRoot).removeRecursively();
             step.status = StepStatus::Failed;
             step.summary = QStringLiteral("Could not activate the staged Unity SDK.");
             step.cause = restored ? QStringLiteral("The original installation state was restored.")
                                   : QStringLiteral("The previous SDK could not be restored. Its backup is listed below.");
+            step.cause += QLatin1Char('\n') + moveError;
+            if (!restoreError.isEmpty()) step.cause += QLatin1Char('\n') + restoreError;
             if (hadTarget && !restored) step.artifacts << updateBackupRoot;
             step.remediation = QStringLiteral("Check %1 directory locks and permissions, then retry.")
                                    .arg(packages.absolutePath());

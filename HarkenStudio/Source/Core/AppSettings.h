@@ -15,7 +15,7 @@ namespace VNX {
 // sizes are stored as PanelFontSize_<key> strings. Inserting or deleting
 // enumerators shifts later values; never serialize the integer.
 enum class PanelId {
-    AIAssistant,
+    Assistant,
     Explorer,
     Inspector,
     Log,
@@ -38,7 +38,7 @@ public:
     static constexpr size_t PANEL_COUNT = static_cast<size_t>(PanelId::Count);
     
     static constexpr std::array<PanelInfo, PANEL_COUNT> panels = {{
-        { PanelId::AIAssistant,     "ai_assistant",      "AI Assistant",      13 },
+        { PanelId::Assistant,       "assistant",         "Assistant",         13 },
         { PanelId::Explorer,        "explorer",          "Explorer",          12 },
         { PanelId::Inspector,       "inspector",         "Inspector",         12 },
         { PanelId::Log,             "log",               "Log Panel",         11 },
@@ -111,8 +111,8 @@ public:
     [[deprecated("Use PanelId overload instead")]]
     int effectiveFontSize(const QString& panelKey) const;
 
-    [[deprecated("Use PanelId::AIAssistant instead")]]
-    static constexpr const char* PANEL_AI_ASSISTANT = "ai_assistant";
+    [[deprecated("Use PanelId::Assistant instead")]]
+    static constexpr const char* PANEL_ASSISTANT = "assistant";
     [[deprecated("Use PanelId::Explorer instead")]]
     static constexpr const char* PANEL_EXPLORER = "explorer";
     [[deprecated("Use PanelId::Inspector instead")]]

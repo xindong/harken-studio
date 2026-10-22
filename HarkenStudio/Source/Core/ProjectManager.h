@@ -21,6 +21,7 @@
 #include "VariableRehearsal.h"
 #include "ItemTypeCatalog.h"
 #include "ProjectTypes.h"
+#include "PackExportSelection.h"
 #include "Components/VBus.h"
 #include "ProjectSerializer.h"
 #include "FileWatcher.h"
@@ -535,9 +536,10 @@ public:
     QString packBuildOutputDir() const;
     bool setPackBuildOutputDir(const QString& value);
     void setPackBuildOutputDirInternal(const QString& value);
+    void setBuildWaveformSettingsInternal(bool enabled, const QString& directory);
 
-    ConversionFailurePolicy getConversionFailurePolicy() const;
-    void setConversionFailurePolicy(ConversionFailurePolicy value);
+    PackExportSelection packExportSelection() const;
+    void setPackExportSelectionInternal(PackExportSelection selection);
 
     QString getPackExportCurrentPlatform() const;
     void setPackExportCurrentPlatformInternal(const QString& value);
@@ -586,7 +588,6 @@ signals:
     void busChanged(uint32_t busID, const QString& propertyName,
                     const QObject* originator = nullptr);
     void packBuildOutputDirChanged(QString newValue);
-    void conversionFailurePolicyChanged(ConversionFailurePolicy value);
     void packExportCurrentPlatformChanged(QString newValue);
     void packExportSelectedPlatformsChanged(QStringList newValue);
     void packGroupsChanged();

@@ -83,7 +83,7 @@ jobs:
         run: >-
           python .scripts/run_test_groups.py
           --build-dir build-core/HarkenEngine/Test --config Release --product runtime
-          --mode "$HARKEN_TEST_MODE" --exclude-label harken-daily --budget-seconds 2000
+          --mode "$HARKEN_TEST_MODE" --exclude-label harken-daily --budget-seconds 2700
           --output-dir .temp/ci-core-${{ github.run_id }}-${{ github.run_attempt }}/groups
 
       - name: Upload test evidence

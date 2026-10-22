@@ -40,10 +40,10 @@ public:
     struct Docks
     {
         ads::CDockManager* dockManager = nullptr;
-        ads::CDockWidget* blueprintCanvasDock = nullptr;
+        ads::CDockWidget* blueprintDock = nullptr;
         ads::CDockWidget* projectExplorerDock = nullptr;
-        ads::CDockWidget* aiDock = nullptr;
-        ads::CDockWidget* previewDock = nullptr;
+        ads::CDockWidget* assistantDock = nullptr;
+        ads::CDockWidget* controlDock = nullptr;
     };
     void setDocks(const Docks& d);
     void setWindowDockResolver(WindowDockResolver resolver);
@@ -140,10 +140,10 @@ private:
 
     ads::CDockManager* dockManager_ = nullptr;
 
-    ads::CDockWidget* blueprintCanvasDock_ = nullptr;
+    ads::CDockWidget* blueprintDock_ = nullptr;
     ads::CDockWidget* projectExplorerDock_ = nullptr;
-    ads::CDockWidget* aiDock_ = nullptr;
-    ads::CDockWidget* previewDock_ = nullptr;
+    ads::CDockWidget* assistantDock_ = nullptr;
+    ads::CDockWidget* controlDock_ = nullptr;
     WindowDockResolver windowDockResolver_;
 
     QHash<QString, PreferredOpenArea> openPlacementHints_;

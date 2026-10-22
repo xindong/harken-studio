@@ -458,7 +458,7 @@ TEST(PlatformContextService, EmptyTargetsYieldEmptyContext)
     EXPECT_FALSE(service.context().all);
 }
 
-TEST(PlatformContextService, DefaultWindowsSupportsBothAllAndIndependentEditing)
+TEST(PlatformContextService, SingleWindowsSupportsBothAllAndIndependentEditing)
 {
     auto& pm = VNX::ProjectManager::instance();
     if (pm.isProjectOpen()) pm.closeProject();
@@ -467,8 +467,9 @@ TEST(PlatformContextService, DefaultWindowsSupportsBothAllAndIndependentEditing)
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
     VNX::ProjectConfig config;
-    config.name = QStringLiteral("DefaultWindowsContext");
+    config.name = QStringLiteral("SingleWindowsContext");
     config.location = directory.path();
+    config.platforms = HarkenTest::platforms(names({"Windows"}));
     ASSERT_TRUE(pm.createProject(config));
     ASSERT_EQ(pm.currentProject()->platforms.size(), 1);
     const auto id = pm.currentProject()->platforms.front().id;

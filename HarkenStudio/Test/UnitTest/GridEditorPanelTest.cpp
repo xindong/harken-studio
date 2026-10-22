@@ -2,11 +2,12 @@
 #include "Widgets/GridEditor/DiscreteGridWidget.h"
 #include "Widgets/GridEditor/MixingEditorWidget.h"
 #include "Widgets/GridEditor/GridEditorPanel.h"
-#include "Widgets/PreviewPanel/PreviewPanel.h"
-#include "Widgets/PreviewPanel/VariableRehearsalRow.h"
+#include "Widgets/ControlPanel/ControlPanel.h"
+#include "Widgets/ControlPanel/VariableRehearsalRow.h"
 #include "Widgets/Common/RehearsalSlider.h"
 #include "Widgets/Common/MatrixTableWidget.h"
 #include "Widgets/Common/TableItemDelegate.h"
+#include "Widgets/Common/SourceRangeThumb.h"
 #include "Widgets/Common/ReorderHeaderView.h"
 #include "Widgets/Shared/RefIdMime.h"
 #include "Widgets/Selector/SelectorWindow.h"
@@ -16,6 +17,7 @@
 #include "Components/VVariable.h"
 #include "ProjectManager.h"
 #include "ProjectTypes.h"
+#include "QtControlSkin.h"
 #include "PlatformContextService.h"
 #include "Support/ProjectPlatformTestUtils.h"
 #include "ThemeManager.h"
@@ -286,6 +288,22 @@ TEST_F(GridEditorPanelTest, MatrixEditingPreservesColumnSharesAndUsesConfigRowDe
     auto* matrix = panel.findChild<VNX::MatrixTableWidget*>();
     ASSERT_NE(matrix, nullptr);
     auto* table = matrix->table();
+    const auto checkFields = [&] {
+        for (auto* field : panel.findChildren<QWidget*>()) {
+            if (!qobject_cast<VNX::ObjectRefWidget*>(field)
+                && !qobject_cast<VNX::SourceRangeThumb*>(field))
+                continue;
+            if (!field->isVisible()) continue;
+            SCOPED_TRACE(field->metaObject()->className());
+            EXPECT_EQ(field->height(), VNX::QtControlSkin::current().fieldHeight());
+            EXPECT_EQ(field->visibleRegion().boundingRect(), field->rect());
+        }
+    };
+    for (int width : {640, 360, 640}) {
+        panel.resize(width, 300);
+        drainEvents();
+        checkFields();
+    }
     EXPECT_EQ(table->currentRow(), -1);
     table->setColumnWidth(3, table->columnWidth(3) + 30);
     QList<int> widths;
@@ -309,6 +327,8 @@ TEST_F(GridEditorPanelTest, MatrixEditingPreservesColumnSharesAndUsesConfigRowDe
     ASSERT_NE(editor, nullptr);
     EXPECT_EQ(editor->currentData().toInt(), 1);
     EXPECT_EQ(table->columnWidth(4), widths[4]);
+    checkFields();
+    EXPECT_EQ(editor->visibleRegion().boundingRect(), editor->rect());
     table->closePersistentEditor(table->item(1, 4));
     auto* remove = panel.findChild<QToolButton*>(QStringLiteral("gridRemoveBtn"));
     ASSERT_NE(remove, nullptr);
@@ -1058,7 +1078,7 @@ TEST_F(GridEditorPanelTest, AuditionUpdatesWinnerWithoutInterruptingCellEdit)
     auto& rehearsal = VNX::ProjectManager::instance().variableRehearsal();
     EXPECT_EQ(grid->winnerRow(), 0);
     EXPECT_FALSE(rehearsal.overrideFor(varIntensity_->guid).has_value());
-    PreviewPanel drawer(nullptr);
+    ControlPanel drawer(nullptr);
     drawer.setItem(container_);
     VNX::VariableRehearsalRow* row = nullptr;
     for (auto* candidate : drawer.findChildren<VNX::VariableRehearsalRow*>())
@@ -1189,6 +1209,8 @@ TEST_F(GridEditorPanelTest, NestedRowKeepsTypeIconAndBreadcrumbNamesWhileDrillin
     auto* row = qobject_cast<VNX::ObjectRefWidget*>(table->cellWidget(0, 1));
     ASSERT_NE(row, nullptr);
     EXPECT_EQ(row->currentObjectID(), nested->objectID);
+    for (auto* waveform : panel.findChildren<VNX::SourceRangeThumb*>())
+        EXPECT_FALSE(waveform->isVisible());
     const QPoint pos(row->width() / 3, row->height() / 2);
     clickWidget(row, pos);
     QMouseEvent doubleClick(QEvent::MouseButtonDblClick, pos,

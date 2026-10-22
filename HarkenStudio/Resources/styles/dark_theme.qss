@@ -51,7 +51,7 @@ QWidget#timelineHeaderColumn QWidget#timelineLane {
     border-bottom: 1px solid transparent;
 }
 
-QWidget#timelineHeaderColumn QFrame#listBox[rowNumberSelection="true"] QWidget[tableRowNumber="true"] {
+QWidget#timelineHeaderColumn QFrame#listBox[cellSelection="true"] QWidget[tableRowNumber="true"] {
     border-right: 1px solid @borderPrimary@;
 }
 
@@ -322,11 +322,11 @@ QToolBar#platformBar QToolButton#remoteConnectButton:checked:enabled {
 QToolBar#platformBar QToolButton#remoteConnectButton:checked:hover:enabled {
     background: @toolbarRemoteHover@;
 }
-QToolBar#platformBar QToolButton#monitorCaptureButton:checked:enabled {
+QToolBar#platformBar QToolButton#captureButton:checked:enabled {
     background: @toolbarMonitorActive@;
     color: @accentText@;
 }
-QToolBar#platformBar QToolButton#monitorCaptureButton:checked:hover:enabled {
+QToolBar#platformBar QToolButton#captureButton:checked:hover:enabled {
     background: @toolbarMonitorHover@;
 }
 QToolBar#platformBar QToolButton#platformBarAll:checked:enabled {
@@ -529,6 +529,19 @@ QPushButton[splitButtonPart="action"]:pressed:enabled,
 QToolButton[splitButtonPart="dropdown"]:pressed:enabled {
     background-color: @accent@;
     color: @accentText@;
+}
+
+QPushButton[splitButtonPart="primary"][primaryAction="true"]:enabled {
+    background-color: @accent@;
+    color: @accentText@;
+}
+
+QPushButton[splitButtonPart="primary"][primaryAction="true"]:hover:enabled {
+    background-color: @accentHover@;
+}
+
+QPushButton[splitButtonPart="primary"][primaryAction="true"]:pressed:enabled {
+    background-color: @accent@;
 }
 
 VNX--SplitButton:disabled,
@@ -1012,6 +1025,11 @@ QHeaderView::section:!last:!only-one {
     border-right: 1px solid @borderPrimary@;
 }
 
+QHeaderView[columnAccents="true"]::section:checked {
+    background-color: @bgTertiary@;
+    color: @textSecondary@;
+}
+
 QHeaderView::up-arrow, QHeaderView::down-arrow {
     width: @chevronExtent@px;
     height: @chevronExtent@px;
@@ -1409,10 +1427,10 @@ QWidget#embeddedEditorTitleBar QLabel { background: transparent; color: @textSec
 }
 
 /* ==========================================================================
-   Preview Panel
+   Control Panel
    ========================================================================== */
 
-#PreviewPanel {
+#ControlPanel {
     background-color: @auditionBg@;
     border-top: 1px solid @borderPrimary@;
 }
@@ -1489,12 +1507,6 @@ QLineEdit[settingsRole="invalid"] { border: 1px solid @error@; }
 
 #aboutLogo {
     background-color: transparent;
-}
-
-#aboutProductName {
-    color: @textPrimary@;
-    font-size: @titlePointSize@pt;
-    font-weight: bold;
 }
 
 #aboutTagline {
@@ -1736,16 +1748,16 @@ QFrame#listBox QWidget[listRow="true"][selected="true"] {
     background-color: @bgSelected@;
     border-left-color: @accent@;
 }
-QFrame#listBox[rowNumberSelection="true"] QWidget#listRow[selected="true"],
-QFrame#listBox[rowNumberSelection="true"] QWidget[listRow="true"][selected="true"] {
+QFrame#listBox[cellSelection="true"] QWidget#listRow[selected="true"],
+QFrame#listBox[cellSelection="true"] QWidget[listRow="true"][selected="true"] {
     background-color: @bgPrimary@;
     border-left-color: transparent;
 }
-QFrame#listBox[rowNumberSelection="true"] QWidget[tableRowNumber="true"] {
+QFrame#listBox[cellSelection="true"] QWidget[tableRowNumber="true"] {
     border-left: 2px solid transparent;
     border-right: 2px solid transparent;
 }
-QFrame#listBox[rowNumberSelection="true"] QWidget[tableRowNumber="true"][selected="true"] {
+QFrame#listBox[cellSelection="true"] QWidget[tableRowNumber="true"][selected="true"] {
     background-color: @bgSelected@;
     border-left-color: @accent@;
 }
@@ -1818,33 +1830,33 @@ VNX--ObjectRefWidget[inputInvalid="true"][dimmed="false"]:enabled {
     border-color: @error@;
 }
 
-#AIAssistantPanel QListWidget#aiChatList {
+#AssistantPanel QListWidget#aiChatList {
     background-color: @bgPrimary@;
     border: none;
 }
-#AIAssistantPanel QListWidget#aiChatList::item { border: none; padding: 0; }
-#AIAssistantPanel QLabel { background: transparent; }
-#AIAssistantPanel QLabel#aiMessageContent,
-#AIAssistantPanel QLabel#aiUserMessageContent { color: @textPrimary@; }
-#AIAssistantPanel QFrame#userBubbleFrame {
+#AssistantPanel QListWidget#aiChatList::item { border: none; padding: 0; }
+#AssistantPanel QLabel { background: transparent; }
+#AssistantPanel QLabel#aiMessageContent,
+#AssistantPanel QLabel#aiUserMessageContent { color: @textPrimary@; }
+#AssistantPanel QFrame#userBubbleFrame {
     background-color: @aiBrandAccentSoft@;
     border-radius: @radiusLarge@px;
 }
-#AIAssistantPanel QFrame#aiMessageSeparator {
+#AssistantPanel QFrame#aiMessageSeparator {
     background-color: @aiMessageSeparator@;
     max-height: 1px;
     border: none;
 }
-#AIAssistantPanel QLabel#aiEmptyState,
-#AIAssistantPanel QLabel#aiStepStatus { color: @textMuted@; }
-#AIAssistantPanel QLabel#aiStepStatus { padding: 0 8px; }
-#AIAssistantPanel QFrame#aiInputFrame {
+#AssistantPanel QLabel#aiEmptyState,
+#AssistantPanel QLabel#aiStepStatus { color: @textMuted@; }
+#AssistantPanel QLabel#aiStepStatus { padding: 0 8px; }
+#AssistantPanel QFrame#aiInputFrame {
     background-color: @bgSecondary@;
     border: 1px solid @borderSecondary@;
     border-radius: @radiusLarge@px;
 }
-#AIAssistantPanel QFrame#aiInputFrame[focused="true"] { border-color: @aiBrandAccent@; }
-#AIAssistantPanel QLineEdit#aiAssistantInput {
+#AssistantPanel QFrame#aiInputFrame[focused="true"] { border-color: @aiBrandAccent@; }
+#AssistantPanel QLineEdit#assistantInput {
     background: transparent;
     border: none;
     padding: 0;
@@ -1852,8 +1864,8 @@ VNX--ObjectRefWidget[inputInvalid="true"][dimmed="false"]:enabled {
     max-height: 16777215px;
     color: @textPrimary@;
 }
-#AIAssistantPanel QPushButton#aiAssistantSend[turnActive="true"] { background-color: @errorOpaque@; }
-#AIAssistantPanel QPushButton#aiAssistantSend[turnActive="true"]:pressed { background-color: @error@; }
+#AssistantPanel QPushButton#assistantSend[turnActive="true"] { background-color: @errorOpaque@; }
+#AssistantPanel QPushButton#assistantSend[turnActive="true"]:pressed { background-color: @error@; }
 #inspectorSectionSeparator,
 #informationSeparator { background-color: @sectionSeparator@; border: none; }
 QWidget#inspectorTabBar {
@@ -1899,6 +1911,12 @@ QLabel[bindingUnit="cent"] { color: @textMuted@; }
 QWidget[surfaceRole="secondary"],
 QWidget[surfaceRole="popup"] { background-color: @bgSecondary@; }
 
+QWidget[surfaceRole="panel"] {
+    background-color: @bgPrimary@;
+    border: 1px solid @borderPrimary@;
+}
+QWidget[surfaceRole="panel"][joinedEdge="left"] { border-left: none; }
+
 /* ==========================================================================
    Application shell semantic roles
    ========================================================================== */
@@ -1930,7 +1948,7 @@ QProgressBar[shellRole="statusProgress"]::chunk {
 #monitorConnectionLabel[connectionRole="warning"] { color: @warning@; font-weight: bold; }
 
 /* ==========================================================================
-   Meter and PackManager semantic roles
+   Meter and Publisher semantic roles
    ========================================================================== */
 
 QToolButton#meterUndoBtn,
@@ -1999,6 +2017,10 @@ QFrame#listBox QAbstractItemView[tableRole="data"] {
     selection-color: @textPrimary@;
     border: none;
 }
+QFrame#listBox QAbstractItemView[tableRole="navigation"] {
+    background-color: @bgPrimary@;
+    border: none;
+}
 QScrollBar[scrollRole="table"]:vertical {
     border-left: 1px solid @borderPrimary@;
 }
@@ -2021,6 +2043,11 @@ QAbstractItemView[tableRole="data"]::item {
 }
 QAbstractItemView[tableRole="data"]::item:hover:!selected { background-color: @bgPrimary@; }
 QAbstractItemView[tableRole="data"]::item:selected { background-color: @bgSelected@; }
+QAbstractItemView[columnAccents="true"]::item:alternate:!selected { background-color: @bgSecondary@; }
+QAbstractItemView[rowProgress="true"]::item,
+QAbstractItemView[rowProgress="true"]::item:selected,
+QAbstractItemView[rowProgress="true"]::item:hover:!selected,
+QAbstractItemView[rowProgress="true"]::item:alternate:!selected { background-color: transparent; }
 QFrame#tableRowInsertion { background-color: @accent@; border: none; }
 QFrame[matrixTable="true"] QTableView { gridline-color: @borderPrimary@; }
 QFrame[matrixHeader="true"] {
@@ -2038,7 +2065,6 @@ QLineEdit[tableEditor="true"] {
     border-radius: 0px;
     padding: 0 @tableCellPaddingX@px;
 }
-QWidget#packPlatformChips QCheckBox:unchecked { color: @textMuted@; }
 QWidget#MonitorPerformancePanel,
 QWidget#MonitorPlayablesPanel,
 QWidget#MonitorEffectsPanel,
@@ -2100,6 +2126,31 @@ QStatusBar::item {
 QStatusBar QLabel {
     background-color: transparent;
     color: @textMuted@;
+}
+
+QPushButton#statusLogButton {
+    background-color: transparent;
+    border: none;
+    padding: 0;
+    text-align: left;
+    color: @logInfo@;
+}
+
+QPushButton#statusLogButton[logLevel="TRACE"],
+QPushButton#statusLogButton[logLevel="DEBUG"] {
+    color: @logDebug@;
+}
+
+QPushButton#statusLogButton[logLevel="WARN"] {
+    color: @logWarning@;
+}
+
+QPushButton#statusLogButton[logLevel="ERROR"] {
+    color: @logError@;
+}
+
+QPushButton#statusLogButton[logLevel="CRIT"] {
+    color: @logCritical@;
 }
 
 QSizeGrip {

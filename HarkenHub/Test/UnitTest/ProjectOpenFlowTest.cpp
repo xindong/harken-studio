@@ -19,6 +19,8 @@
 #include <QTemporaryDir>
 #include <QThread>
 #include <QThreadPool>
+#include <QTranslator>
+#include <QScopeGuard>
 #include <QTimer>
 #include <algorithm>
 
@@ -79,6 +81,7 @@ protected:
                         }
                 } else {
                     ++notifications;
+                    notificationText = box->text();
                     box->accept();
                 }
                 return;
@@ -141,6 +144,7 @@ protected:
     bool approve = false;
     int confirmations = 0;
     int notifications = 0;
+    QString notificationText;
     int completionCount = 0;
     std::function<void()> beforeConfirmation;
     VNH::ProjectOpenOutcome::Result outcome = VNH::ProjectOpenOutcome::Result::Unknown;
@@ -255,6 +259,46 @@ TEST_F(ProjectOpenFlowTest, FailedAnalysisLeavesFinalDecisionToStudio)
     EXPECT_EQ(outcome, VNH::ProjectOpenOutcome::Result::Failed);
     EXPECT_FALSE(launchLog().isEmpty());
     EXPECT_FALSE(hasApproval());
+    EXPECT_TRUE(store.listProjects().front().lastOpenedAt.isEmpty());
+}
+
+TEST_F(ProjectOpenFlowTest, NonWritableUpgradeFilesBlockBeforeApprovalAndLaunch)
+{
+    const QString files = projectPath + QStringLiteral("\n") + dir.filePath("Layers/Main.vp");
+    open({{"analysis", "failed"}, {"upgrade", true},
+          {"errorCode", "PROJECT_UPGRADE_FILES_NOT_WRITABLE"}, {"technicalDetails", files}});
+    ASSERT_TRUE(spinUntil([this]() { return completed; }));
+    EXPECT_EQ(outcome, VNH::ProjectOpenOutcome::Result::Failed);
+    EXPECT_TRUE(launchLog().isEmpty());
+    EXPECT_EQ(confirmations, 0);
+    EXPECT_EQ(notifications, 1);
+    EXPECT_TRUE(notificationText.contains(files));
+    EXPECT_TRUE(notificationText.contains("write protection"));
+    EXPECT_TRUE(store.listProjects().front().lastOpenedAt.isEmpty());
+}
+
+TEST_F(ProjectOpenFlowTest, WriteAccessChangesAfterApprovalKeepPathsInHubLanguage)
+{
+    approve = true;
+    QTranslator translator;
+    ASSERT_TRUE(translator.load(QString::fromUtf8(HARKEN_HUB_TRANSLATION_FILE)));
+    const auto removeTranslator = qScopeGuard([&]() {
+        QCoreApplication::removeTranslator(&translator);
+    });
+    beforeConfirmation = [&]() { QCoreApplication::installTranslator(&translator); };
+    const QString files = projectPath + QStringLiteral("\n") + dir.filePath("Layer %2.vp");
+    const QString failure = QStringLiteral("Studio-only English failure");
+    open({{"upgrade", true}, {"launch", "failed"},
+          {"errorCode", "PROJECT_UPGRADE_FILES_NOT_WRITABLE"}, {"errorMessage", failure},
+          {"failureDetails", files}});
+    ASSERT_TRUE(spinUntil([this]() { return completed; }));
+    EXPECT_EQ(outcome, VNH::ProjectOpenOutcome::Result::Failed);
+    EXPECT_EQ(confirmations, 1);
+    const auto reason = QCoreApplication::translate("HarkenHub", "Some files needed for the project upgrade are read-only or not writable.");
+    EXPECT_NE(reason, QStringLiteral("Some files needed for the project upgrade are read-only or not writable."));
+    EXPECT_TRUE(notificationText.contains(reason));
+    EXPECT_TRUE(notificationText.contains(files));
+    EXPECT_FALSE(notificationText.contains(failure));
     EXPECT_TRUE(store.listProjects().front().lastOpenedAt.isEmpty());
 }
 

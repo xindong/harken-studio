@@ -276,6 +276,8 @@ private:
     std::unique_ptr<ChannelPeakAccumulator> m_channelPeakStorage;
     std::atomic<ChannelPeakAccumulator*> m_channelPeaks{nullptr};
     std::uint64_t m_channelPeakConsumeSerial = 0;
+    std::array<std::uint32_t, VN_SNAPSHOT_MAX_BUSES> m_channelPeakGenerations{};
+    std::array<float, VN_SNAPSHOT_MAX_BUSES * VN_MAX_CHANNELS> m_channelPeakValues{};
     OriginalSourceSubmissionRegistry* m_originalSources = nullptr;
     TimelineArmTable* m_timelineArms = nullptr;
     struct PendingControlAck {

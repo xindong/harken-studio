@@ -384,6 +384,7 @@ public:
     void addWarning(const QString& warning);
 
     bool buildToFile(const QString& outputPath);
+    QString inputFingerprint();
 
     enum class CanonicalPackKind : uint32_t { Init = 2, CanonicalContent = 3 };
 

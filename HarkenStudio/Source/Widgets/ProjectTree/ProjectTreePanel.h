@@ -86,6 +86,7 @@ public slots:
 signals:
     void itemSelected(ProjectItem* item);
     void objectSelectionChanged(const QList<ProjectItem*>& items);
+    void auditionTargetRequested(ProjectItem* item);
     void itemDoubleClicked(ProjectItem* item);
     void actionSelected(const QString& actionName);
     void audioFileSelected(const QString& filePath);

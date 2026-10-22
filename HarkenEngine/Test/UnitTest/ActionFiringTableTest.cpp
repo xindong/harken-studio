@@ -301,11 +301,14 @@ TEST(ActionFiringTable, ResultsUseActualLengthAndSurviveTerminalUntilRelease) {
     EXPECT_EQ(0u, table.ResultStorageBytes());
     ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(2), 1, 1, &small));
     const auto smallBytes = table.ResultStorageBytes();
-    EXPECT_EQ(sizeof(harken::ActionFiringStepResult), smallBytes);
+    EXPECT_GE(smallBytes, sizeof(harken::ActionFiringStepResult));
+    EXPECT_LE(smallBytes, sizeof(harken::ActionFiringStepResult) + sizeof(std::uint64_t));
     constexpr std::uint32_t largeStepCount = 10000;
     ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(3), 1,
         largeStepCount, &full));
-    EXPECT_EQ((largeStepCount + 1u) * smallBytes, table.ResultStorageBytes());
+    const auto largeResultsBytes = largeStepCount * sizeof(harken::ActionFiringStepResult);
+    EXPECT_GE(table.ResultStorageBytes(), smallBytes + largeResultsBytes);
+    EXPECT_LE(table.ResultStorageBytes(), smallBytes + largeResultsBytes + largeStepCount);
 
     for (std::uint32_t index = 0; index < largeStepCount; ++index) {
         harken::ActionFiringStepResult step;
@@ -384,8 +387,9 @@ TEST(ActionFiringTable, ResultAllocationFailureLeavesRowsAndParentLinksUnchanged
     EXPECT_EQ(rootBytes, table.ResultStorageBytes());
     table.SetResultAllocationFailureForTests(false);
     ASSERT_TRUE(table.PrepareChild(root, harkentest::ObjectId(2), 1, largeStepCount, &child));
-    EXPECT_EQ(rootBytes + largeStepCount * sizeof(harken::ActionFiringStepResult),
-        table.ResultStorageBytes());
+    const auto largeResultsBytes = largeStepCount * sizeof(harken::ActionFiringStepResult);
+    EXPECT_GE(table.ResultStorageBytes(), rootBytes + largeResultsBytes);
+    EXPECT_LE(table.ResultStorageBytes(), rootBytes + largeResultsBytes + largeStepCount);
     ASSERT_TRUE(table.Abandon(&root));
     EXPECT_FALSE(child.Valid());
     EXPECT_EQ(3u, table.FreeCount());

@@ -142,6 +142,11 @@ AudioEngine::AudioEngine(QObject* parent)
     connect(runtimeServiceTimer_, &QTimer::timeout,
             this, &AudioEngine::onRuntimeServiceTimer);
 
+    meterTimer_ = new QTimer(this);
+    meterTimer_->setObjectName(QStringLiteral("meterTimer"));
+    meterTimer_->setTimerType(Qt::PreciseTimer);
+    connect(meterTimer_, &QTimer::timeout, this, &AudioEngine::onMeterTimer);
+
     monitorTimer_ = new QTimer(this);
     monitorTimer_->setObjectName(QStringLiteral("monitorTimer"));
     connect(monitorTimer_, &QTimer::timeout, this, &AudioEngine::onMonitorTimer);
@@ -295,6 +300,7 @@ bool AudioEngine::initialize(const Bridge::EngineSessionConfig& config)
 
     updateRuntimeServiceInterval();
     runtimeServiceTimer_->start();
+    meterTimer_->start(33);
     monitorTimer_->start(100);
     onMonitorTimer();
 
@@ -308,6 +314,7 @@ void AudioEngine::shutdown()
         return;
 
     runtimeServiceTimer_->stop();
+    meterTimer_->stop();
     monitorTimer_->stop();
 
     stopAll(0.0f);
@@ -877,14 +884,6 @@ void AudioEngine::onRuntimeServiceTimer()
 {
     if (session_) {
         session_->update();
-        session_->publishMeterPeaks();
-        if (playing_)
-            session_->masterMeterPeak(masterMeterPeakL_, masterMeterPeakR_);
-        else {
-            masterMeterPeakL_ = 0.0f;
-            masterMeterPeakR_ = 0.0f;
-        }
-        emit meterLevelsUpdated();
         while (const auto completion = Bridge::takeCurrentWorldSyncCompletion()) {
             runtimeSyncCoordinator_->acceptCurrentWorldSyncResult(*completion);
             if (completion->ok()) {
@@ -898,6 +897,20 @@ void AudioEngine::onRuntimeServiceTimer()
         applyLivePropertyPreview();
         retryBackpressuredAuditionOverlay();
     }
+}
+
+void AudioEngine::onMeterTimer()
+{
+    if (!session_)
+        return;
+    session_->publishMeterPeaks();
+    if (playing_)
+        session_->masterMeterPeak(masterMeterPeakL_, masterMeterPeakR_);
+    else {
+        masterMeterPeakL_ = 0.0f;
+        masterMeterPeakR_ = 0.0f;
+    }
+    emit meterLevelsUpdated();
 }
 
 RuntimeSyncCoordinator& AudioEngine::runtimeSyncCoordinator() noexcept

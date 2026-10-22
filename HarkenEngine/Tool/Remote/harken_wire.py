@@ -6729,6 +6729,76 @@ TABLE_JSON = r'''
           }
         ]
       ]
+    },
+    "VnMonitorFactActivity": {
+      "fields": [
+        [
+          "actionOutcome",
+          "u32"
+        ],
+        [
+          "stepIndex",
+          "u32"
+        ],
+        [
+          "stepExecutionOrdinal",
+          "u32"
+        ],
+        [
+          "stepOpcode",
+          "u32"
+        ],
+        [
+          "reservedStep",
+          "u32"
+        ],
+        [
+          "stepTargetKind",
+          "u32"
+        ],
+        [
+          "variableValueBits",
+          "u32"
+        ],
+        [
+          "variableScope",
+          "u32"
+        ],
+        [
+          "variableOutcome",
+          "u32"
+        ],
+        [
+          "reserved0",
+          "u32"
+        ],
+        [
+          "stepTargetId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "variableTicket",
+          "u64"
+        ]
+      ]
+    },
+    "VnMonitorExecutionFactV2": {
+      "fields": [
+        [
+          "fact",
+          {
+            "struct": "VnMonitorExecutionFactV1"
+          }
+        ],
+        [
+          "activity",
+          {
+            "struct": "VnMonitorFactActivity"
+          }
+        ]
+      ]
     }
   },
   "functions": [
@@ -7088,6 +7158,23 @@ TABLE_JSON = r'''
           "name": "forward",
           "ctype": "VnVec3",
           "wire": "vec3"
+        }
+      ]
+    },
+    {
+      "name": "Vn_SetGameplayCatalog",
+      "note": "public Runtime API; binds the publication directory independently of Init. No remote opcode.",
+      "params": [
+        {
+          "name": "expectedInitHandle",
+          "ctype": "VnPackHandle",
+          "wire": "u64"
+        },
+        {
+          "name": "catalog",
+          "ctype": "const VnPackByteSpan*",
+          "wire": "desc",
+          "type": "VnPackByteSpan"
         }
       ]
     },
@@ -9888,7 +9975,10 @@ TABLE_JSON = r'''
           "VN_MONITOR_FACT_WAITING": 36,
           "VN_MONITOR_FACT_SOURCE_APPLIED": 37,
           "VN_MONITOR_FACT_SEEK_APPLIED": 38,
-          "VN_MONITOR_FACT_RESOURCE_RETIRED": 39
+          "VN_MONITOR_FACT_RESOURCE_RETIRED": 39,
+          "VN_MONITOR_FACT_PLAYABLE_STARTED": 40,
+          "VN_MONITOR_FACT_STEP_EXECUTED": 41,
+          "VN_MONITOR_FACT_VARIABLE_RESULT": 42
         }
       },
       "VnMonitorExecutionField": {
@@ -9967,7 +10057,10 @@ TABLE_JSON = r'''
           "VN_MONITOR_FACT_FIELD_TARGET_REVISION": 70,
           "VN_MONITOR_FACT_FIELD_TARGET_KIND": 71,
           "VN_MONITOR_FACT_FIELD_TARGET_CONTENT_KIND": 72,
-          "VN_MONITOR_FACT_FIELD_TARGET_SCOPE": 73
+          "VN_MONITOR_FACT_FIELD_TARGET_SCOPE": 73,
+          "VN_MONITOR_FACT_FIELD_ACTIVITY_STEP": 74,
+          "VN_MONITOR_FACT_FIELD_ACTIVITY_VARIABLE": 75,
+          "VN_MONITOR_FACT_FIELD_ACTION_OUTCOME": 76
         }
       },
       "VnMonitorExecutionNamespace": {
@@ -9993,7 +10086,18 @@ TABLE_JSON = r'''
           "VN_MONITOR_CONTENT_TRACK": 3,
           "VN_MONITOR_CONTENT_PIECE": 4,
           "VN_MONITOR_CONTENT_ACTION": 5,
-          "VN_MONITOR_CONTENT_MEDIA": 6
+          "VN_MONITOR_CONTENT_MEDIA": 6,
+          "VN_MONITOR_CONTENT_VARIABLE": 7
+        }
+      },
+      "VnMonitorExecutionTerminalKind": {
+        "backing": "u32",
+        "values": {
+          "VN_MONITOR_TERMINAL_NATURAL_COMPLETION": 1,
+          "VN_MONITOR_TERMINAL_REQUESTED_STOP": 2,
+          "VN_MONITOR_TERMINAL_PARENT_CANCELLATION": 3,
+          "VN_MONITOR_TERMINAL_REPLACEMENT_RESET": 4,
+          "VN_MONITOR_TERMINAL_FAILURE": 5
         }
       },
       "VnMonitorExecutionTargetKind": {
@@ -10053,7 +10157,8 @@ TABLE_JSON = r'''
           "VN_MONITOR_OPERATION_SET_EMITTER_VALUES": 13,
           "VN_MONITOR_OPERATION_POST_ACTION_PINNED": 14,
           "VN_MONITOR_OPERATION_POST_ACTION_RESOLVED": 15,
-          "VN_MONITOR_OPERATION_STOP_EMITTER": 16
+          "VN_MONITOR_OPERATION_STOP_EMITTER": 16,
+          "VN_MONITOR_OPERATION_RESET_VALUES": 19
         }
       },
       "VnMonitorLifecycle": {
@@ -10781,7 +10886,8 @@ TABLE_JSON = r'''
         "values": {
           "VN_MONITOR_HOST_UNKNOWN": 0,
           "VN_MONITOR_HOST_UNITY_EMITTER": 1,
-          "VN_MONITOR_HOST_UNITY_SPATIAL_SOURCE": 2
+          "VN_MONITOR_HOST_UNITY_SPATIAL_SOURCE": 2,
+          "VN_MONITOR_HOST_STUDIO_DEFAULT_EMITTER": 3
         }
       },
       "VnMonitorHostSymbolField": {
@@ -11095,6 +11201,10 @@ TABLE_JSON = r'''
       "VN_MONITOR_HARD_RAW_AUDIO_BYTE_RATE": {
         "type": "u64",
         "value": 67108864
+      },
+      "VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_ID": {
+        "type": "u64",
+        "value": 1
       },
       "VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES": {
         "type": "u32",

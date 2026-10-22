@@ -245,7 +245,7 @@ TEST(ProjectMigration, CurrentGenerationNeedsNoProductionMigration)
     EXPECT_EQ(readObject(projectPath), before);
 }
 
-TEST(ProjectMigration, AllDocumentsPlaceholderSkipsTrashAndDerivedFiles)
+TEST(ProjectMigration, AllDocumentsPlaceholderIncludesOnlyManagedDocuments)
 {
     QTemporaryDir source;
     ASSERT_TRUE(source.isValid());
@@ -259,6 +259,13 @@ TEST(ProjectMigration, AllDocumentsPlaceholderSkipsTrashAndDerivedFiles)
                 QJsonObject{{QStringLiteral("stale"), true}});
     writeObject(source.filePath(QStringLiteral("BuildPacks/Stale.vp")),
                 QJsonObject{{QStringLiteral("stale"), true}});
+    const QStringList unmanagedFiles{
+        QStringLiteral("Other.hsp"), QStringLiteral("Backups/Old.hsp"),
+        QStringLiteral("Layers/Nested/Old.hsp"), QStringLiteral("Backups/Old.vp")};
+    for (const QString& relative : unmanagedFiles) {
+        ASSERT_TRUE(QDir().mkpath(QFileInfo(source.filePath(relative)).absolutePath()));
+        writeObject(source.filePath(relative), readObject(projectPath));
+    }
 
     VNX::MigrationManager migrations;
     VNX::ProjectMigrationStep step;
@@ -280,6 +287,8 @@ TEST(ProjectMigration, AllDocumentsPlaceholderSkipsTrashAndDerivedFiles)
     EXPECT_FALSE(plan.writeSet.contains(QStringLiteral(".trash/Layers/Deleted.vp")));
     EXPECT_FALSE(plan.writeSet.contains(QStringLiteral("GeneratedPacks/Stale.vp")));
     EXPECT_FALSE(plan.writeSet.contains(QStringLiteral("BuildPacks/Stale.vp")));
+    for (const QString& relative : unmanagedFiles)
+        EXPECT_FALSE(plan.writeSet.contains(relative)) << relative.toStdString();
     EXPECT_EQ(plan.fileCount, plan.writeSet.size());
 }
 

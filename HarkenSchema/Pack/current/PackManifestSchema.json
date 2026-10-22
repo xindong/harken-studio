@@ -1,538 +1,147 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "additionalProperties": false,
-  "oneOf": [
-    {
+  "type": "object",
+  "$defs": {
+    "guid": {
+      "type": "string",
+      "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "identity": {
+      "type": "object",
       "additionalProperties": false,
       "properties": {
-        "platforms": {},
-        "schema_version": {}
-      },
-      "required": [
-        "schema_version",
-        "platforms"
-      ],
-      "type": "object"
-    },
-    {
-      "additionalProperties": false,
-      "properties": {
-        "basePlatform": {},
-        "catalogChecksum": {},
-        "gameplayCatalog": {},
-        "groups": {},
-        "initPackStableId": {},
-        "language": {},
-        "packs": {},
-        "platformId": {},
-        "platformName": {},
-        "schema_version": {},
-        "variableCatalog": {}
-      },
-      "required": [
-        "schema_version",
-        "platformId",
-        "platformName",
-        "basePlatform",
-        "packs",
-        "initPackStableId",
-        "language",
-        "groups",
-        "catalogChecksum",
-        "gameplayCatalog"
-      ],
-      "type": "object"
-    }
-  ],
-  "properties": {
-    "basePlatform": {
-      "enum": [
-        "Windows",
-        "macOS",
-        "Linux",
-        "Android",
-        "iOS"
-      ],
-      "type": "string"
-    },
-    "catalogChecksum": {
-      "pattern": "^[0-9]+$",
-      "type": "string"
-    },
-    "gameplayCatalog": {
-      "additionalProperties": false,
-      "properties": {
-        "actions": {
-          "items": {
-            "additionalProperties": false,
-            "properties": {
-              "actionStableId": {
-                "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                "type": "string"
-              },
-              "callableFingerprint": {
-                "pattern": "^[0-9]+$",
-                "type": "string"
-              },
-              "name": {
-                "maxLength": 128,
-                "minLength": 1,
-                "type": "string"
-              },
-              "nameBindingRevision": {
-                "pattern": "^[0-9]+$",
-                "type": "string"
-              },
-              "ownerPackStableId": {
-                "pattern": "^[0-9]+$",
-                "type": "string"
-              },
-              "providerClosureFingerprint": {
-                "pattern": "^[0-9]+$",
-                "type": "string"
-              }
-            },
-            "required": [
-              "name",
-              "actionStableId",
-              "nameBindingRevision",
-              "callableFingerprint",
-              "ownerPackStableId",
-              "providerClosureFingerprint"
-            ],
-            "type": "object"
-          },
-          "type": "array"
+        "name": {
+          "type": "string",
+          "minLength": 1
         },
-        "digest": {
-          "pattern": "^[0-9]+$",
-          "type": "string"
-        },
-        "initContentRevision": {
-          "minimum": 0,
-          "type": "integer"
-        },
-        "initPackStableId": {
-          "pattern": "^[0-9]+$",
-          "type": "string"
-        },
-        "projectId": {
-          "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-          "type": "string"
-        },
-        "retired": {
-          "items": {
-            "additionalProperties": false,
-            "properties": {
-              "lastActionStableId": {
-                "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                "type": "string"
-              },
-              "lastNameBindingRevision": {
-                "pattern": "^[0-9]+$",
-                "type": "string"
-              },
-              "name": {
-                "maxLength": 128,
-                "minLength": 1,
-                "type": "string"
-              },
-              "reason": {
-                "enum": [
-                  "renamed",
-                  "deleted",
-                  "reused"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "name",
-              "lastActionStableId",
-              "lastNameBindingRevision",
-              "reason"
-            ],
-            "type": "object"
-          },
-          "type": "array"
-        },
-        "schema": {
-          "const": 2,
-          "type": "integer"
+        "guid": {
+          "$ref": "#/$defs/guid"
         }
       },
       "required": [
-        "schema",
-        "projectId",
-        "digest",
-        "initPackStableId",
-        "initContentRevision",
-        "actions",
-        "retired"
-      ],
-      "type": "object"
+        "name",
+        "guid"
+      ]
     },
-    "groups": {
-      "items": {
-        "additionalProperties": false,
-        "properties": {
-          "actions": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "name": {
-            "minLength": 1,
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "actions"
-        ],
-        "type": "object"
-      },
-      "type": "array"
-    },
-    "initPackStableId": {
-      "type": "string"
-    },
-    "language": {
-      "type": "string"
-    },
-    "packs": {
-      "items": {
-        "additionalProperties": false,
-        "properties": {
-          "contentHash": {
-            "pattern": "^[0-9]+$",
-            "type": "string"
-          },
-          "contentRevision": {
-            "minimum": 0,
-            "type": "integer"
-          },
-          "dependencies": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "language": {
-            "type": "string"
-          },
-          "name": {
-            "minLength": 1,
-            "type": "string"
-          },
-          "packKind": {
-            "minimum": 0,
-            "type": "integer"
-          },
-          "packStableId": {
-            "type": "string"
-          },
-          "path": {
-            "minLength": 1,
-            "type": "string"
-          },
-          "platformId": {
-            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-            "type": "string"
-          },
-          "variantKey": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "packStableId",
-          "path",
-          "platformId",
-          "contentHash",
-          "dependencies"
-        ],
-        "type": "object"
-      },
-      "minItems": 1,
-      "type": "array"
-    },
-    "platformId": {
-      "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-      "type": "string"
-    },
-    "platformName": {
-      "maxLength": 120,
-      "minLength": 1,
-      "type": "string"
-    },
-    "platforms": {
-      "items": {
-        "additionalProperties": false,
-        "properties": {
-          "basePlatform": {
-            "enum": [
-              "Windows",
-              "macOS",
-              "Linux",
-              "Android",
-              "iOS"
-            ],
-            "type": "string"
-          },
-          "id": {
-            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-            "type": "string"
-          },
-          "name": {
-            "minLength": 1,
-            "type": "string"
-          },
-          "path": {
-            "minLength": 1,
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "name",
-          "basePlatform",
-          "path"
-        ],
-        "type": "object"
-      },
-      "type": "array"
-    },
-    "schema_version": {
-      "type": "integer"
-    },
-    "variableCatalog": {
+    "waveform": {
+      "type": "object",
       "additionalProperties": false,
       "properties": {
-        "capacity": {
-          "additionalProperties": false,
-          "properties": {
-            "definitionCount": {
-              "minimum": 0,
-              "type": "integer"
-            },
-            "maxReferencedPerContentPack": {
-              "minimum": 0,
-              "type": "integer"
-            },
-            "maxStaticEmitterOverrides": {
-              "minimum": 0,
-              "type": "integer"
-            },
-            "maxVariableBindings": {
-              "minimum": 0,
-              "type": "integer"
-            },
-            "recommendedEmitterVariableSlots": {
-              "minimum": 0,
-              "type": "integer"
-            },
-            "recommendedMaxEmitters": {
-              "minimum": 0,
-              "type": "integer"
-            },
-            "recommendedPendingRows": {
-              "minimum": 0,
-              "type": "integer"
-            },
-            "reserved": {
-              "minimum": 0,
-              "type": "integer"
-            }
-          },
-          "required": [
-            "definitionCount",
-            "maxReferencedPerContentPack",
-            "maxVariableBindings",
-            "maxStaticEmitterOverrides",
-            "recommendedMaxEmitters",
-            "recommendedEmitterVariableSlots",
-            "recommendedPendingRows",
-            "reserved"
-          ],
-          "type": "object"
+        "soundGuid": {
+          "$ref": "#/$defs/guid"
         },
-        "executionCatalogFingerprint": {
+        "file": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^.+\\.vkd$"
+        },
+        "trimStartFrame": {
+          "type": "integer",
           "minimum": 0,
-          "type": "integer"
+          "maximum": 9007199254740992
         },
-        "projectBuildId": {
-          "minimum": 0,
-          "type": "integer"
-        },
-        "schemaVersion": {
+        "trimEndFrame": {
+          "type": "integer",
           "minimum": 1,
-          "type": "integer"
-        },
-        "sdkCatalogFingerprint": {
-          "minimum": 0,
-          "type": "integer"
-        },
-        "variables": {
-          "items": {
-            "additionalProperties": false,
-            "properties": {
-              "codeName": {
-                "type": "string"
-              },
-              "defaultBits": {
-                "minimum": 0,
-                "type": "integer"
-              },
-              "deprecated": {
-                "minimum": 0,
-                "type": "integer"
-              },
-              "description": {
-                "type": "string"
-              },
-              "displayName": {
-                "type": "string"
-              },
-              "displayScale": {
-                "maximum": 255,
-                "minimum": 0,
-                "type": "integer"
-              },
-              "executionFingerprint": {
-                "minimum": 0,
-                "type": "integer"
-              },
-              "kind": {
-                "minimum": 0,
-                "type": "integer"
-              },
-              "labels": {
-                "items": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "anchor": {
-                      "type": "integer"
-                    },
-                    "labelId": {
-                      "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                      "type": "string"
-                    },
-                    "name": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "anchor",
-                    "labelId",
-                    "name"
-                  ],
-                  "type": "object"
-                },
-                "type": "array"
-              },
-              "ownerInitPackId": {
-                "minimum": 0,
-                "type": "integer"
-              },
-              "precision": {
-                "type": "integer"
-              },
-              "rangeMaxBits": {
-                "minimum": 0,
-                "type": "integer"
-              },
-              "rangeMinBits": {
-                "minimum": 0,
-                "type": "integer"
-              },
-              "replacementId": {
-                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                "type": "string"
-              },
-              "scopePolicy": {
-                "const": 1,
-                "type": "integer"
-              },
-              "unit": {
-                "type": "string"
-              },
-              "variableId": {
-                "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                "type": "string"
-              },
-              "writers": {
-                "enum": [
-                  1,
-                  2,
-                  3
-                ],
-                "maximum": 3,
-                "minimum": 1,
-                "type": "integer"
-              }
-            },
-            "required": [
-              "variableId",
-              "kind",
-              "scopePolicy",
-              "writers",
-              "rangeMinBits",
-              "rangeMaxBits",
-              "defaultBits",
-              "executionFingerprint",
-              "codeName",
-              "displayName",
-              "description",
-              "unit",
-              "precision",
-              "displayScale",
-              "deprecated",
-              "replacementId",
-              "labels",
-              "ownerInitPackId"
-            ],
-            "type": "object"
-          },
-          "type": "array"
+          "maximum": 9007199254740992
         }
       },
       "required": [
-        "schemaVersion",
-        "projectBuildId",
-        "executionCatalogFingerprint",
-        "sdkCatalogFingerprint",
-        "variables",
-        "capacity"
-      ],
-      "type": "object"
+        "soundGuid",
+        "file",
+        "trimStartFrame",
+        "trimEndFrame"
+      ]
+    },
+    "variable": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "guid": {
+          "$ref": "#/$defs/guid"
+        },
+        "labels": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/identity"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "guid",
+        "labels"
+      ]
     }
   },
-  "required": [
-    "schema_version"
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "guid": {
+          "$ref": "#/$defs/guid"
+        },
+        "waveforms": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/waveform"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "guid"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "variables": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/variable"
+          }
+        },
+        "waveforms": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/waveform"
+          }
+        }
+      },
+      "required": [
+        "variables"
+      ]
+    }
   ],
-  "type": "object",
   "x-harken-format": {
     "classification": "derived",
-    "formatId": "generated.pack-manifest",
+    "formatId": "generated.pack-companion",
     "pathPatterns": [
-      "**/HarkenPackIndex.json",
-      "**/HarkenPackManifest.json"
+      "**/Init.json",
+      "**/*.json"
     ],
     "readers": [
-      "ProjectPackExporter",
-      "CanonicalPackSetExport"
+      "CanonicalPackSetExport",
+      "RuntimeContentBundleBuilder"
     ],
     "rebuildPolicy": "rebuild",
     "validationMode": "generated-json",
     "validators": [
-      "ProjectPackExporter",
       "CanonicalPackSetExport"
     ],
-    "versionLocator": "json:$.schema_version",
+    "versionLocator": "reader:pack-companion",
     "writers": [
-      "ProjectPackExporter",
       "CanonicalPackSetExport"
     ]
   }

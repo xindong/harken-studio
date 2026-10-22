@@ -3,7 +3,6 @@
 #include "IPCBinaryMixerLevels.h"
 #include "IPCBinaryVoiceSnapshot.h"
 #include "ActionManager.h"
-#include "../PackGenerationRecord.h"
 #include <QFileInfo>
 #include <QSet>
 #include <QThread>
@@ -87,18 +86,8 @@ VQLEngine* IPCServer::vqlEngine() const
 void IPCServer::setProjectManager(ProjectManager* projectManager)
 {
     projectManager_ = projectManager;
-    PackGenerationRecordStore::instance().clear();
-
     if (projectManager_)
     {
-        connect(projectManager_, &ProjectManager::projectOpened, this,
-                [](ProjectData*) {
-            PackGenerationRecordStore::instance().clear();
-        }, Qt::DirectConnection);
-        connect(projectManager_, &ProjectManager::projectClosed, this,
-                []() {
-            PackGenerationRecordStore::instance().clear();
-        }, Qt::DirectConnection);
         connect(projectManager_, &ProjectManager::itemCreated, this,
                 [this](ProjectItem*) { if (vqlEngine_) vqlEngine_->notifyProjectChanged(); });
         connect(projectManager_, &ProjectManager::itemMoved, this,
@@ -359,8 +348,9 @@ QJsonObject IPCServer::dispatchCommand(const QString& cmd, const QJsonObject& ar
 }
 
 QJsonObject IPCServer::dispatchCommand(const QString& cmd, const QJsonObject& args,
-                                       const IPCDispatchContext& context)
+                                       const IPCDispatchContext& requestedContext)
 {
+    const IPCDispatchContext context = requestedContext;
     // This 3-argument overload is the single point every dispatch path funnels
     // through (socket handleCommand, in-process AI calls, transaction callbacks,
     // and nested re-dispatch), so the depth guard here marks command execution
@@ -480,7 +470,7 @@ std::optional<QJsonObject> IPCServer::enforceAIPolicyGate(const QString& cmd,
     if (context.unrestricted)
         return std::nullopt;
     const AIDispatchPolicy::Decision decision = aiDispatchPolicy_.evaluate({
-        cmd, args, context.permissionProfile, context.toolProfile,
+        cmd, args, context.permissionProfile,
         context.requestId, context.grantId
     }, consumeGrant);
     if (!decision.allowed)
@@ -493,7 +483,7 @@ QByteArray IPCServer::aiBindingFor(const QString& cmd, const QJsonObject& args,
 {
     assertAIPolicyThread();
     return aiDispatchPolicy_.bindingFor({
-        cmd, args, context.permissionProfile, context.toolProfile,
+        cmd, args, context.permissionProfile,
         context.requestId, context.grantId
     });
 }
@@ -503,7 +493,7 @@ QString IPCServer::issueAIGrant(const QString& cmd, const QJsonObject& args,
 {
     assertAIPolicyThread();
     return aiDispatchPolicy_.issueGrant({
-        cmd, args, context.permissionProfile, context.toolProfile,
+        cmd, args, context.permissionProfile,
         context.requestId, {}
     }, ttlMs);
 }

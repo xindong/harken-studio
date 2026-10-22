@@ -1,4 +1,4 @@
-#include "Core/PackSchemaGenerated.h"
+#include "Core/CanonicalPackSetExport.h"
 #include <harken/Harken.h>
 #include "UnitTest/StudioObjectIdTestSupport.h"
 #include "Core/Components/VSelection.h"
@@ -32,6 +32,8 @@
 #include <harken/media/PackFormat.h>
 #include <harken/media/PackFormatV2.h>
 #include <harken/media/PackLogicImage.h>
+#include <harken_studio_build/PackImage.h>
+#include <harken_studio_build/WorldCodec.h>
 
 #include <gtest/gtest.h>
 #include <QApplication>
@@ -40,6 +42,7 @@
 #include <QElapsedTimer>
 #include <QThread>
 #include <QJsonDocument>
+#include <QMap>
 #include <QTemporaryDir>
 #include <QScopeGuard>
 
@@ -298,6 +301,35 @@ protected:
         return {};
     }
 
+    QJsonArray publication(const QString& path, ProjectPlatformId id)
+    {
+        QJsonArray rows;
+        QStringList files;
+        QString error;
+        EXPECT_TRUE(ReadPackPublication(path, project().projectId, Platforms::idString(id),
+            &rows, &files, &error)) << error.toStdString();
+        return rows;
+    }
+    bool validPublication(const QString& path, ProjectPlatformId id)
+    {
+        QJsonArray rows;
+        QStringList files;
+        QString error;
+        return ReadPackPublication(path, project().projectId, Platforms::idString(id),
+            &rows, &files, &error);
+    }
+    QMap<QString, QByteArray> publicationBytes(const QString& path, ProjectPlatformId id)
+    {
+        QJsonArray rows;
+        QStringList files;
+        QString error;
+        EXPECT_TRUE(ReadPackPublication(path, project().projectId, Platforms::idString(id),
+            &rows, &files, &error)) << error.toStdString();
+        QMap<QString, QByteArray> result;
+        for (const auto& file : files) result.insert(file, bytes(QDir(path).filePath(file)));
+        return result;
+    }
+
     QTemporaryDir directory;
     ProjectPlatformId windows, low, high;
     ProjectItem* layer = nullptr;
@@ -364,44 +396,56 @@ TEST_F(ProjectPlatformBuild, ExportsGameplayIdentityFixturesThroughRename)
         std::vector<ProjectPackExporter::PackBuildRecord> records;
         const auto exported = exportPlatform(windows, firstDir, records);
         ASSERT_TRUE(exported.success) << exported.error.toStdString();
-        const auto manifest = QJsonDocument::fromJson(bytes(QDir(firstDir).filePath("HarkenPackManifest.json"))).object();
-        const auto catalog = manifest.value("gameplayCatalog").toObject();
-        ASSERT_EQ(catalog.value("schema").toInt(), 2);
-        const QString projectId = catalog.value("projectId").toString();
+        const auto packs = publication(firstDir, windows);
+        const QString projectId = project().projectId;
         const QString actionId = objectIdString(action->runtimeId());
-        const auto checkActions = [](const QJsonObject& projection, ProjectItem* a,
+        const auto checkActions = [](const QJsonArray& rows, ProjectItem* a,
                                      ProjectItem* b, ProjectItem* c) {
-            const auto rows = projection.value("actions").toArray();
-            ASSERT_EQ(rows.size(), 3);
+            ASSERT_EQ(rows.size(), 4);
             for (const auto* authored : {a, b, c}) {
                 int matches = 0;
                 for (const auto& value : rows) {
-                    const auto row = value.toObject();
+                    const auto row = value.toObject().value("companion").toObject();
                     if (row.value("name").toString() != authored->name) continue;
                     ++matches;
-                    const QString id = row.value("actionStableId").toString();
+                    const QString id = row.value("guid").toString();
                     EXPECT_FALSE(QUuid(id).isNull());
                     EXPECT_EQ(id, objectIdString(authored->runtimeId()));
-                    EXPECT_EQ(row.value("nameBindingRevision").toString(),
-                              QString::number(authored->nameBindingRevision));
+                    EXPECT_EQ(row.size(), 2);
                 }
                 EXPECT_EQ(matches, 1) << authored->name.toStdString();
             }
         };
-        checkActions(catalog, action, second, caller);
-        const auto retiredBefore = catalog.value("retired").toArray();
-        EXPECT_TRUE(retiredBefore.isEmpty());
-        QString secondOwner;
+        checkActions(packs, action, second, caller);
+        QString initOwner;
+        QString callerPath;
         QJsonArray callerDependencies;
-        for (const auto& value : manifest.value("packs").toArray()) {
+        for (const auto& value : packs) {
             const auto pack = value.toObject();
-            if (pack.value("name").toString() == second->name)
-                secondOwner = pack.value("packStableId").toString();
-            if (pack.value("name").toString() == caller->name)
+            if (pack.value("name").toString() == QStringLiteral("Init"))
+                initOwner = pack.value("packStableId").toString();
+            if (pack.value("name").toString() == caller->name) {
                 callerDependencies = pack.value("dependencies").toArray();
+                callerPath = QDir(firstDir).filePath(pack.value("path").toString());
+            }
         }
-        ASSERT_FALSE(secondOwner.isEmpty());
-        EXPECT_TRUE(callerDependencies.contains(QJsonValue(secondOwner)));
+        ASSERT_FALSE(initOwner.isEmpty());
+        EXPECT_EQ(callerDependencies, QJsonArray{initOwner});
+        const auto callerBytes = bytes(callerPath);
+        harkenstudiobuild::PackCanonicalImage callerImage;
+        ASSERT_EQ(harkenstudiobuild::ParsePackCanonicalImage(
+            reinterpret_cast<const uint8_t*>(callerBytes.constData()), callerBytes.size(),
+            &callerImage), harkenstudiobuild::kPackOk);
+        harkenstudiobuild::CurrentWorldBodyImage callerBody;
+        ASSERT_TRUE(callerBody.Decode(callerImage.partitionBody.data(), callerImage.partitionBody.size(),
+            callerImage.partitionHeader.bodyVintage));
+        const auto& callerWorld = *callerBody.ProductionView();
+        ASSERT_EQ(callerWorld.actionCount, 2u);
+        for (const auto id : {caller->runtimeId(), second->runtimeId()})
+            EXPECT_TRUE(std::any_of(callerWorld.actions, callerWorld.actions + callerWorld.actionCount,
+                [&](const auto& row) { return row.actionStableId == id; }));
+        ASSERT_EQ(callerImage.media.size(), 1u);
+        EXPECT_EQ(callerImage.media.front().soundId, secondSound->runtimeId());
         if (projectIndex != 0) {
             EXPECT_NE(projectId, originalProject);
             EXPECT_NE(actionId, originalAction);
@@ -434,13 +478,9 @@ TEST_F(ProjectPlatformBuild, ExportsGameplayIdentityFixturesThroughRename)
         records.clear();
         const auto renamed = exportPlatform(windows, renamedDir, records);
         ASSERT_TRUE(renamed.success) << renamed.error.toStdString();
-        const auto renamedCatalog = QJsonDocument::fromJson(bytes(QDir(renamedDir).filePath("HarkenPackManifest.json")))
-            .object().value("gameplayCatalog").toObject();
-        EXPECT_EQ(renamedCatalog.value("schema").toInt(), 2);
-        EXPECT_EQ(renamedCatalog.value("projectId").toString(), originalProject);
-        checkActions(renamedCatalog, action, second, caller);
-        const auto retiredRows = renamedCatalog.value("retired").toArray();
-        EXPECT_TRUE(retiredRows.isEmpty());
+        const auto renamedPacks = publication(renamedDir, windows);
+        EXPECT_EQ(project().projectId, originalProject);
+        checkActions(renamedPacks, action, second, caller);
     }
     qInfo().noquote() << "Gameplay fixture root:" << root;
 }
@@ -566,9 +606,8 @@ TEST_F(ProjectPlatformBuild, BaseChangeSeparatesConversionsAndPreservesCapturedB
         record.status = "Built";
         store.add(record);
     }
-    store.reconcilePlatforms(project().platforms);
     for (const auto& record : store.records()) {
-        EXPECT_EQ(record.status, QStringLiteral("Needs rebuild"));
+        EXPECT_EQ(record.status, QStringLiteral("Built"));
         EXPECT_EQ(record.basePlatform, BasePlatform::Android);
     }
     EXPECT_EQ(AssetRegistry::instance().getAsset(source.sourceID)->platformCaches.value(low).cachePath, after.cachePath);
@@ -679,10 +718,10 @@ TEST_F(ProjectPlatformBuild, StrictInitPairingSurvivesRepeatExport)
     });
     ASSERT_NE(initRecord, first.end());
     const auto initBytes = bytes(initRecord->outputPath);
-    harken::PackCanonicalImage init;
-    ASSERT_EQ(VN_OK, harken::ParsePackCanonicalImage(
+    harkenstudiobuild::PackCanonicalImage init;
+    ASSERT_EQ(harkenstudiobuild::kPackOk, harkenstudiobuild::ParsePackCanonicalImage(
         reinterpret_cast<const uint8_t*>(initBytes.constData()), initBytes.size(), &init));
-    ASSERT_EQ(harken::kPackKindInit, init.packKind);
+    ASSERT_EQ(harkenstudiobuild::kPackKindInit, init.packKind);
     std::size_t contents = 0;
     for (const auto& record : first) {
         const auto matching = std::find_if(second.begin(), second.end(), [&](const auto& other) {
@@ -692,14 +731,14 @@ TEST_F(ProjectPlatformBuild, StrictInitPairingSurvivesRepeatExport)
         const auto data = bytes(record.outputPath);
         ASSERT_FALSE(data.isEmpty());
         EXPECT_EQ(data, bytes(matching->outputPath));
-        harken::PackCanonicalImage decoded;
-        ASSERT_EQ(VN_OK, harken::ParsePackCanonicalImage(
+        harkenstudiobuild::PackCanonicalImage decoded;
+        ASSERT_EQ(harkenstudiobuild::kPackOk, harkenstudiobuild::ParsePackCanonicalImage(
             reinterpret_cast<const uint8_t*>(data.constData()), data.size(), &decoded));
-        if (decoded.packKind != harken::kPackKindCanonicalContent) continue;
+        if (decoded.packKind != harkenstudiobuild::kPackKindCanonicalContent) continue;
         ++contents;
-        EXPECT_EQ(VN_OK, harken::ValidateCanonicalInitDependency(decoded.dependencyEdges, init.packStableId));
+        EXPECT_EQ(harkenstudiobuild::kPackOk, harkenstudiobuild::ValidateCanonicalInitDependency(decoded.dependencyEdges, init.packStableId));
         for (const auto& edge : decoded.dependencyEdges) {
-            if (edge.edgeKind == harken::kPackDependencyEdgeKindInit)
+            if (edge.edgeKind == harkenstudiobuild::kPackDependencyEdgeKindInit)
                 EXPECT_EQ(init.requirement.packContentRevision, edge.expectedPrerequisiteContentRevision);
         }
     }
@@ -729,15 +768,11 @@ TEST_F(ProjectPlatformBuild, CapturedBuildSurvivesRenameProfileAndSourceSelectio
     EXPECT_EQ(plan.variants.front().platformDefinition.name, QStringLiteral("Android_Low"));
 }
 
-TEST_F(ProjectPlatformBuild, GroupAndDependencyFiltersDistinguishSiblingInstances)
+TEST_F(ProjectPlatformBuild, SelectionFiltersStandaloneOutputsAndPreservesNestedClosures)
 {
-    PackGroup group;
-    group.name = "LowOnly";
-    group.allPlatforms = false;
-    group.platformIds = {Platforms::idString(low)};
-    group.actionIds = {action->runtimeId()};
-    project().packGroups = {group};
-    const auto plan = PackBuildPlanning::build(project());
+    PackExportSelection selection;
+    selection.actionTargeting = {{action->runtimeId(), false, {Platforms::idString(low)}}};
+    const auto plan = PackBuildPlanning::build(project(), {}, {}, false, selection);
     ASSERT_TRUE(plan.ready());
     ASSERT_EQ(plan.variants.size(), 1u);
     EXPECT_EQ(plan.variants.front().variant.platform, Platforms::idString(low));
@@ -746,11 +781,41 @@ TEST_F(ProjectPlatformBuild, GroupAndDependencyFiltersDistinguishSiblingInstance
     post.type = VActionStep::Type::PostAction;
     post.targetObjectID = action->objectID;
     dependent->comp<VAction>()->steps.push_back(post);
-    const auto conflict = PackBuildPlanning::build(project(), {Platforms::idString(high)});
-    EXPECT_FALSE(conflict.ready());
-    EXPECT_TRUE(std::any_of(conflict.diagnostics.begin(), conflict.diagnostics.end(), [](const auto& issue) {
-        return issue.code == ActionClosureDiagnosticCode::ExcludedDependency;
-    }));
+    const auto nested = PackBuildPlanning::build(project(), {Platforms::idString(high)}, {}, false, selection);
+    ASSERT_TRUE(nested.ready());
+    ASSERT_EQ(nested.variants.size(), 1u);
+    EXPECT_EQ(nested.variants.front().actionStableId, dependent->runtimeId());
+    EXPECT_EQ(nested.variants.front().variant.platform, Platforms::idString(high));
+    EXPECT_EQ(nested.variants.front().dependencyOrder,
+        (std::vector<harkenstudio::ObjectId>{action->runtimeId(), dependent->runtimeId()}));
+    ASSERT_EQ(nested.variants.front().closure.media.size(), 1u);
+    EXPECT_EQ(nested.variants.front().closure.media.front().soundStableId, sound->runtimeId());
+
+    ProjectPackExporter exporter;
+    ProjectPackExporter::ExportOptions options;
+    options.platform = Platforms::idString(high);
+    options.selection = selection;
+    const QString output = directory.filePath(QStringLiteral("NestedSelection"));
+    const auto exported = exporter.ExportAllPacks(project(), output, options);
+    ASSERT_TRUE(exported.success) << exported.error.toStdString();
+    const auto rows = publication(output, high);
+    ASSERT_EQ(rows.size(), 2);
+    EXPECT_FALSE(QFileInfo::exists(QDir(output).filePath(action->name + QStringLiteral(".bytes"))));
+    const auto content = bytes(QDir(output).filePath(dependent->name + QStringLiteral(".bytes")));
+    harkenstudiobuild::PackCanonicalImage image;
+    ASSERT_EQ(harkenstudiobuild::ParsePackCanonicalImage(
+        reinterpret_cast<const uint8_t*>(content.constData()), content.size(), &image), harkenstudiobuild::kPackOk);
+    ASSERT_EQ(image.dependencyEdges.size(), 1u);
+    EXPECT_EQ(image.dependencyEdges.front().edgeKind, harkenstudiobuild::kPackDependencyEdgeKindInit);
+    ASSERT_EQ(image.media.size(), 1u);
+    EXPECT_EQ(image.media.front().soundId, sound->runtimeId());
+    harkenstudiobuild::CurrentWorldBodyImage body;
+    ASSERT_TRUE(body.Decode(image.partitionBody.data(), image.partitionBody.size(), image.partitionHeader.bodyVintage));
+    const auto& world = *body.ProductionView();
+    ASSERT_EQ(world.actionCount, 2u);
+    for (const auto id : {action->runtimeId(), dependent->runtimeId()})
+        EXPECT_TRUE(std::any_of(world.actions, world.actions + world.actionCount,
+            [&](const auto& row) { return row.actionStableId == id; }));
 }
 
 TEST_F(ProjectPlatformBuild, BundleUsesPackedMediaRevisionAndStableInstanceIdentity)
@@ -776,28 +841,20 @@ TEST_F(ProjectPlatformBuild, BundleUsesPackedMediaRevisionAndStableInstanceIdent
     const QString deployed = directory.filePath("Deployed");
     ASSERT_TRUE(RuntimeContentBundleBuilder::deploy(first, deployed, &error)) << error.toStdString();
     ASSERT_TRUE(RuntimeContentBundleBuilder::deploy(renamed, deployed, &error)) << error.toStdString();
-    const QString manifestPath = QDir(deployed).filePath(QStringLiteral("Bundles/%1/%2")
-        .arg(first.bundleId, HarkenEditor::Bridge::packManifestFileName()));
-    const auto assertPair = [](const QString& root) {
-        const auto manifest = bytes(QDir(root).filePath(HarkenEditor::Bridge::packManifestFileName()));
-        const auto waveform = QJsonDocument::fromJson(bytes(QDir(root).filePath(QStringLiteral("HarkenEditorWaveforms.json")))).object();
-        ASSERT_FALSE(waveform.isEmpty());
-        EXPECT_EQ(waveform.value(QStringLiteral("manifestByteLength")).toInteger(), manifest.size());
-        EXPECT_EQ(waveform.value(QStringLiteral("manifestFnv1a64")).toString().toULongLong(),
-            harken::Fnv1a64(manifest.constData(), manifest.size()));
-    };
-    for (const auto& root : {first.bundleDirectory, renamed.bundleDirectory, rebuilt.bundleDirectory,
-                            QFileInfo(manifestPath).absolutePath()})
-        ASSERT_NO_FATAL_FAILURE(assertPair(root));
-    const QString companionPath = QDir(QFileInfo(manifestPath).absolutePath()).filePath(QStringLiteral("HarkenEditorWaveforms.json"));
+    const QString deployedBundle = QDir(deployed).filePath(QStringLiteral("Bundles/%1").arg(first.bundleId));
+    const auto original = publicationBytes(first.bundleDirectory, low);
+    EXPECT_FALSE(original.isEmpty());
+    for (const auto& root : {renamed.bundleDirectory, rebuilt.bundleDirectory, deployedBundle})
+        EXPECT_EQ(publicationBytes(root, low), original);
+    const auto companion = std::find_if(first.requiredPublications.begin(), first.requiredPublications.end(),
+        [](const auto& item) { return item.path.endsWith(QStringLiteral(".json")); });
+    ASSERT_NE(companion, first.requiredPublications.end());
+    const QString companionPath = QDir(deployedBundle).filePath(companion->path);
     const QByteArray originalCompanion = bytes(companionPath);
-    auto companion = QJsonDocument::fromJson(originalCompanion).object();
-    companion.insert(QStringLiteral("manifestFnv1a64"), QStringLiteral("0"));
     {
         QFile file(companionPath);
-        ASSERT_TRUE(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
-        const QByteArray broken = QJsonDocument(companion).toJson();
-        ASSERT_EQ(file.write(broken), broken.size());
+        ASSERT_TRUE(file.open(QIODevice::Append));
+        ASSERT_EQ(file.write(" "), 1);
     }
     EXPECT_FALSE(RuntimeContentBundleBuilder::deploy(renamed, deployed, &error));
     {
@@ -806,40 +863,11 @@ TEST_F(ProjectPlatformBuild, BundleUsesPackedMediaRevisionAndStableInstanceIdent
         ASSERT_EQ(file.write(originalCompanion), originalCompanion.size());
     }
     ASSERT_TRUE(RuntimeContentBundleBuilder::deploy(renamed, deployed, &error)) << error.toStdString();
-    auto manifest = QJsonDocument::fromJson(bytes(manifestPath)).object();
-    ASSERT_FALSE(manifest.isEmpty());
-    manifest.insert(QStringLiteral("language"), QStringLiteral("tampered"));
-    QFile file(manifestPath);
-    ASSERT_TRUE(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
-    const QByteArray changed = QJsonDocument(manifest).toJson();
-    ASSERT_EQ(file.write(changed), changed.size());
-    file.close();
-    EXPECT_FALSE(RuntimeContentBundleBuilder::deploy(renamed, deployed, &error));
-
-    const QString sourceManifestPath = QDir(renamed.bundleDirectory)
-        .filePath(HarkenEditor::Bridge::packManifestFileName());
-    manifest = QJsonDocument::fromJson(bytes(sourceManifestPath)).object();
-    auto variables = manifest.value(QStringLiteral("variableCatalog")).toObject();
-    variables.insert(QStringLiteral("sdkCatalogFingerprint"), QStringLiteral("EXACT_U64"));
-    manifest.insert(QStringLiteral("variableCatalog"), variables);
-    const QByteArray templateBytes = QJsonDocument(manifest).toJson();
-    for (const QString& path : {sourceManifestPath, manifestPath}) {
-        QFile output(path);
-        ASSERT_TRUE(output.open(QIODevice::WriteOnly | QIODevice::Truncate));
-        QByteArray exact = templateBytes;
-        exact.replace("\"EXACT_U64\"", path == sourceManifestPath
-            ? "18446744073709551614" : "18446744073709551615");
-        ASSERT_EQ(output.write(exact), exact.size());
-        output.close();
-        const QString companionPath = QDir(QFileInfo(path).absolutePath()).filePath(QStringLiteral("HarkenEditorWaveforms.json"));
-        auto companion = QJsonDocument::fromJson(bytes(companionPath)).object();
-        companion.insert(QStringLiteral("manifestByteLength"), exact.size());
-        companion.insert(QStringLiteral("manifestFnv1a64"), QString::number(harken::Fnv1a64(exact.constData(), exact.size())));
-        QFile companionFile(companionPath);
-        ASSERT_TRUE(companionFile.open(QIODevice::WriteOnly | QIODevice::Truncate));
-        const auto paired = QJsonDocument(companion).toJson();
-        ASSERT_EQ(companionFile.write(paired), paired.size());
-    }
+    ASSERT_FALSE(first.orderedPacks.empty());
+    QFile pack(QDir(deployed).filePath(first.orderedPacks.front().path));
+    ASSERT_TRUE(pack.open(QIODevice::Append));
+    ASSERT_EQ(pack.write("changed"), 7);
+    pack.close();
     EXPECT_FALSE(RuntimeContentBundleBuilder::deploy(renamed, deployed, &error));
 }
 
@@ -857,7 +885,10 @@ TEST_F(ProjectPlatformBuild, BundleDeployRequiresTheCapturedPublicationSet)
     const QString activePath = QDir(activeRoot).filePath(QStringLiteral("HarkenContent.json"));
     const QByteArray previousActive = bytes(activePath);
     ASSERT_FALSE(previousActive.isEmpty());
-    const QString sourceCompanion = QDir(candidate.bundleDirectory).filePath(QStringLiteral("HarkenEditorWaveforms.json"));
+    const auto companion = std::find_if(candidate.requiredPublications.begin(), candidate.requiredPublications.end(),
+        [](const auto& item) { return item.path.endsWith(QStringLiteral(".json")); });
+    ASSERT_NE(companion, candidate.requiredPublications.end());
+    const QString sourceCompanion = QDir(candidate.bundleDirectory).filePath(companion->path);
     const QByteArray companionBytes = bytes(sourceCompanion);
     ASSERT_FALSE(companionBytes.isEmpty());
     ASSERT_TRUE(QFile::remove(sourceCompanion));
@@ -874,7 +905,7 @@ TEST_F(ProjectPlatformBuild, BundleDeployRequiresTheCapturedPublicationSet)
     ASSERT_TRUE(RuntimeContentBundleBuilder::deploy(candidate, emptyRoot, &error)) << error.toStdString();
     const QString newActivePath = QDir(emptyRoot).filePath(QStringLiteral("HarkenContent.json"));
     const QByteArray newActive = bytes(newActivePath);
-    const QString targetCompanion = QDir(emptyRoot).filePath(QStringLiteral("Bundles/%1/HarkenEditorWaveforms.json").arg(candidate.bundleId));
+    const QString targetCompanion = QDir(emptyRoot).filePath(QStringLiteral("Bundles/%1/%2").arg(candidate.bundleId, companion->path));
     ASSERT_TRUE(QFile::remove(targetCompanion));
     EXPECT_FALSE(RuntimeContentBundleBuilder::deploy(candidate, emptyRoot, &error));
     EXPECT_EQ(bytes(newActivePath), newActive);
@@ -1050,9 +1081,8 @@ TEST_F(ProjectPlatformBuild, ExplicitExportsIgnorePrimaryAndKeepSnapshotRecordNa
         store.add(record);
     }
     ASSERT_TRUE(run("rename_project_platform", {{"platform_id", Platforms::idString(high)}, {"name", "MobileHigh"}}).success);
-    store.reconcilePlatforms(project().platforms);
     for (const auto& record : store.records()) {
-        EXPECT_EQ(record.status, QStringLiteral("Needs rebuild"));
+        EXPECT_EQ(record.status, QStringLiteral("Built"));
         EXPECT_EQ(record.platformName, QStringLiteral("Android_High"));
         EXPECT_TRUE(record.outputPath.contains("PrimaryLow"));
     }
@@ -1208,14 +1238,13 @@ TEST_F(ProjectPlatformBuild, IpcBuildPublishesSnapshotRecordsAfterPlatformChange
     const auto completion = server.dispatchCommand("get_pack_build_status", {}).value("result").toObject();
     EXPECT_EQ(completion.value("result").toObject().value("status").toString(), QStringLiteral("error"));
     EXPECT_TRUE(completion.value("message").toString().contains(QStringLiteral("platform changed")));
-    const auto index = QJsonDocument::fromJson(bytes(directory.filePath("IpcBuild/HarkenPackIndex.json"))).object();
-    EXPECT_TRUE(index.value("platforms").toArray().isEmpty());
+    EXPECT_FALSE(validPublication(directory.filePath("IpcBuild/Changed"), low));
     const auto records = store.records();
     ASSERT_FALSE(records.empty());
     for (const auto& record : records) {
         EXPECT_TRUE(record.success) << record.errors.toStdString();
         EXPECT_EQ(record.platformName, QStringLiteral("Android_Low"));
-        EXPECT_EQ(record.status, QStringLiteral("Needs rebuild"));
+        EXPECT_EQ(record.status, QStringLiteral("Built"));
         EXPECT_TRUE(record.outputPath.contains("Android_Low"));
         if (record.objectID == action->objectID)
             EXPECT_EQ(mediaEntries(record.outputPath).front().sampleRate, 22050u);
@@ -1236,7 +1265,7 @@ void writeDeliveryJson(const QString& path, const QJsonObject& value)
     file.write(QJsonDocument(value).toJson());
 }
 
-TEST_F(ProjectPlatformBuild, DeliveryIndexAccumulatesOnlyPublishedInstances)
+TEST_F(ProjectPlatformBuild, DeliveryContainsIndependentPlatformPairs)
 {
     const QString root = directory.filePath("Delivery");
     QString error;
@@ -1245,27 +1274,20 @@ TEST_F(ProjectPlatformBuild, DeliveryIndexAccumulatesOnlyPublishedInstances)
         std::vector<ProjectPackExporter::PackBuildRecord> records;
         const auto built = exportPlatform(id, QDir(root).filePath(definition.name), records);
         ASSERT_TRUE(built.success) << built.error.toStdString();
-        const auto manifest = deliveryJson(QDir(built.outputPath).filePath("HarkenPackManifest.json"));
-        EXPECT_EQ(manifest.value("platformId").toString(), Platforms::idString(id));
-        EXPECT_EQ(manifest.value("platformName").toString(), definition.name);
-        EXPECT_EQ(manifest.value("basePlatform").toString(), QStringLiteral("Android"));
-        EXPECT_FALSE(manifest.contains("platform"));
-        for (const auto& value : manifest.value("packs").toArray()) {
-            EXPECT_EQ(value.toObject().value("platformId").toString(), Platforms::idString(id));
-            EXPECT_FALSE(value.toObject().contains("platform"));
-        }
-        ASSERT_TRUE(ProjectPackExporter::PublishPackIndex(root, project().platforms,
+        const auto rows = publication(built.outputPath, id);
+        ASSERT_EQ(rows.size(), records.size());
+        const auto files = publicationBytes(built.outputPath, id);
+        EXPECT_EQ(files.size(), records.size() * 2);
+        ASSERT_TRUE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms,
             {Platforms::idString(id)}, {Platforms::idString(id)}, &error)) << error.toStdString();
     }
-    const auto entries = deliveryJson(QDir(root).filePath("HarkenPackIndex.json")).value("platforms").toArray();
-    ASSERT_EQ(entries.size(), 2);
-    EXPECT_EQ(entries[0].toObject().value("id").toString(), Platforms::idString(low));
-    EXPECT_EQ(entries[1].toObject().value("id").toString(), Platforms::idString(high));
-    EXPECT_EQ(entries[1].toObject().value("path").toString(), QStringLiteral("Android_High"));
+    EXPECT_TRUE(validPublication(QDir(root).filePath("Android_Low"), low));
+    EXPECT_TRUE(validPublication(QDir(root).filePath("Android_High"), high));
+    EXPECT_FALSE(QFileInfo::exists(QDir(root).filePath("HarkenPackIndex.json")));
     preservePlatformUnityFixture(root);
 }
 
-TEST_F(ProjectPlatformBuild, FailedDeliveryRetainsFilesWithoutResurrectingIndexEntries)
+TEST_F(ProjectPlatformBuild, FailedDeliveryRetainsPublishedPairs)
 {
     const QString root = directory.filePath("Delivery");
     QString error;
@@ -1274,20 +1296,18 @@ TEST_F(ProjectPlatformBuild, FailedDeliveryRetainsFilesWithoutResurrectingIndexE
         ASSERT_TRUE(exportPlatform(id, QDir(root).filePath(Platforms::find(project().platforms, id)->name), records).success);
     }
     const auto ids = QStringList{Platforms::idString(low), Platforms::idString(high)};
-    ASSERT_TRUE(ProjectPackExporter::PublishPackIndex(root, project().platforms, ids, ids, &error));
-    const auto before = bytes(QDir(root).filePath("Android_Low/Init.bytes"));
-    ASSERT_TRUE(ProjectPackExporter::PublishPackIndex(root, project().platforms, {ids.front()}, {}, &error));
-    EXPECT_EQ(bytes(QDir(root).filePath("Android_Low/Init.bytes")), before);
-    ASSERT_TRUE(ProjectPackExporter::PublishPackIndex(root, project().platforms, {ids.back()}, {ids.back()}, &error));
-    auto entries = deliveryJson(QDir(root).filePath("HarkenPackIndex.json")).value("platforms").toArray();
-    ASSERT_EQ(entries.size(), 1);
-    EXPECT_EQ(entries.first().toObject().value("id").toString(), ids.back());
-    ASSERT_TRUE(ProjectPackExporter::PublishPackIndex(root, project().platforms, ids, {}, &error));
-    EXPECT_TRUE(deliveryJson(QDir(root).filePath("HarkenPackIndex.json")).value("platforms").toArray().isEmpty());
-    EXPECT_EQ(bytes(QDir(root).filePath("Android_Low/Init.bytes")), before);
+    ASSERT_TRUE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms, ids, ids, &error));
+    const QString lowDir = QDir(root).filePath("Android_Low");
+    const auto before = publicationBytes(lowDir, low);
+    ASSERT_TRUE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms, {ids.front()}, {}, &error));
+    EXPECT_EQ(publicationBytes(lowDir, low), before);
+    ASSERT_TRUE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms, {ids.back()}, {ids.back()}, &error));
+    EXPECT_TRUE(validPublication(QDir(root).filePath("Android_High"), high));
+    ASSERT_TRUE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms, ids, {}, &error));
+    EXPECT_EQ(publicationBytes(lowDir, low), before);
 }
 
-TEST_F(ProjectPlatformBuild, IncrementalPublicationPreservesPlatformsAndRejectsInvalidIndex)
+TEST_F(ProjectPlatformBuild, IncrementalPublicationPreservesPlatformsAndRejectsInvalidLegacyIndex)
 {
     const QString root = directory.filePath("LegacyDelivery");
     const auto ids = QStringList{Platforms::idString(low), Platforms::idString(high)};
@@ -1297,19 +1317,37 @@ TEST_F(ProjectPlatformBuild, IncrementalPublicationPreservesPlatformsAndRejectsI
             QDir(root).filePath(Platforms::find(project().platforms, id)->name), records).success);
     }
     QString error;
-    ASSERT_TRUE(ProjectPackExporter::PublishPackIndex(root, project().platforms, ids, ids, &error))
+    const QString highDir = QDir(root).filePath("Android_High");
+    const auto original = publicationBytes(highDir, high);
+    ASSERT_TRUE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms, ids, ids, &error))
         << error.toStdString();
-    const QDir output(root);
-    const QString current = output.filePath("HarkenPackIndex.json");
-    ASSERT_TRUE(ProjectPackExporter::PublishPackIndex(root, project().platforms,
+    ASSERT_TRUE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms,
         {ids.front()}, {ids.front()}, &error)) << error.toStdString();
-    const auto entries = deliveryJson(current).value("platforms").toArray();
-    ASSERT_EQ(entries.size(), 2);
-    EXPECT_EQ(entries[1].toObject().value("id").toString(), ids.back());
-    writeDeliveryJson(current, {});
-    EXPECT_FALSE(ProjectPackExporter::PublishPackIndex(root, project().platforms,
+    EXPECT_EQ(publicationBytes(highDir, high), original);
+    const QString legacy = QDir(root).filePath("HarkenPackIndex.json");
+    writeDeliveryJson(legacy, {});
+    const auto before = bytes(legacy);
+    EXPECT_FALSE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms,
         {ids.front()}, {ids.front()}, &error));
     EXPECT_FALSE(error.isEmpty());
+    EXPECT_EQ(bytes(legacy), before);
+    EXPECT_EQ(publicationBytes(highDir, high), original);
+    const QString staleCompanion = QDir(highDir).filePath("Init.json");
+    writeDeliveryJson(staleCompanion, {});
+    const auto staleBytes = bytes(staleCompanion);
+    ASSERT_FALSE(validPublication(highDir, high));
+    writeDeliveryJson(legacy, QJsonObject{
+        {"schema_version", 3},
+        {"platforms", QJsonArray{
+            QJsonObject{{"id", ids.front()}, {"path", "Android_Low"}},
+            QJsonObject{{"id", ids.back()}, {"path", "Android_High"}}}}});
+    error.clear();
+    ASSERT_TRUE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms,
+        {ids.front()}, {ids.front()}, &error)) << error.toStdString();
+    EXPECT_FALSE(QFileInfo::exists(legacy));
+    for (auto it = original.cbegin(); it != original.cend(); ++it)
+        EXPECT_EQ(bytes(QDir(highDir).filePath(it.key())),
+            it.key() == QStringLiteral("Init.json") ? staleBytes : it.value());
 }
 
 TEST_F(ProjectPlatformBuild, HistoricalIndexIsRejectedWithoutChangingFiles)
@@ -1319,64 +1357,78 @@ TEST_F(ProjectPlatformBuild, HistoricalIndexIsRejectedWithoutChangingFiles)
     std::vector<ProjectPackExporter::PackBuildRecord> records;
     ASSERT_TRUE(exportPlatform(low, QDir(root).filePath("Android_Low"), records).success);
     QString error;
-    ASSERT_TRUE(ProjectPackExporter::PublishPackIndex(root, project().platforms, {id}, {id}, &error))
+    ASSERT_TRUE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms, {id}, {id}, &error))
         << error.toStdString();
     const QString indexPath = QDir(root).filePath("HarkenPackIndex.json");
     auto index = deliveryJson(indexPath);
-    for (int version = 1; version < VNX::PackSchema::kPackManifestSchemaVersion; ++version) {
+    for (int version : {1, 2}) {
         index.insert("schema_version", version);
         writeDeliveryJson(indexPath, index);
         const auto before = bytes(indexPath);
-        EXPECT_FALSE(ProjectPackExporter::PublishPackIndex(root, project().platforms, {id}, {id}, &error));
+        EXPECT_FALSE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms, {id}, {id}, &error));
         EXPECT_FALSE(error.isEmpty());
         EXPECT_EQ(bytes(indexPath), before);
     }
 }
 
-TEST_F(ProjectPlatformBuild, UnreadableIndexIsPreservedWhenPublicationFails)
+TEST_F(ProjectPlatformBuild, UnreadableLegacyIndexIsPreservedWhenPublicationFails)
 {
     const QString root = directory.filePath("UnreadableLegacyDelivery");
-    ASSERT_TRUE(QDir().mkpath(root));
+    std::vector<ProjectPackExporter::PackBuildRecord> records;
+    ASSERT_TRUE(exportPlatform(low, QDir(root).filePath("Android_Low"), records).success);
     ASSERT_TRUE(QDir(root).mkdir("HarkenPackIndex.json"));
-
+    const auto before = publicationBytes(QDir(root).filePath("Android_Low"), low);
+    const QString id = Platforms::idString(low);
     QString error;
-    EXPECT_FALSE(ProjectPackExporter::PublishPackIndex(root, project().platforms, {}, {}, &error));
+    EXPECT_FALSE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms, {id}, {id}, &error));
     EXPECT_FALSE(error.isEmpty());
     EXPECT_TRUE(QFileInfo(QDir(root).filePath("HarkenPackIndex.json")).isDir());
+    EXPECT_EQ(publicationBytes(QDir(root).filePath("Android_Low"), low), before);
 }
 
 TEST_F(ProjectPlatformBuild, RenamedAndRecreatedPlatformsCannotReuseOldDirectoryIdentity)
 {
     const QString root = directory.filePath("Delivery");
     const QString oldDir = QDir(root).filePath("Android_Low");
+    auto* retainedAction = manager().createItem(nullptr, "Retained", ProjectItem::Type::Action);
+    ASSERT_NE(retainedAction, nullptr);
+    retainedAction->comp<VAction>()->steps = action->comp<VAction>()->steps;
     std::vector<ProjectPackExporter::PackBuildRecord> records;
     ASSERT_TRUE(exportPlatform(low, oldDir, records).success);
-    const auto originalInit = bytes(QDir(oldDir).filePath("Init.bytes"));
+    const auto original = publicationBytes(oldDir, low);
     const auto id = Platforms::idString(low);
     QString error;
-    ASSERT_TRUE(ProjectPackExporter::PublishPackIndex(root, project().platforms, {id}, {id}, &error));
+    ASSERT_TRUE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms, {id}, {id}, &error));
     ASSERT_TRUE(run("rename_project_platform", {{"platform_id", id}, {"name", "Mobile"}}).success);
-    ASSERT_TRUE(ProjectPackExporter::PublishPackIndex(root, project().platforms, {}, {}, &error));
-    EXPECT_TRUE(deliveryJson(QDir(root).filePath("HarkenPackIndex.json")).value("platforms").toArray().isEmpty());
-    EXPECT_EQ(bytes(QDir(oldDir).filePath("Init.bytes")), originalInit);
+    ASSERT_TRUE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms, {}, {}, &error));
+    EXPECT_EQ(publicationBytes(oldDir, low), original);
+    EXPECT_FALSE(ProjectPackExporter::ValidatePackOutputs(root, {*Platforms::find(project().platforms, low)}, &error));
     records.clear();
-    ASSERT_TRUE(exportPlatform(low, QDir(root).filePath("Mobile"), records).success);
-    EXPECT_EQ(bytes(QDir(root).filePath("Mobile/Init.bytes")), originalInit);
-    ASSERT_TRUE(ProjectPackExporter::PublishPackIndex(root, project().platforms, {id}, {id}, &error));
+    const QString renamedDir = QDir(root).filePath("Mobile");
+    ASSERT_TRUE(exportPlatform(low, renamedDir, records).success);
+    EXPECT_EQ(publicationBytes(renamedDir, low), original);
+    ASSERT_TRUE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms, {id}, {id}, &error));
     ASSERT_TRUE(run("delete_project_platform", {{"platform_id", id}}).success);
     const auto replacement = createPlatform("Android_Low");
     const auto replacementId = Platforms::idString(replacement);
     EXPECT_NE(replacement, low);
-    EXPECT_FALSE(ProjectPackExporter::PublishPackIndex(root, project().platforms, {replacementId}, {replacementId}, &error));
-    EXPECT_TRUE(deliveryJson(QDir(root).filePath("HarkenPackIndex.json")).value("platforms").toArray().isEmpty());
-    EXPECT_EQ(bytes(QDir(oldDir).filePath("Init.bytes")), originalInit);
+    EXPECT_FALSE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms, {replacementId}, {replacementId}, &error));
+    EXPECT_EQ(publicationBytes(oldDir, low), original);
     records.clear();
-    ASSERT_TRUE(exportPlatform(replacement, oldDir, records).success);
-    EXPECT_NE(bytes(QDir(oldDir).filePath("Init.bytes")), originalInit);
-    ASSERT_TRUE(ProjectPackExporter::PublishPackIndex(root, project().platforms, {replacementId}, {replacementId}, &error));
-    const auto entry = deliveryJson(QDir(root).filePath("HarkenPackIndex.json")).value("platforms").toArray().first().toObject();
-    EXPECT_EQ(entry.value("id").toString(), replacementId);
-    EXPECT_EQ(entry.value("path").toString(), QStringLiteral("Android_Low"));
+    ProjectPackExporter exporter;
+    ProjectPackExporter::ExportOptions options;
+    options.platform = replacementId;
+    options.selfCleaning = false;
+    options.selection.actionTargeting.push_back({retainedAction->runtimeId(), false, {}});
+    const auto rebuilt = exporter.ExportAllPacks(project(), oldDir, options, &records);
+    ASSERT_TRUE(rebuilt.success) << rebuilt.error.toStdString();
+    EXPECT_NE(bytes(QDir(oldDir).filePath("Init.bytes")), original.value(QStringLiteral("Init.bytes")));
+    EXPECT_NE(bytes(QDir(oldDir).filePath("PlayTone.bytes")), original.value(QStringLiteral("PlayTone.bytes")));
+    for (const auto& name : {QStringLiteral("Retained.bytes"), QStringLiteral("Retained.json")})
+        EXPECT_EQ(bytes(QDir(oldDir).filePath(name)), original.value(name));
+    EXPECT_FALSE(validPublication(oldDir, low));
+    ASSERT_TRUE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms,
+        {replacementId}, {replacementId}, &error, rebuilt.artifacts)) << error.toStdString();
 }
 
 TEST_F(ProjectPlatformBuild, ChangedPlatformsCannotReportSuccessfulPublication)
@@ -1387,11 +1439,12 @@ TEST_F(ProjectPlatformBuild, ChangedPlatformsCannotReportSuccessfulPublication)
         std::vector<ProjectPackExporter::PackBuildRecord> records;
         ASSERT_TRUE(exportPlatform(id, QDir(root).filePath(Platforms::find(project().platforms, id)->name), records).success);
     }
-    const auto original = bytes(QDir(root).filePath("Android_Low/Init.bytes"));
+    const auto original = publicationBytes(QDir(root).filePath("Android_Low"), low);
+    const auto capturedPlatforms = project().platforms;
     for (const auto operation : {QStringLiteral("rename"), QStringLiteral("base"), QStringLiteral("delete"), QStringLiteral("recreate")}) {
         SCOPED_TRACE(operation.toStdString());
         QString error;
-        ASSERT_TRUE(ProjectPackExporter::PublishPackIndex(root, project().platforms, ids, ids, &error));
+        ASSERT_TRUE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms, ids, ids, &error));
         if (operation == QStringLiteral("rename")) {
             ASSERT_TRUE(run("rename_project_platform", {{"platform_id", ids.front()}, {"name", "Mobile"}}).success);
         } else if (operation == QStringLiteral("base")) {
@@ -1400,42 +1453,41 @@ TEST_F(ProjectPlatformBuild, ChangedPlatformsCannotReportSuccessfulPublication)
             ASSERT_TRUE(run("delete_project_platform", {{"platform_id", ids.front()}}).success);
             if (operation == QStringLiteral("recreate")) EXPECT_NE(createPlatform("Android_Low"), low);
         }
-        EXPECT_FALSE(ProjectPackExporter::PublishPackIndex(root, project().platforms, ids, ids, &error));
+        EXPECT_FALSE(ProjectPackExporter::ValidatePackBuildPlatforms(capturedPlatforms, project().platforms, ids, &error));
         EXPECT_FALSE(error.isEmpty());
-        const auto entries = deliveryJson(QDir(root).filePath("HarkenPackIndex.json")).value("platforms").toArray();
-        ASSERT_EQ(entries.size(), 1);
-        EXPECT_EQ(entries.first().toObject().value("id").toString(), ids.back());
-        EXPECT_EQ(bytes(QDir(root).filePath("Android_Low/Init.bytes")), original);
+        EXPECT_TRUE(validPublication(QDir(root).filePath("Android_High"), high));
+        EXPECT_EQ(publicationBytes(QDir(root).filePath("Android_Low"), low), original);
         ASSERT_TRUE(UndoRedoManager::instance().undo());
         if (operation == QStringLiteral("recreate")) ASSERT_TRUE(UndoRedoManager::instance().undo());
     }
 }
 
 #ifdef Q_OS_WIN
-TEST_F(ProjectPlatformBuild, TemporarySharingLockRetriesWithoutLosingPublishedIndex)
+TEST_F(ProjectPlatformBuild, LockedPublicationFailsWithoutChangingPublishedPairs)
 {
-    const QString root = directory.filePath("RetryDelivery");
-    const auto ids = QStringList{Platforms::idString(low), Platforms::idString(high)};
-    for (const auto id : {low, high}) {
-        std::vector<ProjectPackExporter::PackBuildRecord> records;
-        ASSERT_TRUE(exportPlatform(id, QDir(root).filePath(Platforms::find(project().platforms, id)->name), records).success);
-    }
-    QString error;
-    ASSERT_TRUE(ProjectPackExporter::PublishPackIndex(root, project().platforms, ids, ids, &error)) << error.toStdString();
-    const QString path = QDir(root).filePath(HarkenEditor::Bridge::packIndexFileName());
-    const HANDLE handle = CreateFileW(reinterpret_cast<LPCWSTR>(QDir::toNativeSeparators(path).utf16()),
+    const QString root = directory.filePath("LockedDelivery");
+    const QString output = QDir(root).filePath("Android_Low");
+    const QString id = Platforms::idString(low);
+    std::vector<ProjectPackExporter::PackBuildRecord> records;
+    ASSERT_TRUE(exportPlatform(low, output, records).success);
+    const auto original = publicationBytes(output, low);
+    ASSERT_FALSE(original.isEmpty());
+    const QString path = QDir(output).filePath(original.firstKey());
+    const QString nativePath = QDir::toNativeSeparators(path);
+    HANDLE handle = CreateFileW(reinterpret_cast<LPCWSTR>(nativePath.utf16()),
         GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     ASSERT_NE(handle, INVALID_HANDLE_VALUE);
-    std::jthread releaseLock([handle] {
-        QThread::msleep(80);
-        CloseHandle(handle);
+    const auto closeHandle = qScopeGuard([&] {
+        if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
     });
-    ASSERT_TRUE(run("delete_project_platform", {{"platform_id", ids.front()}}).success);
-    ASSERT_TRUE(ProjectPackExporter::PublishPackIndex(root, project().platforms, ids, {ids.back()}, &error))
+    QString error;
+    EXPECT_FALSE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms, {id}, {id}, &error));
+    EXPECT_FALSE(error.isEmpty());
+    ASSERT_TRUE(CloseHandle(handle));
+    handle = INVALID_HANDLE_VALUE;
+    EXPECT_EQ(publicationBytes(output, low), original);
+    ASSERT_TRUE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms, {id}, {id}, &error))
         << error.toStdString();
-    const auto entries = deliveryJson(path).value("platforms").toArray();
-    ASSERT_EQ(entries.size(), 1);
-    EXPECT_EQ(entries.first().toObject().value("id").toString(), ids.back());
 }
 #endif
 
@@ -1460,11 +1512,10 @@ TEST_F(ProjectPlatformBuild, IpcBuildRejectsPublicationAfterItsPlatformIsDeleted
     const auto completion = server.dispatchCommand("get_pack_build_status", {}).value("result").toObject();
     EXPECT_EQ(completion.value("result").toObject().value("status").toString(), QStringLiteral("error"));
     EXPECT_TRUE(completion.value("message").toString().contains(QStringLiteral("deleted during the build")));
-    EXPECT_TRUE(deliveryJson(QDir(root).filePath("HarkenPackIndex.json")).value("platforms").toArray().isEmpty());
-    EXPECT_TRUE(QFileInfo::exists(QDir(root).filePath("Android_Low/Init.bytes")));
+    EXPECT_TRUE(validPublication(QDir(root).filePath("Android_Low"), low));
     const auto& records = PackGenerationRecordStore::instance().records();
     ASSERT_FALSE(records.empty());
-    for (const auto& record : records) EXPECT_EQ(record.status, QStringLiteral("Needs rebuild"));
+    for (const auto& record : records) EXPECT_EQ(record.status, QStringLiteral("Built"));
     PackGenerationRecordStore::instance().clear();
 }
 
@@ -1472,35 +1523,94 @@ TEST_F(ProjectPlatformBuild, DeliveryRejectsMismatchedIdentityCorruptionAndIncom
 {
     const QString root = directory.filePath("Delivery");
     const QString platformDir = QDir(root).filePath("Android_Low");
-    const QString manifestPath = QDir(platformDir).filePath("HarkenPackManifest.json");
-    const QString initPath = QDir(platformDir).filePath("Init.bytes");
     const QString id = Platforms::idString(low);
     std::vector<ProjectPackExporter::PackBuildRecord> records;
     ASSERT_TRUE(exportPlatform(low, platformDir, records).success);
-    const auto manifest = deliveryJson(manifestPath);
-    QString error;
-    for (const auto& key : {"platformId", "platformName", "basePlatform"}) {
-        auto wrong = manifest;
-        wrong.insert(QLatin1String(key), key == QStringLiteral("platformId") ? Platforms::idString(high) : QStringLiteral("Windows"));
-        writeDeliveryJson(manifestPath, wrong);
-        EXPECT_FALSE(ProjectPackExporter::WritePackIndex(root, {*Platforms::find(project().platforms, low)}, &error));
+    const auto original = publicationBytes(platformDir, low);
+    ASSERT_FALSE(original.isEmpty());
+    auto foreignProject = project();
+    foreignProject.projectId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    ProjectPackExporter exporter;
+    for (int companionState : {0, 1, 2}) {
+        SCOPED_TRACE(companionState);
+        auto preserved = original;
+        for (auto file = original.cbegin(); file != original.cend(); ++file) {
+            if (companionState == 0 || !file.key().endsWith(QStringLiteral(".json"))) continue;
+            const QString path = QDir(platformDir).filePath(file.key());
+            if (companionState == 1) {
+                QFile output(path);
+                ASSERT_TRUE(output.open(QIODevice::WriteOnly | QIODevice::Truncate));
+                ASSERT_EQ(output.write("invalid"), 7);
+                preserved[file.key()] = QByteArray("invalid");
+            } else {
+                ASSERT_TRUE(QFile::remove(path));
+                preserved.remove(file.key());
+            }
+        }
+        if (companionState == 2) {
+            ASSERT_TRUE(QFile::remove(QDir(platformDir).filePath("Init.bytes")));
+            preserved.remove(QStringLiteral("Init.bytes"));
+        }
+        for (bool otherProject : {false, true}) {
+            for (bool selectedOnly : {false, true}) {
+                if (!otherProject && !selectedOnly) continue;
+                SCOPED_TRACE(otherProject);
+                SCOPED_TRACE(selectedOnly);
+                ProjectPackExporter::ExportOptions options;
+                options.platform = otherProject ? id : Platforms::idString(high);
+                options.updateSelectedOnly = selectedOnly;
+                if (selectedOnly) options.onlyActionStableIds.insert(action->runtimeId());
+                const auto rejected = exporter.ExportAllPacks(
+                    otherProject ? foreignProject : project(), platformDir, options);
+                EXPECT_FALSE(rejected.success);
+                EXPECT_TRUE(rejected.error.contains(otherProject
+                    ? QStringLiteral("another project") : QStringLiteral("another platform")))
+                    << rejected.error.toStdString();
+                for (auto file = original.cbegin(); file != original.cend(); ++file) {
+                    const QString path = QDir(platformDir).filePath(file.key());
+                    EXPECT_EQ(QFileInfo::exists(path), preserved.contains(file.key()));
+                    if (preserved.contains(file.key())) EXPECT_EQ(bytes(path), preserved.value(file.key()));
+                }
+            }
+        }
+        ProjectPackExporter::ExportOptions repairOptions;
+        repairOptions.platform = id;
+        const auto repaired = exporter.ExportAllPacks(project(), platformDir, repairOptions);
+        ASSERT_TRUE(repaired.success) << repaired.error.toStdString();
+        EXPECT_EQ(publicationBytes(platformDir, low), original);
     }
-    auto wrong = manifest;
-    auto rows = wrong.value("packs").toArray();
-    auto row = rows.first().toObject();
-    row.insert("platformId", Platforms::idString(high));
-    rows[0] = row;
-    wrong.insert("packs", rows);
-    writeDeliveryJson(manifestPath, wrong);
-    EXPECT_FALSE(ProjectPackExporter::PublishPackIndex(root, project().platforms, {id}, {id}, &error));
-    writeDeliveryJson(manifestPath, manifest);
-    ASSERT_TRUE(ProjectPackExporter::PublishPackIndex(root, project().platforms, {id}, {id}, &error));
-    QFile file(initPath);
-    ASSERT_TRUE(file.open(QIODevice::Append));
-    file.write("changed");
-    file.close();
-    ASSERT_TRUE(ProjectPackExporter::PublishPackIndex(root, project().platforms, {}, {}, &error));
-    EXPECT_TRUE(deliveryJson(QDir(root).filePath("HarkenPackIndex.json")).value("platforms").toArray().isEmpty());
+    QString initCompanion;
+    for (const auto& value : publication(platformDir, low)) {
+        const auto row = value.toObject();
+        if (row.value("packKind").toInt() != harkenstudiobuild::kPackKindInit) continue;
+        const QFileInfo path(row.value("path").toString());
+        initCompanion = QDir(path.path()).filePath(path.completeBaseName() + QStringLiteral(".json"));
+        initCompanion = QDir::cleanPath(initCompanion);
+    }
+    ASSERT_FALSE(initCompanion.isEmpty());
+    QString error;
+    EXPECT_FALSE(validPublication(platformDir, high));
+    ASSERT_TRUE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms, {id}, {id}, &error));
+    for (auto file = original.cbegin(); file != original.cend(); ++file) {
+        if (file.key().endsWith(QStringLiteral(".json")) && file.key() != initCompanion) continue;
+        SCOPED_TRACE(file.key().toStdString());
+        const QString path = QDir(platformDir).filePath(file.key());
+        ASSERT_TRUE(QFile::remove(path));
+        EXPECT_FALSE(ProjectPackExporter::ValidatePackOutputs(root, {*Platforms::find(project().platforms, low)}, &error));
+        QFile output(path);
+        ASSERT_TRUE(output.open(QIODevice::WriteOnly));
+        ASSERT_EQ(output.write(file.value()), file.value().size());
+        output.close();
+    }
+    EXPECT_EQ(publicationBytes(platformDir, low), original);
+    const QString packPath = contentPath(records);
+    QFile corrupted(packPath);
+    ASSERT_TRUE(corrupted.open(QIODevice::ReadWrite));
+    ASSERT_TRUE(corrupted.seek(0));
+    ASSERT_EQ(corrupted.write("BAD!"), 4);
+    corrupted.close();
+    EXPECT_FALSE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms, {id}, {id}, &error));
+    EXPECT_FALSE(error.isEmpty());
 }
 
 TEST_F(ProjectPlatformBuild, ProjectRootOutputIsRejectedBeforeMutation)
@@ -1631,7 +1741,7 @@ TEST_F(ProjectPlatformBuild, ExistingObjectBucketOutputCanBeLoadedAndCorrectedWi
               QStringLiteral("BuildPacks"));
 }
 
-TEST_F(ProjectPlatformBuild, DefaultOutputPublishesIndexAfterBuildAndCancellation)
+TEST_F(ProjectPlatformBuild, DefaultOutputPublishesPairsAfterBuildAndCancellation)
 {
     project().packBuildOutputDir = directory.filePath("DefaultDelivery");
     const QString root = project().packBuildOutputDir;
@@ -1648,10 +1758,10 @@ TEST_F(ProjectPlatformBuild, DefaultOutputPublishesIndexAfterBuildAndCancellatio
     EXPECT_TRUE(polled);
     EXPECT_FALSE(canceled.success);
     EXPECT_TRUE(canceled.canceled);
-    EXPECT_TRUE(deliveryJson(QDir(root).filePath("HarkenPackIndex.json")).value("platforms").toArray().isEmpty());
+    EXPECT_FALSE(validPublication(QDir(root).filePath("Android_Low"), low));
     options.cancelCheck = {};
     ASSERT_TRUE(exporter.ExportAllPacks(project(), {}, options).success);
-    EXPECT_EQ(deliveryJson(QDir(root).filePath("HarkenPackIndex.json")).value("platforms").toArray().size(), 1);
+    EXPECT_TRUE(validPublication(QDir(root).filePath("Android_Low"), low));
 }
 
 TEST_F(ProjectPlatformBuild, DefaultOutputExcludesPlatformsRenamedDuringBuild)
@@ -1672,9 +1782,8 @@ TEST_F(ProjectPlatformBuild, DefaultOutputExcludesPlatformsRenamedDuringBuild)
     const auto result = exporter.ExportAllPacks(project(), {}, options);
     EXPECT_TRUE(renamed);
     EXPECT_FALSE(result.success);
-    EXPECT_TRUE(QFile::exists(QDir(root).filePath("Android_Low/Init.bytes")));
-    EXPECT_FALSE(QFile::exists(QDir(root).filePath("Mobile/Init.bytes")));
-    EXPECT_TRUE(deliveryJson(QDir(root).filePath("HarkenPackIndex.json")).value("platforms").toArray().isEmpty());
+    EXPECT_TRUE(validPublication(QDir(root).filePath("Android_Low"), low));
+    EXPECT_FALSE(validPublication(QDir(root).filePath("Mobile"), low));
 }
 
 TEST_F(ProjectPlatformBuild, BundleDeploymentKeepsCapturedInstanceAfterAnotherBuild)
@@ -1711,7 +1820,7 @@ TEST_F(ProjectPlatformBuild, CaseOnlyRenamePublishesTheExactDirectoryName)
     records.clear();
     ASSERT_TRUE(exportPlatform(low, QDir(root).filePath("android_low"), records).success);
     QString error;
-    ASSERT_TRUE(ProjectPackExporter::PublishPackIndex(root, project().platforms, {id}, {id}, &error)) << error.toStdString();
+    ASSERT_TRUE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms, {id}, {id}, &error)) << error.toStdString();
     const auto names = QDir(root).entryList(QDir::Dirs | QDir::NoDotAndDotDot);
     EXPECT_TRUE(names.contains(QStringLiteral("android_low"), Qt::CaseSensitive));
 }
@@ -1723,7 +1832,7 @@ TEST_F(ProjectPlatformBuild, IpcPartialFailurePublishesTheSuccessfulSiblingOnly)
     authored->sources.plain.active = QUuid{};
     authored->sources.plain.platforms.clear();
     authored->sources.plain.platforms[Platforms::idString(low)].active = authored->sources.plain.entries.front().entryId;
-    project().packExportSelectedPlatformIds = {Platforms::idString(high), Platforms::idString(low)};
+    ProjectManager::instance().setPackExportSelectedPlatformsInternal({Platforms::idString(high), Platforms::idString(low)});
     IPCServer server(nullptr);
     server.setProjectManager(&manager());
     server.setAppState(IPCServer::AppState::Ready);
@@ -1741,20 +1850,19 @@ TEST_F(ProjectPlatformBuild, IpcPartialFailurePublishesTheSuccessfulSiblingOnly)
     const auto report = status.value("result").toObject().value("result").toObject();
     EXPECT_FALSE(report.value("success").toBool());
     EXPECT_EQ(report.value("platforms").toArray().size(), 2);
-    const auto entries = deliveryJson(QDir(root).filePath("HarkenPackIndex.json")).value("platforms").toArray();
-    ASSERT_EQ(entries.size(), 1);
-    EXPECT_EQ(entries.first().toObject().value("id").toString(), Platforms::idString(low));
+    EXPECT_TRUE(validPublication(QDir(root).filePath("Android_Low"), low));
+    EXPECT_FALSE(validPublication(QDir(root).filePath("Android_High"), high));
 }
 
-TEST_F(ProjectPlatformBuild, IpcCancellationRemovesRequestedPlatformsFromIndex)
+TEST_F(ProjectPlatformBuild, IpcCancellationPreservesPublishedPairs)
 {
     const QString root = directory.filePath("Delivery");
     std::vector<ProjectPackExporter::PackBuildRecord> records;
     ASSERT_TRUE(exportPlatform(low, QDir(root).filePath("Android_Low"), records).success);
     const auto id = Platforms::idString(low);
     QString error;
-    ASSERT_TRUE(ProjectPackExporter::PublishPackIndex(root, project().platforms, {id}, {id}, &error));
-    const auto original = bytes(QDir(root).filePath("Android_Low/Init.bytes"));
+    ASSERT_TRUE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms, {id}, {id}, &error));
+    const auto original = publicationBytes(QDir(root).filePath("Android_Low"), low);
     IPCServer server(nullptr);
     server.setProjectManager(&manager());
     server.setAppState(IPCServer::AppState::Ready);
@@ -1768,20 +1876,19 @@ TEST_F(ProjectPlatformBuild, IpcCancellationRemovesRequestedPlatformsFromIndex)
         QThread::msleep(2);
     }
     ASSERT_LT(timer.elapsed(), 30000);
-    EXPECT_TRUE(deliveryJson(QDir(root).filePath("HarkenPackIndex.json")).value("platforms").toArray().isEmpty());
-    EXPECT_EQ(bytes(QDir(root).filePath("Android_Low/Init.bytes")), original);
+    EXPECT_EQ(publicationBytes(QDir(root).filePath("Android_Low"), low), original);
 }
 
 
-TEST_F(ProjectPlatformBuild, CompetingOutputRequestsDoNotChangePublishedIndex)
+TEST_F(ProjectPlatformBuild, CompetingOutputRequestsDoNotChangePublishedPairs)
 {
     const QString root = directory.filePath("Delivery");
     std::vector<ProjectPackExporter::PackBuildRecord> records;
     ASSERT_TRUE(exportPlatform(low, QDir(root).filePath("Android_Low"), records).success);
     const auto id = Platforms::idString(low);
     QString error;
-    ASSERT_TRUE(ProjectPackExporter::PublishPackIndex(root, project().platforms, {id}, {id}, &error));
-    const auto original = bytes(QDir(root).filePath("HarkenPackIndex.json"));
+    ASSERT_TRUE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms, {id}, {id}, &error));
+    const auto original = publicationBytes(QDir(root).filePath("Android_Low"), low);
     const auto lock = ProjectPackExporter::LockPackOutputRoot(root, &error);
     ASSERT_NE(lock, nullptr);
     IPCServer server(nullptr);
@@ -1789,13 +1896,18 @@ TEST_F(ProjectPlatformBuild, CompetingOutputRequestsDoNotChangePublishedIndex)
     server.setAppState(IPCServer::AppState::Ready);
     const auto rejected = server.dispatchCommand("export_pack", {{"output_path", root}, {"platform_id", id}});
     EXPECT_EQ(rejected.value("code").toString(), QStringLiteral("OUTPUT_BUSY"));
-    EXPECT_EQ(bytes(QDir(root).filePath("HarkenPackIndex.json")), original);
+    EXPECT_EQ(publicationBytes(QDir(root).filePath("Android_Low"), low), original);
 }
 
 
 TEST_F(ProjectPlatformBuild, WritesTwoAndroidInstancesForNativeSdkReader)
 {
-    const QString root = QDir(QString::fromUtf8(HARKEN_TEMP_DIR)).filePath("p6-sdk-delivery");
+    ASSERT_TRUE(QDir().mkpath(QString::fromUtf8(HARKEN_TEMP_DIR)));
+    QTemporaryDir fixtureDirectory(QDir(QString::fromUtf8(HARKEN_TEMP_DIR)).filePath(
+        QStringLiteral("p6-sdk-delivery-XXXXXX")));
+    ASSERT_TRUE(fixtureDirectory.isValid()) << fixtureDirectory.errorString().toStdString();
+    fixtureDirectory.setAutoRemove(false);
+    const QString root = fixtureDirectory.path();
     QString error;
     QStringList ids;
     for (const auto id : {low, high}) {
@@ -1803,7 +1915,8 @@ TEST_F(ProjectPlatformBuild, WritesTwoAndroidInstancesForNativeSdkReader)
         ASSERT_TRUE(exportPlatform(id, QDir(root).filePath(Platforms::find(project().platforms, id)->name), records).success);
         ids.append(Platforms::idString(id));
     }
-    ASSERT_TRUE(ProjectPackExporter::PublishPackIndex(root, project().platforms, ids, ids, &error)) << error.toStdString();
+    ASSERT_TRUE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms, ids, ids, &error)) << error.toStdString();
+    qInfo().noquote() << "Platform fixture root:" << root;
 }
 
 
@@ -1818,9 +1931,7 @@ TEST_F(ProjectPlatformBuild, DestroyingIpcServerCompletesOutputPublication)
         const auto response = server.dispatchCommand("export_pack", {{"output_path", root}, {"platform_id", id}});
         ASSERT_EQ(response.value("status").toString(), QStringLiteral("ok"));
     }
-    const auto entries = deliveryJson(QDir(root).filePath("HarkenPackIndex.json")).value("platforms").toArray();
-    ASSERT_EQ(entries.size(), 1);
-    EXPECT_EQ(entries.first().toObject().value("id").toString(), id);
+    EXPECT_TRUE(validPublication(QDir(root).filePath("Android_Low"), low));
     QString error;
     EXPECT_NE(ProjectPackExporter::LockPackOutputRoot(root, &error), nullptr) << error.toStdString();
 }

@@ -155,7 +155,8 @@ void HubClient::reportStage(const QString& stage)
     send(message);
 }
 
-void HubClient::reportFailed(const QString& errorCode, const QString& error)
+void HubClient::reportFailed(const QString& errorCode, const QString& error,
+                             const QString& technicalDetails)
 {
     if (!helloSent_ || !isConnected())
         return;
@@ -165,6 +166,8 @@ void HubClient::reportFailed(const QString& errorCode, const QString& error)
     message[QStringLiteral("stage")] = QStringLiteral("failed");
     message[QStringLiteral("errorCode")] = errorCode;
     message[QStringLiteral("error")] = error;
+    if (!technicalDetails.isEmpty())
+        message[QStringLiteral("technicalDetails")] = technicalDetails;
     send(message);
 }
 

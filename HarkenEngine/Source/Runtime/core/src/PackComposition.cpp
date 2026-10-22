@@ -2741,7 +2741,8 @@ VnResult PackComposition::PrepareCommit(
     std::uint32_t maxActions, std::uint64_t serviceFrame,
     PreparedCommit* out,
     const PackAttenuationBindingMapV1* attenuationBindings,
-    const CanonicalPackSetLedgerV1* ledger, bool clearInit) {
+    const CanonicalPackSetLedgerV1* ledger, bool clearInit,
+    const GameplayCatalogImage* gameplayCatalog) {
     if (out == nullptr) {
         return VN_INVALID_ARG;
     }
@@ -2853,8 +2854,21 @@ VnResult PackComposition::PrepareCommit(
     if (!clearInit) {
         next->attenuationBindings = effectiveBindings;
     }
+    if (!clearInit && gameplayCatalog != nullptr) {
+        next->hasGameplayCatalog = true;
+        next->gameplayCatalog = *gameplayCatalog;
+    } else if (!clearInit && published_ != nullptr && published_->hasGameplayCatalog &&
+               published_->initHandle == next->initHandle &&
+               next->catalog.packStableId == published_->gameplayCatalog.header.initPackStableId &&
+               next->catalog.requirement.packContentRevision == published_->gameplayCatalog.header.initContentRevision &&
+               (catalogOrNull == nullptr || !catalogOrNull->hasGameplayCatalog ||
+                (published_->catalog.hasGameplayCatalog && catalogOrNull->gameplayCatalog.header.digest ==
+                    published_->catalog.gameplayCatalog.header.digest))) {
+        next->hasGameplayCatalog = true;
+        next->gameplayCatalog = published_->gameplayCatalog;
+    }
     for (const PublishedOwner& owner : next->owners) {
-        if (!owner.hasGameplayCatalog) {
+        if (clearInit || next->hasGameplayCatalog || !owner.hasGameplayCatalog) {
             continue;
         }
         if (next->initHandle != 0 && owner.handle != next->initHandle) {
@@ -2903,7 +2917,13 @@ VnResult PackComposition::PrepareCommit(
         next->variableNameCatalog = owner.variableNameCatalog;
     }
     if (next->hasGameplayCatalog) {
-        const bool sameCatalog = published_ != nullptr && published_->hasGameplayCatalog
+        const auto init = std::find_if(next->owners.begin(), next->owners.end(),
+            [&](const auto& owner) { return owner.handle == next->initHandle; });
+        if (init == next->owners.end() ||
+            init->packStableId != next->gameplayCatalog.header.initPackStableId ||
+            init->contentRevision != next->gameplayCatalog.header.initContentRevision)
+            return VN_PACK_STALE_REVISION;
+        const bool sameCatalog = gameplayCatalog == nullptr && published_ != nullptr && published_->hasGameplayCatalog
             && published_->initHandle == next->initHandle
             && published_->gameplayCatalog.header.digest == next->gameplayCatalog.header.digest;
         for (std::size_t i = 0; i < next->gameplayCatalog.active.size(); ++i) {
@@ -2922,6 +2942,15 @@ VnResult PackComposition::PrepareCommit(
             if (owner != next->owners.end()
                 && owner->providerClosureFingerprint != row.providerClosureFingerprint)
                 return VN_PACK_STALE_REVISION;
+            if (gameplayCatalog != nullptr) {
+                for (const auto& loaded : next->owners) {
+                    bool contains = false;
+                    for (std::uint32_t j = 0; j < loaded.view.actionCount; ++j)
+                        contains |= loaded.view.actions[j].actionStableId == row.actionStableId;
+                    if (contains != (loaded.packStableId == row.ownerPackStableId))
+                        return VN_PACK_STALE_REVISION;
+                }
+            }
         }
     }
     const VnResult overlayPolicy = ValidateInitVariablePolicy(*next);

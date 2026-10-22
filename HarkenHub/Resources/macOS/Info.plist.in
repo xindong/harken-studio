@@ -10,11 +10,9 @@
 		<string>zh-Hans</string>
 	</array>
 	<key>CFBundleDisplayName</key>
-	<string>Harken Hub</string>
+	<string>Harken Studio Hub</string>
 	<key>CFBundleExecutable</key>
 	<string>${MACOSX_BUNDLE_EXECUTABLE_NAME}</string>
-	<key>CFBundleIconFile</key>
-	<string>HarkenHub</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.harkensound.harkenhub</string>
 	<key>CFBundleInfoDictionaryVersion</key>

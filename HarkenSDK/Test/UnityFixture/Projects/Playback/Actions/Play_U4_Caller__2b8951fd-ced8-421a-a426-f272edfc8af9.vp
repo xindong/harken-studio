@@ -1,0 +1,30 @@
+{
+    "content": {
+        "actions": [
+            {
+                "delay": 0,
+                "targetRef": {
+                    "documentId": "9ed810a4-76fd-4155-abc1-ab7b1f6d5cb1",
+                    "id": "9ed810a4-76fd-4155-abc1-ab7b1f6d5cb1"
+                },
+                "type": "Post Action"
+            }
+        ],
+        "guid": "2b8951fd-ced8-421a-a426-f272edfc8af9",
+        "name": "Play_U4_Caller",
+        "nameBindingRevision": 1,
+        "objectPath": "\\Play_U4_Caller",
+        "parentRef": {
+            "kind": "root"
+        },
+        "type": "Action"
+    },
+    "harkenDocument": {
+        "id": "2b8951fd-ced8-421a-a426-f272edfc8af9",
+        "projectId": "2a160729-e1cb-45ec-9be9-180a6b5a1a8c",
+        "propertyModel": "fieldGroupsV1",
+        "savedStudioVersion": "0.7.2",
+        "schemaVersion": 7,
+        "type": "project.action"
+    }
+}

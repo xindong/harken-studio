@@ -2,6 +2,8 @@
 #include "UnitTest/StudioObjectIdTestSupport.h"
 #include "Support/FieldGroupTestUtils.h"
 #include "Engine.h"
+#include "CanonicalPackSetExport.h"
+#include <harken_studio_build/PackImage.h>
 #include "UnitTest/CanonicalPackSetActivate.h"
 #include "UnitTest/TestUtil.h"
 #include "AssetPipeline/AssetRegistry.h"
@@ -198,6 +200,17 @@ void addChild(const std::shared_ptr<VNX::ProjectItem>& parent,
     parent->children.push_back(child);
 }
 
+QJsonArray publicationRows(const VNX::ProjectData& project, const QString& directory,
+                           const QString& platform)
+{
+    QJsonArray rows;
+    QStringList files;
+    QString error;
+    EXPECT_TRUE(VNX::ReadPackPublication(directory, project.projectId, platform,
+        &rows, &files, &error)) << error.toStdString();
+    return rows;
+}
+
 QString variantPackPath(const VNX::ProjectData& project, const QString& dir, harkenstudio::ObjectId stableId,
                         const QString& platform = QStringLiteral("Windows"),
                         const QString& language = QString())
@@ -266,7 +279,6 @@ void buildProject(VNX::ProjectData& project,
     project.name = QStringLiteral("shared-pack");
     project.projectPath =
         QDir(projectRoot).filePath(QStringLiteral("shared-pack.vproj"));
-    project.conversionFailurePolicy = VNX::ConversionFailurePolicy::AbortBuild;
 
     for (uint32_t sourceID : {sharedSourceId, soloSourceId})
     {
@@ -377,13 +389,13 @@ VnResult parseCanonicalPackStableId(const QString& path, uint64_t* packStableId)
     if (!file.open(QIODevice::ReadOnly))
         return VN_BAD_PACK;
     const QByteArray bytes = file.readAll();
-    harken::PackCanonicalImage canonical;
-    const VnResult parsed = harken::ParsePackCanonicalImage(
+    harkenstudiobuild::PackCanonicalImage canonical;
+    const auto parsed = harkenstudiobuild::ParsePackCanonicalImage(
         reinterpret_cast<const uint8_t*>(bytes.constData()),
         static_cast<uint64_t>(bytes.size()),
         &canonical);
-    if (parsed != VN_OK)
-        return parsed;
+    if (parsed != harkenstudiobuild::kPackOk)
+        return VN_BAD_PACK;
     *packStableId = canonical.packStableId != 0
         ? canonical.packStableId
         : canonical.partitionHeader.packStableId;
@@ -871,9 +883,9 @@ TEST_F(EditorFieldGroupCompilation, AllEntriesMatchAcrossPlatformsAndIgnoreDorma
                 outputDir, harkentest::StudioObjectId(kActionOneObjectId + kStableIdBias), platformName);
             PackImage image;
             ASSERT_NO_FATAL_FAILURE(readPack(path, image));
-            harken::PackCanonicalImage canonical;
-            ASSERT_EQ(harken::ParsePackCanonicalImage(
-                          image.data(), static_cast<uint64_t>(image.bytes.size()), &canonical), VN_OK);
+            harkenstudiobuild::PackCanonicalImage canonical;
+            ASSERT_EQ(harkenstudiobuild::ParsePackCanonicalImage(
+                          image.data(), static_cast<uint64_t>(image.bytes.size()), &canonical), harkenstudiobuild::kPackOk);
             ASSERT_TRUE(canonical.hasPartition);
             harken::CurrentWorldBodyImage decoded;
             ASSERT_TRUE(decoded.Decode(
@@ -882,10 +894,10 @@ TEST_F(EditorFieldGroupCompilation, AllEntriesMatchAcrossPlatformsAndIgnoreDorma
             PackImage initImage;
             ASSERT_NO_FATAL_FAILURE(readPack(
                 QDir(outputDir).filePath(QStringLiteral("Init.bytes")), initImage));
-            harken::PackCanonicalImage initCanonical;
-            ASSERT_EQ(harken::ParsePackCanonicalImage(
+            harkenstudiobuild::PackCanonicalImage initCanonical;
+            ASSERT_EQ(harkenstudiobuild::ParsePackCanonicalImage(
                           initImage.data(), static_cast<uint64_t>(initImage.bytes.size()),
-                          &initCanonical), VN_OK);
+                          &initCanonical), harkenstudiobuild::kPackOk);
             ASSERT_TRUE(initCanonical.hasPartition);
             harken::CurrentWorldBodyImage initDecoded;
             ASSERT_TRUE(initDecoded.Decode(
@@ -955,9 +967,9 @@ TEST_F(EditorFieldGroupCompilation, ContainerOnlyEntryIncludesOwnedSoundAndEffec
         outputDir, harkentest::StudioObjectId(kActionOneObjectId + kStableIdBias), QStringLiteral("Android"));
     PackImage image;
     ASSERT_NO_FATAL_FAILURE(readPack(path, image));
-    harken::PackCanonicalImage canonical;
-    ASSERT_EQ(harken::ParsePackCanonicalImage(
-                  image.data(), static_cast<uint64_t>(image.bytes.size()), &canonical), VN_OK);
+    harkenstudiobuild::PackCanonicalImage canonical;
+    ASSERT_EQ(harkenstudiobuild::ParsePackCanonicalImage(
+                  image.data(), static_cast<uint64_t>(image.bytes.size()), &canonical), harkenstudiobuild::kPackOk);
     ASSERT_TRUE(canonical.hasPartition);
     ASSERT_EQ(canonical.media.size(), 1u);
     EXPECT_EQ(canonical.media.front().soundId, sound_->runtimeId());
@@ -1062,11 +1074,7 @@ TEST(EditorProjectPackExporterSharedPack, SharedMediaIncludedInEveryActionPack)
     EXPECT_EQ(VN_OK, Vn_Term());
 
     EXPECT_EQ(initImage.countKind(harken::kPackEntryKindInitRoutingCatalog), 0);
-    QFile manifestFile(QDir(dir.path()).filePath(HarkenEditor::Bridge::packManifestFileName()));
-    ASSERT_TRUE(manifestFile.open(QIODevice::ReadOnly));
-    const QJsonObject manifest = QJsonDocument::fromJson(manifestFile.readAll()).object();
-    EXPECT_TRUE(manifest.value(QStringLiteral("language")).toString().isEmpty());
-    const QJsonArray packs = manifest.value(QStringLiteral("packs")).toArray();
+    const QJsonArray packs = publicationRows(project, dir.path(), opts.platform);
     ASSERT_EQ(packs.size(), 4);
     for (const QJsonValue& value : packs) {
         const QJsonObject pack = value.toObject();
@@ -1265,11 +1273,14 @@ TEST(EditorProjectPackExporterSharedPack, BindingOnlyChangesReviseCanonicalPackI
         const QString output = QDir(dir.path()).filePath(name);
         const auto result = exporter.ExportAllPacks(project, output, options);
         ASSERT_TRUE(result.success) << result.error.toStdString();
-        QFile manifest(QDir(output).filePath(QStringLiteral("HarkenPackManifest.json")));
-        ASSERT_TRUE(manifest.open(QIODevice::ReadOnly));
-        const auto json = QJsonDocument::fromJson(manifest.readAll()).object();
-        const auto rows = json.value(QStringLiteral("packs")).toArray();
-        const auto initId = json.value(QStringLiteral("initPackStableId")).toString().toULongLong();
+        const auto rows = publicationRows(project, output, options.platform);
+        std::uint64_t initId = 0;
+        for (const auto& value : rows) {
+            const auto row = value.toObject();
+            if (row.value(QStringLiteral("packKind")).toInt() == harkenstudiobuild::kPackKindInit)
+                initId = row.value(QStringLiteral("packStableId")).toString().toULongLong();
+        }
+        ASSERT_NE(initId, 0u);
         for (const auto& value : rows) {
             const auto row = value.toObject();
             const auto id = row.value(QStringLiteral("packStableId")).toString().toULongLong();
@@ -1595,8 +1606,9 @@ TEST(EditorProjectPackExporterSharedPack, LegacyGroupedActionsKeepIndependentPac
         PackImage image;
         ASSERT_NO_FATAL_FAILURE(readPack(variantPackPath(project, dir.path(), id), image));
         EXPECT_EQ(image.countKind(harken::kPackEntryKindMedia), 1);
-        harken::PackCanonicalImage canonical;
-        ASSERT_EQ(VN_OK, harken::ParsePackCanonicalImage(image.data(), image.bytes.size(), &canonical));
+        harkenstudiobuild::PackCanonicalImage canonical;
+        ASSERT_EQ(harkenstudiobuild::kPackOk,
+            harkenstudiobuild::ParsePackCanonicalImage(image.data(), image.bytes.size(), &canonical));
         harken::CurrentWorldBodyImage body;
         ASSERT_TRUE(body.Decode(canonical.partitionBody.data(), canonical.partitionBody.size(),
                                canonical.partitionHeader.bodyVintage, harken::CurrentWorldDecodeMode::StrictArtifact));
@@ -1618,7 +1630,7 @@ TEST(EditorProjectPackExporterSharedPack, LegacyGroupedActionsKeepIndependentPac
     VNX::AssetRegistry::instance().clear();
 }
 
-TEST(EditorProjectPackExporterSharedPack, GroupPlatformSelectionSkipsWithoutFallback)
+TEST(EditorProjectPackExporterSharedPack, LegacyGroupSelectionDoesNotRestrictActions)
 {
     qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
 
@@ -1656,7 +1668,7 @@ TEST(EditorProjectPackExporterSharedPack, GroupPlatformSelectionSkipsWithoutFall
 
     EXPECT_FALSE(QFileInfo::exists(
         QDir(dir.path()).filePath(QStringLiteral("AndroidOnly.bytes"))));
-    EXPECT_FALSE(QFileInfo::exists(
+    EXPECT_TRUE(QFileInfo::exists(
         variantPackPath(project, dir.path(), harkentest::StudioObjectId(kActionOneObjectId + kStableIdBias))));
     for (const auto& record : records)
         EXPECT_NE(record.packName, QStringLiteral("AndroidOnly"));
@@ -1688,11 +1700,10 @@ TEST(EditorProjectPackExporterSharedPack, ActionTargetingSkipsUntargetedPlatform
         {{QStringLiteral("ActionOne"), kActionOneObjectId, kSharedSoundObjectId},
          {QStringLiteral("ActionTwo"), kActionTwoObjectId, kSoloSoundObjectId}}));
 
-    project.actionPackTargeting.push_back(
-        {harkentest::StudioObjectId(kActionOneObjectId + kStableIdBias), false, {QStringLiteral("Android")}});
-
     VNX::ProjectPackExporter exporter;
     VNX::ProjectPackExporter::ExportOptions opts;
+    opts.selection.actionTargeting.push_back(
+        {harkentest::StudioObjectId(kActionOneObjectId + kStableIdBias), false, {HarkenTest::platformIdString("Android")}});
     opts.platform = HarkenTest::platformIdString("Windows");
 
     std::vector<VNX::ProjectPackExporter::PackBuildRecord> records;
@@ -1731,11 +1742,10 @@ TEST(EditorProjectPackExporterSharedPack, SharedOwnershipIgnoresUnitsNotBuiltFor
         {{QStringLiteral("ActionOne"), kActionOneObjectId, kSharedSoundObjectId},
          {QStringLiteral("ActionTwo"), kActionTwoObjectId, kSharedSoundObjectId}}));
 
-    project.actionPackTargeting.push_back(
-        {harkentest::StudioObjectId(kActionOneObjectId + kStableIdBias), false, {QStringLiteral("Android")}});
-
     VNX::ProjectPackExporter exporter;
     VNX::ProjectPackExporter::ExportOptions opts;
+    opts.selection.actionTargeting.push_back(
+        {harkentest::StudioObjectId(kActionOneObjectId + kStableIdBias), false, {HarkenTest::platformIdString("Android")}});
     opts.platform = HarkenTest::platformIdString("Windows");
 
     std::vector<VNX::ProjectPackExporter::PackBuildRecord> records;
@@ -1759,7 +1769,7 @@ TEST(EditorProjectPackExporterSharedPack, SharedOwnershipIgnoresUnitsNotBuiltFor
     VNX::AssetRegistry::instance().clear();
 }
 
-TEST(EditorProjectPackExporterSharedPack, GroupTargetedNowhereBuildsOnNoPlatform)
+TEST(EditorProjectPackExporterSharedPack, CachedSelectionCanExcludeLegacyGroupMembers)
 {
     qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
 
@@ -1788,6 +1798,8 @@ TEST(EditorProjectPackExporterSharedPack, GroupTargetedNowhereBuildsOnNoPlatform
 
     VNX::ProjectPackExporter exporter;
     VNX::ProjectPackExporter::ExportOptions opts;
+    opts.selection.actionTargeting.push_back(
+        {harkentest::StudioObjectId(kActionOneObjectId + kStableIdBias), false, {}});
     opts.platform = HarkenTest::platformIdString("Windows");
 
     std::vector<VNX::ProjectPackExporter::PackBuildRecord> records;
@@ -1859,16 +1871,28 @@ TEST(EditorProjectPackExporterSharedPack, InitEmitsKind26AndContentEmitsKind27)
     PackImage initImage;
     ASSERT_NO_FATAL_FAILURE(
         readPack(QDir(dir.path()).filePath(QStringLiteral("Init.bytes")), initImage));
-    harken::PackCanonicalImage initCanonical;
-    ASSERT_EQ(VN_OK, harken::ParsePackCanonicalImage(
+    harkenstudiobuild::PackCanonicalImage initCanonical;
+    ASSERT_EQ(harkenstudiobuild::kPackOk, harkenstudiobuild::ParsePackCanonicalImage(
                          initImage.data(),
                          static_cast<uint64_t>(initImage.bytes.size()),
                          &initCanonical));
     EXPECT_TRUE(initCanonical.hasVariablePolicyOverlay);
-    ASSERT_TRUE(initCanonical.hasGameplayCatalog);
-    ASSERT_EQ(1u, initCanonical.gameplayCatalog.active.size());
-    EXPECT_EQ(actionItem->runtimeId(),
-              initCanonical.gameplayCatalog.active.front().actionStableId);
+    EXPECT_FALSE(initCanonical.hasGameplayCatalog);
+    EXPECT_FALSE(initCanonical.hasVariableNameCatalog);
+    const auto rows = publicationRows(project, dir.path(), options.platform);
+    ASSERT_EQ(rows.size(), 2);
+    QJsonObject initCompanion;
+    QJsonObject actionRow;
+    for (const auto& value : rows) {
+        const auto row = value.toObject();
+        if (row.value("packKind").toInt() == harkenstudiobuild::kPackKindInit)
+            initCompanion = row.value("companion").toObject();
+        else
+            actionRow = row;
+    }
+    const auto actionCompanion = actionRow.value("companion").toObject();
+    EXPECT_EQ(actionCompanion.value("name").toString(), actionItem->name);
+    EXPECT_EQ(actionCompanion.value("guid").toString(), VNX::objectIdString(actionItem->runtimeId()));
     ASSERT_EQ(1u, initCanonical.variablePolicyOverlays.size());
     EXPECT_EQ(variable->runtimeId(),
               initCanonical.variablePolicyOverlays[0].variableId);
@@ -1880,14 +1904,14 @@ TEST(EditorProjectPackExporterSharedPack, InitEmitsKind26AndContentEmitsKind27)
     ASSERT_NO_FATAL_FAILURE(readPack(
         variantPackPath(project, dir.path(), harkentest::StudioObjectId(kActionOneObjectId + kStableIdBias)),
         contentImage));
-    harken::PackCanonicalImage contentCanonical;
-    ASSERT_EQ(VN_OK, harken::ParsePackCanonicalImage(
+    harkenstudiobuild::PackCanonicalImage contentCanonical;
+    ASSERT_EQ(harkenstudiobuild::kPackOk, harkenstudiobuild::ParsePackCanonicalImage(
                          contentImage.data(),
                          static_cast<uint64_t>(contentImage.bytes.size()),
                          &contentCanonical));
     EXPECT_TRUE(contentCanonical.hasVariableRequirements);
     EXPECT_EQ(contentCanonical.packStableId,
-              initCanonical.gameplayCatalog.active.front().ownerPackStableId);
+              actionRow.value("packStableId").toString().toULongLong());
     ASSERT_EQ(1u, contentCanonical.variableRequirements.size());
     EXPECT_EQ(1u, contentCanonical.variableRequirements[0].identityClass);
     EXPECT_EQ(variable->runtimeId(),
@@ -1895,25 +1919,12 @@ TEST(EditorProjectPackExporterSharedPack, InitEmitsKind26AndContentEmitsKind27)
     EXPECT_EQ(initCanonical.variablePolicyOverlays[0].executionFingerprint,
               contentCanonical.variableRequirements[0].expectedExecutionFingerprint);
 
-    QFile manifestFile(QDir(dir.path()).filePath(
-        HarkenEditor::Bridge::packManifestFileName()));
-    ASSERT_TRUE(manifestFile.open(QIODevice::ReadOnly));
-    const QByteArray manifestBytes = manifestFile.readAll();
-    const QJsonObject manifest =
-        QJsonDocument::fromJson(manifestBytes).object();
-    const QJsonObject catalog =
-        manifest.value(QStringLiteral("variableCatalog")).toObject();
-    const QJsonArray catalogVariables =
-        catalog.value(QStringLiteral("variables")).toArray();
-    ASSERT_EQ(1, catalogVariables.size());
-    const QJsonObject catalogRow = catalogVariables.at(0).toObject();
-    EXPECT_EQ(variable->runtimeId(),
-              VNX::runtimeObjectId(QUuid(catalogRow.value(QStringLiteral("variableId")).toString())));
-    EXPECT_EQ(1, catalogRow.value(QStringLiteral("writers")).toInt());
-    const QString overlayFingerprint = QString::number(
-        initCanonical.variablePolicyOverlays[0].executionFingerprint);
-    EXPECT_TRUE(QString::fromUtf8(manifestBytes).contains(
-        QStringLiteral("\"executionFingerprint\":%1").arg(overlayFingerprint)));
+    const auto variables = initCompanion.value("variables").toArray();
+    ASSERT_EQ(variables.size(), 1);
+    const auto variableName = variables.at(0).toObject();
+    EXPECT_EQ(variableName.value("name").toString(), variable->name);
+    EXPECT_EQ(variableName.value("guid").toString(), VNX::objectIdString(variable->runtimeId()));
+    EXPECT_TRUE(variableName.value("labels").toArray().isEmpty());
 
     harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -1929,10 +1940,10 @@ TEST(EditorProjectPackExporterSharedPack, InitEmitsKind26AndContentEmitsKind27)
     ASSERT_NE(0u, contentHandle);
     const auto* published = session.Engine()->packComposition.Published();
     ASSERT_NE(published, nullptr);
-    EXPECT_TRUE(published->hasGameplayCatalog);
+    EXPECT_FALSE(published->hasGameplayCatalog);
     ASSERT_EQ(2u, published->owners.size());
     const auto keep = harken::PackComposition::Keep(published->owners.front());
-    EXPECT_TRUE(keep.hasGameplayCatalog);
+    EXPECT_FALSE(keep.hasGameplayCatalog);
     EXPECT_TRUE(keep.hasVariablePolicyOverlay);
     EXPECT_EQ(1u, keep.variablePolicyOverlays.size());
 

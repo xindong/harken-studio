@@ -2,7 +2,16 @@
 
 All notable changes to the Harken Core Unity package are documented here.
 
-## [0.3.3] - unreleased
+## [0.3.4] - unreleased
+
+- Bind gameplay catalogs separately from Init packs and support a shared Init
+  across language publications for incremental exports. Update managed bindings
+  and native binaries together.
+- Preserve emitter and listener transform publication when result observers
+  change component state, and ignore stale runtime Ready callbacks.
+- Size runtime command capacity for the configured maximum voice count.
+
+## [0.3.3] - 2026-10-15
 
 - Allow the project settings asset to move between parent directories while
   preserving its Resources lookup path and duplicate-resource validation.

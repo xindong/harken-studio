@@ -109,7 +109,7 @@ inline bool ValidRecordingDescriptor(const RecordingDescriptor& value) noexcept 
         VN_MONITOR_PERM_SYMBOLS | VN_MONITOR_PERM_RAW_AUDIO;
     if (value.version != 1 || value.bytes != kRecordingDescriptorBytes || value.engine == 0 || value.epoch == 0 ||
         value.owner == 0 || value.ownerGeneration == 0 || value.ownerEpoch == 0 || value.leaseGeneration == 0 ||
-        value.ownerGeneration != (value.owner >> 8) || value.schema != 1 || value.startedNs == 0 ||
+        value.ownerGeneration != (value.owner >> 8) || (value.schema == 0 || value.schema > 2) || value.startedNs == 0 ||
         value.requestSymbols > 1 || value.streams == 0 || (value.streams & ~streams) != 0 ||
         (value.permissions & ~permissions) != 0 || (value.permissions & VN_MONITOR_PERM_RECORD) == 0 ||
         value.recordingEpoch == 0 || value.recordingEpoch == value.epoch) return false;
@@ -206,9 +206,10 @@ public:
         }
         switch (header.recordKind) {
         case VN_MONITOR_RECORD_EXECUTION_FACT: {
-            VnMonitorExecutionFactV1 value{};
-            valid = source == 0 && DecodeExecutionFact(header, payload, header.payloadBytes, value) &&
-                value.factKind < 128 && (descriptor_.supported[value.factKind / 64] & (UINT64_C(1) << (value.factKind % 64))) != 0;
+            VnMonitorExecutionFactV2 value{};
+            valid = source == 0 && header.recordVersion <= descriptor_.schema &&
+                DecodeExecutionFact(header, payload, header.payloadBytes, value) &&
+                value.fact.factKind < 128 && (descriptor_.supported[value.fact.factKind / 64] & (UINT64_C(1) << (value.fact.factKind % 64))) != 0;
             if (valid) valid = observe(header.producerId == kExecutionLogicProducer ? 0 : 1);
             break;
         }

@@ -18,7 +18,8 @@ enum class ProjectDataClass
 class ProjectDataPolicy
 {
 public:
-    explicit ProjectDataPolicy(const QString& packBuildOutputDir = {});
+    explicit ProjectDataPolicy(const QString& packBuildOutputDir = {},
+                               const QString& buildWaveformOutputDir = {});
     static ProjectDataPolicy forProjectFile(const QString& projectFilePath);
 
     static QString normalizeRelativePath(const QString& path);

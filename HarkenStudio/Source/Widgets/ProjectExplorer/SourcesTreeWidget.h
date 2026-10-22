@@ -39,6 +39,7 @@ signals:
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
+    bool edit(const QModelIndex& index, EditTrigger trigger, QEvent* event) override;
     void startDrag(Qt::DropActions actions) override;
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dragMoveEvent(QDragMoveEvent* event) override;

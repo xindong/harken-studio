@@ -90,7 +90,7 @@ void StartupCoordinator::startAfterHubConnection()
             connect(hubClient_.get(), &HubClient::forwardedCompleted,
                     this, [this](bool acknowledged) {
                 if (!acknowledged) {
-                    fail(tr("The project window was activated, but Harken Hub did not confirm the request."),
+                    fail(tr("The project window was activated, but Harken Studio Hub did not confirm the request."),
                          3, QStringLiteral("PROJECT_FORWARD_UNCONFIRMED"));
                     return;
                 }
@@ -252,8 +252,13 @@ void StartupCoordinator::tryCommit()
         if (!prepared_ || prepared_->error.isEmpty()) {
             fail(tr("Harken Studio could not open the project"));
         } else {
-            fail(ProjectUpgradeMessages::userMessage(
-                prepared_->error, !hubArguments_.createProject));
+            const QString message = ProjectUpgradeMessages::userMessage(
+                prepared_->error, !hubArguments_.createProject);
+            const QString writeAccessCode = projectIssueCode(ProjectIssue::ProjectUpgradeFilesNotWritable);
+            if (prepared_->error.startsWith(writeAccessCode + QLatin1Char(':')))
+                fail(message, 3, writeAccessCode, prepared_->error.mid(writeAccessCode.size() + 1));
+            else
+                fail(message);
         }
         return;
     }
@@ -292,13 +297,20 @@ void StartupCoordinator::beginRuntimeSync()
 
 void StartupCoordinator::finish()
 {
-    if (terminal_)
+    if (terminal_ || presentationStarted_)
         return;
-    terminal_ = true;
+    presentationStarted_ = true;
     loading_.setPhase(StartupPhase::ShowingEditor);
-    mainWindow_->show();
-    ProjectInstance::setActivationWindow(mainWindow_.get());
-    QTimer::singleShot(0, this, [this]() {
+    connect(mainWindow_.get(), &MainWindow::startupPresentationFinished,
+            this, [this](bool shown) {
+        if (terminal_)
+            return;
+        if (!shown) {
+            cancelProjectOpen();
+            return;
+        }
+        terminal_ = true;
+        ProjectInstance::setActivationWindow(mainWindow_.get());
         loading_.setPhase(StartupPhase::Ready);
         loading_.close();
         if (hubClient_) {
@@ -308,6 +320,8 @@ void StartupCoordinator::finish()
             hubClient_->reportStage(QStringLiteral("ready"));
         }
     });
+    mainWindow_->prepareWindowForStartup(loading_.screen());
+    mainWindow_->show();
 }
 
 void StartupCoordinator::cancelProjectOpen()
@@ -330,7 +344,10 @@ void StartupCoordinator::fail(const QString& message, int exitCode,
     const QString userMessage = ProjectUpgradeMessages::userMessage(message);
     const bool hubConnected = hubClient_ && hubClient_->isConnected();
     if (hubConnected)
-        hubClient_->reportFailed(errorCode, userMessage);
+        hubClient_->reportFailed(errorCode,
+            errorCode == projectIssueCode(ProjectIssue::ProjectUpgradeFilesNotWritable)
+                ? ProjectUpgradeMessages::userMessage(ProjectIssue::ProjectUpgradeFilesNotWritable)
+                : userMessage, technicalDetails);
     if (hubConnected) {
         loading_.close();
     } else {

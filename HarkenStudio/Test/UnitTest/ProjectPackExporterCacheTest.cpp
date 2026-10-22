@@ -202,7 +202,6 @@ TEST(EditorProjectPackExporter, UsesMediaCacheAndPropagatesLoopToPackc)
     auto project = HarkenTest::projectWithPlatforms();
     project.name = QStringLiteral("cache-e2e");
     project.projectPath = QDir(dir.path()).filePath(QStringLiteral("cache-e2e.vproj"));
-    project.conversionFailurePolicy = VNX::ConversionFailurePolicy::AbortBuild;
     VNX::ProjectFileBinding busBinding;
     busBinding.rootItem = makeItem(
         QStringLiteral("MasterBus"), VNX::ProjectItem::Type::Bus, 201);
@@ -396,7 +395,6 @@ TEST(EditorProjectPackExporter, PreservesStereoForSpatialAndNonSpatialSoundsShar
     project.name = QStringLiteral("shared-source-stereo");
     project.projectPath =
         QDir(dir.path()).filePath(QStringLiteral("shared-source-stereo.vproj"));
-    project.conversionFailurePolicy = VNX::ConversionFailurePolicy::AbortBuild;
     VNX::ProjectFileBinding busBinding;
     busBinding.rootItem = makeItem(
         QStringLiteral("MasterBus"), VNX::ProjectItem::Type::Bus, 201);

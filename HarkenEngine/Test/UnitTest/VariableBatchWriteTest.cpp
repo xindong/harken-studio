@@ -2,12 +2,14 @@
 #include <harken/Harken.h>
 
 #include "Common/TestUtil.h"
+#include "Common/MonitorExecutionTestSupport.h"
 #include "harken/core/VariableExecutionFingerprint.h"
 #include "harken/param/VariableService.h"
 
 #include <gtest/gtest.h>
 
 #include <array>
+#include <bit>
 #include <cstdint>
 #include <vector>
 
@@ -34,6 +36,168 @@ float ReadValue(harken::Engine* engine, VnVariableId id) {
     float value = 99.0f;
     EXPECT_TRUE(engine->variables.CurrentValue(id, &value));
     return value;
+}
+
+std::vector<harkentest::monitor::ActivityRecord> ReadVariableResults(VnMonitorSessionHandle session) {
+    auto records = harkentest::monitor::ReadActivityEvents(session);
+    std::erase_if(records, [](const auto& row) {
+        return row.fact.fact.factKind != VN_MONITOR_FACT_VARIABLE_RESULT;
+    });
+    return records;
+}
+
+TEST(VariableBatchWrite, MonitorReportsAppliedAndSupersededWithOriginalRequestIdentity) {
+    EngineSession session(MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        InstallSmoothDefinitions(session.Engine(), {harkentest::ObjectId(7), harkentest::ObjectId(8)}).status);
+    VnVariableWriteV1 writes[]{{harkentest::ObjectId(7), 0.25f, 0},
+        {harkentest::ObjectId(8), 0.5f, 0}};
+    const auto desc = MakeBatch(writes, 2);
+    VnVariableTicketV1 ticket{};
+    ASSERT_EQ(VN_OK, Vn_SetValues(&desc, &ticket));
+    const auto batchRequest = session.Engine()->monitorRequests.LastSequence();
+    const auto capture = harkentest::monitor::OpenActivityEvents();
+    EXPECT_TRUE(ReadVariableResults(capture).empty());
+    ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(7), 0.75f));
+    const auto replacementRequest = session.Engine()->monitorRequests.LastSequence();
+    EXPECT_NE(batchRequest, replacementRequest);
+    const auto superseded = ReadVariableResults(capture);
+    ASSERT_EQ(2u, superseded.size());
+    for (const auto& row : superseded) {
+        EXPECT_EQ(batchRequest, row.fact.fact.playbackRequest.sequence);
+        EXPECT_EQ(ticket.sequence, row.fact.activity.variableTicket);
+        EXPECT_EQ(VN_VARIABLE_OUTCOME_SUPERSEDED, row.fact.activity.variableOutcome);
+    }
+    ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(session.Engine()));
+    const auto applied = ReadVariableResults(capture);
+    ASSERT_EQ(1u, applied.size());
+    EXPECT_EQ(replacementRequest, applied[0].fact.fact.playbackRequest.sequence);
+    EXPECT_EQ(harkentest::ObjectId(7), applied[0].header.stableId);
+    EXPECT_EQ(VN_VARIABLE_OUTCOME_APPLIED, applied[0].fact.activity.variableOutcome);
+    EXPECT_FLOAT_EQ(ReadValue(session.Engine(), harkentest::ObjectId(7)),
+        std::bit_cast<float>(applied[0].fact.activity.variableValueBits));
+    EXPECT_FLOAT_EQ(0.0f, ReadValue(session.Engine(), harkentest::ObjectId(8)));
+    VnVariableWriteV1 reset{harkentest::ObjectId(7), 0.0f, 0};
+    const auto resetDesc = MakeBatch(&reset, 1);
+    ASSERT_EQ(VN_OK, Vn_ResetValues(&resetDesc, &ticket));
+    const auto resetRequest = session.Engine()->monitorRequests.LastSequence();
+    EXPECT_TRUE(ReadVariableResults(capture).empty());
+    ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(session.Engine()));
+    const auto resetRecords = ReadVariableResults(capture);
+    ASSERT_EQ(1u, resetRecords.size());
+    EXPECT_EQ(resetRequest, resetRecords[0].fact.fact.playbackRequest.sequence);
+    EXPECT_EQ(ticket.sequence, resetRecords[0].fact.activity.variableTicket);
+    EXPECT_EQ(VN_VARIABLE_OUTCOME_APPLIED, resetRecords[0].fact.activity.variableOutcome);
+    EXPECT_FLOAT_EQ(0.0f, std::bit_cast<float>(resetRecords[0].fact.activity.variableValueBits));
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(capture));
+}
+
+TEST(VariableBatchWrite, MonitorKeepsEmitterResultsAndRejectedRequestsDistinct) {
+    EngineSession session(MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        InstallSmoothDefinitions(session.Engine(), {harkentest::ObjectId(7)}).status);
+    VnEmitterHandle emitter = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+    ASSERT_EQ(VN_OK, Vn_SetEmitterValue(emitter, harkentest::ObjectId(7), 0.25f));
+    const auto acceptedRequest = session.Engine()->monitorRequests.LastSequence();
+    const auto capture = harkentest::monitor::OpenActivityEvents();
+    EXPECT_TRUE(ReadVariableResults(capture).empty());
+    ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(session.Engine()));
+    auto records = ReadVariableResults(capture);
+    ASSERT_EQ(1u, records.size());
+    EXPECT_EQ(acceptedRequest, records[0].fact.fact.playbackRequest.sequence);
+    EXPECT_EQ(emitter, records[0].fact.fact.originEmitter);
+    EXPECT_EQ(1u, records[0].fact.activity.variableScope);
+    EXPECT_EQ(VN_VARIABLE_OUTCOME_APPLIED, records[0].fact.activity.variableOutcome);
+    ASSERT_EQ(VN_NO_VARIABLE, Vn_SetValue(harkentest::ObjectId(99), 0.5f));
+    const auto rejectedRequest = session.Engine()->monitorRequests.LastSequence();
+    records = ReadVariableResults(capture);
+    ASSERT_EQ(1u, records.size());
+    EXPECT_NE(acceptedRequest, rejectedRequest);
+    EXPECT_EQ(rejectedRequest, records[0].fact.fact.playbackRequest.sequence);
+    EXPECT_EQ(VN_NO_VARIABLE, records[0].fact.fact.result);
+    EXPECT_EQ(0u, records[0].fact.activity.variableTicket);
+    ASSERT_EQ(VN_CAPABILITY_UNAVAILABLE, Vn_SetValueByName("Missing", 0.25f));
+    records = ReadVariableResults(capture);
+    ASSERT_EQ(1u, records.size());
+    EXPECT_EQ(VN_CAPABILITY_UNAVAILABLE, records[0].fact.fact.result);
+    EXPECT_TRUE(harken::IsNull(records[0].header.stableId));
+    ASSERT_EQ(VN_NO_VARIABLE_LABEL,
+        Vn_SetValueByLabelName(harkentest::ObjectId(7), "Missing", 0));
+    records = ReadVariableResults(capture);
+    ASSERT_EQ(1u, records.size());
+    EXPECT_EQ(VN_NO_VARIABLE_LABEL, records[0].fact.fact.result);
+    EXPECT_EQ(harkentest::ObjectId(7), records[0].header.stableId);
+    ASSERT_EQ(VN_STALE_HANDLE, Vn_SetEmitterValue(1, harkentest::ObjectId(7), 0.5f));
+    records = ReadVariableResults(capture);
+    ASSERT_EQ(1u, records.size());
+    EXPECT_EQ(VN_STALE_HANDLE, records[0].fact.fact.result);
+    EXPECT_EQ(0u, records[0].fact.fact.originEmitter);
+    EXPECT_EQ(1u, records[0].fact.activity.variableScope);
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(capture));
+}
+
+TEST(VariableBatchWrite, MonitorSeparatesActionStepExecutionFromVariableApplication) {
+    EngineSession session(MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto variable = MakeVariableDefinition(harkentest::ObjectId(7),
+        harken::VariableKindV1::Smooth, -1.0f, 1.0f, 0.0f);
+    harken::ActionStepProgramViewV1 step{};
+    step.opcode = harken::ActionOpcodeV1::SetVariable;
+    step.target.kind = harken::ActionTargetKindV1::Variable;
+    step.target.stableId = variable.variableId;
+    step.valueBits = std::bit_cast<std::uint32_t>(0.5f);
+    for (auto* time : {&step.delay, &step.fade, &step.cooldown}) {
+        time->domain = harken::AuthoredTimeDomainV1::AbsoluteNanoseconds;
+        time->denominator = 1;
+    }
+    harken::ActionProgramViewV1 action{};
+    action.actionStableId = harkentest::ObjectId(9);
+    action.steps = &step;
+    action.stepCount = 1;
+    action.expandedStepOccurrenceCount = 1;
+    action.expandedFiringCount = 1;
+    action.programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(action);
+    harken::ContainerWorldInstallViewV1 world{};
+    world.identity.projectId = harkentest::ObjectId(10);
+    world.identity.capabilityMask = harken::kWorldCapabilityActionDefinitions | harken::kWorldCapabilityVariableDefinitions;
+    world.variables = &variable;
+    world.variableCount = 1;
+    world.actions = &action;
+    world.actionCount = 1;
+    world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(world);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(*session.Engine(), world).status);
+    const auto capture = harkentest::monitor::OpenActivityEvents();
+    VnPostActionDesc desc{};
+    desc.structSize = sizeof(desc);
+    desc.actionId = action.actionStableId;
+    VnActionFiringHandle firing = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    const auto request = session.Engine()->monitorRequests.LastSequence();
+    const auto immediate = harkentest::monitor::ReadActivityEvents(capture);
+    bool sawAction = false, sawStep = false;
+    for (const auto& row : immediate) {
+        if (row.fact.fact.factKind == VN_MONITOR_FACT_ACTION_ACCEPTED) sawAction = true;
+        if (row.fact.fact.factKind == VN_MONITOR_FACT_STEP_EXECUTED) {
+            sawStep = true;
+            EXPECT_EQ(request, row.fact.fact.playbackRequest.sequence);
+        }
+        EXPECT_NE(VN_MONITOR_FACT_VARIABLE_RESULT, row.fact.fact.factKind);
+    }
+    EXPECT_TRUE(sawAction);
+    EXPECT_TRUE(sawStep);
+    ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(session.Engine()));
+    const auto applied = ReadVariableResults(capture);
+    ASSERT_EQ(1u, applied.size());
+    EXPECT_EQ(request, applied[0].fact.fact.playbackRequest.sequence);
+    EXPECT_EQ(firing, applied[0].header.actionInstanceHandle);
+    EXPECT_EQ(variable.variableId, applied[0].header.stableId);
+    EXPECT_EQ(world.identity.projectId, applied[0].fact.fact.projectId);
+    EXPECT_EQ(VN_VARIABLE_OUTCOME_APPLIED, applied[0].fact.activity.variableOutcome);
+    EXPECT_FLOAT_EQ(0.5f, ReadValue(session.Engine(), variable.variableId));
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(capture));
 }
 
 TEST(VariableBatchWrite, AbiSizes) {

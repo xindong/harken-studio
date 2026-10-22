@@ -8,7 +8,7 @@ const QVector<ThemeAssetCatalogEntry>& themeAssetCatalog()
     static const QVector<ThemeAssetCatalogEntry> entries = {
         {QString::fromLatin1(AppLogo), ThemeAssetKind::Image,
          ThemeBuiltinAssetFallback::File,
-         QStringLiteral(":/Resources/icons/V_256x256.png"), false},
+         QStringLiteral(":/Resources/branding/HarkenStudioBlueGradient.png"), false},
         {QString::fromLatin1(WindowMinimize), ThemeAssetKind::Image,
          ThemeBuiltinAssetFallback::File, QStringLiteral(":/icons/minimize.svg")},
         {QString::fromLatin1(WindowMaximize), ThemeAssetKind::Image,
@@ -35,6 +35,8 @@ const QVector<ThemeAssetCatalogEntry>& themeAssetCatalog()
          ThemeBuiltinAssetFallback::File, QStringLiteral(":/icons/monitor-capture.svg")},
         {QString::fromLatin1(PlatformEditAll), ThemeAssetKind::Image,
          ThemeBuiltinAssetFallback::File, QStringLiteral(":/icons/platform-edit-all.svg")},
+        {QString::fromLatin1(Settings), ThemeAssetKind::Image,
+         ThemeBuiltinAssetFallback::File, QStringLiteral(":/icons/settings.svg")},
         {QString::fromLatin1(DockClose), ThemeAssetKind::Image,
          ThemeBuiltinAssetFallback::File, QStringLiteral(":/icons/close.svg")},
         {QString::fromLatin1(DockPin), ThemeAssetKind::Image,

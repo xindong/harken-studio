@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the Harken Hub macOS installer package (.pkg) from a deployed app bundle."""
+"""Build the Harken Studio Hub macOS installer package (.pkg) from a deployed app bundle."""
 
 from __future__ import annotations
 
@@ -84,7 +84,7 @@ def generate_distribution_xml(version: str, component_filename: str) -> str:
     return (
         '<?xml version="1.0" encoding="utf-8"?>\n'
         '<installer-gui-script minSpecVersion="2">\n'
-        "    <title>Harken Hub</title>\n"
+        "    <title>Harken Studio Hub</title>\n"
         '    <license file="License.txt"/>\n'
         '    <options customize="never" require-scripts="false" '
         'hostArchitectures="x86_64,arm64"/>\n'
@@ -92,7 +92,7 @@ def generate_distribution_xml(version: str, component_filename: str) -> str:
         "    <choices-outline>\n"
         '        <line choice="default"/>\n'
         "    </choices-outline>\n"
-        f'    <choice id="default" title="Harken Hub">\n'
+        f'    <choice id="default" title="Harken Studio Hub">\n'
         f'        <pkg-ref id="{PACKAGE_IDENTIFIER}"/>\n'
         "    </choice>\n"
         f'    <pkg-ref id="{PACKAGE_IDENTIFIER}" version="{safe_version}" '

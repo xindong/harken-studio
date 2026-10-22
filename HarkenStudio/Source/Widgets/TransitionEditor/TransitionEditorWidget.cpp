@@ -14,7 +14,6 @@
 #include "Core/ReferenceSlotResolution.h"
 #include "Core/ThemeManager.h"
 #include "Core/Timeline/TimelineCoordinates.h"
-#include "Core/ToastManager.h"
 #include "Core/TransitionFieldGating.h"
 #include "Core/TransitionRehearsal.h"
 #include "Core/VariableRehearsal.h"
@@ -1317,9 +1316,11 @@ void TransitionEditorWidget::refreshStatusBar()
     QtControlSkin::setSemanticProperty(mountBadge_, "textRole", roleText);
     mountBadge_->setToolTip(mountBadgeTooltip());
 
-    const QString mode = modeText();
+    const QString mode = lastInteractionError_.isEmpty() ? modeText() : lastInteractionError_;
     modeLabel_->setText(mode);
     modeLabel_->setToolTip(mode);
+    QtControlSkin::setSemanticProperty(modeLabel_, "textRole",
+        lastInteractionError_.isEmpty() ? QStringLiteral("secondary") : QStringLiteral("warning"));
     modeLabel_->setVisible(!mode.isEmpty());
     statusSeparator_->setVisible(modeLabel_->isVisibleTo(this));
 
@@ -1474,7 +1475,7 @@ void TransitionEditorWidget::rebuildDetail()
 void TransitionEditorWidget::rejectInteraction(const QString& error)
 {
     lastInteractionError_ = error.isEmpty() ? tr("Transition edit was rejected.") : error;
-    ToastManager::instance().showToast(lastInteractionError_, 2500, ToastType::Warning);
+    refreshStatusBar();
 }
 
 bool TransitionEditorWidget::commitTable(TransitionTableDef candidate, const QString& undoText)
@@ -1495,6 +1496,7 @@ bool TransitionEditorWidget::commitTable(TransitionTableDef candidate, const QSt
         return false;
     }
     lastInteractionError_.clear();
+    refreshStatusBar();
     rebuildRuleList();
     refreshRehearsalWinner();
     refreshWatchView();

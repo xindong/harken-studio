@@ -2696,7 +2696,7 @@ void registerProjectActions(ActionManager& mgr,
         def.id = "set_pack_export_current_platform";
         def.displayName = "Set Pack Platform";
         def.category = "project";
-        def.undoable = true;
+        def.undoable = false;
         def.paramSchema = QJsonObject{{"platform_id", "string"}};
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
             if (!projectManager || !projectManager->isProjectOpen())
@@ -2721,13 +2721,6 @@ void registerProjectActions(ActionManager& mgr,
 
             projectManager->setPackExportCurrentPlatformInternal(newValue);
 
-            r.undoFn = [oldValue]() {
-                ProjectManager::instance().setPackExportCurrentPlatformInternal(oldValue);
-            };
-            r.redoFn = [newValue]() {
-                ProjectManager::instance().setPackExportCurrentPlatformInternal(newValue);
-            };
-            r.undoText = QStringLiteral("Set Pack Platform");
             return r;
         };
         mgr.registerAction(def);
@@ -2738,7 +2731,7 @@ void registerProjectActions(ActionManager& mgr,
         def.id = "set_pack_export_selected_platforms";
         def.displayName = "Set Pack Platforms";
         def.category = "project";
-        def.undoable = true;
+        def.undoable = false;
         def.paramSchema = QJsonObject{{"platform_ids", "array"}};
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
             if (!projectManager || !projectManager->isProjectOpen())
@@ -2768,13 +2761,6 @@ void registerProjectActions(ActionManager& mgr,
 
             projectManager->setPackExportSelectedPlatformsInternal(newValue);
 
-            r.undoFn = [oldValue]() {
-                ProjectManager::instance().setPackExportSelectedPlatformsInternal(oldValue);
-            };
-            r.redoFn = [newValue]() {
-                ProjectManager::instance().setPackExportSelectedPlatformsInternal(newValue);
-            };
-            r.undoText = QStringLiteral("Set Pack Platforms");
             return r;
         };
         mgr.registerAction(def);
@@ -2886,10 +2872,48 @@ void registerProjectActions(ActionManager& mgr,
 
     {
         ActionDef def;
+        def.id = "set_build_waveform_settings";
+        def.displayName = "Set Waveform Export Settings";
+        def.category = "project";
+        def.undoable = true;
+        def.paramSchema = QJsonObject{{"enabled", "bool"}, {"path", "string"}};
+        def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
+            if (!projectManager || !projectManager->isProjectOpen())
+                return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
+            const auto* project = projectManager->currentProject();
+            const QJsonValue enabled = args.value("enabled");
+            const QJsonValue path = args.value("path");
+            if (!enabled.isBool() || !path.isString()
+                || !PathUtils::isValidWaveformBuildOutputDir(path.toString(), project->projectPath))
+                return {false, {}, "INVALID_ARGS",
+                    "Waveform output must use a relative directory outside the project root and object directories."};
+            const bool nextEnabled = enabled.toBool();
+            const QString nextPath = PathUtils::normalizePackBuildOutputDir(path.toString());
+            const bool previousEnabled = project->buildExportWaveforms;
+            const QString previousPath = project->buildWaveformOutputDir;
+            ActionResult result;
+            result.success = true;
+            result.data = QJsonObject{{"enabled", nextEnabled}, {"path", nextPath}};
+            if (nextEnabled == previousEnabled && nextPath == previousPath) return result;
+            projectManager->setBuildWaveformSettingsInternal(nextEnabled, nextPath);
+            result.undoFn = [previousEnabled, previousPath]() {
+                ProjectManager::instance().setBuildWaveformSettingsInternal(previousEnabled, previousPath);
+            };
+            result.redoFn = [nextEnabled, nextPath]() {
+                ProjectManager::instance().setBuildWaveformSettingsInternal(nextEnabled, nextPath);
+            };
+            result.undoText = QStringLiteral("Set Waveform Export Settings");
+            return result;
+        };
+        mgr.registerAction(def);
+    }
+
+    {
+        ActionDef def;
         def.id = "set_action_pack_targeting";
         def.displayName = "Set Action Pack Targeting";
         def.category = "project";
-        def.undoable = true;
+        def.undoable = false;
         def.paramSchema = QJsonObject{{"stableId", "string"}, {"allPlatforms", "bool?"},
                                       {"platform_ids", "array?"}, {"language", "string?"}};
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
@@ -2961,15 +2985,7 @@ void registerProjectActions(ActionManager& mgr,
             if (working == before)
                 return r;
 
-            std::vector<ActionPackTargeting> after = working;
             projectManager->setActionPackTargetingInternal(std::move(working));
-            r.undoFn = [before]() {
-                ProjectManager::instance().setActionPackTargetingInternal(before);
-            };
-            r.redoFn = [after]() {
-                ProjectManager::instance().setActionPackTargetingInternal(after);
-            };
-            r.undoText = QStringLiteral("Set Action Pack Targeting");
             return r;
         };
         mgr.registerAction(def);

@@ -76,9 +76,6 @@ inline QJsonObject projectRoot(const QJsonObject& content,
             metadata.insert(QStringLiteral("platforms"),
                             VNX::ProjectPlatformSemantics::platformsToJson(project.platforms));
             configured.insert(QStringLiteral("metadata"), metadata);
-            configured.insert(QStringLiteral("packExportCurrentPlatformId"), project.packExportCurrentPlatformId);
-            configured.insert(QStringLiteral("packExportSelectedPlatformIds"),
-                              QJsonArray::fromStringList(project.packExportSelectedPlatformIds));
         }
     }
     return projectDocument(QStringLiteral("project.root"), projectId, projectId,

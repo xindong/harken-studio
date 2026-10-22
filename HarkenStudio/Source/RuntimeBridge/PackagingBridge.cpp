@@ -14,6 +14,7 @@
 #include <harken_studio_build/MediaContentRevision.h>
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -1139,7 +1140,7 @@ struct PackBuildSession::Impl
         return result;
     }
 
-    bool writeManifest(const QString& manifestPath, const QString& outputPath)
+    QJsonObject manifest(const QString& outputPath)
     {
         const bool resident = initPack;
         if (resident && !media.empty())
@@ -1163,11 +1164,11 @@ struct PackBuildSession::Impl
 
         QJsonObject root = resident ? residentSections() : bindingSections(false);
         if (!lastError.isEmpty())
-            return false;
+            return {};
         if (resident && root.isEmpty())
         {
             lastError = QStringLiteral("Resident pack has no logic entries; add at least one bus");
-            return false;
+            return {};
         }
         QJsonArray entries;
         if (!resident)
@@ -1202,7 +1203,13 @@ struct PackBuildSession::Impl
             {QStringLiteral("cache"), true},
             {QStringLiteral("reportPath"),
              QFileInfo(outputPath + QStringLiteral(".report.json")).absoluteFilePath()}});
+        return root;
+    }
 
+    bool writeManifest(const QString& manifestPath, const QString& outputPath)
+    {
+        const auto root = manifest(outputPath);
+        if (!lastError.isEmpty()) return false;
         QDir().mkpath(QFileInfo(manifestPath).absolutePath());
         QFile file(manifestPath);
         if (!file.open(QIODevice::WriteOnly | QIODevice::Text))
@@ -1557,6 +1564,36 @@ bool PackBuildSession::buildToFile(const QString& outputPath)
         return false;
     }
     return true;
+}
+
+QString PackBuildSession::inputFingerprint()
+{
+    impl_->lastError.clear();
+    impl_->warnings = impl_->pendingWarnings;
+    auto manifest = impl_->manifest(QString());
+    if (!impl_->lastError.isEmpty()) return {};
+    manifest.remove(QStringLiteral("output"));
+    manifest.remove(QStringLiteral("options"));
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    hash.addData(QJsonDocument(manifest).toJson(QJsonDocument::Compact));
+    const auto addFile = [&](const QString& path) {
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly)) {
+            impl_->lastError = QStringLiteral("Cannot fingerprint build input: %1").arg(path);
+            return false;
+        }
+        hash.addData(QByteArray::number(file.size()) + '\0');
+        if (!hash.addData(&file)) {
+            impl_->lastError = QStringLiteral("Cannot read build input: %1").arg(path);
+            return false;
+        }
+        return true;
+    };
+    if (!addFile(findPackcExecutable())) return {};
+    if (!impl_->initPack)
+        for (const auto& entry : impl_->media)
+            if (!addFile(entry.path)) return {};
+    return QString::fromLatin1(hash.result().toHex());
 }
 
 QString PackBuildSession::lastError() const

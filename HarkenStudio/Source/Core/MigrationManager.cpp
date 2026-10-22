@@ -1,5 +1,6 @@
 
 #include "MigrationManager.h"
+#include "ItemTypeCatalog.h"
 #include "ProjectDataPolicy.h"
 #include "ProjectDocument.h"
 #include "ProjectContract.h"
@@ -20,15 +21,18 @@ QStringList projectDocumentRelativePaths(const QString& projectDirectory,
 {
     const ProjectDataPolicy dataPolicy = ProjectDataPolicy::forProjectFile(projectFile);
     const QDir root(projectDirectory);
-    QStringList paths;
-    QDirIterator files(projectDirectory,
-                       {QStringLiteral("*.hsp"), QStringLiteral("*.vp")},
-                       QDir::Files, QDirIterator::Subdirectories);
-    while (files.hasNext()) {
-        const QString relative = ProjectDataPolicy::normalizeRelativePath(
-            root.relativeFilePath(files.next()));
-        if (dataPolicy.classify(relative) == ProjectDataClass::Raw)
-            paths.append(relative);
+    QStringList paths{ProjectDataPolicy::normalizeRelativePath(
+        root.relativeFilePath(projectFile))};
+    for (const auto bucket : ItemTypeCatalog::allBuckets()) {
+        QDirIterator files(root.filePath(ItemTypeCatalog::folderNameOf(bucket)),
+                           {QStringLiteral("*.vp")},
+                           QDir::Files, QDirIterator::Subdirectories);
+        while (files.hasNext()) {
+            const QString relative = ProjectDataPolicy::normalizeRelativePath(
+                root.relativeFilePath(files.next()));
+            if (dataPolicy.classify(relative) == ProjectDataClass::Raw)
+                paths.append(relative);
+        }
     }
     paths.sort();
     paths.removeDuplicates();
@@ -64,7 +68,29 @@ void expandWriteSetPlaceholders(QStringList* writeSet,
 
 }
 
-MigrationManager::MigrationManager() = default;
+MigrationManager::MigrationManager()
+{
+    ProjectMigrationStep step;
+    step.id = QStringLiteral("project-schema-7-to-8");
+    step.fromSchema = 7;
+    step.toSchema = 8;
+    step.writeSet = {QStringLiteral("<all-documents>")};
+    step.transform = [](ProjectMigrationWorkspace& workspace,
+                        QStringList*, QString* error) {
+        for (const QString& relative : workspace.writeSet()) {
+            QJsonObject document;
+            if (!workspace.readObject(relative, &document, error))
+                return false;
+            QJsonObject header = document.value(QStringLiteral("harkenDocument")).toObject();
+            header.insert(QStringLiteral("schemaVersion"), 8);
+            document.insert(QStringLiteral("harkenDocument"), header);
+            if (!workspace.writeObject(relative, document, error))
+                return false;
+        }
+        return true;
+    };
+    registry_.registerStep(std::move(step));
+}
 
 MigrationManager::MigrationManager(ProjectMigrationRegistry registry)
     : registry_(std::move(registry))

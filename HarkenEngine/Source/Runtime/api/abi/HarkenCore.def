@@ -117,6 +117,7 @@ EXPORTS
     Vn_SetEmitterValue
     Vn_SetEmitterValueByName
     Vn_SetEmitterValues
+    Vn_SetGameplayCatalog
     Vn_SetListener
     Vn_SetValue
     Vn_SetValueByLabelId

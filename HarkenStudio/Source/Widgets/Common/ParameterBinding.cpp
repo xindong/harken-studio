@@ -50,7 +50,6 @@ void ParameterBinding::setRange(double minimum, double maximum)
     interruptEdit();
     minimum_ = minimum;
     maximum_ = maximum;
-    defaultValue_ = normalizedValue(defaultValue_);
     const double normalized = normalizedValue(value_);
     const bool valueChanged = !qFuzzyCompare(value_ + 1.0, normalized + 1.0);
     value_ = normalized;
@@ -71,9 +70,8 @@ void ParameterBinding::setMaximum(double maximum)
 
 void ParameterBinding::setDefaultValue(double value)
 {
-    const double normalized = normalizedValue(value);
-    if (qFuzzyCompare(defaultValue_ + 1.0, normalized + 1.0)) return;
-    defaultValue_ = normalized;
+    if (!std::isfinite(value) || qFuzzyCompare(defaultValue_ + 1.0, value + 1.0)) return;
+    defaultValue_ = value;
     emit metadataChanged();
 }
 
@@ -90,7 +88,6 @@ void ParameterBinding::setQuantum(double quantum)
     if (!std::isfinite(quantum) || quantum < 0.0) return;
     if (qFuzzyCompare(quantum_ + 1.0, quantum + 1.0)) return;
     quantum_ = quantum;
-    defaultValue_ = normalizedValue(defaultValue_);
     const double normalized = normalizedValue(value_);
     const bool valueChanged = !qFuzzyCompare(value_ + 1.0, normalized + 1.0);
     value_ = normalized;

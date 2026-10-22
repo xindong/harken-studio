@@ -1,0 +1,30 @@
+{
+    "content": {
+        "actions": [
+            {
+                "delay": 0,
+                "targetRef": {
+                    "documentId": "8479fdff-bb16-4309-a53a-0e1fbfb66c8e",
+                    "id": "8479fdff-bb16-4309-a53a-0e1fbfb66c8e"
+                },
+                "type": "Play"
+            }
+        ],
+        "guid": "1ffba53e-448f-447b-ac30-7f8581c993f6",
+        "name": "Spoken",
+        "nameBindingRevision": 1,
+        "objectPath": "\\Spoken",
+        "parentRef": {
+            "kind": "root"
+        },
+        "type": "Action"
+    },
+    "harkenDocument": {
+        "id": "1ffba53e-448f-447b-ac30-7f8581c993f6",
+        "projectId": "c6ec5c0b-d1e6-44c8-b604-e508dadb9a68",
+        "propertyModel": "fieldGroupsV1",
+        "savedStudioVersion": "0.7.2",
+        "schemaVersion": 7,
+        "type": "project.action"
+    }
+}

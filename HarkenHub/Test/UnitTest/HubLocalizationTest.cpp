@@ -1,6 +1,7 @@
 #include "Localization/HubLocalization.h"
 #include "Integrations/HubUnityIntegrationService.h"
 #include "UI/LogConsoleDialog.h"
+#include "Transactions/TransactionDiagnostics.h"
 
 #include <gtest/gtest.h>
 
@@ -14,6 +15,11 @@ TEST(HubLocalizationTest, CustomSdkSafetyMessagesTranslateWithoutChangingPaths)
 {
     const QString path = QStringLiteral("D:/Game %2/Assets/ThirdParty/Harken SDK");
     const QStringList messages = {
+        QStringLiteral("Cannot check whether this Unity project is open: %1 (system error %2). Check project permissions and try again.")
+            .arg(path, "5"),
+        QStringLiteral("Cannot move directory from %1 to %2 (system error %3: %4).")
+            .arg(path, path + ".backup", "5", "Access denied"),
+        QStringLiteral("Check file write protection, directory permissions and processes holding files open at %1. If checkout or unlocking is required, do that first, then retry. The existing SDK was not changed.").arg(path),
         QStringLiteral("Choose a safe directory inside the Unity project: %1").arg(path),
         QStringLiteral("An SDK is already installed at %1. Use that location or remove it before installing elsewhere.").arg(path),
         QStringLiteral("Cannot read %1: Access denied").arg(path),
@@ -32,6 +38,9 @@ TEST(HubLocalizationTest, CustomSdkSafetyMessagesTranslateWithoutChangingPaths)
         QStringLiteral("Backed up and removed the Harken SDK and native runtimes; preserved 3 project-specific file(s)."),
         QStringLiteral("Installed SDK 1.2.3 from a verified staging directory; copied 12 managed file(s) and preserved 3 target-only file(s)."),
         QStringLiteral("Verified the content integrity of 12 Harken-managed SDK file(s)."),
+        QStringLiteral("12 SDK file(s) differ from their contents at installation."),
+        QStringLiteral("2 SDK file(s) recorded at installation are missing."),
+        QStringLiteral("1 SDK file(s) could not be read, so verification could not finish."),
         QStringLiteral("Check-only mode did not change %1.").arg(path),
         QStringLiteral("Review the file list before confirming the SDK change."),
         QStringLiteral("All Harken-managed files match SDK 1.2.3; 12 Unity metadata file(s) and 2 optional target runtime file(s) are retained as expected."),
@@ -53,7 +62,7 @@ TEST(HubLocalizationTest, CustomSdkSafetyMessagesTranslateWithoutChangingPaths)
                               "SDK version: %1 → %2", "Add %1", "Update %1", "Remove %1", "Keep %1",
                               "No SDK files need to be changed.", "Items needing attention: %1. View check log.",
                               "SDK check failed. Review the check log for details.",
-                              "Select Game Project", "Select a Unity or Unreal project", "Uninstall SDK...",
+                              "Select Game Project", "Select a Unity project", "Uninstall SDK...",
                               "Choose a directory inside this project's Plugins folder, for example Plugins/Audio/Harken.",
                               "The SDK cannot be placed inside another Unreal plugin. Choose a separate directory under Plugins.",
                               "Multiple Harken plugins were found. Keep one installation under Plugins and move the others outside Plugins before checking again.\n%1",
@@ -84,7 +93,11 @@ TEST(HubLocalizationTest, CustomSdkSafetyMessagesTranslateWithoutChangingPaths)
                               "Installed SDK verification did not pass. Review the results; no files were changed.",
                               "The installed SDK has incomplete or invalid verification data.",
                               "Installed SDK files do not match the installation record or could not be read.",
-                              "Missing SDK files:", "Modified SDK files:", "Unreadable SDK files:",
+                              "The installation record is complete. File contents are checked in the next step.",
+                              "Review the listed content differences to confirm whether they were intentional. To restore the original SDK files, use Change SDK and select the complete package for the installed version.",
+                              "Restore the listed missing files from a matching backup, or use Change SDK and select the complete package for the installed version.",
+                              "Check read permissions and whether another program is preventing access to the listed files, then check the SDK status again.",
+                              "Missing SDK files:", "SDK files with contents different from installation:", "Unreadable SDK files:",
                               "Projects linked. SDK files were not changed.",
                               "Migrate...", "Recover...", "Review SDK migration",
                               "Safety Check", "Continue...", "Safety check required.",
@@ -105,6 +118,68 @@ TEST(HubLocalizationTest, CustomSdkSafetyMessagesTranslateWithoutChangingPaths)
             EXPECT_EQ(localized.mid(localized.indexOf(QLatin1Char('\n'))),
                       message.mid(message.indexOf(QLatin1Char('\n'))));
     }
+}
+
+TEST(HubLocalizationTest, MaintenanceDiagnosticsTranslateWithoutLosingEvidence)
+{
+    const QString path = QStringLiteral("D:/Game %2/Studio %3");
+    const QStringList details = {
+        QStringLiteral("HarkenStudio is still running from this version: %1").arg(path),
+        QStringLiteral("Cannot move the install into place: %1").arg(path),
+        QStringLiteral("Installation retained at %1. In Versions, choose Repair to recover it.").arg(path),
+        QStringLiteral("Cannot open the install index for reading: %1 (Qt error 5: Access denied)").arg(path),
+        QStringLiteral("Cannot read the install index: %1 (Qt error 5: Access denied)").arg(path),
+        QStringLiteral("Install index is corrupt: %1 (offset 5: invalid JSON)").arg(path),
+        QStringLiteral("Cannot create file directory: %1").arg(path),
+        QStringLiteral("Cannot open file for writing: %1 (Qt error 5: Access denied)").arg(path),
+        QStringLiteral("Cannot write file: %1 (Qt error 5: Access denied)").arg(path),
+        QStringLiteral("Cannot commit file: %1 (Qt error 5: Access denied)").arg(path),
+    };
+    const QStringList logs = {
+        QStringLiteral("[WARN] Install recovery failed: ") + details[5],
+        QStringLiteral("[ERROR] Repair failed: VersionInUse ") + details[0],
+        QStringLiteral("[ERROR] Install failed: CommitFailed ") + details[1],
+        details[2],
+    };
+    for (const auto& detail : details)
+        EXPECT_EQ(VNH::TransactionDiagnostics::localizeDetail(detail), detail);
+    for (const auto& log : logs)
+        EXPECT_EQ(VNH::LogConsoleDialog::localizeLine(log), log);
+    QTranslator translator;
+    ASSERT_TRUE(translator.load(QString::fromUtf8(HARKEN_HUB_TRANSLATION_FILE)));
+    QCoreApplication::installTranslator(&translator);
+    const auto removeTranslator = qScopeGuard([&]() {
+        QCoreApplication::removeTranslator(&translator);
+    });
+    for (const auto& detail : details) {
+        const QString translated = VNH::TransactionDiagnostics::localizeDetail(detail);
+        EXPECT_NE(translated, detail);
+        EXPECT_TRUE(translated.contains(path));
+        if (detail.contains("Access denied"))
+            EXPECT_TRUE(translated.contains("5") && translated.contains("Access denied"));
+    }
+    for (const auto& log : logs) {
+        const QString translated = VNH::LogConsoleDialog::localizeLine(log);
+        EXPECT_NE(translated, log);
+        EXPECT_TRUE(translated.contains(path));
+        EXPECT_FALSE(translated.contains("HarkenStudio is still running"));
+        EXPECT_FALSE(translated.contains("Install index is corrupt"));
+        if (log.contains("VersionInUse"))
+            EXPECT_TRUE(translated.contains("VersionInUse"));
+    }
+    const auto translatedLines = VNH::TransactionDiagnostics::localizeDetail(
+        details.join(QLatin1Char('\n'))).split(QLatin1Char('\n'));
+    ASSERT_EQ(translatedLines.size(), details.size());
+    for (qsizetype i = 0; i < details.size(); ++i)
+        EXPECT_EQ(translatedLines[i], VNH::TransactionDiagnostics::localizeDetail(details[i]));
+    for (const char* source : {
+        "Close Studio and other programs running from this installation, then retry Repair. No installation files were replaced.",
+        "Another install transaction is running",
+        "Some files needed for the project upgrade are read-only or not writable.",
+        "Check file write protection and access permissions, then try again. If your version control workflow requires checkout or unlocking, do that first. No project data was changed.",
+        "Affected files:\n%1"
+    })
+        EXPECT_FALSE(translator.translate("HarkenHub", source).isEmpty()) << source;
 }
 
 TEST(HubLocalizationTest, SystemPreferenceFollowsChineseSystemLocale)

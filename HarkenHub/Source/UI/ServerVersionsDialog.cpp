@@ -264,7 +264,7 @@ void ServerVersionsDialog::beginInstall(int rowIndex)
     if (!row.installable || row.installed)
         return;
 
-    const QString downloadDir = userDataDir() + QStringLiteral("/downloads");
+    const QString downloadDir = userDataDir() + QStringLiteral("/downloads/manual");
     if (!QDir().mkpath(downloadDir)) {
         statusLabel_->setText(
             QCoreApplication::translate("HarkenHub", "Cannot create the download directory."));
@@ -274,6 +274,13 @@ void ServerVersionsDialog::beginInstall(int rowIndex)
     const QString envelopePath = downloadDir + QStringLiteral("/") +
                                  row.manifest.buildId +
                                  QStringLiteral(".manifest");
+    downloadLease_.reset();
+    QString leaseError;
+    downloadLease_ = DownloadLease::acquire(envelopePath, &leaseError);
+    if (!downloadLease_) {
+        statusLabel_->setText(leaseError);
+        return;
+    }
     QSaveFile envelopeFile(envelopePath);
     if (!envelopeFile.open(QIODevice::WriteOnly) ||
         envelopeFile.write(row.entry.updateManifest) !=
@@ -281,6 +288,7 @@ void ServerVersionsDialog::beginInstall(int rowIndex)
         !envelopeFile.commit()) {
         statusLabel_->setText(
             QCoreApplication::translate("HarkenHub", "Cannot store the release manifest."));
+        downloadLease_.reset();
         return;
     }
 
@@ -299,6 +307,7 @@ void ServerVersionsDialog::startDownload()
         ServerEndpoints::resolvedBaseUrl(), row.entry.objectPath,
         row.entry.releaseTag);
     if (downloadUrls.isEmpty()) {
+        downloadLease_.reset();
         statusLabel_->setText(QCoreApplication::translate(
             "HarkenHub", "The download did not start."));
         return;
@@ -307,8 +316,13 @@ void ServerVersionsDialog::startDownload()
     request.fallbackUrls = downloadUrls;
     request.targetPath = downloadTargetPath_;
     request.expectedSizeBytes = row.manifest.packageSize;
-    if (!downloader_.start(request)) {
-        statusLabel_->setText(QCoreApplication::translate("HarkenHub", "The download did not start."));
+    request.lease = downloadLease_;
+    QString error;
+    if (!downloader_.start(request, &error)) {
+        downloadLease_.reset();
+        statusLabel_->setText(error.isEmpty()
+                                 ? QCoreApplication::translate("HarkenHub", "The download did not start.")
+                                 : error);
         return;
     }
     setBusy(true);
@@ -320,12 +334,14 @@ void ServerVersionsDialog::startDownload()
 void ServerVersionsDialog::handleDownloadFinished(const DownloadResult& result)
 {
     if (result.ok) {
+        downloadLease_ = result.lease;
         packagePath_ = result.filePath;
         accept();
         return;
     }
 
     setBusy(false);
+    downloadLease_.reset();
     statusLabel_->setText(
         QCoreApplication::translate("HarkenHub", "Download failed: %1").arg(result.error));
 }

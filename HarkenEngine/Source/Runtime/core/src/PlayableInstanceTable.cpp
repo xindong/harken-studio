@@ -912,6 +912,7 @@ PlayableInstanceHandle PlayableInstanceTable::Acquire(
         entry.contentIdentity = {};
         entry.monitorPreparedCandidateIdentity = {};
         entry.monitorPreparedCandidateObserved = false;
+        entry.monitorStartedObserved = false;
         entry.playbackRequest = parent != 0 ? FindAny(parent)->playbackRequest : request;
         entry.emitterOrigin = parent != 0 ? FindAny(parent)->emitterOrigin : emitterOrigin;
         entry.controlCause = {};
@@ -983,6 +984,7 @@ bool PlayableInstanceTable::PrepareAcquire(
         entry.contentIdentity = {};
         entry.monitorPreparedCandidateIdentity = {};
         entry.monitorPreparedCandidateObserved = false;
+        entry.monitorStartedObserved = false;
         entry.playbackRequest = parent != 0 ? FindAny(parent)->playbackRequest : request;
         entry.emitterOrigin = parent != 0 ? FindAny(parent)->emitterOrigin : emitterOrigin;
         entry.controlCause = {};
@@ -1308,6 +1310,9 @@ void PlayableInstanceTable::FillMonitorFacts(const Entry& entry,
     out.contentObject = entry.contentIdentity.stableId;
     out.contentWorld = entry.contentIdentity.worldGeneration;
     out.contentKind = static_cast<std::uint8_t>(entry.kind);
+    out.terminalKind = static_cast<std::uint8_t>(entry.terminalOutcome.kind);
+    out.terminalResult = entry.terminalOutcome.resultCode;
+    out.terminalReason = entry.terminalOutcome.reasonCode;
     out.parentPlayable = entry.parent;
     out.ownerEpoch = entry.scheduleEpoch;
     const Entry* ancestor = &entry;
@@ -1350,6 +1355,28 @@ bool PlayableInstanceTable::CaptureMonitorFacts(PlayableInstanceHandle handle,
     if (entry == nullptr) return false;
     FillMonitorFacts(*entry, handle, *out);
     return true;
+}
+
+void PlayableInstanceTable::ObserveStarted(PlayableInstanceHandle handle,
+    std::uint64_t audioBlock, std::uint64_t frame) noexcept {
+    auto* entry = FindMut(handle);
+    if (entry == nullptr || entry->kind != PlayableKind::Sound ||
+        entry->monitorStartedObserved || audioBlock == 0) return;
+    entry->monitorStartedObserved = true;
+    MonitorLifecycleFacts facts{};
+    FillMonitorFacts(*entry, handle, facts);
+    facts.publishLegacy = false;
+    facts.reasonKnown = false;
+    facts.controlCause = {};
+    facts.terminalKind = 0;
+    facts.terminalResult = 0;
+    facts.terminalReason = 0;
+    facts.startedAudioBlock = audioBlock;
+    facts.startedFrame = frame;
+    ObserveMonitorLifecycle(MonitorLifecyclePhase::PlayableStarted, handle,
+        GenerationOf(handle), entry->contentIdentity.worldGeneration,
+        entry->contentIdentity.stableId, handle, facts.relatedAction, 0,
+        static_cast<std::uint8_t>(entry->kind), 0, facts);
 }
 
 bool PlayableInstanceTable::CaptureRootMetadata(

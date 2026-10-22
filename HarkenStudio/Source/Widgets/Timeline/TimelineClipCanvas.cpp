@@ -10,6 +10,7 @@
 #include "Core/Timeline/TimelineEditing.h"
 
 #include <QContextMenuEvent>
+#include <QFocusEvent>
 #include <QKeyEvent>
 #include <QLineEdit>
 #include <QMenu>
@@ -335,7 +336,8 @@ void TimelineMarkerRuler::cancelRename()
 bool TimelineMarkerRuler::eventFilter(QObject* watched, QEvent* event)
 {
     if (watched == nameEditor_) {
-        if (event->type() == QEvent::FocusOut)
+        if (event->type() == QEvent::FocusOut
+            && static_cast<QFocusEvent*>(event)->reason() != Qt::PopupFocusReason)
             commitRename();
         else if (event->type() == QEvent::KeyPress
                  && static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape) {

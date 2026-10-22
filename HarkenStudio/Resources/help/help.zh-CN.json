@@ -209,21 +209,25 @@
       "title": "Cancel",
       "body": "放弃尚未应用的设置修改并关闭窗口；布局的重命名和删除仍保留。"
     },
-    "settings.general": {
-      "title": "General",
-      "body": "设置编辑器主题、Information 语言和开发者模式。"
+    "settings.appearance": {
+      "title": "Appearance",
+      "body": "\u8bbe\u7f6e\u7f16\u8f91\u5668\u4e3b\u9898\u548c Information \u8bed\u8a00\u3002"
     },
-    "settings.general.theme": {
+    "settings.appearance.theme": {
       "title": "Theme",
       "body": "选择编辑器外观，Apply 后生效。额外的主题安装在 %1。"
     },
-    "settings.general.language": {
+    "settings.appearance.language": {
       "title": "Language",
       "body": "选择 Information 帮助语言，不影响编辑器界面和工程音频语言。"
     },
-    "settings.general.developer": {
+    "settings.extension": {
+      "title": "Extension",
+      "body": "\u8bbe\u7f6e\u5f00\u53d1\u8005\u6a21\u5f0f\u3002"
+    },
+    "settings.extension.developer": {
       "title": "Developer Mode",
-      "body": "在 Pack Exporter 中显示 File、Version、CRC32 列和 Preview Pack Structure 命令。"
+      "body": "在 Publisher 中显示 File、Version、CRC32 列和 Preview Pack Structure 命令。"
     },
     "settings.layout": {
       "title": "Layout",
@@ -235,42 +239,46 @@
     },
     "settings.ai_agent": {
       "title": "AI Agent",
-      "body": "配置 AI Assistant 的连接、权限和可用工具。"
+      "body": "配置 Assistant 的连接和权限。"
     },
     "settings.ai_agent.credentials": {
       "title": "Credentials",
-      "body": "设置服务地址、模型、上下文 token 数和 API Key。Apply 时，密钥留空则保留原密钥，填入新值则替换，Clear Saved Key 则从系统凭据库中移除。"
+      "body": "设置服务地址、模型、上下文 token 数和 API Key。已保存的密钥会在输入框中以掩码显示。点击 Apply 时，修改密钥会替换原值，清空输入框会从系统凭据库中删除密钥。"
     },
     "settings.ai_agent.connection": {
       "title": "Test Connection",
-      "body": "使用当前地址、模型和填入或已保存的密钥发送简短请求，不保存设置。"
+      "body": "使用当前地址、模型和输入框中的 API Key 发送简短请求，不保存设置。"
     },
     "settings.ai_agent.permission": {
       "title": "Permission",
       "body": "Read-only 禁止写入，Ask 在写入前请求批准。Auto 目前也会逐次请求批准，Legacy Bypass 等同于 Ask。"
     },
-    "settings.ai_agent.tools": {
-      "title": "Tool Scope",
-      "body": "选择用于查看、编辑、导出或实时测试的工具。Effective tools 显示当前工具范围与权限模式共同允许的工具数量。"
+    "settings.config": {
+      "title": "General",
+      "body": "设置工程的目标平台和音频语言。"
     },
-    "settings.build": {
-      "title": "Build",
-      "body": "设置工程的目标平台、音频语言和数据包输出目录。"
+    "settings.config.platforms": {
+      "title": "Platform Configuration",
+      "body": "\u9009\u62e9\u5de6\u4fa7\u5e73\u53f0\u6807\u7b7e\uff0c\u5728\u53f3\u4fa7\u7f16\u8f91\u540d\u79f0\u3001\u57fa\u7840\u5e73\u53f0\u548c\u6784\u5efa\u8bbe\u7f6e\u3002\u70b9\u51fb + \u6d4f\u89c8\u6240\u6709\u652f\u6301\u7684\u5e73\u53f0\uff0c\u5e76\u9884\u89c8\u9ed8\u8ba4\u914d\u7f6e\u540e\u6dfb\u52a0\u3002Reset \u6062\u590d\u6240\u9009\u57fa\u7840\u5e73\u53f0\u7684\u9ed8\u8ba4\u6784\u5efa\u8bbe\u7f6e\uff1bApply \u4fdd\u5b58\u5de5\u7a0b\u4fee\u6539\u3002\u5fc5\u987b\u4fdd\u7559\u81f3\u5c11\u4e00\u4e2a\u5e73\u53f0\u3002"
     },
-    "settings.build.platforms": {
-      "title": "Target Platforms",
-      "body": "添加平台，或双击平台编辑名称、基础平台和构建设置。必须保留至少一个平台。"
-    },
-    "settings.build.languages": {
-      "title": "Target Languages",
+    "settings.config.languages": {
+      "title": "Language Configuration",
       "body": "定义启用 Language 的 Sound 可用的音频语言。名称仅使用英文字母、数字和下划线。"
     },
-    "settings.build.output": {
+    "settings.publish": {
+      "title": "Publish",
+      "body": "设置数据包输出目录及可选的波形导出。"
+    },
+    "settings.publish.output": {
       "title": "Pack Build Output",
       "body": "填写相对于工程的输出路径，留空使用 BuildPacks。不能使用工程根目录或对象目录。"
     },
-    "BlueprintCanvas": {
-      "title": "Blueprint Canvas",
+    "settings.publish.waveforms": {
+      "title": "Waveform Export",
+      "body": "随数据包导出源音频的波形预览。填写相对于工程的输出路径，留空使用 BuildPacks/Waveforms。"
+    },
+    "Blueprint": {
+      "title": "Blueprint",
       "body": "查看和编辑对象关系与音频路由。拖拽引脚可连接对象，Volume 节点控制输出或 Send 的增益。"
     },
     "Explorer": {
@@ -285,24 +293,24 @@
       "title": "Information",
       "body": "显示指针所在对象或控件的说明；点击标题栏的锁定按钮可保留当前内容。"
     },
-    "Preview": {
-      "title": "Preview",
+    "Control": {
+      "title": "Control",
       "body": "调整选中对象的试听变量值，查看它们对绑定和选择规则的影响。这些数值仅临时生效。"
     },
     "Log": {
       "title": "Log",
       "body": "查看编辑器消息、警告和错误，帮助定位问题。"
     },
-    "ExportPacksManager": {
-      "title": "Pack Exporter",
+    "Publisher": {
+      "title": "Publisher",
       "body": "管理数据包内容，并为选定平台导出运行时数据包。"
     },
-    "MonitorCatalog": {
-      "title": "Monitor Catalog",
+    "Monitor": {
+      "title": "Monitor",
       "body": "搜索和筛选已捕获的运行时事件，选中记录可查看详情或定位工程对象。"
     },
-    "AIAssistant": {
-      "title": "AI Assistant",
+    "Assistant": {
+      "title": "Assistant",
       "body": "询问工程问题，或通过已启用的工具请求修改；写入操作需要批准。"
     },
     "blueprint.select": {

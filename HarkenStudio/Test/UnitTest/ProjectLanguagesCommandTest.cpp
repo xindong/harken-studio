@@ -202,16 +202,31 @@ TEST_F(ProjectLanguagesCommandTest, RejectsOverlongName)
     EXPECT_EQ(stack()->count(), 0);
 }
 
-TEST_F(ProjectLanguagesCommandTest, RejectsEmptyListWithoutMutationOrHistory)
+TEST_F(ProjectLanguagesCommandTest, EmptyLanguagesSurviveUndoRedoAndReload)
 {
+    auto& pm = VNX::ProjectManager::instance();
     const auto before = languages();
-    for (const QStringList& requested : {QStringList{}, QStringList{QStringLiteral("  ")}}) {
-        const auto r = setLanguages(requested);
-        EXPECT_FALSE(r.success);
-        EXPECT_EQ(r.errorCode, QStringLiteral("INVALID_ARGS"));
-        EXPECT_EQ(languages(), before);
-        EXPECT_EQ(stack()->count(), 0);
-    }
+    VNX::LanguageContextService context(std::make_unique<VNX::MemorySettingsStorage>());
+
+    ASSERT_TRUE(setLanguages({}).success);
+    EXPECT_TRUE(languages().isEmpty());
+    EXPECT_TRUE(context.language().isEmpty());
+
+    ASSERT_TRUE(VNX::UndoRedoManager::instance().undo());
+    EXPECT_EQ(languages(), before);
+    EXPECT_EQ(context.language(), before.front());
+
+    ASSERT_TRUE(VNX::UndoRedoManager::instance().redo());
+    EXPECT_TRUE(languages().isEmpty());
+    EXPECT_TRUE(context.language().isEmpty());
+
+    const QString projectPath = pm.currentProject()->projectPath;
+    ASSERT_TRUE(pm.saveProject());
+    ASSERT_TRUE(pm.closeProject());
+    ASSERT_TRUE(pm.loadProject(projectPath));
+    EXPECT_TRUE(languages().isEmpty());
+    EXPECT_TRUE(context.availableLanguages().isEmpty());
+    EXPECT_TRUE(context.language().isEmpty());
 }
 
 TEST_F(ProjectLanguagesCommandTest, SameValueIsNoOp)
@@ -226,11 +241,21 @@ TEST_F(ProjectLanguagesCommandTest, SameValueIsNoOp)
 TEST_F(ProjectLanguagesCommandTest, DoesNotTouchDefaultLanguage)
 {
     auto& pm = VNX::ProjectManager::instance();
-    ASSERT_EQ(pm.getDefaultLanguage(), QStringLiteral("English"));
+    pm.setDefaultLanguage(QStringLiteral("English"));
 
     ASSERT_TRUE(setLanguages({QStringLiteral("Japanese")}).success);
 
     EXPECT_EQ(languages(), (QStringList{QStringLiteral("Japanese")}));
+    EXPECT_EQ(pm.getDefaultLanguage(), QStringLiteral("English"));
+
+    ASSERT_TRUE(setLanguages({}).success);
+    EXPECT_EQ(pm.getDefaultLanguage(), QStringLiteral("English"));
+
+    const QString projectPath = pm.currentProject()->projectPath;
+    ASSERT_TRUE(pm.saveProject());
+    ASSERT_TRUE(pm.closeProject());
+    ASSERT_TRUE(pm.loadProject(projectPath));
+    EXPECT_TRUE(languages().isEmpty());
     EXPECT_EQ(pm.getDefaultLanguage(), QStringLiteral("English"));
 }
 
@@ -266,7 +291,7 @@ TEST_F(ProjectLanguagesCommandTest, SurvivesSaveAndReload)
               (QStringList{QStringLiteral("Korean"), QStringLiteral("Japanese")}));
 }
 
-TEST_F(ProjectLanguagesCommandTest, LegacyEmptyLanguagesLoadWithAPersistableDefault)
+TEST_F(ProjectLanguagesCommandTest, LegacyEmptyLanguagesRemainEmptyAfterSave)
 {
     auto& pm = VNX::ProjectManager::instance();
     const QString projectPath = pm.currentProject()->projectPath;
@@ -286,12 +311,14 @@ TEST_F(ProjectLanguagesCommandTest, LegacyEmptyLanguagesLoadWithAPersistableDefa
         file.write(QJsonDocument(root).toJson());
         file.close();
         ASSERT_TRUE(pm.loadProject(projectPath));
-        EXPECT_EQ(languages(), QStringList{QStringLiteral("English")});
-        EXPECT_FALSE(pm.removeProjectLanguage(QStringLiteral("English")));
+        EXPECT_TRUE(languages().isEmpty());
+        ASSERT_TRUE(pm.addProjectLanguage(QStringLiteral("English")));
+        ASSERT_TRUE(pm.removeProjectLanguage(QStringLiteral("English")));
+        EXPECT_TRUE(languages().isEmpty());
         ASSERT_TRUE(pm.saveProject());
         ASSERT_TRUE(file.open(QIODevice::ReadOnly));
         const auto saved = QJsonDocument::fromJson(file.readAll()).object().value("content").toObject();
-        EXPECT_EQ(saved.value("projectLanguages").toArray(), QJsonArray{QStringLiteral("English")});
+        EXPECT_TRUE(saved.value("projectLanguages").toArray().isEmpty());
         file.close();
     }
 }

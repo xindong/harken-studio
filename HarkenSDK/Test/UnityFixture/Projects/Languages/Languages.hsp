@@ -1,0 +1,69 @@
+{
+    "content": {
+        "actionPublishedNameHistory": [
+            {
+                "event": "created",
+                "name": "Spoken",
+                "nameBindingRevision": 1,
+                "objectGuid": "1ffba53e-448f-447b-ac30-7f8581c993f6"
+            }
+        ],
+        "defaultLanguage": "English",
+        "metadata": {
+            "author": "",
+            "channelConfig": 1,
+            "createdDate": "2026-10-19T17:23:30",
+            "description": "",
+            "enableLFE": true,
+            "modifiedDate": "2026-10-19T17:23:32",
+            "name": "Languages",
+            "platforms": [
+                {
+                    "basePlatform": "Windows",
+                    "id": "8d19c72b-d578-4bbd-8d5f-7a007e9f6f10",
+                    "name": "Windows",
+                    "profile": {
+                        "performResample": false,
+                        "sizePolicies": [
+                            {
+                                "config": {
+                                    "format": 1,
+                                    "targetSampleRate": 48000,
+                                    "vorbisAverageBitrate": 0,
+                                    "vorbisEncodeMode": 0,
+                                    "vorbisMaxBitrate": 0,
+                                    "vorbisMinBitrate": 0,
+                                    "vorbisQuality": 0.6000000238418579
+                                },
+                                "maxBytes": null
+                            }
+                        ]
+                    }
+                }
+            ],
+            "projectTemplateId": "",
+            "sampleRate": 48000,
+            "toolVersion": "HarkenStudio 1.0.0",
+            "version": "1.0"
+        },
+        "paths": {
+            "audioFolder": "Layers",
+            "packFolder": "Packs"
+        },
+        "projectLanguages": [
+            "English",
+            "ja"
+        ],
+        "sourceAssets": {
+            "2074157640": "a.wav"
+        }
+    },
+    "harkenDocument": {
+        "id": "c6ec5c0b-d1e6-44c8-b604-e508dadb9a68",
+        "projectId": "c6ec5c0b-d1e6-44c8-b604-e508dadb9a68",
+        "propertyModel": "fieldGroupsV1",
+        "savedStudioVersion": "0.7.2",
+        "schemaVersion": 7,
+        "type": "project.root"
+    }
+}

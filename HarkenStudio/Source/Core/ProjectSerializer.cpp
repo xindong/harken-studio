@@ -1094,6 +1094,11 @@ bool ProjectSerializer::prepareProjectSave(const QString& filePath,
         emit errorOccurred(lastError_);
         return false;
     }
+    if (!PathUtils::isValidWaveformBuildOutputDir(project.buildWaveformOutputDir, filePath)) {
+        lastError_ = tr("Waveform output must use a relative directory outside the project root and object directories.");
+        emit errorOccurred(lastError_);
+        return false;
+    }
     if (!validatePlaybackReferences(project, &lastError_)) {
         emit errorOccurred(lastError_);
         return false;
@@ -1175,8 +1180,9 @@ bool ProjectSerializer::prepareProjectSave(const QString& filePath,
         for (const auto& lang : projectLanguages)
             langArray.append(lang);
         root["projectLanguages"] = langArray;
-        root["defaultLanguage"] = project.defaultLanguage;
     }
+    if (!project.defaultLanguage.isEmpty())
+        root["defaultLanguage"] = project.defaultLanguage;
 
     if (!project.deploymentProfiles.empty()) {
         QJsonArray profiles;
@@ -1206,34 +1212,10 @@ bool ProjectSerializer::prepareProjectSave(const QString& filePath,
     if (!project.packBuildOutputDir.isEmpty()) {
         root["packBuildOutputDir"] = project.packBuildOutputDir;
     }
-
-    if (project.conversionFailurePolicy != ConversionFailurePolicy::AbortBuild) {
-        root["conversionFailurePolicy"] =
-            conversionFailurePolicyToString(project.conversionFailurePolicy);
-    }
-
-    if (!project.packExportCurrentPlatformId.isEmpty()) {
-        root["packExportCurrentPlatformId"] = project.packExportCurrentPlatformId;
-    }
-    {
-        QJsonArray selectedPlatformsArr;
-        for (const auto& p : project.packExportSelectedPlatformIds)
-            selectedPlatformsArr.append(p);
-        root["packExportSelectedPlatformIds"] = selectedPlatformsArr;
-    }
-    if (!project.packGroups.empty()) {
-        QJsonArray groupArray;
-        for (const auto& group : project.packGroups) groupArray.append(group.toJson());
-        root["packGroups"] = groupArray;
-    }
-
-    {
-        QJsonArray targetingArray;
-        for (const auto& targeting : project.actionPackTargeting)
-            targetingArray.append(targeting.toJson());
-        if (!targetingArray.isEmpty())
-            root["actionPackTargeting"] = targetingArray;
-    }
+    if (project.buildExportWaveforms)
+        root["buildExportWaveforms"] = true;
+    if (!project.buildWaveformOutputDir.isEmpty())
+        root["buildWaveformOutputDir"] = project.buildWaveformOutputDir;
 
     if (!project.actionPublishedNameHistory.empty()) {
         QJsonArray history;
@@ -1377,6 +1359,8 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
         lastError_ = analysis.blockingErrors.isEmpty()
                          ? QStringLiteral("Project governance analysis failed")
                          : analysis.blockingErrors.first();
+        if (analysis.issue == ProjectIssue::ProjectUpgradeFilesNotWritable)
+            lastError_ = projectIssueCode(analysis.issue) + QLatin1Char(':') + analysis.detail;
         emit errorOccurred(ProjectUpgradeMessages::userMessage(lastError_, true));
         return false;
     }
@@ -1527,9 +1511,7 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
     for (const auto& v : root["projectLanguages"].toArray())
         loadedLanguages.append(v.toString());
     project.projectLanguages = ProjectLanguageSemantics::dropSfxNames(loadedLanguages);
-    if (project.projectLanguages.isEmpty())
-        project.projectLanguages = {QStringLiteral("English")};
-    project.defaultLanguage = root["defaultLanguage"].toString("English");
+    project.defaultLanguage = root["defaultLanguage"].toString();
 
     project.packBuildOutputDir = PathUtils::normalizePackBuildOutputDir(
         root["packBuildOutputDir"].toString());
@@ -1539,6 +1521,14 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
     }
     if (!PathUtils::isValidPackBuildOutputDir(project.packBuildOutputDir, project.projectPath))
         warnings_.append(PathUtils::packBuildOutputLocationError());
+
+    project.buildExportWaveforms = root["buildExportWaveforms"].toBool(false);
+    project.buildWaveformOutputDir = PathUtils::normalizePackBuildOutputDir(
+        root["buildWaveformOutputDir"].toString());
+    if (!PathUtils::isValidWaveformBuildOutputDir(project.buildWaveformOutputDir, project.projectPath)) {
+        lastError_ = tr("Waveform output must use a relative directory outside the project root and object directories.");
+        return false;
+    }
 
     project.deploymentProfiles.clear();
     if (root.contains("deploymentProfiles")) {
@@ -1561,32 +1551,6 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
                 project.deploymentProfiles.push_back(std::move(profile));
         }
     }
-    if (root.contains("conversionFailurePolicy")) {
-        project.conversionFailurePolicy =
-            conversionFailurePolicyFromString(root["conversionFailurePolicy"].toString());
-    }
-
-    project.packExportCurrentPlatformId = root["packExportCurrentPlatformId"].toString();
-    project.packExportSelectedPlatformIds.clear();
-    for (const auto& value : root["packExportSelectedPlatformIds"].toArray())
-        project.packExportSelectedPlatformIds.append(value.toString());
-    project.packGroups.clear();
-    if (root.contains("packGroups")) {
-        for (const auto& v : root["packGroups"].toArray())
-            project.packGroups.push_back(PackGroup::fromJson(v.toObject()));
-    }
-
-    project.actionPackTargeting.clear();
-    if (root.contains("actionPackTargeting")) {
-        for (const auto& v : root["actionPackTargeting"].toArray()) {
-            const ActionPackTargeting targeting =
-                ActionPackTargeting::fromJson(v.toObject());
-            if (!harkenstudio::IsNull(targeting.stableId))
-                project.actionPackTargeting.push_back(targeting);
-        }
-    }
-
-    project.dissolvePackGroups();
     project.actionPublishedNameHistory.clear();
     if (root.contains(QLatin1String(kActionPublishedNameHistory))) {
         for (const auto& value : root[QLatin1String(kActionPublishedNameHistory)].toArray()) {

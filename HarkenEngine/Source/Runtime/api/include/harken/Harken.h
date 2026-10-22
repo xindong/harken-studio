@@ -1727,6 +1727,9 @@ typedef struct VnCanonicalPackSetUnloadDescV1 {
     uint64_t reserved0;
 } VnCanonicalPackSetUnloadDescV1;
 
+VnResult Vn_SetGameplayCatalog(VnPackHandle expectedInitHandle,
+                              const VnPackByteSpan* catalog);
+
 VnResult Vn_ActivateCanonicalPackSetV1(
     const VnCanonicalPackSetActivationDescV1* desc,
     VnCanonicalPackSetActivationReportV1* outReport);
@@ -3846,7 +3849,10 @@ enum {
     VN_MONITOR_FACT_WAITING = 36,
     VN_MONITOR_FACT_SOURCE_APPLIED = 37,
     VN_MONITOR_FACT_SEEK_APPLIED = 38,
-    VN_MONITOR_FACT_RESOURCE_RETIRED = 39
+    VN_MONITOR_FACT_RESOURCE_RETIRED = 39,
+    VN_MONITOR_FACT_PLAYABLE_STARTED = 40,
+    VN_MONITOR_FACT_STEP_EXECUTED = 41,
+    VN_MONITOR_FACT_VARIABLE_RESULT = 42
 };
 
 enum {
@@ -3923,7 +3929,10 @@ enum {
     VN_MONITOR_FACT_FIELD_TARGET_REVISION = 70,
     VN_MONITOR_FACT_FIELD_TARGET_KIND = 71,
     VN_MONITOR_FACT_FIELD_TARGET_CONTENT_KIND = 72,
-    VN_MONITOR_FACT_FIELD_TARGET_SCOPE = 73
+    VN_MONITOR_FACT_FIELD_TARGET_SCOPE = 73,
+    VN_MONITOR_FACT_FIELD_ACTIVITY_STEP = 74,
+    VN_MONITOR_FACT_FIELD_ACTIVITY_VARIABLE = 75,
+    VN_MONITOR_FACT_FIELD_ACTION_OUTCOME = 76
 };
 
 enum {
@@ -3945,7 +3954,16 @@ enum {
     VN_MONITOR_CONTENT_TRACK = 3,
     VN_MONITOR_CONTENT_PIECE = 4,
     VN_MONITOR_CONTENT_ACTION = 5,
-    VN_MONITOR_CONTENT_MEDIA = 6
+    VN_MONITOR_CONTENT_MEDIA = 6,
+    VN_MONITOR_CONTENT_VARIABLE = 7
+};
+
+enum {
+    VN_MONITOR_TERMINAL_NATURAL_COMPLETION = 1,
+    VN_MONITOR_TERMINAL_REQUESTED_STOP = 2,
+    VN_MONITOR_TERMINAL_PARENT_CANCELLATION = 3,
+    VN_MONITOR_TERMINAL_REPLACEMENT_RESET = 4,
+    VN_MONITOR_TERMINAL_FAILURE = 5
 };
 
 enum {
@@ -4036,6 +4054,26 @@ typedef struct VnMonitorExecutionFactV1 {
     uint32_t reserved1;
     VnMonitorFactTarget target;
 } VnMonitorExecutionFactV1;
+
+typedef struct VnMonitorFactActivity {
+    uint32_t actionOutcome;
+    uint32_t stepIndex;
+    uint32_t stepExecutionOrdinal;
+    uint32_t stepOpcode;
+    uint32_t reservedStep;
+    uint32_t stepTargetKind;
+    uint32_t variableValueBits;
+    uint32_t variableScope;
+    uint32_t variableOutcome;
+    uint32_t reserved0;
+    VnObjectId stepTargetId;
+    uint64_t variableTicket;
+} VnMonitorFactActivity;
+
+typedef struct VnMonitorExecutionFactV2 {
+    VnMonitorExecutionFactV1 fact;
+    VnMonitorFactActivity activity;
+} VnMonitorExecutionFactV2;
 
 /* STATE identity revision is independent of native ReadCut and EVENT sequences. */
 typedef struct VnMonitorIdentityFactV1 {
@@ -4467,7 +4505,8 @@ enum {
     VN_MONITOR_OPERATION_SET_EMITTER_VALUES = 13,
     VN_MONITOR_OPERATION_POST_ACTION_PINNED = 14,
     VN_MONITOR_OPERATION_POST_ACTION_RESOLVED = 15,
-    VN_MONITOR_OPERATION_STOP_EMITTER = 16
+    VN_MONITOR_OPERATION_STOP_EMITTER = 16,
+    VN_MONITOR_OPERATION_RESET_VALUES = 19
 };
 
 enum {
@@ -4730,8 +4769,11 @@ typedef struct VnMonitorHostSessionV1 {
 enum {
     VN_MONITOR_HOST_UNKNOWN = 0,
     VN_MONITOR_HOST_UNITY_EMITTER = 1,
-    VN_MONITOR_HOST_UNITY_SPATIAL_SOURCE = 2
+    VN_MONITOR_HOST_UNITY_SPATIAL_SOURCE = 2,
+    VN_MONITOR_HOST_STUDIO_DEFAULT_EMITTER = 3
 };
+
+#define VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_ID 1ull
 
 typedef struct VnMonitorHostRegistrationV1 {
     uint32_t structSize;

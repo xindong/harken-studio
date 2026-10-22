@@ -1,6 +1,7 @@
 #include "UI/LogConsoleDialog.h"
 
 #include "App/FileLog.h"
+#include "Transactions/TransactionDiagnostics.h"
 
 #include <QCoreApplication>
 #include <QDateTime>
@@ -59,6 +60,24 @@ QString localizeLandingStage(const QString& stage)
 
 QString localizeLogMessage(const QString& message)
 {
+    const QString recoveryPrefix = QStringLiteral("Install recovery failed: ");
+    if (message.startsWith(recoveryPrefix))
+        return QCoreApplication::translate("HubLog", "Install recovery failed: %1")
+            .arg(TransactionDiagnostics::localizeDetail(message.mid(recoveryPrefix.size())));
+    static const QRegularExpression repairFailurePattern(
+        QStringLiteral(R"(^Repair failed: (\S+) (.*)$)"));
+    const auto repairFailure = repairFailurePattern.match(message);
+    if (repairFailure.hasMatch())
+        return QCoreApplication::translate("HubLog", "Repair failed: %1 %2")
+            .arg(repairFailure.captured(1),
+                 TransactionDiagnostics::localizeDetail(repairFailure.captured(2)));
+    static const QRegularExpression installFailurePattern(
+        QStringLiteral(R"(^Install failed: (\S+) (.*)$)"));
+    const auto installFailure = installFailurePattern.match(message);
+    if (installFailure.hasMatch())
+        return QCoreApplication::translate("HubLog", "Install failed: %1 %2")
+            .arg(installFailure.captured(1),
+                 TransactionDiagnostics::localizeDetail(installFailure.captured(2)));
     if (message == QStringLiteral(
                        "A hub update is queued; the background service exits "
                        "so the update bridge can land it")) {
@@ -129,10 +148,10 @@ QString localizeLogMessage(const QString& message)
     }
 
     static const QRegularExpression hubBuildPattern(
-        QStringLiteral("^Harken Hub (.+)$"));
+        QStringLiteral("^Harken (?:Studio )?Hub (.+)$"));
     match = hubBuildPattern.match(message);
     if (match.hasMatch()) {
-        return QCoreApplication::translate("HubLog", "Harken Hub %1")
+        return QCoreApplication::translate("HubLog", "Harken Studio Hub %1")
             .arg(match.captured(1));
     }
 
@@ -154,7 +173,7 @@ QString localizeLogMessage(const QString& message)
             .arg(match.captured(1));
     }
 
-    return message;
+    return TransactionDiagnostics::localizeDetail(message);
 }
 
 }
@@ -181,7 +200,7 @@ QString LogConsoleDialog::localizeLine(const QString& line)
     QString localized = localizeTimestamp(line);
     const qsizetype levelEnd = localized.indexOf(QStringLiteral("] "));
     if (levelEnd < 0)
-        return localized;
+        return TransactionDiagnostics::localizeDetail(localized);
 
     const qsizetype levelStart = localized.lastIndexOf(
         QLatin1Char('['), levelEnd);
@@ -208,7 +227,7 @@ QString LogConsoleDialog::localizeLine(const QString& line)
 LogConsoleDialog::LogConsoleDialog(QWidget* parent)
     : QDialog(parent)
 {
-    setWindowTitle(tr("Harken Hub Activity Log (%1)")
+    setWindowTitle(tr("Harken Studio Hub Activity Log (%1)")
                        .arg(QCoreApplication::applicationVersion()));
     setModal(false);
     resize(860, 420);
