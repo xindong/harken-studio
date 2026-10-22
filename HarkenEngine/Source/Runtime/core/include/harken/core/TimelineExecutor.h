@@ -176,12 +176,16 @@ public:
     std::size_t DecodedEventCapacityForTest() const noexcept {
         return decoded_.Capacity();
     }
+#endif
+#if !defined(HARKEN_RT_QUALIFICATION)
     std::size_t EventStorageBytesForTest() const noexcept {
         return decoded_.RequestedBytes() + nextEvent_.RequestedBytes() + deferredDigest_.RequestedBytes();
     }
     void SetDecodedCommitPageLimitForTest(std::size_t pages) noexcept {
         decoded_.SetCommitPageLimitForTests(pages);
     }
+#endif
+#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
     std::size_t PageGroupCapacityForTest() const noexcept {
         return pageGroups_.size();
     }

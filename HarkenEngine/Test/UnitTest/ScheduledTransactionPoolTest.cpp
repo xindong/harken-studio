@@ -41,7 +41,7 @@
 #include <utility>
 #include <vector>
 
-#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+#if !defined(HARKEN_RT_QUALIFICATION)
 namespace harken::detail {
 struct ScheduledTransactionPoolCancelTestAccess {
     static void SetNativeEventCommitPageLimit(ScheduledTransactionPool& pool, std::size_t pages) {

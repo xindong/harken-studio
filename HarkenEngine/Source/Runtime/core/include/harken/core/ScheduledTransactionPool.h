@@ -1191,8 +1191,10 @@ inline constexpr std::uint32_t kMaxPlan03GroupHeadersPerPageHard = 1024;
 inline constexpr std::uint32_t kMaxPlan03ArmsPerGroupHard = 1024;
 namespace detail {
 struct ScheduledTransactionPoolTestAccess;
-#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+#if !defined(HARKEN_RT_QUALIFICATION)
 struct ScheduledTransactionPoolCancelTestAccess;
+#endif
+#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
 struct ScheduledTransactionPoolOriginalTestAccess;
 #endif
 }
@@ -2174,8 +2176,10 @@ private:
         std::uint64_t cohortRoot, std::uint64_t provisionalAnchorFrame,
         const Plan03GroupSliceInput& input, const TimelineArmTable& armTable) const noexcept;
     friend struct detail::ScheduledTransactionPoolTestAccess;
-#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+#if !defined(HARKEN_RT_QUALIFICATION)
     friend struct detail::ScheduledTransactionPoolCancelTestAccess;
+#endif
+#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
     friend struct detail::ScheduledTransactionPoolOriginalTestAccess;
 #endif
     bool ClaimImmediateLaneFrontierBound(
