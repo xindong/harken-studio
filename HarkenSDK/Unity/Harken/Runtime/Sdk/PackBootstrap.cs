@@ -118,6 +118,8 @@ namespace Harken
         internal sealed class SharedPack
         {
             internal ulong StableId;
+            internal ulong ContentHash;
+            internal int ByteCount;
             internal PackCompanion Names;
             public Pack Handle;
             public int Requests;

@@ -891,16 +891,13 @@ namespace Harken.Unity
             }
             // A new source is already a selected platform directory. A configured platform name
             // may select its direct child; an absent inventory is never fabricated or enumerated.
-            if (File.Exists(Path.Combine(exportRoot, "Init.json"))) return exportRoot;
+            if (File.Exists(Path.Combine(exportRoot, "Init.json"))) return SelectCompanionDirectory(exportRoot);
             if (!string.IsNullOrEmpty(packPlatform) && PackManifest.IsPlatformName(packPlatform))
             {
                 string selected = Path.Combine(exportRoot, packPlatform);
-                if (Directory.Exists(selected) && IsCompanionDirectory(selected)) return selected;
+                if (Directory.Exists(selected) && IsCompanionDirectory(selected)) return SelectCompanionDirectory(selected);
             }
-            if (!HasLegacyDirectoryMetadata(exportRoot) &&
-                (string.IsNullOrEmpty(packPlatform) || string.Equals(Path.GetFileName(
-                    exportRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)),
-                    packPlatform, StringComparison.Ordinal))) return exportRoot;
+            if (!HasLegacyDirectoryMetadata(exportRoot)) return SelectCompanionDirectory(exportRoot);
             if (PackManifest.TryReadPlatformDirectory(exportRoot, packPlatformId, packPlatform,
                     CurrentPackBasePlatform(), language, out string platformDirectory, out string error))
             {
@@ -909,6 +906,23 @@ namespace Harken.Unity
             }
             LastStartupError = error;
             return null;
+        }
+
+        private string SelectCompanionDirectory(string directory)
+        {
+            if (!string.IsNullOrEmpty(packPlatformId))
+            {
+                LastStartupError = "A companion directory has no platform ID inventory. Clear the legacy platform ID and select its directory by name.";
+                return null;
+            }
+            if (!string.IsNullOrEmpty(packPlatform) && (!PackManifest.IsPlatformName(packPlatform) ||
+                !string.Equals(Path.GetFileName(directory.TrimEnd(Path.DirectorySeparatorChar,
+                    Path.AltDirectorySeparatorChar)), packPlatform, StringComparison.Ordinal)))
+            {
+                LastStartupError = "The companion directory does not match the explicitly selected platform name.";
+                return null;
+            }
+            return directory;
         }
 
         public static string CurrentPackBasePlatform()

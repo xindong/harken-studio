@@ -8,7 +8,7 @@ namespace Harken
     {
         private PackDirectorySource companionSource;
         private Dictionary<string, SharedPack> companionNames = new Dictionary<string, SharedPack>(StringComparer.Ordinal);
-        private readonly Dictionary<(ulong Id, ulong Handle), RawCompanionLease> rawCompanionLeases =
+        private Dictionary<(ulong Id, ulong Handle), RawCompanionLease> rawCompanionLeases =
             new Dictionary<(ulong, ulong), RawCompanionLease>();
 
         private readonly struct RawCompanionLease
@@ -75,7 +75,7 @@ namespace Harken
             return mutationPhase == MutationPhase.Idle ? VnResult.VN_OK : VnResult.VN_IN_USE;
         }
 
-        internal VnResult AcquireCompanions(string[] names, SharedPack[] acquired, bool refresh)
+        internal VnResult AcquireCompanions(string[] names, SharedPack[] acquired, bool refresh, ulong expectedId = 0)
         {
             VnResult allowed = CompanionMutationAllowed();
             if (allowed != VnResult.VN_OK) return allowed;
@@ -114,6 +114,7 @@ namespace Harken
                     VnResult result = companionSource.Capture(name, project, initBytes, out CompanionInput input);
                     if (!active) return VnResult.VN_NOT_INITIALIZED;
                     if (result != VnResult.VN_OK) return result;
+                    if (expectedId != 0 && input.Facts.packStableId != expectedId) return VnResult.VN_PACK_STALE_REVISION;
                     SharedPack owner = null;
                     foreach (SharedPack known in nextPacks.Values)
                     {
@@ -171,7 +172,8 @@ namespace Harken
                 Pack expected = ids[i] == owner.StableId ? owner.Handle : default;
                 if (changes.TryGetValue(owner, out CompanionInput input))
                 {
-                    uint operation = expected.IsValid && BytesEqual(owner.Bytes, input.Bytes)
+                    uint operation = expected.IsValid && owner.ContentHash == input.Facts.contentHash &&
+                        owner.ByteCount == input.Bytes.Length
                         ? VnConstants.VN_PACK_MEMBER_NAME_ONLY : VnConstants.VN_PACK_MEMBER_CONTENT;
                     members[i + 1] = new CompanionMember(ids[i], VnConstants.VN_CANONICAL_PACK_SET_MEMBER_CONTENT,
                         expected, operation, input.Bytes, input.Names);
@@ -187,23 +189,17 @@ namespace Harken
                 owners[i].StableId = ids[i];
                 if (changes.TryGetValue(owners[i], out CompanionInput input))
                 {
-                    owners[i].Bytes = input.Bytes;
+                    owners[i].ContentHash = input.Facts.contentHash;
+                    owners[i].ByteCount = input.Bytes.Length;
                     owners[i].Names = input.Names;
                 }
             }
-            if (removed != null) { removed.Handle = default; removed.Bytes = null; }
+            if (removed != null) removed.Handle = default;
             packs = nextPacks;
             companionNames = nextNames;
             InitPack = new Pack(report.initHandle);
             SetRevision = report.resultSetRevision;
             return VnResult.VN_OK;
-        }
-
-        private static bool BytesEqual(byte[] left, byte[] right)
-        {
-            if (left == null || right == null || left.Length != right.Length) return false;
-            for (int i = 0; i < left.Length; ++i) if (left[i] != right[i]) return false;
-            return true;
         }
 
         internal VnResult ReleaseCompanion(SharedPack owner)
@@ -229,8 +225,24 @@ namespace Harken
             pack = default;
             VnResult allowed = CompanionMutationAllowed();
             if (allowed != VnResult.VN_OK) return allowed;
-            if (!packs.TryGetValue(id, out SharedPack owner) || !owner.Handle.IsValid)
+            if (!packs.TryGetValue(id, out SharedPack owner))
                 return VnResult.VN_CAPABILITY_UNAVAILABLE;
+            if (!owner.Handle.IsValid)
+            {
+                try
+                {
+                    var nextLeases = new Dictionary<(ulong, ulong), RawCompanionLease>(rawCompanionLeases.Count + 1);
+                    foreach (var entry in rawCompanionLeases) nextLeases.Add(entry.Key, entry.Value);
+                    var acquired = new SharedPack[1];
+                    VnResult result = AcquireCompanions(new[] { owner.Names.Name }, acquired, false, id);
+                    if (result != VnResult.VN_OK) return result;
+                    nextLeases.Add((id, owner.Handle.Handle), new RawCompanionLease(owner, 1));
+                    rawCompanionLeases = nextLeases;
+                    pack = owner.Handle;
+                    return VnResult.VN_OK;
+                }
+                catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }
+            }
             if (owner.Requests == int.MaxValue) return VnResult.VN_BACKPRESSURE;
             var key = (id, owner.Handle.Handle);
             rawCompanionLeases.TryGetValue(key, out RawCompanionLease lease);

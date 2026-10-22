@@ -22,6 +22,27 @@ namespace Harken.Unity.Tests
         public IEnumerator ProjectCompanionDirectoryPreparesBothPlaybackEntrypointsOnFirstUse()
             => CompanionFirstUse(true);
 
+        [UnityTest]
+        public IEnumerator CompanionDirectoryHonorsExplicitPlatformSelection()
+        {
+            using (var fixture = new Fixture())
+            {
+                string root = fixture.StartCompanion(false);
+                Assert.That(fixture.Runtime.ShutdownRuntime(), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(fixture.Runtime.ConfigurePlatformBeforeStartup(null, "DifferentPlatform"), Is.EqualTo(VnResult.VN_OK));
+                LogAssert.Expect(LogType.Error, new Regex("Harken operation failed: PackBootstrap.Start: VN_INVALID_ARG"));
+                Assert.That(fixture.Runtime.StartRuntime(root), Is.EqualTo(VnResult.VN_INVALID_ARG));
+                Assert.That(fixture.Runtime.IsReady, Is.False);
+                Assert.That(fixture.Runtime.ConfigurePlatformBeforeStartup(fixture.Publication.Platform.Id), Is.EqualTo(VnResult.VN_OK));
+                LogAssert.Expect(LogType.Error, new Regex("Harken operation failed: PackBootstrap.Start: VN_INVALID_ARG"));
+                Assert.That(fixture.Runtime.StartRuntime(root), Is.EqualTo(VnResult.VN_INVALID_ARG));
+                Assert.That(fixture.Runtime.ConfigurePlatformBeforeStartup(null, Path.GetFileName(root)), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(fixture.Runtime.StartRuntime(Path.GetDirectoryName(root)), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(fixture.Runtime.IsReady, Is.True);
+            }
+            yield return null;
+        }
+
         private static IEnumerator CompanionFirstUse(bool projectStartup)
         {
             using (var fixture = new Fixture())

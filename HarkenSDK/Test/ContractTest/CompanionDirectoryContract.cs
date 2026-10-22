@@ -66,6 +66,9 @@ namespace Harken.Test
                 Require(session.ReleasePack(action.OwnerPackStableId, raw), "original raw handle release");
                 Require(refresh.Release(), "renamed scope release");
                 Assert(Actions.Resolve(renamed, out _) != VnResult.VN_OK, "last lease removes name");
+                Require(session.AcquirePack(action.OwnerPackStableId, out Pack reloaded), "known unloaded owner reacquires by accepted name");
+                Require(Actions.Resolve(renamed, out _), "raw reacquire restores accepted name");
+                Require(session.ReleasePack(action.OwnerPackStableId, reloaded), "reloaded raw release");
                 Assert(session.PrepareActions(new[] { action.Name }, session.ProjectId, out _) == VnResult.VN_GAMEPLAY_NAME_RETIRED, "unload preserves accepted name");
                 const string renamedAgain = "Play_RenamedAgain";
                 WriteAction(directory, renamedAgain, action.ActionStableId, actionBytes);
@@ -136,6 +139,8 @@ namespace Harken.Test
                 Directory.CreateDirectory(localized);
                 foreach (string file in Directory.GetFiles(Path.Combine(fixture, "English")))
                     File.Copy(file, Path.Combine(localized, Path.GetFileName(file)));
+                Require(new PackDirectorySource(directory, "English").Capture("Play_Head", VnObjectId.Parse(session.ProjectId),
+                    File.ReadAllBytes(Path.Combine(directory, "Init.bytes")), out CompanionInput english), "inspect localized identity");
                 Require(session.RefreshAction("Play_Head", session.ProjectId, out ActionPreparation refreshed), "General to localized");
                 Assert(session.AcquirePack(before.Facts.packStableId, out _) == VnResult.VN_CAPABILITY_UNAVAILABLE,
                     "old physical ID no longer owns content");
@@ -144,6 +149,10 @@ namespace Harken.Test
                 Require(general.Release(), "old scope follows stable owner");
                 Require(refreshed.Release(), "localized final release");
                 Assert(Actions.Resolve("Play_Head", out _) != VnResult.VN_OK, "no orphaned variant");
+                foreach (string file in Directory.GetFiles(localized)) File.Delete(file);
+                Assert(session.AcquirePack(english.Facts.packStableId, out _) == VnResult.VN_PACK_STALE_REVISION,
+                    "raw reload cannot substitute a different physical ID");
+                Assert(Actions.Resolve("Play_Head", out _) != VnResult.VN_OK, "refused raw reload publishes nothing");
                 Require(session.Shutdown(), "closure shutdown");
                 session = null;
             }

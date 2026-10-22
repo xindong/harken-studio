@@ -204,7 +204,10 @@ platformDirectory, string language, ref VnConfig config, out
 PackBootstrapSession session)` starts with `Init.bytes` and `Init.json` only.
 `HarkenAudioSystem.StartRuntime(string)` also accepts this selected platform
 directory. Set an explicitly configured Init path to `Init.bytes` and leave
-startup Pack IDs empty. `Session.ProjectId` is the actual Init identity;
+startup Pack IDs empty. Clear a legacy platform ID: companion directories have
+no platform inventory to verify it. An explicit platform name must match the
+directory basename, or select that direct child of the supplied root.
+`Session.ProjectId` is the actual Init identity;
 `Session.Publication` is null for this source.
 
 `Session.PrepareActions` reads only the requested Action pairs on first use.
@@ -220,8 +223,9 @@ preparation)` explicitly captures a previously discovered Action again,
 including a renamed or unloaded Action, and returns one resource lease.
 Release it as with a normal preparation. Existing scopes can still be released
 after a rename or language variant replacement. Failed refresh preserves the
-active content. Acquire-by-ID can only retain an already loaded owner in this
-mode; use names to discover content.
+active content. Acquire-by-ID can retain or reload a previously discovered
+owner using its accepted name; changed physical IDs are rejected. Unknown IDs
+have no filename mapping in this source, so discover new content by name.
 
 `HarkenPackSource` is a `ScriptableObject` containing the selected publication
 and Pack `TextAsset`s. `Capture(out HarkenPreparedPacks prepared, out string
