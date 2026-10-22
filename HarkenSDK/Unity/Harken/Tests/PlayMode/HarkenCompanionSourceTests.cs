@@ -117,6 +117,34 @@ namespace Harken.Unity.Tests
         }
 
         [UnityTest]
+        public IEnumerator CallerCancelledStartupReleasesCallbacksBeforeRetry()
+        {
+            using (var fixture = new Fixture())
+            using (var cancel = new CancellationTokenSource())
+            {
+                var init = new TaskCompletionSource<byte[]>();
+                var start = fixture.Runtime.StartRuntimeAsync(PackSource.FromAsyncReader((path, token) =>
+                    path == "Init.bytes" ? init.Task : Task.FromResult(Read(path))), cancel.Token);
+                HarkenCallbacks.Registration Registration(string name) => (HarkenCallbacks.Registration)
+                    typeof(HarkenAudioSystem).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)
+                        .GetValue(fixture.Runtime);
+                var notification = Registration("notificationRegistration");
+                var log = Registration("logRegistration");
+                Assert.That(notification.IsActive && log.IsActive, Is.True);
+                cancel.Cancel();
+                init.SetResult(Read("Init.bytes"));
+                yield return Until(start);
+                Assert.That(start.IsCanceled, Is.True);
+                Assert.That(fixture.Runtime.State, Is.EqualTo(HarkenRuntimeState.Stopped));
+                Assert.That(notification.IsActive || log.IsActive, Is.False);
+                Assert.That(fixture.Runtime.StartRuntime(PackSource.FromReader(Read)), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(Registration("notificationRegistration").IsActive, Is.True);
+                Assert.That(Registration("logRegistration").IsActive, Is.True);
+            }
+            yield return null;
+        }
+
+        [UnityTest]
         public IEnumerator StreamingReaderDistinguishesMissingPairsFromReadErrors()
         {
             using (var fixture = new Fixture())

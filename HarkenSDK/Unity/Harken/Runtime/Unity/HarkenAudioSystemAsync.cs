@@ -65,7 +65,16 @@ namespace Harken.Unity
             }
             finally
             {
-                if (ReferenceEquals(companionStartup, request)) { companionStartup = null; starting = false; }
+                if (ReferenceEquals(companionStartup, request))
+                {
+                    if (session == null || !session.IsActive)
+                    {
+                        managedFirings = Array.Empty<ManagedFiring>();
+                        DisposeCallbackRegistrations();
+                    }
+                    companionStartup = null;
+                    starting = false;
+                }
                 request.Dispose();
             }
         }

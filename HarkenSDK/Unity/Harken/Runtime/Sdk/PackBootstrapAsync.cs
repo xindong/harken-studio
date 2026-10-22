@@ -95,10 +95,7 @@ namespace Harken
                     {
                         pending = new PendingCapture();
                         companionReads.Add(name, pending);
-                        // A reader may invoke user code synchronously before its first await.
-                        mutationPhase = MutationPhase.ReadingContent;
-                        try { _ = CompleteCapture(pending, name); }
-                        finally { mutationPhase = MutationPhase.Idle; }
+                        _ = CompleteCapture(pending, name);
                     }
                     ++pending.Waiters;
                     subscriptions.Add((name, pending));
@@ -149,10 +146,17 @@ namespace Harken
             try
             {
                 pending.Completion.TrySetResult(await companionSource.CaptureAsync(name,
-                    VnObjectId.Parse(ProjectId), initBytes, pending.Cancellation.Token));
+                    VnObjectId.Parse(ProjectId), initBytes, pending.Cancellation.Token, SetReadCallbackPhase));
             }
             catch (OperationCanceledException) { pending.Completion.TrySetCanceled(); }
             catch (Exception error) { pending.Completion.TrySetException(error); }
+        }
+
+        private void SetReadCallbackPhase(bool reading)
+        {
+            if (RequireOwnerThread() != VnResult.VN_OK)
+                throw new InvalidOperationException("The source must resume on the session control thread.");
+            mutationPhase = reading ? MutationPhase.ReadingContent : MutationPhase.Idle;
         }
 
         private static async Task<CompanionCapture> AwaitCapture(Task<CompanionCapture> task, CancellationToken cancellation)

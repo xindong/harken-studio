@@ -33,6 +33,7 @@ namespace Harken.Test
             {
                 Synchronous();
                 using (var context = new ControlContext()) context.Run(Asynchronous);
+                using (var context = new ControlContext()) context.Run(ReentrantMetadata);
                 ReentrantShutdown();
                 Console.WriteLine("[Companion sources] Reader snapshots, async sharing, cancellation, retry, rename and restart isolation PASS.");
                 return true;
@@ -203,6 +204,30 @@ namespace Harken.Test
                     }
                 }
             });
+        }
+
+        private static async Task ReentrantMetadata()
+        {
+            PackBootstrapSession session = null;
+            var source = PackSource.FromAsyncReader(async (path, token) =>
+            {
+                if (path == "Play_Head.bytes") await Task.Yield();
+                if (path == "Play_Head.json")
+                {
+                    var nested = await session.PrepareActionsAsync(new[] { "Play_Head" }, session.ProjectId);
+                    Check(nested.Result == VnResult.VN_IN_USE, "metadata callback cannot await its own pending read");
+                }
+                return Read(path);
+            });
+            var started = await PackBootstrap.StartAsync(source, Config());
+            Ok(started.Result, "reentrant metadata Init");
+            session = started.Session;
+            using (session)
+            {
+                var ready = await session.PrepareActionsAsync(new[] { "Play_Head" }, session.ProjectId);
+                Ok(ready.Result, "metadata callback returns without self-deadlock");
+                Ok(ready.Preparation.Release(), "metadata callback scope release");
+            }
         }
 
         private static async Task Cancelled(Task task)

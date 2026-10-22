@@ -69,16 +69,32 @@ namespace Harken
             catch { return VnResult.VN_PACK_PROVIDER_FAILED; }
         }
 
-        private async Task<byte[]> Read(string path, CancellationToken cancellation)
+        private ulong ReadRevision(Action<bool> readPhase)
+        {
+            readPhase?.Invoke(true);
+            try { return revision?.Invoke() ?? 0; }
+            finally { readPhase?.Invoke(false); }
+        }
+
+        private async Task<byte[]> Read(string path, CancellationToken cancellation, Action<bool> readPhase)
         {
             cancellation.ThrowIfCancellationRequested();
-            byte[] bytes = asyncReader == null ? reader(path) : await asyncReader(path, cancellation);
+            Task<byte[]> pending = null;
+            byte[] bytes = null;
+            readPhase?.Invoke(true);
+            try
+            {
+                if (asyncReader == null) bytes = reader(path);
+                else pending = asyncReader(path, cancellation);
+            }
+            finally { readPhase?.Invoke(false); }
+            if (asyncReader != null) bytes = await pending;
             cancellation.ThrowIfCancellationRequested();
             return bytes == null ? null : (byte[])bytes.Clone();
         }
 
         internal async Task<CompanionCapture> CaptureAsync(string name, VnObjectId project,
-            byte[] init, CancellationToken cancellation)
+            byte[] init, CancellationToken cancellation, Action<bool> readPhase = null)
         {
             if (name != null && (!PackCompanion.IsName(name) || name == "Init"))
                 return new CompanionCapture(VnResult.VN_INVALID_ARG);
@@ -90,19 +106,19 @@ namespace Harken
                     VnResult result = directory.Capture(name, project, init, out CompanionInput file);
                     return new CompanionCapture(result, file);
                 }
-                ulong version = revision?.Invoke() ?? 0;
+                ulong version = ReadRevision(readPhase);
                 string scope = name == null ? string.Empty : Language;
                 string basename = name ?? "Init";
                 string prefix = scope.Length == 0 ? string.Empty : scope + "/";
-                byte[] bytes = await Read(prefix + basename + ".bytes", cancellation);
-                byte[] json = await Read(prefix + basename + ".json", cancellation);
+                byte[] bytes = await Read(prefix + basename + ".bytes", cancellation, readPhase);
+                byte[] json = await Read(prefix + basename + ".json", cancellation, readPhase);
                 if (bytes == null && json == null && scope.Length != 0)
                 {
                     scope = string.Empty;
-                    bytes = await Read(basename + ".bytes", cancellation);
-                    json = await Read(basename + ".json", cancellation);
+                    bytes = await Read(basename + ".bytes", cancellation, readPhase);
+                    json = await Read(basename + ".json", cancellation, readPhase);
                 }
-                if (revision != null && revision() != version)
+                if (revision != null && ReadRevision(readPhase) != version)
                     return new CompanionCapture(VnResult.VN_PACK_STALE_REVISION);
                 if (bytes == null && json == null) return new CompanionCapture(VnResult.VN_CONTENT_NOT_LOADED);
                 if (bytes == null || json == null) return new CompanionCapture(VnResult.VN_BAD_PACK);

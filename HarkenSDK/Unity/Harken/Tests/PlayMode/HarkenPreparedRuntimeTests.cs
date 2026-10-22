@@ -155,7 +155,7 @@ namespace Harken.Unity.Tests
                 AssertNamedWrite(captured.Publication.ProjectId);
                 Assert.That(runtime.ShutdownRuntime(), Is.EqualTo(VnResult.VN_OK));
 
-                string root = Path.Combine(Application.streamingAssetsPath, "Audio/VariableNames");
+                string root = Path.Combine(Application.streamingAssetsPath, "Audio/U4Sample/Windows");
                 Assert.That(GameplayPublication.Read(root, null, out GameplayPublication publication, out error),
                     Is.EqualTo(VnResult.VN_OK), error);
                 Assert.That(HarkenPreparedPacks.Create(publication, File.ReadAllBytes(Path.Combine(root, publication.InitPack.Path)),
@@ -173,7 +173,7 @@ namespace Harken.Unity.Tests
 
         private static void AssertNamedWrite(string projectId)
         {
-            Assert.That(Values.Resolve("Sdk_Value", out VnObjectId variableId), Is.EqualTo(VnResult.VN_OK));
+            Assert.That(Values.Resolve("Demo_Choice", out VnObjectId variableId), Is.EqualTo(VnResult.VN_OK));
             var query = new VnVariableQueryDescV1
             {
                 structSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf<VnVariableQueryDescV1>(),
@@ -186,7 +186,7 @@ namespace Harken.Unity.Tests
             Assert.That(Values.QueryVariable(in query, ref value), Is.EqualTo(VnResult.VN_OK));
             Assert.That(value.currentValue, Is.Zero);
             Assert.That(value.pendingCount, Is.Zero);
-            Assert.That(Values.SetValue("Sdk_Value", projectId, 0.75f), Is.EqualTo(VnResult.VN_OK));
+            Assert.That(Values.SetValue("Demo_Choice", projectId, 1), Is.EqualTo(VnResult.VN_OK));
             for (int i = 0; i < 32; ++i)
             {
                 Assert.That(HarkenEngine.Update(), Is.EqualTo(VnResult.VN_OK));
@@ -195,11 +195,11 @@ namespace Harken.Unity.Tests
             Assert.That(HarkenEngine.Update(), Is.EqualTo(VnResult.VN_OK));
             Assert.That(Values.QueryVariable(in query, ref value), Is.EqualTo(VnResult.VN_OK));
             Assert.That(value.pendingCount, Is.Zero);
-            Assert.That(value.currentValue, Is.EqualTo(0.75f));
-            Assert.That(Values.SetValue("Sdk_Value", "00000000-0000-4000-8000-000000000001", 0.25f),
+            Assert.That(value.currentValue, Is.EqualTo(1));
+            Assert.That(Values.SetValue("Demo_Choice", "00000000-0000-4000-8000-000000000001", 0),
                 Is.EqualTo(VnResult.VN_GAMEPLAY_WRONG_PROJECT));
             Assert.That(Values.QueryVariable(in query, ref value), Is.EqualTo(VnResult.VN_OK));
-            Assert.That(value.currentValue, Is.EqualTo(0.75f));
+            Assert.That(value.currentValue, Is.EqualTo(1));
         }
 #endif
 
