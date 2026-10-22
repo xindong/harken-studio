@@ -1798,7 +1798,7 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
                         .arg(result.targetOnlyFilesPreserved);
         for (const StepResult& item : result.steps) {
             reportText += QStringLiteral("%1 - %2\n\n%3\n\n")
-                .arg(item.title, statusName(item.status), item.summary);
+                .arg(item.title, item.status == StepStatus::Warning ? QStringLiteral("review recommended") : statusName(item.status), item.summary);
             if (!item.cause.isEmpty()) reportText += QStringLiteral("Cause: %1\n\n").arg(item.cause);
             if (!item.remediation.isEmpty()) reportText += QStringLiteral("Action: %1\n\n").arg(item.remediation);
             for (const QString& detail : item.details) reportText += detail + QStringLiteral("\n\n");
@@ -1849,10 +1849,12 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
     QString sourceVersion;
     QStringList sourceFiles;
     QStringList preservedFiles;
+    QStringList lineEndingPreservedFiles;
     QStringList staleFiles;
     QStringList filesToChange;
     QMap<QString, QString> runtimeMetadataMoves;
     QMap<QString, QByteArray> sourceHashes;
+    QMap<QString, QByteArray> installedContentHashes;
     QSet<QString> declaredOptionalRuntimePaths;
     QString updateBackupRoot;
     bool installationActivated = false;
@@ -1980,6 +1982,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
         }
 
         QStringList missing;
+        QStringList missingOptionalSourceFiles;
         const QJsonArray required = manifest.value(QStringLiteral("required_files")).toArray();
         for (const QJsonValue& value : required) {
             const QString relative = value.toString();
@@ -1991,7 +1994,10 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             }
             if (relative.isEmpty() ||
                 !existingArtifact(QDir(result.sdkSourcePath).filePath(relative))) {
-                missing << relative;
+                if (UnityInstallation::isDocumentationOrSample(relative))
+                    missingOptionalSourceFiles << relative;
+                else
+                    missing << relative;
             }
         }
 
@@ -2098,11 +2104,15 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             sourceHashes.insert(relative, digest.hash);
         }
         sourceVersion = packageVersion(result.sdkSourcePath);
+        installedContentHashes = sourceHashes;
         step.summary = QStringLiteral("Validated SDK %1: %2 file(s); the %3 runtime required for this editor is present.")
                            .arg(sourceVersion, QString::number(sourceFiles.size()),
                                 hostPlatform);
         step.details << QStringLiteral("Native runtimes available in this SDK source: %1")
                             .arg(bundledPlatforms.join(QStringLiteral(", ")));
+        if (!missingOptionalSourceFiles.isEmpty())
+            step.details << QStringLiteral("Missing documentation/sample files (does not block SDK updates):")
+                         << missingOptionalSourceFiles.join(QLatin1Char('\n'));
         if (!missingExpectedPlatforms.isEmpty()) {
             step.status = StepStatus::Warning;
             step.summary += QStringLiteral(" Target runtimes not included: %1. Available platforms can still be integrated.")
@@ -2183,14 +2193,25 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
         const QJsonObject actualHashes = targetSnapshot.value(QStringLiteral("files")).toObject();
         for (const QString& relative : previousManaged.managedFiles) {
             if (result.planHash.isEmpty()) break;
-            if (!actualHashes.contains(relative)) result.missingFiles << relative;
+            if (!actualHashes.contains(relative)) {
+                if (UnityInstallation::isDocumentationOrSample(relative))
+                    result.missingOptionalFiles << relative;
+                else
+                    result.missingFiles << relative;
+            }
             else if (installedHashes.contains(relative)
                      && actualHashes.value(relative).toString().compare(
-                         installedHashes.value(relative).toString(), Qt::CaseInsensitive) != 0)
-                result.modifiedFiles << relative;
+                         installedHashes.value(relative).toString(), Qt::CaseInsensitive) != 0) {
+                if (UnityInstallation::matchesTextHashIgnoringLineEndings(
+                        QDir(targetSdk).filePath(relative), installedHashes.value(relative).toString().toLatin1()))
+                    result.lineEndingFiles << relative;
+                else
+                    result.modifiedFiles << relative;
+            }
         }
         result.modifiedFiles.sort();
         result.missingFiles.sort();
+        result.missingOptionalFiles.sort();
         const QSet<QString> previousManagedKeys =
             comparisonPathKeys(previousManaged.managedFiles);
         QStringList targetFiles = allRelativeFiles(targetSdk);
@@ -2225,8 +2246,15 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             } else if (digest.unreadable()) {
                 unreadableTargets << relative;
             } else if (!digest.matches(sourceHashes.value(relative))) {
-                ++filesChanged;
-                changes.push_back({QStringLiteral("replace"), relative});
+                if (UnityInstallation::matchesTextHashIgnoringLineEndings(
+                        QDir(targetSdk).filePath(relative), sourceHashes.value(relative))) {
+                    lineEndingPreservedFiles << relative;
+                    if (!result.lineEndingFiles.contains(relative)) result.lineEndingFiles << relative;
+                    installedContentHashes[relative] = digest.hash;
+                } else {
+                    ++filesChanged;
+                    changes.push_back({QStringLiteral("replace"), relative});
+                }
             }
         }
         if (!unreadableTargets.isEmpty()) {
@@ -2290,6 +2318,14 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             changes, result.sdkInstallPath);
         result.fileChanges = changes;
         result.staleFilesToRemove = staleFiles.size();
+        result.lineEndingFiles.sort();
+        if (!result.lineEndingFiles.isEmpty())
+            step.details << QStringLiteral("%1 SDK text file(s) differ only in LF/CRLF line endings; contents are unchanged.")
+                                .arg(result.lineEndingFiles.size())
+                         << result.lineEndingFiles.join(QLatin1Char('\n'));
+        if (!result.missingOptionalFiles.isEmpty())
+            step.details << QStringLiteral("Missing documentation/sample files (does not block SDK updates):")
+                         << result.missingOptionalFiles.join(QLatin1Char('\n'));
         result.targetOnlyFilesPreserved = preservedFiles.size();
         result.changesDetected = result.filesAdded > 0 ||
                                  result.filesChanged > 0 ||
@@ -2398,10 +2434,11 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
 
         QString error;
         if (!copyFiles(result.sdkSourcePath, stageRoot, sourceFiles, &error) ||
+            !copyFiles(targetSdk, stageRoot, lineEndingPreservedFiles, &error) ||
             (!preservedFiles.isEmpty() &&
              !copyFiles(targetSdk, stageRoot, preservedFiles, &error)) ||
             !writeInstalledState(stageRoot, sourceVersion, sourceFiles,
-                                 sourceHashes, &error)) {
+                                 installedContentHashes, &error)) {
             QDir(stageRoot).removeRecursively();
             step.status = StepStatus::Failed;
             step.summary = QStringLiteral("Failed to stage the Unity SDK update.");
@@ -2429,7 +2466,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
                 QDir(stageRoot).filePath(relative));
             if (digest.unreadable())
                 stagingUnreadable << relative;
-            else if (!digest.matches(sourceHashes.value(relative)))
+            else if (!digest.matches(installedContentHashes.value(relative)))
                 stagingMismatches << relative;
         }
         if (!stagingMismatches.isEmpty() || !stagingUnreadable.isEmpty()) {
@@ -2553,7 +2590,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
                 QDir(targetSdk).filePath(relative));
             if (digest.unreadable())
                 unreadable << relative;
-            else if (!digest.matches(sourceHashes.value(relative)))
+            else if (!digest.matches(installedContentHashes.value(relative)))
                 mismatches << relative;
         }
         if (!unreadable.isEmpty()) {
@@ -2646,7 +2683,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
                                                          : QStringLiteral("no"));
         for (const StepResult& item : result.steps) {
             reportText += QStringLiteral("%1 — %2\n\n%3\n\n")
-                            .arg(item.title, statusName(item.status), item.summary);
+                            .arg(item.title, item.status == StepStatus::Warning ? QStringLiteral("review recommended") : statusName(item.status), item.summary);
             if (!item.cause.isEmpty())
                 reportText += QStringLiteral("Cause: %1\n\n").arg(item.cause);
             if (!item.remediation.isEmpty())

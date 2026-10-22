@@ -9,6 +9,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSet>
+#include <QStringDecoder>
 #include <QUrl>
 
 #include <algorithm>
@@ -160,6 +161,53 @@ bool walk(const QString& root, bool importedOnly,
     return true;
 }
 
+}
+
+bool isDocumentationOrSample(const QString& relative)
+{
+    return relative.startsWith(QStringLiteral("Documentation~/"))
+        || relative.startsWith(QStringLiteral("Samples~/"))
+        || relative == QStringLiteral("Documentation~.meta")
+        || relative == QStringLiteral("Samples~.meta")
+        || relative == QStringLiteral("README.md")
+        || relative == QStringLiteral("CHANGELOG.md");
+}
+
+bool matchesTextHashIgnoringLineEndings(const QString& path, const QByteArray& expected)
+{
+    static const QSet<QString> textExtensions = {
+        QStringLiteral("cs"), QStringLiteral("asmdef"), QStringLiteral("asmref"),
+        QStringLiteral("json"), QStringLiteral("meta"), QStringLiteral("md"),
+        QStringLiteral("txt"), QStringLiteral("xml"), QStringLiteral("yaml"),
+        QStringLiteral("yml"), QStringLiteral("prefab"), QStringLiteral("unity")};
+    if (!textExtensions.contains(QFileInfo(path).suffix().toLower())) return false;
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) return false;
+    QCryptographicHash lf(QCryptographicHash::Sha256);
+    QCryptographicHash crlf(QCryptographicHash::Sha256);
+    QStringDecoder decoder(QStringDecoder::Utf8);
+    bool pendingCr = false;
+    while (!file.atEnd()) {
+        VNH::IntegrationProgress::checkpoint();
+        QByteArray block = file.read(1024 * 1024);
+        if (file.error() != QFileDevice::NoError || block.contains('\0')) return false;
+        (void)static_cast<QString>(decoder(block));
+        if (decoder.hasError()) return false;
+        if (pendingCr) block.prepend('\r');
+        pendingCr = block.endsWith('\r');
+        if (pendingCr) block.chop(1);
+        block.replace("\r\n", "\n");
+        lf.addData(block);
+        block.replace("\n", "\r\n");
+        crlf.addData(block);
+    }
+    (void)static_cast<QString>(decoder(QByteArrayView("\0", 1)));
+    if (decoder.hasError()) return false;
+    if (pendingCr) {
+        lf.addData(QByteArrayView("\r", 1));
+        crlf.addData(QByteArrayView("\r", 1));
+    }
+    return lf.result().toHex() == expected.toLower() || crlf.result().toHex() == expected.toLower();
 }
 
 QString defaultRelativePath()

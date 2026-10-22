@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QByteArray>
 #include <QString>
 #include <QStringList>
 #include <QVector>
@@ -26,6 +27,8 @@ bool hasPendingMigration(const QString& projectRoot);
 bool samePath(const QString& left, const QString& right);
 bool containsPath(const QString& parent, const QString& child);
 bool safeRelativePath(const QString& path);
+bool isDocumentationOrSample(const QString& relative);
+bool matchesTextHashIgnoringLineEndings(const QString& path, const QByteArray& expected);
 bool validatePath(const QString& path, QString* error);
 bool validateTree(const QString& path, QString* error);
 bool resolveTarget(const QString& projectRoot, const QString& input,

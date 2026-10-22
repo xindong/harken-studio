@@ -7,6 +7,30 @@
   },
   "releases": [
     {
+      "version": "0.1.64",
+      "date": "2026-10-22",
+      "pullRequests": [],
+      "contributors": ["liuxin2-sys"],
+      "changes": [
+        {
+          "category": "improved",
+          "text": "Unity SDK checks and updates recognize LF/CRLF line-ending differences as unchanged text, avoiding false modification warnings and unnecessary write-access checks. Binary files and actual content changes remain strictly checked."
+        },
+        {
+          "category": "improved",
+          "text": "Missing Unity SDK documentation and samples are reported separately and no longer fail SDK verification or block updates. Required SDK files retain their integrity and write-protection checks."
+        },
+        {
+          "category": "improved",
+          "text": "SDK check logs retain the file list and count for line-ending-only differences. Non-blocking items are labeled Review recommended. The SDK status shows normal for unchanged files, line-ending-only differences, and missing documentation or samples, with details kept in the check log."
+        },
+        {
+          "category": "improved",
+          "text": "Integration-list tooltips show only the SDK installation path. Version tooltips appear only when a newer local SDK is available and show its version number."
+        }
+      ]
+    },
+    {
       "version": "0.1.63",
       "date": "2026-10-22",
       "pullRequests": [98],

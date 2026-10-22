@@ -134,11 +134,29 @@ VNX::UnityIntegrationService::Result verifyInstalled(
         const QFileInfo info(path);
         QFile file(path);
         QCryptographicHash hash(QCryptographicHash::Sha256);
-        if (!info.exists()) missing << relative;
+        if (!info.exists()) {
+            if (VNX::UnityInstallation::isDocumentationOrSample(relative))
+                result.missingOptionalFiles << relative;
+            else
+                missing << relative;
+        }
         else if (!info.isFile() || !file.open(QIODevice::ReadOnly) || !IntegrationProgress::addFileData(file, hash))
             unreadable << relative;
-        else if (hash.result().toHex() != hashes.value(relative).toString().toLatin1().toLower())
-            modified << relative;
+        else if (hash.result().toHex() != hashes.value(relative).toString().toLatin1().toLower()) {
+            if (VNX::UnityInstallation::matchesTextHashIgnoringLineEndings(
+                    path, hashes.value(relative).toString().toLatin1()))
+                result.lineEndingFiles << relative;
+            else
+                modified << relative;
+        }
+    }
+    if (!result.lineEndingFiles.isEmpty())
+        verification.details << QStringLiteral("%1 SDK text file(s) differ only in LF/CRLF line endings; contents are unchanged.")
+                                    .arg(result.lineEndingFiles.size())
+                             << result.lineEndingFiles.join(QLatin1Char('\n'));
+    if (!result.missingOptionalFiles.isEmpty()) {
+        verification.details << QStringLiteral("Missing documentation/sample files (does not block SDK updates):")
+                             << result.missingOptionalFiles.join(QLatin1Char('\n'));
     }
     result.changesDetected = !missing.isEmpty() || !modified.isEmpty();
     if (result.changesDetected || !unreadable.isEmpty()) {
@@ -166,7 +184,10 @@ VNX::UnityIntegrationService::Result verifyInstalled(
     }
     verification.status = StepStatus::Succeeded;
     verification.summary = QStringLiteral("Verified the content integrity of %1 Harken-managed SDK file(s).")
-                               .arg(files.size());
+                               .arg(files.size() - result.missingOptionalFiles.size());
+    if (!result.missingOptionalFiles.isEmpty())
+        verification.summary += QLatin1Char('\n') + QStringLiteral("%1 documentation/sample file(s) are missing; SDK updates can continue.")
+            .arg(result.missingOptionalFiles.size());
     return finish();
 }
 
@@ -303,6 +324,10 @@ QString localizeUnityText(const QString& text)
          QT_TRANSLATE_NOOP("HarkenHub", "Installed SDK %1 from a verified staging directory; copied %2 managed file(s) and preserved %3 target-only file(s).")},
         {QRegularExpression(QStringLiteral(R"(^Verified the content integrity of (\d+) Harken-managed SDK file\(s\)\.$)")),
          QT_TRANSLATE_NOOP("HarkenHub", "Verified the content integrity of %1 Harken-managed SDK file(s).")},
+        {QRegularExpression(QStringLiteral(R"(^(\d+) documentation/sample file\(s\) are missing; SDK updates can continue\.$)")),
+         QT_TRANSLATE_NOOP("HarkenHub", "%1 documentation/sample file(s) are missing; SDK updates can continue.")},
+        {QRegularExpression(QStringLiteral(R"(^(\d+) SDK text file\(s\) differ only in LF/CRLF line endings; contents are unchanged\.$)")),
+         QT_TRANSLATE_NOOP("HarkenHub", "%1 SDK text file(s) differ only in LF/CRLF line endings; contents are unchanged.")},
         {QRegularExpression(QStringLiteral(R"(^Cannot read SDK file for migration: (.*)$)")),
          QT_TRANSLATE_NOOP("HarkenHub", "Cannot read SDK file for migration: %1")},
         {QRegularExpression(QStringLiteral(R"(^Cannot read SDK file: (.*)$)")),
@@ -622,7 +647,9 @@ UnityIntegrationResult HubUnityIntegrationService::run(
     result.changesDetected = source.changesDetected;
     result.planHash = source.planHash;
     result.modifiedFiles = source.modifiedFiles;
+    result.lineEndingFiles = source.lineEndingFiles;
     result.missingFiles = source.missingFiles;
+    result.missingOptionalFiles = source.missingOptionalFiles;
     result.unreadableFiles = source.unreadableFiles;
     result.integrationMigrated = source.integrationMigrated;
     result.migrationRecovered = source.migrationRecovered;
