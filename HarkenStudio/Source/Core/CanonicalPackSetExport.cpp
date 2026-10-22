@@ -11,7 +11,6 @@
 #include "PackBuildPlan.h"
 #include "NameValidator.h"
 #include "ProjectTypes.h"
-#include "PackSchemaGenerated.h"
 #include "ProjectSchemaValidator.h"
 #include "BindingRuntimeLowering.h"
 #include "SoundSourceEditing.h"
@@ -1840,7 +1839,7 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
         if (!readAll(dir.filePath(relative), &bytes, &detail)) return reject(detail);
         const auto manifest = QJsonDocument::fromJson(bytes).object();
         if (ProjectSchemaValidator::validatePackManifest(
-                PackSchema::kPackManifestSchemaVersion, manifest, relative).isEmpty()) continue;
+                HARKEN_PACK_SCHEMA_VERSION, manifest, relative).isEmpty()) continue;
         const auto catalog = manifest.value(QStringLiteral("gameplayCatalog")).toObject();
         if (manifest.value(QStringLiteral("schema_version")).toInt() != 3
             || QUuid(catalog.value(QStringLiteral("projectId")).toString()).isNull()
@@ -1972,7 +1971,7 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
                 companion = legacyCompanions.value(path);
             }
             const auto companionErrors = ProjectSchemaValidator::validatePackManifest(
-                PackSchema::kPackManifestSchemaVersion, companion, companionPath);
+                HARKEN_PACK_SCHEMA_VERSION, companion, companionPath);
             if (!companionErrors.isEmpty()) return rejectPair(companionErrors.join(QLatin1Char('\n')));
             if (!hasCompanion && legacyRows.value(path).value(QStringLiteral("contentHash")).toString().toULongLong() != hash)
                 return rejectPair(QStringLiteral("Previous Pack differs from its publication: %1").arg(path));
@@ -2144,7 +2143,7 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
             if (!readAll(dir.filePath(relative), &bytes, &detail)) return reject(detail);
             const auto document = QJsonDocument::fromJson(bytes);
             if (!document.isObject() || !ProjectSchemaValidator::validatePackManifest(
-                    PackSchema::kPackManifestSchemaVersion, document.object(), relative).isEmpty()) continue;
+                    HARKEN_PACK_SCHEMA_VERSION, document.object(), relative).isEmpty()) continue;
             return reject(QStringLiteral("Pack companion has no valid matching binary: %1").arg(relative));
         }
         for (const auto& edge : dependencyEdges) {
@@ -3217,7 +3216,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             && !fillWaveformCompanion(request, pack, waveformOutputRoot, &exportedWaveformSources,
                 &pack.companion, &error)) return fail(error);
         const auto schemaErrors = ProjectSchemaValidator::validatePackManifest(
-            PackSchema::kPackManifestSchemaVersion, pack.companion, relative);
+            HARKEN_PACK_SCHEMA_VERSION, pack.companion, relative);
         if (!schemaErrors.isEmpty()) return fail(schemaErrors.join(QLatin1Char('\n')));
         if (!writeJson(QDir(stagingDir).filePath(relative), pack.companion, &error)) return fail(error);
         companionNames.append(relative);

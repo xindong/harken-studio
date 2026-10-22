@@ -42,9 +42,11 @@ TEST(PackV2Format, CurveWireSizesArePinned) {
     EXPECT_EQ(48u, kPackV6BusPayloadBytes);
 }
 
-TEST(PackV2Format, PackContainerUsesUuidFormatVersion4) {
-    static_assert(kPackFormatVersion2 == 4);
-    EXPECT_EQ(4u, kPackFormatVersion2);
+TEST(PackV2Format, PackContainerUsesPublishedSchemaVersion) {
+    static_assert(kPackFormatVersion == HARKEN_PACK_SCHEMA_VERSION);
+    static_assert(kPackFormatVersion2 == HARKEN_PACK_SCHEMA_VERSION);
+    EXPECT_EQ(HARKEN_PACK_SCHEMA_VERSION, kPackFormatVersion);
+    EXPECT_EQ(HARKEN_PACK_SCHEMA_VERSION, kPackFormatVersion2);
 }
 
 TEST(PackV2Format, VolumeSnapshotParentForestAcceptsDeepUnorderedChainAndRejectsCycles) {
@@ -1072,10 +1074,16 @@ TEST(PackV2Format, RefusesWrongMagic) {
     ExpectRefused(bytes);
 }
 
-TEST(PackV2Format, RefusesValidV1Image) {
-    // A genuine v1 container: 36-byte header, one TOC entry, an aligned
-    // checksummed blob. The v2 parser must refuse it on formatVersion
-    // alone; the v1 parse branch owns these bytes.
+TEST(PackV2Format, RefusesOtherSchemaVersions) {
+    for (const auto version : {kPackFormatVersion2 - 1,
+                               kPackFormatVersion2 + 1}) {
+        std::vector<std::uint8_t> bytes = MinimalContentBytes();
+        StoreLE32(bytes.data() + 4, version);
+        ExpectRefused(bytes);
+    }
+}
+
+TEST(PackV2Format, RefusesMediaOnlyHeaderLayout) {
     const std::vector<float> planar = {0.0f, 0.25f, 0.5f, 0.75f};
     const std::uint64_t blobOffset =
         AlignUp(kPackHeaderBytes + kPackTocEntryBytes, kPackBlobAlign);

@@ -131,10 +131,10 @@ constexpr harkenstudio::ObjectId kVoiceObjectId = harkentest::StudioObjectId(710
 
 } // namespace
 
-TEST(EditorProjectPackExporterInitPack, GeneratedPackBinaryStaysFormatVersion2)
+TEST(EditorProjectPackExporterInitPack, GeneratedPackBinaryUsesSchemaVersion)
 {
-    static_assert(harken::kPackFormatVersion2 == 4);
-    EXPECT_EQ(harken::kPackFormatVersion2, 4u);
+    static_assert(harken::kPackFormatVersion2 == HARKEN_PACK_SCHEMA_VERSION);
+    EXPECT_EQ(harken::kPackFormatVersion2, HARKEN_PACK_SCHEMA_VERSION);
 }
 
 TEST(EditorProjectPackExporterInitPack, DefaultMasterExportsItsUuidAndEffectOwner)

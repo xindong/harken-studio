@@ -21,8 +21,8 @@ namespace Harken
                 using (var reader = new BinaryReader(new MemoryStream(bytes, false), Utf8))
                 {
                     Check(bytes.Length >= 44 && reader.ReadUInt32() == 0x4b505356, "Invalid VSPK header.");
-                    if (reader.ReadUInt32() != 4)
-                        return Fail(VnResult.VN_PACK_INCOMPATIBLE, "Gameplay metadata requires Pack format 4.", out error);
+                    if (reader.ReadUInt32() != PackManifest.SchemaVersion)
+                        return Fail(VnResult.VN_PACK_INCOMPATIBLE, "Gameplay metadata requires Pack schema " + PackManifest.SchemaVersion + ".", out error);
                     Check(reader.ReadUInt32() == 44 && reader.ReadUInt64() == (ulong)bytes.Length &&
                         reader.ReadUInt32() == 2, "The selected bytes are not a complete Init Pack.");
                     uint count = reader.ReadUInt32();

@@ -20,7 +20,6 @@ PROJECT_SCHEMA_NAME = "ProjectSerializedSchema.json"
 PACK_SCHEMA_NAME = "PackManifestSchema.json"
 TREE_SCHEMA_NAMES = {"Editor": PROJECT_SCHEMA_NAME, "Pack": PACK_SCHEMA_NAME}
 GENERATED_PROJECT_HEADER = "ProjectSchemaGenerated.h"
-GENERATED_PACK_HEADER = "PackSchemaGenerated.h"
 GENERATED_VALIDATOR_HEADER = "ProjectSchemaValidator.generated.h"
 GENERATED_VALIDATOR_SOURCE = "ProjectSchemaValidator.generated.cpp"
 GENERATED_BUILD_HEADER = "SchemaBuildGenerated.h"
@@ -578,25 +577,10 @@ def generated_project_header(source: dict[str, Any], versions: list[int]) -> byt
         "",
         "namespace VNX::ProjectSchema {",
         "",
-        f"inline constexpr int kProjectSchemaVersion = {source['projectSchemaVersion']};",
+        "inline constexpr int kProjectSchemaVersion = HARKEN_PROJECT_SCHEMA_VERSION;",
         "inline constexpr int kProjectSchemaVersions[] = {"
         + ", ".join(str(version) for version in versions) + "};",
         *property_model,
-        "",
-        "}",
-        "",
-    ]
-    return "\n".join(lines).encode("ascii")
-
-
-def generated_pack_header(pack: list[dict[str, Any]]) -> bytes:
-    version = pack[-1]["x-harken-format"]["formatVersion"]
-    lines = [
-        "#pragma once",
-        "",
-        "namespace VNX::PackSchema {",
-        "",
-        f"inline constexpr int kPackManifestSchemaVersion = {version};",
         "",
         "}",
         "",
@@ -1247,7 +1231,6 @@ def build_bundle(schema_root: Path | None = None) -> dict[str, Any]:
         GENERATED_PROJECT_HEADER: generated_project_header(
             editor["current"], tree_versions["Editor"]["supportedVersions"]
         ),
-        GENERATED_PACK_HEADER: generated_pack_header(pack["supported"]),
         GENERATED_VALIDATOR_HEADER: validator_header,
         GENERATED_VALIDATOR_SOURCE: validator_source,
     }

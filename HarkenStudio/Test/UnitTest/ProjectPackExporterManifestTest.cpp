@@ -1824,7 +1824,7 @@ TEST(EditorProjectPackExporterManifest, ProductionPackPairGoldenIsRepeatable)
             harken::PackV2Header header;
             ASSERT_GE(bytes.size(), harken::kPackV2HeaderBytes);
             ASSERT_TRUE(harken::ParsePackV2Header(reinterpret_cast<const uint8_t*>(bytes.constData()), &header));
-            EXPECT_EQ(header.formatVersion, 4u);
+            EXPECT_EQ(header.formatVersion, HARKEN_PACK_SCHEMA_VERSION);
             ASSERT_NO_FATAL_FAILURE(expectCanonicalPackParsesWithPartition(path));
         }
         const auto content = findByName(packs, QStringLiteral("Play_Golden"));
@@ -3931,6 +3931,19 @@ void verifyIncrementalPublication(const QString& directory)
     EXPECT_EQ(mediaChanged.builtPackCount, 1);
     EXPECT_EQ(mediaChanged.skippedPackCount, 2);
     EXPECT_NE(readFileBytes(live.filePath("One.bytes")), beforeMediaChange);
+    EXPECT_EQ(readFileBytes(live.filePath("Two.bytes")), validTwo);
+    for (const auto& name : publicationFiles(live.path())) {
+        if (!name.endsWith(QStringLiteral(".bytes"))) continue;
+        auto outdated = readFileBytes(live.filePath(name));
+        ASSERT_GE(outdated.size(), harken::kPackV2HeaderBytes);
+        harken::StoreLE32(reinterpret_cast<std::uint8_t*>(outdated.data()) + 4,
+                          HARKEN_PACK_SCHEMA_VERSION + 1);
+        writeFileBytes(live.filePath(name), outdated);
+    }
+    const auto rebuilt = exporter.ExportAllPacks(project, live.path(), opts);
+    ASSERT_TRUE(rebuilt.success) << rebuilt.error.toStdString();
+    EXPECT_EQ(rebuilt.builtPackCount, 3);
+    EXPECT_EQ(rebuilt.skippedPackCount, 0);
     EXPECT_EQ(readFileBytes(live.filePath("Two.bytes")), validTwo);
     opts.forceReexport = true;
     const auto forced = exporter.ExportAllPacks(project, live.path(), opts);

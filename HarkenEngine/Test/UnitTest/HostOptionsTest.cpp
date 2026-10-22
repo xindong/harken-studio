@@ -19,7 +19,7 @@ namespace {
 
 std::string CurrentPackSidecar(const std::string& members) {
     return "{\"schema_version\":" +
-        std::to_string(VNX::PackSchema::kPackManifestSchemaVersion) + "," + members + "}";
+        std::to_string(HARKEN_PACK_SCHEMA_VERSION) + "," + members + "}";
 }
 
 TEST(HostOptions, AcceptsFiniteSecondsInRange) {
@@ -125,9 +125,9 @@ TEST(HostOptions, PackPlayJoinContainedStaysUnderRequestedRoot) {
 TEST(HostOptions, PackSidecarAcceptsOnlyCompiledCurrentVersion) {
     const std::string indexMembers = R"("platforms":[])";
     const std::string manifestMembers = R"("platformId":"11111111-2222-3333-4444-555555555555","platformName":"Windows","basePlatform":"Windows","initPackStableId":"11","packs":[{"name":"Init","packStableId":"11","path":"Init.pack","platformId":"11111111-2222-3333-4444-555555555555","contentHash":"0","dependencies":[]}])";
-    const auto current = std::to_string(VNX::PackSchema::kPackManifestSchemaVersion);
+    const auto current = std::to_string(HARKEN_PACK_SCHEMA_VERSION);
     const std::string rejectedVersions[] = {
-        "0", "-1", std::to_string(VNX::PackSchema::kPackManifestSchemaVersion + 1),
+        "0", "-1", std::to_string(HARKEN_PACK_SCHEMA_VERSION + 1),
         "\"" + current + "\"", "true", "null", current + ".5"
     };
     for (bool manifest : {false, true}) {
@@ -146,7 +146,7 @@ TEST(HostOptions, PackSidecarAcceptsOnlyCompiledCurrentVersion) {
         };
         EXPECT_TRUE(parse(CurrentPackSidecar(members))) << error;
         EXPECT_TRUE(parse("{\"schema_version\":" + current + ".0," + members + "}")) << error;
-        for (int version = 1; version < VNX::PackSchema::kPackManifestSchemaVersion; ++version)
+        for (int version = 1; version < HARKEN_PACK_SCHEMA_VERSION; ++version)
             EXPECT_FALSE(parse("{\"schema_version\":" + std::to_string(version) + "," + members + "}"));
         for (const auto& version : rejectedVersions) {
             SCOPED_TRACE(version);
@@ -192,7 +192,7 @@ TEST(HostOptions, PackSidecarRejectsOldMixedDuplicateAndUnsafeIndexEntries) {
     std::string error;
     EXPECT_FALSE(harkenhost::ParsePackSidecarIndex(CurrentPackSidecar(R"("platforms":[{"name":"Windows","path":"Windows"}])"), &platforms, &error));
     EXPECT_FALSE(harkenhost::ParsePackSidecarIndex(CurrentPackSidecar(R"("platforms":[],"platform":"Windows")"), &platforms, &error));
-    EXPECT_FALSE(harkenhost::ParsePackSidecarIndex(CurrentPackSidecar("\"schema_version\":" + std::to_string(VNX::PackSchema::kPackManifestSchemaVersion) + R"(,"platforms":[])"), &platforms, &error));
+    EXPECT_FALSE(harkenhost::ParsePackSidecarIndex(CurrentPackSidecar("\"schema_version\":" + std::to_string(HARKEN_PACK_SCHEMA_VERSION) + R"(,"platforms":[])"), &platforms, &error));
     EXPECT_TRUE(harkenhost::ParsePackSidecarIndex(CurrentPackSidecar(R"("platforms":[])"), &platforms, &error));
     const auto row = R"({"id":"11111111-2222-3333-4444-555555555555","name":"Mobile","basePlatform":"Android","path":"Mobile"})";
     EXPECT_FALSE(harkenhost::ParsePackSidecarIndex(CurrentPackSidecar(std::string("\"platforms\":[") + row + "," + row + "]"), &platforms, &error));

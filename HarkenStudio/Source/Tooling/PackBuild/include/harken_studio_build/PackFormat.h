@@ -9,7 +9,7 @@
 namespace harkenstudiobuild {
 inline constexpr std::uint8_t kPackMagic[4] = {'V', 'S', 'P', 'K'};
 
-inline constexpr std::uint32_t kPackFormatVersion = 3;
+inline constexpr std::uint32_t kPackFormatVersion = HARKEN_PACK_SCHEMA_VERSION;
 inline constexpr std::uint32_t kPackHeaderBytes = 36;
 inline constexpr std::uint32_t kPackTocEntryBytes = 76;
 inline constexpr std::uint64_t kPackBlobAlign = 64;

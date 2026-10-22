@@ -18,7 +18,6 @@ MODULE = runpy.run_path(str(SCRIPT))
 SCHEMA_ROOT = REPO_ROOT / "HarkenSchema"
 GENERATED_NAMES = {
     "ProjectSchemaGenerated.h",
-    "PackSchemaGenerated.h",
     "ProjectSchemaValidator.generated.h",
     "ProjectSchemaValidator.generated.cpp",
     "SchemaBuildGenerated.h",
@@ -206,8 +205,6 @@ class SchemaArchiveTest(unittest.TestCase):
                     self.assertEqual(bundle["manifest"]["trees"][tree]["currentVersion"], version)
                     installed = json.loads(bundle["installed"][f"{tree}/{version}/{MODULE['TREE_SCHEMA_NAMES'][tree]}"])
                     self.assertEqual(MODULE["source_version"](tree, installed), version)
-                self.assertIn(f"kProjectSchemaVersion = {expected['Editor']}", bundle["generated"]["ProjectSchemaGenerated.h"].decode("ascii"))
-                self.assertIn(f"kPackManifestSchemaVersion = {expected['Pack']}", bundle["generated"]["PackSchemaGenerated.h"].decode("ascii"))
 
     def test_snapshot_binds_effective_inputs_installation_and_generated_code(self) -> None:
         bundle = self.bundle

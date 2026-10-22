@@ -388,11 +388,8 @@ PackStagingFault PackStagingFaultForTests();
 
 struct Engine;
 
-// Reads only enough of the file to learn its container format version
-// (magic + version word). False when the file cannot be read or is too
-// short — the caller then falls to the v1 path, whose reader owns the
-// refusal shape for unreadable files.
-bool PeekPackFormatVersion(const char* utf8Path, std::uint32_t* outVersion);
+bool PeekPackHeader(const char* utf8Path, std::uint32_t* outVersion,
+                    std::uint32_t* outHeaderBytes);
 
 // The section-19.4 staged, all-or-nothing v2 load: parse -> closure ->
 // id conflicts -> every capacity (pools, variable table, topology-plan

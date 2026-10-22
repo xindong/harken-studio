@@ -10,6 +10,7 @@
 // cases then patch specific bytes. The real compiler tool is exercised by
 // the round-trip golden case, not here.
 #include "Common/ObjectIdTestSupport.h"
+#include "Common/PackFoundationFixture.h"
 #include "Common/TestUtil.h"
 
 #include "harken/media/PackFormat.h"
@@ -414,6 +415,51 @@ TEST(Pack, LoadArgumentValidation) {
     const std::string missing = TempPath("pack_missing.pack");
     std::filesystem::remove(missing);
     EXPECT_EQ(VN_BAD_PACK, LoadPack(missing, &pack));
+}
+
+TEST(Pack, HeaderDispatchRequiresCurrentSchemaAndKnownLayout) {
+    EngineSession session(MakeNullConfig(0, kBlockFrames));
+    ASSERT_EQ(VN_OK, session.InitResult());
+
+    const auto entry = MakeSineEntry(harkentest::ObjectId(61), 64);
+    harkentest::packfoundation::ImageBuilder sectioned(harken::kPackKindContent);
+    sectioned.AddMedia(entry.id, entry.planar);
+    const std::vector<std::vector<std::uint8_t>> layouts = {
+        BuildPackBytes({entry}), sectioned.Build()};
+    const auto path = TempPath("pack_header_dispatch.pack");
+
+    for (const auto& valid : layouts) {
+        for (const auto version : {HARKEN_PACK_SCHEMA_VERSION - 1,
+                                   HARKEN_PACK_SCHEMA_VERSION + 1}) {
+            auto bytes = valid;
+            harken::StoreLE32(bytes.data() + 4, version);
+            WriteFileBytes(path, bytes);
+            VnPackHandle pack = 0;
+            EXPECT_EQ(VN_BAD_PACK, LoadPack(path, &pack));
+            EXPECT_EQ(0u, pack);
+            EXPECT_EQ(0u, session.Engine()->packs.LoadedCount());
+            EXPECT_EQ(0u, session.Engine()->registry.Count());
+        }
+        const auto otherLayout =
+            harken::LoadLE32(valid.data() + 8) == harken::kPackHeaderBytes
+                ? harken::kPackV2HeaderBytes : harken::kPackHeaderBytes;
+        for (const auto headerBytes : {0u, otherLayout}) {
+            auto bytes = valid;
+            harken::StoreLE32(bytes.data() + 8, headerBytes);
+            WriteFileBytes(path, bytes);
+            VnPackHandle pack = 0;
+            EXPECT_EQ(VN_BAD_PACK, LoadPack(path, &pack));
+            EXPECT_EQ(0u, pack);
+            EXPECT_EQ(0u, session.Engine()->packs.LoadedCount());
+            EXPECT_EQ(0u, session.Engine()->registry.Count());
+        }
+        WriteFileBytes(path, valid);
+        VnPackHandle pack = 0;
+        ASSERT_EQ(VN_OK, LoadPack(path, &pack));
+        EXPECT_TRUE(session.Engine()->registry.Lookup(entry.id).Valid());
+        ASSERT_EQ(VN_OK, Vn_UnloadPack(pack));
+        EXPECT_EQ(0u, session.Engine()->registry.Count());
+    }
 }
 
 // --- capacity ---

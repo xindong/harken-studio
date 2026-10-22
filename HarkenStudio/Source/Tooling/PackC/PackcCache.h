@@ -527,16 +527,16 @@ inline void LoadPreviousPack(const std::string& path, PreviousPack* out,
         return;
     }
     harkenstudiobuild::PackHeader header;
-    if (!harkenstudiobuild::ParsePackHeader(out->bytes.data(), &header)) {
+    if (!harkenstudiobuild::ParsePackHeader(out->bytes.data(), &header) ||
+        header.formatVersion != harkenstudiobuild::kPackFormatVersion) {
         *outIgnoreReason = "previous output header does not validate";
         return;
     }
-    if (header.formatVersion == harkenstudiobuild::kPackFormatVersion2) {
+    if (header.headerBytes == harkenstudiobuild::kPackV2HeaderBytes) {
         LoadPreviousPackV2Media(out, outIgnoreReason);
         return;
     }
-    if (header.formatVersion != harkenstudiobuild::kPackFormatVersion ||
-        header.headerBytes != harkenstudiobuild::kPackHeaderBytes ||
+    if (header.headerBytes != harkenstudiobuild::kPackHeaderBytes ||
         header.fileBytes != out->bytes.size() ||
         header.tocOffset != harkenstudiobuild::kPackHeaderBytes) {
         *outIgnoreReason = "previous output header does not validate";

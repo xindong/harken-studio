@@ -1071,7 +1071,7 @@ TEST(PackcPipeline, BezierManifestEmitterIsSymmetric) {
     EXPECT_EQ(1u, Member(Member(binding, "curve"), "handles").items.size());
 }
 
-TEST(PackcPipeline, OldVintagePreviousOutputInvalidatesCacheWhole) {
+TEST(PackcPipeline, InvalidPreviousOutputInvalidatesCacheWhole) {
     const std::string wavPath = TempPath("pipeline_old_vintage.wav");
     WriteWavF32(wavPath, harkentest::MakeSine(500, 440.0, kRate, 0.5f), 1,
                 kRate);
@@ -1096,28 +1096,56 @@ TEST(PackcPipeline, OldVintagePreviousOutputInvalidatesCacheWhole) {
     const std::vector<std::uint8_t> expectedBytes = cleanBytes;
     const std::size_t directoryOffset =
         static_cast<std::size_t>(header.directoryOffset);
-    harken::StoreLE32(cleanBytes.data() + directoryOffset + 4, 1u);
-    harken::StoreLE64(
-        cleanBytes.data() + 36,
-        harken::Fnv1a64(cleanBytes.data() + directoryOffset,
-                       harken::kPackV2DirectoryEntryBytes));
-    WriteFileBytes(packPath, cleanBytes);
 
     ASSERT_EQ(0, RunPackc({manifestPath}));
     std::vector<std::uint8_t> rebuiltBytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &rebuiltBytes));
-    EXPECT_EQ(expectedBytes, rebuiltBytes)
-        << "stale-vintage cache reuse must produce a clean rebuild";
-
+    EXPECT_EQ(expectedBytes, rebuiltBytes);
     JsonValue report;
     ParseJsonFile(packPath + ".report.json", &report);
     RequireReportSkeleton(report, "built");
-    EXPECT_TRUE(
-        HasWarning(Member(report, "warnings"), "cache-ignored"));
-    const JsonValue& totals =
+    EXPECT_FALSE(HasWarning(Member(report, "warnings"), "cache-ignored"));
+    const JsonValue& hitTotals =
         Member(Member(report, "packs").items.at(0), "totals");
-    EXPECT_EQ(0u, MemberU64(totals, "cacheHits"));
-    EXPECT_EQ(1u, MemberU64(totals, "cacheMisses"));
+    EXPECT_EQ(1u, MemberU64(hitTotals, "cacheHits"));
+    EXPECT_EQ(0u, MemberU64(hitTotals, "cacheMisses"));
+
+    struct Corruption {
+        std::size_t offset;
+        std::uint32_t value;
+        bool restampDirectory;
+    };
+    const Corruption corruptions[] = {
+        {4, harken::kPackFormatVersion2 + 1, false},
+        {8, harken::kPackV2HeaderBytes + 1, false},
+        {directoryOffset + 4, 1, true},
+    };
+    for (const Corruption& corruption : corruptions) {
+        SCOPED_TRACE(corruption.offset);
+        std::vector<std::uint8_t> invalidBytes = expectedBytes;
+        harken::StoreLE32(invalidBytes.data() + corruption.offset,
+                          corruption.value);
+        if (corruption.restampDirectory) {
+            harken::StoreLE64(
+                invalidBytes.data() + 36,
+                harken::Fnv1a64(invalidBytes.data() + directoryOffset,
+                               harken::kPackV2DirectoryEntryBytes));
+        }
+        WriteFileBytes(packPath, invalidBytes);
+        ASSERT_EQ(0, RunPackc({manifestPath}));
+        ASSERT_TRUE(ReadFileBytes(packPath, &rebuiltBytes));
+        EXPECT_EQ(expectedBytes, rebuiltBytes);
+
+        JsonValue rebuildReport;
+        ParseJsonFile(packPath + ".report.json", &rebuildReport);
+        RequireReportSkeleton(rebuildReport, "built");
+        EXPECT_TRUE(HasWarning(Member(rebuildReport, "warnings"),
+                               "cache-ignored"));
+        const JsonValue& totals =
+            Member(Member(rebuildReport, "packs").items.at(0), "totals");
+        EXPECT_EQ(0u, MemberU64(totals, "cacheHits"));
+        EXPECT_EQ(1u, MemberU64(totals, "cacheMisses"));
+    }
 
     harken::PackV2Header rebuiltHeader;
     ASSERT_TRUE(harken::ParsePackV2Header(rebuiltBytes.data(), &rebuiltHeader));

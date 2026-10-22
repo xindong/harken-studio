@@ -19,7 +19,7 @@
 
 namespace harkenstudiobuild {
 
-inline constexpr std::uint32_t kPackFormatVersion2 = 4;
+inline constexpr std::uint32_t kPackFormatVersion2 = HARKEN_PACK_SCHEMA_VERSION;
 inline constexpr std::uint32_t kPackV2HeaderBytes = 44;
 inline constexpr std::uint32_t kPackV2DirectoryEntryBytes = 56;
 inline constexpr std::uint32_t kPackKindResident = 0;
