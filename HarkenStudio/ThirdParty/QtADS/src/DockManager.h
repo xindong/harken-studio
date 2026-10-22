@@ -217,6 +217,8 @@ public:
 		ShowTabTextOnlyForActiveTab =0x8000000, //! Set this flag to show label texts in dock area tabs only for active tabs
 		FloatingContainerDockViaTabOnly = 0x10000000, //!< If set, dragging a floating container's window title bar only moves it (never docks). Re-docking is done by dragging the dock widget tab / dock area title bar. Requires AlwaysShowTabs so lone floating windows expose a draggable tab.
 
+		HoveredTabHasCloseButton = 0x20000000,
+
         DefaultDockAreaButtons = DockAreaHasCloseButton
 							   | DockAreaHasUndockButton
 		                       | DockAreaHasTabsMenuButton, ///< default configuration of dock area title bar buttons

@@ -43,10 +43,13 @@
 #include <QToolButton>
 #include <QPushButton>
 #include <QMenu>
+#include <QTimer>
 
 #include "ads_globals.h"
 #include "DockWidget.h"
 #include "DockAreaWidget.h"
+#include "DockAreaTabBar.h"
+#include "DockAreaTitleBar.h"
 #include "FloatingDockContainer.h"
 #include "DockOverlay.h"
 #include "DockManager.h"
@@ -143,7 +146,9 @@ struct DockWidgetTabPrivate
 		bool DockWidgetClosable = DockWidget->features().testFlag(CDockWidget::DockWidgetClosable);
 		bool ActiveTabHasCloseButton = testConfigFlag(CDockManager::ActiveTabHasCloseButton);
 		bool AllTabsHaveCloseButton = testConfigFlag(CDockManager::AllTabsHaveCloseButton);
-		bool TabHasCloseButton = (ActiveTabHasCloseButton && active) | AllTabsHaveCloseButton;
+		bool HoveredTabHasCloseButton = testConfigFlag(CDockManager::HoveredTabHasCloseButton);
+		bool TabHasCloseButton = (ActiveTabHasCloseButton && active) || AllTabsHaveCloseButton
+			|| (HoveredTabHasCloseButton && _this->underMouse());
 		CloseButton->setVisible(DockWidgetClosable && TabHasCloseButton);
 	}
 
@@ -260,6 +265,7 @@ void DockWidgetTabPrivate::createLayout()
 
 	CloseButton = createCloseButton();
 	CloseButton->setObjectName("tabCloseButton");
+	CloseButton->installEventFilter(_this);
 	internal::setButtonIcon(CloseButton, QStyle::SP_TitleBarCloseButton, TabCloseIcon);
     CloseButton->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     CloseButton->setFocusPolicy(Qt::NoFocus);
@@ -364,6 +370,7 @@ CDockWidgetTab::CDockWidgetTab(CDockWidget* DockWidget, QWidget *parent) :
 	setAttribute(Qt::WA_NoMousePropagation, true);
 	d->DockWidget = DockWidget;
 	d->createLayout();
+	d->updateCloseButtonVisibility(isActiveTab());
 	setFocusPolicy(Qt::NoFocus);
 }
 
@@ -791,11 +798,30 @@ bool CDockWidgetTab::event(QEvent *e)
 	{
 		d->updateIcon();
 	}
+	if (e->type() == QEvent::Enter || e->type() == QEvent::Leave)
+	{
+		QTimer::singleShot(0, this, [this]
+		{
+			d->updateCloseButtonVisibility(isActiveTab());
+		});
+	}
 	return Super::event(e);
 }
 
 
 //============================================================================
+bool CDockWidgetTab::eventFilter(QObject* watched, QEvent* event)
+{
+	if (watched == d->CloseButton && event->type() == QEvent::Show && d->DockArea)
+	{
+		auto TitleBar = d->DockArea->titleBar();
+		TitleBar->tabBar()->updateGeometry();
+		TitleBar->layout()->activate();
+	}
+	return Super::eventFilter(watched, event);
+}
+
+
 void CDockWidgetTab::onDockWidgetFeaturesChanged()
 {
     d->updateCloseButtonSizePolicy();
