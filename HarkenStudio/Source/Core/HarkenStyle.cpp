@@ -9,8 +9,10 @@
 #include <QEvent>
 #include <QLineEdit>
 #include <QPainter>
+#include <QPlainTextEdit>
 #include <QStyleOption>
 #include <QTabBar>
+#include <QTextEdit>
 #include <QToolButton>
 #include <QWidget>
 
@@ -96,6 +98,16 @@ void HarkenStyle::polish(QWidget* widget)
             || widget->inherits("QLineEditIconButton")))
         widget->setProperty("flatIconButton", true);
     QProxyStyle::polish(widget);
+    const auto* comboBox = qobject_cast<QComboBox*>(widget);
+    const auto* plainText = qobject_cast<QPlainTextEdit*>(widget);
+    const auto* richText = qobject_cast<QTextEdit*>(widget);
+    if (widget->contextMenuPolicy() == Qt::DefaultContextMenu
+        && (qobject_cast<QLineEdit*>(widget)
+            || qobject_cast<QAbstractSpinBox*>(widget)
+            || (comboBox && comboBox->isEditable())
+            || (plainText && !plainText->isReadOnly())
+            || (richText && !richText->isReadOnly())))
+        widget->setContextMenuPolicy(Qt::PreventContextMenu);
     auto* editor = qobject_cast<QLineEdit*>(widget);
     if (auto* spin = qobject_cast<QAbstractSpinBox*>(widget)) {
         spin->setButtonSymbols(QAbstractSpinBox::NoButtons);

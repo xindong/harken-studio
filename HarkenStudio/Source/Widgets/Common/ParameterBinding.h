@@ -17,7 +17,7 @@ public:
     double value() const { return value_; }
     double minimum() const { return minimum_; }
     double maximum() const { return maximum_; }
-    double defaultValue() const { return defaultValue_; }
+    double defaultValue() const { return normalizedValue(defaultValue_); }
     int decimals() const { return decimals_; }
     double displayScale() const { return displayScale_; }
     double toDisplayValue(double value) const { return value * displayScale_; }

@@ -21,7 +21,10 @@ ParameterSlider::ParameterSlider(const QString& label, QWidget* parent,
 
     connect(binding(), &ParameterBinding::valueCommitted,
             this, [this](double value) {
+        const bool wasMixed = mixedValue_;
         onMixedInteractionStarted();
+        if (wasMixed)
+            clearMixedDisplay();
         emit valueChanged(value);
     });
     connect(binding(), &ParameterBinding::editBegan,

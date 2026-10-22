@@ -990,6 +990,7 @@ private:
         auto* slider = new ParameterSlider(QString(), parent);
         slider->setPresenterOverride(ParameterPresenterId::HorizontalSlider);
         slider->setRange(ed.min.toDouble(), ed.max.toDouble(), ed.decimals);
+        slider->binding()->setDefaultValue(ed.def.isValid() ? ed.def.toDouble() : 0.0);
         if (!ed.unit.isEmpty()) slider->setSuffix(ed.unit);
         slider->setValue(v.toDouble());
 

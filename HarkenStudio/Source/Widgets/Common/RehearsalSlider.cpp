@@ -48,6 +48,7 @@ void RehearsalSlider::configure(const VVariable& variable)
     setRange(lo_, hi_ > lo_ ? hi_ : lo_, form.decimals);
     setDecimals(form.decimals);
     binding()->setQuantum(form.quantum);
+    binding()->setDefaultValue(variable.defaultValue);
     binding()->setAnnotation([labels = variable.labels](double value) {
         return VariableSemantics::labelTextForValue(
             static_cast<float>(value), labels).value_or(QString());
