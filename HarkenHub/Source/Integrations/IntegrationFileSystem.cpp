@@ -7,6 +7,8 @@
 #include <QSaveFile>
 #include <QThread>
 
+#include <filesystem>
+
 #ifdef Q_OS_WIN
 #include <windows.h>
 #else
@@ -30,18 +32,34 @@ bool checkIntegrationDirectoryChanges(const QStringList& destinations, const QSt
     QStringList failures;
     const auto check = [&](const QString& path, bool renameSource) {
         IntegrationProgress::checkpoint();
+        const auto initialFailureCount = failures.size();
         QFileInfo directory(path);
-        if (renameSource && !directory.exists()) return;
+        const auto inspect = [&](const QFileInfo& entry) {
+            std::error_code code;
+            const auto status = std::filesystem::status(std::filesystem::path(entry.absoluteFilePath().toStdU16String()), code);
+            if (code && code != std::errc::no_such_file_or_directory)
+                failures.append(QCoreApplication::translate("HarkenHub", "%1\nReason: %2")
+                    .arg(QDir::toNativeSeparators(entry.absoluteFilePath()), QString::fromStdString(code.message())));
+            return status;
+        };
+        const auto sourceStatus = inspect(directory);
+        if (failures.size() != initialFailureCount) return;
+        if (renameSource && !std::filesystem::exists(sourceStatus)) return;
 #ifdef Q_OS_WIN
         const DWORD access = renameSource ? DELETE : FILE_ADD_SUBDIRECTORY;
         if (!renameSource) directory.setFile(directory.absolutePath());
 #else
         directory.setFile(directory.absolutePath());
 #endif
-        while (!directory.exists() && directory.absoluteFilePath() != directory.absolutePath())
+        auto status = inspect(directory);
+        while (failures.size() == initialFailureCount && !std::filesystem::exists(status)
+               && directory.absoluteFilePath() != directory.absolutePath()) {
             directory.setFile(directory.absolutePath());
+            status = inspect(directory);
+        }
+        if (failures.size() != initialFailureCount) return;
         const QString nativePath = QDir::toNativeSeparators(directory.absoluteFilePath());
-        if (!directory.isDir()) {
+        if (!std::filesystem::is_directory(status)) {
             failures.append(QCoreApplication::translate("HarkenHub", "Not a directory: %1").arg(nativePath));
             return;
         }

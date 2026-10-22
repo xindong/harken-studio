@@ -84,14 +84,14 @@ TEST(IntegrationDirectoryTest, ChecksCreationAndRenamePermissionsWithoutChanging
     ASSERT_TRUE(QFile::setPermissions(parent, permissions & ~(QFile::WriteOwner | QFile::WriteGroup | QFile::WriteOther | QFile::WriteUser)));
 #endif
     EXPECT_TRUE(VNH::checkIntegrationFilesWritable({installed + "/payload.txt"}, &error));
-    EXPECT_FALSE(VNH::checkIntegrationDirectoryChanges({parent + "/nested/new"}, {}, &error));
-    EXPECT_TRUE(error.contains(QDir::toNativeSeparators(parent)));
+    EXPECT_FALSE(VNH::checkIntegrationDirectoryChanges({parent + "/nested/new"}, {}, &error)) << error.toStdString();
+    EXPECT_TRUE(error.contains(QDir::toNativeSeparators(parent))) << error.toStdString();
 #ifdef Q_OS_WIN
     ASSERT_EQ(QProcess::execute("icacls", {parent, "/remove:d", account}), 0);
     ASSERT_EQ(QProcess::execute("icacls", {parent, "/deny", account + ":(DC)"}), 0);
     ASSERT_EQ(QProcess::execute("icacls", {installed, "/deny", account + ":(D)"}), 0);
 #endif
-    EXPECT_FALSE(VNH::checkIntegrationDirectoryChanges({}, {installed}, &error));
+    EXPECT_FALSE(VNH::checkIntegrationDirectoryChanges({}, {installed}, &error)) << error.toStdString();
     EXPECT_FALSE(QFileInfo::exists(parent + "/nested"));
     QFile payload(installed + "/payload.txt");
     ASSERT_TRUE(payload.open(QIODevice::ReadOnly));
