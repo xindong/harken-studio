@@ -4,24 +4,24 @@
             {
                 "delay": 0,
                 "targetRef": {
-                    "documentId": "1ebd3fbf-5944-40a7-a455-559808eefd1c",
-                    "id": "1ebd3fbf-5944-40a7-a455-559808eefd1c"
+                    "documentId": "5b134ae8-b195-477f-95be-97fa0291251f",
+                    "id": "5b134ae8-b195-477f-95be-97fa0291251f"
                 },
-                "type": "Play"
+                "type": "Post Action"
             }
         ],
-        "guid": "f4e9bf3f-36b0-4d33-8445-814c34c1445d",
-        "name": "Play_Nested",
+        "guid": "9e0380d1-9eb1-4a48-9b37-b3a1ed570289",
+        "name": "Play_Tail",
         "nameBindingRevision": 1,
-        "objectPath": "\\Play_Nested",
+        "objectPath": "\\Play_Tail",
         "parentRef": {
             "kind": "root"
         },
         "type": "Action"
     },
     "harkenDocument": {
-        "id": "f4e9bf3f-36b0-4d33-8445-814c34c1445d",
-        "projectId": "e0fe14b5-ad1f-4b40-9368-b266cb5014db",
+        "id": "9e0380d1-9eb1-4a48-9b37-b3a1ed570289",
+        "projectId": "77b2c1cc-416d-4c88-986d-262c7fc1705e",
         "propertyModel": "fieldGroupsV1",
         "savedStudioVersion": "0.8.0",
         "schemaVersion": 8,

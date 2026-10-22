@@ -8,7 +8,7 @@
                 "pan": 0
             }
         },
-        "guid": "aba4a1dd-15d7-4207-932c-313dd37cb34b",
+        "guid": "00a52cc8-14a0-4a35-b866-b9fa558736c3",
         "name": "Master Bus",
         "parentRef": {
             "kind": "root"
@@ -19,8 +19,8 @@
         "type": "Bus"
     },
     "harkenDocument": {
-        "id": "aba4a1dd-15d7-4207-932c-313dd37cb34b",
-        "projectId": "e0fe14b5-ad1f-4b40-9368-b266cb5014db",
+        "id": "00a52cc8-14a0-4a35-b866-b9fa558736c3",
+        "projectId": "77b2c1cc-416d-4c88-986d-262c7fc1705e",
         "propertyModel": "fieldGroupsV1",
         "savedStudioVersion": "0.8.0",
         "schemaVersion": 8,

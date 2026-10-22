@@ -11,7 +11,7 @@ FIXTURE_ROOT = Path(__file__).resolve().parent
 REPOSITORY = FIXTURE_ROOT.parents[2]
 DATA_NAMES = (
     "U4Original", "U4Renamed", "U4OtherProject", "NameFirstPacks",
-    "PlatformContractPacks", "SpatialPacks",
+    "PlatformContractPacks", "SpatialPacks", "CompanionPacks",
 )
 
 

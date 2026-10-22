@@ -26,6 +26,7 @@ namespace Harken.Unity.Tests
             string publicationRoot = Path.Combine(Application.streamingAssetsPath, "Audio/U4Original");
             PrepareSource(publicationRoot, "Source");
             string sampleRoot = Path.Combine(Application.streamingAssetsPath, "Audio/U4Sample/Windows");
+            PrepareSource(sampleRoot, "VariableSource");
             VnResult result = Editor.HarkenVariableCatalogGenerator.Generate(
                 Path.Combine(sampleRoot, PackManifest.ManifestFileName),
                 Editor.HarkenVariableCatalogGenerator.ResolveOutputPath(), out string error);
@@ -34,7 +35,7 @@ namespace Harken.Unity.Tests
 
         public static void PrepareVariableSource()
         {
-            PrepareSource(Path.Combine(Application.streamingAssetsPath, "Audio/VariableNames"), "VariableSource");
+            PrepareSource(Path.Combine(Application.streamingAssetsPath, "Audio/U4Sample/Windows"), "VariableSource");
         }
 
         private static void PrepareSource(string publicationRoot, string name)
