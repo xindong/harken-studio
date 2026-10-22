@@ -5,11 +5,13 @@
 #include "DemoOptions.h"
 #include "PackPlayPath.h"
 #include "PackSidecar.h"
+#include "PackCompanion.h"
 #include "SchedulingMeasureOptions.h"
 
 #include <gtest/gtest.h>
 
 #include <filesystem>
+#include <chrono>
 
 #ifndef HARKEN_TEMP_DIR
 #error "HARKEN_TEMP_DIR must point at the repository's .temp directory"
@@ -299,6 +301,48 @@ TEST(HostOptions, PackSidecarSelectsLanguagePublicationBeforeLoadingFiles) {
     write(root / "ja/HarkenPackManifest.json", manifest("English", row("11", "English/Init.pack", "English") + "," + english));
     EXPECT_FALSE(harkenhost::LoadPackSidecarManifest(root, &platform, &packs, &error, "ja"));
     EXPECT_TRUE(harkenhost::LoadPackSidecarManifest(root, &platform, &packs, &error));
+}
+
+TEST(HostOptions, CompanionNamesPreserveGuidAndStrictJsonContract) {
+    harkenhost::PackCompanion input;
+    const std::string action = R"({"name":"Play_Head","guid":"11111111-2222-3333-4444-555555555555","display":{"gain":1}})";
+    ASSERT_EQ(harkenhost::ParsePackCompanion(action, "Play_Head", "", {}, &input), VN_OK);
+    EXPECT_EQ(harken::ObjectIdString(input.names.rootActionId), "11111111-2222-3333-4444-555555555555");
+    EXPECT_EQ(harkenhost::ParsePackCompanion(action, "WrongName", "", {}, &input), VN_BAD_PACK);
+    EXPECT_EQ(harkenhost::ParsePackCompanion(R"({"variables":[],"variables":[]})", "", "", {}, &input), VN_BAD_PACK);
+    EXPECT_EQ(harkenhost::ParsePackCompanion(R"({"variables":[]} trailing)", "", "", {}, &input), VN_BAD_PACK);
+    EXPECT_EQ(harkenhost::ParsePackCompanion(R"({"variables":[{"name":"Choice","guid":"11111111-2222-3333-4444-555555555555","labels":[{"guid":"21111111-2222-3333-4444-555555555555","name":"\u4e2d\u6587"}]}]})", "", "", {}, &input), VN_OK);
+    ASSERT_EQ(input.labels.size(), 1u);
+    EXPECT_STREQ(input.labels.front().utf8Name, "\xe4\xb8\xad\xe6\x96\x87");
+    EXPECT_FALSE(harkenhost::PackCompanionName("../Play_Head"));
+    EXPECT_FALSE(harkenhost::PackCompanionName("Play-Head"));
+    EXPECT_FALSE(harkenhost::PackCompanionLanguage("../English"));
+}
+
+TEST(HostOptions, CompanionCaptureUsesPairedFilesAndRefusesPartialLanguageOrPublication) {
+    const auto source = std::filesystem::path(HARKEN_TEMP_DIR).parent_path() /
+        "HarkenSDK/Test/UnityFixture/Data/CompanionPacks";
+    harkenhost::PackCompanion init, fallback, localized;
+    ASSERT_EQ(harkenhost::CapturePackCompanion(source, {}, {}, nullptr, &init), VN_OK);
+    ASSERT_EQ(harkenhost::CapturePackCompanion(source, "Play_Head", "French", &init, &fallback), VN_OK);
+    EXPECT_TRUE(fallback.language.empty());
+    ASSERT_EQ(harkenhost::CapturePackCompanion(source, "Play_Head", "English", &init, &localized), VN_OK);
+    EXPECT_EQ(localized.language, "English");
+    EXPECT_EQ(localized.facts.rootActionId, fallback.facts.rootActionId);
+    const auto root = std::filesystem::path(HARKEN_TEMP_DIR) /
+        ("host-companion-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    ASSERT_TRUE(std::filesystem::create_directories(root / "English"));
+    struct Cleanup { std::filesystem::path root; ~Cleanup() { std::error_code ec; std::filesystem::remove_all(root, ec); } } cleanup{root};
+    for (const auto* file : {"Play_Head.bytes", "Play_Head.json"})
+        std::filesystem::copy_file(source / file, root / file);
+    std::filesystem::copy_file(source / "English/Play_Head.bytes", root / "English/Play_Head.bytes");
+    harkenhost::PackCompanion refused;
+    EXPECT_EQ(harkenhost::CapturePackCompanion(root, "Play_Head", "English", &init, &refused), VN_BAD_PACK);
+    { std::ofstream marker(root / ".harken-pack-publishing"); marker << "publishing"; }
+    EXPECT_EQ(harkenhost::CapturePackCompanion(root, "Play_Head", "", &init, &refused), VN_PACK_STALE_REVISION);
+    std::filesystem::remove(root / ".harken-pack-publishing");
+    std::filesystem::rename(root / "Play_Head.bytes", root / "play_head.bytes");
+    EXPECT_EQ(harkenhost::CapturePackCompanion(root, "Play_Head", "", &init, &refused), VN_BAD_PACK);
 }
 
 } // namespace
