@@ -1617,7 +1617,7 @@ bool FindActivate135Tail(const std::vector<std::uint8_t>& bytes, std::uint64_t* 
     return false;
 }
 
-TEST(CanonicalPackSetActivate, TraceActiveActivateNoLongerReturnsCapabilityUnavailable) {
+TEST(CanonicalPackSetActivate, TraceActiveActivationAndUnloadRemainAvailable) {
     const std::filesystem::path directory =
         std::filesystem::path(HARKEN_TEMP_DIR) /
         "canonical-pack-set-trace-active";
@@ -1633,10 +1633,11 @@ TEST(CanonicalPackSetActivate, TraceActiveActivateNoLongerReturnsCapabilityUnava
     EXPECT_NE(nullptr, PackMasterHolder(session.Engine()));
     VnCanonicalPackSetUnloadDescV1 unload{};
     unload.structSize = sizeof(unload);
-    unload.expectedInitHandle = 1;
+    unload.expectedInitHandle = activated.initHandle;
     unload.baseSetRevision = 1;
     unload.unloadRevision = 2;
-    EXPECT_EQ(VN_CAPABILITY_UNAVAILABLE, Vn_UnloadCanonicalPackSetV1(&unload));
+    EXPECT_EQ(VN_OK, Vn_UnloadCanonicalPackSetV1(&unload));
+    EXPECT_EQ(nullptr, PackMasterHolder(session.Engine()));
     ASSERT_EQ(VN_OK, Vn_TraceStop());
 }
 
