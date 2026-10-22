@@ -20,7 +20,6 @@ PROJECT_SCHEMA_NAME = "ProjectSerializedSchema.json"
 PACK_SCHEMA_NAME = "PackManifestSchema.json"
 TREE_SCHEMA_NAMES = {"Editor": PROJECT_SCHEMA_NAME, "Pack": PACK_SCHEMA_NAME}
 GENERATED_PROJECT_HEADER = "ProjectSchemaGenerated.h"
-GENERATED_PACK_HEADER = "PackSchemaGenerated.h"
 GENERATED_VALIDATOR_HEADER = "ProjectSchemaValidator.generated.h"
 GENERATED_VALIDATOR_SOURCE = "ProjectSchemaValidator.generated.cpp"
 GENERATED_BUILD_HEADER = "SchemaBuildGenerated.h"
@@ -398,7 +397,7 @@ def validate_pack_source(source: dict[str, Any]) -> None:
         raise ValueError("Pack contract needs a positive formatVersion")
     if metadata.get("validationMode") != "generated-json":
         raise ValueError("Pack contract must use generated-json validation")
-    expected_locator = "reader:pack-companion" if companion else "json:$.schema_version"
+    expected_locator = "json:$.schemaVersion" if companion else "json:$.schema_version"
     if metadata.get("versionLocator") != expected_locator:
         raise ValueError(f"Pack contract must use {expected_locator}")
     if metadata.get("rebuildPolicy") != "rebuild":
@@ -419,6 +418,8 @@ def validate_pack_source(source: dict[str, Any]) -> None:
     definitions = schema.get("$defs", {})
     if not isinstance(definitions, dict):
         raise ValueError("Pack definitions must be an object")
+    if companion and definitions.get("schemaVersion", {}).get("const") != version:
+        raise ValueError("Pack schemaVersion does not match formatVersion")
     for name, definition in definitions.items():
         validate_schema_language(definition, f"Pack.$defs.{name}")
     validate_schema_language({key: value for key, value in schema.items() if key != "$defs"}, "Pack")
@@ -495,7 +496,12 @@ def materialize_source(tree: str, source: dict[str, Any], version: int) -> dict[
         if not isinstance(metadata, dict) or "formatVersion" in metadata:
             raise ValueError("Pack current must omit the formatVersion product integer")
         metadata["formatVersion"] = version
-        if metadata.get("formatId") != "generated.pack-companion":
+        if metadata.get("formatId") == "generated.pack-companion":
+            slot = result.get("$defs", {}).get("schemaVersion")
+            if slot != {"type": "integer"}:
+                raise ValueError("Pack current schemaVersion must be an integer without a fixed value")
+            slot["const"] = version
+        else:
             slot = result.get("properties", {}).get("schema_version")
             if slot != {"type": "integer"}:
                 raise ValueError("Pack current schema_version must be an integer without a fixed value")
@@ -578,25 +584,10 @@ def generated_project_header(source: dict[str, Any], versions: list[int]) -> byt
         "",
         "namespace VNX::ProjectSchema {",
         "",
-        f"inline constexpr int kProjectSchemaVersion = {source['projectSchemaVersion']};",
+        "inline constexpr int kProjectSchemaVersion = HARKEN_PROJECT_SCHEMA_VERSION;",
         "inline constexpr int kProjectSchemaVersions[] = {"
         + ", ".join(str(version) for version in versions) + "};",
         *property_model,
-        "",
-        "}",
-        "",
-    ]
-    return "\n".join(lines).encode("ascii")
-
-
-def generated_pack_header(pack: list[dict[str, Any]]) -> bytes:
-    version = pack[-1]["x-harken-format"]["formatVersion"]
-    lines = [
-        "#pragma once",
-        "",
-        "namespace VNX::PackSchema {",
-        "",
-        f"inline constexpr int kPackManifestSchemaVersion = {version};",
         "",
         "}",
         "",
@@ -1247,7 +1238,6 @@ def build_bundle(schema_root: Path | None = None) -> dict[str, Any]:
         GENERATED_PROJECT_HEADER: generated_project_header(
             editor["current"], tree_versions["Editor"]["supportedVersions"]
         ),
-        GENERATED_PACK_HEADER: generated_pack_header(pack["supported"]),
         GENERATED_VALIDATOR_HEADER: validator_header,
         GENERATED_VALIDATOR_SOURCE: validator_source,
     }

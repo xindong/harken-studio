@@ -596,16 +596,26 @@ TEST_F(ProjectSettingsDialogTest, IllegalCharactersCannotBeTyped)
     EXPECT_FALSE(edit->text().contains(QLatin1Char('|')));
 }
 
-TEST_F(ProjectSettingsDialogTest, PackBuildDirectoryIsRelativeAndEmptyRestoresDefault)
+TEST_F(ProjectSettingsDialogTest, PublishSettingsRoundTripAndUndoPreserveDefaultPaths)
 {
     ProjectSettingsDialog dialog;
     ASSERT_TRUE(dialog.showPage(QString::fromLatin1(kSettingsPagePublish)));
     dialog.show();
     auto* edit = dialog.findChild<QLineEdit*>(QStringLiteral("packBuildOutputDirEdit"));
+    auto* exportProjectData = dialog.findChild<QCheckBox*>(QStringLiteral("buildExportProjectDataCheckBox"));
+    auto* exportPackMetadata = dialog.findChild<QCheckBox*>(QStringLiteral("buildExportPackMetadataCheckBox"));
     auto* apply = applyButton(dialog);
     ASSERT_NE(edit, nullptr);
+    ASSERT_NE(exportProjectData, nullptr);
+    ASSERT_NE(exportPackMetadata, nullptr);
     ASSERT_NE(apply, nullptr);
 
+    EXPECT_FALSE(exportProjectData->isChecked());
+    exportProjectData->setChecked(true);
+    EXPECT_FALSE(ProjectManager::instance().currentProject()->buildExportProjectData);
+    EXPECT_FALSE(exportPackMetadata->isChecked());
+    exportPackMetadata->setChecked(true);
+    EXPECT_FALSE(ProjectManager::instance().currentProject()->buildExportPackMetadata);
     edit->setText(QStringLiteral("  Audio\\Packs//  "));
     edit->editingFinished();
     EXPECT_EQ(edit->text(), QStringLiteral("Audio/Packs"));
@@ -613,6 +623,8 @@ TEST_F(ProjectSettingsDialogTest, PackBuildDirectoryIsRelativeAndEmptyRestoresDe
     apply->click();
     EXPECT_EQ(ProjectManager::instance().packBuildOutputDir(),
               QStringLiteral("Audio/Packs"));
+    EXPECT_TRUE(ProjectManager::instance().currentProject()->buildExportProjectData);
+    EXPECT_TRUE(ProjectManager::instance().currentProject()->buildExportPackMetadata);
     EXPECT_FALSE(dialog.isVisible());
 
     auto& pm = ProjectManager::instance();
@@ -621,20 +633,34 @@ TEST_F(ProjectSettingsDialogTest, PackBuildDirectoryIsRelativeAndEmptyRestoresDe
     EXPECT_EQ(PathUtils::packBuildOutputRoot(projectPath, pm.packBuildOutputDir()),
               projectRoot.filePath(QStringLiteral("Audio/Packs")));
     UndoRedoManager::instance().undoStack()->undo();
+    EXPECT_FALSE(pm.currentProject()->buildExportPackMetadata);
+    EXPECT_TRUE(pm.currentProject()->buildExportProjectData);
+    UndoRedoManager::instance().undoStack()->undo();
+    EXPECT_FALSE(pm.currentProject()->buildExportProjectData);
+    EXPECT_EQ(pm.packBuildOutputDir(), QStringLiteral("Audio/Packs"));
+    UndoRedoManager::instance().undoStack()->undo();
     EXPECT_EQ(PathUtils::packBuildOutputRoot(projectPath, pm.packBuildOutputDir()),
               projectRoot.filePath(QStringLiteral("BuildPacks")));
     UndoRedoManager::instance().undoStack()->redo();
+    UndoRedoManager::instance().undoStack()->redo();
+    EXPECT_TRUE(pm.currentProject()->buildExportProjectData);
+    UndoRedoManager::instance().undoStack()->redo();
+    EXPECT_TRUE(pm.currentProject()->buildExportPackMetadata);
     ProjectSerializer serializer;
     ASSERT_TRUE(serializer.saveProject(projectPath, *pm.currentProject()));
     ProjectData loaded;
     ASSERT_TRUE(serializer.loadProject(projectPath, loaded)) << serializer.lastError().toStdString();
     EXPECT_EQ(loaded.packBuildOutputDir, QStringLiteral("Audio/Packs"));
+    EXPECT_TRUE(loaded.buildExportProjectData);
+    EXPECT_TRUE(loaded.buildExportPackMetadata);
     EXPECT_EQ(PathUtils::packBuildOutputRoot(loaded.projectPath, loaded.packBuildOutputDir),
               projectRoot.filePath(QStringLiteral("Audio/Packs")));
 
     ProjectSettingsDialog reopen;
     ASSERT_TRUE(reopen.showPage(QString::fromLatin1(kSettingsPagePublish)));
     reopen.show();
+    EXPECT_TRUE(reopen.findChild<QCheckBox*>(QStringLiteral("buildExportProjectDataCheckBox"))->isChecked());
+    EXPECT_TRUE(reopen.findChild<QCheckBox*>(QStringLiteral("buildExportPackMetadataCheckBox"))->isChecked());
     auto* emptyEdit = reopen.findChild<QLineEdit*>(QStringLiteral("packBuildOutputDirEdit"));
     auto* reopenApply = applyButton(reopen);
     ASSERT_NE(emptyEdit, nullptr);
@@ -903,6 +929,8 @@ TEST_F(ProjectSettingsDialogTest, ConcurrentPlatformEditCanReloadAllBuildDraftsW
     addLanguageButton(dialog)->click();
     targetLanguageEdit(dialog, 1)->setText("Japanese");
     dialog.findChild<QLineEdit*>("packBuildOutputDirEdit")->setText("DraftPacks");
+    dialog.findChild<QCheckBox*>("buildExportProjectDataCheckBox")->setChecked(true);
+    dialog.findChild<QCheckBox*>("buildExportPackMetadataCheckBox")->setChecked(true);
     dialog.findChild<QCheckBox*>("buildExportWaveformsCheckBox")->setChecked(true);
     dialog.findChild<QLineEdit*>("buildWaveformOutputDirEdit")->setText("DraftWaveforms");
     auto& manager = ProjectManager::instance();
@@ -928,10 +956,14 @@ TEST_F(ProjectSettingsDialogTest, ConcurrentPlatformEditCanReloadAllBuildDraftsW
     EXPECT_EQ(list->item(0)->text(), QStringLiteral("External"));
     EXPECT_EQ(targetLanguageValues(dialog), QStringList{"English"});
     EXPECT_TRUE(dialog.findChild<QLineEdit*>("packBuildOutputDirEdit")->text().isEmpty());
+    EXPECT_FALSE(dialog.findChild<QCheckBox*>("buildExportProjectDataCheckBox")->isChecked());
+    EXPECT_FALSE(dialog.findChild<QCheckBox*>("buildExportPackMetadataCheckBox")->isChecked());
     EXPECT_FALSE(dialog.findChild<QCheckBox*>("buildExportWaveformsCheckBox")->isChecked());
     EXPECT_TRUE(dialog.findChild<QLineEdit*>("buildWaveformOutputDirEdit")->text().isEmpty());
     EXPECT_EQ(manager.getProjectLanguages(), QStringList{"English"});
     EXPECT_TRUE(manager.packBuildOutputDir().isEmpty());
+    EXPECT_FALSE(manager.currentProject()->buildExportProjectData);
+    EXPECT_FALSE(manager.currentProject()->buildExportPackMetadata);
     EXPECT_FALSE(manager.currentProject()->buildExportWaveforms);
     EXPECT_TRUE(manager.currentProject()->buildWaveformOutputDir.isEmpty());
     EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 1);

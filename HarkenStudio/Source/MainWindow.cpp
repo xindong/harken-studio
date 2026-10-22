@@ -4505,7 +4505,7 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
             if (canceled) break;
         }
         QMetaObject::invokeMethod(store,
-            [window, store, projectLease, snapshot, runId, canceled, failedCount, builtCount,
+            [window, store, projectLease, snapshot, runId, cancel, canceled, failedCount, builtCount,
              skippedCount, removedCount, baseDir, packPaths, selfCleaning,
              genPlatforms, succeededPlatforms, publishedArtifacts, platformActivity, outputLock]() mutable {
             if (!store->isCurrentRun(runId)) return;
@@ -4513,16 +4513,18 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
                 store->finishProgress(runId, true);
                 return;
             }
+            canceled = canceled || cancel->load(std::memory_order_relaxed);
             QString publicationError;
             if (!ProjectPackExporter::ValidatePackBuildPlatforms(snapshot->project.platforms,
                     projectLease->platforms, succeededPlatforms, &publicationError)) {
                 ++failedCount;
-            } else if (packPaths.isEmpty() && !canceled && succeededPlatforms.size() == genPlatforms.size()) {
+            } else if (!canceled && succeededPlatforms.size() == genPlatforms.size()) {
+                const bool cleanOutput = selfCleaning && packPaths.isEmpty();
                 const auto publication = ProjectPackExporter::FinalizePackExport(
-                    baseDir, projectLease->platforms, genPlatforms, selfCleaning, publishedArtifacts);
+                    baseDir, snapshot->project, genPlatforms, cleanOutput, publishedArtifacts);
                 if (publication.success) {
                     removedCount += publication.removedPackCount;
-                    if (selfCleaning)
+                    if (cleanOutput)
                         PackArtifactCache::instance().removeUnselectedPlatforms(baseDir, genPlatforms);
                 } else {
                     ++failedCount;

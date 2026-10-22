@@ -63,7 +63,7 @@
 
 namespace harken {
 
-inline constexpr std::uint32_t kPackFormatVersion2 = 4;
+inline constexpr std::uint32_t kPackFormatVersion2 = HARKEN_PACK_SCHEMA_VERSION;
 
 // Header: magic(4) + formatVersion(4) + headerBytes(4) + fileBytes(8) +
 // packKind(4) + entryCount(4) + directoryOffset(8) + directoryChecksum(8).

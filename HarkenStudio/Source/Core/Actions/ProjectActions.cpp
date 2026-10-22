@@ -2872,6 +2872,70 @@ void registerProjectActions(ActionManager& mgr,
 
     {
         ActionDef def;
+        def.id = "set_build_project_data_export";
+        def.displayName = "Set Project Data Export";
+        def.category = "project";
+        def.undoable = true;
+        def.paramSchema = QJsonObject{{"enabled", "bool"}};
+        def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
+            if (!projectManager || !projectManager->isProjectOpen())
+                return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
+            const QJsonValue enabled = args.value("enabled");
+            if (!enabled.isBool())
+                return {false, {}, "INVALID_ARGS", "'enabled' boolean argument is required"};
+            const bool nextEnabled = enabled.toBool();
+            const bool previousEnabled = projectManager->currentProject()->buildExportProjectData;
+            ActionResult result;
+            result.success = true;
+            result.data = QJsonObject{{"enabled", nextEnabled}};
+            if (nextEnabled == previousEnabled) return result;
+            projectManager->setBuildProjectDataExportInternal(nextEnabled);
+            result.undoFn = [previousEnabled]() {
+                ProjectManager::instance().setBuildProjectDataExportInternal(previousEnabled);
+            };
+            result.redoFn = [nextEnabled]() {
+                ProjectManager::instance().setBuildProjectDataExportInternal(nextEnabled);
+            };
+            result.undoText = QStringLiteral("Set Project Data Export");
+            return result;
+        };
+        mgr.registerAction(def);
+    }
+
+    {
+        ActionDef def;
+        def.id = "set_build_pack_metadata_export";
+        def.displayName = "Set Pack Metadata Export";
+        def.category = "project";
+        def.undoable = true;
+        def.paramSchema = QJsonObject{{"enabled", "bool"}};
+        def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
+            if (!projectManager || !projectManager->isProjectOpen())
+                return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
+            const QJsonValue enabled = args.value("enabled");
+            if (!enabled.isBool())
+                return {false, {}, "INVALID_ARGS", "'enabled' boolean argument is required"};
+            const bool nextEnabled = enabled.toBool();
+            const bool previousEnabled = projectManager->currentProject()->buildExportPackMetadata;
+            ActionResult result;
+            result.success = true;
+            result.data = QJsonObject{{"enabled", nextEnabled}};
+            if (nextEnabled == previousEnabled) return result;
+            projectManager->setBuildPackMetadataExportInternal(nextEnabled);
+            result.undoFn = [previousEnabled]() {
+                ProjectManager::instance().setBuildPackMetadataExportInternal(previousEnabled);
+            };
+            result.redoFn = [nextEnabled]() {
+                ProjectManager::instance().setBuildPackMetadataExportInternal(nextEnabled);
+            };
+            result.undoText = QStringLiteral("Set Pack Metadata Export");
+            return result;
+        };
+        mgr.registerAction(def);
+    }
+
+    {
+        ActionDef def;
         def.id = "set_build_waveform_settings";
         def.displayName = "Set Waveform Export Settings";
         def.category = "project";

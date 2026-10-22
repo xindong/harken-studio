@@ -426,12 +426,15 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
                 return result;
             QString indexError;
             if (!ValidatePackBuildPlatforms(captured.platforms, project.platforms,
-                    {prepared.platform}, &indexError)
-                || !FinalizePackOutputs(root, project.platforms, {prepared.platform},
-                    {prepared.platform}, &indexError, result.artifacts)) {
+                    {prepared.platform}, &indexError)) {
                 result.success = false;
                 result.error = indexError;
+                return result;
             }
+            const auto publication = FinalizePackExport(root, captured, {prepared.platform},
+                false, result.artifacts);
+            result.success = publication.success;
+            result.error = publication.error;
             return result;
         }
         return ExportAllPacks(prepared.snapshot->project, outputDir, prepared, outRecords);

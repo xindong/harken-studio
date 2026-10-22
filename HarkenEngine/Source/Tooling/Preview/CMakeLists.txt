@@ -22,6 +22,7 @@ target_include_directories(harken_preview
 target_link_libraries(harken_preview
     PRIVATE
         harken_core
+        harken_buildinfo
         harken_voice_slot_layout_contract
 )
 
@@ -42,7 +43,8 @@ if(HARKEN_BUILD_EDITOR)
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${HARKEN_RUNTIME_DIR}/api/include
         PRIVATE ${HARKEN_RUNTIME_PRIVATE_INCLUDES} ${HARKEN_RUNTIME_DIR}/api/src)
-    target_link_libraries(harken_studio_runtime PRIVATE "$<LINK_LIBRARY:WHOLE_ARCHIVE,harken_core>")
+    target_link_libraries(harken_studio_runtime PRIVATE
+        "$<LINK_LIBRARY:WHOLE_ARCHIVE,harken_core>" harken_buildinfo)
     target_compile_definitions(harken_studio_runtime PRIVATE
         HARKEN_DEVELOPMENT_PREVIEW=$<BOOL:${HARKEN_DEVELOPMENT_PREVIEW}>)
     set_target_properties(harken_core PROPERTIES POSITION_INDEPENDENT_CODE ON)

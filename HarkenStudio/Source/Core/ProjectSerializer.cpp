@@ -1212,6 +1212,10 @@ bool ProjectSerializer::prepareProjectSave(const QString& filePath,
     if (!project.packBuildOutputDir.isEmpty()) {
         root["packBuildOutputDir"] = project.packBuildOutputDir;
     }
+    if (project.buildExportProjectData)
+        root["buildExportProjectData"] = true;
+    if (project.buildExportPackMetadata)
+        root["buildExportPackMetadata"] = true;
     if (project.buildExportWaveforms)
         root["buildExportWaveforms"] = true;
     if (!project.buildWaveformOutputDir.isEmpty())
@@ -1522,6 +1526,8 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
     if (!PathUtils::isValidPackBuildOutputDir(project.packBuildOutputDir, project.projectPath))
         warnings_.append(PathUtils::packBuildOutputLocationError());
 
+    project.buildExportProjectData = root["buildExportProjectData"].toBool(false);
+    project.buildExportPackMetadata = root["buildExportPackMetadata"].toBool(false);
     project.buildExportWaveforms = root["buildExportWaveforms"].toBool(false);
     project.buildWaveformOutputDir = PathUtils::normalizePackBuildOutputDir(
         root["buildWaveformOutputDir"].toString());

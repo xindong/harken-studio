@@ -1939,6 +1939,18 @@ void ProjectManager::setPackBuildOutputDirInternal(const QString& value)
     emit packBuildOutputDirChanged(value);
 }
 
+void ProjectManager::setBuildProjectDataExportInternal(bool enabled)
+{
+    if (!m_currentProject) return;
+    m_currentProject->buildExportProjectData = enabled;
+}
+
+void ProjectManager::setBuildPackMetadataExportInternal(bool enabled)
+{
+    if (!m_currentProject) return;
+    m_currentProject->buildExportPackMetadata = enabled;
+}
+
 void ProjectManager::setBuildWaveformSettingsInternal(bool enabled, const QString& directory)
 {
     if (!m_currentProject) return;

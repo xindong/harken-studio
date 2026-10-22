@@ -2,6 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "$defs": {
+    "schemaVersion": {
+      "type": "integer"
+    },
     "guid": {
       "type": "string",
       "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
@@ -53,6 +56,140 @@
         "trimEndFrame"
       ]
     },
+    "packMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "packStableId": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,19}$"
+        },
+        "platform": {
+          "type": "string",
+          "minLength": 1
+        },
+        "language": {
+          "type": "string"
+        },
+        "objects": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "guid": {
+                "$ref": "#/$defs/guid"
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "Action",
+                  "Sound",
+                  "Container",
+                  "Track",
+                  "Piece",
+                  "Layer",
+                  "Variable",
+                  "Attenuation",
+                  "Bus"
+                ]
+              },
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "guid",
+              "name",
+              "type",
+              "path"
+            ]
+          }
+        }
+      },
+      "required": [
+        "packStableId",
+        "platform",
+        "language",
+        "objects"
+      ]
+    },
+    "projectData": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": {
+          "$ref": "#/$defs/schemaVersion"
+        },
+        "projectGuid": {
+          "$ref": "#/$defs/guid"
+        },
+        "projectName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "studioVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "studioSchemaVersion": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "platforms": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "guid": {
+                "$ref": "#/$defs/guid"
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "basePlatform": {
+                "type": "string",
+                "enum": [
+                  "Windows",
+                  "macOS",
+                  "Linux",
+                  "Android",
+                  "iOS"
+                ]
+              }
+            },
+            "required": [
+              "guid",
+              "name",
+              "basePlatform"
+            ]
+          }
+        },
+        "languages": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?![Ss][Ff][Xx]$).+$"
+          }
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "projectGuid",
+        "projectName",
+        "studioVersion",
+        "studioSchemaVersion",
+        "platforms",
+        "languages"
+      ]
+    },
     "variable": {
       "type": "object",
       "additionalProperties": false,
@@ -80,9 +217,15 @@
   },
   "oneOf": [
     {
+      "$ref": "#/$defs/projectData"
+    },
+    {
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "schemaVersion": {
+          "$ref": "#/$defs/schemaVersion"
+        },
         "name": {
           "type": "string",
           "minLength": 1
@@ -95,9 +238,13 @@
           "items": {
             "$ref": "#/$defs/waveform"
           }
+        },
+        "metadata": {
+          "$ref": "#/$defs/packMetadata"
         }
       },
       "required": [
+        "schemaVersion",
         "name",
         "guid"
       ]
@@ -106,6 +253,9 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "schemaVersion": {
+          "$ref": "#/$defs/schemaVersion"
+        },
         "variables": {
           "type": "array",
           "items": {
@@ -117,9 +267,13 @@
           "items": {
             "$ref": "#/$defs/waveform"
           }
+        },
+        "metadata": {
+          "$ref": "#/$defs/packMetadata"
         }
       },
       "required": [
+        "schemaVersion",
         "variables"
       ]
     }
@@ -128,6 +282,7 @@
     "classification": "derived",
     "formatId": "generated.pack-companion",
     "pathPatterns": [
+      "ProjectData.json",
       "**/Init.json",
       "**/*.json"
     ],
@@ -140,7 +295,7 @@
     "validators": [
       "CanonicalPackSetExport"
     ],
-    "versionLocator": "reader:pack-companion",
+    "versionLocator": "json:$.schemaVersion",
     "writers": [
       "CanonicalPackSetExport"
     ]

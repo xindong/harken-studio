@@ -182,6 +182,8 @@ TEST(PackGroupSerialization, PackBuildDirectoryRoundTripsWithoutLegacyDeployment
     auto project = projectWithMaster();
     project.name = QStringLiteral("PackPathsProject");
     project.packBuildOutputDir = QStringLiteral("Exports/Packs");
+    project.buildExportProjectData = true;
+    project.buildExportPackMetadata = true;
     project.buildExportWaveforms = true;
     project.buildWaveformOutputDir = QStringLiteral("Exports/Waveforms");
 
@@ -193,6 +195,8 @@ TEST(PackGroupSerialization, PackBuildDirectoryRoundTripsWithoutLegacyDeployment
     VNX::ProjectData loaded;
     ASSERT_TRUE(serializer.loadProject(path, loaded)) << serializer.lastError().toStdString();
     EXPECT_EQ(loaded.packBuildOutputDir, project.packBuildOutputDir);
+    EXPECT_EQ(loaded.buildExportProjectData, project.buildExportProjectData);
+    EXPECT_EQ(loaded.buildExportPackMetadata, project.buildExportPackMetadata);
     EXPECT_EQ(VNX::PathUtils::packBuildOutputRoot(loaded.projectPath, loaded.packBuildOutputDir),
               dir.filePath(QStringLiteral("Exports/Packs")));
     EXPECT_EQ(loaded.buildExportWaveforms, project.buildExportWaveforms);
@@ -206,6 +210,8 @@ TEST(PackGroupSerialization, PackBuildDirectoryRoundTripsWithoutLegacyDeployment
     file.close();
     QJsonObject content = document.value(QStringLiteral("content")).toObject();
     content.remove(QStringLiteral("packBuildOutputDir"));
+    content.remove(QStringLiteral("buildExportProjectData"));
+    content.remove(QStringLiteral("buildExportPackMetadata"));
     content.remove(QStringLiteral("buildExportWaveforms"));
     content.remove(QStringLiteral("buildWaveformOutputDir"));
     document.insert(QStringLiteral("content"), content);
@@ -214,6 +220,8 @@ TEST(PackGroupSerialization, PackBuildDirectoryRoundTripsWithoutLegacyDeployment
     file.close();
     ASSERT_TRUE(serializer.loadProject(path, loaded)) << serializer.lastError().toStdString();
     EXPECT_TRUE(loaded.packBuildOutputDir.isEmpty());
+    EXPECT_FALSE(loaded.buildExportProjectData);
+    EXPECT_FALSE(loaded.buildExportPackMetadata);
     EXPECT_FALSE(loaded.buildExportWaveforms);
     EXPECT_TRUE(loaded.buildWaveformOutputDir.isEmpty());
     EXPECT_EQ(VNX::PathUtils::waveformBuildOutputRoot(loaded.projectPath, loaded.buildWaveformOutputDir),

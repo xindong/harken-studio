@@ -195,6 +195,7 @@ if(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE AND NOT HARKEN_BUILD_RUNTIME_UNIT_TEST
 endif()
 
 add_library(harken_core STATIC ${HARKEN_RUNTIME_SOURCES})
+target_link_libraries(harken_core PRIVATE harken_buildinfo)
 set_target_properties(harken_core PROPERTIES OUTPUT_NAME HarkenCore)
 if(HARKEN_BUILD_RUNTIME_UNIT_TESTS)
     # Native lifetime observation belongs to the test-linked static runtime.
@@ -241,6 +242,7 @@ endif()
 
 if(HARKEN_BUILD_RUNTIME_UNIT_TESTS)
     add_library(harken_core_hub_absent STATIC ${HARKEN_RUNTIME_SOURCES})
+    target_link_libraries(harken_core_hub_absent PRIVATE harken_buildinfo)
     target_include_directories(harken_core_hub_absent
         PUBLIC ${HARKEN_RUNTIME_DIR}/api/include
         PRIVATE ${HARKEN_RUNTIME_PRIVATE_INCLUDES}
@@ -271,6 +273,7 @@ endif()
 # consumers resolve Vn_* at link time from the object symbols directly.
 if(HARKEN_BUILD_SHARED)
     add_library(harken_core_shared SHARED ${HARKEN_RUNTIME_SOURCES})
+    target_link_libraries(harken_core_shared PRIVATE harken_buildinfo)
     target_include_directories(harken_core_shared
         PUBLIC ${HARKEN_RUNTIME_DIR}/api/include
         PRIVATE ${HARKEN_RUNTIME_PRIVATE_INCLUDES}
@@ -321,6 +324,7 @@ if(HARKEN_BUILD_RT_QUALIFICATION)
     endif()
     add_library(harken_core_rt_qualification STATIC
         ${_harken_rt_qualification_sources})
+    target_link_libraries(harken_core_rt_qualification PRIVATE harken_buildinfo)
     target_include_directories(harken_core_rt_qualification
         PUBLIC ${HARKEN_RUNTIME_DIR}/api/include
         PRIVATE ${HARKEN_RUNTIME_PRIVATE_INCLUDES}

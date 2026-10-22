@@ -23,7 +23,6 @@
 #include "Core/ProjectPreflight/ProjectPreflight.h"
 #include "Core/ProjectOpenProtocol.h"
 #include "Core/ProjectLocator.h"
-#include "Core/PackSchemaGenerated.h"
 #include "Core/ProjectSchemaGenerated.h"
 #include "Core/ProjectTemplateLoader.h"
 #include "Core/SchemaArchive.h"
@@ -105,7 +104,7 @@ int main(int argc, char* argv[])
             report[QStringLiteral("schemaSnapshotHash")] =
                 QString::fromLatin1(VNX::SchemaBuild::kSnapshotHash);
             report[QStringLiteral("packSchemaVersion")] =
-                VNX::PackSchema::kPackManifestSchemaVersion;
+                HARKEN_PACK_SCHEMA_VERSION;
             if (!schemaError.isEmpty()) report[QStringLiteral("schemaError")] = schemaError;
             const QByteArray json =
                 QJsonDocument(report).toJson(QJsonDocument::Compact);

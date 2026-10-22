@@ -546,7 +546,6 @@ gtest_discover_tests(harken_editor_tests
 add_executable(harken_editor_metadata_tests UnitTest/EditorWaveformPublicationTest.cpp)
 target_link_libraries(harken_editor_metadata_tests PRIVATE harken_editor_metadata harken_core GTest::gtest_main)
 target_include_directories(harken_editor_metadata_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
-    ${HARKEN_SCHEMA_GENERATED_CORE_DIR}
     ${HARKEN_RUNTIME_DIR}/core/include ${HARKEN_RUNTIME_DIR}/core/contract/include
     ${HARKEN_RUNTIME_DIR}/media/include ${HARKEN_RUNTIME_DIR}/param/include
     ${HARKEN_RUNTIME_DIR}/dsp/include

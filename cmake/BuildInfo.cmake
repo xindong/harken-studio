@@ -10,6 +10,7 @@
 # after target creation so the same identity is visible in file properties.
 
 set(_bi_version_file "${CMAKE_CURRENT_SOURCE_DIR}/VERSION")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_bi_version_file}")
 if(NOT EXISTS "${_bi_version_file}")
     message(FATAL_ERROR "[BuildInfo] VERSION file missing at ${_bi_version_file}")
 endif()
@@ -20,6 +21,7 @@ if(NOT HARKEN_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
 endif()
 
 set(_bi_hub_version_file "${CMAKE_CURRENT_SOURCE_DIR}/HarkenHub/VERSION")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_bi_hub_version_file}")
 if(NOT EXISTS "${_bi_hub_version_file}")
     message(FATAL_ERROR "[BuildInfo] VERSION file missing at ${_bi_hub_version_file}")
 endif()
@@ -228,6 +230,42 @@ configure_file(
 
 add_library(harken_buildinfo INTERFACE)
 target_include_directories(harken_buildinfo INTERFACE "${HARKEN_BI_GENERATED_DIR}")
+
+set(_bi_schema_trees "")
+if(HARKEN_BUILD_CORE)
+    list(APPEND _bi_schema_trees Pack)
+endif()
+if(HARKEN_BUILD_EDITOR OR HARKEN_BUILD_TOOLS)
+    list(APPEND _bi_schema_trees Editor)
+endif()
+foreach(_bi_schema_tree IN LISTS _bi_schema_trees)
+    set(_bi_schema_manifest "${HARKEN_SCHEMA_SOURCE_DIR}/${_bi_schema_tree}/manifest.json")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_bi_schema_manifest}")
+    file(READ "${_bi_schema_manifest}" _bi_schema_json)
+    string(JSON _bi_schema_published_type TYPE "${_bi_schema_json}" published)
+    if(NOT _bi_schema_published_type STREQUAL "ARRAY")
+        message(FATAL_ERROR "[BuildInfo] ${_bi_schema_tree} Schema published must be an array")
+    endif()
+    string(JSON _bi_schema_count LENGTH "${_bi_schema_json}" published)
+    if(_bi_schema_count EQUAL 0)
+        message(FATAL_ERROR "[BuildInfo] ${_bi_schema_tree} Schema must contain a published version")
+    endif()
+    math(EXPR _bi_schema_index "${_bi_schema_count} - 1")
+    string(JSON _bi_schema_version GET "${_bi_schema_json}" published ${_bi_schema_index})
+    string(JSON _bi_schema_version_type TYPE "${_bi_schema_json}" published ${_bi_schema_index})
+    if(NOT _bi_schema_version_type STREQUAL "NUMBER" OR
+       NOT _bi_schema_version MATCHES "^[1-9][0-9]*$" OR
+       _bi_schema_version GREATER 4294967295)
+        message(FATAL_ERROR "[BuildInfo] ${_bi_schema_tree} Schema version must be a positive uint32 value")
+    endif()
+    if(_bi_schema_tree STREQUAL "Editor")
+        set(_bi_schema_name PROJECT)
+    else()
+        set(_bi_schema_name PACK)
+    endif()
+    target_compile_definitions(harken_buildinfo INTERFACE
+        HARKEN_${_bi_schema_name}_SCHEMA_VERSION=${_bi_schema_version})
+endforeach()
 
 function(_harken_rc_escape OUT_VAR VALUE)
     string(REPLACE "\\" "\\\\" _escaped "${VALUE}")

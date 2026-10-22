@@ -2,7 +2,6 @@
 
 #include "JsonReader.h"
 #include "PackPlayPath.h"
-#include "PackSchemaGenerated.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -85,7 +84,7 @@ inline bool PackSidecarRoot(const std::string& json, JsonValue* root, std::strin
         version && version->kind == JsonValue::Kind::Number
             ? std::strtod(version->text.c_str(), nullptr)
             : 0;
-    if (schemaVersion != VNX::PackSchema::kPackManifestSchemaVersion) {
+    if (schemaVersion != HARKEN_PACK_SCHEMA_VERSION) {
         *error = "Unsupported Pack sidecar schema_version; re-export the Packs with this Studio version";
         return false;
     }

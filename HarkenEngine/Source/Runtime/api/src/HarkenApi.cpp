@@ -94959,14 +94959,18 @@ static VnResult LoadPackObserved(const VnPackDesc* desc,
             desc->utf8Path == nullptr || outHandle == nullptr) {
             return VN_INVALID_ARG;
         }
-        /* Container-format branch: a formatVersion-2 file carries logic
-         * entries and routes through the staged v2 loader. Everything else
-         * (v1 files, unreadable paths, garbage) falls to the v1 path below,
-         * whose parser and refusal shapes are untouched. */
         std::uint32_t packFormatVersion = 0;
-        if (harken::PeekPackFormatVersion(desc->utf8Path, &packFormatVersion) &&
-            packFormatVersion == harken::kPackFormatVersion2) {
+        std::uint32_t packHeaderBytes = 0;
+        if (!harken::PeekPackHeader(desc->utf8Path, &packFormatVersion,
+                                    &packHeaderBytes) ||
+            packFormatVersion != HARKEN_PACK_SCHEMA_VERSION) {
+            return VN_BAD_PACK;
+        }
+        if (packHeaderBytes == harken::kPackV2HeaderBytes) {
             return harken::LoadPackV2(*engine, desc->utf8Path, outHandle);
+        }
+        if (packHeaderBytes != harken::kPackHeaderBytes) {
+            return VN_BAD_PACK;
         }
         /* Bulk registration into the same logic-side registry Vn_RegisterPCM
          * uses; file reading stays on this thread. The Sound-ID space has no
@@ -106149,7 +106153,8 @@ void SetPackStagingFaultForTests(PackStagingFault fault) {
 
 PackStagingFault PackStagingFaultForTests() { return g_packStagingFault; }
 
-bool PeekPackFormatVersion(const char* utf8Path, std::uint32_t* outVersion) {
+bool PeekPackHeader(const char* utf8Path, std::uint32_t* outVersion,
+                    std::uint32_t* outHeaderBytes) {
     // UTF-8 path contract; ill-formed bytes peek as "no readable version"
     // rather than throwing out of this bool-returning probe.
     std::filesystem::path path;
@@ -106160,7 +106165,7 @@ bool PeekPackFormatVersion(const char* utf8Path, std::uint32_t* outVersion) {
     if (!in) {
         return false;
     }
-    std::uint8_t head[8] = {};
+    std::uint8_t head[12] = {};
     in.read(reinterpret_cast<char*>(head), sizeof head);
     if (in.gcount() != static_cast<std::streamsize>(sizeof head)) {
         return false;
@@ -106170,6 +106175,7 @@ bool PeekPackFormatVersion(const char* utf8Path, std::uint32_t* outVersion) {
         return false;
     }
     *outVersion = LoadLE32(head + 4);
+    *outHeaderBytes = LoadLE32(head + 8);
     return true;
 }
 

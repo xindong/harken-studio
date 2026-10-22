@@ -499,17 +499,6 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
                                          allSuccess, firstError, pmGuard,
                                          cancel, runId, project, snapshot, platformActivity, outputPath,
                                          platforms, succeededPlatforms, outputLock, actionStableId]() mutable {
-            QString indexError;
-            QVector<PackArtifactMetadata> completedArtifacts;
-            for (const auto& artifacts : publishedArtifacts)
-                completedArtifacts.append(artifacts);
-            if (!ProjectPackExporter::ValidatePackBuildPlatforms(snapshot->project.platforms,
-                    project->platforms, succeededPlatforms, &indexError)
-                || !ProjectPackExporter::FinalizePackOutputs(outputPath, project->platforms,
-                    platforms, succeededPlatforms, &indexError, completedArtifacts)) {
-                allSuccess = false;
-                firstError = indexError;
-            }
             if (!pmGuard || !pmGuard->currentProject()
                 || pmGuard->currentProject() != project.get()
                 || !PackGenerationRecordStore::instance().isCurrentRun(runId)) {
@@ -520,6 +509,27 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
                 packBuildResult_ = QJsonObject();
                 packBuildCancel_.reset();
                 return;
+            }
+            QString publicationError;
+            QVector<PackArtifactMetadata> completedArtifacts;
+            for (const auto& artifacts : publishedArtifacts)
+                completedArtifacts.append(artifacts);
+            bool finalized = ProjectPackExporter::ValidatePackBuildPlatforms(snapshot->project.platforms,
+                project->platforms, succeededPlatforms, &publicationError);
+            if (finalized) {
+                if (allSuccess && !cancel->load(std::memory_order_relaxed)) {
+                    const auto publication = ProjectPackExporter::FinalizePackExport(
+                        outputPath, snapshot->project, platforms, false, completedArtifacts);
+                    finalized = publication.success;
+                    publicationError = publication.error;
+                } else {
+                    finalized = ProjectPackExporter::FinalizePackOutputs(outputPath, project->platforms,
+                        platforms, succeededPlatforms, &publicationError, completedArtifacts);
+                }
+            }
+            if (!finalized) {
+                allSuccess = false;
+                firstError = publicationError;
             }
             for (auto it = publishedArtifacts.cbegin(); it != publishedArtifacts.cend(); ++it)
                 PackArtifactCache::instance().publish(it.key(), it.value(), !harkenstudio::IsNull(actionStableId));
