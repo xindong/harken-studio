@@ -8,6 +8,7 @@
 #include "harken/core/CurrentWorldCodec.h"
 #include "harken/core/PackPlaybackView.h"
 #include "harken/core/PackReadinessContract.h"
+#include "harken/core/PackCompanionNames.h"
 #include "harken/core/PlayablePropertyCut.h"
 #include "harken/core/StableRowStorage.h"
 #include "harken/media/PackLogicImage.h"
@@ -106,6 +107,8 @@ public:
     bool HasOriginalLeaseEpisode(const PackPartitionLease& lease) const noexcept;
     struct PublishedOwner {
         std::uint64_t packStableId = 0;
+        std::uint64_t contentHash = 0;
+        std::shared_ptr<const PackCompanionNames> companionNames;
         VnPackHandle handle = 0;
         std::uint64_t contentRevision = 0;
         std::uint64_t partitionRevision = 0;
@@ -168,7 +171,15 @@ public:
     };
 
     struct PublishedView {
+        struct ActionName {
+            std::string name;
+            VnObjectId actionId{};
+            std::uint64_t ownerPackId = 0;
+            std::uint64_t fingerprint = 0;
+        };
         VnObjectId projectId{};
+        bool companionNames = false;
+        std::vector<ActionName> actionNames;
         std::uint64_t compositeGeneration = 0;
         std::vector<PublishedOwner> owners;
         std::vector<IdentityIndexEntry> index;
@@ -187,6 +198,8 @@ public:
 
     struct CandidateOwner {
         std::uint64_t packStableId = 0;
+        std::uint64_t contentHash = 0;
+        std::shared_ptr<const PackCompanionNames> companionNames;
         VnPackHandle handle = 0;
         std::uint64_t contentRevision = 0;
         std::uint64_t partitionRevision = 0;
@@ -225,6 +238,7 @@ public:
         PreparedCommit& operator=(PreparedCommit&&) noexcept = default;
 
         bool IsPrepared() const noexcept { return owner_ != nullptr; }
+        bool NamesOnly() const noexcept { return namesOnly_; }
         const PublishedView* Published() const noexcept {
             return published_.get();
         }
@@ -234,11 +248,14 @@ public:
         PackComposition* owner_ = nullptr;
         std::shared_ptr<PublishedView> published_;
         PackOwnerLocalFacts facts_{};
+        bool namesOnly_ = false;
     };
 
     static CandidateOwner Keep(const PublishedOwner& existing) {
         CandidateOwner keep;
         keep.packStableId = existing.packStableId;
+        keep.contentHash = existing.contentHash;
+        keep.companionNames = existing.companionNames;
         keep.handle = existing.handle;
         keep.contentRevision = existing.contentRevision;
         keep.partitionRevision = existing.partitionRevision;

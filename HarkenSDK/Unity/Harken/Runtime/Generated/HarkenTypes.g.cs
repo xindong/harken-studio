@@ -470,6 +470,14 @@ namespace Harken
         public const uint VN_PACK_UNLOAD_REFUSE_IF_USED = 1u;
         public const uint VN_CANONICAL_PACK_SET_MEMBER_PROVIDER = 1u;
         public const uint VN_CANONICAL_PACK_SET_MEMBER_ROOT = 2u;
+        internal const uint VN_PACK_MEMBER_KEEP = 0u;
+        internal const uint VN_PACK_MEMBER_CONTENT = 1u;
+        internal const uint VN_PACK_MEMBER_NAME_ONLY = 2u;
+        internal const uint VN_PACK_PREVIEW_UNSUPPORTED = 0u;
+        internal const uint VN_PACK_PREVIEW_SOUND = 1u;
+        internal const uint VN_PACK_PREVIEW_RANDOM_SOUNDS = 2u;
+        internal const uint VN_PACK_OCCURRENCE_FIXED_GAIN = 1u;
+        internal const uint VN_PACK_OCCURRENCE_DURATION = 2u;
         public const uint VN_CANONICAL_PACK_SET_MEMBER_INIT = 2u;
         public const uint VN_CANONICAL_PACK_SET_MEMBER_CONTENT = 3u;
         public const uint VN_CANONICAL_PACK_SET_MEMBER_RESULT_RETAINED = 1u;
@@ -1150,6 +1158,155 @@ namespace Harken
     public ulong baseSetRevision;
     public ulong unloadRevision;
     public ulong reserved0;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnPackVariableNameV1
+    {
+    public VnObjectId variableId;
+    public IntPtr utf8Name;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnPackLabelNameV1
+    {
+    public VnObjectId variableId;
+    public VnObjectId labelId;
+    public IntPtr utf8Name;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnPackNamesV1
+    {
+    public uint structSize;
+    public uint flags;
+    public VnObjectId projectId;
+    public VnObjectId rootActionId;
+    public IntPtr utf8RootName;
+    public IntPtr utf8Language;
+    public uint variableCount;
+    public uint labelCount;
+    public IntPtr variables;
+    public IntPtr labels;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnCanonicalPackSetMemberV2
+    {
+    public uint structSize;
+    public uint operation;
+    public VnCanonicalPackSetMemberV1 source;
+    public IntPtr names;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnCanonicalPackSetActivationDescV2
+    {
+    public uint structSize;
+    public uint flags;
+    public ulong expectedCurrentInitHandle;
+    public ulong baseSetRevision;
+    public ulong setRevision;
+    public uint memberCount;
+    public uint memberStructSize;
+    public IntPtr members;
+    public uint outputMemberCapacity;
+    public uint outputMemberStructSize;
+    public IntPtr outputMembers;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnPackVariableFactV1
+    {
+    public VnObjectId variableId;
+    public uint kind;
+    public uint writers;
+    public float rangeMin;
+    public float rangeMax;
+    public float defaultValue;
+    public uint reserved0;
+    public ulong executionFingerprint;
+    public ulong labelMappingFingerprint;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnPackLabelFactV1
+    {
+    public VnObjectId variableId;
+    public VnObjectId labelId;
+    public int anchor;
+    public uint reserved0;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnPackMediaFactV1
+    {
+    public VnObjectId soundId;
+    public ulong mediaChecksum;
+    public ulong frameCount;
+    public uint sampleRate;
+    public uint channelCount;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnPackOccurrenceFactV1
+    {
+    public VnObjectId rootPlayableId;
+    public VnObjectId soundId;
+    public uint rootPlayableKind;
+    public uint childOrdinal;
+    public ulong rootProgramFingerprint;
+    public ulong soundProgramFingerprint;
+    public ulong occurrenceFingerprint;
+    public ulong mediaChecksum;
+    public ulong mediaFrameCount;
+    public uint sampleRate;
+    public uint channelCount;
+    public uint flags;
+    public uint reserved0;
+    public float fixedGainDb;
+    public float fixedGainLinear;
+    public double durationSeconds;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnPackInspectDescV1
+    {
+    public uint structSize;
+    public uint flags;
+    public VnPackByteSpan pack;
+    public VnPackByteSpan init;
+    public IntPtr names;
+    public ulong maxInputBytes;
+    public uint variableCapacity;
+    public uint labelCapacity;
+    public uint occurrenceCapacity;
+    public uint mediaCapacity;
+    public IntPtr variables;
+    public IntPtr labels;
+    public IntPtr occurrences;
+    public IntPtr media;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnPackInspectReportV1
+    {
+    public uint structSize;
+    public uint packKind;
+    public VnObjectId projectId;
+    public VnObjectId rootActionId;
+    public ulong packStableId;
+    public ulong initPackStableId;
+    public ulong contentRevision;
+    public ulong contentHash;
+    public ulong initContentHash;
+    public ulong executionFingerprint;
+    public uint variableCount;
+    public uint labelCount;
+    public uint occurrenceCount;
+    public uint previewKind;
+    public uint mediaCount;
+    public uint reserved0;
     }
 
     [StructLayout(LayoutKind.Sequential)]
