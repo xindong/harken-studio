@@ -42,6 +42,7 @@
     <Compile Include="RemoteCommunicationContract.cs" />
     <Compile Include="EditorWaveformContract.cs" />
     <Compile Include="RepositoryPublicationContract.cs" />
+    <Compile Include="CompanionDirectoryContract.cs" />
     <Content Include="..\Fixtures\EditorMetadata\1\**\*.json"
              Link="EditorMetadata\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\Fixtures\EditorMetadata\2\**\*.json;..\Fixtures\EditorMetadata\2\**\*.pack"

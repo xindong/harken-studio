@@ -15,6 +15,42 @@ namespace Harken.Unity.Tests
     public sealed class HarkenNameFlowTests
     {
         [UnityTest]
+        public IEnumerator CompanionDirectoryPreparesBothPlaybackEntrypointsOnFirstUse()
+            => CompanionFirstUse(false);
+
+        [UnityTest]
+        public IEnumerator ProjectCompanionDirectoryPreparesBothPlaybackEntrypointsOnFirstUse()
+            => CompanionFirstUse(true);
+
+        private static IEnumerator CompanionFirstUse(bool projectStartup)
+        {
+            using (var fixture = new Fixture())
+            {
+                string root = fixture.StartCompanion(projectStartup);
+                Assert.That(fixture.Runtime.Session.Publication, Is.Null);
+                Assert.That(fixture.Runtime.Session.ProjectId, Is.EqualTo(fixture.Publication.ProjectId));
+                Assert.That(fixture.Runtime.Session.StartupPacks, Is.Empty);
+                Assert.That(Actions.Resolve("Play_U4_A", out _), Is.Not.EqualTo(VnResult.VN_OK));
+                Assert.That(Actions.Resolve("Play_U4_B", out _), Is.Not.EqualTo(VnResult.VN_OK));
+                AssertAction(Post(fixture.Action), fixture.Row("Play_U4_A").ActionStableId);
+                Assert.That(fixture.Runtime.PlayAction("Play_U4_B", fixture.Publication.ProjectId, out ActionFiring managed),
+                    Is.EqualTo(VnResult.VN_OK));
+                AssertAction(managed, fixture.Row("Play_U4_B").ActionStableId);
+
+                // Both owners remain usable while their source files are unavailable.
+                foreach (string file in Directory.GetFiles(root)) File.Delete(file);
+                Assert.That(fixture.Runtime.PlayAction("Play_U4_A", fixture.Publication.ProjectId, out ActionFiring warm),
+                    Is.EqualTo(VnResult.VN_OK));
+                AssertAction(warm, fixture.Row("Play_U4_A").ActionStableId);
+                PackBootstrapSession previous = fixture.Runtime.Session;
+                Assert.That(fixture.Runtime.ShutdownRuntime(), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(previous.IsActive, Is.False);
+                Assert.That(warm.Query(out _), Is.Not.EqualTo(VnResult.VN_OK));
+            }
+            yield return null;
+        }
+
+        [UnityTest]
         public IEnumerator WarmNameEditUsesTheNewActionWithoutDisablingOrRestarting()
         {
             using (var fixture = new Fixture())
@@ -221,6 +257,7 @@ namespace Harken.Unity.Tests
             private readonly List<HarkenAction> actions = new List<HarkenAction>();
             private ulong[] preparedHandles;
             private ulong generation;
+            private string companionRoot;
             public GameplayPublication Publication { get; private set; }
 
             private readonly HarkenProjectSettingsLease settingsLease = HarkenProjectSettingsLease.Acquire();
@@ -252,6 +289,39 @@ namespace Harken.Unity.Tests
                 Owner.SetActive(true);
                 AfterStartup();
                 Source.SetActive(true);
+            }
+
+            public string StartCompanion(bool projectStartup)
+            {
+                string original = Path.Combine(Application.streamingAssetsPath, "Audio", "U4Original");
+                Assert.That(GameplayPublication.Read(original, null, out GameplayPublication publication, out string error),
+                    Is.EqualTo(VnResult.VN_OK), error);
+                Publication = publication;
+                companionRoot = Path.Combine(Application.streamingAssetsPath, "harken-companion-" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(companionRoot);
+                File.Copy(Path.Combine(original, publication.InitPack.Path), Path.Combine(companionRoot, "Init.bytes"));
+                File.WriteAllText(Path.Combine(companionRoot, "Init.json"), "{\"variables\":[]}");
+                foreach (string name in new[] { "Play_U4_A", "Play_U4_B" })
+                {
+                    GameplayAction row = Row(name);
+                    Assert.That(publication.TryFindPack(row.OwnerPackStableId, out PackManifestEntry pack), Is.True);
+                    File.Copy(Path.Combine(original, pack.Path), Path.Combine(companionRoot, name + ".bytes"));
+                    File.WriteAllText(Path.Combine(companionRoot, name + ".json"),
+                        "{\"name\":\"" + name + "\",\"guid\":\"" + row.ActionStableId + "\"}");
+                }
+                File.WriteAllText(Path.Combine(companionRoot, "Unused.json"), "invalid");
+                settingsLease.Settings.SetPackDirectory(companionRoot);
+                Set(Runtime, "autoInitialize", projectStartup);
+                Assert.That(Runtime.ConfigureBeforeStartup("Audio/Companion", "Init.bytes", Array.Empty<ulong>(), true, false),
+                    Is.EqualTo(VnResult.VN_OK));
+                Assert.That(Runtime.ConfigurePlatformBeforeStartup(null), Is.EqualTo(VnResult.VN_OK));
+                Set(Action, "projectId", publication.ProjectId);
+                Owner.SetActive(true);
+                if (!projectStartup)
+                    Assert.That(Runtime.StartRuntime(companionRoot), Is.EqualTo(VnResult.VN_OK), Runtime.LastStartupError);
+                Assert.That(Runtime.IsReady, Is.True, Runtime.LastStartupError);
+                Source.SetActive(true);
+                return companionRoot;
             }
 
             public void Restart(string directory)
@@ -312,6 +382,7 @@ namespace Harken.Unity.Tests
                 Object.Destroy(Source);
                 Object.Destroy(Owner);
                 settingsLease.Dispose();
+                if (companionRoot != null) Directory.Delete(companionRoot, true);
             }
         }
     }

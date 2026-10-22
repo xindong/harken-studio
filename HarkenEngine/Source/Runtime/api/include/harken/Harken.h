@@ -1913,6 +1913,8 @@ typedef struct VnPackInspectReportV1 {
 
 /* Legal before Init; borrows immutable inputs only for this call. Uses the
  * shipping decoder and property fold. No engine or media installation occurs.
+ * A zero names.projectId discovers the actual project from the Pack; a nonzero
+ * value must match. Activation always requires an explicit project identity.
  * Zero capacities with null arrays query required counts. Otherwise every
  * capacity must suffice; VN_PACK_RESIDENT_CAPACITY writes only the report.
  * Unsupported preview is a successful inspection with zero occurrences.

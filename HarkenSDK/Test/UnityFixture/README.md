@@ -14,6 +14,15 @@ project publication intentionally has different project and object identities.
 | `NameFirstPacks` | Paired English and Japanese language publications |
 | `PlatformContractPacks` | Two Android platform instances for exact ID/name selection and ambiguity |
 | `SpatialPacks` | Authored 3D Actions with a volume attenuation profile for rendered spatial tests |
+| `CompanionPacks` | Init plus one root containing a three-Action closure; General and English variants from the same author project |
+
+`CompanionPacks` is consumed by the standalone native-backed SDK contract runner.
+Its ordinary author project is `Projects/Companion/CompanionFixture.hsp`. It has
+`Play_Head -> Play_Tail -> Play_Nested -> Sound`, with a 100 ms mono tone.
+To regenerate, export the Windows platform with the Sound's language distinction
+disabled for the General pair, then enabled for the English pair. Retain only
+the Init pair, the General `Play_Head` pair and `English/Play_Head` pair. The
+missing child files are intentional. No manifest or binary rewriting is used.
 
 The six-mode sample is reused directly from
 `HarkenSDK/Unity/Harken/Samples~/PlayableDemo/PackSource`; its binary content is not

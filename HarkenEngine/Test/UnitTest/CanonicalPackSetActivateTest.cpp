@@ -405,6 +405,33 @@ TEST(CanonicalPackSetActivate, CompanionInitOwnsVariableAndLabelNames) {
     EXPECT_EQ(VN_OK, Vn_ResolveVariableByName(&lookup, &resolved));
 }
 
+TEST(CanonicalPackSetActivate, CompanionInspectionDiscoversProjectWithoutWeakeningActivation) {
+    using namespace companionfixture;
+    Provider init{Build(true, PackId("Init"))};
+    VnPackNamesV1 names{sizeof(VnPackNamesV1), 0, {}, {}, "", "", 0, 0, nullptr, nullptr};
+    VnPackInspectDescV1 desc{};
+    desc.structSize = sizeof(desc);
+    desc.pack = {sizeof(VnPackByteSpan), 0, init.bytes.data(), init.bytes.size()};
+    desc.names = &names;
+    desc.maxInputBytes = init.bytes.size() + 4096;
+    VnPackInspectReportV1 facts{};
+    facts.structSize = sizeof(facts);
+    ASSERT_EQ(VN_OK, Vn_InspectCanonicalPackV1(&desc, &facts));
+    EXPECT_EQ(project, facts.projectId);
+    EXPECT_EQ(PackId("Init"), facts.packStableId);
+    EXPECT_EQ(VnObjectId{}, names.projectId);
+    names.projectId = VN_OBJECT_ID(5, 9);
+    EXPECT_EQ(VN_GAMEPLAY_WRONG_PROJECT, Vn_InspectCanonicalPackV1(&desc, &facts));
+    names.projectId = {};
+    desc.maxInputBytes = init.bytes.size() - 1;
+    EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, Vn_InspectCanonicalPackV1(&desc, &facts));
+    EngineSession session(CanonicalActivationConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    std::vector<VnCanonicalPackSetMemberV2> members{Member(PackId("Init"), true, &init, &names)};
+    VnCanonicalPackSetActivationReportV1 report{};
+    EXPECT_EQ(VN_INVALID_ARG, Activate(members, report));
+}
+
 TEST(CanonicalPackSetActivate, CompanionInspectionKeepsMediaAndOccurrenceFactsDistinct) {
     using namespace companionfixture;
     auto init = Build(true, PackId("Init"));

@@ -192,9 +192,6 @@ VnResult Vn_InspectCanonicalPackV1(const VnPackInspectDescV1* desc,
         };
         if (!valid(desc->pack)) return VN_INVALID_ARG;
         auto budget = desc->maxInputBytes;
-        PackCompanionNames names;
-        const auto captured = CapturePackCompanionNames(*desc->names, budget, &names);
-        if (captured != VN_OK) return captured;
         if (desc->pack.byteCount > budget) return VN_PACK_RESIDENT_CAPACITY;
         budget -= desc->pack.byteCount;
         PackCanonicalImage pack, initImage;
@@ -206,6 +203,7 @@ VnResult Vn_InspectCanonicalPackV1(const VnPackInspectDescV1* desc,
         if (!isInit) {
             if (!valid(desc->init)) return VN_INVALID_ARG;
             if (desc->init.byteCount > budget) return VN_PACK_RESIDENT_CAPACITY;
+            budget -= desc->init.byteCount;
             result = Decode(desc->init, initImage, initBody);
             if (result != VN_OK) return result;
             if (initImage.packKind != kPackKindInit ||
@@ -232,6 +230,13 @@ VnResult Vn_InspectCanonicalPackV1(const VnPackInspectDescV1* desc,
             if (!initEdge) return VN_BAD_PACK;
         }
         const auto& view = *body.ProductionView();
+        // Companion JSON has no project identity. Inspection may discover it;
+        // activation still requires the explicit, validated project identity.
+        VnPackNamesV1 requestedNames = *desc->names;
+        if (requestedNames.projectId == VnObjectId{}) requestedNames.projectId = view.identity.projectId;
+        PackCompanionNames names;
+        const auto captured = CapturePackCompanionNames(requestedNames, budget, &names);
+        if (captured != VN_OK) return captured;
         result = ValidatePackCompanionNames(names, pack.packKind, pack.packStableId,
             init.packStableId, view, pack.variablePolicyOverlays);
         if (result != VN_OK) return result;

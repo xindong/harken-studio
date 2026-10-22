@@ -152,16 +152,6 @@ namespace Harken.Unity
                 cacheValid = false;
             }
             VnResult result;
-            if (!cacheValid)
-            {
-                result = Actions.Resolve(actionName, projectId, out cachedResolved);
-                if (result != VnResult.VN_OK) return result;
-                cachedActionName = actionName;
-                cachedProjectId = projectId;
-                cachedSession = runtime.Session;
-                cachedPackVersion = Packs.ChangeVersion;
-                cacheValid = true;
-            }
             ActionPreparation prepared;
             if (cachedPreparation != null && ReferenceEquals(preparationSession, owner) &&
                 preparationName == name && preparationProject == project)
@@ -187,11 +177,14 @@ namespace Harken.Unity
             firingSession = owner;
             firingRuntime = host;
             releaseObserved = false;
-            if (result == VnResult.VN_OK && cachedPackVersion != Packs.ChangeVersion)
+            if (result == VnResult.VN_OK && (!cacheValid || cachedPackVersion != Packs.ChangeVersion))
             {
                 result = Actions.Resolve(name, project, out cachedResolved);
                 cacheValid = result == VnResult.VN_OK;
                 cachedPackVersion = Packs.ChangeVersion;
+                cachedActionName = name;
+                cachedProjectId = project;
+                cachedSession = owner;
             }
             if (result == VnResult.VN_OK)
                 result = Actions.Post(in cachedResolved, target, callerSeed++, out firing);
