@@ -18,11 +18,13 @@
 #include "CanonicalPackSetExport.h"
 #include "PlayablePropertyAuthoringV1.h"
 #include "ProjectPackExporter.h"
+#include "ProjectSchemaGenerated.h"
 #include "NameValidator.h"
 #include "ProjectTypes.h"
 #include "FieldGroupProjectAdapter.h"
 #include "RuntimeBridge/PackagingBridge.h"
 #include "RuntimeContentBundleBuilder.h"
+#include "harken_buildinfo.h"
 
 #include <harken/Harken.h>
 #include <harken/core/CurrentWorldCodec.h>
@@ -1104,7 +1106,9 @@ TEST(EditorProjectPackExporterManifest, CompanionsCoverEachExportedAction)
     EXPECT_TRUE(initPack.value(QStringLiteral("path")).toString().endsWith(
         QStringLiteral("Init.bytes")));
     EXPECT_EQ(initPack.value(QStringLiteral("companion")).toObject().keys(),
-              QStringList{QStringLiteral("variables")});
+              (QStringList{QStringLiteral("schemaVersion"), QStringLiteral("variables")}));
+    EXPECT_EQ(initPack.value(QStringLiteral("companion")).toObject()
+                  .value(QStringLiteral("schemaVersion")).toInt(), HARKEN_PACK_SCHEMA_VERSION);
 
     for (const QString& fileName :
          {variantFileName(project, harkentest::StudioObjectId(21 + kStableIdBias)),
@@ -1115,13 +1119,15 @@ TEST(EditorProjectPackExporterManifest, CompanionsCoverEachExportedAction)
             << fileName.toStdString();
         const auto companion = QJsonDocument::fromJson(readFileBytes(QDir(dir.path()).filePath(
             fileName.chopped(6) + QStringLiteral(".json")))).object();
-        EXPECT_EQ(companion.keys(), (QStringList{QStringLiteral("guid"), QStringLiteral("name")}));
+        EXPECT_EQ(companion.keys(), (QStringList{QStringLiteral("guid"), QStringLiteral("name"),
+            QStringLiteral("schemaVersion")}));
+        EXPECT_EQ(companion.value(QStringLiteral("schemaVersion")).toInt(), HARKEN_PACK_SCHEMA_VERSION);
     }
 
     VNX::AssetRegistry::instance().clear();
 }
 
-TEST(EditorProjectPackExporterManifest, OptionalWaveformsFollowPublicationLifecycle)
+TEST(EditorProjectPackExporterManifest, OptionalCompanionDataFollowsPublicationLifecycle)
 {
     qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
     QTemporaryDir dir;
@@ -1143,6 +1149,33 @@ TEST(EditorProjectPackExporterManifest, OptionalWaveformsFollowPublicationLifecy
     post.type = VNX::VActionStep::Type::PostAction;
     post.targetObjectID = 22;
     project.actions.front().rootItem->children.front()->comp<VNX::VAction>()->steps.push_back(post);
+    auto variable = makeItem(QStringLiteral("Speed"), VNX::ProjectItem::Type::Variable, 50);
+    project.variables.push_back({variable, QStringLiteral("Variables")});
+    VNX::VActionStep setVariable;
+    setVariable.type = VNX::VActionStep::Type::SetVariable;
+    setVariable.targetObjectID = variable->objectID;
+    project.actions.front().rootItem->children.back()->comp<VNX::VAction>()->steps.push_back(setVariable);
+    auto bindingVariable = makeItem(QStringLiteral("Volume"), VNX::ProjectItem::Type::Variable, 51);
+    project.variables.push_back({bindingVariable, QStringLiteral("Variables")});
+    VNX::ParameterBindingDef binding;
+    binding.guid = VNX::authoringUuid(harkentest::StudioObjectId(500));
+    binding.variable = bindingVariable->guid;
+    binding.address = VNX::BindingSemantics::volumeAddress();
+    binding.curve = {{0.0f, -6.0f}, {100.0f, 0.0f}};
+    ASSERT_TRUE(project.layers.front().rootItem->comp<VNX::VMixNode>()->bindings.upsert(binding));
+    auto unusedVariable = makeItem(QStringLiteral("Unused"), VNX::ProjectItem::Type::Variable, 52);
+    project.variables.push_back({unusedVariable, QStringLiteral("Variables")});
+    auto attenuation = makeItem(QStringLiteral("Distance"), VNX::ProjectItem::Type::Attenuation, 301);
+    project.attenuationItems.push_back({attenuation, QStringLiteral("Attenuations")});
+    VNX::SpatialRatingFieldGroup rating;
+    rating.spatialAttenuationRef = VNX::toFieldGroupGuid(attenuation->guid);
+    project.layers.front().rootItem->fieldGroups.spatialRating.shared = {VNX::FieldGroupMode::Local, rating};
+    const auto assignPath = [&](auto&& self, VNX::ProjectItem* item, const QString& prefix) -> void {
+        item->objectPath = prefix + QLatin1Char('\\') + item->name;
+        for (const auto& child : item->children) self(self, child.get(), item->objectPath);
+    };
+    for (auto* file : project.allFileBindings())
+        assignPath(assignPath, file->rootItem.get(), QString());
     const QString root = QDir(dir.path()).filePath(QStringLiteral("BuildPacks"));
     const QString output = VNX::ProjectPackExporter::platformOutputDir(root, project.platforms.front());
     const QString waveformRoot = VNX::PathUtils::waveformBuildOutputRoot(project.projectPath, {});
@@ -1156,6 +1189,44 @@ TEST(EditorProjectPackExporterManifest, OptionalWaveformsFollowPublicationLifecy
     for (const QString& name : {QStringLiteral("Init"), QStringLiteral("Parent"), QStringLiteral("Child")})
         binaries.insert(name, readFileBytes(QDir(output).filePath(name + QStringLiteral(".bytes"))));
     EXPECT_FALSE(QDir(waveformRoot).exists());
+    for (const auto& value : readPublication(output))
+        EXPECT_FALSE(value.toObject().value(QStringLiteral("companion")).toObject()
+            .contains(QStringLiteral("metadata")));
+    project.buildExportPackMetadata = true;
+    const auto metadataOnly = exporter.ExportAllPacks(project, output, options);
+    ASSERT_TRUE(metadataOnly.success) << metadataOnly.error.toStdString();
+    for (const auto& value : readPublication(output)) {
+        const auto row = value.toObject();
+        const auto companion = row.value(QStringLiteral("companion")).toObject();
+        EXPECT_FALSE(companion.contains(QStringLiteral("waveforms")));
+        EXPECT_FALSE(QDir(waveformRoot).exists());
+        const auto metadata = companion.value(QStringLiteral("metadata")).toObject();
+        EXPECT_EQ(companion.value(QStringLiteral("schemaVersion")).toInt(), HARKEN_PACK_SCHEMA_VERSION);
+        EXPECT_FALSE(metadata.contains(QStringLiteral("schemaVersion")));
+        EXPECT_EQ(metadata.value(QStringLiteral("packStableId")), row.value(QStringLiteral("packStableId")));
+        EXPECT_EQ(metadata.value(QStringLiteral("platform")).toString(), QStringLiteral("Windows"));
+        EXPECT_EQ(metadata.value(QStringLiteral("language")).toString(), QString());
+        QSet<QString> guids;
+        for (const auto& objectValue : metadata.value(QStringLiteral("objects")).toArray()) {
+            const auto object = objectValue.toObject();
+            const auto guid = object.value(QStringLiteral("guid")).toString();
+            EXPECT_FALSE(guids.contains(guid));
+            guids.insert(guid);
+            EXPECT_FALSE(object.value(QStringLiteral("path")).toString().isEmpty());
+            if (row.value(QStringLiteral("name")) != QStringLiteral("Init"))
+                EXPECT_NE(object.value(QStringLiteral("type")).toString(), QStringLiteral("Bus"));
+        }
+        EXPECT_TRUE(guids.contains(VNX::objectIdString(variable->runtimeId())));
+        EXPECT_TRUE(guids.contains(VNX::objectIdString(bindingVariable->runtimeId())));
+        if (row.value(QStringLiteral("name")) == QStringLiteral("Init")) {
+            EXPECT_TRUE(guids.contains(VNX::objectIdString(project.busses.front().rootItem->runtimeId())));
+            EXPECT_TRUE(guids.contains(VNX::objectIdString(unusedVariable->runtimeId())));
+        } else {
+            EXPECT_FALSE(guids.contains(VNX::objectIdString(unusedVariable->runtimeId())));
+            EXPECT_TRUE(guids.contains(VNX::objectIdString(attenuation->runtimeId())));
+            EXPECT_TRUE(guids.contains(VNX::objectIdString(trimmedSound->runtimeId())));
+        }
+    }
     project.buildExportWaveforms = true;
     const auto enabled = exporter.ExportAllPacks(project, output, options);
     ASSERT_TRUE(enabled.success) << enabled.error.toStdString();
@@ -1166,11 +1237,18 @@ TEST(EditorProjectPackExporterManifest, OptionalWaveformsFollowPublicationLifecy
     const auto child = findByName(publication, QStringLiteral("Child")).value(QStringLiteral("companion")).toObject();
     const auto parentWaves = parent.value(QStringLiteral("waveforms")).toArray();
     const auto childWaves = child.value(QStringLiteral("waveforms")).toArray();
+    const auto parentObjects = parent.value(QStringLiteral("metadata")).toObject()
+        .value(QStringLiteral("objects")).toArray();
     ASSERT_EQ(parentWaves.size(), 2);
     ASSERT_EQ(childWaves.size(), 1);
     QSet<QString> files;
     for (const auto& value : parentWaves) {
         const auto row = value.toObject();
+        const auto soundObject = std::find_if(parentObjects.begin(), parentObjects.end(), [&](const auto& value) {
+            return value.toObject().value(QStringLiteral("guid")) == row.value(QStringLiteral("soundGuid"));
+        });
+        ASSERT_NE(soundObject, parentObjects.end());
+        EXPECT_EQ(soundObject->toObject().value(QStringLiteral("type")).toString(), QStringLiteral("Sound"));
         files.insert(row.value(QStringLiteral("file")).toString());
         if (QUuid(row.value(QStringLiteral("soundGuid")).toString()) == trimmedSound->guid) {
             EXPECT_EQ(row.value(QStringLiteral("trimStartFrame")).toInteger(), 8);
@@ -1189,7 +1267,7 @@ TEST(EditorProjectPackExporterManifest, OptionalWaveformsFollowPublicationLifecy
     const QString orphan = QDir(waveformRoot).filePath(QStringLiteral("unreferenced.vkd"));
     writeFileBytes(orphan, "unused");
     const auto finalized = VNX::ProjectPackExporter::FinalizePackExport(
-        root, project.platforms, {options.platform}, true, enabled.artifacts);
+        root, project, {options.platform}, true, enabled.artifacts);
     ASSERT_TRUE(finalized.success) << finalized.error.toStdString();
     EXPECT_TRUE(QFileInfo::exists(waveformPath));
     EXPECT_FALSE(QFileInfo::exists(orphan));
@@ -1201,10 +1279,13 @@ TEST(EditorProjectPackExporterManifest, OptionalWaveformsFollowPublicationLifecy
     ASSERT_TRUE(disabled.success) << disabled.error.toStdString();
     EXPECT_FALSE(QJsonDocument::fromJson(readFileBytes(QDir(output).filePath(QStringLiteral("Parent.json"))))
         .object().contains(QStringLiteral("waveforms")));
+    EXPECT_TRUE(QJsonDocument::fromJson(readFileBytes(QDir(output).filePath(QStringLiteral("Parent.json"))))
+        .object().contains(QStringLiteral("metadata")));
     EXPECT_EQ(readFileBytes(QDir(output).filePath(QStringLiteral("Child.json"))), childJson);
     EXPECT_TRUE(QFileInfo::exists(waveformPath));
     project.buildExportWaveforms = true;
     const QString blocked = QDir(dir.path()).filePath(QStringLiteral("blocked"));
+    project.buildExportPackMetadata = false;
     writeFileBytes(blocked, "file");
     options.waveformOutputDir = blocked;
     QMap<QString, QByteArray> beforeFailure;
@@ -1223,9 +1304,12 @@ TEST(EditorProjectPackExporterManifest, OptionalWaveformsFollowPublicationLifecy
     options.waveformOutputDir.clear();
     const auto disabledAll = exporter.ExportAllPacks(project, output, options);
     ASSERT_TRUE(disabledAll.success) << disabledAll.error.toStdString();
-    for (const auto& value : readPublication(output))
-        EXPECT_FALSE(value.toObject().value(QStringLiteral("companion")).toObject()
-            .contains(QStringLiteral("waveforms")));
+    for (const auto& value : readPublication(output)) {
+        const auto companion = value.toObject().value(QStringLiteral("companion")).toObject();
+        EXPECT_EQ(companion.value(QStringLiteral("schemaVersion")).toInt(), HARKEN_PACK_SCHEMA_VERSION);
+        EXPECT_FALSE(companion.contains(QStringLiteral("waveforms")));
+        EXPECT_FALSE(companion.contains(QStringLiteral("metadata")));
+    }
     VNX::AssetRegistry::instance().clear();
 }
 
@@ -2707,6 +2791,7 @@ TEST(EditorProjectPackExporterManifest, LanguageVariantsKeepDistinctPackIdentiti
         project, dir.path(), sharedSourceId, soloSourceId,
         {{QStringLiteral("Spoken"), 21, kSoloSoundObjectId}}));
     ASSERT_NO_FATAL_FAILURE(localizeSoloSound(project, soloSourceId));
+    project.buildExportPackMetadata = true;
 
     VNX::ProjectPackExporter exporter;
     VNX::ProjectPackExporter::ExportOptions opts;
@@ -2776,6 +2861,10 @@ TEST(EditorProjectPackExporterManifest, LanguageVariantsKeepDistinctPackIdentiti
         const auto selectedAction = findByName(selected, QStringLiteral("Spoken"));
         const auto owner = language == QStringLiteral("English") ? englishId : jaId;
         EXPECT_EQ(selectedAction.value(QStringLiteral("language")).toString(), language);
+        const auto metadata = selectedAction.value(QStringLiteral("companion")).toObject()
+            .value(QStringLiteral("metadata")).toObject();
+        EXPECT_EQ(metadata.value(QStringLiteral("language")).toString(), language);
+        EXPECT_EQ(metadata.value(QStringLiteral("packStableId")).toString(), QString::number(owner));
         EXPECT_EQ(selectedAction.value(QStringLiteral("packStableId")).toString(), QString::number(owner));
         EXPECT_EQ(QUuid(selectedAction.value(QStringLiteral("companion")).toObject()
             .value(QStringLiteral("guid")).toString()), project.actions.front().rootItem->children.front()->guid);
@@ -3985,8 +4074,9 @@ TEST(EditorProjectPackExporterManifest, PublicationSelectionReconcilesTheWholeOu
     auto project = HarkenTest::projectWithPlatforms({"Windows", "Android"});
     ASSERT_NO_FATAL_FAILURE(buildProject(project, dir.path(), tone, tone,
         {{QStringLiteral("Remove"), 21, kSharedSoundObjectId},
-         {QStringLiteral("Keep"), 22, kSharedSoundObjectId}}));
+         {QStringLiteral("ProjectData"), 22, kSharedSoundObjectId}}));
     project.packBuildOutputDir = dir.filePath("exports");
+    project.projectLanguages = {QStringLiteral("English"), QStringLiteral("Japanese")};
     VNX::ProjectPackExporter exporter;
     const auto platform = HarkenTest::platformIdString("Windows");
     QVector<VNX::PackArtifactMetadata> artifacts;
@@ -3996,11 +4086,44 @@ TEST(EditorProjectPackExporterManifest, PublicationSelectionReconcilesTheWholeOu
         artifacts += result.artifacts;
     }
     ASSERT_TRUE(VNX::ProjectPackExporter::FinalizePackExport(project.packBuildOutputDir,
-        project.platforms, {platform, HarkenTest::platformIdString("Android")}, false, artifacts).success);
+        project, {platform, HarkenTest::platformIdString("Android")}, false, artifacts).success);
     const QDir live(QDir(project.packBuildOutputDir).filePath("Windows"));
     const QDir other(QDir(project.packBuildOutputDir).filePath("Android"));
+    const auto projectDataPath = QDir(project.packBuildOutputDir).filePath("ProjectData.json");
+    EXPECT_FALSE(QFileInfo::exists(projectDataPath));
+    QMap<QString, QByteArray> originalPublication;
+    for (const auto& file : publicationFiles(live.path()))
+        originalPublication.insert(file, readFileBytes(live.filePath(file)));
+    project.buildExportProjectData = true;
+    const auto enabled = exporter.ExportAllPacks(project, {}, {.platform = platform});
+    ASSERT_TRUE(enabled.success) << enabled.error.toStdString();
+    const auto projectData = QJsonDocument::fromJson(readFileBytes(projectDataPath)).object();
+    EXPECT_EQ(projectData.value("schemaVersion").toInt(), HARKEN_PACK_SCHEMA_VERSION);
+    EXPECT_EQ(projectData.value("studioSchemaVersion").toInt(), VNX::ProjectSchema::kProjectSchemaVersion);
+    EXPECT_EQ(projectData.value("studioVersion").toString(), QString::fromUtf8(
+        Harken::BuildInfo::Version.data(), static_cast<int>(Harken::BuildInfo::Version.size())));
+    EXPECT_EQ(projectData.value("projectGuid").toString(), project.projectId);
+    const auto configuredPlatforms = projectData.value("platforms").toArray();
+    ASSERT_EQ(configuredPlatforms.size(), 2);
+    EXPECT_EQ(configuredPlatforms.at(1).toObject().value("guid").toString(),
+        HarkenTest::platformIdString("Android"));
+    EXPECT_EQ(projectData.value("languages").toArray(), QJsonArray::fromStringList(project.projectLanguages));
+    for (auto file = originalPublication.cbegin(); file != originalPublication.cend(); ++file)
+        EXPECT_EQ(readFileBytes(live.filePath(file.key())), file.value());
+    VNX::ProjectPackExporter::ExportOptions partialOptions;
+    partialOptions.platform = platform;
+    partialOptions.updateSelectedOnly = true;
+    partialOptions.onlyUnits = {QStringLiteral("ProjectData")};
+    partialOptions.language = QStringLiteral("English");
+    project.name = QStringLiteral("updated-project");
+    const auto partial = exporter.ExportAllPacks(project, {}, partialOptions);
+    ASSERT_TRUE(partial.success) << partial.error.toStdString();
+    const auto partialData = QJsonDocument::fromJson(readFileBytes(projectDataPath)).object();
+    EXPECT_EQ(partialData.value("projectName").toString(), project.name);
+    EXPECT_EQ(partialData.value("platforms"), projectData.value("platforms"));
+    EXPECT_EQ(partialData.value("languages"), projectData.value("languages"));
     const auto otherCompanion = readFileBytes(other.filePath(QStringLiteral("Init.json")));
-    const auto keptBytes = readFileBytes(live.filePath("Keep.bytes"));
+    const auto keptBytes = readFileBytes(live.filePath("ProjectData.bytes"));
     writeFileBytes(live.filePath("Remove.bytes.meta"), "guid");
     writeFileBytes(live.filePath("unrelated.bytes"), "neighbor");
     writeFileBytes(QDir(project.packBuildOutputDir).filePath("DeletedPlatform/old.no-extension"), "old");
@@ -4016,35 +4139,44 @@ TEST(EditorProjectPackExporterManifest, PublicationSelectionReconcilesTheWholeOu
     EXPECT_TRUE(QFileInfo::exists(live.filePath("Remove.json")));
     EXPECT_TRUE(findByName(readPublication(live.path(), {}, true, selected.artifacts), "Remove").isEmpty());
     const auto retained = VNX::ProjectPackExporter::FinalizePackExport(project.packBuildOutputDir,
-        project.platforms, {platform}, false, selected.artifacts);
+        project, {platform}, false, selected.artifacts);
     ASSERT_TRUE(retained.success) << retained.error.toStdString();
     const auto indexPath = QDir(project.packBuildOutputDir).filePath(HarkenEditor::Bridge::packIndexFileName());
     EXPECT_FALSE(QFileInfo::exists(indexPath));
     EXPECT_EQ(readFileBytes(other.filePath(QStringLiteral("Init.json"))), otherCompanion);
     EXPECT_TRUE(QFileInfo::exists(QDir(project.packBuildOutputDir).filePath("notes.txt")));
     const auto companion = readFileBytes(live.filePath(QStringLiteral("Init.json")));
+    const auto retainedProjectData = readFileBytes(projectDataPath);
+    project.name = QStringLiteral("next-project-name");
+    project.buildExportProjectData = false;
     opts.cancelCheck = [] { return true; };
     const auto canceled = exporter.ExportAllPacks(project, {}, opts);
     EXPECT_TRUE(canceled.canceled);
     EXPECT_TRUE(QFileInfo::exists(live.filePath("Remove.bytes")));
     EXPECT_EQ(readFileBytes(live.filePath(QStringLiteral("Init.json"))), companion);
+    EXPECT_EQ(readFileBytes(projectDataPath), retainedProjectData);
     opts.cancelCheck = {};
-    const auto keepPath = live.filePath("Keep.bytes");
+    const auto keepPath = live.filePath("ProjectData.bytes");
     ASSERT_TRUE(QFile::remove(keepPath));
     const auto invalid = VNX::ProjectPackExporter::FinalizePackExport(project.packBuildOutputDir,
-        project.platforms, {platform}, true, selected.artifacts);
+        project, {platform}, true, selected.artifacts);
     EXPECT_FALSE(invalid.success);
     EXPECT_FALSE(QFileInfo::exists(indexPath));
     EXPECT_TRUE(QFileInfo::exists(live.filePath("Remove.bytes")));
     EXPECT_EQ(readFileBytes(other.filePath(QStringLiteral("Init.json"))), otherCompanion);
+    EXPECT_EQ(readFileBytes(projectDataPath), retainedProjectData);
     writeFileBytes(keepPath, keptBytes);
+    project.buildExportProjectData = true;
     const auto cleaned = VNX::ProjectPackExporter::FinalizePackExport(project.packBuildOutputDir,
-        project.platforms, {platform}, true, selected.artifacts);
+        project, {platform}, true, selected.artifacts);
     ASSERT_TRUE(cleaned.success) << cleaned.error.toStdString();
     EXPECT_EQ(cleaned.removedPackCount, 4);
     EXPECT_FALSE(QFileInfo::exists(live.filePath("Remove.bytes")));
     EXPECT_FALSE(QFileInfo::exists(live.filePath("Remove.json")));
-    EXPECT_EQ(readFileBytes(live.filePath("Keep.bytes")), keptBytes);
+    EXPECT_EQ(readFileBytes(live.filePath("ProjectData.bytes")), keptBytes);
+    const auto cleanedProjectData = QJsonDocument::fromJson(readFileBytes(projectDataPath)).object();
+    EXPECT_EQ(cleanedProjectData.value("projectName").toString(), project.name);
+    EXPECT_EQ(cleanedProjectData.value("platforms"), projectData.value("platforms"));
     EXPECT_FALSE(QFileInfo::exists(live.filePath("Remove.bytes.meta")));
     EXPECT_FALSE(QFileInfo::exists(live.filePath("unrelated.bytes")));
     EXPECT_FALSE(other.exists());
@@ -4053,7 +4185,7 @@ TEST(EditorProjectPackExporterManifest, PublicationSelectionReconcilesTheWholeOu
     {
         harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
         ASSERT_EQ(session.InitResult(), VN_OK);
-        ASSERT_NO_FATAL_FAILURE(activateExportedNames(live.path(), {QStringLiteral("Keep")}));
+        ASSERT_NO_FATAL_FAILURE(activateExportedNames(live.path(), {QStringLiteral("ProjectData")}));
     }
     const auto platformDefinition = std::find_if(project.platforms.begin(), project.platforms.end(),
         [&](const auto& value) { return value.id == QUuid(platform); });
@@ -4062,21 +4194,38 @@ TEST(EditorProjectPackExporterManifest, PublicationSelectionReconcilesTheWholeOu
     const auto renamedExport = exporter.ExportAllPacks(project, {}, opts);
     ASSERT_TRUE(renamedExport.success) << renamedExport.error.toStdString();
     const auto renamed = VNX::ProjectPackExporter::FinalizePackExport(project.packBuildOutputDir,
-        project.platforms, {platform}, true, renamedExport.artifacts);
+        project, {platform}, true, renamedExport.artifacts);
     ASSERT_TRUE(renamed.success) << renamed.error.toStdString();
     EXPECT_FALSE(live.exists());
     const QDir renamedLive(QDir(project.packBuildOutputDir).filePath("Desktop"));
-    EXPECT_TRUE(QFileInfo::exists(renamedLive.filePath("Keep.bytes")));
+    EXPECT_TRUE(QFileInfo::exists(renamedLive.filePath("ProjectData.bytes")));
+    EXPECT_EQ(QJsonDocument::fromJson(readFileBytes(projectDataPath)).object()
+        .value("platforms").toArray().first().toObject().value("name").toString(), QStringLiteral("Desktop"));
+    const auto renamedCompanion = readFileBytes(renamedLive.filePath("ProjectData.json"));
+    const auto metadataAlias = QDir(project.packBuildOutputDir).filePath("projectdata.JSON");
+    ASSERT_TRUE(QFile::rename(projectDataPath, projectDataPath + ".tmp"));
+    ASSERT_TRUE(QFile::rename(projectDataPath + ".tmp", metadataAlias));
+    project.buildExportProjectData = false;
+    const auto disabled = exporter.ExportAllPacks(project, {}, opts);
+    ASSERT_TRUE(disabled.success) << disabled.error.toStdString();
+    EXPECT_FALSE(QFileInfo::exists(projectDataPath));
+    EXPECT_FALSE(QFileInfo::exists(metadataAlias));
+    EXPECT_EQ(readFileBytes(renamedLive.filePath("ProjectData.json")), renamedCompanion);
+    EXPECT_EQ(readFileBytes(renamedLive.filePath("ProjectData.bytes")), keptBytes);
     opts.selection.actionTargeting.push_back({harkentest::StudioObjectId(22 + kStableIdBias), false, {}});
+    project.buildExportProjectData = true;
+    project.projectLanguages.clear();
     const auto emptyExport = exporter.ExportAllPacks(project, {}, opts);
     ASSERT_TRUE(emptyExport.success) << emptyExport.error.toStdString();
     const auto empty = VNX::ProjectPackExporter::FinalizePackExport(project.packBuildOutputDir,
-        project.platforms, {platform}, true, emptyExport.artifacts);
+        project, {platform}, true, emptyExport.artifacts);
     ASSERT_TRUE(empty.success) << empty.error.toStdString();
     EXPECT_EQ(empty.removedPackCount, 1);
     EXPECT_EQ(readPublication(renamedLive.path()).size(), 1);
     EXPECT_TRUE(QFileInfo::exists(renamedLive.filePath("Init.bytes")));
     EXPECT_TRUE(actionCompanions(readPublication(renamedLive.path())).isEmpty());
+    EXPECT_TRUE(QJsonDocument::fromJson(readFileBytes(projectDataPath)).object()
+        .value("languages").toArray().isEmpty());
     registry.clear();
 }
 

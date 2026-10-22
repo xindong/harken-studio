@@ -4517,12 +4517,13 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
             if (!ProjectPackExporter::ValidatePackBuildPlatforms(snapshot->project.platforms,
                     projectLease->platforms, succeededPlatforms, &publicationError)) {
                 ++failedCount;
-            } else if (packPaths.isEmpty() && !canceled && succeededPlatforms.size() == genPlatforms.size()) {
+            } else if (!canceled && succeededPlatforms.size() == genPlatforms.size()) {
+                const bool cleanOutput = selfCleaning && packPaths.isEmpty();
                 const auto publication = ProjectPackExporter::FinalizePackExport(
-                    baseDir, projectLease->platforms, genPlatforms, selfCleaning, publishedArtifacts);
+                    baseDir, snapshot->project, genPlatforms, cleanOutput, publishedArtifacts);
                 if (publication.success) {
                     removedCount += publication.removedPackCount;
-                    if (selfCleaning)
+                    if (cleanOutput)
                         PackArtifactCache::instance().removeUnselectedPlatforms(baseDir, genPlatforms);
                 } else {
                     ++failedCount;

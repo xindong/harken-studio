@@ -46,6 +46,12 @@ ProjectPublishPage::ProjectPublishPage(QWidget* parent)
     row->addWidget(packBuildOutputDirEdit_, 1);
     row->addWidget(packBuildOutputDirBrowseBtn_, 0);
     form->addRow(dirLabel, rowWidget);
+    buildExportProjectDataCheckBox_ = new QCheckBox();
+    buildExportProjectDataCheckBox_->setObjectName(QStringLiteral("buildExportProjectDataCheckBox"));
+    form->addRow(tr("Export Project Data"), buildExportProjectDataCheckBox_);
+    buildExportPackMetadataCheckBox_ = new QCheckBox();
+    buildExportPackMetadataCheckBox_->setObjectName(QStringLiteral("buildExportPackMetadataCheckBox"));
+    form->addRow(tr("Export Pack Metadata"), buildExportPackMetadataCheckBox_);
     static_cast<QVBoxLayout*>(packGroup->layout())->addLayout(form);
 
     body->addWidget(packGroup);
@@ -57,6 +63,10 @@ ProjectPublishPage::ProjectPublishPage(QWidget* parent)
             this, &ProjectPublishPage::onPackBuildOutputDirEditingFinished);
     connect(packBuildOutputDirBrowseBtn_, &QPushButton::clicked,
             this, &ProjectPublishPage::onPackBuildOutputDirBrowseClicked);
+    connect(buildExportProjectDataCheckBox_, &QCheckBox::toggled, this,
+        [this] { emit dirtyChanged(); });
+    connect(buildExportPackMetadataCheckBox_, &QCheckBox::toggled, this,
+        [this] { emit dirtyChanged(); });
 
     auto* waveformGroup = makeSection(tr("Waveform Export"));
     ContextInfo::tag(waveformGroup, ContextTopic::forPanel(QStringLiteral("settings.publish.waveforms")));
@@ -114,6 +124,8 @@ QString ProjectPublishPage::categoryLabel() const
 void ProjectPublishPage::rememberBaseline()
 {
     baselinePackBuildOutputDir_ = packBuildOutputDirEdit_->text();
+    baselineExportProjectData_ = buildExportProjectDataCheckBox_->isChecked();
+    baselineExportPackMetadata_ = buildExportPackMetadataCheckBox_->isChecked();
     baselineExportWaveforms_ = buildExportWaveformsCheckBox_->isChecked();
     baselineWaveformOutputDir_ = waveformOutputDirEdit_->text();
 }
@@ -131,6 +143,8 @@ void ProjectPublishPage::load()
         const QSignalBlocker blocker(waveformOutputDirEdit_);
         waveformOutputDirEdit_->setText(project ? project->buildWaveformOutputDir : QString());
     }
+    buildExportProjectDataCheckBox_->setChecked(project && project->buildExportProjectData);
+    buildExportPackMetadataCheckBox_->setChecked(project && project->buildExportPackMetadata);
     buildExportWaveformsCheckBox_->setChecked(project && project->buildExportWaveforms);
     rememberBaseline();
 }
@@ -140,6 +154,8 @@ bool ProjectPublishPage::hasExternalChanges() const
     const auto project = projectLease_.lock();
     return !project || ProjectManager::instance().currentProject() != project.get()
         || project->packBuildOutputDir != baselinePackBuildOutputDir_
+        || project->buildExportProjectData != baselineExportProjectData_
+        || project->buildExportPackMetadata != baselineExportPackMetadata_
         || project->buildExportWaveforms != baselineExportWaveforms_
         || project->buildWaveformOutputDir != baselineWaveformOutputDir_;
 }
@@ -180,6 +196,30 @@ bool ProjectPublishPage::applyPackBuildOutputDir()
     return true;
 }
 
+bool ProjectPublishPage::applyProjectDataExport()
+{
+    const auto result = ActionManager::instance().execute(
+        QStringLiteral("set_build_project_data_export"),
+        QJsonObject{{QStringLiteral("enabled"), buildExportProjectDataCheckBox_->isChecked()}}, ActionSource::GUI);
+    if (!result.success) {
+        QMessageBox::warning(this, tr("Project Data Export"), result.errorMessage);
+        return false;
+    }
+    return true;
+}
+
+bool ProjectPublishPage::applyPackMetadataExport()
+{
+    const auto result = ActionManager::instance().execute(
+        QStringLiteral("set_build_pack_metadata_export"),
+        QJsonObject{{QStringLiteral("enabled"), buildExportPackMetadataCheckBox_->isChecked()}}, ActionSource::GUI);
+    if (!result.success) {
+        QMessageBox::warning(this, tr("Pack Metadata Export"), result.errorMessage);
+        return false;
+    }
+    return true;
+}
+
 bool ProjectPublishPage::applyWaveformSettings()
 {
     const auto result = ActionManager::instance().execute(
@@ -196,7 +236,8 @@ bool ProjectPublishPage::applyWaveformSettings()
 
 bool ProjectPublishPage::apply()
 {
-    if (!applyPackBuildOutputDir() || !applyWaveformSettings()) return false;
+    if (!applyPackBuildOutputDir() || !applyProjectDataExport()
+        || !applyPackMetadataExport() || !applyWaveformSettings()) return false;
     rememberBaseline();
     emit dirtyChanged();
     return true;
@@ -205,6 +246,8 @@ bool ProjectPublishPage::apply()
 bool ProjectPublishPage::isDirty() const
 {
     return packBuildOutputDirEdit_->text() != baselinePackBuildOutputDir_
+        || buildExportProjectDataCheckBox_->isChecked() != baselineExportProjectData_
+        || buildExportPackMetadataCheckBox_->isChecked() != baselineExportPackMetadata_
         || buildExportWaveformsCheckBox_->isChecked() != baselineExportWaveforms_
         || waveformOutputDirEdit_->text() != baselineWaveformOutputDir_;
 }

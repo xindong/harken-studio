@@ -510,16 +510,26 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
                 packBuildCancel_.reset();
                 return;
             }
-            QString indexError;
+            QString publicationError;
             QVector<PackArtifactMetadata> completedArtifacts;
             for (const auto& artifacts : publishedArtifacts)
                 completedArtifacts.append(artifacts);
-            if (!ProjectPackExporter::ValidatePackBuildPlatforms(snapshot->project.platforms,
-                    project->platforms, succeededPlatforms, &indexError)
-                || !ProjectPackExporter::FinalizePackOutputs(outputPath, project->platforms,
-                    platforms, succeededPlatforms, &indexError, completedArtifacts)) {
+            bool finalized = ProjectPackExporter::ValidatePackBuildPlatforms(snapshot->project.platforms,
+                project->platforms, succeededPlatforms, &publicationError);
+            if (finalized) {
+                if (allSuccess && !cancel->load(std::memory_order_relaxed)) {
+                    const auto publication = ProjectPackExporter::FinalizePackExport(
+                        outputPath, snapshot->project, platforms, false, completedArtifacts);
+                    finalized = publication.success;
+                    publicationError = publication.error;
+                } else {
+                    finalized = ProjectPackExporter::FinalizePackOutputs(outputPath, project->platforms,
+                        platforms, succeededPlatforms, &publicationError, completedArtifacts);
+                }
+            }
+            if (!finalized) {
                 allSuccess = false;
-                firstError = indexError;
+                firstError = publicationError;
             }
             for (auto it = publishedArtifacts.cbegin(); it != publishedArtifacts.cend(); ++it)
                 PackArtifactCache::instance().publish(it.key(), it.value(), !harkenstudio::IsNull(actionStableId));

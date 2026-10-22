@@ -937,6 +937,8 @@ struct ProjectData
     std::vector<DeploymentProfile> deploymentProfiles;
 
     QString packBuildOutputDir;
+    bool buildExportProjectData = false;
+    bool buildExportPackMetadata = false;
     bool buildExportWaveforms = false;
     QString buildWaveformOutputDir;
 

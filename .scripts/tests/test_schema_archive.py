@@ -62,6 +62,14 @@ class SchemaArchiveTest(unittest.TestCase):
         self.assertNotIn("schema_version", pack["currentSource"].get("properties", {}))
         self.assertNotIn("schema_version", pack["current"].get("properties", {}))
         self.assertEqual(pack["current"]["x-harken-format"]["formatVersion"], PACK_VERSION)
+        next_pack = MODULE["materialize_source"]("Pack", pack["currentSource"], PACK_VERSION + 1)
+        self.assertEqual(pack["currentSource"]["$defs"]["schemaVersion"], {"type": "integer"})
+        self.assertEqual(next_pack["$defs"]["schemaVersion"]["const"],
+                         next_pack["x-harken-format"]["formatVersion"])
+        for branch in next_pack["oneOf"]:
+            document = next_pack["$defs"][branch["$ref"].removeprefix("#/$defs/")] if "$ref" in branch else branch
+            self.assertEqual(document["properties"]["schemaVersion"], {"$ref": "#/$defs/schemaVersion"})
+            self.assertIn("schemaVersion", document["required"])
 
     def test_current_rejects_embedded_generations(self) -> None:
         for tree, top, slot in (
@@ -83,6 +91,16 @@ class SchemaArchiveTest(unittest.TestCase):
                 invalid.setdefault("properties", {})[slot] = {"type": "integer", "const": 1}
             with self.assertRaises(ValueError):
                 MODULE["materialize_source"](tree, invalid, 2)
+
+        pack = MODULE["load_tree"]("Pack")
+        invalid = copy.deepcopy(pack["currentSource"])
+        invalid["$defs"]["schemaVersion"]["const"] = PACK_VERSION
+        with self.assertRaises(ValueError):
+            MODULE["materialize_source"]("Pack", invalid, PACK_VERSION)
+        invalid = copy.deepcopy(pack["current"])
+        invalid["$defs"]["schemaVersion"]["const"] = PACK_VERSION + 1
+        with self.assertRaises(ValueError):
+            MODULE["validate_pack_source"](invalid)
 
     def test_schema_deprecated_marker_requires_boolean(self) -> None:
         MODULE["validate_schema_language"]({"type": "string", "deprecated": True}, "field")

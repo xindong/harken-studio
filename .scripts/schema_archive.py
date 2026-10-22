@@ -397,7 +397,7 @@ def validate_pack_source(source: dict[str, Any]) -> None:
         raise ValueError("Pack contract needs a positive formatVersion")
     if metadata.get("validationMode") != "generated-json":
         raise ValueError("Pack contract must use generated-json validation")
-    expected_locator = "reader:pack-companion" if companion else "json:$.schema_version"
+    expected_locator = "json:$.schemaVersion" if companion else "json:$.schema_version"
     if metadata.get("versionLocator") != expected_locator:
         raise ValueError(f"Pack contract must use {expected_locator}")
     if metadata.get("rebuildPolicy") != "rebuild":
@@ -418,6 +418,8 @@ def validate_pack_source(source: dict[str, Any]) -> None:
     definitions = schema.get("$defs", {})
     if not isinstance(definitions, dict):
         raise ValueError("Pack definitions must be an object")
+    if companion and definitions.get("schemaVersion", {}).get("const") != version:
+        raise ValueError("Pack schemaVersion does not match formatVersion")
     for name, definition in definitions.items():
         validate_schema_language(definition, f"Pack.$defs.{name}")
     validate_schema_language({key: value for key, value in schema.items() if key != "$defs"}, "Pack")
@@ -494,7 +496,12 @@ def materialize_source(tree: str, source: dict[str, Any], version: int) -> dict[
         if not isinstance(metadata, dict) or "formatVersion" in metadata:
             raise ValueError("Pack current must omit the formatVersion product integer")
         metadata["formatVersion"] = version
-        if metadata.get("formatId") != "generated.pack-companion":
+        if metadata.get("formatId") == "generated.pack-companion":
+            slot = result.get("$defs", {}).get("schemaVersion")
+            if slot != {"type": "integer"}:
+                raise ValueError("Pack current schemaVersion must be an integer without a fixed value")
+            slot["const"] = version
+        else:
             slot = result.get("properties", {}).get("schema_version")
             if slot != {"type": "integer"}:
                 raise ValueError("Pack current schema_version must be an integer without a fixed value")

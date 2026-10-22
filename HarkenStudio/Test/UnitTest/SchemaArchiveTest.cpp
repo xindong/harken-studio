@@ -689,15 +689,23 @@ TEST(ProjectSchemaValidator, AcceptsRetiredSignalGraphInputButRejectsBindingProp
 TEST(ProjectSchemaValidator, PackSidecarAcceptsCurrentAndRejectsUnlistedVersions)
 {
     constexpr int current = HARKEN_PACK_SCHEMA_VERSION;
-    const QJsonObject action{{"name", "Play_Sound"},
+    const QJsonObject action{{"schemaVersion", current},
+                             {"name", "Play_Sound"},
                              {"guid", "11111111-2222-3333-4444-555555555555"}};
-    const QJsonObject init{{"variables", QJsonArray{}}};
+    const QJsonObject init{{"schemaVersion", current}, {"variables", QJsonArray{}}};
     for (const QJsonObject& companion : {action, init}) {
         EXPECT_TRUE(VNX::ProjectSchemaValidator::validatePackManifest(
                         current, companion, QStringLiteral("Pack companion")).isEmpty());
+        auto invalid = companion;
+        invalid.remove("schemaVersion");
+        EXPECT_FALSE(VNX::ProjectSchemaValidator::validatePackManifest(
+                         current, invalid, QStringLiteral("Pack companion")).isEmpty());
         for (const int version : {0, current + 1, current + 2}) {
             EXPECT_FALSE(VNX::ProjectSchemaValidator::validatePackManifest(
                              version, companion, QStringLiteral("Pack companion")).isEmpty());
+            invalid.insert("schemaVersion", version);
+            EXPECT_FALSE(VNX::ProjectSchemaValidator::validatePackManifest(
+                             current, invalid, QStringLiteral("Pack companion")).isEmpty());
         }
     }
 }
@@ -708,7 +716,8 @@ TEST(ProjectSchemaValidator, PackSidecarRequiresExactlyOneCurrentDocumentShape)
         return VNX::ProjectSchemaValidator::validatePackManifest(
             HARKEN_PACK_SCHEMA_VERSION, value, QStringLiteral("Pack sidecar"));
     };
-    QJsonObject action{{"name", "Play_Sound"},
+    QJsonObject action{{"schemaVersion", HARKEN_PACK_SCHEMA_VERSION},
+                       {"name", "Play_Sound"},
                        {"guid", "11111111-2222-3333-4444-555555555555"}};
     EXPECT_TRUE(validate(action).isEmpty());
     EXPECT_FALSE(validate(QJsonObject{}).isEmpty());
@@ -726,13 +735,16 @@ TEST(ProjectSchemaValidator, PackSidecarRequiresExactlyOneCurrentDocumentShape)
     QJsonObject variable{{"name", "Surface"},
                          {"guid", "33333333-4444-5555-6666-777777777777"},
                          {"labels", QJsonArray{label}}};
-    EXPECT_TRUE(validate(QJsonObject{{"variables", QJsonArray{variable}}}).isEmpty());
+    EXPECT_TRUE(validate(QJsonObject{{"schemaVersion", HARKEN_PACK_SCHEMA_VERSION},
+                                    {"variables", QJsonArray{variable}}}).isEmpty());
     variable.insert("unit", "meters");
-    EXPECT_FALSE(validate(QJsonObject{{"variables", QJsonArray{variable}}}).isEmpty());
+    EXPECT_FALSE(validate(QJsonObject{{"schemaVersion", HARKEN_PACK_SCHEMA_VERSION},
+                                     {"variables", QJsonArray{variable}}}).isEmpty());
     variable.remove("unit");
     label.insert("guid", "00000000-0000-0000-0000-000000000000");
     variable.insert("labels", QJsonArray{label});
-    EXPECT_FALSE(validate(QJsonObject{{"variables", QJsonArray{variable}}}).isEmpty());
+    EXPECT_FALSE(validate(QJsonObject{{"schemaVersion", HARKEN_PACK_SCHEMA_VERSION},
+                                     {"variables", QJsonArray{variable}}}).isEmpty());
 }
 
 TEST(ProjectSchemaValidator, CurrentVersionPreservesMetadataBoundariesAcrossDocumentTypes)

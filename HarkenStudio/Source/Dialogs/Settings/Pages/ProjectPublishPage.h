@@ -32,6 +32,8 @@ public:
 private:
     void rememberBaseline();
     bool applyPackBuildOutputDir();
+    bool applyProjectDataExport();
+    bool applyPackMetadataExport();
     bool applyWaveformSettings();
     void onPackBuildOutputDirBrowseClicked();
     void onPackBuildOutputDirEditingFinished();
@@ -40,12 +42,16 @@ private:
     std::weak_ptr<ProjectData> projectLease_;
     QLineEdit* packBuildOutputDirEdit_ = nullptr;
     QPushButton* packBuildOutputDirBrowseBtn_ = nullptr;
+    QCheckBox* buildExportProjectDataCheckBox_ = nullptr;
+    QCheckBox* buildExportPackMetadataCheckBox_ = nullptr;
     QCheckBox* buildExportWaveformsCheckBox_ = nullptr;
     QWidget* waveformOutputRow_ = nullptr;
     QLineEdit* waveformOutputDirEdit_ = nullptr;
     QPushButton* waveformOutputDirBrowseBtn_ = nullptr;
 
     QString baselinePackBuildOutputDir_;
+    bool baselineExportProjectData_ = false;
+    bool baselineExportPackMetadata_ = false;
     bool baselineExportWaveforms_ = false;
     QString baselineWaveformOutputDir_;
 };

@@ -167,7 +167,7 @@ public:
                                            QString* errorOut = nullptr);
 
     static ExportResult FinalizePackExport(const QString& baseDir,
-                                           const QVector<ProjectPlatform>& platforms,
+                                           const ProjectData& project,
                                            const QStringList& selectedPlatformIds,
                                            bool selfCleaning,
                                            const QVector<PackArtifactMetadata>& artifacts = {});
