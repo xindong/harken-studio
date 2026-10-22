@@ -1771,6 +1771,59 @@ TEST(CanonicalPackSetActivate, CompanionTraceOwnsInputsAndReplaysRenameReplaceme
     EXPECT_NE(0, ReplayCompanionTrace(corrupt, output)) << output;
 }
 
+TEST(CanonicalPackSetActivate, CompanionTraceRechecksBadBytesBeforeUnreadMembers) {
+    using namespace companionfixture;
+    const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) / "companion-trace-bad-bytes";
+    std::filesystem::create_directories(directory);
+    const auto trace = directory / "bad-bytes.vtrc";
+    EngineSession session(CanonicalActivationConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    ASSERT_EQ(VN_OK, Vn_TraceStart(trace.string().c_str()));
+    const auto initId = PackId("Init");
+    const auto contentId = PackId("action_" + harken::ObjectIdString(action));
+    Provider init{Build(true, initId)}, bad{Build(false, contentId)}, unread;
+    bad.bytes[0] ^= 1;
+    VnPackNamesV1 initNames{sizeof(VnPackNamesV1), 0, project, {}, "", "", 0, 0, nullptr, nullptr};
+    VnPackNamesV1 names{sizeof(VnPackNamesV1), 0, project, action, "Play_A", "", 0, 0, nullptr, nullptr};
+    std::vector<VnCanonicalPackSetMemberV2> members{Member(initId, true, &init, &initNames)};
+    VnCanonicalPackSetActivationReportV1 report{};
+    ASSERT_EQ(VN_OK, Activate(members, report));
+    members[0] = Member(initId, true, nullptr, nullptr, report.initHandle, VN_PACK_MEMBER_KEEP);
+    members.push_back(Member(contentId, false, &bad, &names));
+    members.push_back(Member(contentId + 1, false, &unread, &names));
+    EXPECT_EQ(VN_BAD_PACK, Activate(members, report, 1));
+    EXPECT_EQ(1u, bad.reads);
+    EXPECT_EQ(1u, bad.releases);
+    EXPECT_EQ(0u, unread.reads);
+    EXPECT_EQ(1u, session.Engine()->packComposition.Published()->ledger.setRevision);
+    ASSERT_EQ(VN_OK, Vn_TraceStop());
+    std::string output;
+    EXPECT_EQ(0, ReplayCompanionTrace(trace, output)) << output;
+
+    // A different recorded result must be rejected by replaying the captured bad bytes.
+    std::ifstream stream(trace, std::ios::binary);
+    std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(stream)), {});
+    std::size_t resultOffset = 0;
+    for (std::size_t offset = ReadTraceU32(bytes, 8); offset + harken::kTraceRecordHeaderBytes <= bytes.size();) {
+        const auto size = ReadTraceU32(bytes, offset);
+        const auto type = bytes[offset + 4] | (static_cast<unsigned>(bytes[offset + 5]) << 8);
+        const auto payload = offset + harken::kTraceRecordHeaderBytes;
+        ASSERT_LE(payload + size, bytes.size());
+        if (type == harken::kTraceRecordApiCall &&
+            ReadTraceU32(bytes, payload) == harken::kTraceCallActivateCanonicalPackSetV2 &&
+            size >= 40 && ReadTraceU32(bytes, payload + size - 40) == static_cast<std::uint32_t>(VN_BAD_PACK))
+            resultOffset = payload + size - 40;
+        offset = payload + size;
+    }
+    ASSERT_NE(0u, resultOffset);
+    const auto changedResult = static_cast<std::uint32_t>(VN_PACK_PROVIDER_FAILED);
+    for (unsigned i = 0; i < 4; ++i) bytes[resultOffset + i] = static_cast<std::uint8_t>(changedResult >> (i * 8));
+    const auto changed = directory / "changed-result.vtrc";
+    ASSERT_TRUE(harkentest::WriteBytes(changed, bytes));
+    output.clear();
+    EXPECT_NE(0, ReplayCompanionTrace(changed, output)) << output;
+}
+
 TEST(CanonicalPackSetActivate, CompanionTraceReplaysEmbeddedMediaAfterSourceLoss) {
     using namespace companionfixture;
     const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) / "companion-trace-media";

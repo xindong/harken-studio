@@ -113597,7 +113597,8 @@ VnResult ActivateCanonicalPackSetImpl(
     const std::vector<std::uint32_t>* operations = nullptr,
     const std::vector<std::shared_ptr<const PackCompanionNames>>* names = nullptr,
     std::uint64_t capturedNameBytes = 0,
-    std::vector<std::uint64_t>* traceResources = nullptr) {
+    std::vector<std::uint64_t>* traceResources = nullptr,
+    bool* traceInputMissing = nullptr) {
     VariableOperationScope variableOperation(&engine);
     if (descriptor == nullptr || outReport == nullptr ||
         descriptor->structSize != sizeof(VnCanonicalPackSetActivationDescV1) ||
@@ -113696,7 +113697,11 @@ VnResult ActivateCanonicalPackSetImpl(
                         const auto result = AcquireCanonicalSetMember(engine,
                             MemberToLoadDesc(desc.members[i]), init, &staged, &captured[i],
                             traceResources != nullptr ? &(*traceResources)[i] : nullptr);
-                        if (result != VN_OK) return result;
+                        if (result != VN_OK) {
+                            if (traceInputMissing != nullptr && traceResources != nullptr)
+                                *traceInputMissing = (*traceResources)[i] == 0;
+                            return result;
+                        }
                         semanticKey = Fnv1a64(&captured[i].hash, sizeof(captured[i].hash), semanticKey);
                     }
                 }
@@ -113851,8 +113856,10 @@ VnResult ActivateCanonicalPackSetV2(
     std::vector<std::uint64_t> resources(recording ? desc.memberCount : 0, 0);
     const auto* before = engine.packComposition.Published();
     const auto priorRevision = before != nullptr ? before->ledger.setRevision : 0;
+    bool missingInput = false;
     const auto result = ActivateCanonicalPackSetImpl(engine, &desc, outReport, &operations, &names,
-        engine.config.maxPackDecodeStagingBytes - nameBudget, recording ? &resources : nullptr);
+        engine.config.maxPackDecodeStagingBytes - nameBudget, recording ? &resources : nullptr,
+        recording ? &missingInput : nullptr);
     if (!recording) return result;
     auto trace = ::TraceStateful(&engine, kTraceCallActivateCanonicalPackSetV2);
     if (result == VN_INVALID_ARG) {
@@ -113861,13 +113868,11 @@ VnResult ActivateCanonicalPackSetV2(
     }
     trace.U32(1).U64(desc.expectedCurrentInitHandle).U64(desc.baseSetRevision)
         .U64(desc.setRevision).U32(desc.memberCount);
-    bool missingInput = false;
     for (std::uint32_t i = 0; i < desc.memberCount; ++i) {
         const auto& member = members[i];
         trace.U32(operations[i]).U64(member.packStableId).U64(member.expectedHandle)
             .U32(member.packKind).U64(resources[i]);
         if (names[i] == nullptr) continue;
-        missingInput |= resources[i] == 0;
         const auto& captured = *names[i];
         trace.ObjectId(captured.projectId).ObjectId(captured.rootActionId)
             .Str(captured.rootName.c_str()).Str(captured.language.c_str())

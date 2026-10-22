@@ -105,6 +105,55 @@ TEST(CanonicalPackSetStorage, KeptOwnerSurvivesSharedOwnerRemovalAndOldReaderRep
     EXPECT_EQ(0u, packs.RetiringCount());
 }
 
+TEST(CanonicalPackSetStorage, MixedKeepMutationsPreserveDistinctTokensAndOldReaders) {
+    harken::PCMRegistry registry;
+    harken::PackTable packs(3, 8, 4);
+    const auto soundA = harkentest::ObjectId(100), soundB = harkentest::ObjectId(101);
+    SetStorageMember init(20, harkentest::ObjectId(99), 0.0f);
+    SetStorageMember a(21, soundA, 0.25f), b(22, soundB, 0.5f);
+    harken::PackTable::PreparedSetMutation first;
+    ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet({init.Input(), a.Input()}, {}, registry, &first));
+    packs.CommitPreparedSet(&first, registry);
+    const auto handleA = first.HandleAt(1);
+    const auto tokenA = first.ResourceTokenAt(1);
+    harken::PackTable::CanonicalSetMember keepInit{
+        first.HandleAt(0), init.key, nullptr, nullptr, true};
+    harken::PackTable::CanonicalSetMember keepA{handleA, a.key, nullptr, nullptr, true};
+
+    harken::PackTable::PreparedSetMutation addition;
+    ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet({keepInit, keepA, b.Input()}, {}, registry, &addition));
+    packs.CommitPreparedSet(&addition, registry);
+    const auto tokenB = addition.ResourceTokenAt(2);
+    EXPECT_EQ(first.ResourceTokenAt(0), addition.ResourceTokenAt(0));
+    EXPECT_EQ(tokenA, addition.ResourceTokenAt(1));
+    EXPECT_NE(tokenA, tokenB);
+    const harken::PackResourceRevisionToken oldTokens[]{tokenA, tokenB};
+    harken::PackResourceClosureToken reader = 0;
+    ASSERT_EQ(VN_OK, packs.AcquireResourceClosure(oldTokens, 2, &reader));
+
+    SetStorageMember changedA(21, soundA, 0.75f);
+    changedA.key.contentRevision = 2;
+    harken::PackTable::CanonicalSetMember keepB{
+        addition.HandleAt(2), b.key, nullptr, nullptr, true};
+    harken::PackTable::PreparedSetMutation replacement;
+    ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet(
+        {keepInit, changedA.Input(handleA), keepB}, {}, registry, &replacement));
+    EXPECT_NE(tokenA, replacement.ResourceTokenAt(1));
+    EXPECT_NE(tokenB, replacement.ResourceTokenAt(1));
+    EXPECT_EQ(tokenB, replacement.ResourceTokenAt(2));
+    packs.CommitPreparedSet(&replacement, registry);
+    EXPECT_FLOAT_EQ(0.75f, registry.Lookup(soundA).channels[0][0]);
+    packs.SweepRetiring(+[](void*, harken::PackResourceRevisionToken) { return false; });
+    harken::PCMView oldA{}, oldB{};
+    ASSERT_EQ(VN_OK, packs.LookupExactClosure(reader, soundA, registry, &oldA));
+    ASSERT_EQ(VN_OK, packs.LookupExactClosure(reader, soundB, registry, &oldB));
+    EXPECT_FLOAT_EQ(0.25f, oldA.channels[0][0]);
+    EXPECT_FLOAT_EQ(0.5f, oldB.channels[0][0]);
+    ASSERT_EQ(VN_OK, packs.ReleaseResourceClosure(reader));
+    packs.SweepRetiring(+[](void*, harken::PackResourceRevisionToken) { return false; });
+    EXPECT_EQ(0u, packs.RetiringCount());
+}
+
 TEST(CanonicalPackSetStorage, CancellationPreservesHandleTokenAndCookieFloors) {
     harken::PCMRegistry registry;
     harken::PackTable packs(2, 4);

@@ -1150,6 +1150,7 @@ VnResult PackTable::PrepareCanonicalSet(
                 }
             }
         }
+        std::uint64_t newRevisionOrdinal = 0;
         for (std::size_t i = 0; i < members.size(); ++i) {
             const CanonicalSetMember& member = members[i];
             if (member.keep) {
@@ -1191,7 +1192,7 @@ VnResult PackTable::PrepareCanonicalSet(
             change.revisionKey = member.revisionKey;
             change.revisionKey.handle = change.handle;
             change.revisionKey.slotGeneration = generation;
-            change.resourceToken = m_nextResourceRevisionToken + i;
+            change.resourceToken = m_nextResourceRevisionToken + newRevisionOrdinal++;
             change.entries.resize(member.media->size());
             for (std::size_t entry = 0; entry < member.media->size(); ++entry) {
                 const auto& media = (*member.media)[entry];
