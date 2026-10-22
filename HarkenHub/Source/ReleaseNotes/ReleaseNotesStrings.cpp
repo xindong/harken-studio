@@ -1,6 +1,8 @@
 #include <QtTranslation>
 
 static const char* const kReleaseNotesStrings[] = {
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Unity SDK checks recognize equivalent text across UTF-8, UTF-16, UTF-32, and common legacy encodings, including BOM and line-ending conversions. Encoding-only differences are listed as Review recommended without blocking updates, and equivalent read-only files retain their existing bytes."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Hub uses the refreshed light application icon for its windows, app bundle, Windows shortcuts, taskbar, and system tray."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Engine Integrations shows the installed SDK version and file status. The quick-change menu lists local SDK versions and identifies the current source."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "SDK changes keep safety checks, confirmation, progress, and results in one window, with clear downgrade warnings and separate lists of modified and missing files."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "SDK updates, repairs, and removal check write protection before confirmation and again before changing files. Failures highlight read-only or inaccessible files and explain how to restore write access."),

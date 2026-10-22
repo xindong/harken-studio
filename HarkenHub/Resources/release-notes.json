@@ -7,6 +7,24 @@
   },
   "releases": [
     {
+      "version": "0.1.65",
+      "date": "2026-10-22",
+      "pullRequests": [],
+      "contributors": [
+        "liuxin2-sys"
+      ],
+      "changes": [
+        {
+          "category": "improved",
+          "text": "Unity SDK checks recognize equivalent text across UTF-8, UTF-16, UTF-32, and common legacy encodings, including BOM and line-ending conversions. Encoding-only differences are listed as Review recommended without blocking updates, and equivalent read-only files retain their existing bytes."
+        },
+        {
+          "category": "improved",
+          "text": "Hub uses the refreshed light application icon for its windows, app bundle, Windows shortcuts, taskbar, and system tray."
+        }
+      ]
+    },
+    {
       "version": "0.1.64",
       "date": "2026-10-22",
       "pullRequests": [100],

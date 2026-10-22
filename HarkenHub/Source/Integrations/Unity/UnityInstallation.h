@@ -31,6 +31,8 @@ bool isDocumentationOrSample(const QString& relative);
 QByteArray normalizedTextHash(const QString& path, QByteArray* crlfHash = nullptr);
 bool matchesTextHashIgnoringLineEndings(const QString& path, const QByteArray& expected,
                                        const QByteArray& normalizedExpected = {});
+bool matchesTextHashIgnoringEncoding(const QString& path, const QByteArray& expected,
+                                    const QByteArray& normalizedExpected = {});
 bool validatePath(const QString& path, QString* error);
 bool validateTree(const QString& path, QString* error);
 bool resolveTarget(const QString& projectRoot, const QString& input,

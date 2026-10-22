@@ -72,6 +72,7 @@ struct UnityIntegrationResult
     QByteArray planHash;
     QStringList modifiedFiles;
     QStringList lineEndingFiles;
+    QStringList encodingFiles;
     QStringList missingFiles;
     QStringList missingOptionalFiles;
     QStringList unreadableFiles;

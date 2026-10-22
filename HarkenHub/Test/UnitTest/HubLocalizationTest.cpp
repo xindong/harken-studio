@@ -41,6 +41,7 @@ TEST(HubLocalizationTest, CustomSdkSafetyMessagesTranslateWithoutChangingPaths)
         QStringLiteral("Installed SDK 1.2.3 from a verified staging directory; copied 12 managed file(s) and preserved 3 target-only file(s)."),
         QStringLiteral("Verified the content integrity of 12 Harken-managed SDK file(s)."),
         QStringLiteral("179 SDK text file(s) differ only in LF/CRLF line endings; contents are unchanged."),
+        QStringLiteral("Review recommended: 2 SDK text file(s) use a different encoding; text contents match after normalizing encoding and line endings. SDK updates can continue."),
         QStringLiteral("42 documentation/sample file(s) are missing; SDK updates can continue."),
         QStringLiteral("Missing documentation/sample files (does not block SDK updates):"),
         QStringLiteral("12 SDK file(s) differ from their contents at installation."),
