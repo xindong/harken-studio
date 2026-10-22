@@ -499,17 +499,6 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
                                          allSuccess, firstError, pmGuard,
                                          cancel, runId, project, snapshot, platformActivity, outputPath,
                                          platforms, succeededPlatforms, outputLock, actionStableId]() mutable {
-            QString indexError;
-            QVector<PackArtifactMetadata> completedArtifacts;
-            for (const auto& artifacts : publishedArtifacts)
-                completedArtifacts.append(artifacts);
-            if (!ProjectPackExporter::ValidatePackBuildPlatforms(snapshot->project.platforms,
-                    project->platforms, succeededPlatforms, &indexError)
-                || !ProjectPackExporter::FinalizePackOutputs(outputPath, project->platforms,
-                    platforms, succeededPlatforms, &indexError, completedArtifacts)) {
-                allSuccess = false;
-                firstError = indexError;
-            }
             if (!pmGuard || !pmGuard->currentProject()
                 || pmGuard->currentProject() != project.get()
                 || !PackGenerationRecordStore::instance().isCurrentRun(runId)) {
@@ -520,6 +509,17 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
                 packBuildResult_ = QJsonObject();
                 packBuildCancel_.reset();
                 return;
+            }
+            QString indexError;
+            QVector<PackArtifactMetadata> completedArtifacts;
+            for (const auto& artifacts : publishedArtifacts)
+                completedArtifacts.append(artifacts);
+            if (!ProjectPackExporter::ValidatePackBuildPlatforms(snapshot->project.platforms,
+                    project->platforms, succeededPlatforms, &indexError)
+                || !ProjectPackExporter::FinalizePackOutputs(outputPath, project->platforms,
+                    platforms, succeededPlatforms, &indexError, completedArtifacts)) {
+                allSuccess = false;
+                firstError = indexError;
             }
             for (auto it = publishedArtifacts.cbegin(); it != publishedArtifacts.cend(); ++it)
                 PackArtifactCache::instance().publish(it.key(), it.value(), !harkenstudio::IsNull(actionStableId));

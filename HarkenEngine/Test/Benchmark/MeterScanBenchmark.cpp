@@ -124,7 +124,7 @@ int main() {
     harken::Engine* engine = harken::detail::ActiveEngine();
 
     for (std::uint32_t b = 2; b <= kMaxBuses; ++b) {
-        const VnResult created = Vn_CreateBus(b, VN_BUS_MASTER);
+        const VnResult created = Vn_CreateBus(harkentest::ObjectId(b), VN_BUS_MASTER);
         if (created != VN_OK) {
             std::printf("FAIL: bus creation refused at %u (VnResult %d)\n",
                         b, static_cast<int>(created));
@@ -133,7 +133,8 @@ int main() {
         }
     }
     const VnResult paired = harken::InstallMeterProbe(
-        *engine, 9001, 2, VN_BUS_METER_TAP_POST_EFFECTS, 10, 200);
+        *engine, harkentest::ObjectId(9001), harkentest::ObjectId(2),
+        VN_BUS_METER_TAP_POST_EFFECTS, 10, 200);
     if (paired != VN_OK) {
         std::printf("FAIL: MeterProbe install refused (VnResult %d)\n",
                     static_cast<int>(paired));
@@ -157,7 +158,7 @@ int main() {
         VnPlayDesc play{};
         play.structSize = sizeof(VnPlayDesc);
         play.soundId = harkentest::ObjectId(1);
-        play.busId = 2 + (v % (kMaxBuses - 1)); // spread across every bus
+        play.busId = harkentest::ObjectId(2 + (v % (kMaxBuses - 1))); // spread across every bus
         play.volumeDb = -12.0f;
         play.loopCount = 1;
         VnVoiceHandle handle = 0;

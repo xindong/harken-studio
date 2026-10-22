@@ -4504,7 +4504,7 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
             if (canceled) break;
         }
         QMetaObject::invokeMethod(store,
-            [window, store, projectLease, snapshot, runId, canceled, failedCount, builtCount,
+            [window, store, projectLease, snapshot, runId, cancel, canceled, failedCount, builtCount,
              skippedCount, removedCount, baseDir, packPaths, selfCleaning,
              genPlatforms, succeededPlatforms, publishedArtifacts, platformActivity, outputLock]() mutable {
             if (!store->isCurrentRun(runId)) return;
@@ -4512,6 +4512,7 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
                 store->finishProgress(runId, true);
                 return;
             }
+            canceled = canceled || cancel->load(std::memory_order_relaxed);
             QString publicationError;
             if (!ProjectPackExporter::ValidatePackBuildPlatforms(snapshot->project.platforms,
                     projectLease->platforms, succeededPlatforms, &publicationError)) {
