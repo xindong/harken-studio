@@ -61775,9 +61775,9 @@ void FormatLogRecord(const harken::LogRecord& record, char* out,
         break;
     case harken::kLogCodePropertyCapacityEstimate:
         std::snprintf(out, capacity,
-                      "property worst-case estimate %llu exceeds command "
-                      "queue capacity %llu: publication will chunk under "
-                      "full load",
+                      "property capacity estimate (not usage): %llu "
+                      "spatial/bus updates, %llu queue slots; full-load "
+                      "updates may need batching",
                       static_cast<unsigned long long>(record.arg0),
                       static_cast<unsigned long long>(record.arg1));
         break;
