@@ -16,6 +16,16 @@ enum class EngineTargetHealth
     Unreadable
 };
 
+enum class SdkContentState
+{
+    NotChecked,
+    MatchesInstallation,
+    Modified,
+    Missing,
+    ModifiedAndMissing,
+    Unverified
+};
+
 struct EngineTargetObservation
 {
     bool validTarget = false;
@@ -26,6 +36,8 @@ struct EngineTargetObservation
     QString error;
     QString status;
     QString remediation;
+    SdkContentState sdkContentState = SdkContentState::NotChecked;
+    QString sdkContentDetails;
     bool dependencyRestricted = false;
     bool canChangeSdk = false;
     bool canMoveSdk = false;
@@ -39,7 +51,7 @@ public:
                         QString* error = nullptr);
     static bool resolve(EngineKind kind, const QString& input,
                         EngineTargetRecord* record, QString* error = nullptr);
-    static EngineTargetObservation observe(const EngineTargetRecord& record);
+    static EngineTargetObservation observe(const EngineTargetRecord& record, bool verifyContent = false);
 };
 
 }

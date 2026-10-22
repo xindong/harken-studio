@@ -475,6 +475,7 @@ void VersionsPage::refresh()
         addVersionRow(index, version, linkedCount(version.buildId));
     }
     tryStartVersionHighlight();
+    emit versionsRefreshed();
 }
 
 void VersionsPage::highlightVersion(const QString& executablePath)

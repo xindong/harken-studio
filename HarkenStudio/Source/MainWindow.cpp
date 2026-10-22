@@ -1449,6 +1449,7 @@ void MainWindow::setupDockWidgets()
 void MainWindow::configureDockManager()
 {
     ads::CDockManager::setConfigFlags(ads::CDockManager::DefaultOpaqueConfig);
+    ads::CDockManager::setConfigFlag(ads::CDockManager::HoveredTabHasCloseButton, true);
     ads::CDockManager::setConfigFlag(ads::CDockManager::DockAreaHasTabsMenuButton, true);
     ads::CDockManager::setConfigFlag(ads::CDockManager::DockAreaHasUndockButton, false);
     ads::CDockManager::setConfigFlag(ads::CDockManager::FocusHighlighting, true);

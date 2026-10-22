@@ -56,7 +56,6 @@ THIRD_PARTY_FILES = {
             REPO_ROOT / "HarkenStudio" / "ThirdParty" / "lmdb" / "LICENSE",
             "LMDB-LICENSE.txt",
         ),
-        (LEGAL_SOURCE_DIRS["studio"] / "Lucide-LICENSE.txt", "Lucide-LICENSE.txt"),
     ),
     "hub": (
         (LEGAL_SOURCE_DIRS["hub"] / "Qt6-THIRD-PARTY-NOTICES.txt", "Qt6-THIRD-PARTY-NOTICES.txt"),

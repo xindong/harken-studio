@@ -2,6 +2,8 @@
 
 #include <QDir>
 #include <QFile>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QScopeGuard>
 
 #ifdef Q_OS_WIN
@@ -16,11 +18,15 @@
 
 namespace VNX {
 
-bool checkUnityProjectClosed(const QString& project, QString* error)
+bool checkUnityProjectClosed(const QString& project, QString* error, bool* isOpen)
 {
+    static QMutex mutex;
+    const QMutexLocker locker(&mutex);
     error->clear();
+    if (isOpen) *isOpen = false;
     const QString path = QDir(project).absoluteFilePath(QStringLiteral("Temp/UnityLockfile"));
     const auto inUse = [&]() {
+        if (isOpen) *isOpen = true;
         *error = QStringLiteral("This Unity project is open. Close it before changing the SDK, then run the safety check again.");
         return false;
     };

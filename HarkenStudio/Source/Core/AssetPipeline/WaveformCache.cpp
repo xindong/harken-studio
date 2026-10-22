@@ -19,6 +19,7 @@
 #include <QMutexLocker>
 #include <QSemaphore>
 #include <QSet>
+#include <QWaitCondition>
 
 #include <atomic>
 
@@ -44,6 +45,13 @@ QHash<QString, quint64>& waveformRevisions()
     static QHash<QString, quint64> revisions;
     return revisions;
 }
+
+int waveformChangeDepth = 0;
+int waveformActiveReads = 0;
+QWaitCondition waveformReadersIdle;
+std::atomic<quint64> waveformReadEpoch{0};
+QHash<QString, uint32_t> deferredWaveforms;
+QHash<QString, QPair<quint64, uint32_t>> pendingWaveforms;
 
 struct SharedWaveform
 {
@@ -72,18 +80,64 @@ QString normalizedAudioPath(const QString& audioFilePath)
         QDir::cleanPath(QFileInfo(audioFilePath).absoluteFilePath()));
 }
 
-quint64 beginWaveformGeneration(const QString& audioFilePath)
+quint64 beginWaveformGeneration(const QString& audioFilePath, uint32_t targetPeaks = 0)
 {
-    const quint64 revision = waveformRevisionCounter().fetch_add(1, std::memory_order_relaxed) + 1;
     QMutexLocker lock(&waveformWriteMutex());
-    waveformRevisions()[normalizedAudioPath(audioFilePath)] = revision;
+    const QString path = normalizedAudioPath(audioFilePath);
+    if (waveformChangeDepth != 0) {
+        if (targetPeaks != 0)
+            deferredWaveforms.insert(path, targetPeaks);
+        return 0;
+    }
+    const quint64 revision = waveformRevisionCounter().fetch_add(1, std::memory_order_relaxed) + 1;
+    waveformRevisions()[path] = revision;
+    if (targetPeaks != 0)
+        pendingWaveforms.insert(path, {revision, targetPeaks});
     return revision;
 }
 
 bool isCurrentWaveformGeneration(const QString& audioFilePath, quint64 revision)
 {
-    return waveformRevisions().value(normalizedAudioPath(audioFilePath)) == revision;
+    return revision != 0 && waveformRevisions().value(normalizedAudioPath(audioFilePath)) == revision;
 }
+
+class WaveformReadScope
+{
+public:
+    explicit WaveformReadScope(const QString& path = {}, quint64 revision = 0)
+        : path_(path.isEmpty() ? QString() : normalizedAudioPath(path)), revision_(revision)
+    {
+        QMutexLocker lock(&waveformWriteMutex());
+        if (waveformChangeDepth != 0
+            || (!path.isEmpty() && !isCurrentWaveformGeneration(path, revision)))
+            return;
+        epoch_ = waveformReadEpoch.load(std::memory_order_relaxed);
+        active_ = true;
+        ++waveformActiveReads;
+    }
+
+    ~WaveformReadScope()
+    {
+        QMutexLocker lock(&waveformWriteMutex());
+        const auto pending = pendingWaveforms.constFind(path_);
+        if (pending != pendingWaveforms.cend() && pending->first == revision_)
+            pendingWaveforms.remove(path_);
+        if (active_ && --waveformActiveReads == 0)
+            waveformReadersIdle.wakeAll();
+    }
+
+    bool active() const { return active_; }
+    bool cancelled() const
+    {
+        return epoch_ != waveformReadEpoch.load(std::memory_order_relaxed);
+    }
+
+private:
+    QString path_;
+    quint64 revision_ = 0;
+    quint64 epoch_ = 0;
+    bool active_ = false;
+};
 
 QString waveformCachePathForAudio(const QString& audioFilePath)
 {
@@ -173,6 +227,37 @@ WaveformCache& WaveformCache::instance()
     return cache;
 }
 
+void WaveformCache::beginSourceFileChange()
+{
+    QMutexLocker lock(&waveformWriteMutex());
+    if (++waveformChangeDepth != 1)
+        return;
+    waveformReadEpoch.fetch_add(1, std::memory_order_relaxed);
+    for (auto it = pendingWaveforms.cbegin(); it != pendingWaveforms.cend(); ++it)
+        deferredWaveforms.insert(it.key(), it->second);
+    pendingWaveforms.clear();
+    waveformRevisions().clear();
+    sharedWaveforms().clear();
+    while (waveformActiveReads != 0)
+        waveformReadersIdle.wait(&waveformWriteMutex());
+}
+
+void WaveformCache::endSourceFileChange(bool regenerate)
+{
+    QHash<QString, uint32_t> deferred;
+    {
+        QMutexLocker lock(&waveformWriteMutex());
+        if (--waveformChangeDepth != 0)
+            return;
+        deferred.swap(deferredWaveforms);
+    }
+    if (regenerate) {
+        for (auto it = deferred.cbegin(); it != deferred.cend(); ++it)
+            if (QFileInfo(it.key()).isFile())
+                generateAsync(it.key(), it.value());
+    }
+}
+
 QString WaveformCache::cachePath(const QString& audioFilePath)
 {
     return waveformCachePathForAudio(audioFilePath);
@@ -182,6 +267,8 @@ bool WaveformCache::remove(const QString& audioFilePath)
 {
     QMutexLocker lock(&waveformWriteMutex());
     waveformRevisions().remove(normalizedAudioPath(audioFilePath));
+    pendingWaveforms.remove(normalizedAudioPath(audioFilePath));
+    deferredWaveforms.remove(normalizedAudioPath(audioFilePath));
     sharedWaveforms().remove(normalizedAudioPath(audioFilePath));
     QString path = cachePath(audioFilePath);
     if (QFile::exists(path)) {
@@ -192,7 +279,14 @@ bool WaveformCache::remove(const QString& audioFilePath)
 
 QFuture<bool> WaveformCache::generateAsync(const QString& audioFilePath, uint32_t targetPeaks)
 {
-    const quint64 revision = beginWaveformGeneration(audioFilePath);
+    const quint64 revision = beginWaveformGeneration(audioFilePath, targetPeaks);
+    if (revision == 0) {
+        QPromise<bool> result;
+        result.start();
+        result.addResult(false);
+        result.finish();
+        return result.future();
+    }
     return QtConcurrent::run([audioFilePath, targetPeaks, revision]() {
         return WaveformCache::generateForRevision(audioFilePath, targetPeaks, revision);
     });
@@ -202,13 +296,16 @@ QFuture<bool> WaveformCache::generateAsync(const QString& audioFilePath, uint32_
 bool WaveformCache::generate(const QString& audioFilePath, uint32_t targetPeaks)
 {
     return generateForRevision(audioFilePath, targetPeaks,
-                               beginWaveformGeneration(audioFilePath));
+                               beginWaveformGeneration(audioFilePath, targetPeaks));
 }
 
 bool WaveformCache::generateForRevision(const QString& audioFilePath,
                                          uint32_t targetPeaks,
                                          quint64 revision)
 {
+    const WaveformReadScope reading(audioFilePath, revision);
+    if (!reading.active())
+        return false;
     QFileInfo fileInfo(audioFilePath);
     if (!fileInfo.exists()) {
         qWarning() << "[WaveformCache] Audio file not found:" << audioFilePath;
@@ -293,6 +390,10 @@ bool WaveformCache::generateForRevision(const QString& audioFilePath,
 
         uint64_t framesRemaining = framesToRead;
         while (framesRemaining > 0) {
+            if (reading.cancelled()) {
+                drwav_uninit(&wav);
+                return false;
+            }
             uint64_t toRead = std::min(framesRemaining, static_cast<uint64_t>(maxBufferFrames));
             uint64_t framesRead = drwav_read_pcm_frames_f32(&wav, toRead, readBuffer.data());
             if (framesRead == 0) break;
@@ -325,6 +426,7 @@ bool WaveformCache::generateForRevision(const QString& audioFilePath,
     }
 
     drwav_uninit(&wav);
+    file.close();
 
     return writeVKD(cachePath(audioFilePath), audioFilePath, data,
                     sourceFileSize, sourceMtime, revision);
@@ -506,6 +608,9 @@ WaveformPeakData WaveformCache::readRange(const QString& audioFilePath,
                                          uint64_t startFrame, uint64_t frameCount,
                                          uint32_t targetPeaks)
 {
+    const WaveformReadScope reading;
+    if (!reading.active())
+        return {};
     if (frameCount == 0 || targetPeaks == 0)
         return {};
 
@@ -554,6 +659,10 @@ WaveformPeakData WaveformCache::readRange(const QString& audioFilePath,
         std::vector<float> samples(bufferFrames * data.numChannels);
         uint64_t read = 0;
         while (read < frameCount) {
+            if (reading.cancelled()) {
+                drwav_uninit(&wav);
+                return {};
+            }
             const uint64_t count = drwav_read_pcm_frames_f32(
                 &wav, std::min(bufferFrames, frameCount - read), samples.data());
             if (count == 0)
@@ -570,6 +679,7 @@ WaveformPeakData WaveformCache::readRange(const QString& audioFilePath,
     int sampleRate = 0;
     if (!HarkenEditor::Bridge::decodeAudioFileInterleaved(
             audioFilePath, samples, channels, sampleRate)
+        || reading.cancelled()
         || channels <= 0 || sampleRate <= 0
         || !prepare(samples.size() / channels, channels, sampleRate))
         return {};
@@ -878,6 +988,9 @@ bool WaveformCache::generateMidSideForRevision(const QString& audioFilePath,
                                                 WaveformPeakData& outData,
                                                 quint64 revision)
 {
+    const WaveformReadScope reading(audioFilePath, revision);
+    if (!reading.active())
+        return false;
     if (!load(audioFilePath, outData)) {
         qWarning() << "[WaveformCache] generateMidSide: failed to load existing VKD for" << audioFilePath;
         return false;
@@ -931,6 +1044,11 @@ bool WaveformCache::generateMidSideForRevision(const QString& audioFilePath,
             float sideMin = 1.0f, sideMax = -1.0f;
 
             while (framesToRead > 0) {
+                if (reading.cancelled()) {
+                    drwav_uninit(&wav);
+                    outData.midSidePeaks.clear();
+                    return false;
+                }
                 uint64_t chunk = std::min(framesToRead, static_cast<uint64_t>(kBufFrames));
                 uint64_t framesRead = drwav_read_pcm_frames_f32(&wav, chunk, readBuf.data());
                 if (framesRead == 0) break;
@@ -969,7 +1087,7 @@ bool WaveformCache::generateMidSideForRevision(const QString& audioFilePath,
             return false;
         }
 
-        if (decodedChannels < 2) {
+        if (decodedChannels < 2 || reading.cancelled()) {
             outData.midSidePeaks.clear();
             return false;
         }
@@ -1055,10 +1173,10 @@ QFuture<int> WaveformCache::rebuildAllAsync(const ProjectData* project,
         if (QFileInfo::exists(absPath)) audioPaths.append(absPath);
     }
 
-    QStringList toRebuild;
+    QList<QPair<QString, quint64>> toRebuild;
     for (const QString& path : audioPaths) {
         if (!WaveformCache::isValid(path))
-            toRebuild.append(path);
+            toRebuild.append({path, beginWaveformGeneration(path, VKD::DEFAULT_NUM_PEAKS)});
     }
 
     if (toRebuild.isEmpty()) {
@@ -1076,10 +1194,10 @@ QFuture<int> WaveformCache::rebuildAllAsync(const ProjectData* project,
         std::atomic<int> rebuilt{0};
         QList<QFuture<bool>> futures;
 
-        for (const QString& path : toRebuild) {
+        for (const auto& [path, revision] : toRebuild) {
             sem.acquire();
-            futures.append(QtConcurrent::run([path, &sem, &rebuilt]() -> bool {
-                bool ok = WaveformCache::generate(path);
+            futures.append(QtConcurrent::run([path, revision, &sem, &rebuilt]() -> bool {
+                bool ok = WaveformCache::generateForRevision(path, VKD::DEFAULT_NUM_PEAKS, revision);
                 if (ok)
                     rebuilt.fetch_add(1, std::memory_order_relaxed);
                 else

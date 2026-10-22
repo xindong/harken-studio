@@ -1736,6 +1736,70 @@ VnResult Vn_ActivateCanonicalPackSetV1(
 VnResult Vn_UnloadCanonicalPackSetV1(
     const VnCanonicalPackSetUnloadDescV1* desc);
 
+/* Companion names are supplied with the captured pack, never inferred from
+ * an authored-history catalog. Strings and rows are copied during the call.
+ * Init supplies all Variable names and any named subset of its Labels.
+ * Content supplies exactly its root Action name and the selected language
+ * (empty for General). Object identity remains the authored GUID. */
+typedef struct VnPackVariableNameV1 {
+    VnVariableId variableId;
+    const char* utf8Name;
+} VnPackVariableNameV1;
+
+typedef struct VnPackLabelNameV1 {
+    VnVariableId variableId;
+    VnObjectId labelId;
+    const char* utf8Name;
+} VnPackLabelNameV1;
+
+typedef struct VnPackNamesV1 {
+    uint32_t structSize;
+    uint32_t flags;
+    VnObjectId projectId;
+    VnObjectId rootActionId;
+    const char* utf8RootName;
+    const char* utf8Language;
+    uint32_t variableCount;
+    uint32_t labelCount;
+    const VnPackVariableNameV1* variables;
+    const VnPackLabelNameV1* labels;
+} VnPackNamesV1;
+
+#define VN_PACK_MEMBER_KEEP ((uint32_t)0u)
+#define VN_PACK_MEMBER_CONTENT ((uint32_t)1u)
+#define VN_PACK_MEMBER_NAME_ONLY ((uint32_t)2u)
+
+typedef struct VnCanonicalPackSetMemberV2 {
+    uint32_t structSize;
+    uint32_t operation;
+    VnCanonicalPackSetMemberV1 source;
+    const VnPackNamesV1* names;
+} VnCanonicalPackSetMemberV2;
+
+/* The complete desired set, Init first, remaining members ordered by pack ID.
+ * Keep has only source identity/kind/expectedHandle, with no source or names.
+ * Content and NameOnly capture the source and names; NameOnly requires the
+ * bytes to match the installed content. Omitted owners are unloaded atomically.
+ * V1 layouts and legacy semantics remain unchanged. A companion Init accepts
+ * only V2 mutations until unloaded; legacy catalog writes cannot replace it. */
+typedef struct VnCanonicalPackSetActivationDescV2 {
+    uint32_t structSize;
+    uint32_t flags;
+    VnPackHandle expectedCurrentInitHandle;
+    uint64_t baseSetRevision;
+    uint64_t setRevision;
+    uint32_t memberCount;
+    uint32_t memberStructSize;
+    const VnCanonicalPackSetMemberV2* members;
+    uint32_t outputMemberCapacity;
+    uint32_t outputMemberStructSize;
+    VnCanonicalPackSetMemberResultV1* outputMembers;
+} VnCanonicalPackSetActivationDescV2;
+
+VnResult Vn_ActivateCanonicalPackSetV2(
+    const VnCanonicalPackSetActivationDescV2* desc,
+    VnCanonicalPackSetActivationReportV1* outReport);
+
 typedef struct VnInitPackInspectReport {
     uint32_t structSize;
     uint32_t status;
@@ -1756,6 +1820,106 @@ typedef struct VnInitPackInspectReport {
  * retain bytes after return. */
 VnResult Vn_InspectInitPack(const VnPackLoadDesc* desc,
                             VnInitPackInspectReport* outReport);
+
+#define VN_PACK_PREVIEW_UNSUPPORTED ((uint32_t)0u)
+#define VN_PACK_PREVIEW_SOUND ((uint32_t)1u)
+#define VN_PACK_PREVIEW_RANDOM_SOUNDS ((uint32_t)2u)
+#define VN_PACK_OCCURRENCE_FIXED_GAIN ((uint32_t)1u)
+#define VN_PACK_OCCURRENCE_DURATION ((uint32_t)2u)
+
+typedef struct VnPackVariableFactV1 {
+    VnVariableId variableId;
+    uint32_t kind;
+    uint32_t writers;
+    float rangeMin;
+    float rangeMax;
+    float defaultValue;
+    uint32_t reserved0;
+    uint64_t executionFingerprint;
+    uint64_t labelMappingFingerprint;
+} VnPackVariableFactV1;
+
+typedef struct VnPackLabelFactV1 {
+    VnVariableId variableId;
+    VnObjectId labelId;
+    int32_t anchor;
+    uint32_t reserved0;
+} VnPackLabelFactV1;
+
+/* Facts about the converted Pack media, independent of preview classification.
+ * Source waveform rate/trim coordinates come from companion JSON and VKD. */
+typedef struct VnPackMediaFactV1 {
+    VnSoundId soundId;
+    uint64_t mediaChecksum;
+    uint64_t frameCount;
+    uint32_t sampleRate;
+    uint32_t channelCount;
+} VnPackMediaFactV1;
+
+typedef struct VnPackOccurrenceFactV1 {
+    VnObjectId rootPlayableId;
+    VnSoundId soundId;
+    uint32_t rootPlayableKind;
+    uint32_t childOrdinal; /* UINT32_MAX for a direct Sound. */
+    uint64_t rootProgramFingerprint;
+    uint64_t soundProgramFingerprint;
+    uint64_t occurrenceFingerprint;
+    uint64_t mediaChecksum;
+    uint64_t mediaFrameCount;
+    uint32_t sampleRate;
+    uint32_t channelCount;
+    uint32_t flags;
+    uint32_t reserved0;
+    float fixedGainDb;
+    float fixedGainLinear;
+    double durationSeconds;
+} VnPackOccurrenceFactV1;
+
+typedef struct VnPackInspectDescV1 {
+    uint32_t structSize;
+    uint32_t flags;
+    VnPackByteSpan pack;
+    VnPackByteSpan init; /* Required for Content; empty for Init. */
+    const VnPackNamesV1* names;
+    uint64_t maxInputBytes;
+    uint32_t variableCapacity;
+    uint32_t labelCapacity;
+    uint32_t occurrenceCapacity;
+    uint32_t mediaCapacity;
+    VnPackVariableFactV1* variables;
+    VnPackLabelFactV1* labels;
+    VnPackOccurrenceFactV1* occurrences;
+    VnPackMediaFactV1* media;
+} VnPackInspectDescV1;
+
+typedef struct VnPackInspectReportV1 {
+    uint32_t structSize;
+    uint32_t packKind;
+    VnObjectId projectId;
+    VnObjectId rootActionId;
+    uint64_t packStableId;
+    uint64_t initPackStableId;
+    uint64_t contentRevision;
+    uint64_t contentHash;
+    uint64_t initContentHash;
+    uint64_t executionFingerprint;
+    uint32_t variableCount;
+    uint32_t labelCount;
+    uint32_t occurrenceCount;
+    uint32_t previewKind;
+    uint32_t mediaCount;
+    uint32_t reserved0;
+} VnPackInspectReportV1;
+
+/* Legal before Init; borrows immutable inputs only for this call. Uses the
+ * shipping decoder and property fold. No engine or media installation occurs.
+ * Zero capacities with null arrays query required counts. Otherwise every
+ * capacity must suffice; VN_PACK_RESIDENT_CAPACITY writes only the report.
+ * Unsupported preview is a successful inspection with zero occurrences.
+ * Fixed gain is the authored source/main-output chain, not a mixed DSP result.
+ * Only flagged duration/gain fields are known. No decoder pointers escape. */
+VnResult Vn_InspectCanonicalPackV1(const VnPackInspectDescV1* desc,
+                                  VnPackInspectReportV1* outReport);
 
 typedef uint32_t VnCurrentWorldLoadStatus;
 

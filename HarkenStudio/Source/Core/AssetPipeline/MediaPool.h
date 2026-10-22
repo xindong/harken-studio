@@ -6,9 +6,11 @@
 #include <QVector>
 #include <QMap>
 #include <QHash>
+#include <QSet>
 #include <QFutureWatcher>
 #include <cstdint>
 #include <atomic>
+#include <memory>
 
 namespace VNX {
 
@@ -61,6 +63,9 @@ class MediaPool : public QObject
 
 public:
     static MediaPool& instance();
+
+    void beginSourceFileChange();
+    void endSourceFileChange();
 
     // Project root is owned by AssetRegistry; MediaPool reads through it so the
     // two never drift out of sync.
@@ -129,6 +134,24 @@ private:
         qint64        lastModified = 0;
     };
 
+    struct ReplacementBatchResult {
+        QVector<PendingReplace> pending;
+        QVector<BatchReplaceResult> results;
+    };
+
+    struct ReplacementBatch {
+        QFuture<ReplacementBatchResult> future;
+        uint64_t generation = 0;
+        bool published = false;
+    };
+
+    struct ConversionBatch {
+        std::shared_ptr<AssetConverter> converter;
+        QFuture<void> future;
+        QVector<uint32_t> sourceIDs;
+        ProjectPlatformId platform;
+    };
+
     static bool stageReplacement(AssetImporter& importer,
                                  const QString& projectRoot,
                                  uint32_t sourceID,
@@ -136,8 +159,10 @@ private:
                                  PendingReplace& pending,
                                  BatchReplaceResult& result);
     void commitReplacements(const QVector<PendingReplace>& pending);
+    void finishReplacementBatch(const std::shared_ptr<ReplacementBatch>& batch);
     void synchronizeSourceFiles(const QStringList& paths);
     void synchronizeSourceFilesAsync(const QStringList& paths);
+    void trackSourceFileTask(const QFuture<void>& future);
     void commitSourceFile(uint32_t sourceID, const QString& absolutePath,
                           const AudioMetadata& metadata, const QString& contentHash,
                           uint64_t lastModified);
@@ -160,6 +185,19 @@ private:
 
     std::atomic<bool> asyncRefreshRunning_{false};
     QFutureWatcherBase* sourceRefreshWatcher_ = nullptr;
+    QList<QFuture<void>> sourceFileFutures_;
+    QList<std::shared_ptr<ReplacementBatch>> replacementBatches_;
+    QList<std::shared_ptr<ConversionBatch>> conversionBatches_;
+    QStringList sourceRefreshPaths_;
+    QSet<QString> deferredSourceRefreshPaths_;
+    QSet<uint32_t> deferredWaveformIds_;
+    QMap<uint32_t, QString> deferredReplacements_;
+    QMap<ProjectPlatformId, QSet<uint32_t>> deferredConversions_;
+    ProjectPlatformId deferredStatusPlatform_;
+    bool deferredStatusRefresh_ = false;
+    bool projectClosedDuringFileChange_ = false;
+    int sourceFileChangeDepth_ = 0;
+    uint64_t sourceFileGeneration_ = 0;
     uint64_t sourceRefreshGeneration_ = 0;
     uint64_t cacheGeneration_ = 0;
 };

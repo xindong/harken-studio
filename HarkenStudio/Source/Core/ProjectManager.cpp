@@ -12,6 +12,7 @@
 #include "AssetPipeline/AssetGarbageCollector.h"
 #include "AssetPipeline/AssetImporter.h"
 #include "AssetPipeline/AssetRegistry.h"
+#include "AssetPipeline/MediaPool.h"
 #include "AssetPipeline/PathUtils.h"
 #include "AttenuationStore.h"
 #include "BindingContract.h"
@@ -2280,6 +2281,8 @@ bool ProjectManager::createProject(const ProjectConfig& config)
         return false;
     }
 
+    if (m_currentProject && !closeProject())
+        return false;
     AssetRegistry::instance().setProjectRoot(projectRoot);
     qDebug() << "[ProjectManager] New project root set to:" << projectRoot;
 
@@ -2774,7 +2777,8 @@ bool ProjectManager::commitPreparedProject(PreparedProject&& prepared)
         return true;
     }
     if (m_currentProject) {
-        closeProject();
+        if (!closeProject())
+            return false;
         if (m_runtimeCloseRevision) {
             m_queuedPreparedProject.emplace(std::move(prepared));
             return true;
@@ -2964,6 +2968,11 @@ void ProjectManager::reconcileAssetsOnOpen(int bindingLoadFailures)
 bool ProjectManager::saveProject()
 {
     if (!m_currentProject) return false;
+    QString sourceRecoveryError;
+    if (!SourceFileSystem::recoverDiscard(&sourceRecoveryError)) {
+        emit errorOccurred(sourceRecoveryError);
+        return false;
+    }
     m_fileWatcher.refreshSources();
     if (!PathUtils::isValidPackBuildOutputDir(m_currentProject->packBuildOutputDir,
                                              m_currentProject->projectPath)) {
@@ -3193,24 +3202,31 @@ bool ProjectManager::closeProject()
             audio.stopAll(0.0f);
         }
 
+        auto& mediaPool = MediaPool::instance();
+        mediaPool.beginSourceFileChange();
+        const auto resumeReaders = qScopeGuard([&] { mediaPool.endSourceFileChange(); });
+        const bool resumeWatcher = m_fileWatcher.isWatching();
+        m_fileWatcher.stopWatching();
+        const auto restoreWatcher = qScopeGuard([&] {
+            if (resumeWatcher && m_currentProject)
+                m_fileWatcher.startWatching(QFileInfo(m_currentProject->projectPath).absolutePath());
+        });
+        QString discardError;
+        bool rollbackFailed = false;
+        if (!SourceFileSystem::discardChanges(&discardError, &rollbackFailed)) {
+            if (rollbackFailed) {
+                UndoRedoManager::instance().clear();
+                UndoRedoManager::instance().undoStack()->resetClean();
+            }
+            emit errorOccurred(discardError);
+            return false;
+        }
+        AssetRegistry::instance().discardUncommittedCaches();
         m_closing = true;
         m_runtimePrepared = false;
-
-        m_fileWatcher.stopWatching();
-
         m_itemSaveState.reset();
         UndoRedoManager::instance().clear();
         m_folderSaveState.reset();
-
-        if (!AssetRegistry::instance().projectRoot().isEmpty()) {
-            const int discarded = AssetRegistry::instance().discardUncommittedFiles();
-            if (discarded > 0) {
-                qDebug() << "[ProjectManager] closeProject: discarded" << discarded
-                         << "uncommitted import file(s).";
-            }
-        }
-
-        SourceFileSystem::discardChanges();
         AssetRegistry::instance().clear();
         qDebug() << "[ProjectManager] AssetRegistry cleared.";
 

@@ -159,6 +159,15 @@
 </context>
 <context>
     <name>HubReleaseNotes</name>
+    <message><source>Engine Integrations shows the installed SDK version and file status. The quick-change menu lists local SDK versions and identifies the current source.</source><translation>集成列表显示已安装的 SDK 版本和文件状态。快捷更换菜单列出本地 SDK 版本，并标明当前使用的来源。</translation></message>
+    <message><source>SDK changes keep safety checks, confirmation, progress, and results in one window, with clear downgrade warnings and separate lists of modified and missing files.</source><translation>更换 SDK 的安全检查、确认、执行进度和结果集中在同一窗口，明确提示降级，并分别列出已修改和缺失的文件。</translation></message>
+    <message><source>SDK updates, repairs, and removal check write protection before confirmation and again before changing files. Failures highlight read-only or inaccessible files and explain how to restore write access.</source><translation>SDK 更新、修复和卸载在确认前及实际修改前检查写入权限。失败时醒目标出只读或无法写入的文件，并说明如何恢复写入权限。</translation></message>
+    <message><source>Automatic SDK scans run quietly in the background. Local SDK choices refresh after Studio installation and when opening the source menus.</source><translation>自动 SDK 扫描在后台静默运行。Studio 安装完成后以及打开 SDK 来源菜单时，会刷新本地可选版本。</translation></message>
+    <message><source>SDK operation windows show a red engine-running warning only when the target project is open. Unity integration reports open as text files stored in Hub's application-data folder.</source><translation>SDK 操作窗口仅在目标工程已打开时显示红色引擎运行提示。Unity 集成报告改为文本文件，并保存在 Hub 的应用数据目录中。</translation></message>
+    <message><source>Integration menus distinguish full SDK and project-association management from quick SDK changes. Project columns offer clearly named folder actions, including right-click access, and SDK status tooltips label the installation path.</source><translation>集成菜单明确区分完整的 SDK 与工程关联管理和快捷更换入口。工程列提供名称清楚的文件夹操作并支持右键打开，SDK 状态悬浮提示明确标注安装路径。</translation></message>
+    <message><source>Project-association guidance explains that each Harken project and game project can belong to only one local association.</source><translation>工程关联说明明确指出，每个 Harken 工程和游戏工程只能属于一个本地关联。</translation></message>
+    <message><source>Double-clicking a Studio version preselects that version when creating a new project.</source><translation>双击 Studio 版本后，新建工程会默认选择刚才双击的版本。</translation></message>
+    <message><source>Hub uses the updated application icon for its windows, app bundle, Windows shortcuts, taskbar, and system tray.</source><translation>Hub 的工具窗口、应用程序、Windows 快捷方式、任务栏及系统托盘使用更新后的应用图标。</translation></message>
     <message>
         <source>Unity SDK management no longer reports that a closed project is still open because of a leftover lock file. SDK checks, installation, updates, removal, moves, and recovery can proceed once the project is no longer in use.</source>
         <translation>修复 Unity 工程关闭后，因残留锁文件仍被误判为正在运行的问题。工程不再被占用后，即可正常检查、安装、更新、卸载、移动和恢复 SDK。</translation>
@@ -782,6 +791,57 @@ Continue?</source>
 </context>
 <context>
     <name>HarkenHub</name>
+    <message><source>Not a directory: %1</source><translation>此路径不是目录：%1</translation></message>
+    <message><source>Directories without required create or rename access:
+%1</source><translation>以下目录缺少创建或重命名所需的权限：
+%1</translation></message>
+    <message><source>Could not prepare the Hub report directory.</source><translation>无法准备 Hub 报告目录。</translation></message>
+    <message><source>Cannot create the Hub application-data directory: %1</source><translation>无法创建 Hub 应用数据目录：%1</translation></message>
+    <message><source>Cannot resolve the Hub application-data directory: %1</source><translation>无法解析 Hub 应用数据目录的实际路径：%1</translation></message>
+    <message><source>SDK file write access check failed.</source><translation>SDK 文件写入权限检查未通过。</translation></message>
+    <message><source>Some files required for this SDK operation cannot be changed. No SDK files were changed.</source><translation>本次 SDK 操作需要修改的部分文件无法更改，SDK 文件未发生变更。</translation></message>
+    <message><source>Read-only files:
+%1</source><translation>以下文件处于只读状态：
+%1</translation></message>
+    <message><source>Files that could not be opened for writing:
+%1</source><translation>以下文件无法以写入方式打开：
+%1</translation></message>
+    <message><source>%1
+Reason: %2</source><translation>%1
+原因：%2</translation></message>
+    <message><source>Check out or unlock the listed files if required by version control. Otherwise, check write protection, access permissions and programs using these files, then run the safety check again.</source><translation>如果版本控制要求签出或解锁，请先处理以上文件；否则请检查文件的只读属性、访问权限和占用程序，然后重新运行安全检查。</translation></message>
+    <message><source>JSON report was written, but the text removal report failed.</source><translation>JSON 报告已写入，但 TXT 卸载报告写入失败。</translation></message>
+    <message><source>JSON report was written, but the text report failed.</source><translation>JSON 报告已写入，但 TXT 报告写入失败。</translation></message>
+    <message><source>SDK %1 | Studio %2</source><translation>SDK %1 | Studio %2</translation></message>
+    <message><source>Manage SDK and Project Links</source><translation>管理 SDK 与工程关联</translation></message>
+    <message><source>Open Harken Project Folder</source><translation>打开 Harken 工程文件夹</translation></message>
+    <message><source>Open Game Project Folder</source><translation>打开游戏工程文件夹</translation></message>
+    <message><source>Quick Change SDK</source><translation>快捷更换 SDK</translation></message>
+    <message><source>Manage project links, verify SDK files, change versions, move or uninstall the SDK, and view detailed reports.</source><translation>管理工程关联、校验 SDK 文件、更换版本、迁移或卸载 SDK，并查看详细报告。</translation></message>
+    <message><source>Installed: %1</source><translation>已安装：%1</translation></message>
+    <message><source>Installed SDK: %1</source><translation>当前已安装 SDK：%1</translation></message>
+    <message><source>Current SDK installation path:
+%1</source><translation>SDK 当前安装路径：
+%1</translation></message>
+    <message><source>Files match installation</source><translation>文件与安装时一致</translation></message>
+    <message><source>Checking SDK status...</source><translation>正在检查 SDK 状态…</translation></message>
+    <message><source>Files modified</source><translation>文件已修改</translation></message>
+    <message><source>Files missing</source><translation>文件缺失</translation></message>
+    <message><source>Files modified and missing</source><translation>文件已修改且有缺失</translation></message>
+    <message><source>File verification incomplete</source><translation>文件校验未完成</translation></message>
+    <message><source> (Installed source)</source><translation>（当前安装来源）</translation></message>
+    <message><source> (Same version number as installed)</source><translation>（与已安装版本同号）</translation></message>
+    <message><source>This is the source recorded for the installed SDK. File verification compares the installed files with their installation record; the source folder may have changed since installation.</source><translation>这是安装记录中的 SDK 来源。文件校验对照的是安装时的记录；来源目录本身可能已在安装后发生变化。</translation></message>
+    <message><source>Unknown</source><translation>未知</translation></message>
+    <message><source>Update available: %1</source><translation>可升级至 %1</translation></message>
+    <message><source>Local SDK packages available: %1</source><translation>本机有 %1 个 SDK 安装包可选</translation></message>
+    <message><source>No local SDK sources are available.</source><translation>没有可用的本地 SDK 来源。</translation></message>
+    <message><source>SDKs with the same version number can contain different files. Select a source to check its contents.</source><translation>版本号相同的 SDK 也可能包含不同的文件。选择来源后将检查实际内容。</translation></message>
+    <message><source> (Upgrade)</source><translation>（可升级）</translation></message>
+    <message><source> (Older version)</source><translation>（较旧版本）</translation></message>
+    <message><source>SDK files will be checked before you confirm the change.</source><translation>确认更换前会先检查 SDK 文件。</translation></message>
+    <message><source>The installed SDK is no longer available. Open Manage Integration to review its status.</source><translation>已安装的 SDK 已不可用。请打开“集成管理”查看状态。</translation></message>
+    <message><source>Change SDK — %1</source><translation>更换 SDK — %1</translation></message>
     <message><source>HarkenStudio is still running from this version: %1</source><translation>此版本的 HarkenStudio 仍在运行：%1</translation></message>
     <message><source>Close Studio and other programs running from this installation, then retry Repair. No installation files were replaced.</source><translation>请关闭此安装目录中的 Studio 及其他正在运行的程序，然后重试“修复”。安装文件未被替换。</translation></message>
     <message><source>Another install transaction is running</source><translation>另一个安装任务正在运行</translation></message>
@@ -1120,8 +1180,8 @@ SDK 安装位置：
         <translation>SDK 内容一致，未修改 SDK 文件。</translation>
     </message>
     <message>
-        <source>Close the game engine before continuing.</source>
-        <translation>请先关闭游戏引擎，再继续操作。</translation>
+        <source>Check write permission for the Hub report directory: %1</source>
+        <translation>请检查 Hub 报告目录的写入权限：%1</translation>
     </message>
     <message>
         <source>Check Passed</source>
@@ -2495,8 +2555,8 @@ Diagnostic log: %2</source>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="800"/>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1542"/>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1558"/>
-        <source>Edit Integration</source>
-        <translation>编辑集成</translation>
+        <source>Manage Integration</source>
+        <translation>集成管理</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="146"/>
@@ -3766,7 +3826,7 @@ Engine project:
     </message>
     <message>
         <source>SDK VERSION</source>
-        <translation type="vanished">SDK 版本</translation>
+        <translation>SDK 版本</translation>
     </message>
     <message>
         <source>STATUS</source>
@@ -5160,7 +5220,7 @@ Choose or install a Harken Studio version that supports this project format.</so
     <message><source>SDK files changed after the safety check. Run the check again before continuing.</source><translation>安全检查后 SDK 文件发生了变化，请重新检查后再继续。</translation></message>
     <message><source>Installed SDK verification failed. Review the backup and restore the project before retrying.</source><translation>安装后的 SDK 验证失败，请检查备份并恢复工程后再重试。</translation></message>
     <message><source>An Unreal Editor uses a relative project path with the same project name as this target. Reopen it with an absolute .uproject path so Hub can identify the project before changing SDK files.</source><translation>有 Unreal 编辑器使用相对路径打开了与目标同名的工程，Hub 无法确认是否为本工程。请使用 .uproject 的绝对路径重新打开，再进行 SDK 安全检查。</translation></message>
-        <message><source>Association only controls whether this project pair appears in Engine Integrations. SDK checks and management do not require association.</source><translation>关联仅决定这组工程是否显示在 Hub 的“引擎集成”列表中。未关联也可检查和管理 SDK。</translation></message>
+        <message><source>Linking adds this project pair to Engine Integrations and establishes a one-to-one relationship in this Hub. Unlink the pair before linking either project to another. SDK checks and management do not require linking.</source><translation>关联会将这组工程加入“引擎集成”列表，并在本机 Hub 中建立一对一关系。任一工程如需关联其他工程，请先解除当前关联。未关联也可检查和管理 SDK。</translation></message>
         <message><source>Add this project pair to Engine Integrations. No project or SDK files are changed.</source><translation>将这组工程加入 Hub 的“引擎集成”列表，不修改工程或 SDK 文件。</translation></message>
         <message><source>Remove this project pair from Engine Integrations. Project files and the installed SDK are kept.</source><translation>将这组工程从 Hub 的“引擎集成”列表移除，保留工程文件和已安装的 SDK。</translation></message>
         <message><source>View Resolution...</source><translation>查看解决办法...</translation></message>
@@ -5272,5 +5332,47 @@ Close Unreal Editor before continuing. Any paths hard-coded in your project must
         <message><source>Affected files:
 %1</source><translation>受影响的文件：
 %1</translation></message>
-    </context>
+        <message><source>Project and SDK Paths</source><translation>工程与 SDK 路径</translation></message>
+    <message><source>Open Report</source><translation>打开报告</translation></message>
+    <message><source>SDK integration failed. Review the log for details.</source><translation>SDK 集成失败，请查看日志中的详细原因。</translation></message>
+    <message><source>Applying SDK...</source><translation>正在更换 SDK…</translation></message>
+    <message><source>Checking SDK...</source><translation>正在检查 SDK…</translation></message>
+    <message><source>Confirm SDK Change</source><translation>确认更换 SDK</translation></message>
+    <message><source>Confirm SDK Installation</source><translation>确认安装 SDK</translation></message>
+    <message><source>Game project: %1 | Harken project: %2</source><translation>游戏工程：%1 | Harken 工程：%2</translation></message>
+    <message><source> (Downgrade)</source><translation>（降级）</translation></message>
+    <message><source>Harken project:
+%1
+
+Game project:
+%2
+
+SDK source:
+%3
+
+SDK installation location:
+%4</source><translation>Harken 工程：
+%1
+
+游戏工程：
+%2
+
+SDK 来源：
+%3
+
+SDK 安装位置：
+%4</translation></message>
+    <message><source>SDK files changed. Review the refreshed results and confirm again. No SDK files were changed.</source><translation>检查后文件发生了变化，请查看更新后的检查结果并重新确认。本次操作未修改 SDK 文件。</translation></message>
+    <message><source>Check complete. Review the changes, then confirm to continue.</source><translation>检查完成，请查看文件变化，再确认执行。</translation></message>
+    <message><source>Locally modified files to overwrite or remove: %1</source><translation>将被覆盖或移除的本地修改文件：%1 个</translation></message>
+    <message><source>Missing installed SDK files: %1</source><translation>当前 SDK 缺失文件：%1 个</translation></message>
+    <message><source>The SDK files could not be checked safely.</source><translation>SDK 文件未通过安全检查。</translation></message>
+    <message><source>The SDK contains an unsafe path.</source><translation>SDK 中存在不安全的路径。</translation></message>
+    <message><source>Cannot read SDK file: %1</source><translation>无法读取 SDK 文件：%1</translation></message>
+    <message><source>Locally modified files overwritten or removed: %1</source><translation>已覆盖或移除的本地修改文件：%1 个</translation></message>
+    <message><source>SDK files missing before the change: %1</source><translation>更换前缺失的 SDK 文件：%1 个</translation></message>
+    <message><source>Files added</source><translation>已新增文件</translation></message>
+    <message><source>Files updated</source><translation>已更新文件</translation></message>
+    <message><source>Files removed</source><translation>已移除文件</translation></message>
+</context>
 </TS>

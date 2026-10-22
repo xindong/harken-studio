@@ -862,7 +862,11 @@ TEST_F(ProjectSettingsDialogTest, DisablingResampleAppliesWithoutLosingRatesAndS
     ASSERT_TRUE(UndoRedoManager::instance().redo());
     EXPECT_EQ(ProjectPlatformSemantics::platformsToJson(manager.currentProject()->platforms), after);
     const auto path = manager.currentProject()->projectPath;
-    ASSERT_TRUE(manager.saveProject());
+    QStringList saveErrors;
+    QObject errorContext;
+    QObject::connect(&manager, &ProjectManager::errorOccurred, &errorContext,
+        [&saveErrors](const QString& error) { saveErrors.append(error); });
+    ASSERT_TRUE(manager.saveProject()) << saveErrors.join(QLatin1Char('\n')).toStdString();
     manager.closeProject();
     ASSERT_TRUE(manager.loadProject(path));
     EXPECT_EQ(ProjectPlatformSemantics::platformsToJson(manager.currentProject()->platforms), after);

@@ -65,8 +65,6 @@ COMPONENT_INPUTS = (
      "url": "https://github.com/zlib-ng/zlib-ng", "legalFiles": ["zlib-LICENSE.txt"]},
     {"id": "apple-libcompression", "notice": "Apple libcompression", "scope": "system-library-not-redistributed",
      "url": "https://developer.apple.com/documentation/compression", "evidence": []},
-    {"id": "lucide", "notice": "Lucide icons", "products": ["studio"], "url": "https://lucide.dev",
-     "legalFiles": ["Lucide-LICENSE.txt"]},
     {"id": "heroicons", "notice": "Heroicons", "products": ["hub"],
      "url": "https://github.com/tailwindlabs/heroicons", "legalFiles": ["Heroicons-LICENSE.txt"]},
 )

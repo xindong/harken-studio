@@ -18,6 +18,7 @@
 
 #ifdef Q_OS_WIN
 #include <windows.h>
+#include <sddl.h>
 #endif
 
 namespace {
@@ -60,6 +61,61 @@ TEST(IntegrationDirectoryTest, ExistingDestinationIsNeverReplaced)
     QFile preserved(target + "/existing.txt");
     ASSERT_TRUE(preserved.open(QIODevice::ReadOnly));
     EXPECT_EQ(preserved.readAll(), "existing");
+}
+
+TEST(IntegrationDirectoryTest, ChecksCreationAndRenamePermissionsWithoutChangingContents)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString parent = directory.filePath("plugins");
+    const QString installed = parent + "/SDK";
+    ASSERT_TRUE(writeFile(installed + "/payload.txt", "original"));
+    QString error;
+    EXPECT_TRUE(VNH::checkIntegrationDirectoryChanges({parent + "/nested/new"}, {installed}, &error));
+#ifdef Q_OS_WIN
+    HANDLE token = nullptr;
+    ASSERT_TRUE(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token));
+    const auto closeToken = qScopeGuard([&]() { CloseHandle(token); });
+    DWORD bytes = 0;
+    GetTokenInformation(token, TokenUser, nullptr, 0, &bytes);
+    ASSERT_GT(bytes, 0u);
+    QByteArray tokenData(bytes, Qt::Uninitialized);
+    ASSERT_TRUE(GetTokenInformation(token, TokenUser, tokenData.data(), bytes, &bytes));
+    LPWSTR sid = nullptr;
+    ASSERT_TRUE(ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER*>(tokenData.data())->User.Sid, &sid));
+    const QString account = '*' + QString::fromWCharArray(sid);
+    LocalFree(sid);
+    const auto restore = qScopeGuard([&]() {
+        QProcess::execute("icacls", {parent, "/remove:d", account});
+        QProcess::execute("icacls", {installed, "/remove:d", account});
+    });
+    ASSERT_EQ(QProcess::execute("icacls", {parent, "/deny", account + ":(AD)"}), 0);
+#else
+    const auto permissions = QFileInfo(parent).permissions();
+    const auto restore = qScopeGuard([&]() { QFile::setPermissions(parent, permissions); });
+    ASSERT_TRUE(QFile::setPermissions(parent, permissions & ~(QFile::WriteOwner | QFile::WriteGroup | QFile::WriteOther | QFile::WriteUser)));
+#endif
+    EXPECT_TRUE(VNH::checkIntegrationFilesWritable({installed + "/payload.txt"}, &error));
+    const bool canCreate = VNH::checkIntegrationDirectoryChanges({parent + "/nested/new"}, {}, &error);
+    EXPECT_FALSE(QFileInfo::exists(parent + "/nested"));
+    const bool created = QDir().mkpath(parent + "/nested/new");
+    EXPECT_EQ(canCreate, created) << error.toStdString();
+    if (!canCreate) EXPECT_TRUE(error.contains(QDir::toNativeSeparators(parent))) << error.toStdString();
+    if (created) ASSERT_TRUE(QDir(parent + "/nested").removeRecursively());
+#ifdef Q_OS_WIN
+    ASSERT_EQ(QProcess::execute("icacls", {parent, "/remove:d", account}), 0);
+    ASSERT_EQ(QProcess::execute("icacls", {parent, "/deny", account + ":(DC)"}), 0);
+    ASSERT_EQ(QProcess::execute("icacls", {installed, "/deny", account + ":(D)"}), 0);
+#endif
+    const bool canRename = VNH::checkIntegrationDirectoryChanges({}, {installed}, &error);
+    QString renameError;
+    const bool renamed = VNH::renameIntegrationDirectory(installed, parent + "/Moved", &renameError);
+    EXPECT_EQ(canRename, renamed) << error.toStdString() << '\n' << renameError.toStdString();
+    if (renamed) ASSERT_TRUE(VNH::renameIntegrationDirectory(parent + "/Moved", installed));
+    EXPECT_FALSE(QFileInfo::exists(parent + "/nested"));
+    QFile payload(installed + "/payload.txt");
+    ASSERT_TRUE(payload.open(QIODevice::ReadOnly));
+    EXPECT_EQ(payload.readAll(), "original");
 }
 
 #ifdef Q_OS_WIN
@@ -106,6 +162,38 @@ TEST(IntegrationFileWriteTest, PersistentLockKeepsPreviousContentsAndReportsFail
     QFile report(path);
     ASSERT_TRUE(report.open(QIODevice::ReadOnly));
     EXPECT_EQ(report.readAll(), "new report");
+}
+
+TEST(IntegrationFileWriteTest, WritePreflightReportsReadOnlyAndLockedFilesWithoutChangingThem)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString readOnly = directory.filePath("readonly %1.txt");
+    const QString locked = directory.filePath("locked %2.txt");
+    ASSERT_TRUE(writeFile(readOnly, "original readonly"));
+    ASSERT_TRUE(writeFile(locked, "original locked"));
+    const auto permissions = QFileInfo(readOnly).permissions();
+    const auto restore = qScopeGuard([&]() { QFile::setPermissions(readOnly, permissions); });
+    ASSERT_TRUE(QFile::setPermissions(readOnly, QFile::ReadOwner | QFile::ReadUser));
+    HANDLE handle = CreateFileW(reinterpret_cast<LPCWSTR>(locked.utf16()), GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    ASSERT_NE(handle, INVALID_HANDLE_VALUE);
+    QString error;
+    EXPECT_FALSE(VNH::checkIntegrationFilesWritable({readOnly, locked}, &error));
+    CloseHandle(handle);
+    EXPECT_TRUE(error.contains("Read-only files:"));
+    EXPECT_TRUE(error.contains("Files that could not be opened for writing:"));
+    EXPECT_TRUE(error.contains(QDir::toNativeSeparators(readOnly)));
+    EXPECT_TRUE(error.contains(QDir::toNativeSeparators(locked)));
+    ASSERT_TRUE(QFile::setPermissions(readOnly, permissions));
+    EXPECT_TRUE(VNH::checkIntegrationFilesWritable({readOnly, locked}, &error));
+    EXPECT_TRUE(error.isEmpty());
+    QFile original(readOnly);
+    ASSERT_TRUE(original.open(QIODevice::ReadOnly));
+    EXPECT_EQ(original.readAll(), "original readonly");
+    QFile other(locked);
+    ASSERT_TRUE(other.open(QIODevice::ReadOnly));
+    EXPECT_EQ(other.readAll(), "original locked");
 }
 
 TEST(IntegrationDirectoryTest, TransientFileLockAllowsAtomicRenameAfterRelease)
@@ -199,6 +287,47 @@ protected:
             read(QDir(QFileInfo(plan.backupRoot).absolutePath()).filePath("migration.json"))));
     }
 };
+
+TEST_F(UnrealMigrationTest, WriteProtectionBlocksSdkChangesAfterApprovalAndAllowsRetry)
+{
+    const QString changed = original + "/Runtime.bin";
+    const QString receipt = original + "/.harken-integration-state.json";
+    const QByteArray originalReceipt = read(receipt);
+    ASSERT_TRUE(writeFile(source + "/Runtime.bin", "updated"));
+    for (const auto operation : {Operation::Update, Operation::Repair, Operation::Remove}) {
+        const auto reviewed = Executor::planUnreal(target, source, operation);
+        ASSERT_TRUE(reviewed.valid) << reviewed.error.toStdString();
+        for (const auto& path : {changed, receipt}) {
+            SCOPED_TRACE(path.toStdString());
+            const auto permissions = QFileInfo(path).permissions();
+            const auto restore = qScopeGuard([&]() { QFile::setPermissions(path, permissions); });
+            ASSERT_TRUE(QFile::setPermissions(path, QFile::ReadOwner | QFile::ReadUser));
+            const auto blocked = Executor::planUnreal(target, source, operation);
+            EXPECT_FALSE(blocked.valid);
+            EXPECT_TRUE(blocked.error.contains(QDir::toNativeSeparators(path)));
+            const auto result = Executor::executeUnreal(target, reviewed, operation, true);
+            EXPECT_FALSE(result.success);
+            EXPECT_TRUE(result.error.contains(QDir::toNativeSeparators(path)));
+            EXPECT_EQ(read(changed), "runtime");
+            EXPECT_EQ(read(receipt), originalReceipt);
+            EXPECT_TRUE(result.backupPath.isEmpty());
+        }
+    }
+    const QString custom = original + "/Custom.txt";
+    const QString unchanged = original + "/Harken.uplugin";
+    ASSERT_TRUE(writeFile(custom, "preserved"));
+    const auto permissions = QFileInfo(unchanged).permissions();
+    const auto restore = qScopeGuard([&]() {
+        for (const auto& path : {custom, unchanged, source + "/Runtime.bin"}) QFile::setPermissions(path, permissions);
+    });
+    for (const auto& path : {custom, unchanged, source + "/Runtime.bin"})
+        ASSERT_TRUE(QFile::setPermissions(path, QFile::ReadOwner | QFile::ReadUser));
+    const auto reviewed = Executor::planUnreal(target, source, Operation::Update);
+    ASSERT_TRUE(reviewed.valid) << reviewed.error.toStdString();
+    EXPECT_TRUE(Executor::executeUnreal(target, reviewed, Operation::Update, true).success);
+    EXPECT_EQ(read(changed), "updated");
+    EXPECT_EQ(read(custom), "preserved");
+}
 
 TEST_F(UnrealMigrationTest, IncompleteSourcesCannotModifyNewOrInstalledProjects)
 {
@@ -685,8 +814,50 @@ TEST(ProjectIntegrationExecutorTest, RejectsSourceChangesAndInvalidOwnershipWith
     EXPECT_TRUE(inspection.valid);
     EXPECT_EQ(inspection.modifiedManagedFiles, QStringList{"Runtime.bin"});
     const QString recordPath = QDir(plan.targetRoot).filePath(".harken-integration-state.json");
+    const auto changed = VNH::EngineTargetProbe::observe(target, true);
+    EXPECT_EQ(changed.sdkContentState, VNH::SdkContentState::Modified);
+    EXPECT_TRUE(changed.sdkContentDetails.contains("Runtime.bin"));
+    EXPECT_TRUE(changed.canChangeSdk);
+    const QString requiredFile = "Source/HarkenCore/Include/harken/ObjectId.h";
+    const QString requiredPath = QDir(plan.targetRoot).filePath(requiredFile);
+    ASSERT_TRUE(QFile::remove(requiredPath));
+    const auto incomplete = VNH::ProjectIntegrationExecutor::inspectUnreal(target);
+    EXPECT_FALSE(incomplete.valid);
+    EXPECT_EQ(incomplete.missingManagedFiles, QStringList{requiredFile});
+    EXPECT_TRUE(incomplete.modifiedManagedFiles.contains(requiredFile));
+    const auto repair = VNH::ProjectIntegrationExecutor::planUnreal(target, source, VNH::IntegrationOperation::Update);
+    ASSERT_TRUE(repair.valid) << repair.error.toStdString();
+    EXPECT_EQ(repair.missingManagedFiles, QStringList{requiredFile});
+    EXPECT_TRUE(repair.unreadableManagedFiles.isEmpty());
+    const auto both = VNH::EngineTargetProbe::observe(target, true);
+    EXPECT_EQ(both.sdkContentState, VNH::SdkContentState::ModifiedAndMissing);
+    EXPECT_TRUE(both.sdkContentDetails.contains(requiredFile));
+    EXPECT_TRUE(both.sdkContentDetails.contains("Runtime.bin"));
+    ASSERT_TRUE(writeFile(QDir(plan.targetRoot).filePath("Runtime.bin"), "two"));
+    EXPECT_EQ(VNH::EngineTargetProbe::observe(target, true).sdkContentState,
+              VNH::SdkContentState::Missing);
+    EXPECT_FALSE(QFileInfo::exists(requiredPath));
+    ASSERT_TRUE(QFile::copy(QDir(source).filePath(requiredFile), requiredPath));
+    EXPECT_EQ(VNH::EngineTargetProbe::observe(target, true).sdkContentState,
+              VNH::SdkContentState::MatchesInstallation);
+    const QString runtimePath = QDir(plan.targetRoot).filePath("Runtime.bin");
+    ASSERT_TRUE(QFile::remove(runtimePath));
+    ASSERT_TRUE(QDir().mkpath(runtimePath));
+    const auto unreadable = VNH::ProjectIntegrationExecutor::inspectUnreal(target);
+    EXPECT_EQ(unreadable.unreadableManagedFiles, QStringList{"Runtime.bin"});
+    EXPECT_EQ(unreadable.modifiedManagedFiles, QStringList{"Runtime.bin"});
+    EXPECT_TRUE(unreadable.missingManagedFiles.isEmpty());
+    const auto unreadablePlan = VNH::ProjectIntegrationExecutor::planUnreal(target, source, VNH::IntegrationOperation::Update);
+    EXPECT_FALSE(unreadablePlan.valid);
+    EXPECT_EQ(unreadablePlan.unreadableManagedFiles, QStringList{"Runtime.bin"});
+    EXPECT_EQ(VNH::EngineTargetProbe::observe(target, true).sdkContentState,
+              VNH::SdkContentState::Unverified);
+    ASSERT_TRUE(QDir().rmdir(runtimePath));
+    ASSERT_TRUE(writeFile(runtimePath, "modified"));
     ASSERT_TRUE(writeFile(recordPath, R"({"schema_version":1,"engine":"unreal","sdk_version":"1.0","managed_files":{"../outside.txt":"bad"}})"));
     EXPECT_FALSE(VNH::ProjectIntegrationExecutor::inspectUnreal(target).valid);
+    EXPECT_EQ(VNH::EngineTargetProbe::observe(target, true).sdkContentState,
+              VNH::SdkContentState::Unverified);
     EXPECT_FALSE(VNH::ProjectIntegrationExecutor::planUnreal(target, {}, VNH::IntegrationOperation::Remove).valid);
     EXPECT_TRUE(QFileInfo::exists(QDir(plan.targetRoot).filePath("Runtime.bin")));
 }
@@ -713,12 +884,15 @@ TEST(ProjectIntegrationExecutorTest, BlocksOnlyTheRunningTargetAndRechecksBefore
     const auto stop = qScopeGuard([&]() { process.kill(); process.waitForFinished(); });
     ASSERT_TRUE(process.waitForStarted());
     QString error;
-    EXPECT_FALSE(VNH::ProjectIntegrationExecutor::checkUnrealClosed(target, &error));
+    bool isOpen = false;
+    EXPECT_FALSE(VNH::ProjectIntegrationExecutor::checkUnrealClosed(target, &error, &isOpen));
+    EXPECT_TRUE(isOpen);
     EXPECT_TRUE(error.contains("This Unreal project is open")) << error.toStdString();
     auto other = target;
     other.canonicalRoot = directory.filePath("OtherGame");
     other.descriptorPath = QDir(other.canonicalRoot).filePath("Game.uproject");
-    EXPECT_TRUE(VNH::ProjectIntegrationExecutor::checkUnrealClosed(other, &error));
+    EXPECT_TRUE(VNH::ProjectIntegrationExecutor::checkUnrealClosed(other, &error, &isOpen));
+    EXPECT_FALSE(isOpen);
     EXPECT_FALSE(VNH::ProjectIntegrationExecutor::executeUnreal(target, plan, VNH::IntegrationOperation::Install, true).success);
     EXPECT_FALSE(QDir(plan.targetRoot).exists());
     process.kill();
@@ -727,7 +901,8 @@ TEST(ProjectIntegrationExecutorTest, BlocksOnlyTheRunningTargetAndRechecksBefore
     EXPECT_TRUE(VNH::ProjectIntegrationExecutor::executeUnreal(target, plan, VNH::IntegrationOperation::Install, true).success);
     process.start(editor, {"/d", "/q", "/k", "rem", "Game.uproject"});
     ASSERT_TRUE(process.waitForStarted());
-    EXPECT_FALSE(VNH::ProjectIntegrationExecutor::checkUnrealClosed(target, &error));
+    EXPECT_FALSE(VNH::ProjectIntegrationExecutor::checkUnrealClosed(target, &error, &isOpen));
+    EXPECT_FALSE(isOpen);
     EXPECT_TRUE(error.contains("relative project path")) << error.toStdString();
     other.descriptorPath = QDir(other.canonicalRoot).filePath("Other.uproject");
     EXPECT_TRUE(VNH::ProjectIntegrationExecutor::checkUnrealClosed(other, &error));

@@ -23,6 +23,7 @@ set(HARKEN_RUNTIME_SOURCES
     ${HARKEN_RUNTIME_DIR}/api/src/MonitorSpectrumHandler.cpp
     ${HARKEN_RUNTIME_DIR}/api/src/MonitorMeterHandler.cpp
     ${HARKEN_RUNTIME_DIR}/api/src/HarkenApi.cpp
+    ${HARKEN_RUNTIME_DIR}/api/src/PackInspection.cpp
     ${HARKEN_RUNTIME_DIR}/api/src/ProjectGenerationTransaction.cpp
     ${HARKEN_RUNTIME_DIR}/api/src/PackVariablePublication.cpp
     ${HARKEN_RUNTIME_DIR}/core/src/AllocGuard.cpp
@@ -63,6 +64,7 @@ set(HARKEN_RUNTIME_SOURCES
     ${HARKEN_RUNTIME_DIR}/core/src/LogicReasonCode.cpp
     ${HARKEN_RUNTIME_DIR}/core/src/OccurrenceStatePool.cpp
     ${HARKEN_RUNTIME_DIR}/core/src/PackComposition.cpp
+    ${HARKEN_RUNTIME_DIR}/core/src/PackCompanionNames.cpp
     ${HARKEN_RUNTIME_DIR}/core/src/PlayableInstanceTable.cpp
     ${HARKEN_RUNTIME_DIR}/core/src/ContainerPlaybackTable.cpp
     ${HARKEN_RUNTIME_DIR}/core/src/QueueRuntime.cpp

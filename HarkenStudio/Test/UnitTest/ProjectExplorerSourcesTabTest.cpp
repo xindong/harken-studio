@@ -17,6 +17,7 @@
 #include "Widgets/ProjectExplorer/ExplorerSection.h"
 #include "Widgets/ProjectExplorer/SourcesTreeWidget.h"
 #include "Widgets/DragDropOverlay.h"
+#include "Widgets/LogPanel/LogPanel.h"
 #include "Widgets/Shared/RefIdMime.h"
 #include "Widgets/Shared/InlineRenameEdit.h"
 
@@ -204,9 +205,14 @@ protected:
     void TearDown() override
     {
         explorer_.reset();
+        auto& manager = ProjectManager::instance();
+        QString closeError;
+        const auto connection = QObject::connect(&manager, &ProjectManager::errorOccurred,
+            [&closeError](const QString& error) { closeError = error; });
+        if (manager.isProjectOpen())
+            EXPECT_TRUE(manager.closeProject()) << closeError.toStdString();
+        QObject::disconnect(connection);
         UndoRedoManager::instance().clear();
-        if (ProjectManager::instance().isProjectOpen())
-            ProjectManager::instance().closeProject();
         AssetRegistry::instance().clear();
     }
 
@@ -1549,6 +1555,7 @@ TEST_F(ProjectExplorerSourcesTabTest, AssetAndSourceFoldersShareExpansionIconsAn
     expectNoChevron(sources, emptySourceFolder);
     AssetRegistry::instance().unregisterAsset(83);
     expectNoChevron(sources, findRow(sources, QStringLiteral("Folder")));
+    ASSERT_TRUE(QFile::remove(SourceFileSystem::absolutePath(QStringLiteral("Folder/hit.wav"))));
 }
 
 TEST_F(ProjectExplorerSourcesTabTest, ExternalDragPreviewMatchesInternalSourceIcons)
@@ -2534,10 +2541,177 @@ TEST_F(ProjectExplorerSourcesTabTest, InitialBatchFileLockRollsBackWithoutPublis
     ASSERT_TRUE(manager.closeProject());
     EXPECT_EQ(notifications, 0);
 }
+
+TEST_F(ProjectExplorerSourcesTabTest, FailedClosePreservesSavedSourceEditsAndTheirUndoCopies)
+{
+    auto& manager = ProjectManager::instance();
+    auto& registry = AssetRegistry::instance();
+    auto& undo = UndoRedoManager::instance();
+    const QString input = tempDir_.filePath(QStringLiteral("Keep.wav"));
+    writeWavF32(input, {0.0f, 0.25f, -0.25f, 0.0f});
+    const QString savedHash = AssetImporter::computeContentHash(input);
+    auto* imported = ImportAssetsCommand::pushImportSources({input});
+    ASSERT_EQ(imported->successCount(), 1);
+    const uint32_t id = imported->importedIDs().first();
+    const QString savedPath = registry.getAsset(id)->absolutePath;
+    ASSERT_TRUE(manager.saveProject());
+    ASSERT_TRUE(SourceFileSystem::createFolder({}, QStringLiteral("Edited")));
+    ASSERT_TRUE(SourceFileSystem::move({QStringLiteral("Keep.wav")}, QStringLiteral("Edited")));
+    writeWavF32(input, {0.0f, 0.75f, -0.75f, 0.0f});
+    const QString editedHash = AssetImporter::computeContentHash(input);
+    ASSERT_EQ(ImportAssetsCommand::pushImportSources({input}, QStringLiteral("Edited"),
+        {{QStringLiteral("Edited/Keep.wav"), input}})->successCount(), 1);
+    ASSERT_TRUE(SourceFileSystem::createFolder({}, QStringLiteral("Scratch")));
+    const QString editedPath = registry.getAsset(id)->absolutePath;
+    const QString scratchPath = SourceFileSystem::absolutePath(QStringLiteral("Scratch"));
+    const auto* project = manager.currentProject();
+    const QString projectPath = project->projectPath;
+    const QString projectRoot = registry.projectRoot();
+    const int index = undo.undoStack()->index();
+    const int count = undo.undoStack()->count();
+    ASSERT_TRUE(QFile::remove(input));
+    {
+        HANDLE handle = CreateFileW(reinterpret_cast<LPCWSTR>(editedPath.utf16()), GENERIC_READ,
+            FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        ASSERT_NE(handle, INVALID_HANDLE_VALUE);
+        const auto release = qScopeGuard([&] { CloseHandle(handle); });
+        EXPECT_FALSE(manager.closeProject());
+        EXPECT_EQ(manager.currentProject(), project);
+        ASSERT_NE(registry.getAsset(id), nullptr);
+        EXPECT_EQ(registry.getAsset(id)->relativePath, QStringLiteral("Edited/Keep.wav"));
+        EXPECT_FALSE(registry.isUncommitted(id));
+        EXPECT_EQ(AssetImporter::computeContentHash(editedPath), editedHash);
+        EXPECT_FALSE(QFile::exists(savedPath));
+        EXPECT_TRUE(QDir(scratchPath).exists());
+        EXPECT_EQ(undo.undoStack()->index(), index);
+        EXPECT_EQ(undo.undoStack()->count(), count);
+        ProjectConfig nextProject;
+        nextProject.name = QStringLiteral("BlockedProjectSwitch");
+        nextProject.location = tempDir_.path();
+        EXPECT_FALSE(manager.createProject(nextProject));
+        ASSERT_EQ(manager.currentProject(), project);
+        EXPECT_EQ(manager.currentProject()->projectPath, projectPath);
+        EXPECT_EQ(registry.projectRoot(), projectRoot);
+        ASSERT_NE(registry.getAsset(id), nullptr);
+        EXPECT_EQ(registry.getAsset(id)->absolutePath, editedPath);
+        EXPECT_EQ(AssetImporter::computeContentHash(editedPath), editedHash);
+    }
+    ASSERT_TRUE(undo.undo());
+    ASSERT_TRUE(undo.undo());
+    EXPECT_EQ(AssetImporter::computeContentHash(editedPath), savedHash);
+    ASSERT_TRUE(undo.redo());
+    ASSERT_TRUE(undo.redo());
+    EXPECT_EQ(AssetImporter::computeContentHash(editedPath), editedHash);
+    ASSERT_TRUE(manager.closeProject());
+    EXPECT_FALSE(manager.isProjectOpen());
+    EXPECT_EQ(AssetImporter::computeContentHash(savedPath), savedHash);
+    EXPECT_FALSE(QDir(QFileInfo(editedPath).absolutePath()).exists());
+    EXPECT_FALSE(QDir(scratchPath).exists());
+}
+
+TEST_F(ProjectExplorerSourcesTabTest, FailedCloseRetainsUncommittedImportsUntilDeletionCanBeRetried)
+{
+    auto& manager = ProjectManager::instance();
+    auto& registry = AssetRegistry::instance();
+    auto& undo = UndoRedoManager::instance();
+    ASSERT_TRUE(manager.saveProject());
+    ASSERT_TRUE(SourceFileSystem::createFolder({}, QStringLiteral("Pending")));
+    const QString input = tempDir_.filePath(QStringLiteral("Unsaved.wav"));
+    writeWavF32(input, {0.0f, 0.5f, -0.5f, 0.0f});
+    auto* imported = ImportAssetsCommand::pushImportSources({input}, QStringLiteral("Pending"));
+    ASSERT_EQ(imported->successCount(), 1);
+    const AssetInfo asset = *registry.getAsset(imported->importedIDs().first());
+    const auto* project = manager.currentProject();
+    const int index = undo.undoStack()->index();
+    const int count = undo.undoStack()->count();
+    ASSERT_TRUE(QFile::remove(input));
+    {
+        HANDLE handle = CreateFileW(reinterpret_cast<LPCWSTR>(asset.absolutePath.utf16()), GENERIC_READ,
+            FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        ASSERT_NE(handle, INVALID_HANDLE_VALUE);
+        const auto release = qScopeGuard([&] { CloseHandle(handle); });
+        EXPECT_FALSE(manager.closeProject());
+        EXPECT_EQ(manager.currentProject(), project);
+        ASSERT_NE(registry.getAssetByPath(asset.relativePath), nullptr);
+        EXPECT_EQ(registry.getAssetByPath(asset.relativePath)->sourceID, asset.sourceID);
+        EXPECT_TRUE(registry.isUncommitted(asset.sourceID));
+        EXPECT_EQ(AssetImporter::computeContentHash(asset.absolutePath), asset.contentHash);
+        EXPECT_EQ(undo.undoStack()->index(), index);
+        EXPECT_EQ(undo.undoStack()->count(), count);
+    }
+    ASSERT_TRUE(undo.undo());
+    EXPECT_FALSE(QFile::exists(asset.absolutePath));
+    EXPECT_FALSE(registry.contains(asset.sourceID));
+    ASSERT_TRUE(undo.redo());
+    EXPECT_TRUE(registry.isUncommitted(asset.sourceID));
+    EXPECT_EQ(AssetImporter::computeContentHash(asset.absolutePath), asset.contentHash);
+    ASSERT_TRUE(manager.closeProject());
+    EXPECT_FALSE(manager.isProjectOpen());
+    EXPECT_FALSE(QFile::exists(asset.absolutePath));
+    EXPECT_FALSE(QDir(QFileInfo(asset.absolutePath).absolutePath()).exists());
+}
+
+TEST_F(ProjectExplorerSourcesTabTest, FailedCloseRollsBackImportCleanupWhenSavedSourceRestoreIsLocked)
+{
+    auto& manager = ProjectManager::instance();
+    auto& registry = AssetRegistry::instance();
+    auto& undo = UndoRedoManager::instance();
+    const QString input = tempDir_.filePath(QStringLiteral("Saved.wav"));
+    writeWavF32(input, {0.0f, 0.25f, -0.25f, 0.0f});
+    const QString savedHash = AssetImporter::computeContentHash(input);
+    auto* savedImport = ImportAssetsCommand::pushImportSources({input});
+    ASSERT_EQ(savedImport->successCount(), 1);
+    const uint32_t savedId = savedImport->importedIDs().first();
+    const QString savedPath = registry.getAsset(savedId)->absolutePath;
+    ASSERT_TRUE(manager.saveProject());
+    writeWavF32(input, {0.0f, 0.75f, -0.75f, 0.0f});
+    const QString editedHash = AssetImporter::computeContentHash(input);
+    ASSERT_EQ(ImportAssetsCommand::pushImportSources({input}, {},
+        {{QStringLiteral("Saved.wav"), input}})->successCount(), 1);
+    const QString extra = tempDir_.filePath(QStringLiteral("Unsaved.wav"));
+    writeWavF32(extra, {0.0f, 0.5f, -0.5f, 0.0f});
+    auto* pendingImport = ImportAssetsCommand::pushImportSources({extra});
+    ASSERT_EQ(pendingImport->successCount(), 1);
+    const AssetInfo pending = *registry.getAsset(pendingImport->importedIDs().first());
+    const auto* project = manager.currentProject();
+    const int index = undo.undoStack()->index();
+    const int count = undo.undoStack()->count();
+    ASSERT_TRUE(QFile::remove(input));
+    ASSERT_TRUE(QFile::remove(extra));
+    {
+        HANDLE handle = CreateFileW(reinterpret_cast<LPCWSTR>(savedPath.utf16()), GENERIC_READ,
+            FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        ASSERT_NE(handle, INVALID_HANDLE_VALUE);
+        const auto release = qScopeGuard([&] { CloseHandle(handle); });
+        EXPECT_FALSE(manager.closeProject());
+        EXPECT_EQ(manager.currentProject(), project);
+        ASSERT_NE(registry.getAsset(savedId), nullptr);
+        EXPECT_EQ(AssetImporter::computeContentHash(savedPath), editedHash);
+        ASSERT_NE(registry.getAssetByPath(pending.relativePath), nullptr);
+        EXPECT_EQ(registry.getAssetByPath(pending.relativePath)->sourceID, pending.sourceID);
+        EXPECT_TRUE(registry.isUncommitted(pending.sourceID));
+        EXPECT_EQ(AssetImporter::computeContentHash(pending.absolutePath), pending.contentHash);
+        EXPECT_EQ(undo.undoStack()->index(), index);
+        EXPECT_EQ(undo.undoStack()->count(), count);
+    }
+    ASSERT_TRUE(undo.undo());
+    EXPECT_FALSE(QFile::exists(pending.absolutePath));
+    ASSERT_TRUE(undo.redo());
+    EXPECT_TRUE(registry.isUncommitted(pending.sourceID));
+    EXPECT_EQ(AssetImporter::computeContentHash(pending.absolutePath), pending.contentHash);
+    ASSERT_TRUE(manager.closeProject());
+    EXPECT_FALSE(manager.isProjectOpen());
+    EXPECT_EQ(AssetImporter::computeContentHash(savedPath), savedHash);
+    EXPECT_FALSE(QFile::exists(pending.absolutePath));
+}
 #endif
 
 TEST_F(ProjectExplorerSourcesTabTest, DiscardRestoresSavedFilesAndRemovesUncommittedSourceFolders)
 {
+    QStringList projectErrors;
+    QObject errorContext;
+    QObject::connect(&ProjectManager::instance(), &ProjectManager::errorOccurred, &errorContext,
+        [&projectErrors](const QString& error) { projectErrors.append(error); });
     const QString input = tempDir_.filePath(QStringLiteral("Keep.wav"));
     writeWavF32(input, {0.0f, 0.5f, -0.5f, 0.0f});
     const QString savedHash = AssetImporter::computeContentHash(input);
@@ -2561,8 +2735,8 @@ TEST_F(ProjectExplorerSourcesTabTest, DiscardRestoresSavedFilesAndRemovesUncommi
     writeWavF32(extra, {0.0f, 0.125f, -0.125f, 0.0f});
     ASSERT_EQ(ImportAssetsCommand::pushImportSources({input, extra}, QStringLiteral("Renamed"),
         {{QStringLiteral("Renamed/Keep.wav"), input}, {QStringLiteral("Renamed/Unsaved.wav"), extra}})
-        ->successCount(), 2);
-    ASSERT_TRUE(manager.closeProject());
+        ->successCount(), 2) << LogPanel::globalModel()->exportToText(LogEntry::Error).toStdString();
+    ASSERT_TRUE(manager.closeProject()) << projectErrors.join(QLatin1Char('\n')).toStdString();
     EXPECT_TRUE(QFile::exists(QDir(audioRoot).filePath(QStringLiteral("Keep.wav"))));
     EXPECT_EQ(AssetImporter::computeContentHash(QDir(audioRoot).filePath(QStringLiteral("Keep.wav"))), savedHash);
     EXPECT_FALSE(QDir(QDir(audioRoot).filePath(QStringLiteral("New"))).exists());
