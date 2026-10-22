@@ -28,8 +28,9 @@ std::unique_ptr<TransactionalUndoCommand> registerImport(
     const AssetInfo& asset, bool copiedFile, QString* error = nullptr);
 bool replayFiles(const QList<std::shared_ptr<TransactionalUndoCommand>>& commands,
                  bool redo, bool* rollbackFailed);
-bool copyFile(const QString& source, const QString& destination);
+bool copyFile(const QString& source, const QString& destination, QString* error = nullptr);
 void commitChanges();
-void discardChanges();
+bool recoverDiscard(QString* error = nullptr);
+bool discardChanges(QString* error = nullptr, bool* rollbackFailed = nullptr);
 
 }

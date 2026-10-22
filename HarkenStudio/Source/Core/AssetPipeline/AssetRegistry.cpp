@@ -5,6 +5,7 @@
 #include "PathUtils.h"
 #include "../ProjectDataPolicy.h"
 #include "../ProjectLocator.h"
+#include "Utils/FileOperationRetry.h"
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -554,16 +555,26 @@ bool AssetRegistry::saveToFile(const QString& path)
     }
     root["assets"] = assetsObj;
 
-    QJsonDocument doc(root);
-    QSaveFile file(filePath);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        qWarning() << "Failed to save asset registry:" << file.errorString();
+    const QByteArray bytes = QJsonDocument(root).toJson(QJsonDocument::Indented);
+    const char* failedOperation = nullptr;
+    QString errorMessage;
+    QFileDevice::FileError errorCode = QFileDevice::NoError;
+    if (!retryFileOperation([&] {
+        QSaveFile file(filePath);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Text))
+            failedOperation = "open";
+        else if (file.write(bytes) != bytes.size())
+            failedOperation = "write";
+        else if (!file.commit())
+            failedOperation = "commit";
+        else
+            return true;
+        errorMessage = file.errorString();
+        errorCode = file.error();
         return false;
-    }
-
-    const QByteArray bytes = doc.toJson(QJsonDocument::Indented);
-    if (file.write(bytes) != bytes.size() || !file.commit()) {
-        qWarning() << "Failed to commit asset registry:" << file.errorString();
+    })) {
+        qWarning() << "Failed to save asset registry:" << failedOperation
+                   << filePath << errorMessage << errorCode;
         return false;
     }
 
@@ -771,39 +782,24 @@ void AssetRegistry::markAllCommitted()
     uncommittedIDs_.clear();
 }
 
-int AssetRegistry::discardUncommittedFiles()
+void AssetRegistry::discardUncommittedCaches()
 {
     QMutexLocker lock(&mutex_);
-
-    int removed = 0;
-    const QList<uint32_t> ids = uncommittedIDs_.values();
-    for (uint32_t id : ids) {
-        auto it = assets_.find(id);
-        if (it == assets_.end()) {
+    for (uint32_t id : uncommittedIDs_) {
+        const auto it = assets_.constFind(id);
+        if (it == assets_.cend())
             continue;
-        }
-
         const AssetInfo& info = it.value();
-        if (!info.absolutePath.isEmpty() && QFile::exists(info.absolutePath)) {
-            if (QFile::remove(info.absolutePath)) {
-                ++removed;
-            }
-        }
         for (auto cacheIt = info.platformCaches.constBegin();
              cacheIt != info.platformCaches.constEnd(); ++cacheIt) {
             QString cachePath = PathUtils::toAbsolutePath(
                 cacheIt->cachePath, PathUtils::getCacheDir(projectRoot_));
-            if (QFile::exists(cachePath)) {
-                QFile::remove(cachePath);
-            }
+            QFile cache(cachePath);
+            if (cache.exists() && !cache.remove())
+                qWarning() << "[AssetRegistry] Cannot remove uncommitted cache:"
+                           << cachePath << cache.errorString();
         }
-
-        pathToID_.remove(info.relativePath);
-        assets_.remove(id);
     }
-
-    uncommittedIDs_.clear();
-    return removed;
 }
 
 void AssetRegistry::cleanupOrphaned(const QList<QString>& files)

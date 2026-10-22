@@ -110,6 +110,12 @@ ImportAssetsCommand* ImportAssetsCommand::pushImportSources(const QStringList& e
         externalPaths, static_cast<ProjectFileBinding*>(nullptr));
     command->sourceFolder_ = sourceFolder;
     command->sourceMode_ = true;
+    QString recoveryError;
+    if (!SourceFileSystem::recoverDiscard(&recoveryError)) {
+        command->failCount_ = externalPaths.size();
+        LogPanel::logError(LogCategory::Import, recoveryError);
+        return pushCollected(std::move(command));
+    }
     QMap<QString, QString> fileChanges = replacements;
     for (const QString& path : externalPaths) {
         const QString relative = sourceFolder.isEmpty() ? QFileInfo(path).fileName()
