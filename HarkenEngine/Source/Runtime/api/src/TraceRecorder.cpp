@@ -861,6 +861,34 @@ void TraceRecorder::EmitBarrier(std::uint16_t type,
     CommitRecord(start);
 }
 
+std::uint64_t TraceRecorder::RecordPackBytes(const void* bytes, std::uint64_t count) noexcept {
+    if (!m_active) return 0;
+    if (bytes == nullptr || count == 0 || count > UINT32_MAX - 24u || count > SIZE_MAX) {
+        FailTrace();
+        return 0;
+    }
+    try {
+        const auto hash = Fnv1a64(bytes, static_cast<std::size_t>(count));
+        const auto key = std::make_pair(hash, count);
+        const auto found = m_packResources.find(key);
+        if (found != m_packResources.end()) return found->second;
+        const auto id = static_cast<std::uint64_t>(m_packResources.size()) + 1;
+        m_packResources.emplace(key, id);
+        SyncBlocks();
+        if (!m_active) return 0;
+        const auto start = BeginRecord(kTraceRecordPackBytes);
+        AppendU64(id);
+        AppendU64(hash);
+        AppendU64(count);
+        Append(bytes, static_cast<std::size_t>(count));
+        CommitRecord(start);
+        return m_active ? id : 0;
+    } catch (...) {
+        FailTrace();
+        return 0;
+    }
+}
+
 std::size_t TraceRecorder::BeginRecord(std::uint16_t type) noexcept {
     const std::size_t start = m_buffer.size();
     const std::uint32_t payloadBytes = 0; // patched at commit
