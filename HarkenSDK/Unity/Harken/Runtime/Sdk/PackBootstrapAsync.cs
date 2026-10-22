@@ -23,6 +23,7 @@ namespace Harken
     public sealed partial class PackBootstrapSession
     {
         private readonly Dictionary<string, PendingCapture> companionReads = new Dictionary<string, PendingCapture>(StringComparer.Ordinal);
+        private readonly AsyncLocal<bool> inCompanionReadCallback = new AsyncLocal<bool>();
 
         private sealed class PendingCapture
         {
@@ -156,6 +157,8 @@ namespace Harken
         {
             if (RequireOwnerThread() != VnResult.VN_OK)
                 throw new InvalidOperationException("The source must resume on the session control thread.");
+            // Flow into the reader's own continuations without blocking independent subscribers.
+            inCompanionReadCallback.Value = reading;
             mutationPhase = reading ? MutationPhase.ReadingContent : MutationPhase.Idle;
         }
 

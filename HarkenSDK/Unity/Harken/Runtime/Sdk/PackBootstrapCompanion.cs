@@ -74,7 +74,8 @@ namespace Harken
             if (!active) return VnResult.VN_NOT_INITIALIZED;
             VnResult thread = RequireOwnerThread();
             if (thread != VnResult.VN_OK) return thread;
-            return mutationPhase == MutationPhase.Idle ? VnResult.VN_OK : VnResult.VN_IN_USE;
+            return mutationPhase == MutationPhase.Idle && !inCompanionReadCallback.Value
+                ? VnResult.VN_OK : VnResult.VN_IN_USE;
         }
 
         internal VnResult AcquireCompanions(string[] names, SharedPack[] acquired, bool refresh, ulong expectedId = 0)

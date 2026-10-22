@@ -159,6 +159,7 @@ namespace Harken.Test
                 var pending = session.RefreshActionAsync("Play_Head", session.ProjectId);
                 var late = gates.Dequeue();
                 Ok(session.Shutdown(), "shutdown with pending capture");
+                await Cancelled(pending);
                 var config = Config();
                 Ok(PackBootstrap.Start(PackSource.FromReader(Read), ref config, out PackBootstrapSession restarted), "restart while old reader pending");
                 using (restarted)
@@ -216,6 +217,9 @@ namespace Harken.Test
                 {
                     var nested = await session.PrepareActionsAsync(new[] { "Play_Head" }, session.ProjectId);
                     Check(nested.Result == VnResult.VN_IN_USE, "metadata callback cannot await its own pending read");
+                    await Task.Yield();
+                    nested = await session.PrepareActionsAsync(new[] { "Play_Head" }, session.ProjectId);
+                    Check(nested.Result == VnResult.VN_IN_USE, "reader continuation cannot await its own pending read");
                 }
                 return Read(path);
             });

@@ -88,9 +88,31 @@ namespace Harken
                 else pending = asyncReader(path, cancellation);
             }
             finally { readPhase?.Invoke(false); }
-            if (asyncReader != null) bytes = await pending;
+            if (asyncReader != null) bytes = await AwaitRead(pending, cancellation);
             cancellation.ThrowIfCancellationRequested();
             return bytes == null ? null : (byte[])bytes.Clone();
+        }
+
+        private static async Task<byte[]> AwaitRead(Task<byte[]> pending, CancellationToken cancellation)
+        {
+            if (pending.IsCompleted || !cancellation.CanBeCanceled) return await pending;
+            var cancelled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using (cancellation.Register(() => cancelled.TrySetResult(true)))
+            {
+                await Task.WhenAny(pending, cancelled.Task);
+                if (cancellation.IsCancellationRequested)
+                {
+                    _ = ObserveLateRead(pending);
+                    cancellation.ThrowIfCancellationRequested();
+                }
+                return await pending;
+            }
+        }
+
+        private static async Task ObserveLateRead(Task<byte[]> pending)
+        {
+            // A provider may ignore cancellation or fail after the SDK request has ended.
+            try { await pending.ConfigureAwait(false); } catch { }
         }
 
         internal async Task<CompanionCapture> CaptureAsync(string name, VnObjectId project,
