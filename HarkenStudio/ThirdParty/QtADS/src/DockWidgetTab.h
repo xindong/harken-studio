@@ -71,6 +71,7 @@ protected:
 	virtual void mouseReleaseEvent(QMouseEvent* ev) override;
 	virtual void mouseMoveEvent(QMouseEvent* ev) override;
 	virtual void contextMenuEvent(QContextMenuEvent* ev) override;
+	bool eventFilter(QObject* watched, QEvent* event) override;
 
 	/**
 	 * Double clicking the tab widget makes the assigned dock widget floating
