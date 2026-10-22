@@ -309,6 +309,8 @@ TEST(MeterSource, CaptureChangesAndTapRetirementStayIsolatedToTheirConsumers)
     ASSERT_EQ(Vn_CreateBus(harkentest::ToRuntime(bus), VN_BUS_MASTER), VN_OK);
     ASSERT_EQ(Vn_Update(), VN_OK);
     harken::detail::ActiveEngine()->nullBackend.Pump(1);
+    harken::monitor::StopDrainForTests();
+    const auto restartDrain = qScopeGuard([] { harken::monitor::StartDrainForTests(); });
     VNX::MeterSource first;
     VNX::MeterSource second;
     VNX::MeterSource otherBus;
@@ -338,16 +340,10 @@ TEST(MeterSource, CaptureChangesAndTapRetirementStayIsolatedToTheirConsumers)
         harken::monitor::DrainOnceForTests();
     };
     const auto receive = [](VNX::MeterSource& source, float expected) {
-        std::vector<HarkenEditor::Bridge::MeterMeasurementFrame> frames;
-        for (int attempt = 0; attempt < 100 && frames.empty(); ++attempt) {
-            auto update = source.poll();
-            EXPECT_FALSE(update.interrupted);
-            frames = std::move(update.frames);
-            if (frames.empty())
-                QThread::msleep(5);
-        }
-        ASSERT_FALSE(frames.empty());
-        for (const auto& frame : frames) {
+        const auto update = source.poll();
+        EXPECT_FALSE(update.interrupted);
+        ASSERT_FALSE(update.frames.empty());
+        for (const auto& frame : update.frames) {
             ASSERT_FALSE(frame.spectrumDb.empty());
             EXPECT_NEAR(*std::max_element(frame.spectrumDb.begin(), frame.spectrumDb.end()), expected, 0.1f);
         }
@@ -385,11 +381,8 @@ TEST(MeterSource, CaptureChangesAndTapRetirementStayIsolatedToTheirConsumers)
     const auto busIndex = runtime->buses.FindIndex(harkentest::ToRuntime(bus));
     harken::monitor::NoteExactInstanceRetired(VN_MONITOR_TAP_BUS_POST_EFFECTS,
         busIndex + 1u, runtime->buses.GenerationAt(busIndex));
-    for (int attempt = 0; attempt < 100 && otherBus.active(); ++attempt) {
-        EXPECT_FALSE(second.poll().interrupted);
-        if (otherBus.active())
-            QThread::msleep(5);
-    }
+    harken::monitor::DrainOnceForTests();
+    EXPECT_FALSE(second.poll().interrupted);
     EXPECT_FALSE(otherBus.active());
     EXPECT_TRUE(otherBus.poll().interrupted);
     EXPECT_TRUE(second.active());
