@@ -6,6 +6,9 @@ const QVector<ThemeAssetCatalogEntry>& themeAssetCatalog()
 {
     using namespace ThemeAssetIds;
     static const QVector<ThemeAssetCatalogEntry> entries = {
+        {QString::fromLatin1(AppIcon), ThemeAssetKind::Image,
+         ThemeBuiltinAssetFallback::File,
+         QStringLiteral(":/Resources/icons/V_256x256.png"), false},
         {QString::fromLatin1(AppLogo), ThemeAssetKind::Image,
          ThemeBuiltinAssetFallback::File,
          QStringLiteral(":/Resources/branding/HarkenStudioBlueGradient.png"), false},
