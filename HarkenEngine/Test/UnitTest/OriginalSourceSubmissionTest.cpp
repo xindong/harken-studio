@@ -5566,51 +5566,41 @@ struct ReleaseRegisteredSourceClaimBeforeTerm {
     }
 };
 
-void AbandonRegisteredVariableWorkerSource(harken::Engine& engine,
+void DeferRegisteredVariableWorkerSource(harken::Engine& engine,
     RegisteredVariableWorkerEpisode& episode, RegisteredSourceClaimStall& gate) {
     NativeCallbackAccess::SetOriginalSourceWorkerGates(engine.voices,
         &RegisteredSourceClaimStall::Coordinator,
         &RegisteredSourceClaimStall::Claimed, &gate);
     NativeCallbackAccess::SetWorkerDeadline(engine.voices,
         std::max(UINT64_C(1), harken::CpuClockTicksPerSecond() / 20u));
-    const auto originBefore = SourceOriginAccess::Observe(
-        engine.originalSourceSubmissions, episode.body.arm);
     const auto completed = engine.mixer.BlocksRendered();
     engine.nullBackend.Pump(1);
-    ASSERT_EQ(completed + 1u, engine.mixer.BlocksRendered());
+    ASSERT_EQ(completed, engine.mixer.BlocksRendered());
     ASSERT_NE(0u, gate.generation.load(std::memory_order_acquire));
-    ASSERT_EQ(0u, gate.job.load(std::memory_order_acquire));
     const auto actual = NativeCallbackAccess::ObserveOriginalWorkerJob(engine.voices, 0);
     ASSERT_EQ(gate.generation.load(std::memory_order_acquire), actual.abandonedGeneration);
-    ASSERT_EQ(1u, actual.abandonedJobCount);
     ASSERT_EQ(static_cast<std::uint32_t>(episode.body.source), actual.renderSlot);
-    ASSERT_EQ(static_cast<std::uint32_t>(episode.body.source >> 32), actual.renderGeneration);
     ASSERT_FALSE(actual.finishedAtAbandonment);
-    ASSERT_TRUE(NativeCallbackAccess::IsActuallyQuarantined(engine.voices, actual.renderSlot));
+    ASSERT_FALSE(NativeCallbackAccess::IsActuallyQuarantined(engine.voices, actual.renderSlot));
     ASSERT_FALSE(gate.leftClaimGate.load(std::memory_order_acquire));
-    EXPECT_NE(static_cast<std::uint32_t>(episode.body.source >> 32),
+    EXPECT_EQ(static_cast<std::uint32_t>(episode.body.source >> 32),
         NativeCallbackAccess::OriginalSlotGeneration(engine.voices, actual.renderSlot));
-    EXPECT_EQ(nullptr, engine.voices.Resolve(episode.body.source));
     EXPECT_FALSE(engine.voices.ReleaseObserved(episode.body.release));
-    const auto retained = NativeCallbackAccess::ObserveOriginalCallback(engine.voices,
-        actual.renderSlot);
+    const auto retained = NativeCallbackAccess::ObserveOriginalCallback(engine.voices, actual.renderSlot);
     EXPECT_TRUE(retained.reader);
     EXPECT_TRUE(retained.storageHeld);
     EXPECT_TRUE(retained.actor);
     EXPECT_TRUE(retained.installedInstallation);
     EXPECT_FALSE(retained.loanReturned);
-    const auto origin = SourceOriginAccess::Observe(
-        engine.originalSourceSubmissions, episode.body.arm);
-    EXPECT_EQ(kSourceOriginNormal, origin.mode);
-    EXPECT_EQ(1u, origin.count);
-    EXPECT_GT(origin.epoch, originBefore.epoch);
-    EXPECT_TRUE(origin.installationStanding);
-    EXPECT_FALSE(engine.voices.IsOriginalSourceBodyCurrent(episode.originalBody));
-    // No PCM, cascade payload, timeline span or pending/installed loan member
-    // is read while the claimed worker still owns its native job.
+    // Repeated callbacks are bounded polls and cannot consume another quantum.
+    engine.nullBackend.Pump(3);
+    EXPECT_EQ(completed, engine.mixer.BlocksRendered());
+    EXPECT_EQ(0.0f, CurrentPeak(engine));
+    EXPECT_EQ(0u, engine.mixer.Arena().QuarantinedHighBytes());
 }
 
-void CheckRegisteredQuarantineUntilJoin(bool keepForeignBody) {
+void CheckRegisteredDeferredRecovery(int mode) {
+    const bool suspend = mode == 1 || mode == 3;
     RegisteredVariableWorkerProgram storage;
     RegisteredSourceClaimStall gate;
     harkentest::EngineSession session(RegisteredVariableWorkerConfig());
@@ -5619,80 +5609,69 @@ void CheckRegisteredQuarantineUntilJoin(bool keepForeignBody) {
     ReleaseRegisteredSourceClaimBeforeTerm release{gate};
     RegisteredVariableWorkerEpisode episode;
     const std::vector<float> samples(kRate, 0.25f);
-    ASSERT_NO_FATAL_FAILURE(PublishRegisteredVariableWorkerSource(engine, storage,
-        episode, samples));
+    ASSERT_NO_FATAL_FAILURE(PublishRegisteredVariableWorkerSource(engine, storage, episode, samples));
     ASSERT_NO_FATAL_FAILURE(StartRegisteredVariableWorkerSource(engine, episode));
-    BodyPin foreign;
-    if (keepForeignBody) ASSERT_TRUE(episode.originalBody.Borrow(&foreign));
-    ASSERT_NO_FATAL_FAILURE(AbandonRegisteredVariableWorkerSource(engine, episode, gate));
+    ASSERT_NO_FATAL_FAILURE(DeferRegisteredVariableWorkerSource(engine, episode, gate));
+    const auto completed = engine.mixer.BlocksRendered();
     const auto slot = static_cast<std::uint32_t>(episode.body.source);
+    const bool queuedStop = mode == 2 || mode == 3;
+    const auto consumedBefore = engine.commands.ConsumedCount();
+    if (queuedStop) {
+        harken::CommandRecord stop{};
+        stop.opcode = harken::kOpcodeStop;
+        stop.payload.stop.handle = episode.body.source;
+        ASSERT_TRUE(engine.commands.TryPush(stop));
+        engine.nullBackend.Pump(2);
+        EXPECT_EQ(completed, engine.mixer.BlocksRendered());
+        EXPECT_FALSE(engine.voices.ReleaseObserved(episode.body.release));
+    }
+    if (suspend) ASSERT_EQ(VN_OK, Vn_Suspend());
+    if (mode == 3) {
+        engine.mixer.DrainQueuedCommands(2);
+        EXPECT_EQ(completed, engine.mixer.BlocksRendered());
+        EXPECT_EQ(consumedBefore, engine.commands.ConsumedCount());
+    }
+    gate.release.store(true, std::memory_order_release);
+    if (mode == 3) {
+        const auto idleUntil = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (!engine.voices.DeferredRenderReady() &&
+            std::chrono::steady_clock::now() < idleUntil) std::this_thread::yield();
+        ASSERT_TRUE(engine.voices.DeferredRenderReady());
+        engine.mixer.DrainQueuedCommands(2);
+        EXPECT_EQ(completed, engine.mixer.BlocksRendered());
+        EXPECT_EQ(consumedBefore, engine.commands.ConsumedCount());
+        EXPECT_FALSE(engine.voices.ReleaseObserved(episode.body.release));
+    }
+    if (suspend) ASSERT_EQ(VN_OK, Vn_Resume());
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (engine.mixer.BlocksRendered() == completed && std::chrono::steady_clock::now() < until) {
+        engine.nullBackend.Pump(1);
+        std::this_thread::yield();
+    }
+    ASSERT_EQ(completed + 1u, engine.mixer.BlocksRendered());
+    if (queuedStop) EXPECT_EQ(consumedBefore, engine.commands.ConsumedCount());
+    EXPECT_GT(CurrentPeak(engine), 0.1f);
+    EXPECT_EQ(static_cast<std::uint32_t>(episode.body.source >> 32),
+        NativeCallbackAccess::OriginalSlotGeneration(engine.voices, slot));
+    ASSERT_NO_FATAL_FAILURE(CheckActualNativeCallbackReturned(engine, episode.body));
+    EXPECT_EQ(0u, engine.mixer.Arena().QuarantinedHighBytes());
+    // A real Stop returns the physical slot; releasing ownership alone is not Stop.
     episode.originalBody.Release();
     episode.source.Release();
-    auto held = NativeCallbackAccess::ObserveOriginalCallback(engine.voices, slot);
-    EXPECT_EQ(keepForeignBody ? 1u : 0u, held.bodyCount);
-    EXPECT_TRUE(held.reader);
-    EXPECT_TRUE(held.installedInstallation);
-    EXPECT_FALSE(held.disposed);
-    EXPECT_FALSE(held.loanReturned);
-    VnVoiceHandle refused = UINT64_C(0x11223344);
-    EXPECT_EQ(VN_NO_VOICE, PrepareAtOriginalBodySlot(engine, episode.body, &refused));
-    EXPECT_EQ(UINT64_C(0x11223344), refused);
-
-    // Finishing this already-claimed job is not the actual lifecycle join.
-    gate.release.store(true, std::memory_order_release);
-    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-    while (!gate.leftClaimGate.load(std::memory_order_acquire) &&
-        std::chrono::steady_clock::now() < until) std::this_thread::yield();
-    ASSERT_TRUE(gate.leftClaimGate.load(std::memory_order_acquire));
-    const auto completed = engine.mixer.BlocksRendered();
-    engine.nullBackend.Pump(1);
-    ASSERT_EQ(completed + 1u, engine.mixer.BlocksRendered());
-    const auto frozen = NativeCallbackAccess::ObserveOriginalWorkerJob(engine.voices, 0);
-    EXPECT_FALSE(frozen.finishedAtAbandonment);
-    held = NativeCallbackAccess::ObserveOriginalCallback(engine.voices, slot);
-    EXPECT_TRUE(held.reader);
-    EXPECT_TRUE(held.storageHeld);
-    EXPECT_TRUE(held.actor);
-    EXPECT_TRUE(held.installedInstallation);
-    EXPECT_FALSE(held.loanReturned);
-    EXPECT_EQ(1u, SourceOriginAccess::Observe(
-        engine.originalSourceSubmissions, episode.body.arm).count);
-
-    // This genuine native entry first calls workers.Stop (join), then marks
-    // Body disposition and returns callback last-use storage/actor.
-    engine.voices.ShutdownOriginalSourceBodiesAfterQuiescence();
-    NativeCallbackAccess::SetOriginalSourceWorkerGates(engine.voices, nullptr, nullptr, nullptr);
-    held = NativeCallbackAccess::ObserveOriginalCallback(engine.voices, slot);
-    EXPECT_FALSE(held.reader);
-    EXPECT_FALSE(held.storageHeld);
-    EXPECT_FALSE(held.actor);
-    EXPECT_TRUE(held.disposed);
-    EXPECT_EQ(0u, SourceOriginAccess::Observe(
-        engine.originalSourceSubmissions, episode.body.arm).count);
-    if (keepForeignBody) {
-        EXPECT_TRUE(foreign.Valid());
-        EXPECT_TRUE(held.installedInstallation);
-        EXPECT_FALSE(held.loanReturned);
-        EXPECT_TRUE(SourceOriginAccess::Observe(
-            engine.originalSourceSubmissions, episode.body.arm).installationStanding);
-        foreign.Release();
+    if (!queuedStop) {
+        harken::CommandRecord stop{};
+        stop.opcode = harken::kOpcodeStop;
+        stop.payload.stop.handle = episode.body.source;
+        ASSERT_TRUE(engine.commands.TryPush(stop));
     }
-    held = NativeCallbackAccess::ObserveOriginalCallback(engine.voices, slot);
-    EXPECT_TRUE(held.loanReturned);
-    EXPECT_FALSE(held.pendingInstallation);
-    EXPECT_FALSE(held.installedInstallation);
-    const auto closed = SourceOriginAccess::Observe(
-        engine.originalSourceSubmissions, episode.body.arm);
-    EXPECT_EQ(kSourceOriginClosed, closed.mode);
-    EXPECT_EQ(0u, closed.count);
-    EXPECT_EQ(0u, closed.lifetime);
-    EXPECT_FALSE(closed.installationStanding);
-    EXPECT_FALSE(engine.timelineArms.RowAt(episode.body.arm.slot)->originalLifetimePinned.load());
-    EXPECT_EQ(0u, NativeCallbackAccess::OriginalOwnerCount(engine.voices));
-    // Quarantine intentionally does not ReleaseSlot. Thread join and Source
-    // loan return do not manufacture a physical release receipt or slot reuse.
-    EXPECT_FALSE(engine.voices.ReleaseObserved(episode.body.release));
-    EXPECT_TRUE(NativeCallbackAccess::IsActuallyQuarantined(engine.voices, slot));
+    engine.nullBackend.Pump(1);
+    EXPECT_EQ(completed + 2u, engine.mixer.BlocksRendered());
+    EXPECT_TRUE(engine.voices.ReleaseObserved(episode.body.release));
+    EXPECT_EQ(nullptr, engine.voices.Resolve(episode.body.source));
+    VnVoiceHandle replacement = 0;
+    ASSERT_EQ(VN_OK, PrepareAtOriginalBodySlot(engine, episode.body, &replacement));
+    EXPECT_NE(episode.body.source, replacement);
+    ASSERT_TRUE(engine.voices.CancelPreparedVoice(replacement));
 }
 
 struct JoinRegisteredSourceTermination {
@@ -5716,7 +5695,7 @@ void CheckRegisteredSourceTermJoinsActualClaim() {
     ASSERT_NO_FATAL_FAILURE(PublishRegisteredVariableWorkerSource(engine, storage,
         episode, samples));
     ASSERT_NO_FATAL_FAILURE(StartRegisteredVariableWorkerSource(engine, episode));
-    ASSERT_NO_FATAL_FAILURE(AbandonRegisteredVariableWorkerSource(engine, episode, gate));
+    ASSERT_NO_FATAL_FAILURE(DeferRegisteredVariableWorkerSource(engine, episode, gate));
     const auto slot = static_cast<std::uint32_t>(episode.body.source);
     episode.originalBody.Release();
     episode.source.Release();
@@ -5755,12 +5734,20 @@ void CheckRegisteredSourceTermJoinsActualClaim() {
 }
 } // namespace
 
-TEST(OriginalSourceSubmission, RegisteredVariableSourceActualWorkerDeadlineRetainsCallbackUntilJoinedStop) {
-    CheckRegisteredQuarantineUntilJoin(false);
+TEST(OriginalSourceSubmission, RegisteredVariableSourceWorkerDeadlineResumesAndReusesCapacity) {
+    CheckRegisteredDeferredRecovery(0);
 }
 
-TEST(OriginalSourceSubmission, RegisteredVariableSourceActualWorkerDeadlineForeignBodyReturnsOnlyAfterJoinedStop) {
-    CheckRegisteredQuarantineUntilJoin(true);
+TEST(OriginalSourceSubmission, RegisteredVariableSourceWorkerDeadlineSurvivesSuspendResume) {
+    CheckRegisteredDeferredRecovery(1);
+}
+
+TEST(OriginalSourceSubmission, RegisteredVariableSourceWorkerDeadlinePreservesQueuedStop) {
+    CheckRegisteredDeferredRecovery(2);
+}
+
+TEST(OriginalSourceSubmission, RegisteredVariableSourceWorkerDeadlineFreezesCommandOnlyDrain) {
+    CheckRegisteredDeferredRecovery(3);
 }
 
 TEST(OriginalSourceSubmission, RegisteredVariableSourceActualWorkerDeadlineTermWaitsForRealClaimAndReturnsNativeLoans) {

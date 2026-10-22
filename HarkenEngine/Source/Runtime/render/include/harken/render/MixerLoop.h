@@ -194,28 +194,9 @@ private:
     // Applies commands published at or before `publishedHead`, at most
     // m_maxCommandsPerQuantum of them, cutting only between atomic batches.
     // Returns how many records were left behind for a later quantum.
-    // How long the render-worker rendezvous may take before the coordinator
-    // walks away from the batch. An absolute duration, not a share of the block
-    // period: what this has to clear is the machine's own scheduling jitter, and
-    // that is an absolute quantity — measurements across 128, 256 and 480 frame
-    // blocks put the worst observed rendezvous in the same 200-340 us band
-    // regardless of block width. Expressed as a share instead, one number would
-    // mean 2.2x headroom at 128 frames and 8.6x at 480 for no difference in real
-    // risk, and every recalibration would have to be redone per block size.
-    //
-    // A safe starting point, not a measured optimum: about three times the worst
-    // span observed on an idle machine with a null backend, which is a lower
-    // bound on a lower bound — it had no real-time competition, no device, and
-    // did not include worker wake latency. It wants calibration on target
-    // hardware.
-    static constexpr std::uint64_t kJobDeadlineMicros = 1000;
-    // The block period is a ceiling guard only. A budget that outlasts the block
-    // it belongs to would let one late block push the next one late as well, so
-    // the absolute figure is capped here — but the cap never raises it, because
-    // a budget below the jitter floor would abandon healthy batches. Measured
-    // worst case already occupies 11.5% of the shortest block period, with 7.5x
-    // to 9.7x spread above the median, so anything under about a quarter of the
-    // period is known-wrong; half leaves room above that.
+    // Synchronization ends halfway through the block period measured from
+    // callback entry; the rest is reserved for folding, buses and publication.
+    static constexpr std::uint64_t kJobJitterWarningMicros = 1000;
     static constexpr std::uint64_t kJobDeadlineBlockPeriodPercent = 50;
 
     std::uint32_t DrainCommands(std::uint64_t blockIndex,
@@ -368,10 +349,12 @@ private:
     // QPC tick rate, fetched once at construction (logic thread) so the
     // audio thread only ever reads the cached value.
     std::uint64_t m_cpuTicksPerSecond = 0;
-    // The render-worker rendezvous budget, resolved once on the logic thread
-    // from the two figures above and the frozen block width. The audio thread
-    // only reads it.
+    // Offset from block entry to the worker cutoff, resolved once from the
+    // frozen block period. It is not a fresh duration after voice processing.
     std::uint64_t m_jobDeadlineTicks = 0;
+    bool m_renderDeferred = false;
+    std::uint32_t m_deferredFrames = 0;
+    std::uint64_t m_deferredArenaOverflows = 0;
     // Highest whole-callback microseconds observed since init; audio-thread
     // owned, published with every block.
     std::uint32_t m_audioCpuPeakUs = 0;

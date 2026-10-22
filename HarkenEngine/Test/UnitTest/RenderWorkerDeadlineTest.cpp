@@ -1,9 +1,8 @@
-// The render-worker rendezvous deadline and what abandoning a batch leaves
-// behind. What is pinned here:
+// The render-worker synchronization budget and retained batch lifetime:
 //   1. A worker that stops making progress inside a claimed job makes the
 //      rendezvous overrun its deadline, and the coordinator leaves rather than
 //      waiting for it.
-//   2. The set of jobs the abandonment names as unfinished is exactly the set
+//   2. The set of jobs the timeout names as unfinished is exactly the set
 //      whose work never ran, and it is fixed at the moment of classification --
 //      the stalled worker finishing later changes no answer.
 //   3. A stalled executor strands exactly one job, not the rest of the batch.
@@ -90,6 +89,7 @@ struct StallProbe {
     // for a stall that is never going to arrive.
     bool awaitStall = false;
     bool coordinatorThrows = false;
+    bool slowCoordinator = false;
     std::vector<std::uint32_t> ran;
     std::atomic<std::uint32_t> coordinatorJobs{0};
     std::atomic<std::uint32_t> totalRuns{0};
@@ -108,6 +108,10 @@ struct StallProbe {
                        wake_test::TestGatePoint::BeforeJobFunction) == 0) {
                 std::this_thread::yield();
             }
+        }
+        if (firstCoordinatorJob && probe->slowCoordinator) {
+            const auto until = harken::CpuClockTicks() + BudgetTicks(kCoordinatorOverrunMicros);
+            while (harken::CpuClockTicks() < until) std::this_thread::yield();
         }
         // The claim cursor hands each index out once, so a plain write is
         // sufficient -- and counting rather than flagging also catches a second
@@ -184,8 +188,7 @@ harken::RenderWorkerPool::RunResult RunPlainBatch(
 }
 
 // Releases the stall and waits until every job has run exactly once, which is
-// the point at which no worker is inside the abandoned batch any more and Stop
-// cannot be held up by one.
+// point at which payload is complete. Stop still joins the final worker ack.
 void ReleaseAndQuiesce(StallProbe& probe) {
     wake_test::ReleaseGate(wake_test::TestGatePoint::BeforeJobFunction);
     ASSERT_TRUE(WaitUntil([&] {
@@ -194,7 +197,7 @@ void ReleaseAndQuiesce(StallProbe& probe) {
     })) << "a released worker never finished the job it was holding";
 }
 
-TEST(RenderWorkerDeadline, StalledWorkerMakesTheRendezvousOverrunAndAbandon) {
+TEST(RenderWorkerDeadline, StalledWorkerDefersWithoutAcceptingAnotherBatch) {
     harken::RenderWorkerPool pool;
     ASSERT_TRUE(pool.Start(2, 64));
     ASSERT_TRUE(pool.EnableOffline());
@@ -204,13 +207,20 @@ TEST(RenderWorkerDeadline, StalledWorkerMakesTheRendezvousOverrunAndAbandon) {
     const harken::RenderWorkerPool::RunResult result =
         RunStalledBatch(pool, probe, wake_test::TestGateOrdering::Ordered);
 
-    EXPECT_TRUE(result.abandoned)
+    EXPECT_TRUE(result.deferred)
         << "the coordinator waited out a worker that was not making progress";
     EXPECT_GE(result.unfinishedJobs, 1u);
     EXPECT_LE(result.unfinishedJobs, 2u)
         << "more jobs were stranded than there are executors to hold them";
     EXPECT_EQ(0u, result.busyPeakTicks)
-        << "an abandoned batch reported a busy peak it could not have read";
+        << "an deferred batch reported a busy peak it could not have read";
+
+    StallProbe rejected;
+    rejected.jobCount = 4;
+    rejected.ran.assign(4, 0);
+    const auto second = pool.Run(4, &StallProbe::Job, &rejected);
+    EXPECT_FALSE(second.accepted);
+    EXPECT_EQ(0u, rejected.totalRuns.load(std::memory_order_acquire));
 
     // The classification is exactly "whose work did not run". Read while the
     // stall is still held, so both sides describe the same instant.
@@ -223,8 +233,54 @@ TEST(RenderWorkerDeadline, StalledWorkerMakesTheRendezvousOverrunAndAbandon) {
         }
     }
     EXPECT_EQ(result.unfinishedJobs, unfinished)
-        << "the reported count and the quarantine set disagree";
+        << "the reported count and the pending job set disagree";
 
+    ReleaseAndQuiesce(probe);
+    pool.Stop();
+}
+
+TEST(RenderWorkerDeadline, CompletedPayloadWaitsForIdleWorkerBeforeDescriptorReuse) {
+    harken::RenderWorkerPool pool;
+    wake_test::ArmBeforeFirstEpochLoadGate(1);
+    ASSERT_TRUE(pool.Start(1, 64));
+    ASSERT_TRUE(pool.EnableOffline());
+    ASSERT_TRUE(WaitUntil([&] {
+        return wake_test::GateEnteredCount(
+            wake_test::TestGatePoint::BeforeFirstEpochLoad) == 1;
+    }));
+
+    StallProbe probe;
+    probe.jobCount = 8;
+    probe.ran.assign(probe.jobCount, 0);
+    const auto result = pool.Run(probe.jobCount, &StallProbe::Job, &probe,
+        StallBudgetTicks());
+    EXPECT_TRUE(result.deferred);
+    EXPECT_EQ(0u, result.unfinishedJobs);
+    EXPECT_TRUE(pool.PendingJobsCompleted());
+    EXPECT_FALSE(pool.TryReserveBatch());
+    EXPECT_EQ(probe.jobCount, probe.totalRuns.load(std::memory_order_acquire));
+
+    wake_test::ReleaseGate(wake_test::TestGatePoint::BeforeFirstEpochLoad);
+    ASSERT_TRUE(WaitUntil([&] { return pool.TryCompletePendingBatch(); }));
+    EXPECT_FALSE(RunPlainBatch(pool, probe).deferred);
+    EXPECT_EQ(1u, pool.WorkerCount());
+    pool.Stop();
+}
+
+TEST(RenderWorkerDeadline, ExpiredAbsoluteCutoffDoesNotRestartWaiting) {
+    harken::RenderWorkerPool pool;
+    ASSERT_TRUE(pool.Start(1, 8));
+    ASSERT_TRUE(pool.EnableOffline());
+    StallProbe probe;
+    probe.coordinator = std::this_thread::get_id();
+    probe.jobCount = 2;
+    probe.ran.assign(2, 0);
+    probe.awaitStall = true;
+    wake_test::ArmBeforeJobFunctionGate(1, wake_test::TestGateOrdering::Ordered);
+    const auto result = pool.RunUntil(2, &StallProbe::Job, &probe,
+        harken::CpuClockTicks() - 1);
+    EXPECT_TRUE(result.deferred);
+    EXPECT_EQ(1u, result.unfinishedJobs);
     ReleaseAndQuiesce(probe);
     pool.Stop();
 }
@@ -239,7 +295,7 @@ TEST(RenderWorkerDeadline,
     probe.jobCount = 8;
     const harken::RenderWorkerPool::RunResult result =
         RunStalledBatch(pool, probe, wake_test::TestGateOrdering::Ordered);
-    ASSERT_TRUE(result.abandoned);
+    ASSERT_TRUE(result.deferred);
     ASSERT_EQ(1u, result.unfinishedJobs);
 
     std::vector<bool> verdictWhileStalled(probe.jobCount, false);
@@ -277,9 +333,10 @@ TEST(RenderWorkerDeadline, AStalledExecutorStrandsExactlyOneJob) {
 
     StallProbe probe;
     probe.jobCount = 8;
+    probe.slowCoordinator = true;
     const harken::RenderWorkerPool::RunResult result =
         RunStalledBatch(pool, probe, wake_test::TestGateOrdering::Ordered);
-    ASSERT_TRUE(result.abandoned);
+    ASSERT_TRUE(result.deferred);
     EXPECT_EQ(1u, result.unfinishedJobs)
         << "one stalled executor stranded more than one job";
 
@@ -308,7 +365,7 @@ TEST(RenderWorkerDeadline, UnorderedGateReachesTheSameVerdict) {
     probe.jobCount = 8;
     const harken::RenderWorkerPool::RunResult result =
         RunStalledBatch(pool, probe, wake_test::TestGateOrdering::Unordered);
-    EXPECT_TRUE(result.abandoned);
+    EXPECT_TRUE(result.deferred);
     EXPECT_EQ(1u, result.unfinishedJobs);
     for (std::uint32_t j = 0; j < probe.jobCount; ++j) {
         EXPECT_EQ(pool.JobCompletedForLastBatch(j), probe.ran[j] != 0)
@@ -323,7 +380,7 @@ TEST(RenderWorkerDeadline, WakeFaultDrainCompletesInsideTheWholeBudget) {
     // The wake-fault path stops waiting for the completion barrier and waits for
     // the job counter instead. A budget that survives publication leaves the
     // coordinator enough time to drain every job itself, so the batch completes
-    // without quarantine while the worker set still enters serial fallback.
+    // without deferral while the worker set still enters serial fallback.
     //
     // A wake-fault drain held open by a worker remains unconstructible with these
     // gates: the fault is established during publication and workers normally
@@ -343,8 +400,8 @@ TEST(RenderWorkerDeadline, WakeFaultDrainCompletesInsideTheWholeBudget) {
     const harken::RenderWorkerPool::RunResult result =
         pool.Run(probe.jobCount, &StallProbe::Job, &probe);
 
-    EXPECT_FALSE(result.abandoned)
-        << "a drain with nothing outstanding abandoned the batch anyway";
+    EXPECT_FALSE(result.deferred)
+        << "a drain with nothing outstanding deferred the batch anyway";
     EXPECT_EQ(0u, result.unfinishedJobs);
     for (std::uint32_t j = 0; j < probe.jobCount; ++j) {
         EXPECT_EQ(1u, probe.ran[j]) << "job " << j;
@@ -369,7 +426,7 @@ TEST(RenderWorkerDeadline, JobFaultDrainWaitIsBoundedToo) {
     const harken::RenderWorkerPool::RunResult result =
         RunStalledBatch(pool, probe, wake_test::TestGateOrdering::Ordered);
 
-    EXPECT_TRUE(result.abandoned)
+    EXPECT_TRUE(result.deferred)
         << "the drain wait after a job fault was not bounded";
     EXPECT_EQ(1u, result.unfinishedJobs);
     EXPECT_EQ(1u, wake_test::JobFaultCount(pool));
@@ -378,20 +435,9 @@ TEST(RenderWorkerDeadline, JobFaultDrainWaitIsBoundedToo) {
     pool.Stop();
 }
 
-TEST(RenderWorkerDeadline, AbandonmentLeavesTheGenerationUnrunnable) {
-    // After the coordinator walks away, the slot the new epoch selects must not
-    // name runnable work: a worker that wakes reloads the epoch and switches on
-    // that slot's command with no further check, so a command left there is a
-    // command it will execute. This pins the invariant that clearing the command
-    // before bumping the epoch exists to maintain.
-    //
-    // Honest limit: it does not currently discriminate the two orderings. Every
-    // reachable predecessor of that slot has already cleared its own command -- a
-    // completed batch and a completed control round both do, and every path that
-    // returns without clearing also closes parallel dispatch for good -- so the
-    // slot is already unrunnable and the bump-first ordering would pass this too.
-    // It becomes discriminating as soon as some path can leave a live command in
-    // a slot a later generation selects.
+TEST(RenderWorkerDeadline, DeferredGenerationCompletesBeforeReuse) {
+    // A deferred descriptor stays live until all worker acknowledgements arrive.
+    // Surplus wakes cannot replay it, and completion reopens normal dispatch.
     harken::RenderWorkerPool pool;
     ASSERT_TRUE(pool.Start(1, 64));
     ASSERT_TRUE(pool.EnableOffline());
@@ -400,7 +446,7 @@ TEST(RenderWorkerDeadline, AbandonmentLeavesTheGenerationUnrunnable) {
     probe.jobCount = 4;
     const harken::RenderWorkerPool::RunResult result =
         RunStalledBatch(pool, probe, wake_test::TestGateOrdering::Ordered);
-    ASSERT_TRUE(result.abandoned);
+    ASSERT_TRUE(result.deferred);
     ReleaseAndQuiesce(probe);
 
     // Surplus wakes are part of the protocol -- the epoch is the authority -- so
@@ -413,14 +459,14 @@ TEST(RenderWorkerDeadline, AbandonmentLeavesTheGenerationUnrunnable) {
     EXPECT_EQ(probe.jobCount, probe.totalRuns.load(std::memory_order_acquire))
         << "a woken worker ran work from a generation nobody published";
 
-    // And later blocks are serial: an abandoned set never dispatches again.
-    EXPECT_TRUE(wake_test::IsSerialFallback(pool));
-    EXPECT_EQ(0u, pool.WorkerCount());
+    ASSERT_TRUE(WaitUntil([&] { return pool.TryCompletePendingBatch(); }));
+    EXPECT_FALSE(wake_test::IsSerialFallback(pool));
+    EXPECT_EQ(1u, pool.WorkerCount());
     StallProbe serialProbe;
     serialProbe.jobCount = 4;
     const harken::RenderWorkerPool::RunResult serialResult =
         RunPlainBatch(pool, serialProbe);
-    EXPECT_FALSE(serialResult.abandoned);
+    EXPECT_FALSE(serialResult.deferred);
     for (std::uint32_t j = 0; j < serialProbe.jobCount; ++j) {
         EXPECT_EQ(1u, serialProbe.ran[j]) << "job " << j;
     }
@@ -429,8 +475,8 @@ TEST(RenderWorkerDeadline, AbandonmentLeavesTheGenerationUnrunnable) {
 
 TEST(RenderWorkerDeadline, CompletedBatchesReportNoDeadlineDamage) {
     // The budget only ever fires on a batch that did not finish in time. A pool
-    // running normally reports nothing abandoned, and a query about its jobs
-    // answers "finished" instead of reading whatever an earlier abandonment might
+    // running normally reports nothing deferred, and a query about its jobs
+    // answers "finished" instead of reading whatever an earlier timeout might
     // have left in the classification storage.
     harken::RenderWorkerPool pool;
     ASSERT_TRUE(pool.Start(2, 64));
@@ -440,7 +486,7 @@ TEST(RenderWorkerDeadline, CompletedBatchesReportNoDeadlineDamage) {
     probe.jobCount = 16;
     const harken::RenderWorkerPool::RunResult result =
         RunPlainBatch(pool, probe);
-    EXPECT_FALSE(result.abandoned);
+    EXPECT_FALSE(result.deferred);
     EXPECT_EQ(0u, result.unfinishedJobs);
     EXPECT_EQ(0u, result.overrunTicks);
     for (std::uint32_t j = 0; j < probe.jobCount; ++j) {
@@ -451,7 +497,7 @@ TEST(RenderWorkerDeadline, CompletedBatchesReportNoDeadlineDamage) {
 }
 
 TEST(RenderWorkerDeadline,
-     CoordinatorJobOverBudgetAbandonsAfterWorkersFinish) {
+     CoordinatorWorkPastWaitBudgetKeepsCompletedBatch) {
     harken::RenderWorkerPool pool;
     ASSERT_TRUE(pool.Start(1, 8));
     ASSERT_TRUE(pool.EnableOffline());
@@ -460,17 +506,17 @@ TEST(RenderWorkerDeadline,
     probe.coordinator = std::this_thread::get_id();
     wake_test::ArmBeforeJobFunctionGate(1,
                                         wake_test::TestGateOrdering::Ordered);
-    pool.SetJobDeadlineTicksForTest(CoordinatorBudgetTicks());
     const harken::RenderWorkerPool::RunResult result =
-        pool.Run(2, &CoordinatorBudgetProbe::Job, &probe);
+        pool.RunUntil(2, &CoordinatorBudgetProbe::Job, &probe,
+            harken::CpuClockTicks() + CoordinatorBudgetTicks());
 
     EXPECT_EQ(1u, probe.coordinatorJobs.load(std::memory_order_acquire));
     EXPECT_EQ(1u, probe.workerJobs.load(std::memory_order_acquire));
-    EXPECT_TRUE(result.abandoned)
-        << "coordinator work that exceeded the budget was reported complete";
-    EXPECT_GT(result.overrunTicks, 0u);
+    EXPECT_FALSE(result.deferred);
+    EXPECT_EQ(0u, result.overrunTicks);
+    EXPECT_EQ(1u, pool.WorkerCount());
     EXPECT_EQ(0u, result.unfinishedJobs)
-        << "completed coordinator and worker jobs were quarantined";
+        << "completed coordinator and worker jobs were deferred";
     EXPECT_TRUE(pool.JobCompletedForLastBatch(0));
     EXPECT_TRUE(pool.JobCompletedForLastBatch(1));
     pool.Stop();

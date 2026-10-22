@@ -64461,20 +64461,19 @@ void FormatLogRecord(const harken::LogRecord& record, char* out,
                       static_cast<unsigned long long>(record.arg0),
                       static_cast<unsigned long long>(record.arg1));
         break;
-    case harken::kLogCodeRenderBatchAbandoned:
+    case harken::kLogCodeRenderBatchDeferred:
         std::snprintf(out, capacity,
-                      "render worker rendezvous abandoned %llu us past its "
-                      "deadline: %llu jobs unfinished, and that same count is "
-                      "the number of voice slots held out of reuse; parallel "
-                      "rendering is off for the rest of this session",
+                      "render worker synchronization deferred %llu us past its "
+                      "wait budget: %llu jobs unfinished; playback state and "
+                      "capacity are retained until the work completes",
                       static_cast<unsigned long long>(record.arg0),
                       static_cast<unsigned long long>(record.arg1));
         break;
     case harken::kLogCodeRenderDeadlineBelowJitterFloor:
         std::snprintf(out, capacity,
-                      "render worker deadline capped at %llu us by the block "
-                      "period, below the %llu us jitter allowance: healthy "
-                      "batches may be abandoned at this block size",
+                      "render worker cutoff is %llu us from block entry; the "
+                      "budget is below the %llu us jitter warning: healthy "
+                      "batches may be deferred at this block size",
                       static_cast<unsigned long long>(record.arg0),
                       static_cast<unsigned long long>(record.arg1));
         break;

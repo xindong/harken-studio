@@ -1182,9 +1182,11 @@ CompressorSceneResult RunCompressorScene(const CompressorSceneSpec& scene,
         }
     }
 
+    const auto beforeWarmup = engine->mixer.BlocksRendered();
     for (std::uint32_t block = 0; block < warmupBlocks; ++block) {
         engine->nullBackend.Pump(1);
     }
+    const auto afterWarmup = engine->mixer.BlocksRendered();
     result.blockDurationsUs.reserve(measuredBlocks);
     constexpr double kDeadlineUs =
         1.0e6 * static_cast<double>(kBlock) / static_cast<double>(kRate);
@@ -1206,6 +1208,14 @@ CompressorSceneResult RunCompressorScene(const CompressorSceneSpec& scene,
             static_cast<std::uint64_t>(std::count_if(
                 output, output + outputSampleCount,
                 [](float sample) { return !std::isfinite(sample); }));
+    }
+    const auto completedMeasured = engine->mixer.BlocksRendered() - afterWarmup;
+    const auto completedWarmup = afterWarmup - beforeWarmup;
+    if (completedWarmup != warmupBlocks || completedMeasured != measuredBlocks) {
+        std::fprintf(stderr,
+            "render-progress: workers=%u warmup=%llu/%u measured=%llu/%u\n",
+            workerCount, static_cast<unsigned long long>(completedWarmup), warmupBlocks,
+            static_cast<unsigned long long>(completedMeasured), measuredBlocks);
     }
     const DurationStats durationStats =
         ComputeDurationStats(result.blockDurationsUs);

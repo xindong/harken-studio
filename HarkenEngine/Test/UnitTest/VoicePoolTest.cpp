@@ -578,6 +578,7 @@ TEST(VoicePool, SourceTerminalUnjoinedWorkerRetainsSourceAndLeaf) {
     engine.mixer.ArenaForTests().SetCommitPageLimitForTests(0);
     harken::detail::VoicePoolReleaseTestAccess::SetWorkerDeadline(
         engine.voices, harken::CpuClockTicksPerSecond() / 20u);
+    const auto completed = engine.mixer.BlocksRendered();
     engine.nullBackend.Pump(1);
     ASSERT_TRUE(gate.entered.load(std::memory_order_acquire));
     EXPECT_FALSE(gate.exited.load(std::memory_order_acquire));
@@ -593,12 +594,11 @@ TEST(VoicePool, SourceTerminalUnjoinedWorkerRetainsSourceAndLeaf) {
     EXPECT_EQ(harken::SourceTerminalKind::None,
         engine.sourceTerminals.Resolve(unjoined->token)->bypassResult.load());
     VnVoiceHandle following = 0;
-    ASSERT_EQ(VN_OK, ClaimObserverVoice(engine, &following));
-    engine.voices.ApplyPlay(following, following, 0, 0);
+    EXPECT_EQ(VN_NO_VOICE, ClaimObserverVoice(engine, &following));
     const auto overflows = engine.mixer.Arena().OverflowCount();
     engine.nullBackend.Pump(1);
     EXPECT_EQ(overflows, engine.mixer.Arena().OverflowCount());
-    EXPECT_EQ(nullptr, engine.voices.Resolve(following));
+    EXPECT_EQ(completed, engine.mixer.BlocksRendered());
     EXPECT_FALSE(gate.exited.load(std::memory_order_acquire));
     gate.release.store(true, std::memory_order_release);
     harken::detail::VoicePoolReleaseTestAccess::JoinWorkers(engine.voices);
@@ -606,6 +606,20 @@ TEST(VoicePool, SourceTerminalUnjoinedWorkerRetainsSourceAndLeaf) {
     EXPECT_FALSE(engine.sourceTerminals.Capture(unjoined->token, UINT64_MAX, &result));
     EXPECT_FALSE(engine.voices.ReleaseObserved(unjoined->release));
     EXPECT_TRUE(engine.playableInstances.HasSourceRetirementHold(unjoined->leaf));
+    engine.nullBackend.Pump(1);
+    EXPECT_EQ(completed + 1u, engine.mixer.BlocksRendered());
+    for (const auto& source : sources) {
+        EXPECT_TRUE(engine.voices.ReleaseObserved(source.release));
+        ASSERT_TRUE(engine.sourceTerminals.Capture(source.token,
+            engine.mixer.BlocksRendered(), &result));
+        EXPECT_EQ(harken::SourceTerminalKind::Natural, result.kind);
+        EXPECT_EQ(64u, result.frame);
+    }
+    ASSERT_EQ(VN_OK, ClaimObserverVoice(engine, &following));
+    engine.voices.ApplyPlay(following, following, 0, 0);
+    engine.nullBackend.Pump(1);
+    EXPECT_EQ(overflows, engine.mixer.Arena().OverflowCount());
+    EXPECT_EQ(nullptr, engine.voices.Resolve(following));
 }
 
 TEST(VoicePool, SourceTerminalCapacityGenerationReuseAndExhaustionStayBounded) {

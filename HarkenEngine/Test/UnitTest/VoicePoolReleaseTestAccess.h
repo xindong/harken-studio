@@ -118,9 +118,9 @@ struct VoicePoolReleaseTestAccess {
     static OriginalWorkerJobObservation ObserveOriginalWorkerJob(const VoicePool& pool,
         std::uint32_t job) {
         const auto& workers = pool.m_workers;
-        assert(workers.m_abandonedGeneration != 0 && job < workers.m_abandonedJobCount &&
+        assert(workers.m_deferredGeneration != 0 && job < workers.m_deferredJobCount &&
             job < pool.m_jobSlots.size() && job < pool.m_jobGenerations.size());
-        return {workers.m_abandonedGeneration, workers.m_abandonedJobCount,
+        return {workers.m_deferredGeneration, workers.m_deferredJobCount,
             pool.m_jobSlots[job], pool.m_jobGenerations[job],
             workers.JobCompletedForLastBatch(job)};
     }

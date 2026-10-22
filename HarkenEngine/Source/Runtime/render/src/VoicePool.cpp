@@ -4121,7 +4121,7 @@ void VoicePool::ApplySetVoiceSendLevel(VnVoiceHandle handle,
 VoicePool::RenderAllResult VoicePool::RenderAll(
     BlockArena& arena, float* const* busPlanes, std::uint32_t blockFrames,
     NotificationQueue& notifications, std::uint64_t blockIndex,
-    std::uint64_t jobDeadlineTicks, std::uint64_t sourceFrameBegin) {
+    std::uint64_t jobDeadlineAt, std::uint64_t sourceFrameBegin) {
     RenderAllResult outcome;
     const auto beginCompressors = [](VoiceRenderContext& render) {
         for (std::uint32_t slot = 0; slot < render.fxSlotCount; ++slot) {
@@ -4211,7 +4211,7 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
                 m_effectBank.PublishCompressorRuntime(ref, payload);
             }
         };
-    if (!m_workers.TryReserveBatch()) {
+    if (m_deferredJobCount == 0 && !m_workers.TryReserveBatch()) {
         // Serial in-callback path (renderWorkerCount = 0), unchanged from M4:
         // each rendering voice runs its full cascade and folds as it goes.
         // This keeps every existing baseline byte-untouched at the default.
@@ -4283,70 +4283,61 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
     //      its lifecycle. The float reduction into the shared planes happens in
     //      fixed slot order regardless of which worker produced which cascade,
     //      so the mix is byte-identical to the serial path at any worker count.
-    std::uint32_t jobCount = 0;
-    for (std::uint32_t i = 0; i < m_slots.size(); ++i) {
-        Slot& slot = m_slots[i];
-        if (!IsAudioRenderingState(slot.state.load(std::memory_order_relaxed))) {
-            continue;
+    std::uint32_t jobCount = m_deferredJobCount;
+    if (jobCount == 0) {
+        for (std::uint32_t i = 0; i < m_slots.size(); ++i) {
+            Slot& slot = m_slots[i];
+            if (!IsAudioRenderingState(slot.state.load(std::memory_order_relaxed))) {
+                continue;
+            }
+            PrepareFirstOutputTimelineWeights(slot);
+            beginCompressors(slot.render);
+            slot.render.monitorRenderSlot = i;
+            slot.render.monitorRenderGeneration =
+                slot.generation.load(std::memory_order_relaxed);
+            for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
+                slot.render.monitorPreChain[ch] = ch < slot.render.pcm.channelCount
+                    ? m_monitorPreChainStorage[ch].data() + static_cast<std::size_t>(i) * m_blockFrames
+                    : nullptr;
+            }
+            slot.render.monitorPreChainFrames = 0;
+            slot.render.dynamicVoiceTapActive =
+                m_dynamicRoutes.HasVoiceTap(slot.render.dynamicSourceIdentity);
+            PrepareVoiceCascade(slot.render, arena, blockFrames, m_mixChannels);
+            m_jobSlots[jobCount] = i;
+            m_jobGenerations[jobCount] =
+                slot.generation.load(std::memory_order_relaxed);
+            ++jobCount;
         }
-        PrepareFirstOutputTimelineWeights(slot);
-        beginCompressors(slot.render);
-        slot.render.monitorRenderSlot = i;
-        slot.render.monitorRenderGeneration =
-            slot.generation.load(std::memory_order_relaxed);
-        for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
-            slot.render.monitorPreChain[ch] = ch < slot.render.pcm.channelCount
-                ? m_monitorPreChainStorage[ch].data() + static_cast<std::size_t>(i) * m_blockFrames
-                : nullptr;
-        }
-        slot.render.monitorPreChainFrames = 0;
-        slot.render.dynamicVoiceTapActive =
-            m_dynamicRoutes.HasVoiceTap(slot.render.dynamicSourceIdentity);
-        PrepareVoiceCascade(slot.render, arena, blockFrames, m_mixChannels);
-        m_jobSlots[jobCount] = i;
-        m_jobGenerations[jobCount] =
-            slot.generation.load(std::memory_order_relaxed);
-        ++jobCount;
-    }
 
-    if (jobCount > 0) {
-        m_jobQuantumIndex = blockIndex;
-        m_jobBlockFrames = blockFrames;
-        m_jobSourceFrameBegin = sourceFrameBegin;
-        const RenderWorkerPool::RunResult batch = m_workers.Run(
-            jobCount, &VoicePool::CascadeThunk, this, jobDeadlineTicks);
-        if (batch.busyPeakTicks > m_workerBusyPeakTicks) {
-            m_workerBusyPeakTicks = batch.busyPeakTicks;
+        if (jobCount > 0) {
+            m_jobQuantumIndex = blockIndex;
+            m_jobBlockFrames = blockFrames;
+            m_jobSourceFrameBegin = sourceFrameBegin;
+            const RenderWorkerPool::RunResult batch = m_workers.RunUntil(
+                jobCount, &VoicePool::CascadeThunk, this, jobDeadlineAt);
+            if (batch.busyPeakTicks > m_workerBusyPeakTicks) {
+                m_workerBusyPeakTicks = batch.busyPeakTicks;
+            }
+            outcome.batchDeferred = batch.deferred && batch.unfinishedJobs != 0;
+            outcome.overrunTicks = batch.overrunTicks;
+            outcome.pendingVoices = batch.unfinishedJobs;
+        } else {
+            m_workers.CancelReservedBatch();
         }
-        outcome.batchAbandoned = batch.abandoned;
-        outcome.overrunTicks = batch.overrunTicks;
-        outcome.quarantinedVoices = batch.unfinishedJobs;
+
     } else {
-        m_workers.CancelReservedBatch();
+        outcome.batchDeferred = !m_workers.PendingJobsCompleted();
     }
+    if (outcome.batchDeferred) {
+        m_deferredJobCount = jobCount;
+        return outcome;
+    }
+    m_deferredJobCount = 0;
 
     for (std::uint32_t j = 0; j < jobCount; ++j) {
         const std::uint32_t i = m_jobSlots[j];
         Slot& slot = m_slots[i];
-        if (outcome.batchAbandoned &&
-            !m_workers.JobCompletedForLastBatch(j)) {
-            // A worker may still be inside this job. Its cascade writes are not
-            // published to this thread, so every field of the render context is
-            // off limits here — the fold, the tap publication, the compressor
-            // telemetry and the lifecycle all read it, so all four are skipped.
-            //
-            // The voice contributes nothing to this block and never will again.
-            // Its dynamic-route Voice tap goes silent without anything being
-            // said to the route system: the block's BeginBlock already zeroed
-            // the write bank of every tap slot in the installed plan and cleared
-            // its write-valid flag, EndBlock promotes that zeroed bank to the
-            // read side, and from the next block on the detector finds the tap
-            // invalid and reports the route source-stale. Invalidating the tap
-            // explicitly would mean reading the context for the voice's route
-            // identity, which is the one thing this branch may not do.
-            QuarantineSlot(i, slot, notifications, blockIndex);
-            continue;
-        }
         if (slot.render.lastResult.phase != SourcePhase::Done) {
             m_dynamicRoutes.PublishVoiceTap(
                 slot.render.dynamicSourceIdentity,

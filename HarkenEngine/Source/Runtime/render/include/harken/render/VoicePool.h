@@ -583,33 +583,31 @@ public:
     void ApplySetVoiceSendLevel(VnVoiceHandle handle, std::uint32_t sendSlot,
                                 float levelDb, std::uint32_t rampMs);
 
-    // What one RenderAll had to give up on. Everything zero on an ordinary
-    // block, which is every block that does not blow the render deadline.
     struct RenderAllResult {
-        // Ticks the worker rendezvous ran past its deadline before the
-        // coordinator walked away from the batch.
         std::uint64_t overrunTicks = 0;
-        // Voice slots this call put beyond reuse because a worker may still be
-        // writing their scratch. Equal to the batch's unfinished job count.
-        std::uint32_t quarantinedVoices = 0;
-        // The render batch was abandoned. Parallel dispatch is off from here on
-        // and the caller owes the arena's descending span the same treatment.
-        bool batchAbandoned = false;
+        std::uint32_t pendingVoices = 0;
+        bool batchDeferred = false;
     };
+
+    // A deferred quantum owns all its original payload until the last writer
+    // completes. Lifecycle Stop establishes the same fact by joining.
+    bool DeferredRenderReady() const noexcept {
+        return m_workers.PendingJobsCompleted();
+    }
 
     // Renders every rendering voice into its bus's planar accumulator and
     // releases the ones that finished, emitting their notifications.
     // `busPlanes` is bus-major: bus i's channels start at
     // busPlanes[i * mixChannels] (the resolved mix-layout channel count).
     //
-    // jobDeadlineTicks bounds the worker rendezvous; see RenderWorkerPool::Run.
+    // jobDeadlineAt is the absolute cutoff; see RenderWorkerPool::RunUntil.
     // 0 renders without a bound, which only a caller that owns no deadline may
     // ask for. Audio thread.
     RenderAllResult RenderAll(BlockArena& arena, float* const* busPlanes,
                               std::uint32_t blockFrames,
                               NotificationQueue& notifications,
                               std::uint64_t blockIndex,
-                              std::uint64_t jobDeadlineTicks,
+                              std::uint64_t jobDeadlineAt,
                               std::uint64_t sourceFrameBegin = 0);
 
     // Publishes a valid all-zero current block for every live Voice tap when
@@ -1177,6 +1175,7 @@ private:
     // path.
     std::vector<std::uint32_t> m_jobSlots;
     std::vector<std::uint32_t> m_jobGenerations;
+    std::uint32_t m_deferredJobCount = 0;
     std::uint64_t m_jobQuantumIndex = 0;
     std::uint32_t m_jobBlockFrames = 0; // block width for the in-flight batch
     std::uint64_t m_jobSourceFrameBegin = 0;

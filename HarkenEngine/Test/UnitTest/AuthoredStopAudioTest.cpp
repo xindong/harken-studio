@@ -855,7 +855,7 @@ struct FrontierAudioHarness {
     std::optional<harken::AuthoredStopFenceDescriptor> stopFence;
 };
 
-TEST(AuthoredStopAudio, AbandonedWorkerKeepsFrozenFrontierWhileNextQuantumFinalizes) {
+TEST(AuthoredStopAudio, DeferredWorkerRetainsFrozenFrontierUntilCompletion) {
     FrontierAudioHarness h(1);
     h.audio.retainSources = true;
     h.audio.captureControl = true;
@@ -911,37 +911,14 @@ TEST(AuthoredStopAudio, AbandonedWorkerKeepsFrozenFrontierWhileNextQuantumFinali
     const auto rendered = engine.voices.RenderAll(h.audio.arena, h.audio.planes.data(), kBlock,
         engine.notifications, 0, 0, 0);
     ASSERT_TRUE(gate.entered.load(std::memory_order_acquire));
-    ASSERT_TRUE(rendered.batchAbandoned);
-    ASSERT_GT(rendered.quarantinedVoices, 0u);
+    ASSERT_TRUE(rendered.batchDeferred);
+    ASSERT_GT(rendered.pendingVoices, 0u);
     ASSERT_NE(nullptr, gate.span);
     ASSERT_NE(nullptr, gate.source);
     ASSERT_GE(gate.before.eventCount, 2u);
     EXPECT_EQ(0u, gate.before.quantumIndex);
     EXPECT_EQ(harken::FrontierEventState::Applied, gate.before.events[0].frontierProof.state);
 
-    const harken::AuthoredStopOperationIdentity nextIdentity{1, 2, 1, 1, 1, 1, 80};
-    harken::AuthoredStopOperation nextStop(nextIdentity);
-    auto nextPayload = h.stopPayload;
-    nextPayload.envelopeEndFrame = 80;
-    nextPayload.authoredStopOperation = nextIdentity;
-    harken::TimelineProgramView nextProgram{1, &nextPayload, 1};
-    nextProgram.role = harken::TimelineProgramRole::AuthoredStopFence;
-    harken::AuthoredStopFenceDescriptor nextFence(&nextStop, nextIdentity, {}, &nextProgram, 1);
-    nextProgram.authoredStopFence = &nextFence;
-    harken::ScheduledEventInput nextEvent{};
-    nextEvent.executeFrame = 80;
-    nextEvent.logicCommitSequence = 3;
-    nextEvent.subeventPhase = 50;
-    h.File(11, nextProgram, {}, &nextEvent, 1);
-    auto nextControl = h.Event(72, 1, 30, harken::FrontierOperationKind::Dependent);
-    nextControl.logicCommitSequence = 3;
-    h.File(12, h.voiceProgram, gate.source->render == h.render ? h.arm : h.secondArm, &nextControl, 1);
-    ASSERT_FALSE(::testing::Test::HasFatalFailure());
-    h.pool.Publish(2u * kBlock, nullptr, nullptr, &h.arms);
-    const auto beforeDigest = h.digest.count;
-    h.executor.ExecuteQuantum(1);
-    EXPECT_GT(h.digest.count, beforeDigest);
-    EXPECT_EQ(2u, nextStop.AppliedAudioSequence());
     EXPECT_FALSE(gate.exited.load(std::memory_order_acquire));
     EXPECT_EQ(gate.before.quantumIndex, gate.span->quantumIndex);
     EXPECT_EQ(gate.before.renderGeneration, gate.span->renderGeneration);
@@ -967,19 +944,13 @@ TEST(AuthoredStopAudio, AbandonedWorkerKeepsFrozenFrontierWhileNextQuantumFinali
     }
     harken::SourceTerminalPayload terminal{};
     EXPECT_FALSE(engine.sourceTerminals.Capture(gate.sourceToken, UINT64_MAX, &terminal));
-    const auto binding = std::find_if(h.audio.controlBindings.begin(), h.audio.controlBindings.end(),
-        [&](const auto& candidate) { return candidate.render == gate.source->render; });
-    ASSERT_NE(h.audio.controlBindings.end(), binding);
-    harken::MonitorVoiceControlFact control{};
-    EXPECT_FALSE(binding->receipt->TryRead(*binding, &control));
-    EXPECT_TRUE(engine.playableInstances.HasSourceRetirementHold(gate.source->leaf));
-    EXPECT_TRUE(engine.playableInstances.Classify(gate.source->leaf).live);
     gate.release.store(true, std::memory_order_release);
     harken::detail::VoicePoolReleaseTestAccess::JoinWorkers(engine.voices);
     EXPECT_TRUE(gate.exited.load(std::memory_order_acquire));
-    EXPECT_FALSE(engine.sourceTerminals.Capture(gate.sourceToken, UINT64_MAX, &terminal));
-    EXPECT_FALSE(binding->receipt->TryRead(*binding, &control));
-    EXPECT_TRUE(engine.playableInstances.HasSourceRetirementHold(gate.source->leaf));
+    const auto completed = engine.voices.RenderAll(h.audio.arena, h.audio.planes.data(), kBlock,
+        engine.notifications, 0, 0, 0);
+    EXPECT_FALSE(completed.batchDeferred);
+
 }
 
 TEST(AuthoredStopAudio, FrontierExecutorFinalizesEntryAndEarlierControlBeforeStop) {
