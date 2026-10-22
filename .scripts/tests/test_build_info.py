@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -86,6 +87,7 @@ class BuildInfoTest(unittest.TestCase):
             ("HarkenSchema/Pack/manifest.json", json.dumps({"published": [3, 29, 30]}), ("0.8.1", 15, 30)),
         ):
             with self.subTest(source=source):
+                time.sleep(1.1)
                 (self.root / source).write_text(value, encoding="utf-8")
                 result = subprocess.run(
                     ["cmake", "--build", str(self.root / "build"), "--target", "version_snapshot"],
