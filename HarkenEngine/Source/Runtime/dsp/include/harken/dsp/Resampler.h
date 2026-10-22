@@ -279,9 +279,14 @@ static_assert(std::is_trivially_copyable_v<ResamplerParkState>,
 static_assert(sizeof(ResamplerParkState) <= 32u * 1024u,
               "resampler park state exceeds the 32 KiB ceiling");
 
-// Per-voice resampler state. POD except for the pointers wired at reset:
-// ring storage is owned by the voice pool (preallocated at init), tables by
-// the engine. All methods are audio-thread safe after reset.
+// Per-voice state borrows prepared ring and optional profile storage from its
+// caller. All methods are audio-thread safe after reset.
+struct ResamplerUnitySpan {
+    std::uint32_t ringOffset = 0;
+    std::uint32_t firstFrames = 0;
+    std::uint32_t frames = 0;
+};
+
 struct Resampler {
     float* ring[kMaxChannels] = {};  // kResampleFifoFrames floats each
     const ResampleTables* tables = nullptr;
@@ -306,7 +311,7 @@ struct Resampler {
     bool highRatioFilterActive = false;
     ResampleProfile resampleProfile =
         ResampleProfile::LegacyCompatibility;
-    MultirateResamplerCandidate professional = {};
+    MultirateResamplerCandidate* professional = nullptr;
 
     // Prepares for a new voice: zeroes the ring, writes the history pad,
     // and positions the read head on the first real input frame. Runs on
@@ -315,11 +320,13 @@ struct Resampler {
                ResampleQuality q, double inRatio, const ResampleTables* t);
 
     // Selects one immutable processing profile for the lifetime of the reset
-    // voice. Both profiles use the caller-owned raw ring; no PCM is duplicated.
+    // voice. Professional requires caller-owned stable workspace. Both profiles
+    // use the caller-owned raw ring; no PCM is duplicated.
     void Reset(float* const* ringStorage, std::uint32_t channels,
                ResampleQuality q, double inRatio, const ResampleTables* t,
                ResampleProfile profile,
-               const MultirateResampleTables* multirateTables);
+               const MultirateResampleTables* multirateTables,
+               MultirateResamplerCandidate* workspace);
 
     // Frames of real input the ring can accept without overwriting the fixed
     // quality-tier history reserve needed by a later ratio change.
@@ -346,6 +353,11 @@ struct Resampler {
     std::uint32_t Produce(float* const* dst, std::uint32_t dstOffset,
                           std::uint32_t maxFrames);
 
+    // Consumes a complete live unity span without copying. Ring storage stays
+    // read-only until the borrower finishes; no refill/reset may intervene.
+    bool BorrowLinearUnity(std::uint32_t frames,
+                           ResamplerUnitySpan& out) noexcept;
+
     // Runtime rate change at a block boundary. The read position, ring
     // contents, and accumulated kernel history are preserved while the
     // per-output-frame advance ramps to the new target.
@@ -356,37 +368,37 @@ struct Resampler {
     }
     std::uint64_t SourceFrame() const {
         return resampleProfile == ResampleProfile::Professional44148
-                   ? professional.sourceFrame
+                   ? professional->sourceFrame
                    : readIndex;
     }
     double SourceFraction() const {
         return resampleProfile == ResampleProfile::Professional44148
-                   ? professional.sourceFraction
+                   ? professional->sourceFraction
                    : readFraction;
     }
     bool InputEnded() const {
         return resampleProfile == ResampleProfile::Professional44148
-                   ? professional.inputEnded
+                   ? professional->inputEnded
                    : inputEnded;
     }
     double CurrentRatio() const {
         return resampleProfile == ResampleProfile::Professional44148
-                   ? professional.ratio
+                   ? professional->ratio
                    : ratio;
     }
     double TargetRatio() const {
         return resampleProfile == ResampleProfile::Professional44148
-                   ? professional.targetRatio
+                   ? professional->targetRatio
                    : targetRatio;
     }
     std::uint32_t RampFramesRemaining() const {
         return resampleProfile == ResampleProfile::Professional44148
-                   ? professional.rampRemaining
+                   ? professional->rampRemaining
                    : rampRemaining;
     }
     double RampStep() const {
         return resampleProfile == ResampleProfile::Professional44148
-                   ? professional.rampStep
+                   ? professional->rampStep
                    : rampStep;
     }
     bool CaptureProfessional(ProfessionalResamplerState* out) const;
@@ -396,14 +408,16 @@ struct Resampler {
         const ProfessionalResamplerState& state,
         float* const* ringStorage, std::uint32_t channels,
         const ResampleTables* legacyTables,
-        const MultirateResampleTables* multirateTables);
+        const MultirateResampleTables* multirateTables,
+        MultirateResamplerCandidate* workspace);
     bool CaptureParkState(ResamplerParkState* out) const;
     static bool ValidateParkState(const ResamplerParkState& state);
     bool RestoreParkState(
         const ResamplerParkState& state,
         float* const* ringStorage, std::uint32_t channels,
         const ResampleTables* legacyTables,
-        const MultirateResampleTables* multirateTables);
+        const MultirateResampleTables* multirateTables,
+        MultirateResamplerCandidate* workspace = nullptr);
 };
 
 static_assert(sizeof(Resampler) <= 32u * 1024u,

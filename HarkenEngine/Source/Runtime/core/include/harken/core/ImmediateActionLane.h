@@ -6,7 +6,9 @@
 #include "harken/core/DecisionTable.h"
 #include "harken/core/AuthoredStopFence.h"
 #include "harken/core/EngineConfig.h"
+#include "harken/core/StableSlotStorage.h"
 
+#include <algorithm>
 #include <atomic>
 #include <bitset>
 #include <cassert>
@@ -15,6 +17,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 
 namespace harken {
 class OriginalImmediateLaneConditionalProjection;
@@ -379,6 +382,8 @@ struct ImmediateLaneAttempt {
     std::uint32_t groupCredit = 0;
     std::uint32_t memberCredit = 0;
     std::uint32_t bucketCredit = 0;
+    std::uint32_t eventStorageCount = 0;
+    std::uint32_t memberStorageCount = 0;
     std::uint32_t eventCount = 0;
     std::uint32_t groupCount = 0;
     std::uint32_t pinGroupManifestCount = 0;
@@ -405,7 +410,7 @@ struct ImmediateLaneAttempt {
     bool conditionalProjectionCancelled = false;
     bool conditionalProjectionReferencesReturned = false;
     std::array<Plan03GroupSliceIdentity, 2> conditionalProjectionGroups{};
-    std::atomic<std::uint64_t> conditionalProjectionAdmission{0};
+    mutable std::atomic<std::uint64_t> conditionalProjectionAdmission{0};
     std::atomic<std::uint64_t> conditionalProjectionLastUse{0};
     bool capturedConditionalProjection = false;
     OriginalConditionalReplacementBatch* conditionalReplacement = nullptr;
@@ -437,7 +442,7 @@ private:
     std::uint64_t root_ = 0, marker_ = 0;
 };
 
-// Fixed storage for initial Action cohort events. The logic producer prepares
+// Stable storage for initial Action cohort events. The logic producer prepares
 // immutable descriptors, then publishes a complete bank with a release store.
 // The audio reader scans one bucket head per attempt and never allocates.
 class ImmediateActionLane {
@@ -448,6 +453,27 @@ public:
     ImmediateActionLane& operator=(const ImmediateActionLane&) = delete;
     ImmediateActionLane(ImmediateActionLane&&) = delete;
     ImmediateActionLane& operator=(ImmediateActionLane&&) = delete;
+    // Registrations attach and detach only while the audio consumer is quiescent.
+    class EventStorageRegistration {
+    public:
+        using Prepare = bool (*)(void*, std::uint32_t) noexcept;
+        EventStorageRegistration() = default;
+        ~EventStorageRegistration() { Detach(); }
+        EventStorageRegistration(const EventStorageRegistration&) = delete;
+        EventStorageRegistration& operator=(const EventStorageRegistration&) = delete;
+        void Detach() noexcept;
+        bool IsFor(const ImmediateActionLane* lane) const noexcept { return lane != nullptr && owner_ == lane; }
+    private:
+        friend class ImmediateActionLane;
+        const ImmediateActionLane* owner_ = nullptr;
+        EventStorageRegistration* previous_ = nullptr;
+        EventStorageRegistration* next_ = nullptr;
+        void* context_ = nullptr;
+        Prepare prepare_ = nullptr;
+    };
+    std::uint32_t EventStorageHighWater() const noexcept;
+    void AttachEventStorage(EventStorageRegistration& registration,
+        void* context, EventStorageRegistration::Prepare prepare) const noexcept;
     struct Config {
         std::uint32_t attempts = 0;
         std::uint32_t eventsPerAttempt = 0;
@@ -458,6 +484,9 @@ public:
     };
 
     bool Reset(Config config);
+    bool PreparePrivateEntryBacking(std::uint32_t count,
+        StableStoragePreparation* out) noexcept;
+    bool PrepareAttemptBacking(StableStoragePreparation* out) noexcept;
     bool IsOriginalAttemptLifetimePinFor(
         const OriginalImmediateLaneAttemptLifetimePin& original,
         ImmediateLaneHandle handle, std::uint64_t root) const noexcept;
@@ -481,10 +510,53 @@ public:
     std::uint32_t AttemptCapacity() const noexcept { return config_.attempts; }
     std::uint32_t EventsPerAttempt() const noexcept { return config_.eventsPerAttempt; }
     std::size_t PrivateEntryStorageBytes() const noexcept {
-        return static_cast<std::size_t>(config_.attempts) * config_.eventsPerAttempt *
-            (sizeof(PrivateEntryAssociation) + 2u * sizeof(PrivateEntryBucket) +
-             sizeof(ImmediateLaneDeclaredGroup) + 2u * sizeof(std::uint32_t));
+        return privateEntries_.RequestedBytes();
     }
+    std::size_t PrivateEntryCommittedBytes() const noexcept { return privateEntries_.CommittedBytes(); }
+    std::size_t PrivateEntryReservedBytes() const noexcept { return privateEntries_.ReservedBytes(); }
+    std::size_t PlacementScratchStorageBytes() const noexcept {
+        return static_cast<std::size_t>(config_.eventsPerAttempt) * sizeof(std::uint32_t) *
+            (static_cast<std::size_t>(eventPlacementOrder_ != nullptr) +
+             static_cast<std::size_t>(groupPlacementOrder_ != nullptr));
+    }
+    std::size_t EventStorageBytes() const noexcept { return eventStorageBytes_; }
+    std::size_t MemberStorageBytes() const noexcept { return memberStorageBytes_; }
+    std::size_t PayloadCommittedBytes() const noexcept {
+        return eventStorage_.CommittedBytes() + memberStorage_.CommittedBytes();
+    }
+    std::size_t PayloadReservedBytes() const noexcept {
+        return eventStorage_.ReservedBytes() + memberStorage_.ReservedBytes();
+    }
+    std::size_t PayloadDirectoryBytes() const noexcept {
+        return eventStorage_.DirectoryBytes() + memberStorage_.DirectoryBytes();
+    }
+    std::size_t MetadataStorageBytes() const noexcept;
+    std::size_t MetadataCommittedBytes() const noexcept;
+    std::size_t MetadataReservedBytes() const noexcept;
+    std::size_t MetadataDirectoryBytes() const noexcept;
+    std::span<FrontierEntryReceiptRef> CapturedSourceWaitScratch(std::uint32_t slot,
+        const ImmediateLaneBucket* bucket) noexcept;
+#if !defined(HARKEN_RT_QUALIFICATION)
+    void SetAttemptCommitPageLimitForTests(std::size_t pages) noexcept {
+        attempts_.SetCommitPageLimitForTests(pages);
+    }
+    void SetMetadataCommitPageLimitsForTests(std::size_t groupPages,
+        std::size_t sourceWaitPages) noexcept {
+        groupCommitPageLimit_ = groupPages;
+        sourceWaitCommitPageLimit_ = sourceWaitPages;
+    }
+    void SetStateCommitPageLimitForTests(std::size_t pages) noexcept {
+        stateCommitPageLimit_ = pages;
+    }
+    void SetPrivateEntryCommitPageLimitForTests(std::size_t pages) noexcept {
+        privateEntries_.SetCommitPageLimitForTests(pages);
+    }
+    void SetPayloadCommitPageLimitsForTests(std::size_t eventPages,
+        std::size_t memberPages) noexcept {
+        eventStorage_.SetCommitPageLimitForTests(eventPages);
+        memberStorage_.SetCommitPageLimitForTests(memberPages);
+    }
+#endif
     std::uint32_t MaxEventsPerQuantum() const noexcept { return config_.maxEventsPerQuantum; }
     bool OwnsPrivate(ImmediateLaneHandle handle,
                      std::uint64_t root) const noexcept;
@@ -530,6 +602,7 @@ public:
         std::uint32_t bucketOrdinal, std::uint32_t groupOffset,
         ImmediateLaneGroupRef* out) const noexcept;
     bool HasProgramReference(ProgramGeneration generation) const noexcept;
+    bool HasProgramReference(TimelineTransactionProgramRef program) const noexcept;
     // Logic requests exact withdrawal; false retains any issued request for retry.
     bool WithdrawPlainNoneFence(ImmediateLaneHandle handle, std::uint64_t root,
         const TimelineTransactionProgramRef& program,
@@ -825,9 +898,33 @@ private:
     void ReturnPrivatePlacementProof(PrivateImmediateLanePlacementProof& proof) noexcept;
     void InstallPlacement(ImmediateLaneHandle handle, std::uint64_t anchor) noexcept;
     void FinishPrivateLayout(PrivatePlainLayoutEdit& edit, bool commit) noexcept;
+    bool HasProgramReferenceImpl(ProgramGeneration generation,
+        const TimelineProgramView* program) const noexcept;
     bool AcquirePrivatePlainLayoutEditImpl(ImmediateLaneHandle handle,
         std::uint64_t root, ImmediateLaneDemand originalDemand,
         PrivatePlainLayoutEdit* out, bool pristineReserved) noexcept;
+    struct EventState {
+        TimelineArmReaderPin arm;
+        AuthoredStopFenceLaneReference fence;
+        std::uint64_t lastCaptureSequence = 0;
+        std::uint32_t privateEntry = UINT32_MAX;
+        std::uint32_t withdrawalLeader = 0;
+        std::atomic<std::uint8_t> withdrawal{0};
+        std::uint8_t capturedAdmission = 0;
+        std::uint8_t conditionalScope = 0;
+    };
+    struct GroupState {
+        DecisionFuturePin decision;
+        std::uint32_t privateEntry = UINT32_MAX;
+        std::uint32_t memberBase = 0;
+        std::uint32_t privateOwnedIndex = 0;
+        std::uint16_t memberCount = 0;
+        std::uint8_t futureOwned = 0;
+    };
+    struct MemberState {
+        std::uint32_t order = 0;
+        std::uint32_t privateEntry = UINT32_MAX;
+    };
     struct PrivateEntryBucket {
         std::uint32_t ordinal = UINT32_MAX;
         std::atomic<ImmediateLaneEntryOutcome> outcome{
@@ -837,6 +934,48 @@ private:
     struct SourceWaitEntry {
         FrontierEntryReceiptRef entry{};
         std::uint64_t sequence = 0;
+    };
+    // Columns remain contiguous within one attempt and share a single page reservation.
+    struct AttemptMetadataBacking {
+        ~AttemptMetadataBacking();
+        bool Initialize(ImmediateLaneDemand requested, const Config& config,
+            std::size_t pageLimit) noexcept;
+        bool Fits(ImmediateLaneDemand requested, const Config& config) const noexcept;
+        void Swap(AttemptMetadataBacking& other) noexcept;
+        detail::StablePageReservation storage;
+        ImmediateLaneDemand demand{};
+        std::uint32_t sourceWaitCount = 0;
+        std::uint32_t waitingScratchCount = 0;
+        std::size_t privateBucketCount = 0;
+        std::size_t requestedBytes = 0;
+        ImmediateLaneGroupRef* groups = nullptr;
+        ImmediateLaneDeclaredGroup* declaredGroups = nullptr;
+        Plan03GroupReaderPin* groupPins = nullptr;
+        EventState* eventState = nullptr;
+        GroupState* groupState = nullptr;
+        MemberState* memberState = nullptr;
+        SourceWaitEntry* sourceWaitEntries = nullptr;
+        ImmediateLaneBucket* buckets = nullptr;
+        PrivateEntryBucket* privateEntryBuckets = nullptr;
+        FrontierEntryReceiptRef* waitingScratch = nullptr;
+    };
+    struct AttemptMetadata {
+        AttemptMetadataBacking active;
+        AttemptMetadataBacking standby;
+    };
+    template<auto Column>
+    struct MetadataColumn {
+        ImmediateActionLane* owner;
+        auto* At(std::size_t logical) noexcept {
+            const auto slot = logical / owner->config_.eventsPerAttempt;
+            const auto index = logical % owner->config_.eventsPerAttempt;
+            return (owner->metadata_[static_cast<std::uint32_t>(slot)].active.*Column) + index;
+        }
+        const auto* At(std::size_t logical) const noexcept {
+            return const_cast<MetadataColumn*>(this)->At(logical);
+        }
+        decltype(auto) operator[](std::size_t logical) noexcept { return *At(logical); }
+        decltype(auto) operator[](std::size_t logical) const noexcept { return *At(logical); }
     };
     struct PrivateEntryAssociation {
         FrontierEntryReceiptRef entry{};
@@ -857,7 +996,32 @@ private:
         PrivateEntryBucket* buckets = nullptr;
         std::uint32_t bucketCapacity = 0;
         std::uint32_t bucketCount = 0;
+        bool inUse = false;
     };
+    PrivateEntryAssociation& PrivateEntryAt(std::size_t logical) noexcept {
+        return privateEntries_[memberState_[logical].privateEntry];
+    }
+    const PrivateEntryAssociation& PrivateEntryAt(std::size_t logical) const noexcept {
+        return privateEntries_[memberState_[logical].privateEntry];
+    }
+    template<class Owner>
+    struct PrivateEntryView {
+        Owner* owner;
+        std::size_t base;
+        decltype(auto) operator[](std::size_t index) const noexcept {
+            return owner->PrivateEntryAt(base + index);
+        }
+    };
+    auto PrivateEntries(std::uint32_t slot) noexcept {
+        return PrivateEntryView<ImmediateActionLane>{this,
+            static_cast<std::size_t>(slot) * config_.eventsPerAttempt};
+    }
+    auto PrivateEntries(std::uint32_t slot) const noexcept {
+        return PrivateEntryView<const ImmediateActionLane>{this,
+            static_cast<std::size_t>(slot) * config_.eventsPerAttempt};
+    }
+    PrivateEntryAssociation* AcquirePrivateEntry(std::size_t logical) noexcept;
+    void ReleasePrivateEntries(std::uint32_t slot) noexcept;
     bool FreezePrivateEntryAdmission(ImmediateLaneHandle handle) noexcept;
     void BeginPrivateEntryAdmission(std::uint32_t slot,
                                     std::uint32_t bucketOrdinal) noexcept;
@@ -900,6 +1064,23 @@ private:
     const ImmediateLaneAttempt* Resolve(ImmediateLaneHandle handle) const noexcept;
     ImmediateLaneEvent* EventBase(std::uint32_t slot) noexcept;
     const ImmediateLaneEvent* EventBase(std::uint32_t slot) const noexcept;
+    ImmediateLaneMemberManifest* MemberBase(std::uint32_t slot) noexcept;
+    const ImmediateLaneMemberManifest* MemberBase(std::uint32_t slot) const noexcept;
+    static std::size_t PrivateBucketCapacity(ImmediateLaneDemand demand) noexcept {
+        return static_cast<std::size_t>(std::min<std::uint64_t>(
+            static_cast<std::uint64_t>(demand.events) + demand.groups,
+            static_cast<std::uint64_t>(demand.members) * demand.buckets));
+    }
+    bool PrepareAttemptStorage(std::uint32_t slot, ImmediateLaneDemand demand) noexcept;
+    bool InstallAttemptMetadata(std::uint32_t slot, ImmediateLaneDemand demand) noexcept;
+    ImmediateLaneDemand FullAttemptDemand() const noexcept {
+        return {config_.eventsPerAttempt, config_.eventsPerAttempt,
+            config_.eventsPerAttempt, config_.eventsPerAttempt};
+    }
+    mutable EventStorageRegistration* eventStorageConsumers_ = nullptr;
+    bool PrepareAttemptIdentityStorage() noexcept;
+    bool EnsureAttemptBacking(std::uint64_t count,
+        std::uint32_t excluded = UINT32_MAX) noexcept;
     ImmediateLaneGroupRef* GroupBase(std::uint32_t slot) noexcept;
     const ImmediateLaneGroupRef* GroupBase(std::uint32_t slot) const noexcept;
     ImmediateLaneBucket* BucketBase(std::uint32_t slot) noexcept;
@@ -914,35 +1095,30 @@ private:
     void ReturnOriginalAttempt(OriginalImmediateLaneAttemptLifetimePin& original) noexcept;
     std::uint64_t nextOriginalLifetimeMarker_ = 0;
     Config config_{};
-    std::unique_ptr<ImmediateLaneAttempt[]> attempts_;
-    std::unique_ptr<ImmediateLaneEvent[]> events_;
-    std::unique_ptr<ImmediateLaneGroupRef[]> groups_;
-    std::unique_ptr<ImmediateLaneDeclaredGroup[]> declaredGroups_;
+    StableRowStorage<ImmediateLaneAttempt> attempts_;
+    StableRowStorage<AttemptMetadata> metadata_;
+    detail::StablePageReservation eventStorage_;
+    detail::StablePageReservation memberStorage_;
+    StableStorageGrowthState payloadGrowth_{};
+    std::size_t eventStorageBytes_ = 0;
+    std::size_t memberStorageBytes_ = 0;
+    ImmediateLaneEvent* events_ = nullptr;
+    MetadataColumn<&AttemptMetadataBacking::groups> groups_{this};
+    MetadataColumn<&AttemptMetadataBacking::declaredGroups> declaredGroups_{this};
     std::unique_ptr<std::uint32_t[]> eventPlacementOrder_;
     std::unique_ptr<std::uint32_t[]> groupPlacementOrder_;
-    std::unique_ptr<ImmediateLaneMemberManifest[]> members_;
-    std::unique_ptr<PrivateEntryAssociation[]> privateEntries_;
-    std::unique_ptr<ImmediateLaneDeclaredGroup[]> privateOwnedGroups_;
-    std::unique_ptr<PrivateEntryBucket[]> privateEntryBuckets_;
-    std::unique_ptr<SourceWaitEntry[]> sourceWaitEntries_;
-    std::unique_ptr<std::uint32_t[]> eventPrivateEntries_;
-    std::unique_ptr<std::uint32_t[]> groupPrivateEntries_;
-    std::unique_ptr<std::uint32_t[]> memberOrder_;
-    std::unique_ptr<std::uint32_t[]> groupMemberBases_;
-    std::unique_ptr<std::uint16_t[]> groupMemberCounts_;
-    std::unique_ptr<ImmediateLaneBucket[]> buckets_;
-    std::unique_ptr<TimelineArmReaderPin[]> armPins_;
-    std::unique_ptr<AuthoredStopFenceLaneReference[]> fenceReferences_;
-    std::unique_ptr<std::atomic<std::uint8_t>[]> eventWithdrawal_;
-    std::unique_ptr<std::uint32_t[]> eventWithdrawalLeader_;
-    std::unique_ptr<std::uint64_t[]> scopeLastCaptureSequence_;
-    std::unique_ptr<std::uint8_t[]> capturedEventAdmission_;
-    std::unique_ptr<std::uint8_t[]> conditionalEventScopes_;
-    std::unique_ptr<Plan03GroupReaderPin[]> groupPins_;
-    std::unique_ptr<DecisionFuturePin[]> decisionPins_;
-    std::unique_ptr<std::uint8_t[]> futureDependentOwned_;
+    ImmediateLaneMemberManifest* members_ = nullptr;
+    StableRowStorage<PrivateEntryAssociation> privateEntries_;
+    MetadataColumn<&AttemptMetadataBacking::eventState> eventState_{this};
+    MetadataColumn<&AttemptMetadataBacking::groupState> groupState_{this};
+    MetadataColumn<&AttemptMetadataBacking::memberState> memberState_{this};
+    MetadataColumn<&AttemptMetadataBacking::sourceWaitEntries> sourceWaitEntries_{this};
+    MetadataColumn<&AttemptMetadataBacking::groupPins> groupPins_{this};
     ScheduledTransactionPool* groupPool_ = nullptr;
 #if !defined(HARKEN_RT_QUALIFICATION)
+    std::size_t groupCommitPageLimit_ = SIZE_MAX;
+    std::size_t sourceWaitCommitPageLimit_ = SIZE_MAX;
+    std::size_t stateCommitPageLimit_ = SIZE_MAX;
     void (*reserveGateHook_)(void*, std::uint32_t) = nullptr;
     void* reserveGateContext_ = nullptr;
     void (*finishHeadHook_)(void*) = nullptr;

@@ -117,12 +117,19 @@ TEST(CanonicalPackSetStorage, SharedRevisionRequiresAllOwnersAndKeepsOldClosure)
     ASSERT_EQ(VN_OK, packs.AcquireResourceClosure(oldTokens, 2, &closure));
     SetStorageMember changedA(21, harkentest::ObjectId(100), 0.75f), changedB(22, harkentest::ObjectId(100), 0.75f);
     changedA.key.contentRevision = changedB.key.contentRevision = 2;
+    harken::PackTable::PreparedSetMutation next;
+    packs.SetStorageCommitPageLimitsForTests(0, 0, 0);
+    EXPECT_EQ(VN_BACKPRESSURE, packs.PrepareCanonicalSet(
+        {changedA.Input(handleA), changedB.Input(handleB)}, {}, registry, &next));
+    EXPECT_FALSE(next.IsPrepared());
+    EXPECT_FLOAT_EQ(0.25f, registry.Lookup(harkentest::ObjectId(100)).channels[0][0]);
+    packs.SetStorageCommitPageLimitsForTests(0, 0, SIZE_MAX);
     harken::PackTable::PreparedSetMutation partial;
     EXPECT_EQ(VN_IN_USE, packs.PrepareCanonicalSet({changedA.Input(handleA)}, {}, registry, &partial));
     EXPECT_FLOAT_EQ(0.25f, registry.Lookup(harkentest::ObjectId(100)).channels[0][0]);
-    harken::PackTable::PreparedSetMutation next;
     ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet(
         {changedA.Input(handleA), changedB.Input(handleB)}, {}, registry, &next));
+    packs.SetStorageCommitPageLimitsForTests(0, 0, 0);
     EXPECT_EQ(handleA, next.HandleAt(0));
     EXPECT_EQ(handleB, next.HandleAt(1));
     EXPECT_FLOAT_EQ(0.25f, registry.Lookup(harkentest::ObjectId(100)).channels[0][0]);

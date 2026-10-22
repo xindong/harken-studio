@@ -4,6 +4,7 @@
 // protocol visibility; the last case exercises the same fade path through
 // the public Vn_Stop.
 #include "Common/ObjectIdTestSupport.h"
+#include "harken/core/SnapshotBuffer.h"
 #include "harken/render/Voice.h"
 
 #include "Common/TestUtil.h"
@@ -47,18 +48,25 @@ PCMView MakeMonoView(const std::vector<float>& samples) {
 // with a fresh planar master accumulator per block.
 struct CascadeHarness {
     explicit CascadeHarness(const std::vector<float>& input,
-                            double ratio = 1.0)
-        : ring(harken::kResampleFifoFrames, 0.0f) {
+                            double ratio = 1.0,
+                            ResampleQuality quality = ResampleQuality::Hermite,
+                            const std::vector<float>* right = nullptr)
+        : ring(harken::kResampleFifoFrames * (right != nullptr ? 2u : 1u), 0.0f) {
         ctx.biquadTrig = &trig;
         ctx.pcm = MakeMonoView(input);
+        if (right != nullptr) {
+            ctx.pcm.channels[1] = right->data();
+            ctx.pcm.channelCount = 2;
+        }
         ctx.phase = SourcePhase::Active;
         // One active chain slot, left empty (an empty slot is a zero-cost
         // identity, exactly the old default passthrough); the tail-drain
         // case installs an effect into slot 0.
         ctx.fxSlotCount = 1;
         ctx.gain.Set(1.0f, 0);
-        float* rings[1] = {ring.data()};
-        ctx.resampler.Reset(rings, 1, ResampleQuality::Hermite, ratio,
+        float* rings[2] = {ring.data(), right != nullptr
+            ? ring.data() + harken::kResampleFifoFrames : nullptr};
+        ctx.resampler.Reset(rings, ctx.pcm.channelCount, quality, ratio,
                             Tables());
     }
 
@@ -68,8 +76,9 @@ struct CascadeHarness {
         masterR.assign(kBlock, 0.0f);
         float* master[harken::kOutputChannels] = {masterL.data(),
                                                  masterR.data()};
-        return RenderVoiceBlock(ctx, arena, master, kBlock, 1,
-                                VN_CHANNEL_LAYOUT_MONO);
+        return RenderVoiceBlock(ctx, arena, master, kBlock, ctx.pcm.channelCount,
+                                ctx.pcm.channelCount == 2
+                                    ? VN_CHANNEL_LAYOUT_STEREO : VN_CHANNEL_LAYOUT_MONO);
     }
 
     harken::BiquadTrigTable trig;
@@ -79,6 +88,77 @@ struct CascadeHarness {
     std::vector<float> masterL;
     std::vector<float> masterR;
 };
+
+TEST(CascadeProtocol, PlainLinearPcmPreservesSamplesAndStateThroughReconfiguration) {
+    const auto source = harkentest::MakeSine(8192, 997.0, 48000.0, 0.73f);
+    const auto right = harkentest::MakeSine(8192, 313.0, 48000.0, 0.41f);
+    for (bool stereo : {false, true}) {
+        for (float gain : {1.0f, 0.37f}) {
+            CascadeHarness plain(source, 1.0, ResampleQuality::Linear,
+                                 stereo ? &right : nullptr);
+            CascadeHarness generic(source, 1.0, ResampleQuality::Linear,
+                                   stereo ? &right : nullptr);
+            generic.ctx.fxSlots[0].process =
+                [](void*, float* const*, std::uint32_t, std::uint32_t, std::uint32_t) {};
+            for (auto* harness : {&plain, &generic}) {
+                harness->ctx.engineSampleRate = 48000;
+                harness->ctx.startOffsetFrames = 19;
+                harness->ctx.gain.Set(gain);
+                harness->ctx.outputGain.Set(0.73f);
+                harness->ctx.pan = 0.23f;
+                harness->ctx.width = 0.61f;
+            }
+            std::uint32_t borrowedBlocks = 0;
+            for (std::uint32_t block = 0; block < 40; ++block) {
+                SCOPED_TRACE(::testing::Message() << stereo << '/' << gain << '/' << block);
+                for (auto* harness : {&plain, &generic}) {
+                    auto& ctx = harness->ctx;
+                    ctx.timelineEvents.quantumIndex = block;
+                    if (block == 6 || block == 8)
+                        ctx.resampler.UpdateRatio(block == 6 ? 0.5 : 1.0, 0);
+                    if (block == 16 || block == 20) {
+                        const auto coeffs = harken::MakeLowpassFromTrig(
+                            harness->trig.Lookup(48000.0f, 2200.0f), 0.707f);
+                        harken::RequestBiquadTransition(
+                            ctx.lpfTransition, ctx.lpfEnabled, ctx.lpfCoeffs,
+                            harken::EstimateBiquadTailFrames(coeffs), block == 16,
+                            coeffs, 32);
+                    }
+                    if (block == 26) ctx.gain.Set(0.59f, 128);
+                    if (block == 30) {
+                        ctx.pan = -0.43f;
+                        ctx.spatialMatrixDirty = true;
+                    }
+                }
+                const auto actual = plain.RenderBlock();
+                const auto expected = generic.RenderBlock();
+                borrowedBlocks += plain.ctx.cascade.borrowed.frames != 0;
+                EXPECT_EQ(expected.framesProduced, actual.framesProduced);
+                EXPECT_EQ(expected.phase, actual.phase);
+                EXPECT_EQ(generic.masterL, plain.masterL);
+                EXPECT_EQ(generic.masterR, plain.masterR);
+                EXPECT_EQ(generic.ctx.srcCursor, plain.ctx.srcCursor);
+                EXPECT_EQ(generic.ctx.resampler.readIndex, plain.ctx.resampler.readIndex);
+                EXPECT_EQ(generic.ctx.resampler.readFraction, plain.ctx.resampler.readFraction);
+                EXPECT_EQ(generic.ctx.resampler.readPos, plain.ctx.resampler.readPos);
+                EXPECT_EQ(generic.ctx.resampler.writeIndex, plain.ctx.resampler.writeIndex);
+                EXPECT_EQ(generic.ring, plain.ring);
+                EXPECT_EQ(generic.ctx.gain.current, plain.ctx.gain.current);
+                EXPECT_EQ(generic.ctx.outputGain.current, plain.ctx.outputGain.current);
+                EXPECT_EQ(generic.arena.HighWaterBytes(), plain.arena.HighWaterBytes());
+                for (std::uint32_t ch = 0; ch < plain.ctx.pcm.channelCount; ++ch) {
+                    EXPECT_EQ(generic.ctx.lpfTransition.lastInput[ch], plain.ctx.lpfTransition.lastInput[ch]);
+                    EXPECT_EQ(generic.ctx.hpfTransition.lastInput[ch], plain.ctx.hpfTransition.lastInput[ch]);
+                    EXPECT_EQ(generic.ctx.shelfTransition.lastInput[ch], plain.ctx.shelfTransition.lastInput[ch]);
+                    EXPECT_EQ(generic.ctx.highShelfTransition.lastInput[ch], plain.ctx.highShelfTransition.lastInput[ch]);
+                }
+            }
+#if !HARKEN_STAGE_TAPS_ACTIVE
+            EXPECT_GT(borrowedBlocks, 0u);
+#endif
+        }
+    }
+}
 
 constexpr float kTailOffset = 0.25f;
 
@@ -469,6 +549,39 @@ TEST(CascadeProtocol,
     EXPECT_NEAR(2.0f / 3.0f, harness.masterL[6], 1e-6f);
     EXPECT_FLOAT_EQ(1.0f, harness.masterL[7]);
     EXPECT_FLOAT_EQ(1.0f, harness.masterL[kBlock - 1]);
+}
+
+TEST(CascadeProtocol, PendingStartRebasesOnlyOriginalWeightGenerations) {
+    const std::vector<float> dc = harkentest::MakeDC(2000, 1.0f);
+    CascadeHarness harness(dc);
+    auto& ctx = harness.ctx;
+    ctx.timelineGated = true;
+    ctx.pendingImmediateWeightRebase = true;
+    ctx.pendingImmediateWeightBaseFrame = 100;
+    ctx.pendingImmediateWeightCount = 2;
+    harken::WeightSegmentV1 original{100, 200, 1.0f, 1.0f, 1, {3, 5}, {7, 11}};
+    const harken::VariableWeightControlIdentity first{101, 7, 1}, second{102, 9, 1};
+    ASSERT_TRUE(ctx.ApplyVariableWeightControl(first, original));
+    ASSERT_TRUE(ctx.ApplyVariableWeightControl(second, original));
+    ctx.variableWeightControls[0].initialRebaseGeneration = 1;
+    ctx.variableWeightControls[1].initialRebaseGeneration = 1;
+    auto update = original;
+    update.segmentGeneration = 2;
+    update.startFrame = 200;
+    update.endFrame = 400;
+    ASSERT_TRUE(ctx.ApplyVariableWeightControl(second, update));
+    ctx.timelineEvents.quantumIndex = 1;
+    ctx.timelineEvents.eventCount = 1;
+    auto& start = ctx.timelineEvents.events[0];
+    start.kind = harken::TimelineEventKind::Start;
+    start.offset = 9;
+    start.frame = kBlock + 9;
+    EXPECT_EQ(kBlock - 9u, harness.RenderBlock().framesProduced);
+    EXPECT_EQ(265u, ctx.variableWeightControls[0].segment.startFrame);
+    EXPECT_EQ(365u, ctx.variableWeightControls[0].segment.endFrame);
+    EXPECT_EQ(200u, ctx.variableWeightControls[1].segment.startFrame);
+    EXPECT_EQ(400u, ctx.variableWeightControls[1].segment.endFrame);
+    EXPECT_FALSE(ctx.pendingImmediateWeightRebase);
 }
 
 TEST(CascadeProtocol, FutureTimelineStopDoesNotAffectEarlierSamples) {

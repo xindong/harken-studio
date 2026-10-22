@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <array>
+#include <new>
 #include <vector>
 
 namespace harken {
@@ -27,9 +28,16 @@ public:
     VoiceTimelineSink(VoicePool& voices, TimelineArmTable& arms)
         : voices_(voices), arms_(arms), frontier_(voices, arms),
           laneFrontier_(voices, arms), immediate_(voices, arms),
-          pendingVariableStarts_(voices.Capacity()),
           plainResults_(voices.Capacity() * 2u * kTimelineMaxEventsPerVoiceQuantum),
-          retiringPlainArms_(arms.Capacity()), retiringPlainArmSlots_(arms.Capacity()) {}
+          retiringPlainArms_(arms.Capacity()), retiringPlainArmSlots_(arms.Capacity()) {
+        if (!pendingVariableStarts_.Reserve(voices.Capacity()) ||
+            !voices.AttachSlotStoragePreparation(slotStorageRegistration_, this,
+                [](void* context, std::uint32_t count) noexcept {
+                    return static_cast<VoiceTimelineSink*>(context)->pendingVariableStarts_.ConstructThrough(count);
+                })) throw std::bad_alloc{};
+    }
+
+    ~VoiceTimelineSink() override { slotStorageRegistration_.Detach(); }
 
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
     struct FrontierStageRecordForTest {
@@ -72,7 +80,8 @@ public:
 #endif
 
     bool AttachImmediateLane(ImmediateActionLane& lane, std::uint32_t blockFrames) {
-        return immediate_.Attach(lane, blockFrames);
+        return immediate_.Attach(lane, blockFrames) &&
+            (pool_ == nullptr || immediate_.AttachFrontier(laneFrontier_, *pool_));
     }
 
     bool CaptureIndependentWork(std::uint64_t quantumIndex) noexcept override {
@@ -107,8 +116,7 @@ public:
         authoredStopFences_.assign(pool.MaxScheduledTransactions(), nullptr);
         if (!frontier_.Attach(decisions, pool) ||
             !laneFrontier_.Attach(decisions, pool, true)) return false;
-        immediate_.AttachFrontier(laneFrontier_, pool);
-        return true;
+        return immediate_.AttachFrontier(laneFrontier_, pool);
     }
 
     bool AttachQueueAuthority(QueueInstanceTable& queues,
@@ -269,7 +277,7 @@ public:
     }
 
     std::size_t VariableStartStorageBytes() const noexcept {
-        return pendingVariableStarts_.size() * sizeof(PendingVariableStart) +
+        return pendingVariableStarts_.RequestedBytes() +
             plainResults_.size() * sizeof(PlainTransactionResult) +
             retiringPlainArms_.size() * sizeof(TimelineArmToken) +
             retiringPlainArmSlots_.size() * sizeof(std::uint32_t);
@@ -573,7 +581,7 @@ public:
                           const TimelineSinkEvent* events,
                           std::uint32_t eventCount,
                           TimelineArmToken armToken) noexcept override {
-        if (events == nullptr || eventCount == 0 ||
+        if (events == nullptr || eventCount == 0 || renderSlot >= pendingVariableStarts_.size() ||
             eventCount > kTimelineMaxEventsPerVoiceQuantum ||
             !voices_.CanAppendTimelineEvents(renderSlot, renderGeneration,
                                              quantumIndex, eventCount)) {
@@ -582,8 +590,10 @@ public:
         bool hasStart = false;
         for (std::uint32_t i = 0; i < eventCount; ++i)
             hasStart = hasStart || events[i].payload->kind == TimelineEventKind::Start;
+        const bool publicationRefused = hasStart && !arms_.SourcePublicationAccepted(armToken);
         if (renderSlot < pendingVariableStarts_.size() &&
             (pendingVariableStarts_[renderSlot].count != 0 ||
+             publicationRefused ||
              (hasStart && voices_.HasTimelineVariableSourceRead(renderSlot, renderGeneration)))) {
             auto& pending = pendingVariableStarts_[renderSlot];
             if (pending.count != 0 && pending.arm.renderGeneration != renderGeneration) return false;
@@ -634,6 +644,14 @@ public:
                         (payload.reserved & kTimelineEventTransientStartArm) != 0);
             }
             pending.count += eventCount;
+            if (publicationRefused) {
+                // Scheduled pages retain their absolute time; a missed permit
+                // is a normal start failure, never a protocol error or re-anchor.
+                pending.failed = true;
+                RecordPlainResult(armToken, pending.failureDisposition);
+                (void)CancelBinding(renderSlot, renderGeneration);
+                return true;
+            }
             RecordPlainResult(armToken, kTimelineDispositionArmPending);
             return true;
         }
@@ -872,7 +890,7 @@ private:
             const auto source = voices_.TimelineVariableSourceRead(arm.renderSlot, arm.renderGeneration);
             const auto status = source.Valid() && source.slot == pending.source.slot &&
                 source.generation == pending.source.generation
-                ? voices_.TimelineVariableSourcesStatus(arm.renderSlot, arm.renderGeneration)
+                ? voices_.TimelineStartSourcesStatus(arms_, arm)
                 : VariableReadCutStatus::Failed;
             const bool canStart = observed && (observation.state == ArmState::Published ||
                 observation.state == ArmState::AudioClaimed);
@@ -1307,7 +1325,8 @@ private:
     CurrentSliceApplyCallback currentSliceApplyCallback_ = nullptr;
     FrontierTimelineFinalizer laneFrontier_;
     ImmediateLaneTimelineFinalizer immediate_;
-    std::vector<PendingVariableStart> pendingVariableStarts_;
+    StableRowStorage<PendingVariableStart> pendingVariableStarts_;
+    VoicePool::SlotStorageRegistration slotStorageRegistration_;
     std::vector<PlainTransactionResult> plainResults_;
     std::vector<TimelineArmToken> retiringPlainArms_;
     std::vector<std::uint32_t> retiringPlainArmSlots_;

@@ -30,12 +30,14 @@
 
 #include "harken/core/EngineConfig.h"
 #include "harken/core/LogRing.h"
+#include "harken/core/StableRowStorage.h"
 #include "harken/core/VariableReadCut.h"
 #include "harken/core/VariableSliceTable.h"
 #include "harken/param/Curve.h"
 #include "harken/param/ParamTargets.h"
 #include "harken/param/PropertyPublisher.h"
 
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -50,6 +52,9 @@ namespace harken {
 // global-only scope).
 class EmitterTable;
 class BindingTable;
+class BindingDependencyIndex;
+enum class BindingDependencyKind : std::uint32_t;
+struct BindingDependencyIdentity;
 
 // Fixed contribution slots per target, reduced in index order. The order
 // is part of the model's determinism guarantee.
@@ -126,8 +131,17 @@ enum class FlushOutcome : std::uint8_t {
 };
 
 class ParamSystem {
+    struct Binding;
+
 public:
     explicit ParamSystem(const EngineConfig& config);
+    ParamSystem(const EngineConfig& config, std::uint32_t initialVoiceRows);
+    bool PrepareVoiceStorage(std::uint32_t count) noexcept;
+    std::size_t VoiceStorageBytes() const noexcept {
+        return m_voiceStates.RequestedBytes() + m_projectionVoices.capacity() * sizeof(VoiceEvaluation);
+    }
+    ParamSystem(const ParamSystem& other);
+    ParamSystem& operator=(const ParamSystem&) = delete;
 
     // Voice lifecycle, called by the API layer when a play succeeds. Resets
     // the reused slot's combine state and records the authored bases
@@ -240,7 +254,8 @@ public:
     // is consumed only by binding evaluation — a direct setter cannot
     // erase it, so demand known since a deferral survives until the
     // gather that realizes (or disproves) it.
-    void NoteVariableWrite(VnVariableId id) noexcept;
+    void NoteVariableWrite(VnVariableId id, VnEmitterHandle emitter = 0) noexcept;
+    void NoteProbeChanged(VnObjectId stableId, std::uint32_t generation) noexcept;
     // Marks every bound target of every voice attached to `emitter` as
     // pending-input: destroying the emitter flips those voices' scoped
     // Variable resolution to the global fallback, a latent change the
@@ -268,8 +283,69 @@ public:
     // the worst-case one-tick publication past the command queue; the
     // capacity refusal logs a
     // record carrying both numbers and changes no state.
+    class PreparedBindingToken {
+    public:
+        PreparedBindingToken() = default;
+        ~PreparedBindingToken();
+        PreparedBindingToken(const PreparedBindingToken&) = delete;
+        PreparedBindingToken& operator=(const PreparedBindingToken&) = delete;
+        PreparedBindingToken(PreparedBindingToken&& other) noexcept;
+        PreparedBindingToken& operator=(PreparedBindingToken&& other) noexcept;
+        bool IsPrepared() const noexcept { return m_owner != nullptr; }
+
+    private:
+        friend class ParamSystem;
+        ParamSystem* m_owner = nullptr;
+        std::uint32_t m_slot = UINT32_MAX;
+        Binding* m_stagedBinding = nullptr;
+    };
+
+    class PreparedUse;
+    class BackingPreparation {
+    public:
+        BackingPreparation() = default;
+        ~BackingPreparation();
+        BackingPreparation(const BackingPreparation&) = delete;
+        BackingPreparation& operator=(const BackingPreparation&) = delete;
+        BackingPreparation(BackingPreparation&& other) noexcept;
+        BackingPreparation& operator=(BackingPreparation&& other) noexcept;
+        bool Valid() const noexcept { return m_owner != nullptr; }
+        void Release() noexcept;
+    private:
+        friend class ParamSystem;
+        friend class PreparedUse;
+        ParamSystem* m_owner = nullptr;
+        StableStoragePreparation m_bindingRows;
+        std::array<StableStoragePreparation, 3> m_dependencies;
+    };
+
+    class PreparedUse {
+    public:
+        PreparedUse(ParamSystem& owner, const BackingPreparation* backing) noexcept;
+        ~PreparedUse();
+        PreparedUse(const PreparedUse&) = delete;
+        PreparedUse& operator=(const PreparedUse&) = delete;
+    private:
+        ParamSystem* m_owner = nullptr;
+        StableStoragePreparedUse m_bindingRows;
+        std::array<StableStoragePreparedUse, 3> m_dependencies;
+    };
+
+    // Physical holds do not claim dependency identities. PreparedUse forbids growth.
+    bool PrepareBindingBacking(std::uint32_t count, BackingPreparation* out) noexcept;
+
+    // Attach before creating bindings. A preparation reserves backing only;
+    // binding admission and every native identity remain with their original owner.
+    bool AttachBindingDependencies(BindingDependencyIndex* dependencies) noexcept;
+    bool PrepareBinding(PreparedBindingToken* out) noexcept;
+    void CancelPreparedBinding(PreparedBindingToken* token) noexcept;
+    // Staging borrows an already prepared, stable token until commit or discard.
+    // The token must not move or be canceled while borrowed. Discard preserves it.
     bool BindVoiceTarget(VnVariableId variableId, VnVoiceHandle handle,
-                         std::uint32_t targetId, const Curve& curve);
+                         std::uint32_t targetId, const Curve& curve,
+                         PreparedBindingToken* preparation = nullptr,
+                         bool staged = false);
+    void CommitStagedVoiceBindings(VnVoiceHandle handle) noexcept;
 
     // --- definition-backed binding instances: the M1 mechanism above
     // evolved to reference a
@@ -302,10 +378,15 @@ public:
     InstanceBindResult BindVoiceInstance(const BindingDefinitionView& view,
                                          VnVoiceHandle handle,
                                          VnObjectId attachmentObjectId,
-                                         bool viaApply);
+                                         bool viaApply,
+                                         PreparedBindingToken* preparation = nullptr,
+                                         bool staged = false);
     InstanceBindResult CanBindVoiceInstance(
         const BindingDefinitionView& view, VnVoiceHandle handle,
         VnObjectId attachmentObjectId, bool viaApply) const;
+    // The new Binding owns this attempt's reservation until commit or discard.
+    InstanceBindResult StageOwnedVoiceInstance(const BindingDefinitionView& view,
+        VnVoiceHandle handle, VnObjectId attachmentObjectId, bool viaApply);
 
     // Neutralizes every instance born from one attachment identity
     // (definition id + object id, viaApply false): the contribution ramps
@@ -347,8 +428,16 @@ public:
     void CommitPreparedPurgeInstances(
         PreparedPurgeToken* token) noexcept;
     std::uint32_t BindingCapacity() const {
-        return static_cast<std::uint32_t>(m_bindings.size());
+        return m_bindings.Capacity();
     }
+    std::size_t BindingStorageBytes() const noexcept {
+        return m_bindings.RequestedBytes() + m_primingInputs.capacity() * sizeof(PrimingInput) +
+            m_projectionBindings.capacity() * sizeof(BindingEvaluation);
+    }
+    void SetBindingCommitPageLimitForTests(std::size_t pages) noexcept {
+        m_bindings.SetCommitPageLimitForTests(pages);
+    }
+    std::uint32_t PreparationCapacity() const noexcept { return m_preparationCapacity; }
 
     // Removes ALL definition-backed instances of one voice WITHOUT
     // releasing their worst-case demand, returning the unique-target
@@ -496,6 +585,10 @@ public:
         EvalDirtyBindings(emitters);
         for (VoiceState& state : m_voiceStates) {
             state.anyDirty = false;
+        }
+        if (m_dirtyTargetCount == 0) {
+            ++m_flushTick;
+            return;
         }
         const std::size_t targetCount =
             m_voiceStates.size() * kBuiltinTargetCount;
@@ -694,6 +787,12 @@ public:
                             TargetClaimOwner owner, float resolved,
                             std::uint32_t rampMs, float pan2d = 0.0f) noexcept;
     std::uint32_t RetiringTargetCountForTests() const noexcept;
+    bool PrepareRetiringTargetStorage() noexcept {
+        return m_retiringTargets.ConstructThrough(m_retiringTargets.Capacity());
+    }
+    void SetRetiringTargetCommitPageLimitForTests(std::size_t pages) noexcept {
+        m_retiringTargets.SetCommitPageLimitForTests(pages);
+    }
 
     std::uint64_t CommitCount() const { return m_commits; }
     std::uint32_t VariableCount() const { return m_variableCount; }
@@ -851,6 +950,11 @@ private:
         VnVariableId variableId{};
         VnVoiceHandle handle = 0;
         std::uint32_t targetId = 0;
+        VnEmitterHandle dependencyEmitter = 0;
+        std::uint32_t dependencySlot = UINT32_MAX;
+        std::uint32_t dependencyGeneration = 0;
+        PreparedBindingToken* preparation = nullptr;
+        bool ownsPreparation = false;
         // Raw (definition-less) and snapshotOwned instances copy their
         // curve here. Live definition-backed instances leave it empty
         // and evaluate through liveCurve instead. snapshotOwned must
@@ -878,6 +982,7 @@ private:
         // (ramping to neutral with the definition's transitionMs).
         bool neutralized = false;
         bool neutralizePending = false;
+        Binding* nextNeutralization = nullptr;
         // Change detection is per binding, not per Variable, because a
         // binding's contribution depends on the Variable value resolved at its
         // voice's emitter scope (emitter-local or global): the same global
@@ -1009,6 +1114,13 @@ private:
         if (targetId == kTargetVoicePan) state.lastCommittedPan2d = pan2d;
     }
     void EvalDirtyBindings(const EmitterTable* emitters);
+    void EvalIndexedBindings(const EmitterTable* emitters);
+    static BindingDependencyIdentity ReadBindingDependency(
+        const void* fact, BindingDependencyKind kind) noexcept;
+    void RegisterBindingDependency(Binding& binding, PreparedBindingToken* preparation) noexcept;
+    void RemoveBindingDependency(Binding& binding) noexcept;
+    void RemovePendingNeutralization(Binding& binding) noexcept;
+    void MoveBinding(std::uint32_t from, std::uint32_t to) noexcept;
     // Whether any binding already feeds (handle, targetId) — a duplicate
     // pair adds no worst-case demand.
     bool HasBinding(VnVoiceHandle handle,
@@ -1082,15 +1194,26 @@ private:
     // worst-case release when its slot is reused.
     std::uint32_t UniqueBoundTargets(VnVoiceHandle handle) const;
 
-    std::vector<VoiceState> m_voiceStates; // indexed by voice slot
-    std::vector<RetiringTarget> m_retiringTargets;
+    StableRowStorage<VoiceState> m_voiceStates; // indexed by voice slot
+    StableRowStorage<RetiringTarget> m_retiringTargets;
     std::uint32_t m_sampleRate = 0;
     std::vector<Variable> m_variables;     // fixed capacity, m_variableCount live
     // Fixed capacity (maxVoices x voiceBindingInstanceSlots — the
     // section-16 instance pool), m_bindingCount live entries in stable
     // order. Raw bindings and definition-backed instances share it; a
     // slot-reuse purge reclaims the dead occupant's entries.
-    std::vector<Binding> m_bindings;
+    std::uint32_t BindingBackingOccupancy() const noexcept;
+    bool PrepareBindingAuxiliaryStorage(std::uint32_t count) noexcept;
+    bool PrepareBindingRows(std::uint32_t count) noexcept;
+    StableRowStorage<Binding> m_bindings;
+    BindingDependencyIndex* m_dependencies = nullptr;
+    Binding* m_pendingNeutralizations = nullptr;
+    std::vector<std::uint32_t> m_freeDependencySlots;
+    std::uint32_t m_dependencySlotCount = 0;
+    std::uint32_t m_preparedBindingCount = 0;
+    std::uint32_t m_preparationCapacity = 0;
+    std::uint32_t m_backingPreparationCount = 0;
+    std::uint32_t m_backingUsers = 0;
     std::vector<PrimingInput> m_primingInputs;
     std::vector<Variable> m_projectionVariables;
     std::vector<BindingEvaluation> m_projectionBindings;
@@ -1098,6 +1221,7 @@ private:
     bool m_projectionActive = false;
     std::uint32_t m_projectionVariableCount = 0;
     std::uint32_t m_projectionBindingCount = 0;
+    std::uint32_t m_projectionVoiceCount = 0;
     std::uint32_t m_projectionForcedRebuilds = 0;
     std::uint32_t m_projectionDirtyTargetCount = 0;
     std::uint32_t m_projectionPendingInputMarks = 0;

@@ -256,6 +256,35 @@ TEST(BlockArena, ZeroCountContractSurvivesAQuarantinedFloor) {
     EXPECT_EQ(overflowsBefore, arena.OverflowCount());
 }
 
+TEST(BlockArena, PreparedEndsKeepTheGapInaccessibleAndRetainQuarantinedPages) {
+    const auto page = static_cast<std::uint32_t>(harken::detail::StablePageReservation::SystemPageBytes());
+    harken::BlockArena arena(16u * page + 3u, harken::BlockArena::BackingMode::OnDemand);
+    EXPECT_EQ(0u, arena.CommittedBytes());
+    ASSERT_TRUE(arena.PrepareBacking(page, 2u * page + 3u));
+    EXPECT_LT(arena.CommittedBytes(), arena.CapacityBytes());
+    arena.SetCommitPageLimitForTests(0);
+    {
+        harken::memguard::AudioThreadScope audio;
+        EXPECT_FALSE(arena.PrepareBacking(16u * page, 0));
+        ASSERT_NE(nullptr, arena.AllocFloats(page / sizeof(float)));
+        float* old = arena.AllocFloatsHigh(page / sizeof(float));
+        ASSERT_NE(nullptr, old);
+        old[0] = 0.25f;
+        arena.QuarantineHighEnd();
+        arena.Reset();
+        float* next = arena.AllocFloatsHigh(page / sizeof(float));
+        ASSERT_NE(nullptr, next);
+        next[0] = 0.5f;
+        EXPECT_EQ(0.25f, old[0]);
+        EXPECT_EQ(nullptr, arena.AllocFloats(page / sizeof(float) + 1u));
+        EXPECT_EQ(1u, arena.OverflowCount());
+    }
+    arena.SetCommitPageLimitForTests(SIZE_MAX);
+    arena.SetCapacityForTests(8u * page);
+    arena.Reset();
+    EXPECT_NE(nullptr, arena.AllocFloatsHigh(page / sizeof(float)));
+}
+
 TEST(BlockArena, TwoEndedGrantsExactlyWhatOneCursorWouldForTheEngineShape) {
     // Every engine allocation is AllocFloats-shaped: one alignment, a whole
     // number of floats. Across capacities that straddle the exhaustion point,

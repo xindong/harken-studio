@@ -71,9 +71,12 @@ inline constexpr std::uint32_t kHardPieceScheduleProgramCapacity = 1048576;
 inline constexpr std::uint32_t kHardScheduleTrackRefCapacity = 1048576;
 inline constexpr std::uint32_t kHardSchedulePlacementCapacity = 1048576;
 inline constexpr std::uint32_t kHardScheduleMarkerCapacity = 1048576;
+// Fixed-capacity public descriptors retain their original layout.
+// Runtime content uses declared counts and the independent hard limits below.
 inline constexpr std::uint32_t kMaxActionSteps = 64;
 inline constexpr std::uint32_t kHardActionDefinitionCapacity = 65536;
 inline constexpr std::uint32_t kHardActionStepCapacity = 4194304;
+inline constexpr std::uint32_t kHardActionExpandedWorkCapacity = 4194304;
 
 enum class PlayableKindV1 : std::uint32_t {
     Sound = 0,

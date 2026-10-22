@@ -4,6 +4,8 @@
 #include "harken/core/CommandQueue.h"
 #include "harken/core/VariableReadCut.h"
 
+#include "harken/core/StableRowStorage.h"
+
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -140,17 +142,30 @@ public:
     bool RetainSource(const VariableSliceSource& source) noexcept;
     bool ReleaseSource(const VariableSliceSource& source) noexcept;
     bool SourceApplied(const VariableSliceSource& source) const noexcept;
+    bool SubscribeSource(const VariableSliceSource& source, VariableSourceSubscription& subscription) noexcept;
+    bool UnsubscribeSource(const VariableSliceSource& source, VariableSourceSubscription& subscription) noexcept;
+    void DispatchSourceChanges() noexcept;
+    std::uint32_t SourceSubscriptionCount(const VariableSliceSource& source) const noexcept;
     bool AddSource(VariableSliceRef ref, const VariableSliceSource& source) noexcept;
     const VariableSliceSource* Source(VariableSliceRef ref, std::uint32_t index) const noexcept;
     const VariableSliceSource* NextSource(VariableSliceRef ref, std::uint32_t* cursor) const noexcept;
     bool ClearPreparedSources(VariableSliceRef ref) noexcept;
     bool SetPreparedEffectiveFrame(VariableSliceRef ref, std::uint64_t frame) noexcept;
-    bool SetPreparedCommandFrontier(VariableSliceRef ref, std::uint64_t frontier) noexcept;
+    bool SetPreparedCommandFrontier(VariableSliceRef ref, std::uint64_t frontier,
+                                   std::uint64_t initialSourceFrontier = 0) noexcept;
     std::uint64_t EffectiveFrame(VariableSliceRef ref) const noexcept;
     std::uint32_t SourceCount(VariableSliceRef ref) const noexcept;
     std::uint32_t SourceObserverCount(VariableSliceRef ref) const noexcept;
     std::uint32_t InvalidationReasons(VariableSliceRef ref) const noexcept;
     std::size_t StorageBytes() const noexcept;
+    std::size_t PayloadStorageBytes() const noexcept;
+    std::size_t RowStorageBytes() const noexcept { return rows_.RequestedBytes(); }
+    std::size_t RowCommittedBytes() const noexcept { return rows_.CommittedBytes(); }
+    std::size_t RowReservedBytes() const noexcept { return rows_.ReservedBytes(); }
+    std::uint32_t ConstructedRowCount() const noexcept { return rows_.ConstructedCount(); }
+    void SetRowCommitPageLimitForTests(std::size_t pages) noexcept {
+        rows_.SetCommitPageLimitForTests(pages);
+    }
     bool Publish(VariableSliceRef ref) noexcept;
     bool CanPublishPrepared(VariableSliceRef ref, bool allowPreparedSources = false) const noexcept;
     VariableSliceInvalidationResult Invalidate(
@@ -160,7 +175,8 @@ public:
                bool (*validate)(void*, const VariableSliceTarget&) noexcept,
                void (*apply)(void*,
                              const VariableSliceTarget&) noexcept,
-               std::uint64_t settledCommandFrontier = UINT64_MAX) noexcept;
+               std::uint64_t settledCommandFrontier = UINT64_MAX,
+               std::uint64_t settledInitialSourceFrontier = UINT64_MAX) noexcept;
     VariableSliceState State(VariableSliceRef ref) const noexcept;
     std::uint64_t AppliedBlockSequence(VariableSliceRef ref) const noexcept;
     std::uint32_t TargetCount(VariableSliceRef ref) const noexcept;
@@ -205,9 +221,13 @@ private:
         VariableSliceSource source{};
         std::uint64_t effectiveFrame = 0;
         std::uint64_t requiredCommandFrontier = 0;
+        std::uint64_t requiredInitialSourceFrontier = 0;
         std::uint32_t payload = UINT32_MAX;
         std::uint32_t sourceObservers = 0;
+        VariableSourceSubscription* sourceHead = nullptr;
+        std::uint32_t subscriptionCount = 0;
         bool logicAcknowledged = false;
+        std::atomic<bool> sourceChanged{false};
         std::atomic<std::uint64_t> appliedBlockSequence{0};
         std::atomic<std::uint32_t> pendingInvalidationReasons{0};
     };
@@ -217,6 +237,8 @@ private:
         std::uint32_t targetSpanCapacity = 0;
         std::uint32_t targetCount = 0;
         std::uint32_t sourceCount = 0;
+        std::vector<VariableSliceTarget> targets;
+        std::vector<std::uint64_t> sourceBits;
     };
 
     struct FreeRange {
@@ -225,6 +247,7 @@ private:
     };
 
     Row* Resolve(VariableSliceRef ref) noexcept;
+    bool PrepareRow(std::uint32_t slot) noexcept;
     const Row* Resolve(VariableSliceRef ref) const noexcept;
     bool ReleaseSpan(std::uint32_t offset, std::uint32_t count) noexcept;
     bool RecycleRow(Row& row, VariableSliceRef ref) noexcept;
@@ -236,12 +259,11 @@ private:
     std::uint32_t capacity_ = 0;
     std::uint32_t maxTargetsPerSlice_ = 0;
     std::uint32_t targetPoolCapacity_ = 0;
-    std::unique_ptr<Row[]> rows_;
-    std::vector<Payload> payloads_;
+    StableRowStorage<Row> rows_;
+    StableRowStorage<Payload> payloads_;
     std::vector<std::uint32_t> freeRows_;
     std::vector<std::uint32_t> freePayloads_;
-    std::vector<VariableSliceTarget> targets_;
-    std::vector<std::uint64_t> sourceBits_;
+    std::vector<std::uint32_t> subscribedSources_;
     std::uint32_t sourceWords_ = 0;
     std::uint32_t payloadCapacity_ = 0;
     std::vector<FreeRange> freeRanges_;

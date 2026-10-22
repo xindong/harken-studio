@@ -2791,7 +2791,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
         world.capacity.maxActionDefinitions == 0 ||
         world.capacity.maxActionDefinitions > kHardActionDefinitionCapacity ||
         world.capacity.maxActionStepsPerDefinition == 0 ||
-        world.capacity.maxActionStepsPerDefinition > kMaxActionSteps ||
+        world.capacity.maxActionStepsPerDefinition > kHardActionStepCapacity ||
         world.capacity.maxActionStepsTotal == 0 ||
         world.capacity.maxActionStepsTotal > kHardActionStepCapacity ||
         static_cast<std::uint64_t>(world.capacity.maxActionStepsTotal) >
@@ -2800,9 +2800,8 @@ WorldInstallStatus ValidateCurrentWorldImpl(
         world.capacity.maxActionTriggerDepth == 0 ||
         world.capacity.maxActionTriggerDepth > 64 ||
         world.capacity.maxActionExpandedWork == 0 ||
-        world.capacity.maxActionExpandedWork > 4096 ||
         world.capacity.maxActionExpandedWork >
-            kMaxActionSteps * world.capacity.maxActionTriggerDepth) {
+            kHardActionExpandedWorkCapacity) {
         return WorldInstallStatus::Capacity;
     }
 

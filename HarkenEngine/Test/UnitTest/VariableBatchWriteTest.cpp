@@ -632,4 +632,49 @@ TEST(VariableBatch, FingerprintChangingInitReplaceResetsDefault) {
     EXPECT_TRUE(sawWorldReplacement);
 }
 
+TEST(VariableBatchWrite, ReadCutDeduplicatesBatchSubscriptionsAcrossHistoryAndSliceStages) {
+    EngineSession session(MakeNullConfig(2, 256, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto first = harkentest::ObjectId(71);
+    const auto second = harkentest::ObjectId(72);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, InstallSmoothDefinitions(&engine, {first, second}).status);
+    const auto observed = harken::ObserveVariableCallAt(engine.variables.CurrentWorldGeneration(),
+        engine.variables.CurrentTransportEpoch(), 256, 0, 0);
+    const VnVariableWriteV1 writes[] = {{first, 0.25f}, {second, 0.75f}};
+    const auto accepted = engine.variables.AcceptGlobalBatch(writes, 2, observed,
+        engine.params, engine.bindings, engine.busTargets);
+    ASSERT_EQ(VN_OK, accepted.result);
+    harken::VariableReadCutRef cut;
+    ASSERT_TRUE(engine.variables.CaptureReadCut(0, 1024, accepted.ticket.sequence + 1, 0, &cut));
+    float value = 0;
+    ASSERT_TRUE(engine.variables.ReadCutValue(cut, second, &value));
+    EXPECT_FLOAT_EQ(0.75f, value);
+    ASSERT_TRUE(engine.variables.ReadCutValue(cut, first, &value));
+    EXPECT_FLOAT_EQ(0.25f, value);
+    EXPECT_EQ(1u, engine.variables.ReadCutSourceSubscriptionCount(cut));
+    (void)engine.variables.TakeReadCutSourceChange(cut);
+    EXPECT_FALSE(engine.variables.TakeReadCutSourceChange(cut));
+    engine.variables.BeginService(engine, 0, 256);
+    engine.variables.PrepareClaimedSlices(engine);
+    EXPECT_TRUE(engine.variables.TakeReadCutSourceChange(cut));
+    EXPECT_EQ(harken::VariableReadCutStatus::Waiting, engine.variables.PublishReadCut(cut, 1024));
+    EXPECT_EQ(1u, engine.variables.ReadCutSourceSubscriptionCount(cut));
+    (void)engine.variables.TakeReadCutSourceChange(cut);
+    engine.nullBackend.Pump(12);
+    EXPECT_TRUE(engine.variables.TakeReadCutSourceChange(cut));
+    EXPECT_EQ(harken::VariableReadCutStatus::Applied, engine.variables.ReadCutSourcesStatus(cut));
+    engine.variables.EndService(engine);
+    engine.variables.MarkOutcomeDeliveryComplete();
+    engine.variables.FinishOutcomeDelivery();
+    ASSERT_TRUE(engine.variables.ReleaseReadCut(cut));
+    EXPECT_EQ(0u, engine.variables.ReadCutSourceSubscriptionCount(cut));
+    EXPECT_FALSE(engine.variables.TakeReadCutSourceChange(cut));
+    harken::VariableReadCutRef next;
+    ASSERT_TRUE(engine.variables.CaptureReadCut(0, 4096, accepted.ticket.sequence + 1, 0, &next));
+    EXPECT_EQ(0u, engine.variables.ReadCutSourceSubscriptionCount(next));
+    EXPECT_FALSE(engine.variables.TakeReadCutSourceChange(next));
+    ASSERT_TRUE(engine.variables.ReleaseReadCut(next));
+}
+
 } // namespace

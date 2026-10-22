@@ -992,7 +992,7 @@ VnEffectDynamicRouteDesc MatrixVoiceRoute(VnVoiceHandle sourceVoice) {
     route.signalForm = VN_DYNAMIC_SIGNAL_RAW_AUDIO;
     route.sourceKind = VN_DYNAMIC_SOURCE_VOICE;
     route.tap = VN_DYNAMIC_TAP_VOICE_POST_GAIN_PRE_SPATIAL;
-    route.sourceId = sourceVoice;
+    route.sourceVoiceHandle = sourceVoice;
     route.levelDb = 0.0f;
     route.expectedEffectType = VN_EFFECT_COMPRESSOR;
     return route;
@@ -1048,15 +1048,16 @@ CompressorSceneResult RunCompressorScene(const CompressorSceneSpec& scene,
 
     constexpr std::uint32_t kBusSourceCount = 8;
     constexpr std::uint32_t kBusTargetCount = 16;
-    constexpr VnBusId kFirstSourceBus = harkentest::ObjectId(100);
-    constexpr VnBusId kFirstTargetBus = harkentest::ObjectId(200);
+    constexpr std::uint32_t kFirstSourceBus = 100;
+    constexpr std::uint32_t kFirstTargetBus = 200;
     const bool routedScene =
         scene.kind == CompressorSceneKind::BusRouted ||
         scene.kind == CompressorSceneKind::Mixed;
     const bool featureRouted = routedScene && featureEnabled;
     if (routedScene) {
         for (std::uint32_t i = 0; i < kBusSourceCount; ++i) {
-            if (Vn_CreateBus(kFirstSourceBus + i, VN_BUS_MASTER) != VN_OK) {
+            if (Vn_CreateBus(harkentest::ObjectId(kFirstSourceBus + i),
+                             VN_BUS_MASTER) != VN_OK) {
                 return finishWithError("create-source-bus");
             }
             engine->nullBackend.Pump(1);
@@ -1066,7 +1067,8 @@ CompressorSceneResult RunCompressorScene(const CompressorSceneSpec& scene,
             }
         }
         for (std::uint32_t i = 0; i < kBusTargetCount; ++i) {
-            if (Vn_CreateBus(kFirstTargetBus + i, VN_BUS_MASTER) != VN_OK) {
+            if (Vn_CreateBus(harkentest::ObjectId(kFirstTargetBus + i),
+                             VN_BUS_MASTER) != VN_OK) {
                 return finishWithError("create-target-bus");
             }
             engine->nullBackend.Pump(1);
@@ -1102,14 +1104,15 @@ CompressorSceneResult RunCompressorScene(const CompressorSceneSpec& scene,
         play.busId = VN_BUS_MASTER;
         if (scene.kind == CompressorSceneKind::BusRouted) {
             if (voice < 8) {
-                play.busId = kFirstSourceBus + voice;
+                play.busId = harkentest::ObjectId(kFirstSourceBus + voice);
             } else if (voice >= 16) {
-                play.busId = kFirstTargetBus + (voice - 16);
+                play.busId = harkentest::ObjectId(
+                    kFirstTargetBus + (voice - 16));
             }
         } else if (scene.kind == CompressorSceneKind::Mixed) {
-            play.busId =
+            play.busId = harkentest::ObjectId(
                 voice < 8 ? kFirstSourceBus + voice
-                          : kFirstTargetBus + ((voice - 8) % kBusTargetCount);
+                          : kFirstTargetBus + ((voice - 8) % kBusTargetCount));
         }
         play.volumeDb = -18.0f;
         play.pitchRatio = 1.0f;
@@ -1128,7 +1131,7 @@ CompressorSceneResult RunCompressorScene(const CompressorSceneSpec& scene,
 
     if (featureRouted) {
         for (std::uint32_t bus = 0; bus < kBusTargetCount; ++bus) {
-            if (Vn_SetBusEffect(kFirstTargetBus + bus, 0,
+            if (Vn_SetBusEffect(harkentest::ObjectId(kFirstTargetBus + bus), 0,
                                 VN_EFFECT_COMPRESSOR,
                                 AsBase(&compressor)) != VN_OK) {
                 return finishWithError("bus-compressor");
@@ -1148,15 +1151,17 @@ CompressorSceneResult RunCompressorScene(const CompressorSceneSpec& scene,
         }
         for (std::uint32_t target = 0; target < kBusTargetCount; ++target) {
             const std::array<VnEffectDynamicRouteDesc, 4> routes = {{
-                MatrixBusRoute(kFirstSourceBus + (target % 8)),
-                MatrixBusRoute(kFirstSourceBus + ((target + 3) % 8)),
+                MatrixBusRoute(harkentest::ObjectId(
+                    kFirstSourceBus + (target % 8))),
+                MatrixBusRoute(harkentest::ObjectId(
+                    kFirstSourceBus + ((target + 3) % 8))),
                 MatrixVoiceRoute(voiceSources[target % 8]),
                 MatrixVoiceRoute(voiceSources[(target + 5) % 8]),
             }};
             for (std::uint32_t routeSlot = 0; routeSlot < routes.size();
                  ++routeSlot) {
                 if (Vn_SetBusEffectDynamicRoute(
-                        kFirstTargetBus + target, 0, routeSlot,
+                        harkentest::ObjectId(kFirstTargetBus + target), 0, routeSlot,
                         &routes[routeSlot]) != VN_OK) {
                     return finishWithError("dynamic-route");
                 }
@@ -1177,9 +1182,11 @@ CompressorSceneResult RunCompressorScene(const CompressorSceneSpec& scene,
         }
     }
 
+    const auto beforeWarmup = engine->mixer.BlocksRendered();
     for (std::uint32_t block = 0; block < warmupBlocks; ++block) {
         engine->nullBackend.Pump(1);
     }
+    const auto afterWarmup = engine->mixer.BlocksRendered();
     result.blockDurationsUs.reserve(measuredBlocks);
     constexpr double kDeadlineUs =
         1.0e6 * static_cast<double>(kBlock) / static_cast<double>(kRate);
@@ -1201,6 +1208,14 @@ CompressorSceneResult RunCompressorScene(const CompressorSceneSpec& scene,
             static_cast<std::uint64_t>(std::count_if(
                 output, output + outputSampleCount,
                 [](float sample) { return !std::isfinite(sample); }));
+    }
+    const auto completedMeasured = engine->mixer.BlocksRendered() - afterWarmup;
+    const auto completedWarmup = afterWarmup - beforeWarmup;
+    if (completedWarmup != warmupBlocks || completedMeasured != measuredBlocks) {
+        std::fprintf(stderr,
+            "render-progress: workers=%u warmup=%llu/%u measured=%llu/%u\n",
+            workerCount, static_cast<unsigned long long>(completedWarmup), warmupBlocks,
+            static_cast<unsigned long long>(completedMeasured), measuredBlocks);
     }
     const DurationStats durationStats =
         ComputeDurationStats(result.blockDurationsUs);
@@ -1249,6 +1264,15 @@ CompressorSceneResult RunCompressorScene(const CompressorSceneSpec& scene,
         result.error = "non-finite-output";
     } else if (!capacityObservabilityValid) {
         result.error = "capacity-observability";
+        std::fprintf(stderr,
+                     "capacity-observability: scene=%s active=%u high=%llu "
+                     "expected-voices=%u workers=%u expected-workers=%u "
+                     "mix=%u device=%u\n",
+                     scene.name, snapshot.activeVoiceCount,
+                     static_cast<unsigned long long>(snapshot.voiceHighWater),
+                     scene.voiceCount,
+                     snapshot.renderWorkerCount, workerCount,
+                     snapshot.mixChannelCount, snapshot.deviceChannelCount);
     } else {
         result.error = "none";
     }
@@ -2281,11 +2305,11 @@ Result RunScene(std::uint32_t workerCount) {
         desc.policy = VN_PCM_POLICY_COPY;
         desc.frames = sine.size();
         desc.samplesInterleaved = sine.data();
-        Vn_RegisterPCM(static_cast<VnSoundId>(1 + i), &desc);
+        Vn_RegisterPCM(harkentest::ObjectId(1 + i), &desc);
     }
 
     for (std::uint32_t v = 0; v < kVoices; ++v) {
-        const VnSoundId id = static_cast<VnSoundId>(1 + (v % 8));
+        const VnSoundId id = harkentest::ObjectId(1 + (v % 8));
         VnPlayDesc play{};
         play.structSize = sizeof(VnPlayDesc);
         play.soundId = id;

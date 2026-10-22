@@ -26,6 +26,7 @@ set(HARKEN_RUNTIME_SOURCES
     ${HARKEN_RUNTIME_DIR}/api/src/ProjectGenerationTransaction.cpp
     ${HARKEN_RUNTIME_DIR}/api/src/PackVariablePublication.cpp
     ${HARKEN_RUNTIME_DIR}/core/src/AllocGuard.cpp
+    ${HARKEN_RUNTIME_DIR}/core/src/StableRowStorage.cpp
     ${HARKEN_RUNTIME_DIR}/core/src/MonitorRequest.cpp
     ${HARKEN_RUNTIME_DIR}/core/src/MonitorWaveformReduce.cpp
     ${HARKEN_RUNTIME_DIR}/core/src/MonitorScopeTrigger.cpp

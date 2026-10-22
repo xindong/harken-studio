@@ -209,8 +209,8 @@ bool HasCleanRestartState(const RenderWorkerPool& pool) {
         pool.m_wakeFault.load(std::memory_order_acquire) ||
         pool.m_jobFault.load(std::memory_order_acquire) ||
         pool.m_runActive.load(std::memory_order_acquire) ||
-        pool.m_serialFallback || pool.m_abandonedGeneration != 0 ||
-        pool.m_abandonedJobCount != 0 ||
+        pool.m_serialFallback || pool.m_deferredGeneration != 0 ||
+        pool.m_deferredJobCount != 0 ||
         pool.m_dispatchState.load(std::memory_order_acquire) !=
             RenderWorkerPool::DispatchState::Disabled ||
         pool.m_domainBound || pool.m_boundDomain.generation != 0 ||
@@ -279,6 +279,9 @@ bool RenderWorkerPool::Start(std::uint32_t workerCount,
 }
 
 bool RenderWorkerPool::EnsureReady() noexcept {
+    // This lifecycle entry owns a stopped callback. Join old payload writers
+    // before replacing a thread set; VoicePool retains the prepared quantum.
+    if (m_deferredGeneration != 0) Stop();
 #ifndef NDEBUG
     assert(m_startedOnce);
     assert(!m_runActive.load(std::memory_order_acquire));
@@ -319,8 +322,8 @@ bool RenderWorkerPool::HasReadyThreadSet() const noexcept {
         m_workerBusyTicks[0].size() != m_configuredThreadCount ||
         m_workerBusyTicks[1].size() != m_configuredThreadCount ||
         m_jobState.size() != m_configuredMaxJobs ||
-        m_jobDoneAtAbandonment.size() != m_configuredMaxJobs ||
-        m_abandonedGeneration != 0 ||
+        m_jobDoneAtTimeout.size() != m_configuredMaxJobs ||
+        m_deferredGeneration != 0 ||
         m_workerControlAckGenerations.size() !=
             m_configuredThreadCount ||
         m_workerDomainGenerations.size() != m_configuredThreadCount) {
@@ -386,9 +389,9 @@ bool RenderWorkerPool::CreateThreadSet(
     m_workerBusyTicks[0].clear();
     m_workerBusyTicks[1].clear();
     m_jobState.clear();
-    m_jobDoneAtAbandonment.clear();
-    m_abandonedGeneration = 0;
-    m_abandonedJobCount = 0;
+    m_jobDoneAtTimeout.clear();
+    m_deferredGeneration = 0;
+    m_deferredJobCount = 0;
     m_workerControlAckGenerations.clear();
     m_workerDomainGenerations.clear();
 #if defined(HARKEN_RENDER_WORKER_POOL_TEST_HOOKS)
@@ -412,8 +415,8 @@ bool RenderWorkerPool::CreateThreadSet(
             word.store(0, std::memory_order_relaxed);
         }
         // The classification snapshot's storage, sized from the same frozen
-        // bound. Its contents are meaningless until an abandonment writes them.
-        m_jobDoneAtAbandonment.assign(m_configuredMaxJobs, 0);
+        // bound. Its contents are meaningless until a timeout writes them.
+        m_jobDoneAtTimeout.assign(m_configuredMaxJobs, 0);
         m_workerControlAckGenerations.assign(workerCount, 0);
         m_workerDomainGenerations.assign(workerCount, 0);
 #if HARKEN_RENDER_WORKER_POOL_MACH_WAKE
@@ -433,7 +436,7 @@ bool RenderWorkerPool::CreateThreadSet(
                 m_workerBusyTicks[0].clear();
                 m_workerBusyTicks[1].clear();
                 m_jobState.clear();
-                m_jobDoneAtAbandonment.clear();
+                m_jobDoneAtTimeout.clear();
                 m_workerControlAckGenerations.clear();
                 m_workerDomainGenerations.clear();
                 m_threadCount = 0;
@@ -490,7 +493,7 @@ bool RenderWorkerPool::CreateThreadSet(
         m_workerBusyTicks[0].clear();
         m_workerBusyTicks[1].clear();
         m_jobState.clear();
-        m_jobDoneAtAbandonment.clear();
+        m_jobDoneAtTimeout.clear();
         m_workerControlAckGenerations.clear();
         m_workerDomainGenerations.clear();
         m_threadCount = 0;
@@ -551,6 +554,10 @@ bool RenderWorkerPool::BindRealtimeDomain(
 }
 
 bool RenderWorkerPool::UnbindRealtimeDomain() {
+    if (m_deferredGeneration != 0) {
+        Stop();
+        return true;
+    }
 #ifndef NDEBUG
     assert(!m_runActive.load(std::memory_order_acquire));
 #endif
@@ -651,6 +658,7 @@ void RenderWorkerPool::Disable() noexcept {
 }
 
 bool RenderWorkerPool::TryReserveBatch() noexcept {
+    if (!TryCompletePendingBatch()) return false;
     DispatchState expected = DispatchState::Enabled;
     if (!m_dispatchState.compare_exchange_strong(
             expected, DispatchState::BatchActive,
@@ -761,10 +769,10 @@ void RenderWorkerPool::Stop() {
 #ifndef NDEBUG
     // Stop must not overlap an in-flight Run; the engine owns this lifecycle
     // ordering and this assertion keeps that precondition visible in debug.
-    assert(!m_runActive.load(std::memory_order_acquire));
+    assert(!m_runActive.load(std::memory_order_acquire) || m_deferredGeneration != 0);
 #endif
     Disable();
-    if (m_domainBound &&
+    if (m_deferredGeneration == 0 && m_domainBound &&
         !m_wakeFault.load(std::memory_order_acquire)) {
         if (DispatchDomainControl(false, m_boundDomain)) {
             m_domainBound = false;
@@ -805,13 +813,18 @@ void RenderWorkerPool::Stop() {
         }
     }
     m_threads.clear();
+    if (m_deferredGeneration != 0) {
+        m_deferredGeneration = 0;
+        m_deferredJobCount = 0;
+        FinishReservedBatch();
+    }
     DestroyWakePrimitives();
     m_domainBound = false;
     m_boundDomain = RealtimeWorkerDomain{};
     m_workerBusyTicks[0].clear();
     m_workerBusyTicks[1].clear();
     m_jobState.clear();
-    m_jobDoneAtAbandonment.clear();
+    m_jobDoneAtTimeout.clear();
     m_workerControlAckGenerations.clear();
     m_workerDomainGenerations.clear();
     m_threadCount = 0;
@@ -1105,18 +1118,8 @@ void RenderWorkerPool::RunBatch(std::uint32_t id, std::uint64_t generation) {
     }
 #endif
     for (;;) {
-        // Stop claiming the moment this batch is no longer the live one.
-        //
-        // Defensive, with no known reachable path today: the coordinator drains
-        // the shared claim cursor before it can reach any wait, so a batch it
-        // walks away from has nothing left to claim and the size test below
-        // stops a resumed worker on its own. What actually bounds the quarantine
-        // set to one job per executor is the shape of this loop -- claim, run,
-        // account, repeat -- which never holds two jobs at once.
-        //
-        // It becomes load-bearing the moment the coordinator can stop claiming
-        // early, because then a dead batch does have unclaimed jobs and every
-        // one a stranded worker takes is another voice slot held for good.
+        // Claims belong to the published generation. A deferred batch retains
+        // that generation until every worker has acknowledged completion.
         if (m_epoch.load(std::memory_order_acquire) != generation) {
             break;
         }
@@ -1134,7 +1137,7 @@ void RenderWorkerPool::RunBatch(std::uint32_t id, std::uint64_t generation) {
         m_jobState[j].store(EncodeJobState(generation, JobState::Claimed),
                             std::memory_order_release);
 #if defined(HARKEN_RENDER_WORKER_POOL_TEST_HOOKS)
-        // Held here, a worker is in exactly the state a quarantine exists for:
+        // Held here, a worker is in exactly the state a deferred quantum retains:
         // this job is registered as claimed by this generation and has not run.
         // The coordinator's view of it is identical to a real stall, because the
         // only inputs it has are the progress word and the finished counter.
@@ -1179,10 +1182,10 @@ void RenderWorkerPool::RunBatch(std::uint32_t id, std::uint64_t generation) {
 }
 
 bool RenderWorkerPool::JobCompletedForLastBatch(std::uint32_t j) const {
-    if (m_abandonedGeneration == 0 || j >= m_abandonedJobCount) {
+    if (m_deferredGeneration == 0 || j >= m_deferredJobCount) {
         return true;
     }
-    return m_jobDoneAtAbandonment[j] != 0;
+    return m_jobDoneAtTimeout[j] != 0;
 }
 
 template <typename Ready>
@@ -1204,63 +1207,72 @@ std::uint64_t RenderWorkerPool::SpinUntil(Ready ready,
     return 0;
 }
 
-RenderWorkerPool::RunResult RenderWorkerPool::AbandonBatch(
+bool RenderWorkerPool::PendingJobsCompleted() const noexcept {
+    return m_deferredGeneration == 0 ||
+        m_jobsCompleted[SlotOf(m_deferredGeneration)].load(std::memory_order_acquire) ==
+            m_deferredJobCount;
+}
+
+bool RenderWorkerPool::TryCompletePendingBatch() noexcept {
+    if (m_deferredGeneration == 0) return true;
+    const auto slot = SlotOf(m_deferredGeneration);
+    const bool allWorkers =
+        m_workersFinished[slot].load(std::memory_order_acquire) == m_threadCount;
+    const bool fault = m_wakeFault.load(std::memory_order_acquire) ||
+        m_jobFault.load(std::memory_order_acquire);
+    if (!allWorkers && !(fault && PendingJobsCompleted())) return false;
+    if (allWorkers) m_batches[slot].command = Command::None;
+    // A failed wake can leave an idle worker without an acknowledgement.
+    // Keep that descriptor immutable and stay serial until lifecycle join.
+    if (fault) {
+        m_serialFallback = true;
+        Disable();
+    }
+    m_deferredGeneration = 0;
+    m_deferredJobCount = 0;
+    FinishReservedBatch();
+    return true;
+}
+
+RenderWorkerPool::RunResult RenderWorkerPool::DeferBatch(
     std::uint64_t generation, std::uint32_t jobCount,
     std::uint64_t deadlineAt, std::uint64_t observedTicks) {
-    // Void the generation. The command of the slot the NEXT generation selects
-    // has to be cleared BEFORE the epoch moves, and the order is not cosmetic: a
-    // worker that wakes reloads the epoch and then switches on that slot's
-    // command unconditionally. Bumping the epoch alone would point it at a
-    // descriptor two generations old, whose command is very likely still
-    // RunBatch and whose function and job count are stale -- it would go run a
-    // dead batch, and the epoch would agree with it. Cleared first, it falls
-    // through the command switch and parks again.
-    m_batches[SlotOf(generation + 1)].command = Command::None;
-    m_epoch.fetch_add(1, std::memory_order_release);
-    // No wake here. A stranded worker is not parked -- it is inside the batch
-    // and rereads the epoch on its own -- so signalling would only wake the
-    // workers that are parked, to look at a cleared command and go back to
-    // sleep, at the cost of a notify per worker on the audio callback thread.
-
-    // Classify once, now that the generation is void. The set can only shrink
-    // from here: the dead generation cannot claim anything more, so a word can
-    // still move from claimed to done but never the other way, which is what
-    // makes a single reading safe to keep.
     const std::uint64_t doneWord = EncodeJobState(generation, JobState::Done);
-    std::uint32_t unfinished = 0;
-    for (std::uint32_t j = 0; j < jobCount; ++j) {
-        const bool complete =
-            m_jobState[j].load(std::memory_order_acquire) == doneWord;
-        m_jobDoneAtAbandonment[j] = complete ? std::uint8_t{1}
-                                             : std::uint8_t{0};
-        if (!complete) {
-            ++unfinished;
-        }
-    }
-    m_abandonedGeneration = generation;
-    m_abandonedJobCount = jobCount;
-
-    // Later blocks render serially on the caller. This is what makes two copies
-    // of the batch state sufficient: nothing publishes again, so the copy the
-    // stranded worker is reading is never rewritten.
-    m_serialFallback = true;
-    Disable();
-
     RunResult result{};
-    result.abandoned = true;
-    result.unfinishedJobs = unfinished;
-    result.overrunTicks =
-        observedTicks > deadlineAt ? observedTicks - deadlineAt : 0;
-    FinishReservedBatch();
+    for (std::uint32_t j = 0; j < jobCount; ++j) {
+        const bool complete = m_jobState[j].load(std::memory_order_acquire) == doneWord;
+        m_jobDoneAtTimeout[j] = complete ? std::uint8_t{1} : std::uint8_t{0};
+        if (!complete) ++result.unfinishedJobs;
+    }
+    m_deferredGeneration = generation;
+    m_deferredJobCount = jobCount;
+    result.deferred = true;
+    result.overrunTicks = observedTicks > deadlineAt ? observedTicks - deadlineAt : 0;
     return result;
 }
 
 RenderWorkerPool::RunResult RenderWorkerPool::Run(std::uint32_t jobCount,
                                                   JobFn fn, void* userData,
                                                   std::uint64_t deadlineTicks) {
+    return RunImpl(jobCount, fn, userData, deadlineTicks, 0);
+}
+
+RenderWorkerPool::RunResult RenderWorkerPool::RunUntil(std::uint32_t jobCount,
+    JobFn fn, void* userData, std::uint64_t deadlineAt) {
+    return RunImpl(jobCount, fn, userData, 0, deadlineAt);
+}
+
+RenderWorkerPool::RunResult RenderWorkerPool::RunImpl(std::uint32_t jobCount,
+    JobFn fn, void* userData, std::uint64_t deadlineTicks, std::uint64_t deadlineAt) {
     assert(jobCount <= m_configuredMaxJobs);
+    if (!TryCompletePendingBatch()) {
+        RunResult result{};
+        result.accepted = false;
+        return result;
+    }
     if (m_deadlineTicksOverride != 0) {
         deadlineTicks = m_deadlineTicksOverride;
+        deadlineAt = 0;
     }
     // The generation this call will publish as, and therefore which of the two
     // copies of the batch state it owns. Fixed here because the probe helper
@@ -1419,29 +1431,6 @@ RenderWorkerPool::RunResult RenderWorkerPool::Run(std::uint32_t jobCount,
         return RunResult{};
     }
 
-    // The deadline starts before the batch exists, so the budget covers
-    // publication and the coordinator's own share of the work as well as every
-    // wait. A budget measured from the first wait would be blind to exactly the
-    // case where the coordinator itself is what ran long.
-    const std::uint64_t deadlineAt =
-        deadlineTicks != 0 ? CpuClockTicks() + deadlineTicks : 0;
-    const auto abandonIfExpired = [&]() -> RunResult {
-        if (deadlineAt == 0) {
-            return RunResult{};
-        }
-        const std::uint64_t now = CpuClockTicks();
-        if (now <= deadlineAt) {
-            return RunResult{};
-        }
-#if defined(HARKEN_RT_PROBE_WORKER_BARRIER)
-        if (probeSink != nullptr) {
-            probeRecord.coordinatorDoneTicks = now;
-        }
-        finalizeProbe(rtprobe::kWorkerBarrierFlagIncompleteScratch, false);
-#endif
-        return AbandonBatch(generation, jobCount, deadlineAt, now);
-    };
-
     // Publish the batch, then release the workers. The epoch bump is a release
     // store, so a worker that observes the new epoch also observes these
     // writes; m_nextJob and m_workersFinished are reset before the bump.
@@ -1491,10 +1480,6 @@ RenderWorkerPool::RunResult RenderWorkerPool::Run(std::uint32_t jobCount,
     EnterOriginalSourceCoordinatorGate(*this, generation);
 #endif
     for (;;) {
-        const RunResult deadlineResult = abandonIfExpired();
-        if (deadlineResult.abandoned) {
-            return deadlineResult;
-        }
         const std::uint32_t j =
             m_nextJob[slot].fetch_add(1, std::memory_order_relaxed);
         if (j >= jobCount) {
@@ -1512,10 +1497,6 @@ RenderWorkerPool::RunResult RenderWorkerPool::Run(std::uint32_t jobCount,
         m_jobState[j].store(EncodeJobState(generation, JobState::Done),
                             std::memory_order_release);
         m_jobsCompleted[slot].fetch_add(1, std::memory_order_release);
-        const RunResult jobDeadlineResult = abandonIfExpired();
-        if (jobDeadlineResult.abandoned) {
-            return jobDeadlineResult;
-        }
     }
 #if defined(HARKEN_RT_PROBE_WORKER_BARRIER)
     if (probeSink != nullptr) {
@@ -1523,12 +1504,19 @@ RenderWorkerPool::RunResult RenderWorkerPool::Run(std::uint32_t jobCount,
     }
 #endif
 
-    // Every wait below is a rendezvous with the worker threads, and every one of
-    // them can be held open by a worker that stopped making progress. They are
-    // therefore all bounded by the same deadline and all end in the same
-    // abandonment, including the two that are only reachable after a fault: a
-    // wait on the audio callback thread does not become acceptable because the
-    // reason for it was already a degradation.
+    // Only waiting is bounded here. Normal coordinator work must finish its
+    // claims; dropping the remaining voices cannot recover that spent time.
+    if (deadlineAt == 0 && deadlineTicks != 0)
+        deadlineAt = CpuClockTicks() + deadlineTicks;
+    const auto deferIfExpired = [&]() -> RunResult {
+        if (deadlineAt == 0) return {};
+        const auto now = CpuClockTicks();
+        if (now <= deadlineAt) return {};
+#if defined(HARKEN_RT_PROBE_WORKER_BARRIER)
+        finalizeProbe(rtprobe::kWorkerBarrierFlagIncompleteScratch, false);
+#endif
+        return DeferBatch(generation, jobCount, deadlineAt, now);
+    };
     const auto jobsDrained = [&] {
         return m_jobsCompleted[slot].load(std::memory_order_acquire) ==
                jobCount;
@@ -1554,7 +1542,7 @@ RenderWorkerPool::RunResult RenderWorkerPool::Run(std::uint32_t jobCount,
 #if defined(HARKEN_RT_PROBE_WORKER_BARRIER)
             finalizeProbe(rtprobe::kWorkerBarrierFlagIncompleteScratch, false);
 #endif
-            return AbandonBatch(generation, jobCount, deadlineAt, expiredAt);
+            return DeferBatch(generation, jobCount, deadlineAt, expiredAt);
         }
 #if defined(HARKEN_RT_PROBE_WORKER_BARRIER)
         finalizeProbe(rtprobe::kWorkerBarrierFlagIncompleteScratch, false);
@@ -1583,14 +1571,14 @@ RenderWorkerPool::RunResult RenderWorkerPool::Run(std::uint32_t jobCount,
                           false);
 #endif
             if (faultExpiredAt != 0) {
-                return AbandonBatch(generation, jobCount, deadlineAt,
+                return DeferBatch(generation, jobCount, deadlineAt,
                                     faultExpiredAt);
             }
             FinishReservedBatch();
             return RunResult{};
         }
-        const RunResult waitDeadlineResult = abandonIfExpired();
-        if (waitDeadlineResult.abandoned) {
+        const RunResult waitDeadlineResult = deferIfExpired();
+        if (waitDeadlineResult.deferred) {
             return waitDeadlineResult;
         }
 #if defined(HARKEN_RT_PROBE_WORKER_BARRIER)
@@ -1599,11 +1587,6 @@ RenderWorkerPool::RunResult RenderWorkerPool::Run(std::uint32_t jobCount,
         }
 #endif
         std::this_thread::yield();
-    }
-
-    const RunResult finalDeadlineResult = abandonIfExpired();
-    if (finalDeadlineResult.abandoned) {
-        return finalDeadlineResult;
     }
 
 #if defined(HARKEN_RT_PROBE_WORKER_BARRIER)
@@ -1616,7 +1599,7 @@ RenderWorkerPool::RunResult RenderWorkerPool::Run(std::uint32_t jobCount,
     // parallelism signal the snapshot reports. The coordinator's own span is
     // excluded: the figure answers "how long was the busiest worker busy."
     // Reading these words is only legal on this side of the barrier, which is
-    // why an abandoned batch reports no peak at all.
+    // why a deferred batch reports no peak at that boundary.
     RunResult result{};
     for (std::uint32_t i = 0; i < m_threadCount; ++i) {
         if (m_workerBusyTicks[slot][i] > result.busyPeakTicks) {

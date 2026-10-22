@@ -1,6 +1,8 @@
 #include "harken/render/EffectPool.h"
 #include "harken/core/MonitorLifecycleSink.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <limits>
 #include <utility>
@@ -32,6 +34,11 @@ std::uint32_t StrideUnits(std::uint32_t stateBytes) {
 
 } // namespace
 
+EffectPoolBank::ExtraStorage::ExtraStorage(std::size_t count) {
+    detail::LogicAllocCheckpoint(detail::LogicAllocSite::EffectExtraStorage);
+    samples.assign(count, 0.0f);
+}
+
 EffectPoolBank::EffectPoolBank(const EngineConfig& config)
     : m_retire(TotalInstanceCapacity(config)) {
     m_slots.resize(kEffectRegistryRowCount);
@@ -41,6 +48,8 @@ EffectPoolBank::EffectPoolBank(const EngineConfig& config)
         slot.effectType = row.effectType;
         slot.capacity = row.capacity(config);
         slot.strideUnits = StrideUnits(row.stateSize);
+        slot.registry = &row;
+        slot.sampleRate = config.mixRate.SampleRate();
 
         // Type-erased instance storage: capacity * strideUnits max_align_t units,
         // zero-filled before construction. Every instance base is aligned to
@@ -50,14 +59,11 @@ EffectPoolBank::EffectPoolBank(const EngineConfig& config)
                                 slot.strideUnits,
                             std::max_align_t{});
 
-        // Per-instance extra storage (the delay line): frames per channel across
-        // kMaxChannels, carved per instance. Zero for effects that request none.
-        const std::uint32_t extraFrames = row.extraFramesPerChannel(config);
-        const std::size_t extraPerInstance =
-            static_cast<std::size_t>(extraFrames) * kMaxChannels;
-        slot.extra.assign(static_cast<std::size_t>(slot.capacity) *
-                              extraPerInstance,
-                          0.0f);
+        slot.extraFramesPerChannel = row.extraFramesPerChannel(config);
+        if (slot.extraFramesPerChannel != 0 && slot.capacity != 0) {
+            slot.extra = std::make_unique<ExtraStorageTable>();
+            if (!slot.extra->Reserve(slot.capacity)) throw std::bad_alloc{};
+        }
 
         slot.freeList.reserve(slot.capacity);
         slot.generations.assign(slot.capacity, 0);
@@ -74,19 +80,49 @@ EffectPoolBank::EffectPoolBank(const EngineConfig& config)
                     slot.capacity);
         }
         for (std::uint32_t i = 0; i < slot.capacity; ++i) {
-            float* extraBase =
-                extraPerInstance != 0
-                    ? slot.extra.data() + static_cast<std::size_t>(i) *
-                                              extraPerInstance
-                    : nullptr;
-            row.initInstance(slot.StateAt(i), extraBase, extraFrames,
-                             config.mixRate.SampleRate());
+            row.initInstance(slot.StateAt(i), nullptr, 0, slot.sampleRate);
             // Push in reverse so the first acquisitions hand out ascending
             // indices (0, 1, 2, ...) — friendlier to read in snapshots and
             // tests.
             slot.freeList.push_back(slot.capacity - 1 - i);
         }
     }
+}
+
+bool EffectPoolBank::EnsureExtraBacking(PoolTypeSlot& slot, std::uint32_t index) noexcept {
+    if (slot.extra == nullptr) return true;
+    const auto available = [&](const ExtraStorage& row) noexcept {
+        return slot.states[slot.extra->IndexOf(row)].load(std::memory_order_acquire) == InstanceState::Free;
+    };
+    const auto construct = [&](std::uint32_t candidate) noexcept {
+        return slot.extra->Emplace(candidate, static_cast<std::size_t>(slot.extraFramesPerChannel) * kMaxChannels);
+    };
+    return construct(index) && slot.extra->ProtectBackingForAcquire(index, available, construct);
+}
+
+bool EffectPoolBank::PrepareBacking(const BackingDemand& demand, BackingPreparation* out) noexcept {
+    if (out == nullptr) return false;
+    for (const auto& column : *out) if (column.Valid()) return false;
+    for (std::uint32_t type = 0; type < m_slots.size(); ++type) {
+        auto& slot = m_slots[type];
+        if (slot.extra == nullptr) continue;
+        const auto available = [&](const ExtraStorage& row) noexcept {
+            return slot.states[slot.extra->IndexOf(row)].load(std::memory_order_acquire) == InstanceState::Free;
+        };
+        const auto construct = [&](std::uint32_t candidate) noexcept {
+            return slot.extra->Emplace(candidate, static_cast<std::size_t>(slot.extraFramesPerChannel) * kMaxChannels);
+        };
+        if (!slot.extra->PrepareBacking(static_cast<std::uint32_t>(
+                std::min<std::uint64_t>(demand[type], slot.capacity)), 0, available, construct, &(*out)[type]))
+            return false;
+    }
+    return true;
+}
+
+EffectPoolBank::BackingUse EffectPoolBank::UseBacking(const BackingPreparation* backing) noexcept {
+    return [&]<std::size_t... Index>(std::index_sequence<Index...>) {
+        return BackingUse{(backing == nullptr ? ExtraStorageTable::PreparedUse{} : (*backing)[Index].Use())...};
+    }(std::make_index_sequence<kEffectRegistryRowCount>{});
 }
 
 EffectPoolBank::PreparedCommitProof::PreparedCommitProof(
@@ -130,7 +166,22 @@ EffectInstanceRef EffectPoolBank::AcquireWithState(
         ++slot->refusalCount;
         return {};
     }
-    const std::uint32_t idx = slot->freeList.back();
+    auto free = slot->freeList.end() - 1;
+    if (slot->extra != nullptr && slot->extra->PreparedUseActive()) {
+        const auto prepared = std::find_if(slot->freeList.rbegin(), slot->freeList.rend(),
+            [&](std::uint32_t index) { return slot->extra->IsConstructed(index); });
+        if (prepared == slot->freeList.rend()) return {};
+        free = prepared.base() - 1;
+    }
+    const std::uint32_t idx = *free;
+    if (!EnsureExtraBacking(*slot, idx)) return {};
+    if (slot->extra != nullptr && !(*slot->extra)[idx].initialized) {
+        auto& extra = (*slot->extra)[idx];
+        slot->registry->initInstance(slot->StateAt(idx), extra.samples.data(),
+            slot->extraFramesPerChannel, slot->sampleRate);
+        extra.initialized = true;
+    }
+    *free = slot->freeList.back();
     slot->freeList.pop_back();
     // Only genuinely Free rows enter this freelist. A maximum generation is
     // issued once, then disposal quarantines the row permanently.

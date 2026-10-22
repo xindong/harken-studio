@@ -24,6 +24,7 @@
 #include <harken/Harken.h>
 
 #include "harken/abi/PackRevisionIdentity.h"
+#include "harken/core/StableRowStorage.h"
 #include "harken/media/PackFormat.h"
 #include "harken/media/PcmRegistry.h"
 
@@ -300,7 +301,7 @@ public:
 
     // Fixed slot capacity, for the loader's staging preflight.
     std::uint32_t SlotCapacity() const {
-        return static_cast<std::uint32_t>(m_slots.size());
+        return m_slots.Capacity();
     }
 
     // Books one refused-by-full-table load into the observability
@@ -433,6 +434,9 @@ public:
         const PackResourceRevisionToken* resourceTokens,
         std::size_t resourceTokenCount,
         PackResourceClosureToken* outClosureToken) noexcept;
+    VnResult AcquirePreparedResourceClosure(
+        const std::shared_ptr<const std::vector<PackResourceRevisionToken>>& resourceTokens,
+        PackResourceClosureToken* outClosureToken) noexcept;
     VnResult ValidateResourceClosure(
         PackResourceClosureToken closureToken) const noexcept;
     VnResult ReleaseResourceClosure(
@@ -445,6 +449,12 @@ public:
         std::size_t rowIndex, std::uint32_t generation) noexcept;
     VnResult SetSlotGenerationForTests(
         std::size_t rowIndex, std::uint32_t generation) noexcept;
+    void SetStorageCommitPageLimitsForTests(std::size_t slots,
+        std::size_t closures, std::size_t retiring) noexcept {
+        m_slots.SetCommitPageLimitForTests(slots);
+        m_resourceClosures.SetCommitPageLimitForTests(closures);
+        m_retiring.SetCommitPageLimitForTests(retiring);
+    }
 
     // Observability facts merged into snapshots: the most packs ever loaded
     // at once, and loads refused because every slot was taken.
@@ -510,8 +520,10 @@ private:
         ResourceClosureState state = ResourceClosureState::Free;
         std::uint32_t generation = 1;
         std::uint32_t resourceCount = 0;
+        std::shared_ptr<const std::vector<PackResourceRevisionToken>> tokens;
     };
 
+    bool PrepareContentStorage() noexcept;
     Slot* SlotFor(VnPackHandle handle);
     const Slot* SlotFor(VnPackHandle handle) const;
     bool OtherPackReferences(VnPackHandle excluded, VnSoundId soundId,
@@ -541,8 +553,7 @@ private:
         PackResourceClosureToken closureToken) const noexcept;
     ResourceClosureRow* ResourceClosureRowFor(
         PackResourceClosureToken closureToken) noexcept;
-    PackResourceRevisionToken* ResourceClosureTokens(
-        std::size_t rowIndex) noexcept;
+    VnResult SelectResourceClosureRow(std::size_t* out) const noexcept;
     const PackResourceRevisionToken* ResourceClosureTokens(
         std::size_t rowIndex) const noexcept;
 
@@ -552,10 +563,9 @@ private:
     VnResult ReadAndValidate(const char* utf8Path, AlignedBuffer* outBytes,
                              std::vector<PackTocEntry>* outParsed) const;
 
-    std::vector<Slot> m_slots;
-    std::vector<RetiringGeneration> m_retiring;
-    std::vector<ResourceClosureRow> m_resourceClosures;
-    std::vector<PackResourceRevisionToken> m_resourceClosureTokens;
+    StableRowStorage<Slot> m_slots;
+    StableRowStorage<RetiringGeneration, std::size_t> m_retiring;
+    StableRowStorage<ResourceClosureRow> m_resourceClosures;
     std::uint64_t m_staleHandleHits = 0;
     std::uint64_t m_loadedHighWater = 0;
     std::uint64_t m_noPackCount = 0;

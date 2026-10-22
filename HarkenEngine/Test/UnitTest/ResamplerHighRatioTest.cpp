@@ -1561,15 +1561,16 @@ TEST(ResamplerProfessionalFacade,
 
     std::vector<float> ring(kResampleFifoFrames, 0.0f);
     float* rings[1] = {ring.data()};
+    MultirateResamplerCandidate resamplerWorkspace;
     Resampler resampler;
     resampler.Reset(
         rings, 1, ResampleQuality::Linear, 1.0, Tables(),
-        SelectResampleProfile(44100u, 48000u), CandidateTables());
+        SelectResampleProfile(44100u, 48000u), CandidateTables(), nullptr);
     EXPECT_EQ(ResampleProfile::LegacyCompatibility,
               resampler.Profile());
     resampler.Reset(
         rings, 1, ResampleQuality::Sinc16, 1.0, Tables(),
-        ResampleProfile::Professional44148, CandidateTables());
+        ResampleProfile::Professional44148, CandidateTables(), &resamplerWorkspace);
     EXPECT_EQ(ResampleProfile::Professional44148,
               resampler.Profile());
     resampler.UpdateRatio(
@@ -1608,12 +1609,13 @@ TEST(ResamplerProfessionalFacade,
     view.frames = input.size();
     std::vector<float> ring(kResampleFifoFrames, 0.0f);
     float* rings[1] = {ring.data()};
+    MultirateResamplerCandidate resamplerWorkspace;
     Resampler resampler;
     resampler.Reset(
         rings, 1, ResampleQuality::Sinc16, kInitialRatio, Tables(),
-        ResampleProfile::Professional44148, CandidateTables());
+        ResampleProfile::Professional44148, CandidateTables(), &resamplerWorkspace);
 
-    MultirateResamplerCandidate& candidate = resampler.professional;
+    MultirateResamplerCandidate& candidate = resamplerWorkspace;
     candidate.sourceFrame += kLargeFrame;
     candidate.rawWriteIndex += kLargeFrame;
     MultirateCandidatePathState& path =
@@ -1645,10 +1647,11 @@ TEST(ResamplerProfessionalFacade,
      ResetSlotReuseClearsProfessionalProfileState) {
     std::vector<float> ring(kResampleFifoFrames, 0.0f);
     float* rings[1] = {ring.data()};
+    MultirateResamplerCandidate resamplerWorkspace;
     Resampler resampler;
     resampler.Reset(
         rings, 1, ResampleQuality::Sinc16, 2.0, Tables(),
-        ResampleProfile::Professional44148, CandidateTables());
+        ResampleProfile::Professional44148, CandidateTables(), &resamplerWorkspace);
     resampler.UpdateRatio(4.0, 64);
     resampler.MarkInputEnd();
     ASSERT_EQ(ResampleProfile::Professional44148,
@@ -1667,14 +1670,14 @@ TEST(ResamplerProfessionalFacade,
 
     resampler.Reset(
         rings, 1, ResampleQuality::Sinc16, 1.0, Tables(),
-        ResampleProfile::Professional44148, CandidateTables());
+        ResampleProfile::Professional44148, CandidateTables(), &resamplerWorkspace);
     EXPECT_EQ(ResampleProfile::Professional44148,
               resampler.Profile());
     EXPECT_FALSE(resampler.InputEnded());
     EXPECT_EQ(kResampleHistoryPad, resampler.SourceFrame());
     EXPECT_DOUBLE_EQ(0.0, resampler.SourceFraction());
-    EXPECT_EQ(0u, resampler.professional.rampRemaining);
-    EXPECT_EQ(0u, resampler.professional.counters.stageTransitions);
+    EXPECT_EQ(0u, resamplerWorkspace.rampRemaining);
+    EXPECT_EQ(0u, resamplerWorkspace.counters.stageTransitions);
 }
 
 TEST(ResamplerProfessionalFacade,
@@ -1694,7 +1697,7 @@ TEST(ResamplerProfessionalFacade,
         Resampler original;
         original.Reset(
             ringsA, 1, ResampleQuality::Linear, ratio, Tables(),
-            ResampleProfile::LegacyCompatibility, CandidateTables());
+            ResampleProfile::LegacyCompatibility, CandidateTables(), nullptr);
         harken::ResamplerParkState state;
         ASSERT_TRUE(original.CaptureParkState(&state));
         ASSERT_TRUE(Resampler::ValidateParkState(state));
@@ -1711,7 +1714,7 @@ TEST(ResamplerProfessionalFacade,
     Resampler ramping;
     ramping.Reset(
         ringsA, 1, ResampleQuality::Linear, kLowCombinedRatio, Tables(),
-        ResampleProfile::LegacyCompatibility, CandidateTables());
+        ResampleProfile::LegacyCompatibility, CandidateTables(), nullptr);
     ramping.UpdateRatio(kHighCombinedRatio, 64);
     harken::ResamplerParkState rampState;
     ASSERT_TRUE(ramping.CaptureParkState(&rampState));
@@ -1739,34 +1742,36 @@ TEST(ResamplerProfessionalFacade,
     std::vector<float> ringB(kResampleFifoFrames, 0.0f);
     float* ringsA[1] = {ringA.data()};
     float* ringsB[1] = {ringB.data()};
+    MultirateResamplerCandidate originalWorkspace;
     Resampler original;
     original.Reset(
         ringsA, 1, ResampleQuality::Sinc16, 1.25, Tables(),
-        ResampleProfile::Professional44148, CandidateTables());
+        ResampleProfile::Professional44148, CandidateTables(), &originalWorkspace);
     original.PushPCM(view, 0, 256);
     original.UpdateRatio(1.75, 32);
     float prefix[7] = {};
     float* prefixPlanes[1] = {prefix};
     ASSERT_EQ(7u,
-              original.professional.ProduceInstrumentedForTesting(
+              originalWorkspace.ProduceInstrumentedForTesting(
                   prefixPlanes, 0, 7));
     ASSERT_NE(0.0, original.SourceFraction());
     ASSERT_NE(0u, original.RampFramesRemaining());
-    ASSERT_GT(original.professional.counters.rawFramesRead, 0u);
+    ASSERT_GT(originalWorkspace.counters.rawFramesRead, 0u);
 
     harken::ProfessionalResamplerState state;
     ASSERT_TRUE(original.CaptureProfessional(&state));
     ASSERT_TRUE(Resampler::ValidateProfessionalState(state));
+    MultirateResamplerCandidate restoredWorkspace;
     Resampler restored;
     ASSERT_TRUE(restored.RestoreProfessional(
-        state, ringsB, 1, Tables(), CandidateTables()));
-    EXPECT_EQ(0u, restored.professional.counters.rawFramesRead);
+        state, ringsB, 1, Tables(), CandidateTables(), &restoredWorkspace));
+    EXPECT_EQ(0u, restoredWorkspace.counters.rawFramesRead);
     EXPECT_EQ(
         0u,
-        restored.professional.counters.halfbandMultiplyAccumulates);
+        restoredWorkspace.counters.halfbandMultiplyAccumulates);
     EXPECT_EQ(
         0u,
-        restored.professional.counters.residualMultiplyAccumulates);
+        restoredWorkspace.counters.residualMultiplyAccumulates);
     EXPECT_EQ(original.SourceFrame(), restored.SourceFrame());
     EXPECT_DOUBLE_EQ(original.SourceFraction(),
                      restored.SourceFraction());
@@ -1801,11 +1806,12 @@ TEST(ResamplerProfessionalFacade,
     std::vector<float> ringB(kResampleFifoFrames, 0.0f);
     float* ringsA[1] = {ringA.data()};
     float* ringsB[1] = {ringB.data()};
+    MultirateResamplerCandidate originalWorkspace;
     Resampler original;
     original.Reset(
         ringsA, 1, ResampleQuality::Sinc16,
         kCandidateMaximumPublicRatio, Tables(),
-        ResampleProfile::Professional44148, CandidateTables());
+        ResampleProfile::Professional44148, CandidateTables(), &originalWorkspace);
 
     std::uint64_t inputCursor = 0;
     float prefix[32] = {};
@@ -1827,14 +1833,15 @@ TEST(ResamplerProfessionalFacade,
         inputCursor += refill;
     }
     ASSERT_EQ(kMultirateMaxStages,
-              original.professional.activeStages);
+              originalWorkspace.activeStages);
 
     harken::ProfessionalResamplerState state;
     ASSERT_TRUE(original.CaptureProfessional(&state));
     ASSERT_TRUE(Resampler::ValidateProfessionalState(state));
+    MultirateResamplerCandidate restoredWorkspace;
     Resampler restored;
     ASSERT_TRUE(restored.RestoreProfessional(
-        state, ringsB, 1, Tables(), CandidateTables()));
+        state, ringsB, 1, Tables(), CandidateTables(), &restoredWorkspace));
 
     float expected[32] = {};
     float actual[32] = {};
@@ -1907,10 +1914,11 @@ TEST(ResamplerProfessionalFacade,
                 static_cast<std::size_t>(ch) * kResampleFifoFrames;
         }
 
+        MultirateResamplerCandidate originalWorkspace;
         Resampler original;
         original.Reset(
             ringsA, channels, ResampleQuality::Sinc16, 1.0, Tables(),
-            ResampleProfile::Professional44148, CandidateTables());
+            ResampleProfile::Professional44148, CandidateTables(), &originalWorkspace);
         std::uint64_t sourceCursor = 0;
         const std::uint32_t initialFeed = original.FreeFrames();
         ASSERT_EQ(kResampleFifoFrames, initialFeed);
@@ -1939,9 +1947,10 @@ TEST(ResamplerProfessionalFacade,
                   kResampleFifoFrames);
         EXPECT_LE(state.usedBytes, harken::kStreamParkTokenBytes);
 
+        MultirateResamplerCandidate restoredWorkspace;
         Resampler restored;
         ASSERT_TRUE(restored.RestoreProfessional(
-            state, ringsB, channels, Tables(), CandidateTables()));
+            state, ringsB, channels, Tables(), CandidateTables(), &restoredWorkspace));
         std::vector<std::vector<float>> expected(
             channels, std::vector<float>(96, 0.0f));
         std::vector<std::vector<float>> actual(
@@ -1983,22 +1992,23 @@ TEST(ResamplerProfessionalFacade,
         std::vector<float> ringB(kResampleFifoFrames, 0.0f);
         float* ringsA[1] = {ringA.data()};
         float* ringsB[1] = {ringB.data()};
+        MultirateResamplerCandidate originalWorkspace;
         Resampler original;
         original.Reset(
             ringsA, 1, ResampleQuality::Sinc16,
             boundary * 0.98, Tables(),
             ResampleProfile::Professional44148,
-            CandidateTables());
+            CandidateTables(), &originalWorkspace);
         original.UpdateRatio(boundary * 1.02, 128);
         float unused = 0.0f;
         float* unusedPlane[1] = {&unused};
         EXPECT_EQ(0u, original.Produce(unusedPlane, 0, 1));
-        ASSERT_TRUE(original.professional.transitionPreparing);
+        ASSERT_TRUE(originalWorkspace.transitionPreparing);
         const MultirateCandidatePathState& future =
-            original.professional.paths[
-                original.professional.transitionPath];
+            originalWorkspace.paths[
+                originalWorkspace.transitionPath];
         ASSERT_GT(future.rawProcessIndex,
-                  original.professional.rawWriteIndex);
+                  originalWorkspace.rawWriteIndex);
         constexpr std::uint64_t kMaximumPreparingLookahead =
             static_cast<std::uint64_t>(
                 harken::kMultirateFinalRingFrames) *
@@ -2013,15 +2023,16 @@ TEST(ResamplerProfessionalFacade,
               harken::kMultirateMaxStages) -
              1u);
         EXPECT_LE(future.rawProcessIndex -
-                      original.professional.rawWriteIndex,
+                      originalWorkspace.rawWriteIndex,
                   kMaximumPreparingLookahead);
 
         harken::ProfessionalResamplerState state;
         ASSERT_TRUE(original.CaptureProfessional(&state));
         ASSERT_TRUE(Resampler::ValidateProfessionalState(state));
+        MultirateResamplerCandidate restoredWorkspace;
         Resampler restored;
         ASSERT_TRUE(restored.RestoreProfessional(
-            state, ringsB, 1, Tables(), CandidateTables()));
+            state, ringsB, 1, Tables(), CandidateTables(), &restoredWorkspace));
         float expected[16] = {};
         float actual[16] = {};
         float* expectedPlane[1] = {expected};
@@ -2064,10 +2075,11 @@ TEST(ResamplerProfessionalFacade,
      InvalidCapturedIndicesAndTransitionStatesAreRejectedAtomically) {
     std::vector<float> sourceRing(kResampleFifoFrames, 0.0f);
     float* sourceRings[1] = {sourceRing.data()};
+    MultirateResamplerCandidate sourceWorkspace;
     Resampler source;
     source.Reset(
         sourceRings, 1, ResampleQuality::Sinc16, 1.0, Tables(),
-        ResampleProfile::Professional44148, CandidateTables());
+        ResampleProfile::Professional44148, CandidateTables(), &sourceWorkspace);
     harken::ProfessionalResamplerState valid;
     ASSERT_TRUE(source.CaptureProfessional(&valid));
     ASSERT_TRUE(Resampler::ValidateProfessionalState(valid));
@@ -2141,20 +2153,29 @@ TEST(ResamplerProfessionalFacade,
     std::vector<float> destinationRing(
         kResampleFifoFrames, 0.0f);
     float* destinationRings[1] = {destinationRing.data()};
+    MultirateResamplerCandidate destinationWorkspace;
     Resampler destination;
     destination.Reset(
         destinationRings, 1, ResampleQuality::Sinc16, 1.5,
         Tables(), ResampleProfile::Professional44148,
-        CandidateTables());
+        CandidateTables(), &destinationWorkspace);
     destinationRing[17] = 0.375f;
     const std::uint64_t frameBefore = destination.SourceFrame();
     const double ratioBefore = destination.CurrentRatio();
+    EXPECT_FALSE(destination.RestoreProfessional(
+        valid, destinationRings, 1, Tables(), CandidateTables(), nullptr));
+    EXPECT_FALSE(destination.RestoreParkState(
+        valid, destinationRings, 1, Tables(), CandidateTables()));
+    EXPECT_EQ(&destinationWorkspace, destination.professional);
+    EXPECT_EQ(frameBefore, destination.SourceFrame());
+    EXPECT_DOUBLE_EQ(ratioBefore, destination.CurrentRatio());
+    EXPECT_FLOAT_EQ(0.375f, destinationRing[17]);
     invalid = valid;
     invalid.paths[invalid.activePath].stages[0].sideWriteOffset =
         harken::kMultirateHalfbandSideFrames;
     EXPECT_FALSE(destination.RestoreProfessional(
         invalid, destinationRings, 1, Tables(),
-        CandidateTables()));
+        CandidateTables(), &destinationWorkspace));
     EXPECT_EQ(frameBefore, destination.SourceFrame());
     EXPECT_DOUBLE_EQ(ratioBefore, destination.CurrentRatio());
     EXPECT_FLOAT_EQ(0.375f, destinationRing[17]);
@@ -2165,7 +2186,7 @@ TEST(ResamplerProfessionalFacade,
         (std::numeric_limits<double>::max)();
     EXPECT_FALSE(destination.RestoreProfessional(
         invalid, destinationRings, 1, Tables(),
-        CandidateTables()));
+        CandidateTables(), &destinationWorkspace));
     EXPECT_EQ(frameBefore, destination.SourceFrame());
     EXPECT_DOUBLE_EQ(ratioBefore, destination.CurrentRatio());
     EXPECT_FLOAT_EQ(0.375f, destinationRing[17]);
@@ -2177,7 +2198,7 @@ TEST(ResamplerProfessionalFacade,
     invalid.rampStep = -0.49;
     EXPECT_FALSE(destination.RestoreProfessional(
         invalid, destinationRings, 1, Tables(),
-        CandidateTables()));
+        CandidateTables(), &destinationWorkspace));
     EXPECT_EQ(frameBefore, destination.SourceFrame());
     EXPECT_DOUBLE_EQ(ratioBefore, destination.CurrentRatio());
     EXPECT_FLOAT_EQ(0.375f, destinationRing[17]);
@@ -2197,15 +2218,17 @@ TEST(ResamplerProfessionalFacade,
     std::vector<float> instrumentedRing(kResampleFifoFrames, 0.0f);
     float* defaultRings[1] = {defaultRing.data()};
     float* instrumentedRings[1] = {instrumentedRing.data()};
+    MultirateResamplerCandidate regularWorkspace;
     Resampler regular;
+    MultirateResamplerCandidate instrumentedWorkspace;
     Resampler instrumented;
     regular.Reset(
         defaultRings, 1, ResampleQuality::Sinc16, 3.25, Tables(),
-        ResampleProfile::Professional44148, CandidateTables());
+        ResampleProfile::Professional44148, CandidateTables(), &regularWorkspace);
     instrumented.Reset(
         instrumentedRings, 1, ResampleQuality::Sinc16, 3.25,
         Tables(), ResampleProfile::Professional44148,
-        CandidateTables());
+        CandidateTables(), &instrumentedWorkspace);
     regular.PushPCM(view, 0, 256);
     instrumented.PushPCM(view, 0, 256);
     regular.UpdateRatio(3.75, 16);
@@ -2218,16 +2241,16 @@ TEST(ResamplerProfessionalFacade,
     ASSERT_EQ(16u, regular.Produce(regularPlanes, 0, 16));
     ASSERT_EQ(
         16u,
-        instrumented.professional.ProduceInstrumentedForTesting(
+        instrumentedWorkspace.ProduceInstrumentedForTesting(
             instrumentedPlanes, 0, 16));
-    EXPECT_EQ(0u, regular.professional.counters.rawFramesRead);
+    EXPECT_EQ(0u, regularWorkspace.counters.rawFramesRead);
     EXPECT_EQ(
         0u,
-        regular.professional.counters.halfbandMultiplyAccumulates);
+        regularWorkspace.counters.halfbandMultiplyAccumulates);
     EXPECT_EQ(
         0u,
-        regular.professional.counters.residualMultiplyAccumulates);
-    EXPECT_GT(instrumented.professional.counters.rawFramesRead, 0u);
+        regularWorkspace.counters.residualMultiplyAccumulates);
+    EXPECT_GT(instrumentedWorkspace.counters.rawFramesRead, 0u);
     for (std::uint32_t frame = 0; frame < 16; ++frame)
         EXPECT_FLOAT_EQ(regularOutput[frame],
                         instrumentedOutput[frame]);
@@ -2299,14 +2322,16 @@ TEST(ResamplerProfessionalFacade,
             static_cast<std::size_t>(ch) * kResampleFifoFrames;
     }
 
+    MultirateResamplerCandidate regularWorkspace;
     Resampler regular;
+    MultirateResamplerCandidate instrumentedWorkspace;
     Resampler instrumented;
     regular.Reset(
         regularRings, channels, ResampleQuality::Sinc16, 1.9, Tables(),
-        ResampleProfile::Professional44148, CandidateTables());
+        ResampleProfile::Professional44148, CandidateTables(), &regularWorkspace);
     instrumented.Reset(
         instrumentedRings, channels, ResampleQuality::Sinc16, 1.9,
-        Tables(), ResampleProfile::Professional44148, CandidateTables());
+        Tables(), ResampleProfile::Professional44148, CandidateTables(), &instrumentedWorkspace);
     const std::uint32_t feed = regular.FreeFrames();
     ASSERT_EQ(feed, instrumented.FreeFrames());
     regular.PushPCM(view, 0, feed);
@@ -2327,7 +2352,7 @@ TEST(ResamplerProfessionalFacade,
     ASSERT_EQ(outputFrames,
               regular.Produce(regularPlanes, 0, outputFrames));
     ASSERT_EQ(outputFrames,
-              instrumented.professional.ProducePerChannelResidualForTesting(
+              instrumentedWorkspace.ProducePerChannelResidualForTesting(
                   instrumentedPlanes, 0, outputFrames));
     for (std::uint32_t ch = 0; ch < channels; ++ch) {
         EXPECT_EQ(0, std::memcmp(regularOutput[ch].data(),
@@ -2378,16 +2403,18 @@ TEST(ResamplerProfessionalFacade,
                     static_cast<std::size_t>(ch) * kResampleFifoFrames;
             }
 
+            MultirateResamplerCandidate regularWorkspace;
             Resampler regular;
+            MultirateResamplerCandidate legacyWorkspace;
             Resampler legacy;
             regular.Reset(
                 regularRings, channels, ResampleQuality::Sinc16,
                 initialRatio, Tables(),
-                ResampleProfile::Professional44148, CandidateTables());
+                ResampleProfile::Professional44148, CandidateTables(), &regularWorkspace);
             legacy.Reset(
                 legacyRings, channels, ResampleQuality::Sinc16,
                 initialRatio, Tables(),
-                ResampleProfile::Professional44148, CandidateTables());
+                ResampleProfile::Professional44148, CandidateTables(), &legacyWorkspace);
             regular.UpdateRatio(targetRatio, 64);
             legacy.UpdateRatio(targetRatio, 64);
 
@@ -2420,7 +2447,7 @@ TEST(ResamplerProfessionalFacade,
                 const std::uint32_t regularProduced = regular.Produce(
                     regularPlanes, produced, request);
                 const std::uint32_t legacyProduced =
-                    legacy.professional.ProducePerChannelResidualForTesting(
+                    legacyWorkspace.ProducePerChannelResidualForTesting(
                         legacyPlanes, produced, request);
                 ASSERT_EQ(regularProduced, legacyProduced);
                 produced += regularProduced;

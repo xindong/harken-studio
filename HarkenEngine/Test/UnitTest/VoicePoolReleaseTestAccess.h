@@ -7,6 +7,9 @@
 namespace harken::detail {
 
 struct VoicePoolReleaseTestAccess {
+    static void SetRingCommitPageLimit(VoicePool& pool, std::uint32_t channel, std::size_t pages) {
+        pool.m_ringStorage[channel].SetCommitPageLimitForTests(pages);
+    }
     struct OriginalCallbackObservation {
         bool reader = false;
         bool storageHeld = false;
@@ -60,6 +63,9 @@ struct VoicePoolReleaseTestAccess {
         pool.m_releaseHeldHookForTest.store(hook, std::memory_order_release);
     }
     static void SetReleaseSequence(VoicePool& pool, std::uint64_t sequence) {
+        const bool prepared = pool.m_slots.ConstructThrough(1);
+        assert(prepared);
+        (void)prepared;
         pool.m_slots[0].releaseSequence.store(sequence, std::memory_order_relaxed);
     }
     static void Quarantine(VoicePool& pool, NotificationQueue& notifications) {
@@ -112,9 +118,9 @@ struct VoicePoolReleaseTestAccess {
     static OriginalWorkerJobObservation ObserveOriginalWorkerJob(const VoicePool& pool,
         std::uint32_t job) {
         const auto& workers = pool.m_workers;
-        assert(workers.m_abandonedGeneration != 0 && job < workers.m_abandonedJobCount &&
+        assert(workers.m_deferredGeneration != 0 && job < workers.m_deferredJobCount &&
             job < pool.m_jobSlots.size() && job < pool.m_jobGenerations.size());
-        return {workers.m_abandonedGeneration, workers.m_abandonedJobCount,
+        return {workers.m_deferredGeneration, workers.m_deferredJobCount,
             pool.m_jobSlots[job], pool.m_jobGenerations[job],
             workers.JobCompletedForLastBatch(job)};
     }

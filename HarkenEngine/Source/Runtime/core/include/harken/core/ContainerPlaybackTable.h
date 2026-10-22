@@ -387,6 +387,13 @@ public:
     std::size_t PreparedInstanceCensusCount() const noexcept {
         return step_.instances_.size() + step_.adoptedInstanceCount_ + (externalInstance_ == nullptr ? 0u : 1u);
     }
+    std::size_t StorageBytes() const noexcept {
+        return step_.instances_.capacity() * sizeof(PreparedPlayableInstance) +
+            step_.containers_.capacity() * sizeof(PreparedContainerPlaybackRow) +
+            step_.instanceCommitProofs_.capacity() * sizeof(PlayableInstanceTable::PreparedCommitProof) +
+            step_.containerCommitProofs_.capacity() * sizeof(ContainerPlaybackTable::PreparedCommitProof) +
+            step_.parentLinkRequests_.capacity() * sizeof(PlayableInstanceTable::ParentLinkRequest);
+    }
     const PreparedPlayableInstance* PreparedInstanceCensusToken(std::size_t index) const noexcept {
         if (index < step_.instances_.size()) return &step_.instances_[index];
         index -= step_.instances_.size();

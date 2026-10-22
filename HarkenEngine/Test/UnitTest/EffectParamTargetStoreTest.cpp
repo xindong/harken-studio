@@ -74,6 +74,13 @@ TEST(EffectParamTargetStore, SeedComposesBindingOnAuthoredBaseNotNeutral) {
     // directly set), a Multiply 0.5 binding contribution -> resolved 0.5.
     EffectParamTargetStore s = MakeStore();
     const std::vector<float> bases = DelayBases(10.0f, 0.0f, 1.0f, 1.0f);
+    EXPECT_EQ(0u, s.StorageBytes());
+    s.SetRecordCommitPageLimitForTests(0);
+    EXPECT_FALSE(s.SeedInstalledEffect(Scope::Voice, kVoice, kSlot,
+        VN_EFFECT_FEEDBACK_DELAY, bases.data(), harken::kDelayParamCount));
+    EXPECT_EQ(0u, s.ReservedRecordCountForTests());
+    EXPECT_TRUE(s.CanSeedFreshEffects(64));
+    s.SetRecordCommitPageLimitForTests(SIZE_MAX);
     ASSERT_TRUE(s.SeedInstalledEffect(Scope::Voice, kVoice, kSlot,
                                       VN_EFFECT_FEEDBACK_DELAY, bases.data(),
                                       harken::kDelayParamCount));
@@ -445,12 +452,30 @@ TEST(EffectParamTargetStore, DetachReturnsResolvedToBase) {
     EXPECT_FLOAT_EQ(0.5f, s.Reduce(Scope::Voice, kVoice, kSlot,
                                    harken::kDelayParamWet));
 
+    s.BeginTargetContribution(Scope::Voice, kVoice, kSlot,
+                              harken::kDelayParamDry, VN_EFFECT_FEEDBACK_DELAY);
+    s.AccumulateBinding(Scope::Voice, kVoice, kSlot, harken::kDelayParamDry,
+                        VN_EFFECT_FEEDBACK_DELAY, 0.25f);
+    s.EndTargetContribution(Scope::Voice, kVoice, kSlot,
+                            harken::kDelayParamDry, VN_EFFECT_FEEDBACK_DELAY);
+    s.BeginTargetContribution(Scope::Voice, kVoice, kSlot,
+                              harken::kDelayParamWet, VN_EFFECT_GAIN);
+    s.EndTargetContribution(Scope::Voice, kVoice, kSlot,
+                            harken::kDelayParamWet, VN_EFFECT_GAIN);
+    EXPECT_FLOAT_EQ(0.5f, s.Reduce(Scope::Voice, kVoice, kSlot,
+                                   harken::kDelayParamWet));
+
     // The last binding detaches: the next rebuild folds nothing, so the
     // contribution returns to the Multiply neutral and the resolved value
     // returns to the base alone.
-    Sweep(s, kVoice, kSlot, harken::kDelayParamWet, {});
+    s.BeginTargetContribution(Scope::Voice, kVoice, kSlot,
+                              harken::kDelayParamWet, VN_EFFECT_FEEDBACK_DELAY);
+    s.EndTargetContribution(Scope::Voice, kVoice, kSlot,
+                            harken::kDelayParamWet, VN_EFFECT_FEEDBACK_DELAY);
     EXPECT_FLOAT_EQ(1.0f, s.Reduce(Scope::Voice, kVoice, kSlot,
                                    harken::kDelayParamWet));
+    EXPECT_FLOAT_EQ(0.25f, s.Reduce(Scope::Voice, kVoice, kSlot,
+                                    harken::kDelayParamDry));
 }
 
 // --- publication bookkeeping ---

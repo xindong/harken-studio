@@ -772,6 +772,9 @@ TEST(MonitorTypedRecording, SelectionPoolLossIsFencedBeforeStopAndCannotProduceA
     VnMonitorCaptureControlStatus lease{};
     ASSERT_EQ(VN_OK, Acquire(owner, &lease));
     harken::VoiceLedger ledger(1, 1, 1);
+    harken::VoiceLedger::MonitorSelectionBacking monitorBacking;
+    ASSERT_TRUE(ledger.PrepareMonitorSelectionBacking(
+        static_cast<std::uint32_t>(ledger.MonitorSelectionCapacity()), &monitorBacking));
     VnVoiceHandle voice = 0;
     std::uint32_t slot = 0;
     ASSERT_TRUE(ledger.Acquire(&voice, &slot));
@@ -1431,7 +1434,9 @@ TEST(MonitorTypedRecordingCodec, AcceptsProductionGainReductionAndRejectsItsMalf
         tap.tapDescriptorId, tap.tapDescriptorGeneration, 0, 48000, 1, 0, 0, 4, samples.data(), 4);
     ASSERT_NE(0u, bytes);
     std::vector<std::vector<std::uint8_t>> records;
-    DispatchDerivedAudioChunk(&request, 1, &tap, 1, packed.data(), bytes,
+    harken::monitor::DerivedDrainState derived;
+    ASSERT_TRUE(derived.Prepare(&request, 1, 48000));
+    derived.Dispatch(&request, 1, &tap, 1, packed.data(), bytes,
         [](void* raw, const DerivedEmit& value) {
             auto& output = *static_cast<std::vector<std::vector<std::uint8_t>>*>(raw);
             output.emplace_back(value.bytes, value.bytes + value.size);

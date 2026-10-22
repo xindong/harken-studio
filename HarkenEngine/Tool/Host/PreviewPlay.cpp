@@ -800,7 +800,7 @@ int RunPreviewPlay(int argc, char** argv) {
                     std::size_t memberSlot = 0;
                     if (engine->ResolvePlayableMemberSlot(row.scheduleStorageBase, &memberSlot)) {
                         lastDiscreteOrdinal =
-                            engine->playableScheduleVoices[memberSlot].target.occurrenceOrdinal;
+                            engine->ReadPlayableMember(memberSlot).voice.Facts().target.occurrenceOrdinal;
                     }
                 }
                 if (row.variableControlDiscreteRetargetFrame != 0) {

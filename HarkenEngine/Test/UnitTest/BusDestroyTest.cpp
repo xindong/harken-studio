@@ -263,8 +263,8 @@ TEST(BusDestroy, PendingAndParkedSendMirrorsDropCascadeTargets) {
     ASSERT_EQ(VN_OK, Vn_CreateBus(kBusC, VN_BUS_MASTER));
 
     harken::Engine* engine = session.Engine();
-    ASSERT_FALSE(engine->pendingStarts.empty());
-    ASSERT_FALSE(engine->parkRecords.empty());
+    ASSERT_TRUE(engine->pendingStarts.Emplace(0));
+    ASSERT_TRUE(engine->parkRecords.Emplace(0));
 
     harken::PendingStartRecord& pending = engine->pendingStarts[0];
     pending.active = true;

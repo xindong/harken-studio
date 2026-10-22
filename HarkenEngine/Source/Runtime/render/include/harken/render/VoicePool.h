@@ -1,6 +1,6 @@
-// Fixed-capacity voice pool with generational handles. All storage — voice
-// slots and the resamplers' FIFO rings — is allocated once at engine init;
-// Starting and ending Render Voices never allocate. Over-capacity Play refuses
+// Fixed-capacity voice pool with generational handles. Voice rows are prepared
+// on the logic thread before publication and stay stable through retirement.
+// Audio-side starts and endings never allocate. Over-capacity Play refuses
 // with VN_NO_VOICE; a stale handle is a benign no-op with a counter.
 //
 // Voice lifecycle across the command transport: the logic side claims a
@@ -26,6 +26,8 @@
 #include "harken/core/SnapshotBuffer.h"
 #include "harken/core/SourceCursorMirror.h"
 #include "harken/core/SourceTerminalRecord.h"
+#include "harken/core/StableRowStorage.h"
+#include "harken/core/StableSlotStorage.h"
 #include "harken/core/TimelineArmTable.h"
 #include "harken/core/VariableReadCut.h"
 #include "harken/core/StreamParkMailbox.h"
@@ -201,6 +203,8 @@ public:
     void ApplyTimelineVariableInitializer(VariableTimelineInitializerProof& proof) noexcept;
     VariableReadCutStatus TimelineVariableSourcesStatus(std::uint32_t renderSlot,
         std::uint32_t renderGeneration) const noexcept;
+    VariableReadCutStatus TimelineStartSourcesStatus(const TimelineArmTable& arms,
+        TimelineArmToken arm, bool* waitingPublication = nullptr) const noexcept;
     VariableReadCutStatus TimelineEntryVariableSourcesStatus(
         const FrontierActivationDescriptor& descriptor) const noexcept;
     bool PendingTimelineVariableReadMatchesArm(TimelineArmToken arm) const noexcept;
@@ -255,8 +259,66 @@ public:
     bool BindSourceTerminal(VnVoiceHandle handle, SourceTerminalRecord* record,
                             SourceTerminalToken token) noexcept;
     std::uint32_t Capacity() const {
-        return static_cast<std::uint32_t>(m_slots.size());
+        return m_slots.Capacity();
     }
+    std::uint32_t ConstructedSlotCount() const noexcept { return m_slots.ConstructedCount(); }
+    std::size_t SlotStorageBytes() const noexcept { return m_slots.RequestedBytes(); }
+    // Attach and detach only while the corresponding consumer is quiescent.
+    class SlotStorageRegistration {
+    public:
+        using Prepare = bool (*)(void*, std::uint32_t) noexcept;
+        SlotStorageRegistration() = default;
+        ~SlotStorageRegistration() { Detach(); }
+        SlotStorageRegistration(const SlotStorageRegistration&) = delete;
+        SlotStorageRegistration& operator=(const SlotStorageRegistration&) = delete;
+        void Detach() noexcept;
+    private:
+        friend class VoicePool;
+        VoicePool* owner_ = nullptr;
+        SlotStorageRegistration* previous_ = nullptr;
+        SlotStorageRegistration* next_ = nullptr;
+        void* context_ = nullptr;
+        Prepare prepare_ = nullptr;
+    };
+    bool AttachSlotStoragePreparation(SlotStorageRegistration& registration,
+        void* context, SlotStorageRegistration::Prepare prepare) noexcept;
+    bool PrepareSlotBacking(std::uint32_t count, StableStoragePreparation* out) noexcept;
+    bool PrepareSlotWorkingSet(std::uint32_t renderSlot, std::uint32_t channelCount,
+        ResampleProfile profile = ResampleProfile::LegacyCompatibility) noexcept;
+    std::size_t SlotCommittedBytes() const noexcept { return m_slots.CommittedBytes(); }
+    std::size_t SlotReservedBytes() const noexcept { return m_slots.ReservedBytes(); }
+    std::size_t RenderWorksetStorageBytes() const noexcept {
+        std::size_t bytes = m_firstOutputEndpoints.RequestedBytes() + m_firstOutputWeights.RequestedBytes() +
+            m_professionalStorage.RequestedBytes();
+        for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch)
+            bytes += m_ringStorage[ch].RequestedBytes() + m_monitorPreChainStorage[ch].RequestedBytes();
+        return bytes;
+    }
+    std::size_t RenderWorksetCommittedBytes() const noexcept {
+        std::size_t bytes = m_firstOutputEndpoints.CommittedBytes() + m_firstOutputWeights.CommittedBytes() +
+            m_professionalStorage.CommittedBytes();
+        for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch)
+            bytes += m_ringStorage[ch].CommittedBytes() + m_monitorPreChainStorage[ch].CommittedBytes();
+        return bytes;
+    }
+    std::size_t RenderWorksetReservedBytes() const noexcept {
+        std::size_t bytes = m_firstOutputEndpoints.ReservedBytes() + m_firstOutputWeights.ReservedBytes() +
+            m_professionalStorage.ReservedBytes();
+        for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch)
+            bytes += m_ringStorage[ch].ReservedBytes() + m_monitorPreChainStorage[ch].ReservedBytes();
+        return bytes;
+    }
+    void SetSlotCommitPageLimitForTests(std::size_t pages) noexcept {
+        m_slots.SetCommitPageLimitForTests(pages);
+    }
+    void SetStreamParkCommitPageLimitForTests(std::size_t pages) noexcept {
+        m_streamParkTokens.SetCommitPageLimitForTests(pages);
+    }
+    void SetProfessionalCommitPageLimitForTests(std::size_t pages) noexcept {
+        m_professionalStorage.SetCommitPageLimitForTests(pages);
+    }
+    std::size_t ProfessionalStorageBytes() const noexcept { return m_professionalStorage.RequestedBytes(); }
+    std::size_t ProfessionalDirectoryBytes() const noexcept { return m_professionalStorage.DirectoryBytes(); }
     std::uint32_t BlockFrames() const { return m_blockFrames; }
 
     // Records a voice admission refused with VN_NO_VOICE outside
@@ -321,7 +383,9 @@ public:
                                    VoiceTimelineReservation* out) noexcept;
     bool StageReservedTimelineEvent(const VoiceTimelineReservation& reservation,
                                     std::uint32_t index,
-                                    const VoiceTimelineEvent& event) noexcept;
+                                    const VoiceTimelineEvent& event,
+                                    const FrontierEntryReceiptRef& entry,
+                                    const FrontierDueOperationRef& operation) noexcept;
     bool StageReservedLaneTimelineEvent(const VoiceTimelineReservation& reservation,
                                        std::uint32_t index,
                                        const VoiceTimelineEvent& event) noexcept;
@@ -519,33 +583,31 @@ public:
     void ApplySetVoiceSendLevel(VnVoiceHandle handle, std::uint32_t sendSlot,
                                 float levelDb, std::uint32_t rampMs);
 
-    // What one RenderAll had to give up on. Everything zero on an ordinary
-    // block, which is every block that does not blow the render deadline.
     struct RenderAllResult {
-        // Ticks the worker rendezvous ran past its deadline before the
-        // coordinator walked away from the batch.
         std::uint64_t overrunTicks = 0;
-        // Voice slots this call put beyond reuse because a worker may still be
-        // writing their scratch. Equal to the batch's unfinished job count.
-        std::uint32_t quarantinedVoices = 0;
-        // The render batch was abandoned. Parallel dispatch is off from here on
-        // and the caller owes the arena's descending span the same treatment.
-        bool batchAbandoned = false;
+        std::uint32_t pendingVoices = 0;
+        bool batchDeferred = false;
     };
+
+    // A deferred quantum owns all its original payload until the last writer
+    // completes. Lifecycle Stop establishes the same fact by joining.
+    bool DeferredRenderReady() const noexcept {
+        return m_workers.PendingJobsCompleted();
+    }
 
     // Renders every rendering voice into its bus's planar accumulator and
     // releases the ones that finished, emitting their notifications.
     // `busPlanes` is bus-major: bus i's channels start at
     // busPlanes[i * mixChannels] (the resolved mix-layout channel count).
     //
-    // jobDeadlineTicks bounds the worker rendezvous; see RenderWorkerPool::Run.
+    // jobDeadlineAt is the absolute cutoff; see RenderWorkerPool::RunUntil.
     // 0 renders without a bound, which only a caller that owns no deadline may
     // ask for. Audio thread.
     RenderAllResult RenderAll(BlockArena& arena, float* const* busPlanes,
                               std::uint32_t blockFrames,
                               NotificationQueue& notifications,
                               std::uint64_t blockIndex,
-                              std::uint64_t jobDeadlineTicks,
+                              std::uint64_t jobDeadlineAt,
                               std::uint64_t sourceFrameBegin = 0);
 
     // Publishes a valid all-zero current block for every live Voice tap when
@@ -867,10 +929,14 @@ private:
         std::uint32_t targetRevision = 0;
         VariableNativeEffectIdentity nativeEffect{};
         VariableToneBandValues toneBand{};
+        CommandRecord command{};
+    };
+    struct DeferredFirstOutputWeight {
+        bool valid = false;
+        VariablePlaybackOrder order{};
         VariableWeightControlIdentity weightOwner{};
         WeightSegmentV1 weightSegment{};
         bool weightRemoved = false;
-        CommandRecord command{};
     };
     struct Slot {
         std::atomic<SlotState> state{SlotState::Free};
@@ -917,7 +983,10 @@ private:
     bool FinishNativeVariableStart(Slot& slot, bool activated) noexcept;
     static constexpr std::uint32_t kFirstOutputBuiltinEndpoints = 11;
     std::uint32_t m_firstOutputStride = 0;
-    std::vector<DeferredFirstOutputEndpoint> m_firstOutputEndpoints;
+    StableRowStorage<DeferredFirstOutputEndpoint> m_firstOutputEndpoints;
+    StableRowStorage<DeferredFirstOutputWeight> m_firstOutputWeights;
+    bool FirstOutputBackingReady(std::uint32_t count) const noexcept;
+    bool PrepareFirstOutputBacking(std::uint32_t count) noexcept;
     void* m_firstOutputCommandContext = nullptr;
     void (*m_firstOutputCommandConsumer)(void*, const CommandRecord&) noexcept = nullptr;
     void ClearFirstOutput(Slot& slot) noexcept;
@@ -926,7 +995,7 @@ private:
     void SupersedeDeferredFirstOutput(const CommandRecord& command,
         VnVoiceHandle initializingVoice = 0) noexcept;
     void ApplyDeferredFirstOutput(Slot& slot) noexcept;
-    DeferredFirstOutputEndpoint* FindFirstOutputWeightEndpoint(Slot& slot,
+    DeferredFirstOutputWeight* FindFirstOutputWeightEndpoint(Slot& slot,
         VariableWeightControlIdentity owner, bool create) noexcept;
     void PrepareFirstOutputTimelineWeights(Slot& slot) noexcept;
     static bool FirstOutputProtected(const Slot& slot) noexcept;
@@ -1072,12 +1141,17 @@ private:
     std::uint64_t m_nextOriginalBodyMarker = 1;
     bool m_originalBodyMarkerExhausted = false;
     bool m_originalBodyShutdown = false;
-    std::vector<Slot> m_slots;
+    StableRowStorage<Slot> m_slots;
+    SlotStorageRegistration* m_slotStorageRegistrations = nullptr;
     std::vector<OriginalCallbackStorageLease> m_originalCallbackStorage;
     bool m_originalSourceCallbackOpen = false;
     std::vector<StreamParkMailbox> m_streamParkMailboxes;
-    std::vector<StreamParkTokenSlot> m_streamParkTokens;
-    std::vector<float> m_ringStorage; // FIFO rings for every slot/channel
+    StableRowStorage<StreamParkTokenSlot> m_streamParkTokens;
+    bool PrepareRenderSlotBacking(std::uint32_t count, std::uint32_t channelCount,
+        bool firstOutput) noexcept;
+    bool RenderSlotBackingReady(std::uint32_t count, std::uint32_t channelCount) const noexcept;
+    std::array<StableRowStorage<std::array<float, kResampleFifoFrames>>, kMaxChannels> m_ringStorage;
+    StableSlotStorage<MultirateResamplerCandidate> m_professionalStorage;
     std::uint64_t m_staleHandleHits = 0;
     std::uint64_t m_invalidVolumeApplies = 0;
     std::uint64_t m_noVoiceRefusals = 0;
@@ -1101,10 +1175,11 @@ private:
     // path.
     std::vector<std::uint32_t> m_jobSlots;
     std::vector<std::uint32_t> m_jobGenerations;
+    std::uint32_t m_deferredJobCount = 0;
     std::uint64_t m_jobQuantumIndex = 0;
     std::uint32_t m_jobBlockFrames = 0; // block width for the in-flight batch
     std::uint64_t m_jobSourceFrameBegin = 0;
-    std::vector<float> m_monitorPreChainStorage;
+    std::array<StableRowStorage<float>, kMaxChannels> m_monitorPreChainStorage;
     std::uint64_t m_workerBusyPeakTicks = 0; // running peak, audio-thread-owned
 };
 

@@ -146,6 +146,7 @@ struct PackPendingRevision {
     std::vector<PackEntry> mediaEntries;
     std::vector<PackBusEffectReservation> busEffectRefs;
     std::vector<DynamicRouteDefinition> dynamicRouteCandidates;
+    StableStoragePreparation dynamicBusTapBacking;
     std::vector<std::uint32_t> dynamicRouteRemovals;
     std::vector<CommandRecord> activationCommands;
     std::vector<BusTree::PreparedBusSlot> preparedBusSlots;

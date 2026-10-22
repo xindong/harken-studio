@@ -37,7 +37,7 @@ struct VariableControlInstanceTableTestAccess {
     }
     static bool SeedFreeGeneration(VariableControlInstanceTable& table, std::uint32_t slot,
                                   std::uint32_t generation) {
-        if (slot >= table.capacity_ || generation == 0 ||
+        if (slot >= table.capacity_ || generation == 0 || !table.entries_.ConstructThrough(slot + 1u) ||
             table.entries_[slot].state.load() != VariableControlInstanceTable::SlotState::Free) return false;
         table.entries_[slot].generation.store(generation);
         return true;

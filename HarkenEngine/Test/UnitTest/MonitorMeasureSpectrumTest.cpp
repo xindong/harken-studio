@@ -6,6 +6,7 @@
 #include "Common/TestUtil.h"
 #include "monitor_fixture_decode.h"
 #include "harken/core/MonitorSpectrumFft.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 
 #include <gtest/gtest.h>
 
@@ -183,9 +184,32 @@ TEST(MonitorMeasure, SpectrumPlanAcceptsMeasurementRequest) {
     accepted.structSize = sizeof(accepted);
     ASSERT_EQ(VN_OK, Vn_MonitorValidateCapturePlan(handle, lease.leaseGeneration,
                                                    &plan, &accepted));
+    for (std::size_t failAt = 1; failAt <= 3; ++failAt) {
+        harken::detail::ArmLogicAllocFaultForTests(
+            failAt, harken::detail::LogicAllocSite::MonitorDerivedStorage);
+        const auto failed = Vn_MonitorApplyCapturePlan(
+            handle, lease.leaseGeneration, &plan, &accepted);
+        harken::detail::DisarmLogicAllocFaultForTests();
+        EXPECT_EQ(VN_MONITOR_BUDGET_EXCEEDED, failed);
+    }
     ASSERT_EQ(VN_OK, Vn_MonitorApplyCapturePlan(handle, lease.leaseGeneration, &plan,
                                                 &accepted));
     EXPECT_EQ(1u, accepted.accepted.measurementCount);
+    harken::monitor::StopDrainForTests();
+    harken::monitor::AdvanceExecuteFrameForTests(1);
+    const auto generation = accepted.capturePlanGeneration;
+    harken::detail::ArmLogicAllocFaultForTests(
+        1, harken::detail::LogicAllocSite::MonitorDerivedStorage);
+    const auto failed = Vn_MonitorApplyCapturePlan(
+        handle, lease.leaseGeneration, &plan, &accepted);
+    harken::detail::DisarmLogicAllocFaultForTests();
+    EXPECT_EQ(VN_MONITOR_BUDGET_EXCEEDED, failed);
+    ASSERT_EQ(VN_OK, Vn_MonitorGetEffectiveCapturePlan(handle, 0, &accepted));
+    EXPECT_EQ(generation, accepted.capturePlanGeneration);
+    EXPECT_EQ(static_cast<std::uint32_t>(VN_MONITOR_PLAN_ACTIVE), accepted.activationState);
+    EXPECT_EQ(1u, accepted.accepted.measurementCount);
+    ASSERT_EQ(VN_OK, Vn_MonitorApplyCapturePlan(handle, lease.leaseGeneration, &plan,
+                                              &accepted));
     EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(handle));
 }
 
@@ -211,7 +235,9 @@ TEST(MonitorMeasure, SpectrumDispatchPublishesPackedBins) {
     struct Collected {
         std::vector<std::vector<std::uint8_t>> records;
     } collected;
-    harken::monitor::DispatchDerivedAudioChunk(
+    harken::monitor::DerivedDrainState derived;
+    ASSERT_TRUE(derived.Prepare(&request, 1, 48000));
+    derived.Dispatch(
         &request, 1, &tap, 1, packed.data(), packedBytes,
         [](void* raw, const harken::monitor::DerivedEmit& emit) {
             auto* typed = static_cast<Collected*>(raw);
@@ -278,7 +304,9 @@ TEST(MonitorMeasure, SpectrumTapMismatchDoesNotPublish) {
     struct Collected {
         std::uint32_t count = 0;
     } collected;
-    harken::monitor::DispatchDerivedAudioChunk(
+    harken::monitor::DerivedDrainState derived;
+    ASSERT_TRUE(derived.Prepare(&request, 1, 48000));
+    derived.Dispatch(
         &request, 1, &other, 1, packed.data(), packedBytes,
         [](void* raw, const harken::monitor::DerivedEmit&) {
             ++static_cast<Collected*>(raw)->count;
@@ -352,7 +380,9 @@ TEST(MonitorMeasure, SpectrumPerChannelUsesIndexZero) {
         std::uint32_t count = 0;
         std::uint32_t channelMode = 99;
     } collected;
-    harken::monitor::DispatchDerivedAudioChunk(
+    harken::monitor::DerivedDrainState derived;
+    ASSERT_TRUE(derived.Prepare(&request, 1, 48000));
+    derived.Dispatch(
         &request, 1, &tap, 1, packed.data(), packedBytes,
         [](void* raw, const harken::monitor::DerivedEmit& emit) {
             auto* typed = static_cast<Collected*>(raw);
@@ -400,16 +430,17 @@ TEST(MonitorMeasure, SpectrumCompletesAcrossChunks) {
         ++static_cast<Collected*>(raw)->count;
         return true;
     };
-    harken::monitor::DispatchDerivedAudioChunk(&request, 1, &tap, 1, first.data(),
+    harken::monitor::DerivedDrainState derived;
+    ASSERT_TRUE(derived.Prepare(&request, 1, 48000));
+    derived.Dispatch(&request, 1, &tap, 1, first.data(),
                                               firstBytes, emit, &collected);
     EXPECT_EQ(0u, collected.count);
-    harken::monitor::DispatchDerivedAudioChunk(&request, 1, &tap, 1, second.data(),
+    derived.Dispatch(&request, 1, &tap, 1, second.data(),
                                               secondBytes, emit, &collected);
     EXPECT_EQ(1u, collected.count);
 }
 
 TEST(MonitorMeasure, SpectrumStalePlanChunkDoesNotReuseOverlap) {
-    harken::monitor::ResetMonitorSpectrumSlotsForTests();
     VnMonitorTapDescriptor tap{};
     tap.structSize = sizeof(tap);
     tap.tapDescriptorId = 11;
@@ -451,22 +482,23 @@ TEST(MonitorMeasure, SpectrumStalePlanChunkDoesNotReuseOverlap) {
             (static_cast<std::uint64_t>(emitRec.bytes[87]) << 56);
         return true;
     };
-    harken::monitor::DispatchDerivedAudioChunk(&newRequest, 1, &tap, 1, packedOld.data(),
+    harken::monitor::DerivedDrainState derived;
+    ASSERT_TRUE(derived.Prepare(&newRequest, 1, 48000));
+    derived.Dispatch(&newRequest, 1, &tap, 1, packedOld.data(),
                                               oldBytes, emit, &collected, 8);
     EXPECT_EQ(0u, collected.count);
-    harken::monitor::DispatchDerivedAudioChunk(&newRequest, 1, &tap, 1, packedNew.data(),
+    derived.Dispatch(&newRequest, 1, &tap, 1, packedNew.data(),
                                               newBytes, emit, &collected, 8);
     EXPECT_EQ(1u, collected.count);
     EXPECT_EQ(1024u, collected.fftSize);
     EXPECT_EQ(8u, collected.planGeneration);
-    harken::monitor::DispatchDerivedAudioChunk(&newRequest, 1, &tap, 1, packedOld.data(),
+    derived.Dispatch(&newRequest, 1, &tap, 1, packedOld.data(),
                                               oldBytes, emit, &collected, 8);
     EXPECT_EQ(1u, collected.count);
     EXPECT_EQ(8u, collected.planGeneration);
 }
 
 TEST(MonitorMeasure, SpectrumSameShapeStalePlanChunkIsSkipped) {
-    harken::monitor::ResetMonitorSpectrumSlotsForTests();
     VnMonitorTapDescriptor tap{};
     tap.structSize = sizeof(tap);
     tap.tapDescriptorId = 11;
@@ -508,15 +540,17 @@ TEST(MonitorMeasure, SpectrumSameShapeStalePlanChunkIsSkipped) {
             (static_cast<std::uint64_t>(emitRec.bytes[87]) << 56);
         return true;
     };
-    harken::monitor::DispatchDerivedAudioChunk(&request, 1, &tap, 1, packedOld.data(),
+    harken::monitor::DerivedDrainState derived;
+    ASSERT_TRUE(derived.Prepare(&request, 1, 48000));
+    derived.Dispatch(&request, 1, &tap, 1, packedOld.data(),
                                               oldBytes, emit, &collected, 8);
     EXPECT_EQ(0u, collected.count);
-    harken::monitor::DispatchDerivedAudioChunk(&request, 1, &tap, 1, packedNew.data(),
+    derived.Dispatch(&request, 1, &tap, 1, packedNew.data(),
                                               newBytes, emit, &collected, 8);
     EXPECT_EQ(1u, collected.count);
     EXPECT_EQ(512u, collected.fftSize);
     EXPECT_EQ(8u, collected.planGeneration);
-    harken::monitor::DispatchDerivedAudioChunk(&request, 1, &tap, 1, packedOld.data(),
+    derived.Dispatch(&request, 1, &tap, 1, packedOld.data(),
                                               oldBytes, emit, &collected, 8);
     EXPECT_EQ(1u, collected.count);
     EXPECT_EQ(8u, collected.planGeneration);

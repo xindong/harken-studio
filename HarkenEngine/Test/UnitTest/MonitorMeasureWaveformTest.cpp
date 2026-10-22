@@ -299,7 +299,9 @@ TEST(MonitorMeasure, WaveformDispatchIsolatesMeasurementsAndCopiesEnvelope) {
     struct Collected {
         std::vector<std::vector<std::uint8_t>> records;
     } collected;
-    harken::monitor::DispatchDerivedAudioChunk(
+    harken::monitor::DerivedDrainState derived;
+    ASSERT_TRUE(derived.Prepare(requests, 2, 48000));
+    derived.Dispatch(
         requests, 2, &tap, 1, packed.data(), packedBytes,
         [](void* raw, const harken::monitor::DerivedEmit& emit) {
             auto* typed = static_cast<Collected*>(raw);
@@ -340,7 +342,7 @@ TEST(MonitorMeasure, WaveformDispatchIsolatesMeasurementsAndCopiesEnvelope) {
     otherTap.tapDescriptorId = 99;
     otherTap.tapDescriptorGeneration = 1;
     collected.records.clear();
-    harken::monitor::DispatchDerivedAudioChunk(
+    derived.Dispatch(
         requests, 2, &otherTap, 1, packed.data(), packedBytes,
         [](void* raw, const harken::monitor::DerivedEmit& emit) {
             auto* typed = static_cast<Collected*>(raw);
@@ -386,11 +388,16 @@ TEST(MonitorMeasure, WaveformPlanGenerationChangeDiscardsPartial) {
         typed->partials.push_back(p[72]);
         return true;
     };
-    harken::monitor::DispatchDerivedAudioChunk(&request, 1, &tap, 1, packedOld.data(),
+    harken::monitor::DerivedDrainState derived;
+    ASSERT_TRUE(derived.Prepare(&request, 1, 48000));
+    derived.Dispatch(&request, 1, &tap, 1, packedOld.data(),
                                               oldBytes, emit, &collected);
     EXPECT_TRUE(collected.kinds.empty());
-    harken::monitor::DispatchDerivedAudioChunk(&request, 1, &tap, 1, packedNew.data(),
-                                              newBytes, emit, &collected);
+    harken::monitor::DerivedDrainState replacement;
+    ASSERT_TRUE(replacement.Prepare(&request, 1, 48000, &derived));
+    derived = {};
+    replacement.Dispatch(&request, 1, &tap, 1, packedNew.data(),
+                         newBytes, emit, &collected);
     ASSERT_GE(collected.kinds.size(), 2u);
     EXPECT_EQ(VN_MONITOR_RECORD_PARTIAL_BUCKET_DISCARDED, collected.kinds[0]);
     EXPECT_EQ(1u, collected.partials[0]);

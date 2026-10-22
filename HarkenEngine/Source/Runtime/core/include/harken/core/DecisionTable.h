@@ -5,6 +5,7 @@
 #include "harken/core/DecisionToken.h"
 #include "harken/core/FrontierActivation.h"
 #include "harken/core/LogicCommitCoordinator.h"
+#include "harken/core/StableRowStorage.h"
 #include "harken/core/TimeCoordinates.h"
 #include "harken/core/TimelineProgram.h"
 #include "harken/core/TransitionInstancePool.h"
@@ -334,6 +335,15 @@ public:
     }
     std::uint32_t LiveCount() const noexcept;
     std::uint32_t QuarantinedCount() const noexcept;
+    std::uint32_t ConstructedRowCount() const noexcept { return rows_.ConstructedCount(); }
+    std::uint64_t RowStorageBytes() const noexcept;
+    using BackingPreparation = std::array<StableStoragePreparation, 3>;
+    bool PrepareBacking(std::uint32_t rows, BackingPreparation* out) noexcept;
+    std::uint64_t RowCommittedBytes() const noexcept;
+    std::uint64_t RowReservedBytes() const noexcept;
+    void SetRowCommitPageLimitForTests(std::size_t pages) noexcept {
+        rows_.SetCommitPageLimitForTests(pages);
+    }
 
     bool Reserve(const DecisionReserveRequest& request,
                  DecisionToken* outToken,
@@ -487,11 +497,12 @@ private:
     const DecisionParticipantRef* Participants(
         std::uint32_t slot) const noexcept;
 
-    std::unique_ptr<Row[]> rows_;
-    std::unique_ptr<DecisionParticipantRef[]> participants_;
+    bool PrepareSlotStorage(std::uint32_t slot) noexcept;
+    StableRowStorage<Row> rows_;
+    StableRowStorage<DecisionParticipantRef> participants_;
     struct FrontierSidecar;
     void ResetFrontierStorage(std::uint32_t slot) noexcept;
-    std::unique_ptr<FrontierSidecar[]> frontiers_;
+    StableRowStorage<FrontierSidecar> frontiers_;
     std::uint64_t nextOriginalLifetimeMarker_ = 1;
     bool originalLifetimeMarkerExhausted_ = false;
     std::uint32_t capacity_ = 0;

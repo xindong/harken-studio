@@ -6,6 +6,7 @@
 #include "Common/StreamBuilder.h"
 #include "harken/param/EffectParamLocator.h"
 #include "harken/render/BuiltinEffects.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 
 #include <gtest/gtest.h>
 
@@ -24,6 +25,17 @@
 
 namespace harken::detail {
 
+struct MixerCurrentSliceStorageTestAccess {
+    static void SetCommitPageLimit(MixerLoop& mixer, std::size_t storage, std::size_t pages) {
+        switch (storage) {
+        case 0: mixer.m_currentSliceScratch.SetCommitPageLimitForTests(pages); break;
+        case 1: mixer.m_pendingSliceConsumptions.SetCommitPageLimitForTests(pages); break;
+        case 2: mixer.m_pendingSliceOrder.SetCommitPageLimitForTests(pages); break;
+        default: FAIL() << "Unknown CurrentSlice consumer storage";
+        }
+    }
+};
+
 void SetParkedReadCutCapturedHookForTest(
     void (*hook)(Engine&, VariableReadCutRef, void*), void* context) noexcept;
 
@@ -36,6 +48,9 @@ struct VariableServiceTestAccess {
     }
     static bool ReadCutStorageAlive(const VariableServiceV1& service, VariableReadCutRef ref) {
         return service.ResolveReadCut(ref) != nullptr;
+    }
+    static void LimitReadCutCommit(VariableServiceV1& service, std::size_t pages) {
+        service.readCuts_.SetCommitPageLimitForTests(pages);
     }
     static bool TimelineReadUseStorageAlive(const VariableServiceV1& service, VariableTimelineReadUseRef ref) {
         return service.ResolveTimelineReadUse(ref) != nullptr;
@@ -106,7 +121,18 @@ struct VariableServiceTestAccess {
         return service.outcomes_.data();
     }
     static std::array<std::size_t, 3> OutcomeCapacity(const VariableServiceV1& service) {
-        return {service.outcomes_.size(), service.outcomes_.capacity(), service.freeSlots_.size()};
+        return {service.outcomeCount_, service.outcomes_.Capacity(), service.freeSlots_.size()};
+    }
+    static std::size_t OutcomeStorageBytes(const VariableServiceV1& service) {
+        return service.outcomes_.RequestedBytes();
+    }
+    static void LimitOutcomePages(VariableServiceV1& service, std::size_t pages) {
+        service.outcomes_.SetCommitPageLimitForTests(pages);
+    }
+    static void LimitResultPages(VariableServiceV1& service, unsigned field, std::size_t pages) {
+        if (field == 0 || field == 3) service.outcomes_.SetCommitPageLimitForTests(pages);
+        if (field == 1 || field == 3) service.ticketQueryRecords_.SetCommitPageLimitForTests(pages);
+        if (field == 2 || field == 3) service.expiredTicketRecords_.SetCommitPageLimitForTests(pages);
     }
     static void SeedWorld(VariableServiceV1& service, WorldGeneration world) {
         service.worldGeneration_ = world;
@@ -155,6 +181,9 @@ struct VariableServiceTestAccess {
 
 bool ReadCutStorageAliveForTest(const VariableServiceV1& service, VariableReadCutRef ref) {
     return VariableServiceTestAccess::ReadCutStorageAlive(service, ref);
+}
+void LimitVariableResultPagesForTest(VariableServiceV1& service, unsigned field, std::size_t pages) {
+    VariableServiceTestAccess::LimitResultPages(service, field, pages);
 }
 bool TimelineReadUseStorageAliveForTest(const VariableServiceV1& service, VariableTimelineReadUseRef ref) {
     return VariableServiceTestAccess::TimelineReadUseStorageAlive(service, ref);
@@ -3068,6 +3097,15 @@ TEST(VariableCurrentSlice, EffectiveCapacityCoversTwoFullLegalPages) {
         resolved.maxEventsPerQuantum = 4;
         resolved.maxFrameBatchesPerQuantum = 4;
         auto engine = std::make_unique<harken::Engine>(resolved);
+        using StorageAccess = harken::detail::MixerCurrentSliceStorageTestAccess;
+        EXPECT_EQ(0u, engine->mixer.VariableSliceConsumptionStorageBytes());
+        for (std::size_t storage = 0; storage < 3; ++storage) {
+            StorageAccess::SetCommitPageLimit(engine->mixer, storage, 0);
+            harken::CurrentSliceBacking refused;
+            EXPECT_FALSE(engine->timelinePool.PrepareCurrentSliceBacking(&refused));
+            EXPECT_FALSE(refused.Valid());
+            StorageAccess::SetCommitPageLimit(engine->mixer, storage, SIZE_MAX);
+        }
         std::vector<float> output(kBlockFrames * 2u);
         const auto render = [&] { engine->mixer.RenderBlock(output.data(), kBlockFrames, 2); };
         for (std::uint32_t block = 0; block < engine->timelinePool.PublishLeadQuanta() + 2u &&
@@ -3087,6 +3125,8 @@ TEST(VariableCurrentSlice, EffectiveCapacityCoversTwoFullLegalPages) {
                 index < maximum ? &first : &second, 1, &refs[index]));
         }
         engine->timelinePool.Publish((frontier + 2u) * kBlockFrames);
+        for (std::size_t storage = 0; storage < 3; ++storage)
+            StorageAccess::SetCommitPageLimit(engine->mixer, storage, 0);
         const auto allocated = engine->mixer.CurrentSliceScratchCapacityForTest();
         engine->mixer.SetCurrentSliceScratchLimitForTest(2u * maximum - shortCapacity);
         EXPECT_EQ(allocated, engine->mixer.CurrentSliceScratchCapacityForTest());
@@ -4721,6 +4761,16 @@ TEST(VariableCurrentSlice,
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     InstallVariable(engine);
+    const auto sequenceBefore = engine->logicCommits.IssuedCount();
+    const auto refuseRetirementStorage = [&](auto& targets) {
+        targets.SetRetiringTargetCommitPageLimitForTests(0);
+        EXPECT_EQ(VN_BACKPRESSURE, Vn_SetValue(kVariable, 1.0f));
+        EXPECT_EQ(sequenceBefore, engine->logicCommits.IssuedCount());
+        EXPECT_EQ(0u, engine->variables.PendingCount());
+        targets.SetRetiringTargetCommitPageLimitForTests(SIZE_MAX);
+    };
+    refuseRetirementStorage(engine->params);
+    refuseRetirementStorage(engine->busTargets);
     static const std::vector<float> samples(kSampleRate, 0.05f);
     const VnPCMDesc pcm = MonoDesc(samples, kSampleRate);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(55), &pcm));
@@ -4750,6 +4800,8 @@ TEST(VariableCurrentSlice,
     ASSERT_TRUE(pendingSlice.Valid());
     ASSERT_TRUE(engine->params.ForeignClaim(
         oldRender, harken::kTargetVoiceVolume));
+    engine->params.SetRetiringTargetCommitPageLimitForTests(0);
+    engine->busTargets.SetRetiringTargetCommitPageLimitForTests(0);
 
     const VnPlayDesc incomingPlay = MakePlayDesc(harkentest::ObjectId(56));
     VnVoiceHandle incoming = 0;
@@ -5368,6 +5420,14 @@ TEST(VariableCurrentSlice, PublicationTerminatesFullRevisionBudgetWithBoundedOut
     InstallVariable(&e);
     const auto firstTicket = e.logicCommits.IssuedCount() + 1;
     const void* storage = Access::OutcomeStorage(e.variables);
+    EXPECT_EQ(0u, Access::OutcomeStorageBytes(e.variables));
+    Access::LimitOutcomePages(e.variables, 0);
+    const auto refused = harken::ObserveVariableCallAt(e.variables.CurrentWorldGeneration(),
+        e.variables.CurrentTransportEpoch(), kBlockFrames, 0, 0);
+    EXPECT_EQ(VN_BACKPRESSURE, e.variables.AcceptGlobal(kVariable, 0.5f, refused,
+        e.params, e.bindings, e.busTargets).result);
+    EXPECT_EQ(0u, e.variables.PendingCount());
+    Access::LimitOutcomePages(e.variables, SIZE_MAX);
     const auto capacity = e.variables.PendingCapacity();
     const auto physicalCapacity = e.variables.RevisionStorageCapacity();
     std::vector<bool> seen(capacity, false);
@@ -5380,12 +5440,15 @@ TEST(VariableCurrentSlice, PublicationTerminatesFullRevisionBudgetWithBoundedOut
             e.params, e.bindings, e.busTargets).result);
     }
     ASSERT_EQ((std::array<std::size_t, 3>{0, physicalCapacity, 8}), Access::OutcomeCapacity(e.variables));
+    const auto bytes = Access::OutcomeStorageBytes(e.variables);
+    EXPECT_GT(bytes, 0u);
     const auto definition = *e.variables.Definition(kVariable);
     const auto world = e.variables.CurrentWorldGeneration();
     harken::VariableServiceV1::PreparedPackDefinitions token;
     ASSERT_EQ(VN_OK, e.variables.PreparePackDefinitions(&definition, 1,
         harken::PackVariablePublicationReason::InitPublication, 987, &token));
     e.variables.CommitPreparedPackDefinitions(&token);
+    EXPECT_EQ(bytes, Access::OutcomeStorageBytes(e.variables));
     EXPECT_EQ(storage, Access::OutcomeStorage(e.variables));
     EXPECT_EQ((std::array<std::size_t, 3>{capacity, physicalCapacity, 8}), Access::OutcomeCapacity(e.variables));
     EXPECT_EQ(capacity, e.variables.TerminationCount());
@@ -7237,7 +7300,6 @@ TEST(VariableCurrentSlice, ReadCutCapacityRefusalAndCanceledPreparationReleaseEv
     auto& e = *session.Engine();
     InstallVariable(&e);
     const auto freeBefore = Access::OutcomeCapacity(e.variables)[2];
-    const auto storage = e.variables.ReadCutStorageBytes();
     const auto observed = harken::ObserveVariableCallAt(e.variables.CurrentWorldGeneration(),
         e.variables.CurrentTransportEpoch(), kBlockFrames, 0, 0);
     harken::PreparedVariableWriteToken prepared;
@@ -7252,6 +7314,7 @@ TEST(VariableCurrentSlice, ReadCutCapacityRefusalAndCanceledPreparationReleaseEv
         ASSERT_TRUE(e.variables.ReadCutValue(cut, kVariable, &value));
         EXPECT_FLOAT_EQ(0.5f, value);
     }
+    const auto storage = e.variables.ReadCutStorageBytes();
     harken::VariableReadCutRef refused{};
     EXPECT_FALSE(e.variables.CaptureReadCut(0, 4 * kBlockFrames, 1, 1, &refused));
     EXPECT_FALSE(refused.Valid());
@@ -7269,6 +7332,58 @@ TEST(VariableCurrentSlice, ReadCutCapacityRefusalAndCanceledPreparationReleaseEv
     EXPECT_FALSE(e.variables.ReleaseReadCut(cuts.front()));
     EXPECT_EQ(harken::VariableReadCutStatus::Applied, e.variables.PublishReadCut(reused, 4 * kBlockFrames));
     EXPECT_TRUE(e.variables.ReleaseReadCut(reused));
+}
+
+TEST(VariableCurrentSlice, ReadCutBackingRefusalPreservesReservedCapacityAndRecovers) {
+    using Access = harken::detail::VariableServiceTestAccess;
+    EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& variables = session.Engine()->variables;
+    InstallVariable(session.Engine());
+    const auto emptyStorage = variables.ReadCutStorageBytes();
+    Access::LimitReadCutCommit(variables, 0);
+    harken::VariableReadCutRef refused{};
+    EXPECT_FALSE(variables.CaptureReadCut(0, 4 * kBlockFrames, 1, 1, &refused));
+    EXPECT_FALSE(refused.Valid());
+    harken::VariableServiceV1::ReadCutBackingPreparation backing;
+    EXPECT_FALSE(variables.PrepareReadCutBacking(2, &backing));
+    EXPECT_FALSE(backing.Valid());
+    EXPECT_EQ(emptyStorage, variables.ReadCutStorageBytes());
+    Access::LimitReadCutCommit(variables, SIZE_MAX);
+    harken::detail::ArmLogicAllocFaultForTests(2, harken::detail::LogicAllocSite::VariableReadCutColumns);
+    EXPECT_FALSE(variables.PrepareReadCutBacking(2, &backing));
+    harken::detail::DisarmLogicAllocFaultForTests();
+    EXPECT_FALSE(backing.Valid());
+    ASSERT_TRUE(variables.PrepareReadCutBacking(2, &backing));
+    Access::LimitReadCutCommit(variables, 0);
+    harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::VariableReadCutColumns);
+    EXPECT_FALSE(variables.CaptureReadCut(0, 4 * kBlockFrames, 1, 1, &refused));
+    harken::detail::DisarmLogicAllocFaultForTests();
+    EXPECT_FALSE(refused.Valid());
+    const auto preparedStorage = variables.ReadCutStorageBytes();
+    std::array<harken::VariableReadCutRef, 2> cuts{};
+    {
+        const auto use = backing.Use();
+        for (auto& cut : cuts) {
+            ASSERT_TRUE(variables.CaptureReadCut(0, 4 * kBlockFrames, 1, 1, &cut));
+            float value = -1.0f;
+            ASSERT_TRUE(variables.ReadCutValue(cut, kVariable, &value));
+            EXPECT_FLOAT_EQ(0.0f, value);
+            EXPECT_EQ(harken::VariableReadCutStatus::Applied,
+                variables.PublishReadCut(cut, 4 * kBlockFrames));
+        }
+        EXPECT_FALSE(variables.CaptureReadCut(0, 4 * kBlockFrames, 1, 1, &refused));
+        EXPECT_FALSE(refused.Valid());
+    }
+    EXPECT_EQ(preparedStorage, variables.ReadCutStorageBytes());
+    backing.Release();
+    for (auto cut : cuts) ASSERT_TRUE(variables.ReleaseReadCut(cut));
+    Access::LimitReadCutCommit(variables, SIZE_MAX);
+    harken::VariableReadCutRef recovered{};
+    ASSERT_TRUE(variables.CaptureReadCut(0, 4 * kBlockFrames, 1, 1, &recovered));
+    EXPECT_NE(cuts.front().generation, recovered.generation);
+    EXPECT_FALSE(variables.ReleaseReadCut(cuts.front()));
+    EXPECT_TRUE(variables.ReleaseReadCut(recovered));
 }
 
 TEST(VariableCurrentSlice, ActionReadCutRequiresTheOriginalReservedWriteAndIssuer) {
@@ -8371,6 +8486,7 @@ TEST(VariableCurrentSlice, CapturedReaderPrimesCompleteBuiltinInputsAndPreserves
         {harken::kTargetVoiceLowShelfQ, 0, 1, 2 * harken::kToneDefaultQ},
         {harken::kTargetVoicePan, 0, 0.5f, 0.5f}};
     for (const auto voice : {firstVoice, secondVoice}) {
+        ASSERT_TRUE(e.params.PrepareVoiceStorage(static_cast<std::uint32_t>(voice) + 1u));
         e.params.OnVoiceStarted(voice, 0, 1);
         for (const auto& target : cases) {
             ASSERT_TRUE(e.params.BindVoiceTarget(kVariable, voice, target.target,
@@ -8433,6 +8549,7 @@ TEST(VariableCurrentSlice, CapturedReaderFailureDoesNotFallBackOrPartiallyPrimeT
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
         harkentest::InstallDefinitionsWorld(&e, definitions.data(), 2, 0x43555446).status);
     const VnVoiceHandle voice = std::uint64_t{1} << 32;
+    ASSERT_TRUE(e.params.PrepareVoiceStorage(static_cast<std::uint32_t>(voice) + 1u));
     e.params.OnVoiceStarted(voice, 0, 1);
     ASSERT_TRUE(e.params.BindVoiceTarget(kVariable, voice, harken::kTargetVoiceVolume,
         LinearCurve(0, 0, 1, -12)));
@@ -8472,6 +8589,7 @@ TEST(VariableCurrentSlice, CapturedReaderRejectsInvalidatedPublishedSourceBefore
     auto& e = *session.Engine();
     InstallVariable(&e);
     const VnVoiceHandle voice = std::uint64_t{1} << 32;
+    ASSERT_TRUE(e.params.PrepareVoiceStorage(static_cast<std::uint32_t>(voice) + 1u));
     e.params.OnVoiceStarted(voice, 0, 1);
     ASSERT_TRUE(e.params.BindVoiceTarget(kVariable, voice, harken::kTargetVoiceVolume,
         LinearCurve(0, 0, 1, -12)));
@@ -8509,6 +8627,10 @@ TEST(VariableCurrentSlice, NativeReadCutCalendarRequiresExactConsumedIdentityInE
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& e = *session.Engine();
         InstallVariable(&e);
+        harken::VariableServiceV1::ReadCutBackingPreparation backing;
+        ASSERT_TRUE(e.variables.PrepareReadCutBacking(2, &backing));
+        const auto use = backing.Use();
+        const auto calendarBytes = e.timelinePool.CurrentSliceStorageBytes();
         harken::VariableReadCutRef cut{};
         constexpr auto frame = 4 * kBlockFrames;
         ASSERT_TRUE(e.variables.CaptureReadCut(0, frame, 7, 3, &cut));
@@ -8548,6 +8670,12 @@ TEST(VariableCurrentSlice, NativeReadCutCalendarRequiresExactConsumedIdentityInE
         ASSERT_TRUE(e.variables.AcknowledgeNativeReadCut(identity));
         EXPECT_FALSE(e.variables.ConsumeNativeReadCutCalendar(consumed));
         EXPECT_FALSE(e.variables.HasNativeReadCutsForTransport(identity.transport));
+        harken::VariableReadCutRef next{};
+        ASSERT_TRUE(e.variables.CaptureReadCut(0, frame + kBlockFrames, 8, 3, &next));
+        ASSERT_TRUE(e.variables.ReserveNativeReadCutCalendar(next, 0, &calendar));
+        ASSERT_TRUE(e.variables.CancelNativeReadCutCalendar(next, &calendar));
+        ASSERT_TRUE(e.variables.ReleaseReadCut(next));
+        EXPECT_EQ(calendarBytes, e.timelinePool.CurrentSliceStorageBytes());
     }
 }
 
@@ -9703,7 +9831,6 @@ TEST(VariableCurrentSlice, TimelineReadUseCapacityRefusalReturnsPinsAndAllowsFre
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
     InstallVariable(&e);
-    const auto storage = e.variables.ReadCutStorageBytes();
     EXPECT_EQ(e.voices.Capacity(), e.variables.TimelineReadUseCapacity());
     harken::VariableReadCutRef cut{};
     ASSERT_TRUE(e.variables.CaptureReadCut(0, 4 * kBlockFrames, 1, 1, &cut));
@@ -9717,6 +9844,7 @@ TEST(VariableCurrentSlice, TimelineReadUseCapacityRefusalReturnsPinsAndAllowsFre
     std::vector<harken::VariableTimelineReadUseRef> uses(e.variables.TimelineReadUseCapacity());
     for (auto& use : uses)
         ASSERT_TRUE(e.variables.PrepareTimelineReadUse(cut, std::uint64_t{9} << 32, e.timelineArms, proof, &use));
+    const auto storage = e.variables.ReadCutStorageBytes();
     harken::VariableTimelineReadUseRef refused{};
     EXPECT_FALSE(e.variables.PrepareTimelineReadUse(cut, std::uint64_t{9} << 32, e.timelineArms, proof, &refused));
     EXPECT_FALSE(refused.Valid());

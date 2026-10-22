@@ -64,6 +64,7 @@ bool TimelinePlanner::ResetForTransport() noexcept {
     std::fill(deferredProgram_.begin(), deferredProgram_.end(), nullptr);
     std::fill(deferredInput_.begin(), deferredInput_.end(), PostInput{});
     std::fill(deferredSlotUsed_.begin(), deferredSlotUsed_.end(), 0);
+    committedDeferredProgramCount_ = 0;
     std::fill(rolling_.begin(), rolling_.end(), RollingCursor{});
     std::fill(scratchEvents_.begin(), scratchEvents_.end(),
               ScheduledEventInput{});
@@ -139,6 +140,7 @@ void TimelinePlanner::ReleaseDeferredSlot(std::uint64_t payload) {
     if (slot >= deferredProgram_.size()) {
         return;
     }
+    if (deferredSlotUsed_[slot] == 1) --committedDeferredProgramCount_;
     deferredSlotUsed_[slot] = 0;
     deferredProgram_[slot] = nullptr;
     deferredInput_[slot] = PostInput{};
@@ -382,6 +384,7 @@ bool TimelinePlanner::CommitPreparedDeferredPlay(
         return false;
     }
     deferredSlotUsed_[prepared->slot] = 1;
+    ++committedDeferredProgramCount_;
     *prepared = {};
     return true;
 }
@@ -635,7 +638,7 @@ bool TimelinePlanner::HasProgramReference(
             candidate->runtimeProgram.programGeneration == program.programGeneration;
     };
     for (std::size_t index = 0; index < deferredProgram_.size(); ++index) {
-        if (deferredSlotUsed_[index] == 1 && matches(deferredProgram_[index])) return true;
+        if (deferredSlotUsed_[index] != 0 && matches(deferredProgram_[index])) return true;
     }
     for (const auto& cursor : rolling_) {
         if (cursor.state != RollingState::Free && matches(cursor.program)) return true;
@@ -838,6 +841,7 @@ std::uint64_t TimelinePlanner::DeferredBlockerBefore(
     }
     std::uint64_t blocker =
         deferredPool_->EarliestHeldDueBefore(cutoffFrame);
+    if (committedDeferredProgramCount_ == 0) return blocker;
     for (std::size_t slot = 0; slot < deferredProgram_.size(); ++slot) {
         if (deferredSlotUsed_[slot] != 1 || deferredProgram_[slot] == nullptr) {
             continue;

@@ -22,6 +22,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
+#include <new>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -66,6 +67,235 @@ bool PrepareLedgerCommitInput(harken::VoiceLedger& ledger, VnVoiceHandle render,
     std::uint32_t slot = UINT32_MAX;
     return ledger.PreparePlayableOwned(input->parent, &slot, &input->identity) &&
         slot == input->identity.slot;
+}
+
+TEST(VoiceLedger, EmptyQueriesKeepNativeBackingUnconstructedAndCapacityAvailable) {
+    harken::VoiceLedger ledger(0);
+    EXPECT_EQ(1u, ledger.Capacity());
+    EXPECT_EQ(1u, ledger.AvailableEntryCount());
+    EXPECT_TRUE(ledger.HasFreeEntry());
+    EXPECT_EQ(2u, ledger.MonitorSelectionCapacity());
+    EXPECT_EQ(ledger.MonitorSelectionStorageBytes(), 0u);
+    std::array<std::uint64_t, 4> handles{1, 2, 3, 4};
+    ledger.FillPublicHandles(handles.data(), handles.size(), [](auto) { return true; });
+    EXPECT_EQ((std::array<std::uint64_t, 4>{}), handles);
+    std::uint32_t visits = 0;
+    const auto visit = [&](auto...) { ++visits; };
+    ledger.ForEachLive(visit);
+    ledger.ForEachPending(visit);
+    ledger.ForEachParked(visit);
+    ledger.ForEachPlayableOwnedLive(visit);
+    ledger.SweepEnded([](auto) { ADD_FAILURE(); return false; });
+    EXPECT_EQ(0u, visits);
+    EXPECT_EQ(0u, ledger.PendingStartCount());
+    EXPECT_EQ(0u, ledger.ParkedCount());
+    EXPECT_EQ(0u, ledger.ToRender(MakeRenderHandle(0, 1)));
+    EXPECT_EQ(0u, ledger.ToPublic(MakeRenderHandle(0, 1)));
+    EXPECT_EQ(0u, ledger.PublicHandleForSlot(0));
+    EXPECT_FALSE(ledger.OwnerForRender(MakeRenderHandle(0, 1)).live);
+    EXPECT_FALSE(ledger.ArmMonitorControl(0, MakeRenderHandle(0, 1)).Valid());
+    harken::VoiceLedger::MonitorIdentity identity{};
+    EXPECT_FALSE(ledger.CaptureMonitorIdentity(0, &identity));
+    EXPECT_EQ(0u, ledger.ConstructedEntryCount());
+    EXPECT_EQ(0u, ledger.EntryStorageBytes());
+    EXPECT_EQ(0u, ledger.EntryCommittedBytes());
+    EXPECT_EQ(0u, ledger.MonitorReceiptStorageBytes());
+    EXPECT_EQ(0u, ledger.MonitorReceiptCommittedBytes());
+    EXPECT_GT(ledger.EntryReservedBytes(), 0u);
+    EXPECT_GT(ledger.MonitorReceiptReservedBytes(), 0u);
+    harken::detail::StablePageReservation::FailNextReservationForTests();
+    EXPECT_THROW((harken::VoiceLedger(4)), std::bad_alloc);
+}
+
+TEST(VoiceLedger, AllIssuersPreserveOutputsOnReceiptAndEntryCommitFailureAndRecover) {
+    for (const auto issuer : {0, 1, 2, 3}) {
+        SCOPED_TRACE(issuer);
+        harken::VoiceLedger ledger(2);
+        const harken::VoiceLedger::PlayableParentRef parent{7, 9};
+        VnVoiceHandle publicOut = 41;
+        std::uint32_t slotOut = 43;
+        harken::VoiceLedger::PreparedPlayableIdentity identityOut{47, 53};
+        const auto acquire = [&] {
+            switch (issuer) {
+                case 0: return ledger.Acquire(&publicOut, &slotOut);
+                case 1: return ledger.AcquirePending(&publicOut, &slotOut, 128);
+                case 2: return ledger.AcquirePlayableOwned(parent, &slotOut);
+                default: return ledger.PreparePlayableOwned(parent, &slotOut, &identityOut);
+            }
+        };
+        const auto expectUnchanged = [&] {
+            EXPECT_EQ(41u, publicOut);
+            EXPECT_EQ(43u, slotOut);
+            EXPECT_EQ(47u, identityOut.slot);
+            EXPECT_EQ(53u, identityOut.generation);
+            EXPECT_EQ(0u, ledger.ConstructedEntryCount());
+            EXPECT_EQ(0u, ledger.EntryStorageBytes());
+            EXPECT_EQ(2u, ledger.AvailableEntryCount());
+        };
+        ledger.SetReceiptCommitPageLimitForTests(0);
+        EXPECT_FALSE(acquire());
+        expectUnchanged();
+        EXPECT_EQ(0u, ledger.EntryCommittedBytes());
+        EXPECT_EQ(0u, ledger.MonitorReceiptCommittedBytes());
+        ledger.SetReceiptCommitPageLimitForTests(SIZE_MAX);
+        ledger.SetEntryCommitPageLimitForTests(0);
+        EXPECT_FALSE(acquire());
+        expectUnchanged();
+        EXPECT_EQ(0u, ledger.EntryCommittedBytes());
+        EXPECT_GT(ledger.MonitorReceiptStorageBytes(), 0u);
+        EXPECT_GT(ledger.MonitorReceiptCommittedBytes(), 0u);
+        ledger.SetEntryCommitPageLimitForTests(SIZE_MAX);
+        ASSERT_TRUE(acquire());
+        EXPECT_EQ(0u, slotOut);
+        EXPECT_EQ(1u, ledger.ConstructedEntryCount());
+        EXPECT_EQ(1u, ledger.AvailableEntryCount());
+        EXPECT_GT(ledger.EntryStorageBytes(), 0u);
+        EXPECT_GT(ledger.EntryCommittedBytes(), 0u);
+        ledger.Release(slotOut);
+        EXPECT_EQ(2u, ledger.AvailableEntryCount());
+        EXPECT_EQ(1u, ledger.ConstructedEntryCount());
+    }
+}
+
+TEST(VoiceLedger, AcceptedBackingSurvivesOrdinaryReuseAndCommitFailures) {
+    harken::VoiceLedger ledger(8);
+    harken::VoiceLedger::BackingPreparation first, second;
+    ledger.SetReceiptCommitPageLimitForTests(0);
+    EXPECT_FALSE(ledger.PrepareBacking(2, &first));
+    EXPECT_TRUE(first.Empty());
+    ledger.SetReceiptCommitPageLimitForTests(SIZE_MAX);
+    ledger.SetEntryCommitPageLimitForTests(0);
+    EXPECT_FALSE(ledger.PrepareBacking(2, &first));
+    EXPECT_TRUE(first.Empty());
+    ledger.SetEntryCommitPageLimitForTests(SIZE_MAX);
+    ASSERT_TRUE(ledger.PrepareBacking(2, &first));
+    ASSERT_TRUE(ledger.PrepareBacking(2, &second));
+    EXPECT_EQ(8u, ledger.AvailableEntryCount());
+    const harken::VoiceLedger::PlayableParentRef parent{7, 9};
+    std::array<std::uint32_t, 8> slots{};
+    ASSERT_TRUE(ledger.AcquirePlayableOwned(parent, &slots[0]));
+    ledger.Release(slots[0]);
+    ASSERT_TRUE(ledger.AcquirePlayableOwned(parent, &slots[0]));
+    ASSERT_TRUE(ledger.AcquirePlayableOwned(parent, &slots[1]));
+    const auto constructed = ledger.ConstructedEntryCount();
+    const auto entries = ledger.EntryStorageBytes();
+    const auto receipts = ledger.MonitorReceiptStorageBytes();
+    const auto entryPages = ledger.EntryCommittedBytes();
+    const auto receiptPages = ledger.MonitorReceiptCommittedBytes();
+    ledger.SetReceiptCommitPageLimitForTests(0);
+    ledger.SetEntryCommitPageLimitForTests(0);
+    {
+        const auto use = first.Use();
+        for (auto i = 2u; i != 4u; ++i)
+            ASSERT_TRUE(ledger.AcquirePlayableOwned(parent, &slots[i]));
+    }
+    {
+        const auto use = second.Use();
+        for (auto i = 4u; i != 6u; ++i)
+            ASSERT_TRUE(ledger.AcquirePlayableOwned(parent, &slots[i]));
+        EXPECT_EQ(constructed, ledger.ConstructedEntryCount());
+        EXPECT_EQ(entries, ledger.EntryStorageBytes());
+        EXPECT_EQ(receipts, ledger.MonitorReceiptStorageBytes());
+        EXPECT_EQ(entryPages, ledger.EntryCommittedBytes());
+        EXPECT_EQ(receiptPages, ledger.MonitorReceiptCommittedBytes());
+    }
+    for (auto i = 0u; i != 6u; ++i) ledger.Release(slots[i]);
+    first.Release();
+    second.Release();
+    EXPECT_EQ(ledger.Capacity(), ledger.AvailableEntryCount());
+    ledger.SetReceiptCommitPageLimitForTests(SIZE_MAX);
+    ledger.SetEntryCommitPageLimitForTests(SIZE_MAX);
+    for (auto& slot : slots) ASSERT_TRUE(ledger.AcquirePlayableOwned(parent, &slot));
+    EXPECT_EQ(0u, ledger.AvailableEntryCount());
+    for (const auto slot : slots) ledger.Release(slot);
+}
+
+TEST(VoiceLedger, DirectVoiceBackingRefusalPreservesAdmissionAndSkipsInternalSlots) {
+    for (const bool pending : {false, true}) {
+        SCOPED_TRACE(pending);
+        auto config = MakeNullConfig(2, kBlock, 48000);
+        config.maxParkedVoices = 2;
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        std::array<std::uint32_t, 2> internal{};
+        ASSERT_TRUE(engine.ledger.AcquirePlayableOwned({7, 9}, &internal[0]));
+        ASSERT_TRUE(engine.ledger.PreparePlayableOwned({7, 9}, &internal[1]));
+        EXPECT_EQ(0u, engine.pendingStarts.ConstructedCount());
+        EXPECT_EQ(0u, engine.parkRecords.ConstructedCount());
+        VnVoiceHandle handle = 41;
+        std::uint32_t slot = 43;
+        const auto acquire = [&] {
+            return pending ? engine.ledger.AcquirePending(&handle, &slot, 128)
+                           : engine.ledger.Acquire(&handle, &slot);
+        };
+        engine.pendingStarts.SetCommitPageLimitForTests(0);
+        engine.parkRecords.SetCommitPageLimitForTests(0);
+        EXPECT_FALSE(acquire());
+        EXPECT_EQ(41u, handle);
+        EXPECT_EQ(43u, slot);
+        EXPECT_EQ(2u, engine.ledger.AvailableEntryCount());
+        EXPECT_EQ(0u, engine.ledger.PendingStartCount());
+        EXPECT_EQ(0u, engine.pendingStarts.RequestedBytes());
+        engine.pendingStarts.SetCommitPageLimitForTests(SIZE_MAX);
+        EXPECT_FALSE(acquire());
+        EXPECT_EQ(41u, handle);
+        EXPECT_EQ(43u, slot);
+        EXPECT_EQ(2u, engine.ledger.AvailableEntryCount());
+        EXPECT_EQ(1u, engine.pendingStarts.ConstructedCount());
+        EXPECT_EQ(0u, engine.parkRecords.ConstructedCount());
+        engine.parkRecords.SetCommitPageLimitForTests(SIZE_MAX);
+        ASSERT_TRUE(acquire());
+        EXPECT_EQ(2u, slot);
+        EXPECT_EQ(1u, engine.pendingStarts.ConstructedCount());
+        EXPECT_EQ(1u, engine.parkRecords.ConstructedCount());
+        auto* preparedPending = &engine.pendingStarts[slot];
+        auto* preparedParked = &engine.parkRecords[slot];
+        const auto oldHandle = handle;
+        engine.ledger.Release(slot);
+        engine.pendingStarts.SetCommitPageLimitForTests(0);
+        engine.parkRecords.SetCommitPageLimitForTests(0);
+        ASSERT_TRUE(acquire());
+        EXPECT_NE(oldHandle, handle);
+        EXPECT_EQ(preparedPending, &engine.pendingStarts[slot]);
+        EXPECT_EQ(preparedParked, &engine.parkRecords[slot]);
+        engine.ledger.Release(slot);
+        engine.ledger.Release(internal[0]);
+        ASSERT_TRUE(engine.ledger.CancelPreparedPlayableOwned(internal[1]));
+        EXPECT_EQ(engine.ledger.Capacity(), engine.ledger.AvailableEntryCount());
+    }
+}
+
+TEST(VoiceLedger, AudioTaggedIssuersAndGenerationPreparationCannotConstructNativeRows) {
+    harken::VoiceLedger ledger(8);
+    VnVoiceHandle publicOut = 41;
+    std::uint32_t slotOut = 43;
+    harken::VoiceLedger::PreparedPlayableIdentity identityOut{47, 53};
+    const harken::VoiceLedger::PlayableParentRef parent{7, 9};
+    std::array<bool, 5> accepted{};
+    {
+        harken::memguard::AudioThreadScope audio;
+        accepted = {ledger.Acquire(&publicOut, &slotOut),
+            ledger.AcquirePending(&publicOut, &slotOut, 128),
+            ledger.AcquirePlayableOwned(parent, &slotOut),
+            ledger.PreparePlayableOwned(parent, &slotOut, &identityOut),
+            ledger.SetGenerationForTests(2, 3)};
+    }
+    EXPECT_EQ((std::array<bool, 5>{}), accepted);
+    EXPECT_EQ(41u, publicOut);
+    EXPECT_EQ(43u, slotOut);
+    EXPECT_EQ(47u, identityOut.slot);
+    EXPECT_EQ(53u, identityOut.generation);
+    EXPECT_EQ(0u, ledger.ConstructedEntryCount());
+    EXPECT_EQ(0u, ledger.EntryCommittedBytes());
+    EXPECT_EQ(0u, ledger.MonitorReceiptCommittedBytes());
+    EXPECT_FALSE(ledger.SetGenerationForTests(8, 1));
+    EXPECT_FALSE(ledger.SetGenerationForTests(0, 0));
+    EXPECT_FALSE(ledger.SetGenerationForTests(0, harken::VoiceLedger::kMaxGeneration + 1));
+    EXPECT_EQ(0u, ledger.ConstructedEntryCount());
+    ASSERT_TRUE(ledger.SetGenerationForTests(2, harken::VoiceLedger::kMaxGeneration));
+    EXPECT_EQ(3u, ledger.ConstructedEntryCount());
+    EXPECT_EQ(8u, ledger.AvailableEntryCount());
 }
 
 TEST(VoiceLedger, PreparedProofExcludesRealMutationAndAbortPreservesOriginalCancel) {
@@ -870,6 +1100,49 @@ TEST(VoiceLedger, OriginalMutationFactoryRequiresRealHeldSingleAndRejectsForeign
     fixture.ReleaseAll();
 }
 
+TEST(VoiceLedger, NativeProofAndOriginalLoansRetainTheirActualEntryThroughLaterGrowth) {
+    harken::VoiceLedger ledger(128, 2);
+    OriginalLedgerNativeFixture fixture;
+    harken::VoiceLedger::PreparedCommitInput input{};
+    ASSERT_TRUE(fixture.Prepare(ledger, MakeRenderHandle(0, 7), &input));
+    harken::VoiceLedger::PreparedCommitProof proof;
+    ASSERT_TRUE(ledger.ProvePreparedPlayableCommit(input, &proof));
+    harken::VoiceLedger::OriginalCompletionMutationOwner original, loan;
+    ASSERT_TRUE(ledger.IssueOriginalCompletionMutationOwner(proof, &original));
+    ASSERT_TRUE(original.Borrow(&loan));
+    const auto originalCommit = ledger.EntryCommittedBytes();
+    const auto receiptCommit = ledger.MonitorReceiptCommittedBytes();
+    for (std::uint32_t i = 1; i <= 64; ++i) {
+        VnVoiceHandle handle = 0;
+        std::uint32_t slot = UINT32_MAX;
+        ASSERT_TRUE(ledger.Acquire(&handle, &slot));
+        ASSERT_EQ(i, slot);
+    }
+    EXPECT_GT(ledger.EntryCommittedBytes(), originalCommit);
+    EXPECT_GT(ledger.MonitorReceiptCommittedBytes(), receiptCommit);
+    EXPECT_TRUE(proof.Valid());
+    EXPECT_TRUE(loan.Valid());
+    EXPECT_TRUE(ledger.IsOriginalCompletionMutationOwnerFor(original, input.identity,
+        input.parent, input.renderHandle, input.completionMutation));
+    harken::VoiceLedger::ConsumePreparedPlayableCommit(std::move(proof));
+    EXPECT_EQ(input.identity.slot, ledger.OwnerForRender(input.renderHandle).ledgerSlot);
+    ledger.Reap(input.renderHandle);
+    original.Release();
+    VnVoiceHandle handle = 0;
+    std::uint32_t slot = UINT32_MAX;
+    ASSERT_TRUE(ledger.Acquire(&handle, &slot));
+    EXPECT_EQ(65u, slot);
+    ledger.Release(slot);
+    loan.Release();
+    ASSERT_TRUE(ledger.Acquire(&handle, &slot));
+    EXPECT_EQ(input.identity.slot, slot);
+    EXPECT_NE(input.identity.generation, static_cast<std::uint32_t>(handle >> 32));
+    ledger.Release(slot);
+    for (std::uint32_t i = 1; i <= 64; ++i) ledger.Release(i);
+    EXPECT_EQ(ledger.Capacity(), ledger.AvailableEntryCount());
+    fixture.ReleaseAll();
+}
+
 TEST(VoiceLedger, OriginalMutationLoansAllowRealReapAndAllCapacityPathsWaitOnlyForLastReturn) {
     using Original = harken::VoiceLedger::OriginalCompletionMutationOwner;
     harken::VoiceLedger ledger(1);
@@ -1543,7 +1816,7 @@ TEST(MonitorVoiceControl, RebindingRejectsLateWritersInvalidationAndTicketReuse)
 }
 
 TEST(VoiceLedger, ObservationWritingCannotBlockParkEndOrReuseAndCannotCrossGenerations) {
-    harken::VoiceLedger ledger(1);
+    harken::VoiceLedger ledger(128);
     VnVoiceHandle publicHandle = 0;
     std::uint32_t slot = 0;
     ASSERT_TRUE(ledger.Acquire(&publicHandle, &slot));
@@ -1552,6 +1825,14 @@ TEST(VoiceLedger, ObservationWritingCannotBlockParkEndOrReuseAndCannotCrossGener
     ASSERT_TRUE(old.Valid());
     ledger.BindRender(slot, oldRender, 128);
     ASSERT_TRUE(harken::detail::MonitorVoiceControlTestAccess::BeginWrite(old));
+    const auto oldReceiptCommit = ledger.MonitorReceiptCommittedBytes();
+    for (std::uint32_t i = 1; i <= 64; ++i) {
+        VnVoiceHandle next = 0;
+        std::uint32_t nextSlot = UINT32_MAX;
+        ASSERT_TRUE(ledger.Acquire(&next, &nextSlot));
+        ASSERT_EQ(i, nextSlot);
+    }
+    EXPECT_GT(ledger.MonitorReceiptCommittedBytes(), oldReceiptCommit);
     ASSERT_TRUE(ledger.Park(oldRender, &slot));
     ledger.EndParked(slot);
     const auto oldPublic = publicHandle;
@@ -1574,6 +1855,7 @@ TEST(VoiceLedger, ObservationWritingCannotBlockParkEndOrReuseAndCannotCrossGener
     const auto thirdRender = MakeRenderHandle(0, 3);
     const auto third = ledger.ArmMonitorControl(slot, thirdRender);
     ASSERT_TRUE(third.Valid());
+    EXPECT_EQ(old.receipt, third.receipt);
     ledger.BindRender(slot, thirdRender, 128);
     harken::MonitorControlCause thirdCause{};
     thirdCause.request.key = {9, 27};
@@ -1644,6 +1926,9 @@ TEST(VoiceLedger, ObservedSourceWinnerOverridesLaterAcceptedControlWithoutChangi
 
 TEST(VoiceLedger, ResetSelectionAndCancellationKeepPlaybackIdentityAndDoNotChangeOwnership) {
     harken::VoiceLedger ledger(1);
+    harken::VoiceLedger::MonitorSelectionBacking monitorBacking;
+    ASSERT_TRUE(ledger.PrepareMonitorSelectionBacking(
+        static_cast<std::uint32_t>(ledger.MonitorSelectionCapacity()), &monitorBacking));
     harken::MonitorRequestContext playback{};
     playback.key = {9, 3};
     VnVoiceHandle handle = 0;

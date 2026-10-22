@@ -1876,6 +1876,14 @@ VnResult ValidateCompositeWorld(
         scratch.actions.size() > capacity.maxActionDefinitions) {
         return VN_PACK_RESIDENT_CAPACITY;
     }
+    std::uint64_t actionStepTotal = 0;
+    for (const auto& action : scratch.actions) {
+        if (action.stepCount > capacity.maxActionStepsPerDefinition ||
+            !CheckedCompositeCount(&actionStepTotal, action.stepCount,
+                capacity.maxActionStepsTotal)) {
+            return VN_PACK_RESIDENT_CAPACITY;
+        }
+    }
 
     for (ContainerProgramViewV3& container : scratch.containers) {
         if (container.transitionProgramIndex == UINT32_MAX) {
@@ -2157,6 +2165,78 @@ VnResult ValidateCrossOwnerReferences(
     return VN_OK;
 }
 
+VnResult BuildPublishedResourceClosure(
+    const PackComposition::PublishedView* published, const PackPartitionLease& lease,
+    PackResourceRevisionToken* outTokens, std::size_t tokenCapacity,
+    std::size_t* outTokenCount) noexcept {
+    using PublishedOwner = PackComposition::PublishedOwner;
+    if (outTokenCount == nullptr ||
+        (tokenCapacity != 0 && outTokens == nullptr)) {
+        return VN_INVALID_ARG;
+    }
+    *outTokenCount = 0;
+    if (published == nullptr || lease.resourceToken == 0) {
+        return VN_CONTENT_NOT_LOADED;
+    }
+    const auto ownerForToken = [&](PackResourceRevisionToken token)
+        -> const PublishedOwner* {
+        for (const PublishedOwner& owner : published->owners) {
+            if (owner.readiness == PackOwnerReadiness::Active &&
+                owner.resourceToken == token) {
+                return &owner;
+            }
+        }
+        return nullptr;
+    };
+    const PublishedOwner* root = ownerForToken(lease.resourceToken);
+    if (root == nullptr || root->handle != lease.handle ||
+        root->packStableId != lease.packStableId) {
+        return VN_CONTENT_NOT_LOADED;
+    }
+    if (tokenCapacity == 0) {
+        return VN_BACKPRESSURE;
+    }
+    outTokens[0] = root->resourceToken;
+    std::size_t count = 1;
+    for (std::size_t cursor = 0; cursor < count; ++cursor) {
+        const PublishedOwner* consumer = ownerForToken(outTokens[cursor]);
+        if (consumer == nullptr) {
+            return VN_CONTENT_NOT_LOADED;
+        }
+        for (const PackDependencyEdge& edge : consumer->dependencyEdges) {
+            const std::uint64_t providerStableId =
+                edge.prerequisitePackStableId;
+            const PublishedOwner* provider = nullptr;
+            for (const PublishedOwner& candidate : published->owners) {
+                if (candidate.readiness == PackOwnerReadiness::Active &&
+                    candidate.packStableId == providerStableId) {
+                    provider = &candidate;
+                    break;
+                }
+            }
+            if (provider == nullptr || provider->resourceToken == 0) {
+                return VN_CONTENT_NOT_LOADED;
+            }
+            bool duplicate = false;
+            for (std::size_t i = 0; i < count; ++i) {
+                if (outTokens[i] == provider->resourceToken) {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (duplicate) {
+                continue;
+            }
+            if (count == tokenCapacity) {
+                return VN_BACKPRESSURE;
+            }
+            outTokens[count++] = provider->resourceToken;
+        }
+    }
+    *outTokenCount = count;
+    return VN_OK;
+}
+
 VnResult BuildPlaybackOwnerStore(PackComposition::PublishedView& published,
                                  std::size_t maxPacks,
                                  std::uint64_t worldSemanticFingerprint,
@@ -2192,6 +2272,19 @@ VnResult BuildPlaybackOwnerStore(PackComposition::PublishedView& published,
                 stored.closureOwnerSlots.push_back(ownerSlot);
             }
         }
+        if (owner.resourceToken != 0) {
+            auto tokens = std::make_shared<std::vector<PackResourceRevisionToken>>(stored.closureOwnerSlots.size());
+            PackPartitionLease lease{};
+            lease.handle = owner.handle;
+            lease.packStableId = owner.packStableId;
+            lease.resourceToken = owner.resourceToken;
+            std::size_t count = 0;
+            const auto resources = BuildPublishedResourceClosure(&published, lease, tokens->data(), tokens->size(), &count);
+            if (resources == VN_OK) {
+                tokens->resize(count);
+                stored.resourceTokens = std::move(tokens);
+            } else if (resources != VN_CONTENT_NOT_LOADED) return resources;
+        }
     }
     published.playbackStore = std::move(store);
     return VN_OK;
@@ -2214,10 +2307,15 @@ PackComposition::PackComposition(std::size_t sharedActionDeferredCapacity,
         throw std::length_error("pack lease pool overflow");
     }
     const std::size_t leaseCount = static_cast<std::size_t>(leaseTotal);
-    leases_.resize(leaseCount);
-    originalLeaseRecords_.resize(leaseCount);
+    if (!leases_.Reserve(leaseCount) || !originalLeaseRecords_.Reserve(leaseCount) ||
+        !frozenClosures_.Reserve(leaseCount)) throw std::bad_alloc{};
     originalLeaseIncarnation_ = IssueOriginalPackIncarnation();
-    frozenClosures_.resize(leaseCount);
+}
+
+bool PackComposition::PrepareLeaseStorage() const noexcept {
+    return originalLeaseRecords_.ConstructThrough(originalLeaseRecords_.Capacity()) &&
+        frozenClosures_.ConstructThrough(frozenClosures_.Capacity()) &&
+        leases_.ConstructThrough(leases_.Capacity());
 }
 
 PackComposition::~PackComposition() {
@@ -2904,6 +3002,7 @@ VnResult PackComposition::PrepareCommit(
     if (playbackStore != VN_OK) {
         return playbackStore;
     }
+    if (!next->index.empty() && !PrepareLeaseStorage()) return VN_BACKPRESSURE;
     prepared.facts_.compositeGeneration = next->compositeGeneration;
     prepared.facts_.activationFrame = serviceFrame;
     prepared.owner_ = this;
@@ -2933,7 +3032,7 @@ void PackComposition::RestorePublished(
 }
 
 std::size_t PackComposition::LeaseIndex(const LeaseRow& row) const noexcept {
-    if (leases_.empty()) {
+    if (leases_.size() == 0) {
         return 0;
     }
     const LeaseRow* data = leases_.data();
@@ -2950,6 +3049,15 @@ PackFrozenClosure& PackComposition::FrozenClosure(LeaseRow& row) const noexcept 
 const PackFrozenClosure& PackComposition::FrozenClosure(
     const LeaseRow& row) const noexcept {
     return frozenClosures_[LeaseIndex(row)];
+}
+
+const ContainerWorldInstallViewV1* PackComposition::DefinitionView(
+    const LeaseRow& row) const noexcept {
+    const auto& closure = FrozenClosure(row);
+    if (closure.ownerStore == nullptr ||
+        closure.rootOwnerIndex >= closure.ownerStore->owners.size()) return nullptr;
+    const auto& snapshot = closure.ownerStore->owners[closure.rootOwnerIndex].snapshot;
+    return snapshot.definitionBody != nullptr ? &snapshot.definitionView : nullptr;
 }
 
 std::size_t PackComposition::SliceCapacity(PackLeaseSlice slice) const noexcept {
@@ -3025,6 +3133,7 @@ VnResult PackComposition::PrepareLease(const PublishedOwner& owner,
     if (SliceOccupied(slice) >= SliceCapacity(slice)) {
         return VN_BACKPRESSURE;
     }
+    if (!PrepareLeaseStorage()) return VN_BACKPRESSURE;
     std::size_t availableIndex = leases_.size();
     for (std::size_t i = 0; i < leases_.size(); ++i) {
         if (leases_[i].state == LeaseState::Free && !originalLeaseRecords_[i].active) {
@@ -3062,8 +3171,6 @@ VnResult PackComposition::PrepareLease(const PublishedOwner& owner,
     available.tag = slice;
     available.lease = lease;
     available.refs = 0;
-    available.definitionBody = owner.body;
-    available.definitionView = owner.view;
     ++SliceOccupied(slice);
     if (original != nullptr) {
         auto& record = originalLeaseRecords_[availableIndex];
@@ -3224,13 +3331,13 @@ const ActionProgramViewV1* PackComposition::FindActionAtLease(
     const PackPartitionLease& lease, VnObjectId actionId) const noexcept {
     for (const LeaseRow& row : leases_) {
         if (row.state != LeaseState::Live || row.refs == 0 ||
-            !SameLease(row.lease, lease) ||
-            row.definitionBody == nullptr ||
-            row.definitionView.actions == nullptr) {
+            !SameLease(row.lease, lease)) {
             continue;
         }
-        for (std::uint32_t i = 0; i < row.definitionView.actionCount; ++i) {
-            const ActionProgramViewV1& action = row.definitionView.actions[i];
+        const auto* definition = DefinitionView(row);
+        if (definition == nullptr || definition->actions == nullptr) continue;
+        for (std::uint32_t i = 0; i < definition->actionCount; ++i) {
+            const ActionProgramViewV1& action = definition->actions[i];
             if (action.actionStableId == actionId) {
                 return &action;
             }
@@ -3245,14 +3352,14 @@ const ContainerProgramViewV3* PackComposition::FindContainerAtLease(
     VnObjectId containerStableId) const noexcept {
     for (const LeaseRow& row : leases_) {
         if (row.state != LeaseState::Live || row.refs == 0 ||
-            !SameLease(row.lease, lease) ||
-            row.definitionBody == nullptr ||
-            row.definitionView.containers == nullptr) {
+            !SameLease(row.lease, lease)) {
             continue;
         }
-        for (std::uint32_t i = 0; i < row.definitionView.containerCount; ++i) {
+        const auto* definition = DefinitionView(row);
+        if (definition == nullptr || definition->containers == nullptr) continue;
+        for (std::uint32_t i = 0; i < definition->containerCount; ++i) {
             const ContainerProgramViewV3& container =
-                row.definitionView.containers[i];
+                definition->containers[i];
             if (container.containerStableId == containerStableId) {
                 return &container;
             }
@@ -3270,27 +3377,29 @@ bool PackComposition::PlayableWorldAtLease(
     *out = {};
     for (const LeaseRow& row : leases_) {
         if (row.state != LeaseState::Live || row.refs == 0 ||
-            !SameLease(row.lease, lease) || row.definitionBody == nullptr) {
+            !SameLease(row.lease, lease)) {
             continue;
         }
+        const auto* definition = DefinitionView(row);
+        if (definition == nullptr) continue;
         out->generation = lease.compositeGeneration;
-        out->identity = row.definitionView.identity;
-        out->properties = row.definitionView.playableProperties;
-        out->propertyCount = row.definitionView.playablePropertyCount;
-        out->occurrences = row.definitionView.playableOccurrences;
-        out->occurrenceCount = row.definitionView.playableOccurrenceCount;
-        out->trackSchedules = row.definitionView.trackSchedules;
-        out->trackScheduleCount = row.definitionView.trackScheduleCount;
-        out->pieceSchedules = row.definitionView.pieceSchedules;
-        out->pieceScheduleCount = row.definitionView.pieceScheduleCount;
+        out->identity = definition->identity;
+        out->properties = definition->playableProperties;
+        out->propertyCount = definition->playablePropertyCount;
+        out->occurrences = definition->playableOccurrences;
+        out->occurrenceCount = definition->playableOccurrenceCount;
+        out->trackSchedules = definition->trackSchedules;
+        out->trackScheduleCount = definition->trackScheduleCount;
+        out->pieceSchedules = definition->pieceSchedules;
+        out->pieceScheduleCount = definition->pieceScheduleCount;
         out->maxKnownScheduleLeaves =
-            row.definitionView.capacity.maxKnownScheduleLeaves;
+            definition->capacity.maxKnownScheduleLeaves;
         out->maxTrackPieceScheduleDepth =
-            row.definitionView.capacity.maxTrackPieceScheduleDepth;
-        out->containers = row.definitionView.containers;
-        out->containerCount = row.definitionView.containerCount;
-        out->transitions = row.definitionView.transitions;
-        out->transitionCount = row.definitionView.transitionCount;
+            definition->capacity.maxTrackPieceScheduleDepth;
+        out->containers = definition->containers;
+        out->containerCount = definition->containerCount;
+        out->transitions = definition->transitions;
+        out->transitionCount = definition->transitionCount;
         return true;
     }
     return false;
@@ -3350,71 +3459,26 @@ VnResult PackComposition::BuildResourceClosure(
     const PackPartitionLease& lease,
     PackResourceRevisionToken* outTokens, std::size_t tokenCapacity,
     std::size_t* outTokenCount) const noexcept {
-    if (outTokenCount == nullptr ||
-        (tokenCapacity != 0 && outTokens == nullptr)) {
-        return VN_INVALID_ARG;
+    return BuildPublishedResourceClosure(published_.get(), lease, outTokens, tokenCapacity, outTokenCount);
+}
+
+VnResult PackComposition::PreparedResourceClosureBacking(const PackPartitionLease& lease,
+    std::shared_ptr<const std::vector<PackResourceRevisionToken>>* out) const noexcept {
+    if (out == nullptr) return VN_INVALID_ARG;
+    out->reset();
+    for (const auto& row : leases_) {
+        if (row.state != LeaseState::Prepared || !SameLeaseIdentity(row.lease, lease)) continue;
+        const auto& closure = FrozenClosure(row);
+        if (closure.ownerStore == nullptr || closure.rootOwnerIndex >= closure.ownerStore->owners.size() ||
+            closure.compositeGeneration != lease.compositeGeneration) return VN_CONTENT_NOT_LOADED;
+        const auto& owner = closure.ownerStore->owners[closure.rootOwnerIndex];
+        if (owner.snapshot.handle != lease.handle || owner.snapshot.packStableId != lease.packStableId ||
+            owner.snapshot.resourceToken != lease.resourceToken || owner.resourceTokens == nullptr ||
+            owner.resourceTokens->empty()) return VN_CONTENT_NOT_LOADED;
+        *out = owner.resourceTokens;
+        return VN_OK;
     }
-    *outTokenCount = 0;
-    if (published_ == nullptr || lease.resourceToken == 0) {
-        return VN_CONTENT_NOT_LOADED;
-    }
-    const auto ownerForToken = [&](PackResourceRevisionToken token)
-        -> const PublishedOwner* {
-        for (const PublishedOwner& owner : published_->owners) {
-            if (owner.readiness == PackOwnerReadiness::Active &&
-                owner.resourceToken == token) {
-                return &owner;
-            }
-        }
-        return nullptr;
-    };
-    const PublishedOwner* root = ownerForToken(lease.resourceToken);
-    if (root == nullptr || root->handle != lease.handle ||
-        root->packStableId != lease.packStableId) {
-        return VN_CONTENT_NOT_LOADED;
-    }
-    if (tokenCapacity == 0) {
-        return VN_BACKPRESSURE;
-    }
-    outTokens[0] = root->resourceToken;
-    std::size_t count = 1;
-    for (std::size_t cursor = 0; cursor < count; ++cursor) {
-        const PublishedOwner* consumer = ownerForToken(outTokens[cursor]);
-        if (consumer == nullptr) {
-            return VN_CONTENT_NOT_LOADED;
-        }
-        for (const PackDependencyEdge& edge : consumer->dependencyEdges) {
-            const std::uint64_t providerStableId =
-                edge.prerequisitePackStableId;
-            const PublishedOwner* provider = nullptr;
-            for (const PublishedOwner& candidate : published_->owners) {
-                if (candidate.readiness == PackOwnerReadiness::Active &&
-                    candidate.packStableId == providerStableId) {
-                    provider = &candidate;
-                    break;
-                }
-            }
-            if (provider == nullptr || provider->resourceToken == 0) {
-                return VN_CONTENT_NOT_LOADED;
-            }
-            bool duplicate = false;
-            for (std::size_t i = 0; i < count; ++i) {
-                if (outTokens[i] == provider->resourceToken) {
-                    duplicate = true;
-                    break;
-                }
-            }
-            if (duplicate) {
-                continue;
-            }
-            if (count == tokenCapacity) {
-                return VN_BACKPRESSURE;
-            }
-            outTokens[count++] = provider->resourceToken;
-        }
-    }
-    *outTokenCount = count;
-    return VN_OK;
+    return VN_STALE_HANDLE;
 }
 
 PackIdentityLookup PackComposition::Lookup(VnObjectId stableId) const noexcept {

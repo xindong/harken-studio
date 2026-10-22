@@ -1212,6 +1212,47 @@ TEST(MonitorActionActivity, DeferredExecutionAndActionHaveSeparateCompletionBoun
     ASSERT_EQ(VN_OK, Vn_MonitorCloseSession(session));
 }
 
+TEST(MonitorActionActivity, LargeActionStepsPublishOnceAcrossUpdatesAndRowReuse) {
+    using namespace harken;
+    using namespace harkentest::monitor;
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, engine.InitResult());
+    const auto session = OpenActivityEvents();
+    ActionFiringTable actions;
+    ASSERT_TRUE(actions.Reset(1));
+    const std::set<std::uint32_t> indices{0, 63, 64, 127, 128, 9999};
+    for (std::uint32_t reuse = 0; reuse < 2; ++reuse) {
+        PreparedActionFiring prepared;
+        ASSERT_TRUE(actions.PrepareRoot(harkentest::ObjectId(125), 7, 10000, &prepared));
+        for (const auto index : indices) {
+            ActionFiringStepResult step;
+            step.authoredEventIndex = index;
+            step.executionOrdinal = index;
+            step.state = ActionStepState::Active;
+            step.monitorExecutionOnCommit = true;
+            ASSERT_TRUE(actions.SetPreparedStep(prepared, index, step));
+        }
+        ASSERT_TRUE(actions.Commit(&prepared, 102 + reuse));
+        for (const auto index : indices) {
+            ActionFiringStepResult step;
+            ASSERT_TRUE(actions.CaptureStep(prepared.Handle(), index, &step));
+            ASSERT_TRUE(actions.UpdateStep(prepared.Handle(), index, step));
+            actions.ObserveStepExecution(prepared.Handle(), index);
+        }
+        std::set<std::uint32_t> observed;
+        for (const auto& record : ReadActivityEvents(session)) {
+            if (record.fact.fact.factKind != VN_MONITOR_FACT_STEP_EXECUTED) continue;
+            EXPECT_EQ(prepared.Handle(), record.header.instanceHandle);
+            EXPECT_TRUE(observed.insert(record.fact.activity.stepIndex).second);
+        }
+        EXPECT_EQ(indices, observed);
+        ASSERT_TRUE(actions.MarkTerminal(prepared.Handle()));
+        ASSERT_TRUE(actions.ReleaseRoot(prepared.Handle()));
+        ReadActivityEvents(session);
+    }
+    ASSERT_EQ(VN_OK, Vn_MonitorCloseSession(session));
+}
+
 TEST(MonitorActionActivity, AbandonedPreparationAndUntriggeredCancellationDoNotExecuteSteps) {
     using namespace harken;
     using namespace harkentest::monitor;

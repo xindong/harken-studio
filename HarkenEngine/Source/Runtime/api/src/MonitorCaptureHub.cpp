@@ -90,6 +90,7 @@ struct PlanSlot {
         measurements{};
     std::uint32_t storedTapCount = 0;
     std::uint32_t storedMeasurementCount = 0;
+    std::shared_ptr<DerivedDrainState> derivedState;
 };
 
 struct LeaseState {
@@ -1556,6 +1557,7 @@ void ReleaseFailedSlot(PlanSlot* slot) {
     if (slot == nullptr) {
         return;
     }
+    slot->derivedState.reset();
     slot->occupancy = SlotOccupancy::Free;
     slot->empty = true;
     slot->quarantined = false;
@@ -1757,6 +1759,7 @@ void RetireLingeringLocked(ProcessOwner& owner) {
         if (owner.activeSlot == static_cast<std::int32_t>(i)) {
             continue;
         }
+        slot.derivedState.reset();
         slot.occupancy = SlotOccupancy::Free;
         slot.empty = true;
         FillEmptyPlan(&slot.plan);
@@ -1776,6 +1779,7 @@ void ActivatePendingLocked(ProcessOwner& owner) {
         } else if (owner.holdPlanAck) {
             old.occupancy = SlotOccupancy::Lingering;
         } else {
+            old.derivedState.reset();
             old.occupancy = SlotOccupancy::Free;
             old.empty = true;
             FillEmptyPlan(&old.plan);
@@ -2345,6 +2349,7 @@ void ProcessPendingOnDrain(ProcessOwner& owner) {
         if (applyLeaseGone) {
             PlanSlot& pending =
                 owner.planSlots[static_cast<std::size_t>(owner.pendingSlot)];
+            pending.derivedState.reset();
             pending.occupancy = SlotOccupancy::Free;
             pending.empty = true;
             FillEmptyPlan(&pending.plan);
@@ -2743,6 +2748,7 @@ bool DrainOneFrom(ProcessOwner& owner, MonitorProducerRing& ring,
                    VN_MONITOR_HARD_MEASUREMENTS_PER_PLAN>
             measurements{};
         std::array<VnMonitorTapDescriptor, VN_MONITOR_HARD_TAPS_PER_PLAN> taps{};
+        std::shared_ptr<DerivedDrainState> derivedState;
         std::uint32_t measurementCount = 0;
         std::uint32_t tapCount = 0;
         std::uint64_t activeCapturePlanGeneration = 0;
@@ -2754,6 +2760,7 @@ bool DrainOneFrom(ProcessOwner& owner, MonitorProducerRing& ring,
             if (owner.activeSlot >= 0) {
                 const PlanSlot& slot =
                     owner.planSlots[static_cast<std::size_t>(owner.activeSlot)];
+                derivedState = slot.derivedState;
                 measurementCount = slot.storedMeasurementCount;
                 tapCount = slot.storedTapCount;
                 measurements = slot.measurements;
@@ -2769,14 +2776,14 @@ bool DrainOneFrom(ProcessOwner& owner, MonitorProducerRing& ring,
         const bool beforeEffective =
             recordPlan == activeCapturePlanGeneration && recordFrame < effectiveFrom;
         if (audioArmed != 0 && !beforeEffective && measurementCount != 0 &&
-            tapCount != 0) {
+            tapCount != 0 && derivedState) {
             struct EmitCtx {
                 ProcessOwner* owner = nullptr;
                 MonitorProducerOrigin origin{};
             } ctx;
             ctx.owner = &owner;
             ctx.origin = origin;
-            DispatchDerivedAudioChunk(
+            derivedState->Dispatch(
                 measurements.data(), measurementCount, taps.data(), tapCount,
                 scratch, size,
                 [](void* raw, const DerivedEmit& emit) {
@@ -5265,6 +5272,23 @@ VnResult ApplyCapturePlan(VnMonitorSessionHandle handle,
         ReleaseFailedSlot(&slot);
         return check;
     }
+    if (slot.storedMeasurementCount != 0 &&
+        (accepted.streamKindMask & VN_MONITOR_STREAM_OPTIONAL_AUDIO) != 0) {
+        try {
+            auto derived = std::make_shared<DerivedDrainState>();
+            const auto* previous = owner.activeSlot >= 0
+                ? owner.planSlots[static_cast<std::size_t>(owner.activeSlot)].derivedState.get() : nullptr;
+            if (!derived->Prepare(slot.measurements.data(), slot.storedMeasurementCount,
+                                  owner.engine->config.mixRate.SampleRate(), previous)) {
+                ReleaseFailedSlot(&slot);
+                return VN_MONITOR_BUDGET_EXCEEDED;
+            }
+            slot.derivedState = std::move(derived);
+        } catch (...) {
+            ReleaseFailedSlot(&slot);
+            return VN_MONITOR_BUDGET_EXCEEDED;
+        }
+    }
     slot.occupancy = SlotOccupancy::Pending;
     slot.empty = PlanLooksEmpty(accepted);
     slot.quarantined = false;
@@ -5306,6 +5330,7 @@ VnResult StopCapture(VnMonitorSessionHandle handle, uint64_t leaseGeneration,
         owner.pendingSlot != static_cast<std::int32_t>(kStopSlotIndex)) {
         PlanSlot& pending =
             owner.planSlots[static_cast<std::size_t>(owner.pendingSlot)];
+        pending.derivedState.reset();
         pending.occupancy = SlotOccupancy::Free;
         pending.empty = true;
         FillEmptyPlan(&pending.plan);

@@ -81,6 +81,17 @@ TEST(VariableSliceTable, ReservationProbeSeparatesProofPayloadAndFragmentedSpan)
     using Status = harken::VariableSliceTable::ReservationStatus;
     harken::VariableSliceTable table;
     ASSERT_TRUE(table.Reset(8, 4, 8, 8));
+    EXPECT_EQ(0u, table.RowStorageBytes());
+    EXPECT_EQ(0u, table.RowCommittedBytes());
+    EXPECT_GT(table.RowReservedBytes(), 0u);
+    table.SetRowCommitPageLimitForTests(0);
+    harken::VariableSliceRef refused{};
+    EXPECT_FALSE(ReserveTargets(table, 2, 1, &refused));
+    EXPECT_FALSE(refused.Valid());
+    EXPECT_EQ(8u, table.FreeRowCount());
+    EXPECT_EQ(8u, table.FreePayloadCount());
+    EXPECT_EQ(8u, table.FreeTargetCapacity());
+    table.SetRowCommitPageLimitForTests(SIZE_MAX);
     std::array<harken::VariableSliceRef, 4> refs{};
     for (std::uint32_t i = 0; i < refs.size(); ++i) ASSERT_TRUE(ReserveTargets(table, 2, i + 1, &refs[i]));
     ASSERT_TRUE(table.AbandonPrepared(refs[0]));
@@ -206,6 +217,35 @@ TEST(VariableSliceTable, WaitingSourceKeepsDependentUnclaimedUntilSourceActually
     EXPECT_EQ(1u, probe.applyCount);
     EXPECT_EQ(harken::VariableSliceState::SliceApplied, table.State(dependent));
     EXPECT_EQ(5u, table.AppliedBlockSequence(dependent));
+}
+
+TEST(VariableSliceTable, InstallationFrontiersBothSettleBeforeAnyTargetApplies) {
+    harken::VariableSliceTable table;
+    ASSERT_TRUE(table.Reset(1, 1, 1));
+    for (const bool rawFirst : {false, true}) {
+        SCOPED_TRACE(rawFirst);
+        harken::VariableSliceRef ref{};
+        ASSERT_TRUE(ReserveTargets(table, 1, rawFirst ? 2 : 1, &ref));
+        FillTargets(table, ref, 1);
+        ASSERT_TRUE(table.SetPreparedCommandFrontier(ref, 5, 9));
+        ASSERT_TRUE(table.Publish(ref));
+        ApplyProbe probe{};
+        EXPECT_FALSE(table.Apply(ref, 10, &probe, ValidateTarget, ApplyCommand, 4, 8));
+        EXPECT_FALSE(table.Apply(ref, 11, &probe, ValidateTarget, ApplyCommand,
+                                 rawFirst ? 5 : 4, rawFirst ? 8 : 9));
+        EXPECT_EQ(harken::VariableSliceState::PageCommitted, table.State(ref));
+        EXPECT_EQ(0u, table.AppliedBlockSequence(ref));
+        EXPECT_EQ(0u, table.InvalidationReasons(ref));
+        EXPECT_EQ(0u, probe.validationCount);
+        EXPECT_EQ(0u, probe.applyCount);
+        ASSERT_TRUE(table.Apply(ref, 12, &probe, ValidateTarget, ApplyCommand, 5, 9));
+        EXPECT_EQ(1u, probe.validationCount);
+        EXPECT_EQ(1u, probe.applyCount);
+        EXPECT_EQ(12u, table.AppliedBlockSequence(ref));
+        EXPECT_FALSE(table.Apply(ref, 13, &probe, ValidateTarget, ApplyCommand, 5, 9));
+        EXPECT_EQ(1u, probe.applyCount);
+        ASSERT_TRUE(table.Reclaim(ref, 13));
+    }
 }
 
 TEST(VariableSliceTable, FailedSourceRejectsWholeDependentSliceButIndependentSliceApplies) {
@@ -655,6 +695,7 @@ TEST(VariableSliceTable, AcknowledgementAndStrictFenceReleasePayloadWhileProofRe
     ASSERT_TRUE(table.Acknowledge(source));
     table.ReclaimSettled(1);
     EXPECT_EQ(0u, table.FreeTargetCapacity());
+    EXPECT_EQ(originalTarget, static_cast<const harken::VariableSliceTable&>(table).Target(source, 0));
     table.ReclaimSettled(2);
     EXPECT_EQ(1u, table.FreePayloadCount());
     EXPECT_EQ(1u, table.FreeTargetCapacity());
@@ -662,7 +703,9 @@ TEST(VariableSliceTable, AcknowledgementAndStrictFenceReleasePayloadWhileProofRe
     ASSERT_TRUE(table.SourceApplied(proof));
     ASSERT_TRUE(ReserveTargets(table, 1, 2, &next));
     ASSERT_TRUE(table.AddTarget(next, MakeTarget(99)));
-    EXPECT_EQ(originalTarget, static_cast<const harken::VariableSliceTable&>(table).Target(next, 0));
+    const auto* nextTarget = static_cast<const harken::VariableSliceTable&>(table).Target(next, 0);
+    ASSERT_NE(nullptr, nextTarget);
+    EXPECT_EQ(99u, nextTarget->locator.targetId);
     EXPECT_NE(source.slot, next.slot);
     ASSERT_TRUE(table.AddSource(next, proof));
     PublishAndApply(table, next, 3);
@@ -758,6 +801,101 @@ TEST(VariableSliceTable, AudioApplyDoesNotMutatePoolOrFreeRangeState) {
     EXPECT_EQ(freeRowsBefore, table.FreeRowCount());
     EXPECT_EQ(freeRangesBefore, table.FreeRangeCount());
     EXPECT_EQ(firstBefore, immutable.Target(ref, 0));
+}
+
+struct SourceNotice {
+    std::uint32_t count = 0;
+    harken::VariableReadCutRef last{};
+};
+
+void NotifySource(void* context, harken::VariableReadCutRef target) noexcept {
+    auto& notice = *static_cast<SourceNotice*>(context);
+    ++notice.count;
+    notice.last = target;
+}
+
+TEST(VariableSliceTable, SourceNotificationsDispatchOnLogicAndPayloadReturnsBeforeRetainedProof) {
+    harken::VariableSliceTable table;
+    ASSERT_TRUE(table.Reset(2, 2, 4));
+    harken::VariableSliceRef ref;
+    ASSERT_TRUE(ReserveTargets(table, 2, 1, &ref));
+    FillTargets(table, ref, 2);
+    harken::VariableSliceSource source;
+    ASSERT_TRUE(table.CaptureSource(ref, &source));
+    ASSERT_TRUE(table.RetainSource(source));
+    SourceNotice notice;
+    harken::VariableSourceSubscription subscription{nullptr, &notice, NotifySource, {4, 8}};
+    auto wrong = source;
+    ++wrong.bankOrdinal;
+    EXPECT_FALSE(table.SubscribeSource(wrong, subscription));
+    ASSERT_TRUE(table.SubscribeSource(source, subscription));
+    EXPECT_EQ(1u, table.SourceSubscriptionCount(source));
+    EXPECT_EQ(0u, notice.count);
+    ASSERT_TRUE(table.Publish(ref));
+    table.DispatchSourceChanges();
+    EXPECT_EQ(1u, notice.count);
+    const auto payloadBytes = table.PayloadStorageBytes();
+    ApplyProbe probe;
+    bool applied = false;
+    {
+        harken::memguard::AudioThreadScope audio;
+        applied = table.Apply(ref, 11, &probe, ValidateTarget, ApplyCommand);
+        table.DispatchSourceChanges();
+    }
+    EXPECT_TRUE(applied);
+    EXPECT_EQ(1u, notice.count);
+    table.DispatchSourceChanges();
+    EXPECT_EQ(2u, notice.count);
+    EXPECT_EQ(4u, notice.last.slot);
+    EXPECT_EQ(8u, notice.last.generation);
+    table.DispatchSourceChanges();
+    EXPECT_EQ(2u, notice.count);
+    ASSERT_TRUE(table.Acknowledge(ref));
+    table.ReclaimSettled(11);
+    EXPECT_EQ(payloadBytes, table.PayloadStorageBytes());
+    table.ReclaimSettled(12);
+    EXPECT_LT(table.PayloadStorageBytes(), payloadBytes);
+    EXPECT_EQ(2u, table.FreePayloadCount());
+    EXPECT_EQ(1u, table.FreeRowCount());
+    EXPECT_TRUE(table.SourceApplied(source));
+    ASSERT_TRUE(table.UnsubscribeSource(source, subscription));
+    EXPECT_EQ(0u, table.SourceSubscriptionCount(source));
+    ASSERT_TRUE(table.ReleaseSource(source));
+    table.ReclaimSettled(13);
+    EXPECT_EQ(2u, table.FreeRowCount());
+    EXPECT_FALSE(table.SubscribeSource(source, subscription));
+    EXPECT_FALSE(table.UnsubscribeSource(source, subscription));
+}
+
+TEST(VariableSliceTable, SubscribeAfterCompletionRechecksExactGenerationAndCannotLeakAcrossReuse) {
+    harken::VariableSliceTable table;
+    ASSERT_TRUE(table.Reset(1, 1, 1));
+    harken::VariableSliceRef ref;
+    ASSERT_TRUE(ReserveTargets(table, 0, 1, &ref));
+    PublishAndApply(table, ref, 1);
+    harken::VariableSliceSource oldSource;
+    ASSERT_TRUE(table.CaptureSource(ref, &oldSource));
+    ASSERT_TRUE(table.RetainSource(oldSource));
+    SourceNotice notice;
+    harken::VariableSourceSubscription subscription{nullptr, &notice, NotifySource, {4, 8}};
+    ASSERT_TRUE(table.SubscribeSource(oldSource, subscription));
+    EXPECT_EQ(1u, notice.count);
+    ASSERT_TRUE(table.UnsubscribeSource(oldSource, subscription));
+    ASSERT_TRUE(table.ReleaseSource(oldSource));
+    ASSERT_TRUE(table.Reclaim(ref, 2));
+    ASSERT_TRUE(ReserveTargets(table, 0, 2, &ref));
+    EXPECT_NE(oldSource.slice.generation, ref.generation);
+    harken::VariableSliceSource currentSource;
+    ASSERT_TRUE(table.CaptureSource(ref, &currentSource));
+    ASSERT_TRUE(table.RetainSource(currentSource));
+    EXPECT_FALSE(table.SubscribeSource(oldSource, subscription));
+    ASSERT_TRUE(table.SubscribeSource(currentSource, subscription));
+    EXPECT_EQ(1u, notice.count);
+    table.DispatchSourceChanges();
+    EXPECT_EQ(1u, notice.count);
+    ASSERT_TRUE(table.UnsubscribeSource(currentSource, subscription));
+    ASSERT_TRUE(table.ReleaseSource(currentSource));
+    ASSERT_TRUE(table.AbandonPrepared(ref));
 }
 
 } // namespace

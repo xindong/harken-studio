@@ -138,24 +138,54 @@ harken::VoiceTimelineEvent StartAt(std::uint16_t offset) {
     return event;
 }
 
-harken::VoiceTimelineEvent WithFrontierProof(harken::VoiceTimelineEvent event,
+harken::FrontierEntryReceiptRef TestFrontierEntry() {
+    harken::FrontierEntryReceiptRef entry{};
+    entry.coordinator = {0, 1};
+    entry.attempt = 1;
+    entry.owner = {1, 1, 0, 0, 1, 1, 0, 1};
+    return entry;
+}
+
+harken::FrontierDueOperationRef TestFrontierOperation(const harken::VoiceTimelineEvent& event) {
+    harken::FrontierDueOperationRef operation{};
+    operation.kind = harken::FrontierOperationKind::Entry;
+    operation.owner = TestFrontierEntry().owner;
+    operation.order = event.order;
+    operation.transport = 1;
+    operation.world = 1;
+    operation.group = {event.frontierProof.quantum, 1, {0, 1}, 0, 0, 1, 1};
+    return operation;
+}
+
+harken::VoiceTimelineEvent WithFrontierGuard(harken::VoiceTimelineEvent event,
     VnVoiceHandle render, std::uint64_t quantum, harken::FrontierEventState state) {
     auto& proof = event.frontierProof;
     proof.state = state;
-    proof.entry.coordinator = {0, 1};
-    proof.entry.attempt = 1;
-    proof.entry.owner = {1, 1, 0, 0, 1, 1, 0, 1};
-    proof.operation.kind = harken::FrontierOperationKind::Entry;
-    proof.operation.owner = proof.entry.owner;
-    proof.operation.order.executeFrame = quantum * kBlock + event.offset;
-    proof.operation.order.logicCommitSequence = 1;
-    proof.operation.transport = 1;
-    proof.operation.world = 1;
-    proof.operation.group = {quantum, 1, {0, 1}, 0, 0, 1, 1};
     proof.quantum = quantum;
     proof.renderGeneration = static_cast<std::uint32_t>(render >> 32);
-    event.order = proof.operation.order;
+    event.order = {};
+    event.order.executeFrame = quantum * kBlock + event.offset;
+    event.order.logicCommitSequence = 1;
     return event;
+}
+
+void AppendProvenFrontier(StopAudioHarness& h, VnVoiceHandle render, harken::VoiceTimelineEvent event) {
+    const auto expected = event.frontierProof;
+    auto& voices = h.engine->voices;
+    event.frontierProof.state = harken::FrontierEventState::Pending;
+    event.frontierProof.quantum = h.quantum;
+    event.frontierProof.renderGeneration = static_cast<std::uint32_t>(render >> 32);
+    harken::VoiceTimelineReservation reservation{};
+    ASSERT_TRUE(voices.ReserveTimelineEvents(static_cast<std::uint32_t>(render),
+        event.frontierProof.renderGeneration, h.quantum, 1, &reservation));
+    ASSERT_TRUE(voices.StageReservedTimelineEvent(reservation, 0, event,
+        TestFrontierEntry(), TestFrontierOperation(event)));
+    harken::VoiceTimelineReservationProof proof{};
+    ASSERT_TRUE(voices.ProveTimelineReservation(reservation, &proof));
+    voices.ApplyProvenTimelineReservation(proof, expected.cutoffFrame, expected.cutoffOperation);
+    auto& frozen = voices.Resolve(render)->timelineEvents.events[reservation.first].frontierProof;
+    frozen.quantum = expected.quantum;
+    frozen.renderGeneration = expected.renderGeneration;
 }
 
 struct FrontierAudioHarness {
@@ -648,9 +678,10 @@ struct FrontierAudioHarness {
                 EXPECT_EQ(3u, bucket->groupCount);
                 ASSERT_TRUE(lane.ReleaseCapture(laneHandle.slot, bucket));
             }
+            ASSERT_TRUE(sink.AttachPlan03ScratchAuthority(decisions, pool));
             ASSERT_TRUE(sink.AttachImmediateLane(lane, kBlock));
         }
-        ASSERT_TRUE(sink.AttachPlan03ScratchAuthority(decisions, pool));
+        if (!laneEntry) ASSERT_TRUE(sink.AttachPlan03ScratchAuthority(decisions, pool));
         if (variable) {
             ASSERT_TRUE(sink.AttachQueueAuthority(queues, armGroups, occurrences));
             ASSERT_TRUE(sink.AttachVariableControlAuthority(variables));
@@ -824,7 +855,7 @@ struct FrontierAudioHarness {
     std::optional<harken::AuthoredStopFenceDescriptor> stopFence;
 };
 
-TEST(AuthoredStopAudio, AbandonedWorkerKeepsFrozenFrontierWhileNextQuantumFinalizes) {
+TEST(AuthoredStopAudio, DeferredWorkerRetainsFrozenFrontierUntilCompletion) {
     FrontierAudioHarness h(1);
     h.audio.retainSources = true;
     h.audio.captureControl = true;
@@ -880,37 +911,14 @@ TEST(AuthoredStopAudio, AbandonedWorkerKeepsFrozenFrontierWhileNextQuantumFinali
     const auto rendered = engine.voices.RenderAll(h.audio.arena, h.audio.planes.data(), kBlock,
         engine.notifications, 0, 0, 0);
     ASSERT_TRUE(gate.entered.load(std::memory_order_acquire));
-    ASSERT_TRUE(rendered.batchAbandoned);
-    ASSERT_GT(rendered.quarantinedVoices, 0u);
+    ASSERT_TRUE(rendered.batchDeferred);
+    ASSERT_GT(rendered.pendingVoices, 0u);
     ASSERT_NE(nullptr, gate.span);
     ASSERT_NE(nullptr, gate.source);
     ASSERT_GE(gate.before.eventCount, 2u);
     EXPECT_EQ(0u, gate.before.quantumIndex);
     EXPECT_EQ(harken::FrontierEventState::Applied, gate.before.events[0].frontierProof.state);
 
-    const harken::AuthoredStopOperationIdentity nextIdentity{1, 2, 1, 1, 1, 1, 80};
-    harken::AuthoredStopOperation nextStop(nextIdentity);
-    auto nextPayload = h.stopPayload;
-    nextPayload.envelopeEndFrame = 80;
-    nextPayload.authoredStopOperation = nextIdentity;
-    harken::TimelineProgramView nextProgram{1, &nextPayload, 1};
-    nextProgram.role = harken::TimelineProgramRole::AuthoredStopFence;
-    harken::AuthoredStopFenceDescriptor nextFence(&nextStop, nextIdentity, {}, &nextProgram, 1);
-    nextProgram.authoredStopFence = &nextFence;
-    harken::ScheduledEventInput nextEvent{};
-    nextEvent.executeFrame = 80;
-    nextEvent.logicCommitSequence = 3;
-    nextEvent.subeventPhase = 50;
-    h.File(11, nextProgram, {}, &nextEvent, 1);
-    auto nextControl = h.Event(72, 1, 30, harken::FrontierOperationKind::Dependent);
-    nextControl.logicCommitSequence = 3;
-    h.File(12, h.voiceProgram, gate.source->render == h.render ? h.arm : h.secondArm, &nextControl, 1);
-    ASSERT_FALSE(::testing::Test::HasFatalFailure());
-    h.pool.Publish(2u * kBlock, nullptr, nullptr, &h.arms);
-    const auto beforeDigest = h.digest.count;
-    h.executor.ExecuteQuantum(1);
-    EXPECT_GT(h.digest.count, beforeDigest);
-    EXPECT_EQ(2u, nextStop.AppliedAudioSequence());
     EXPECT_FALSE(gate.exited.load(std::memory_order_acquire));
     EXPECT_EQ(gate.before.quantumIndex, gate.span->quantumIndex);
     EXPECT_EQ(gate.before.renderGeneration, gate.span->renderGeneration);
@@ -922,17 +930,13 @@ TEST(AuthoredStopAudio, AbandonedWorkerKeepsFrozenFrontierWhileNextQuantumFinali
         EXPECT_EQ(before.offset, after.offset);
         EXPECT_EQ(before.authoredStopOperation, after.authoredStopOperation);
         EXPECT_EQ(before.frontierProof.state, after.frontierProof.state);
-        EXPECT_EQ(before.frontierProof.entry, after.frontierProof.entry);
-        const auto operationIdentity = [](const harken::FrontierDueOperationRef& operation) {
-            return std::tuple(operation.kind, operation.owner, operation.order.executeFrame,
-                operation.order.logicCommitSequence, operation.order.executionOrdinal, operation.order.eventIndex,
-                operation.order.transactionOrdinal, operation.order.subeventPhase, operation.order.rowSequence,
-                operation.group.absoluteQuantum, operation.group.pageGeneration, operation.group.decision.slot,
-                operation.group.decision.generation, operation.group.sliceIndex, operation.transport, operation.world,
-                operation.transactionId, operation.transactionSlot, operation.program, operation.programGeneration,
-                operation.armSlot, operation.armGeneration, operation.renderSlot, operation.renderGeneration);
-        };
-        EXPECT_EQ(operationIdentity(before.frontierProof.operation), operationIdentity(after.frontierProof.operation));
+        EXPECT_EQ(before.order, after.order);
+        EXPECT_EQ(before.frontierProof.Eligible(gate.before.quantumIndex, gate.before.renderGeneration),
+            after.frontierProof.Eligible(gate.span->quantumIndex, gate.span->renderGeneration));
+        if (after.frontierProof.state != harken::FrontierEventState::Legacy) {
+            EXPECT_FALSE(after.frontierProof.Eligible(gate.span->quantumIndex + 1u, gate.span->renderGeneration));
+            EXPECT_FALSE(after.frontierProof.Eligible(gate.span->quantumIndex, gate.span->renderGeneration + 1u));
+        }
         EXPECT_EQ(before.frontierProof.quantum, after.frontierProof.quantum);
         EXPECT_EQ(before.frontierProof.renderGeneration, after.frontierProof.renderGeneration);
         EXPECT_EQ(before.frontierProof.cutoffFrame, after.frontierProof.cutoffFrame);
@@ -940,19 +944,13 @@ TEST(AuthoredStopAudio, AbandonedWorkerKeepsFrozenFrontierWhileNextQuantumFinali
     }
     harken::SourceTerminalPayload terminal{};
     EXPECT_FALSE(engine.sourceTerminals.Capture(gate.sourceToken, UINT64_MAX, &terminal));
-    const auto binding = std::find_if(h.audio.controlBindings.begin(), h.audio.controlBindings.end(),
-        [&](const auto& candidate) { return candidate.render == gate.source->render; });
-    ASSERT_NE(h.audio.controlBindings.end(), binding);
-    harken::MonitorVoiceControlFact control{};
-    EXPECT_FALSE(binding->receipt->TryRead(*binding, &control));
-    EXPECT_TRUE(engine.playableInstances.HasSourceRetirementHold(gate.source->leaf));
-    EXPECT_TRUE(engine.playableInstances.Classify(gate.source->leaf).live);
     gate.release.store(true, std::memory_order_release);
     harken::detail::VoicePoolReleaseTestAccess::JoinWorkers(engine.voices);
     EXPECT_TRUE(gate.exited.load(std::memory_order_acquire));
-    EXPECT_FALSE(engine.sourceTerminals.Capture(gate.sourceToken, UINT64_MAX, &terminal));
-    EXPECT_FALSE(binding->receipt->TryRead(*binding, &control));
-    EXPECT_TRUE(engine.playableInstances.HasSourceRetirementHold(gate.source->leaf));
+    const auto completed = engine.voices.RenderAll(h.audio.arena, h.audio.planes.data(), kBlock,
+        engine.notifications, 0, 0, 0);
+    EXPECT_FALSE(completed.batchDeferred);
+
 }
 
 TEST(AuthoredStopAudio, FrontierExecutorFinalizesEntryAndEarlierControlBeforeStop) {
@@ -1210,7 +1208,8 @@ TEST(AuthoredStopAudio, LaneBackedVariableEntryAppliesOnlyAfterWholeBucketClaim)
             1, true, &directProof, h.member.frontier));
         directProof.Release();
         harken::FrontierTimelineFinalizer finalizer(h.audio.engine->voices, h.arms);
-        ASSERT_TRUE(finalizer.Attach(h.decisions, h.pool));
+        ASSERT_TRUE(finalizer.Attach(h.decisions, h.pool, true));
+        ASSERT_TRUE(finalizer.AttachLaneEventStorage(h.lane));
         finalizer.AttachArmGroups(h.armGroups);
         finalizer.AttachVariableControls(h.variables);
         const auto* bucket = h.lane.CaptureDue(h.laneHandle.slot, 0);
@@ -1312,6 +1311,7 @@ TEST(AuthoredStopAudio, LaneMixedFutureWaitDoesNotGrantIndependentEntryLatePermi
 
     harken::FrontierTimelineFinalizer finalizer(h.audio.engine->voices, h.arms);
     ASSERT_TRUE(finalizer.Attach(h.decisions, h.pool, true));
+    ASSERT_TRUE(finalizer.AttachLaneEventStorage(h.lane));
     const auto inspect = [&](const harken::ImmediateLaneBucket* bucket, std::uint64_t quantum) {
         finalizer.BeginLane(quantum, kBlock, h.lane, bucket, h.laneHandle.slot);
         const auto* groups = h.lane.Groups(h.laneHandle.slot, bucket);
@@ -1370,7 +1370,8 @@ TEST(AuthoredStopAudio, LaneBucketMissingSecondCoordinatorKeepsFirstUnapplied) {
         false, false, false, false, UINT64_MAX, false, true, true);
     ASSERT_FALSE(::testing::Test::HasFatalFailure());
     harken::FrontierTimelineFinalizer finalizer(h.audio.engine->voices, h.arms);
-    ASSERT_TRUE(finalizer.Attach(h.decisions, h.pool));
+    ASSERT_TRUE(finalizer.Attach(h.decisions, h.pool, true));
+    ASSERT_TRUE(finalizer.AttachLaneEventStorage(h.lane));
     finalizer.AttachArmGroups(h.armGroups);
     finalizer.AttachVariableControls(h.variables);
     const auto* bucket = h.lane.CaptureDue(h.laneHandle.slot, 0);
@@ -1485,6 +1486,7 @@ TEST(AuthoredStopAudio, LaneStagedStartRequiresExactOriginalAndHeldNativeProofs)
         SCOPED_TRACE(static_cast<unsigned>(fault));
         harken::FrontierTimelineFinalizer finalizer(h.audio.engine->voices, h.arms);
         ASSERT_TRUE(finalizer.Attach(h.decisions, h.pool, true));
+        ASSERT_TRUE(finalizer.AttachLaneEventStorage(h.lane));
         finalizer.AttachArmGroups(h.armGroups);
         finalizer.AttachVariableControls(h.variables);
         finalizer.BeginLane(0u, kBlock, h.lane, bucket, h.laneHandle.slot);
@@ -1548,7 +1550,8 @@ TEST(AuthoredStopAudio, LaneBucketClaimsAllCoordinatorsOrAbortsAllClaimedLeases)
             false, false, false, false, UINT64_MAX, false, true, false, true);
         ASSERT_FALSE(::testing::Test::HasFatalFailure());
         harken::FrontierTimelineFinalizer finalizer(h.audio.engine->voices, h.arms);
-        ASSERT_TRUE(finalizer.Attach(h.decisions, h.pool));
+        ASSERT_TRUE(finalizer.Attach(h.decisions, h.pool, true));
+        ASSERT_TRUE(finalizer.AttachLaneEventStorage(h.lane));
         finalizer.AttachArmGroups(h.armGroups);
         finalizer.AttachVariableControls(h.variables);
         const auto* bucket = h.lane.CaptureDue(h.laneHandle.slot, 0);
@@ -2041,14 +2044,14 @@ TEST(AuthoredStopAudio, FrontierFinalizedSpansSortOriginalFullKeysWithoutLosingG
     StopAudioHarness h(0);
     const auto render = h.Play();
     h.Begin();
-    auto earlier = WithFrontierProof(StartAt(8), render, 0, harken::FrontierEventState::Applied);
+    auto earlier = WithFrontierGuard(StartAt(8), render, 0, harken::FrontierEventState::Applied);
     auto later = earlier;
     earlier.order.rowSequence = 3;
     later.order.rowSequence = 9;
     later.frontierProof.state = harken::FrontierEventState::Rejected;
     h.Append(render, later);
     h.Append(render, StopAt(32));
-    h.Append(render, earlier);
+    AppendProvenFrontier(h, render, earlier);
     h.engine->voices.FinalizeTimelineQuantum(0);
     const auto& span = h.engine->voices.Resolve(render)->timelineEvents;
     ASSERT_EQ(3u, span.eventCount);
@@ -2098,18 +2101,21 @@ TEST(AuthoredStopAudio, FrontierReservationMustBeCompleteAndExactBeforeNonFailin
         auto cursor = StartAt(8);
         cursor.kind = harken::TimelineEventKind::SetStartCursor;
         cursor.value = 128;
-        cursor = WithFrontierProof(cursor, render, h.quantum, harken::FrontierEventState::Pending);
-        ASSERT_TRUE(voices.StageReservedTimelineEvent(reservation, 0, cursor));
-        EXPECT_FALSE(voices.StageReservedTimelineEvent(reservation, 0, cursor));
+        cursor = WithFrontierGuard(cursor, render, h.quantum, harken::FrontierEventState::Pending);
+        EXPECT_FALSE(voices.StageReservedTimelineEvent(reservation, 0, cursor, {}, TestFrontierOperation(cursor)));
+        EXPECT_FALSE(voices.StageReservedTimelineEvent(reservation, 0, cursor, TestFrontierEntry(), {}));
         EXPECT_FALSE(voices.ProveTimelineReservation(reservation, &proof));
-        auto start = WithFrontierProof(StartAt(8), render, h.quantum, harken::FrontierEventState::Pending);
+        ASSERT_TRUE(voices.StageReservedTimelineEvent(reservation, 0, cursor, TestFrontierEntry(), TestFrontierOperation(cursor)));
+        EXPECT_FALSE(voices.StageReservedTimelineEvent(reservation, 0, cursor, TestFrontierEntry(), TestFrontierOperation(cursor)));
+        EXPECT_FALSE(voices.ProveTimelineReservation(reservation, &proof));
+        auto start = WithFrontierGuard(StartAt(8), render, h.quantum, harken::FrontierEventState::Pending);
         auto stale = reservation;
         ++stale.renderGeneration;
-        EXPECT_FALSE(voices.StageReservedTimelineEvent(stale, 1, start));
+        EXPECT_FALSE(voices.StageReservedTimelineEvent(stale, 1, start, TestFrontierEntry(), TestFrontierOperation(start)));
         stale = reservation;
         ++stale.quantum;
-        EXPECT_FALSE(voices.StageReservedTimelineEvent(stale, 1, start));
-        ASSERT_TRUE(voices.StageReservedTimelineEvent(reservation, 1, start));
+        EXPECT_FALSE(voices.StageReservedTimelineEvent(stale, 1, start, TestFrontierEntry(), TestFrontierOperation(start)));
+        ASSERT_TRUE(voices.StageReservedTimelineEvent(reservation, 1, start, TestFrontierEntry(), TestFrontierOperation(start)));
         ASSERT_TRUE(voices.ProveTimelineReservation(reservation, &proof));
         EXPECT_FALSE(voices.CancelTimelineBinding(slot, generation));
         EXPECT_FALSE(voices.RejectTimelineReservation(reservation));
@@ -2313,8 +2319,8 @@ TEST(AuthoredStopAudio, FrontierReservationProofReleaseAndQuantumReuseCannotExec
     const auto generation = static_cast<std::uint32_t>(render >> 32);
     harken::VoiceTimelineReservation reservation{};
     ASSERT_TRUE(voices.ReserveTimelineEvents(slot, generation, h.quantum, 1, &reservation));
-    const auto event = WithFrontierProof(StartAt(8), render, h.quantum, harken::FrontierEventState::Pending);
-    ASSERT_TRUE(voices.StageReservedTimelineEvent(reservation, 0, event));
+    const auto event = WithFrontierGuard(StartAt(8), render, h.quantum, harken::FrontierEventState::Pending);
+    ASSERT_TRUE(voices.StageReservedTimelineEvent(reservation, 0, event, TestFrontierEntry(), TestFrontierOperation(event)));
     {
         harken::VoiceTimelineReservationProof proof{};
         ASSERT_TRUE(voices.ProveTimelineReservation(reservation, &proof));
@@ -2324,9 +2330,9 @@ TEST(AuthoredStopAudio, FrontierReservationProofReleaseAndQuantumReuseCannotExec
     h.Begin();
     harken::VoiceTimelineReservation replacement{};
     ASSERT_TRUE(voices.ReserveTimelineEvents(slot, generation, h.quantum, 1, &replacement));
-    EXPECT_FALSE(voices.StageReservedTimelineEvent(reservation, 0, event));
+    EXPECT_FALSE(voices.StageReservedTimelineEvent(reservation, 0, event, TestFrontierEntry(), TestFrontierOperation(event)));
     EXPECT_FALSE(voices.RejectTimelineReservation(reservation));
-    EXPECT_TRUE(voices.StageReservedTimelineEvent(replacement, 0, event));
+    EXPECT_TRUE(voices.StageReservedTimelineEvent(replacement, 0, event, TestFrontierEntry(), TestFrontierOperation(event)));
     h.Render();
     for (std::uint32_t i = 0; i < kBlock; ++i) EXPECT_EQ(0.0f, h.Sample(i));
 }
@@ -2334,16 +2340,17 @@ TEST(AuthoredStopAudio, FrontierReservationProofReleaseAndQuantumReuseCannotExec
 TEST(AuthoredStopAudio, RejectedAndUnfinalizedFrontierEventsHaveNoCascadeEffects) {
     static_assert(std::is_trivially_copyable_v<harken::FrozenFrontierEventProof>);
     for (const auto workers : {2u}) {
-        for (const auto state : {harken::FrontierEventState::Pending, harken::FrontierEventState::Rejected}) {
+        for (const auto state : {harken::FrontierEventState::Pending, harken::FrontierEventState::Rejected,
+                                harken::FrontierEventState::Applied, harken::FrontierEventState::LaneApplied}) {
             StopAudioHarness h(workers);
             const auto render = h.Play();
             h.Begin();
             auto cursor = StartAt(8);
             cursor.kind = harken::TimelineEventKind::SetStartCursor;
             cursor.value = 1024;
-            h.Append(render, WithFrontierProof(cursor, render, h.quantum, state));
-            h.Append(render, WithFrontierProof(StartAt(8), render, h.quantum, state));
-            h.Append(render, WithFrontierProof(StopAt(4), render, h.quantum, state));
+            h.Append(render, WithFrontierGuard(cursor, render, h.quantum, state));
+            h.Append(render, WithFrontierGuard(StartAt(8), render, h.quantum, state));
+            h.Append(render, WithFrontierGuard(StopAt(4), render, h.quantum, state));
             h.Append(render, StartAt(16));
             h.Append(render, StopAt(32));
             h.Render();
@@ -2362,19 +2369,19 @@ TEST(AuthoredStopAudio, FrozenFrontierProofKeepsExactQuantumGenerationAndStopFac
         StopAudioHarness h(workers);
         const auto render = h.Play();
         h.Begin();
-        auto stale = WithFrontierProof(StartAt(4), render, h.quantum, harken::FrontierEventState::Applied);
+        auto stale = WithFrontierGuard(StartAt(4), render, h.quantum, harken::FrontierEventState::Applied);
         ++stale.frontierProof.renderGeneration;
-        h.Append(render, stale);
-        stale = WithFrontierProof(StartAt(6), render, h.quantum + 1u, harken::FrontierEventState::Applied);
-        h.Append(render, stale);
-        auto start = WithFrontierProof(StartAt(8), render, h.quantum, harken::FrontierEventState::Applied);
+        AppendProvenFrontier(h, render, stale);
+        stale = WithFrontierGuard(StartAt(6), render, h.quantum + 1u, harken::FrontierEventState::Applied);
+        AppendProvenFrontier(h, render, stale);
+        auto start = WithFrontierGuard(StartAt(8), render, h.quantum, harken::FrontierEventState::Applied);
         start.frontierProof.cutoffFrame = 32;
-        h.Append(render, start);
-        auto late = WithFrontierProof(StartAt(32), render, h.quantum, harken::FrontierEventState::Applied);
+        AppendProvenFrontier(h, render, start);
+        auto late = WithFrontierGuard(StartAt(32), render, h.quantum, harken::FrontierEventState::Applied);
         late.kind = harken::TimelineEventKind::SetStartCursor;
         late.value = 1024;
         late.frontierProof.cutoffFrame = 32;
-        h.Append(render, late);
+        AppendProvenFrontier(h, render, late);
         auto stop = StopAt(32);
         stop.authoredStopOperation = {2, 3, 1, 1, 4, 0, 32};
         h.Append(render, stop);
@@ -4286,8 +4293,8 @@ TEST(AuthoredStopAudio, FinalizedCurrentSpanMergesOnlyTrueEligibleCutoffAcrossPa
             harken::VoiceTimelineReservation page{}, lane{};
             const auto reservePage = [&] {
                 EXPECT_TRUE(voices.ReserveTimelineEvents(slot, generation, 0, 1, &page));
-                auto event = WithFrontierProof(StartAt(32), render, 0, harken::FrontierEventState::Pending);
-                EXPECT_TRUE(voices.StageReservedTimelineEvent(page, 0, event));
+                auto event = WithFrontierGuard(StartAt(32), render, 0, harken::FrontierEventState::Pending);
+                EXPECT_TRUE(voices.StageReservedTimelineEvent(page, 0, event, TestFrontierEntry(), TestFrontierOperation(event)));
                 harken::VoiceTimelineReservationProof proof;
                 EXPECT_TRUE(voices.ProveTimelineReservation(page, &proof));
                 voices.ApplyProvenTimelineReservation(proof, UINT64_MAX);
@@ -6588,7 +6595,7 @@ TEST(AuthoredStopAudio, PendingControlSourceLoanReturnsBeforeMaximumGenerationQu
         SCOPED_TRACE(sourceMaximum);
         harken::TimelineArmTable table(2);
         PendingControlRecord h;
-        table.RowAt(sourceMaximum ? 0u : 1u)->generation = UINT32_MAX;
+        ASSERT_TRUE(table.SetFreeGenerationForTests(sourceMaximum ? 0u : 1u, UINT32_MAX));
         ASSERT_TRUE(h.PrepareSource(table));
         ASSERT_TRUE(h.CommitControl(table));
         ASSERT_TRUE(h.BindSource(table, 120));
@@ -6783,7 +6790,7 @@ TEST(AuthoredStopAudio, PendingControlPreparedMaximumDisposesToQuarantineWithout
     for (const bool sourceMaximum : {false, true}) {
         harken::TimelineArmTable table(2);
         PendingControlRecord h;
-        table.RowAt(sourceMaximum ? 0 : 1)->generation = UINT32_MAX;
+        ASSERT_TRUE(table.SetFreeGenerationForTests(sourceMaximum ? 0u : 1u, UINT32_MAX));
         ASSERT_TRUE(h.PrepareSource(table));
         const auto token = sourceMaximum ? h.source : h.record.token;
         ASSERT_EQ(UINT32_MAX, token.generation);
@@ -7470,6 +7477,7 @@ namespace {
 struct OriginalControlHeaderHarness : MixerPendingControlHarness {
     bool Prepare() {
         auto& engine = *audio.engine;
+        if (!engine.authoredStopResources.ConstructThrough(1)) return false;
         control.record.input.renderSlot = static_cast<std::uint32_t>(render);
         control.record.input.renderGeneration = static_cast<std::uint32_t>(render >> 32);
         if (!control.PrepareControl(engine.timelineArms) ||

@@ -26,23 +26,96 @@ bool ValidConfig(std::uint32_t capacity,
 
 ArmGroupTable::ArmGroupTable(std::uint32_t capacity,
                              std::uint32_t maxMembersPerGroup)
-    : rows_(ValidConfig(capacity, maxMembersPerGroup)
-                ? std::make_unique<Row[]>(capacity)
-                : nullptr),
-      members_(!ValidConfig(capacity, maxMembersPerGroup)
-                   ? nullptr
-                   : std::make_unique<MemberRow[]>(
-                         static_cast<std::size_t>(capacity) *
-                         maxMembersPerGroup)),
-      capacity_(ValidConfig(capacity, maxMembersPerGroup) ? capacity : 0),
+    : capacity_(ValidConfig(capacity, maxMembersPerGroup) ? capacity : 0),
       maxMembersPerGroup_(ValidConfig(capacity, maxMembersPerGroup)
                               ? static_cast<std::uint16_t>(maxMembersPerGroup)
-                              : 0) {}
+                              : 0) {
+    if (!rows_.Reserve(capacity_)) throw std::bad_alloc{};
+}
+
+std::size_t ArmGroupTable::MemberStorageBytes() const noexcept {
+    std::size_t bytes = preparedMemberBytes_;
+    for (const auto& row : rows_) bytes += row.memberCapacity * sizeof(MemberRow);
+    return bytes;
+}
+
+ArmGroupTable::PreparedMembers::~PreparedMembers() {
+    if (owner != nullptr) owner->preparedMemberBytes_ -=
+        sizeof(PreparedMembers) + static_cast<std::size_t>(capacity) * sizeof(MemberRow);
+}
+
+ArmGroupTable::BackingPreparation::~BackingPreparation() { Release(); }
+ArmGroupTable::BackingPreparation::BackingPreparation(BackingPreparation&& other) noexcept {
+    *this = std::move(other);
+}
+ArmGroupTable::BackingPreparation& ArmGroupTable::BackingPreparation::operator=(BackingPreparation&& other) noexcept {
+    if (this != &other) {
+        Release();
+        rows_ = std::move(other.rows_);
+        members_ = std::move(other.members_);
+    }
+    return *this;
+}
+
+void ArmGroupTable::BackingPreparation::Release() noexcept {
+    for (auto& member : members_) {
+        if (member != nullptr && member->inUse) {
+            member->held = false;
+            (void)member.release();
+        }
+    }
+    members_.clear();
+    rows_.Release();
+}
+
+ArmGroupTable::PreparedUse::PreparedUse(ArmGroupTable& owner, BackingPreparation* backing) noexcept
+    : owner_(owner), previous_(owner.activeBacking_),
+      rows_(backing == nullptr ? StableStoragePreparedUse{} : backing->rows_.Use()) {
+    owner_.activeBacking_ = backing;
+}
+ArmGroupTable::PreparedUse::~PreparedUse() { owner_.activeBacking_ = previous_; }
+
+bool ArmGroupTable::PrepareBacking(std::uint32_t groupCount, std::uint32_t totalMembers,
+                                  BackingPreparation* out) noexcept {
+    if (out == nullptr || out->Valid() || memguard::IsAudioTagged()) return false;
+    groupCount = std::min(groupCount, capacity_);
+    auto occupied = rows_.ConstructedCount();
+    while (occupied != 0 && rows_[occupied - 1u].slotState.load(std::memory_order_acquire) == SlotState::Free)
+        --occupied;
+    BackingPreparation candidate;
+    if (!rows_.PrepareBacking(groupCount, occupied, &candidate.rows_)) return false;
+    try {
+        const auto nonempty = std::min(groupCount, totalMembers);
+        candidate.members_.reserve(nonempty);
+        // Sorted group sizes obey size[i] <= totalMembers / (i + 1).
+        for (std::uint32_t index = 0; index < nonempty; ++index) {
+            const auto count = static_cast<std::uint16_t>(std::min<std::uint32_t>(
+                maxMembersPerGroup_, totalMembers / (index + 1u)));
+            if (count > memberAllocationLimitForTests_) return false;
+            auto member = std::make_unique<PreparedMembers>();
+            member->members = std::make_unique<MemberRow[]>(count);
+            member->capacity = count;
+            member->owner = this;
+            preparedMemberBytes_ += sizeof(PreparedMembers) +
+                static_cast<std::size_t>(count) * sizeof(MemberRow);
+            candidate.members_.push_back(std::move(member));
+        }
+    } catch (...) { return false; }
+    *out = std::move(candidate);
+    return true;
+}
+
+void ArmGroupTable::ReturnPreparedMembers(Row& row) noexcept {
+    auto* member = std::exchange(row.preparedMembers, nullptr);
+    if (member == nullptr) return;
+    member->inUse = false;
+    if (!member->held) delete member;
+}
 
 ArmGroupTable::MemberRow* ArmGroupTable::Members(
     std::uint32_t slot) noexcept {
-    return members_.get() +
-           static_cast<std::size_t>(slot) * maxMembersPerGroup_;
+    const auto& row = rows_[slot];
+    return row.preparedMembers != nullptr ? row.preparedMembers->members.get() : row.members.get();
 }
 
 const ArmGroupTable::MemberRow* ArmGroupTable::Members(
@@ -51,7 +124,7 @@ const ArmGroupTable::MemberRow* ArmGroupTable::Members(
 }
 
 ArmGroupTable::Row* ArmGroupTable::Resolve(ArmGroupToken token) noexcept {
-    if (!token.Valid() || token.slot >= capacity_) {
+    if (!token.Valid() || token.slot >= rows_.ConstructedCount()) {
         return nullptr;
     }
     Row& row = rows_[token.slot];
@@ -81,7 +154,7 @@ ArmGroupTable::MemberRow* ArmGroupTable::ResolveMember(
 
 std::uint32_t ArmGroupTable::LiveCount() const noexcept {
     std::uint32_t count = 0;
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
+    for (std::uint32_t slot = 0, constructed = rows_.ConstructedCount(); slot < constructed; ++slot) {
         if (rows_[slot].slotState.load(std::memory_order_acquire) ==
             SlotState::Live) {
             ++count;
@@ -91,8 +164,9 @@ std::uint32_t ArmGroupTable::LiveCount() const noexcept {
 }
 
 std::uint32_t ArmGroupTable::FreeCount() const noexcept {
-    std::uint32_t count = 0;
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
+    const auto constructed = rows_.ConstructedCount();
+    std::uint32_t count = capacity_ - constructed;
+    for (std::uint32_t slot = 0; slot < constructed; ++slot) {
         if (rows_[slot].slotState.load(std::memory_order_acquire) ==
             SlotState::Free) {
             ++count;
@@ -103,7 +177,7 @@ std::uint32_t ArmGroupTable::FreeCount() const noexcept {
 
 std::uint32_t ArmGroupTable::QuarantinedCount() const noexcept {
     std::uint32_t count = 0;
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
+    for (std::uint32_t slot = 0, constructed = rows_.ConstructedCount(); slot < constructed; ++slot) {
         if (rows_[slot].slotState.load(std::memory_order_acquire) ==
             SlotState::Quarantined) {
             ++count;
@@ -131,7 +205,7 @@ bool ArmGroupTable::ReserveInternal(DecisionToken parent,
                                     std::uint16_t memberCount,
                                     ArmGroupToken* outToken,
                                     bool prepared) noexcept {
-    if (!parent.Valid() || (memberCount != 0 && members == nullptr) ||
+    if (memguard::IsAudioTagged() || !parent.Valid() || (memberCount != 0 && members == nullptr) ||
         memberCount > maxMembersPerGroup_ || outToken == nullptr) {
         return false;
     }
@@ -146,10 +220,40 @@ bool ArmGroupTable::ReserveInternal(DecisionToken parent,
         }
     }
     for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
+        if (!rows_.ConstructThrough(slot + 1u)) return false;
         Row& row = rows_[slot];
         if (row.slotState.load(std::memory_order_acquire) != SlotState::Free ||
             row.reservation.test_and_set(std::memory_order_acquire)) {
             continue;
+        }
+        // Reuse only after the original group fence; published member addresses stay fixed.
+        if (memberCount > row.memberCapacity) {
+            if (activeBacking_ != nullptr) {
+                PreparedMembers* best = nullptr;
+                for (const auto& candidate : activeBacking_->members_) {
+                    if (candidate == nullptr || candidate->inUse || candidate->capacity < memberCount) continue;
+                    if (best == nullptr || candidate->capacity < best->capacity) best = candidate.get();
+                }
+                if (best == nullptr) {
+                    row.reservation.clear(std::memory_order_release);
+                    return false;
+                }
+                best->inUse = true;
+                row.preparedMembers = best;
+            } else {
+                if (memberCount > memberAllocationLimitForTests_) {
+                    row.reservation.clear(std::memory_order_release);
+                    return false;
+                }
+                try {
+                    auto candidate = std::make_unique<MemberRow[]>(memberCount);
+                    row.members.swap(candidate);
+                    row.memberCapacity = memberCount;
+                } catch (...) {
+                    row.reservation.clear(std::memory_order_release);
+                    return false;
+                }
+            }
         }
         SlotState expected = SlotState::Free;
         row.parent = parent;
@@ -179,6 +283,7 @@ bool ArmGroupTable::ReserveInternal(DecisionToken parent,
             return true;
         }
         row.identity.store(0, std::memory_order_release);
+        ReturnPreparedMembers(row);
         row.reservation.clear(std::memory_order_release);
     }
     return false;
@@ -191,7 +296,7 @@ ArmGroupTable::Row* ArmGroupTable::ResolvePrepared(
 
 const ArmGroupTable::Row* ArmGroupTable::ResolvePrepared(
     ArmGroupToken token) const noexcept {
-    if (!token.Valid() || token.slot >= capacity_) {
+    if (!token.Valid() || token.slot >= rows_.ConstructedCount()) {
         return nullptr;
     }
     const Row& row = rows_[token.slot];
@@ -234,6 +339,7 @@ bool ArmGroupTable::CommitPrepared(ArmGroupToken token) noexcept {
 }
 
 bool ArmGroupTable::CancelPrepared(ArmGroupToken token) noexcept {
+    if (memguard::IsAudioTagged()) return false;
     Row* row = ResolvePrepared(token);
     if (row == nullptr) {
         return false;
@@ -245,6 +351,7 @@ bool ArmGroupTable::CancelPrepared(ArmGroupToken token) noexcept {
         return false;
     }
     row->identity.store(0, std::memory_order_release);
+    ReturnPreparedMembers(*row);
     row->parent = {};
     row->memberCount = 0;
     row->ackedCount.store(0, std::memory_order_relaxed);
@@ -291,6 +398,7 @@ bool ArmGroupTable::Acknowledge(ArmGroupToken token,
 
 bool ArmGroupTable::CancelBeforePublication(
     ArmGroupToken token) noexcept {
+    if (memguard::IsAudioTagged()) return false;
     Row* row = Resolve(token);
     if (row == nullptr ||
         row->ackedCount.load(std::memory_order_acquire) != 0 ||
@@ -315,6 +423,7 @@ bool ArmGroupTable::CancelBeforePublication(
         return false;
     }
     row->identity.store(0, std::memory_order_release);
+    ReturnPreparedMembers(*row);
     if (row->generation == std::numeric_limits<std::uint32_t>::max()) {
         row->state.store(ArmGroupState::Quarantined,
                          std::memory_order_release);
@@ -399,6 +508,7 @@ bool ArmGroupTable::HasPublishedMemberTombstone(
 
 bool ArmGroupTable::Reclaim(ArmGroupToken token,
                             std::uint64_t observedAudioSequence) noexcept {
+    if (memguard::IsAudioTagged()) return false;
     Row* row = Resolve(token);
     if (row == nullptr ||
         row->state.load(std::memory_order_acquire) !=
@@ -416,6 +526,7 @@ bool ArmGroupTable::Reclaim(ArmGroupToken token,
         return false;
     }
     row->identity.store(0, std::memory_order_release);
+    ReturnPreparedMembers(*row);
     if (row->generation == std::numeric_limits<std::uint32_t>::max()) {
         row->state.store(ArmGroupState::Quarantined,
                          std::memory_order_release);
