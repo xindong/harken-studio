@@ -18,6 +18,7 @@
 
 #ifdef Q_OS_WIN
 #include <windows.h>
+#include <sddl.h>
 #endif
 
 namespace {
@@ -72,7 +73,18 @@ TEST(IntegrationDirectoryTest, ChecksCreationAndRenamePermissionsWithoutChanging
     QString error;
     EXPECT_TRUE(VNH::checkIntegrationDirectoryChanges({parent + "/nested/new"}, {installed}, &error));
 #ifdef Q_OS_WIN
-    const QString account = qEnvironmentVariable("USERDOMAIN") + '\\' + qEnvironmentVariable("USERNAME");
+    HANDLE token = nullptr;
+    ASSERT_TRUE(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token));
+    const auto closeToken = qScopeGuard([&]() { CloseHandle(token); });
+    DWORD bytes = 0;
+    GetTokenInformation(token, TokenUser, nullptr, 0, &bytes);
+    ASSERT_GT(bytes, 0u);
+    QByteArray tokenData(bytes, Qt::Uninitialized);
+    ASSERT_TRUE(GetTokenInformation(token, TokenUser, tokenData.data(), bytes, &bytes));
+    LPWSTR sid = nullptr;
+    ASSERT_TRUE(ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER*>(tokenData.data())->User.Sid, &sid));
+    const QString account = '*' + QString::fromWCharArray(sid);
+    LocalFree(sid);
     const auto restore = qScopeGuard([&]() {
         QProcess::execute("icacls", {parent, "/remove:d", account});
         QProcess::execute("icacls", {installed, "/remove:d", account});
