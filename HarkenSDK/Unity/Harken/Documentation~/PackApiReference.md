@@ -352,3 +352,8 @@ to the thread pool. Shutdown invalidates pending reads only after it succeeds;
 component Disable also cancels a pending startup. Late completions cannot
 initialize or publish into a later session. Configure auto-start with
 `ConfigureCompanionSourceBeforeStartup(source)` before the component's Awake.
+
+SDK requests finish cancellation even when a reader ignores its token. Such a
+reader still owns its underlying I/O and should cooperate with cancellation.
+A reader and its asynchronous continuations cannot prepare on the same session
+(`VN_IN_USE`); unrelated callers can still share the pending read.

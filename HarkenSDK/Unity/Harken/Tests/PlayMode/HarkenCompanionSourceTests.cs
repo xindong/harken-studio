@@ -132,12 +132,12 @@ namespace Harken.Unity.Tests
                 var log = Registration("logRegistration");
                 Assert.That(notification.IsActive && log.IsActive, Is.True);
                 cancel.Cancel();
-                init.SetResult(Read("Init.bytes"));
                 yield return Until(start);
                 Assert.That(start.IsCanceled, Is.True);
                 Assert.That(fixture.Runtime.State, Is.EqualTo(HarkenRuntimeState.Stopped));
                 Assert.That(notification.IsActive || log.IsActive, Is.False);
                 Assert.That(fixture.Runtime.StartRuntime(PackSource.FromReader(Read)), Is.EqualTo(VnResult.VN_OK));
+                init.SetResult(Read("Init.bytes"));
                 Assert.That(Registration("notificationRegistration").IsActive, Is.True);
                 Assert.That(Registration("logRegistration").IsActive, Is.True);
             }
@@ -223,13 +223,15 @@ namespace Harken.Unity.Tests
                             string path = Uri.UnescapeDataString(context.Request.Url.AbsolutePath.TrimStart('/'));
                             byte[] bytes = null;
                             if (path.StartsWith("French/", StringComparison.Ordinal)) context.Response.StatusCode = Fail ? 500 : 404;
-                            else
+                            else if (path == "Init.bytes" || path == "Init.json" ||
+                                path == "Play_Head.bytes" || path == "Play_Head.json")
                             {
                                 string file = Path.Combine(directory, path);
                                 if (File.Exists(file)) bytes = File.ReadAllBytes(file);
                                 context.Response.StatusCode = bytes == null ? 404 : 200;
                                 if (path.StartsWith("Play_Head", StringComparison.Ordinal)) Interlocked.Increment(ref GeneralReads);
                             }
+                            else context.Response.StatusCode = 404;
                             if (bytes != null) context.Response.OutputStream.Write(bytes, 0, bytes.Length);
                             context.Response.Close();
                         }
