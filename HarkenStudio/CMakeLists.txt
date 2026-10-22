@@ -426,6 +426,8 @@ if(WIN32)
     # embedded in the exe matches what the About dialog and startup logs report.
     # Right Click → Properties → Details reads FileVersion / ProductVersion /
     # Comments (which carries the full BuildInfo Label + commit + timestamp).
+    set_source_files_properties("HarkenStudio.rc" PROPERTIES
+        OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Resources/icons/HarkenStudio.ico")
     add_executable(harken_editor WIN32 Source/Main.cpp "resources.qrc" "HarkenStudio.rc")
 else()
     set_source_files_properties("Resources/icons/HarkenStudio.icns"

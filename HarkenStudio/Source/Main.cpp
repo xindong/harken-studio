@@ -2,6 +2,7 @@
 #include <QCoreApplication>
 #include <QFile>
 #include <QFileInfo>
+#include <QIcon>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSettings>
@@ -189,6 +190,7 @@ int main(int argc, char* argv[])
         static_cast<int>(Harken::BuildInfo::Version.size())));
     app.setOrganizationName(QStringLiteral("HarkenSound"));
     app.setOrganizationDomain(QStringLiteral("harkensound.com"));
+    app.setWindowIcon(QIcon(QStringLiteral(":/Resources/icons/HarkenStudio.ico")));
 
     VNX::ProjectTemplateLoader::ensureUserTemplatesSeeded();
     VNX::ThemeManager::instance();
