@@ -80,6 +80,7 @@
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QElapsedTimer>
+#include <QScopedValueRollback>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QTimer>
@@ -5137,18 +5138,6 @@ TEST(AudioEnginePreview, RuntimeRestartCancelsPendingPreviewStart)
     ASSERT_TRUE(engine.startOutput());
     ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
 
-    constexpr harkenstudio::ObjectId foreignBus = harkentest::StudioObjectId(7001);
-    ASSERT_FALSE(harkenstudio::IsNull(foreignBus));
-    ASSERT_NE(foreignBus, harkenstudio::kMasterBusObjectId);
-    ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ToRuntime(foreignBus),harkentest::ToRuntime(harkenstudio::kMasterBusObjectId)));
-    VnResult saturation = VN_OK;
-    int saturatedCommands = 0;
-    while (saturation == VN_OK && saturatedCommands < 512) {
-        saturation = Vn_SetBusVolume(harkentest::ToRuntime(foreignBus), -1.0f, 0);
-        ++saturatedCommands;
-    }
-    ASSERT_EQ(saturation, VN_BACKPRESSURE);
-
     HarkenEditor::AuditionManager audition(&engine);
     int startedCount = 0;
     int failedCount = 0;
@@ -5166,7 +5155,14 @@ TEST(AudioEnginePreview, RuntimeRestartCancelsPendingPreviewStart)
             failedPlay = playingId;
             failedResult = result;
         });
-    const uint32_t secondPlay = audition.playItem(*second);
+    auto* runtime = harken::detail::ActiveEngine();
+    ASSERT_NE(runtime, nullptr);
+    uint32_t secondPlay = 0;
+    {
+        QScopedValueRollback admissionClosed(
+            runtime->currentWorldReplacementAdmissionClosed, true);
+        secondPlay = audition.playItem(*second);
+    }
     ASSERT_NE(secondPlay, 0u);
     ASSERT_TRUE(audition.lastPlayPending());
     ASSERT_TRUE(audition.getAudition(secondPlay).previewStartPending);
