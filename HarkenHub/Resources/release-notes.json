@@ -14,7 +14,7 @@
       "changes": [
         {
           "category": "improved",
-          "text": "Unity SDK checks and updates recognize LF/CRLF line-ending differences as unchanged text, avoiding false modification warnings and unnecessary write-access checks. Binary files and actual content changes remain strictly checked."
+          "text": "Unity SDK checks and updates recognize LF, CRLF, and mixed line endings as unchanged text, including conversions after an update, avoiding false modification warnings and unnecessary write-access checks. Binary files and actual content changes remain strictly checked."
         },
         {
           "category": "improved",

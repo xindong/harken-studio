@@ -2280,8 +2280,8 @@ TEST(UnityIntegrationService, WriteProtectionBlocksMutationBeforeAndAfterReview)
 
 TEST(UnityIntegrationService, LineEndingConversionsPreserveIntegrityAndReadOnlyContentAcrossUpdates)
 {
-    for (const bool installedWithCrLf : {false, true}) {
-        SCOPED_TRACE(installedWithCrLf);
+    for (const int installedEnding : {0, 1, 2}) {
+        SCOPED_TRACE(installedEnding);
         QTemporaryDir dir;
         ASSERT_TRUE(dir.isValid());
         const QString project = makeUnityProject(dir.filePath("Game"));
@@ -2290,14 +2290,23 @@ TEST(UnityIntegrationService, LineEndingConversionsPreserveIntegrityAndReadOnlyC
         const QByteArray lf = QByteArray(1024 * 1024 - 1, ' ') + "\nclass Example {}\n";
         QByteArray crlf = lf;
         crlf.replace("\n", "\r\n");
-        writeFile(source + "/" + relative, installedWithCrLf ? crlf : lf);
+        QByteArray mixed = lf;
+        mixed.replace(mixed.indexOf('\n'), 1, "\r\n");
+        const QList<QByteArray> endings = {lf, crlf, mixed};
+        writeFile(source + "/" + relative, endings[installedEnding]);
         VNX::UnityIntegrationService service;
         VNX::UnityIntegrationService::Request request;
         request.unityProjectPath = project;
         request.sdkSourcePath = source;
         ASSERT_TRUE(service.run(request).success);
         const QString installed = project + "/Packages/com.harken.core";
-        const QByteArray converted = installedWithCrLf ? lf : crlf;
+        if (installedEnding < 2) {
+            const QString statePath = installed + "/.harken-integration-state.json";
+            auto state = QJsonDocument::fromJson(readFile(statePath)).object();
+            state.remove("text_lf_sha256");
+            writeFile(statePath, QJsonDocument(state).toJson());
+        }
+        const QByteArray converted = endings[(installedEnding + 1) % endings.size()];
         writeFile(installed + "/" + relative, converted);
         const auto permissions = QFileInfo(installed + "/" + relative).permissions();
         const auto restore = qScopeGuard([&]() { QFile::setPermissions(installed + "/" + relative, permissions); });
@@ -2333,6 +2342,25 @@ TEST(UnityIntegrationService, LineEndingConversionsPreserveIntegrityAndReadOnlyC
         EXPECT_EQ(readFile(installed + "/" + relative), converted);
         EXPECT_EQ(readFile(installed + "/Runtime/Generated/HarkenNative.g.cs"), "updated implementation\n");
         EXPECT_TRUE(VNH::HubUnityIntegrationService::run(verify).success);
+        ASSERT_TRUE(QFile::setPermissions(installed + "/" + relative, permissions));
+        request.checkOnly = true;
+        request.approvedPlanHash.clear();
+        for (const QByteArray& ending : endings) {
+            writeFile(installed + "/" + relative, ending);
+            inspection = VNH::HubUnityIntegrationService::run(verify);
+            EXPECT_TRUE(inspection.success);
+            EXPECT_TRUE(inspection.modifiedFiles.isEmpty());
+            review = service.run(request);
+            EXPECT_TRUE(review.success);
+            EXPECT_TRUE(review.modifiedFiles.isEmpty());
+            EXPECT_TRUE(review.targetAlreadyCurrent);
+            EXPECT_EQ(review.filesChanged, 0);
+        }
+        writeFile(installed + "/" + relative, "class Modified {}\n");
+        EXPECT_FALSE(VNH::HubUnityIntegrationService::run(verify).success);
+        review = service.run(request);
+        EXPECT_TRUE(review.modifiedFiles.contains(relative));
+        EXPECT_EQ(review.filesChanged, 1);
     }
 }
 

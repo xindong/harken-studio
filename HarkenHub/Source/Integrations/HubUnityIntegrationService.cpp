@@ -105,9 +105,12 @@ VNX::UnityIntegrationService::Result verifyInstalled(
         return finish();
     }
     const QJsonObject hashes = state.value(QStringLiteral("sha256")).toObject();
+    const QJsonObject textHashes = state.value(QStringLiteral("text_lf_sha256")).toObject();
     const QRegularExpression hashFormat(QStringLiteral("\\A[0-9a-fA-F]{64}\\z"));
     for (const QString& relative : managedFiles) {
-        if (!hashFormat.match(hashes.value(relative).toString()).hasMatch()) {
+        if (!hashFormat.match(hashes.value(relative).toString()).hasMatch()
+            || (!textHashes.value(relative).isUndefined()
+                && !hashFormat.match(textHashes.value(relative).toString()).hasMatch())) {
             inspection.summary = QStringLiteral("The installed SDK has incomplete or invalid verification data.");
             inspection.details << relative;
             inspection.remediation = QStringLiteral("Restore the installation record from a trusted backup before verifying again.");
@@ -144,7 +147,8 @@ VNX::UnityIntegrationService::Result verifyInstalled(
             unreadable << relative;
         else if (hash.result().toHex() != hashes.value(relative).toString().toLatin1().toLower()) {
             if (VNX::UnityInstallation::matchesTextHashIgnoringLineEndings(
-                    path, hashes.value(relative).toString().toLatin1()))
+                    path, hashes.value(relative).toString().toLatin1(),
+                    textHashes.value(relative).toString().toLatin1()))
                 result.lineEndingFiles << relative;
             else
                 modified << relative;

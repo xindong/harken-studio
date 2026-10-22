@@ -173,16 +173,16 @@ bool isDocumentationOrSample(const QString& relative)
         || relative == QStringLiteral("CHANGELOG.md");
 }
 
-bool matchesTextHashIgnoringLineEndings(const QString& path, const QByteArray& expected)
+QByteArray normalizedTextHash(const QString& path, QByteArray* crlfHash)
 {
     static const QSet<QString> textExtensions = {
         QStringLiteral("cs"), QStringLiteral("asmdef"), QStringLiteral("asmref"),
         QStringLiteral("json"), QStringLiteral("meta"), QStringLiteral("md"),
         QStringLiteral("txt"), QStringLiteral("xml"), QStringLiteral("yaml"),
         QStringLiteral("yml"), QStringLiteral("prefab"), QStringLiteral("unity")};
-    if (!textExtensions.contains(QFileInfo(path).suffix().toLower())) return false;
+    if (!textExtensions.contains(QFileInfo(path).suffix().toLower())) return {};
     QFile file(path);
-    if (!file.open(QIODevice::ReadOnly)) return false;
+    if (!file.open(QIODevice::ReadOnly)) return {};
     QCryptographicHash lf(QCryptographicHash::Sha256);
     QCryptographicHash crlf(QCryptographicHash::Sha256);
     QStringDecoder decoder(QStringDecoder::Utf8);
@@ -190,24 +190,37 @@ bool matchesTextHashIgnoringLineEndings(const QString& path, const QByteArray& e
     while (!file.atEnd()) {
         VNH::IntegrationProgress::checkpoint();
         QByteArray block = file.read(1024 * 1024);
-        if (file.error() != QFileDevice::NoError || block.contains('\0')) return false;
+        if (file.error() != QFileDevice::NoError || block.contains('\0')) return {};
         (void)static_cast<QString>(decoder(block));
-        if (decoder.hasError()) return false;
+        if (decoder.hasError()) return {};
         if (pendingCr) block.prepend('\r');
         pendingCr = block.endsWith('\r');
         if (pendingCr) block.chop(1);
         block.replace("\r\n", "\n");
         lf.addData(block);
-        block.replace("\n", "\r\n");
-        crlf.addData(block);
+        if (crlfHash) {
+            block.replace("\n", "\r\n");
+            crlf.addData(block);
+        }
     }
     (void)static_cast<QString>(decoder(QByteArrayView("\0", 1)));
-    if (decoder.hasError()) return false;
+    if (decoder.hasError()) return {};
     if (pendingCr) {
         lf.addData(QByteArrayView("\r", 1));
         crlf.addData(QByteArrayView("\r", 1));
     }
-    return lf.result().toHex() == expected.toLower() || crlf.result().toHex() == expected.toLower();
+    if (crlfHash) *crlfHash = crlf.result().toHex();
+    return lf.result().toHex();
+}
+
+bool matchesTextHashIgnoringLineEndings(const QString& path, const QByteArray& expected,
+                                       const QByteArray& normalizedExpected)
+{
+    QByteArray crlf;
+    const QByteArray lf = normalizedTextHash(path, normalizedExpected.isEmpty() ? &crlf : nullptr);
+    if (lf.isEmpty()) return false;
+    if (!normalizedExpected.isEmpty()) return lf == normalizedExpected.toLower();
+    return lf == expected.toLower() || crlf == expected.toLower();
 }
 
 QString defaultRelativePath()

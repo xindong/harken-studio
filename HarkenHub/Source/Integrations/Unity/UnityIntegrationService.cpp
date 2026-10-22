@@ -647,6 +647,7 @@ bool writeInstalledState(const QString& stageRoot,
                          const QString& version,
                          const QStringList& managedFiles,
                          const QMap<QString, QByteArray>& hashes,
+                         const QMap<QString, QByteArray>& textHashes,
                          QString* error)
 {
     QJsonObject root;
@@ -661,6 +662,10 @@ bool writeInstalledState(const QString& stageRoot,
     for (auto it = hashes.cbegin(); it != hashes.cend(); ++it)
         fileHashes[it.key()] = QString::fromLatin1(it.value());
     root[QStringLiteral("sha256")] = fileHashes;
+    QJsonObject textFileHashes;
+    for (auto it = textHashes.cbegin(); it != textHashes.cend(); ++it)
+        textFileHashes[it.key()] = QString::fromLatin1(it.value());
+    root[QStringLiteral("text_lf_sha256")] = textFileHashes;
 
     QSaveFile file(QDir(stageRoot).filePath(QLatin1String(kInstalledState)));
     if (!file.open(QIODevice::WriteOnly) ||
@@ -1854,6 +1859,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
     QStringList filesToChange;
     QMap<QString, QString> runtimeMetadataMoves;
     QMap<QString, QByteArray> sourceHashes;
+    QMap<QString, QByteArray> sourceTextHashes;
     QMap<QString, QByteArray> installedContentHashes;
     QSet<QString> declaredOptionalRuntimePaths;
     QString updateBackupRoot;
@@ -2102,6 +2108,9 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
                 return;
             }
             sourceHashes.insert(relative, digest.hash);
+            const QByteArray textHash = UnityInstallation::normalizedTextHash(
+                QDir(result.sdkSourcePath).filePath(relative));
+            if (!textHash.isEmpty()) sourceTextHashes.insert(relative, textHash);
         }
         sourceVersion = packageVersion(result.sdkSourcePath);
         installedContentHashes = sourceHashes;
@@ -2187,9 +2196,10 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             step.remediation = QStringLiteral("Restore the ownership record from backup, or resolve file access errors, then check again.");
             return;
         }
-        const QJsonObject installedHashes = readJsonObject(
-            QDir(targetSdk).filePath(QLatin1String(kInstalledState))).object
-                .value(QStringLiteral("sha256")).toObject();
+        const QJsonObject installedState = readJsonObject(
+            QDir(targetSdk).filePath(QLatin1String(kInstalledState))).object;
+        const QJsonObject installedHashes = installedState.value(QStringLiteral("sha256")).toObject();
+        const QJsonObject installedTextHashes = installedState.value(QStringLiteral("text_lf_sha256")).toObject();
         const QJsonObject actualHashes = targetSnapshot.value(QStringLiteral("files")).toObject();
         for (const QString& relative : previousManaged.managedFiles) {
             if (result.planHash.isEmpty()) break;
@@ -2203,7 +2213,8 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
                      && actualHashes.value(relative).toString().compare(
                          installedHashes.value(relative).toString(), Qt::CaseInsensitive) != 0) {
                 if (UnityInstallation::matchesTextHashIgnoringLineEndings(
-                        QDir(targetSdk).filePath(relative), installedHashes.value(relative).toString().toLatin1()))
+                        QDir(targetSdk).filePath(relative), installedHashes.value(relative).toString().toLatin1(),
+                        installedTextHashes.value(relative).toString().toLatin1()))
                     result.lineEndingFiles << relative;
                 else
                     result.modifiedFiles << relative;
@@ -2247,7 +2258,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
                 unreadableTargets << relative;
             } else if (!digest.matches(sourceHashes.value(relative))) {
                 if (UnityInstallation::matchesTextHashIgnoringLineEndings(
-                        QDir(targetSdk).filePath(relative), sourceHashes.value(relative))) {
+                        QDir(targetSdk).filePath(relative), sourceHashes.value(relative), sourceTextHashes.value(relative))) {
                     lineEndingPreservedFiles << relative;
                     if (!result.lineEndingFiles.contains(relative)) result.lineEndingFiles << relative;
                     installedContentHashes[relative] = digest.hash;
@@ -2438,7 +2449,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             (!preservedFiles.isEmpty() &&
              !copyFiles(targetSdk, stageRoot, preservedFiles, &error)) ||
             !writeInstalledState(stageRoot, sourceVersion, sourceFiles,
-                                 installedContentHashes, &error)) {
+                                 installedContentHashes, sourceTextHashes, &error)) {
             QDir(stageRoot).removeRecursively();
             step.status = StepStatus::Failed;
             step.summary = QStringLiteral("Failed to stage the Unity SDK update.");
@@ -2466,7 +2477,10 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
                 QDir(stageRoot).filePath(relative));
             if (digest.unreadable())
                 stagingUnreadable << relative;
-            else if (!digest.matches(installedContentHashes.value(relative)))
+            else if (!digest.matches(installedContentHashes.value(relative))
+                     || (sourceTextHashes.contains(relative)
+                         && UnityInstallation::normalizedTextHash(QDir(stageRoot).filePath(relative))
+                             != sourceTextHashes.value(relative)))
                 stagingMismatches << relative;
         }
         if (!stagingMismatches.isEmpty() || !stagingUnreadable.isEmpty()) {

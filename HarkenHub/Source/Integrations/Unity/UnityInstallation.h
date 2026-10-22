@@ -28,7 +28,9 @@ bool samePath(const QString& left, const QString& right);
 bool containsPath(const QString& parent, const QString& child);
 bool safeRelativePath(const QString& path);
 bool isDocumentationOrSample(const QString& relative);
-bool matchesTextHashIgnoringLineEndings(const QString& path, const QByteArray& expected);
+QByteArray normalizedTextHash(const QString& path, QByteArray* crlfHash = nullptr);
+bool matchesTextHashIgnoringLineEndings(const QString& path, const QByteArray& expected,
+                                       const QByteArray& normalizedExpected = {});
 bool validatePath(const QString& path, QString* error);
 bool validateTree(const QString& path, QString* error);
 bool resolveTarget(const QString& projectRoot, const QString& input,
