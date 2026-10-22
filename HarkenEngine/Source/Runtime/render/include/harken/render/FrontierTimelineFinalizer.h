@@ -83,6 +83,8 @@ public:
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
     std::uint32_t EventCapacityForTest() const noexcept;
     std::uint32_t GroupCapacityForTest() const noexcept;
+#endif
+#if !defined(HARKEN_RT_QUALIFICATION)
     void SetPendingEventCommitPageLimitForTest(std::size_t pages) noexcept;
     std::uint64_t PendingEventStorageBytesForTest() const noexcept;
 #endif

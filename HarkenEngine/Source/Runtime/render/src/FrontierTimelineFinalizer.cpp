@@ -2943,7 +2943,9 @@ std::uint32_t FrontierTimelineFinalizer::EventCapacityForTest() const noexcept {
 std::uint32_t FrontierTimelineFinalizer::GroupCapacityForTest() const noexcept {
     return impl_->groupCapacity;
 }
+#endif
 
+#if !defined(HARKEN_RT_QUALIFICATION)
 void FrontierTimelineFinalizer::SetPendingEventCommitPageLimitForTest(std::size_t pages) noexcept {
     impl_->pendingEvents.SetCommitPageLimitForTests(pages);
     impl_->pendingGroups.SetCommitPageLimitForTests(pages);
