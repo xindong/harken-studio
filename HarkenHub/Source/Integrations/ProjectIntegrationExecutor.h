@@ -34,6 +34,8 @@ struct IntegrationPlan
     QString version;
     QByteArray fingerprint;
     QStringList modifiedManagedFiles;
+    QStringList missingManagedFiles;
+    QStringList unreadableManagedFiles;
     QStringList preservedTargetFiles;
     std::vector<IntegrationFileChange> changes;
 };
@@ -41,6 +43,7 @@ struct IntegrationPlan
 struct IntegrationOperationResult
 {
     bool success = false;
+    bool reviewRequired = false;
     QString error;
     QString backupPath;
     QString installedPath;
@@ -73,7 +76,7 @@ public:
     static IntegrationOperationResult executeUnrealMigration(const EngineTargetRecord& target,
                                                              const SdkMigrationPlan& plan, bool confirmed);
     static IntegrationPlan inspectUnreal(const EngineTargetRecord& target, bool verifyContent = true);
-    static bool checkUnrealClosed(const EngineTargetRecord& target, QString* error);
+    static bool checkUnrealClosed(const EngineTargetRecord& target, QString* error, bool* isOpen = nullptr);
     static IntegrationPlan planUnreal(
         const EngineTargetRecord& target,
         const QString& sourceRoot,

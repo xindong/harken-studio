@@ -285,8 +285,12 @@ harken_attach_version_resource(
     hub)
 
 if(APPLE)
+    set_source_files_properties(Resources/icons/HubIcon.icns PROPERTIES
+        MACOSX_PACKAGE_LOCATION Resources)
+    target_sources(harken_hub PRIVATE Resources/icons/HubIcon.icns)
     set_target_properties(harken_hub PROPERTIES
         MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_ICON_FILE "HubIcon.icns"
         MACOSX_BUNDLE_BUNDLE_NAME "HarkenHub"
         MACOSX_BUNDLE_GUI_IDENTIFIER "com.harkensound.harkenhub"
         MACOSX_BUNDLE_BUNDLE_VERSION "${HARKEN_BI_HUB_VERSION_QUAD}"

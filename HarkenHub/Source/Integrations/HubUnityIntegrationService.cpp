@@ -123,9 +123,9 @@ VNX::UnityIntegrationService::Result verifyInstalled(
     inspection.summary = QStringLiteral("The installation record is complete. File contents are checked in the next step.");
     auto& verification = result.steps[2];
     verification.artifacts << installation.path;
-    QStringList missing;
-    QStringList modified;
-    QStringList unreadable;
+    auto& missing = result.missingFiles;
+    auto& modified = result.modifiedFiles;
+    auto& unreadable = result.unreadableFiles;
     QStringList files = managedFiles.values();
     files.sort();
     for (const QString& relative : files) {
@@ -305,8 +305,12 @@ QString localizeUnityText(const QString& text)
          QT_TRANSLATE_NOOP("HarkenHub", "Verified the content integrity of %1 Harken-managed SDK file(s).")},
         {QRegularExpression(QStringLiteral(R"(^Cannot read SDK file for migration: (.*)$)")),
          QT_TRANSLATE_NOOP("HarkenHub", "Cannot read SDK file for migration: %1")},
+        {QRegularExpression(QStringLiteral(R"(^Cannot read SDK file: (.*)$)")),
+         QT_TRANSLATE_NOOP("HarkenHub", "Cannot read SDK file: %1")},
         {QRegularExpression(QStringLiteral(R"(^Cannot write (.*): (.*)$)")),
          QT_TRANSLATE_NOOP("HarkenHub", "Cannot write %1: %2")},
+        {QRegularExpression(QStringLiteral(R"(^Check write permission for the Hub report directory: (.*)$)")),
+         QT_TRANSLATE_NOOP("HarkenHub", "Check write permission for the Hub report directory: %1")},
         {QRegularExpression(QStringLiteral(R"(^Cannot create directory for (.*)$)")),
          QT_TRANSLATE_NOOP("HarkenHub", "Cannot create directory for %1")},
         {QRegularExpression(QStringLiteral(R"(^Copy failed from (.*) to (.*)$)")),
@@ -593,6 +597,7 @@ UnityIntegrationResult HubUnityIntegrationService::run(
     studioRequest.installToAssets = request.installToAssets;
     studioRequest.checkOnly = request.checkOnly;
     studioRequest.confirmTargetChanges = request.confirmTargetChanges;
+    studioRequest.approvedPlanHash = request.approvedPlanHash;
     studioRequest.removeIntegration = request.removeIntegration;
     studioRequest.confirmRemoval = request.confirmRemoval;
     studioRequest.removalBackupPath = request.removalBackupPath;
@@ -615,6 +620,10 @@ UnityIntegrationResult HubUnityIntegrationService::run(
     result.integrationRemoved = source.integrationRemoved;
     result.removalBackupCreated = source.removalBackupCreated;
     result.changesDetected = source.changesDetected;
+    result.planHash = source.planHash;
+    result.modifiedFiles = source.modifiedFiles;
+    result.missingFiles = source.missingFiles;
+    result.unreadableFiles = source.unreadableFiles;
     result.integrationMigrated = source.integrationMigrated;
     result.migrationRecovered = source.migrationRecovered;
     result.migrationBackupPath = source.migrationBackupPath;
@@ -625,7 +634,7 @@ UnityIntegrationResult HubUnityIntegrationService::run(
     result.sdkInstallPath = source.sdkInstallPath;
     result.removalBackupPath = source.removalBackupPath;
     result.jsonReportPath = source.jsonReportPath;
-    result.markdownReportPath = source.markdownReportPath;
+    result.textReportPath = source.textReportPath;
     result.sdkFilesCopied = source.sdkFilesCopied;
     result.filesAdded = source.filesAdded;
     result.filesChanged = source.filesChanged;

@@ -327,8 +327,10 @@ QByteArray migrationFingerprint(const EngineTargetRecord& target, const SdkMigra
 
 }
 
-bool ProjectIntegrationExecutor::checkUnrealClosed(const EngineTargetRecord& target, QString* error)
+bool ProjectIntegrationExecutor::checkUnrealClosed(const EngineTargetRecord& target, QString* error, bool* isOpen)
 {
+    error->clear();
+    if (isOpen) *isOpen = false;
     QList<RunningProcess> processes;
     if (!runningUnrealEditors(&processes)) {
         *error = hubTranslate(QStringLiteral("Could not check Unreal Editor processes. Check permissions and retry the safety check."));
@@ -364,6 +366,7 @@ bool ProjectIntegrationExecutor::checkUnrealClosed(const EngineTargetRecord& tar
             }
         }
         if (matches) {
+            if (isOpen) *isOpen = true;
             *error = hubTranslate(QStringLiteral("This Unreal project is open. Close it before changing the SDK, then run the safety check again."));
             return false;
         }
@@ -668,12 +671,21 @@ IntegrationPlan ProjectIntegrationExecutor::inspectUnreal(const EngineTargetReco
         result.error = hubTranslate(QStringLiteral("The existing Unreal plugin has no trusted ownership record"));
         return result;
     }
-    if (verifyContent && !validateUnrealRuntime(result.targetRoot, &result.error)) return result;
     result.version = state.value(QStringLiteral("sdk_version")).toString();
     const auto managed = state.value(QStringLiteral("managed_files")).toObject();
-    for (auto it = managed.begin(); verifyContent && it != managed.end(); ++it)
-        if (hashFile(QDir(result.targetRoot).filePath(it.key())) != it.value().toString())
+    for (auto it = managed.begin(); verifyContent && it != managed.end(); ++it) {
+        const QString path = QDir(result.targetRoot).filePath(it.key());
+        const QFileInfo info(path);
+        const QString hash = hashFile(path);
+        if (hash != it.value().toString()) {
             result.modifiedManagedFiles.append(it.key());
+            if (!info.exists())
+                result.missingManagedFiles.append(it.key());
+            else if (!info.isFile() || hash.isEmpty())
+                result.unreadableManagedFiles.append(it.key());
+        }
+    }
+    if (verifyContent && !validateUnrealRuntime(result.targetRoot, &result.error)) return result;
     result.valid = true;
     return result;
 }
@@ -802,6 +814,18 @@ IntegrationPlan ProjectIntegrationExecutor::planUnreal(
         }
     }
     plan.modifiedManagedFiles.sort(Qt::CaseSensitive);
+    if (!plan.changes.empty()) {
+        QStringList filesToChange;
+        if (operation == IntegrationOperation::Remove) {
+            for (const QString& relative : priorHashes.keys())
+                filesToChange.append(QDir(plan.targetRoot).filePath(relative));
+        } else {
+            for (const auto& change : plan.changes)
+                filesToChange.append(QDir(plan.targetRoot).filePath(change.path));
+        }
+        filesToChange.append(QDir(plan.targetRoot).filePath(QLatin1String(kUnrealReceiptFileName)));
+        if (!checkIntegrationFilesWritable(filesToChange, &plan.error)) return plan;
+    }
     plan.confirmationRequired = targetExists && !plan.changes.empty();
     plan.fingerprint = fingerprint(target, plan, operation);
     plan.valid = true;
@@ -838,6 +862,7 @@ IntegrationOperationResult ProjectIntegrationExecutor::executeUnreal(
         if (plan.fingerprint.isEmpty() || current.fingerprint != plan.fingerprint
             || current.targetRoot != plan.targetRoot
             || current.preservedTargetFiles != plan.preservedTargetFiles) {
+            result.reviewRequired = true;
             result.error = hubTranslate(QStringLiteral("SDK files changed after the safety check. Run the check again before continuing."));
             return false;
         }

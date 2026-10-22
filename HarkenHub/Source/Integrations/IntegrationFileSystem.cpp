@@ -1,5 +1,7 @@
 #include "Integrations/IntegrationFileSystem.h"
+#include "Integrations/IntegrationProgress.h"
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
 #include <QSaveFile>
@@ -21,6 +23,51 @@
 #endif
 
 namespace VNH {
+
+bool checkIntegrationFilesWritable(const QStringList& paths, QString* error)
+{
+    error->clear();
+    QStringList orderedPaths = paths;
+    orderedPaths.removeDuplicates();
+    orderedPaths.sort();
+    QStringList readOnlyFiles;
+    QStringList inaccessibleFiles;
+    for (const QString& path : orderedPaths) {
+        IntegrationProgress::checkpoint();
+        const QFileInfo info(path);
+        if (!info.exists()) continue;
+        const QString nativePath = QDir::toNativeSeparators(info.absoluteFilePath());
+#ifdef Q_OS_WIN
+        const DWORD attributes = GetFileAttributesW(reinterpret_cast<LPCWSTR>(nativePath.utf16()));
+        const bool readOnly = attributes != INVALID_FILE_ATTRIBUTES
+            && (attributes & FILE_ATTRIBUTE_READONLY) != 0 && info.isFile();
+#else
+        const bool readOnly = info.isFile() && !(info.permissions()
+            & (QFileDevice::WriteOwner | QFileDevice::WriteGroup | QFileDevice::WriteOther));
+#endif
+        if (readOnly) {
+            readOnlyFiles.append(nativePath);
+            continue;
+        }
+        QFile file(info.absoluteFilePath());
+        if (!file.open(QIODevice::ReadWrite | QIODevice::ExistingOnly))
+            inaccessibleFiles.append(QCoreApplication::translate("HarkenHub", "%1\nReason: %2")
+                .arg(nativePath, file.errorString()));
+    }
+    if (readOnlyFiles.isEmpty() && inaccessibleFiles.isEmpty()) return true;
+    QStringList sections{QCoreApplication::translate("HarkenHub",
+        "Some files required for this SDK operation cannot be changed. No SDK files were changed.")};
+    if (!readOnlyFiles.isEmpty())
+        sections.append(QCoreApplication::translate("HarkenHub", "Read-only files:\n%1")
+            .arg(readOnlyFiles.join(QLatin1Char('\n'))));
+    if (!inaccessibleFiles.isEmpty())
+        sections.append(QCoreApplication::translate("HarkenHub", "Files that could not be opened for writing:\n%1")
+            .arg(inaccessibleFiles.join(QStringLiteral("\n\n"))));
+    sections.append(QCoreApplication::translate("HarkenHub",
+        "Check out or unlock the listed files if required by version control. Otherwise, check write protection, access permissions and programs using these files, then run the safety check again."));
+    *error = sections.join(QStringLiteral("\n\n"));
+    return false;
+}
 
 bool renameIntegrationDirectory(const QString& source, const QString& target, QString* error)
 {

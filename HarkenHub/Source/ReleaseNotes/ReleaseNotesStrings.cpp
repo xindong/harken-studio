@@ -1,6 +1,15 @@
 #include <QtTranslation>
 
 static const char* const kReleaseNotesStrings[] = {
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Engine Integrations shows the installed SDK version and file status. The quick-change menu lists local SDK versions and identifies the current source."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "SDK changes keep safety checks, confirmation, progress, and results in one window, with clear downgrade warnings and separate lists of modified and missing files."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "SDK updates, repairs, and removal check write protection before confirmation and again before changing files. Failures highlight read-only or inaccessible files and explain how to restore write access."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Automatic SDK scans run quietly in the background. Local SDK choices refresh after Studio installation and when opening the source menus."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "SDK operation windows show a red engine-running warning only when the target project is open. Unity integration reports open as text files stored in Hub's application-data folder."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Integration menus distinguish full SDK and project-association management from quick SDK changes. Project columns offer clearly named folder actions, including right-click access, and SDK status tooltips label the installation path."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Project-association guidance explains that each Harken project and game project can belong to only one local association."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Double-clicking a Studio version preselects that version when creating a new project."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Hub uses the updated application icon for its windows, app bundle, Windows shortcuts, taskbar, and system tray."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Unity SDK management no longer reports that a closed project is still open because of a leftover lock file. SDK checks, installation, updates, removal, moves, and recovery can proceed once the project is no longer in use."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "When Hub cannot check whether a Unity project is in use, it reports the access error and affected path instead of claiming that Unity is running."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "The project list shows elapsed time since the last launch in hours and minutes, adding days after 24 hours instead of using vague labels such as Yesterday."),

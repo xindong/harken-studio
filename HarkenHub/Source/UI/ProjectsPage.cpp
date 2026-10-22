@@ -408,6 +408,7 @@ void ProjectsPage::showProjectLaunchGuidance(const QString& buildId)
     projectLaunchGuidanceAnimation_->stop();
     clearProjectLaunchGuidance();
     projectLaunchGuidanceBuildId_ = buildId;
+    pendingCreateBuildId_ = buildId;
     projectLaunchGuidanceAnimation_->start();
 }
 
@@ -640,7 +641,7 @@ QWidget* ProjectsPage::createNewProjectPage()
     return page;
 }
 
-void ProjectsPage::loadProjectVersions()
+void ProjectsPage::loadProjectVersions(const QString& preferredBuildId)
 {
     createVersions_ = versionsProvider_ ? versionsProvider_()
                                         : std::vector<InstalledVersion>{};
@@ -659,7 +660,8 @@ void ProjectsPage::loadProjectVersions()
     }
 
     const InstalledVersion* target = StudioLaunchTarget::pick(
-        createVersions_, StudioLaunchTarget::pinnedBuildId(),
+        createVersions_, preferredBuildId.isEmpty()
+            ? StudioLaunchTarget::pinnedBuildId() : preferredBuildId,
         needsRepairBuildIds());
     int selectedIndex = -1;
     if (target) {
@@ -864,7 +866,7 @@ void ProjectsPage::persistProjectLocation(const QString& path)
 
 void ProjectsPage::onNewProjectClicked()
 {
-    loadProjectVersions();
+    loadProjectVersions(pendingCreateBuildId_);
     if (createTarget_.installPath.isEmpty()) {
         QMessageBox::warning(
             this, QCoreApplication::translate("HarkenHub", "New Project"),
@@ -873,6 +875,7 @@ void ProjectsPage::onNewProjectClicked()
         return;
     }
 
+    pendingCreateBuildId_.clear();
     projectNameEdit_->clear();
     loadProjectTemplates();
     updateNewProjectCreateEnabled();
@@ -887,6 +890,7 @@ void ProjectsPage::showNewProjectPage()
 
 void ProjectsPage::showProjectsList()
 {
+    pendingCreateBuildId_.clear();
     viewStack_->setCurrentWidget(projectsView_);
     refresh();
 }
@@ -1146,7 +1150,7 @@ void ProjectsPage::refreshVersions()
     refresh();
     if (viewStack_->currentWidget() != newProjectView_)
         return;
-    loadProjectVersions();
+    loadProjectVersions(createTarget_.buildId);
     loadProjectTemplates();
     updateNewProjectCreateEnabled();
 }
@@ -1160,6 +1164,7 @@ void ProjectsPage::showEvent(QShowEvent* event)
 
 void ProjectsPage::hideEvent(QHideEvent* event)
 {
+    pendingCreateBuildId_.clear();
     projectLaunchGuidanceAnimation_->stop();
     clearProjectLaunchGuidance();
     QWidget::hideEvent(event);

@@ -7,6 +7,52 @@
   },
   "releases": [
     {
+      "version": "0.1.63",
+      "date": "2026-10-22",
+      "pullRequests": [],
+      "contributors": [
+        "liuxin2-sys"
+      ],
+      "changes": [
+        {
+          "category": "added",
+          "text": "Engine Integrations shows the installed SDK version and file status. The quick-change menu lists local SDK versions and identifies the current source."
+        },
+        {
+          "category": "improved",
+          "text": "SDK changes keep safety checks, confirmation, progress, and results in one window, with clear downgrade warnings and separate lists of modified and missing files."
+        },
+        {
+          "category": "improved",
+          "text": "SDK updates, repairs, and removal check write protection before confirmation and again before changing files. Failures highlight read-only or inaccessible files and explain how to restore write access."
+        },
+        {
+          "category": "improved",
+          "text": "Automatic SDK scans run quietly in the background. Local SDK choices refresh after Studio installation and when opening the source menus."
+        },
+        {
+          "category": "improved",
+          "text": "SDK operation windows show a red engine-running warning only when the target project is open. Unity integration reports open as text files stored in Hub's application-data folder."
+        },
+        {
+          "category": "improved",
+          "text": "Integration menus distinguish full SDK and project-association management from quick SDK changes. Project columns offer clearly named folder actions, including right-click access, and SDK status tooltips label the installation path."
+        },
+        {
+          "category": "improved",
+          "text": "Project-association guidance explains that each Harken project and game project can belong to only one local association."
+        },
+        {
+          "category": "improved",
+          "text": "Double-clicking a Studio version preselects that version when creating a new project."
+        },
+        {
+          "category": "improved",
+          "text": "Hub uses the updated application icon for its windows, app bundle, Windows shortcuts, taskbar, and system tray."
+        }
+      ]
+    },
+    {
       "version": "0.1.62",
       "date": "2026-10-21",
       "pullRequests": [82],

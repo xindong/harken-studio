@@ -1,4 +1,5 @@
 #include "Integrations/EngineTargetProbe.h"
+#include "Integrations/HubUnityIntegrationService.h"
 #include "Integrations/ProjectIntegrationExecutor.h"
 #include "Integrations/Unity/UnityInstallation.h"
 
@@ -125,8 +126,9 @@ bool EngineTargetProbe::resolve(EngineKind kind, const QString& input,
     return true;
 }
 
-EngineTargetObservation EngineTargetProbe::observe(
-    const EngineTargetRecord& record)
+namespace {
+
+EngineTargetObservation observeLayout(const EngineTargetRecord& record)
 {
     EngineTargetObservation result;
     QDir root(record.canonicalRoot);
@@ -316,6 +318,64 @@ EngineTargetObservation EngineTargetProbe::observe(
         result.error = hubTranslate(QStringLiteral("Harken.uplugin is missing or invalid, but the plugin ownership record is available."));
         result.remediation = hubTranslate(QStringLiteral("Use Change SDK with a complete Unreal plugin source to repair it, or Uninstall SDK to remove the recorded files after backup. Repair the plugin metadata before moving it."));
     }
+    return result;
+}
+
+}
+
+EngineTargetObservation EngineTargetProbe::observe(const EngineTargetRecord& record, bool verifyContent)
+{
+    auto result = observeLayout(record);
+    if (!verifyContent || result.sdkInstallPath.isEmpty()) return result;
+    result.sdkContentState = SdkContentState::Unverified;
+    if (result.health != EngineTargetHealth::Managed && !result.canChangeSdk) {
+        result.sdkContentDetails = result.error;
+        return result;
+    }
+    bool modified = false;
+    bool missing = false;
+    if (record.engineKind == EngineKind::Unity) {
+        UnityIntegrationRequest request;
+        request.unityProjectPath = record.canonicalRoot;
+        request.verifyInstalledOnly = true;
+        const auto inspection = HubUnityIntegrationService::run(request);
+        result.sdkContentState = inspection.success ? SdkContentState::MatchesInstallation
+                                                   : SdkContentState::Unverified;
+        modified = !inspection.modifiedFiles.isEmpty();
+        missing = !inspection.missingFiles.isEmpty();
+        QStringList details;
+        for (const auto& step : inspection.steps) {
+            if (step.status != UnityIntegrationStepStatus::Failed) continue;
+            details << step.summary;
+            if (!step.cause.isEmpty()) details << step.cause;
+            details << step.details;
+        }
+        result.sdkContentDetails = details.join(QLatin1Char('\n'));
+    } else {
+        const auto inspection = ProjectIntegrationExecutor::inspectUnreal(record);
+        result.sdkContentState = inspection.valid && inspection.unreadableManagedFiles.isEmpty()
+            ? SdkContentState::MatchesInstallation : SdkContentState::Unverified;
+        QStringList modifiedFiles = inspection.modifiedManagedFiles;
+        for (const auto& path : inspection.missingManagedFiles) modifiedFiles.removeAll(path);
+        for (const auto& path : inspection.unreadableManagedFiles) modifiedFiles.removeAll(path);
+        modified = !modifiedFiles.isEmpty();
+        missing = !inspection.missingManagedFiles.isEmpty();
+        QStringList details;
+        if (modified)
+            details << hubTranslate(QStringLiteral("SDK files with contents different from installation:"))
+                    << modifiedFiles.join(QLatin1Char('\n'));
+        if (missing)
+            details << hubTranslate(QStringLiteral("Missing SDK files:"))
+                    << inspection.missingManagedFiles.join(QLatin1Char('\n'));
+        if (!inspection.unreadableManagedFiles.isEmpty())
+            details << hubTranslate(QStringLiteral("Unreadable SDK files:"))
+                    << inspection.unreadableManagedFiles.join(QLatin1Char('\n'));
+        if (!inspection.error.isEmpty()) details << inspection.error;
+        result.sdkContentDetails = details.join(QLatin1Char('\n'));
+    }
+    if (modified && missing) result.sdkContentState = SdkContentState::ModifiedAndMissing;
+    else if (modified) result.sdkContentState = SdkContentState::Modified;
+    else if (missing) result.sdkContentState = SdkContentState::Missing;
     return result;
 }
 

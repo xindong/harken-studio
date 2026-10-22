@@ -1,5 +1,6 @@
 #include "UI/ProjectsPage.h"
 #include "Projects/ProjectStore.h"
+#include "Versions/StudioLaunchTarget.h"
 
 #include <gtest/gtest.h>
 #include <QApplication>
@@ -13,6 +14,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMenu>
+#include <QPushButton>
 #include <QScopeGuard>
 #include <QSemaphore>
 #include <QSet>
@@ -23,6 +25,7 @@
 #include <QThreadPool>
 #include <QTimer>
 #include <QToolButton>
+#include <QVariantAnimation>
 
 #include <memory>
 
@@ -289,4 +292,56 @@ TEST_F(ProjectsPageSelectionTest, NewProjectTemplateRowIsHidden)
     ASSERT_NE(templates, nullptr);
     EXPECT_TRUE(templates->parentWidget()->isHidden());
     EXPECT_FALSE(templates->isVisible());
+}
+
+TEST_F(ProjectsPageSelectionTest, ExplicitCreateVersionSurvivesGuidanceAndRefreshWithoutChangingDefault)
+{
+    VNH::InstalledVersion latest;
+    latest.buildId = "latest-build";
+    latest.semanticVersion = "2.0.0";
+    latest.installPath = dir.path();
+    auto older = latest;
+    older.buildId = "older-build";
+    older.semanticVersion = "1.0.0";
+    auto local = older;
+    local.buildId = "local-build";
+    local.runtimeBuildId = "local-runtime";
+    local.source = VNH::VersionSource::LocalBuild;
+    page->setVersionsProvider([=]() {
+        return std::vector<VNH::InstalledVersion>{latest, older, local};
+    });
+    const QString previousDefault = VNH::StudioLaunchTarget::pinnedBuildId();
+    auto* create = page->findChild<QPushButton*>(QStringLiteral("newProjectButton"));
+    auto* versions = page->findChild<QComboBox*>(QStringLiteral("newProjectVersion"));
+    auto* guidance = page->findChild<QVariantAnimation*>();
+    ASSERT_NE(create, nullptr);
+    ASSERT_NE(versions, nullptr);
+    ASSERT_NE(guidance, nullptr);
+
+    for (const QString& buildId : {older.buildId, local.buildId}) {
+        page->showProjectLaunchGuidance(buildId);
+        guidance->setCurrentTime(guidance->totalDuration());
+        page->refreshVersions();
+        create->click();
+        EXPECT_TRUE(versions->isVisible());
+        EXPECT_EQ(versions->currentData().toString(), buildId);
+        page->refreshVersions();
+        EXPECT_EQ(versions->currentData().toString(), buildId);
+
+        const QString manualBuildId = buildId == older.buildId ? local.buildId : older.buildId;
+        versions->setCurrentIndex(versions->findData(manualBuildId));
+        page->refreshVersions();
+        EXPECT_EQ(versions->currentData().toString(), manualBuildId);
+        EXPECT_EQ(VNH::StudioLaunchTarget::pinnedBuildId(), previousDefault);
+
+        page->showProjectsList();
+        create->click();
+        EXPECT_EQ(versions->currentData().toString(), latest.buildId);
+    }
+
+    page->showProjectLaunchGuidance(older.buildId);
+    page->hide();
+    page->show();
+    create->click();
+    EXPECT_EQ(versions->currentData().toString(), latest.buildId);
 }

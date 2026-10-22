@@ -4,6 +4,6 @@
 
 namespace VNX {
 
-bool checkUnityProjectClosed(const QString& project, QString* error);
+bool checkUnityProjectClosed(const QString& project, QString* error, bool* isOpen = nullptr);
 
 }
