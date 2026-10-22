@@ -57,8 +57,6 @@ THIRD_PARTY_FILES = {
             "LMDB-LICENSE.txt",
         ),
         (LEGAL_SOURCE_DIRS["studio"] / "Lucide-LICENSE.txt", "Lucide-LICENSE.txt"),
-        (LEGAL_SOURCE_DIRS["studio"] / "ReactBits-LICENSE.txt", "ReactBits-LICENSE.txt"),
-        (LEGAL_SOURCE_DIRS["studio"] / "WebGLNoise-LICENSE.txt", "WebGLNoise-LICENSE.txt"),
     ),
     "hub": (
         (LEGAL_SOURCE_DIRS["hub"] / "Qt6-THIRD-PARTY-NOTICES.txt", "Qt6-THIRD-PARTY-NOTICES.txt"),

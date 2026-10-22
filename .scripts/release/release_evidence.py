@@ -24,12 +24,6 @@ from release import collect_legal_texts
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPONENT_INPUTS = (
-    {"id": "react-bits-dither", "notice": "React Bits Dither", "products": ["studio"],
-     "url": "https://github.com/DavidHDev/react-bits",
-     "legalFiles": ["ReactBits-LICENSE.txt"]},
-    {"id": "webgl-noise", "notice": "webgl-noise", "products": ["studio"],
-     "url": "https://github.com/stegu/webgl-noise",
-     "legalFiles": ["WebGLNoise-LICENSE.txt"]},
     {"id": "miniaudio", "notice": "miniaudio", "path": "HarkenEngine/ThirdParty/miniaudio",
      "url": "https://github.com/mackron/miniaudio",
      "evidence": ["HarkenEngine/ThirdParty/miniaudio/miniaudio.h"]},

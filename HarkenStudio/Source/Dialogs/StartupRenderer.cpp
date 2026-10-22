@@ -18,7 +18,7 @@
 
 namespace {
 
-constexpr int kPixelSize = 2;
+constexpr int kPixelSize = 1;
 constexpr int kLogoWidth = 268;
 
 const char* kVertexShader = R"glsl(
@@ -45,83 +45,56 @@ uniform float uWaveAmplitude;
 uniform float uScale;
 out vec4 fragColor;
 
-vec4 mod289(vec4 x)
+float latticeHeight(ivec2 cell)
 {
-    return x - floor(x * (1.0 / 289.0)) * 289.0;
+    uvec2 coordinate = uvec2(cell);
+    uint seed = coordinate.x * 503u + coordinate.y * 911u + 101u;
+    seed = (seed ^ (seed >> 16u)) * 0x4841524bu;
+    seed = (seed ^ (seed >> 13u)) * 0x53545545u;
+    seed ^= seed >> 16u;
+    return float(seed & 65535u) / 32767.5 - 1.0;
 }
 
-vec4 permute(vec4 x)
+float surfaceHeight(vec2 position)
 {
-    return mod289(((x * 34.0) + 1.0) * x);
+    ivec2 cell = ivec2(floor(position));
+    vec2 blend = smoothstep(vec2(0.0), vec2(1.0), fract(position));
+    float lower = mix(latticeHeight(cell), latticeHeight(cell + ivec2(1, 0)), blend.x);
+    float upper = mix(latticeHeight(cell + ivec2(0, 1)),
+                      latticeHeight(cell + ivec2(1, 1)), blend.x);
+    return mix(lower, upper, blend.y);
 }
 
-vec4 taylorInvSqrt(vec4 r)
+vec2 flowOffset(vec2 position, float time)
 {
-    return 1.79284291400159 - 0.85373472095314 * r;
-}
-
-vec2 fade(vec2 t)
-{
-    return t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
-}
-
-float cnoise(vec2 p)
-{
-    vec4 pi = floor(p.xyxy) + vec4(0.0, 0.0, 1.0, 1.0);
-    vec4 pf = fract(p.xyxy) - vec4(0.0, 0.0, 1.0, 1.0);
-    pi = mod289(pi);
-    vec4 ix = pi.xzxz;
-    vec4 iy = pi.yyww;
-    vec4 fx = pf.xzxz;
-    vec4 fy = pf.yyww;
-    vec4 i = permute(permute(ix) + iy);
-    vec4 gx = fract(i * (1.0 / 41.0)) * 2.0 - 1.0;
-    vec4 gy = abs(gx) - 0.5;
-    vec4 tx = floor(gx + 0.5);
-    gx = gx - tx;
-    vec2 g00 = vec2(gx.x, gy.x);
-    vec2 g10 = vec2(gx.y, gy.y);
-    vec2 g01 = vec2(gx.z, gy.z);
-    vec2 g11 = vec2(gx.w, gy.w);
-    vec4 norm = taylorInvSqrt(vec4(dot(g00, g00), dot(g01, g01), dot(g10, g10), dot(g11, g11)));
-    g00 *= norm.x;
-    g01 *= norm.y;
-    g10 *= norm.z;
-    g11 *= norm.w;
-    float n00 = dot(g00, vec2(fx.x, fy.x));
-    float n10 = dot(g10, vec2(fx.y, fy.y));
-    float n01 = dot(g01, vec2(fx.z, fy.z));
-    float n11 = dot(g11, vec2(fx.w, fy.w));
-    vec2 fadeXY = fade(pf.xy);
-    vec2 nx = mix(vec2(n00, n01), vec2(n10, n11), fadeXY.x);
-    return 2.3 * mix(nx.x, nx.y, fadeXY.y);
-}
-
-float fbm(vec2 p)
-{
-    float value = 0.0;
-    float amplitude = 1.0;
-    for (int i = 0; i < 4; ++i) {
-        value += amplitude * abs(cnoise(p));
-        p *= uWaveFrequency;
-        amplitude *= uWaveAmplitude;
-    }
-    return value;
-}
-
-float pattern(vec2 p)
-{
-    vec2 p2 = p - uTime * uWaveSpeed;
-    return fbm(p + fbm(p2));
+    vec2 drift = vec2(time, 0.0);
+    vec2 broad = vec2(surfaceHeight(position + drift),
+                      surfaceHeight(position + vec2(19.3, -7.8) - drift.yx));
+    vec2 detail = position * uWaveFrequency + vec2(5.2, 9.1);
+    vec2 fine = vec2(surfaceHeight(detail + drift.yx),
+                     surfaceHeight(detail + vec2(-8.4, 17.6) + drift));
+    return broad + uWaveAmplitude * fine;
 }
 
 void main()
 {
-    vec2 corner = (gl_FragCoord.xy - 0.5) * uCell;
-    vec2 uv = corner / uResolution - 0.5;
-    uv.x *= uResolution.x / uResolution.y;
-    float value = clamp(pattern(uv / uScale), 0.0, 1.0);
-    fragColor = vec4(floor(value * 255.0) / 255.0, fract(value * 255.0), 0.0, 1.0);
+    vec2 pixelCenter = gl_FragCoord.xy * uCell;
+    vec2 position = (pixelCenter - uResolution * 0.5) / (uResolution.y * uScale);
+    position = position * 2.5 + vec2(11.7, 23.4);
+    float flowTime = uTime * uWaveSpeed;
+    position -= flowTime * vec2(1.0, 0.35);
+    position += 0.75 * flowOffset(position, flowTime);
+
+    vec4 heights;
+    mat2 rotation = mat2(0.8, 0.6, -0.6, 0.8);
+    for (int layer = 0; layer < 4; ++layer) {
+        heights[layer] = abs(surfaceHeight(position));
+        position = rotation * position * uWaveFrequency + vec2(5.2, 9.1);
+    }
+    vec4 weights = pow(vec4(uWaveAmplitude), vec4(0.0, 1.0, 2.0, 3.0));
+    float brightness = smoothstep(0.12, 1.12, dot(heights, weights));
+    brightness -= 0.14 * smoothstep(0.55, 1.0, brightness);
+    fragColor = vec4(brightness, 0.0, 0.0, 1.0);
 }
 )glsl";
 
@@ -131,17 +104,6 @@ uniform sampler2D uField;
 uniform float uCellDevice;
 out vec4 fragColor;
 
-const float bayer8[64] = float[64](
-    0.0 / 64.0, 48.0 / 64.0, 12.0 / 64.0, 60.0 / 64.0, 3.0 / 64.0, 51.0 / 64.0, 15.0 / 64.0, 63.0 / 64.0,
-    32.0 / 64.0, 16.0 / 64.0, 44.0 / 64.0, 28.0 / 64.0, 35.0 / 64.0, 19.0 / 64.0, 47.0 / 64.0, 31.0 / 64.0,
-    8.0 / 64.0, 56.0 / 64.0, 4.0 / 64.0, 52.0 / 64.0, 11.0 / 64.0, 59.0 / 64.0, 7.0 / 64.0, 55.0 / 64.0,
-    40.0 / 64.0, 24.0 / 64.0, 36.0 / 64.0, 20.0 / 64.0, 43.0 / 64.0, 27.0 / 64.0, 39.0 / 64.0, 23.0 / 64.0,
-    2.0 / 64.0, 50.0 / 64.0, 14.0 / 64.0, 62.0 / 64.0, 1.0 / 64.0, 49.0 / 64.0, 13.0 / 64.0, 61.0 / 64.0,
-    34.0 / 64.0, 18.0 / 64.0, 46.0 / 64.0, 30.0 / 64.0, 33.0 / 64.0, 17.0 / 64.0, 45.0 / 64.0, 29.0 / 64.0,
-    10.0 / 64.0, 58.0 / 64.0, 6.0 / 64.0, 54.0 / 64.0, 9.0 / 64.0, 57.0 / 64.0, 5.0 / 64.0, 53.0 / 64.0,
-    42.0 / 64.0, 26.0 / 64.0, 38.0 / 64.0, 22.0 / 64.0, 41.0 / 64.0, 25.0 / 64.0, 37.0 / 64.0, 21.0 / 64.0
-);
-
 const vec3 palette[4] = vec3[4](
     vec3(6.0, 18.0, 31.0) / 255.0,
     vec3(23.0, 61.0, 92.0) / 255.0,
@@ -149,16 +111,23 @@ const vec3 palette[4] = vec3[4](
     vec3(228.0, 243.0, 255.0) / 255.0
 );
 
+float orderedThreshold(ivec2 pixel)
+{
+    uvec2 address = uvec2(pixel);
+    uint rank = 0u;
+    for (int level = 0; level < 3; ++level) {
+        uvec2 bit = address & uvec2(1u);
+        rank = (rank << 2u) | ((bit.x ^ bit.y) << 1u) | bit.y;
+        address >>= 1u;
+    }
+    return (float(rank) + 0.5) / 64.0;
+}
+
 void main()
 {
-    vec2 cell = floor(gl_FragCoord.xy / uCellDevice);
-    vec4 sampleValue = texelFetch(uField, clamp(ivec2(cell), ivec2(0), textureSize(uField, 0) - 1), 0);
-    float field = sampleValue.r + sampleValue.g / 255.0;
-    ivec2 c = ivec2(mod(cell, 8.0));
-    float threshold = bayer8[c.y * 8 + c.x] - 0.25;
-    float value = field + threshold / 3.0;
-    value = clamp(value - mix(0.2, 0.0, smoothstep(0.45, 0.8, value)), 0.0, 1.0);
-    int index = int(floor(value * 3.0 + 0.5));
+    ivec2 pixel = ivec2(gl_FragCoord.xy / uCellDevice);
+    float brightness = texelFetch(uField, pixel, 0).r;
+    int index = clamp(int(floor(brightness * 3.0 + orderedThreshold(pixel))), 0, 3);
     fragColor = vec4(palette[index], 1.0);
 }
 )glsl";
@@ -301,7 +270,7 @@ void StartupRenderer::renderLoop()
     QOpenGLVertexArrayObject vao;
     vao.create();
     QOpenGLFramebufferObjectFormat fieldFormat;
-    fieldFormat.setInternalTextureFormat(GL_RGBA8);
+    fieldFormat.setInternalTextureFormat(GL_R16F);
     std::unique_ptr<QOpenGLFramebufferObject> field;
     const QImage logoSource(QStringLiteral(":/Resources/branding/HarkenStudioWhite.png"));
     QImage logo;
@@ -344,10 +313,10 @@ void StartupRenderer::renderLoop()
             waveProgram.setUniformValue("uResolution", QVector2D(width, height));
             waveProgram.setUniformValue("uCell", static_cast<float>(cell));
             waveProgram.setUniformValue("uTime", static_cast<float>(time));
-            waveProgram.setUniformValue("uWaveSpeed", 0.05f);
+            waveProgram.setUniformValue("uWaveSpeed", 0.12f);
             waveProgram.setUniformValue("uWaveFrequency", 3.0f);
             waveProgram.setUniformValue("uWaveAmplitude", 0.3f);
-            waveProgram.setUniformValue("uScale", 0.6f);
+            waveProgram.setUniformValue("uScale", 0.9f);
             functions->glDrawArrays(GL_TRIANGLES, 0, 3);
             waveProgram.release();
             field->release();
