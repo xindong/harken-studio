@@ -1518,6 +1518,60 @@ TEST(UnityIntegrationService, RejectsIncompleteBundledSdkAndWritesReport)
     }
 }
 
+TEST(UnityIntegrationService, ReportsResolveTrustedDataRootButRejectLinkedReportSubdirectories)
+{
+    QTemporaryDir dir(QDir::current().filePath(".temp/report-path-XXXXXX"));
+    ASSERT_TRUE(dir.isValid());
+    const QString relocated = dir.filePath("Relocated");
+    const QString link = dir.filePath("DataLink");
+    const QString userRoot = link + "/Hub";
+    ASSERT_TRUE(QDir().mkpath(relocated));
+    const auto createLink = [](const QString& source, const QString& target) {
+#ifdef Q_OS_WIN
+        return QProcess::execute("cmd.exe", {"/c", "mklink", "/J",
+            QDir::toNativeSeparators(target), QDir::toNativeSeparators(source)}) == 0;
+#else
+        return QFile::link(source, target);
+#endif
+    };
+    ASSERT_TRUE(createLink(relocated, link));
+    const auto removeLink = qScopeGuard([&]() { QDir().rmdir(link); });
+    const QByteArray previousRoot = qgetenv("HARKEN_HUB_USER_ROOT");
+    qputenv("HARKEN_HUB_USER_ROOT", userRoot.toUtf8());
+    const auto restoreRoot = qScopeGuard([&]() {
+        if (previousRoot.isNull()) qunsetenv("HARKEN_HUB_USER_ROOT");
+        else qputenv("HARKEN_HUB_USER_ROOT", previousRoot);
+    });
+    VNX::UnityIntegrationService::Request request;
+    request.unityProjectPath = makeUnityProject(dir.filePath("Game"));
+    request.sdkSourcePath = makeCompleteSdk(dir.filePath("SDK"));
+    request.checkOnly = true;
+    VNX::UnityIntegrationService service;
+    const auto checked = service.run(request);
+    QStringList failures;
+    for (const auto& step : checked.steps)
+        if (step.status == VNX::UnityIntegrationService::StepStatus::Failed)
+            failures << step.summary << step.cause;
+    ASSERT_TRUE(checked.success) << failures.join('\n').toStdString();
+    EXPECT_TRUE(checked.textReportPath.startsWith(QFileInfo(relocated).canonicalFilePath() + "/Hub/"));
+    EXPECT_TRUE(QFileInfo::exists(checked.textReportPath));
+    request.removeIntegration = true;
+    const auto removed = service.run(request);
+    ASSERT_TRUE(removed.success);
+    EXPECT_TRUE(QFileInfo::exists(removed.textReportPath));
+    const QString reportRoot = relocated + "/Hub/IntegrationReports";
+    ASSERT_TRUE(QDir(reportRoot).removeRecursively());
+    const QString external = dir.filePath("OutsideReports");
+    ASSERT_TRUE(QDir().mkpath(external));
+    ASSERT_TRUE(createLink(external, reportRoot));
+    const auto removeReportLink = qScopeGuard([&]() { QDir().rmdir(reportRoot); });
+    request.removeIntegration = false;
+    const auto rejected = service.run(request);
+    EXPECT_FALSE(rejected.success);
+    EXPECT_FALSE(QFileInfo::exists(rejected.textReportPath));
+    EXPECT_TRUE(QDir(external).isEmpty());
+}
+
 TEST(UnityIntegrationService, ReportsButDoesNotBlockTargetsRequiringAnotherHost)
 {
     QTemporaryDir dir;

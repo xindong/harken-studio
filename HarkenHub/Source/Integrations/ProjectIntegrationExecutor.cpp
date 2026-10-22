@@ -767,11 +767,16 @@ IntegrationPlan ProjectIntegrationExecutor::planUnreal(
     if (targetExists) {
         for (auto iterator = priorHashes.begin(); iterator != priorHashes.end();
              ++iterator) {
-            const QString current = hashFile(
-                QDir(plan.targetRoot).filePath(iterator.key()));
+            const QString path = QDir(plan.targetRoot).filePath(iterator.key());
+            const QFileInfo info(path);
+            const QString current = hashFile(path);
             if (current.isEmpty() || current != iterator.value().toString()) {
                 modifiedManagedFiles.insert(iterator.key());
                 plan.modifiedManagedFiles.push_back(iterator.key());
+                if (!info.exists())
+                    plan.missingManagedFiles.append(iterator.key());
+                else if (!info.isFile() || current.isEmpty())
+                    plan.unreadableManagedFiles.append(iterator.key());
             }
         }
     }
@@ -825,6 +830,11 @@ IntegrationPlan ProjectIntegrationExecutor::planUnreal(
         }
         filesToChange.append(QDir(plan.targetRoot).filePath(QLatin1String(kUnrealReceiptFileName)));
         if (!checkIntegrationFilesWritable(filesToChange, &plan.error)) return plan;
+        const QDir root(target.canonicalRoot);
+        if (!checkIntegrationDirectoryChanges({plan.targetRoot,
+                root.filePath(QStringLiteral("Saved/HarkenHub/Staging/Harken")),
+                root.filePath(QStringLiteral("Saved/HarkenHub/Backups/operation/Harken"))},
+                {plan.targetRoot}, &plan.error)) return plan;
     }
     plan.confirmationRequired = targetExists && !plan.changes.empty();
     plan.fingerprint = fingerprint(target, plan, operation);

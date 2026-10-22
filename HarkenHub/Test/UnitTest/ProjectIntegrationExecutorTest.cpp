@@ -62,6 +62,42 @@ TEST(IntegrationDirectoryTest, ExistingDestinationIsNeverReplaced)
     EXPECT_EQ(preserved.readAll(), "existing");
 }
 
+TEST(IntegrationDirectoryTest, ChecksCreationAndRenamePermissionsWithoutChangingContents)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString parent = directory.filePath("plugins");
+    const QString installed = parent + "/SDK";
+    ASSERT_TRUE(writeFile(installed + "/payload.txt", "original"));
+    QString error;
+    EXPECT_TRUE(VNH::checkIntegrationDirectoryChanges({parent + "/nested/new"}, {installed}, &error));
+#ifdef Q_OS_WIN
+    const QString account = qEnvironmentVariable("USERDOMAIN") + '\\' + qEnvironmentVariable("USERNAME");
+    const auto restore = qScopeGuard([&]() {
+        QProcess::execute("icacls", {parent, "/remove:d", account});
+        QProcess::execute("icacls", {installed, "/remove:d", account});
+    });
+    ASSERT_EQ(QProcess::execute("icacls", {parent, "/deny", account + ":(AD)"}), 0);
+#else
+    const auto permissions = QFileInfo(parent).permissions();
+    const auto restore = qScopeGuard([&]() { QFile::setPermissions(parent, permissions); });
+    ASSERT_TRUE(QFile::setPermissions(parent, permissions & ~(QFile::WriteOwner | QFile::WriteGroup | QFile::WriteOther | QFile::WriteUser)));
+#endif
+    EXPECT_TRUE(VNH::checkIntegrationFilesWritable({installed + "/payload.txt"}, &error));
+    EXPECT_FALSE(VNH::checkIntegrationDirectoryChanges({parent + "/nested/new"}, {}, &error));
+    EXPECT_TRUE(error.contains(QDir::toNativeSeparators(parent)));
+#ifdef Q_OS_WIN
+    ASSERT_EQ(QProcess::execute("icacls", {parent, "/remove:d", account}), 0);
+    ASSERT_EQ(QProcess::execute("icacls", {parent, "/deny", account + ":(DC)"}), 0);
+    ASSERT_EQ(QProcess::execute("icacls", {installed, "/deny", account + ":(D)"}), 0);
+#endif
+    EXPECT_FALSE(VNH::checkIntegrationDirectoryChanges({}, {installed}, &error));
+    EXPECT_FALSE(QFileInfo::exists(parent + "/nested"));
+    QFile payload(installed + "/payload.txt");
+    ASSERT_TRUE(payload.open(QIODevice::ReadOnly));
+    EXPECT_EQ(payload.readAll(), "original");
+}
+
 #ifdef Q_OS_WIN
 TEST(IntegrationFileWriteTest, TransientLockAllowsAtomicReplacementAfterRelease)
 {
@@ -769,6 +805,10 @@ TEST(ProjectIntegrationExecutorTest, RejectsSourceChangesAndInvalidOwnershipWith
     EXPECT_FALSE(incomplete.valid);
     EXPECT_EQ(incomplete.missingManagedFiles, QStringList{requiredFile});
     EXPECT_TRUE(incomplete.modifiedManagedFiles.contains(requiredFile));
+    const auto repair = VNH::ProjectIntegrationExecutor::planUnreal(target, source, VNH::IntegrationOperation::Update);
+    ASSERT_TRUE(repair.valid) << repair.error.toStdString();
+    EXPECT_EQ(repair.missingManagedFiles, QStringList{requiredFile});
+    EXPECT_TRUE(repair.unreadableManagedFiles.isEmpty());
     const auto both = VNH::EngineTargetProbe::observe(target, true);
     EXPECT_EQ(both.sdkContentState, VNH::SdkContentState::ModifiedAndMissing);
     EXPECT_TRUE(both.sdkContentDetails.contains(requiredFile));
@@ -787,6 +827,9 @@ TEST(ProjectIntegrationExecutorTest, RejectsSourceChangesAndInvalidOwnershipWith
     EXPECT_EQ(unreadable.unreadableManagedFiles, QStringList{"Runtime.bin"});
     EXPECT_EQ(unreadable.modifiedManagedFiles, QStringList{"Runtime.bin"});
     EXPECT_TRUE(unreadable.missingManagedFiles.isEmpty());
+    const auto unreadablePlan = VNH::ProjectIntegrationExecutor::planUnreal(target, source, VNH::IntegrationOperation::Update);
+    EXPECT_FALSE(unreadablePlan.valid);
+    EXPECT_EQ(unreadablePlan.unreadableManagedFiles, QStringList{"Runtime.bin"});
     EXPECT_EQ(VNH::EngineTargetProbe::observe(target, true).sdkContentState,
               VNH::SdkContentState::Unverified);
     ASSERT_TRUE(QDir().rmdir(runtimePath));

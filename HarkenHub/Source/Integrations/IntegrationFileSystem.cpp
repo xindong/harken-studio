@@ -12,17 +12,66 @@
 #else
 #include <cerrno>
 #include <cstring>
+#include <unistd.h>
 #ifdef Q_OS_MACOS
 #include <stdio.h>
 #else
 #include <fcntl.h>
 #include <linux/fs.h>
 #include <sys/syscall.h>
-#include <unistd.h>
 #endif
 #endif
 
 namespace VNH {
+
+bool checkIntegrationDirectoryChanges(const QStringList& destinations, const QStringList& sources, QString* error)
+{
+    error->clear();
+    QStringList failures;
+    const auto check = [&](const QString& path, bool renameSource) {
+        IntegrationProgress::checkpoint();
+        QFileInfo directory(path);
+        if (renameSource && !directory.exists()) return;
+#ifdef Q_OS_WIN
+        const DWORD access = renameSource ? DELETE : FILE_ADD_SUBDIRECTORY;
+        if (!renameSource) directory.setFile(directory.absolutePath());
+#else
+        directory.setFile(directory.absolutePath());
+#endif
+        while (!directory.exists() && directory.absoluteFilePath() != directory.absolutePath())
+            directory.setFile(directory.absolutePath());
+        const QString nativePath = QDir::toNativeSeparators(directory.absoluteFilePath());
+        if (!directory.isDir()) {
+            failures.append(QCoreApplication::translate("HarkenHub", "Not a directory: %1").arg(nativePath));
+            return;
+        }
+#ifdef Q_OS_WIN
+        HANDLE handle = CreateFileW(reinterpret_cast<LPCWSTR>(nativePath.utf16()), access,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+        if (handle != INVALID_HANDLE_VALUE) {
+            CloseHandle(handle);
+            return;
+        }
+        const DWORD code = GetLastError();
+        wchar_t message[1024] = {};
+        FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+            nullptr, code, 0, message, 1024, nullptr);
+        const QString reason = QString::fromWCharArray(message).trimmed();
+#else
+        if (::access(QFile::encodeName(directory.absoluteFilePath()).constData(), W_OK | X_OK) == 0) return;
+        const QString reason = QString::fromLocal8Bit(std::strerror(errno));
+#endif
+        failures.append(QCoreApplication::translate("HarkenHub", "%1\nReason: %2").arg(nativePath, reason));
+    };
+    for (const QString& destination : destinations) check(destination, false);
+    for (const QString& source : sources) check(source, true);
+    if (failures.isEmpty()) return true;
+    failures.removeDuplicates();
+    *error = QCoreApplication::translate("HarkenHub",
+        "Directories without required create or rename access:\n%1").arg(failures.join(QStringLiteral("\n\n")));
+    return false;
+}
 
 bool checkIntegrationFilesWritable(const QStringList& paths, QString* error)
 {

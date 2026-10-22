@@ -3375,11 +3375,11 @@ bool EngineIntegrationsPage::runUnreal(
     compareStep.id = QStringLiteral("compare_sdk");
     compareStep.title = QCoreApplication::translate("HarkenHub", "Compare installed SDK");
     compareStep.hasFileComparison = plan.valid;
-    compareStep.attentionRequired = !plan.modifiedManagedFiles.isEmpty();
     compareStep.modifiedFiles = plan.modifiedManagedFiles;
     compareStep.missingFiles = plan.missingManagedFiles;
     for (const auto& path : plan.missingManagedFiles) compareStep.modifiedFiles.removeAll(path);
     for (const auto& path : plan.unreadableManagedFiles) compareStep.modifiedFiles.removeAll(path);
+    compareStep.attentionRequired = !compareStep.modifiedFiles.isEmpty();
     if (plan.valid) {
         compareStep.fileChanges = plan.changes;
         for (const QString& path : plan.preservedTargetFiles)
@@ -3392,18 +3392,18 @@ bool EngineIntegrationsPage::runUnreal(
         compareStep.status = ResultStatus::Succeeded;
         compareStep.summary = QCoreApplication::translate("HarkenHub", "The installed Unreal SDK matches the selected source.");
     } else {
-        compareStep.status = checkOnly || !plan.modifiedManagedFiles.isEmpty()
+        compareStep.status = checkOnly || !compareStep.modifiedFiles.isEmpty()
             ? ResultStatus::Warning : ResultStatus::Succeeded;
-        compareStep.summary = plan.modifiedManagedFiles.isEmpty()
+        compareStep.summary = compareStep.modifiedFiles.isEmpty()
             ? QCoreApplication::translate("HarkenHub", "%1 SDK file change(s) were found.")
                   .arg(plan.changes.size())
             : QCoreApplication::translate("HarkenHub", "%1 SDK file change(s) were found, including %2 locally modified managed file(s) that require confirmation before overwrite.")
                   .arg(plan.changes.size())
-                  .arg(plan.modifiedManagedFiles.size());
-        if (!plan.modifiedManagedFiles.isEmpty()) {
+                  .arg(compareStep.modifiedFiles.size());
+        if (!compareStep.modifiedFiles.isEmpty()) {
             compareStep.details.push_back(
                 QCoreApplication::translate("HarkenHub", "Locally modified managed files:\n%1")
-                    .arg(plan.modifiedManagedFiles.join(QLatin1Char('\n'))));
+                    .arg(compareStep.modifiedFiles.join(QLatin1Char('\n'))));
         }
         if (!plan.preservedTargetFiles.isEmpty()) {
             compareStep.details.push_back(
@@ -3664,7 +3664,8 @@ QString EngineIntegrationsPage::formatStepHtml(const ResultStep& step) const
     if (!step.cause.isEmpty()) {
         const QStringList accessHeadings{
             QCoreApplication::translate("HarkenHub", "Read-only files:\n%1").section(QLatin1Char('\n'), 0, 0),
-            QCoreApplication::translate("HarkenHub", "Files that could not be opened for writing:\n%1").section(QLatin1Char('\n'), 0, 0)};
+            QCoreApplication::translate("HarkenHub", "Files that could not be opened for writing:\n%1").section(QLatin1Char('\n'), 0, 0),
+            QCoreApplication::translate("HarkenHub", "Directories without required create or rename access:\n%1").section(QLatin1Char('\n'), 0, 0)};
         QStringList lines;
         for (const auto& line : step.cause.split(QLatin1Char('\n'))) {
             lines << (step.status == ResultStatus::Failed && accessHeadings.contains(line)

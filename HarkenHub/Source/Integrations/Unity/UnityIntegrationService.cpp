@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <filesystem>
 #include <memory>
 
 namespace VNX {
@@ -360,8 +361,20 @@ bool lockUnityProject(const QString& root, std::unique_ptr<QLockFile>* lock,
     return true;
 }
 
-QString integrationReportDirectory(const QString& project)
+QString integrationReportDirectory(const QString& project, QString* error)
 {
+    const QString userRoot = VNH::userDataDir();
+    if (userRoot.isEmpty() || !QDir().mkpath(userRoot)) {
+        *error = QCoreApplication::translate("HarkenHub", "Cannot create the Hub application-data directory: %1").arg(userRoot);
+        return {};
+    }
+    std::error_code resolutionError;
+    const auto resolvedRoot = std::filesystem::canonical(std::filesystem::path(userRoot.toStdU16String()), resolutionError);
+    if (resolutionError) {
+        *error = QCoreApplication::translate("HarkenHub", "Cannot resolve the Hub application-data directory: %1").arg(userRoot);
+        return {};
+    }
+    const QString canonicalRoot = QString::fromStdU16String(resolvedRoot.generic_u16string());
     QString identity = QFileInfo(project).canonicalFilePath();
     if (identity.isEmpty()) identity = QFileInfo(project).absoluteFilePath();
 #ifdef Q_OS_WIN
@@ -369,7 +382,7 @@ QString integrationReportDirectory(const QString& project)
 #endif
     const QString key = QString::fromLatin1(QCryptographicHash::hash(
         identity.toUtf8(), QCryptographicHash::Sha256).toHex());
-    return QDir(VNH::userDataDir()).filePath(QStringLiteral("IntegrationReports/Unity/%1").arg(key));
+    return QDir(canonicalRoot).filePath(QStringLiteral("IntegrationReports/Unity/%1").arg(key));
 }
 
 bool writeIntegrationReport(const QString& path, const QByteArray& contents, QString* error)
@@ -1481,7 +1494,8 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
             filesToChange.append(QDir(targetSdk).filePath(relative));
         if (preservedFiles.isEmpty()) filesToChange.append(targetSdk + QStringLiteral(".meta"));
         QString accessError;
-        if (!VNH::checkIntegrationFilesWritable(filesToChange, &accessError)) {
+        if (!VNH::checkIntegrationFilesWritable(filesToChange, &accessError)
+            || !VNH::checkIntegrationDirectoryChanges({targetSdk}, {targetSdk}, &accessError)) {
             step.status = StepStatus::Failed;
             step.summary = QStringLiteral("SDK file write access check failed.");
             step.cause = accessError;
@@ -1682,7 +1696,8 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
                                            QUuid::createUuid().toString(
                                                QUuid::WithoutBraces));
         const QString stageRoot = packages.filePath(stageName);
-        if (!VNH::checkIntegrationFilesWritable(filesToChange, &backupError)) {
+        if (!VNH::checkIntegrationFilesWritable(filesToChange, &backupError)
+            || !VNH::checkIntegrationDirectoryChanges({targetSdk}, {targetSdk}, &backupError)) {
             step.status = StepStatus::Failed;
             step.summary = QStringLiteral("SDK file write access check failed.");
             step.cause = backupError;
@@ -1730,7 +1745,12 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
             step.summary = QStringLiteral("No removal report was written because the Unity project was not valid.");
             return;
         }
-        const QString reportDir = integrationReportDirectory(result.unityProjectPath);
+        const QString reportDir = integrationReportDirectory(result.unityProjectPath, &step.cause);
+        if (reportDir.isEmpty()) {
+            step.status = StepStatus::Failed;
+            step.summary = QStringLiteral("Could not prepare the Hub report directory.");
+            return;
+        }
         result.jsonReportPath = QDir(reportDir).filePath(
             QStringLiteral("latest-removal.json"));
         result.textReportPath = QDir(reportDir).filePath(
@@ -2131,6 +2151,11 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
         QVector<FileChange> changes;
         result.targetInstalled = targetExists;
         if (!targetExists) {
+            if (!VNH::checkIntegrationDirectoryChanges({targetSdk}, {targetSdk}, &step.cause)) {
+                step.status = StepStatus::Failed;
+                step.summary = QStringLiteral("SDK file write access check failed.");
+                return;
+            }
             result.filesAdded = sourceFiles.size();
             result.changesDetected = true;
             for (const QString& relative : sourceFiles)
@@ -2301,7 +2326,8 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
         }
         filesToChange.append(QDir(targetSdk).filePath(QLatin1String(kInstalledState)));
         QString accessError;
-        if (!VNH::checkIntegrationFilesWritable(filesToChange, &accessError)) {
+        if (!VNH::checkIntegrationFilesWritable(filesToChange, &accessError)
+            || !VNH::checkIntegrationDirectoryChanges({targetSdk}, {targetSdk}, &accessError)) {
             step.status = StepStatus::Failed;
             step.summary = QStringLiteral("SDK file write access check failed.");
             step.cause = accessError;
@@ -2439,7 +2465,8 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             return;
         }
         QString moveError;
-        if (!VNH::checkIntegrationFilesWritable(filesToChange, &moveError)) {
+        if (!VNH::checkIntegrationFilesWritable(filesToChange, &moveError)
+            || !VNH::checkIntegrationDirectoryChanges({targetSdk}, {targetSdk, stageRoot}, &moveError)) {
             QDir(stageRoot).removeRecursively();
             step.status = StepStatus::Failed;
             step.summary = QStringLiteral("SDK file write access check failed.");
@@ -2566,7 +2593,12 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             step.summary = QStringLiteral("No report was written because the Unity project was not valid.");
             return;
         }
-        const QString reportDir = integrationReportDirectory(result.unityProjectPath);
+        const QString reportDir = integrationReportDirectory(result.unityProjectPath, &step.cause);
+        if (reportDir.isEmpty()) {
+            step.status = StepStatus::Failed;
+            step.summary = QStringLiteral("Could not prepare the Hub report directory.");
+            return;
+        }
         result.jsonReportPath = QDir(reportDir).filePath(QStringLiteral("latest.json"));
         result.textReportPath = QDir(reportDir).filePath(QStringLiteral("latest.txt"));
         step.status = StepStatus::Succeeded;

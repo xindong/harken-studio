@@ -791,6 +791,13 @@ Continue?</source>
 </context>
 <context>
     <name>HarkenHub</name>
+    <message><source>Not a directory: %1</source><translation>此路径不是目录：%1</translation></message>
+    <message><source>Directories without required create or rename access:
+%1</source><translation>以下目录缺少创建或重命名所需的权限：
+%1</translation></message>
+    <message><source>Could not prepare the Hub report directory.</source><translation>无法准备 Hub 报告目录。</translation></message>
+    <message><source>Cannot create the Hub application-data directory: %1</source><translation>无法创建 Hub 应用数据目录：%1</translation></message>
+    <message><source>Cannot resolve the Hub application-data directory: %1</source><translation>无法解析 Hub 应用数据目录的实际路径：%1</translation></message>
     <message><source>SDK file write access check failed.</source><translation>SDK 文件写入权限检查未通过。</translation></message>
     <message><source>Some files required for this SDK operation cannot be changed. No SDK files were changed.</source><translation>本次 SDK 操作需要修改的部分文件无法更改，SDK 文件未发生变更。</translation></message>
     <message><source>Read-only files:

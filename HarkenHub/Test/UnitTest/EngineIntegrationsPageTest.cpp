@@ -419,6 +419,19 @@ TEST_F(EngineIntegrationsPageTest, UnrealUsesTheSameProjectAndSdkWorkflowInBothL
         EXPECT_FALSE(primary()->isVisible());
         EXPECT_EQ(page->findChild<QLineEdit*>("installedSdkPath")->text(), QDir::toNativeSeparators(installed));
         EXPECT_TRUE(page->findChild<QLabel*>("installedSdkVersion")->text().contains("1.0.0"));
+        writeFile(QDir(installed).filePath("Runtime.bin"), "local changes");
+        ASSERT_TRUE(QFile::remove(installed + "/Binaries/ThirdParty/HarkenCore/Linux/x86_64/libHarkenCore.so"));
+        selectSdkFolder(source);
+        checkButton()->click();
+        const QString differences = page->findChild<QLabel*>("sdkDiffSummary")->text();
+        EXPECT_TRUE(differences.contains(QCoreApplication::translate(
+            "HarkenHub", "Locally modified files to overwrite or remove: %1").arg(1)));
+        EXPECT_TRUE(differences.contains(QCoreApplication::translate(
+            "HarkenHub", "Missing installed SDK files: %1").arg(1)));
+        page->findChild<QPushButton*>("cancelSdkSelection")->click();
+        writeFile(QDir(installed).filePath("Runtime.bin"), "runtime");
+        ASSERT_TRUE(QFile::copy(source + "/Binaries/ThirdParty/HarkenCore/Linux/x86_64/libHarkenCore.so",
+                               installed + "/Binaries/ThirdParty/HarkenCore/Linux/x86_64/libHarkenCore.so"));
         EXPECT_TRUE(QDir(source).removeRecursively());
         checkButton()->click();
         ASSERT_EQ(steps()->rowCount(), 1);
