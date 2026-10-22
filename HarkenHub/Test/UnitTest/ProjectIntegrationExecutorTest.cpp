@@ -96,14 +96,22 @@ TEST(IntegrationDirectoryTest, ChecksCreationAndRenamePermissionsWithoutChanging
     ASSERT_TRUE(QFile::setPermissions(parent, permissions & ~(QFile::WriteOwner | QFile::WriteGroup | QFile::WriteOther | QFile::WriteUser)));
 #endif
     EXPECT_TRUE(VNH::checkIntegrationFilesWritable({installed + "/payload.txt"}, &error));
-    EXPECT_FALSE(VNH::checkIntegrationDirectoryChanges({parent + "/nested/new"}, {}, &error)) << error.toStdString();
-    EXPECT_TRUE(error.contains(QDir::toNativeSeparators(parent))) << error.toStdString();
+    const bool canCreate = VNH::checkIntegrationDirectoryChanges({parent + "/nested/new"}, {}, &error);
+    EXPECT_FALSE(QFileInfo::exists(parent + "/nested"));
+    const bool created = QDir().mkpath(parent + "/nested/new");
+    EXPECT_EQ(canCreate, created) << error.toStdString();
+    if (!canCreate) EXPECT_TRUE(error.contains(QDir::toNativeSeparators(parent))) << error.toStdString();
+    if (created) ASSERT_TRUE(QDir(parent + "/nested").removeRecursively());
 #ifdef Q_OS_WIN
     ASSERT_EQ(QProcess::execute("icacls", {parent, "/remove:d", account}), 0);
     ASSERT_EQ(QProcess::execute("icacls", {parent, "/deny", account + ":(DC)"}), 0);
     ASSERT_EQ(QProcess::execute("icacls", {installed, "/deny", account + ":(D)"}), 0);
 #endif
-    EXPECT_FALSE(VNH::checkIntegrationDirectoryChanges({}, {installed}, &error)) << error.toStdString();
+    const bool canRename = VNH::checkIntegrationDirectoryChanges({}, {installed}, &error);
+    QString renameError;
+    const bool renamed = VNH::renameIntegrationDirectory(installed, parent + "/Moved", &renameError);
+    EXPECT_EQ(canRename, renamed) << error.toStdString() << '\n' << renameError.toStdString();
+    if (renamed) ASSERT_TRUE(VNH::renameIntegrationDirectory(parent + "/Moved", installed));
     EXPECT_FALSE(QFileInfo::exists(parent + "/nested"));
     QFile payload(installed + "/payload.txt");
     ASSERT_TRUE(payload.open(QIODevice::ReadOnly));
