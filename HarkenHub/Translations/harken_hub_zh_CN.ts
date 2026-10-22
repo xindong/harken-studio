@@ -159,6 +159,8 @@
 </context>
 <context>
     <name>HubReleaseNotes</name>
+    <message><source>Unity SDK checks recognize equivalent text across UTF-8, UTF-16, UTF-32, and common legacy encodings, including BOM and line-ending conversions. Encoding-only differences are listed as Review recommended without blocking updates, and equivalent read-only files retain their existing bytes.</source><translation>Unity SDK 检查支持 UTF-8、UTF-16、UTF-32 及常见传统编码之间的等价文本，包括 BOM 和换行格式转换。纯编码差异列为“建议关注”，不阻塞更新；内容等价的只读文件保留现有字节。</translation></message>
+    <message><source>Hub uses the refreshed light application icon for its windows, app bundle, Windows shortcuts, taskbar, and system tray.</source><translation>Hub 窗口、应用、Windows 快捷方式、任务栏和系统托盘统一使用新版浅色图标。</translation></message>
     <message><source>Integration-list tooltips show only the SDK installation path. Version tooltips appear only when a newer local SDK is available and show its version number.</source><translation>集成列表的 SDK 状态悬浮提示仅显示安装路径。版本悬浮提示仅在本地存在可更新 SDK 时出现，并显示最新版本号。</translation></message>
     <message><source>SDK check logs retain the file list and count for line-ending-only differences. Non-blocking items are labeled Review recommended. The SDK status shows normal for unchanged files, line-ending-only differences, and missing documentation or samples, with details kept in the check log.</source><translation>SDK 检查日志保留纯换行差异的文件列表和数量，非阻塞提示统一表述为“建议关注”。文件一致、仅换行差异或仅文档和示例缺失时，列表统一显示“正常”，详情保留在检查日志中。</translation></message>
     <message><source>Unity SDK checks and updates recognize LF, CRLF, and mixed line endings as unchanged text, including conversions after an update, avoiding false modification warnings and unnecessary write-access checks. Binary files and actual content changes remain strictly checked.</source><translation>Unity SDK 检查与更新将 LF、CRLF 及混合换行之间的纯换行差异视为内容一致，更新后再次转换换行也不会误报文件修改或触发不必要的写入权限检查。二进制文件和实际内容变化仍严格校验。</translation></message>
@@ -796,6 +798,7 @@ Continue?</source>
 <context>
     <name>HarkenHub</name>
     <message><source>Latest local SDK version: %1</source><translation>本地最新 SDK 版本：%1</translation></message>
+    <message><source>Review recommended: %1 SDK text file(s) use a different encoding; text contents match after normalizing encoding and line endings. SDK updates can continue.</source><translation>建议关注：%1 个 SDK 文本文件的编码不同；统一编码和换行格式后，正文内容一致，不影响 SDK 更新。</translation></message>
     <message><source>%1 SDK text file(s) differ only in LF/CRLF line endings; contents are unchanged.</source><translation>%1 个 SDK 文本文件仅换行格式不同（LF/CRLF），内容一致。</translation></message>
     <message><source>Missing documentation/sample files (does not block SDK updates):</source><translation>缺失的文档/示例文件（不影响 SDK 更新）：</translation></message>
     <message><source>%1 documentation/sample file(s) are missing; SDK updates can continue.</source><translation>%1 个文档/示例文件缺失，不影响 SDK 更新。</translation></message>
@@ -3551,8 +3554,8 @@ Close Unity before continuing.</source>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1206"/>
-        <source>Check completed with guidance for additional target platforms.</source>
-        <translation>检查完成，请查看其他目标平台的相关提示。</translation>
+        <source>Check completed. Review is recommended for the highlighted steps.</source>
+        <translation>检查完成，建议关注高亮步骤中的说明。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1208"/>

@@ -1854,7 +1854,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
     QString sourceVersion;
     QStringList sourceFiles;
     QStringList preservedFiles;
-    QStringList lineEndingPreservedFiles;
+    QStringList textFormatPreservedFiles;
     QStringList staleFiles;
     QStringList filesToChange;
     QMap<QString, QString> runtimeMetadataMoves;
@@ -2216,6 +2216,10 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
                         QDir(targetSdk).filePath(relative), installedHashes.value(relative).toString().toLatin1(),
                         installedTextHashes.value(relative).toString().toLatin1()))
                     result.lineEndingFiles << relative;
+                else if (UnityInstallation::matchesTextHashIgnoringEncoding(
+                             QDir(targetSdk).filePath(relative), installedHashes.value(relative).toString().toLatin1(),
+                             installedTextHashes.value(relative).toString().toLatin1()))
+                    result.encodingFiles << relative;
                 else
                     result.modifiedFiles << relative;
             }
@@ -2257,10 +2261,14 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             } else if (digest.unreadable()) {
                 unreadableTargets << relative;
             } else if (!digest.matches(sourceHashes.value(relative))) {
-                if (UnityInstallation::matchesTextHashIgnoringLineEndings(
-                        QDir(targetSdk).filePath(relative), sourceHashes.value(relative), sourceTextHashes.value(relative))) {
-                    lineEndingPreservedFiles << relative;
-                    if (!result.lineEndingFiles.contains(relative)) result.lineEndingFiles << relative;
+                const bool lineEndingsOnly = UnityInstallation::matchesTextHashIgnoringLineEndings(
+                    QDir(targetSdk).filePath(relative), sourceHashes.value(relative), sourceTextHashes.value(relative));
+                const bool encodingOnly = !lineEndingsOnly && UnityInstallation::matchesTextHashIgnoringEncoding(
+                    QDir(targetSdk).filePath(relative), sourceHashes.value(relative), sourceTextHashes.value(relative));
+                if (lineEndingsOnly || encodingOnly) {
+                    textFormatPreservedFiles << relative;
+                    auto& differences = encodingOnly ? result.encodingFiles : result.lineEndingFiles;
+                    if (!differences.contains(relative)) differences << relative;
                     installedContentHashes[relative] = digest.hash;
                 } else {
                     ++filesChanged;
@@ -2330,10 +2338,18 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
         result.fileChanges = changes;
         result.staleFilesToRemove = staleFiles.size();
         result.lineEndingFiles.sort();
+        result.encodingFiles.sort();
+        for (const QString& relative : result.encodingFiles) result.lineEndingFiles.removeAll(relative);
         if (!result.lineEndingFiles.isEmpty())
             step.details << QStringLiteral("%1 SDK text file(s) differ only in LF/CRLF line endings; contents are unchanged.")
                                 .arg(result.lineEndingFiles.size())
                          << result.lineEndingFiles.join(QLatin1Char('\n'));
+        if (!result.encodingFiles.isEmpty()) {
+            step.status = StepStatus::Warning;
+            step.details << QStringLiteral("Review recommended: %1 SDK text file(s) use a different encoding; text contents match after normalizing encoding and line endings. SDK updates can continue.")
+                                .arg(result.encodingFiles.size())
+                         << result.encodingFiles.join(QLatin1Char('\n'));
+        }
         if (!result.missingOptionalFiles.isEmpty())
             step.details << QStringLiteral("Missing documentation/sample files (does not block SDK updates):")
                          << result.missingOptionalFiles.join(QLatin1Char('\n'));
@@ -2445,7 +2461,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
 
         QString error;
         if (!copyFiles(result.sdkSourcePath, stageRoot, sourceFiles, &error) ||
-            !copyFiles(targetSdk, stageRoot, lineEndingPreservedFiles, &error) ||
+            !copyFiles(targetSdk, stageRoot, textFormatPreservedFiles, &error) ||
             (!preservedFiles.isEmpty() &&
              !copyFiles(targetSdk, stageRoot, preservedFiles, &error)) ||
             !writeInstalledState(stageRoot, sourceVersion, sourceFiles,
@@ -2479,8 +2495,10 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
                 stagingUnreadable << relative;
             else if (!digest.matches(installedContentHashes.value(relative))
                      || (sourceTextHashes.contains(relative)
-                         && UnityInstallation::normalizedTextHash(QDir(stageRoot).filePath(relative))
-                             != sourceTextHashes.value(relative)))
+                         && !UnityInstallation::matchesTextHashIgnoringLineEndings(
+                             QDir(stageRoot).filePath(relative), sourceHashes.value(relative), sourceTextHashes.value(relative))
+                         && !UnityInstallation::matchesTextHashIgnoringEncoding(
+                             QDir(stageRoot).filePath(relative), sourceHashes.value(relative), sourceTextHashes.value(relative))))
                 stagingMismatches << relative;
         }
         if (!stagingMismatches.isEmpty() || !stagingUnreadable.isEmpty()) {

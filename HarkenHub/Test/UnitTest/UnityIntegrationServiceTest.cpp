@@ -9,6 +9,7 @@
 #include <gtest/gtest.h>
 
 #include <QDir>
+#include <QCryptographicHash>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -19,6 +20,7 @@
 #include <QLockFile>
 #include <QProcess>
 #include <QScopeGuard>
+#include <QStringEncoder>
 
 #include <atomic>
 
@@ -2364,6 +2366,125 @@ TEST(UnityIntegrationService, LineEndingConversionsPreserveIntegrityAndReadOnlyC
     }
 }
 
+TEST(UnityIntegrationService, EncodingConversionsPreserveIntegrityAndReadOnlyContentAcrossUpdates)
+{
+    const QString text = QStringLiteral("// caf\u00e9\nclass Example {}\n");
+    QList<QPair<QByteArray, QByteArray>> conversions;
+    for (const auto encoding : {QStringConverter::Utf8, QStringConverter::Utf16LE,
+                                QStringConverter::Utf16BE, QStringConverter::Utf32LE,
+                                QStringConverter::Utf32BE}) {
+        for (const bool bom : {false, true}) {
+            if (encoding == QStringConverter::Utf8 && !bom) continue;
+            QStringEncoder encoder(encoding, bom ? QStringConverter::Flag::WriteBom
+                                                 : QStringConverter::Flag::Default);
+            QString crlf = text;
+            crlf.replace("\n", "\r\n");
+            conversions.append({text.toUtf8(), encoder(crlf)});
+        }
+    }
+    conversions.append({text.toUtf8(), QByteArray("// caf\xe9\r\nclass Example {}\r\n")});
+    for (const auto& pair : QList<QPair<QString, QByteArray>>{
+             {QStringLiteral("\u4e2d\u6587"), QByteArray::fromHex("d6d0cec4")},
+             {QStringLiteral("\u4e2d\u6587"), QByteArray::fromHex("a4a4a4e5")},
+             {QStringLiteral("\u65e5\u672c\u8a9e"), QByteArray::fromHex("93fa967b8cea")},
+             {QStringLiteral("\ud55c\uad6d\uc5b4"), QByteArray::fromHex("c7d1b1b9beee")},
+             {QStringLiteral("\U0001f600"), QByteArray::fromHex("9439fc36")}}) {
+        conversions.append({("// " + pair.first + "\nclass Example {}\n").toUtf8(),
+                            "// " + pair.second + "\r\nclass Example {}\r\n"});
+    }
+    for (qsizetype index = 0; index < conversions.size(); ++index) {
+        for (const int recordVariant : {0, 1, 2, 3}) {
+            SCOPED_TRACE(index);
+            SCOPED_TRACE(recordVariant);
+            QTemporaryDir dir;
+            ASSERT_TRUE(dir.isValid());
+            const QString project = makeUnityProject(dir.filePath("Game"));
+            const QString source = makeCompleteSdk(dir.filePath("SDK"));
+            const QString relative = "Runtime/Generated/HarkenAbi.g.cs";
+            const auto& conversion = conversions[index];
+            const QByteArray original = recordVariant < 2 ? conversion.first : conversion.second;
+            const QByteArray converted = recordVariant < 2 ? conversion.second : conversion.first;
+            writeFile(source + "/" + relative, original);
+            VNX::UnityIntegrationService service;
+            VNX::UnityIntegrationService::Request request;
+            request.unityProjectPath = project;
+            request.sdkSourcePath = source;
+            ASSERT_TRUE(service.run(request).success);
+            const QString installed = project + "/Packages/com.harken.core";
+            const QString statePath = installed + "/.harken-integration-state.json";
+            auto state = QJsonDocument::fromJson(readFile(statePath)).object();
+            if (recordVariant % 2) {
+                state.remove("text_lf_sha256");
+                writeFile(statePath, QJsonDocument(state).toJson());
+            }
+            writeFile(installed + "/" + relative, converted);
+            const auto permissions = QFileInfo(installed + "/" + relative).permissions();
+            const auto restore = qScopeGuard([&]() { QFile::setPermissions(installed + "/" + relative, permissions); });
+            ASSERT_TRUE(QFile::setPermissions(installed + "/" + relative, QFile::ReadOwner | QFile::ReadUser));
+            VNH::UnityIntegrationRequest verify;
+            verify.unityProjectPath = project;
+            verify.verifyInstalledOnly = true;
+            auto inspection = VNH::HubUnityIntegrationService::run(verify);
+            ASSERT_TRUE(inspection.success);
+            EXPECT_TRUE(inspection.hasWarnings);
+            EXPECT_TRUE(inspection.modifiedFiles.isEmpty());
+            EXPECT_EQ(inspection.encodingFiles, QStringList{relative});
+            request.checkOnly = true;
+            auto review = service.run(request);
+            ASSERT_TRUE(review.success);
+            EXPECT_TRUE(review.targetAlreadyCurrent);
+            EXPECT_EQ(review.filesChanged, 0);
+            EXPECT_EQ(review.encodingFiles, QStringList{relative});
+            EXPECT_TRUE(readFile(review.textReportPath).contains("Review recommended"));
+            EXPECT_TRUE(readFile(review.textReportPath).contains(relative.toUtf8()));
+            writeFile(source + "/Runtime/Generated/HarkenNative.g.cs", "updated implementation\n");
+            review = service.run(request);
+            ASSERT_TRUE(review.success);
+            EXPECT_EQ(review.filesChanged, 1);
+            request.checkOnly = false;
+            request.confirmTargetChanges = true;
+            request.approvedPlanHash = review.planHash;
+            const auto updated = service.run(request);
+            ASSERT_TRUE(updated.success) << updated.steps[3].cause.toStdString();
+            EXPECT_EQ(readFile(installed + "/" + relative), converted);
+            EXPECT_TRUE(VNH::HubUnityIntegrationService::run(verify).success);
+            ASSERT_TRUE(QFile::setPermissions(installed + "/" + relative, permissions));
+            QByteArray mixed = conversion.first;
+            mixed.replace(mixed.indexOf('\n'), 1, "\r\n");
+            writeFile(installed + "/" + relative, mixed);
+            EXPECT_TRUE(VNH::HubUnityIntegrationService::run(verify).success);
+            writeFile(installed + "/" + relative, "class Modified {}\n");
+            inspection = VNH::HubUnityIntegrationService::run(verify);
+            EXPECT_FALSE(inspection.success);
+            EXPECT_EQ(inspection.modifiedFiles, QStringList{relative});
+        }
+    }
+}
+
+TEST(UnityIntegrationService, EncodingToleranceRejectsCorruptionMojibakeAndBinaryChanges)
+{
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    const QByteArray original = QStringLiteral("// caf\u00e9\n").toUtf8();
+    const QByteArray hash = QCryptographicHash::hash(original, QCryptographicHash::Sha256).toHex();
+    const QString path = dir.filePath("Example.cs");
+    for (const QByteArray& changed : QList<QByteArray>{
+             QStringLiteral("// caf\u00c3\u00a9\n").toUtf8(),
+             QByteArray::fromHex("efbbbfefbbbf") + original,
+             QByteArray::fromHex("efbbbf") + original + QByteArray::fromHex("c3"),
+             QByteArray::fromHex("fffe2f002f002000630061006600e9000a"),
+             QByteArray::fromHex("fffe00002f00000000d80000"),
+             original + '\0', original + ' ',
+             QStringLiteral("// caf\ufeff\u00e9\n").toUtf8()}) {
+        writeFile(path, changed);
+        EXPECT_FALSE(VNX::UnityInstallation::matchesTextHashIgnoringEncoding(path, hash));
+        EXPECT_FALSE(VNX::UnityInstallation::matchesTextHashIgnoringEncoding(path, hash, hash));
+    }
+    const QString binary = dir.filePath("Plugin.dll");
+    writeFile(binary, QByteArray::fromHex("efbbbf") + original);
+    EXPECT_FALSE(VNX::UnityInstallation::matchesTextHashIgnoringEncoding(binary, hash));
+}
+
 TEST(UnityIntegrationService, MissingDocumentationAndSamplesDoNotBlockVerificationOrUpdates)
 {
     QTemporaryDir dir;
@@ -2447,7 +2568,7 @@ TEST(UnityIntegrationService, LineEndingToleranceDoesNotHideBinaryOrActualTextCh
     const QString invalidText = "Runtime/Generated/HarkenTypes.g.cs";
     writeFile(source + "/" + binary, "native\nbytes\n");
     writeFile(source + "/" + text, "class Original {}\n");
-    writeFile(source + "/" + invalidText, QByteArray("invalid\xff\n", 9));
+    writeFile(source + "/" + invalidText, QByteArray::fromHex("efbbbf") + "invalid\xff\n");
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = project;
@@ -2456,7 +2577,7 @@ TEST(UnityIntegrationService, LineEndingToleranceDoesNotHideBinaryOrActualTextCh
     const QString installed = project + "/Packages/com.harken.core";
     writeFile(installed + "/" + binary, "native\r\nbytes\r\n");
     writeFile(installed + "/" + text, "class Modified {}\r\n");
-    writeFile(installed + "/" + invalidText, QByteArray("invalid\xff\r\n", 10));
+    writeFile(installed + "/" + invalidText, QByteArray::fromHex("efbbbf") + "invalid\xff\r\n");
     VNH::UnityIntegrationRequest verify;
     verify.unityProjectPath = project;
     verify.verifyInstalledOnly = true;
