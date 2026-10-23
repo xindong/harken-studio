@@ -1790,9 +1790,10 @@ struct SpatialCase {
     std::uint32_t voicesPerEmitter = 1;
     std::string motion;
     bool curves = false;
+    bool highpass = false;
 };
 
-VnAttenuationDesc SpatialProfile(bool curves, bool alternate = false) {
+VnAttenuationDesc SpatialProfile(bool curves, bool alternate = false, bool highpass = false) {
     VnAttenuationDesc desc{};
     desc.structSize = sizeof(desc);
     desc.rolloff = VN_ROLLOFF_LINEAR;
@@ -1808,10 +1809,6 @@ VnAttenuationDesc SpatialProfile(bool curves, bool alternate = false) {
     desc.coneOuterDeg = 120.0f;
     desc.coneOuterGainDb = -6.0f;
     desc.coneOuterLowpassHz = 4000.0f;
-    if (!curves) {
-        if (alternate) desc.maxDistance = 90.0f;
-        return desc;
-    }
     const auto fill = [](VnAttenuationCurve& curve, float nearValue, float farValue) {
         curve.enabled = 1;
         curve.pointCount = VN_ATTENUATION_MAX_CURVE_POINTS;
@@ -1826,6 +1823,11 @@ VnAttenuationDesc SpatialProfile(bool curves, bool alternate = false) {
                 a.x + (b.x - a.x) * 0.8f, b.y};
         }
     };
+    if (highpass) fill(desc.highpassCurve, 0.0f, alternate ? 1800.0f : 1000.0f);
+    if (!curves) {
+        if (alternate) desc.maxDistance = 90.0f;
+        return desc;
+    }
     fill(desc.volumeCurve, 0.0f, alternate ? -50.0f : -60.0f);
     fill(desc.lowpassCurve, 18000.0f, 2000.0f);
     fill(desc.widthCurve, 0.8f, 0.1f);
@@ -1892,7 +1894,7 @@ SpatialRun RunSpatialOnce(const SpatialCase& scenario, std::uint32_t warmup,
     pcm.samplesInterleaved = source.data();
     const auto sound = harkentest::ObjectId(0x5350415449414c01ull);
     const auto profile = harkentest::ObjectId(0x5350415449414c02ull);
-    auto desc = SpatialProfile(scenario.curves);
+    auto desc = SpatialProfile(scenario.curves, false, scenario.highpass);
     if ((run.failure = Vn_RegisterPCM(sound, &pcm)) != VN_OK ||
         (run.failure = Vn_RegisterAttenuation(profile, &desc)) != VN_OK) return run;
     std::vector<VnEmitterHandle> emitters(config.maxEmitters);
@@ -1985,13 +1987,13 @@ SpatialRun RunSpatialOnce(const SpatialCase& scenario, std::uint32_t warmup,
             }
         } else if (replaceEvent) {
             alternateProfile = !alternateProfile;
-            desc = SpatialProfile(scenario.curves, alternateProfile);
+            desc = SpatialProfile(scenario.curves, alternateProfile, scenario.highpass);
             run.failure = Vn_ReplaceAttenuation(profile, &desc);
             if (measure && run.failure == VN_OK) ++run.profileChanges;
         }
         if (run.failure == VN_OK && residencyEvent) {
             alternateProfile = !alternateProfile;
-            desc = SpatialProfile(scenario.curves, alternateProfile);
+            desc = SpatialProfile(scenario.curves, alternateProfile, scenario.highpass);
             run.failure = Vn_ReplaceAttenuation(profile, &desc);
             if (measure && run.failure == VN_OK) ++run.profileChanges;
             const auto retired = emitters.front();
@@ -2142,12 +2144,13 @@ int RunSpatial(const SpatialCase& scenario, bool smoke, bool once) {
         passed = passed && repetitionIntegrity;
         std::printf("{\"benchmark\":\"spatial-update\",\"schema\":\"spatial-update-v1\","
             "\"mode\":\"%s\",\"repetition\":%u,\"voices\":%u,\"voices_per_emitter\":%u,"
-            "\"motion\":\"%s\",\"curves\":%s,\"logic_hz\":60,\"sample_rate\":48000,"
+            "\"motion\":\"%s\",\"curves\":%s,\"distance_highpass\":%s,\"logic_hz\":60,\"sample_rate\":48000,"
             "\"queue_depth\":16384,\"control_commands_per_block\":8192,\"render_workers\":0,"
             "\"block_frames\":256,\"warmup_ticks\":%u,\"measured_ticks\":%u,"
             "\"environment_qualified\":%s,\"pinned_cpu\":%d,\"source_commit\":",
             smoke ? "smoke" : "formal", repetition, scenario.voices, scenario.voicesPerEmitter,
-            scenario.motion.c_str(), scenario.curves ? "true" : "false", warmup, ticks,
+            scenario.motion.c_str(), scenario.curves ? "true" : "false",
+            scenario.highpass ? "true" : "false", warmup, ticks,
             EnvironmentQualified(environment) ? "true" : "false", environment.pinnedCpuIndex);
         PrintJsonString(environment.sourceCommit.c_str());
         std::fputs(",\"source_dirty\":", stdout);
@@ -2206,9 +2209,21 @@ int RunSpatial(const SpatialCase& scenario, bool smoke, bool once) {
 
 int main(int argc, char* argv[]) {
     if (argc >= 2 && std::strcmp(argv[1], "--spatial") == 0) {
-        if (argc != 6 && !(argc == 7 && (std::strcmp(argv[6], "--smoke") == 0 ||
-                                      std::strcmp(argv[6], "--once") == 0))) return 2;
+        if (argc < 6 || argc > 8) return 2;
         SpatialCase scenario;
+        bool smoke = false;
+        bool once = false;
+        for (int i = 6; i < argc; ++i) {
+            if (std::strcmp(argv[i], "--highpass") == 0 && !scenario.highpass) {
+                scenario.highpass = true;
+            } else if (std::strcmp(argv[i], "--smoke") == 0 && !smoke && !once) {
+                smoke = true;
+            } else if (std::strcmp(argv[i], "--once") == 0 && !smoke && !once) {
+                once = true;
+            } else {
+                return 2;
+            }
+        }
         const auto parse = [](const char* text, std::uint32_t* out) {
             char* end = nullptr;
             const auto value = std::strtoul(text, &end, 10);
@@ -2226,8 +2241,7 @@ int main(int argc, char* argv[]) {
         if (scenario.motion == "residency" && scenario.voices < 32) return 2;
         if (std::strcmp(argv[5], "builtin") != 0 && std::strcmp(argv[5], "curves") != 0) return 2;
         scenario.curves = std::strcmp(argv[5], "curves") == 0;
-        return RunSpatial(scenario, argc == 7 && std::strcmp(argv[6], "--smoke") == 0,
-                          argc == 7 && std::strcmp(argv[6], "--once") == 0);
+        return RunSpatial(scenario, smoke, once);
     }
     bool list = false;
     bool listResources = false;
@@ -2254,7 +2268,7 @@ int main(int argc, char* argv[]) {
                 "--list | --list-resources | --resource <id> | "
                 "--scenario <id> [--pilot|--smoke] | "
                 "--spatial <voices:1..512> <voices-per-emitter:1|4> "
-                "<static|ten|all|listener|replace|residency> <builtin|curves> [--smoke|--once]\n");
+                "<static|ten|all|listener|replace|residency> <builtin|curves> [--highpass] [--smoke|--once]\n");
             return 0;
         } else {
             std::fprintf(stderr, "Unknown or incomplete argument\n");
