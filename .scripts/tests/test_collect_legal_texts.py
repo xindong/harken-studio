@@ -112,24 +112,21 @@ class CollectLegalTextsTest(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     self.module.verify("hub", output)
 
-    def test_standalone_sdk_requires_license_and_notice_for_each_engine(self):
+    def test_standalone_sdk_requires_license_and_notice(self):
         sdk = self.root / "HarkenSDK"
-        packages = (("Unity", "Harken"), ("Unreal", "Harken"))
-        for engine, package in packages:
-            destination = sdk / engine / package
-            destination.mkdir(parents=True)
-            for name in ("LICENSE.md", "NOTICE.md"):
-                shutil.copyfile(REPO_ROOT / "HarkenSDK" / engine / package / name, destination / name)
+        destination = sdk / "Unity/Harken"
+        destination.mkdir(parents=True)
+        for name in ("LICENSE.md", "NOTICE.md"):
+            shutil.copyfile(REPO_ROOT / "HarkenSDK/Unity/Harken" / name, destination / name)
         self.module.verify_sdk(sdk)
-        for engine, package in packages:
-            for name in ("LICENSE.md", "NOTICE.md"):
-                with self.subTest(engine=engine, name=name):
-                    path = sdk / engine / package / name
-                    content = path.read_bytes()
-                    path.unlink()
-                    with self.assertRaises(SystemExit):
-                        self.module.verify_sdk(sdk)
-                    path.write_bytes(content)
+        for name in ("LICENSE.md", "NOTICE.md"):
+            with self.subTest(name=name):
+                path = destination / name
+                content = path.read_bytes()
+                path.unlink()
+                with self.assertRaises(SystemExit):
+                    self.module.verify_sdk(sdk)
+                path.write_bytes(content)
 
     def test_staged_text_accepts_platform_line_endings(self):
         output = self.root / "Legal"
@@ -140,16 +137,6 @@ class CollectLegalTextsTest(unittest.TestCase):
             with self.subTest(newline=newline):
                 path.write_bytes(normalized.replace("\n", newline).encode("utf-8"))
                 self.module.verify("hub", output)
-
-    def test_unreal_plugin_filter_retains_standalone_legal_files(self):
-        filters = (REPO_ROOT / "HarkenSDK/Unreal/Harken/Config/FilterPlugin.ini").read_text(encoding="utf-8").splitlines()
-        self.assertIn("/LICENSE.md", filters)
-        self.assertIn("/NOTICE.md", filters)
-        self.assertIn("/Legal/...", filters)
-        self.assertEqual(
-            (REPO_ROOT / "HarkenSDK/Unreal/Harken/LICENSE.md").read_text(encoding="utf-8"),
-            (REPO_ROOT / "LICENSE").read_text(encoding="utf-8"),
-        )
 
 
 if __name__ == "__main__":

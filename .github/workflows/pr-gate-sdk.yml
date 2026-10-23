@@ -51,7 +51,6 @@ jobs:
           python .scripts/check_sdk_version.py
           python .scripts/check_unity_sdk_contract.py
           python .scripts/tests/test_check_unity_sdk_contract.py -v
-          python .scripts/check_unreal_sdk_contract.py
           python HarkenEngine/Source/Tooling/Binding/gen_binding.py --check
 
       - name: Setup MSVC environment
@@ -126,9 +125,6 @@ jobs:
 
       - name: Test Unity SDK source contract
         run: python3 .scripts/tests/test_check_unity_sdk_contract.py -v
-
-      - name: Check Unreal native contract
-        run: python3 .scripts/check_unreal_sdk_contract.py
 
       - name: Check generated binding drift
         run: python3 HarkenEngine/Source/Tooling/Binding/gen_binding.py --check

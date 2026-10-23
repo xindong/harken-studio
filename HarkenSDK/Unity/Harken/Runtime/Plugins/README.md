@@ -86,7 +86,7 @@ options default OFF. Shared-library builds enable `HARKEN_BUILD_CORE` and
 `HARKEN_BUILD_SHARED`; iOS enables only `HARKEN_BUILD_CORE` and builds the static
 `harken_core` target.
 
-`.github/workflows/sdk-artifact.yml` assembles these libraries with the Unity and
-Unreal SDK sources and validates the package layout. SDK contract tests belong
+`.github/workflows/sdk-artifact.yml` assembles these libraries with the Unity
+SDK sources and validates the package layout. SDK contract tests belong
 to `.github/workflows/pr-gate-sdk.yml`, including the Windows native binding
-test. The artifact workflows do not run the SDK in Unity or Unreal.
+test. The artifact workflows do not run the SDK in Unity.

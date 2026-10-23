@@ -424,7 +424,7 @@ _harken_add_python_regen_target(
 _harken_add_python_regen_target(
     harken_variable_catalog_regen
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/VariableCatalog/gen_variable_catalog.py"
-    "Regenerating Native/Unity/Unreal Variable catalog constants from variable_catalog.json"
+    "Regenerating Native/Unity Variable catalog constants from variable_catalog.json"
 )
 
 # Remote-control channel (Tool/Remote): a static tooling library the

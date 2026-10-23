@@ -47,9 +47,6 @@ jobs:
       - name: Verify SDK version identity
         run: python3 .scripts/check_sdk_version.py
 
-      - name: Test Unreal SDK artifact contract
-        run: python3 .scripts/tests/test_check_unreal_sdk_contract.py -v
-
       - name: Download release Runtime libraries
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -63,27 +60,15 @@ jobs:
           set -euo pipefail
           mkdir -p .temp/package/HarkenSDK
           cp HarkenSDK/VERSION .temp/package/HarkenSDK/VERSION
-          tar -C HarkenSDK --exclude='./Test' -cf - . \
+          tar -C HarkenSDK -cf - VERSION API_SURFACE.md Unity Tooling \
             | tar -C .temp/package/HarkenSDK -xf -
           runtime_root=".temp/runtime"
           unity_plugins=".temp/package/HarkenSDK/Unity/Harken/Runtime/Plugins"
-          unreal_root=".temp/package/HarkenSDK/Unreal/Harken"
           install -Dm644 "$runtime_root/windows-x64/HarkenCore.dll" "$unity_plugins/x86_64/HarkenCore.dll"
           install -Dm644 "$runtime_root/macos-universal/libHarkenCore.dylib" "$unity_plugins/macOS/libHarkenCore.dylib"
           install -Dm644 "$runtime_root/ios-arm64/libHarkenCore.a" "$unity_plugins/iOS/libHarkenCore.a"
           install -Dm644 "$runtime_root/linux-x64/libHarkenCore.so" "$unity_plugins/x86_64/libHarkenCore.so"
           install -Dm644 "$runtime_root/android/arm64-v8a/libHarkenCore.so" "$unity_plugins/Android/arm64-v8a/libHarkenCore.so"
-          install -Dm644 "$runtime_root/windows-x64/HarkenCore.dll" "$unreal_root/Binaries/ThirdParty/HarkenCore/Win64/HarkenCore.dll"
-          install -Dm644 "$runtime_root/windows-x64/HarkenCoreImport.lib" "$unreal_root/Source/HarkenCore/Lib/Win64/HarkenCoreImport.lib"
-          install -Dm644 "$runtime_root/macos-universal/libHarkenCore.dylib" "$unreal_root/Binaries/ThirdParty/HarkenCore/Mac/libHarkenCore.dylib"
-          install -Dm644 "$runtime_root/linux-x64/libHarkenCore.so" "$unreal_root/Binaries/ThirdParty/HarkenCore/Linux/x86_64/libHarkenCore.so"
-          install -Dm644 "$runtime_root/android/arm64-v8a/libHarkenCore.so" "$unreal_root/Source/HarkenCore/Lib/Android/arm64-v8a/libHarkenCore.so"
-          install -Dm644 "$runtime_root/ios-arm64/libHarkenCore.a" "$unreal_root/Source/HarkenCore/Lib/IOS/libHarkenCore.a"
-          mkdir -p "$unreal_root/Source/HarkenCore/Include/harken"
-          cp -R HarkenEngine/Source/Runtime/api/include/harken/. "$unreal_root/Source/HarkenCore/Include/harken/"
-          python3 .scripts/check_unreal_sdk_contract.py \
-            --sdk-root "$unreal_root" \
-            --require-embedded-header
 
           windows_runtime=".temp/package/HarkenSDK/Unity/Harken/Runtime/Plugins/x86_64/HarkenCore.dll"
           macos_runtime=".temp/package/HarkenSDK/Unity/Harken/Runtime/Plugins/macOS/libHarkenCore.dylib"
@@ -98,20 +83,6 @@ jobs:
             "$android_arm64_runtime"; do
             if [ ! -s "$runtime" ]; then
               echo "::error file=$runtime::required integration runtime is missing or empty"
-              exit 1
-            fi
-          done
-
-          for runtime in \
-            "$unreal_root/Binaries/ThirdParty/HarkenCore/Win64/HarkenCore.dll" \
-            "$unreal_root/Source/HarkenCore/Lib/Win64/HarkenCoreImport.lib" \
-            "$unreal_root/Binaries/ThirdParty/HarkenCore/Mac/libHarkenCore.dylib" \
-            "$unreal_root/Binaries/ThirdParty/HarkenCore/Linux/x86_64/libHarkenCore.so" \
-            "$unreal_root/Source/HarkenCore/Lib/Android/arm64-v8a/libHarkenCore.so" \
-            "$unreal_root/Source/HarkenCore/Lib/IOS/libHarkenCore.a" \
-            "$unreal_root/Source/HarkenCore/Include/harken/Harken.h"; do
-            if [ ! -s "$runtime" ]; then
-              echo "::error file=$runtime::required Unreal SDK file is missing or empty"
               exit 1
             fi
           done
@@ -137,7 +108,7 @@ jobs:
             --require-binaries
 
           cat > .temp/package/README-FIRST.txt <<EOF
-          Harken Unity and Unreal SDK integration bundle
+          Harken Unity SDK integration bundle
           Commit: ${GITHUB_SHA}
           Channel: ${HARKEN_BUILD_CHANNEL}
           Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
@@ -149,10 +120,6 @@ jobs:
           The HarkenSDK directory contains the shared Unity SDK package plus
           Windows x64, macOS universal (arm64 + x86_64), iOS device arm64,
           Linux x64, and Android arm64-v8a runtimes.
-
-          Copy HarkenSDK/Unreal/Harken to an Unreal project's Plugins/Harken directory.
-          It contains Windows x64, macOS universal, Linux x64, Android arm64-v8a,
-          and iOS device arm64 HarkenCore runtimes.
           EOF
 
       - name: Record SDK dependencies and build evidence

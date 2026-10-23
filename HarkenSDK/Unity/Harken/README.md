@@ -1,8 +1,8 @@
 # Harken Core Unity SDK
 
 `com.harken.core` is the Unity package for the Harken Core game-audio runtime.
-The package root contains Unity content only. The Unreal plugin is maintained
-and shipped separately from `HarkenSDK/Unreal/Harken`.
+The package root contains Unity content only. `HarkenSDK/VERSION` defines the
+SDK product version; this package's `package.json` must match that version.
 
 ## API reference manual
 
@@ -402,8 +402,11 @@ They can be moved or renamed to match the game project's directory layout,
 but must stay outside `Resources` so the audio project directory is not shipped.
 Keep a single Editor settings asset; duplicates fail settings lookup and build validation.
 
-The page's Network section contains the connection settings.
-`Remote Bind Address` defaults to `0.0.0.0` for the local machine and LAN.
+The Communication page contains the connection settings.
+`Bind Address` is fixed to `127.0.0.1`. TCP connections and UDP discovery are
+restricted to this machine; LAN communication is unavailable. The native service
+rejects other configured addresses with `VN_INVALID_ARG`; existing settings are
+not migrated.
 `Remote Port` zero requests an available TCP port, allowing multiple game
 processes to run together. `Enable Remote Discovery` defaults to true, and
 `Remote Discovery Port` zero selects UDP port `37840`. Studio discovery reports
@@ -436,10 +439,9 @@ or a successful `PackBootstrap.Start`. Remote remains off until explicitly start
 an explicit retry. Engine termination stops the listener.
 While the Engine is initialized, these calls must run on
 the Engine logic thread that owns `Init` and `Update`.
-The initial transport is intended for trusted local networks and does not
-authenticate peers or encrypt traffic. Bind to `127.0.0.1` when the listener
-should only accept local connections. Disabling discovery does not restrict
-manual connections to the listener.
+The transport is restricted to the local machine and does not authenticate peers
+or encrypt traffic. Disabling discovery does not disable manual local connections
+to the listener.
 
 ## Managed Spatial Playback
 

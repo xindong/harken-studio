@@ -18,10 +18,6 @@ def cs(source):
     return surface.managed_surface(source.encode(), "fixture.cs")
 
 
-def cpp(source):
-    return surface.unreal_surface(source.encode(), "fixture.h")
-
-
 def policy(rows, **changes):
     group = {"audience": "gameplay", "disposition": "supported",
              "rationale": "Fixture API", "consumer_contract": "Fixture consumer",
@@ -158,168 +154,6 @@ class ManagedSurfaceTest(unittest.TestCase):
         self.assertTrue(any("Visible" in key for key in rows))
 
 
-class UnrealSurfaceTest(unittest.TestCase):
-    def test_moving_type_across_existing_pack_boundary_is_detected(self):
-        declaration = 'struct S { char A; int B; };'
-        before = cpp('#pragma pack(push, 1)\n' + declaration + '\n#pragma pack(pop)')
-        after = cpp(declaration + '\n#pragma pack(push, 1)\n#pragma pack(pop)')
-        self.assertTrue(surface.validate(policy(before), after))
-
-    def test_preprocessor_context_does_not_freeze_method_body_or_offsets(self):
-        before = cpp('#pragma once\nstruct S { int F() { return 1; } };')
-        after = cpp('// Comment shifts offsets\n#pragma once\nstruct S { int F() { return 123; } };')
-        self.assertEqual(set(before), set(after))
-
-    def test_method_local_condition_changes_are_not_api_changes(self):
-        source = ('struct S { int F() {\n#if WITH_EDITOR\nreturn 1;\n'
-                  '#elif FEATURE\nreturn 2;\n#else\nreturn 3;\n#endif\n} };')
-        self.assertEqual(set(cpp(source)), set(cpp(source.replace('WITH_EDITOR', '!WITH_EDITOR'))))
-        self.assertEqual(set(cpp(source)), set(cpp('struct S { int F() { return 3; } };')))
-
-    def test_method_local_macro_state_preserves_its_conditional_branches(self):
-        source = ('struct S { void F() {\n#if WITH_EDITOR\nint x = 1;\n'
-                  '#elif FEATURE\nint x = 2;\n#else\n#define PUBLIC_TYPE long\n#endif\n}\n'
-                  'PUBLIC_TYPE Value; };')
-        for before, after in [('WITH_EDITOR', '!WITH_EDITOR'), ('FEATURE', '!FEATURE'),
-                              ('long', 'int')]:
-            with self.subTest(before=before):
-                self.assertTrue(surface.validate(policy(cpp(source)), cpp(source.replace(before, after))))
-
-    def test_define_undef_order_changes_availability(self):
-        tail = '\n#if FEATURE\nstruct C {};\n#endif'
-        before = cpp('#define FEATURE 1\n#undef FEATURE' + tail)
-        after = cpp('#undef FEATURE\n#define FEATURE 1' + tail)
-        self.assertTrue(surface.validate(policy(before), after))
-
-    def test_include_order_and_pack_directives_are_recorded(self):
-        before = cpp('#include "A.h"\n#include "B.h"\nstruct C { int X; };')
-        after = cpp('#include "B.h"\n#include "A.h"\nstruct C { int X; };')
-        packed = cpp('#include "A.h"\n#include "B.h"\n#pragma pack(push, 1)\nstruct C { int X; };\n#pragma pack(pop)')
-        self.assertTrue(surface.validate(policy(before), after))
-        self.assertTrue(surface.validate(policy(before), packed))
-
-    def test_platform_availability_is_part_of_contract(self):
-        before = cpp('struct C { void Play(); };')
-        after = cpp('struct C {\n#if WITH_EDITOR\nvoid Play();\n#endif\n};')
-        self.assertTrue(surface.validate(policy(before), after))
-        player = cpp('struct C {\n#if WITH_EDITOR\n#else\nvoid Play();\n#endif\n};')
-        self.assertTrue(surface.validate(policy(after), player))
-
-    def test_conditionally_inherited_access_preserves_platform_identity(self):
-        before = cpp('class C {\n#if WITH_EDITOR\npublic:\n#else\nprivate:\n#endif\nvoid F(); };')
-        after = cpp('class C {\n#if WITH_EDITOR\nprivate:\n#else\npublic:\n#endif\nvoid F(); };')
-        self.assertTrue(surface.validate(policy(before), after))
-
-    def test_ifdef_and_ifndef_are_distinct(self):
-        before = cpp('#ifdef FEATURE\nstruct C {};\n#endif')
-        after = cpp('#ifndef FEATURE\nstruct C {};\n#endif')
-        self.assertTrue(surface.validate(policy(before), after))
-
-    def test_three_way_conditional_access_observes_every_branch(self):
-        rows = cpp('class C {\n#if A\nprivate:\n#elif B\nprivate:\n#else\n'
-                   'public: void Play();\n#endif\nvoid Following(); };')
-        self.assertTrue(any('Play' in key for key in rows))
-        self.assertTrue(any('Following' in key for key in rows))
-
-    def test_elif_access_does_not_hide_alternative_public_branch(self):
-        rows = cpp('class C { public:\n#if A\nprivate:\n#elif B\nprivate:\n#else\n'
-                   'void Player();\n#endif\n};')
-        self.assertTrue(any('Player' in key for key in rows))
-
-    def test_enum_reordering_changes_implicit_values(self):
-        before = cpp('UENUM() enum class E { Real, Null };')
-        after = cpp('UENUM() enum class E { Null, Real };')
-        self.assertTrue(surface.validate(policy(before), after))
-
-    def test_struct_field_order_and_private_layout_fields_are_frozen(self):
-        before = cpp('struct S { int First; long Second; };')
-        after = cpp('struct S { long Second; int First; };')
-        extended = cpp('struct S { int First; long Second; private: int Tail; };')
-        self.assertTrue(surface.validate(policy(before), after))
-        self.assertTrue(surface.validate(policy(before), extended))
-
-    def test_private_reflected_property_is_part_of_blueprint_surface(self):
-        before = cpp('UCLASS() class C { GENERATED_BODY() private: };')
-        after = cpp('UCLASS() class C { GENERATED_BODY() private: '
-                    'UPROPERTY(BlueprintReadWrite, meta=(AllowPrivateAccess="true")) int32 NewValue; };')
-        self.assertTrue(any("NewValue" in error for error in surface.validate(policy(before), after)))
-
-    def test_enum_trailing_metadata_is_observed(self):
-        before = cpp('UENUM(BlueprintType) enum class E { Value UMETA(Hidden), Other };')
-        after = cpp('UENUM(BlueprintType) enum class E { Value UMETA(DisplayName="Value"), Other };')
-        self.assertTrue(surface.validate(policy(before), after))
-
-    def test_comment_does_not_detach_function_metadata(self):
-        before = cpp('class C { public: UFUNCTION(BlueprintPure) /* explanation */ void Play(); };')
-        after = cpp('class C { public: UFUNCTION(BlueprintCallable) /* explanation */ void Play(); };')
-        self.assertTrue(surface.validate(policy(before), after))
-
-    def test_using_base_member_expands_surface(self):
-        before = cpp('class C : public Base { public: };')
-        after = cpp('class C : public Base { public: using Base::CreateBus; };')
-        self.assertTrue(any("CreateBus" in error for error in surface.validate(policy(before), after)))
-
-    def test_unattached_reflection_macro_fails_closed(self):
-        with self.assertRaises(surface.SurfaceError):
-            cpp('struct C {}; UFUNCTION(BlueprintCallable)')
-
-    def test_class_access_and_struct_default(self):
-        rows = cpp("class C { int Hidden; public: int F(int x) const; protected: int P; "
-                   "private: int Hidden2; }; struct S { int X; };")
-        self.assertFalse(any("Hidden" in key for key in rows))
-        self.assertTrue(any("int F" in key for key in rows))
-        self.assertTrue(any("int X" in key for key in rows))
-
-    def test_new_blueprint_callable_and_metadata_change_are_detected(self):
-        old = cpp('UCLASS() class HARKENRUNTIME_API C { GENERATED_BODY() public: '
-                  'UFUNCTION(BlueprintPure) void Play(); };')
-        new = cpp('UCLASS() class HARKENRUNTIME_API C { GENERATED_BODY() public: '
-                  'UFUNCTION(BlueprintCallable) void Play(); };')
-        errors = surface.validate(policy(old), new)
-        self.assertEqual(2, len(errors))
-        self.assertTrue(any("BlueprintCallable" in error for error in errors))
-
-    def test_uparam_and_deprecation_are_part_of_signature(self):
-        rows = cpp('class C { public: UE_DEPRECATED(5.0, "Use F") '
-                   'void Old(UPARAM(ref) Handle& Value); };')
-        self.assertTrue(any("UPARAM(ref)" in key and "UE_DEPRECATED" in key for key in rows))
-
-    def test_inline_body_is_not_part_of_contract(self):
-        a = cpp("namespace N { struct C { int F() { return 1; } }; }")
-        b = cpp("namespace N { struct C { int F() { return 2; } }; }")
-        self.assertEqual(set(a), set(b))
-
-    def test_conditional_members_are_both_observed(self):
-        rows = cpp("struct S {\n#if WITH_EDITOR\nint Editor;\n#else\nint Player;\n#endif\n};")
-        self.assertTrue(any("Editor" in key for key in rows))
-        self.assertTrue(any("Player" in key for key in rows))
-
-    def test_conditional_access_cannot_hide_player_only_public_api(self):
-        rows = cpp("class C {\n#if WITH_EDITOR\nprivate:\n#else\npublic:\n#endif\nvoid Play(); };")
-        self.assertTrue(any("Play" in key for key in rows))
-
-    def test_public_member_inside_access_branch_is_observed(self):
-        rows = cpp("class C {\n#if WITH_EDITOR\npublic: void Editor();\n#endif\n};")
-        self.assertTrue(any("Editor" in key for key in rows))
-
-    def test_missing_macro_end_fails_closed(self):
-        with self.assertRaises(surface.SurfaceError):
-            cpp("UCLASS(unclosed class C {};")
-
-    def test_comments_and_strings_do_not_become_unreal_macros(self):
-        rows = cpp('/* UCLASS(unclosed */ struct S { const char* Value = "UFUNCTION("; };')
-        self.assertTrue(any("Value" in key for key in rows))
-
-    def test_export_marker_is_not_silently_erased(self):
-        a = cpp("class HARKENRUNTIME_API C {};")
-        b = cpp("class C {};")
-        self.assertEqual(2, len(surface.validate(policy(a), b)))
-
-    def test_unmodelled_template_fails_closed(self):
-        with self.assertRaises(surface.SurfaceError):
-            cpp("template<typename T> struct S { T Value; };")
-
-
 class InventoryTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -336,22 +170,6 @@ class InventoryTest(unittest.TestCase):
 
     def source(self, name, content):
         self.write("HarkenSDK/Unity/Harken/Runtime/" + name, content)
-
-    def test_unreal_alternative_header_extensions_are_inventoried(self):
-        before = surface.inventory(self.root)
-        for index, extension in enumerate(('.hpp', '.hh', '.hxx', '.inl', '.ipp', '.inc', '.HPP')):
-            with self.subTest(extension=extension):
-                filename = f'New{index}{extension}'
-                self.write('HarkenSDK/Unreal/Harken/Source/HarkenRuntime/Public/' + filename,
-                           'struct Extra { void CreateBus(); };')
-                errors = surface.validate(policy(before), surface.inventory(self.root))
-                self.assertTrue(any('CreateBus' in error and filename in error for error in errors))
-
-    def test_unmodelled_unreal_public_file_fails_closed(self):
-        self.write('HarkenSDK/Unreal/Harken/Source/HarkenRuntime/Public/New.custom',
-                   'void CreateBus();')
-        with self.assertRaises(surface.SurfaceError):
-            surface.inventory(self.root)
 
     def test_partial_access_across_files_is_observed(self):
         self.source("A.cs", "namespace N { public partial class C {} }")

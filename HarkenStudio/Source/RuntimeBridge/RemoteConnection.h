@@ -84,6 +84,8 @@ class RemoteConnection final : public QObject
     Q_OBJECT
 
 public:
+    static constexpr bool kLocalConnectionsOnly = true;
+
     explicit RemoteConnection(QObject* parent = nullptr);
     ~RemoteConnection() override;
 

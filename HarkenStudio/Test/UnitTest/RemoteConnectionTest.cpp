@@ -873,26 +873,54 @@ TEST(RemoteConnection, SnapshotCaptureWorksWithoutMonitorOrControlCapability)
     EXPECT_FALSE(connection.capturePending());
 }
 
-TEST(RemoteConnection, DiscoveryUsesExplicitTcpBindAddress)
+TEST(RemoteConnection, LocalDiscoveryRejectsNetworkEndpointsAndStaleAnnouncements)
 {
     ensureRemoteTestApp();
     QUdpSocket server;
     ASSERT_TRUE(server.bind(QHostAddress::LocalHost, 0));
+    QNetworkDatagram request;
+    quint32 requestId = 0;
     QObject::connect(&server, &QUdpSocket::readyRead, &server, [&] {
-        const auto datagram = server.receiveDatagram();
-        Wire::Header header;
-        ASSERT_TRUE(Wire::DecodeHeader(datagram.data().data(), datagram.data().size(), header));
-        Wire::Identity identity;
-        identity.instanceId = 88;
-        identity.tcpPort = 34567;
-        identity.bindAddress = "192.168.1.20";
-        const auto response = bytesFor(Wire::MakeFrame(Wire::Message::Announcement, header.requestId, identity));
-        server.writeDatagram(response, datagram.senderAddress(), datagram.senderPort());
+        while (server.hasPendingDatagrams()) {
+            request = server.receiveDatagram();
+            Wire::Header header;
+            ASSERT_TRUE(Wire::DecodeHeader(request.data().data(), request.data().size(), header));
+            requestId = header.requestId;
+            Wire::Identity identity;
+            identity.instanceId = 88;
+            identity.tcpPort = 34567;
+            identity.bindAddress = "192.168.1.20";
+            server.writeDatagram(bytesFor(Wire::MakeFrame(Wire::Message::Announcement, requestId, identity)),
+                                 request.senderAddress(), request.senderPort());
+            identity.instanceId = 89;
+            identity.bindAddress = "127.0.0.1";
+            server.writeDatagram(bytesFor(Wire::MakeFrame(Wire::Message::Announcement, requestId, identity)),
+                                 request.senderAddress(), request.senderPort());
+        }
     });
     RemoteConnection connection;
     connection.discover(server.localPort());
     ASSERT_TRUE(waitUntil([&] { return connection.discoveredTargets().size() == 1; }));
-    EXPECT_EQ(connection.discoveredTargets().first().address, QStringLiteral("192.168.1.20"));
+    EXPECT_EQ(connection.discoveredTargets().first().address, QStringLiteral("127.0.0.1"));
+
+    const auto previousRequestId = requestId;
+
+    connection.discover(server.localPort());
+    EXPECT_TRUE(connection.discoveredTargets().isEmpty());
+    ASSERT_TRUE(waitUntil([&] { return connection.discoveredTargets().size() == 1; }));
+    EXPECT_EQ(connection.discoveredTargets().first().address, QStringLiteral("127.0.0.1"));
+    EXPECT_NE(requestId, previousRequestId);
+    Wire::Identity stale;
+    stale.instanceId = 90;
+    stale.tcpPort = 34568;
+    stale.bindAddress = "127.0.0.1";
+    server.writeDatagram(bytesFor(Wire::MakeFrame(Wire::Message::Announcement, previousRequestId, stale)),
+                         request.senderAddress(), request.senderPort());
+    stale.instanceId = 91;
+    server.writeDatagram(bytesFor(Wire::MakeFrame(Wire::Message::Announcement, requestId, stale)),
+                         request.senderAddress(), request.senderPort());
+    ASSERT_TRUE(waitUntil([&] { return connection.discoveredTargets().size() == 2; }));
+    EXPECT_EQ(connection.discoveredTargets().last().instanceId, QString::number(stale.instanceId, 16));
 }
 
 TEST(RemoteConnection, LoopbackMulticastDiscoversMultipleSharedPortListeners)
@@ -946,7 +974,7 @@ TEST(RemoteConnection, InstanceAnnouncementsMergeAddressesAndPreferLoopback)
             const auto datagram = server.receiveDatagram();
             Wire::Header header;
             ASSERT_TRUE(Wire::DecodeHeader(datagram.data().data(), datagram.data().size(), header));
-            for (const auto* address : {"192.168.1.20", "127.0.0.1", "10.0.0.20"}) {
+            for (const auto* address : {"127.0.0.2", "127.0.0.1", "127.0.0.3"}) {
                 Wire::Identity identity;
                 identity.instanceId = 99;
                 identity.processId = 500;
@@ -977,7 +1005,7 @@ TEST(RemoteConnection, DialogKeepsSelectedInstanceAndConnectsItsLatestCompatible
     quint32 requestId = 0;
     Wire::Identity identity = peer.identity;
     identity.tcpPort = 34567;
-    identity.bindAddress = "192.168.1.20";
+    identity.bindAddress = "127.0.0.2";
     const auto announce = [&] {
         server.writeDatagram(bytesFor(Wire::MakeFrame(Wire::Message::Announcement, requestId, identity)),
                              receiver, receiverPort);
@@ -1004,7 +1032,7 @@ TEST(RemoteConnection, DialogKeepsSelectedInstanceAndConnectsItsLatestCompatible
     ASSERT_TRUE(waitUntil([&] { return targets->topLevelItemCount() == 1; }));
     targets->setCurrentItem(targets->topLevelItem(0));
     EXPECT_TRUE(connect->isEnabled());
-    EXPECT_EQ(targets->currentItem()->text(2), QStringLiteral("192.168.1.20:34567"));
+    EXPECT_EQ(targets->currentItem()->text(2), QStringLiteral("127.0.0.2:34567"));
 
     identity.bindAddress = "127.0.0.1";
     identity.tcpPort = peer.server.serverPort();
@@ -1062,6 +1090,23 @@ TEST(RemoteConnection, HandshakeTimeoutAndCancelledConnectionDoNotContaminateRec
     connection.connectTarget(QStringLiteral("127.0.0.1"), peer.server.serverPort());
     ASSERT_TRUE(waitUntil([&] { return connection.catalog().size() == 2; }));
     EXPECT_EQ(connection.state(), RemoteConnectionState::Connected);
+}
+
+TEST(RemoteConnection, LocalConnectionsRejectNetworkEndpointsBeforeOpeningTransport)
+{
+    ensureRemoteTestApp();
+    RemoteConnection connection;
+    for (const auto* host : {"192.168.1.20", "10.0.0.20", "0.0.0.0", "239.255.37.84",
+                             "::", "fd00::1", "game.local", "localhost.example", "localhost."}) {
+        SCOPED_TRACE(host);
+        connection.connectTarget(QString::fromLatin1(host), 37840);
+        EXPECT_EQ(connection.state(), RemoteConnectionState::Failed);
+        EXPECT_TRUE(connection.findChildren<QTcpSocket*>().isEmpty());
+    }
+    RemotePeer peer;
+    connection.connectTarget(QStringLiteral(" LoCaLhOsT "), peer.server.serverPort());
+    ASSERT_TRUE(waitUntil([&] { return connection.state() == RemoteConnectionState::Connected; }));
+    EXPECT_EQ(connection.target().address, QStringLiteral("127.0.0.1"));
 }
 
 TEST(RemoteConnection, ManualConnectionValidatesEndpointAndEscapeDoesNotConnect)
