@@ -79,6 +79,7 @@ namespace Harken.Unity.Tests
                 f.Actor.SetActive(true);
                 f.Camera.SetActive(true);
                 var actors = new Transform[8];
+                var sources = new HarkenSpatialSource[8];
                 for (int i = 0; i < actors.Length; ++i)
                 {
                     GameObject actor = i == 0 ? f.Actor : new GameObject("Allocation source " + i);
@@ -88,9 +89,7 @@ namespace Harken.Unity.Tests
                         actor.AddComponent<HarkenEmitter>();
                     }
                     actors[i] = actor.transform;
-                    Assert.That(f.Runtime.CreateSpatialSource(actors[i], out HarkenSpatialSource source),
-                        Is.EqualTo(VnResult.VN_OK));
-                    Assert.That(f.Runtime.PlayAction(f.Action.ActionName, f.Action.ProjectId, source, out _),
+                    Assert.That(f.Runtime.CreateSpatialSource(actors[i], out sources[i]),
                         Is.EqualTo(VnResult.VN_OK));
                 }
                 Recorder recorder = Recorder.Get("GC.Alloc");
@@ -100,23 +99,35 @@ namespace Harken.Unity.Tests
                 {
                     AssertAllocationRecorder(recorder);
                     int allocations = 0;
-                    for (int frame = 0; frame < 1152; ++frame)
+                    int activeFrames = 0;
+                    for (int pass = 0; pass < 2; ++pass)
                     {
-                        for (int i = 0; i < actors.Length; ++i)
-                            actors[i].position = new Vector3((frame & 1) == 0 ? 80 + i : -80 - i, 0, i);
-                        f.Camera.transform.position = new Vector3(frame & 1, 0, 0);
-                        f.Camera.transform.rotation = Quaternion.Euler(0, (frame & 1) * 180, 0);
-                        recorder.enabled = true;
-                        f.Runtime.AdvanceFrame();
-                        recorder.enabled = false;
-                        int count = recorder.sampleBlockCount;
-                        if (frame >= 128) allocations += count;
-                        f.RenderPhysicalBlocks(1);
+                        foreach (HarkenSpatialSource source in sources)
+                            Assert.That(f.Runtime.PlayAction(f.Action.ActionName, f.Action.ProjectId, source, out _),
+                                Is.EqualTo(VnResult.VN_OK));
+                        // Warm a complete playback/retirement cycle, including cached success notifications.
+                        for (int frame = 0; frame < 1024; ++frame)
+                        {
+                            for (int i = 0; i < actors.Length; ++i)
+                                actors[i].position = new Vector3((frame & 1) == 0 ? 80 + i : -80 - i, 0, i);
+                            f.Camera.transform.position = new Vector3(frame & 1, 0, 0);
+                            f.Camera.transform.rotation = Quaternion.Euler(0, (frame & 1) * 180, 0);
+                            recorder.enabled = true;
+                            f.Runtime.AdvanceFrame();
+                            recorder.enabled = false;
+                            int count = recorder.sampleBlockCount;
+                            if (pass != 0) allocations += count;
+                            f.RenderPhysicalBlocks(1);
+                            var snapshot = HarkenEngine.DefaultSnapshot();
+                            Assert.That(HarkenEngine.Capture(ref snapshot), Is.EqualTo(VnResult.VN_OK));
+                            if (pass != 0 && snapshot.activeVoiceCount == 8) ++activeFrames;
+                        }
                     }
                     AssertAllocationRecorder(recorder);
+                    Assert.That(activeFrames, Is.GreaterThan(64), "The measured frames must include eight active Voices.");
                     Assert.That(allocations, Is.Zero,
                         "1024 warm moving frames with 8 component emitters, 8 Transform sources and one Listener.");
-                    Debug.Log($"SPATIAL_GC frames=1024 components=8 sources=8 listeners=1 allocations={allocations}");
+                    Debug.Log($"SPATIAL_GC frames=1024 activeFrames={activeFrames} components=8 sources=8 listeners=1 allocations={allocations}");
                 }
                 finally
                 {
