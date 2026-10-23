@@ -82,8 +82,8 @@ def installer_ui(tables, license_rtf):
     def event(dialog, button, event, value, condition="1", order=1):
         tables["ControlEvent"].append((dialog, button, event, value, condition, order))
 
-    def cancel(dialog):
-        control(dialog, "Cancel", "PushButton", (330, 285, 72, 20), "Cancel", next="Next")
+    def cancel(dialog, next):
+        control(dialog, "Cancel", "PushButton", (330, 285, 72, 20), "Cancel", next=next)
         event(dialog, "Cancel", "EndDialog", "Exit")
 
     dialog("LicenseDialog", "License Agreement and Privacy Policy", "Accept", "Next", "Cancel")
@@ -91,7 +91,7 @@ def installer_ui(tables, license_rtf):
     control("LicenseDialog", "Accept", "CheckBox", (18, 254, 384, 20),
             "I accept the license agreement and privacy policy.", "LICENSEACCEPTED", "Next")
     control("LicenseDialog", "Next", "PushButton", (250, 285, 72, 20), "Next", next="Cancel")
-    cancel("LicenseDialog")
+    cancel("LicenseDialog", "Accept")
     event("LicenseDialog", "Next", "NewDialog", "FolderDialog", 'LICENSEACCEPTED="1"')
     tables["ControlCondition"] += [
         ("LicenseDialog", "Next", "Enable", 'LICENSEACCEPTED="1"'),
@@ -104,7 +104,7 @@ def installer_ui(tables, license_rtf):
     control("FolderDialog", "Back", "PushButton", (170, 285, 72, 20), "Back", next="Next")
     event("FolderDialog", "Back", "NewDialog", "LicenseDialog")
     control("FolderDialog", "Next", "PushButton", (250, 285, 72, 20), "Install", next="Cancel")
-    cancel("FolderDialog")
+    cancel("FolderDialog", "Path")
     event("FolderDialog", "Next", "SetTargetPath", "INSTALLFOLDER")
     event("FolderDialog", "Next", "EndDialog", "Return", order=2)
 
@@ -214,10 +214,10 @@ def package_tables(files, input_dir, version, license_rtf):
     tables["AppSearch"] = [("INSTALLFOLDER", "PreviousInstallFolder")]
     tables["RegLocator"] = [("PreviousInstallFolder", 2, registry_key, "InstallDir", 18)]
     tables["CustomAction"] = [
-        ("HarkenHealthHandshake", 1042, "HarkenHubExe", "--await-health-handshake"),
-        ("HarkenRestartHub", 1746, "HarkenHubExe", ""),
-        ("HarkenRegisterUpdateBridge", 3090, "HarkenHubExe", "--register-update-bridge"),
-        ("HarkenUnregisterUpdateBridge", 3154, "HarkenHubExe", "--unregister-update-bridge"),
+        ("HarkenHealthHandshake", 1058, "INSTALLFOLDER", '"[INSTALLFOLDER]HarkenStudioHub.exe" --await-health-handshake'),
+        ("HarkenRestartHub", 1762, "INSTALLFOLDER", '"[INSTALLFOLDER]HarkenStudioHub.exe"'),
+        ("HarkenRegisterUpdateBridge", 3106, "INSTALLFOLDER", '"[INSTALLFOLDER]HarkenStudioHub.exe" --register-update-bridge'),
+        ("HarkenUnregisterUpdateBridge", 3170, "INSTALLFOLDER", '"[INSTALLFOLDER]HarkenStudioHub.exe" --unregister-update-bridge'),
     ]
     prepare = [("FindRelatedProducts", None, 25), ("AppSearch", None, 50),
                ("LaunchConditions", None, 100), ("ValidateProductID", None, 700),
@@ -230,7 +230,8 @@ def package_tables(files, input_dir, version, license_rtf):
         ("RemoveRegistryValues", None, 2600), ("RemoveShortcuts", None, 3200),
         ("RemoveFiles", None, 3500), ("RemoveFolders", None, 3600),
         ("CreateFolders", None, 3700), ("InstallFiles", None, 4000),
-        ("HarkenRegisterUpdateBridge", "NOT REMOVE", 4001), ("CreateShortcuts", None, 4500),
+        ("HarkenRegisterUpdateBridge", "NOT REMOVE", 4001),
+        ("CreateShortcuts", "NOT HARKENSELFUPDATE=1", 4500),
         ("WriteRegistryValues", None, 5000), ("RegisterUser", None, 6000),
         ("RegisterProduct", None, 6100), ("PublishFeatures", None, 6300),
         ("PublishProduct", None, 6400),

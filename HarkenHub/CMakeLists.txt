@@ -174,6 +174,7 @@ if(WIN32)
         Source/Platform/Windows/Elevation.cpp
         Source/Platform/Windows/ProcessScan.cpp
         Source/Platform/Windows/LoginLaunch.cpp
+        Source/Platform/Windows/ShellIcons.cpp
         Source/Platform/Windows/AclHardening.cpp
         Source/Platform/Windows/UpdateBridgeDeployment.cpp
         Source/Platform/Windows/UpdateBridgeTask.cpp
@@ -210,6 +211,7 @@ function(harken_configure_hub_library target)
             crypt32
             ole32
             oleaut32
+            uuid
             taskschd
             userenv
             wintrust
