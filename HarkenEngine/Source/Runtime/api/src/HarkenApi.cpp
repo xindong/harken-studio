@@ -64924,32 +64924,11 @@ DirectParkPendingResult CommitDirectParkPending(
     if (GuardCompletionMutation(engine, rec.publicHandle) != VN_OK) {
         return DirectParkPendingResult::CompletionGuarded;
     }
-    // Resolve the would-be spatial state: position from the play descriptor
-    // unless a setVoicePosition was staged; the emitter attaches only if still
-    // live, and when attached its pose overrides the staged position and
-    // orientation (the return-time and evaluate-time rule).
+    // Sample all source facts together. A dead emitter preserves this record's
+    // last sample, including orientation and distance scale.
     const VnEmitterHandle em =
         engine.emitters.IsLive(rec.emitterHandle) ? rec.emitterHandle : 0u;
-    float px = rec.hasPosition ? rec.setPosX : rec.posX;
-    float py = rec.hasPosition ? rec.setPosY : rec.posY;
-    float pz = rec.hasPosition ? rec.setPosZ : rec.posZ;
-    float fwdX = 0.0f, fwdY = 0.0f, fwdZ = -1.0f;
-    if (rec.hasOrientation) {
-        fwdX = rec.orientation.x;
-        fwdY = rec.orientation.y;
-        fwdZ = rec.orientation.z;
-    }
-    if (em != 0) {
-        float ex, ey, ez, efx, efy, efz;
-        if (engine.emitters.Pose(em, &ex, &ey, &ez, &efx, &efy, &efz)) {
-            px = ex;
-            py = ey;
-            pz = ez;
-            fwdX = efx;
-            fwdY = efy;
-            fwdZ = efz;
-        }
-    }
+    (void)engine.emitters.Pose(em, &rec.source);
     const VnAttenuationId attenId = rec.hasAttenuation ? rec.attenuationId : VnAttenuationId{};
     const float distanceScale =
         rec.hasDistanceScale ? rec.distanceScale : 1.0f;
@@ -64995,8 +64974,10 @@ DirectParkPendingResult CommitDirectParkPending(
     double attenDb = 0.0;
     if (rec.spatialized && attenId != VnObjectId{}) {
         attenDb = static_cast<double>(
-            engine.spatial.AttenuationVolumeDb(attenId, px, py, pz,
-                                               distanceScale));
+            engine.spatial.AttenuationVolumeDb(
+                attenId, rec.source.posX, rec.source.posY, rec.source.posZ,
+                distanceScale, rec.attenuationGeneration,
+                rec.source.emitterDistanceScale));
     }
     // Below threshold: park directly. Build the play facts locally — there is no
     // render slot to key RecordPlayFacts on.
@@ -65093,13 +65074,14 @@ DirectParkPendingResult CommitDirectParkPending(
     prec.instanceReservedTargets = rec.pinnedReservedTargets;
     prec.preparedBindings = std::move(rec.preparedBindings);
     prec.spatial.spatialized = rec.spatialized;
-    prec.spatial.posX = px;
-    prec.spatial.posY = py;
-    prec.spatial.posZ = pz;
-    prec.spatial.fwdX = fwdX;
-    prec.spatial.fwdY = fwdY;
-    prec.spatial.fwdZ = fwdZ;
+    prec.spatial.posX = rec.source.posX;
+    prec.spatial.posY = rec.source.posY;
+    prec.spatial.posZ = rec.source.posZ;
+    prec.spatial.fwdX = rec.source.fwdX;
+    prec.spatial.fwdY = rec.source.fwdY;
+    prec.spatial.fwdZ = rec.source.fwdZ;
     prec.spatial.distanceScale = distanceScale;
+    prec.spatial.emitterDistanceScale = rec.source.emitterDistanceScale;
     prec.spatial.spatializationMix =
         rec.hasSpatializationMix ? rec.spatializationMix : 1.0f;
     prec.spatial.attenuationId = attenId;
@@ -65406,6 +65388,7 @@ PendingStartOutcome StartDeferredVoice(
     }
     const VnEmitterHandle startEmitter =
         engine.emitters.IsLive(rec.emitterHandle) ? rec.emitterHandle : 0u;
+    (void)engine.emitters.Pose(startEmitter, &rec.source);
     const auto* initialReader = variableCut.Reader();
     float voiceDb = 0;
     if (!TryPendingStartVoiceDb(engine, rec, &voiceDb, initialReader)) return PendingStartOutcome::BankBlocked;
@@ -65511,7 +65494,7 @@ PendingStartOutcome StartDeferredVoice(
         const VnResult played = engine.voices.PlayStream(
             engine.streams.RingOf(streamSlot), facts.channelCount,
             facts.sampleRate, prebufferFrames, rec.baseVolumeDb, rec.ratio,
-            rec.busIndex, rec.spatialized, rec.posX, rec.posY, rec.posZ,
+            rec.busIndex, rec.spatialized, rec.source.posX, rec.source.posY, rec.source.posZ,
             harken::ResolvePanGains(engine.config.mixChannelLayout, 0.0f),
             /*activationStartFrame=*/0, facts.frameCount,
             rec.loopStartFrame, rec.loopEndFrame, rec.loopCount,
@@ -65538,7 +65521,7 @@ PendingStartOutcome StartDeferredVoice(
     } else {
         const VnResult played = engine.voices.Play(
             rec.view, rec.baseVolumeDb, rec.ratio, rec.busIndex,
-            rec.spatialized, rec.posX, rec.posY, rec.posZ,
+            rec.spatialized, rec.source.posX, rec.source.posY, rec.source.posZ,
             harken::ResolvePanGains(engine.config.mixChannelLayout, 0.0f),
             rec.loopStartFrame, rec.loopEndFrame, rec.loopCount,
             rec.resampleProfile, &render, rec.busGeneration, target.slot,
@@ -65566,8 +65549,9 @@ PendingStartOutcome StartDeferredVoice(
     if (rec.hasTonePreset) {
         ApplyTonePresetAndPrime(engine, render, rec.tonePreset, commands);
     }
-    engine.spatial.OnVoiceStarted(render, rec.spatialized, rec.posX, rec.posY,
-                                  rec.posZ, engine.emitters.Context(startEmitter).spatialEmitter);
+    engine.spatial.OnVoiceStarted(render, rec.spatialized, rec.source.posX, rec.source.posY,
+                                  rec.source.posZ, engine.emitters.Context(startEmitter).spatialEmitter);
+    engine.spatial.RestoreVoiceSource(render, rec.source);
     const std::uint32_t renderSlot = static_cast<std::uint32_t>(render);
     if (renderSlot < engine.effectSlotTypes.size()) {
         engine.effectSlotTypes[renderSlot].fill(harken::kEffectTypeNone);
@@ -65615,11 +65599,6 @@ PendingStartOutcome StartDeferredVoice(
         cmd.payload.setVoicePosition.y = rec.setPosY;
         cmd.payload.setVoicePosition.z = rec.setPosZ;
         (void)commands.Push(cmd);
-        engine.spatial.SetVoicePosition(render, rec.setPosX, rec.setPosY,
-                                        rec.setPosZ);
-    }
-    if (rec.hasOrientation) {
-        (void)engine.spatial.SetVoiceOrientation(render, rec.orientation);
     }
     if (rec.hasAttenuation) {
         if (engine.spatial.BindVoice(render, rec.attenuationId,
@@ -66018,23 +65997,22 @@ VnResult StopAllCore(harken::Engine& engine, std::uint32_t fadeMs,
 // threshold does not flap between live and parked.
 inline constexpr float kParkReturnHysteresisDb = 6.0f;
 
-// A parked voice's current world position: its live emitter's pose if attached,
-// else its frozen stored position.
-void ParkedPosition(harken::Engine& engine, const harken::ParkRecord& rec,
-                    float* x, float* y, float* z) {
+// Retain the complete last sampled source even without a render slot.
+void SampleParkedSource(harken::Engine& engine, harken::ParkRecord& rec) {
     if (rec.spatial.emitterHandle != 0) {
-        float ex, ey, ez, efx, efy, efz;
-        if (engine.emitters.Pose(rec.spatial.emitterHandle, &ex, &ey, &ez, &efx,
-                                 &efy, &efz)) {
-            *x = ex;
-            *y = ey;
-            *z = ez;
-            return;
+        harken::SpatialSourceState source;
+        if (engine.emitters.Pose(rec.spatial.emitterHandle, &source)) {
+            rec.spatial.posX = source.posX;
+            rec.spatial.posY = source.posY;
+            rec.spatial.posZ = source.posZ;
+            rec.spatial.fwdX = source.fwdX;
+            rec.spatial.fwdY = source.fwdY;
+            rec.spatial.fwdZ = source.fwdZ;
+            rec.spatial.emitterDistanceScale = source.emitterDistanceScale;
+        } else {
+            rec.spatial.emitterHandle = 0;
         }
     }
-    *x = rec.spatial.posX;
-    *y = rec.spatial.posY;
-    *z = rec.spatial.posZ;
 }
 
 // A parked voice's recomputed audibility metric: the non-spatial,
@@ -66042,16 +66020,16 @@ void ParkedPosition(harken::Engine& engine, const harken::ParkRecord& rec,
 // instance volume term (re-evaluated each tick — section 5.6), plus the
 // live distance attenuation. Distance- and binding-driven return are both
 // tracked; the cone angular term stayed frozen at park.
-float ParkedMetricDb(harken::Engine& engine, const harken::ParkRecord& rec) {
+float ParkedMetricDb(harken::Engine& engine, harken::ParkRecord& rec) {
+    SampleParkedSource(engine, rec);
     if (!rec.spatial.spatialized || rec.spatial.attenuationId == VnObjectId{}) {
         return rec.frozenNonSpatialDb + rec.instanceVolumeDb;
     }
-    float x, y, z;
-    ParkedPosition(engine, rec, &x, &y, &z);
     return rec.frozenNonSpatialDb + rec.instanceVolumeDb +
-           engine.spatial.AttenuationVolumeDb(rec.spatial.attenuationId, x, y,
-                                               z, rec.spatial.distanceScale,
-                                               rec.spatial.attenuationGeneration);
+           engine.spatial.AttenuationVolumeDb(
+               rec.spatial.attenuationId, rec.spatial.posX, rec.spatial.posY,
+               rec.spatial.posZ, rec.spatial.distanceScale,
+               rec.spatial.attenuationGeneration, rec.spatial.emitterDistanceScale);
 }
 
 // The section-5.6 per-tick re-evaluation of a parked voice's binding
@@ -66122,7 +66100,8 @@ void DoParkVoice(harken::Engine& engine, VnVoiceHandle render,
     if (spatial.spatialized && spatial.attenuationId != VnObjectId{}) {
         attenAtPark = engine.spatial.AttenuationVolumeDb(
             spatial.attenuationId, spatial.posX, spatial.posY, spatial.posZ,
-            spatial.distanceScale, spatial.attenuationGeneration);
+            spatial.distanceScale, spatial.attenuationGeneration,
+            spatial.emitterDistanceScale);
     }
 
     const harken::VoiceLedger::Resolved resolved =
@@ -66399,7 +66378,7 @@ StreamVictimWaitResult TryWaitStreamVictim(
         attenAtPark = engine.spatial.AttenuationVolumeDb(
             spatial.attenuationId, spatial.posX, spatial.posY,
             spatial.posZ, spatial.distanceScale,
-            spatial.attenuationGeneration);
+            spatial.attenuationGeneration, spatial.emitterDistanceScale);
     }
     const float metric =
         engine.params.ResolvedValue(victim, harken::kTargetVoiceVolume);
@@ -67026,6 +67005,7 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
         *bankBlocked = false;
     }
     harken::ParkRecord& rec = engine.parkRecords[ledgerSlot];
+    SampleParkedSource(engine, rec);
     if (engine.variables.AdmissionClosed()) {
         if (bankBlocked != nullptr) {
             *bankBlocked = true;
@@ -67323,6 +67303,10 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
     engine.spatial.OnVoiceStarted(newRender, rec.spatial.spatialized,
                                   rec.spatial.posX, rec.spatial.posY,
                                   rec.spatial.posZ, spatialEmitter);
+    engine.spatial.RestoreVoiceSource(newRender, {
+        rec.spatial.posX, rec.spatial.posY, rec.spatial.posZ,
+        rec.spatial.fwdX, rec.spatial.fwdY, rec.spatial.fwdZ,
+        rec.spatial.emitterDistanceScale});
     engine.spatial.SetVoiceDistanceScale(newRender,
                                          rec.spatial.distanceScale);
     engine.spatial.SetVoiceSpatializationMix(
@@ -67655,7 +67639,7 @@ bool AdvanceFiniteParkedTimeline(harken::ParkRecord& rec, double advance) {
 }
 
 double PendingRequestAudibility(harken::Engine& engine,
-                                 const harken::PendingStartRecord& rec,
+                                 harken::PendingStartRecord& rec,
                                  const harken::VariableReadCutReader* reader = nullptr) {
     double metric = static_cast<double>(rec.baseVolumeDb);
     if (rec.hasVolume) {
@@ -67663,18 +67647,12 @@ double PendingRequestAudibility(harken::Engine& engine,
     }
     const VnEmitterHandle emitter =
         engine.emitters.IsLive(rec.emitterHandle) ? rec.emitterHandle : 0u;
-    float px = rec.hasPosition ? rec.setPosX : rec.posX;
-    float py = rec.hasPosition ? rec.setPosY : rec.posY;
-    float pz = rec.hasPosition ? rec.setPosZ : rec.posZ;
-    if (emitter != 0) {
-        float fx = 0.0f, fy = 0.0f, fz = 0.0f;
-        (void)engine.emitters.Pose(emitter, &px, &py, &pz, &fx, &fy, &fz);
-    }
+    (void)engine.emitters.Pose(emitter, &rec.source);
     if (rec.spatialized && rec.hasAttenuation && rec.attenuationId != VnObjectId{}) {
         metric += static_cast<double>(engine.spatial.AttenuationVolumeDb(
-            rec.attenuationId, px, py, pz,
+            rec.attenuationId, rec.source.posX, rec.source.posY, rec.source.posZ,
             rec.hasDistanceScale ? rec.distanceScale : 1.0f,
-            rec.attenuationGeneration));
+            rec.attenuationGeneration, rec.source.emitterDistanceScale));
     }
     for (std::uint32_t i = 0; i < rec.pinnedBindingCount; ++i) {
         const harken::BindingTable::Definition* def =
@@ -95628,6 +95606,11 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
             ? 1.0
             : ClampWireRatio(static_cast<double>(desc->pitchRatio));
 
+    harken::SpatialSourceState acceptedSource;
+    acceptedSource.posX = desc->positionX;
+    acceptedSource.posY = desc->positionY;
+    acceptedSource.posZ = desc->positionZ;
+    (void)engine->emitters.Pose(emitterHandle, &acceptedSource);
     double immediateAudibilityDb = static_cast<double>(desc->volumeDb);
     for (std::uint32_t i = 0; i < matchedBindingCount; ++i) {
         const harken::BindingTable::Definition* def =
@@ -95643,20 +95626,12 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
     }
     if (spatialized && voiceRecipe != nullptr &&
         voiceRecipe->spatial.attenuationId != VnObjectId{}) {
-        float px = desc->positionX;
-        float py = desc->positionY;
-        float pz = desc->positionZ;
-        if (engine->emitters.IsLive(emitterHandle)) {
-            float fx = 0.0f;
-            float fy = 0.0f;
-            float fz = 0.0f;
-            (void)engine->emitters.Pose(emitterHandle, &px, &py, &pz,
-                                        &fx, &fy, &fz);
-        }
         immediateAudibilityDb +=
             static_cast<double>(engine->spatial.AttenuationVolumeDb(
-                voiceRecipe->spatial.attenuationId, px, py, pz,
-                voiceRecipe->spatial.distanceScale));
+                voiceRecipe->spatial.attenuationId, acceptedSource.posX,
+                acceptedSource.posY, acceptedSource.posZ,
+                voiceRecipe->spatial.distanceScale, 0,
+                acceptedSource.emitterDistanceScale));
     }
     harken::VoiceManager::RenderRequest freshRequest;
     freshRequest.kind = harken::VoiceManager::RequestKind::Fresh;
@@ -95719,9 +95694,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         rec.busIndex = busIndex;
         rec.busGeneration = engine->buses.GenerationAt(busIndex);
         rec.spatialized = spatialized;
-        rec.posX = desc->positionX;
-        rec.posY = desc->positionY;
-        rec.posZ = desc->positionZ;
+        rec.source = acceptedSource;
         rec.priority = priority;
         rec.emitterHandle = emitterHandle;
         for (std::uint32_t i = 0; i < matchedBindingCount; ++i) {
@@ -95795,9 +95768,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         rec.busIndex = busIndex;
         rec.busGeneration = engine->buses.GenerationAt(busIndex);
         rec.spatialized = spatialized;
-        rec.posX = desc->positionX;
-        rec.posY = desc->positionY;
-        rec.posZ = desc->positionZ;
+        rec.source = acceptedSource;
         rec.loopStartFrame = loopStart;
         rec.loopEndFrame = loopEnd;
         rec.loopCount = loopCount;
@@ -95943,9 +95914,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         rec.busIndex = busIndex;
         rec.busGeneration = engine->buses.GenerationAt(busIndex);
         rec.spatialized = spatialized;
-        rec.posX = desc->positionX;
-        rec.posY = desc->positionY;
-        rec.posZ = desc->positionZ;
+        rec.source = acceptedSource;
         rec.loopStartFrame = loopStart;
         rec.loopEndFrame = loopEnd;
         rec.loopCount = loopCount;
@@ -96275,6 +96244,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
                                    desc->positionX, desc->positionY,
                                    desc->positionZ,
                                    engine->emitters.Context(emitterHandle).spatialEmitter);
+    engine->spatial.RestoreVoiceSource(renderHandle, acceptedSource);
     if (voiceRecipe != nullptr &&
         voiceRecipe->spatial.attenuationId != VnObjectId{}) {
         const auto bound = engine->spatial.BindVoice(
@@ -101076,6 +101046,9 @@ VnResult Vn_SetVoicePosition(VnVoiceHandle handle, VnVec3 position) {
         rec.setPosX = position.x;
         rec.setPosY = position.y;
         rec.setPosZ = position.z;
+        rec.source.posX = position.x;
+        rec.source.posY = position.y;
+        rec.source.posZ = position.z;
         return VN_OK;
     }
     if (resolved.kind == harken::VoiceLedger::HandleKind::Parked) {
@@ -102336,8 +102309,10 @@ VnResult Vn_SetVoiceOrientation(VnVoiceHandle handle, VnVec3 forward) {
             return VN_INVALID_ARG;
         }
         // A pending-start voice stages the orientation; applied at start.
-        rec.hasOrientation = true;
-        rec.orientation = forward;
+        const double length = std::sqrt(lengthSq);
+        rec.source.fwdX = static_cast<float>(forward.x / length);
+        rec.source.fwdY = static_cast<float>(forward.y / length);
+        rec.source.fwdZ = static_cast<float>(forward.z / length);
         return VN_OK;
     }
     if (resolved.kind == harken::VoiceLedger::HandleKind::Parked) {
@@ -102540,6 +102515,32 @@ VnResult Vn_SetEmitterPosition(VnEmitterHandle handle, VnVec3 position) {
                                         position.z)
                ? VN_OK
                : VN_STALE_HANDLE;
+
+    } catch (const std::bad_alloc&) {
+        return VN_DEVICE_ERROR;
+    } catch (...) {
+        return VN_DEVICE_ERROR;
+    }}
+
+VnResult Vn_SetEmitterDistanceScale(VnEmitterHandle handle, float scale) {
+    try {
+    if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
+    harken::Engine* engine = harken::detail::g_engine;
+    if (engine == nullptr || engine->callbackFatalSticky) {
+        return VN_NOT_INITIALIZED;
+    }
+    TraceStateful(engine, harken::kTraceCallSetEmitterDistanceScale)
+        .U64(engine->trace != nullptr && engine->trace->Active()
+                  ? engine->trace->RecordedEmitterHandle(handle)
+                  : handle)
+        .F32(scale);
+    if (!std::isfinite(scale) || !(scale > 0.0f)) {
+        return VN_INVALID_ARG;
+    }
+    if (!engine->emitters.IsPublicLive(handle)) return VN_STALE_HANDLE;
+    if (engine->emitters.Context(handle).spatialEmitter == 0)
+        return VN_CAPABILITY_UNAVAILABLE;
+    return engine->emitters.SetDistanceScale(handle, scale) ? VN_OK : VN_STALE_HANDLE;
 
     } catch (const std::bad_alloc&) {
         return VN_DEVICE_ERROR;

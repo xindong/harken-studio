@@ -114,6 +114,7 @@ EXPORTS
     Vn_SetBusSendLevel
     Vn_SetBusSolo
     Vn_SetBusVolume
+    Vn_SetEmitterDistanceScale
     Vn_SetEmitterOrientation
     Vn_SetEmitterPosition
     Vn_SetEmitterValue

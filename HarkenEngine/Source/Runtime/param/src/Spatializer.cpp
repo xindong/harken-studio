@@ -162,15 +162,15 @@ bool FiniteVec(const VnVec3& v) {
 // large values (near FLT_MAX) overflow to infinity, which would slip
 // past a "> 0" gate and normalize into a near-zero axis. Doubles hold
 // the squares exactly enough; callers still reject a non-finite result.
-double Length3(float x, float y, float z) {
-    const double dx = static_cast<double>(x);
-    const double dy = static_cast<double>(y);
-    const double dz = static_cast<double>(z);
-    return std::sqrt(dx * dx + dy * dy + dz * dz);
+double Length3(double x, double y, double z) {
+    return std::sqrt(x * x + y * y + z * z);
 }
 
-float EffectiveDistance(float pairDistance, float distanceScale) {
-    return pairDistance / distanceScale;
+float EffectiveDistance(double pairDistance, float distanceScale,
+                         float emitterDistanceScale) {
+    const double scale = static_cast<double>(distanceScale) * emitterDistanceScale;
+    return static_cast<float>(std::min(pairDistance / scale,
+                                      static_cast<double>(std::numeric_limits<float>::max())));
 }
 
 // Builds an internal curve from one public override block. The fixed-capacity
@@ -570,6 +570,20 @@ void Spatializer::SetVoicePosition(VnVoiceHandle handle, float x, float y,
     mirror->posZ = z;
 }
 
+void Spatializer::RestoreVoiceSource(VnVoiceHandle handle,
+                                     const SpatialSourceState& source) {
+    VoiceMirror* mirror = MirrorFor(handle);
+    if (mirror != nullptr) {
+        mirror->posX = source.posX;
+        mirror->posY = source.posY;
+        mirror->posZ = source.posZ;
+        mirror->fwdX = source.fwdX;
+        mirror->fwdY = source.fwdY;
+        mirror->fwdZ = source.fwdZ;
+        mirror->emitterDistanceScale = source.emitterDistanceScale;
+    }
+}
+
 void Spatializer::SetVoiceDistanceScale(VnVoiceHandle handle, float scale) {
     VoiceMirror* mirror = MirrorFor(handle);
     if (mirror != nullptr) {
@@ -661,14 +675,9 @@ VnResult Spatializer::EvaluateVoice(VnVoiceHandle handle, ParamSystem& params,
     // individually addressable again. Runs before the geometry below so
     // the distance/azimuth this tick reflect the emitter's current pose.
     if (mirror.emitterHandle != 0) {
-        float ex, ey, ez, efx, efy, efz;
-        if (emitters.Pose(mirror.emitterHandle, &ex, &ey, &ez, &efx, &efy, &efz)) {
-            mirror.posX = ex;
-            mirror.posY = ey;
-            mirror.posZ = ez;
-            mirror.fwdX = efx;
-            mirror.fwdY = efy;
-            mirror.fwdZ = efz;
+        SpatialSourceState source;
+        if (emitters.Pose(mirror.emitterHandle, &source)) {
+            RestoreVoiceSource(handle, source);
         } else {
             mirror.emitterHandle = 0; // detached; last pose stays frozen
         }
@@ -677,11 +686,12 @@ VnResult Spatializer::EvaluateVoice(VnVoiceHandle handle, ParamSystem& params,
         return VN_OK;
     }
     const bool initialEvaluation = !mirror.evaluated;
-    const float dx = mirror.posX - m_listenerX;
-    const float dy = mirror.posY - m_listenerY;
-    const float dz = mirror.posZ - m_listenerZ;
-    const float pairDistance = static_cast<float>(Length3(dx, dy, dz));
-    const float effectiveDistance = EffectiveDistance(pairDistance, mirror.distanceScale);
+    const double dx = static_cast<double>(mirror.posX) - m_listenerX;
+    const double dy = static_cast<double>(mirror.posY) - m_listenerY;
+    const double dz = static_cast<double>(mirror.posZ) - m_listenerZ;
+    const double pairDistance = Length3(dx, dy, dz);
+    const float effectiveDistance = EffectiveDistance(
+        pairDistance, mirror.distanceScale, mirror.emitterDistanceScale);
 
     // Azimuth pan: the projection of the emitter direction onto the
     // listener's right axis. A coincident emitter has no direction
@@ -689,7 +699,7 @@ VnResult Spatializer::EvaluateVoice(VnVoiceHandle handle, ParamSystem& params,
     // output does not distinguish them).
     float pan = 0.0f;
     if (pairDistance > 0.0f) {
-        pan = (dx * m_rightX + dy * m_rightY + dz * m_rightZ) / pairDistance;
+        pan = static_cast<float>((dx * m_rightX + dy * m_rightY + dz * m_rightZ) / pairDistance);
         pan = (pan < -1.0f) ? -1.0f : (pan > 1.0f) ? 1.0f : pan;
     }
     params.SetAttenuationSlot(mirror.handle, kTargetVoicePan, pan);
@@ -728,7 +738,7 @@ VnResult Spatializer::EvaluateVoice(VnVoiceHandle handle, ParamSystem& params,
         // toward the listener; a coincident listener reads on-axis.
         float thetaDeg = 0.0f;
         if (pairDistance > 0.0f) {
-            float cosTheta =
+            double cosTheta =
                 (-dx * mirror.fwdX - dy * mirror.fwdY - dz * mirror.fwdZ) / pairDistance;
             cosTheta = (cosTheta < -1.0f) ? -1.0f : (cosTheta > 1.0f) ? 1.0f : cosTheta;
             thetaDeg = static_cast<float>(std::acos(static_cast<double>(cosTheta)) * 180.0 / kPi);
@@ -808,17 +818,18 @@ std::uint64_t Spatializer::CurrentProfileGeneration(VnAttenuationId id) const no
 float Spatializer::AttenuationVolumeDb(VnAttenuationId attenuationId, float px,
                                        float py, float pz,
                                        float distanceScale,
-                                       std::uint64_t generation) const {
+                                       std::uint64_t generation,
+                                       float emitterDistanceScale) const {
     const AttenuationProfile* profile = FindProfile(attenuationId, generation);
     if (profile == nullptr) {
         return 0.0f;
     }
-    const float dx = px - m_listenerX;
-    const float dy = py - m_listenerY;
-    const float dz = pz - m_listenerZ;
-    const float pairDistance = static_cast<float>(Length3(dx, dy, dz));
+    const double dx = static_cast<double>(px) - m_listenerX;
+    const double dy = static_cast<double>(py) - m_listenerY;
+    const double dz = static_cast<double>(pz) - m_listenerZ;
+    const double pairDistance = Length3(dx, dy, dz);
     const float effectiveDistance =
-        EffectiveDistance(pairDistance, distanceScale);
+        EffectiveDistance(pairDistance, distanceScale, emitterDistanceScale);
     // Matches Evaluate()'s volume-slot term (minus the cone angular addend).
     return profile->volumeOverride
                ? AmplitudeToDb(profile->volumeCurve.Eval(effectiveDistance))
@@ -844,6 +855,7 @@ bool Spatializer::CaptureVoice(VnVoiceHandle handle,
     out->fwdY = mirror.fwdY;
     out->fwdZ = mirror.fwdZ;
     out->distanceScale = mirror.distanceScale;
+    out->emitterDistanceScale = mirror.emitterDistanceScale;
     out->spatializationMix = mirror.spatializationMix;
     const auto* profile = ResolveProfile(mirror);
     out->attenuationId = profile != nullptr ? profile->id : VnAttenuationId{};

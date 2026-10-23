@@ -2549,6 +2549,14 @@ VnResult Vn_SetEmitterPosition(VnEmitterHandle handle, VnVec3 position);
  * returning VN_STALE_HANDLE. Logic thread only. */
 VnResult Vn_SetEmitterOrientation(VnEmitterHandle handle, VnVec3 forward);
 
+/* Sets the emitter's distance scale (default 1). Must be positive and finite
+ * (VN_INVALID_ARG otherwise). Distance attenuation uses physical distance
+ * divided by this scale and the voice's distance scale; pan and cone angles
+ * remain physical. Attached voices observe it at their next spatial sample.
+ * VN_STALE_HANDLE for a stale handle; VN_CAPABILITY_UNAVAILABLE for a
+ * StateOnly emitter. Refused calls leave state unchanged. Logic thread only. */
+VnResult Vn_SetEmitterDistanceScale(VnEmitterHandle handle, float scale);
+
 /* Stops every voice currently attached to the emitter — live voices fade over
  * fadeMs (0 = immediate cut) and voices still awaiting a render slot are
  * cancelled — leaving the emitter itself intact for reuse. A stale handle is a

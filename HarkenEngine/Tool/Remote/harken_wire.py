@@ -7544,6 +7544,22 @@ TABLE_JSON = r'''
       ]
     },
     {
+      "name": "Vn_SetEmitterDistanceScale",
+      "note": "public Runtime API; not part of the remote wire protocol (no opcode).",
+      "params": [
+        {
+          "name": "handle",
+          "ctype": "VnEmitterHandle",
+          "wire": "u64"
+        },
+        {
+          "name": "scale",
+          "ctype": "float",
+          "wire": "f32"
+        }
+      ]
+    },
+    {
       "name": "Vn_SetVoiceDistanceScale",
       "note": "public Runtime API; not part of the remote wire protocol (no opcode).",
       "params": [

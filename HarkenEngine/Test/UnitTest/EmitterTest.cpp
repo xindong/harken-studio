@@ -563,8 +563,43 @@ TEST(Emitter, StaleEmitterOpsAreBenign) {
               Vn_SetEmitterPosition(emitter, Vec3(1.0f, 0.0f, 0.0f)));
     EXPECT_EQ(VN_STALE_HANDLE,
               Vn_SetEmitterOrientation(emitter, Vec3(1.0f, 0.0f, 0.0f)));
+    EXPECT_EQ(VN_STALE_HANDLE, Vn_SetEmitterDistanceScale(emitter, 2.0f));
     EXPECT_EQ(VN_STALE_HANDLE, Vn_StopEmitter(emitter, 0));
     EXPECT_EQ(VN_STALE_HANDLE, Vn_SetEmitterValue(emitter, harkentest::ObjectId(5), 1.0f));
+}
+
+TEST(Emitter, DistanceScaleValidationAndGenerationResetLeaveRefusalsUnchanged) {
+    EngineSession session(EmitterConfig(1, 1));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    VnEmitterHandle emitter = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+    harken::SpatialSourceState source;
+    ASSERT_TRUE(engine->emitters.Pose(emitter, &source));
+    EXPECT_FLOAT_EQ(1.0f, source.emitterDistanceScale);
+    ASSERT_EQ(VN_OK, Vn_SetEmitterDistanceScale(emitter, 200.0f));
+    const auto freeCommands = engine->commands.FreeSlots();
+    for (const float invalid : {0.0f, -1.0f, kNan,
+                               std::numeric_limits<float>::infinity()}) {
+        EXPECT_EQ(VN_INVALID_ARG, Vn_SetEmitterDistanceScale(emitter, invalid));
+        ASSERT_TRUE(engine->emitters.Pose(emitter, &source));
+        EXPECT_FLOAT_EQ(200.0f, source.emitterDistanceScale);
+        EXPECT_EQ(freeCommands, engine->commands.FreeSlots());
+    }
+    for (const float scale : {std::numeric_limits<float>::denorm_min(),
+                             std::numeric_limits<float>::max()}) {
+        EXPECT_EQ(VN_OK, Vn_SetEmitterDistanceScale(emitter, scale));
+        ASSERT_TRUE(engine->emitters.Pose(emitter, &source));
+        EXPECT_FLOAT_EQ(scale, source.emitterDistanceScale);
+    }
+    ASSERT_EQ(VN_OK, Vn_DestroyEmitter(emitter));
+    VnEmitterHandle reused = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&reused));
+    EXPECT_EQ(static_cast<std::uint32_t>(emitter), static_cast<std::uint32_t>(reused));
+    EXPECT_NE(emitter, reused);
+    EXPECT_EQ(VN_STALE_HANDLE, Vn_SetEmitterDistanceScale(emitter, 3.0f));
+    ASSERT_TRUE(engine->emitters.Pose(reused, &source));
+    EXPECT_FLOAT_EQ(1.0f, source.emitterDistanceScale);
 }
 
 TEST(Emitter, PlayNamingADeadEmitterIsRefused) {
@@ -1170,6 +1205,117 @@ TEST(Emitter, RenderOutputParkReturn) {
     engine->nullBackend.Pump(1);
 }
 
+enum class SourceResidency { Live, Pending, Parked };
+struct SourceFreezeCase { SourceResidency residency; bool sampleReplacement; };
+class EmitterSourceFreeze : public testing::TestWithParam<SourceFreezeCase> {};
+
+TEST_P(EmitterSourceFreeze, DestroyKeepsThisRecordsLastCompleteSampleAndListenerStaysLive) {
+    const auto test = GetParam();
+    auto config = EmitterConfig(1);
+    config.maxParkedVoices = 1;
+    config.voiceStealPolicy = 2;
+    config.audibilityParkEnabled = test.residency == SourceResidency::Pending ? 0 : 1;
+    config.parkThresholdDb = -40.0f;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    const auto samples = MakeDC(kRate, 0.25f);
+    const auto pcm = MonoDesc(samples, kRate);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &pcm));
+    const auto profile = MakeAttenuationDesc(1.0f, 21.0f);
+    ASSERT_EQ(VN_OK, Vn_RegisterAttenuation(harkentest::ObjectId(9), &profile));
+    VnEmitterHandle emitter = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+    ASSERT_EQ(VN_OK, Vn_SetEmitterPosition(emitter, Vec3(10, 0, 0)));
+    ASSERT_EQ(VN_OK, Vn_SetEmitterDistanceScale(emitter, 2.0f));
+    if (test.residency == SourceResidency::Pending) {
+        auto incumbentPlay = MakePlayDesc(harkentest::ObjectId(1));
+        incumbentPlay.loopCount = 0;
+        VnVoiceHandle incumbent = 0;
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&incumbentPlay, &incumbent));
+        engine->nullBackend.Pump(1);
+    }
+    auto play = AttachedPlay(harkentest::ObjectId(1), emitter);
+    play.spatialized = 1;
+    play.loopCount = 0;
+    play.volumeDb = test.residency == SourceResidency::Parked ? -80.0f : 0.0f;
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    ASSERT_EQ(VN_OK, Vn_BindVoiceAttenuation(voice, harkentest::ObjectId(9)));
+    ASSERT_EQ(VN_OK, Vn_SetVoiceDistanceScale(voice, 0.5f));
+    const auto expectedKind = test.residency == SourceResidency::Live
+        ? harken::VoiceLedger::HandleKind::Live
+        : test.residency == SourceResidency::Pending
+            ? harken::VoiceLedger::HandleKind::Pending
+            : harken::VoiceLedger::HandleKind::Parked;
+    ASSERT_EQ(expectedKind, engine->ledger.Classify(voice).kind);
+    if (test.residency == SourceResidency::Live) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine->nullBackend.Pump(1);
+    }
+    ASSERT_EQ(VN_OK, Vn_SetEmitterPosition(emitter, Vec3(-12, 0, 0)));
+    ASSERT_EQ(VN_OK, Vn_SetEmitterOrientation(emitter, Vec3(0, 0, 1)));
+    ASSERT_EQ(VN_OK, Vn_SetEmitterDistanceScale(emitter, 4.0f));
+    if (test.sampleReplacement) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        ASSERT_EQ(expectedKind, engine->ledger.Classify(voice).kind);
+    }
+    // No sampling occurs during destruction. Each record freezes A or B
+    // according to whether it sampled the replacement above.
+    ASSERT_EQ(VN_OK, Vn_DestroyEmitter(emitter));
+    const float frozenX = test.sampleReplacement ? -12.0f : 10.0f;
+    const float frozenScale = test.sampleReplacement ? 4.0f : 2.0f;
+    const float frozenForwardZ = test.sampleReplacement ? 1.0f : -1.0f;
+    ASSERT_EQ(VN_OK, Vn_SetListener(Vec3(frozenX - frozenScale * 0.5f, 0, 0),
+                                    Vec3(0, 0, -1), Vec3(0, 1, 0)));
+    if (test.residency == SourceResidency::Pending)
+        engine->nullBackend.Pump(1);
+    if (test.residency == SourceResidency::Parked)
+        ASSERT_EQ(VN_OK, Vn_SetVoiceVolume(voice, 80.0f, 0));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    ASSERT_EQ(harken::VoiceLedger::HandleKind::Live, engine->ledger.Classify(voice).kind);
+    const auto render = RenderHandle(engine, voice);
+    harken::Spatializer::SpatialVoiceState spatial;
+    ASSERT_TRUE(engine->spatial.CaptureVoice(render, &spatial));
+    EXPECT_EQ(0u, spatial.emitterHandle);
+    EXPECT_FLOAT_EQ(frozenX, spatial.posX);
+    EXPECT_FLOAT_EQ(frozenForwardZ, spatial.fwdZ);
+    EXPECT_FLOAT_EQ(frozenScale, spatial.emitterDistanceScale);
+    EXPECT_FLOAT_EQ(0.5f, spatial.distanceScale);
+    if (test.residency == SourceResidency::Live)
+        engine->nullBackend.Pump(4);
+    harkentest::Capture output;
+    harkentest::PumpAndCapture(engine, 1, output);
+    ASSERT_EQ(kBlock, output.right.size());
+
+    // Compare the frozen source against an unattached source at the same
+    // effective distance and azimuth, including the established mono matrix.
+    ASSERT_EQ(VN_OK, Vn_Stop(voice, 0));
+    engine->nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    ASSERT_EQ(VN_OK, Vn_SetListener(Vec3(0, 0, 0), Vec3(0, 0, -1), Vec3(0, 1, 0)));
+    auto referencePlay = MakePlayDesc(harkentest::ObjectId(1));
+    referencePlay.spatialized = 1;
+    referencePlay.positionX = 1.0f;
+    VnVoiceHandle referenceVoice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&referencePlay, &referenceVoice));
+    ASSERT_EQ(VN_OK, Vn_BindVoiceAttenuation(referenceVoice, harkentest::ObjectId(9)));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    harkentest::Capture reference;
+    harkentest::PumpAndCapture(engine, 1, reference);
+    ASSERT_EQ(output.right.size(), reference.right.size());
+    HARKENTEST_ASSERT_NON_SILENT(reference.right);
+    for (std::uint32_t frame = 0; frame < kBlock; ++frame) {
+        EXPECT_NEAR(0.0f, output.left[frame], 1e-6f) << frame;
+        EXPECT_NEAR(reference.right[frame], output.right[frame], 1e-5f) << frame;
+    }
+}
+
+INSTANTIATE_TEST_SUITE_P(AllSourceRecords, EmitterSourceFreeze, testing::Values(
+    SourceFreezeCase{SourceResidency::Live, false}, SourceFreezeCase{SourceResidency::Live, true},
+    SourceFreezeCase{SourceResidency::Pending, false}, SourceFreezeCase{SourceResidency::Pending, true},
+    SourceFreezeCase{SourceResidency::Parked, false}, SourceFreezeCase{SourceResidency::Parked, true}));
+
 
 VnEmitterHandle CreateStateOnly() {
     VnEmitterCreateDescV1 desc{};
@@ -1191,6 +1337,7 @@ TEST(Emitter, StateOnlyPreservesVoicePoseAndOwnsStops) {
     ASSERT_NE(0u, state);
     EXPECT_EQ(VN_CAPABILITY_UNAVAILABLE, Vn_SetEmitterPosition(state, Vec3(3, 0, 0)));
     EXPECT_EQ(VN_CAPABILITY_UNAVAILABLE, Vn_SetEmitterOrientation(state, Vec3(0, 0, 1)));
+    EXPECT_EQ(VN_CAPABILITY_UNAVAILABLE, Vn_SetEmitterDistanceScale(state, 2.0f));
     auto play = AttachedPlay(harkentest::ObjectId(1), state);
     play.spatialized = 1;
     play.positionX = 3.0f;
@@ -1206,6 +1353,7 @@ TEST(Emitter, StateOnlyPreservesVoicePoseAndOwnsStops) {
     ASSERT_TRUE(engine->spatial.CaptureVoice(render, &spatial));
     EXPECT_FLOAT_EQ(5.0f, spatial.posX);
     EXPECT_FLOAT_EQ(-2.0f, spatial.posZ);
+    EXPECT_FLOAT_EQ(1.0f, spatial.emitterDistanceScale);
     harkentest::Capture capture;
     harkentest::PumpAndCapture(engine, 2, capture);
     HARKENTEST_ASSERT_NON_SILENT(capture.left);

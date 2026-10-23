@@ -2322,6 +2322,16 @@ int ExecuteCall(std::uint16_t callId, ByteReader& r, BlobStore& blobs,
         result = Vn_SetEmitterOrientation(handle, forward);
         break;
     }
+    case harken::kTraceCallSetEmitterDistanceScale: {
+        const std::uint64_t recorded = r.U64();
+        const std::uint64_t handle =
+            r.formatVersion >= harken::kTraceFormatVersionV4
+                ? RemapEmitterHandle(emitterHandles, recorded)
+                : recorded;
+        const float scale = r.F32();
+        result = Vn_SetEmitterDistanceScale(handle, scale);
+        break;
+    }
     case harken::kTraceCallStopEmitter: {
         const std::uint64_t recorded = r.U64();
         const std::uint64_t handle =

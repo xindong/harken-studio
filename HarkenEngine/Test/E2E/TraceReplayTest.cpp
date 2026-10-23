@@ -4495,10 +4495,13 @@ TEST(TraceReplayE2E, AuthoredProximityAndToneRecipeReplayByteIdentically) {
         ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
         ASSERT_EQ(VN_OK,
                   Vn_SetEmitterPosition(emitter, VnVec3{0.0f, 0.0f, -5.0f}));
+        ASSERT_EQ(VN_OK, Vn_SetEmitterDistanceScale(emitter, 2.0f));
         ASSERT_NE(0u, PostCanonicalAction(kSpatialAction, 0, emitter));
         ASSERT_NE(0u, PostCanonicalAction(kRecipeAction));
 
         for (int i = 0; i < 20; ++i) {
+            if (i == 8) ASSERT_EQ(VN_OK, Vn_SetEmitterDistanceScale(emitter, 0.5f));
+            if (i == 12) ASSERT_EQ(VN_OK, Vn_SetEmitterDistanceScale(emitter, 4.0f));
             ASSERT_EQ(VN_OK, Vn_Update());
             engine->nullBackend.Pump(1);
             CaptureLastBlock(engine, &original);
@@ -5317,6 +5320,9 @@ TEST(TraceReplayE2E, StateOnlyAndDefaultActionContextsReplayExactly) {
         EXPECT_EQ(0u, static_cast<std::uint32_t>(state));
         EXPECT_EQ(1u, static_cast<std::uint32_t>(spatial));
         EXPECT_EQ(VN_CAPABILITY_UNAVAILABLE, Vn_SetEmitterPosition(state, VnVec3{1, 0, 0}));
+        EXPECT_EQ(VN_CAPABILITY_UNAVAILABLE, Vn_SetEmitterDistanceScale(state, 2.0f));
+        EXPECT_EQ(VN_INVALID_ARG, Vn_SetEmitterDistanceScale(spatial, 0.0f));
+        ASSERT_EQ(VN_OK, Vn_SetEmitterDistanceScale(spatial, 2.0f));
         for (unsigned turn = 0; turn < 4; ++turn) for (VnEmitterHandle emitter : {VnEmitterHandle{0}, state, spatial}) {
             ASSERT_NE(0u, PostCanonicalAction(action, 0, emitter));
             for (unsigned block = 0; block < 6; ++block) {
@@ -5328,6 +5334,7 @@ TEST(TraceReplayE2E, StateOnlyAndDefaultActionContextsReplayExactly) {
         }
         ASSERT_EQ(VN_OK, Vn_DestroyEmitter(state));
         ASSERT_EQ(VN_OK, Vn_DestroyEmitter(spatial));
+        EXPECT_EQ(VN_STALE_HANDLE, Vn_SetEmitterDistanceScale(spatial, 3.0f));
         ASSERT_EQ(VN_OK, Vn_TraceStop());
     }
     ASSERT_GT(PeakOfRawF32(original), harkentest::kSilenceFloor);

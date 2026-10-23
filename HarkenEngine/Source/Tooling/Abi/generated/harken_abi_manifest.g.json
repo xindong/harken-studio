@@ -1605,6 +1605,21 @@
         },
         {
           "callingConvention": "cdecl",
+          "name": "Vn_SetEmitterDistanceScale",
+          "parameters": [
+            {
+              "ctype": "VnEmitterHandle",
+              "name": "handle"
+            },
+            {
+              "ctype": "float",
+              "name": "scale"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
           "name": "Vn_SetVoiceDistanceScale",
           "parameters": [
             {
@@ -3929,6 +3944,7 @@
         "Vn_SetBusSendLevel",
         "Vn_SetBusSolo",
         "Vn_SetBusVolume",
+        "Vn_SetEmitterDistanceScale",
         "Vn_SetEmitterOrientation",
         "Vn_SetEmitterPosition",
         "Vn_SetEmitterValue",
@@ -23357,6 +23373,7 @@
         "kTraceCallSetBusSendLevel": 38,
         "kTraceCallSetBusSolo": 71,
         "kTraceCallSetBusVolume": 6,
+        "kTraceCallSetEmitterDistanceScale": 199,
         "kTraceCallSetEmitterOrientation": 27,
         "kTraceCallSetEmitterPosition": 26,
         "kTraceCallSetEmitterValue": 29,
@@ -23443,11 +23460,11 @@
       "formatVersion": 7
     }
   },
-  "contractSha256": "f5e907ea12903a50375ea9804bbbd787ba73f7c069f9ee7d0ccff72df6faa3d4",
+  "contractSha256": "3870590fdebbe101cc31efdb78bf22f266227eb9ffe7cc571143f1ddb8f3a503",
   "generatedFiles": {
     "HarkenEngine/Source/Tooling/Binding/generated/harken_binding_abi_pin.g.h": {
-      "sha256": "52d4b46c9cf0ee26f146a8319840c837e1c3dbd176cb61280776366a3b901891",
-      "size": 321464
+      "sha256": "7f9383b5ba3bc51e2f36cca3e6062953044d03f53c1d7802f371ac9906757d16",
+      "size": 321600
     },
     "HarkenEngine/Tool/Remote/generated/harken_wire_desc_meta.h": {
       "sha256": "d02bee48f10bd551a2887f963fd26ee9e0ba21e66108f186d7e6af6941ee0567",
@@ -23466,16 +23483,16 @@
       "size": 235982
     },
     "HarkenEngine/Tool/Remote/harken_wire.py": {
-      "sha256": "b136f9f4a06a3b97a075cb39f64d5d3721a85d88be7192ce11b772d906c12e37",
-      "size": 249424
+      "sha256": "755ab5219bd0db1c7ac814de4072100319792931056962a46377152fcffcf364",
+      "size": 249804
     },
     "HarkenSDK/Unity/Harken/Runtime/Generated/HarkenAbi.g.cs": {
       "sha256": "72e7fcdf0088bac39bd50f3807acff584b628cb3b56f309894332c3d810301c9",
       "size": 105149
     },
     "HarkenSDK/Unity/Harken/Runtime/Generated/HarkenNative.g.cs": {
-      "sha256": "6c4e2687ef78eb2cfcbe4c471938af950b37eb1efcb3f71d4a28da29c23fb61b",
-      "size": 28362
+      "sha256": "00b7d4515bb5c6a7ac14f10e524c542e772768b00467dae7ee2032d7e3aac41d",
+      "size": 28577
     },
     "HarkenSDK/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs": {
       "sha256": "1cd0bd29c3f03c80b54d6ef5101ccdee1b5a210b7a111f9b3f3bb54a13f2466f",
@@ -23485,22 +23502,22 @@
   "kind": "harken-contract-suite-manifest",
   "schemaVersion": 1,
   "sectionSha256": {
-    "nativeAbiSha256": "6d8be6ce96740d6b46cbccbc3596db477a64e11df5c452dec45ec9dd19234edb",
+    "nativeAbiSha256": "c15b8b97f780b527a86b4b23e22fc6eba6381aa547d894bd35c9aba522242b02",
     "remoteWireSha256": "d99304d71d24436e14a34fd990b3ded5e6ddd7bca6c13dc2065a9709d53577d3",
-    "traceFormatSha256": "96a2d927a69b82185c1624dd316c535feab0576f8da254b005605460942907d9"
+    "traceFormatSha256": "a783b8055e9d9432031a299d036e0a9d0549ea5ff7500d03864084956880f05a"
   },
   "sourceFiles": {
     "HarkenEngine/Source/Runtime/api/include/harken/Harken.h": {
-      "sha256": "246959d7eabecc238c7a8a5069bf86cb1fb80f4675102ff534faff7cf2ef98af",
-      "size": 234414
+      "sha256": "62fd0b3a5d42be4476528aa5ee5ebaf7e0220258e837f5c2d08dbf0d9d860034",
+      "size": 234948
     },
     "HarkenEngine/Source/Runtime/api/include/harken/ObjectId.h": {
       "sha256": "90b6f66ad515c5e411564f1e5981b65bec2e461fabbdee6c57aa86b26b9a300d",
       "size": 4323
     },
     "HarkenEngine/Source/Runtime/api/src/TraceFormat.h": {
-      "sha256": "717c5ee63d0c79f6ea425e9a030c5da84f89de78839eaed813b99d3923979db4",
-      "size": 19412
+      "sha256": "d90df281da465035e5c0faf274c94de3865fece2e406da42bf44fdb8d6f98123",
+      "size": 19491
     },
     "HarkenEngine/Source/Tooling/Abi/gen_abi_manifest.py": {
       "sha256": "5bda54ee40f5af045fbc9a0a420c1695056061d83db9960c88f53b054bbf2214",
@@ -23515,8 +23532,8 @@
       "size": 30774
     },
     "HarkenEngine/Source/Tooling/Remote/wire/harken_wire_table.json": {
-      "sha256": "5666571dfcf6aac0aa963ab89f26988865361973cb691d505edf4c28f774d951",
-      "size": 248179
+      "sha256": "a8cc85c7374d0d8cbd2875caacae445db077936d5fa4e10e7e9592cb9c16f756",
+      "size": 248559
     }
   }
 }

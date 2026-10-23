@@ -32,6 +32,12 @@ struct PlaybackExecutionContext {
     VnEmitterHandle spatialEmitter = 0;
 };
 
+struct SpatialSourceState {
+    float posX = 0.0f, posY = 0.0f, posZ = 0.0f;
+    float fwdX = 0.0f, fwdY = 0.0f, fwdZ = -1.0f;
+    float emitterDistanceScale = 1.0f;
+};
+
 class EmitterTable {
 public:
     explicit EmitterTable(const EngineConfig& config);
@@ -71,12 +77,12 @@ public:
     // finiteness and non-zero length and normalized it).
     bool SetPosition(VnEmitterHandle handle, float x, float y, float z);
     bool SetOrientation(VnEmitterHandle handle, float fx, float fy, float fz);
+    bool SetDistanceScale(VnEmitterHandle handle, float scale);
 
     // Reads the emitter's pose for the spatializer's per-tick fan-out to
     // attached voices. False for a stale handle (the caller keeps the voice's
     // frozen last-known state).
-    bool Pose(VnEmitterHandle handle, float* x, float* y, float* z, float* fx,
-              float* fy, float* fz) const;
+    bool Pose(VnEmitterHandle handle, SpatialSourceState* out) const;
 
     // Emitter-local Variable overrides. SetLocalValue creates or updates the
     // override (VN_NO_VARIABLE when the emitter's local table is full and the
@@ -109,8 +115,7 @@ private:
         std::uint32_t generation = 1; // wrap skips 0 (handle 0 never valid)
         bool live = false;
         bool stateOnly = false;
-        float posX = 0.0f, posY = 0.0f, posZ = 0.0f;
-        float fwdX = 0.0f, fwdY = 0.0f, fwdZ = -1.0f;
+        SpatialSourceState spatial;
         std::vector<LocalVar> locals; // fixed size emitterVariableSlots
     };
 

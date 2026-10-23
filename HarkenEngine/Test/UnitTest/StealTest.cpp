@@ -1116,7 +1116,9 @@ TEST(Steal, PendingStartStagesEveryPerVoiceOp) {
     EXPECT_FLOAT_EQ(2.5f, rec.distanceScale);
     EXPECT_TRUE(rec.hasSpatializationMix);
     EXPECT_FLOAT_EQ(0.25f, rec.spatializationMix);
-    EXPECT_TRUE(rec.hasOrientation);
+    EXPECT_FLOAT_EQ(0.0f, rec.source.fwdX);
+    EXPECT_FLOAT_EQ(0.0f, rec.source.fwdY);
+    EXPECT_FLOAT_EQ(1.0f, rec.source.fwdZ);
     EXPECT_TRUE(rec.hasAttenuation);
     EXPECT_EQ(harkentest::ObjectId(55u), rec.attenuationId);
     EXPECT_EQ(0u, rec.attenuationGeneration);

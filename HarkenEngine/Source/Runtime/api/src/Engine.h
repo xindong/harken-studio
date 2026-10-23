@@ -380,9 +380,7 @@ struct PendingStartRecord {
     std::uint32_t busIndex = 0;
     std::uint32_t busGeneration = 0;
     bool spatialized = false;
-    float posX = 0.0f;
-    float posY = 0.0f;
-    float posZ = 0.0f;
+    SpatialSourceState source;
     std::uint32_t priority = 128;
     VnEmitterHandle emitterHandle = 0;  // emitter to attach at deferred start
     VnSoundId originPlayable{};       // Sound id named by a raw start or an Action
@@ -406,8 +404,6 @@ struct PendingStartRecord {
     float setPosX = 0.0f;
     float setPosY = 0.0f;
     float setPosZ = 0.0f;
-    bool hasOrientation = false;
-    VnVec3 orientation{};
     bool hasAttenuation = false;
     VnAttenuationId attenuationId{};
     std::uint64_t attenuationGeneration = 0;

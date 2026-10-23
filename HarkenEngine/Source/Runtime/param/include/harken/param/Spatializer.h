@@ -26,6 +26,7 @@
 #include "harken/core/EngineConfig.h"
 #include "harken/core/StableRowStorage.h"
 #include "harken/param/Curve.h"
+#include "harken/param/EmitterTable.h"
 #include "harken/param/ParamSystem.h"
 
 #include <cstdint>
@@ -35,10 +36,6 @@
 namespace harken {
 
 // The emitter table an attached voice derives its geometry from each tick.
-// Forward-declared: the spatializer reads emitter poses through a reference,
-// no ownership.
-class EmitterTable;
-
 // Attenuation profile capacity is independent of its prepared storage.
 inline constexpr std::uint32_t kMaxAttenuationProfiles = 64;
 
@@ -237,6 +234,7 @@ public:
     void OnVoiceStarted(VnVoiceHandle handle, bool spatialized, float x,
                         float y, float z, VnEmitterHandle emitterHandle = 0);
     void SetVoicePosition(VnVoiceHandle handle, float x, float y, float z);
+    void RestoreVoiceSource(VnVoiceHandle handle, const SpatialSourceState& source);
     void SetVoiceDistanceScale(VnVoiceHandle handle, float scale);
     void SetVoiceSpatializationMix(VnVoiceHandle handle, float mix);
 
@@ -293,7 +291,8 @@ public:
     // cone-angle-driven return is not).
     float AttenuationVolumeDb(VnAttenuationId attenuationId, float px, float py,
                               float pz, float distanceScale,
-                              std::uint64_t generation = 0) const;
+                              std::uint64_t generation = 0,
+                              float emitterDistanceScale = 1.0f) const;
 
     // A portable snapshot of a voice's spatial mirror, for park/return. Return
     // re-applies it to the new render slot (OnVoiceStarted + BindVoice +
@@ -303,6 +302,7 @@ public:
         float posX = 0.0f, posY = 0.0f, posZ = 0.0f;
         float fwdX = 0.0f, fwdY = 0.0f, fwdZ = -1.0f;
         float distanceScale = 1.0f;
+        float emitterDistanceScale = 1.0f;
         float spatializationMix = 1.0f;
         VnAttenuationId attenuationId{}; // 0 = no profile bound
         std::uint64_t attenuationGeneration = 0;
@@ -323,6 +323,7 @@ private:
         bool evaluated = false; // first spatial installation may snap
         float posX = 0.0f, posY = 0.0f, posZ = 0.0f;
         float distanceScale = 1.0f;
+        float emitterDistanceScale = 1.0f;
         float spatializationMix = 1.0f;
         // Emitter forward, unit length; the cone's axis.
         float fwdX = 0.0f, fwdY = 0.0f, fwdZ = -1.0f;

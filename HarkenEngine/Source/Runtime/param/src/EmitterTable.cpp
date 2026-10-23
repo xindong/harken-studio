@@ -58,10 +58,7 @@ bool EmitterTable::Create(VnEmitterHandle* outHandle, bool stateOnly) {
         }
         emitter.live = true;
         emitter.stateOnly = stateOnly;
-        emitter.posX = emitter.posY = emitter.posZ = 0.0f;
-        emitter.fwdX = 0.0f;
-        emitter.fwdY = 0.0f;
-        emitter.fwdZ = -1.0f;
+        emitter.spatial = SpatialSourceState{};
         for (LocalVar& local : emitter.locals) {
             local = LocalVar{};
         }
@@ -128,9 +125,9 @@ bool EmitterTable::SetPosition(VnEmitterHandle handle, float x, float y,
     if (emitter == nullptr || emitter->stateOnly) {
         return false;
     }
-    emitter->posX = x;
-    emitter->posY = y;
-    emitter->posZ = z;
+    emitter->spatial.posX = x;
+    emitter->spatial.posY = y;
+    emitter->spatial.posZ = z;
     return true;
 }
 
@@ -140,24 +137,27 @@ bool EmitterTable::SetOrientation(VnEmitterHandle handle, float fx, float fy,
     if (emitter == nullptr || emitter->stateOnly) {
         return false;
     }
-    emitter->fwdX = fx;
-    emitter->fwdY = fy;
-    emitter->fwdZ = fz;
+    emitter->spatial.fwdX = fx;
+    emitter->spatial.fwdY = fy;
+    emitter->spatial.fwdZ = fz;
     return true;
 }
 
-bool EmitterTable::Pose(VnEmitterHandle handle, float* x, float* y, float* z,
-                        float* fx, float* fy, float* fz) const {
+bool EmitterTable::SetDistanceScale(VnEmitterHandle handle, float scale) {
+    Emitter* emitter = Live(handle);
+    if (emitter == nullptr || emitter->stateOnly) {
+        return false;
+    }
+    emitter->spatial.emitterDistanceScale = scale;
+    return true;
+}
+
+bool EmitterTable::Pose(VnEmitterHandle handle, SpatialSourceState* out) const {
     const Emitter* emitter = Live(handle);
     if (emitter == nullptr || emitter->stateOnly) {
         return false;
     }
-    *x = emitter->posX;
-    *y = emitter->posY;
-    *z = emitter->posZ;
-    *fx = emitter->fwdX;
-    *fy = emitter->fwdY;
-    *fz = emitter->fwdZ;
+    *out = emitter->spatial;
     return true;
 }
 
