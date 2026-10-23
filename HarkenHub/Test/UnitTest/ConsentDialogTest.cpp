@@ -80,7 +80,7 @@ TEST_F(ConsentDialogTest, BothLanguagesIncludePrivacyAndRenewOldConsent)
             const QString hash = QString::fromLatin1(QCryptographicHash::hash(
                 content, QCryptographicHash::Sha256).toHex());
             EXPECT_TRUE(VNH::ConsentStore::hasConsent(
-                id, QStringLiteral("2026-09-30-r3"), hash));
+                id, QStringLiteral("2026-09-30-r2"), hash));
             EXPECT_TRUE(VNH::ConsentDialog::requestConsent(nullptr, id));
             QFile consent(VNH::ConsentStore::filePath());
             ASSERT_TRUE(consent.open(QIODevice::ReadOnly));

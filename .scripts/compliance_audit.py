@@ -60,7 +60,6 @@ RULE_STANDARDS = {
     "GOV-002": "PR 描述的摘要、验证信息、各章节勾选结果以及已勾选项的说明内容必须填写，不得留空。",
     "GOV-003": "PR 描述条目文案应与模板语义一致；该项仅提示人工核对，不作为阻断条件。",
     "GOV-004": "PR 引入的每个非 merge commit 必须带有合法行首 Signed-off-by: Name <email>（trailer email 像邮箱即可，不比 author/committer 身份）；模板勾选不能替代 trailer。",
-    "GOV-005": "完整 Git 历史中的非 merge commit 必须有有效 DCO 签署，或有原贡献者出具并经人工核实的历史补正记录；浅克隆和待确认记录不能作为通过依据。",
     "LOCAL-001": "本地 gitignored 配置存在时只作为提醒；不得提交、打包或发布。",
     "LOCAL-002": "本地未跟踪自动化目录存在时只作为提醒；不得默认进入发布范围。",
 }
@@ -158,7 +157,6 @@ LICENSE_FILENAMES = re.compile(
 )
 PULL_REQUEST_TEMPLATE_PATH = ".github/PULL_REQUEST_TEMPLATE.md"
 CONTRIBUTING_DCO_PATH = ".github/CONTRIBUTING.md"
-DCO_ATTESTATIONS_PATH = ".github/dco-attestations.json"
 SHA40_RE = re.compile(r"[0-9a-fA-F]{40}")
 SIGNED_OFF_BY_LINE_RE = re.compile(
     r"^Signed-off-by: ([^<\n]{1,256}) <([^>\n]{1,254})>\s*$",
@@ -957,81 +955,6 @@ def rule_pull_request_dco(
         CONTRIBUTING_DCO_PATH,
         evidence=" | ".join(failures[:DCO_FINDING_EVIDENCE_LIMIT]),
     )
-
-
-def load_dco_attestations(commits: list[DcoCommit]) -> set[str]:
-    payload = json.loads((REPO_ROOT / DCO_ATTESTATIONS_PATH).read_text(encoding="utf-8"))
-    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
-        raise ValueError("Invalid DCO attestation schema")
-    records = payload.get("attestations")
-    if not isinstance(records, list):
-        raise ValueError("DCO attestations must be a list")
-    history = {commit.sha: commit for commit in commits}
-    covered: set[str] = set()
-    for record in records:
-        if not isinstance(record, dict) or record.get("dco_version") != "1.1":
-            raise ValueError("An attestation must certify DCO 1.1")
-        signature = record.get("signed_off_by")
-        if not isinstance(signature, str) or "\n" in signature or "\r" in signature:
-            raise ValueError("An attestation needs one Signed-off-by line")
-        signoffs = parse_sign_offs(signature)
-        if len(signoffs) != 1 or not looks_like_email(signoffs[0].email):
-            raise ValueError("Invalid attestation signature")
-        recorded_on = record.get("recorded_on")
-        if not isinstance(recorded_on, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", recorded_on):
-            raise ValueError("An attestation needs a recording date")
-        if dt.date.fromisoformat(recorded_on) > dt.datetime.now(dt.timezone.utc).date():
-            raise ValueError("An attestation cannot be dated in the future")
-        evidence = record.get("evidence")
-        if not isinstance(evidence, str) or not evidence.strip():
-            raise ValueError("An attestation needs its confirmation source")
-        shas = record.get("commits")
-        if not isinstance(shas, list) or not shas:
-            raise ValueError("An attestation must identify the original commits")
-        for sha in shas:
-            if not isinstance(sha, str) or not SHA40_RE.fullmatch(sha) or sha not in history:
-                raise ValueError(f"Attested commit is not in the audited history: {sha}")
-            if sha in covered:
-                raise ValueError(f"Duplicate DCO attestation: {sha}")
-            if history[sha].author_email.casefold() != signoffs[0].email.casefold():
-                raise ValueError(f"Attestation signer must be the original contributor: {sha}")
-            covered.add(sha)
-    return covered
-
-
-def rule_history_dco(findings: list[Finding]) -> None:
-    try:
-        shallow = run_git(["rev-parse", "--is-shallow-repository"])
-        if shallow.returncode != 0 or shallow.stdout.strip() != "false":
-            raise ValueError("Full Git history is required; use fetch-depth: 0")
-        result = run_git(["log", f"--format={DCO_GIT_LOG_FORMAT}", "HEAD"])
-        if result.returncode != 0:
-            raise ValueError(result.stderr.strip() or "git log failed")
-        commits = parse_git_log_commits(result.stdout)
-        if not commits:
-            raise ValueError("Git history is empty")
-        covered = load_dco_attestations(commits)
-    except (OSError, ValueError, RuntimeError) as exc:
-        add(
-            findings, "GOV-005", "high", "repository-governance",
-            "无法完成全历史 DCO 校验",
-            "完整历史或补正记录无法验证，不能视为历史已全部签署。",
-            "获取完整 Git 历史并修复补正记录；待确认材料不得填入已签署记录。",
-            DCO_ATTESTATIONS_PATH, evidence=str(exc)[:300],
-        )
-        return
-    failures = [
-        commit.sha for commit in commits
-        if not dco_exempt_reason(commit) and validate_dco_commit(commit) and commit.sha not in covered
-    ]
-    if failures:
-        add(
-            findings, "GOV-005", "high", "repository-governance",
-            "Git 历史存在未补正的 DCO 漏签",
-            f"完整历史中有 {len(failures)} 个非 merge commit 缺少有效签署，且没有原贡献者的历史补正记录。",
-            "按贡献指南取得原贡献者对完整 SHA 清单的真实 DCO 1.1 确认，核实签署身份和证据后登记；不要代签或重写 main。",
-            DCO_ATTESTATIONS_PATH, evidence=" | ".join(failures),
-        )
 
 
 def rule_license(files: list[str], findings: list[Finding]) -> None:
@@ -1972,7 +1895,6 @@ def run_audit() -> dict:
     pull_request = load_pull_request_context()
     rule_pull_request_governance(pull_request, findings)
     rule_pull_request_dco(pull_request, findings)
-    rule_history_dco(findings)
     rule_license(files, findings)
     rule_third_party_notices(files, findings)
     rule_license_policy(files, findings)

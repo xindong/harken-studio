@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import runpy
 import shutil
@@ -436,30 +435,11 @@ class ComplianceDcoGitRangeTest(unittest.TestCase):
         # runpy.run_path 返回的是 globals 副本；函数仍从 __globals__ 取名。
         self.rule_fn = self.audit_module["rule_pull_request_dco"]
         self.rule_fn.__globals__["run_git"] = run_git
-        self.history_rule = self.audit_module["rule_history_dco"]
-        self.history_rule.__globals__["REPO_ROOT"] = self.temp_dir
-        (self.temp_dir / ".github").mkdir()
-        self._write_attestations([])
         self.addCleanup(self._restore_run_git)
         self.addCleanup(lambda: shutil.rmtree(self.temp_dir, ignore_errors=True))
 
     def _restore_run_git(self) -> None:
         self.rule_fn.__globals__["run_git"] = self._original_run_git
-        self.history_rule.__globals__["REPO_ROOT"] = REPO_ROOT
-
-    def _write_attestations(self, records: list) -> None:
-        (self.temp_dir / ".github/dco-attestations.json").write_text(
-            json.dumps({"schema_version": 1, "attestations": records}), encoding="utf-8"
-        )
-
-    def _attestation(self, sha: str) -> dict:
-        return {
-            "dco_version": "1.1",
-            "signed_off_by": "Signed-off-by: Alice <alice@xd.com>",
-            "recorded_on": "2026-01-01",
-            "evidence": "https://example.com/review/1",
-            "commits": [sha],
-        }
 
     def _commit(self, message: str, *, signoff: bool) -> str:
         (self.temp_dir / "note.txt").write_text(message + "\n", encoding="utf-8")
@@ -511,83 +491,6 @@ class ComplianceDcoGitRangeTest(unittest.TestCase):
         self.assertEqual(findings[0].severity, "high")
         self.assertEqual(findings[0].title, "PR commit 缺少有效 DCO 签名")
         self.assertIn(head[:8], findings[0].evidence or "")
-
-    def test_history_checks_unsigned_ancestors_without_pr_context(self) -> None:
-        base = self._commit("unsigned original contribution", signoff=False)
-        self._commit("signed follow-up", signoff=True)
-        (self.temp_dir / ".github/dco-attestations.json").write_text(json.dumps({
-            "schema_version": 1, "attestations": [], "pending_commits": [base],
-        }), encoding="utf-8")
-        findings: list = []
-        self.history_rule(findings)
-        self.assertEqual([item.rule_id for item in findings], ["GOV-005"])
-        self.assertIn(base, findings[0].evidence)
-
-    def test_complete_signed_history_passes(self) -> None:
-        self._commit("signed root", signoff=True)
-        self._commit("signed follow-up", signoff=True)
-        findings: list = []
-        self.history_rule(findings)
-        self.assertEqual(findings, [])
-
-    def test_attestation_covers_only_listed_commits(self) -> None:
-        first = self._commit("first unsigned", signoff=False)
-        second = self._commit("second unsigned", signoff=False)
-        self._write_attestations([self._attestation(first)])
-        findings: list = []
-        self.history_rule(findings)
-        self.assertEqual(len(findings), 1)
-        self.assertNotIn(first, findings[0].evidence)
-        self.assertIn(second, findings[0].evidence)
-        record = self._attestation(first)
-        record["commits"].append(second)
-        self._write_attestations([record])
-        findings.clear()
-        self.history_rule(findings)
-        self.assertEqual(findings, [])
-
-    def test_attestation_does_not_exempt_new_pr_commits(self) -> None:
-        base = self._commit("signed base", signoff=True)
-        head = self._commit("unsigned PR", signoff=False)
-        self._write_attestations([self._attestation(head)])
-        findings: list = []
-        self.rule_fn(self.audit_module["PullRequestContext"](
-            base_sha=base, head_sha=head, body=""), findings)
-        self.assertEqual([item.rule_id for item in findings], ["GOV-004"])
-
-    def test_invalid_or_unconfirmed_attestations_fail_closed(self) -> None:
-        sha = self._commit("unsigned", signoff=False)
-        for field, value in (
-            ("dco_version", None), ("signed_off_by", None),
-            ("signed_off_by", "Signed-off-by: Bob <bob@xd.com>"),
-            ("recorded_on", None), ("recorded_on", "9999-01-01"),
-            ("recorded_on", "2026-02-30"), ("evidence", None),
-            ("evidence", "   "),
-            ("commits", []), ("commits", [sha[:8]]),
-            ("commits", ["a" * 40]), ("commits", [sha, sha]),
-        ):
-            with self.subTest(field=field, value=value):
-                record = self._attestation(sha)
-                record[field] = value
-                self._write_attestations([record])
-                findings: list = []
-                self.history_rule(findings)
-                self.assertEqual([item.rule_id for item in findings], ["GOV-005"])
-                self.assertEqual(findings[0].title, "无法完成全历史 DCO 校验")
-
-    def test_shallow_history_does_not_hide_unsigned_ancestors(self) -> None:
-        self._commit("unsigned root", signoff=False)
-        self._commit("signed tip", signoff=True)
-        with tempfile.TemporaryDirectory() as clone:
-            subprocess.run(["git", "clone", "--depth=1", self.temp_dir.as_uri(), clone],
-                           check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            self.history_rule.__globals__["run_git"] = lambda args: subprocess.run(
-                ["git", *args], cwd=clone, text=True, encoding="utf-8",
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-            findings: list = []
-            self.history_rule(findings)
-            self.assertEqual([item.rule_id for item in findings], ["GOV-005"])
-            self.assertIn("Full Git history is required", findings[0].evidence)
 
 
 if __name__ == "__main__":

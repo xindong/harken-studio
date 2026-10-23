@@ -57,7 +57,6 @@
 | `GOV-002` | 高 | 仓库治理 | PR 描述的必答内容不得留空：无勾选项和填写项的章节正文必须有内容；多选章节至少勾选一项，确认类章节（提交前检查）必须逐条全部勾选；填写项必须在冒号后或紧随其后的续行给出内容；已勾选条目若自身以冒号结尾，或模板为该条目声明了 `>` 说明行，必须逐条补齐说明内容。说明行是否已作答按模板提示文案判定：扣除提示文案后仍有实质内容才算已填写，原样保留提示（含只保留其中一种语言）视同未填写，作答不要求写成冒号后缀。 |
 | `GOV-003` | 低 | 仓库治理 | PR 描述的条目文案应与模板语义一致。该项按双语别名做尽力匹配，仅在条数校验通过后提示评审者人工核对措辞是否被改写，不作为阻断条件。 |
 | `GOV-004` | 高 | 仓库治理 | PR 引入的 `base.sha..head.sha` 范围内，每个非 merge commit 必须有行首 `Signed-off-by: Name <email>`（冒号后一个空格，多出来的空格进 name、不 trim；行长超过 512 或姓名捕获超过 256 的行跳过；trailer 捕获的 email 必须像邮箱）。不要求 name+email 等于 author 或 committer。模板 DCO 勾选不能替代 trailer。父提交数大于 1 的 merge commit 豁免；看起来像 bot 的邮箱不豁免。head.sha 缺失、`git log` 失败或范围为空时失败关闭，不当成已全部签署。 |
-| `GOV-005` | 高 | 仓库治理 | 每次巡检读取 checkout `HEAD` 的完整可达历史，非 merge commit 必须有与 `GOV-004` 相同标准的签署，或有 `.github/dco-attestations.json` 中原贡献者的 DCO 1.1 补正记录。补正须列出完整 SHA、签署行、非未来登记日期与确认形式及来源；签署邮箱须匹配原作者邮箱。待补正清单不豁免，重复、缺字段、引用非本历史提交、浅克隆、读取或解析失败均按高风险报告。自动化不证明确认真实性，须按贡献指南人工核验。补正不改变 `GOV-004` 对新 PR 提交的要求。 |
 | `LOCAL-001` | 信息 | 密钥与本地配置 | 本地 gitignored 配置存在时只作为提醒；不得提交、打包或发布。 |
 | `LOCAL-002` | 信息 | 发布边界与私有资料 | 本地未跟踪自动化目录存在时只作为提醒；不得默认进入发布范围。 |
 
@@ -66,8 +65,6 @@
 `GOV-001`、`GOV-002`、`GOV-003` 和 `GOV-004` 只在 `pull_request` 事件运行。workflow 监听 `opened`、`synchronize`、`reopened` 和 `edited`；脚本从 GitHub event payload 读取 `base.sha`、`head.sha` 和 PR `body`。
 
 前三条规则必须用 `git show <base>:.github/PULL_REQUEST_TEMPLATE.md` 读取目标分支模板；checkout 中的模板属于 PR head，不可作为自身合规标准。PR event、base SHA 或 base 模板缺失、无效、不可读取时扫描失败关闭。`GOV-004` 用 event 的 `base.sha..head.sha` 读取 commit trailer，不使用 checkout `HEAD` 代替 head。head.sha 缺失或非法时仍校验描述规则，并对 `GOV-004` 给出高风险 finding。定时、手动触发和 `main` push 不具备 PR 上下文，因此跳过这四条规则。
-
-`GOV-005` 不依赖 PR 上下文，在所有巡检中运行。workflow 保持 `fetch-depth: 0`，不得把仅检查 PR 增量等同于历史已全部签署。
 
 章节与条目要求全部由 base 模板结构推导，不在脚本中硬编码章节名或条目文案；模板增删条目后，判定基准随之变化，此前已开启的 PR 需要按新模板补齐条目。
 

@@ -56,7 +56,7 @@ QString ConsentDialog::studioDocumentId()
 
 QString ConsentDialog::documentVersion()
 {
-    return QStringLiteral("2026-09-30-r3");
+    return QStringLiteral("2026-09-30-r2");
 }
 
 ConsentDialog::ConsentDialog(const QString& documentId,

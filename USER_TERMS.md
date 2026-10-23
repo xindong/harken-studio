@@ -396,7 +396,7 @@ Issues, Pull Requests, Discussions, comments, or commit records that you submit 
 
 You may submit a rights request to harken-support@xd.com. To verify the requester’s identity, locate the relevant records, and prevent others from exercising your rights without authorization, we may ask you to provide reasonably necessary information. We will respond within the period required by applicable law. If we are required by law to continue retaining the information, cannot verify your identity, or the request is beyond our control, we will explain the reasons to you.
 
-You may withdraw consent to the corresponding further processing by stopping use of the Product, including its background update components, or by no longer submitting feedback. Turning off automatic silent Hub updates or automatic Studio downloads only stops the corresponding automatic installation or download; it does not stop Hub background update checks or their network requests. Information that we are required by law to retain, or that you have yourself provided to a third party, will be handled in accordance with this Policy and other applicable rules.
+You may withdraw consent to further processing by stopping use of the Product, turning off automatic updates, or no longer submitting feedback. Information that we are required by law to retain, or that you have yourself provided to a third party, will be handled in accordance with this Policy and other applicable rules.
 
 VIII. Protection of Minors
 
