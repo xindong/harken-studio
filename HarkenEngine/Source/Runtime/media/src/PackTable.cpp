@@ -435,7 +435,7 @@ VnResult PackTable::ReadAndValidate(
     if (!ParsePackHeader(bytes.get(), &header)) {
         return VN_BAD_PACK;
     }
-    if (header.formatVersion != kPackFormatVersion ||
+    if (!SupportedPackFormatVersion(header.formatVersion) ||
         header.headerBytes != kPackHeaderBytes ||
         header.fileBytes != fileBytes || header.entryCount == 0) {
         return VN_BAD_PACK;

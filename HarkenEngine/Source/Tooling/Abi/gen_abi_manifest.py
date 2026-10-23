@@ -967,7 +967,7 @@ def validate_table_metadata(table: dict[str, Any]) -> None:
         "VnConfig": "engine-defaults",
         "VnSnapshot": "caller-tail-untouched",
         "VnPlayDesc": "documented-play-defaults",
-        "VnAttenuationDesc": "legacy-proximity-frequency",
+        "VnAttenuationDesc": "legacy-proximity-frequency-and-disabled-highpass",
     }
     if set(abi["structSizePolicies"]) != set(expected_missing_fields):
         raise ManifestError(

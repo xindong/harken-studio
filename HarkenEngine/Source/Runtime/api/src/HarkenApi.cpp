@@ -6774,6 +6774,8 @@ private:
 };
 
 std::uint32_t SpatialStartCommandDemand(bool spatialized, bool hasProfile) noexcept {
+    // The initial mask also includes shelf frequency. Its value shares the
+    // shelf-gain tuple command, so seven targets require six physical commands.
     return !spatialized ? 0u : hasProfile ? harken::kSpatialDrivenTargetsPerVoice : 1u;
 }
 
@@ -94952,7 +94954,7 @@ static VnResult LoadPackObserved(const VnPackDesc* desc,
         std::uint32_t packHeaderBytes = 0;
         if (!harken::PeekPackHeader(desc->utf8Path, &packFormatVersion,
                                     &packHeaderBytes) ||
-            packFormatVersion != HARKEN_PACK_SCHEMA_VERSION) {
+            !harken::SupportedPackFormatVersion(packFormatVersion)) {
             return VN_BAD_PACK;
         }
         if (packHeaderBytes == harken::kPackV2HeaderBytes) {

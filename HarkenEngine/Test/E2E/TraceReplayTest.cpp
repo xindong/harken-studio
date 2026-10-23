@@ -4483,6 +4483,18 @@ TEST(TraceReplayE2E, AuthoredProximityAndToneRecipeReplayByteIdentically) {
         attenuation.proximityRadius = 10.0f;
         attenuation.proximityMaxBoostDb = 12.0f;
         attenuation.proximityFrequency = 400.0f;
+        // Preserve both historical portable vintages before recording v3.
+        attenuation.structSize = 608;
+        ASSERT_EQ(VN_OK, Vn_RegisterAttenuation(harkentest::ObjectId(10), &attenuation));
+        attenuation.structSize = 612;
+        ASSERT_EQ(VN_OK, Vn_RegisterAttenuation(harkentest::ObjectId(11), &attenuation));
+        attenuation.structSize = sizeof(attenuation);
+        attenuation.highpassCurve.enabled = 1;
+        attenuation.highpassCurve.pointCount = 2;
+        attenuation.highpassCurve.points[0] = {1, 0};
+        attenuation.highpassCurve.points[1] = {20, 1000};
+        attenuation.highpassCurve.handles[0] = harkentest::EndpointHandles(
+            attenuation.highpassCurve.points[0], attenuation.highpassCurve.points[1]);
         ASSERT_EQ(VN_OK, Vn_RegisterAttenuation(kAttenuation, &attenuation));
 
         VnPackDesc pack{};

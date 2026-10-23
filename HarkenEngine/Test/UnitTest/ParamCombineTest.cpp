@@ -852,6 +852,10 @@ TEST(ParamCombine, HighpassTakesMaximumOverClosedBase) {
     EXPECT_EQ(harken::kHighpassClosedHz,
               params.ResolvedValue(kVoice0,
                                    harken::kTargetVoiceHighpassCutoff));
+    harken::VoiceTonePreset authored;
+    authored.highpassEnabled = true;
+    authored.highpassFrequencyHz = 150;
+    params.ApplyTonePreset(kVoice0, authored);
 
     ASSERT_TRUE(params.BindVoiceTarget(
         harkentest::ObjectId(13), kVoice0, harken::kTargetVoiceHighpassCutoff,
@@ -861,7 +865,18 @@ TEST(ParamCombine, HighpassTakesMaximumOverClosedBase) {
 
     const float resolved = params.SetApiDirect(
         kVoice0, harken::kTargetVoiceHighpassCutoff, 200.0f);
-    EXPECT_FLOAT_EQ(200.0f, resolved); // max(0, 100, 200)
+    EXPECT_FLOAT_EQ(200.0f, resolved); // max(150, 100, 200)
+    params.SetAttenuationSlot(kVoice0, harken::kTargetVoiceHighpassCutoff, 300.0f);
+    EXPECT_FLOAT_EQ(300.0f, params.ResolvedValue(kVoice0, harken::kTargetVoiceHighpassCutoff));
+    ASSERT_EQ(VN_OK, params.SetValue(harkentest::ObjectId(13), 1.0f));
+    (void)FlushAll(params);
+    EXPECT_FLOAT_EQ(400.0f, params.ResolvedValue(kVoice0, harken::kTargetVoiceHighpassCutoff));
+    params.SetAttenuationSlot(kVoice0, harken::kTargetVoiceHighpassCutoff, 0.0f);
+    EXPECT_FLOAT_EQ(400.0f, params.ResolvedValue(kVoice0, harken::kTargetVoiceHighpassCutoff));
+    params.SetApiDirect(kVoice0, harken::kTargetVoiceHighpassCutoff, 0);
+    ASSERT_EQ(VN_OK, params.SetValue(harkentest::ObjectId(13), 0));
+    (void)FlushAll(params);
+    EXPECT_FLOAT_EQ(150, params.ResolvedValue(kVoice0, harken::kTargetVoiceHighpassCutoff));
 }
 
 TEST(ParamCombine, ToneFrequencyAndQComposeInLog2Domains) {

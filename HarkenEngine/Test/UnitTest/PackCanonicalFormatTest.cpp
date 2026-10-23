@@ -7,6 +7,7 @@
 #include "harken/media/PackFormat.h"
 #include "harken/media/PackFormatV2.h"
 #include "harken/media/PackLogicImage.h"
+#include "harken/media/CanonicalAttenuationFingerprint.h"
 
 #include <gtest/gtest.h>
 
@@ -994,6 +995,60 @@ TEST(PackCanonicalFormat, VoiceRecipeKindIsIncompatible) {
     PackCanonicalImage image;
     EXPECT_EQ(VN_PACK_INCOMPATIBLE,
               ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
+}
+
+TEST(PackCanonicalFormat, AttenuationPayloadMatchesOuterVersionExactly) {
+    VnAttenuationDesc desc{};
+    desc.rolloff = VN_ROLLOFF_LINEAR;
+    desc.minDistance = 1;
+    desc.maxDistance = 100;
+    desc.airAbsorptionNearHz = desc.airAbsorptionFarHz = 20000;
+    desc.proximityFrequency = 400;
+    desc.highpassCurve.enabled = 1;
+    desc.highpassCurve.pointCount = 1;
+    desc.highpassCurve.points[0] = {0, 1000};
+    for (const auto version : {3u, 4u}) {
+        for (const auto size : {608u, 792u}) {
+            ImageBuilder builder(kPackKindInit);
+            auto requirement = RequirementPayload(11, 1, 0,
+                                                   kPackCanonicalEntryVintage);
+            StampRequirementCoverage(&requirement);
+            builder.AddEntry(kPackEntryKindPackRequirementBlock, 11,
+                             std::move(requirement), kPackCanonicalEntryVintage);
+            std::vector<std::uint8_t> payload(kPackV4AttenuationPayloadBytes);
+            SerializePackV3Attenuation(desc, payload.data());
+            SerializePackV2AttenuationCurve(desc.highpassCurve,
+                payload.data() + kPackV3AttenuationPayloadBytes);
+            payload.resize(size);
+            builder.AddEntry(kPackEntryKindAttenuation, 500, std::move(payload),
+                             kPackV2AuthoredToneSchemaVintage);
+            auto bytes = builder.Build();
+            StoreLE32(bytes.data() + 4, version);
+            PackCanonicalImage image;
+            const bool valid = (version == 3 && size == 608) ||
+                               (version == 4 && size == 792);
+            ASSERT_EQ(valid ? VN_OK : VN_BAD_PACK,
+                      ParsePackCanonicalImage(bytes.data(), bytes.size(), &image))
+                << version << "/" << size;
+            if (valid) {
+                ASSERT_EQ(1u, image.attenuations.size());
+                const auto& parsed = image.attenuations[0].desc;
+                EXPECT_EQ(version == 3 ? 612u : 796u, parsed.structSize);
+                EXPECT_FLOAT_EQ(400, parsed.proximityFrequency);
+                EXPECT_EQ(version == 4 ? 1u : 0u, parsed.highpassCurve.enabled);
+                const auto fingerprint = CanonicalAttenuationDefinitionRevisionV1(image.attenuations[0]);
+                if (version == 3) {
+                    // Produced by the unchanged 612-byte baseline implementation.
+                    EXPECT_EQ(UINT64_C(0xf602a15155735ed9), fingerprint);
+                } else {
+                    EXPECT_NE(UINT64_C(0xf602a15155735ed9), fingerprint);
+                    auto changed = image.attenuations[0];
+                    changed.desc.highpassCurve.points[0].y = 500;
+                    EXPECT_NE(fingerprint, CanonicalAttenuationDefinitionRevisionV1(changed));
+                }
+            }
+        }
+    }
 }
 
 TEST(PackCanonicalFormat, RetiredAttenuationVintageIsIncompatible) {

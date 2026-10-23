@@ -1511,7 +1511,7 @@ enum {
 #define VN_ATTENUATION_MAX_CURVE_POINTS 8
 
 /* One override control point: x is distance (engine units), y is the
- * target's value in its own domain (dB for volume, Hz for lowpass,
+ * target's value in its own domain (dB for volume, Hz for lowpass/highpass,
  * 0..1 for width). */
 typedef struct VnAttenuationCurvePoint {
     float x;
@@ -1536,10 +1536,12 @@ typedef struct VnCurveHandlePair {
  * Values above 1 are reserved and refused (VN_INVALID_ARG). Point and handle
  * coordinates must be finite. Volume y values are dB in [-96, 0] and are
  * evaluated in linear amplitude before conversion back to dB; lowpass y must
- * be > 0; width y must be in [0, 1]. Unused handle slots (i >= pointCount
+ * be > 0; highpass y must be >= 0; width y must be in [0, 1]. Unused handle slots (i >= pointCount
  * - 1) must be bitwise +0.0f. Outside the x span the curve clamps to its
  * end values. A disabled width curve contributes zero width at every
- * distance; authored/API width contributions still combine by maximum. */
+ * distance; authored/API width contributions still combine by maximum.
+ * A disabled highpass curve contributes 0 Hz; authored/API/Variable
+ * highpass contributions still combine by maximum. */
 typedef struct VnAttenuationCurve {
     uint32_t enabled;
     uint32_t pointCount;
@@ -1573,6 +1575,7 @@ typedef struct VnAttenuationDesc {
     VnAttenuationCurve lowpassCurve; /* overrides air absorption; y in Hz */
     VnAttenuationCurve widthCurve;   /* overrides zero width; y 0..1 */
     float proximityFrequency; /* authored near-field shelf corner in Hz */
+    VnAttenuationCurve highpassCurve; /* distance highpass; y >= 0 Hz */
 } VnAttenuationDesc;
 
 /* Sets the listener's position and orientation. Components must be finite
@@ -1604,7 +1607,7 @@ VnResult Vn_RegisterAttenuation(VnAttenuationId id,
 
 /* Binds a spatialized voice to a registered attenuation profile. From the
  * next Vn_Update the profile's distance-driven contributions (volume,
- * lowpass, width, near-field shelf, cone) apply to the voice; an unbound
+ * lowpass, highpass, width, near-field shelf, cone) apply to the voice; an unbound
  * 3D voice pans but does not attenuate. An unknown attenuation id is
  * VN_UNKNOWN_ID; a stale handle is a benign no-op returning
  * VN_STALE_HANDLE. Binding a 2D voice is accepted and has no acoustic

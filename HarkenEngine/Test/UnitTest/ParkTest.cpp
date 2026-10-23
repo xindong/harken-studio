@@ -1293,7 +1293,10 @@ TEST_P(ParkedAttenuationGeneration,
     const auto attenuation = harkentest::ObjectId(9);
     RegisterLeaf(sound);
 
-    const auto oldProfile = MakeAttenuationDesc(1.0f, 101.0f);
+    auto oldProfile = MakeAttenuationDesc(1.0f, 101.0f);
+    oldProfile.highpassCurve.enabled = 1;
+    oldProfile.highpassCurve.pointCount = 1;
+    oldProfile.highpassCurve.points[0] = {0, 1000};
     const harken::Spatializer::PackProfileInput oldInput{attenuation, &oldProfile};
     harken::Spatializer::PreparedProfileSet first;
     ASSERT_EQ(VN_OK,
@@ -1375,6 +1378,8 @@ TEST_P(ParkedAttenuationGeneration,
     ASSERT_TRUE(engine->spatial.CaptureVoice(RenderHandle(engine, fresh),
                                              &freshSpatial));
     EXPECT_EQ(2u, freshSpatial.attenuationGeneration);
+    EXPECT_FLOAT_EQ(0, engine->params.ResolvedValue(
+        RenderHandle(engine, fresh), harken::kTargetVoiceHighpassCutoff));
     ASSERT_NO_FATAL_FAILURE(expectOutput(0.25f));
     ASSERT_EQ(VN_OK, Vn_Stop(fresh, 0));
     engine->nullBackend.Pump(1);
@@ -1399,7 +1404,20 @@ TEST_P(ParkedAttenuationGeneration,
     ASSERT_TRUE(engine->spatial.CaptureVoice(RenderHandle(engine, original),
                                              &restored));
     EXPECT_EQ(1u, restored.attenuationGeneration);
-    ASSERT_NO_FATAL_FAILURE(expectOutput(0.25f));
+    const auto restoredHandle = RenderHandle(engine, original);
+    EXPECT_FLOAT_EQ(1000, engine->params.ResolvedValue(
+        restoredHandle, harken::kTargetVoiceHighpassCutoff));
+    harkentest::Capture filtered;
+    harkentest::PumpAndCapture(engine, 8, filtered);
+    const auto* restoredContext = engine->voices.Resolve(restoredHandle);
+    ASSERT_NE(nullptr, restoredContext);
+    EXPECT_TRUE(restoredContext->hpfEnabled);
+    ASSERT_GT(harkentest::Peak(filtered.left), harkentest::kSilenceFloor);
+    for (std::size_t frame = filtered.left.size() - kBlock;
+         frame < filtered.left.size(); ++frame) {
+        EXPECT_NEAR(0, filtered.left[frame], 1e-5f) << frame;
+        EXPECT_NEAR(0, filtered.right[frame], 1e-5f) << frame;
+    }
 
     ASSERT_EQ(VN_OK, Vn_Stop(original, 0));
     for (unsigned step = 0; step < 4; ++step) {

@@ -163,9 +163,10 @@ TABLE_JSON = r'''
       "VnAttenuationDesc": {
         "mode": "exact-discrete-prefix",
         "boundaryFields": [
-          "proximityFrequency"
+          "proximityFrequency",
+          "highpassCurve"
         ],
-        "missingFields": "legacy-proximity-frequency",
+        "missingFields": "legacy-proximity-frequency-and-disabled-highpass",
         "unknownSize": "reject"
       }
     },
@@ -3671,6 +3672,12 @@ TABLE_JSON = r'''
         [
           "proximityFrequency",
           "f32"
+        ],
+        [
+          "highpassCurve",
+          {
+            "struct": "VnAttenuationCurve"
+          }
         ]
       ]
     },

@@ -8,7 +8,9 @@
 #include "harken/param/ParamTargets.h"
 
 #include <cmath>
+#include <cstring>
 #include <limits>
+#include <memory>
 
 namespace {
 
@@ -220,6 +222,64 @@ TEST(SpatialApi, RegisterRefusesMalformedCones) {
     // fields are dormant, not validated.
     desc.coneEnabled = 0;
     EXPECT_EQ(VN_OK, Vn_RegisterAttenuation(harkentest::ObjectId(1), &desc));
+}
+
+TEST(SpatialApi, AttenuationVintagesReadOnlyTheirCompleteFields) {
+    EngineSession session(MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    for (const auto size : {608u, 612u, 796u}) {
+        auto desc = MakeAttenuationDesc(1, 20);
+        desc.structSize = size;
+        desc.proximityFrequency = 400;
+        desc.highpassCurve.enabled = 1;
+        desc.highpassCurve.pointCount = 1;
+        desc.highpassCurve.points[0] = {0, 1000};
+        auto bytes = std::make_unique<std::uint32_t[]>(size / sizeof(std::uint32_t));
+        std::memcpy(bytes.get(), &desc, size);
+        const auto* prefix = reinterpret_cast<const VnAttenuationDesc*>(bytes.get());
+        const auto id = harkentest::ObjectId(size);
+        ASSERT_EQ(VN_OK, Vn_RegisterAttenuation(id, prefix)) << size;
+        ASSERT_EQ(VN_OK, Vn_ReplaceAttenuation(id, prefix)) << size;
+        const auto* profile = session.Engine()->spatial.FindProfile(id);
+        ASSERT_NE(nullptr, profile);
+        EXPECT_FLOAT_EQ(size == 608 ? 250 : 400, profile->proximityFrequency);
+        EXPECT_EQ(size == 796, profile->highpassOverride);
+    }
+    for (const auto size : {607u, 609u, 611u, 613u, 795u, 797u}) {
+        auto desc = MakeAttenuationDesc(1, 20);
+        desc.structSize = size;
+        EXPECT_EQ(VN_INVALID_ARG, Vn_RegisterAttenuation(harkentest::ObjectId(1), &desc));
+        EXPECT_EQ(VN_INVALID_ARG, Vn_ReplaceAttenuation(harkentest::ObjectId(612), &desc));
+    }
+}
+
+TEST(SpatialApi, HighpassOverrideValidatesNonnegativeFiniteHz) {
+    EngineSession session(MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto valid = MakeAttenuationDesc(1, 20);
+    valid.highpassCurve.enabled = 1;
+    valid.highpassCurve.pointCount = 2;
+    valid.highpassCurve.points[0] = {1, 0};
+    valid.highpassCurve.points[1] = {20, 1000};
+    valid.highpassCurve.handles[0] = harkentest::EndpointHandles(
+        valid.highpassCurve.points[0], valid.highpassCurve.points[1]);
+    ASSERT_EQ(VN_OK, Vn_RegisterAttenuation(harkentest::ObjectId(1), &valid));
+    for (std::uint32_t fault = 0; fault < 7; ++fault) {
+        auto desc = valid;
+        switch (fault) {
+        case 0: desc.highpassCurve.enabled = 2; break;
+        case 1: desc.highpassCurve.pointCount = 0; break;
+        case 2: desc.highpassCurve.pointCount = 9; break;
+        case 3: desc.highpassCurve.points[0].y = -1; break;
+        case 4: desc.highpassCurve.points[1].y = kInf; break;
+        case 5: desc.highpassCurve.handles[0].h1y = -1; break;
+        case 6: desc.highpassCurve.handles[6].h1y = -0.0f; break;
+        }
+        EXPECT_EQ(VN_INVALID_ARG, Vn_ReplaceAttenuation(harkentest::ObjectId(1), &desc)) << fault;
+        const auto* profile = session.Engine()->spatial.FindProfile(harkentest::ObjectId(1));
+        ASSERT_NE(nullptr, profile);
+        EXPECT_TRUE(profile->highpassOverride);
+    }
 }
 
 TEST(SpatialApi, RegisterRefusesMalformedOverrideCurves) {
@@ -502,6 +562,12 @@ TEST(SpatialApi, DistanceScaleMatchesEffectiveDistanceAcrossDomainTargets) {
     overrideDesc.widthCurve.handles[0] = harkentest::EndpointHandles(
         overrideDesc.widthCurve.points[0],
         overrideDesc.widthCurve.points[1]);
+    overrideDesc.highpassCurve.enabled = 1;
+    overrideDesc.highpassCurve.pointCount = 2;
+    overrideDesc.highpassCurve.points[0] = {1, 0};
+    overrideDesc.highpassCurve.points[1] = {20, 1000};
+    overrideDesc.highpassCurve.handles[0] = harkentest::EndpointHandles(
+        overrideDesc.highpassCurve.points[0], overrideDesc.highpassCurve.points[1]);
     ASSERT_EQ(VN_OK, Vn_RegisterAttenuation(harkentest::ObjectId(11), &overrideDesc));
 
     VnVoiceHandle builtScaled = 0;
@@ -544,6 +610,7 @@ TEST(SpatialApi, DistanceScaleMatchesEffectiveDistanceAcrossDomainTargets) {
     for (const DistanceScaleCase& testCase : cases) {
         for (const auto target : {harken::kTargetVoiceVolume,
                                   harken::kTargetVoiceLowpassCutoff,
+                                  harken::kTargetVoiceHighpassCutoff,
                                   harken::kTargetVoiceWidth,
                                   harken::kTargetVoiceLowShelfGainDb}) {
             EXPECT_NEAR(
@@ -617,6 +684,12 @@ TEST(SpatialApi, EmitterScaleCombinesWithVoiceScaleAcrossWideFiniteGeometry) {
     profile.widthCurve.points[1] = {20.0f, 0.1f};
     profile.widthCurve.handles[0] = harkentest::EndpointHandles(
         profile.widthCurve.points[0], profile.widthCurve.points[1]);
+    profile.highpassCurve.enabled = 1;
+    profile.highpassCurve.pointCount = 2;
+    profile.highpassCurve.points[0] = {1, 0};
+    profile.highpassCurve.points[1] = {20, 1000};
+    profile.highpassCurve.handles[0] = harkentest::EndpointHandles(
+        profile.highpassCurve.points[0], profile.highpassCurve.points[1]);
     ASSERT_EQ(VN_OK, Vn_RegisterAttenuation(harkentest::ObjectId(9), &profile));
     VnEmitterHandle emitter = 0, distanceReference = 0;
     ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
@@ -693,6 +766,12 @@ TEST(SpatialApi, DistanceReferenceControlsDistanceTargetsButListenerKeepsPanAndC
     profile.widthCurve.points[1] = {20, 0.1f};
     profile.widthCurve.handles[0] = harkentest::EndpointHandles(
         profile.widthCurve.points[0], profile.widthCurve.points[1]);
+    profile.highpassCurve.enabled = 1;
+    profile.highpassCurve.pointCount = 2;
+    profile.highpassCurve.points[0] = {1, 0};
+    profile.highpassCurve.points[1] = {20, 1000};
+    profile.highpassCurve.handles[0] = harkentest::EndpointHandles(
+        profile.highpassCurve.points[0], profile.highpassCurve.points[1]);
     profile.coneEnabled = 1;
     profile.coneInnerDeg = 30;
     profile.coneOuterDeg = 60;
@@ -707,7 +786,8 @@ TEST(SpatialApi, DistanceReferenceControlsDistanceTargetsButListenerKeepsPanAndC
     ASSERT_EQ(VN_OK, Vn_Update());
     const auto render = harkentest::RenderHandle(engine, voice);
     const auto targets = {harken::kTargetVoiceVolume, harken::kTargetVoiceLowpassCutoff,
-                          harken::kTargetVoiceWidth, harken::kTargetVoiceLowShelfGainDb};
+                          harken::kTargetVoiceWidth, harken::kTargetVoiceLowShelfGainDb,
+                          harken::kTargetVoiceHighpassCutoff};
     std::vector<float> nearTargets;
     for (const auto target : targets) nearTargets.push_back(engine->params.ResolvedValue(render, target));
     ASSERT_EQ(VN_OK, Vn_SetVoicePosition(voice, Vec3(0, 0, -10)));
@@ -729,7 +809,7 @@ TEST(SpatialApi, DistanceReferenceControlsDistanceTargetsButListenerKeepsPanAndC
         engine->emitters, harkentest::ObjectId(9), 0, 0, -10, 1), 1e-4f);
     index = 1;
     for (const auto target : {harken::kTargetVoiceLowpassCutoff, harken::kTargetVoiceWidth,
-                              harken::kTargetVoiceLowShelfGainDb})
+                              harken::kTargetVoiceLowShelfGainDb, harken::kTargetVoiceHighpassCutoff})
         EXPECT_NEAR(nearTargets[index++], engine->params.ResolvedValue(render, target), 1e-4f) << target;
     ASSERT_EQ(VN_OK, Vn_SetListener(Vec3(10, 0, -10), Vec3(0, 0, -1), Vec3(0, 1, 0)));
     ASSERT_EQ(VN_OK, Vn_Update());
@@ -740,6 +820,7 @@ TEST(SpatialApi, DistanceReferenceControlsDistanceTargetsButListenerKeepsPanAndC
     EXPECT_LT(engine->params.ResolvedValue(render, harken::kTargetVoiceLowpassCutoff), nearTargets[1]);
     EXPECT_LT(engine->params.ResolvedValue(render, harken::kTargetVoiceWidth), nearTargets[2]);
     EXPECT_LT(engine->params.ResolvedValue(render, harken::kTargetVoiceLowShelfGainDb), nearTargets[3]);
+    EXPECT_GT(engine->params.ResolvedValue(render, harken::kTargetVoiceHighpassCutoff), nearTargets[4]);
     EXPECT_FLOAT_EQ(-1.0f, engine->params.ResolvedValue(render, harken::kTargetVoicePan));
 }
 

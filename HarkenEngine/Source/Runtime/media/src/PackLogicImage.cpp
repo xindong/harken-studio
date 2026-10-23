@@ -233,7 +233,7 @@ VnResult ParsePackV2Image(const std::uint8_t* bytes, std::uint64_t fileBytes,
     if (!ParsePackV2Header(bytes, &header)) {
         return VN_BAD_PACK;
     }
-    if (header.formatVersion != kPackFormatVersion2 ||
+    if (!SupportedPackFormatVersion(header.formatVersion) ||
         header.headerBytes != kPackV2HeaderBytes ||
         header.fileBytes != fileBytes) {
         return VN_BAD_PACK;
@@ -415,7 +415,7 @@ VnResult ParsePackV2Image(const std::uint8_t* bytes, std::uint64_t fileBytes,
         case kPackEntryKindAttenuation: {
             PackLogicImage::Attenuation attenuation;
             attenuation.id = entry.id;
-            if (!ParsePackV3Attenuation(payload, entry.size,
+            if (!ParsePackAttenuation(payload, entry.size, header.formatVersion,
                                         &attenuation.desc)) {
                 return VN_BAD_PACK;
             }
@@ -1469,7 +1469,7 @@ VnResult ParsePackCanonicalImage(const std::uint8_t* bytes,
     if (!ParsePackV2Header(bytes, &header)) {
         return VN_BAD_PACK;
     }
-    if (header.formatVersion != kPackFormatVersion2 ||
+    if (!SupportedPackFormatVersion(header.formatVersion) ||
         header.headerBytes != kPackV2HeaderBytes ||
         header.fileBytes != fileBytes) {
         return VN_BAD_PACK;
@@ -1861,7 +1861,7 @@ VnResult ParsePackCanonicalImage(const std::uint8_t* bytes,
         case kPackEntryKindAttenuation: {
             PackLogicImage::Attenuation attenuation;
             attenuation.id = entry.id;
-            if (!ParsePackV3Attenuation(payload, entry.size,
+            if (!ParsePackAttenuation(payload, entry.size, header.formatVersion,
                                         &attenuation.desc)) {
                 return VN_BAD_PACK;
             }

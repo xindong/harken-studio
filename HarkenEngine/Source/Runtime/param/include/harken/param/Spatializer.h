@@ -39,12 +39,12 @@ namespace harken {
 inline constexpr std::uint32_t kMaxAttenuationProfiles = 64;
 
 // The distinct targets one spatialized voice's evaluation can dirty in a
-// single tick: the engine-computed pan plus the four profile-driven
-// outputs (volume, lowpass cutoff, width, low-shelf gain) — the exact
+// single tick: the engine-computed pan plus the five profile-driven
+// outputs (volume, lowpass/highpass cutoff, width, low-shelf gain), the
 // SetAttenuationSlot destinations in Evaluate(). Config-time worst-case
 // publication estimates multiply this by maxVoices; keep it in step with
 // the evaluation whenever a spatial contribution is added or removed.
-inline constexpr std::uint32_t kSpatialDrivenTargetsPerVoice = 5;
+inline constexpr std::uint32_t kSpatialDrivenTargetsPerVoice = 6;
 
 // A registered attenuation profile in evaluated form: validated scalars
 // plus prebuilt override curves (distance in, target-domain value out).
@@ -66,9 +66,11 @@ struct AttenuationProfile {
     bool volumeOverride = false;
     bool lowpassOverride = false;
     bool widthOverride = false;
+    bool highpassOverride = false;
     Curve volumeCurve;
     Curve lowpassCurve;
     Curve widthCurve;
+    Curve highpassCurve;
 };
 
 class Spatializer {

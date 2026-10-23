@@ -1235,8 +1235,13 @@ TraceCallScribe& TraceCallScribe::AttenuationDesc(
     if (d->structSize == legacy) {
         return Scalar32Desc(d, legacy, 1);
     }
+    const std::uint32_t proximity = static_cast<std::uint32_t>(
+        offsetof(VnAttenuationDesc, highpassCurve));
+    if (d->structSize == proximity) {
+        return Scalar32Desc(d, proximity, 2);
+    }
     if (d->structSize == sizeof(VnAttenuationDesc)) {
-        return Scalar32Desc(d, sizeof(VnAttenuationDesc), 2);
+        return Scalar32Desc(d, sizeof(VnAttenuationDesc), 3);
     }
     return Scalar32Desc(nullptr, 0, 0);
 }

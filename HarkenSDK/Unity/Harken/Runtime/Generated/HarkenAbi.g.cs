@@ -786,7 +786,7 @@ namespace Harken
             Off(f, "VnAttenuationCurve", "pointCount", Marshal.OffsetOf<VnAttenuationCurve>("pointCount"), 4);
             Off(f, "VnAttenuationCurve", "pointsRaw", Marshal.OffsetOf<VnAttenuationCurve>("pointsRaw"), 8);
             Off(f, "VnAttenuationCurve", "handlesRaw", Marshal.OffsetOf<VnAttenuationCurve>("handlesRaw"), 72);
-            Size(f, "VnAttenuationDesc", Marshal.SizeOf<VnAttenuationDesc>(), 612);
+            Size(f, "VnAttenuationDesc", Marshal.SizeOf<VnAttenuationDesc>(), 796);
             Off(f, "VnAttenuationDesc", "structSize", Marshal.OffsetOf<VnAttenuationDesc>("structSize"), 0);
             Off(f, "VnAttenuationDesc", "rolloff", Marshal.OffsetOf<VnAttenuationDesc>("rolloff"), 4);
             Off(f, "VnAttenuationDesc", "minDistance", Marshal.OffsetOf<VnAttenuationDesc>("minDistance"), 8);
@@ -805,6 +805,7 @@ namespace Harken
             Off(f, "VnAttenuationDesc", "lowpassCurve", Marshal.OffsetOf<VnAttenuationDesc>("lowpassCurve"), 240);
             Off(f, "VnAttenuationDesc", "widthCurve", Marshal.OffsetOf<VnAttenuationDesc>("widthCurve"), 424);
             Off(f, "VnAttenuationDesc", "proximityFrequency", Marshal.OffsetOf<VnAttenuationDesc>("proximityFrequency"), 608);
+            Off(f, "VnAttenuationDesc", "highpassCurve", Marshal.OffsetOf<VnAttenuationDesc>("highpassCurve"), 612);
             Size(f, "VnEffectDesc", Marshal.SizeOf<VnEffectDesc>(), 24);
             Off(f, "VnEffectDesc", "structSize", Marshal.OffsetOf<VnEffectDesc>("structSize"), 0);
             Off(f, "VnEffectDesc", "reserved0", Marshal.OffsetOf<VnEffectDesc>("reserved0"), 4);

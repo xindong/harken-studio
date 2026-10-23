@@ -229,7 +229,8 @@ bool ReadPortableDesc(ByteReader& r, VnAttenuationDesc* out) {
     const std::uint32_t vintage = r.U32();
     const std::size_t nativeBytes =
         vintage == 1 ? offsetof(VnAttenuationDesc, proximityFrequency)
-                     : vintage == 2 ? sizeof(VnAttenuationDesc) : 0;
+                     : vintage == 2 ? offsetof(VnAttenuationDesc, highpassCurve)
+                     : vintage == 3 ? sizeof(VnAttenuationDesc) : 0;
     if (nativeBytes == 0 || nativeBytes % 4 != 0) return false;
     std::memset(out, 0, sizeof(*out));
     out->structSize = static_cast<std::uint32_t>(nativeBytes);

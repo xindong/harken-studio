@@ -150,9 +150,10 @@
       "VnAttenuationDesc": {
         "mode": "exact-discrete-prefix",
         "boundaryFields": [
-          "proximityFrequency"
+          "proximityFrequency",
+          "highpassCurve"
         ],
-        "missingFields": "legacy-proximity-frequency",
+        "missingFields": "legacy-proximity-frequency-and-disabled-highpass",
         "unknownSize": "reject"
       }
     },
@@ -3658,6 +3659,12 @@
         [
           "proximityFrequency",
           "f32"
+        ],
+        [
+          "highpassCurve",
+          {
+            "struct": "VnAttenuationCurve"
+          }
         ]
       ]
     },

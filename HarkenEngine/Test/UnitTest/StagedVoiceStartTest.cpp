@@ -235,6 +235,9 @@ TEST(StagedVoiceStart, SpatialCommitInstallsEveryInitialTargetBeforeRendering) {
         profile.widthCurve.points[1] = {11.0f, 0.6f};
         profile.widthCurve.handles[0] = harkentest::EndpointHandles(
             profile.widthCurve.points[0], profile.widthCurve.points[1]);
+        profile.highpassCurve.enabled = 1;
+        profile.highpassCurve.pointCount = 1;
+        profile.highpassCurve.points[0] = {0, 350};
         ASSERT_EQ(VN_OK, Vn_RegisterAttenuation(attenuation, &profile));
         auto play = harkentest::MakePlayDesc3D(kSound, 6.0f, 0.0f, 0.0f, -3.0f);
         play.reserved0 = staged ? VN_PLAY_FLAG_STAGED_INSTALL : 0u;
@@ -258,6 +261,7 @@ TEST(StagedVoiceStart, SpatialCommitInstallsEveryInitialTargetBeforeRendering) {
             engine->params.ResolvedValue(handle, harken::kTargetVoiceVolume), 1e-5f);
         EXPECT_FLOAT_EQ(0.75f, engine->params.ResolvedValue(handle, harken::kTargetVoicePan));
         EXPECT_FLOAT_EQ(1200.0f, engine->params.ResolvedValue(handle, harken::kTargetVoiceLowpassCutoff));
+        EXPECT_FLOAT_EQ(350.0f, engine->params.ResolvedValue(handle, harken::kTargetVoiceHighpassCutoff));
         EXPECT_FLOAT_EQ(0.6f, engine->params.ResolvedValue(handle, harken::kTargetVoiceWidth));
         EXPECT_GT(engine->params.ResolvedValue(handle, harken::kTargetVoiceLowShelfGainDb), 0.0f);
         EXPECT_FLOAT_EQ(1234.0f, engine->params.ResolvedValue(handle, harken::kTargetVoiceLowShelfFreqHz));
@@ -483,7 +487,7 @@ TEST(StagedVoiceStart, CommitRefusesDeterministicallyWithoutBackpressure) {
     ASSERT_EQ(VN_OK, Vn_SetVoicePan(handle, -1.0f));
     ASSERT_EQ(VN_OK, Vn_SetVoiceWidth(handle, 0.0f));
 
-    // Play, API pan/width, effect and the five spatial physical commands.
+    // Play, API pan/width, effect and the six spatial physical commands.
     constexpr auto demand = 4u + harken::kSpatialDrivenTargetsPerVoice;
     while (engine->commands.FreeSlots() > demand - 1u) {
         ASSERT_EQ(VN_OK, Vn_SetBusVolume(VN_BUS_MASTER, -1.0f, 0));

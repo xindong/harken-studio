@@ -23,6 +23,7 @@ constexpr std::uint32_t kSpatialVolumeRampMs = 10;
 enum class OverrideCurveDomain {
     VolumeDb,
     LowpassHz,
+    HighpassHz,
     Width,
 };
 
@@ -57,8 +58,9 @@ bool SameProfile(const AttenuationProfile& a, const AttenuationProfile& b) noexc
         a.coneOuterDeg == b.coneOuterDeg && a.coneOuterGainDb == b.coneOuterGainDb &&
         a.coneOuterLowpassHz == b.coneOuterLowpassHz &&
         a.volumeOverride == b.volumeOverride && a.lowpassOverride == b.lowpassOverride &&
-        a.widthOverride == b.widthOverride && SameCurve(a.volumeCurve, b.volumeCurve) &&
-        SameCurve(a.lowpassCurve, b.lowpassCurve) && SameCurve(a.widthCurve, b.widthCurve);
+        a.widthOverride == b.widthOverride && a.highpassOverride == b.highpassOverride &&
+        SameCurve(a.volumeCurve, b.volumeCurve) && SameCurve(a.lowpassCurve, b.lowpassCurve) &&
+        SameCurve(a.widthCurve, b.widthCurve) && SameCurve(a.highpassCurve, b.highpassCurve);
 }
 
 bool RetainedKeyLess(const Spatializer::RetainedProfileKey& a,
@@ -130,6 +132,8 @@ bool InAuthorizedDomain(float value, OverrideCurveDomain domain) {
         return value >= kAttenuationFloorDb && value <= 0.0f;
     case OverrideCurveDomain::LowpassHz:
         return value > 0.0f;
+    case OverrideCurveDomain::HighpassHz:
+        return value >= 0.0f;
     case OverrideCurveDomain::Width:
         return value >= 0.0f && value <= 1.0f;
     }
@@ -224,8 +228,11 @@ VnResult BuildProfileFromDesc(VnAttenuationId id,
     constexpr std::uint32_t kLegacyDescBytes =
         static_cast<std::uint32_t>(offsetof(VnAttenuationDesc,
                                             proximityFrequency));
+    constexpr std::uint32_t kProximityDescBytes =
+        static_cast<std::uint32_t>(offsetof(VnAttenuationDesc, highpassCurve));
     if (desc == nullptr ||
         (desc->structSize != sizeof(VnAttenuationDesc) &&
+         desc->structSize != kProximityDescBytes &&
          desc->structSize != kLegacyDescBytes)) {
         return VN_INVALID_ARG;
     }
@@ -243,11 +250,15 @@ VnResult BuildProfileFromDesc(VnAttenuationId id,
         desc->structSize >= offsetof(VnAttenuationDesc, proximityFrequency) +
                                 sizeof(VnAttenuationDesc::proximityFrequency) &&
         desc->proximityFrequency != 0.0f;
+    const bool hasHighpass =
+        desc->structSize >= offsetof(VnAttenuationDesc, highpassCurve) +
+                                sizeof(VnAttenuationDesc::highpassCurve);
     // Enable flags are a strict 0/1 contract (the play descriptor's
     // spatialized precedent): values above 1 are reserved for future
     // header vintages and refused rather than guessed at.
     if (desc->coneEnabled > 1u || desc->volumeCurve.enabled > 1u ||
-        desc->lowpassCurve.enabled > 1u || desc->widthCurve.enabled > 1u) {
+        desc->lowpassCurve.enabled > 1u || desc->widthCurve.enabled > 1u ||
+        (hasHighpass && desc->highpassCurve.enabled > 1u)) {
         return VN_INVALID_ARG;
     }
     if (!std::isfinite(desc->minDistance) ||
@@ -314,6 +325,7 @@ VnResult BuildProfileFromDesc(VnAttenuationId id,
     built.volumeOverride = desc->volumeCurve.enabled != 0;
     built.lowpassOverride = desc->lowpassCurve.enabled != 0;
     built.widthOverride = desc->widthCurve.enabled != 0;
+    built.highpassOverride = hasHighpass && desc->highpassCurve.enabled != 0;
     if (built.volumeOverride &&
         !BuildOverrideCurve(desc->volumeCurve, OverrideCurveDomain::VolumeDb,
                             &built.volumeCurve)) {
@@ -328,6 +340,11 @@ VnResult BuildProfileFromDesc(VnAttenuationId id,
     if (built.widthOverride &&
         !BuildOverrideCurve(desc->widthCurve, OverrideCurveDomain::Width,
                             &built.widthCurve)) {
+        return VN_INVALID_ARG;
+    }
+    if (built.highpassOverride &&
+        !BuildOverrideCurve(desc->highpassCurve, OverrideCurveDomain::HighpassHz,
+                            &built.highpassCurve)) {
         return VN_INVALID_ARG;
     }
     *out = built;
@@ -757,6 +774,8 @@ VnResult Spatializer::EvaluateVoice(VnVoiceHandle handle, ParamSystem& params,
             : AirAbsorptionHz(effectiveDistance, profile.minDistance, profile.maxDistance,
                               profile.airNearHz, profile.airFarHz);
     const float width = profile.widthOverride ? profile.widthCurve.Eval(effectiveDistance) : 0.0f;
+    const float highpassHz = profile.highpassOverride
+                                ? profile.highpassCurve.Eval(effectiveDistance) : 0.0f;
     const float shelfDb =
         NearFieldShelfDb(effectiveDistance, profile.proximityRadius, profile.proximityMaxBoostDb);
     const float distanceVolumeDb = volumeDb;
@@ -782,12 +801,14 @@ VnResult Spatializer::EvaluateVoice(VnVoiceHandle handle, ParamSystem& params,
     params.SetAttenuationSlot(mirror.handle, kTargetVoiceVolume, volumeDb, volumeRampMs);
     mirror.appliedDistanceVolumeDb = distanceVolumeDb;
     params.SetAttenuationSlot(mirror.handle, kTargetVoiceLowpassCutoff, lowpassHz);
+    params.SetAttenuationSlot(mirror.handle, kTargetVoiceHighpassCutoff, highpassHz);
     params.SetAttenuationSlot(mirror.handle, kTargetVoiceWidth, width);
     params.ApplyProximityFrequency(mirror.handle, profile.proximityFrequency);
     params.SetAttenuationSlot(mirror.handle, kTargetVoiceLowShelfGainDb, shelfDb);
     mirror.evaluated = true;
     if (targetMask != nullptr) {
         *targetMask |= (1u << kTargetVoiceVolume) | (1u << kTargetVoiceLowpassCutoff) |
+                       (1u << kTargetVoiceHighpassCutoff) |
                        (1u << kTargetVoiceWidth) | (1u << kTargetVoiceLowShelfGainDb) |
                        (1u << kTargetVoiceLowShelfFreqHz);
     }

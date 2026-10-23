@@ -39,7 +39,9 @@ inline std::uint64_t CanonicalAttenuationDefinitionRevisionV1(
         }
         return true;
     };
-    if (attenuation.id == VnObjectId{} || d.structSize != sizeof(VnAttenuationDesc) ||
+    const bool hasHighpass = d.structSize == sizeof(VnAttenuationDesc);
+    const auto legacySize = offsetof(VnAttenuationDesc, highpassCurve);
+    if (attenuation.id == VnObjectId{} || (!hasHighpass && d.structSize != legacySize) ||
         d.coneEnabled > 1 || d.reserved0 != 0 ||
         !finite(d.minDistance) || !finite(d.maxDistance) ||
         !finite(d.airAbsorptionNearHz) || !finite(d.airAbsorptionFarHz) ||
@@ -47,7 +49,8 @@ inline std::uint64_t CanonicalAttenuationDefinitionRevisionV1(
         !finite(d.coneInnerDeg) || !finite(d.coneOuterDeg) ||
         !finite(d.coneOuterGainDb) || !finite(d.coneOuterLowpassHz) ||
         !finite(d.proximityFrequency) || !curveFinite(d.volumeCurve) ||
-        !curveFinite(d.lowpassCurve) || !curveFinite(d.widthCurve)) return 0;
+        !curveFinite(d.lowpassCurve) || !curveFinite(d.widthCurve) ||
+        (hasHighpass && !curveFinite(d.highpassCurve))) return 0;
     std::uint64_t hash = busfingerprint::kOffsetBasis;
     const auto byte = [&](std::uint8_t value) { hash = busfingerprint::Step(hash, value); };
     const auto u32 = [&](std::uint32_t value) { busfingerprint::AppendU32(byte, value); };
@@ -72,6 +75,7 @@ inline std::uint64_t CanonicalAttenuationDefinitionRevisionV1(
     u32(d.coneEnabled); f32(d.coneInnerDeg); f32(d.coneOuterDeg);
     f32(d.coneOuterGainDb); f32(d.coneOuterLowpassHz); u32(d.reserved0);
     curve(d.volumeCurve); curve(d.lowpassCurve); curve(d.widthCurve); f32(d.proximityFrequency);
+    if (hasHighpass) curve(d.highpassCurve);
     return busfingerprint::Finalize(hash);
 }
 
