@@ -158,6 +158,7 @@ TEST_F(UpdateCheckerTest, DisabledPollingAllowsOneManualRoundWithoutRetrying)
     auto options = makeOptions();
     options.automaticCheckingEnabled = false;
     ASSERT_TRUE(checker.start(options));
+    EXPECT_FALSE(checker.checkNow(false));
     spinFor(40);
     EXPECT_EQ(server.requestCount(), 0);
 
@@ -185,20 +186,23 @@ TEST_F(UpdateCheckerTest, DisablingPollingCancelsAutomaticRoundAndItsFallback)
     delayed.mode = RangeHttpServer::Script::Mode::Status;
     delayed.status = 503;
     delayed.delayMs = 100;
-    server.enqueue(delayed);
     UpdateChecker checker;
     checker.setBackoffPolicy(fastBackoff());
     ResultCapture capture(checker);
     auto options = makeOptions();
     options.fallbackUrls = {fallback.packageUrl()};
     ASSERT_TRUE(checker.start(options));
-    ASSERT_TRUE(spinUntil([&]() { return server.requestCount() == 1; }));
+    ASSERT_TRUE(spinUntil([&]() { return capture.results.size() == 1; }));
+    capture.results.clear();
+    server.enqueue(delayed);
+    ASSERT_TRUE(checker.checkNow(false));
+    ASSERT_TRUE(spinUntil([&]() { return server.requestCount() == 2; }));
     checker.invalidateCache();
     checker.setAutomaticCheckingEnabled(false);
     spinFor(160);
     EXPECT_FALSE(checker.isChecking());
     EXPECT_TRUE(capture.results.isEmpty());
-    EXPECT_EQ(server.requestCount(), 1);
+    EXPECT_EQ(server.requestCount(), 2);
     EXPECT_EQ(fallback.requestCount(), 0);
     ASSERT_TRUE(checker.checkNow());
     ASSERT_TRUE(spinUntil([&]() { return capture.results.size() == 1; }));

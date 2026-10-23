@@ -837,6 +837,9 @@ int main(int argc, char* argv[])
                     if (arguments.contains(QStringLiteral("--check-now"))) {
                         coordinator.checkNow();
                         selfUpdate.checkNow();
+                    } else if (arguments.contains(
+                                   QStringLiteral("--check-studio"))) {
+                        coordinator.checkNow(false);
                     }
                     confirmHubReady(arguments);
                 });

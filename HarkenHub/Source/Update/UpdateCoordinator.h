@@ -34,7 +34,7 @@ public:
     void configure(const Options& options);
     bool start(const Options& options);
     void stop();
-    bool checkNow();
+    bool checkNow(bool manual = true);
     void setAutomaticDownloadEnabled(bool enabled);
     bool isDownloading() const;
     UpdateStateRecord currentState() const;

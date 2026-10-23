@@ -111,10 +111,12 @@ void UpdateCoordinator::stop()
     started_ = false;
 }
 
-bool UpdateCoordinator::checkNow()
+bool UpdateCoordinator::checkNow(bool manual)
 {
+    if (!manual && !options_.automaticDownloadEnabled)
+        return false;
     checker_.invalidateCache();
-    return checker_.checkNow();
+    return checker_.checkNow(manual);
 }
 
 void UpdateCoordinator::setAutomaticDownloadEnabled(bool enabled)

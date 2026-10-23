@@ -92,12 +92,12 @@ void UpdateChecker::stop()
     }
 }
 
-bool UpdateChecker::checkNow()
+bool UpdateChecker::checkNow(bool manual)
 {
-    if (!started_ || reply_)
+    if (!started_ || reply_ || (!manual && !options_.automaticCheckingEnabled))
         return false;
     nextTimer_.stop();
-    beginRound(true);
+    beginRound(manual);
     return true;
 }
 

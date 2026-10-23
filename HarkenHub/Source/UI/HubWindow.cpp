@@ -570,7 +570,7 @@ void HubWindow::finishManualUpdateCheck()
 void HubWindow::kickBackgroundCheck(bool manual)
 {
     const QString activation = manual ? QStringLiteral("--check-now")
-                                      : QStringLiteral("--settings-changed");
+                                      : QStringLiteral("--check-studio");
     if (!SingleInstanceGuard::sendTo(
             SingleInstanceGuard::backgroundServerName(),
             {activation}))

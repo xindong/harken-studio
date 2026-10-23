@@ -56,7 +56,7 @@ public:
     bool start(const Options& options);
     void stop();
     void setAutomaticCheckingEnabled(bool enabled);
-    bool checkNow();
+    bool checkNow(bool manual = true);
     void invalidateCache();
     bool isChecking() const;
     qint64 effectiveIntervalMs() const;
