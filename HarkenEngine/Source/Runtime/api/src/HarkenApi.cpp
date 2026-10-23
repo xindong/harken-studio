@@ -8485,6 +8485,15 @@ bool CompleteDeferredPlayableCancellation(harken::Engine& engine,
     harken::EnginePlayableServiceRow& row, std::uint64_t observed) noexcept {
     if (!row.variableControlDeferredCancellation) return true;
     const auto identity = row.variableControlDeferredCancellationSlice;
+    // A claimed slice can be aborted before application when its bucket loses
+    // cancellation arbitration. It will never publish consumedSlices.
+    if (engine.timelinePool.IsInvalidatedPlan03GroupAudioReadComplete(
+            identity, row.variableControlDeferredCancellationReasonBit, observed)) {
+        row.variableControlDeferredCancellation = false;
+        row.variableControlDeferredCancellationSlice = {};
+        row.variableControlDeferredCancellationReasonBit = 0;
+        return true;
+    }
     harken::DecisionCommittedSnapshot decision{};
     if (!engine.decisions.CaptureCommitted(identity.decision, &decision)) {
 engine.runtimeRecreateRequired = true;

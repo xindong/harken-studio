@@ -9324,6 +9324,35 @@ bool ScheduledTransactionPool::NotePlan03GroupReadRt(
     return true;
 }
 
+bool ScheduledTransactionPool::IsInvalidatedPlan03GroupAudioReadComplete(
+    const Plan03GroupSliceIdentity& identity, std::uint32_t expectedReasonBit,
+    std::uint64_t completedAudioSequence) const noexcept {
+    Plan03PageGroupView group{};
+    if (!identity.Exact() || expectedReasonBit == 0 ||
+        !ResolvePlan03GroupSliceProducer(identity, &group) ||
+        group.identity != identity || group.lease == nullptr) return false;
+    const auto lease = group.lease->Capture();
+    if (lease.state != AudioSliceState::SliceInvalidated ||
+        (lease.pendingReasonBits & expectedReasonBit) != expectedReasonBit) return false;
+    const auto lastRead = [&](const Plan03GroupSliceIdentity& exact) noexcept {
+        return exact.backing == Plan03GroupBacking::ImmediateLane
+            ? immediateLaneGroups_[exact.committedRow].readers.lastAudioSequence.load(std::memory_order_acquire)
+            : PageGroupData(exact.committedRow).readers.lastAudioSequence.load(std::memory_order_acquire);
+    };
+    // Read the fence after the terminal lease's acquire publication. Entry
+    // members borrow their coordinator's lease but retain their own readers.
+    auto last = lastRead(identity);
+    if (group.frontier != nullptr && group.frontier->role == FrontierGroupRole::EntryMember) {
+        Plan03PageGroupView primary{};
+        if (!group.frontier->Valid() || !group.frontier->primary.Exact() ||
+            !ResolvePlan03GroupSliceProducer(group.frontier->primary, &primary) ||
+            primary.identity != group.frontier->primary) return false;
+        if (primary.lease == group.lease)
+            last = std::max(last, lastRead(primary.identity));
+    }
+    return last != 0 && completedAudioSequence > last;
+}
+
 bool Plan03GroupReaderPin::Release(std::uint64_t completedAudioSequence) noexcept {
     return owner_ == nullptr || owner_->ReleasePlan03GroupReader(this, completedAudioSequence);
 }

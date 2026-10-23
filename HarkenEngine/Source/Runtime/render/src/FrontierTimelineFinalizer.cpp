@@ -166,6 +166,7 @@ struct FrontierTimelineFinalizer::Impl {
     void (*queueFutureClaimedHook)(void*) = nullptr;
     void (*queueFutureAppliedHook)(void*, std::uint16_t) = nullptr;
     void* queueFutureHookContext = nullptr;
+    bool queueFutureBeforeBucketClaim = false;
     Plan03GroupSliceIdentity queueLaneProbeGroup{};
 
     Group* SelectedLaneQueueProbe(bool continuation) noexcept {
@@ -2967,11 +2968,12 @@ void FrontierTimelineFinalizer::SetVariableControlSliceClaimHookForTest(void (*h
 
 void FrontierTimelineFinalizer::SetQueueFutureSliceHooksForTest(
     void (*validated)(void*), void (*claimed)(void*),
-    void (*applied)(void*, std::uint16_t), void* context) noexcept {
+    void (*applied)(void*, std::uint16_t), void* context, bool beforeBucketClaim) noexcept {
     impl_->queueFutureValidatedHook = validated;
     impl_->queueFutureClaimedHook = claimed;
     impl_->queueFutureAppliedHook = applied;
     impl_->queueFutureHookContext = context;
+    impl_->queueFutureBeforeBucketClaim = beforeBucketClaim;
 }
 
 void FrontierTimelineFinalizer::SetQueueLaneProbeGroupForTest(Plan03GroupSliceIdentity group) noexcept {
@@ -4103,7 +4105,7 @@ bool FrontierTimelineFinalizer::FinishLaneBucketImpl(
                 event.disposition == kTimelineDispositionApplied && valid;
         }
 #if !defined(HARKEN_RT_QUALIFICATION)
-        if (valid && self.SelectedLaneQueueProbe(continuation) != nullptr &&
+        if (valid && !self.queueFutureBeforeBucketClaim && self.SelectedLaneQueueProbe(continuation) != nullptr &&
             self.queueFutureValidatedHook != nullptr)
             self.queueFutureValidatedHook(self.queueFutureHookContext);
 #endif
@@ -4123,6 +4125,11 @@ bool FrontierTimelineFinalizer::FinishLaneBucketImpl(
                     break;
                 }
         }
+        #if !defined(HARKEN_RT_QUALIFICATION)
+        if (valid && self.queueFutureBeforeBucketClaim &&
+            self.SelectedLaneQueueProbe(continuation) != nullptr && self.queueFutureClaimedHook != nullptr)
+            self.queueFutureClaimedHook(self.queueFutureHookContext);
+        #endif
         if (valid) {
             ImmediateLaneBucketClaimReceipt receipt{};
             valid = claimBucket(claimContext, &receipt) &&
@@ -4134,7 +4141,7 @@ bool FrontierTimelineFinalizer::FinishLaneBucketImpl(
                     self.groups[i].view.identity,
                     self.groups[i].view.lease, receipt);
 #if !defined(HARKEN_RT_QUALIFICATION)
-            if (valid && self.SelectedLaneQueueProbe(continuation) != nullptr &&
+            if (valid && !self.queueFutureBeforeBucketClaim && self.SelectedLaneQueueProbe(continuation) != nullptr &&
                 self.ProbeLaneReceipt(receipt, bucket) && self.queueFutureClaimedHook != nullptr)
                 self.queueFutureClaimedHook(self.queueFutureHookContext);
 #endif
@@ -4235,7 +4242,7 @@ bool FrontierTimelineFinalizer::FinishLaneBucketImpl(
                 typedQueueSource || typedQueueTarget || independentCompletion) && valid;
     }
 #if !defined(HARKEN_RT_QUALIFICATION)
-    if (valid && self.SelectedLaneQueueProbe(continuation) != nullptr &&
+    if (valid && !self.queueFutureBeforeBucketClaim && self.SelectedLaneQueueProbe(continuation) != nullptr &&
         self.queueFutureValidatedHook != nullptr)
         self.queueFutureValidatedHook(self.queueFutureHookContext);
 #endif
@@ -4259,6 +4266,11 @@ bool FrontierTimelineFinalizer::FinishLaneBucketImpl(
             }
         }
     }
+    #if !defined(HARKEN_RT_QUALIFICATION)
+    if (valid && self.queueFutureBeforeBucketClaim &&
+        self.SelectedLaneQueueProbe(continuation) != nullptr && self.queueFutureClaimedHook != nullptr)
+        self.queueFutureClaimedHook(self.queueFutureHookContext);
+    #endif
     if (valid) {
         ImmediateLaneBucketClaimReceipt receipt{};
         valid = claimBucket(claimContext, &receipt);
@@ -4282,7 +4294,7 @@ bool FrontierTimelineFinalizer::FinishLaneBucketImpl(
                     self.groups[index].view.lease, receipt);
         }
 #if !defined(HARKEN_RT_QUALIFICATION)
-        if (valid && self.SelectedLaneQueueProbe(continuation) != nullptr &&
+        if (valid && !self.queueFutureBeforeBucketClaim && self.SelectedLaneQueueProbe(continuation) != nullptr &&
             self.ProbeLaneReceipt(receipt, bucket) && self.queueFutureClaimedHook != nullptr)
             self.queueFutureClaimedHook(self.queueFutureHookContext);
 #endif

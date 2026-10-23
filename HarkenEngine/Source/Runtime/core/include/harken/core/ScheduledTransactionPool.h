@@ -1958,6 +1958,9 @@ public:
     }
     bool NotePlan03GroupReadRt(const Plan03GroupSliceIdentity& identity,
                               std::uint64_t audioSequence) const noexcept;
+    bool IsInvalidatedPlan03GroupAudioReadComplete(
+        const Plan03GroupSliceIdentity& identity, std::uint32_t expectedReasonBit,
+        std::uint64_t completedAudioSequence) const noexcept;
     std::uint64_t Plan03GroupReaderStorageBytes() const noexcept;
     bool BindPlan03GroupFrontier(const Plan03GroupSliceIdentity& identity,
                                 const FrontierGroupBinding& binding) noexcept;

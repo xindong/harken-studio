@@ -40,7 +40,7 @@ public:
 #if !defined(HARKEN_RT_QUALIFICATION)
     void SetVariableControlSliceClaimHookForTest(void (*hook)(void*), void* context) noexcept;
     void SetQueueFutureSliceHooksForTest(void (*validated)(void*), void (*claimed)(void*),
-        void (*applied)(void*, std::uint16_t), void* context) noexcept;
+        void (*applied)(void*, std::uint16_t), void* context, bool beforeBucketClaim = false) noexcept;
     void SetQueueLaneProbeGroupForTest(Plan03GroupSliceIdentity group) noexcept;
 #endif
     void Begin(std::uint64_t quantum, std::uint32_t blockFrames) noexcept;
