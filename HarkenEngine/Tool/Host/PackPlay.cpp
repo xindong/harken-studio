@@ -739,11 +739,19 @@ int RunPackPlay(int argc, char** argv) {
     std::vector<ManifestPack> packs;
     std::vector<const ManifestPack*> loadOrder;
     if (companion) {
-        VnResult result = CapturePackCompanion(rootPath, {}, {}, nullptr, &companionInit);
+        PackCompanionDiagnostic diagnostic;
+        VnResult result = CapturePackCompanion(rootPath, {}, {}, nullptr, &companionInit, &diagnostic);
         if (result == VN_OK)
-            result = CapturePackCompanion(rootPath, options.actionName, options.language, &companionInit, &companionContent);
+            result = CapturePackCompanion(rootPath, options.actionName, options.language, &companionInit, &companionContent, &diagnostic);
         if (result != VN_OK) {
-            std::fprintf(stderr, "error: companion capture/inspection failed (%d)\n", result);
+            auto binaryPath = diagnostic.jsonPath;
+            binaryPath.replace_extension(".bytes");
+            std::fprintf(stderr, "error: %s companion '%s' (bytes '%s'): %s failed (%d)\n",
+                diagnostic.kind, Utf8Path(diagnostic.jsonPath).c_str(), Utf8Path(binaryPath).c_str(),
+                diagnostic.stage, result);
+            if (std::strcmp(diagnostic.stage, "schemaVersion") == 0)
+                std::fprintf(stderr, "Re-export with the matching Studio version (required schemaVersion: %u).\n",
+                    static_cast<unsigned>(HARKEN_PACK_SCHEMA_VERSION));
             return 3;
         }
     } else {

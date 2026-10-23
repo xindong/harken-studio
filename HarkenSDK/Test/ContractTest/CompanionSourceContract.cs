@@ -32,6 +32,7 @@ namespace Harken.Test
             try
             {
                 Synchronous();
+                using (var context = new ControlContext()) context.Run(VersionedRefresh);
                 using (var context = new ControlContext()) context.Run(Asynchronous);
                 using (var context = new ControlContext()) context.Run(ReentrantMetadata);
                 ReentrantShutdown();
@@ -172,6 +173,43 @@ namespace Harken.Test
                 }
             }
             finally { session.Dispose(); }
+        }
+
+        private static async Task VersionedRefresh()
+        {
+            string invalid = "Init.json";
+            var source = PackSource.FromAsyncReader(async (path, token) =>
+            {
+                await Task.Yield();
+                byte[] bytes = Read(path);
+                return path == invalid ? Encoding.UTF8.GetBytes(System.Text.RegularExpressions.Regex.Replace(
+                    Encoding.UTF8.GetString(bytes), "\"schemaVersion\"\\s*:\\s*3", "\"schemaVersion\":999")) : bytes;
+            });
+            var start = await PackBootstrap.StartAsync(source, Config());
+            Check(start.Result == VnResult.VN_BAD_PACK && start.Session == null, "async bad Init leaves no session");
+            invalid = null;
+            start = await PackBootstrap.StartAsync(source, Config());
+            Ok(start.Result, "async corrected Init retries");
+            using (var session = start.Session)
+            {
+                var ready = await session.PrepareActionsAsync(new[] { "Play_Head" }, session.ProjectId);
+                Ok(ready.Result, "versioned source prepares");
+                Ok(Actions.Resolve("Play_Head", out ActionResolved resolved), "versioned source resolve");
+                Ok(HarkenEngine.Update(), "versioned source update");
+                Ok(Actions.Post(in resolved, Emitter.None, 50, out ActionFiring firing), "versioned source post");
+                invalid = "Play_Head.json";
+                Check((await session.RefreshActionAsync("Play_Head", session.ProjectId)).Result == VnResult.VN_BAD_PACK,
+                    "async bad Action version rejected");
+                Ok(Actions.Resolve("Play_Head", out _), "async version failure preserves name");
+                Ok(Actions.Post(in resolved, Emitter.None, 51, out _), "async version failure preserves resolved token");
+                Ok(firing.Query(out _), "async version failure preserves firing");
+                invalid = null;
+                var refreshed = await session.RefreshActionAsync("Play_Head", session.ProjectId);
+                Ok(refreshed.Result, "async corrected Action retries");
+                Ok(ready.Preparation.Release(), "original lease survives rejected refresh");
+                Ok(refreshed.Preparation.Release(), "refreshed lease releases");
+                Check(Actions.Resolve("Play_Head", out _) != VnResult.VN_OK, "no leaked lease after version retry");
+            }
         }
 
         private static void ReentrantShutdown()

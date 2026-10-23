@@ -12,6 +12,13 @@ The directory contains `Init.bytes`, `Init.json`, `Play_Head.bytes`, and
 The Host reads only these pairs and uses their authored IDs; it does not require
 a manifest or scan the directory. Use the SDK and packs from the same release.
 
+Both JSON files require top-level numeric `schemaVersion: 3`. Missing, mistyped,
+fractional or unsupported versions fail with `VN_BAD_PACK`; re-export these
+resources with the matching Studio release. Exact integer spellings such as
+`3.0` and `3e0` are also valid. Optional `metadata` and `waveforms` do not affect
+playback admission. A version error in a localized pair does not fall back to
+General. Errors identify the selected pair and failing stage.
+
 Add `--language English` to request `English/Play_Head.bytes` and its JSON.
 Only when both localized files are absent does the Host use the General pair at
 the root. A partial pair, malformed metadata, redirected file, or active

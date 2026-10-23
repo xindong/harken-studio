@@ -9,8 +9,15 @@ namespace Harken
     internal sealed class JsonParser
     {
         private readonly string text;
+        private readonly string rawRootNumberKey;
         private int cursor;
-        public JsonParser(string text) { this.text = text ?? string.Empty; }
+        internal sealed class NumberToken
+        {
+            internal readonly string Text;
+            internal NumberToken(string text) { Text = text; }
+        }
+        public JsonParser(string text, string rawRootNumberKey = null)
+        { this.text = text ?? string.Empty; this.rawRootNumberKey = rawRootNumberKey; }
         private void Space() { while (cursor < text.Length && " \r\n\t".IndexOf(text[cursor]) >= 0) ++cursor; }
         public bool End { get { Space(); return cursor == text.Length; } }
         private bool Take(char value)
@@ -20,7 +27,7 @@ namespace Harken
             ++cursor;
             return true;
         }
-        public object Read(int depth)
+        public object Read(int depth, bool rawNumber = false)
         {
             Space();
             if (depth > 64 || cursor >= text.Length) throw new FormatException();
@@ -33,7 +40,7 @@ namespace Harken
                     Space();
                     string key = String();
                     if (!Take(':')) throw new FormatException();
-                    result.Add(key, Read(depth + 1));
+                    result.Add(key, Read(depth + 1, depth == 0 && key == rawRootNumberKey));
                 } while (Take(','));
                 if (!Take('}')) throw new FormatException();
                 return result;
@@ -54,6 +61,7 @@ namespace Harken
             if (token == "true") return true;
             if (token == "false") return false;
             if (!Regex.IsMatch(token, @"\A-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?\z")) throw new FormatException();
+            if (rawNumber) return new NumberToken(token);
             if (ulong.TryParse(token, NumberStyles.None, CultureInfo.InvariantCulture, out ulong unsigned)) return unsigned;
             if (long.TryParse(token, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out long signed)) return signed;
             if (!double.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out double number)) throw new FormatException();
