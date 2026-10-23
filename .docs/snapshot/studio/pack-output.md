@@ -2,11 +2,13 @@
 
 核对日期：2026-10-22。
 
-Project Settings > Publish > Pack Build Output 的 `Export Project Data` 控制打包是否输出 `ProjectData.json`，默认关闭。文件位于打包输出根目录，与平台目录并列；它是 SDK 可选使用的项目元数据，不是引擎加载包的必要文件。
+Project Settings > Publish 的 `Export Directory` 与 `Waveform File Directory` 均以工程目录为相对路径基准；可转为相对路径时保存相对路径，跨盘符等无法相对化的情况保留绝对路径。留空时分别使用 `BuildPacks` 与 `BuildPacks/Waveforms`。
+
+Project Settings > Publish > Additional Material 的 `Export Project Information` 控制打包是否输出 `Project.json`，默认关闭。文件位于 `Export Directory` 根目录，与平台目录并列；它是 SDK 可选使用的项目元数据，不是引擎加载包的必要文件。
 
 ```text
 BuildPacks/
-├── ProjectData.json
+├── Project.json
 ├── Windows/
 │   ├── Init.bytes
 │   ├── Init.json
@@ -29,7 +31,7 @@ BuildPacks/
 
 `basePlatform` 使用 `Windows`、`macOS`、`Linux`、`Android`、`iOS`。平台不导出编码、重采样、质量等处理参数；语言保留项目配置的名称，不转换为语言 GUID 或 ISO 代码，也不输出默认语言。
 
-项目身份直接铺在顶层，不使用 `project` 子对象。`ProjectData.json` 随同现有 Pack 合同定义和验证，不建立独立的 Schema 版本线；`schemaVersion` 与 `.bytes` 文件头版本统一取自 `HarkenSchema/Pack/manifest.json` 的最新发布代。Studio 写入端与引擎读取端共同使用该来源，当前为 `3`，版本升代由正式发布流程决定。
+项目身份直接铺在顶层，不使用 `project` 子对象。`Project.json` 随同现有 Pack 合同定义和验证，不建立独立的 Schema 版本线；`schemaVersion` 与 `.bytes` 文件头版本统一取自 `HarkenSchema/Pack/manifest.json` 的最新发布代。Studio 写入端与引擎读取端共同使用该来源，当前为 `3`，版本升代由正式发布流程决定。
 
 Studio 软件版本、Editor 当前合同版本和 Pack 当前合同版本统一由 `cmake/BuildInfo.cmake` 读取各自权威文件，并通过已有 `harken_buildinfo` 构建目标提供。两个合同版本使用编译定义注入，Pack 格式头不依赖包含时间戳的构建信息头。当前合同版本的读取不需要 Python；Studio 的合同内容、历史支持列表和校验器仍由现有 Schema 工具生成。
 
@@ -37,13 +39,13 @@ Pack 跨代必须重新打包，不提供迁移或升级。统一版本前生成
 
 本次只导出部分平台或 Action 时，`platforms` 与 `languages` 仍表达构建快照中的完整项目配置，不表示本次选择或输出目录中已有文件的清单。元数据只在整次请求成功后更新；失败或取消时保留上次成功发布的项目信息。
 
-关闭开关后，下一次成功打包会删除输出根目录中的旧 `ProjectData.json`。全量清理会保留当前启用导出的项目信息，更新和删除均使用现有发布事务及中断恢复机制。平台目录中的同名 Action 伴随文件不受根目录元数据开关影响。内部运行预览 bundle 沿用自己的输出协议。
+关闭开关后，下一次成功打包会删除输出根目录中的旧 `Project.json`。之前版本生成的 `ProjectData.json` 也会在下一次成功打包时移除。全量清理会保留当前启用导出的项目信息，更新和删除均使用现有发布事务及中断恢复机制。平台目录中的同名 Action 伴随文件不受根目录元数据开关影响。内部运行预览 bundle 沿用自己的输出协议。
 
 ## Pack 元数据
 
 每个 `.bytes` 伴随 JSON 的最小形态包含顶层 `schemaVersion` 和名称到 GUID 的映射。Action 使用 `name`、`guid`；Variable 及 Label 映射使用 `variables`。即使关闭元数据与波形导出，顶层版本仍为必需字段。
 
-Project Settings > Publish > Pack Build Output 的 `Export Pack Metadata` 默认关闭，独立于项目信息与波形导出。开启后，在本次构建的每个 `.bytes` 伴随 JSON 中追加 `metadata`，不在其中重复版本：
+Project Settings > Publish > Additional Material 的 `Export Pack MetaData` 默认关闭，独立于项目信息与波形导出。开启后，在本次构建的每个 `.bytes` 同目录、同名 JSON（如 `Init.json`、`Play_Footstep.json`）中追加 `metadata`，不在其中重复版本：
 
 ```json
 {
@@ -72,6 +74,6 @@ Project Settings > Publish > Pack Build Output 的 `Export Pack Metadata` 默认
 
 清单只列 Studio 对象；总线编译器追加的内置设备输出根没有 Studio 对象身份，不列入清单。项目自身的主总线保留原有 GUID、名称和路径。
 
-同时开启波形输出时，Sound 条目的 `guid` 对应既有 `waveforms[].soundGuid`，进而关联 VKD 文件及裁剪范围。仅开启元数据不会生成波形；开关不改变 `.bytes` 内容或原有名称映射。
+同组的 `Export Wave Buffer` 会将波形数据写入 `Waveform File Directory` 下按内容 SHA-256 命名的 `<hash>.vkd` 文件，并在包的同名 JSON 中写入 `waveforms` 索引。索引中的 `file` 优先使用相对于伴随 JSON 的路径，无法相对化时使用绝对路径。同时开启元数据输出时，Sound 条目的 `guid` 对应既有 `waveforms[].soundGuid`，进而关联 VKD 文件及裁剪范围。仅开启元数据不会生成波形；开关不改变 `.bytes` 内容或原有名称映射。
 
 关闭后，本次重新构建的伴随文件移除 `metadata`。增量打包保留未选中包的原伴随文件；失败或取消保留之前成功发布的文件。元数据随包体通过既有发布事务提交，校验覆盖统一版本、包身份、语言、依赖清单去重与完整性。

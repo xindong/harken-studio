@@ -1928,7 +1928,7 @@ bool ProjectManager::setPackBuildOutputDir(const QString& value)
 {
     if (!m_currentProject || !PathUtils::isValidPackBuildOutputDir(value, m_currentProject->projectPath))
         return false;
-    setPackBuildOutputDirInternal(PathUtils::normalizePackBuildOutputDir(value));
+    setPackBuildOutputDirInternal(PathUtils::normalizePackBuildOutputDir(value, m_currentProject->projectPath));
     return true;
 }
 
@@ -3025,7 +3025,7 @@ bool ProjectManager::saveProject()
         emit errorOccurred(QStringLiteral("Cannot prepare the asset registry for saving"));
         return false;
     }
-    if (!m_serializer.prepareProjectSave(stagedProjectPath, stagedProject)) {
+    if (!m_serializer.prepareProjectSave(m_currentProject->projectPath, stagedProject, stagedProjectPath)) {
         emit errorOccurred(m_serializer.lastError());
         return false;
     }

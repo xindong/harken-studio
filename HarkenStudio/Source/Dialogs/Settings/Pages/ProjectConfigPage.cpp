@@ -1,6 +1,7 @@
 #include "Dialogs/Settings/Pages/ProjectConfigPage.h"
 
 #include "Core/ActionManager.h"
+#include "Core/BaseDialog.h"
 #include "Core/ContextInfo.h"
 #include "Core/ProjectLanguageSemantics.h"
 #include "Core/ProjectManager.h"
@@ -8,79 +9,27 @@
 
 #include "Dialogs/Settings/ProjectPlatformDialog.h"
 #include "Dialogs/Settings/ProjectPlatformEditor.h"
+#include "Widgets/Common/DialogFormLayout.h"
 #include "Widgets/Common/ListFooter.h"
 #include "Widgets/Common/TableWidget.h"
+#include <QDialogButtonBox>
 #include <QListWidget>
-#include <QFocusEvent>
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QLineEdit>
 #include <QMessageBox>
-#include <QMouseEvent>
+#include <QPushButton>
 #include <QRegularExpression>
 #include <QRegularExpressionValidator>
 #include <QSet>
 #include <QSignalBlocker>
-#include <QStyle>
 #include <QToolButton>
 #include <QVBoxLayout>
 
-#include <functional>
 #include <algorithm>
 
 namespace VNX {
-
-namespace {
-
-
-void refreshStyle(QWidget* widget)
-{
-    if (!widget) return;
-    widget->style()->unpolish(widget);
-    widget->style()->polish(widget);
-    widget->update();
-}
-
-class ClickableWidget : public QWidget
-{
-public:
-    using QWidget::QWidget;
-
-    std::function<void()> onMousePress;
-
-protected:
-    void mousePressEvent(QMouseEvent* event) override
-    {
-        QWidget::mousePressEvent(event);
-        if (onMousePress) onMousePress();
-    }
-};
-
-class FocusAwareLineEdit : public QLineEdit
-{
-public:
-    using QLineEdit::QLineEdit;
-
-    std::function<void()> onFocusIn;
-
-protected:
-    void focusInEvent(QFocusEvent* event) override
-    {
-        QLineEdit::focusInEvent(event);
-        if (onFocusIn && (event->reason() == Qt::MouseFocusReason
-            || event->reason() == Qt::TabFocusReason || event->reason() == Qt::BacktabFocusReason))
-            onFocusIn();
-    }
-
-    void mousePressEvent(QMouseEvent* event) override
-    {
-        QLineEdit::mousePressEvent(event);
-        if (event->button() == Qt::LeftButton && onFocusIn) onFocusIn();
-    }
-};
-
-}
 
 ProjectConfigPage::ProjectConfigPage(QWidget* parent)
     : SettingsPage(parent)
@@ -122,25 +71,55 @@ ProjectConfigPage::ProjectConfigPage(QWidget* parent)
 
     auto* languagesGroup = makeSection(tr("Language Configuration"));
     ContextInfo::tag(languagesGroup, ContextTopic::forPanel(QStringLiteral("settings.config.languages")));
-    targetLanguagesBox_ = new TableWidget(languagesGroup);
-    targetLanguagesBox_->setSelectionClearHandler([this] { selectTargetLanguageRow(-1); });
-    targetLanguagesBox_->setRowSelectionHandler([this](QWidget* row) {
-        selectTargetLanguageRow(targetLanguageRows_.indexOf(row));
-    });
-    targetLanguagesBox_->setColumns(QStringLiteral("TargetLanguages"), {
-        {QStringLiteral("Language"), tr("Language"), 1000}
-    });
-    targetLanguagesBoxLayout_ = targetLanguagesBox_->rowsLayout();
-    auto* targetLanguagesFoot = targetLanguagesBox_->footer();
-    targetLanguageAddBtn_ = targetLanguagesFoot->addButton();
-    targetLanguageAddBtn_->setObjectName(QStringLiteral("targetLanguageAddButton"));
+    auto* languagesLayout = new QHBoxLayout();
+    languagesLayout->setContentsMargins(0, 0, 0, 0);
+    languagesLayout->setSpacing(0);
+    auto* languageTabs = new TableWidget(
+        {TableKind::Config, TableBodySizing::Expanding}, languagesGroup);
+    languageTabs->setFixedWidth(150);
+    targetLanguagesList_ = languageTabs->createNavigationView(QStringLiteral("targetLanguagesList"));
+    targetLanguagesList_->setSizeAdjustPolicy(QAbstractScrollArea::AdjustToContents);
+    targetLanguagesList_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Minimum);
+    auto* targetLanguagesFoot = languageTabs->footer();
+    auto* targetLanguageAddBtn = targetLanguagesFoot->addButton();
+    targetLanguageAddBtn->setObjectName(QStringLiteral("targetLanguageAddButton"));
     targetLanguageRemoveBtn_ = targetLanguagesFoot->removeButton();
     targetLanguageRemoveBtn_->setObjectName(QStringLiteral("targetLanguageRemoveButton"));
-    connect(targetLanguageAddBtn_, &QToolButton::clicked,
-            this, &ProjectConfigPage::onAddTargetLanguageClicked);
+    languagesLayout->addWidget(languageTabs);
+    auto* languageEditor = new QWidget(languagesGroup);
+    languageEditor->setObjectName(QStringLiteral("targetLanguageEditor"));
+    languageEditor->setAttribute(Qt::WA_StyledBackground, true);
+    QtControlSkin::setSemanticProperty(languageEditor, "surfaceRole", QStringLiteral("panel"));
+    QtControlSkin::setSemanticProperty(languageEditor, "joinedEdge", QStringLiteral("left"));
+    auto* languageEditorLayout = new QVBoxLayout(languageEditor);
+    languageEditorLayout->setContentsMargins(12, 12, 12, 12);
+    targetLanguageFields_ = new QWidget(languageEditor);
+    auto languageFieldsPolicy = targetLanguageFields_->sizePolicy();
+    languageFieldsPolicy.setRetainSizeWhenHidden(true);
+    targetLanguageFields_->setSizePolicy(languageFieldsPolicy);
+    auto* languageForm = makeForm();
+    targetLanguageFields_->setLayout(languageForm);
+    targetLanguageEdit_ = new QLineEdit(targetLanguageFields_);
+    targetLanguageEdit_->setObjectName(QStringLiteral("targetLanguageEdit"));
+    targetLanguageEdit_->setValidator(new QRegularExpressionValidator(
+        QRegularExpression(QStringLiteral("[A-Za-z0-9_]*")), targetLanguageEdit_));
+    languageForm->addRow(tr("Language:"), targetLanguageEdit_);
+    languageEditorLayout->addWidget(targetLanguageFields_);
+    languageEditorLayout->addStretch();
+    languagesLayout->addWidget(languageEditor, 1);
+    static_cast<QVBoxLayout*>(languagesGroup->layout())->addLayout(languagesLayout);
+    connect(targetLanguageAddBtn, &QToolButton::clicked, this, &ProjectConfigPage::addTargetLanguage);
+    connect(targetLanguagesList_, &QListWidget::currentRowChanged,
+            this, &ProjectConfigPage::selectTargetLanguage);
+    connect(targetLanguageEdit_, &QLineEdit::textChanged, this, [this](const QString& language) {
+        auto* item = targetLanguagesList_->currentItem();
+        if (!item) return;
+        item->setText(language);
+        item->setToolTip(language);
+        emit dirtyChanged();
+    });
     connect(targetLanguageRemoveBtn_, &QToolButton::clicked,
             this, &ProjectConfigPage::onRemoveTargetLanguageClicked);
-    languagesGroup->layout()->addWidget(targetLanguagesBox_);
 
     body->addWidget(languagesGroup);
 
@@ -236,8 +215,8 @@ void ProjectConfigPage::removePlatform()
 QStringList ProjectConfigPage::targetLanguages() const
 {
     QStringList languages;
-    for (QLineEdit* edit : targetLanguageEdits_)
-        languages << edit->text();
+    for (int i = 0; i < targetLanguagesList_->count(); ++i)
+        languages << targetLanguagesList_->item(i)->text();
     return languages;
 }
 
@@ -247,125 +226,74 @@ void ProjectConfigPage::rememberBaseline()
     baselineProjectLanguages_ = targetLanguages();
 }
 
-void ProjectConfigPage::clearTargetLanguageRows()
+void ProjectConfigPage::setTargetLanguages(const QStringList& value, int selectedIndex)
 {
-    selectedTargetLanguageRow_ = -1;
-    while (!targetLanguageRows_.isEmpty())
+    if (selectedIndex < 0) selectedIndex = targetLanguagesList_->currentRow();
+    const int index = value.isEmpty() ? -1 : std::clamp(selectedIndex, 0, int(value.size()) - 1);
     {
-        auto* row = targetLanguageRows_.takeLast();
-        targetLanguagesBoxLayout_->removeWidget(row);
-        delete row;
+        const QSignalBlocker blocker(targetLanguagesList_);
+        targetLanguagesList_->clear();
+        for (const QString& language : value) {
+            auto* item = new QListWidgetItem(language, targetLanguagesList_);
+            item->setToolTip(language);
+        }
+        targetLanguagesList_->setCurrentRow(index);
     }
-    targetLanguageEdits_.clear();
-    updateTargetLanguageRowState();
+    selectTargetLanguage(index);
 }
 
-void ProjectConfigPage::appendTargetLanguageRow(const QString& value)
+void ProjectConfigPage::selectTargetLanguage(int index)
 {
-    auto* row = new ClickableWidget(targetLanguagesBox_->rowsWidget());
-    row->setAttribute(Qt::WA_StyledBackground, true);
-    row->setProperty("listRow", true);
-    row->setProperty("selected", false);
-    row->setProperty("lastRow", false);
-    auto* layout = new QHBoxLayout(row);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(0);
+    const auto* item = targetLanguagesList_->item(index);
+    targetLanguageFields_->setVisible(item != nullptr);
+    targetLanguageRemoveBtn_->setEnabled(item != nullptr);
+    const QSignalBlocker blocker(targetLanguageEdit_);
+    targetLanguageEdit_->setText(item ? item->text() : QString());
+}
 
-    auto* cell = targetLanguagesBox_->createCell(row);
-    auto* edit = new FocusAwareLineEdit(cell);
-    edit->setText(value);
-    edit->setPlaceholderText(tr("Language"));
+void ProjectConfigPage::addTargetLanguage()
+{
+    BaseDialog dialog(this);
+    dialog.setWindowTitle(tr("Add Language"));
+    dialog.setObjectName(QStringLiteral("targetLanguageDialog"));
+    dialog.resize(340, 120);
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* form = new DialogFormLayout();
+    auto* edit = new QLineEdit(&dialog);
+    edit->setObjectName(QStringLiteral("targetLanguageEdit"));
     edit->setValidator(new QRegularExpressionValidator(
         QRegularExpression(QStringLiteral("[A-Za-z0-9_]*")), edit));
-
-    row->onMousePress = [this, row]() {
-        selectTargetLanguageRow(targetLanguageRows_.indexOf(row));
-    };
-    edit->onFocusIn = [this, row]() {
-        selectTargetLanguageRow(targetLanguageRows_.indexOf(row));
-    };
-    connect(edit, &QLineEdit::textChanged, this, [this]() {
-        if (!suppressTargetLanguageDirty_)
-            emit dirtyChanged();
+    form->addRow(tr("Language:"), edit);
+    layout->addLayout(form);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    layout->addWidget(buttons);
+    auto* ok = buttons->button(QDialogButtonBox::Ok);
+    ok->setEnabled(false);
+    connect(edit, &QLineEdit::textChanged, &dialog, [ok](const QString& text) {
+        ok->setEnabled(!text.isEmpty());
     });
-
-    cell->addWidget(edit);
-    layout->addWidget(cell);
-    targetLanguagesBox_->registerRow(row, {cell});
-    targetLanguagesBoxLayout_->addWidget(row);
-    targetLanguageRows_.append(row);
-    targetLanguageEdits_.append(edit);
-    updateTargetLanguageRowState();
-}
-
-void ProjectConfigPage::setTargetLanguages(const QStringList& value)
-{
-    targetLanguagesBox_->clearSelection();
-    const bool previous = suppressTargetLanguageDirty_;
-    suppressTargetLanguageDirty_ = true;
-    clearTargetLanguageRows();
-    for (const QString& language : value)
-        appendTargetLanguageRow(language);
-    selectTargetLanguageRow(-1);
-    suppressTargetLanguageDirty_ = previous;
-}
-
-void ProjectConfigPage::selectTargetLanguageRow(int index)
-{
-    if (index < 0 || index >= targetLanguageRows_.size())
-        selectedTargetLanguageRow_ = -1;
-    else
-        selectedTargetLanguageRow_ = index;
-    updateTargetLanguageRowState();
-}
-
-void ProjectConfigPage::updateTargetLanguageRowState()
-{
-    for (int i = 0; i < targetLanguageRows_.size(); ++i)
-    {
-        auto* row = targetLanguageRows_.at(i);
-        auto* edit = targetLanguageEdits_.at(i);
-        row->setObjectName(QStringLiteral("targetLanguageRow_%1").arg(i));
-        row->setProperty("languageIndex", i);
-        row->setProperty("selected", i == selectedTargetLanguageRow_);
-        row->setProperty("lastRow", i == targetLanguageRows_.size() - 1);
-        edit->setObjectName(QStringLiteral("targetLanguageEdit_%1").arg(i));
-        edit->setProperty("languageIndex", i);
-        refreshStyle(row);
-    }
-
-    if (targetLanguageRemoveBtn_)
-        targetLanguageRemoveBtn_->setEnabled(selectedTargetLanguageRow_ >= 0);
-}
-
-void ProjectConfigPage::onAddTargetLanguageClicked()
-{
-    appendTargetLanguageRow(QString());
-    selectTargetLanguageRow(targetLanguageRows_.size() - 1);
-    if (!targetLanguageEdits_.isEmpty())
-        targetLanguageEdits_.last()->setFocus();
-    if (!suppressTargetLanguageDirty_)
-        emit dirtyChanged();
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    edit->setFocus();
+    if (dialog.exec() != QDialog::Accepted) return;
+    auto* item = new QListWidgetItem(edit->text(), targetLanguagesList_);
+    item->setToolTip(edit->text());
+    targetLanguagesList_->setCurrentItem(item);
+    targetLanguageEdit_->setFocus();
+    emit dirtyChanged();
 }
 
 void ProjectConfigPage::onRemoveTargetLanguageClicked()
 {
-    if (selectedTargetLanguageRow_ < 0 || selectedTargetLanguageRow_ >= targetLanguageRows_.size())
-        return;
-
-    targetLanguagesBox_->removeSelectedRow([this] {
-        auto* row = targetLanguageRows_.takeAt(selectedTargetLanguageRow_);
-        targetLanguageEdits_.removeAt(selectedTargetLanguageRow_);
-        targetLanguagesBoxLayout_->removeWidget(row);
-        delete row;
-
-        selectedTargetLanguageRow_ = -1;
-
-        updateTargetLanguageRowState();
-        if (!suppressTargetLanguageDirty_)
-            emit dirtyChanged();
-        return true;
-    });
+    const int index = targetLanguagesList_->currentRow();
+    if (index < 0) return;
+    {
+        const QSignalBlocker blocker(targetLanguagesList_);
+        delete targetLanguagesList_->takeItem(index);
+        targetLanguagesList_->setCurrentRow(std::min(index, targetLanguagesList_->count() - 1));
+    }
+    selectTargetLanguage(targetLanguagesList_->currentRow());
+    emit dirtyChanged();
 }
 
 void ProjectConfigPage::load()
@@ -380,7 +308,7 @@ void ProjectConfigPage::load()
         projectLanguages = ProjectLanguageSemantics::buildLanguages(*pm.currentProject());
     }
     refreshPlatforms(projectChanged ? 0 : -1);
-    setTargetLanguages(projectLanguages);
+    setTargetLanguages(projectLanguages, projectChanged ? 0 : -1);
     rememberBaseline();
 }
 
@@ -402,7 +330,13 @@ bool ProjectConfigPage::validate()
         QMessageBox::warning(this, tr("Platform Configuration"), error);
         return false;
     }
-    const auto languages = ProjectLanguageSemantics::normalize(targetLanguages());
+    const auto requestedLanguages = targetLanguages();
+    if (std::any_of(requestedLanguages.cbegin(), requestedLanguages.cend(),
+                    [](const QString& language) { return language.trimmed().isEmpty(); })) {
+        QMessageBox::warning(this, tr("Language Configuration"), tr("Language name cannot be empty."));
+        return false;
+    }
+    const auto languages = ProjectLanguageSemantics::normalize(requestedLanguages);
     if (!languages.ok()) {
         QMessageBox::warning(this, tr("Language Configuration"), languages.error);
         return false;

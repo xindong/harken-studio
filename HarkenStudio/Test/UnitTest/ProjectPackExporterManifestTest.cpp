@@ -1264,6 +1264,12 @@ TEST(EditorProjectPackExporterManifest, OptionalCompanionDataFollowsPublicationL
     EXPECT_EQ(QFileInfo(waveformPath).absolutePath(), waveformRoot);
     EXPECT_EQ(readFileBytes(waveformPath), readFileBytes(VNX::WaveformCache::cachePath(
         VNX::AssetRegistry::instance().getAsset(sourceId)->absolutePath)));
+    auto absoluteChild = child;
+    auto absoluteWaveform = childWaves.first().toObject();
+    absoluteWaveform.insert(QStringLiteral("file"), waveformPath);
+    absoluteChild.insert(QStringLiteral("waveforms"), QJsonArray{absoluteWaveform});
+    writeFileBytes(QDir(output).filePath(QStringLiteral("Child.json")),
+        QJsonDocument(absoluteChild).toJson());
     const QString orphan = QDir(waveformRoot).filePath(QStringLiteral("unreferenced.vkd"));
     writeFileBytes(orphan, "unused");
     const auto finalized = VNX::ProjectPackExporter::FinalizePackExport(
@@ -4074,7 +4080,7 @@ TEST(EditorProjectPackExporterManifest, PublicationSelectionReconcilesTheWholeOu
     auto project = HarkenTest::projectWithPlatforms({"Windows", "Android"});
     ASSERT_NO_FATAL_FAILURE(buildProject(project, dir.path(), tone, tone,
         {{QStringLiteral("Remove"), 21, kSharedSoundObjectId},
-         {QStringLiteral("ProjectData"), 22, kSharedSoundObjectId}}));
+         {QStringLiteral("Project"), 22, kSharedSoundObjectId}}));
     project.packBuildOutputDir = dir.filePath("exports");
     project.projectLanguages = {QStringLiteral("English"), QStringLiteral("Japanese")};
     VNX::ProjectPackExporter exporter;
@@ -4089,7 +4095,7 @@ TEST(EditorProjectPackExporterManifest, PublicationSelectionReconcilesTheWholeOu
         project, {platform, HarkenTest::platformIdString("Android")}, false, artifacts).success);
     const QDir live(QDir(project.packBuildOutputDir).filePath("Windows"));
     const QDir other(QDir(project.packBuildOutputDir).filePath("Android"));
-    const auto projectDataPath = QDir(project.packBuildOutputDir).filePath("ProjectData.json");
+    const auto projectDataPath = QDir(project.packBuildOutputDir).filePath("Project.json");
     EXPECT_FALSE(QFileInfo::exists(projectDataPath));
     QMap<QString, QByteArray> originalPublication;
     for (const auto& file : publicationFiles(live.path()))
@@ -4110,20 +4116,23 @@ TEST(EditorProjectPackExporterManifest, PublicationSelectionReconcilesTheWholeOu
     EXPECT_EQ(projectData.value("languages").toArray(), QJsonArray::fromStringList(project.projectLanguages));
     for (auto file = originalPublication.cbegin(); file != originalPublication.cend(); ++file)
         EXPECT_EQ(readFileBytes(live.filePath(file.key())), file.value());
+    const auto previousProjectDataPath = QDir(project.packBuildOutputDir).filePath("ProjectData.json");
+    ASSERT_TRUE(QFile::rename(projectDataPath, previousProjectDataPath));
     VNX::ProjectPackExporter::ExportOptions partialOptions;
     partialOptions.platform = platform;
     partialOptions.updateSelectedOnly = true;
-    partialOptions.onlyUnits = {QStringLiteral("ProjectData")};
+    partialOptions.onlyUnits = {QStringLiteral("Project")};
     partialOptions.language = QStringLiteral("English");
     project.name = QStringLiteral("updated-project");
     const auto partial = exporter.ExportAllPacks(project, {}, partialOptions);
     ASSERT_TRUE(partial.success) << partial.error.toStdString();
+    EXPECT_FALSE(QFileInfo::exists(previousProjectDataPath));
     const auto partialData = QJsonDocument::fromJson(readFileBytes(projectDataPath)).object();
     EXPECT_EQ(partialData.value("projectName").toString(), project.name);
     EXPECT_EQ(partialData.value("platforms"), projectData.value("platforms"));
     EXPECT_EQ(partialData.value("languages"), projectData.value("languages"));
     const auto otherCompanion = readFileBytes(other.filePath(QStringLiteral("Init.json")));
-    const auto keptBytes = readFileBytes(live.filePath("ProjectData.bytes"));
+    const auto keptBytes = readFileBytes(live.filePath("Project.bytes"));
     writeFileBytes(live.filePath("Remove.bytes.meta"), "guid");
     writeFileBytes(live.filePath("unrelated.bytes"), "neighbor");
     writeFileBytes(QDir(project.packBuildOutputDir).filePath("DeletedPlatform/old.no-extension"), "old");
@@ -4156,7 +4165,7 @@ TEST(EditorProjectPackExporterManifest, PublicationSelectionReconcilesTheWholeOu
     EXPECT_EQ(readFileBytes(live.filePath(QStringLiteral("Init.json"))), companion);
     EXPECT_EQ(readFileBytes(projectDataPath), retainedProjectData);
     opts.cancelCheck = {};
-    const auto keepPath = live.filePath("ProjectData.bytes");
+    const auto keepPath = live.filePath("Project.bytes");
     ASSERT_TRUE(QFile::remove(keepPath));
     const auto invalid = VNX::ProjectPackExporter::FinalizePackExport(project.packBuildOutputDir,
         project, {platform}, true, selected.artifacts);
@@ -4173,7 +4182,7 @@ TEST(EditorProjectPackExporterManifest, PublicationSelectionReconcilesTheWholeOu
     EXPECT_EQ(cleaned.removedPackCount, 4);
     EXPECT_FALSE(QFileInfo::exists(live.filePath("Remove.bytes")));
     EXPECT_FALSE(QFileInfo::exists(live.filePath("Remove.json")));
-    EXPECT_EQ(readFileBytes(live.filePath("ProjectData.bytes")), keptBytes);
+    EXPECT_EQ(readFileBytes(live.filePath("Project.bytes")), keptBytes);
     const auto cleanedProjectData = QJsonDocument::fromJson(readFileBytes(projectDataPath)).object();
     EXPECT_EQ(cleanedProjectData.value("projectName").toString(), project.name);
     EXPECT_EQ(cleanedProjectData.value("platforms"), projectData.value("platforms"));
@@ -4185,7 +4194,7 @@ TEST(EditorProjectPackExporterManifest, PublicationSelectionReconcilesTheWholeOu
     {
         harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
         ASSERT_EQ(session.InitResult(), VN_OK);
-        ASSERT_NO_FATAL_FAILURE(activateExportedNames(live.path(), {QStringLiteral("ProjectData")}));
+        ASSERT_NO_FATAL_FAILURE(activateExportedNames(live.path(), {QStringLiteral("Project")}));
     }
     const auto platformDefinition = std::find_if(project.platforms.begin(), project.platforms.end(),
         [&](const auto& value) { return value.id == QUuid(platform); });
@@ -4198,11 +4207,11 @@ TEST(EditorProjectPackExporterManifest, PublicationSelectionReconcilesTheWholeOu
     ASSERT_TRUE(renamed.success) << renamed.error.toStdString();
     EXPECT_FALSE(live.exists());
     const QDir renamedLive(QDir(project.packBuildOutputDir).filePath("Desktop"));
-    EXPECT_TRUE(QFileInfo::exists(renamedLive.filePath("ProjectData.bytes")));
+    EXPECT_TRUE(QFileInfo::exists(renamedLive.filePath("Project.bytes")));
     EXPECT_EQ(QJsonDocument::fromJson(readFileBytes(projectDataPath)).object()
         .value("platforms").toArray().first().toObject().value("name").toString(), QStringLiteral("Desktop"));
-    const auto renamedCompanion = readFileBytes(renamedLive.filePath("ProjectData.json"));
-    const auto metadataAlias = QDir(project.packBuildOutputDir).filePath("projectdata.JSON");
+    const auto renamedCompanion = readFileBytes(renamedLive.filePath("Project.json"));
+    const auto metadataAlias = QDir(project.packBuildOutputDir).filePath("project.JSON");
     ASSERT_TRUE(QFile::rename(projectDataPath, projectDataPath + ".tmp"));
     ASSERT_TRUE(QFile::rename(projectDataPath + ".tmp", metadataAlias));
     project.buildExportProjectData = false;
@@ -4210,8 +4219,8 @@ TEST(EditorProjectPackExporterManifest, PublicationSelectionReconcilesTheWholeOu
     ASSERT_TRUE(disabled.success) << disabled.error.toStdString();
     EXPECT_FALSE(QFileInfo::exists(projectDataPath));
     EXPECT_FALSE(QFileInfo::exists(metadataAlias));
-    EXPECT_EQ(readFileBytes(renamedLive.filePath("ProjectData.json")), renamedCompanion);
-    EXPECT_EQ(readFileBytes(renamedLive.filePath("ProjectData.bytes")), keptBytes);
+    EXPECT_EQ(readFileBytes(renamedLive.filePath("Project.json")), renamedCompanion);
+    EXPECT_EQ(readFileBytes(renamedLive.filePath("Project.bytes")), keptBytes);
     opts.selection.actionTargeting.push_back({harkentest::StudioObjectId(22 + kStableIdBias), false, {}});
     project.buildExportProjectData = true;
     project.projectLanguages.clear();

@@ -171,7 +171,7 @@ ProjectPlatformEditor::ProjectPlatformEditor(QWidget* parent)
     auto* form = new DialogFormLayout();
     name_ = new QLineEdit(this);
     name_->setObjectName("projectPlatformName");
-    form->addRow(tr("Name:"), name_);
+    form->addRow(tr("Platform:"), name_);
     base_ = new QComboBox(this);
     base_->setObjectName("projectPlatformBase");
     base_->addItems({"Windows", "Android", "Linux", "macOS", "iOS"});

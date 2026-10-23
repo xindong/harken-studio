@@ -32,7 +32,7 @@ AppearancePage::AppearancePage(ThemeManager& themeManager, QWidget* parent)
     themeLabel->setBuddy(themeCombo_);
     appearanceForm->addRow(themeLabel, themeCombo_);
 
-    auto* languageLabel = new QLabel(tr("Language:"));
+    auto* languageLabel = new QLabel(tr("Information Language:"));
     languageCombo_ = new QComboBox();
     languageCombo_->setObjectName(QStringLiteral("appearanceLanguageCombo"));
     const auto languageTopic = ContextTopic::forPanel(QStringLiteral("settings.appearance.language"));

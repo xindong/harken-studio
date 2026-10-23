@@ -2182,11 +2182,18 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
                 const auto waveform = value.toObject();
                 const auto soundId = runtimeObjectId(QUuid(waveform.value(QStringLiteral("soundGuid")).toString()));
                 const QString file = waveform.value(QStringLiteral("file")).toString();
+                QString filePath = file;
+#if defined(Q_OS_WIN)
+                if (filePath.size() >= 3 && filePath.at(0).toLower() >= QLatin1Char('a')
+                    && filePath.at(0).toLower() <= QLatin1Char('z')
+                    && filePath.at(1) == QLatin1Char(':') && filePath.at(2) == QLatin1Char('/'))
+                    filePath.remove(0, 2);
+#endif
                 if (!waveformSounds.insert(soundId).second
                     || std::none_of(image.media.begin(), image.media.end(),
                         [&](const auto& media) { return media.soundId == soundId; })
-                    || QDir::isAbsolutePath(file) || file.contains(QLatin1Char('\\'))
-                    || file.contains(QLatin1Char(':')) || !file.endsWith(QStringLiteral(".vkd"))
+                    || file.contains(QLatin1Char('\\')) || PathUtils::hasUnsafeCharacters(filePath)
+                    || !file.endsWith(QStringLiteral(".vkd"))
                     || QDir::cleanPath(file) != file
                     || waveform.value(QStringLiteral("trimEndFrame")).toInteger()
                         <= waveform.value(QStringLiteral("trimStartFrame")).toInteger())
@@ -3332,7 +3339,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
     if (project.buildExportWaveforms) {
         if (request.options.waveformOutputDir.isEmpty()) {
             if (!PathUtils::isValidWaveformBuildOutputDir(project.buildWaveformOutputDir, project.projectPath))
-                return fail(QStringLiteral("Waveform output must be a valid project-relative directory"));
+                return fail(QStringLiteral("Waveform output must use a valid directory outside the project root and object directories."));
             waveformOutputRoot = PathUtils::waveformBuildOutputRoot(project.projectPath, project.buildWaveformOutputDir);
         } else {
             waveformOutputRoot = request.options.waveformOutputDir;
@@ -3574,7 +3581,8 @@ ProjectPackExporter::ExportResult ProjectPackExporter::FinalizePackExport(
         }
     }
     QStringList liveNames, previousPackNames;
-    const QString metadataName = QStringLiteral("ProjectData.json");
+    const QString metadataName = QStringLiteral("Project.json");
+    const QStringList metadataNames{metadataName, QStringLiteral("ProjectData.json")};
     if (selfCleaning) {
         if (!scanOutputFiles(liveDir, &liveNames, &previousPackNames, &result.error)) return result;
         for (const auto& directory : liveDir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden)) {
@@ -3597,7 +3605,7 @@ ProjectPackExporter::ExportResult ProjectPackExporter::FinalizePackExport(
             return result;
         }
         for (const auto& entry : liveDir.entryInfoList(QDir::Files | QDir::Hidden | QDir::System)) {
-            if (entry.fileName().compare(metadataName, Qt::CaseInsensitive) != 0) continue;
+            if (!metadataNames.contains(entry.fileName(), Qt::CaseInsensitive)) continue;
             if (entry.isSymLink()) {
                 result.error = QStringLiteral("Project data output is a symbolic link: %1").arg(entry.absoluteFilePath());
                 return result;
@@ -3607,7 +3615,7 @@ ProjectPackExporter::ExportResult ProjectPackExporter::FinalizePackExport(
     }
     QStringList publishedNames;
     for (const auto& name : liveNames)
-        if (name.compare(metadataName, Qt::CaseInsensitive) != 0
+        if (!metadataNames.contains(name, Qt::CaseInsensitive)
             && (!selfCleaning || selectedFiles.contains(name))) publishedNames.append(name);
     QStringList preservedNames = publishedNames;
     QTemporaryDir next(liveDir.filePath(QString::fromLatin1(kNextPrefix) + QStringLiteral("XXXXXX")));

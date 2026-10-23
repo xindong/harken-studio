@@ -112,8 +112,10 @@ TEST(ProjectSafetyFoundation, PackOutputRejectsProjectRootAliases)
     ASSERT_TRUE(directory.isValid());
     const QString project = directory.filePath(QStringLiteral("Demo.hsp"));
     for (const auto& path : {QStringLiteral("."), QStringLiteral(" ./ "),
-                            QStringLiteral("Packs/.."), QStringLiteral("../") + QDir(directory.path()).dirName()}) {
+                            QStringLiteral("Packs/.."), QStringLiteral("../") + QDir(directory.path()).dirName(),
+                            directory.path()}) {
         EXPECT_FALSE(VNX::PathUtils::isValidPackBuildOutputDir(path, project)) << path.toStdString();
+        EXPECT_FALSE(VNX::PathUtils::isValidWaveformBuildOutputDir(path, project)) << path.toStdString();
         EXPECT_TRUE(VNX::PathUtils::isProjectRootDirectory(
             VNX::PathUtils::packBuildOutputRoot(project, path), project));
     }
@@ -135,8 +137,10 @@ TEST(ProjectSafetyFoundation, PackOutputRejectsObjectBucketsAndTheirDescendants)
         for (const auto& path : {bucket, bucket + QStringLiteral("/BuildPacks"),
                                 QStringLiteral("Exports/../") + bucket + QStringLiteral("/Generated"),
                                 QStringLiteral("../") + QDir(directory.path()).dirName()
-                                    + QLatin1Char('/') + bucket + QStringLiteral("/BuildPacks")}) {
+                                    + QLatin1Char('/') + bucket + QStringLiteral("/BuildPacks"),
+                                directory.filePath(bucket + QStringLiteral("/BuildPacks"))}) {
             EXPECT_FALSE(VNX::PathUtils::isValidPackBuildOutputDir(path, project)) << path.toStdString();
+            EXPECT_FALSE(VNX::PathUtils::isValidWaveformBuildOutputDir(path, project)) << path.toStdString();
             EXPECT_TRUE(VNX::PathUtils::isProjectObjectDirectory(
                 VNX::PathUtils::packBuildOutputRoot(project, path), project));
         }
@@ -149,6 +153,45 @@ TEST(ProjectSafetyFoundation, PackOutputRejectsObjectBucketsAndTheirDescendants)
     EXPECT_TRUE(VNX::PathUtils::isValidPackBuildOutputDir(QStringLiteral("BuildPacks"), project));
     EXPECT_TRUE(VNX::PathUtils::isValidPackBuildOutputDir(QStringLiteral("../Layers/BuildPacks"), project));
     EXPECT_TRUE(VNX::PathUtils::isValidPackBuildOutputDir(QStringLiteral("Layers/../BuildPacks"), project));
+}
+
+TEST(ProjectSafetyFoundation, BuildOutputNormalizationPreservesDestination)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString project = directory.filePath(QStringLiteral("Demo.hsp"));
+    for (const auto& path : {QStringLiteral(" ./Exports\\Unused/../Packs/ "),
+                            directory.filePath(QStringLiteral("Exports/Packs"))}) {
+        const QString normalized = VNX::PathUtils::normalizePackBuildOutputDir(path, project);
+        EXPECT_TRUE(QDir::isRelativePath(normalized));
+        EXPECT_TRUE(VNX::PathUtils::isValidPackBuildOutputDir(normalized, project));
+        EXPECT_TRUE(VNX::PathUtils::isValidWaveformBuildOutputDir(normalized, project));
+        EXPECT_EQ(VNX::PathUtils::packBuildOutputRoot(project, normalized),
+                  directory.filePath(QStringLiteral("Exports/Packs")));
+        EXPECT_EQ(VNX::PathUtils::waveformBuildOutputRoot(project, normalized),
+                  directory.filePath(QStringLiteral("Exports/Packs")));
+    }
+#if defined(Q_OS_WIN)
+    const QString windowsProject = QStringLiteral("D:/Audio/Project/Demo.hsp");
+    for (const auto& path : {QStringLiteral("E:/Game/Assets/GeneratedPacks"),
+                            QStringLiteral("E:/"), QStringLiteral("//localhost/Audio/GeneratedPacks")}) {
+        const QString normalized = VNX::PathUtils::normalizePackBuildOutputDir(
+            QDir::toNativeSeparators(path), windowsProject);
+        EXPECT_TRUE(QDir::isAbsolutePath(normalized));
+        EXPECT_EQ(VNX::PathUtils::packBuildOutputRoot(windowsProject, normalized), path);
+        EXPECT_EQ(VNX::PathUtils::waveformBuildOutputRoot(windowsProject, normalized), path);
+    }
+    EXPECT_TRUE(VNX::PathUtils::isValidPackBuildOutputDir(QStringLiteral("E:/GeneratedPacks"), windowsProject));
+    EXPECT_TRUE(VNX::PathUtils::isValidWaveformBuildOutputDir(QStringLiteral("E:/Waveforms"), windowsProject));
+    for (const auto& path : {QStringLiteral("D:GeneratedPacks"), QStringLiteral("E:GeneratedPacks"),
+                            QStringLiteral("D:"), QStringLiteral("1:/GeneratedPacks")}) {
+        EXPECT_FALSE(VNX::PathUtils::isValidPackBuildOutputDir(path, windowsProject));
+        const QString normalized = VNX::PathUtils::normalizePackBuildOutputDir(path, windowsProject);
+        EXPECT_FALSE(VNX::PathUtils::isValidPackBuildOutputDir(normalized, windowsProject));
+        EXPECT_FALSE(VNX::PathUtils::isValidWaveformBuildOutputDir(normalized, windowsProject));
+    }
+    EXPECT_FALSE(VNX::PathUtils::isValidWaveformBuildOutputDir(QStringLiteral("E:/Wave:forms"), windowsProject));
+#endif
 }
 
 TEST(ProjectSafetyFoundation, PackOutputPolicyResolvesParentRelativePaths)
@@ -174,6 +217,15 @@ TEST(ProjectSafetyFoundation, PackOutputPolicyResolvesParentRelativePaths)
     const VNX::ProjectDataPolicy rejected = policyFor(QStringLiteral("Layers/BuildPacks"));
     EXPECT_TRUE(rejected.protectByDefault(QStringLiteral("Layers/BuildPacks/Windows/Main.vpack")));
     EXPECT_TRUE(rejected.protectByDefault(QStringLiteral("Layers/Main.vp")));
+
+    const QJsonObject absoluteRoot{{QStringLiteral("content"), QJsonObject{
+        {QStringLiteral("packBuildOutputDir"), project.filePath(QStringLiteral("Exports/Packs"))},
+        {QStringLiteral("buildWaveformOutputDir"), project.filePath(QStringLiteral("Exports/Waveforms"))}}}};
+    writeFile(projectFile, QJsonDocument(absoluteRoot).toJson());
+    const VNX::ProjectDataPolicy absolute = VNX::ProjectDataPolicy::forProjectFile(projectFile);
+    EXPECT_FALSE(absolute.protectByDefault(QStringLiteral("Exports/Packs/Windows/Main.vpack")));
+    EXPECT_FALSE(absolute.protectByDefault(QStringLiteral("Exports/Waveforms/Main.vkd")));
+    EXPECT_TRUE(absolute.protectByDefault(QStringLiteral("Exports/Notes.txt")));
 }
 
 TEST(ProjectSafetyFoundation, DefaultTransactionDoesNotBackUpOrRollBackCustomPacks)

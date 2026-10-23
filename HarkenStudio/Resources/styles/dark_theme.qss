@@ -298,8 +298,8 @@ QToolBar#platformBar QToolButton#platformBarAll {
     padding: 0px 6px;
 }
 QToolBar#platformBar QComboBox {
-    min-height: 20px;
-    max-height: 20px;
+    min-height: 19px;
+    max-height: 19px;
 }
 QToolBar#platformBar QToolButton[segmentedControl="true"]:hover:enabled {
     background: @bgHover@;
@@ -350,6 +350,7 @@ QLineEdit[fieldRole="segmentInline"]:focus {
     border-radius: 0px;
     padding: 0px;
     min-height: 0px;
+    max-height: 16777215px;
     color: @textSecondary@;
 }
 
@@ -596,16 +597,16 @@ QLineEdit, QPlainTextEdit, QTextEdit {
     background-color: @base@;
     border: 1px solid @borderSecondary@;
     border-radius: 0px;
-    padding: 6px 8px;
+    padding: @fieldTextPaddingY@px @fieldTextPaddingX@px;
     color: @brightText@;
 }
 
 QLineEdit {
     background-color: @bgSecondary@;
     color: @textPrimary@;
-    padding: 0px 8px;
-    min-height: @fieldContentHeight@px;
-    max-height: @fieldContentHeight@px;
+    padding: 0px @lineEditPaddingX@px 1px @lineEditPaddingX@px;
+    min-height: @singleLineContentHeight@px;
+    max-height: @singleLineContentHeight@px;
 }
 
 QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus {
@@ -627,17 +628,10 @@ QLineEdit:disabled {
     border-color: @borderPrimary@;
 }
 
-QLineEdit[fieldRole="gridCell"] {
-    padding: 0 @inspectorColumnPadding@px;
-}
-
-/* Roomier entry variant used by the editor popups (span, fade, transition),
-   which carry their own padding rhythm and a full hover/disabled treatment. */
 QLineEdit[fieldRole="popup"] {
     background-color: @bgSecondary@;
     border: 1px solid @borderSecondary@;
     border-radius: 0px;
-    padding: 0px 12px;
     color: @textPrimary@;
 }
 
@@ -707,9 +701,9 @@ QComboBox {
     background-color: @bgSecondary@;
     border: 1px solid @borderSecondary@;
     border-radius: 0px;
-    padding: 0px 0px 0px 6px;
-    min-height: @fieldContentHeight@px;
-    max-height: @fieldContentHeight@px;
+    padding: 0px 0px 1px @fieldTextPaddingX@px;
+    min-height: @singleLineContentHeight@px;
+    max-height: @singleLineContentHeight@px;
     color: @textPrimary@;
     combobox-popup: 0;
 }
@@ -730,8 +724,8 @@ QComboBox:disabled {
     border-color: @borderPrimary@;
 }
 
-QComboBox[fieldRole="gridCell"] {
-    padding: 0 0 0 @inspectorColumnPadding@px;
+QComboBox:editable {
+    padding-left: @lineEditPaddingX@px;
 }
 
 QComboBox::drop-down {
@@ -783,24 +777,22 @@ QComboBox:editable QLineEdit:focus {
     border: none;
     padding: 0;
     min-height: 0px;
+    max-height: 16777215px;
     color: @textPrimary@;
 }
 
 /* ==========================================================================
    Numeric Fields
-   Two field roles share one visual language: "inspectorValue" is the dense
-   variant that fits the inspector's shared value column, "compact" is the
-   roomier variant used when a presenter owns a full control row.
    ========================================================================== */
 
 QAbstractSpinBox {
     background-color: @bgSecondary@;
     border: 1px solid @borderSecondary@;
     border-radius: 0px;
-    padding: 0px 6px;
+    padding: 0px @lineEditPaddingX@px 1px @lineEditPaddingX@px;
     color: @textPrimary@;
-    min-height: @fieldContentHeight@px;
-    max-height: @fieldContentHeight@px;
+    min-height: @singleLineContentHeight@px;
+    max-height: @singleLineContentHeight@px;
 }
 
 QAbstractSpinBox:hover {
@@ -822,7 +814,6 @@ QAbstractSpinBox[fieldRole="compact"] {
     background-color: @bgSecondary@;
     border: 1px solid @borderSecondary@;
     border-radius: 0px;
-    padding: 0px 8px;
     color: @textPrimary@;
 }
 
@@ -1388,7 +1379,6 @@ QLineEdit#nodeTitleEditor,
 QWidget#NodeContentEditor QAbstractSpinBox {
     min-height: 0px;
     max-height: 16777215px;
-    padding: 0px 2px;
 }
 
 QWidget#NodeContentEditor QToolButton[segmentedControl="true"] {
@@ -1447,7 +1437,7 @@ QWidget#embeddedEditorTitleBar QLabel { background: transparent; color: @textSec
 
 #settingsCategoryList::item {
     padding: 12px 16px;
-    color: @textSecondary@;
+    color: @textPrimary@;
     border: none;
     border-left: 2px solid transparent;
 }
@@ -1488,6 +1478,14 @@ QLabel[settingsRole="subtitle"] {
 QLabel[dialogRole="label"] {
     color: @textSecondary@;
     background: transparent;
+}
+
+VNX--SettingsPage QLabel[dialogRole="label"]:enabled {
+    color: @textPrimary@;
+}
+
+VNX--SettingsPage QLabel[dialogRole="label"]:disabled {
+    color: @textDisabled@;
 }
 
 QPushButton:disabled {
@@ -1859,7 +1857,6 @@ VNX--ObjectRefWidget[inputInvalid="true"][dimmed="false"]:enabled {
 #AssistantPanel QLineEdit#assistantInput {
     background: transparent;
     border: none;
-    padding: 0;
     min-height: 0px;
     max-height: 16777215px;
     color: @textPrimary@;
@@ -1983,7 +1980,7 @@ QWidget#MeterSubPanelTitleBar {
 }
 QLabel#meterSubPanelDragHandle { color: @textSecondary@; font-size: @bodyPointSize@pt; }
 QComboBox#meterTypeCombo {
-    padding: 0 @chevronExtent@px 0 4px;
+    padding-right: @chevronExtent@px;
     font-size: @captionPointSize@pt;
 }
 QToolButton#meterSubPanelGearBtn,
@@ -2008,7 +2005,7 @@ QWidget#MeterSettingsPopup {
 }
 QWidget#MeterSettingsPopup QLabel { color: @textSecondary@; font-size: @captionPointSize@pt; padding: 0 4px; }
 QWidget#MeterSettingsPopup QComboBox {
-    padding: 0px @chevronExtent@px 0px 6px;
+    padding-right: @chevronExtent@px;
     font-size: @captionPointSize@pt;
 }
 
@@ -2060,10 +2057,9 @@ QLineEdit[tableEditor="true"] {
     background-color: @bgPrimary@;
     color: @textPrimary@;
     border: 1px solid @accent@;
-    min-height: @fieldContentHeight@px;
-    max-height: @fieldContentHeight@px;
+    min-height: @singleLineContentHeight@px;
+    max-height: @singleLineContentHeight@px;
     border-radius: 0px;
-    padding: 0 @tableCellPaddingX@px;
 }
 QWidget#MonitorPerformancePanel,
 QWidget#MonitorPlayablesPanel,
