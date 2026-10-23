@@ -543,7 +543,7 @@ callbacks inside that boundary. Native destruction freezes each attached
 playback's last accepted source pose and scale; a new emitter identity starts at 1.
 
 An explicit distance reference changes only distance contributions (volume,
-filters, width and proximity); pan and cone continue to use the actual Listener.
+low-pass filtering, width and proximity); pan and cone continue to use the actual Listener.
 The runtime keeps one selection across same-session Listener changes and clears
 it on shutdown. New selections validate their pose before changing the choice.
 Selection and clear reject publication reentry with `VN_IN_USE`.
