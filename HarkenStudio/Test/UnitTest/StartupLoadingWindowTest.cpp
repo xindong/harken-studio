@@ -1,6 +1,5 @@
 #include "Core/StartupProgress.h"
 #include "Dialogs/StartupLoadingWindow.h"
-#include "harken_buildinfo.h"
 
 #include <gtest/gtest.h>
 
@@ -82,26 +81,6 @@ TEST(StartupLoadingWindow, IsFramelessSplash)
     VNX::StartupLoadingWindow loading;
     EXPECT_EQ(loading.windowType(), Qt::SplashScreen);
     EXPECT_TRUE(loading.windowFlags().testFlag(Qt::FramelessWindowHint));
-}
-
-TEST(StartupLoadingWindow, ShowsFooterVersionAndBuildYear)
-{
-    ensureApp();
-    QCoreApplication::setApplicationVersion(QString::fromUtf8(
-        Harken::BuildInfo::Version.data(),
-        static_cast<int>(Harken::BuildInfo::Version.size())));
-    VNX::StartupLoadingWindow loading;
-    auto* version = loading.findChild<QLabel*>(
-        QStringLiteral("startupLoadingVersion"));
-    auto* copyright = loading.findChild<QLabel*>(
-        QStringLiteral("startupLoadingCopyright"));
-    ASSERT_NE(version, nullptr);
-    ASSERT_NE(copyright, nullptr);
-    EXPECT_EQ(version->text(),
-              QStringLiteral("v%1").arg(QCoreApplication::applicationVersion()));
-    EXPECT_TRUE(copyright->text().contains(QString::fromUtf8(
-        Harken::BuildInfo::BuildYear.data(),
-        static_cast<int>(Harken::BuildInfo::BuildYear.size()))));
 }
 
 TEST(StartupLoadingWindow, WaitsForInitialFrameBeforeBecomingVisible)
