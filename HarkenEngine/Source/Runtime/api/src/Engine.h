@@ -2996,7 +2996,7 @@ struct EnginePreparedTimelineVoiceStart {
     EngineMonitorSelection monitorSelection{};
     static constexpr std::uint32_t kMaxCommandCount =
         3u + kTimelineMaxVoiceSends + kTimelineMaxVoiceEffects + 2u +
-        kMaxVoiceBindingInstanceSlots;
+        kMaxVoiceBindingInstanceSlots + kSpatialDrivenTargetsPerVoice;
 
     std::uint32_t ledgerSlot = UINT32_MAX;
     VnVoiceHandle renderHandle = 0;

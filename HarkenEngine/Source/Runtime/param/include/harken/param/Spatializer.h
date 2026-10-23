@@ -270,6 +270,13 @@ public:
     // change write identical values, which the slot writer treats as no-ops.
     void Evaluate(ParamSystem& params, const EmitterTable& emitters);
 
+    // Prepares one voice's spatial contributions without publishing commands.
+    // The start transaction primes these targets together with its bindings.
+    // A bound profile whose retained identity no longer resolves is refused.
+    VnResult EvaluateVoice(VnVoiceHandle handle, ParamSystem& params,
+                           const EmitterTable& emitters,
+                           std::uint32_t* targetMask = nullptr);
+
     // The distance-driven volume attenuation in dB that Evaluate() writes to
     // the volume attenuation slot for a voice at world position (px,py,pz)
     // bound to this profile — the non-cone term (override curve or rolloff).

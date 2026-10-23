@@ -538,15 +538,19 @@ public:
     // batch as the start command (rampMs 0: initial instantiation
     // snaps). The written targets' marks are cleaned here (lastCommitted
     // updated), so the tick's ordinary flush re-publishes nothing.
+    // initialTargetMask also settles start-time spatial contributions in the
+    // same reduction; it does not add or reset Variable-binding slots.
     // Returns the count written (bounded by kBuiltinTargetCount).
     std::uint32_t PrimeVoiceBindings(VnVoiceHandle handle,
                                      const EmitterTable* emitters,
                                      PrimedValue* out,
-                                     std::uint32_t capacity);
+                                     std::uint32_t capacity,
+                                     std::uint32_t initialTargetMask = 0);
     // Validates every captured input before changing any evaluator or publication state.
     bool TryPrimeVoiceBindings(VnVoiceHandle handle, const VariableReadCutReader& reader,
                                PrimedValue* out, std::uint32_t capacity,
-                               std::uint32_t* written, bool includeUnchanged = false);
+                               std::uint32_t* written, bool includeUnchanged = false,
+                               std::uint32_t initialTargetMask = 0);
 
     // Settles an explicit list of targets for a voice's start batch, the
     // authored-base counterpart of PrimeVoiceBindings: each listed target
@@ -1090,7 +1094,8 @@ private:
     std::uint32_t PrimeVoiceBindingsImpl(VnVoiceHandle handle,
                                          const EmitterTable* emitters,
                                          PrimedValue* out, std::uint32_t capacity,
-                                         const PrimingInput* capturedInputs, bool includeUnchanged = false);
+                                         const PrimingInput* capturedInputs, bool includeUnchanged,
+                                         std::uint32_t initialTargetMask);
     // Resolves a Variable at a voice's emitter scope: the emitter-local
     // override when the (live) emitter has one, else the global value. Returns
     // false when neither scope holds a value (the binding contributes nothing).

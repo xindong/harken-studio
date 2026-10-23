@@ -18090,6 +18090,22 @@ TEST(PlayableStart, QueueTrackSuccessorUsesSameScheduleMaterialization) {
     SequenceQueueTrackWorldImage image(
         engine->registry.Lookup(kSound).contentRevision,
         engine->registry.Lookup(kSecondSound).contentRevision);
+    const auto attenuation = harkentest::ObjectId(73);
+    const auto profile = harkentest::MakeAttenuationDesc(1.0f, 101.0f);
+    ASSERT_EQ(VN_OK, Vn_RegisterAttenuation(attenuation, &profile));
+    for (std::uint32_t i = 0; i < 2; ++i) {
+        image.properties[i].payload.values[10].bits = 1;
+        image.properties[i].payload.values[13].objectId = attenuation;
+        image.properties[i].programSemanticFingerprint =
+            harken::ComputePlayablePropertyFingerprintV1(image.properties[i]);
+    }
+    image.placement.content.expectedProgramSemanticFingerprint =
+        image.properties[0].programSemanticFingerprint;
+    image.occurrences[2].childPlayable = image.placement.content;
+    image.occurrences[2].occurrenceSemanticFingerprint =
+        harken::ComputePlayableOccurrenceFingerprintV1(image.occurrences[2]);
+    image.track.scheduleSemanticFingerprint =
+        harken::ComputeTrackScheduleFingerprintV1(image.track);
     image.children[0].playable.kind = harken::PlayableKindV1::Sound;
     image.children[0].playable.stableId = harkentest::ObjectId(kSecondSound);
     image.children[0].playable.expectedProgramSemanticFingerprint =
@@ -18115,21 +18131,26 @@ TEST(PlayableStart, QueueTrackSuccessorUsesSameScheduleMaterialization) {
     }
     harken::PlayableStartRequest request{};
     request.root = image.Root();
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&request.emitter));
+    ASSERT_EQ(VN_OK, Vn_SetEmitterPosition(request.emitter, {51.0f, 0.0f, 0.0f}));
     const harken::PlayableStartResult started =
         harken::StartPlayable(*engine, image.world, request);
     ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
     bool heardFirst = false;
     bool heardTrackAfterFirst = false;
     for (std::uint32_t block = 0; block < 48; ++block) {
-        ASSERT_EQ(VN_OK, Vn_Update());
+        engine->timelineService->Service();
         engine->nullBackend.Pump(1);
         const float* output = engine->nullBackend.LastBlock();
-        for (std::uint32_t sample = 0;
-             sample < 2u * engine->config.blockFrames; ++sample) {
-            heardFirst = heardFirst || output[sample] < 0.0f;
+        for (std::uint32_t frame = 0; frame < engine->config.blockFrames; ++frame) {
+            ASSERT_NEAR(0.0f, output[2 * frame], 1e-5f) << block << ":" << frame;
+            const auto right = output[2 * frame + 1];
+            if (std::abs(right) > harkentest::kSilenceFloor)
+                ASSERT_NEAR(0.25f * 0.5f * std::sqrt(2.0f), std::abs(right), 1e-5f)
+                    << block << ":" << frame;
+            heardFirst = heardFirst || right < 0.0f;
             heardTrackAfterFirst =
-                heardTrackAfterFirst ||
-                (heardFirst && output[sample] > 0.0f);
+                heardTrackAfterFirst || (heardFirst && right > 0.0f);
         }
     }
     EXPECT_TRUE(heardFirst);

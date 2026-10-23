@@ -1162,7 +1162,7 @@ TEST(Emitter, RenderOutputParkReturn) {
     ASSERT_EQ(VN_OK, Vn_Update());
     harkentest::Capture returned;
     harkentest::PumpAndCapture(engine, 2, returned);
-    HARKENTEST_ASSERT_NON_SILENT(returned.left);
+    EXPECT_LE(harkentest::Peak(returned.left), harkentest::kSilenceFloor);
     HARKENTEST_ASSERT_NON_SILENT(returned.right);
     EXPECT_EQ(0u, Snap().parkedVoiceCount);
 
@@ -1317,7 +1317,8 @@ TEST(Emitter, StateOnlyParkReturnPreservesOwnerAndPose) {
     ASSERT_EQ(VN_OK, Vn_Update());
     harkentest::Capture capture;
     harkentest::PumpAndCapture(engine, 2, capture);
-    HARKENTEST_ASSERT_NON_SILENT(capture.left);
+    EXPECT_LE(harkentest::Peak(capture.left), harkentest::kSilenceFloor);
+    HARKENTEST_ASSERT_NON_SILENT(capture.right);
     EXPECT_NEAR(VolumeDbAt(0.75f), engine->params.ResolvedValue(RenderHandle(engine, voice), harken::kTargetVoiceVolume), 1.0e-5f);
     EXPECT_EQ(state, engine->params.EmitterHandleOf(RenderHandle(engine, voice)));
     EXPECT_EQ(0u, engine->spatial.AttachedEmitter(RenderHandle(engine, voice)));

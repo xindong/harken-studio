@@ -284,6 +284,62 @@ TEST(StreamPlayback, PreparingHoldsSilentUntilPrebufferThreshold) {
     EXPECT_EQ(0u, harken::memguard::HitCount());
 }
 
+TEST(StreamPlayback, SpatialRecipeAndCommitApplyBeforeFirstPrebufferedOutput) {
+    for (const bool staged : {false, true}) {
+        SCOPED_TRACE(staged);
+        EngineSession session(MakeStreamConfig(nullptr, 2, 1024, 1, 1));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto* engine = session.Engine();
+        const auto sound = harkentest::ObjectId(7198);
+        const auto attenuation = harkentest::ObjectId(7199);
+        const auto profile = harkentest::MakeAttenuationDesc(1.0f, 101.0f);
+        ASSERT_EQ(VN_OK, Vn_RegisterAttenuation(attenuation, &profile));
+        StreamSpec spec;
+        spec.soundId = sound;
+        spec.sampleRate = kRate;
+        spec.channelCount = 1;
+        spec.chunkFrames = kBlockFrames;
+        const auto path = TempPath("stream_spatial_initial.stream");
+        WriteFileBytes(path, BuildStreamBytes(spec, harkentest::MakeDC(4096, 0.25f)));
+        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(sound, path.c_str()));
+        if (!staged) {
+            harken::PackLogicStore::PreparedClaimToken token;
+            ASSERT_EQ(VN_OK, engine->logicPacks.PrepareClaim(1, &token));
+            harken::PackLogicRecord content;
+            harken::PackLogicImage::VoiceRecipe recipe;
+            recipe.header.playableId = sound;
+            recipe.spatial.attenuationId = attenuation;
+            recipe.spatial.distanceScale = 1.0f;
+            content.voiceRecipes.push_back(std::move(recipe));
+            engine->logicPacks.CommitPreparedClaim(&token, std::move(content));
+        }
+        engine->streams.SetThrottled(true);
+        auto play = harkentest::MakePlayDesc3D(sound, 51.0f, 0.0f, 0.0f);
+        play.reserved0 = staged ? VN_PLAY_FLAG_STAGED_INSTALL : 0u;
+        VnVoiceHandle voice = 0;
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+        if (staged) {
+            ASSERT_EQ(VN_OK, Vn_BindVoiceAttenuation(voice, attenuation));
+            EXPECT_EQ(0.0f, PumpBlockPeak(engine));
+            ASSERT_EQ(VN_OK, Vn_CommitVoiceStart(voice));
+        }
+        EXPECT_EQ(0.0f, PumpBlockPeak(engine));
+        EXPECT_EQ(0.0f, PumpBlockPeak(engine));
+        engine->streams.SetThrottled(false);
+        engine->streams.SyncServe();
+        const auto before = engine->mixer.BlocksRendered();
+        Capture first;
+        harkentest::PumpAndCapture(engine, 1, first);
+        ASSERT_EQ(before + 1, engine->mixer.BlocksRendered());
+        ASSERT_EQ(kBlockFrames, first.right.size());
+        const auto expected = 0.25f * 0.5f * std::sqrt(2.0f);
+        for (std::size_t frame = 0; frame < first.right.size(); ++frame) {
+            ASSERT_NEAR(0.0f, first.left[frame], 1e-5f) << frame;
+            ASSERT_NEAR(expected, first.right[frame], 1e-5f) << frame;
+        }
+    }
+}
+
 TEST(StreamPlayback, PlaysToEndReleasesSlotAndRecycles) {
     NotificationLog log;
     EngineSession session(MakeStreamConfig(&log));

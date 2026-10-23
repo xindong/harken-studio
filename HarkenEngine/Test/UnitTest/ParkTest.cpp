@@ -1321,8 +1321,10 @@ TEST_P(ParkedAttenuationGeneration,
         ASSERT_EQ(before + 1, engine->mixer.BlocksRendered());
         ASSERT_EQ(kBlock, capture.left.size());
         ASSERT_GT(harkentest::Peak(capture.left), harkentest::kSilenceFloor);
-        EXPECT_NEAR(expected, capture.left.back(), 1e-4f);
-        EXPECT_NEAR(expected, capture.right.back(), 1e-4f);
+        for (std::uint32_t frame = 0; frame < kBlock; ++frame) {
+            EXPECT_NEAR(expected, capture.left[frame], 1e-4f) << frame;
+            EXPECT_NEAR(expected, capture.right[frame], 1e-4f) << frame;
+        }
     };
 
     VnVoiceHandle incumbent = 0;
@@ -1393,7 +1395,6 @@ TEST_P(ParkedAttenuationGeneration,
     ASSERT_EQ(VN_OK, Vn_Update());
     ASSERT_EQ(harken::VoiceLedger::HandleKind::Live,
               engine->ledger.Classify(original).kind);
-    ASSERT_EQ(VN_OK, Vn_Update());
     harken::Spatializer::SpatialVoiceState restored{};
     ASSERT_TRUE(engine->spatial.CaptureVoice(RenderHandle(engine, original),
                                              &restored));
@@ -1737,7 +1738,7 @@ TEST(Park, ParkedWidthReachesReturnedVoiceParameterState) {
 TEST(Park, ReturnCensusCountsEveryApiDirectTargetAtomically) {
     VnConfig config = ParkConfig(/*maxVoices=*/1,
                                  /*maxParkedVoices=*/1);
-    config.commandQueueDepth = 8;
+    config.commandQueueDepth = 16;
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -1759,25 +1760,26 @@ TEST(Park, ReturnCensusCountsEveryApiDirectTargetAtomically) {
     ASSERT_EQ(VN_OK,
               Vn_SetVoicePosition(handle, Vec3(1.0f, 0.0f, 0.0f)));
 
-    while (engine->commands.FreeSlots() > 3) {
+    constexpr std::uint32_t demand = 4u + harken::kSpatialDrivenTargetsPerVoice;
+    while (engine->commands.FreeSlots() > demand - 1) {
         ASSERT_EQ(VN_OK, Vn_SetBusVolume(VN_BUS_MASTER, -3.0f, 0));
     }
-    ASSERT_EQ(engine->commands.FreeSlots(), 3u);
+    ASSERT_EQ(engine->commands.FreeSlots(), demand - 1);
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_EQ(harken::VoiceLedger::HandleKind::Parked,
               engine->ledger.Classify(handle).kind);
-    EXPECT_EQ(engine->commands.FreeSlots(), 3u);
+    EXPECT_EQ(engine->commands.FreeSlots(), demand - 1);
 
     engine->nullBackend.Pump(1);
-    while (engine->commands.FreeSlots() > 4) {
+    while (engine->commands.FreeSlots() > demand) {
         ASSERT_EQ(VN_OK, Vn_SetBusVolume(VN_BUS_MASTER, -3.0f, 0));
     }
     const std::uint32_t exactRoom = engine->commands.FreeSlots();
-    ASSERT_EQ(exactRoom, 4u);
+    ASSERT_EQ(exactRoom, demand);
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_EQ(harken::VoiceLedger::HandleKind::Live,
               engine->ledger.Classify(handle).kind);
-    EXPECT_EQ(exactRoom - engine->commands.FreeSlots(), 4u);
+    EXPECT_EQ(exactRoom - engine->commands.FreeSlots(), 6u);
 }
 
 TEST(Park, SettersReachParkedVoice) {
@@ -1904,7 +1906,7 @@ TEST(Park, ParkedBypassPersistsAcrossEffectSet) {
         ASSERT_EQ(VN_OK, Vn_Update()); // returns, no effect installed
         harkentest::PumpAndCapture(engine, 1, noEffect); // first block
     }
-    HARKENTEST_ASSERT_NON_SILENT(noEffect.left);
+    HARKENTEST_ASSERT_NON_SILENT(noEffect.right);
     ASSERT_EQ(noEffect.left.size(), withBypassedEffect.left.size());
     for (std::size_t i = 0; i < noEffect.left.size(); ++i) {
         EXPECT_FLOAT_EQ(noEffect.left[i], withBypassedEffect.left[i])

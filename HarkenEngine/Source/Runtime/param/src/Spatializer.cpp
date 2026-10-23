@@ -641,117 +641,118 @@ VnResult Spatializer::BindVoice(VnVoiceHandle handle,
 
 void Spatializer::Evaluate(ParamSystem& params, const EmitterTable& emitters) {
     for (VoiceMirror& mirror : m_mirrors) {
-        if (mirror.handle == 0) {
-            continue;
+        if (mirror.handle != 0) {
+            (void)EvaluateVoice(mirror.handle, params, emitters);
         }
-        // Emitter fan-out: an attached voice takes its emitter's pose each
-        // tick. A destroyed emitter no longer resolves, so the voice detaches
-        // — it keeps its last emitter-derived pose (frozen) and becomes
-        // individually addressable again. Runs before the geometry below so
-        // the distance/azimuth this tick reflect the emitter's current pose.
-        if (mirror.emitterHandle != 0) {
-            float ex, ey, ez, efx, efy, efz;
-            if (emitters.Pose(mirror.emitterHandle, &ex, &ey, &ez, &efx, &efy,
-                              &efz)) {
-                mirror.posX = ex;
-                mirror.posY = ey;
-                mirror.posZ = ez;
-                mirror.fwdX = efx;
-                mirror.fwdY = efy;
-                mirror.fwdZ = efz;
-            } else {
-                mirror.emitterHandle = 0; // detached; last pose stays frozen
-            }
-        }
-        if (!mirror.spatialized) {
-            continue;
-        }
-        const bool initialEvaluation = !mirror.evaluated;
-        const float dx = mirror.posX - m_listenerX;
-        const float dy = mirror.posY - m_listenerY;
-        const float dz = mirror.posZ - m_listenerZ;
-        const float pairDistance = static_cast<float>(Length3(dx, dy, dz));
-        const float effectiveDistance =
-            EffectiveDistance(pairDistance, mirror.distanceScale);
-
-        // Azimuth pan: the projection of the emitter direction onto the
-        // listener's right axis. A coincident emitter has no direction
-        // and pans center; front and back project identically (stereo
-        // output does not distinguish them).
-        float pan = 0.0f;
-        if (pairDistance > 0.0f) {
-            pan = (dx * m_rightX + dy * m_rightY + dz * m_rightZ) /
-                  pairDistance;
-            pan = (pan < -1.0f) ? -1.0f : (pan > 1.0f) ? 1.0f : pan;
-        }
-        params.SetAttenuationSlot(mirror.handle, kTargetVoicePan, pan);
-
-        const AttenuationProfile* resolved = ResolveProfile(mirror);
-        if (resolved == nullptr) {
-            // No profile bound: azimuth pan is geometry, but distance
-            // attenuation is policy — none applies implicitly.
-            mirror.evaluated = true;
-            continue;
-        }
-        const AttenuationProfile& profile = *resolved;
-
-        float volumeDb =
-            profile.volumeOverride
-                ? AmplitudeToDb(profile.volumeCurve.Eval(effectiveDistance))
-                : RolloffGainToDb(RolloffGain(profile.rolloff, effectiveDistance,
-                                              profile.minDistance,
-                                              profile.maxDistance));
-        float lowpassHz =
-            profile.lowpassOverride
-                ? profile.lowpassCurve.Eval(effectiveDistance)
-                : AirAbsorptionHz(effectiveDistance, profile.minDistance,
-                                  profile.maxDistance, profile.airNearHz,
-                                  profile.airFarHz);
-        const float width =
-            profile.widthOverride
-                ? profile.widthCurve.Eval(effectiveDistance)
-                : 0.0f;
-        const float shelfDb =
-            NearFieldShelfDb(effectiveDistance, profile.proximityRadius,
-                             profile.proximityMaxBoostDb);
-
-        if (profile.coneEnabled) {
-            // Angle between the emitter's forward axis and the direction
-            // toward the listener; a coincident listener reads on-axis.
-            float thetaDeg = 0.0f;
-            if (pairDistance > 0.0f) {
-                float cosTheta = (-dx * mirror.fwdX - dy * mirror.fwdY -
-                                  dz * mirror.fwdZ) /
-                                  pairDistance;
-                cosTheta = (cosTheta < -1.0f)
-                               ? -1.0f
-                               : (cosTheta > 1.0f) ? 1.0f : cosTheta;
-                thetaDeg = static_cast<float>(
-                    std::acos(static_cast<double>(cosTheta)) * 180.0 / kPi);
-            }
-            volumeDb += ConeGainDb(thetaDeg, profile.coneInnerDeg,
-                                   profile.coneOuterDeg,
-                                   profile.coneOuterGainDb);
-            const float coneHz = ConeLowpassHz(thetaDeg,
-                                               profile.coneInnerDeg,
-                                               profile.coneOuterDeg,
-                                               profile.coneOuterLowpassHz);
-            lowpassHz = (coneHz < lowpassHz) ? coneHz : lowpassHz;
-        }
-
-        const std::uint32_t volumeRampMs =
-            initialEvaluation ? 0u : kSpatialVolumeRampMs;
-        params.SetAttenuationSlot(mirror.handle, kTargetVoiceVolume, volumeDb,
-                                  volumeRampMs);
-        params.SetAttenuationSlot(mirror.handle, kTargetVoiceLowpassCutoff,
-                                  lowpassHz);
-        params.SetAttenuationSlot(mirror.handle, kTargetVoiceWidth, width);
-        params.ApplyProximityFrequency(mirror.handle,
-                                       profile.proximityFrequency);
-        params.SetAttenuationSlot(mirror.handle, kTargetVoiceLowShelfGainDb,
-                                  shelfDb);
-        mirror.evaluated = true;
     }
+}
+
+VnResult Spatializer::EvaluateVoice(VnVoiceHandle handle, ParamSystem& params,
+                                    const EmitterTable& emitters, std::uint32_t* targetMask) {
+    if (targetMask != nullptr)
+        *targetMask = 0;
+    VoiceMirror* found = MirrorFor(handle);
+    if (found == nullptr)
+        return VN_INVALID_ARG;
+    VoiceMirror& mirror = *found;
+    // Emitter fan-out: an attached voice takes its emitter's pose each
+    // tick. A destroyed emitter no longer resolves, so the voice detaches
+    // — it keeps its last emitter-derived pose (frozen) and becomes
+    // individually addressable again. Runs before the geometry below so
+    // the distance/azimuth this tick reflect the emitter's current pose.
+    if (mirror.emitterHandle != 0) {
+        float ex, ey, ez, efx, efy, efz;
+        if (emitters.Pose(mirror.emitterHandle, &ex, &ey, &ez, &efx, &efy, &efz)) {
+            mirror.posX = ex;
+            mirror.posY = ey;
+            mirror.posZ = ez;
+            mirror.fwdX = efx;
+            mirror.fwdY = efy;
+            mirror.fwdZ = efz;
+        } else {
+            mirror.emitterHandle = 0; // detached; last pose stays frozen
+        }
+    }
+    if (!mirror.spatialized) {
+        return VN_OK;
+    }
+    const bool initialEvaluation = !mirror.evaluated;
+    const float dx = mirror.posX - m_listenerX;
+    const float dy = mirror.posY - m_listenerY;
+    const float dz = mirror.posZ - m_listenerZ;
+    const float pairDistance = static_cast<float>(Length3(dx, dy, dz));
+    const float effectiveDistance = EffectiveDistance(pairDistance, mirror.distanceScale);
+
+    // Azimuth pan: the projection of the emitter direction onto the
+    // listener's right axis. A coincident emitter has no direction
+    // and pans center; front and back project identically (stereo
+    // output does not distinguish them).
+    float pan = 0.0f;
+    if (pairDistance > 0.0f) {
+        pan = (dx * m_rightX + dy * m_rightY + dz * m_rightZ) / pairDistance;
+        pan = (pan < -1.0f) ? -1.0f : (pan > 1.0f) ? 1.0f : pan;
+    }
+    params.SetAttenuationSlot(mirror.handle, kTargetVoicePan, pan);
+    if (targetMask != nullptr)
+        *targetMask = 1u << kTargetVoicePan;
+
+    const AttenuationProfile* resolved = ResolveProfile(mirror);
+    if (resolved == nullptr) {
+        if (mirror.profileIndex >= 0 || mirror.retainIndex >= 0) {
+            return VN_UNKNOWN_ID;
+        }
+        // No profile bound: azimuth pan is geometry, but distance
+        // attenuation is policy — none applies implicitly.
+        // Direction-only onset must not consume the first profile snap:
+        // a following raw Bind still takes effect at the first Update.
+        mirror.evaluated = mirror.evaluated || targetMask == nullptr;
+        return VN_OK;
+    }
+    const AttenuationProfile& profile = *resolved;
+
+    float volumeDb = profile.volumeOverride
+                         ? AmplitudeToDb(profile.volumeCurve.Eval(effectiveDistance))
+                         : RolloffGainToDb(RolloffGain(profile.rolloff, effectiveDistance,
+                                                       profile.minDistance, profile.maxDistance));
+    float lowpassHz =
+        profile.lowpassOverride
+            ? profile.lowpassCurve.Eval(effectiveDistance)
+            : AirAbsorptionHz(effectiveDistance, profile.minDistance, profile.maxDistance,
+                              profile.airNearHz, profile.airFarHz);
+    const float width = profile.widthOverride ? profile.widthCurve.Eval(effectiveDistance) : 0.0f;
+    const float shelfDb =
+        NearFieldShelfDb(effectiveDistance, profile.proximityRadius, profile.proximityMaxBoostDb);
+
+    if (profile.coneEnabled) {
+        // Angle between the emitter's forward axis and the direction
+        // toward the listener; a coincident listener reads on-axis.
+        float thetaDeg = 0.0f;
+        if (pairDistance > 0.0f) {
+            float cosTheta =
+                (-dx * mirror.fwdX - dy * mirror.fwdY - dz * mirror.fwdZ) / pairDistance;
+            cosTheta = (cosTheta < -1.0f) ? -1.0f : (cosTheta > 1.0f) ? 1.0f : cosTheta;
+            thetaDeg = static_cast<float>(std::acos(static_cast<double>(cosTheta)) * 180.0 / kPi);
+        }
+        volumeDb += ConeGainDb(thetaDeg, profile.coneInnerDeg, profile.coneOuterDeg,
+                               profile.coneOuterGainDb);
+        const float coneHz = ConeLowpassHz(thetaDeg, profile.coneInnerDeg, profile.coneOuterDeg,
+                                           profile.coneOuterLowpassHz);
+        lowpassHz = (coneHz < lowpassHz) ? coneHz : lowpassHz;
+    }
+
+    const std::uint32_t volumeRampMs = initialEvaluation ? 0u : kSpatialVolumeRampMs;
+    params.SetAttenuationSlot(mirror.handle, kTargetVoiceVolume, volumeDb, volumeRampMs);
+    params.SetAttenuationSlot(mirror.handle, kTargetVoiceLowpassCutoff, lowpassHz);
+    params.SetAttenuationSlot(mirror.handle, kTargetVoiceWidth, width);
+    params.ApplyProximityFrequency(mirror.handle, profile.proximityFrequency);
+    params.SetAttenuationSlot(mirror.handle, kTargetVoiceLowShelfGainDb, shelfDb);
+    mirror.evaluated = true;
+    if (targetMask != nullptr) {
+        *targetMask |= (1u << kTargetVoiceVolume) | (1u << kTargetVoiceLowpassCutoff) |
+                       (1u << kTargetVoiceWidth) | (1u << kTargetVoiceLowShelfGainDb) |
+                       (1u << kTargetVoiceLowShelfFreqHz);
+    }
+    return VN_OK;
 }
 
 bool Spatializer::HasProfile(VnAttenuationId id, std::uint64_t generation) const {
