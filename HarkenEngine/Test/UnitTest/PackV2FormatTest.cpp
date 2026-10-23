@@ -1118,8 +1118,8 @@ TEST(PackV2Format, RefusesWrongMagic) {
 }
 
 TEST(PackV2Format, RefusesOtherSchemaVersions) {
-    for (const auto version : {kPackFormatVersion2 - 1,
-                               kPackFormatVersion2 + 1}) {
+    for (const auto version : {kPackFormatVersion3 - 1,
+                               kPackFormatVersion4 + 1}) {
         std::vector<std::uint8_t> bytes = MinimalContentBytes();
         StoreLE32(bytes.data() + 4, version);
         ExpectRefused(bytes);

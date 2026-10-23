@@ -419,7 +419,7 @@ TEST(Pack, LoadArgumentValidation) {
     EXPECT_EQ(VN_BAD_PACK, LoadPack(missing, &pack));
 }
 
-TEST(Pack, HeaderDispatchRequiresCurrentSchemaAndKnownLayout) {
+TEST(Pack, HeaderDispatchRequiresSupportedSchemaAndKnownLayout) {
     EngineSession session(MakeNullConfig(0, kBlockFrames));
     ASSERT_EQ(VN_OK, session.InitResult());
 
@@ -431,8 +431,8 @@ TEST(Pack, HeaderDispatchRequiresCurrentSchemaAndKnownLayout) {
     const auto path = TempPath("pack_header_dispatch.pack");
 
     for (const auto& valid : layouts) {
-        for (const auto version : {HARKEN_PACK_SCHEMA_VERSION - 1,
-                                   HARKEN_PACK_SCHEMA_VERSION + 1}) {
+        for (const auto version : {harken::kPackFormatVersion3 - 1,
+                                   harken::kPackFormatVersion4 + 1}) {
             auto bytes = valid;
             harken::StoreLE32(bytes.data() + 4, version);
             WriteFileBytes(path, bytes);
