@@ -1,6 +1,9 @@
 /*******************************************************************************
  ** Qt Advanced Docking System
  ** Copyright (C) 2017 Uwe Kindler
+ ** Modified for Harken Studio by 2026-10-13 (source import f54336505):
+ ** keep native title-bar drags from docking in tab-only mode.
+ ** Modification notice added on 2026-10-23.
  **
  ** This library is free software; you can redistribute it and/or
  ** modify it under the terms of the GNU Lesser General Public
