@@ -63,7 +63,8 @@ namespace Harken
         /// audio running; the host may retry without creating another session.
         /// </summary>
         public static VnResult StartRemoteCommunication(
-            string applicationName, string bindAddress = "0.0.0.0", int port = 0,
+            // string applicationName, string bindAddress = "0.0.0.0", int port = 0,
+            string applicationName, string bindAddress = "127.0.0.1", int port = 0,
             bool enableDiscovery = true, int discoveryPort = 0, string projectName = null)
             => RemoteCommunication.Start(applicationName, bindAddress, port,
                 enableDiscovery, discoveryPort, projectName);

@@ -140,7 +140,11 @@ Editor builds always start communication with audio, including PIE, regardless
 of this build setting. The shared Engine runs the service inside the Editor or
 game process; Release builds support the same communication feature.
 
-The default bind address is `0.0.0.0`. TCP port `0` requests an available port
+The bind address is fixed to `127.0.0.1` and is read-only in Project Settings.
+TCP connections and UDP discovery are restricted to this machine; LAN
+communication is unavailable. The native service rejects other configured
+addresses with `VN_INVALID_ARG`; existing settings are not migrated.
+TCP port `0` requests an available port
 for each process. Discovery is enabled by default when communication is enabled;
 discovery port `0` selects UDP `37840`. Studio discovery and
 `QueryRemoteCommunication` report the actual TCP endpoint. An empty application
@@ -162,9 +166,9 @@ game thread. Direct C API `Vn_RemoteStart`, `Vn_RemoteStop`, and
 is initialized. Project network changes apply at the next audio session or
 failed-start retry; retrying an active service returns `VN_IN_USE`.
 
-This transport is for trusted local networks; peer authentication and transport
-encryption are not implemented. Bind to `127.0.0.1` for local-only access, or
-disable the service when remote access is unnecessary.
+This transport is restricted to the local machine; peer authentication and
+transport encryption are not implemented. Disable the service when communication
+is unnecessary.
 
 ## Repository validation
 

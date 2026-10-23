@@ -204,6 +204,16 @@ TEST(RuntimeRemote, WrongThreadRejectedAndInvalidConfigDoesNotAffectAudio) {
     EXPECT_EQ(VN_OK, Vn_Update());
     EXPECT_EQ(VN_OK, Vn_RemoteStop());
     config.tcpPort = 0;
+    for (const auto* address : {"0.0.0.0", "192.168.1.20", "10.0.0.20", "::", "game.local"}) {
+        SCOPED_TRACE(address);
+        config.bindAddress = address;
+        EXPECT_EQ(VN_INVALID_ARG, Vn_RemoteStart(&config));
+        EXPECT_EQ(0u, Status().tcpPort);
+        EXPECT_EQ(0u, Status().discoveryPort);
+        EXPECT_EQ(VN_OK, Vn_Update());
+        EXPECT_EQ(VN_OK, Vn_RemoteStop());
+    }
+    config.bindAddress = "127.0.0.1";
     VnResult otherResult = VN_OK;
     std::thread other([&] { otherResult = Vn_RemoteStart(&config); });
     other.join();
@@ -1122,7 +1132,7 @@ TEST(RuntimeRemote, MulticastDiscoveryReturnsAuthoritativeEndpointIdentity) {
     harkentest::EngineSession session(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto config = RemoteConfig();
-    config.bindAddress = "0.0.0.0";
+    config.bindAddress = nullptr;
     config.flags = VN_REMOTE_DISCOVERY_ENABLED;
     ASSERT_EQ(VN_OK, Vn_RemoteStart(&config));
     const auto running = Status();
@@ -1176,7 +1186,8 @@ TEST(RuntimeRemote, MulticastDiscoveryReturnsAuthoritativeEndpointIdentity) {
     EXPECT_EQ(running.instanceId, identity.instanceId);
     EXPECT_EQ(running.tcpPort, identity.tcpPort);
     EXPECT_EQ(0u, identity.sessionId);
-    EXPECT_EQ("0.0.0.0", identity.bindAddress);
+    EXPECT_EQ("127.0.0.1", identity.bindAddress);
+    EXPECT_STREQ("127.0.0.1", running.bindAddress);
 }
 
 TEST(RuntimeRemote, SecondControllerReceivesBusyWithoutDisturbingFirst) {
