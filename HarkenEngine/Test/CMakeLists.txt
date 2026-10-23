@@ -805,6 +805,7 @@ target_include_directories(harken_resample_benchmark PRIVATE
 # the bounded test runner; it is deliberately not registered with ctest.
 add_executable(harken_runtime_capacity_benchmark
     Benchmark/RuntimeCapacityBenchmark.cpp
+    UnitTest/AllocationProbe.cpp
 )
 target_link_libraries(harken_runtime_capacity_benchmark PRIVATE harken_core harken_buildinfo)
 if(WIN32)
