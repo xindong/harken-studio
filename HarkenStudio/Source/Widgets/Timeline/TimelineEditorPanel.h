@@ -103,6 +103,8 @@ public:
     TimeAxisTicks timeTicks() const;
     int64_t viewOriginCoordinate() const;
     int64_t editCursor() const { return editCursor_; }
+    bool isEditCursorVisible() const { return editCursorVisible_ && hasTimeline(); }
+    void setEditCursorVisible(bool visible);
     bool isCursorDragActive() const { return cursorDrag_.has_value(); }
     void beginCursorDrag(int canvasX, bool disableSnap, bool locate);
     void updateCursorDrag(int canvasX, bool disableSnap);
@@ -309,6 +311,7 @@ private:
     std::optional<LaneResizeDrag> laneResizeDrag_;
     std::optional<HeaderResizeDrag> headerResizeDrag_;
     int64_t editCursor_ = 0;
+    bool editCursorVisible_ = false;
     std::optional<CursorDrag> cursorDrag_;
     QPointer<QDialog> cursorValueEditor_;
     QTimer* cursorEdgeScroll_ = nullptr;

@@ -1013,6 +1013,21 @@ void TimelineEditorPanel::refreshVerticalRange()
     verticalZoomOutButton_->setEnabled(trackVerticalZoom_ > 1.0);
 }
 
+void TimelineEditorPanel::setEditCursorVisible(bool visible)
+{
+    if (editCursorVisible_ == visible)
+        return;
+    editCursorVisible_ = visible;
+    if (!visible) {
+        endCursorDrag(true);
+        if (cursorValueEditor_)
+            cursorValueEditor_->reject();
+        if (auto* menu = findChild<QMenu*>(QStringLiteral("timelineCursorContextMenu")))
+            menu->close();
+    }
+    refreshTimelinePaint();
+}
+
 void TimelineEditorPanel::setEditCursor(int64_t coordinate, bool disableSnap)
 {
     bool ok = true;
@@ -1025,7 +1040,7 @@ void TimelineEditorPanel::setEditCursor(int64_t coordinate, bool disableSnap)
 
 void TimelineEditorPanel::beginCursorDrag(int canvasX, bool disableSnap, bool locate)
 {
-    if (!hasTimeline())
+    if (!isEditCursorVisible())
         return;
     cursorEdgeScroll_->stop();
     const int offset = locate ? 0 : canvasX - viewportPixelAtCoordinate(0, editCursor_);
@@ -1097,7 +1112,7 @@ void TimelineEditorPanel::setPlayhead(std::optional<int64_t> coordinate)
 
 void TimelineEditorPanel::editCursorValue()
 {
-    if (!hasTimeline())
+    if (!isEditCursorVisible())
         return;
     endCursorDrag(true);
     if (cursorValueEditor_)
@@ -1162,7 +1177,7 @@ void TimelineEditorPanel::editCursorValue()
 
 void TimelineEditorPanel::showCursorContextMenu(const QPoint& position)
 {
-    if (!hasTimeline())
+    if (!isEditCursorVisible())
         return;
     endCursorDrag(true);
     if (cursorValueEditor_)

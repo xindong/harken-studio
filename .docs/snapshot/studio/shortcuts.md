@@ -117,8 +117,8 @@ Edit 菜单补充核对：2026-10-22，当前工作区。
 | 控件 / 场景 | 固定键 | 当前行为 | 定位 |
 |---|---|---|---|
 | TransitionEditorWidget | `Qt::Key_Delete` | 有所选显示行时调用 `removeSelectedRule()`；默认规则等删除限制仍由业务校验决定。修改 `edit.delete` 不会修改此键 | [TransitionEditorWidget.cpp](../../../../HarkenStudio/Source/Widgets/TransitionEditor/TransitionEditorWidget.cpp) / `keyPressEvent()` |
-| TimelineCanvas | `Qt::Key_Home` | 将编辑游标设为 `viewOriginCoordinate()` | [TimelineCanvas.cpp](../../../../HarkenStudio/Source/Widgets/Timeline/TimelineCanvas.cpp) / `keyPressEvent()` |
-| TimelineCanvas | `Qt::Key_End` | 将编辑游标设为所有 lane 中最大的 `clipStart + clipDuration`，下限为 `viewOriginCoordinate()`；不是播放头跳转或 nominal span 末尾 | 同上 |
+| TimelineCanvas | `Qt::Key_Home` | 编辑游标可见时，将其设为 `viewOriginCoordinate()`；当前 Track / Piece 默认隐藏游标，此入口不启用 | [TimelineCanvas.cpp](../../../../HarkenStudio/Source/Widgets/Timeline/TimelineCanvas.cpp) / `keyPressEvent()` |
+| TimelineCanvas | `Qt::Key_End` | 编辑游标可见时，将其设为所有 lane 中最大的 `clipStart + clipDuration`，下限为 `viewOriginCoordinate()`；当前 Track / Piece 默认隐藏游标，此入口不启用 | 同上 |
 
 这三项直接比较 `event->key()`，未附加修饰键相等检查；表中键名表示 Qt 键码，不承诺带修饰键时一定能到达该处理函数。
 

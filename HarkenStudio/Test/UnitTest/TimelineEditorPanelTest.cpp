@@ -1182,6 +1182,7 @@ TEST_F(TimelineEditorPanelTest, MarkerRenameKeepsMenuEditsUntilCommitOrCancel)
 TEST_F(TimelineEditorPanelTest, RulerGestureMovesCursorWithoutEditingHiddenMarker)
 {
     VNX::TimelineEditorPanel panel;
+    panel.setEditCursorVisible(true);
     panel.resize(1200, 420);
     panel.bindItem(piece_);
     panel.show();
@@ -1730,6 +1731,7 @@ TEST_P(TimelineTrackHostTest, CursorReadoutPrecisionFollowsZoomWithoutChangingPo
 TEST_P(TimelineTrackHostTest, TrackHighZoomKeepsLongTimelineGeometryCursorAndCachedViewportPrecise)
 {
     VNX::TimelineEditorPanel panel;
+    panel.setEditCursorVisible(true);
     panel.resize(1000, 420);
     panel.bindItem(track_);
     panel.show();
@@ -1782,6 +1784,7 @@ TEST_P(TimelineTrackHostTest, TrackMicrosecondViewportStaysPreciseAcrossTheSigne
     constexpr int64_t minimum = std::numeric_limits<int64_t>::min();
     constexpr int64_t maximum = std::numeric_limits<int64_t>::max();
     VNX::TimelineEditorPanel panel;
+    panel.setEditCursorVisible(true);
     panel.resize(1600, 420);
     panel.bindItem(track_);
     panel.show();
@@ -1938,6 +1941,7 @@ TEST_F(TimelineEditorPanelTest, TrackBindingSelectsOwningPieceAndPreservesItsVie
 TEST_P(TimelineTrackHostTest, RulerAndHandlePositionCursorWithoutPanning)
 {
     VNX::TimelineEditorPanel panel;
+    panel.setEditCursorVisible(true);
     panel.resize(900, 360);
     panel.move(100, 100);
     panel.bindItem(track_);
@@ -2029,6 +2033,7 @@ TEST_P(TimelineTrackHostTest, RulerAndHandlePositionCursorWithoutPanning)
 TEST_P(TimelineTrackHostTest, TrackCursorHandleAndLineSupportExactValueEntry)
 {
     VNX::TimelineEditorPanel panel;
+    panel.setEditCursorVisible(true);
     panel.resize(900, 360);
     panel.move(100, 100);
     panel.bindItem(track_);
@@ -2106,6 +2111,7 @@ TEST_P(TimelineTrackHostTest, TrackCursorHandleAndLineSupportExactValueEntry)
 TEST_P(TimelineTrackHostTest, CursorValueInputDiscardsStaleHiddenAndReboundEdits)
 {
     VNX::TimelineEditorPanel panel;
+    panel.setEditCursorVisible(true);
     panel.resize(900, 360);
     panel.bindItem(track_);
     panel.show();
@@ -2146,6 +2152,7 @@ TEST_P(TimelineTrackHostTest, CursorValueInputDiscardsStaleHiddenAndReboundEdits
 TEST_P(TimelineTrackHostTest, TrackCursorLineDragsAcrossCanvasAndTakesPriorityOverClips)
 {
     VNX::TimelineEditorPanel panel;
+    panel.setEditCursorVisible(true);
     panel.resize(900, 360);
     panel.bindItem(track_);
     panel.show();
@@ -2225,6 +2232,7 @@ TEST_P(TimelineTrackHostTest, TrackCursorLineDragsAcrossCanvasAndTakesPriorityOv
 TEST_P(TimelineTrackHostTest, TrackCursorHandleAndLineScrollBeyondViewportAndStopAtTrackBounds)
 {
     VNX::TimelineEditorPanel panel;
+    panel.setEditCursorVisible(true);
     panel.resize(900, 360);
     panel.bindItem(track_);
     panel.show();
@@ -2341,6 +2349,7 @@ TEST_P(TimelineTrackHostTest, TrackCursorDragEndsBeforePanelDestruction)
 {
     for (const bool handle : {false, true}) {
         auto panel = std::make_unique<VNX::TimelineEditorPanel>();
+        panel->setEditCursorVisible(true);
         panel->resize(900, 360);
         panel->bindItem(track_);
         panel->show();
@@ -3110,6 +3119,7 @@ TEST_F(TimelineEditorPanelTest, HeaderResizeAndCursorDragRemainIndependent)
 {
     ASSERT_TRUE(VNX::ProjectManager::instance().moveItem(track_, piece_));
     VNX::TimelineEditorPanel panel;
+    panel.setEditCursorVisible(true);
     panel.resize(1400, 420);
     panel.bindItem(piece_);
     panel.show();
@@ -3193,6 +3203,7 @@ TEST_F(TimelineEditorPanelTest, HeaderResizeAndCursorDragRemainIndependent)
 TEST_P(TimelineTrackHostTest, RulerAndCanvasKeepContinuousCursorAndSurfaceEdges)
 {
     VNX::TimelineEditorPanel panel;
+    panel.setEditCursorVisible(true);
     panel.setStyleSheet(VNX::QtControlSkin::current().applicationStyleSheet());
     panel.resize(900, 360);
     panel.bindItem(piece_);

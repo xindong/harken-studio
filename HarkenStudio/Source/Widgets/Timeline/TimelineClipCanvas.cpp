@@ -270,11 +270,13 @@ QMenu* TimelineMarkerRuler::createContextMenu(const QPoint& localPos)
         return menu;
     }
     populateCreationMenu(menu, coordinateAtWidgetX(localPos.x()));
-    menu->addSeparator();
-    QAction* moveCursor = menu->addAction(tr("Move Cursor Here"));
-    connect(moveCursor, &QAction::triggered, this, [this, localPos] {
-        panel_->setEditCursor(coordinateAtWidgetX(localPos.x()));
-    });
+    if (panel_->isEditCursorVisible()) {
+        menu->addSeparator();
+        QAction* moveCursor = menu->addAction(tr("Move Cursor Here"));
+        connect(moveCursor, &QAction::triggered, this, [this, localPos] {
+            panel_->setEditCursor(coordinateAtWidgetX(localPos.x()));
+        });
+    }
     return menu;
 }
 
