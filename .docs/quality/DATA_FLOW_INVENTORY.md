@@ -92,11 +92,11 @@ Hub 和 Studio 更新下载失败后会清除内存中的清单缓存标记，�
 
 ## DF-5：Remote 游戏联调
 
-2026-09-14 新增的 `HarkenEngine/Source/Runtime/remote/` 随正式 Engine 静态库和共享库交付，Debug、RelWithDebInfo 和 Release 均可用。Unity/Unreal SDK 默认随音频初始化启动通信；Unity `Project Settings > Harken`、Unreal `Project Settings > Plugins > Harken` 中的 `Enable Communication in Builds` 默认开启，关闭后打包游戏不启动通信，编辑器内运行不受此开关影响。加载 Engine 的进程监听 IPv4 TCP，并可按配置接收 UDP 发现请求，无需独立 host 程序。原生 C ABI 由集成方显式管理通信生命周期。
+2026-09-14 新增的 `HarkenEngine/Source/Runtime/remote/` 随正式 Engine 静态库和共享库交付，Debug、RelWithDebInfo 和 Release 均可用。Unity SDK 默认随音频初始化启动通信；Unity `Project Settings > Harken` 中的 `Enable Communication in Builds` 默认开启，关闭后打包游戏不启动通信，编辑器内运行不受此开关影响。加载 Engine 的进程监听 IPv4 TCP，并可按配置接收 UDP 发现请求，无需独立 host 程序。原生 C ABI 由集成方显式管理通信生命周期。
 
-- Unity 项目配置保存为游戏项目内的 `Assets/Harken/Resources/HarkenProjectSettings.asset`，通过 Unity Resources 随包交付；Unreal 通过项目 `DefaultGame.ini` 随包交付。两者均在本地保存，不上传配置。
+- Unity 项目配置保存为游戏项目内的 `Assets/Harken/Resources/HarkenProjectSettings.asset`，通过 Unity Resources 随包交付。配置在本地保存，不上传。
 
-- 默认 TCP 端口由系统分配；Engine 的 TCP 与 UDP 监听地址均固定为 `127.0.0.1`。发现使用 UDP 端口 `37840`，只在回环接口加入组播地址 `239.255.37.84`，只向本机发现请求返回单播响应。`Vn_RemoteStart` 仅接受空地址或 `127.0.0.1`；其他显式地址（含 `0.0.0.0`）在创建套接字前返回 `VN_INVALID_ARG`，不做旧配置兼容或迁移。Unity / Unreal SDK 默认地址同步为 `127.0.0.1`，项目设置界面不允许修改绑定地址；原通配地址绑定代码以注释保留，恢复局域网能力需要修改源码并重新构建。
+- 默认 TCP 端口由系统分配；Engine 的 TCP 与 UDP 监听地址均固定为 `127.0.0.1`。发现使用 UDP 端口 `37840`，只在回环接口加入组播地址 `239.255.37.84`，只向本机发现请求返回单播响应。`Vn_RemoteStart` 仅接受空地址或 `127.0.0.1`；其他显式地址（含 `0.0.0.0`）在创建套接字前返回 `VN_INVALID_ARG`，不做旧配置兼容或迁移。Unity SDK 默认地址为 `127.0.0.1`，项目设置界面不允许修改绑定地址；原通配地址绑定代码以注释保留，恢复局域网能力需要修改源码并重新构建。
 - `HarkenStudio/Source/RuntimeBridge/RemoteConnection.h` 的编译期常量 `kLocalConnectionsOnly` 固定为 `true`，当前 Studio 无界面、配置或环境变量可开启局域网 Remote。局域网实现仅保留在源码中，恢复能力需要修改源码并重新构建。
 - `HarkenStudio/Source/RuntimeBridge/RemoteConnection.cpp` 在用户打开 Remote Connect 或刷新时仅通过回环接口发现本机实例，发现套接字绑定 `127.0.0.1`，组播 TTL 为 `0`，仅接收本机回环来源且连接地址为回环地址的目标。手动连接界面固定本机地址；连接层在建立套接字前拒绝所有非回环地址和非 `localhost` 主机名，`localhost` 直接映射到回环地址，不进行 DNS 查询。历史保存的局域网地址不用于连接。在用户连接本机目标后发送握手、运行目录和控制请求；采集由用户单独启用。
 - 发现和握手包含应用名、工程名、机器名、进程 ID、实例标识、监听端口、Engine 版本、构建 ID、平台、协议与能力。连接后的运行数据包含运行对象 ID／可用名称、音频状态、性能计数和用户请求的监控记录；本地实例地址字段在网络发送前清零。

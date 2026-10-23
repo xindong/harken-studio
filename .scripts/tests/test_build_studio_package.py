@@ -67,12 +67,11 @@ class BuildStudioPackageTest(unittest.TestCase):
     def publish_legal(self, binary_dir, legal_dir):
         names = self.module.collect_legal_texts.assemble("studio", legal_dir, "6.8.3")
         self.legal_paths = {(legal_dir / name).relative_to(self.input_dir).as_posix() for name in names}
-        for engine, name_root in (("Unity", "Harken"), ("Unreal", "Harken")):
-            for name in ("LICENSE.md", "NOTICE.md"):
-                relative = Path("HarkenSDK") / engine / name_root / name
-                destination = binary_dir / relative
-                shutil.copyfile(REPO_ROOT / relative, destination)
-                self.legal_paths.add(destination.relative_to(self.input_dir).as_posix())
+        for name in ("LICENSE.md", "NOTICE.md"):
+            relative = Path("HarkenSDK/Unity/Harken") / name
+            destination = binary_dir / relative
+            shutil.copyfile(REPO_ROOT / relative, destination)
+            self.legal_paths.add(destination.relative_to(self.input_dir).as_posix())
 
     def make_input(self, with_binary=True, sdk_version="0.2.0"):
         (self.input_dir / "data").mkdir(parents=True)
@@ -81,17 +80,10 @@ class BuildStudioPackageTest(unittest.TestCase):
         (self.input_dir / "data" / "asset.bin").write_bytes(b"payload" * 100)
         self.publish_schema(self.input_dir / "schema")
         unity = self.input_dir / "HarkenSDK" / "Unity" / "Harken"
-        unreal = self.input_dir / "HarkenSDK" / "Unreal" / "Harken"
         unity.mkdir(parents=True)
-        unreal.mkdir(parents=True)
         (self.input_dir / "HarkenSDK" / "VERSION").write_text(sdk_version + "\n", encoding="utf-8")
         (unity / "package.json").write_text(
-            json.dumps({"name": "com.harken.core", "version": "0.3.0"}),
-            encoding="utf-8",
-        )
-        (unreal / "Harken.uplugin").write_text(
-            json.dumps({"FileVersion": 3, "Version": 2,
-                        "VersionName": sdk_version}),
+            json.dumps({"name": "com.harken.core", "version": sdk_version}),
             encoding="utf-8",
         )
         self.publish_legal(self.input_dir, self.input_dir / "Legal")
@@ -137,7 +129,7 @@ class BuildStudioPackageTest(unittest.TestCase):
             for path in (self.input_dir / "schema").rglob("*")
             if path.is_file()
         }
-        self.assertEqual(summary["fileCount"], 5 + len(schema_files) + len(self.legal_paths))
+        self.assertEqual(summary["fileCount"], 4 + len(schema_files) + len(self.legal_paths))
 
         with zipfile.ZipFile(package) as archive:
             names = set(archive.namelist())
@@ -167,7 +159,6 @@ class BuildStudioPackageTest(unittest.TestCase):
                     "data/asset.bin",
                     "HarkenSDK/VERSION",
                     "HarkenSDK/Unity/Harken/package.json",
-                    "HarkenSDK/Unreal/Harken/Harken.uplugin",
                 })
             self.assertEqual(by_path["HarkenStudio.exe"]["size"], len(b"stub-binary"))
             self.assertEqual(manifest["components"], [{
@@ -175,7 +166,6 @@ class BuildStudioPackageTest(unittest.TestCase):
                 "version": "0.2.0",
                 "artifacts": {
                     "unity": "HarkenSDK/Unity/Harken",
-                    "unreal": "HarkenSDK/Unreal/Harken",
                 },
             }])
 
@@ -211,7 +201,7 @@ class BuildStudioPackageTest(unittest.TestCase):
         self.make_input()
         for relative in (
             "Legal/third-party/Qt6-THIRD-PARTY-NOTICES.txt",
-            "HarkenSDK/Unreal/Harken/LICENSE.md",
+            "HarkenSDK/Unity/Harken/LICENSE.md",
             "HarkenSDK/Unity/Harken/NOTICE.md",
         ):
             with self.subTest(path=relative):
@@ -225,18 +215,17 @@ class BuildStudioPackageTest(unittest.TestCase):
 
     def test_mismatched_sdk_versions_are_rejected(self):
         self.make_input()
-        plugin = self.input_dir / "HarkenSDK/Unreal" / "Harken" / "Harken.uplugin"
+        plugin = self.input_dir / "HarkenSDK/Unity" / "Harken" / "package.json"
         plugin.write_text(
-            json.dumps({"FileVersion": 3, "Version": 1,
-                        "VersionName": "0.1.0"}),
+            json.dumps({"name": "com.harken.core", "version": "0.1.0"}),
             encoding="utf-8",
         )
         with self.assertRaises(SystemExit):
             self.run_build()
 
-    def test_missing_unreal_sdk_is_rejected(self):
+    def test_missing_unity_sdk_is_rejected(self):
         self.make_input()
-        (self.input_dir / "HarkenSDK/Unreal" / "Harken" / "Harken.uplugin").unlink()
+        (self.input_dir / "HarkenSDK/Unity" / "Harken" / "package.json").unlink()
         with self.assertRaises(SystemExit):
             self.run_build()
 
@@ -246,14 +235,10 @@ class BuildStudioPackageTest(unittest.TestCase):
         (app / "HarkenStudio").write_bytes(b"stub-binary")
         self.publish_schema(app / "schema")
         unity = app / "HarkenSDK" / "Unity" / "Harken"
-        unreal = app / "HarkenSDK" / "Unreal" / "Harken"
         unity.mkdir(parents=True)
-        unreal.mkdir(parents=True)
         (app / "HarkenSDK" / "VERSION").write_text("0.2.0\n", encoding="utf-8")
         (unity / "package.json").write_text(
-            json.dumps({"version": "0.3.0"}), encoding="utf-8")
-        (unreal / "Harken.uplugin").write_text(
-            json.dumps({"VersionName": "0.2.0"}), encoding="utf-8")
+            json.dumps({"version": "0.2.0"}), encoding="utf-8")
         self.publish_legal(app, app.parent / "Resources" / "Legal")
         summary = self.run_build()
         with zipfile.ZipFile(summary["package"]) as archive:
@@ -262,10 +247,6 @@ class BuildStudioPackageTest(unittest.TestCase):
             self.assertEqual(
                 artifacts["unity"],
                 "HarkenStudio.app/Contents/MacOS/HarkenSDK/Unity/Harken",
-            )
-            self.assertEqual(
-                artifacts["unreal"],
-                "HarkenStudio.app/Contents/MacOS/HarkenSDK/Unreal/Harken",
             )
 
     def test_missing_binary_is_rejected(self):

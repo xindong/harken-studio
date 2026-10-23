@@ -27,8 +27,8 @@ VnResult remoteResult = Vn_RemoteStart(&remote);
 Call this only after successful Engine initialization. A failed start leaves
 audio running. Report `remoteResult` separately, correct the configuration or
 port conflict, and retry. Explicitly stop an existing service before changing
-its configuration. The Unity and Unreal integrations perform this startup
-automatically. Their Harken project settings pages expose `Enable Communication
+its configuration. The Unity integration performs this startup
+automatically. Its Harken project settings page exposes `Enable Communication
 in Builds`, enabled by default. It controls packaged games; Editor sessions
 remain enabled. SDK retries honor that policy and report communication errors
 separately from audio initialization. Raw C ABI users own the lifecycle explicitly.
@@ -43,8 +43,8 @@ separately from audio initialization. Raw C ABI users own the lifecycle explicit
 | `maxCommandsPerUpdate` | `32` | Maximum queued requests dispatched per update |
 | `requestTimeoutMs` | `30000` | Peer inactivity, incomplete-frame and stalled-send timeout |
 
-Unity/Unreal enable communication and discovery by default, restricted to this
-machine. Their address setting is not editable in the project settings UI.
+Unity enables communication and discovery by default, restricted to this
+machine. Its address setting is not editable in the project settings UI.
 Listening, a connected Studio, and active capture are separate states. With
 communication off there is no communication socket or worker. Monitor capture
 buffers and its worker are initialized only when a consumer requests them.

@@ -165,37 +165,29 @@ def sdk_components(input_dir: Path) -> list[dict]:
         (
             input_dir / "HarkenSDK" / "VERSION",
             input_dir / "HarkenSDK" / "Unity" / "Harken" / "package.json",
-            input_dir / "HarkenSDK" / "Unreal" / "Harken" / "Harken.uplugin",
             "HarkenSDK/Unity/Harken",
-            "HarkenSDK/Unreal/Harken",
         ),
         (
             input_dir / "HarkenStudio.app" / "Contents" / "MacOS" / "HarkenSDK" / "VERSION",
             input_dir / "HarkenStudio.app" / "Contents" / "MacOS" / "HarkenSDK" / "Unity" / "Harken" / "package.json",
-            input_dir / "HarkenStudio.app" / "Contents" / "MacOS" / "HarkenSDK" / "Unreal" / "Harken" / "Harken.uplugin",
             "HarkenStudio.app/Contents/MacOS/HarkenSDK/Unity/Harken",
-            "HarkenStudio.app/Contents/MacOS/HarkenSDK/Unreal/Harken",
         ),
     ]
-    matches = [layout for layout in layouts if any(path.exists() for path in layout[:3])]
+    matches = [layout for layout in layouts if any(path.exists() for path in layout[:2])]
     if len(matches) != 1:
-        raise SystemExit("error: expected one complete Unity and Unreal SDK layout")
-    version_path, unity_path, unreal_path, unity_root, unreal_root = matches[0]
-    for path in (version_path, unity_path, unreal_path):
+        raise SystemExit("error: expected one complete Unity SDK layout")
+    version_path, unity_path, unity_root = matches[0]
+    for path in (version_path, unity_path):
         if not path.is_file():
             raise SystemExit(f"error: required SDK identity is missing: {path}")
     version = version_path.read_text(encoding="utf-8").strip()
     unity_version = json.loads(unity_path.read_text(encoding="utf-8"))["version"]
-    unreal_version = json.loads(unreal_path.read_text(encoding="utf-8"))["VersionName"]
-    if not version or not unity_version or unreal_version != version:
-        raise SystemExit(
-            "error: HarkenSDK/VERSION must match the Unreal plugin and the "
-            "Harken Unity package must declare a version"
-        )
+    if not version or unity_version != version:
+        raise SystemExit("error: HarkenSDK/VERSION must match the Harken Unity package version")
     return [{
         "product": "HarkenSDK",
         "version": version,
-        "artifacts": {"unity": unity_root, "unreal": unreal_root},
+        "artifacts": {"unity": unity_root},
     }]
 
 

@@ -17,7 +17,6 @@ from pathlib import Path
 
 from tree_sitter import Language, Parser
 import tree_sitter_c_sharp
-import tree_sitter_cpp
 
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -30,13 +29,8 @@ CS_MEMBERS = {"method_declaration", "constructor_declaration", "destructor_decla
               "property_declaration", "indexer_declaration", "field_declaration",
               "event_declaration", "event_field_declaration", "operator_declaration",
               "conversion_operator_declaration", "delegate_declaration"}
-CPP_TYPES = {"class_specifier", "struct_specifier", "union_specifier", "enum_specifier"}
-CPP_HEADERS = {".h", ".hpp", ".hh", ".hxx", ".inl", ".ipp", ".inc"}
 CONDITIONALS = {"preproc_if", "preproc_ifdef", "preproc_elif", "preproc_else"}
-UE_MACROS = {"UCLASS", "USTRUCT", "UENUM", "UPROPERTY", "UFUNCTION", "UMETA",
-             "UPARAM", "GENERATED_BODY", "GENERATED_UCLASS_BODY", "UE_DEPRECATED"}
-PARSERS = {"managed": Parser(Language(tree_sitter_c_sharp.language())),
-           "unreal": Parser(Language(tree_sitter_cpp.language()))}
+PARSERS = {"managed": Parser(Language(tree_sitter_c_sharp.language()))}
 
 
 class SurfaceError(ValueError):
@@ -317,153 +311,6 @@ def _managed_surface(source, label, assembly, tree, partial_types):
     return result
 
 
-def mask_ue_macros(source: bytes):
-    """Strip only known decoration macros, preserving offsets for diagnostics."""
-    value = bytearray(source)
-    decorations = []
-    pattern = rb'\b(?:' + b'|'.join(x.encode() for x in sorted(UE_MACROS)) + rb')\s*\('
-    lexical = re.sub(rb'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'',
-                     lambda m: b' ' * len(m.group()), source, flags=re.DOTALL)
-    for match in re.finditer(pattern, lexical):
-        depth, index, quote = 1, match.end(), None
-        while index < len(source) and depth:
-            char = source[index]
-            if quote:
-                if char == 92:
-                    index += 2
-                    continue
-                if char == quote:
-                    quote = None
-            elif char in (34, 39):
-                quote = char
-            elif char == 40:
-                depth += 1
-            elif char == 41:
-                depth -= 1
-            index += 1
-        if depth:
-            raise SurfaceError("Unterminated Unreal decoration macro")
-        decorations.append((match.start(), index, source[match.start():index].decode("utf-8")))
-        for pos in range(match.start(), index):
-            if value[pos] not in (10, 13):
-                value[pos] = 32
-    for match in re.finditer(rb'\bHARKEN[A-Z_]*_API\b', lexical):
-        decorations.append((match.start(), match.end(), match.group().decode("ascii")))
-        value[match.start():match.end()] = b' ' * (match.end() - match.start())
-    return bytes(value), decorations
-
-
-def unreal_surface(source: bytes, label: str) -> dict[str, dict]:
-    masked, decorations = mask_ue_macros(source)
-    tree = parse(masked, "unreal", label)
-    root = tree.root_node
-    result, anchors = {}, []
-    # Comments are trivia when attaching prefix or trailing reflection metadata.
-    trivia = bytearray(masked)
-    for node in walk(root):
-        if node.type == "comment":
-            trivia[node.start_byte:node.end_byte] = b" " * (node.end_byte - node.start_byte)
-    consumed = set()
-
-    def metadata_for(node):
-        prefix = node.start_byte
-        while prefix and chr(trivia[prefix - 1]).isspace():
-            prefix -= 1
-        body = node.child_by_field_name("body")
-        end = body.start_byte if body else node.end_byte
-        if node.type == "enumerator":
-            while end < len(trivia) and chr(trivia[end]).isspace():
-                end += 1
-        matched = [(start, raw) for start, stop, raw in decorations
-                   if start >= prefix and stop <= end and
-                   not raw.startswith(("GENERATED_BODY(", "GENERATED_UCLASS_BODY("))]
-        consumed.update(start for start, raw in matched)
-        return [re.sub(r"\s+", " ", raw).strip() for start, raw in sorted(matched)]
-
-    def add(node, owner, kind, metadata=None):
-        declaration = signature(node, masked, is_type=kind == "type")
-        ordered = declaration_order(node, masked) if kind == "type" else []
-        declaration = ordered_signature(declaration, ordered)
-        conditions = conditional_context(node, masked)
-        declaration = conditional_signature(declaration, conditions)
-        metadata = metadata_for(node) if metadata is None else metadata
-        if metadata:
-            declaration = " ".join(metadata) + " " + declaration
-        key = f"unreal:{label}/{owner}::{declaration}"
-        anchors.append((node.start_byte, key))
-        result[key] = {
-            "language": "unreal", "owner": owner, "kind": kind,
-            "declaration": declaration, "file": label, "line": node.start_point.row + 1,
-            "ordered_members": ordered, "conditions": conditions}
-
-    def visit(node, scope="", visible=True):
-        if node.type == "template_declaration":
-            raise SurfaceError(f"New C++ template needs explicit surface support: {label}")
-        if node.type == "namespace_definition":
-            name = node.child_by_field_name("name")
-            owner = "::".join(filter(None, (scope, text(name, masked) if name else "<anonymous>")))
-            for child in node.child_by_field_name("body").named_children:
-                visit(child, owner, visible and name is not None)
-            return
-        if node.type in CPP_TYPES:
-            name = node.child_by_field_name("name")
-            if not name:
-                raise SurfaceError(f"Unnamed public C++ type in {label}")
-            owner = "::".join(filter(None, (scope, text(name, masked))))
-            metadata = metadata_for(node)
-            if visible or any(re.match(r"U(CLASS|STRUCT|ENUM)\s*\(", m) for m in metadata):
-                add(node, owner, "type", metadata)
-            body = node.child_by_field_name("body")
-            if body:
-                def members(children, states):
-                    for child in children:
-                        if child.type == "access_specifier":
-                            states = {text(child, masked) in {"public", "protected"}}
-                        elif child.type in {"preproc_if", "preproc_ifdef", "preproc_elif"}:
-                            alternate = child.child_by_field_name("alternative")
-                            branch = [c for c in child.named_children if c != alternate]
-                            left = members(branch, set(states))
-                            right = members([alternate], set(states)) if alternate else states
-                            states = left | right
-                        elif child.type == "preproc_else":
-                            states = members(child.named_children, set(states))
-                        else:
-                            visit(child, owner, visible and any(states))
-                    return states
-                members(body.named_children, {node.type != "class_specifier"})
-            return
-        if node.type in {"field_declaration", "declaration", "function_definition",
-                          "alias_declaration", "type_definition", "enumerator", "using_declaration"}:
-            nested = [c for c in node.named_children if c.type in CPP_TYPES]
-            if nested:
-                for child in nested:
-                    visit(child, scope, visible)
-            else:
-                metadata = metadata_for(node)
-                # Reflection exposes private properties/functions independently
-                # of their native C++ accessibility (including Blueprint access).
-                if visible or any(re.match(r"U(PROPERTY|FUNCTION)\s*\(", m) for m in metadata):
-                    add(node, scope, "member", metadata)
-            return
-        if node.type == "preproc_include":
-            add(node, label, "binding")
-            return
-        if node.type in {"preproc_def", "preproc_function_def"}:
-            if visible:
-                add(node, label, "macro")
-            return
-        if node.type not in {"compound_statement", "comment"}:
-            for child in node.named_children:
-                visit(child, scope, visible)
-
-    visit(root)
-    for start, stop, raw in decorations:
-        if start not in consumed and not re.match(r"GENERATED_(?:UCLASS_)?BODY\s*\(", raw):
-            raise SurfaceError(f"Unattached Unreal decoration in {label}: {raw}")
-    result.update(preprocessor_context(root, source, label, "unreal", anchors=anchors))
-    return result
-
-
 def inventory(root: Path) -> dict[str, dict]:
     result = {}
     table = load_json(root / "HarkenEngine/Source/Tooling/Remote/wire/harken_wire_table.json")
@@ -499,14 +346,6 @@ def inventory(root: Path) -> dict[str, dict]:
             result[f"assembly:{label}::{definition}"] = {
                 "language": "managed", "owner": label, "kind": "binding", "file": label}
     result.update(managed_surfaces(sources))
-    folder = root / "HarkenSDK/Unreal/Harken/Source/HarkenRuntime/Public"
-    for path in sorted(p for p in folder.rglob("*") if p.is_file()):
-        label = path.relative_to(root).as_posix()
-        if path.suffix.lower() not in CPP_HEADERS:
-            raise SurfaceError(f"Unmodelled Unreal public file needs explicit surface support: {label}")
-        result[f"source:{label}"] = {"language": "unreal", "owner": label,
-                                     "kind": "binding", "file": label}
-        result.update(unreal_surface(path.read_bytes(), label))
     return dict(sorted(result.items()))
 
 

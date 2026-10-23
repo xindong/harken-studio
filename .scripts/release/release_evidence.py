@@ -448,17 +448,13 @@ def read_runtime_receipts(root: Path, commit: str, channel: str = "stable") -> l
             raise ValueError("SDK Runtime source identity differs from the package source")
         sdk = next((parent.parent for parent in path.parents
                     if parent.name == "BuildEvidence" and parent.parent.name == "HarkenSDK"), None)
-        directories = [
-            sdk / "Unity/Harken/Legal",
-            sdk / "Unreal/Harken/Legal",
-        ] if sdk else [path.parent]
+        directory = sdk / "Unity/Harken/Legal" if sdk else path.parent
         for notice in receipt.get("notices", []):
-            for directory in directories:
-                source = directory / notice["path"]
-                if (not source.resolve().is_relative_to(directory.resolve()) or not source.is_file()
-                        or sha256(source) != notice["sha256"]):
-                    prefix = "SDK plugin Runtime" if sdk else "Runtime"
-                    raise ValueError(f"{prefix} license evidence is missing or changed")
+            source = directory / notice["path"]
+            if (not source.resolve().is_relative_to(directory.resolve()) or not source.is_file()
+                    or sha256(source) != notice["sha256"]):
+                prefix = "SDK plugin Runtime" if sdk else "Runtime"
+                raise ValueError(f"{prefix} license evidence is missing or changed")
         receipts.append(receipt)
     if not receipts:
         raise ValueError("SDK Runtime build receipts are missing")
@@ -639,20 +635,21 @@ def prepare_sdk(payload: Path, receipts_root: Path, output: Path, channel: str =
     version = (sdk / "VERSION").read_text(encoding="utf-8").strip()
     if version != (REPO_ROOT / "HarkenSDK/VERSION").read_text(encoding="utf-8").strip():
         raise ValueError("SDK version differs from the source checkout")
+    if not version or read_json(sdk / "Unity/Harken/package.json")["version"] != version:
+        raise ValueError("SDK version differs from the Unity package")
     for path in receipts_root.rglob("runtime-build.json"):
         destination = sdk / "BuildEvidence" / path.relative_to(receipts_root)
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(path, destination)
         for notice in read_json(path).get("notices", []):
             source = path.parent / notice["path"]
-            for plugin_root in (sdk / "Unity/Harken", sdk / "Unreal/Harken"):
-                target = plugin_root / "Legal" / notice["path"]
-                if target.exists():
-                    if sha256(target) != notice["sha256"]:
-                        raise ValueError("SDK Runtime builds used incompatible toolchain notices")
-                else:
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copyfile(source, target)
+            target = sdk / "Unity/Harken/Legal" / notice["path"]
+            if target.exists():
+                if sha256(target) != notice["sha256"]:
+                    raise ValueError("SDK Runtime builds used incompatible toolchain notices")
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(source, target)
     identity = {**receipts[0]["identity"], "platform": "multi-platform", "version": version,
                 "channel": channel, "gitDirty": any(receipt["identity"]["gitDirty"]
                     or receipt["sourceState"]["checkoutDirty"] for receipt in receipts)}
@@ -666,9 +663,8 @@ def prepare_sdk(payload: Path, receipts_root: Path, output: Path, channel: str =
              "cmakeVersion": sorted({receipt["cmakeVersion"] for receipt in receipts})}
     checksums = payload / "SHA256SUMS.txt"
     records = inventory(payload, checksums)
-    checksum_roots = ("HarkenSDK/Unity/Harken/Runtime/Plugins/", "HarkenSDK/Unreal/Harken/")
     checksums.write_text("".join(f"{record['sha256']}  {record['path']}\n" for record in records
-                        if "sha256" in record and record["path"].startswith(checksum_roots)
+                        if "sha256" in record and record["path"].startswith("HarkenSDK/Unity/Harken/Runtime/Plugins/")
                         and Path(record["path"]).name != "README.md"), encoding="utf-8", newline="\n")
     records.append(file_record(checksums, payload))
     records.sort(key=lambda record: record["path"])

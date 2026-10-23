@@ -158,7 +158,7 @@ jobs:
         run: |
           set -euo pipefail
           status=0
-          for required in HarkenStudio.exe packc.exe qt.conf HarkenSDK HarkenSDK/Unity/Harken HarkenSDK/Unreal/Harken Legal/NOTICE.txt; do
+          for required in HarkenStudio.exe packc.exe qt.conf HarkenSDK HarkenSDK/Unity/Harken Legal/NOTICE.txt; do
             if [ ! -e "build/bin/Release/$required" ]; then
               echo "::error::missing deployed content: build/bin/Release/$required"
               status=1
@@ -427,7 +427,6 @@ jobs:
             "$bundle/Contents/MacOS/packc" \
             "$bundle/Contents/MacOS/HarkenSDK" \
             "$bundle/Contents/MacOS/HarkenSDK/Unity/Harken" \
-            "$bundle/Contents/MacOS/HarkenSDK/Unreal/Harken" \
             "$bundle/Contents/Resources/HarkenStudio.icns" \
             "$bundle/Contents/Resources/Legal/NOTICE.txt" \
             "$bundle/Contents/Frameworks" \
