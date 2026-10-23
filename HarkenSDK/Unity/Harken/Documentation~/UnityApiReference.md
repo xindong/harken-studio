@@ -377,6 +377,12 @@ Transform and session returns the same source; an ended source cannot be used
 for another Play. `HarkenSpatialSource.IsFollowing` and `LastResult` report its
 state. `Dispose()` calls `EndFollow()`.
 
+`source.SetDistanceScale(float scale)` sets a positive finite range multiplier
+for that followed identity. It requires the original live session and a source
+that is still following; an ended source returns `VN_INVALID_ARG`, and a released
+or obsolete source returns `VN_STALE_HANDLE`. A new source starts at 1. The value
+is stored by the native emitter, with no serialized Unity copy.
+
 ### Low-level `Harken.Actions`
 
 These calls submit directly to the active native session. They do not acquire
@@ -466,6 +472,7 @@ destroy and recreate it when pooling assigns a new object identity.
 | `VnResult LastResult { get; }` | Last component operation, including transform publication. |
 | `VnResult Create()` | Create/register after a live session exists. Pose publication happens at the shared frame boundary or immediately before an SDK Post. Repeated creation of this component's current emitter returns `VN_OK`; no session returns `VN_NOT_INITIALIZED`. |
 | `VnResult Stop()` | Stop the emitter's current playback using `stopFadeMs`; no created emitter returns `VN_OK`. |
+| `VnResult SetDistanceScale(float scale)` | Set a positive finite range multiplier on this enabled component's current identity. An unavailable/obsolete identity returns `VN_STALE_HANDLE`; an active spatial publication returns `VN_IN_USE`. Destroy/recreate resets the multiplier to 1. |
 | `VnResult DestroyEmitter()` | Stop, then destroy the owned emitter. Check the result; failed cleanup retains ownership. |
 
 `ShutdownOrder` and `BeforeRuntimeShutdown()` serve owner cleanup. Do not
@@ -522,6 +529,16 @@ retain their existing ownership rules; callbacks cannot recursively pump the
 Runtime. Invalid listener input preserves the last accepted snapshot. Invalid
 source input preserves that source's last accepted pose and reports the result.
 
+Emitter distance scale multiplies the existing authored/Voice range scale.
+Distance contributions use physical distance divided by the combined scale;
+pan and cone direction still use physical geometry. Set the scale before Play
+to affect its initial spatial state. An asynchronous Play uses the current
+native scale when it actually posts after preparation. Live changes use the
+existing target smoothing. Component and Transform-source scale setters reject
+reentry during spatial publication with `VN_IN_USE`, without invoking result
+callbacks inside that boundary. Native destruction freezes each attached
+playback's last accepted source pose and scale; a new emitter identity starts at 1.
+
 For pooled Transform sources, call `EndFollow()` before reassigning the object
 and create a new source for the new identity; existing tails keep the frozen
 pose. Raw `Emitter` handles have no Unity Transform association: their caller
@@ -536,6 +553,7 @@ must explicitly submit the listener/source pose before low-level `Actions.Post`.
 | `static VnResult CreateStateOnly(out Emitter emitter)` | Create independent state without a pose; uses the same public emitter quota. |
 | `VnResult SetPosition(VnVec3 position)` | Set a position in Harken coordinates, meters. StateOnly returns `VN_CAPABILITY_UNAVAILABLE`. |
 | `VnResult SetOrientation(VnVec3 forward)` | Set its forward direction in Harken coordinates. |
+| `VnResult SetDistanceScale(float scale)` | Set a positive finite range multiplier, default 1. Nonpositive/NaN/infinite values return `VN_INVALID_ARG`, StateOnly returns `VN_CAPABILITY_UNAVAILABLE`, and stale handles return `VN_STALE_HANDLE`; refused writes preserve the previous value. |
 | `VnResult Stop(uint fadeMs)` | Request stop for playback on this emitter; fade is in milliseconds. |
 | `VnResult Destroy()` | Destroy this caller-owned native emitter after its users finish. |
 | `VnResult QueryVariable(HarkenVariableId variable, out VnVariableQueryResultV1 result)` | Query this emitter's value after a typed catalog check; see Variable documentation for that separate feature. |

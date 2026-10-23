@@ -48,6 +48,19 @@ namespace Harken.Unity
 
         public void Dispose() => EndFollow();
 
+        /// <summary>Changes the followed identity's range; an ended source cannot be changed.</summary>
+        public VnResult SetDistanceScale(float scale)
+        {
+            if (owner is HarkenAudioSystem runtime)
+            {
+                if (runtime == null || !ReferenceEquals(runtime.Session, session))
+                    return LastResult = VnResult.VN_STALE_HANDLE;
+                if (runtime.IsPublishingSpatial) return LastResult = VnResult.VN_IN_USE;
+            }
+            VnResult result = Validate(owner, session, out Emitter handle);
+            return LastResult = result == VnResult.VN_OK ? handle.SetDistanceScale(scale) : result;
+        }
+
         internal VnResult Validate(object expectedOwner, PackBootstrapSession expectedSession, out Emitter handle)
         {
             handle = default;

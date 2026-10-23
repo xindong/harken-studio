@@ -69,6 +69,56 @@ namespace Harken.Unity.Tests
             }
         }
 
+        [UnityTest]
+        public IEnumerator DistanceScaleRejectsInvalidAndRetiredIdentities()
+        {
+            using (var f = new Fixture())
+            {
+                f.Start();
+                f.Actor.SetActive(true);
+                f.Camera.SetActive(true);
+                Assert.That(f.Runtime.CreateSpatialSource(f.Actor.transform, out HarkenSpatialSource source),
+                    Is.EqualTo(VnResult.VN_OK));
+                Assert.That(f.Emitter.SetDistanceScale(2), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(source.SetDistanceScale(2), Is.EqualTo(VnResult.VN_OK));
+                foreach (float scale in new[] { 0, -1, float.NaN, float.PositiveInfinity, float.NegativeInfinity })
+                {
+                    LogAssert.Expect(LogType.Error, "Harken operation failed: Emitter.SetDistanceScale: VN_INVALID_ARG");
+                    Assert.That(f.Emitter.SetDistanceScale(scale), Is.EqualTo(VnResult.VN_INVALID_ARG));
+                    Assert.That(source.SetDistanceScale(scale), Is.EqualTo(VnResult.VN_INVALID_ARG));
+                }
+                int notifications = 0;
+                f.Runtime.OperationCompleted += (_, operation, result) => ++notifications;
+                Assert.That(f.Runtime.BeginSpatialPost(f.Runtime.Session, f.Emitter, null, out var publication),
+                    Is.EqualTo(VnResult.VN_OK));
+                try
+                {
+                    Assert.That(f.Emitter.SetDistanceScale(3), Is.EqualTo(VnResult.VN_IN_USE));
+                    Assert.That(source.SetDistanceScale(3), Is.EqualTo(VnResult.VN_IN_USE));
+                    Assert.That(notifications, Is.Zero, "Publication refusal must not reenter result callbacks.");
+                }
+                finally { f.Runtime.EndSpatialPost(in publication); }
+                Assert.That(source.EndFollow(), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(source.SetDistanceScale(1), Is.EqualTo(VnResult.VN_INVALID_ARG));
+                Assert.That(source.Maintain(), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(source.SetDistanceScale(1), Is.EqualTo(VnResult.VN_STALE_HANDLE));
+                Assert.That(f.Runtime.CreateSpatialSource(f.Actor.transform, out HarkenSpatialSource next),
+                    Is.EqualTo(VnResult.VN_OK));
+                Assert.That(next.Validate(f.Runtime, f.Runtime.Session, out Emitter rawSource), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(rawSource.Destroy(), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(next.SetDistanceScale(1), Is.EqualTo(VnResult.VN_STALE_HANDLE),
+                    "A cached managed handle must still pass native generation validation.");
+                Emitter oldComponent = f.Emitter.Handle;
+                Assert.That(f.Runtime.ShutdownRuntime(), Is.EqualTo(VnResult.VN_OK));
+                f.Start();
+                Assert.That(next.SetDistanceScale(1), Is.EqualTo(VnResult.VN_STALE_HANDLE));
+                Assert.That(oldComponent.SetDistanceScale(1), Is.EqualTo(VnResult.VN_STALE_HANDLE));
+                Assert.That(f.Emitter.Handle.Handle, Is.Not.EqualTo(oldComponent.Handle));
+                Assert.That(f.Emitter.SetDistanceScale(1), Is.EqualTo(VnResult.VN_OK));
+            }
+            yield return null;
+        }
+
         #if HARKEN_SDK_TEST_NULL_PUMP
         [UnityTest]
         public IEnumerator WarmMovingSpatialFrameKeepsZeroManagedAllocations()
@@ -154,10 +204,16 @@ namespace Harken.Unity.Tests
         [UnityTest]
         public IEnumerator TransformSourcePostUsesPosesMovedInOrdinaryUpdate() => ImmediatePoseCase(true);
 
-        private static IEnumerator ImmediatePoseCase(bool useSpatialSource)
+        [UnityTest]
+        public IEnumerator ComponentDistanceScaleAppliesAtFirstSoundAndResetsWithIdentity() => ImmediatePoseCase(false, 2);
+
+        [UnityTest]
+        public IEnumerator TransformSourceDistanceScaleAppliesAtFirstSoundAndResetsWithIdentity() => ImmediatePoseCase(true, 2);
+
+        private static IEnumerator ImmediatePoseCase(bool useSpatialSource, float scale = 1)
         {
             Vector2 reference = default;
-            for (int pass = 0; pass < 2; ++pass)
+            for (int pass = 0; pass < (scale == 1 ? 2 : 3); ++pass)
             {
                 using (var f = new Fixture())
                 {
@@ -168,6 +224,27 @@ namespace Harken.Unity.Tests
                     HarkenSpatialSource source = null;
                     if (useSpatialSource)
                         Assert.That(f.Runtime.CreateSpatialSource(f.Actor.transform, out source), Is.EqualTo(VnResult.VN_OK));
+                    if (pass == 2)
+                    {
+                        if (useSpatialSource)
+                        {
+                            Assert.That(source.SetDistanceScale(scale), Is.EqualTo(VnResult.VN_OK));
+                            Assert.That(source.Validate(f.Runtime, f.Runtime.Session, out Emitter previous), Is.EqualTo(VnResult.VN_OK));
+                            Assert.That(source.EndFollow(), Is.EqualTo(VnResult.VN_OK));
+                            Assert.That(source.Maintain(), Is.EqualTo(VnResult.VN_OK));
+                            Assert.That(f.Runtime.CreateSpatialSource(f.Actor.transform, out source), Is.EqualTo(VnResult.VN_OK));
+                            Assert.That(source.Validate(f.Runtime, f.Runtime.Session, out Emitter current), Is.EqualTo(VnResult.VN_OK));
+                            Assert.That(current.Handle, Is.Not.EqualTo(previous.Handle));
+                        }
+                        else
+                        {
+                            Assert.That(f.Emitter.SetDistanceScale(scale), Is.EqualTo(VnResult.VN_OK));
+                            Emitter previous = f.Emitter.Handle;
+                            Assert.That(f.Emitter.DestroyEmitter(), Is.EqualTo(VnResult.VN_OK));
+                            Assert.That(f.Emitter.Create(), Is.EqualTo(VnResult.VN_OK));
+                            Assert.That(f.Emitter.Handle.Handle, Is.Not.EqualTo(previous.Handle));
+                        }
+                    }
                     var driver = f.Owner.AddComponent<HarkenSpatialPlayerLoopProbe>();
                     Vector2 rendered = default;
                     ActionFiring posted = default;
@@ -177,7 +254,12 @@ namespace Harken.Unity.Tests
                         if (currentPass != 0)
                         {
                             f.Actor.transform.position = Vector3.right * 160;
-                            f.Camera.transform.position = Vector3.right * 240;
+                            f.Camera.transform.position = Vector3.right * (160 + 80 * (currentPass == 1 ? scale : 1));
+                        }
+                        if (currentPass == 1 && scale != 1)
+                        {
+                            Assert.That(useSpatialSource ? source.SetDistanceScale(scale) : f.Emitter.SetDistanceScale(scale),
+                                Is.EqualTo(VnResult.VN_OK));
                         }
                         VnResult result = useSpatialSource
                             ? f.Runtime.PlayAction(f.Action.ActionName, f.Action.ProjectId, source, out posted)
@@ -229,7 +311,12 @@ namespace Harken.Unity.Tests
         }
 
         [UnityTest]
-        public IEnumerator AsyncPreparationUsesCurrentSourceAndListenerAtFirstSound()
+        public IEnumerator AsyncPreparationUsesCurrentSourceAndListenerAtFirstSound() => AsyncPreparationCase(1);
+
+        [UnityTest]
+        public IEnumerator AsyncPreparationUsesDistanceScaleChangedWhileAwaitingContent() => AsyncPreparationCase(2);
+
+        private static IEnumerator AsyncPreparationCase(float scale)
         {
             Vector2 reference = default;
             for (int pass = 0; pass < 2; ++pass)
@@ -297,7 +384,8 @@ namespace Harken.Unity.Tests
                         driver.BeforeLate = () =>
                         {
                             f.Actor.transform.position = Vector3.right * 160;
-                            f.Camera.transform.position = Vector3.right * 240;
+                            f.Camera.transform.position = Vector3.right * (160 + 80 * scale);
+                            if (scale != 1) Assert.That(source.SetDistanceScale(scale), Is.EqualTo(VnResult.VN_OK));
                             content.SetResult(companion["Play_U4_A.bytes"]);
                         };
                         yield return Until(accepted);

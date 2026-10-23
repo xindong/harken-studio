@@ -90,6 +90,19 @@ namespace Harken.Unity
                 : Observe("Emitter.Stop", emitter.Stop(stopFadeMs));
         }
 
+        /// <summary>Changes this identity's range without changing its physical direction.</summary>
+        public VnResult SetDistanceScale(float scale)
+        {
+            HarkenAudioSystem owner = owningRuntime;
+            if (owner != null && owner.IsPublishingSpatial)
+                return LastResult = VnResult.VN_IN_USE;
+            Emitter handle = emitter;
+            if (owner == null || !ReferenceEquals(owner.Session, owningSession) ||
+                !Matches(owner, owningSession, handle))
+                return Observe("Emitter.SetDistanceScale", VnResult.VN_STALE_HANDLE);
+            return Observe("Emitter.SetDistanceScale", handle.SetDistanceScale(scale));
+        }
+
         public VnResult DestroyEmitter()
         {
             if (!IsCreated)
