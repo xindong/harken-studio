@@ -1645,15 +1645,14 @@ VnResult ParsePackCanonicalImage(const std::uint8_t* bytes,
             if (!parsed) {
                 return VN_BAD_PACK;
             }
-            if (partitionHeader.bodyVintage !=
-                kCanonicalDefinitionPartitionBodyVintage) {
+            if (!IsReadableCurrentWorldBodyVintage(partitionHeader.bodyVintage)) {
                 return VN_PACK_INCOMPATIBLE;
             }
             CurrentWorldBodyImage body;
             const CurrentWorldBodyDecodeResult decoded = body.DecodeWithResult(
                 payload + partitionHeader.headerBytes,
                 static_cast<std::size_t>(partitionHeader.bodyBytes),
-                kCanonicalDefinitionPartitionBodyVintage,
+                partitionHeader.bodyVintage,
                 CurrentWorldDecodeMode::StrictArtifact);
             if (decoded != CurrentWorldBodyDecodeResult::Ok) {
                 return decoded == CurrentWorldBodyDecodeResult::Capacity

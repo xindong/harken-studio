@@ -137,6 +137,8 @@ struct PlayableExecutionCanonicalResult {
     VnObjectId stableId{};
     std::uint64_t programSemanticFingerprint = 0;
     std::uint64_t authorityIdentity = 0;
+    ProgramSourceIdentityV1 source{};
+    std::uint32_t initialClosureCapabilities = 0;
 };
 
 class PlayableExecutionAuthority {
@@ -211,6 +213,11 @@ public:
                    a.routeStableId == b.routeStableId &&
                    a.compatibilityFingerprint == b.compatibilityFingerprint;
         };
+        result.source = world_ != nullptr ? world_->ProgramSource()
+            : pack_->ResolveProgramSource(contentKind(), request.root.stableId);
+        result.initialClosureCapabilities = world_ != nullptr
+            ? world_->InitialClosureCapabilities()
+            : pack_->InitialClosureCapabilities(request.root.kind, request.root.stableId);
         const auto property = [&]() noexcept
             -> const PlayablePropertyProgramViewV1* {
             if (world_ != nullptr) {
@@ -266,7 +273,7 @@ public:
                         break;
                     }
                 }
-            } else if (const auto* row =
+            } else if (const auto row =
                            pack_->ResolveTrack(request.root.stableId, 0)) {
                 canonical = &row->rootDefinition;
             }
@@ -279,7 +286,7 @@ public:
                         break;
                     }
                 }
-            } else if (const auto* row =
+            } else if (const auto row =
                            pack_->ResolvePiece(request.root.stableId, 0)) {
                 canonical = &row->rootDefinition;
             }
@@ -2751,7 +2758,7 @@ float VariableBusWireValue(const Engine& engine, std::uint32_t busIndex,
                            float resolvedDb, std::uint32_t targetId);
 
 struct EngineActionFiringPlanRow {
-    const ActionProgramViewV1* action = nullptr;
+    ActionProgramHandleV1 action{};
     ActionFiringOwnerStamp owner{};
     EngineOriginalPackIdentityLease originalPackLease;
     bool ownerLeaseHeld = false;
@@ -6714,7 +6721,7 @@ public:
             owner.kind != ActionFiringOwnerKind::Pack ||
             !actionFirings.Capture(firing, &actual) || actual.owner != owner ||
             actual.acceptedLogicSequence == 0) return false;
-        const auto* action = packComposition.FindActionAtLease(owner.pack, actual.actionId);
+        const auto action = packComposition.FindActionAtLease(owner.pack, actual.actionId);
         if (action == nullptr || action->programSemanticFingerprint != actual.programSemanticFingerprint)
             return false;
         ActionFiringHandle root = firing;

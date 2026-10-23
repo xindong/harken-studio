@@ -19,9 +19,159 @@
 #include <set>
 #include <stdexcept>
 #include <tuple>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace harken {
+
+bool BuildProgramCapabilitySummariesV1(
+    const ContainerWorldInstallViewV1* worlds, std::uint32_t worldCount,
+    std::vector<ProgramCapabilitySummaryV1>& out) {
+    out.clear();
+    if (worldCount != 0 && worlds == nullptr) return false;
+    bool needsSummary = false;
+    for (std::uint32_t w = 0; w < worldCount; ++w) {
+        if (!IsReadableCurrentWorldBodyVintage(worlds[w].sourceBodyVintage)) return false;
+        needsSummary |= worlds[w].sourceBodyVintage == kCurrentWorldBodyVintageV19;
+    }
+    // A homogeneous legacy installation has no Entry19 dependency to cache.
+    if (!needsSummary) return true;
+    struct Edge {
+        std::size_t child = 0;
+        bool initial = true;
+    };
+    struct Node {
+        ProgramCapabilitySummaryV1 summary{};
+        std::uint32_t vintage = 0;
+        std::vector<Edge> children;
+        std::uint8_t state = 0;
+        std::uint32_t height = 1;
+    };
+    std::vector<Node> nodes;
+    std::unordered_map<VnObjectId, std::size_t> index;
+    const auto kindOf = [](playableproperties::ContentPropertyKindV1 kind) {
+        using Kind = playableproperties::ContentPropertyKindV1;
+        switch (kind) {
+        case Kind::Sound: return PlayableKindV1::Sound;
+        case Kind::Container: return PlayableKindV1::Container;
+        case Kind::Track: return PlayableKindV1::Track;
+        case Kind::Piece: return PlayableKindV1::Piece;
+        default: return static_cast<PlayableKindV1>(UINT32_MAX);
+        }
+    };
+    for (std::uint32_t w = 0; w < worldCount; ++w) {
+        const auto& world = worlds[w];
+        if (world.playablePropertyCount != 0 && world.playableProperties == nullptr)
+            return false;
+        for (std::uint32_t p = 0; p < world.playablePropertyCount; ++p) {
+            const auto& property = world.playableProperties[p];
+            const auto kind = kindOf(property.contentPropertyKind);
+            if (static_cast<std::uint32_t>(kind) > 3) continue;
+            const auto [it, inserted] = index.emplace(property.stableId, nodes.size());
+            if (!inserted) {
+                const auto& existing = nodes[it->second];
+                if (existing.summary.kind != kind ||
+                    existing.summary.semanticFingerprint != property.programSemanticFingerprint ||
+                    existing.vintage != world.sourceBodyVintage) return false;
+                continue;
+            }
+            Node node{};
+            node.summary = {property.stableId, property.programSemanticFingerprint, kind,
+                world.sourceBodyVintage == kCurrentWorldBodyVintageV19
+                    ? kProgramCapabilityEntrySchedulingV1 : 0u};
+            node.vintage = world.sourceBodyVintage;
+            nodes.push_back(std::move(node));
+        }
+    }
+    const auto addEdge = [&](VnObjectId parent, const PlayableRefV1& child,
+                             bool initial = true) {
+        const auto p = index.find(parent);
+        const auto c = index.find(child.stableId);
+        if (p == index.end() || c == index.end() ||
+            nodes[c->second].summary.kind != child.kind ||
+            nodes[c->second].summary.semanticFingerprint !=
+                child.expectedProgramSemanticFingerprint) return false;
+        nodes[p->second].children.push_back({c->second, initial});
+        return true;
+    };
+    for (std::uint32_t w = 0; w < worldCount; ++w) {
+        const auto& world = worlds[w];
+        if ((world.trackScheduleCount != 0 && world.trackSchedules == nullptr) ||
+            (world.pieceScheduleCount != 0 && world.pieceSchedules == nullptr) ||
+            (world.containerCount != 0 && world.containers == nullptr)) return false;
+        for (std::uint32_t t = 0; t < world.trackScheduleCount; ++t) {
+            const auto& track = world.trackSchedules[t];
+            if (track.placementCount != 0 && track.placements == nullptr) return false;
+            for (std::uint32_t p = 0; p < track.placementCount; ++p)
+                if (!addEdge(track.rootDefinition.stableId, track.placements[p].content))
+                    return false;
+        }
+        for (std::uint32_t p = 0; p < world.pieceScheduleCount; ++p) {
+            const auto& piece = world.pieceSchedules[p];
+            if (piece.trackRefCount != 0 && piece.trackRefs == nullptr) return false;
+            for (std::uint32_t t = 0; t < piece.trackRefCount; ++t)
+                if (!addEdge(piece.rootDefinition.stableId, piece.trackRefs[t].trackDefinition))
+                    return false;
+        }
+        for (std::uint32_t c = 0; c < world.containerCount; ++c) {
+            const auto& container = world.containers[c];
+            if (container.childCount != 0 && container.children == nullptr) return false;
+            const bool fixedQueueEntry = container.mode == ContainerModeV1::SequenceQueue &&
+                                         container.resumePosition == 0;
+            if (fixedQueueEntry && container.initialSequenceCursor >= container.childCount)
+                return false;
+            std::unordered_set<std::uint32_t> gridChildren;
+            if (container.mode == ContainerModeV1::VariableControl) {
+                if ((container.discreteRowCount != 0 && container.discreteRows == nullptr) ||
+                    (container.continuousRowCount != 0 && container.continuousRows == nullptr))
+                    return false;
+                for (std::uint32_t row = 0; row < container.discreteRowCount; ++row)
+                    gridChildren.insert(container.discreteRows[row].childStableOrdinal);
+                for (std::uint32_t row = 0; row < container.continuousRowCount; ++row)
+                    gridChildren.insert(container.continuousRows[row].childStableOrdinal);
+            }
+            for (std::uint32_t child = 0; child < container.childCount; ++child) {
+                const auto& row = container.children[child];
+                const bool initial = fixedQueueEntry
+                    ? child == container.initialSequenceCursor
+                    : container.mode == ContainerModeV1::VariableControl
+                        ? gridChildren.contains(row.stableChildOrdinal)
+                        : container.mode != ContainerModeV1::Random ||
+                          container.randomDiscipline != RandomDisciplineV1::Draw ||
+                          row.frequencyWeight != 0;
+                if (!addEdge(container.containerStableId, row.playable, initial))
+                    return false;
+            }
+        }
+    }
+    const auto visit = [&](auto&& self, std::size_t n, std::uint32_t depth) -> bool {
+        auto& node = nodes[n];
+        if (node.state == 1 || depth > 64) return false;
+        if (node.state == 2) return true;
+        node.state = 1;
+        for (const auto& edge : node.children) {
+            if (!self(self, edge.child, depth + 1)) return false;
+            node.height = std::max(node.height, nodes[edge.child].height + 1);
+            if (node.height > 64) return false;
+            if (edge.initial)
+                node.summary.initialClosureCapabilities |=
+                    nodes[edge.child].summary.initialClosureCapabilities;
+        }
+        node.state = 2;
+        return true;
+    };
+    for (std::size_t n = 0; n < nodes.size(); ++n)
+        if (!visit(visit, n, 1)) return false;
+    std::vector<ProgramCapabilitySummaryV1> summaries;
+    summaries.reserve(nodes.size());
+    for (const auto& node : nodes) summaries.push_back(node.summary);
+    std::sort(summaries.begin(), summaries.end(), [](const auto& a, const auto& b) {
+        return std::pair(a.kind, a.stableId) < std::pair(b.kind, b.stableId);
+    });
+    out.swap(summaries);
+    return true;
+}
 
 namespace {
 
@@ -1727,6 +1877,10 @@ VnResult ValidateCompositeWorld(
         if (owner.readiness != PackOwnerReadiness::Active) {
             continue;
         }
+        // U1 readers accept V19, but the shipping scheduler is still V18.
+        if (owner.view.sourceBodyVintage == kCurrentWorldBodyVintageV19) {
+            return VN_CAPABILITY_UNAVAILABLE;
+        }
         if (first == nullptr) {
             first = &owner;
         } else if (first->view.identity.projectId != owner.view.identity.projectId ||
@@ -2245,6 +2399,13 @@ VnResult BuildPlaybackOwnerStore(PackComposition::PublishedView& published,
     store->worldSemanticFingerprint = worldSemanticFingerprint;
     store->attenuationBindings = attenuationBindings;
     store->owners.resize(published.owners.size());
+    std::vector<ContainerWorldInstallViewV1> worlds;
+    worlds.reserve(published.owners.size());
+    for (const auto& owner : published.owners)
+        if (owner.readiness == PackOwnerReadiness::Active) worlds.push_back(owner.view);
+    if (worlds.size() > UINT32_MAX || !BuildProgramCapabilitySummariesV1(
+            worlds.data(), static_cast<std::uint32_t>(worlds.size()), store->programCapabilities))
+        return VN_BAD_PACK;
     for (std::uint32_t slot = 0; slot < published.owners.size(); ++slot) {
         const PackComposition::PublishedOwner& owner = published.owners[slot];
         PackPlaybackOwnerStore::Owner& stored = store->owners[slot];
@@ -2467,6 +2628,7 @@ VnResult PackComposition::PrepareCandidate(const PackCanonicalImage& image,
     candidate.hasPartition = image.hasPartition;
     if (image.hasPartition) {
         candidate.partitionBody = image.partitionBody;
+        candidate.partitionBodyVintage = image.partitionHeader.bodyVintage;
     }
     auto bindings = std::make_shared<std::vector<PackVoiceBinding>>();
     for (const PackBindingAttachmentEntry& attachment : image.bindingAttachments) {
@@ -2798,14 +2960,12 @@ VnResult PackComposition::PrepareCommit(
             owner.body = std::move(candidate.body);
             owner.view = *owner.body->ProductionView();
         } else if (candidate.hasPartition) {
-            // ParsePackCanonicalImage already refused a non-current
-            // bodyVintage. This decode is the current table only.
             auto decodedBody = std::make_shared<CurrentWorldBodyImage>();
             const CurrentWorldBodyDecodeResult decoded =
                 decodedBody->DecodeWithResult(
                     candidate.partitionBody.data(),
                     candidate.partitionBody.size(),
-                    kCanonicalDefinitionPartitionBodyVintage,
+                    candidate.partitionBodyVintage,
                     CurrentWorldDecodeMode::StrictArtifact);
             if (decoded != CurrentWorldBodyDecodeResult::Ok) {
                 return decoded == CurrentWorldBodyDecodeResult::Capacity
@@ -3082,6 +3242,13 @@ VnResult PackComposition::PrepareCommit(
     if (playbackStore != VN_OK) {
         return playbackStore;
     }
+    const auto summaryCount = next->playbackStore->programCapabilities.capacity();
+    if (summaryCount > (UINT64_MAX - prepared.facts_.loadedBytes) /
+                           sizeof(ProgramCapabilitySummaryV1))
+        return VN_PACK_RESIDENT_CAPACITY;
+    prepared.facts_.loadedBytes += summaryCount * sizeof(ProgramCapabilitySummaryV1);
+    prepared.facts_.highWaterLoadedBytes = std::max(
+        prepared.facts_.highWaterLoadedBytes, prepared.facts_.loadedBytes);
     if (!next->index.empty() && !PrepareLeaseStorage()) return VN_BACKPRESSURE;
     prepared.facts_.compositeGeneration = next->compositeGeneration;
     prepared.facts_.activationFrame = serviceFrame;
@@ -3250,6 +3417,7 @@ VnResult PackComposition::PrepareLease(const PublishedOwner& owner,
     available.state = LeaseState::Prepared;
     available.tag = slice;
     available.lease = lease;
+    FrozenClosure(available).leaseIdentity = lease.leaseToken;
     available.refs = 0;
     ++SliceOccupied(slice);
     if (original != nullptr) {
@@ -3407,7 +3575,7 @@ VnResult PackComposition::SetNextLeaseTokenForTests(
     return VN_OK;
 }
 
-const ActionProgramViewV1* PackComposition::FindActionAtLease(
+ActionProgramHandleV1 PackComposition::FindActionAtLease(
     const PackPartitionLease& lease, VnObjectId actionId) const noexcept {
     for (const LeaseRow& row : leases_) {
         if (row.state != LeaseState::Live || row.refs == 0 ||
@@ -3419,12 +3587,14 @@ const ActionProgramViewV1* PackComposition::FindActionAtLease(
         for (std::uint32_t i = 0; i < definition->actionCount; ++i) {
             const ActionProgramViewV1& action = definition->actions[i];
             if (action.actionStableId == actionId) {
-                return &action;
+                return {ProgramKindV1::Action, actionId, action.programSemanticFingerprint,
+                        {lease.compositeGeneration, lease.packStableId, lease.partitionRevision,
+                         lease.leaseToken, definition->sourceBodyVintage}, 0, &action};
             }
         }
-        return nullptr;
+        return {};
     }
-    return nullptr;
+    return {};
 }
 
 const ContainerProgramViewV3* PackComposition::FindContainerAtLease(
@@ -3464,6 +3634,10 @@ bool PackComposition::PlayableWorldAtLease(
         if (definition == nullptr) continue;
         out->generation = lease.compositeGeneration;
         out->identity = definition->identity;
+        out->sourceBodyVintage = definition->sourceBodyVintage;
+        out->ownerRevision = lease.partitionRevision;
+        out->leaseIdentity = lease.leaseToken;
+        out->ownerStableId = lease.packStableId;
         out->properties = definition->playableProperties;
         out->propertyCount = definition->playablePropertyCount;
         out->occurrences = definition->playableOccurrences;
@@ -3576,28 +3750,36 @@ PackIdentityLookup PackComposition::Lookup(VnObjectId stableId) const noexcept {
     return result;
 }
 
-const ActionProgramViewV1* PackComposition::FindActionIn(
+ActionProgramHandleV1 PackComposition::FindActionIn(
     const PublishedView& view, VnObjectId actionId) const noexcept {
     const IdentityIndexEntry* hit = BinaryFind(view.index, actionId);
     if (hit == nullptr || hit->packSlot >= view.owners.size() ||
         hit->identityClass != kInitCatalogIdentityClassAction) {
-        return nullptr;
+        return {};
     }
     const PublishedOwner& owner = view.owners[hit->packSlot];
     if (owner.readiness != PackOwnerReadiness::Active ||
         hit->localRow >= owner.view.actionCount ||
         owner.view.actions == nullptr) {
-        return nullptr;
+        return {};
     }
-    return &owner.view.actions[hit->localRow];
+    const auto& action = owner.view.actions[hit->localRow];
+    return {ProgramKindV1::Action, actionId, action.programSemanticFingerprint,
+            {view.compositeGeneration, owner.packStableId, owner.partitionRevision,
+             0, owner.view.sourceBodyVintage}, 0, &action};
+}
+
+ActionProgramHandleV1 PackComposition::ResolveAction(
+    VnObjectId actionId) const noexcept {
+    if (published_ == nullptr) {
+        return {};
+    }
+    return FindActionIn(*published_, actionId);
 }
 
 const ActionProgramViewV1* PackComposition::FindAction(
     VnObjectId actionId) const noexcept {
-    if (published_ == nullptr) {
-        return nullptr;
-    }
-    return FindActionIn(*published_, actionId);
+    return ResolveAction(actionId).programView;
 }
 
 const ContainerProgramViewV3* PackComposition::FindContainer(
@@ -3893,15 +4075,46 @@ const PlayablePropertyProgramViewV1* PackPlaybackView::ResolveProperty(
     return nullptr;
 }
 
-const ContainerProgramViewV3* PackPlaybackView::ResolveContainer(
+ProgramSourceIdentityV1 PackPlaybackView::SourceOf(
+    const PackClosureOwnerSnapshot& owner) const noexcept {
+    return {closure_->compositeGeneration, owner.packStableId, owner.partitionRevision,
+            closure_->leaseIdentity, owner.definitionView.sourceBodyVintage};
+}
+
+ProgramSourceIdentityV1 PackPlaybackView::ResolveProgramSource(
+    playableproperties::ContentPropertyKindV1 kind, VnObjectId stableId) const noexcept {
+    if (closure_ == nullptr || ownerStore_ == nullptr) return {};
+    for (std::uint32_t i = 0; i < closure_->ownerCount; ++i) {
+        const auto* owner = OwnerAt(i);
+        if (owner == nullptr) return {};
+        if (FindPlayableProperty(owner->snapshot.definitionView, kind, stableId) != nullptr)
+            return SourceOf(owner->snapshot);
+    }
+    return {};
+}
+
+std::uint32_t PackPlaybackView::InitialClosureCapabilities(
+    PlayableKindV1 kind, VnObjectId stableId) const noexcept {
+    if (ownerStore_ == nullptr) return 0;
+    const auto& summaries = ownerStore_->programCapabilities;
+    const auto key = std::pair(kind, stableId);
+    const auto found = std::lower_bound(summaries.begin(), summaries.end(), key,
+        [](const auto& row, const auto& value) {
+            return std::pair(row.kind, row.stableId) < value;
+        });
+    return found != summaries.end() && found->kind == kind && found->stableId == stableId
+        ? found->initialClosureCapabilities : 0;
+}
+
+ContainerProgramHandleV1 PackPlaybackView::ResolveContainer(
     VnObjectId stableId, std::uint64_t expectedFingerprint) const noexcept {
     if (closure_ == nullptr || ownerStore_ == nullptr) {
-        return nullptr;
+        return {};
     }
     for (std::uint32_t i = 0; i < closure_->ownerCount; ++i) {
         const auto* owner = OwnerAt(i);
         if (owner == nullptr) {
-            return nullptr;
+            return {};
         }
         const PlayablePropertyProgramViewV1* property = FindPlayableProperty(
             owner->snapshot.definitionView,
@@ -3914,55 +4127,61 @@ const ContainerProgramViewV3* PackPlaybackView::ResolveContainer(
         if (program != nullptr &&
             FingerprintMatches(expectedFingerprint,
                                program->programSemanticFingerprint)) {
-            return program;
+            return {ProgramKindV1::Container, stableId, program->programSemanticFingerprint,
+                    SourceOf(owner->snapshot),
+                    InitialClosureCapabilities(PlayableKindV1::Container, stableId), program};
         }
-        return nullptr;
+        return {};
     }
-    return nullptr;
+    return {};
 }
 
-const TrackScheduleProgramViewV1* PackPlaybackView::ResolveTrack(
+TrackProgramHandleV1 PackPlaybackView::ResolveTrack(
     VnObjectId stableId,
     std::uint64_t expectedScheduleFingerprint) const noexcept {
     if (closure_ == nullptr || ownerStore_ == nullptr) {
-        return nullptr;
+        return {};
     }
     for (std::uint32_t i = 0; i < closure_->ownerCount; ++i) {
         const auto* owner = OwnerAt(i);
         if (owner == nullptr) {
-            return nullptr;
+            return {};
         }
         const TrackScheduleProgramViewV1* schedule =
             FindTrackSchedule(owner->snapshot.definitionView, stableId);
         if (schedule != nullptr &&
             FingerprintMatches(expectedScheduleFingerprint,
                                schedule->scheduleSemanticFingerprint)) {
-            return schedule;
+            return {ProgramKindV1::Track, stableId, schedule->scheduleSemanticFingerprint,
+                    SourceOf(owner->snapshot),
+                    InitialClosureCapabilities(PlayableKindV1::Track, stableId), schedule};
         }
     }
-    return nullptr;
+    return {};
 }
 
-const PieceScheduleProgramViewV1* PackPlaybackView::ResolvePiece(
+PieceProgramHandleV1 PackPlaybackView::ResolvePiece(
     VnObjectId stableId,
     std::uint64_t expectedScheduleFingerprint) const noexcept {
     if (closure_ == nullptr || ownerStore_ == nullptr) {
-        return nullptr;
+        return {};
     }
     for (std::uint32_t i = 0; i < closure_->ownerCount; ++i) {
         const auto* owner = OwnerAt(i);
         if (owner == nullptr) {
-            return nullptr;
+            return {};
         }
         const PieceScheduleProgramViewV1* schedule =
             FindPieceSchedule(owner->snapshot.definitionView, stableId);
         if (schedule != nullptr &&
             FingerprintMatches(expectedScheduleFingerprint,
                                schedule->scheduleSemanticFingerprint)) {
-            return schedule;
+            return {ProgramKindV1::Piece, stableId, schedule->scheduleSemanticFingerprint,
+                    SourceOf(owner->snapshot),
+                    InitialClosureCapabilities(PlayableKindV1::Piece, stableId), schedule};
         }
     }
-    return nullptr;
+    return {};
 }
 
 const PlayableOccurrencePropertyViewV1* PackPlaybackView::ResolveOccurrence(

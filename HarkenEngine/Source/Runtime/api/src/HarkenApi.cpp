@@ -1405,7 +1405,7 @@ bool ResolveSharedContainerProgram(
                                      harken::PackPlaybackView>) {
             return view.ResolveContainer(
                 resolvedParent.root.stableId,
-                resolvedParent.root.expectedProgramSemanticFingerprint);
+                resolvedParent.root.expectedProgramSemanticFingerprint).programView;
         } else {
             for (std::uint32_t index = 0; index < view.containerCount;
                  ++index) {
@@ -14704,7 +14704,7 @@ QueueProgramResolveStatus ResolveQueueProgram(
     }
     if (!row.queueWorldUsesCurrentAuthority &&
         row.Invocation().packLease.leaseToken != 0) {
-        const harken::ContainerProgramViewV3* program =
+        const auto program =
             row.Invocation().packPlaybackView.ResolveContainer(
                 row.queueContainerStableId,
                 row.queueProgramSemanticFingerprint);
@@ -14713,7 +14713,11 @@ QueueProgramResolveStatus ResolveQueueProgram(
         }
         *outWorld = {};
         outWorld->generation = row.Invocation().worldGeneration;
-        *outProgram = program;
+        outWorld->sourceBodyVintage = program.source.sourceBodyVintage;
+        outWorld->ownerRevision = program.source.ownerRevision;
+        outWorld->leaseIdentity = program.source.leaseIdentity;
+        outWorld->ownerStableId = program.source.ownerStableId;
+        *outProgram = program.programView;
         return QueueProgramResolveStatus::Ok;
     }
     harken::PlayableWorldViewV1 world = row.queueWorld;
@@ -14737,7 +14741,7 @@ QueueProgramResolveStatus ResolveQueueProgram(
     return QueueProgramResolveStatus::Invalid;
 }
 
-const harken::TrackScheduleProgramViewV1* FindTrackSchedule(
+harken::TrackProgramHandleV1 FindTrackSchedule(
     const harken::PlayableWorldViewV1& world,
     const harken::PlayableRefV1& root) noexcept {
     for (std::uint32_t index = 0; index < world.trackScheduleCount;
@@ -14751,13 +14755,14 @@ const harken::TrackScheduleProgramViewV1* FindTrackSchedule(
             row.rootDefinition.routeStableId == root.routeStableId &&
             row.rootDefinition.compatibilityFingerprint ==
                 root.compatibilityFingerprint) {
-            return &row;
+            return {harken::ProgramKindV1::Track, root.stableId, row.scheduleSemanticFingerprint,
+                    world.ProgramSource(), world.InitialClosureCapabilities(), &row};
         }
     }
-    return nullptr;
+    return {};
 }
 
-const harken::PieceScheduleProgramViewV1* FindPieceSchedule(
+harken::PieceProgramHandleV1 FindPieceSchedule(
     const harken::PlayableWorldViewV1& world,
     const harken::PlayableRefV1& root) noexcept {
     for (std::uint32_t index = 0; index < world.pieceScheduleCount;
@@ -14771,10 +14776,11 @@ const harken::PieceScheduleProgramViewV1* FindPieceSchedule(
             row.rootDefinition.routeStableId == root.routeStableId &&
             row.rootDefinition.compatibilityFingerprint ==
                 root.compatibilityFingerprint) {
-            return &row;
+            return {harken::ProgramKindV1::Piece, root.stableId, row.scheduleSemanticFingerprint,
+                    world.ProgramSource(), world.InitialClosureCapabilities(), &row};
         }
     }
-    return nullptr;
+    return {};
 }
 
 bool SamePlayableRef(const harken::PlayableRefV1& a,
@@ -14788,24 +14794,24 @@ bool SamePlayableRef(const harken::PlayableRefV1& a,
            a.compatibilityFingerprint == b.compatibilityFingerprint;
 }
 
-const harken::TrackScheduleProgramViewV1* FindTrackSchedule(
+harken::TrackProgramHandleV1 FindTrackSchedule(
     const harken::PackPlaybackView& world,
     const harken::PlayableRefV1& root) noexcept {
-    const harken::TrackScheduleProgramViewV1* row =
+    const auto row =
         world.ResolveTrack(root.stableId, 0);
     return row != nullptr && SamePlayableRef(row->rootDefinition, root)
                ? row
-               : nullptr;
+               : harken::TrackProgramHandleV1{};
 }
 
-const harken::PieceScheduleProgramViewV1* FindPieceSchedule(
+harken::PieceProgramHandleV1 FindPieceSchedule(
     const harken::PackPlaybackView& world,
     const harken::PlayableRefV1& root) noexcept {
-    const harken::PieceScheduleProgramViewV1* row =
+    const auto row =
         world.ResolvePiece(root.stableId, 0);
     return row != nullptr && SamePlayableRef(row->rootDefinition, root)
                ? row
-               : nullptr;
+               : harken::PieceProgramHandleV1{};
 }
 
 bool MaterializeSchedulePosition(
@@ -14965,14 +14971,14 @@ bool ResolveScheduleFingerprint(
     std::uint64_t* out) noexcept {
     if (out == nullptr) return false;
     if (playable.kind == harken::PlayableKindV1::Track) {
-        const harken::TrackScheduleProgramViewV1* track =
+        const auto track =
             FindTrackSchedule(world, playable);
         if (track == nullptr) return false;
         *out = track->scheduleSemanticFingerprint;
         return true;
     }
     if (playable.kind == harken::PlayableKindV1::Piece) {
-        const harken::PieceScheduleProgramViewV1* piece =
+        const auto piece =
             FindPieceSchedule(world, playable);
         if (piece == nullptr) return false;
         *out = piece->scheduleSemanticFingerprint;
@@ -14987,14 +14993,14 @@ bool ResolveScheduleFingerprint(
     std::uint64_t* out) noexcept {
     if (out == nullptr) return false;
     if (playable.kind == harken::PlayableKindV1::Track) {
-        const harken::TrackScheduleProgramViewV1* track =
+        const auto track =
             FindTrackSchedule(world, playable);
         if (track == nullptr) return false;
         *out = track->scheduleSemanticFingerprint;
         return true;
     }
     if (playable.kind == harken::PlayableKindV1::Piece) {
-        const harken::PieceScheduleProgramViewV1* piece =
+        const auto piece =
             FindPieceSchedule(world, playable);
         if (piece == nullptr) return false;
         *out = piece->scheduleSemanticFingerprint;
@@ -15065,7 +15071,7 @@ ScheduleMaterializeStatus MaterializeScheduleNode(
         return ScheduleMaterializeStatus::Invalid;
     }
     if (current.kind == harken::PlayableKindV1::Piece) {
-        const harken::PieceScheduleProgramViewV1* piece =
+        const auto piece =
             FindPieceSchedule(world, current);
         if (piece == nullptr || piece->trackRefCount == 0 ||
             piece->trackRefs == nullptr ||
@@ -15091,7 +15097,7 @@ ScheduleMaterializeStatus MaterializeScheduleNode(
         for (std::uint32_t index = 0; index < piece->trackRefCount;
              ++index) {
             const harken::ScheduleTrackRefV1& ref = piece->trackRefs[index];
-            const harken::TrackScheduleProgramViewV1* track =
+            const auto track =
                 FindTrackSchedule(world, ref.trackDefinition);
             if (track == nullptr ||
                 track->scheduleSemanticFingerprint !=
@@ -15115,7 +15121,7 @@ ScheduleMaterializeStatus MaterializeScheduleNode(
     if (current.kind != harken::PlayableKindV1::Track) {
         return ScheduleMaterializeStatus::Invalid;
     }
-    const harken::TrackScheduleProgramViewV1* track =
+    const auto track =
         FindTrackSchedule(world, current);
     if (track == nullptr || track->placementCount == 0 ||
         track->placements == nullptr) {
@@ -16272,7 +16278,7 @@ const harken::ContainerProgramViewV3* FindVariableControlNestedContainer(
     const harken::PackPlaybackView& world,
     const harken::PlayableRefV1& ref) noexcept {
     return world.ResolveContainer(
-        ref.stableId, ref.expectedProgramSemanticFingerprint);
+        ref.stableId, ref.expectedProgramSemanticFingerprint).programView;
 }
 
 template <typename WorldView>
@@ -21423,7 +21429,7 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
         -> const harken::ContainerProgramViewV3* {
         if constexpr (std::is_same_v<WorldView, harken::PackPlaybackView>) {
             return world.ResolveContainer(
-                ref.stableId, ref.expectedProgramSemanticFingerprint);
+                ref.stableId, ref.expectedProgramSemanticFingerprint).programView;
         } else {
             return FindVariableControlNestedContainer(world, ref);
         }
@@ -31091,7 +31097,7 @@ const harken::ContainerProgramViewV3* ResolveVariableControlProgram(
     if (!row.variableControlWorldUsesCurrentAuthority &&
         row.Invocation().packLease.leaseToken != 0) {
         return row.Invocation().packPlaybackView.ResolveContainer(
-            row.root.stableId, row.root.expectedProgramSemanticFingerprint);
+            row.root.stableId, row.root.expectedProgramSemanticFingerprint).programView;
     }
     const harken::PlayableWorldViewV1 world =
         row.variableControlWorldUsesCurrentAuthority
@@ -73745,19 +73751,19 @@ void ResetActionStepResult(VnActionStepResult* outResult) noexcept {
     outResult->structSize = structSize;
 }
 
-const harken::ActionProgramViewV1* FindCanonicalActionProgram(
+harken::ActionProgramHandleV1 FindCanonicalActionProgram(
     const harken::Engine& engine, VnActionId actionId,
     const harken::PackComposition::PublishedView* pinned) noexcept;
 const harken::ContainerProgramViewV3* FindCanonicalContainerProgram(
     const harken::Engine& engine, VnObjectId containerStableId,
     const harken::PackPartitionLease* leaseOrNull) noexcept;
 
-const harken::ActionProgramViewV1* FindCanonicalActionProgram(
+harken::ActionProgramHandleV1 FindCanonicalActionProgram(
     const harken::Engine& engine, VnActionId actionId) noexcept {
     return FindCanonicalActionProgram(engine, actionId, nullptr);
 }
 
-const harken::ActionProgramViewV1* FindCanonicalActionProgram(
+harken::ActionProgramHandleV1 FindCanonicalActionProgram(
     const harken::Engine& engine, VnActionId actionId,
     const harken::PackComposition::PublishedView* pinned) noexcept {
     if (engine.packComposition.Authority() ==
@@ -73765,7 +73771,7 @@ const harken::ActionProgramViewV1* FindCanonicalActionProgram(
         if (pinned != nullptr) {
             return engine.packComposition.FindActionIn(*pinned, actionId);
         }
-        return engine.packComposition.FindAction(actionId);
+        return engine.packComposition.ResolveAction(actionId);
     }
     const harken::VariableServiceV1& variables = engine.variables;
     std::uint32_t first = 0;
@@ -73780,10 +73786,12 @@ const harken::ActionProgramViewV1* FindCanonicalActionProgram(
         }
     }
     if (first == variables.ActionProgramCount()) {
-        return nullptr;
+        return {};
     }
     const auto& candidate = variables.ActionProgramAt(first);
-    return candidate.actionStableId == actionId ? &candidate : nullptr;
+    if (candidate.actionStableId != actionId) return {};
+    return {harken::ProgramKindV1::Action, actionId, candidate.programSemanticFingerprint,
+            variables.CurrentPlayableWorld().ProgramSource(), 0, &candidate};
 }
 
 const harken::ContainerProgramViewV3* FindCanonicalContainerProgram(
@@ -74601,7 +74609,7 @@ bool ResolveActionQuantizeBoundaryFrame(
         *outMissing = true;
         return true;
     }
-    const harken::PieceScheduleProgramViewV1* piece = nullptr;
+    harken::PieceProgramHandleV1 piece{};
     if (selected->root.kind == harken::PlayableKindV1::Piece) {
         if (selected->Invocation().packLease.leaseToken != 0) {
             piece = FindPieceSchedule(selected->Invocation().packPlaybackView,
@@ -74933,7 +74941,7 @@ harken::ActionFiringStepResult MakeDeferredActionStepResult(
 }
 
 bool ExpandImmediateAction(ImmediateActionPlan* plan,
-                           const harken::ActionProgramViewV1* action,
+                           const harken::ActionProgramHandleV1& action,
                            const harken::ActionFiringOwnerStamp& owner,
                            bool ownerLeaseHeld,
                            std::uint32_t parentIndex,
@@ -75257,7 +75265,7 @@ bool ExpandImmediateAction(ImmediateActionPlan* plan,
             ++plan->deferredCount;
             continue;
         }
-        const harken::ActionProgramViewV1* child = nullptr;
+        harken::ActionProgramHandleV1 child{};
         harken::ActionFiringOwnerStamp childOwner = owner;
         bool childLeaseHeld = false;
         if (plan->engine->packComposition.Authority() ==
@@ -75271,7 +75279,8 @@ bool ExpandImmediateAction(ImmediateActionPlan* plan,
                 plan->result = acquired;
                 return false;
             }
-            child = found.action;
+            child = plan->engine->packComposition.FindActionAtLease(
+                found.lease, step.step->target.stableId);
             childOwner = harken::ActionFiringOwnerStamp::Pack(found.lease,
                 plan->engine->packComposition.ProjectIdAtLease(found.lease));
             childLeaseHeld = true;
@@ -75416,7 +75425,7 @@ std::uint32_t CountActionOperations(const ImmediateActionPlan& plan,
     std::uint32_t depth, std::uint32_t limit) noexcept {
     if (step.opcode == opcode) return 1;
     if (step.opcode != harken::ActionOpcodeV1::PostAction) return 0;
-    const auto* child = FindCanonicalActionProgram(
+    const auto child = FindCanonicalActionProgram(
         *plan.engine, step.target.stableId, plan.pinnedPublished);
     // Unresolved descendants and long deferred chains retain the full allowance.
     // Storage accounting must not introduce a new Action acceptance restriction.
@@ -76372,13 +76381,13 @@ bool ResolveImmediateActionCompositeRef(
     bool found = false;
     if (scratch.packLeaseOwned) {
         if (kind == harken::PlayableKindV1::Track) {
-            if (const auto* schedule =
+            if (const auto schedule =
                     scratch.packPlaybackView.ResolveTrack(target.stableId, 0)) {
                 requested = schedule->rootDefinition;
                 found = true;
             }
         } else if (kind == harken::PlayableKindV1::Piece) {
-            if (const auto* schedule =
+            if (const auto schedule =
                     scratch.packPlaybackView.ResolvePiece(target.stableId, 0)) {
                 requested = schedule->rootDefinition;
                 found = true;
@@ -93118,7 +93127,7 @@ TimelineDeferredMaterializeStatus MaterializeActionDeferredPostAction(
                 ? TimelineDeferredMaterializeStatus::Consumed : TimelineDeferredMaterializeStatus::NotOwned;
         return FinalizeOrRetainActionDeferredClaim(engine, claim.token, recordToken, record);
     };
-    const ActionProgramViewV1* child = nullptr;
+    ActionProgramHandleV1 child{};
     if (record.targetPackLease.leaseToken != 0) {
         if (engine.packComposition.ValidateLease(record.targetPackLease) !=
                 VN_OK ||
@@ -102852,7 +102861,7 @@ VnResult harken::detail::PostActionWithValidation(
                     if (engine->runtimeRecreateRequired || engine->logicCommits.Exhausted())
                         return VN_RUNTIME_RECREATE_REQUIRED;
                 }
-                const harken::ActionProgramViewV1* action = nullptr;
+                harken::ActionProgramHandleV1 action{};
                 std::shared_ptr<const harken::PackComposition::PublishedView>
                     pinnedPublished;
                 if (engine->packComposition.Authority() ==
@@ -102869,7 +102878,7 @@ VnResult harken::detail::PostActionWithValidation(
                         harken::PackIdentityReadiness::Active) {
                         return VN_UNKNOWN_ID;
                     }
-                    action = found.action;
+                    action = engine->packComposition.FindActionAtLease(found.lease, desc->actionId);
                     packLease = found.lease;
                     packLeaseHeld = true;
                     originalDefinitionAcquired = true;
@@ -102890,7 +102899,7 @@ VnResult harken::detail::PostActionWithValidation(
                 }
                 if (validator != nullptr) {
                     const ActionAdmissionView admission{
-                        action, pinnedPublished.get(), packLease, packLeaseHeld};
+                        action.programView, pinnedPublished.get(), packLease, packLeaseHeld};
                     const VnResult validated = validator(admission, context);
                     if (validated != VN_OK) {
                         trace.MarkUnreplayable();

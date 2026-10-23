@@ -5,6 +5,7 @@
 #include "harken/abi/PackRevisionIdentity.h"
 #include "harken/core/CurrentWorld.h"
 #include "harken/core/CurrentWorldCodec.h"
+#include "harken/core/ProgramHandle.h"
 
 #include <array>
 #include <cstdint>
@@ -71,6 +72,7 @@ struct PackPlaybackOwnerStore {
     };
 
     std::vector<Owner> owners;
+    std::vector<ProgramCapabilitySummaryV1> programCapabilities;
     std::uint64_t worldSemanticFingerprint = 0;
     PackAttenuationBindingMapV1 attenuationBindings;
 };
@@ -81,6 +83,7 @@ struct PackFrozenClosure {
     std::shared_ptr<const PackPlaybackOwnerStore> ownerStore;
     std::uint32_t rootOwnerIndex = UINT32_MAX;
     std::uint32_t ownerCount = 0;
+    std::uint64_t leaseIdentity = 0;
 };
 
 class PackPlaybackView {
@@ -95,14 +98,18 @@ public:
     const PlayablePropertyProgramViewV1* ResolveProperty(
         playableproperties::ContentPropertyKindV1 kind,
         VnObjectId stableId) const noexcept;
-    const ContainerProgramViewV3* ResolveContainer(
+    ContainerProgramHandleV1 ResolveContainer(
         VnObjectId stableId, std::uint64_t expectedFingerprint) const noexcept;
-    const TrackScheduleProgramViewV1* ResolveTrack(
+    TrackProgramHandleV1 ResolveTrack(
         VnObjectId stableId,
         std::uint64_t expectedScheduleFingerprint) const noexcept;
-    const PieceScheduleProgramViewV1* ResolvePiece(
+    PieceProgramHandleV1 ResolvePiece(
         VnObjectId stableId,
         std::uint64_t expectedScheduleFingerprint) const noexcept;
+    ProgramSourceIdentityV1 ResolveProgramSource(
+        playableproperties::ContentPropertyKindV1 kind, VnObjectId stableId) const noexcept;
+    std::uint32_t InitialClosureCapabilities(
+        PlayableKindV1 kind, VnObjectId stableId) const noexcept;
     const PlayableOccurrencePropertyViewV1* ResolveOccurrence(
         playableproperties::ContentPropertyKindV1 parentKind,
         VnObjectId parentStableId, std::uint32_t ordinal) const noexcept;
@@ -122,9 +129,15 @@ private:
     friend class PackComposition;
     const PackPlaybackOwnerStore::Owner* OwnerAt(
         std::uint32_t closureIndex) const noexcept;
+    ProgramSourceIdentityV1 SourceOf(const PackClosureOwnerSnapshot& owner) const noexcept;
     const PackFrozenClosure* closure_ = nullptr;
     const PackPlaybackOwnerStore* ownerStore_ = nullptr;
 };
+
+// Installation-only traversal over actual definition references, including providers.
+bool BuildProgramCapabilitySummariesV1(
+    const ContainerWorldInstallViewV1* worlds, std::uint32_t worldCount,
+    std::vector<ProgramCapabilitySummaryV1>& out);
 
 std::uint32_t CollectCutVoiceBindings(
     const ResolvedPlayablePathRowV1* path, std::uint32_t pathCount,

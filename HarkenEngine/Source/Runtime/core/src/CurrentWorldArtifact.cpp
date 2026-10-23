@@ -66,7 +66,7 @@ CurrentWorldLoadStatusV1 InspectCurrentWorldArtifactHeaderV1(
         return CurrentWorldLoadStatusV1::UnsupportedEnvelope;
     }
     if (ReadU32(bytes + 16) != 1 ||
-        ReadU32(bytes + 20) != kCurrentWorldShippingBodyVintage) {
+        !IsReadableCurrentWorldBodyVintage(ReadU32(bytes + 20))) {
         return CurrentWorldLoadStatusV1::UnsupportedBody;
     }
 
@@ -74,6 +74,7 @@ CurrentWorldLoadStatusV1 InspectCurrentWorldArtifactHeaderV1(
     outHeader.bodyChecksum = ReadU64(bytes + 32);
     outHeader.runtimeSemanticFingerprint = ReadU64(bytes + 40);
     outHeader.capabilityMask = ReadU64(bytes + 48);
+    outHeader.bodyVintage = ReadU32(bytes + 20);
     if (outHeader.bodyBytes > kCurrentWorldArtifactMaxBodyBytes) {
         return CurrentWorldLoadStatusV1::TooLarge;
     }
@@ -108,7 +109,7 @@ CurrentWorldLoadStatusV1 DecodeCurrentWorldArtifactBodyV1(
         return CurrentWorldLoadStatusV1::ChecksumMismatch;
     }
     const CurrentWorldBodyDecodeResult decode = outImage.DecodeWithResult(
-        body, bodyBytes, kCurrentWorldShippingBodyVintage,
+        body, bodyBytes, header.bodyVintage,
         CurrentWorldDecodeMode::StrictArtifact);
     if (decode == CurrentWorldBodyDecodeResult::Capacity) {
         return CurrentWorldLoadStatusV1::Capacity;

@@ -208,6 +208,7 @@ public:
         std::uint32_t slotIndex = 0;
         PackOwnerReadiness readiness = PackOwnerReadiness::Active;
         std::vector<std::uint8_t> partitionBody;
+        std::uint32_t partitionBodyVintage = kCurrentWorldShippingBodyVintage;
         bool hasPartition = false;
         std::shared_ptr<CurrentWorldBodyImage> body;
         ContainerWorldInstallViewV1 view{};
@@ -265,6 +266,7 @@ public:
         keep.readiness = PackOwnerReadiness::Active;
         keep.body = existing.body;
         keep.view = existing.view;
+        keep.partitionBodyVintage = existing.view.sourceBodyVintage;
         keep.voiceBindings = existing.voiceBindings;
         keep.definitionBytes = existing.definitionBytes;
         keep.hasPartition = existing.body != nullptr;
@@ -362,7 +364,7 @@ public:
         const PackPartitionLease& lease) const noexcept;
 
     PackIdentityLookup Lookup(VnObjectId stableId) const noexcept;
-    const ActionProgramViewV1* FindActionAtLease(
+    ActionProgramHandleV1 FindActionAtLease(
         const PackPartitionLease& lease,
         VnObjectId actionId) const noexcept;
     const ContainerProgramViewV3* FindContainerAtLease(
@@ -373,8 +375,9 @@ public:
     bool PlaybackViewAtLease(const PackPartitionLease& lease,
                              PackPlaybackView* out) const noexcept;
     VnObjectId ProjectIdAtLease(const PackPartitionLease& lease) const noexcept;
-    const ActionProgramViewV1* FindActionIn(
+    ActionProgramHandleV1 FindActionIn(
         const PublishedView& view, VnObjectId actionId) const noexcept;
+    ActionProgramHandleV1 ResolveAction(VnObjectId actionId) const noexcept;
     const ActionProgramViewV1* FindAction(VnObjectId actionId) const noexcept;
     const ContainerProgramViewV3* FindContainer(
         VnObjectId containerStableId) const noexcept;

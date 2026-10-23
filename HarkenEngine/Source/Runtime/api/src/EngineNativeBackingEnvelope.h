@@ -190,15 +190,15 @@ public:
         return view_.ResolveVoiceBindings(object, nullptr, 0);
     }
     const ContainerProgramViewV3* Container(const PlayableRefV1& ref) const noexcept {
-        return view_.ResolveContainer(ref.stableId, ref.expectedProgramSemanticFingerprint);
+        return view_.ResolveContainer(ref.stableId, ref.expectedProgramSemanticFingerprint).programView;
     }
     const TrackScheduleProgramViewV1* Track(const PlayableRefV1& ref) const noexcept {
-        const auto* item = view_.ResolveTrack(ref.stableId, 0);
-        return item != nullptr && SameRef(item->rootDefinition, ref) ? item : nullptr;
+        const auto item = view_.ResolveTrack(ref.stableId, 0);
+        return item != nullptr && SameRef(item->rootDefinition, ref) ? item.programView : nullptr;
     }
     const PieceScheduleProgramViewV1* Piece(const PlayableRefV1& ref) const noexcept {
-        const auto* item = view_.ResolvePiece(ref.stableId, 0);
-        return item != nullptr && SameRef(item->rootDefinition, ref) ? item : nullptr;
+        const auto item = view_.ResolvePiece(ref.stableId, 0);
+        return item != nullptr && SameRef(item->rootDefinition, ref) ? item.programView : nullptr;
     }
 private:
     const PackPlaybackView& view_;
