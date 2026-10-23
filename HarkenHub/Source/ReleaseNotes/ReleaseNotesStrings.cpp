@@ -1,6 +1,7 @@
 #include <QtTranslation>
 
 static const char* const kReleaseNotesStrings[] = {
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Hub windows, the app bundle, Windows shortcuts, the taskbar, and the system tray use the new white icon on a black background."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "The quick SDK change menu lists newer versions first, with separators between upgrades, the installed version, and older versions. Sources with the same SDK version list newer Studio versions first."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Successful SDK installation and update results are highlighted in green."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Restored the blue H icon for Hub windows, the app bundle, Windows shortcuts, the taskbar, and the system tray."),
