@@ -31,7 +31,7 @@ struct VoicePoolReleaseTestAccess {
         const auto& native = pool.m_slots[slot];
         const auto& lease = pool.m_originalCallbackStorage[slot];
         const auto lifetime = native.originalBodyLifetime.load(std::memory_order_acquire);
-        return {native.originalCallbackStorageReader.load(std::memory_order_acquire),
+        return {(lifetime & VoicePool::kOriginalBodyCallbackReader) != 0,
             lease.storageHeld, lease.actor.Valid(), lifetime & VoicePool::kOriginalBodyPinMask,
             (lifetime & VoicePool::kOriginalBodyDisposed) != 0,
             (lifetime & VoicePool::kOriginalBodyReturnClaimed) != 0,
@@ -48,7 +48,8 @@ struct VoicePoolReleaseTestAccess {
         // This borrows the already issued authentic actor. A numeric index
         // cannot issue a root actor or fake a native standing/installation.
         return lease.storageHeld &&
-            pool.m_slots[slot].originalCallbackStorageReader.load(std::memory_order_acquire) &&
+            (pool.m_slots[slot].originalBodyLifetime.load(std::memory_order_acquire) &
+                VoicePool::kOriginalBodyCallbackReader) != 0 &&
             lease.actor.Borrow(out);
     }
     static std::uint64_t OriginalOwnerCount(const VoicePool& pool) {
@@ -104,7 +105,8 @@ struct VoicePoolReleaseTestAccess {
     }
     static bool OriginalCallbackStorageReader(const VoicePool& pool, std::uint32_t slot) {
         assert(slot < pool.m_slots.size());
-        return pool.m_slots[slot].originalCallbackStorageReader.load(std::memory_order_acquire);
+        return (pool.m_slots[slot].originalBodyLifetime.load(std::memory_order_acquire) &
+            VoicePool::kOriginalBodyCallbackReader) != 0;
     }
     struct OriginalWorkerJobObservation {
         std::uint64_t abandonedGeneration = 0;

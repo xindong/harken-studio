@@ -302,7 +302,7 @@ public:
                                          const CompletionOwnerRef& owner);
     bool CompletionOwnerReleaseFencePassed(
         const OccurrenceToken& token,
-        std::uint64_t observedCompletionBlockSequence) const;
+        std::uint64_t observedCompletionBlockSequence);
 
     // Advances one occurrence to a later stage. Refused for a stale token, for
     // Free as a destination, and for any move that is not strictly forward.
@@ -352,6 +352,7 @@ public:
     std::uint32_t RetainedStorageCount() const { return m_retainedStorageCount; }
 
 private:
+    bool CaptureCompletionOwnerReleaseFence(const OccurrenceToken& token);
     friend class CompositeCompletionOwnerPool;
     bool ProvePreparedCompositeCompletionCommit(const OriginalCompositeCompletionOwnerPin& original,
         const CompletionOwnerRef& owner, const CompletionProgressRow* progress,
@@ -400,6 +401,7 @@ private:
         bool completionOwnerReleaseFenceArmed = false;
         bool completionOwnerReleaseTerminal = false;
         std::uint64_t completionOwnerReleaseAfterBlock = 0;
+        std::uint64_t completionOwnerPendingFactsRevision = 0;
     };
 
     // Resolves a token to its entry, or nullptr when the slot is out of range,

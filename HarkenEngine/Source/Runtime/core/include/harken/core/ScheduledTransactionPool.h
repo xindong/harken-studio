@@ -100,6 +100,12 @@ class PrivateImmediateLanePublicationProof;
 // Caller-assigned identifier for one transaction, opaque to the pool.
 using TransactionId = std::uint64_t;
 
+enum class FrontierOwnerInvalidationDisposition : std::uint8_t {
+    Ready,
+    DeferredAfterClaim,
+    NotEligible,
+};
+
 enum class ImmediateEntryAttemptState : std::uint8_t {
     Retired = 0,
     Preparing = 1,
@@ -1963,6 +1969,9 @@ public:
         const Plan03GroupSliceIdentity& identity) noexcept;
     bool InvalidateFrontierOwnerOperations(const FrontierOwnerIdentity& owner,
         DecisionToken decision = {}, AudioSliceInvalidateReason reason = AudioSliceInvalidateReason::Cancel) const noexcept;
+    FrontierOwnerInvalidationDisposition TryInvalidateFrontierOwnerOperations(
+        const FrontierOwnerIdentity& owner, DecisionToken decision,
+        AudioSliceInvalidateReason reason) const noexcept;
     bool HasFrontierOwnerOperations(const FrontierOwnerIdentity& owner, DecisionToken decision = {}) const noexcept;
     bool FrontierMemberBindingDetached(const Plan03GroupSliceIdentity& identity,
         const FrontierEntryReceiptRef& entry, std::uint64_t completedAudioSequence) const noexcept;

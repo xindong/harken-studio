@@ -1017,12 +1017,20 @@ TEST(DecisionGroup, ImmediateLaneFrontierCancellationRetainsScopeReasonAndClaimO
     harken::ImmediateLaneFrontierClaim claim{};
     EXPECT_FALSE(pool.ClaimImmediateLaneFrontier(first, &claim));
     ASSERT_TRUE(pool.ClaimImmediateLaneFrontier(second, &claim));
+    EXPECT_EQ(harken::FrontierOwnerInvalidationDisposition::NotEligible,
+        pool.TryInvalidateFrontierOwnerOperations({}, {}, harken::AudioSliceInvalidateReason::Cancel));
+    EXPECT_EQ(harken::FrontierOwnerInvalidationDisposition::DeferredAfterClaim,
+        pool.TryInvalidateFrontierOwnerOperations(
+            owner, {}, harken::AudioSliceInvalidateReason::WorldReplacement));
     EXPECT_FALSE(pool.InvalidateFrontierOwnerOperations(
         owner, {}, harken::AudioSliceInvalidateReason::WorldReplacement));
     pool.SettleInvalidatedImmediateLaneFrontiers();
     EXPECT_EQ(harken::AudioSliceState::Ready, secondView.lease->Capture().state);
     ASSERT_TRUE(pool.ReleaseImmediateLaneFrontier(&claim));
     EXPECT_FALSE(claim.Valid());
+    EXPECT_EQ(harken::FrontierOwnerInvalidationDisposition::Ready,
+        pool.TryInvalidateFrontierOwnerOperations(
+            owner, {}, harken::AudioSliceInvalidateReason::WorldReplacement));
     pool.SettleInvalidatedImmediateLaneFrontiers();
     EXPECT_EQ(harken::AudioSliceState::SliceInvalidated,
               secondView.lease->Capture().state);

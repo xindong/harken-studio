@@ -8896,7 +8896,14 @@ bool ScheduledTransactionPool::BindPlan03GroupFrontier(const Plan03GroupSliceIde
 
 bool ScheduledTransactionPool::InvalidateFrontierOwnerOperations(
     const FrontierOwnerIdentity& owner, DecisionToken decision, AudioSliceInvalidateReason reason) const noexcept {
-    if (!owner.Valid()) return false;
+    return TryInvalidateFrontierOwnerOperations(owner, decision, reason) ==
+        FrontierOwnerInvalidationDisposition::Ready;
+}
+
+FrontierOwnerInvalidationDisposition ScheduledTransactionPool::TryInvalidateFrontierOwnerOperations(
+    const FrontierOwnerIdentity& owner, DecisionToken decision, AudioSliceInvalidateReason reason) const noexcept {
+    if (!owner.Valid() || reason > AudioSliceInvalidateReason::TransportReset)
+        return FrontierOwnerInvalidationDisposition::NotEligible;
     // Check all matching shared gates before changing even the first invalid bit.
     for (std::size_t index = 0; index < immediateLaneGroups_.ConstructedCount(); ++index) {
         const auto& row = immediateLaneGroups_[index];
@@ -8904,9 +8911,10 @@ bool ScheduledTransactionPool::InvalidateFrontierOwnerOperations(
         if (row.publicationProof != nullptr && row.frontierPinsOwned &&
             heldOwner.serviceSlot == owner.serviceSlot && heldOwner.serviceGeneration == owner.serviceGeneration &&
             (!decision.Valid() || (row.decision.slot == decision.slot && row.decision.generation == decision.generation)))
-            return false;
+            return FrontierOwnerInvalidationDisposition::NotEligible;
     }
     bool mutableOwner = true;
+    bool eligible = true;
     const auto invalidateGate = [reason](LaneFrontierGate& gate,
                                          std::uint64_t generation) noexcept {
         if (gate.generation.load(std::memory_order_acquire) != generation)
@@ -8938,11 +8946,26 @@ bool ScheduledTransactionPool::InvalidateFrontierOwnerOperations(
             (decision.Valid() && (binding.operation.group.decision.slot != decision.slot ||
              binding.operation.group.decision.generation != decision.generation))) continue;
         auto* lease = EffectivePlan03GroupLease(i);
-        if (lease == nullptr) mutableOwner = false;
-        else if (lease->Invalidate(reason) ==
-                 AudioSliceInvalidateDisposition::DeferredAfterClaim) mutableOwner = false;
+        if (lease == nullptr) {
+            eligible = false;
+            continue;
+        }
+        switch (lease->Invalidate(reason)) {
+        case AudioSliceInvalidateDisposition::DeferredAfterClaim:
+            mutableOwner = false;
+            break;
+        case AudioSliceInvalidateDisposition::InvalidatedReady:
+        case AudioSliceInvalidateDisposition::AppliedNeedsLifecycle:
+        case AudioSliceInvalidateDisposition::AlreadyInvalidated:
+            break;
+        default:
+            eligible = false;
+            break;
+        }
     }
-    return mutableOwner;
+    if (!eligible) return FrontierOwnerInvalidationDisposition::NotEligible;
+    return mutableOwner ? FrontierOwnerInvalidationDisposition::Ready :
+        FrontierOwnerInvalidationDisposition::DeferredAfterClaim;
 }
 
 void ScheduledTransactionPool::SettleInvalidatedImmediateLaneFrontiers(

@@ -1384,20 +1384,43 @@ bool DecisionTable::RecordAppliedSlice(
 
 bool DecisionTable::Retire(DecisionToken token,
                            std::uint64_t audioSequence) noexcept {
-    if (PreparedTicketHeld(token)) { return false; }
-    if (!MayMutateFrontierDecision(token, AudioSliceInvalidateReason::Cancel)) return false;
+    return TryRetire(token, audioSequence) == DecisionRetirementDisposition::Retired;
+}
+
+DecisionRetirementDisposition DecisionTable::TryRetire(DecisionToken token,
+    std::uint64_t audioSequence) noexcept {
+    if (PreparedTicketHeld(token) || FrontierPublicationHeld(token))
+        return DecisionRetirementDisposition::NotEligible;
     if (auto* activation = ResolveFrontierActivation(token)) {
-        if (activation->State() != FrontierReceiptState::AudioFinal &&
-            activation->State() != FrontierReceiptState::LogicFinal) return false;
+        const auto receiptState = activation->State();
+        if (receiptState != FrontierReceiptState::AudioFinal &&
+            receiptState != FrontierReceiptState::LogicFinal)
+            return DecisionRetirementDisposition::NotEligible;
     }
     Row* row = Resolve(token);
     if (row == nullptr || audioSequence == 0 ||
         row->commit.load(std::memory_order_acquire) !=
             DecisionCommitState::Committed) {
-        return false;
+        return DecisionRetirementDisposition::NotEligible;
     }
     AudioGroupState state =
         row->audioState.load(std::memory_order_acquire);
+    if (state != AudioGroupState::Invalidated &&
+        state != AudioGroupState::DeadlineInvalidated &&
+        state != AudioGroupState::Admitted &&
+        state != AudioGroupState::PostStartInvalidated &&
+        state != AudioGroupState::PostStartDeadlineInvalidated &&
+        state != AudioGroupState::Retired)
+        return DecisionRetirementDisposition::NotEligible;
+    if (HasFrontierDecisionBinding(token)) {
+        const auto& sidecar = frontiers_[token.slot];
+        const auto disposition = sidecar.operationPool->TryInvalidateFrontierOwnerOperations(
+            sidecar.operationOwner, token, AudioSliceInvalidateReason::Cancel);
+        if (disposition == FrontierOwnerInvalidationDisposition::NotEligible)
+            return DecisionRetirementDisposition::NotEligible;
+        if (disposition == FrontierOwnerInvalidationDisposition::DeferredAfterClaim)
+            return DecisionRetirementDisposition::DeferredByFrontier;
+    }
     while (state == AudioGroupState::Invalidated ||
            state == AudioGroupState::DeadlineInvalidated ||
            state == AudioGroupState::Admitted ||
@@ -1409,10 +1432,11 @@ bool DecisionTable::Retire(DecisionToken token,
                 std::memory_order_acquire)) {
             row->lastAudioSequence.store(audioSequence,
                                          std::memory_order_release);
-            return true;
+            return DecisionRetirementDisposition::Retired;
         }
     }
-    return state == AudioGroupState::Retired;
+    return state == AudioGroupState::Retired ? DecisionRetirementDisposition::Retired :
+        DecisionRetirementDisposition::NotEligible;
 }
 
 bool DecisionTable::ReclaimRetired(DecisionToken token,
