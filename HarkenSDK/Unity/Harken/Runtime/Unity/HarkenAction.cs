@@ -23,6 +23,7 @@ namespace Harken.Unity
         private string preparationProject;
         private bool preparing;
         private uint enableGeneration;
+        private ulong observationRevision;
         private bool releaseObserved;
         private VnResult lastReleaseResult;
         private enum AutomaticPlayState { Idle, Armed, Consumed }
@@ -119,6 +120,7 @@ namespace Harken.Unity
 
         public VnResult Play()
         {
+            if (runtime != null && runtime.IsPublishingSpatial) return VnResult.VN_IN_USE;
             automaticPlay = AutomaticPlayState.Consumed;
             ForgetTerminatedFiring();
             if (runtime == null || !runtime.IsReady ||
@@ -127,15 +129,36 @@ namespace Harken.Unity
             {
                 return ObserveAction(VnResult.VN_INVALID_ARG);
             }
+            HarkenAudioSystem host = runtime;
+            PackBootstrapSession owner = host.Session;
+            HarkenEmitter source = emitter;
+            Emitter handle = source.Handle;
+            uint generation = enableGeneration;
+            ulong revision = observationRevision;
+            string name = actionName;
+            string project = projectId;
             VnResult result;
+            bool publicationCurrent;
             preparing = true;
-            try { result = PrepareAndPost(); }
+            try { result = PrepareAndPost(out publicationCurrent); }
             finally { preparing = false; }
-            return ObserveAction(result);
+            if (!PlayContextIsCurrent(host, owner, source, handle, generation, name, project))
+                return VnResult.VN_NOT_INITIALIZED;
+            if (publicationCurrent && observationRevision == revision) ObserveAction(result);
+            return PlayContextIsCurrent(host, owner, source, handle, generation, name, project)
+                ? result : VnResult.VN_NOT_INITIALIZED;
         }
 
-        private VnResult PrepareAndPost()
+        private bool PlayContextIsCurrent(HarkenAudioSystem host, PackBootstrapSession owner,
+            HarkenEmitter source, Emitter handle, uint generation, string name, string project)
+            => this && isActiveAndEnabled && enableGeneration == generation && runtime == host &&
+                host != null && host.IsReady && ReferenceEquals(host.Session, owner) && owner.IsActive &&
+                emitter == source && source != null && source.Matches(host, owner, handle) &&
+                actionName == name && projectId == project;
+
+        private VnResult PrepareAndPost(out bool publicationCurrent)
         {
+            publicationCurrent = false;
             HarkenAudioSystem host = runtime;
             PackBootstrapSession owner = host.Session;
             HarkenEmitter source = emitter;
@@ -186,11 +209,20 @@ namespace Harken.Unity
                 cachedProjectId = project;
                 cachedSession = owner;
             }
-            if (result == VnResult.VN_OK)
-                result = Actions.Post(in cachedResolved, target, callerSeed++, out firing);
+            HarkenAudioSystem.SpatialPost publication = default;
+            try
+            {
+                if (result == VnResult.VN_OK)
+                    result = host.BeginSpatialPost(owner, source, null, out publication);
+                if (result == VnResult.VN_OK)
+                    result = Actions.Post(in cachedResolved, target, callerSeed++, out firing);
+            }
+            finally { host.EndSpatialPost(in publication); }
             // Direct native mutations can bypass the SDK stamp. Refuse once, then refresh on a new request.
             if (result == VnResult.VN_STALE_HANDLE) cacheValid = false;
             if (result != VnResult.VN_OK) ReleaseResources();
+            host.NotifySpatialPost(in publication);
+            publicationCurrent = host.SpatialPostIsCurrent(in publication);
             return result;
         }
 
@@ -267,6 +299,8 @@ namespace Harken.Unity
 
         private void HandleRuntimeReady(HarkenAudioSystem owner)
         {
+            if (!this || !isActiveAndEnabled || !runtimeBound || !ReferenceEquals(runtime, owner) || !owner.IsReady)
+                return;
             owner.RegisterParticipant(this);
             cacheValid = false;
         }
@@ -292,6 +326,7 @@ namespace Harken.Unity
 
         private VnResult Observe(string operation, VnResult result)
         {
+            ++observationRevision;
             LastResult = result;
             return runtime != null
                 ? runtime.ObserveResult(operation, result)

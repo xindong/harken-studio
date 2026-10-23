@@ -455,28 +455,77 @@ progress while the session is active.
 ### Unity components
 
 `HarkenEmitter` serializes `runtime` and `stopFadeMs` (default 50 ms). It
-creates one native emitter when its Runtime becomes ready, publishes its
-Transform position and orientation when changed, and transfers cleanup to the
-Runtime when disabled. A retained emitter keeps emitter-local Variable values;
+creates and registers one native emitter when its Runtime becomes ready. The
+Runtime publishes its Transform when changed. The component transfers cleanup
+to the Runtime when disabled. A retained emitter keeps emitter-local Variable values;
 destroy and recreate it when pooling assigns a new object identity.
 
 | Member | Contract |
 | --- | --- |
 | `Emitter Handle { get; }`, `bool IsCreated { get; }` | Live native handle and creation state. An unavailable handle is `default`. |
 | `VnResult LastResult { get; }` | Last component operation, including transform publication. |
-| `VnResult Create()` | Create/publish after a live session exists. Repeated creation of this component's current emitter returns `VN_OK`; no session returns `VN_NOT_INITIALIZED`. |
+| `VnResult Create()` | Create/register after a live session exists. Pose publication happens at the shared frame boundary or immediately before an SDK Post. Repeated creation of this component's current emitter returns `VN_OK`; no session returns `VN_NOT_INITIALIZED`. |
 | `VnResult Stop()` | Stop the emitter's current playback using `stopFadeMs`; no created emitter returns `VN_OK`. |
 | `VnResult DestroyEmitter()` | Stop, then destroy the owned emitter. Check the result; failed cleanup retains ownership. |
 
 `ShutdownOrder` and `BeforeRuntimeShutdown()` serve owner cleanup. Do not
 destroy the component's `Handle` through the low-level wrapper.
 
-`HarkenListener` serializes an optional `runtime` reference. When the owner
-is ready, it publishes its Transform from `LateUpdate` and exposes
+`HarkenListener` serializes an optional `runtime` reference and exposes
 `VnResult LastResult { get; }`. Attach it to the camera or player whose pose
-should drive spatial audio.
-Re-enabling the listener clears its publication cache and republishes even an
-unchanged Transform on the next ready update.
+should drive spatial audio. Enabled listeners register as candidates. The
+first candidate that successfully publishes its pose becomes the selected
+listener; later candidates remain registered with `LastResult = VN_IN_USE`
+and cannot overwrite the selected pose.
+
+| AudioSystem member | Contract |
+| --- | --- |
+| `HarkenListener SelectedListener { get; }` | Current listener component, or `null` when none is selected. |
+| `VnResult SelectListener(HarkenListener listener)` | Validate and publish an enabled candidate belonging to this session, then select it. Failure preserves the previous selection. Selecting the current owner republishes its pose without creating another identity. |
+
+Disabling or destroying the selected listener clears the selection. Existing
+candidates do not automatically take over; select one explicitly. With no
+selected component, native audio retains its default or last accepted
+listener pose. Restarting the Runtime clears session ownership; still-enabled
+components register again and retransmit even an unchanged Transform.
+
+```csharp
+VnResult selected = runtime.SelectListener(cutsceneListener);
+if (selected != VnResult.VN_OK) Debug.LogWarning(selected);
+```
+
+### Pose sampling and playback timing
+
+Each AudioSystem owns one internal coordinator with
+`DefaultExecutionOrder(+10000)`. Its `LateUpdate` captures the selected
+listener and all active component/Transform sources, publishes the captured
+values, then performs the normal Runtime update. Place camera and gameplay
+Transform writes before this boundary. A script with the same or later order,
+a project execution-order override, or a custom PlayerLoop must explicitly
+arrange that ordering. Writes after the boundary enter the next submission.
+The AudioSystem keeps its early initialization order of `-10000`.
+
+`HarkenAction.Play` and spatial `HarkenAudioSystem.PlayAction` capture and
+publish the selected listener and that request's source immediately before
+the actual Post, after resource preparation. `PlayActionAsync` waits for
+preparation, revalidates the session/source, and captures the current pose at
+that point. A cancelled or obsolete request cannot post into a new session.
+The existing installation/ACK service can still be required before the first
+audible block; these calls do not promise synchronous sound. A later normal
+frame submission can legitimately accept a newer pose. Game code does not
+need to add an extra `HarkenEngine.Update` or position setter.
+
+Pose publication contains no user callbacks or maintenance pumps. Publication
+results are notified after firing/resource ownership is registered, or after
+the normal native update returns. Play/Stop/Destroy in those safe callbacks
+retain their existing ownership rules; callbacks cannot recursively pump the
+Runtime. Invalid listener input preserves the last accepted snapshot. Invalid
+source input preserves that source's last accepted pose and reports the result.
+
+For pooled Transform sources, call `EndFollow()` before reassigning the object
+and create a new source for the new identity; existing tails keep the frozen
+pose. Raw `Emitter` handles have no Unity Transform association: their caller
+must explicitly submit the listener/source pose before low-level `Actions.Post`.
 
 ### Raw `Harken.Emitter` and coordinate adapters
 

@@ -233,8 +233,8 @@ namespace Harken.Unity.Tests
                     else
                     {
                         if (component == null) Assert.That(UnitySpatial.SetListener(Listener), Is.EqualTo(VnResult.VN_OK));
-                        else typeof(HarkenListener).GetMethod("LateUpdate", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(component, null);
-                        typeof(HarkenAudioSystem).GetMethod("Update", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(runtime, null);
+                        else Assert.That(runtime.SelectListener(component), Is.EqualTo(VnResult.VN_OK));
+                        typeof(HarkenAudioSystem).GetMethod("AdvanceFrame", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(runtime, null);
                     }
                     Assert.That(HarkenSdkTest_PumpAndCopy(samples, (uint)samples.Length, out uint frames, out uint channels),
                         Is.EqualTo(VnResult.VN_OK));

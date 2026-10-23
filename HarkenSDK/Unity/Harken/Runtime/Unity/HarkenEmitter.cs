@@ -30,15 +30,7 @@ namespace Harken.Unity
 
         private void Update()
         {
-            if (!TryBindRuntime())
-            {
-                return;
-            }
-            if (!IsCreated || owningRuntime == null || !owningRuntime.IsReady)
-            {
-                return;
-            }
-            PublishTransformIfChanged();
+            TryBindRuntime();
         }
 
         private bool TryBindRuntime()
@@ -80,18 +72,13 @@ namespace Harken.Unity
             }
             if (emitter.IsValid)
             {
+                runtime.RegisterSpatialEmitter(this);
                 return Observe("Emitter.Create", VnResult.VN_OK);
             }
             VnResult result = Emitter.Create(out emitter);
             if (result == VnResult.VN_OK)
             {
-                result = UnitySpatial.SetEmitterTransform(emitter, transform);
-                if (result == VnResult.VN_OK)
-                {
-                    lastPosition = transform.position;
-                    lastRotation = transform.rotation;
-                    transformPublished = true;
-                }
+                runtime.RegisterSpatialEmitter(this);
             }
             return Observe("Emitter.Create", result);
         }
@@ -154,23 +141,25 @@ namespace Harken.Unity
             Create();
         }
 
-        private void PublishTransformIfChanged()
+        internal bool Matches(HarkenAudioSystem owner, PackBootstrapSession session, Emitter handle)
+            => this && isActiveAndEnabled && ReferenceEquals(owningRuntime, owner) &&
+                ReferenceEquals(owningSession, session) && IsCreated && emitter.Handle == handle.Handle;
+
+        internal VnResult PublishPose(in UnitySpatialPose pose, out bool changed)
         {
-            Vector3 position = transform.position;
-            Quaternion rotation = transform.rotation;
-            if (transformPublished && position == lastPosition && rotation == lastRotation)
-            {
-                return;
-            }
-            VnResult result = UnitySpatial.SetEmitterTransform(emitter, position, rotation * Vector3.forward);
+            changed = !transformPublished || pose.Position != lastPosition || pose.Rotation != lastRotation;
+            if (!changed) return LastResult = VnResult.VN_OK;
+            VnResult result = UnitySpatial.SetEmitterTransform(emitter, pose.Position, pose.Forward);
             if (result == VnResult.VN_OK)
             {
-                lastPosition = position;
-                lastRotation = rotation;
+                lastPosition = pose.Position;
+                lastRotation = pose.Rotation;
                 transformPublished = true;
             }
-            Observe("UnitySpatial.SetEmitterTransform", result);
+            return LastResult = result;
         }
+
+        internal void RecordSpatialResult(VnResult result) => LastResult = result;
 
         private VnResult Observe(string operation, VnResult result)
         {
@@ -189,6 +178,7 @@ namespace Harken.Unity
             {
                 bound.BecameReady -= HandleRuntimeReady;
                 bound.UnregisterParticipant(this);
+                bound.UnregisterSpatialEmitter(this);
             }
             TransferEmitterCleanup();
         }

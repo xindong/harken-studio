@@ -55,6 +55,221 @@ namespace Harken.Unity.Tests
 
         #if HARKEN_SDK_TEST_NULL_PUMP
         [UnityTest]
+        public IEnumerator ComponentPostUsesPosesMovedInOrdinaryUpdate() => ImmediatePoseCase(false);
+
+        [UnityTest]
+        public IEnumerator TransformSourcePostUsesPosesMovedInOrdinaryUpdate() => ImmediatePoseCase(true);
+
+        private static IEnumerator ImmediatePoseCase(bool useSpatialSource)
+        {
+            Vector2 reference = default;
+            for (int pass = 0; pass < 2; ++pass)
+            {
+                using (var f = new Fixture())
+                {
+                    f.Start();
+                    f.Actor.SetActive(true);
+                    f.Camera.SetActive(true);
+                    f.Actor.transform.position = Vector3.right * 80;
+                    HarkenSpatialSource source = null;
+                    if (useSpatialSource)
+                        Assert.That(f.Runtime.CreateSpatialSource(f.Actor.transform, out source), Is.EqualTo(VnResult.VN_OK));
+                    var driver = f.Owner.AddComponent<HarkenSpatialPlayerLoopProbe>();
+                    Vector2 rendered = default;
+                    ActionFiring posted = default;
+                    int currentPass = pass;
+                    driver.BeforeLate = () =>
+                    {
+                        if (currentPass != 0)
+                        {
+                            f.Actor.transform.position = Vector3.right * 160;
+                            f.Camera.transform.position = Vector3.right * 240;
+                        }
+                        VnResult result = useSpatialSource
+                            ? f.Runtime.PlayAction(f.Action.ActionName, f.Action.ProjectId, source, out posted)
+                            : f.Action.Play();
+                        if (!useSpatialSource) posted = f.Action.Firing;
+                        Assert.That(result, Is.EqualTo(VnResult.VN_OK));
+                    };
+                    yield return f.FirstAudible(driver, () => posted, value => rendered = value);
+                    if (pass == 0)
+                    {
+                        reference = rendered;
+                        Assert.That(reference.y, Is.GreaterThan(reference.x * 3));
+                        Assert.That(reference.y, Is.GreaterThan(0.001f));
+                    }
+                    else
+                    {
+                        Assert.That(rendered.x, Is.GreaterThan(rendered.y * 3));
+                        Assert.That(rendered.x, Is.EqualTo(reference.y).Within(reference.y * 0.02f));
+                    }
+                }
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator FrameEndFollowsSourceAndListenerWithoutAnotherLogicalUpdate()
+        {
+            using (var f = new Fixture())
+            {
+                f.Start();
+                f.Actor.SetActive(true);
+                f.Camera.SetActive(true);
+                f.Actor.transform.position = Vector3.right * 80;
+                var driver = f.Owner.AddComponent<HarkenSpatialPlayerLoopProbe>();
+                bool finished = false;
+                Vector2 reference = default;
+                driver.BeforeLate = () => Assert.That(f.Action.Play(), Is.EqualTo(VnResult.VN_OK));
+                yield return f.FirstAudible(driver, () => f.Action.Firing, _ => { });
+                reference = f.RenderPhysicalBlocks(8);
+                Assert.That(reference.y, Is.GreaterThan(reference.x * 3));
+                finished = false;
+                Vector2 moved = default;
+                driver.BeforeLate = () =>
+                {
+                    f.Actor.transform.position = Vector3.right * 160;
+                    f.Camera.transform.position = Vector3.right * 240;
+                };
+                driver.AfterLate = () => { moved = f.RenderPhysicalBlocks(8); finished = true; };
+                for (int frame = 0; frame < 10 && !finished; ++frame) yield return null;
+                Assert.That(finished, Is.True);
+                Assert.That(moved.x, Is.GreaterThan(moved.y * 3));
+                Assert.That(moved.x, Is.EqualTo(reference.y).Within(reference.y * 0.1f));
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator LateWritesOnEitherSideOfTheBoundaryUseTheIntendedSubmission()
+        {
+            using (var f = new Fixture())
+            {
+                f.Start();
+                f.Actor.SetActive(true);
+                f.Camera.SetActive(true);
+                f.Actor.transform.position = Vector3.right * 80;
+                var driver = f.Owner.AddComponent<HarkenSpatialPlayerLoopProbe>();
+                var earlier = f.Owner.AddComponent<HarkenSpatialBeforeBoundaryProbe>();
+                driver.BeforeLate = () => Assert.That(f.Action.Play(), Is.EqualTo(VnResult.VN_OK));
+                yield return f.FirstAudible(driver, () => f.Action.Firing, _ => { });
+                bool finished = false;
+                Vector2 beforeBoundary = default;
+                earlier.OnLate = () => f.Actor.transform.position = Vector3.left * 80;
+                driver.AfterLate = () => { beforeBoundary = f.RenderPhysicalBlocks(8); finished = true; };
+                for (int frame = 0; frame < 10 && !finished; ++frame) yield return null;
+                Assert.That(finished, Is.True);
+                Assert.That(beforeBoundary.x, Is.GreaterThan(beforeBoundary.y * 3));
+                finished = false;
+                Vector2 afterBoundary = default;
+                driver.AfterLate = () =>
+                {
+                    f.Actor.transform.position = Vector3.right * 80;
+                    afterBoundary = f.RenderPhysicalBlocks(8);
+                    finished = true;
+                };
+                for (int frame = 0; frame < 10 && !finished; ++frame) yield return null;
+                Assert.That(finished, Is.True);
+                Assert.That(afterBoundary.x, Is.GreaterThan(afterBoundary.y * 3));
+                finished = false;
+                Vector2 nextSubmission = default;
+                driver.AfterLate = () => { nextSubmission = f.RenderPhysicalBlocks(8); finished = true; };
+                for (int frame = 0; frame < 10 && !finished; ++frame) yield return null;
+                Assert.That(finished, Is.True);
+                Assert.That(nextSubmission.y, Is.GreaterThan(nextSubmission.x * 3));
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator PostNotificationMayDisableItsSourceWithoutReturningStaleSuccess()
+        {
+            using (var f = new Fixture())
+            {
+                f.Start();
+                f.Actor.SetActive(true);
+                f.Camera.SetActive(true);
+                f.Actor.transform.position = Vector3.right * 80;
+                bool called = false;
+                f.Runtime.OperationCompleted += (_, operation, result) =>
+                {
+                    if (called || operation != "UnitySpatial.SetEmitterTransform") return;
+                    called = true;
+                    Assert.That(result, Is.EqualTo(VnResult.VN_OK));
+                    f.Actor.SetActive(false);
+                };
+                Assert.That(f.Action.Play(), Is.EqualTo(VnResult.VN_NOT_INITIALIZED));
+                Assert.That(called, Is.True);
+                Assert.That(f.Action.Firing.IsValid, Is.False);
+                Assert.That(f.Emitter.IsCreated, Is.False);
+                Assert.That(f.Runtime.IsReady, Is.True);
+            }
+            yield return null;
+        }
+
+        [UnityTest]
+        public IEnumerator SpatialPostNotificationRestartCannotReturnAnOldFiring()
+        {
+            using (var f = new Fixture())
+            {
+                f.Start();
+                f.Actor.SetActive(true);
+                Assert.That(f.Runtime.CreateSpatialSource(f.Actor.transform, out HarkenSpatialSource source),
+                    Is.EqualTo(VnResult.VN_OK));
+                PackBootstrapSession original = f.Runtime.Session;
+                bool called = false;
+                f.Runtime.OperationCompleted += (_, operation, result) =>
+                {
+                    if (called || operation != "SpatialSource.Update") return;
+                    called = true;
+                    Assert.That(result, Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(f.Runtime.ShutdownRuntime(), Is.EqualTo(VnResult.VN_OK));
+                    f.Start();
+                };
+                Assert.That(f.Runtime.PlayAction(f.Action.ActionName, f.Action.ProjectId, source, out ActionFiring firing),
+                    Is.EqualTo(VnResult.VN_NOT_INITIALIZED));
+                Assert.That(called, Is.True);
+                Assert.That(original.IsActive, Is.False);
+                Assert.That(firing.IsValid, Is.False);
+                Assert.That(f.Runtime.Session, Is.Not.SameAs(original));
+            }
+            yield return null;
+        }
+
+        [UnityTest]
+        public IEnumerator ListenerCandidatesRequireExplicitSelectionAfterOwnerDisables()
+        {
+            using (var f = new Fixture())
+            {
+                f.Start();
+                f.Camera.SetActive(true);
+                HarkenListener first = f.Camera.GetComponent<HarkenListener>();
+                var other = new GameObject("Listener candidate");
+                try
+                {
+                    HarkenListener second = other.AddComponent<HarkenListener>();
+                    Assert.That(f.Runtime.SelectedListener, Is.SameAs(first));
+                    Assert.That(second.LastResult, Is.EqualTo(VnResult.VN_IN_USE));
+                    second.enabled = false;
+                    LogAssert.Expect(LogType.Error, "Harken operation failed: HarkenAudioSystem.SelectListener: VN_INVALID_ARG");
+                    Assert.That(f.Runtime.SelectListener(second), Is.EqualTo(VnResult.VN_INVALID_ARG));
+                    Assert.That(f.Runtime.SelectedListener, Is.SameAs(first));
+                    second.enabled = true;
+                    Assert.That(f.Runtime.SelectListener(second), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(f.Runtime.SelectedListener, Is.SameAs(second));
+                    second.enabled = false;
+                    LogAssert.Expect(LogType.Error, "Harken operation failed: HarkenAudioSystem.SelectListener: VN_INVALID_ARG");
+                    Assert.That(f.Runtime.SelectListener(second), Is.EqualTo(VnResult.VN_INVALID_ARG));
+                    yield return null;
+                    Assert.That(f.Runtime.SelectedListener, Is.Null);
+                    Assert.That(f.Runtime.SelectListener(first), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(f.Runtime.ShutdownRuntime(), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(f.Runtime.SelectedListener, Is.Null);
+                    f.Start();
+                    Assert.That(f.Runtime.SelectedListener, Is.SameAs(first));
+                }
+                finally { Object.DestroyImmediate(other); }
+            }
+        }
+
+        [UnityTest]
         public IEnumerator OrdinaryEmitterMovementReachesNativeAudio() => EmitterPoseCase("ordinary");
 
         [UnityTest]
@@ -270,6 +485,54 @@ namespace Harken.Unity.Tests
                 return new Vector2(Mathf.Sqrt(energy.x), Mathf.Sqrt(energy.y));
             }
 
+            public IEnumerator FirstAudible(HarkenSpatialPlayerLoopProbe driver,
+                Func<ActionFiring> firing, Action<Vector2> accept)
+            {
+                bool audible = false;
+                int blocks = 0;
+                // Installation ACKs use ordinary PlayerLoop service. Never pump a logical update here.
+                for (int frame = 0; frame < 32 && !audible; ++frame)
+                {
+                    driver.AfterLate = () =>
+                    {
+                        Vector2 energy = RenderPhysicalBlocks(1);
+                        ++blocks;
+                        Assert.That(firing().Query(out VnActionFiringInfo info), Is.EqualTo(VnResult.VN_OK));
+                        if (energy.x + energy.y <= 0.000001f) return;
+                        var snapshot = HarkenEngine.DefaultSnapshot();
+                        Assert.That(HarkenEngine.Capture(ref snapshot), Is.EqualTo(VnResult.VN_OK));
+                        Debug.Log($"SPATIAL_FIRST_AUDIBLE blocks={blocks} block={snapshot.blockIndex} state={info.state} left={energy.x:R} right={energy.y:R}");
+                        audible = true;
+                        accept(energy);
+                    };
+                    yield return null;
+                }
+                Assert.That(audible, Is.True, "Normal installation service did not produce an audible block.");
+            }
+
+            public Vector2 RenderPhysicalBlocks(int blockCount)
+            {
+                PackBootstrapSession session = Runtime.Session;
+                Vector2 energy = default;
+                for (int block = 0; block < blockCount; ++block)
+                {
+                    // The bridge requires exactly one newly rendered block before copying its samples.
+                    Assert.That(HarkenSdkTest_PumpAndCopy(samples, (uint)samples.Length, out uint frames, out uint channels),
+                        Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(channels, Is.EqualTo(2));
+                    Assert.That(frames, Is.GreaterThan(0));
+                    if (block < blockCount - 4) continue;
+                    for (int frame = 0; frame < frames; ++frame)
+                    {
+                        energy.x += samples[frame * 2] * samples[frame * 2];
+                        energy.y += samples[frame * 2 + 1] * samples[frame * 2 + 1];
+                    }
+                }
+                Assert.That(Runtime.Session, Is.SameAs(session));
+                Assert.That(session.IsActive, Is.True);
+                return new Vector2(Mathf.Sqrt(energy.x), Mathf.Sqrt(energy.y));
+            }
+
             public void Dispose()
             {
                 Runtime.ShutdownRuntime();
@@ -281,6 +544,39 @@ namespace Harken.Unity.Tests
 
             private static void Set(object target, string name, object value)
                 => target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic).SetValue(target, value);
+        }
+    }
+
+    [DefaultExecutionOrder(9999)]
+    public sealed class HarkenSpatialBeforeBoundaryProbe : MonoBehaviour
+    {
+        internal Action OnLate;
+        private void LateUpdate()
+        {
+            Action callback = OnLate;
+            OnLate = null;
+            callback?.Invoke();
+        }
+    }
+
+    [DefaultExecutionOrder(10001)]
+    public sealed class HarkenSpatialPlayerLoopProbe : MonoBehaviour
+    {
+        internal Action BeforeLate;
+        internal Action AfterLate;
+
+        private void Update()
+        {
+            Action callback = BeforeLate;
+            BeforeLate = null;
+            callback?.Invoke();
+        }
+
+        private void LateUpdate()
+        {
+            Action callback = AfterLate;
+            AfterLate = null;
+            callback?.Invoke();
         }
     }
 }
