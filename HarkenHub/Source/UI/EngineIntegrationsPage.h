@@ -168,7 +168,7 @@ private:
     void setSdkPath(const QString& path, bool userSelected);
     void setEditorLocked(bool locked);
     void clearResults();
-    void setSummaryText(const QString& text);
+    void setSummaryText(const QString& text, bool succeeded = false);
     void updateIdleSummary();
     void runCheck();
     void runIntegration();
@@ -182,7 +182,8 @@ private:
         const UnityIntegrationResult& result, bool checkOnly = false) const;
     void showResults(const QVector<ResultStep>& steps,
                      const QString& summary,
-                     const QString& preferredStep = QString());
+                     const QString& preferredStep = QString(),
+                     bool succeeded = false);
     void showSelectedStep();
     void updateSdkCheckResults();
     QString formatStepHtml(const ResultStep& step) const;

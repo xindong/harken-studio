@@ -7,6 +7,26 @@
   },
   "releases": [
     {
+      "version": "0.1.66",
+      "date": "2026-10-23",
+      "pullRequests": [],
+      "contributors": ["liuxin2-sys"],
+      "changes": [
+        {
+          "category": "improved",
+          "text": "The quick SDK change menu lists newer versions first, with separators between upgrades, the installed version, and older versions. Sources with the same SDK version list newer Studio versions first."
+        },
+        {
+          "category": "improved",
+          "text": "Successful SDK installation and update results are highlighted in green."
+        },
+        {
+          "category": "improved",
+          "text": "Restored the blue H icon for Hub windows, the app bundle, Windows shortcuts, the taskbar, and the system tray."
+        }
+      ]
+    },
+    {
       "version": "0.1.65",
       "date": "2026-10-22",
       "pullRequests": [102],

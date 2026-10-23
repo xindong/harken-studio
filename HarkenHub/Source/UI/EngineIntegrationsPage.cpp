@@ -223,6 +223,7 @@ struct LocalSdkSource
     QString path;
     QString version;
     QString label;
+    QString studioVersion;
 };
 
 QVector<LocalSdkSource> localSdkSources(
@@ -235,7 +236,7 @@ QVector<LocalSdkSource> localSdkSources(
         if (version.isEmpty()) continue;
         sources.push_back({path, version,
             QCoreApplication::translate("HarkenHub", "SDK %1 | Studio %2")
-                .arg(version, versionLabel(studio))});
+                .arg(version, versionLabel(studio)), studio.semanticVersion});
     }
     return sources;
 }
@@ -1425,7 +1426,21 @@ void EngineIntegrationsPage::populateQuickSdkMenu(QMenu* change, const QString& 
     });
     if (target != targets.end()) {
         const auto observation = requestTargetObservation(*target);
-        const auto sources = localSdkSources(target->engineKind, availableStudioVersions());
+        auto sources = localSdkSources(target->engineKind, availableStudioVersions());
+        const auto sourceGroup = [&](const LocalSdkSource& source) {
+            const int comparison = compareSdkVersions(source.version, observation.integrationVersion);
+            return comparison > 0 ? 0 : comparison < 0 ? 2 : 1;
+        };
+        std::stable_sort(sources.begin(), sources.end(), [&](const auto& left, const auto& right) {
+            const int leftGroup = sourceGroup(left);
+            const int rightGroup = sourceGroup(right);
+            if (leftGroup != rightGroup) return leftGroup < rightGroup;
+            const int comparison = QVersionNumber::compare(
+                QVersionNumber::fromString(left.version), QVersionNumber::fromString(right.version));
+            if (comparison != 0) return comparison > 0;
+            return QVersionNumber::compare(QVersionNumber::fromString(left.studioVersion),
+                                           QVersionNumber::fromString(right.studioVersion)) > 0;
+        });
         if (!targetInspections_[target->targetId].ready) {
             change->addAction(observation.status)->setEnabled(false);
             change->addSeparator();
@@ -1437,7 +1452,12 @@ void EngineIntegrationsPage::populateQuickSdkMenu(QMenu* change, const QString& 
             change->addAction(installed)->setEnabled(false);
             change->addSeparator();
         }
+        int previousGroup = -1;
         for (const auto& source : sources) {
+            const int group = sourceGroup(source);
+            if (previousGroup != -1 && previousGroup != group)
+                change->addSeparator();
+            previousGroup = group;
             QString label = source.label;
             const bool sameVersion = source.version == observation.integrationVersion;
             const bool installedSource = sameVersion && !record->sdkSourcePath.isEmpty()
@@ -2579,9 +2599,11 @@ void EngineIntegrationsPage::setOperationRunning(bool running)
         QTimer::singleShot(0, this, &EngineIntegrationsPage::refreshStudioVersion);
 }
 
-void EngineIntegrationsPage::setSummaryText(const QString& text)
+void EngineIntegrationsPage::setSummaryText(const QString& text, bool succeeded)
 {
-    summaryLabel_->setStyleSheet(QString());
+    const QString style = succeeded ? QStringLiteral("color: #69D391;") : QString();
+    summaryLabel_->setStyleSheet(style);
+    sdkSelectionSummary_->setStyleSheet(style);
     showingIdleSummary_ = text == QCoreApplication::translate(
         "HarkenHub", "No integration check has run.");
     if (showingIdleSummary_)
@@ -2617,6 +2639,7 @@ void EngineIntegrationsPage::updateIdleSummary()
 void EngineIntegrationsPage::clearResults()
 {
     summaryLabel_->setStyleSheet(QString());
+    sdkSelectionSummary_->setStyleSheet(QString());
     reviewedUnrealPlan_.reset();
     reviewedSdkHash_.clear();
     sdkReportPath_.clear();
@@ -2696,9 +2719,7 @@ void EngineIntegrationsPage::runCheck()
             showResults(steps, success
                 ? QCoreApplication::translate("HarkenHub", "Installed SDK verification passed. No files were changed.")
                 : QCoreApplication::translate("HarkenHub", "Installed SDK verification did not pass. Review the results; no files were changed."),
-                QStringLiteral("verify"));
-            if (success)
-                summaryLabel_->setStyleSheet(QStringLiteral("color: #69D391;"));
+                QStringLiteral("verify"), success);
             return;
         }
         setSummaryText(QCoreApplication::translate("HarkenHub", "Select a Unity project before checking integration."));
@@ -3295,7 +3316,8 @@ bool EngineIntegrationsPage::runUnity(
             : QCoreApplication::translate("HarkenHub", "SDK installation complete. Installed files passed verification.");
     }
     showResults(steps, summary, checkOnly ? QStringLiteral("compare_sdk")
-                                        : QStringLiteral("install_sdk"));
+                                        : QStringLiteral("install_sdk"),
+                !checkOnly && result.success);
     if (!result.textReportPath.isEmpty())
         summaryLabel_->setToolTip(
             QCoreApplication::translate("HarkenHub", "Report: %1").arg(result.textReportPath));
@@ -3457,7 +3479,7 @@ bool EngineIntegrationsPage::runUnreal(
     showResults(steps, result.success
         ? QCoreApplication::translate("HarkenHub", "SDK integration completed successfully.")
         : QCoreApplication::translate("HarkenHub", "SDK integration failed. Select the failed step for details."),
-                QStringLiteral("apply_sdk"));
+                QStringLiteral("apply_sdk"), result.success);
     if (result.success && !targets_->updateSdkInstallPath(target.targetId, result.installedPath))
         setSummaryText(QCoreApplication::translate("HarkenHub", "The SDK location changed, but Hub could not save it. Reopen this integration to rediscover the location.\n%1")
             .arg(localizeIntegrationText(targets_->lastError())));
@@ -3466,7 +3488,7 @@ bool EngineIntegrationsPage::runUnreal(
 
 void EngineIntegrationsPage::showResults(
     const QVector<ResultStep>& steps, const QString& summary,
-    const QString& preferredStep)
+    const QString& preferredStep, bool succeeded)
 {
     const QSignalBlocker blocker(stepsTable_);
     resultSteps_ = steps;
@@ -3496,7 +3518,7 @@ void EngineIntegrationsPage::showResults(
             selectedRow = row;
         }
     }
-    setSummaryText(summary);
+    setSummaryText(summary, succeeded);
     updateSdkCheckResults();
     if (selectedRow < 0 && !steps.isEmpty())
         selectedRow = 0;
