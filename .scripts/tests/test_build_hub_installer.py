@@ -4,7 +4,7 @@ import os
 import subprocess
 import tempfile
 import unittest
-import xml.etree.ElementTree as ET
+import json
 from pathlib import Path
 from unittest import mock
 
@@ -13,12 +13,6 @@ SCRIPT_PATH = REPO_ROOT / ".scripts" / "release" / "build_hub_installer.py"
 ACL_HEADER_PATH = (
     REPO_ROOT / "HarkenHub" / "Source" / "Platform" / "AclHardening.h"
 )
-WXS_PATH = REPO_ROOT / ".scripts" / "release" / "wix" / "HarkenHub.wxs"
-
-WXS_NS = "http://wixtoolset.org/schemas/v4/wxs"
-WIXUI_NS = "http://wixtoolset.org/schemas/v4/wxs/ui"
-
-
 def load_module():
     spec = importlib.util.spec_from_file_location(
         "build_hub_installer", SCRIPT_PATH
@@ -67,52 +61,6 @@ class BuildHubInstallerTest(unittest.TestCase):
         if with_foreign:
             (self.input_dir / "HarkenEditor.exe").write_bytes(b"editor")
 
-    def payload_root(self):
-        files = self.module.collect_payload(self.input_dir)
-        text = self.module.generate_payload_wxs(files, self.input_dir)
-        return ET.fromstring(text)
-
-    def test_payload_lists_all_files_with_stable_component_guids(self):
-        self.make_input()
-        first = self.module.generate_payload_wxs(
-            self.module.collect_payload(self.input_dir), self.input_dir
-        )
-        second = self.module.generate_payload_wxs(
-            self.module.collect_payload(self.input_dir), self.input_dir
-        )
-        self.assertEqual(first, second)
-
-        root = ET.fromstring(first)
-        components = root.findall(
-            f".//{{{WXS_NS}}}ComponentGroup/{{{WXS_NS}}}Component"
-        )
-        self.assertEqual(len(components), 6 + len(self.legal_files))
-        guids = {component.get("Guid") for component in components}
-        self.assertEqual(len(guids), 6 + len(self.legal_files))
-        for component in components:
-            files = component.findall(f"{{{WXS_NS}}}File")
-            self.assertEqual(len(files), 1)
-            self.assertEqual(files[0].get("KeyPath"), "yes")
-
-    def test_hub_exe_gets_referenced_file_id(self):
-        self.make_input()
-        root = self.payload_root()
-        file_ids = {
-            file.get("Id")
-            for file in root.iter(f"{{{WXS_NS}}}File")
-        }
-        self.assertIn("HarkenHubExe", file_ids)
-
-    def test_plugin_directory_is_materialized(self):
-        self.make_input()
-        root = self.payload_root()
-        names = {
-            directory.get("Name")
-            for directory in root.iter(f"{{{WXS_NS}}}Directory")
-        }
-        self.assertIn("platforms", names)
-        self.assertIn("Updater", names)
-
     def test_missing_hub_binary_is_rejected(self):
         self.make_input()
         for name in (self.module.HUB_BINARY, self.module.LEGACY_HUB_BINARY):
@@ -152,283 +100,123 @@ class BuildHubInstallerTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.module.msi_version("dev")
 
-    def test_wix_command_carries_authoring_inputs(self):
-        command = self.module.wix_command(
-            Path("Product.wxs"), Path("Payload.wxs"), Path("Eula.rtf"),
-            "0.1.0", Path("out.msi"), "wix",
-        )
-        self.assertEqual(command[:2], ["wix", "build"])
-        self.assertIn("-ext", command)
-        self.assertIn("WixToolset.UI.wixext", command)
-        self.assertIn("HarkenVersion=0.1.0", command)
-        self.assertIn(f"HarkenHandoffSddl={self.module.HANDOFF_SDDL}", command)
-        self.assertIn(f"HarkenUpdaterSddl={self.module.UPDATER_SDDL}", command)
-        self.assertEqual(command[-2:], ["Product.wxs", "Payload.wxs"])
-
-    def test_installer_allows_install_directory_selection(self):
-        root = ET.parse(WXS_PATH).getroot()
-        install_ui = root.find(f".//{{{WIXUI_NS}}}WixUI")
-        self.assertIsNotNone(install_ui)
-        self.assertEqual(install_ui.get("Id"), "WixUI_InstallDir")
-        self.assertEqual(install_ui.get("InstallDirectory"), "INSTALLFOLDER")
-
-    def test_installer_reuses_registered_install_directory(self):
-        root = ET.parse(WXS_PATH).getroot()
-        properties = root.findall(f".//{{{WXS_NS}}}Property")
-        install_folder = next(
-            item for item in properties if item.get("Id") == "INSTALLFOLDER"
-        )
-        search = install_folder.find(f"{{{WXS_NS}}}RegistrySearch")
-        self.assertIsNotNone(search)
-        self.assertEqual(search.get("Root"), "HKLM")
-        self.assertEqual(search.get("Key"), r"Software\HarkenSound\HarkenHub")
-        self.assertEqual(search.get("Name"), "InstallDir")
-        self.assertEqual(search.get("Type"), "raw")
-        self.assertEqual(search.get("Bitness"), "always64")
-
-    def test_build_produces_summary_with_fake_wix(self):
-        self.make_input()
-
-        def fake_run(command):
-            if command[0] == "wix":
-                eula_path = Path(next(arg.split("=", 1)[1] for arg in command
-                                      if arg.startswith("HarkenEulaRtf=")))
-                self.assertEqual(eula_path.read_text(encoding="ascii"),
-                                 self.module.product_legal.render_rtf(self.module.product_legal.installer_text()))
-                out_index = command.index("-o") + 1
-                Path(command[out_index]).write_bytes(b"fake-msi")
-            return subprocess.CompletedProcess(command, 0)
-
-        args = self.module.parse_args([
-            "--input-dir", str(self.input_dir),
-            "--output-dir", str(self.output_dir),
-            "--version", "0.1.0-dev",
-            "--build-id", "run12.abcd1234",
-        ])
-        summary = self.module.build_installer(args, run=fake_run)
-
-        package = Path(summary["package"])
-        self.assertTrue(package.exists())
-        self.assertEqual(
-            package.name, "HarkenStudioHubSetup-0.1.0-dev-run12.abcd1234.msi"
-        )
-        self.assertEqual(summary["msiVersion"], "0.1.0")
-        self.assertEqual(summary["fileCount"], 6 + len(self.legal_files))
-        self.assertFalse(summary["signed"])
-        self.assertNotIn("setupExe", summary)
-        self.evidence.finalize.assert_called_once()
-        self.assertEqual(self.evidence.finalize.call_args.args[1][0].name, package.name)
-        self.assertEqual(self.evidence.finalize.call_args.kwargs["intermediate_artifacts"], ())
-        self.assertEqual(list(self.output_dir.rglob("*.wxs")),
-                         [Path(summary["evidence"]) / "packaging-inputs/payload.wxs"])
-        self.assertTrue((Path(summary["evidence"]) / "packaging-inputs/license.rtf").is_file())
-
-    def test_custom_eula_is_used_and_missing_override_is_rejected(self):
-        self.make_input()
-        custom = self.root / "custom.rtf"
-        custom.write_bytes(b"{\\rtf1 custom terms}")
-        args = self.module.parse_args([
+    def args(self, *extra):
+        return self.module.parse_args([
             "--input-dir", str(self.input_dir), "--output-dir", str(self.output_dir),
-            "--version", "0.1.0", "--build-id", "custom", "--eula-rtf", str(custom),
+            "--version", "0.1.68", "--build-id", "run12.abcd1234", *extra,
         ])
 
-        def fake_run(command):
-            self.assertIn(f"HarkenEulaRtf={custom}", command)
-            Path(command[command.index("-o") + 1]).write_bytes(b"fake-msi")
+    def fake_build(self, files, input_dir, version, eula, output, evidence):
+        self.assertEqual(eula.read_text(encoding="ascii"),
+                         self.module.product_legal.render_rtf(self.module.product_legal.installer_text()))
+        output.write_bytes(b"MSI")
+        (evidence / "msi-tables.json").write_text("{}")
+
+    def test_signing_precedes_embedding_and_final_hashes(self):
+        self.make_input()
+        stub = self.root / "stub.exe"
+        stub.write_bytes(b"STUB")
+        calls = []
+
+        def sign(command):
+            calls.append(command)
+            target = Path(command[-1])
+            target.write_bytes(target.read_bytes() + b"SIGNED")
             return subprocess.CompletedProcess(command, 0)
 
-        with mock.patch.object(self.module, "sign_command", return_value=None):
-            self.module.build_installer(args, run=fake_run)
-        self.assertEqual(self.evidence.retain_packaging_inputs.call_args.args[1]["license.rtf"], custom)
-        custom.unlink()
-        with self.assertRaises(SystemExit):
-            self.module.build_installer(args, run=fake_run)
+        def embed(stub, msi, exe):
+            self.assertEqual(msi.read_bytes(), b"MSISIGNED")
+            exe.write_bytes(stub.read_bytes() + msi.read_bytes())
 
-    def test_build_with_stub_produces_setup_exe(self):
+        with mock.patch.dict(os.environ, {"HARKEN_AUTHENTICODE_THUMBPRINT": "TEST", "HARKEN_AUTHENTICODE_TIMESTAMP_URL": "https://timestamp.example"}):
+            result = self.module.build_installer(self.args("--stub-exe", str(stub)),
+                                                run=sign, embed=embed, build_msi=self.fake_build)
+        self.assertEqual(len(calls), 2)
+        self.assertIn("/tr", calls[0])
+        self.assertEqual(Path(result["setupExe"]).read_bytes(), b"STUBMSISIGNEDSIGNED")
+        self.assertEqual(result["setupExeSha256"], hashlib.sha256(b"STUBMSISIGNEDSIGNED").hexdigest())
+        self.assertEqual(result["sha256"], hashlib.sha256(b"MSISIGNED").hexdigest())
+        self.assertEqual(self.evidence.finalize.call_args.kwargs["intermediate_artifacts"][0].suffix, ".msi")
+
+    def test_unsigned_package_preserves_publisher_contract(self):
         self.make_input()
-        stub = self.root / "HarkenStudioHubSetup.exe"
-        stub.write_bytes(b"stub-image")
-        embeds = []
+        with mock.patch.dict(os.environ, {"HARKEN_AUTHENTICODE_THUMBPRINT": ""}):
+            result = self.module.build_installer(self.args(), build_msi=self.fake_build)
+        self.assertEqual(Path(result["package"]).name, "HarkenStudioHubSetup-0.1.68-run12.abcd1234.msi")
+        self.assertEqual(Path(result["evidence"]).name, "hub-0.1.68-run12.abcd1234-evidence")
+        self.assertEqual(result["fileCount"], 6 + len(self.legal_files))
+        self.assertFalse(result["signed"])
+        self.assertTrue((Path(result["evidence"]) / "packaging-inputs/license.rtf").is_file())
 
-        def fake_run(command):
-            if command[0] == "wix":
-                out_index = command.index("-o") + 1
-                Path(command[out_index]).write_bytes(b"fake-msi")
-            return subprocess.CompletedProcess(command, 0)
-
-        def fake_embed(stub_exe, msi_path, exe_path):
-            embeds.append((stub_exe, msi_path, exe_path))
-            exe_path.write_bytes(
-                stub_exe.read_bytes() + msi_path.read_bytes()
-            )
-
-        args = self.module.parse_args([
-            "--input-dir", str(self.input_dir),
-            "--output-dir", str(self.output_dir),
-            "--version", "0.1.0-dev",
-            "--build-id", "run12.abcd1234",
-            "--stub-exe", str(stub),
-        ])
-        summary = self.module.build_installer(
-            args, run=fake_run, embed=fake_embed
-        )
-
-        exe = Path(summary["setupExe"])
-        self.assertTrue(exe.exists())
-        self.assertEqual(
-            exe.name, "HarkenStudioHubSetup-0.1.0-dev-run12.abcd1234.exe"
-        )
-        self.assertEqual(len(embeds), 1)
-        self.assertEqual(embeds[0][0], stub.resolve())
-        self.assertEqual(embeds[0][1].name, Path(summary["package"]).name)
-        self.assertEqual(summary["setupExeSize"], exe.stat().st_size)
-
-    def test_missing_stub_exe_is_rejected(self):
+    def test_failed_build_or_signing_does_not_publish_partial_outputs(self):
         self.make_input()
 
-        args = self.module.parse_args([
-            "--input-dir", str(self.input_dir),
-            "--output-dir", str(self.output_dir),
-            "--version", "0.1.0",
-            "--build-id", "run12.abcd1234",
-            "--stub-exe", str(self.root / "absent-stub.exe"),
-        ])
-        with self.assertRaises(SystemExit):
-            self.module.build_installer(
-                args,
-                run=lambda command: subprocess.CompletedProcess(command, 0),
-            )
+        def fail_build(*args):
+            args[4].write_bytes(b"partial")
+            raise RuntimeError("build failed")
 
-    def test_signing_covers_msi_and_setup_exe(self):
-        self.make_input()
-        stub = self.root / "HarkenStudioHubSetup.exe"
-        stub.write_bytes(b"stub-image")
-        commands = []
-
-        def fake_run(command):
-            commands.append(command)
-            if command[0] == "wix":
-                out_index = command.index("-o") + 1
-                Path(command[out_index]).write_bytes(b"fake-msi")
-            return subprocess.CompletedProcess(command, 0)
-
-        def fake_embed(stub_exe, msi_path, exe_path):
-            exe_path.write_bytes(b"fake-exe")
-
-        args = self.module.parse_args([
-            "--input-dir", str(self.input_dir),
-            "--output-dir", str(self.output_dir),
-            "--version", "0.1.0",
-            "--build-id", "run12.abcd1234",
-            "--stub-exe", str(stub),
-        ])
-        with mock.patch.dict(
-            os.environ, {"HARKEN_AUTHENTICODE_THUMBPRINT": "AB12CD"}
-        ):
-            summary = self.module.build_installer(
-                args, run=fake_run, embed=fake_embed
-            )
-
-        sign_calls = [c for c in commands if c[0] == "signtool"]
-        self.assertEqual(len(sign_calls), 2)
-        self.assertTrue(sign_calls[0][-1].endswith(".msi"))
-        self.assertTrue(sign_calls[1][-1].endswith(".exe"))
-        self.assertTrue(summary["signed"])
-
-    def test_evidence_failure_prevents_wix(self):
-        self.make_input()
-        self.evidence.prepare.side_effect = ValueError("missing sources")
-        args = self.module.parse_args([
-            "--input-dir", str(self.input_dir), "--output-dir", str(self.output_dir),
-            "--version", "0.1.0", "--build-id", "test-build",
-        ])
-        run = mock.Mock()
-        with self.assertRaisesRegex(ValueError, "missing sources"):
-            self.module.build_installer(args, run=run)
-        run.assert_not_called()
-
-    def test_wix_failure_aborts_build(self):
-        self.make_input()
-
-        def failing_run(command):
-            Path(command[command.index("-o") + 1]).write_bytes(b"partial installer")
-            return subprocess.CompletedProcess(command, 311)
-
-        args = self.module.parse_args([
-            "--input-dir", str(self.input_dir),
-            "--output-dir", str(self.output_dir),
-            "--version", "0.1.0",
-            "--build-id", "run12.abcd1234",
-        ])
-        with self.assertRaises(SystemExit):
-            self.module.build_installer(args, run=failing_run)
+        with self.assertRaisesRegex(RuntimeError, "build failed"):
+            self.module.build_installer(self.args(), build_msi=fail_build)
+        self.assertEqual(list(self.output_dir.iterdir()), [])
+        with mock.patch.dict(os.environ, {"HARKEN_AUTHENTICODE_THUMBPRINT": "TEST"}):
+            with self.assertRaises(SystemExit):
+                self.module.build_installer(self.args(), build_msi=self.fake_build,
+                    run=lambda command: subprocess.CompletedProcess(command, 1))
         self.assertEqual(list(self.output_dir.iterdir()), [])
 
-        def successful_run(command):
-            Path(command[command.index("-o") + 1]).write_bytes(b"complete installer")
-            return subprocess.CompletedProcess(command, 0)
+    def test_evidence_failure_prevents_packaging(self):
+        self.make_input()
+        self.evidence.prepare.side_effect = ValueError("missing sources")
+        build = mock.Mock()
+        with self.assertRaisesRegex(ValueError, "missing sources"):
+            self.module.build_installer(self.args(), build_msi=build)
+        build.assert_not_called()
 
+    def test_missing_inputs_are_rejected_before_packaging(self):
+        self.make_input()
+        for flag in ("--stub-exe", "--eula-rtf"):
+            with self.subTest(flag=flag), self.assertRaises(SystemExit):
+                self.module.build_installer(self.args(flag, str(self.root / "missing")))
+
+    @unittest.skipUnless(os.name == "nt", "Windows Installer requires Windows")
+    def test_native_package_round_trip_and_upgrade_contract(self):
+        from release.windows_installer import Database
+        self.make_input()
+        (self.input_dir / "nested directory").mkdir()
+        (self.input_dir / "nested directory/settings.json").write_text('{"preserve":true}')
         with mock.patch.dict(os.environ, {"HARKEN_AUTHENTICODE_THUMBPRINT": ""}):
-            summary = self.module.build_installer(args, run=successful_run)
-            args.build_id = "another-build"
-            second = self.module.build_installer(args, run=successful_run)
-        self.assertEqual(Path(summary["package"]).read_bytes(), b"complete installer")
-        self.assertTrue(Path(second["package"]).is_file())
-
-    def test_handoff_sddl_matches_hub_source(self):
-        header = ACL_HEADER_PATH.read_text(encoding="utf-8")
-        self.assertIn(self.module.HANDOFF_SDDL, header)
-
-    def test_updater_sddl_matches_hub_source(self):
-        header = ACL_HEADER_PATH.read_text(encoding="utf-8")
-        self.assertIn(self.module.UPDATER_SDDL, header)
-
-    def test_wxs_wires_generated_payload_and_eula(self):
-        wxs = WXS_PATH.read_text(encoding="utf-8")
-        self.assertIn('ComponentGroupRef Id="HubPayload"', wxs)
-        self.assertIn('PermissionEx Sddl="$(var.HarkenHandoffSddl)"', wxs)
-        self.assertIn('Extension Id="hsp"', wxs)
-        self.assertIn("--await-health-handshake", wxs)
-        self.assertIn('Scope="perMachine"', wxs)
-        self.assertIn('WixVariable Id="WixUILicenseRtf" Value="$(var.HarkenEulaRtf)"', wxs)
-
-    def test_wxs_wires_update_bridge_and_pins_area(self):
-        wxs = WXS_PATH.read_text(encoding="utf-8")
-        self.assertIn('Directory Id="PinsDir" Name="pins"', wxs)
-        self.assertIn('Component Id="PinsAreaAcl" Directory="PinsDir"', wxs)
-        self.assertIn('Directory Id="UpdaterDir" Name="Updater"', wxs)
-        self.assertIn(
-            'Component Id="UpdaterAreaAcl" Directory="UpdaterDir"', wxs
-        )
-        self.assertEqual(
-            wxs.count('PermissionEx Sddl="$(var.HarkenHandoffSddl)"'), 2
-        )
-        self.assertEqual(
-            wxs.count('PermissionEx Sddl="$(var.HarkenUpdaterSddl)"'), 1
-        )
-        self.assertIn("--register-update-bridge", wxs)
-        self.assertIn("--unregister-update-bridge", wxs)
-        self.assertIn('Property Id="HARKENBRIDGE" Secure="yes"', wxs)
-        self.assertIn(
-            "HARKENSELFUPDATE=1 AND NOT HARKENBRIDGE=1 AND NOT REMOVE", wxs
-        )
-        self.assertIn(
-            "REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE", wxs
-        )
-
-    def test_bridge_register_action_is_deferred_without_impersonation(self):
-        root = ET.fromstring(WXS_PATH.read_text(encoding="utf-8"))
-        actions = {
-            action.get("Id"): action
-            for action in root.iter(f"{{{WXS_NS}}}CustomAction")
-        }
-        register = actions["HarkenRegisterUpdateBridge"]
-        self.assertEqual(register.get("Execute"), "deferred")
-        self.assertEqual(register.get("Impersonate"), "no")
-        self.assertEqual(register.get("Return"), "check")
-        unregister = actions["HarkenUnregisterUpdateBridge"]
-        self.assertEqual(unregister.get("Execute"), "deferred")
-        self.assertEqual(unregister.get("Impersonate"), "no")
+            result = self.module.build_installer(self.args())
+        package = Path(result["package"])
+        with Database(package, 0) as db:
+            properties = dict(db.query("SELECT `Property`, `Value` FROM `Property`"))
+            self.assertEqual(properties["UpgradeCode"], "{4EA0003D-209E-45E6-8343-67529D7E7E5A}")
+            self.assertEqual(properties["ALLUSERS"], "1")
+            for name in ("HARKENSELFUPDATE", "HARKENBRIDGE", "INSTALLFOLDER"):
+                self.assertIn(name, properties["SecureCustomProperties"].split(";"))
+            components = {row[0]: row for row in db.query("SELECT * FROM `Component`")}
+            self.assertEqual(components["HarkenProjectAssociation"][1], "{53FC615E-9B49-4762-B13C-B81820BDD7DB}")
+            self.assertEqual(components["HarkenProjectAssociation"][5], "reg9Iw6ZFMWLFHU5l3K2mYjrhyy3bc")
+            actions = {row[0]: row for row in db.query("SELECT * FROM `CustomAction`")}
+            self.assertEqual(actions["HarkenRegisterUpdateBridge"][1:4], ["3090", "HarkenHubExe", "--register-update-bridge"])
+            sequences = {row[0]: row for row in db.query("SELECT * FROM `InstallExecuteSequence`")}
+            self.assertGreater(int(sequences["RemoveExistingProducts"][2]), int(sequences["InstallFinalize"][2]))
+            self.assertEqual(sequences["HarkenUnregisterUpdateBridge"][1], 'REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE')
+            acls = {row[1]: row[3] for row in db.query("SELECT * FROM `MsiLockPermissionsEx`")}
+            source = ACL_HEADER_PATH.read_text(encoding="utf-8")
+            for name in ("HandoffDir", "PinsDir", "UpdaterDir"):
+                self.assertIn(acls[name], source)
+            terms = db.query("SELECT `Text` FROM `Control` WHERE `Dialog_`='LicenseDialog' AND `Control`='Terms'")
+            self.assertEqual(terms[0][0], self.module.product_legal.render_rtf(self.module.product_legal.installer_text()))
+        extracted = self.root / "extracted"
+        process = subprocess.run(["msiexec.exe", "/a", str(package), "/qn", "TARGETDIR=" + str(extracted),
+                                  "/l*v", str(self.root / "extract.log")], timeout=60)
+        self.assertEqual(process.returncode, 0, (self.root / "extract.log").read_text(encoding="utf-16", errors="replace"))
+        installed = extracted / "PFiles64/HarkenStudioHub"
+        expected = {p.relative_to(self.input_dir) for p in self.input_dir.rglob("*") if p.is_file()}
+        actual = {p.relative_to(installed) for p in installed.rglob("*") if p.is_file()}
+        self.assertEqual(expected, actual)
+        for relative in expected:
+            self.assertEqual((self.input_dir / relative).read_bytes(), (installed / relative).read_bytes(), str(relative))
 
 
 if __name__ == "__main__":

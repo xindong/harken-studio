@@ -508,8 +508,8 @@
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="196"/>
-        <source>Automatically Download the Latest Studio</source>
-        <translation>是否自动下载最新版Studio</translation>
+        <source>Automatically Check and Download the Latest Studio</source>
+        <translation>是否自动检查并下载最新版Studio</translation>
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="222"/>
@@ -534,8 +534,8 @@
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="172"/>
-        <source>Automatically Update Harken Studio Hub Silently</source>
-        <translation>是否自动静默更新Hub</translation>
+        <source>Automatically Check and Silently Update Hub</source>
+        <translation>是否自动检查并静默更新Hub</translation>
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="176"/>

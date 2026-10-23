@@ -89,6 +89,7 @@ bool UpdateCoordinator::start(const Options& options)
     checkerOptions.channel = ServerEndpoints::hostChannel();
     checkerOptions.manifestPublicKey = options_.manifestPublicKey;
     checkerOptions.intervalMs = options_.checkIntervalMs;
+    checkerOptions.automaticCheckingEnabled = options_.automaticDownloadEnabled;
     started_ = checker_.start(checkerOptions);
     if (started_) {
         const UpdateStateRecord existing = UpdateStateStore::load(kProduct);
@@ -121,6 +122,7 @@ void UpdateCoordinator::setAutomaticDownloadEnabled(bool enabled)
     if (options_.automaticDownloadEnabled == enabled)
         return;
     options_.automaticDownloadEnabled = enabled;
+    checker_.setAutomaticCheckingEnabled(enabled);
     if (!enabled && downloading_) {
         automaticDownloadPauseRequested_ = true;
         downloader_.cancel();

@@ -19,7 +19,6 @@ permissions:
 
 env:
   QT_VERSION: '6.8.3'
-  WIX_VERSION: '6.0.1'
   HARKEN_BUILD_CHANNEL: ${{ inputs.build-channel }}
 
 jobs:
@@ -82,11 +81,6 @@ jobs:
             --product hub \
             --qt-version "$(qmake -query QT_VERSION)" \
             --output build/bin/Release/Legal
-
-      - name: Install WiX ${{ env.WIX_VERSION }}
-        run: |
-          dotnet tool install --global wix --version ${{ env.WIX_VERSION }}
-          wix extension add -g WixToolset.UI.wixext/${{ env.WIX_VERSION }}
 
       - name: Build Harken Studio Hub MSI and setup EXE
         shell: bash

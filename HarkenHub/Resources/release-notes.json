@@ -7,6 +7,18 @@
   },
   "releases": [
     {
+      "version": "0.1.68",
+      "date": "2026-10-23",
+      "pullRequests": [113],
+      "contributors": ["liuxin2-sys"],
+      "changes": [
+        {
+          "category": "improved",
+          "text": "Disabling automatic updates stops background checks and downloads for the corresponding product. Manual update checks remain available."
+        }
+      ]
+    },
+    {
       "version": "0.1.67",
       "date": "2026-10-23",
       "pullRequests": [109],

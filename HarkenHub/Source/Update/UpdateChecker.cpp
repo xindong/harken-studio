@@ -53,7 +53,7 @@ UpdateChecker::UpdateChecker(QObject* parent)
     backoff_.baseDelayMs = 30 * 1000;
     backoff_.maxDelayMs = 30 * 60 * 1000;
     nextTimer_.setSingleShot(true);
-    connect(&nextTimer_, &QTimer::timeout, this, &UpdateChecker::beginRound);
+    connect(&nextTimer_, &QTimer::timeout, this, [this]() { beginRound(); });
 }
 
 void UpdateChecker::setBackoffPolicy(const BackoffPolicy& policy)
@@ -97,8 +97,28 @@ bool UpdateChecker::checkNow()
     if (!started_ || reply_)
         return false;
     nextTimer_.stop();
-    beginRound();
+    beginRound(true);
     return true;
+}
+
+void UpdateChecker::setAutomaticCheckingEnabled(bool enabled)
+{
+    if (options_.automaticCheckingEnabled == enabled)
+        return;
+    options_.automaticCheckingEnabled = enabled;
+    if (enabled) {
+        invalidateCache();
+        failureStreak_ = 0;
+        beginRound();
+        return;
+    }
+    nextTimer_.stop();
+    forcedRoundPending_ = false;
+    if (reply_ && !manualRound_) {
+        stopping_ = true;
+        reply_->abort();
+        stopping_ = false;
+    }
 }
 
 void UpdateChecker::invalidateCache()
@@ -118,11 +138,12 @@ qint64 UpdateChecker::effectiveIntervalMs() const
     return options_.intervalMs;
 }
 
-void UpdateChecker::beginRound()
+void UpdateChecker::beginRound(bool manual)
 {
-    if (!started_ || reply_)
+    if (!started_ || reply_ || (!manual && !options_.automaticCheckingEnabled))
         return;
 
+    manualRound_ = manual;
     roundUrls_.clear();
     roundUrls_.append(options_.latestUrl);
     for (const QUrl& fallback : options_.fallbackUrls) {
@@ -429,7 +450,7 @@ void UpdateChecker::finishRound(UpdateCheckResult result, bool failed)
 
 void UpdateChecker::scheduleNext(bool failed)
 {
-    if (!started_)
+    if (!started_ || !options_.automaticCheckingEnabled)
         return;
     if (forcedRoundPending_) {
         forcedRoundPending_ = false;

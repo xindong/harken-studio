@@ -45,6 +45,7 @@ public:
         QByteArray manifestPublicKey;
         qint64 intervalMs = kDefaultIntervalMs;
         int transferTimeoutMs = 15000;
+        bool automaticCheckingEnabled = true;
     };
 
     static constexpr qint64 kMinIntervalMs = 15ll * 60 * 1000;
@@ -54,6 +55,7 @@ public:
     void setBackoffPolicy(const BackoffPolicy& policy);
     bool start(const Options& options);
     void stop();
+    void setAutomaticCheckingEnabled(bool enabled);
     bool checkNow();
     void invalidateCache();
     bool isChecking() const;
@@ -63,7 +65,7 @@ signals:
     void checkFinished(const VNH::UpdateCheckResult& result);
 
 private:
-    void beginRound();
+    void beginRound(bool manual = false);
     void beginRequest();
     void handleReplyFinished();
     bool tryFallback(int status, int networkError, const QString& error);
@@ -82,6 +84,7 @@ private:
     int redirectCount_ = 0;
     int failureStreak_ = 0;
     bool started_ = false;
+    bool manualRound_ = false;
     bool forcedRoundPending_ = false;
     bool stopping_ = false;
     bool sentConditional_ = false;
