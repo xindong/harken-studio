@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -47,8 +48,10 @@ namespace Harken
             if (json == null || json.Length == 0) return VnResult.VN_BAD_PACK;
             try
             {
-                var parser = new JsonParser(new UTF8Encoding(false, true).GetString(json));
-                if (!(parser.Read(0) is Dictionary<string, object> root) || !parser.End)
+                var parser = new JsonParser(new UTF8Encoding(false, true).GetString(json), "schemaVersion");
+                if (!(parser.Read(0) is Dictionary<string, object> root) || !parser.End ||
+                    !root.TryGetValue("schemaVersion", out object version) ||
+                    !(version is JsonParser.NumberToken token) || !SupportsVersion(token.Text))
                     return VnResult.VN_BAD_PACK;
                 var candidate = new PackCompanion { ProjectId = project, Language = language ?? string.Empty };
                 if (name != null)
@@ -87,6 +90,25 @@ namespace Harken
             catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }
             catch (ArgumentException) { return VnResult.VN_BAD_PACK; }
             catch (FormatException) { return VnResult.VN_BAD_PACK; }
+        }
+
+        private static bool SupportsVersion(string token)
+        {
+            // Compare decimal digits and scale without floating-point rounding.
+            if (token[0] == '-') return false;
+            int exponentAt = token.IndexOfAny(new[] { 'e', 'E' });
+            string coefficient = exponentAt < 0 ? token : token.Substring(0, exponentAt);
+            long exponent = 0;
+            if (exponentAt >= 0 && !long.TryParse(token.Substring(exponentAt + 1),
+                    NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out exponent)) return false;
+            int dot = coefficient.IndexOf('.');
+            int fraction = dot < 0 ? 0 : coefficient.Length - dot - 1;
+            string digits = coefficient.Replace(".", "").TrimStart('0');
+            string significant = digits.TrimEnd('0');
+            string expected = PackManifest.SchemaVersion.ToString(CultureInfo.InvariantCulture);
+            string expectedSignificant = expected.TrimEnd('0');
+            return significant == expectedSignificant && exponent ==
+                (long)fraction - (digits.Length - significant.Length) + (expected.Length - expectedSignificant.Length);
         }
 
         private static string Text(Dictionary<string, object> row, string key)

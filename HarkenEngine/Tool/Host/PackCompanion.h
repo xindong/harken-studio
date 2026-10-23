@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <charconv>
 #include <cstdint>
 #include <filesystem>
 #include <limits>
@@ -79,13 +80,45 @@ inline bool PackCompanionGuid(const JsonValue& row, VnObjectId* id) {
         harken::ObjectIdString(*id) == value->text;
 }
 
+inline bool PackCompanionVersion(const JsonValue* value) {
+    if (!value || value->kind != JsonValue::Kind::Number || value->text.front() == '-') return false;
+    // The JSON reader has checked syntax. Compare decimal digits and scale exactly.
+    const auto& token = value->text;
+    const auto exponentAt = token.find_first_of("eE");
+    std::string digits = token.substr(0, exponentAt);
+    std::int64_t exponent = 0;
+    if (exponentAt != std::string::npos) {
+        const char* begin = token.data() + exponentAt + 1;
+        const char* end = token.data() + token.size();
+        if (*begin == '+') ++begin;
+        const auto parsed = std::from_chars(begin, end, exponent);
+        if (parsed.ec != std::errc{} || parsed.ptr != end) return false;
+    }
+    const auto dot = digits.find('.');
+    const auto fraction = dot == std::string::npos ? 0 : digits.size() - dot - 1;
+    if (dot != std::string::npos) digits.erase(dot, 1);
+    const auto first = digits.find_first_not_of('0');
+    if (first == std::string::npos) return false;
+    digits.erase(0, first);
+    const auto significant = digits.find_last_not_of('0') + 1;
+    const std::string expected = std::to_string(HARKEN_PACK_SCHEMA_VERSION);
+    const auto expectedSignificant = expected.find_last_not_of('0') + 1;
+    return digits.substr(0, significant) == expected.substr(0, expectedSignificant) && exponent ==
+        static_cast<std::int64_t>(fraction) - static_cast<std::int64_t>(digits.size() - significant) +
+        static_cast<std::int64_t>(expected.size() - expectedSignificant);
+}
+
 inline VnResult ParsePackCompanion(const std::string& json, const std::string& name,
                                     const std::string& language, VnObjectId project,
-                                    PackCompanion* out) {
+                                    PackCompanion* out, const char** stage = nullptr) {
     std::string error;
     out->metadata = {};
+    if (stage) *stage = "JSON syntax";
     if (!ParseJson(json, &out->metadata, &error, true) ||
         out->metadata.kind != JsonValue::Kind::Object) return VN_BAD_PACK;
+    if (stage) *stage = "schemaVersion";
+    if (!PackCompanionVersion(out->metadata.Find("schemaVersion"))) return VN_BAD_PACK;
+    if (stage) *stage = "name metadata";
     out->name = name;
     out->language = language;
     out->variables.clear();
@@ -304,13 +337,24 @@ inline VnResult Pair(const std::filesystem::path& root, const std::string& basen
 }
 } // namespace companiondetail
 
+struct PackCompanionDiagnostic {
+    const char* kind = "Init";
+    std::filesystem::path jsonPath;
+    const char* stage = "file capture";
+};
+
 inline VnResult CapturePackCompanion(const std::filesystem::path& root, const std::string& name,
                                      const std::string& language, const PackCompanion* init,
-                                     PackCompanion* out) {
+                                     PackCompanion* out, PackCompanionDiagnostic* diagnostic = nullptr) {
     if ((!name.empty() && (!PackCompanionName(name) || name == "Init")) ||
         !PackCompanionLanguage(language)) return VN_INVALID_ARG;
     std::string scope = name.empty() ? std::string{} : language;
     const std::string basename = name.empty() ? "Init" : name;
+    if (diagnostic) {
+        diagnostic->kind = name.empty() ? "Init" : "Action";
+        diagnostic->jsonPath = root / companiondetail::Path(scope) / (basename + ".json");
+        diagnostic->stage = "file capture";
+    }
     std::vector<std::uint8_t> json;
     auto result = companiondetail::Pair(root, basename, scope, &out->bytes, &json);
     if (result == VN_CONTENT_NOT_LOADED && !scope.empty()) {
@@ -319,11 +363,14 @@ inline VnResult CapturePackCompanion(const std::filesystem::path& root, const st
         if (companiondetail::Pair(root, basename, scope, &ignoredBytes, &ignoredJson) != VN_CONTENT_NOT_LOADED)
             return VN_PACK_STALE_REVISION;
         scope.clear();
+        if (diagnostic) diagnostic->jsonPath = root / (basename + ".json");
     }
     if (result != VN_OK) return result;
     const std::string text(json.begin(), json.end());
-    result = ParsePackCompanion(text, name, scope, init ? init->facts.projectId : VnObjectId{}, out);
+    result = ParsePackCompanion(text, name, scope, init ? init->facts.projectId : VnObjectId{}, out,
+        diagnostic ? &diagnostic->stage : nullptr);
     if (result != VN_OK) return result;
+    if (diagnostic) diagnostic->stage = "native inspection";
     VnPackInspectDescV1 desc{};
     desc.structSize = sizeof(desc);
     desc.pack = out->Span();

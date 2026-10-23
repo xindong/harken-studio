@@ -5,6 +5,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Reflection;
+using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using NUnit.Framework;
@@ -63,6 +65,49 @@ namespace Harken.Unity.Tests
                     Object.Destroy(assets);
                     AssetDatabase.DeleteAsset(imported.TrimEnd('/'));
                 }
+            }
+            yield return null;
+        }
+
+        [UnityTest]
+        public IEnumerator UnsupportedVersionsRefuseStartupAndRefreshWithoutLosingPlayback()
+        {
+            using (var fixture = new Fixture())
+            {
+                string invalid = "Init.json";
+                var source = PackSource.FromAsyncReader(async (path, token) =>
+                {
+                    await Task.Yield();
+                    byte[] bytes = Read(path);
+                    return path == invalid ? Encoding.UTF8.GetBytes(Regex.Replace(Encoding.UTF8.GetString(bytes),
+                        "\"schemaVersion\"\\s*:\\s*3", "\"schemaVersion\":3.0000000000000001")) : bytes;
+                });
+                LogAssert.Expect(LogType.Error, "Harken operation failed: PackBootstrap.Start: VN_BAD_PACK");
+                var start = fixture.Runtime.StartRuntimeAsync(source);
+                yield return Until(start);
+                Assert.That(start.GetAwaiter().GetResult(), Is.EqualTo(VnResult.VN_BAD_PACK));
+                Assert.That(fixture.Runtime.Session, Is.Null);
+                invalid = null;
+                start = fixture.Runtime.StartRuntimeAsync(source);
+                yield return Until(start);
+                Assert.That(start.GetAwaiter().GetResult(), Is.EqualTo(VnResult.VN_OK));
+                var session = fixture.Runtime.Session;
+                var play = fixture.Runtime.PlayActionAsync("Play_Head", session.ProjectId);
+                yield return Until(play);
+                var played = play.GetAwaiter().GetResult();
+                Assert.That(played.Result, Is.EqualTo(VnResult.VN_OK));
+                invalid = "Play_Head.json";
+                var refresh = session.RefreshActionAsync("Play_Head", session.ProjectId);
+                yield return Until(refresh);
+                Assert.That(refresh.GetAwaiter().GetResult().Result, Is.EqualTo(VnResult.VN_BAD_PACK));
+                Assert.That(played.Firing.Query(out _), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(fixture.Runtime.PlayAction("Play_Head", session.ProjectId, out _), Is.EqualTo(VnResult.VN_OK));
+                invalid = null;
+                refresh = session.RefreshActionAsync("Play_Head", session.ProjectId);
+                yield return Until(refresh);
+                var corrected = refresh.GetAwaiter().GetResult();
+                Assert.That(corrected.Result, Is.EqualTo(VnResult.VN_OK));
+                Assert.That(corrected.Preparation.Release(), Is.EqualTo(VnResult.VN_OK));
             }
             yield return null;
         }
