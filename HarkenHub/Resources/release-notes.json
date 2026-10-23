@@ -7,6 +7,26 @@
   },
   "releases": [
     {
+      "version": "0.1.69",
+      "date": "2026-10-24",
+      "pullRequests": [117],
+      "contributors": ["liuxin2-sys"],
+      "changes": [
+        {
+          "category": "improved",
+          "text": "Windows installation no longer fails when opening the installer dialogs or when an existing Hub executable does not need to be replaced."
+        },
+        {
+          "category": "improved",
+          "text": "Hub self-updates preserve existing desktop and Start menu shortcuts without creating additional shortcuts or restoring shortcuts you removed."
+        },
+        {
+          "category": "improved",
+          "text": "When the Hub icon changes, Hub asks Windows to refresh its icon cache and existing Hub shortcuts once for the signed-in user. Updates with the same icon do not repeat the refresh."
+        }
+      ]
+    },
+    {
       "version": "0.1.68",
       "date": "2026-10-23",
       "pullRequests": [113],

@@ -62,7 +62,9 @@
 #include <utility>
 
 #ifdef Q_OS_WIN
+#include "Platform/Windows/ShellIcons.h"
 #include "Platform/Windows/UserSessionReady.h"
+#include <QThreadPool>
 #include <windows.h>
 #endif
 
@@ -701,6 +703,11 @@ int main(int argc, char* argv[])
                 guard.notifyPrimary(app.arguments());
                 return 0;
             }
+#ifdef Q_OS_WIN
+            QTimer::singleShot(0, &app, [] {
+                QThreadPool::globalInstance()->start(&VNH::refreshShellIconsIfChanged);
+            });
+#endif
 
             const QString currentVersion = QString::fromUtf8(
                 Harken::BuildInfo::HubVersion.data(),
@@ -939,6 +946,12 @@ int main(int argc, char* argv[])
             return 1;
         }
     }
+
+#ifdef Q_OS_WIN
+    QTimer::singleShot(0, &app, [] {
+        QThreadPool::globalInstance()->start(&VNH::refreshShellIconsIfChanged);
+    });
+#endif
 
     QList<QStringList> pendingActivations;
     const auto startupConnection = QObject::connect(

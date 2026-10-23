@@ -197,7 +197,8 @@ class BuildHubInstallerTest(unittest.TestCase):
             self.assertEqual(components["HarkenProjectAssociation"][1], "{53FC615E-9B49-4762-B13C-B81820BDD7DB}")
             self.assertEqual(components["HarkenProjectAssociation"][5], "reg9Iw6ZFMWLFHU5l3K2mYjrhyy3bc")
             actions = {row[0]: row for row in db.query("SELECT * FROM `CustomAction`")}
-            self.assertEqual(actions["HarkenRegisterUpdateBridge"][1:4], ["3090", "HarkenHubExe", "--register-update-bridge"])
+            self.assertEqual(actions["HarkenRegisterUpdateBridge"][1:4],
+                             ["3106", "INSTALLFOLDER", '"[INSTALLFOLDER]HarkenStudioHub.exe" --register-update-bridge'])
             sequences = {row[0]: row for row in db.query("SELECT * FROM `InstallExecuteSequence`")}
             self.assertGreater(int(sequences["RemoveExistingProducts"][2]), int(sequences["InstallFinalize"][2]))
             self.assertEqual(sequences["HarkenUnregisterUpdateBridge"][1], 'REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE')
@@ -207,6 +208,22 @@ class BuildHubInstallerTest(unittest.TestCase):
                 self.assertIn(acls[name], source)
             terms = db.query("SELECT `Text` FROM `Control` WHERE `Dialog_`='LicenseDialog' AND `Control`='Terms'")
             self.assertEqual(terms[0][0], self.module.product_legal.render_rtf(self.module.product_legal.installer_text()))
+            for dialog, first in db.query("SELECT `Dialog`, `Control_First` FROM `Dialog`"):
+                with self.subTest(dialog=dialog):
+                    controls = dict(db.query(
+                        f"SELECT `Control`, `Control_Next` FROM `Control` WHERE `Dialog_`='{dialog}'"))
+                    self.assertIn(first, controls)
+                    linked = {name for name, following in controls.items() if following}
+                    if not linked:
+                        continue
+                    visited = set()
+                    current = first
+                    while current not in visited:
+                        self.assertIn(current, linked)
+                        visited.add(current)
+                        current = controls[current]
+                    self.assertEqual(current, first)
+                    self.assertEqual(visited, linked)
         extracted = self.root / "extracted"
         msi = ctypes.WinDLL("msi.dll")
         msi.MsiSetInternalUI.argtypes = [ctypes.c_uint, ctypes.c_void_p]
