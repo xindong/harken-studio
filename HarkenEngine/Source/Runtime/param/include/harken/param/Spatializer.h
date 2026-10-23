@@ -313,8 +313,10 @@ public:
         VnEmitterHandle emitterHandle = 0; // 0 = none
     };
     // Captures the live voice's spatial mirror into *out. False for a stale
-    // voice handle (no mirror owns it).
-    bool CaptureVoice(VnVoiceHandle handle, SpatialVoiceState* out) const;
+    // voice handle (no mirror owns it). The optional distance term is the last
+    // one written to the attenuation slot, excluding the cone contribution.
+    bool CaptureVoice(VnVoiceHandle handle, SpatialVoiceState* out,
+                       float* appliedDistanceVolumeDb = nullptr) const;
 
     std::uint32_t ProfileCount() const { return m_profileCount; }
     std::uint32_t ProfileCapacity() const { return kMaxAttenuationProfiles; }
@@ -334,6 +336,7 @@ private:
         std::int32_t profileIndex = -1; // -1 = no attenuation bound
         std::int32_t retainIndex = -1;
         std::uint32_t retainEpoch = 0;
+        float appliedDistanceVolumeDb = 0.0f;
         std::uint64_t profileGeneration = 0;
     };
 

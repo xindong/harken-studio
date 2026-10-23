@@ -759,6 +759,7 @@ VnResult Spatializer::EvaluateVoice(VnVoiceHandle handle, ParamSystem& params,
     const float width = profile.widthOverride ? profile.widthCurve.Eval(effectiveDistance) : 0.0f;
     const float shelfDb =
         NearFieldShelfDb(effectiveDistance, profile.proximityRadius, profile.proximityMaxBoostDb);
+    const float distanceVolumeDb = volumeDb;
 
     if (profile.coneEnabled) {
         // Angle between the emitter's forward axis and the direction
@@ -779,6 +780,7 @@ VnResult Spatializer::EvaluateVoice(VnVoiceHandle handle, ParamSystem& params,
 
     const std::uint32_t volumeRampMs = initialEvaluation ? 0u : kSpatialVolumeRampMs;
     params.SetAttenuationSlot(mirror.handle, kTargetVoiceVolume, volumeDb, volumeRampMs);
+    mirror.appliedDistanceVolumeDb = distanceVolumeDb;
     params.SetAttenuationSlot(mirror.handle, kTargetVoiceLowpassCutoff, lowpassHz);
     params.SetAttenuationSlot(mirror.handle, kTargetVoiceWidth, width);
     params.ApplyProximityFrequency(mirror.handle, profile.proximityFrequency);
@@ -869,7 +871,8 @@ float Spatializer::AttenuationVolumeDb(const EmitterTable& emitters,
 }
 
 bool Spatializer::CaptureVoice(VnVoiceHandle handle,
-                               SpatialVoiceState* out) const {
+                               SpatialVoiceState* out,
+                               float* appliedDistanceVolumeDb) const {
     const std::uint32_t slot = SlotOf(handle);
     if (handle == 0 || slot >= m_mirrors.size() ||
         m_mirrors[slot].handle != handle) {
@@ -890,6 +893,8 @@ bool Spatializer::CaptureVoice(VnVoiceHandle handle,
     out->attenuationId = profile != nullptr ? profile->id : VnAttenuationId{};
     out->attenuationGeneration = profile != nullptr ? mirror.profileGeneration : 0;
     out->emitterHandle = mirror.emitterHandle;
+    if (appliedDistanceVolumeDb != nullptr)
+        *appliedDistanceVolumeDb = mirror.appliedDistanceVolumeDb;
     return true;
 }
 

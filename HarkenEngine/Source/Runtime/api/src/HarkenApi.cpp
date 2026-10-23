@@ -66095,14 +66095,8 @@ void DoParkVoice(harken::Engine& engine, VnVoiceHandle render,
         engine.params.ResolvedValue(render, harken::kTargetVoiceVolume);
 
     harken::Spatializer::SpatialVoiceState spatial;
-    engine.spatial.CaptureVoice(render, &spatial);
     float attenAtPark = 0.0f;
-    if (spatial.spatialized && spatial.attenuationId != VnObjectId{}) {
-        attenAtPark = engine.spatial.AttenuationVolumeDb(
-            engine.emitters, spatial.attenuationId, spatial.posX, spatial.posY, spatial.posZ,
-            spatial.distanceScale, spatial.attenuationGeneration,
-            spatial.emitterDistanceScale);
-    }
+    engine.spatial.CaptureVoice(render, &spatial, &attenAtPark);
 
     const harken::VoiceLedger::Resolved resolved =
         engine.ledger.Classify(publicHandle);
@@ -66372,14 +66366,8 @@ StreamVictimWaitResult TryWaitStreamVictim(
     }
 
     harken::Spatializer::SpatialVoiceState spatial;
-    engine.spatial.CaptureVoice(victim, &spatial);
     float attenAtPark = 0.0f;
-    if (spatial.spatialized && spatial.attenuationId != VnObjectId{}) {
-        attenAtPark = engine.spatial.AttenuationVolumeDb(
-            engine.emitters, spatial.attenuationId, spatial.posX, spatial.posY,
-            spatial.posZ, spatial.distanceScale,
-            spatial.attenuationGeneration, spatial.emitterDistanceScale);
-    }
+    engine.spatial.CaptureVoice(victim, &spatial, &attenAtPark);
     const float metric =
         engine.params.ResolvedValue(victim, harken::kTargetVoiceVolume);
     const float instanceVolumeDb = engine.params.InstanceContribution(

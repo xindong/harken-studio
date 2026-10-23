@@ -1496,6 +1496,108 @@ TEST(StreamPlayback,
     EXPECT_NEAR(20.0 * std::log10(0.25), request->audibilityDb, 1e-4);
 }
 
+TEST(StreamPlayback, PressureWaitUsesAppliedDistanceBeforeUnpublishedGeometryChanges) {
+    enum class Change { SwitchReference, MoveReference, ClearReference,
+                        DestroyReference, Listener, EmitterScale, VoiceScale, Source };
+    for (const auto change : {Change::SwitchReference, Change::MoveReference,
+                              Change::ClearReference, Change::DestroyReference,
+                              Change::Listener, Change::EmitterScale,
+                              Change::VoiceScale, Change::Source}) {
+        SCOPED_TRACE(static_cast<int>(change));
+        EngineSession session(MakeStreamWaitConfig(nullptr));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto* engine = session.Engine();
+        const auto streamId = harkentest::ObjectId(9706);
+        const auto claimantId = harkentest::ObjectId(9707);
+        const auto attenuationId = harkentest::ObjectId(9708);
+        const auto path = WriteSineStream("stream_wait_distance_reference.stream", streamId, 48000);
+        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(streamId, path.c_str()));
+        const std::vector<float> pcmData(48000, 0.2f);
+        const auto pcm = harkentest::MonoDesc(pcmData, kRate);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(claimantId, &pcm));
+        auto profile = harkentest::MakeAttenuationDesc(1, 101);
+        profile.coneEnabled = 1;
+        profile.coneInnerDeg = 30;
+        profile.coneOuterDeg = 60;
+        profile.coneOuterGainDb = -12;
+        profile.coneOuterLowpassHz = 20000;
+        ASSERT_EQ(VN_OK, Vn_RegisterAttenuation(attenuationId, &profile));
+        const auto setListener = [](float z) {
+            return Vn_SetListener(harkentest::Vec3(0, 0, z), harkentest::Vec3(0, 0, -1),
+                                  harkentest::Vec3(0, 1, 0));
+        };
+        ASSERT_EQ(VN_OK, setListener(-52));
+        VnEmitterHandle source = 0, reference = 0, farReference = 0;
+        ASSERT_EQ(VN_OK, Vn_CreateEmitter(&source));
+        ASSERT_EQ(VN_OK, Vn_CreateEmitter(&reference));
+        ASSERT_EQ(VN_OK, Vn_CreateEmitter(&farReference));
+        ASSERT_EQ(VN_OK, Vn_SetEmitterPosition(source, harkentest::Vec3(0, 0, -51)));
+        ASSERT_EQ(VN_OK, Vn_SetEmitterOrientation(source, harkentest::Vec3(0, 0, 1)));
+        ASSERT_EQ(VN_OK, Vn_SetEmitterPosition(reference, harkentest::Vec3(0, 0, -50)));
+        if (change != Change::Listener)
+            ASSERT_EQ(VN_OK, Vn_SetListenerDistanceReference(reference));
+        auto play = harkentest::MakePlayDesc3D(streamId, 0, 0, -51);
+        play.emitterHandle = source;
+        VnVoiceHandle stream = 0;
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &stream));
+        ASSERT_EQ(VN_OK, Vn_BindVoiceAttenuation(stream, attenuationId));
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine->streams.SyncServe();
+        engine->nullBackend.Pump(2);
+        const auto render = harkentest::RenderHandle(engine, stream);
+        ASSERT_NEAR(-12, engine->params.ResolvedValue(render, harken::kTargetVoiceVolume), 1e-4f);
+        float expectedGain = 0.5f;
+        switch (change) {
+        case Change::SwitchReference:
+            ASSERT_EQ(VN_OK, Vn_SetListenerDistanceReference(farReference));
+            break;
+        case Change::MoveReference:
+            ASSERT_EQ(VN_OK, Vn_SetEmitterPosition(reference, harkentest::Vec3(0, 0, 0)));
+            break;
+        case Change::ClearReference:
+            ASSERT_EQ(VN_OK, setListener(0));
+            ASSERT_EQ(VN_OK, Vn_SetListenerDistanceReference(0));
+            break;
+        case Change::DestroyReference:
+            ASSERT_EQ(VN_OK, setListener(0));
+            ASSERT_EQ(VN_OK, Vn_DestroyEmitter(reference));
+            break;
+        case Change::Listener:
+            ASSERT_EQ(VN_OK, setListener(0));
+            break;
+        case Change::EmitterScale:
+            ASSERT_EQ(VN_OK, Vn_SetEmitterDistanceScale(source, 0.02f));
+            expectedGain = 0.51f;
+            break;
+        case Change::VoiceScale:
+            ASSERT_EQ(VN_OK, Vn_SetVoiceDistanceScale(stream, 0.02f));
+            expectedGain = 0.51f;
+            break;
+        case Change::Source:
+            ASSERT_EQ(VN_OK, Vn_SetEmitterPosition(source, harkentest::Vec3(0, 0, -101)));
+            break;
+        }
+        // Steal without another spatial evaluation: freeze the applied cone,
+        // then let the waiting request use the new distance term exactly once.
+        ASSERT_NEAR(-12, engine->params.ResolvedValue(render, harken::kTargetVoiceVolume), 1e-4f);
+        VnVoiceHandle claimant = 0;
+        ASSERT_EQ(VN_OK, PlayDefault(claimantId, &claimant));
+        const auto waiting = engine->ledger.Classify(stream);
+        ASSERT_EQ(harken::VoiceLedger::HandleKind::Parked, waiting.kind);
+        EXPECT_NEAR(-12, engine->parkRecords[waiting.ledgerSlot].frozenNonSpatialDb, 1e-4f);
+        engine->nullBackend.Pump(1);
+        engine->streams.SyncServe();
+        ASSERT_EQ(VN_OK, Vn_Update());
+        const auto& requests = engine->voiceManager.Requests();
+        const auto request = std::find_if(requests.begin(), requests.end(),
+            [stream](const harken::VoiceManager::RenderRequest& value) {
+                return value.publicHandle == stream;
+            });
+        ASSERT_NE(requests.end(), request);
+        EXPECT_NEAR(-12 + 20 * std::log10(expectedGain), request->audibilityDb, 1e-4);
+    }
+}
+
 TEST(StreamPlayback,
      CompletionOwnedStreamVictimIsProtectedBeforePressurePark) {
     EngineSession session(MakeStreamWaitConfig(nullptr));
