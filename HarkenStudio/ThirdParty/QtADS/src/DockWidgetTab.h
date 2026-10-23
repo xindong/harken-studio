@@ -3,6 +3,7 @@
 /*******************************************************************************
 ** Qt Advanced Docking System
 ** Copyright (C) 2017 Uwe Kindler
+** Modified for Harken Studio on 2026-10-22 to support close buttons on inactive tabs.
 **
 ** This library is free software; you can redistribute it and/or
 ** modify it under the terms of the GNU Lesser General Public

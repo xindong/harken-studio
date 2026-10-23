@@ -26,3 +26,9 @@
 ## 知识产权确认（DCO）
 
 本项目采用 [Developer Certificate of Origin 1.1](https://developercertificate.org/)（DCO）。提交贡献即表示你按 DCO 作出承诺：贡献内容为本人创作或你有权授权本项目使用，不包含未经授权的第三方代码或侵犯他人版权、专利、商业秘密的内容。每个 commit 须使用 `git commit -s` 附带 `Signed-off-by: 姓名 <邮箱>` 签署行，表明你同意 DCO。引入新的第三方依赖前，须确认其许可证符合仓库依赖政策（见 `.docs/quality/DEPENDENCY_POLICY.md`），并在 `NOTICE` 中登记。
+
+已合入 `main` 的历史漏签不重写共享历史。原贡献者须针对完整 commit SHA 清单明确作出 DCO 1.1 确认，授权登记签署行，并知悉确认记录会公开。维护者核实贡献者身份及真实确认后，才可登记到 [dco-attestations.json](dco-attestations.json)。接受补正方案、公司批准开源、维护者对登记提交的签署，均不能替代贡献者的真实确认。
+
+`attestations` 中每条已完成记录包含：`dco_version`（`"1.1"`）、`signed_off_by`（完整的 `Signed-off-by: 姓名 <邮箱>` 行，邮箱须属于原贡献者）、`recorded_on`（登记日期，`YYYY-MM-DD`）、`evidence`（确认形式及来源）以及 `commits`（完整 SHA 清单）。书面确认附来源引用；经转述的口头确认应明确记载转述关系和确认内容，不得描述为原贡献者亲自书面签署。`pending_commits` 仅记录待补正项，不产生豁免。没有真实确认时保持 `attestations` 为空，不填写占位签名或代签。
+
+合规巡检在定时运行和 `main` push 等场景也检查完整历史；浅克隆或不完整记录会导致检查失败。自动化仅核对记录格式与覆盖范围，真实性由评审者核验。历史补正记录不豁免新 PR 引入提交的逐条签署要求。
