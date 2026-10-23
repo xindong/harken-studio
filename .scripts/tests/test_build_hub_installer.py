@@ -1,10 +1,10 @@
+import ctypes
 import hashlib
 import importlib.util
 import os
 import subprocess
 import tempfile
 import unittest
-import json
 from pathlib import Path
 from unittest import mock
 
@@ -208,9 +208,25 @@ class BuildHubInstallerTest(unittest.TestCase):
             terms = db.query("SELECT `Text` FROM `Control` WHERE `Dialog_`='LicenseDialog' AND `Control`='Terms'")
             self.assertEqual(terms[0][0], self.module.product_legal.render_rtf(self.module.product_legal.installer_text()))
         extracted = self.root / "extracted"
-        process = subprocess.run(["msiexec.exe", "/a", str(package), "/qn", "TARGETDIR=" + str(extracted),
-                                  "/l*v", str(self.root / "extract.log")], timeout=60)
-        self.assertEqual(process.returncode, 0, (self.root / "extract.log").read_text(encoding="utf-16", errors="replace"))
+        msi = ctypes.WinDLL("msi.dll")
+        msi.MsiSetInternalUI.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+        msi.MsiSetInternalUI.restype = ctypes.c_uint
+        msi.MsiOpenPackageExW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint, ctypes.POINTER(ctypes.c_uint)]
+        msi.MsiDoActionW.argtypes = [ctypes.c_uint, ctypes.c_wchar_p]
+        msi.MsiCloseHandle.argtypes = [ctypes.c_uint]
+        msi.MsiInstallProductW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p]
+        previous_ui = msi.MsiSetInternalUI(2, None)
+        try:
+            session = ctypes.c_uint()
+            self.assertEqual(msi.MsiOpenPackageExW(str(package), 1, ctypes.byref(session)), 0)
+            try:
+                self.assertEqual(msi.MsiDoActionW(session, "AppSearch"), 0)
+            finally:
+                msi.MsiCloseHandle(session)
+            self.assertEqual(msi.MsiInstallProductW(str(package),
+                f'ACTION=ADMIN TARGETDIR="{extracted}" REBOOT=ReallySuppress'), 0)
+        finally:
+            msi.MsiSetInternalUI(previous_ui, None)
         installed = extracted / "PFiles64/HarkenStudioHub"
         expected = {p.relative_to(self.input_dir) for p in self.input_dir.rglob("*") if p.is_file()}
         actual = {p.relative_to(installed) for p in installed.rglob("*") if p.is_file()}
