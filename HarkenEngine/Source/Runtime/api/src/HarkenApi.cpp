@@ -67922,30 +67922,11 @@ void RunAudibilityPass(harken::Engine& engine) {
     const std::uint32_t blockFrames =
         engine.config.blockFrames == 0 ? 1 : engine.config.blockFrames;
 
-    std::vector<harken::SourceCursorMirror::Row> rows;
-    std::vector<std::uint32_t> parkedSlots;
-    std::vector<VnVoiceHandle> parkedHandles;
-    harken::detail::LogicAllocSite failedSite =
-        harken::detail::LogicAllocSite::AudibilityRows;
-    try {
-        failedSite = harken::detail::LogicAllocSite::AudibilityRows;
-        harken::detail::CheckedGrow(
-            rows, engine.sourceCursors.SlotCount(),
-            harken::detail::LogicAllocSite::AudibilityRows);
-        rows.resize(engine.sourceCursors.SlotCount());
-        failedSite = harken::detail::LogicAllocSite::AudibilityParked;
-        harken::detail::CheckedGrow(
-            parkedSlots, engine.config.voiceCapacity.Virtual(),
-            harken::detail::LogicAllocSite::AudibilityParked);
-        harken::detail::CheckedGrow(
-            parkedHandles, engine.config.voiceCapacity.Virtual(),
-            harken::detail::LogicAllocSite::AudibilityParked);
-        parkedSlots.reserve(engine.config.voiceCapacity.Virtual());
-        parkedHandles.reserve(engine.config.voiceCapacity.Virtual());
-    } catch (const std::bad_alloc&) {
-        LogLogicAllocFailure(engine, failedSite);
-        return;
-    }
+    auto& rows = engine.audibilityCursorRows;
+    auto& parkedSlots = engine.audibilityParkedSlots;
+    auto& parkedHandles = engine.audibilityParkedHandles;
+    parkedSlots.clear();
+    parkedHandles.clear();
     // Coherent snapshot of the per-slot source cursors (timeline authority).
     std::uint64_t mirrorBlock = 0;
     const bool haveMirror =
