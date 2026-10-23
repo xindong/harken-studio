@@ -758,13 +758,17 @@ TEST(HotReload, ParkedVoiceReturnsOnItsOriginalGeneration) {
     ASSERT_EQ(VN_OK, Vn_Update());
     ASSERT_EQ(0u, Snap().parkedVoiceCount);
 
-    // The returned voice sounds the OLD samples. At d = dmin, width 1
-    // gives centered unity in both channels regardless of azimuth.
-    // Old data peaks at 0.25; the replacement would peak at 0.5.
+    // The first returned block sounds the OLD samples at full gain, hard right.
+    // Center-unity normalization scales old PCM by sqrt(2); replacement PCM
+    // would be twice this level.
     Capture captured;
-    PumpAndCapture(engine, 2, captured);
+    PumpAndCapture(engine, 1, captured);
     HARKENTEST_ASSERT_NON_SILENT(captured.right);
-    EXPECT_NEAR(0.25f, harkentest::Peak(captured.right), 1e-3f);
+    const float expected = 0.25f * std::sqrt(2.0f);
+    for (std::uint32_t frame = 0; frame < kBlock; ++frame) {
+        EXPECT_NEAR(0.0f, captured.left[frame], 1e-6f) << frame;
+        EXPECT_NEAR(expected, captured.right[frame], 1e-3f) << frame;
+    }
 
     // A fresh play resolves the new generation.
     ASSERT_EQ(VN_OK, Vn_Stop(voice, 0));

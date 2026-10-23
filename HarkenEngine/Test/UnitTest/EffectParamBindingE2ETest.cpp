@@ -479,9 +479,9 @@ TEST(EffectParamBindingE2E,
     ASSERT_EQ(VN_OK, Vn_BindVoiceAttenuation(handle, harkentest::ObjectId(211)));
     Capture initial;
     for (unsigned block = 0; block < 8 &&
-         !std::any_of(initial.left.begin(), initial.left.end(), [](float value) { return value != 0.0f; }); ++block)
+         !std::any_of(initial.right.begin(), initial.right.end(), [](float value) { return value != 0.0f; }); ++block)
         harkentest::PumpAndCapture(engine, 1, initial);
-    HARKENTEST_ASSERT_NON_SILENT(initial.left);
+    HARKENTEST_ASSERT_NON_SILENT(initial.right);
     ASSERT_EQ(VN_OK, Vn_Update());
     ASSERT_FALSE(engine->variables.HasNativePublicationHold(harkentest::RenderHandle(engine, handle)));
 
@@ -495,14 +495,18 @@ TEST(EffectParamBindingE2E,
     ASSERT_EQ(VN_OK, listenerAt(99.0f));
     ASSERT_EQ(VN_OK, Vn_Update());
     Capture returned;
-    harkentest::PumpAndCapture(engine, 1, returned);
+    CaptureFreshStereo(engine, 1, returned);
     ASSERT_EQ(harken::VoiceLedger::HandleKind::Live,
               engine->ledger.Classify(handle).kind);
-    HARKENTEST_ASSERT_NON_SILENT(returned.left);
-    // Centered mono keeps the source level in each stereo channel.
+    HARKENTEST_ASSERT_NON_SILENT(returned.right);
+    // The first return block includes both the hard-right spatial matrix and
+    // the recipe base (-12 dB) plus effect binding (+6 dB).
     const float expected =
-        kDc * std::pow(10.0f, -6.0f / 20.0f);
-    EXPECT_NEAR(expected, SteadyLevel(returned), 2e-3f);
+        kDc * std::pow(10.0f, -6.0f / 20.0f) * std::sqrt(2.0f);
+    for (std::uint32_t frame = 0; frame < kBlock; ++frame) {
+        EXPECT_NEAR(0.0f, returned.left[frame], 1e-6f) << frame;
+        EXPECT_NEAR(expected, returned.right[frame], 2e-3f) << frame;
+    }
 }
 
 TEST(EffectParamBindingE2E, LoadedVoiceRecipePinsReferencedBinding) {

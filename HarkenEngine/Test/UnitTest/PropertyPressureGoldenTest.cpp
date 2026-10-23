@@ -627,8 +627,10 @@ void RunSpatialScene(std::uint32_t queueDepth, LogCodeSink* sink,
         VnVoiceHandle handle = 0;
         ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
         ASSERT_EQ(VN_OK, Vn_BindVoiceAttenuation(handle, harkentest::ObjectId(9)));
+        // Drain each atomic start so setup does not consume the queue space
+        // whose later spatial publication overflow this scene measures.
+        engine->nullBackend.Pump(1);
     }
-    engine->nullBackend.Pump(1); // drain the plays
 
     bool invariant = true;
     for (int wave = 0; wave < 2; ++wave) {
