@@ -64,6 +64,7 @@
 #ifdef Q_OS_WIN
 #include "Platform/Windows/ShellIcons.h"
 #include "Platform/Windows/UserSessionReady.h"
+#include <QThreadPool>
 #include <windows.h>
 #endif
 
@@ -703,7 +704,9 @@ int main(int argc, char* argv[])
                 return 0;
             }
 #ifdef Q_OS_WIN
-            QTimer::singleShot(0, &app, &VNH::refreshShellIconsIfChanged);
+            QTimer::singleShot(0, &app, [] {
+                QThreadPool::globalInstance()->start(&VNH::refreshShellIconsIfChanged);
+            });
 #endif
 
             const QString currentVersion = QString::fromUtf8(
@@ -945,7 +948,9 @@ int main(int argc, char* argv[])
     }
 
 #ifdef Q_OS_WIN
-    QTimer::singleShot(0, &app, &VNH::refreshShellIconsIfChanged);
+    QTimer::singleShot(0, &app, [] {
+        QThreadPool::globalInstance()->start(&VNH::refreshShellIconsIfChanged);
+    });
 #endif
 
     QList<QStringList> pendingActivations;
