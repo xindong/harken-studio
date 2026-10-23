@@ -26,6 +26,11 @@ namespace Harken.Test
             if (args.Length == 1 && args[0] == "--waveform-only") return EditorWaveformContract.Run() ? 0 : 1;
             if (args.Length == 1 && (args[0] == "--attenuation-only" || args[0] == "--attenuation-old-native"))
             {
+                if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("HARKEN_NATIVE_DIR")))
+                {
+                    Console.Error.WriteLine(args[0] + " requires an explicit HARKEN_NATIVE_DIR.");
+                    return 2;
+                }
                 InstallNativeResolver(true);
                 return RunAbiFidelity() && RunAttenuationAbi(args[0] == "--attenuation-old-native") ? 0 : 1;
             }
