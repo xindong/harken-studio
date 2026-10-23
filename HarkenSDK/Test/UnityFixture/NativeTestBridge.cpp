@@ -54,6 +54,48 @@ extern "C" __declspec(dllexport) VnResult HarkenSdkTest_PumpNull(std::uint32_t b
     return VN_OK;
 }
 
+extern "C" __declspec(dllexport) VnResult HarkenSdkTest_MuteSingleFiringOutput(
+    VnActionFiringHandle firing, std::uint64_t instance, std::uint64_t expectedBlock,
+    std::uint64_t* outRenderVoice) noexcept {
+    if (outRenderVoice == nullptr) return VN_INVALID_ARG;
+    *outRenderVoice = 0;
+    auto* engine = harken::detail::ActiveEngine();
+    if (engine == nullptr) return VN_NOT_INITIALIZED;
+    if (!engine->config.nullDevice) return VN_INVALID_ARG;
+    VnSnapshot snapshot{};
+    snapshot.structSize = sizeof(snapshot);
+    const auto captured = Vn_CaptureSnapshot(&snapshot);
+    if (captured != VN_OK) return captured;
+    if (snapshot.blockIndex != expectedBlock || snapshot.activeVoiceCount != 1 ||
+        engine->voices.ActiveCount() != 1) return VN_IN_USE;
+    VnActionStepResult step{};
+    step.structSize = sizeof(step);
+    const auto queried = Vn_QueryActionStep(firing, 0, &step);
+    if (queried != VN_OK) return queried;
+    harken::PlayableRootMetadata metadata{};
+    if (instance == 0 || step.producedPlayableInstance != instance ||
+        !engine->playableInstances.CaptureRootMetadata(instance, &metadata) ||
+        metadata.actionFiring != firing) return VN_STALE_HANDLE;
+    VnVoiceHandle renderVoice = 0;
+    for (std::uint32_t slot = 0; slot < engine->ledger.Capacity(); ++slot) {
+        harken::VoiceLedger::MonitorIdentity identity{};
+        if (!engine->ledger.CaptureMonitorIdentity(slot, &identity) ||
+            identity.prepared || identity.parent.internalToken != instance ||
+            engine->voices.Resolve(identity.renderHandle) == nullptr) continue;
+        if (renderVoice != 0) return VN_IN_USE;
+        renderVoice = identity.renderHandle;
+    }
+    if (renderVoice == 0) return VN_STALE_HANDLE;
+    harken::CommandRecord command{};
+    command.opcode = harken::kOpcodeSetVoiceVolume;
+    command.payload.setVoiceVolume.handle = renderVoice;
+    command.payload.setVoiceVolume.volumeDb = -1000.0f;
+    command.payload.setVoiceVolume.outputOnly = 1;
+    if (!engine->commands.TryPush(command)) return VN_BACKPRESSURE;
+    *outRenderVoice = renderVoice;
+    return VN_OK;
+}
+
 extern "C" __declspec(dllexport) VnResult HarkenSdkTest_QueueNotification() noexcept {
     auto* engine = harken::detail::ActiveEngine();
     if (engine == nullptr) return VN_NOT_INITIALIZED;

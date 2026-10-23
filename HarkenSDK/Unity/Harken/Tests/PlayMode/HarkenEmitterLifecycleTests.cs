@@ -21,6 +21,10 @@ namespace Harken.Unity.Tests
         private static extern VnResult HarkenSdkTest_PumpAndCopy(
             [Out] float[] samples, uint capacity, out uint frames, out uint channels);
 
+        [DllImport(HarkenNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        private static extern VnResult HarkenSdkTest_MuteSingleFiringOutput(
+            ulong firing, ulong instance, ulong expectedBlock, out ulong renderVoice);
+
         [StructLayout(LayoutKind.Sequential)]
         private struct AcceptedSpatialSnapshot
         {
@@ -383,6 +387,18 @@ namespace Harken.Unity.Tests
                             point.transform.position = Vector3.right * 10000;
                             LogAssert.Expect(LogType.Error, "Harken operation failed: HarkenAudioSystem.SetDistanceReference: VN_INVALID_ARG");
                             Assert.That(f.Runtime.SetDistanceReference(selected), Is.EqualTo(VnResult.VN_INVALID_ARG));
+                            var keepAliveDriver = f.Owner.AddComponent<HarkenSpatialPlayerLoopProbe>();
+                            ulong audibleBlock = 0;
+                            yield return f.FirstAudible(keepAliveDriver, () => delayed, _ => { }, block => audibleBlock = block);
+                            Assert.That(delayed.QueryStep(0, out VnActionStepResult keepAlive), Is.EqualTo(VnResult.VN_OK));
+                            Assert.That(keepAlive.producedPlayableInstance, Is.Not.Zero);
+                            // Keep the real source owner alive while isolating the measured voice's output.
+                            Assert.That(HarkenSdkTest_MuteSingleFiringOutput(delayed.Handle,
+                                keepAlive.producedPlayableInstance, audibleBlock, out ulong renderVoice),
+                                Is.EqualTo(VnResult.VN_OK));
+                            Assert.That(f.RenderPhysicalBlocks(1), Is.EqualTo(Vector2.zero));
+                            Assert.That(selected.IsReleased, Is.False);
+                            Debug.Log($"REFERENCE_KEEPALIVE_MUTED firing={delayed.Handle} instance={keepAlive.producedPlayableInstance} renderVoice={renderVoice} left=0 right=0");
                         }
                         if (mode == "reused")
                         {
@@ -445,7 +461,20 @@ namespace Harken.Unity.Tests
                     var driver = f.Owner.AddComponent<HarkenSpatialPlayerLoopProbe>();
                     driver.BeforeLate = () => Assert.That(f.Action.Play(), Is.EqualTo(VnResult.VN_OK));
                     Vector2 first = default;
-                    yield return f.FirstAudible(driver, () => f.Action.Firing, value => first = value);
+                    yield return f.FirstAudible(driver, () => f.Action.Firing, value =>
+                    {
+                        first = value;
+                        Assert.That(f.Action.Firing.QueryStep(0, out VnActionStepResult step), Is.EqualTo(VnResult.VN_OK));
+                        Assert.That(step.producedPlayableInstance, Is.Not.Zero);
+                        var snapshot = HarkenEngine.DefaultSnapshot();
+                        Assert.That(HarkenEngine.Capture(ref snapshot), Is.EqualTo(VnResult.VN_OK));
+                        Debug.Log($"REFERENCE_LIFETIME mode={mode} pass={pass} firing={f.Action.Firing.Handle} instance={step.producedPlayableInstance} state={step.state} result={step.result} voices={snapshot.activeVoiceCount}");
+                        if (delayed.IsValid)
+                        {
+                            Assert.That(delayed.QueryStep(0, out VnActionStepResult keepAlive), Is.EqualTo(VnResult.VN_OK));
+                            Debug.Log($"REFERENCE_KEEPALIVE firing={delayed.Handle} instance={keepAlive.producedPlayableInstance} state={keepAlive.state} result={keepAlive.result}");
+                        }
+                    });
                     if (pass == 0)
                     {
                         baseline = first;
@@ -1052,7 +1081,7 @@ namespace Harken.Unity.Tests
             }
 
             public IEnumerator FirstAudible(HarkenSpatialPlayerLoopProbe driver,
-                Func<ActionFiring> firing, Action<Vector2> accept)
+                Func<ActionFiring> firing, Action<Vector2> accept, Action<ulong> acceptBlock = null)
             {
                 bool audible = false;
                 int blocks = 0;
@@ -1070,6 +1099,7 @@ namespace Harken.Unity.Tests
                         Assert.That(HarkenEngine.Capture(ref snapshot), Is.EqualTo(VnResult.VN_OK));
                         Debug.Log($"SPATIAL_FIRST_AUDIBLE blocks={blocks} block={snapshot.blockIndex} state={info.state} left={energy.x:R} right={energy.y:R}");
                         audible = true;
+                        acceptBlock?.Invoke(snapshot.blockIndex);
                         accept(energy);
                     };
                     yield return null;
