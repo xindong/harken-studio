@@ -198,7 +198,18 @@ namespace Harken.Unity.Tests
                     }
                     else
                     {
+                        var boundary = f.Owner.AddComponent<HarkenSpatialBeforeBoundaryProbe>();
+                        int postFrame = -1;
+                        int postBoundary = -1;
+                        f.Runtime.OperationCompleted += (_, operation, result) =>
+                        {
+                            if (operation != "HarkenAudioSystem.PlayAction" || result != VnResult.VN_OK) return;
+                            postFrame = Time.frameCount;
+                            postBoundary = boundary.LateUpdateCount;
+                        };
                         var play = f.Runtime.PlayActionAsync(f.Action.ActionName, f.Action.ProjectId, source);
+                        var accepted = CaptureSuccessfulAsyncPost(play, f.Actor.transform, f.Camera.transform,
+                            boundary, () => postFrame, () => postBoundary);
                         Assert.That(f.Runtime.Session.Publication, Is.Null);
                         Assert.That(contentReads, Is.EqualTo(1));
                         Assert.That(play.IsCompleted, Is.False);
@@ -210,12 +221,11 @@ namespace Harken.Unity.Tests
                             f.Camera.transform.position = Vector3.right * 240;
                             content.SetResult(companion["Play_U4_A.bytes"]);
                         };
-                        yield return Until(play);
-                        HarkenActionPlayResult result = play.GetAwaiter().GetResult();
+                        yield return Until(accepted);
+                        HarkenActionPlayResult result = accepted.GetAwaiter().GetResult();
                         Assert.That(result.Result, Is.EqualTo(VnResult.VN_OK));
                         firing = result.Firing;
                         Assert.That(contentReads, Is.EqualTo(1));
-                        AssertAcceptedSpatial(firing, f.Actor.transform, f.Camera.transform);
                     }
                     Vector2 first = default;
                     yield return f.FirstAudible(driver, () => firing, value => first = value);
@@ -229,6 +239,22 @@ namespace Harken.Unity.Tests
                     }
                 }
             }
+        }
+
+        private static async Task<HarkenActionPlayResult> CaptureSuccessfulAsyncPost(
+            Task<HarkenActionPlayResult> play, Transform source, Transform listener,
+            HarkenSpatialBeforeBoundaryProbe boundary, Func<int> postFrame, Func<int> postBoundary)
+        {
+            HarkenActionPlayResult result = await play;
+            Assert.That(result.Result, Is.EqualTo(VnResult.VN_OK));
+            // Capture in the successful continuation, before yielding back to the test coroutine.
+            AssertAcceptedSpatial(result.Firing, source, listener);
+            Assert.That(postFrame(), Is.GreaterThanOrEqualTo(0));
+            Assert.That(Time.frameCount, Is.EqualTo(postFrame()));
+            Assert.That(boundary.LateUpdateCount, Is.EqualTo(postBoundary()),
+                "No spatial LateUpdate may correct the poses between Post and accepted-pose capture.");
+            Debug.Log($"ASYNC_SPATIAL_ACCEPTED postFrame={postFrame()} captureFrame={Time.frameCount} postBoundary={postBoundary()} captureBoundary={boundary.LateUpdateCount}");
+            return result;
         }
 
         private static IEnumerator Until(Task task)
@@ -651,6 +677,7 @@ namespace Harken.Unity.Tests
                 {
                     driver.AfterLate = () =>
                     {
+                        if (firing().Handle == 0) return;
                         Vector2 energy = RenderPhysicalBlocks(1);
                         ++blocks;
                         Assert.That(firing().Query(out VnActionFiringInfo info), Is.EqualTo(VnResult.VN_OK));
@@ -707,8 +734,10 @@ namespace Harken.Unity.Tests
     public sealed class HarkenSpatialBeforeBoundaryProbe : MonoBehaviour
     {
         internal Action OnLate;
+        internal int LateUpdateCount { get; private set; }
         private void LateUpdate()
         {
+            ++LateUpdateCount;
             Action callback = OnLate;
             OnLate = null;
             callback?.Invoke();
