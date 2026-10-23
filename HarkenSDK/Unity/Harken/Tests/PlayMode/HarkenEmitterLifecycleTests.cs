@@ -9,6 +9,7 @@ using System.Text;
 using System.Threading.Tasks;
 using NUnit.Framework;
 using UnityEngine;
+using UnityEngine.Profiling;
 using UnityEngine.TestTools;
 using Object = UnityEngine.Object;
 
@@ -69,6 +70,73 @@ namespace Harken.Unity.Tests
         }
 
         #if HARKEN_SDK_TEST_NULL_PUMP
+        [UnityTest]
+        public IEnumerator WarmMovingSpatialFrameKeepsZeroManagedAllocations()
+        {
+            using (var f = new Fixture())
+            {
+                f.Start();
+                f.Actor.SetActive(true);
+                f.Camera.SetActive(true);
+                var actors = new Transform[8];
+                for (int i = 0; i < actors.Length; ++i)
+                {
+                    GameObject actor = i == 0 ? f.Actor : new GameObject("Allocation source " + i);
+                    if (i != 0)
+                    {
+                        actor.transform.SetParent(f.Actor.transform);
+                        actor.AddComponent<HarkenEmitter>();
+                    }
+                    actors[i] = actor.transform;
+                    Assert.That(f.Runtime.CreateSpatialSource(actors[i], out HarkenSpatialSource source),
+                        Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(f.Runtime.PlayAction(f.Action.ActionName, f.Action.ProjectId, source, out _),
+                        Is.EqualTo(VnResult.VN_OK));
+                }
+                Recorder recorder = Recorder.Get("GC.Alloc");
+                recorder.enabled = false;
+                recorder.FilterToCurrentThread();
+                try
+                {
+                    AssertAllocationRecorder(recorder);
+                    int allocations = 0;
+                    for (int frame = 0; frame < 1152; ++frame)
+                    {
+                        for (int i = 0; i < actors.Length; ++i)
+                            actors[i].position = new Vector3((frame & 1) == 0 ? 80 + i : -80 - i, 0, i);
+                        f.Camera.transform.position = new Vector3(frame & 1, 0, 0);
+                        f.Camera.transform.rotation = Quaternion.Euler(0, (frame & 1) * 180, 0);
+                        recorder.enabled = true;
+                        f.Runtime.AdvanceFrame();
+                        recorder.enabled = false;
+                        int count = recorder.sampleBlockCount;
+                        if (frame >= 128) allocations += count;
+                        f.RenderPhysicalBlocks(1);
+                    }
+                    AssertAllocationRecorder(recorder);
+                    Assert.That(allocations, Is.Zero,
+                        "1024 warm moving frames with 8 component emitters, 8 Transform sources and one Listener.");
+                    Debug.Log($"SPATIAL_GC frames=1024 components=8 sources=8 listeners=1 allocations={allocations}");
+                }
+                finally
+                {
+                    recorder.enabled = false;
+                    recorder.CollectFromAllThreads();
+                }
+            }
+            yield return null;
+        }
+
+        private static void AssertAllocationRecorder(Recorder recorder)
+        {
+            recorder.enabled = true;
+            var control = new byte[1024];
+            recorder.enabled = false;
+            int count = recorder.sampleBlockCount;
+            GC.KeepAlive(control);
+            Assert.That(count, Is.GreaterThan(0), "The allocation recorder must detect the positive control.");
+        }
+
         [UnityTest]
         public IEnumerator ComponentPostUsesPosesMovedInOrdinaryUpdate() => ImmediatePoseCase(false);
 
