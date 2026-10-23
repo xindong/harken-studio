@@ -47,11 +47,19 @@
 #include <QTemporaryDir>
 #include <QUuid>
 
+#ifdef Q_OS_WIN
+#include <QtCore/qt_windows.h>
+#else
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <functional>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -346,6 +354,27 @@ bool scanOutputFiles(const QDir& dir, QStringList* names, QStringList* packs, QS
     return true;
 }
 
+bool scanCleanupFiles(const QDir& root, const QStringList& selectedPlatforms,
+                      QStringList* names, QStringList* packs, QString* error)
+{
+    if (!scanOutputFiles(root, names, packs, error)) return false;
+    for (const auto& directory : root.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden)) {
+        if (directory.fileName().startsWith(QString::fromLatin1(kStagingPrefix))
+            || directory.fileName().startsWith(QString::fromLatin1(kPreviousPrefix))
+            || directory.fileName().startsWith(QString::fromLatin1(kNextPrefix))
+            || selectedPlatforms.contains(directory.fileName())) continue;
+        QStringList retiredFiles, retiredPacks;
+        if (!scanOutputFiles(QDir(directory.absoluteFilePath()), &retiredFiles,
+                packs ? &retiredPacks : nullptr, error, true)) return false;
+        for (const auto& name : retiredFiles) names->append(directory.fileName() + QLatin1Char('/') + name);
+        if (packs)
+            for (const auto& name : retiredPacks) packs->append(directory.fileName() + QLatin1Char('/') + name);
+    }
+    names->removeDuplicates();
+    if (packs) packs->removeDuplicates();
+    return true;
+}
+
 bool publishedRelativeNames(const QDir& dir, QStringList* names, QString* error,
                             bool requireComplete = false, QStringList* packNames = nullptr)
 {
@@ -529,6 +558,65 @@ bool writeJson(const QString& path, const QJsonObject& object, QString* error)
     return true;
 }
 
+bool validateWriteAccess(QStringList paths, QString* error)
+{
+    paths.removeDuplicates();
+    paths.sort();
+    QStringList blocked;
+    QSet<QString> checkedDirectories;
+    for (const QString& path : paths) {
+        const QFileInfo entry(path);
+        if (entry.isFile()) {
+            bool accessible = entry.isWritable();
+#ifdef Q_OS_WIN
+            const QString nativePath = QDir::toNativeSeparators(entry.absoluteFilePath());
+            const HANDLE handle = CreateFileW(reinterpret_cast<LPCWSTR>(nativePath.utf16()),
+                GENERIC_READ | DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            accessible = accessible && handle != INVALID_HANDLE_VALUE;
+            if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
+#else
+            QFile file(entry.absoluteFilePath());
+            accessible = accessible && file.open(QIODevice::ReadOnly);
+            struct stat parentStat{};
+            if (::stat(QFile::encodeName(entry.absolutePath()).constData(), &parentStat) != 0
+                || ((parentStat.st_mode & S_ISVTX) && ::geteuid() != 0
+                    && ::geteuid() != parentStat.st_uid && ::geteuid() != entry.ownerId()))
+                accessible = false;
+#endif
+            if (!accessible)
+                blocked.append(QDir::toNativeSeparators(entry.absoluteFilePath()));
+        }
+        QFileInfo parent(entry.isDir() ? entry.absoluteFilePath() : entry.absolutePath());
+        while (!parent.exists() && parent.absoluteFilePath() != parent.absolutePath())
+            parent.setFile(parent.absolutePath());
+        if (checkedDirectories.contains(parent.absoluteFilePath())) continue;
+        checkedDirectories.insert(parent.absoluteFilePath());
+        bool accessible = parent.isDir() && parent.isWritable();
+#ifdef Q_OS_WIN
+        const QString nativePath = QDir::toNativeSeparators(parent.absoluteFilePath());
+        const HANDLE handle = CreateFileW(reinterpret_cast<LPCWSTR>(nativePath.utf16()),
+            FILE_ADD_FILE | FILE_ADD_SUBDIRECTORY,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+        accessible = accessible && handle != INVALID_HANDLE_VALUE;
+        if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
+#else
+        accessible = accessible && ::access(QFile::encodeName(parent.absoluteFilePath()).constData(), W_OK | X_OK) == 0;
+#endif
+        if (!accessible)
+            blocked.append(QDir::toNativeSeparators(parent.absoluteFilePath()));
+    }
+    blocked.removeDuplicates();
+    if (blocked.isEmpty()) return true;
+    *error = ProjectPackExporter::tr(
+        "Some paths needed for Pack export are read-only, locked, or cannot be replaced.\n"
+        "Check file write protection, access permissions, and other programs using these files. If your version control workflow "
+        "requires checkout or unlocking, do that first, then retry.\n\nAffected paths:\n%1")
+        .arg(blocked.join(QLatin1Char('\n')));
+    return false;
+}
+
 bool commitPublication(const QDir& liveDir, const QString& nextDir,
                        const QStringList& liveNames, const QStringList& publishedNames,
                        const QStringList& preservedNames, QString* error)
@@ -549,6 +637,10 @@ bool commitPublication(const QDir& liveDir, const QString& nextDir,
     for (const auto& name : publishedNames)
         if (!preservedNames.contains(name)) nextNames.append(name);
     if (previousNames.isEmpty() && nextNames.isEmpty()) return true;
+    QStringList writePaths;
+    for (const auto& name : previousNames + nextNames)
+        writePaths.append(liveDir.filePath(name));
+    if (!validateWriteAccess(writePaths, error)) return false;
     QTemporaryDir previous(liveDir.filePath(QString::fromLatin1(kPreviousPrefix) + QStringLiteral("XXXXXX")));
     const QString previousDir = previous.path();
     if (!previous.isValid())
@@ -1909,7 +2001,181 @@ std::uint32_t ownedDefinitionCount(
     return count;
 }
 
+bool readPreviousPack(const QDir& output, PackMeta* pack, QByteArray* bytes,
+                      harkenstudiobuild::CurrentWorldBodyImage* body)
+{
+    const auto path = pack->previousRow.value(QStringLiteral("path")).toString();
+    QString error;
+    harkenstudiobuild::PackCanonicalImage image;
+    return !path.isEmpty() && safePublicationPath(output, path)
+        && readAll(output.filePath(path), bytes, &error)
+        && (!pack->previousRow.contains(QStringLiteral("contentHash"))
+            || harkenstudiobuild::Fnv1a64(bytes->constData(), bytes->size())
+                == pack->previousRow.value(QStringLiteral("contentHash")).toString().toULongLong())
+        && harkenstudiobuild::ParsePackCanonicalImage(
+            reinterpret_cast<const std::uint8_t*>(bytes->constData()), bytes->size(), &image) == harkenstudiobuild::kPackOk
+        && image.packStableId == pack->packStableId && image.packKind == pack->packKind
+        && collectEntries(output.filePath(path), &pack->previousEntries, &error)
+        && body->Decode(image.partitionBody.data(), image.partitionBody.size(),
+            harkenstudiobuild::kCanonicalDefinitionPartitionBodyVintage);
+}
+
+bool mayReuseWaveform(const QString& path, const ProjectData& project,
+                      const ProjectPackExporter::ExportOptions& options)
+{
+    if (!project.buildExportWaveforms) return false;
+    const QFileInfo file(path);
+    const QString root = options.waveformOutputDir.isEmpty()
+        ? PathUtils::waveformBuildOutputRoot(project.projectPath, project.buildWaveformOutputDir)
+        : options.waveformOutputDir;
+    const auto hash = file.completeBaseName();
+    return QFileInfo(file.absolutePath()) == QFileInfo(root)
+        && file.suffix() == QStringLiteral("vkd") && hash.size() == 64
+        && std::all_of(hash.begin(), hash.end(), [](QChar ch) {
+            return (ch >= QLatin1Char('0') && ch <= QLatin1Char('9'))
+                || (ch >= QLatin1Char('a') && ch <= QLatin1Char('f'));
+        });
+}
+
+bool collectPlatformWritePaths(const ProjectData& project, const QDir& output,
+                               const PackBuildPlan& plan,
+                               const ProjectPackExporter::ExportOptions& options,
+                               QStringList* paths, QString* error)
+{
+    paths->append(output.absolutePath());
+    QStringList files, binaries;
+    if (!scanOutputFiles(output, &files, &binaries, error)) return false;
+    QJsonArray publication;
+    QStringList managed;
+    if (!ReadPackPublication(output.path(), project.projectId, options.platform,
+            &publication, &managed, error, false, {}, !options.updateSelectedOnly)) return false;
+    QMap<QString, QJsonObject> previous;
+    QStringList previousCompanions;
+    for (const auto& value : publication) {
+        const auto row = value.toObject();
+        const QString path = row.value(QStringLiteral("path")).toString();
+        previous.insert(path, row);
+        const QFileInfo file(path);
+        previousCompanions.append(QDir::cleanPath(QDir(file.path()).filePath(
+            file.completeBaseName() + QStringLiteral(".json"))));
+    }
+    QStringList plannedFiles;
+    const auto appendPack = [&](const QString& relative, std::uint64_t id, std::uint32_t kind) {
+        if (!safePublicationPath(output, relative)) {
+            *error = QStringLiteral("Invalid Pack output path: %1").arg(output.filePath(relative));
+            return false;
+        }
+        const QFileInfo file(relative);
+        const auto companion = QDir::cleanPath(QDir(file.path()).filePath(
+            file.completeBaseName() + QStringLiteral(".json")));
+        plannedFiles.append(relative);
+        plannedFiles.append(companion);
+        paths->append(QFileInfo(output.filePath(relative)).absolutePath());
+        PackMeta pack;
+        pack.packStableId = id;
+        pack.packKind = kind;
+        pack.previousRow = previous.value(relative);
+        if (pack.previousRow.isEmpty() && files.contains(relative))
+            pack.previousRow.insert(QStringLiteral("path"), relative);
+        QByteArray bytes;
+        harkenstudiobuild::CurrentWorldBodyImage body;
+        const bool valid = readPreviousPack(output, &pack, &bytes, &body);
+        const bool retained = options.updateSelectedOnly && kind == harkenstudiobuild::kPackKindInit
+            && valid && previous.contains(relative);
+        if (!retained && (options.forceReexport || !valid))
+            paths->append(output.filePath(relative));
+        if (!retained && QFileInfo(output.filePath(companion)).isFile()) {
+            QByteArray companionBytes;
+            if (!readAll(output.filePath(companion), &companionBytes, error)) return false;
+            const auto document = QJsonDocument::fromJson(companionBytes);
+            const auto object = document.object();
+            if (!document.isObject()
+                || !ProjectSchemaValidator::validatePackManifest(HARKEN_PACK_SCHEMA_VERSION, object, companion).isEmpty()
+                || object.contains(QStringLiteral("metadata")) != project.buildExportPackMetadata
+                || object.contains(QStringLiteral("waveforms")) != project.buildExportWaveforms)
+                paths->append(output.filePath(companion));
+        }
+        return true;
+    };
+    if (!appendPack(QStringLiteral("Init") + Bridge::packArtifactExtension(),
+            fnvName(options.platform + QStringLiteral("/Init")), harkenstudiobuild::kPackKindInit)) return false;
+    for (const auto& unit : plan.units) {
+        const bool hasContent = std::any_of(unit.actionStableIds.begin(), unit.actionStableIds.end(),
+            [&](auto id) {
+                const ProjectItem* action = findAction(project, id);
+                return action && action->comp<VAction>() && !action->comp<VAction>()->steps.empty();
+            });
+        if (hasContent && !appendPack(PackBuildPlanning::packFileName(
+                unit.variant.language, unit.name, Bridge::packArtifactExtension()),
+                fnvName(PackBuildPlanning::relativePackPath(unit.variant.platform,
+                    unit.variant.language, unit.artifactKey)), harkenstudiobuild::kPackKindCanonicalContent)) return false;
+    }
+    for (const auto& name : files) {
+        if (containsPublicationFile(output, plannedFiles, name) || mayReuseWaveform(output.filePath(name), project, options))
+            continue;
+        if ((options.selfCleaning && !options.updateSelectedOnly)
+            || (managed.contains(name) && !binaries.contains(name) && !previousCompanions.contains(name)))
+            paths->append(output.filePath(name));
+    }
+    return true;
+}
+
 } // namespace
+
+bool ProjectPackExporter::ValidatePackBuildWriteAccess(
+    const ProjectData& project, const QString& baseDir, const QStringList& platforms,
+    const ExportOptions& options, QString* error)
+{
+    const QDir root(baseDir);
+    QStringList paths{root.absolutePath()};
+    QStringList platformNames;
+    for (const auto& id : platforms) {
+        const auto* platform = ProjectPlatformSemantics::find(project.platforms, QUuid(id));
+        if (!platform) {
+            *error = QStringLiteral("Unknown project platform ID: %1").arg(id);
+            return false;
+        }
+        platformNames.append(platform->name);
+        auto platformOptions = options;
+        platformOptions.platform = id;
+        const QDir output(platformOutputDir(baseDir, *platform));
+        std::unique_ptr<QLockFile> platformLock;
+        if (output.exists()) {
+            platformLock = std::make_unique<QLockFile>(output.filePath(QStringLiteral(".harken-pack-platform.lock")));
+            platformLock->setStaleLockTime(0);
+            if (!platformLock->tryLock()) {
+                *error = QStringLiteral("Platform output is being built by another request: %1").arg(output.path());
+                return false;
+            }
+            if (!recoverInterruptedPublish(output, error)) return false;
+        }
+        if (!collectPlatformWritePaths(project, output,
+                createBuildPlan(project, platformOptions), platformOptions, &paths, error)) return false;
+    }
+    if (options.selfCleaning && !options.updateSelectedOnly) {
+        QStringList files;
+        if (!scanCleanupFiles(root, platformNames, &files, nullptr, error)) return false;
+        for (const auto& name : files) {
+            if (std::any_of(platformNames.begin(), platformNames.end(), [&](const auto& platform) {
+                    return name.startsWith(platform + QLatin1Char('/'));
+                }) || mayReuseWaveform(root.filePath(name), project, options)) continue;
+            paths.append(root.filePath(name));
+        }
+    } else {
+        for (const auto& entry : root.entryInfoList(QDir::Files | QDir::Hidden | QDir::System)) {
+            if (entry.fileName().compare(QStringLiteral("Project.json"), Qt::CaseInsensitive) == 0
+                || entry.fileName().compare(QStringLiteral("ProjectData.json"), Qt::CaseInsensitive) == 0)
+                paths.append(entry.absoluteFilePath());
+        }
+    }
+    if (project.buildExportProjectData) paths.append(root.filePath(QStringLiteral("Project.json")));
+    if (project.buildExportWaveforms) {
+        paths.append(options.waveformOutputDir.isEmpty()
+            ? PathUtils::waveformBuildOutputRoot(project.projectPath, project.buildWaveformOutputDir)
+            : options.waveformOutputDir);
+    }
+    return validateWriteAccess(paths, error);
+}
 
 bool ReadPackPublication(const QString& directory, const QString& projectId,
                          const QString& platformId, QJsonArray* packs,
@@ -2380,6 +2646,10 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
     }
     if (!recoverInterruptedPublish(liveDir, &result.error))
         return result;
+    QStringList writePaths;
+    if (!collectPlatformWritePaths(project, liveDir, *request.plan,
+            request.options, &writePaths, &result.error)
+        || !validateWriteAccess(writePaths, &result.error)) return result;
     QStringList liveNames, allPackNames;
     if (!scanOutputFiles(liveDir, &liveNames, &allPackNames, &result.error)) return result;
     const QDir resourceCacheDir(QDir(PathUtils::getDotCacheDir(QFileInfo(project.projectPath).absolutePath()))
@@ -2502,37 +2772,22 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             publishedPacks.insert(pack.packStableId, pack.previousRow);
         if (pack.previousRow.isEmpty() && liveNames.contains(pack.fileName))
             pack.previousRow.insert(QStringLiteral("path"), pack.fileName);
-        const auto oldPath = pack.previousRow.value(QStringLiteral("path")).toString();
         QByteArray bytes;
-        QString error;
-        harkenstudiobuild::PackCanonicalImage image;
-        pack.previousValid = !oldPath.isEmpty() && safePublicationPath(liveDir, oldPath)
-            && readAll(liveDir.filePath(oldPath), &bytes, &error)
-            && (!pack.previousRow.contains(QStringLiteral("contentHash"))
-                || harkenstudiobuild::Fnv1a64(bytes.constData(), bytes.size())
-                    == pack.previousRow.value(QStringLiteral("contentHash")).toString().toULongLong())
-            && harkenstudiobuild::ParsePackCanonicalImage(
-                reinterpret_cast<const std::uint8_t*>(bytes.constData()), bytes.size(), &image) == harkenstudiobuild::kPackOk
-            && image.packStableId == pack.packStableId && image.packKind == pack.packKind
-            && collectEntries(liveDir.filePath(oldPath), &pack.previousEntries, &error);
+        harkenstudiobuild::CurrentWorldBodyImage body;
+        pack.previousValid = readPreviousPack(liveDir, &pack, &bytes, &body);
         if (pack.previousValid) {
-            harkenstudiobuild::CurrentWorldBodyImage body;
-            pack.previousValid = body.Decode(image.partitionBody.data(), image.partitionBody.size(),
-                harkenstudiobuild::kCanonicalDefinitionPartitionBodyVintage);
-            if (pack.previousValid) {
-                if (request.options.updateSelectedOnly && pack.packKind == harkenstudiobuild::kPackKindInit) {
-                    const auto* world = body.ProductionView();
-                    for (std::uint32_t i = 0; i < world->playablePropertyCount; ++i) {
-                        const auto& property = world->playableProperties[i];
-                        if (property.contentPropertyKind == harkenstudiobuild::playableproperties::ContentPropertyKindV1::Layer)
-                            previousInitLayerIds.insert(property.stableId);
-                    }
+            if (request.options.updateSelectedOnly && pack.packKind == harkenstudiobuild::kPackKindInit) {
+                const auto* world = body.ProductionView();
+                for (std::uint32_t i = 0; i < world->playablePropertyCount; ++i) {
+                    const auto& property = world->playableProperties[i];
+                    if (property.contentPropertyKind == harkenstudiobuild::playableproperties::ContentPropertyKindV1::Layer)
+                        previousInitLayerIds.insert(property.stableId);
                 }
-                QFile cache(resourceCacheDir.filePath(QString::fromLatin1(
-                    QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex())));
-                if (cache.open(QIODevice::ReadOnly))
-                    pack.previousResourceFingerprint = QString::fromLatin1(cache.readAll());
             }
+            QFile cache(resourceCacheDir.filePath(QString::fromLatin1(
+                QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex())));
+            if (cache.open(QIODevice::ReadOnly))
+                pack.previousResourceFingerprint = QString::fromLatin1(cache.readAll());
         }
     }
 
@@ -3280,6 +3535,10 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         const bool matches = meta.previousValid
             && entriesFingerprint(entries, meta.packKind) == entriesFingerprint(meta.previousEntries, meta.packKind);
         if (matches && !request.options.forceReexport) return reuse();
+        if (!validateWriteAccess({liveDir.filePath(meta.fileName)}, &unit.error)) {
+            unit.success = false;
+            return unit;
+        }
         if (!Bridge::PackBuildSession::writeCanonicalPackFile(
                 path,
                 meta.packKind == harkenstudiobuild::kPackKindInit
@@ -3584,21 +3843,9 @@ ProjectPackExporter::ExportResult ProjectPackExporter::FinalizePackExport(
     const QString metadataName = QStringLiteral("Project.json");
     const QStringList metadataNames{metadataName, QStringLiteral("ProjectData.json")};
     if (selfCleaning) {
-        if (!scanOutputFiles(liveDir, &liveNames, &previousPackNames, &result.error)) return result;
-        for (const auto& directory : liveDir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden)) {
-            if (directory.fileName().startsWith(QString::fromLatin1(kStagingPrefix))
-                || directory.fileName().startsWith(QString::fromLatin1(kPreviousPrefix))
-                || directory.fileName().startsWith(QString::fromLatin1(kNextPrefix))
-                || std::any_of(selectedPlatforms.begin(), selectedPlatforms.end(),
-                    [&](const auto& platform) { return platform.name == directory.fileName(); })) continue;
-            QStringList retiredFiles, retiredPacks;
-            if (!scanOutputFiles(QDir(directory.absoluteFilePath()), &retiredFiles, &retiredPacks,
-                    &result.error, true)) return result;
-            for (const auto& name : retiredFiles) liveNames.append(directory.fileName() + QLatin1Char('/') + name);
-            for (const auto& name : retiredPacks) previousPackNames.append(directory.fileName() + QLatin1Char('/') + name);
-        }
-        liveNames.removeDuplicates();
-        previousPackNames.removeDuplicates();
+        QStringList platformNames;
+        for (const auto& platform : selectedPlatforms) platformNames.append(platform.name);
+        if (!scanCleanupFiles(liveDir, platformNames, &liveNames, &previousPackNames, &result.error)) return result;
     } else {
         if (QFileInfo(liveDir.absolutePath()).isSymLink()) {
             result.error = QStringLiteral("Output directory is a symbolic link: %1").arg(liveDir.absolutePath());

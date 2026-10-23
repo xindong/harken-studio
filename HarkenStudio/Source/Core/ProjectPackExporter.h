@@ -213,6 +213,12 @@ public:
                                                        const QString& outputDir,
                                                        const MediaBuildSnapshot* media = nullptr);
 
+    static bool ValidatePackBuildWriteAccess(const ProjectData& project,
+                                             const QString& baseDir,
+                                             const QStringList& platforms,
+                                             const ExportOptions& options,
+                                             QString* errorOut);
+
 
     struct DependencyNode
     {
@@ -257,6 +263,9 @@ public:
     };
 
 private:
+
+    static PackBuildPlan createBuildPlan(const ProjectData& project,
+                                         const ExportOptions& options);
 
     struct MediaCollectionStats
     {

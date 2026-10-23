@@ -361,6 +361,14 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
     QString outputLockError;
     const auto outputLock = ProjectPackExporter::LockPackOutputRoot(outputPath, &outputLockError);
     if (!outputLock) return errorResponse("OUTPUT_BUSY", outputLockError);
+    ProjectPackExporter::ExportOptions writeOptions;
+    writeOptions.selection = exportSelection;
+    writeOptions.language = language;
+    if (!harkenstudio::IsNull(actionStableId)) writeOptions.onlyActionStableIds.insert(actionStableId);
+    QString writeAccessError;
+    if (!ProjectPackExporter::ValidatePackBuildWriteAccess(
+            snapshot->project, outputPath, platforms, writeOptions, &writeAccessError))
+        return errorResponse("PACK_BUILD_PREFLIGHT_FAILED", writeAccessError);
     const auto cancel = std::make_shared<std::atomic_bool>(false);
     const quint64 runId = PackGenerationRecordStore::instance().beginProgress(cancel);
     if (runId == 0)

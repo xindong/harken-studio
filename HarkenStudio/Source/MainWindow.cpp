@@ -4368,6 +4368,19 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
         return;
     }
 
+    ProjectPackExporter::ExportOptions writeOptions;
+    writeOptions.selection = exportSelection;
+    writeOptions.updateSelectedOnly = !packPaths.isEmpty();
+    writeOptions.selfCleaning = selfCleaning && packPaths.isEmpty();
+    for (const auto& path : packPaths) writeOptions.onlyPackPaths.insert(path);
+    QString writeAccessError;
+    if (!ProjectPackExporter::ValidatePackBuildWriteAccess(
+            *pmProject, baseDir, genPlatforms, writeOptions, &writeAccessError)) {
+        LogPanel::logError(LogCategory::Pack, writeAccessError);
+        QMessageBox::critical(this, tr("Export Readiness"), writeAccessError);
+        return;
+    }
+
     {
         const auto readiness =
             ProjectPackExporter::ValidatePackBuildReadiness(*pmProject, baseDir, &snapshot->media);
