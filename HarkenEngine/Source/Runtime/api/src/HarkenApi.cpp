@@ -12133,6 +12133,23 @@ engine.runtimeRecreateRequired = true;
 engine.runtimeRecreateRequired = true;
         return false;
     }
+    // Cancellation can borrow this coordinator or a member's shared lease.
+    // Settle those readers before reconciliation retires their completion evidence.
+    for (std::uint32_t cursor = 0;
+         auto* borrower = engine.NextOccupiedPlayableService(&cursor);) {
+        if (!borrower->variableControlDeferredCancellation) continue;
+        const auto identity = borrower->variableControlDeferredCancellationSlice;
+        bool belongs = identity.decision.slot == row.frontierEntry.coordinator.slot &&
+            identity.decision.generation == row.frontierEntry.coordinator.generation;
+        if (!belongs) {
+            harken::Plan03PageGroupView group{};
+            belongs = engine.timelinePool.ResolvePlan03GroupSliceProducer(identity, &group) &&
+                group.identity == identity && group.frontier != nullptr &&
+                group.frontier->entry == row.frontierEntry;
+        }
+        if (belongs && !CompleteDeferredPlayableCancellation(
+                engine, *borrower, completedAudioSequence)) return false;
+    }
     if (row.frontierAcceptedSignal.Valid()) {
         const auto outcome = receipt.outcome == harken::FrontierReceiptOutcome::Applied
             ? harken::QueueSignalOutcomeV1::Applied : harken::QueueSignalOutcomeV1::DefinitivelyNotApplied;
