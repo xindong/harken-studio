@@ -14,6 +14,10 @@ All notable changes to the Harken Core Unity package are documented here.
 - Re-export PlayableDemo and companion regression data with the new generation.
   Rebuild the sample scene from its Init and Action pairs and prepare Actions by
   name before enabling playback.
+- Runtime support does not extend to the general Action Inspector's automatic
+  list, Editor preview, waveform tools, or symbol-generation menu. Those tools
+  still require legacy manifests and cannot consume Schema 4 companion pairs.
+  Use authored names with runtime preparation and Play mode or Player playback.
 
 ## [0.3.4] - 2026-10-19
 

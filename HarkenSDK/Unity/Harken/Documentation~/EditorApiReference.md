@@ -1,5 +1,13 @@
 # Unity API reference: Editor catalog, preview, and tools
 
+In SDK 0.3.5, the catalog, Action Inspector's automatic list, preview, waveform
+tools, and symbol-generation menu described here require legacy manifest
+publications. They do not read Studio 0.9.0 Pack Schema 4 companion pairs or its
+optional metadata/waveform exports. For new publications, use exact authored
+names with [runtime preparation](UnityApiReference.md#prepared-content-and-preload)
+and validate playback in Play mode or a Player. Legacy catalog parsing alone
+does not establish compatibility with the current native runtime.
+
 The `Harken.Unity.Editor` assembly is available only in the Unity Editor. It
 validates a selected publication for inspectors and provides a preview session;
 Player code must use the Runtime and Unity component APIs. Calls involving

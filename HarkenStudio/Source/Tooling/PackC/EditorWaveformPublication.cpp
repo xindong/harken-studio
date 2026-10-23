@@ -446,7 +446,7 @@ bool BuildEditorWaveformPublication(std::string_view selectedManifestUtf8,
     if (!harkenstudiojson::ParsePackSidecarManifest(manifest, &platform, &entries, error) ||
         !harkenstudiojson::ParseJson(manifest, &root, error, true)) return false;
     *error = "Selected manifest and Pack bytes disagree";
-    if (!U64(root, "schema_version", HARKEN_PACK_SCHEMA_VERSION, true) || sources.size() != entries.size()) return false;
+    if (!U64(root, "schema_version", harkenstudiojson::kPackSidecarSchemaVersion, true) || sources.size() != entries.size()) return false;
     PackMap packs;
     ParsedPack* init = nullptr;
     const auto* packRows = root.Find("packs");

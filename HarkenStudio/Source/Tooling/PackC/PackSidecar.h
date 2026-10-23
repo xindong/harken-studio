@@ -10,6 +10,8 @@
 
 namespace harkenstudiojson {
 
+inline constexpr int kPackSidecarSchemaVersion = 3;
+
 struct PackSidecarPlatform {
     std::string id;
     std::string name;
@@ -84,8 +86,8 @@ inline bool PackSidecarRoot(const std::string& json, JsonValue* root, std::strin
         version && version->kind == JsonValue::Kind::Number
             ? std::strtod(version->text.c_str(), nullptr)
             : 0;
-    if (schemaVersion != HARKEN_PACK_SCHEMA_VERSION) {
-        *error = "Unsupported Pack sidecar schema_version; re-export the Packs with this Studio version";
+    if (schemaVersion != kPackSidecarSchemaVersion) {
+        *error = "Unsupported legacy Pack sidecar schema_version; expected 3";
         return false;
     }
     return true;

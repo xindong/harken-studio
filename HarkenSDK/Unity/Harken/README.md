@@ -4,6 +4,19 @@
 The package root contains Unity content only. The Unreal plugin is maintained
 and shipped separately from `HarkenSDK/Unreal/Harken`.
 
+Unity SDK 0.3.5 supports Studio 0.9.0 Pack Schema 4 companion publications at
+runtime, including the PlayableDemo sample. Re-export the complete publication
+and update managed bindings and native libraries together. Select the platform
+directory containing `Init.bytes` and `Init.json`; see
+[companion startup and preparation](Documentation~/UnityApiReference.md#prepared-content-and-preload).
+
+The general Action Inspector's automatic Action list, Editor preview, waveform
+tools, and symbol-generation menu still require the legacy manifest format.
+They do not support Schema 4 companion publications in 0.3.5. Use exact authored
+names and the runtime preparation APIs for new Packs; validate playback in Play
+mode or a Player. Legacy tooling descriptions below apply only to that format
+and do not establish compatibility with the current native runtime.
+
 ## API reference manual
 
 The manual describes the public APIs in this SDK, including their parameters,
@@ -158,7 +171,11 @@ Runtime Pack and audio data stay outside the SDK. Auto-start uses the single Gen
 
 For the default filesystem loader, relative paths start at the Unity project root in the Editor. In a desktop Player, they start at the parent of `Application.dataPath` (the executable directory on Windows). For example, `GameContent/GeneratedPacks` resolves to that same relative layout under either root. Editor auto-start through Project Settings requires a directory inside the Unity project; a desktop Player can use an external absolute directory as configured. Unity's `Assets/StreamingAssets/...` paths map to the actual `Application.streamingAssetsPath/...` in the Player, so moving the installed game does not retain the Editor path. Missing directories fail startup without searching another location. Android's packaged-assets startup continues to require a selected directory inside StreamingAssets.
 
-For AssetBundles or another project-owned resource system, disable auto-initialization and pass the selected publication's manifest address and a byte reader to `StartRuntime(manifestPath, readBytes)`. The integration derives that address from the same configured Pack root and its platform selection. This route keeps logical resource addresses unchanged; it does not resolve them against the filesystem or require a disk directory. The project owns packaging and resource loading, while the SDK validates and consumes the supplied Pack bytes.
+For companion pairs in AssetBundles or another project-owned resource system,
+use `PackSource` and the [asynchronous source APIs](Documentation~/PackApiReference.md).
+For legacy manifest publications, `StartRuntime(manifestPath, readBytes)` accepts
+a manifest address and synchronous byte reader. The project owns packaging and
+resource loading, while the SDK validates and consumes the supplied Pack bytes.
 
 The repository deliberately does not track generated native binaries. Studio
 builds and SDK release artifacts inject binaries produced by the
@@ -209,16 +226,20 @@ generated-catalog guard.
 
 ## GameObject components
 
-- `HarkenAudioSystem` is the single global owner. When auto-start is enabled, it reads the GeneratedPacks directory selected under Project Settings > Harken > Project. It does not initialize from StreamingAssets/Audio/GeneratedPacks and does not fall back there. It reads HarkenPackIndex.json in the selected directory to pick the platform subdirectory, then loads the Init path from the selected manifest (`Init.bytes` in new exports). An invalid index fails startup. On a built player, that platform directory must also be named in the selected player exports. Android additionally requires the directory to be inside StreamingAssets. It
+- `HarkenAudioSystem` is the single global owner. For Schema 4 auto-start, select
+  the platform directory containing `Init.bytes` and `Init.json` under Project
+  Settings > Harken > Project. Clear a legacy platform ID and startup Pack IDs;
+  configure an explicit Init path as `Init.bytes`. The legacy manifest route
+  selects a platform using `HarkenPackIndex.json`. Android's packaged-assets
+  loader uses that legacy route; use `PackSource` for new companion publications.
+  The owner
   pumps `Vn_Update`, observes suspend/resume results, shuts participants down
   in dependency order, terminates the native session, then clears managed
   ownership and callback registrations at the safe completion boundary.
-  Copy the whole `GeneratedPacks/` tree, including the root index and each
-  platform folder. Android copies the index first, then that platform's
-  `HarkenPackManifest.json`.
-- `HarkenPack` loads and unloads one authored Pack by stable ID. The SDK
+  Deploy the complete selected platform publication with the Player.
+- `HarkenPack` loads and unloads one legacy manifest Pack by stable ID. The SDK
   resolves the file from the platform `HarkenPackManifest.json`; the Init Pack is
-  not a file directory.
+  not a file directory. For companion publications, use Action preparation leases.
 - `HarkenListener` publishes a Unity Transform as the listener.
 - `HarkenEmitter` owns one native emitter and follows its Transform.
 - `HarkenAction` persists an exact authored `actionName` and validated `projectId`.
@@ -316,7 +337,13 @@ own application lifecycle.
 
 ## Pack filenames and existing publications
 
-New Studio exports use `Init.bytes`, `ActionName.bytes`, and the same suffix for shared, grouped, and localized Packs. The binary format and logical Pack/Action identities are unchanged. Manifest paths and the Editor waveform companion are generated together; do not rename files or rewrite manifests after export.
+Studio 0.9.0 exports `Init.bytes` / `Init.json` and Action `.bytes` / `.json`
+pairs using Pack Schema 4. Deploy the complete publication together, including
+the selected language directories. Optional `metadata` and `waveforms` exports
+are not inputs to the general Unity Editor tools in this release. Do not rename
+files or mix companion JSON from different exports.
+
+The following filename and manifest rules describe legacy publications.
 
 Unity imports these files as TextAssets for the project's existing AssetBundle pipeline. Readers retain support for legacy `.pack` files and `.pack.bytes` wrappers. A manifest path ending in `.bytes` is a complete filename and never falls back to `.bytes.bytes`. Only competing files for the selected resource are ambiguous; unrelated old Init files do not block a new publication.
 
@@ -517,6 +544,10 @@ Name lookup follows Pack replacement and unload without a separate SDK name-tabl
 publication step. Old names are not automatically aliased to current names.
 
 ### Generate symbols and use code completion
+
+This menu requires a legacy `HarkenPackManifest.json`; it cannot generate symbols
+from Studio 0.9.0 companion pairs. For those publications, use authored Action
+and Variable names with the runtime APIs.
 
 Generated symbols let game programmers select authored Actions and Variables
 from the code editor's completion list instead of typing their names as strings.

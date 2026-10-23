@@ -21,7 +21,7 @@ namespace {
 
 std::string CurrentPackSidecar(const std::string& members) {
     return "{\"schema_version\":" +
-        std::to_string(HARKEN_PACK_SCHEMA_VERSION) + "," + members + "}";
+        std::to_string(harkenhost::kPackSidecarSchemaVersion) + "," + members + "}";
 }
 
 TEST(HostOptions, AcceptsFiniteSecondsInRange) {
@@ -124,12 +124,12 @@ TEST(HostOptions, PackPlayJoinContainedStaysUnderRequestedRoot) {
 }
 
 
-TEST(HostOptions, PackSidecarAcceptsOnlyCompiledCurrentVersion) {
+TEST(HostOptions, PackSidecarAcceptsOnlyLegacyManifestVersion) {
     const std::string indexMembers = R"("platforms":[])";
     const std::string manifestMembers = R"("platformId":"11111111-2222-3333-4444-555555555555","platformName":"Windows","basePlatform":"Windows","initPackStableId":"11","packs":[{"name":"Init","packStableId":"11","path":"Init.pack","platformId":"11111111-2222-3333-4444-555555555555","contentHash":"0","dependencies":[]}])";
-    const auto current = std::to_string(HARKEN_PACK_SCHEMA_VERSION);
+    const auto current = std::to_string(harkenhost::kPackSidecarSchemaVersion);
     const std::string rejectedVersions[] = {
-        "0", "-1", std::to_string(HARKEN_PACK_SCHEMA_VERSION + 1),
+        "0", "-1", std::to_string(harkenhost::kPackSidecarSchemaVersion + 1),
         "\"" + current + "\"", "true", "null", current + ".5"
     };
     for (bool manifest : {false, true}) {
@@ -148,7 +148,7 @@ TEST(HostOptions, PackSidecarAcceptsOnlyCompiledCurrentVersion) {
         };
         EXPECT_TRUE(parse(CurrentPackSidecar(members))) << error;
         EXPECT_TRUE(parse("{\"schema_version\":" + current + ".0," + members + "}")) << error;
-        for (int version = 1; version < HARKEN_PACK_SCHEMA_VERSION; ++version)
+        for (int version = 1; version < harkenhost::kPackSidecarSchemaVersion; ++version)
             EXPECT_FALSE(parse("{\"schema_version\":" + std::to_string(version) + "," + members + "}"));
         for (const auto& version : rejectedVersions) {
             SCOPED_TRACE(version);
@@ -194,7 +194,7 @@ TEST(HostOptions, PackSidecarRejectsOldMixedDuplicateAndUnsafeIndexEntries) {
     std::string error;
     EXPECT_FALSE(harkenhost::ParsePackSidecarIndex(CurrentPackSidecar(R"("platforms":[{"name":"Windows","path":"Windows"}])"), &platforms, &error));
     EXPECT_FALSE(harkenhost::ParsePackSidecarIndex(CurrentPackSidecar(R"("platforms":[],"platform":"Windows")"), &platforms, &error));
-    EXPECT_FALSE(harkenhost::ParsePackSidecarIndex(CurrentPackSidecar("\"schema_version\":" + std::to_string(HARKEN_PACK_SCHEMA_VERSION) + R"(,"platforms":[])"), &platforms, &error));
+    EXPECT_FALSE(harkenhost::ParsePackSidecarIndex(CurrentPackSidecar("\"schema_version\":" + std::to_string(harkenhost::kPackSidecarSchemaVersion) + R"(,"platforms":[])"), &platforms, &error));
     EXPECT_TRUE(harkenhost::ParsePackSidecarIndex(CurrentPackSidecar(R"("platforms":[])"), &platforms, &error));
     const auto row = R"({"id":"11111111-2222-3333-4444-555555555555","name":"Mobile","basePlatform":"Android","path":"Mobile"})";
     EXPECT_FALSE(harkenhost::ParsePackSidecarIndex(CurrentPackSidecar(std::string("\"platforms\":[") + row + "," + row + "]"), &platforms, &error));
@@ -305,13 +305,14 @@ TEST(HostOptions, PackSidecarSelectsLanguagePublicationBeforeLoadingFiles) {
 
 TEST(HostOptions, CompanionNamesPreserveGuidAndStrictJsonContract) {
     harkenhost::PackCompanion input;
-    const std::string action = R"({"schemaVersion":3,"name":"Play_Head","guid":"11111111-2222-3333-4444-555555555555","display":{"gain":1}})";
+    const std::string header = "{\"schemaVersion\":" + std::to_string(HARKEN_PACK_SCHEMA_VERSION) + ",";
+    const std::string action = header + R"("name":"Play_Head","guid":"11111111-2222-3333-4444-555555555555","display":{"gain":1}})";
     ASSERT_EQ(harkenhost::ParsePackCompanion(action, "Play_Head", "", {}, &input), VN_OK);
     EXPECT_EQ(harken::ObjectIdString(input.names.rootActionId), "11111111-2222-3333-4444-555555555555");
     EXPECT_EQ(harkenhost::ParsePackCompanion(action, "WrongName", "", {}, &input), VN_BAD_PACK);
-    EXPECT_EQ(harkenhost::ParsePackCompanion(R"({"schemaVersion":3,"variables":[],"variables":[]})", "", "", {}, &input), VN_BAD_PACK);
-    EXPECT_EQ(harkenhost::ParsePackCompanion(R"({"schemaVersion":3,"variables":[]} trailing)", "", "", {}, &input), VN_BAD_PACK);
-    EXPECT_EQ(harkenhost::ParsePackCompanion(R"({"schemaVersion":3,"variables":[{"name":"Choice","guid":"11111111-2222-3333-4444-555555555555","labels":[{"guid":"21111111-2222-3333-4444-555555555555","name":"\u4e2d\u6587"}]}]})", "", "", {}, &input), VN_OK);
+    EXPECT_EQ(harkenhost::ParsePackCompanion(header + R"("variables":[],"variables":[]})", "", "", {}, &input), VN_BAD_PACK);
+    EXPECT_EQ(harkenhost::ParsePackCompanion(header + R"("variables":[]} trailing)", "", "", {}, &input), VN_BAD_PACK);
+    EXPECT_EQ(harkenhost::ParsePackCompanion(header + R"("variables":[{"name":"Choice","guid":"11111111-2222-3333-4444-555555555555","labels":[{"guid":"21111111-2222-3333-4444-555555555555","name":"\u4e2d\u6587"}]}]})", "", "", {}, &input), VN_OK);
     ASSERT_EQ(input.labels.size(), 1u);
     EXPECT_STREQ(input.labels.front().utf8Name, "\xe4\xb8\xad\xe6\x96\x87");
     EXPECT_FALSE(harkenhost::PackCompanionName("../Play_Head"));
@@ -321,26 +322,32 @@ TEST(HostOptions, CompanionNamesPreserveGuidAndStrictJsonContract) {
 
 TEST(HostOptions, CompanionVersionUsesExactJsonIntegerSemantics) {
     harkenhost::PackCompanion input;
+    const auto current = std::to_string(HARKEN_PACK_SCHEMA_VERSION);
+    const auto previous = std::to_string(HARKEN_PACK_SCHEMA_VERSION - 1);
     for (bool init : {true, false}) {
         const std::string fields = init ? R"("variables":[])"
             : R"("name":"Play_Head","guid":"11111111-2222-3333-4444-555555555555")";
         const std::string name = init ? "" : "Play_Head";
-        for (const char* version : {"3", "3.0", "3e0", "30e-1", "0.03E+2", "300e-2", "3e-0000"}) {
+        for (const auto& version : {current, current + ".0", current + "e0", current + "0e-1",
+                "0." + current + "E+" + std::to_string(current.size()), current + "00e-2", current + "e-0000"}) {
             SCOPED_TRACE(version);
             EXPECT_EQ(harkenhost::ParsePackCompanion(std::string("{\"schemaVersion\":") + version + "," + fields +
                 R"(,"metadata":false,"waveforms":42})", name, "", {}, &input), VN_OK);
         }
-        for (const char* version : {"", "999", "\"3\"", "true", "null", "[]", "{}", "3.5", "-3", "0",
-                "3.0000000000000001", "2.9999999999999999", "3e999999999999999999999", "3e-999999999999999999999"}) {
+        for (const auto& version : std::vector<std::string>{"", previous,
+                std::to_string(HARKEN_PACK_SCHEMA_VERSION + 1), "\"" + current + "\"",
+                "true", "null", "[]", "{}", current + ".5", "-" + current, "0",
+                current + ".0000000000000001", previous + ".9999999999999999",
+                current + "e999999999999999999999", current + "e-999999999999999999999"}) {
             SCOPED_TRACE(version);
-            const std::string field = *version ? std::string("\"schemaVersion\":") + version + "," : "";
+            const std::string field = !version.empty() ? std::string("\"schemaVersion\":") + version + "," : "";
             const char* stage = nullptr;
             EXPECT_EQ(harkenhost::ParsePackCompanion("{" + field + fields +
                 R"(,"schema_version":3,"metadata":{"schemaVersion":3}})", name, "", {}, &input, &stage), VN_BAD_PACK);
             EXPECT_STREQ(stage, "schemaVersion");
         }
     }
-    EXPECT_EQ(harkenhost::ParsePackCompanion(R"({"schemaVersion":3,"variables":[{"name":"Choice","guid":"11111111-2222-3333-4444-555555555555","labels":[]}]})",
+    EXPECT_EQ(harkenhost::ParsePackCompanion("{\"schemaVersion\":" + current + R"(,"variables":[{"name":"Choice","guid":"11111111-2222-3333-4444-555555555555","labels":[]}]})",
         "", "", {}, &input), VN_OK);
 }
 

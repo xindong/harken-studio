@@ -9,8 +9,8 @@ allocate managed memory. Prepare content before a timing-sensitive trigger.
 
 For the companion entry (`PackBootstrap.StartDirectory` or `PackSource`), supply
 `Init.bytes` / `Init.json` and the requested Action's `.bytes` / `.json` pair.
-Both JSON files require top-level numeric `schemaVersion: 3`. Exact integer
-spellings such as `3.0` and `3e0` are valid; missing, mistyped, fractional or
+Both JSON files require top-level numeric `schemaVersion: 4`. Exact integer
+spellings such as `4.0` and `4e0` are valid; missing, mistyped, fractional or
 unsupported versions return `VN_BAD_PACK`. Re-export incompatible resources
 with the matching Studio release. Optional `metadata` and `waveforms` are not
 playback dependencies. A bad localized version cannot fall back to General.
@@ -18,7 +18,7 @@ A refused Init leaves no session; a refused Action refresh preserves the
 accepted names, playback and leases, and can be retried after correcting the
 resource. The manifest APIs below retain their existing publication contract.
 
-A complete export has a root `HarkenPackIndex.json`, one selected platform
+A legacy manifest publication has a root `HarkenPackIndex.json`, one selected platform
 directory, its `HarkenPackManifest.json`, and the Pack files named by that
 manifest. If the index is absent, directory selection tries the supplied path
 as a platform directory. There is no legacy index fallback; a malformed

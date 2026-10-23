@@ -195,7 +195,7 @@ struct Fixture {
         const auto id = [&](const char* key, std::uint64_t value) { text(key, JsonWriter::DecimalU64(value)); };
         const auto number = [&](const char* key, std::uint64_t value) { json.Key(key); json.ValueU64(value); };
         json.BeginObject();
-        number("schema_version", HARKEN_PACK_SCHEMA_VERSION); text("platformId", "33333333-3333-3333-3333-333333333333");
+        number("schema_version", 3); text("platformId", "33333333-3333-3333-3333-333333333333");
         text("platformName", "Windows"); text("basePlatform", "Windows"); text("language", ""); id("initPackStableId", 11);
         json.Key("packs"); json.BeginArray();
         for (const auto& pack : packs) {

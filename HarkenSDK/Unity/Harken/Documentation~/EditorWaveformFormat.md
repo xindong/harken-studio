@@ -1,5 +1,10 @@
 # Editor Waveform Companion v2
 
+This document describes the legacy manifest-based waveform format. SDK 0.3.5
+Editor tools do not consume the optional waveform exports from Studio 0.9.0
+Pack Schema 4 publications. New Pack playback uses the runtime APIs independently
+of these tools.
+
 `HarkenEditorWaveforms.json` is optional Editor metadata for one selected playable
 publication. It describes final exported-source PCM, not processed playback or
 the candidate selected by a Random container. Runtime Pack bytes, loading and
