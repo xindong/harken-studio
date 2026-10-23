@@ -157,17 +157,6 @@ AboutDialog::AboutDialog(QWidget* parent, bool showDeveloperInformation)
         developerInfo->setMinimumHeight(210);
         root->addWidget(developerInfo, 1);
     }
-
-    root->addSpacing(20);
-
-    auto* copyright = new QLabel(
-        tr("Copyright %1 %2 XD.")
-            .arg(QChar(0x00A9))
-            .arg(buildInfoString(Harken::BuildInfo::BuildYear)),
-        this);
-    copyright->setObjectName(QStringLiteral("aboutCopyright"));
-    copyright->setAlignment(Qt::AlignCenter);
-    root->addWidget(copyright);
 }
 
 void AboutDialog::showEvent(QShowEvent* event)
