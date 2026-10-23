@@ -26,26 +26,33 @@ namespace Harken.Unity.Tests
                 {
                     HarkenListener first = fixture.Listener.gameObject.AddComponent<HarkenListener>();
                     HarkenListener second = other.AddComponent<HarkenListener>();
-                    second.enabled = false;
+                    SetListenerEnabled(first, true);
+                    SetListenerEnabled(second, false);
                     other.transform.rotation = Quaternion.Euler(0, 180, 0);
                     fixture.Actor.position = Vector3.right * 80;
                     fixture.Play(fixture.CreateSource());
                     Vector2 original = fixture.Render(8, first);
                     Assert.That(original.y, Is.GreaterThan(original.x * 3));
-                    first.enabled = false;
-                    second.enabled = true;
+                    SetListenerEnabled(first, false);
+                    SetListenerEnabled(second, true);
                     Vector2 switched = fixture.Render(8, second);
                     Assert.That(switched.x, Is.GreaterThan(switched.y * 3));
-                    second.enabled = false;
-                    first.enabled = true;
-                    // EditMode drives the same lifecycle callback before ticking.
-                    typeof(HarkenListener).GetMethod("OnEnable", BindingFlags.Instance | BindingFlags.NonPublic)?.Invoke(first, null);
+                    SetListenerEnabled(second, false);
+                    SetListenerEnabled(first, true);
                     Vector2 restored = fixture.Render(8, first);
                     Assert.That(restored.y, Is.GreaterThan(restored.x * 3));
                     Assert.That(restored.y, Is.GreaterThan(0.001f));
                 }
                 finally { Object.DestroyImmediate(other); }
             }
+        }
+
+        private static void SetListenerEnabled(HarkenListener listener, bool enabled)
+        {
+            listener.enabled = enabled;
+            // EditMode does not run ordinary MonoBehaviour enable/disable callbacks.
+            typeof(HarkenListener).GetMethod(enabled ? "OnEnable" : "OnDisable",
+                BindingFlags.Instance | BindingFlags.NonPublic).Invoke(listener, null);
         }
 
         [TestCase(true)]

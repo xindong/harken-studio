@@ -1080,6 +1080,12 @@ namespace Harken.Unity.Tests
             }
             finally { fixture.Runtime.OperationCompleted -= observer; }
             Assert.That(observed, Is.True);
+            // Frame maintenance precedes the native update that first reports terminal completion.
+            for (int i = 0; i < 16 && Pending(fixture.Runtime) != 0; ++i)
+            {
+                Invoke(fixture.Runtime, "AdvanceFrame");
+                Assert.That(PumpFreshPcm(samples, out _), Is.EqualTo(-1));
+            }
             Assert.That(Pending(fixture.Runtime), Is.Zero);
         }
 
