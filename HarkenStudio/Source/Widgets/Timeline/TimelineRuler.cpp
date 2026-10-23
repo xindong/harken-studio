@@ -59,7 +59,7 @@ void TimelineRuler::refresh()
     palette.setColor(QPalette::Window, theme->ui.colors.bgSecondary);
     palette.setColor(QPalette::WindowText, theme->ui.colors.textPrimary);
     cursorValue_->setPalette(palette);
-    if (panel_->isCursorDragActive())
+    if (panel_->isEditCursorVisible() && panel_->isCursorDragActive())
         showCursorValue();
     else
         cursorValue_->hide();
@@ -139,6 +139,8 @@ void TimelineRuler::paintEvent(QPaintEvent*)
 
 QRect TimelineRuler::cursorHandleRect() const
 {
+    if (!panel_->isEditCursorVisible())
+        return {};
     const QRect axis = timeAxisRect();
     const int x = panel_->laneHeaderWidth()
         + panel_->viewportPixelAtCoordinate(0, panel_->editCursor());
@@ -188,7 +190,7 @@ void TimelineRuler::mousePressEvent(QMouseEvent* event)
         QWidget::mousePressEvent(event);
         return;
     }
-    if (panel_->hasTimeline()) {
+    if (panel_->isEditCursorVisible()) {
         hoverPos_ = event->position().toPoint();
         if (event->position().x() < panel_->laneHeaderWidth()
             || event->position().x() >= panel_->laneHeaderWidth() + panel_->timelineViewportWidth()) {

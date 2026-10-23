@@ -486,7 +486,7 @@ TimelineRenderData TimelineCanvas::buildRenderData() const
     for (TimelineClipItem& item : data.clipItems)
         item.waveform = waveformForPath(item.waveformPath);
 
-    data.editCursor.visible = true;
+    data.editCursor.visible = panel_->isEditCursorVisible();
     data.editCursor.x = panel_->viewportPixelAtCoordinate(0, panel_->editCursor());
     if (const auto playhead = panel_->playheadCoordinate()) {
         data.playhead.visible = true;
@@ -780,12 +780,12 @@ void TimelineCanvas::keyPressEvent(QKeyEvent* event)
         event->accept();
         return;
     }
-    if (event->key() == Qt::Key_Home) {
+    if (panel_->isEditCursorVisible() && event->key() == Qt::Key_Home) {
         panel_->setEditCursor(panel_->viewOriginCoordinate());
         event->accept();
         return;
     }
-    if (event->key() == Qt::Key_End) {
+    if (panel_->isEditCursorVisible() && event->key() == Qt::Key_End) {
         int64_t end = panel_->viewOriginCoordinate();
         for (int lane = 0; lane < panel_->laneCount(); ++lane) {
             for (int clip = 0; clip < panel_->clipCount(lane); ++clip)
@@ -1133,7 +1133,7 @@ void TimelineCanvas::updateHoverCursor(const QPoint& pos)
 
 bool TimelineCanvas::hitsEditCursor(const QPoint& point) const
 {
-    if (!panel_->hasTimeline() || !rect().contains(point))
+    if (!panel_->isEditCursorVisible() || !rect().contains(point))
         return false;
     const int x = panel_->viewportPixelAtCoordinate(0, panel_->editCursor());
     return x >= 0 && x < width() && std::abs(point.x() - x) <= 3;
