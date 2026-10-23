@@ -122,6 +122,7 @@ EXPORTS
     Vn_SetEmitterValues
     Vn_SetGameplayCatalog
     Vn_SetListener
+    Vn_SetListenerDistanceReference
     Vn_SetValue
     Vn_SetValueByLabelId
     Vn_SetValueByLabelName

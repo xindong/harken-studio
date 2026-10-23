@@ -1583,6 +1583,17 @@ typedef struct VnAttenuationDesc {
  * facing (0,0,-1) with up (0,1,0). */
 VnResult Vn_SetListener(VnVec3 pos, VnVec3 forward, VnVec3 up);
 
+/* Selects an optional spatial emitter as the distance reference. Zero clears
+ * the selection and uses the listener position (the default). Distance-driven
+ * attenuation uses the reference position; pan and cone still use the actual
+ * listener. The reference's orientation and distance scale are ignored.
+ * Does not retain the emitter: destruction clears a matching full handle,
+ * and Init starts with no selection. A stale/non-public handle returns
+ * VN_STALE_HANDLE; StateOnly returns VN_CAPABILITY_UNAVAILABLE, without
+ * changing the selection. Re-selecting the same handle still validates it.
+ * Consumed at spatial evaluation and start installation. Logic thread only. */
+VnResult Vn_SetListenerDistanceReference(VnEmitterHandle handle);
+
 /* Registers an attenuation profile under an id. The descriptor is copied;
  * caller memory is free to go. Refusals: null desc or structSize mismatch,
  * non-finite or out-of-contract fields, and invalid override curves are
@@ -2550,7 +2561,7 @@ VnResult Vn_SetEmitterPosition(VnEmitterHandle handle, VnVec3 position);
 VnResult Vn_SetEmitterOrientation(VnEmitterHandle handle, VnVec3 forward);
 
 /* Sets the emitter's distance scale (default 1). Must be positive and finite
- * (VN_INVALID_ARG otherwise). Distance attenuation uses physical distance
+ * (VN_INVALID_ARG otherwise). Distance attenuation uses source-to-reference distance
  * divided by this scale and the voice's distance scale; pan and cone angles
  * remain physical. Attached voices observe it at their next spatial sample.
  * VN_STALE_HANDLE for a stale handle; VN_CAPABILITY_UNAVAILABLE for a

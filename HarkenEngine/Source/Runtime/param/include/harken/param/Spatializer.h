@@ -35,7 +35,6 @@
 
 namespace harken {
 
-// The emitter table an attached voice derives its geometry from each tick.
 // Attenuation profile capacity is independent of its prepared storage.
 inline constexpr std::uint32_t kMaxAttenuationProfiles = 64;
 
@@ -172,6 +171,9 @@ public:
     // forward or up, or parallel forward and up — because the panning
     // right axis is their cross product.
     VnResult SetListener(VnVec3 pos, VnVec3 forward, VnVec3 up);
+    VnResult SetListenerDistanceReference(VnEmitterHandle handle,
+                                          const EmitterTable& emitters);
+    void NoteEmitterDestroyed(VnEmitterHandle handle) noexcept;
 
     void CaptureListener(VnVec3& position, VnVec3& right) const noexcept {
         position = {m_listenerX, m_listenerY, m_listenerZ};
@@ -284,12 +286,14 @@ public:
     // the volume attenuation slot for a voice at world position (px,py,pz)
     // bound to this profile — the non-cone term (override curve or rolloff).
     // Recomputes a parked voice's audibility contribution from its stored (or
-    // its live emitter's) position against the current listener, without a
-    // render slot. Returns 0 for id 0 or an unregistered profile. The cone
+    // its live emitter's) position against the current distance reference
+    // (the listener when unset), without a render slot. Returns 0 for id 0 or
+    // an unregistered profile. The cone
     // angular term is deliberately excluded: a parked voice's cone contribution
     // stays frozen at its park value (distance-driven return is tracked;
     // cone-angle-driven return is not).
-    float AttenuationVolumeDb(VnAttenuationId attenuationId, float px, float py,
+    float AttenuationVolumeDb(const EmitterTable& emitters,
+                              VnAttenuationId attenuationId, float px, float py,
                               float pz, float distanceScale,
                               std::uint64_t generation = 0,
                               float emitterDistanceScale = 1.0f) const;
@@ -355,11 +359,14 @@ private:
     void ReleaseRetainedMirror(VoiceMirror& mirror) noexcept;
 
     VoiceMirror* MirrorFor(VnVoiceHandle handle);
+    double DistanceToReference(const EmitterTable& emitters, float px, float py,
+                                float pz, double listenerDistance) const;
 
     // Listener pose. rightX/Y/Z is the normalized forward x up cross
     // product, rebuilt at SetListener so evaluation is pure arithmetic.
     float m_listenerX = 0.0f, m_listenerY = 0.0f, m_listenerZ = 0.0f;
     float m_rightX = 1.0f, m_rightY = 0.0f, m_rightZ = 0.0f;
+    VnEmitterHandle m_distanceReference = 0;
 
     StableRowStorage<VoiceMirror> m_mirrors; // indexed by prepared voice slot
     mutable StableRowStorage<AttenuationProfile> m_profiles;

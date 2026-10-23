@@ -372,6 +372,32 @@ VnResult Spatializer::SetListener(VnVec3 pos, VnVec3 forward, VnVec3 up) {
     return VN_OK;
 }
 
+VnResult Spatializer::SetListenerDistanceReference(VnEmitterHandle handle,
+                                                    const EmitterTable& emitters) {
+    if (handle != 0) {
+        if (!emitters.IsPublicLive(handle)) return VN_STALE_HANDLE;
+        if (emitters.Context(handle).spatialEmitter == 0)
+            return VN_CAPABILITY_UNAVAILABLE;
+    }
+    m_distanceReference = handle;
+    return VN_OK;
+}
+
+void Spatializer::NoteEmitterDestroyed(VnEmitterHandle handle) noexcept {
+    if (m_distanceReference == handle) m_distanceReference = 0;
+}
+
+double Spatializer::DistanceToReference(const EmitterTable& emitters,
+                                        float px, float py, float pz,
+                                        double listenerDistance) const {
+    SpatialSourceState reference;
+    if (m_distanceReference == 0 || !emitters.Pose(m_distanceReference, &reference))
+        return listenerDistance;
+    return Length3(static_cast<double>(px) - reference.posX,
+                   static_cast<double>(py) - reference.posY,
+                   static_cast<double>(pz) - reference.posZ);
+}
+
 VnResult Spatializer::CanRegisterProfile(VnAttenuationId id,
                                          const VnAttenuationDesc* desc) const {
     AttenuationProfile built;
@@ -691,7 +717,8 @@ VnResult Spatializer::EvaluateVoice(VnVoiceHandle handle, ParamSystem& params,
     const double dz = static_cast<double>(mirror.posZ) - m_listenerZ;
     const double pairDistance = Length3(dx, dy, dz);
     const float effectiveDistance = EffectiveDistance(
-        pairDistance, mirror.distanceScale, mirror.emitterDistanceScale);
+        DistanceToReference(emitters, mirror.posX, mirror.posY, mirror.posZ, pairDistance),
+        mirror.distanceScale, mirror.emitterDistanceScale);
 
     // Azimuth pan: the projection of the emitter direction onto the
     // listener's right axis. A coincident emitter has no direction
@@ -815,7 +842,8 @@ std::uint64_t Spatializer::CurrentProfileGeneration(VnAttenuationId id) const no
     return 0;
 }
 
-float Spatializer::AttenuationVolumeDb(VnAttenuationId attenuationId, float px,
+float Spatializer::AttenuationVolumeDb(const EmitterTable& emitters,
+                                       VnAttenuationId attenuationId, float px,
                                        float py, float pz,
                                        float distanceScale,
                                        std::uint64_t generation,
@@ -829,7 +857,8 @@ float Spatializer::AttenuationVolumeDb(VnAttenuationId attenuationId, float px,
     const double dz = static_cast<double>(pz) - m_listenerZ;
     const double pairDistance = Length3(dx, dy, dz);
     const float effectiveDistance =
-        EffectiveDistance(pairDistance, distanceScale, emitterDistanceScale);
+        EffectiveDistance(DistanceToReference(emitters, px, py, pz, pairDistance),
+                          distanceScale, emitterDistanceScale);
     // Matches Evaluate()'s volume-slot term (minus the cone angular addend).
     return profile->volumeOverride
                ? AmplitudeToDb(profile->volumeCurve.Eval(effectiveDistance))

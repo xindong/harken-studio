@@ -2428,6 +2428,7 @@ extern "C" {
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_SetVoiceVolume)(VnVoiceHandle, float, uint32_t) = &Vn_SetVoiceVolume;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_SetVoicePitch)(VnVoiceHandle, float) = &Vn_SetVoicePitch;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_SetVoicePosition)(VnVoiceHandle, VnVec3) = &Vn_SetVoicePosition;
+[[maybe_unused]] static VnResult (*const binding_sig_Vn_SetListenerDistanceReference)(VnEmitterHandle) = &Vn_SetListenerDistanceReference;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_SetEmitterDistanceScale)(VnEmitterHandle, float) = &Vn_SetEmitterDistanceScale;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_SetVoiceDistanceScale)(VnVoiceHandle, float) = &Vn_SetVoiceDistanceScale;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_SetVoiceSpatializationMix)(VnVoiceHandle, float) = &Vn_SetVoiceSpatializationMix;

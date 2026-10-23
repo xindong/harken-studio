@@ -64975,7 +64975,7 @@ DirectParkPendingResult CommitDirectParkPending(
     if (rec.spatialized && attenId != VnObjectId{}) {
         attenDb = static_cast<double>(
             engine.spatial.AttenuationVolumeDb(
-                attenId, rec.source.posX, rec.source.posY, rec.source.posZ,
+                engine.emitters, attenId, rec.source.posX, rec.source.posY, rec.source.posZ,
                 distanceScale, rec.attenuationGeneration,
                 rec.source.emitterDistanceScale));
     }
@@ -66027,7 +66027,7 @@ float ParkedMetricDb(harken::Engine& engine, harken::ParkRecord& rec) {
     }
     return rec.frozenNonSpatialDb + rec.instanceVolumeDb +
            engine.spatial.AttenuationVolumeDb(
-               rec.spatial.attenuationId, rec.spatial.posX, rec.spatial.posY,
+               engine.emitters, rec.spatial.attenuationId, rec.spatial.posX, rec.spatial.posY,
                rec.spatial.posZ, rec.spatial.distanceScale,
                rec.spatial.attenuationGeneration, rec.spatial.emitterDistanceScale);
 }
@@ -66099,7 +66099,7 @@ void DoParkVoice(harken::Engine& engine, VnVoiceHandle render,
     float attenAtPark = 0.0f;
     if (spatial.spatialized && spatial.attenuationId != VnObjectId{}) {
         attenAtPark = engine.spatial.AttenuationVolumeDb(
-            spatial.attenuationId, spatial.posX, spatial.posY, spatial.posZ,
+            engine.emitters, spatial.attenuationId, spatial.posX, spatial.posY, spatial.posZ,
             spatial.distanceScale, spatial.attenuationGeneration,
             spatial.emitterDistanceScale);
     }
@@ -66376,7 +66376,7 @@ StreamVictimWaitResult TryWaitStreamVictim(
     float attenAtPark = 0.0f;
     if (spatial.spatialized && spatial.attenuationId != VnObjectId{}) {
         attenAtPark = engine.spatial.AttenuationVolumeDb(
-            spatial.attenuationId, spatial.posX, spatial.posY,
+            engine.emitters, spatial.attenuationId, spatial.posX, spatial.posY,
             spatial.posZ, spatial.distanceScale,
             spatial.attenuationGeneration, spatial.emitterDistanceScale);
     }
@@ -67650,7 +67650,7 @@ double PendingRequestAudibility(harken::Engine& engine,
     (void)engine.emitters.Pose(emitter, &rec.source);
     if (rec.spatialized && rec.hasAttenuation && rec.attenuationId != VnObjectId{}) {
         metric += static_cast<double>(engine.spatial.AttenuationVolumeDb(
-            rec.attenuationId, rec.source.posX, rec.source.posY, rec.source.posZ,
+            engine.emitters, rec.attenuationId, rec.source.posX, rec.source.posY, rec.source.posZ,
             rec.hasDistanceScale ? rec.distanceScale : 1.0f,
             rec.attenuationGeneration, rec.source.emitterDistanceScale));
     }
@@ -95628,7 +95628,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         voiceRecipe->spatial.attenuationId != VnObjectId{}) {
         immediateAudibilityDb +=
             static_cast<double>(engine->spatial.AttenuationVolumeDb(
-                voiceRecipe->spatial.attenuationId, acceptedSource.posX,
+                engine->emitters, voiceRecipe->spatial.attenuationId, acceptedSource.posX,
                 acceptedSource.posY, acceptedSource.posZ,
                 voiceRecipe->spatial.distanceScale, 0,
                 acceptedSource.emitterDistanceScale));
@@ -102193,6 +102193,25 @@ VnResult Vn_SetListener(VnVec3 pos, VnVec3 forward, VnVec3 up) {
         return VN_DEVICE_ERROR;
     }}
 
+VnResult Vn_SetListenerDistanceReference(VnEmitterHandle handle) {
+    try {
+    if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
+    harken::Engine* engine = harken::detail::g_engine;
+    if (engine == nullptr || engine->callbackFatalSticky) {
+        return VN_NOT_INITIALIZED;
+    }
+    TraceStateful(engine, harken::kTraceCallSetListenerDistanceReference)
+        .U64(engine->trace != nullptr && engine->trace->Active()
+                  ? engine->trace->RecordedEmitterHandle(handle)
+                  : handle);
+    return engine->spatial.SetListenerDistanceReference(handle, engine->emitters);
+
+    } catch (const std::bad_alloc&) {
+        return VN_DEVICE_ERROR;
+    } catch (...) {
+        return VN_DEVICE_ERROR;
+    }}
+
 VnResult Vn_RegisterAttenuation(VnAttenuationId id,
                                 const VnAttenuationDesc* desc) {
     try {
@@ -102470,6 +102489,7 @@ VnResult Vn_DestroyEmitter(VnEmitterHandle handle) {
         engine->runtimeRecreateRequired = true;
         return VN_RUNTIME_RECREATE_REQUIRED;
     }
+    engine->spatial.NoteEmitterDestroyed(handle);
     (void)engine->actionCooldowns.RemoveEmitter(handle);
     engine->selectionMemory.RetireEmitter(
         static_cast<std::uint32_t>(handle),

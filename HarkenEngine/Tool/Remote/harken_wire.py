@@ -7544,6 +7544,17 @@ TABLE_JSON = r'''
       ]
     },
     {
+      "name": "Vn_SetListenerDistanceReference",
+      "note": "public Runtime API; not part of the remote wire protocol (no opcode).",
+      "params": [
+        {
+          "name": "handle",
+          "ctype": "VnEmitterHandle",
+          "wire": "u64"
+        }
+      ]
+    },
+    {
       "name": "Vn_SetEmitterDistanceScale",
       "note": "public Runtime API; not part of the remote wire protocol (no opcode).",
       "params": [
