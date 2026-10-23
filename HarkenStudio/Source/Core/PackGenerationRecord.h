@@ -68,6 +68,8 @@ public:
     const PackGenerationRecord* find(const QString& platform, const QString& language,
                                      const QString& unitKey) const;
     quint64 beginProgress(const std::shared_ptr<std::atomic_bool>& cancel);
+    void finishPreflight(quint64 runId);
+    bool isPreflighting() const { return preflighting_; }
     void updateProgress(quint64 runId, const PackGenerationProgress& progress);
     void finishProgress(quint64 runId, bool canceled);
     const PackGenerationProgress* findProgress(const QString& platform, const QString& language,
@@ -80,6 +82,7 @@ signals:
     void changed();
     void progressChanged(const QString& platform, const QString& language, const QString& unitKey);
     void exportActivityChanged(bool exporting);
+    void preflightActivityChanged(bool active);
 
 private:
     struct ProgressEntry {
@@ -92,6 +95,7 @@ private:
     QVector<ProgressEntry> progress_;
     quint64 nextRunId_ = 0;
     quint64 activeRunId_ = 0;
+    bool preflighting_ = false;
     std::shared_ptr<std::atomic_bool> cancel_;
 };
 

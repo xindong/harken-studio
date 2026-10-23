@@ -220,6 +220,7 @@ TEST(PackGenerationRecord, ClearingSessionCancelsWorkAndInvalidatesItsEvents)
                      &receiver, [&](bool exporting) { activity.push_back(exporting); });
     const auto cancel = std::make_shared<std::atomic_bool>(false);
     const auto oldRun = store.beginProgress(cancel);
+    EXPECT_TRUE(store.isPreflighting());
     VNX::PackGenerationProgress progress{
         QStringLiteral("platform"), QStringLiteral("English"), QStringLiteral("a:123"),
         41, VNX::PackGenerationStage::Compiling};
@@ -227,11 +228,14 @@ TEST(PackGenerationRecord, ClearingSessionCancelsWorkAndInvalidatesItsEvents)
     store.clear();
     EXPECT_TRUE(cancel->load());
     EXPECT_FALSE(store.isExporting());
+    EXPECT_FALSE(store.isPreflighting());
     EXPECT_EQ(store.findProgress(progress.platform, progress.language, progress.unitKey), nullptr);
     EXPECT_EQ(activity, QVector<bool>({true, false}));
 
     const auto nextCancel = std::make_shared<std::atomic_bool>(false);
     const auto nextRun = store.beginProgress(nextCancel);
+    store.finishPreflight(oldRun);
+    EXPECT_TRUE(store.isPreflighting());
     ASSERT_GT(nextRun, oldRun);
     store.updateProgress(oldRun, progress);
     store.finishProgress(oldRun, true);
@@ -241,8 +245,10 @@ TEST(PackGenerationRecord, ClearingSessionCancelsWorkAndInvalidatesItsEvents)
     store.cancelExport();
     EXPECT_TRUE(nextCancel->load());
     EXPECT_TRUE(store.isExporting());
+    EXPECT_TRUE(store.isPreflighting());
     store.finishProgress(nextRun, true);
     EXPECT_FALSE(store.isExporting());
+    EXPECT_FALSE(store.isPreflighting());
     store.clear();
 }
 

@@ -4,6 +4,7 @@
 #include "Components/VAction.h"
 #include "IPC/IPCServer.h"
 #include "PackGenerationRecord.h"
+#include "MainWindow.h"
 #include "ProjectManager.h"
 #include "ProjectPackExporter.h"
 #include "CanonicalPackSetExport.h"
@@ -19,11 +20,16 @@
 
 #include <QAbstractSocket>
 #include <QDataStream>
+#include <QDialog>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
+#include <QPointer>
+#include <QProgressBar>
+#include <QPushButton>
+#include <QScopeGuard>
 #include <QSet>
 #include <QTemporaryDir>
 #include <QTcpSocket>
@@ -636,6 +642,65 @@ TEST_F(PackBuildIpcScenarioTest, DirectoryExportKeepsTheNamedActionSeparateFromS
         EXPECT_TRUE(record.success) << record.errors.toStdString();
         EXPECT_TRUE(names.contains(record.packName));
     }
+}
+
+TEST_F(PackBuildIpcScenarioTest, PreflightFailurePreservesPublishedFilesAndReleasesTheRun)
+{
+    const QDir output(temp_.filePath(QStringLiteral("preflight")));
+    ASSERT_TRUE(output.mkpath(QStringLiteral("Windows")));
+    QFile metadata(output.filePath(QStringLiteral("Project.json")));
+    ASSERT_TRUE(metadata.open(QIODevice::WriteOnly));
+    const QByteArray original("previous project metadata");
+    ASSERT_EQ(metadata.write(original), original.size());
+    metadata.close();
+    const auto permissions = metadata.permissions();
+    const auto restore = qScopeGuard([&] { metadata.setPermissions(permissions); });
+    ASSERT_TRUE(metadata.setPermissions(permissions & ~(QFileDevice::WriteOwner
+        | QFileDevice::WriteUser | QFileDevice::WriteGroup | QFileDevice::WriteOther)));
+    const auto started = server_.dispatchCommand(QStringLiteral("export_pack"),
+        {{QStringLiteral("output_path"), output.path()},
+         {QStringLiteral("platform_id"), platformId()}});
+    ASSERT_EQ(started.value(QStringLiteral("status")).toString(), QStringLiteral("ok"));
+    EXPECT_TRUE(started.value(QStringLiteral("result")).toObject().value(QStringLiteral("async")).toBool());
+    QJsonObject status;
+    ASSERT_TRUE(TestSupport::spinUntil([&] {
+        status = server_.dispatchCommand(QStringLiteral("get_pack_build_status"), {})
+            .value(QStringLiteral("result")).toObject();
+        return !status.value(QStringLiteral("in_progress")).toBool(true);
+    }, 10000));
+    EXPECT_EQ(status.value(QStringLiteral("result")).toObject().value(QStringLiteral("code")).toString(),
+        QStringLiteral("PACK_BUILD_PREFLIGHT_FAILED"));
+    EXPECT_FALSE(PackGenerationRecordStore::instance().isExporting());
+    EXPECT_FALSE(PackGenerationRecordStore::instance().isPreflighting());
+    EXPECT_FALSE(QFileInfo::exists(output.filePath(QStringLiteral("Windows/Init.bytes"))));
+    ASSERT_TRUE(metadata.open(QIODevice::ReadOnly));
+    EXPECT_EQ(metadata.readAll(), original);
+}
+
+TEST_F(PackBuildIpcScenarioTest, PreflightModalStaysUntilCancellationIsAcknowledged)
+{
+    MainWindow window;
+    auto& store = PackGenerationRecordStore::instance();
+    const auto cancel = std::make_shared<std::atomic_bool>(false);
+    const auto run = store.beginProgress(cancel);
+    ASSERT_NE(run, 0u);
+    const auto finish = qScopeGuard([&] { store.finishProgress(run, true); });
+    QPointer<QDialog> dialog = window.findChild<QDialog*>(QStringLiteral("PackPreflightDialog"));
+    ASSERT_TRUE(dialog);
+    EXPECT_TRUE(dialog->isVisible());
+    EXPECT_EQ(dialog->windowModality(), Qt::ApplicationModal);
+    ASSERT_NE(dialog->findChild<QProgressBar*>(), nullptr);
+    auto* stop = dialog->findChild<QPushButton*>();
+    ASSERT_NE(stop, nullptr);
+    stop->click();
+    EXPECT_TRUE(cancel->load());
+    EXPECT_TRUE(dialog->isVisible());
+    EXPECT_FALSE(stop->isEnabled());
+    dialog->reject();
+    dialog->close();
+    EXPECT_TRUE(dialog->isVisible());
+    store.finishProgress(run, true);
+    EXPECT_TRUE(!dialog || !dialog->isVisible());
 }
 
 TEST_F(PackBuildIpcScenarioTest, RuntimeCapabilityQueriesShareOperationsAndBackends)

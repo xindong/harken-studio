@@ -386,6 +386,52 @@ QStringList ProjectPackExporter::resolveExportPlatforms(const ProjectData& proje
 }
 
 
+static bool actionRequested(const ProjectData& project,
+                            const ProjectPackExporter::ExportOptions& options,
+                            harkenstudio::ObjectId id, const QString& name)
+{
+    if (!options.onlyActionStableIds.empty())
+        return options.onlyActionStableIds.count(id) != 0;
+    if (!options.onlyUnits.isEmpty())
+        return options.onlyUnits.contains(name);
+    if (!options.onlyPackPaths.isEmpty()) {
+        if (options.onlyPackPaths.contains(name)) return true;
+        for (const auto& language : ProjectLanguageSemantics::buildLanguages(project))
+            if (options.onlyPackPaths.contains(PackBuildPlanning::packFileName(language, name, {})))
+                return true;
+        return false;
+    }
+    return true;
+}
+
+PackBuildPlan ProjectPackExporter::createBuildPlan(
+    const ProjectData& project, const ExportOptions& options)
+{
+    QStringList languages;
+    if (!options.language.trimmed().isEmpty())
+        languages.append(options.language.trimmed());
+
+    PackBuildPlan buildPlan = PackBuildPlanning::build(project, {options.platform}, languages,
+                                                       options.updateSelectedOnly, options.selection);
+    using VariantKey = std::pair<harkenstudio::ObjectId, QString>;
+    std::set<VariantKey> selectedVariants;
+    for (const auto& variant : buildPlan.variants) {
+        if (actionRequested(project, options, variant.actionStableId, variant.artifactName)
+            && (options.onlyPackPaths.isEmpty() || options.onlyPackPaths.contains(
+                PackBuildPlanning::packFileName(variant.variant.language, variant.artifactName, {}))))
+            selectedVariants.emplace(variant.actionStableId, variant.variant.language);
+    }
+    buildPlan.variants.erase(std::remove_if(buildPlan.variants.begin(), buildPlan.variants.end(),
+        [&](const auto& variant) {
+            return !selectedVariants.count({variant.actionStableId, variant.variant.language});
+        }), buildPlan.variants.end());
+    buildPlan.units.erase(std::remove_if(buildPlan.units.begin(), buildPlan.units.end(),
+        [&](const auto& unit) {
+            return !selectedVariants.count({unit.actionStableIds.front(), unit.variant.language});
+        }), buildPlan.units.end());
+    return buildPlan;
+}
+
 ProjectPackExporter::ExportResult
 ProjectPackExporter::ExportAllPacks(const ProjectData& project,
                                      const QString& outputDir,
@@ -420,6 +466,12 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
             }
             const auto outputLock = LockPackOutputRoot(root, &failure.error);
             if (!outputLock) return failure;
+            auto writeOptions = prepared;
+            writeOptions.selfCleaning = false;
+            if (!ValidatePackBuildWriteAccess(captured, root, {prepared.platform}, writeOptions, &failure.error)) {
+                failure.canceled = prepared.cancelCheck && prepared.cancelCheck();
+                return failure;
+            }
             const auto& platform = *ProjectPlatformSemantics::find(captured.platforms, QUuid(prepared.platform));
             auto result = ExportAllPacks(captured, platformOutputDir(root, platform), prepared, outRecords);
             if (!result.success)
@@ -459,42 +511,7 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
     for (const ProjectItem* evt : allActions)
         actionsByStableId.emplace(actionIdentity(evt), evt);
 
-    QStringList languages;
-    if (!effectiveOpts.language.trimmed().isEmpty())
-        languages.append(effectiveOpts.language.trimmed());
-
-    PackBuildPlan buildPlan = PackBuildPlanning::build(project, {effectiveOpts.platform}, languages,
-                                                       effectiveOpts.updateSelectedOnly, effectiveOpts.selection);
-    const auto actionRequested = [&](harkenstudio::ObjectId id, const QString& name) {
-        if (!effectiveOpts.onlyActionStableIds.empty())
-            return effectiveOpts.onlyActionStableIds.count(id) != 0;
-        if (!effectiveOpts.onlyUnits.isEmpty())
-            return effectiveOpts.onlyUnits.contains(name);
-        if (!effectiveOpts.onlyPackPaths.isEmpty()) {
-            if (effectiveOpts.onlyPackPaths.contains(name)) return true;
-            for (const auto& language : ProjectLanguageSemantics::buildLanguages(project))
-                if (effectiveOpts.onlyPackPaths.contains(PackBuildPlanning::packFileName(language, name, {})))
-                    return true;
-            return false;
-        }
-        return true;
-    };
-    using VariantKey = std::pair<harkenstudio::ObjectId, QString>;
-    std::set<VariantKey> selectedVariants;
-    for (const auto& variant : buildPlan.variants) {
-        if (actionRequested(variant.actionStableId, variant.artifactName)
-            && (effectiveOpts.onlyPackPaths.isEmpty() || effectiveOpts.onlyPackPaths.contains(
-                PackBuildPlanning::packFileName(variant.variant.language, variant.artifactName, {}))))
-            selectedVariants.emplace(variant.actionStableId, variant.variant.language);
-    }
-    buildPlan.variants.erase(std::remove_if(buildPlan.variants.begin(), buildPlan.variants.end(),
-        [&](const auto& variant) {
-            return !selectedVariants.count({variant.actionStableId, variant.variant.language});
-        }), buildPlan.variants.end());
-    buildPlan.units.erase(std::remove_if(buildPlan.units.begin(), buildPlan.units.end(),
-        [&](const auto& unit) {
-            return !selectedVariants.count({unit.actionStableIds.front(), unit.variant.language});
-        }), buildPlan.units.end());
+    PackBuildPlan buildPlan = createBuildPlan(project, effectiveOpts);
     std::map<std::pair<QString, QString>, PackGenerationProgress> unitProgress;
     if (options.progressCallback) {
         effectiveOpts.progressCallback = [&](const PackGenerationProgress& progress) {
@@ -568,21 +585,15 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
     }
     if (!dir.exists())
         dir.mkpath(".");
-    if (effectiveOpts.updateSelectedOnly) {
+    if (effectiveOpts.updateSelectedOnly)
         effectiveOpts.selfCleaning = false;
-        QJsonArray packs;
-        QStringList managedFiles;
-        if (!ReadPackPublication(outputDir, project.projectId, effectiveOpts.platform,
-                                 &packs, &managedFiles, &result.error, false))
-            return result;
-    }
     for (const auto& diagnostic : buildPlan.diagnostics) {
         if (diagnostic.code != ActionClosureDiagnosticCode::LocalizedWithoutLanguages
             && diagnostic.code != ActionClosureDiagnosticCode::InvalidBuildLanguage
             && diagnostic.code != ActionClosureDiagnosticCode::InvalidPackName)
             continue;
         const auto action = actionsByStableId.find(diagnostic.actionStableId);
-        if (action != actionsByStableId.end() && actionRequested(action->first, action->second->name)) {
+        if (action != actionsByStableId.end() && actionRequested(project, effectiveOpts, action->first, action->second->name)) {
             result.error = diagnostic.message;
             return result;
         }
