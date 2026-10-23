@@ -1371,6 +1371,76 @@ TEST(StreamPlayback, PressureWaitKeepsHandleAndReturnsAtAcknowledgedFrame) {
 }
 
 TEST(StreamPlayback,
+     PressureWaitRetainsAttenuationGenerationAfterProfileReplacement) {
+    EngineSession session(MakeStreamWaitConfig(nullptr));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    harken::Engine* engine = session.Engine();
+    const auto streamId = harkentest::ObjectId(9703);
+    const auto claimantId = harkentest::ObjectId(9704);
+    const auto attenuationId = harkentest::ObjectId(9705);
+    const std::string path =
+        WriteSineStream("stream_wait_attenuation_generation.stream", streamId,
+                        48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(streamId, path.c_str()));
+    const std::vector<float> pcmData(48000, 0.2f);
+    const VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(claimantId, &pcm));
+
+    const auto oldProfile = harkentest::MakeAttenuationDesc(1.0f, 101.0f);
+    const harken::Spatializer::PackProfileInput oldInput{attenuationId,
+                                                       &oldProfile};
+    harken::Spatializer::PreparedProfileSet first;
+    ASSERT_EQ(VN_OK,
+              engine->spatial.PreparePackProfiles(&oldInput, 1, 1, &first));
+    engine->spatial.CommitPreparedSet(&first);
+    ASSERT_EQ(VN_OK, Vn_SetListener(harkentest::Vec3(0.0f, 0.0f, -50.0f),
+                                    harkentest::Vec3(0.0f, 0.0f, -1.0f),
+                                    harkentest::Vec3(0.0f, 1.0f, 0.0f)));
+    const auto play =
+        harkentest::MakePlayDesc3D(streamId, 0.0f, 0.0f, -101.0f);
+    VnVoiceHandle stream = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &stream));
+    ASSERT_EQ(VN_OK, Vn_BindVoiceAttenuation(stream, attenuationId));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    engine->streams.SyncServe();
+    engine->nullBackend.Pump(2);
+
+    const auto nextProfile = harkentest::MakeAttenuationDesc(1.0f, 201.0f);
+    const harken::Spatializer::PackProfileInput nextInput{attenuationId,
+                                                        &nextProfile};
+    harken::Spatializer::PreparedProfileSet replacement;
+    ASSERT_EQ(VN_OK, engine->spatial.PreparePackProfiles(
+                         &nextInput, 1, 2, &replacement, {{attenuationId, 1}}));
+    engine->spatial.CommitPreparedSet(&replacement);
+    VnVoiceHandle claimant = 0;
+    ASSERT_EQ(VN_OK, PlayDefault(claimantId, &claimant));
+    const auto waiting = engine->ledger.Classify(stream);
+    ASSERT_EQ(harken::VoiceLedger::HandleKind::Parked, waiting.kind);
+    const auto& rec = engine->parkRecords[waiting.ledgerSlot];
+    EXPECT_EQ(1u, rec.spatial.attenuationGeneration);
+    // Remove the original distance term, even though the current curve differs.
+    EXPECT_NEAR(0.0f, rec.frozenNonSpatialDb, 1e-4f);
+
+    ASSERT_EQ(VN_OK, Vn_SetListener(harkentest::Vec3(0.0f, 0.0f, -25.0f),
+                                    harkentest::Vec3(0.0f, 0.0f, -1.0f),
+                                    harkentest::Vec3(0.0f, 1.0f, 0.0f)));
+    engine->nullBackend.Pump(1);
+    engine->streams.SyncServe();
+    ASSERT_EQ(VN_OK, Vn_Update());
+    const auto& requests = engine->voiceManager.Requests();
+    const auto request = std::find_if(
+        requests.begin(), requests.end(),
+        [stream](const harken::VoiceManager::RenderRequest& value) {
+            return value.publicHandle == stream;
+        });
+    ASSERT_NE(requests.end(), request);
+    EXPECT_EQ(harken::VoiceManager::Residency::RenderRequired,
+              request->residency);
+    // At distance 76 the retained curve has gain 0.25, the current curve 0.625.
+    EXPECT_NEAR(20.0 * std::log10(0.25), request->audibilityDb, 1e-4);
+}
+
+TEST(StreamPlayback,
      CompletionOwnedStreamVictimIsProtectedBeforePressurePark) {
     EngineSession session(MakeStreamWaitConfig(nullptr));
     ASSERT_EQ(VN_OK, session.InitResult());

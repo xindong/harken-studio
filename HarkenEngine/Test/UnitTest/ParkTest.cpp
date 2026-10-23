@@ -1276,6 +1276,153 @@ TEST(Park, PendingStartArrivingInaudibleParksDirectly) {
     EXPECT_FLOAT_EQ(0.25f, spatial.spatializationMix);
 }
 
+enum class AttenuationReplacementPhase { Pending, Parked, Live };
+
+class ParkedAttenuationGeneration
+    : public testing::TestWithParam<AttenuationReplacementPhase> {};
+
+TEST_P(ParkedAttenuationGeneration,
+       ReplacementAndRemovalPreserveAudibilityOutputAndRetirement) {
+    const auto phase = GetParam();
+    VnConfig config = ParkConfig(/*maxVoices=*/1, /*maxParkedVoices=*/1);
+    config.voiceStealPolicy = 2;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    harken::Engine* engine = session.Engine();
+    const auto sound = harkentest::ObjectId(1);
+    const auto attenuation = harkentest::ObjectId(9);
+    RegisterLeaf(sound);
+
+    const auto oldProfile = MakeAttenuationDesc(1.0f, 101.0f);
+    const harken::Spatializer::PackProfileInput oldInput{attenuation, &oldProfile};
+    harken::Spatializer::PreparedProfileSet first;
+    ASSERT_EQ(VN_OK,
+              engine->spatial.PreparePackProfiles(&oldInput, 1, 1, &first));
+    engine->spatial.CommitPreparedSet(&first);
+
+    const auto replaceProfile = [&] {
+        const auto nextProfile = MakeAttenuationDesc(1.0f, 201.0f);
+        const harken::Spatializer::PackProfileInput nextInput{
+            attenuation, &nextProfile};
+        harken::Spatializer::PreparedProfileSet replacement;
+        ASSERT_EQ(VN_OK, engine->spatial.PreparePackProfiles(
+                             &nextInput, 1, 2, &replacement, {{attenuation, 1}}));
+        engine->spatial.CommitPreparedSet(&replacement);
+    };
+    const auto setListener = [&](float z) {
+        ASSERT_EQ(VN_OK, Vn_SetListener(Vec3(0.0f, 0.0f, z),
+                                      Vec3(0.0f, 0.0f, -1.0f),
+                                      Vec3(0.0f, 1.0f, 0.0f)));
+    };
+    const auto expectOutput = [&](float expected) {
+        const auto before = engine->mixer.BlocksRendered();
+        harkentest::Capture capture;
+        harkentest::PumpAndCapture(engine, 1, capture);
+        ASSERT_EQ(before + 1, engine->mixer.BlocksRendered());
+        ASSERT_EQ(kBlock, capture.left.size());
+        ASSERT_GT(harkentest::Peak(capture.left), harkentest::kSilenceFloor);
+        EXPECT_NEAR(expected, capture.left.back(), 1e-4f);
+        EXPECT_NEAR(expected, capture.right.back(), 1e-4f);
+    };
+
+    VnVoiceHandle incumbent = 0;
+    if (phase != AttenuationReplacementPhase::Live) {
+        const auto play = MakePlayDesc(sound);
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &incumbent));
+        engine->nullBackend.Pump(1);
+    } else {
+        ASSERT_NO_FATAL_FAILURE(setListener(-50.0f));
+    }
+    const auto play = MakePlayDesc3D(sound, 0.0f, 0.0f, -101.0f);
+    VnVoiceHandle original = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &original));
+    ASSERT_EQ(VN_OK, Vn_BindVoiceAttenuation(original, attenuation));
+    if (phase == AttenuationReplacementPhase::Live) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine->nullBackend.Pump(1);
+        ASSERT_NO_FATAL_FAILURE(replaceProfile());
+        ASSERT_NO_FATAL_FAILURE(setListener(0.0f));
+    } else {
+        ASSERT_EQ(harken::VoiceLedger::HandleKind::Pending,
+                  engine->ledger.Classify(original).kind);
+        if (phase == AttenuationReplacementPhase::Pending) {
+            ASSERT_NO_FATAL_FAILURE(replaceProfile());
+        }
+        engine->nullBackend.Pump(1);
+    }
+    ASSERT_EQ(VN_OK, Vn_Update());
+    const auto parked = engine->ledger.Classify(original);
+    ASSERT_EQ(harken::VoiceLedger::HandleKind::Parked, parked.kind);
+    EXPECT_EQ(1u, engine->parkRecords[parked.ledgerSlot]
+                      .spatial.attenuationGeneration);
+    engine->nullBackend.Pump(1);
+    if (phase == AttenuationReplacementPhase::Parked) {
+        ASSERT_NO_FATAL_FAILURE(replaceProfile());
+    }
+    // At distance 101 only the current curve is audible: old gain 0, new 0.5.
+    ASSERT_EQ(VN_OK, Vn_Update());
+    ASSERT_EQ(harken::VoiceLedger::HandleKind::Parked,
+              engine->ledger.Classify(original).kind);
+    ASSERT_NE(nullptr, engine->spatial.FindProfile(attenuation, 1));
+
+    VnVoiceHandle fresh = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &fresh));
+    ASSERT_EQ(VN_OK, Vn_BindVoiceAttenuation(fresh, attenuation));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    harken::Spatializer::SpatialVoiceState freshSpatial{};
+    ASSERT_TRUE(engine->spatial.CaptureVoice(RenderHandle(engine, fresh),
+                                             &freshSpatial));
+    EXPECT_EQ(2u, freshSpatial.attenuationGeneration);
+    ASSERT_NO_FATAL_FAILURE(expectOutput(0.25f));
+    ASSERT_EQ(VN_OK, Vn_Stop(fresh, 0));
+    engine->nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
+
+    harken::Spatializer::PreparedProfileSet removed;
+    ASSERT_EQ(VN_OK, engine->spatial.PreparePackProfiles(
+                         nullptr, 0, 0, &removed, {{attenuation, 1}}));
+    engine->spatial.CommitPreparedSet(&removed);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(nullptr, engine->spatial.FindProfile(attenuation));
+    ASSERT_NE(nullptr, engine->spatial.FindProfile(attenuation, 1));
+    ASSERT_EQ(harken::VoiceLedger::HandleKind::Parked,
+              engine->ledger.Classify(original).kind);
+
+    // At distance 51 the retained curve has gain 0.5, not the replaced 0.75.
+    ASSERT_NO_FATAL_FAILURE(setListener(-50.0f));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    ASSERT_EQ(harken::VoiceLedger::HandleKind::Live,
+              engine->ledger.Classify(original).kind);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    harken::Spatializer::SpatialVoiceState restored{};
+    ASSERT_TRUE(engine->spatial.CaptureVoice(RenderHandle(engine, original),
+                                             &restored));
+    EXPECT_EQ(1u, restored.attenuationGeneration);
+    ASSERT_NO_FATAL_FAILURE(expectOutput(0.25f));
+
+    ASSERT_EQ(VN_OK, Vn_Stop(original, 0));
+    for (unsigned step = 0; step < 4; ++step) {
+        engine->nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    EXPECT_EQ(nullptr, engine->spatial.FindProfile(attenuation, 1));
+    EXPECT_EQ(0u, engine->spatial.RetainedProfileCount());
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Park, ParkedAttenuationGeneration,
+    testing::Values(AttenuationReplacementPhase::Pending,
+                    AttenuationReplacementPhase::Parked,
+                    AttenuationReplacementPhase::Live),
+    [](const testing::TestParamInfo<AttenuationReplacementPhase>& info) {
+        switch (info.param) {
+        case AttenuationReplacementPhase::Pending: return "Pending";
+        case AttenuationReplacementPhase::Parked: return "Parked";
+        case AttenuationReplacementPhase::Live: return "Live";
+        }
+        return "Unknown";
+    });
+
 // --- virtual time advances at the resolved pitch, not the base pitch ---
 
 TEST(Park, VirtualTimeAdvancesAtResolvedPitch) {

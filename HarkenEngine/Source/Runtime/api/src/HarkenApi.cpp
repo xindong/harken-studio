@@ -65090,6 +65090,7 @@ DirectParkPendingResult CommitDirectParkPending(
     prec.spatial.spatializationMix =
         rec.hasSpatializationMix ? rec.spatializationMix : 1.0f;
     prec.spatial.attenuationId = attenId;
+    prec.spatial.attenuationGeneration = rec.attenuationGeneration;
     prec.stateEmitter = em;
     prec.spatial.emitterHandle = engine.emitters.Context(em).spatialEmitter;
     // Staged API-direct values, captured in each target's combine domain so the
@@ -66027,7 +66028,8 @@ float ParkedMetricDb(harken::Engine& engine, const harken::ParkRecord& rec) {
     ParkedPosition(engine, rec, &x, &y, &z);
     return rec.frozenNonSpatialDb + rec.instanceVolumeDb +
            engine.spatial.AttenuationVolumeDb(rec.spatial.attenuationId, x, y,
-                                               z, rec.spatial.distanceScale);
+                                               z, rec.spatial.distanceScale,
+                                               rec.spatial.attenuationGeneration);
 }
 
 // The section-5.6 per-tick re-evaluation of a parked voice's binding
@@ -66098,7 +66100,7 @@ void DoParkVoice(harken::Engine& engine, VnVoiceHandle render,
     if (spatial.spatialized && spatial.attenuationId != VnObjectId{}) {
         attenAtPark = engine.spatial.AttenuationVolumeDb(
             spatial.attenuationId, spatial.posX, spatial.posY, spatial.posZ,
-            spatial.distanceScale);
+            spatial.distanceScale, spatial.attenuationGeneration);
     }
 
     const harken::VoiceLedger::Resolved resolved =
@@ -66374,7 +66376,8 @@ StreamVictimWaitResult TryWaitStreamVictim(
     if (spatial.spatialized && spatial.attenuationId != VnObjectId{}) {
         attenAtPark = engine.spatial.AttenuationVolumeDb(
             spatial.attenuationId, spatial.posX, spatial.posY,
-            spatial.posZ, spatial.distanceScale);
+            spatial.posZ, spatial.distanceScale,
+            spatial.attenuationGeneration);
     }
     const float metric =
         engine.params.ResolvedValue(victim, harken::kTargetVoiceVolume);
@@ -67643,7 +67646,8 @@ double PendingRequestAudibility(harken::Engine& engine,
     if (rec.spatialized && rec.hasAttenuation && rec.attenuationId != VnObjectId{}) {
         metric += static_cast<double>(engine.spatial.AttenuationVolumeDb(
             rec.attenuationId, px, py, pz,
-            rec.hasDistanceScale ? rec.distanceScale : 1.0f));
+            rec.hasDistanceScale ? rec.distanceScale : 1.0f,
+            rec.attenuationGeneration));
     }
     for (std::uint32_t i = 0; i < rec.pinnedBindingCount; ++i) {
         const harken::BindingTable::Definition* def =
