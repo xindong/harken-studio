@@ -1,8 +1,8 @@
 # Harken Core Unity SDK
 
 `com.harken.core` is the Unity package for the Harken Core game-audio runtime.
-The package root contains Unity content only. `HarkenSDK/VERSION` defines the
-SDK product version; this package's `package.json` must match that version.
+The package root contains Unity content only. The `version` field in this
+package's `package.json` is the sole source of the SDK product version.
 
 Editor catalog binding, preview, waveform browsing and symbol generation are
 temporarily unavailable while they are adapted to current-schema Pack companions.

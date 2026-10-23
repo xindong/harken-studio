@@ -6,29 +6,22 @@ from pathlib import Path
 
 
 REPOSITORY = Path(__file__).resolve().parents[1]
-VERSION_FILE = REPOSITORY / "HarkenSDK" / "VERSION"
 UNITY_PACKAGE = REPOSITORY / "HarkenSDK" / "Unity" / "Harken" / "package.json"
 
 
-def version() -> str:
-    value = VERSION_FILE.read_text(encoding="utf-8").strip()
-    if not value:
-        raise ValueError("HarkenSDK/VERSION is empty")
+def version(package: Path | None = None) -> str:
+    package = UNITY_PACKAGE if package is None else package
+    manifest = json.loads(package.read_text(encoding="utf-8"))
+    value = manifest.get("version") if isinstance(manifest, dict) else None
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise ValueError(f"{package} must define a non-empty version without surrounding whitespace")
     return value
-
-
-def verify() -> str:
-    expected = version()
-    unity = json.loads(UNITY_PACKAGE.read_text(encoding="utf-8"))["version"]
-    if unity != expected:
-        raise ValueError(f"Unity SDK version {unity} does not match {expected}")
-    return expected
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.parse_args()
-    print(f"Verified Harken Unity SDK {verify()}.")
+    print(f"Verified Harken Unity SDK {version()}.")
     return 0
 
 

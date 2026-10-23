@@ -81,7 +81,6 @@ class BuildStudioPackageTest(unittest.TestCase):
         self.publish_schema(self.input_dir / "schema")
         unity = self.input_dir / "HarkenSDK" / "Unity" / "Harken"
         unity.mkdir(parents=True)
-        (self.input_dir / "HarkenSDK" / "VERSION").write_text(sdk_version + "\n", encoding="utf-8")
         (unity / "package.json").write_text(
             json.dumps({"name": "com.harken.core", "version": sdk_version}),
             encoding="utf-8",
@@ -129,7 +128,7 @@ class BuildStudioPackageTest(unittest.TestCase):
             for path in (self.input_dir / "schema").rglob("*")
             if path.is_file()
         }
-        self.assertEqual(summary["fileCount"], 4 + len(schema_files) + len(self.legal_paths))
+        self.assertEqual(summary["fileCount"], 3 + len(schema_files) + len(self.legal_paths))
 
         with zipfile.ZipFile(package) as archive:
             names = set(archive.namelist())
@@ -157,7 +156,6 @@ class BuildStudioPackageTest(unittest.TestCase):
             self.assertEqual(set(by_path), schema_files | self.legal_paths | {
                     "HarkenStudio.exe",
                     "data/asset.bin",
-                    "HarkenSDK/VERSION",
                     "HarkenSDK/Unity/Harken/package.json",
                 })
             self.assertEqual(by_path["HarkenStudio.exe"]["size"], len(b"stub-binary"))
@@ -213,15 +211,21 @@ class BuildStudioPackageTest(unittest.TestCase):
                 self.assertFalse(self.output_dir.exists())
                 path.write_bytes(content)
 
-    def test_mismatched_sdk_versions_are_rejected(self):
+    def test_invalid_sdk_versions_are_rejected(self):
         self.make_input()
         plugin = self.input_dir / "HarkenSDK/Unity" / "Harken" / "package.json"
-        plugin.write_text(
-            json.dumps({"name": "com.harken.core", "version": "0.1.0"}),
-            encoding="utf-8",
-        )
-        with self.assertRaises(SystemExit):
-            self.run_build()
+        for identity in (
+            {},
+            {"name": "com.harken.core", "version": ""},
+            {"name": "com.harken.core", "version": "   "},
+            {"name": "com.harken.core", "version": "0.2.0 "},
+            {"name": "com.harken.core", "version": None},
+            {"name": "com.harken.core", "version": 2},
+        ):
+            with self.subTest(identity=identity):
+                plugin.write_text(json.dumps(identity), encoding="utf-8")
+                with self.assertRaises(SystemExit):
+                    self.run_build()
 
     def test_missing_unity_sdk_is_rejected(self):
         self.make_input()
@@ -236,7 +240,6 @@ class BuildStudioPackageTest(unittest.TestCase):
         self.publish_schema(app / "schema")
         unity = app / "HarkenSDK" / "Unity" / "Harken"
         unity.mkdir(parents=True)
-        (app / "HarkenSDK" / "VERSION").write_text("0.2.0\n", encoding="utf-8")
         (unity / "package.json").write_text(
             json.dumps({"version": "0.2.0"}), encoding="utf-8")
         self.publish_legal(app, app.parent / "Resources" / "Legal")

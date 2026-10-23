@@ -2,7 +2,7 @@
 
 Unity SDK 最近核对：2026-10-09
 
-2026-10-23 产品边界更新：删除 Unreal SDK，`HarkenSDK/VERSION` 是剩余 Unity SDK 的产品版本来源，当前为 `0.3.4`。Unity `package.json`、独立 SDK 制品与 Studio 随附 SDK 的版本必须一致。`HarkenSDK/Unity/Harken` 保留为 Unity 包根，`Tooling` 与 `Test` 分别保留集成工具和仓库测试；不将它们移入 Unity 包。
+2026-10-24 产品边界更新：删除 Unreal SDK 后，`HarkenSDK/Unity/Harken/package.json` 的 `version` 字段是 SDK 产品版本的唯一维护源，不再单独维护 SDK 的 `VERSION` 文件。独立 SDK 制品的清单版本须与对应源码一致；Studio 随附 SDK 的组件版本从实际随附清单读取。`HarkenSDK/Unity/Harken` 保留为 Unity 包根，`Tooling` 与 `Test` 分别保留集成工具和仓库测试；不将它们移入 Unity 包。后续仅调整 SDK 产品版本时，只修改该 `version` 字段，无需同步修改业务源码或测试。
 
 本次核对 Unity 的公开 API、资源与宿主生命周期、Editor 服务、生成边界及随包说明。此表记录实现状态，不代表所有目标平台均完成设备验收。iOS 设备行为保留原核对结论，本轮未重新验证。
 

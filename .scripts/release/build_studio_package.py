@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import check_sdk_version
 import schema_archive
 import studio_schema_release_audit
 from release import collect_legal_texts, release_evidence
@@ -163,27 +164,22 @@ def collect_payload(input_dir: Path) -> list[Path]:
 def sdk_components(input_dir: Path) -> list[dict]:
     layouts = [
         (
-            input_dir / "HarkenSDK" / "VERSION",
             input_dir / "HarkenSDK" / "Unity" / "Harken" / "package.json",
             "HarkenSDK/Unity/Harken",
         ),
         (
-            input_dir / "HarkenStudio.app" / "Contents" / "MacOS" / "HarkenSDK" / "VERSION",
             input_dir / "HarkenStudio.app" / "Contents" / "MacOS" / "HarkenSDK" / "Unity" / "Harken" / "package.json",
             "HarkenStudio.app/Contents/MacOS/HarkenSDK/Unity/Harken",
         ),
     ]
-    matches = [layout for layout in layouts if any(path.exists() for path in layout[:2])]
+    matches = [layout for layout in layouts if layout[0].exists()]
     if len(matches) != 1:
         raise SystemExit("error: expected one complete Unity SDK layout")
-    version_path, unity_path, unity_root = matches[0]
-    for path in (version_path, unity_path):
-        if not path.is_file():
-            raise SystemExit(f"error: required SDK identity is missing: {path}")
-    version = version_path.read_text(encoding="utf-8").strip()
-    unity_version = json.loads(unity_path.read_text(encoding="utf-8"))["version"]
-    if not version or unity_version != version:
-        raise SystemExit("error: HarkenSDK/VERSION must match the Harken Unity package version")
+    unity_path, unity_root = matches[0]
+    try:
+        version = check_sdk_version.version(unity_path)
+    except (OSError, ValueError) as error:
+        raise SystemExit(f"error: invalid Unity SDK identity: {error}") from error
     return [{
         "product": "HarkenSDK",
         "version": version,

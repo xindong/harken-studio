@@ -59,8 +59,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .temp/package/HarkenSDK
-          cp HarkenSDK/VERSION .temp/package/HarkenSDK/VERSION
-          tar -C HarkenSDK -cf - VERSION API_SURFACE.md Unity Tooling \
+          tar -C HarkenSDK -cf - API_SURFACE.md Unity Tooling \
             | tar -C .temp/package/HarkenSDK -xf -
           runtime_root=".temp/runtime"
           unity_plugins=".temp/package/HarkenSDK/Unity/Harken/Runtime/Plugins"
