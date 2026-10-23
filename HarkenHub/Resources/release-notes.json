@@ -15,6 +15,10 @@
         {
           "category": "improved",
           "text": "Disabling automatic updates stops background checks and downloads for the corresponding product. Manual update checks remain available."
+        },
+        {
+          "category": "improved",
+          "text": "Hub windows, the app bundle, Windows shortcuts, the taskbar, the system tray, and the installer use the refreshed Hub icon."
         }
       ]
     },
