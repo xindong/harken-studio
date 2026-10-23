@@ -159,6 +159,9 @@
 </context>
 <context>
     <name>HubReleaseNotes</name>
+    <message><source>The quick SDK change menu lists newer versions first, with separators between upgrades, the installed version, and older versions. Sources with the same SDK version list newer Studio versions first.</source><translation>快捷更换 SDK 菜单将新版本放在前面，并在可升级版本、当前版本和较旧版本之间添加分割线。同一 SDK 版本的来源优先显示较新的 Studio 版本。</translation></message>
+    <message><source>Successful SDK installation and update results are highlighted in green.</source><translation>SDK 安装或更新成功后，结果文字以绿色突出显示。</translation></message>
+    <message><source>Restored the blue H icon for Hub windows, the app bundle, Windows shortcuts, the taskbar, and the system tray.</source><translation>Hub 窗口、应用、Windows 快捷方式、任务栏和系统托盘恢复使用蓝色 H 图标。</translation></message>
     <message><source>Unity SDK checks recognize equivalent text across UTF-8, UTF-16, UTF-32, and common legacy encodings, including BOM and line-ending conversions. Encoding-only differences are listed as Review recommended without blocking updates, and equivalent read-only files retain their existing bytes.</source><translation>Unity SDK 检查支持 UTF-8、UTF-16、UTF-32 及常见传统编码之间的等价文本，包括 BOM 和换行格式转换。纯编码差异列为“建议关注”，不阻塞更新；内容等价的只读文件保留现有字节。</translation></message>
     <message><source>Hub uses the refreshed light application icon for its windows, app bundle, Windows shortcuts, taskbar, and system tray.</source><translation>Hub 窗口、应用、Windows 快捷方式、任务栏和系统托盘统一使用新版浅色图标。</translation></message>
     <message><source>Integration-list tooltips show only the SDK installation path. Version tooltips appear only when a newer local SDK is available and show its version number.</source><translation>集成列表的 SDK 状态悬浮提示仅显示安装路径。版本悬浮提示仅在本地存在可更新 SDK 时出现，并显示最新版本号。</translation></message>
