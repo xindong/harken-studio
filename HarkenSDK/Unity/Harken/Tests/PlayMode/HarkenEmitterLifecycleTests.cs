@@ -286,8 +286,8 @@ namespace Harken.Unity.Tests
                 {
                     f.Actor.transform.position = Vector3.right * 160;
                     f.Camera.transform.position = Vector3.right * 240;
+                    driver.AfterLate = () => { moved = f.RenderPhysicalBlocks(8); finished = true; };
                 };
-                driver.AfterLate = () => { moved = f.RenderPhysicalBlocks(8); finished = true; };
                 for (int frame = 0; frame < 10 && !finished; ++frame) yield return null;
                 Assert.That(finished, Is.True);
                 Assert.That(moved.x, Is.GreaterThan(moved.y * 3));
