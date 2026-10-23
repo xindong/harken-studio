@@ -41,17 +41,20 @@ namespace Harken
 
         private static bool Letter(char c) => c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z';
 
-        internal static VnResult Parse(byte[] json, string name, string language,
+        internal static VnResult Parse(byte[] json, byte[] pack, string name, string language,
             VnObjectId project, out PackCompanion companion)
         {
             companion = null;
-            if (json == null || json.Length == 0) return VnResult.VN_BAD_PACK;
+            if (json == null || json.Length == 0 || pack == null || pack.Length < 8 ||
+                pack[0] != 'V' || pack[1] != 'S' || pack[2] != 'P' || pack[3] != 'K')
+                return VnResult.VN_BAD_PACK;
             try
             {
+                uint packVersion = (uint)pack[4] | (uint)pack[5] << 8 | (uint)pack[6] << 16 | (uint)pack[7] << 24;
                 var parser = new JsonParser(new UTF8Encoding(false, true).GetString(json), "schemaVersion");
                 if (!(parser.Read(0) is Dictionary<string, object> root) || !parser.End ||
                     !root.TryGetValue("schemaVersion", out object version) ||
-                    !(version is JsonParser.NumberToken token) || !SupportsVersion(token.Text))
+                    !(version is JsonParser.NumberToken token) || !MatchesPackVersion(token.Text, packVersion))
                     return VnResult.VN_BAD_PACK;
                 var candidate = new PackCompanion { ProjectId = project, Language = language ?? string.Empty };
                 if (name != null)
@@ -92,10 +95,12 @@ namespace Harken
             catch (FormatException) { return VnResult.VN_BAD_PACK; }
         }
 
-        private static bool SupportsVersion(string token)
+        private static bool MatchesPackVersion(string token, uint packVersion)
         {
+            // Matching the pair does not establish support. Native inspection admits the
+            // binary against the schema version compiled from HarkenSchema/Pack/manifest.json.
             // Compare decimal digits and scale without floating-point rounding.
-            if (token[0] == '-') return false;
+            if (packVersion == 0 || token[0] == '-') return false;
             int exponentAt = token.IndexOfAny(new[] { 'e', 'E' });
             string coefficient = exponentAt < 0 ? token : token.Substring(0, exponentAt);
             long exponent = 0;
@@ -105,7 +110,7 @@ namespace Harken
             int fraction = dot < 0 ? 0 : coefficient.Length - dot - 1;
             string digits = coefficient.Replace(".", "").TrimStart('0');
             string significant = digits.TrimEnd('0');
-            string expected = PackManifest.SchemaVersion.ToString(CultureInfo.InvariantCulture);
+            string expected = packVersion.ToString(CultureInfo.InvariantCulture);
             string expectedSignificant = expected.TrimEnd('0');
             return significant == expectedSignificant && exponent ==
                 (long)fraction - (digits.Length - significant.Length) + (expected.Length - expectedSignificant.Length);

@@ -535,6 +535,8 @@ struct RemoteConnection::Impl
         bool changed = false;
         while (discovery->hasPendingDatagrams() && ++processed <= 64) {
             const auto datagram = discovery->receiveDatagram(4096);
+            if (kLocalConnectionsOnly && !datagram.senderAddress().isLoopback())
+                continue;
             const auto bytes = datagram.data();
             Wire::Header header;
             if (!Wire::DecodeHeader(bytes.constData(), bytes.size(), header)
@@ -546,15 +548,15 @@ struct RemoteConnection::Impl
             if (!Wire::Decode(reader, identity) || identity.tcpPort == 0 || identity.tcpPort > 65535
                 || identity.instanceId == 0)
                 continue;
-            QString address = datagram.senderAddress().toString();
+            QHostAddress address = datagram.senderAddress();
             if (!identity.bindAddress.empty() && identity.bindAddress != "0.0.0.0") {
-                QHostAddress bound;
-                if (!bound.setAddress(text(identity.bindAddress))
-                    || bound.protocol() != QAbstractSocket::IPv4Protocol)
+                if (!address.setAddress(text(identity.bindAddress))
+                    || address.protocol() != QAbstractSocket::IPv4Protocol)
                     continue;
-                address = bound.toString();
             }
-            auto target = targetFromIdentity(identity, address);
+            if (kLocalConnectionsOnly && !address.isLoopback())
+                continue;
+            auto target = targetFromIdentity(identity, address.toString());
             auto previous = std::find_if(targets.begin(), targets.end(), [&](const auto& row) {
                 return row.instanceId == target.instanceId;
             });
@@ -702,22 +704,25 @@ void RemoteConnection::stopEventCapture()
 
 void RemoteConnection::discover(quint16 discoveryPort)
 {
-    if (impl_->discovery->state() == QAbstractSocket::UnconnectedState
-        && !impl_->discovery->bind(QHostAddress::AnyIPv4, 0)) {
+    impl_->discovery->close();
+    impl_->discoveryRequestId = 0;
+    impl_->targets.clear();
+    emit targetsChanged();
+    if (!impl_->discovery->bind(kLocalConnectionsOnly ? QHostAddress::LocalHost : QHostAddress::AnyIPv4, 0)) {
         emit discoveryFailed(tr("Discovery failed: %1").arg(impl_->discovery->errorString()));
         return;
     }
-    impl_->targets.clear();
-    emit targetsChanged();
     impl_->discoveryRequestId = impl_->requestId();
     if (!impl_->discoveryRequestId)
         return;
     const auto packed = Wire::EncodeFrame({Wire::Message::Discover, impl_->discoveryRequestId, {}});
     const QByteArray bytes(reinterpret_cast<const char*>(packed.data()), static_cast<qsizetype>(packed.size()));
     impl_->discovery->setSocketOption(QAbstractSocket::MulticastLoopbackOption, 1);
+    impl_->discovery->setSocketOption(QAbstractSocket::MulticastTtlOption, kLocalConnectionsOnly ? 0 : 1);
     bool sent = impl_->discovery->writeDatagram(bytes, QHostAddress::LocalHost, discoveryPort) == bytes.size();
     for (const auto& interface : QNetworkInterface::allInterfaces()) {
         if (!(interface.flags() & QNetworkInterface::IsUp)
+            || (kLocalConnectionsOnly && !(interface.flags() & QNetworkInterface::IsLoopBack))
             || (!(interface.flags() & QNetworkInterface::CanMulticast)
                 && !(interface.flags() & QNetworkInterface::IsLoopBack)))
             continue;
@@ -733,13 +738,24 @@ void RemoteConnection::connectTarget(const QString& address, quint16 port)
 {
     if (impl_->state != RemoteConnectionState::Disconnected && impl_->state != RemoteConnectionState::Failed)
         return;
-    if (address.trimmed().isEmpty() || port == 0) {
+    QString host = address.trimmed();
+    if (host.isEmpty() || port == 0) {
         impl_->fail(tr("A host and TCP port are required"));
         return;
     }
+    if constexpr (kLocalConnectionsOnly) {
+        QHostAddress endpoint;
+        if (host.compare(QStringLiteral("localhost"), Qt::CaseInsensitive) == 0)
+            endpoint = QHostAddress::LocalHost;
+        else if (!endpoint.setAddress(host) || !endpoint.isLoopback()) {
+            impl_->fail(tr("Only connections to this computer are available"));
+            return;
+        }
+        host = endpoint.toString();
+    }
     impl_->resetSession(tr("Disconnected before the command result arrived; execution outcome is unknown"));
     impl_->target = {};
-    impl_->target.address = address.trimmed();
+    impl_->target.address = host;
     impl_->target.port = port;
     auto* socket = new QTcpSocket(this);
     impl_->socket = socket;
@@ -770,8 +786,11 @@ void RemoteConnection::connectTarget(const QString& address, quint16 port)
             impl_->fail(tr("Remote connection failed: %1").arg(socket->errorString()));
     });
     impl_->connectedDeadline = impl_->clock.elapsed() + kRequestTimeoutMs;
-    impl_->setState(RemoteConnectionState::Connecting, tr("Connecting to %1:%2").arg(address).arg(port));
-    socket->connectToHost(address.trimmed(), port);
+    impl_->setState(RemoteConnectionState::Connecting, tr("Connecting to %1:%2").arg(host).arg(port));
+    if constexpr (kLocalConnectionsOnly)
+        socket->connectToHost(QHostAddress(host), port);
+    else
+        socket->connectToHost(host, port);
 }
 
 void RemoteConnection::disconnectTarget()

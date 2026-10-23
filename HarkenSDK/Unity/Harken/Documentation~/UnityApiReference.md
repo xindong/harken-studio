@@ -25,23 +25,36 @@ The companion chapters cover [Variables and Labels](VariableApiReference.md),
 ## Minimal scene setup
 
 1. Install `com.harken.core` through Hub. In **Project Settings > Harken >
-   Project**, select the exported `GeneratedPacks` directory. Keep its root
-   `HarkenPackIndex.json`, platform directory, manifest, and Packs together.
-   Select a platform ID or exact name when the host platform has more than one
-   matching instance. For a built Player, include the selected export in the
-   Player exports list and deploy the export through the project's build/content
-   pipeline. The SDK does not copy it. Android requires `StreamingAssets`.
+   Project**, select the exported platform directory containing `Init.bytes`
+   and `Init.json`, or its parent with an exact **Platform Name**. Keep every
+   `.bytes`/`.json` pair together. For a built desktop Player, include the selected
+   export in the Player exports list and deploy it through the project's
+   build/content pipeline. The SDK does not copy it. Android uses an explicit
+   companion source as described below.
 2. Add one `HarkenAudioSystem` to the scene. **Auto Start** is enabled by
-   default; its `Awake` reads the directory from Project Settings. Add a
+   default; in the Editor and desktop Player, its `Awake` reads the directory
+   from Project Settings. Add a
    `HarkenListener` to the camera or player Transform for spatial playback.
 3. Add a `HarkenEmitter` to an object whose Transform should drive a sound.
-   Add `HarkenAction`, assign that emitter, and select an exact published Action
-   name in its Inspector. Bind its `projectId` to the publication shown by the
-   Inspector. The component follows the runtime selected in its `runtime` field,
+   Add `HarkenAction`, assign that emitter, and enter **Action Name** and
+   **Project Id** manually. Use the exact authored name and the audio project's
+   GUID; a running companion session exposes the validated GUID through
+   `Session.ProjectId`. Automatic catalog binding, preview and waveform controls
+   are temporarily unavailable. The component follows the runtime selected in its `runtime` field,
    or the singleton `HarkenAudioSystem.Instance` when that field is empty.
 4. Wait for `HarkenAudioSystem.IsPreparationComplete` before an explicit
    gameplay trigger. `IsReady` only says that an engine session exists;
    startup Content preparation can still be pending or failed.
+
+Android's default directory Auto Start is temporarily unavailable and returns
+`VN_CAPABILITY_UNAVAILABLE` before reading the old index/manifest. Disable Auto
+Start before `Awake`, create a source with
+`HarkenStreamingPackSource.Create(platformUri, language)`, then await
+`StartRuntimeAsync(source)`. Android jar URIs are supported. Alternatively,
+configure a companion source before startup with
+`ConfigureCompanionSourceBeforeStartup(source)`. See the
+[companion source reference](PackApiReference.md) for asynchronous reads and
+playback. The PlayableDemo is suspended and is not a current setup example.
 
 For a component trigger, the following script can be placed on any GameObject
 and connected to a button or gameplay event:
@@ -92,7 +105,9 @@ firing has finished or that the user heard audio.
 
 Only one active component can own a Runtime session. A duplicate is disabled
 with `VN_ALREADY_INITIALIZED`. `Awake` claims ownership, and Auto Start starts
-from the selected project Pack directory. With Auto Start disabled before
+from the selected project Pack directory on supported filesystem hosts. Android
+requires a configured companion source or explicit startup while its default
+directory path is suspended. With Auto Start disabled before
 `Awake`, call a startup overload explicitly after `Awake`; failed requests are
 not retried by the component. These serialized options are private Inspector
 fields, not public C# setters. Adding the component to an active GameObject can
@@ -107,7 +122,8 @@ wait for a successful resume. Later resumes raise only `BecameReady`. Applicatio
 pause callbacks are ignored in the Editor. Explicit `SetSuspended` calls still
 require an active session and report native failures normally.
 
-Missing startup Content (`VN_CONTENT_NOT_LOADED`) can leave an active session
+For retained legacy startup-ID sources, missing startup Content
+(`VN_CONTENT_NOT_LOADED`) can leave an active session
 and raise Ready/BecameReady. Check the startup return value and
 `Session?.IsActive` before inspecting `Session.StartupResult` and
 `Session.FailedStartupPackStableId`. Other preparation failures can occur before
@@ -119,12 +135,12 @@ for `IsPreparationComplete` does not retry failed requests.
 
 | Setting | Meaning |
 | --- | --- |
-| **Auto Start** (`autoInitialize`, default `true`) | Start from configured Pack content during `Awake`. Disable before entering Play Mode when code must supply content first. |
+| **Auto Start** (`autoInitialize`, default `true`) | Start from configured Pack content during `Awake`. Android's default directory path is suspended; configure a companion source first or disable Auto Start and start explicitly. |
 | **Keep Across Scenes** (`persistAcrossScenes`, default `true`) | Apply `DontDestroyOnLoad` to the owner GameObject. |
 | **Shut Down When Disabled** (`shutdownWhenDisabled`, default `false`) | End the session when the component or GameObject is disabled. |
 | **Ready / Failed / Result Observed** | Inspector-bindable Unity events; Failed and Result Observed pass a string. |
 | **GeneratedPacks directory** | The single directory selection used by Auto Start. Editor and Player resolve it according to the rules below. There is no implicit `StreamingAssets/Audio/GeneratedPacks` fallback. |
-| **Platform Id / Platform Name** | Select one platform instance; leave both empty only when exactly one instance matches the host's base platform. |
+| **Platform Name** | Select a direct child of the configured root, or match the selected platform directory's basename. The legacy Platform Id control is hidden; when an ID was saved, use **Clear legacy platform selection** on this page before companion directory startup. |
 | **Language / Init Pack** | Select the publication language and its matching Init Pack. |
 | **Max Simultaneous Playbacks** | Limits SDK-managed `PlayAction` slots as well as native firing capacity. An exhausted managed slot refuses with `VN_NO_ACTION`. |
 
@@ -132,8 +148,9 @@ In the Editor, relative paths start at the Unity project root and the selected
 directory must be inside that project. Desktop Players resolve relative paths
 from the parent of `Application.dataPath` and also accept external absolute
 directories. `Assets/StreamingAssets/...` maps explicitly to
-`Application.streamingAssetsPath/...`; Android packaged startup requires this
-StreamingAssets route. The project team deploys Packs to the configured
+`Application.streamingAssetsPath/...`. Android packaged companions use the
+explicit streaming source instead of the suspended directory Auto Start path.
+The project team deploys Packs to the configured
 location. The SDK installation folder does not determine the Pack location.
 The old serialized `packRoot` value does not select Auto Start content.
 
@@ -178,13 +195,16 @@ the Inspector's Failed and Result Observed callbacks.
 | --- | --- |
 | `VnResult ConfigureLifecycleBeforeStartup(bool suppressAudio, bool stopWhenDisabled)` | Before startup: optionally pause/mute Unity audio while Runtime owns the session, and end the session on disable. Both default to false. Returns `VN_INVALID_ARG` during a session or transition. |
 | `VnResult ConfigureBeforeStartup(string relativePackRoot, string relativeInitPack, ulong[] startupPacks, bool useNullDevice, bool keepAcrossScenes)` | Before startup: validate and store relative Pack/Init paths, startup Pack IDs, Null device, and scene persistence. `startupPacks` cannot be null; invalid input or an active/starting session returns `VN_INVALID_ARG`. The stored `relativePackRoot` does not select Auto Start content: Project Settings supplies that directory, or pass an explicit root to `StartRuntime(string)`. Scene persistence is applied in `Awake`, so changing `keepAcrossScenes` after `Awake` does not reapply `DontDestroyOnLoad` to that GameObject. |
-| `VnResult ConfigurePlatformBeforeStartup(string platformId, string platformName = null)` | Before startup: pass either a platform instance ID or exact name, not both. Empty values restore automatic selection. Invalid selection format or an active/starting session returns `VN_INVALID_ARG`. |
+| `VnResult ConfigurePlatformBeforeStartup(string platformId, string platformName = null)` | Before startup: pass either a legacy platform instance ID or exact directory name, not both. For companion directories, pass a null/empty ID and an optional exact name. Invalid selection format or an active/starting session returns `VN_INVALID_ARG`. |
 | `VnResult ConfigureLanguageBeforeStartup(string selectedLanguage)` | Before startup: select a language key (empty means publication default). Invalid path-like input or an active/starting session returns `VN_INVALID_ARG`. |
-| `VnResult ConfigurePreparedSourceBeforeStartup(HarkenPackSource source)` | Before startup: select a Unity `TextAsset` source. Null or an existing/starting session returns `VN_INVALID_ARG`; capture occurs on startup. |
-| `VnResult ConfigurePreparedBytesBeforeStartup(HarkenPreparedPacks source)` | Before startup: select previously captured bytes. Null or an existing/starting session returns `VN_INVALID_ARG`. |
-| `VnResult StartRuntime(string containmentRoot)` | Start from a root containing the Pack index and selected platform directory. A previously configured prepared source/bytes takes precedence. `null` is suitable only when such a source is configured. Returns startup result; a second start returns `VN_ALREADY_INITIALIZED`. |
-| `VnResult StartRuntime(HarkenPreparedPacks source)` | Start from validated prepared bytes; source must be non-null and match configured language/platform. |
-| `VnResult StartRuntime(string manifestPath, Func<string, byte[]> readBytes, string selectedLanguage = null)` | Capture a publication with a synchronous byte reader, then start. The reader receives logical relative paths; keep it valid for subsequent on-demand content loads. |
+| `VnResult ConfigureCompanionSourceBeforeStartup(PackSource source)` | Configure an explicit companion source before startup; Auto Start can use it on Android as well as filesystem hosts. |
+| `VnResult StartRuntime(PackSource source)` | Start from a synchronous companion source and initialize its Init pair. |
+| `Task<VnResult> StartRuntimeAsync(PackSource source, CancellationToken cancellation = default)` | Await companion Init readiness, including asynchronous packaged/HTTP reads. Start on the Unity main thread. |
+| `VnResult ConfigurePreparedSourceBeforeStartup(HarkenPackSource source)` | Retained legacy manifest source configuration. For current TextAssets use `CaptureCompanion` and a `PackSource` startup overload. |
+| `VnResult ConfigurePreparedBytesBeforeStartup(HarkenPreparedPacks source)` | Retained legacy prepared-byte configuration. Null or an existing/starting session returns `VN_INVALID_ARG`. |
+| `VnResult StartRuntime(string containmentRoot)` | Start from a selected companion platform directory, or its parent with an exact configured platform name. Legacy indexed roots remain accepted by the retained reader. A previously configured legacy prepared source/bytes takes precedence. `null` is suitable only when such a source is configured. |
+| `VnResult StartRuntime(HarkenPreparedPacks source)` | Retained legacy prepared-byte startup; source must be non-null and match configured language/platform. |
+| `VnResult StartRuntime(string manifestPath, Func<string, byte[]> readBytes, string selectedLanguage = null)` | Retained legacy manifest-reader startup. Current companion readers use `PackSource` startup overloads. |
 | `VnResult SetSuspended(bool suspended)` | Suspend or resume the active session. Without one returns `VN_NOT_INITIALIZED`; resume success moves state to `Ready` and raises `BecameReady`. |
 | `VnResult ShutdownRuntime()` | Stop owned firings and participants, release Packs and emitters, then terminate the Runtime. Check its result. A failed native termination retains the session for cleanup. |
 | `VnResult SetMasterVolume(float volume)` | Set the master bus output volume from a finite linear value clamped to `[0, 1]`; invalid values return `VN_INVALID_ARG`, no ready session returns `VN_NOT_INITIALIZED`. |
@@ -227,6 +247,16 @@ active content. Acquire-by-ID can retain or reload a previously discovered
 owner using its accepted name; changed physical IDs are rejected. Unknown IDs
 have no filename mapping in this source, so discover new content by name.
 
+For Unity TextAssets, configure `HarkenPackSource`'s Init Pack, Content and
+Language fields, then call `CaptureCompanion(initJson, out source, out error,
+language)` on the Unity main thread. Supply the paired Init JSON TextAsset
+explicitly and start the resulting `PackSource`. The old inventory and selected
+manifest fields are hidden. See [Pack sources](PackApiReference.md) for streaming
+and reader-backed alternatives.
+
+The following `HarkenPreparedPacks` details describe retained legacy APIs.
+They do not provide current companion discovery or restore suspended Editor tools.
+
 `HarkenPackSource` is a `ScriptableObject` containing the selected publication
 and Pack `TextAsset`s. `Capture(out HarkenPreparedPacks prepared, out string
 error, string selectedLanguage = null)` and its overload with `out byte[]
@@ -242,8 +272,8 @@ provider, object state = null)` supplies missing Content synchronously.
 session)` is the lower-level owner path; use a `HarkenAudioSystem` startup
 overload when that component owns the Runtime. `Publication` and
 `SelectedManifestPath` expose the captured identity and manifest location.
-The source's inventory, selected manifest, language, Init and Content fields
-are private Inspector configuration. Dynamic code uses the public
+The source's legacy inventory and selected manifest fields remain serialized
+but are hidden from the Inspector. Dynamic legacy code uses the public
 `HarkenPreparedPacks.Capture/Create` factories. `SelectedManifestPath` is set by
 reader `Capture`; it may be null for `Create` or `HarkenPackSource.Capture`.
 
@@ -261,11 +291,17 @@ offers a scene component for one authored Pack ID: `PackStableId`, `IsLoaded`,
 `LoadOnReady`, `Handle`, and `LastResult` report it; `Load()` and `Unload()`
 acquire and release that component's request.
 
+The `HarkenPack` Add Component entry and Load On Ready control are hidden while
+cold-ID preloading is adapted. In companion sessions, `LoadOnReady` evaluates
+to false even for an existing serialized component, so it neither queues a cold
+load nor blocks `IsPreparationComplete`. Explicit `Load()` can lease a Pack
+after `Session.PrepareActions` has discovered its ID; `Unload()` still releases it.
+
 ## Action component: `Harken.Unity.HarkenAction`
 
 The Inspector serializes private `runtime`, `emitter`, `actionName`, `projectId`,
-`callerSeed`, `playOnEnable`, and `stopFadeMs` (default 50 ms). Bind the Action
-to the intended publication in its Inspector; names are exact, case-sensitive
+`callerSeed`, `playOnEnable`, and `stopFadeMs` (default 50 ms). Enter Action Name
+and Project Id manually while automatic catalog binding is suspended. Names are exact, case-sensitive
 authored identifiers matching `[A-Za-z][A-Za-z0-9_]{0,127}`. A valid emitter
 component is required for `Play()`.
 The component handles one firing at a time and increments its stored
@@ -478,13 +514,15 @@ accepts Harken coordinates. All setter calls return a `VnResult`.
 | `VN_STALE_HANDLE` / `VN_PACK_STALE_REVISION` / `VN_PACK_HASH_MISMATCH` | A handle or publication/Pack pairing is stale or mismatched. Refresh from one coherent export. |
 | `VN_NO_ACTION` / `VN_NO_EMITTER` / `VN_NO_VOICE` / `VN_BACKPRESSURE` | Different admission/capacity refusals. Preserve the exact code when diagnosing; a refused Post does not replay itself. |
 | `VN_IN_USE` | Operation conflicts with current resource ownership or an in-progress mutation. |
+| `VN_CAPABILITY_UNAVAILABLE` | A capability is temporarily suspended or unavailable for the selected source, including Android's default directory Auto Start and Editor publication tools. |
 
 For the full result table, inspect the generated `VnResult` enum in
 [`HarkenTypes.g.cs`](../Runtime/Generated/HarkenTypes.g.cs) and the
 [diagnostics reference](DiagnosticsRemoteApiReference.md). Do not treat
 `VN_BACKPRESSURE` as `VN_NO_VOICE`.
 
-Editor preview scopes own separate StateOnly emitters and reuse them across
+Editor preview preparation is temporarily unavailable. The retained scope
+contract owns separate StateOnly emitters and reuses them across
 Prepare/Play/StopAll in the same session. Disposal drains owned firings before
 releasing the scope identity; session teardown invalidates all of its handles.
 Ordinary runtime callers continue to pass `Emitter.None`. The existing Studio

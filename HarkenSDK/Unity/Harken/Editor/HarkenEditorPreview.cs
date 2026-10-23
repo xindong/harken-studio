@@ -102,6 +102,9 @@ namespace Harken.Unity.Editor
 
             public VnResult Prepare(HarkenPreparedPacks source, string[] actionNames)
             {
+                // Temporarily block direct API callers as well as the Inspector until current Pack companions are supported.
+                if (!HarkenEditorPublicationSupport.IsAvailable)
+                    return Observe(VnResult.VN_CAPABILITY_UNAVAILABLE, "<prepare>", HarkenEditorPublicationSupport.Diagnostic);
                 if (disposed) return Observe(VnResult.VN_NOT_INITIALIZED, "<prepare>");
                 if (preview.shutdownRequested) return Observe(VnResult.VN_NOT_INITIALIZED, "<prepare>");
                 if (preview.ticking || preview.scopeBusy) return Observe(VnResult.VN_IN_USE, "<prepare>");
@@ -300,6 +303,8 @@ namespace Harken.Unity.Editor
 
         public VnResult Prepare(string directory, string language, ulong[] startupIds, bool nullDevice = false)
         {
+            if (!HarkenEditorPublicationSupport.IsAvailable)
+                return Observe(VnResult.VN_CAPABILITY_UNAVAILABLE, "<prepare>", HarkenEditorPublicationSupport.Diagnostic);
             VnResult allowed = CanPrepare();
             if (allowed != VnResult.VN_OK) return Observe(allowed, "<prepare>");
             var catalog = new HarkenEditorCatalog();
@@ -314,6 +319,8 @@ namespace Harken.Unity.Editor
 
         public VnResult Prepare(HarkenPackSource source, ulong[] startupIds, bool nullDevice = false)
         {
+            if (!HarkenEditorPublicationSupport.IsAvailable)
+                return Observe(VnResult.VN_CAPABILITY_UNAVAILABLE, "<prepare>", HarkenEditorPublicationSupport.Diagnostic);
             VnResult allowed = CanPrepare();
             if (allowed != VnResult.VN_OK) return Observe(allowed, "<prepare>");
             if (source == null) return Observe(VnResult.VN_CONTENT_NOT_LOADED, "<prepare>");
@@ -323,6 +330,8 @@ namespace Harken.Unity.Editor
 
         public VnResult Prepare(HarkenPreparedPacks source, ulong[] startupIds, bool nullDevice = false)
         {
+            if (!HarkenEditorPublicationSupport.IsAvailable)
+                return Observe(VnResult.VN_CAPABILITY_UNAVAILABLE, "<prepare>", HarkenEditorPublicationSupport.Diagnostic);
             VnResult allowed = CanPrepare();
             if (allowed != VnResult.VN_OK) return Observe(allowed, "<prepare>");
             if (source == null) return Observe(VnResult.VN_CONTENT_NOT_LOADED, "<prepare>");

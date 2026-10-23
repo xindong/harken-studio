@@ -22,6 +22,7 @@ namespace Harken.Unity.Tests
         [Test]
         public void NativeBytesPublicationIgnoresUnrelatedLegacyInitAndNeverUsesDoubleSuffix()
         {
+            HarkenEditorServiceTests.RequirePublicationTooling();
             string folder = "Assets/HarkenBytes_" + Guid.NewGuid().ToString("N");
             Directory.CreateDirectory(folder);
             try
@@ -71,19 +72,29 @@ namespace Harken.Unity.Tests
                         Path.Combine(folder, legacyPath + (wrapped ? ".bytes" : "")));
                 }
                 File.WriteAllText(Path.Combine(folder, PackManifest.ManifestFileName), manifest);
-                var catalog = new HarkenEditorCatalog();
-                Assert.That(catalog.Refresh(folder), Is.EqualTo(VnResult.VN_OK), catalog.Diagnostic);
-                Assert.That(catalog.Publication.InitPack.Path, Is.EqualTo("Init.pack"));
-                Assert.That(catalog.GetPreparationOrder("Play_U4_A", out var ids, out string error), Is.EqualTo(VnResult.VN_OK), error);
-                using (var preview = new HarkenEditorPreview())
+                Assert.That(HarkenPreparedPacks.Capture(PackManifest.ManifestFileName,
+                    path => HarkenPackFiles.Read(Path.Combine(folder, path)), out var prepared, out _, out string error),
+                    Is.EqualTo(VnResult.VN_OK), error);
+                Assert.That(prepared.Publication.InitPack.Path, Is.EqualTo("Init.pack"));
+                Assert.That(prepared.Publication.GetActionPreparationOrder(new[] { "Play_U4_A" },
+                    prepared.Publication.ProjectId, out var ids), Is.EqualTo(VnResult.VN_OK));
+                VnConfig config = HarkenEngine.DefaultConfig();
+                config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
+                PackBootstrapSession session = null;
+                try
                 {
-                    Assert.That(preview.Prepare(folder, null, ids, true), Is.EqualTo(VnResult.VN_OK), preview.Diagnostic);
-                    Assert.That(preview.Play("Play_U4_A", catalog.Publication.ProjectId, out var firing), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(prepared.Start(ids, ref config, out session), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(Actions.Resolve("Play_U4_A", prepared.Publication.ProjectId, out var action), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(Emitter.CreateStateOnly(out var emitter), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(Actions.Post(in action, emitter, 0, out var firing), Is.EqualTo(VnResult.VN_OK));
                     Assert.That(firing.IsValid, Is.True);
                 }
+                finally { session?.Dispose(); }
                 File.WriteAllBytes(Path.Combine(folder, wrapped ? "Init.pack" : "Init.pack.bytes"), new byte[] { 0 });
-                Assert.That(catalog.Refresh(folder), Is.EqualTo(VnResult.VN_INVALID_ARG));
-                Assert.That(catalog.Publication, Is.Null);
+                Assert.That(HarkenPreparedPacks.Capture(PackManifest.ManifestFileName,
+                    path => HarkenPackFiles.Read(Path.Combine(folder, path)), out prepared, out _, out _),
+                    Is.EqualTo(VnResult.VN_PACK_PROVIDER_FAILED));
+                Assert.That(prepared, Is.Null);
             }
             finally { Directory.Delete(folder, true); }
         }
@@ -160,17 +171,22 @@ namespace Harken.Unity.Tests
                 }
                 Assert.That(HarkenPreparedPacks.Capture(PackManifest.ManifestFileName, Read,
                     out var prepared, out _, out string error), Is.EqualTo(VnResult.VN_OK), error);
-                using (var preview = new HarkenEditorPreview())
+                VnConfig config = HarkenEngine.DefaultConfig();
+                config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
+                PackBootstrapSession session = null;
+                try
                 {
-                    Set(preview, "forceNullDevice", true);
-                    var scope = preview.CreateScope();
-                    Assert.That(scope.Prepare(prepared, new[] { ActionName }), Is.EqualTo(VnResult.VN_OK));
-                    Assert.That(scope.Play(ActionName, out var firing), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(prepared.Start(Array.Empty<ulong>(), ref config, out session), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(session.PrepareActions(new[] { ActionName }, prepared.Publication.ProjectId, out var preparation),
+                        Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(Actions.Resolve(ActionName, prepared.Publication.ProjectId, out var action), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(Emitter.CreateStateOnly(out var emitter), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(Actions.Post(in action, emitter, 0, out var firing), Is.EqualTo(VnResult.VN_OK));
                     var samples = new float[8192];
                     double energy = 0;
                     for (int i = 0; i < 32; ++i)
                     {
-                        Assert.That(preview.Tick(), Is.EqualTo(VnResult.VN_OK));
+                        Assert.That(HarkenEngine.Update(), Is.EqualTo(VnResult.VN_OK));
                         Array.Clear(samples, 0, samples.Length);
                         Assert.That(HarkenSdkTest_PumpAndCopy(samples, (uint)samples.Length, out uint frames, out uint channels),
                             Is.EqualTo(VnResult.VN_OK));
@@ -182,6 +198,7 @@ namespace Harken.Unity.Tests
                     Assert.That(requested, Has.None.EndsWith(".pack"));
                     Assert.That(requested, Has.None.EndsWith(".bytes.bytes"));
                 }
+                finally { session?.Dispose(); }
             }
             finally
             {

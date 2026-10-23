@@ -10,11 +10,24 @@ namespace Harken.Unity.Editor
 
         /// <summary>Validates a publication's Variable catalog without writing assets.</summary>
         public static VnResult ValidatePublication(string json, string sourceLabel, out string error)
-            => VariableCatalogEmitter.EmitCSharpFromJson(json, sourceLabel, out _, out error);
+        {
+            if (!HarkenEditorPublicationSupport.IsAvailable)
+            {
+                error = HarkenEditorPublicationSupport.Diagnostic;
+                return VnResult.VN_CAPABILITY_UNAVAILABLE;
+            }
+            return VariableCatalogEmitter.EmitCSharpFromJson(json, sourceLabel, out _, out error);
+        }
 
-        [MenuItem("Harken/Generate SDK Symbols From Publication")]
+        // Temporarily unregistered until symbol generation reads current Pack companions instead of a legacy manifest.
+        // [MenuItem("Harken/Generate SDK Symbols From Publication")]
         public static void GenerateFromMenu()
         {
+            if (!HarkenEditorPublicationSupport.IsAvailable)
+            {
+                EditorUtility.DisplayDialog("Harken SDK Symbols", HarkenEditorPublicationSupport.Diagnostic, "OK");
+                return;
+            }
             string path = EditorUtility.OpenFilePanel("Select Harken publication JSON",
                 Application.dataPath, "json");
             if (string.IsNullOrEmpty(path)) return;
@@ -27,6 +40,12 @@ namespace Harken.Unity.Editor
 
         public static VnResult GeneratePublication(string jsonPath, string variablePath, out string error)
         {
+            // Keep direct callers behind the same temporary gate as the menu before reading or writing assets.
+            if (!HarkenEditorPublicationSupport.IsAvailable)
+            {
+                error = HarkenEditorPublicationSupport.Diagnostic;
+                return VnResult.VN_CAPABILITY_UNAVAILABLE;
+            }
             error = "A publication path and Variable output path are required.";
             if (string.IsNullOrEmpty(jsonPath) || string.IsNullOrEmpty(variablePath)) return VnResult.VN_INVALID_ARG;
             try
@@ -51,6 +70,11 @@ namespace Harken.Unity.Editor
 
         public static VnResult Generate(string jsonPath, string csharpPath, out string error)
         {
+            if (!HarkenEditorPublicationSupport.IsAvailable)
+            {
+                error = HarkenEditorPublicationSupport.Diagnostic;
+                return VnResult.VN_CAPABILITY_UNAVAILABLE;
+            }
             error = "A publication JSON path and C# output path are required.";
             if (string.IsNullOrEmpty(jsonPath) || string.IsNullOrEmpty(csharpPath)) return VnResult.VN_INVALID_ARG;
             string json;

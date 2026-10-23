@@ -5,6 +5,8 @@ import json
 import re
 from pathlib import Path
 
+from check_sdk_version import version
+
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 DEFAULT_SDK = REPOSITORY / "HarkenSDK" / "Unity" / "Harken"
@@ -239,8 +241,9 @@ def verify_manifests(sdk: Path, errors: list[str]) -> None:
     )
     if package.get("name") != "com.harken.core":
         errors.append("package.json name must be com.harken.core")
-    if package.get("version") != "0.3.4":
-        errors.append("package.json version must be 0.3.4")
+    expected_version = version()
+    if package.get("version") != expected_version:
+        errors.append(f"package.json version must match HarkenSDK/VERSION ({expected_version})")
     if "samples" in package:
         errors.append("package.json must not declare repository-owned Samples")
 

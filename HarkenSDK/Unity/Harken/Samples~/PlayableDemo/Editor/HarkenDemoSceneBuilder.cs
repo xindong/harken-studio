@@ -43,11 +43,14 @@ namespace Harken.Samples.PlayableDemo.Editor
             "Sequence Queue", "Variable Control"
         };
 
-        [MenuItem("Harken/Playable Demo/Rebuild Scene and Prefabs")]
+        // Temporarily unregistered until scene binding and demo Packs use the current companion contract.
+        // [MenuItem("Harken/Playable Demo/Rebuild Scene and Prefabs")]
         public static void Rebuild() => RebuildAtPath(FindSampleRoot());
 
         public static void RebuildAtPath(string root)
         {
+            if (!HarkenPlayableDemoController.IsAvailable)
+                throw new InvalidOperationException(HarkenPlayableDemoController.UnavailableReason);
             if (EditorApplication.isPlayingOrWillChangePlaymode)
                 throw new InvalidOperationException("Rebuild the sample outside Play Mode.");
             if (string.IsNullOrEmpty(root))

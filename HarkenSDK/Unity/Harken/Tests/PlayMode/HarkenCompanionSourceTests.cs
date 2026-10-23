@@ -29,6 +29,48 @@ namespace Harken.Unity.Tests
             => target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic).SetValue(target, value);
 
         [UnityTest]
+        public IEnumerator SerializedPackPreloadDoesNotBlockCompanionReadinessOrExplicitLeases()
+        {
+            using (var fixture = new Fixture())
+            {
+                Assert.That(new PackDirectorySource(Root, string.Empty).Capture("Play_Head", default,
+                    Read("Init.bytes"), out CompanionInput inspected), Is.EqualTo(VnResult.VN_OK));
+                var owner = new GameObject("Serialized Pack preload");
+                owner.SetActive(false);
+                owner.transform.SetParent(fixture.Owner.transform, false);
+                var pack = owner.AddComponent<HarkenPack>();
+                Set(pack, "runtime", fixture.Runtime);
+                Set(pack, "packStableId", inspected.Facts.packStableId);
+                Set(pack, "loadOnReady", true);
+                owner.SetActive(true);
+                int contentReads = 0;
+                var source = PackSource.FromReader(path =>
+                {
+                    if (path.StartsWith("Play_Head", StringComparison.Ordinal)) ++contentReads;
+                    return Read(path);
+                });
+                Assert.That(fixture.Runtime.StartRuntime(source), Is.EqualTo(VnResult.VN_OK));
+                yield return null;
+                Assert.That(fixture.Runtime.IsReady, Is.True);
+                Assert.That(fixture.Runtime.IsPreparationComplete, Is.True);
+                Assert.That(contentReads, Is.Zero);
+                Assert.That(pack.IsLoaded, Is.False);
+                Assert.That(pack.LastResult, Is.EqualTo(VnResult.VN_OK));
+                Assert.That(Actions.Resolve("Play_Head", out _), Is.Not.EqualTo(VnResult.VN_OK));
+
+                Assert.That(fixture.Runtime.PlayAction("Play_Head", fixture.Runtime.Session.ProjectId, out ActionFiring firing),
+                    Is.EqualTo(VnResult.VN_OK));
+                Assert.That(firing.IsValid, Is.True);
+                Assert.That(pack.Load(), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(pack.IsLoaded, Is.True);
+                Assert.That(pack.Unload(), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(pack.IsLoaded, Is.False);
+                Assert.That(firing.Query(out _), Is.EqualTo(VnResult.VN_OK));
+            }
+            yield return null;
+        }
+
+        [UnityTest]
         public IEnumerator TextAssetsUseFrozenReferencesAndTheExistingSynchronousPlayEntry()
         {
             using (var fixture = new Fixture())

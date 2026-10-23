@@ -5,7 +5,8 @@ using Harken.Unity.Editor;
 
 namespace Harken.Samples.PlayableDemo.Editor
 {
-    [InitializeOnLoad]
+    // Temporarily suspend automatic installation and the menu until the demo ships current Pack companions.
+    // [InitializeOnLoad]
     public static class HarkenDemoPackInstaller
     {
         private const string Destination =
@@ -13,12 +14,18 @@ namespace Harken.Samples.PlayableDemo.Editor
 
         static HarkenDemoPackInstaller()
         {
-            EditorApplication.delayCall += InstallIfImported;
+            if (HarkenPlayableDemoController.IsAvailable)
+                EditorApplication.delayCall += InstallIfImported;
         }
 
-        [MenuItem("Harken/Playable Demo/Install Packs")]
+        // [MenuItem("Harken/Playable Demo/Install Packs")]
         public static void InstallIfImported()
         {
+            if (!HarkenPlayableDemoController.IsAvailable)
+            {
+                Debug.LogWarning(HarkenPlayableDemoController.UnavailableReason);
+                return;
+            }
             string source = FindPackSource();
             if (string.IsNullOrEmpty(source) || !Directory.Exists(source))
             {

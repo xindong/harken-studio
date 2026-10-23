@@ -116,21 +116,17 @@ def verify(product: str, directory: Path) -> None:
     verify_files(THIRD_PARTY_FILES[product], directory / "third-party")
 
 
-def verify_sdk_plugin(engine: str, directory: Path) -> None:
-    source = REPO_ROOT / "HarkenSDK" / engine / "Harken"
-    verify_files(tuple((source / name, name) for name in ("LICENSE.md", "NOTICE.md")), directory)
-
-
 def verify_sdk(directory: Path) -> None:
-    verify_sdk_plugin("Unity", directory / "Unity" / "Harken")
-    verify_sdk_plugin("Unreal", directory / "Unreal" / "Harken")
+    source = REPO_ROOT / "HarkenSDK" / "Unity" / "Harken"
+    verify_files(tuple((source / name, name) for name in ("LICENSE.md", "NOTICE.md")),
+                 directory / "Unity" / "Harken")
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     target = parser.add_mutually_exclusive_group(required=True)
     target.add_argument("--product", choices=sorted(THIRD_PARTY_FILES))
-    target.add_argument("--sdk-root", help="Verify licenses in a staged Unity and Unreal SDK bundle")
+    target.add_argument("--sdk-root", help="Verify licenses in a staged Unity SDK bundle")
     parser.add_argument("--output")
     parser.add_argument("--qt-version", help="Version reported by the deployed Qt kit's qmake")
     parser.add_argument("--verify", action="store_true", help="Verify an existing Legal directory")

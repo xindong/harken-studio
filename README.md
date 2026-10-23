@@ -167,7 +167,7 @@ harken/
 ├── HarkenEngine/                         # harken_core — the sound engine runtime core
 ├── HarkenHub/                            # HarkenHub — the standalone launcher
 ├── HarkenSchema/                         # Independent Editor and Pack JSON contracts
-├── HarkenSDK/                            # HarkenSDK — shared engine SDK root (Unity/Harken + Unreal/Harken)
+├── HarkenSDK/                            # HarkenSDK — shared engine SDK root (Unity/Harken)
 ├── HarkenStudio/                         # HarkenEditor — the front-end editor
 ├── CLAUDE.md | AGENTS.md                 # High-level AI project instructions
 ├── CMake*                                # CMake project solution

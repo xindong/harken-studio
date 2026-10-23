@@ -27,10 +27,13 @@ namespace Harken.Unity.Tests
             PrepareSource(publicationRoot, "Source");
             string sampleRoot = Path.Combine(Application.streamingAssetsPath, "Audio/U4Sample/Windows");
             PrepareSource(sampleRoot, "VariableSource");
-            VnResult result = Editor.HarkenVariableCatalogGenerator.Generate(
-                Path.Combine(sampleRoot, PackManifest.ManifestFileName),
-                Editor.HarkenVariableCatalogGenerator.ResolveOutputPath(), out string error);
+            // Retained fixture catalogs are test inputs; they must not reopen suspended production symbol tooling.
+            string manifestPath = Path.Combine(sampleRoot, PackManifest.ManifestFileName);
+            string outputPath = Editor.HarkenVariableCatalogGenerator.ResolveOutputPath();
+            VnResult result = VariableCatalogEmitter.WriteCSharpFromJson(File.ReadAllText(manifestPath),
+                manifestPath, outputPath, out string error);
             if (result != VnResult.VN_OK) throw new InvalidDataException(error);
+            AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
         }
 
         public static void PrepareVariableSource()

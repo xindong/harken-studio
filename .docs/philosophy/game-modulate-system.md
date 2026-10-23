@@ -19,7 +19,7 @@ Match 的条件表保存 Variable 与 Label 身份，重命名和重排后仍引
 
 Blend 模式的混合行和 Binding 保存数值坐标。同一 Label 移到新索引后，其输入使用新坐标，曲线不自动移动。Default、Set Variable Action 和已经写入的运行时值也保留数值语义。
 
-Native、Unity 与 Unreal 可按当前名称或稳定 Label 身份赋值，控制侧解析当前 Pack 映射后使用现有数值写入路径。旧名称、删除或范围外的身份明确失败，不回退为数字、None 或默认值。生成的 Label 常量保存身份，不缓存枚举数值。映射与编译后的离散条件通过 Pack 依赖合同一起校验和发布；改名更新名称入口与 Catalog，不重置数值槽位。
+Native 与 Unity 可按当前名称或稳定 Label 身份赋值，控制侧解析当前 Pack 映射后使用现有数值写入路径。旧名称、删除或范围外的身份明确失败，不回退为数字、None 或默认值。生成的 Label 常量保存身份，不缓存枚举数值。映射与编译后的离散条件通过 Pack 依赖合同一起校验和发布；改名更新名称入口与 Catalog，不重置数值槽位。
 
 
 Variable 的定义描述数值本身，不声明作用域。每个 Variable 都有全局值，也允许发声体拥有自己的局部值。全局值在运行状态建立时以 default 初始化。统一的 `GlobalWithEmitterOverride` 契约表示这两层存储，不提供 `GlobalOnly` 类别。

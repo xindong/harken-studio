@@ -86,10 +86,9 @@ complete corresponding source accessible to binary recipients.
   producing Studio ZIPs and Hub installers; a Qt version change requires
   reviewing and updating the Qt attribution files.
 
-- **Standalone SDKs** carry Apache-2.0 `LICENSE.md` and an SDK-specific
-  `NOTICE.md` inside each Unity/Unreal `Harken` directory, including the chosen
-  MIT-0 terms for miniaudio. Unreal plugin packaging retains both files through
-  `Config/FilterPlugin.ini`.
+- **The standalone Unity SDK** carries Apache-2.0 `LICENSE.md` and an SDK-specific
+  `NOTICE.md` inside `HarkenSDK/Unity/Harken`, including the chosen MIT-0 terms
+  for miniaudio.
 
 - **miniaudio** is vendored, so its full license text travels with the source:
   the dual Unlicense / MIT-0 notice (including the upstream copyright line) is

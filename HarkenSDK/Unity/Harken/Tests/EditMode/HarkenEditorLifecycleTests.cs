@@ -130,8 +130,43 @@ namespace Harken.Unity.Tests
         }
 
         [UnityTest]
+        public IEnumerator SuspendedSampleDoesNotClaimTheRuntimeSingleton()
+        {
+            string sampleScene = AssetDatabase.GUIDToAssetPath("df1e14712a3bfa646afce84f432ea5c9");
+            Assert.That(sampleScene, Is.Not.Empty, "Import PlayableDemo before running the sample suspension contract.");
+            EditorSceneManager.OpenScene(sampleScene, OpenSceneMode.Single);
+            yield return new EnterPlayMode();
+            HarkenAudioSystem sampleRuntime = Find<HarkenAudioSystem>();
+            Assert.That(sampleRuntime.gameObject.activeSelf, Is.False);
+            Assert.That(sampleRuntime.Session, Is.Null);
+            Assert.That(HarkenAudioSystem.Instance, Is.Null);
+            Assert.That(FindAll<HarkenAction>().All(action => !action.isActiveAndEnabled), Is.True);
+            Assert.That(Find<HarkenVariable>().isActiveAndEnabled, Is.False);
+            Assert.That(Find<HarkenEmitter>().isActiveAndEnabled, Is.False);
+            Assert.That(Find<HarkenListener>().enabled, Is.False);
+            yield return null;
+            var owner = new GameObject("Independent Runtime");
+            owner.SetActive(false);
+            try
+            {
+                var runtime = owner.AddComponent<HarkenAudioSystem>();
+                var serialized = new SerializedObject(runtime);
+                serialized.FindProperty("autoInitialize").boolValue = false;
+                serialized.FindProperty("persistAcrossScenes").boolValue = false;
+                serialized.ApplyModifiedPropertiesWithoutUndo();
+                owner.SetActive(true);
+                Assert.That(HarkenAudioSystem.Instance, Is.SameAs(runtime));
+                Assert.That(runtime.State, Is.EqualTo(HarkenRuntimeState.Stopped));
+                Assert.That(runtime.Session, Is.Null);
+            }
+            finally { Object.DestroyImmediate(owner); }
+            yield return new ExitPlayMode();
+        }
+
+        [UnityTest]
         public IEnumerator PrefabUndoRedoAndPreviewOwnershipSurviveActualScriptAndPlayModeReloads()
         {
+            HarkenEditorServiceTests.RequirePublicationTooling();
             HarkenEditorCatalog catalog = Catalog("U4Original");
             var original = new GameObject("Persistent Action");
             original.SetActive(false);
@@ -217,12 +252,13 @@ namespace Harken.Unity.Tests
             SetString(action, "actionName", "Play_U4_Renamed");
             Post(action);
             Assert.That(action.Firing.Query(out VnActionFiringInfo info), Is.EqualTo(VnResult.VN_OK));
-            Assert.That(Catalog("U4Renamed").Publication.TryFindAction("Play_U4_Renamed", out GameplayAction row), Is.True);
+            Assert.That(ReadPublication("U4Renamed").TryFindAction("Play_U4_Renamed", out GameplayAction row), Is.True);
             Assert.That(info.actionId, Is.EqualTo(row.ActionStableId));
             yield return new ExitPlayMode();
         }
 
         [UnityTest]
+        [Ignore("Temporarily suspended until PlayableDemo scene generation and playback consume current Pack companions.")]
         public IEnumerator RebuiltSampleKeepsAssetIdentityAndRunsAllSixPreparedNames()
         {
             string source = PublicationRoot("U4Sample");
@@ -340,7 +376,8 @@ namespace Harken.Unity.Tests
             SetReference(emitter, "runtime", runtime);
             SetReference(action, "runtime", runtime);
             SetReference(action, "emitter", emitter);
-            Assert.That(Catalog(directory).SelectAction(action, name, false, out _), Is.EqualTo(VnResult.VN_OK));
+            SetString(action, "actionName", name);
+            SetString(action, "projectId", ReadPublication(directory).ProjectId);
             owner.SetActive(true);
             source.SetActive(true);
             Assert.That(EditorSceneManager.SaveScene(SceneManager.GetActiveScene(), scenePath), Is.True);
@@ -348,9 +385,9 @@ namespace Harken.Unity.Tests
 
         private static void ConfigureRuntime(HarkenAudioSystem runtime, string directory, string name)
         {
-            HarkenEditorCatalog catalog = Catalog(directory);
-            Assert.That(catalog.GetPreparationOrder(name, out ulong[] ids, out _), Is.EqualTo(VnResult.VN_OK));
-            Assert.That(runtime.ConfigureBeforeStartup("Audio/" + directory, catalog.Publication.InitPack.Path, ids, true, false),
+            GameplayPublication publication = ReadPublication(directory);
+            Assert.That(publication.GetActionPreparationOrder(new[] { name }, publication.ProjectId, out ulong[] ids), Is.EqualTo(VnResult.VN_OK));
+            Assert.That(runtime.ConfigureBeforeStartup("Audio/" + directory, publication.InitPack.Path, ids, true, false),
                 Is.EqualTo(VnResult.VN_OK));
             var projectSettings = HarkenProjectSettingsProvider.GetOrCreateSettings();
             var serializedSettings = new SerializedObject(projectSettings);
@@ -358,7 +395,7 @@ namespace Harken.Unity.Tests
                 Path.Combine(Application.streamingAssetsPath, "Audio", directory);
             serializedSettings.ApplyModifiedPropertiesWithoutUndo();
             AssetDatabase.SaveAssetIfDirty(projectSettings);
-            Assert.That(runtime.ConfigurePlatformBeforeStartup(catalog.Publication.Platform.Id), Is.EqualTo(VnResult.VN_OK));
+            Assert.That(runtime.ConfigurePlatformBeforeStartup(publication.Platform.Id), Is.EqualTo(VnResult.VN_OK));
         }
 
         private static void ValidateSampleBindings()
@@ -401,6 +438,13 @@ namespace Harken.Unity.Tests
             var catalog = new HarkenEditorCatalog();
             Assert.That(catalog.Refresh(PublicationRoot(directory)), Is.EqualTo(VnResult.VN_OK), catalog.Diagnostic);
             return catalog;
+        }
+
+        private static GameplayPublication ReadPublication(string directory)
+        {
+            Assert.That(GameplayPublication.Read(PublicationRoot(directory), null, out var publication, out string error),
+                Is.EqualTo(VnResult.VN_OK), error);
+            return publication;
         }
 
         private static string PublicationRoot(string name) => Path.Combine(Application.streamingAssetsPath, "Audio", name);

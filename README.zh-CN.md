@@ -167,7 +167,7 @@ harken/
 ├── HarkenEngine/                         # harken_core — 声音引擎运行核心
 ├── HarkenHub/                            # HarkenHub — 独立启动器程序
 ├── HarkenSchema/                         # Editor 与 Pack 各自独立的 JSON 合同
-├── HarkenSDK/                            # HarkenSDK — 共享引擎 SDK 总目录（Unity/Harken + Unreal/Harken）
+├── HarkenSDK/                            # HarkenSDK — 共享引擎 SDK 总目录（Unity/Harken）
 ├── HarkenStudio/                         # HarkenEditor — 前端编辑器
 ├── CLAUDE.md | AGENTS.md                 # AI 项目高层指令
 ├── CMake*                                # CMake 项目解决方案

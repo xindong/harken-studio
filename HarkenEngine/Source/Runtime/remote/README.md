@@ -27,15 +27,15 @@ VnResult remoteResult = Vn_RemoteStart(&remote);
 Call this only after successful Engine initialization. A failed start leaves
 audio running. Report `remoteResult` separately, correct the configuration or
 port conflict, and retry. Explicitly stop an existing service before changing
-its configuration. The Unity and Unreal integrations perform this startup
-automatically. Their Harken project settings pages expose `Enable Communication
+its configuration. The Unity integration performs this startup
+automatically. Its Harken project settings page exposes `Enable Communication
 in Builds`, enabled by default. It controls packaged games; Editor sessions
 remain enabled. SDK retries honor that policy and report communication errors
 separately from audio initialization. Raw C ABI users own the lifecycle explicitly.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `bindAddress` | `0.0.0.0` | IPv4 listen interface; `127.0.0.1` restricts TCP to this machine |
+| `bindAddress` | `127.0.0.1` | Fixed loopback listener; null, empty, or `127.0.0.1` are accepted; other addresses return `VN_INVALID_ARG` |
 | `tcpPort` | `0` | System-assigned port, reported in status and discovery |
 | `discoveryPort` | `37840` | Shared UDP discovery port |
 | `flags` | `0` | Set `VN_REMOTE_DISCOVERY_ENABLED` for discovery |
@@ -43,7 +43,8 @@ separately from audio initialization. Raw C ABI users own the lifecycle explicit
 | `maxCommandsPerUpdate` | `32` | Maximum queued requests dispatched per update |
 | `requestTimeoutMs` | `30000` | Peer inactivity, incomplete-frame and stalled-send timeout |
 
-Unity/Unreal enable communication and discovery by default.
+Unity enables communication and discovery by default, restricted to this
+machine. Its address setting is not editable in the project settings UI.
 Listening, a connected Studio, and active capture are separate states. With
 communication off there is no communication socket or worker. Monitor capture
 buffers and its worker are initialized only when a consumer requests them.
@@ -60,7 +61,15 @@ C++ object layouts, addresses or the legacy tooling pipe protocol.
 
 Discovery sends a query to multicast group `239.255.37.84` and receives unicast
 announcements correlated by request ID. Each application instance has its own
-identity and TCP port. Manual TCP connection is independent of discovery.
+identity and TCP port. The current Studio build permits only local discovery
+and connections. `RemoteConnection::kLocalConnectionsOnly` is a compile-time
+constant fixed to `true`; LAN support remains in source and requires a source
+change and rebuild to restore. There is no runtime setting to enable it.
+Discovery binds to loopback and uses multicast TTL `0` so multiple local
+processes sharing the discovery port remain discoverable without LAN queries.
+Manual connections also require a loopback address; `localhost` maps directly
+to loopback without DNS. Engine TCP and UDP listeners also bind to `127.0.0.1`.
+The previous wildcard binding code is retained as comments for future work.
 An Engine admits one active Studio connection at a time.
 
 Every TCP connection starts with Hello/Welcome. Protocol major versions must
@@ -88,9 +97,12 @@ and remote runtime state are separate instances.
 
 ## Network Boundary
 
-This version supports explicitly enabled same-machine/LAN communication over
-IPv4 TCP/UDP. It does not authenticate or encrypt peers. A reachable peer can
-control the opted-in runtime; binding to loopback limits access to this machine.
+This version supports only same-machine communication over IPv4 TCP/UDP.
+Both listeners bind to `127.0.0.1`, and discovery joins only the loopback
+interface. LAN discovery and connections are unavailable. Explicit non-loopback
+configuration is rejected before sockets are created; existing configurations
+are not migrated. The transport does not authenticate or encrypt peers. A local
+peer that can reach the port can control the opted-in runtime.
 No cloud relay, telemetry upload or persistent remote data store is involved.
 Future authenticated transports must establish per-session permissions before
 dispatch and preserve the same logic-thread and capability boundaries. Legacy

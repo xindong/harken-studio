@@ -53,7 +53,7 @@ namespace Harken
                     if (!PairStillMissing(name, Language)) return VnResult.VN_PACK_STALE_REVISION;
                 }
                 if (result != VnResult.VN_OK) return result;
-                result = PackCompanion.Parse(json, name, scope, project, out PackCompanion names);
+                result = PackCompanion.Parse(json, bytes, name, scope, project, out PackCompanion names);
                 if (result != VnResult.VN_OK) return result;
                 result = CompanionNative.Inspect(bytes, init, names, out VnPackInspectReportV1 facts);
                 if (result != VnResult.VN_OK) return result;

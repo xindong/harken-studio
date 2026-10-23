@@ -52,8 +52,10 @@ RemoteConnectDialog::RemoteConnectDialog(HarkenEditor::Bridge::RemoteConnection*
     footer->removeButton()->hide();
     manual_ = footer->addButton();
     manual_->setObjectName(QStringLiteral("remoteAddConnection"));
-    manual_->setToolTip(tr("Connect by Address"));
-    manual_->setAccessibleName(tr("Connect by Address"));
+    const auto manualTitle = HarkenEditor::Bridge::RemoteConnection::kLocalConnectionsOnly
+        ? tr("Connect to Local Application") : tr("Connect by Address");
+    manual_->setToolTip(manualTitle);
+    manual_->setAccessibleName(manualTitle);
     auto* refreshAction = new QAction(tr("Refresh"), footer);
     refreshAction->setToolTip(tr("Refresh Applications"));
     auto* refresh = footer->setRefreshAction(refreshAction);
@@ -159,7 +161,7 @@ void RemoteConnectDialog::openManualConnection()
 {
     BaseDialog dialog(this);
     dialog.setObjectName(QStringLiteral("remoteManualConnectDialog"));
-    dialog.setWindowTitle(tr("Connect by Address"));
+    dialog.setWindowTitle(manual_->toolTip());
     dialog.setMinimumWidth(360);
     auto* layout = new QVBoxLayout(&dialog);
     layout->setContentsMargins(16, 16, 16, 16);
@@ -167,9 +169,14 @@ void RemoteConnectDialog::openManualConnection()
     auto* form = new DialogFormLayout();
     auto* address = new QLineEdit(&dialog);
     address->setObjectName(QStringLiteral("remoteAddress"));
-    address->setPlaceholderText(tr("Host name or IP address"));
     QSettings settings;
-    address->setText(settings.value(QStringLiteral("remote/host"), QStringLiteral("127.0.0.1")).toString());
+    if constexpr (HarkenEditor::Bridge::RemoteConnection::kLocalConnectionsOnly) {
+        address->setText(QStringLiteral("127.0.0.1"));
+        address->setReadOnly(true);
+    } else {
+        address->setPlaceholderText(tr("Host name or IP address"));
+        address->setText(settings.value(QStringLiteral("remote/host"), QStringLiteral("127.0.0.1")).toString());
+    }
     auto* port = new QSpinBox(&dialog);
     port->setObjectName(QStringLiteral("remotePort"));
     port->setRange(0, 65535);
@@ -195,7 +202,10 @@ void RemoteConnectDialog::openManualConnection()
     connect(connection_, &HarkenEditor::Bridge::RemoteConnection::stateChanged, &dialog, validate);
     connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     validate();
-    address->setFocus();
+    if constexpr (HarkenEditor::Bridge::RemoteConnection::kLocalConnectionsOnly)
+        port->setFocus();
+    else
+        address->setFocus();
     if (dialog.exec() != QDialog::Accepted)
         return;
     settings.setValue(QStringLiteral("remote/host"), address->text().trimmed());

@@ -7,7 +7,7 @@
 
 namespace harken {
 
-// Allocation-free helpers for C++ hosts, including Unreal adapters. The
+// Allocation-free helpers for C++ hosts. The
 // caller owns the row storage until Vn_ApplyBusTopology returns.
 class BusTopologyBuilder final {
 public:

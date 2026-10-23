@@ -1543,14 +1543,12 @@ QLabel[aboutRole="value"] {
 }
 
 #startupLoadingPercent,
-#startupLoadingVersion,
-#startupLoadingCopyright {
+#startupLoadingVersion {
     background-color: transparent;
     color: @textMuted@;
 }
 
-#startupLoadingVersion,
-#startupLoadingCopyright {
+#startupLoadingVersion {
     font-size: @captionPointSize@pt;
 }
 

@@ -706,19 +706,18 @@ class ReleaseEvidenceTest(unittest.TestCase):
         for item in record["notices"]:
             self.assertEqual(item["sha256"], evidence.sha256(output.parent / item["path"]))
 
-    def test_sdk_retains_dirty_runtime_receipts_and_notices_for_both_plugins(self):
+    def test_sdk_retains_dirty_runtime_receipts_and_notices(self):
         sdk_source = self.repo / "HarkenSDK"
         sdk = self.payload / "HarkenSDK"
         for root in (sdk_source, sdk):
             root.mkdir(parents=True)
             (root / "VERSION").write_text("1.0.0\n", encoding="utf-8")
-            for engine, name in (("Unity", "Harken"), ("Unreal", "Harken")):
-                plugin = root / engine / name
-                plugin.mkdir(parents=True)
-                (plugin / "LICENSE.md").write_text("license\n", encoding="utf-8")
-                (plugin / "NOTICE.md").write_text("notice\n", encoding="utf-8")
-        binaries = [sdk / "Unity/Harken/Runtime/Plugins/Windows/HarkenCore.dll",
-                    sdk / "Unreal/Harken/Binaries/Win64/HarkenCore.dll"]
+            plugin = root / "Unity/Harken"
+            plugin.mkdir(parents=True)
+            (plugin / "LICENSE.md").write_text("license\n", encoding="utf-8")
+            (plugin / "NOTICE.md").write_text("notice\n", encoding="utf-8")
+            evidence.write_json(plugin / "package.json", {"version": "1.0.0"})
+        binaries = [sdk / "Unity/Harken/Runtime/Plugins/Windows/HarkenCore.dll"]
         for binary in binaries:
             binary.parent.mkdir(parents=True)
             shutil.copyfile(self.payload / "app.exe", binary)
@@ -762,12 +761,11 @@ class ReleaseEvidenceTest(unittest.TestCase):
         self.assertFalse((self.repo / ".temp").exists())
         self.assertEqual(len(evidence.read_runtime_receipts(self.payload, commit, "stable")), 2)
         self.assertEqual(list((sdk / "BuildEvidence").rglob("*.txt")), [])
-        self.assertEqual(len(list(sdk.rglob(notice.name))), 2)
+        self.assertEqual(len(list(sdk.rglob(notice.name))), 1)
         for record in package_receipt["payload"]:
             self.assertEqual(record["sha256"], evidence.sha256(self.payload / record["path"]))
-        for plugin in (sdk / "Unity/Harken", sdk / "Unreal/Harken"):
-            self.assertEqual((plugin / "Legal" / notice.name).read_bytes(), notice.read_bytes())
         plugin_notice = sdk / "Unity/Harken/Legal" / notice.name
+        self.assertEqual(plugin_notice.read_bytes(), notice.read_bytes())
         plugin_notice.unlink()
         with self.assertRaises(ValueError):
             evidence.read_runtime_receipts(self.payload, commit, "stable")

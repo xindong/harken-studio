@@ -144,7 +144,7 @@ namespace Harken
                     return new CompanionCapture(VnResult.VN_PACK_STALE_REVISION);
                 if (bytes == null && json == null) return new CompanionCapture(VnResult.VN_CONTENT_NOT_LOADED);
                 if (bytes == null || json == null) return new CompanionCapture(VnResult.VN_BAD_PACK);
-                VnResult parsed = PackCompanion.Parse(json, name, scope, project, out PackCompanion names);
+                VnResult parsed = PackCompanion.Parse(json, bytes, name, scope, project, out PackCompanion names);
                 if (parsed != VnResult.VN_OK) return new CompanionCapture(parsed);
                 parsed = CompanionNative.Inspect(bytes, init, names, out VnPackInspectReportV1 facts);
                 if (parsed != VnResult.VN_OK) return new CompanionCapture(parsed);

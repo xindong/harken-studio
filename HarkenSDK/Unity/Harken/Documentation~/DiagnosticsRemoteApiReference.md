@@ -50,15 +50,17 @@ observe the outermost Update return boundary.
 
 ```csharp
 VnResult HarkenEngine.StartRemoteCommunication(string applicationName,
-    string bindAddress = "0.0.0.0", int port = 0,
+    string bindAddress = "127.0.0.1", int port = 0,
     bool enableDiscovery = true, int discoveryPort = 0,
     string projectName = null);
 VnResult HarkenEngine.QueryRemoteCommunication(out VnRemoteStatus status);
 VnResult HarkenEngine.StopRemoteCommunication();
 ```
 
-`StartRemoteCommunication` passes a TCP bind address, application and optional project name to
-the native service. Port values must be in `[0, 65535]`; embedded NUL and
+`StartRemoteCommunication` passes a bind address, application and optional project name to
+the native service. TCP and UDP bind only to `127.0.0.1`; null, empty, or
+`127.0.0.1` are accepted, and other addresses return `VN_INVALID_ARG`. LAN
+communication is unavailable. Port values must be in `[0, 65535]`; embedded NUL and
 UTF-8 text that does not fit the native fixed buffers return `VN_INVALID_ARG`.
 The wrapper uses 64-byte address and 128-byte application/project buffers,
 including terminators. `port == 0` and `discoveryPort == 0` defer selection to

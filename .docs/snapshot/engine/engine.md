@@ -58,7 +58,7 @@ SDK 生成通过 `sdk_api_surface.json` 的 `managed_projection` 排除 Monitor 
 | 一致快照与阶段抽头 | 音频侧无等待发布、读者付代价、块内自洽、抽头只观测不介入 | `core/PinnedSnapshot3`（三槽 pin 变体，契约同）+StageTap，撕裂压测覆盖 | 一致 |
 | trace 录制与回放 | — | `api/src/TraceRecorder`（全 API 调用流）+`harken_host trace-replay`；历史 CurrentWorld 仅支持有限诊断，明确拒绝 pre-#443 V5–V7 内嵌 Binding/Curve，范围与样本见[历史诊断约定](../../../HarkenEngine/Test/UnitTest/fixtures/current-world-pre443/README.md)（本项核对：2026-09-08） | 未记载 |
 | 内部宿主管道 | 宿主侧工具通道、逻辑线程安全点执行、单一描述表生成+门禁防漂移 | `Tool/Remote/` + `harken_host remote-serve`；Windows named pipe 连接 Python 客户端，用于独立驱动引擎、验证 Pack 热替换、快照与可选 trace 回放；不进入游戏运行库 | 一致 |
-| Studio / 游戏远程连接 | 游戏进程内提供通信，Studio 连接运行中的引擎进行观测与控制 | `Runtime/remote/` 提供 TCP 通信与 UDP 发现，SDK 调用 `Vn_RemoteStart` 启动，Studio `RemoteConnection` 使用独立的 `Protocol.h`；本地试听仍通过进程内 C API | 已实现 |
+| Studio / 游戏远程连接 | 游戏进程内提供通信，Studio 连接运行中的引擎进行观测与控制 | `Runtime/remote/` 提供仅绑定 `127.0.0.1` 的 TCP 通信与 UDP 发现；当前 Studio / Engine / SDK 仅支持同机连接，不支持局域网；SDK 调用 `Vn_RemoteStart` 启动，Studio `RemoteConnection` 使用独立的 `Protocol.h`；本地试听仍通过进程内 C API | 已实现 |
 
 ## 对象与参数（运行时侧）
 

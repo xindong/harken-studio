@@ -68,7 +68,8 @@ namespace Harken.Unity.Editor
                     serialized.Update();
                     EditorGUILayout.PropertyField(serialized.FindProperty("enableCommunicationInBuilds"),
                         new GUIContent("Enable Communication in Builds"));
-                    EditorGUILayout.PropertyField(serialized.FindProperty("remoteBindAddress"), new GUIContent("Bind Address"));
+                    // EditorGUILayout.PropertyField(serialized.FindProperty("remoteBindAddress"), new GUIContent("Bind Address"));
+                    EditorGUILayout.LabelField("Bind Address", "127.0.0.1");
                     EditorGUILayout.PropertyField(serialized.FindProperty("remotePort"), new GUIContent("Port"));
                     EditorGUILayout.PropertyField(serialized.FindProperty("enableRemoteDiscovery"), new GUIContent("Auto Discover"));
                     EditorGUILayout.PropertyField(serialized.FindProperty("remoteDiscoveryPort"), new GUIContent("Discovery Port"));
@@ -114,7 +115,17 @@ namespace Harken.Unity.Editor
             DrawCapacity(project, "maxEmitters", "Max Emitters");
             DrawCapacity(project, "emitterVariableSlots", "Emitter Variable Slots");
             EditorGUILayout.PropertyField(project.FindProperty("language"), new GUIContent("Language"));
-            EditorGUILayout.PropertyField(project.FindProperty("packPlatformId"), new GUIContent("Platform Id"));
+            // Temporarily hide inventory-only platform ids until current Pack companions provide this selector.
+            if (HarkenEditorPublicationSupport.IsAvailable)
+                EditorGUILayout.PropertyField(project.FindProperty("packPlatformId"), new GUIContent("Platform Id"));
+            else if (!string.IsNullOrEmpty(project.FindProperty("packPlatformId").stringValue))
+            {
+                // Existing settings must remain recoverable while the legacy selector is suspended.
+                EditorGUILayout.HelpBox("Clear the saved legacy platform selection to use the configured Pack directory and platform name.",
+                    MessageType.Warning);
+                if (GUILayout.Button("Clear legacy platform selection"))
+                    project.FindProperty("packPlatformId").stringValue = string.Empty;
+            }
             EditorGUILayout.PropertyField(project.FindProperty("packPlatform"), new GUIContent("Platform Name"));
             EditorGUILayout.PropertyField(project.FindProperty("initPack"), new GUIContent("Init Pack"));
             EditorGUILayout.PropertyField(project.FindProperty("suppressUnityAudio"), new GUIContent("Suppress Unity Audio"));
