@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using Harken;
@@ -7,64 +7,60 @@ namespace Harken.Test
 {
     internal static class RepositoryPublicationContract
     {
-        public static bool Run()
+        public static bool Run(string publicationRoot = null)
         {
             try
             {
-                string root = Path.Combine(AppContext.BaseDirectory, "NativePublications");
-                foreach (string category in new[] { "UnityFixture", "PlayableDemo" })
-                    if (!Directory.Exists(Path.Combine(root, category)) ||
-                        Directory.GetFiles(Path.Combine(root, category), PackManifest.ManifestFileName,
-                            SearchOption.AllDirectories).Length == 0)
-                        throw new InvalidOperationException("Native publication category is missing: " + category);
-                string[] manifests = Directory.GetFiles(root, PackManifest.ManifestFileName,
-                    SearchOption.AllDirectories);
-                if (manifests.Length == 0) throw new InvalidOperationException("Native publications are missing.");
-                foreach (string manifest in manifests.OrderBy(path => path, StringComparer.Ordinal))
+                string root = publicationRoot ?? Path.Combine(AppContext.BaseDirectory,
+                    "NativePublications", "UnityFixture", "CompanionPacks");
+                byte[] init = File.ReadAllBytes(Path.Combine(root, "Init.bytes"));
+                string[] directories = new[] { root }.Concat(Directory.GetDirectories(root)
+                    .OrderBy(path => path, StringComparer.Ordinal)).ToArray();
+                int count = 0;
+                foreach (string directory in directories)
                 {
-                    string directory = Path.GetDirectoryName(manifest);
-                    string language = null;
-                    string parent = Path.GetDirectoryName(directory);
-                    if (parent != null && File.Exists(Path.Combine(parent, PackManifest.ManifestFileName)))
-                    {
-                        language = Path.GetFileName(directory);
-                        directory = parent;
-                    }
-                    Require(GameplayPublication.Read(directory, language, out GameplayPublication publication,
-                        out string error), "Read " + manifest + ": " + error);
-                    byte[] init = File.ReadAllBytes(Path.Combine(directory, publication.InitPack.Path));
-                    ulong[] content = publication.Packs.Where(pack => pack.PackStableId != publication.InitPackStableId)
-                        .Select(pack => pack.PackStableId).ToArray();
+                    string[] names = Directory.GetFiles(directory)
+                        .Where(path => Path.GetExtension(path) == ".json" || Path.GetExtension(path) == ".bytes")
+                        .Select(Path.GetFileNameWithoutExtension).Where(name => name != "Init")
+                        .Distinct(StringComparer.Ordinal).OrderBy(name => name, StringComparer.Ordinal).ToArray();
+                    if (directory != root && (File.Exists(Path.Combine(directory, "Init.bytes")) ||
+                        File.Exists(Path.Combine(directory, "Init.json"))))
+                        throw new InvalidOperationException("Init must be in the selected platform directory.");
+                    if (names.Length == 0 && directory != root) continue;
+                    string language = directory == root ? null : Path.GetFileName(directory);
                     VnConfig config = HarkenEngine.DefaultConfig();
                     config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
                     PackBootstrapSession session = null;
                     try
                     {
-                        Require(PackBootstrap.Start(publication, init, content, ReadContent, directory,
-                            ref config, out session), "Start " + manifest);
-                        if (session == null || !session.IsStartupComplete)
-                            throw new InvalidOperationException("Incomplete publication: " + manifest);
-                        Require(session.Shutdown(), "Shutdown " + manifest);
+                        Require(PackBootstrap.StartDirectory(root, language, ref config, out session), "Start " + directory);
+                        foreach (string name in names)
+                        {
+                            Require(session.PrepareActions(new[] { name }, session.ProjectId,
+                                out ActionPreparation preparation), "Prepare " + name);
+                            Require(Actions.Resolve(name, session.ProjectId, out ActionResolved action), "Resolve " + name);
+                            Require(HarkenEngine.Update(), "Update");
+                            Require(Actions.Post(in action, Emitter.None, 0, out ActionFiring firing), "Post " + name);
+                            if (!firing.IsValid) throw new InvalidOperationException("Missing firing: " + name);
+                            Require(preparation.Release(), "Release " + name);
+                            ++count;
+                        }
+                        Require(session.Shutdown(), "Shutdown " + directory);
                         session = null;
                     }
                     finally { session?.Dispose(); }
                 }
-                Console.WriteLine("[Repository publications] " + manifests.Length +
-                    " current fixture/sample publications loaded through native Runtime PASS.");
+                if (count == 0) throw new InvalidOperationException("Publication has no Action companion pairs.");
+                uint version = (uint)init[4] | (uint)init[5] << 8 | (uint)init[6] << 16 | (uint)init[7] << 24;
+                Console.WriteLine("[PackCompanion] schemaVersion " + version);
+                Console.WriteLine("[PackCompanion] native publication PASS.");
                 return true;
             }
             catch (Exception error)
             {
-                Console.WriteLine("[Repository publications] FAIL: " + error);
+                Console.WriteLine("[PackCompanion] FAIL: " + error);
                 return false;
             }
-        }
-
-        private static VnResult ReadContent(ulong id, string path, uint variant, ulong hash,
-            out byte[] bytes, object state)
-        {
-            bytes = File.ReadAllBytes(Path.Combine((string)state, path));
-            return VnResult.VN_OK;
         }
 
         private static void Require(VnResult result, string operation)

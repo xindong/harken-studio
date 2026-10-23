@@ -22,7 +22,6 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import schema_archive
-from release.verify_pack_reader import verify_pack_reader
 
 REPO_ROOT = SCRIPT_DIR.parent
 SCHEMA_ROOT_PATH = "HarkenSchema"
@@ -273,13 +272,11 @@ def published_releases() -> dict[str, dict[str, Any]]:
 def required_baselines(root: Path, exclude_tag: str | None = None,
                       exclude_commit: str | None = None) -> dict[str, dict[str, Any]]:
     editor = schema_archive.load_tree("Editor", root)
-    pack = schema_archive.load_tree("Pack", root)
     versions = set(editor["manifest"]["supportedHistorical"]) | {editor["currentVersion"]}
     return {tag: record for tag, record in published_releases().items()
             if tag != exclude_tag and (exclude_commit is None or
                 run_git(["rev-parse", f"refs/tags/{tag}^{{commit}}"]).stdout.strip() != exclude_commit)
-            and (record.get("trees", {}).get("Editor", {}).get("generation") in versions
-            or record.get("trees", {}).get("Pack", {}).get("generation") == pack["currentVersion"])}
+            and record.get("trees", {}).get("Editor", {}).get("generation") in versions}
 
 
 def release_schema_errors(root: Path, exclude_tag: str | None = None) -> list[str]:
@@ -615,13 +612,20 @@ def verify_release_readers(current_binary: Path, baseline_readers: dict[str, Pat
     if errors:
         raise ValueError("; ".join(errors))
     if pack_reader is None or pack_root is None:
-        raise ValueError("Formal release requires the compiled native Pack gate and its Pack fixture")
+        raise ValueError("Reader validation requires the compiled native Pack gate and its companion fixture")
     current_binary = current_binary.resolve()
     pack_reader, pack_root = pack_reader.resolve(), pack_root.resolve()
     if not current_binary.is_file() or not pack_reader.is_file() or pack_reader.name != "HarkenAbiFidelity.dll":
-        raise ValueError("Formal release requires the Studio binary and HarkenAbiFidelity.dll")
-    if not all((pack_root / name).is_file() for name in ("Init.pack", "Content.pack")):
-        raise ValueError("Native Pack fixture must contain Init.pack and Content.pack")
+        raise ValueError("Reader validation requires the Studio binary and HarkenAbiFidelity.dll")
+    pack_files = sorted(path for path in pack_root.rglob("*")
+                        if path.is_file() and path.suffix in (".bytes", ".json"))
+    if not all((pack_root / name).is_file() for name in ("Init.bytes", "Init.json")) \
+            or not any(path.suffix == ".bytes" and path.stem != "Init" for path in pack_files):
+        raise ValueError("Native Pack fixture must contain Init and Action companion pairs")
+    for path in pack_files:
+        companion = path.with_suffix(".json" if path.suffix == ".bytes" else ".bytes")
+        if not companion.is_file():
+            raise ValueError(f"Native Pack fixture has an incomplete companion pair: {path}")
     result: dict[str, Any] = {"protocol": "schema-roundtrip-v1", "errors": [],
         "schemaSnapshotHash": bundle["manifest"]["snapshotHash"],
         "baselineTags": sorted(required), "readers": []}
@@ -640,20 +644,6 @@ def verify_release_readers(current_binary: Path, baseline_readers: dict[str, Pat
             binary, manifest = checked_baseline_package(tag, package_root)
             readers.append((tag, binary, manifest["_schemaManifest"], manifest))
         for index, (tag, binary, expected, package) in enumerate(readers):
-            checks = []
-            if package is not None and expected["trees"]["Pack"]["currentVersion"] == bundle["manifest"]["trees"]["Pack"]["currentVersion"]:
-                reader_source = binary.parent / "HarkenSDK/Unity/Harken/Runtime/Sdk/PackManifest.cs"
-                if reader_source.relative_to(baseline_readers[tag].resolve()).as_posix() not in package["_protectedFiles"]:
-                    raise ValueError("Baseline package does not protect its Pack parser")
-                parser = verify_pack_reader(reader_source, pack_root, expected["trees"]["Pack"]["currentVersion"], work)
-                result.setdefault("packReaders", []).append({"tag": tag, **parser})
-                checks.append("old-pack-parser-reads-current-sidecars")
-            old_editor_version = expected["trees"]["Editor"]["currentVersion"]
-            if old_editor_version != current_report["editorSchemaVersion"] \
-                    and old_editor_version not in editor["manifest"]["supportedHistorical"]:
-                result["readers"].append({"tag": tag, "buildId": package["buildId"],
-                    "schemaSnapshotHash": expected["snapshotHash"], "checks": checks})
-                continue
             old_report = run_probe(binary, {"mode": "create", "outputDirectory": str(work / f"old-{index}")},
                                    work, expected, package)
             old_project = Path(old_report["projectPath"])
@@ -678,7 +668,7 @@ def verify_release_readers(current_binary: Path, baseline_readers: dict[str, Pat
                 if not documents_equal(after, project_documents(old_project)):
                     raise ValueError("Reading migrated project data modified its documents")
                 result["readers"].append({"tag": tag, "buildId": old_report["buildId"],
-                    "schemaSnapshotHash": old_report["schemaSnapshotHash"], "checks": checks + ["migration-preserves-metadata", "new-reads-migrated"]})
+                    "schemaSnapshotHash": old_report["schemaSnapshotHash"], "checks": ["migration-preserves-metadata", "new-reads-migrated"]})
                 continue
             before = project_documents(old_project)
             run_probe(current_binary, {"mode": "read", "projectPath": str(old_project)}, work, bundle["manifest"])
@@ -696,7 +686,7 @@ def verify_release_readers(current_binary: Path, baseline_readers: dict[str, Pat
                 raise ValueError("Reopening edited data modified its documents")
             result["readers"].append({"tag": tag, "buildId": old_report["buildId"],
                 "schemaSnapshotHash": old_report["schemaSnapshotHash"],
-                "checks": checks + ["new-reads-old", "old-edits-new", "new-reopens-preserved-content"]})
+                "checks": ["new-reads-old", "old-edits-new", "new-reopens-preserved-content"]})
     platform = "macOS" if sys.platform == "darwin" else "x86_64"
     native_directory = current_binary.parent / "HarkenSDK/Unity/Harken/Runtime/Plugins" / platform
     native_name = "HarkenCore.dll" if os.name == "nt" else "libHarkenCore.dylib" if sys.platform == "darwin" else "libHarkenCore.so"
@@ -705,17 +695,17 @@ def verify_release_readers(current_binary: Path, baseline_readers: dict[str, Pat
     if not (native_directory / native_name).is_file():
         raise ValueError("Studio package does not contain the native library required by the Pack gate")
     environment = dict(os.environ, HARKEN_NATIVE_DIR=str(native_directory))
-    pack_result = subprocess.run(["dotnet", str(pack_reader), "--require-native", "--pack-root", str(pack_root)],
+    pack_result = subprocess.run(["dotnet", str(pack_reader), "--require-native", "--companion-root", str(pack_root)],
                                  cwd=REPO_ROOT, env=environment, capture_output=True, text=True,
                                  encoding="utf-8", timeout=180, check=False)
     pack_version = bundle["manifest"]["trees"]["Pack"]["currentVersion"]
-    if pack_result.returncode != 0 or "[PackNative] shared Init/content fixture PASS." not in pack_result.stdout \
-            or f"[PackSidecar] schema_version {pack_version}" not in pack_result.stdout.splitlines():
+    if pack_result.returncode != 0 or "[PackCompanion] native publication PASS." not in pack_result.stdout.splitlines() \
+            or f"[PackCompanion] schemaVersion {pack_version}" not in pack_result.stdout.splitlines():
         raise ValueError(f"Native Pack gate failed: {pack_result.stdout} {pack_result.stderr}")
     result["pack"] = {"status": "passed", "schemaVersion": pack_version,
                       "readerSha256": digest(pack_reader.read_bytes()),
-                      "fixtureSha256": {name: digest((pack_root / name).read_bytes())
-                                        for name in ("Init.pack", "Content.pack")}}
+                      "fixtureSha256": {path.relative_to(pack_root).as_posix(): digest(path.read_bytes())
+                                        for path in pack_files}}
     return result
 
 

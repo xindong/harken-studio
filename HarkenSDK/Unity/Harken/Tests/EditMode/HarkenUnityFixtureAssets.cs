@@ -16,72 +16,61 @@ namespace Harken.Unity.Tests
             if (EditorApplication.isPlayingOrWillChangePlaymode)
                 throw new InvalidOperationException("Prepare fixture assets outside Play Mode.");
             HarkenProjectSettings settings = Editor.HarkenProjectSettingsProvider.GetOrCreateSettings();
-            // Player startup enforces the configured export selection. Include the
-            // installed fixture publications just as a game build selects its exports.
             string audioRoot = Path.Combine(Application.streamingAssetsPath, "Audio");
-            settings.SetPlayerExports(Directory.GetFiles(audioRoot, PackManifest.ManifestFileName,
-                SearchOption.AllDirectories).Select(path => Path.GetFileName(Path.GetDirectoryName(path)))
+            settings.SetPlayerExports(Directory.GetFiles(audioRoot, "Init.json", SearchOption.AllDirectories)
+                .Select(path => Path.GetFileName(Path.GetDirectoryName(path)))
                 .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(name => name, StringComparer.Ordinal).ToArray());
             EditorUtility.SetDirty(settings);
-            string publicationRoot = Path.Combine(Application.streamingAssetsPath, "Audio/U4Original");
-            PrepareSource(publicationRoot, "Source");
-            string sampleRoot = Path.Combine(Application.streamingAssetsPath, "Audio/U4Sample/Windows");
-            PrepareSource(sampleRoot, "VariableSource");
-            // Retained fixture catalogs are test inputs; they must not reopen suspended production symbol tooling.
-            string manifestPath = Path.Combine(sampleRoot, PackManifest.ManifestFileName);
-            string outputPath = Editor.HarkenVariableCatalogGenerator.ResolveOutputPath();
-            VnResult result = VariableCatalogEmitter.WriteCSharpFromJson(File.ReadAllText(manifestPath),
-                manifestPath, outputPath, out string error);
-            if (result != VnResult.VN_OK) throw new InvalidDataException(error);
-            AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+            PrepareSource(Path.Combine(audioRoot, "U4Original"), "Source");
+            PrepareVariableSource();
+            AssetDatabase.SaveAssets();
         }
 
         public static void PrepareVariableSource()
         {
-            PrepareSource(Path.Combine(Application.streamingAssetsPath, "Audio/U4Sample/Windows"), "VariableSource");
+            PrepareSource(Path.Combine(Application.streamingAssetsPath, "Audio/VariableNames"), "VariableSource");
         }
 
         private static void PrepareSource(string publicationRoot, string name)
         {
-            VnResult result = GameplayPublication.Read(publicationRoot, null, out GameplayPublication publication, out string error);
-            if (result != VnResult.VN_OK) throw new InvalidDataException(error);
-            EnsureFolder(Root + "/PackBytes");
-            EnsureFolder(Root + "/Resources/HarkenSdkFixture");
-            string sourcePath = Root + "/Resources/HarkenSdkFixture/" + name + ".asset";
+            string resourceRoot = Root + "/Resources/HarkenSdkFixture";
+            EnsureFolder(Root + "/PackBytes/" + name);
+            EnsureFolder(resourceRoot);
+            string sourcePath = resourceRoot + "/" + name + ".asset";
             HarkenPackSource source = AssetDatabase.LoadAssetAtPath<HarkenPackSource>(sourcePath);
             if (source == null)
             {
                 source = ScriptableObject.CreateInstance<HarkenPackSource>();
                 AssetDatabase.CreateAsset(source, sourcePath);
             }
+            TextAsset initJson = Import(Path.Combine(publicationRoot, "Init.json"), resourceRoot + "/" + name + "Init.json");
             var serialized = new SerializedObject(source);
-            serialized.FindProperty("inventory").objectReferenceValue = Import(
-                Path.Combine(publicationRoot, PackManifest.ManifestFileName), name + "Inventory.json");
-            serialized.FindProperty("selectedManifest").objectReferenceValue = null;
-            serialized.FindProperty("language").stringValue = publication.Language;
+            serialized.FindProperty("language").stringValue = string.Empty;
             serialized.FindProperty("initPack").objectReferenceValue = Import(
-                Path.Combine(publicationRoot, publication.InitPack.Path), name + "Init.bytes");
-            PackManifestEntry[] content = publication.Packs.Where(row => row.PackStableId != publication.InitPackStableId).ToArray();
+                Path.Combine(publicationRoot, "Init.bytes"), Root + "/PackBytes/" + name + "/Init.bytes");
+            string[] content = Directory.GetFiles(publicationRoot, "*", SearchOption.AllDirectories)
+                .Where(path => (path.EndsWith(".bytes", StringComparison.Ordinal) || path.EndsWith(".json", StringComparison.Ordinal)) &&
+                    Path.GetFileName(path) != "Init.bytes" && Path.GetFileName(path) != "Init.json")
+                .OrderBy(path => path, StringComparer.Ordinal).ToArray();
             SerializedProperty rows = serialized.FindProperty("content");
             rows.arraySize = content.Length;
             for (int i = 0; i < content.Length; ++i)
             {
+                string relative = Path.GetRelativePath(publicationRoot, content[i]).Replace('\\', '/');
                 SerializedProperty row = rows.GetArrayElementAtIndex(i);
-                row.FindPropertyRelative("relativePath").stringValue = content[i].Path;
-                row.FindPropertyRelative("asset").objectReferenceValue = Import(
-                    Path.Combine(publicationRoot, content[i].Path), content[i].PackStableId + ".bytes");
+                row.FindPropertyRelative("relativePath").stringValue = relative;
+                row.FindPropertyRelative("asset").objectReferenceValue = Import(content[i], Root + "/PackBytes/" + name + "/" + relative);
             }
             serialized.ApplyModifiedPropertiesWithoutUndo();
-            result = source.Capture(out _, out error);
+            VnResult result = source.CaptureCompanion(initJson, out _, out string error);
             if (result != VnResult.VN_OK) throw new InvalidDataException(error);
             EditorUtility.SetDirty(source);
             AssetDatabase.SaveAssets();
-            Debug.Log("Harken SDK Player fixture prepared: " + sourcePath);
         }
 
-        private static TextAsset Import(string source, string name)
+        private static TextAsset Import(string source, string destination)
         {
-            string destination = Root + "/PackBytes/" + name;
+            EnsureFolder(Path.GetDirectoryName(destination).Replace('\\', '/'));
             File.Copy(source, destination, true);
             AssetDatabase.ImportAsset(destination, ImportAssetOptions.ForceSynchronousImport);
             TextAsset asset = AssetDatabase.LoadAssetAtPath<TextAsset>(destination);
@@ -90,12 +79,12 @@ namespace Harken.Unity.Tests
             return asset;
         }
 
-        private static void EnsureFolder(string folder)
+        private static void EnsureFolder(string path)
         {
-            if (AssetDatabase.IsValidFolder(folder)) return;
-            string parent = Path.GetDirectoryName(folder).Replace('\\', '/');
+            if (AssetDatabase.IsValidFolder(path)) return;
+            string parent = Path.GetDirectoryName(path).Replace('\\', '/');
             EnsureFolder(parent);
-            AssetDatabase.CreateFolder(parent, Path.GetFileName(folder));
+            AssetDatabase.CreateFolder(parent, Path.GetFileName(path));
         }
     }
 }

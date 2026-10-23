@@ -325,17 +325,10 @@ def emit_cs(variables: list[dict], execution_catalog: int, sdk_catalog: int,
     return "\n".join(lines)
 
 
-def load_publication_variables(path: str) -> list[dict]:
-    with open(path, "r", encoding="utf-8") as handle:
-        payload = json.load(handle)
-    catalog = payload.get("variableCatalog", payload)
-    if not isinstance(catalog, dict):
-        raise SystemExit("%s does not contain a variableCatalog object" % path)
-    return load_variables_from_artifact(catalog)
-
-
 def load_variables_from_artifact(artifact: dict) -> list[dict]:
-    variables = list(artifact.get("variables") or [])
+    if not isinstance(artifact, dict) or not isinstance(artifact.get("variables"), list):
+        raise SystemExit("VariableContractArtifactV1 requires a variables array")
+    variables = list(artifact["variables"])
     variables.sort(key=lambda row: uuid.UUID(row["variableId"]).int)
     seen_ids = set()
     seen_names = set()
@@ -375,28 +368,6 @@ def load_variables_from_artifact(artifact: dict) -> list[dict]:
     return variables
 
 
-def load_actions(path: str) -> list[dict]:
-    if not path:
-        return []
-    with open(path, "r", encoding="utf-8") as handle:
-        payload = json.load(handle)
-    catalog = payload.get("gameplayCatalog")
-    if not isinstance(catalog, dict) or not isinstance(catalog.get("actions"), list):
-        raise SystemExit("publication requires gameplayCatalog.actions")
-    actions = catalog["actions"]
-    ids, names = set(), set()
-    for action in actions:
-        name = action.get("name", "")
-        identity = uuid.UUID(action["actionStableId"])
-        if not CODE_NAME_RE.fullmatch(name) or len(name) > 128:
-            raise SystemExit("invalid Action name %r" % name)
-        if identity.int == 0 or identity in ids or name in names:
-            raise SystemExit("duplicate or null Action identity/name %r" % name)
-        ids.add(identity)
-        names.add(name)
-    return sorted(actions, key=lambda row: row["name"])
-
-
 def emit_actions(actions: list[dict], language: str) -> str:
     if language == "cs":
         lines = ["namespace Harken.Generated", "{", "    public static class HarkenActions", "    {"]
@@ -434,7 +405,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--publication",
-        help="HarkenPackManifest.json; uses its variableCatalog, including an empty table",
+        help="retired legacy manifest input; companion symbol generation is unavailable",
     )
     parser.add_argument(
         "--csharp",
@@ -448,22 +419,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args(sys.argv[1:])
-    if args.publication and args.json:
-        raise SystemExit("use either --publication or --json, not both")
     if args.publication:
-        source = args.publication
-        variables = load_publication_variables(source)
-    else:
-        source = args.json or JSON_PATH
-        variables = load_variables(source)
+        raise SystemExit("Legacy manifest symbol generation is retired. Re-export with the current Studio. "
+                         "Companion symbol generation is unavailable.")
+    source = args.json or JSON_PATH
+    variables = load_variables(source)
     execution_catalog, sdk_catalog = catalog_hashes(variables)
     try:
         relative_source = os.path.relpath(source, REPO_ROOT) if os.path.isabs(source) else source
     except ValueError:
         relative_source = source
     selected = any((args.csharp, args.action_csharp, args.native, args.action_native))
-    actions = load_actions(args.publication) if not selected or any((
-        args.action_csharp, args.action_native)) else []
+    actions = []
     candidates = [
         (args.native, OUT_PATH, emit(variables, execution_catalog, sdk_catalog)),
         (args.csharp, CS_OUT_PATH, emit_cs(variables, execution_catalog, sdk_catalog, relative_source)),

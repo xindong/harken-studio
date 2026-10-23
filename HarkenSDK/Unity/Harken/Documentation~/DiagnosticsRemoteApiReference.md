@@ -79,7 +79,7 @@ ownership stays with that component.
 ## DirectWorld host/debug utility
 
 `CurrentWorld.Load(string path, out CurrentWorldLoadReport report)` loads a
-Studio/debug DirectWorld envelope. Games load published `.pack` content through
+Studio/debug DirectWorld envelope. Games load current Pack companions through
 the Pack APIs. The report exposes `Status`, `Result`, prior/result generation,
 runtime semantic fingerprint, capability mask, body byte count, and checksum.
 Check the return result and report before treating the new world as active.
@@ -99,7 +99,7 @@ The complete enum and numeric values are generated in
 | `VN_IN_USE` (`-302`) | Conflicting ownership or concurrent mutation; inspect the resource scope. |
 | `VN_UNKNOWN_ID` (`-200`) / `VN_STALE_HANDLE` (`-201`) | Unknown authored identity versus an expired generational handle. |
 | `VN_CONTENT_NOT_LOADED` (`-220`) | Required Pack content is absent or not prepared. |
-| `VN_PACK_HASH_MISMATCH` (`-412`) / `VN_PACK_STALE_REVISION` (`-222`) | Supplied bytes or publication revision do not match the selected manifest. |
+| `VN_PACK_HASH_MISMATCH` (`-412`) / `VN_PACK_STALE_REVISION` (`-222`) | Supplied bytes or the captured publication revision are inconsistent. |
 | `VN_GAMEPLAY_WRONG_PROJECT` / `VN_GAMEPLAY_NAME_RETIRED` | Wrong-project binding, or a retired Action name. Variable lookup has no retired-name tracking: a missing/renamed Variable name returns `VN_NO_VARIABLE`. |
 | `VN_DEVICE_ERROR` (`-400`) | Device/backend failure; inspect logs and platform state. |
 

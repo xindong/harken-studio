@@ -106,7 +106,8 @@ game-code APIs.
 
 The component serializes a Runtime, optional `HarkenEmitter`, typed Variable,
 authored `variableName`, `projectId`, numeric `value`, and `setOnEnable`.
-Inspector publication binding supplies the exact name/project pair. When
+Enter the exact authored name and project GUID manually while automatic
+publication binding is unavailable. When
 `setOnEnable` is true, the component attempts to apply after the Runtime
 becomes ready. It retries only `VN_NOT_INITIALIZED` for at most 120 frames;
 other failures stop that automatic attempt. Invoke `Apply()` explicitly after
@@ -142,9 +143,8 @@ runtime registration operation.
 
 ## Generated symbols and catalog pairing
 
-Use **Harken > Generate SDK Symbols From Publication** with the exported
-`HarkenPackManifest.json` to regenerate `HarkenActions.g.cs` and
-`HarkenVariables.g.cs` as one publication pair. The generated
+Editor symbol generation is suspended, and the **Generate SDK Symbols From
+Publication** menu is hidden. Existing generated
 `Harken.Generated.HarkenVariables` fields are raw `VnObjectId` GUIDs, not typed
 Variable references. `Values.SetValue(HarkenVariables.Speed, ...)` therefore
 uses the raw GUID overload. To request the typed catalog check, construct a
@@ -156,22 +156,19 @@ HarkenVariableId speed = HarkenVariableId.FromGenerated(
 VnResult result = Values.SetValue(speed, 0.5f, emitter);
 ```
 
-Regenerate after an export changes the published catalog. The SDK's internal
-guard blocks a typed write with
+Generated typed references require a catalog matching the loaded content.
+The SDK's internal guard blocks a typed write with
 `VN_VARIABLE_CATALOG_MISMATCH` when the execution fingerprint differs. A
 display-only catalog fingerprint difference warns and records a mismatch but
 allows the write. Raw ID and current-name calls use the loaded publication.
 The guard and its test hooks are internal.
 
-The public `HarkenVariableCatalogGenerator.GeneratePublication(...)` and
-`Generate(...)` Editor methods write generated C# from a publication JSON
-path. `ValidatePublication(string json, string sourceLabel, out string error)`
-validates only the Variable catalog in JSON content; it does not verify Action
-data, Pack bytes or manifest/Init pairing. The emitter implementation classes
-are internal. Keep generated
-files paired with the Pack export; editing their contents by hand loses that
-pairing. See [Editor APIs](EditorApiReference.md) for signatures and output
-ownership.
+The public `HarkenVariableCatalogGenerator.GeneratePublication(...)`,
+`Generate(...)`, and `ValidatePublication(...)` Editor methods return
+`VN_CAPABILITY_UNAVAILABLE`. They do not read, validate, or write a legacy
+publication. The internal catalog emitters accept standalone catalogs only.
+Use current name-based calls while Editor generation remains suspended; see
+[Editor APIs](EditorApiReference.md).
 
 ## Failure results to preserve
 
@@ -180,5 +177,5 @@ ownership.
 | `VN_INVALID_ARG` | Invalid numeric value/range, empty/malformed name or project, wrong game thread, unassigned typed Variable, or explicit invalid emitter. |
 | `VN_UNKNOWN_ID`, `VN_NO_VARIABLE`, `VN_NO_VARIABLE_LABEL` | Current name/ID or Label is unavailable in the loaded publication. |
 | `VN_GAMEPLAY_WRONG_PROJECT` | Project binding does not match the loaded publication. A missing or renamed Variable string returns `VN_NO_VARIABLE`; Variable name lookup does not use Action retired-name tracking. |
-| `VN_VARIABLE_CATALOG_MISMATCH` | Generated typed execution catalog differs from the live one; regenerate from the paired export. |
+| `VN_VARIABLE_CATALOG_MISMATCH` | Generated typed execution catalog differs from the live one. Use current name-based calls while generation is suspended. |
 | `VN_VARIABLE_EMITTER_SLOT_EXHAUSTED`, `VN_BACKPRESSURE` | Different resource/admission refusals; preserve the exact result for diagnosis. |

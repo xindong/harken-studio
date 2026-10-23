@@ -2,7 +2,6 @@ using System;
 using System.Collections;
 using System.IO;
 using System.Reflection;
-using System.Text.RegularExpressions;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
@@ -19,14 +18,13 @@ namespace Harken.Unity.Tests
 #endif
 
         [UnityTest]
-        public IEnumerator DestroyedDependencyRequestIsEventuallyReleased()
+        public IEnumerator DestroyedComponentReleasesOnlyItsSharedRequest()
         {
             using (var fixture = new Fixture())
             {
                 fixture.Start();
-                ExpectRefusal();
                 Object.DestroyImmediate(fixture.Source);
-                Assert.That(PendingCleanup(fixture.Runtime), Is.EqualTo(1));
+                Assert.That(PendingCleanup(fixture.Runtime), Is.Zero);
                 for (int i = 0; i < 3; ++i) yield return null;
                 fixture.AssertDependency(VnResult.VN_OK);
                 fixture.ReleaseCaller();
@@ -38,18 +36,18 @@ namespace Harken.Unity.Tests
         }
 
         [UnityTest]
-        public IEnumerator ExplicitUnloadRefusalRetainsTheComponentRequestForManualRetry()
+        public IEnumerator ExplicitUnloadReleasesOnlyTheComponentRequest()
         {
             using (var fixture = new Fixture())
             {
                 fixture.Start();
-                ExpectRefusal();
-                Assert.That(fixture.Pack.Unload(), Is.EqualTo(VnResult.VN_IN_USE));
-                Assert.That(fixture.Pack.IsLoaded, Is.True);
+                Assert.That(fixture.Pack.Unload(), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(fixture.Pack.IsLoaded, Is.False);
+                fixture.AssertDependency(VnResult.VN_OK);
                 Assert.That(PendingCleanup(fixture.Runtime), Is.Zero);
                 fixture.ReleaseCaller();
                 for (int i = 0; i < 3; ++i) yield return null;
-                fixture.AssertDependency(VnResult.VN_OK);
+                fixture.AssertDependency(VnResult.VN_CONTENT_NOT_LOADED);
                 Assert.That(fixture.Pack.Unload(), Is.EqualTo(VnResult.VN_OK));
                 fixture.AssertDependency(VnResult.VN_CONTENT_NOT_LOADED);
             }
@@ -57,7 +55,7 @@ namespace Harken.Unity.Tests
         }
 
         [UnityTest]
-        public IEnumerator RefusalListenerCanReenableWithoutLosingTheNewSharedRequest()
+        public IEnumerator UnloadListenerCanReenableWithoutLosingTheNewSharedRequest()
         {
             using (var fixture = new Fixture())
             {
@@ -65,14 +63,16 @@ namespace Harken.Unity.Tests
                 bool reenabled = false;
                 fixture.Runtime.OperationCompleted += (owner, operation, result) =>
                 {
-                    if (reenabled || !IsRefusal(operation, result)) return;
+                    if (reenabled || !IsUnload(operation, result)) return;
                     reenabled = true;
                     Assert.That(fixture.Pack.IsLoaded, Is.False);
-                    Assert.That(PendingCleanup(owner), Is.EqualTo(1));
+                    Assert.That(PendingCleanup(owner), Is.Zero);
+                    Assert.That(owner.Session.PrepareActions(new[] { "Play_U4_B" }, owner.Session.ProjectId,
+                        out ActionPreparation ready), Is.EqualTo(VnResult.VN_OK));
                     fixture.Pack.enabled = true;
                     Assert.That(fixture.Pack.Load(), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(ready.Release(), Is.EqualTo(VnResult.VN_OK));
                 };
-                ExpectRefusal();
                 fixture.Pack.enabled = false;
                 Assert.That(reenabled, Is.True);
                 Assert.That(Get<HarkenAudioSystem>(fixture.Pack, "boundRuntime"), Is.SameAs(fixture.Runtime));
@@ -88,7 +88,7 @@ namespace Harken.Unity.Tests
         }
 
         [UnityTest]
-        public IEnumerator RefusalListenerCanRestartWithoutTransferringOldOwnershipToTheNewSession()
+        public IEnumerator UnloadListenerCanRestartWithoutTransferringOldOwnershipToTheNewSession()
         {
             using (var fixture = new Fixture())
             {
@@ -97,16 +97,18 @@ namespace Harken.Unity.Tests
                 bool restarted = false;
                 fixture.Runtime.OperationCompleted += (owner, operation, result) =>
                 {
-                    if (restarted || !IsRefusal(operation, result)) return;
+                    if (restarted || !IsUnload(operation, result)) return;
                     restarted = true;
-                    Assert.That(PendingCleanup(owner), Is.EqualTo(1));
+                    Assert.That(PendingCleanup(owner), Is.Zero);
                     Assert.That(owner.ShutdownRuntime(), Is.EqualTo(VnResult.VN_OK));
                     Assert.That(PendingCleanup(owner), Is.Zero);
                     Assert.That(owner.StartRuntime(fixture.Root), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(owner.Session.PrepareActions(new[] { "Play_U4_B" }, owner.Session.ProjectId,
+                        out ActionPreparation ready), Is.EqualTo(VnResult.VN_OK));
                     fixture.Pack.enabled = true;
                     Assert.That(fixture.Pack.Load(), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(ready.Release(), Is.EqualTo(VnResult.VN_OK));
                 };
-                ExpectRefusal();
                 fixture.Pack.enabled = false;
                 Assert.That(restarted, Is.True);
                 Assert.That(previous.IsActive, Is.False);
@@ -122,48 +124,14 @@ namespace Harken.Unity.Tests
         }
 
         [UnityTest]
-        public IEnumerator CleanupListenerCanRestartAfterRetiringTheOldRequest()
-        {
-            using (var fixture = new Fixture())
-            {
-                fixture.Start();
-                PackBootstrapSession previous = fixture.Runtime.Session;
-                ExpectRefusal();
-                Object.DestroyImmediate(fixture.Source);
-                fixture.ReleaseCaller();
-                bool restarted = false;
-                Pack current = default;
-                fixture.Runtime.OperationCompleted += (owner, operation, result) =>
-                {
-                    if (restarted || operation != "Packs.UnloadPack(cleanup)") return;
-                    restarted = true;
-                    Assert.That(result, Is.EqualTo(VnResult.VN_OK));
-                    Assert.That(PendingCleanup(owner), Is.Zero);
-                    Assert.That(owner.ShutdownRuntime(), Is.EqualTo(VnResult.VN_OK));
-                    Assert.That(owner.StartRuntime(fixture.Root), Is.EqualTo(VnResult.VN_OK));
-                    Assert.That(owner.Session.AcquirePack(fixture.DependencyId, out current), Is.EqualTo(VnResult.VN_OK));
-                };
-                for (int i = 0; i < 3; ++i) yield return null;
-                Assert.That(restarted, Is.True);
-                Assert.That(previous.IsActive, Is.False);
-                Assert.That(PendingCleanup(fixture.Runtime), Is.Zero);
-                fixture.AssertDependency(VnResult.VN_OK);
-                Assert.That(fixture.Runtime.Session.ReleasePack(fixture.DependencyId, current), Is.EqualTo(VnResult.VN_OK));
-                fixture.AssertDependency(VnResult.VN_CONTENT_NOT_LOADED);
-            }
-            yield return null;
-        }
-
-        [UnityTest]
         public IEnumerator EditedRuntimeReferenceCannotAbandonTheActualLoadOwner()
         {
             using (var fixture = new Fixture())
             {
                 fixture.Start();
                 Set(fixture.Pack, "runtime", null);
-                ExpectRefusal();
                 Object.DestroyImmediate(fixture.Source);
-                Assert.That(PendingCleanup(fixture.Runtime), Is.EqualTo(1));
+                Assert.That(PendingCleanup(fixture.Runtime), Is.Zero);
                 fixture.ReleaseCaller();
                 for (int i = 0; i < 3; ++i) yield return null;
                 Assert.That(PendingCleanup(fixture.Runtime), Is.Zero);
@@ -180,7 +148,7 @@ namespace Harken.Unity.Tests
             public readonly HarkenPack Pack;
             public readonly string Root = Path.Combine(Application.streamingAssetsPath, "Audio/U4Original");
             public ulong DependencyId { get; private set; }
-            private GameplayPublication publication;
+            private CompanionTestPublication publication;
             private ulong callerId;
             private Pack caller;
             private ulong probeSeed;
@@ -197,12 +165,11 @@ namespace Harken.Unity.Tests
 
             public void Start()
             {
-                Assert.That(GameplayPublication.Read(Root, null, out publication, out string error),
+                Assert.That(CompanionTestPublication.Read(Root, null, out publication, out string error),
                     Is.EqualTo(VnResult.VN_OK), error);
-                Assert.That(publication.TryFindAction("Play_U4_B", out GameplayAction dependency), Is.True);
-                Assert.That(publication.TryFindAction("Play_U4_Caller", out GameplayAction consumer), Is.True);
+                Assert.That(publication.TryFindAction("Play_U4_B", out CompanionTestAction dependency), Is.True);
                 DependencyId = dependency.OwnerPackStableId;
-                callerId = consumer.OwnerPackStableId;
+                callerId = dependency.OwnerPackStableId;
                 Set(Pack, "runtime", Runtime);
                 Set(Pack, "packStableId", DependencyId);
                 Set(Pack, "loadOnReady", false);
@@ -211,8 +178,11 @@ namespace Harken.Unity.Tests
                     Is.EqualTo(VnResult.VN_OK));
                 Owner.SetActive(true);
                 Source.SetActive(true);
+                Assert.That(Runtime.Session.PrepareActions(new[] { dependency.Name }, publication.ProjectId,
+                    out ActionPreparation ready), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(Pack.Load(), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(Runtime.Session.AcquirePack(callerId, out caller), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(ready.Release(), Is.EqualTo(VnResult.VN_OK));
             }
 
             public void ReleaseCaller()
@@ -227,12 +197,16 @@ namespace Harken.Unity.Tests
             public void AssertDependency(VnResult expected)
             {
                 Assert.That(HarkenEngine.Update(), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(Actions.Resolve("Play_U4_B", publication.ProjectId, out ActionResolved resolved),
-                    Is.EqualTo(VnResult.VN_OK), "The catalog entry remains published after content unload.");
+                VnResult result = Actions.Resolve("Play_U4_B", publication.ProjectId, out ActionResolved resolved);
+                if (expected != VnResult.VN_OK)
+                {
+                    Assert.That(result, Is.Not.EqualTo(VnResult.VN_OK));
+                    return;
+                }
+                Assert.That(result, Is.EqualTo(VnResult.VN_OK));
                 Assert.That(Actions.Post(in resolved, Emitter.None, probeSeed++, out ActionFiring firing),
-                    Is.EqualTo(expected), "Checked admission must reflect the outstanding Pack requests.");
-                Assert.That(firing.IsValid, Is.EqualTo(expected == VnResult.VN_OK));
-                // Successful probes retain their firing slots until this fixture terminates the session.
+                    Is.EqualTo(VnResult.VN_OK));
+                Assert.That(firing.IsValid, Is.True);
             }
 
             public void Dispose()
@@ -244,11 +218,8 @@ namespace Harken.Unity.Tests
             }
         }
 
-        private static bool IsRefusal(string operation, VnResult result)
-            => operation.StartsWith("Packs.UnloadPack(", StringComparison.Ordinal) && result == VnResult.VN_IN_USE;
-
-        private static void ExpectRefusal()
-            => LogAssert.Expect(LogType.Error, new Regex("Harken operation failed: Packs.UnloadPack.*VN_IN_USE"));
+        private static bool IsUnload(string operation, VnResult result)
+            => operation.StartsWith("Packs.UnloadPack(", StringComparison.Ordinal) && result == VnResult.VN_OK;
 
         private static int PendingCleanup(HarkenAudioSystem runtime) => Get<ICollection>(runtime, "packCleanup").Count;
 

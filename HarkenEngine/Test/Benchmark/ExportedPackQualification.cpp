@@ -2,6 +2,7 @@
 #include <harken_buildinfo.h>
 
 #include "Engine.h"
+#include "PackCompanion.h"
 #include "harken/core/AllocGuard.h"
 #include "harken/core/EngineConfig.h"
 #include "harken/media/PackFormat.h"
@@ -32,7 +33,6 @@ using Clock = std::chrono::steady_clock;
 
 constexpr std::uint32_t kSampleRate = 48000;
 constexpr std::uint32_t kBlockFrames = 256;
-constexpr char kManifestName[] = "HarkenPackManifest.json";
 
 struct ProcessMemory {
     std::uint64_t privateBytes = 0;
@@ -104,102 +104,48 @@ std::filesystem::path ExecutablePath() {
 #endif
 }
 
-std::string JsonStringField(const std::string& object, const char* key) {
-    const std::string needle = std::string("\"") + key + "\":";
-    const auto at = object.find(needle);
-    if (at == std::string::npos) {
-        return {};
-    }
-    auto cursor = at + needle.size();
-    while (cursor < object.size() &&
-           (object[cursor] == ' ' || object[cursor] == '\t')) {
-        ++cursor;
-    }
-    if (cursor >= object.size() || object[cursor] != '"') {
-        return {};
-    }
-    ++cursor;
-    std::string value;
-    while (cursor < object.size() && object[cursor] != '"') {
-        if (object[cursor] == '\\' && cursor + 1 < object.size()) {
-            ++cursor;
-        }
-        value.push_back(object[cursor++]);
-    }
-    return value;
-}
-
-std::uint64_t ParseStableId(const std::string& text) {
-    char* end = nullptr;
-    const unsigned long long value = std::strtoull(text.c_str(), &end, 10);
-    if (end == text.c_str() || *end != '\0') {
-        return 0;
-    }
-    return static_cast<std::uint64_t>(value);
-}
-
-struct ManifestPack {
-    std::string name;
+struct ExportedPack {
     std::string path;
     std::uint64_t packStableId = 0;
 };
 
-std::vector<ManifestPack> ParseManifestPacks(const std::string& json) {
-    std::vector<ManifestPack> packs;
-    const auto packsAt = json.find("\"packs\"");
-    if (packsAt == std::string::npos) {
-        return packs;
+VnResult CaptureExportedPacks(const std::filesystem::path& root,
+                              const std::string& actionName,
+                              const std::string& language,
+                              ExportedPack* init, ExportedPack* content,
+                              VnObjectId* actionId) {
+    harkenhost::PackCompanion initInput, contentInput;
+    harkenhost::PackCompanionDiagnostic diagnostic;
+    VnResult result = harkenhost::CapturePackCompanion(root, {}, {}, nullptr,
+                                                      &initInput, &diagnostic);
+    if (result == VN_OK) {
+        result = harkenhost::CapturePackCompanion(root, actionName, language,
+                                                 &initInput, &contentInput, &diagnostic);
     }
-    auto cursor = json.find('[', packsAt);
-    if (cursor == std::string::npos) {
-        return packs;
+    if (result != VN_OK) {
+        std::fprintf(stderr, "%s companion %s failed at %s (%d). Re-export with the current Studio.\n",
+                     diagnostic.kind, diagnostic.jsonPath.generic_string().c_str(),
+                     diagnostic.stage, result);
+        return result;
     }
-    ++cursor;
-    while (cursor < json.size()) {
-        const auto objectStart = json.find('{', cursor);
-        if (objectStart == std::string::npos) {
-            break;
-        }
-        const auto objectEnd = json.find('}', objectStart);
-        if (objectEnd == std::string::npos) {
-            break;
-        }
-        const std::string object =
-            json.substr(objectStart, objectEnd - objectStart + 1);
-        ManifestPack pack;
-        pack.name = JsonStringField(object, "name");
-        pack.path = JsonStringField(object, "path");
-        pack.packStableId = ParseStableId(JsonStringField(object, "packStableId"));
-        if (!pack.name.empty() && !pack.path.empty() && pack.packStableId != 0) {
-            packs.push_back(pack);
-        }
-        cursor = objectEnd + 1;
-        if (json.find('{', cursor) == std::string::npos) {
-            break;
-        }
-    }
-    return packs;
-}
-
-const ManifestPack* FindPack(const std::vector<ManifestPack>& packs,
-                             const std::string& name) {
-    for (const auto& pack : packs) {
-        if (pack.name == name) {
-            return &pack;
-        }
-    }
-    return nullptr;
+    init->path = "Init.bytes";
+    init->packStableId = initInput.facts.packStableId;
+    content->path = (std::filesystem::path(contentInput.language) /
+                      (actionName + ".bytes")).generic_string();
+    content->packStableId = contentInput.facts.packStableId;
+    *actionId = contentInput.facts.rootActionId;
+    return VN_OK;
 }
 
 std::filesystem::path PackFilePath(const std::filesystem::path& root,
-                                   const ManifestPack& pack) {
+                                   const ExportedPack& pack) {
     return root / std::filesystem::path(pack.path);
 }
 
 VnResult ActivateExportedSet(const std::string& initPath,
                             std::uint64_t initStableId,
                             const std::string& root,
-                            const ManifestPack* content,
+                            const ExportedPack* content,
                             VnCanonicalPackSetMemberResultV1 (&rows)[2],
                             VnCanonicalPackSetActivationReportV1& report,
                             VnPackHandle previous = 0,
@@ -422,8 +368,8 @@ struct ExportedPackLoad {
 };
 
 ExportedPackLoad LoadExportedPack(const std::string& initPath, const std::string& root,
-                                  const ManifestPack& init,
-                                  const ManifestPack& content) {
+                                  const ExportedPack& init,
+                                  const ExportedPack& content) {
     ExportedPackLoad loaded;
     VnCanonicalPackSetMemberResultV1 rows[2]{};
     VnCanonicalPackSetActivationReportV1 activation{};
@@ -483,7 +429,7 @@ LeaseWindow MeasureLeaseWindow(harken::Engine* engine, VnObjectId actionId,
 }
 
 VnResult ObserveMinusOne(const std::string& initPath, const std::string& root,
-                         const ManifestPack& init, const ManifestPack& content,
+                         const ExportedPack& init, const ExportedPack& content,
                          VnObjectId actionId, const LeaseWindow& window) {
     EngineGuard guard;
     if (InitQualification(&guard) != VN_OK) {
@@ -519,8 +465,8 @@ VnResult ObserveMinusOne(const std::string& initPath, const std::string& root,
 }
 
 bool ObserveExactAndPlusOne(const std::string& initPath, const std::string& root,
-                            const ManifestPack& init,
-                            const ManifestPack& content, VnObjectId actionId,
+                            const ExportedPack& init,
+                            const ExportedPack& content, VnObjectId actionId,
                             const LeaseWindow& window, VnResult* exactResult,
                             VnResult* plusOneResult) {
     if (exactResult == nullptr || plusOneResult == nullptr) {
@@ -574,38 +520,37 @@ int main(int argc, char* argv[]) {
     std::filesystem::path exportedPackRoot;
     std::filesystem::path nextRoot;
     VnObjectId actionId{};
-    std::string contentName = "ExportedPackVerticalContainer";
+    std::string actionName;
+    std::string language;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--exported-pack-root" && i + 1 < argc) {
             exportedPackRoot = argv[++i];
         } else if (arg == "--next-root" && i + 1 < argc) {
             nextRoot = argv[++i];
-        } else if (arg == "--action" && i + 1 < argc) {
-            if (!harken::ParseObjectId(argv[++i], &actionId)) {
-                return 2;
-            }
-        } else if (arg == "--content" && i + 1 < argc) {
-            contentName = argv[++i];
+        } else if (arg == "--action-name" && i + 1 < argc) {
+            actionName = argv[++i];
+        } else if (arg == "--language" && i + 1 < argc) {
+            language = argv[++i];
         } else {
-            std::fprintf(stderr, "Unknown or incomplete argument\n");
+            std::fprintf(stderr, "Unknown or incomplete argument. Use --exported-pack-root <platform-dir> --action-name NAME [--language NAME] [--next-root <platform-dir>].\n");
             return 2;
         }
     }
-    if (exportedPackRoot.empty() || actionId == VnObjectId{}) {
-        std::fprintf(stderr, "--exported-pack-root and --action are required\n");
+    if (exportedPackRoot.empty() || !harkenhost::PackCompanionName(actionName) ||
+        actionName == "Init" || !harkenhost::PackCompanionLanguage(language)) {
+        std::fprintf(stderr, "--exported-pack-root <platform-dir> and --action-name NAME are required\n");
         return 2;
     }
 
+    exportedPackRoot = std::filesystem::absolute(exportedPackRoot).lexically_normal();
+    if (!nextRoot.empty()) nextRoot = std::filesystem::absolute(nextRoot).lexically_normal();
     const std::string root = exportedPackRoot.generic_string();
-    const std::string manifest = ReadText(exportedPackRoot / kManifestName);
-    const auto packs = ParseManifestPacks(manifest);
-    const ManifestPack* init = FindPack(packs, "Init");
-    const ManifestPack* content = FindPack(packs, contentName);
-    if (init == nullptr || content == nullptr) {
-        std::fprintf(stderr, "exported pack manifest missing Init or content pack\n");
-        return 1;
-    }
+    ExportedPack initPack, contentPack;
+    if (CaptureExportedPacks(exportedPackRoot, actionName, language,
+                             &initPack, &contentPack, &actionId) != VN_OK) return 1;
+    const ExportedPack* init = &initPack;
+    const ExportedPack* content = &contentPack;
     const std::filesystem::path initFile = PackFilePath(exportedPackRoot, *init);
     const std::string initPath = initFile.generic_string();
     const std::filesystem::path contentPath = PackFilePath(exportedPackRoot, *content);
@@ -718,17 +663,19 @@ int main(int argc, char* argv[]) {
     if (!nextRoot.empty()) {
         replaceResult = VN_BAD_PACK;
         const std::string nextRootText = nextRoot.generic_string();
-        const auto nextManifest =
-            ParseManifestPacks(ReadText(nextRoot / kManifestName));
-        const ManifestPack* nextContent = FindPack(nextManifest, contentName);
-        if (nextContent == nullptr) {
-            std::fprintf(stderr, "successor manifest missing content pack\n");
-        } else {
-            const std::string nextPath = PackFilePath(nextRoot, *nextContent).generic_string();
+        ExportedPack nextInit, nextContent;
+        VnObjectId nextActionId{};
+        replaceResult = CaptureExportedPacks(nextRoot, actionName, language,
+                                             &nextInit, &nextContent, &nextActionId);
+        if (replaceResult == VN_OK && nextActionId != actionId) {
+            std::fprintf(stderr, "successor companion changed the Action identity\n");
+            replaceResult = VN_BAD_PACK;
+        }
+        if (replaceResult == VN_OK) {
+            const std::string nextPath = PackFilePath(nextRoot, nextContent).generic_string();
             replaceUs = MeasureUs([&] {
                 replaceResult = ReplaceCatalogRoot(
-                    contentHandle, nextContent->packStableId, nextRootText,
-                    nextPath);
+                    contentHandle, nextContent.packStableId, nextRootText, nextPath);
             });
         }
     }

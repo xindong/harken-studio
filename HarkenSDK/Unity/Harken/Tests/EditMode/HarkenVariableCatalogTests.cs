@@ -53,21 +53,22 @@ namespace Harken.Unity.Tests
             else Assert.That(resolved, Is.False);
         }
 
-        [Test]
-        public void EmitterWritesEmptyCatalogFromU4Publication()
-        {
-            string json = File.ReadAllText(Path.Combine(Application.streamingAssetsPath,
-                "Audio", "U4Original", PackManifest.ManifestFileName));
-            Assert.That(VariableCatalogEmitter.EmitCSharpFromJson(json, "U4Original",
-                out string csharp, out string error), Is.EqualTo(VnResult.VN_OK), error);
-            Assert.That(csharp, Does.Contain("ExecutionCatalogFingerprint = 2859494785881168858UL"));
-            Assert.That(csharp, Does.Contain("CatalogFingerprint = 4694109132088536712UL"));
-            Assert.That(csharp, Does.Not.Contain("VehicleRPM"));
-        }
+
 
         [Test]
-        public void EmitterRejectsInvalidOptionalFieldsAndWrongTypeLabels()
+        public void EmitterRequiresVariableRowsAndRejectsInvalidFields()
         {
+            Assert.That(VariableCatalogEmitter.EmitCSharpFromJson("{\"variables\":[]}", "empty", out string empty, out _),
+                Is.EqualTo(VnResult.VN_OK));
+            Assert.That(empty, Is.Not.Null);
+            foreach (string invalid in new[] { "{}", "{\"variableCatalog\":{\"variables\":[]}}",
+                "{\"variables\":null}", "{\"variables\":{}}", "{\"variables\":true}" })
+            {
+                Assert.That(VariableCatalogEmitter.EmitCSharpFromJson(invalid, "invalid", out string refused, out string diagnostic),
+                    Is.EqualTo(VnResult.VN_BAD_PACK));
+                Assert.That(refused, Is.Null);
+                Assert.That(diagnostic, Is.Not.Empty);
+            }
             const string valid = "{\"variables\":[{\"variableId\":\"3da91a64-b947-4560-0000-000000000003\",\"kind\":0,\"scopePolicy\":1," +
                 "\"writers\":1,\"rangeMinBits\":0,\"rangeMaxBits\":1065353216,\"defaultBits\":0," +
                 "\"codeName\":\"Demo_Choice\"}]}";

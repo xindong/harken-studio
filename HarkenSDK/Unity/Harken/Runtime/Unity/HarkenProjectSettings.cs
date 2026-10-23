@@ -36,7 +36,7 @@ namespace Harken.Unity
         [SerializeField] private string language = string.Empty;
         [SerializeField] private string packPlatformId = string.Empty;
         [SerializeField] private string packPlatform = string.Empty;
-        [SerializeField] private string initPack = "Init.pack";
+        [SerializeField] private string initPack = "Init.bytes";
         [SerializeField] private bool suppressUnityAudio;
         [SerializeField] private string packDirectory = string.Empty;
         [SerializeField] private string[] playerExports = Array.Empty<string>();
@@ -53,7 +53,7 @@ namespace Harken.Unity
         public string Language => language ?? string.Empty;
         public string PlatformId => packPlatformId ?? string.Empty;
         public string PlatformName => packPlatform ?? string.Empty;
-        public string InitPack => string.IsNullOrEmpty(initPack) ? "Init.pack" : initPack;
+        public string InitPack => string.IsNullOrEmpty(initPack) ? "Init.bytes" : initPack;
         public string PackDirectory => packDirectory ?? string.Empty;
         public bool SuppressUnityAudio => suppressUnityAudio;
         public string[] PlayerExports => playerExports ?? Array.Empty<string>();
@@ -167,7 +167,7 @@ namespace Harken.Unity
             if (streaming)
             {
                 if (!TryResolveStreamingPackDirectory(raw, streamingAssetsPath, out string relative, out error) ||
-                    !PackManifest.TryJoinContainedPath(streamingAssetsPath, relative, out fullPath)) return false;
+                    !PackPaths.TryJoinContainedPath(streamingAssetsPath, relative, out fullPath)) return false;
             }
             else if (!TryResolveProjectPath(raw, playerRoot, out fullPath) ||
                      (!Path.IsPathRooted(raw) && !IsInside(playerRoot, fullPath)))
@@ -200,7 +200,7 @@ namespace Harken.Unity
                 candidate = raw.Substring(playerPrefix.Length);
             else
                 return false;
-            if (!PackManifest.IsSafeRelativePath(candidate)) return false;
+            if (!PackPaths.IsSafeRelativePath(candidate)) return false;
             relative = candidate;
             error = null;
             return true;

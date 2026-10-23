@@ -58,6 +58,10 @@
             "toolVersion": "HarkenStudio 1.0.0",
             "version": "1.0"
         },
+        "packExportCurrentPlatformId": "e99ee1fb-1fcf-44a7-aff9-d963acead69d",
+        "packExportSelectedPlatformIds": [
+            "e99ee1fb-1fcf-44a7-aff9-d963acead69d"
+        ],
         "paths": {
             "audioFolder": "Layers",
             "packFolder": "Packs"

@@ -1278,7 +1278,6 @@ def host_command(
     host_exe: Path,
     export_dir: Path,
     case: Case,
-    action_id: str,
     variable_id: str,
     null_mode: bool,
     capture_ready_gate: Path | None = None,
@@ -1288,9 +1287,7 @@ def host_command(
         "pack-play",
         "--root",
         str(export_dir),
-        "--action",
-        str(action_id),
-        "--content",
+        "--action-name",
         f"Play_{case.name}",
         "--seconds",
         str(case.seconds_per_trigger),
@@ -1937,28 +1934,26 @@ def main() -> int:
         )
         export_dir = export_dir / platform["name"]
         report["export"] = wait_for_export(ipc)
-        manifest_path = export_dir / "HarkenPackManifest.json"
-        if not manifest_path.is_file():
-            raise QualificationError(f"Pack manifest was not generated: {manifest_path}")
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        pack_names = {pack.get("name") for pack in manifest.get("packs", [])}
-        required_packs = {"Init", *(f"Play_{case.name}" for case in CASES)}
-        missing_packs = sorted(required_packs - pack_names)
-        if missing_packs:
-            raise QualificationError(f"Manifest is missing Packs: {missing_packs}")
-        report["manifest"] = {
-            "path": str(manifest_path),
-            "sha256": sha256(manifest_path),
-            "pack_names": sorted(pack_names),
-            "data": manifest,
-        }
+        companions = {}
+        for name in ["Init", *(f"Play_{case.name}" for case in CASES)]:
+            binary_path = export_dir / f"{name}.bytes"
+            json_path = export_dir / f"{name}.json"
+            if not binary_path.is_file() or not json_path.is_file():
+                raise QualificationError(f"Pack companion pair was not generated: {name}")
+            companions[name] = {
+                "bytes_path": str(binary_path),
+                "bytes_sha256": sha256(binary_path),
+                "json_path": str(json_path),
+                "json_sha256": sha256(json_path),
+                "data": json.loads(json_path.read_text(encoding="utf-8")),
+            }
+        report["companions"] = companions
 
         null_results: dict[str, Any] = {}
         report["null_smoke"] = null_results
         for case in CASES:
-            action_id = identities[case.name]
             command = host_command(
-                host_exe, export_dir, case, action_id, variable_id, True
+                host_exe, export_dir, case, variable_id, True
             )
             result = run_host(
                 command,
@@ -1979,7 +1974,6 @@ def main() -> int:
             wasapi_results: dict[str, Any] = {}
             report["wasapi"] = wasapi_results
             for case in CASES:
-                action_id = identities[case.name]
                 capture_seconds = (
                     case.repeats * case.seconds_per_trigger + 1.8
                 )
@@ -1991,7 +1985,6 @@ def main() -> int:
                     host_exe,
                     export_dir,
                     case,
-                    action_id,
                     variable_id,
                     False,
                     ready_gate_path,

@@ -40,7 +40,9 @@ Studio 工程往返、历史工程迁移、Pack 解析和原生加载属于开�
 python .scripts/studio_schema_release_audit.py --verify-readers --reader <Studio可执行文件> --baseline-readers-file <历史标签与安装目录映射.json> --pack-reader <HarkenAbiFidelity.dll路径> --pack-root <Pack测试数据目录>
 ```
 
-历史读写器范围依据 schema 声明的支持范围选择，目录映射只指定本次使用的安装包位置。命令直接执行检查，不复用之前的通过结论。发布输入检查与开发测试各自负责自己的边界，正式打包成功不代表已经执行了开发测试。
+历史读写器仅针对 Studio 工程，依据 Editor schema 声明的支持范围选择，目录映射只指定本次使用的安装包位置。旧 Pack 不提供迁移或旧读取器兼容验证，需从 Studio 工程重新导出。
+
+`--pack-root` 指向一个已选择的平台目录，必须包含 `Init.bytes + Init.json` 和 Action 的同名 `.bytes + .json`，可包含语言子目录。校验调用 SDK 的 `--companion-root` 入口，通过真实 native 启动、按名称准备与播放验证当前产物，并记录实际对子文件的摘要。命令直接执行检查，不复用之前的通过结论。发布输入检查与开发测试各自负责自己的边界，正式打包成功不代表已经执行了开发测试。
 
 命令可以输出诊断报告，Actions 也保留运行日志；后续流程不读取它们作为通过凭据，报告不属于回流 main 的内容。
 

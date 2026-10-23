@@ -23,7 +23,7 @@ directory, so staged fixtures and concurrent runs keep separate build outputs.
 Any legacy `bin/` or `obj/` directories are ignored and excluded from staging.
 
 Native execution uses the requested production library and checks file/byte
-bootstrap, Action query/stop, spatial calls, resource failures and explicit retry,
+companion startup, Action preparation/query/stop, spatial calls, resource failures and explicit retry,
 ownership, host registration disposal, and optional Remote startup/stop/termination.
 Null audio does not render automatically: release before retirement returns
 `VN_IN_USE`; shutdown owns the remaining firing. This runner does not claim audio
@@ -36,7 +36,7 @@ lists. Prepare the project with the existing `../UnityFixture/README.md` process
 the current SDK, and the dedicated **test-only** native bridge. Enable
 `HARKEN_SDK_TEST_NULL_PUMP` for Standalone and run the external test alongside
 `Harken.Unity.PlayModeTests` in PlayMode and a Standalone Windows IL2CPP Player.
-Also run `Harken.Unity.EditModeTests` and compile the imported PlayableDemo sample.
+Also run `Harken.Unity.EditModeTests`. PlayableDemo remains suspended and is not a runtime validation input.
 
 `PublicHostPreservesCallbacksAndTerminalActionRelease` posts and stops an authored
 Action, advances null audio until the same firing is terminal, and releases it.

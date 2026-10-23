@@ -27,7 +27,7 @@ namespace Harken.Unity.Editor
         public static bool TryLoad(string projectId, out HarkenEditorPublicationBinding binding)
         {
             binding = default;
-            if (string.IsNullOrEmpty(projectId) || !PackManifest.IsPlatformId(projectId)) return false;
+            if (string.IsNullOrEmpty(projectId) || !PackPaths.IsPlatformId(projectId)) return false;
             string json = EditorPrefs.GetString(Key(projectId), string.Empty);
             if (string.IsNullOrEmpty(json)) return false;
             var parsed = JsonUtility.FromJson<Serialized>(json);
@@ -39,7 +39,7 @@ namespace Harken.Unity.Editor
 
         public static bool Save(string projectId, HarkenEditorPublicationBinding binding)
         {
-            if (string.IsNullOrEmpty(projectId) || !PackManifest.IsPlatformId(projectId)) return false;
+            if (string.IsNullOrEmpty(projectId) || !PackPaths.IsPlatformId(projectId)) return false;
             var parsed = new Serialized
             {
                 sourceGuid = binding.SourceGuid,

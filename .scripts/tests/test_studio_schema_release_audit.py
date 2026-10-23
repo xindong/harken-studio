@@ -477,7 +477,7 @@ class ReleaseLifecycleTest(unittest.TestCase):
         self.assertTrue(any("removed" in error for error in MODULE.release_schema_errors(self.root / "HarkenSchema")))
 
     def test_sdk_source_changes_are_not_a_generation_hash_lock(self) -> None:
-        reader = self.root / "HarkenSDK/Unity/Harken/Runtime/Sdk/PackManifest.cs"
+        reader = self.root / "HarkenSDK/Unity/Harken/Runtime/Sdk/PackCompanion.cs"
         reader.parent.mkdir(parents=True)
         reader.write_text("old reader", encoding="utf-8")
         self.publish_tag("sdk-baseline")
@@ -499,7 +499,7 @@ class ReleaseLifecycleTest(unittest.TestCase):
         MODULE.run_git(["reset", "--hard", "first"])
         original["x-harken-documentTypes"][0]["schema"]["properties"]["content"]["required"].remove("name")
         path.write_text(json.dumps(original), encoding="utf-8")
-        reader = self.root / "HarkenSDK/Unity/Harken/Runtime/Sdk/PackManifest.cs"
+        reader = self.root / "HarkenSDK/Unity/Harken/Runtime/Sdk/PackCompanion.cs"
         reader.parent.mkdir(parents=True)
         reader.write_text("new development", encoding="utf-8")
         self.commit()
@@ -569,7 +569,7 @@ class ReleaseLifecycleTest(unittest.TestCase):
             MODULE.require_current_reader({"currentReader": reader})
 
     def test_changed_persistence_paths_are_reviewed_without_internal_format_scopes(self) -> None:
-        paths = ["HarkenStudio/Source/Core/ProjectSchemaValidator.cpp", "HarkenSDK/Unity/Harken/Runtime/Sdk/PackManifest.cs",
+        paths = ["HarkenStudio/Source/Core/ProjectSchemaValidator.cpp", "HarkenSDK/Unity/Harken/Runtime/Sdk/PackCompanion.cs",
                  "HarkenStudio/Source/Core/MigrationManager.cpp", "HarkenStudio/Source/Core/ProjectMigration.cpp",
                  "HarkenStudio/Source/Core/ProjectMigration.h"]
         with patch.object(MODULE, "changed_files", return_value=paths):
@@ -664,9 +664,10 @@ class ReaderGateTest(unittest.TestCase):
         self.pack_root.mkdir()
         native_name = "HarkenCore.dll" if MODULE.os.name == "nt" else "libHarkenCore.dylib" \
             if MODULE.sys.platform == "darwin" else "libHarkenCore.so"
-        self.old_source = self.old_binary.parent / "HarkenSDK/Unity/Harken/Runtime/Sdk/PackManifest.cs"
-        for path in (self.binary, self.old_binary, self.old_source, self.pack_reader,
-                     self.binary.parent / native_name, self.pack_root / "Init.pack", self.pack_root / "Content.pack"):
+        for path in (self.binary, self.old_binary, self.pack_reader,
+                     self.binary.parent / native_name, self.pack_root / "Init.bytes", self.pack_root / "Init.json",
+                     self.pack_root / "Play.bytes", self.pack_root / "Play.json",
+                     self.pack_root / "English/Play.bytes", self.pack_root / "English/Play.json"):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"fixture")
         self.calls = []
@@ -689,49 +690,49 @@ class ReaderGateTest(unittest.TestCase):
                 "packSchemaVersion": expected["trees"]["Pack"]["currentVersion"],
                 "schemaSnapshotHash": expected["snapshotHash"], "projectPath": str(project), "edits": edits}
 
-    def verify(self, old_version: int | None = None, protected: bool = True, sdk_version: int | None = None,
-               native_returncode: int = 0) -> tuple:
+    def verify(self, old_version: int | None = None, sdk_version: int | None = None,
+               native_returncode: int = 0, native_output: str | None = None) -> tuple:
         if sdk_version is None:
             sdk_version = self.pack_schema_version
         expected = copy.deepcopy(MODULE.schema_archive.build_bundle(self.source)["manifest"])
         if old_version is not None:
             expected["trees"]["Editor"]["currentVersion"] = old_version
         baselines = {"baseline": self.old_binary.parent} if old_version is not None else {}
-        package = {"_schemaManifest": expected, "buildId": "released",
-                   "_protectedFiles": {self.old_source.relative_to(self.old_binary.parent).as_posix()} if protected else set()}
-        native = SimpleNamespace(returncode=native_returncode, stdout=f"[PackNative] shared Init/content fixture PASS.\n[PackSidecar] schema_version {sdk_version}\n", stderr="")
+        package = {"_schemaManifest": expected, "buildId": "released"}
+        if native_output is None:
+            native_output = f"[PackCompanion] native publication PASS.\n[PackCompanion] schemaVersion {sdk_version}\n"
+        native = SimpleNamespace(returncode=native_returncode, stdout=native_output, stderr="")
         with patch.object(MODULE, "required_baselines", return_value={tag: {} for tag in baselines}), \
                 patch.object(MODULE, "release_schema_errors", return_value=[]), \
                 patch.object(MODULE, "run_git", return_value=SimpleNamespace(returncode=0, stdout="a" * 40)), \
                 patch.object(MODULE, "checked_baseline_package", return_value=(self.old_binary, package)), \
                 patch.object(MODULE, "run_probe", side_effect=self.probe), \
-                patch.object(MODULE, "verify_pack_reader", return_value={"ok": True, "schemaVersion": self.pack_schema_version}) as parser, \
-                patch.object(MODULE.subprocess, "run", return_value=native):
+                patch.object(MODULE.subprocess, "run", return_value=native) as native_run:
             report = MODULE.verify_release_readers(self.binary, baselines, self.pack_reader, self.pack_root, self.source)
-            return report, parser.call_args_list
+            return report, native_run.call_args_list
 
-    def test_old_same_generation_reader_executes_pack_parser_and_project_edits(self) -> None:
+    def test_old_same_generation_editor_and_current_companion_reader_execute(self) -> None:
         report, calls = self.verify(old_version=MODULE.schema_archive.load_tree("Editor", self.source)["currentVersion"])
         self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0].args[:3], (self.old_source, self.pack_root, self.pack_schema_version))
+        self.assertEqual(calls[0].args[0], ["dotnet", str(self.pack_reader), "--require-native",
+                                          "--companion-root", str(self.pack_root)])
         self.assertIn((self.old_binary, "edit"), self.calls)
-        self.assertIn("old-pack-parser-reads-current-sidecars", report["readers"][1]["checks"])
+        self.assertEqual(set(report["pack"]["fixtureSha256"]), {
+            "Init.bytes", "Init.json", "Play.bytes", "Play.json", "English/Play.bytes", "English/Play.json"})
 
-    def test_pack_only_baseline_does_not_enter_unsupported_editor_chain(self) -> None:
-        path = self.source / "Editor/manifest.json"
-        manifest = json.loads(path.read_text(encoding="utf-8"))
-        manifest["supportedHistorical"] = []
-        path.write_text(json.dumps(manifest), encoding="utf-8")
-        report, calls = self.verify(old_version=1)
-        self.assertEqual(len(calls), 1)
-        self.assertFalse(any(binary == self.old_binary for binary, _ in self.calls))
-        self.assertEqual(report["readers"][1]["checks"], ["old-pack-parser-reads-current-sidecars"])
+    def test_pack_generation_does_not_require_unsupported_editor_baselines(self) -> None:
+        releases = {"pack-only": {"trees": {"Editor": {"generation": -1},
+                                          "Pack": {"generation": self.pack_schema_version}}}}
+        with patch.object(MODULE, "published_releases", return_value=releases):
+            self.assertEqual(MODULE.required_baselines(self.source), {})
 
-    def test_unprotected_old_pack_parser_is_rejected(self) -> None:
-        with self.assertRaises(ValueError):
-            self.verify(old_version=2, protected=False)
+    def test_incomplete_companion_pair_stops_before_current_reader(self) -> None:
+        (self.pack_root / "English/Play.json").unlink()
+        with self.assertRaisesRegex(ValueError, "incomplete companion pair"):
+            self.verify()
+        self.assertEqual(self.calls, [])
 
-    def test_native_pass_cannot_certify_a_different_sidecar_generation(self) -> None:
+    def test_native_pass_cannot_certify_a_different_companion_generation(self) -> None:
         with self.assertRaises(ValueError):
             self.verify(sdk_version=self.pack_schema_version - 1)
         with self.assertRaises(ValueError):
@@ -740,6 +741,8 @@ class ReaderGateTest(unittest.TestCase):
     def test_previous_success_cannot_replace_executing_readers_and_native_checks(self) -> None:
         report, _ = self.verify()
         self.assertEqual(report["errors"], [])
+        with self.assertRaisesRegex(ValueError, "Native Pack gate failed"):
+            self.verify(native_output=f"[PackCompanion] schemaVersion {self.pack_schema_version}\n")
         previous_calls = len(self.calls)
         with self.assertRaises(ValueError):
             self.verify(native_returncode=1)

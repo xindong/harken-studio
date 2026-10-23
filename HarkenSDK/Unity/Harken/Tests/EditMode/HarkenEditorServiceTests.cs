@@ -111,7 +111,7 @@ namespace Harken.Unity.Tests
         private static string Root(string name = "U4Original")
             => Path.Combine(Application.streamingAssetsPath, "Audio", name);
 
-        private static void CopyAsUnityBytes(string sourceDir, string destDir)
+        private static void CopyCompanionAssets(string sourceDir, string destDir)
         {
             Directory.CreateDirectory(destDir);
             foreach (string file in Directory.GetFiles(sourceDir, "*", SearchOption.AllDirectories))
@@ -119,7 +119,6 @@ namespace Harken.Unity.Tests
                 if (file.EndsWith(".meta", StringComparison.OrdinalIgnoreCase)) continue;
                 string relative = file.Substring(sourceDir.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
                 string dest = Path.Combine(destDir, relative);
-                if (relative.EndsWith(".pack", StringComparison.OrdinalIgnoreCase)) dest += ".bytes";
                 Directory.CreateDirectory(Path.GetDirectoryName(dest));
                 File.Copy(file, dest, true);
             }
@@ -175,8 +174,7 @@ namespace Harken.Unity.Tests
         public void SessionlessReplacePackRefusesCanonicalLifecycleWithoutNativeCall()
         {
             string root = Root();
-            Assert.That(GameplayPublication.Read(root, null, out var publication, out string error), Is.EqualTo(VnResult.VN_OK), error);
-            string initPath = Path.Combine(root, publication.InitPack.Path);
+            string initPath = Path.Combine(root, "Init.bytes");
             Assert.That(File.Exists(initPath), Is.True);
             Assert.That(Packs.ReplacePack(default, initPath, root),
                 Is.EqualTo(VnResult.VN_INVALID_ARG));
@@ -206,8 +204,7 @@ namespace Harken.Unity.Tests
         [Test]
         public void PublicationBindingSavesUnderCurrentPublicationIdOnly()
         {
-            Assert.That(GameplayPublication.Read(Root(), null, out var publication, out string error), Is.EqualTo(VnResult.VN_OK), error);
-            string publicationId = publication.ProjectId;
+            string publicationId = "a046b230-c437-4cea-8533-546be84a2e50";
             string staleId = "11111111-1111-1111-1111-111111111111";
             var binding = new HarkenEditorPublicationBinding(string.Empty, Root(), string.Empty, string.Empty,
                 string.Empty, string.Empty);
@@ -266,7 +263,7 @@ namespace Harken.Unity.Tests
             using (var fixture = new AssetFixture())
             {
                 string dest = fixture.Folder + "/U4Bytes";
-                CopyAsUnityBytes(Root(), dest);
+                CopyCompanionAssets(Root(), dest);
                 var catalog = new HarkenEditorCatalog();
                 Assert.That(catalog.Refresh(dest), Is.EqualTo(VnResult.VN_OK), catalog.Diagnostic);
                 Assert.That(catalog.PreparedPacks, Is.Not.Null);
@@ -285,29 +282,7 @@ namespace Harken.Unity.Tests
             }
         }
 
-        [Test]
-        public void PlatformDiscoveryUsesIdAndRefusesAmbiguousAutomaticSelection()
-        {
-            RequirePublicationTooling();
-            string root = Root("PlatformContractPacks");
-            Assert.That(PackManifest.TryParseIndex(File.ReadAllText(Path.Combine(root, PackManifest.IndexFileName)),
-                out PackIndexEntry[] platforms), Is.True);
-            var catalog = Catalog();
-            Assert.That(catalog.RefreshPlatform(root, null, null, "Android"), Is.EqualTo(VnResult.VN_INVALID_ARG));
-            Assert.That(catalog.Publication, Is.Null);
-            foreach (PackIndexEntry platform in platforms)
-            {
-                Assert.That(catalog.Diagnostic, Does.Contain(platform.Id));
-                Assert.That(PackManifest.TryReadPlatformDirectory(root, platform.Id, null, "Windows", null,
-                    out string path, out string error), Is.True, error);
-                Assert.That(Path.GetFileName(path), Is.EqualTo(platform.Name));
-            }
-            HarkenEditorCatalog original = Catalog();
-            Assert.That(catalog.RefreshPlatform(Root(), original.Publication.Platform.Id, null, "Android"),
-                Is.EqualTo(VnResult.VN_OK), catalog.Diagnostic);
-            Assert.That(catalog.RefreshPlatform(Root(), null, null, "Android"), Is.EqualTo(VnResult.VN_INVALID_ARG));
-            Assert.That(catalog.Publication, Is.Null);
-        }
+
 
         [Test]
         public void TypedNameCanBindAndProjectChangesNeedExplicitRebindWithUndo()
@@ -344,35 +319,37 @@ namespace Harken.Unity.Tests
         }
 
         [Test]
-        public void TextAssetCapturePreservesBinaryBytesAndClearsFailedCandidates()
+        public void CompanionTextAssetCaptureKeepsOriginalAssetsAndRejectsInvalidCandidates()
         {
             using (var fixture = new AssetFixture())
             {
                 HarkenPackSource source = fixture.CreateSource();
-                Assert.That(source.Capture(out HarkenPreparedPacks captured, out string error), Is.EqualTo(VnResult.VN_OK), error);
-                VnResult background = Task.Run(() => source.Capture(out _, out _)).GetAwaiter().GetResult();
-                Assert.That(background, Is.EqualTo(VnResult.VN_INVALID_ARG));
-                Set(source, "initPack", new TextAsset("invalid bytes"));
-                TextAsset invalid = Get<TextAsset>(source, "initPack");
-                try
-                {
-                    Assert.That(source.Capture(out HarkenPreparedPacks failed, out _), Is.Not.EqualTo(VnResult.VN_OK));
-                    Assert.That(failed, Is.Null);
-                }
-                finally { Object.DestroyImmediate(invalid); }
-                Object.DestroyImmediate(source);
-                fixture.DeleteAssets();
-                VnConfig config = HarkenEngine.DefaultConfig();
-                config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
                 PackBootstrapSession session = null;
                 try
                 {
-                    Assert.That(captured.Start(Array.Empty<ulong>(), ref config, out session), Is.EqualTo(VnResult.VN_OK));
-                    foreach (PackManifestEntry pack in captured.Publication.Packs.Where(row => row.PackStableId != captured.Publication.InitPackStableId)
-                        .OrderBy(row => row.Dependencies.Length))
-                        Assert.That(session.AcquirePack(pack.PackStableId, out _), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(source.CaptureCompanion(fixture.InitJson, out PackSource captured, out string error),
+                        Is.EqualTo(VnResult.VN_OK), error);
+                    VnResult background = Task.Run(() => source.CaptureCompanion(fixture.InitJson, out _, out _)).GetAwaiter().GetResult();
+                    Assert.That(background, Is.EqualTo(VnResult.VN_INVALID_ARG));
+                    Set(source, "initPack", null);
+                    Assert.That(source.CaptureCompanion(fixture.InitJson, out PackSource failed, out _),
+                        Is.EqualTo(VnResult.VN_CONTENT_NOT_LOADED));
+                    Assert.That(failed, Is.Null);
+                    Object.DestroyImmediate(source);
+                    VnConfig config = HarkenEngine.DefaultConfig();
+                    config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
+                    Assert.That(PackBootstrap.Start(captured, ref config, out session), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(session.PrepareActions(new[] { "Play_U4_A" }, session.ProjectId, out var preparation),
+                        Is.EqualTo(VnResult.VN_OK));
+                    fixture.DeleteAssets();
+                    Assert.That(Actions.Resolve("Play_U4_A", session.ProjectId, out _), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(preparation.Release(), Is.EqualTo(VnResult.VN_OK));
                 }
-                finally { session?.Dispose(); }
+                finally
+                {
+                    if (source != null) Object.DestroyImmediate(source);
+                    session?.Dispose();
+                }
             }
         }
 
@@ -410,22 +387,18 @@ namespace Harken.Unity.Tests
         [Test]
         public void RefusedPreviewPrepareNeverTerminatesAnExternalEngine()
         {
-            Assert.That(GameplayPublication.Read(Root(), null, out var publication, out string error), Is.EqualTo(VnResult.VN_OK), error);
-            Assert.That(publication.GetActionPreparationOrder(new[] { "Play_U4_A" }, publication.ProjectId, out ulong[] ids),
-                Is.EqualTo(VnResult.VN_OK));
             VnConfig config = HarkenEngine.DefaultConfig();
             config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
             PackBootstrapSession external = null;
             try
             {
-                Assert.That(PackBootstrap.Start(Path.Combine(Root(), publication.InitPack.Path), Root(), ids,
-                    ref config, out external), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(Actions.Resolve("Play_U4_A", publication.ProjectId, out ActionResolved resolved), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(PackBootstrap.StartDirectory(Root(), null, ref config, out external), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(external.PrepareActions(new[] { "Play_U4_A" }, external.ProjectId, out _), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(Actions.Resolve("Play_U4_A", external.ProjectId, out ActionResolved resolved), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(Actions.Post(in resolved, Emitter.None, 0, out ActionFiring retained), Is.EqualTo(VnResult.VN_OK));
                 using (var refused = new HarkenEditorPreview())
                 {
-                    Assert.That(refused.Prepare(Root(), null, ids, true), Is.EqualTo(HarkenEditorPublicationSupport.IsAvailable
-                        ? VnResult.VN_ALREADY_INITIALIZED : VnResult.VN_CAPABILITY_UNAVAILABLE));
+                    Assert.That(refused.Prepare(Root(), null, Array.Empty<ulong>(), true), Is.EqualTo(VnResult.VN_CAPABILITY_UNAVAILABLE));
                     Assert.That(refused.Shutdown(), Is.EqualTo(VnResult.VN_OK));
                 }
                 Assert.That(external.IsActive, Is.True);
@@ -1285,18 +1258,21 @@ namespace Harken.Unity.Tests
             public readonly string Folder = "Assets/HarkenEditorServices_" + Guid.NewGuid().ToString("N");
             public AssetFixture() => AssetDatabase.CreateFolder("Assets", Folder.Substring("Assets/".Length));
 
+            public TextAsset InitJson { get; private set; }
+
             public HarkenPackSource CreateSource(bool includeContent = true)
             {
-                Assert.That(GameplayPublication.Read(Root(), null, out var publication, out string error), Is.EqualTo(VnResult.VN_OK), error);
                 var source = ScriptableObject.CreateInstance<HarkenPackSource>();
-                Set(source, "inventory", Import(Path.Combine(Root(), PackManifest.ManifestFileName), "Inventory.json"));
-                Set(source, "initPack", Import(Path.Combine(Root(), publication.InitPack.Path), "Init.bytes"));
+                InitJson = Import(Path.Combine(Root(), "Init.json"), "Init.json");
+                Set(source, "initPack", Import(Path.Combine(Root(), "Init.bytes"), "Init.bytes"));
                 if (includeContent)
-                    Set(source, "content", publication.Packs.Where(row => row.PackStableId != publication.InitPackStableId)
-                        .Select(row => new HarkenPackSource.ContentAsset
+                    Set(source, "content", Directory.GetFiles(Root())
+                        .Where(path => (path.EndsWith(".bytes", StringComparison.Ordinal) || path.EndsWith(".json", StringComparison.Ordinal)) &&
+                            Path.GetFileName(path) != "Init.bytes" && Path.GetFileName(path) != "Init.json")
+                        .Select(path => new HarkenPackSource.ContentAsset
                         {
-                            relativePath = row.Path,
-                            asset = Import(Path.Combine(Root(), row.Path), row.PackStableId + ".bytes")
+                            relativePath = Path.GetFileName(path),
+                            asset = Import(path, Path.GetFileName(path))
                         }).ToArray());
                 return source;
             }

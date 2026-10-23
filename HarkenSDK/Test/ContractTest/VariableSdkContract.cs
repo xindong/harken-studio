@@ -63,9 +63,9 @@ namespace Harken.Test
                 Check(Values.Resolve("Vehicle\0RPM", out _) == VnResult.VN_INVALID_ARG,
                     "embedded NUL cannot truncate a Variable name");
                 Check(Values.Resolve("", out _) == VnResult.VN_INVALID_ARG, "empty Variable name refused");
-                const string actions = "{\"gameplayCatalog\":{\"actions\":[" +
+                const string actions = "{\"actions\":[" +
                     "{\"name\":\"class\",\"actionStableId\":\"01234567-89ab-cdef-fedc-ba9876543210\"}," +
-                    "{\"name\":\"A_class\",\"actionStableId\":\"12345678-9abc-def0-0123-456789abcdef\"}]}}";
+                    "{\"name\":\"A_class\",\"actionStableId\":\"12345678-9abc-def0-0123-456789abcdef\"}]}";
                 Require(ActionCatalogEmitter.EmitCSharpFromJson(actions, out string actionCode, out _));
                 Check(actionCode.Contains("A_class = new VnObjectId(0x0123456789abcdefUL, 0xfedcba9876543210UL)") &&
                     actionCode.Contains("A_A_class = new VnObjectId"), "Action symbols retain GUIDs and escape without collisions");

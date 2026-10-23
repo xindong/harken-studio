@@ -448,7 +448,6 @@ target_link_libraries(harken_editor_foundation PUBLIC
     r8brain
 )
 
-target_link_libraries(harken_editor_foundation PRIVATE harken_editor_metadata)
 
 if(APPLE)
     find_library(IOKIT_FRAMEWORK IOKit REQUIRED)

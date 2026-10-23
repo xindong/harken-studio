@@ -40,8 +40,6 @@ namespace Bridge {
 //==============================================================================
 
 QString packArtifactExtension();     // pack file extension, dot included
-QString packManifestFileName();      // per-platform pack list file name
-QString packIndexFileName();         // multi-platform index at the export root
 QString packVorbisCodecName();       // retired codec identifier (unavailable in .pack)
 QString packOpusCodecName();         // retired codec identifier (unavailable in .pack)
 uint32_t legacyPackContainerMagic(); // legacy .vp container magic

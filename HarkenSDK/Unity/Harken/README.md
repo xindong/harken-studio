@@ -336,18 +336,11 @@ Current companion exports use `Init.bytes` with `Init.json` and
 directory. Keep each pair from the same export; do not rename files or rewrite
 their metadata. No separate legacy manifest is required for companion playback.
 
-The remaining filename notes in this section describe retained legacy reader
-APIs. They do not enable the suspended Editor tools or replace current companion
-startup. Re-export old Packs with the matching Studio and update SDK/native
-libraries together when changing the Pack schema.
-
-Unity imports these files as TextAssets for the project's existing AssetBundle pipeline. Readers retain support for legacy `.pack` files and `.pack.bytes` wrappers. A manifest path ending in `.bytes` is a complete filename and never falls back to `.bytes.bytes`. Only competing files for the selected resource are ambiguous; unrelated old Init files do not block a new publication.
-
-JSON metadata paths are also complete filenames; a neighboring `HarkenPackManifest.json.bytes` Pack does not act as a wrapper for `HarkenPackManifest.json`.
-
-The serialized `Init.pack` default continues to select the manifest's Init. A path explicitly passed to `ConfigureBeforeStartup` must match that publication, including its language directory. Existing manifestless low-level file-loading APIs still accept their supplied physical paths.
-
-When migrating a game from `Name.pack.bytes` to `Name.bytes`, the project team must migrate AssetBundle addresses, GUID/.meta and source-control records and retire any post-export renaming. A filename change alone does not complete a hot-update rollout. The exporter retires only files owned by the previous publication and preserves unrelated `.bytes` and Unity `.meta` files.
+Legacy Pack manifests, indexes, `.pack` path resolution and `.pack.bytes`
+wrappers are unsupported. Re-export old Packs with the current Studio and update
+the SDK/native libraries together. Unity imports the exact `.bytes` and `.json`
+files as TextAssets. The default Init path is `Init.bytes`; explicitly configured
+paths must match it. Studio project migration is unaffected.
 
 ## Unity Editor and prepared bytes
 
@@ -363,10 +356,9 @@ assembly definition's `.meta` file when moving assets.
 
 `HarkenPackSource.CaptureCompanion(initJson, out source, out error, language)`
 captures the configured Init/content TextAsset references on the Unity main
-thread. Pass the resulting `PackSource` to the Runtime startup APIs. The old
-inventory and selected-manifest Inspector fields are hidden. Explicit
-`HarkenPreparedPacks` APIs remain as legacy reader contracts; they are not the
-current companion or Editor-preview setup path. Do not decode Pack bytes as text.
+thread. Pass the resulting `PackSource` to the Runtime startup APIs. The old inventory and selected-manifest fields have been removed.
+`HarkenPreparedPacks` declarations remain for suspended Editor signatures and
+reject capture with `VN_PACK_INCOMPATIBLE`. Do not decode Pack bytes as text.
 Preload with `Session.PrepareActions` when synchronous cold I/O would be too late
 for a gameplay trigger, or use the asynchronous preparation/playback APIs.
 

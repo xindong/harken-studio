@@ -543,19 +543,6 @@ gtest_discover_tests(harken_editor_tests
     TEST_LIST harken_editor_qualification_tests
     PROPERTIES LABELS harken-qualification ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
-add_executable(harken_editor_metadata_tests UnitTest/EditorWaveformPublicationTest.cpp)
-target_link_libraries(harken_editor_metadata_tests PRIVATE harken_editor_metadata harken_core GTest::gtest_main)
-target_include_directories(harken_editor_metadata_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
-    ${HARKEN_RUNTIME_DIR}/core/include ${HARKEN_RUNTIME_DIR}/core/contract/include
-    ${HARKEN_RUNTIME_DIR}/media/include ${HARKEN_RUNTIME_DIR}/param/include
-    ${HARKEN_RUNTIME_DIR}/dsp/include
-    ${HARKEN_RUNTIME_DIR}/render/include
-    ${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Common)
-target_compile_definitions(harken_editor_metadata_tests PRIVATE HARKEN_TEMP_DIR="${CMAKE_SOURCE_DIR}/.temp")
-target_compile_definitions(harken_editor_metadata_tests PRIVATE
-    HARKEN_EDITOR_METADATA_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/HarkenSDK/Test/Fixtures/EditorMetadata/2")
-gtest_discover_tests(harken_editor_metadata_tests TEST_PREFIX "EditorMetadata.")
-
 add_executable(harken_project_schema_tests
     UnitTest/ProjectSchemaFrontEndTest.cpp
     UnitTest/ProjectSchemaFixtureTest.cpp

@@ -2,7 +2,6 @@
 #define HARKEN_HOST_PACK_COMPANION_H
 
 #include "JsonReader.h"
-#include "PackPlayPath.h"
 #include <harken/Harken.h>
 
 #include <algorithm>
@@ -385,7 +384,8 @@ inline VnResult CapturePackCompanion(const std::filesystem::path& root, const st
     return result;
 }
 
-inline VnResult ActivatePackCompanions(PackCompanion& init, PackCompanion& content) {
+inline VnResult ActivatePackCompanions(PackCompanion& init, PackCompanion& content,
+                                      VnCanonicalPackSetActivationReportV1* outReport = nullptr) {
     VnCanonicalPackSetMemberV2 members[2]{};
     VnCanonicalPackSetMemberResultV1 results[2]{};
     PackCompanion* inputs[]{&init, &content};
@@ -414,7 +414,9 @@ inline VnResult ActivatePackCompanions(PackCompanion& init, PackCompanion& conte
     desc.outputMembers = results;
     VnCanonicalPackSetActivationReportV1 report{};
     report.structSize = sizeof(report);
-    return Vn_ActivateCanonicalPackSetV2(&desc, &report);
+    const auto result = Vn_ActivateCanonicalPackSetV2(&desc, &report);
+    if (outReport) *outReport = report;
+    return result;
 }
 
 } // namespace harkenhost

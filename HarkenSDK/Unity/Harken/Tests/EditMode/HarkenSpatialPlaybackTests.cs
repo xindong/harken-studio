@@ -174,30 +174,23 @@ namespace Harken.Unity.Tests
             {
                 owner.SetActive(false);
                 string root = Path.Combine(Application.streamingAssetsPath, "Audio", publication);
-                Assert.That(HarkenPreparedPacks.Capture(PackManifest.ManifestFileName,
-                    path => File.ReadAllBytes(Path.Combine(root, path)), out var prepared, out _, out string error),
-                    Is.EqualTo(VnResult.VN_OK), error);
-                projectId = prepared.Publication.ProjectId;
+                var input = new PackDirectorySource(root, null);
+                Assert.That(input.Capture(null, default, null, out CompanionInput init), Is.EqualTo(VnResult.VN_OK));
+                projectId = init.Facts.projectId.ToString();
                 if (editorPreview)
                 {
-                    preview = new HarkenEditorPreview();
-                    Set(preview, "forceNullDevice", true);
-                    scope = preview.CreateScope();
-                    string[] names = publication == "SpatialPacks"
-                        ? new[] { "Play_U4_A", "Play_Spatial_Delayed" } : new[] { "Play_U4_A" };
-                    Assert.That(scope.Prepare(prepared, names), Is.EqualTo(VnResult.VN_OK));
-                    Assert.That(scope.SetListener(Listener), Is.EqualTo(VnResult.VN_OK));
+                    throw new InvalidOperationException("Editor preview is suspended.");
                 }
                 else
                 {
                     runtime = owner.AddComponent<HarkenAudioSystem>();
                     Set(runtime, "autoInitialize", false);
                     Set(runtime, "persistAcrossScenes", false);
-                    Assert.That(runtime.ConfigureBeforeStartup("Audio/" + publication, prepared.Publication.InitPack.Path,
+                    Assert.That(runtime.ConfigureBeforeStartup("Audio/" + publication, "Init.bytes",
                         Array.Empty<ulong>(), true, false), Is.EqualTo(VnResult.VN_OK));
                     owner.SetActive(true);
                     typeof(HarkenAudioSystem).GetMethod("Awake", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(runtime, null);
-                    Assert.That(runtime.StartRuntime(prepared), Is.EqualTo(VnResult.VN_OK), runtime.LastStartupError);
+                    Assert.That(runtime.StartRuntime(root), Is.EqualTo(VnResult.VN_OK), runtime.LastStartupError);
                 }
             }
 

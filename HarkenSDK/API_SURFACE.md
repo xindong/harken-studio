@@ -59,7 +59,7 @@ requirement.
 | Capability | Decision and consumer evidence |
 | --- | --- |
 | Actions and Variables | Preserve existing checked names, IDs, results, query/release and Emitter scope. `Actions.cs`, `Values.cs` and Unity components are direct consumers. |
-| Pack preparation and bytes | Preserve lifecycle, file and byte-provider paths, canonical set ownership and published metadata. `PackBootstrap.cs`, `Packs.cs`, `PackByteProvider.cs` and the engine integrations consume them. No implicit loading is added. |
+| Pack preparation and bytes | Preserve companion lifecycle, explicit file/byte sources and canonical set ownership. Legacy manifest/index readers and ID-to-path resolution are removed. `PackBootstrap.cs`, `Packs.cs`, `PackByteProvider.cs` and the engine integrations consume them. No implicit loading is added. |
 | Existing Bus gain/mute | Keep volume, output volume and mute as runtime controls of an existing mix. They cannot create or reroute a Bus. Unity's `HarkenAudioSystem.SetMasterVolume` uses output volume; it must remain functional. |
 | Existing Voice parameters | Preserve the implemented volume, pitch, filter, pan, width, spatial, output gain, Send level and stop contract. `.scripts/check_unity_sdk_contract.py::VOICE_WRAPPER_CONTRACT` checks these wrappers. No equivalent Variable replacement is assumed. |
 | Voice SetSend/ClearSend | Both remain public and are classified as structural compatibility exceptions. They create/replace/remove a route, unlike `SetSendLevel`; their continued presence must not be described as a fully removed structural API surface. This classification records current SDK behavior, not a claim that production projects depend on these calls. |
@@ -68,6 +68,13 @@ requirement.
 | SDK Editor services | Catalog discovery, waveform browsing, preview preparation and symbol generation are temporarily suspended until they consume current-schema Pack companions. Public declarations remain, but catalog refresh, preview preparation and generator validation/generation return `VN_CAPABILITY_UNAVAILABLE`. The Action Inspector supports manual Action name and project ID configuration. |
 | Generated types | Supported public signature dependencies and their transitive fields, callback parameters, and semantic enum vocabulary (for example device mode and Action outcomes) remain public. Tool-only Unity DTOs, including Snapshot/Monitor types, are internal. Numeric field types do not justify hiding their enum vocabulary. |
 | Helpers and probes | Full P/Invoke, generation helpers, callback pointer fields, mutable catalog/thread probes and byte-provider counters are implementation details. Existing internal consumers remain wired through precise SDK assembly access. |
+
+Old Pack formats have no read or migration compatibility. `PackManifest`,
+manifest-based ID loading and `Packs.SetGameplayCatalog` are removed. Public
+publication models and prepared-publication declarations needed by suspended
+Editor signatures remain inert: capture/read/validation return
+`VN_PACK_INCOMPATIBLE`, and waveform parsing returns `VN_CAPABILITY_UNAVAILABLE`.
+Current callers use `PackSource`, `StartDirectory` and Action preparation.
 
 Constants are classified individually: master Bus, Pack and Remote discovery
 semantics remain supported, while Monitor/Snapshot formats and limits, curve and

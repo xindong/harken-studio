@@ -46,7 +46,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Harken.Unity::Harken.Unity.HarkenAudioSystem
   autoInitialize: 1
   packRoot: Audio/GeneratedPacks
-  initPack: Init.pack
+  initPack: Init.bytes
   packPlatform:
   packPlatformId: 7e69e0e2-8d15-52df-a609-ab96fff38750
   language:

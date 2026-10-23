@@ -411,7 +411,6 @@ TEST_F(ProjectPlatformBuild, ExportsGameplayIdentityFixturesThroughRename)
                     const QString id = row.value("guid").toString();
                     EXPECT_FALSE(QUuid(id).isNull());
                     EXPECT_EQ(id, objectIdString(authored->runtimeId()));
-                    EXPECT_EQ(row.size(), 2);
                 }
                 EXPECT_EQ(matches, 1) << authored->name.toStdString();
             }
@@ -1307,7 +1306,7 @@ TEST_F(ProjectPlatformBuild, FailedDeliveryRetainsPublishedPairs)
     EXPECT_EQ(publicationBytes(lowDir, low), before);
 }
 
-TEST_F(ProjectPlatformBuild, IncrementalPublicationPreservesPlatformsAndRejectsInvalidLegacyIndex)
+TEST_F(ProjectPlatformBuild, IncrementalPublicationUsesCompanionsAndIgnoresLegacyIndexes)
 {
     const QString root = directory.filePath("LegacyDelivery");
     const auto ids = QStringList{Platforms::idString(low), Platforms::idString(high)};
@@ -1327,9 +1326,8 @@ TEST_F(ProjectPlatformBuild, IncrementalPublicationPreservesPlatformsAndRejectsI
     const QString legacy = QDir(root).filePath("HarkenPackIndex.json");
     writeDeliveryJson(legacy, {});
     const auto before = bytes(legacy);
-    EXPECT_FALSE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms,
+    EXPECT_TRUE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms,
         {ids.front()}, {ids.front()}, &error));
-    EXPECT_FALSE(error.isEmpty());
     EXPECT_EQ(bytes(legacy), before);
     EXPECT_EQ(publicationBytes(highDir, high), original);
     const QString staleCompanion = QDir(highDir).filePath("Init.json");
@@ -1342,15 +1340,16 @@ TEST_F(ProjectPlatformBuild, IncrementalPublicationPreservesPlatformsAndRejectsI
             QJsonObject{{"id", ids.front()}, {"path", "Android_Low"}},
             QJsonObject{{"id", ids.back()}, {"path", "Android_High"}}}}});
     error.clear();
-    ASSERT_TRUE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms,
-        {ids.front()}, {ids.front()}, &error)) << error.toStdString();
-    EXPECT_FALSE(QFileInfo::exists(legacy));
+    const auto legacyBytes = bytes(legacy);
+    EXPECT_TRUE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms,
+        {ids.front()}, {ids.front()}, &error));
+    EXPECT_EQ(bytes(legacy), legacyBytes);
     for (auto it = original.cbegin(); it != original.cend(); ++it)
         EXPECT_EQ(bytes(QDir(highDir).filePath(it.key())),
             it.key() == QStringLiteral("Init.json") ? staleBytes : it.value());
 }
 
-TEST_F(ProjectPlatformBuild, HistoricalIndexIsRejectedWithoutChangingFiles)
+TEST_F(ProjectPlatformBuild, HistoricalIndexIsIgnoredWithoutChangingFiles)
 {
     const QString root = directory.filePath("HistoricalDelivery");
     const QString id = Platforms::idString(low);
@@ -1365,13 +1364,12 @@ TEST_F(ProjectPlatformBuild, HistoricalIndexIsRejectedWithoutChangingFiles)
         index.insert("schema_version", version);
         writeDeliveryJson(indexPath, index);
         const auto before = bytes(indexPath);
-        EXPECT_FALSE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms, {id}, {id}, &error));
-        EXPECT_FALSE(error.isEmpty());
+        EXPECT_TRUE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms, {id}, {id}, &error));
         EXPECT_EQ(bytes(indexPath), before);
     }
 }
 
-TEST_F(ProjectPlatformBuild, UnreadableLegacyIndexIsPreservedWhenPublicationFails)
+TEST_F(ProjectPlatformBuild, UnreadableLegacyIndexDoesNotControlCurrentPublication)
 {
     const QString root = directory.filePath("UnreadableLegacyDelivery");
     std::vector<ProjectPackExporter::PackBuildRecord> records;
@@ -1380,8 +1378,7 @@ TEST_F(ProjectPlatformBuild, UnreadableLegacyIndexIsPreservedWhenPublicationFail
     const auto before = publicationBytes(QDir(root).filePath("Android_Low"), low);
     const QString id = Platforms::idString(low);
     QString error;
-    EXPECT_FALSE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms, {id}, {id}, &error));
-    EXPECT_FALSE(error.isEmpty());
+    EXPECT_TRUE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms, {id}, {id}, &error));
     EXPECT_TRUE(QFileInfo(QDir(root).filePath("HarkenPackIndex.json")).isDir());
     EXPECT_EQ(publicationBytes(QDir(root).filePath("Android_Low"), low), before);
 }

@@ -676,7 +676,7 @@ void renamePublicationToLegacy(const QDir& dir, bool wrapped,
         {QStringLiteral("gameplayCatalog"), QJsonObject{{QStringLiteral("projectId"), projectId},
             {QStringLiteral("actions"), actions}}},
         {QStringLiteral("variableCatalog"), QJsonObject{{QStringLiteral("variables"), variables}}}};
-    writeFileBytes(dir.filePath(HarkenEditor::Bridge::packManifestFileName()),
+    writeFileBytes(dir.filePath(QStringLiteral("HarkenPackManifest.json")),
                    QJsonDocument(manifest).toJson(QJsonDocument::Compact));
 }
 
@@ -1077,7 +1077,7 @@ TEST(EditorProjectPackExporterManifest, CompanionsCoverEachExportedAction)
 
     const QJsonArray manifest = readPublication(dir.path());
     EXPECT_FALSE(QFileInfo::exists(QDir(dir.path()).filePath(
-        HarkenEditor::Bridge::packManifestFileName())));
+        QStringLiteral("HarkenPackManifest.json"))));
 
     const QJsonArray packs = manifest;
 
@@ -1689,7 +1689,7 @@ TEST(EditorProjectPackExporterManifest, ActionNameCollisionFailsBeforePublishing
         << result.error.toStdString();
     EXPECT_TRUE(QDir(dir.path()).entryList({QStringLiteral("*.bytes")}, QDir::Files).isEmpty());
     EXPECT_FALSE(QFileInfo::exists(QDir(dir.path()).filePath(
-        HarkenEditor::Bridge::packManifestFileName())));
+        QStringLiteral("HarkenPackManifest.json"))));
 
     VNX::AssetRegistry::instance().clear();
 }
@@ -1765,7 +1765,7 @@ TEST(EditorProjectPackExporterManifest, UnsupportedBusPropertiesKeepPublishedPac
     const auto published = outputBytes();
     ASSERT_FALSE(published.empty());
     ASSERT_TRUE(published.contains(QStringLiteral("current-world.bin")));
-    ASSERT_FALSE(published.contains(HarkenEditor::Bridge::packIndexFileName()));
+    ASSERT_FALSE(published.contains(QStringLiteral("HarkenPackIndex.json")));
     RecordProperty("publishedFileCount", static_cast<int>(published.size()));
     QCryptographicHash fileSetHash(QCryptographicHash::Sha256);
     for (const auto& [name, bytes] : published) {
@@ -2575,7 +2575,7 @@ TEST(EditorProjectPackExporterManifest, LaterExportPreservesUnownedFiles)
     VNX::AssetRegistry::instance().clear();
 }
 
-TEST(EditorProjectPackExporterManifest, LegacyMigrationReplacesOutputsAndCleansUnusedFiles)
+TEST(EditorProjectPackExporterManifest, FullRebuildReplacesRetiredOutputsWithoutReadingTheirMetadata)
 {
     qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
     QTemporaryDir dir;
@@ -2595,6 +2595,12 @@ TEST(EditorProjectPackExporterManifest, LegacyMigrationReplacesOutputsAndCleansU
         ASSERT_TRUE(exporter.ExportAllPacks(project, live.path(), opts).success);
         const QJsonArray native = readPublication(live.path());
         ASSERT_NO_FATAL_FAILURE(renamePublicationToLegacy(live, wrapped));
+        QJsonArray retiredPacks;
+        QStringList retiredFiles;
+        QString error;
+        EXPECT_FALSE(VNX::ReadPackPublication(live.path(), {}, {}, &retiredPacks, &retiredFiles, &error));
+        EXPECT_TRUE(retiredPacks.isEmpty());
+        writeFileBytes(live.filePath("HarkenPackManifest.json"), "invalid-retired-metadata");
         const QString oldInit = wrapped ? QStringLiteral("Init.pack.bytes") : QStringLiteral("Init.pack");
         writeFileBytes(live.filePath("unrelated.bytes"), "other");
         writeFileBytes(live.filePath("arbitrary.pack"), "other-pack");
@@ -2611,7 +2617,7 @@ TEST(EditorProjectPackExporterManifest, LegacyMigrationReplacesOutputsAndCleansU
     registry.clear();
 }
 
-TEST(EditorProjectPackExporterManifest, DotPrefixedLegacyPackIsRetiredAfterActionExport)
+TEST(EditorProjectPackExporterManifest, FullRebuildCleansDotPrefixedRetiredOutputs)
 {
     qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
     QTemporaryDir dir;
@@ -3148,7 +3154,7 @@ TEST(EditorProjectPackExporterManifest, LocalizedActionEmbedsNonLocalizedExecuti
     QString error;
     ASSERT_TRUE(VNX::ProjectPackExporter::ValidatePackOutputs(dir.path(), {*VNX::ProjectPlatformSemantics::find(project.platforms, QUuid(opts.platform))}, &error, result.artifacts))
         << error.toStdString();
-    EXPECT_FALSE(QFileInfo::exists(QDir(dir.path()).filePath(HarkenEditor::Bridge::packIndexFileName())));
+    EXPECT_FALSE(QFileInfo::exists(QDir(dir.path()).filePath(QStringLiteral("HarkenPackIndex.json"))));
 
     const QJsonArray packs = readPublication(outputDir);
     ASSERT_EQ(packs.size(), 3);
@@ -3329,7 +3335,7 @@ TEST(EditorProjectPackExporterManifest, MixedLanguageVariantsOwnMatchingDefiniti
     QString error;
     ASSERT_TRUE(VNX::ProjectPackExporter::ValidatePackOutputs(dir.path(), project.platforms, &error, artifacts))
         << error.toStdString();
-    EXPECT_FALSE(QFileInfo::exists(QDir(dir.path()).filePath(HarkenEditor::Bridge::packIndexFileName())));
+    EXPECT_FALSE(QFileInfo::exists(QDir(dir.path()).filePath(QStringLiteral("HarkenPackIndex.json"))));
     VNX::AssetRegistry::instance().clear();
 }
 
@@ -3543,7 +3549,7 @@ TEST(EditorProjectPackExporterManifest, ExternalLocalizedOccurrenceKeepsInvalidO
     QDirIterator packs(outputDir, {"*.bytes"}, QDir::Files, QDirIterator::Subdirectories);
     EXPECT_FALSE(packs.hasNext());
     EXPECT_FALSE(QFileInfo::exists(
-        QDir(outputDir).filePath(HarkenEditor::Bridge::packManifestFileName())));
+        QDir(outputDir).filePath(QStringLiteral("HarkenPackManifest.json"))));
     VNX::AssetRegistry::instance().clear();
 }
 
@@ -3615,7 +3621,7 @@ TEST(EditorProjectPackExporterManifest, MissingLocalizedActiveWritesNoPacks)
     QDirIterator packs(outputDir, {"*.bytes"}, QDir::Files, QDirIterator::Subdirectories);
     EXPECT_FALSE(packs.hasNext());
     EXPECT_FALSE(QFileInfo::exists(
-        QDir(outputDir).filePath(HarkenEditor::Bridge::packManifestFileName())));
+        QDir(outputDir).filePath(QStringLiteral("HarkenPackManifest.json"))));
     opts.language = QStringLiteral("ja");
     const QString path = QDir(dir.path()).filePath(QStringLiteral("single.bytes"));
     result = exporter.ExportActionPack(project, QStringLiteral("Spoken"), path, opts);
@@ -3718,7 +3724,7 @@ TEST(EditorProjectPackExporterManifest, InvalidRequestedLanguageWritesNoPacks)
         QDirIterator packs(outputDir, {"*.bytes"}, QDir::Files, QDirIterator::Subdirectories);
         EXPECT_FALSE(packs.hasNext());
         EXPECT_FALSE(QFileInfo::exists(
-            QDir(outputDir).filePath(HarkenEditor::Bridge::packManifestFileName())));
+            QDir(outputDir).filePath(QStringLiteral("HarkenPackManifest.json"))));
     }
     VNX::AssetRegistry::instance().clear();
 }
@@ -3760,7 +3766,7 @@ TEST(EditorProjectPackExporterManifest, SelectedPostActionChainWithoutLanguagesW
     QDirIterator packs(outputDir, {"*.bytes"}, QDir::Files, QDirIterator::Subdirectories);
     EXPECT_FALSE(packs.hasNext());
     EXPECT_FALSE(QFileInfo::exists(
-        QDir(outputDir).filePath(HarkenEditor::Bridge::packManifestFileName())));
+        QDir(outputDir).filePath(QStringLiteral("HarkenPackManifest.json"))));
     VNX::AssetRegistry::instance().clear();
 }
 
@@ -3811,7 +3817,7 @@ TEST(EditorProjectPackExporterManifest, InterruptedPublishRestoresOwnedFilesAndP
         const QString marker = live.filePath(QStringLiteral(".harken-pack-publishing"));
         QJsonObject transaction{{"version", 1}, {"previous", previousName}, {"next", nextName},
             {"previousFiles", QJsonArray::fromStringList(names)}, {"nextFiles", QJsonArray::fromStringList(names)}};
-        writeFileBytes(marker, legacy ? QByteArray() : QJsonDocument(transaction).toJson());
+        writeFileBytes(marker, QJsonDocument(transaction).toJson());
         opts.cancelCheck = [] { return true; };
         const auto result = exporter.ExportAllPacks(project, live.path(), opts);
         EXPECT_FALSE(result.success);
@@ -3835,12 +3841,12 @@ TEST(EditorProjectPackExporterManifest, InterruptedPublishRestoresOwnedFilesAndP
     const QString nextName = QStringLiteral(".harken-pack-next-interrupted");
     const QDir previous(root.filePath(previousName));
     const QDir next(root.filePath(nextName));
-    const QStringList previousNames{HarkenEditor::Bridge::packIndexFileName(),
+    const QStringList previousNames{QStringLiteral("HarkenPackIndex.json"),
         QStringLiteral("OldPlatform/pack.archive"), QStringLiteral("OldPlatform/pack.archive.meta")};
     for (const auto& name : previousNames)
         writeFileBytes(previous.filePath(name), "previous");
     writeFileBytes(root.filePath("SelectedPlatform/current.bytes"), "unchanged");
-    const QStringList nextNames{HarkenEditor::Bridge::packIndexFileName()};
+    const QStringList nextNames{QStringLiteral("HarkenPackIndex.json")};
     for (const auto& name : nextNames) {
         writeFileBytes(root.filePath(name), "partial");
         writeFileBytes(next.filePath(name), "next");
@@ -4155,7 +4161,7 @@ TEST(EditorProjectPackExporterManifest, PublicationSelectionReconcilesTheWholeOu
     const auto retained = VNX::ProjectPackExporter::FinalizePackExport(project.packBuildOutputDir,
         project, {platform}, false, selected.artifacts);
     ASSERT_TRUE(retained.success) << retained.error.toStdString();
-    const auto indexPath = QDir(project.packBuildOutputDir).filePath(HarkenEditor::Bridge::packIndexFileName());
+    const auto indexPath = QDir(project.packBuildOutputDir).filePath(QStringLiteral("HarkenPackIndex.json"));
     EXPECT_FALSE(QFileInfo::exists(indexPath));
     EXPECT_EQ(readFileBytes(other.filePath(QStringLiteral("Init.json"))), otherCompanion);
     EXPECT_TRUE(QFileInfo::exists(QDir(project.packBuildOutputDir).filePath("notes.txt")));

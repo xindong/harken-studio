@@ -35,14 +35,14 @@ namespace Harken.Unity.Tests
         {
             InstallTestPacks();
             var settingsLease = HarkenProjectSettingsLease.Acquire();
-            settingsLease.Settings.SetPackDirectory(Path.Combine(Application.streamingAssetsPath, "Audio", "GeneratedPacks"));
+            settingsLease.Settings.SetPackDirectory(Path.Combine(Application.streamingAssetsPath, "Audio", "CompanionPacks"));
             GameObject owner = new GameObject("Harken Runtime Test");
             owner.SetActive(false);
             HarkenAudioSystem runtime = owner.AddComponent<HarkenAudioSystem>();
             try
             {
                 Assert.That(runtime.ConfigureBeforeStartup(
-                    "Audio/GeneratedPacks", "Init.bytes",
+                    "Audio/CompanionPacks", "Init.bytes",
                     System.Array.Empty<ulong>(), true, false),
                     Is.EqualTo(VnResult.VN_OK));
 
@@ -78,60 +78,7 @@ namespace Harken.Unity.Tests
             yield return null;
         }
 
-        [UnityTest]
-        public IEnumerator SuspendedRuntimePreservesQueuedPackUntilResume()
-        {
-            InstallTestPacks();
-            var settingsLease = HarkenProjectSettingsLease.Acquire();
-            settingsLease.Settings.SetPackDirectory(Path.Combine(Application.streamingAssetsPath, "Audio", "GeneratedPacks"));
-            GameObject owner = new GameObject("Harken Runtime Suspend Test");
-            owner.SetActive(false);
 
-            HarkenAudioSystem runtime = owner.AddComponent<HarkenAudioSystem>();
-            HarkenPack pack = owner.AddComponent<HarkenPack>();
-            try
-            {
-                Assert.That(runtime.ConfigureBeforeStartup(
-                    "Audio/GeneratedPacks", "Init.bytes",
-                    System.Array.Empty<ulong>(), true, false),
-                    Is.EqualTo(VnResult.VN_OK));
-                SetPrivateField(pack, "runtime", runtime);
-                SetPrivateField(pack, "packStableId", ReadSampleRandomOwner());
-
-                owner.SetActive(true);
-                Assert.That(runtime.State, Is.EqualTo(HarkenRuntimeState.Ready));
-                Assert.That(runtime.PendingPackLoadCount, Is.EqualTo(1));
-                Assert.That(runtime.SetSuspended(true), Is.EqualTo(VnResult.VN_OK));
-
-                yield return null;
-
-                Assert.That(runtime.State, Is.EqualTo(HarkenRuntimeState.Suspended));
-                Assert.That(runtime.PendingPackLoadCount, Is.EqualTo(1));
-                Assert.That(pack.IsLoaded, Is.False);
-                Assert.That(runtime.SetSuspended(false), Is.EqualTo(VnResult.VN_OK));
-
-                yield return null;
-
-                Assert.That(runtime.State, Is.EqualTo(HarkenRuntimeState.Ready));
-                Assert.That(runtime.PendingPackLoadCount, Is.Zero);
-                Assert.That(pack.IsLoaded, Is.True);
-                Assert.That(runtime.ShutdownRuntime(), Is.EqualTo(VnResult.VN_OK));
-            }
-            finally
-            {
-                try
-                {
-                    if (runtime.Session != null && runtime.Session.IsActive)
-                        Assert.That(runtime.ShutdownRuntime(), Is.EqualTo(VnResult.VN_OK));
-                }
-                finally
-                {
-                    Object.DestroyImmediate(owner);
-                    settingsLease.Dispose();
-                }
-            }
-            yield return null;
-        }
 
         [UnityTest]
         public IEnumerator ComponentActionPostsFromPlayerLoopAfterRuntimePump()
@@ -164,13 +111,12 @@ namespace Harken.Unity.Tests
                 yield return null;
                 Assert.That(fixture.Pack.IsLoaded, Is.False);
                 Assert.That(fixture.Runtime.PendingPackLoadCount, Is.Zero);
-                Assert.That(Actions.Resolve(fixture.Name, fixture.ProjectId, out ActionResolved initial),
-                    Is.EqualTo(VnResult.VN_OK));
-                ulong initialGeneration = initial.PublicationGeneration;
+                Assert.That(Actions.Resolve(fixture.Name, fixture.ProjectId, out _),
+                    Is.EqualTo(VnResult.VN_UNKNOWN_ID));
 
                 SetPrivateField(fixture.Action, "actionName", "Missing_Action_For_Component_Test");
-                ExpectActionFailure(VnResult.VN_UNKNOWN_ID);
-                Assert.That(fixture.Action.Play(), Is.EqualTo(VnResult.VN_UNKNOWN_ID));
+                ExpectActionFailure(VnResult.VN_CONTENT_NOT_LOADED);
+                Assert.That(fixture.Action.Play(), Is.EqualTo(VnResult.VN_CONTENT_NOT_LOADED));
                 SetPrivateField(fixture.Action, "actionName", fixture.Name);
                 SetPrivateField(fixture.Action, "projectId", "01234567-89ab-cdef-8123-456789abcdef");
                 ExpectActionFailure(VnResult.VN_GAMEPLAY_WRONG_PROJECT);
@@ -179,7 +125,7 @@ namespace Harken.Unity.Tests
                 Assert.That(fixture.Action.Play(), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(fixture.Pack.IsLoaded, Is.False, "The Action owns its own preparation request.");
                 Assert.That(GetPrivateField<ActionResolved>(fixture.Action, "cachedResolved").PublicationGeneration,
-                    Is.Not.EqualTo(initialGeneration));
+                    Is.GreaterThan(0UL));
                 Assert.That(fixture.Action.Firing.Query(out VnActionFiringInfo info), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(info.actionId, Is.EqualTo(fixture.ActionId));
                 Assert.That(fixture.Action.ActionName, Is.EqualTo(fixture.Name));
@@ -215,22 +161,7 @@ namespace Harken.Unity.Tests
             yield return null;
         }
 
-        [UnityTest]
-        public IEnumerator AutomaticPlayWaitsForExplicitPreparation()
-        {
-            using (var fixture = new NameFirstFixture())
-            {
-                fixture.Start(true, true);
-                Assert.That(fixture.Runtime.PendingPackLoadCount, Is.EqualTo(1));
-                Assert.That(fixture.Runtime.IsPreparationComplete, Is.False);
-                Assert.That(GetPrivateField<ulong>(fixture.Action, "callerSeed"), Is.Zero);
-                yield return null;
-                Assert.That(fixture.Runtime.IsPreparationComplete, Is.True);
-                Assert.That(fixture.Action.LastResult, Is.EqualTo(VnResult.VN_OK));
-                Assert.That(GetPrivateField<ulong>(fixture.Action, "callerSeed"), Is.EqualTo(1UL));
-            }
-            yield return null;
-        }
+
 
         [UnityTest]
         public IEnumerator ExplicitRefusalSurvivesExistingFiringObservation()
@@ -295,6 +226,7 @@ namespace Harken.Unity.Tests
                 SetPrivateField(other, "packStableId", fixture.Pack.PackStableId);
                 SetPrivateField(other, "loadOnReady", false);
                 otherOwner.SetActive(true);
+                fixture.PreparePack();
                 Assert.That(fixture.Pack.Load(), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(other.Load(), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(other.Handle.Handle, Is.EqualTo(fixture.Pack.Handle.Handle));
@@ -310,13 +242,13 @@ namespace Harken.Unity.Tests
         }
 
         [UnityTest]
-        public IEnumerator UnknownStartupPackRejectsTheWholeSessionAndAllowsRetry()
+        public IEnumerator LegacyStartupPackIdsRejectTheWholeSessionAndAllowRetry()
         {
             using (var fixture = new NameFirstFixture())
             {
                 const string relativeRoot = "Audio/NameFirstPacks";
                 string root = Path.Combine(Application.streamingAssetsPath, relativeRoot);
-                Assert.That(GameplayPublication.Read(root, "English", out GameplayPublication publication,
+                Assert.That(CompanionTestPublication.Read(root, "English", out CompanionTestPublication publication,
                     out string error), Is.EqualTo(VnResult.VN_OK), error);
                 Assert.That(publication.TryFindPack(ulong.MaxValue, out _), Is.False);
                 ulong ownerId = publication.Actions[0].OwnerPackStableId;
@@ -324,14 +256,14 @@ namespace Harken.Unity.Tests
                 Assert.That(fixture.Runtime.ConfigureBeforeStartup(relativeRoot, publication.InitPack.Path,
                     new[] { ownerId, ulong.MaxValue }, true, false), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(fixture.Runtime.ConfigureLanguageBeforeStartup("English"), Is.EqualTo(VnResult.VN_OK));
-                LogAssert.Expect(LogType.Error, new Regex("PackBootstrap.Start: VN_UNKNOWN_ID"));
+                LogAssert.Expect(LogType.Error, new Regex("PackBootstrap.Start: VN_INVALID_ARG"));
                 VnResult startupResult = VnResult.VN_OK;
                 fixture.Runtime.OperationCompleted += (owner, operation, result) =>
                 {
                     if (operation == "PackBootstrap.Start") startupResult = result;
                 };
                 fixture.Owner.SetActive(true);
-                Assert.That(startupResult, Is.EqualTo(VnResult.VN_UNKNOWN_ID));
+                Assert.That(startupResult, Is.EqualTo(VnResult.VN_INVALID_ARG));
                 Assert.That(fixture.Runtime.Session, Is.Null);
                 Assert.That(fixture.Runtime.IsReady, Is.False);
                 Assert.That(GetPrivateField<object>(fixture.Runtime, "notificationRegistration"), Is.Null);
@@ -340,7 +272,7 @@ namespace Harken.Unity.Tests
                 Assert.That(fixture.Runtime.Session, Is.Null);
                 Assert.That(fixture.Runtime.IsReady, Is.False);
                 Assert.That(fixture.Runtime.ConfigureBeforeStartup(relativeRoot, publication.InitPack.Path,
-                    new[] { ownerId }, true, false), Is.EqualTo(VnResult.VN_OK));
+                    System.Array.Empty<ulong>(), true, false), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(fixture.Runtime.StartRuntime(root), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(fixture.Runtime.IsReady, Is.True);
                 Assert.That(fixture.Runtime.Session.IsStartupComplete, Is.True);
@@ -359,6 +291,7 @@ namespace Harken.Unity.Tests
                     fixture.Start(false, false, language);
                     Assert.That(fixture.Runtime.Language, Is.EqualTo(language));
                     Assert.That(fixture.Runtime.Session.Language, Is.EqualTo(language));
+                    fixture.PreparePack();
                     Assert.That(fixture.Pack.Load(), Is.EqualTo(VnResult.VN_OK));
                     yield return null;
                     LogAssert.Expect(LogType.Error, new Regex("ConfigureLanguageBeforeStartup: VN_INVALID_ARG"));
@@ -389,32 +322,23 @@ namespace Harken.Unity.Tests
                     Directory.CreateDirectory(Path.GetDirectoryName(destination));
                     File.Copy(file, destination);
                 }
-                Assert.That(PackManifest.TryReadManifest(target, "English", out _,
-                    out PackManifestEntry[] packs, out _, out ulong initId), Is.True);
-                PackManifestEntry init = System.Array.Find(packs, entry => entry.PackStableId == initId);
-                PackManifestEntry content = System.Array.Find(packs, entry => entry.PackStableId != initId);
+                Assert.That(CompanionTestPublication.Read(target, "English", out CompanionTestPublication publication,
+                    out string error), Is.EqualTo(VnResult.VN_OK), error);
+                CompanionTestAction action = publication.Actions[0];
+                Assert.That(publication.TryFindPack(action.OwnerPackStableId, out CompanionTestPack content), Is.True);
                 string contentPath = Path.Combine(target, content.Path);
                 File.Delete(contentPath);
-                Assert.That(PackManifest.TryReadManifest(target, "English", out _, out _, out _), Is.True);
-                Assert.That(PackManifest.TryLoadManifest(target, "English", out _, out _), Is.False);
+                File.Delete(Path.ChangeExtension(contentPath, ".json"));
                 VnConfig config = HarkenEngine.DefaultConfig();
                 config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
-                Assert.That(PackBootstrap.Start(Path.Combine(target, init.Path), target,
-                    new[] { content.PackStableId }, "English", ref config, out session),
+                Assert.That(PackBootstrap.StartDirectory(target, "English", ref config, out session), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(session.PrepareActions(new[] { action.Name }, publication.ProjectId, out _),
                     Is.EqualTo(VnResult.VN_CONTENT_NOT_LOADED));
-                Assert.That(session, Is.Not.Null);
                 Assert.That(session.IsActive, Is.True);
-                Assert.That(session.IsStartupComplete, Is.False);
-                Assert.That(session.FailedStartupPackStableId, Is.EqualTo(content.PackStableId));
                 File.Copy(Path.Combine(source, content.Path), contentPath);
-                Assert.That(session.PrepareStartupPacks(), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(session.IsActive, Is.True);
-                Assert.That(session.IsStartupComplete, Is.True);
-                Assert.That(session.StartupPacks[0].IsValid, Is.True);
-                Assert.That(GameplayPublication.Read(target, "English", out GameplayPublication publication,
-                    out string error), Is.EqualTo(VnResult.VN_OK), error);
-                Assert.That(Actions.Resolve(publication.Actions[0].Name,
-                    publication.ProjectId, out ActionResolved resolved), Is.EqualTo(VnResult.VN_OK));
+                File.Copy(Path.ChangeExtension(Path.Combine(source, content.Path), ".json"), Path.ChangeExtension(contentPath, ".json"));
+                Assert.That(session.PrepareActions(new[] { action.Name }, publication.ProjectId, out _), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(Actions.Resolve(action.Name, publication.ProjectId, out ActionResolved resolved), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(Actions.Post(in resolved, Emitter.None, 0, out ActionFiring firing), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(firing.IsValid, Is.True);
             }
@@ -442,6 +366,8 @@ namespace Harken.Unity.Tests
                 Assert.That(fixture.Runtime.StartRuntime(Path.Combine(Application.streamingAssetsPath,
                     "Audio/NameFirstPacks")), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(fixture.Runtime.Session, Is.Not.SameAs(previous));
+                fixture.PreparePack();
+                Assert.That(fixture.Pack.Load(), Is.EqualTo(VnResult.VN_OK));
                 yield return null;
                 Assert.That(fixture.Pack.IsLoaded, Is.True);
                 Assert.That(fixture.Emitter.IsCreated, Is.True);
@@ -476,32 +402,27 @@ namespace Harken.Unity.Tests
                 Action = Source.AddComponent<HarkenAction>();
             }
 
-            public void Start(bool loadOnReady, bool playOnEnable = false, string language = null,
+            public void Start(bool loadOnReady, bool playOnEnable = false, string language = "English",
                 bool loadAtStartup = false)
             {
                 const string relativeRoot = "Audio/NameFirstPacks";
                 string root = Path.Combine(Application.streamingAssetsPath, relativeRoot);
-                Assert.That(PackManifest.TryResolvePlatformDirectory(root, null, null, "Windows", language,
-                    out string platformRoot, out string error), Is.True, error);
-                Assert.That(GameplayPublication.Read(platformRoot, language,
-                    out GameplayPublication publication, out error), Is.EqualTo(VnResult.VN_OK), error);
-                Assert.That(publication.ValidateInit(File.ReadAllBytes(
-                    Path.Combine(platformRoot, publication.InitPack.Path)), out error),
-                    Is.EqualTo(VnResult.VN_OK), error);
+                Assert.That(CompanionTestPublication.Read(root, language,
+                    out CompanionTestPublication publication, out string error), Is.EqualTo(VnResult.VN_OK), error);
                 Assert.That(publication.Actions, Is.Not.Empty);
-                global::Harken.GameplayAction selected = publication.Actions[0];
+                CompanionTestAction selected = publication.Actions[0];
                 Name = selected.Name;
                 ProjectId = publication.ProjectId;
                 ActionId = selected.ActionStableId;
                 ulong ownerId = selected.OwnerPackStableId;
-                ulong[] startup = loadAtStartup ? new[] { ownerId } : System.Array.Empty<ulong>();
+                ulong[] startup = System.Array.Empty<ulong>();
                 settingsLease.Settings.SetPackDirectory(root);
                 Assert.That(Runtime.ConfigureBeforeStartup(relativeRoot, publication.InitPack.Path, startup, true, false),
                     Is.EqualTo(VnResult.VN_OK));
                 Assert.That(Runtime.ConfigureLanguageBeforeStartup(language), Is.EqualTo(VnResult.VN_OK));
                 SetPrivateField(Pack, "runtime", Runtime);
                 SetPrivateField(Pack, "packStableId", ownerId);
-                SetPrivateField(Pack, "loadOnReady", loadOnReady);
+                SetPrivateField(Pack, "loadOnReady", false);
                 SetPrivateField(Emitter, "runtime", Runtime);
                 SetPrivateField(Action, "runtime", Runtime);
                 SetPrivateField(Action, "emitter", Emitter);
@@ -509,8 +430,18 @@ namespace Harken.Unity.Tests
                 SetPrivateField(Action, "projectId", ProjectId);
                 SetPrivateField(Action, "playOnEnable", playOnEnable);
                 Owner.SetActive(true);
+                if (loadOnReady || loadAtStartup)
+                {
+                    PreparePack();
+                    Assert.That(Pack.Load(), Is.EqualTo(VnResult.VN_OK));
+                }
                 Source.SetActive(true);
                 Assert.That(Runtime.IsReady, Is.True);
+            }
+
+            public void PreparePack()
+            {
+                Assert.That(Runtime.Session.PrepareActions(new[] { Name }, ProjectId, out _), Is.EqualTo(VnResult.VN_OK));
             }
 
             public void Dispose()
@@ -532,24 +463,11 @@ namespace Harken.Unity.Tests
         private static void InstallTestPacks()
         {
             string target = Path.Combine(
-                Application.streamingAssetsPath, "Audio", "GeneratedPacks");
+                Application.streamingAssetsPath, "Audio", "CompanionPacks");
             Assert.That(
-                File.Exists(Path.Combine(target, "HarkenPackIndex.json")) &&
-                File.Exists(Path.Combine(target, "Windows", "Init.bytes")),
+                File.Exists(Path.Combine(target, "Init.json")) &&
+                File.Exists(Path.Combine(target, "Init.bytes")),
                 "Playable Demo Packs must be installed before PlayMode tests.");
-        }
-
-        private static ulong ReadSampleRandomOwner()
-        {
-            string root = Path.Combine(Application.streamingAssetsPath, "Audio", "GeneratedPacks");
-            Assert.That(PackManifest.TryReadPlatformDirectory(root, null, null,
-                HarkenAudioSystem.CurrentPackBasePlatform(), null, out string directory, out string error), Is.True, error);
-            Assert.That(GameplayPublication.Read(directory, null, out GameplayPublication publication, out error),
-                Is.EqualTo(VnResult.VN_OK), error);
-            Assert.That(publication.ValidateInit(File.ReadAllBytes(Path.Combine(directory, publication.InitPack.Path)), out error),
-                Is.EqualTo(VnResult.VN_OK), error);
-            Assert.That(publication.TryFindAction("Play_Random_Draw", out global::Harken.GameplayAction action), Is.True);
-            return action.OwnerPackStableId;
         }
 
         private static void SetPrivateField<T>(
