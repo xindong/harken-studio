@@ -36,10 +36,10 @@ extern "C" __declspec(dllexport) VnResult HarkenSdkTest_CaptureAcceptedSpatial(
     captured.firing = firing;
     captured.instance = step.producedPlayableInstance;
     captured.emitter = metadata.invocationEmitter;
-    auto& position = captured.sourcePosition;
-    auto& forward = captured.sourceForward;
-    if (!engine->emitters.Pose(captured.emitter, &position.x, &position.y, &position.z,
-                              &forward.x, &forward.y, &forward.z)) return VN_STALE_HANDLE;
+    harken::SpatialSourceState source{};
+    if (!engine->emitters.Pose(captured.emitter, &source)) return VN_STALE_HANDLE;
+    captured.sourcePosition = {source.posX, source.posY, source.posZ};
+    captured.sourceForward = {source.fwdX, source.fwdY, source.fwdZ};
     engine->spatial.CaptureListener(captured.listenerPosition, captured.listenerRight);
     captured.block = engine->mixer.BlocksRendered();
     *output = captured;
