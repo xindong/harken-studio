@@ -9,13 +9,11 @@
 
 class QListWidget;
 class QFrame;
+class QLineEdit;
 class QToolButton;
-class QTreeWidget;
-class QTreeWidgetItem;
 
 namespace VNX {
 
-class TableWidget;
 class ProjectPlatformEditor;
 
 inline constexpr const char* kSettingsPageConfig = "config";
@@ -43,9 +41,10 @@ private:
     void removePlatform();
     bool applyTargetLanguages();
     bool applyTargetPlatforms();
-    void editTargetLanguage(QTreeWidgetItem* item = nullptr);
+    void addTargetLanguage();
+    void selectTargetLanguage(int index);
     void onRemoveTargetLanguageClicked();
-    void setTargetLanguages(const QStringList& value);
+    void setTargetLanguages(const QStringList& value, int selectedIndex = -1);
     QJsonArray platformDraft() const;
     QStringList targetLanguages() const;
 
@@ -54,8 +53,9 @@ private:
     QToolButton* platformRemoveButton_ = nullptr;
     QVector<ProjectPlatform> draftPlatforms_;
     std::weak_ptr<ProjectData> projectLease_;
-    TableWidget* targetLanguagesBox_ = nullptr;
-    QTreeWidget* targetLanguagesList_ = nullptr;
+    QListWidget* targetLanguagesList_ = nullptr;
+    QWidget* targetLanguageFields_ = nullptr;
+    QLineEdit* targetLanguageEdit_ = nullptr;
     QToolButton* targetLanguageRemoveBtn_ = nullptr;
 
     QJsonArray baselinePlatforms_;

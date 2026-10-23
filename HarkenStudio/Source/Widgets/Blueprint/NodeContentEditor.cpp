@@ -23,6 +23,7 @@
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QStackedWidget>
+#include <QStyleOptionSpinBox>
 #include <QToolButton>
 
 #include <algorithm>
@@ -414,8 +415,15 @@ void NodeContentEditor::updateMetrics()
             row->editor->ensurePolished();
             const QString text = row->editingValue ? row->editor->text()
                 : formatDecimal(row->binding->value(), row->property.decimals, row->editor->locale());
+            QStyleOptionSpinBox option;
+            option.initFrom(row->editor);
+            option.buttonSymbols = row->editor->buttonSymbols();
+            option.frame = row->editor->hasFrame();
+            const QSize textSize(row->editor->fontMetrics().horizontalAdvance(text) + 2,
+                row->editor->fontMetrics().height());
             valueWidth = std::max(valueWidth,
-                row->editor->fontMetrics().horizontalAdvance(text) + 8);
+                row->editor->style()->sizeFromContents(QStyle::CT_SpinBox, &option,
+                    textSize, row->editor).width());
         }
     }
     if (isEditing()) valueWidth = std::max(valueWidth, valueColumnWidth_);
