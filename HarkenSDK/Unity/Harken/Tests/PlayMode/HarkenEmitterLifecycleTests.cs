@@ -1,8 +1,12 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading.Tasks;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
@@ -15,6 +19,17 @@ namespace Harken.Unity.Tests
         [DllImport(HarkenNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
         private static extern VnResult HarkenSdkTest_PumpAndCopy(
             [Out] float[] samples, uint capacity, out uint frames, out uint channels);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct AcceptedSpatialSnapshot
+        {
+            public ulong Firing, Instance, Emitter, Block;
+            public VnVec3 SourcePosition, SourceForward, ListenerPosition, ListenerRight;
+        }
+
+        [DllImport(HarkenNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        private static extern VnResult HarkenSdkTest_CaptureAcceptedSpatial(
+            ulong firing, out AcceptedSpatialSnapshot snapshot);
 
         [UnityTest]
         public IEnumerator DisabledBeforeReadyDoesNotCreateEmitter() => ReadyCase("before");
@@ -90,6 +105,9 @@ namespace Harken.Unity.Tests
                             : f.Action.Play();
                         if (!useSpatialSource) posted = f.Action.Firing;
                         Assert.That(result, Is.EqualTo(VnResult.VN_OK));
+                        // This executes inside Update, immediately after Play and before any LateUpdate.
+                        AssertAcceptedSpatial(posted, f.Actor.transform, f.Camera.transform,
+                            useSpatialSource ? 0UL : f.Emitter.Handle.Handle);
                     };
                     yield return f.FirstAudible(driver, () => posted, value => rendered = value);
                     if (pass == 0)
@@ -105,6 +123,119 @@ namespace Harken.Unity.Tests
                     }
                 }
             }
+        }
+
+        private static void AssertAcceptedSpatial(ActionFiring firing, Transform source,
+            Transform listener, ulong expectedEmitter = 0)
+        {
+            Assert.That(HarkenSdkTest_CaptureAcceptedSpatial(firing.Handle, out AcceptedSpatialSnapshot accepted),
+                Is.EqualTo(VnResult.VN_OK));
+            Assert.That(accepted.Firing, Is.EqualTo(firing.Handle));
+            Assert.That(firing.QueryStep(0, out VnActionStepResult step), Is.EqualTo(VnResult.VN_OK));
+            Assert.That(accepted.Instance, Is.EqualTo(step.producedPlayableInstance).And.Not.Zero);
+            Assert.That(accepted.Emitter, Is.Not.Zero);
+            if (expectedEmitter != 0) Assert.That(accepted.Emitter, Is.EqualTo(expectedEmitter));
+            AssertPose(accepted.SourcePosition, UnitySpatial.ToHarken(source.position));
+            AssertPose(accepted.SourceForward, UnitySpatial.ToHarken(source.forward));
+            AssertPose(accepted.ListenerPosition, UnitySpatial.ToHarken(listener.position));
+            AssertPose(accepted.ListenerRight, UnitySpatial.ToHarken(listener.right));
+            Debug.Log($"SPATIAL_ACCEPTED frame={Time.frameCount} firing={accepted.Firing} instance={accepted.Instance} emitter={accepted.Emitter} block={accepted.Block} sourceX={accepted.SourcePosition.x:R} listenerX={accepted.ListenerPosition.x:R}");
+        }
+
+        private static void AssertPose(VnVec3 actual, VnVec3 expected)
+        {
+            Assert.That(actual.x, Is.EqualTo(expected.x).Within(0.00001f));
+            Assert.That(actual.y, Is.EqualTo(expected.y).Within(0.00001f));
+            Assert.That(actual.z, Is.EqualTo(expected.z).Within(0.00001f));
+        }
+
+        [UnityTest]
+        public IEnumerator AsyncPreparationUsesCurrentSourceAndListenerAtFirstSound()
+        {
+            Vector2 reference = default;
+            for (int pass = 0; pass < 2; ++pass)
+            {
+                using (var f = new Fixture(companion: pass != 0))
+                {
+                    var content = new TaskCompletionSource<byte[]>();
+                    Dictionary<string, byte[]> companion = f.CompanionBytes();
+                    int contentReads = 0;
+                    if (pass == 0) f.Start();
+                    else
+                    {
+                        var init = new TaskCompletionSource<byte[]>();
+                        var start = f.Runtime.StartRuntimeAsync(PackSource.FromAsyncReader((path, token) =>
+                        {
+                            if (path == "Init.bytes") return init.Task;
+                            if (path == "Play_U4_A.bytes") { ++contentReads; return content.Task; }
+                            return Task.FromResult(companion.TryGetValue(path, out byte[] bytes) ? bytes : null);
+                        }));
+                        Assert.That(start.IsCompleted, Is.False);
+                        yield return null;
+                        init.SetResult(companion["Init.bytes"]);
+                        yield return Until(start);
+                        Assert.That(start.GetAwaiter().GetResult(), Is.EqualTo(VnResult.VN_OK));
+                        Assert.That(f.Runtime.Session.Publication, Is.Null);
+                        Assert.That(contentReads, Is.Zero);
+                    }
+                    f.Actor.SetActive(true);
+                    f.Camera.SetActive(true);
+                    f.Actor.transform.position = Vector3.right * 80;
+                    Assert.That(f.Runtime.CreateSpatialSource(f.Actor.transform, out HarkenSpatialSource source),
+                        Is.EqualTo(VnResult.VN_OK));
+                    var driver = f.Owner.AddComponent<HarkenSpatialPlayerLoopProbe>();
+                    ActionFiring firing = default;
+                    if (pass == 0)
+                    {
+                        driver.BeforeLate = () =>
+                        {
+                            f.Actor.transform.position = Vector3.right * 160;
+                            f.Camera.transform.position = Vector3.right * 240;
+                            Assert.That(f.Runtime.PlayAction(f.Action.ActionName, f.Action.ProjectId, source, out firing),
+                                Is.EqualTo(VnResult.VN_OK));
+                            AssertAcceptedSpatial(firing, f.Actor.transform, f.Camera.transform);
+                        };
+                    }
+                    else
+                    {
+                        var play = f.Runtime.PlayActionAsync(f.Action.ActionName, f.Action.ProjectId, source);
+                        Assert.That(f.Runtime.Session.Publication, Is.Null);
+                        Assert.That(contentReads, Is.EqualTo(1));
+                        Assert.That(play.IsCompleted, Is.False);
+                        yield return null;
+                        Assert.That(play.IsCompleted, Is.False);
+                        driver.BeforeLate = () =>
+                        {
+                            f.Actor.transform.position = Vector3.right * 160;
+                            f.Camera.transform.position = Vector3.right * 240;
+                            content.SetResult(companion["Play_U4_A.bytes"]);
+                        };
+                        yield return Until(play);
+                        HarkenActionPlayResult result = play.GetAwaiter().GetResult();
+                        Assert.That(result.Result, Is.EqualTo(VnResult.VN_OK));
+                        firing = result.Firing;
+                        Assert.That(contentReads, Is.EqualTo(1));
+                        AssertAcceptedSpatial(firing, f.Actor.transform, f.Camera.transform);
+                    }
+                    Vector2 first = default;
+                    yield return f.FirstAudible(driver, () => firing, value => first = value);
+                    Assert.That(first.x, Is.GreaterThan(0.001f));
+                    Assert.That(first.x, Is.GreaterThan(first.y * 3));
+                    if (pass == 0) reference = first;
+                    else
+                    {
+                        Assert.That(first.x, Is.EqualTo(reference.x).Within(reference.x * 0.02f));
+                        Assert.That(first.y, Is.EqualTo(reference.y).Within(0.00001f));
+                    }
+                }
+            }
+        }
+
+        private static IEnumerator Until(Task task)
+        {
+            float deadline = Time.realtimeSinceStartup + 15;
+            while (!task.IsCompleted && Time.realtimeSinceStartup < deadline) yield return null;
+            Assert.That(task.IsCompleted, Is.True, "Spatial preparation timed out.");
         }
 
         [UnityTest]
@@ -427,7 +558,7 @@ namespace Harken.Unity.Tests
             private HarkenProjectSettingsLease lease;
             private readonly float[] samples = new float[8192];
 
-            public Fixture()
+            public Fixture(bool companion = false)
             {
                 lease = HarkenProjectSettingsLease.Acquire();
                 Owner.SetActive(false);
@@ -449,8 +580,33 @@ namespace Harken.Unity.Tests
                 Assert.That(publication.TryFindAction("Play_U4_A", out GameplayAction selected), Is.True);
                 Set(Action, "actionName", selected.Name);
                 Set(Action, "projectId", publication.ProjectId);
-                Assert.That(Runtime.ConfigureBeforeStartup("Audio/SpatialPacks", publication.InitPack.Path, new[] { selected.OwnerPackStableId }, true, false), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(Runtime.ConfigureBeforeStartup("Audio/SpatialPacks", publication.InitPack.Path,
+                    companion ? Array.Empty<ulong>() : new[] { selected.OwnerPackStableId }, true, false), Is.EqualTo(VnResult.VN_OK));
+                if (companion) Assert.That(Runtime.ConfigurePlatformBeforeStartup(null), Is.EqualTo(VnResult.VN_OK));
                 Owner.SetActive(true);
+            }
+
+            public Dictionary<string, byte[]> CompanionBytes()
+            {
+                byte[] init = File.ReadAllBytes(Path.Combine(root, "Init.bytes"));
+                string version;
+                using (var reader = new BinaryReader(new MemoryStream(init)))
+                {
+                    reader.BaseStream.Position = 4;
+                    version = reader.ReadUInt32().ToString(CultureInfo.InvariantCulture);
+                }
+                Assert.That(GameplayPublication.Read(root, null, out GameplayPublication publication, out string error),
+                    Is.EqualTo(VnResult.VN_OK), error);
+                Assert.That(publication.TryFindAction(Action.ActionName, out GameplayAction action), Is.True);
+                Assert.That(publication.TryFindPack(action.OwnerPackStableId, out PackManifestEntry pack), Is.True);
+                return new Dictionary<string, byte[]>
+                {
+                    ["Init.bytes"] = init,
+                    ["Init.json"] = Encoding.UTF8.GetBytes("{\"schemaVersion\":" + version + ",\"variables\":[]}"),
+                    ["Play_U4_A.bytes"] = File.ReadAllBytes(Path.Combine(root, pack.Path)),
+                    ["Play_U4_A.json"] = Encoding.UTF8.GetBytes("{\"schemaVersion\":" + version +
+                        ",\"name\":\"" + action.Name + "\",\"guid\":\"" + action.ActionStableId + "\"}")
+                };
             }
 
             public void Start()

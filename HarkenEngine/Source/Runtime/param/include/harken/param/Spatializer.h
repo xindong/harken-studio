@@ -176,6 +176,11 @@ public:
     // right axis is their cross product.
     VnResult SetListener(VnVec3 pos, VnVec3 forward, VnVec3 up);
 
+    void CaptureListener(VnVec3& position, VnVec3& right) const noexcept {
+        position = {m_listenerX, m_listenerY, m_listenerZ};
+        right = {m_rightX, m_rightY, m_rightZ};
+    }
+
     // Profile registration: validates the descriptor, builds override
     // curves, and stores the evaluated form. VN_INVALID_ARG for a null or
     // mis-sized descriptor, non-finite or out-of-contract fields, or an

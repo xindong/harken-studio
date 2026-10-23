@@ -3,6 +3,48 @@
 
 #include <cstdint>
 #include <cstring>
+#include <type_traits>
+
+struct HarkenSdkTestSpatialSnapshot {
+    std::uint64_t firing = 0;
+    std::uint64_t instance = 0;
+    std::uint64_t emitter = 0;
+    std::uint64_t block = 0;
+    VnVec3 sourcePosition{};
+    VnVec3 sourceForward{};
+    VnVec3 listenerPosition{};
+    VnVec3 listenerRight{};
+};
+static_assert(std::is_trivially_copyable_v<HarkenSdkTestSpatialSnapshot>);
+static_assert(sizeof(HarkenSdkTestSpatialSnapshot) == 80);
+
+extern "C" __declspec(dllexport) VnResult HarkenSdkTest_CaptureAcceptedSpatial(
+    VnActionFiringHandle firing, HarkenSdkTestSpatialSnapshot* output) noexcept {
+    if (output == nullptr) return VN_INVALID_ARG;
+    *output = {};
+    auto* engine = harken::detail::ActiveEngine();
+    if (engine == nullptr) return VN_NOT_INITIALIZED;
+    VnActionStepResult step{};
+    step.structSize = sizeof(step);
+    const auto queried = Vn_QueryActionStep(firing, 0, &step);
+    if (queried != VN_OK) return queried;
+    harken::PlayableRootMetadata metadata{};
+    if (step.producedPlayableInstance == 0 ||
+        !engine->playableInstances.CaptureRootMetadata(step.producedPlayableInstance, &metadata) ||
+        metadata.actionFiring != firing) return VN_STALE_HANDLE;
+    HarkenSdkTestSpatialSnapshot captured{};
+    captured.firing = firing;
+    captured.instance = step.producedPlayableInstance;
+    captured.emitter = metadata.invocationEmitter;
+    auto& position = captured.sourcePosition;
+    auto& forward = captured.sourceForward;
+    if (!engine->emitters.Pose(captured.emitter, &position.x, &position.y, &position.z,
+                              &forward.x, &forward.y, &forward.z)) return VN_STALE_HANDLE;
+    engine->spatial.CaptureListener(captured.listenerPosition, captured.listenerRight);
+    captured.block = engine->mixer.BlocksRendered();
+    *output = captured;
+    return VN_OK;
+}
 
 extern "C" __declspec(dllexport) VnResult HarkenSdkTest_PumpNull(std::uint32_t blocks) noexcept {
     auto* engine = harken::detail::ActiveEngine();
