@@ -339,6 +339,7 @@ namespace Harken.Unity.Tests
                 }
                 File.WriteAllText(Path.Combine(companionRoot, "Unused.json"), "invalid");
                 settingsLease.Settings.SetPackDirectory(companionRoot);
+                settingsLease.Settings.SetPlayerExports(new[] { Path.GetFileName(companionRoot) });
                 Set(Runtime, "autoInitialize", projectStartup);
                 Assert.That(Runtime.ConfigureBeforeStartup("Audio/Companion", "Init.bytes", Array.Empty<ulong>(), true, false),
                     Is.EqualTo(VnResult.VN_OK));
