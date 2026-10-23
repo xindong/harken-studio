@@ -2,143 +2,70 @@
   "auditVersion": 4,
   "product": "HarkenStudio",
   "publication": "released",
-  "releaseTag": "studio-v0.8.0",
-  "sourceFingerprint": "c745fcbc9280ccd2489ce1ce7d7f41f794fae1ea490b688361317840b8b51bd1",
+  "releaseTag": "studio-v0.9.0",
+  "sourceFingerprint": "54ce5442fca3027ca961577b640335a250307a5a9008fec525d0ad2b308dea65",
   "trees": {
     "Editor": {
-      "generation": 8,
-      "sha256": "b5e239becf88784831fc0d6f0e767d500ecd3fa002cbaf346f3d6877000fe17b"
+      "generation": 9,
+      "sha256": "50bbe6e829f6d145c5a9885f19b5c751902a8f4a3b5753ae6506c37e6fa926c4"
     },
     "Pack": {
-      "generation": 3,
-      "sha256": "22051330667b09b1128d606a4f4924f49be8c7252637592e6e0140de34a8e341"
+      "generation": 4,
+      "sha256": "10620a48274499f20be4f123951cd2fd6e785533861dcd25764607d43c7ccf1c"
     }
   },
   "verification": {
     "baselineTags": [
       "release-38541471454-6a1340232cb6",
-      "release-38687506468-2620aeacdbeb"
+      "release-38687506468-2620aeacdbeb",
+      "release-39244142982-c3e1add8aef4"
     ],
     "currentReader": {
-      "buildId": "local-windows-x64-d847b813-20261019T093205Z",
-      "gitCommit": "d847b8134080494d1dffaea4fdb919ac2c8a7c1e",
+      "buildId": "local-windows-x64-1cb5593a-20261023T075450Z",
+      "gitCommit": "1cb5593ad64e8cf2c1d33e4d59ebf62c1f0c5479",
       "gitDirty": false,
-      "version": "0.8.0"
+      "version": "0.9.0"
     },
     "errors": [],
     "pack": {
       "fixtureSha256": {
-        "Content.pack": "bde8022499e0d45e2d4e1160266c93efb4c6dcd73f600c7a4e43735a0d071d3c",
-        "Init.pack": "c91393749a6490d6deb24ab2c72bf6975ef7298dd4bf71f31eff7af374f44d17"
+        "Init.bytes": "bf44cf14af22b9d851eb902decf2069b4d603796934638fdb2e884fc7aeb1606",
+        "Init.json": "d6704c0b98baa87687f675d90ba1055270238783ffdcb16f9fc723badded2da1",
+        "Play_Random_Draw.bytes": "c633d7718216a577d87e7f3454d6cb9d1a634982edf7419a475ffde26eaa3dde",
+        "Play_Random_Draw.json": "6773de1cc549e26ac206f6b2d9345ce8cd64c475f2b3dd4ede4fb23031fc0abf",
+        "Play_Random_Queue.bytes": "b42525385b664dbaccb8b07e5d9bf9feb1e1eb91110cfe93113732f40e67d8a9",
+        "Play_Random_Queue.json": "e9a37ac406c167a9db8c8e883da967bba879ef4c3c19c0c80387809c8e81bf36",
+        "Play_Sequence.bytes": "469c3cffdcf88ad6b4f60f5703c1dcf622e7cc01c9164db593fef23dcda8885f",
+        "Play_Sequence.json": "e88d81c107118999dff6ee128f530a4192e8631f9c9f3a0b41cbcc6b18ab238a",
+        "Play_Sequence_Queue.bytes": "bfba123d6c6b79f7cddcdf609a141bcb5c9f5f72b0e4db0baa222d9890f6db77",
+        "Play_Sequence_Queue.json": "560251f7a3195a48c51e5759e405845440c843dfeea114d3952de05fec25aa00",
+        "Play_Shuffle.bytes": "91e63887ecc281f68fb309427fff0cf82c62e44f5d9a9ded7a14d94f62c6f0fc",
+        "Play_Shuffle.json": "e482a1c9410184a4a751987df2ac8b1df44af8d362d9d7409906e58bec1a83af",
+        "Play_Variable_Control.bytes": "1fbd3bedb23b4a764af88a89229931b69e83c8e0d55f798fcab701b6da8fef51",
+        "Play_Variable_Control.json": "a578f84de3548e625d72b2366d76ec223e4baa729fce99315b31132b1bcb85d6"
       },
-      "readerSha256": "9535751b232ee554b2451f6b79040274d15ba43f68f08c24eb8012c974fb33d8",
-      "schemaVersion": 3,
+      "readerSha256": "485f8b059d1b2b817007fbf13a271121ac26ab97089022bf58db5d0467234296",
+      "schemaVersion": 4,
       "status": "passed"
     },
-    "packReaders": [
-      {
-        "fixtureSha256": {
-          "Content.pack": "bde8022499e0d45e2d4e1160266c93efb4c6dcd73f600c7a4e43735a0d071d3c",
-          "Init.pack": "c91393749a6490d6deb24ab2c72bf6975ef7298dd4bf71f31eff7af374f44d17"
-        },
-        "indexEntries": [
-          {
-            "basePlatform": "Windows",
-            "id": "11111111-2222-3333-4444-555555555555",
-            "name": "Compatibility",
-            "path": "Compatibility"
-          }
-        ],
-        "manifestEntries": [
-          {
-            "contentHash": "10384373630898370863",
-            "dependencies": [],
-            "name": "Init",
-            "packStableId": "11",
-            "path": "Init.pack",
-            "platformId": "11111111-2222-3333-4444-555555555555"
-          },
-          {
-            "contentHash": "1993705983692833308",
-            "dependencies": [
-              "11"
-            ],
-            "name": "Content",
-            "packStableId": "22",
-            "path": "Content.pack",
-            "platformId": "11111111-2222-3333-4444-555555555555"
-          }
-        ],
-        "ok": true,
-        "packPaths": [
-          "Compatibility/Init.pack",
-          "Compatibility/Content.pack"
-        ],
-        "readerSha256": "e7fc69a2faffcbe8b5d91c926e7510e4d04c3bad8865f995ce38b967e5aca19d",
-        "schemaVersion": 3,
-        "tag": "release-38541471454-6a1340232cb6"
-      },
-      {
-        "fixtureSha256": {
-          "Content.pack": "bde8022499e0d45e2d4e1160266c93efb4c6dcd73f600c7a4e43735a0d071d3c",
-          "Init.pack": "c91393749a6490d6deb24ab2c72bf6975ef7298dd4bf71f31eff7af374f44d17"
-        },
-        "indexEntries": [
-          {
-            "basePlatform": "Windows",
-            "id": "11111111-2222-3333-4444-555555555555",
-            "name": "Compatibility",
-            "path": "Compatibility"
-          }
-        ],
-        "manifestEntries": [
-          {
-            "contentHash": "10384373630898370863",
-            "dependencies": [],
-            "name": "Init",
-            "packStableId": "11",
-            "path": "Init.pack",
-            "platformId": "11111111-2222-3333-4444-555555555555"
-          },
-          {
-            "contentHash": "1993705983692833308",
-            "dependencies": [
-              "11"
-            ],
-            "name": "Content",
-            "packStableId": "22",
-            "path": "Content.pack",
-            "platformId": "11111111-2222-3333-4444-555555555555"
-          }
-        ],
-        "ok": true,
-        "packPaths": [
-          "Compatibility/Init.pack",
-          "Compatibility/Content.pack"
-        ],
-        "readerSha256": "e7fc69a2faffcbe8b5d91c926e7510e4d04c3bad8865f995ce38b967e5aca19d",
-        "schemaVersion": 3,
-        "tag": "release-38687506468-2620aeacdbeb"
-      }
-    ],
     "protocol": "schema-roundtrip-v1",
     "readers": [
       {
-        "buildId": "local-windows-x64-d847b813-20261019T093205Z",
+        "buildId": "local-windows-x64-1cb5593a-20261023T075450Z",
         "checks": [
           "new-reads-old",
           "old-edits-new",
           "new-reopens-preserved-content"
         ],
-        "schemaSnapshotHash": "4261e815506db3af02e3eeda143ef41e9a2022633ec24342bc169f79ce48cc5c",
+        "schemaSnapshotHash": "819064e8512dc2cabb5d66b0a8bf716fa19d182daf8aa0c84443cc36b7eb5bad",
         "tag": "current"
       },
       {
         "buildId": "stable-windows-x64-run2-0e5f4826-20261014T092443Z",
         "checks": [
-          "old-pack-parser-reads-current-sidecars",
           "migration-preserves-metadata",
-          "new-reads-migrated"
+          "new-reads-migrated",
+          "migration-rollback-restores-original"
         ],
         "schemaSnapshotHash": "bd0e0b2d04376bf2760c495829407a4ca45b4820d0f99ebc62a9ec3c1004a381",
         "tag": "release-38541471454-6a1340232cb6"
@@ -146,14 +73,24 @@
       {
         "buildId": "stable-windows-x64-run5-67e1befd-20261015T054127Z",
         "checks": [
-          "old-pack-parser-reads-current-sidecars",
           "migration-preserves-metadata",
-          "new-reads-migrated"
+          "new-reads-migrated",
+          "migration-rollback-restores-original"
         ],
         "schemaSnapshotHash": "bd0e0b2d04376bf2760c495829407a4ca45b4820d0f99ebc62a9ec3c1004a381",
         "tag": "release-38687506468-2620aeacdbeb"
+      },
+      {
+        "buildId": "stable-windows-x64-run7-02b99fea-20261019T113012Z",
+        "checks": [
+          "migration-preserves-metadata",
+          "new-reads-migrated",
+          "migration-rollback-restores-original"
+        ],
+        "schemaSnapshotHash": "4261e815506db3af02e3eeda143ef41e9a2022633ec24342bc169f79ce48cc5c",
+        "tag": "release-39244142982-c3e1add8aef4"
       }
     ],
-    "schemaSnapshotHash": "4261e815506db3af02e3eeda143ef41e9a2022633ec24342bc169f79ce48cc5c"
+    "schemaSnapshotHash": "819064e8512dc2cabb5d66b0a8bf716fa19d182daf8aa0c84443cc36b7eb5bad"
   }
 }

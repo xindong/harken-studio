@@ -1,7 +1,8 @@
 {
   "manifestVersion": 1,
   "published": [
-    3
+    3,
+    4
   ],
   "supportedHistorical": [],
   "tip": "current"

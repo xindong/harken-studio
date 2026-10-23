@@ -2,6 +2,6 @@ namespace Harken
 {
     internal static class HarkenPackSchema
     {
-        internal const int Version = 3;
+        internal const int Version = 4;
     }
 }
