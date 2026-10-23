@@ -159,6 +159,8 @@
 </context>
 <context>
     <name>HubReleaseNotes</name>
+    <message><source>Hub windows, the app bundle, Windows shortcuts, the taskbar, the system tray, and the installer use the refreshed Hub icon.</source><translation>Hub &#x7a97;&#x53e3;&#x3001;&#x5e94;&#x7528;&#x3001;Windows &#x5feb;&#x6377;&#x65b9;&#x5f0f;&#x3001;&#x4efb;&#x52a1;&#x680f;&#x3001;&#x7cfb;&#x7edf;&#x6258;&#x76d8;&#x548c;&#x5b89;&#x88c5;&#x7a0b;&#x5e8f;&#x7edf;&#x4e00;&#x4f7f;&#x7528;&#x65b0;&#x7248; Hub &#x56fe;&#x6807;&#x3002;</translation></message>
+    <message><source>Disabling automatic updates stops background checks and downloads for the corresponding product. Manual update checks remain available.</source><translation>关闭自动更新后，会停止对应产品的后台检查和下载，仍可手动检查更新。</translation></message>
     <message><source>Hub windows, the app bundle, Windows shortcuts, the taskbar, and the system tray use the new white icon on a black background.</source><translation>Hub 窗口、应用、Windows 快捷方式、任务栏和系统托盘统一使用新版黑底白色图标。</translation></message>
     <message><source>The quick SDK change menu lists newer versions first, with separators between upgrades, the installed version, and older versions. Sources with the same SDK version list newer Studio versions first.</source><translation>快捷更换 SDK 菜单将新版本放在前面，并在可升级版本、当前版本和较旧版本之间添加分割线。同一 SDK 版本的来源优先显示较新的 Studio 版本。</translation></message>
     <message><source>Successful SDK installation and update results are highlighted in green.</source><translation>SDK 安装或更新成功后，结果文字以绿色突出显示。</translation></message>
@@ -508,8 +510,8 @@
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="196"/>
-        <source>Automatically Download the Latest Studio</source>
-        <translation>是否自动下载最新版Studio</translation>
+        <source>Automatically Check and Download the Latest Studio</source>
+        <translation>是否自动检查并下载最新版Studio</translation>
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="222"/>
@@ -534,8 +536,8 @@
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="172"/>
-        <source>Automatically Update Harken Studio Hub Silently</source>
-        <translation>是否自动静默更新Hub</translation>
+        <source>Automatically Check and Silently Update Hub</source>
+        <translation>是否自动检查并静默更新Hub</translation>
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="176"/>

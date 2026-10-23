@@ -60,7 +60,7 @@ AI 对话已经支持本机持久化，不能再写成“对话仅存内存”�
 
 以上是公开文件的托管与下载，没有接收用户工程、统计或诊断上报的业务接口。
 
-`UpdateChecker.cpp`、`UpdateCoordinator.cpp` 负责周期检查和更新调度，默认检查间隔为 1 小时、下限为 15 分钟。不可用响应按现有规则尝试备用源并退避；`--check-updates --product hub` 和 `--check-updates --product harken` 分别支持 Hub 与 Studio 单次检查，省略产品参数时仍检查 Studio。
+`UpdateChecker.cpp`、`UpdateCoordinator.cpp`、`HubSelfUpdate.cpp` 负责周期检查和更新调度，默认检查间隔为 1 小时、下限为 15 分钟。关闭对应产品的自动更新设置后，不再发起该产品的后台清单检查、重试及下载，并中止正在进行的自动请求；下次启动沿用该设置。手动检查仍可发起一次查询，不重新开启后台轮询或自动下载。已经提交的本机安装事务继续完成。不可用响应按现有规则尝试备用源；自动检查开启时才安排退避重试。`--check-updates --product hub` 和 `--check-updates --product harken` 分别支持 Hub 与 Studio 单次检查，省略产品参数时仍检查 Studio。
 
 Hub 和 Studio 更新下载失败后会清除内存中的清单缓存标记，后续检查可重新获取清单并重试。待安装文件丢失时，即使条件请求返回 304，也会重新请求已签名清单以恢复下载。校验拒绝后主动清理的坏包不按缓存丢失自动恢复；用户主动检查仍可重试。以上请求沿用原有分发源和校验流程。
 

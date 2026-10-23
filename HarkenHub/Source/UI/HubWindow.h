@@ -59,7 +59,7 @@ protected:
 private:
     void installChrome();
     void beginStartupFlow();
-    void kickBackgroundCheck();
+    void kickBackgroundCheck(bool manual = true);
     void requestUpdateCheck();
     void handleManualUpdateCheckResult(UpdateChecker* checker,
                                        bool hubProduct,

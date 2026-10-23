@@ -162,7 +162,7 @@ HubWindow::HubWindow(ProjectStore* store, QWidget* parent)
             });
     settingsMenu->addSeparator();
     QMenu* autoHubUpdateMenu =
-        settingsMenu->addMenu(tr("Automatically Update Harken Studio Hub Silently"));
+        settingsMenu->addMenu(tr("Automatically Check and Silently Update Hub"));
     auto* autoHubUpdateGroup = new QActionGroup(autoHubUpdateMenu);
     autoHubUpdateGroup->setExclusive(true);
     autoHubUpdateYesAction_ = autoHubUpdateMenu->addAction(tr("Yes"));
@@ -186,7 +186,7 @@ HubWindow::HubWindow(ProjectStore* store, QWidget* parent)
                     applyAutoSilentlyUpdateHubPreference(false);
             });
     QMenu* autoDownloadMenu =
-        settingsMenu->addMenu(tr("Automatically Download the Latest Studio"));
+        settingsMenu->addMenu(tr("Automatically Check and Download the Latest Studio"));
     auto* autoDownloadGroup = new QActionGroup(autoDownloadMenu);
     autoDownloadGroup->setExclusive(true);
     autoDownloadYesAction_ =
@@ -434,9 +434,10 @@ HubWindow::~HubWindow()
 
 void HubWindow::beginStartupFlow()
 {
-    if (!VersionScanner::scanAvailable().empty())
+    if (!HubSettings::autoDownloadStudio() ||
+        !VersionScanner::scanAvailable().empty())
         return;
-    kickBackgroundCheck();
+    kickBackgroundCheck(false);
     versionsPage_->showServerCheckPending();
     sidebar_->setCurrentRow(1);
 }
@@ -566,13 +567,16 @@ void HubWindow::finishManualUpdateCheck()
     }
 }
 
-void HubWindow::kickBackgroundCheck()
+void HubWindow::kickBackgroundCheck(bool manual)
 {
+    const QString activation = manual ? QStringLiteral("--check-now")
+                                      : QStringLiteral("--check-studio");
     if (!SingleInstanceGuard::sendTo(
             SingleInstanceGuard::backgroundServerName(),
-            {QStringLiteral("--check-now")}))
+            {activation}))
         QProcess::startDetached(QCoreApplication::applicationFilePath(),
-                                {QStringLiteral("--background")});
+                                {QStringLiteral("--background"),
+                                 activation});
 }
 
 void HubWindow::showLogConsole()
@@ -635,11 +639,9 @@ void HubWindow::applyAutoDownloadStudioPreference(bool enabled)
     autoDownloadNoAction_->setChecked(!enabled);
     versionsPage_->setAutoDownloadStudio(enabled);
 
-    QStringList arguments{QStringLiteral("--settings-changed")};
-    if (enabled)
-        arguments.append(QStringLiteral("--check-now"));
     const bool notified = SingleInstanceGuard::sendTo(
-        SingleInstanceGuard::backgroundServerName(), arguments);
+        SingleInstanceGuard::backgroundServerName(),
+        {QStringLiteral("--settings-changed")});
     if (enabled && !notified)
         QProcess::startDetached(QCoreApplication::applicationFilePath(),
                                 {QStringLiteral("--background")});

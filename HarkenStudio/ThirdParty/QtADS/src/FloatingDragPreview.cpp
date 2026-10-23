@@ -3,6 +3,9 @@
 /// \author Uwe Kindler
 /// \date   26.11.2019
 /// \brief  Implementation of CFloatingDragPreview
+/// Modified for Harken Studio by 2026-10-13 (source import f54336505):
+/// remove empty floating containers after docking their contents.
+/// Modification notice added on 2026-10-23.
 //============================================================================
 
 //============================================================================

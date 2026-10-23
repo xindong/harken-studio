@@ -113,6 +113,7 @@ bool HubSelfUpdate::start(const Options& options)
     checkerOptions.channel = ServerEndpoints::hostChannel();
     checkerOptions.manifestPublicKey = options_.manifestPublicKey;
     checkerOptions.intervalMs = options_.checkIntervalMs;
+    checkerOptions.automaticCheckingEnabled = options_.automaticUpdateEnabled;
     return checker_.start(checkerOptions);
 }
 
@@ -120,6 +121,18 @@ void HubSelfUpdate::stop()
 {
     checker_.stop();
     downloader_.cancel();
+}
+
+void HubSelfUpdate::setAutomaticUpdateEnabled(bool enabled)
+{
+    if (options_.automaticUpdateEnabled == enabled)
+        return;
+    options_.automaticUpdateEnabled = enabled;
+    checker_.setAutomaticCheckingEnabled(enabled);
+    if (!enabled && downloading_) {
+        automaticDownloadPauseRequested_ = true;
+        downloader_.cancel();
+    }
 }
 
 UpdateStateRecord HubSelfUpdate::currentState() const
@@ -176,7 +189,7 @@ void HubSelfUpdate::restoreState(const UpdateStateRecord& record,
 void HubSelfUpdate::handleCheckResult(const UpdateCheckResult& result,
                                            const QDateTime& now)
 {
-    if (!result.ok || result.manifestAbsent)
+    if (!options_.automaticUpdateEnabled || !result.ok || result.manifestAbsent)
         return;
     if (result.notModified) {
         if (currentState().needsDownloadRecovery())
@@ -328,9 +341,21 @@ void HubSelfUpdate::handleDownloadFinished(const DownloadResult& result)
     const QDateTime now = QDateTime::currentDateTimeUtc();
     UpdateStateRecord record = UpdateStateStore::load(kProduct);
     if (!record.found || record.buildId != activeManifest_.buildId ||
-        record.state != QStringLiteral("Downloading"))
+        record.state != QStringLiteral("Downloading")) {
+        automaticDownloadPauseRequested_ = false;
         return;
+    }
     const auto expected = record;
+    if (automaticDownloadPauseRequested_) {
+        automaticDownloadPauseRequested_ = false;
+        record.state = QStringLiteral("MetadataAvailable");
+        record.downloadPath.clear();
+        record.downloadedBytes = -1;
+        record.failureCode.clear();
+        if (persist(record, now, expected) && options_.automaticUpdateEnabled)
+            checkNow();
+        return;
+    }
     if (!result.ok) {
         record.state = QStringLiteral("DownloadFailed");
         record.failureCode = QStringLiteral("DownloadFailed");

@@ -124,6 +124,64 @@ TEST_F(HubSelfUpdateTest, VerifiesInstallerHashAndSize)
         &error));
 }
 
+TEST_F(HubSelfUpdateTest, DisabledAutomationDoesNotDownloadAnAvailablePackage)
+{
+    HarkenHubTest::RangeHttpServer server;
+    ASSERT_TRUE(server.listen());
+    HubSelfUpdate::Options options;
+    options.serverBaseUrl = server.baseUrl();
+    options.automaticUpdateEnabled = false;
+    HubSelfUpdate update;
+    update.configure(options);
+    VNH::UpdateCheckResult result;
+    result.ok = true;
+    result.manifest.product = QStringLiteral("HarkenHub");
+    result.manifest.version = QStringLiteral("0.2.0");
+    result.manifest.buildId = QStringLiteral("run4.dddd4444");
+    result.objectPath = QStringLiteral("release/hub/windows-x64/0.2.0/run4.dddd4444/HarkenHubSetup.exe");
+    update.handleCheckResult(result, kNow);
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < 100)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+    EXPECT_EQ(server.requestCount(), 0);
+    EXPECT_FALSE(update.currentState().found);
+}
+
+TEST_F(HubSelfUpdateTest, DisablingAutomationCancelsActiveDownloadWithoutRetry)
+{
+    HarkenHubTest::RangeHttpServer server;
+    ASSERT_TRUE(server.listen());
+    server.setPayload(QByteArrayLiteral("installer"), QByteArrayLiteral("hub"));
+    HarkenHubTest::RangeHttpServer::Script delayed;
+    delayed.delayMs = 250;
+    server.enqueue(delayed);
+    HubSelfUpdate::Options options;
+    options.serverBaseUrl = server.baseUrl();
+    HubSelfUpdate update;
+    update.configure(options);
+    VNH::UpdateCheckResult result;
+    result.ok = true;
+    result.manifest.product = QStringLiteral("HarkenHub");
+    result.manifest.version = QStringLiteral("0.2.0");
+    result.manifest.buildId = QStringLiteral("run4.dddd4444");
+    result.objectPath = QStringLiteral("release/hub/windows-x64/0.2.0/run4.dddd4444/HarkenHubSetup.exe");
+    update.handleCheckResult(result, kNow);
+    QElapsedTimer timer;
+    timer.start();
+    while (server.requestCount() == 0 && timer.elapsed() < 5000)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+    ASSERT_EQ(server.requestCount(), 1);
+    update.setAutomaticUpdateEnabled(false);
+    timer.restart();
+    while (timer.elapsed() < 350)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+    EXPECT_EQ(server.requestCount(), 1);
+    EXPECT_NE(update.currentState().state, QStringLiteral("Downloading"));
+    EXPECT_TRUE(update.currentState().failureCode.isEmpty());
+    update.stop();
+}
+
 TEST_F(HubSelfUpdateTest, InstallerRejectedWhenAuthenticodeRequired)
 {
     const QByteArray content = QByteArrayLiteral("installer-bytes");

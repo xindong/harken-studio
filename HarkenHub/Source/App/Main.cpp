@@ -830,11 +830,16 @@ int main(int argc, char* argv[])
                         notifier.retranslateTray();
                         coordinator.setAutomaticDownloadEnabled(
                             VNH::HubSettings::autoDownloadStudio());
+                        selfUpdate.setAutomaticUpdateEnabled(
+                            VNH::HubSettings::autoSilentlyUpdateHub());
                         landHubUpdate(selfUpdate.currentState());
                     }
                     if (arguments.contains(QStringLiteral("--check-now"))) {
                         coordinator.checkNow();
                         selfUpdate.checkNow();
+                    } else if (arguments.contains(
+                                   QStringLiteral("--check-studio"))) {
+                        coordinator.checkNow(false);
                     }
                     confirmHubReady(arguments);
                 });
@@ -854,12 +859,19 @@ int main(int argc, char* argv[])
 
             VNH::HubSelfUpdate::Options hubOptions;
             hubOptions.serverBaseUrl = serverBaseUrl;
+            hubOptions.automaticUpdateEnabled =
+                VNH::HubSettings::autoSilentlyUpdateHub();
             hubOptions.manifestPublicKey =
                 VNH::TrustAnchors::manifestPublicKey();
             hubOptions.currentVersion = QString::fromUtf8(
                 Harken::BuildInfo::HubVersion.data(),
                 static_cast<int>(Harken::BuildInfo::HubVersion.size()));
             anyStarted = selfUpdate.start(hubOptions) || anyStarted;
+
+            if (app.arguments().contains(QStringLiteral("--check-now"))) {
+                coordinator.checkNow();
+                selfUpdate.checkNow();
+            }
 
             if (!anyStarted) {
                 qInfo().noquote()
