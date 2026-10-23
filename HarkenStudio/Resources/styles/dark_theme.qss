@@ -1533,11 +1533,6 @@ QLabel[aboutRole="value"] {
     font-weight: 500;
 }
 
-#aboutCopyright {
-    color: @textMuted@;
-    font-size: @captionPointSize@pt;
-}
-
 /* ==========================================================================
    Startup loading window semantic roles
    ========================================================================== */
