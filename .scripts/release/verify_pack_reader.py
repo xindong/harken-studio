@@ -7,11 +7,79 @@ import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
+from xml.sax.saxutils import quoteattr
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SDK_RUNTIME = REPO_ROOT / "HarkenSDK" / "Unity" / "Harken" / "Runtime" / "Sdk"
 JSON_PARSER = SDK_RUNTIME / "JsonParser.cs"
+
+
+def verify_companion_reader(sdk: Path, pack_root: Path, schema_version: int,
+                            native_directory: Path, work_root: Path) -> dict[str, Any]:
+    work_root = work_root.resolve()
+    if not work_root.is_relative_to((REPO_ROOT / ".temp").resolve()):
+        raise ValueError("Pack reader work directory must be under repository .temp")
+    sources = sorted([*sdk.glob("Runtime/Generated/*.cs"), *sdk.glob("Runtime/Sdk/*.cs")])
+    if not sources or any(path.is_symlink() for path in sources):
+        raise ValueError("Baseline SDK must contain regular generated and reader sources")
+    harness = REPO_ROOT / "HarkenSDK/Test/ContractTest/CompanionReleaseContract.cs"
+    native_name = "HarkenCore.dll" if os.name == "nt" else "libHarkenCore.dylib" if os.uname().sysname == "Darwin" else "libHarkenCore.so"
+    work_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="companion-reader-", dir=work_root) as directory:
+        work = Path(directory)
+        includes = "\n".join(f"    <Compile Include={quoteattr(str(path.resolve()))} />" for path in [*sources, harness])
+        project = work / "PackReader.csproj"
+        project.write_text(f'''<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <UseSharedCompilation>false</UseSharedCompilation>
+    <NuGetAudit>false</NuGetAudit>
+  </PropertyGroup>
+  <ItemGroup>
+{includes}
+    <Compile Include="Program.cs" />
+  </ItemGroup>
+</Project>
+''', encoding="utf-8")
+        (work / "Program.cs").write_text('''using System;
+using System.IO;
+using System.Runtime.InteropServices;
+internal static class Program
+{
+    private static int Main(string[] args)
+    {
+        NativeLibrary.SetDllImportResolver(typeof(Harken.HarkenNative).Assembly,
+            (name, assembly, searchPath) => name == "HarkenCore"
+                ? NativeLibrary.Load(Path.Combine(args[1], args[2])) : IntPtr.Zero);
+        return Harken.Test.CompanionReleaseContract.Run(args[0]) ? 0 : 1;
+    }
+}
+''', encoding="utf-8")
+        config = work / "NuGet.Config"
+        config.write_text("<configuration><packageSources><clear /></packageSources></configuration>\n", encoding="utf-8")
+        built = subprocess.run(["dotnet", "build", str(project), "--configuration", "Release", "--nologo",
+                                "--disable-build-servers", f"-p:RestoreConfigFile={config}",
+                                "-p:ImportDirectoryBuildProps=false", "-p:ImportDirectoryBuildTargets=false"],
+                               cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8", timeout=120)
+        if built.returncode:
+            raise ValueError(f"Published companion reader did not compile: {built.stdout} {built.stderr}")
+        executed = subprocess.run(["dotnet", str(work / "bin/Release/net9.0/PackReader.dll"),
+                                   str(pack_root), str(native_directory), native_name], cwd=REPO_ROOT,
+                                  capture_output=True, text=True, encoding="utf-8", timeout=180)
+        if executed.returncode or "[PackCompanion] native publication PASS." not in executed.stdout.splitlines() \
+                or f"[PackCompanion] schemaVersion {schema_version}" not in executed.stdout.splitlines():
+            raise ValueError(f"Published companion reader failed: {executed.stdout} {executed.stderr}")
+    hashes = {path.relative_to(sdk).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest() for path in sources}
+    return {"ok": True, "schemaVersion": schema_version,
+            "readerSha256": hashlib.sha256(json.dumps(hashes, sort_keys=True).encode("utf-8")).hexdigest(),
+            "fixtureSha256": {path.relative_to(pack_root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+                              for path in sorted(pack_root.rglob("*"))
+                              if path.is_file() and path.suffix in {".bytes", ".json"}}}
 PROJECT = """<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>

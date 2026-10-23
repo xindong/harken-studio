@@ -183,7 +183,7 @@ namespace Harken.Test
                 await Task.Yield();
                 byte[] bytes = Read(path);
                 return path == invalid ? Encoding.UTF8.GetBytes(System.Text.RegularExpressions.Regex.Replace(
-                    Encoding.UTF8.GetString(bytes), "\"schemaVersion\"\\s*:\\s*3", "\"schemaVersion\":999")) : bytes;
+                    Encoding.UTF8.GetString(bytes), "\"schemaVersion\"\\s*:\\s*" + HarkenPackSchema.Version, "\"schemaVersion\":999")) : bytes;
             });
             var start = await PackBootstrap.StartAsync(source, Config());
             Check(start.Result == VnResult.VN_BAD_PACK && start.Session == null, "async bad Init leaves no session");

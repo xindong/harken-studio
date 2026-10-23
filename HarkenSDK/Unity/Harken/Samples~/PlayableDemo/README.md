@@ -3,16 +3,18 @@
 Install the SDK, then copy this sample directory to
 `Assets/Samples/Harken/PlayableDemo`. Open `Scenes/HarkenPlayableDemo.unity`
 and enter Play Mode. The sample installer
-copies the whole PackSource tree (root `HarkenPackIndex.json` plus the
-`Windows/` platform folder) to
+copies the whole PackSource tree containing the `Windows/` platform folder to
 `Assets/StreamingAssets/Audio/GeneratedPacks` so Editor and Player use the same
 path.
 
+For a Windows Player build, select `Windows` in Harken Project Settings' included
+exports before building.
+
 The scene contains one Runtime prefab, one Emitter prefab, a Listener on the
 camera, six name-bound Action components, and a Variable component. The Runtime
-startup list explicitly prepares all six Content Packs before the Play buttons
-become available. An Action trigger only submits its checked name; it does not
-load, unload, switch Packs, or retry a refused submission. Use each Play
+starts the selected directory's Init pair. The demo controller prepares all six
+Actions by name before enabling the Play buttons and releases its preparation
+when disabled. Action components retain their normal firing ownership. Use each Play
 button individually and use Set 0/Set 1 while the Variable Control Action
 plays.
 
@@ -28,35 +30,26 @@ media. The exact authored names are:
 - `Play_Variable_Control`
 
 The Variable component writes the global `Demo_Choice` variable with values 0
-and 1. The variable UUID is read from the current publication
-`variableCatalog`; the retired numeric ID 3 is not used. No Shared Pack is
-required. The current fixtures are produced by
+and 1. The variable UUID and project identity are resolved from the published
+Init through the native Runtime. No Shared Pack is required. The current
+fixtures are produced by
 `EditorProjectPackExporterManifest.ExportsPlayableDemoSampleFixtures` through
-the production exporter. The same project is exported into two independent
-directories and compared byte-for-byte. Project and platform instance
-identities come from the paired manifest and root index; historical
-publication IDs are not hard-coded. The platform name and base platform are
-both `Windows`. Automatic selection works on a
-Windows host because this is the only matching instance. When replacing the
-sample output with multiple instances of one base platform, configure the
-Runtime's platform ID or exact instance name before startup.
+the production exporter. Two independent exports are compared byte-for-byte.
+The sample explicitly selects its `Windows` directory.
 
 ## Rebuild the assets
 
 Run **Harken > Playable Demo > Rebuild Scene and Prefabs** outside Play Mode.
-The builder validates the paired catalog and Pack hashes in `PackSource`, looks
-up the six exact names, and writes their project association and explicit
-startup dependency order into the Unity assets. It refuses missing or renamed
-Actions before replacing the scene. It does not infer names from numeric IDs.
-The same builder is available as `HarkenDemoSceneBuilder.RebuildAtPath(sampleRoot)`
-for a caller with a specific imported sample directory. Unity serializes the
-scene and Prefabs; existing asset GUIDs are retained.
+The builder opens the Init and Action companion pairs in a temporary Null-device
+session, resolves the six names and `Demo_Choice`, then closes that session before
+writing the scene. Rebuilding requires the matching native library and no active
+Runtime session. Missing or renamed Actions are refused before replacing assets.
+`HarkenDemoSceneBuilder.RebuildAtPath(sampleRoot)` accepts an imported sample
+path. Unity serializes the scene and Prefabs, retaining existing asset GUIDs.
 
-Replace the root index, selected manifest, and Pack files together when
-re-exporting. Rebuild the sample assets to bind an intentionally replaced
-publication. Ordinary Action configuration is never silently rebound to a
-different project. `READY` means explicit startup preparation has completed;
-missing Content reports `PREPARATION FAILED` and keeps Play disabled.
+Replace all binary and JSON pairs together when re-exporting. Rebuild the sample
+assets to bind an intentionally replaced publication. `READY` means all six
+Actions have been prepared; failed preparation keeps Play disabled.
 
 ## Human listening check
 

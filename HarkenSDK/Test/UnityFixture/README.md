@@ -3,6 +3,9 @@
 These are real Pack publications exported by Harken Studio from the ordinary
 author projects in `Projects`. SDK tests consume the publications; regeneration
 uses the Studio application and does not require an editor test executable.
+Only `CompanionPacks` and the regenerated PlayableDemo use the current Pack
+generation. The retained manifest-format fixtures exercise legacy readers and
+require their matching historical native build for host execution.
 The original and renamed publications come from the same project; the other
 project publication intentionally has different project and object identities.
 

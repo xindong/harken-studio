@@ -23,6 +23,11 @@ namespace Harken.Test
     {
         private static int Main(string[] args)
         {
+            if (args.Length == 2 && args[0] == "--companion-root")
+            {
+                InstallNativeResolver(true);
+                return RunAbiFidelity() && CompanionReleaseContract.Run(args[1]) ? 0 : 1;
+            }
             if (args.Length == 1 && args[0] == "--waveform-only") return EditorWaveformContract.Run() ? 0 : 1;
             if (args.Length == 1 && args[0] == "--variables-only")
             {

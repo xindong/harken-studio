@@ -331,8 +331,6 @@ namespace Harken.Test
                 Check(PackManifest.TryLoadManifest(localized, out _), "other language remains usable");
             }
             finally { Directory.Delete(root, true); }
-            string sample = Path.GetFullPath("HarkenSDK/Unity/Harken/Samples~/PlayableDemo/PackSource");
-            Check(PackManifest.TryResolvePlatformDirectory(sample, null, null, "Windows", out _, out _), "shipped sample files and identity");
             Console.WriteLine("[PackPlatform] " + (checks - failures) + "/" + checks + " passed");
             return failures == 0;
         }

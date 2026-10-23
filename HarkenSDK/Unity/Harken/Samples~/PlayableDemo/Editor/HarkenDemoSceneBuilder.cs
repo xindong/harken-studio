@@ -1,37 +1,16 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using Harken.Samples.PlayableDemo;
 using Harken.Unity;
-using Harken.Unity.Editor;
 using Object = UnityEngine.Object;
 
 namespace Harken.Samples.PlayableDemo.Editor
 {
     public static class HarkenDemoSceneBuilder
     {
-        [Serializable]
-        private sealed class VariableManifest
-        {
-            public VariableCatalog variableCatalog;
-        }
-
-        [Serializable]
-        private sealed class VariableCatalog
-        {
-            public VariableEntry[] variables;
-        }
-
-        [Serializable]
-        private sealed class VariableEntry
-        {
-            public string codeName;
-            public string variableId;
-        }
-
         private static readonly string[] ActionNames =
         {
             "Play_Random_Draw", "Play_Shuffle", "Play_Random_Queue",
@@ -55,30 +34,24 @@ namespace Harken.Samples.PlayableDemo.Editor
                 throw new DirectoryNotFoundException(
                     "Import the Playable Audio Demo sample first.");
             }
-            var catalog = new HarkenEditorCatalog();
-            VnResult result = catalog.RefreshPlatform(Path.Combine(root, "PackSource"), null, null,
-                HarkenAudioSystem.CurrentPackBasePlatform());
-            if (result != VnResult.VN_OK) throw new InvalidDataException(catalog.Diagnostic);
-            if (!PackManifest.TryLoadManifest(catalog.DirectoryPath, catalog.Publication.Language, out _, out _))
-                throw new InvalidDataException("The sample publication has missing or mismatched Pack files.");
-            string manifestJson = File.ReadAllText(Path.Combine(catalog.DirectoryPath, "HarkenPackManifest.json"));
-            result = HarkenVariableCatalogGenerator.ValidatePublication(manifestJson, catalog.DirectoryPath, out string variableError);
-            if (result != VnResult.VN_OK) throw new InvalidDataException(variableError);
-            VariableManifest manifest = JsonUtility.FromJson<VariableManifest>(manifestJson);
-            VnObjectId choiceId = default;
-            if (manifest?.variableCatalog?.variables != null)
-                foreach (VariableEntry entry in manifest.variableCatalog.variables)
-                    if (entry.codeName == "Demo_Choice")
-                        choiceId = VnObjectId.Parse(entry.variableId);
-            if (choiceId.IsNull) throw new InvalidDataException("The sample publication has no Demo_Choice variable.");
-            var startupIds = new List<ulong>();
-            var prepared = new HashSet<ulong>();
-            foreach (string name in ActionNames)
+            string platformRoot = Path.Combine(root, "PackSource", "Windows");
+            VnConfig config = HarkenEngine.DefaultConfig();
+            config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
+            VnResult result = PackBootstrap.StartDirectory(platformRoot, null, ref config, out PackBootstrapSession session);
+            if (result != VnResult.VN_OK) throw new InvalidDataException("Sample Init: " + result);
+            string projectId;
+            VnObjectId choiceId;
+            using (session)
             {
-                result = catalog.GetPreparationOrder(name, out ulong[] required, out string error);
-                if (result != VnResult.VN_OK) throw new InvalidDataException(error);
-                foreach (ulong id in required)
-                    if (prepared.Add(id)) startupIds.Add(id);
+                projectId = session.ProjectId;
+                result = session.PrepareActions(ActionNames, projectId, out ActionPreparation preparation);
+                if (result != VnResult.VN_OK) throw new InvalidDataException("Sample Actions: " + result);
+                result = Values.Resolve("Demo_Choice", out choiceId);
+                if (result != VnResult.VN_OK) throw new InvalidDataException("Sample Variable: " + result);
+                result = preparation.Release();
+                if (result != VnResult.VN_OK) throw new InvalidDataException("Sample release: " + result);
+                result = session.Shutdown();
+                if (result != VnResult.VN_OK) throw new InvalidDataException("Sample shutdown: " + result);
             }
             string prefabRoot = root + "/Prefabs";
             string sceneRoot = root + "/Scenes";
@@ -88,7 +61,7 @@ namespace Harken.Samples.PlayableDemo.Editor
             GameObject runtimeTemplate = new GameObject("Harken Runtime");
             HarkenAudioSystem runtimeComponent =
                 runtimeTemplate.AddComponent<HarkenAudioSystem>();
-            ConfigureRuntime(runtimeComponent, catalog.Publication, startupIds);
+            ConfigureRuntime(runtimeComponent);
             string runtimePrefabPath = prefabRoot + "/HarkenAudioSystem.prefab";
             PrefabUtility.SaveAsPrefabAsset(runtimeTemplate, runtimePrefabPath);
             Object.DestroyImmediate(runtimeTemplate);
@@ -122,9 +95,9 @@ namespace Harken.Samples.PlayableDemo.Editor
                 SerializedObject serialized = new SerializedObject(actions[i]);
                 serialized.FindProperty("runtime").objectReferenceValue = runtime;
                 serialized.FindProperty("emitter").objectReferenceValue = emitter;
+                serialized.FindProperty("actionName").stringValue = ActionNames[i];
+                serialized.FindProperty("projectId").stringValue = projectId;
                 serialized.ApplyModifiedPropertiesWithoutUndo();
-                result = catalog.SelectAction(actions[i], ActionNames[i], false, out string error);
-                if (result != VnResult.VN_OK) throw new InvalidDataException(error);
             }
 
             HarkenVariable variable = emitterObject.AddComponent<HarkenVariable>();
@@ -135,7 +108,7 @@ namespace Harken.Samples.PlayableDemo.Editor
             variableId.FindPropertyRelative("stableId").FindPropertyRelative("low").ulongValue = choiceId.low;
             variableId.FindPropertyRelative("codeName").stringValue = "Demo_Choice";
             variableSerialized.FindProperty("variableName").stringValue = "Demo_Choice";
-            variableSerialized.FindProperty("projectId").stringValue = catalog.Publication.ProjectId;
+            variableSerialized.FindProperty("projectId").stringValue = projectId;
             variableSerialized.FindProperty("value").floatValue = 0.0f;
             variableSerialized.ApplyModifiedPropertiesWithoutUndo();
 
@@ -178,19 +151,15 @@ namespace Harken.Samples.PlayableDemo.Editor
             Debug.Log("Harken playable sample rebuilt at " + scenePath);
         }
 
-        private static void ConfigureRuntime(HarkenAudioSystem runtime, GameplayPublication publication, List<ulong> startupIds)
+        private static void ConfigureRuntime(HarkenAudioSystem runtime)
         {
             SerializedObject serialized = new SerializedObject(runtime);
-            SerializedProperty packs =
-                serialized.FindProperty("startupPackStableIds");
-            packs.arraySize = startupIds.Count;
-            for (int i = 0; i < startupIds.Count; ++i)
-                packs.GetArrayElementAtIndex(i).ulongValue = startupIds[i];
-            serialized.FindProperty("packRoot").stringValue = "Audio/GeneratedPacks";
-            serialized.FindProperty("initPack").stringValue = publication.InitPack.Path;
-            serialized.FindProperty("packPlatformId").stringValue = publication.Platform.Id;
+            serialized.FindProperty("startupPackStableIds").arraySize = 0;
+            serialized.FindProperty("packRoot").stringValue = "Audio/GeneratedPacks/Windows";
+            serialized.FindProperty("initPack").stringValue = "Init.bytes";
+            serialized.FindProperty("packPlatformId").stringValue = string.Empty;
             serialized.FindProperty("packPlatform").stringValue = string.Empty;
-            serialized.FindProperty("language").stringValue = publication.Language;
+            serialized.FindProperty("language").stringValue = string.Empty;
             serialized.FindProperty("nullDevice").boolValue = false;
             serialized.FindProperty("persistAcrossScenes").boolValue = false;
             serialized.ApplyModifiedPropertiesWithoutUndo();

@@ -1,0 +1,11 @@
+{
+    "schemaVersion": 4,
+    "variables": [
+        {
+            "guid": "3da91a64-b947-4560-0000-00000001876b",
+            "labels": [
+            ],
+            "name": "Demo_Choice"
+        }
+    ]
+}

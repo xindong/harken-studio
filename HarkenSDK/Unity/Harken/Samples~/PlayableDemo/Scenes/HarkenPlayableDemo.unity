@@ -119,7 +119,7 @@ NavMeshSettings:
     debug:
       m_Flags: 0
   m_NavMeshData: {fileID: 0}
---- !u!1 &282764294
+--- !u!1 &328020461
 GameObject:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -127,402 +127,8 @@ GameObject:
   m_PrefabAsset: {fileID: 0}
   serializedVersion: 6
   m_Component:
-  - component: {fileID: 282764296}
-  - component: {fileID: 282764295}
-  m_Layer: 0
-  m_Name: Demo UI
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!114 &282764295
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 282764294}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: e80f7d232ed4fe542a0444c5e499720c, type: 3}
-  m_Name:
-  m_EditorClassIdentifier: Assembly-CSharp::Harken.Samples.PlayableDemo.HarkenPlayableDemoController
-  runtime: {fileID: 765715456}
-  actions:
-  - {fileID: 1837767711}
-  - {fileID: 607380332}
-  - {fileID: 1628213723}
-  - {fileID: 1392655455}
-  - {fileID: 329997180}
-  - {fileID: 791164198}
-  labels:
-  - Random
-  - Shuffle
-  - Random Queue
-  - Sequence
-  - Sequence Queue
-  - Variable Control
-  variable: {fileID: 453733458}
---- !u!4 &282764296
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 282764294}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &297559516
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 297559520}
-  - component: {fileID: 297559519}
-  - component: {fileID: 297559518}
-  - component: {fileID: 297559517}
-  m_Layer: 0
-  m_Name: Main Camera
-  m_TagString: MainCamera
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!114 &297559517
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 297559516}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 085a7acf12a2c55459f6bf39baa74f37, type: 3}
-  m_Name:
-  m_EditorClassIdentifier: Harken.Unity::Harken.Unity.HarkenListener
-  runtime: {fileID: 0}
---- !u!81 &297559518
-AudioListener:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 297559516}
-  m_Enabled: 1
---- !u!20 &297559519
-Camera:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 297559516}
-  m_Enabled: 1
-  serializedVersion: 2
-  m_ClearFlags: 1
-  m_BackGroundColor: {r: 0.19215687, g: 0.3019608, b: 0.4745098, a: 0}
-  m_projectionMatrixMode: 1
-  m_GateFitMode: 2
-  m_FOVAxisMode: 0
-  m_Iso: 200
-  m_ShutterSpeed: 0.005
-  m_Aperture: 16
-  m_FocusDistance: 10
-  m_FocalLength: 50
-  m_BladeCount: 5
-  m_Curvature: {x: 2, y: 11}
-  m_BarrelClipping: 0.25
-  m_Anamorphism: 0
-  m_SensorSize: {x: 36, y: 24}
-  m_LensShift: {x: 0, y: 0}
-  m_NormalizedViewPortRect:
-    serializedVersion: 2
-    x: 0
-    y: 0
-    width: 1
-    height: 1
-  near clip plane: 0.3
-  far clip plane: 1000
-  field of view: 60
-  orthographic: 0
-  orthographic size: 5
-  m_Depth: 0
-  m_CullingMask:
-    serializedVersion: 2
-    m_Bits: 4294967295
-  m_RenderingPath: -1
-  m_TargetTexture: {fileID: 0}
-  m_TargetDisplay: 0
-  m_TargetEye: 3
-  m_HDR: 1
-  m_AllowMSAA: 1
-  m_AllowDynamicResolution: 0
-  m_ForceIntoRT: 0
-  m_OcclusionCulling: 1
-  m_StereoConvergence: 10
-  m_StereoSeparation: 0.022
---- !u!4 &297559520
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 297559516}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 1, z: -10}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &329997178
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 329997179}
-  - component: {fileID: 329997180}
-  m_Layer: 0
-  m_Name: Sequence Queue
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &329997179
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 329997178}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 453733456}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &329997180
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 329997178}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 2ef3314cf6c38e04d8e2928103934f08, type: 3}
-  m_Name:
-  m_EditorClassIdentifier: Harken.Unity::Harken.Unity.HarkenAction
-  runtime: {fileID: 765715456}
-  emitter: {fileID: 453733455}
-  actionName: Play_Sequence_Queue
-  projectId: 2c2ed2ff-33b0-4940-af9e-b1d174612e2b
-  callerSeed: 0
-  playOnEnable: 0
-  stopFadeMs: 50
---- !u!1001 &453733454
-PrefabInstance:
-  m_ObjectHideFlags: 0
-  serializedVersion: 2
-  m_Modification:
-    serializedVersion: 3
-    m_TransformParent: {fileID: 0}
-    m_Modifications:
-    - target: {fileID: 3187345564223101132, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
-      propertyPath: runtime
-      value:
-      objectReference: {fileID: 765715456}
-    - target: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
-      propertyPath: m_LocalPosition.x
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
-      propertyPath: m_LocalPosition.y
-      value: 1
-      objectReference: {fileID: 0}
-    - target: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
-      propertyPath: m_LocalPosition.z
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
-      propertyPath: m_LocalRotation.w
-      value: 1
-      objectReference: {fileID: 0}
-    - target: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
-      propertyPath: m_LocalRotation.x
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
-      propertyPath: m_LocalRotation.y
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
-      propertyPath: m_LocalRotation.z
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.x
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.y
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.z
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 7286028897125124784, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
-      propertyPath: m_Name
-      value: HarkenEmitter
-      objectReference: {fileID: 0}
-    m_RemovedComponents: []
-    m_RemovedGameObjects: []
-    m_AddedGameObjects:
-    - targetCorrespondingSourceObject: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
-      insertIndex: -1
-      addedObject: {fileID: 1837767710}
-    - targetCorrespondingSourceObject: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
-      insertIndex: -1
-      addedObject: {fileID: 607380331}
-    - targetCorrespondingSourceObject: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
-      insertIndex: -1
-      addedObject: {fileID: 1628213722}
-    - targetCorrespondingSourceObject: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
-      insertIndex: -1
-      addedObject: {fileID: 1392655454}
-    - targetCorrespondingSourceObject: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
-      insertIndex: -1
-      addedObject: {fileID: 329997179}
-    - targetCorrespondingSourceObject: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
-      insertIndex: -1
-      addedObject: {fileID: 791164199}
-    m_AddedComponents:
-    - targetCorrespondingSourceObject: {fileID: 7286028897125124784, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
-      insertIndex: -1
-      addedObject: {fileID: 453733458}
-  m_SourcePrefab: {fileID: 100100000, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
---- !u!114 &453733455 stripped
-MonoBehaviour:
-  m_CorrespondingSourceObject: {fileID: 3187345564223101132, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
-  m_PrefabInstance: {fileID: 453733454}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 453733457}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 86dc2ba3718492d4d81ac658c4d37948, type: 3}
-  m_Name:
-  m_EditorClassIdentifier: Harken.Unity::Harken.Unity.HarkenEmitter
---- !u!4 &453733456 stripped
-Transform:
-  m_CorrespondingSourceObject: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
-  m_PrefabInstance: {fileID: 453733454}
-  m_PrefabAsset: {fileID: 0}
---- !u!1 &453733457 stripped
-GameObject:
-  m_CorrespondingSourceObject: {fileID: 7286028897125124784, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
-  m_PrefabInstance: {fileID: 453733454}
-  m_PrefabAsset: {fileID: 0}
---- !u!114 &453733458
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 453733457}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: a16a98bff1bb7844eb17fbb89499c665, type: 3}
-  m_Name:
-  m_EditorClassIdentifier: Harken.Unity::Harken.Unity.HarkenVariable
-  runtime: {fileID: 765715456}
-  emitter: {fileID: 0}
-  variable:
-    stableId:
-      high: 4443111527285212512
-      low: 100203
-    codeName: Demo_Choice
-  variableName: Demo_Choice
-  projectId: 2c2ed2ff-33b0-4940-af9e-b1d174612e2b
-  value: 0
-  setOnEnable: 1
---- !u!1 &607380330
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 607380331}
-  - component: {fileID: 607380332}
-  m_Layer: 0
-  m_Name: Shuffle
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &607380331
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 607380330}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 453733456}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &607380332
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 607380330}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 2ef3314cf6c38e04d8e2928103934f08, type: 3}
-  m_Name:
-  m_EditorClassIdentifier: Harken.Unity::Harken.Unity.HarkenAction
-  runtime: {fileID: 765715456}
-  emitter: {fileID: 453733455}
-  actionName: Play_Shuffle
-  projectId: 2c2ed2ff-33b0-4940-af9e-b1d174612e2b
-  callerSeed: 0
-  playOnEnable: 0
-  stopFadeMs: 50
---- !u!1 &707787584
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 707787586}
-  - component: {fileID: 707787585}
+  - component: {fileID: 328020463}
+  - component: {fileID: 328020462}
   m_Layer: 0
   m_Name: Directional Light
   m_TagString: Untagged
@@ -530,13 +136,13 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!108 &707787585
+--- !u!108 &328020462
 Light:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 707787584}
+  m_GameObject: {fileID: 328020461}
   m_Enabled: 1
   serializedVersion: 13
   m_Type: 1
@@ -595,13 +201,13 @@ Light:
   m_LightUnit: 1
   m_LuxAtDistance: 1
   m_EnableSpotReflector: 1
---- !u!4 &707787586
+--- !u!4 &328020463
 Transform:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 707787584}
+  m_GameObject: {fileID: 328020461}
   serializedVersion: 2
   m_LocalRotation: {x: 0.40821794, y: -0.23456973, z: 0.10938166, w: 0.8754261}
   m_LocalPosition: {x: 0, y: 0, z: 0}
@@ -610,7 +216,317 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1001 &765715455
+--- !u!1 &393615334
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 393615335}
+  - component: {fileID: 393615336}
+  m_Layer: 0
+  m_Name: Random Queue
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &393615335
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 393615334}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1960324963}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &393615336
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 393615334}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2ef3314cf6c38e04d8e2928103934f08, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Harken.Unity::Harken.Unity.HarkenAction
+  runtime: {fileID: 1300461259}
+  emitter: {fileID: 1960324962}
+  actionName: Play_Random_Queue
+  projectId: 2c2ed2ff-33b0-4940-af9e-b1d174612e2b
+  callerSeed: 0
+  playOnEnable: 0
+  stopFadeMs: 50
+--- !u!1 &863856077
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 863856081}
+  - component: {fileID: 863856080}
+  - component: {fileID: 863856079}
+  - component: {fileID: 863856078}
+  m_Layer: 0
+  m_Name: Main Camera
+  m_TagString: MainCamera
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &863856078
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 863856077}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 085a7acf12a2c55459f6bf39baa74f37, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Harken.Unity::Harken.Unity.HarkenListener
+  runtime: {fileID: 0}
+--- !u!81 &863856079
+AudioListener:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 863856077}
+  m_Enabled: 1
+--- !u!20 &863856080
+Camera:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 863856077}
+  m_Enabled: 1
+  serializedVersion: 2
+  m_ClearFlags: 1
+  m_BackGroundColor: {r: 0.19215687, g: 0.3019608, b: 0.4745098, a: 0}
+  m_projectionMatrixMode: 1
+  m_GateFitMode: 2
+  m_FOVAxisMode: 0
+  m_Iso: 200
+  m_ShutterSpeed: 0.005
+  m_Aperture: 16
+  m_FocusDistance: 10
+  m_FocalLength: 50
+  m_BladeCount: 5
+  m_Curvature: {x: 2, y: 11}
+  m_BarrelClipping: 0.25
+  m_Anamorphism: 0
+  m_SensorSize: {x: 36, y: 24}
+  m_LensShift: {x: 0, y: 0}
+  m_NormalizedViewPortRect:
+    serializedVersion: 2
+    x: 0
+    y: 0
+    width: 1
+    height: 1
+  near clip plane: 0.3
+  far clip plane: 1000
+  field of view: 60
+  orthographic: 0
+  orthographic size: 5
+  m_Depth: 0
+  m_CullingMask:
+    serializedVersion: 2
+    m_Bits: 4294967295
+  m_RenderingPath: -1
+  m_TargetTexture: {fileID: 0}
+  m_TargetDisplay: 0
+  m_TargetEye: 3
+  m_HDR: 1
+  m_AllowMSAA: 1
+  m_AllowDynamicResolution: 0
+  m_ForceIntoRT: 0
+  m_OcclusionCulling: 1
+  m_StereoConvergence: 10
+  m_StereoSeparation: 0.022
+--- !u!4 &863856081
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 863856077}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 1, z: -10}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &887343536
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 887343538}
+  - component: {fileID: 887343537}
+  m_Layer: 0
+  m_Name: Variable Control
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &887343537
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 887343536}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2ef3314cf6c38e04d8e2928103934f08, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Harken.Unity::Harken.Unity.HarkenAction
+  runtime: {fileID: 1300461259}
+  emitter: {fileID: 1960324962}
+  actionName: Play_Variable_Control
+  projectId: 2c2ed2ff-33b0-4940-af9e-b1d174612e2b
+  callerSeed: 0
+  playOnEnable: 0
+  stopFadeMs: 50
+--- !u!4 &887343538
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 887343536}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1960324963}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &899858007
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 899858008}
+  - component: {fileID: 899858009}
+  m_Layer: 0
+  m_Name: Shuffle
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &899858008
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 899858007}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1960324963}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &899858009
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 899858007}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2ef3314cf6c38e04d8e2928103934f08, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Harken.Unity::Harken.Unity.HarkenAction
+  runtime: {fileID: 1300461259}
+  emitter: {fileID: 1960324962}
+  actionName: Play_Shuffle
+  projectId: 2c2ed2ff-33b0-4940-af9e-b1d174612e2b
+  callerSeed: 0
+  playOnEnable: 0
+  stopFadeMs: 50
+--- !u!1 &1100291128
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1100291129}
+  - component: {fileID: 1100291130}
+  m_Layer: 0
+  m_Name: Sequence
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &1100291129
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1100291128}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1960324963}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1100291130
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1100291128}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2ef3314cf6c38e04d8e2928103934f08, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Harken.Unity::Harken.Unity.HarkenAction
+  runtime: {fileID: 1300461259}
+  emitter: {fileID: 1960324962}
+  actionName: Play_Sequence
+  projectId: 2c2ed2ff-33b0-4940-af9e-b1d174612e2b
+  callerSeed: 0
+  playOnEnable: 0
+  stopFadeMs: 50
+--- !u!1001 &1300461258
 PrefabInstance:
   m_ObjectHideFlags: 0
   serializedVersion: 2
@@ -667,10 +583,10 @@ PrefabInstance:
     m_AddedGameObjects: []
     m_AddedComponents: []
   m_SourcePrefab: {fileID: 100100000, guid: 963d61d248243be48aedcfd0e6564869, type: 3}
---- !u!114 &765715456 stripped
+--- !u!114 &1300461259 stripped
 MonoBehaviour:
   m_CorrespondingSourceObject: {fileID: 2161491970854104102, guid: 963d61d248243be48aedcfd0e6564869, type: 3}
-  m_PrefabInstance: {fileID: 765715455}
+  m_PrefabInstance: {fileID: 1300461258}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 0}
   m_Enabled: 1
@@ -678,7 +594,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 36331721422512843a2073fdb8a0a5b7, type: 3}
   m_Name:
   m_EditorClassIdentifier: Harken.Unity::Harken.Unity.HarkenAudioSystem
---- !u!1 &791164197
+--- !u!1 &1576958699
 GameObject:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -686,161 +602,8 @@ GameObject:
   m_PrefabAsset: {fileID: 0}
   serializedVersion: 6
   m_Component:
-  - component: {fileID: 791164199}
-  - component: {fileID: 791164198}
-  m_Layer: 0
-  m_Name: Variable Control
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!114 &791164198
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 791164197}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 2ef3314cf6c38e04d8e2928103934f08, type: 3}
-  m_Name:
-  m_EditorClassIdentifier: Harken.Unity::Harken.Unity.HarkenAction
-  runtime: {fileID: 765715456}
-  emitter: {fileID: 453733455}
-  actionName: Play_Variable_Control
-  projectId: 2c2ed2ff-33b0-4940-af9e-b1d174612e2b
-  callerSeed: 0
-  playOnEnable: 0
-  stopFadeMs: 50
---- !u!4 &791164199
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 791164197}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 453733456}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &1392655453
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 1392655454}
-  - component: {fileID: 1392655455}
-  m_Layer: 0
-  m_Name: Sequence
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &1392655454
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1392655453}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 453733456}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &1392655455
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1392655453}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 2ef3314cf6c38e04d8e2928103934f08, type: 3}
-  m_Name:
-  m_EditorClassIdentifier: Harken.Unity::Harken.Unity.HarkenAction
-  runtime: {fileID: 765715456}
-  emitter: {fileID: 453733455}
-  actionName: Play_Sequence
-  projectId: 2c2ed2ff-33b0-4940-af9e-b1d174612e2b
-  callerSeed: 0
-  playOnEnable: 0
-  stopFadeMs: 50
---- !u!1 &1628213721
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 1628213722}
-  - component: {fileID: 1628213723}
-  m_Layer: 0
-  m_Name: Random Queue
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &1628213722
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1628213721}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 453733456}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &1628213723
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1628213721}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 2ef3314cf6c38e04d8e2928103934f08, type: 3}
-  m_Name:
-  m_EditorClassIdentifier: Harken.Unity::Harken.Unity.HarkenAction
-  runtime: {fileID: 765715456}
-  emitter: {fileID: 453733455}
-  actionName: Play_Random_Queue
-  projectId: 2c2ed2ff-33b0-4940-af9e-b1d174612e2b
-  callerSeed: 0
-  playOnEnable: 0
-  stopFadeMs: 50
---- !u!1 &1837767709
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 1837767710}
-  - component: {fileID: 1837767711}
+  - component: {fileID: 1576958700}
+  - component: {fileID: 1576958701}
   m_Layer: 0
   m_Name: Random
   m_TagString: Untagged
@@ -848,46 +611,283 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!4 &1837767710
+--- !u!4 &1576958700
 Transform:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1837767709}
+  m_GameObject: {fileID: 1576958699}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
-  m_Father: {fileID: 453733456}
+  m_Father: {fileID: 1960324963}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &1837767711
+--- !u!114 &1576958701
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1837767709}
+  m_GameObject: {fileID: 1576958699}
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 2ef3314cf6c38e04d8e2928103934f08, type: 3}
   m_Name:
   m_EditorClassIdentifier: Harken.Unity::Harken.Unity.HarkenAction
-  runtime: {fileID: 765715456}
-  emitter: {fileID: 453733455}
+  runtime: {fileID: 1300461259}
+  emitter: {fileID: 1960324962}
   actionName: Play_Random_Draw
   projectId: 2c2ed2ff-33b0-4940-af9e-b1d174612e2b
   callerSeed: 0
   playOnEnable: 0
   stopFadeMs: 50
+--- !u!1 &1947913602
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1947913604}
+  - component: {fileID: 1947913603}
+  m_Layer: 0
+  m_Name: Demo UI
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &1947913603
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1947913602}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e80f7d232ed4fe542a0444c5e499720c, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::Harken.Samples.PlayableDemo.HarkenPlayableDemoController
+  runtime: {fileID: 1300461259}
+  actions:
+  - {fileID: 1576958701}
+  - {fileID: 899858009}
+  - {fileID: 393615336}
+  - {fileID: 1100291130}
+  - {fileID: 1954780912}
+  - {fileID: 887343537}
+  labels:
+  - Random
+  - Shuffle
+  - Random Queue
+  - Sequence
+  - Sequence Queue
+  - Variable Control
+  variable: {fileID: 1960324965}
+--- !u!4 &1947913604
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1947913602}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &1954780910
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1954780911}
+  - component: {fileID: 1954780912}
+  m_Layer: 0
+  m_Name: Sequence Queue
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &1954780911
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1954780910}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1960324963}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1954780912
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1954780910}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2ef3314cf6c38e04d8e2928103934f08, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Harken.Unity::Harken.Unity.HarkenAction
+  runtime: {fileID: 1300461259}
+  emitter: {fileID: 1960324962}
+  actionName: Play_Sequence_Queue
+  projectId: 2c2ed2ff-33b0-4940-af9e-b1d174612e2b
+  callerSeed: 0
+  playOnEnable: 0
+  stopFadeMs: 50
+--- !u!1001 &1960324961
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 0}
+    m_Modifications:
+    - target: {fileID: 3187345564223101132, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
+      propertyPath: runtime
+      value:
+      objectReference: {fileID: 1300461259}
+    - target: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 7286028897125124784, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
+      propertyPath: m_Name
+      value: HarkenEmitter
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects:
+    - targetCorrespondingSourceObject: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1576958700}
+    - targetCorrespondingSourceObject: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 899858008}
+    - targetCorrespondingSourceObject: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 393615335}
+    - targetCorrespondingSourceObject: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1100291129}
+    - targetCorrespondingSourceObject: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1954780911}
+    - targetCorrespondingSourceObject: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 887343538}
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 7286028897125124784, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1960324965}
+  m_SourcePrefab: {fileID: 100100000, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
+--- !u!114 &1960324962 stripped
+MonoBehaviour:
+  m_CorrespondingSourceObject: {fileID: 3187345564223101132, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
+  m_PrefabInstance: {fileID: 1960324961}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1960324964}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 86dc2ba3718492d4d81ac658c4d37948, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Harken.Unity::Harken.Unity.HarkenEmitter
+--- !u!4 &1960324963 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: 3200161913511707720, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
+  m_PrefabInstance: {fileID: 1960324961}
+  m_PrefabAsset: {fileID: 0}
+--- !u!1 &1960324964 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 7286028897125124784, guid: b8b3bb20befb5274991c2a9c5b4f96a5, type: 3}
+  m_PrefabInstance: {fileID: 1960324961}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &1960324965
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1960324964}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a16a98bff1bb7844eb17fbb89499c665, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Harken.Unity::Harken.Unity.HarkenVariable
+  runtime: {fileID: 1300461259}
+  emitter: {fileID: 0}
+  variable:
+    stableId:
+      high: 4443111527285212512
+      low: 100203
+    codeName: Demo_Choice
+  variableName: Demo_Choice
+  projectId: 2c2ed2ff-33b0-4940-af9e-b1d174612e2b
+  value: 0
+  setOnEnable: 1
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
   m_Roots:
-  - {fileID: 765715455}
-  - {fileID: 453733454}
-  - {fileID: 297559520}
-  - {fileID: 707787586}
-  - {fileID: 282764296}
+  - {fileID: 1300461258}
+  - {fileID: 1960324961}
+  - {fileID: 863856081}
+  - {fileID: 328020463}
+  - {fileID: 1947913604}

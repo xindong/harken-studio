@@ -91,11 +91,12 @@ QJsonObject runSchemaCompatibilityProbe(const QJsonObject& request)
     };
     const bool create = mode == QStringLiteral("create");
     const bool edit = mode == QStringLiteral("edit");
-    const bool migrate = mode == QStringLiteral("migrate");
+    const bool migrate = mode == QStringLiteral("migrate") || mode == QStringLiteral("migrate-only");
+    const bool rollback = mode == QStringLiteral("rollback");
     const QString pathKey = create ? QStringLiteral("outputDirectory")
                                    : QStringLiteral("projectPath");
     if (request.value(QStringLiteral("requestVersion")).toInt() != 1
-        || (!create && !edit && !migrate && mode != QStringLiteral("read"))
+        || (!create && !edit && !migrate && !rollback && mode != QStringLiteral("read"))
         || request.size() != 3 || !request.value(pathKey).isString())
         return invalid(QStringLiteral("Invalid schema round-trip request"));
     const QString path = QDir::cleanPath(request.value(pathKey).toString());
@@ -110,6 +111,14 @@ QJsonObject runSchemaCompatibilityProbe(const QJsonObject& request)
     ProjectManager& manager = ProjectManager::instance();
     if (manager.currentProject())
         return invalid(QStringLiteral("Schema round-trip requires no open project"));
+    if (rollback) {
+        QString error;
+        if (!ProjectUpgradeManager().rollbackLastUpgrade(path, &error))
+            return invalid(error);
+        report.insert(QStringLiteral("projectPath"), info.absoluteFilePath());
+        report.insert(QStringLiteral("ok"), true);
+        return report;
+    }
     QString operationError;
     QObject diagnostics;
     QObject::connect(&manager, &ProjectManager::errorOccurred, &diagnostics,
@@ -178,7 +187,7 @@ QJsonObject runSchemaCompatibilityProbe(const QJsonObject& request)
             });
         }
     }
-    if ((edit || migrate) && !manager.saveProject())
+    if ((edit || mode == QStringLiteral("migrate")) && !manager.saveProject())
         return failed(QStringLiteral("Schema round-trip could not save the fixture"));
     if (!manager.closeProject())
         return failed(QStringLiteral("Schema round-trip could not close the fixture"));

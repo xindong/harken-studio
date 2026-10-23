@@ -2,7 +2,20 @@
 
 All notable changes to the Harken Core Unity package are documented here.
 
-## [0.3.4] - unreleased
+## [0.3.5] - unreleased
+
+- Prepare Pack Schema 4 companion publications for Studio 0.9.0. The companion
+  reader version is generated from the selected Pack schema independently of
+  the legacy manifest reader. Rebuild publications and update managed bindings
+  and native libraries together when adopting the new generation.
+- Support directory and asynchronous companion sources with atomic Action
+  preparation, explicit release, cancellation, and version validation before
+  activation.
+- Re-export PlayableDemo and companion regression data with the new generation.
+  Rebuild the sample scene from its Init and Action pairs and prepare Actions by
+  name before enabling playback.
+
+## [0.3.4] - 2026-10-19
 
 - Bind gameplay catalogs separately from Init packs and support a shared Init
   across language publications for incremental exports. Update managed bindings

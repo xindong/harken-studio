@@ -34,6 +34,14 @@ class UnitySdkContractTest(unittest.TestCase):
     def test_repository_source_contract_passes(self) -> None:
         MODULE.verify(REPOSITORY / "HarkenSDK", False)
 
+    def test_managed_pack_generation_must_match_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            sdk = self.copy_sdk(directory)
+            generated = sdk / "Runtime/Generated/HarkenPackSchema.g.cs"
+            generated.write_text(generated.read_text().replace("Version =", "Version = 100 +"), encoding="utf-8")
+            with self.assertRaisesRegex(SystemExit, "Unity Pack schema"):
+                MODULE.verify(sdk, False)
+
     def test_unity_meta_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             sdk = self.copy_sdk(directory)

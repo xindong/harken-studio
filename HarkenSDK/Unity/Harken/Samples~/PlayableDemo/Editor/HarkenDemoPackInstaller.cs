@@ -29,9 +29,9 @@ namespace Harken.Samples.PlayableDemo.Editor
             var settings = HarkenProjectSettingsProvider.GetOrCreateSettings();
             var serialized = new SerializedObject(settings);
             var directory = serialized.FindProperty("packDirectory");
-            if (string.IsNullOrWhiteSpace(directory.stringValue))
+            if (string.IsNullOrWhiteSpace(directory.stringValue) || directory.stringValue == Destination)
             {
-                directory.stringValue = Destination;
+                directory.stringValue = Destination + "/Windows";
                 serialized.ApplyModifiedPropertiesWithoutUndo();
                 AssetDatabase.SaveAssetIfDirty(settings);
             }

@@ -17,25 +17,6 @@ namespace Harken.Unity.Tests
 {
     public sealed class HarkenEditorLifecycleTests
     {
-        [Serializable]
-        private sealed class SampleManifest
-        {
-            public SampleVariables variableCatalog;
-        }
-
-        [Serializable]
-        private sealed class SampleVariables
-        {
-            public SampleVariable[] variables;
-        }
-
-        [Serializable]
-        private sealed class SampleVariable
-        {
-            public string codeName;
-            public string variableId;
-        }
-
         private static readonly string DomainToken = Guid.NewGuid().ToString("N");
         [SerializeField] private string folder;
         [SerializeField] private string scenePath;
@@ -203,10 +184,10 @@ namespace Harken.Unity.Tests
             SetString(action, "projectId", savedProject);
             AssertNoSerializedCache(action);
             Assert.That(EditorSceneManager.SaveScene(SceneManager.GetActiveScene(), scenePath), Is.True);
-            int previousInstance = action.GetInstanceID();
+            HarkenAction previousInstance = action;
             EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Single);
-            Assert.That(Find<HarkenAction>().GetInstanceID(), Is.Not.EqualTo(previousInstance));
+            Assert.That(ReferenceEquals(Find<HarkenAction>(), previousInstance), Is.False);
             Assert.That(Find<HarkenAction>().ActionName, Is.EqualTo(savedName));
             Assert.That(Find<HarkenAction>().ProjectId, Is.EqualTo(savedProject));
             yield return new EnterPlayMode();
@@ -256,33 +237,18 @@ namespace Harken.Unity.Tests
             ownedEngine = runtime.IsReady;
             Assert.That(runtime.IsPreparationComplete, Is.True, runtime.LastStartupError);
             ValidateSampleBindings();
-            ulong[] handles = runtime.Session.StartupPacks.Select(pack => pack.Handle).ToArray();
-            Assert.That(handles.Length, Is.EqualTo(6));
-            Assert.That(Actions.Resolve("Play_Random_Draw", runtime.Session.Publication.ProjectId, out ActionResolved baseline),
-                Is.EqualTo(VnResult.VN_OK));
             foreach (HarkenAction action in FindAll<HarkenAction>())
             {
+                Assert.That(Actions.Resolve(action.ActionName, action.ProjectId, out ActionResolved prepared), Is.EqualTo(VnResult.VN_OK));
                 Post(action);
                 Assert.That(action.Firing.Query(out VnActionFiringInfo info), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(runtime.Session.Publication.TryFindAction(action.ActionName, out GameplayAction row), Is.True);
-                Assert.That(info.actionId, Is.EqualTo(row.ActionStableId));
-                Assert.That(runtime.Session.StartupPacks.Select(pack => pack.Handle).ToArray(), Is.EqualTo(handles));
-                Assert.That(Actions.Resolve(action.ActionName, action.ProjectId, out ActionResolved resolved), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(resolved.PublicationGeneration, Is.EqualTo(baseline.PublicationGeneration));
+                Assert.That(info.actionId, Is.EqualTo(prepared.ActionId));
+                Assert.That(Actions.Resolve(action.ActionName, action.ProjectId, out ActionResolved after), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(after.PublicationGeneration, Is.EqualTo(prepared.PublicationGeneration));
             }
             HarkenVariable variable = Find<HarkenVariable>();
-            Assert.That(PackManifest.TryResolvePlatformDirectory(Path.Combine(folder, "PackSource"),
-                null, null, HarkenAudioSystem.CurrentPackBasePlatform(), out string platformRoot, out string error),
-                Is.True, error);
-            SampleManifest manifest = JsonUtility.FromJson<SampleManifest>(
-                File.ReadAllText(Path.Combine(platformRoot, "HarkenPackManifest.json")));
-            SampleVariable choice = manifest.variableCatalog.variables.Single(row => row.codeName == "Demo_Choice");
-            Assert.That(VnObjectId.TryParse(choice.variableId, out VnObjectId choiceId), Is.True);
-            Assert.That(choiceId.high, Is.Not.Zero);
+            Assert.That(Values.Resolve("Demo_Choice", out VnObjectId choiceId), Is.EqualTo(VnResult.VN_OK));
             Assert.That(variable.VariableStableId, Is.EqualTo(choiceId));
-            Assert.That(runtime.Session.Publication.ValidateInit(File.ReadAllBytes(
-                Path.Combine(platformRoot, runtime.Session.Publication.InitPack.Path)), out error),
-                Is.EqualTo(VnResult.VN_OK), error);
             Assert.That(variable.SetValue(0), Is.EqualTo(VnResult.VN_OK));
             Assert.That(variable.SetValue(1), Is.EqualTo(VnResult.VN_OK));
             Assert.That(runtime.ShutdownRuntime(), Is.EqualTo(VnResult.VN_OK));
@@ -367,18 +333,14 @@ namespace Harken.Unity.Tests
                 "Play_Sequence_Queue", "Play_Variable_Control" };
             HarkenAction[] actions = FindAll<HarkenAction>();
             Assert.That(actions.Select(action => action.ActionName), Is.EquivalentTo(expected));
-            var catalog = new HarkenEditorCatalog();
-            Assert.That(catalog.RefreshPlatform(PublicationRoot("U4Sample"), null, null,
-                HarkenAudioSystem.CurrentPackBasePlatform()), Is.EqualTo(VnResult.VN_OK), catalog.Diagnostic);
+            string directory = Path.Combine(PublicationRoot("U4Sample"), "Windows");
+            Assert.That(new PackDirectorySource(directory, null).Capture(null, default, null, out CompanionInput init),
+                Is.EqualTo(VnResult.VN_OK));
             foreach (HarkenAction action in actions)
             {
-                Assert.That(action.ProjectId, Is.EqualTo(catalog.Publication.ProjectId));
+                Assert.That(action.ProjectId, Is.EqualTo(init.Facts.projectId.ToString()));
                 AssertNoSerializedCache(action);
             }
-            var runtime = new SerializedObject(Find<HarkenAudioSystem>());
-            SerializedProperty startup = runtime.FindProperty("startupPackStableIds");
-            ulong[] ids = Enumerable.Range(0, startup.arraySize).Select(index => startup.GetArrayElementAtIndex(index).ulongValue).ToArray();
-            Assert.That(ids, Is.EquivalentTo(catalog.Publication.Actions.Select(row => row.OwnerPackStableId)));
         }
 
         private static void RefuseOldName(HarkenAction action)

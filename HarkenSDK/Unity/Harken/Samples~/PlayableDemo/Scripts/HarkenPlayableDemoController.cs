@@ -14,6 +14,32 @@ namespace Harken.Samples.PlayableDemo
         private GUIStyle titleStyle;
         private GUIStyle statusStyle;
         private GUIStyle buttonStyle;
+        private ActionPreparation preparation;
+        private VnResult preparationResult = VnResult.VN_NOT_INITIALIZED;
+
+        private void OnEnable()
+        {
+            if (runtime == null) return;
+            runtime.BecameReady += Prepare;
+            if (runtime.IsReady) Prepare(runtime);
+        }
+
+        private void OnDisable()
+        {
+            if (runtime != null) runtime.BecameReady -= Prepare;
+            preparation?.Release();
+            preparation = null;
+        }
+
+        private void Prepare(HarkenAudioSystem owner)
+        {
+            preparation?.Release();
+            preparation = null;
+            string[] names = new string[actions.Length];
+            for (int i = 0; i < names.Length; ++i) names[i] = actions[i].ActionName;
+            preparationResult = owner.Session.PrepareActions(names, owner.Session.ProjectId, out preparation);
+            owner.ObserveResult("PlayableDemo.PrepareActions", preparationResult);
+        }
 
         private void OnGUI()
         {
@@ -28,7 +54,7 @@ namespace Harken.Samples.PlayableDemo
             GUILayout.Label(RuntimeStatus(), statusStyle);
             GUILayout.Space(12.0f);
 
-            GUI.enabled = runtime != null && runtime.IsPreparationComplete;
+            GUI.enabled = runtime != null && runtime.IsPreparationComplete && preparation != null && !preparation.IsReleased;
             for (int i = 0; actions != null && i < actions.Length; i += 2)
             {
                 GUILayout.BeginHorizontal();
@@ -88,7 +114,8 @@ namespace Harken.Samples.PlayableDemo
             if (runtime.Session != null && !runtime.Session.IsStartupComplete)
                 return "PREPARATION FAILED - Pack " + runtime.Session.FailedStartupPackStableId +
                     " - " + runtime.Session.StartupResult;
-            return runtime.IsPreparationComplete ? "READY" : "PREPARING";
+            if (preparationResult != VnResult.VN_OK) return "PREPARATION FAILED - " + preparationResult;
+            return preparation != null && !preparation.IsReleased ? "READY" : "PREPARING";
         }
 
         private void EnsureStyles()

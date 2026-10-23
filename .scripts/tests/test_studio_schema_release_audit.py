@@ -616,6 +616,10 @@ class ReaderGateTest(unittest.TestCase):
         self.root = Path(self.directory.name)
         self.source = self.root / "HarkenSchema"
         shutil.copytree(REPO_ROOT / "HarkenSchema", self.source)
+        legacy = json.loads((self.source / "Pack/3/PackManifestSchema.json").read_text(encoding="utf-8"))
+        legacy["x-harken-format"].pop("formatVersion")
+        legacy["properties"]["schema_version"].pop("const")
+        (self.source / "Pack/current/PackManifestSchema.json").write_text(json.dumps(legacy), encoding="utf-8")
         bundle = MODULE.schema_archive.build_bundle(self.source)
         self.pack_schema_version = bundle["manifest"]["trees"]["Pack"]["currentVersion"]
         self.binary = self.root / "current/HarkenStudio.exe"
@@ -650,7 +654,13 @@ class ReaderGateTest(unittest.TestCase):
                 "packSchemaVersion": expected["trees"]["Pack"]["currentVersion"],
                 "schemaSnapshotHash": expected["snapshotHash"], "projectPath": str(project), "edits": edits}
 
-    def verify(self, old_version: int | None = None, protected: bool = True, sdk_version: int | None = None) -> tuple:
+    def verify(self, old_version: int | None = None, protected: bool = True, sdk_version: int | None = None,
+               companion: bool = False, legacy_result: bool = False) -> tuple:
+        if companion:
+            shutil.copyfile(REPO_ROOT / "HarkenSchema/Pack/current/PackManifestSchema.json",
+                            self.source / "Pack/current/PackManifestSchema.json")
+            for name in ("Init.bytes", "Init.json", "Play.bytes", "Play.json"):
+                (self.pack_root / name).write_bytes(b"fixture")
         if sdk_version is None:
             sdk_version = self.pack_schema_version
         expected = copy.deepcopy(MODULE.schema_archive.build_bundle(self.source)["manifest"])
@@ -659,15 +669,41 @@ class ReaderGateTest(unittest.TestCase):
         baselines = {"baseline": self.old_binary.parent} if old_version is not None else {}
         package = {"_schemaManifest": expected, "buildId": "released",
                    "_protectedFiles": {self.old_source.relative_to(self.old_binary.parent).as_posix()} if protected else set()}
-        native = SimpleNamespace(returncode=0, stdout=f"[PackNative] shared Init/content fixture PASS.\n[PackSidecar] schema_version {sdk_version}\n", stderr="")
+        output = f"[PackCompanion] native publication PASS.\n[PackCompanion] schemaVersion {sdk_version}\n" \
+            if companion and not legacy_result else f"[PackNative] shared Init/content fixture PASS.\n[PackSidecar] schema_version {sdk_version}\n"
+        native = SimpleNamespace(returncode=0, stdout=output, stderr="")
         with patch.object(MODULE, "required_baselines", return_value={tag: {} for tag in baselines}), \
                 patch.object(MODULE, "release_schema_errors", return_value=[]), \
                 patch.object(MODULE, "checked_baseline_package", return_value=(self.old_binary, package)), \
                 patch.object(MODULE, "run_probe", side_effect=self.probe), \
                 patch.object(MODULE, "verify_pack_reader", return_value={"ok": True, "schemaVersion": self.pack_schema_version}) as parser, \
+                patch.object(MODULE, "verify_companion_reader", return_value={"ok": True, "schemaVersion": self.pack_schema_version}) as companion_parser, \
                 patch.object(MODULE.subprocess, "run", return_value=native):
             report = MODULE.verify_release_readers(self.binary, baselines, self.pack_reader, self.pack_root, self.source)
-            return report, parser.call_args_list
+            return report, companion_parser.call_args_list if companion else parser.call_args_list
+
+    def test_companion_receipt_covers_binary_and_json_inputs(self) -> None:
+        report, _ = self.verify(companion=True)
+        self.assertEqual(set(report["pack"]["fixtureSha256"]), {"Init.bytes", "Init.json", "Play.bytes", "Play.json"})
+
+    def test_legacy_success_cannot_certify_companion_publication(self) -> None:
+        with self.assertRaises(ValueError):
+            self.verify(companion=True, legacy_result=True)
+
+    def test_companion_reader_must_match_requested_generation(self) -> None:
+        for version in (self.pack_schema_version - 1, self.pack_schema_version + 1):
+            with self.subTest(version=version), self.assertRaises(ValueError):
+                self.verify(companion=True, sdk_version=version)
+
+    def test_same_generation_companion_baseline_executes_its_sdk(self) -> None:
+        report, calls = self.verify(companion=True, old_version=MODULE.schema_archive.load_tree("Editor", self.source)["currentVersion"])
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0].args[0], self.old_source.parents[2])
+        self.assertIn("old-pack-parser-reads-current-sidecars", report["readers"][1]["checks"])
+
+    def test_companion_baseline_requires_protected_sources(self) -> None:
+        with self.assertRaises(ValueError):
+            self.verify(companion=True, old_version=1, protected=False)
 
     def test_old_same_generation_reader_executes_pack_parser_and_project_edits(self) -> None:
         report, calls = self.verify(old_version=MODULE.schema_archive.load_tree("Editor", self.source)["currentVersion"])

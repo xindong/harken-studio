@@ -105,7 +105,7 @@ namespace Harken
             int fraction = dot < 0 ? 0 : coefficient.Length - dot - 1;
             string digits = coefficient.Replace(".", "").TrimStart('0');
             string significant = digits.TrimEnd('0');
-            string expected = PackManifest.SchemaVersion.ToString(CultureInfo.InvariantCulture);
+            string expected = HarkenPackSchema.Version.ToString(CultureInfo.InvariantCulture);
             string expectedSignificant = expected.TrimEnd('0');
             return significant == expectedSignificant && exponent ==
                 (long)fraction - (digits.Length - significant.Length) + (expected.Length - expectedSignificant.Length);

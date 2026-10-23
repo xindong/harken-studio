@@ -74,6 +74,8 @@ def candidate_updates(candidate_root: Path) -> dict[Path, bytes]:
             raise ValueError(f"{tree} candidate does not materialize current into generation {version}")
         updates[SCHEMA_ROOT / tree / "manifest.json"] = audit.canonical_text(candidate["manifest"]).encode("utf-8")
         updates[SCHEMA_ROOT / tree / str(version) / audit.SCHEMA_NAMES[tree]] = schema_archive.canonical_bytes(candidate["current"])
+    updates[REPO_ROOT / schema_archive.UNITY_PACK_SCHEMA_PATH] = schema_archive.unity_pack_schema(
+        schema_archive.build_bundle(candidate_root)).encode("utf-8")
     return updates
 
 
@@ -133,23 +135,35 @@ def main() -> int:
     stage.add_argument("--candidate-root", type=Path, required=True)
     stage.add_argument("--editor", choices=("same", "next"), default="same")
     stage.add_argument("--pack", choices=("same", "next"), default="same")
-    publish = commands.add_parser("publish")
-    publish.add_argument("--candidate-root", type=Path, required=True)
-    publish.add_argument("--release-tag", required=True)
-    publish.add_argument("--reader", type=Path, required=True)
-    publish.add_argument("--baseline-reader", action="append", default=[])
-    publish.add_argument("--baseline-readers-file", type=Path)
-    publish.add_argument("--pack-reader", type=Path, required=True)
-    publish.add_argument("--pack-root", type=Path, required=True)
+    for name in ("verify", "publish"):
+        command = commands.add_parser(name)
+        command.add_argument("--candidate-root", type=Path, required=True)
+        command.add_argument("--release-tag", required=name == "publish")
+        command.add_argument("--reader", type=Path, required=True)
+        command.add_argument("--baseline-reader", action="append", default=[])
+        command.add_argument("--baseline-readers-file", type=Path)
+        command.add_argument("--pack-reader", type=Path, required=True)
+        command.add_argument("--pack-root", type=Path, required=True)
+        command.add_argument("--json-out", type=Path)
     commands.add_parser("reset-unpublished")
     args = parser.parse_args()
     try:
         if args.command == "stage":
             report = stage_candidate(args.candidate_root, {"Editor": args.editor, "Pack": args.pack})
-        elif args.command == "publish":
+        elif args.command in {"verify", "publish"}:
             readers = audit.parse_baseline_readers(args.baseline_reader, args.baseline_readers_file)
-            report = publish_candidate(args.candidate_root, args.release_tag, args.reader.resolve(), readers,
-                                       args.pack_reader.resolve(), args.pack_root.resolve())
+            if args.command == "publish":
+                report = publish_candidate(args.candidate_root, args.release_tag, args.reader.resolve(), readers,
+                                           args.pack_reader.resolve(), args.pack_root.resolve())
+            else:
+                candidate_updates(args.candidate_root)
+                report = {"publication": "candidate", "trees": audit.tree_summary(args.candidate_root),
+                          "verification": audit.verify_release_readers(
+                              args.reader, readers, args.pack_reader, args.pack_root,
+                              schema_root=args.candidate_root, release_tag=args.release_tag)}
+            if args.json_out:
+                args.json_out.parent.mkdir(parents=True, exist_ok=True)
+                args.json_out.write_text(audit.canonical_text(report), encoding="utf-8")
         else:
             reset_unpublished()
             report = {"publication": "unpublished"}

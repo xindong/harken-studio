@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Text;
+using System.Text.Json.Nodes;
 using Harken;
 
 namespace Harken.Test
@@ -14,88 +15,88 @@ namespace Harken.Test
             try
             {
                 VersionContract();
-                string fixture = Path.Combine(AppContext.BaseDirectory, "NativePublications", "UnityFixture", "U4Original");
-                Require(GameplayPublication.Read(fixture, null, out GameplayPublication publication, out _), "fixture");
-                Assert(publication.TryFindAction("Play_U4_A", out GameplayAction action), "fixture A");
-                Assert(publication.TryFindAction("Play_U4_B", out GameplayAction other), "fixture B");
+                string fixture = Path.Combine(AppContext.BaseDirectory, "NativePublications", "PlayableDemo", "Windows");
+                var source = new PackDirectorySource(fixture, null);
+                Require(source.Capture(null, default, null, out CompanionInput init), "fixture Init");
+                byte[] initBytes = init.Bytes;
+                string initJson = File.ReadAllText(Path.Combine(fixture, "Init.json"));
+                Require(source.Capture("Play_Random_Draw", init.Facts.projectId, initBytes, out CompanionInput action), "fixture A");
+                Require(source.Capture("Play_Shuffle", init.Facts.projectId, initBytes, out CompanionInput other), "fixture B");
                 Directory.CreateDirectory(directory);
-                byte[] initBytes = File.ReadAllBytes(Path.Combine(fixture, publication.InitPack.Path));
-                Assert(publication.TryFindPack(action.OwnerPackStableId, out PackManifestEntry entry), "fixture pack");
-                byte[] actionBytes = File.ReadAllBytes(Path.Combine(fixture, entry.Path));
-                Assert(publication.TryFindPack(other.OwnerPackStableId, out PackManifestEntry otherEntry), "fixture B pack");
-                byte[] otherBytes = File.ReadAllBytes(Path.Combine(fixture, otherEntry.Path));
-                WriteInit(directory, initBytes);
-                WriteAction(directory, action.Name, action.ActionStableId, actionBytes);
-                WriteAction(directory, other.Name, other.ActionStableId, otherBytes);
+                byte[] actionBytes = action.Bytes;
+                byte[] otherBytes = other.Bytes;
+                WriteInit(directory, initBytes, initJson);
+                WriteAction(directory, action.Names.Name, action.Names.RootId, actionBytes);
+                WriteAction(directory, other.Names.Name, other.Names.RootId, otherBytes);
                 File.WriteAllText(Path.Combine(directory, "Unused_Broken.json"), "not json");
                 VnConfig config = HarkenEngine.DefaultConfig();
                 config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
-                WriteInit(directory, initBytes, null);
+                WriteInit(directory, initBytes, initJson, null);
                 Assert(PackBootstrap.StartDirectory(directory, "French", ref config, out session) == VnResult.VN_BAD_PACK &&
                     session == null, "missing Init version leaves no session");
-                WriteInit(directory, initBytes);
+                WriteInit(directory, initBytes, initJson);
                 Require(PackBootstrap.StartDirectory(directory, "French", ref config, out session), "Init-only startup");
-                Assert(session.ProjectId == publication.ProjectId && session.Publication == null &&
+                Assert(session.ProjectId == init.Facts.projectId.ToString() && session.Publication == null &&
                     session.StartupPacks.Length == 0 && session.IsStartupComplete, "real identity without Publication");
-                Assert(Actions.Resolve(action.Name, out _) != VnResult.VN_OK, "initially absent");
-                Assert(session.PrepareActions(new[] { action.Name }, Guid.NewGuid().ToString("D"), out _) ==
+                Assert(Actions.Resolve(action.Names.Name, out _) != VnResult.VN_OK, "initially absent");
+                Assert(session.PrepareActions(new[] { action.Names.Name }, Guid.NewGuid().ToString("D"), out _) ==
                     VnResult.VN_GAMEPLAY_WRONG_PROJECT, "explicit project check");
-                Assert(session.PrepareActions(new[] { action.Name, "Missing" }, session.ProjectId, out ActionPreparation refused) ==
+                Assert(session.PrepareActions(new[] { action.Names.Name, "Missing" }, session.ProjectId, out ActionPreparation refused) ==
                     VnResult.VN_CONTENT_NOT_LOADED, "batch refuses missing input");
-                Assert(refused.IsReleased && Actions.Resolve(action.Name, out _) != VnResult.VN_OK, "atomic batch");
+                Assert(refused.IsReleased && Actions.Resolve(action.Names.Name, out _) != VnResult.VN_OK, "atomic batch");
                 string localized = Path.Combine(directory, "French");
                 Directory.CreateDirectory(localized);
-                File.WriteAllText(Path.Combine(localized, action.Name + ".json"), "{}");
-                Assert(session.PrepareActions(new[] { action.Name }, session.ProjectId, out _) == VnResult.VN_BAD_PACK, "half pair refuses fallback");
-                WriteAction(localized, action.Name, action.ActionStableId, actionBytes, "999");
-                Assert(session.PrepareActions(new[] { action.Name }, session.ProjectId, out _) == VnResult.VN_BAD_PACK,
+                File.WriteAllText(Path.Combine(localized, action.Names.Name + ".json"), "{}");
+                Assert(session.PrepareActions(new[] { action.Names.Name }, session.ProjectId, out _) == VnResult.VN_BAD_PACK, "half pair refuses fallback");
+                WriteAction(localized, action.Names.Name, action.Names.RootId, actionBytes, "999");
+                Assert(session.PrepareActions(new[] { action.Names.Name }, session.ProjectId, out _) == VnResult.VN_BAD_PACK,
                     "complete language pair with bad version cannot fall back");
-                File.Delete(Path.Combine(localized, action.Name + ".bytes"));
-                File.Delete(Path.Combine(localized, action.Name + ".json"));
-                Require(session.PrepareActions(new[] { action.Name }, session.ProjectId, out ActionPreparation first), "General fallback");
+                File.Delete(Path.Combine(localized, action.Names.Name + ".bytes"));
+                File.Delete(Path.Combine(localized, action.Names.Name + ".json"));
+                Require(session.PrepareActions(new[] { action.Names.Name }, session.ProjectId, out ActionPreparation first), "General fallback");
                 File.Delete(Path.Combine(directory, "Init.bytes"));
                 File.Delete(Path.Combine(directory, "Init.json"));
-                File.Delete(Path.Combine(directory, action.Name + ".bytes"));
-                File.Delete(Path.Combine(directory, action.Name + ".json"));
-                Require(session.PrepareActions(new[] { action.Name }, session.ProjectId, out ActionPreparation warm), "warm without source");
-                Require(session.PrepareActions(new[] { other.Name }, session.ProjectId, out ActionPreparation second), "B without Init or A files");
-                Require(session.AcquirePack(action.OwnerPackStableId, out Pack raw), "raw lease");
-                Require(Actions.Resolve(action.Name, session.ProjectId, out ActionResolved beforeRename), "prepared resolve");
+                File.Delete(Path.Combine(directory, action.Names.Name + ".bytes"));
+                File.Delete(Path.Combine(directory, action.Names.Name + ".json"));
+                Require(session.PrepareActions(new[] { action.Names.Name }, session.ProjectId, out ActionPreparation warm), "warm without source");
+                Require(session.PrepareActions(new[] { other.Names.Name }, session.ProjectId, out ActionPreparation second), "B without Init or A files");
+                Require(session.AcquirePack(action.Facts.packStableId, out Pack raw), "raw lease");
+                Require(Actions.Resolve(action.Names.Name, session.ProjectId, out ActionResolved beforeRename), "prepared resolve");
                 Require(HarkenEngine.Update(), "update");
                 Require(Actions.Post(in beforeRename, Emitter.None, 3, out ActionFiring firing), "prepared post");
-                WriteAction(directory, action.Name, action.ActionStableId, actionBytes, "3.0000000000000001");
-                Assert(session.RefreshAction(action.Name, session.ProjectId, out _) == VnResult.VN_BAD_PACK,
+                WriteAction(directory, action.Names.Name, action.Names.RootId, actionBytes, HarkenPackSchema.Version + ".0000000000000001");
+                Assert(session.RefreshAction(action.Names.Name, session.ProjectId, out _) == VnResult.VN_BAD_PACK,
                     "refresh rejects rounded version");
-                Require(Actions.Resolve(action.Name, out _), "version failure preserves name");
+                Require(Actions.Resolve(action.Names.Name, out _), "version failure preserves name");
                 Require(Actions.Post(in beforeRename, Emitter.None, 4, out _), "version failure preserves resolved token");
                 Require(firing.Query(out _), "version failure preserves firing");
-                WriteAction(directory, action.Name, action.ActionStableId, actionBytes, "3e0");
-                Require(session.RefreshAction(action.Name, session.ProjectId, out ActionPreparation corrected), "corrected version retries");
+                WriteAction(directory, action.Names.Name, action.Names.RootId, actionBytes, HarkenPackSchema.Version + "e0");
+                Require(session.RefreshAction(action.Names.Name, session.ProjectId, out ActionPreparation corrected), "corrected version retries");
                 Require(corrected.Release(), "corrected scope release leaves original leases");
                 const string renamed = "Play_Renamed";
-                WriteAction(directory, renamed, action.ActionStableId, actionBytes);
+                WriteAction(directory, renamed, action.Names.RootId, actionBytes);
                 Require(session.RefreshAction(renamed, session.ProjectId, out ActionPreparation refresh), "rename");
                 Assert(Actions.Post(in beforeRename, Emitter.None, 4, out _) == VnResult.VN_STALE_HANDLE, "old token expires");
                 Require(firing.Query(out _), "firing survives rename");
-                WriteAction(directory, action.Name, action.ActionStableId, actionBytes);
-                Assert(session.PrepareActions(new[] { action.Name }, session.ProjectId, out _) == VnResult.VN_GAMEPLAY_NAME_RETIRED, "old file cannot rename back");
+                WriteAction(directory, action.Names.Name, action.Names.RootId, actionBytes);
+                Assert(session.PrepareActions(new[] { action.Names.Name }, session.ProjectId, out _) == VnResult.VN_GAMEPLAY_NAME_RETIRED, "old file cannot rename back");
                 Require(first.Release(), "old scope release");
                 Require(warm.Release(), "warm scope release");
-                Require(session.ReleasePack(action.OwnerPackStableId, raw), "original raw handle release");
+                Require(session.ReleasePack(action.Facts.packStableId, raw), "original raw handle release");
                 Require(refresh.Release(), "renamed scope release");
                 Assert(Actions.Resolve(renamed, out _) != VnResult.VN_OK, "last lease removes name");
-                Require(session.AcquirePack(action.OwnerPackStableId, out Pack reloaded), "known unloaded owner reacquires by accepted name");
+                Require(session.AcquirePack(action.Facts.packStableId, out Pack reloaded), "known unloaded owner reacquires by accepted name");
                 Require(Actions.Resolve(renamed, out _), "raw reacquire restores accepted name");
-                Require(session.ReleasePack(action.OwnerPackStableId, reloaded), "reloaded raw release");
-                Assert(session.PrepareActions(new[] { action.Name }, session.ProjectId, out _) == VnResult.VN_GAMEPLAY_NAME_RETIRED, "unload preserves accepted name");
+                Require(session.ReleasePack(action.Facts.packStableId, reloaded), "reloaded raw release");
+                Assert(session.PrepareActions(new[] { action.Names.Name }, session.ProjectId, out _) == VnResult.VN_GAMEPLAY_NAME_RETIRED, "unload preserves accepted name");
                 const string renamedAgain = "Play_RenamedAgain";
-                WriteAction(directory, renamedAgain, action.ActionStableId, actionBytes);
+                WriteAction(directory, renamedAgain, action.Names.RootId, actionBytes);
                 Require(session.RefreshAction(renamedAgain, session.ProjectId, out ActionPreparation revived), "refresh unloaded owner");
                 File.WriteAllText(Path.Combine(directory, ".harken-pack-publishing"), "in progress");
                 Assert(session.RefreshAction(renamedAgain, session.ProjectId, out _) == VnResult.VN_PACK_STALE_REVISION, "marker refuses refresh");
                 Require(Actions.Resolve(renamedAgain, out _), "failed refresh preserves name");
                 File.Delete(Path.Combine(directory, ".harken-pack-publishing"));
-                File.WriteAllText(Path.Combine(directory, renamedAgain + ".json"), "{\"schemaVersion\":3,\"name\":\"Wrong\",\"guid\":\"" + action.ActionStableId + "\"}");
+                File.WriteAllText(Path.Combine(directory, renamedAgain + ".json"), "{\"schemaVersion\":" + HarkenPackSchema.Version + ",\"name\":\"Wrong\",\"guid\":\"" + action.Names.RootId + "\"}");
                 Assert(session.RefreshAction(renamedAgain, session.ProjectId, out _) == VnResult.VN_BAD_PACK, "JSON name must match basename");
                 Require(Actions.Resolve(renamedAgain, out _), "bad JSON preserves owner");
                 Require(revived.Release(), "revived scope release");
@@ -104,9 +105,9 @@ namespace Harken.Test
                 Require(first.Release(), "terminated scope release");
                 Assert(first.Prepare() == VnResult.VN_NOT_INITIALIZED, "old scope cannot restart");
                 session = null;
-                WriteInit(directory, initBytes);
+                WriteInit(directory, initBytes, initJson);
                 Require(PackBootstrap.StartDirectory(directory, null, ref config, out session), "restart");
-                Require(session.PrepareActions(new[] { action.Name }, session.ProjectId, out ActionPreparation restarted), "new session has no invented history");
+                Require(session.PrepareActions(new[] { action.Names.Name }, session.ProjectId, out ActionPreparation restarted), "new session has no invented history");
                 Require(restarted.Release(), "restarted release");
                 Require(session.Shutdown(), "restarted shutdown");
                 session = null;
@@ -183,35 +184,41 @@ namespace Harken.Test
 
         private static void VersionContract()
         {
+            string current = HarkenPackSchema.Version.ToString(System.Globalization.CultureInfo.InvariantCulture);
             const string action = "\"name\":\"Play_Head\",\"guid\":\"11111111-2222-3333-4444-555555555555\"";
             foreach (bool init in new[] { true, false })
             {
                 string fields = init ? "\"variables\":[]" : action;
-                foreach (string version in new[] { "3", "3.0", "3e0", "30e-1", "0.03E+2", "300e-2", "3e-0000" })
+                foreach (string version in new[] { current, current + ".0", current + "e0", current + "0e-1", "0.0" + current + "E+2", current + "00e-2", current + "e-0000" })
                     Require(PackCompanion.Parse(Encoding.UTF8.GetBytes("{\"schemaVersion\":" + version + "," + fields +
                         ",\"metadata\":false,\"waveforms\":42}"), init ? null : "Play_Head", "", default, out _),
                         "exact companion version " + version);
-                foreach (string version in new[] { null, "999", "\"3\"", "true", "null", "[]", "{}", "3.5", "-3",
-                    "0", "3.0000000000000001", "2.9999999999999999", "3e999999999999999999999", "3e-999999999999999999999" })
+                foreach (string version in new[] { null, "999", "\"" + current + "\"", "true", "null", "[]", "{}", current + ".5", "-" + current,
+                    "0", HarkenPackSchema.Version + ".0000000000000001", (HarkenPackSchema.Version - 1) + ".9999999999999999", current + "e999999999999999999999", current + "e-999999999999999999999" })
                 {
                     string field = version == null ? "" : "\"schemaVersion\":" + version + ",";
                     Assert(PackCompanion.Parse(Encoding.UTF8.GetBytes("{" + field + fields +
-                        ",\"schema_version\":3,\"metadata\":{\"schemaVersion\":3}}"), init ? null : "Play_Head", "", default, out _) ==
+                        ",\"schema_version\":3,\"metadata\":{\"schemaVersion\":" + HarkenPackSchema.Version + "}}"), init ? null : "Play_Head", "", default, out _) ==
                         VnResult.VN_BAD_PACK, "reject companion version " + (version ?? "missing"));
                 }
             }
-            Require(PackCompanion.Parse(Encoding.UTF8.GetBytes("{\"schemaVersion\":3,\"variables\":[{\"name\":\"Choice\"," +
+            Require(PackCompanion.Parse(Encoding.UTF8.GetBytes("{\"schemaVersion\":" + HarkenPackSchema.Version + ",\"variables\":[{\"name\":\"Choice\"," +
                 "\"guid\":\"11111111-2222-3333-4444-555555555555\",\"labels\":[]}]}"), null, "", default, out _), "empty labels");
         }
 
-        private static void WriteInit(string directory, byte[] bytes, string version = "3")
+        private static void WriteInit(string directory, byte[] bytes, string json, string version = "current")
         {
+            if (version == "current") version = HarkenPackSchema.Version.ToString(System.Globalization.CultureInfo.InvariantCulture);
             File.WriteAllBytes(Path.Combine(directory, "Init.bytes"), bytes);
-            File.WriteAllText(Path.Combine(directory, "Init.json"), "{" +
-                (version == null ? "" : "\"schemaVersion\":" + version + ",") + "\"variables\":[],\"waveforms\":false}", new UTF8Encoding(false));
+            JsonObject metadata = JsonNode.Parse(json).AsObject();
+            if (version == null) metadata.Remove("schemaVersion");
+            else metadata["schemaVersion"] = JsonNode.Parse(version);
+            metadata["waveforms"] = false;
+            File.WriteAllText(Path.Combine(directory, "Init.json"), metadata.ToJsonString(), new UTF8Encoding(false));
         }
-        private static void WriteAction(string directory, string name, VnObjectId id, byte[] bytes, string version = "3")
+        private static void WriteAction(string directory, string name, VnObjectId id, byte[] bytes, string version = "current")
         {
+            if (version == "current") version = HarkenPackSchema.Version.ToString(System.Globalization.CultureInfo.InvariantCulture);
             File.WriteAllBytes(Path.Combine(directory, name + ".bytes"), bytes);
             File.WriteAllText(Path.Combine(directory, name + ".json"), "{\"schemaVersion\":" + version +
                 ",\"name\":\"" + name + "\",\"guid\":\"" + id + "\",\"waveforms\":42}", new UTF8Encoding(false));

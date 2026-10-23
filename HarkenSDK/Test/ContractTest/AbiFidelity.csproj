@@ -24,12 +24,15 @@
     <AssemblyName>HarkenAbiFidelity</AssemblyName>
     <RootNamespace>Harken.Test</RootNamespace>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <HarkenPackSchemaFile Condition="'$(HarkenPackSchemaFile)' == ''">$(MSBuildThisFileDirectory)..\..\Unity\Harken\Runtime\Generated\HarkenPackSchema.g.cs</HarkenPackSchemaFile>
   </PropertyGroup>
 
   <ItemGroup>
     <!-- The binding under test: the exact generated + hand-written SDK sources
          the UPM package ships. -->
-    <Compile Include="..\..\..\HarkenSDK\Unity\Harken\Runtime\Generated\**\*.cs" />
+    <Compile Include="..\..\..\HarkenSDK\Unity\Harken\Runtime\Generated\**\*.cs"
+             Exclude="..\..\..\HarkenSDK\Unity\Harken\Runtime\Generated\HarkenPackSchema.g.cs" />
+    <Compile Include="$(HarkenPackSchemaFile)" />
     <Compile Include="..\..\..\HarkenSDK\Unity\Harken\Runtime\Sdk\**\*.cs" />
     <Compile Include="..\..\..\HarkenSDK\Unity\Harken\Runtime\Unity\UnityCoordinates.cs" />
     <Compile Include="..\..\..\HarkenSDK\Unity\Harken\Editor\HarkenActionWaveform.cs" />
@@ -44,6 +47,7 @@
     <Compile Include="RepositoryPublicationContract.cs" />
     <Compile Include="CompanionDirectoryContract.cs" />
     <Compile Include="CompanionSourceContract.cs" />
+    <Compile Include="CompanionReleaseContract.cs" />
     <Content Include="..\Fixtures\EditorMetadata\1\**\*.json"
              Link="EditorMetadata\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\Fixtures\EditorMetadata\2\**\*.json;..\Fixtures\EditorMetadata\2\**\*.pack"

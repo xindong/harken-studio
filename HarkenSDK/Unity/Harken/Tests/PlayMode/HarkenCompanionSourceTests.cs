@@ -80,7 +80,7 @@ namespace Harken.Unity.Tests
                     await Task.Yield();
                     byte[] bytes = Read(path);
                     return path == invalid ? Encoding.UTF8.GetBytes(Regex.Replace(Encoding.UTF8.GetString(bytes),
-                        "\"schemaVersion\"\\s*:\\s*3", "\"schemaVersion\":3.0000000000000001")) : bytes;
+                        "\"schemaVersion\"\\s*:\\s*" + HarkenPackSchema.Version, "\"schemaVersion\":" + HarkenPackSchema.Version + ".0000000000000001")) : bytes;
                 });
                 LogAssert.Expect(LogType.Error, "Harken operation failed: PackBootstrap.Start: VN_BAD_PACK");
                 var start = fixture.Runtime.StartRuntimeAsync(source);

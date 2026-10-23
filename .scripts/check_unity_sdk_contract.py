@@ -5,6 +5,9 @@ import json
 import re
 from pathlib import Path
 
+import schema_archive
+from check_sdk_version import UNITY_PACKAGE_VERSION
+
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 DEFAULT_SDK = REPOSITORY / "HarkenSDK" / "Unity" / "Harken"
@@ -239,8 +242,8 @@ def verify_manifests(sdk: Path, errors: list[str]) -> None:
     )
     if package.get("name") != "com.harken.core":
         errors.append("package.json name must be com.harken.core")
-    if package.get("version") != "0.3.4":
-        errors.append("package.json version must be 0.3.4")
+    if package.get("version") != UNITY_PACKAGE_VERSION:
+        errors.append(f"package.json version must be {UNITY_PACKAGE_VERSION}")
     if "samples" in package:
         errors.append("package.json must not declare repository-owned Samples")
 
@@ -308,7 +311,7 @@ def verify_voice_wrappers(sdk: Path, errors: list[str]) -> None:
             )
 
 
-def verify(sdk: Path, require_binaries: bool) -> None:
+def verify(sdk: Path, require_binaries: bool, schema_root: Path | None = None) -> None:
     errors: list[str] = []
     candidates = [sdk, sdk / "Unity" / "Harken", sdk / "Harken"]
     sdk = next(
@@ -322,6 +325,10 @@ def verify(sdk: Path, require_binaries: bool) -> None:
     verify_manifests(sdk, errors)
     verify_sample_scripts(sdk, errors)
     verify_voice_wrappers(sdk, errors)
+    generated = sdk / "Runtime/Generated/HarkenPackSchema.g.cs"
+    if not generated.is_file() or generated.read_text(encoding="utf-8") != schema_archive.unity_pack_schema(
+            schema_archive.build_bundle(schema_root)):
+        errors.append("Unity Pack schema does not match the selected Schema tree")
     if errors:
         raise SystemExit("\n".join(errors))
     content = "source-only" if not require_binaries else "assembled"
@@ -335,8 +342,9 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--sdk-root", type=Path, default=DEFAULT_SDK)
     parser.add_argument("--require-binaries", action="store_true")
+    parser.add_argument("--schema-root", type=Path)
     arguments = parser.parse_args()
-    verify(arguments.sdk_root.resolve(), arguments.require_binaries)
+    verify(arguments.sdk_root.resolve(), arguments.require_binaries, arguments.schema_root)
     return 0
 
 

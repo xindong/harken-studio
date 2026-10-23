@@ -4,6 +4,20 @@ Standalone .NET runner for the C# binding's machine gates (spec M5 §5.2 / §5.4
 acceptance §11.6). It compiles the **same** generated + hand-written SDK sources
 the `HarkenSDK` UPM package ships (single source, no copy) and exercises them.
 
+For schema release preparation, `--companion-root <platform directory>` runs the
+focused native gate against an actual Studio-exported Init and Action publication.
+Set `HARKEN_NATIVE_DIR` to the matching candidate native library directory. This
+mode checks binary and JSON generations, refuses adjacent generations, and
+activates, prepares, resolves, posts, and releases the exported Actions. It does
+not consume or rewrite the repository's historical publication fixtures.
+
+When building against an isolated schema candidate, pass
+`-p:HarkenPackSchemaFile=<absolute generated HarkenPackSchema.g.cs path>`.
+Generate that file with `.scripts/schema_archive.py --schema-root <candidate>
+--generate-unity <file>`. The regular runner uses the checked-in schema projection.
+Use `studio_schema_lock.py verify` for candidate evidence and `publish` to record
+the qualification after rebuilding from a clean commit.
+
 It has **no NuGet dependencies**, so it builds offline from the .NET SDK alone,
 and its `LangVersion` is pinned to **9.0** (the Unity 2022.3 LTS C# level), so a
 successful build also proves the generated + SDK sources are Unity-2022.3
@@ -29,8 +43,9 @@ dotnet run --project HarkenSDK/Test/ContractTest -- --require-native
 ```
 
 This mode exits nonzero when native validation is skipped or fails. It also
-loads the production-exported Unity fixtures and PlayableDemo publications through
-the native Runtime. Hand-built waveform fixtures remain metadata reader contracts.
+loads the production-exported companion fixtures and PlayableDemo through the
+native Runtime. Legacy manifest publications and waveform fixtures remain
+managed reader compatibility inputs; they do not certify current native loading.
 When `HARKEN_NATIVE_DIR` is explicitly set with `--require-native`, that directory is
 authoritative: the runner does not probe repository build folders or fall back
 to the operating system library search. This makes missing-library acceptance

@@ -66,7 +66,7 @@ class StudioSchemaLockTest(unittest.TestCase):
         self.assertEqual(result["trees"]["Pack"]["generation"], current + 1)
         pack = MODULE.schema_archive.load_tree("Pack", self.candidate)
         self.assertNotIn("formatVersion", pack["currentSource"]["x-harken-format"])
-        self.assertEqual(pack["current"]["properties"]["schema_version"]["const"], current + 1)
+        self.assertEqual(pack["current"]["$defs"]["schemaVersion"]["const"], current + 1)
         self.assertFalse((self.source / "Pack" / str(current + 1)).exists())
 
     def test_next_editor_generation_preserves_latest_previous_snapshot(self) -> None:
@@ -156,6 +156,8 @@ class StudioSchemaLockTest(unittest.TestCase):
         self.assertEqual(tree["published"][self.editor_version], tree["current"])
         self.assertEqual(result["publication"], "released")
         self.assertFalse((self.source / f"Editor/{self.editor_version + 1}").exists())
+        self.assertEqual((self.root / MODULE.schema_archive.UNITY_PACK_SCHEMA_PATH).read_text(encoding="utf-8"),
+                         MODULE.schema_archive.unity_pack_schema(MODULE.schema_archive.build_bundle(self.candidate)))
 
     def test_failed_final_verification_rolls_back_snapshot_and_receipt(self) -> None:
         self.stage(editor="next")

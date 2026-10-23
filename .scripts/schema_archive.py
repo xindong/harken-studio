@@ -16,6 +16,7 @@ from typing import Any, Iterator
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_ROOT = REPO_ROOT / "HarkenSchema"
+UNITY_PACK_SCHEMA_PATH = "HarkenSDK/Unity/Harken/Runtime/Generated/HarkenPackSchema.g.cs"
 PROJECT_SCHEMA_NAME = "ProjectSerializedSchema.json"
 PACK_SCHEMA_NAME = "PackManifestSchema.json"
 TREE_SCHEMA_NAMES = {"Editor": PROJECT_SCHEMA_NAME, "Pack": PACK_SCHEMA_NAME}
@@ -1268,6 +1269,13 @@ def installed_files(bundle: dict[str, Any] | None = None) -> dict[str, bytes]:
     return dict((build_bundle() if bundle is None else bundle)["installed"])
 
 
+def unity_pack_schema(bundle: dict[str, Any]) -> str:
+    version = bundle["manifest"]["trees"]["Pack"]["currentVersion"]
+    return ("namespace Harken\n{\n    internal static class HarkenPackSchema\n    {\n"
+            f"        internal const int Version = {version};\n"
+            "    }\n}\n")
+
+
 def generated_files(bundle: dict[str, Any] | None = None) -> dict[str, bytes]:
     return dict((build_bundle() if bundle is None else bundle)["generated"])
 
@@ -1375,9 +1383,16 @@ def main() -> int:
     parser.add_argument("--publish", type=Path)
     parser.add_argument("--generate-code", type=Path)
     parser.add_argument("--check-generated", type=Path)
+    parser.add_argument("--generate-unity", type=Path)
+    parser.add_argument("--check-unity", type=Path)
     args = parser.parse_args()
     try:
         bundle = build_bundle(args.schema_root)
+        if args.check_unity and args.check_unity.read_text(encoding="utf-8") != unity_pack_schema(bundle):
+            raise ValueError("Unity Pack schema does not match the selected Schema tree")
+        if args.generate_unity:
+            args.generate_unity.parent.mkdir(parents=True, exist_ok=True)
+            args.generate_unity.write_text(unity_pack_schema(bundle), encoding="utf-8", newline="\n")
         if args.check_generated:
             errors = check_generated(args.check_generated, bundle)
             if errors:

@@ -45,12 +45,12 @@ MonoBehaviour:
   m_Name:
   m_EditorClassIdentifier: Harken.Unity::Harken.Unity.HarkenAudioSystem
   autoInitialize: 1
-  packRoot: Audio/GeneratedPacks
-  initPack: Init.pack
+  packRoot: Audio/GeneratedPacks/Windows
+  initPack: Init.bytes
   packPlatform:
-  packPlatformId: 7e69e0e2-8d15-52df-a609-ab96fff38750
+  packPlatformId:
   language:
-  startupPackStableIds: c53acd86d7b10b6ed707d086d70a0f6efc0cd386d784126ed95cd386d7b3126eb730d686d710166e7ad40a82d76d8e65
+  startupPackStableIds:
   preparedPackSource: {fileID: 0}
   nullDevice: 0
   persistAcrossScenes: 0
