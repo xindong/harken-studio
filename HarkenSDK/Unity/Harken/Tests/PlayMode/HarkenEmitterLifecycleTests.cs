@@ -108,12 +108,16 @@ namespace Harken.Unity.Tests
                 Assert.That(rawSource.Destroy(), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(next.SetDistanceScale(1), Is.EqualTo(VnResult.VN_STALE_HANDLE),
                     "A cached managed handle must still pass native generation validation.");
+                Assert.That(f.Runtime.CreateSpatialSource(f.Camera.transform, out HarkenSpatialSource sessionSource),
+                    Is.EqualTo(VnResult.VN_OK));
+                PackBootstrapSession oldSession = f.Runtime.Session;
                 Emitter oldComponent = f.Emitter.Handle;
                 Assert.That(f.Runtime.ShutdownRuntime(), Is.EqualTo(VnResult.VN_OK));
                 f.Start();
-                Assert.That(next.SetDistanceScale(1), Is.EqualTo(VnResult.VN_STALE_HANDLE));
-                Assert.That(oldComponent.SetDistanceScale(1), Is.EqualTo(VnResult.VN_STALE_HANDLE));
-                Assert.That(f.Emitter.Handle.Handle, Is.Not.EqualTo(oldComponent.Handle));
+                Assert.That(oldSession.IsActive, Is.False);
+                Assert.That(f.Runtime.Session, Is.Not.SameAs(oldSession));
+                Assert.That(sessionSource.SetDistanceScale(1), Is.EqualTo(VnResult.VN_STALE_HANDLE));
+                Assert.That(f.Emitter.Matches(f.Runtime, oldSession, oldComponent), Is.False);
                 Assert.That(f.Emitter.SetDistanceScale(1), Is.EqualTo(VnResult.VN_OK));
             }
             yield return null;
