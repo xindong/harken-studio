@@ -114,20 +114,10 @@ StartupLoadingWindow::StartupLoadingWindow(QWidget* parent)
     contentLayout->addWidget(progressBar_);
 
     contentLayout->addSpacing(4);
-    auto* metadata = new QHBoxLayout();
-    metadata->setSpacing(12);
-    auto* version = new QLabel(tr("v%1").arg(versionString()), content);
+    auto* version = new QLabel(versionString(), content);
     version->setObjectName(QStringLiteral("startupLoadingVersion"));
-    metadata->addWidget(version);
-    metadata->addStretch();
-    auto* copyright = new QLabel(
-        tr("© %1 XD").arg(QString::fromUtf8(Harken::BuildInfo::BuildYear.data(),
-                                            static_cast<int>(Harken::BuildInfo::BuildYear.size()))),
-        content);
-    copyright->setObjectName(QStringLiteral("startupLoadingCopyright"));
-    copyright->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    metadata->addWidget(copyright);
-    contentLayout->addLayout(metadata);
+    version->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    contentLayout->addWidget(version);
 
     setPhase(StartupPhase::PreparingApplication);
 }
