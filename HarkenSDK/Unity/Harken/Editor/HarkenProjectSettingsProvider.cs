@@ -68,7 +68,8 @@ namespace Harken.Unity.Editor
                     serialized.Update();
                     EditorGUILayout.PropertyField(serialized.FindProperty("enableCommunicationInBuilds"),
                         new GUIContent("Enable Communication in Builds"));
-                    EditorGUILayout.PropertyField(serialized.FindProperty("remoteBindAddress"), new GUIContent("Bind Address"));
+                    // EditorGUILayout.PropertyField(serialized.FindProperty("remoteBindAddress"), new GUIContent("Bind Address"));
+                    EditorGUILayout.LabelField("Bind Address", "127.0.0.1");
                     EditorGUILayout.PropertyField(serialized.FindProperty("remotePort"), new GUIContent("Port"));
                     EditorGUILayout.PropertyField(serialized.FindProperty("enableRemoteDiscovery"), new GUIContent("Auto Discover"));
                     EditorGUILayout.PropertyField(serialized.FindProperty("remoteDiscoveryPort"), new GUIContent("Discovery Port"));

@@ -379,7 +379,8 @@ class Server {
         sockaddr_in address{};
         address.sin_family = AF_INET;
         address.sin_port = htons(static_cast<std::uint16_t>(config.discoveryPort));
-        address.sin_addr.s_addr = htonl(INADDR_ANY);
+        // address.sin_addr.s_addr = htonl(INADDR_ANY);
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         if (bind(discovery, reinterpret_cast<const sockaddr *>(&address), sizeof(address)) != 0)
             return false;
         ip_mreq membership{};
@@ -1243,6 +1244,9 @@ VnResult StartRuntime(const VnRemoteConfig *input) {
         (input->flags & ~VN_REMOTE_DISCOVERY_ENABLED) != 0 || !ConfigText(input->bindAddress, 64) ||
         !ConfigText(input->applicationName, 128) || !ConfigText(input->projectName, 128))
         return VN_INVALID_ARG;
+    if (input->bindAddress != nullptr && input->bindAddress[0] != 0 &&
+        std::string_view(input->bindAddress) != "127.0.0.1")
+        return VN_INVALID_ARG;
     if (g_server)
         return VN_IN_USE;
     auto server = std::make_unique<Server>();
@@ -1260,9 +1264,10 @@ VnResult StartRuntime(const VnRemoteConfig *input) {
         config.maxCommandsPerUpdate > 256 || config.requestTimeoutMs < 100 ||
         config.requestTimeoutMs > 300000)
         return VN_INVALID_ARG;
-    server->bindAddress = input->bindAddress == nullptr || input->bindAddress[0] == 0
-                              ? "0.0.0.0"
-                              : input->bindAddress;
+    // server->bindAddress = input->bindAddress == nullptr || input->bindAddress[0] == 0
+    //                           ? "0.0.0.0"
+    //                           : input->bindAddress;
+    server->bindAddress = "127.0.0.1";
     auto &identity = server->identity;
     identity.bindAddress = server->bindAddress;
     identity.instanceId = NewInstanceId();

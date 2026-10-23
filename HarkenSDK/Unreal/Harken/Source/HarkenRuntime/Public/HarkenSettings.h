@@ -41,8 +41,10 @@ public:
     UPROPERTY(Config, EditAnywhere, Category = "Communication", meta = (DisplayName = "Enable Communication in Builds"))
     bool bEnableCommunicationInBuilds = true;
 
-    UPROPERTY(Config, EditAnywhere, Category = "Communication")
-    FString RemoteBindAddress = TEXT("0.0.0.0");
+    // UPROPERTY(Config, EditAnywhere, Category = "Communication")
+    // FString RemoteBindAddress = TEXT("0.0.0.0");
+    UPROPERTY(Config, VisibleAnywhere, Category = "Communication")
+    FString RemoteBindAddress = TEXT("127.0.0.1");
 
     UPROPERTY(Config, EditAnywhere, Category = "Communication", meta = (ClampMin = "0", ClampMax = "65535"))
     int32 RemotePort = 0;
