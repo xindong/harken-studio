@@ -26,7 +26,6 @@ from release.verify_pack_reader import verify_pack_reader
 
 REPO_ROOT = SCRIPT_DIR.parent
 SCHEMA_ROOT_PATH = "HarkenSchema"
-CONFIG_PATH = ".scripts/studio-schema-release.json"
 RELEASE_SCOPE_CONFIG_PATH = ".scripts/studio-schema-release-scopes.json"
 TREE_NAMES = ("Editor", "Pack")
 SCHEMA_NAMES = {"Editor": "ProjectSerializedSchema.json", "Pack": "PackManifestSchema.json"}
@@ -157,17 +156,6 @@ def review_scopes(base: str, head: str) -> list[dict[str, Any]]:
                             or any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)])]
 
 
-def source_fingerprint(revision: str) -> str:
-    patterns = [pattern for values in release_scope_config(revision).values() for pattern in values]
-    files = {}
-    for path in revision_paths(revision):
-        if any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns):
-            data = revision_bytes(revision, path)
-            if data is not None:
-                files[path] = digest(data.replace(b"\r\n", b"\n"))
-    return digest(canonical_bytes(files))
-
-
 def same_generation_errors(tree: str, previous: dict[str, Any], current: dict[str, Any]) -> list[str]:
     if json_equal(previous, current):
         return []
@@ -239,6 +227,8 @@ def github_json(root: Path, endpoint: str, asset: bool = False) -> Any:
 
 def github_studio_release_tags(tags: set[str]) -> set[str]:
     published = set()
+    if not tags:
+        return published
     for page in github_json(REPO_ROOT, "repos/{owner}/{repo}/releases?per_page=100"):
         for release in page:
             tag = release["tag_name"]
@@ -268,18 +258,15 @@ def github_studio_release_tags(tags: set[str]) -> set[str]:
 
 def published_releases() -> dict[str, dict[str, Any]]:
     releases = {}
-    candidates = {}
-    for tag in run_git(["tag", "--list"]).stdout.splitlines():
-        record = revision_json(tag, CONFIG_PATH)
-        if record and record.get("product") == "HarkenStudio" \
-                and record.get("auditVersion") == 4 and record.get("publication") == "released":
-            if record.get("releaseTag") == tag:
-                releases[tag] = record
-            else:
-                candidates[tag] = record
-    if candidates:
-        for tag in github_studio_release_tags(set(candidates)):
-            releases[tag] = candidates[tag]
+    tags = set(run_git(["tag", "--list"]).stdout.splitlines())
+    for tag in sorted(github_studio_release_tags(tags)):
+        version = revision_bytes(tag, "VERSION")
+        if version is None or not re.fullmatch(rb"\d+\.\d+\.\d+", version.strip()):
+            raise ValueError(f"Published Studio version is missing or invalid: {tag}")
+        with schema_root_at(tag) as root:
+            releases[tag] = {"product": "HarkenStudio", "version": version.decode("utf-8").strip(),
+                             "gitCommit": run_git(["rev-parse", f"refs/tags/{tag}^{{commit}}"]).stdout.strip(),
+                             "trees": tree_summary(root)}
     return releases
 
 
@@ -308,66 +295,21 @@ def release_schema_errors(root: Path, exclude_tag: str | None = None) -> list[st
                     if version not in current[tree]["published"]:
                         errors.append(f"{tag}: Published {tree} generation {version} cannot be removed")
                         continue
-                    target = current[tree]["current"] if version == current[tree]["currentVersion"] \
-                        else current[tree]["published"][version]
-                    source = previous["current"] if version == previous["currentVersion"] else published
-                    errors.extend(f"{tag} {tree}/{version}: {error}" for error in same_generation_errors(tree, source, target))
+                    target = current[tree]["published"][version]
+                    errors.extend(f"{tag} {tree}/{version}: {error}" for error in same_generation_errors(tree, published, target))
     return errors
 
 
 def verify_current_release(head_revision: str = "WORKTREE") -> dict[str, Any]:
     errors = []
     with schema_root_at(head_revision) as root:
-        bundle = schema_archive.build_bundle(root)
-        record = revision_json(head_revision, CONFIG_PATH)
-        if not record or record.get("product") != "HarkenStudio" \
-                or record.get("auditVersion") != 4 or record.get("publication") != "released":
-            errors.append("Formal Studio release has no verified release receipt")
-        else:
-            if record.get("trees") != tree_summary(root):
-                errors.append("Formal Schema release receipt does not match current contracts")
-            if record.get("sourceFingerprint") != source_fingerprint(head_revision):
-                errors.append("Formal Schema release receipt does not match reader/writer sources")
-            verification = record.get("verification")
-            if not isinstance(verification, dict):
-                verification = {}
-            pack = verification.get("pack")
-            if not isinstance(pack, dict):
-                pack = {}
-            committed = revision_json("HEAD" if head_revision == "WORKTREE" else head_revision, CONFIG_PATH)
-            release_commit = None
-            if not errors and json_equal(record, committed):
-                release_commit = run_git(["rev-parse", "HEAD" if head_revision == "WORKTREE" else head_revision]).stdout.strip()
-            baselines = sorted(required_baselines(root, record.get("releaseTag"), release_commit))
-            readers = verification.get("readers")
-            reader_tags = [reader["tag"] for reader in readers
-                           if isinstance(reader, dict) and isinstance(reader.get("tag"), str)] \
-                if isinstance(readers, list) else []
-            if verification.get("protocol") != "schema-roundtrip-v1" \
-                    or verification.get("errors") != [] \
-                    or verification.get("schemaSnapshotHash") != bundle["manifest"]["snapshotHash"] \
-                    or not isinstance(readers, list) or len(reader_tags) != len(readers) \
-                    or len(reader_tags) != len(set(reader_tags)) or set(reader_tags) != set(baselines) | {"current"} \
-                    or pack.get("status") != "passed" \
-                    or type(pack.get("schemaVersion")) is not int \
-                    or pack.get("schemaVersion") != bundle["manifest"]["trees"]["Pack"]["currentVersion"]:
-                errors.append("Formal Schema release receipt has no controlled reader/writer and native Pack checks")
-            if verification.get("baselineTags") != baselines:
-                errors.append("Formal Schema release receipt does not cover all promised releases")
-            tag = record.get("releaseTag")
-            if not isinstance(tag, str) or not tag:
-                errors.append("Formal Schema release receipt has no release tag")
-            elif run_git(["rev-parse", "--verify", f"refs/tags/{tag}"], check=False).returncode == 0:
-                tagged = run_git(["rev-parse", f"refs/tags/{tag}^{{commit}}"]).stdout.strip()
-                head = run_git(["rev-parse", "HEAD" if head_revision == "WORKTREE" else head_revision]).stdout.strip()
-                if tagged != head:
-                    errors.append("Published release tag cannot be reused for another commit")
+        schema_archive.build_bundle(root)
         for tree in TREE_NAMES:
             data = schema_archive.load_tree(tree, root)
             if data["published"][data["currentVersion"]] != data["current"]:
                 errors.append(f"{tree} current has not been synchronized to its release generation")
-        errors.extend(release_schema_errors(root, record.get("releaseTag") if record else None))
-    return {"auditVersion": 4, "decision": "formal-release", "headRevision": head_revision,
+        errors.extend(release_schema_errors(root))
+    return {"auditVersion": 4, "decision": "release-source", "headRevision": head_revision,
             "status": "failed" if errors else "passed", "errors": errors}
 
 
@@ -376,10 +318,11 @@ def audit(base_revision: str | None, head_revision: str = "WORKTREE") -> dict[st
         schema_archive.build_bundle(root)
     scopes = review_scopes(base_revision, head_revision) if base_revision else []
     errors = []
-    if base_revision and published_releases() and any(
+    if base_revision and any(
             re.match(r"HarkenSchema/(Editor|Pack)/(\d+/|manifest\.json$)", path)
             for path in changed_files(base_revision, head_revision)):
-        errors.extend(verify_current_release(head_revision)["errors"])
+        with schema_root_at(head_revision) as root:
+            errors.extend(release_schema_errors(root))
     return {"auditVersion": 4, "decision": "development", "headRevision": head_revision,
             "reviewScopes": scopes, "status": "failed" if errors else "passed", "errors": errors}
 
@@ -652,8 +595,8 @@ def require_current_reader(report: dict[str, Any]) -> None:
     if not isinstance(reader, dict) or reader.get("gitDirty") is not False \
             or reader.get("gitCommit") != run_git(["rev-parse", "HEAD"]).stdout.strip():
         raise ValueError("Formal release verification requires a clean reader built from HEAD")
-    if source_fingerprint("WORKTREE") != source_fingerprint("HEAD"):
-        raise ValueError("Commit reader/writer source changes before building a formal release candidate")
+    if run_git(["diff", "--quiet", "HEAD", "--"], check=False).returncode != 0:
+        raise ValueError("Commit source changes before verifying a formal release build")
 
 
 def verify_release_readers(current_binary: Path, baseline_readers: dict[str, Path],
@@ -661,10 +604,8 @@ def verify_release_readers(current_binary: Path, baseline_readers: dict[str, Pat
                            schema_root: Path | None = None, release_tag: str | None = None) -> dict[str, Any]:
     root = schema_root or REPO_ROOT / SCHEMA_ROOT_PATH
     bundle = schema_archive.build_bundle(root)
-    if release_tag is None and root.resolve() == (REPO_ROOT / SCHEMA_ROOT_PATH).resolve():
-        record = revision_json("WORKTREE", CONFIG_PATH) or {}
-        release_tag = record.get("releaseTag")
-    required = required_baselines(root, release_tag)
+    commit = run_git(["rev-parse", "HEAD"]).stdout.strip()
+    required = required_baselines(root, release_tag, commit)
     missing = set(required) - set(baseline_readers)
     if missing:
         raise ValueError("Missing promised baseline package(s): " + ", ".join(sorted(missing)))
@@ -790,12 +731,32 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base")
     parser.add_argument("--head", default="WORKTREE")
-    parser.add_argument("--verify-current", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--verify-current", action="store_true")
+    mode.add_argument("--verify-readers", action="store_true")
+    parser.add_argument("--reader", type=Path)
+    parser.add_argument("--baseline-reader", action="append", default=[])
+    parser.add_argument("--baseline-readers-file", type=Path)
+    parser.add_argument("--pack-reader", type=Path)
+    parser.add_argument("--pack-root", type=Path)
     parser.add_argument("--json-out", type=Path)
     parser.add_argument("--markdown-out", type=Path)
     args = parser.parse_args()
     try:
-        report = verify_current_release(args.head) if args.verify_current else audit(args.base, args.head)
+        if args.verify_readers:
+            if args.head not in {"HEAD", "WORKTREE"}:
+                raise ValueError("Reader verification must use the checked-out release commit")
+            if args.reader is None or args.pack_reader is None or args.pack_root is None:
+                raise ValueError("Reader verification requires --reader, --pack-reader and --pack-root")
+            report = verify_current_release()
+            if not report["errors"]:
+                verification = verify_release_readers(args.reader,
+                    parse_baseline_readers(args.baseline_reader, args.baseline_readers_file),
+                    args.pack_reader, args.pack_root)
+                require_current_reader(verification)
+                report.update(decision="release-readers", verification=verification)
+        else:
+            report = verify_current_release(args.head) if args.verify_current else audit(args.base, args.head)
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
         report = {"auditVersion": 4, "decision": "error", "status": "failed", "errors": [str(error)]}
     for path, content in ((args.json_out, canonical_text(report)), (args.markdown_out, markdown_report(report))):

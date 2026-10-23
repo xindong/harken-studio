@@ -327,12 +327,12 @@ class BuildStudioPackageTest(unittest.TestCase):
             self.run_build()
         self.assertEqual(package.read_bytes(), original)
 
-    def test_formal_packages_reject_invalid_or_stale_release_receipts(self):
+    def test_formal_packages_reject_unprepared_release_contracts(self):
         self.make_input()
         self.module.verify_release_candidate = self.verify_release_candidate
         for error in (
-            "Formal Studio release has no verified release receipt",
-            "Formal Schema release receipt does not match reader/writer sources",
+            "Editor current has not been synchronized to its release generation",
+            "Published Pack generation cannot be removed",
         ):
             with self.subTest(error=error), mock.patch.object(
                 self.module.studio_schema_release_audit,
@@ -350,8 +350,7 @@ class BuildStudioPackageTest(unittest.TestCase):
         self_test = self.module.run_studio_self_test
         with (
             mock.patch.object(audit, "verify_current_release", return_value={"errors": []}),
-            mock.patch.object(audit, "run_git", return_value=mock.Mock(stdout="b" * 40)),
-            mock.patch.object(audit, "source_fingerprint", return_value="fingerprint"),
+            mock.patch.object(audit, "run_git", return_value=mock.Mock(stdout="b" * 40, returncode=0)),
         ):
             for channel in ("stable", "beta"):
                 self.self_test_channel = channel
@@ -370,19 +369,18 @@ class BuildStudioPackageTest(unittest.TestCase):
         audit = self.module.studio_schema_release_audit
         with (
             mock.patch.object(audit, "verify_current_release", return_value={"errors": []}),
-            mock.patch.object(audit, "run_git", return_value=mock.Mock(stdout="b" * 40)),
-            mock.patch.object(audit, "source_fingerprint", side_effect=["worktree", "head"]),
+            mock.patch.object(audit, "run_git", return_value=mock.Mock(stdout="b" * 40, returncode=1)),
         ):
             with self.assertRaises(SystemExit):
                 self.run_build()
         self.assertFalse(self.output_dir.exists())
 
-    def test_development_packages_do_not_require_a_release_receipt(self):
+    def test_development_packages_do_not_run_formal_release_checks(self):
         self.make_input()
         self.module.verify_release_candidate = self.verify_release_candidate
         audit = self.module.studio_schema_release_audit
         with (
-            mock.patch.object(audit, "verify_current_release", side_effect=AssertionError("release receipt required")),
+            mock.patch.object(audit, "verify_current_release", side_effect=AssertionError("formal contracts required")),
             mock.patch.object(audit, "require_current_reader", side_effect=AssertionError("formal reader required")),
         ):
             for channel in ("dev", "nightly"):
@@ -392,15 +390,14 @@ class BuildStudioPackageTest(unittest.TestCase):
                     summary = self.run_build(["--channel", channel])
                     self.assertTrue(Path(summary["package"]).is_file())
 
-    def test_formal_packages_accept_verified_receipt_without_test_inputs(self):
+    def test_formal_packages_verify_contracts_and_identity_without_a_receipt(self):
         self.make_input()
         self.module.verify_release_candidate = self.verify_release_candidate
         audit = self.module.studio_schema_release_audit
         with (
             mock.patch.object(audit, "verify_current_release", return_value={"errors": []}),
-            mock.patch.object(audit, "run_git", return_value=mock.Mock(stdout="b" * 40)),
-            mock.patch.object(audit, "source_fingerprint", return_value="fingerprint"),
-            mock.patch.object(audit, "verify_release_readers", side_effect=AssertionError("reader validation repeated")),
+            mock.patch.object(audit, "run_git", return_value=mock.Mock(stdout="b" * 40, returncode=0)),
+            mock.patch.object(audit, "verify_release_readers", side_effect=AssertionError("development reader validation requested")),
             mock.patch.object(audit.subprocess, "run", side_effect=AssertionError("external build or test requested")),
         ):
             for channel in ("stable", "beta"):
