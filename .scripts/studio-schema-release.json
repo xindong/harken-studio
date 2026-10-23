@@ -3,7 +3,7 @@
   "product": "HarkenStudio",
   "publication": "released",
   "releaseTag": "studio-v0.9.0",
-  "sourceFingerprint": "54ce5442fca3027ca961577b640335a250307a5a9008fec525d0ad2b308dea65",
+  "sourceFingerprint": "2bec3972c60f3574f137c3a0fc1fe2f04ce9849aae117558854c4a49c4e47da2",
   "trees": {
     "Editor": {
       "generation": 9,
@@ -21,8 +21,8 @@
       "release-39244142982-c3e1add8aef4"
     ],
     "currentReader": {
-      "buildId": "local-windows-x64-1cb5593a-20261023T075450Z",
-      "gitCommit": "1cb5593ad64e8cf2c1d33e4d59ebf62c1f0c5479",
+      "buildId": "local-windows-x64-104c5b02-20261023T081820Z",
+      "gitCommit": "104c5b02adbfa621438385b27b05a38bd25ae3d6",
       "gitDirty": false,
       "version": "0.9.0"
     },
@@ -51,7 +51,7 @@
     "protocol": "schema-roundtrip-v1",
     "readers": [
       {
-        "buildId": "local-windows-x64-1cb5593a-20261023T075450Z",
+        "buildId": "local-windows-x64-104c5b02-20261023T081820Z",
         "checks": [
           "new-reads-old",
           "old-edits-new",
