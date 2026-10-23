@@ -119,6 +119,7 @@ namespace Harken.Unity
             }
             if (result == VnResult.VN_OK)
             {
+                if (owningRuntime != null) owningRuntime.ForgetDestroyedDistanceReference(owningSession, emitter);
                 emitter = default;
                 transformPublished = false;
             }

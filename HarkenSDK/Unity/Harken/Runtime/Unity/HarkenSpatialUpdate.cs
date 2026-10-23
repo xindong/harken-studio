@@ -24,11 +24,21 @@ namespace Harken.Unity
         private SpatialRecord[] spatialRecords = Array.Empty<SpatialRecord>();
         private HarkenListener selectedListener;
         private ulong listenerRevision;
+        private DistanceReference distanceReference;
+        private ulong referenceRevision;
         private bool publishingSpatial;
         private bool advancingSpatialFrame;
 
         internal bool IsPublishingSpatial => publishingSpatial;
         public HarkenListener SelectedListener => selectedListener;
+
+        private struct DistanceReference
+        {
+            internal PackBootstrapSession Session;
+            internal HarkenEmitter Component;
+            internal HarkenSpatialSource Source;
+            internal Emitter Handle;
+        }
 
         internal struct SpatialRecord
         {
@@ -67,8 +77,10 @@ namespace Harken.Unity
         {
             internal PackBootstrapSession Session;
             internal ulong ListenerRevision;
+            internal ulong ReferenceRevision;
             internal SpatialRecord Listener;
             internal SpatialRecord Source;
+            internal SpatialRecord Reference;
             internal bool Active;
         }
 
@@ -77,7 +89,7 @@ namespace Harken.Unity
 
         private void ReserveSpatialRecords()
         {
-            int required = 1 + spatialEmitters.Count + spatialSources.Count;
+            int required = 2 + spatialEmitters.Count + spatialSources.Count;
             if (spatialRecords.Length < required)
                 Array.Resize(ref spatialRecords, Math.Max(required, Math.Max(8, spatialRecords.Length * 2)));
         }
@@ -137,6 +149,122 @@ namespace Harken.Unity
             return ObserveResult("HarkenAudioSystem.SelectListener", result);
         }
 
+        /// <summary>Selects an existing component identity for distance, preserving physical panning.</summary>
+        public VnResult SetDistanceReference(HarkenEmitter emitter)
+            => SelectDistanceReference(emitter, null);
+
+        /// <summary>Selects an existing followed identity without extending its native lifetime.</summary>
+        public VnResult SetDistanceReference(HarkenSpatialSource source)
+            => SelectDistanceReference(null, source);
+
+        private VnResult SelectDistanceReference(HarkenEmitter component, HarkenSpatialSource source)
+        {
+            const string operation = "HarkenAudioSystem.SetDistanceReference";
+            if (publishingSpatial) return VnResult.VN_IN_USE;
+            PackBootstrapSession owner = session;
+            if (!SpatialSessionIsCurrent(owner) || !IsReady)
+                return ObserveResult(operation, VnResult.VN_NOT_INITIALIZED);
+            if (component == null && source == null) return ObserveResult(operation, VnResult.VN_INVALID_ARG);
+            VnResult result;
+            publishingSpatial = true;
+            try
+            {
+                SpatialRecord candidate = component != null ? CaptureEmitter(component) : CaptureSource(source);
+                result = candidate.Result;
+                if (result == VnResult.VN_OK)
+                {
+                    candidate.Publish();
+                    result = candidate.Result;
+                }
+                if (result == VnResult.VN_OK) result = Harken.Listener.SetDistanceReference(candidate.Handle);
+                if (result == VnResult.VN_OK && (!ReferenceEquals(distanceReference.Session, owner) ||
+                    distanceReference.Handle.Handle != candidate.Handle.Handle))
+                {
+                    distanceReference = new DistanceReference
+                    {
+                        Session = owner, Component = component, Source = source, Handle = candidate.Handle
+                    };
+                    ++referenceRevision;
+                    ReserveSpatialRecords();
+                }
+            }
+            finally { publishingSpatial = false; }
+            return ObserveResult(operation, result);
+        }
+
+        /// <summary>Restores distance evaluation from the actual listener position.</summary>
+        public VnResult ClearDistanceReference()
+        {
+            const string operation = "HarkenAudioSystem.ClearDistanceReference";
+            if (publishingSpatial) return VnResult.VN_IN_USE;
+            if (!SpatialSessionIsCurrent(session) || !IsReady)
+                return ObserveResult(operation, VnResult.VN_NOT_INITIALIZED);
+            VnResult result;
+            publishingSpatial = true;
+            try
+            {
+                result = Harken.Listener.SetDistanceReference(Emitter.None);
+                if (result == VnResult.VN_OK && distanceReference.Handle.IsValid)
+                {
+                    distanceReference = default;
+                    ++referenceRevision;
+                }
+            }
+            finally { publishingSpatial = false; }
+            return ObserveResult(operation, result);
+        }
+
+        private VnResult ReconcileDistanceReference()
+        {
+            DistanceReference captured = distanceReference;
+            ulong revision = referenceRevision;
+            if (!captured.Handle.IsValid) return VnResult.VN_OK;
+            if (!SpatialSessionIsCurrent(captured.Session)) return VnResult.VN_NOT_INITIALIZED;
+            bool wasPublishing = publishingSpatial;
+            publishingSpatial = true;
+            try
+            {
+                // Validate the full native identity before touching a possibly obsolete Transform.
+                VnResult result = Harken.Listener.SetDistanceReference(captured.Handle);
+                if (result != VnResult.VN_STALE_HANDLE) return result;
+                if (revision != referenceRevision || !ReferenceEquals(captured.Session, distanceReference.Session) ||
+                    captured.Handle.Handle != distanceReference.Handle.Handle) return VnResult.VN_IN_USE;
+                result = Harken.Listener.SetDistanceReference(Emitter.None);
+                if (result == VnResult.VN_OK)
+                {
+                    distanceReference = default;
+                    ++referenceRevision;
+                }
+                return result;
+            }
+            finally { publishingSpatial = wasPublishing; }
+        }
+
+        internal void ForgetDestroyedDistanceReference(PackBootstrapSession owner, Emitter handle)
+        {
+            // Retirement calls this synchronously before publishing a result callback.
+            if (!handle.IsValid || !ReferenceEquals(distanceReference.Session, owner) ||
+                distanceReference.Handle.Handle != handle.Handle)
+                return;
+            distanceReference = default;
+            ++referenceRevision;
+        }
+
+        private SpatialRecord CaptureDistanceReference()
+        {
+            DistanceReference selected = distanceReference;
+            if (selected.Component != null && selected.Component.Matches(this, session, selected.Handle))
+                return CaptureEmitter(selected.Component);
+            if (selected.Source != null && selected.Source.Matches(this, session, selected.Handle))
+                return CaptureSource(selected.Source);
+            // Ended following retains only the original native identity and its last published pose.
+            return default;
+        }
+
+        private bool SpatialStateIsCurrent(PackBootstrapSession owner, ulong listenerStamp, ulong referenceStamp)
+            => SpatialSessionIsCurrent(owner) && listenerStamp == listenerRevision && referenceStamp == referenceRevision &&
+                ReconcileDistanceReference() == VnResult.VN_OK && referenceStamp == referenceRevision;
+
         private SpatialRecord CaptureListener()
         {
             var record = new SpatialRecord { Listener = selectedListener };
@@ -180,13 +308,22 @@ namespace Harken.Unity
             publication.Active = true;
             publication.Session = owner;
             publication.ListenerRevision = listenerRevision;
+            VnResult referenceResult = ReconcileDistanceReference();
+            publication.ReferenceRevision = referenceRevision;
+            if (referenceResult != VnResult.VN_OK) return referenceResult;
             publication.Listener = CaptureListener();
             if (component != null) publication.Source = CaptureEmitter(component);
             else if (source != null) publication.Source = CaptureSource(source);
+            bool sharedReference = distanceReference.Handle.IsValid &&
+                distanceReference.Handle.Handle == publication.Source.Handle.Handle;
+            if (!sharedReference) publication.Reference = CaptureDistanceReference();
             if (publication.Listener.Result != VnResult.VN_OK) return publication.Listener.Result;
             if (publication.Source.Result != VnResult.VN_OK) return publication.Source.Result;
+            if (publication.Reference.Result != VnResult.VN_OK) return publication.Reference.Result;
             publication.Listener.Publish();
             if (publication.Listener.Result != VnResult.VN_OK) return publication.Listener.Result;
+            publication.Reference.Publish();
+            if (publication.Reference.Result != VnResult.VN_OK) return publication.Reference.Result;
             publication.Source.Publish();
             return publication.Source.Result;
         }
@@ -197,32 +334,35 @@ namespace Harken.Unity
         }
 
         internal bool SpatialPostIsCurrent(in SpatialPost publication)
-            => !publication.Active || (SpatialSessionIsCurrent(publication.Session) &&
-                publication.ListenerRevision == listenerRevision &&
+            => !publication.Active || (SpatialStateIsCurrent(publication.Session,
+                publication.ListenerRevision, publication.ReferenceRevision) &&
                 (ReferenceEquals(publication.Source.Component, null) && publication.Source.Source == null ||
                     publication.Source.IsCurrent(this, publication.Session)));
 
         internal void NotifySpatialPost(in SpatialPost publication)
         {
             if (!publication.Active) return;
-            NotifySpatialRecord(in publication.Listener, publication.Session, publication.ListenerRevision);
-            NotifySpatialRecord(in publication.Source, publication.Session, publication.ListenerRevision);
+            NotifySpatialRecord(in publication.Listener, publication.Session, publication.ListenerRevision, publication.ReferenceRevision);
+            NotifySpatialRecord(in publication.Reference, publication.Session, publication.ListenerRevision, publication.ReferenceRevision);
+            NotifySpatialRecord(in publication.Source, publication.Session, publication.ListenerRevision, publication.ReferenceRevision);
         }
 
-        private void NotifySpatialRecord(in SpatialRecord record, PackBootstrapSession owner, ulong revision)
+        private void NotifySpatialRecord(in SpatialRecord record, PackBootstrapSession owner, ulong revision, ulong referenceStamp)
         {
-            if (!record.Notify || !SpatialSessionIsCurrent(owner) || revision != listenerRevision ||
+            if (!record.Notify || !SpatialStateIsCurrent(owner, revision, referenceStamp) ||
                 !record.IsCurrent(this, owner)) return;
             ObserveResult(record.Listener != null ? "UnitySpatial.SetListener" :
                 record.Component != null ? "UnitySpatial.SetEmitterTransform" : "SpatialSource.Update", record.Result);
         }
 
-        private int PublishSpatialFrame()
+        private int PublishSpatialFrame(out VnResult referenceResult)
         {
             int count = 0;
             publishingSpatial = true;
             try
             {
+                referenceResult = ReconcileDistanceReference();
+                if (referenceResult != VnResult.VN_OK) return 0;
                 spatialRecords[count++] = CaptureListener();
                 for (int i = 0; i < spatialEmitters.Count; ++i)
                 {
@@ -235,7 +375,19 @@ namespace Harken.Unity
                     HarkenSpatialSource source = spatialSources[i];
                     if (source.IsFollowing) spatialRecords[count++] = CaptureSource(source);
                 }
-                if (spatialRecords[0].Result == VnResult.VN_OK)
+                int referenceIndex = -1;
+                if (distanceReference.Handle.IsValid)
+                {
+                    for (int i = 1; i < count; ++i)
+                        if (spatialRecords[i].Handle.Handle == distanceReference.Handle.Handle) { referenceIndex = i; break; }
+                    if (referenceIndex < 0)
+                    {
+                        referenceIndex = count;
+                        spatialRecords[count++] = CaptureDistanceReference();
+                    }
+                }
+                if (spatialRecords[0].Result == VnResult.VN_OK &&
+                    (referenceIndex < 0 || spatialRecords[referenceIndex].Result == VnResult.VN_OK))
                 {
                     spatialRecords[0].Publish();
                     if (spatialRecords[0].Result == VnResult.VN_OK)
@@ -250,6 +402,8 @@ namespace Harken.Unity
         {
             selectedListener = null;
             ++listenerRevision;
+            distanceReference = default;
+            ++referenceRevision;
             spatialEmitters.Clear();
             listenerCandidates.Clear();
             ReserveSpatialRecords();

@@ -11,5 +11,9 @@ namespace Harken
     {
         public static VnResult Set(VnVec3 position, VnVec3 forward, VnVec3 up)
             => HarkenNative.Vn_SetListener(position, forward, up);
+
+        /// <summary>Uses a live emitter for distance only; None restores the listener position.</summary>
+        public static VnResult SetDistanceReference(Emitter emitter)
+            => HarkenNative.Vn_SetListenerDistanceReference(emitter.Handle);
     }
 }

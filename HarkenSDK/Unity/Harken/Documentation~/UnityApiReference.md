@@ -489,6 +489,9 @@ and cannot overwrite the selected pose.
 | --- | --- |
 | `HarkenListener SelectedListener { get; }` | Current listener component, or `null` when none is selected. |
 | `VnResult SelectListener(HarkenListener listener)` | Validate and publish an enabled candidate belonging to this session, then select it. Failure preserves the previous selection. Selecting the current owner republishes its pose without creating another identity. |
+| `VnResult SetDistanceReference(HarkenEmitter emitter)` | Use this enabled component's current emitter for distance evaluation. The component must belong to this runtime and session. |
+| `VnResult SetDistanceReference(HarkenSpatialSource source)` | Use an existing source still following in this runtime and session. This does not create an emitter or keep the source alive. |
+| `VnResult ClearDistanceReference()` | Restore distance evaluation from the actual listener position. |
 
 Disabling or destroying the selected listener clears the selection. Existing
 candidates do not automatically take over; select one explicitly. With no
@@ -539,6 +542,23 @@ reentry during spatial publication with `VN_IN_USE`, without invoking result
 callbacks inside that boundary. Native destruction freezes each attached
 playback's last accepted source pose and scale; a new emitter identity starts at 1.
 
+An explicit distance reference changes only distance contributions (volume,
+filters, width and proximity); pan and cone continue to use the actual Listener.
+The runtime keeps one selection across same-session Listener changes and clears
+it on shutdown. New selections validate their pose before changing the choice.
+Selection and clear reject publication reentry with `VN_IN_USE`.
+
+An already-selected source that ends following, or component that disables,
+uses its original native identity's last published position while that identity
+remains alive. It does not follow a recycled Transform or a new emitter generation.
+Actual native destruction falls back to the Listener; selecting an ended source
+anew is rejected. Before each Post or frame submission, the runtime validates
+the complete native identity before reading the reference Transform. A live
+reference with an invalid pose rejects that spatial submission and preserves the
+previously accepted spatial state. Async Play captures the current selection
+after content preparation. Callbacks that replace the selection cannot be
+overwritten by an older publication or cleanup result.
+
 For pooled Transform sources, call `EndFollow()` before reassigning the object
 and create a new source for the new identity; existing tails keep the frozen
 pose. Raw `Emitter` handles have no Unity Transform association: their caller
@@ -567,7 +587,10 @@ to `VnVec3`. `SetEmitterTransform(Emitter, Transform)` and
 world-space pose; the latter rejects nonfinite positions or invalid forward
 vectors with `VN_INVALID_ARG`. `SetListener(Transform)` and
 `SetListener(Vector3 position, Vector3 forward, Vector3 up)` publish a listener
-pose. Raw `Harken.Listener.Set(VnVec3 position, VnVec3 forward, VnVec3 up)`
+pose. Raw `Harken.Listener.SetDistanceReference(Emitter emitter)` selects a live
+spatial emitter; `Emitter.None` clears it. StateOnly returns
+`VN_CAPABILITY_UNAVAILABLE`, a stale handle returns `VN_STALE_HANDLE`, and refused
+selections preserve the current choice. Raw `Harken.Listener.Set(VnVec3 position, VnVec3 forward, VnVec3 up)`
 accepts Harken coordinates. All setter calls return a `VnResult`.
 
 ## Common immediate failures

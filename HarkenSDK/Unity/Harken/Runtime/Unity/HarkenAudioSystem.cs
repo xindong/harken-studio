@@ -1102,7 +1102,10 @@ namespace Harken.Unity
                     if (pending.StopAccepted) result = pending.Emitter.Destroy();
                     bool changed = !pending.Observed || result != pending.LastResult;
                     if (result == VnResult.VN_OK || result == VnResult.VN_STALE_HANDLE)
+                    {
+                        ForgetDestroyedDistanceReference(pending.Session, pending.Emitter);
                         emitterCleanup.RemoveAt(i);
+                    }
                     else
                     {
                         pending.Observed = true;
@@ -1599,9 +1602,10 @@ namespace Harken.Unity
                 }
             }
             if (!SpatialSessionIsCurrent(updatingSession)) return;
-            int count = PublishSpatialFrame();
+            int count = PublishSpatialFrame(out VnResult referenceResult);
             SpatialRecord[] records = spatialRecords;
             ulong revision = listenerRevision;
+            ulong referenceStamp = referenceRevision;
             VnResult result = HarkenEngine.Update();
             if (!SpatialSessionIsCurrent(updatingSession)) return;
             if (result != VnResult.VN_OK)
@@ -1609,10 +1613,16 @@ namespace Harken.Unity
                 FailRuntime("HarkenEngine.Update", result);
                 return;
             }
+            if (referenceResult != VnResult.VN_OK)
+            {
+                if (revision == listenerRevision && referenceStamp == referenceRevision)
+                    ObserveResult("HarkenAudioSystem.DistanceReference", referenceResult);
+                return;
+            }
             for (int i = 0; i < count; ++i)
             {
-                NotifySpatialRecord(in records[i], updatingSession, revision);
-                if (!SpatialSessionIsCurrent(updatingSession) || revision != listenerRevision) return;
+                NotifySpatialRecord(in records[i], updatingSession, revision, referenceStamp);
+                if (!SpatialStateIsCurrent(updatingSession, revision, referenceStamp)) return;
             }
             ObserveResult("HarkenEngine.Update", result);
         }

@@ -98,7 +98,11 @@ namespace Harken.Unity
             {
                 VnResult released = emitter.Destroy();
                 if (released == VnResult.VN_OK || released == VnResult.VN_STALE_HANDLE)
+                {
+                    if (owner is HarkenAudioSystem runtime && runtime != null)
+                        runtime.ForgetDestroyedDistanceReference(session, emitter);
                     emitter = default;
+                }
                 else result = released;
             }
             return LastResult = result;
