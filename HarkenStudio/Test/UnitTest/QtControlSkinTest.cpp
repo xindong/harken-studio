@@ -1,4 +1,5 @@
 #include "Core/BuiltinTheme.h"
+#include "Core/HarkenStyle.h"
 #include "Core/QtControlSkin.h"
 #include "Core/ThemeManager.h"
 #include "Widgets/Common/SearchField.h"
@@ -22,6 +23,7 @@
 #include <QLineEdit>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QScopeGuard>
@@ -31,6 +33,7 @@
 #include <QStyleOptionButton>
 #include <QStyleOptionHeader>
 #include <QTableView>
+#include <QTextEdit>
 #include <QToolButton>
 #include <QTreeView>
 #include <QVBoxLayout>
@@ -375,6 +378,96 @@ TEST(QtControlSkin, FieldHeightAccommodatesThemeMetricsAndLargerText)
         }
         EXPECT_GE(skin.fieldHeight(), theme.ui.metrics.controlHeight);
         EXPECT_GE(skin.fieldHeight(), theme.ui.metrics.objectIconExtent + 4);
+    }
+}
+
+TEST(QtControlSkin, InputTextOriginsAgreeAcrossControlTypesAndThemes)
+{
+    VNX::ThemeManager::instance();
+    const QString previousStyle = qApp->styleSheet();
+    const auto restore = qScopeGuard([&] { qApp->setStyleSheet(previousStyle); });
+    VNX::HarkenStyle style(QStyleFactory::create("Fusion"));
+    QWidget form;
+    auto* layout = new QVBoxLayout(&form);
+    layout->setAlignment(Qt::AlignTop);
+    auto* plain = new QPlainTextEdit(&form);
+    auto* rich = new QTextEdit(&form);
+    QList<QWidget*> fields{plain, rich};
+    for (const QString& role : {QString(), QStringLiteral("popup"), QStringLiteral("gridCell")}) {
+        auto* line = new QLineEdit(&form);
+        line->setProperty("fieldRole", role);
+        fields.append(line);
+    }
+    auto* table = new QLineEdit(&form);
+    table->setProperty("tableEditor", true);
+    fields.append(table);
+    for (const QString& role : {QString(), QStringLiteral("compact"), QStringLiteral("inspectorValue")}) {
+        auto* spin = new QSpinBox(&form);
+        spin->setRange(0, 9999);
+        spin->setProperty("fieldRole", role);
+        fields.append(spin);
+    }
+    for (const QString& role : {QString(), QStringLiteral("gridCell")}) {
+        for (bool editable : {false, true}) {
+            auto* combo = new QComboBox(&form);
+            combo->setProperty("fieldRole", role);
+            combo->setEditable(editable);
+            combo->addItem(QStringLiteral("123"));
+            fields.append(combo);
+        }
+    }
+    for (auto* field : fields) {
+        field->setStyle(&style);
+        layout->addWidget(field);
+    }
+
+    const auto textBounds = [](QWidget* field) {
+        const QImage image = field->grab().toImage();
+        const qreal ratio = image.devicePixelRatio();
+        const QColor foreground = field->palette().color(QPalette::Text);
+        QRect bounds;
+        for (int y = qCeil(ratio); y < image.height() - ratio; ++y) {
+            for (int x = qCeil(ratio); x < image.width() / 2; ++x) {
+                const QColor pixel = image.pixelColor(x, y);
+                if (pixel == foreground)
+                    bounds = bounds.united(QRect(x, y, 1, 1));
+            }
+        }
+        return bounds;
+    };
+    for (const int variant : {0, 1, 2, 0}) {
+        SCOPED_TRACE(variant);
+        auto theme = VNX::createBuiltinDarkTheme();
+        if (variant == 1) theme.ui.metrics.controlHeight = 36;
+        if (variant == 2) theme.ui.typography.body.pointSize = 20;
+        const VNX::QtControlSkin skin(std::make_shared<const VNX::ThemeSnapshot>(theme));
+        qApp->setStyleSheet(skin.applicationStyleSheet());
+        plain->setFixedHeight(skin.fieldHeight());
+        rich->setFixedHeight(skin.fieldHeight());
+        form.resize(400, fields.size() * (skin.fieldHeight() + layout->spacing()) + 40);
+        form.show();
+        QApplication::processEvents();
+        for (auto* field : fields) {
+            field->setFont(plain->font());
+            if (auto* line = qobject_cast<QLineEdit*>(field)) line->setText(QStringLiteral("123"));
+            if (auto* spin = qobject_cast<QSpinBox*>(field)) spin->setValue(123);
+            if (auto* edit = qobject_cast<QPlainTextEdit*>(field)) edit->setPlainText(QStringLiteral("123"));
+            if (auto* edit = qobject_cast<QTextEdit*>(field)) edit->setPlainText(QStringLiteral("123"));
+            field->clearFocus();
+        }
+        QApplication::processEvents();
+        const QRect reference = textBounds(plain);
+        ASSERT_FALSE(reference.isEmpty());
+        for (auto* field : fields) {
+            SCOPED_TRACE(field->metaObject()->className());
+            SCOPED_TRACE(field->property("fieldRole").toString().toStdString());
+            const QRect bounds = textBounds(field);
+            ASSERT_FALSE(bounds.isEmpty());
+            EXPECT_EQ(bounds.left(), reference.left());
+            EXPECT_NEAR(bounds.top(), reference.top(), 1);
+            EXPECT_EQ(bounds.size(), reference.size());
+            EXPECT_EQ(field->height(), skin.fieldHeight());
+        }
     }
 }
 

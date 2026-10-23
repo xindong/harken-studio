@@ -1928,7 +1928,7 @@ bool ProjectManager::setPackBuildOutputDir(const QString& value)
 {
     if (!m_currentProject || !PathUtils::isValidPackBuildOutputDir(value, m_currentProject->projectPath))
         return false;
-    setPackBuildOutputDirInternal(PathUtils::normalizePackBuildOutputDir(value));
+    setPackBuildOutputDirInternal(PathUtils::normalizePackBuildOutputDir(value, m_currentProject->projectPath));
     return true;
 }
 

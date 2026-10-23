@@ -282,7 +282,7 @@
     "classification": "derived",
     "formatId": "generated.pack-companion",
     "pathPatterns": [
-      "ProjectData.json",
+      "Project.json",
       "**/Init.json",
       "**/*.json"
     ],

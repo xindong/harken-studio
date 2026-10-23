@@ -26,10 +26,8 @@ ProjectPublishPage::ProjectPublishPage(QWidget* parent)
 {
     auto* body = makePageBody();
 
-    auto* packGroup = makeSection(tr("Pack Build Output"));
-    ContextInfo::tag(packGroup, ContextTopic::forPanel(QStringLiteral("settings.publish.output")));
     auto* form = makeForm();
-    auto* dirLabel = new QLabel(tr("Relative Directory:"));
+    auto* dirLabel = new QLabel(tr("Export Directory:"));
 
     auto* rowWidget = new QWidget();
     auto* row = new QHBoxLayout(rowWidget);
@@ -46,15 +44,29 @@ ProjectPublishPage::ProjectPublishPage(QWidget* parent)
     row->addWidget(packBuildOutputDirEdit_, 1);
     row->addWidget(packBuildOutputDirBrowseBtn_, 0);
     form->addRow(dirLabel, rowWidget);
+    const auto outputTopic = ContextTopic::forPanel(QStringLiteral("settings.publish.output"));
+    ContextInfo::tag(dirLabel, outputTopic);
+    ContextInfo::tag(rowWidget, outputTopic);
+    body->addLayout(form);
+
+    auto* materialGroup = makeSection(tr("Additional Material"));
+    ContextInfo::tag(materialGroup,
+        ContextTopic::forPanel(QStringLiteral("settings.publish.additional_material")));
+    auto* materialForm = makeForm();
     buildExportProjectDataCheckBox_ = new QCheckBox();
     buildExportProjectDataCheckBox_->setObjectName(QStringLiteral("buildExportProjectDataCheckBox"));
-    form->addRow(tr("Export Project Data"), buildExportProjectDataCheckBox_);
+    auto* projectDataLabel = new QLabel(tr("Export Project Information"));
+    materialForm->addRow(projectDataLabel, buildExportProjectDataCheckBox_);
+    const auto projectDataTopic = ContextTopic::forPanel(QStringLiteral("settings.publish.project_information"));
+    ContextInfo::tag(projectDataLabel, projectDataTopic);
+    ContextInfo::tag(buildExportProjectDataCheckBox_, projectDataTopic);
     buildExportPackMetadataCheckBox_ = new QCheckBox();
     buildExportPackMetadataCheckBox_->setObjectName(QStringLiteral("buildExportPackMetadataCheckBox"));
-    form->addRow(tr("Export Pack Metadata"), buildExportPackMetadataCheckBox_);
-    static_cast<QVBoxLayout*>(packGroup->layout())->addLayout(form);
-
-    body->addWidget(packGroup);
+    auto* packMetadataLabel = new QLabel(tr("Export Pack MetaData"));
+    materialForm->addRow(packMetadataLabel, buildExportPackMetadataCheckBox_);
+    const auto packMetadataTopic = ContextTopic::forPanel(QStringLiteral("settings.publish.pack_metadata"));
+    ContextInfo::tag(packMetadataLabel, packMetadataTopic);
+    ContextInfo::tag(buildExportPackMetadataCheckBox_, packMetadataTopic);
 
     connect(packBuildOutputDirEdit_, &QLineEdit::textChanged, this, [this]() {
         emit dirtyChanged();
@@ -68,12 +80,13 @@ ProjectPublishPage::ProjectPublishPage(QWidget* parent)
     connect(buildExportPackMetadataCheckBox_, &QCheckBox::toggled, this,
         [this] { emit dirtyChanged(); });
 
-    auto* waveformGroup = makeSection(tr("Waveform Export"));
-    ContextInfo::tag(waveformGroup, ContextTopic::forPanel(QStringLiteral("settings.publish.waveforms")));
-    auto* waveformForm = makeForm();
     buildExportWaveformsCheckBox_ = new QCheckBox();
     buildExportWaveformsCheckBox_->setObjectName(QStringLiteral("buildExportWaveformsCheckBox"));
-    waveformForm->addRow(tr("Export waveform preview data"), buildExportWaveformsCheckBox_);
+    auto* waveformsLabel = new QLabel(tr("Export Wave Buffer"));
+    materialForm->addRow(waveformsLabel, buildExportWaveformsCheckBox_);
+    const auto waveformsTopic = ContextTopic::forPanel(QStringLiteral("settings.publish.waveforms"));
+    ContextInfo::tag(waveformsLabel, waveformsTopic);
+    ContextInfo::tag(buildExportWaveformsCheckBox_, waveformsTopic);
 
     waveformOutputRow_ = new QWidget();
     auto* waveformRow = new QHBoxLayout(waveformOutputRow_);
@@ -88,12 +101,15 @@ ProjectPublishPage::ProjectPublishPage(QWidget* parent)
     waveformOutputDirBrowseBtn_->setObjectName(QStringLiteral("buildWaveformOutputDirBrowseBtn"));
     waveformRow->addWidget(waveformOutputDirEdit_, 1);
     waveformRow->addWidget(waveformOutputDirBrowseBtn_);
-    auto* waveformDirectoryLabel = new QLabel(tr("Relative Directory:"));
+    auto* waveformDirectoryLabel = new QLabel(tr("Waveform File Directory:"));
+    const auto waveformDirectoryTopic = ContextTopic::forPanel(QStringLiteral("settings.publish.waveform_directory"));
+    ContextInfo::tag(waveformDirectoryLabel, waveformDirectoryTopic);
+    ContextInfo::tag(waveformOutputRow_, waveformDirectoryTopic);
     waveformDirectoryLabel->setEnabled(false);
-    waveformForm->addRow(waveformDirectoryLabel, waveformOutputRow_);
+    materialForm->addRow(waveformDirectoryLabel, waveformOutputRow_);
     waveformOutputRow_->setEnabled(false);
-    static_cast<QVBoxLayout*>(waveformGroup->layout())->addLayout(waveformForm);
-    body->addWidget(waveformGroup);
+    static_cast<QVBoxLayout*>(materialGroup->layout())->addLayout(materialForm);
+    body->addWidget(materialGroup);
 
     connect(buildExportWaveformsCheckBox_, &QCheckBox::toggled, this,
         [this, waveformDirectoryLabel](bool enabled) {
@@ -103,7 +119,10 @@ ProjectPublishPage::ProjectPublishPage(QWidget* parent)
         });
     connect(waveformOutputDirEdit_, &QLineEdit::textChanged, this, [this] { emit dirtyChanged(); });
     connect(waveformOutputDirEdit_, &QLineEdit::editingFinished, this, [this] {
-        waveformOutputDirEdit_->setText(PathUtils::normalizePackBuildOutputDir(waveformOutputDirEdit_->text()));
+        const auto project = projectLease_.lock();
+        if (!project) return;
+        waveformOutputDirEdit_->setText(PathUtils::normalizePackBuildOutputDir(
+            waveformOutputDirEdit_->text(), project->projectPath));
     });
     connect(waveformOutputDirBrowseBtn_, &QPushButton::clicked,
         this, &ProjectPublishPage::onWaveformOutputDirBrowseClicked);
@@ -165,13 +184,13 @@ bool ProjectPublishPage::validate()
     const auto project = projectLease_.lock();
     if (!project) return false;
     if (!PathUtils::isValidPackBuildOutputDir(packBuildOutputDirEdit_->text(), project->projectPath)) {
-        QMessageBox::warning(this, tr("Pack Build Output"),
-            tr("Pack output must use a relative directory path. ") + PathUtils::packBuildOutputLocationError());
+        QMessageBox::warning(this, tr("Export Directory"),
+            tr("Choose a valid relative or absolute export directory. ") + PathUtils::packBuildOutputLocationError());
         return false;
     }
     if (!PathUtils::isValidWaveformBuildOutputDir(waveformOutputDirEdit_->text(), project->projectPath)) {
-        QMessageBox::warning(this, tr("Waveform Export"),
-            tr("Waveform output must use a relative directory outside the project root and object directories."));
+        QMessageBox::warning(this, tr("Waveform File Directory"),
+            tr("Waveform output must use a valid directory outside the project root and object directories."));
         return false;
     }
     return true;
@@ -189,7 +208,7 @@ bool ProjectPublishPage::applyPackBuildOutputDir()
         ActionSource::GUI);
     if (!result.success)
     {
-        QMessageBox::warning(this, tr("Pack Build Output"), result.errorMessage);
+        QMessageBox::warning(this, tr("Export Directory"), result.errorMessage);
         return false;
     }
     packBuildOutputDirEdit_->setText(pm.packBuildOutputDir());
@@ -202,7 +221,7 @@ bool ProjectPublishPage::applyProjectDataExport()
         QStringLiteral("set_build_project_data_export"),
         QJsonObject{{QStringLiteral("enabled"), buildExportProjectDataCheckBox_->isChecked()}}, ActionSource::GUI);
     if (!result.success) {
-        QMessageBox::warning(this, tr("Project Data Export"), result.errorMessage);
+        QMessageBox::warning(this, tr("Export Project Information"), result.errorMessage);
         return false;
     }
     return true;
@@ -214,7 +233,7 @@ bool ProjectPublishPage::applyPackMetadataExport()
         QStringLiteral("set_build_pack_metadata_export"),
         QJsonObject{{QStringLiteral("enabled"), buildExportPackMetadataCheckBox_->isChecked()}}, ActionSource::GUI);
     if (!result.success) {
-        QMessageBox::warning(this, tr("Pack Metadata Export"), result.errorMessage);
+        QMessageBox::warning(this, tr("Export Pack MetaData"), result.errorMessage);
         return false;
     }
     return true;
@@ -227,7 +246,7 @@ bool ProjectPublishPage::applyWaveformSettings()
         QJsonObject{{QStringLiteral("enabled"), buildExportWaveformsCheckBox_->isChecked()},
             {QStringLiteral("path"), waveformOutputDirEdit_->text()}}, ActionSource::GUI);
     if (!result.success) {
-        QMessageBox::warning(this, tr("Waveform Export"), result.errorMessage);
+        QMessageBox::warning(this, tr("Export Wave Buffer"), result.errorMessage);
         return false;
     }
     waveformOutputDirEdit_->setText(ProjectManager::instance().currentProject()->buildWaveformOutputDir);
@@ -254,7 +273,10 @@ bool ProjectPublishPage::isDirty() const
 
 void ProjectPublishPage::onPackBuildOutputDirEditingFinished()
 {
-    const QString normalized = PathUtils::normalizePackBuildOutputDir(packBuildOutputDirEdit_->text());
+    const auto project = projectLease_.lock();
+    if (!project) return;
+    const QString normalized = PathUtils::normalizePackBuildOutputDir(
+        packBuildOutputDirEdit_->text(), project->projectPath);
     if (normalized != packBuildOutputDirEdit_->text())
         packBuildOutputDirEdit_->setText(normalized);
 }
@@ -265,28 +287,28 @@ void ProjectPublishPage::onPackBuildOutputDirBrowseClicked()
     if (!pm.isProjectOpen())
         return;
     const QString projectRoot = QFileInfo(pm.currentProject()->projectPath).absolutePath();
-    const QString relative = PathUtils::normalizePackBuildOutputDir(packBuildOutputDirEdit_->text());
-    const QString startDir = PathUtils::isValidPackBuildOutputDir(relative, pm.currentProject()->projectPath)
-        ? PathUtils::toAbsolutePath(relative.isEmpty() ? PathUtils::buildPacksDirName() : relative,
-                                    projectRoot)
+    const QString path = PathUtils::normalizePackBuildOutputDir(
+        packBuildOutputDirEdit_->text(), pm.currentProject()->projectPath);
+    const QString startDir = PathUtils::isValidPackBuildOutputDir(path, pm.currentProject()->projectPath)
+        ? PathUtils::packBuildOutputRoot(pm.currentProject()->projectPath, path)
         : projectRoot;
 
     const QString dir = QFileDialog::getExistingDirectory(
-        this, tr("Select Pack Build Output Directory"), startDir);
+        this, tr("Select Export Directory"), startDir);
     if (dir.isEmpty())
         return;
 
-    const QString rel = QDir(projectRoot).relativeFilePath(dir);
+    const QString selectedPath = PathUtils::normalizePackBuildOutputDir(dir, pm.currentProject()->projectPath);
 
-    if (!PathUtils::isValidPackBuildOutputDir(rel, pm.currentProject()->projectPath))
+    if (!PathUtils::isValidPackBuildOutputDir(selectedPath, pm.currentProject()->projectPath))
     {
-        QMessageBox::warning(this, tr("Pack Build Output"),
-                             tr("Pack output must use a relative directory path. ")
+        QMessageBox::warning(this, tr("Export Directory"),
+                             tr("Choose a valid relative or absolute export directory. ")
                                  + PathUtils::packBuildOutputLocationError());
         return;
     }
 
-    packBuildOutputDirEdit_->setText(PathUtils::normalizePackBuildOutputDir(rel));
+    packBuildOutputDirEdit_->setText(selectedPath);
 }
 
 void ProjectPublishPage::onWaveformOutputDirBrowseClicked()
@@ -294,19 +316,19 @@ void ProjectPublishPage::onWaveformOutputDirBrowseClicked()
     const auto* project = ProjectManager::instance().currentProject();
     if (!project) return;
     const QString projectRoot = QFileInfo(project->projectPath).absolutePath();
-    const QString relative = PathUtils::normalizePackBuildOutputDir(waveformOutputDirEdit_->text());
-    const QString startDir = PathUtils::isValidWaveformBuildOutputDir(relative, project->projectPath)
-        ? PathUtils::waveformBuildOutputRoot(project->projectPath, relative) : projectRoot;
+    const QString path = PathUtils::normalizePackBuildOutputDir(waveformOutputDirEdit_->text(), project->projectPath);
+    const QString startDir = PathUtils::isValidWaveformBuildOutputDir(path, project->projectPath)
+        ? PathUtils::waveformBuildOutputRoot(project->projectPath, path) : projectRoot;
     const QString directory = QFileDialog::getExistingDirectory(
-        this, tr("Select Waveform Output Directory"), startDir);
+        this, tr("Select Waveform File Directory"), startDir);
     if (directory.isEmpty()) return;
-    const QString path = QDir(projectRoot).relativeFilePath(directory);
-    if (!PathUtils::isValidWaveformBuildOutputDir(path, project->projectPath)) {
-        QMessageBox::warning(this, tr("Waveform Export"),
-            tr("Waveform output must use a relative directory outside the project root and object directories."));
+    const QString selectedPath = PathUtils::normalizePackBuildOutputDir(directory, project->projectPath);
+    if (!PathUtils::isValidWaveformBuildOutputDir(selectedPath, project->projectPath)) {
+        QMessageBox::warning(this, tr("Waveform File Directory"),
+            tr("Waveform output must use a valid directory outside the project root and object directories."));
         return;
     }
-    waveformOutputDirEdit_->setText(PathUtils::normalizePackBuildOutputDir(path));
+    waveformOutputDirEdit_->setText(selectedPath);
 }
 
 }

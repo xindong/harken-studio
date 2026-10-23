@@ -12,6 +12,7 @@
 #include <QPlainTextEdit>
 #include <QStyleOption>
 #include <QTabBar>
+#include <QTextDocument>
 #include <QTextEdit>
 #include <QToolButton>
 #include <QWidget>
@@ -101,6 +102,10 @@ void HarkenStyle::polish(QWidget* widget)
     const auto* comboBox = qobject_cast<QComboBox*>(widget);
     const auto* plainText = qobject_cast<QPlainTextEdit*>(widget);
     const auto* richText = qobject_cast<QTextEdit*>(widget);
+    if (plainText)
+        plainText->document()->setDocumentMargin(0);
+    if (richText)
+        richText->document()->setDocumentMargin(0);
     if (widget->contextMenuPolicy() == Qt::DefaultContextMenu
         && (qobject_cast<QLineEdit*>(widget)
             || qobject_cast<QAbstractSpinBox*>(widget)

@@ -218,7 +218,7 @@
       "body": "选择编辑器外观，Apply 后生效。额外的主题安装在 %1。"
     },
     "settings.appearance.language": {
-      "title": "Language",
+      "title": "Information Language",
       "body": "选择 Information 帮助语言，不影响编辑器界面和工程音频语言。"
     },
     "settings.extension": {
@@ -267,15 +267,31 @@
     },
     "settings.publish": {
       "title": "Publish",
-      "body": "设置数据包输出目录及可选的波形导出。"
+      "body": "\u8bbe\u7f6e\u5bfc\u51fa\u76ee\u5f55\uff0c\u5e76\u9009\u62e9\u9700\u8981\u9644\u5e26\u5bfc\u51fa\u7684\u5185\u5bb9\u3002"
     },
     "settings.publish.output": {
-      "title": "Pack Build Output",
-      "body": "填写相对于工程的输出路径，留空使用 BuildPacks。不能使用工程根目录或对象目录。"
+      "title": "Export Directory",
+      "body": "\u9009\u62e9\u6570\u636e\u5305\u7684\u5bfc\u51fa\u76ee\u5f55\u3002\u80fd\u591f\u8f6c\u6362\u65f6\u4f7f\u7528\u76f8\u5bf9\u4e8e\u5de5\u7a0b\u7684\u8def\u5f84\uff0c\u5426\u5219\u4fdd\u7559\u7edd\u5bf9\u8def\u5f84\uff0c\u4f8b\u5982 Windows \u8de8\u76d8\u7b26\u76ee\u5f55\u3002\u7559\u7a7a\u4f7f\u7528 BuildPacks\u3002\u4e0d\u80fd\u4f7f\u7528\u5de5\u7a0b\u6839\u76ee\u5f55\u6216\u5bf9\u8c61\u76ee\u5f55\u3002"
+    },
+    "settings.publish.additional_material": {
+      "title": "Additional Material",
+      "body": "\u6309\u9700\u5bfc\u51fa Project.json\u3001\u5404\u6570\u636e\u5305\u4f34\u968f JSON \u4e2d\u7684 metadata\uff0c\u4ee5\u53ca <hash>.vkd \u6ce2\u5f62\u7f13\u51b2\u6587\u4ef6\u3002"
+    },
+    "settings.publish.project_information": {
+      "title": "Export Project Information",
+      "body": "\u5728 Export Directory \u6839\u76ee\u5f55\u8f93\u51fa Project.json\uff0c\u4e0e\u5404\u5e73\u53f0\u76ee\u5f55\u5e76\u5217\u3002\u6587\u4ef6\u63d0\u4f9b\u4f9b SDK \u4f7f\u7528\u7684\u9879\u76ee\u4fe1\u606f\uff0c\u4e0d\u662f\u8fd0\u884c\u65f6\u52a0\u8f7d\u6570\u636e\u5305\u7684\u5fc5\u9700\u6587\u4ef6\u3002"
+    },
+    "settings.publish.pack_metadata": {
+      "title": "Export Pack MetaData",
+      "body": "\u5728\u6bcf\u4e2a\u6570\u636e\u5305\u65c1\u7684\u540c\u540d JSON \u6587\u4ef6\u4e2d\u5305\u542b metadata\uff0c\u4f8b\u5982\u4e0e .bytes \u6587\u4ef6\u5e76\u5217\u7684 Init.json \u6216 <action>.json\u3002"
     },
     "settings.publish.waveforms": {
-      "title": "Waveform Export",
-      "body": "随数据包导出源音频的波形预览。填写相对于工程的输出路径，留空使用 BuildPacks/Waveforms。"
+      "title": "Export Wave Buffer",
+      "body": "\u5728 Waveform File Directory \u4e2d\u8f93\u51fa\u540d\u4e3a <hash>.vkd \u7684\u6ce2\u5f62\u9884\u89c8\u7f13\u51b2\u6587\u4ef6\u3002\u5404\u6570\u636e\u5305\u7684\u540c\u540d JSON \u901a\u8fc7 waveforms \u5b57\u6bb5\u8bb0\u5f55\u8fd9\u4e9b\u6587\u4ef6\u3002"
+    },
+    "settings.publish.waveform_directory": {
+      "title": "Waveform File Directory",
+      "body": "\u9009\u62e9 <hash>.vkd \u6ce2\u5f62\u7f13\u51b2\u6587\u4ef6\u7684\u8f93\u51fa\u76ee\u5f55\u3002\u80fd\u591f\u8f6c\u6362\u65f6\u4f7f\u7528\u76f8\u5bf9\u4e8e\u5de5\u7a0b\u7684\u8def\u5f84\uff0c\u5426\u5219\u4fdd\u7559\u7edd\u5bf9\u8def\u5f84\u3002\u7559\u7a7a\u4f7f\u7528 BuildPacks/Waveforms\u3002\u4e0d\u80fd\u4f7f\u7528\u5de5\u7a0b\u6839\u76ee\u5f55\u6216\u5bf9\u8c61\u76ee\u5f55\u3002"
     },
     "Blueprint": {
       "title": "Blueprint",

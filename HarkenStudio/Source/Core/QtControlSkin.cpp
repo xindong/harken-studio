@@ -25,6 +25,8 @@
 
 namespace {
 
+constexpr int LineEditHorizontalMargin = 2;
+
 class IconButtonEngine final : public QIconEngine
 {
 public:
@@ -123,6 +125,13 @@ int QtControlSkin::fieldHeight() const
     return std::max({metrics().controlHeight, metrics().objectIconExtent + 4,
                      metrics().navigationChevronExtent + 2,
                      QFontMetrics(font).height() + 6});
+}
+
+QMargins QtControlSkin::fieldTextMargins() const
+{
+    const QFont font = FontManager::instance().getFont(snapshot_, FontRole::Body);
+    const int vertical = std::max(0, (fieldHeight() - QFontMetrics(font).height()) / 2 - 1);
+    return QMargins(6, vertical, 6, vertical);
 }
 
 QIcon QtControlSkin::toolBarIcon(const QStyleOptionToolButton& option, qreal devicePixelRatio) const
@@ -349,12 +358,16 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@spacingSmall@"), QString::number(metrics().spacingSmall));
     replace(QStringLiteral("@spacingMedium@"), QString::number(metrics().spacingMedium));
     replace(QStringLiteral("@fieldContentHeight@"), QString::number(fieldHeight() - 2));
+    replace(QStringLiteral("@singleLineContentHeight@"), QString::number(fieldHeight() - 3));
+    const QMargins fieldMargins = fieldTextMargins();
+    replace(QStringLiteral("@fieldTextPaddingX@"), QString::number(fieldMargins.left()));
+    replace(QStringLiteral("@fieldTextPaddingY@"), QString::number(fieldMargins.top()));
+    replace(QStringLiteral("@lineEditPaddingX@"),
+            QString::number(fieldMargins.left() - LineEditHorizontalMargin));
     replace(QStringLiteral("@tableCellPaddingX@"), QString::number(metrics().table.cellPaddingX));
     replace(QStringLiteral("@tableCellPaddingY@"), QString::number(metrics().table.cellPaddingY));
     replace(QStringLiteral("@chevronExtent@"),
             QString::number(metrics().navigationChevronExtent));
-    replace(QStringLiteral("@inspectorColumnPadding@"),
-            QString::number(metrics().inspector.columnPadding));
     const auto& parameterMetrics = metrics().parameter;
     replace(QStringLiteral("@parameterSliderGroove@"),
             QString::number(parameterMetrics.sliderGrooveThickness));

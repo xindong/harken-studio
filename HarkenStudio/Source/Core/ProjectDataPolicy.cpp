@@ -47,7 +47,9 @@ ProjectDataPolicy ProjectDataPolicy::forProjectFile(const QString& projectFilePa
     const QDir projectDirectory(QFileInfo(location.projectFilePath).absolutePath());
     return ProjectDataPolicy(projectDirectory.relativeFilePath(
         PathUtils::packBuildOutputRoot(location.projectFilePath, path)),
-        PathUtils::isValidWaveformBuildOutputDir(waveformPath, location.projectFilePath) ? waveformPath : QString());
+        PathUtils::isValidWaveformBuildOutputDir(waveformPath, location.projectFilePath)
+            ? projectDirectory.relativeFilePath(PathUtils::waveformBuildOutputRoot(location.projectFilePath, waveformPath))
+            : QString());
 }
 
 QString ProjectDataPolicy::normalizeRelativePath(const QString& path)

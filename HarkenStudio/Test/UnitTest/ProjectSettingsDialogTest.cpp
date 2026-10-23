@@ -62,31 +62,17 @@ QToolButton* removeLanguageButton(ProjectSettingsDialog& dialog)
     return dialog.findChild<QToolButton*>(QStringLiteral("targetLanguageRemoveButton"));
 }
 
-QLineEdit* targetLanguageEdit(ProjectSettingsDialog& dialog, int index)
+QTreeWidget* targetLanguageList(ProjectSettingsDialog& dialog)
 {
-    return dialog.findChild<QLineEdit*>(QStringLiteral("targetLanguageEdit_%1").arg(index));
-}
-
-QList<QLineEdit*> targetLanguageEdits(ProjectSettingsDialog& dialog)
-{
-    QList<QLineEdit*> edits;
-    for (QLineEdit* edit : dialog.findChildren<QLineEdit*>())
-    {
-        if (!edit->objectName().startsWith(QStringLiteral("targetLanguageEdit_")))
-            continue;
-        edits.append(edit);
-    }
-    std::sort(edits.begin(), edits.end(), [](QLineEdit* lhs, QLineEdit* rhs) {
-        return lhs->property("languageIndex").toInt() < rhs->property("languageIndex").toInt();
-    });
-    return edits;
+    return dialog.findChild<QTreeWidget*>(QStringLiteral("targetLanguagesList"));
 }
 
 QStringList targetLanguageValues(ProjectSettingsDialog& dialog)
 {
     QStringList values;
-    for (QLineEdit* edit : targetLanguageEdits(dialog))
-        values.append(edit->text());
+    auto* list = targetLanguageList(dialog);
+    for (int i = 0; i < list->topLevelItemCount(); ++i)
+        values.append(list->topLevelItem(i)->text(0));
     return values;
 }
 
@@ -120,14 +106,35 @@ void doubleClickCurrentRow(QTreeWidget* table)
     }
 }
 
-void clickLanguageEditor(QLineEdit* edit)
+void enterLanguage(ProjectSettingsDialog& dialog, const QString& value, int index = -1)
+{
+    QTimer::singleShot(0, &dialog, [value] {
+        auto* modal = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        ASSERT_NE(modal, nullptr);
+        auto* edit = modal->findChild<QLineEdit*>(QStringLiteral("targetLanguageEdit"));
+        ASSERT_NE(edit, nullptr);
+        edit->setText(value);
+        modal->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->click();
+    });
+    if (index < 0) {
+        addLanguageButton(dialog)->click();
+    } else {
+        auto* list = targetLanguageList(dialog);
+        list->setCurrentItem(list->topLevelItem(index));
+        doubleClickCurrentRow(list);
+    }
+}
+
+void clickLanguageRow(ProjectSettingsDialog& dialog, int index)
 {
     QApplication::processEvents();
-    const auto point = edit->rect().center();
+    auto* list = targetLanguageList(dialog);
+    auto* viewport = list->viewport();
+    const auto point = list->visualItemRect(list->topLevelItem(index)).center();
     for (auto type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
         const auto buttons = type == QEvent::MouseButtonPress ? Qt::LeftButton : Qt::NoButton;
-        QMouseEvent event(type, point, edit->mapToGlobal(point), Qt::LeftButton, buttons, Qt::NoModifier);
-        QApplication::sendEvent(edit, &event);
+        QMouseEvent event(type, point, viewport->mapToGlobal(point), Qt::LeftButton, buttons, Qt::NoModifier);
+        QApplication::sendEvent(viewport, &event);
     }
 }
 
@@ -253,19 +260,19 @@ TEST_F(ProjectSettingsDialogTest, LanguageFocusDoesNotSelectUntilUserInteraction
     seedProjectLanguages({"English", "Japanese"});
     ProjectSettingsDialog dialog;
     dialog.show();
-    auto* edit = targetLanguageEdit(dialog, 0);
-    edit->setFocus(Qt::OtherFocusReason);
+    auto* list = targetLanguageList(dialog);
+    list->setFocus(Qt::OtherFocusReason);
     QApplication::processEvents();
     EXPECT_FALSE(removeLanguageButton(dialog)->isEnabled());
-    clickLanguageEditor(edit);
+    clickLanguageRow(dialog, 0);
     EXPECT_TRUE(removeLanguageButton(dialog)->isEnabled());
     QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
-    QApplication::sendEvent(edit, &escape);
+    QApplication::sendEvent(list, &escape);
     EXPECT_TRUE(dialog.isVisible());
     EXPECT_FALSE(removeLanguageButton(dialog)->isEnabled());
-    addLanguageButton(dialog)->click();
+    enterLanguage(dialog, "Korean");
     EXPECT_TRUE(removeLanguageButton(dialog)->isEnabled());
-    EXPECT_TRUE(dialog.findChild<QWidget*>("targetLanguageRow_2")->property("selected").toBool());
+    EXPECT_EQ(list->currentItem(), list->topLevelItem(2));
 }
 
 TEST_F(ProjectSettingsDialogTest, PolicyDeletionSelectsNextRowWhileResetClearsSelection)
@@ -314,11 +321,19 @@ TEST_F(ProjectSettingsDialogTest, LanguageListStartsEmptyWithoutLockedSfxRow)
     EXPECT_TRUE(targetLanguageValues(dialog).isEmpty());
     EXPECT_FALSE(remove->isEnabled());
 
+    QTimer::singleShot(0, &dialog, [] {
+        auto* modal = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        ASSERT_NE(modal, nullptr);
+        auto* edit = modal->findChild<QLineEdit*>(QStringLiteral("targetLanguageEdit"));
+        ASSERT_NE(edit, nullptr);
+        QApplication::processEvents();
+        EXPECT_TRUE(edit->hasFocus());
+        edit->setText(QStringLiteral("Japanese"));
+        modal->reject();
+    });
     add->click();
-    QApplication::processEvents();
-    auto* edit = targetLanguageEdit(dialog, 0);
-    ASSERT_NE(edit, nullptr);
-    EXPECT_TRUE(edit->hasFocus());
+    EXPECT_TRUE(targetLanguageValues(dialog).isEmpty());
+    EXPECT_FALSE(applyButton(dialog)->isEnabled());
 }
 
 TEST_F(ProjectSettingsDialogTest, PlatformDeletionAppliesWithLanguagesAndOneUndo)
@@ -351,10 +366,7 @@ TEST_F(ProjectSettingsDialogTest, AddingLanguageOnlyDirtiesUntilApply)
     ASSERT_NE(add, nullptr);
     ASSERT_NE(apply, nullptr);
 
-    add->click();
-    auto* edit = targetLanguageEdit(dialog, 0);
-    ASSERT_NE(edit, nullptr);
-    edit->setText(QStringLiteral("Japanese"));
+    enterLanguage(dialog, QStringLiteral("Japanese"));
     EXPECT_TRUE(apply->isEnabled());
     EXPECT_TRUE(ProjectManager::instance().getProjectLanguages().isEmpty());
 
@@ -374,14 +386,8 @@ TEST_F(ProjectSettingsDialogTest, ApplyPersistsLanguagesAndClearsDirty)
     ASSERT_NE(add, nullptr);
     ASSERT_NE(apply, nullptr);
 
-    add->click();
-    auto* first = targetLanguageEdit(dialog, 0);
-    ASSERT_NE(first, nullptr);
-    first->setText(QStringLiteral("English"));
-    add->click();
-    auto* second = targetLanguageEdit(dialog, 1);
-    ASSERT_NE(second, nullptr);
-    second->setText(QStringLiteral("Japanese"));
+    enterLanguage(dialog, QStringLiteral("English"));
+    enterLanguage(dialog, QStringLiteral("Japanese"));
     apply->click();
     EXPECT_EQ(ProjectManager::instance().getProjectLanguages(),
               QStringList({QStringLiteral("English"), QStringLiteral("Japanese")}));
@@ -402,18 +408,16 @@ TEST_F(ProjectSettingsDialogTest, ApplyPersistsLanguagesAndClearsDirty)
     EXPECT_FALSE(reopenApply->isEnabled());
 }
 
-TEST_F(ProjectSettingsDialogTest, RenameLanguageInPlaceApplies)
+TEST_F(ProjectSettingsDialogTest, RenameLanguageDialogApplies)
 {
     seedProjectLanguages({QStringLiteral("English"), QStringLiteral("Japanese")});
 
     ProjectSettingsDialog dialog;
     dialog.show();
     auto* apply = applyButton(dialog);
-    auto* edit = targetLanguageEdit(dialog, 1);
     ASSERT_NE(apply, nullptr);
-    ASSERT_NE(edit, nullptr);
 
-    edit->setText(QStringLiteral("Korean"));
+    enterLanguage(dialog, QStringLiteral("Korean"), 1);
     EXPECT_TRUE(apply->isEnabled());
     apply->click();
 
@@ -430,13 +434,11 @@ TEST_F(ProjectSettingsDialogTest, RemoveSelectedLanguageApplies)
     dialog.show();
     auto* apply = applyButton(dialog);
     auto* remove = removeLanguageButton(dialog);
-    auto* edit = targetLanguageEdit(dialog, 1);
     ASSERT_NE(apply, nullptr);
     ASSERT_NE(remove, nullptr);
-    ASSERT_NE(edit, nullptr);
     EXPECT_FALSE(remove->isEnabled());
 
-    clickLanguageEditor(edit);
+    clickLanguageRow(dialog, 1);
     EXPECT_TRUE(remove->isEnabled());
     remove->click();
     EXPECT_EQ(targetLanguageValues(dialog), QStringList{QStringLiteral("English")});
@@ -459,12 +461,10 @@ TEST_F(ProjectSettingsDialogTest, LastLanguageDeletionAppliesAndCanBeUndone)
     dialog.show();
     auto* apply = applyButton(dialog);
     auto* remove = removeLanguageButton(dialog);
-    auto* edit = targetLanguageEdit(dialog, 0);
     ASSERT_NE(apply, nullptr);
     ASSERT_NE(remove, nullptr);
-    ASSERT_NE(edit, nullptr);
 
-    clickLanguageEditor(edit);
+    clickLanguageRow(dialog, 0);
     EXPECT_TRUE(remove->isEnabled());
     remove->click();
     EXPECT_TRUE(targetLanguageValues(dialog).isEmpty());
@@ -495,17 +495,22 @@ TEST_F(ProjectSettingsDialogTest, IllegalLanguageCharactersCannotBeTyped)
     auto* add = addLanguageButton(dialog);
     ASSERT_NE(add, nullptr);
 
+    QTimer::singleShot(0, &dialog, [] {
+        auto* modal = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        ASSERT_NE(modal, nullptr);
+        auto* edit = modal->findChild<QLineEdit*>(QStringLiteral("targetLanguageEdit"));
+        ASSERT_NE(edit, nullptr);
+        edit->insert(QStringLiteral("English"));
+        EXPECT_EQ(edit->text(), QStringLiteral("English"));
+        edit->insert(QStringLiteral(" "));
+        EXPECT_EQ(edit->text(), QStringLiteral("English"));
+        edit->insert(QStringLiteral("-"));
+        EXPECT_EQ(edit->text(), QStringLiteral("English"));
+        edit->insert(QStringLiteral("\u4e2d"));
+        EXPECT_EQ(edit->text(), QStringLiteral("English"));
+        modal->reject();
+    });
     add->click();
-    auto* edit = targetLanguageEdit(dialog, 0);
-    ASSERT_NE(edit, nullptr);
-    edit->insert(QStringLiteral("English"));
-    EXPECT_EQ(edit->text(), QStringLiteral("English"));
-    edit->insert(QStringLiteral(" "));
-    EXPECT_EQ(edit->text(), QStringLiteral("English"));
-    edit->insert(QStringLiteral("-"));
-    EXPECT_EQ(edit->text(), QStringLiteral("English"));
-    edit->insert(QStringLiteral("中"));
-    EXPECT_EQ(edit->text(), QStringLiteral("English"));
 }
 
 TEST_F(ProjectSettingsDialogTest, DuplicateLanguageRejectedOnApply)
@@ -518,13 +523,7 @@ TEST_F(ProjectSettingsDialogTest, DuplicateLanguageRejectedOnApply)
     ASSERT_NE(add, nullptr);
     ASSERT_NE(apply, nullptr);
 
-    auto* first = targetLanguageEdit(dialog, 0);
-    ASSERT_NE(first, nullptr);
-    first->setText(QStringLiteral("English"));
-    add->click();
-    auto* second = targetLanguageEdit(dialog, 1);
-    ASSERT_NE(second, nullptr);
-    second->setText(QStringLiteral("english"));
+    enterLanguage(dialog, QStringLiteral("english"));
     acceptNextModalDialog();
     apply->click();
 
@@ -547,10 +546,7 @@ TEST_F(ProjectSettingsDialogTest, InvalidConfigurationRejectsApplyBeforeAnySetti
     ASSERT_NE(apply, nullptr);
     ASSERT_NE(list, nullptr);
 
-    add->click();
-    auto* edit = targetLanguageEdit(dialog, 1);
-    ASSERT_NE(edit, nullptr);
-    edit->setText(QStringLiteral("SFX"));
+    enterLanguage(dialog, QStringLiteral("SFX"));
     list->setCurrentItem(list->item(1));
     dialog.findChild<QToolButton*>("projectPlatformDelete")->click();
     dialog.findChild<QLineEdit*>("packBuildOutputDirEdit")->setText("DraftPacks");
@@ -563,7 +559,7 @@ TEST_F(ProjectSettingsDialogTest, InvalidConfigurationRejectsApplyBeforeAnySetti
               HarkenTest::platformIdStrings({"Windows", "macOS"}));
     EXPECT_TRUE(ProjectManager::instance().packBuildOutputDir().isEmpty());
 
-    edit->setText(QStringLiteral("German"));
+    enterLanguage(dialog, QStringLiteral("German"), 1);
     auto* platformName = dialog.findChild<QLineEdit*>("projectPlatformName");
     ASSERT_NE(platformName, nullptr);
     platformName->clear();
@@ -708,22 +704,53 @@ TEST_F(ProjectSettingsDialogTest, ProjectRootAndObjectBucketPackBuildDirectories
     }
 }
 
-TEST_F(ProjectSettingsDialogTest, AbsolutePackBuildDirectoryCannotBeApplied)
+TEST_F(ProjectSettingsDialogTest, ExportDirectoriesAcceptAbsolutePathsAndPreserveDestinations)
 {
-    seedProjectLanguages({QStringLiteral("English")});
-    ProjectSettingsDialog dialog;
-    ASSERT_TRUE(dialog.showPage(QString::fromLatin1(kSettingsPagePublish)));
-    dialog.show();
-    addLanguageButton(dialog)->click();
-    targetLanguageEdit(dialog, 1)->setText("Japanese");
-    auto* edit = dialog.findChild<QLineEdit*>(QStringLiteral("packBuildOutputDirEdit"));
-    ASSERT_NE(edit, nullptr);
-    edit->setText(tempDir_.filePath(QStringLiteral("Packs")));
-    acceptNextModalDialog();
-    applyButton(dialog)->click();
-    EXPECT_TRUE(dialog.isVisible());
-    EXPECT_TRUE(ProjectManager::instance().packBuildOutputDir().isEmpty());
-    EXPECT_EQ(ProjectManager::instance().getProjectLanguages(), QStringList{"English"});
+    auto& manager = ProjectManager::instance();
+    const QString projectPath = manager.currentProject()->projectPath;
+    QStringList outputRoots{tempDir_.filePath(QStringLiteral("Exports"))};
+#ifdef Q_OS_WIN
+    const QString otherDrive = projectPath.startsWith(QStringLiteral("E:"), Qt::CaseInsensitive)
+        ? QStringLiteral("D:") : QStringLiteral("E:");
+    outputRoots.append(otherDrive + QStringLiteral("/HarkenExport"));
+#endif
+    for (const QString& outputRoot : outputRoots) {
+        seedProjectLanguages({QStringLiteral("English")});
+        ProjectSettingsDialog dialog;
+        ASSERT_TRUE(dialog.showPage(QString::fromLatin1(kSettingsPagePublish)));
+        dialog.show();
+        enterLanguage(dialog, "Japanese");
+        auto* packDirectory = dialog.findChild<QLineEdit*>(QStringLiteral("packBuildOutputDirEdit"));
+        auto* waveformDirectory = dialog.findChild<QLineEdit*>(QStringLiteral("buildWaveformOutputDirEdit"));
+        auto* exportWaveforms = dialog.findChild<QCheckBox*>(QStringLiteral("buildExportWaveformsCheckBox"));
+        ASSERT_NE(packDirectory, nullptr);
+        ASSERT_NE(waveformDirectory, nullptr);
+        ASSERT_NE(exportWaveforms, nullptr);
+        const QString packs = QDir(outputRoot).filePath(QStringLiteral("Packs"));
+        const QString waveforms = QDir(outputRoot).filePath(QStringLiteral("Waveforms"));
+        packDirectory->setText(packs);
+        packDirectory->editingFinished();
+        exportWaveforms->setChecked(true);
+        waveformDirectory->setText(waveforms);
+        waveformDirectory->editingFinished();
+        EXPECT_EQ(QDir::isAbsolutePath(packDirectory->text()), outputRoot != outputRoots.first());
+        EXPECT_EQ(QDir::isAbsolutePath(waveformDirectory->text()), outputRoot != outputRoots.first());
+        applyButton(dialog)->click();
+        EXPECT_FALSE(dialog.isVisible());
+        EXPECT_EQ(manager.getProjectLanguages(), (QStringList{"English", "Japanese"}));
+        EXPECT_EQ(PathUtils::packBuildOutputRoot(projectPath, manager.packBuildOutputDir()), packs);
+        EXPECT_EQ(PathUtils::waveformBuildOutputRoot(projectPath,
+            manager.currentProject()->buildWaveformOutputDir), waveforms);
+        EXPECT_TRUE(manager.currentProject()->buildExportWaveforms);
+
+        ProjectSerializer serializer;
+        ASSERT_TRUE(serializer.saveProject(projectPath, *manager.currentProject()));
+        ProjectData loaded;
+        ASSERT_TRUE(serializer.loadProject(projectPath, loaded)) << serializer.lastError().toStdString();
+        EXPECT_EQ(PathUtils::packBuildOutputRoot(projectPath, loaded.packBuildOutputDir), packs);
+        EXPECT_EQ(PathUtils::waveformBuildOutputRoot(projectPath, loaded.buildWaveformOutputDir), waveforms);
+        EXPECT_TRUE(loaded.buildExportWaveforms);
+    }
 }
 
 namespace {
@@ -897,8 +924,7 @@ TEST_F(ProjectSettingsDialogTest, ConcurrentPlatformEditRejectsApplyBeforeOtherS
     ProjectSettingsDialog dialog;
     dialog.show();
     enterPlatform(dialog, "Draft", "Android");
-    addLanguageButton(dialog)->click();
-    targetLanguageEdit(dialog, 1)->setText("Japanese");
+    enterLanguage(dialog, "Japanese");
     const auto id = ProjectManager::instance().currentProject()->platforms.first().id;
     ASSERT_TRUE(ActionManager::instance().execute("rename_project_platform",
         {{"platform_id", ProjectPlatformSemantics::idString(id)}, {"name", "External"}}, ActionSource::IPC).success);
@@ -926,8 +952,7 @@ TEST_F(ProjectSettingsDialogTest, ConcurrentPlatformEditCanReloadAllBuildDraftsW
     dialog.show();
     EXPECT_EQ(dialog.findChild<QAbstractButton*>("projectPlatformsReload"), nullptr);
     enterPlatform(dialog, "Draft", "Android");
-    addLanguageButton(dialog)->click();
-    targetLanguageEdit(dialog, 1)->setText("Japanese");
+    enterLanguage(dialog, "Japanese");
     dialog.findChild<QLineEdit*>("packBuildOutputDirEdit")->setText("DraftPacks");
     dialog.findChild<QCheckBox*>("buildExportProjectDataCheckBox")->setChecked(true);
     dialog.findChild<QCheckBox*>("buildExportPackMetadataCheckBox")->setChecked(true);

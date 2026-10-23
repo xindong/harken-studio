@@ -375,7 +375,7 @@ void AssistantPanel::setupUI()
     inputFrame_->setMaximumWidth(INPUT_MAX_WIDTH);
 
     QHBoxLayout* frameLayout = new QHBoxLayout(inputFrame_);
-    frameLayout->setContentsMargins(16, 5, 6, 5);
+    frameLayout->setContentsMargins(0, 5, 6, 5);
     frameLayout->setSpacing(6);
 
     inputEdit_ = new QLineEdit();

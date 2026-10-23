@@ -4,6 +4,7 @@
 
 #include <QPalette>
 #include <QIcon>
+#include <QMargins>
 #include <QRect>
 #include <QString>
 #include <QVariant>
@@ -31,6 +32,7 @@ public:
     QPalette applicationPalette() const;
     QString applicationStyleSheet() const;
     int fieldHeight() const;
+    QMargins fieldTextMargins() const;
     QIcon toolBarIcon(const QStyleOptionToolButton& option, qreal devicePixelRatio) const;
     static QIcon iconButtonIcon(const QIcon& icon);
     static void setSemanticProperty(QWidget* widget, const char* name,

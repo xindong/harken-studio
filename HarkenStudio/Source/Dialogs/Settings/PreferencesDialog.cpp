@@ -51,7 +51,6 @@ PreferencesDialog::PreferencesDialog(SecretStoreAccess secretStore,
     setWindowTitle(tr("Preferences"));
 
     addPage(new AppearancePage(themeManager, this));
-    addPage(new ExtensionPage(this));
     addPage(new ShortcutsPage(this));
 
     auto* layoutPage = new LayoutPage(this, std::move(saveCurrentLayout));
@@ -65,6 +64,7 @@ PreferencesDialog::PreferencesDialog(SecretStoreAccess secretStore,
     connect(aiPage, &AIAgentPage::aiAgentConfigApplied,
             this, &PreferencesDialog::aiAgentConfigApplied);
     addPage(aiPage);
+    addPage(new ExtensionPage(this));
 
     loadPages();
     DialogManager::instance().registerDialog(QStringLiteral("preferences"), this);

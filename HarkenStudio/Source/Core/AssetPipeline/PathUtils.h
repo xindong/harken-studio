@@ -75,16 +75,17 @@ public:
     static constexpr const char* SEARCH_INDEX_SUBDIR = "search_index";
 
     static QString buildPacksDirName();
-    static QString normalizePackBuildOutputDir(const QString& path);
+    static QString normalizePackBuildOutputDir(const QString& path,
+                                               const QString& projectFilePath = {});
     static bool isValidPackBuildOutputDir(const QString& path, const QString& projectFilePath = {},
                                           bool allowObjectBuckets = false);
     static bool isProjectRootDirectory(const QString& path, const QString& projectFilePath);
     static bool isProjectObjectDirectory(const QString& path, const QString& projectFilePath);
     static QString packBuildOutputLocationError();
     static QString packBuildOutputRoot(const QString& projectFilePath,
-                                       const QString& relativeDir);
+                                       const QString& directory);
     static QString waveformBuildOutputRoot(const QString& projectFilePath,
-                                           const QString& relativeDir);
+                                           const QString& directory);
     static bool isValidWaveformBuildOutputDir(const QString& path,
                                               const QString& projectFilePath = {});
 };

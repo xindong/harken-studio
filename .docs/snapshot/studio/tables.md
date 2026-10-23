@@ -92,7 +92,7 @@ configTable 编辑当前字段或表单中的配置条目集合。displayTable �
 | C08 | config | External Editor / Binding | BindingFieldEditor |
 | C09 | config | Transition Editor / Rules | TransitionEditorWidget |
 | C10 | 标签配置（非表格） | Project Settings / General / Platform Configuration：左侧平台标签，右侧配置面板 | ProjectConfigPage / ProjectPlatformEditor |
-| C11 | config | Project Settings / General / Language Configuration | ProjectConfigPage |
+| C11 | config | Project Settings / General / Language Configuration：无表头普通行，双击弹窗编辑 | ProjectConfigPage |
 | C12 | config | Project Platform / Resample Policies | ProjectPlatformEditor |
 | D01 | display | Bus Inspector / Inputs | ListFieldDrawer |
 | D02 | display | Bus Inspector / Receives | ListFieldDrawer |

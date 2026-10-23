@@ -2843,9 +2843,10 @@ void registerProjectActions(ActionManager& mgr,
             const QJsonValue path = args.value("path");
             if (!path.isString() || !PathUtils::isValidPackBuildOutputDir(path.toString(), projectManager->currentProject()->projectPath))
                 return {false, {}, "INVALID_ARGS",
-                        QStringLiteral("Pack output must use a relative directory path. ")
+                        QStringLiteral("Pack output must use a valid directory path. ")
                             + PathUtils::packBuildOutputLocationError()};
-            const QString newValue = PathUtils::normalizePackBuildOutputDir(path.toString());
+            const QString newValue = PathUtils::normalizePackBuildOutputDir(
+                path.toString(), projectManager->currentProject()->projectPath);
             const QString oldValue = projectManager->packBuildOutputDir();
 
             ActionResult r;
@@ -2950,9 +2951,9 @@ void registerProjectActions(ActionManager& mgr,
             if (!enabled.isBool() || !path.isString()
                 || !PathUtils::isValidWaveformBuildOutputDir(path.toString(), project->projectPath))
                 return {false, {}, "INVALID_ARGS",
-                    "Waveform output must use a relative directory outside the project root and object directories."};
+                    "Waveform output must use a valid directory outside the project root and object directories."};
             const bool nextEnabled = enabled.toBool();
-            const QString nextPath = PathUtils::normalizePackBuildOutputDir(path.toString());
+            const QString nextPath = PathUtils::normalizePackBuildOutputDir(path.toString(), project->projectPath);
             const bool previousEnabled = project->buildExportWaveforms;
             const QString previousPath = project->buildWaveformOutputDir;
             ActionResult result;

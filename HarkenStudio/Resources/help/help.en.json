@@ -218,7 +218,7 @@
       "body": "Choose the editor's appearance; Apply activates the theme. Install additional themes in %1."
     },
     "settings.appearance.language": {
-      "title": "Language",
+      "title": "Information Language",
       "body": "Choose the Information help language; the editor interface and project audio languages are unaffected."
     },
     "settings.extension": {
@@ -267,15 +267,31 @@
     },
     "settings.publish": {
       "title": "Publish",
-      "body": "Set the pack output directory and optional waveform export."
+      "body": "Set the export directories and choose which additional material to include."
     },
     "settings.publish.output": {
-      "title": "Pack Build Output",
-      "body": "Use a path relative to the project; blank uses BuildPacks. The project root and object directories cannot be used."
+      "title": "Export Directory",
+      "body": "Choose the directory for exported packs. Paths are relative to the project when possible; otherwise an absolute path is kept, such as on a different Windows drive. Blank uses BuildPacks. The project root and object directories cannot be used."
+    },
+    "settings.publish.additional_material": {
+      "title": "Additional Material",
+      "body": "Optionally export Project.json, metadata in each pack's companion JSON, and <hash>.vkd waveform buffers."
+    },
+    "settings.publish.project_information": {
+      "title": "Export Project Information",
+      "body": "Write Project.json in Export Directory, alongside the platform folders. It contains project information for SDK consumers and is optional for runtime pack loading."
+    },
+    "settings.publish.pack_metadata": {
+      "title": "Export Pack MetaData",
+      "body": "Include metadata in each pack's same-named JSON file, such as Init.json or <action>.json, beside its .bytes file."
     },
     "settings.publish.waveforms": {
-      "title": "Waveform Export",
-      "body": "Include source waveform previews with exported packs. Use a path relative to the project; blank uses BuildPacks/Waveforms."
+      "title": "Export Wave Buffer",
+      "body": "Export waveform preview buffers as <hash>.vkd files in Waveform File Directory. Each pack's same-named JSON lists these files in its waveforms field."
+    },
+    "settings.publish.waveform_directory": {
+      "title": "Waveform File Directory",
+      "body": "Choose where <hash>.vkd waveform buffers are written. Paths are relative to the project when possible; otherwise an absolute path is kept. Blank uses BuildPacks/Waveforms. The project root and object directories cannot be used."
     },
     "Blueprint": {
       "title": "Blueprint",

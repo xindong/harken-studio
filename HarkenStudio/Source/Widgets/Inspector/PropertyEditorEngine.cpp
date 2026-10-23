@@ -111,8 +111,7 @@ public:
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
-        setViewportMargins(6, 2, 6, 2);
-        document()->setDocumentMargin(0.0);
+        setViewportMargins(QtControlSkin::current().fieldTextMargins());
         QtControlSkin::setSemanticProperty(this, "fieldRole",
                                           QStringLiteral("inspectorText"));
         grip_ = new ResizeGrip(this);
@@ -130,6 +129,7 @@ public:
                 [this] { positionGrip(); });
         connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this,
                 [this] {
+                    setViewportMargins(QtControlSkin::current().fieldTextMargins());
                     const int nextHeight = QtControlSkin::current().fieldHeight();
                     setFixedHeight(height() == fieldHeight_
                         ? nextHeight : std::max(height(), nextHeight));

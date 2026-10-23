@@ -1089,13 +1089,13 @@ bool ProjectSerializer::prepareProjectSave(const QString& filePath,
                                             ProjectData& project)
 {
     if (!PathUtils::isValidPackBuildOutputDir(project.packBuildOutputDir, filePath)) {
-        lastError_ = tr("Pack output must use a relative directory path. ")
+        lastError_ = tr("Pack output must use a valid directory path. ")
             + PathUtils::packBuildOutputLocationError();
         emit errorOccurred(lastError_);
         return false;
     }
     if (!PathUtils::isValidWaveformBuildOutputDir(project.buildWaveformOutputDir, filePath)) {
-        lastError_ = tr("Waveform output must use a relative directory outside the project root and object directories.");
+        lastError_ = tr("Waveform output must use a valid directory outside the project root and object directories.");
         emit errorOccurred(lastError_);
         return false;
     }
@@ -1210,7 +1210,7 @@ bool ProjectSerializer::prepareProjectSave(const QString& filePath,
     }
 
     if (!project.packBuildOutputDir.isEmpty()) {
-        root["packBuildOutputDir"] = project.packBuildOutputDir;
+        root["packBuildOutputDir"] = PathUtils::normalizePackBuildOutputDir(project.packBuildOutputDir, filePath);
     }
     if (project.buildExportProjectData)
         root["buildExportProjectData"] = true;
@@ -1219,7 +1219,7 @@ bool ProjectSerializer::prepareProjectSave(const QString& filePath,
     if (project.buildExportWaveforms)
         root["buildExportWaveforms"] = true;
     if (!project.buildWaveformOutputDir.isEmpty())
-        root["buildWaveformOutputDir"] = project.buildWaveformOutputDir;
+        root["buildWaveformOutputDir"] = PathUtils::normalizePackBuildOutputDir(project.buildWaveformOutputDir, filePath);
 
     if (!project.actionPublishedNameHistory.empty()) {
         QJsonArray history;
@@ -1518,9 +1518,9 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
     project.defaultLanguage = root["defaultLanguage"].toString();
 
     project.packBuildOutputDir = PathUtils::normalizePackBuildOutputDir(
-        root["packBuildOutputDir"].toString());
+        root["packBuildOutputDir"].toString(), project.projectPath);
     if (!PathUtils::isValidPackBuildOutputDir(project.packBuildOutputDir, project.projectPath, true)) {
-        lastError_ = tr("Pack output must use a relative path to a directory distinct from the project root.");
+        lastError_ = tr("Pack output must use a valid directory path distinct from the project root.");
         return false;
     }
     if (!PathUtils::isValidPackBuildOutputDir(project.packBuildOutputDir, project.projectPath))
@@ -1530,9 +1530,9 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
     project.buildExportPackMetadata = root["buildExportPackMetadata"].toBool(false);
     project.buildExportWaveforms = root["buildExportWaveforms"].toBool(false);
     project.buildWaveformOutputDir = PathUtils::normalizePackBuildOutputDir(
-        root["buildWaveformOutputDir"].toString());
+        root["buildWaveformOutputDir"].toString(), project.projectPath);
     if (!PathUtils::isValidWaveformBuildOutputDir(project.buildWaveformOutputDir, project.projectPath)) {
-        lastError_ = tr("Waveform output must use a relative directory outside the project root and object directories.");
+        lastError_ = tr("Waveform output must use a valid directory outside the project root and object directories.");
         return false;
     }
 

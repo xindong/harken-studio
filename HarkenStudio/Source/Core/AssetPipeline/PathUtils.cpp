@@ -13,19 +13,37 @@ QString PathUtils::buildPacksDirName()
     return QStringLiteral("BuildPacks");
 }
 
-QString PathUtils::normalizePackBuildOutputDir(const QString& path)
+QString PathUtils::normalizePackBuildOutputDir(const QString& path, const QString& projectFilePath)
 {
-    const QString normalized = normalizeToUnix(path.trimmed());
-    return normalized.isEmpty() ? QString() : QDir::cleanPath(normalized);
+    QString normalized = path.trimmed();
+    normalized.replace('\\', '/');
+    if (normalized.isEmpty()) return {};
+    normalized = QDir::cleanPath(normalized);
+#if defined(Q_OS_WIN)
+    if (normalized.size() >= 2 && normalized.at(1) == QLatin1Char(':')
+        && (normalized.size() < 3 || normalized.at(2) != QLatin1Char('/')
+            || normalized.at(0).toLower() < QLatin1Char('a')
+            || normalized.at(0).toLower() > QLatin1Char('z')))
+        return normalized;
+#endif
+    if (!projectFilePath.isEmpty() && QDir::isAbsolutePath(normalized))
+        normalized = QDir(QFileInfo(projectFilePath).absolutePath()).relativeFilePath(normalized);
+    return normalized;
 }
 
 bool PathUtils::isValidPackBuildOutputDir(const QString& path, const QString& projectFilePath,
                                          bool allowObjectBuckets)
 {
     const QString normalized = normalizePackBuildOutputDir(path);
+    QString directory = normalized;
+#if defined(Q_OS_WIN)
+    if (directory.size() >= 3 && directory.at(0).toLower() >= QLatin1Char('a')
+        && directory.at(0).toLower() <= QLatin1Char('z')
+        && directory.at(1) == QLatin1Char(':') && directory.at(2) == QLatin1Char('/'))
+        directory.remove(0, 2);
+#endif
     return (normalized.isEmpty()
-        || (normalized != QStringLiteral(".") && QDir::isRelativePath(normalized)
-            && !hasUnsafeCharacters(normalized)))
+        || (normalized != QStringLiteral(".") && !hasUnsafeCharacters(directory)))
         && !isProjectRootDirectory(packBuildOutputRoot(projectFilePath, normalized), projectFilePath)
         && (allowObjectBuckets
             || !isProjectObjectDirectory(packBuildOutputRoot(projectFilePath, normalized), projectFilePath));
@@ -89,17 +107,17 @@ bool PathUtils::isProjectRootDirectory(const QString& path, const QString& proje
 }
 
 QString PathUtils::packBuildOutputRoot(const QString& projectFilePath,
-                                      const QString& relativeDir)
+                                      const QString& directory)
 {
-    const QString normalized = normalizePackBuildOutputDir(relativeDir);
+    const QString normalized = normalizePackBuildOutputDir(directory);
     return toAbsolutePath(normalized.isEmpty() ? buildPacksDirName() : normalized,
                           QFileInfo(projectFilePath).absolutePath());
 }
 
 QString PathUtils::waveformBuildOutputRoot(const QString& projectFilePath,
-                                          const QString& relativeDir)
+                                          const QString& directory)
 {
-    const QString normalized = normalizePackBuildOutputDir(relativeDir);
+    const QString normalized = normalizePackBuildOutputDir(directory);
     return toAbsolutePath(normalized.isEmpty()
         ? buildPacksDirName() + QStringLiteral("/Waveforms") : normalized,
         QFileInfo(projectFilePath).absolutePath());

@@ -181,11 +181,11 @@ TEST(PackGroupSerialization, PackBuildDirectoryRoundTripsWithoutLegacyDeployment
     ASSERT_TRUE(dir.isValid());
     auto project = projectWithMaster();
     project.name = QStringLiteral("PackPathsProject");
-    project.packBuildOutputDir = QStringLiteral("Exports/Packs");
+    project.packBuildOutputDir = dir.filePath(QStringLiteral("Exports/Packs"));
     project.buildExportProjectData = true;
     project.buildExportPackMetadata = true;
     project.buildExportWaveforms = true;
-    project.buildWaveformOutputDir = QStringLiteral("Exports/Waveforms");
+    project.buildWaveformOutputDir = dir.filePath(QStringLiteral("Exports/Waveforms"));
 
     VNX::ProjectSerializer serializer;
     const QString path = dir.filePath(QStringLiteral("paths.hsp"));
@@ -194,13 +194,13 @@ TEST(PackGroupSerialization, PackBuildDirectoryRoundTripsWithoutLegacyDeployment
 
     VNX::ProjectData loaded;
     ASSERT_TRUE(serializer.loadProject(path, loaded)) << serializer.lastError().toStdString();
-    EXPECT_EQ(loaded.packBuildOutputDir, project.packBuildOutputDir);
+    EXPECT_EQ(loaded.packBuildOutputDir, QStringLiteral("Exports/Packs"));
     EXPECT_EQ(loaded.buildExportProjectData, project.buildExportProjectData);
     EXPECT_EQ(loaded.buildExportPackMetadata, project.buildExportPackMetadata);
     EXPECT_EQ(VNX::PathUtils::packBuildOutputRoot(loaded.projectPath, loaded.packBuildOutputDir),
               dir.filePath(QStringLiteral("Exports/Packs")));
     EXPECT_EQ(loaded.buildExportWaveforms, project.buildExportWaveforms);
-    EXPECT_EQ(loaded.buildWaveformOutputDir, project.buildWaveformOutputDir);
+    EXPECT_EQ(loaded.buildWaveformOutputDir, QStringLiteral("Exports/Waveforms"));
     EXPECT_EQ(VNX::PathUtils::waveformBuildOutputRoot(loaded.projectPath, loaded.buildWaveformOutputDir),
               dir.filePath(QStringLiteral("Exports/Waveforms")));
 
