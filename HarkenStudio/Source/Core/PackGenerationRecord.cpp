@@ -68,6 +68,7 @@ void PackGenerationRecordStore::clear()
 {
     const bool exporting = isExporting();
     cancelExport();
+    finishPreflight(activeRunId_);
     activeRunId_ = 0;
     cancel_.reset();
     records_.clear();
@@ -96,8 +97,17 @@ quint64 PackGenerationRecordStore::beginProgress(const std::shared_ptr<std::atom
     if (isExporting()) return 0;
     activeRunId_ = ++nextRunId_;
     cancel_ = cancel;
+    preflighting_ = true;
     emit exportActivityChanged(true);
+    emit preflightActivityChanged(true);
     return activeRunId_;
+}
+
+void PackGenerationRecordStore::finishPreflight(quint64 runId)
+{
+    if (!isCurrentRun(runId) || !preflighting_) return;
+    preflighting_ = false;
+    emit preflightActivityChanged(false);
 }
 
 void PackGenerationRecordStore::updateProgress(quint64 runId, const PackGenerationProgress& progress)
@@ -136,6 +146,7 @@ void PackGenerationRecordStore::updateProgress(quint64 runId, const PackGenerati
 void PackGenerationRecordStore::finishProgress(quint64 runId, bool canceled)
 {
     if (!isCurrentRun(runId)) return;
+    finishPreflight(runId);
     QVector<PackGenerationProgress> unfinished;
     for (auto& entry : progress_) {
         if (entry.runId != runId

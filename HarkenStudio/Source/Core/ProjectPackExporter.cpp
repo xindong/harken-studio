@@ -468,8 +468,10 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
             if (!outputLock) return failure;
             auto writeOptions = prepared;
             writeOptions.selfCleaning = false;
-            if (!ValidatePackBuildWriteAccess(captured, root, {prepared.platform}, writeOptions, &failure.error))
+            if (!ValidatePackBuildWriteAccess(captured, root, {prepared.platform}, writeOptions, &failure.error)) {
+                failure.canceled = prepared.cancelCheck && prepared.cancelCheck();
                 return failure;
+            }
             const auto& platform = *ProjectPlatformSemantics::find(captured.platforms, QUuid(prepared.platform));
             auto result = ExportAllPacks(captured, platformOutputDir(root, platform), prepared, outRecords);
             if (!result.success)

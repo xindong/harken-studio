@@ -36,7 +36,8 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
                          QStringList* managedFiles, QString* error,
                          bool requireComplete = true,
                          const QStringList& expectedPackPaths = {},
-                         bool allowPlatformReplacement = false);
+                         bool allowPlatformReplacement = false,
+                         const std::function<bool()>& cancelCheck = {});
 
 bool RecoverPackOutput(const QString& outputDir, QString* error);
 

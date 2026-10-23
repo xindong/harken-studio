@@ -313,9 +313,18 @@ bool containsPublicationFile(const QDir& dir, const QStringList& names, const QS
     });
 }
 
-bool scanOutputFiles(const QDir& dir, QStringList* names, QStringList* packs, QString* error,
-                     bool includeStagingDirectories = false)
+bool exportCanceled(const std::function<bool()>& cancelCheck, QString* error)
 {
+    if (!cancelCheck || !cancelCheck()) return false;
+    if (error) *error = QStringLiteral("Export canceled");
+    return true;
+}
+
+bool scanOutputFiles(const QDir& dir, QStringList* names, QStringList* packs, QString* error,
+                     bool includeStagingDirectories = false,
+                     const std::function<bool()>& cancelCheck = {})
+{
+    if (exportCanceled(cancelCheck, error)) return false;
     if (QFileInfo(dir.absolutePath()).isSymLink()) {
         *error = QStringLiteral("Output directory is a symbolic link: %1").arg(dir.absolutePath());
         return false;
@@ -325,6 +334,7 @@ bool scanOutputFiles(const QDir& dir, QStringList* names, QStringList* packs, QS
         const QDir current(dir.filePath(directories.takeLast()));
         for (const auto& entry : current.entryInfoList(
                  QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System)) {
+            if (exportCanceled(cancelCheck, error)) return false;
             const QString relative = dir.relativeFilePath(entry.absoluteFilePath());
             if (entry.isSymLink()) {
                 *error = QStringLiteral("Output contains a symbolic link: %1").arg(entry.absoluteFilePath());
@@ -355,9 +365,10 @@ bool scanOutputFiles(const QDir& dir, QStringList* names, QStringList* packs, QS
 }
 
 bool scanCleanupFiles(const QDir& root, const QStringList& selectedPlatforms,
-                      QStringList* names, QStringList* packs, QString* error)
+                      QStringList* names, QStringList* packs, QString* error,
+                      const std::function<bool()>& cancelCheck = {})
 {
-    if (!scanOutputFiles(root, names, packs, error)) return false;
+    if (!scanOutputFiles(root, names, packs, error, false, cancelCheck)) return false;
     for (const auto& directory : root.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden)) {
         if (directory.fileName().startsWith(QString::fromLatin1(kStagingPrefix))
             || directory.fileName().startsWith(QString::fromLatin1(kPreviousPrefix))
@@ -365,7 +376,7 @@ bool scanCleanupFiles(const QDir& root, const QStringList& selectedPlatforms,
             || selectedPlatforms.contains(directory.fileName())) continue;
         QStringList retiredFiles, retiredPacks;
         if (!scanOutputFiles(QDir(directory.absoluteFilePath()), &retiredFiles,
-                packs ? &retiredPacks : nullptr, error, true)) return false;
+                packs ? &retiredPacks : nullptr, error, true, cancelCheck)) return false;
         for (const auto& name : retiredFiles) names->append(directory.fileName() + QLatin1Char('/') + name);
         if (packs)
             for (const auto& name : retiredPacks) packs->append(directory.fileName() + QLatin1Char('/') + name);
@@ -558,13 +569,15 @@ bool writeJson(const QString& path, const QJsonObject& object, QString* error)
     return true;
 }
 
-bool validateWriteAccess(QStringList paths, QString* error)
+bool validateWriteAccess(QStringList paths, QString* error,
+                         const std::function<bool()>& cancelCheck = {})
 {
     paths.removeDuplicates();
     paths.sort();
     QStringList blocked;
     QSet<QString> checkedDirectories;
     for (const QString& path : paths) {
+        if (exportCanceled(cancelCheck, error)) return false;
         const QFileInfo entry(path);
         if (entry.isFile()) {
             bool accessible = entry.isWritable();
@@ -2044,11 +2057,11 @@ bool collectPlatformWritePaths(const ProjectData& project, const QDir& output,
 {
     paths->append(output.absolutePath());
     QStringList files, binaries;
-    if (!scanOutputFiles(output, &files, &binaries, error)) return false;
+    if (!scanOutputFiles(output, &files, &binaries, error, false, options.cancelCheck)) return false;
     QJsonArray publication;
     QStringList managed;
     if (!ReadPackPublication(output.path(), project.projectId, options.platform,
-            &publication, &managed, error, false, {}, !options.updateSelectedOnly)) return false;
+            &publication, &managed, error, false, {}, !options.updateSelectedOnly, options.cancelCheck)) return false;
     QMap<QString, QJsonObject> previous;
     QStringList previousCompanions;
     for (const auto& value : publication) {
@@ -2061,6 +2074,7 @@ bool collectPlatformWritePaths(const ProjectData& project, const QDir& output,
     }
     QStringList plannedFiles;
     const auto appendPack = [&](const QString& relative, std::uint64_t id, std::uint32_t kind) {
+        if (exportCanceled(options.cancelCheck, error)) return false;
         if (!safePublicationPath(output, relative)) {
             *error = QStringLiteral("Invalid Pack output path: %1").arg(output.filePath(relative));
             return false;
@@ -2111,6 +2125,7 @@ bool collectPlatformWritePaths(const ProjectData& project, const QDir& output,
                     unit.variant.language, unit.artifactKey)), harkenstudiobuild::kPackKindCanonicalContent)) return false;
     }
     for (const auto& name : files) {
+        if (exportCanceled(options.cancelCheck, error)) return false;
         if (containsPublicationFile(output, plannedFiles, name) || mayReuseWaveform(output.filePath(name), project, options))
             continue;
         if ((options.selfCleaning && !options.updateSelectedOnly)
@@ -2154,7 +2169,7 @@ bool ProjectPackExporter::ValidatePackBuildWriteAccess(
     }
     if (options.selfCleaning && !options.updateSelectedOnly) {
         QStringList files;
-        if (!scanCleanupFiles(root, platformNames, &files, nullptr, error)) return false;
+        if (!scanCleanupFiles(root, platformNames, &files, nullptr, error, options.cancelCheck)) return false;
         for (const auto& name : files) {
             if (std::any_of(platformNames.begin(), platformNames.end(), [&](const auto& platform) {
                     return name.startsWith(platform + QLatin1Char('/'));
@@ -2174,13 +2189,15 @@ bool ProjectPackExporter::ValidatePackBuildWriteAccess(
             ? PathUtils::waveformBuildOutputRoot(project.projectPath, project.buildWaveformOutputDir)
             : options.waveformOutputDir);
     }
-    return validateWriteAccess(paths, error);
+    return !exportCanceled(options.cancelCheck, error)
+        && validateWriteAccess(paths, error, options.cancelCheck);
 }
 
 bool ReadPackPublication(const QString& directory, const QString& projectId,
                          const QString& platformId, QJsonArray* packs,
                          QStringList* managedFiles, QString* error, bool requireComplete,
-                         const QStringList& expectedPackPaths, bool allowPlatformReplacement)
+                         const QStringList& expectedPackPaths, bool allowPlatformReplacement,
+                         const std::function<bool()>& cancelCheck)
 {
     *packs = {};
     managedFiles->clear();
@@ -2191,7 +2208,7 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
     };
     QStringList files, binaries;
     QString detail;
-    if (!scanOutputFiles(dir, &files, &binaries, &detail)) return reject(detail);
+    if (!scanOutputFiles(dir, &files, &binaries, &detail, false, cancelCheck)) return reject(detail);
     for (const auto& path : expectedPackPaths)
         if (!safePublicationPath(dir, path))
             return reject(QStringLiteral("Unsafe requested Pack path '%1'").arg(path));
@@ -2205,6 +2222,7 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
     QHash<QString, QString> legacyProjects;
     QStringList legacyFiles;
     for (const auto& relative : files) {
+        if (exportCanceled(cancelCheck, error)) return false;
         if (QFileInfo(relative).fileName() != QStringLiteral("HarkenPackManifest.json")) continue;
         QByteArray bytes;
         if (!readAll(dir.filePath(relative), &bytes, &detail)) return reject(detail);
@@ -2289,6 +2307,7 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
     QSet<QString> localizedNames;
     QSet<QString> localizedActionIds;
     for (const auto& path : binaries) {
+        if (exportCanceled(cancelCheck, error)) return false;
         const auto info = QFileInfo(path);
         const bool selected = expectedPackPaths.isEmpty() || expectedPackPaths.contains(path);
         const QString companionPath = QDir::cleanPath(QDir(info.path()).filePath(info.completeBaseName() + QStringLiteral(".json")));
@@ -2533,6 +2552,7 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
                 && !managedFiles->contains(row.key()))
                 return reject(QStringLiteral("Previous publication is missing Pack: %1").arg(row.key()));
         for (const auto& relative : files) {
+            if (exportCanceled(cancelCheck, error)) return false;
             if (!relative.endsWith(QStringLiteral(".json"), Qt::CaseInsensitive)
                 || managedFiles->contains(relative) || legacyFiles.contains(relative)) continue;
             const QFileInfo info(relative);
@@ -2557,6 +2577,7 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
     }
     if (initId != 0) {
         for (const auto& path : binaries) {
+            if (exportCanceled(cancelCheck, error)) return false;
             if (managedFiles->contains(path)) continue;
             const QFileInfo info(path);
             const auto companion = QDir::cleanPath(QDir(info.path()).filePath(info.completeBaseName() + QStringLiteral(".json")));
@@ -2586,7 +2607,7 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
     }
     managedFiles->append(legacyFiles);
     managedFiles->removeDuplicates();
-    return true;
+    return !exportCanceled(cancelCheck, error);
 }
 
 ProjectPackExporter::ExportResult ExportCanonicalPackSet(
@@ -2649,7 +2670,10 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
     QStringList writePaths;
     if (!collectPlatformWritePaths(project, liveDir, *request.plan,
             request.options, &writePaths, &result.error)
-        || !validateWriteAccess(writePaths, &result.error)) return result;
+        || !validateWriteAccess(writePaths, &result.error, request.options.cancelCheck)) {
+        result.canceled = request.options.cancelCheck && request.options.cancelCheck();
+        return result;
+    }
     QStringList liveNames, allPackNames;
     if (!scanOutputFiles(liveDir, &liveNames, &allPackNames, &result.error)) return result;
     const QDir resourceCacheDir(QDir(PathUtils::getDotCacheDir(QFileInfo(project.projectPath).absolutePath()))

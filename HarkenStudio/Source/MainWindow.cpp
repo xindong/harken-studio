@@ -222,6 +222,38 @@ void applyFramelessFloatingChrome(ads::CFloatingDockContainer* fw)
 #endif
 
 namespace {
+class PackPreflightDialog final : public QDialog
+{
+public:
+    explicit PackPreflightDialog(QWidget* parent) : QDialog(parent)
+    {
+        setObjectName(QStringLiteral("PackPreflightDialog"));
+        setWindowTitle(MainWindow::tr("Pack Export Check"));
+        setWindowModality(Qt::ApplicationModal);
+        setAttribute(Qt::WA_DeleteOnClose);
+        auto* layout = new QVBoxLayout(this);
+        label_ = new QLabel(MainWindow::tr("Checking existing packs and output permissions..."), this);
+        layout->addWidget(label_);
+        auto* progress = new QProgressBar(this);
+        progress->setRange(0, 0);
+        layout->addWidget(progress);
+        stop_ = new QPushButton(MainWindow::tr("Stop"), this);
+        layout->addWidget(stop_);
+        connect(stop_, &QPushButton::clicked, this, &PackPreflightDialog::reject);
+    }
+
+    void reject() override
+    {
+        PackGenerationRecordStore::instance().cancelExport();
+        label_->setText(MainWindow::tr("Stopping pack export check..."));
+        stop_->setEnabled(false);
+    }
+
+private:
+    QLabel* label_ = nullptr;
+    QPushButton* stop_ = nullptr;
+};
+
 QString aiConversationScope(const ProjectData* project)
 {
     if (!project || project->projectPath.trimmed().isEmpty())
@@ -282,6 +314,17 @@ void MainWindow::initializeStructure(
     startupTrace(QStringLiteral("MainWindow: ctor begin"));
     VNX::initializeEditorSingletons();
     VNX::registerBuiltinInspectorCustomizations();
+    connect(&PackGenerationRecordStore::instance(), &PackGenerationRecordStore::preflightActivityChanged,
+            this, [this](bool active) {
+        if (!active) return;
+        auto* dialog = new PackPreflightDialog(this);
+        connect(&PackGenerationRecordStore::instance(), &PackGenerationRecordStore::preflightActivityChanged,
+                dialog, [dialog](bool checking) {
+            if (!checking) dialog->accept();
+        });
+        dialog->show();
+        dialog->raise();
+    });
 
     panelRegistry_ = new PanelInstanceRegistry(this);
     layoutController_ = new LayoutController(this);
@@ -4367,20 +4410,6 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
         LogPanel::logError(LogCategory::Pack, outputLockError);
         return;
     }
-
-    ProjectPackExporter::ExportOptions writeOptions;
-    writeOptions.selection = exportSelection;
-    writeOptions.updateSelectedOnly = !packPaths.isEmpty();
-    writeOptions.selfCleaning = selfCleaning && packPaths.isEmpty();
-    for (const auto& path : packPaths) writeOptions.onlyPackPaths.insert(path);
-    QString writeAccessError;
-    if (!ProjectPackExporter::ValidatePackBuildWriteAccess(
-            *pmProject, baseDir, genPlatforms, writeOptions, &writeAccessError)) {
-        LogPanel::logError(LogCategory::Pack, writeAccessError);
-        QMessageBox::critical(this, tr("Export Readiness"), writeAccessError);
-        return;
-    }
-
     {
         const auto readiness =
             ProjectPackExporter::ValidatePackBuildReadiness(*pmProject, baseDir, &snapshot->media);
@@ -4440,6 +4469,44 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
         QStringList succeededPlatforms;
         QVector<PackArtifactMetadata> publishedArtifacts;
         ProjectPackExporter exporter;
+        ProjectPackExporter::ExportOptions opts;
+        opts.snapshot = snapshot;
+        opts.selection = exportSelection;
+        opts.debugStrings = true;
+        opts.forceReexport = forceReexport;
+        opts.selfCleaning = selfCleaning && packPaths.isEmpty();
+        opts.updateSelectedOnly = !packPaths.isEmpty();
+        for (const QString& unit : packPaths)
+            opts.onlyPackPaths.insert(unit);
+        opts.cancelCheck = [cancel] { return cancel->load(std::memory_order_relaxed); };
+        opts.progressCallback = [store, projectLease, runId](const PackGenerationProgress& progress) {
+            QMetaObject::invokeMethod(store, [store, projectLease, runId, progress] {
+                if (ProjectManager::instance().currentProject() == projectLease.get())
+                    store->updateProgress(runId, progress);
+            }, Qt::QueuedConnection);
+        };
+        QString writeAccessError;
+        if (!ProjectPackExporter::ValidatePackBuildWriteAccess(
+                snapshot->project, baseDir, genPlatforms, opts, &writeAccessError)) {
+            QMetaObject::invokeMethod(store,
+                [window, store, projectLease, runId, cancel, writeAccessError, platformActivity, outputLock] {
+                if (!store->isCurrentRun(runId)) return;
+                const bool canceled = cancel->load(std::memory_order_relaxed);
+                store->finishProgress(runId, canceled);
+                if (!window || ProjectManager::instance().currentProject() != projectLease.get()) return;
+                if (canceled) {
+                    LogPanel::logWarning(LogCategory::Pack, tr("Pack export canceled"));
+                } else {
+                    LogPanel::logError(LogCategory::Pack, writeAccessError);
+                    QMessageBox::critical(window, tr("Export Readiness"), writeAccessError);
+                }
+            }, Qt::QueuedConnection);
+            return;
+        }
+        QMetaObject::invokeMethod(store, [store, runId] {
+            store->finishPreflight(runId);
+        }, Qt::QueuedConnection);
+        opts.selfCleaning = false;
         for (const QString& platform : genPlatforms) {
             if (cancel->load(std::memory_order_relaxed)) {
                 canceled = true;
@@ -4448,23 +4515,7 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
             const auto& definition = *ProjectPlatformSemantics::find(
                 snapshot->project.platforms, QUuid(platform));
             const QString platformDir = ProjectPackExporter::platformOutputDir(baseDir, definition);
-            ProjectPackExporter::ExportOptions opts;
             opts.platform = platform;
-            opts.snapshot = snapshot;
-            opts.selection = exportSelection;
-            opts.debugStrings = true;
-            opts.forceReexport = forceReexport;
-            opts.selfCleaning = false;
-            opts.updateSelectedOnly = !packPaths.isEmpty();
-            for (const QString& unit : packPaths)
-                opts.onlyPackPaths.insert(unit);
-            opts.cancelCheck = [cancel] { return cancel->load(std::memory_order_relaxed); };
-            opts.progressCallback = [store, projectLease, runId](const PackGenerationProgress& progress) {
-                QMetaObject::invokeMethod(store, [store, projectLease, runId, progress] {
-                    if (ProjectManager::instance().currentProject() == projectLease.get())
-                        store->updateProgress(runId, progress);
-                }, Qt::QueuedConnection);
-            };
             std::vector<ProjectPackExporter::PackBuildRecord> records;
             const auto result = exporter.ExportAllPacks(snapshot->project, platformDir, opts, &records);
             if (result.success) {

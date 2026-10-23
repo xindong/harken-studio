@@ -4837,6 +4837,7 @@ TEST(EditorProjectPackExporterManifest, RecoveryPrecedesPreflightForRootAndParti
         if (directPartial) context.options.onlyPackPaths = {QStringLiteral("One")};
         const auto result = context.exporter.ExportAllPacks(context.project,
             directPartial ? context.live.path() : QString(), context.options);
+        EXPECT_TRUE(result.canceled);
         EXPECT_EQ(result.error, QStringLiteral("Export canceled"));
         EXPECT_FALSE(QFileInfo::exists(marker));
         for (const auto& [name, bytes] : before)
