@@ -26,6 +26,7 @@ namespace VNX {
 BlueprintPanel::BlueprintPanel(QWidget* parent)
     : QWidget(parent)
 {
+    setObjectName(QStringLiteral("BlueprintPanel"));
     canvas_ = new BlueprintCanvasWidget(this);
 
     auto* toolbar = new QFrame(this);

@@ -320,6 +320,7 @@ private:
     std::vector<const ProgramView*> deferredProgram_;
     std::vector<PostInput> deferredInput_;
     std::vector<std::uint8_t> deferredSlotUsed_;
+    std::uint32_t committedDeferredProgramCount_ = 0;
     std::vector<RollingCursor> rolling_;
 
     // Reserve-time scratch for a transaction's events, sized once at Reset.

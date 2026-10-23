@@ -1,18 +1,15 @@
 #pragma once
 
 #include <QString>
-#include <QStringList>
-#include <optional>
+#include <QList>
 
 namespace VNX {
 
 enum class AIPermissionMode { ReadOnly, Ask, Auto };
-enum class AIToolProfile { ReadOnly, Authoring, Pack, Live };
 enum class AIConfirmationPolicy { None, WhenPolicyRequires, Always };
 
 AIPermissionMode parsePermissionMode(const QString& value);
 QString toId(AIPermissionMode mode);
-QString toId(AIToolProfile profile);
 
 class AIPermissionSetting
 {
@@ -35,7 +32,6 @@ private:
 };
 
 inline QString toId(AIPermissionSetting mode) { return toId(mode.mode()); }
-std::optional<AIToolProfile> parseToolProfile(const QString& value);
 bool allowsWrites(AIPermissionMode mode);
 
 struct AIPermissionMetadata
@@ -46,33 +42,6 @@ struct AIPermissionMetadata
 };
 
 const QList<AIPermissionMetadata>& permissionMetadata();
-
-struct AIToolProfileMetadata
-{
-    AIToolProfile profile;
-    const char* label;
-};
-const QList<AIToolProfileMetadata>& toolProfileMetadata();
-
-constexpr unsigned int toolProfileBit(AIToolProfile profile)
-{
-    return 1u << static_cast<unsigned int>(profile);
-}
-
-class AIToolProfileSet
-{
-public:
-    AIToolProfileSet() = default;
-    AIToolProfileSet(unsigned int bits) : bits_(bits) {}
-    AIToolProfileSet(const QStringList& ids);
-    bool contains(AIToolProfile profile) const { return (bits_ & toolProfileBit(profile)) != 0; }
-    bool contains(const QString& id) const;
-    bool isEmpty() const { return bits_ == 0; }
-    unsigned int bits() const { return bits_; }
-    void add(AIToolProfile profile) { bits_ |= toolProfileBit(profile); }
-private:
-    unsigned int bits_ = 0;
-};
 
 bool requiresConfirmation(AIPermissionMode mode, AIConfirmationPolicy confirmation);
 

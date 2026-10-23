@@ -309,12 +309,100 @@ bool ReadPortableDesc(ByteReader& r, VnBindingAttachDesc* out) {
 struct BlobStore {
     std::deque<std::vector<float>> pcm;
     std::deque<std::vector<const float*>> planes;
+    // Pack spans point into the immutable journal, which outlives replay.
+    std::vector<VnPackByteSpan> packs;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> packGenerations;
 };
 
 using VoiceHandleMap =
     std::vector<std::pair<VnVoiceHandle, VnVoiceHandle>>;
 using PackHandleMap =
     std::vector<std::pair<VnPackHandle, VnPackHandle>>;
+
+VnPackHandle RemapPackHandle(const PackHandleMap& handles, VnPackHandle recorded) {
+    if (recorded == 0) return 0;
+    for (const auto& entry : handles)
+        if (entry.first == recorded) return entry.second;
+    // An unknown recorded handle is stale, never an accidentally live slot.
+    return UINT64_MAX;
+}
+
+bool RememberPackHandle(PackHandleMap& handles, VnPackHandle recorded, VnPackHandle live) {
+    if (recorded == 0 || live == 0) return recorded == live;
+    for (const auto& entry : handles)
+        if (entry.first == recorded) return entry.second == live;
+    handles.emplace_back(recorded, live);
+    return true;
+}
+
+std::uint64_t PackSetRevision(const harken::Engine& engine) {
+    const auto* published = engine.packComposition.Published();
+    return published != nullptr ? published->ledger.setRevision : 0;
+}
+
+bool CheckPackPublication(harken::Engine& engine, BlobStore& blobs,
+    std::uint64_t revision, std::uint64_t activation, std::uint64_t generation) {
+    const auto* published = engine.packComposition.Published();
+    if (published == nullptr) return revision == 0 && activation == 0 && generation == 0;
+    if (revision != published->ledger.setRevision || activation != published->ledger.activationGeneration ||
+        generation == 0) return false;
+    for (const auto& entry : blobs.packGenerations)
+        if (entry.first == generation) return entry.second == published->compositeGeneration;
+    for (const auto& entry : blobs.packGenerations)
+        if (entry.second == published->compositeGeneration ||
+            (entry.first < generation) != (entry.second < published->compositeGeneration)) return false;
+    blobs.packGenerations.emplace_back(generation, published->compositeGeneration);
+    return true;
+}
+
+VnResult ReplayPackBytes(void* context, std::uint64_t, const char*, std::uint32_t,
+                         std::uint64_t, VnPackByteSpan* out) {
+    const auto& span = *static_cast<const VnPackByteSpan*>(context);
+    if (span.bytes == nullptr) return VN_PACK_PROVIDER_FAILED;
+    *out = span;
+    return VN_OK;
+}
+
+void ReleaseReplayPackBytes(void*, std::uint64_t, VnPackByteSpan) {}
+
+struct ReplayPackNames {
+    VnPackNamesV1 value{};
+    std::string root, language;
+    std::vector<VnPackVariableNameV1> variables;
+    std::vector<VnPackLabelNameV1> labels;
+    std::vector<std::string> variableNames, labelNames;
+
+    bool Read(ByteReader& reader) {
+        value.structSize = sizeof(value);
+        value.projectId = reader.ObjectId();
+        value.rootActionId = reader.ObjectId();
+        if (!reader.Str(&root) || !reader.Str(&language)) return false;
+        value.variableCount = reader.U32();
+        value.labelCount = reader.U32();
+        if (reader.failed || value.variableCount > reader.Remaining() / 20 ||
+            value.labelCount > reader.Remaining() / 36) return false;
+        variables.resize(value.variableCount);
+        variableNames.resize(value.variableCount);
+        labels.resize(value.labelCount);
+        labelNames.resize(value.labelCount);
+        for (std::uint32_t i = 0; i < value.variableCount; ++i) {
+            variables[i].variableId = reader.ObjectId();
+            if (!reader.Str(&variableNames[i])) return false;
+            variables[i].utf8Name = variableNames[i].c_str();
+        }
+        for (std::uint32_t i = 0; i < value.labelCount; ++i) {
+            labels[i].variableId = reader.ObjectId();
+            labels[i].labelId = reader.ObjectId();
+            if (!reader.Str(&labelNames[i])) return false;
+            labels[i].utf8Name = labelNames[i].c_str();
+        }
+        value.utf8RootName = root.c_str();
+        value.utf8Language = language.c_str();
+        value.variables = variables.data();
+        value.labels = labels.data();
+        return !reader.failed;
+    }
+};
 using ActionFiringHandleMap = std::vector<
     std::pair<VnActionFiringHandle, VnActionFiringHandle>>;
 using ActionSeekTicketMap = std::vector<
@@ -1747,6 +1835,142 @@ int ExecuteCall(std::uint16_t callId, ByteReader& r, BlobStore& blobs,
             packHandles.erase(packHandles.begin() +
                               static_cast<std::ptrdiff_t>(foundIndex));
         }
+        break;
+    }
+    case harken::kTraceCallSetGameplayCatalog: {
+        const VnPackHandle recorded = r.U64();
+        const std::uint64_t count = r.U64();
+        if (r.failed || count > 1048576) return 1;
+        const auto* bytes = r.Bytes(static_cast<std::size_t>(count));
+        if (r.failed || r.Remaining() != 0) return 1;
+        const auto found = std::find_if(packHandles.begin(), packHandles.end(),
+            [recorded](const auto& entry) { return entry.first == recorded; });
+        if (found == packHandles.end()) return 1;
+        VnPackByteSpan catalog{};
+        catalog.structSize = sizeof(catalog);
+        catalog.bytes = bytes;
+        catalog.byteCount = count;
+        result = Vn_SetGameplayCatalog(found->second, &catalog);
+        if (result != VN_OK) return 1;
+        break;
+    }
+    case harken::kTraceCallActivateCanonicalPackSetV2: {
+        const auto vintage = r.U32();
+        const auto recordedInit = r.U64();
+        const auto baseRevision = r.U64();
+        const auto setRevision = r.U64();
+        const auto count = r.U32();
+        if (r.failed || vintage != 1 || count == 0 || count > engine.config.maxPacks ||
+            count > r.Remaining() / 32) return 1;
+        std::vector<VnCanonicalPackSetMemberV2> members(count);
+        std::vector<ReplayPackNames> names(count);
+        std::vector<VnPackByteSpan> spans(count);
+        std::vector<VnCanonicalPackSetMemberResultV1> outputs(count), expected(count);
+        for (std::uint32_t i = 0; i < count; ++i) {
+            auto& member = members[i];
+            member.structSize = sizeof(member);
+            member.operation = r.U32();
+            member.source.structSize = sizeof(member.source);
+            member.source.packStableId = r.U64();
+            member.source.expectedHandle = RemapPackHandle(packHandles, r.U64());
+            member.source.packKind = r.U32();
+            const auto resource = r.U64();
+            if (r.failed || member.operation > VN_PACK_MEMBER_NAME_ONLY || resource > blobs.packs.size()) return 1;
+            if (member.operation == VN_PACK_MEMBER_KEEP) {
+                if (resource != 0) return 1;
+            } else {
+                if (!names[i].Read(r)) return 1;
+                member.names = &names[i].value;
+                if (resource != 0) spans[i] = blobs.packs[resource - 1];
+                member.source.flags = VN_CANONICAL_PACK_SET_MEMBER_PROVIDER;
+                member.source.providerUserData = &spans[i];
+                member.source.provide = ReplayPackBytes;
+                member.source.release = ReleaseReplayPackBytes;
+            }
+            outputs[i].structSize = sizeof(outputs[i]);
+        }
+        const auto recordedResult = static_cast<VnResult>(static_cast<std::int32_t>(r.U32()));
+        const auto policy = r.U32();
+        const auto priorRevision = r.U64();
+        const auto afterRevision = r.U64();
+        const auto afterActivation = r.U64();
+        const auto afterGeneration = r.U64();
+        VnPackHandle outputInit = 0;
+        std::uint64_t busGeneration = 0, busFingerprint = 0, profileFingerprint = 0;
+        if (recordedResult == VN_OK) {
+            outputInit = r.U64();
+            busGeneration = r.U64();
+            busFingerprint = r.U64();
+            profileFingerprint = r.U64();
+            for (auto& row : expected) {
+                row.packStableId = r.U64();
+                row.handle = r.U64();
+                row.flags = r.U32();
+            }
+        }
+        if (r.failed || r.Remaining() != 0 || policy > 2 ||
+            priorRevision != PackSetRevision(engine)) return 1;
+        const auto before = engine.packComposition.PublishedHandle();
+        if (policy != 0) {
+            if (recordedResult == VN_OK || priorRevision != afterRevision ||
+                (policy == 1 && !harken::IsTransientPackTraceRefusal(recordedResult)) ||
+                (policy == 2 && recordedResult != VN_PACK_PROVIDER_FAILED && recordedResult != VN_BAD_PACK)) return 1;
+            result = recordedResult;
+        } else {
+            VnCanonicalPackSetActivationDescV2 desc{};
+            desc.structSize = sizeof(desc);
+            desc.expectedCurrentInitHandle = RemapPackHandle(packHandles, recordedInit);
+            desc.baseSetRevision = baseRevision;
+            desc.setRevision = setRevision;
+            desc.memberCount = count;
+            desc.memberStructSize = sizeof(members.front());
+            desc.members = members.data();
+            desc.outputMemberCapacity = count;
+            desc.outputMemberStructSize = sizeof(outputs.front());
+            desc.outputMembers = outputs.data();
+            VnCanonicalPackSetActivationReportV1 report{};
+            report.structSize = sizeof(report);
+            result = Vn_ActivateCanonicalPackSetV2(&desc, &report);
+            if (result != recordedResult) return 1;
+            if (result == VN_OK) {
+                if (report.resultSetRevision != afterRevision || report.activationGeneration != afterActivation ||
+                    report.busContentGeneration != busGeneration || report.publishedBusFingerprint != busFingerprint ||
+                    report.compileTargetProfileFingerprint != profileFingerprint ||
+                    !RememberPackHandle(packHandles, outputInit, report.initHandle)) return 1;
+                for (std::uint32_t i = 0; i < count; ++i) {
+                    if (outputs[i].packStableId != expected[i].packStableId || outputs[i].flags != expected[i].flags ||
+                        !RememberPackHandle(packHandles, expected[i].handle, outputs[i].handle)) return 1;
+                }
+            }
+        }
+        if ((result != VN_OK && engine.packComposition.PublishedHandle() != before) ||
+            !CheckPackPublication(engine, blobs, afterRevision, afterActivation, afterGeneration)) return 1;
+        break;
+    }
+    case harken::kTraceCallUnloadCanonicalPackSet:
+    case harken::kTraceCallUnloadCompanionPack: {
+        const auto vintage = r.U32();
+        const auto handle = RemapPackHandle(packHandles, r.U64());
+        VnCanonicalPackSetUnloadDescV1 desc{};
+        desc.structSize = sizeof(desc);
+        desc.expectedInitHandle = handle;
+        const bool wholeSet = callId == harken::kTraceCallUnloadCanonicalPackSet;
+        std::uint32_t unloadFlags = 0;
+        if (wholeSet) {
+            desc.baseSetRevision = r.U64();
+            desc.unloadRevision = r.U64();
+        } else unloadFlags = r.U32();
+        const auto recordedResult = static_cast<VnResult>(static_cast<std::int32_t>(r.U32()));
+        const auto priorRevision = r.U64();
+        const auto afterRevision = r.U64();
+        if (r.failed || r.Remaining() != 0 || vintage != 1 ||
+            priorRevision != PackSetRevision(engine) ||
+            (unloadFlags & ~VN_PACK_UNLOAD_REFUSE_IF_USED) != 0) return 1;
+        const auto before = engine.packComposition.PublishedHandle();
+        if (harken::IsTransientPackTraceRefusal(recordedResult)) result = recordedResult;
+        else result = wholeSet ? Vn_UnloadCanonicalPackSetV1(&desc) : Vn_UnloadPackEx(handle, unloadFlags);
+        if (result != recordedResult || afterRevision != PackSetRevision(engine) ||
+            (result != VN_OK && engine.packComposition.PublishedHandle() != before)) return 1;
         break;
     }
     case harken::kTraceCallActivateCanonicalPackSet: {
@@ -3512,6 +3736,22 @@ int RunTraceReplay(int argc, char** argv) {
             break;
         }
         switch (recordType) {
+        case harken::kTraceRecordPackBytes: {
+            const auto id = rec.U64();
+            const auto hash = rec.U64();
+            const auto count = rec.U64();
+            if (rec.failed || id != blobs.packs.size() + 1 || count == 0 || count != rec.Remaining()) {
+                exitCode = 1;
+                break;
+            }
+            const auto* bytes = rec.Bytes(static_cast<std::size_t>(count));
+            if (rec.failed || harken::Fnv1a64(bytes, static_cast<std::size_t>(count)) != hash) {
+                exitCode = 1;
+                break;
+            }
+            blobs.packs.push_back({sizeof(VnPackByteSpan), 0, bytes, count});
+            break;
+        }
         case harken::kTraceRecordApiCall: {
             const std::uint16_t callId = rec.U16();
             const std::uint16_t reserved = rec.U16();

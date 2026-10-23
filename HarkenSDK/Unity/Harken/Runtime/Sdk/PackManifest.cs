@@ -343,7 +343,8 @@ namespace Harken
                         !original.Dependencies.SequenceEqual(pack.Dependencies)) return false;
                     if (pack.PackStableId == initId)
                     {
-                        if (pack.Path != selectedLanguage + "/" + original.Path) return false;
+                        if (pack.Path != original.Path && pack.Path != selectedLanguage + "/" + original.Path) return false;
+                        if (pack.Path == original.Path && pack.ContentHash != original.ContentHash) return false;
                     }
                     else if (pack.Path != original.Path || pack.ContentHash != original.ContentHash ||
                         pack.VariantKey != original.VariantKey) return false;

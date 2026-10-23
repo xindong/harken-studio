@@ -13,7 +13,6 @@
 #include <harken/Harken.h>
 
 #include "Common/TestUtil.h"
-#include "PlayableStorageTestSupport.h"
 #include "harken/param/EffectParamLocator.h"
 #include "harken/render/BuiltinEffects.h"
 
@@ -37,11 +36,6 @@ constexpr float kDc = 0.5f;
 constexpr VnVariableId kVar = harkentest::ObjectId(7);
 constexpr std::uint32_t kSlot = 0;
 
-class EffectParamBindingE2E : public testing::Test {
-    // Effect and binding capacity drills use Raw Voice entries.
-    harkentest::PlayableCapacityScope playableCapacity_{8, 1};
-};
-
 void InstallBindingVariable(harken::Engine* engine) {
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
               harkentest::InstallSmoothDefinitions(
@@ -50,8 +44,6 @@ void InstallBindingVariable(harken::Engine* engine) {
 
 VnConfig EffectBindConfig() {
     VnConfig config = harkentest::MakeNullConfig(0, kBlock, kRate);
-    config.maxTriggerDepth = 1;
-    config.maxActionFirings = 8;
     config.fxSlotsPerVoice = 1;
     config.fxSlotsPerBus = 1;
     config.delayEffectPoolCapacity = 4;
@@ -256,7 +248,7 @@ void InstallTwoGainRecipe(harken::Engine* engine, VnSoundId playable,
 }
 
 
-TEST_F(EffectParamBindingE2E,
+TEST(EffectParamBindingE2E,
      VoiceRecipeGainAndBindingAreCorrectOnFirstAudibleBlock) {
     EngineSession session(EffectBindConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -436,20 +428,20 @@ static void CheckOrderedRecipeFirstPcm(std::uint32_t type, bool refuseArena) {
         EXPECT_FALSE(engine.variables.HasNativePublicationHold(harkentest::RenderHandle(&engine, handle)));
 }
 
-TEST_F(EffectParamBindingE2E, OrderedRecipeGainKeepsOwnFirstPcmThenFollowsLatestValue) {
+TEST(EffectParamBindingE2E, OrderedRecipeGainKeepsOwnFirstPcmThenFollowsLatestValue) {
     CheckOrderedRecipeFirstPcm(VN_EFFECT_GAIN, false);
 }
 
-TEST_F(EffectParamBindingE2E, OrderedRecipeToneKeepsCompleteInitialTupleThroughArenaRefusal) {
+TEST(EffectParamBindingE2E, OrderedRecipeToneKeepsCompleteInitialTupleThroughArenaRefusal) {
     CheckOrderedRecipeFirstPcm(VN_EFFECT_THREE_BAND_TONE, true);
 }
 
-TEST_F(EffectParamBindingE2E, OrderedRecipeCompressorKeepsCompleteInitialTupleThroughArenaRefusal) {
+TEST(EffectParamBindingE2E, OrderedRecipeCompressorKeepsCompleteInitialTupleThroughArenaRefusal) {
     CheckOrderedRecipeFirstPcm(VN_EFFECT_COMPRESSOR, true);
 }
 
 
-TEST_F(EffectParamBindingE2E,
+TEST(EffectParamBindingE2E,
      ParkReturnRecipeGainAndBindingAreCorrectOnFirstReturnedBlock) {
     VnConfig config = EffectBindConfig();
     config.maxVoices = 2;
@@ -513,7 +505,7 @@ TEST_F(EffectParamBindingE2E,
     EXPECT_NEAR(expected, SteadyLevel(returned), 2e-3f);
 }
 
-TEST_F(EffectParamBindingE2E, LoadedVoiceRecipePinsReferencedBinding) {
+TEST(EffectParamBindingE2E, LoadedVoiceRecipePinsReferencedBinding) {
     EngineSession session(EffectBindConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const VnBindingDesc binding = EffectParamBinding(
@@ -524,7 +516,7 @@ TEST_F(EffectParamBindingE2E, LoadedVoiceRecipePinsReferencedBinding) {
     EXPECT_EQ(VN_IN_USE, Vn_UnregisterBinding(harkentest::ObjectId(2)));
 }
 
-TEST_F(EffectParamBindingE2E, VoiceRecipeSeedFailureLeavesNoVoiceOrEffect) {
+TEST(EffectParamBindingE2E, VoiceRecipeSeedFailureLeavesNoVoiceOrEffect) {
     EngineSession session(EffectBindConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -549,7 +541,7 @@ TEST_F(EffectParamBindingE2E, VoiceRecipeSeedFailureLeavesNoVoiceOrEffect) {
     engine->effectParamTargets.SetSeedFailureForTests(false);
 }
 
-TEST_F(EffectParamBindingE2E, VoiceRecipePoolExhaustionIsAtomic) {
+TEST(EffectParamBindingE2E, VoiceRecipePoolExhaustionIsAtomic) {
     VnConfig config = EffectBindConfig();
     config.maxVoices = 2;
     config.gainEffectPoolCapacity = 1;
@@ -577,7 +569,7 @@ TEST_F(EffectParamBindingE2E, VoiceRecipePoolExhaustionIsAtomic) {
     EXPECT_EQ(1u, engine->effectBank.InUseOf(VN_EFFECT_GAIN));
 }
 
-TEST_F(EffectParamBindingE2E,
+TEST(EffectParamBindingE2E,
      VoiceRecipePartialPoolExhaustionDoesNotRaiseHighWater) {
     // Two gain instances, one already held, so a two-gain recipe is short by
     // exactly one: one free, two demanded. The pure-count precheck must refuse
@@ -625,7 +617,7 @@ TEST_F(EffectParamBindingE2E,
     EXPECT_EQ(highWaterBefore, engine->effectBank.HighWaterOf(VN_EFFECT_GAIN));
 }
 
-TEST_F(EffectParamBindingE2E, VoiceRecipeBackpressureRecyclesStaging) {
+TEST(EffectParamBindingE2E, VoiceRecipeBackpressureRecyclesStaging) {
     VnConfig config = EffectBindConfig();
     config.commandQueueDepth = 2;
     EngineSession session(config);
@@ -666,7 +658,7 @@ VnVoiceHandle PlayActiveSine(EngineSession& session, VnSoundId id,
 
 // --- voice gainDb analytic ---
 
-TEST_F(EffectParamBindingE2E, VoiceGainBindingComposesBasePlusContribution) {
+TEST(EffectParamBindingE2E, VoiceGainBindingComposesBasePlusContribution) {
     EngineSession session(EffectBindConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     VnVoiceHandle handle = PlayActiveDc(session, harkentest::ObjectId(1));
@@ -699,7 +691,7 @@ TEST_F(EffectParamBindingE2E, VoiceGainBindingComposesBasePlusContribution) {
 
 // --- detach returns to base (explicit clear) ---
 
-TEST_F(EffectParamBindingE2E, VoiceDetachReturnsToBase) {
+TEST(EffectParamBindingE2E, VoiceDetachReturnsToBase) {
     EngineSession session(EffectBindConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     VnVoiceHandle handle = PlayActiveDc(session, harkentest::ObjectId(1));
@@ -729,7 +721,7 @@ TEST_F(EffectParamBindingE2E, VoiceDetachReturnsToBase) {
 
 // --- bound vs unbound direct set: interpose defers, unbound emits directly ---
 
-TEST_F(EffectParamBindingE2E, BoundDirectSetComposesOnNewBaseNoDoubleEmit) {
+TEST(EffectParamBindingE2E, BoundDirectSetComposesOnNewBaseNoDoubleEmit) {
     EngineSession session(EffectBindConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     VnVoiceHandle handle = PlayActiveDc(session, harkentest::ObjectId(1));
@@ -766,7 +758,7 @@ TEST_F(EffectParamBindingE2E, BoundDirectSetComposesOnNewBaseNoDoubleEmit) {
     EXPECT_NEAR(kDc * std::pow(10.0f, 3.0f / 20.0f), SteadyLevel(out), 3e-3f);
 }
 
-TEST_F(EffectParamBindingE2E, UnboundDirectSetIsUnaffectedByTheStore) {
+TEST(EffectParamBindingE2E, UnboundDirectSetIsUnaffectedByTheStore) {
     EngineSession session(EffectBindConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     VnVoiceHandle handle = PlayActiveDc(session, harkentest::ObjectId(1));
@@ -784,7 +776,7 @@ TEST_F(EffectParamBindingE2E, UnboundDirectSetIsUnaffectedByTheStore) {
 
 // --- install-only base composition (desc value is the base, never directly set) ---
 
-TEST_F(EffectParamBindingE2E, InstallOnlyBaseComposesUnderMultiply) {
+TEST(EffectParamBindingE2E, InstallOnlyBaseComposesUnderMultiply) {
     EngineSession session(EffectBindConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     VnVoiceHandle handle = PlayActiveDc(session, harkentest::ObjectId(2));
@@ -815,7 +807,7 @@ TEST_F(EffectParamBindingE2E, InstallOnlyBaseComposesUnderMultiply) {
     EXPECT_GT(std::fabs(SteadyLevel(out) - unfolded), 0.1f);
 }
 
-TEST_F(EffectParamBindingE2E,
+TEST(EffectParamBindingE2E,
      CompressorRatioBindingUsesEffectOwnedTransitionAndLocalTarget) {
     EngineSession session(EffectBindConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -847,7 +839,7 @@ TEST_F(EffectParamBindingE2E,
     EXPECT_LT(SteadyLevel(out), kDc - 0.05f);
 }
 
-TEST_F(EffectParamBindingE2E,
+TEST(EffectParamBindingE2E,
      VoiceRecipeInstallsCompressorBeforeTheFirstAudibleBlock) {
     EngineSession session(EffectBindConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -876,7 +868,7 @@ TEST_F(EffectParamBindingE2E,
 
 // --- bus scope: rendered composition + detach ---
 
-TEST_F(EffectParamBindingE2E, BusGainBindingComposesAndDetaches) {
+TEST(EffectParamBindingE2E, BusGainBindingComposesAndDetaches) {
     EngineSession session(EffectBindConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     // A DC voice routes to the master bus by default; the bus gain effect scales
@@ -916,7 +908,7 @@ TEST_F(EffectParamBindingE2E, BusGainBindingComposesAndDetaches) {
 
 // --- bus attach enforces CanBind: empty slot / type mismatch refused ---
 
-TEST_F(EffectParamBindingE2E, BusAttachRefusesUnbindableSlotThenAcceptsMatch) {
+TEST(EffectParamBindingE2E, BusAttachRefusesUnbindableSlotThenAcceptsMatch) {
     EngineSession session(EffectBindConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     // A bus-effect binding whose locator names slot 0 with a GAIN parameter.
@@ -958,7 +950,7 @@ TEST_F(EffectParamBindingE2E, BusAttachRefusesUnbindableSlotThenAcceptsMatch) {
 
 // --- tone peakGain AddDb smoke: a bound peak boost changes the render ---
 
-TEST_F(EffectParamBindingE2E, TonePeakGainBindingChangesRender) {
+TEST(EffectParamBindingE2E, TonePeakGainBindingChangesRender) {
     EngineSession session(EffectBindConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     VnVoiceHandle handle = PlayActiveSine(session, harkentest::ObjectId(6), /*freqHz=*/1000.0);
@@ -995,7 +987,7 @@ TEST_F(EffectParamBindingE2E, TonePeakGainBindingChangesRender) {
 
 // --- live-path attach/apply eligibility (empty slot / wrong type / slot range) ---
 
-TEST_F(EffectParamBindingE2E, ApplyRefusesUnbindableOnLivePath) {
+TEST(EffectParamBindingE2E, ApplyRefusesUnbindableOnLivePath) {
     EngineSession session(EffectBindConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     VnVoiceHandle handle = PlayActiveDc(session, harkentest::ObjectId(7));
@@ -1023,7 +1015,7 @@ TEST_F(EffectParamBindingE2E, ApplyRefusesUnbindableOnLivePath) {
 
 // --- unregister protection covers voice-effect instances ---
 
-TEST_F(EffectParamBindingE2E, UnregisterRefusedWhileVoiceEffectApplied) {
+TEST(EffectParamBindingE2E, UnregisterRefusedWhileVoiceEffectApplied) {
     EngineSession session(EffectBindConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     VnVoiceHandle handle = PlayActiveDc(session, harkentest::ObjectId(8));
@@ -1044,7 +1036,7 @@ TEST_F(EffectParamBindingE2E, UnregisterRefusedWhileVoiceEffectApplied) {
 
 // --- in-place type replace: stale binding does not interpose the direct set ---
 
-TEST_F(EffectParamBindingE2E, TypeReplaceMakesDirectSetTakeUnboundPath) {
+TEST(EffectParamBindingE2E, TypeReplaceMakesDirectSetTakeUnboundPath) {
     EngineSession session(EffectBindConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     VnVoiceHandle handle = PlayActiveSine(session, harkentest::ObjectId(9), /*freqHz=*/1000.0);
@@ -1075,7 +1067,7 @@ TEST_F(EffectParamBindingE2E, TypeReplaceMakesDirectSetTakeUnboundPath) {
     EXPECT_GT(PeakLevel(after), PeakLevel(before) * 1.05f);
 }
 
-TEST_F(EffectParamBindingE2E, BusTypeReplaceMakesDirectSetTakeUnboundPath) {
+TEST(EffectParamBindingE2E, BusTypeReplaceMakesDirectSetTakeUnboundPath) {
     EngineSession session(EffectBindConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -1149,7 +1141,7 @@ TEST_F(EffectParamBindingE2E, BusTypeReplaceMakesDirectSetTakeUnboundPath) {
 
 // --- no store/instance leak across natural voice-end cycles ---
 
-TEST_F(EffectParamBindingE2E, VoiceEndCyclesDoNotLeakStoreOrInstances) {
+TEST(EffectParamBindingE2E, VoiceEndCyclesDoNotLeakStoreOrInstances) {
     // Small instance + effect pools so a leak exhausts fast: if a naturally
     // ended voice's voice-effect instance or effect instance is NOT reclaimed
     // on the delivered-terminal path, a later cycle's apply/install refuses.
@@ -1190,7 +1182,7 @@ TEST_F(EffectParamBindingE2E, VoiceEndCyclesDoNotLeakStoreOrInstances) {
 
 // --- deferred-start voice seeds the store and composes ---
 
-TEST_F(EffectParamBindingE2E, DeferredStartVoiceSeedsAndComposes) {
+TEST(EffectParamBindingE2E, DeferredStartVoiceSeedsAndComposes) {
     // Steal setup (per StealTest): a one-voice pool, a second play steals the
     // first and its own start is DEFERRED to the next update.
     VnConfig config = EffectBindConfig();
@@ -1249,7 +1241,7 @@ TEST_F(EffectParamBindingE2E, DeferredStartVoiceSeedsAndComposes) {
 
 // --- park -> return keeps the effect-parameter binding driving ---
 
-TEST_F(EffectParamBindingE2E, ParkedBoundVoiceReturnsAndBindingStillDrives) {
+TEST(EffectParamBindingE2E, ParkedBoundVoiceReturnsAndBindingStillDrives) {
     // Audibility-park setup (per ParkTest): a 3D voice on a distance profile,
     // parked by moving the listener far and returned by moving it near.
     VnConfig config = EffectBindConfig();
@@ -1336,7 +1328,7 @@ TEST_F(EffectParamBindingE2E, ParkedBoundVoiceReturnsAndBindingStillDrives) {
 
 // --- park reservation: a parked voice's binding slot stays booked ---
 
-TEST_F(EffectParamBindingE2E, ParkedVoiceEffectBindingReservationRefusesNewApply) {
+TEST(EffectParamBindingE2E, ParkedVoiceEffectBindingReservationRefusesNewApply) {
     // Instance pool of exactly one: voice A applies the only slot then parks, so
     // the slot must stay RESERVED while parked. A second live voice's apply must
     // then be refused for want of capacity, and A's binding must still drive
@@ -1417,7 +1409,7 @@ TEST_F(EffectParamBindingE2E, ParkedVoiceEffectBindingReservationRefusesNewApply
     EXPECT_GT(SteadyStereoLevel(high), SteadyStereoLevel(low) * 1.05f);
 }
 
-TEST_F(EffectParamBindingE2E,
+TEST(EffectParamBindingE2E,
      ParkedOneShotNaturalEndReleasesBindingReservation) {
     VnConfig config = EffectBindConfig();
     config.maxVoices = 2;
@@ -1486,7 +1478,7 @@ TEST_F(EffectParamBindingE2E,
 
 // --- multi-binding park: ALL bindings survive the round trip ---
 
-TEST_F(EffectParamBindingE2E, MultiBindingParkedVoiceReturnsWithAllBindingsIntact) {
+TEST(EffectParamBindingE2E, MultiBindingParkedVoiceReturnsWithAllBindingsIntact) {
     VnConfig config = EffectBindConfig();
     config.maxVoices = 2;
     config.maxParkedVoices = 1;
@@ -1562,7 +1554,7 @@ TEST_F(EffectParamBindingE2E, MultiBindingParkedVoiceReturnsWithAllBindingsIntac
 
 // --- parked reservation is a live reference: unregister refused ---
 
-TEST_F(EffectParamBindingE2E, ParkedVoiceEffectBindingRefusesUnregisterThenReturns) {
+TEST(EffectParamBindingE2E, ParkedVoiceEffectBindingRefusesUnregisterThenReturns) {
     VnConfig config = EffectBindConfig();
     config.maxVoices = 2;
     config.maxParkedVoices = 1;
@@ -1635,7 +1627,7 @@ TEST_F(EffectParamBindingE2E, ParkedVoiceEffectBindingRefusesUnregisterThenRetur
 
 // --- freq (AddLogHz) binding composes and reaches the kernel ---
 
-TEST_F(EffectParamBindingE2E, VoiceFreqBindingRetunesPeakAndEmits) {
+TEST(EffectParamBindingE2E, VoiceFreqBindingRetunesPeakAndEmits) {
     // A behavioral witness that a composed frequency reaches the audio thread
     // (never suppressed): a +12 dB peak based at 500 Hz is retuned by an AddLogHz
     // binding onto a 1 kHz sine, so the sine's level rises only if the composed
@@ -1677,7 +1669,7 @@ TEST_F(EffectParamBindingE2E, VoiceFreqBindingRetunesPeakAndEmits) {
 
 // --- refusal battery ---
 
-TEST_F(EffectParamBindingE2E, RefusalBattery) {
+TEST(EffectParamBindingE2E, RefusalBattery) {
     EngineSession session(EffectBindConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
 

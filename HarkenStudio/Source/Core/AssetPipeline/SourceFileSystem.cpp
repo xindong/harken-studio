@@ -12,8 +12,9 @@
 #include "../LanguageContextService.h"
 #include "../PlatformContextService.h"
 #include "../SoundSourceEditing.h"
-#include "../ToastManager.h"
 #include "../UndoCommands.h"
+#include "../../Widgets/LogPanel/LogPanel.h"
+#include "Utils/FileOperationRetry.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -22,6 +23,7 @@
 #include <QTemporaryDir>
 #include <QUuid>
 #include <QDebug>
+#include <QScopeGuard>
 
 #include <algorithm>
 
@@ -46,6 +48,7 @@ struct Change {
 };
 
 QList<Change> pendingChanges;
+QList<Change> discardRollbackChanges;
 
 enum class ApplyMode { Record, Transient, Discard };
 
@@ -96,20 +99,17 @@ bool applyFileChange(const Change& change, QString* error)
     if (from.isEmpty() || to.isEmpty())
         return fail(error, QObject::tr("The source path must stay inside AudioSources."));
 
-    bool ok = false;
-    if (change.after) {
-        if (change.after->file.isEmpty()) {
-            ok = !QFileInfo::exists(to) || QFile::remove(to);
-        } else {
-            ok = copyFile(change.after->file, to);
-        }
-    } else if (change.from.isEmpty()) {
-        ok = QDir().mkdir(to);
-    } else if (change.to.isEmpty()) {
-        ok = QDir().rmdir(from);
-    } else {
-        ok = QDir().rename(from, to);
-    }
+    if (change.after && !change.after->file.isEmpty())
+        return copyFile(change.after->file, to, error);
+    const bool ok = retryFileOperation([&] {
+        if (change.after)
+            return !QFileInfo::exists(to) || QFile::remove(to);
+        if (change.from.isEmpty())
+            return QDir().mkdir(to);
+        if (change.to.isEmpty())
+            return QDir().rmdir(from);
+        return QDir().rename(from, to);
+    });
     if (!ok)
         return fail(error, QObject::tr("Could not update '%1'. Check for a name conflict or a file in use.")
             .arg(change.from.isEmpty() ? change.to : change.from));
@@ -177,7 +177,11 @@ bool validateSourcePaths(const QList<Change>& changes, QString* error)
 
 bool applyBatch(const QList<Change>& changes, ApplyMode mode, QString* error, bool* rollbackFailed = nullptr)
 {
+    if (mode != ApplyMode::Discard && !recoverDiscard(error)) return false;
     if (mode != ApplyMode::Discard && !validateSourcePaths(changes, error)) return false;
+    auto& mediaPool = MediaPool::instance();
+    mediaPool.beginSourceFileChange();
+    const auto resumeReaders = qScopeGuard([&] { mediaPool.endSourceFileChange(); });
     QList<Change> steps;
     for (const Change& change : changes) {
         if (change.from != change.to && pathKey(change.from) == pathKey(change.to)) {
@@ -194,17 +198,20 @@ bool applyBatch(const QList<Change>& changes, ApplyMode mode, QString* error, bo
     for (const Change& step : steps) {
         QString failure;
         if (!applyFileChange(step, &failure)) {
-            QList<Change> remaining;
+            QList<Change> remaining = applied;
             QStringList rollbackErrors;
             for (auto it = applied.crbegin(); it != applied.crend(); ++it) {
                 QString rollbackError;
                 if (!applyFileChange(it->reversed(), &rollbackError)) {
-                    remaining.prepend(*it);
                     rollbackErrors.append(rollbackError);
+                    break;
                 }
+                remaining.removeLast();
             }
             if (!remaining.isEmpty()) {
-                if (mode != ApplyMode::Discard)
+                if (mode == ApplyMode::Discard)
+                    discardRollbackChanges = remaining;
+                else
                     publishChanges(remaining, mode == ApplyMode::Record);
                 if (rollbackFailed)
                     *rollbackFailed = true;
@@ -242,8 +249,7 @@ private:
         if (applyBatch(changes, ApplyMode::Record, &error, &rollbackFailed))
             return true;
         setObsolete(rollbackFailed);
-        qWarning().noquote() << error;
-        ToastManager::instance().showToast(error, 5000, ToastType::Error);
+        LogPanel::logError(LogCategory::File, error);
         return false;
     }
 
@@ -260,9 +266,13 @@ private:
     bool apply(bool redo) override
     {
         auto& registry = AssetRegistry::instance();
+        QString error;
+        if (!recoverDiscard(&error)) {
+            LogPanel::logError(LogCategory::File, error);
+            return false;
+        }
         if (redo && !removed_) return true;
         if (!redo && !registry.isUncommitted(asset_.sourceID)) return true;
-        QString error;
         if (redo && (registry.contains(asset_.sourceID)
             || registry.findAssetByPath(asset_.absolutePath) || QFileInfo::exists(asset_.absolutePath))) {
             error = QObject::tr("Cannot restore '%1': the source ID or path is already in use.")
@@ -296,8 +306,7 @@ private:
             }
             setObsolete(rollbackFailed);
         }
-        qWarning().noquote() << error;
-        ToastManager::instance().showToast(error, 5000, ToastType::Error);
+        LogPanel::logError(LogCategory::File, error);
         return false;
     }
 
@@ -337,6 +346,10 @@ private:
         auto& registry = AssetRegistry::instance();
         auto& manager = ProjectManager::instance();
         QString error;
+        if (!recoverDiscard(&error)) {
+            LogPanel::logError(LogCategory::File, error);
+            return false;
+        }
         const auto* source = registry.getAsset(source_.sourceID);
         const auto* missing = registry.getAsset(missing_.sourceID);
         const QString from = redo ? source_.relativePath : missing_.relativePath;
@@ -375,8 +388,7 @@ private:
             }
             setObsolete(rollbackFailed);
         }
-        qWarning().noquote() << error;
-        ToastManager::instance().showToast(error, 5000, ToastType::Error);
+        LogPanel::logError(LogCategory::File, error);
         return false;
     }
 
@@ -455,6 +467,7 @@ bool validName(const QString& name)
 
 bool createFolder(const QString& parentPath, const QString& name, QString* error, QString* createdName)
 {
+    if (!recoverDiscard(error)) return false;
     if (!validName(name))
         return fail(error, QObject::tr("Enter a valid folder name."));
     const QString prefix = parentPath.isEmpty() ? QString() : parentPath + QLatin1Char('/');
@@ -488,6 +501,7 @@ bool validateRename(const QString& path, const QString& name, QString* error)
 
 bool rename(const QString& path, const QString& name, QString* error, QString* renamedName)
 {
+    if (!recoverDiscard(error)) return false;
     if (!validateRename(path, name, error)) return false;
     const int slash = path.lastIndexOf(QLatin1Char('/'));
     const QString prefix = slash < 0 ? QString() : path.left(slash + 1);
@@ -510,6 +524,7 @@ bool rename(const QString& path, const QString& name, QString* error, QString* r
 
 bool restoreByRename(uint32_t sourceID, uint32_t missingID, QString* error)
 {
+    if (!recoverDiscard(error)) return false;
     auto& registry = AssetRegistry::instance();
     const auto* source = registry.getAsset(sourceID);
     const auto* missing = registry.getAsset(missingID);
@@ -568,11 +583,13 @@ bool canMove(const QStringList& paths, const QString& parentPath)
 
 bool move(const QStringList& paths, const QString& parentPath, QString* error)
 {
+    if (!recoverDiscard(error)) return false;
     return push(planMove(paths, parentPath, error), QObject::tr("Move sources"), error);
 }
 
 bool removeEmptyFolder(const QString& path, QString* error)
 {
+    if (!recoverDiscard(error)) return false;
     const QString absolute = absolutePath(path);
     if (path.isEmpty() || absolute.isEmpty() || !QFileInfo(absolute).isDir() || !QDir(absolute).isEmpty())
         return fail(error, QObject::tr("Only empty source folders can be deleted."));
@@ -582,8 +599,12 @@ bool removeEmptyFolder(const QString& path, QString* error)
 std::unique_ptr<TransactionalUndoCommand> replaceFiles(
     const QMap<QString, QString>& replacements, QString* error)
 {
+    if (!recoverDiscard(error)) return {};
     if (replacements.isEmpty())
         return {};
+    auto& mediaPool = MediaPool::instance();
+    mediaPool.beginSourceFileChange();
+    const auto resumeReaders = qScopeGuard([&] { mediaPool.endSourceFileChange(); });
     const auto storage = std::make_shared<QTemporaryDir>(
         QDir(PathUtils::getDotCacheDir(AssetRegistry::instance().projectRoot()))
             .filePath(QStringLiteral("source-import-XXXXXX")));
@@ -610,8 +631,10 @@ std::unique_ptr<TransactionalUndoCommand> replaceFiles(
         const auto capture = [&](const QString& source, const QString& name,
                                  FileRevision& revision) {
             revision.file = storage->filePath(name + QLatin1Char('.') + QFileInfo(source).suffix());
-            if (!QFile::copy(source, revision.file))
-                return fail(error, QObject::tr("Could not prepare '%1' for replacement.").arg(source));
+            QFile input(source);
+            if (!input.copy(revision.file))
+                return fail(error, QObject::tr("Could not prepare '%1' for replacement: %2 (file error %3).")
+                    .arg(source, input.errorString()).arg(static_cast<int>(input.error())));
             revision.metadata = importer.analyzeFile(revision.file);
             revision.hash = AssetImporter::computeContentHash(revision.file);
             return !revision.hash.isEmpty()
@@ -642,6 +665,7 @@ std::unique_ptr<TransactionalUndoCommand> replaceFiles(
 std::unique_ptr<TransactionalUndoCommand> registerImport(
     const AssetInfo& asset, bool copiedFile, QString* error)
 {
+    if (!recoverDiscard(error)) return {};
     QList<Change> changes;
     if (copiedFile) {
         const QString cache = PathUtils::getDotCacheDir(AssetRegistry::instance().projectRoot());
@@ -694,22 +718,35 @@ bool replayFiles(const QList<std::shared_ptr<TransactionalUndoCommand>>& command
     return true;
 }
 
-bool copyFile(const QString& source, const QString& destination)
+bool copyFile(const QString& source, const QString& destination, QString* error)
 {
-    QFile input(source);
-    QSaveFile output(destination);
-    if (!input.open(QIODevice::ReadOnly)
-        || !QDir().mkpath(QFileInfo(destination).absolutePath())
-        || !output.open(QIODevice::WriteOnly))
+    if (!QDir().mkpath(QFileInfo(destination).absolutePath()))
+        return fail(error, QObject::tr("Could not create the destination folder for '%1'.").arg(destination));
+    QString failure;
+    const auto fileError = [&](const QFileDevice& file) {
+        failure = QObject::tr("Could not copy '%1' to '%2': %3 (file error %4).")
+            .arg(source, destination, file.errorString()).arg(static_cast<int>(file.error()));
         return false;
-    QByteArray buffer(1024 * 1024, Qt::Uninitialized);
-    qint64 count = 0;
-    while ((count = input.read(buffer.data(), buffer.size())) > 0) {
-        if (output.write(buffer.constData(), count) != count)
-            return false;
-    }
-    input.close();
-    return count == 0 && output.commit();
+    };
+    const bool copied = retryFileOperation([&] {
+        QFile input(source);
+        QSaveFile output(destination);
+        if (!input.open(QIODevice::ReadOnly))
+            return fileError(input);
+        if (!output.open(QIODevice::WriteOnly))
+            return fileError(output);
+        QByteArray buffer(1024 * 1024, Qt::Uninitialized);
+        qint64 count = 0;
+        while ((count = input.read(buffer.data(), buffer.size())) > 0) {
+            if (output.write(buffer.constData(), count) != count)
+                return fileError(output);
+        }
+        if (count < 0)
+            return fileError(input);
+        input.close();
+        return output.commit() || fileError(output);
+    });
+    return copied || fail(error, failure);
 }
 
 void commitChanges()
@@ -717,14 +754,59 @@ void commitChanges()
     pendingChanges.clear();
 }
 
-void discardChanges()
+bool recoverDiscard(QString* error)
 {
-    for (auto it = pendingChanges.crbegin(); it != pendingChanges.crend(); ++it) {
-        QString error;
-        if (!applyBatch({it->reversed()}, ApplyMode::Discard, &error))
-            qWarning().noquote() << error;
+    if (discardRollbackChanges.isEmpty())
+        return true;
+    auto& mediaPool = MediaPool::instance();
+    mediaPool.beginSourceFileChange();
+    const auto resumeReaders = qScopeGuard([&] { mediaPool.endSourceFileChange(); });
+    while (!discardRollbackChanges.isEmpty()) {
+        if (!applyFileChange(discardRollbackChanges.last().reversed(), error))
+            return false;
+        discardRollbackChanges.removeLast();
     }
+    return true;
+}
+
+bool discardChanges(QString* error, bool* rollbackFailed)
+{
+    if (rollbackFailed)
+        *rollbackFailed = false;
+    if (!recoverDiscard(error))
+        return false;
+    auto& mediaPool = MediaPool::instance();
+    mediaPool.beginSourceFileChange();
+    const auto resumeReaders = qScopeGuard([&] { mediaPool.endSourceFileChange(); });
+    QList<Change> changes;
+    std::shared_ptr<QTemporaryDir> storage;
+    auto& registry = AssetRegistry::instance();
+    for (const auto& asset : registry.snapshot()) {
+        if (!registry.isUncommitted(asset.sourceID) || !QFileInfo::exists(asset.absolutePath))
+            continue;
+        if (!storage) {
+            storage = std::make_shared<QTemporaryDir>(
+                QDir(PathUtils::getDotCacheDir(registry.projectRoot()))
+                    .filePath(QStringLiteral("source-discard-XXXXXX")));
+            if (!storage->isValid())
+                return fail(error, QObject::tr("Could not keep the imported audio files while closing the project."));
+        }
+        auto before = std::make_shared<FileRevision>();
+        before->storage = storage;
+        before->file = storage->filePath(QString::number(asset.sourceID));
+        before->metadata = asset.metadata;
+        before->hash = asset.contentHash;
+        if (!copyFile(asset.absolutePath, before->file, error))
+            return false;
+        changes.append({asset.relativePath, asset.relativePath, false,
+            before, std::make_shared<FileRevision>()});
+    }
+    for (auto it = pendingChanges.crbegin(); it != pendingChanges.crend(); ++it)
+        changes.append(it->reversed());
+    if (!applyBatch(changes, ApplyMode::Discard, error, rollbackFailed))
+        return false;
     pendingChanges.clear();
+    return true;
 }
 
 }

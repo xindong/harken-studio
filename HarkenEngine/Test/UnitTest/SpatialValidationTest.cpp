@@ -43,9 +43,16 @@ TEST(SpatialValidation,
     EXPECT_FALSE(token.IsPrepared());
     EXPECT_EQ(0u, spatial.ProfileCount());
 
+    spatial.SetProfileCommitPageLimitForTests(0);
+    EXPECT_EQ(VN_BACKPRESSURE,
+              spatial.PrepareRegisterProfile(harkentest::ObjectId(17), &desc, 0, &token));
+    EXPECT_FALSE(token.IsPrepared());
+    EXPECT_EQ(0u, spatial.ProfileCount());
+    spatial.SetProfileCommitPageLimitForTests(SIZE_MAX);
     EXPECT_EQ(VN_OK,
               spatial.PrepareRegisterProfile(harkentest::ObjectId(17), &desc, 0, &token));
     ASSERT_TRUE(token.IsPrepared());
+    spatial.SetProfileCommitPageLimitForTests(0);
     EXPECT_EQ(0u, token.SlotIndex());
     spatial.CommitPreparedProfile(&token);
 

@@ -17,6 +17,7 @@
 #include <QFontMetrics>
 #include <QMouseEvent>
 #include <QThread>
+#include <QTimer>
 #include <QScopeGuard>
 #include <QtEndian>
 
@@ -144,7 +145,7 @@ TEST(MeterPanel, StereoPeaksRemainIndependentWhilePressingThePlot)
     }
 }
 
-TEST(MeterBridge, ServiceWindowIsSharedAndAuxiliaryUpdatesDoNotConsumePeaks)
+TEST(MeterBridge, DisplayWindowIsSharedAndAuxiliaryUpdatesDoNotConsumePeaks)
 {
     ensureApp();
     VNX::AudioEngine::instance().shutdown();
@@ -184,7 +185,6 @@ TEST(MeterBridge, ServiceWindowIsSharedAndAuxiliaryUpdatesDoNotConsumePeaks)
         EXPECT_NEAR(0.8f, left, 1e-5f);
         EXPECT_NEAR(0.2f, right, 1e-5f);
     }
-    // Getter calls leave the next window intact until the service pass.
     session->pumpNullMixer(1);
     float left = 0.0f, right = 0.0f;
     session->masterMeterPeak(left, right);
@@ -197,8 +197,8 @@ TEST(MeterBridge, ServiceWindowIsSharedAndAuxiliaryUpdatesDoNotConsumePeaks)
     session->update();
     session->publishMeterPeaks();
     ASSERT_TRUE(session->busMeterPeakById(busId, left, right));
-    EXPECT_FLOAT_EQ(0.0f, left);
-    EXPECT_FLOAT_EQ(0.0f, right);
+    EXPECT_NEAR(0.05f, left, 1e-5f);
+    EXPECT_NEAR(0.05f, right, 1e-5f);
     session->pumpNullMixer(1);
     session->stopAll(0);
     session->update();
@@ -208,7 +208,8 @@ TEST(MeterBridge, ServiceWindowIsSharedAndAuxiliaryUpdatesDoNotConsumePeaks)
     EXPECT_NEAR(0.05f, left, 1e-5f);
     session->publishMeterPeaks();
     session->masterMeterPeak(left, right);
-    EXPECT_FLOAT_EQ(0.0f, left);
+    EXPECT_NEAR(0.05f, left, 1e-5f);
+    EXPECT_NEAR(0.05f, right, 1e-5f);
     session->stopOutput();
     session->masterMeterPeak(left, right);
     EXPECT_FLOAT_EQ(0.0f, left);
@@ -232,6 +233,71 @@ TEST(MeterBridge, ServiceWindowIsSharedAndAuxiliaryUpdatesDoNotConsumePeaks)
     EXPECT_NEAR(0.02f, right, 1e-5f);
 }
 
+TEST(MeterPanel, DisplayPublicationsPreservePeaksAcrossServiceUpdatesAndSharedReaders)
+{
+    ensureApp();
+    auto& engine = VNX::AudioEngine::instance();
+    engine.shutdown();
+    const auto shutdown = qScopeGuard([&] { engine.shutdown(); });
+    HarkenEditor::Bridge::EngineSessionConfig config;
+    config.deviceMode = HarkenEditor::Bridge::EngineDeviceMode::Null;
+    config.sampleRate = 48000;
+    config.bufferSize = 128;
+    ASSERT_TRUE(engine.initialize(config));
+    ASSERT_FALSE(engine.isSimulationMode());
+    ASSERT_TRUE(engine.startOutput());
+    for (auto* timer : engine.findChildren<QTimer*>())
+        timer->stop();
+    VNX::MeterPanel first;
+    VNX::MeterPanel second;
+    first.show();
+    second.show();
+    for (auto* panel : {&first, &second}) {
+        for (auto* timer : panel->findChildren<QTimer*>())
+            timer->stop();
+    }
+    auto* runtime = harken::detail::ActiveEngine();
+    ASSERT_NE(nullptr, runtime);
+    std::vector<float> samples(128 * 8 * 2, 0.05f);
+    for (std::size_t frame = 0; frame < 128; ++frame) {
+        samples[2 * frame] = 0.8f;
+        samples[2 * frame + 1] = 0.2f;
+    }
+    const auto pcm = harkentest::InterleavedDesc(samples, 2, 48000);
+    const auto soundId = harkentest::ToRuntime(harkentest::StudioObjectId(8304));
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(soundId, &pcm));
+    auto play = harkentest::MakePlayDesc(soundId);
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    runtime->nullBackend.Pump(2);
+    for (int step = 0; step < 3; ++step) {
+        ASSERT_TRUE(QMetaObject::invokeMethod(&engine, "onRuntimeServiceTimer", Qt::DirectConnection));
+        runtime->nullBackend.Pump(1);
+    }
+    const auto expectLevels = [&](float left, float right) {
+        for (auto* panel : {&first, &second}) {
+            EXPECT_NEAR(left, panel->levelDb(0), 0.001f);
+            EXPECT_NEAR(right, panel->levelDb(1), 0.001f);
+        }
+    };
+    expectLevels(-96.0f, -96.0f);
+    ASSERT_TRUE(QMetaObject::invokeMethod(&engine, "onMeterTimer", Qt::DirectConnection));
+    expectLevels(20.0f * std::log10(0.8f), 20.0f * std::log10(0.2f));
+    for (int step = 0; step < 3; ++step) {
+        ASSERT_TRUE(QMetaObject::invokeMethod(&engine, "onRuntimeServiceTimer", Qt::DirectConnection));
+        ASSERT_TRUE(QMetaObject::invokeMethod(&engine, "onMeterTimer", Qt::DirectConnection));
+        expectLevels(20.0f * std::log10(0.8f), 20.0f * std::log10(0.2f));
+    }
+    runtime->nullBackend.Pump(1);
+    ASSERT_TRUE(QMetaObject::invokeMethod(&engine, "onMeterTimer", Qt::DirectConnection));
+    expectLevels(20.0f * std::log10(0.05f), 20.0f * std::log10(0.05f));
+    engine.stopAll(0.0f);
+    ASSERT_TRUE(QMetaObject::invokeMethod(&engine, "onRuntimeServiceTimer", Qt::DirectConnection));
+    runtime->nullBackend.Pump(2);
+    ASSERT_TRUE(QMetaObject::invokeMethod(&engine, "onMeterTimer", Qt::DirectConnection));
+    expectLevels(-96.0f, -96.0f);
+}
+
 TEST(MeterSource, CaptureChangesAndTapRetirementStayIsolatedToTheirConsumers)
 {
     VnConfig config{};
@@ -243,6 +309,8 @@ TEST(MeterSource, CaptureChangesAndTapRetirementStayIsolatedToTheirConsumers)
     ASSERT_EQ(Vn_CreateBus(harkentest::ToRuntime(bus), VN_BUS_MASTER), VN_OK);
     ASSERT_EQ(Vn_Update(), VN_OK);
     harken::detail::ActiveEngine()->nullBackend.Pump(1);
+    harken::monitor::StopDrainForTests();
+    const auto restartDrain = qScopeGuard([] { harken::monitor::StartDrainForTests(); });
     VNX::MeterSource first;
     VNX::MeterSource second;
     VNX::MeterSource otherBus;
@@ -272,16 +340,10 @@ TEST(MeterSource, CaptureChangesAndTapRetirementStayIsolatedToTheirConsumers)
         harken::monitor::DrainOnceForTests();
     };
     const auto receive = [](VNX::MeterSource& source, float expected) {
-        std::vector<HarkenEditor::Bridge::MeterMeasurementFrame> frames;
-        for (int attempt = 0; attempt < 100 && frames.empty(); ++attempt) {
-            auto update = source.poll();
-            EXPECT_FALSE(update.interrupted);
-            frames = std::move(update.frames);
-            if (frames.empty())
-                QThread::msleep(5);
-        }
-        ASSERT_FALSE(frames.empty());
-        for (const auto& frame : frames) {
+        const auto update = source.poll();
+        EXPECT_FALSE(update.interrupted);
+        ASSERT_FALSE(update.frames.empty());
+        for (const auto& frame : update.frames) {
             ASSERT_FALSE(frame.spectrumDb.empty());
             EXPECT_NEAR(*std::max_element(frame.spectrumDb.begin(), frame.spectrumDb.end()), expected, 0.1f);
         }
@@ -319,11 +381,8 @@ TEST(MeterSource, CaptureChangesAndTapRetirementStayIsolatedToTheirConsumers)
     const auto busIndex = runtime->buses.FindIndex(harkentest::ToRuntime(bus));
     harken::monitor::NoteExactInstanceRetired(VN_MONITOR_TAP_BUS_POST_EFFECTS,
         busIndex + 1u, runtime->buses.GenerationAt(busIndex));
-    for (int attempt = 0; attempt < 100 && otherBus.active(); ++attempt) {
-        EXPECT_FALSE(second.poll().interrupted);
-        if (otherBus.active())
-            QThread::msleep(5);
-    }
+    harken::monitor::DrainOnceForTests();
+    EXPECT_FALSE(second.poll().interrupted);
     EXPECT_FALSE(otherBus.active());
     EXPECT_TRUE(otherBus.poll().interrupted);
     EXPECT_TRUE(second.active());

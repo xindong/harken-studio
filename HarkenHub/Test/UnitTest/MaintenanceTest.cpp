@@ -1,4 +1,5 @@
 #include "Maintenance/CacheManager.h"
+#include "Download/DownloadLease.h"
 #include "Maintenance/LogExporter.h"
 #include "Transactions/TransactionDiagnostics.h"
 
@@ -121,6 +122,36 @@ TEST_F(MaintenanceTest, CacheCleanPreservesFilesReferencedByUpdates)
         ASSERT_TRUE(file.open(QIODevice::ReadOnly)) << path.toStdString();
         EXPECT_EQ(file.readAll(), QByteArrayLiteral("pending"));
     }
+}
+
+TEST_F(MaintenanceTest, ActiveArtifactsAreProtectedThroughConsumerHandoff)
+{
+    const auto package = dir.filePath(QStringLiteral("downloads/manual/build.zip"));
+    const auto installer = dir.filePath(QStringLiteral("hub-updates/HarkenHubSetup-run.123.pkg"));
+    const QStringList paths = {installer, installer + QStringLiteral(".part"),
+                              installer + QStringLiteral(".part.meta"),
+                              installer + QStringLiteral(".stale"),
+                              dir.filePath(QStringLiteral("hub-updates/run.123.manifest")),
+                              package, package + QStringLiteral(".part"),
+                              package + QStringLiteral(".part.meta"),
+                              package + QStringLiteral(".stale"),
+                              dir.filePath(QStringLiteral("downloads/manual/build.manifest"))};
+    for (const auto& path : paths)
+        writeFileAged(path, QByteArrayLiteral("active"), kNow.addDays(-30));
+    auto lease = VNH::DownloadLease::acquire(package);
+    ASSERT_TRUE(lease);
+    auto installerLease = VNH::DownloadLease::acquire(installer);
+    ASSERT_TRUE(installerLease);
+    const auto protectedReport = CacheManager::clean(dir.path(), {}, kNow);
+    EXPECT_TRUE(protectedReport.removedFiles.isEmpty());
+    for (const auto& path : paths)
+        EXPECT_TRUE(QFile::exists(path));
+    lease.reset();
+    installerLease.reset();
+    const auto expiredReport = CacheManager::clean(dir.path(), {}, kNow);
+    EXPECT_EQ(expiredReport.removedFiles.size(), paths.size());
+    for (const auto& path : paths)
+        EXPECT_FALSE(QFile::exists(path));
 }
 
 TEST_F(MaintenanceTest, LogExporterBundlesDiagnostics)

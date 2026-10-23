@@ -16,7 +16,6 @@ add_executable(harken_host
     TraceReplay.cpp
 )
 harken_attach_version_resource(harken_host "Harken Host" "harken_host.exe")
-add_dependencies(harken_host harken_schema_codegen)
 target_link_libraries(harken_host PRIVATE harken_core harken_remote harken_buildinfo
                       harken_preview)
 # The demo scenes' per-voice-tap silence verdicts branch on the stage-tap
@@ -31,7 +30,6 @@ add_executable(harken_host_selection_copy_test
     ${CMAKE_SOURCE_DIR}/HarkenEngine/Test/UnitTest/PackPlaySelectionTest.cpp
 )
 target_include_directories(harken_host_selection_copy_test PRIVATE
-    ${HARKEN_SCHEMA_GENERATED_CORE_DIR}
     ${HARKEN_RUNTIME_DIR}/api/src
     ${HARKEN_RUNTIME_DIR}/core/include
     ${HARKEN_RUNTIME_DIR}/core/contract/include
@@ -43,10 +41,9 @@ target_include_directories(harken_host_selection_copy_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Common
 )
-target_link_libraries(harken_host_selection_copy_test PRIVATE harken_core)
+target_link_libraries(harken_host_selection_copy_test PRIVATE harken_core harken_buildinfo)
 
 target_include_directories(harken_host PRIVATE
-    ${HARKEN_SCHEMA_GENERATED_CORE_DIR}
     ${HARKEN_RUNTIME_DIR}/api/src
     ${HARKEN_RUNTIME_DIR}/core/include
     ${HARKEN_RUNTIME_DIR}/core/contract/include

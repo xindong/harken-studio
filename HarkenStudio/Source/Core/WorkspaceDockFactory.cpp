@@ -9,7 +9,7 @@
 #include "Widgets/GridEditor/GridEditorPanel.h"
 #include "Widgets/Information/InformationPanel.h"
 #include "Widgets/Inspector/InspectorPanel.h"
-#include "Widgets/PreviewPanel/PreviewPanel.h"
+#include "Widgets/ControlPanel/ControlPanel.h"
 #include "Widgets/SourceEditor/SourceEditorPanel.h"
 #include "Widgets/Timeline/TimelineEditorPanel.h"
 #include "Widgets/TransitionEditor/TransitionEditorPanel.h"
@@ -77,7 +77,7 @@ QAction* pinActionFor(QWidget* content)
     }
     if (auto* panel = qobject_cast<GridEditorPanel*>(content))
         return bindPinAction(panel);
-    if (auto* panel = qobject_cast<PreviewPanel*>(content))
+    if (auto* panel = qobject_cast<ControlPanel*>(content))
         return bindPinAction(panel);
     if (auto* panel = qobject_cast<TransitionEditorPanel*>(content))
         return bindPinAction(panel);

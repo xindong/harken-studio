@@ -45,13 +45,19 @@ struct ImmediateLaneTimelineFinalizer::Impl {
     std::uint64_t capturedQuantum = 0;
     bool prepared = false;
     NativeTimelineQuantumAdmissionState admission;
-    std::unique_ptr<EventScratch[]> events;
-    std::unique_ptr<ControlScratch[]> controls;
-    std::unique_ptr<FenceScratch[]> fences;
+    StableRowStorage<EventScratch> events;
+    StableRowStorage<ControlScratch> controls;
+    StableRowStorage<FenceScratch> fences;
+    ImmediateActionLane::EventStorageRegistration eventStorageRegistration;
     std::unique_ptr<Receipt[]> receipts;
-    std::unique_ptr<FrontierEntryReceiptRef[]> waitingEntries;
     std::unique_ptr<std::uint32_t[]> controlRenderGenerations;
     std::uint32_t renderCapacity = 0;
+    static bool PrepareEventStorage(void* context, std::uint32_t demand) noexcept {
+        auto& self = *static_cast<Impl*>(context);
+        const auto count = std::min(self.eventCapacity, demand);
+        return self.events.ConstructThrough(count) && self.controls.ConstructThrough(count) &&
+            self.fences.ConstructThrough(count);
+    }
 };
 
 ImmediateLaneTimelineFinalizer::ImmediateLaneTimelineFinalizer(
@@ -68,29 +74,43 @@ bool ImmediateLaneTimelineFinalizer::Attach(
     state->lane = &lane;
     state->blockFrames = blockFrames;
     state->eventCapacity = lane.MaxEventsPerQuantum();
-    state->events = std::make_unique<Impl::EventScratch[]>(state->eventCapacity);
-    state->controls = std::make_unique<Impl::ControlScratch[]>(state->eventCapacity);
-    state->fences = std::make_unique<Impl::FenceScratch[]>(state->eventCapacity);
+    if (!state->events.Reserve(state->eventCapacity) ||
+        !state->controls.Reserve(state->eventCapacity) ||
+        !state->fences.Reserve(state->eventCapacity) ||
+        !Impl::PrepareEventStorage(state.get(), lane.EventStorageHighWater())) return false;
     state->receipts = std::make_unique<Impl::Receipt[]>(lane.AttemptCapacity());
-    state->waitingEntries = std::make_unique<FrontierEntryReceiptRef[]>(
-        static_cast<std::size_t>(lane.AttemptCapacity()) * state->eventCapacity);
     state->renderCapacity = voices_.Capacity();
     state->controlRenderGenerations =
         std::make_unique<std::uint32_t[]>(state->renderCapacity);
+    lane.AttachEventStorage(state->eventStorageRegistration, state.get(), Impl::PrepareEventStorage);
     impl_ = std::move(state);
     return true;
 }
 
-void ImmediateLaneTimelineFinalizer::AttachFrontier(
+bool ImmediateLaneTimelineFinalizer::AttachFrontier(
     FrontierTimelineFinalizer& frontier,
     const ScheduledTransactionPool& pool) noexcept {
-    if (impl_ == nullptr) return;
+    if (impl_ == nullptr) return true;
+    if (!impl_->eventStorageRegistration.IsFor(impl_->lane) ||
+        !frontier.AttachLaneEventStorage(*impl_->lane)) return false;
     impl_->frontier = &frontier;
     impl_->pool = &pool;
+    return true;
 }
 
+std::uint64_t ImmediateLaneTimelineFinalizer::EventStorageBytes() const noexcept {
+    return impl_ == nullptr ? 0u : impl_->events.RequestedBytes() +
+        impl_->controls.RequestedBytes() + impl_->fences.RequestedBytes();
+}
+
+#if !defined(HARKEN_RT_QUALIFICATION)
+void ImmediateLaneTimelineFinalizer::SetEventCommitPageLimitForTests(std::size_t pages) noexcept {
+    if (impl_ != nullptr) impl_->events.SetCommitPageLimitForTests(pages);
+}
+#endif
+
 bool ImmediateLaneTimelineFinalizer::Capture(std::uint64_t quantum) noexcept {
-    if (impl_ == nullptr) return false;
+    if (impl_ == nullptr || !impl_->eventStorageRegistration.IsFor(impl_->lane)) return false;
     auto& state = *impl_;
     if (state.prepared) {
         assert(state.capturedQuantum == quantum);
@@ -213,20 +233,23 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
         std::uint64_t resumeQuantum = 0;
         const bool resuming = state.lane->CapturedSourceWaitQuantum(slot, bucket, &resumeQuantum) &&
             resumeQuantum == quantum;
-        auto* waitingEntries = state.waitingEntries.get() +
-            static_cast<std::size_t>(receiptIndex) * state.eventCapacity;
+        const auto waiting = state.lane->CapturedSourceWaitScratch(slot, bucket);
+        auto* waitingEntries = waiting.data();
+        const auto waitingCapacity = static_cast<std::uint32_t>(waiting.size());
         const auto recordWaiting = [&](const FrontierEntryReceiptRef& entry) noexcept {
             if (!entry.Valid()) return true;
             for (std::uint32_t index = 0; index < receipt.waitingEntryCount; ++index)
                 if (waitingEntries[index] == entry) return true;
-            if (receipt.waitingEntryCount == state.eventCapacity) return false;
+            if (receipt.waitingEntryCount == waitingCapacity) return false;
             waitingEntries[receipt.waitingEntryCount++] = entry;
             return true;
         };
         const auto originalQuantumStart = resuming ? bucket->quantum * state.blockFrames : quantumStart;
         const auto* events = state.lane->Events(slot, bucket);
         bool valid = (events != nullptr || bucket->eventCount == 0) &&
-                     bucket->eventCount <= state.eventCapacity &&
+                     bucket->eventCount <= state.events.ConstructedCount() &&
+                     bucket->eventCount <= state.controls.ConstructedCount() &&
+                     bucket->eventCount <= state.fences.ConstructedCount() &&
                      state.lane->CapturedEntryProjectionValid(slot, bucket);
         std::uint32_t admittedGroups = 0;
         std::uint32_t admittedEvents = 0;
@@ -304,11 +327,15 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
             }
         }
         auto sources = grouped && state.frontier != nullptr
-            ? state.frontier->VariableSourcesStatus(waitingEntries, state.eventCapacity,
+            ? state.frontier->VariableSourcesStatus(waitingEntries, waitingCapacity,
                 &receipt.waitingEntryCount) : VariableReadCutStatus::Applied;
         bool waitingShape = valid;
+        bool publicationWaiting = false;
+        bool relativePublication = !grouped && !futureOnly;
         for (std::uint32_t i = 0; events != nullptr && i < bucket->eventCount; ++i) {
             if (!state.lane->IsEventAdmitted(slot, bucket, bucket->firstEvent + i)) continue;
+            relativePublication = relativePublication &&
+                events[i].timeDomain == ImmediateLaneTimeDomain::RelativeToAnchor;
             const auto& event = events[i].event;
             const auto* program = event.program.program;
             const auto* payload = program != nullptr && program->payloads != nullptr &&
@@ -336,8 +363,10 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
                     sources = timing;
             }
             if (program->role != TimelineProgramRole::Voice || payload->kind != TimelineEventKind::Start) continue;
-            const auto status = voices_.TimelineVariableSourcesStatus(event.armToken.renderSlot,
-                event.armToken.renderGeneration);
+            bool waitForPublication = false;
+            const auto status = voices_.TimelineStartSourcesStatus(arms_,
+                event.armToken, &waitForPublication);
+            publicationWaiting = publicationWaiting || waitForPublication;
             if (status == VariableReadCutStatus::Failed) sources = status;
             else if (status == VariableReadCutStatus::Waiting) {
                 if (!recordWaiting(event.frontier.entry)) sources = VariableReadCutStatus::Failed;
@@ -351,6 +380,10 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
                 sources = VariableReadCutStatus::Failed;
             const auto effective = quantumStart + outputOffset;
             if (voice == nullptr || effective >= voice->authoredRootStopFrame) sources = VariableReadCutStatus::Failed;
+        }
+        if (publicationWaiting && !relativePublication) {
+            (void)state.lane->RejectCapturedBucket({slot, bucket->attemptGeneration}, bucket);
+            continue;
         }
         if (waitingShape && sources == VariableReadCutStatus::Waiting) {
             receipt.sourceWaiting = true;
@@ -521,8 +554,7 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
                 }
             }
             if (!control) {
-                const auto source = voices_.TimelineVariableSourcesStatus(event.armToken.renderSlot,
-                    event.armToken.renderGeneration);
+                const auto source = voices_.TimelineStartSourcesStatus(arms_, event.armToken);
                 if (source != VariableReadCutStatus::Applied) {
                     sourcesWaiting = source == VariableReadCutStatus::Waiting;
                     valid = false;
@@ -706,8 +738,8 @@ void ImmediateLaneTimelineFinalizer::Finish() noexcept {
     auto& state = *impl_;
     for (std::uint32_t i = 0; i < state.receiptCount; ++i) {
         const auto& receipt = state.receipts[i];
-        const auto* waitingEntries = state.waitingEntries.get() +
-            static_cast<std::size_t>(i) * state.eventCapacity;
+        const auto waiting = state.lane->CapturedSourceWaitScratch(receipt.slot, receipt.bucket);
+        const auto* waitingEntries = waiting.data();
         if (receipt.sourceWaiting && state.lane->SuspendCaptureForSourceWait(receipt.slot, receipt.bucket,
                 waitingEntries, receipt.waitingEntryCount))
             continue;

@@ -19,6 +19,8 @@ constexpr int SourceFieldIndex(MonitorFactBody body, unsigned field) noexcept {
             return -1;
         return field < 64 ? static_cast<int>(field) : -1;
     }
+    if (field >= VN_MONITOR_FACT_FIELD_ACTIVITY_STEP && field <= VN_MONITOR_FACT_FIELD_ACTION_OUTCOME)
+        return static_cast<int>(field - VN_MONITOR_FACT_FIELD_ACTIVITY_STEP + 58);
     return field <= VN_MONITOR_FACT_FIELD_TIMESTAMP ? static_cast<int>(field) : -1;
 }
 
@@ -37,7 +39,7 @@ inline bool SetSourceField(MonitorExecutionFact& fact, unsigned field, bool vali
 
 constexpr std::uint64_t SourceAllowedFields(MonitorFactBody body) noexcept {
     std::uint64_t bits = 0;
-    for (unsigned field = 0; field <= VN_MONITOR_FACT_FIELD_TARGET_SCOPE; ++field) {
+    for (unsigned field = 0; field <= VN_MONITOR_FACT_FIELD_ACTION_OUTCOME; ++field) {
         const auto index = SourceFieldIndex(body, field);
         if (index >= 0) bits |= UINT64_C(1) << index;
     }
@@ -47,6 +49,11 @@ constexpr std::uint64_t SourceAllowedFields(MonitorFactBody body) noexcept {
 constexpr bool IsCallFactKind(unsigned kind) noexcept {
     return kind == VN_MONITOR_FACT_REQUEST_SUBMITTED || kind == VN_MONITOR_FACT_REQUEST_RETURNED ||
         kind == VN_MONITOR_FACT_REQUEST_TERMINAL;
+}
+
+constexpr bool IsActivityFactKind(unsigned kind) noexcept {
+    return kind == VN_MONITOR_FACT_STEP_EXECUTED || kind == VN_MONITOR_FACT_VARIABLE_RESULT ||
+        kind == VN_MONITOR_FACT_ACTION_TERMINAL;
 }
 
 constexpr std::uint64_t SubjectGeneration(unsigned subject, std::uint64_t handle) noexcept {
@@ -66,11 +73,11 @@ static_assert(VN_MONITOR_OPERATION_STOP_EMITTER < 256);
 static_assert(kMonitorOperationResetPreview < 256 && kMonitorOperationPlayRawPreview < 256);
 static_assert(static_cast<unsigned>(MonitorRequestOrigin::StudioPreview) < 256);
 static_assert(static_cast<unsigned>(MonitorEmitterKind::ExplicitSpatial) < 256);
-static_assert(static_cast<unsigned>(MonitorHostOwnership::UnitySpatialSource) < 256);
+static_assert(static_cast<unsigned>(MonitorHostOwnership::StudioDefaultEmitter) < 256);
 static_assert(static_cast<unsigned>(MonitorBindingState::Detached) < 16);
 
 inline bool ValidRequestOperation(std::uint32_t value) noexcept {
-    return value >= VN_MONITOR_OPERATION_POST_ACTION && value <= kMonitorOperationPlayRawPreview;
+    return value >= VN_MONITOR_OPERATION_POST_ACTION && value <= VN_MONITOR_OPERATION_RESET_VALUES;
 }
 
 inline bool ValidRequestOrigin(std::uint32_t value) noexcept {
@@ -177,7 +184,7 @@ inline void CaptureFactEmitters(MonitorExecutionFact& fact, const MonitorEmitter
         }
     } else if (origin.host.engineInstance != 0 || origin.host.sdkSession != 0 || origin.host.localSequence != 0)
         fact.flags |= kMonitorFactIdentityIncomplete;
-    if (origin.ownership != MonitorHostOwnership::Unknown && origin.ownership <= MonitorHostOwnership::UnitySpatialSource) {
+    if (origin.ownership != MonitorHostOwnership::Unknown && origin.ownership <= MonitorHostOwnership::StudioDefaultEmitter) {
         fact.hostOwnership = static_cast<std::uint8_t>(origin.ownership);
         SetSourceField(fact, VN_MONITOR_FACT_FIELD_HOST_OWNERSHIP);
     }

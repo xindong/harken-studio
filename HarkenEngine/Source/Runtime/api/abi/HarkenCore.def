@@ -7,6 +7,7 @@
 ; exported. No LIBRARY statement -- the output name comes from the build.
 EXPORTS
     Vn_ActivateCanonicalPackSetV1
+    Vn_ActivateCanonicalPackSetV2
     Vn_ApplyBusTopology
     Vn_ApplyVoiceBinding
     Vn_AttachBinding
@@ -35,6 +36,7 @@ EXPORTS
     Vn_DetachBinding
     Vn_DisconnectBusSend
     Vn_Init
+    Vn_InspectCanonicalPackV1
     Vn_InspectInitPack
     Vn_LoadCurrentWorld
     Vn_LoadPack
@@ -117,6 +119,7 @@ EXPORTS
     Vn_SetEmitterValue
     Vn_SetEmitterValueByName
     Vn_SetEmitterValues
+    Vn_SetGameplayCatalog
     Vn_SetListener
     Vn_SetValue
     Vn_SetValueByLabelId

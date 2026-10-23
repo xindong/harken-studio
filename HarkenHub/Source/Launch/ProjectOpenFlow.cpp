@@ -44,7 +44,8 @@ QSet<QString> activeProjects;
 constexpr int kHandshakeTimeoutMs = 15000;
 constexpr int kLaunchTimeoutMs = 120000;
 
-QString analysisFailureText(const QString& code)
+QString analysisFailureText(const QString& code, const QString& studioVersion,
+                            const ProjectOpenAnalysis& analysis)
 {
     if (code == QStringLiteral("ANALYZER_START_FAILED"))
         return hubText("The selected Harken Studio could not start the project safety check.");
@@ -55,12 +56,32 @@ QString analysisFailureText(const QString& code)
     if (code.startsWith(QStringLiteral("ANALYSIS_"))
         || code == QStringLiteral("ANALYZER_EXIT_MISMATCH"))
         return hubText("The selected Harken Studio returned an invalid project safety report.");
-    if (code == QStringLiteral("PROJECT_REQUIRES_NEWER_STUDIO"))
-        return hubText("This project requires a newer Studio. Choose or install a newer version.");
+    if (code == QStringLiteral("PROJECT_REQUIRES_NEWER_STUDIO")) {
+        if (analysis.reportValid && analysis.errorCode == code
+            && analysis.currentSchema > analysis.targetSchema && analysis.targetSchema > 0)
+            return hubText(
+                "The selected Harken Studio %1 does not support this project format.\n"
+                "Project format version: Schema %2\n"
+                "Current Studio format version: Schema %3\n\n"
+                "Choose or install a Harken Studio version that supports this project format.")
+                .arg(analysis.studioVersion).arg(analysis.currentSchema).arg(analysis.targetSchema);
+        return hubText(
+            "The selected Harken Studio %1 does not support this project format.\n\n"
+            "Choose or install a Harken Studio version that supports this project format.")
+            .arg(studioVersion);
+    }
     if (code == QStringLiteral("PROJECT_MIGRATION_MISSING"))
         return hubText("The selected Harken Studio does not contain a complete migration path for this project.");
     if (code == QStringLiteral("PROJECT_UPGRADE_SPACE_INSUFFICIENT"))
         return hubText("There is not enough free space to upgrade and protect this project safely.");
+    if (code == QStringLiteral("PROJECT_UPGRADE_FILES_NOT_WRITABLE")) {
+        QString text = hubText("Some files needed for the project upgrade are read-only or not writable.")
+            + QStringLiteral("\n\n")
+            + hubText("Check file write protection and access permissions, then try again. If your version control workflow requires checkout or unlocking, do that first. No project data was changed.");
+        if (analysis.errorCode == code && !analysis.technicalDetails.isEmpty())
+            text += QStringLiteral("\n\n") + hubText("Affected files:\n%1").arg(analysis.technicalDetails);
+        return text;
+    }
     if (code == QStringLiteral("PROJECT_VOLUME_UNSUPPORTED"))
         return hubText("This project is stored on a volume that cannot be upgraded safely.");
     if (code == QStringLiteral("PROJECT_RECOVERY_VOLUME_UNAVAILABLE"))
@@ -156,10 +177,16 @@ public:
                 return;
             if (monitor_.failureCode() == QStringLiteral("PROJECT_OPEN_CANCELLED")) {
                 finish(ProjectOpenOutcome::Result::Declined);
+            } else if (monitor_.failureCode() == QStringLiteral("PROJECT_UPGRADE_FILES_NOT_WRITABLE")) {
+                auto failure = analysis_;
+                failure.errorCode = monitor_.failureCode();
+                failure.technicalDetails = monitor_.failureDetails();
+                fail(analysisFailureText(failure.errorCode, version_.semanticVersion, failure));
             } else if (monitor_.failureCode().isEmpty() && launcher_.stillRunning()) {
                 loseMonitoring(error);
             } else {
-                fail(monitor_.failureCode().isEmpty() ? error : analysisFailureText(monitor_.failureCode()));
+                fail(monitor_.failureCode().isEmpty() ? error : analysisFailureText(
+                    monitor_.failureCode(), version_.semanticVersion, analysis_));
             }
         }, Qt::QueuedConnection);
         connect(&liveness_, &QTimer::timeout, this, [this]() {
@@ -204,6 +231,12 @@ private:
     {
         if (finished_)
             return;
+        analysis_ = analysis;
+        if (analysis.reportValid && !analysis.ok
+            && analysis.errorCode == QStringLiteral("PROJECT_UPGRADE_FILES_NOT_WRITABLE")) {
+            fail(analysisFailureText(analysis.errorCode, version_.semanticVersion, analysis));
+            return;
+        }
         LaunchIntent intent = LaunchIntent::DirectOpenOnly;
         QString approval;
         if (analysis.reportValid && analysis.ok) {
@@ -224,7 +257,8 @@ private:
             }
         } else if (version_.capabilitiesVersion == kStudioCapabilitiesVersion) {
             qWarning().noquote() << analysis.errorCode << analysis.technicalDetails;
-            progress_->setLabelText(analysisFailureText(analysis.errorCode)
+            progress_->setLabelText(analysisFailureText(
+                analysis.errorCode, version_.semanticVersion, analysis)
                 + QLatin1Char('\n') + hubText("Opening Studio to continue the check..."));
         }
         const auto decision = LaunchPreflight::evaluate(project_, {version_}, InstallIndex::snapshot(),
@@ -340,6 +374,7 @@ private:
     ProjectStore* store_;
     ProjectRecord project_;
     InstalledVersion version_;
+    ProjectOpenAnalysis analysis_;
     QPointer<QWidget> parent_;
     std::function<void(const ProjectOpenOutcome&)> completed_;
     QPointer<QProgressDialog> progress_;

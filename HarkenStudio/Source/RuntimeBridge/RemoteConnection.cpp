@@ -119,6 +119,7 @@ struct RemoteConnection::Impl
     bool captureRequested = false;
     bool receiveScheduled = false;
     RemoteEventCaptureStatus eventCapture;
+    bool eventCaptureUsesExecution = false;
 
     explicit Impl(RemoteConnection* object) : owner(object)
     {
@@ -302,7 +303,7 @@ struct RemoteConnection::Impl
         const bool streaming = frame.requestId == 0
             && (frame.type == Wire::Message::Snapshot || frame.type == Wire::Message::MonitorRecords
                 || frame.type == Wire::Message::MonitorStatus || frame.type == Wire::Message::EventStatus
-                || frame.type == Wire::Message::EventRecords);
+                || frame.type == Wire::Message::EventStatusV2 || frame.type == Wire::Message::EventRecords);
         if (!streaming && !pending.contains(frame.requestId)) {
             fail(RemoteConnection::tr("Unexpected remote response"));
             return;
@@ -321,7 +322,7 @@ struct RemoteConnection::Impl
                 fail(RemoteConnection::tr("Invalid remote error response"));
                 return;
             }
-            if (request.expected == Wire::Message::EventStatus) {
+            if (request.expected == Wire::Message::EventStatus || request.expected == Wire::Message::EventStatusV2) {
                 eventCapture.state = RemoteEventCaptureState::Failed;
                 eventCapture.result = result;
                 eventCapture.error = resultText(result);
@@ -419,11 +420,16 @@ struct RemoteConnection::Impl
             }
             lastSnapshot = clock.elapsed();
             emit owner->snapshotChanged();
-        } else if (frame.type == Wire::Message::EventStatus) {
-            Wire::EventCaptureStatus result;
-            if (!Wire::DecodePayload(frame, result) ||
+        } else if (frame.type == Wire::Message::EventStatus || frame.type == Wire::Message::EventStatusV2) {
+            const bool execution = frame.type == Wire::Message::EventStatusV2;
+            Wire::EventCaptureStatusV2 status;
+            const bool decoded = execution ? Wire::DecodePayload(frame, status) : Wire::DecodePayload(frame, status.base);
+            const auto& result = status.base;
+            if (execution != eventCaptureUsesExecution || !decoded ||
                 (result.result == VN_OK && (!result.sessionEpoch || !result.startedTimestampNs ||
-                    (result.state != VN_MONITOR_EVENT_SESSION_LIVE &&
+                    (execution && (status.acceptedExecutionFactVersion != 2 ||
+                        (status.acceptedStreamKindMask & VN_MONITOR_STREAM_EVENT) == 0)) ||
+                    ((result.state == VN_MONITOR_EVENT_SESSION_DRAINED || result.stoppedTimestampNs != 0) &&
                      result.stoppedTimestampNs < result.startedTimestampNs)))) {
                 fail(RemoteConnection::tr("Invalid event capture status"));
                 return;
@@ -437,6 +443,18 @@ struct RemoteConnection::Impl
                 fail(RemoteConnection::tr("Event capture session changed unexpectedly"));
                 return;
             }
+            eventCapture.acceptedExecutionFactVersion = status.acceptedExecutionFactVersion;
+            eventCapture.baselineAvailability = status.baselineAvailability;
+            eventCapture.requestedPermissionMask = status.requestedPermissionMask;
+            eventCapture.acceptedPermissionMask = status.acceptedPermissionMask;
+            eventCapture.deniedPermissionMask = status.deniedPermissionMask;
+            eventCapture.unsupportedPermissionMask = status.unsupportedPermissionMask;
+            eventCapture.acceptedStreamKindMask = status.acceptedStreamKindMask;
+            eventCapture.symbolsDecision = status.symbolsDecision;
+            eventCapture.symbolAvailability = status.symbolAvailability;
+            eventCapture.identityUnavailableCount = status.identityUnavailableCount;
+            eventCapture.baselineStateCutId = status.baselineStateCutId;
+            std::copy_n(status.supportedFactKinds, 2, eventCapture.supportedFactKinds);
             eventCapture.result = result.result;
             eventCapture.sessionEpoch = result.sessionEpoch;
             eventCapture.startedTimestampNs = result.startedTimestampNs;
@@ -644,30 +662,42 @@ quint64 RemoteConnection::lastPlaybackHandle() const { return impl_->playbackHan
 bool RemoteConnection::canCaptureEvents() const
 {
     return impl_->connected() &&
-        (impl_->target.capabilities & Wire::kCapabilityEventCapture) != 0;
+        (impl_->target.capabilities & (Wire::kCapabilityEventCapture | Wire::kCapabilityExecutionObservation)) != 0;
 }
 RemoteEventCaptureStatus RemoteConnection::eventCaptureStatus() const { return impl_->eventCapture; }
 
 void RemoteConnection::startEventCapture()
 {
-    if (!canCaptureEvents() || impl_->hasPending(Wire::Message::EventStatus) ||
+    if (!canCaptureEvents() || (impl_->hasPending(Wire::Message::EventStatus) || impl_->hasPending(Wire::Message::EventStatusV2)) ||
         impl_->eventCapture.state == RemoteEventCaptureState::Capturing ||
         impl_->eventCapture.state == RemoteEventCaptureState::Stopping) return;
     impl_->eventCapture = {};
     impl_->eventCapture.state = RemoteEventCaptureState::Starting;
     emit eventCaptureChanged();
-    impl_->request({Wire::Message::EventStart, 0, {}}, Wire::Message::EventStatus);
+    impl_->eventCaptureUsesExecution = (impl_->target.capabilities & Wire::kCapabilityExecutionObservation) != 0;
+    if (impl_->eventCaptureUsesExecution) {
+        Wire::EventCaptureRequestV2 request;
+        request.executionFactVersion = 2;
+        request.requestedStreamKindMask = VN_MONITOR_STREAM_EVENT | VN_MONITOR_STREAM_STATE;
+        request.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS | VN_MONITOR_PERM_OBSERVE_STATE | VN_MONITOR_PERM_SYMBOLS;
+        request.requestSymbols = 1;
+        request.consumerQueueBytes = 1048576;
+        impl_->request(Wire::MakeFrame(Wire::Message::EventStartV2, 0, request), Wire::Message::EventStatusV2);
+    } else {
+        impl_->request({Wire::Message::EventStart, 0, {}}, Wire::Message::EventStatus);
+    }
 }
 
 void RemoteConnection::stopEventCapture()
 {
     if (!impl_->connected() || impl_->eventCapture.state != RemoteEventCaptureState::Capturing ||
-        impl_->hasPending(Wire::Message::EventStatus)) return;
+        (impl_->hasPending(Wire::Message::EventStatus) || impl_->hasPending(Wire::Message::EventStatusV2))) return;
     impl_->eventCapture.state = RemoteEventCaptureState::Stopping;
     emit eventCaptureChanged();
     Wire::Writer writer;
     writer.U64(impl_->eventCapture.sessionEpoch);
-    impl_->request({Wire::Message::EventSeal, 0, std::move(writer.bytes)}, Wire::Message::EventStatus);
+    impl_->request({Wire::Message::EventSeal, 0, std::move(writer.bytes)},
+        impl_->eventCaptureUsesExecution ? Wire::Message::EventStatusV2 : Wire::Message::EventStatus);
 }
 
 void RemoteConnection::discover(quint16 discoveryPort)

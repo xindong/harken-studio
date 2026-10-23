@@ -26,16 +26,6 @@ VnPackHandle MakePackHandle(std::uint32_t slot,
     return (static_cast<std::uint64_t>(generation) << 32) | slot;
 }
 
-std::size_t ResourceClosureStorageSize(std::uint32_t resourceCapacity,
-                                       std::size_t closureCapacity) {
-    if (closureCapacity > std::numeric_limits<std::uint32_t>::max() ||
-        (resourceCapacity != 0 &&
-         closureCapacity > std::numeric_limits<std::size_t>::max() /
-                               resourceCapacity)) {
-        throw std::length_error("pack resource closure capacity overflow");
-    }
-    return closureCapacity * resourceCapacity;
-}
 
 PackResourceClosureToken MakeResourceClosureToken(
     std::size_t rowIndex, std::uint32_t generation) noexcept {
@@ -137,12 +127,19 @@ void PackTable::AlignedDeleter::operator()(std::uint8_t* p) const {
 
 PackTable::PackTable(std::uint32_t capacity,
                      std::size_t retirementCapacity,
-                     std::size_t resourceClosureCapacity)
-    : m_slots(capacity),
-      m_retiring(retirementCapacity != 0 ? retirementCapacity : capacity),
-      m_resourceClosures(resourceClosureCapacity),
-      m_resourceClosureTokens(
-          ResourceClosureStorageSize(capacity, resourceClosureCapacity)) {}
+                     std::size_t resourceClosureCapacity) {
+    if (resourceClosureCapacity > UINT32_MAX)
+        throw std::length_error("pack resource closure capacity overflow");
+    if (!m_slots.Reserve(capacity) ||
+        !m_retiring.Reserve(retirementCapacity != 0 ? retirementCapacity : capacity) ||
+        !m_resourceClosures.Reserve(static_cast<std::uint32_t>(resourceClosureCapacity)))
+        throw std::bad_alloc{};
+}
+
+bool PackTable::PrepareContentStorage() noexcept {
+    return m_resourceClosures.ConstructThrough(m_resourceClosures.Capacity()) &&
+        m_slots.ConstructThrough(m_slots.Capacity());
+}
 
 VnResult PackTable::PrepareRetiringRow(
     VnPackHandle handle, std::size_t predecessorEntryCount,
@@ -178,8 +175,11 @@ VnResult PackTable::PrepareRetiringRow(
             break;
         }
     }
+    if (selected == m_retiring.size() && selected < m_retiring.Capacity()) {
+        if (!m_retiring.ConstructThrough(selected + 1u)) return VN_BACKPRESSURE;
+    }
     if (selected == m_retiring.size()) {
-        return !m_retiring.empty() && !anyReusable
+        return m_retiring.size() != 0 && !anyReusable
                    ? VN_RUNTIME_RECREATE_REQUIRED
                    : VN_BACKPRESSURE;
     }
@@ -286,82 +286,69 @@ PackTable::ResourceClosureRow* PackTable::ResourceClosureRowFor(
             closureToken));
 }
 
-PackResourceRevisionToken* PackTable::ResourceClosureTokens(
-    std::size_t rowIndex) noexcept {
-    return m_resourceClosureTokens.data() + rowIndex * m_slots.size();
-}
-
 const PackResourceRevisionToken* PackTable::ResourceClosureTokens(
     std::size_t rowIndex) const noexcept {
-    return m_resourceClosureTokens.data() + rowIndex * m_slots.size();
+    const auto& tokens = m_resourceClosures[rowIndex].tokens;
+    return tokens == nullptr ? nullptr : tokens->data();
+}
+
+VnResult PackTable::SelectResourceClosureRow(std::size_t* out) const noexcept {
+    if (m_slots.size() == 0) return VN_BACKPRESSURE;
+    bool anyReusable = false;
+    for (std::size_t i = 0; i < m_resourceClosures.size(); ++i) {
+        const auto& row = m_resourceClosures[i];
+        anyReusable = anyReusable || row.state != ResourceClosureState::Quarantined;
+        if (row.state == ResourceClosureState::Free) { *out = i; return VN_OK; }
+    }
+    return m_resourceClosures.size() != 0 && !anyReusable ? VN_RUNTIME_RECREATE_REQUIRED : VN_BACKPRESSURE;
 }
 
 VnResult PackTable::AcquireResourceClosure(
     const PackResourceRevisionToken* resourceTokens,
     std::size_t resourceTokenCount,
     PackResourceClosureToken* outClosureToken) noexcept {
-    if (outClosureToken == nullptr || resourceTokens == nullptr ||
-        resourceTokenCount == 0) {
+    if (outClosureToken == nullptr || resourceTokens == nullptr || resourceTokenCount == 0)
         return VN_INVALID_ARG;
-    }
     *outClosureToken = 0;
-    if (m_slots.empty()) {
-        return VN_BACKPRESSURE;
-    }
+    std::size_t selected = 0;
+    const auto available = SelectResourceClosureRow(&selected);
+    if (available != VN_OK) return available;
+    try {
+        auto tokens = std::make_shared<std::vector<PackResourceRevisionToken>>();
+        for (std::size_t i = 0; i < resourceTokenCount; ++i) {
+            const auto token = resourceTokens[i];
+            if (std::find(tokens->begin(), tokens->end(), token) != tokens->end()) continue;
+            const auto* refs = ResourceClosureRefCountFor(token);
+            if (refs == nullptr) return VN_CONTENT_NOT_LOADED;
+            if (*refs == UINT64_MAX) return VN_RUNTIME_RECREATE_REQUIRED;
+            if (tokens->size() == m_slots.size()) return VN_BACKPRESSURE;
+            tokens->push_back(token);
+        }
+        return AcquirePreparedResourceClosure(tokens, outClosureToken);
+    } catch (...) { return VN_BACKPRESSURE; }
+}
 
-    std::size_t selected = m_resourceClosures.size();
-    bool anyReusable = false;
-    for (std::size_t i = 0; i < m_resourceClosures.size(); ++i) {
-        const ResourceClosureRow& row = m_resourceClosures[i];
-        if (row.state != ResourceClosureState::Quarantined) {
-            anyReusable = true;
-        }
-        if (row.state == ResourceClosureState::Free) {
-            selected = i;
-            break;
-        }
+VnResult PackTable::AcquirePreparedResourceClosure(
+    const std::shared_ptr<const std::vector<PackResourceRevisionToken>>& resourceTokens,
+    PackResourceClosureToken* outClosureToken) noexcept {
+    if (outClosureToken == nullptr || resourceTokens == nullptr || resourceTokens->empty()) return VN_INVALID_ARG;
+    *outClosureToken = 0;
+    std::size_t selected = 0;
+    const auto available = SelectResourceClosureRow(&selected);
+    if (available != VN_OK) return available;
+    if (resourceTokens->size() > m_slots.size()) return VN_BACKPRESSURE;
+    for (std::size_t i = 0; i < resourceTokens->size(); ++i) {
+        const auto token = (*resourceTokens)[i];
+        const auto* refs = ResourceClosureRefCountFor(token);
+        if (refs == nullptr) return VN_CONTENT_NOT_LOADED;
+        if (*refs == UINT64_MAX) return VN_RUNTIME_RECREATE_REQUIRED;
+        for (std::size_t j = 0; j < i; ++j)
+            if ((*resourceTokens)[j] == token) return VN_INVALID_ARG;
     }
-    if (selected == m_resourceClosures.size()) {
-        return !m_resourceClosures.empty() && !anyReusable
-                   ? VN_RUNTIME_RECREATE_REQUIRED
-                   : VN_BACKPRESSURE;
-    }
-
-    PackResourceRevisionToken* stored = ResourceClosureTokens(selected);
-    std::size_t uniqueCount = 0;
-    for (std::size_t i = 0; i < resourceTokenCount; ++i) {
-        const PackResourceRevisionToken token = resourceTokens[i];
-        bool duplicate = false;
-        for (std::size_t j = 0; j < uniqueCount; ++j) {
-            if (stored[j] == token) {
-                duplicate = true;
-                break;
-            }
-        }
-        if (duplicate) {
-            continue;
-        }
-        std::uint64_t* refs = ResourceClosureRefCountFor(token);
-        if (refs == nullptr) {
-            return VN_CONTENT_NOT_LOADED;
-        }
-        if (*refs == std::numeric_limits<std::uint64_t>::max()) {
-            return VN_RUNTIME_RECREATE_REQUIRED;
-        }
-        if (uniqueCount == m_slots.size()) {
-            return VN_BACKPRESSURE;
-        }
-        stored[uniqueCount++] = token;
-    }
-    if (uniqueCount == 0) {
-        return VN_CONTENT_NOT_LOADED;
-    }
-
-    for (std::size_t i = 0; i < uniqueCount; ++i) {
-        ++*ResourceClosureRefCountFor(stored[i]);
-    }
-    ResourceClosureRow& row = m_resourceClosures[selected];
-    row.resourceCount = static_cast<std::uint32_t>(uniqueCount);
+    auto& row = m_resourceClosures[selected];
+    row.tokens = resourceTokens;
+    for (const auto token : *row.tokens) ++*ResourceClosureRefCountFor(token);
+    row.resourceCount = static_cast<std::uint32_t>(row.tokens->size());
     row.state = ResourceClosureState::Live;
     *outClosureToken = MakeResourceClosureToken(selected, row.generation);
     return VN_OK;
@@ -375,9 +362,11 @@ VnResult PackTable::ValidateResourceClosure(
 
 VnResult PackTable::SetResourceClosureGenerationForTests(
     std::size_t rowIndex, std::uint32_t generation) noexcept {
-    if (rowIndex >= m_resourceClosures.size() || generation == 0) {
+    if (rowIndex >= m_resourceClosures.Capacity() || generation == 0) {
         return VN_INVALID_ARG;
     }
+    if (!m_resourceClosures.ConstructThrough(static_cast<std::uint32_t>(rowIndex + 1u)))
+        return VN_BACKPRESSURE;
     ResourceClosureRow& row = m_resourceClosures[rowIndex];
     if (row.state != ResourceClosureState::Free) {
         return VN_IN_USE;
@@ -391,9 +380,11 @@ VnResult PackTable::SetResourceClosureGenerationForTests(
 
 VnResult PackTable::SetSlotGenerationForTests(
     std::size_t rowIndex, std::uint32_t generation) noexcept {
-    if (rowIndex >= m_slots.size() || generation == 0) {
+    if (rowIndex >= m_slots.Capacity() || generation == 0) {
         return VN_INVALID_ARG;
     }
+    if (!m_slots.ConstructThrough(static_cast<std::uint32_t>(rowIndex + 1u)))
+        return VN_BACKPRESSURE;
     Slot& slot = m_slots[rowIndex];
     if (slot.loaded || generation < slot.generation) {
         return VN_IN_USE;
@@ -410,7 +401,7 @@ VnResult PackTable::ReleaseResourceClosure(
     }
     const std::size_t rowIndex =
         static_cast<std::size_t>(static_cast<std::uint32_t>(closureToken) - 1);
-    PackResourceRevisionToken* stored = ResourceClosureTokens(rowIndex);
+    const PackResourceRevisionToken* stored = ResourceClosureTokens(rowIndex);
     for (std::size_t i = 0; i < row->resourceCount; ++i) {
         const std::uint64_t* refs = ResourceClosureRefCountFor(stored[i]);
         if (refs == nullptr || *refs == 0) {
@@ -419,8 +410,8 @@ VnResult PackTable::ReleaseResourceClosure(
     }
     for (std::size_t i = 0; i < row->resourceCount; ++i) {
         --*ResourceClosureRefCountFor(stored[i]);
-        stored[i] = 0;
     }
+    row->tokens.reset();
     row->resourceCount = 0;
     if (row->generation == std::numeric_limits<std::uint32_t>::max()) {
         row->state = ResourceClosureState::Quarantined;
@@ -501,6 +492,7 @@ VnResult PackTable::ReadAndValidate(
 VnResult PackTable::Load(const char* utf8Path, PCMRegistry& registry,
                               VnPackHandle* outHandle,
                               ReservedIdFn isReserved, void* reservedCtx) {
+    if (!PrepareContentStorage()) return VN_BACKPRESSURE;
     const std::uint32_t capacity =
         static_cast<std::uint32_t>(m_slots.size());
     std::uint32_t slotIndex = 0;
@@ -1011,6 +1003,7 @@ VnResult PackTable::PrepareLoad(PreparedLoadToken* out) noexcept {
         return VN_INVALID_ARG;
     }
     *out = PreparedLoadToken{};
+    if (!PrepareContentStorage()) return VN_BACKPRESSURE;
     const std::uint32_t capacity =
         static_cast<std::uint32_t>(m_slots.size());
     std::uint32_t slotIndex = 0;
@@ -1087,14 +1080,17 @@ VnResult PackTable::PrepareCanonicalSet(
     if (out->IsPrepared() || m_pendingSetMutation || registry.m_pendingSetMutation) {
         return VN_IN_USE;
     }
-    if (members.size() > m_slots.size()) {
+    if (members.size() > m_slots.Capacity()) {
         return VN_INVALID_ARG;
     }
+    if (!PrepareContentStorage()) return VN_BACKPRESSURE;
     *out = PreparedSetMutation{};
     m_conflictingSoundId = {};
-    if (!members.empty() &&
+    const auto newRevisions = std::count_if(members.begin(), members.end(),
+        [](const auto& member) { return !member.keep; });
+    if (newRevisions != 0 &&
         (m_resourceRevisionTokensExhausted ||
-         members.size() - 1 > UINT64_MAX - m_nextResourceRevisionToken)) {
+         static_cast<std::uint64_t>(newRevisions - 1) > UINT64_MAX - m_nextResourceRevisionToken)) {
         return VN_RUNTIME_RECREATE_REQUIRED;
     }
     PreparedSetMutation prepared;
@@ -1154,8 +1150,21 @@ VnResult PackTable::PrepareCanonicalSet(
                 }
             }
         }
+        std::uint64_t newRevisionOrdinal = 0;
         for (std::size_t i = 0; i < members.size(); ++i) {
             const CanonicalSetMember& member = members[i];
+            if (member.keep) {
+                const auto* slot = SlotFor(member.expectedHandle);
+                if (slot == nullptr || member.bytes != nullptr || member.media != nullptr ||
+                    slot->revisionKey.packStableId != member.revisionKey.packStableId)
+                    return VN_INVALID_ARG;
+                const auto index = static_cast<std::uint32_t>(member.expectedHandle);
+                auto& change = prepared.m_changes[index];
+                change.handle = member.expectedHandle;
+                change.resourceToken = slot->resourceToken;
+                prepared.m_members.push_back(index);
+                continue;
+            }
             if (member.revisionKey.packStableId == 0 || member.media == nullptr ||
                 (!member.media->empty() &&
                  (member.bytes == nullptr || !*member.bytes))) {
@@ -1183,7 +1192,7 @@ VnResult PackTable::PrepareCanonicalSet(
             change.revisionKey = member.revisionKey;
             change.revisionKey.handle = change.handle;
             change.revisionKey.slotGeneration = generation;
-            change.resourceToken = m_nextResourceRevisionToken + i;
+            change.resourceToken = m_nextResourceRevisionToken + newRevisionOrdinal++;
             change.entries.resize(member.media->size());
             for (std::size_t entry = 0; entry < member.media->size(); ++entry) {
                 const auto& media = (*member.media)[entry];
@@ -1236,6 +1245,7 @@ VnResult PackTable::PrepareCanonicalSet(
             return true;
         };
         for (const auto& member : members) {
+            if (member.keep) continue;
             for (const auto& media : *member.media) {
                 MediaSource source{&media, reinterpret_cast<const float*>(
                     member.bytes->get() + media.blobOffset), {}};
@@ -1422,6 +1432,7 @@ void PackTable::CommitPreparedSet(PreparedSetMutation* prepared,
     registry.CommitPreparedPackMutation(&prepared->m_pcm);
     for (const auto index : prepared->m_members) {
         auto& change = prepared->m_changes[index];
+        if (!change.touched) continue;
         auto& slot = m_slots[index];
         slot.generation = static_cast<std::uint32_t>(change.handle >> 32);
         slot.entries = std::move(change.entries);

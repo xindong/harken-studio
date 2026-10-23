@@ -47,6 +47,10 @@ ImportResult AssetImporter::importFile(const QString& externalPath,
                                         uint32_t restoreSourceID)
 {
     ImportResult result;
+    if (!SourceFileSystem::recoverDiscard(&result.errorMessage)) {
+        result.error = AssetError::E_CONVERSION_FAILED;
+        return result;
+    }
 
     if (!sourceFolder.isEmpty() && restoreSourceID == 0) {
         const QString directory = SourceFileSystem::absolutePath(sourceFolder);

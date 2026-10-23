@@ -155,18 +155,14 @@ inline constexpr std::uint32_t kLogCodeStreamWorkerFailed = 28;
 // again reports again, because a once-per-process signal would go quiet for the
 // rest of a long session after the first burst.
 inline constexpr std::uint32_t kLogCodeCommandBudgetBehind = 29;
-// The render-worker rendezvous ran past its deadline and the block's batch was
-// abandoned (audio thread; arg0 = microseconds past the deadline, arg1 = jobs
-// not observed finished). arg1 is also, exactly, the number of voice slots put
-// beyond reuse: the classification that produced the count is the one that
-// selected the quarantine set. Parallel dispatch is off from this block on, so
-// this record is emitted at most once per worker thread set.
-inline constexpr std::uint32_t kLogCodeRenderBatchAbandoned = 30;
-// The block period forced the render-worker deadline below the absolute jitter
-// floor it exists to clear (logic thread, emitted once at init; arg0 = the
-// budget actually in force in microseconds, arg1 = the absolute figure it was
-// cut from). This configuration may abandon healthy batches. Observability
-// only — nothing is refused.
+// Render-worker synchronization exceeded its wait budget (audio thread;
+// arg0 = microseconds past that budget, arg1 = jobs not observed finished).
+// The prepared quantum and its voices are retained until payload completion.
+// Later callbacks poll without advancing playback time or reclaiming storage.
+inline constexpr std::uint32_t kLogCodeRenderBatchDeferred = 30;
+// The worker cutoff is below the scheduler jitter warning threshold (logic
+// thread, once at init; arg0 = cutoff offset in microseconds, arg1 = warning
+// threshold). Short blocks retain their own bound; the warning never raises it.
 inline constexpr std::uint32_t kLogCodeRenderDeadlineBelowJitterFloor = 31;
 inline constexpr std::uint32_t kLogCodePackContentConflict = 32;
 

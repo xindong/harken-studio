@@ -14,6 +14,7 @@
 #include "harken/core/VariableWeightControl.h"
 #include "harken/param/Curve.h"
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <utility>
@@ -85,12 +86,32 @@ enum class TimelineProgramRole : std::uint8_t {
     ControllerActivation = 2,
 };
 
+class TimelineProgramReadFence {
+public:
+    void RecordRead(std::uint64_t audioBlock) noexcept {
+        lastReadBlock_.store(audioBlock, std::memory_order_release);
+    }
+    bool WasRead() const noexcept {
+        return lastReadBlock_.load(std::memory_order_acquire) != UINT64_MAX;
+    }
+    bool ReadCompleted(std::uint64_t completedBlocks) const noexcept {
+        const auto block = lastReadBlock_.load(std::memory_order_acquire);
+        return block == UINT64_MAX || completedBlocks > block;
+    }
+    void ResetAfterSafeRetirement() noexcept {
+        lastReadBlock_.store(UINT64_MAX, std::memory_order_relaxed);
+    }
+private:
+    std::atomic<std::uint64_t> lastReadBlock_{UINT64_MAX};
+};
+
 struct TimelineProgramView {
     ProgramGeneration generation = 0;
     const TimelineEventPayload* payloads = nullptr;
     std::uint32_t payloadCount = 0;
     TimelineProgramRole role = TimelineProgramRole::Voice;
     const AuthoredStopFenceDescriptor* authoredStopFence = nullptr;
+    TimelineProgramReadFence* readFence = nullptr;
 };
 
 struct OwningTimelineProgram {

@@ -3,6 +3,7 @@
 #include "JsonReader.h"
 #include "JsonWriter.h"
 #include "PackSidecar.h"
+#include "GameplayPublication.h"
 #include "harken_studio_build/WorldCodec.h"
 #include "harken_studio_build/MediaContentRevision.h"
 #include "harken_studio_build/PackImage.h"
@@ -61,54 +62,16 @@ struct ParsedPack {
 };
 using PackMap = std::map<std::uint64_t, std::unique_ptr<ParsedPack>>;
 
-bool CheckCatalog(const JsonValue& root, const ParsedPack& init) {
+bool CheckCatalog(const JsonValue& root, const ParsedPack& init, GameplayCatalogImage* catalog) {
+    std::vector<std::uint8_t> bytes;
+    if (!EncodeGameplayPublication(root, &bytes) ||
+        ParseGameplayCatalog(bytes.data(), bytes.size(), catalog) != kPackOk) return false;
+    const auto& header = catalog->header;
     const auto* json = root.Find("gameplayCatalog");
-    if (!json || !harkenstudiojson::PackSidecarKeys(*json, {"schema", "projectId", "initPackStableId",
-            "initContentRevision", "digest", "actions", "retired"})) return false;
-    const auto& catalog = init.image.gameplayCatalog;
-    const auto& header = catalog.header;
-    if (!U64(*json, "schema", 2, true) || !U64(*json, "digest", header.digest) ||
-        !U64(*json, "initPackStableId", header.initPackStableId) ||
-        !U64(*json, "initContentRevision", header.initContentRevision, true) ||
-        PackSidecarText(*json, "projectId") != Guid(header.projectGuid)) return false;
-    const auto* active = json->Find("actions");
-    const auto* retired = json->Find("retired");
-    if (!active || active->kind != JsonValue::Kind::Array || active->items.size() != catalog.active.size() ||
-        !retired || retired->kind != JsonValue::Kind::Array || retired->items.size() != catalog.retired.size()) return false;
-    std::set<harkenstudio::ObjectId> seen;
-    for (const auto& row : active->items) {
-        if (!harkenstudiojson::PackSidecarKeys(row, {"name", "actionStableId", "nameBindingRevision",
-                "callableFingerprint", "ownerPackStableId", "providerClosureFingerprint"})) return false;
-        harkenstudio::ObjectId id{};
-        if (!ParseObjectId(PackSidecarText(row, "actionStableId"), &id) || !seen.insert(id).second) return false;
-        const auto match = std::find_if(catalog.active.begin(), catalog.active.end(),
-            [id](const auto& entry) { return entry.actionStableId == id; });
-        if (match == catalog.active.end()) return false;
-        const auto name = Name(catalog, match->nameOffset, match->nameLength);
-        if (PackSidecarText(row, "name") != name ||
-            !U64(row, "nameBindingRevision", match->nameBindingRevision) ||
-            !U64(row, "callableFingerprint", match->callableFingerprint) ||
-            !U64(row, "ownerPackStableId", match->ownerPackStableId) ||
-            !U64(row, "providerClosureFingerprint", match->providerClosureFingerprint) ||
-            GameplayCallableFingerprint(match->actionStableId, match->nameBindingRevision, name) != match->callableFingerprint) return false;
-    }
-    std::set<std::string> retiredNames;
-    for (const auto& row : retired->items) {
-        if (!harkenstudiojson::PackSidecarKeys(row, {"name", "lastActionStableId",
-                "lastNameBindingRevision", "reason"})) return false;
-        const auto name = PackSidecarText(row, "name");
-        if (!retiredNames.insert(name).second) return false;
-        const auto match = std::find_if(catalog.retired.begin(), catalog.retired.end(), [&](const auto& entry) {
-            return Name(catalog, entry.nameOffset, entry.nameLength) == name;
-        });
-        if (match == catalog.retired.end() || !ObjectId(row, "lastActionStableId", match->lastActionStableId) ||
-            !U64(row, "lastNameBindingRevision", match->lastNameBindingRevision)) return false;
-        const auto reason = PackSidecarText(row, "reason");
-        const char* expected = match->reason == kGameplayCatalogRetiredReasonDeleted ? "deleted" :
-            match->reason == kGameplayCatalogRetiredReasonReused ? "reused" : "renamed";
-        if (reason != expected) return false;
-    }
-    return true;
+    const auto* world = init.world.ProductionView();
+    return world && ObjectId(*json, "projectId", world->identity.projectId) &&
+        U64(*json, "digest", header.digest) && header.initPackStableId == init.image.packStableId &&
+        header.initContentRevision == init.image.requirement.packContentRevision;
 }
 
 bool Closure(std::uint64_t id, const PackMap& packs, std::set<std::uint64_t>& visited,
@@ -483,7 +446,7 @@ bool BuildEditorWaveformPublication(std::string_view selectedManifestUtf8,
     if (!harkenstudiojson::ParsePackSidecarManifest(manifest, &platform, &entries, error) ||
         !harkenstudiojson::ParseJson(manifest, &root, error, true)) return false;
     *error = "Selected manifest and Pack bytes disagree";
-    if (!U64(root, "schema_version", VNX::PackSchema::kPackManifestSchemaVersion, true) || sources.size() != entries.size()) return false;
+    if (!U64(root, "schema_version", HARKEN_PACK_SCHEMA_VERSION, true) || sources.size() != entries.size()) return false;
     PackMap packs;
     ParsedPack* init = nullptr;
     const auto* packRows = root.Find("packs");
@@ -504,7 +467,6 @@ bool BuildEditorWaveformPublication(std::string_view selectedManifestUtf8,
             !U64(row, "contentRevision", decoded->image.requirement.packContentRevision, true)) return false;
         if (entry->isInit) {
             if (decoded->image.packKind != kPackKindInit ||
-                !decoded->image.hasGameplayCatalog ||
                 (decoded->image.requirement.storageModelVersion == 2 &&
                  !decoded->image.hasBusDefinitionSnapshot)) return false;
             if (decoded->image.hasCatalog) {
@@ -515,7 +477,8 @@ bool BuildEditorWaveformPublication(std::string_view selectedManifestUtf8,
         } else if (decoded->image.packKind != kPackKindCanonicalContent) return false;
         packs.emplace(source.packStableId, std::move(decoded));
     }
-    if (!init || !CheckCatalog(root, *init) || init->image.gameplayCatalog.active.size() > kEditorWaveformMaxActions) return false;
+    GameplayCatalogImage catalog;
+    if (!init || !CheckCatalog(root, *init, &catalog) || catalog.active.size() > kEditorWaveformMaxActions) return false;
     std::set<std::uint64_t> visited, visiting;
     for (const auto& [id, pack] : packs) {
         if (!Closure(id, packs, visited, visiting)) return false;
@@ -540,18 +503,18 @@ bool BuildEditorWaveformPublication(std::string_view selectedManifestUtf8,
     Text(json, "envelopeKind", "exported-source-pcm-minmax");
     Number(json, "manifestByteLength", manifest.size());
     Id(json, "manifestFnv1a64", Fnv1a64(manifest.data(), manifest.size()));
-    Text(json, "projectId", Guid(init->image.gameplayCatalog.header.projectGuid));
+    Text(json, "projectId", Guid(catalog.header.projectGuid));
     Text(json, "platformId", platform.id);
     Text(json, "basePlatform", platform.basePlatform);
     Text(json, "language", PackSidecarText(root, "language"));
     Id(json, "initPackStableId", init->image.packStableId);
     Id(json, "initContentHash", init->manifest->contentHash);
-    Id(json, "catalogDigest", init->image.gameplayCatalog.header.digest);
+    Id(json, "catalogDigest", catalog.header.digest);
     json.EndObject();
     auto result = json.Finish();
     while (!result.empty() && (result.back() == '\n' || result.back() == '\r')) result.pop_back();
     result.pop_back();
-    auto actions = init->image.gameplayCatalog.active;
+    auto actions = catalog.active;
     std::sort(actions.begin(), actions.end(), [](const auto& a, const auto& b) { return a.actionStableId < b.actionStableId; });
     std::size_t budget = kEditorWaveformMaxBytes - actions.size() * 2048 - 4096;
     std::size_t decodedBudget = kEditorWaveformMaxBytes;
@@ -559,7 +522,7 @@ bool BuildEditorWaveformPublication(std::string_view selectedManifestUtf8,
     std::vector<std::string> actionRows;
     for (const auto& action : actions) {
         std::string row;
-        if (!WriteAction(&row, action, init->image.gameplayCatalog, packs, sourceTable, &budget, &decodedBudget, error)) return false;
+        if (!WriteAction(&row, action, catalog, packs, sourceTable, &budget, &decodedBudget, error)) return false;
         actionRows.push_back(std::move(row));
     }
     result += ",\"sources\":[";

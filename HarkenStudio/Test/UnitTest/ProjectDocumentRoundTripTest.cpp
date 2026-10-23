@@ -1,5 +1,6 @@
 #include "UnitTest/StudioObjectIdTestSupport.h"
 #include "harken_buildinfo.h"
+#include "Core/AssetPipeline/PathUtils.h"
 #include "Core/ProjectDocument.h"
 #include "Core/BindingSemantics.h"
 #include "Core/EffectChainSemantics.h"
@@ -355,6 +356,69 @@ TEST_F(ProjectDocumentRoundTripTest, AllDocumentMetadataSurvivesEditingSavingAnd
                       .value(QStringLiteral("futureHeaderMetadata")));
         EXPECT_EQ(HarkenTest::projectContent(document).value(QStringLiteral("extensions")),
                   extensionMetadata(it.key()));
+    }
+}
+
+TEST_F(ProjectDocumentRoundTripTest, WholeProjectSavePreservesOutputDestinations)
+{
+    auto& manager = ProjectManager::instance();
+    ASSERT_TRUE(manager.loadProject(projectPath_));
+    const QString packDirectory = directory_.filePath(QStringLiteral("Exports/Packs"));
+    const QString waveformDirectory = directory_.filePath(QStringLiteral("Exports/Waveforms"));
+    manager.currentProject()->packBuildOutputDir = packDirectory;
+    manager.currentProject()->buildWaveformOutputDir = waveformDirectory;
+    ASSERT_TRUE(manager.saveProject());
+    ASSERT_TRUE(manager.closeProject());
+    ASSERT_TRUE(manager.loadProject(projectPath_));
+    const auto* reopened = manager.currentProject();
+    EXPECT_EQ(PathUtils::packBuildOutputRoot(reopened->projectPath, reopened->packBuildOutputDir), packDirectory);
+    EXPECT_EQ(PathUtils::waveformBuildOutputRoot(reopened->projectPath, reopened->buildWaveformOutputDir),
+              waveformDirectory);
+}
+
+TEST_F(ProjectDocumentRoundTripTest, SaveAsUsesDestinationProjectForOutputPaths)
+{
+    QTemporaryDir destination(QStringLiteral(HARKEN_TEMP_DIR "/project-save-as-XXXXXX"));
+    ASSERT_TRUE(destination.isValid());
+    auto& manager = ProjectManager::instance();
+    ASSERT_TRUE(manager.loadProject(projectPath_));
+    const QString packDirectory = directory_.filePath(QStringLiteral("Exports/Packs"));
+    const QString destinationPath = destination.filePath(QStringLiteral("SavedAs.hsp"));
+    const QByteArray original = readFile(projectPath_);
+    manager.currentProject()->packBuildOutputDir = packDirectory;
+    manager.currentProject()->buildWaveformOutputDir = QStringLiteral("Waveforms");
+    manager.currentProject()->projectPath = destinationPath;
+    manager.currentProject()->name = QStringLiteral("SavedAs");
+    ASSERT_TRUE(manager.saveProject());
+    EXPECT_EQ(readFile(projectPath_), original);
+    ASSERT_TRUE(manager.closeProject());
+    ASSERT_TRUE(manager.loadProject(destinationPath));
+    const auto* reopened = manager.currentProject();
+    EXPECT_EQ(PathUtils::packBuildOutputRoot(reopened->projectPath, reopened->packBuildOutputDir), packDirectory);
+    EXPECT_EQ(PathUtils::waveformBuildOutputRoot(reopened->projectPath, reopened->buildWaveformOutputDir),
+              destination.filePath(QStringLiteral("Waveforms")));
+    ASSERT_TRUE(manager.saveProject());
+    ASSERT_TRUE(manager.closeProject());
+    ASSERT_TRUE(manager.loadProject(destinationPath));
+    EXPECT_EQ(PathUtils::packBuildOutputRoot(manager.currentProject()->projectPath,
+        manager.currentProject()->packBuildOutputDir), packDirectory);
+    ASSERT_TRUE(manager.closeProject());
+}
+
+TEST_F(ProjectDocumentRoundTripTest, StagedSaveRejectsOutputInsideFinalProjectDocuments)
+{
+    auto& manager = ProjectManager::instance();
+    ASSERT_TRUE(manager.loadProject(projectPath_));
+    QMap<QString, QByteArray> before;
+    for (const QString& path : pathsById_)
+        before.insert(path, readFile(path));
+    for (const auto& path : {projectDirectory_,
+                            QDir(projectDirectory_).filePath(QStringLiteral("Layers/Generated"))}) {
+        manager.currentProject()->buildWaveformOutputDir = path;
+        EXPECT_FALSE(manager.saveProject());
+        EXPECT_FALSE(ProjectTransaction::recoveryRequired(projectPath_));
+        for (auto it = before.cbegin(); it != before.cend(); ++it)
+            EXPECT_EQ(readFile(it.key()), it.value()) << it.key().toStdString();
     }
 }
 

@@ -182,10 +182,18 @@ TEST(ActionDeferredRecordTable, ReturnedPairLoanKeepsRealPreparationAndRollbackC
     ASSERT_TRUE(table.Reset(1));
     harken::DeferredIntentPool pool(1, 1);
     const auto record = MakeRecord();
+    table.SetCommitPageLimitForTests(0);
+    const auto refused = table.Prepare(record);
+    EXPECT_EQ(harken::ActionDeferredRecordPrepareStatus::Capacity, refused.status);
+    EXPECT_FALSE(refused.token.Valid());
+    EXPECT_EQ(1u, table.Capacity());
+    EXPECT_EQ(0u, table.PreparedCount());
+    table.SetCommitPageLimitForTests(SIZE_MAX);
     for (unsigned attempt = 0; attempt < 3; ++attempt) {
         SCOPED_TRACE(attempt);
         auto prepared = table.Prepare(record);
         ASSERT_EQ(harken::ActionDeferredRecordPrepareStatus::Prepared, prepared.status);
+        table.SetCommitPageLimitForTests(0);
         const auto original = prepared.token;
         const auto added = pool.AddPrepared(MakeIntent(record, original));
         ASSERT_EQ(harken::DeferredIntentRefusal::None, added.status);

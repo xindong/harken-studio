@@ -78,6 +78,9 @@ class WaveformCache : public QObject
 public:
     static WaveformCache& instance();
 
+    static void beginSourceFileChange();
+    static void endSourceFileChange(bool regenerate = true);
+
     static bool generate(const QString& audioFilePath, uint32_t targetPeaks = VKD::DEFAULT_NUM_PEAKS);
 
     static QFuture<bool> generateAsync(const QString& audioFilePath, uint32_t targetPeaks = VKD::DEFAULT_NUM_PEAKS);

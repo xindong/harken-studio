@@ -12,6 +12,7 @@
 #include "AssetPipeline/AssetGarbageCollector.h"
 #include "AssetPipeline/AssetImporter.h"
 #include "AssetPipeline/AssetRegistry.h"
+#include "AssetPipeline/MediaPool.h"
 #include "AssetPipeline/PathUtils.h"
 #include "AttenuationStore.h"
 #include "BindingContract.h"
@@ -40,11 +41,12 @@
 #include "PlaybackReferenceValidation.h"
 #include "ProjectPackExporter.h"
 #include "PackGenerationRecord.h"
+#include "PackArtifactCache.h"
 #include "ProjectIndex.h"
 #include "PropertyEditSession.h"
 #include "ReferenceSlotResolution.h"
 #include "TemplateApplyService.h"
-#include "ToastManager.h"
+#include "Widgets/LogPanel/LogPanel.h"
 #include "UndoCommands.h"
 #include "Components/VAttenuation.h"
 #include "Components/VAudio.h"
@@ -1550,12 +1552,6 @@ bool validateLoadedProjectIdentities(const ProjectData& project, QString* error)
         if (error) *error = QStringLiteral("Project identity counters are behind loaded data");
         return false;
     }
-    for (const ActionPackTargeting& targeting : project.actionPackTargeting) {
-        if (harkenstudio::IsNull(targeting.stableId) || !actionRuntimeIds.contains(targeting.stableId)) {
-            if (error) *error = QStringLiteral("Project action targeting references an unknown action");
-            return false;
-        }
-    }
     for (const PackGroup& group : project.packGroups) {
         for (const harkenstudio::ObjectId id : group.actionIds) {
             if (harkenstudio::IsNull(id) || !actionRuntimeIds.contains(id)) {
@@ -1891,7 +1887,7 @@ bool ProjectManager::removeProjectLanguage(const QString& languageName)
     if (!normalized.ok()) return false;
     setProjectLanguagesInternal(normalized.value);
     if (m_currentProject->defaultLanguage == languageName)
-        m_currentProject->defaultLanguage = m_currentProject->projectLanguages.first();
+        m_currentProject->defaultLanguage = m_currentProject->projectLanguages.value(0);
     return true;
 }
 
@@ -1903,7 +1899,7 @@ QStringList ProjectManager::getProjectLanguages() const
 
 void ProjectManager::setProjectLanguagesInternal(const QStringList& value)
 {
-    if (!m_currentProject || value.isEmpty()) return;
+    if (!m_currentProject) return;
     if (m_currentProject->projectLanguages == value) return;
     m_currentProject->projectLanguages = value;
     emit projectLanguagesChanged(value);
@@ -1917,7 +1913,7 @@ void ProjectManager::setDefaultLanguage(const QString& languageName)
 
 QString ProjectManager::getDefaultLanguage() const
 {
-    if (!m_currentProject) return "English";
+    if (!m_currentProject) return {};
     return m_currentProject->defaultLanguage;
 }
 
@@ -1932,7 +1928,7 @@ bool ProjectManager::setPackBuildOutputDir(const QString& value)
 {
     if (!m_currentProject || !PathUtils::isValidPackBuildOutputDir(value, m_currentProject->projectPath))
         return false;
-    setPackBuildOutputDirInternal(PathUtils::normalizePackBuildOutputDir(value));
+    setPackBuildOutputDirInternal(PathUtils::normalizePackBuildOutputDir(value, m_currentProject->projectPath));
     return true;
 }
 
@@ -1943,46 +1939,66 @@ void ProjectManager::setPackBuildOutputDirInternal(const QString& value)
     emit packBuildOutputDirChanged(value);
 }
 
-ConversionFailurePolicy ProjectManager::getConversionFailurePolicy() const
-{
-    if (!m_currentProject) return ConversionFailurePolicy::AbortBuild;
-    return m_currentProject->conversionFailurePolicy;
-}
-
-void ProjectManager::setConversionFailurePolicy(ConversionFailurePolicy value)
+void ProjectManager::setBuildProjectDataExportInternal(bool enabled)
 {
     if (!m_currentProject) return;
-    if (m_currentProject->conversionFailurePolicy == value) return;
-    m_currentProject->conversionFailurePolicy = value;
-    emit conversionFailurePolicyChanged(value);
+    m_currentProject->buildExportProjectData = enabled;
+}
+
+void ProjectManager::setBuildPackMetadataExportInternal(bool enabled)
+{
+    if (!m_currentProject) return;
+    m_currentProject->buildExportPackMetadata = enabled;
+}
+
+void ProjectManager::setBuildWaveformSettingsInternal(bool enabled, const QString& directory)
+{
+    if (!m_currentProject) return;
+    m_currentProject->buildExportWaveforms = enabled;
+    m_currentProject->buildWaveformOutputDir = directory;
+}
+
+PackExportSelection ProjectManager::packExportSelection() const
+{
+    return m_currentProject ? PackExportSelectionStore::instance().selection() : PackExportSelection{};
+}
+
+void ProjectManager::setPackExportSelectionInternal(PackExportSelection selection)
+{
+    if (!m_currentProject) return;
+    const auto before = packExportSelection();
+    PackExportSelectionStore::instance().setSelection(*m_currentProject, std::move(selection));
+    const auto after = packExportSelection();
+    if (before.currentPlatformId != after.currentPlatformId)
+        emit packExportCurrentPlatformChanged(after.currentPlatformId);
+    if (before.selectedPlatformIds != after.selectedPlatformIds)
+        emit packExportSelectedPlatformsChanged(after.selectedPlatformIds);
+    if (before.actionTargeting != after.actionTargeting)
+        emit actionPackTargetingChanged();
 }
 
 QString ProjectManager::getPackExportCurrentPlatform() const
 {
-    if (!m_currentProject) return QString();
-    return m_currentProject->packExportCurrentPlatformId;
+    return packExportSelection().currentPlatformId;
 }
 
 void ProjectManager::setPackExportCurrentPlatformInternal(const QString& value)
 {
-    if (!m_currentProject) return;
-    if (m_currentProject->packExportCurrentPlatformId == value) return;
-    m_currentProject->packExportCurrentPlatformId = value;
-    emit packExportCurrentPlatformChanged(value);
+    auto selection = packExportSelection();
+    selection.currentPlatformId = value;
+    setPackExportSelectionInternal(std::move(selection));
 }
 
 QStringList ProjectManager::getPackExportSelectedPlatforms() const
 {
-    if (!m_currentProject) return QStringList();
-    return m_currentProject->packExportSelectedPlatformIds;
+    return packExportSelection().selectedPlatformIds;
 }
 
 void ProjectManager::setPackExportSelectedPlatformsInternal(const QStringList& value)
 {
-    if (!m_currentProject) return;
-    if (m_currentProject->packExportSelectedPlatformIds == value) return;
-    m_currentProject->packExportSelectedPlatformIds = value;
-    emit packExportSelectedPlatformsChanged(value);
+    auto selection = packExportSelection();
+    selection.selectedPlatformIds = value;
+    setPackExportSelectionInternal(std::move(selection));
 }
 
 std::vector<PackGroup> ProjectManager::getPackGroups() const
@@ -2001,16 +2017,14 @@ void ProjectManager::setPackGroupsInternal(std::vector<PackGroup> value)
 
 std::vector<ActionPackTargeting> ProjectManager::getActionPackTargeting() const
 {
-    if (!m_currentProject) return {};
-    return m_currentProject->actionPackTargeting;
+    return packExportSelection().actionTargeting;
 }
 
 void ProjectManager::setActionPackTargetingInternal(std::vector<ActionPackTargeting> value)
 {
-    if (!m_currentProject) return;
-    if (m_currentProject->actionPackTargeting == value) return;
-    m_currentProject->actionPackTargeting = std::move(value);
-    emit actionPackTargetingChanged();
+    auto selection = packExportSelection();
+    selection.actionTargeting = std::move(value);
+    setPackExportSelectionInternal(std::move(selection));
 }
 
 QStringList ProjectManager::getTargetPlatforms() const
@@ -2044,12 +2058,11 @@ void ProjectManager::notifyProjectPlatformEdits(const QVector<ProjectItem*>& cha
                 SoundSourceEditing::previewLanguage(*item, LanguageContextService::instance().language()));
     }
     for (const auto& id : platformIds) {
-        PackGenerationRecordStore::instance().invalidatePlatform(id);
         emit projectPlatformEdited(id);
     }
     emit targetPlatformsChanged(m_currentProject->platformIds());
-    emit packExportCurrentPlatformChanged(m_currentProject->packExportCurrentPlatformId);
-    emit packExportSelectedPlatformsChanged(m_currentProject->packExportSelectedPlatformIds);
+    emit packExportCurrentPlatformChanged(getPackExportCurrentPlatform());
+    emit packExportSelectedPlatformsChanged(getPackExportSelectedPlatforms());
     emit packGroupsChanged();
     emit actionPackTargetingChanged();
     for (auto* item : changedItems) {
@@ -2268,6 +2281,8 @@ bool ProjectManager::createProject(const ProjectConfig& config)
         return false;
     }
 
+    if (m_currentProject && !closeProject())
+        return false;
     AssetRegistry::instance().setProjectRoot(projectRoot);
     qDebug() << "[ProjectManager] New project root set to:" << projectRoot;
 
@@ -2316,9 +2331,6 @@ bool ProjectManager::createMainProjectFile(const ProjectConfig& config, const QS
     project.projectPath = QDir(projectRoot).filePath(config.name + ".hsp");
 
     project.platforms = config.platforms;
-    project.projectLanguages = {QStringLiteral("English")};
-    project.packExportSelectedPlatformIds = project.platformIds();
-    project.packExportCurrentPlatformId = project.platformIds().first();
     project.sampleRate        = config.sampleRate;
     project.channelConfig     = config.channelConfig;
     project.enableLFE         = config.enableLFE;
@@ -2544,8 +2556,6 @@ PreparedProject ProjectManager::prepareProject(const ProjectConfig& config)
     project.projectPath = root.filePath(config.name + QStringLiteral(".hsp"));
     project.projectId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     project.platforms = config.platforms;
-    project.packExportSelectedPlatformIds = project.platformIds();
-    project.packExportCurrentPlatformId = project.platformIds().first();
     project.sampleRate = config.sampleRate;
     project.channelConfig = config.channelConfig;
     project.enableLFE = config.enableLFE;
@@ -2767,7 +2777,8 @@ bool ProjectManager::commitPreparedProject(PreparedProject&& prepared)
         return true;
     }
     if (m_currentProject) {
-        closeProject();
+        if (!closeProject())
+            return false;
         if (m_runtimeCloseRevision) {
             m_queuedPreparedProject.emplace(std::move(prepared));
             return true;
@@ -2806,15 +2817,17 @@ bool ProjectManager::commitPreparedProject(PreparedProject&& prepared)
     m_integrityScanner = std::move(prepared.integrityScanner);
     m_closing = false;
     m_runtimePrepared = false;
+    PackExportSelectionStore::instance().openProject(*m_currentProject);
+    PackArtifactCache::instance().openProject(*m_currentProject);
+    PackGenerationRecordStore::instance().clear();
 
     assetRegistry.replaceSnapshot(projectRoot, prepared.assets);
     assetRegistry.setPlatforms(m_currentProject->platforms);
     assetRegistry.markAllCommitted();
 
     if (!prepared.integrityReport.issues.empty()) {
-        ToastManager::instance().showToast(
-            IntegrityScanner::summarize(prepared.integrityReport),
-            5000, ToastType::Warning);
+        LogPanel::logWarning(LogCategory::File,
+            IntegrityScanner::summarize(prepared.integrityReport));
     }
 
     for (const QString& diagnostic : prepared.diagnostics)
@@ -2935,11 +2948,10 @@ void ProjectManager::reconcileAssetsOnOpen(int bindingLoadFailures)
     }
 
     if (!reclaim.isEmpty() || trashedFiles > 0) {
-        ToastManager::instance().showToast(
+        LogPanel::logInfo(LogCategory::File,
             tr("Asset cleanup: %1 unused asset(s) and %2 orphaned file(s) moved to %3/")
                 .arg(reclaim.size()).arg(trashedFiles)
-                .arg(QLatin1String(PathUtils::TRASH_DIR)),
-            5000, ToastType::Info);
+                .arg(QLatin1String(PathUtils::TRASH_DIR)));
     }
 
     if (!reclaim.isEmpty()) {
@@ -2956,6 +2968,11 @@ void ProjectManager::reconcileAssetsOnOpen(int bindingLoadFailures)
 bool ProjectManager::saveProject()
 {
     if (!m_currentProject) return false;
+    QString sourceRecoveryError;
+    if (!SourceFileSystem::recoverDiscard(&sourceRecoveryError)) {
+        emit errorOccurred(sourceRecoveryError);
+        return false;
+    }
     m_fileWatcher.refreshSources();
     if (!PathUtils::isValidPackBuildOutputDir(m_currentProject->packBuildOutputDir,
                                              m_currentProject->projectPath)) {
@@ -3008,7 +3025,7 @@ bool ProjectManager::saveProject()
         emit errorOccurred(QStringLiteral("Cannot prepare the asset registry for saving"));
         return false;
     }
-    if (!m_serializer.prepareProjectSave(stagedProjectPath, stagedProject)) {
+    if (!m_serializer.prepareProjectSave(m_currentProject->projectPath, stagedProject, stagedProjectPath)) {
         emit errorOccurred(m_serializer.lastError());
         return false;
     }
@@ -3160,6 +3177,7 @@ bool ProjectManager::closeProject()
     if (m_currentProject)
     {
         PropertyEditSession::finishAllActive(false);
+        PackGenerationRecordStore::instance().cancelExport();
         if (ProjectPackExporter::hasBackgroundExportInFlight())
         {
             qInfo() << "[ProjectManager] closeProject: waiting for in-flight"
@@ -3184,24 +3202,31 @@ bool ProjectManager::closeProject()
             audio.stopAll(0.0f);
         }
 
+        auto& mediaPool = MediaPool::instance();
+        mediaPool.beginSourceFileChange();
+        const auto resumeReaders = qScopeGuard([&] { mediaPool.endSourceFileChange(); });
+        const bool resumeWatcher = m_fileWatcher.isWatching();
+        m_fileWatcher.stopWatching();
+        const auto restoreWatcher = qScopeGuard([&] {
+            if (resumeWatcher && m_currentProject)
+                m_fileWatcher.startWatching(QFileInfo(m_currentProject->projectPath).absolutePath());
+        });
+        QString discardError;
+        bool rollbackFailed = false;
+        if (!SourceFileSystem::discardChanges(&discardError, &rollbackFailed)) {
+            if (rollbackFailed) {
+                UndoRedoManager::instance().clear();
+                UndoRedoManager::instance().undoStack()->resetClean();
+            }
+            emit errorOccurred(discardError);
+            return false;
+        }
+        AssetRegistry::instance().discardUncommittedCaches();
         m_closing = true;
         m_runtimePrepared = false;
-
-        m_fileWatcher.stopWatching();
-
         m_itemSaveState.reset();
         UndoRedoManager::instance().clear();
         m_folderSaveState.reset();
-
-        if (!AssetRegistry::instance().projectRoot().isEmpty()) {
-            const int discarded = AssetRegistry::instance().discardUncommittedFiles();
-            if (discarded > 0) {
-                qDebug() << "[ProjectManager] closeProject: discarded" << discarded
-                         << "uncommitted import file(s).";
-            }
-        }
-
-        SourceFileSystem::discardChanges();
         AssetRegistry::instance().clear();
         qDebug() << "[ProjectManager] AssetRegistry cleared.";
 
@@ -3216,6 +3241,9 @@ bool ProjectManager::closeProject()
         m_transitionRehearsal.clearAll();
         clearClipboard();
 
+        PackExportSelectionStore::instance().closeProject();
+        PackArtifactCache::instance().closeProject();
+        PackGenerationRecordStore::instance().clear();
         m_pendingDestruction = std::shared_ptr<ProjectData>(std::move(m_currentProject));
         m_pendingRuntimePreparation.reset();
         emit projectClosed();
@@ -5749,7 +5777,7 @@ QJsonObject folderProjectReferences(const ProjectData& project)
     QJsonArray groups;
     for (const auto& group : project.packGroups) groups.append(group.toJson());
     QJsonArray targeting;
-    for (const auto& target : project.actionPackTargeting) targeting.append(target.toJson());
+    for (const auto& target : ProjectManager::instance().getActionPackTargeting()) targeting.append(target.toJson());
     return {{QStringLiteral("packGroups"), groups}, {QStringLiteral("actionPackTargeting"), targeting}};
 }
 
@@ -5758,9 +5786,10 @@ void applyFolderProjectReferences(ProjectData& project, const QJsonObject& state
     project.packGroups.clear();
     for (const auto& group : state.value(QStringLiteral("packGroups")).toArray())
         project.packGroups.push_back(PackGroup::fromJson(group.toObject()));
-    project.actionPackTargeting.clear();
+    std::vector<ActionPackTargeting> targeting;
     for (const auto& target : state.value(QStringLiteral("actionPackTargeting")).toArray())
-        project.actionPackTargeting.push_back(ActionPackTargeting::fromJson(target.toObject()));
+        targeting.push_back(ActionPackTargeting::fromJson(target.toObject()));
+    ProjectManager::instance().setActionPackTargetingInternal(std::move(targeting));
 }
 
 }
@@ -5866,7 +5895,15 @@ DeletedSubtreeRefLog ProjectManager::cleanupReferencesToDeletedSubtree(ProjectIt
 
     {
         const auto before = folderProjectReferences(*project);
-        const auto after = PhysicalFolderReferenceEdits::removeReferences(before, deletedGuids);
+        auto after = PhysicalFolderReferenceEdits::removeReferences(before, deletedGuids);
+        QJsonArray targeting;
+        for (const auto& value : after.value(QStringLiteral("actionPackTargeting")).toArray()) {
+            const auto entry = ActionPackTargeting::fromJson(value.toObject());
+            const bool removed = std::any_of(deletedObjects.cbegin(), deletedObjects.cend(),
+                [&](const auto* item) { return item->runtimeId() == entry.stableId; });
+            if (!removed) targeting.append(value);
+        }
+        after.insert(QStringLiteral("actionPackTargeting"), targeting);
         if (before != after) {
             log.folderProjectReferencesBefore = before;
             log.folderProjectReferencesAfter = after;

@@ -23,6 +23,7 @@ class InstallExecutor
 {
 public:
     static QString lockFilePath();
+    static bool isTransactionActive();
     static InstallOutcome run(const QString& transactionId,
                               const QByteArray& manifestPublicKey,
                               const QDateTime& now,

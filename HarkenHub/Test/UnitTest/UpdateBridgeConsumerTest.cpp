@@ -5,6 +5,7 @@
 #include "Support/ManifestTestUtils.h"
 #include "Transactions/HandoffArea.h"
 #include "Transactions/InstallIndex.h"
+#include "Transactions/InstallExecutor.h"
 #include "Transactions/TransactionJournal.h"
 #include "Update/UpdateQueue.h"
 #include "ZipTestUtils.h"
@@ -214,6 +215,26 @@ TEST_F(UpdateBridgeConsumerTest, ConsumesQueuedStudioInstall)
     EXPECT_EQ(index.records[0].buildId, QStringLiteral("run12.abcd1234"));
 }
 
+TEST_F(UpdateBridgeConsumerTest, StudioInstallCannotReclaimAnActiveHubInstaller)
+{
+    queueHubTransaction(QStringLiteral("gui"));
+    bool studioInstalled = false;
+    hooks.runHubInstaller = [&](const QString& installerPath, const QString&) {
+        EXPECT_TRUE(QFileInfo::exists(installerPath));
+        const QByteArray originalHash = PackageReader::fileSha256Hex(installerPath).toUtf8();
+        const auto installed = VNH::InstallExecutor::run(queueStudioTransaction(), keys.publicKey, kNow);
+        studioInstalled = installed.ok;
+        EXPECT_TRUE(installed.ok) << installed.error.toStdString();
+        EXPECT_TRUE(QFileInfo::exists(installerPath));
+        EXPECT_EQ(PackageReader::fileSha256Hex(installerPath).toUtf8(), originalHash);
+        return 0;
+    };
+    const auto report = UpdateBridgeConsumer::run(keys.publicKey, kNow, hooks);
+    EXPECT_TRUE(studioInstalled);
+    EXPECT_EQ(report.installed, 1);
+    EXPECT_EQ(report.failed, 0);
+}
+
 TEST_F(UpdateBridgeConsumerTest, DiscardsOrphanedQueueMarker)
 {
     const QString transactionId = HandoffArea::newTransactionId();
@@ -275,7 +296,7 @@ TEST_F(UpdateBridgeConsumerTest, FallsBackToStagingLogWhenLogsDirUnavailable)
     EXPECT_TRUE(installerLogPaths.first().endsWith(
         QStringLiteral("/install.log")));
     EXPECT_TRUE(
-        installerLogPaths.first().contains(QStringLiteral("/staging/")));
+        installerLogPaths.first().contains(QStringLiteral("/hub-update-staging/")));
 }
 
 TEST_F(UpdateBridgeConsumerTest, InstallsQueuedHubUpdateAndRestartsGui)

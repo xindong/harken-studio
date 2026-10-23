@@ -66,10 +66,10 @@ struct ZoneFixture
         window->resize(1400, 900);
         manager = new ads::CDockManager(window.get());
 
-        canvas          = makeDock(QStringLiteral("BlueprintCanvasDock"));
-        ai              = makeDock(QStringLiteral("AIDock"));
+        canvas          = makeDock(QStringLiteral("BlueprintDock"));
+        ai              = makeDock(QStringLiteral("AssistantDock"));
         projectExplorer = makeDock(QStringLiteral("ExplorerDock"));
-        audition       = makeDock(QStringLiteral("PreviewDock"));
+        audition       = makeDock(QStringLiteral("ControlDock"));
         information     = makeDock(QStringLiteral("InformationDock"));
 
         controller = makeController();
@@ -90,10 +90,10 @@ struct ZoneFixture
 
         VNX::LayoutController::Docks docks;
         docks.dockManager          = manager;
-        docks.blueprintCanvasDock  = canvas;
+        docks.blueprintDock  = canvas;
         docks.projectExplorerDock  = projectExplorer;
-        docks.aiDock               = ai;
-        docks.previewDock = audition;
+        docks.assistantDock               = ai;
+        docks.controlDock = audition;
         made->setDocks(docks);
         made->setWindowDockResolver(
             [this](const QString& typeId) -> ads::CDockWidget* {
@@ -159,9 +159,9 @@ TEST(LayoutZoneToggleTest, SingletonContentStateRestoresWithoutReplacingWindows)
     factory.restoreState = [](QWidget* content, const QVariantMap& state) {
         content->setProperty("workspaceState", state);
     };
-    workspace.registerSingletonFactory(QStringLiteral("Preview"), factory);
+    workspace.registerSingletonFactory(QStringLiteral("Control"), factory);
     workspace.registerSingletonFactory(QStringLiteral("Information"), factory);
-    ASSERT_TRUE(workspace.registerSingleton(QStringLiteral("Preview"), fixture.audition));
+    ASSERT_TRUE(workspace.registerSingleton(QStringLiteral("Control"), fixture.audition));
     ASSERT_TRUE(workspace.registerSingleton(QStringLiteral("Information"), fixture.information));
     fixture.controller->setSingletonSnapshotProvider([&] { return workspace.singletonStates(); });
     fixture.controller->setSingletonStateRestorer(
@@ -183,6 +183,19 @@ TEST(LayoutZoneToggleTest, SingletonContentStateRestoresWithoutReplacingWindows)
     EXPECT_EQ(first->property("workspaceState").toMap(), firstState);
     EXPECT_EQ(second->property("workspaceState").toMap(), secondState);
     EXPECT_TRUE(workspace.instanceSpecs().isEmpty());
+
+    QVariantMap legacyStates = workspace.singletonStates();
+    legacyStates.insert(QStringLiteral("Preview"), legacyStates.take(QStringLiteral("Control")));
+    first->setProperty("workspaceState", QVariantMap());
+    second->setProperty("workspaceState", QVariantMap());
+    workspace.restoreSingletonStates(legacyStates);
+    EXPECT_EQ(first->property("workspaceState").toMap(), firstState);
+    EXPECT_EQ(second->property("workspaceState").toMap(), secondState);
+
+    legacyStates.insert(QStringLiteral("Control"), QVariantMap());
+    workspace.restoreSingletonStates(legacyStates);
+    EXPECT_TRUE(first->property("workspaceState").toMap().isEmpty());
+    EXPECT_EQ(second->property("workspaceState").toMap(), secondState);
 
     fixture.controller->selectDefaultLayout();
     EXPECT_TRUE(first->property("workspaceState").toMap().isEmpty());
@@ -417,6 +430,76 @@ TEST(LayoutZoneToggleTest, ANamedLayoutCarriesTheCollapseItWasSavedWith)
     QApplication::processEvents();
     EXPECT_FALSE(fixture.projectExplorer->isClosed());
     EXPECT_TRUE(fixture.information->isClosed());
+}
+
+TEST(LayoutZoneToggleTest, RenamedDocksKeepCollapsedGroupsAcrossLayoutStores)
+{
+    const QList<QPair<QByteArray, QByteArray>> renames = {
+        {"AuditionDock", "ControlDock"},
+        {"PreviewDock", "ControlDock"},
+        {"BlueprintCanvasDock", "BlueprintDock"},
+        {"AIDock", "AssistantDock"},
+        {"MonitorCatalogDock", "MonitorDock"},
+        {"PackManagerDock", "PublisherDock"},
+    };
+    for (const auto& [oldName, currentName] : renames) {
+        for (bool namedLayout : {false, true}) {
+            SCOPED_TRACE(oldName.toStdString());
+            SCOPED_TRACE(namedLayout);
+            ZoneFixture fixture;
+            NamedLayoutGuard guard{QStringLiteral("RenamedZoneTestLayout")};
+            auto* panel = fixture.manager->findDockWidget(QString::fromLatin1(currentName));
+            if (!panel) {
+                panel = makeDock(QString::fromLatin1(currentName));
+                fixture.manager->addDockWidget(ads::BottomDockWidgetArea, panel);
+            }
+            auto* companion = makeDock(QStringLiteral("CompanionDock"));
+            auto* closed = makeDock(QStringLiteral("ClosedDock"));
+            fixture.manager->addDockWidget(ads::CenterDockWidgetArea, companion,
+                                            panel->dockAreaWidget());
+            fixture.manager->addDockWidget(ads::CenterDockWidgetArea, closed,
+                                            panel->dockAreaWidget());
+            panel->toggleView(true);
+            closed->toggleView(false);
+            fixture.controller->setZoneCollapsed(panel, true);
+            fixture.controller->saveProjectLayout();
+
+            QJsonObject saved = fixture.cachedLayout();
+            QByteArray state = QByteArray::fromBase64(saved.value(QStringLiteral("state")).toString().toLatin1());
+            if (!state.startsWith("<?xml"))
+                state = qUncompress(state);
+            state.replace(currentName, oldName);
+            saved[QStringLiteral("state")] = QString::fromLatin1(state.toBase64());
+            QByteArray collapsed = QJsonDocument(saved.value(QStringLiteral("collapsedZones")).toArray()).toJson();
+            collapsed.replace(currentName, oldName);
+            saved[QStringLiteral("collapsedZones")] = QJsonDocument::fromJson(collapsed).array();
+
+            fixture.controller->setZoneCollapsed(panel, false);
+            if (namedLayout) {
+                saved[QStringLiteral("name")] = guard.name;
+                saved[QStringLiteral("dockState")] = saved.value(QStringLiteral("state"));
+                ASSERT_TRUE(VNX::NamedLayoutStore::write(guard.name, saved));
+                ASSERT_TRUE(fixture.controller->loadNamedLayout(guard.name));
+            } else {
+                QFile file(VNX::PathUtils::getDotCacheDir(fixture.projectDir.path())
+                           + QStringLiteral("/editor_layout.json"));
+                ASSERT_TRUE(file.open(QIODevice::WriteOnly));
+                const QByteArray data = QJsonDocument(saved).toJson();
+                ASSERT_EQ(file.write(data), data.size());
+                file.close();
+                fixture.reopenFromCache();
+            }
+
+            EXPECT_TRUE(panel->isClosed());
+            EXPECT_TRUE(companion->isClosed());
+            EXPECT_TRUE(closed->isClosed());
+            fixture.controller->setZoneCollapsed(panel, false);
+            QApplication::processEvents();
+            EXPECT_FALSE(panel->isClosed());
+            EXPECT_FALSE(companion->isClosed());
+            EXPECT_TRUE(closed->isClosed());
+        }
+    }
 }
 
 TEST(LayoutZoneToggleTest, ACacheWithoutCollapseRecordsLeavesEveryZoneOpen)

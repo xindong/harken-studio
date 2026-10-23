@@ -14,6 +14,7 @@
 #include <QUndoStack>
 #include <QStackedWidget>
 #include <QPointer>
+#include <QThread>
 #include <QMap>
 #include <QHash>
 #include <QVariant>
@@ -29,6 +30,7 @@
 #include <optional>
 
 #include "Core/WorkspaceWindowTypes.h"
+#include "Widgets/LogPanel/LogPanel.h"
 #include "Widgets/Monitor/MonitorPerformanceChartSource.h"
 #include "Widgets/Monitor/MonitorBusesSource.h"
 #include "Widgets/Monitor/MonitorDspTimelineSource.h"
@@ -66,9 +68,9 @@ namespace VNX {
     class GridEditorPanel;
     class MeterPanel;
     class LogPanel;
-    class PackManagerPanel;
+    class PublisherPanel;
     class BlueprintCanvasWidget;
-    class AIAssistantPanel;
+    class AssistantPanel;
     class AIAssistantService;
     class IPCServer;
     class PanelInstanceRegistry;
@@ -91,7 +93,8 @@ namespace VNX {
     }
 }
 
-class PreviewPanel;
+class ControlPanel;
+class QPushButton;
 
 namespace HarkenEditor {
     class AuditionManager;
@@ -118,6 +121,7 @@ public:
         QWidget* parent = nullptr,
         std::function<void(StartupPhase)> startupProgress = {},
         InitializationMode initializationMode = InitializationMode::Immediate);
+    void prepareWindowForStartup(QScreen* screen);
     void initializeDeferred(std::function<void(StartupPhase)> startupProgress,
                             std::function<void()> finished);
     ~MainWindow() override;
@@ -180,6 +184,7 @@ public:
     IPCServer* ipcServer() const { return ipcServer_; }
 
     HarkenEditor::AuditionManager* auditionManager() const { return auditionManager_; }
+    ProjectItem* auditionTarget() const;
 
     BlueprintCanvasWidget* blueprintCanvas() const { return blueprintCanvas_; }
 
@@ -250,6 +255,9 @@ public:
 
     int lastFocusedHierarchyPanelId() const;
     bool resetCurrentLayout();
+signals:
+    void startupPresentationFinished(bool shown);
+
 public slots:
     void setLastFocusedInspectorPanelId(int panelId);
     void setLastFocusedHierarchyPanelId(int panelId);
@@ -283,7 +291,7 @@ private slots:
     void onPlayRequested();
     void onStopPressed();
     void onResetPressed();
-    void refreshPlaybackResetEnabled(ProjectItem* item = nullptr);
+    void refreshPlaybackResetEnabled();
     void onAudioError(const QString& error);
     
     void onSaveProgress(int percent, const QString& message);
@@ -293,6 +301,7 @@ private:
     void setupMainToolBar();
     void setupTitleBarToggles();
     void setupStatusBar();
+    void setStatusMessage(const QString& message, LogEntry::Level level = LogEntry::Info);
     void setupCentralDocks();
     void setupDockWidgets();
     void configureDockManager();
@@ -316,11 +325,14 @@ private:
     void applyDarkPalette();
     void loadSettings();
     void saveSettings();
+    void completeStartupPresentation();
+    void finishStartupPresentation(bool shown);
     void loadProjectLayout();
     void saveProjectLayout();
     void connectSignals();
     void enforceDisabledDocks();
     SourceEditorPanel* focusedSourceEditorPanel() const;
+    void setAuditionTarget(ProjectItem* item);
     
     void initEmptyProject();
     bool maybeSave();
@@ -330,7 +342,8 @@ private:
     
     void generateProjectPacks(const QStringList& platforms = {},
                               const QStringList& packPaths = {},
-                              bool includeUnchecked = false);
+                               bool includeUnchecked = false,
+                               bool forceReexport = false, bool selfCleaning = false);
     void recordPackGenerationResult(const QString& packName, uint32_t objectID,
                                     bool success, const QString& outputPath,
                                     const QString& error, qint64 bytes,
@@ -339,27 +352,38 @@ private:
                                     const QString& warnings = QString(),
                                     const QString& statusOverride = QString(),
                                     const QString& language = QString(),
-                                    const QJsonObject* platformDefinition = nullptr);
+                                    const QJsonObject* platformDefinition = nullptr,
+                                    const QString& unitKey = QString());
 
 protected:
     void closeEvent(QCloseEvent* event) override;
     void showEvent(QShowEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
+    bool startupPresentationPrepared_ = false;
+    bool startupPresentationScheduled_ = false;
+    bool startupPresentationCompleting_ = false;
+    bool startupPresentationDone_ = false;
+    bool startupStateChanged_ = false;
+    QPointer<QScreen> startupScreen_;
+    QSize startupNormalSize_;
+    Qt::WindowState startupState_ = Qt::WindowNoState;
+    QSize normalWindowSize_;
     bool initializeEmptyProject_ = true;
     QString currentProjectPath_;
     bool projectModified_ = false;
     bool projectOpenInProgress_ = false;
     
-    ads::CDockWidget* blueprintCanvasDock_ = nullptr;
+    ads::CDockWidget* blueprintDock_ = nullptr;
 
     BlueprintCanvasWidget* blueprintCanvas_ = nullptr;
 
     ads::CDockManager* dockManager_ = nullptr;
 
     ads::CDockWidget* projectExplorerDock_ = nullptr;
-    ads::CDockWidget* aiDock_ = nullptr;
+    ads::CDockWidget* assistantDock_ = nullptr;
 
     QPointer<PanelInstanceRegistry> panelRegistry_;
     std::unique_ptr<EditorShellRegistry> editorShellRegistry_;
@@ -389,7 +413,7 @@ private:
     void refreshVisibleMaterializedSingletons();
     bool applyWorkspacePanelRestoreSpec(const DockInstanceSpec& spec);
     LogPanel* logPanel() const;
-    PackManagerPanel* packManagerPanel() const;
+    PublisherPanel* publisherPanel() const;
 
     void wireInspectorDockCloseHandler(ads::CDockWidget* dock);
 
@@ -415,14 +439,14 @@ private:
     void wireHierarchyDockCloseHandler(ads::CDockWidget* dock);
 
     ProjectExplorer* projectExplorer_ = nullptr;
-    AIAssistantPanel* aiPanel_ = nullptr;
-    bool packGenerationInProgress_ = false;
+    AssistantPanel* assistantPanel_ = nullptr;
+    QList<QPointer<QThread>> packExportThreads_;
 
     HarkenEditor::AuditionManager* auditionManager_ = nullptr;
     PlaybackControls* playbackControls_ = nullptr;
-    PreviewPanel* previewPanel_ = nullptr;
-    ads::CDockWidget* previewDock_ = nullptr;
-    ProjectItem* playbackResetItem_ = nullptr;
+    ControlPanel* controlPanel_ = nullptr;
+    ads::CDockWidget* controlDock_ = nullptr;
+    QUuid auditionTargetGuid_;
     
     QAction* undoAction_ = nullptr;
     QAction* redoAction_ = nullptr;
@@ -430,7 +454,7 @@ private:
     IPCServer* ipcServer_ = nullptr;
     std::unique_ptr<AIAssistantService> aiService_;
 
-    QLabel* statusLabel_ = nullptr;
+    QPushButton* statusButton_ = nullptr;
     QProgressBar* progressBar_ = nullptr;
 
     ExternalDropDispatcher* externalDropDispatcher_ = nullptr;
@@ -440,7 +464,6 @@ private:
     HarkenEditor::Bridge::RemoteConnection* remoteConnection_ = nullptr;
     Monitor::EventCaptureController* eventCaptureController_ = nullptr;
     QPointer<RemoteConnectDialog> remoteConnectDialog_;
-    QLabel* remoteStatusLabel_ = nullptr;
 
     MonitorPerformanceChartSource monitorPerformanceChartSource_;
     MonitorVoicesSource monitorVoicesSource_;

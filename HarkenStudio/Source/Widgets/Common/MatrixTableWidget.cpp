@@ -45,6 +45,8 @@ public:
         cell->setCursor(Qt::ArrowCursor);
         auto* layout = new QVBoxLayout(cell);
         layout->setSizeConstraint(QLayout::SetNoConstraint);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(0);
         widget->setParent(cell);
         widget->setMinimumWidth(0);
         widget->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
@@ -92,8 +94,7 @@ public:
 
     int gripWidth() const
     {
-        return std::max(theme_->metrics().table.resizeHandleRadius,
-            style()->pixelMetric(QStyle::PM_HeaderGripMargin, nullptr, this));
+        return QtControlSkin(theme_->snapshot()).tableResizeGripWidth(this);
     }
 
     void applyTheme()
@@ -101,12 +102,9 @@ public:
         const auto& metrics = theme_->metrics().table;
         int height = std::max(metrics.headerHeight,
             QtControlSkin(theme_->snapshot()).fieldHeight() + metrics.cellPaddingY * 2 + 1);
-        const int padding = std::max(0, metrics.cellPaddingX - gripWidth());
         for (auto* cell : cells_) {
-            cell->layout()->setContentsMargins(padding, metrics.cellPaddingY, padding, metrics.cellPaddingY);
-            cell->layout()->setSpacing(0);
             cell->ensurePolished();
-            height = std::max(height, cell->sizeHint().height() + 1);
+            height = std::max(height, cell->sizeHint().height() + metrics.cellPaddingY * 2 + 1);
         }
         setFixedHeight(height);
         positionWidgets();
@@ -114,13 +112,9 @@ public:
 
     void positionWidgets()
     {
-        const int grip = gripWidth();
         QFrame* dragged = nullptr;
         for (auto it = cells_.cbegin(); it != cells_.cend(); ++it) {
-            const int handle = dragHandleWidth(it.key());
-            const auto rect = sectionDisplayRect(it.key());
-            it.value()->setGeometry(rect.x() + grip + handle, 0,
-                std::max(0, rect.width() - grip * 2 - handle), height() - 1);
+            it.value()->setGeometry(cellGeometry(it.key()).content);
             if (isDraggedSection(it.key())) dragged = it.value();
         }
         if (dragged) dragged->raise();
@@ -150,7 +144,9 @@ protected:
             matrix_->setSelectedColumn(column);
             matrix_->table()->setFocus(Qt::MouseFocusReason);
         }
-        if (event->button() == Qt::LeftButton && cell && cell->geometry().contains(position)) {
+        if (event->button() == Qt::LeftButton && cell
+            && position.x() >= dragHandleRect(column).right() + 1
+            && position.x() < rect.x() + rect.width() - gripWidth()) {
             event->accept();
             return;
         }
@@ -173,36 +169,28 @@ protected:
     {
         ReorderHeaderView::paintEvent(event);
         QPainter painter(viewport());
+        const QtControlSkin skin(theme_->snapshot());
         const int selected = matrix_->selectedColumn();
         if (selected >= 0) {
             const auto rect = sectionDisplayRect(selected).adjusted(0, 0, -1, -1);
-            painter.fillRect(rect, theme_->colors().bgSelected);
-            painter.fillRect(QRect(rect.left(), rect.top(), 2, rect.height()), theme_->colors().accent);
+            skin.paintTableCellSelection(painter, rect);
         }
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(theme_->colors().textMuted);
-        for (int column = firstMovableColumn_; column < count(); ++column) {
-            const auto rect = dragHandleRect(column);
-            if (rect.width() < 6) continue;
-            const auto center = rect.center();
-            for (int x : {-2, 2})
-                for (int y : {-4, 0, 4})
-                    painter.drawEllipse(QPointF(center.x() + x, center.y() + y), 1, 1);
-        }
+        for (int column = firstMovableColumn_; column < count(); ++column)
+            skin.paintDragHandle(painter, dragHandleRect(column));
     }
 
 private:
-    int dragHandleWidth(int column) const
+    QtControlSkin::TableHandleLayout cellGeometry(int column) const
     {
-        return column >= firstMovableColumn_ && ReorderHeaderView::isMovableSection(column)
-            ? std::min(theme_->metrics().table.compactColumnWidth,
-                       std::max(0, sectionSize(column) - gripWidth() * 2)) : 0;
+        auto rect = sectionDisplayRect(column);
+        rect.setHeight(height() - 1);
+        return QtControlSkin(theme_->snapshot()).tableHandleLayout(rect, this,
+            column >= firstMovableColumn_ && ReorderHeaderView::isMovableSection(column));
     }
 
     QRect dragHandleRect(int column) const
     {
-        const auto rect = sectionDisplayRect(column);
-        return QRect(rect.x() + gripWidth(), 0, dragHandleWidth(column), height() - 1);
+        return cellGeometry(column).handle;
     }
 
     ThemeManager* theme_;

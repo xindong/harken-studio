@@ -1,8 +1,12 @@
 * @Probus-XD
 
 /.github/ @Probus-XD
-/.docs/design/ @Probus-XD
+/.docs/philosophy/ @Probus-XD
 /.docs/quality/ @liuxin2-sys
+/.docs/snapshot/engine/ @zqm-web
+/.docs/snapshot/hub/ @liuxin2-sys
+/.docs/snapshot/sdk/ @zqm-web
+/.docs/snapshot/studio/ @Probus-XD
 /.scripts/ @liuxin2-sys @Probus-XD
 /HarkenEngine/ @zqm-web
 /HarkenHub/ @liuxin2-sys

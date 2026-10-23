@@ -3,6 +3,7 @@
 #include "Common/TestUtil.h"
 #include "harken/core/CurrentWorld.h"
 #include "harken/core/CurrentWorldCodec.h"
+#include "harken/core/VariableExecutionFingerprint.h"
 #include "harken/media/PackFormat.h"
 #include "harken/media/PackFormatV2.h"
 #include "harken/media/PackLogicImage.h"
@@ -1152,6 +1153,55 @@ TEST(PackCanonicalFormat, Kind26Vintage2Incompatible) {
     PackCanonicalImage image;
     EXPECT_EQ(VN_PACK_INCOMPATIBLE,
               ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
+}
+
+TEST(PackCanonicalFormat, Kind26LabelMappingsStayValidatedAcrossFormats) {
+    const auto variableId = harkentest::ObjectId(7);
+    const VariableLabelDefinitionV1 label{8, "Step", harkentest::ObjectId(9)};
+    const auto mapping = ComputeVariableLabelMappingFingerprintV1(variableId, std::span(&label, 1));
+    for (std::uint32_t format : {1u, 2u}) {
+        SCOPED_TRACE(format);
+        auto payload = Kind26Payload({{variableId, 1, 1, {8}}});
+        StoreLE32(payload.data() + 4, format);
+        const auto labelHeaderOffset = payload.size();
+        const std::size_t labelHeaderBytes = format == 1 ? 24 : 16;
+        const auto labelOffset = labelHeaderOffset + labelHeaderBytes;
+        payload.resize(labelOffset + 24 + (format == 1 ? 4 : 0), 0);
+        StoreLE64(payload.data() + labelHeaderOffset, mapping);
+        if (format == 1) StoreLE64(payload.data() + labelHeaderOffset + 8, 1);
+        StoreLE32(payload.data() + labelOffset - 8, 1);
+        StoreObjectId(payload.data() + labelOffset, label.labelId);
+        StoreLE32(payload.data() + labelOffset + 16, label.anchor);
+        if (format == 1) {
+            StoreLE32(payload.data() + labelOffset + 20, 4);
+            std::memcpy(payload.data() + labelOffset + 24, label.name.data(), 4);
+        }
+        const auto bytes = BuildInitWithTypedEntry(kPackEntryKindVariablePolicyOverlay, 0, payload);
+        PackCanonicalImage image;
+        ASSERT_EQ(VN_OK, ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
+        ASSERT_EQ(1u, image.variablePolicyOverlays.size());
+        const auto& overlay = image.variablePolicyOverlays.front();
+        EXPECT_EQ(variableId, overlay.variableId);
+        EXPECT_EQ(mapping, overlay.labelMappingFingerprint);
+        ASSERT_EQ(1u, overlay.labels.size());
+        EXPECT_EQ(label.labelId, overlay.labels.front().labelId);
+        EXPECT_EQ(label.anchor, overlay.labels.front().anchor);
+        EXPECT_EQ(format == 1 ? label.name : std::string{}, overlay.labels.front().name);
+
+        std::vector<std::vector<std::uint8_t>> malformed(4, payload);
+        malformed[0].pop_back();
+        malformed[1][labelHeaderOffset] ^= 1;
+        StoreLE32(malformed[2].data() + labelOffset - 4, 1);
+        StoreLE32(malformed[3].data() + 4, 3);
+        if (format == 2) {
+            malformed.push_back(payload);
+            StoreLE32(malformed.back().data() + labelOffset + 20, 1);
+        }
+        for (const auto& invalid : malformed) {
+            const auto invalidBytes = BuildInitWithTypedEntry(kPackEntryKindVariablePolicyOverlay, 0, invalid);
+            EXPECT_EQ(VN_BAD_PACK, ParsePackCanonicalImage(invalidBytes.data(), invalidBytes.size(), &image));
+        }
+    }
 }
 
 TEST(PackCanonicalFormat, Kind26OnContentRefused) {

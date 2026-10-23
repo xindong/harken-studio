@@ -21,6 +21,15 @@ struct VariableReadCutRef {
     bool operator==(const VariableReadCutRef&) const = default;
 };
 
+// The serialized source owner links this preallocated node; the target owns its lifetime.
+struct VariableSourceSubscription {
+    VariableSourceSubscription* next = nullptr;
+    void* context = nullptr;
+    void (*notify)(void*, VariableReadCutRef) noexcept = nullptr;
+    VariableReadCutRef target{};
+};
+static_assert(sizeof(VariableSourceSubscription) == 32);
+
 struct VariableTimelineReadUseRef {
     std::uint32_t slot = UINT32_MAX;
     std::uint32_t generation = 0;

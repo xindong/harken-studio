@@ -4,6 +4,7 @@
 #include <QAction>
 #include <QCoreApplication>
 #include <QEvent>
+#include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMenu>
@@ -79,19 +80,20 @@ TitleBarWidget::TitleBarWidget(QWidget* parent) : QWidget(parent) {
     setObjectName("TitleBarWidget");
 
     layout_ = new QHBoxLayout(this);
-    layout_->setContentsMargins(8, 0, 0, 0);
+    layout_->setContentsMargins(0, 0, 0, 0);
     layout_->setSpacing(6);
+
+    menuLayout_ = new QHBoxLayout;
+    menuLayout_->setContentsMargins(0, 0, 0, 0);
+    menuLayout_->setSpacing(0);
 
     logoLabel_ = new QLabel(this);
     logoLabel_->setObjectName("titleBarLogo");
-    const auto logo = ThemeManager::instance().resolveImage(
-        QString::fromLatin1(ThemeAssetIds::AppLogo),
-        ThemeAssetVariant{QSize(24, 24), devicePixelRatioF(), 0, QColor()});
-    if (logo.resource)
-        logoLabel_->setPixmap(QPixmap::fromImage(logo.resource->image));
-    logoLabel_->setFixedSize(24, 24);
+    logoLabel_->setAccessibleName(QStringLiteral("Harken Studio"));
+    logoLabel_->setAlignment(Qt::AlignCenter);
 
-    layout_->addWidget(logoLabel_);
+    menuLayout_->addWidget(logoLabel_);
+    layout_->addLayout(menuLayout_);
     layout_->addStretch();
 
     auto makeWinBtn = [this](const QString& name, TitleBarButtonKind kind, const QString& tip) {
@@ -111,8 +113,10 @@ TitleBarWidget::TitleBarWidget(QWidget* parent) : QWidget(parent) {
 
     versionLabel_ = new QLabel(this);
     versionLabel_->setObjectName("titleBarVersion");
-    versionLabel_->setText(QStringLiteral("Harken Studio %1").arg(QCoreApplication::applicationVersion()));
+    versionLabel_->setTextFormat(Qt::RichText);
+    versionLabel_->setAlignment(Qt::AlignCenter);
     versionLabel_->setAttribute(Qt::WA_TransparentForMouseEvents);
+    setProjectTitle({}, false);
 
     trackWindow(parentWidget());
     syncChromeMetrics();
@@ -128,7 +132,7 @@ void TitleBarWidget::embedMenuBar(QMenuBar* menuBar) {
     menuBar_->setNativeMenuBar(false);
     menuBar_->setDefaultUp(false);
     menuBar_->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
-    layout_->insertWidget(1, menuBar_, 0, Qt::AlignVCenter);
+    menuLayout_->addWidget(menuBar_, 0, Qt::AlignVCenter);
     menuBar_->setVisible(true);
     menuBar_->installEventFilter(this);
     syncChromeMetrics();
@@ -143,6 +147,19 @@ void TitleBarWidget::insertControlWidget(QWidget* widget) {
 void TitleBarWidget::updateMaxButton(bool maximized) {
     btnMax_->setButtonKind(maximized ? TitleBarButtonKind::Restore : TitleBarButtonKind::Maximize);
     btnMax_->setToolTip(maximized ? tr("Restore Down") : tr("Maximize"));
+}
+
+void TitleBarWidget::setProjectTitle(const QString& name, bool modified) {
+    projectName_ = name;
+    projectModified_ = modified;
+    layoutVersionLabel();
+}
+
+bool TitleBarWidget::event(QEvent* event) {
+    const bool handled = QWidget::event(event);
+    if (event->type() == QEvent::LayoutRequest)
+        layoutVersionLabel();
+    return handled;
 }
 
 bool TitleBarWidget::eventFilter(QObject* watched, QEvent* event) {
@@ -188,22 +205,52 @@ void TitleBarWidget::resizeEvent(QResizeEvent* event) {
 void TitleBarWidget::layoutVersionLabel() {
     if (!versionLabel_ || !layout_)
         return;
-    versionLabel_->adjustSize();
-    const QRect target((width() - versionLabel_->width()) / 2,
-                       (height() - versionLabel_->height()) / 2,
-                       versionLabel_->width(), versionLabel_->height());
-    versionLabel_->move(target.topLeft());
-
-    bool clear = true;
+    layout_->activate();
+    QRect available;
     for (int i = 0; i < layout_->count(); ++i) {
-        QWidget* sibling = layout_->itemAt(i)->widget();
-        if (sibling && sibling->isVisible() &&
-            sibling->geometry().adjusted(-12, 0, 12, 0).intersects(target)) {
-            clear = false;
+        if (QSpacerItem* spacer = layout_->itemAt(i)->spacerItem()) {
+            available = spacer->geometry();
             break;
         }
     }
-    versionLabel_->setVisible(clear);
+
+    QString version = QStringLiteral("Harken Studio %1")
+                          .arg(QCoreApplication::applicationVersion());
+    if (!projectName_.isEmpty())
+        version.prepend(QStringLiteral(" - "));
+    const QString suffix = projectModified_ && !projectName_.isEmpty()
+                               ? QStringLiteral(" *") : QString();
+    const QFontMetrics versionMetrics(versionLabel_->font());
+    QFont projectFont = versionLabel_->font();
+    projectFont.setItalic(projectModified_);
+    const QFontMetrics projectMetrics(projectFont);
+    const int versionWidth = versionMetrics.horizontalAdvance(version);
+    const int titleWidth = qMin(qMax(0, available.width()),
+        versionWidth + projectMetrics.horizontalAdvance(projectName_ + suffix) + 2);
+    const int textWidth = qMax(0, titleWidth - 2);
+    QString title;
+    if (projectName_.isEmpty()) {
+        title = versionMetrics.elidedText(version, Qt::ElideRight, textWidth).toHtmlEscaped();
+    } else {
+        const int suffixWidth = projectMetrics.horizontalAdvance(suffix);
+        const int minimumProjectWidth = qMin(projectMetrics.horizontalAdvance(projectName_ + suffix),
+            projectMetrics.horizontalAdvance(QString(QChar(0x2026)) + suffix));
+        if (textWidth < versionWidth + minimumProjectWidth)
+            version.clear();
+        const int projectWidth = textWidth - versionMetrics.horizontalAdvance(version);
+        QString projectTitle = projectWidth < minimumProjectWidth
+            ? projectMetrics.elidedText(projectName_ + suffix, Qt::ElideRight, projectWidth)
+            : projectMetrics.elidedText(projectName_, Qt::ElideRight, projectWidth - suffixWidth) + suffix;
+        projectTitle = projectTitle.toHtmlEscaped();
+        if (projectModified_)
+            projectTitle = QStringLiteral("<i>%1</i>").arg(projectTitle);
+        title = projectTitle + version.toHtmlEscaped();
+    }
+    versionLabel_->setText(title);
+    versionLabel_->setGeometry(qBound(available.left(), (width() - titleWidth) / 2,
+                                     available.x() + available.width() - titleWidth),
+                              0, titleWidth, height());
+    versionLabel_->setVisible(titleWidth > 0);
 }
 
 void TitleBarWidget::trackWindow(QWidget* window) {
@@ -281,6 +328,16 @@ void TitleBarWidget::syncChromeMetrics() {
     }
     const int barHeight = qMax(36, itemHeight);
     setFixedHeight(barHeight);
+    logoLabel_->setFixedSize(barHeight, barHeight);
+    const QSize logoSize(28, 28);
+    const auto logo = ThemeManager::instance().resolveImage(
+        QString::fromLatin1(ThemeAssetIds::AppIcon));
+    if (logo.resource) {
+        QPixmap pixmap = QPixmap::fromImage(logo.resource->image).scaled(
+            logoSize * devicePixelRatioF(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        pixmap.setDevicePixelRatio(devicePixelRatioF());
+        logoLabel_->setPixmap(pixmap);
+    }
     if (menuBar_) {
         menuBar_->setMinimumWidth(contentWidth);
         menuBar_->setFixedHeight(barHeight);

@@ -50,6 +50,7 @@ public slots:
     void clearEditor();
 
 signals:
+    void auditionTargetRequested(const QUuid& target);
     void pinToggled(bool pinned);
     void navigateToItem(uint32_t objectID);
     void locateItem(uint32_t objectID);

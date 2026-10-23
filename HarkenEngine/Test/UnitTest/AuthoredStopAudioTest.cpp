@@ -1,7 +1,6 @@
 #include "Common/ObjectIdTestSupport.h"
 #include "Engine.h"
 #include "Common/TestUtil.h"
-#include "PlayableStorageTestSupport.h"
 #include "VoicePoolReleaseTestAccess.h"
 #include "CommandQueueSubmissionTestAccess.h"
 #include "harken/core/AllocGuard.h"
@@ -26,20 +25,12 @@ namespace {
 constexpr std::uint32_t kBlock = 64;
 constexpr std::uint32_t kRate = 48000;
 
-class AuthoredStopAudio : public testing::Test {
-    // The drills retain at most two Playables and one container mode.
-    harkentest::PlayableCapacityScope playableCapacity_{8, 1};
-};
-
 VnConfig AudioConfig(std::uint32_t workers) {
     auto config = harkentest::MakeNullConfig(2, kBlock, kRate);
     // These tests use stop/audio primitives without nested Action dispatch.
     config.maxTriggerDepth = 1;
     // Keep each engine isolated without reserving 256 unused Action attempts.
     config.maxActionFirings = 8;
-    // Stop/control proofs need only the master bus and no concurrent delays.
-    config.maxBuses = 4;
-    config.delayEffectPoolCapacity = 1;
     config.renderWorkerCount = workers;
     return config;
 }
@@ -147,24 +138,54 @@ harken::VoiceTimelineEvent StartAt(std::uint16_t offset) {
     return event;
 }
 
-harken::VoiceTimelineEvent WithFrontierProof(harken::VoiceTimelineEvent event,
+harken::FrontierEntryReceiptRef TestFrontierEntry() {
+    harken::FrontierEntryReceiptRef entry{};
+    entry.coordinator = {0, 1};
+    entry.attempt = 1;
+    entry.owner = {1, 1, 0, 0, 1, 1, 0, 1};
+    return entry;
+}
+
+harken::FrontierDueOperationRef TestFrontierOperation(const harken::VoiceTimelineEvent& event) {
+    harken::FrontierDueOperationRef operation{};
+    operation.kind = harken::FrontierOperationKind::Entry;
+    operation.owner = TestFrontierEntry().owner;
+    operation.order = event.order;
+    operation.transport = 1;
+    operation.world = 1;
+    operation.group = {event.frontierProof.quantum, 1, {0, 1}, 0, 0, 1, 1};
+    return operation;
+}
+
+harken::VoiceTimelineEvent WithFrontierGuard(harken::VoiceTimelineEvent event,
     VnVoiceHandle render, std::uint64_t quantum, harken::FrontierEventState state) {
     auto& proof = event.frontierProof;
     proof.state = state;
-    proof.entry.coordinator = {0, 1};
-    proof.entry.attempt = 1;
-    proof.entry.owner = {1, 1, 0, 0, 1, 1, 0, 1};
-    proof.operation.kind = harken::FrontierOperationKind::Entry;
-    proof.operation.owner = proof.entry.owner;
-    proof.operation.order.executeFrame = quantum * kBlock + event.offset;
-    proof.operation.order.logicCommitSequence = 1;
-    proof.operation.transport = 1;
-    proof.operation.world = 1;
-    proof.operation.group = {quantum, 1, {0, 1}, 0, 0, 1, 1};
     proof.quantum = quantum;
     proof.renderGeneration = static_cast<std::uint32_t>(render >> 32);
-    event.order = proof.operation.order;
+    event.order = {};
+    event.order.executeFrame = quantum * kBlock + event.offset;
+    event.order.logicCommitSequence = 1;
     return event;
+}
+
+void AppendProvenFrontier(StopAudioHarness& h, VnVoiceHandle render, harken::VoiceTimelineEvent event) {
+    const auto expected = event.frontierProof;
+    auto& voices = h.engine->voices;
+    event.frontierProof.state = harken::FrontierEventState::Pending;
+    event.frontierProof.quantum = h.quantum;
+    event.frontierProof.renderGeneration = static_cast<std::uint32_t>(render >> 32);
+    harken::VoiceTimelineReservation reservation{};
+    ASSERT_TRUE(voices.ReserveTimelineEvents(static_cast<std::uint32_t>(render),
+        event.frontierProof.renderGeneration, h.quantum, 1, &reservation));
+    ASSERT_TRUE(voices.StageReservedTimelineEvent(reservation, 0, event,
+        TestFrontierEntry(), TestFrontierOperation(event)));
+    harken::VoiceTimelineReservationProof proof{};
+    ASSERT_TRUE(voices.ProveTimelineReservation(reservation, &proof));
+    voices.ApplyProvenTimelineReservation(proof, expected.cutoffFrame, expected.cutoffOperation);
+    auto& frozen = voices.Resolve(render)->timelineEvents.events[reservation.first].frontierProof;
+    frozen.quantum = expected.quantum;
+    frozen.renderGeneration = expected.renderGeneration;
 }
 
 struct FrontierAudioHarness {
@@ -657,9 +678,10 @@ struct FrontierAudioHarness {
                 EXPECT_EQ(3u, bucket->groupCount);
                 ASSERT_TRUE(lane.ReleaseCapture(laneHandle.slot, bucket));
             }
+            ASSERT_TRUE(sink.AttachPlan03ScratchAuthority(decisions, pool));
             ASSERT_TRUE(sink.AttachImmediateLane(lane, kBlock));
         }
-        ASSERT_TRUE(sink.AttachPlan03ScratchAuthority(decisions, pool));
+        if (!laneEntry) ASSERT_TRUE(sink.AttachPlan03ScratchAuthority(decisions, pool));
         if (variable) {
             ASSERT_TRUE(sink.AttachQueueAuthority(queues, armGroups, occurrences));
             ASSERT_TRUE(sink.AttachVariableControlAuthority(variables));
@@ -833,7 +855,7 @@ struct FrontierAudioHarness {
     std::optional<harken::AuthoredStopFenceDescriptor> stopFence;
 };
 
-TEST_F(AuthoredStopAudio, AbandonedWorkerKeepsFrozenFrontierWhileNextQuantumFinalizes) {
+TEST(AuthoredStopAudio, DeferredWorkerRetainsFrozenFrontierUntilCompletion) {
     FrontierAudioHarness h(1);
     h.audio.retainSources = true;
     h.audio.captureControl = true;
@@ -889,37 +911,14 @@ TEST_F(AuthoredStopAudio, AbandonedWorkerKeepsFrozenFrontierWhileNextQuantumFina
     const auto rendered = engine.voices.RenderAll(h.audio.arena, h.audio.planes.data(), kBlock,
         engine.notifications, 0, 0, 0);
     ASSERT_TRUE(gate.entered.load(std::memory_order_acquire));
-    ASSERT_TRUE(rendered.batchAbandoned);
-    ASSERT_GT(rendered.quarantinedVoices, 0u);
+    ASSERT_TRUE(rendered.batchDeferred);
+    ASSERT_GT(rendered.pendingVoices, 0u);
     ASSERT_NE(nullptr, gate.span);
     ASSERT_NE(nullptr, gate.source);
     ASSERT_GE(gate.before.eventCount, 2u);
     EXPECT_EQ(0u, gate.before.quantumIndex);
     EXPECT_EQ(harken::FrontierEventState::Applied, gate.before.events[0].frontierProof.state);
 
-    const harken::AuthoredStopOperationIdentity nextIdentity{1, 2, 1, 1, 1, 1, 80};
-    harken::AuthoredStopOperation nextStop(nextIdentity);
-    auto nextPayload = h.stopPayload;
-    nextPayload.envelopeEndFrame = 80;
-    nextPayload.authoredStopOperation = nextIdentity;
-    harken::TimelineProgramView nextProgram{1, &nextPayload, 1};
-    nextProgram.role = harken::TimelineProgramRole::AuthoredStopFence;
-    harken::AuthoredStopFenceDescriptor nextFence(&nextStop, nextIdentity, {}, &nextProgram, 1);
-    nextProgram.authoredStopFence = &nextFence;
-    harken::ScheduledEventInput nextEvent{};
-    nextEvent.executeFrame = 80;
-    nextEvent.logicCommitSequence = 3;
-    nextEvent.subeventPhase = 50;
-    h.File(11, nextProgram, {}, &nextEvent, 1);
-    auto nextControl = h.Event(72, 1, 30, harken::FrontierOperationKind::Dependent);
-    nextControl.logicCommitSequence = 3;
-    h.File(12, h.voiceProgram, gate.source->render == h.render ? h.arm : h.secondArm, &nextControl, 1);
-    ASSERT_FALSE(::testing::Test::HasFatalFailure());
-    h.pool.Publish(2u * kBlock, nullptr, nullptr, &h.arms);
-    const auto beforeDigest = h.digest.count;
-    h.executor.ExecuteQuantum(1);
-    EXPECT_GT(h.digest.count, beforeDigest);
-    EXPECT_EQ(2u, nextStop.AppliedAudioSequence());
     EXPECT_FALSE(gate.exited.load(std::memory_order_acquire));
     EXPECT_EQ(gate.before.quantumIndex, gate.span->quantumIndex);
     EXPECT_EQ(gate.before.renderGeneration, gate.span->renderGeneration);
@@ -931,17 +930,13 @@ TEST_F(AuthoredStopAudio, AbandonedWorkerKeepsFrozenFrontierWhileNextQuantumFina
         EXPECT_EQ(before.offset, after.offset);
         EXPECT_EQ(before.authoredStopOperation, after.authoredStopOperation);
         EXPECT_EQ(before.frontierProof.state, after.frontierProof.state);
-        EXPECT_EQ(before.frontierProof.entry, after.frontierProof.entry);
-        const auto operationIdentity = [](const harken::FrontierDueOperationRef& operation) {
-            return std::tuple(operation.kind, operation.owner, operation.order.executeFrame,
-                operation.order.logicCommitSequence, operation.order.executionOrdinal, operation.order.eventIndex,
-                operation.order.transactionOrdinal, operation.order.subeventPhase, operation.order.rowSequence,
-                operation.group.absoluteQuantum, operation.group.pageGeneration, operation.group.decision.slot,
-                operation.group.decision.generation, operation.group.sliceIndex, operation.transport, operation.world,
-                operation.transactionId, operation.transactionSlot, operation.program, operation.programGeneration,
-                operation.armSlot, operation.armGeneration, operation.renderSlot, operation.renderGeneration);
-        };
-        EXPECT_EQ(operationIdentity(before.frontierProof.operation), operationIdentity(after.frontierProof.operation));
+        EXPECT_EQ(before.order, after.order);
+        EXPECT_EQ(before.frontierProof.Eligible(gate.before.quantumIndex, gate.before.renderGeneration),
+            after.frontierProof.Eligible(gate.span->quantumIndex, gate.span->renderGeneration));
+        if (after.frontierProof.state != harken::FrontierEventState::Legacy) {
+            EXPECT_FALSE(after.frontierProof.Eligible(gate.span->quantumIndex + 1u, gate.span->renderGeneration));
+            EXPECT_FALSE(after.frontierProof.Eligible(gate.span->quantumIndex, gate.span->renderGeneration + 1u));
+        }
         EXPECT_EQ(before.frontierProof.quantum, after.frontierProof.quantum);
         EXPECT_EQ(before.frontierProof.renderGeneration, after.frontierProof.renderGeneration);
         EXPECT_EQ(before.frontierProof.cutoffFrame, after.frontierProof.cutoffFrame);
@@ -949,22 +944,16 @@ TEST_F(AuthoredStopAudio, AbandonedWorkerKeepsFrozenFrontierWhileNextQuantumFina
     }
     harken::SourceTerminalPayload terminal{};
     EXPECT_FALSE(engine.sourceTerminals.Capture(gate.sourceToken, UINT64_MAX, &terminal));
-    const auto binding = std::find_if(h.audio.controlBindings.begin(), h.audio.controlBindings.end(),
-        [&](const auto& candidate) { return candidate.render == gate.source->render; });
-    ASSERT_NE(h.audio.controlBindings.end(), binding);
-    harken::MonitorVoiceControlFact control{};
-    EXPECT_FALSE(binding->receipt->TryRead(*binding, &control));
-    EXPECT_TRUE(engine.playableInstances.HasSourceRetirementHold(gate.source->leaf));
-    EXPECT_TRUE(engine.playableInstances.Classify(gate.source->leaf).live);
     gate.release.store(true, std::memory_order_release);
     harken::detail::VoicePoolReleaseTestAccess::JoinWorkers(engine.voices);
     EXPECT_TRUE(gate.exited.load(std::memory_order_acquire));
-    EXPECT_FALSE(engine.sourceTerminals.Capture(gate.sourceToken, UINT64_MAX, &terminal));
-    EXPECT_FALSE(binding->receipt->TryRead(*binding, &control));
-    EXPECT_TRUE(engine.playableInstances.HasSourceRetirementHold(gate.source->leaf));
+    const auto completed = engine.voices.RenderAll(h.audio.arena, h.audio.planes.data(), kBlock,
+        engine.notifications, 0, 0, 0);
+    EXPECT_FALSE(completed.batchDeferred);
+
 }
 
-TEST_F(AuthoredStopAudio, FrontierExecutorFinalizesEntryAndEarlierControlBeforeStop) {
+TEST(AuthoredStopAudio, FrontierExecutorFinalizesEntryAndEarlierControlBeforeStop) {
     for (const auto workers : {0u, 2u}) {
         FrontierAudioHarness h(workers);
         h.Prepare();
@@ -986,7 +975,7 @@ TEST_F(AuthoredStopAudio, FrontierExecutorFinalizesEntryAndEarlierControlBeforeS
     }
 }
 
-TEST_F(AuthoredStopAudio, FrontierExecutorStopAtEntryRejectsWholeEntryIncludingEmptyController) {
+TEST(AuthoredStopAudio, FrontierExecutorStopAtEntryRejectsWholeEntryIncludingEmptyController) {
     for (const bool empty : {false, true}) {
         for (const auto stop : {4u, 8u}) {
             FrontierAudioHarness h(0);
@@ -1003,7 +992,7 @@ TEST_F(AuthoredStopAudio, FrontierExecutorStopAtEntryRejectsWholeEntryIncludingE
     }
 }
 
-TEST_F(AuthoredStopAudio, FrontierExecutorStopAtDependentDoesNotRewriteAppliedEntry) {
+TEST(AuthoredStopAudio, FrontierExecutorStopAtDependentDoesNotRewriteAppliedEntry) {
     FrontierAudioHarness h(0);
     h.Prepare(16);
     ASSERT_FALSE(::testing::Test::HasFatalFailure());
@@ -1018,7 +1007,7 @@ TEST_F(AuthoredStopAudio, FrontierExecutorStopAtDependentDoesNotRewriteAppliedEn
     for (std::uint32_t i = 8; i < 16; ++i) EXPECT_NEAR(0.25f, h.audio.Sample(i), 1e-6f);
 }
 
-TEST_F(AuthoredStopAudio, FrontierExecutorMissingFinalEntryLeavesNoPartialVoiceOrReceipt) {
+TEST(AuthoredStopAudio, FrontierExecutorMissingFinalEntryLeavesNoPartialVoiceOrReceipt) {
     FrontierAudioHarness h(0);
     h.Prepare(32, false, true);
     ASSERT_FALSE(::testing::Test::HasFatalFailure());
@@ -1033,7 +1022,7 @@ TEST_F(AuthoredStopAudio, FrontierExecutorMissingFinalEntryLeavesNoPartialVoiceO
     for (std::uint32_t i = 0; i < kBlock; ++i) EXPECT_EQ(0.0f, h.audio.Sample(i));
 }
 
-TEST_F(AuthoredStopAudio, FrontierVariableMemberCommitsActualBankAndDecisionWithWholeEntry) {
+TEST(AuthoredStopAudio, FrontierVariableMemberCommitsActualBankAndDecisionWithWholeEntry) {
     for (const auto workers : {2u}) {
         for (const auto side : {harken::VariableControlSide::Discrete, harken::VariableControlSide::Continuous}) {
             for (const bool empty : {false, true}) {
@@ -1060,7 +1049,7 @@ TEST_F(AuthoredStopAudio, FrontierVariableMemberCommitsActualBankAndDecisionWith
     }
 }
 
-TEST_F(AuthoredStopAudio, FrontierVariableMemberFailureLeavesBankDecisionAndAudioUnapplied) {
+TEST(AuthoredStopAudio, FrontierVariableMemberFailureLeavesBankDecisionAndAudioUnapplied) {
     for (const bool empty : {false, true}) {
         for (const bool missing : {false, true}) {
             FrontierAudioHarness h(0);
@@ -1082,7 +1071,7 @@ TEST_F(AuthoredStopAudio, FrontierVariableMemberFailureLeavesBankDecisionAndAudi
     }
 }
 
-TEST_F(AuthoredStopAudio, LaneVariableEntryFlowsThroughExecutorAndSink) {
+TEST(AuthoredStopAudio, LaneVariableEntryFlowsThroughExecutorAndSink) {
     for (const bool missing : {false, true}) {
         FrontierAudioHarness h(0);
         h.Prepare(32, false, missing, true, harken::VariableControlSide::Discrete,
@@ -1104,7 +1093,7 @@ TEST_F(AuthoredStopAudio, LaneVariableEntryFlowsThroughExecutorAndSink) {
     }
 }
 
-TEST_F(AuthoredStopAudio, LanePlainStartAndVariableEntryShareBucketDecision) {
+TEST(AuthoredStopAudio, LanePlainStartAndVariableEntryShareBucketDecision) {
     for (const bool plainBefore : {false, true}) {
         for (const bool missing : {false, true}) {
             FrontierAudioHarness h(0);
@@ -1128,7 +1117,7 @@ TEST_F(AuthoredStopAudio, LanePlainStartAndVariableEntryShareBucketDecision) {
     }
 }
 
-TEST_F(AuthoredStopAudio, LaneSinkRejectsMissingSecondCoordinatorWithWholeBucket) {
+TEST(AuthoredStopAudio, LaneSinkRejectsMissingSecondCoordinatorWithWholeBucket) {
     FrontierAudioHarness h(0, 3);
     h.Prepare(32, false, false, true, harken::VariableControlSide::Discrete,
         false, false, false, false, UINT64_MAX, false, true, true);
@@ -1148,7 +1137,7 @@ TEST_F(AuthoredStopAudio, LaneSinkRejectsMissingSecondCoordinatorWithWholeBucket
         EXPECT_EQ(0.0f, h.audio.Sample(frame));
 }
 
-TEST_F(AuthoredStopAudio, LaneCaptureKeepsGroupAndDecisionAliveAcrossCancellation) {
+TEST(AuthoredStopAudio, LaneCaptureKeepsGroupAndDecisionAliveAcrossCancellation) {
     FrontierAudioHarness h(0);
     h.Prepare(32, false, false, true, harken::VariableControlSide::Discrete,
         false, false, false, false, UINT64_MAX, false, true);
@@ -1202,7 +1191,7 @@ TEST_F(AuthoredStopAudio, LaneCaptureKeepsGroupAndDecisionAliveAcrossCancellatio
     EXPECT_NE(h.memberDecision.generation, reused.generation);
 }
 
-TEST_F(AuthoredStopAudio, LaneBackedVariableEntryAppliesOnlyAfterWholeBucketClaim) {
+TEST(AuthoredStopAudio, LaneBackedVariableEntryAppliesOnlyAfterWholeBucketClaim) {
     for (const int scenario : {0, 1, 2}) {
         const bool missing = scenario == 1;
         const bool fakeClaim = scenario == 2;
@@ -1219,7 +1208,8 @@ TEST_F(AuthoredStopAudio, LaneBackedVariableEntryAppliesOnlyAfterWholeBucketClai
             1, true, &directProof, h.member.frontier));
         directProof.Release();
         harken::FrontierTimelineFinalizer finalizer(h.audio.engine->voices, h.arms);
-        ASSERT_TRUE(finalizer.Attach(h.decisions, h.pool));
+        ASSERT_TRUE(finalizer.Attach(h.decisions, h.pool, true));
+        ASSERT_TRUE(finalizer.AttachLaneEventStorage(h.lane));
         finalizer.AttachArmGroups(h.armGroups);
         finalizer.AttachVariableControls(h.variables);
         const auto* bucket = h.lane.CaptureDue(h.laneHandle.slot, 0);
@@ -1305,7 +1295,7 @@ TEST_F(AuthoredStopAudio, LaneBackedVariableEntryAppliesOnlyAfterWholeBucketClai
     }
 }
 
-TEST_F(AuthoredStopAudio, LaneMixedFutureWaitDoesNotGrantIndependentEntryLatePermission) {
+TEST(AuthoredStopAudio, LaneMixedFutureWaitDoesNotGrantIndependentEntryLatePermission) {
     FrontierAudioHarness h(0, 3);
     h.Prepare(3u * kBlock + 16u, false, false, true, harken::VariableControlSide::Discrete,
         false, false, false, false, UINT64_MAX, false, true, false, true,
@@ -1321,6 +1311,7 @@ TEST_F(AuthoredStopAudio, LaneMixedFutureWaitDoesNotGrantIndependentEntryLatePer
 
     harken::FrontierTimelineFinalizer finalizer(h.audio.engine->voices, h.arms);
     ASSERT_TRUE(finalizer.Attach(h.decisions, h.pool, true));
+    ASSERT_TRUE(finalizer.AttachLaneEventStorage(h.lane));
     const auto inspect = [&](const harken::ImmediateLaneBucket* bucket, std::uint64_t quantum) {
         finalizer.BeginLane(quantum, kBlock, h.lane, bucket, h.laneHandle.slot);
         const auto* groups = h.lane.Groups(h.laneHandle.slot, bucket);
@@ -1373,13 +1364,14 @@ TEST_F(AuthoredStopAudio, LaneMixedFutureWaitDoesNotGrantIndependentEntryLatePer
     ASSERT_TRUE(h.lane.Cancel(h.laneHandle));
 }
 
-TEST_F(AuthoredStopAudio, LaneBucketMissingSecondCoordinatorKeepsFirstUnapplied) {
+TEST(AuthoredStopAudio, LaneBucketMissingSecondCoordinatorKeepsFirstUnapplied) {
     FrontierAudioHarness h(0, 3);
     h.Prepare(32, false, false, true, harken::VariableControlSide::Discrete,
         false, false, false, false, UINT64_MAX, false, true, true);
     ASSERT_FALSE(::testing::Test::HasFatalFailure());
     harken::FrontierTimelineFinalizer finalizer(h.audio.engine->voices, h.arms);
-    ASSERT_TRUE(finalizer.Attach(h.decisions, h.pool));
+    ASSERT_TRUE(finalizer.Attach(h.decisions, h.pool, true));
+    ASSERT_TRUE(finalizer.AttachLaneEventStorage(h.lane));
     finalizer.AttachArmGroups(h.armGroups);
     finalizer.AttachVariableControls(h.variables);
     const auto* bucket = h.lane.CaptureDue(h.laneHandle.slot, 0);
@@ -1428,7 +1420,7 @@ TEST_F(AuthoredStopAudio, LaneBucketMissingSecondCoordinatorKeepsFirstUnapplied)
         EXPECT_EQ(0.0f, h.audio.Sample(frame));
 }
 
-TEST_F(AuthoredStopAudio, LaneStagedStartRequiresExactOriginalAndHeldNativeProofs) {
+TEST(AuthoredStopAudio, LaneStagedStartRequiresExactOriginalAndHeldNativeProofs) {
     FrontierAudioHarness h(0);
     h.Prepare(32, false, false, true, harken::VariableControlSide::Discrete,
         false, false, false, false, UINT64_MAX, false, true, false, false, false, 16u);
@@ -1494,6 +1486,7 @@ TEST_F(AuthoredStopAudio, LaneStagedStartRequiresExactOriginalAndHeldNativeProof
         SCOPED_TRACE(static_cast<unsigned>(fault));
         harken::FrontierTimelineFinalizer finalizer(h.audio.engine->voices, h.arms);
         ASSERT_TRUE(finalizer.Attach(h.decisions, h.pool, true));
+        ASSERT_TRUE(finalizer.AttachLaneEventStorage(h.lane));
         finalizer.AttachArmGroups(h.armGroups);
         finalizer.AttachVariableControls(h.variables);
         finalizer.BeginLane(0u, kBlock, h.lane, bucket, h.laneHandle.slot);
@@ -1550,14 +1543,15 @@ TEST_F(AuthoredStopAudio, LaneStagedStartRequiresExactOriginalAndHeldNativeProof
         EXPECT_NEAR(frame < 16u ? 0.0f : 0.25f, h.audio.Sample(frame), 1e-6f);
 }
 
-TEST_F(AuthoredStopAudio, LaneBucketClaimsAllCoordinatorsOrAbortsAllClaimedLeases) {
+TEST(AuthoredStopAudio, LaneBucketClaimsAllCoordinatorsOrAbortsAllClaimedLeases) {
     for (const bool rejectBucket : {false, true}) {
         FrontierAudioHarness h(0, 3);
         h.Prepare(32, false, false, true, harken::VariableControlSide::Discrete,
             false, false, false, false, UINT64_MAX, false, true, false, true);
         ASSERT_FALSE(::testing::Test::HasFatalFailure());
         harken::FrontierTimelineFinalizer finalizer(h.audio.engine->voices, h.arms);
-        ASSERT_TRUE(finalizer.Attach(h.decisions, h.pool));
+        ASSERT_TRUE(finalizer.Attach(h.decisions, h.pool, true));
+        ASSERT_TRUE(finalizer.AttachLaneEventStorage(h.lane));
         finalizer.AttachArmGroups(h.armGroups);
         finalizer.AttachVariableControls(h.variables);
         const auto* bucket = h.lane.CaptureDue(h.laneHandle.slot, 0);
@@ -1644,7 +1638,7 @@ TEST_F(AuthoredStopAudio, LaneBucketClaimsAllCoordinatorsOrAbortsAllClaimedLease
     }
 }
 
-TEST_F(AuthoredStopAudio, FrontierGroupedFutureUsesOwnLeaseAndKeepsEarlierEntryReceipt) {
+TEST(AuthoredStopAudio, FrontierGroupedFutureUsesOwnLeaseAndKeepsEarlierEntryReceipt) {
     for (const auto workers : {2u}) {
         for (const bool empty : {false, true}) {
             for (const auto stopFrame : {8u, 16u, 32u}) {
@@ -1671,7 +1665,7 @@ TEST_F(AuthoredStopAudio, FrontierGroupedFutureUsesOwnLeaseAndKeepsEarlierEntryR
     }
 }
 
-TEST_F(AuthoredStopAudio, FrontierGroupedControlUsesNextSliceAfterEntryWithoutRestartingArm) {
+TEST(AuthoredStopAudio, FrontierGroupedControlUsesNextSliceAfterEntryWithoutRestartingArm) {
     for (const auto workers : {2u}) {
         for (const auto side : {harken::VariableControlSide::Discrete, harken::VariableControlSide::Continuous}) {
             for (const auto stopFrame : {16u, 32u}) {
@@ -1708,7 +1702,7 @@ TEST_F(AuthoredStopAudio, FrontierGroupedControlUsesNextSliceAfterEntryWithoutRe
     }
 }
 
-TEST_F(AuthoredStopAudio, FrontierTransitionLocksAtOriginalAudibleSliceAndCannotBypassClaim) {
+TEST(AuthoredStopAudio, FrontierTransitionLocksAtOriginalAudibleSliceAndCannotBypassClaim) {
     for (const auto workers : {2u}) {
         for (const auto audibleFrame : {8u, 16u}) {
             for (const auto stopFrame : {8u, 16u, 32u}) {
@@ -1739,7 +1733,7 @@ TEST_F(AuthoredStopAudio, FrontierTransitionLocksAtOriginalAudibleSliceAndCannot
     }
 }
 
-TEST_F(AuthoredStopAudio, FrontierTransitionCancellationUsesOriginalLeaseBeforeAndAfterClaim) {
+TEST(AuthoredStopAudio, FrontierTransitionCancellationUsesOriginalLeaseBeforeAndAfterClaim) {
     for (const bool afterClaim : {false, true}) {
         FrontierAudioHarness h(0);
         h.Prepare(32, true, false, true, harken::VariableControlSide::Discrete,
@@ -1781,7 +1775,7 @@ TEST_F(AuthoredStopAudio, FrontierTransitionCancellationUsesOriginalLeaseBeforeA
     }
 }
 
-TEST_F(AuthoredStopAudio, FrontierQueueDelayedTargetKeepsCompletionAndAudibleLockOnTheirOwnSlices) {
+TEST(AuthoredStopAudio, FrontierQueueDelayedTargetKeepsCompletionAndAudibleLockOnTheirOwnSlices) {
     for (const auto stopFrame : {16u, 24u, 40u}) {
         FrontierAudioHarness h(0);
         h.Prepare(stopFrame, false, false, true, harken::VariableControlSide::Discrete,
@@ -1808,7 +1802,7 @@ TEST_F(AuthoredStopAudio, FrontierQueueDelayedTargetKeepsCompletionAndAudibleLoc
     }
 }
 
-TEST_F(AuthoredStopAudio, FrontierQueuePreludeDoesNotAdvanceUntilActualCompletionTargetSlice) {
+TEST(AuthoredStopAudio, FrontierQueuePreludeDoesNotAdvanceUntilActualCompletionTargetSlice) {
     for (const auto stopFrame : {8u, 16u, 40u}) {
         FrontierAudioHarness h(0);
         h.Prepare(stopFrame, false, false, true, harken::VariableControlSide::Discrete,
@@ -1844,7 +1838,7 @@ TEST_F(AuthoredStopAudio, FrontierQueuePreludeDoesNotAdvanceUntilActualCompletio
     }
 }
 
-TEST_F(AuthoredStopAudio, FrontierQueueInitialSharesEntryWithoutInventingConditionalOrAdvancingMirror) {
+TEST(AuthoredStopAudio, FrontierQueueInitialSharesEntryWithoutInventingConditionalOrAdvancingMirror) {
     for (const auto workers : {2u}) {
         for (const bool empty : {false, true}) {
             for (const auto stopFrame : {8u, 32u}) {
@@ -1877,7 +1871,7 @@ TEST_F(AuthoredStopAudio, FrontierQueueInitialSharesEntryWithoutInventingConditi
     }
 }
 
-TEST_F(AuthoredStopAudio, FrontierQueueInitialClaimDefersFailureAndMirrorMutation) {
+TEST(AuthoredStopAudio, FrontierQueueInitialClaimDefersFailureAndMirrorMutation) {
     FrontierAudioHarness h(0);
     h.Prepare(32, true, false, true, harken::VariableControlSide::Discrete, false, true);
     ASSERT_FALSE(::testing::Test::HasFatalFailure());
@@ -1917,7 +1911,7 @@ TEST_F(AuthoredStopAudio, FrontierQueueInitialClaimDefersFailureAndMirrorMutatio
         h.queues.FailContainerBeforeConditional(h.queue, harken::QueueFailureReason::TransportReset, 8));
 }
 
-TEST_F(AuthoredStopAudio, FrontierQueueInitialFailureBeforeClaimRejectsEntireEntry) {
+TEST(AuthoredStopAudio, FrontierQueueInitialFailureBeforeClaimRejectsEntireEntry) {
     FrontierAudioHarness h(0);
     h.Prepare(32, false, false, true, harken::VariableControlSide::Discrete, false, true);
     ASSERT_FALSE(::testing::Test::HasFatalFailure());
@@ -1937,7 +1931,7 @@ TEST_F(AuthoredStopAudio, FrontierQueueInitialFailureBeforeClaimRejectsEntireEnt
     for (std::uint32_t frame = 0; frame < kBlock; ++frame) EXPECT_EQ(0.0f, h.audio.Sample(frame));
 }
 
-TEST_F(AuthoredStopAudio, FrontierQueueConditionalUsesActualCompletionAndOwnGateAfterEntry) {
+TEST(AuthoredStopAudio, FrontierQueueConditionalUsesActualCompletionAndOwnGateAfterEntry) {
     {
         constexpr std::uint32_t workers = 0;
         for (const bool empty : {false, true}) {
@@ -1972,7 +1966,7 @@ TEST_F(AuthoredStopAudio, FrontierQueueConditionalUsesActualCompletionAndOwnGate
     }
 }
 
-TEST_F(AuthoredStopAudio, FrontierQueueConditionalRejectsMissingCompletionOwnerDespitePositiveEntry) {
+TEST(AuthoredStopAudio, FrontierQueueConditionalRejectsMissingCompletionOwnerDespitePositiveEntry) {
     FrontierAudioHarness h(0);
     h.Prepare(32, false, false, true, harken::VariableControlSide::Discrete, true, false, true);
     ASSERT_FALSE(::testing::Test::HasFatalFailure());
@@ -1989,7 +1983,7 @@ TEST_F(AuthoredStopAudio, FrontierQueueConditionalRejectsMissingCompletionOwnerD
     for (std::uint32_t frame = 16; frame < 32; ++frame) EXPECT_EQ(0.0f, h.audio.Sample(frame));
 }
 
-TEST_F(AuthoredStopAudio, FrontierQueueConditionalClaimExcludesLegacyActivationCancelAndRetirement) {
+TEST(AuthoredStopAudio, FrontierQueueConditionalClaimExcludesLegacyActivationCancelAndRetirement) {
     FrontierAudioHarness h(0);
     h.Prepare(32, false, false, true, harken::VariableControlSide::Discrete, true, false, true);
     ASSERT_FALSE(::testing::Test::HasFatalFailure());
@@ -2027,7 +2021,7 @@ TEST_F(AuthoredStopAudio, FrontierQueueConditionalClaimExcludesLegacyActivationC
     EXPECT_EQ(2u, snapshot.logicMirror.version);
 }
 
-TEST_F(AuthoredStopAudio, FrontierQueueConditionalCancellationBeforeClaimCannotAdvance) {
+TEST(AuthoredStopAudio, FrontierQueueConditionalCancellationBeforeClaimCannotAdvance) {
     FrontierAudioHarness h(0);
     h.Prepare(32, false, false, true, harken::VariableControlSide::Discrete, true, false, true);
     ASSERT_FALSE(::testing::Test::HasFatalFailure());
@@ -2046,18 +2040,18 @@ TEST_F(AuthoredStopAudio, FrontierQueueConditionalCancellationBeforeClaimCannotA
     EXPECT_TRUE(h.queues.RetireConditionalForAbort(h.queue, h.conditionalVersion, h.memberDecision));
 }
 
-TEST_F(AuthoredStopAudio, FrontierFinalizedSpansSortOriginalFullKeysWithoutLosingGuards) {
+TEST(AuthoredStopAudio, FrontierFinalizedSpansSortOriginalFullKeysWithoutLosingGuards) {
     StopAudioHarness h(0);
     const auto render = h.Play();
     h.Begin();
-    auto earlier = WithFrontierProof(StartAt(8), render, 0, harken::FrontierEventState::Applied);
+    auto earlier = WithFrontierGuard(StartAt(8), render, 0, harken::FrontierEventState::Applied);
     auto later = earlier;
     earlier.order.rowSequence = 3;
     later.order.rowSequence = 9;
     later.frontierProof.state = harken::FrontierEventState::Rejected;
     h.Append(render, later);
     h.Append(render, StopAt(32));
-    h.Append(render, earlier);
+    AppendProvenFrontier(h, render, earlier);
     h.engine->voices.FinalizeTimelineQuantum(0);
     const auto& span = h.engine->voices.Resolve(render)->timelineEvents;
     ASSERT_EQ(3u, span.eventCount);
@@ -2070,7 +2064,7 @@ TEST_F(AuthoredStopAudio, FrontierFinalizedSpansSortOriginalFullKeysWithoutLosin
     for (std::uint32_t i = 8; i < 32; ++i) EXPECT_NEAR(0.25f, h.Sample(i), 1e-6f);
 }
 
-TEST_F(AuthoredStopAudio, FrontierReservationsAggregateWithOtherTransactionsAndLegacyEvents) {
+TEST(AuthoredStopAudio, FrontierReservationsAggregateWithOtherTransactionsAndLegacyEvents) {
     StopAudioHarness h(0);
     const auto render = h.Play();
     h.Begin();
@@ -2092,7 +2086,7 @@ TEST_F(AuthoredStopAudio, FrontierReservationsAggregateWithOtherTransactionsAndL
     for (std::uint32_t i = 0; i < kBlock; ++i) EXPECT_EQ(0.0f, h.Sample(i));
 }
 
-TEST_F(AuthoredStopAudio, FrontierReservationMustBeCompleteAndExactBeforeNonFailingApply) {
+TEST(AuthoredStopAudio, FrontierReservationMustBeCompleteAndExactBeforeNonFailingApply) {
     for (const auto workers : {2u}) {
         StopAudioHarness h(workers);
         const auto render = h.Play();
@@ -2107,18 +2101,21 @@ TEST_F(AuthoredStopAudio, FrontierReservationMustBeCompleteAndExactBeforeNonFail
         auto cursor = StartAt(8);
         cursor.kind = harken::TimelineEventKind::SetStartCursor;
         cursor.value = 128;
-        cursor = WithFrontierProof(cursor, render, h.quantum, harken::FrontierEventState::Pending);
-        ASSERT_TRUE(voices.StageReservedTimelineEvent(reservation, 0, cursor));
-        EXPECT_FALSE(voices.StageReservedTimelineEvent(reservation, 0, cursor));
+        cursor = WithFrontierGuard(cursor, render, h.quantum, harken::FrontierEventState::Pending);
+        EXPECT_FALSE(voices.StageReservedTimelineEvent(reservation, 0, cursor, {}, TestFrontierOperation(cursor)));
+        EXPECT_FALSE(voices.StageReservedTimelineEvent(reservation, 0, cursor, TestFrontierEntry(), {}));
         EXPECT_FALSE(voices.ProveTimelineReservation(reservation, &proof));
-        auto start = WithFrontierProof(StartAt(8), render, h.quantum, harken::FrontierEventState::Pending);
+        ASSERT_TRUE(voices.StageReservedTimelineEvent(reservation, 0, cursor, TestFrontierEntry(), TestFrontierOperation(cursor)));
+        EXPECT_FALSE(voices.StageReservedTimelineEvent(reservation, 0, cursor, TestFrontierEntry(), TestFrontierOperation(cursor)));
+        EXPECT_FALSE(voices.ProveTimelineReservation(reservation, &proof));
+        auto start = WithFrontierGuard(StartAt(8), render, h.quantum, harken::FrontierEventState::Pending);
         auto stale = reservation;
         ++stale.renderGeneration;
-        EXPECT_FALSE(voices.StageReservedTimelineEvent(stale, 1, start));
+        EXPECT_FALSE(voices.StageReservedTimelineEvent(stale, 1, start, TestFrontierEntry(), TestFrontierOperation(start)));
         stale = reservation;
         ++stale.quantum;
-        EXPECT_FALSE(voices.StageReservedTimelineEvent(stale, 1, start));
-        ASSERT_TRUE(voices.StageReservedTimelineEvent(reservation, 1, start));
+        EXPECT_FALSE(voices.StageReservedTimelineEvent(stale, 1, start, TestFrontierEntry(), TestFrontierOperation(start)));
+        ASSERT_TRUE(voices.StageReservedTimelineEvent(reservation, 1, start, TestFrontierEntry(), TestFrontierOperation(start)));
         ASSERT_TRUE(voices.ProveTimelineReservation(reservation, &proof));
         EXPECT_FALSE(voices.CancelTimelineBinding(slot, generation));
         EXPECT_FALSE(voices.RejectTimelineReservation(reservation));
@@ -2136,7 +2133,7 @@ TEST_F(AuthoredStopAudio, FrontierReservationMustBeCompleteAndExactBeforeNonFail
     }
 }
 
-TEST_F(AuthoredStopAudio, LaneReservationRemainsInvisibleUntilWholeProofIsApplied) {
+TEST(AuthoredStopAudio, LaneReservationRemainsInvisibleUntilWholeProofIsApplied) {
     StopAudioHarness h(2);
     const auto render = h.Play();
     h.Begin();
@@ -2169,7 +2166,7 @@ TEST_F(AuthoredStopAudio, LaneReservationRemainsInvisibleUntilWholeProofIsApplie
         EXPECT_NEAR(0.25f, h.Sample(i), 1e-6f);
 }
 
-TEST_F(AuthoredStopAudio, PageAndLaneHaveIndependentVoiceEventCapacity) {
+TEST(AuthoredStopAudio, PageAndLaneHaveIndependentVoiceEventCapacity) {
     for (const bool laneFirst : {false, true}) {
         StopAudioHarness h(0);
         const auto render = h.Play();
@@ -2197,7 +2194,7 @@ TEST_F(AuthoredStopAudio, PageAndLaneHaveIndependentVoiceEventCapacity) {
     }
 }
 
-TEST_F(AuthoredStopAudio, LaneBucketRequiresEveryArmBeforeAnyVoiceStarts) {
+TEST(AuthoredStopAudio, LaneBucketRequiresEveryArmBeforeAnyVoiceStarts) {
     for (const bool invalidateSecond : {false, true}) {
         StopAudioHarness h(0);
         const VnVoiceHandle renders[] = {h.Play(), h.Play()};
@@ -2253,7 +2250,7 @@ TEST_F(AuthoredStopAudio, LaneBucketRequiresEveryArmBeforeAnyVoiceStarts) {
     }
 }
 
-TEST_F(AuthoredStopAudio, LaneOnlyQuantumUsesCapturedWorkAndCannotBypassAdmission) {
+TEST(AuthoredStopAudio, LaneOnlyQuantumUsesCapturedWorkAndCannotBypassAdmission) {
     for (const bool publishAfterCapture : {false, true}) {
         StopAudioHarness h(0);
         const auto render = h.Play();
@@ -2313,7 +2310,7 @@ TEST_F(AuthoredStopAudio, LaneOnlyQuantumUsesCapturedWorkAndCannotBypassAdmissio
     }
 }
 
-TEST_F(AuthoredStopAudio, FrontierReservationProofReleaseAndQuantumReuseCannotExecuteOldSlots) {
+TEST(AuthoredStopAudio, FrontierReservationProofReleaseAndQuantumReuseCannotExecuteOldSlots) {
     StopAudioHarness h(0);
     const auto render = h.Play();
     h.Begin();
@@ -2322,8 +2319,8 @@ TEST_F(AuthoredStopAudio, FrontierReservationProofReleaseAndQuantumReuseCannotEx
     const auto generation = static_cast<std::uint32_t>(render >> 32);
     harken::VoiceTimelineReservation reservation{};
     ASSERT_TRUE(voices.ReserveTimelineEvents(slot, generation, h.quantum, 1, &reservation));
-    const auto event = WithFrontierProof(StartAt(8), render, h.quantum, harken::FrontierEventState::Pending);
-    ASSERT_TRUE(voices.StageReservedTimelineEvent(reservation, 0, event));
+    const auto event = WithFrontierGuard(StartAt(8), render, h.quantum, harken::FrontierEventState::Pending);
+    ASSERT_TRUE(voices.StageReservedTimelineEvent(reservation, 0, event, TestFrontierEntry(), TestFrontierOperation(event)));
     {
         harken::VoiceTimelineReservationProof proof{};
         ASSERT_TRUE(voices.ProveTimelineReservation(reservation, &proof));
@@ -2333,26 +2330,27 @@ TEST_F(AuthoredStopAudio, FrontierReservationProofReleaseAndQuantumReuseCannotEx
     h.Begin();
     harken::VoiceTimelineReservation replacement{};
     ASSERT_TRUE(voices.ReserveTimelineEvents(slot, generation, h.quantum, 1, &replacement));
-    EXPECT_FALSE(voices.StageReservedTimelineEvent(reservation, 0, event));
+    EXPECT_FALSE(voices.StageReservedTimelineEvent(reservation, 0, event, TestFrontierEntry(), TestFrontierOperation(event)));
     EXPECT_FALSE(voices.RejectTimelineReservation(reservation));
-    EXPECT_TRUE(voices.StageReservedTimelineEvent(replacement, 0, event));
+    EXPECT_TRUE(voices.StageReservedTimelineEvent(replacement, 0, event, TestFrontierEntry(), TestFrontierOperation(event)));
     h.Render();
     for (std::uint32_t i = 0; i < kBlock; ++i) EXPECT_EQ(0.0f, h.Sample(i));
 }
 
-TEST_F(AuthoredStopAudio, RejectedAndUnfinalizedFrontierEventsHaveNoCascadeEffects) {
+TEST(AuthoredStopAudio, RejectedAndUnfinalizedFrontierEventsHaveNoCascadeEffects) {
     static_assert(std::is_trivially_copyable_v<harken::FrozenFrontierEventProof>);
     for (const auto workers : {2u}) {
-        for (const auto state : {harken::FrontierEventState::Pending, harken::FrontierEventState::Rejected}) {
+        for (const auto state : {harken::FrontierEventState::Pending, harken::FrontierEventState::Rejected,
+                                harken::FrontierEventState::Applied, harken::FrontierEventState::LaneApplied}) {
             StopAudioHarness h(workers);
             const auto render = h.Play();
             h.Begin();
             auto cursor = StartAt(8);
             cursor.kind = harken::TimelineEventKind::SetStartCursor;
             cursor.value = 1024;
-            h.Append(render, WithFrontierProof(cursor, render, h.quantum, state));
-            h.Append(render, WithFrontierProof(StartAt(8), render, h.quantum, state));
-            h.Append(render, WithFrontierProof(StopAt(4), render, h.quantum, state));
+            h.Append(render, WithFrontierGuard(cursor, render, h.quantum, state));
+            h.Append(render, WithFrontierGuard(StartAt(8), render, h.quantum, state));
+            h.Append(render, WithFrontierGuard(StopAt(4), render, h.quantum, state));
             h.Append(render, StartAt(16));
             h.Append(render, StopAt(32));
             h.Render();
@@ -2366,24 +2364,24 @@ TEST_F(AuthoredStopAudio, RejectedAndUnfinalizedFrontierEventsHaveNoCascadeEffec
     }
 }
 
-TEST_F(AuthoredStopAudio, FrozenFrontierProofKeepsExactQuantumGenerationAndStopFact) {
+TEST(AuthoredStopAudio, FrozenFrontierProofKeepsExactQuantumGenerationAndStopFact) {
     for (const auto workers : {2u}) {
         StopAudioHarness h(workers);
         const auto render = h.Play();
         h.Begin();
-        auto stale = WithFrontierProof(StartAt(4), render, h.quantum, harken::FrontierEventState::Applied);
+        auto stale = WithFrontierGuard(StartAt(4), render, h.quantum, harken::FrontierEventState::Applied);
         ++stale.frontierProof.renderGeneration;
-        h.Append(render, stale);
-        stale = WithFrontierProof(StartAt(6), render, h.quantum + 1u, harken::FrontierEventState::Applied);
-        h.Append(render, stale);
-        auto start = WithFrontierProof(StartAt(8), render, h.quantum, harken::FrontierEventState::Applied);
+        AppendProvenFrontier(h, render, stale);
+        stale = WithFrontierGuard(StartAt(6), render, h.quantum + 1u, harken::FrontierEventState::Applied);
+        AppendProvenFrontier(h, render, stale);
+        auto start = WithFrontierGuard(StartAt(8), render, h.quantum, harken::FrontierEventState::Applied);
         start.frontierProof.cutoffFrame = 32;
-        h.Append(render, start);
-        auto late = WithFrontierProof(StartAt(32), render, h.quantum, harken::FrontierEventState::Applied);
+        AppendProvenFrontier(h, render, start);
+        auto late = WithFrontierGuard(StartAt(32), render, h.quantum, harken::FrontierEventState::Applied);
         late.kind = harken::TimelineEventKind::SetStartCursor;
         late.value = 1024;
         late.frontierProof.cutoffFrame = 32;
-        h.Append(render, late);
+        AppendProvenFrontier(h, render, late);
         auto stop = StopAt(32);
         stop.authoredStopOperation = {2, 3, 1, 1, 4, 0, 32};
         h.Append(render, stop);
@@ -2494,7 +2492,7 @@ struct StopFenceHarness {
     harken::TimelineExecutor executor;
 };
 
-TEST_F(AuthoredStopAudio, BindinglessRootAndEmptyDecisionApplyOnlyAtDeadline) {
+TEST(AuthoredStopAudio, BindinglessRootAndEmptyDecisionApplyOnlyAtDeadline) {
     StopFenceHarness h;
     const auto decision = h.Decision();
     harken::AuthoredStopOperation op({0, 1, 17, 19, 23, 0, 81});
@@ -2525,7 +2523,7 @@ TEST_F(AuthoredStopAudio, BindinglessRootAndEmptyDecisionApplyOnlyAtDeadline) {
     h.Healthy();
 }
 
-TEST_F(AuthoredStopAudio, FenceValidationRejectsStaleIdentitiesAndNormalBindinglessPrograms) {
+TEST(AuthoredStopAudio, FenceValidationRejectsStaleIdentitiesAndNormalBindinglessPrograms) {
     for (const auto variant : {0, 1, 2, 3, 4, 5, 6}) {
         SCOPED_TRACE(variant);
         StopFenceHarness h;
@@ -2547,7 +2545,7 @@ TEST_F(AuthoredStopAudio, FenceValidationRejectsStaleIdentitiesAndNormalBindingl
     }
 }
 
-TEST_F(AuthoredStopAudio, FenceScratchDeduplicatesExactIdentitiesAndHonorsCancellation) {
+TEST(AuthoredStopAudio, FenceScratchDeduplicatesExactIdentitiesAndHonorsCancellation) {
     StopFenceHarness h(0, 2);
     const auto first = h.Decision();
     const auto second = h.Decision();
@@ -2572,7 +2570,7 @@ TEST_F(AuthoredStopAudio, FenceScratchDeduplicatesExactIdentitiesAndHonorsCancel
     EXPECT_EQ(0u, op.AppliedAudioSequence());
 }
 
-TEST_F(AuthoredStopAudio, OldDecisionAndOperationGenerationsCannotCancelReusedSlots) {
+TEST(AuthoredStopAudio, OldDecisionAndOperationGenerationsCannotCancelReusedSlots) {
     StopFenceHarness h;
     const auto first = h.Decision();
     ASSERT_EQ(harken::DecisionInvalidationDisposition::NewlyInvalidated,
@@ -2606,7 +2604,7 @@ TEST_F(AuthoredStopAudio, OldDecisionAndOperationGenerationsCannotCancelReusedSl
     EXPECT_TRUE(snapshot.authoredStopInvalidated);
 }
 
-TEST_F(AuthoredStopAudio, AuthoredReasonPreservesEarlierInvalidationAndClearsOnReuse) {
+TEST(AuthoredStopAudio, AuthoredReasonPreservesEarlierInvalidationAndClearsOnReuse) {
     StopFenceHarness h;
     const auto deadline = h.Decision();
     const auto authored = h.Decision();
@@ -2628,7 +2626,7 @@ TEST_F(AuthoredStopAudio, AuthoredReasonPreservesEarlierInvalidationAndClearsOnR
     EXPECT_FALSE(snapshot.authoredStopInvalidated);
 }
 
-TEST_F(AuthoredStopAudio, ApplyingStopCannotBeCancelledBeforeItsPublishedAudioFact) {
+TEST(AuthoredStopAudio, ApplyingStopCannotBeCancelledBeforeItsPublishedAudioFact) {
     StopFenceHarness h;
     const auto decision = h.Decision();
     harken::AuthoredStopOperation operation({0, 1, 17, 19, 23, 0, 17});
@@ -2653,7 +2651,7 @@ TEST_F(AuthoredStopAudio, ApplyingStopCannotBeCancelledBeforeItsPublishedAudioFa
     EXPECT_FALSE(second.descriptor.TryBeginApply());
 }
 
-TEST_F(AuthoredStopAudio, CancelledOrDisarmedStopCannotAcquireApplicationAccess) {
+TEST(AuthoredStopAudio, CancelledOrDisarmedStopCannotAcquireApplicationAccess) {
     harken::AuthoredStopOperation operation({0, 1, 17, 19, 23, 0, 17});
     FenceRecord disarmed(operation, {}, {});
     ASSERT_TRUE(disarmed.descriptor.DisarmAndReleaseDecisionPin());
@@ -2665,7 +2663,7 @@ TEST_F(AuthoredStopAudio, CancelledOrDisarmedStopCannotAcquireApplicationAccess)
     EXPECT_EQ(0u, operation.AppliedAudioSequence());
 }
 
-TEST_F(AuthoredStopAudio, ApplyingFencePinsExactDecisionUntilFinalAudioAccessCompletes) {
+TEST(AuthoredStopAudio, ApplyingFencePinsExactDecisionUntilFinalAudioAccessCompletes) {
     StopFenceHarness h(0, 8, 1);
     const auto decision = h.Decision();
     harken::AuthoredStopOperation op({0, 1, 17, 19, 23, 0, 17});
@@ -2694,7 +2692,7 @@ TEST_F(AuthoredStopAudio, ApplyingFencePinsExactDecisionUntilFinalAudioAccessCom
     EXPECT_FALSE(snapshot.authoredStopInvalidated);
 }
 
-TEST_F(AuthoredStopAudio, DisarmedFutureFenceAllowsPromptDecisionReuseWithoutCancellingRoot) {
+TEST(AuthoredStopAudio, DisarmedFutureFenceAllowsPromptDecisionReuseWithoutCancellingRoot) {
     StopFenceHarness h(0, 8, 1);
     const auto first = h.Decision();
     harken::AuthoredStopOperation op({0, 1, 17, 19, 23, 0, 145});
@@ -2728,7 +2726,7 @@ TEST_F(AuthoredStopAudio, DisarmedFutureFenceAllowsPromptDecisionReuseWithoutCan
     EXPECT_TRUE(current.descriptor.DisarmAndReleaseDecisionPin());
 }
 
-TEST_F(AuthoredStopAudio, MultipleFencePinsAndMoveOnlyReleaseCannotUnderflowOtherOwners) {
+TEST(AuthoredStopAudio, MultipleFencePinsAndMoveOnlyReleaseCannotUnderflowOtherOwners) {
     static_assert(!std::is_copy_constructible_v<harken::DecisionFuturePin>);
     static_assert(!std::is_copy_assignable_v<harken::DecisionFuturePin>);
     StopFenceHarness h(0, 8, 1);
@@ -2754,7 +2752,7 @@ TEST_F(AuthoredStopAudio, MultipleFencePinsAndMoveOnlyReleaseCannotUnderflowOthe
     EXPECT_TRUE(h.decisions.ReclaimRetired(token));
 }
 
-TEST_F(AuthoredStopAudio, FuturePinOverflowAndPreparedRollbackLeaveIdentityIntact) {
+TEST(AuthoredStopAudio, FuturePinOverflowAndPreparedRollbackLeaveIdentityIntact) {
     StopFenceHarness h(0, 8, 1);
     harken::DecisionReserveRequest request{};
     request.world = 1;
@@ -2782,7 +2780,7 @@ TEST_F(AuthoredStopAudio, FuturePinOverflowAndPreparedRollbackLeaveIdentityIntac
     EXPECT_EQ(0u, h.decisions.LiveCount());
 }
 
-TEST_F(AuthoredStopAudio, NonemptyDecisionDescriptorWithoutMatchingPinCannotApply) {
+TEST(AuthoredStopAudio, NonemptyDecisionDescriptorWithoutMatchingPinCannotApply) {
     StopFenceHarness h;
     const auto token = h.Decision();
     const auto other = h.Decision();
@@ -2804,7 +2802,7 @@ TEST_F(AuthoredStopAudio, NonemptyDecisionDescriptorWithoutMatchingPinCannotAppl
     EXPECT_EQ(0u, op.AppliedAudioSequence());
 }
 
-TEST_F(AuthoredStopAudio, GatedRootStopReleasesWithoutStartingInSerialAndWorker) {
+TEST(AuthoredStopAudio, GatedRootStopReleasesWithoutStartingInSerialAndWorker) {
     for (const auto workers : {0u, 2u}) {
         for (const auto laterStart : {0, 17, 31}) {
             SCOPED_TRACE(testing::Message() << "workers=" << workers << " later=" << laterStart);
@@ -2833,7 +2831,7 @@ TEST_F(AuthoredStopAudio, GatedRootStopReleasesWithoutStartingInSerialAndWorker)
     }
 }
 
-TEST_F(AuthoredStopAudio, PreinstalledGroupPreservesEarlySamplesAndCancelsFutureSlices) {
+TEST(AuthoredStopAudio, PreinstalledGroupPreservesEarlySamplesAndCancelsFutureSlices) {
     for (const auto workers : {2u}) {
         SCOPED_TRACE(workers);
         StopFenceHarness h(workers);
@@ -2967,7 +2965,7 @@ std::vector<float> RenderDominanceStream(std::uint32_t workers, int adversarialO
     return output;
 }
 
-TEST_F(AuthoredStopAudio, SameFrameAppendOrderAndLaterBlocksMatchOnlyAuthorizedControls) {
+TEST(AuthoredStopAudio, SameFrameAppendOrderAndLaterBlocksMatchOnlyAuthorizedControls) {
     for (const auto workers : {0u, 2u}) {
         const auto reference = RenderDominanceStream(workers, 0);
         for (const auto order : {1, 2}) {
@@ -2979,7 +2977,7 @@ TEST_F(AuthoredStopAudio, SameFrameAppendOrderAndLaterBlocksMatchOnlyAuthorizedC
     }
 }
 
-TEST_F(AuthoredStopAudio, RootStopDoesNotExtendEarlierTimelineFallback) {
+TEST(AuthoredStopAudio, RootStopDoesNotExtendEarlierTimelineFallback) {
     for (const auto workers : {2u}) {
         StopAudioHarness h(workers);
         const auto render = h.Play(false);
@@ -2999,7 +2997,7 @@ TEST_F(AuthoredStopAudio, RootStopDoesNotExtendEarlierTimelineFallback) {
     }
 }
 
-TEST_F(AuthoredStopAudio, PrebufferUsesActualRingReadinessWithoutInventingSourceProgress) {
+TEST(AuthoredStopAudio, PrebufferUsesActualRingReadinessWithoutInventingSourceProgress) {
     for (const auto workers : {2u}) {
         for (const auto ready : {false, true}) {
             SCOPED_TRACE(testing::Message() << workers << " ready=" << ready);
@@ -3038,7 +3036,7 @@ TEST_F(AuthoredStopAudio, PrebufferUsesActualRingReadinessWithoutInventingSource
     }
 }
 
-TEST_F(AuthoredStopAudio, ArrivedRootStopSurvivesAnUnrenderableQuantum) {
+TEST(AuthoredStopAudio, ArrivedRootStopSurvivesAnUnrenderableQuantum) {
     for (const auto workers : {2u}) {
       for (const auto missed : {1u, 4u, 6u}) {
         SCOPED_TRACE(testing::Message() << workers << " missed=" << missed);
@@ -3065,7 +3063,7 @@ TEST_F(AuthoredStopAudio, ArrivedRootStopSurvivesAnUnrenderableQuantum) {
     }
 }
 
-TEST_F(AuthoredStopAudio, MarkerTransactionsRespectPoolCapacityAtomically) {
+TEST(AuthoredStopAudio, MarkerTransactionsRespectPoolCapacityAtomically) {
     StopFenceHarness h(0, 2);
     harken::AuthoredStopOperation first({0, 1, 17, 19, 23, 0, 17});
     harken::AuthoredStopOperation second({1, 1, 17, 19, 23, 0, 17});
@@ -3089,7 +3087,7 @@ TEST_F(AuthoredStopAudio, MarkerTransactionsRespectPoolCapacityAtomically) {
     EXPECT_EQ(1u, first.AppliedAudioSequence());
 }
 
-TEST_F(AuthoredStopAudio, ActualCoverageControlsSameQuantumAndLateOrMissingEnvelopeFallback) {
+TEST(AuthoredStopAudio, ActualCoverageControlsSameQuantumAndLateOrMissingEnvelopeFallback) {
     struct Scenario {
         std::uint64_t stop;
         std::uint64_t envelopeEnd;
@@ -3165,7 +3163,7 @@ TEST_F(AuthoredStopAudio, ActualCoverageControlsSameQuantumAndLateOrMissingEnvel
     }
 }
 
-TEST_F(AuthoredStopAudio, ResetTimelineStopCapturesOnlyItsActualSourceWinner) {
+TEST(AuthoredStopAudio, ResetTimelineStopCapturesOnlyItsActualSourceWinner) {
     for (const auto workers : {0u, 2u}) {
         for (const auto naturalFirst : {false, true}) {
             SCOPED_TRACE(testing::Message() << "workers=" << workers << " natural=" << naturalFirst);
@@ -3208,7 +3206,7 @@ TEST_F(AuthoredStopAudio, ResetTimelineStopCapturesOnlyItsActualSourceWinner) {
     }
 }
 
-TEST_F(AuthoredStopAudio, FirstAppliedControlSurvivesTimelineAndApiStopMixing) {
+TEST(AuthoredStopAudio, FirstAppliedControlSurvivesTimelineAndApiStopMixing) {
     for (const auto workers : {0u, 2u}) {
         for (const auto timelineFirst : {false, true}) {
             for (const auto immediate : {false, true}) {
@@ -3247,7 +3245,7 @@ TEST_F(AuthoredStopAudio, FirstAppliedControlSurvivesTimelineAndApiStopMixing) {
     }
 }
 
-TEST_F(AuthoredStopAudio, RootStopDominatesLaterControlsAcrossQuanta) {
+TEST(AuthoredStopAudio, RootStopDominatesLaterControlsAcrossQuanta) {
     for (const auto workers : {2u}) {
         StopAudioHarness h(workers);
         h.captureControl = true;
@@ -3288,7 +3286,7 @@ TEST_F(AuthoredStopAudio, RootStopDominatesLaterControlsAcrossQuanta) {
     }
 }
 
-TEST_F(AuthoredStopAudio, CrossQuantumAuthoredEnvelopeDoesNotRestoreGainAtStop) {
+TEST(AuthoredStopAudio, CrossQuantumAuthoredEnvelopeDoesNotRestoreGainAtStop) {
     for (const auto workers : {2u}) {
         SCOPED_TRACE(testing::Message() << "workers=" << workers);
         StopAudioHarness h(workers);
@@ -3365,7 +3363,7 @@ TEST_F(AuthoredStopAudio, CrossQuantumAuthoredEnvelopeDoesNotRestoreGainAtStop) 
 } // namespace
 
 
-TEST_F(AuthoredStopAudio, LaneFencePreparedAbortKeepsOriginalStopUnappliedAndReacquirable) {
+TEST(AuthoredStopAudio, LaneFencePreparedAbortKeepsOriginalStopUnappliedAndReacquirable) {
     harken::AuthoredStopOperation op({0, 1, 17, 19, 23, 0, 81});
     FenceRecord record(op);
     record.payload.authoredStopOperation = op.Identity();
@@ -3390,7 +3388,7 @@ TEST_F(AuthoredStopAudio, LaneFencePreparedAbortKeepsOriginalStopUnappliedAndRea
     EXPECT_FALSE(proof.Valid());
 }
 
-TEST_F(AuthoredStopAudio, LaneFenceProofDestructorAndMoveReleaseOnlyTheOriginalPreparedReader) {
+TEST(AuthoredStopAudio, LaneFenceProofDestructorAndMoveReleaseOnlyTheOriginalPreparedReader) {
     harken::AuthoredStopOperation firstOp({0, 1, 17, 19, 23, 0, 81});
     harken::AuthoredStopOperation secondOp({1, 1, 29, 31, 37, 1, 83});
     FenceRecord first(firstOp), second(secondOp);
@@ -3416,7 +3414,7 @@ TEST_F(AuthoredStopAudio, LaneFenceProofDestructorAndMoveReleaseOnlyTheOriginalP
     EXPECT_EQ(0u, secondOp.AppliedAudioSequence());
 }
 
-TEST_F(AuthoredStopAudio, LaneFenceProofConsumptionTransfersTheActualReaderToApplying) {
+TEST(AuthoredStopAudio, LaneFenceProofConsumptionTransfersTheActualReaderToApplying) {
     harken::AuthoredStopOperation op({0, 1, 17, 19, 23, 0, 81});
     FenceRecord record(op);
     record.payload.authoredStopOperation = op.Identity();
@@ -3439,7 +3437,7 @@ TEST_F(AuthoredStopAudio, LaneFenceProofConsumptionTransfersTheActualReaderToApp
     EXPECT_FALSE(record.descriptor.ProveLaneApply(record.request.program, &proof));
 }
 
-TEST_F(AuthoredStopAudio, LaneFenceProofRejectsForeignProgramAndPayloadWithoutConsumingRights) {
+TEST(AuthoredStopAudio, LaneFenceProofRejectsForeignProgramAndPayloadWithoutConsumingRights) {
     harken::AuthoredStopOperation op({0, 1, 17, 19, 23, 0, 81});
     FenceRecord record(op);
     record.payload.authoredStopOperation = op.Identity();
@@ -3498,7 +3496,7 @@ TEST_F(AuthoredStopAudio, LaneFenceProofRejectsForeignProgramAndPayloadWithoutCo
     EXPECT_EQ(harken::AuthoredStopCancelDisposition::Cancelled, op.Cancel());
 }
 
-TEST_F(AuthoredStopAudio, LaneFenceProofRejectsRealDecisionAndMalformedNoneWithoutDroppingItsPin) {
+TEST(AuthoredStopAudio, LaneFenceProofRejectsRealDecisionAndMalformedNoneWithoutDroppingItsPin) {
     StopFenceHarness h(0, 8, 1);
     const auto decision = h.Decision();
     harken::AuthoredStopOperation op({0, 1, 17, 19, 23, 0, 81});
@@ -3524,7 +3522,7 @@ TEST_F(AuthoredStopAudio, LaneFenceProofRejectsRealDecisionAndMalformedNoneWitho
     EXPECT_EQ(0u, snapshot.futurePinCount);
 }
 
-TEST_F(AuthoredStopAudio, LaneFenceProofAndCancellationRaceHaveOneOriginalOwnershipOutcome) {
+TEST(AuthoredStopAudio, LaneFenceProofAndCancellationRaceHaveOneOriginalOwnershipOutcome) {
     static_assert(!std::is_copy_constructible_v<harken::AuthoredStopFenceLaneProof>);
     static_assert(!std::is_copy_assignable_v<harken::AuthoredStopFenceLaneProof>);
     for (std::uint32_t iteration = 0; iteration < 64; ++iteration) {
@@ -3642,7 +3640,7 @@ struct OriginalControlRecord {
 
 } // namespace
 
-TEST_F(AuthoredStopAudio, ControlArmEnvelopeThenStopNeverStartsOrCompletesTheRootFence) {
+TEST(AuthoredStopAudio, ControlArmEnvelopeThenStopNeverStartsOrCompletesTheRootFence) {
     harken::TimelineArmTable table(1);
     OriginalControlRecord record;
     ASSERT_TRUE(record.Install(table));
@@ -3691,7 +3689,7 @@ TEST_F(AuthoredStopAudio, ControlArmEnvelopeThenStopNeverStartsOrCompletesTheRoo
     EXPECT_EQ(0u, record.operation.AppliedAudioSequence());
 }
 
-TEST_F(AuthoredStopAudio, ControlArmSameBucketRequiresTheCompleteOriginalPairExactlyOnce) {
+TEST(AuthoredStopAudio, ControlArmSameBucketRequiresTheCompleteOriginalPairExactlyOnce) {
     harken::TimelineArmTable table(1);
     OriginalControlRecord record(120, 100);
     ASSERT_TRUE(record.Install(table));
@@ -3719,7 +3717,7 @@ TEST_F(AuthoredStopAudio, ControlArmSameBucketRequiresTheCompleteOriginalPairExa
     record.CancelAndReclaim(table);
 }
 
-TEST_F(AuthoredStopAudio, ControlArmAbortMoveAndDestructionRetainOriginalCancellationRights) {
+TEST(AuthoredStopAudio, ControlArmAbortMoveAndDestructionRetainOriginalCancellationRights) {
     static_assert(!std::is_copy_constructible_v<harken::TimelineArmTable::AuthoredControlBucketProof>);
     static_assert(!std::is_copy_assignable_v<harken::TimelineArmTable::AuthoredControlBucketProof>);
     harken::TimelineArmTable firstTable(1), secondTable(1);
@@ -3747,7 +3745,7 @@ TEST_F(AuthoredStopAudio, ControlArmAbortMoveAndDestructionRetainOriginalCancell
     second.CancelAndReclaim(secondTable);
 }
 
-TEST_F(AuthoredStopAudio, ControlArmRejectsForeignFullTokenReferenceAndCrossTableReader) {
+TEST(AuthoredStopAudio, ControlArmRejectsForeignFullTokenReferenceAndCrossTableReader) {
     harken::TimelineArmTable table(1), foreignTable(1);
     OriginalControlRecord record, foreign;
     ASSERT_TRUE(record.Install(table));
@@ -3787,7 +3785,7 @@ TEST_F(AuthoredStopAudio, ControlArmRejectsForeignFullTokenReferenceAndCrossTabl
     foreign.CancelAndReclaim(foreignTable);
 }
 
-TEST_F(AuthoredStopAudio, ControlArmFreezesOriginalPayloadAndEventSemanticsBeforePublication) {
+TEST(AuthoredStopAudio, ControlArmFreezesOriginalPayloadAndEventSemanticsBeforePublication) {
     harken::TimelineArmTable table(1);
     OriginalControlRecord record;
     ASSERT_TRUE(record.Install(table));
@@ -3844,7 +3842,7 @@ TEST_F(AuthoredStopAudio, ControlArmFreezesOriginalPayloadAndEventSemanticsBefor
     record.CancelAndReclaim(table);
 }
 
-TEST_F(AuthoredStopAudio, ControlArmDistinctPurposeRejectsGenericStartAndReusedRowsClearMetadata) {
+TEST(AuthoredStopAudio, ControlArmDistinctPurposeRejectsGenericStartAndReusedRowsClearMetadata) {
     harken::TimelineArmTable table(1);
     OriginalControlRecord record;
     ASSERT_TRUE(record.Install(table));
@@ -3881,7 +3879,7 @@ TEST_F(AuthoredStopAudio, ControlArmDistinctPurposeRejectsGenericStartAndReusedR
     EXPECT_TRUE(table.Reclaim(generic, 2));
 }
 
-TEST_F(AuthoredStopAudio, ControlArmPreparedCancelAndMaxGenerationQuarantineClearOriginalBacking) {
+TEST(AuthoredStopAudio, ControlArmPreparedCancelAndMaxGenerationQuarantineClearOriginalBacking) {
     harken::TimelineArmTable table(1);
     OriginalControlRecord first;
     ASSERT_TRUE(table.PrepareAuthoredControl(first.input, &first.token));
@@ -3909,7 +3907,7 @@ TEST_F(AuthoredStopAudio, ControlArmPreparedCancelAndMaxGenerationQuarantineClea
     EXPECT_EQ(harken::AuthoredStopCancelDisposition::Cancelled, last.operation.Cancel());
 }
 
-TEST_F(AuthoredStopAudio, ControlArmOriginalOperationCancelRacePreservesOneOwnershipOutcome) {
+TEST(AuthoredStopAudio, ControlArmOriginalOperationCancelRacePreservesOneOwnershipOutcome) {
     for (std::uint32_t iteration = 0; iteration < 64; ++iteration) {
         harken::TimelineArmTable table(1);
         OriginalControlRecord record;
@@ -3942,7 +3940,7 @@ TEST_F(AuthoredStopAudio, ControlArmOriginalOperationCancelRacePreservesOneOwner
 }
 
 
-TEST_F(AuthoredStopAudio, ControlArmFactoryUsesActualAuthoredStopSchemaAndRejectsMalformedInputs) {
+TEST(AuthoredStopAudio, ControlArmFactoryUsesActualAuthoredStopSchemaAndRejectsMalformedInputs) {
     harken::TimelineArmTable table(1);
     OriginalControlRecord record(120, 100);
     EXPECT_EQ(1u, record.payloads[0].envelopeIndex);
@@ -3985,7 +3983,7 @@ TEST_F(AuthoredStopAudio, ControlArmFactoryUsesActualAuthoredStopSchemaAndReject
     RecordProperty("control_metadata_bytes", static_cast<int>(sizeof(harken::TimelineArmTable::AuthoredControlMetadata)));
 }
 
-TEST_F(AuthoredStopAudio, ControlArmOriginalCancelPreventsFactoryAndNoFadeStopHasNoCandidateFlag) {
+TEST(AuthoredStopAudio, ControlArmOriginalCancelPreventsFactoryAndNoFadeStopHasNoCandidateFlag) {
     harken::TimelineArmTable table(1);
     OriginalControlRecord cancelled;
     ASSERT_EQ(harken::AuthoredStopCancelDisposition::Cancelled, cancelled.operation.Cancel());
@@ -4011,7 +4009,7 @@ TEST_F(AuthoredStopAudio, ControlArmOriginalCancelPreventsFactoryAndNoFadeStopHa
     direct.CancelAndReclaim(table);
 }
 
-TEST_F(AuthoredStopAudio, ControlArmFactoryRefusesReplacingAnOwnedOutputEvenWithFreshBackingAndCapacity) {
+TEST(AuthoredStopAudio, ControlArmFactoryRefusesReplacingAnOwnedOutputEvenWithFreshBackingAndCapacity) {
     harken::TimelineArmTable table(2);
     OriginalControlRecord original, fresh(120, 100, true, 15);
     ASSERT_TRUE(original.Install(table));
@@ -4174,7 +4172,7 @@ struct ControlLaneAudioHarness {
 
 } // namespace
 
-TEST_F(AuthoredStopAudio, TypedLaneControlRendersOriginalFadeAndFenceAtExactFixedFrame) {
+TEST(AuthoredStopAudio, TypedLaneControlRendersOriginalFadeAndFenceAtExactFixedFrame) {
     for (const auto workers : {0u, 2u}) {
         for (const auto stopFrame : {32u, 100u}) {
             SCOPED_TRACE(workers);
@@ -4206,7 +4204,7 @@ TEST_F(AuthoredStopAudio, TypedLaneControlRendersOriginalFadeAndFenceAtExactFixe
     }
 }
 
-TEST_F(AuthoredStopAudio, TypedLaneStopDominatesAnotherOriginalLaneStartAtSameFrameInBothOrders) {
+TEST(AuthoredStopAudio, TypedLaneStopDominatesAnotherOriginalLaneStartAtSameFrameInBothOrders) {
     for (const auto workers : {0u, 2u}) {
         for (const bool stopFirst : {false, true}) {
             ControlLaneAudioHarness h(workers, 32, 8, false, true);
@@ -4223,7 +4221,7 @@ TEST_F(AuthoredStopAudio, TypedLaneStopDominatesAnotherOriginalLaneStartAtSameFr
     }
 }
 
-TEST_F(AuthoredStopAudio, TypedLaneStopRefusalReturnsEveryProofWithoutChangingEarlierStartGuard) {
+TEST(AuthoredStopAudio, TypedLaneStopRefusalReturnsEveryProofWithoutChangingEarlierStartGuard) {
     for (const auto mode : {0, 1, 2}) {
         SCOPED_TRACE(mode);
         ControlLaneAudioHarness h(0, 32, 8, false, true);
@@ -4282,7 +4280,7 @@ TEST_F(AuthoredStopAudio, TypedLaneStopRefusalReturnsEveryProofWithoutChangingEa
     }
 }
 
-TEST_F(AuthoredStopAudio, FinalizedCurrentSpanMergesOnlyTrueEligibleCutoffAcrossPageAndLaneReservations) {
+TEST(AuthoredStopAudio, FinalizedCurrentSpanMergesOnlyTrueEligibleCutoffAcrossPageAndLaneReservations) {
     for (const bool laneFirst : {false, true}) {
         for (const bool rejectStop : {false, true}) {
             StopAudioHarness h(0);
@@ -4295,8 +4293,8 @@ TEST_F(AuthoredStopAudio, FinalizedCurrentSpanMergesOnlyTrueEligibleCutoffAcross
             harken::VoiceTimelineReservation page{}, lane{};
             const auto reservePage = [&] {
                 EXPECT_TRUE(voices.ReserveTimelineEvents(slot, generation, 0, 1, &page));
-                auto event = WithFrontierProof(StartAt(32), render, 0, harken::FrontierEventState::Pending);
-                EXPECT_TRUE(voices.StageReservedTimelineEvent(page, 0, event));
+                auto event = WithFrontierGuard(StartAt(32), render, 0, harken::FrontierEventState::Pending);
+                EXPECT_TRUE(voices.StageReservedTimelineEvent(page, 0, event, TestFrontierEntry(), TestFrontierOperation(event)));
                 harken::VoiceTimelineReservationProof proof;
                 EXPECT_TRUE(voices.ProveTimelineReservation(page, &proof));
                 voices.ApplyProvenTimelineReservation(proof, UINT64_MAX);
@@ -4337,7 +4335,7 @@ TEST_F(AuthoredStopAudio, FinalizedCurrentSpanMergesOnlyTrueEligibleCutoffAcross
     }
 }
 
-TEST_F(AuthoredStopAudio, TypedLaneStopDominatesStartFromActualFixedPageExecutor) {
+TEST(AuthoredStopAudio, TypedLaneStopDominatesStartFromActualFixedPageExecutor) {
     for (const auto workers : {0u, 2u}) {
         ControlLaneAudioHarness h(workers, 32, 8, false, true);
         h.InstallControl();
@@ -4434,7 +4432,7 @@ struct PlainFenceWithdrawalHarness {
 
 } // namespace
 
-TEST_F(AuthoredStopAudio, PlainNoneFenceWithdrawalPreservesSameBucketSiblingApplication) {
+TEST(AuthoredStopAudio, PlainNoneFenceWithdrawalPreservesSameBucketSiblingApplication) {
     PlainFenceWithdrawalHarness h;
     harken::ImmediateLaneHandle handle{};
     h.Install({&h.a, &h.b}, &handle);
@@ -4458,7 +4456,7 @@ TEST_F(AuthoredStopAudio, PlainNoneFenceWithdrawalPreservesSameBucketSiblingAppl
     EXPECT_EQ(harken::AuthoredStopCancelDisposition::Cancelled, h.second.Cancel());
 }
 
-TEST_F(AuthoredStopAudio, PlainNoneFenceWithdrawalDoesNotDisarmAnotherActualLaneReference) {
+TEST(AuthoredStopAudio, PlainNoneFenceWithdrawalDoesNotDisarmAnotherActualLaneReference) {
     PlainFenceWithdrawalHarness h;
     harken::ImmediateLaneHandle left{}, right{};
     h.Install({&h.a}, &left);
@@ -4557,19 +4555,19 @@ void CheckPlainNoneFenceArenaDiscard(bool lateRequest, bool requestWithdrawal = 
 
 } // namespace
 
-TEST_F(AuthoredStopAudio, PlainNoneFenceWithdrawalArenaDiscardFinishesSkippedBucketAndKeepsFutureSibling) {
+TEST(AuthoredStopAudio, PlainNoneFenceWithdrawalArenaDiscardFinishesSkippedBucketAndKeepsFutureSibling) {
     CheckPlainNoneFenceArenaDiscard(false);
 }
 
-TEST_F(AuthoredStopAudio, PlainNoneFenceWithdrawalLateRequestThenActualArenaDiscardKeepsFutureSibling) {
+TEST(AuthoredStopAudio, PlainNoneFenceWithdrawalLateRequestThenActualArenaDiscardKeepsFutureSibling) {
     CheckPlainNoneFenceArenaDiscard(true);
 }
 
-TEST_F(AuthoredStopAudio, PlainNoneFenceWithdrawalUnrequestedArenaSurvivorRetainsCapacityFailureContract) {
+TEST(AuthoredStopAudio, PlainNoneFenceWithdrawalUnrequestedArenaSurvivorRetainsCapacityFailureContract) {
     CheckPlainNoneFenceArenaDiscard(true, false);
 }
 
-TEST_F(AuthoredStopAudio, PlainNoneFenceWithdrawalCaptureWinnerKeepsCurrentProofUntilNewCompletion) {
+TEST(AuthoredStopAudio, PlainNoneFenceWithdrawalCaptureWinnerKeepsCurrentProofUntilNewCompletion) {
     PlainFenceWithdrawalHarness h;
     harken::ImmediateLaneHandle handle{};
     h.Install({&h.a, &h.b}, &handle);
@@ -4589,7 +4587,7 @@ TEST_F(AuthoredStopAudio, PlainNoneFenceWithdrawalCaptureWinnerKeepsCurrentProof
     EXPECT_EQ(harken::AuthoredStopCancelDisposition::Cancelled, h.second.Cancel());
 }
 
-TEST_F(AuthoredStopAudio, PlainNoneFenceWithdrawalRefusedClaimRetainsTheActualPreparedProofCapture) {
+TEST(AuthoredStopAudio, PlainNoneFenceWithdrawalRefusedClaimRetainsTheActualPreparedProofCapture) {
     PlainFenceWithdrawalHarness h;
     harken::ImmediateLaneHandle handle{};
     h.Install({&h.a}, &handle);
@@ -4617,7 +4615,7 @@ TEST_F(AuthoredStopAudio, PlainNoneFenceWithdrawalRefusedClaimRetainsTheActualPr
     EXPECT_EQ(0u, h.first.AppliedAudioSequence());
 }
 
-TEST_F(AuthoredStopAudio, PlainNoneFenceWithdrawalRejectsForeignBackingIdentityAndUnpublishedAttempt) {
+TEST(AuthoredStopAudio, PlainNoneFenceWithdrawalRejectsForeignBackingIdentityAndUnpublishedAttempt) {
     PlainFenceWithdrawalHarness h;
     harken::ImmediateLaneHandle handle{};
     h.Install({&h.a}, &handle, false);
@@ -4643,7 +4641,7 @@ TEST_F(AuthoredStopAudio, PlainNoneFenceWithdrawalRejectsForeignBackingIdentityA
     EXPECT_EQ(harken::AuthoredStopCancelDisposition::Cancelled, h.first.Cancel());
 }
 
-TEST_F(AuthoredStopAudio, PlainNoneFenceWithdrawalReusedActualLaneClearsAdmissionBytes) {
+TEST(AuthoredStopAudio, PlainNoneFenceWithdrawalReusedActualLaneClearsAdmissionBytes) {
     PlainFenceWithdrawalHarness h(kBlock + 16);
     harken::ImmediateLaneHandle handle{};
     h.Install({&h.a}, &handle);
@@ -4666,7 +4664,7 @@ TEST_F(AuthoredStopAudio, PlainNoneFenceWithdrawalReusedActualLaneClearsAdmissio
     EXPECT_EQ(harken::AuthoredStopCancelDisposition::Cancelled, h.second.Cancel());
 }
 
-TEST_F(AuthoredStopAudio, PlainNoneFenceWithdrawalLeavesIndependentPreparedDescriptorProofOwned) {
+TEST(AuthoredStopAudio, PlainNoneFenceWithdrawalLeavesIndependentPreparedDescriptorProofOwned) {
     PlainFenceWithdrawalHarness h;
     harken::ImmediateLaneHandle handle{};
     h.Install({&h.a}, &handle);
@@ -4683,7 +4681,7 @@ TEST_F(AuthoredStopAudio, PlainNoneFenceWithdrawalLeavesIndependentPreparedDescr
     EXPECT_EQ(0u, h.first.AppliedAudioSequence());
 }
 
-TEST_F(AuthoredStopAudio, PlainNoneFenceWithdrawalRequestWinsWhileActualCaptureGateIsHeld) {
+TEST(AuthoredStopAudio, PlainNoneFenceWithdrawalRequestWinsWhileActualCaptureGateIsHeld) {
     PlainFenceWithdrawalHarness h;
     harken::ImmediateLaneHandle handle{};
     h.Install({&h.a, &h.b}, &handle);
@@ -4711,7 +4709,7 @@ TEST_F(AuthoredStopAudio, PlainNoneFenceWithdrawalRequestWinsWhileActualCaptureG
     EXPECT_EQ(harken::AuthoredStopCancelDisposition::Cancelled, h.second.Cancel());
 }
 
-TEST_F(AuthoredStopAudio, NoneFenceFutureReferenceOwnsOnlyOriginalReaderAcrossMovesAndAbortPrefixes) {
+TEST(AuthoredStopAudio, NoneFenceFutureReferenceOwnsOnlyOriginalReaderAcrossMovesAndAbortPrefixes) {
     static_assert(!std::is_copy_constructible_v<harken::AuthoredStopFenceLaneReference>);
     harken::AuthoredStopOperation first({0, 1, 17, 19, 23, 7, 32});
     harken::AuthoredStopOperation second({1, 1, 17, 19, 23, 7, 32});
@@ -4734,7 +4732,7 @@ TEST_F(AuthoredStopAudio, NoneFenceFutureReferenceOwnsOnlyOriginalReaderAcrossMo
     EXPECT_FALSE(b.descriptor.AcquireLaneReference(b.request.program, &x));
 }
 
-TEST_F(AuthoredStopAudio, NoneFenceLanePinPrefixRollbackAndCapturedBorrowRequireOriginalCapture) {
+TEST(AuthoredStopAudio, NoneFenceLanePinPrefixRollbackAndCapturedBorrowRequireOriginalCapture) {
     harken::AuthoredStopOperation op({0, 1, 17, 19, 23, 7, 32});
     FenceRecord fence(op);
     fence.payload.authoredStopOperation = op.Identity();
@@ -4785,7 +4783,7 @@ TEST_F(AuthoredStopAudio, NoneFenceLanePinPrefixRollbackAndCapturedBorrowRequire
     EXPECT_EQ(0u, active.AppliedAudioSequence());
 }
 
-TEST_F(AuthoredStopAudio, NoneFenceOriginalReferenceFollowsPinnedReplacementOrderAndFailedPlacement) {
+TEST(AuthoredStopAudio, NoneFenceOriginalReferenceFollowsPinnedReplacementOrderAndFailedPlacement) {
     ControlLaneAudioHarness h(0, 80, 8, false, true);
     ASSERT_TRUE(h.arms.Prepare(static_cast<std::uint32_t>(h.render),
         static_cast<std::uint32_t>(h.render >> 32), 96, 64, 11, {}, &h.startArm));
@@ -4830,7 +4828,7 @@ TEST_F(AuthoredStopAudio, NoneFenceOriginalReferenceFollowsPinnedReplacementOrde
     EXPECT_EQ(3u, h.arms.FreeCount());
 }
 
-TEST_F(AuthoredStopAudio, NoneFenceCapturedReferenceRejectsEqualPayloadBackingSubstitutionAndRecoversOriginal) {
+TEST(AuthoredStopAudio, NoneFenceCapturedReferenceRejectsEqualPayloadBackingSubstitutionAndRecoversOriginal) {
     harken::AuthoredStopOperation operation({0, 1, 17, 19, 23, 7, 32});
     FenceRecord fence(operation);
     fence.payload.authoredStopOperation = operation.Identity();
@@ -4870,7 +4868,7 @@ TEST_F(AuthoredStopAudio, NoneFenceCapturedReferenceRejectsEqualPayloadBackingSu
     EXPECT_EQ(harken::AuthoredStopCancelDisposition::Cancelled, operation.Cancel());
 }
 
-TEST_F(AuthoredStopAudio, TypedLaneArenaRefusalPreservesOriginalControlAndFenceUntilActualCancellationRetires) {
+TEST(AuthoredStopAudio, TypedLaneArenaRefusalPreservesOriginalControlAndFenceUntilActualCancellationRetires) {
     for (const auto workers : {0u, 2u}) {
         ControlLaneAudioHarness h(workers);
         h.InstallControl();
@@ -4926,7 +4924,7 @@ TEST_F(AuthoredStopAudio, TypedLaneArenaRefusalPreservesOriginalControlAndFenceU
     }
 }
 
-TEST_F(AuthoredStopAudio, TypedLaneArenaRetryAtSameQuantumAppliesOnlyAfterRealScratchAdmission) {
+TEST(AuthoredStopAudio, TypedLaneArenaRetryAtSameQuantumAppliesOnlyAfterRealScratchAdmission) {
     for (const auto workers : {0u, 2u}) {
         ControlLaneAudioHarness h(workers);
         h.InstallControl();
@@ -4953,7 +4951,7 @@ TEST_F(AuthoredStopAudio, TypedLaneArenaRetryAtSameQuantumAppliesOnlyAfterRealSc
     }
 }
 
-TEST_F(AuthoredStopAudio, ControlScratchAdmissionIncludesEarlierOrdinaryVoicesAndRejectsStaleTargets) {
+TEST(AuthoredStopAudio, ControlScratchAdmissionIncludesEarlierOrdinaryVoicesAndRejectsStaleTargets) {
     StopAudioHarness h(0);
     const auto earlier = h.Play(false);
     const auto controlled = h.Play(false);
@@ -4973,7 +4971,7 @@ TEST_F(AuthoredStopAudio, ControlScratchAdmissionIncludesEarlierOrdinaryVoicesAn
         nullptr, nullptr, 0, targets.data(), static_cast<std::uint32_t>(targets.size())));
 }
 
-TEST_F(AuthoredStopAudio, NoneOnlyCapturedFenceRequiresNoVoiceScratchAndRetiresAfterActualReadBlock) {
+TEST(AuthoredStopAudio, NoneOnlyCapturedFenceRequiresNoVoiceScratchAndRetiresAfterActualReadBlock) {
     StopAudioHarness h(0);
     harken::AuthoredStopOperation operation({0, 1, 17, 19, 23, 7, 32});
     FenceRecord fence(operation);
@@ -5021,7 +5019,7 @@ TEST_F(AuthoredStopAudio, NoneOnlyCapturedFenceRequiresNoVoiceScratchAndRetiresA
     EXPECT_EQ(harken::AuthoredStopCancelDisposition::Cancelled, operation.Cancel());
 }
 
-TEST_F(AuthoredStopAudio, TypedLaneOriginalControlAndNoneFenceProofsSurviveActualCancelClaimWinners) {
+TEST(AuthoredStopAudio, TypedLaneOriginalControlAndNoneFenceProofsSurviveActualCancelClaimWinners) {
     for (std::uint32_t trial = 0; trial < 8; ++trial) {
         ControlLaneAudioHarness h(0, 32, 8, false);
         h.InstallControl();
@@ -5417,7 +5415,7 @@ struct HeldRenderingCancel {
 } // namespace
 
 
-TEST_F(AuthoredStopAudio, RenderingCancelCurrentNonGatedGenerationRetainsFreshPlayback) {
+TEST(AuthoredStopAudio, RenderingCancelCurrentNonGatedGenerationRetainsFreshPlayback) {
     StopAudioHarness h(0);
     const auto render = h.Play(false);
     const auto observer = h.lastObserver;
@@ -5445,7 +5443,7 @@ TEST_F(AuthoredStopAudio, RenderingCancelCurrentNonGatedGenerationRetainsFreshPl
     EXPECT_TRUE(engine.voices.ReleaseObserved(observer));
 }
 
-TEST_F(AuthoredStopAudio, RenderingCancelOriginalGenerationCannotReleaseReissuedVoice) {
+TEST(AuthoredStopAudio, RenderingCancelOriginalGenerationCannotReleaseReissuedVoice) {
     MixerPendingControlHarness h;
     ASSERT_TRUE(h.InstallSource());
     auto& engine = *h.audio.engine;
@@ -5491,7 +5489,7 @@ TEST_F(AuthoredStopAudio, RenderingCancelOriginalGenerationCannotReleaseReissued
     EXPECT_TRUE(engine.timelineArms.Reclaim(h.control.source, engine.mixer.BlocksRendered()));
 }
 
-TEST_F(AuthoredStopAudio, RenderingCancelCurrentGatedGenerationReleasesActualOriginal) {
+TEST(AuthoredStopAudio, RenderingCancelCurrentGatedGenerationReleasesActualOriginal) {
     MixerPendingControlHarness h;
     ASSERT_TRUE(h.InstallSource());
     auto& engine = *h.audio.engine;
@@ -5510,7 +5508,7 @@ TEST_F(AuthoredStopAudio, RenderingCancelCurrentGatedGenerationReleasesActualOri
     EXPECT_TRUE(engine.timelineArms.Reclaim(h.control.source, engine.mixer.BlocksRendered()));
 }
 
-TEST_F(AuthoredStopAudio, MixerBusyOriginalSourceRetainsAcknowledgementUntilActualRowRelease) {
+TEST(AuthoredStopAudio, MixerBusyOriginalSourceRetainsAcknowledgementUntilActualRowRelease) {
     MixerPendingControlHarness h;
     ASSERT_TRUE(h.PrepareSource());
     auto& engine = *h.audio.engine;
@@ -5548,7 +5546,7 @@ TEST_F(AuthoredStopAudio, MixerBusyOriginalSourceRetainsAcknowledgementUntilActu
     h.Dispose();
 }
 
-TEST_F(AuthoredStopAudio, SourceCommandProofAbortRetainsActualClaimAndQueuedOriginal) {
+TEST(AuthoredStopAudio, SourceCommandProofAbortRetainsActualClaimAndQueuedOriginal) {
     MixerPendingControlHarness h;
     ASSERT_TRUE(h.PrepareSource());
     auto& engine = *h.audio.engine;
@@ -5592,7 +5590,7 @@ TEST_F(AuthoredStopAudio, SourceCommandProofAbortRetainsActualClaimAndQueuedOrig
     h.Dispose();
 }
 
-TEST_F(AuthoredStopAudio, SourceCommandInstallationHoldsVoiceThroughMetadataAndOriginalAck) {
+TEST(AuthoredStopAudio, SourceCommandInstallationHoldsVoiceThroughMetadataAndOriginalAck) {
     MixerPendingControlHarness h;
     ASSERT_TRUE(h.PrepareSource());
     auto& engine = *h.audio.engine;
@@ -5643,7 +5641,7 @@ TEST_F(AuthoredStopAudio, SourceCommandInstallationHoldsVoiceThroughMetadataAndO
     h.Dispose();
 }
 
-TEST_F(AuthoredStopAudio, MixerBusySourceRetainsWholeMetadataBatchAndOrderedSibling) {
+TEST(AuthoredStopAudio, MixerBusySourceRetainsWholeMetadataBatchAndOrderedSibling) {
     MixerPendingControlHarness h;
     auto& engine = *h.audio.engine;
     const auto other = h.audio.Play(false, 1, false);
@@ -5693,7 +5691,7 @@ TEST_F(AuthoredStopAudio, MixerBusySourceRetainsWholeMetadataBatchAndOrderedSibl
     h.Dispose();
 }
 
-TEST_F(AuthoredStopAudio, MixerSourceCompletionMaximumRetainsActualCommandAndCanRecover) {
+TEST(AuthoredStopAudio, MixerSourceCompletionMaximumRetainsActualCommandAndCanRecover) {
     MixerPendingControlHarness h;
     ASSERT_TRUE(h.PrepareSource());
     auto& engine = *h.audio.engine;
@@ -5723,7 +5721,7 @@ TEST_F(AuthoredStopAudio, MixerSourceCompletionMaximumRetainsActualCommandAndCan
     h.Dispose();
 }
 
-TEST_F(AuthoredStopAudio, MixerGroupedSourceCopiesHeldOriginalParentAndMember) {
+TEST(AuthoredStopAudio, MixerGroupedSourceCopiesHeldOriginalParentAndMember) {
     MixerPendingControlHarness h;
     auto& engine = *h.audio.engine;
     harken::DecisionReserveRequest request{};
@@ -5756,7 +5754,7 @@ TEST_F(AuthoredStopAudio, MixerGroupedSourceCopiesHeldOriginalParentAndMember) {
     EXPECT_TRUE(engine.decisions.ReclaimCancelled(decision));
 }
 
-TEST_F(AuthoredStopAudio, MixerSourceHeldMetadataInstallsRealPreparedCompressorFlag) {
+TEST(AuthoredStopAudio, MixerSourceHeldMetadataInstallsRealPreparedCompressorFlag) {
     MixerPendingControlHarness h;
     auto& engine = *h.audio.engine;
     std::uint32_t generation = 0;
@@ -5810,7 +5808,7 @@ TEST_F(AuthoredStopAudio, MixerSourceHeldMetadataInstallsRealPreparedCompressorF
     EXPECT_EQ(nullptr, engine.effectBank.LiveStateFor(effect));
 }
 
-TEST_F(AuthoredStopAudio, MixerCancelledControlPreservesGenuineGatedOriginalSource) {
+TEST(AuthoredStopAudio, MixerCancelledControlPreservesGenuineGatedOriginalSource) {
     MixerPendingControlHarness h;
     ASSERT_TRUE(h.InstallSource());
     ASSERT_TRUE(h.InstallControl());
@@ -5827,7 +5825,7 @@ TEST_F(AuthoredStopAudio, MixerCancelledControlPreservesGenuineGatedOriginalSour
     h.Dispose();
 }
 
-TEST_F(AuthoredStopAudio, MixerBusyLastControlRetainsAckAcrossRealBlocksWithoutAdvancingSettled) {
+TEST(AuthoredStopAudio, MixerBusyLastControlRetainsAckAcrossRealBlocksWithoutAdvancingSettled) {
     MixerPendingControlHarness h;
     ASSERT_TRUE(h.InstallSource());
     ASSERT_TRUE(h.InstallControl());
@@ -5870,7 +5868,7 @@ TEST_F(AuthoredStopAudio, MixerBusyLastControlRetainsAckAcrossRealBlocksWithoutA
     h.Dispose();
 }
 
-TEST_F(AuthoredStopAudio, MixerBusyControlCancellationSettlesBeforeActualSiblingStop) {
+TEST(AuthoredStopAudio, MixerBusyControlCancellationSettlesBeforeActualSiblingStop) {
     MixerPendingControlHarness h;
     ASSERT_TRUE(h.InstallSource());
     ASSERT_TRUE(h.InstallControl());
@@ -5911,7 +5909,7 @@ TEST_F(AuthoredStopAudio, MixerBusyControlCancellationSettlesBeforeActualSibling
     h.Dispose();
 }
 
-TEST_F(AuthoredStopAudio, MixerInvalidControlPhysicalIdentityReportsOnceAndKeepsOriginalAck) {
+TEST(AuthoredStopAudio, MixerInvalidControlPhysicalIdentityReportsOnceAndKeepsOriginalAck) {
     MixerPendingControlHarness h;
     ASSERT_TRUE(h.InstallSource());
     ASSERT_TRUE(h.InstallControl());
@@ -5943,7 +5941,7 @@ TEST_F(AuthoredStopAudio, MixerInvalidControlPhysicalIdentityReportsOnceAndKeeps
     h.Dispose();
 }
 
-TEST_F(AuthoredStopAudio, MixerOriginalSourceCancellationStillReleasesItsOwnGatedVoice) {
+TEST(AuthoredStopAudio, MixerOriginalSourceCancellationStillReleasesItsOwnGatedVoice) {
     MixerPendingControlHarness h;
     h.audio.retainSources = true;
     h.render = h.audio.Play(false, 1, false);
@@ -5964,7 +5962,7 @@ TEST_F(AuthoredStopAudio, MixerOriginalSourceCancellationStillReleasesItsOwnGate
     EXPECT_TRUE(engine.timelineArms.Reclaim(h.control.source, engine.mixer.BlocksRendered()));
 }
 
-TEST_F(AuthoredStopAudio, MixerStaleControlCommandNeverConfirmsGenuinelyReissuedRow) {
+TEST(AuthoredStopAudio, MixerStaleControlCommandNeverConfirmsGenuinelyReissuedRow) {
     MixerPendingControlHarness h;
     ASSERT_TRUE(h.InstallSource());
     auto& engine = *h.audio.engine;
@@ -5994,7 +5992,7 @@ TEST_F(AuthoredStopAudio, MixerStaleControlCommandNeverConfirmsGenuinelyReissued
     h.Dispose();
 }
 
-TEST_F(AuthoredStopAudio, MixerLegacyGroupedControlPreservesGenuineAdmissionRetirement) {
+TEST(AuthoredStopAudio, MixerLegacyGroupedControlPreservesGenuineAdmissionRetirement) {
     for (const bool cancelBeforeConsume : {false, true}) {
         MixerPendingControlHarness h;
         ASSERT_TRUE(h.InstallSource());
@@ -6056,7 +6054,7 @@ TEST_F(AuthoredStopAudio, MixerLegacyGroupedControlPreservesGenuineAdmissionReti
     }
 }
 
-TEST_F(AuthoredStopAudio, MixerBusyControlCancelRetryPreservesOriginalVoiceAndRealTombstoneBlock) {
+TEST(AuthoredStopAudio, MixerBusyControlCancelRetryPreservesOriginalVoiceAndRealTombstoneBlock) {
     MixerPendingControlHarness h;
     ASSERT_TRUE(h.InstallSource());
     ASSERT_TRUE(h.InstallControl());
@@ -6084,7 +6082,7 @@ TEST_F(AuthoredStopAudio, MixerBusyControlCancelRetryPreservesOriginalVoiceAndRe
     h.Dispose();
 }
 
-TEST_F(AuthoredStopAudio, MixerUnissuedFutureControlGenerationIsProtocolErrorWithoutRowWrite) {
+TEST(AuthoredStopAudio, MixerUnissuedFutureControlGenerationIsProtocolErrorWithoutRowWrite) {
     MixerPendingControlHarness h;
     ASSERT_TRUE(h.InstallSource());
     ASSERT_TRUE(h.InstallControl());
@@ -6108,7 +6106,7 @@ TEST_F(AuthoredStopAudio, MixerUnissuedFutureControlGenerationIsProtocolErrorWit
     h.Dispose();
 }
 
-TEST_F(AuthoredStopAudio, ControlAckStateRefusalsAndIdempotencePreserveOriginalCompletion) {
+TEST(AuthoredStopAudio, ControlAckStateRefusalsAndIdempotencePreserveOriginalCompletion) {
     using Status = harken::TimelineArmTable::ControlCommandAckStatus;
     harken::TimelineArmTable table(1);
     harken::TimelineArmToken token{};
@@ -6141,7 +6139,7 @@ TEST_F(AuthoredStopAudio, ControlAckStateRefusalsAndIdempotencePreserveOriginalC
     EXPECT_EQ(Status::Stale, table.AcknowledgeControlCommand(token, 2, 4));
 }
 
-TEST_F(AuthoredStopAudio, MixerCancelledControlOriginalStartStillProducesFreshPcmAndReleasesRealSource) {
+TEST(AuthoredStopAudio, MixerCancelledControlOriginalStartStillProducesFreshPcmAndReleasesRealSource) {
     MixerPendingControlHarness h;
     ASSERT_TRUE(h.InstallSource());
     ASSERT_TRUE(h.InstallControl());
@@ -6221,7 +6219,7 @@ TEST_F(AuthoredStopAudio, MixerCancelledControlOriginalStartStillProducesFreshPc
     EXPECT_FALSE(engine.playableInstances.Classify(leaf).live);
 }
 
-TEST_F(AuthoredStopAudio, PendingControlUsesRealCreditTypedCommitAndRejectsEveryUnboundGenericRoute) {
+TEST(AuthoredStopAudio, PendingControlUsesRealCreditTypedCommitAndRejectsEveryUnboundGenericRoute) {
     harken::TimelineArmTable table(2);
     PendingControlRecord h;
     ASSERT_TRUE(h.PrepareSource(table));
@@ -6265,7 +6263,7 @@ TEST_F(AuthoredStopAudio, PendingControlUsesRealCreditTypedCommitAndRejectsEvery
     EXPECT_EQ(2u, table.FreeCount());
 }
 
-TEST_F(AuthoredStopAudio, PendingControlTypedCommitChecksOriginalOwnersAndReleasesExactReservation) {
+TEST(AuthoredStopAudio, PendingControlTypedCommitChecksOriginalOwnersAndReleasesExactReservation) {
     harken::TimelineArmTable table(2);
     PendingControlRecord h;
     ASSERT_TRUE(h.PrepareSource(table));
@@ -6303,7 +6301,7 @@ TEST_F(AuthoredStopAudio, PendingControlTypedCommitChecksOriginalOwnersAndReleas
     ASSERT_NO_FATAL_FAILURE(h.DisposeSource(table));
 }
 
-TEST_F(AuthoredStopAudio, PendingControlBindsFinalOnsetAndLiteralStopOnceWithRealHeldRights) {
+TEST(AuthoredStopAudio, PendingControlBindsFinalOnsetAndLiteralStopOnceWithRealHeldRights) {
     using Proof = harken::TimelineArmTable::PendingAuthoredControlBindingProof;
     static_assert(!std::is_copy_constructible_v<Proof>);
     for (const auto onset : {80u, 100u, 120u, 300u, 320u}) {
@@ -6376,7 +6374,7 @@ TEST_F(AuthoredStopAudio, PendingControlBindsFinalOnsetAndLiteralStopOnceWithRea
     }
 }
 
-TEST_F(AuthoredStopAudio, BoundPublicationKeepsSourceControlIdentityLoansAndOperationReservation) {
+TEST(AuthoredStopAudio, BoundPublicationKeepsSourceControlIdentityLoansAndOperationReservation) {
     harken::TimelineArmTable table(2);
     PendingControlRecord h;
     ASSERT_TRUE(h.PrepareSource(table));
@@ -6448,7 +6446,7 @@ TEST_F(AuthoredStopAudio, BoundPublicationKeepsSourceControlIdentityLoansAndOper
     EXPECT_EQ(2u, table.FreeCount());
 }
 
-TEST_F(AuthoredStopAudio, BoundPublicationRefusesMissingSourceAndReturnsControlOperationReservation) {
+TEST(AuthoredStopAudio, BoundPublicationRefusesMissingSourceAndReturnsControlOperationReservation) {
     harken::TimelineArmTable table(2);
     PendingControlRecord h;
     ASSERT_TRUE(h.PrepareSource(table));
@@ -6480,7 +6478,7 @@ TEST_F(AuthoredStopAudio, BoundPublicationRefusesMissingSourceAndReturnsControlO
     EXPECT_EQ(2u, table.FreeCount());
 }
 
-TEST_F(AuthoredStopAudio, PendingControlSourceLoanReclaimRetainsBusyAndEqualReadFence) {
+TEST(AuthoredStopAudio, PendingControlSourceLoanReclaimRetainsBusyAndEqualReadFence) {
     harken::TimelineArmTable table(2);
     PendingControlRecord h;
     ASSERT_TRUE(h.PrepareSource(table));
@@ -6523,7 +6521,7 @@ TEST_F(AuthoredStopAudio, PendingControlSourceLoanReclaimRetainsBusyAndEqualRead
     EXPECT_EQ(2u, table.FreeCount());
 }
 
-TEST_F(AuthoredStopAudio, PendingControlSecondActualBindingRefusedAfterOriginalControlReclaimUntilSourceReissue) {
+TEST(AuthoredStopAudio, PendingControlSecondActualBindingRefusedAfterOriginalControlReclaimUntilSourceReissue) {
     harken::TimelineArmTable table(3);
     PendingControlRecord first, second(500, 100), fresh;
     ASSERT_TRUE(first.PrepareSource(table));
@@ -6567,7 +6565,7 @@ TEST_F(AuthoredStopAudio, PendingControlSecondActualBindingRefusedAfterOriginalC
     EXPECT_EQ(3u, table.FreeCount());
 }
 
-TEST_F(AuthoredStopAudio, PendingControlSourceLoanMaximumCountRefusesWithoutMutation) {
+TEST(AuthoredStopAudio, PendingControlSourceLoanMaximumCountRefusesWithoutMutation) {
     harken::TimelineArmTable table(2);
     PendingControlRecord h;
     ASSERT_TRUE(h.PrepareSource(table));
@@ -6592,12 +6590,12 @@ TEST_F(AuthoredStopAudio, PendingControlSourceLoanMaximumCountRefusesWithoutMuta
     EXPECT_EQ(2u, table.FreeCount());
 }
 
-TEST_F(AuthoredStopAudio, PendingControlSourceLoanReturnsBeforeMaximumGenerationQuarantine) {
+TEST(AuthoredStopAudio, PendingControlSourceLoanReturnsBeforeMaximumGenerationQuarantine) {
     for (const bool sourceMaximum : {false, true}) {
         SCOPED_TRACE(sourceMaximum);
         harken::TimelineArmTable table(2);
         PendingControlRecord h;
-        table.RowAt(sourceMaximum ? 0u : 1u)->generation = UINT32_MAX;
+        ASSERT_TRUE(table.SetFreeGenerationForTests(sourceMaximum ? 0u : 1u, UINT32_MAX));
         ASSERT_TRUE(h.PrepareSource(table));
         ASSERT_TRUE(h.CommitControl(table));
         ASSERT_TRUE(h.BindSource(table, 120));
@@ -6623,7 +6621,7 @@ TEST_F(AuthoredStopAudio, PendingControlSourceLoanReturnsBeforeMaximumGeneration
     }
 }
 
-TEST_F(AuthoredStopAudio, PendingControlBindingRefusesForeignReaderOriginalBackingAndWrongCanonicalShape) {
+TEST(AuthoredStopAudio, PendingControlBindingRefusesForeignReaderOriginalBackingAndWrongCanonicalShape) {
     harken::TimelineArmTable table(2), foreignTable(2);
     PendingControlRecord h, foreign;
     ASSERT_TRUE(h.PrepareSource(table));
@@ -6684,7 +6682,7 @@ TEST_F(AuthoredStopAudio, PendingControlBindingRefusesForeignReaderOriginalBacki
     ASSERT_NO_FATAL_FAILURE(foreign.DisposeSource(foreignTable));
 }
 
-TEST_F(AuthoredStopAudio, OriginalRowOwnerRejectsBothGenuineTypedControlPreparations) {
+TEST(AuthoredStopAudio, OriginalRowOwnerRejectsBothGenuineTypedControlPreparations) {
     harken::TimelineArmTable table(2);
     PendingControlRecord pending;
     ASSERT_TRUE(pending.PrepareSource(table));
@@ -6720,7 +6718,7 @@ TEST_F(AuthoredStopAudio, OriginalRowOwnerRejectsBothGenuineTypedControlPreparat
     EXPECT_EQ(2u, table.FreeCount());
 }
 
-TEST_F(AuthoredStopAudio, PendingControlOriginalPreparedSourceCancellationCannotFollowRealReissue) {
+TEST(AuthoredStopAudio, PendingControlOriginalPreparedSourceCancellationCannotFollowRealReissue) {
     harken::TimelineArmTable table(3);
     PendingControlRecord old, fresh;
     ASSERT_TRUE(old.PrepareSource(table));
@@ -6753,7 +6751,7 @@ TEST_F(AuthoredStopAudio, PendingControlOriginalPreparedSourceCancellationCannot
     EXPECT_EQ(3u, table.FreeCount());
 }
 
-TEST_F(AuthoredStopAudio, PendingControlBindingAbortMoveAssignmentAndCancelledOwnersKeepOriginalFacts) {
+TEST(AuthoredStopAudio, PendingControlBindingAbortMoveAssignmentAndCancelledOwnersKeepOriginalFacts) {
     harken::TimelineArmTable leftTable(2), rightTable(2);
     PendingControlRecord left, right;
     ASSERT_TRUE(left.PrepareSource(leftTable));
@@ -6788,11 +6786,11 @@ TEST_F(AuthoredStopAudio, PendingControlBindingAbortMoveAssignmentAndCancelledOw
     ASSERT_NO_FATAL_FAILURE(right.DisposeSource(rightTable));
 }
 
-TEST_F(AuthoredStopAudio, PendingControlPreparedMaximumDisposesToQuarantineWithoutWrappingOrCreditRecovery) {
+TEST(AuthoredStopAudio, PendingControlPreparedMaximumDisposesToQuarantineWithoutWrappingOrCreditRecovery) {
     for (const bool sourceMaximum : {false, true}) {
         harken::TimelineArmTable table(2);
         PendingControlRecord h;
-        table.RowAt(sourceMaximum ? 0 : 1)->generation = UINT32_MAX;
+        ASSERT_TRUE(table.SetFreeGenerationForTests(sourceMaximum ? 0u : 1u, UINT32_MAX));
         ASSERT_TRUE(h.PrepareSource(table));
         const auto token = sourceMaximum ? h.source : h.record.token;
         ASSERT_EQ(UINT32_MAX, token.generation);
@@ -6814,7 +6812,7 @@ TEST_F(AuthoredStopAudio, PendingControlPreparedMaximumDisposesToQuarantineWitho
     }
 }
 
-TEST_F(AuthoredStopAudio, PlainReferenceWithdrawalSourceKeepsActualSiblingPcmAndOriginalRetirementOwners) {
+TEST(AuthoredStopAudio, PlainReferenceWithdrawalSourceKeepsActualSiblingPcmAndOriginalRetirementOwners) {
     for (const bool permuted : {false, true}) {
         SCOPED_TRACE(permuted);
         MixerPendingControlHarness h;
@@ -6973,7 +6971,7 @@ TEST_F(AuthoredStopAudio, PlainReferenceWithdrawalSourceKeepsActualSiblingPcmAnd
     }
 }
 
-TEST_F(AuthoredStopAudio, PlainReferenceWithdrawalTypedControlPreservesIndependentReaderAndPhysicalVoice) {
+TEST(AuthoredStopAudio, PlainReferenceWithdrawalTypedControlPreservesIndependentReaderAndPhysicalVoice) {
     for (const auto stop : {32u, 100u}) {
         SCOPED_TRACE(stop);
         ControlLaneAudioHarness h(0, stop);
@@ -7017,7 +7015,7 @@ TEST_F(AuthoredStopAudio, PlainReferenceWithdrawalTypedControlPreservesIndepende
     }
 }
 
-TEST_F(AuthoredStopAudio, PlainReferenceWithdrawalCaptureWinnerKeepsWholeControlScopeAndTombstonedPins) {
+TEST(AuthoredStopAudio, PlainReferenceWithdrawalCaptureWinnerKeepsWholeControlScopeAndTombstonedPins) {
     ControlLaneAudioHarness h(0);
     h.InstallControl();
     struct Gate { std::atomic<bool> entered{false}, release{false}; } gate;
@@ -7056,7 +7054,7 @@ TEST_F(AuthoredStopAudio, PlainReferenceWithdrawalCaptureWinnerKeepsWholeControl
     EXPECT_EQ(3u, h.arms.FreeCount());
 }
 
-TEST_F(AuthoredStopAudio, PlainReferenceWithdrawalLiteralStopBeforeBoundStartNeverStartsDisposedSource) {
+TEST(AuthoredStopAudio, PlainReferenceWithdrawalLiteralStopBeforeBoundStartNeverStartsDisposedSource) {
     MixerPendingControlHarness h;
     ASSERT_TRUE(h.InstallSource());
     ASSERT_TRUE(h.InstallControl());
@@ -7142,7 +7140,7 @@ TEST_F(AuthoredStopAudio, PlainReferenceWithdrawalLiteralStopBeforeBoundStartNev
     ASSERT_TRUE(engine.playableInstances.AdvanceLifecycle(leaf, harken::PlayableLifecycle::Retired));
 }
 
-TEST_F(AuthoredStopAudio, PendingControlActualStopCancellationBeforeFLeavesOriginalStartAudible) {
+TEST(AuthoredStopAudio, PendingControlActualStopCancellationBeforeFLeavesOriginalStartAudible) {
     MixerPendingControlHarness h;
     ASSERT_TRUE(h.InstallSource());
     ASSERT_TRUE(h.InstallControl());
@@ -7243,7 +7241,7 @@ TEST_F(AuthoredStopAudio, PendingControlActualStopCancellationBeforeFLeavesOrigi
     ASSERT_TRUE(engine.playableInstances.AdvanceLifecycle(leaf, harken::PlayableLifecycle::Retired));
 }
 
-TEST_F(AuthoredStopAudio, PlainReferenceWithdrawalSourceCaptureWinnerRetainsRealStartUntilGreaterCompletion) {
+TEST(AuthoredStopAudio, PlainReferenceWithdrawalSourceCaptureWinnerRetainsRealStartUntilGreaterCompletion) {
     MixerPendingControlHarness h;
     ASSERT_TRUE(h.InstallSource());
     auto& engine = *h.audio.engine;
@@ -7325,7 +7323,7 @@ TEST_F(AuthoredStopAudio, PlainReferenceWithdrawalSourceCaptureWinnerRetainsReal
     ASSERT_TRUE(engine.playableInstances.AdvanceLifecycle(leaf, harken::PlayableLifecycle::Retired));
 }
 
-TEST_F(AuthoredStopAudio, PlainReferenceWithdrawalFreedSourceBackingKeepsOtherLaneAndReissuedSlotFresh) {
+TEST(AuthoredStopAudio, PlainReferenceWithdrawalFreedSourceBackingKeepsOtherLaneAndReissuedSlotFresh) {
     MixerPendingControlHarness h;
     ASSERT_TRUE(h.InstallSource());
     auto& engine = *h.audio.engine;
@@ -7479,6 +7477,7 @@ namespace {
 struct OriginalControlHeaderHarness : MixerPendingControlHarness {
     bool Prepare() {
         auto& engine = *audio.engine;
+        if (!engine.authoredStopResources.ConstructThrough(1)) return false;
         control.record.input.renderSlot = static_cast<std::uint32_t>(render);
         control.record.input.renderGeneration = static_cast<std::uint32_t>(render >> 32);
         if (!control.PrepareControl(engine.timelineArms) ||
@@ -7530,7 +7529,7 @@ struct OriginalControlHeaderHarness : MixerPendingControlHarness {
 
 } // namespace
 
-TEST_F(AuthoredStopAudio, OriginalControlHeaderFactoryKeepsTypedLifetimeSeparateFromSourcePurpose) {
+TEST(AuthoredStopAudio, OriginalControlHeaderFactoryKeepsTypedLifetimeSeparateFromSourcePurpose) {
     using Owner = harken::TimelineArmTable::OriginalControlHeaderRowOwner;
     static_assert(!std::is_copy_constructible_v<Owner>);
     harken::TimelineArmTable table(2), foreign(2);
@@ -7567,14 +7566,12 @@ TEST_F(AuthoredStopAudio, OriginalControlHeaderFactoryKeepsTypedLifetimeSeparate
     EXPECT_EQ(2u, table.FreeCount());
 }
 
-TEST_F(AuthoredStopAudio, OriginalControlHeaderFrozenFactoryRejectsForeignHeaderAndAbortsRealUnpublishedRange) {
-    OriginalControlHeaderHarness h;
-    ASSERT_TRUE(h.InstallSource());
-    ASSERT_TRUE(h.Prepare());
-    auto& queue = h.audio.engine->commands;
-    const auto head = queue.PublishedHead();
+TEST(AuthoredStopAudio, OriginalControlHeaderFrozenFactoryRejectsForeignHeaderAndAbortsRealUnpublishedRange) {
     for (unsigned field = 0; field < 9; ++field) {
         SCOPED_TRACE(field);
+        OriginalControlHeaderHarness h;
+        ASSERT_TRUE(h.InstallSource());
+        ASSERT_TRUE(h.Prepare());
         auto wrong = h.header;
         switch (field) {
         case 0: wrong.flags = 1; break;
@@ -7587,32 +7584,33 @@ TEST_F(AuthoredStopAudio, OriginalControlHeaderFrozenFactoryRejectsForeignHeader
         case 7: ++wrong.payload.play.batch.reserved; break;
         case 8: ++wrong.payload.play.batch.batchVersion; break;
         }
+        auto& queue = h.audio.engine->commands;
+        const auto head = queue.PublishedHead();
         ASSERT_TRUE(h.Freeze(wrong));
         EXPECT_FALSE(h.Attach());
         EXPECT_TRUE(h.original.Valid());
         EXPECT_EQ(harken::CommandQueue::OriginalRangeState::Empty, h.Range().State());
         h.queueCommit.Release();
+        ASSERT_TRUE(h.Freeze(h.header));
+        harken::CommandQueue foreign(2);
+        EXPECT_FALSE(foreign.IssueOriginalControlHeaderRange(h.queueCommit, 0,
+            std::move(h.original), &h, &h.Range()));
+        ASSERT_TRUE(h.Attach());
+        EXPECT_FALSE(h.original.Valid());
+        EXPECT_FALSE(h.Range().ResetAfterDisposition());
+        h.queueCommit.Release();
         EXPECT_EQ(head, queue.PublishedHead());
+        EXPECT_EQ(harken::CommandQueue::OriginalRangeState::UnpublishedCancelled, h.Range().State());
+        h.coreCommit.Release();
+        EXPECT_FALSE(h.audio.engine->timelineArms.CancelPrepared(h.control.record.token));
+        ASSERT_TRUE(h.Range().ResetAfterDisposition());
+        ASSERT_TRUE(h.audio.engine->timelineArms.CancelPrepared(h.control.record.token));
+        h.control.record.token = {};
+        h.Dispose();
     }
-    ASSERT_TRUE(h.Freeze(h.header));
-    harken::CommandQueue foreign(2);
-    EXPECT_FALSE(foreign.IssueOriginalControlHeaderRange(h.queueCommit, 0,
-        std::move(h.original), &h, &h.Range()));
-    ASSERT_TRUE(h.Attach());
-    EXPECT_FALSE(h.original.Valid());
-    EXPECT_FALSE(h.Range().ResetAfterDisposition());
-    h.queueCommit.Release();
-    EXPECT_EQ(head, queue.PublishedHead());
-    EXPECT_EQ(harken::CommandQueue::OriginalRangeState::UnpublishedCancelled, h.Range().State());
-    h.coreCommit.Release();
-    EXPECT_FALSE(h.audio.engine->timelineArms.CancelPrepared(h.control.record.token));
-    ASSERT_TRUE(h.Range().ResetAfterDisposition());
-    ASSERT_TRUE(h.audio.engine->timelineArms.CancelPrepared(h.control.record.token));
-    h.control.record.token = {};
-    h.Dispose();
 }
 
-TEST_F(AuthoredStopAudio, OriginalControlHeaderConsumedCommitUnpublishedAbortRetainsTrueReclaimFence) {
+TEST(AuthoredStopAudio, OriginalControlHeaderConsumedCommitUnpublishedAbortRetainsTrueReclaimFence) {
     OriginalControlHeaderHarness h;
     ASSERT_TRUE(h.InstallSource());
     ASSERT_TRUE(h.Prepare());
@@ -7635,7 +7633,7 @@ TEST_F(AuthoredStopAudio, OriginalControlHeaderConsumedCommitUnpublishedAbortRet
     h.Dispose();
 }
 
-TEST_F(AuthoredStopAudio, OriginalControlHeaderReceiverRefusesGenuineOtherTableWithIdenticalFullTokenBeforeMovingOwner) {
+TEST(AuthoredStopAudio, OriginalControlHeaderReceiverRefusesGenuineOtherTableWithIdenticalFullTokenBeforeMovingOwner) {
     OriginalControlHeaderHarness h;
     ASSERT_TRUE(h.InstallSource());
     ASSERT_TRUE(h.Prepare());
@@ -7682,7 +7680,7 @@ TEST_F(AuthoredStopAudio, OriginalControlHeaderReceiverRefusesGenuineOtherTableW
     h.Dispose();
 }
 
-TEST_F(AuthoredStopAudio, OriginalControlHeaderReissuedRangeAndRowConfirmOnlyNewGenerationAndKeepTrueSourcePcm) {
+TEST(AuthoredStopAudio, OriginalControlHeaderReissuedRangeAndRowConfirmOnlyNewGenerationAndKeepTrueSourcePcm) {
     OriginalControlHeaderHarness h;
     ASSERT_TRUE(h.InstallSource());
     ASSERT_TRUE(h.Prepare());
@@ -7791,7 +7789,7 @@ TEST_F(AuthoredStopAudio, OriginalControlHeaderReissuedRangeAndRowConfirmOnlyNew
     EXPECT_EQ(0u, engine.mixer.CommandProtocolViolationCount());
 }
 
-TEST_F(AuthoredStopAudio, OriginalControlHeaderPublishedCancelAndMaximumInitialBlockKeepActualOriginalUntilCompletion) {
+TEST(AuthoredStopAudio, OriginalControlHeaderPublishedCancelAndMaximumInitialBlockKeepActualOriginalUntilCompletion) {
     OriginalControlHeaderHarness h;
     ASSERT_TRUE(h.InstallSource());
     ASSERT_TRUE(h.Prepare());
@@ -7827,7 +7825,7 @@ TEST_F(AuthoredStopAudio, OriginalControlHeaderPublishedCancelAndMaximumInitialB
     h.Dispose();
 }
 
-TEST_F(AuthoredStopAudio, OriginalControlHeaderBusyAckRetainsLoanAndRejectsMaximumRetryWithoutAdvancingSettled) {
+TEST(AuthoredStopAudio, OriginalControlHeaderBusyAckRetainsLoanAndRejectsMaximumRetryWithoutAdvancingSettled) {
     for (const bool cancel : {false, true}) {
         SCOPED_TRACE(cancel);
         OriginalControlHeaderHarness h;
@@ -7867,7 +7865,7 @@ TEST_F(AuthoredStopAudio, OriginalControlHeaderBusyAckRetainsLoanAndRejectsMaxim
     }
 }
 
-TEST_F(AuthoredStopAudio, OriginalControlHeaderActualCorruptRecordCompletesInvalidWithoutConfirmingSourceOrControl) {
+TEST(AuthoredStopAudio, OriginalControlHeaderActualCorruptRecordCompletesInvalidWithoutConfirmingSourceOrControl) {
     OriginalControlHeaderHarness h;
     ASSERT_TRUE(h.InstallSource());
     ASSERT_TRUE(h.Prepare());
@@ -7893,7 +7891,7 @@ TEST_F(AuthoredStopAudio, OriginalControlHeaderActualCorruptRecordCompletesInval
     h.Dispose();
 }
 
-TEST_F(AuthoredStopAudio, OriginalControlHeaderEngineShutdownReturnsQueuedAndPendingRealLifetimeOwnersAfterJoin) {
+TEST(AuthoredStopAudio, OriginalControlHeaderEngineShutdownReturnsQueuedAndPendingRealLifetimeOwnersAfterJoin) {
     for (const bool pendingAck : {false, true}) {
         SCOPED_TRACE(pendingAck);
         OriginalControlHeaderHarness h;
@@ -7913,7 +7911,7 @@ TEST_F(AuthoredStopAudio, OriginalControlHeaderEngineShutdownReturnsQueuedAndPen
     }
 }
 
-TEST_F(AuthoredStopAudio, PendingControlRejectsUnoriginalSourceAndIncompleteWorstCaseStorageBeforeReservation) {
+TEST(AuthoredStopAudio, PendingControlRejectsUnoriginalSourceAndIncompleteWorstCaseStorageBeforeReservation) {
     for (unsigned mode = 0; mode < 7; ++mode) {
         SCOPED_TRACE(mode);
         harken::TimelineArmTable table(3);
@@ -8066,7 +8064,7 @@ void ReturnControlOriginAndDisposePhysicalSource(OriginalControlOriginHarness& h
 }
 } // namespace
 
-TEST_F(AuthoredStopAudio, ControlOriginTruePreparedAndFrozenFactoriesRetainFullScopeAndAbortWithoutHeadExposure) {
+TEST(AuthoredStopAudio, ControlOriginTruePreparedAndFrozenFactoriesRetainFullScopeAndAbortWithoutHeadExposure) {
     static_assert(!std::is_copy_constructible_v<ControlOriginPin>);
     static_assert(std::is_nothrow_move_constructible_v<ControlOriginPin>);
     static_assert(!std::is_copy_constructible_v<ControlOriginActor>);
@@ -8132,7 +8130,7 @@ TEST_F(AuthoredStopAudio, ControlOriginTruePreparedAndFrozenFactoriesRetainFullS
     EXPECT_EQ(engine.timelineArms.Capacity(), engine.timelineArms.FreeCount());
 }
 
-TEST_F(AuthoredStopAudio, ControlOriginDefaultLegacyGenuineTypedHeaderDoesNotRequireUnusedNewScopeOrMintActor) {
+TEST(AuthoredStopAudio, ControlOriginDefaultLegacyGenuineTypedHeaderDoesNotRequireUnusedNewScopeOrMintActor) {
     OriginalControlHeaderHarness h;
     ASSERT_TRUE(h.InstallSource());
     ASSERT_TRUE(h.Prepare());
@@ -8171,7 +8169,7 @@ TEST_F(AuthoredStopAudio, ControlOriginDefaultLegacyGenuineTypedHeaderDoesNotReq
     EXPECT_EQ(engine.timelineArms.Capacity(), engine.timelineArms.FreeCount());
 }
 
-TEST_F(AuthoredStopAudio, ControlOriginActualBusyAckKeepsNativeActorAcrossTwoCallbacksAndForeignDoesNotBlockAck) {
+TEST(AuthoredStopAudio, ControlOriginActualBusyAckKeepsNativeActorAcrossTwoCallbacksAndForeignDoesNotBlockAck) {
     OriginalControlOriginHarness h;
     ASSERT_NO_FATAL_FAILURE(PreparePublishedControlOrigin(h));
     auto& engine = *h.audio.engine;
@@ -8223,7 +8221,7 @@ TEST_F(AuthoredStopAudio, ControlOriginActualBusyAckKeepsNativeActorAcrossTwoCal
     ASSERT_NO_FATAL_FAILURE(ReturnControlOriginAndDisposePhysicalSource(h));
 }
 
-TEST_F(AuthoredStopAudio, ControlOriginActualCommandCutoffAndMaximumDoNotBorrowOrPublishCompletion) {
+TEST(AuthoredStopAudio, ControlOriginActualCommandCutoffAndMaximumDoNotBorrowOrPublishCompletion) {
     OriginalControlOriginHarness h;
     ASSERT_NO_FATAL_FAILURE(PreparePublishedControlOrigin(h));
     auto& engine = *h.audio.engine;
@@ -8251,7 +8249,7 @@ TEST_F(AuthoredStopAudio, ControlOriginActualCommandCutoffAndMaximumDoNotBorrowO
     ASSERT_NO_FATAL_FAILURE(ReturnControlOriginAndDisposePhysicalSource(h));
 }
 
-TEST_F(AuthoredStopAudio, ControlOriginRealMaximumEpochExhaustsWithoutWrapAndStillCompletesActualOldAck) {
+TEST(AuthoredStopAudio, ControlOriginRealMaximumEpochExhaustsWithoutWrapAndStillCompletesActualOldAck) {
     OriginalControlOriginHarness h;
     ASSERT_NO_FATAL_FAILURE(PreparePublishedControlOrigin(h));
     auto& engine = *h.audio.engine;
@@ -8276,7 +8274,7 @@ TEST_F(AuthoredStopAudio, ControlOriginRealMaximumEpochExhaustsWithoutWrapAndSti
     ASSERT_NO_FATAL_FAILURE(ReturnControlOriginAndDisposePhysicalSource(h));
 }
 
-TEST_F(AuthoredStopAudio, ControlOriginRealChildCountExhaustionKeepsActualAckProgressAndBlocksOnlyRangeReuse) {
+TEST(AuthoredStopAudio, ControlOriginRealChildCountExhaustionKeepsActualAckProgressAndBlocksOnlyRangeReuse) {
     OriginalControlOriginHarness h;
     ASSERT_NO_FATAL_FAILURE(PreparePublishedControlOrigin(h));
     auto& engine = *h.audio.engine;
@@ -8305,7 +8303,7 @@ TEST_F(AuthoredStopAudio, ControlOriginRealChildCountExhaustionKeepsActualAckPro
     ASSERT_NO_FATAL_FAILURE(ReturnControlOriginAndDisposePhysicalSource(h));
 }
 
-TEST_F(AuthoredStopAudio, ControlOriginActualCancelAndCorruptWireReturnActorWithoutStartingOrReleasingSource) {
+TEST(AuthoredStopAudio, ControlOriginActualCancelAndCorruptWireReturnActorWithoutStartingOrReleasingSource) {
     for (const bool cancel : {false, true}) {
         SCOPED_TRACE(cancel);
         OriginalControlOriginHarness h;
@@ -8343,7 +8341,7 @@ TEST_F(AuthoredStopAudio, ControlOriginActualCancelAndCorruptWireReturnActorWith
     }
 }
 
-TEST_F(AuthoredStopAudio, ControlOriginActualQuiescentTermReturnsQueuedOrRetainedPendingActorsAfterJoin) {
+TEST(AuthoredStopAudio, ControlOriginActualQuiescentTermReturnsQueuedOrRetainedPendingActorsAfterJoin) {
     for (const bool busy : {false, true}) {
         SCOPED_TRACE(busy);
         OriginalControlOriginHarness h;

@@ -402,16 +402,21 @@ ResolvedPlayablePropertyCutStorageV1::ResolveInto(
         return ResolvedPlayablePropertyCutStatusV1::InvalidInput;
     }
 
+    const auto sourceFor = [&](playableproperties::ContentPropertyKindV1 kind,
+                               VnObjectId stableId) {
+        if constexpr (std::is_same_v<World, PackPlaybackView>) {
+            return world.ResolveProgramSource(kind, stableId);
+        } else {
+            return world.ProgramSource();
+        }
+    };
     const auto addPayload = [&](const PlayablePropertyPayloadViewV1& payload,
-                                const ResolvedPlayablePathRowV1& pathRow) {
+                                const ResolvedPlayablePathRowV1& pathRow,
+                                const ProgramSourceIdentityV1* payloadSource = nullptr) {
         if (output.path.size() >= config_.maxPathRows) return false;
         auto sourcedRow = pathRow;
-        if constexpr (std::is_same_v<World, PackPlaybackView>) {
-            sourcedRow.source = world.ResolveProgramSource(
-                pathRow.contentPropertyKind, pathRow.stableId);
-        } else {
-            sourcedRow.source = world.ProgramSource();
-        }
+        sourcedRow.source = payloadSource != nullptr ? *payloadSource
+            : sourceFor(pathRow.contentPropertyKind, pathRow.stableId);
         output.path.push_back(sourcedRow);
         output.payloads.push_back(&payload);
         return true;
@@ -423,6 +428,9 @@ ResolvedPlayablePropertyCutStorageV1::ResolveInto(
         return ResolvedPlayablePropertyCutStatusV1::UnknownPlayable;
     }
     if (definition->structuralAncestorCount != 0) {
+        // Inline ancestor payloads belong to the definition carrying the snapshot.
+        const auto payloadSource = sourceFor(
+            definition->contentPropertyKind, definition->stableId);
         for (std::uint32_t i = 0; i < definition->structuralAncestorCount; ++i) {
             const auto& ref = definition->structuralAncestors[i];
             if (!addPayload(
@@ -432,7 +440,7 @@ ResolvedPlayablePropertyCutStorageV1::ResolveInto(
                          ? ResolvedPlayablePathRowKindV1::OrganizationLayer
                          : ResolvedPlayablePathRowKindV1::Definition,
                      ref.contentPropertyKind, ref.stableId,
-                     ref.programSemanticFingerprint, UINT32_MAX})) {
+                     ref.programSemanticFingerprint, UINT32_MAX}, &payloadSource)) {
                 return ResolvedPlayablePropertyCutStatusV1::Capacity;
             }
         }

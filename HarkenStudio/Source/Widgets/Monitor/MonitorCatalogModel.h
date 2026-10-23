@@ -10,7 +10,7 @@ namespace VNX {
 class MonitorCatalogModel final : public QAbstractTableModel
 {
 public:
-    enum Column { Time, Level, Category, Object, Description, ColumnCount };
+    enum Column { Time, Level, Type, Description, RequestId, Object, ObjectId, GameObject, GameObjectId, ColumnCount };
     explicit MonitorCatalogModel(Monitor::EventCaptureController* capture, QObject* parent = nullptr);
     int rowCount(const QModelIndex& parent = {}) const override;
     int columnCount(const QModelIndex& parent = {}) const override;
@@ -19,7 +19,7 @@ public:
     const Monitor::CapturedEvent* eventAt(int row) const;
     QString details(int row) const;
     static QString levelText(const Monitor::CapturedEvent& event);
-    static QString categoryText(const Monitor::CapturedEvent& event);
+    static QString typeText(const Monitor::CapturedEvent& event);
     static QString description(const Monitor::CapturedEvent& event);
 
 private:

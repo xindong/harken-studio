@@ -39,11 +39,10 @@ recorded in `.docs/quality/DEPENDENCY_POLICY.md`).
 | r8brain-free-src | 7.1 | MIT | Sample-rate conversion in the editor asset pipeline (header-only); embeds the two FFT components listed in the next two rows | Vendored at `HarkenStudio/ThirdParty/r8brain-free-src` (bench/DLL payloads trimmed) |
 | Ooura FFT (fft4g), embedded in r8brain-free-src | fft4g (1996-2001) as bundled with r8brain 7.1 | Ooura's permissive terms: use, copy, modify and distribute for any purpose (including commercial) and without fee; refer to the package when modifying | Default FFT backend of r8brain (`R8B_PFFFT`/`R8B_PFFFT_DOUBLE`/`R8B_IPP` all unset); compiled into HarkenEditor via the asset-pipeline resampler | Vendored at `HarkenStudio/ThirdParty/r8brain-free-src/fft/fft4g.h`; upstream terms at https://www.kurims.kyoto-u.ac.jp/~ooura/fft.html, copy kept at `HarkenStudio/Resources/Legal/OouraFFT-NOTICE.txt` |
 | PFFFT, embedded in r8brain-free-src | as bundled with r8brain 7.1 | FFTPACK license (UCAR, BSD-style; Julien Pommier's changes under the same terms) | Optional FFT backend, not compiled by default (`R8B_PFFFT 0`, `R8B_PFFFT_DOUBLE 0` in `r8bconf.h`); redistributed in source form only | Vendored at `HarkenStudio/ThirdParty/r8brain-free-src/fft/pffft*.c/.h`; full license text in each file header |
-| Lucide icons | export version not recorded (SVGs carry Lucide export markup) | ISC; icons derived from the Feather set additionally under MIT (Cole Bemis) | 18 editor UI icons at `HarkenStudio/Resources/icons/` are derived from Lucide SVG exports (regenerated on a 20px grid); the derived files are identifiable by the `class="lucide ..."` markup they retain, and the remaining icons in that directory are original artwork drawn on the same grid | Derived from lucide.dev exports; license text kept at `HarkenStudio/Resources/Legal/Lucide-LICENSE.txt` |
 | LMDB | 0.9.33 | OpenLDAP Public License 2.8 (permissive, non-copyleft) | Persistent search-index backend (optional, `HARKEN_DISABLE_LMDB` falls back to memory) | Vendored at `HarkenStudio/ThirdParty/lmdb` |
 | dr_wav (dr_libs) | 0.14.4 | Public domain / MIT-0 (dual, user's choice) | Editor-side WAV read/write in the asset pipeline, the VST3 offline processor, and the runtime bridge's private preview/pack-source decode, independent of the runtime decoder | Vendored at `HarkenStudio/ThirdParty/dr_wav` (single header; dual license text embedded at end of `dr_wav.h`) |
 
-## Harken Hub only (`HarkenHub/` subtree, never in the runtime closure)
+## Harken Studio Hub only (`HarkenHub/` subtree, never in the runtime closure)
 
 | Name | Version | License | Use | How obtained |
 |---|---|---|---|---|
@@ -77,7 +76,7 @@ complete corresponding source accessible to binary recipients.
 - **Release artifacts** bundle a `Legal/` directory (the root `LICENSE`, this
   `NOTICE`, and the third-party license texts for the shipped closure),
   assembled by `.scripts/release/collect_legal_texts.py` from the release
-  workflows. The Qt LGPL-3.0/GPL-3.0, QWindowKit, Lucide, Heroicons, Ooura FFT,
+  workflows. The Qt LGPL-3.0/GPL-3.0, QWindowKit, Heroicons, Ooura FFT,
   minizip-ng, ed25519 (orlp) and zlib license/notice texts it needs are
   maintained for each product at `HarkenStudio/Resources/Legal/` or
   `HarkenHub/Resources/Legal/` (the minizip-ng, ed25519 and zlib copies are

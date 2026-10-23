@@ -721,7 +721,7 @@ VnResult ParseVariablePolicyOverlayPayload(
     }
     const std::uint32_t rowCount = LoadLE32(payload);
     const std::uint32_t format = LoadLE32(payload + 4);
-    if (format > 1 || LoadLE64(payload + 8) != 0) {
+    if (format > 2 || LoadLE64(payload + 8) != 0) {
         return VN_BAD_PACK;
     }
     std::uint64_t rowsBytes = 0;
@@ -772,16 +772,20 @@ VnResult ParseVariablePolicyOverlayPayload(
             rows[i].discreteAnchors.push_back(anchor);
         }
     }
-    if (format == 1) {
+    if (format != 0) {
         for (auto& row : rows) {
-            if (size - cursor < 24) return VN_BAD_PACK;
+            const std::uint32_t headerBytes = format == 1 ? 24 : 16;
+            if (size - cursor < headerBytes) return VN_BAD_PACK;
             row.labelMappingFingerprint = LoadLE64(payload + cursor);
-            row.catalogFingerprint = LoadLE64(payload + cursor + 8);
-            const std::uint32_t count = LoadLE32(payload + cursor + 16);
-            if (LoadLE32(payload + cursor + 20) != 0
-                || row.labelMappingFingerprint == 0 || row.catalogFingerprint == 0)
+            if (format == 1) {
+                row.catalogFingerprint = LoadLE64(payload + cursor + 8);
+                if (row.catalogFingerprint == 0) return VN_BAD_PACK;
+            }
+            const std::uint32_t count = LoadLE32(payload + cursor + headerBytes - 8);
+            if (LoadLE32(payload + cursor + headerBytes - 4) != 0
+                || row.labelMappingFingerprint == 0)
                 return VN_BAD_PACK;
-            cursor += 24;
+            cursor += headerBytes;
             if (count > (size - cursor) / 24) return VN_BAD_PACK;
             std::set<VnObjectId> identities;
             std::set<std::string> names;
@@ -793,12 +797,16 @@ VnResult ParseVariablePolicyOverlayPayload(
                 label.anchor = static_cast<std::int32_t>(LoadLE32(payload + cursor + 16));
                 const std::uint32_t length = LoadLE32(payload + cursor + 20);
                 cursor += 24;
-                const std::uint64_t paddedLength = (static_cast<std::uint64_t>(length) + 3u) & ~std::uint64_t{3};
-                if (paddedLength > size - cursor) return VN_BAD_PACK;
-                label.name.assign(reinterpret_cast<const char*>(payload + cursor), length);
-                for (std::uint64_t k = length; k < paddedLength; ++k)
-                    if (payload[cursor + k] != 0) return VN_BAD_PACK;
-                cursor += static_cast<std::size_t>(paddedLength);
+                if (format == 1) {
+                    const std::uint64_t paddedLength = (static_cast<std::uint64_t>(length) + 3u) & ~std::uint64_t{3};
+                    if (paddedLength > size - cursor) return VN_BAD_PACK;
+                    label.name.assign(reinterpret_cast<const char*>(payload + cursor), length);
+                    for (std::uint64_t k = length; k < paddedLength; ++k)
+                        if (payload[cursor + k] != 0) return VN_BAD_PACK;
+                    cursor += static_cast<std::size_t>(paddedLength);
+                } else if (length != 0) {
+                    return VN_BAD_PACK;
+                }
                 if (label.labelId == VnObjectId{} || !identities.insert(label.labelId).second
                     || label.anchor < 0 || label.anchor > 16777216
                     || (j > 0 && label.anchor <= row.labels.back().anchor)
@@ -1424,6 +1432,11 @@ VnResult ParseGameplayCatalogPayload(const std::uint8_t* payload,
 }
 
 } // namespace
+
+VnResult ParseGameplayCatalog(const std::uint8_t* bytes, std::uint64_t size,
+                              GameplayCatalogImage* out) {
+    return ParseGameplayCatalogPayload(bytes, size, out);
+}
 
 VnResult ValidateCanonicalInitDependency(
     std::span<const PackDependencyEdge> edges,

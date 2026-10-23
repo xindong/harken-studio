@@ -4,7 +4,8 @@
 #include "Core/DialogManager.h"
 #include "Core/ThemeManager.h"
 #include "Dialogs/Settings/Pages/AIAgentPage.h"
-#include "Dialogs/Settings/Pages/GeneralPage.h"
+#include "Dialogs/Settings/Pages/AppearancePage.h"
+#include "Dialogs/Settings/Pages/ExtensionPage.h"
 #include "Dialogs/Settings/Pages/LayoutPage.h"
 #include "Dialogs/Settings/Pages/ShortcutsPage.h"
 #include "Platform/SecretStore.h"
@@ -49,7 +50,7 @@ PreferencesDialog::PreferencesDialog(SecretStoreAccess secretStore,
 {
     setWindowTitle(tr("Preferences"));
 
-    addPage(new GeneralPage(themeManager, this));
+    addPage(new AppearancePage(themeManager, this));
     addPage(new ShortcutsPage(this));
 
     auto* layoutPage = new LayoutPage(this, std::move(saveCurrentLayout));
@@ -63,6 +64,7 @@ PreferencesDialog::PreferencesDialog(SecretStoreAccess secretStore,
     connect(aiPage, &AIAgentPage::aiAgentConfigApplied,
             this, &PreferencesDialog::aiAgentConfigApplied);
     addPage(aiPage);
+    addPage(new ExtensionPage(this));
 
     loadPages();
     DialogManager::instance().registerDialog(QStringLiteral("preferences"), this);

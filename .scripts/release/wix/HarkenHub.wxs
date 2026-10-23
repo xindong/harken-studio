@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
-  <Package Name="Harken Hub"
+  <Package Name="Harken Studio Hub"
            Manufacturer="XD"
            Version="$(var.HarkenVersion)"
            UpgradeCode="4EA0003D-209E-45E6-8343-67529D7E7E5A"
@@ -11,7 +11,7 @@
 
     <MajorUpgrade Schedule="afterInstallFinalize"
                   AllowSameVersionUpgrades="yes"
-                  DowngradeErrorMessage="A newer version of Harken Hub is already installed." />
+                  DowngradeErrorMessage="A newer version of Harken Studio Hub is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
     <Property Id="HARKENSELFUPDATE" Secure="yes" />
@@ -20,8 +20,6 @@
     <ui:WixUI Id="WixUI_InstallDir"
               InstallDirectory="INSTALLFOLDER" />
     <WixVariable Id="WixUILicenseRtf" Value="$(var.HarkenEulaRtf)" />
-    <Icon Id="HarkenHubIco" SourceFile="$(var.HarkenIconIco)" />
-    <Property Id="ARPPRODUCTICON" Value="HarkenHubIco" />
     <Property Id="INSTALLFOLDER" Secure="yes">
       <RegistrySearch Id="PreviousInstallFolder"
                       Root="HKLM"
@@ -32,9 +30,7 @@
     </Property>
 
     <StandardDirectory Id="ProgramFiles64Folder">
-      <Directory Id="HarkenSoundDir" Name="HarkenSound">
-        <Directory Id="INSTALLFOLDER" Name="HarkenHub" />
-      </Directory>
+      <Directory Id="INSTALLFOLDER" Name="HarkenStudioHub" />
     </StandardDirectory>
     <StandardDirectory Id="ProgramMenuFolder" />
     <StandardDirectory Id="DesktopFolder" />
@@ -84,8 +80,8 @@
 
     <Component Id="StartMenuShortcut" Directory="ProgramMenuFolder"
                Guid="3455F7BE-53E0-4D87-8C57-3DC57710C8F9">
-      <Shortcut Id="HarkenHubShortcut" Name="Harken Hub"
-                Target="[INSTALLFOLDER]HarkenHub.exe"
+      <Shortcut Id="HarkenHubShortcut" Name="Harken Studio Hub"
+                Target="[INSTALLFOLDER]HarkenStudioHub.exe"
                 WorkingDirectory="INSTALLFOLDER" />
       <RegistryValue Root="HKLM" Key="Software\HarkenSound\HarkenHub"
                      Name="StartMenuShortcut" Type="integer" Value="1"
@@ -94,8 +90,8 @@
 
     <Component Id="DesktopShortcut" Directory="DesktopFolder"
                Guid="4682FB52-D840-44F7-9356-E524137D4CE3">
-      <Shortcut Id="HarkenHubDesktopShortcut" Name="Harken Hub"
-                Target="[INSTALLFOLDER]HarkenHub.exe"
+      <Shortcut Id="HarkenHubDesktopShortcut" Name="Harken Studio Hub"
+                Target="[INSTALLFOLDER]HarkenStudioHub.exe"
                 WorkingDirectory="INSTALLFOLDER" />
       <RegistryValue Root="HKLM" Key="Software\HarkenSound\HarkenHub"
                      Name="DesktopShortcut" Type="integer" Value="1"

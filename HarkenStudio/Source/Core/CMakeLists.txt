@@ -57,10 +57,14 @@ add_library(harken_editor_foundation STATIC
     ActionStepEditing.h
     ActionClosureSemantics.cpp
     ActionClosureSemantics.h
+    PackExportSelection.cpp
+    PackExportSelection.h
     PackBuildPlan.cpp
     PackBuildPlan.h
     PackGenerationRecord.cpp
     PackGenerationRecord.h
+    PackArtifactCache.cpp
+    PackArtifactCache.h
     EffectChainSemantics.cpp
     EffectChainSemantics.h
     RuntimeU64Json.cpp
@@ -86,7 +90,6 @@ add_library(harken_editor_foundation STATIC
     ProjectMigration.cpp
     ProjectMigration.h
     ${HARKEN_SCHEMA_GENERATED_PROJECT_HEADER}
-    ${HARKEN_SCHEMA_GENERATED_PACK_HEADER}
     ${HARKEN_SCHEMA_GENERATED_BUILD_HEADER}
     ${HARKEN_SCHEMA_GENERATED_VALIDATOR_SOURCE}
     ${HARKEN_SCHEMA_GENERATED_VALIDATOR_HEADER}
@@ -219,8 +222,6 @@ add_library(harken_editor_foundation STATIC
     ThemeAssetCatalog.h
     BuiltinTheme.cpp
     BuiltinTheme.h
-    ToastManager.cpp
-    ToastManager.h
     ComponentCatalog.cpp
     ComponentCatalog.h
     ItemTypeCatalog.cpp

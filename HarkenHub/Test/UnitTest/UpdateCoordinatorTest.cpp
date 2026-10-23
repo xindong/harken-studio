@@ -332,6 +332,32 @@ TEST_F(UpdateCoordinatorTest, FallsBackWhenBridgeReportsFailure)
               QStringLiteral("BridgeInstallFailed"));
 }
 
+TEST_F(UpdateCoordinatorTest, InstallHandoffCannotBorrowAnotherPackagesOwnership)
+{
+    EnvGuard bridge("HARKEN_HUB_BRIDGE_COMMAND", QStringLiteral("noop"));
+    VNH::UpdateStateRecord record;
+    record.product = QStringLiteral("HarkenStudio");
+    record.state = QStringLiteral("Verified");
+    record.buildId = QStringLiteral("run3.cccc3333");
+    record.downloadPath = dir.filePath(QStringLiteral("source.zip"));
+    record.manifestEnvelopePath = dir.filePath(QStringLiteral("source.manifest"));
+    {
+        QFile envelope(record.manifestEnvelopePath);
+        ASSERT_TRUE(envelope.open(QIODevice::WriteOnly));
+        envelope.write(QByteArrayLiteral("manifest"));
+    }
+    ASSERT_TRUE(UpdateStateStore::save(record, kNow));
+    const auto expected = UpdateStateStore::load(record.product);
+    const auto owner = VNH::DownloadLease::acquire(record.downloadPath);
+    ASSERT_TRUE(owner);
+    const auto unrelated = VNH::DownloadLease::acquire(dir.filePath(QStringLiteral("other.zip")));
+    ASSERT_TRUE(unrelated);
+    UpdateCoordinator coordinator;
+    coordinator.beginAutoInstall(kNow, unrelated);
+    EXPECT_EQ(coordinator.currentState(), expected);
+    EXPECT_TRUE(VNH::UpdateQueue::pendingEntries().empty());
+}
+
 TEST_F(UpdateCoordinatorTest, QuarantinesTamperedPackage)
 {
     QByteArray tampered = packageBytes;

@@ -162,12 +162,52 @@ private slots:
         write(QDir(target.canonicalRoot).filePath("Packages/manifest.json"),
               R"({"dependencies":{"com.harken.core":"1.0.0"}})");
         const auto observation = VNH::EngineTargetProbe::observe(target);
-        QCOMPARE(observation.status, "SDK dependency present");
+        QVERIFY(observation.dependencyRestricted);
         QVERIFY(observation.canChangeSdk);
         QVERIFY(!observation.canMoveSdk && !observation.canRemoveSdk);
         auto check = request();
         check.checkOnly = true;
         QVERIFY(VNH::HubUnityIntegrationService::run(check).success);
+    }
+
+    void embeddedLockRecordAllowsMaintenanceWithoutIgnoringRealDependencies()
+    {
+        install();
+        write(target.canonicalRoot + "/Packages/manifest.json", R"({"dependencies":{}})");
+        QJsonObject resolved{{"com.harken.core", QJsonObject{
+            {"version", "file:com.harken.core"}, {"depth", 0}, {"source", "embedded"},
+            {"dependencies", QJsonObject{}}}}};
+        const auto writeLock = [&]() {
+            write(target.canonicalRoot + "/Packages/packages-lock.json",
+                  QJsonDocument(QJsonObject{{"dependencies", resolved}}).toJson());
+        };
+        writeLock();
+        auto observation = VNH::EngineTargetProbe::observe(target);
+        QVERIFY(observation.status.isEmpty());
+        QVERIFY(!observation.dependencyRestricted);
+        QVERIFY(observation.canChangeSdk && observation.canMoveSdk && observation.canRemoveSdk);
+        auto check = request();
+        check.checkOnly = true;
+        QVERIFY(VNH::HubUnityIntegrationService::run(check).success);
+        resolved.insert("com.example.consumer", QJsonObject{
+            {"version", "1.0.0"}, {"source", "registry"}, {"depth", 0},
+            {"dependencies", QJsonObject{{"com.harken.core", "1.0.0"}}}});
+        writeLock();
+        observation = VNH::EngineTargetProbe::observe(target);
+        QVERIFY(observation.dependencyRestricted);
+        QVERIFY(observation.canChangeSdk && !observation.canMoveSdk && !observation.canRemoveSdk);
+        resolved.remove("com.example.consumer");
+        writeLock();
+        write(target.canonicalRoot + "/Packages/manifest.json",
+              R"({"dependencies":{"com.harken.core":"file:com.harken.core"}})");
+        observation = VNH::EngineTargetProbe::observe(target);
+        QVERIFY(observation.dependencyRestricted && !observation.canRemoveSdk);
+        write(target.canonicalRoot + "/Packages/manifest.json", R"({"dependencies":{}})");
+        auto remove = request();
+        remove.removeIntegration = true;
+        remove.confirmRemoval = true;
+        remove.removalBackupPath = dir->filePath("removal-backup");
+        QVERIFY(VNH::HubUnityIntegrationService::run(remove).success);
     }
 
     void duplicateAndInterruptedMigrationNeedDifferentRecovery()
@@ -194,6 +234,10 @@ private slots:
         write(source + "/Harken.uplugin", R"({"VersionName":"1.0.0"})");
         write(source + "/Source/HarkenCore/Include/harken/Harken.h", "#include <harken/ObjectId.h>\n");
         write(source + "/Source/HarkenCore/Include/harken/ObjectId.h", "header");
+        write(source + "/Source/HarkenCore/Lib/Win64/HarkenCoreImport.lib", "import");
+        write(source + "/Binaries/ThirdParty/HarkenCore/Win64/HarkenCore.dll", "runtime");
+        write(source + "/Binaries/ThirdParty/HarkenCore/Mac/libHarkenCore.dylib", "runtime");
+        write(source + "/Binaries/ThirdParty/HarkenCore/Linux/x86_64/libHarkenCore.so", "runtime");
         using Executor = VNH::ProjectIntegrationExecutor;
         using Operation = VNH::IntegrationOperation;
         auto plan = Executor::planUnreal(target, source, Operation::Install);
@@ -258,7 +302,7 @@ private slots:
         QVERIFY(integrations.list().empty());
         const auto* association = page.findChild<QLabel*>("projectAssociationHint");
         QVERIFY(association);
-        const char* associationText = "Association only controls whether this project pair appears in Engine Integrations. SDK checks and management do not require association.";
+        const char* associationText = "Linking adds this project pair to Engine Integrations and establishes a one-to-one relationship in this Hub. Unlink the pair before linking either project to another. SDK checks and management do not require linking.";
         QCOMPARE(association->text(), QCoreApplication::translate("HarkenHub", associationText));
         if (chinese) QVERIFY(association->text() != QString::fromLatin1(associationText));
         QVERIFY(!page.findChild<QPushButton*>("changeSdk")->isEnabled());

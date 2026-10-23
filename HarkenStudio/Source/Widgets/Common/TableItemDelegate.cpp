@@ -5,6 +5,7 @@
 #include "Core/ThemeManager.h"
 #include "Core/QtControlSkin.h"
 
+#include <QMouseEvent>
 #include <QPainter>
 #include <QTableView>
 
@@ -16,6 +17,33 @@ TableItemDelegate::TableItemDelegate(QObject* parent, ThemeManager* themeManager
     : QStyledItemDelegate(parent),
       themeManager_(themeManager ? themeManager : &ThemeManager::instance())
 {
+    if (auto* view = qobject_cast<QAbstractItemView*>(parent)) {
+        view->setMouseTracking(true);
+        view->viewport()->installEventFilter(this);
+    }
+}
+
+bool TableItemDelegate::eventFilter(QObject* watched, QEvent* event)
+{
+    if (auto* view = qobject_cast<QAbstractItemView*>(parent()); view && watched == view->viewport()) {
+        if (view->itemDelegate() == this
+            && (event->type() == QEvent::MouseMove || event->type() == QEvent::Leave)) {
+            const auto hoverIndex = [&](const QPoint& position) {
+                const auto index = view->indexAt(position);
+                const auto first = index.siblingAtColumn(0);
+                return first.data(TableGroupRole).toBool() ? first : index;
+            };
+            const auto previous = hoverIndex(hoverPosition_);
+            hoverPosition_ = event->type() == QEvent::MouseMove
+                ? static_cast<QMouseEvent*>(event)->position().toPoint() : QPoint(-1, -1);
+            const auto current = hoverIndex(hoverPosition_);
+            if (previous.data(Qt::CheckStateRole).isValid()) view->viewport()->update(view->visualRect(previous));
+            if (current != previous && current.data(Qt::CheckStateRole).isValid())
+                view->viewport()->update(view->visualRect(current));
+        }
+        return false;
+    }
+    return QStyledItemDelegate::eventFilter(watched, event);
 }
 
 QWidget* TableItemDelegate::createEditor(QWidget* parent, const QStyleOptionViewItem& option,
@@ -62,10 +90,14 @@ QSize TableItemDelegate::sizeHint(const QStyleOptionViewItem& option, const QMod
 void TableItemDelegate::initStyleOption(QStyleOptionViewItem* option, const QModelIndex& index) const
 {
     QStyledItemDelegate::initStyleOption(option, index);
-    if (const auto* tree = qobject_cast<const ProportionalTreeWidget*>(option->widget))
+    if (const auto* tree = qobject_cast<const ProportionalTreeWidget*>(option->widget)) {
         option->rect = tree->cellContentsRect(option->rect, index);
-    option->state &= ~QStyle::State_MouseOver;
+        if (tree->rowProgressEndColumn() >= 0) option->backgroundBrush = Qt::NoBrush;
+    }
     const auto& colors = themeManager_->colors();
+    if (index.model()->headerData(index.column(), Qt::Horizontal, TableColumnAccentRole).toBool()
+        && !index.siblingAtColumn(0).data(TableGroupRole).toBool())
+        option->features |= QStyleOptionViewItem::Alternate;
     QColor text = colors.textPrimary;
     switch (static_cast<TableTextState>(index.data(TableTextRole).toInt())) {
     case TableTextState::Muted: text = colors.textMuted; break;
@@ -80,13 +112,17 @@ void TableItemDelegate::initStyleOption(QStyleOptionViewItem* option, const QMod
     option->palette.setColor(QPalette::Text, text);
     option->palette.setColor(QPalette::HighlightedText, text);
     option->font.setBold(index.data(TableTextRole).toInt() == static_cast<int>(TableTextState::Modified));
+    if (option->widget && option->features.testFlag(QStyleOptionViewItem::HasCheckIndicator)) {
+        const auto rect = option->widget->style()->subElementRect(
+            QStyle::SE_ItemViewItemCheckIndicator, option, option->widget);
+        option->state.setFlag(QStyle::State_MouseOver, isCheckIndicatorHovered(rect));
+    }
 }
 
 void TableItemDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option,
                              const QModelIndex& index) const
 {
     QStyleOptionViewItem styled = option;
-    styled.state &= ~QStyle::State_MouseOver;
     const auto numberColumn = option.widget ? option.widget->property("rowNumberColumn") : QVariant();
     const bool composite = option.widget && option.widget->property("compositeTable").toBool();
     const bool plain = numberColumn.isValid() ? index.column() != numberColumn.toInt() : composite;
@@ -96,15 +132,35 @@ void TableItemDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opt
             ? QBrush(themeManager_->colors().bgPrimary) : background);
     }
     if (plain) styled.state &= ~(QStyle::State_Selected | QStyle::State_HasFocus);
-    if (const auto* tree = qobject_cast<const ProportionalTreeWidget*>(option.widget);
-        tree && tree->cellContentsRect(option.rect, index) != option.rect) {
+    const auto* tree = qobject_cast<const ProportionalTreeWidget*>(option.widget);
+    const auto& colors = themeManager_->colors();
+    if (tree && tree->rowProgressEndColumn() >= 0) {
+        painter->fillRect(option.rect, colors.bgPrimary);
+        if (styled.state.testFlag(QStyle::State_Selected)) {
+            painter->fillRect(option.rect, colors.bgSelected);
+        } else {
+            const auto background = index.data(Qt::BackgroundRole).value<QBrush>();
+            if (background.style() != Qt::NoBrush)
+                painter->fillRect(option.rect, background);
+            else if (index.model()->headerData(index.column(), Qt::Horizontal, TableColumnAccentRole).toBool())
+                painter->fillRect(option.rect, colors.bgSecondary);
+        }
+        const auto row = index.siblingAtColumn(0);
+        const auto progress = row.data(TableRowProgressRole);
+        if (progress.isValid() && !row.data(TableGroupRole).toBool()) {
+            const auto state = static_cast<TableRowProgressState>(row.data(TableRowProgressStateRole).toInt());
+            QColor fill = state == TableRowProgressState::Failed ? colors.error
+                : state == TableRowProgressState::Canceled ? colors.textMuted : colors.accent;
+            fill.setAlpha(state == TableRowProgressState::Complete ? 28 : 40);
+            painter->fillRect(tree->rowProgressRect(option.rect, progress.toInt()).intersected(option.rect), fill);
+        }
+    } else if (tree && tree->cellContentsRect(option.rect, index) != option.rect) {
         QStyleOptionViewItem background = styled;
         initStyleOption(&background, index);
         background.rect = option.rect;
         tree->style()->drawPrimitive(QStyle::PE_PanelItemViewItem, &background, painter, tree);
     }
     paintContents(painter, styled, index);
-    const auto& colors = themeManager_->colors();
     painter->save();
     painter->setPen(colors.borderPrimary);
     const auto* table = qobject_cast<const QTableView*>(option.widget);

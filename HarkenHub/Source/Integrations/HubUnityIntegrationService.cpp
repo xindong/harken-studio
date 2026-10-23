@@ -3,6 +3,7 @@
 
 #include "Integrations/Unity/UnityIntegrationService.h"
 #include "Integrations/Unity/UnityInstallation.h"
+#include "Integrations/Unity/UnityProjectAccess.h"
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -38,7 +39,7 @@ VNX::UnityIntegrationService::Result verifyInstalled(
     const auto finish = [&]() {
         result.success = true;
         for (const auto& step : result.steps) {
-            result.success &= step.status == StepStatus::Succeeded;
+            result.success &= step.status == StepStatus::Succeeded || step.status == StepStatus::Warning;
             result.hasWarnings |= step.status == StepStatus::Warning;
         }
         return result;
@@ -104,9 +105,12 @@ VNX::UnityIntegrationService::Result verifyInstalled(
         return finish();
     }
     const QJsonObject hashes = state.value(QStringLiteral("sha256")).toObject();
+    const QJsonObject textHashes = state.value(QStringLiteral("text_lf_sha256")).toObject();
     const QRegularExpression hashFormat(QStringLiteral("\\A[0-9a-fA-F]{64}\\z"));
     for (const QString& relative : managedFiles) {
-        if (!hashFormat.match(hashes.value(relative).toString()).hasMatch()) {
+        if (!hashFormat.match(hashes.value(relative).toString()).hasMatch()
+            || (!textHashes.value(relative).isUndefined()
+                && !hashFormat.match(textHashes.value(relative).toString()).hasMatch())) {
             inspection.summary = QStringLiteral("The installed SDK has incomplete or invalid verification data.");
             inspection.details << relative;
             inspection.remediation = QStringLiteral("Restore the installation record from a trusted backup before verifying again.");
@@ -119,12 +123,12 @@ VNX::UnityIntegrationService::Result verifyInstalled(
         return finish();
     }
     inspection.status = StepStatus::Succeeded;
-    inspection.summary = QStringLiteral("Installed SDK verification data is valid.");
+    inspection.summary = QStringLiteral("The installation record is complete. File contents are checked in the next step.");
     auto& verification = result.steps[2];
     verification.artifacts << installation.path;
-    QStringList missing;
-    QStringList modified;
-    QStringList unreadable;
+    auto& missing = result.missingFiles;
+    auto& modified = result.modifiedFiles;
+    auto& unreadable = result.unreadableFiles;
     QStringList files = managedFiles.values();
     files.sort();
     for (const QString& relative : files) {
@@ -133,25 +137,69 @@ VNX::UnityIntegrationService::Result verifyInstalled(
         const QFileInfo info(path);
         QFile file(path);
         QCryptographicHash hash(QCryptographicHash::Sha256);
-        if (!info.exists()) missing << relative;
+        if (!info.exists()) {
+            if (VNX::UnityInstallation::isDocumentationOrSample(relative))
+                result.missingOptionalFiles << relative;
+            else
+                missing << relative;
+        }
         else if (!info.isFile() || !file.open(QIODevice::ReadOnly) || !IntegrationProgress::addFileData(file, hash))
             unreadable << relative;
-        else if (hash.result().toHex() != hashes.value(relative).toString().toLatin1().toLower())
-            modified << relative;
+        else if (hash.result().toHex() != hashes.value(relative).toString().toLatin1().toLower()) {
+            if (VNX::UnityInstallation::matchesTextHashIgnoringLineEndings(
+                    path, hashes.value(relative).toString().toLatin1(),
+                    textHashes.value(relative).toString().toLatin1()))
+                result.lineEndingFiles << relative;
+            else if (VNX::UnityInstallation::matchesTextHashIgnoringEncoding(
+                         path, hashes.value(relative).toString().toLatin1(),
+                         textHashes.value(relative).toString().toLatin1()))
+                result.encodingFiles << relative;
+            else
+                modified << relative;
+        }
+    }
+    if (!result.lineEndingFiles.isEmpty())
+        verification.details << QStringLiteral("%1 SDK text file(s) differ only in LF/CRLF line endings; contents are unchanged.")
+                                    .arg(result.lineEndingFiles.size())
+                             << result.lineEndingFiles.join(QLatin1Char('\n'));
+    if (!result.encodingFiles.isEmpty())
+        verification.details << QStringLiteral("Review recommended: %1 SDK text file(s) use a different encoding; text contents match after normalizing encoding and line endings. SDK updates can continue.")
+                                    .arg(result.encodingFiles.size())
+                             << result.encodingFiles.join(QLatin1Char('\n'));
+    if (!result.missingOptionalFiles.isEmpty()) {
+        verification.details << QStringLiteral("Missing documentation/sample files (does not block SDK updates):")
+                             << result.missingOptionalFiles.join(QLatin1Char('\n'));
     }
     result.changesDetected = !missing.isEmpty() || !modified.isEmpty();
     if (result.changesDetected || !unreadable.isEmpty()) {
         verification.status = StepStatus::Failed;
-        verification.summary = QStringLiteral("Installed SDK files do not match the installation record or could not be read.");
-        verification.remediation = QStringLiteral("Review the listed files and local changes. Restore missing files from backup or use Change SDK with a complete SDK package.");
-        if (!missing.isEmpty()) verification.details << QStringLiteral("Missing SDK files:") << missing.join(QLatin1Char('\n'));
-        if (!modified.isEmpty()) verification.details << QStringLiteral("Modified SDK files:") << modified.join(QLatin1Char('\n'));
-        if (!unreadable.isEmpty()) verification.details << QStringLiteral("Unreadable SDK files:") << unreadable.join(QLatin1Char('\n'));
+        QStringList issues;
+        QStringList guidance;
+        if (!modified.isEmpty()) {
+            issues << QStringLiteral("%1 SDK file(s) differ from their contents at installation.").arg(modified.size());
+            guidance << QStringLiteral("Review the listed content differences to confirm whether they were intentional. To restore the original SDK files, use Change SDK and select the complete package for the installed version.");
+            verification.details << QStringLiteral("SDK files with contents different from installation:") << modified.join(QLatin1Char('\n'));
+        }
+        if (!missing.isEmpty()) {
+            issues << QStringLiteral("%1 SDK file(s) recorded at installation are missing.").arg(missing.size());
+            guidance << QStringLiteral("Restore the listed missing files from a matching backup, or use Change SDK and select the complete package for the installed version.");
+            verification.details << QStringLiteral("Missing SDK files:") << missing.join(QLatin1Char('\n'));
+        }
+        if (!unreadable.isEmpty()) {
+            issues << QStringLiteral("%1 SDK file(s) could not be read, so verification could not finish.").arg(unreadable.size());
+            guidance << QStringLiteral("Check read permissions and whether another program is preventing access to the listed files, then check the SDK status again.");
+            verification.details << QStringLiteral("Unreadable SDK files:") << unreadable.join(QLatin1Char('\n'));
+        }
+        verification.summary = issues.join(QLatin1Char('\n'));
+        verification.remediation = guidance.join(QStringLiteral("\n\n"));
         return finish();
     }
-    verification.status = StepStatus::Succeeded;
+    verification.status = result.encodingFiles.isEmpty() ? StepStatus::Succeeded : StepStatus::Warning;
     verification.summary = QStringLiteral("Verified the content integrity of %1 Harken-managed SDK file(s).")
-                               .arg(files.size());
+                               .arg(files.size() - result.missingOptionalFiles.size());
+    if (!result.missingOptionalFiles.isEmpty())
+        verification.summary += QLatin1Char('\n') + QStringLiteral("%1 documentation/sample file(s) are missing; SDK updates can continue.")
+            .arg(result.missingOptionalFiles.size());
     return finish();
 }
 
@@ -260,6 +308,18 @@ QString localizeUnityText(const QString& text)
         QRegularExpression expression;
         const char* source;
     } installationMessages[] = {
+        {QRegularExpression(QStringLiteral(R"(^Cannot check whether this Unity project is open: (.*) \(system error ([0-9]+)\)\. Check project permissions and try again\.$)")),
+         QT_TRANSLATE_NOOP("HarkenHub", "Cannot check whether this Unity project is open: %1 (system error %2). Check project permissions and try again.")},
+        {QRegularExpression(QStringLiteral(R"(^(\d+) SDK file\(s\) differ from their contents at installation\.$)")),
+         QT_TRANSLATE_NOOP("HarkenHub", "%1 SDK file(s) differ from their contents at installation.")},
+        {QRegularExpression(QStringLiteral(R"(^(\d+) SDK file\(s\) recorded at installation are missing\.$)")),
+         QT_TRANSLATE_NOOP("HarkenHub", "%1 SDK file(s) recorded at installation are missing.")},
+        {QRegularExpression(QStringLiteral(R"(^(\d+) SDK file\(s\) could not be read, so verification could not finish\.$)")),
+         QT_TRANSLATE_NOOP("HarkenHub", "%1 SDK file(s) could not be read, so verification could not finish.")},
+        {QRegularExpression(QStringLiteral(R"(^Cannot move directory from (.*) to (.*) \(system error ([0-9]+): (.*)\)\.$)")),
+         QT_TRANSLATE_NOOP("HarkenHub", "Cannot move directory from %1 to %2 (system error %3: %4).")},
+        {QRegularExpression(QStringLiteral(R"(^Check file write protection, directory permissions and processes holding files open at (.*)\. If checkout or unlocking is required, do that first, then retry\. The existing SDK was not changed\.$)")),
+         QT_TRANSLATE_NOOP("HarkenHub", "Check file write protection, directory permissions and processes holding files open at %1. If checkout or unlocking is required, do that first, then retry. The existing SDK was not changed.")},
         {QRegularExpression(QStringLiteral(R"(^Check-only mode did not change (.*)\.$)")),
          QT_TRANSLATE_NOOP("HarkenHub", "Check-only mode did not change %1.")},
         {QRegularExpression(QStringLiteral(R"(^Ready to remove (\d+) Harken SDK/runtime file\(s\) and preserve (\d+) project-specific file\(s\)\.$)")),
@@ -276,10 +336,20 @@ QString localizeUnityText(const QString& text)
          QT_TRANSLATE_NOOP("HarkenHub", "Installed SDK %1 from a verified staging directory; copied %2 managed file(s) and preserved %3 target-only file(s).")},
         {QRegularExpression(QStringLiteral(R"(^Verified the content integrity of (\d+) Harken-managed SDK file\(s\)\.$)")),
          QT_TRANSLATE_NOOP("HarkenHub", "Verified the content integrity of %1 Harken-managed SDK file(s).")},
+        {QRegularExpression(QStringLiteral(R"(^(\d+) documentation/sample file\(s\) are missing; SDK updates can continue\.$)")),
+         QT_TRANSLATE_NOOP("HarkenHub", "%1 documentation/sample file(s) are missing; SDK updates can continue.")},
+        {QRegularExpression(QStringLiteral(R"(^(\d+) SDK text file\(s\) differ only in LF/CRLF line endings; contents are unchanged\.$)")),
+         QT_TRANSLATE_NOOP("HarkenHub", "%1 SDK text file(s) differ only in LF/CRLF line endings; contents are unchanged.")},
+        {QRegularExpression(QStringLiteral(R"(^Review recommended: (\d+) SDK text file\(s\) use a different encoding; text contents match after normalizing encoding and line endings\. SDK updates can continue\.$)")),
+         QT_TRANSLATE_NOOP("HarkenHub", "Review recommended: %1 SDK text file(s) use a different encoding; text contents match after normalizing encoding and line endings. SDK updates can continue.")},
         {QRegularExpression(QStringLiteral(R"(^Cannot read SDK file for migration: (.*)$)")),
          QT_TRANSLATE_NOOP("HarkenHub", "Cannot read SDK file for migration: %1")},
+        {QRegularExpression(QStringLiteral(R"(^Cannot read SDK file: (.*)$)")),
+         QT_TRANSLATE_NOOP("HarkenHub", "Cannot read SDK file: %1")},
         {QRegularExpression(QStringLiteral(R"(^Cannot write (.*): (.*)$)")),
          QT_TRANSLATE_NOOP("HarkenHub", "Cannot write %1: %2")},
+        {QRegularExpression(QStringLiteral(R"(^Check write permission for the Hub report directory: (.*)$)")),
+         QT_TRANSLATE_NOOP("HarkenHub", "Check write permission for the Hub report directory: %1")},
         {QRegularExpression(QStringLiteral(R"(^Cannot create directory for (.*)$)")),
          QT_TRANSLATE_NOOP("HarkenHub", "Cannot create directory for %1")},
         {QRegularExpression(QStringLiteral(R"(^Copy failed from (.*) to (.*)$)")),
@@ -331,7 +401,9 @@ QString localizeUnityText(const QString& text)
         const auto match = message.expression.match(text);
         if (!match.hasMatch()) continue;
         const QString translated = QCoreApplication::translate("HarkenHub", message.source);
-        return match.lastCapturedIndex() == 3
+        return match.lastCapturedIndex() == 4
+            ? translated.arg(match.captured(1), match.captured(2), match.captured(3), match.captured(4))
+            : match.lastCapturedIndex() == 3
             ? translated.arg(match.captured(1), match.captured(2), match.captured(3))
             : match.lastCapturedIndex() == 2
             ? translated.arg(match.captured(1), match.captured(2))
@@ -544,15 +616,16 @@ UnityIntegrationStepStatus convertStatus(
 UnityIntegrationResult HubUnityIntegrationService::run(
     const UnityIntegrationRequest& request)
 {
+    QString accessError;
     if (!request.verifyInstalledOnly && !request.unityProjectPath.trimmed().isEmpty()
-        && QFileInfo::exists(QDir(request.unityProjectPath).filePath(QStringLiteral("Temp/UnityLockfile")))) {
+        && !VNX::checkUnityProjectClosed(request.unityProjectPath, &accessError)) {
         UnityIntegrationResult result;
         result.unityProjectPath = QDir::cleanPath(QFileInfo(request.unityProjectPath).absoluteFilePath());
         UnityIntegrationStep step;
         step.id = QStringLiteral("unity_preflight");
         step.title = localizeUnityText(QStringLiteral("Validate Unity project"));
         step.status = UnityIntegrationStepStatus::Failed;
-        step.summary = localizeUnityText(QStringLiteral("This Unity project is open. Close it before changing the SDK, then run the safety check again."));
+        step.summary = localizeUnityText(accessError);
         result.steps.push_back(step);
         return result;
     }
@@ -563,6 +636,7 @@ UnityIntegrationResult HubUnityIntegrationService::run(
     studioRequest.installToAssets = request.installToAssets;
     studioRequest.checkOnly = request.checkOnly;
     studioRequest.confirmTargetChanges = request.confirmTargetChanges;
+    studioRequest.approvedPlanHash = request.approvedPlanHash;
     studioRequest.removeIntegration = request.removeIntegration;
     studioRequest.confirmRemoval = request.confirmRemoval;
     studioRequest.removalBackupPath = request.removalBackupPath;
@@ -585,6 +659,13 @@ UnityIntegrationResult HubUnityIntegrationService::run(
     result.integrationRemoved = source.integrationRemoved;
     result.removalBackupCreated = source.removalBackupCreated;
     result.changesDetected = source.changesDetected;
+    result.planHash = source.planHash;
+    result.modifiedFiles = source.modifiedFiles;
+    result.lineEndingFiles = source.lineEndingFiles;
+    result.encodingFiles = source.encodingFiles;
+    result.missingFiles = source.missingFiles;
+    result.missingOptionalFiles = source.missingOptionalFiles;
+    result.unreadableFiles = source.unreadableFiles;
     result.integrationMigrated = source.integrationMigrated;
     result.migrationRecovered = source.migrationRecovered;
     result.migrationBackupPath = source.migrationBackupPath;
@@ -595,7 +676,7 @@ UnityIntegrationResult HubUnityIntegrationService::run(
     result.sdkInstallPath = source.sdkInstallPath;
     result.removalBackupPath = source.removalBackupPath;
     result.jsonReportPath = source.jsonReportPath;
-    result.markdownReportPath = source.markdownReportPath;
+    result.textReportPath = source.textReportPath;
     result.sdkFilesCopied = source.sdkFilesCopied;
     result.filesAdded = source.filesAdded;
     result.filesChanged = source.filesChanged;

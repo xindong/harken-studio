@@ -51,7 +51,7 @@ QWidget#timelineHeaderColumn QWidget#timelineLane {
     border-bottom: 1px solid transparent;
 }
 
-QWidget#timelineHeaderColumn QFrame#listBox[rowNumberSelection="true"] QWidget[tableRowNumber="true"] {
+QWidget#timelineHeaderColumn QFrame#listBox[cellSelection="true"] QWidget[tableRowNumber="true"] {
     border-right: 1px solid @borderPrimary@;
 }
 
@@ -298,8 +298,8 @@ QToolBar#platformBar QToolButton#platformBarAll {
     padding: 0px 6px;
 }
 QToolBar#platformBar QComboBox {
-    min-height: 20px;
-    max-height: 20px;
+    min-height: 19px;
+    max-height: 19px;
 }
 QToolBar#platformBar QToolButton[segmentedControl="true"]:hover:enabled {
     background: @bgHover@;
@@ -322,11 +322,11 @@ QToolBar#platformBar QToolButton#remoteConnectButton:checked:enabled {
 QToolBar#platformBar QToolButton#remoteConnectButton:checked:hover:enabled {
     background: @toolbarRemoteHover@;
 }
-QToolBar#platformBar QToolButton#monitorCaptureButton:checked:enabled {
+QToolBar#platformBar QToolButton#captureButton:checked:enabled {
     background: @toolbarMonitorActive@;
     color: @accentText@;
 }
-QToolBar#platformBar QToolButton#monitorCaptureButton:checked:hover:enabled {
+QToolBar#platformBar QToolButton#captureButton:checked:hover:enabled {
     background: @toolbarMonitorHover@;
 }
 QToolBar#platformBar QToolButton#platformBarAll:checked:enabled {
@@ -350,6 +350,7 @@ QLineEdit[fieldRole="segmentInline"]:focus {
     border-radius: 0px;
     padding: 0px;
     min-height: 0px;
+    max-height: 16777215px;
     color: @textSecondary@;
 }
 
@@ -531,6 +532,19 @@ QToolButton[splitButtonPart="dropdown"]:pressed:enabled {
     color: @accentText@;
 }
 
+QPushButton[splitButtonPart="primary"][primaryAction="true"]:enabled {
+    background-color: @accent@;
+    color: @accentText@;
+}
+
+QPushButton[splitButtonPart="primary"][primaryAction="true"]:hover:enabled {
+    background-color: @accentHover@;
+}
+
+QPushButton[splitButtonPart="primary"][primaryAction="true"]:pressed:enabled {
+    background-color: @accent@;
+}
+
 VNX--SplitButton:disabled,
 QPushButton[splitButtonPart="primary"]:disabled,
 QPushButton[splitButtonPart="action"]:disabled,
@@ -583,16 +597,16 @@ QLineEdit, QPlainTextEdit, QTextEdit {
     background-color: @base@;
     border: 1px solid @borderSecondary@;
     border-radius: 0px;
-    padding: 6px 8px;
+    padding: @fieldTextPaddingY@px @fieldTextPaddingX@px;
     color: @brightText@;
 }
 
 QLineEdit {
     background-color: @bgSecondary@;
     color: @textPrimary@;
-    padding: 0px 8px;
-    min-height: @fieldContentHeight@px;
-    max-height: @fieldContentHeight@px;
+    padding: 0px @lineEditPaddingX@px 1px @lineEditPaddingX@px;
+    min-height: @singleLineContentHeight@px;
+    max-height: @singleLineContentHeight@px;
 }
 
 QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus {
@@ -614,17 +628,10 @@ QLineEdit:disabled {
     border-color: @borderPrimary@;
 }
 
-QLineEdit[fieldRole="gridCell"] {
-    padding: 0 @inspectorColumnPadding@px;
-}
-
-/* Roomier entry variant used by the editor popups (span, fade, transition),
-   which carry their own padding rhythm and a full hover/disabled treatment. */
 QLineEdit[fieldRole="popup"] {
     background-color: @bgSecondary@;
     border: 1px solid @borderSecondary@;
     border-radius: 0px;
-    padding: 0px 12px;
     color: @textPrimary@;
 }
 
@@ -694,9 +701,9 @@ QComboBox {
     background-color: @bgSecondary@;
     border: 1px solid @borderSecondary@;
     border-radius: 0px;
-    padding: 0px 0px 0px 6px;
-    min-height: @fieldContentHeight@px;
-    max-height: @fieldContentHeight@px;
+    padding: 0px 0px 1px @fieldTextPaddingX@px;
+    min-height: @singleLineContentHeight@px;
+    max-height: @singleLineContentHeight@px;
     color: @textPrimary@;
     combobox-popup: 0;
 }
@@ -717,8 +724,8 @@ QComboBox:disabled {
     border-color: @borderPrimary@;
 }
 
-QComboBox[fieldRole="gridCell"] {
-    padding: 0 0 0 @inspectorColumnPadding@px;
+QComboBox:editable {
+    padding-left: @lineEditPaddingX@px;
 }
 
 QComboBox::drop-down {
@@ -770,24 +777,22 @@ QComboBox:editable QLineEdit:focus {
     border: none;
     padding: 0;
     min-height: 0px;
+    max-height: 16777215px;
     color: @textPrimary@;
 }
 
 /* ==========================================================================
    Numeric Fields
-   Two field roles share one visual language: "inspectorValue" is the dense
-   variant that fits the inspector's shared value column, "compact" is the
-   roomier variant used when a presenter owns a full control row.
    ========================================================================== */
 
 QAbstractSpinBox {
     background-color: @bgSecondary@;
     border: 1px solid @borderSecondary@;
     border-radius: 0px;
-    padding: 0px 6px;
+    padding: 0px @lineEditPaddingX@px 1px @lineEditPaddingX@px;
     color: @textPrimary@;
-    min-height: @fieldContentHeight@px;
-    max-height: @fieldContentHeight@px;
+    min-height: @singleLineContentHeight@px;
+    max-height: @singleLineContentHeight@px;
 }
 
 QAbstractSpinBox:hover {
@@ -809,7 +814,6 @@ QAbstractSpinBox[fieldRole="compact"] {
     background-color: @bgSecondary@;
     border: 1px solid @borderSecondary@;
     border-radius: 0px;
-    padding: 0px 8px;
     color: @textPrimary@;
 }
 
@@ -1010,6 +1014,11 @@ QHeaderView::section {
 
 QHeaderView::section:!last:!only-one {
     border-right: 1px solid @borderPrimary@;
+}
+
+QHeaderView[columnAccents="true"]::section:checked {
+    background-color: @bgTertiary@;
+    color: @textSecondary@;
 }
 
 QHeaderView::up-arrow, QHeaderView::down-arrow {
@@ -1370,7 +1379,6 @@ QLineEdit#nodeTitleEditor,
 QWidget#NodeContentEditor QAbstractSpinBox {
     min-height: 0px;
     max-height: 16777215px;
-    padding: 0px 2px;
 }
 
 QWidget#NodeContentEditor QToolButton[segmentedControl="true"] {
@@ -1409,10 +1417,10 @@ QWidget#embeddedEditorTitleBar QLabel { background: transparent; color: @textSec
 }
 
 /* ==========================================================================
-   Preview Panel
+   Control Panel
    ========================================================================== */
 
-#PreviewPanel {
+#ControlPanel {
     background-color: @auditionBg@;
     border-top: 1px solid @borderPrimary@;
 }
@@ -1429,7 +1437,7 @@ QWidget#embeddedEditorTitleBar QLabel { background: transparent; color: @textSec
 
 #settingsCategoryList::item {
     padding: 12px 16px;
-    color: @textSecondary@;
+    color: @textPrimary@;
     border: none;
     border-left: 2px solid transparent;
 }
@@ -1472,6 +1480,14 @@ QLabel[dialogRole="label"] {
     background: transparent;
 }
 
+VNX--SettingsPage QLabel[dialogRole="label"]:enabled {
+    color: @textPrimary@;
+}
+
+VNX--SettingsPage QLabel[dialogRole="label"]:disabled {
+    color: @textDisabled@;
+}
+
 QPushButton:disabled {
     background-color: @bgSecondary@;
     color: @textDisabled@;
@@ -1489,12 +1505,6 @@ QLineEdit[settingsRole="invalid"] { border: 1px solid @error@; }
 
 #aboutLogo {
     background-color: transparent;
-}
-
-#aboutProductName {
-    color: @textPrimary@;
-    font-size: @titlePointSize@pt;
-    font-weight: bold;
 }
 
 #aboutTagline {
@@ -1736,16 +1746,16 @@ QFrame#listBox QWidget[listRow="true"][selected="true"] {
     background-color: @bgSelected@;
     border-left-color: @accent@;
 }
-QFrame#listBox[rowNumberSelection="true"] QWidget#listRow[selected="true"],
-QFrame#listBox[rowNumberSelection="true"] QWidget[listRow="true"][selected="true"] {
+QFrame#listBox[cellSelection="true"] QWidget#listRow[selected="true"],
+QFrame#listBox[cellSelection="true"] QWidget[listRow="true"][selected="true"] {
     background-color: @bgPrimary@;
     border-left-color: transparent;
 }
-QFrame#listBox[rowNumberSelection="true"] QWidget[tableRowNumber="true"] {
+QFrame#listBox[cellSelection="true"] QWidget[tableRowNumber="true"] {
     border-left: 2px solid transparent;
     border-right: 2px solid transparent;
 }
-QFrame#listBox[rowNumberSelection="true"] QWidget[tableRowNumber="true"][selected="true"] {
+QFrame#listBox[cellSelection="true"] QWidget[tableRowNumber="true"][selected="true"] {
     background-color: @bgSelected@;
     border-left-color: @accent@;
 }
@@ -1818,42 +1828,41 @@ VNX--ObjectRefWidget[inputInvalid="true"][dimmed="false"]:enabled {
     border-color: @error@;
 }
 
-#AIAssistantPanel QListWidget#aiChatList {
+#AssistantPanel QListWidget#aiChatList {
     background-color: @bgPrimary@;
     border: none;
 }
-#AIAssistantPanel QListWidget#aiChatList::item { border: none; padding: 0; }
-#AIAssistantPanel QLabel { background: transparent; }
-#AIAssistantPanel QLabel#aiMessageContent,
-#AIAssistantPanel QLabel#aiUserMessageContent { color: @textPrimary@; }
-#AIAssistantPanel QFrame#userBubbleFrame {
+#AssistantPanel QListWidget#aiChatList::item { border: none; padding: 0; }
+#AssistantPanel QLabel { background: transparent; }
+#AssistantPanel QLabel#aiMessageContent,
+#AssistantPanel QLabel#aiUserMessageContent { color: @textPrimary@; }
+#AssistantPanel QFrame#userBubbleFrame {
     background-color: @aiBrandAccentSoft@;
     border-radius: @radiusLarge@px;
 }
-#AIAssistantPanel QFrame#aiMessageSeparator {
+#AssistantPanel QFrame#aiMessageSeparator {
     background-color: @aiMessageSeparator@;
     max-height: 1px;
     border: none;
 }
-#AIAssistantPanel QLabel#aiEmptyState,
-#AIAssistantPanel QLabel#aiStepStatus { color: @textMuted@; }
-#AIAssistantPanel QLabel#aiStepStatus { padding: 0 8px; }
-#AIAssistantPanel QFrame#aiInputFrame {
+#AssistantPanel QLabel#aiEmptyState,
+#AssistantPanel QLabel#aiStepStatus { color: @textMuted@; }
+#AssistantPanel QLabel#aiStepStatus { padding: 0 8px; }
+#AssistantPanel QFrame#aiInputFrame {
     background-color: @bgSecondary@;
     border: 1px solid @borderSecondary@;
     border-radius: @radiusLarge@px;
 }
-#AIAssistantPanel QFrame#aiInputFrame[focused="true"] { border-color: @aiBrandAccent@; }
-#AIAssistantPanel QLineEdit#aiAssistantInput {
+#AssistantPanel QFrame#aiInputFrame[focused="true"] { border-color: @aiBrandAccent@; }
+#AssistantPanel QLineEdit#assistantInput {
     background: transparent;
     border: none;
-    padding: 0;
     min-height: 0px;
     max-height: 16777215px;
     color: @textPrimary@;
 }
-#AIAssistantPanel QPushButton#aiAssistantSend[turnActive="true"] { background-color: @errorOpaque@; }
-#AIAssistantPanel QPushButton#aiAssistantSend[turnActive="true"]:pressed { background-color: @error@; }
+#AssistantPanel QPushButton#assistantSend[turnActive="true"] { background-color: @errorOpaque@; }
+#AssistantPanel QPushButton#assistantSend[turnActive="true"]:pressed { background-color: @error@; }
 #inspectorSectionSeparator,
 #informationSeparator { background-color: @sectionSeparator@; border: none; }
 QWidget#inspectorTabBar {
@@ -1899,6 +1908,12 @@ QLabel[bindingUnit="cent"] { color: @textMuted@; }
 QWidget[surfaceRole="secondary"],
 QWidget[surfaceRole="popup"] { background-color: @bgSecondary@; }
 
+QWidget[surfaceRole="panel"] {
+    background-color: @bgPrimary@;
+    border: 1px solid @borderPrimary@;
+}
+QWidget[surfaceRole="panel"][joinedEdge="left"] { border-left: none; }
+
 /* ==========================================================================
    Application shell semantic roles
    ========================================================================== */
@@ -1930,7 +1945,7 @@ QProgressBar[shellRole="statusProgress"]::chunk {
 #monitorConnectionLabel[connectionRole="warning"] { color: @warning@; font-weight: bold; }
 
 /* ==========================================================================
-   Meter and PackManager semantic roles
+   Meter and Publisher semantic roles
    ========================================================================== */
 
 QToolButton#meterUndoBtn,
@@ -1965,7 +1980,7 @@ QWidget#MeterSubPanelTitleBar {
 }
 QLabel#meterSubPanelDragHandle { color: @textSecondary@; font-size: @bodyPointSize@pt; }
 QComboBox#meterTypeCombo {
-    padding: 0 @chevronExtent@px 0 4px;
+    padding-right: @chevronExtent@px;
     font-size: @captionPointSize@pt;
 }
 QToolButton#meterSubPanelGearBtn,
@@ -1990,13 +2005,17 @@ QWidget#MeterSettingsPopup {
 }
 QWidget#MeterSettingsPopup QLabel { color: @textSecondary@; font-size: @captionPointSize@pt; padding: 0 4px; }
 QWidget#MeterSettingsPopup QComboBox {
-    padding: 0px @chevronExtent@px 0px 6px;
+    padding-right: @chevronExtent@px;
     font-size: @captionPointSize@pt;
 }
 
 QFrame#listBox QAbstractItemView[tableRole="data"] {
     background-color: @bgPrimary@;
     selection-color: @textPrimary@;
+    border: none;
+}
+QFrame#listBox QAbstractItemView[tableRole="navigation"] {
+    background-color: @bgPrimary@;
     border: none;
 }
 QScrollBar[scrollRole="table"]:vertical {
@@ -2021,6 +2040,11 @@ QAbstractItemView[tableRole="data"]::item {
 }
 QAbstractItemView[tableRole="data"]::item:hover:!selected { background-color: @bgPrimary@; }
 QAbstractItemView[tableRole="data"]::item:selected { background-color: @bgSelected@; }
+QAbstractItemView[columnAccents="true"]::item:alternate:!selected { background-color: @bgSecondary@; }
+QAbstractItemView[rowProgress="true"]::item,
+QAbstractItemView[rowProgress="true"]::item:selected,
+QAbstractItemView[rowProgress="true"]::item:hover:!selected,
+QAbstractItemView[rowProgress="true"]::item:alternate:!selected { background-color: transparent; }
 QFrame#tableRowInsertion { background-color: @accent@; border: none; }
 QFrame[matrixTable="true"] QTableView { gridline-color: @borderPrimary@; }
 QFrame[matrixHeader="true"] {
@@ -2033,12 +2057,10 @@ QLineEdit[tableEditor="true"] {
     background-color: @bgPrimary@;
     color: @textPrimary@;
     border: 1px solid @accent@;
-    min-height: @fieldContentHeight@px;
-    max-height: @fieldContentHeight@px;
+    min-height: @singleLineContentHeight@px;
+    max-height: @singleLineContentHeight@px;
     border-radius: 0px;
-    padding: 0 @tableCellPaddingX@px;
 }
-QWidget#packPlatformChips QCheckBox:unchecked { color: @textMuted@; }
 QWidget#MonitorPerformancePanel,
 QWidget#MonitorPlayablesPanel,
 QWidget#MonitorEffectsPanel,
@@ -2102,6 +2124,31 @@ QStatusBar QLabel {
     color: @textMuted@;
 }
 
+QPushButton#statusLogButton {
+    background-color: transparent;
+    border: none;
+    padding: 0;
+    text-align: left;
+    color: @logInfo@;
+}
+
+QPushButton#statusLogButton[logLevel="TRACE"],
+QPushButton#statusLogButton[logLevel="DEBUG"] {
+    color: @logDebug@;
+}
+
+QPushButton#statusLogButton[logLevel="WARN"] {
+    color: @logWarning@;
+}
+
+QPushButton#statusLogButton[logLevel="ERROR"] {
+    color: @logError@;
+}
+
+QPushButton#statusLogButton[logLevel="CRIT"] {
+    color: @logCritical@;
+}
+
 QSizeGrip {
     background-color: transparent;
 }
@@ -2162,6 +2209,7 @@ QDialog QLabel {
     background-color: transparent;
     border: none;
     padding: 0;
+    spacing: 0;
 }
 
 #titleBarMenuBar::item {

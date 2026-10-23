@@ -8,6 +8,7 @@
 namespace VNX {
 
 namespace ThemeAssetIds {
+inline constexpr char AppIcon[] = "app.icon";
 inline constexpr char AppLogo[] = "app.logo";
 inline constexpr char WindowMinimize[] = "window.minimize";
 inline constexpr char WindowMaximize[] = "window.maximize";
@@ -22,6 +23,7 @@ inline constexpr char SidebarRightOff[] = "shell.sidebar.right.off";
 inline constexpr char RemoteConnect[] = "shell.remote.connect";
 inline constexpr char MonitorCapture[] = "shell.monitor.capture";
 inline constexpr char PlatformEditAll[] = "shell.platform.editAll";
+inline constexpr char Settings[] = "navigation.settings";
 inline constexpr char DockClose[] = "dock.close";
 inline constexpr char DockPin[] = "dock.pin";
 inline constexpr char DockPinFilled[] = "dock.pin.filled";

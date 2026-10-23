@@ -654,49 +654,6 @@ struct PackGroup
     }
 };
 
-struct ActionPackTargeting
-{
-    harkenstudio::ObjectId stableId{};
-    bool allPlatforms = true;
-    QStringList platformIds;
-    std::optional<QString> language = std::nullopt;
-
-    bool includesPlatform(const QString& platform) const {
-        return allPlatforms || platformIds.contains(platform);
-    }
-
-    bool operator==(const ActionPackTargeting& other) const {
-        return stableId == other.stableId
-            && allPlatforms == other.allPlatforms
-            && platformIds == other.platformIds
-            && language == other.language;
-    }
-    bool operator!=(const ActionPackTargeting& other) const { return !(*this == other); }
-
-    QJsonObject toJson() const {
-        QJsonObject obj;
-        obj["stableId"] = objectIdString(stableId);
-        obj["allPlatforms"] = allPlatforms;
-        QJsonArray platformArray;
-        for (const auto& p : platformIds) platformArray.append(p);
-        obj["platformIds"] = platformArray;
-        if (language) obj["language"] = *language;
-        return obj;
-    }
-
-    static ActionPackTargeting fromJson(const QJsonObject& obj) {
-        ActionPackTargeting targeting;
-        if (!parseObjectIdJson(obj["stableId"], &targeting.stableId)) return {};
-        QStringList rawPlatforms;
-        for (const auto& v : obj["platformIds"].toArray())
-            rawPlatforms.append(v.toString());
-        targeting.platformIds = rawPlatforms;
-        targeting.allPlatforms = obj["allPlatforms"].toBool();
-        if (obj.contains("language")) targeting.language = obj["language"].toString();
-        return targeting;
-    }
-};
-
 struct ActionPublishedNameHistoryRow
 {
     QString name;
@@ -951,43 +908,10 @@ struct ProjectData
 
 
     QStringList projectLanguages;
-    QString     defaultLanguage = "English";
-
-    QString packExportCurrentPlatformId;
-
-    QStringList packExportSelectedPlatformIds;
+    QString     defaultLanguage;
 
     std::vector<PackGroup> packGroups;
-
-    std::vector<ActionPackTargeting> actionPackTargeting;
     std::vector<ActionPublishedNameHistoryRow> actionPublishedNameHistory;
-
-    bool includesActionPack(harkenstudio::ObjectId id, const QString& platform,
-                            const QString& language) const {
-        const ActionPackTargeting* inherited = nullptr;
-        for (const auto& entry : actionPackTargeting) {
-            if (entry.stableId != id) continue;
-            if (entry.language == language) return entry.includesPlatform(platform);
-            if (!entry.language) inherited = &entry;
-        }
-        return !inherited || inherited->includesPlatform(platform);
-    }
-
-    void dissolvePackGroups() {
-        std::set<harkenstudio::ObjectId> migrated;
-        for (const auto& group : packGroups) {
-            for (const auto id : group.actionIds) {
-                if (!migrated.insert(id).second) continue;
-                actionPackTargeting.erase(std::remove_if(actionPackTargeting.begin(),
-                    actionPackTargeting.end(), [id](const auto& entry) {
-                        return entry.stableId == id;
-                    }), actionPackTargeting.end());
-                if (!group.allPlatforms)
-                    actionPackTargeting.push_back({id, false, group.platformIds});
-            }
-        }
-        packGroups.clear();
-    }
 
     QVector<ProjectPlatform> platforms;
 
@@ -1013,8 +937,10 @@ struct ProjectData
     std::vector<DeploymentProfile> deploymentProfiles;
 
     QString packBuildOutputDir;
-
-    ConversionFailurePolicy conversionFailurePolicy = ConversionFailurePolicy::AbortBuild;
+    bool buildExportProjectData = false;
+    bool buildExportPackMetadata = false;
+    bool buildExportWaveforms = false;
+    QString buildWaveformOutputDir;
 
     std::vector<AudioSourceData> audioSources;
 

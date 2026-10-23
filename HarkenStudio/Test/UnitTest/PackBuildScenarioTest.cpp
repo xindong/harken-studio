@@ -7,7 +7,9 @@
 #include "Components/VSound.h"
 #include "Components/VTrack.h"
 #include "PackBuildPlan.h"
+#include "PackExportSelection.h"
 #include "ProjectPackExporter.h"
+#include "CanonicalPackSetExport.h"
 #include "ProjectTypes.h"
 #include "FieldGroupProjectAdapter.h"
 #include "RuntimeBridge/PackagingBridge.h"
@@ -250,14 +252,14 @@ void readPack(const QString& path, PackImage& image)
             + i * harken::kPackV2DirectoryEntryBytes));
 }
 
-QJsonObject readManifest(const QString& outputDir)
+QJsonArray readPublication(const QString& outputDir)
 {
-    QFile file(QDir(outputDir).filePath(
-        HarkenEditor::Bridge::packManifestFileName()));
-    EXPECT_TRUE(file.open(QIODevice::ReadOnly));
-    const QJsonDocument document = QJsonDocument::fromJson(file.readAll());
-    EXPECT_TRUE(document.isObject());
-    return document.object();
+    QJsonArray packs;
+    QStringList files;
+    QString error;
+    EXPECT_TRUE(VNX::ReadPackPublication(outputDir, {}, {}, &packs, &files, &error))
+        << error.toStdString();
+    return packs;
 }
 
 QJsonObject findNamed(const QJsonArray& array, const QString& name)
@@ -282,24 +284,15 @@ QString variantPackPath(const VNX::ProjectData& project, const QString& outputDi
     return {};
 }
 
-QStringList manifestPlan(const QString& outputDir, const QString& actionName)
+QStringList publicationPlan(const QString& outputDir, const QString& actionName)
 {
     QStringList result;
-    const QJsonObject manifest = readManifest(outputDir);
-    const QJsonArray packs = manifest.value(QStringLiteral("packs")).toArray();
+    const QJsonArray packs = readPublication(outputDir);
     const QJsonObject initPack = findNamed(packs, QStringLiteral("Init"));
     EXPECT_FALSE(initPack.isEmpty());
     result.append(QDir(outputDir).filePath(
         QFileInfo(initPack.value(QStringLiteral("path")).toString()).fileName()));
-    const QJsonObject catalogAction = findNamed(
-        manifest.value(QStringLiteral("gameplayCatalog")).toObject()
-            .value(QStringLiteral("actions")).toArray(), actionName);
-    QJsonObject action;
-    for (const auto& value : packs) {
-        const auto pack = value.toObject();
-        if (pack.value(QStringLiteral("packStableId")) == catalogAction.value(QStringLiteral("ownerPackStableId")))
-            action = pack;
-    }
+    const QJsonObject action = findNamed(packs, actionName);
     EXPECT_FALSE(action.isEmpty());
     for (const QJsonValue& value :
          action.value(QStringLiteral("dependencies")).toArray()) {
@@ -333,7 +326,6 @@ VNX::ProjectData executableProject(const QString& root, uint32_t sharedSourceId)
     VNX::ProjectData project = HarkenTest::projectWithPlatforms();
     project.name = QStringLiteral("phase6-pack-scenario");
     project.projectPath = QDir(root).filePath(QStringLiteral("scenario.vproj"));
-    project.conversionFailurePolicy = VNX::ConversionFailurePolicy::AbortBuild;
     project.platforms = HarkenTest::platforms({QStringLiteral("Windows"), QStringLiteral("Linux")});
 
     const VNX::AssetInfo* asset =
@@ -381,12 +373,6 @@ VNX::ProjectData executableProject(const QString& root, uint32_t sharedSourceId)
     attach(actions, peer);
     addBinding(project.actions, actions);
 
-    VNX::PackGroup group;
-    group.name = QStringLiteral("WindowsBundle");
-    group.actionIds = {head->runtimeId()};
-    group.allPlatforms = false;
-    group.platformIds = {HarkenTest::platformIdString(QStringLiteral("Windows"))};
-    project.packGroups.push_back(group);
     return project;
 }
 
@@ -486,14 +472,12 @@ TEST(PackBuildScenario, BuildPlanCarriesVariantSelectionAndCompleteActionClosure
     addBinding(project.actions, tail);
     addBinding(project.actions, root);
 
-    VNX::PackGroup group;
-    group.name = QStringLiteral("RootBundle");
-    group.actionIds = {root->runtimeId()};
-    group.allPlatforms = false;
-    group.platformIds = {HarkenTest::platformIdString(QStringLiteral("Windows"))};
-    project.packGroups.push_back(group);
+    VNX::PackExportSelection exportSelection;
+    exportSelection.actionTargeting = {{root->runtimeId(), false,
+        {HarkenTest::platformIdString(QStringLiteral("Windows"))}}};
 
-    const VNX::PackBuildPlan plan = VNX::PackBuildPlanning::build(project);
+    const VNX::PackBuildPlan plan = VNX::PackBuildPlanning::build(
+        project, {}, {}, false, exportSelection);
     ASSERT_EQ(plan.variants.size(), 3u);
     EXPECT_TRUE(plan.groupMetadata.value(QStringLiteral("groups")).toArray().isEmpty());
 
@@ -579,7 +563,6 @@ TEST(PackBuildScenario, PhysicalLocalizedVariantsUseSelectedAndCommonMedia)
     project.projectPath = QDir(dir.path()).filePath(QStringLiteral("localized.vproj"));
     project.platforms = HarkenTest::platforms({QStringLiteral("Windows")});
     project.projectLanguages = {QStringLiteral("English"), QStringLiteral("Japanese")};
-    project.conversionFailurePolicy = VNX::ConversionFailurePolicy::AbortBuild;
     for (const auto& [sourceId, path, language] :
          std::vector<std::tuple<uint32_t, QString, QString>>{
              {localizedEnglishSource, QStringLiteral("localized-en.wav"), QStringLiteral("English")},
@@ -662,8 +645,7 @@ TEST(PackBuildScenario, PhysicalLocalizedVariantsUseSelectedAndCommonMedia)
     EXPECT_EQ(englishMedia.at(common->runtimeId()).blobChecksum,
               japaneseMedia.at(common->runtimeId()).blobChecksum);
 
-    const QJsonArray events = readManifest(dir.path())
-        .value(QStringLiteral("packs")).toArray();
+    const QJsonArray events = readPublication(dir.path());
     std::set<QString> manifestLanguages;
     std::set<QString> manifestPaths;
     for (const QJsonValue& value : events) {
@@ -683,7 +665,7 @@ TEST(PackBuildScenario, PhysicalLocalizedVariantsUseSelectedAndCommonMedia)
     VNX::AssetRegistry::instance().clear();
 }
 
-TEST(PackBuildScenario, ExportManifestAndRuntimeHonorGroupOwnershipAndPlatformSelection)
+TEST(PackBuildScenario, ExportAndRuntimeHonorActionOwnershipAndPlatformSelection)
 {
     PackRuntimeGuard guard;
     qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
@@ -696,20 +678,24 @@ TEST(PackBuildScenario, ExportManifestAndRuntimeHonorGroupOwnershipAndPlatformSe
         registerTone(dir.path(), QStringLiteral("shared.wav"), 1.0f);
     VNX::ProjectData project = executableProject(dir.path(), sourceId);
 
-    const auto grouped = VNX::PackBuildPlanning::build(project);
-    ASSERT_EQ(grouped.units.size(), 5u);
-    const auto groupedUnit = std::find_if(grouped.units.begin(), grouped.units.end(), [](const auto& unit) {
+    VNX::PackExportSelection exportSelection;
+    exportSelection.actionTargeting = {{harkentest::StudioObjectId(21 + kStableIdBias), false,
+        {HarkenTest::platformIdString(QStringLiteral("Windows"))}}};
+    const auto plan = VNX::PackBuildPlanning::build(project, {}, {}, false, exportSelection);
+    ASSERT_EQ(plan.units.size(), 5u);
+    const auto headUnit = std::find_if(plan.units.begin(), plan.units.end(), [](const auto& unit) {
         return unit.actionStableIds == std::vector<harkenstudio::ObjectId>{harkentest::StudioObjectId(21 + kStableIdBias)};
     });
-    ASSERT_NE(groupedUnit, grouped.units.end());
-    EXPECT_EQ(groupedUnit->name, QStringLiteral("Head"));
-    EXPECT_EQ(groupedUnit->variant.platform, HarkenTest::platformIdString(QStringLiteral("Windows")));
-    EXPECT_EQ(groupedUnit->actionStableIds,
+    ASSERT_NE(headUnit, plan.units.end());
+    EXPECT_EQ(headUnit->name, QStringLiteral("Head"));
+    EXPECT_EQ(headUnit->variant.platform, HarkenTest::platformIdString(QStringLiteral("Windows")));
+    EXPECT_EQ(headUnit->actionStableIds,
               (std::vector<harkenstudio::ObjectId>{harkentest::StudioObjectId(21 + kStableIdBias)}));
 
     const QString windowsDir = QDir(dir.path()).filePath(QStringLiteral("windows"));
     VNX::ProjectPackExporter exporter;
     VNX::ProjectPackExporter::ExportOptions options;
+    options.selection = exportSelection;
     options.platform = HarkenTest::platformIdString(QStringLiteral("Windows"));
     const auto windowsResult = exporter.ExportAllPacks(project, windowsDir, options);
     ASSERT_TRUE(windowsResult.success) << windowsResult.error.toStdString();
@@ -739,11 +725,10 @@ TEST(PackBuildScenario, ExportManifestAndRuntimeHonorGroupOwnershipAndPlatformSe
     EXPECT_EQ(tailImage.countKind(10u), 0);
     EXPECT_EQ(peerImage.countKind(10u), 0);
 
-    const QStringList loadPlan = manifestPlan(windowsDir, QStringLiteral("Head"));
-    ASSERT_EQ(loadPlan.size(), 3);
+    const QStringList loadPlan = publicationPlan(windowsDir, QStringLiteral("Head"));
+    ASSERT_EQ(loadPlan.size(), 2);
     EXPECT_EQ(QFileInfo(loadPlan[0]).fileName(), QStringLiteral("Init.bytes"));
-    EXPECT_EQ(QFileInfo(loadPlan[1]).fileName(), QFileInfo(tailPath).fileName());
-    EXPECT_EQ(QFileInfo(loadPlan[2]).fileName(), QFileInfo(headPath).fileName());
+    EXPECT_EQ(QFileInfo(loadPlan[1]).fileName(), QFileInfo(headPath).fileName());
 
     VnConfig config{};
     config.structSize = sizeof(config);
@@ -766,11 +751,9 @@ TEST(PackBuildScenario, ExportManifestAndRuntimeHonorGroupOwnershipAndPlatformSe
     ASSERT_TRUE(linuxResult.success) << linuxResult.error.toStdString();
     EXPECT_FALSE(QFileInfo::exists(
         variantPackPath(project, linuxDir, harkentest::StudioObjectId(21 + kStableIdBias), HarkenTest::platformIdString(QStringLiteral("Linux")))));
-    const QJsonObject linuxManifest = readManifest(linuxDir);
-    EXPECT_TRUE(findNamed(linuxManifest.value(QStringLiteral("packs")).toArray(),
+    const QJsonArray linuxPublication = readPublication(linuxDir);
+    EXPECT_TRUE(findNamed(linuxPublication,
                           QStringLiteral("Head")).isEmpty());
-    EXPECT_FALSE(findNamed(linuxManifest.value(QStringLiteral("packs")).toArray(),
+    EXPECT_FALSE(findNamed(linuxPublication,
                            QStringLiteral("Tail")).isEmpty());
-    EXPECT_TRUE(findNamed(linuxManifest.value(QStringLiteral("groups")).toArray(),
-                          QStringLiteral("WindowsBundle")).isEmpty());
 }

@@ -6,7 +6,10 @@
 #include "harken/core/KnownCompletion.h"
 #include "harken/core/OccurrenceStatePool.h"
 
+#include "harken/core/StableRowStorage.h"
+
 #include <atomic>
+#include <array>
 #include <cstdint>
 #include <vector>
 
@@ -73,6 +76,7 @@ public:
         std::uint32_t slot_ = UINT32_MAX;
         const KnownScheduleLeafV1* leaves_ = nullptr;
         std::uint32_t leafCount_ = 0;
+        std::uint64_t originalCompleteFrame_ = 0;
         std::uint64_t completeFrame_ = 0;
     };
 
@@ -144,6 +148,14 @@ public:
         std::uint32_t leafCount,
         OccurrenceStatePool& occurrences,
         PrivateReanchorProof* out) noexcept;
+    // Uniform reanchors retain the checked shift, without a candidate leaf array.
+    // The same private-owner and serialized producer requirements apply.
+    bool ProvePrivateUniformReanchorBeforePublication(
+        CompositeCompletionOwnerToken token,
+        std::uint64_t oldEntryFrame,
+        std::uint64_t newEntryFrame,
+        OccurrenceStatePool& occurrences,
+        PrivateReanchorProof* out) noexcept;
     void ApplyPrivateReanchorBeforePublication(
         const PrivateReanchorProof& proof) noexcept;
     bool RollbackBeforePublication(
@@ -154,6 +166,15 @@ public:
                  std::uint64_t observedCompletionBlockSequence) noexcept;
 
     std::uint32_t Capacity() const noexcept { return capacity_; }
+    std::uint32_t ConstructedRowCount() const noexcept { return rows_.ConstructedCount(); }
+    std::uint64_t StorageBytes() const noexcept;
+    using BackingPreparation = std::array<StableStoragePreparation, 4>;
+    bool PrepareBacking(std::uint32_t rows, BackingPreparation* out) noexcept;
+    std::uint64_t CommittedBytes() const noexcept;
+    std::uint64_t ReservedBytes() const noexcept;
+    void SetRowCommitPageLimitForTests(std::size_t pages) noexcept {
+        rows_.SetCommitPageLimitForTests(pages);
+    }
     std::uint32_t FreeCount() const noexcept;
     std::uint32_t OccupiedCount() const noexcept { return occupied_; }
     std::uint32_t HighWater() const noexcept { return highWater_; }
@@ -187,6 +208,15 @@ private:
     };
 
     const Row* Resolve(CompositeCompletionOwnerToken token) const noexcept;
+    bool ProvePrivateReanchor(
+        CompositeCompletionOwnerToken token,
+        const KnownScheduleLeafV1* candidates,
+        std::uint32_t leafCount,
+        std::uint64_t oldEntryFrame,
+        std::uint64_t newEntryFrame,
+        OccurrenceStatePool& occurrences,
+        PrivateReanchorProof* out) noexcept;
+    bool PrepareSlotStorage(std::uint32_t slot) noexcept;
     Row* ResolveForRelease(CompositeCompletionOwnerToken token) noexcept;
     void Quarantine(Row& row) noexcept;
     void RetireRow(Row& row, bool occupied) noexcept;
@@ -203,10 +233,10 @@ private:
 
     std::uint32_t capacity_ = 0;
     std::uint32_t maxLeaves_ = 0;
-    std::vector<Row> rows_;
-    std::vector<KnownScheduleLeafV1> leaves_;
-    std::vector<OccurrenceStatePool::OriginalCompositeCompletionOwnerPin> leafOriginals_;
-    std::vector<OccurrenceStatePool::PreparedCompositeCompletionCommitProof> leafCommitProofs_;
+    StableRowStorage<Row> rows_;
+    StableRowStorage<KnownScheduleLeafV1> leaves_;
+    StableRowStorage<OccurrenceStatePool::OriginalCompositeCompletionOwnerPin> leafOriginals_;
+    StableRowStorage<OccurrenceStatePool::PreparedCompositeCompletionCommitProof> leafCommitProofs_;
     std::uint32_t occupied_ = 0;
     std::uint32_t highWater_ = 0;
     std::uint64_t refusalCount_ = 0;

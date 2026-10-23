@@ -27,6 +27,7 @@ public:
 
     QString packagePath() const { return packagePath_; }
     QString manifestPath() const { return manifestPath_; }
+    std::shared_ptr<DownloadLease> takeDownloadLease() { return std::move(downloadLease_); }
 
 private:
     struct DisplayRow
@@ -48,6 +49,7 @@ private:
     QSet<QString> installedVersions_;
     ServerVersionCatalog catalog_;
     Downloader downloader_;
+    std::shared_ptr<DownloadLease> downloadLease_;
     std::vector<DisplayRow> rows_;
     QTableWidget* table_ = nullptr;
     QLabel* statusLabel_ = nullptr;

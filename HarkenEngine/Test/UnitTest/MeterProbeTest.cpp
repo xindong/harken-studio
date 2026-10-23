@@ -389,9 +389,17 @@ TEST(MeterProbe,
             EXPECT_EQ(0u, engine->meterProbes.AttachmentCount(*engine));
         }
 
+        if (iteration == 0) {
+            engine->params.SetRetiringTargetCommitPageLimitForTests(0);
+            EXPECT_EQ(VN_BACKPRESSURE, harken::AttachMeterProbeBinding(
+                *engine, kSidechain, VN_TARGET_SCOPE_VOICE, {}, voice, renderGeneration));
+            EXPECT_EQ(0u, engine->meterProbes.AttachmentCount(*engine));
+            engine->params.SetRetiringTargetCommitPageLimitForTests(SIZE_MAX);
+        }
         ASSERT_EQ(VN_OK, harken::AttachMeterProbeBinding(
                              *engine, kSidechain, VN_TARGET_SCOPE_VOICE,
                              {}, voice, renderGeneration));
+        engine->params.SetRetiringTargetCommitPageLimitForTests(0);
         ASSERT_EQ(1u, engine->meterProbes.AttachmentCount(*engine));
         ASSERT_EQ(1u, engine->bindings.AttachmentCount());
         ASSERT_NE(nullptr, engine->bindings.FindProbeAttachment(
@@ -927,10 +935,17 @@ TEST(MeterProbe, UninstallWithdrawsContributionToNeutral) {
                          &generation));
     DefineSidechain(engine, kSidechain, kProbe, generation, 30);
     const std::uint32_t targetIndex = engine->buses.FindIndex(kTargetBus);
+    engine->busTargets.SetRetiringTargetCommitPageLimitForTests(0);
+    EXPECT_EQ(VN_BACKPRESSURE, harken::AttachMeterProbeBinding(
+        *engine, kSidechain, VN_TARGET_SCOPE_BUS, kTargetBus, 0,
+        engine->buses.GenerationAt(targetIndex)));
+    EXPECT_EQ(0u, engine->meterProbes.AttachmentCount(*engine));
+    engine->busTargets.SetRetiringTargetCommitPageLimitForTests(SIZE_MAX);
     ASSERT_EQ(VN_OK, harken::AttachMeterProbeBinding(
                          *engine, kSidechain, VN_TARGET_SCOPE_BUS,
                          kTargetBus, 0,
                          engine->buses.GenerationAt(targetIndex)));
+    engine->busTargets.SetRetiringTargetCommitPageLimitForTests(0);
 
     const std::vector<float> dc = MakeDC(48000 * 2, 0.5f);
     const VnPCMDesc pcm = harkentest::MonoDesc(dc, 48000);
@@ -1000,6 +1015,12 @@ TEST(MeterProbe, RepeatedWithdrawalReturnsSharedSliceResources) {
         EXPECT_EQ(4u, engine.variableSlices.FreeRowCount());
         EXPECT_EQ(2u, engine.variableSlices.FreePayloadCount());
         EXPECT_EQ(8u, engine.variableSlices.FreeTargetCapacity());
+        harken::BindingDirtyTarget target;
+        for (std::uint32_t cursor = 0; engine.bindings.Dependencies().DirtyTargetAt(cursor, &target); ++cursor) {
+            harken::BindingDependencyIdentity identity;
+            ASSERT_TRUE(engine.bindings.Dependencies().TargetIdentity(target, &identity));
+            EXPECT_NE(static_cast<std::uint32_t>(harken::BindingSourceKind::MeterProbe), identity.detail);
+        }
     }
 }
 

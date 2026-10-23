@@ -196,7 +196,7 @@ void StudioLaunchMonitor::processMessage(const QByteArray& line)
                 rejectClient(expectedOperation_ ==
                                      QStringLiteral("createProject")
                                  ? hubText("This HarkenStudio version cannot "
-                                           "create projects from Harken Hub. "
+                                           "create projects from Harken Studio Hub. "
                                            "Update HarkenStudio and try again.")
                                  : hubText("HarkenStudio reported an unexpected "
                                            "launch operation"));
@@ -269,6 +269,7 @@ void StudioLaunchMonitor::processMessage(const QByteArray& line)
     if (stage == QStringLiteral("failed")) {
         const QString error = message[QStringLiteral("error")].toString();
         failureCode_ = message[QStringLiteral("errorCode")].toString();
+        failureDetails_ = message[QStringLiteral("technicalDetails")].toString();
         if (failureCode_.isEmpty()) {
             rejectClient(hubText(
                 "HarkenStudio reported a failure without an error code"));

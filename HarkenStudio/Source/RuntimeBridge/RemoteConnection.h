@@ -25,6 +25,18 @@ struct RemoteEventCaptureStatus
     quint64 sourceDroppedRecords = 0;
     quint64 deliveryDroppedRecords = 0;
     quint64 transportDroppedRecords = 0;
+    quint32 acceptedExecutionFactVersion = 0;
+    quint32 baselineAvailability = 0;
+    quint32 requestedPermissionMask = 0;
+    quint32 acceptedPermissionMask = 0;
+    quint32 deniedPermissionMask = 0;
+    quint32 unsupportedPermissionMask = 0;
+    quint32 acceptedStreamKindMask = 0;
+    quint32 symbolsDecision = 0;
+    quint32 symbolAvailability = 0;
+    quint64 identityUnavailableCount = 0;
+    quint64 baselineStateCutId = 0;
+    quint64 supportedFactKinds[2]{};
     QString error;
 };
 

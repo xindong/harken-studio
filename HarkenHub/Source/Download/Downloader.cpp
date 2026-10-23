@@ -62,8 +62,10 @@ QString Downloader::metaPath(const QString& targetPath)
     return targetPath + QStringLiteral(".part.meta");
 }
 
-bool Downloader::start(const DownloadRequest& request)
+bool Downloader::start(const DownloadRequest& request, QString* error)
 {
+    if (error)
+        error->clear();
     if (active_)
         return false;
     if (!request.url.isValid() || request.url.isEmpty() ||
@@ -74,7 +76,15 @@ bool Downloader::start(const DownloadRequest& request)
             return false;
     }
 
+    auto lease = request.lease;
+    if (lease && !lease->covers(request.targetPath))
+        return false;
+    if (!lease)
+        lease = DownloadLease::acquire(request.targetPath, error);
+    if (!lease)
+        return false;
     request_ = request;
+    request_.lease = std::move(lease);
     attemptsStarted_ = 0;
     sourceIndex_ = 0;
     resultHttpStatus_ = 0;
@@ -436,6 +446,7 @@ void Downloader::finishSuccess()
     result.filePath = request_.targetPath;
     result.attemptsUsed = attemptsStarted_;
     result.httpStatus = resultHttpStatus_;
+    result.lease = std::move(request_.lease);
     qInfo().noquote() << QStringLiteral("Update package source:")
                       << result.source << QStringLiteral("result: success");
     emit finished(result);
@@ -444,6 +455,7 @@ void Downloader::finishSuccess()
 void Downloader::failPermanently(const QString& error)
 {
     active_ = false;
+    request_.lease.reset();
     DownloadResult result;
     if (attemptsStarted_ > 0)
         result.source = currentSourceName();

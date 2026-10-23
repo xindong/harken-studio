@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QWidget>
+#include "Download/DownloadLease.h"
 
 #include "Transactions/InstallIndex.h"
 #include "Transactions/InstallRequest.h"
@@ -42,6 +43,7 @@ public:
 
 signals:
     void launchTargetChanged();
+    void versionsRefreshed();
     void projectLaunchGuidanceRequested(const QString& buildId);
 
 protected:
@@ -70,7 +72,8 @@ private:
     void onCatalogFinished(const ServerVersionList& result);
     void beginInstallFromFiles(const QString& packagePath,
                                const QString& manifestPath,
-                               bool explicitInstall);
+                               bool explicitInstall,
+                               std::shared_ptr<DownloadLease> lease = {});
     void beginUninstall(const InstalledVersion& version);
     void beginRepair(const QString& buildId);
     void beginHubUpdate();

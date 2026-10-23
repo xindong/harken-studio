@@ -1727,11 +1727,78 @@ typedef struct VnCanonicalPackSetUnloadDescV1 {
     uint64_t reserved0;
 } VnCanonicalPackSetUnloadDescV1;
 
+VnResult Vn_SetGameplayCatalog(VnPackHandle expectedInitHandle,
+                              const VnPackByteSpan* catalog);
+
 VnResult Vn_ActivateCanonicalPackSetV1(
     const VnCanonicalPackSetActivationDescV1* desc,
     VnCanonicalPackSetActivationReportV1* outReport);
 VnResult Vn_UnloadCanonicalPackSetV1(
     const VnCanonicalPackSetUnloadDescV1* desc);
+
+/* Companion names are supplied with the captured pack, never inferred from
+ * an authored-history catalog. Strings and rows are copied during the call.
+ * Init supplies all Variable names and any named subset of its Labels.
+ * Content supplies exactly its root Action name and the selected language
+ * (empty for General). Object identity remains the authored GUID. */
+typedef struct VnPackVariableNameV1 {
+    VnVariableId variableId;
+    const char* utf8Name;
+} VnPackVariableNameV1;
+
+typedef struct VnPackLabelNameV1 {
+    VnVariableId variableId;
+    VnObjectId labelId;
+    const char* utf8Name;
+} VnPackLabelNameV1;
+
+typedef struct VnPackNamesV1 {
+    uint32_t structSize;
+    uint32_t flags;
+    VnObjectId projectId;
+    VnObjectId rootActionId;
+    const char* utf8RootName;
+    const char* utf8Language;
+    uint32_t variableCount;
+    uint32_t labelCount;
+    const VnPackVariableNameV1* variables;
+    const VnPackLabelNameV1* labels;
+} VnPackNamesV1;
+
+#define VN_PACK_MEMBER_KEEP ((uint32_t)0u)
+#define VN_PACK_MEMBER_CONTENT ((uint32_t)1u)
+#define VN_PACK_MEMBER_NAME_ONLY ((uint32_t)2u)
+
+typedef struct VnCanonicalPackSetMemberV2 {
+    uint32_t structSize;
+    uint32_t operation;
+    VnCanonicalPackSetMemberV1 source;
+    const VnPackNamesV1* names;
+} VnCanonicalPackSetMemberV2;
+
+/* The complete desired set, Init first, remaining members ordered by pack ID.
+ * Keep has only source identity/kind/expectedHandle, with no source or names.
+ * Content and NameOnly capture the source and names; NameOnly requires the
+ * bytes to match the installed content. Omitted owners are unloaded atomically.
+ * V1 layouts and legacy semantics remain unchanged. A companion Init accepts
+ * only V2 mutations until unloaded; legacy catalog writes cannot replace it. */
+typedef struct VnCanonicalPackSetActivationDescV2 {
+    uint32_t structSize;
+    uint32_t flags;
+    VnPackHandle expectedCurrentInitHandle;
+    uint64_t baseSetRevision;
+    uint64_t setRevision;
+    uint32_t memberCount;
+    uint32_t memberStructSize;
+    const VnCanonicalPackSetMemberV2* members;
+    uint32_t outputMemberCapacity;
+    uint32_t outputMemberStructSize;
+    VnCanonicalPackSetMemberResultV1* outputMembers;
+} VnCanonicalPackSetActivationDescV2;
+
+VnResult Vn_ActivateCanonicalPackSetV2(
+    const VnCanonicalPackSetActivationDescV2* desc,
+    VnCanonicalPackSetActivationReportV1* outReport);
 
 typedef struct VnInitPackInspectReport {
     uint32_t structSize;
@@ -1753,6 +1820,108 @@ typedef struct VnInitPackInspectReport {
  * retain bytes after return. */
 VnResult Vn_InspectInitPack(const VnPackLoadDesc* desc,
                             VnInitPackInspectReport* outReport);
+
+#define VN_PACK_PREVIEW_UNSUPPORTED ((uint32_t)0u)
+#define VN_PACK_PREVIEW_SOUND ((uint32_t)1u)
+#define VN_PACK_PREVIEW_RANDOM_SOUNDS ((uint32_t)2u)
+#define VN_PACK_OCCURRENCE_FIXED_GAIN ((uint32_t)1u)
+#define VN_PACK_OCCURRENCE_DURATION ((uint32_t)2u)
+
+typedef struct VnPackVariableFactV1 {
+    VnVariableId variableId;
+    uint32_t kind;
+    uint32_t writers;
+    float rangeMin;
+    float rangeMax;
+    float defaultValue;
+    uint32_t reserved0;
+    uint64_t executionFingerprint;
+    uint64_t labelMappingFingerprint;
+} VnPackVariableFactV1;
+
+typedef struct VnPackLabelFactV1 {
+    VnVariableId variableId;
+    VnObjectId labelId;
+    int32_t anchor;
+    uint32_t reserved0;
+} VnPackLabelFactV1;
+
+/* Facts about the converted Pack media, independent of preview classification.
+ * Source waveform rate/trim coordinates come from companion JSON and VKD. */
+typedef struct VnPackMediaFactV1 {
+    VnSoundId soundId;
+    uint64_t mediaChecksum;
+    uint64_t frameCount;
+    uint32_t sampleRate;
+    uint32_t channelCount;
+} VnPackMediaFactV1;
+
+typedef struct VnPackOccurrenceFactV1 {
+    VnObjectId rootPlayableId;
+    VnSoundId soundId;
+    uint32_t rootPlayableKind;
+    uint32_t childOrdinal; /* UINT32_MAX for a direct Sound. */
+    uint64_t rootProgramFingerprint;
+    uint64_t soundProgramFingerprint;
+    uint64_t occurrenceFingerprint;
+    uint64_t mediaChecksum;
+    uint64_t mediaFrameCount;
+    uint32_t sampleRate;
+    uint32_t channelCount;
+    uint32_t flags;
+    uint32_t reserved0;
+    float fixedGainDb;
+    float fixedGainLinear;
+    double durationSeconds;
+} VnPackOccurrenceFactV1;
+
+typedef struct VnPackInspectDescV1 {
+    uint32_t structSize;
+    uint32_t flags;
+    VnPackByteSpan pack;
+    VnPackByteSpan init; /* Required for Content; empty for Init. */
+    const VnPackNamesV1* names;
+    uint64_t maxInputBytes;
+    uint32_t variableCapacity;
+    uint32_t labelCapacity;
+    uint32_t occurrenceCapacity;
+    uint32_t mediaCapacity;
+    VnPackVariableFactV1* variables;
+    VnPackLabelFactV1* labels;
+    VnPackOccurrenceFactV1* occurrences;
+    VnPackMediaFactV1* media;
+} VnPackInspectDescV1;
+
+typedef struct VnPackInspectReportV1 {
+    uint32_t structSize;
+    uint32_t packKind;
+    VnObjectId projectId;
+    VnObjectId rootActionId;
+    uint64_t packStableId;
+    uint64_t initPackStableId;
+    uint64_t contentRevision;
+    uint64_t contentHash;
+    uint64_t initContentHash;
+    uint64_t executionFingerprint;
+    uint32_t variableCount;
+    uint32_t labelCount;
+    uint32_t occurrenceCount;
+    uint32_t previewKind;
+    uint32_t mediaCount;
+    uint32_t reserved0;
+} VnPackInspectReportV1;
+
+/* Legal before Init; borrows immutable inputs only for this call. Uses the
+ * shipping decoder and property fold. No engine or media installation occurs.
+ * A zero names.projectId discovers the actual project from the Pack; a nonzero
+ * value must match. Activation always requires an explicit project identity.
+ * Zero capacities with null arrays query required counts. Otherwise every
+ * capacity must suffice; VN_PACK_RESIDENT_CAPACITY writes only the report.
+ * Unsupported preview is a successful inspection with zero occurrences.
+ * Fixed gain is the authored source/main-output chain, not a mixed DSP result.
+ * Only flagged duration/gain fields are known. No decoder pointers escape. */
+VnResult Vn_InspectCanonicalPackV1(const VnPackInspectDescV1* desc,
+                                  VnPackInspectReportV1* outReport);
 
 typedef uint32_t VnCurrentWorldLoadStatus;
 
@@ -3846,7 +4015,10 @@ enum {
     VN_MONITOR_FACT_WAITING = 36,
     VN_MONITOR_FACT_SOURCE_APPLIED = 37,
     VN_MONITOR_FACT_SEEK_APPLIED = 38,
-    VN_MONITOR_FACT_RESOURCE_RETIRED = 39
+    VN_MONITOR_FACT_RESOURCE_RETIRED = 39,
+    VN_MONITOR_FACT_PLAYABLE_STARTED = 40,
+    VN_MONITOR_FACT_STEP_EXECUTED = 41,
+    VN_MONITOR_FACT_VARIABLE_RESULT = 42
 };
 
 enum {
@@ -3923,7 +4095,10 @@ enum {
     VN_MONITOR_FACT_FIELD_TARGET_REVISION = 70,
     VN_MONITOR_FACT_FIELD_TARGET_KIND = 71,
     VN_MONITOR_FACT_FIELD_TARGET_CONTENT_KIND = 72,
-    VN_MONITOR_FACT_FIELD_TARGET_SCOPE = 73
+    VN_MONITOR_FACT_FIELD_TARGET_SCOPE = 73,
+    VN_MONITOR_FACT_FIELD_ACTIVITY_STEP = 74,
+    VN_MONITOR_FACT_FIELD_ACTIVITY_VARIABLE = 75,
+    VN_MONITOR_FACT_FIELD_ACTION_OUTCOME = 76
 };
 
 enum {
@@ -3945,7 +4120,16 @@ enum {
     VN_MONITOR_CONTENT_TRACK = 3,
     VN_MONITOR_CONTENT_PIECE = 4,
     VN_MONITOR_CONTENT_ACTION = 5,
-    VN_MONITOR_CONTENT_MEDIA = 6
+    VN_MONITOR_CONTENT_MEDIA = 6,
+    VN_MONITOR_CONTENT_VARIABLE = 7
+};
+
+enum {
+    VN_MONITOR_TERMINAL_NATURAL_COMPLETION = 1,
+    VN_MONITOR_TERMINAL_REQUESTED_STOP = 2,
+    VN_MONITOR_TERMINAL_PARENT_CANCELLATION = 3,
+    VN_MONITOR_TERMINAL_REPLACEMENT_RESET = 4,
+    VN_MONITOR_TERMINAL_FAILURE = 5
 };
 
 enum {
@@ -4036,6 +4220,26 @@ typedef struct VnMonitorExecutionFactV1 {
     uint32_t reserved1;
     VnMonitorFactTarget target;
 } VnMonitorExecutionFactV1;
+
+typedef struct VnMonitorFactActivity {
+    uint32_t actionOutcome;
+    uint32_t stepIndex;
+    uint32_t stepExecutionOrdinal;
+    uint32_t stepOpcode;
+    uint32_t reservedStep;
+    uint32_t stepTargetKind;
+    uint32_t variableValueBits;
+    uint32_t variableScope;
+    uint32_t variableOutcome;
+    uint32_t reserved0;
+    VnObjectId stepTargetId;
+    uint64_t variableTicket;
+} VnMonitorFactActivity;
+
+typedef struct VnMonitorExecutionFactV2 {
+    VnMonitorExecutionFactV1 fact;
+    VnMonitorFactActivity activity;
+} VnMonitorExecutionFactV2;
 
 /* STATE identity revision is independent of native ReadCut and EVENT sequences. */
 typedef struct VnMonitorIdentityFactV1 {
@@ -4467,7 +4671,8 @@ enum {
     VN_MONITOR_OPERATION_SET_EMITTER_VALUES = 13,
     VN_MONITOR_OPERATION_POST_ACTION_PINNED = 14,
     VN_MONITOR_OPERATION_POST_ACTION_RESOLVED = 15,
-    VN_MONITOR_OPERATION_STOP_EMITTER = 16
+    VN_MONITOR_OPERATION_STOP_EMITTER = 16,
+    VN_MONITOR_OPERATION_RESET_VALUES = 19
 };
 
 enum {
@@ -4730,8 +4935,11 @@ typedef struct VnMonitorHostSessionV1 {
 enum {
     VN_MONITOR_HOST_UNKNOWN = 0,
     VN_MONITOR_HOST_UNITY_EMITTER = 1,
-    VN_MONITOR_HOST_UNITY_SPATIAL_SOURCE = 2
+    VN_MONITOR_HOST_UNITY_SPATIAL_SOURCE = 2,
+    VN_MONITOR_HOST_STUDIO_DEFAULT_EMITTER = 3
 };
+
+#define VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_ID 1ull
 
 typedef struct VnMonitorHostRegistrationV1 {
     uint32_t structSize;

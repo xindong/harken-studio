@@ -90,6 +90,7 @@ struct PlanSlot {
         measurements{};
     std::uint32_t storedTapCount = 0;
     std::uint32_t storedMeasurementCount = 0;
+    std::shared_ptr<DerivedDrainState> derivedState;
 };
 
 struct LeaseState {
@@ -485,7 +486,7 @@ struct Session {
 };
 
 bool WantsSymbols(const Session& session) {
-    return session.executionFactVersion == 1 && session.requestSymbols != 0 &&
+    return session.executionFactVersion != 0 && session.requestSymbols != 0 &&
         (session.acceptedPermissionMask & VN_MONITOR_PERM_SYMBOLS) != 0 &&
         (session.acceptedStreamKindMask & (VN_MONITOR_STREAM_STATE | VN_MONITOR_STREAM_EVENT)) != 0;
 }
@@ -1556,6 +1557,7 @@ void ReleaseFailedSlot(PlanSlot* slot) {
     if (slot == nullptr) {
         return;
     }
+    slot->derivedState.reset();
     slot->occupancy = SlotOccupancy::Free;
     slot->empty = true;
     slot->quarantined = false;
@@ -1757,6 +1759,7 @@ void RetireLingeringLocked(ProcessOwner& owner) {
         if (owner.activeSlot == static_cast<std::int32_t>(i)) {
             continue;
         }
+        slot.derivedState.reset();
         slot.occupancy = SlotOccupancy::Free;
         slot.empty = true;
         FillEmptyPlan(&slot.plan);
@@ -1776,6 +1779,7 @@ void ActivatePendingLocked(ProcessOwner& owner) {
         } else if (owner.holdPlanAck) {
             old.occupancy = SlotOccupancy::Lingering;
         } else {
+            old.derivedState.reset();
             old.occupancy = SlotOccupancy::Free;
             old.empty = true;
             FillEmptyPlan(&old.plan);
@@ -2062,7 +2066,7 @@ void FanoutIdentityLocked(ProcessOwner& owner, const std::uint8_t* bytes, std::u
     const bool symbol = header.recordKind == VN_MONITOR_RECORD_HOST_OBJECT_SYMBOL;
     const auto* payload = bytes + kPackedEnvelopeBytes;
     for (auto& session : owner.sessions) {
-        if (!session.live.load(std::memory_order_acquire) || session.executionFactVersion != 1 ||
+        if (!session.live.load(std::memory_order_acquire) || session.executionFactVersion == 0 ||
             (session.acceptedStreamKindMask & VN_MONITOR_STREAM_STATE) == 0 || session.eventDrained ||
             session.streamTerminated.load(std::memory_order_acquire) || !session.queue) continue;
         if (symbol && !WantsSymbols(session)) continue;
@@ -2127,7 +2131,8 @@ void FanoutOne(ProcessOwner& owner, const std::uint8_t* bytes, std::uint32_t siz
     const bool unknownKind = recordKind == VN_MONITOR_RECORD_UNKNOWN ||
         (recordKind >= VN_MONITOR_RECORD_INVALID &&
          recordKind != VN_MONITOR_RECORD_EVENT_DETAIL && recordKind != VN_MONITOR_RECORD_EXECUTION_FACT && !IsIdentityRecord(recordKind));
-    const bool unknownVersion = recordVersion != 1u;
+    const bool unknownVersion = recordVersion != 1u &&
+        !(recordKind == VN_MONITOR_RECORD_EXECUTION_FACT && recordVersion == 2u);
     const bool unknownRecord = unknownKind || unknownVersion;
     const bool requiredUnknown =
         unknownRecord && (recordFlags & VN_MONITOR_RECORD_FLAG_REQUIRED) != 0;
@@ -2163,7 +2168,7 @@ void FanoutOne(ProcessOwner& owner, const std::uint8_t* bytes, std::uint32_t siz
                 continue;
             }
             if (recordKind == VN_MONITOR_RECORD_EXECUTION_FACT) {
-                if (session.executionFactVersion != 1) continue;
+                if (session.executionFactVersion == 0 || ReadPackedU32(bytes, 4) > session.executionFactVersion) continue;
                 const auto producerId = ReadPackedU64(bytes, 32);
                 if (producerId != kExecutionLogicProducer && producerId != kExecutionAudioProducer) continue;
                 const auto producerIndex = producerId == kExecutionLogicProducer ? 0u : 1u;
@@ -2173,10 +2178,10 @@ void FanoutOne(ProcessOwner& owner, const std::uint8_t* bytes, std::uint32_t siz
                 if (recordKind != VN_MONITOR_RECORD_EVENT_DETAIL) {
                     continue;
                 }
-                if (session.executionFactVersion == 1 && ExecutionReplacesLegacyEvent(
+                if (session.executionFactVersion != 0 && ExecutionReplacesLegacyEvent(
                     ReadPackedU32(bytes, kPackedEnvelopeBytes + 4),
                     ReadPackedU32(bytes, kPackedEnvelopeBytes + 8))) continue;
-                if (session.executionFactVersion == 1 && origin.source >= 3 && origin.source <= 4) {
+                if (session.executionFactVersion != 0 && origin.source >= 3 && origin.source <= 4) {
                     const auto index = origin.source - 3;
                     const auto end = index == 0 ? session.sealedAudioLogs : session.sealedLogicLogs;
                     if (origin.ticket <= session.logStarts[index] ||
@@ -2344,6 +2349,7 @@ void ProcessPendingOnDrain(ProcessOwner& owner) {
         if (applyLeaseGone) {
             PlanSlot& pending =
                 owner.planSlots[static_cast<std::size_t>(owner.pendingSlot)];
+            pending.derivedState.reset();
             pending.occupancy = SlotOccupancy::Free;
             pending.empty = true;
             FillEmptyPlan(&pending.plan);
@@ -2387,7 +2393,7 @@ void NoteExecutionSourceDrop(ProcessOwner& owner, unsigned producerIndex,
     std::uint64_t first, std::uint64_t last) {
     std::lock_guard<std::mutex> lock(owner.mutex);
     for (auto& session : owner.sessions) {
-        if (!session.live.load(std::memory_order_acquire) || session.executionFactVersion != 1 || session.eventDrained ||
+        if (!session.live.load(std::memory_order_acquire) || session.executionFactVersion == 0 || session.eventDrained ||
             (session.acceptedStreamKindMask & VN_MONITOR_STREAM_EVENT) == 0)
             continue;
         const auto begin = session.executionStarts[producerIndex];
@@ -2404,7 +2410,7 @@ void NoteExecutionSourceDrop(ProcessOwner& owner, unsigned producerIndex,
         summary.firstSourceSequence = clippedFirst;
         summary.lastSourceSequence = clippedLast;
         summary.recordCount = count;
-        summary.byteCount = count > UINT64_MAX / kExecutionRecordBytes ? UINT64_MAX : count * kExecutionRecordBytes;
+        summary.byteCount = count > UINT64_MAX / sizeof(MonitorExecutionFact) ? UINT64_MAX : count * sizeof(MonitorExecutionFact);
         summary.reason = VN_MONITOR_EVENT_DROP;
         session.executionSourceDrops[producerIndex].NoteRange(clippedFirst, clippedLast,
             count, summary.byteCount, summary.reason);
@@ -2421,7 +2427,7 @@ void NoteExecutionSourceDrop(ProcessOwner& owner, unsigned producerIndex,
 
 void NoteIdentitySourceDropLocked(ProcessOwner& owner, std::uint64_t first, std::uint64_t last) {
     for (auto& session : owner.sessions) {
-        if (!session.live.load(std::memory_order_acquire) || session.executionFactVersion != 1 ||
+        if (!session.live.load(std::memory_order_acquire) || session.executionFactVersion == 0 ||
             (session.acceptedStreamKindMask & VN_MONITOR_STREAM_STATE) == 0 || session.eventDrained ||
             session.identity.requested || session.identityStart == UINT64_MAX) continue;
         const auto lo = std::max(first, session.identityStart + 1);
@@ -2742,6 +2748,7 @@ bool DrainOneFrom(ProcessOwner& owner, MonitorProducerRing& ring,
                    VN_MONITOR_HARD_MEASUREMENTS_PER_PLAN>
             measurements{};
         std::array<VnMonitorTapDescriptor, VN_MONITOR_HARD_TAPS_PER_PLAN> taps{};
+        std::shared_ptr<DerivedDrainState> derivedState;
         std::uint32_t measurementCount = 0;
         std::uint32_t tapCount = 0;
         std::uint64_t activeCapturePlanGeneration = 0;
@@ -2753,6 +2760,7 @@ bool DrainOneFrom(ProcessOwner& owner, MonitorProducerRing& ring,
             if (owner.activeSlot >= 0) {
                 const PlanSlot& slot =
                     owner.planSlots[static_cast<std::size_t>(owner.activeSlot)];
+                derivedState = slot.derivedState;
                 measurementCount = slot.storedMeasurementCount;
                 tapCount = slot.storedTapCount;
                 measurements = slot.measurements;
@@ -2768,14 +2776,14 @@ bool DrainOneFrom(ProcessOwner& owner, MonitorProducerRing& ring,
         const bool beforeEffective =
             recordPlan == activeCapturePlanGeneration && recordFrame < effectiveFrom;
         if (audioArmed != 0 && !beforeEffective && measurementCount != 0 &&
-            tapCount != 0) {
+            tapCount != 0 && derivedState) {
             struct EmitCtx {
                 ProcessOwner* owner = nullptr;
                 MonitorProducerOrigin origin{};
             } ctx;
             ctx.owner = &owner;
             ctx.origin = origin;
-            DispatchDerivedAudioChunk(
+            derivedState->Dispatch(
                 measurements.data(), measurementCount, taps.data(), tapCount,
                 scratch, size,
                 [](void* raw, const DerivedEmit& emit) {
@@ -3350,7 +3358,7 @@ Session* FindLive(ProcessOwner& owner, VnMonitorSessionHandle handle, bool allow
 void RetireSessionLocked(ProcessOwner& owner, Session& session) {
     if (session.sealRequested) --owner.pendingIdentitySeals;
     if (session.eventCatalog) owner.eventObservers.fetch_sub(1, std::memory_order_release);
-    if (session.executionFactVersion == 1) {
+    if (session.executionFactVersion != 0) {
         if ((session.acceptedStreamKindMask & VN_MONITOR_STREAM_EVENT) != 0)
             owner.executionObservers.fetch_sub(1, std::memory_order_release);
         if (!session.identityInterestReleased) {
@@ -3676,7 +3684,7 @@ VnResult ReadExecutionVersion(const VnMonitorSessionDesc* desc, std::uint32_t& v
         std::memcpy(extension, reinterpret_cast<const std::uint8_t*>(desc) +
             sizeof(VnMonitorSessionDesc), sizeof(extension));
         if (extension[1] != 0) return VN_INVALID_ARG;
-        if (extension[0] > 1) return VN_MONITOR_UNSUPPORTED;
+        if (extension[0] > 2) return VN_MONITOR_UNSUPPORTED;
         version = extension[0];
     }
     return VN_OK;
@@ -3775,7 +3783,7 @@ void SealAtIdentityBoundary(ProcessOwner& owner, Session& session) {
     if (session.sealRequested) --owner.pendingIdentitySeals;
     session.sealRequested = false;
     if (session.eventStoppedNs != 0) return;
-    if (session.executionFactVersion == 1 && (session.acceptedStreamKindMask & VN_MONITOR_STREAM_STATE) != 0) {
+    if (session.executionFactVersion != 0 && (session.acceptedStreamKindMask & VN_MONITOR_STREAM_STATE) != 0) {
         session.identityEnd = owner.identityProducer.Published();
         --owner.identityObservers;
     }
@@ -3896,7 +3904,7 @@ void RefreshIdentityBoundary() noexcept {
         owner.identityProducer.Unavailable() + owner.identityMirror.Unavailable(),
         owner.symbolProducer.Unavailable() + owner.symbolMirror.Unavailable()};
     for (auto& session : owner.sessions) {
-        if (!session.live.load(std::memory_order_acquire) || session.executionFactVersion != 1 ||
+        if (!session.live.load(std::memory_order_acquire) || session.executionFactVersion == 0 ||
             session.eventStoppedNs != 0) continue;
         if ((session.acceptedStreamKindMask & VN_MONITOR_STREAM_STATE) != 0) {
             if (session.identity.requested && FreezeIdentityCut(owner, session, 0) != VN_OK) {
@@ -4010,9 +4018,9 @@ VnResult OpenSessionWithPermissions(const VnMonitorSessionDesc* desc,
     if (owner.LiveSlotsLocked() >= VN_MONITOR_DEFAULT_SESSIONS_PER_ENGINE) {
         return VN_MONITOR_SESSION_CAPACITY;
     }
-    const bool identityRequested = executionVersion == 1 && (acceptedMask & VN_MONITOR_STREAM_STATE) != 0;
+    const bool identityRequested = executionVersion != 0 && (acceptedMask & VN_MONITOR_STREAM_STATE) != 0;
     const auto identityCapacity = identityRequested ? IdentitySlotCapacity(*owner.engine) : 0;
-    const bool symbolsRequested = executionVersion == 1 && desc->requestSymbols != 0 &&
+    const bool symbolsRequested = executionVersion != 0 && desc->requestSymbols != 0 &&
         (desc->requestedPermissionMask & VN_MONITOR_PERM_SYMBOLS) != 0 &&
         (acceptedMask & (VN_MONITOR_STREAM_STATE | VN_MONITOR_STREAM_EVENT)) != 0 &&
         (!remote || (remoteGrant & VN_MONITOR_PERM_SYMBOLS) != 0);
@@ -4113,8 +4121,8 @@ VnResult OpenSessionWithPermissions(const VnMonitorSessionDesc* desc,
         acceptedPerm = (requestedPerm & kObservePermissionMask) |
                        (requestedPerm & kCaptureControlPermission) |
                        (requestedPerm & kRecordPermission) |
-                       (executionVersion == 1 ? requestedPerm & (VN_MONITOR_PERM_RAW_AUDIO | VN_MONITOR_PERM_SYMBOLS) : 0);
-        unsupportedPerm = executionVersion == 1 ? 0u :
+                       (executionVersion != 0 ? requestedPerm & (VN_MONITOR_PERM_RAW_AUDIO | VN_MONITOR_PERM_SYMBOLS) : 0);
+        unsupportedPerm = executionVersion != 0 ? 0u :
             requestedPerm & (VN_MONITOR_PERM_RAW_AUDIO | VN_MONITOR_PERM_SYMBOLS);
     }
     if (executionVersion != 0) {
@@ -4127,7 +4135,7 @@ VnResult OpenSessionWithPermissions(const VnMonitorSessionDesc* desc,
     }
     slot->executionFactVersion = executionVersion;
     slot->supportedFactKinds = {};
-    if (executionVersion == 1) {
+    if (executionVersion != 0) {
         slot->supportedFactKinds[0] = (UINT64_C(1) << VN_MONITOR_FACT_REQUEST_SUBMITTED) |
             (UINT64_C(1) << VN_MONITOR_FACT_REQUEST_RETURNED) |
             (UINT64_C(1) << VN_MONITOR_FACT_EMITTER_CREATED) |
@@ -4135,10 +4143,14 @@ VnResult OpenSessionWithPermissions(const VnMonitorSessionDesc* desc,
             (UINT64_C(1) << VN_MONITOR_FACT_EMITTER_BINDING_CHANGED) |
             (UINT64_C(1) << VN_MONITOR_FACT_IDENTITY_UPSERT) |
             (UINT64_C(1) << VN_MONITOR_FACT_IDENTITY_TOMBSTONE);
-        for (unsigned phase = 1; phase <= static_cast<unsigned>(MonitorLifecyclePhase::PreparedCandidate); ++phase) {
+        for (unsigned phase = 1; phase <= static_cast<unsigned>(MonitorLifecyclePhase::PlayableStarted); ++phase) {
             const auto kind = LifecycleFactKind(static_cast<MonitorLifecyclePhase>(phase));
             if (kind != 0) slot->supportedFactKinds[0] |= UINT64_C(1) << kind;
         }
+    }
+    if (executionVersion >= 2) {
+        slot->supportedFactKinds[0] |= (UINT64_C(1) << VN_MONITOR_FACT_ACTION_TERMINAL) |
+            (UINT64_C(1) << VN_MONITOR_FACT_STEP_EXECUTED) | (UINT64_C(1) << VN_MONITOR_FACT_VARIABLE_RESULT);
     }
     slot->baselineAvailability = executionVersion != 0 &&
         (desc->requestedStreamKindMask & VN_MONITOR_STREAM_STATE) != 0
@@ -4226,7 +4238,7 @@ VnResult OpenSessionWithPermissions(const VnMonitorSessionDesc* desc,
     if (eventCatalog) {
         owner.eventObservers.fetch_add(1, std::memory_order_release);
     }
-    if (slot->executionFactVersion == 1 && (acceptedMask & VN_MONITOR_STREAM_EVENT) != 0)
+    if (slot->executionFactVersion != 0 && (acceptedMask & VN_MONITOR_STREAM_EVENT) != 0)
         owner.executionObservers.fetch_add(1, std::memory_order_release);
     if (identityRequested) ++owner.identityObservers;
     if (symbolsRequested) ++owner.symbolObservers;
@@ -4299,7 +4311,7 @@ VnResult SealEventSession(VnMonitorSessionHandle handle) {
     if (session->eventStoppedNs != 0) return VN_OK;
     // Identity and symbol endpoints must include the outer Update transaction.
     // Pure EVENT sessions retain their synchronous seal and restart behavior.
-    if (session->executionFactVersion == 1 && owner.identityMutationDepth != 0 &&
+    if (session->executionFactVersion != 0 && owner.identityMutationDepth != 0 &&
         ((session->acceptedStreamKindMask & VN_MONITOR_STREAM_STATE) != 0 || WantsSymbols(*session))) {
         if (!session->sealRequested) ++owner.pendingIdentitySeals;
         session->sealRequested = true;
@@ -4335,10 +4347,10 @@ VnResult GetEventSessionStatus(VnMonitorSessionHandle handle,
     status.deliveryDroppedRecords = session->queue->droppedRecords;
     if (session->eventStoppedNs != 0) {
         bool executionDrained = true;
-        if (session->executionFactVersion == 1)
+        if (session->executionFactVersion != 0)
             for (unsigned i = 0; i != owner.executionProducers.size(); ++i)
                 executionDrained &= owner.executionProducers[i].Completed() >= session->executionEnds[i];
-        const bool identityDrained = session->executionFactVersion != 1 ||
+        const bool identityDrained = session->executionFactVersion == 0 ||
             (session->acceptedStreamKindMask & VN_MONITOR_STREAM_STATE) == 0 ||
             (!session->identity.requested && !session->identity.active &&
                 owner.identityProducer.Completed() >= session->identityEnd);
@@ -4347,7 +4359,7 @@ VnResult GetEventSessionStatus(VnMonitorSessionHandle handle,
         const bool legacyDrained = executionDrained && identityDrained && symbolDrained && owner.engine->logRing.ConsumedCount() >= session->sealedAudioLogs &&
             owner.engine->logicLogRing.ConsumedCount() >= session->sealedLogicLogs &&
             owner.lastEventFanoutSequence.load(std::memory_order_acquire) >= session->lastEventSequence;
-        const bool drained = (session->executionFactVersion == 1 ? RecordingSourcesDrained(owner, *session, false) : legacyDrained) &&
+        const bool drained = (session->executionFactVersion != 0 ? RecordingSourcesDrained(owner, *session, false) : legacyDrained) &&
             session->queue->deferredSymbols.empty() && session->queue->records.empty();
         if (drained && !session->eventDrained) {
             session->eventDrained = true;
@@ -4470,10 +4482,10 @@ bool PublishEventDetail(const VnMonitorEventDetail& detail,
     for (auto& session : owner.sessions) {
         if (!session.live.load(std::memory_order_acquire) || !session.eventCatalog ||
             session.eventDrained ||
-            (!(session.executionFactVersion == 1 && logSource >= 3 && logSource <= 4) &&
+            (!(session.executionFactVersion != 0 && logSource >= 3 && logSource <= 4) &&
              !session.recordingReceiver && (detail.timestampNs < session.eventStartedNs ||
                 (session.eventStoppedNs != 0 && detail.timestampNs > session.eventStoppedNs)))) continue;
-        if (session.executionFactVersion == 1) {
+        if (session.executionFactVersion != 0) {
             if (logSource >= 3 && logSource <= 4) {
                 const auto i = logSource - 3;
                 const auto end = i == 0 ? session.sealedAudioLogs : session.sealedLogicLogs;
@@ -4481,7 +4493,7 @@ bool PublishEventDetail(const VnMonitorEventDetail& detail,
                 if (published) session.logDownstreamEnds[i] = owner.logicRing.Published();
             } else if (session.recordingReceiver && session.eventStoppedNs != 0) continue;
         }
-        if (session.executionFactVersion == 1 && ExecutionReplacesLegacyEvent(detail.category, detail.code)) continue;
+        if (session.executionFactVersion != 0 && ExecutionReplacesLegacyEvent(detail.category, detail.code)) continue;
         if (published) session.lastEventSequence = envelope.sourceSequence;
         else ++session.eventSourceDrops;
     }
@@ -4661,7 +4673,7 @@ VnResult GetSubscriptionStatus(VnMonitorSessionHandle handle,
     VnMonitorStreamBaseline* callerBaselines = outStatus->baselines;
     const std::uint32_t matchingCount =
          ((resolvedMask & VN_MONITOR_STREAM_TIME_SERIES) ? 1u : 0u) +
-         ((resolvedMask & VN_MONITOR_STREAM_STATE) ? (session->executionFactVersion == 1 ? 2u : 1u) : 0u) +
+         ((resolvedMask & VN_MONITOR_STREAM_STATE) ? (session->executionFactVersion != 0 ? 2u : 1u) : 0u) +
          (WantsSymbols(*session) ? 1u : 0u);
     if (matchingCount > 0 &&
         ((callerBaselines == nullptr && callerCapacity != 0) ||
@@ -4701,12 +4713,12 @@ VnResult GetSubscriptionStatus(VnMonitorSessionHandle handle,
         if (resolvedMask & VN_MONITOR_STREAM_STATE) {
             std::memset(&callerBaselines[written], 0, sizeof(callerBaselines[written]));
             callerBaselines[written].structSize = sizeof(callerBaselines[written]);
-            callerBaselines[written].streamId = session->executionFactVersion == 1 ? kIdentityDeltaStream : kSyntheticStateStreamId;
-            callerBaselines[written].firstExpectedSourceSequence = session->executionFactVersion == 1
+            callerBaselines[written].streamId = session->executionFactVersion != 0 ? kIdentityDeltaStream : kSyntheticStateStreamId;
+            callerBaselines[written].firstExpectedSourceSequence = session->executionFactVersion != 0
                 ? (session->identityStart == UINT64_MAX ? 0 : session->identityStart + 1) : session->firstExpectedStateSequence;
             callerBaselines[written].streamKind = VN_MONITOR_STREAM_STATE;
             ++written;
-            if (session->executionFactVersion == 1) {
+            if (session->executionFactVersion != 0) {
                 callerBaselines[written] = {};
                 callerBaselines[written].structSize = sizeof(callerBaselines[written]);
                 callerBaselines[written].streamId = kIdentityBaselineStream;
@@ -4920,7 +4932,7 @@ VnResult GetConsumerStatus(VnMonitorSessionHandle handle,
     constexpr auto executionSourceOffset = 1 + ConsumerQueue::kDropStreamCount;
     constexpr auto identitySourceOffset = executionSourceOffset + 2;
     std::array<DropAccum, identitySourceOffset + 3> snapshots{};
-    if (session->executionFactVersion != 1 || (session->acceptedStreamKindMask & ~VN_MONITOR_STREAM_STATE) != 0)
+    if (session->executionFactVersion == 0 || (session->acceptedStreamKindMask & ~VN_MONITOR_STREAM_STATE) != 0)
         snapshots[0] = owner.producerDrop.Snapshot();
     snapshots[identitySourceOffset] = session->identityDrops;
     snapshots[identitySourceOffset + 1] = session->baselineDrops;
@@ -4988,7 +5000,7 @@ VnResult RequestStateCut(VnMonitorSessionHandle handle,
             return VN_MONITOR_PERMISSION_DENIED;
         }
         if (session->eventStoppedNs != 0) return VN_INVALID_ARG;
-        if (session->executionFactVersion == 1) {
+        if (session->executionFactVersion != 0) {
             const auto result = FreezeIdentityCut(owner, *session, desc->requestedCapacityHint);
             if (result == VN_OK) *outStateCutId = session->cut.id;
             return result;
@@ -5260,6 +5272,23 @@ VnResult ApplyCapturePlan(VnMonitorSessionHandle handle,
         ReleaseFailedSlot(&slot);
         return check;
     }
+    if (slot.storedMeasurementCount != 0 &&
+        (accepted.streamKindMask & VN_MONITOR_STREAM_OPTIONAL_AUDIO) != 0) {
+        try {
+            auto derived = std::make_shared<DerivedDrainState>();
+            const auto* previous = owner.activeSlot >= 0
+                ? owner.planSlots[static_cast<std::size_t>(owner.activeSlot)].derivedState.get() : nullptr;
+            if (!derived->Prepare(slot.measurements.data(), slot.storedMeasurementCount,
+                                  owner.engine->config.mixRate.SampleRate(), previous)) {
+                ReleaseFailedSlot(&slot);
+                return VN_MONITOR_BUDGET_EXCEEDED;
+            }
+            slot.derivedState = std::move(derived);
+        } catch (...) {
+            ReleaseFailedSlot(&slot);
+            return VN_MONITOR_BUDGET_EXCEEDED;
+        }
+    }
     slot.occupancy = SlotOccupancy::Pending;
     slot.empty = PlanLooksEmpty(accepted);
     slot.quarantined = false;
@@ -5301,6 +5330,7 @@ VnResult StopCapture(VnMonitorSessionHandle handle, uint64_t leaseGeneration,
         owner.pendingSlot != static_cast<std::int32_t>(kStopSlotIndex)) {
         PlanSlot& pending =
             owner.planSlots[static_cast<std::size_t>(owner.pendingSlot)];
+        pending.derivedState.reset();
         pending.occupancy = SlotOccupancy::Free;
         pending.empty = true;
         FillEmptyPlan(&pending.plan);
@@ -5487,11 +5517,10 @@ VnResult StartRecording(VnMonitorSessionHandle handle, uint64_t leaseGeneration,
         descriptor.leaseGeneration = leaseGeneration;
         descriptor.engine = owner.engine->monitorRequests.EngineInstance();
         descriptor.recordingEpoch = owner.nextEpoch++;
-        descriptor.schema = session->executionFactVersion;
+        descriptor.schema = 2;
         descriptor.streams = session->acceptedStreamKindMask;
         descriptor.permissions = session->acceptedPermissionMask;
         descriptor.requestSymbols = session->requestSymbols;
-        std::copy(session->supportedFactKinds.begin(), session->supportedFactKinds.end(), descriptor.supported);
         receiverDesc.structSize = sizeof(receiverDesc);
         receiverDesc.requestedStreamKindMask = descriptor.streams;
         receiverDesc.requestedPermissionMask = descriptor.permissions & ~(kRecordPermission | kCaptureControlPermission);
@@ -5533,6 +5562,7 @@ VnResult StartRecording(VnMonitorSessionHandle handle, uint64_t leaseGeneration,
     recorder.receiver = receiver;
     descriptor.epoch = subscription->epoch;
     descriptor.startedNs = subscription->eventStartedNs;
+    std::copy(subscription->supportedFactKinds.begin(), subscription->supportedFactKinds.end(), descriptor.supported);
     descriptor.controlStart = subscription->controlStart;
     std::copy(subscription->executionStarts.begin(), subscription->executionStarts.end(), descriptor.starts);
     descriptor.starts[2] = subscription->identityStart;
@@ -6812,6 +6842,9 @@ std::uint32_t LifecycleEntityKind(MonitorLifecyclePhase phase,
                                   std::uint8_t playableKind) noexcept {
     switch (phase) {
     case MonitorLifecyclePhase::PreparedCandidate:
+    case MonitorLifecyclePhase::PlayableStarted:
+    case MonitorLifecyclePhase::StepExecuted:
+    case MonitorLifecyclePhase::ActionTerminal:
     case MonitorLifecyclePhase::SelectionCommitted: return 0;
     case MonitorLifecyclePhase::EffectInstalled:
     case MonitorLifecyclePhase::EffectReleased:
@@ -6849,6 +6882,9 @@ std::uint32_t LifecycleEntityKind(MonitorLifecyclePhase phase,
 std::uint32_t LifecycleEventClass(MonitorLifecyclePhase phase) noexcept {
     switch (phase) {
     case MonitorLifecyclePhase::PreparedCandidate:
+    case MonitorLifecyclePhase::PlayableStarted:
+    case MonitorLifecyclePhase::StepExecuted:
+    case MonitorLifecyclePhase::ActionTerminal:
     case MonitorLifecyclePhase::SelectionCommitted: return 0;
     case MonitorLifecyclePhase::EffectInstalled:
         return VN_MONITOR_EVENT_START;
@@ -6912,6 +6948,55 @@ void ObserveMonitorCurrentWorld(std::uint64_t worldGeneration) noexcept {
     }
     monitor::Owner().currentWorldGeneration.store(worldGeneration,
                                                   std::memory_order_release);
+#endif
+}
+
+void ObserveMonitorVariableResult(const MonitorVariableResultFacts& facts) noexcept {
+#if defined(HARKEN_MONITOR_HUB_ABSENT)
+    (void)facts;
+#else
+    if (!monitor::ExecutionObservationEnabled() || !monitor::LogicThreadReady()) return;
+    auto& engine = *monitor::Owner().engine;
+    MonitorExecutionFact fact{};
+    fact.engine = monitor::ExecutionEngineInstance();
+    fact.kind = VN_MONITOR_FACT_VARIABLE_RESULT;
+    fact.contentKind = VN_MONITOR_CONTENT_VARIABLE;
+    fact.timestamp = LogTimestampNs();
+    fact.result = facts.result;
+    auto& body = fact.body.execution;
+    body.identity.object = facts.variableId;
+    body.identity.project = facts.projectId;
+    body.identity.world = facts.worldGeneration;
+    monitor::SetSourceField(fact, VN_MONITOR_FACT_FIELD_TIMESTAMP);
+    monitor::SetSourceField(fact, VN_MONITOR_FACT_FIELD_RESULT);
+    monitor::SetSourceField(fact, VN_MONITOR_FACT_FIELD_CONTENT_OBJECT, facts.variableId != VnObjectId{});
+    monitor::SetSourceField(fact, VN_MONITOR_FACT_FIELD_PROJECT, facts.projectId != VnObjectId{});
+    monitor::SetSourceField(fact, VN_MONITOR_FACT_FIELD_CONTENT_WORLD, facts.worldGeneration != 0);
+    MonitorControlCause cause{};
+    cause.request = facts.request;
+    cause.actionFiring = facts.actionFiring;
+    cause.executionOrdinal = facts.executionOrdinal;
+    monitor::CaptureExecutionRequests(fact, facts.request, cause, {});
+    if (facts.actionFiring != 0) {
+        body.relations.action = facts.actionFiring;
+        monitor::SetSourceField(fact, VN_MONITOR_FACT_FIELD_RELATED_ACTION);
+    }
+    const auto origin = facts.emitterOrigin.kind != MonitorEmitterKind::Unknown
+        ? facts.emitterOrigin : MonitorEmitterOrigin{};
+    const auto context = engine.emitters.Context(origin.emitter);
+    monitor::CaptureFactEmitters(fact, origin,
+        engine.monitorEmitters.CaptureBinding(origin, context.stateEmitter, context.spatialEmitter));
+    auto& activity = body.activity;
+    activity.logicCommit = facts.logicCommitSequence;
+    activity.executeFrame = facts.actualFrame;
+    std::memcpy(&activity.variableValueBits, &facts.value, sizeof(facts.value));
+    activity.variableScope = facts.emitterScope ? 1u : 0u;
+    activity.variableOutcome = facts.outcome;
+    activity.variableTicket = facts.logicCommitSequence;
+    monitor::SetSourceField(fact, VN_MONITOR_FACT_FIELD_LOGIC_COMMIT, facts.logicCommitSequence != 0);
+    monitor::SetSourceField(fact, VN_MONITOR_FACT_FIELD_EXECUTE_FRAME, facts.outcome == VN_VARIABLE_OUTCOME_APPLIED);
+    monitor::SetSourceField(fact, VN_MONITOR_FACT_FIELD_ACTIVITY_VARIABLE);
+    monitor::PublishExecutionFact(fact);
 #endif
 }
 

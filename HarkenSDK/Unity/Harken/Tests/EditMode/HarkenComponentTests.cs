@@ -1,9 +1,11 @@
 using System;
+using System.Reflection;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using UnityEngine.TestTools;
 using Object = UnityEngine.Object;
 
 namespace Harken.Unity.Tests
@@ -31,6 +33,26 @@ namespace Harken.Unity.Tests
                 Object.DestroyImmediate(owner);
                 Object.DestroyImmediate(source);
             }
+        }
+
+        [TestCase((uint)VnLogLevel.VN_LOG_INFO, LogType.Log)]
+        [TestCase((uint)VnLogLevel.VN_LOG_WARN, LogType.Warning)]
+        [TestCase((uint)VnLogLevel.VN_LOG_ERROR, LogType.Error)]
+        [TestCase(99u, LogType.Log)]
+        public void NativeLogSeverityReachesUnityConsole(uint level, LogType expected)
+        {
+            var owner = new GameObject("Native log routing");
+            owner.SetActive(false);
+            try
+            {
+                var runtime = owner.AddComponent<HarkenAudioSystem>();
+                LogAssert.Expect(expected, "[Harken " + level + "/42] native diagnostic");
+                typeof(HarkenAudioSystem).GetMethod("HandleLog",
+                    BindingFlags.Instance | BindingFlags.NonPublic)
+                    .Invoke(runtime, new object[] { level, 42u, "native diagnostic", null });
+                LogAssert.NoUnexpectedReceived();
+            }
+            finally { Object.DestroyImmediate(owner); }
         }
 
         [Test]

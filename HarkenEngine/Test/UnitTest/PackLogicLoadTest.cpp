@@ -4686,7 +4686,7 @@ TEST(PackLogicUnload,
         ASSERT_NE(0u, pack);
         const std::uint32_t bus = engine->buses.FindIndex(packBus);
         ASSERT_NE(harken::kInvalidBusIndex, bus);
-        ASSERT_FALSE(engine->pendingStarts.empty());
+        ASSERT_TRUE(engine->pendingStarts.Emplace(0));
         harken::PendingStartRecord& pending = engine->pendingStarts[0];
         pending.active = true;
         pending.busIndex = voiceSend ? 0 : bus;
@@ -4716,7 +4716,7 @@ TEST(PackLogicUnload,
         ASSERT_NE(0u, pack);
         const std::uint32_t bus = engine->buses.FindIndex(packBus);
         ASSERT_NE(harken::kInvalidBusIndex, bus);
-        ASSERT_FALSE(engine->parkRecords.empty());
+        ASSERT_TRUE(engine->parkRecords.Emplace(0));
         harken::ParkRecord& parked = engine->parkRecords[0];
         parked.active = true;
         parked.facts.busIndex = voiceSend ? 0 : bus;
@@ -7156,7 +7156,19 @@ TEST(PackLogicReplace,
     const std::uint64_t oldInstalledRevision =
         engine->dynamicRoutes.InstalledRevision();
 
+    EXPECT_EQ(0u, engine->dynamicRoutes.TapSampleStorageBytes());
+    engine->dynamicRoutes.SetTapSampleCommitPageLimitsForTests(0, 0);
+    EXPECT_EQ(VN_NO_DYNAMIC_ROUTE, ReplacePack(pack, replacementPath));
+    EXPECT_EQ(nullptr, engine->logicPacks.PendingFor(pack));
+    EXPECT_EQ(0u, engine->dynamicRoutes.BusTapInUse());
+    EXPECT_EQ(tapGenerationBefore,
+              engine->dynamicRoutes.TapGeneration(VN_DYNAMIC_SOURCE_BUS, 0));
+    engine->dynamicRoutes.SetTapSampleCommitPageLimitsForTests(SIZE_MAX, SIZE_MAX);
     ASSERT_EQ(VN_OK, ReplacePack(pack, replacementPath));
+    const auto preparedTapBytes = engine->dynamicRoutes.TapSampleStorageBytes();
+    EXPECT_GT(preparedTapBytes, 0u);
+    EXPECT_EQ(0u, engine->dynamicRoutes.BusTapInUse());
+    engine->dynamicRoutes.SetTapSampleCommitPageLimitsForTests(0, 0);
     {
         StagingFaultGuard guard(
             harken::PackStagingFault::ActivationQueueReservation);
@@ -7226,6 +7238,7 @@ TEST(PackLogicReplace,
                   VN_DYNAMIC_SOURCE_BUS, preparedRoute.tapSlot));
     EXPECT_EQ(oldTopologyPublications + 1,
               engine->topologyPlanCount);
+    EXPECT_EQ(preparedTapBytes, engine->dynamicRoutes.TapSampleStorageBytes());
     engine->nullBackend.Pump(1);
 }
 

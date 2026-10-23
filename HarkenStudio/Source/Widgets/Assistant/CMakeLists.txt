@@ -1,5 +1,5 @@
-# harken_editor_assistant -- STATIC library for the AIAssistantPanel widget.
-# Pattern: leaf (foundation link only). Note: AIAssistantPanel.cpp uses
+# harken_editor_assistant -- STATIC library for the AssistantPanel widget.
+# Pattern: leaf (foundation link only). Note: AssistantPanel.cpp uses
 # AIAssistantService from harken_editor_lib. Its symbols are resolved at the
 # final executable link when the harken_editor_lib OBJECT files and STATIC
 # libraries are combined.
@@ -9,8 +9,8 @@
 # (AIAssistantService at executable link).
 
 add_library(harken_editor_assistant STATIC
-    AIAssistantPanel.cpp
-    AIAssistantPanel.h
+    AssistantPanel.cpp
+    AssistantPanel.h
 )
 
 set_target_properties(harken_editor_assistant PROPERTIES

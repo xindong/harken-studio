@@ -68,6 +68,7 @@ struct PackPlaybackOwnerStore {
     struct Owner {
         PackClosureOwnerSnapshot snapshot{};
         std::vector<std::uint32_t> closureOwnerSlots;
+        std::shared_ptr<const std::vector<PackResourceRevisionToken>> resourceTokens;
     };
 
     std::vector<Owner> owners;

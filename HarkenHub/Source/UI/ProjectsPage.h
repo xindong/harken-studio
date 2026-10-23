@@ -25,6 +25,7 @@ class QVariantAnimation;
 namespace VNH {
 
 class ProjectStore;
+class TableSorting;
 
 class ProjectsPage : public QWidget
 {
@@ -67,7 +68,7 @@ private:
     void onAddTemplateClicked();
     QWidget* createNewProjectPage();
     void loadProjectTemplates(const QString& preferredPath = QString());
-    void loadProjectVersions();
+    void loadProjectVersions(const QString& preferredBuildId = QString());
     void validateSelectedTemplate();
     void showTemplatePreview(const QJsonObject& content,
                              const QString& description);
@@ -85,6 +86,7 @@ private:
     QWidget* projectsView_ = nullptr;
     QWidget* newProjectView_ = nullptr;
     QTableWidget* table_ = nullptr;
+    TableSorting* sorting_ = nullptr;
     QLabel* countLabel_ = nullptr;
     QLineEdit* projectNameEdit_ = nullptr;
     QLineEdit* projectLocationEdit_ = nullptr;
@@ -101,6 +103,7 @@ private:
     QTimer* launchTargetPollTimer_ = nullptr;
     QVariantAnimation* projectLaunchGuidanceAnimation_ = nullptr;
     QString projectLaunchGuidanceBuildId_;
+    QString pendingCreateBuildId_;
     InstalledVersion createTarget_;
     bool creatingProject_ = false;
     std::vector<InstalledVersion> createVersions_;

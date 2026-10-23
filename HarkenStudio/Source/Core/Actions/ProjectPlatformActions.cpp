@@ -47,9 +47,10 @@ struct EditState
 
 RootState captureRoot(const ProjectData& project)
 {
-    return {project.platforms, project.packExportCurrentPlatformId,
-            project.packExportSelectedPlatformIds, project.packGroups,
-            project.actionPackTargeting, project.deploymentProfiles,
+    const auto selection = ProjectManager::instance().packExportSelection();
+    return {project.platforms, selection.currentPlatformId,
+            selection.selectedPlatformIds, project.packGroups,
+            selection.actionTargeting, project.deploymentProfiles,
             PlatformContextService::instance().context()};
 }
 
@@ -112,14 +113,59 @@ void apply(ProjectManager& manager, const EditState& state, const QStringList& p
 {
     PropertyEditSession::finishAllActive(false);
     auto& project = *manager.currentProject();
+    const auto previousPlatformIds = project.platformIds();
     project.platforms = state.root.platforms;
     if (membershipChanged) {
-        project.packExportCurrentPlatformId = state.root.current;
-        project.packExportSelectedPlatformIds = state.root.selected;
+        auto selection = manager.packExportSelection();
+        const auto nextPlatformIds = project.platformIds();
+        if (!nextPlatformIds.contains(selection.currentPlatformId))
+            selection.currentPlatformId = state.root.current;
+        selection.selectedPlatformIds.removeIf([&](const auto& id) {
+            return !nextPlatformIds.contains(id);
+        });
+        for (const auto& id : state.root.selected)
+            if (!previousPlatformIds.contains(id) && nextPlatformIds.contains(id))
+                selection.selectedPlatformIds.append(id);
+        const auto currentTargeting = selection.actionTargeting;
+        if (std::any_of(nextPlatformIds.begin(), nextPlatformIds.end(),
+            [&](const auto& id) { return !previousPlatformIds.contains(id); })) {
+            for (const auto& saved : state.root.targeting)
+                if (std::none_of(selection.actionTargeting.begin(), selection.actionTargeting.end(),
+                    [&](const auto& entry) {
+                        return entry.stableId == saved.stableId && entry.language == saved.language;
+                    }))
+                    selection.actionTargeting.push_back(saved);
+        }
+        const auto effectiveEntry = [](const auto& entries, const auto& key) -> const ActionPackTargeting* {
+            const ActionPackTargeting* inherited = nullptr;
+            for (const auto& entry : entries) {
+                if (entry.stableId != key.stableId) continue;
+                if (entry.language == key.language) return &entry;
+                if (!entry.language) inherited = &entry;
+            }
+            return inherited;
+        };
+        for (auto& entry : selection.actionTargeting) {
+            const auto* current = effectiveEntry(currentTargeting, entry);
+            const auto* saved = effectiveEntry(state.root.targeting, entry);
+            QStringList candidates = current ? current->platformIds : QStringList{};
+            if (saved) candidates.append(saved->platformIds);
+            candidates.append(nextPlatformIds);
+            candidates.removeDuplicates();
+            entry.allPlatforms = !current || current->allPlatforms;
+            entry.platformIds.clear();
+            for (const auto& id : candidates) {
+                if (!nextPlatformIds.contains(id)) continue;
+                const auto* source = previousPlatformIds.contains(id) ? current : saved;
+                if (!source || source->includesPlatform(id)) entry.platformIds.append(id);
+                else entry.allPlatforms = false;
+            }
+            if (entry.allPlatforms) entry.platformIds.clear();
+        }
+        manager.setPackExportSelectionInternal(std::move(selection));
     }
     if (referencesChanged) {
         project.packGroups = state.root.groups;
-        project.actionPackTargeting = state.root.targeting;
         project.deploymentProfiles = state.root.deployments;
     }
     QVector<ProjectItem*> changed;

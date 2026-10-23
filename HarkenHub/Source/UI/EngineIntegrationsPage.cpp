@@ -15,8 +15,10 @@
 #include "Transactions/InstallIndex.h"
 #include "UI/BoundedHeaderView.h"
 #include "UI/NoHoverItemDelegate.h"
+#include "UI/TableSorting.h"
 #include "Versions/VersionScanner.h"
 #include "Integrations/Unity/UnityInstallation.h"
+#include "Integrations/Unity/UnityProjectAccess.h"
 #include "Integrations/Unity/UnityIntegrationService.h"
 
 #include <QAbstractItemView>
@@ -66,8 +68,10 @@
 #include <QUuid>
 #include <QUrl>
 #include <QVBoxLayout>
+#include <QVersionNumber>
 
 #include <algorithm>
+#include <functional>
 #include <utility>
 
 namespace VNH {
@@ -77,8 +81,38 @@ constexpr int kHarkenProjectColumn = 0;
 constexpr int kEngineProjectColumn = 1;
 constexpr int kEngineColumn = 2;
 constexpr int kSdkStatusColumn = 3;
-constexpr int kActionColumn = 4;
+constexpr int kSdkVersionColumn = 4;
+constexpr int kActionColumn = 5;
 constexpr int kPathButtonMinimumWidth = 126;
+constexpr int kProjectFolderRole = Qt::UserRole + 1;
+
+void addProjectFolderAction(QMenu& menu, int column, const QString& path)
+{
+    auto* action = menu.addAction(column == kHarkenProjectColumn
+        ? QCoreApplication::translate("HarkenHub", "Open Harken Project Folder")
+        : QCoreApplication::translate("HarkenHub", "Open Game Project Folder"));
+    action->setToolTip(QDir::toNativeSeparators(path));
+    action->setEnabled(!path.isEmpty() && QFileInfo(path).isDir());
+    QObject::connect(action, &QAction::triggered, &menu, [path]() {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+    });
+}
+
+class SdkSourceComboBox final : public QComboBox
+{
+public:
+    SdkSourceComboBox(QWidget* parent, std::function<void()> refreshSources)
+        : QComboBox(parent), refreshSources_(std::move(refreshSources)) {}
+
+    void showPopup() override
+    {
+        refreshSources_();
+        QComboBox::showPopup();
+    }
+
+private:
+    std::function<void()> refreshSources_;
+};
 
 bool hasPendingMigration(const EngineTargetRecord& target)
 {
@@ -131,6 +165,26 @@ QString engineName(EngineKind kind)
                                      : QStringLiteral("Unreal");
 }
 
+QString sdkContentText(SdkContentState state)
+{
+    switch (state) {
+        case SdkContentState::MatchesInstallation:
+        case SdkContentState::OptionalFilesMissing:
+            return QCoreApplication::translate("HarkenHub", "Normal");
+        case SdkContentState::Modified:
+            return QCoreApplication::translate("HarkenHub", "Files modified");
+        case SdkContentState::Missing:
+            return QCoreApplication::translate("HarkenHub", "Files missing");
+        case SdkContentState::ModifiedAndMissing:
+            return QCoreApplication::translate("HarkenHub", "Files modified and missing");
+        case SdkContentState::Unverified:
+            return QCoreApplication::translate("HarkenHub", "File verification incomplete");
+        case SdkContentState::NotChecked:
+            return {};
+    }
+    return {};
+}
+
 QString versionLabel(const InstalledVersion& version)
 {
     QString label = version.semanticVersion;
@@ -162,6 +216,49 @@ QString studioSdkPath(const InstalledVersion& version, EngineKind kind)
     return QDir(QFileInfo(version.executablePath).absolutePath()).filePath(
         kind == EngineKind::Unity ? QStringLiteral("HarkenSDK/Unity/Harken")
                                   : QStringLiteral("HarkenSDK/Unreal/Harken"));
+}
+
+struct LocalSdkSource
+{
+    QString path;
+    QString version;
+    QString label;
+    QString studioVersion;
+};
+
+QVector<LocalSdkSource> localSdkSources(
+    EngineKind kind, const std::vector<InstalledVersion>& versions)
+{
+    QVector<LocalSdkSource> sources;
+    for (const auto& studio : versions) {
+        const QString path = studioSdkPath(studio, kind);
+        const QString version = sdkVersion(path, kind);
+        if (version.isEmpty()) continue;
+        sources.push_back({path, version,
+            QCoreApplication::translate("HarkenHub", "SDK %1 | Studio %2")
+                .arg(version, versionLabel(studio)), studio.semanticVersion});
+    }
+    return sources;
+}
+
+std::vector<InstalledVersion> availableStudioVersions()
+{
+    auto versions = VersionScanner::scanAvailable();
+    std::stable_sort(versions.begin(), versions.end(), [](const auto& left, const auto& right) {
+        return left.releaseSequence > right.releaseSequence;
+    });
+    return versions;
+}
+
+int compareSdkVersions(const QString& left, const QString& right)
+{
+    qsizetype leftSuffix = 0;
+    qsizetype rightSuffix = 0;
+    const auto leftVersion = QVersionNumber::fromString(left, &leftSuffix);
+    const auto rightVersion = QVersionNumber::fromString(right, &rightSuffix);
+    if (leftVersion.isNull() || rightVersion.isNull()
+        || leftSuffix != left.size() || rightSuffix != right.size()) return 0;
+    return QVersionNumber::compare(leftVersion, rightVersion);
 }
 
 QString targetInputPath(const EngineTargetRecord& target)
@@ -484,30 +581,32 @@ EngineIntegrationsPage::EngineIntegrationsPage(
     title->setObjectName(QStringLiteral("pageTitle"));
     listHeader->addWidget(title, 0, Qt::AlignBottom);
     listHeader->addStretch();
-    auto* editButton = new QPushButton(QCoreApplication::translate("HarkenHub", "Edit Integration"), listPage_);
+    auto* editButton = new QPushButton(QCoreApplication::translate("HarkenHub", "Manage Integration"), listPage_);
     editButton->setObjectName(QStringLiteral("addIntegrationButton"));
     editButton->setText(QStringLiteral("+"));
     editButton->setFixedSize(34, 34);
-    editButton->setToolTip(QCoreApplication::translate("HarkenHub", "Edit Integration"));
-    editButton->setAccessibleName(QCoreApplication::translate("HarkenHub", "Edit Integration"));
+    editButton->setToolTip(QCoreApplication::translate("HarkenHub", "Manage Integration"));
+    editButton->setAccessibleName(QCoreApplication::translate("HarkenHub", "Manage Integration"));
     connect(editButton, &QPushButton::clicked, this,
             [this]() { beginNewEditor(); });
     listHeader->addWidget(editButton);
 
     table_ = new QTableWidget(listPage_);
-    table_->setColumnCount(5);
+    table_->setObjectName(QStringLiteral("engineIntegrationsTable"));
+    table_->setColumnCount(6);
     table_->setHorizontalHeaderLabels({
         QCoreApplication::translate("HarkenHub", "HARKEN PROJECT"),
         QCoreApplication::translate("HarkenHub", "GAME PROJECT"),
         QCoreApplication::translate("HarkenHub", "ENGINE"),
         QCoreApplication::translate("HarkenHub", "SDK STATUS"),
+        QCoreApplication::translate("HarkenHub", "SDK VERSION"),
         QString(),
     });
     auto* boundedHeader = new BoundedHeaderView(Qt::Horizontal, table_);
-    boundedHeader->setFillSection(kSdkStatusColumn);
+    boundedHeader->setFillSection(kSdkVersionColumn);
     table_->setHorizontalHeader(boundedHeader);
     table_->horizontalHeader()->setHighlightSections(false);
-    table_->horizontalHeader()->setSectionsClickable(false);
+    sorting_ = new TableSorting(table_, QStringLiteral("engineIntegrations"), kEngineColumn);
     table_->horizontalHeader()->setDefaultAlignment(
         Qt::AlignLeft | Qt::AlignVCenter);
     table_->horizontalHeader()->setSectionResizeMode(
@@ -517,14 +616,17 @@ EngineIntegrationsPage::EngineIntegrationsPage(
     table_->horizontalHeader()->setSectionResizeMode(
         kEngineColumn, QHeaderView::Interactive);
     table_->horizontalHeader()->setSectionResizeMode(
-        kSdkStatusColumn, QHeaderView::Stretch);
+        kSdkStatusColumn, QHeaderView::Interactive);
+    table_->horizontalHeader()->setSectionResizeMode(
+        kSdkVersionColumn, QHeaderView::Stretch);
     table_->horizontalHeader()->setSectionResizeMode(
         kActionColumn, QHeaderView::Fixed);
     table_->horizontalHeader()->setMinimumSectionSize(70);
-    table_->setColumnWidth(kHarkenProjectColumn, 300);
-    table_->setColumnWidth(kEngineProjectColumn, 480);
-    table_->setColumnWidth(kEngineColumn, 130);
-    table_->setColumnWidth(kSdkStatusColumn, 150);
+    table_->setColumnWidth(kHarkenProjectColumn, 180);
+    table_->setColumnWidth(kEngineProjectColumn, 200);
+    table_->setColumnWidth(kEngineColumn, 80);
+    table_->setColumnWidth(kSdkStatusColumn, 130);
+    table_->setColumnWidth(kSdkVersionColumn, 190);
     table_->setColumnWidth(kActionColumn, 70);
     table_->verticalHeader()->hide();
     table_->verticalHeader()->setDefaultSectionSize(58);
@@ -542,7 +644,22 @@ EngineIntegrationsPage::EngineIntegrationsPage(
     table_->setItemDelegateForColumn(
         kSdkStatusColumn, new NoHoverItemDelegate(table_));
     table_->setItemDelegateForColumn(
+        kSdkVersionColumn, new NoHoverItemDelegate(table_));
+    table_->setItemDelegateForColumn(
         kActionColumn, new NoHoverItemDelegate(table_));
+    table_->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(table_, &QTableWidget::customContextMenuRequested, this,
+            [this](const QPoint& position) {
+                if (operationRunning_) return;
+                const auto* item = table_->itemAt(position);
+                if (!item || (item->column() != kHarkenProjectColumn
+                              && item->column() != kEngineProjectColumn)) return;
+                QMenu popup(this);
+                popup.setToolTipsVisible(true);
+                addProjectFolderAction(popup, item->column(),
+                                       item->data(kProjectFolderRole).toString());
+                popup.exec(table_->viewport()->mapToGlobal(position));
+            });
 
     auto* panel = new QFrame(listPage_);
     panel->setObjectName(QStringLiteral("tablePanel"));
@@ -628,7 +745,7 @@ EngineIntegrationsPage::EngineIntegrationsPage(
     engineField->setSpacing(8);
     engineProjectEdit_ = new QLineEdit(engineFieldWidget);
     engineProjectEdit_->setPlaceholderText(
-        QCoreApplication::translate("HarkenHub", "Select a Unity or Unreal project"));
+        QCoreApplication::translate("HarkenHub", "Select a Unity project"));
     engineProjectEdit_->setObjectName(QStringLiteral("engineProjectPath"));
     engineBrowseButton_ = new QPushButton(
         QCoreApplication::translate("HarkenHub", "Select Game Project"), engineFieldWidget);
@@ -654,7 +771,7 @@ EngineIntegrationsPage::EngineIntegrationsPage(
     relationshipActions->addWidget(linkProjectsButton_);
     relationshipActions->addWidget(unlinkProjectsButton_);
     form->addLayout(relationshipActions);
-    const QString associationHint = QCoreApplication::translate("HarkenHub", "Association only controls whether this project pair appears in Engine Integrations. SDK checks and management do not require association.");
+    const QString associationHint = QCoreApplication::translate("HarkenHub", "Linking adds this project pair to Engine Integrations and establishes a one-to-one relationship in this Hub. Unlink the pair before linking either project to another. SDK checks and management do not require linking.");
     auto* associationLabel = new QLabel(associationHint, formPanel);
     associationLabel->setObjectName(QStringLiteral("projectAssociationHint"));
     associationLabel->setWordWrap(true);
@@ -719,7 +836,7 @@ EngineIntegrationsPage::EngineIntegrationsPage(
     sdkSelectionDialog_->setWindowFlag(Qt::WindowMaximizeButtonHint, true);
     sdkSelectionDialog_->setSizeGripEnabled(true);
     sdkSelectionDialog_->setMinimumSize(640, 360);
-    sdkSelectionDialog_->resize(780, 440);
+    sdkSelectionDialog_->resize(820, 600);
     sdkSelectionDialog_->installEventFilter(this);
     auto* dialogLayout = new QVBoxLayout(sdkSelectionDialog_);
     dialogLayout->setContentsMargins(20, 20, 20, 20);
@@ -731,7 +848,9 @@ EngineIntegrationsPage::EngineIntegrationsPage(
     selectionLayout->setSpacing(8);
     auto [sdkRowWidget, sdkPathRow] = makeRow(
         QCoreApplication::translate("HarkenHub", "SDK Source Directory"));
-    sdkSourceCombo_ = new QComboBox(sdkRowWidget);
+    sdkSourceCombo_ = new SdkSourceComboBox(sdkRowWidget, [this]() {
+        if (!operationRunning_) refreshLocalSdkSources();
+    });
     sdkSourceCombo_->setObjectName(QStringLiteral("sdkSourceSelector"));
     sdkSourceCombo_->installEventFilter(this);
     sdkSourceCombo_->setEditable(true);
@@ -775,7 +894,7 @@ EngineIntegrationsPage::EngineIntegrationsPage(
     integrateButton_ = new QPushButton(
         QCoreApplication::translate("HarkenHub", "Install SDK..."), sdkSelectionDialog_);
     integrateButton_->setObjectName(QStringLiteral("sdkPrimaryAction"));
-    integrateButton_->setDefault(true);
+    integrateButton_->setAutoDefault(false);
     cancelSdkButton_ = new QPushButton(QCoreApplication::translate("HarkenHub", "Cancel"), sdkSelectionDialog_);
     cancelSdkButton_->setAutoDefault(false);
     cancelSdkButton_->setObjectName(QStringLiteral("cancelSdkSelection"));
@@ -792,7 +911,18 @@ EngineIntegrationsPage::EngineIntegrationsPage(
         button->setMinimumWidth(buttonWidth);
     integrationActionRow->addWidget(cancelSdkButton_);
     integrationActionRow->addWidget(integrateButton_);
+    sdkSelectionContext_ = new QLabel(sdkSelectionDialog_);
+    sdkSelectionContext_->setObjectName(QStringLiteral("sdkSelectionContext"));
+    sdkSelectionContext_->setTextFormat(Qt::PlainText);
+    sdkSelectionContext_->setWordWrap(true);
+    sdkSelectionContext_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    sdkSelectionContext_->hide();
+    dialogLayout->addWidget(sdkSelectionContext_);
     dialogLayout->addWidget(sdkSelectionRow_);
+    sdkProgress_ = new IntegrationTaskProgress(sdkSelectionDialog_);
+    sdkProgress_->setObjectName(QStringLiteral("sdkInlineProgress"));
+    sdkProgress_->hide();
+    dialogLayout->addWidget(sdkProgress_);
     sdkSelectionSummary_ = new QLabel(sdkSelectionDialog_);
     sdkSelectionSummary_->setObjectName(QStringLiteral("sdkSelectionSummary"));
     sdkSelectionSummary_->setWordWrap(true);
@@ -826,8 +956,29 @@ EngineIntegrationsPage::EngineIntegrationsPage(
     sdkSelectionDetails_->setOpenLinks(false);
     sdkSelectionDetails_->setOpenExternalLinks(false);
     sdkResultsTabs_->addTab(sdkSelectionDetails_, QCoreApplication::translate("HarkenHub", "Check Log"));
+    sdkSelectionPaths_ = new QPlainTextEdit(sdkResultsTabs_);
+    sdkSelectionPaths_->setObjectName(QStringLiteral("sdkSelectionPaths"));
+    sdkSelectionPaths_->setReadOnly(true);
+    sdkResultsTabs_->addTab(sdkSelectionPaths_, QCoreApplication::translate("HarkenHub", "Project and SDK Paths"));
     sdkResultsTabs_->setMinimumHeight(160);
     dialogLayout->addWidget(sdkResultsTabs_, 1);
+    sdkSafetyHint_ = new QLabel(sdkSelectionDialog_);
+    sdkSafetyHint_->setObjectName(QStringLiteral("sdkEngineRunningHint"));
+    sdkSafetyHint_->setWordWrap(true);
+    sdkSafetyHint_->setStyleSheet(QStringLiteral("color: #FF6B6B;"));
+    sdkSafetyHint_->hide();
+    engineStatusTimer_ = new QTimer(this);
+    engineStatusTimer_->setInterval(1000);
+    connect(engineStatusTimer_, &QTimer::timeout, this, &EngineIntegrationsPage::refreshEngineRunningHint);
+    dialogLayout->addWidget(sdkSafetyHint_);
+    sdkReportButton_ = new QPushButton(QCoreApplication::translate("HarkenHub", "Open Report"), sdkSelectionDialog_);
+    sdkReportButton_->setObjectName(QStringLiteral("sdkOpenReport"));
+    sdkReportButton_->setAutoDefault(false);
+    sdkReportButton_->hide();
+    integrationActionRow->insertWidget(1, sdkReportButton_);
+    connect(sdkReportButton_, &QPushButton::clicked, this, [this]() {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(sdkReportPath_));
+    });
     dialogLayout->addLayout(integrationActionRow);
     editorLayout->addWidget(formPanel);
 
@@ -968,8 +1119,73 @@ EngineIntegrationsPage::EngineIntegrationsPage(
     refresh();
 }
 
+EngineIntegrationsPage::~EngineIntegrationsPage()
+{
+    cancelTargetInspections();
+}
+
+void EngineIntegrationsPage::cancelTargetInspections()
+{
+    for (auto& inspection : targetInspections_) {
+        if (inspection.cancelled) inspection.cancelled->store(true, std::memory_order_relaxed);
+        inspection.cancelled.reset();
+    }
+}
+
+EngineTargetObservation EngineIntegrationsPage::requestTargetObservation(
+    const EngineTargetRecord& target, bool refresh)
+{
+    auto& inspection = targetInspections_[target.targetId];
+    if (!operationRunning_ && (refresh || (!inspection.ready && !inspection.cancelled))) {
+        if (inspection.cancelled) inspection.cancelled->store(true, std::memory_order_relaxed);
+        if (!inspection.ready) {
+            inspection.observation = {};
+            inspection.observation.status = QCoreApplication::translate("HarkenHub", "Checking SDK status...");
+        }
+        const auto cancelled = std::make_shared<std::atomic<bool>>(false);
+        inspection.cancelled = cancelled;
+        const QPointer<EngineIntegrationsPage> self(this);
+        QThreadPool::globalInstance()->start([self, target, cancelled]() {
+            std::atomic<quint64> inspected{0};
+            IntegrationProgress progress(inspected, *cancelled);
+            EngineTargetObservation observation;
+            try {
+                IntegrationProgress::checkpoint();
+                observation = EngineTargetProbe::observe(target, true);
+                IntegrationProgress::checkpoint();
+            } catch (const IntegrationScanStopped&) {
+                return;
+            }
+            QMetaObject::invokeMethod(QCoreApplication::instance(), [self, target, cancelled, observation]() {
+                if (!self || cancelled->load(std::memory_order_relaxed)) return;
+                auto found = self->targetInspections_.find(target.targetId);
+                if (found == self->targetInspections_.end() || found->cancelled != cancelled) return;
+                found->observation = observation;
+                found->ready = true;
+                found->cancelled.reset();
+                const bool recoverLocation = std::exchange(found->recoverLocation, false);
+                self->populateList();
+                if (self->selectedEngineTargetId_ == target.targetId)
+                    self->updateRemovalButtonState(recoverLocation);
+                emit self->sdkStatusChanged(target.targetId);
+            }, Qt::QueuedConnection);
+        });
+    }
+    return inspection.observation;
+}
+
 bool EngineIntegrationsPage::eventFilter(QObject* watched, QEvent* event)
 {
+    if (watched == sdkSelectionDialog_) {
+        if (event->type() == QEvent::Show) {
+            engineRunning_ = false;
+            sdkSafetyHint_->hide();
+            engineStatusTimer_->start();
+            QTimer::singleShot(0, this, &EngineIntegrationsPage::refreshEngineRunningHint);
+        } else if (event->type() == QEvent::Hide) {
+            engineStatusTimer_->stop();
+        }
+    }
     if ((watched == sdkSourceCombo_ || watched == sdkPathEdit_)
         && sdkSourceCombo_->isEnabled()
         && (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease)
@@ -992,7 +1208,43 @@ bool EngineIntegrationsPage::eventFilter(QObject* watched, QEvent* event)
 
 void EngineIntegrationsPage::refresh()
 {
+    if (operationRunning_ || listMenuOpen_ || refreshingList_) {
+        versionRefreshPending_ = true;
+        return;
+    }
+    const auto targets = targets_->list();
+    const auto integrations = integrations_->list();
     inspectionStopped_ = false;
+    for (const auto& target : targets) {
+        if (target.targetId == selectedEngineTargetId_
+            || std::any_of(integrations.begin(), integrations.end(), [&](const auto& record) {
+                return record.engineTargetId == target.targetId;
+            }))
+            requestTargetObservation(target, true);
+    }
+    populateList();
+}
+
+void EngineIntegrationsPage::populateList()
+{
+    if (operationRunning_ || listMenuOpen_ || refreshingList_) {
+        observationRefreshPending_ = true;
+        return;
+    }
+    observationRefreshPending_ = false;
+    refreshingList_ = true;
+    const auto finishRefresh = qScopeGuard([this]() {
+        refreshingList_ = false;
+        if (versionRefreshPending_)
+            QTimer::singleShot(0, this, &EngineIntegrationsPage::refreshStudioVersion);
+    });
+    versionRefreshPending_ = false;
+    sorting_->beginRefresh();
+    const auto selectedRows = table_->selectionModel()->selectedRows(kHarkenProjectColumn);
+    const QString selectedId = selectedRows.isEmpty()
+        ? QString() : selectedRows.front().data(Qt::UserRole).toString();
+    const auto* currentItem = table_->item(table_->currentRow(), kHarkenProjectColumn);
+    const QString currentId = currentItem ? currentItem->data(Qt::UserRole).toString() : QString();
     const auto integrations = integrations_->list();
     const auto targets = targets_->list();
     const QString storageError = integrations_->lastError().isEmpty()
@@ -1001,7 +1253,11 @@ void EngineIntegrationsPage::refresh()
     storageErrorLabel_->setText(storageError.isEmpty() ? QString()
         : QCoreApplication::translate("HarkenHub", "Integration records could not be read.\n%1").arg(localizeIntegrationText(storageError)));
     const auto projects = projects_->listProjects();
+    const auto versions = availableStudioVersions();
+    const auto unitySources = localSdkSources(EngineKind::Unity, versions);
+    const auto unrealSources = localSdkSources(EngineKind::Unreal, versions);
     table_->clearContents();
+    table_->setCurrentCell(-1, -1);
     table_->setRowCount(static_cast<int>(integrations.size()));
     for (int row = 0; row < static_cast<int>(integrations.size()); ++row) {
         const IntegrationRecord& integration =
@@ -1018,34 +1274,72 @@ void EngineIntegrationsPage::refresh()
         const QString harkenName = project == projects.end()
             ? QFileInfo(integration.harkenProjectPath).completeBaseName()
             : project->displayName;
-        auto* harkenItem = new QTableWidgetItem(harkenName);
+        auto* harkenItem = new SortableTableItem(harkenName);
         harkenItem->setToolTip(integration.harkenProjectPath);
         harkenItem->setData(Qt::UserRole, integration.integrationId);
+        const QString harkenRoot = QFileInfo(integration.harkenProjectPath).absolutePath();
+        harkenItem->setData(kProjectFolderRole, harkenRoot);
         table_->setItem(row, kHarkenProjectColumn, harkenItem);
         if (target == targets.end()) {
             table_->setItem(row, kEngineProjectColumn,
-                            new QTableWidgetItem());
+                            new SortableTableItem(QString()));
             table_->setItem(row, kEngineColumn, new QTableWidgetItem());
             table_->setItem(
                 row, kSdkStatusColumn,
                 new QTableWidgetItem(healthText(EngineTargetHealth::Missing)));
+            table_->setItem(row, kSdkVersionColumn, new QTableWidgetItem(
+                QCoreApplication::translate("HarkenHub", "Unknown")));
         } else {
-            EngineTargetObservation observation;
-            if (inspectionStopped_)
-                observation.status = QCoreApplication::translate("HarkenHub", "SDK scan stopped");
-            else
-                observation = observeTarget(*target);
-            auto* targetItem = new QTableWidgetItem(target->displayName);
+            const auto observation = requestTargetObservation(*target);
+            auto* targetItem = new SortableTableItem(target->displayName);
             targetItem->setToolTip(targetInputPath(*target));
             targetItem->setData(Qt::UserRole, target->canonicalRoot);
+            targetItem->setData(kProjectFolderRole, target->canonicalRoot);
             table_->setItem(row, kEngineProjectColumn, targetItem);
             table_->setItem(row, kEngineColumn,
                             new QTableWidgetItem(engineName(target->engineKind)));
-            auto* statusItem = new QTableWidgetItem(observation.status.isEmpty()
-                ? healthText(observation.health) : observation.status);
-            statusItem->setToolTip(observation.error.isEmpty()
-                ? observation.sdkInstallPath : localizeIntegrationText(observation.error));
+            const QString contentText = sdkContentText(observation.sdkContentState);
+            QString statusText = observation.status;
+            if (statusText.isEmpty()
+                && (observation.health != EngineTargetHealth::Managed || contentText.isEmpty()))
+                statusText = healthText(observation.health);
+            if (!contentText.isEmpty()) {
+                if (!statusText.isEmpty()) statusText += QLatin1Char('\n');
+                statusText += contentText;
+            }
+            auto* statusItem = new QTableWidgetItem(statusText);
+            if (!observation.sdkInstallPath.isEmpty())
+                statusItem->setToolTip(QCoreApplication::translate(
+                    "HarkenHub", "Current SDK installation path:\n%1").arg(observation.sdkInstallPath));
+            if (observation.sdkContentState != SdkContentState::NotChecked
+                && observation.sdkContentState != SdkContentState::OptionalFilesMissing
+                && observation.sdkContentState != SdkContentState::MatchesInstallation)
+                statusItem->setForeground(QColor(QStringLiteral("#E3B341")));
             table_->setItem(row, kSdkStatusColumn, statusItem);
+            const auto& sources = target->engineKind == EngineKind::Unity ? unitySources : unrealSources;
+            QString versionText = observation.integrationVersion;
+            if (!versionText.isEmpty())
+                versionText = QCoreApplication::translate("HarkenHub", "Installed: %1").arg(versionText);
+            if (versionText.isEmpty())
+                versionText = observation.health == EngineTargetHealth::NotInstalled
+                    ? QCoreApplication::translate("HarkenHub", "Not installed")
+                    : QCoreApplication::translate("HarkenHub", "Unknown");
+            QString newestVersion = observation.integrationVersion;
+            for (const auto& source : sources) {
+                if (compareSdkVersions(source.version, newestVersion) > 0)
+                    newestVersion = source.version;
+            }
+            const bool newer = !observation.integrationVersion.isEmpty()
+                && newestVersion != observation.integrationVersion;
+            if (newer)
+                versionText += QLatin1Char('\n') + QCoreApplication::translate(
+                    "HarkenHub", "Update available: %1").arg(newestVersion);
+            auto* versionItem = new QTableWidgetItem(versionText);
+            if (newer) versionItem->setForeground(QColor(QStringLiteral("#00D9EF")));
+            if (newer)
+                versionItem->setToolTip(QCoreApplication::translate(
+                    "HarkenHub", "Latest local SDK version: %1").arg(newestVersion));
+            table_->setItem(row, kSdkVersionColumn, versionItem);
         }
 
         table_->setItem(row, kActionColumn, new QTableWidgetItem());
@@ -1061,25 +1355,149 @@ void EngineIntegrationsPage::refresh()
         menu->setIcon(HubIcons::moreIcon(holder->devicePixelRatioF()));
         menu->setIconSize(QSize(16, 16));
         menu->setFixedSize(34, 26);
-        connect(menu, &QToolButton::clicked, this, [this, row, menu]() {
+        const QString integrationId = integration.integrationId;
+        const QString engineRoot = target == targets.end() ? QString() : target->canonicalRoot;
+        connect(menu, &QToolButton::clicked, this, [this, integrationId, harkenRoot, engineRoot, menu]() {
+            if (operationRunning_) return;
+            listMenuOpen_ = true;
             QMenu popup;
-            QAction* edit = popup.addAction(QCoreApplication::translate("HarkenHub", "Edit Integration"));
-            QAction* open = popup.addAction(QCoreApplication::translate("HarkenHub", "Open Folder"));
+            popup.setToolTipsVisible(true);
+            QAction* edit = popup.addAction(QCoreApplication::translate("HarkenHub", "Manage SDK and Project Links"));
+            edit->setToolTip(QCoreApplication::translate("HarkenHub", "Manage project links, verify SDK files, change versions, move or uninstall the SDK, and view detailed reports."));
+            auto* change = popup.addMenu(QCoreApplication::translate("HarkenHub", "Quick Change SDK"));
+            change->setObjectName(QStringLiteral("quickSdkSources"));
+            change->setToolTipsVisible(true);
+            const auto records = integrations_->list();
+            const auto record = std::find_if(records.begin(), records.end(), [&](const auto& value) {
+                return value.integrationId == integrationId;
+            });
+            const QString targetId = record == records.end() ? QString() : record->engineTargetId;
+            const auto targets = targets_->list();
+            for (const auto& target : targets)
+                if (target.targetId == targetId) requestTargetObservation(target, true);
+            populateQuickSdkMenu(change, integrationId);
+            connect(this, &EngineIntegrationsPage::sdkStatusChanged, change,
+                [this, change, integrationId, targetId](const QString& updatedId) {
+                    if (updatedId == targetId) populateQuickSdkMenu(change, integrationId);
+                });
+            popup.addSeparator();
+            addProjectFolderAction(popup, kHarkenProjectColumn, harkenRoot);
+            addProjectFolderAction(popup, kEngineProjectColumn, engineRoot);
             popup.addSeparator();
             QAction* remove = popup.addAction(QCoreApplication::translate("HarkenHub", "Unlink Projects..."));
             QAction* selected = popup.exec(
                 menu->mapToGlobal(QPoint(0, menu->height())));
+            listMenuOpen_ = false;
+            if (observationRefreshPending_)
+                QTimer::singleShot(0, this, &EngineIntegrationsPage::populateList);
+            const QString sourcePath = selected ? selected->data().toString() : QString();
             if (selected == edit)
-                editIntegration(row);
-            else if (selected == open)
-                openEngineFolder(row);
+                beginExistingEditor(integrationId);
             else if (selected == remove)
-                removeIntegration(row);
+                unlinkProjects(integrationId);
+            else if (!sourcePath.isEmpty())
+                changeSdkFromList(integrationId, sourcePath);
+            if (versionRefreshPending_)
+                QTimer::singleShot(0, this, &EngineIntegrationsPage::refreshStudioVersion);
         });
         actions->addWidget(menu);
         table_->setCellWidget(row, kActionColumn, holder);
+        if (integrationId == selectedId)
+            table_->selectRow(row);
+        if (integrationId == currentId)
+            table_->setCurrentCell(row, kHarkenProjectColumn, QItemSelectionModel::NoUpdate);
     }
-    applyHighlight();
+    sorting_->endRefresh();
+    if (!highlightedIntegrationId_.isEmpty())
+        applyHighlight();
+}
+
+
+void EngineIntegrationsPage::populateQuickSdkMenu(QMenu* change, const QString& integrationId)
+{
+    change->clear();
+    const auto records = integrations_->list();
+    const auto record = std::find_if(records.begin(), records.end(), [&](const auto& value) {
+        return value.integrationId == integrationId;
+    });
+    const auto targets = targets_->list();
+    const auto target = std::find_if(targets.begin(), targets.end(), [&](const auto& value) {
+        return record != records.end() && value.targetId == record->engineTargetId;
+    });
+    if (target != targets.end()) {
+        const auto observation = requestTargetObservation(*target);
+        auto sources = localSdkSources(target->engineKind, availableStudioVersions());
+        const auto sourceGroup = [&](const LocalSdkSource& source) {
+            const int comparison = compareSdkVersions(source.version, observation.integrationVersion);
+            return comparison > 0 ? 0 : comparison < 0 ? 2 : 1;
+        };
+        std::stable_sort(sources.begin(), sources.end(), [&](const auto& left, const auto& right) {
+            const int leftGroup = sourceGroup(left);
+            const int rightGroup = sourceGroup(right);
+            if (leftGroup != rightGroup) return leftGroup < rightGroup;
+            const int comparison = QVersionNumber::compare(
+                QVersionNumber::fromString(left.version), QVersionNumber::fromString(right.version));
+            if (comparison != 0) return comparison > 0;
+            return QVersionNumber::compare(QVersionNumber::fromString(left.studioVersion),
+                                           QVersionNumber::fromString(right.studioVersion)) > 0;
+        });
+        if (!targetInspections_[target->targetId].ready) {
+            change->addAction(observation.status)->setEnabled(false);
+            change->addSeparator();
+        } else if (!observation.integrationVersion.isEmpty()) {
+            QString installed = QCoreApplication::translate("HarkenHub", "Installed SDK: %1")
+                .arg(observation.integrationVersion);
+            const QString contentText = sdkContentText(observation.sdkContentState);
+            if (!contentText.isEmpty()) installed += QStringLiteral(" — ") + contentText;
+            change->addAction(installed)->setEnabled(false);
+            change->addSeparator();
+        }
+        int previousGroup = -1;
+        for (const auto& source : sources) {
+            const int group = sourceGroup(source);
+            if (previousGroup != -1 && previousGroup != group)
+                change->addSeparator();
+            previousGroup = group;
+            QString label = source.label;
+            const bool sameVersion = source.version == observation.integrationVersion;
+            const bool installedSource = sameVersion && !record->sdkSourcePath.isEmpty()
+                && samePath(source.path, record->sdkSourcePath);
+            const int comparison = compareSdkVersions(source.version, observation.integrationVersion);
+            if (installedSource) {
+                label += QCoreApplication::translate("HarkenHub", " (Installed source)");
+                if (observation.sdkContentState != SdkContentState::NotChecked
+                    && observation.sdkContentState != SdkContentState::OptionalFilesMissing
+                    && observation.sdkContentState != SdkContentState::MatchesInstallation)
+                    label += QStringLiteral(" — ") + sdkContentText(observation.sdkContentState);
+            } else if (sameVersion)
+                label += QCoreApplication::translate("HarkenHub", " (Same version number as installed)");
+            else if (comparison > 0)
+                label += QCoreApplication::translate("HarkenHub", " (Upgrade)");
+            else if (comparison < 0)
+                label += QCoreApplication::translate("HarkenHub", " (Older version)");
+            auto* action = change->addAction(label);
+            action->setData(source.path);
+            action->setCheckable(installedSource);
+            action->setChecked(installedSource);
+            action->setEnabled(observation.canChangeSdk
+                && observation.health != EngineTargetHealth::NotInstalled);
+            QString tooltip = action->isEnabled()
+                ? QDir::toNativeSeparators(source.path) + QLatin1Char('\n')
+                    + QCoreApplication::translate("HarkenHub", "SDK files will be checked before you confirm the change.")
+                : observation.remediation;
+            if (installedSource)
+                tooltip += QLatin1Char('\n') + QCoreApplication::translate("HarkenHub", "This is the source recorded for the installed SDK. File verification compares the installed files with their installation record; the source folder may have changed since installation.");
+            if (sameVersion)
+                tooltip += QLatin1Char('\n') + QCoreApplication::translate("HarkenHub", "SDKs with the same version number can contain different files. Select a source to check its contents.");
+            action->setToolTip(tooltip);
+        }
+        if (sources.isEmpty())
+            change->addAction(QCoreApplication::translate(
+                "HarkenHub", "No local SDK sources are available."))->setEnabled(false);
+    }
+    if (change->isEmpty())
+        change->addAction(QCoreApplication::translate(
+            "HarkenHub", "No local SDK sources are available."))->setEnabled(false);
 }
 
 void EngineIntegrationsPage::beginEditForProject(
@@ -1139,7 +1557,18 @@ void EngineIntegrationsPage::beginNewEditor(const QString& harkenProjectPath)
 void EngineIntegrationsPage::beginExistingEditor(
     const QString& integrationId)
 {
+    if (!loadExistingIntegration(integrationId)) return;
+    stack_->setCurrentWidget(editorPage_);
+    updateStudioVersionFields();
+}
+
+bool EngineIntegrationsPage::loadExistingIntegration(const QString& integrationId, bool refreshObservation)
+{
     sdkSelectionDialog_->hide();
+    quickSdkChange_ = false;
+    ++versionRequest_;
+    versionResolutionPending_ = false;
+    studioVersion_.reset();
     const auto integrations = integrations_->list();
     const auto integration = std::find_if(
         integrations.begin(), integrations.end(),
@@ -1147,10 +1576,10 @@ void EngineIntegrationsPage::beginExistingEditor(
             return value.integrationId == integrationId;
         });
     if (integration == integrations.end()) {
-        QMessageBox::warning(this, QCoreApplication::translate("HarkenHub", "Edit Integration"),
+        QMessageBox::warning(this, QCoreApplication::translate("HarkenHub", "Manage Integration"),
                              QCoreApplication::translate("HarkenHub", "The integration is no longer available."));
         showList();
-        return;
+        return false;
     }
     const auto targets = targets_->list();
     const auto target = std::find_if(
@@ -1158,10 +1587,10 @@ void EngineIntegrationsPage::beginExistingEditor(
             return value.targetId == integration->engineTargetId;
         });
     if (target == targets.end()) {
-        QMessageBox::warning(this, QCoreApplication::translate("HarkenHub", "Edit Integration"),
+        QMessageBox::warning(this, QCoreApplication::translate("HarkenHub", "Manage Integration"),
                              QCoreApplication::translate("HarkenHub", "The engine project is no longer available."));
         showConflict(integrationId, QCoreApplication::translate("HarkenHub", "The stored engine project is missing."));
-        return;
+        return false;
     }
 
     sdkSelection_.reset();
@@ -1179,13 +1608,35 @@ void EngineIntegrationsPage::beginExistingEditor(
     clearResults();
     setSummaryText(
         QCoreApplication::translate("HarkenHub", "No integration check has run."));
-    stack_->setCurrentWidget(editorPage_);
     if (!integration->sdkSourcePath.trimmed().isEmpty())
         setSdkPath(integration->sdkSourcePath, true);
     else
         setSdkPath({}, false);
-    updateStudioVersionFields();
+    if (refreshObservation) {
+        targetInspections_[target->targetId].ready = false;
+        requestTargetObservation(*target, true);
+    }
     updateRemovalButtonState(true);
+    return true;
+}
+
+void EngineIntegrationsPage::changeSdkFromList(
+    const QString& integrationId, const QString& sourcePath)
+{
+    if (operationRunning_ || !loadExistingIntegration(integrationId, false)) return;
+    if (targetBlocked_ || !sdkInstalled_) {
+        QMessageBox::warning(this, QCoreApplication::translate("HarkenHub", "Change SDK"),
+            changeSdkButton_->toolTip().isEmpty()
+                ? QCoreApplication::translate("HarkenHub", "The installed SDK is no longer available. Open Manage Integration to review its status.")
+                : changeSdkButton_->toolTip());
+        refresh();
+        return;
+    }
+    quickSdkChange_ = true;
+    beginSdkSelection();
+    setSdkPath(sourcePath, true);
+    runCheck();
+    refresh();
 }
 
 void EngineIntegrationsPage::showList()
@@ -1202,22 +1653,21 @@ void EngineIntegrationsPage::showList()
 
 void EngineIntegrationsPage::refreshStudioVersion()
 {
-    if (operationRunning_) return;
+    if (!isVisible() || operationRunning_ || listMenuOpen_ || refreshingList_) {
+        versionRefreshPending_ = true;
+        return;
+    }
+    if (sdkSelectionDialog_->isVisible()) {
+        versionRefreshPending_ = true;
+        if (!quickSdkChange_ && !sdkSourceCombo_->view()->isVisible())
+            refreshLocalSdkSources();
+        return;
+    }
+    versionRefreshPending_ = false;
     if (stack_->currentWidget() == editorPage_)
         updateStudioVersionFields();
-}
-
-void EngineIntegrationsPage::editIntegration(int row)
-{
-    const QTableWidgetItem* item = table_->item(row, kHarkenProjectColumn);
-    if (item)
-        beginExistingEditor(item->data(Qt::UserRole).toString());
-}
-
-void EngineIntegrationsPage::removeIntegration(int row)
-{
-    const QTableWidgetItem* item = table_->item(row, kHarkenProjectColumn);
-    if (item) unlinkProjects(item->data(Qt::UserRole).toString());
+    else
+        refresh();
 }
 
 void EngineIntegrationsPage::unlinkProjects(const QString& integrationId)
@@ -1269,14 +1719,6 @@ void EngineIntegrationsPage::linkProjects()
     }
 }
 
-void EngineIntegrationsPage::openEngineFolder(int row)
-{
-    const QTableWidgetItem* item = table_->item(row, kEngineProjectColumn);
-    if (item)
-        QDesktopServices::openUrl(
-            QUrl::fromLocalFile(item->data(Qt::UserRole).toString()));
-}
-
 void EngineIntegrationsPage::browseHarkenProject()
 {
     auto* dialog = new QFileDialog(
@@ -1301,24 +1743,6 @@ void EngineIntegrationsPage::browseEngineProject()
                        | QFileDialog::DontUseCustomDirectoryIcons);
     dialog->setFileMode(QFileDialog::Directory);
     connect(dialog, &QFileDialog::fileSelected, this, [this](const QString& path) {
-        const QDir directory(path);
-        const auto descriptors = directory.entryList({QStringLiteral("*.uproject")}, QDir::Files);
-        const bool unity = directory.exists(QStringLiteral("Assets"))
-            && directory.exists(QStringLiteral("Packages")) && directory.exists(QStringLiteral("ProjectSettings"));
-        if (descriptors.size() > 1 || (unity && !descriptors.isEmpty())) {
-            auto* descriptorDialog = new QFileDialog(this,
-                QCoreApplication::translate("HarkenHub", "Select Unreal Project"), path,
-                QCoreApplication::translate("HarkenHub", "Unreal Project (*.uproject)"));
-            descriptorDialog->setObjectName(QStringLiteral("unrealProjectSelection"));
-            descriptorDialog->setAttribute(Qt::WA_DeleteOnClose);
-            descriptorDialog->setOptions(QFileDialog::DontUseCustomDirectoryIcons);
-            descriptorDialog->setFileMode(QFileDialog::ExistingFile);
-            connect(descriptorDialog, &QFileDialog::fileSelected, this, [this](const QString& descriptor) {
-                acceptEngineTarget(descriptor, true);
-            });
-            descriptorDialog->open();
-            return;
-        }
         acceptEngineTarget(path, true);
     });
     dialog->open();
@@ -1349,7 +1773,10 @@ void EngineIntegrationsPage::beginSdkSelection()
         || targetBlocked_) return;
     sdkSelection_ = SdkSelection{sdkPathEdit_->text(), sdkInstallPathEdit_->text(),
                                  sdkPathUserSelected_};
-    refreshInstalledSdkSources();
+    sdkPhase_ = SdkPhase::Choosing;
+    sdkPreviousVersion_ = sdkInstalled_ ? installedSdkVersion_
+        : QCoreApplication::translate("HarkenHub", "Not installed");
+    refreshLocalSdkSources();
     clearResults();
     updateRemovalButtonState();
     setSummaryText(QCoreApplication::translate("HarkenHub", "No integration check has run."));
@@ -1365,7 +1792,17 @@ void EngineIntegrationsPage::beginSdkSelection()
 
 void EngineIntegrationsPage::cancelSdkSelection()
 {
-    if (operationRunning_ || !sdkSelection_) return;
+    if (operationRunning_) return;
+    if (quickSdkChange_ || sdkPhase_ == SdkPhase::Finished) {
+        quickSdkChange_ = false;
+        sdkPhase_ = SdkPhase::Choosing;
+        sdkSelection_.reset();
+        sdkSelectionDialog_->hide();
+        updatePrimaryAction();
+        refresh();
+        return;
+    }
+    if (!sdkSelection_) return;
     const SdkSelection original = *sdkSelection_;
     sdkSelection_.reset();
     sdkSelectionDialog_->hide();
@@ -1378,6 +1815,7 @@ void EngineIntegrationsPage::cancelSdkSelection()
     setEditorLocked(!editingIntegrationId_.isEmpty());
     updateRemovalButtonState();
     setSummaryText(QCoreApplication::translate("HarkenHub", "Cancelled. SDK files and project relationships were not changed."));
+    if (versionRefreshPending_) refreshStudioVersion();
 }
 
 void EngineIntegrationsPage::browseSdkInstallPath()
@@ -1419,7 +1857,7 @@ bool EngineIntegrationsPage::acceptHarkenProject(
     const ProjectProbeResult probe = ProjectProbe::probe(path);
     if (!probe.ok) {
         QMessageBox::warning(
-            this, QCoreApplication::translate("HarkenHub", "Edit Integration"),
+            this, QCoreApplication::translate("HarkenHub", "Manage Integration"),
             QCoreApplication::translate("HarkenHub", "The Harken project could not be used.\n\n%1")
                 .arg(localizeIntegrationText(probe.error)));
         return false;
@@ -1439,7 +1877,7 @@ bool EngineIntegrationsPage::acceptHarkenProject(
         record.detectedSchema = probe.schemaVersion;
         if (!projects_->addProject(record)) {
             QMessageBox::warning(
-                this, QCoreApplication::translate("HarkenHub", "Edit Integration"),
+                this, QCoreApplication::translate("HarkenHub", "Manage Integration"),
             QCoreApplication::translate("HarkenHub", "The Harken project could not be added to Projects.\n\n%1")
                     .arg(localizeIntegrationText(projects_->lastError())));
             return false;
@@ -1462,7 +1900,7 @@ bool EngineIntegrationsPage::acceptEngineTarget(
     QString error;
     if (!EngineTargetProbe::resolve(path, &candidate, &error)) {
         QMessageBox::warning(
-                this, QCoreApplication::translate("HarkenHub", "Edit Integration"),
+                this, QCoreApplication::translate("HarkenHub", "Manage Integration"),
             QCoreApplication::translate("HarkenHub", "The engine project could not be used.\n\n%1")
                 .arg(localizeIntegrationText(error)));
         return false;
@@ -1480,7 +1918,7 @@ bool EngineIntegrationsPage::acceptEngineTarget(
         selected.addedAt = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
         if (!targets_->add(selected)) {
             QMessageBox::warning(
-                this, QCoreApplication::translate("HarkenHub", "Edit Integration"),
+                this, QCoreApplication::translate("HarkenHub", "Manage Integration"),
             QCoreApplication::translate("HarkenHub", "The engine project could not be registered.\n\n%1")
                     .arg(localizeIntegrationText(targets_->lastError())));
             return false;
@@ -1491,10 +1929,12 @@ bool EngineIntegrationsPage::acceptEngineTarget(
     if (redirectOnConflict && !conflict.isEmpty()) {
         showConflict(
             conflict,
-            QCoreApplication::translate("HarkenHub", "This Unity or Unreal project already belongs to an engine integration."));
+            QCoreApplication::translate("HarkenHub", "This Unity project already belongs to an engine integration."));
         return false;
     }
     selectedEngineTargetId_ = selected.targetId;
+    targetInspections_[selected.targetId].ready = false;
+    requestTargetObservation(selected, true);
     clearResults();
     {
         const QSignalBlocker blocker(engineProjectEdit_);
@@ -1518,14 +1958,14 @@ bool EngineIntegrationsPage::resolveSelection(
     const QString storageError = integrations_->lastError().isEmpty()
         ? targets_->lastError() : integrations_->lastError();
     if (!storageError.isEmpty()) {
-        QMessageBox::warning(this, QCoreApplication::translate("HarkenHub", "Edit Integration"),
+        QMessageBox::warning(this, QCoreApplication::translate("HarkenHub", "Manage Integration"),
             QCoreApplication::translate("HarkenHub", "Integration records could not be read.\n%1").arg(localizeIntegrationText(storageError)));
         return false;
     }
     const QString harkenInput = harkenProjectEdit_->text().trimmed();
     if (harkenInput.isEmpty()) {
         QMessageBox::warning(
-            this, QCoreApplication::translate("HarkenHub", "Edit Integration"),
+            this, QCoreApplication::translate("HarkenHub", "Manage Integration"),
             QCoreApplication::translate("HarkenHub", "Select a Harken project before checking integration."));
         return false;
     }
@@ -1547,8 +1987,8 @@ bool EngineIntegrationsPage::resolveSelection(
     const QString engineInput = engineProjectEdit_->text().trimmed();
     if (engineInput.isEmpty()) {
         QMessageBox::warning(
-            this, QCoreApplication::translate("HarkenHub", "Edit Integration"),
-            QCoreApplication::translate("HarkenHub", "Select a Unity or Unreal project before checking integration."));
+            this, QCoreApplication::translate("HarkenHub", "Manage Integration"),
+            QCoreApplication::translate("HarkenHub", "Select a Unity project before checking integration."));
         return false;
     }
     auto targets = targets_->list();
@@ -1562,8 +2002,8 @@ bool EngineIntegrationsPage::resolveSelection(
             || !acceptEngineTarget(engineInput, redirectOnConflict)) {
             if (!registerTarget) {
                 QMessageBox::warning(
-                    this, QCoreApplication::translate("HarkenHub", "Edit Integration"),
-                    QCoreApplication::translate("HarkenHub", "Select a valid Unity project folder or Unreal .uproject file."));
+                    this, QCoreApplication::translate("HarkenHub", "Manage Integration"),
+                    QCoreApplication::translate("HarkenHub", "Select a valid Unity project folder."));
             }
             return false;
         }
@@ -1585,7 +2025,7 @@ bool EngineIntegrationsPage::resolveSelection(
     }
     if (requireSdkSource && sdkPathEdit_->text().trimmed().isEmpty()) {
         QMessageBox::warning(
-            sdkSelectionDialog_, QCoreApplication::translate("HarkenHub", "Edit Integration"),
+            sdkSelectionDialog_, QCoreApplication::translate("HarkenHub", "Manage Integration"),
             QCoreApplication::translate("HarkenHub", "Select a Runtime / SDK source before checking integration."));
         return false;
     }
@@ -1699,7 +2139,7 @@ void EngineIntegrationsPage::updateDefaultSdkPath()
                    : studioSdkPath(*studioVersion_, target->engineKind), false);
 }
 
-void EngineIntegrationsPage::refreshInstalledSdkSources()
+void EngineIntegrationsPage::refreshLocalSdkSources()
 {
     const auto targets = targets_->list();
     const auto target = std::find_if(targets.begin(), targets.end(), [this](const auto& value) {
@@ -1710,19 +2150,11 @@ void EngineIntegrationsPage::refreshInstalledSdkSources()
     const QSignalBlocker comboBlocker(sdkSourceCombo_);
     const QSignalBlocker editBlocker(sdkPathEdit_);
     sdkSourceCombo_->clear();
-    auto versions = VersionScanner::scanInstalled();
-    std::stable_sort(versions.begin(), versions.end(), [](const auto& left, const auto& right) {
-        return left.releaseSequence > right.releaseSequence;
-    });
-    for (const auto& version : versions) {
-        const QString path = studioSdkPath(version, target->engineKind);
-        const QString bundledVersion = sdkVersion(path, target->engineKind);
-        if (bundledVersion.isEmpty()) continue;
-        sdkSourceCombo_->addItem(path, path);
+    const auto sources = localSdkSources(target->engineKind, availableStudioVersions());
+    for (const auto& source : sources) {
+        sdkSourceCombo_->addItem(source.path, source.path);
         sdkSourceCombo_->setItemData(sdkSourceCombo_->count() - 1,
-            QCoreApplication::translate("HarkenHub", "Studio %1 | %2 SDK %3")
-                .arg(versionLabel(version), engineName(target->engineKind), bundledVersion)
-                + QLatin1Char('\n') + QDir::toNativeSeparators(path), Qt::ToolTipRole);
+            source.label + QLatin1Char('\n') + QDir::toNativeSeparators(source.path), Qt::ToolTipRole);
     }
     sdkSourceCombo_->setEditText(selectedPath);
     updateSdkSourceState();
@@ -1774,27 +2206,47 @@ void EngineIntegrationsPage::updatePrimaryAction()
     const bool current = sdkComparison_ == SdkComparison::Current;
     const bool linked = !editingIntegrationId_.isEmpty();
     const bool selecting = sdkSelection_.has_value();
-    checkButton_->setEnabled(!operationRunning_ && !versionResolutionPending_ && !selecting);
-    sdkCheckButton_->setEnabled(!operationRunning_ && !versionResolutionPending_ && selecting);
+    const auto inspection = targetInspections_.constFind(selectedEngineTargetId_);
+    const bool inspecting = inspection != targetInspections_.cend()
+        && !inspection->ready && inspection->cancelled;
+    checkButton_->setEnabled(!operationRunning_ && !versionResolutionPending_ && !selecting && !inspecting);
+    sdkCheckButton_->setVisible(selecting && (sdkPhase_ != SdkPhase::Choosing
+        || sdkComparison_ != SdkComparison::Unknown));
+    sdkCheckButton_->setText(QCoreApplication::translate("HarkenHub", "Check Again"));
+    sdkCheckButton_->setEnabled(!operationRunning_ && !versionResolutionPending_ && selecting && !inspecting);
     changeSdkButton_->setText(sdkInstalled_
         ? QCoreApplication::translate("HarkenHub", "Change SDK...")
         : QCoreApplication::translate("HarkenHub", "Install SDK..."));
     changeSdkButton_->setEnabled(!operationRunning_ && !selecting
         && !selectedEngineTargetId_.isEmpty() && !selectedHarkenProjectPath_.isEmpty()
         && !targetBlocked_);
-    sdkSelectionRow_->setVisible(selecting);
+    sdkSelectionRow_->setVisible(selecting && sdkPhase_ != SdkPhase::Finished);
+    sdkSelectionContext_->setVisible(selecting);
+    sdkSafetyHint_->setVisible(selecting && sdkPhase_ != SdkPhase::Finished && engineRunning_);
+    sdkReportButton_->setVisible(selecting && !sdkReportPath_.isEmpty());
+    sdkReportButton_->setEnabled(!operationRunning_);
+    updateSdkSelectionContext();
     sdkSourceBrowseButton_->setEnabled(selecting && !operationRunning_);
-    cancelSdkButton_->setVisible(selecting);
+    cancelSdkButton_->setVisible(selecting || quickSdkChange_);
+    cancelSdkButton_->setText(quickSdkChange_ || sdkPhase_ == SdkPhase::Finished
+        ? QCoreApplication::translate("HarkenHub", "Close")
+        : QCoreApplication::translate("HarkenHub", "Cancel"));
     cancelSdkButton_->setEnabled(!operationRunning_);
-    integrateButton_->setVisible(selecting);
-    integrateButton_->setText(current
-        ? QCoreApplication::translate("HarkenHub", "Up to Date")
-        : sdkInstalled_ ? QCoreApplication::translate("HarkenHub", "Apply SDK Change...")
-                        : QCoreApplication::translate("HarkenHub", "Install SDK..."));
+    integrateButton_->setVisible(selecting && sdkPhase_ != SdkPhase::Finished);
+    integrateButton_->setText(sdkPhase_ == SdkPhase::Applying
+        ? QCoreApplication::translate("HarkenHub", "Applying SDK...")
+        : sdkPhase_ == SdkPhase::Checking
+            ? QCoreApplication::translate("HarkenHub", "Checking SDK...")
+        : current ? QCoreApplication::translate("HarkenHub", "Up to Date")
+        : sdkPhase_ == SdkPhase::Reviewing
+            ? (sdkInstalled_ ? QCoreApplication::translate("HarkenHub", "Confirm SDK Change")
+                             : QCoreApplication::translate("HarkenHub", "Confirm SDK Installation"))
+            : QCoreApplication::translate("HarkenHub", "Check SDK Changes"));
     integrateButton_->setEnabled(!operationRunning_ && !versionResolutionPending_
         && !selectedHarkenProjectPath_.isEmpty() && !selectedEngineTargetId_.isEmpty()
         && sdkSourceAvailable_ && !targetBlocked_
-        && sdkComparison_ != SdkComparison::Blocked && !current && selecting);
+        && sdkComparison_ != SdkComparison::Blocked && !current && selecting
+        && sdkPhase_ != SdkPhase::Finished);
     integrateButton_->setToolTip(!sdkSourceAvailable_
         ? QCoreApplication::translate("HarkenHub", "Select a valid SDK source or run a check for details.")
         : sdkComparison_ == SdkComparison::Blocked
@@ -1820,6 +2272,32 @@ void EngineIntegrationsPage::updatePrimaryAction()
         button->setFixedWidth(actionWidth);
 }
 
+void EngineIntegrationsPage::updateSdkSelectionContext()
+{
+    if (!sdkSelection_) return;
+    const auto targets = targets_->list();
+    const auto target = std::find_if(targets.begin(), targets.end(), [this](const auto& value) {
+        return value.targetId == selectedEngineTargetId_;
+    });
+    if (target == targets.end()) return;
+    const QString version = sdkVersion(sdkPathEdit_->text(), target->engineKind);
+    QString context = QCoreApplication::translate("HarkenHub", "Game project: %1 | Harken project: %2")
+        .arg(target->displayName, QFileInfo(selectedHarkenProjectPath_).completeBaseName());
+    if (!version.isEmpty()) {
+        context += QLatin1Char('\n') + QCoreApplication::translate("HarkenHub", "SDK version: %1 → %2")
+            .arg(sdkPreviousVersion_, version);
+        if (compareSdkVersions(version, sdkPreviousVersion_) < 0)
+            context += QCoreApplication::translate("HarkenHub", " (Downgrade)");
+    }
+    sdkSelectionContext_->setText(context);
+    sdkSelectionPaths_->setPlainText(QCoreApplication::translate("HarkenHub",
+        "Harken project:\n%1\n\nGame project:\n%2\n\nSDK source:\n%3\n\nSDK installation location:\n%4")
+        .arg(QDir::toNativeSeparators(selectedHarkenProjectPath_),
+             QDir::toNativeSeparators(targetInputPath(*target)),
+             QDir::toNativeSeparators(sdkPathEdit_->text()),
+             QDir::toNativeSeparators(QDir(target->canonicalRoot).filePath(sdkInstallPathEdit_->text()))));
+}
+
 void EngineIntegrationsPage::setEditorLocked(bool locked)
 {
     harkenProjectEdit_->setReadOnly(locked);
@@ -1839,11 +2317,18 @@ void EngineIntegrationsPage::scanStopped()
     setSummaryText(QCoreApplication::translate("HarkenHub", "SDK scan stopped. The check is incomplete; no SDK files were changed."));
 }
 
-EngineTargetObservation EngineIntegrationsPage::observeTarget(const EngineTargetRecord& target)
+EngineTargetObservation EngineIntegrationsPage::observeTarget(const EngineTargetRecord& target, bool verifyContent)
 {
-    const auto result = runIntegrationTask(this, [target]() { return EngineTargetProbe::observe(target); }, true);
+    const auto result = runIntegrationTask(this, [target, verifyContent]() {
+        return EngineTargetProbe::observe(target, verifyContent);
+    }, sdkPhase_ != SdkPhase::Applying, sdkSelection_ ? sdkProgress_ : nullptr);
     if (result) {
         inspectionStopped_ = false;
+        auto& inspection = targetInspections_[target.targetId];
+        if (inspection.cancelled) inspection.cancelled->store(true, std::memory_order_relaxed);
+        inspection.cancelled.reset();
+        inspection.observation = *result;
+        inspection.ready = true;
         return *result;
     }
     EngineTargetObservation stopped;
@@ -1862,7 +2347,8 @@ UnityIntegrationResult EngineIntegrationsPage::runUnityTask(const UnityIntegrati
     const bool readOnly = request.verifyInstalledOnly || request.checkOnly
         || (request.removeIntegration && !request.confirmRemoval)
         || (request.migrateIntegration && !request.confirmMigration);
-    const auto result = runIntegrationTask(this, [request]() { return HubUnityIntegrationService::run(request); }, readOnly);
+    const auto result = runIntegrationTask(this, [request]() { return HubUnityIntegrationService::run(request); },
+        readOnly, sdkSelection_ ? sdkProgress_ : nullptr);
     if (result) return *result;
     scanStopped();
     UnityIntegrationResult stopped;
@@ -1876,7 +2362,7 @@ IntegrationPlan EngineIntegrationsPage::inspectUnrealTask(const EngineTargetReco
     const auto result = runIntegrationTask(this, [target, source, operation]() {
         return operation ? ProjectIntegrationExecutor::planUnreal(target, source, *operation)
                          : ProjectIntegrationExecutor::inspectUnreal(target);
-    }, true);
+    }, true, sdkSelection_ ? sdkProgress_ : nullptr);
     if (result) return *result;
     scanStopped();
     IntegrationPlan stopped;
@@ -1899,7 +2385,10 @@ void EngineIntegrationsPage::updateRemovalButtonState(bool recoverLocation)
     removeInstalledSdkButton_->setVisible(true);
     migrateSdkButton_->setVisible(true);
     const EngineTargetObservation observation = target == targets.end()
-        ? EngineTargetObservation{} : observeTarget(*target);
+        ? EngineTargetObservation{} : operationRunning_ ? observeTarget(*target)
+                                                       : requestTargetObservation(*target);
+    if (target != targets.end() && recoverLocation && !targetInspections_[target->targetId].ready)
+        targetInspections_[target->targetId].recoverLocation = true;
     sdkInstalled_ = target != targets.end() && observation.validTarget
         && observation.health != EngineTargetHealth::NotInstalled;
     targetBlocked_ = target != targets.end() && !observation.canChangeSdk;
@@ -1928,6 +2417,11 @@ void EngineIntegrationsPage::updateRemovalButtonState(bool recoverLocation)
         }
     }
     sdkIssueLabel_->setText(issue);
+    sdkIssueLabel_->setStyleSheet(observation.dependencyRestricted
+        ? QStringLiteral("color: #9AA4B5;") : QStringLiteral("color: #F0C36A;"));
+    sdkResolutionButton_->setText(observation.dependencyRestricted
+        ? QCoreApplication::translate("HarkenHub", "View Dependencies...")
+        : QCoreApplication::translate("HarkenHub", "View Resolution..."));
     sdkIssueRow_->setVisible(!issue.isEmpty());
     sdkResolutionButton_->setEnabled(!operationRunning_ && !sdkSelection_);
     changeSdkButton_->setToolTip(observation.canChangeSdk ? QString() : observation.remediation);
@@ -2003,7 +2497,9 @@ void EngineIntegrationsPage::showSdkResolution()
     if (inspectionStopped_) return;
     QDialog dialog(this);
     dialog.setObjectName(QStringLiteral("sdkResolutionDialog"));
-    dialog.setWindowTitle(QCoreApplication::translate("HarkenHub", "SDK Resolution"));
+    dialog.setWindowTitle(observation.dependencyRestricted
+        ? QCoreApplication::translate("HarkenHub", "SDK Dependencies")
+        : QCoreApplication::translate("HarkenHub", "SDK Resolution"));
     dialog.resize(680, 430);
     dialog.setMinimumSize(520, 320);
     auto* layout = new QVBoxLayout(&dialog);
@@ -2053,20 +2549,61 @@ void EngineIntegrationsPage::showSdkResolution()
     if (dialog.exec() == QDialog::Accepted) runCheck();
 }
 
+void EngineIntegrationsPage::refreshEngineRunningHint()
+{
+    if (engineStatusPending_ || operationRunning_ || !sdkSelectionDialog_->isVisible()
+        || !sdkSelection_ || sdkPhase_ == SdkPhase::Finished) return;
+    const auto targets = targets_->list();
+    const auto target = std::find_if(targets.begin(), targets.end(), [this](const auto& value) {
+        return value.targetId == selectedEngineTargetId_;
+    });
+    if (target == targets.end()) return;
+    engineStatusPending_ = true;
+    const QPointer<EngineIntegrationsPage> self(this);
+    QThreadPool::globalInstance()->start([self, target = *target]() {
+        QString error;
+        bool isOpen = false;
+        if (target.engineKind == EngineKind::Unity)
+            VNX::checkUnityProjectClosed(target.canonicalRoot, &error, &isOpen);
+        else
+            ProjectIntegrationExecutor::checkUnrealClosed(target, &error, &isOpen);
+        QMetaObject::invokeMethod(QCoreApplication::instance(), [self, target, isOpen, error]() {
+            if (!self) return;
+            self->engineStatusPending_ = false;
+            if (self->selectedEngineTargetId_ != target.targetId || !self->sdkSelectionDialog_->isVisible()) return;
+            self->engineRunning_ = isOpen;
+            self->sdkSafetyHint_->setText(isOpen ? localizeIntegrationText(error) : QString());
+            self->updatePrimaryAction();
+        }, Qt::QueuedConnection);
+    });
+}
+
 void EngineIntegrationsPage::setOperationRunning(bool running)
 {
     operationRunning_ = running;
-    if (running) inspectionStopped_ = false;
+    if (running) {
+        inspectionStopped_ = false;
+        cancelTargetInspections();
+    }
     integrationForm_->setEnabled(!running);
     sdkSelectionRow_->setEnabled(!running);
     backButton_->setEnabled(!running);
     checkButton_->setEnabled(!running && !versionResolutionPending_);
     updatePrimaryAction();
-    if (!running && !inspectionStopped_) updateRemovalButtonState();
+    if (!running && !inspectionStopped_) {
+        refresh();
+        updateRemovalButtonState();
+        refreshEngineRunningHint();
+    }
+    if (!running && versionRefreshPending_)
+        QTimer::singleShot(0, this, &EngineIntegrationsPage::refreshStudioVersion);
 }
 
-void EngineIntegrationsPage::setSummaryText(const QString& text)
+void EngineIntegrationsPage::setSummaryText(const QString& text, bool succeeded)
 {
+    const QString style = succeeded ? QStringLiteral("color: #69D391;") : QString();
+    summaryLabel_->setStyleSheet(style);
+    sdkSelectionSummary_->setStyleSheet(style);
     showingIdleSummary_ = text == QCoreApplication::translate(
         "HarkenHub", "No integration check has run.");
     if (showingIdleSummary_)
@@ -2101,7 +2638,12 @@ void EngineIntegrationsPage::updateIdleSummary()
 
 void EngineIntegrationsPage::clearResults()
 {
+    summaryLabel_->setStyleSheet(QString());
+    sdkSelectionSummary_->setStyleSheet(QString());
     reviewedUnrealPlan_.reset();
+    reviewedSdkHash_.clear();
+    sdkReportPath_.clear();
+    if (!operationRunning_) sdkPhase_ = SdkPhase::Choosing;
     sdkComparison_ = SdkComparison::Unknown;
     const QSignalBlocker blocker(stepsTable_);
     resultSteps_.clear();
@@ -2177,10 +2719,10 @@ void EngineIntegrationsPage::runCheck()
             showResults(steps, success
                 ? QCoreApplication::translate("HarkenHub", "Installed SDK verification passed. No files were changed.")
                 : QCoreApplication::translate("HarkenHub", "Installed SDK verification did not pass. Review the results; no files were changed."),
-                QStringLiteral("verify"));
+                QStringLiteral("verify"), success);
             return;
         }
-        setSummaryText(QCoreApplication::translate("HarkenHub", "Select a Unity or Unreal project before checking integration."));
+        setSummaryText(QCoreApplication::translate("HarkenHub", "Select a Unity project before checking integration."));
         return;
     }
     ProjectRecord project;
@@ -2198,73 +2740,66 @@ void EngineIntegrationsPage::runCheck()
 void EngineIntegrationsPage::runIntegration()
 {
     if (operationRunning_ || !sdkSelection_) return;
+    if (sdkPhase_ != SdkPhase::Reviewing || reviewedSdkHash_.isEmpty()) {
+        runCheck();
+        return;
+    }
     ProjectRecord project;
     EngineTargetRecord target;
-    if (!resolveSelection(&project, &target, true, true))
-        return;
-    const QString conflict = conflictingIntegration(
-        project.canonicalPath, target.targetId);
-    if (!conflict.isEmpty()) {
-        showConflict(conflict,
-                     QCoreApplication::translate("HarkenHub", "The selected project relationship already exists."));
-        return;
-    }
-
+    if (!resolveSelection(&project, &target, true, true)) return;
     const QString sdkPath = sdkPathEdit_->text().trimmed();
+    const QByteArray approved = reviewedSdkHash_;
     setOperationRunning(true);
     const auto finish = qScopeGuard([this]() { setOperationRunning(false); });
-    if (!runCheckForSelection(target, sdkPath)) {
-        return;
-    }
-
+    if (!runCheckForSelection(target, sdkPath)) return;
     if (sdkComparison_ == SdkComparison::Current) return;
-    const QString action = sdkInstalled_ ? QCoreApplication::translate("HarkenHub", "Change SDK")
-                        : QCoreApplication::translate("HarkenHub", "Install SDK");
-    const QString targetVersion = sdkVersion(sdkPath, target.engineKind);
-    if (!confirmIntegrationAction(
-            sdkSelectionDialog_, action,
-            QCoreApplication::translate("HarkenHub", "Installed SDK: %1\nTarget SDK: %2\n\nHarken project:\n%3\n\nGame project:\n%4\n\nSDK source:\n%5\n\nSDK installation location:\n%6")
-                .arg(installedSdkVersion_, targetVersion,
-                     QDir::toNativeSeparators(project.canonicalPath),
-                     QDir::toNativeSeparators(targetInputPath(target)),
-                     QDir::toNativeSeparators(sdkPath),
-                     QDir::toNativeSeparators(QDir(target.canonicalRoot).filePath(
-                         sdkInstallPathEdit_->text())))
-                + QStringLiteral("\n\n") + QCoreApplication::translate("HarkenHub", "Close the game engine before continuing."),
-            confirmationDetails(),
-            action,
-            QDialogButtonBox::AcceptRole)) {
-        cancelPendingOperation();
+    if (approved != reviewedSdkHash_) {
+        setSummaryText(QCoreApplication::translate("HarkenHub",
+            "SDK files changed. Review the refreshed results and confirm again. No SDK files were changed."));
         return;
     }
-
-    const QString lateConflict = conflictingIntegration(
-        project.canonicalPath, target.targetId);
-    if (!lateConflict.isEmpty()) {
-        showConflict(lateConflict,
-                     QCoreApplication::translate("HarkenHub", "The selected project relationship was created while the check was running."));
+    const QString conflict = conflictingIntegration(project.canonicalPath, target.targetId);
+    if (!conflict.isEmpty()) {
+        sdkPhase_ = SdkPhase::Choosing;
+        reviewedSdkHash_.clear();
+        setSummaryText(QCoreApplication::translate("HarkenHub",
+            "The selected project relationship was created while the check was running."));
         return;
     }
-
+    sdkPhase_ = SdkPhase::Applying;
+    sdkReviewInvalidated_ = false;
+    updatePrimaryAction();
     const bool success = target.engineKind == EngineKind::Unity
-        ? runUnity(target, sdkPath, false)
-        : runUnreal(target, sdkPath, false);
-    if (success && (editingIntegrationId_.isEmpty()
-        || persistIntegration(project.canonicalPath, target.targetId, sdkPath))) {
-        if (sdkSelection_) {
-            sdkSelection_.reset();
-        }
-        sdkSelectionDialog_->accept();
-        setEditorLocked(!editingIntegrationId_.isEmpty());
+        ? runUnity(target, sdkPath, false) : runUnreal(target, sdkPath, false);
+    if (sdkReviewInvalidated_) {
+        if (runCheckForSelection(target, sdkPath))
+            setSummaryText(QCoreApplication::translate("HarkenHub",
+                "SDK files changed. Review the refreshed results and confirm again. No SDK files were changed."));
+        return;
     }
+    sdkPhase_ = SdkPhase::Finished;
+    if (success && !editingIntegrationId_.isEmpty())
+        persistIntegration(project.canonicalPath, target.targetId, sdkPath);
+    setEditorLocked(!editingIntegrationId_.isEmpty());
 }
 
 bool EngineIntegrationsPage::runCheckForSelection(
     const EngineTargetRecord& target, const QString& sdkPath)
 {
-    return target.engineKind == EngineKind::Unity
-        ? runUnity(target, sdkPath, true)
-        : runUnreal(target, sdkPath, true);
+    sdkPhase_ = SdkPhase::Checking;
+    updatePrimaryAction();
+    const bool success = target.engineKind == EngineKind::Unity
+        ? runUnity(target, sdkPath, true) : runUnreal(target, sdkPath, true);
+    sdkPhase_ = success && sdkComparison_ == SdkComparison::Different && !reviewedSdkHash_.isEmpty()
+        ? SdkPhase::Reviewing : SdkPhase::Choosing;
+    if (success) {
+        sdkPreviousVersion_ = sdkInstalled_ ? installedSdkVersion_
+            : QCoreApplication::translate("HarkenHub", "Not installed");
+        if (sdkPhase_ == SdkPhase::Reviewing)
+            setSummaryText(QCoreApplication::translate("HarkenHub", "Check complete. Review the changes, then confirm to continue."));
+    }
+    updatePrimaryAction();
+    return success;
 }
 
 QVector<EngineIntegrationsPage::ResultStep>
@@ -2327,8 +2862,10 @@ EngineIntegrationsPage::unityResultSteps(
                 || step.status == UnityIntegrationStepStatus::Warning)) {
             auto& comparison = steps.back();
             comparison.hasFileComparison = true;
-            comparison.attentionRequired = result.targetAlreadyCurrent
-                && step.status == UnityIntegrationStepStatus::Warning;
+            comparison.modifiedFiles = result.modifiedFiles;
+            comparison.missingFiles = result.missingFiles;
+            comparison.attentionRequired = !result.modifiedFiles.isEmpty() || !result.missingFiles.isEmpty()
+                || (result.targetAlreadyCurrent && step.status == UnityIntegrationStepStatus::Warning);
             for (const auto& change : result.fileChanges)
                 comparison.fileChanges.push_back({change.path, change.action});
         }
@@ -2699,7 +3236,7 @@ void EngineIntegrationsPage::runUnityRemoval()
         } else if (result.hasWarnings) {
             setSummaryText(QCoreApplication::translate(
                 "HarkenHub",
-                "The Unity SDK and runtimes were backed up and removed with a cleanup warning. Backup: %1")
+                "The Unity SDK and runtimes were backed up and removed. Review is recommended for cleanup details. Backup: %1")
                 .arg(QDir::toNativeSeparators(result.removalBackupPath)));
         } else {
             setSummaryText(QCoreApplication::translate(
@@ -2721,9 +3258,9 @@ void EngineIntegrationsPage::runUnityRemoval()
             "HarkenHub",
             "Unity SDK removal failed. Select the first failed step for details."));
     }
-    if (!result.markdownReportPath.isEmpty())
+    if (!result.textReportPath.isEmpty())
         summaryLabel_->setToolTip(QCoreApplication::translate(
-            "HarkenHub", "Removal report: %1").arg(result.markdownReportPath));
+            "HarkenHub", "Removal report: %1").arg(result.textReportPath));
     updateRemovalButtonState();
 }
 
@@ -2731,6 +3268,7 @@ bool EngineIntegrationsPage::runUnity(
     const EngineTargetRecord& target, const QString& sdkPath, bool checkOnly)
 {
     const bool updating = sdkInstalled_;
+    const QByteArray approved = reviewedSdkHash_;
     clearResults();
     setSummaryText(checkOnly
         ? QCoreApplication::translate("HarkenHub", "Checking only. No SDK files will be changed...")
@@ -2742,9 +3280,13 @@ bool EngineIntegrationsPage::runUnity(
     request.sdkInstallPath = sdkInstallPathEdit_->text().trimmed();
     request.checkOnly = checkOnly;
     request.confirmTargetChanges = !checkOnly;
+    if (!checkOnly) request.approvedPlanHash = approved;
     const UnityIntegrationResult result =
         runUnityTask(request);
     if (result.cancelled) return false;
+    if (checkOnly && result.success) reviewedSdkHash_ = result.planHash;
+    if (!checkOnly) sdkReviewInvalidated_ = result.requiresConfirmation;
+    sdkReportPath_ = QFileInfo::exists(result.textReportPath) ? result.textReportPath : QString();
     const QVector<ResultStep> steps = unityResultSteps(result, checkOnly);
     sdkComparison_ = !result.success ? SdkComparison::Blocked
         : (checkOnly ? result.targetAlreadyCurrent : result.targetCurrent)
@@ -2759,7 +3301,7 @@ bool EngineIntegrationsPage::runUnity(
         else if (result.changesDetected)
             summary = QCoreApplication::translate("HarkenHub", "Check completed. Differences were found; no SDK files were changed.");
         else if (result.hasWarnings)
-            summary = QCoreApplication::translate("HarkenHub", "Check completed with guidance for additional target platforms.");
+            summary = QCoreApplication::translate("HarkenHub", "Check completed. Review is recommended for the highlighted steps.");
         else
             summary = QCoreApplication::translate("HarkenHub", "Check completed. The installed Unity SDK matches the selected source.");
     } else if (!result.success) {
@@ -2767,17 +3309,18 @@ bool EngineIntegrationsPage::runUnity(
     } else if (result.targetAlreadyCurrent) {
         summary = QCoreApplication::translate("HarkenHub", "The Unity SDK is already current and passed verification.");
     } else if (result.hasWarnings) {
-        summary = QCoreApplication::translate("HarkenHub", "SDK integration completed with warnings. Review the highlighted steps.");
+        summary = QCoreApplication::translate("HarkenHub", "SDK integration completed. Review is recommended for the highlighted steps.");
     } else {
         summary = updating
             ? QCoreApplication::translate("HarkenHub", "SDK update complete. Installed files passed verification.")
             : QCoreApplication::translate("HarkenHub", "SDK installation complete. Installed files passed verification.");
     }
     showResults(steps, summary, checkOnly ? QStringLiteral("compare_sdk")
-                                        : QStringLiteral("install_sdk"));
-    if (!result.markdownReportPath.isEmpty())
+                                        : QStringLiteral("install_sdk"),
+                !checkOnly && result.success);
+    if (!result.textReportPath.isEmpty())
         summaryLabel_->setToolTip(
-            QCoreApplication::translate("HarkenHub", "Report: %1").arg(result.markdownReportPath));
+            QCoreApplication::translate("HarkenHub", "Report: %1").arg(result.textReportPath));
     updateRemovalButtonState();
     if (!checkOnly && result.targetCurrent
         && !targets_->updateSdkInstallPath(target.targetId, result.sdkInstallPath)) {
@@ -2821,7 +3364,10 @@ bool EngineIntegrationsPage::runUnreal(
         ? inspectUnrealTask(executionTarget, sdkPath, operation)
         : reviewed.value_or(IntegrationPlan{});
     if (plan.cancelled) return false;
-    if (checkOnly && plan.valid) reviewedUnrealPlan_ = plan;
+    if (checkOnly && plan.valid) {
+        reviewedUnrealPlan_ = plan;
+        reviewedSdkHash_ = plan.fingerprint;
+    }
     sdkComparison_ = !plan.valid ? SdkComparison::Blocked
         : plan.changes.empty() ? SdkComparison::Current : SdkComparison::Different;
 
@@ -2844,7 +3390,11 @@ bool EngineIntegrationsPage::runUnreal(
     compareStep.id = QStringLiteral("compare_sdk");
     compareStep.title = QCoreApplication::translate("HarkenHub", "Compare installed SDK");
     compareStep.hasFileComparison = plan.valid;
-    compareStep.attentionRequired = !plan.modifiedManagedFiles.isEmpty();
+    compareStep.modifiedFiles = plan.modifiedManagedFiles;
+    compareStep.missingFiles = plan.missingManagedFiles;
+    for (const auto& path : plan.missingManagedFiles) compareStep.modifiedFiles.removeAll(path);
+    for (const auto& path : plan.unreadableManagedFiles) compareStep.modifiedFiles.removeAll(path);
+    compareStep.attentionRequired = !compareStep.modifiedFiles.isEmpty();
     if (plan.valid) {
         compareStep.fileChanges = plan.changes;
         for (const QString& path : plan.preservedTargetFiles)
@@ -2857,18 +3407,18 @@ bool EngineIntegrationsPage::runUnreal(
         compareStep.status = ResultStatus::Succeeded;
         compareStep.summary = QCoreApplication::translate("HarkenHub", "The installed Unreal SDK matches the selected source.");
     } else {
-        compareStep.status = checkOnly || !plan.modifiedManagedFiles.isEmpty()
+        compareStep.status = checkOnly || !compareStep.modifiedFiles.isEmpty()
             ? ResultStatus::Warning : ResultStatus::Succeeded;
-        compareStep.summary = plan.modifiedManagedFiles.isEmpty()
+        compareStep.summary = compareStep.modifiedFiles.isEmpty()
             ? QCoreApplication::translate("HarkenHub", "%1 SDK file change(s) were found.")
                   .arg(plan.changes.size())
             : QCoreApplication::translate("HarkenHub", "%1 SDK file change(s) were found, including %2 locally modified managed file(s) that require confirmation before overwrite.")
                   .arg(plan.changes.size())
-                  .arg(plan.modifiedManagedFiles.size());
-        if (!plan.modifiedManagedFiles.isEmpty()) {
+                  .arg(compareStep.modifiedFiles.size());
+        if (!compareStep.modifiedFiles.isEmpty()) {
             compareStep.details.push_back(
                 QCoreApplication::translate("HarkenHub", "Locally modified managed files:\n%1")
-                    .arg(plan.modifiedManagedFiles.join(QLatin1Char('\n'))));
+                    .arg(compareStep.modifiedFiles.join(QLatin1Char('\n'))));
         }
         if (!plan.preservedTargetFiles.isEmpty()) {
             compareStep.details.push_back(
@@ -2909,7 +3459,8 @@ bool EngineIntegrationsPage::runUnreal(
     const IntegrationOperationResult result =
         *runIntegrationTask(this, [executionTarget, plan, operation]() {
             return ProjectIntegrationExecutor::executeUnreal(executionTarget, plan, operation, true);
-        });
+        }, false, sdkSelection_ ? sdkProgress_ : nullptr);
+    sdkReviewInvalidated_ = result.reviewRequired;
     sdkComparison_ = result.success ? SdkComparison::Current : SdkComparison::Blocked;
     actionStep.status = result.success ? ResultStatus::Succeeded
                                        : ResultStatus::Failed;
@@ -2928,7 +3479,7 @@ bool EngineIntegrationsPage::runUnreal(
     showResults(steps, result.success
         ? QCoreApplication::translate("HarkenHub", "SDK integration completed successfully.")
         : QCoreApplication::translate("HarkenHub", "SDK integration failed. Select the failed step for details."),
-                QStringLiteral("apply_sdk"));
+                QStringLiteral("apply_sdk"), result.success);
     if (result.success && !targets_->updateSdkInstallPath(target.targetId, result.installedPath))
         setSummaryText(QCoreApplication::translate("HarkenHub", "The SDK location changed, but Hub could not save it. Reopen this integration to rediscover the location.\n%1")
             .arg(localizeIntegrationText(targets_->lastError())));
@@ -2937,7 +3488,7 @@ bool EngineIntegrationsPage::runUnreal(
 
 void EngineIntegrationsPage::showResults(
     const QVector<ResultStep>& steps, const QString& summary,
-    const QString& preferredStep)
+    const QString& preferredStep, bool succeeded)
 {
     const QSignalBlocker blocker(stepsTable_);
     resultSteps_ = steps;
@@ -2967,7 +3518,7 @@ void EngineIntegrationsPage::showResults(
             selectedRow = row;
         }
     }
-    setSummaryText(summary);
+    setSummaryText(summary, succeeded);
     updateSdkCheckResults();
     if (selectedRow < 0 && !steps.isEmpty())
         selectedRow = 0;
@@ -3016,43 +3567,56 @@ void EngineIntegrationsPage::updateSdkCheckResults()
     QString log;
     for (const auto* step : logSteps) log += formatStepHtml(*step);
     sdkSelectionDetails_->setHtml(log);
-    sdkResultsTabs_->setTabText(1, warnings > 0
-        ? QCoreApplication::translate("HarkenHub", "Check Log (warnings: %1)").arg(warnings)
-        : QCoreApplication::translate("HarkenHub", "Check Log"));
+    sdkResultsTabs_->setTabText(1, sdkPhase_ == SdkPhase::Applying
+        ? QCoreApplication::translate("HarkenHub", "Results and Logs")
+        : warnings > 0 ? QCoreApplication::translate("HarkenHub", "Check Log (review recommended: %1)").arg(warnings)
+                       : QCoreApplication::translate("HarkenHub", "Check Log"));
     sdkResultsTabs_->setCurrentIndex(failure || !comparison ? 1 : 0);
     if (failure)
-        sdkSelectionSummary_->setText(QCoreApplication::translate(
-            "HarkenHub", "SDK check failed. Review the check log for details."));
+        sdkSelectionSummary_->setText(sdkPhase_ == SdkPhase::Applying
+            ? QCoreApplication::translate("HarkenHub", "SDK integration failed. Review the log for details.")
+            : QCoreApplication::translate("HarkenHub", "SDK check failed. Review the check log for details."));
     if (!comparison) {
         sdkDiffSummary_->clear();
         return;
     }
 
     QStringList summary;
-    const auto targets = targets_->list();
-    const auto target = std::find_if(targets.begin(), targets.end(), [this](const auto& value) {
-        return value.targetId == selectedEngineTargetId_;
-    });
-    if (target != targets.end()) {
-        const QString sourceVersion = sdkVersion(sdkPathEdit_->text(), target->engineKind);
-        const QString currentVersion = sdkInstalled_ ? installedSdkVersion_
-            : QCoreApplication::translate("HarkenHub", "Not installed");
-        if (!sourceVersion.isEmpty() && !currentVersion.isEmpty())
-            summary << QStringLiteral("<b>%1</b>").arg(
-                QCoreApplication::translate("HarkenHub", "SDK version: %1 → %2")
-                    .arg(currentVersion, sourceVersion).toHtmlEscaped());
-    }
+    const bool applied = sdkPhase_ == SdkPhase::Applying && sdkComparison_ == SdkComparison::Current;
+    const auto addAttention = [&](const QStringList& files, const char* label, bool changedOnly) {
+        QStringList affected;
+        for (const auto& path : files) {
+            if (!changedOnly || std::any_of(comparison->fileChanges.begin(), comparison->fileChanges.end(),
+                [&](const auto& change) { return change.path == path && change.action != QStringLiteral("preserve"); }))
+                affected << path;
+        }
+        if (affected.isEmpty()) return;
+        affected.sort();
+        const QString title = QCoreApplication::translate("HarkenHub", label).arg(affected.size());
+        summary << QStringLiteral("<span style='color:#F0C36A'><b>%1</b></span>").arg(title.toHtmlEscaped());
+        auto* section = new QTreeWidgetItem(sdkDiffTree_, {title});
+        section->setForeground(0, QColor(QStringLiteral("#F0C36A")));
+        for (const auto& path : affected) new QTreeWidgetItem(section, {path});
+        section->setExpanded(true);
+    };
+    addAttention(comparison->modifiedFiles, applied
+        ? QT_TRANSLATE_NOOP("HarkenHub", "Locally modified files overwritten or removed: %1")
+        : QT_TRANSLATE_NOOP("HarkenHub", "Locally modified files to overwrite or remove: %1"), true);
+    addAttention(comparison->missingFiles, applied
+        ? QT_TRANSLATE_NOOP("HarkenHub", "SDK files missing before the change: %1")
+        : QT_TRANSLATE_NOOP("HarkenHub", "Missing installed SDK files: %1"), false);
     struct ChangeGroup
     {
         const char* action;
         const char* color;
         const char* countText;
+        const char* completedText;
     };
     const ChangeGroup groups[] = {
-        {"add", "#69D391", QT_TRANSLATE_NOOP("HarkenHub", "Add %1")},
-        {"replace", "#83B9FF", QT_TRANSLATE_NOOP("HarkenHub", "Update %1")},
-        {"remove", "#FF8B8B", QT_TRANSLATE_NOOP("HarkenHub", "Remove %1")},
-        {"preserve", "#9AA6B8", QT_TRANSLATE_NOOP("HarkenHub", "Keep %1")},
+        {"add", "#69D391", QT_TRANSLATE_NOOP("HarkenHub", "Add %1"), QT_TRANSLATE_NOOP("HarkenHub", "Files added")},
+        {"replace", "#83B9FF", QT_TRANSLATE_NOOP("HarkenHub", "Update %1"), QT_TRANSLATE_NOOP("HarkenHub", "Files updated")},
+        {"remove", "#FF8B8B", QT_TRANSLATE_NOOP("HarkenHub", "Remove %1"), QT_TRANSLATE_NOOP("HarkenHub", "Files removed")},
+        {"preserve", "#9AA6B8", QT_TRANSLATE_NOOP("HarkenHub", "Keep %1"), QT_TRANSLATE_NOOP("HarkenHub", "Files kept unchanged")},
     };
     QStringList counts;
     int modified = 0;
@@ -3069,7 +3633,9 @@ void EngineIntegrationsPage::updateSdkCheckResults()
                 .arg(paths.size()).toHtmlEscaped());
         if (paths.isEmpty()) continue;
         auto* section = new QTreeWidgetItem(sdkDiffTree_,
-            {QStringLiteral("%1 (%2)").arg(localizeFileChangeAction(action)).arg(paths.size())});
+            {QStringLiteral("%1 (%2)").arg(applied
+                ? QCoreApplication::translate("HarkenHub", group.completedText)
+                : localizeFileChangeAction(action)).arg(paths.size())});
         QFont font = section->font(0);
         font.setBold(true);
         section->setFont(0, font);
@@ -3089,7 +3655,7 @@ void EngineIntegrationsPage::updateSdkCheckResults()
             .arg(failure->summary.toHtmlEscaped()));
     if (warnings > 0)
         summary << QStringLiteral("<a href='log' style='color:#F0C36A'>%1</a>").arg(
-            QCoreApplication::translate("HarkenHub", "Items needing attention: %1. View check log.")
+            QCoreApplication::translate("HarkenHub", "Review recommended for %1 item(s). View check log.")
                 .arg(warnings).toHtmlEscaped());
     sdkDiffSummary_->setText(summary.join(QStringLiteral("<br>")));
 }
@@ -3104,11 +3670,25 @@ QString EngineIntegrationsPage::formatStepHtml(const ResultStep& step) const
             ? QStringLiteral("#F0C36A")
         : step.status == ResultStatus::Succeeded || step.status == ResultStatus::CheckPassed
             ? QStringLiteral("#69D391") : QStringLiteral("#9AA6B8");
+    const QString summary = step.status == ResultStatus::Failed
+        ? QStringLiteral("<span style='color:%1'>%2</span>").arg(color, text(step.summary))
+        : text(step.summary);
     QString html = QStringLiteral("<h3 style='margin-top:18px;margin-bottom:6px'>%1"
         " &nbsp; <span style='color:%2;font-size:small'>%3</span></h3><p><b>%4</b></p>")
-        .arg(text(step.title), color, text(statusText(step.status)), text(step.summary));
-    if (!step.cause.isEmpty())
-        html += QStringLiteral("<p>%1</p>").arg(text(step.cause));
+        .arg(text(step.title), color, text(statusText(step.status)), summary);
+    if (!step.cause.isEmpty()) {
+        const QStringList accessHeadings{
+            QCoreApplication::translate("HarkenHub", "Read-only files:\n%1").section(QLatin1Char('\n'), 0, 0),
+            QCoreApplication::translate("HarkenHub", "Files that could not be opened for writing:\n%1").section(QLatin1Char('\n'), 0, 0),
+            QCoreApplication::translate("HarkenHub", "Directories without required create or rename access:\n%1").section(QLatin1Char('\n'), 0, 0)};
+        QStringList lines;
+        for (const auto& line : step.cause.split(QLatin1Char('\n'))) {
+            lines << (step.status == ResultStatus::Failed && accessHeadings.contains(line)
+                ? QStringLiteral("<span style='color:%1'><b>%2</b></span>").arg(color, text(line))
+                : text(line));
+        }
+        html += QStringLiteral("<p>%1</p>").arg(lines.join(QStringLiteral("<br>")));
+    }
     if (!step.remediation.isEmpty())
         html += QStringLiteral("<p style='color:%1'><b>%2</b></p>")
             .arg(color, text(QCoreApplication::translate("HarkenHub", "Recommended action:\n%1")
@@ -3169,7 +3749,7 @@ QString EngineIntegrationsPage::statusText(ResultStatus status) const
         case ResultStatus::Succeeded:
             return QCoreApplication::translate("HarkenHub", "Succeeded");
         case ResultStatus::Warning:
-            return QCoreApplication::translate("HarkenHub", "Warning");
+            return QCoreApplication::translate("HarkenHub", "Review recommended");
         case ResultStatus::Failed:
             return QCoreApplication::translate("HarkenHub", "Failed");
         case ResultStatus::Skipped:
@@ -3294,7 +3874,7 @@ bool EngineIntegrationsPage::persistIntegration(
             return true;
         }
         QMessageBox::warning(
-            this, QCoreApplication::translate("HarkenHub", "Edit Integration"),
+            this, QCoreApplication::translate("HarkenHub", "Manage Integration"),
             QCoreApplication::translate("HarkenHub", "The SDK was integrated, but the Runtime / SDK path could not be saved.\n\n%1")
                 .arg(localizeIntegrationText(integrations_->lastError())));
         return false;
@@ -3310,7 +3890,7 @@ bool EngineIntegrationsPage::persistIntegration(
     integration.updatedAt = integration.createdAt;
     if (!integrations_->add(integration, false)) {
         QMessageBox::warning(
-            this, QCoreApplication::translate("HarkenHub", "Edit Integration"),
+            this, QCoreApplication::translate("HarkenHub", "Manage Integration"),
             QCoreApplication::translate("HarkenHub", "The project relationship could not be saved.\n\n%1")
                 .arg(localizeIntegrationText(integrations_->lastError())));
         return false;

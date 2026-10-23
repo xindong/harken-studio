@@ -228,10 +228,12 @@ TEST(StudioLaunchMonitor, ReportsStudioFailure)
     QJsonObject failed = stageFor(monitor, QStringLiteral("failed"));
     failed[QStringLiteral("error")] = QStringLiteral("Project is corrupt");
     failed[QStringLiteral("errorCode")] = QStringLiteral("PROJECT_FILE_DAMAGED");
+    failed[QStringLiteral("technicalDetails")] = QStringLiteral("/project/Layer %2.vp");
     sendMessage(socket, failed);
 
     ASSERT_TRUE(spinUntil([&]() { return capture.failedCount == 1; }));
     EXPECT_EQ(capture.failure, QStringLiteral("Project is corrupt"));
+    EXPECT_EQ(monitor.failureDetails(), QStringLiteral("/project/Layer %2.vp"));
     EXPECT_EQ(capture.readyCount, 0);
 }
 

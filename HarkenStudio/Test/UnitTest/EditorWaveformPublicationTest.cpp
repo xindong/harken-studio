@@ -1,4 +1,3 @@
-#include "PackSchemaGenerated.h"
 #include <harken/Harken.h>
 #include "UnitTest/ObjectIdTestSupport.h"
 #include "EditorWaveformPublication.h"
@@ -22,6 +21,7 @@ using harkenhost::JsonWriter;
 using harkentest::packfoundation::ImageBuilder;
 
 std::vector<std::uint8_t> Partition(std::uint64_t id, ContainerWorldInstallViewV1 world) {
+    world.identity.projectId = {0x1111111111111111ULL, 0x1111111111111111ULL};
     world.identity.runtimeSemanticFingerprint = ComputeCurrentWorldFingerprintV5(world);
     std::vector<std::uint8_t> body;
     EXPECT_TRUE(EncodeCurrentWorldShippingBody(world, body));
@@ -195,7 +195,7 @@ struct Fixture {
         const auto id = [&](const char* key, std::uint64_t value) { text(key, JsonWriter::DecimalU64(value)); };
         const auto number = [&](const char* key, std::uint64_t value) { json.Key(key); json.ValueU64(value); };
         json.BeginObject();
-        number("schema_version", VNX::PackSchema::kPackManifestSchemaVersion); text("platformId", "33333333-3333-3333-3333-333333333333");
+        number("schema_version", HARKEN_PACK_SCHEMA_VERSION); text("platformId", "33333333-3333-3333-3333-333333333333");
         text("platformName", "Windows"); text("basePlatform", "Windows"); text("language", ""); id("initPackStableId", 11);
         json.Key("packs"); json.BeginArray();
         for (const auto& pack : packs) {

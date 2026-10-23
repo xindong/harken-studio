@@ -80,8 +80,10 @@ void WidgetFactory::registerBuiltins()
         slider->setRange(minVal, maxVal, decimals);
         if (cfg.contains("suffix"))
             slider->setSuffix(cfg["suffix"].toString());
-        if (cfg.contains("default"))
+        if (cfg.contains("default")) {
+            slider->binding()->setDefaultValue(cfg["default"].toDouble());
             slider->setValue(cfg["default"].toDouble());
+        }
         if (cfg.contains("objectName"))
             slider->setObjectName(cfg["objectName"].toString());
         return slider;

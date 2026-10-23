@@ -1,5 +1,8 @@
 #include "MonitorDerivedDispatch.h"
+#include "harken/core/AllocGuard.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 
@@ -62,7 +65,58 @@ VnResult ValidateDerivedRequest(const VnMonitorMeasurementRequest& request,
     return handler.validate(request, tap);
 }
 
-void DispatchDerivedAudioChunk(const VnMonitorMeasurementRequest* requests,
+bool DerivedDrainState::Prepare(const VnMonitorMeasurementRequest* requests,
+                               std::uint32_t requestCount, std::uint32_t sampleRate,
+                               const DerivedDrainState* previous) noexcept {
+    if (memguard::IsAudioTagged() || requestCount > VN_MONITOR_HARD_MEASUREMENTS_PER_PLAN ||
+        (requestCount != 0 && requests == nullptr)) return false;
+    try {
+        std::vector<Measurement> prepared;
+        if (requestCount != 0)
+            detail::LogicAllocCheckpoint(detail::LogicAllocSite::MonitorDerivedStorage);
+        prepared.reserve(requestCount);
+        for (std::uint32_t i = 0; i < requestCount; ++i) {
+            const auto index = SlotFor(requests[i].kind);
+            if (index >= kHandlerSlots) return false;
+            const auto handler = g_handlers[index];
+            if (handler.consume == nullptr || handler.createState == nullptr ||
+                handler.createScratch == nullptr) return false;
+            Measurement measurement{requests[i].kind, handler, {}, {}};
+            if (previous != nullptr && previous->sampleRate_ == sampleRate &&
+                i < previous->measurements_.size()) {
+                const auto& old = previous->measurements_[i];
+                if (old.kind == measurement.kind && old.handler.createState == handler.createState)
+                    measurement.state = old.state;
+            }
+            if (!measurement.state) {
+                detail::LogicAllocCheckpoint(detail::LogicAllocSite::MonitorDerivedStorage);
+                measurement.state = handler.createState(requests[i], sampleRate);
+            }
+            const auto findScratch = [&](const auto& entries) {
+                return std::find_if(entries.begin(), entries.end(), [&](const auto& entry) {
+                    return entry.handler.createScratch == handler.createScratch;
+                });
+            };
+            const auto current = findScratch(prepared);
+            if (current != prepared.end()) measurement.scratch = current->scratch;
+            else if (previous != nullptr) {
+                const auto old = findScratch(previous->measurements_);
+                if (old != previous->measurements_.end()) measurement.scratch = old->scratch;
+            }
+            if (!measurement.scratch) {
+                detail::LogicAllocCheckpoint(detail::LogicAllocSite::MonitorDerivedStorage);
+                measurement.scratch = handler.createScratch();
+            }
+            if (!measurement.state || !measurement.scratch) return false;
+            prepared.push_back(std::move(measurement));
+        }
+        measurements_.swap(prepared);
+        sampleRate_ = sampleRate;
+        return true;
+    } catch (...) { return false; }
+}
+
+void DerivedDrainState::Dispatch(const VnMonitorMeasurementRequest* requests,
                                std::uint32_t requestCount,
                                const VnMonitorTapDescriptor* taps,
                                std::uint32_t tapCount,
@@ -76,7 +130,8 @@ void DispatchDerivedAudioChunk(const VnMonitorMeasurementRequest* requests,
         }
         ~ActiveGenerationScope() { g_activeCapturePlanGeneration = 0; }
     } scope(activeCapturePlanGeneration);
-    if (requests == nullptr || requestCount == 0 || packedAudioChunk == nullptr ||
+    if (memguard::IsAudioTagged() || requests == nullptr || requestCount == 0 ||
+        requestCount > measurements_.size() || packedAudioChunk == nullptr ||
         packedBytes == 0 || taps == nullptr || tapCount == 0) {
         return;
     }
@@ -85,16 +140,13 @@ void DispatchDerivedAudioChunk(const VnMonitorMeasurementRequest* requests,
         if (request.tapIndex >= tapCount) {
             continue;
         }
-        const std::uint32_t slot = SlotFor(request.kind);
-        if (slot >= kHandlerSlots) {
+        auto& measurement = measurements_[i];
+        if (measurement.kind != request.kind) {
             continue;
         }
-        const DerivedHandler& handler = g_handlers[slot];
-        if (handler.consume == nullptr) {
-            continue;
-        }
-        handler.consume(request, taps[request.tapIndex], packedAudioChunk,
-                        packedBytes, i, emit, emitCtx);
+        measurement.handler.consume(measurement.state.get(), measurement.scratch.get(),
+                                    request, taps[request.tapIndex], packedAudioChunk,
+                                    packedBytes, emit, emitCtx);
     }
 }
 

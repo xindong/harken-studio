@@ -4,7 +4,6 @@
 #include <QString>
 #include <functional>
 #include <memory>
-#include <optional>
 #include "AIPermissionModel.h"
 
 namespace VNX {
@@ -16,7 +15,6 @@ struct AIAgentConfig
     QString baseUrl;
     QString model;
     AIPermissionSetting permissionProfile = AIPermissionMode::Ask;
-    QString toolProfile = QStringLiteral("authoring");
     int contextWindowTokens = 128000;
     int maxTokens = 1024;
     int requestTimeoutMs = 30000;
@@ -25,7 +23,6 @@ struct AIAgentConfig
     AIAgentConfig effectiveSnapshot() const;
     bool operator==(const AIAgentConfig& other) const;
     bool operator!=(const AIAgentConfig& other) const { return !(*this == other); }
-    std::optional<AIToolProfile> typedToolProfile() const { return parseToolProfile(toolProfile); }
 };
 
 class AIAgentConfigStore

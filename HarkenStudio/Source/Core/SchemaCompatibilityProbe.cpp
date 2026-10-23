@@ -1,6 +1,5 @@
 #include "SchemaCompatibilityProbe.h"
 
-#include "PackSchemaGenerated.h"
 #include "ProjectManager.h"
 #include "ProjectOpenProtocol.h"
 #include "ProjectSchemaGenerated.h"
@@ -82,7 +81,7 @@ QJsonObject runSchemaCompatibilityProbe(const QJsonObject& request)
         {QStringLiteral("gitCommit"), buildString(Harken::BuildInfo::GitCommit)},
         {QStringLiteral("gitDirty"), Harken::BuildInfo::GitDirty},
         {QStringLiteral("editorSchemaVersion"), ProjectSchema::kProjectSchemaVersion},
-        {QStringLiteral("packSchemaVersion"), PackSchema::kPackManifestSchemaVersion},
+        {QStringLiteral("packSchemaVersion"), HARKEN_PACK_SCHEMA_VERSION},
         {QStringLiteral("schemaSnapshotHash"), QString::fromLatin1(SchemaBuild::kSnapshotHash)},
         {QStringLiteral("edits"), QJsonArray{}},
     };

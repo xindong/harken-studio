@@ -1,6 +1,7 @@
 #include "ProjectTransaction.h"
 
 #include "ProjectDataPolicy.h"
+#include "Utils/FileOperationRetry.h"
 
 #include <QCryptographicHash>
 #include <QDir>
@@ -107,14 +108,25 @@ bool isSha256(const QString& value)
     return true;
 }
 
-QByteArray fileHash(const QString& path)
+QString fileOperationError(const QString& operation, const QFileDevice& file)
+{
+    return QStringLiteral("%1 '%2': %3 (Qt file error %4)")
+        .arg(operation, file.fileName(), file.errorString())
+        .arg(static_cast<int>(file.error()));
+}
+
+QByteArray fileHash(const QString& path, QString* error = nullptr)
 {
     QFile file(path);
-    if (!file.open(QIODevice::ReadOnly))
+    if (!file.open(QIODevice::ReadOnly)) {
+        if (error) *error = fileOperationError(QStringLiteral("Cannot open file for verification"), file);
         return {};
+    }
     QCryptographicHash hash(QCryptographicHash::Sha256);
-    if (!hash.addData(&file))
+    if (!hash.addData(&file)) {
+        if (error) *error = fileOperationError(QStringLiteral("Cannot read file for verification"), file);
         return {};
+    }
     return hash.result();
 }
 
@@ -150,34 +162,54 @@ bool copyFileVerified(const QString& source, const QString& destination,
 {
     QFile input(source);
     if (!input.open(QIODevice::ReadOnly)) {
-        if (error) *error = QStringLiteral("Cannot read transaction source file");
+        if (error) *error = fileOperationError(QStringLiteral("Cannot read transaction source file"), input);
         return false;
     }
     if (!QDir().mkpath(QFileInfo(destination).absolutePath())) {
-        if (error) *error = QStringLiteral("Cannot create transaction directory");
+        if (error) *error = QStringLiteral("Cannot create transaction directory: %1")
+            .arg(QFileInfo(destination).absolutePath());
         return false;
     }
-    QSaveFile output(destination);
-    if (!output.open(QIODevice::WriteOnly)) {
-        if (error) *error = QStringLiteral("Cannot write transaction file");
-        return false;
-    }
-    QCryptographicHash sourceHash(QCryptographicHash::Sha256);
+    QByteArray expected;
     QByteArray buffer(1024 * 1024, Qt::Uninitialized);
-    while (!input.atEnd()) {
-        const qint64 size = input.read(buffer.data(), buffer.size());
-        if (size < 0 || output.write(buffer.constData(), size) != size) {
-            if (error) *error = QStringLiteral("Cannot copy transaction file");
+    QString copyError;
+    if (!retryFileOperation([&] {
+        input.unsetError();
+        if (!input.seek(0)) {
+            copyError = fileOperationError(QStringLiteral("Cannot rewind transaction source file"), input);
             return false;
         }
-        sourceHash.addData(buffer.constData(), size);
-    }
-    if (!output.commit()) {
-        if (error) *error = QStringLiteral("Cannot commit transaction file");
+        QSaveFile output(destination);
+        if (!output.open(QIODevice::WriteOnly)) {
+            copyError = fileOperationError(QStringLiteral("Cannot open transaction file for writing"), output);
+            return false;
+        }
+        QCryptographicHash sourceHash(QCryptographicHash::Sha256);
+        while (!input.atEnd()) {
+            const qint64 size = input.read(buffer.data(), buffer.size());
+            if (size < 0) {
+                copyError = fileOperationError(QStringLiteral("Cannot read transaction source file"), input);
+                return false;
+            }
+            if (output.write(buffer.constData(), size) != size) {
+                copyError = fileOperationError(QStringLiteral("Cannot write transaction file"), output);
+                return false;
+            }
+            sourceHash.addData(buffer.constData(), size);
+        }
+        if (!output.commit()) {
+            copyError = fileOperationError(QStringLiteral("Cannot commit transaction file"), output);
+            return false;
+        }
+        expected = sourceHash.result();
+        return true;
+    })) {
+        if (error) *error = copyError;
         return false;
     }
-    if (!QFile::setPermissions(destination, QFile::permissions(source))) {
-        if (error) *error = QStringLiteral("Cannot preserve transaction file permissions");
+    QFile destinationFile(destination);
+    if (!destinationFile.setPermissions(input.permissions())) {
+        if (error) *error = fileOperationError(QStringLiteral("Cannot preserve transaction file permissions"), destinationFile);
         return false;
     }
 #if defined(Q_OS_WIN)
@@ -185,20 +217,35 @@ bool copyFileVerified(const QString& source, const QString& destination,
     const QString nativeDestination = windowsFilePath(destination);
     const DWORD sourceAttributes = GetFileAttributesW(
         reinterpret_cast<LPCWSTR>(nativeSource.utf16()));
+    if (sourceAttributes == INVALID_FILE_ATTRIBUTES) {
+        const DWORD nativeError = GetLastError();
+        if (error) *error = QStringLiteral("Cannot read transaction source file attributes '%1' (Win32 error %2)")
+            .arg(source).arg(nativeError);
+        return false;
+    }
     const DWORD destinationAttributes = GetFileAttributesW(
         reinterpret_cast<LPCWSTR>(nativeDestination.utf16()));
+    if (destinationAttributes == INVALID_FILE_ATTRIBUTES) {
+        const DWORD nativeError = GetLastError();
+        if (error) *error = QStringLiteral("Cannot read transaction destination file attributes '%1' (Win32 error %2)")
+            .arg(destination).arg(nativeError);
+        return false;
+    }
     constexpr DWORD preservedAttributes = FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM;
-    if (sourceAttributes == INVALID_FILE_ATTRIBUTES
-        || destinationAttributes == INVALID_FILE_ATTRIBUTES
-        || !SetFileAttributesW(reinterpret_cast<LPCWSTR>(nativeDestination.utf16()),
+    if (!SetFileAttributesW(reinterpret_cast<LPCWSTR>(nativeDestination.utf16()),
             (destinationAttributes & ~preservedAttributes) | (sourceAttributes & preservedAttributes))) {
-        if (error) *error = QStringLiteral("Cannot preserve transaction file attributes");
+        const DWORD nativeError = GetLastError();
+        if (error) *error = QStringLiteral("Cannot preserve transaction file attributes '%1' (Win32 error %2)")
+            .arg(destination).arg(nativeError);
         return false;
     }
 #endif
-    const QByteArray expected = sourceHash.result();
-    if (fileHash(destination) != expected) {
-        if (error) *error = QStringLiteral("Transaction file copy failed verification");
+    const QByteArray actual = fileHash(destination, error);
+    if (actual.isEmpty())
+        return false;
+    if (actual != expected) {
+        if (error) *error = QStringLiteral("Transaction file copy failed verification: '%1' -> '%2'")
+            .arg(source, destination);
         return false;
     }
     if (hash) *hash = expected;
@@ -263,13 +310,19 @@ QJsonObject readJson(const QString& path, QString* error)
 {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) {
-        if (error) *error = QStringLiteral("Cannot read project transaction record");
+        if (error) *error = fileOperationError(QStringLiteral("Cannot open project transaction record"), file);
+        return {};
+    }
+    const QByteArray bytes = file.readAll();
+    if (file.error() != QFileDevice::NoError) {
+        if (error) *error = fileOperationError(QStringLiteral("Cannot read project transaction record"), file);
         return {};
     }
     QJsonParseError parseError;
-    const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &parseError);
+    const QJsonDocument document = QJsonDocument::fromJson(bytes, &parseError);
     if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
-        if (error) *error = QStringLiteral("Project transaction record is invalid");
+        if (error) *error = QStringLiteral("Project transaction record is invalid '%1': %2")
+            .arg(path, parseError.errorString());
         return {};
     }
     const QJsonObject object = document.object();
@@ -292,19 +345,23 @@ bool writeJson(const QString& path, const QJsonObject& object, QString* error)
         if (!file.open(QIODevice::WriteOnly)) {
             if (attempt == kMaxAttempts) {
                 if (error)
-                    *error = QStringLiteral("Cannot write project transaction record");
+                    *error = fileOperationError(QStringLiteral("Cannot open project transaction record for writing"), file);
                 return false;
             }
             QThread::msleep(kRetryDelayMs);
             continue;
         }
-        if (file.write(bytes) == bytes.size() && file.commit())
+        const bool written = file.write(bytes) == bytes.size();
+        if (written && file.commit())
             return true;
-        if (attempt == kMaxAttempts)
-            break;
+        if (attempt == kMaxAttempts) {
+            if (error) *error = fileOperationError(written
+                ? QStringLiteral("Cannot commit project transaction record")
+                : QStringLiteral("Cannot write project transaction record"), file);
+            return false;
+        }
         QThread::msleep(kRetryDelayMs);
     }
-    if (error) *error = QStringLiteral("Cannot commit project transaction record");
     return false;
 }
 
@@ -466,7 +523,8 @@ bool validJournal(const QJsonObject& journal, QString* error)
     return true;
 }
 
-bool currentMatchesKnownState(const QString& path, const QJsonObject& entry)
+bool currentMatchesKnownState(const QString& path, const QJsonObject& entry,
+                              QString* error = nullptr)
 {
     const bool exists = QFileInfo(path).isFile();
     const bool existed = entry.value(QStringLiteral("existed")).toBool();
@@ -482,14 +540,15 @@ bool currentMatchesKnownState(const QString& path, const QJsonObject& entry)
         return !displacedPath.isEmpty()
             && QFileInfo::exists(displacedPath)
             && !oldHash.isEmpty()
-            && fileHash(displacedPath) == oldHash;
+            && fileHash(displacedPath, error) == oldHash;
     }
-    const QByteArray current = fileHash(path);
+    const QByteArray current = fileHash(path, error);
     return (!oldHash.isEmpty() && current == oldHash)
         || (!newHash.isEmpty() && current == newHash);
 }
 
-bool currentMatchesOldState(const QString& path, const QJsonObject& entry)
+bool currentMatchesOldState(const QString& path, const QJsonObject& entry,
+                            QString* error = nullptr)
 {
     const bool exists = QFileInfo(path).isFile();
     if (!entry.value(QStringLiteral("existed")).toBool())
@@ -498,7 +557,7 @@ bool currentMatchesOldState(const QString& path, const QJsonObject& entry)
         return false;
     const QByteArray oldHash = QByteArray::fromHex(
         entry.value(QStringLiteral("oldHash")).toString().toLatin1());
-    return !oldHash.isEmpty() && fileHash(path) == oldHash;
+    return !oldHash.isEmpty() && fileHash(path, error) == oldHash;
 }
 
 bool detachTarget(const QString& target, const QString& displaced,
@@ -508,29 +567,44 @@ bool detachTarget(const QString& target, const QString& displaced,
     if (!QFileInfo::exists(target))
         return true;
     if (!moveToDisplaced) {
-        if (fileHash(target) != oldHash || !QFile::remove(target)) {
-            if (error) *error = QStringLiteral("Project changed or is locked before transaction write");
+        const QByteArray currentHash = fileHash(target, error);
+        if (currentHash.isEmpty())
+            return false;
+        if (currentHash != oldHash) {
+            if (error) *error = QStringLiteral("Project changed before transaction write: %1").arg(target);
+            return false;
+        }
+        QFile file(target);
+        if (!file.remove()) {
+            if (error) *error = fileOperationError(QStringLiteral("Cannot remove project file before transaction write"), file);
             return false;
         }
         return true;
     }
     if (!QDir().mkpath(QFileInfo(displaced).absolutePath())) {
-        if (error) *error = QStringLiteral("Cannot create transaction displacement directory");
+        if (error) *error = QStringLiteral("Cannot create transaction displacement directory: %1")
+            .arg(QFileInfo(displaced).absolutePath());
         return false;
     }
-    if (!QFile::rename(target, displaced)) {
-        if (error) *error = QStringLiteral("Project changed or is locked before transaction write");
+    QFile file(target);
+    if (!file.rename(displaced)) {
+        if (error) *error = fileOperationError(
+            QStringLiteral("Cannot move project file to '%1' before transaction write").arg(displaced), file);
         return false;
     }
-    if (fileHash(displaced) == oldHash)
+    QString verificationError;
+    if (fileHash(displaced, &verificationError) == oldHash)
         return true;
     if (!QFileInfo::exists(target))
         QFile::rename(displaced, target);
-    if (error) *error = QStringLiteral("Project changed before transaction write");
+    if (error) *error = verificationError.isEmpty()
+        ? QStringLiteral("Project changed before transaction write: %1").arg(displaced)
+        : verificationError;
     return false;
 }
 
-bool currentMatchesPlannedState(const QString& path, const QJsonObject& entry)
+bool currentMatchesPlannedState(const QString& path, const QJsonObject& entry,
+                                QString* error = nullptr)
 {
     const QString operation = entry.value(QStringLiteral("operation")).toString();
     if (operation == QStringLiteral("delete"))
@@ -539,7 +613,7 @@ bool currentMatchesPlannedState(const QString& path, const QJsonObject& entry)
         return false;
     const QByteArray expected = QByteArray::fromHex(
         entry.value(QStringLiteral("newHash")).toString().toLatin1());
-    return !expected.isEmpty() && QFileInfo(path).isFile() && fileHash(path) == expected;
+    return !expected.isEmpty() && QFileInfo(path).isFile() && fileHash(path, error) == expected;
 }
 
 bool reconcileDirectories(const QString& projectDirectory, const QJsonArray& directories,
@@ -605,8 +679,11 @@ bool restore(const QJsonObject& journal, QString* error,
         const QJsonObject entry = value.toObject();
         const QString relative = entry.value(QStringLiteral("path")).toString();
         const QString target = QDir(projectDirectory).filePath(relative);
-        if (!currentMatchesKnownState(target, entry)) {
-            if (error) *error = QStringLiteral("Project changed after the transaction started");
+        QString verificationError;
+        if (!currentMatchesKnownState(target, entry, &verificationError)) {
+            if (error) *error = verificationError.isEmpty()
+                ? QStringLiteral("Project changed after the transaction started: %1").arg(target)
+                : verificationError;
             return false;
         }
     }
@@ -655,12 +732,13 @@ bool removeTransactionFiles(const QJsonObject& journal, const QString& recordPat
                             QString* error)
 {
     const QString backup = journal.value(QStringLiteral("backupDirectory")).toString();
-    if (QFileInfo::exists(recordPath) && !QFile::remove(recordPath)) {
-        if (error) *error = QStringLiteral("Cannot remove project transaction record");
+    QFile record(recordPath);
+    if (record.exists() && !record.remove()) {
+        if (error) *error = fileOperationError(QStringLiteral("Cannot remove project transaction record"), record);
         return false;
     }
     if (QDir(backup).exists() && !QDir(backup).removeRecursively()) {
-        if (error) *error = QStringLiteral("Cannot remove project transaction recovery data");
+        if (error) *error = QStringLiteral("Cannot remove project transaction recovery data: %1").arg(backup);
         return false;
     }
     return true;
@@ -812,7 +890,7 @@ bool ProjectTransaction::replaceFromDirectory(const QString& stagedDirectory,
         return false;
     }
     QJsonObject journal = readJson(transactionPath_, error);
-    if (!validJournal(journal, error))
+    if (journal.isEmpty() || !validJournal(journal, error))
         return false;
     QJsonArray entries = journal.value(QStringLiteral("entries")).toArray();
     QSet<QString> before;
@@ -929,8 +1007,11 @@ bool ProjectTransaction::replaceFromDirectory(const QString& stagedDirectory,
                 ? QDir(backupDirectory_).filePath(QStringLiteral(".displaced/") + relative)
                 : QDir(backupDirectory_).filePath(relative)
             : QString();
-        if (!currentMatchesOldState(target, entry)) {
-            if (error) *error = QStringLiteral("Project changed before transaction write");
+        QString verificationError;
+        if (!currentMatchesOldState(target, entry, &verificationError)) {
+            if (error) *error = verificationError.isEmpty()
+                ? QStringLiteral("Project changed before transaction write: %1").arg(target)
+                : verificationError;
             return false;
         }
         if (QFileInfo(source).isFile()) {
@@ -960,8 +1041,11 @@ bool ProjectTransaction::replaceFromDirectory(const QString& stagedDirectory,
         const QJsonObject entry = value.toObject();
         const QString target = QDir(projectDirectory_).filePath(
             entry.value(QStringLiteral("path")).toString());
-        if (!currentMatchesOldState(target, entry)) {
-            if (error) *error = QStringLiteral("Project changed before transaction write");
+        QString verificationError;
+        if (!currentMatchesOldState(target, entry, &verificationError)) {
+            if (error) *error = verificationError.isEmpty()
+                ? QStringLiteral("Project changed before transaction write: %1").arg(target)
+                : verificationError;
             return false;
         }
         if (!entry.value(QStringLiteral("existed")).toBool()
@@ -986,11 +1070,12 @@ bool ProjectTransaction::replaceFromDirectory(const QString& stagedDirectory,
                 && !entry.contains(QStringLiteral("oldPath"))
                 && currentMatchesOldState(target, entry);
             if (QFileInfo::exists(target) && !replaceExisting) {
-                if (error) *error = QStringLiteral("Project changed during transaction write");
+                if (error) *error = QStringLiteral("Project changed during transaction write: %1").arg(target);
                 return false;
             }
             if (!QDir().mkpath(QFileInfo(target).absolutePath())) {
-                if (error) *error = QStringLiteral("Cannot create project file directory");
+                if (error) *error = QStringLiteral("Cannot create project file directory: %1")
+                    .arg(QFileInfo(target).absolutePath());
                 return false;
             }
             const QString snapshot = QDir(backupDirectory_).filePath(
@@ -1000,8 +1085,13 @@ bool ProjectTransaction::replaceFromDirectory(const QString& stagedDirectory,
                 ? installFileWithoutReplacement(snapshot, target)
                     || copyFileVerified(snapshot, target, &installedHash, error)
                 : copyFileVerified(snapshot, target, &installedHash, error);
-            if (!installed || !currentMatchesPlannedState(target, entry)) {
-                if (error) *error = QStringLiteral("Staged project file changed during transaction");
+            if (!installed)
+                return false;
+            QString verificationError;
+            if (!currentMatchesPlannedState(target, entry, &verificationError)) {
+                if (error) *error = verificationError.isEmpty()
+                    ? QStringLiteral("Staged project file changed during transaction: %1").arg(target)
+                    : verificationError;
                 return false;
             }
         }
@@ -1022,7 +1112,7 @@ bool ProjectTransaction::commit(bool keepJournal, QString* error)
     if (!active_)
         return true;
     QJsonObject journal = readJson(transactionPath_, error);
-    if (!validJournal(journal, error))
+    if (journal.isEmpty() || !validJournal(journal, error))
         return false;
     QJsonArray entries = journal.value(QStringLiteral("entries")).toArray();
     const QJsonArray directories = journal.value(QStringLiteral("directories")).toArray();
@@ -1035,7 +1125,8 @@ bool ProjectTransaction::commit(bool keepJournal, QString* error)
             && physicalPathSpelling(projectDirectory_, relative) == relative;
         if (info.isSymLink()
             || exists != directory.value(QStringLiteral("retained")).toBool()) {
-            if (error) *error = QStringLiteral("Project directories changed before transaction commit");
+            if (error) *error = QStringLiteral("Project directory changed before transaction commit: %1")
+                .arg(info.absoluteFilePath());
             return false;
         }
     }
@@ -1047,14 +1138,16 @@ bool ProjectTransaction::commit(bool keepJournal, QString* error)
         const QString operation = entry.value(QStringLiteral("operation")).toString();
         const bool hasPlannedState = state == QStringLiteral("written")
             && !operation.isEmpty();
-        if (hasPlannedState && !currentMatchesPlannedState(target, entry)) {
-            if (error) *error = QStringLiteral("Project changed before transaction commit");
+        QString verificationError;
+        if (hasPlannedState && !currentMatchesPlannedState(target, entry, &verificationError)) {
+            if (error) *error = verificationError.isEmpty()
+                ? QStringLiteral("Project changed before transaction commit: %1").arg(target)
+                : verificationError;
             return false;
         }
         if (!hasPlannedState && QFileInfo(target).isFile()) {
-            const QByteArray hash = fileHash(target);
+            const QByteArray hash = fileHash(target, error);
             if (hash.isEmpty()) {
-                if (error) *error = QStringLiteral("Cannot verify committed project file");
                 return false;
             }
             entry.insert(QStringLiteral("operation"), QStringLiteral("write"));

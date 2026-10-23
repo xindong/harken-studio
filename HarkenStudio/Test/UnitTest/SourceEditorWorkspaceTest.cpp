@@ -47,8 +47,8 @@ public:
         window->resize(1200, 800);
         dockManager = new ads::CDockManager(window.get());
 
-        baseDock = new ads::CDockWidget(QStringLiteral("Blueprint Canvas"));
-        baseDock->setObjectName(QStringLiteral("BlueprintCanvasDock"));
+        baseDock = new ads::CDockWidget(QStringLiteral("Blueprint"));
+        baseDock->setObjectName(QStringLiteral("BlueprintDock"));
         baseDock->setWidget(new QLabel(QStringLiteral("canvas")));
         dockManager->addDockWidget(ads::TopDockWidgetArea, baseDock);
 
@@ -106,7 +106,7 @@ public:
         controller = std::make_unique<VNX::LayoutController>(nullptr);
         VNX::LayoutController::Docks docks;
         docks.dockManager = dockManager;
-        docks.blueprintCanvasDock = baseDock;
+        docks.blueprintDock = baseDock;
         controller->setDocks(docks);
         controller->setInstanceSnapshotProvider([this] {
             return workspace->instanceSpecs();

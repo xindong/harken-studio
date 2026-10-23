@@ -165,7 +165,7 @@ endif()
 option(HARKEN_BUILD_CORE "Build the Harken Core runtime" OFF)
 option(HARKEN_BUILD_SHARED "Build the HarkenCore shared library (C# binding native lib)" OFF)
 option(HARKEN_BUILD_EDITOR "Build the Harken Studio editor" OFF)
-option(HARKEN_BUILD_HUB "Build the Harken Hub application" OFF)
+option(HARKEN_BUILD_HUB "Build the Harken Studio Hub application" OFF)
 option(HARKEN_BUILD_TOOLS "Build the host, compiler, and preview tooling" OFF)
 option(HARKEN_BUILD_RUNTIME_UNIT_TESTS "Build the runtime correctness tests" OFF)
 option(HARKEN_BUILD_EDITOR_UNIT_TESTS "Build Editor/Qt unit tests" OFF)
@@ -246,6 +246,11 @@ endif()
 set(HARKEN_RUNTIME_DIR ${CMAKE_CURRENT_SOURCE_DIR}/HarkenEngine/Source/Runtime)
 set(HARKEN_THIRD_PARTY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/HarkenEngine/ThirdParty)
 
+if(HARKEN_BUILD_CORE)
+    set(HARKEN_SCHEMA_SOURCE_DIR "${CMAKE_SOURCE_DIR}/HarkenSchema"
+        CACHE PATH "Harken Schema source tree")
+endif()
+
 # Configure-time build identity (product version / git commit / build label),
 # exposed through the generated harken_buildinfo.h and embedded into
 # Windows binary file properties by harken_attach_version_resource().
@@ -258,14 +263,10 @@ if(HARKEN_BUILD_TOOLS)
 endif()
 
 if(HARKEN_BUILD_EDITOR OR HARKEN_BUILD_TOOLS)
-    set(HARKEN_SCHEMA_SOURCE_DIR "${CMAKE_SOURCE_DIR}/HarkenSchema"
-        CACHE PATH "Studio Schema source tree")
     set(HARKEN_SCHEMA_GENERATED_DIR "${CMAKE_BINARY_DIR}/generated/schema")
     set(HARKEN_SCHEMA_GENERATED_CORE_DIR "${HARKEN_SCHEMA_GENERATED_DIR}/Core")
     set(HARKEN_SCHEMA_GENERATED_PROJECT_HEADER
         "${HARKEN_SCHEMA_GENERATED_CORE_DIR}/ProjectSchemaGenerated.h")
-    set(HARKEN_SCHEMA_GENERATED_PACK_HEADER
-        "${HARKEN_SCHEMA_GENERATED_CORE_DIR}/PackSchemaGenerated.h")
     set(HARKEN_SCHEMA_GENERATED_BUILD_HEADER
         "${HARKEN_SCHEMA_GENERATED_CORE_DIR}/SchemaBuildGenerated.h")
     set(HARKEN_SCHEMA_GENERATED_VALIDATOR_HEADER
@@ -274,7 +275,6 @@ if(HARKEN_BUILD_EDITOR OR HARKEN_BUILD_TOOLS)
         "${HARKEN_SCHEMA_GENERATED_CORE_DIR}/ProjectSchemaValidator.generated.cpp")
     set(HARKEN_SCHEMA_GENERATED_FILES
         ${HARKEN_SCHEMA_GENERATED_PROJECT_HEADER}
-        ${HARKEN_SCHEMA_GENERATED_PACK_HEADER}
         ${HARKEN_SCHEMA_GENERATED_BUILD_HEADER}
         ${HARKEN_SCHEMA_GENERATED_VALIDATOR_HEADER}
         ${HARKEN_SCHEMA_GENERATED_VALIDATOR_SOURCE})

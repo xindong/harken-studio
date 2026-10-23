@@ -6,8 +6,10 @@
 #include "harken/core/MonitorLifecycleSink.h"
 #include "harken/core/MonitorRequest.h"
 #include "harken/core/PackReadinessContract.h"
+#include "harken/core/StableRowStorage.h"
 
 #include <cstdint>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -96,6 +98,7 @@ enum class ActionTerminalReason : std::uint8_t {
 };
 
 struct ActionFiringStepResult {
+    bool monitorExecutionOnCommit = false;
     ActionStepState state = ActionStepState::Pending;
     std::int32_t result = 0;
     ActionTerminalReason terminalReason = ActionTerminalReason::None;
@@ -133,6 +136,12 @@ struct ActionFiringSnapshot {
     std::uint32_t directStepTerminalCount = 0;
     std::uint32_t childFiringCount = 0;
     std::uint32_t livePlayableCount = 0;
+};
+
+struct ActionVariableResultBacking {
+    StableStoragePreparation outcomes;
+    StableStoragePreparation queries;
+    StableStoragePreparation expired;
 };
 
 class ActionFiringTable;
@@ -230,6 +239,10 @@ public:
         ChildActivationReceipt* out = nullptr) noexcept;
     bool SetPreparedProgramFingerprint(const PreparedActionFiring& prepared,
                                         std::uint64_t fingerprint) noexcept;
+    bool AdoptPreparedVariableResultBacking(const PreparedActionFiring& prepared,
+        std::unique_ptr<ActionVariableResultBacking> backing) noexcept;
+    const ActionVariableResultBacking* VariableResultBackingFor(
+        ActionFiringHandle handle) const noexcept;
     bool SetPreparedStep(const PreparedActionFiring& prepared,
                          std::uint32_t index,
                          const ActionFiringStepResult& result) noexcept;
@@ -297,11 +310,24 @@ public:
                                 std::uint32_t* out) const noexcept;
     bool CaptureStep(ActionFiringHandle handle, std::uint32_t index,
                      ActionFiringStepResult* out) const noexcept;
+    void ObserveStepExecution(ActionFiringHandle handle, std::uint32_t index) noexcept;
 
     std::uint32_t Capacity() const noexcept {
-        return static_cast<std::uint32_t>(rows_.size());
+        return rows_.Capacity();
     }
     std::uint32_t LiveCount() const noexcept { return liveCount_; }
+    std::uint32_t ConstructedRowCount() const noexcept { return rows_.ConstructedCount(); }
+    std::uint64_t RowStorageBytes() const noexcept { return rows_.RequestedBytes(); }
+    std::uint64_t RowCommittedBytes() const noexcept { return rows_.CommittedBytes(); }
+    std::uint64_t RowReservedBytes() const noexcept { return rows_.ReservedBytes(); }
+    void SetRowCommitPageLimitForTests(std::size_t pages) noexcept {
+        rows_.SetCommitPageLimitForTests(pages);
+    }
+    // Result payload requests, including hidden preparations and retained terminals.
+    std::uint64_t ResultStorageBytes() const noexcept;
+    void SetResultAllocationFailureForTests(bool fail) noexcept {
+        failResultAllocationForTests_ = fail;
+    }
     std::uint32_t HighWater() const noexcept { return highWater_; }
     std::uint32_t FreeCount() const noexcept;
     std::uint32_t QuarantinedCount() const noexcept {
@@ -340,6 +366,8 @@ private:
         ActionFiringOutcome outcome = ActionFiringOutcome::Pending;
         ActionTerminalReason terminalReason = ActionTerminalReason::None;
         std::int32_t terminalResult = 0;
+        bool monitorTerminalPublished = false;
+        std::vector<std::uint64_t> monitorExecutedSteps;
         ActionFiringHandle parent = 0;
         ActionFiringHandle root = 0;
         ActionFiringHandle firstChild = 0;
@@ -349,6 +377,9 @@ private:
         std::uint32_t childFiringCount = 0;
         std::uint32_t livePlayableCount = 0;
         std::uint32_t ownedDeferredCount = 0;
+        // The serialized control owner constructs this before publishing the row.
+        std::vector<ActionFiringStepResult> results;
+        std::unique_ptr<ActionVariableResultBacking> variableResultBacking;
     };
 
     static ActionFiringHandle MakeHandle(std::uint32_t slot,
@@ -372,13 +403,17 @@ private:
     bool PropagateTerminal(Row& row) noexcept;
     bool TryFinalizeSubtree(ActionFiringHandle handle) noexcept;
     bool TryFinalize(Row& row) noexcept;
+    bool PrepareResults(Row& row, std::uint32_t count) noexcept;
+    MonitorLifecycleFacts CaptureMonitorFacts(const Row& row) const noexcept;
+    void ObserveCommittedSubtree(ActionFiringHandle handle) noexcept;
+    void ObserveActionTerminal(Row& row) noexcept;
 
-    std::vector<Row> rows_;
-    std::vector<ActionFiringStepResult> results_;
+    StableRowStorage<Row> rows_;
     std::uint32_t liveCount_ = 0;
     std::uint32_t highWater_ = 0;
     std::uint32_t quarantinedCount_ = 0;
     std::uint64_t refusalCount_ = 0;
+    bool failResultAllocationForTests_ = false;
 };
 
 } // namespace harken

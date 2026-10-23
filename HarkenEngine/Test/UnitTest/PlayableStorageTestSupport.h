@@ -23,52 +23,26 @@ auto StorageIdentity(const std::vector<T>& rows) {
     return std::pair<const void*, std::size_t>{rows.data(), rows.capacity()};
 }
 
+template <typename T>
+auto StorageIdentity(const harken::StableSlotStorage<T>& rows) {
+    return std::pair<const void*, std::size_t>{rows.BackingAddress(), rows.size()};
+}
+
+template <typename T, typename Index>
+auto StorageIdentity(const harken::StableRowStorage<T, Index>& rows) {
+    return std::pair<const void*, std::size_t>{rows.data(), rows.Capacity()};
+}
+
 inline auto CapturePlayableStorage(const harken::Engine& engine) {
     return std::array{
         StorageIdentity(engine.playableStarts),
         StorageIdentity(engine.initialFrontierEvents),
         StorageIdentity(engine.initialFrontierRequests),
         StorageIdentity(engine.playableServices),
-        StorageIdentity(engine.playableMemberReferences),
-        StorageIdentity(engine.playableScheduleVoices),
-        StorageIdentity(engine.playableScheduleLeaves),
-        StorageIdentity(engine.playableScheduleArms),
-        StorageIdentity(engine.playableScheduleRenderHandles),
-        StorageIdentity(engine.playableScheduleReleaseObservers),
-        StorageIdentity(engine.variableControlMemberCompletions),
-        StorageIdentity(engine.playableScheduleStartFrames),
-        StorageIdentity(engine.variableControlDynamicMembers),
-        StorageIdentity(engine.playableScheduleCompletions),
-        StorageIdentity(engine.playableSchedulePostSourceTailFrames),
-        StorageIdentity(engine.playableSuccessorPayloads),
-        StorageIdentity(engine.playableSuccessorEvents),
-        StorageIdentity(engine.playableSchedulePayloads),
-        StorageIdentity(engine.playableScheduleEvents),
-        StorageIdentity(engine.variableControlRuntimePrograms),
-        StorageIdentity(engine.variableControlSchedules),
-        StorageIdentity(engine.playableScheduleRuntimePrograms),
-        StorageIdentity(engine.playableSchedules),
-        StorageIdentity(engine.playableScheduleOccurrences),
-        StorageIdentity(engine.playableSuccessorVoices),
-        StorageIdentity(engine.playableSuccessorLeaves),
-        StorageIdentity(engine.playableSuccessorRuntimePrograms),
-        StorageIdentity(engine.playableSuccessorSchedules),
-        StorageIdentity(engine.playableSuccessorArms),
-        StorageIdentity(engine.playableSuccessorRenderHandles),
-        StorageIdentity(engine.playableSuccessorOccurrences),
-        StorageIdentity(engine.playableSuccessorCompletions),
-        StorageIdentity(engine.playableSuccessorStartFrames),
-        StorageIdentity(engine.playableSuccessorPostSourceTailFrames),
-        StorageIdentity(engine.variableControlWeightSegments),
-        StorageIdentity(engine.variableControlPendingWeightSegments),
-        StorageIdentity(engine.variableControlInitialContinuousArms),
-        StorageIdentity(engine.variableControlRetargetPayloads),
-        StorageIdentity(engine.variableControlRetargetEvents),
-        StorageIdentity(engine.variableControlRetargetRuntimePrograms),
-        StorageIdentity(engine.variableControlRetargetSchedules),
-        StorageIdentity(engine.variableControlRetargetArms),
-        StorageIdentity(engine.variableControlRetargetMemberKinds),
-        StorageIdentity(engine.variableControlRetargetDesiredOrdinals),
+        StorageIdentity(engine.memberRelations),
+        StorageIdentity(engine.playableMemberRecords),
+        StorageIdentity(engine.memberProgramRecords),
+        StorageIdentity(engine.variableControlRetargetPrograms),
         StorageIdentity(engine.queueProgramBanks)};
 }
 
@@ -128,10 +102,7 @@ public:
         const bool allocationAvailable = available_ && operations_ > 0;
         testing::Test::RecordProperty("allocation_observation_available", allocationAvailable ? "true" : "false");
         if (!allocationAvailable) return;
-        EXPECT_EQ(0u, logic_.allocations);
-        EXPECT_EQ(0u, logic_.reallocations);
-        EXPECT_EQ(0u, logic_.allocationBytes);
-        EXPECT_EQ(0u, logic_.reallocationBytes);
+        // Control-side preparation may grow actual columns before publication.
         EXPECT_EQ(0u, audio_.allocations);
         EXPECT_EQ(0u, audio_.reallocations);
         EXPECT_EQ(0u, audio_.allocationBytes);

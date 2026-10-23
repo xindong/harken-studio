@@ -11,7 +11,6 @@
 #include "../SoundSourceEditing.h"
 #include "../SoundSourceSemantics.h"
 #include "../UndoCommands.h"
-#include "../ToastManager.h"
 #include "../../Widgets/LogPanel/LogPanel.h"
 
 #include <QFile>
@@ -169,7 +168,6 @@ void ImportSoundSourcesCommand::collectEntries()
     };
     const auto report = [](const QString& error) {
         LogPanel::logError(LogCategory::Import, error);
-        ToastManager::instance().showToast(error, 5000, ToastType::Error);
     };
     struct PlannedImport { QString path; uint32_t restoreID = 0; };
     QList<PlannedImport> plan;

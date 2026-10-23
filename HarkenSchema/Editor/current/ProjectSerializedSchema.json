@@ -2908,12 +2908,7 @@
             "$schema": "https://json-schema.org/draft/2020-12/schema",
             "additionalProperties": false,
             "properties": {
-              "actionPackTargeting": {
-                "items": {
-                  "$ref": "#/$defs/actionPackTargeting"
-                },
-                "type": "array"
-              },
+              "actionPackTargeting": {},
               "actionPublishedNameHistory": {
                 "items": {
                   "$ref": "#/$defs/actionPublishedNameHistoryRow"
@@ -2946,18 +2941,21 @@
               "packBuildOutputDir": {
                 "type": "string"
               },
-              "packExportCurrentPlatformId": {
-                "$ref": "#/$defs/projectPlatformId"
+              "buildExportProjectData": {
+                "type": "boolean"
               },
-              "packExportSelectedPlatformIds": {
-                "$ref": "#/$defs/projectPlatformIds"
+              "buildExportPackMetadata": {
+                "type": "boolean"
               },
-              "packGroups": {
-                "items": {
-                  "$ref": "#/$defs/packGroup"
-                },
-                "type": "array"
+              "buildExportWaveforms": {
+                "type": "boolean"
               },
+              "buildWaveformOutputDir": {
+                "type": "string"
+              },
+              "packExportCurrentPlatformId": {},
+              "packExportSelectedPlatformIds": {},
+              "packGroups": {},
               "packOutputDir": {
                 "type": "string"
               },
@@ -2983,9 +2981,7 @@
             },
             "required": [
               "metadata",
-              "paths",
-              "packExportCurrentPlatformId",
-              "packExportSelectedPlatformIds"
+              "paths"
             ],
             "type": "object"
           },

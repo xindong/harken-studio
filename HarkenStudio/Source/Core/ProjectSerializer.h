@@ -37,7 +37,8 @@ public:
     bool saveProject(const QString& filePath, ProjectData& project);
     bool saveProject(const QString& filePath, const ProjectData& project);
     bool prepareReferenceWrite(const ProjectData& project);
-    bool prepareProjectSave(const QString& filePath, ProjectData& project);
+    bool prepareProjectSave(const QString& filePath, ProjectData& project,
+                            const QString& stagingFilePath = {});
     bool commitProjectSave(QJsonObject* savedHeader = nullptr);
     void cancelProjectSave();
     bool loadProject(const QString& filePath, ProjectData& project,

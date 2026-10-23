@@ -1,0 +1,30 @@
+{
+    "content": {
+        "actions": [
+            {
+                "delay": 0,
+                "targetRef": {
+                    "documentId": "5b134ae8-b195-477f-95be-97fa0291251f",
+                    "id": "5b134ae8-b195-477f-95be-97fa0291251f"
+                },
+                "type": "Post Action"
+            }
+        ],
+        "guid": "9e0380d1-9eb1-4a48-9b37-b3a1ed570289",
+        "name": "Play_Tail",
+        "nameBindingRevision": 1,
+        "objectPath": "\\Play_Tail",
+        "parentRef": {
+            "kind": "root"
+        },
+        "type": "Action"
+    },
+    "harkenDocument": {
+        "id": "9e0380d1-9eb1-4a48-9b37-b3a1ed570289",
+        "projectId": "77b2c1cc-416d-4c88-986d-262c7fc1705e",
+        "propertyModel": "fieldGroupsV1",
+        "savedStudioVersion": "0.8.0",
+        "schemaVersion": 8,
+        "type": "project.action"
+    }
+}

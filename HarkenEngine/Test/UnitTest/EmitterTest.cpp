@@ -9,7 +9,6 @@
 // naming a dead emitter.
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
-#include "PlayableStorageTestSupport.h"
 
 #include "harken/param/Curve.h"
 #include "harken/param/ParamTargets.h"
@@ -22,23 +21,8 @@
 
 namespace {
 
-class Emitter : public testing::Test {
-    harkentest::PlayableCapacityScope playableCapacity_{8, 1};
-};
-
-using MonitorEmitterIdentity = Emitter;
-
-VnConfig EmitterBaseConfig(std::uint32_t maxVoices = 0,
-                           std::uint32_t blockFrames = 0,
-                           std::uint32_t sampleRate = 0) {
-    auto config = harkentest::MakeNullConfig(maxVoices, blockFrames, sampleRate);
-    config.maxTriggerDepth = 1;
-    config.maxActionFirings = 8;
-    return config;
-}
-
-TEST_F(MonitorEmitterIdentity, CaptureOffPreservesOriginAcrossDestroyAndSlotReuse) {
-    harkentest::EngineSession session(EmitterBaseConfig());
+TEST(MonitorEmitterIdentity, CaptureOffPreservesOriginAcrossDestroyAndSlotReuse) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
     auto& registry = engine.monitorEmitters;
@@ -80,8 +64,8 @@ TEST_F(MonitorEmitterIdentity, CaptureOffPreservesOriginAcrossDestroyAndSlotReus
     EXPECT_EQ(1u, origin.host.localSequence);
 }
 
-TEST_F(MonitorEmitterIdentity, NoneDefaultStateOnlyAndUnknownHostRemainDistinct) {
-    harkentest::EngineSession session(EmitterBaseConfig());
+TEST(MonitorEmitterIdentity, NoneDefaultStateOnlyAndUnknownHostRemainDistinct) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
     auto& registry = engine.monitorEmitters;
@@ -109,8 +93,8 @@ TEST_F(MonitorEmitterIdentity, NoneDefaultStateOnlyAndUnknownHostRemainDistinct)
     EXPECT_EQ(harken::MonitorBindingState::None, detached.spatial);
 }
 
-TEST_F(MonitorEmitterIdentity, ReconnectRejectsOldSessionWithoutChangingEmitterLifetime) {
-    harkentest::EngineSession session(EmitterBaseConfig());
+TEST(MonitorEmitterIdentity, ReconnectRejectsOldSessionWithoutChangingEmitterLifetime) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
     auto& registry = engine.monitorEmitters;
@@ -141,8 +125,8 @@ TEST_F(MonitorEmitterIdentity, ReconnectRejectsOldSessionWithoutChangingEmitterL
     EXPECT_FALSE(registry.CaptureOrigin(emitter).host.Valid());
 }
 
-TEST_F(MonitorEmitterIdentity, ExhaustedDiagnosticSessionDoesNotStopNativeEmitterCreation) {
-    harkentest::EngineSession session(EmitterBaseConfig());
+TEST(MonitorEmitterIdentity, ExhaustedDiagnosticSessionDoesNotStopNativeEmitterCreation) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
     harken::MonitorEmitterRegistry exhausted(engine.emitters, engine.config.maxEmitters,
@@ -159,7 +143,7 @@ TEST_F(MonitorEmitterIdentity, ExhaustedDiagnosticSessionDoesNotStopNativeEmitte
     EXPECT_EQ(VN_OK, Vn_DestroyEmitter(emitter));
 }
 
-TEST_F(MonitorEmitterIdentity, OldEngineCallbacksCannotChangeSameNumericSessionAndEmitter) {
+TEST(MonitorEmitterIdentity, OldEngineCallbacksCannotChangeSameNumericSessionAndEmitter) {
     harken::EngineConfig config{};
     config.maxEmitters = 1;
     harken::EmitterTable firstTable(config), secondTable(config);
@@ -184,8 +168,8 @@ TEST_F(MonitorEmitterIdentity, OldEngineCallbacksCannotChangeSameNumericSessionA
     EXPECT_TRUE(current.host.Valid());
 }
 
-TEST_F(MonitorEmitterIdentity, OptionalAbiRejectsMalformedAndStaleRegistrationWithoutMutation) {
-    harkentest::EngineSession session(EmitterBaseConfig());
+TEST(MonitorEmitterIdentity, OptionalAbiRejectsMalformedAndStaleRegistrationWithoutMutation) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
     VnMonitorHostSessionV1 info{};
@@ -214,6 +198,7 @@ using harkentest::EngineSession;
 using harkentest::InterleavedDesc;
 using harkentest::MakeAttenuationDesc;
 using harkentest::MakeDC;
+using harkentest::MakeNullConfig;
 using harkentest::MakePlayDesc;
 using harkentest::MonoDesc;
 using harkentest::RenderHandle;
@@ -243,7 +228,7 @@ void InstallEmitterVariables(harken::Engine* engine) {
 
 VnConfig EmitterConfig(std::uint32_t maxVoices = 8,
                        std::uint32_t maxEmitters = 8) {
-    VnConfig config = EmitterBaseConfig(maxVoices, kBlock, kRate);
+    VnConfig config = MakeNullConfig(maxVoices, kBlock, kRate);
     config.maxEmitters = maxEmitters;
     return config;
 }
@@ -264,7 +249,7 @@ VnSnapshot Snap() {
 
 // --- Variable isolation goldens ---
 
-TEST_F(Emitter, VariableProjectionRestoresPresenceAndReleasesSpeculativeLocalSlot) {
+TEST(Emitter, VariableProjectionRestoresPresenceAndReleasesSpeculativeLocalSlot) {
     harken::EngineConfig config{};
     config.maxEmitters = 1;
     config.emitterVariableSlots = 1;
@@ -288,7 +273,7 @@ TEST_F(Emitter, VariableProjectionRestoresPresenceAndReleasesSpeculativeLocalSlo
     EXPECT_GT(emitters.VariableProjectionStorageBytes(), 0u);
 }
 
-TEST_F(Emitter, LocalVariableValuesIsolatePerEmitter) {
+TEST(Emitter, LocalVariableValuesIsolatePerEmitter) {
     EngineSession session(EmitterConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -329,7 +314,7 @@ TEST_F(Emitter, LocalVariableValuesIsolatePerEmitter) {
                                 harken::kTargetVoiceVolume), 1.0e-5f);
 }
 
-TEST_F(Emitter, GlobalWriteReplacesLocalAndReachesUnscopedVoices) {
+TEST(Emitter, GlobalWriteReplacesLocalAndReachesUnscopedVoices) {
     EngineSession session(EmitterConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -379,7 +364,7 @@ TEST_F(Emitter, GlobalWriteReplacesLocalAndReachesUnscopedVoices) {
                                 harken::kTargetVoiceVolume));
 }
 
-TEST_F(Emitter, LocalWriteDirtiesOnlyThatEmittersVoices) {
+TEST(Emitter, LocalWriteDirtiesOnlyThatEmittersVoices) {
     // Dirty tracking is scoped: an emitter-local write recommits only that
     // emitter's voices, never the other emitter's (whose resolved value did
     // not move). Proven through the commit counter.
@@ -426,7 +411,7 @@ TEST_F(Emitter, LocalWriteDirtiesOnlyThatEmittersVoices) {
 
 // --- emitter-driven spatial ---
 
-TEST_F(Emitter, DrivesPerVoiceDistanceAndFansOutAMove) {
+TEST(Emitter, DrivesPerVoiceDistanceAndFansOutAMove) {
     EngineSession session(EmitterConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -479,7 +464,7 @@ TEST_F(Emitter, DrivesPerVoiceDistanceAndFansOutAMove) {
 
 // --- contract gates ---
 
-TEST_F(Emitter, AttachedVoiceRefusesPerVoiceSpatialWrites) {
+TEST(Emitter, AttachedVoiceRefusesPerVoiceSpatialWrites) {
     EngineSession session(EmitterConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const std::vector<float> dc = MakeDC(kRate, 0.5f);
@@ -517,7 +502,7 @@ TEST_F(Emitter, AttachedVoiceRefusesPerVoiceSpatialWrites) {
     EXPECT_EQ(VN_OK, Vn_SetVoiceOrientation(freeVoice, Vec3(1.0f, 0.0f, 0.0f)));
 }
 
-TEST_F(Emitter, DestroyDetachesVoiceWithFrozenStateAndReenablesPerVoice) {
+TEST(Emitter, DestroyDetachesVoiceWithFrozenStateAndReenablesPerVoice) {
     EngineSession session(EmitterConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -564,7 +549,7 @@ TEST_F(Emitter, DestroyDetachesVoiceWithFrozenStateAndReenablesPerVoice) {
               attachedDb); // closer than distance 10 -> louder
 }
 
-TEST_F(Emitter, StaleEmitterOpsAreBenign) {
+TEST(Emitter, StaleEmitterOpsAreBenign) {
     EngineSession session(EmitterConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
 
@@ -582,7 +567,7 @@ TEST_F(Emitter, StaleEmitterOpsAreBenign) {
     EXPECT_EQ(VN_STALE_HANDLE, Vn_SetEmitterValue(emitter, harkentest::ObjectId(5), 1.0f));
 }
 
-TEST_F(Emitter, PlayNamingADeadEmitterIsRefused) {
+TEST(Emitter, PlayNamingADeadEmitterIsRefused) {
     EngineSession session(EmitterConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const std::vector<float> dc = MakeDC(kRate, 0.5f);
@@ -601,7 +586,7 @@ TEST_F(Emitter, PlayNamingADeadEmitterIsRefused) {
     EXPECT_EQ(VN_OK, harkentest::PlayRaw(&plain, &voice));
 }
 
-TEST_F(Emitter, StopEmitterBatchWaitsRatherThanApplyingAPrefix) {
+TEST(Emitter, StopEmitterBatchWaitsRatherThanApplyingAPrefix) {
     EngineSession session(EmitterConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -635,7 +620,7 @@ TEST_F(Emitter, StopEmitterBatchWaitsRatherThanApplyingAPrefix) {
     EXPECT_EQ(nullptr, engine->voices.Resolve(RenderHandle(engine, b)));
 }
 
-TEST_F(Emitter, StopEmitterStopsOnlyItsVoices) {
+TEST(Emitter, StopEmitterStopsOnlyItsVoices) {
     EngineSession session(EmitterConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -667,7 +652,7 @@ TEST_F(Emitter, StopEmitterStopsOnlyItsVoices) {
     EXPECT_EQ(VN_OK, Vn_SetEmitterPosition(emitter, Vec3(1.0f, 0.0f, 0.0f)));
 }
 
-TEST_F(Emitter, CapacityExhaustionRefusesWithNoEmitterAndCounts) {
+TEST(Emitter, CapacityExhaustionRefusesWithNoEmitterAndCounts) {
     EngineSession session(EmitterConfig(/*maxVoices=*/8, /*maxEmitters=*/2));
     ASSERT_EQ(VN_OK, session.InitResult());
 
@@ -690,7 +675,7 @@ TEST_F(Emitter, CapacityExhaustionRefusesWithNoEmitterAndCounts) {
 
 // --- dirty-tracking edge cases ---
 
-TEST_F(Emitter, BindAfterGlobalSetEvaluatesWithExistingValue) {
+TEST(Emitter, BindAfterGlobalSetEvaluatesWithExistingValue) {
     // A binding created after its Variable already holds a value must evaluate
     // against that pre-existing value on its first pass (the never-evaluated
     // path), not wait for a later Vn_SetValue to move it.
@@ -721,7 +706,7 @@ TEST_F(Emitter, BindAfterGlobalSetEvaluatesWithExistingValue) {
                                 harken::kTargetVoiceVolume), 1.0e-5f);
 }
 
-TEST_F(Emitter, SetSameValueProducesNoCommitAtEitherScope) {
+TEST(Emitter, SetSameValueProducesNoCommitAtEitherScope) {
     // Setting a Variable to the value it already holds must not recommit its
     // bound targets — the per-binding change detector sees no input change.
     // Checked at global scope (Vn_SetValue) and emitter scope
@@ -765,7 +750,7 @@ TEST_F(Emitter, SetSameValueProducesNoCommitAtEitherScope) {
     EXPECT_EQ(before, engine->params.CommitCount());
 }
 
-TEST_F(Emitter, LocalGlobalLocalWritesEachDetectedOnce) {
+TEST(Emitter, LocalGlobalLocalWritesEachDetectedOnce) {
     EngineSession session(EmitterConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -814,7 +799,7 @@ TEST_F(Emitter, LocalGlobalLocalWritesEachDetectedOnce) {
                                 harken::kTargetVoiceVolume), 1.0e-5f);
 }
 
-TEST_F(Emitter, DestroyWithLocalOverrideReresolvesToGlobalOnce) {
+TEST(Emitter, DestroyWithLocalOverrideReresolvesToGlobalOnce) {
     // An emitter destroyed while its local override differs from the global
     // value: the now-detached voice's binding re-resolves to the global value
     // exactly once, then holds without further commits.
@@ -860,7 +845,7 @@ TEST_F(Emitter, DestroyWithLocalOverrideReresolvesToGlobalOnce) {
 
 // --- Vn_StopEmitter with pending voices and backpressure atomicity ---
 
-TEST_F(Emitter, StopEmitterCancelsPendingAttachedAndStopsLive) {
+TEST(Emitter, StopEmitterCancelsPendingAttachedAndStopsLive) {
     // Mixed case: an emitter with one live attached voice and one steal-deferred
     // (pending) attached voice. Vn_StopEmitter cancels the pending start within
     // the call — no queued command — and stops the live one.
@@ -902,7 +887,7 @@ TEST_F(Emitter, StopEmitterCancelsPendingAttachedAndStopsLive) {
     EXPECT_EQ(VN_OK, Vn_SetEmitterPosition(emitter, Vec3(1.0f, 0.0f, 0.0f)));
 }
 
-TEST_F(Emitter, StopEmitterBackpressureIsAtomicThenSucceedsAfterPump) {
+TEST(Emitter, StopEmitterBackpressureIsAtomicThenSucceedsAfterPump) {
     // When the command queue cannot hold a stop for every attached voice,
     // Vn_StopEmitter refuses atomically: VN_BACKPRESSURE, zero stops issued,
     // every voice still live, emitter unchanged. After a pump drains the queue,
@@ -974,7 +959,7 @@ std::vector<float> MakeStereoDC(std::size_t frames, float left, float right) {
     return samples;
 }
 
-TEST_F(Emitter, RenderOutputPanAttenuationAndListenerPose) {
+TEST(Emitter, RenderOutputPanAttenuationAndListenerPose) {
     EngineSession session(EmitterConfig(/*maxVoices=*/4));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -1080,7 +1065,7 @@ TEST_F(Emitter, RenderOutputPanAttenuationAndListenerPose) {
     EXPECT_GT(stereoPower(farCapture), harkentest::kSilenceFloor);
 }
 
-TEST_F(Emitter, RenderOutputLiveTransitionAndFanOut) {
+TEST(Emitter, RenderOutputLiveTransitionAndFanOut) {
     EngineSession session(EmitterConfig(/*maxVoices=*/4));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -1139,7 +1124,7 @@ TEST_F(Emitter, RenderOutputLiveTransitionAndFanOut) {
               CapturedSample(settled, false) * 10.0f);
 }
 
-TEST_F(Emitter, RenderOutputParkReturn) {
+TEST(Emitter, RenderOutputParkReturn) {
     VnConfig config = EmitterConfig(/*maxVoices=*/4);
     config.maxParkedVoices = 2;
     config.audibilityParkEnabled = 1;
@@ -1195,7 +1180,7 @@ VnEmitterHandle CreateStateOnly() {
     return handle;
 }
 
-TEST_F(Emitter, StateOnlyPreservesVoicePoseAndOwnsStops) {
+TEST(Emitter, StateOnlyPreservesVoicePoseAndOwnsStops) {
     EngineSession session(EmitterConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto* engine = session.Engine();
@@ -1231,7 +1216,7 @@ TEST_F(Emitter, StateOnlyPreservesVoicePoseAndOwnsStops) {
     EXPECT_EQ(VN_OK, Vn_DestroyEmitter(state));
 }
 
-TEST_F(Emitter, StateOnlyPendingVoiceAcceptsPoseAndStopsWithItsOwner) {
+TEST(Emitter, StateOnlyPendingVoiceAcceptsPoseAndStopsWithItsOwner) {
     auto config = EmitterConfig(1);
     config.voiceStealPolicy = 2;
     EngineSession session(config);
@@ -1257,7 +1242,7 @@ TEST_F(Emitter, StateOnlyPendingVoiceAcceptsPoseAndStopsWithItsOwner) {
     EXPECT_EQ(0u, engine->voices.ActiveCount());
 }
 
-TEST_F(Emitter, StateOnlyPendingPromotionPreservesPoseAndVariableContext) {
+TEST(Emitter, StateOnlyPendingPromotionPreservesPoseAndVariableContext) {
     auto config = EmitterConfig(1); config.voiceStealPolicy = 2;
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -1294,7 +1279,7 @@ TEST_F(Emitter, StateOnlyPendingPromotionPreservesPoseAndVariableContext) {
     EXPECT_NEAR(VolumeDbAt(0), engine->params.ResolvedValue(render, harken::kTargetVoiceVolume), 1e-5f);
 }
 
-TEST_F(Emitter, StateOnlyParkReturnPreservesOwnerAndPose) {
+TEST(Emitter, StateOnlyParkReturnPreservesOwnerAndPose) {
     auto config = EmitterConfig(4);
     config.maxParkedVoices = 2;
     config.audibilityParkEnabled = 1;
@@ -1345,7 +1330,7 @@ TEST_F(Emitter, StateOnlyParkReturnPreservesOwnerAndPose) {
     EXPECT_EQ(0u, engine->ledger.ParkedCount());
 }
 
-TEST_F(Emitter, DefaultStateIsPrivateAndDoesNotConsumePublicCapacity) {
+TEST(Emitter, DefaultStateIsPrivateAndDoesNotConsumePublicCapacity) {
     EngineSession session(EmitterConfig(4, 2));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto* engine = session.Engine();
@@ -1377,7 +1362,7 @@ TEST_F(Emitter, DefaultStateIsPrivateAndDoesNotConsumePublicCapacity) {
     EXPECT_EQ(0u, engine->params.EmitterHandleOf(RenderHandle(engine, voice)));
 }
 
-TEST_F(Emitter, CreateExRejectsInvalidDescriptorsWithoutAllocating) {
+TEST(Emitter, CreateExRejectsInvalidDescriptorsWithoutAllocating) {
     EngineSession session(EmitterConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     VnEmitterCreateDescV1 desc{};
@@ -1396,7 +1381,7 @@ TEST_F(Emitter, CreateExRejectsInvalidDescriptorsWithoutAllocating) {
     EXPECT_EQ(VN_OK, Vn_SetEmitterPosition(handle, Vec3(2, 0, 0)));
 }
 
-TEST_F(MonitorEmitterIdentity, RawVoiceRetainsAcceptedOriginAcrossEmitterReuse) {
+TEST(MonitorEmitterIdentity, RawVoiceRetainsAcceptedOriginAcrossEmitterReuse) {
     EngineSession session(EmitterConfig(4, 1));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();

@@ -1,0 +1,29 @@
+{
+    "content": {
+        "componentData": {
+            "pan": 0
+        },
+        "components": {
+            "bus": {
+                "pan": 0
+            }
+        },
+        "guid": "00a52cc8-14a0-4a35-b866-b9fa558736c3",
+        "name": "Master Bus",
+        "parentRef": {
+            "kind": "root"
+        },
+        "playableProperties": {
+            "presence": "0000000000000000"
+        },
+        "type": "Bus"
+    },
+    "harkenDocument": {
+        "id": "00a52cc8-14a0-4a35-b866-b9fa558736c3",
+        "projectId": "77b2c1cc-416d-4c88-986d-262c7fc1705e",
+        "propertyModel": "fieldGroupsV1",
+        "savedStudioVersion": "0.8.0",
+        "schemaVersion": 8,
+        "type": "project.bus"
+    }
+}

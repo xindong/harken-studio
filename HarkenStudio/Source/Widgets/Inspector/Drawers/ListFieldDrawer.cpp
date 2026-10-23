@@ -973,8 +973,10 @@ private:
             spin->setKeyboardTracking(false);
             new NumericToolTip(spin, ed.unit);
             spin->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-            if (stretch)
-                spin->setFixedWidth(kFloatReadOnlyWidth);
+            if (stretch) {
+                spin->setMaximumWidth(kFloatReadOnlyWidth);
+                spin->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+            }
             QtControlSkin::setSemanticProperty(spin, "fieldRole",
                                               QStringLiteral("inspectorValue"));
             spin->setValue(v.toDouble());
@@ -988,6 +990,7 @@ private:
         auto* slider = new ParameterSlider(QString(), parent);
         slider->setPresenterOverride(ParameterPresenterId::HorizontalSlider);
         slider->setRange(ed.min.toDouble(), ed.max.toDouble(), ed.decimals);
+        slider->binding()->setDefaultValue(ed.def.isValid() ? ed.def.toDouble() : 0.0);
         if (!ed.unit.isEmpty()) slider->setSuffix(ed.unit);
         slider->setValue(v.toDouble());
 

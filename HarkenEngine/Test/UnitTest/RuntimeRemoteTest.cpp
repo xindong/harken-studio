@@ -8,7 +8,6 @@
 #endif
 
 #include "Common/TestUtil.h"
-#include "PlayableStorageTestSupport.h"
 #include "MonitorCaptureHubTestHooks.h"
 #include "MonitorCaptureHub.h"
 #include "MonitorIdentityCut.h"
@@ -25,17 +24,6 @@
 
 namespace {
 using namespace harken::remote;
-
-class RuntimeRemote : public testing::Test {
-    harkentest::PlayableCapacityScope playableCapacity_{8, 1};
-};
-
-VnConfig RemoteEngineConfig() {
-    auto config = harkentest::MakeNullConfig();
-    config.maxTriggerDepth = 1;
-    config.maxActionFirings = 8;
-    return config;
-}
 
 VnRemoteConfig RemoteConfig() {
     VnRemoteConfig config{};
@@ -157,8 +145,8 @@ TEST(RuntimeRemoteProtocol, ExecutionObservationHasIndependentStrictFrames) {
     EXPECT_FALSE(DecodePayload(MakeFrame(Message::EventStatusV2, 1, status), result));
 }
 
-TEST_F(RuntimeRemote, RestrictedExecutionObservationGrantDoesNotTrustRequest) {
-    harkentest::EngineSession engine(RemoteEngineConfig());
+TEST(RuntimeRemote, RestrictedExecutionObservationGrantDoesNotTrustRequest) {
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
     VnMonitorSessionDescV2 desc{};
     desc.structSize = sizeof(desc);
@@ -181,8 +169,8 @@ TEST_F(RuntimeRemote, RestrictedExecutionObservationGrantDoesNotTrustRequest) {
     EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(handle));
 }
 
-TEST_F(RuntimeRemote, DefaultOffStatusAndReleaseLifecycle) {
-    harkentest::EngineSession session(RemoteEngineConfig());
+TEST(RuntimeRemote, DefaultOffStatusAndReleaseLifecycle) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     EXPECT_EQ(VN_REMOTE_STOPPED, Status().state);
     EXPECT_EQ(0u, Status().tcpPort);
@@ -206,8 +194,8 @@ TEST_F(RuntimeRemote, DefaultOffStatusAndReleaseLifecycle) {
     EXPECT_EQ(0u, Status().tcpPort);
 }
 
-TEST_F(RuntimeRemote, WrongThreadRejectedAndInvalidConfigDoesNotAffectAudio) {
-    harkentest::EngineSession session(RemoteEngineConfig());
+TEST(RuntimeRemote, WrongThreadRejectedAndInvalidConfigDoesNotAffectAudio) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto config = RemoteConfig();
     config.tcpPort = 65536;
@@ -384,8 +372,8 @@ VnMonitorHostRegistrationV2 RegisterRemoteHost(VnEmitterHandle emitter, const Vn
     return value;
 }
 
-TEST_F(RuntimeRemote, ExecutionSocketPreservesFrozenMixedCutDeltasSymbolsAndSealedTail) {
-    harkentest::EngineSession engine(RemoteEngineConfig());
+TEST(RuntimeRemote, ExecutionSocketPreservesFrozenMixedCutDeltasSymbolsAndSealedTail) {
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
     VnMonitorHostSessionV1 host{};
     host.structSize = sizeof(host);
@@ -509,8 +497,8 @@ TEST_F(RuntimeRemote, ExecutionSocketPreservesFrozenMixedCutDeltasSymbolsAndSeal
     EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(local));
 }
 
-TEST_F(RuntimeRemote, ExecutionSocketNeverSendsSymbolsWithoutBothRequestAndPermission) {
-    harkentest::EngineSession engine(RemoteEngineConfig());
+TEST(RuntimeRemote, ExecutionSocketNeverSendsSymbolsWithoutBothRequestAndPermission) {
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
     VnMonitorHostSessionV1 host{};
     host.structSize = sizeof(host);
@@ -559,8 +547,8 @@ TEST_F(RuntimeRemote, ExecutionSocketNeverSendsSymbolsWithoutBothRequestAndPermi
     }
 }
 
-TEST_F(RuntimeRemote, ExecutionObservationUsesServerWhitelistAndFreshConnectionGrant) {
-    harkentest::EngineSession engine(RemoteEngineConfig());
+TEST(RuntimeRemote, ExecutionObservationUsesServerWhitelistAndFreshConnectionGrant) {
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
     const auto config = RemoteConfig();
     ASSERT_EQ(VN_OK, Vn_RemoteStart(&config));
@@ -624,8 +612,8 @@ TEST_F(RuntimeRemote, ExecutionObservationUsesServerWhitelistAndFreshConnectionG
     EXPECT_EQ(0u, started.symbolsDecision);
 }
 
-TEST_F(RuntimeRemote, ExecutionObservationRequiresNegotiatedCapability) {
-    harkentest::EngineSession engine(RemoteEngineConfig());
+TEST(RuntimeRemote, ExecutionObservationRequiresNegotiatedCapability) {
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
     const auto config = RemoteConfig();
     ASSERT_EQ(VN_OK, Vn_RemoteStart(&config));
@@ -657,8 +645,8 @@ TEST_F(RuntimeRemote, ExecutionObservationRequiresNegotiatedCapability) {
     EXPECT_EQ(VN_OK, oldStatus.result);
 }
 
-TEST_F(RuntimeRemote, ReconnectBetweenGrantSnapshotAndDispatchKeepsNewRequestQueued) {
-    harkentest::EngineSession engine(RemoteEngineConfig());
+TEST(RuntimeRemote, ReconnectBetweenGrantSnapshotAndDispatchKeepsNewRequestQueued) {
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
     const auto config = RemoteConfig();
     ASSERT_EQ(VN_OK, Vn_RemoteStart(&config));
@@ -698,8 +686,8 @@ TEST_F(RuntimeRemote, ReconnectBetweenGrantSnapshotAndDispatchKeepsNewRequestQue
     EXPECT_EQ(0u, result.base.sessionEpoch);
 }
 
-TEST_F(RuntimeRemote, RepeatedV2SealKeepsV2ReplyAfterImmediateDrain) {
-    harkentest::EngineSession engine(RemoteEngineConfig());
+TEST(RuntimeRemote, RepeatedV2SealKeepsV2ReplyAfterImmediateDrain) {
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
     const auto config = RemoteConfig();
     ASSERT_EQ(VN_OK, Vn_RemoteStart(&config));
@@ -731,8 +719,8 @@ TEST_F(RuntimeRemote, RepeatedV2SealKeepsV2ReplyAfterImmediateDrain) {
     }
 }
 
-TEST_F(RuntimeRemote, TcpHandshakeSnapshotAndCommandsUseLogicPump) {
-    harkentest::EngineSession session(RemoteEngineConfig());
+TEST(RuntimeRemote, TcpHandshakeSnapshotAndCommandsUseLogicPump) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto config = RemoteConfig();
     ASSERT_EQ(VN_OK, Vn_RemoteStart(&config));
@@ -778,8 +766,8 @@ TEST_F(RuntimeRemote, TcpHandshakeSnapshotAndCommandsUseLogicPump) {
     EXPECT_EQ(VN_STALE_HANDLE, result.result);
 }
 
-TEST_F(RuntimeRemote, EventCaptureDeliversGameOperationsAndSealedTail) {
-    harkentest::EngineSession engine(RemoteEngineConfig());
+TEST(RuntimeRemote, EventCaptureDeliversGameOperationsAndSealedTail) {
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
     const auto config = RemoteConfig();
     ASSERT_EQ(VN_OK, Vn_RemoteStart(&config));
@@ -854,8 +842,8 @@ TEST_F(RuntimeRemote, EventCaptureDeliversGameOperationsAndSealedTail) {
     EXPECT_EQ(0u, Status().receivedCommands);
 }
 
-TEST_F(RuntimeRemote, EmptyEventCaptureCanRestartImmediatelyAfterSeal) {
-    harkentest::EngineSession engine(RemoteEngineConfig());
+TEST(RuntimeRemote, EmptyEventCaptureCanRestartImmediatelyAfterSeal) {
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
     const auto config = RemoteConfig();
     ASSERT_EQ(VN_OK, Vn_RemoteStart(&config));
@@ -890,8 +878,8 @@ TEST_F(RuntimeRemote, EmptyEventCaptureCanRestartImmediatelyAfterSeal) {
     EXPECT_NE(started.sessionEpoch, restarted.sessionEpoch);
 }
 
-TEST_F(RuntimeRemote, MissingClientCapabilityDoesNotNegotiateEventCapture) {
-    harkentest::EngineSession engine(RemoteEngineConfig());
+TEST(RuntimeRemote, MissingClientCapabilityDoesNotNegotiateEventCapture) {
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
     const auto config = RemoteConfig();
     ASSERT_EQ(VN_OK, Vn_RemoteStart(&config));
@@ -908,8 +896,8 @@ TEST_F(RuntimeRemote, MissingClientCapabilityDoesNotNegotiateEventCapture) {
     EXPECT_NE(0u, identity.capabilities & kCapabilitySnapshot);
 }
 
-TEST_F(RuntimeRemote, VersionMismatchAndMalformedPeerDoNotBreakNextConnection) {
-    harkentest::EngineSession session(RemoteEngineConfig());
+TEST(RuntimeRemote, VersionMismatchAndMalformedPeerDoNotBreakNextConnection) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto config = RemoteConfig();
     ASSERT_EQ(VN_OK, Vn_RemoteStart(&config));
@@ -940,8 +928,8 @@ TEST_F(RuntimeRemote, VersionMismatchAndMalformedPeerDoNotBreakNextConnection) {
     EXPECT_EQ(VN_OK, Vn_Update());
 }
 
-TEST_F(RuntimeRemote, QueuedOldSessionCommandNeverRunsAfterReconnect) {
-    harkentest::EngineSession session(RemoteEngineConfig());
+TEST(RuntimeRemote, QueuedOldSessionCommandNeverRunsAfterReconnect) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto config = RemoteConfig();
     ASSERT_EQ(VN_OK, Vn_RemoteStart(&config));
@@ -964,8 +952,8 @@ TEST_F(RuntimeRemote, QueuedOldSessionCommandNeverRunsAfterReconnect) {
     EXPECT_EQ(0u, Status().receivedCommands);
 }
 
-TEST_F(RuntimeRemote, InboundQueueOverflowDiscardsCommandsAndAllowsReconnect) {
-    harkentest::EngineSession session(RemoteEngineConfig());
+TEST(RuntimeRemote, InboundQueueOverflowDiscardsCommandsAndAllowsReconnect) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto config = RemoteConfig();
     ASSERT_EQ(VN_OK, Vn_RemoteStart(&config));
@@ -1025,8 +1013,8 @@ TEST_F(RuntimeRemote, InboundQueueOverflowDiscardsCommandsAndAllowsReconnect) {
                     session.Engine()->busTargets.Reduce(master, harken::kBusTargetBusVolume));
 }
 
-TEST_F(RuntimeRemote, PortConflictFailsIndependentlyAndCanRetry) {
-    harkentest::EngineSession session(RemoteEngineConfig());
+TEST(RuntimeRemote, PortConflictFailsIndependentlyAndCanRetry) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto config = RemoteConfig();
     ASSERT_EQ(VN_OK, Vn_RemoteStart(&config));
@@ -1051,8 +1039,8 @@ TEST_F(RuntimeRemote, PortConflictFailsIndependentlyAndCanRetry) {
     EXPECT_EQ(VN_REMOTE_LISTENING, Status().state);
 }
 
-TEST_F(RuntimeRemote, RemoteCaptureEmitsActualPackedRecordsAndStops) {
-    harkentest::EngineSession session(RemoteEngineConfig());
+TEST(RuntimeRemote, RemoteCaptureEmitsActualPackedRecordsAndStops) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto config = RemoteConfig();
     ASSERT_EQ(VN_OK, Vn_RemoteStart(&config));
@@ -1090,8 +1078,8 @@ TEST_F(RuntimeRemote, RemoteCaptureEmitsActualPackedRecordsAndStops) {
     EXPECT_EQ(0u, monitor.sessionEpoch);
 }
 
-TEST_F(RuntimeRemote, DuplicateCommandIsRejectedBeforeSecondExecution) {
-    harkentest::EngineSession session(RemoteEngineConfig());
+TEST(RuntimeRemote, DuplicateCommandIsRejectedBeforeSecondExecution) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto config = RemoteConfig();
     ASSERT_EQ(VN_OK, Vn_RemoteStart(&config));
@@ -1112,8 +1100,8 @@ TEST_F(RuntimeRemote, DuplicateCommandIsRejectedBeforeSecondExecution) {
     EXPECT_EQ(VN_OK, Vn_Update());
 }
 
-TEST_F(RuntimeRemote, IncompleteFrameTimeoutDisconnectsAndLeavesEngineRunning) {
-    harkentest::EngineSession session(RemoteEngineConfig());
+TEST(RuntimeRemote, IncompleteFrameTimeoutDisconnectsAndLeavesEngineRunning) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto config = RemoteConfig();
     config.requestTimeoutMs = 150;
@@ -1130,8 +1118,8 @@ TEST_F(RuntimeRemote, IncompleteFrameTimeoutDisconnectsAndLeavesEngineRunning) {
     EXPECT_EQ(VN_OK, Vn_Update());
 }
 
-TEST_F(RuntimeRemote, MulticastDiscoveryReturnsAuthoritativeEndpointIdentity) {
-    harkentest::EngineSession session(RemoteEngineConfig());
+TEST(RuntimeRemote, MulticastDiscoveryReturnsAuthoritativeEndpointIdentity) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto config = RemoteConfig();
     config.bindAddress = "0.0.0.0";
@@ -1191,8 +1179,8 @@ TEST_F(RuntimeRemote, MulticastDiscoveryReturnsAuthoritativeEndpointIdentity) {
     EXPECT_EQ("0.0.0.0", identity.bindAddress);
 }
 
-TEST_F(RuntimeRemote, SecondControllerReceivesBusyWithoutDisturbingFirst) {
-    harkentest::EngineSession session(RemoteEngineConfig());
+TEST(RuntimeRemote, SecondControllerReceivesBusyWithoutDisturbingFirst) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto config = RemoteConfig();
     ASSERT_EQ(VN_OK, Vn_RemoteStart(&config));
@@ -1219,8 +1207,8 @@ TEST_F(RuntimeRemote, SecondControllerReceivesBusyWithoutDisturbingFirst) {
     EXPECT_EQ(Message::Snapshot, frame.type);
 }
 
-TEST_F(RuntimeRemote, ImmediateReconnectProcessesOldFinBeforeNewHello) {
-    harkentest::EngineSession session(RemoteEngineConfig());
+TEST(RuntimeRemote, ImmediateReconnectProcessesOldFinBeforeNewHello) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto config = RemoteConfig();
     ASSERT_EQ(VN_OK, Vn_RemoteStart(&config));

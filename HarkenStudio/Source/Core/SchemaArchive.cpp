@@ -1,6 +1,5 @@
 #include "SchemaArchive.h"
 
-#include "PackSchemaGenerated.h"
 #include "ProjectSchemaGenerated.h"
 #include "SchemaBuildGenerated.h"
 
@@ -82,7 +81,7 @@ QJsonObject SchemaArchive::buildManifest(QString* error) const
             != ProjectSchema::kProjectSchemaVersion
         || trees.value(QStringLiteral("Pack")).toObject()
                .value(QStringLiteral("currentVersion")).toInt()
-            != PackSchema::kPackManifestSchemaVersion
+            != HARKEN_PACK_SCHEMA_VERSION
         || manifest.value(QStringLiteral("files")).toArray().isEmpty()) {
         snapshotMismatch(error);
         return {};

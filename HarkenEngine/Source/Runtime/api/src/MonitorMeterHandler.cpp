@@ -50,9 +50,9 @@ struct MeterSlot {
     bool occupied = false;
 };
 
-thread_local std::array<MeterSlot, VN_MONITOR_HARD_MEASUREMENTS_PER_PLAN>
-    g_slots{};
-thread_local std::array<std::uint8_t, 512> g_pack{};
+struct MeterScratch {
+    std::array<std::uint8_t, 512> pack{};
+};
 
 VnMonitorMeterPayload MakeMeterPayload(const core::MonitorMeterChunkResult& item,
                                        std::uint32_t kind) {
@@ -99,7 +99,7 @@ std::uint32_t ValidityFor(const core::MonitorMeterChunkResult& item,
     return VN_MONITOR_VALID_ARMED | VN_MONITOR_VALID_NUMERIC;
 }
 
-void EmitMeter(std::uint32_t kind, const core::MonitorMeterChunkResult& item,
+void EmitMeter(MeterScratch& scratch, std::uint32_t kind, const core::MonitorMeterChunkResult& item,
                const VnMonitorTapDescriptor& tap, std::uint64_t sourceSequence,
                std::uint64_t capturePlanGeneration, std::uint64_t executeFrame,
                DerivedEmitFn emit, void* emitCtx) {
@@ -111,19 +111,19 @@ void EmitMeter(std::uint32_t kind, const core::MonitorMeterChunkResult& item,
     }
     VnMonitorMeterPayload payload = MakeMeterPayload(item, kind);
     const std::uint32_t bytes = PackMeterRecord(
-        g_pack.data(), static_cast<std::uint32_t>(g_pack.size()), sourceSequence,
+        scratch.pack.data(), static_cast<std::uint32_t>(scratch.pack.size()), sourceSequence,
         capturePlanGeneration, executeFrame, tap.tapDescriptorId,
         tap.tapDescriptorGeneration, payload, ValidityFor(item, kind));
     if (bytes == 0) {
         return;
     }
     DerivedEmit emitRec{};
-    emitRec.bytes = g_pack.data();
+    emitRec.bytes = scratch.pack.data();
     emitRec.size = bytes;
     (void)emit(emitCtx, emitRec);
 }
 
-void EmitGainReduction(const VnMonitorTapDescriptor& tap,
+void EmitGainReduction(MeterScratch& scratch, const VnMonitorTapDescriptor& tap,
                        const core::MonitorMeterGainReductionSample& sample,
                        std::uint64_t sourceSequence,
                        std::uint64_t capturePlanGeneration,
@@ -141,7 +141,7 @@ void EmitGainReduction(const VnMonitorTapDescriptor& tap,
     payload.ownerInstanceHandle = sample.ownerInstanceHandle;
     payload.ownerGeneration = sample.ownerGeneration;
     const std::uint32_t bytes = PackGainReductionRecord(
-        g_pack.data(), static_cast<std::uint32_t>(g_pack.size()), sourceSequence,
+        scratch.pack.data(), static_cast<std::uint32_t>(scratch.pack.size()), sourceSequence,
         capturePlanGeneration, executeFrame, tap.tapDescriptorId,
         tap.tapDescriptorGeneration, payload,
         VN_MONITOR_VALID_ARMED | VN_MONITOR_VALID_NUMERIC);
@@ -149,7 +149,7 @@ void EmitGainReduction(const VnMonitorTapDescriptor& tap,
         return;
     }
     DerivedEmit emitRec{};
-    emitRec.bytes = g_pack.data();
+    emitRec.bytes = scratch.pack.data();
     emitRec.size = bytes;
     (void)emit(emitCtx, emitRec);
 }
@@ -159,15 +159,15 @@ VnResult ValidateMeter(const VnMonitorMeasurementRequest& request,
     return core::ValidateMeterRequest(request);
 }
 
-void ConsumeMeter(const VnMonitorMeasurementRequest& request,
+void ConsumeMeter(void* state, void* workspace,
+                     const VnMonitorMeasurementRequest& request,
                   const VnMonitorTapDescriptor& tap,
                   const std::uint8_t* packedAudioChunk,
-                  std::uint32_t packedBytes, std::uint32_t measurementIndex,
+                  std::uint32_t packedBytes,
                   DerivedEmitFn emit, void* emitCtx) {
     if (emit == nullptr || packedAudioChunk == nullptr ||
         packedBytes < VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES +
-                          sizeof(VnMonitorAudioChunk) ||
-        measurementIndex >= g_slots.size()) {
+                          sizeof(VnMonitorAudioChunk)) {
         return;
     }
     if (core::ValidateMeterRequest(request) != VN_OK) {
@@ -198,7 +198,8 @@ void ConsumeMeter(const VnMonitorMeasurementRequest& request,
     const std::uint64_t segmentGeneration = ReadPackedU64(
         packedAudioChunk, kPackedMeasurementSegmentGenerationOffset);
 
-    MeterSlot& slot = g_slots[measurementIndex];
+    auto& slot = *static_cast<MeterSlot*>(state);
+    auto& scratch = *static_cast<MeterScratch*>(workspace);
     if (!slot.occupied || slot.tapId != tap.tapDescriptorId ||
         slot.tapGeneration != tap.tapDescriptorGeneration ||
         slot.capturePlanGeneration != capturePlanGeneration ||
@@ -256,7 +257,7 @@ void ConsumeMeter(const VnMonitorMeasurementRequest& request,
                     &reductionDb);
             }
         }
-        EmitGainReduction(tap, sample, sourceSequence, capturePlanGeneration,
+        EmitGainReduction(scratch, tap, sample, sourceSequence, capturePlanGeneration,
                           executeFrame, emit, emitCtx);
         return;
     }
@@ -264,7 +265,7 @@ void ConsumeMeter(const VnMonitorMeasurementRequest& request,
     const core::MonitorMeterChunkResult item = request.kind == VN_MONITOR_MEASURE_LUFS_MOMENTARY
         ? core::ReduceLoudnessChunk(&slot.loudness, samples, frames, chunk.channelCount)
         : core::ReduceMeterChunk(&slot.state, samples, frames, chunk.channelCount, request.channelMode);
-    EmitMeter(request.kind, item, tap, sourceSequence, capturePlanGeneration,
+    EmitMeter(scratch, request.kind, item, tap, sourceSequence, capturePlanGeneration,
               executeFrame, emit, emitCtx);
 }
 
@@ -273,6 +274,18 @@ struct MeterAutoRegister {
         DerivedHandler handler{};
         handler.validate = &ValidateMeter;
         handler.consume = &ConsumeMeter;
+        handler.createState = [](const VnMonitorMeasurementRequest& request,
+                                 std::uint32_t sampleRate) -> std::shared_ptr<void> {
+            auto slot = std::make_shared<MeterSlot>();
+            if (request.kind == VN_MONITOR_MEASURE_LUFS_MOMENTARY)
+                slot->loudness.squares.reserve(static_cast<std::size_t>(sampleRate) * 400u / 1000u);
+            else if (request.kind != VN_MONITOR_MEASURE_GAIN_REDUCTION)
+                slot->state.rmsSquares = std::make_unique<float[]>(core::kMeterMaxRmsSamples);
+            return slot;
+        };
+        handler.createScratch = []() -> std::shared_ptr<void> {
+            return std::make_shared<MeterScratch>();
+        };
         RegisterDerivedHandler(VN_MONITOR_MEASURE_SAMPLE_PEAK, handler);
         RegisterDerivedHandler(VN_MONITOR_MEASURE_TRUE_PEAK, handler);
         RegisterDerivedHandler(VN_MONITOR_MEASURE_RMS, handler);

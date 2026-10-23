@@ -19,6 +19,12 @@ public:
     explicit ProportionalTreeWidget(const QList<int>& columnWeights, QWidget* parent = nullptr,
                                     ThemeManager* themeManager = nullptr);
     void setColumnsHidden(const QList<int>& columns, bool hidden);
+    void setPinnedTrailingColumns(const QList<int>& columns);
+    void setAccentedColumns(const QList<int>& columns);
+    void setColumnSeparatorBefore(int column);
+    void setRowProgressEndColumn(int column);
+    int rowProgressEndColumn() const { return progressEndColumn_; }
+    QRect rowProgressRect(const QRect& rowRect, int percent) const;
     void setColumnLayoutKey(const QString& key);
     void setColumnsFitToWidth(bool fit);
     void setHierarchyIndentation(int indentation);
@@ -32,6 +38,7 @@ signals:
     void groupCheckStateRequested(QTreeWidgetItem* group, Qt::CheckState state);
 
 protected:
+    void paintEvent(QPaintEvent* event) override;
     void drawRow(QPainter* painter, const QStyleOptionViewItem& option,
                  const QModelIndex& index) const override;
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -54,6 +61,8 @@ private:
     bool columnsFitToWidth_ = true;
     QPersistentModelIndex pressedGroup_;
     GroupControl pressedGroupControl_ = GroupControl::None;
+    int separatorColumn_ = -1;
+    int progressEndColumn_ = -1;
 };
 
 }

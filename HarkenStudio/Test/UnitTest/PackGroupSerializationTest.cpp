@@ -2,6 +2,7 @@
 #include "ProjectSerializer.h"
 #include "AssetPipeline/PathUtils.h"
 #include "ProjectTypes.h"
+#include "PackExportSelection.h"
 #include "Support/ProjectDocumentTestUtils.h"
 
 #include <gtest/gtest.h>
@@ -32,7 +33,7 @@ VNX::ProjectData projectWithMaster()
 
 }
 
-TEST(PackGroupSerialization, LegacyGroupsDissolveWithoutChangingMemberTargeting)
+TEST(PackGroupSerialization, LegacyGroupsDoNotRestoreLocalExportSelections)
 {
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
@@ -62,17 +63,29 @@ TEST(PackGroupSerialization, LegacyGroupsDissolveWithoutChangingMemberTargeting)
     ASSERT_TRUE(serializer.saveProject(path, project)) << serializer.lastError().toStdString();
     ASSERT_TRUE(HarkenTest::writeRootBusForProject(path));
 
+    QFile legacy(path);
+    ASSERT_TRUE(legacy.open(QIODevice::ReadOnly));
+    auto document = QJsonDocument::fromJson(legacy.readAll()).object();
+    legacy.close();
+    auto content = document.value(QStringLiteral("content")).toObject();
+    content.insert(QStringLiteral("packGroups"), QJsonArray{combat.toJson(), ambience.toJson()});
+    content.insert(QStringLiteral("packExportSelectedPlatformIds"), QJsonArray{});
+    content.insert(QStringLiteral("actionPackTargeting"), QJsonArray{
+        VNX::ActionPackTargeting{combat.actionIds.front(), false, {}}.toJson()});
+    document.insert(QStringLiteral("content"), content);
+    ASSERT_TRUE(legacy.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    legacy.write(QJsonDocument(document).toJson());
+    legacy.close();
+
     VNX::ProjectData loaded;
     ASSERT_TRUE(serializer.loadProject(path, loaded)) << serializer.lastError().toStdString();
 
     EXPECT_TRUE(loaded.packGroups.empty());
-    ASSERT_EQ(loaded.actionPackTargeting.size(), combat.actionIds.size());
-    for (const auto id : combat.actionIds) {
-        EXPECT_TRUE(loaded.includesActionPack(id, HarkenTest::platformIdString("Windows"), "English"));
-        EXPECT_TRUE(loaded.includesActionPack(id, HarkenTest::platformIdString("Android"), "Japanese"));
-        EXPECT_FALSE(loaded.includesActionPack(id, HarkenTest::platformIdString("iOS"), "English"));
-    }
-    EXPECT_TRUE(loaded.includesActionPack(ambience.actionIds.front(), HarkenTest::platformIdString("iOS"), "English"));
+    auto& cache = VNX::PackExportSelectionStore::instance();
+    cache.openProject(loaded);
+    EXPECT_TRUE(cache.selection().actionTargeting.empty());
+    EXPECT_EQ(cache.selection().selectedPlatformIds, loaded.platformIds());
+    cache.closeProject();
     loaded.busses = project.busses;
     ASSERT_TRUE(serializer.saveProject(path, loaded)) << serializer.lastError().toStdString();
     QFile saved(path);
@@ -93,50 +106,46 @@ TEST(PackGroupSerialization, ExplicitEmptyFilterDoesNotBecomeAllPlatforms)
     EXPECT_FALSE(group.includesPlatform(HarkenTest::platformIdString(QStringLiteral("Windows"))));
 }
 
-TEST(PackGroupSerialization, ActionPackTargetingRoundTripPreservesExplicitFilters)
+TEST(PackGroupSerialization, ExportSelectionsPersistOnlyInDisposableCache)
 {
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
-
     auto project = projectWithMaster();
     project.name = QStringLiteral("TargetingProject");
-    project.actionPackTargeting.push_back(
-        {harkentest::StudioObjectId(7001u), false, {HarkenTest::platformIdString(QStringLiteral("Windows")), HarkenTest::platformIdString(QStringLiteral("iOS"))}});
-    project.actionPackTargeting.push_back({harkentest::StudioObjectId(7002u), true, {}});
-    project.actionPackTargeting.push_back({harkentest::StudioObjectId(7003u), false, {}});
-    project.actionPackTargeting.push_back({harkentest::StudioObjectId(7001u), false,
-        {HarkenTest::platformIdString("Android")}, QStringLiteral("English")});
-    project.actionPackTargeting.push_back({harkentest::StudioObjectId(7003u), true, {}, QStringLiteral("Japanese")});
-
+    project.projectLanguages = {QStringLiteral("English"), QStringLiteral("Japanese")};
+    project.projectPath = dir.filePath(QStringLiteral("targeting.hsp"));
+    auto action = std::make_shared<VNX::ProjectItem>(QStringLiteral("Voice"), VNX::ProjectItem::Type::Action);
+    action->guid = QUuid::createUuid();
+    action->objectID = project.generateObjectID();
+    action->attachDefaultComponents();
+    project.actions.push_back({action, QStringLiteral("Actions")});
     VNX::ProjectSerializer serializer;
-    const QString path = dir.filePath(QStringLiteral("targeting.hsp"));
-    ASSERT_TRUE(serializer.saveProject(path, project)) << serializer.lastError().toStdString();
-    ASSERT_TRUE(HarkenTest::writeRootBusForProject(path));
-
-    QFile file(path);
-    ASSERT_TRUE(file.open(QIODevice::ReadOnly | QIODevice::Text));
-    const QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
-    file.close();
-    const QJsonObject content = root.value(QStringLiteral("content")).toObject();
-    EXPECT_EQ(content.value(QStringLiteral("actionPackTargeting")).toArray().size(), 5);
-
-    VNX::ProjectData loaded;
-    ASSERT_TRUE(serializer.loadProject(path, loaded)) << serializer.lastError().toStdString();
-
-    ASSERT_EQ(loaded.actionPackTargeting.size(), 5u);
-    EXPECT_EQ(loaded.actionPackTargeting, project.actionPackTargeting);
-    EXPECT_FALSE(loaded.includesActionPack(harkentest::StudioObjectId(7001u), HarkenTest::platformIdString("Windows"), "English"));
-    EXPECT_TRUE(loaded.includesActionPack(harkentest::StudioObjectId(7001u), HarkenTest::platformIdString("Windows"), "Japanese"));
-    EXPECT_TRUE(loaded.includesActionPack(harkentest::StudioObjectId(7003u), HarkenTest::platformIdString("Windows"), "Japanese"));
-    EXPECT_FALSE(loaded.includesActionPack(harkentest::StudioObjectId(7003u), HarkenTest::platformIdString("Windows"), "English"));
-    EXPECT_EQ(loaded.actionPackTargeting[0].stableId, harkentest::StudioObjectId(7001u));
-    EXPECT_FALSE(loaded.actionPackTargeting[0].allPlatforms);
-    EXPECT_EQ(loaded.actionPackTargeting[0].platformIds,
-              (QStringList{HarkenTest::platformIdString(QStringLiteral("Windows")), HarkenTest::platformIdString(QStringLiteral("iOS"))}));
-    EXPECT_EQ(loaded.actionPackTargeting[2].stableId, harkentest::StudioObjectId(7003u));
-    EXPECT_FALSE(loaded.actionPackTargeting[2].allPlatforms);
-    EXPECT_TRUE(loaded.actionPackTargeting[2].platformIds.isEmpty());
-    EXPECT_FALSE(loaded.actionPackTargeting[2].includesPlatform(HarkenTest::platformIdString(QStringLiteral("Windows"))));
+    ASSERT_TRUE(serializer.saveProject(project.projectPath, project)) << serializer.lastError().toStdString();
+    auto& cache = VNX::PackExportSelectionStore::instance();
+    cache.openProject(project);
+    auto selection = cache.selection();
+    selection.selectedPlatformIds.clear();
+    selection.actionTargeting = {{action->runtimeId(), false, {}, QStringLiteral("English")}};
+    cache.setSelection(project, selection);
+    cache.closeProject();
+    cache.openProject(project);
+    EXPECT_EQ(cache.selection(), selection);
+    EXPECT_FALSE(cache.selection().includesActionPack(action->runtimeId(), project.platformIds().first(), "English"));
+    EXPECT_TRUE(cache.selection().includesActionPack(action->runtimeId(), project.platformIds().first(), "Japanese"));
+    QFile file(project.projectPath);
+    ASSERT_TRUE(file.open(QIODevice::ReadOnly));
+    const auto original = file.readAll();
+    const auto content = QJsonDocument::fromJson(original).object().value("content").toObject();
+    for (const auto* key : {"packExportCurrentPlatformId", "packExportSelectedPlatformIds", "actionPackTargeting", "packGroups"})
+        EXPECT_FALSE(content.contains(QLatin1String(key)));
+    cache.closeProject();
+    ASSERT_TRUE(QFile::remove(dir.filePath(".cache/pack-export-selection.json")));
+    cache.openProject(project);
+    EXPECT_EQ(cache.selection().selectedPlatformIds, project.platformIds());
+    EXPECT_TRUE(cache.selection().actionTargeting.empty());
+    file.seek(0);
+    EXPECT_EQ(file.readAll(), original);
+    cache.closeProject();
 }
 
 TEST(PackGroupSerialization, MissingPackGroupsKeyLoadsAsEmpty)
@@ -172,7 +181,11 @@ TEST(PackGroupSerialization, PackBuildDirectoryRoundTripsWithoutLegacyDeployment
     ASSERT_TRUE(dir.isValid());
     auto project = projectWithMaster();
     project.name = QStringLiteral("PackPathsProject");
-    project.packBuildOutputDir = QStringLiteral("Exports/Packs");
+    project.packBuildOutputDir = dir.filePath(QStringLiteral("Exports/Packs"));
+    project.buildExportProjectData = true;
+    project.buildExportPackMetadata = true;
+    project.buildExportWaveforms = true;
+    project.buildWaveformOutputDir = dir.filePath(QStringLiteral("Exports/Waveforms"));
 
     VNX::ProjectSerializer serializer;
     const QString path = dir.filePath(QStringLiteral("paths.hsp"));
@@ -181,9 +194,15 @@ TEST(PackGroupSerialization, PackBuildDirectoryRoundTripsWithoutLegacyDeployment
 
     VNX::ProjectData loaded;
     ASSERT_TRUE(serializer.loadProject(path, loaded)) << serializer.lastError().toStdString();
-    EXPECT_EQ(loaded.packBuildOutputDir, project.packBuildOutputDir);
+    EXPECT_EQ(loaded.packBuildOutputDir, QStringLiteral("Exports/Packs"));
+    EXPECT_EQ(loaded.buildExportProjectData, project.buildExportProjectData);
+    EXPECT_EQ(loaded.buildExportPackMetadata, project.buildExportPackMetadata);
     EXPECT_EQ(VNX::PathUtils::packBuildOutputRoot(loaded.projectPath, loaded.packBuildOutputDir),
               dir.filePath(QStringLiteral("Exports/Packs")));
+    EXPECT_EQ(loaded.buildExportWaveforms, project.buildExportWaveforms);
+    EXPECT_EQ(loaded.buildWaveformOutputDir, QStringLiteral("Exports/Waveforms"));
+    EXPECT_EQ(VNX::PathUtils::waveformBuildOutputRoot(loaded.projectPath, loaded.buildWaveformOutputDir),
+              dir.filePath(QStringLiteral("Exports/Waveforms")));
 
     QFile file(path);
     ASSERT_TRUE(file.open(QIODevice::ReadOnly));
@@ -191,6 +210,22 @@ TEST(PackGroupSerialization, PackBuildDirectoryRoundTripsWithoutLegacyDeployment
     file.close();
     QJsonObject content = document.value(QStringLiteral("content")).toObject();
     content.remove(QStringLiteral("packBuildOutputDir"));
+    content.remove(QStringLiteral("buildExportProjectData"));
+    content.remove(QStringLiteral("buildExportPackMetadata"));
+    content.remove(QStringLiteral("buildExportWaveforms"));
+    content.remove(QStringLiteral("buildWaveformOutputDir"));
+    document.insert(QStringLiteral("content"), content);
+    ASSERT_TRUE(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    file.write(QJsonDocument(document).toJson());
+    file.close();
+    ASSERT_TRUE(serializer.loadProject(path, loaded)) << serializer.lastError().toStdString();
+    EXPECT_TRUE(loaded.packBuildOutputDir.isEmpty());
+    EXPECT_FALSE(loaded.buildExportProjectData);
+    EXPECT_FALSE(loaded.buildExportPackMetadata);
+    EXPECT_FALSE(loaded.buildExportWaveforms);
+    EXPECT_TRUE(loaded.buildWaveformOutputDir.isEmpty());
+    EXPECT_EQ(VNX::PathUtils::waveformBuildOutputRoot(loaded.projectPath, loaded.buildWaveformOutputDir),
+              dir.filePath(QStringLiteral("BuildPacks/Waveforms")));
     EXPECT_FALSE(content.contains(QStringLiteral("unityIntegration")));
     EXPECT_FALSE(content.contains(QStringLiteral("unityPackDeployDir")));
     EXPECT_FALSE(content.contains(QStringLiteral("packOutputDir")));

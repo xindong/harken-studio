@@ -3076,6 +3076,13 @@ static void CheckReplacementOwnedRandomRequest(harken::RandomDisciplineV1 discip
         ASSERT_EQ(harken::SelectionMemoryStatusV1::Ok, reference.CommitHead(expectedHistory.delta));
         const auto followerRequest = MemoryRequest(second, 3, key);
         ASSERT_EQ(harken::SelectionMemoryStatusV1::Ok, IssueMemoryProducerBatch(table, followerRequest, follower));
+        harken::SelectionMemoryTableV1::BackingPreparation backing;
+        ASSERT_TRUE(table.PrepareBacking({2, 2, 1, {second.program.avoidLastN,
+            discipline == harken::RandomDisciplineV1::Rotation ? second.program.childCount : 0u,
+            2u, second.program.childCount}}, &backing));
+        const auto preparedBytes = table.StorageBytes();
+        table.SetCommitPageLimitForTests(0);
+        auto use = backing.Use();
         harken::PendingSelectionReplacementV1 candidate;
         ASSERT_EQ(harken::SelectionMemoryStatusV1::Ok, table.BeginPendingBatchReplacement(original, 1, &candidate));
         auto request = MemoryRequest(second, 1, key);
@@ -3115,6 +3122,7 @@ static void CheckReplacementOwnedRandomRequest(harken::RandomDisciplineV1 discip
         ASSERT_EQ(harken::SelectionMemoryStatusV1::Ok, table.CommitPendingBatch(&follower, table.ReadPendingBatch(follower).revision));
         EXPECT_EQ(3u, table.Snapshot(key).selectionOrdinal);
         EXPECT_EQ(8u, table.FreeDeltaCount());
+        EXPECT_EQ(preparedBytes, table.StorageBytes());
     }
 }
 
@@ -3938,6 +3946,67 @@ TEST(CurrentSelectionMemory, ScopeCapacityRetirementAndQuarantineAreExact) {
         MemoryRequest(program, 3, emitterGenerationTwo));
     EXPECT_EQ(harken::SelectionMemoryStatusV1::Ok, replacement.status);
     EXPECT_EQ(1u, table.RowCount());
+}
+
+TEST(CurrentSelectionMemory, PreparedShapesPreserveOtherHoldsAndOrdinaryAdmissions) {
+    using Status = harken::SelectionMemoryStatusV1;
+    using Table = harken::SelectionMemoryTableV1;
+    auto config = MemoryConfig();
+    config.maxGlobalRows = 0;
+    config.maxPendingDeltasTotal = 4;
+    Table table;
+    ASSERT_TRUE(table.Reset(config));
+    const auto emptyBytes = table.StorageBytes();
+    Table::BackingPreparation small, large;
+    table.SetCommitPageLimitForTests(0);
+    EXPECT_FALSE(table.PrepareBacking({2, 2, 1, {1, 0, 1, 3}}, &small));
+    EXPECT_FALSE(small.Valid());
+    EXPECT_EQ(0u, table.RowCount());
+    EXPECT_EQ(config.maxPendingDeltasTotal, table.FreeDeltaCount());
+    table.SetCommitPageLimitForTests(SIZE_MAX);
+
+    MemoryProgram draw;
+    harken::SelectionPathNodeV1 path{};
+    path.kind = harken::PlayableKindV1::Container;
+    path.objectId = harkentest::ObjectId(401);
+    auto request = MemoryRequest(draw, 1);
+    request.path = &path;
+    request.pathCount = 1;
+    const auto active = table.AppendPlay(request);
+    ASSERT_EQ(Status::Ok, active.status);
+    const auto selected = table.Delta(active.delta).selectedChildOrdinal;
+    ASSERT_TRUE(table.PrepareBacking({2, 2, 1, {1, 0, 1, 3}}, &small));
+    ASSERT_TRUE(table.PrepareBacking({2, 2, 1, {1, 3, 2, 3}}, &large));
+    Table::BackingPreparation moved(std::move(small));
+    request.ticket = request.acceptedPostOrdinal = 2;
+    const auto ordinary = table.AppendPlay(request);
+    ASSERT_EQ(Status::Ok, ordinary.status);
+    ASSERT_EQ(Status::Ok, table.CancelDelta(ordinary.delta));
+    EXPECT_EQ(selected, table.Delta(active.delta).selectedChildOrdinal);
+
+    MemoryProgram rotation(harken::ContainerModeV1::Random, harken::RandomDisciplineV1::Rotation);
+    auto key = MemoryKey();
+    SetSecondMemoryProgram(rotation, key);
+    std::array<harken::SelectionPathNodeV1, 2> nestedPath{path, path};
+    auto replacement = MemoryRequest(rotation, 3, key);
+    replacement.path = nestedPath.data();
+    replacement.pathCount = static_cast<std::uint32_t>(nestedPath.size());
+    const auto preparedBytes = table.StorageBytes();
+    table.SetCommitPageLimitForTests(0);
+    {
+        auto use = large.Use();
+        harken::PreparedSelectionPlayV1 pending;
+        std::uint32_t ordinal = 0;
+        ASSERT_EQ(Status::Ok, table.PreparePlayForPendingBatch(replacement, &pending, &ordinal));
+        ASSERT_EQ(Status::Ok, table.CancelPreparedPlay(&pending));
+    }
+    EXPECT_EQ(preparedBytes, table.StorageBytes());
+    ASSERT_EQ(Status::Ok, table.FailHead(active.delta));
+    EXPECT_EQ(config.maxPendingDeltasTotal, table.FreeDeltaCount());
+    moved.Release();
+    large.Release();
+    ASSERT_TRUE(table.Reset(config));
+    EXPECT_EQ(emptyBytes, table.StorageBytes());
 }
 
 }

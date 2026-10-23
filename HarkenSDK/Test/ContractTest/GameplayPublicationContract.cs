@@ -36,14 +36,15 @@ namespace Harken.Test
                     ["reason"] = "renamed"
                 });
                 Expect(Parse(inventedRetirement).ValidateInit(renamedInit, out _), VnResult.VN_PACK_STALE_REVISION,
-                    "A JSON-only retirement cannot match the current-name Init catalog");
-                Expect(original.ValidateInit(renamedInit, out _), VnResult.VN_PACK_HASH_MISMATCH, "Wrong Init bytes");
+                    "An uncommitted JSON retirement must fail the publication digest");
+                Require(originalInit.SequenceEqual(renamedInit), "Renaming an Action must not change Init bytes.");
+                Expect(original.ValidateInit(renamedInit, out _), VnResult.VN_OK, "Shared base Init");
                 JsonObject rebound = LoadJson(originalRoot);
                 foreach (JsonNode pack in rebound["packs"].AsArray())
                     if (pack["packStableId"].GetValue<string>() == original.InitPackStableId.ToString(CultureInfo.InvariantCulture))
                         pack["contentHash"] = renamed.InitPack.ContentHash.ToString(CultureInfo.InvariantCulture);
-                Expect(Parse(rebound).ValidateInit(renamedInit, out _), VnResult.VN_PACK_STALE_REVISION,
-                    "Rebinding a file hash cannot adopt a different catalog");
+                Expect(Parse(rebound).ValidateInit(renamedInit, out _), VnResult.VN_OK,
+                    "Independent catalogs share the same base Init");
                 JsonObject legacy = LoadJson(originalRoot);
                 legacy.Remove("gameplayCatalog");
                 Expect(GameplayPublication.Parse(legacy.ToJsonString(), null, null, out _, out _),

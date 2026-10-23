@@ -6,13 +6,14 @@
 #include "PackGenerationRecord.h"
 #include "ProjectManager.h"
 #include "ProjectPackExporter.h"
+#include "CanonicalPackSetExport.h"
 #include "RuntimeCapabilityMatrix.h"
 #include "Support/AITestSupport.h"
 #include "UndoCommands.h"
 #include "Support/ProjectPlatformTestUtils.h"
 
-#include <harken/core/CurrentWorldCodec.h>
-#include <harken/media/PackLogicImage.h>
+#include <harken_studio_build/WorldCodec.h>
+#include <harken_studio_build/PackImage.h>
 
 #include <gtest/gtest.h>
 
@@ -257,7 +258,9 @@ TEST_F(PackBuildIpcScenarioTest,
          {QStringLiteral("platform_id"), platformId()}});
     ASSERT_EQ(startedBuild.value(QStringLiteral("status")).toString(),
               QStringLiteral("ok"));
-    EXPECT_TRUE(PackGenerationRecordStore::instance().records().isEmpty());
+    ASSERT_EQ(PackGenerationRecordStore::instance().records().size(), 1);
+    EXPECT_EQ(PackGenerationRecordStore::instance().records().front().packName,
+              QStringLiteral("PreviousProject"));
     QJsonObject buildStatus;
     ASSERT_TRUE(TestSupport::spinUntil([&] {
         buildStatus = call(QStringLiteral("get_pack_build_status"));
@@ -285,7 +288,7 @@ TEST_F(PackBuildIpcScenarioTest,
     EXPECT_TRUE(failure->toObject().value(QStringLiteral("errors")).toString()
                     .contains(QStringLiteral(
                         "Entry Marker requires an updated Engine marker scheduling contract")));
-    EXPECT_TRUE(std::none_of(records.begin(), records.end(), [](const QJsonValue& value) {
+    EXPECT_TRUE(std::any_of(records.begin(), records.end(), [](const QJsonValue& value) {
         return value.toObject().value(QStringLiteral("packName")).toString()
             == QStringLiteral("PreviousProject");
     }));
@@ -413,7 +416,7 @@ TEST_F(PackBuildIpcScenarioTest, OmittedOutputPathUsesTheProjectBuildDirectory)
     }, 10000));
     const auto records = PackGenerationRecordStore::instance().records();
     ASSERT_FALSE(records.isEmpty());
-    EXPECT_TRUE(QFileInfo::exists(QDir(outputRoot).filePath(QStringLiteral("HarkenPackIndex.json"))));
+    EXPECT_FALSE(QFileInfo::exists(QDir(outputRoot).filePath(QStringLiteral("HarkenPackIndex.json"))));
     for (const auto& record : records) {
         EXPECT_TRUE(record.success);
         EXPECT_EQ(QFileInfo(record.outputPath).absolutePath(),
@@ -422,7 +425,7 @@ TEST_F(PackBuildIpcScenarioTest, OmittedOutputPathUsesTheProjectBuildDirectory)
     }
 }
 
-TEST_F(PackBuildIpcScenarioTest, CanceledBuildCannotCompleteOrPublishOverItsSuccessor)
+TEST_F(PackBuildIpcScenarioTest, CanceledBuildRetainsCompletedRecordsWithoutOverwritingItsSuccessor)
 {
     create(QStringLiteral("CanceledAction"), QStringLiteral("Action"));
     create(QStringLiteral("SuccessorAction"), QStringLiteral("Action"));
@@ -453,7 +456,12 @@ TEST_F(PackBuildIpcScenarioTest, CanceledBuildCannotCompleteOrPublishOverItsSucc
     ASSERT_EQ(status.value(QStringLiteral("status")).toString(), QStringLiteral("ok"));
     EXPECT_FALSE(status.value(QStringLiteral("result")).toObject()
                      .value(QStringLiteral("in_progress")).toBool(true));
-    EXPECT_TRUE(PackGenerationRecordStore::instance().records().isEmpty());
+    const auto completedRecords = PackGenerationRecordStore::instance().records();
+    const auto completed = std::find_if(completedRecords.begin(), completedRecords.end(), [](const auto& record) {
+        return record.packName == QStringLiteral("CanceledAction");
+    });
+    ASSERT_NE(completed, completedRecords.end());
+    const QJsonObject completedRecord = completed->toJson();
 
     const QJsonObject second = server_.dispatchCommand(
         QStringLiteral("export_pack"),
@@ -471,9 +479,11 @@ TEST_F(PackBuildIpcScenarioTest, CanceledBuildCannotCompleteOrPublishOverItsSucc
     EXPECT_TRUE(std::any_of(records.begin(), records.end(), [](const auto& record) {
         return record.packName == QStringLiteral("SuccessorAction") && !record.success;
     }));
-    EXPECT_TRUE(std::none_of(records.begin(), records.end(), [](const auto& record) {
+    const auto retained = std::find_if(records.begin(), records.end(), [](const auto& record) {
         return record.packName == QStringLiteral("CanceledAction");
-    }));
+    });
+    ASSERT_NE(retained, records.end());
+    EXPECT_EQ(retained->toJson(), completedRecord);
 }
 
 TEST_F(PackBuildIpcScenarioTest, PackFilePathsAndAmbiguousActionRequestsAreRejectedBeforeStarting)
@@ -579,14 +589,15 @@ TEST_F(PackBuildIpcScenarioTest, DirectoryExportKeepsTheNamedActionSeparateFromS
     }, 10000));
     ASSERT_EQ(status.value(QStringLiteral("message")).toString(), QStringLiteral("Export complete"));
     EXPECT_EQ(status.value(QStringLiteral("progress")).toInt(), 100);
-    EXPECT_TRUE(QFileInfo::exists(QDir(output).filePath(
+    EXPECT_FALSE(QFileInfo::exists(QDir(output).filePath(
         HarkenEditor::Bridge::packIndexFileName())));
 
     const QDir platformDir(QDir(output).filePath(QStringLiteral("Windows")));
-    QFile manifestFile(platformDir.filePath(HarkenEditor::Bridge::packManifestFileName()));
-    ASSERT_TRUE(manifestFile.open(QIODevice::ReadOnly));
-    const QJsonArray packs = QJsonDocument::fromJson(manifestFile.readAll()).object()
-                                 .value(QStringLiteral("packs")).toArray();
+    QJsonArray packs;
+    QStringList publications;
+    QString error;
+    ASSERT_TRUE(ReadPackPublication(platformDir.path(), {}, platformId(),
+                                   &packs, &publications, &error)) << error.toStdString();
     ASSERT_EQ(packs.size(), 2);
     QSet<QString> names;
     for (const QJsonValue& value : packs) {
@@ -597,16 +608,15 @@ TEST_F(PackBuildIpcScenarioTest, DirectoryExportKeepsTheNamedActionSeparateFromS
         QFile file(platformDir.filePath(relative));
         ASSERT_TRUE(file.open(QIODevice::ReadOnly));
         const QByteArray bytes = file.readAll();
-        harken::PackCanonicalImage image;
-        ASSERT_EQ(VN_OK, harken::ParsePackCanonicalImage(
+        harkenstudiobuild::PackCanonicalImage image;
+        ASSERT_EQ(harkenstudiobuild::kPackOk, harkenstudiobuild::ParsePackCanonicalImage(
             reinterpret_cast<const std::uint8_t*>(bytes.constData()),
             static_cast<std::uint64_t>(bytes.size()), &image));
         ASSERT_TRUE(image.hasPartition);
         EXPECT_TRUE(image.hasRequirement);
-        harken::CurrentWorldBodyImage world;
+        harkenstudiobuild::CurrentWorldBodyImage world;
         ASSERT_TRUE(world.Decode(image.partitionBody.data(), image.partitionBody.size(),
-                                 image.partitionHeader.bodyVintage,
-                                 harken::CurrentWorldDecodeMode::StrictArtifact));
+                                 image.partitionHeader.bodyVintage));
         ASSERT_NE(world.ProductionView(), nullptr);
         if (name == action->name) {
             EXPECT_EQ(relative, action->name + QStringLiteral(".bytes"));

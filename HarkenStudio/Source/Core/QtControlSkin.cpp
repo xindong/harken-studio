@@ -25,6 +25,8 @@
 
 namespace {
 
+constexpr int LineEditHorizontalMargin = 2;
+
 class IconButtonEngine final : public QIconEngine
 {
 public:
@@ -125,6 +127,13 @@ int QtControlSkin::fieldHeight() const
                      QFontMetrics(font).height() + 6});
 }
 
+QMargins QtControlSkin::fieldTextMargins() const
+{
+    const QFont font = FontManager::instance().getFont(snapshot_, FontRole::Body);
+    const int vertical = std::max(0, (fieldHeight() - QFontMetrics(font).height()) / 2 - 1);
+    return QMargins(6, vertical, 6, vertical);
+}
+
 QIcon QtControlSkin::toolBarIcon(const QStyleOptionToolButton& option, qreal devicePixelRatio) const
 {
     const auto state = option.state & QStyle::State_On ? QIcon::On : QIcon::Off;
@@ -182,6 +191,46 @@ void QtControlSkin::setSemanticProperty(QWidget* widget, const char* name,
         widget->style()->polish(widget);
     }
     widget->update();
+}
+
+int QtControlSkin::tableResizeGripWidth(const QWidget* widget) const
+{
+    return std::max(metrics().table.resizeHandleRadius,
+        widget->style()->pixelMetric(QStyle::PM_HeaderGripMargin, nullptr, widget));
+}
+
+QtControlSkin::TableHandleLayout QtControlSkin::tableHandleLayout(
+    const QRect& rect, const QWidget* widget, bool hasHandle) const
+{
+    const auto& table = metrics().table;
+    const int grip = tableResizeGripWidth(widget);
+    const int handle = hasHandle
+        ? std::min(table.compactColumnWidth, std::max(0, rect.width() - grip * 2)) : 0;
+    const int padding = std::max(table.cellPaddingX, grip);
+    return {
+        QRect(rect.x() + grip, rect.y(), handle, rect.height()),
+        QRect(rect.x() + padding + handle, rect.y() + table.cellPaddingY,
+              std::max(0, rect.width() - padding * 2 - handle),
+              std::max(0, rect.height() - table.cellPaddingY * 2))};
+}
+
+void QtControlSkin::paintDragHandle(QPainter& painter, const QRect& rect, bool enabled) const
+{
+    if (rect.width() < 6) return;
+    painter.save();
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(enabled ? colors().textMuted : colors().textDisabled);
+    const auto center = rect.center();
+    for (int x : {-2, 2})
+        for (int y : {-4, 0, 4})
+            painter.drawEllipse(QPointF(center.x() + x, center.y() + y), 1, 1);
+    painter.restore();
+}
+
+void QtControlSkin::paintTableCellSelection(QPainter& painter, const QRect& rect) const
+{
+    painter.fillRect(rect, colors().bgSelected);
+    painter.fillRect(QRect(rect.left(), rect.top(), 2, rect.height()), colors().accent);
 }
 
 void QtControlSkin::paintFieldFrame(QPainter& painter, const QWidget* widget)
@@ -288,6 +337,11 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@compactSliderFill@"), rgba(colors().accent, 85));
     replace(QStringLiteral("@nodeContentLabel@"), color(snapshot_->domains.nodeGraphNode.contentLabel));
     replace(QStringLiteral("@nodeContentValue@"), color(snapshot_->domains.nodeGraphNode.contentValue));
+    replace(QStringLiteral("@logDebug@"), color(snapshot_->domains.log.debug));
+    replace(QStringLiteral("@logInfo@"), color(snapshot_->domains.log.info));
+    replace(QStringLiteral("@logWarning@"), color(snapshot_->domains.log.warning));
+    replace(QStringLiteral("@logError@"), color(snapshot_->domains.log.error));
+    replace(QStringLiteral("@logCritical@"), color(snapshot_->domains.log.critical));
     replace(QStringLiteral("@aiBrandAccent@"), color(snapshot_->domains.ai.brandAccent));
     replace(QStringLiteral("@aiBrandAccentSoft@"), rgba(snapshot_->domains.ai.brandAccent, 32));
     replace(QStringLiteral("@aiMessageSeparator@"), rgba(colors().textPrimary, 16));
@@ -304,12 +358,16 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@spacingSmall@"), QString::number(metrics().spacingSmall));
     replace(QStringLiteral("@spacingMedium@"), QString::number(metrics().spacingMedium));
     replace(QStringLiteral("@fieldContentHeight@"), QString::number(fieldHeight() - 2));
+    replace(QStringLiteral("@singleLineContentHeight@"), QString::number(fieldHeight() - 3));
+    const QMargins fieldMargins = fieldTextMargins();
+    replace(QStringLiteral("@fieldTextPaddingX@"), QString::number(fieldMargins.left()));
+    replace(QStringLiteral("@fieldTextPaddingY@"), QString::number(fieldMargins.top()));
+    replace(QStringLiteral("@lineEditPaddingX@"),
+            QString::number(fieldMargins.left() - LineEditHorizontalMargin));
     replace(QStringLiteral("@tableCellPaddingX@"), QString::number(metrics().table.cellPaddingX));
     replace(QStringLiteral("@tableCellPaddingY@"), QString::number(metrics().table.cellPaddingY));
     replace(QStringLiteral("@chevronExtent@"),
             QString::number(metrics().navigationChevronExtent));
-    replace(QStringLiteral("@inspectorColumnPadding@"),
-            QString::number(metrics().inspector.columnPadding));
     const auto& parameterMetrics = metrics().parameter;
     replace(QStringLiteral("@parameterSliderGroove@"),
             QString::number(parameterMetrics.sliderGrooveThickness));

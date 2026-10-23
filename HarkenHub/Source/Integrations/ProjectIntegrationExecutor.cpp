@@ -35,6 +35,33 @@ QString hubTranslate(const QString& source)
     return QCoreApplication::translate("HarkenHub", utf8.constData());
 }
 
+bool validateUnrealRuntime(const QString& root, QString* error)
+{
+    const QStringList required = {
+        QStringLiteral("Source/HarkenCore/Include/harken/Harken.h"),
+        QStringLiteral("Source/HarkenCore/Include/harken/ObjectId.h"),
+#ifdef Q_OS_WIN
+        QStringLiteral("Source/HarkenCore/Lib/Win64/HarkenCoreImport.lib"),
+        QStringLiteral("Binaries/ThirdParty/HarkenCore/Win64/HarkenCore.dll"),
+#elif defined(Q_OS_MACOS)
+        QStringLiteral("Binaries/ThirdParty/HarkenCore/Mac/libHarkenCore.dylib"),
+#else
+        QStringLiteral("Binaries/ThirdParty/HarkenCore/Linux/x86_64/libHarkenCore.so"),
+#endif
+    };
+    for (const auto& relative : required) {
+        QFile file(QDir(root).filePath(relative));
+        if (!QFileInfo(file).isFile() || !file.open(QIODevice::ReadOnly)
+            || file.size() <= 0 || file.read(1).size() != 1) {
+            *error = hubTranslate(QStringLiteral(
+                "The Unreal SDK is missing a readable, nonempty file required on this platform: %1. Select a complete SDK source."))
+                .arg(relative);
+            return false;
+        }
+    }
+    return true;
+}
+
 QString hashFile(const QString& path)
 {
     QFile file(path);
@@ -300,8 +327,10 @@ QByteArray migrationFingerprint(const EngineTargetRecord& target, const SdkMigra
 
 }
 
-bool ProjectIntegrationExecutor::checkUnrealClosed(const EngineTargetRecord& target, QString* error)
+bool ProjectIntegrationExecutor::checkUnrealClosed(const EngineTargetRecord& target, QString* error, bool* isOpen)
 {
+    error->clear();
+    if (isOpen) *isOpen = false;
     QList<RunningProcess> processes;
     if (!runningUnrealEditors(&processes)) {
         *error = hubTranslate(QStringLiteral("Could not check Unreal Editor processes. Check permissions and retry the safety check."));
@@ -337,6 +366,7 @@ bool ProjectIntegrationExecutor::checkUnrealClosed(const EngineTargetRecord& tar
             }
         }
         if (matches) {
+            if (isOpen) *isOpen = true;
             *error = hubTranslate(QStringLiteral("This Unreal project is open. Close it before changing the SDK, then run the safety check again."));
             return false;
         }
@@ -643,9 +673,19 @@ IntegrationPlan ProjectIntegrationExecutor::inspectUnreal(const EngineTargetReco
     }
     result.version = state.value(QStringLiteral("sdk_version")).toString();
     const auto managed = state.value(QStringLiteral("managed_files")).toObject();
-    for (auto it = managed.begin(); verifyContent && it != managed.end(); ++it)
-        if (hashFile(QDir(result.targetRoot).filePath(it.key())) != it.value().toString())
+    for (auto it = managed.begin(); verifyContent && it != managed.end(); ++it) {
+        const QString path = QDir(result.targetRoot).filePath(it.key());
+        const QFileInfo info(path);
+        const QString hash = hashFile(path);
+        if (hash != it.value().toString()) {
             result.modifiedManagedFiles.append(it.key());
+            if (!info.exists())
+                result.missingManagedFiles.append(it.key());
+            else if (!info.isFile() || hash.isEmpty())
+                result.unreadableManagedFiles.append(it.key());
+        }
+    }
+    if (verifyContent && !validateUnrealRuntime(result.targetRoot, &result.error)) return result;
     result.valid = true;
     return result;
 }
@@ -703,18 +743,7 @@ IntegrationPlan ProjectIntegrationExecutor::planUnreal(
             plan.error = hubTranslate(QStringLiteral("The Unreal SDK version is unavailable"));
             return plan;
         }
-        for (const auto* name : {"Harken.h", "ObjectId.h"}) {
-            const QString relative = QStringLiteral("Source/HarkenCore/Include/harken/")
-                + QLatin1String(name);
-            QFile header(QDir(plan.sourceRoot).filePath(relative));
-            if (!header.open(QIODevice::ReadOnly) || header.size() == 0
-                || header.read(1).size() != 1) {
-                plan.error = hubTranslate(QStringLiteral(
-                    "The Unreal SDK is missing a readable, nonempty header: %1. Select a complete SDK source."))
-                    .arg(relative);
-                return plan;
-            }
-        }
+        if (!validateUnrealRuntime(plan.sourceRoot, &plan.error)) return plan;
     }
     const bool targetExists = QFileInfo::exists(QDir(plan.targetRoot).filePath(QStringLiteral("Harken.uplugin")))
         || QFileInfo::exists(QDir(plan.targetRoot).filePath(QLatin1String(kUnrealReceiptFileName)));
@@ -738,11 +767,16 @@ IntegrationPlan ProjectIntegrationExecutor::planUnreal(
     if (targetExists) {
         for (auto iterator = priorHashes.begin(); iterator != priorHashes.end();
              ++iterator) {
-            const QString current = hashFile(
-                QDir(plan.targetRoot).filePath(iterator.key()));
+            const QString path = QDir(plan.targetRoot).filePath(iterator.key());
+            const QFileInfo info(path);
+            const QString current = hashFile(path);
             if (current.isEmpty() || current != iterator.value().toString()) {
                 modifiedManagedFiles.insert(iterator.key());
                 plan.modifiedManagedFiles.push_back(iterator.key());
+                if (!info.exists())
+                    plan.missingManagedFiles.append(iterator.key());
+                else if (!info.isFile() || current.isEmpty())
+                    plan.unreadableManagedFiles.append(iterator.key());
             }
         }
     }
@@ -785,6 +819,23 @@ IntegrationPlan ProjectIntegrationExecutor::planUnreal(
         }
     }
     plan.modifiedManagedFiles.sort(Qt::CaseSensitive);
+    if (!plan.changes.empty()) {
+        QStringList filesToChange;
+        if (operation == IntegrationOperation::Remove) {
+            for (const QString& relative : priorHashes.keys())
+                filesToChange.append(QDir(plan.targetRoot).filePath(relative));
+        } else {
+            for (const auto& change : plan.changes)
+                filesToChange.append(QDir(plan.targetRoot).filePath(change.path));
+        }
+        filesToChange.append(QDir(plan.targetRoot).filePath(QLatin1String(kUnrealReceiptFileName)));
+        if (!checkIntegrationFilesWritable(filesToChange, &plan.error)) return plan;
+        const QDir root(target.canonicalRoot);
+        if (!checkIntegrationDirectoryChanges({plan.targetRoot,
+                root.filePath(QStringLiteral("Saved/HarkenHub/Staging/Harken")),
+                root.filePath(QStringLiteral("Saved/HarkenHub/Backups/operation/Harken"))},
+                {plan.targetRoot}, &plan.error)) return plan;
+    }
     plan.confirmationRequired = targetExists && !plan.changes.empty();
     plan.fingerprint = fingerprint(target, plan, operation);
     plan.valid = true;
@@ -821,6 +872,7 @@ IntegrationOperationResult ProjectIntegrationExecutor::executeUnreal(
         if (plan.fingerprint.isEmpty() || current.fingerprint != plan.fingerprint
             || current.targetRoot != plan.targetRoot
             || current.preservedTargetFiles != plan.preservedTargetFiles) {
+            result.reviewRequired = true;
             result.error = hubTranslate(QStringLiteral("SDK files changed after the safety check. Run the check again before continuing."));
             return false;
         }

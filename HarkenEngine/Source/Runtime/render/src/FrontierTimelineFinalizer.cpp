@@ -6,6 +6,7 @@
 #include "harken/core/QueueRuntime.h"
 #include "harken/core/OccurrenceStatePool.h"
 #include "harken/core/ArmGroupTable.h"
+#include "harken/core/PinnedSnapshot3.h"
 
 #include <algorithm>
 #include <atomic>
@@ -93,10 +94,43 @@ struct FrontierTimelineFinalizer::Impl {
     };
     struct PendingEvent {
         std::uint64_t work = 0;
-        ConsumedEvent source{};
-        VoiceTimelineEvent voice{};
+        TimelineExecutionOrder order{};
+        TimelineTransactionProgramRef program{};
+        FrontierEventBinding frontier{};
+        TimelineArmToken armToken{};
+        TransactionId transactionId = 0;
+        std::uint64_t payload = 0;
+        std::uint32_t txnSlot = 0;
+        bool frozenTxnValid = false;
+        bool authoredFadeOutCandidate = false;
         bool controller = false;
-        bool completesControl = false;
+
+        PendingEvent() = default;
+        PendingEvent(std::uint64_t pendingWork, const ConsumedEvent& source, bool isController) noexcept
+            : work(pendingWork), order(OrderOf(source)), program(source.program), frontier(source.frontier),
+              armToken(source.armToken), transactionId(source.transactionId), payload(source.payload),
+              txnSlot(source.txnSlot), frozenTxnValid(source.frozenTxnValid),
+              authoredFadeOutCandidate(source.authoredFadeOutCandidate), controller(isController) {}
+
+        ConsumedEvent Restore() const noexcept {
+            ConsumedEvent source{};
+            source.executeFrame = order.executeFrame;
+            source.logicCommitSequence = order.logicCommitSequence;
+            source.executionOrdinal = order.executionOrdinal;
+            source.eventIndex = order.eventIndex;
+            source.transactionOrdinal = order.transactionOrdinal;
+            source.subeventPhase = order.subeventPhase;
+            source.rowSequence = order.rowSequence;
+            source.program = program;
+            source.frontier = frontier;
+            source.armToken = armToken;
+            source.transactionId = transactionId;
+            source.payload = payload;
+            source.txnSlot = txnSlot;
+            source.frozenTxnValid = frozenTxnValid;
+            source.authoredFadeOutCandidate = authoredFadeOutCandidate;
+            return source;
+        }
     };
     struct PendingGroup {
         std::uint64_t work = 0;
@@ -205,16 +239,24 @@ struct FrontierTimelineFinalizer::Impl {
     std::uint32_t completionCapacity = 0;
     std::uint32_t completionCount = 0;
     std::uint32_t deferredStartCount = 0;
-    std::unique_ptr<Event[]> events;
-    std::unique_ptr<StagedLaneStart[]> stagedLaneStarts;
+    StableRowStorage<Event> events;
+    StableRowStorage<StagedLaneStart> stagedLaneStarts;
+    ImmediateActionLane::EventStorageRegistration laneEventRegistration;
     std::uint32_t stagedLaneStartCount = 0;
     std::unique_ptr<Group[]> groups;
-    std::unique_ptr<OrderRef[]> order;
+    StableRowStorage<OrderRef> order;
     std::unique_ptr<ImmediateLaneFrontierClaim[]> laneClaims;
-    std::unique_ptr<PendingEvent[]> pendingEvents;
-    std::unique_ptr<PendingGroup[]> pendingGroups;
-    std::uint32_t pendingEventCapacity = 0;
-    std::uint32_t pendingGroupCapacity = 0;
+    StableRowStorage<PendingEvent> pendingEvents;
+    struct PendingEventSnapshot {
+        std::uint64_t count = 0;
+        std::uint64_t retiredEvents = 0;
+        std::uint64_t groups = 0;
+        std::uint64_t retiredGroups = 0;
+    };
+    PinnedSnapshot3<PendingEventSnapshot> pendingEventSnapshot;
+    PendingEventSnapshot capturedPendingEvents{};
+    ScheduledTransactionPool::PendingEventStorageRegistration pendingEventRegistration;
+    StableRowStorage<PendingGroup> pendingGroups;
     std::uint32_t pendingEventCount = 0;
     std::uint32_t pendingGroupCount = 0;
     std::uint64_t nextPendingWork = 1;
@@ -224,11 +266,64 @@ struct FrontierTimelineFinalizer::Impl {
     std::uint32_t groupCount = 0;
     std::uint64_t quantum = 0;
     std::uint32_t frames = 0;
+    bool laneOnly = false;
     bool laneMode = false;
     bool laneSourceResumed = false;
     std::uint64_t laneOriginalQuantum = 0;
 
     Impl(VoicePool& v, TimelineArmTable& a) : voices(v), arms(a) {}
+    static bool PrepareLaneEvents(void* context, std::uint32_t demand) noexcept {
+        auto& self = *static_cast<Impl*>(context);
+        const auto count = std::min(self.eventCapacity, demand);
+        return self.stagedLaneStarts.ConstructThrough(count) && self.events.ConstructThrough(count);
+    }
+    static bool PreparePendingEvents(void* context,
+        ScheduledTransactionPool::PendingEventStorageDemand demand) noexcept {
+        auto& self = *static_cast<Impl*>(context);
+        PendingEventSnapshot latest{};
+        if (self.pendingEventSnapshot.Capture(latest)) self.capturedPendingEvents = latest;
+        const auto& captured = self.capturedPendingEvents;
+        const auto required = [](std::uint32_t capacity, std::uint64_t capturedCount,
+            std::uint64_t capturedRetired, std::uint64_t native, std::uint64_t retired) noexcept {
+            std::uint64_t count = std::min<std::uint64_t>(capacity, capturedCount);
+            if (retired == UINT64_MAX || retired < capturedRetired) return capacity;
+            count += std::min<std::uint64_t>(capacity - count, retired - capturedRetired);
+            count += std::min<std::uint64_t>(capacity - count, native);
+            return static_cast<std::uint32_t>(count);
+        };
+        const auto requiredEvents = [&](std::uint32_t capacity) noexcept {
+            return required(capacity, captured.count, captured.retiredEvents,
+                demand.nativeEvents, demand.retiredEvents);
+        };
+        const auto eventCount = requiredEvents(self.events.Capacity());
+        return self.pendingEvents.ConstructThrough(requiredEvents(self.pendingEvents.Capacity())) &&
+            self.pendingGroups.ConstructThrough(required(self.pendingGroups.Capacity(),
+                captured.groups, captured.retiredGroups, demand.nativeGroups, demand.retiredGroups)) &&
+            self.order.ConstructThrough(std::max(eventCount, self.events.ConstructedCount()) +
+                self.groupCapacity) && self.events.ConstructThrough(eventCount);
+    }
+    static void DecodeVoiceEvent(Event& event, const TimelineEventPayload& payload,
+        std::uint16_t offset) noexcept {
+        event.controller = payload.kind == TimelineEventKind::ControllerActivation;
+        event.completesControl = payload.kind == TimelineEventKind::VariableWeight ||
+            (payload.kind == TimelineEventKind::Start && (payload.reserved & kTimelineEventTransientStartArm) != 0) ||
+            (payload.kind == TimelineEventKind::Stop && (payload.reserved & kTimelineEventTransientControlArm) != 0);
+        event.voice.kind = payload.kind;
+        event.voice.offset = offset;
+        event.voice.envelopeDirection = payload.envelopeDirection;
+        event.voice.authoredFadeOutCandidate = event.source.authoredFadeOutCandidate;
+        event.voice.authoredRootStop = payload.kind == TimelineEventKind::Stop &&
+            (payload.reserved & kTimelineEventAuthoredRootStop) != 0;
+        event.voice.frame = payload.envelopeStartFrame;
+        event.voice.endFrame = payload.envelopeEndFrame;
+        event.voice.value = payload.sourceStartFrame;
+        event.voice.variableWeight = payload.variableWeight;
+        event.voice.variableWeightOwner = payload.variableWeightOwner;
+        event.voice.envelopeCurve = payload.envelopeCurve;
+        event.voice.order = event.order;
+        event.voice.authoredStopOperation = payload.authoredStopOperation;
+        event.voice.controlCause = payload.controlCause;
+    }
     std::uint64_t DueQuantum() const noexcept { return laneSourceResumed ? laneOriginalQuantum : quantum; }
     QueueFrontierSourceWaitContext SourceWaitContext() const noexcept {
         return {immediateLane, immediateLaneBucket, decisions, immediateLaneSlot};
@@ -621,8 +716,8 @@ struct FrontierTimelineFinalizer::Impl {
         std::uint32_t eventTotal = 0, groupTotal = 0;
         for (std::uint32_t i = 0; i < eventCount; ++i) eventTotal += includesEvent(events[i]);
         for (std::uint32_t i = 0; i < groupCount; ++i) groupTotal += includesGroup(i);
-        if (eventTotal > pendingEventCapacity - pendingEventCount ||
-            groupTotal > pendingGroupCapacity - pendingGroupCount) return false;
+        if (eventTotal > pendingEvents.size() - pendingEventCount ||
+            groupTotal > pendingGroups.size() - pendingGroupCount) return false;
         const auto work = nextPendingWork++;
         for (std::uint32_t i = 0; i < groupCount; ++i) {
             if (!includesGroup(i)) continue;
@@ -632,8 +727,7 @@ struct FrontierTimelineFinalizer::Impl {
         for (std::uint32_t i = 0; i < eventCount; ++i) {
             auto& event = events[i];
             if (!includesEvent(event)) continue;
-            pendingEvents[pendingEventCount++] = {work, event.source, event.voice,
-                event.controller, event.completesControl};
+            pendingEvents[pendingEventCount++] = {work, event.source, event.controller};
             Reject(event, kTimelineDispositionArmPending);
         }
         for (std::uint32_t i = 0; i < groupCount; ++i)
@@ -655,7 +749,7 @@ struct FrontierTimelineFinalizer::Impl {
                 if (work == 0 || candidateOrder < first) { work = candidate; first = candidateOrder; }
             };
             for (std::uint32_t i = 0; i < pendingEventCount; ++i)
-                select(pendingEvents[i].work, OrderOf(pendingEvents[i].source));
+                select(pendingEvents[i].work, pendingEvents[i].order);
             for (std::uint32_t i = 0; i < pendingGroupCount; ++i)
                 select(pendingGroups[i].work, pendingGroups[i].order);
             std::uint32_t eventTotal = 0, groupTotal = 0;
@@ -673,12 +767,25 @@ struct FrontierTimelineFinalizer::Impl {
                 const auto& pending = pendingEvents[i];
                 if (pending.work != work) continue;
                 ++eventTotal;
-                if (pending.controller) continue;
-                const auto* arm = arms.Resolve(pending.source.armToken);
-                valid = arm != nullptr && arm->programGeneration == pending.source.program.programGeneration && valid;
+                if (pending.controller) {
+                    TimelineTransactionProgramRef original{};
+                    valid = decisions->CaptureFrontierControlProgram(pending.frontier.group.decision, &original) &&
+                        original.program == pending.program.program &&
+                        original.programGeneration == pending.program.programGeneration && valid;
+                } else {
+                    const auto* arm = arms.Resolve(pending.armToken);
+                    valid = arm != nullptr && arm->programGeneration == pending.program.programGeneration && valid;
+                }
+                if (!valid) continue;
+                const auto* program = pending.program.program;
+                valid = program != nullptr && program->generation == pending.program.programGeneration &&
+                    program->payloads != nullptr && pending.payload < program->payloadCount &&
+                    (program->payloads[pending.payload].kind == TimelineEventKind::ControllerActivation) ==
+                        pending.controller;
             }
             if (!valid) { RemovePending(work); continue; }
-            if (eventTotal > pool->MaxEventsPerQuantum() - eventCount ||
+            if (eventTotal > events.ConstructedCount() - eventCount ||
+                eventTotal > pool->MaxEventsPerQuantum() - eventCount ||
                 groupTotal > pool->MaxPlan03GroupHeadersPerPage() - groupCount) break;
             const auto originalGroupCount = groupCount;
             for (std::uint32_t i = 0; i < pendingGroupCount; ++i) {
@@ -706,12 +813,9 @@ struct FrontierTimelineFinalizer::Impl {
                 const auto& pending = pendingEvents[i];
                 if (pending.work != work) continue;
                 auto& event = events[eventCount++];
-                event.source = pending.source;
+                event.source = pending.Restore();
                 event.order = OrderOf(event.source);
-                event.voice = pending.voice;
-                event.voice.offset = 0;
-                event.controller = pending.controller;
-                event.completesControl = pending.completesControl;
+                DecodeVoiceEvent(event, event.source.program.program->payloads[event.source.payload], 0);
                 event.resumed = true;
             }
             RemovePending(work);
@@ -720,9 +824,9 @@ struct FrontierTimelineFinalizer::Impl {
 
     bool EarlierPending(const Event& event) const noexcept {
         for (std::uint32_t i = 0; i < pendingEventCount; ++i) {
-            const auto& prior = pendingEvents[i].source;
+            const auto& prior = pendingEvents[i];
             if (SameArm(prior.armToken, event.source.armToken) &&
-                prior.frontier.owner == event.source.frontier.owner && OrderOf(prior) < event.order) return true;
+                prior.frontier.owner == event.source.frontier.owner && prior.order < event.order) return true;
         }
         for (std::uint32_t i = 0; i < eventCount; ++i) {
             const auto& prior = events[i];
@@ -895,10 +999,6 @@ struct FrontierTimelineFinalizer::Impl {
             const auto& binding = event.source.frontier;
             auto& guard = event.voice.frontierProof;
             guard.state = FrontierEventState::Pending;
-            if (!laneMode) {
-                guard.entry = binding.entry;
-                guard.operation = event.operation;
-            }
             guard.quantum = quantum;
             guard.renderGeneration = event.source.armToken.renderGeneration;
             event.reserved = laneMode
@@ -908,7 +1008,8 @@ struct FrontierTimelineFinalizer::Impl {
                     event.source.armToken.renderGeneration, quantum, 1, &event.reservation);
             const bool staged = event.reserved && (laneMode
                 ? voices.StageReservedLaneTimelineEvent(event.reservation, 0, event.voice)
-                : voices.StageReservedTimelineEvent(event.reservation, 0, event.voice));
+                : voices.StageReservedTimelineEvent(event.reservation, 0, event.voice,
+                    binding.entry, event.operation));
             if (!staged)
                 event.disposition = kTimelineDispositionProtocolViolation;
         }
@@ -1737,13 +1838,14 @@ struct FrontierTimelineFinalizer::Impl {
                     !pool->NotePlan03GroupReadRt(descriptor.identity, quantum + 1u)) return false;
             }
             const auto sourceWait = SourceWaitContext();
+            QueueConditionalProof completion{};
             if (occurrences == nullptr || quantum > UINT64_MAX / frames ||
                 quantum * frames > UINT64_MAX - frames || matches != 1u ||
                 !queues->ProveFrontierInitialCompletion(binding,
                     source, *member.view.lease, *pool, decision.lastAudioSequence,
                     *occurrences, composites, quantum * frames, quantum * frames + frames,
-                    quantum, &member.queueCompletionProof, SourceWaitApplies(binding) ? &sourceWait : nullptr) ||
-                !CompletionMatchesPreflight(member, member.queueCompletionProof.Completion())) return false;
+                    quantum, &member.queueCompletionProof, SourceWaitApplies(binding) ? &sourceWait : nullptr,
+                    &completion) || !CompletionMatchesPreflight(member, completion)) return false;
             ArmGroupMemberSnapshot historical{};
             if (!armGroups->CaptureMember(decision.armGroup, 0u, &historical) ||
                 !SameArm(historical.token, member.view.members[0])) return false;
@@ -1780,13 +1882,13 @@ struct FrontierTimelineFinalizer::Impl {
         }
         if (queue) return queues->ProveFrontierInitial(binding, *member.view.lease, quantum + 1u, &member.queueProof);
         const auto sourceWait = SourceWaitContext();
+        QueueConditionalProof proof{};
         if (quantum > UINT64_MAX / frames || quantum * frames > UINT64_MAX - frames ||
             !queues->ProveFrontierConditional(binding, *member.view.lease, *occurrences, composites,
                 quantum * frames, quantum * frames + frames, quantum, &member.conditionalProof, member.queueSlice,
-                SourceWaitApplies(binding) ? &sourceWait : nullptr) ||
-            !CompletionMatchesPreflight(member, member.conditionalProof.Completion())) return false;
+                SourceWaitApplies(binding) ? &sourceWait : nullptr, &proof) ||
+            !CompletionMatchesPreflight(member, proof)) return false;
         if (member.queueSlice != QueueInstanceTable::FrontierConditionalSlice::Activation) return true;
-        const auto& proof = member.conditionalProof.Completion();
         if (proof.completionMode != QueueConditionalCompletionMode::RetiredSource) return true;
         if (member.view.memberCount == 0 ||
             (member.view.sourceControlCount != 0 && !member.conditionalQueueCompletion)) return false;
@@ -2841,6 +2943,19 @@ std::uint32_t FrontierTimelineFinalizer::EventCapacityForTest() const noexcept {
 std::uint32_t FrontierTimelineFinalizer::GroupCapacityForTest() const noexcept {
     return impl_->groupCapacity;
 }
+#endif
+
+#if !defined(HARKEN_RT_QUALIFICATION)
+void FrontierTimelineFinalizer::SetPendingEventCommitPageLimitForTest(std::size_t pages) noexcept {
+    impl_->pendingEvents.SetCommitPageLimitForTests(pages);
+    impl_->pendingGroups.SetCommitPageLimitForTests(pages);
+    impl_->events.SetCommitPageLimitForTests(pages);
+    impl_->order.SetCommitPageLimitForTests(pages);
+}
+
+std::uint64_t FrontierTimelineFinalizer::PendingEventStorageBytesForTest() const noexcept {
+    return impl_->pendingEvents.RequestedBytes();
+}
 
 #endif
 
@@ -2883,25 +2998,67 @@ bool FrontierTimelineFinalizer::Attach(DecisionTable& decisions,
         pendingEventCapacity > SIZE_MAX / sizeof(Impl::PendingEvent) ||
         pendingGroupCapacity > SIZE_MAX / sizeof(Impl::PendingGroup)) return false;
     auto& self = *impl_;
-    self.events = std::make_unique<Impl::Event[]>(eventCapacity);
-    self.stagedLaneStarts = std::make_unique<Impl::StagedLaneStart[]>(eventCapacity);
-    self.groups = std::make_unique<Impl::Group[]>(groupCapacity);
-    self.order = std::make_unique<Impl::OrderRef[]>(eventCapacity + groupCapacity);
-    self.laneClaims = std::make_unique<ImmediateLaneFrontierClaim[]>(groupCapacity);
-    self.pendingEvents = std::make_unique<Impl::PendingEvent[]>(pendingEventCapacity);
-    self.pendingGroups = std::make_unique<Impl::PendingGroup[]>(pendingGroupCapacity);
-    self.pendingEventCapacity = static_cast<std::uint32_t>(pendingEventCapacity);
-    self.pendingGroupCapacity = static_cast<std::uint32_t>(pendingGroupCapacity);
+    StableRowStorage<Impl::PendingEvent> pendingEvents;
+    StableRowStorage<Impl::PendingGroup> pendingGroups;
+    StableRowStorage<Impl::Event> events;
+    StableRowStorage<Impl::StagedLaneStart> stagedLaneStarts;
+    StableRowStorage<Impl::OrderRef> order;
+    const auto demand = pool.CapturePendingEventStorageDemand();
+    const auto preparedEvents = static_cast<std::uint32_t>(laneOnly ? 0u :
+        std::min<std::uint64_t>(eventCapacity, demand.nativeEvents));
+    if (!pendingEvents.Reserve(static_cast<std::uint32_t>(pendingEventCapacity)) ||
+        !pendingEvents.ConstructThrough(static_cast<std::uint32_t>(
+            std::min<std::uint64_t>(pendingEventCapacity, demand.nativeEvents))) ||
+        !pendingGroups.Reserve(static_cast<std::uint32_t>(pendingGroupCapacity)) ||
+        !pendingGroups.ConstructThrough(static_cast<std::uint32_t>(
+            std::min<std::uint64_t>(pendingGroupCapacity, demand.nativeGroups))) ||
+        !events.Reserve(static_cast<std::uint32_t>(eventCapacity)) ||
+        !events.ConstructThrough(preparedEvents) ||
+        !stagedLaneStarts.Reserve(laneOnly ? static_cast<std::uint32_t>(eventCapacity) : 0u) ||
+        !order.Reserve(laneOnly ? 0u : static_cast<std::uint32_t>(eventCapacity + groupCapacity)) ||
+        !order.ConstructThrough(laneOnly ? 0u : preparedEvents + static_cast<std::uint32_t>(groupCapacity)))
+        return false;
+    auto groups = std::make_unique<Impl::Group[]>(groupCapacity);
+    auto laneClaims = laneOnly ? std::make_unique<ImmediateLaneFrontierClaim[]>(groupCapacity) : nullptr;
+    const auto participantCapacity = decisions.MaxParticipantsPerDecision();
+    auto participants = std::make_unique<DecisionParticipantRef[]>(participantCapacity);
+    const auto completionCapacity = pool.MaxArmsPerGroup();
+    auto completionProofs = std::make_unique<TimelineArmTable::BoundAudioProof[]>(completionCapacity);
+
+    self.pendingEventRegistration.Detach();
+    self.laneEventRegistration.Detach();
+    self.pendingEvents.Swap(pendingEvents);
+    self.events.Swap(events);
+    self.stagedLaneStarts.Swap(stagedLaneStarts);
+    self.groups = std::move(groups);
+    self.order.Swap(order);
+    self.laneClaims = std::move(laneClaims);
+    self.pendingGroups.Swap(pendingGroups);
     self.pendingEventCount = self.pendingGroupCount = 0;
+    self.eventCount = self.groupCount = 0;
     self.nextPendingWork = 1;
-    self.participantCapacity = decisions.MaxParticipantsPerDecision();
-    self.participants = std::make_unique<DecisionParticipantRef[]>(self.participantCapacity);
-    self.completionCapacity = pool.MaxArmsPerGroup();
-    self.completionProofs = std::make_unique<TimelineArmTable::BoundAudioProof[]>(self.completionCapacity);
+    self.participantCapacity = participantCapacity;
+    self.participants = std::move(participants);
+    self.completionCapacity = completionCapacity;
+    self.completionProofs = std::move(completionProofs);
     self.eventCapacity = static_cast<std::uint32_t>(eventCapacity);
     self.groupCapacity = static_cast<std::uint32_t>(groupCapacity);
+    self.laneOnly = laneOnly;
     self.decisions = &decisions;
     self.pool = &pool;
+    self.capturedPendingEvents = {0, demand.retiredEvents, 0, demand.retiredGroups};
+    self.pendingEventSnapshot.BeginWrite() = self.capturedPendingEvents;
+    self.pendingEventSnapshot.EndWrite();
+    if (!laneOnly)
+        pool.AttachPendingEventStorage(self.pendingEventRegistration, &self, Impl::PreparePendingEvents);
+    return true;
+}
+
+bool FrontierTimelineFinalizer::AttachLaneEventStorage(const ImmediateActionLane& lane) noexcept {
+    auto& self = *impl_;
+    if (!self.laneOnly || !lane.Valid() ||
+        !Impl::PrepareLaneEvents(&self, lane.EventStorageHighWater())) return false;
+    lane.AttachEventStorage(self.laneEventRegistration, &self, Impl::PrepareLaneEvents);
     return true;
 }
 
@@ -2944,12 +3101,17 @@ void FrontierTimelineFinalizer::Begin(std::uint64_t quantum, std::uint32_t frame
     self.laneMode = false;
     self.laneSourceResumed = false;
     self.immediateLaneBucket = nullptr;
-    if (self.pool != nullptr) self.RestorePending();
+    if (!self.laneOnly && self.pool != nullptr) self.RestorePending();
 }
 
 void FrontierTimelineFinalizer::BeginLane(std::uint64_t quantum, std::uint32_t frames,
     const ImmediateActionLane& lane, const ImmediateLaneBucket* bucket, std::uint32_t slot) noexcept {
     Begin(quantum, frames);
+    if (!impl_->laneOnly || !impl_->laneEventRegistration.IsFor(&lane)) {
+        impl_->frames = 0;
+        impl_->immediateLane = nullptr;
+        return;
+    }
     impl_->immediateLane = &lane;
     impl_->immediateLaneBucket = bucket;
     impl_->immediateLaneSlot = slot;
@@ -3167,7 +3329,7 @@ bool FrontierTimelineFinalizer::PendingBindingValid(const ConsumedEvent& event,
 bool FrontierTimelineFinalizer::CollectEvent(const ConsumedEvent& source,
     const TimelineEventPayload* payload, std::uint8_t disposition) noexcept {
     auto& self = *impl_;
-    if (self.eventCount == self.eventCapacity) return false;
+    if (self.eventCount == self.events.ConstructedCount()) return false;
     const ImmediateLaneEvent* laneSource = nullptr;
     if (self.immediateLaneBucket != nullptr) {
         const auto* original = self.immediateLane->Events(self.immediateLaneSlot, self.immediateLaneBucket);
@@ -3188,28 +3350,11 @@ bool FrontierTimelineFinalizer::CollectEvent(const ConsumedEvent& source,
         event.disposition = kTimelineDispositionProtocolViolation;
         return true;
     }
-    event.controller = payload->kind == TimelineEventKind::ControllerActivation;
-    event.completesControl = payload->kind == TimelineEventKind::VariableWeight ||
-        (payload->kind == TimelineEventKind::Start && (payload->reserved & kTimelineEventTransientStartArm) != 0) ||
-        (payload->kind == TimelineEventKind::Stop && (payload->reserved & kTimelineEventTransientControlArm) != 0);
-    event.voice.kind = payload->kind;
     event.resumed = self.laneSourceResumed;
-    event.voice.offset = static_cast<std::uint16_t>(source.executeFrame - self.DueQuantum() * self.frames);
+    self.DecodeVoiceEvent(event, *payload,
+        static_cast<std::uint16_t>(source.executeFrame - self.DueQuantum() * self.frames));
     if (laneSource != nullptr && !self.LaneEventOffset(source, &event.voice.offset))
         event.disposition = kTimelineDispositionProtocolViolation;
-    event.voice.envelopeDirection = payload->envelopeDirection;
-    event.voice.authoredFadeOutCandidate = source.authoredFadeOutCandidate;
-    event.voice.authoredRootStop = payload->kind == TimelineEventKind::Stop &&
-        (payload->reserved & kTimelineEventAuthoredRootStop) != 0;
-    event.voice.frame = payload->envelopeStartFrame;
-    event.voice.endFrame = payload->envelopeEndFrame;
-    event.voice.value = payload->sourceStartFrame;
-    event.voice.variableWeight = payload->variableWeight;
-    event.voice.variableWeightOwner = payload->variableWeightOwner;
-    event.voice.envelopeCurve = payload->envelopeCurve;
-    event.voice.order = event.order;
-    event.voice.authoredStopOperation = payload->authoredStopOperation;
-    event.voice.controlCause = payload->controlCause;
     return true;
 }
 
@@ -3217,8 +3362,8 @@ bool FrontierTimelineFinalizer::CollectLaneStagedStart(const ImmediateLaneEvent&
     const TimelineArmTable::LaneAudioProof& arm, const VoiceTimelineReservationProof& reservation,
     const VariableTimelineInitializerProof& initializer) noexcept {
     auto& self = *impl_;
-    if (self.immediateLane == nullptr || self.immediateLaneBucket == nullptr ||
-        self.stagedLaneStartCount == self.eventCapacity ||
+    if (!self.laneOnly || self.immediateLane == nullptr || self.immediateLaneBucket == nullptr ||
+        self.stagedLaneStartCount == self.stagedLaneStarts.ConstructedCount() ||
         !arm.Valid() || !reservation.Valid()) return false;
     const auto* captured = self.immediateLane->Events(self.immediateLaneSlot, self.immediateLaneBucket);
     if (captured == nullptr || self.immediateLaneBucket->eventCount > self.eventCapacity) return false;
@@ -3246,7 +3391,7 @@ bool FrontierTimelineFinalizer::CollectStop(const AuthoredStopFenceDescriptor& d
             prior->decision.slot == descriptor.decision.slot &&
             prior->decision.generation == descriptor.decision.generation) return true;
     }
-    if (self.eventCount == self.eventCapacity) return false;
+    if (self.eventCount == self.events.ConstructedCount()) return false;
     auto& event = self.events[self.eventCount++];
     event.stop = &descriptor;
     event.stopIdentity = descriptor.identity;
@@ -3256,7 +3401,7 @@ bool FrontierTimelineFinalizer::CollectStop(const AuthoredStopFenceDescriptor& d
 
 void FrontierTimelineFinalizer::Finish() noexcept {
     auto& self = *impl_;
-    if (self.decisions == nullptr || self.frames == 0 || self.quantum == UINT64_MAX) return;
+    if (self.laneOnly || self.decisions == nullptr || self.frames == 0 || self.quantum == UINT64_MAX) return;
     self.PrepareSpans();
     std::uint32_t ordered = 0;
     for (std::uint32_t i = 0; i < self.groupCount; ++i) {
@@ -3268,7 +3413,7 @@ void FrontierTimelineFinalizer::Finish() noexcept {
         if (self.events[i].stop != nullptr || self.events[i].representative == i)
             self.order[ordered++] = {self.events[i].order, i, false};
     }
-    std::sort(self.order.get(), self.order.get() + ordered, [](const auto& a, const auto& b) {
+    if (ordered > 1) std::sort(self.order.data(), self.order.data() + ordered, [](const auto& a, const auto& b) {
         return a.order < b.order;
     });
     for (std::uint32_t i = 0; i < ordered; ++i) {
@@ -3295,6 +3440,13 @@ void FrontierTimelineFinalizer::Finish() noexcept {
         auto& event = self.events[i];
         if (event.stop == nullptr && event.group == UINT32_MAX && event.representative == UINT32_MAX)
             self.Reject(event, kTimelineDispositionArmFailed);
+    }
+    // A stale complete snapshot is safe: removed page rows bridge any work
+    // copied after it. Never publish the temporary drop during RestorePending.
+    if (!self.laneMode && self.pool != nullptr) {
+        self.pendingEventSnapshot.BeginWrite() = {self.pendingEventCount, self.pool->RetiredPageEventCount(),
+            self.pendingGroupCount, self.pool->RetiredPageGroupCount()};
+        self.pendingEventSnapshot.EndWrite();
     }
 }
 
@@ -3888,7 +4040,7 @@ bool FrontierTimelineFinalizer::FinishLaneBucketImpl(
     const ImmediateLaneBucket* bucket, std::uint32_t laneSlot,
     std::uint32_t laneGeneration, bool continuation) noexcept {
     auto& self = *impl_;
-    if (self.pool == nullptr || self.decisions == nullptr || self.frames == 0 ||
+    if (!self.laneOnly || self.pool == nullptr || self.decisions == nullptr || self.frames == 0 ||
         self.quantum == UINT64_MAX || claimBucket == nullptr || lane == nullptr ||
         bucket == nullptr || bucket->quantum != self.DueQuantum() ||
         bucket->attemptGeneration != laneGeneration ||
@@ -4225,15 +4377,13 @@ std::uint8_t FrontierTimelineFinalizer::EventDisposition(const ConsumedEvent& so
 
 std::uint64_t FrontierTimelineFinalizer::StorageBytes() const noexcept {
     const auto& self = *impl_;
-    return sizeof(Impl) + static_cast<std::uint64_t>(self.eventCapacity) * sizeof(Impl::Event) +
-        static_cast<std::uint64_t>(self.eventCapacity) * sizeof(Impl::StagedLaneStart) +
+    return sizeof(Impl) + self.events.RequestedBytes() + self.order.RequestedBytes() +
+        self.stagedLaneStarts.RequestedBytes() +
         static_cast<std::uint64_t>(self.participantCapacity) * sizeof(DecisionParticipantRef) +
         static_cast<std::uint64_t>(self.completionCapacity) * sizeof(TimelineArmTable::BoundAudioProof) +
         static_cast<std::uint64_t>(self.groupCapacity) * sizeof(Impl::Group) +
-        static_cast<std::uint64_t>(self.groupCapacity) * sizeof(ImmediateLaneFrontierClaim) +
-        static_cast<std::uint64_t>(self.pendingEventCapacity) * sizeof(Impl::PendingEvent) +
-        static_cast<std::uint64_t>(self.pendingGroupCapacity) * sizeof(Impl::PendingGroup) +
-        (static_cast<std::uint64_t>(self.eventCapacity) + self.groupCapacity) * sizeof(Impl::OrderRef);
+        (self.laneOnly ? static_cast<std::uint64_t>(self.groupCapacity) * sizeof(ImmediateLaneFrontierClaim) : 0u) +
+        self.pendingEvents.RequestedBytes() + self.pendingGroups.RequestedBytes();
 }
 
 } // namespace harken

@@ -288,7 +288,7 @@ TEST(BusTopologySnapshot, RetirementCensusFixtureRequiresExactPendingReferenceTo
     ASSERT_EQ(VN_OK, Vn_ApplyBusTopology(&remove));
     Pump(engine);
 
-    ASSERT_FALSE(engine->pendingStarts.empty());
+    ASSERT_TRUE(engine->pendingStarts.Emplace(0));
     auto& pending = engine->pendingStarts[0];
     ASSERT_FALSE(pending.active);
     pending.active = true;
@@ -317,9 +317,10 @@ TEST(BusTopologySnapshot, PublishedTimelineIdentityMigratesOffRemovedSlot) {
     ASSERT_EQ(VN_OK, Vn_Update());
     const auto index = engine->buses.FindIndex(harkentest::ObjectId(10));
     const auto generation = engine->buses.GenerationAt(index);
-    ASSERT_FALSE(engine->pendingStarts.empty());
-    ASSERT_FALSE(engine->parkRecords.empty());
-    ASSERT_FALSE(engine->timelineVoiceInstallIdentities.empty());
+    ASSERT_TRUE(engine->pendingStarts.Emplace(0));
+    ASSERT_TRUE(engine->parkRecords.Emplace(0));
+    ASSERT_TRUE(engine->voices.PrepareSlotWorkingSet(0, 1));
+    ASSERT_NE(0u, engine->timelineVoiceInstallIdentities.size());
     auto& pending = engine->pendingStarts[0];
     pending.active = true;
     pending.busIndex = index;

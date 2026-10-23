@@ -1,5 +1,6 @@
 #include "UI/ProjectsPage.h"
 #include "Projects/ProjectStore.h"
+#include "Versions/StudioLaunchTarget.h"
 
 #include <gtest/gtest.h>
 #include <QApplication>
@@ -8,10 +9,12 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QHeaderView>
 #include <QItemSelectionModel>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMenu>
+#include <QPushButton>
 #include <QScopeGuard>
 #include <QSemaphore>
 #include <QSet>
@@ -21,6 +24,8 @@
 #include <QThread>
 #include <QThreadPool>
 #include <QTimer>
+#include <QToolButton>
+#include <QVariantAnimation>
 
 #include <memory>
 
@@ -143,6 +148,15 @@ protected:
                          table->viewport()->mapTo(page.get(), pos));
     }
 
+    void clickHeader(int column)
+    {
+        auto* header = table->horizontalHeader();
+        QTest::mouseClick(header->viewport(), Qt::LeftButton, Qt::NoModifier,
+                         QPoint(header->sectionViewportPosition(column) + header->sectionSize(column) / 2,
+                                header->height() / 2));
+        QCoreApplication::processEvents();
+    }
+
     QSet<QString> selectedPaths() const
     {
         QSet<QString> result;
@@ -160,6 +174,17 @@ protected:
 
 TEST_F(ProjectsPageSelectionTest, SelectionSurvivesReorderingAndMetadataRefresh)
 {
+    VNH::InstalledVersion newer;
+    newer.buildId = "newer";
+    newer.semanticVersion = "1.10.0";
+    auto older = newer;
+    older.buildId = "older";
+    older.semanticVersion = "1.9.0";
+    page->setVersionsProvider([=]() { return std::vector<VNH::InstalledVersion>{newer, older}; });
+    ASSERT_TRUE(store.setPreferredBuild(paths[0], newer.buildId));
+    ASSERT_TRUE(store.setPreferredBuild(paths[1], older.buildId));
+    ASSERT_TRUE(store.setLastOpened(paths[0], "2026-10-21T10:00:00+08:00"));
+    ASSERT_TRUE(store.setLastOpened(paths[1], "2026-10-21T03:00:00Z"));
     clickRow(0);
     clickRow(1, Qt::LeftButton, Qt::ShiftModifier);
     const auto selected = selectedPaths();
@@ -173,6 +198,34 @@ TEST_F(ProjectsPageSelectionTest, SelectionSurvivesReorderingAndMetadataRefresh)
     ASSERT_TRUE(QThreadPool::globalInstance()->waitForDone(5000));
     QCoreApplication::processEvents();
     EXPECT_EQ(selectedPaths(), selected);
+    const std::vector<std::pair<int, QStringList>> orders{
+        {0, {paths[1], paths[0], paths[2]}},
+        {1, {paths[0], paths[1], paths[2]}},
+        {1, {paths[1], paths[0], paths[2]}},
+        {2, {paths[1], paths[0], paths[2]}},
+        {2, {paths[0], paths[1], paths[2]}},
+        {3, {paths[0], paths[1], paths[2]}},
+    };
+    for (const auto& [column, expectedPaths] : orders) {
+        clickHeader(column);
+        for (int row = 0; row < table->rowCount(); ++row)
+            EXPECT_EQ(table->item(row, 0)->data(Qt::UserRole + 1).toString(), expectedPaths[row]);
+        page->refresh();
+        ASSERT_TRUE(QThreadPool::globalInstance()->waitForDone(5000));
+        QCoreApplication::processEvents();
+        for (int row = 0; row < table->rowCount(); ++row)
+            EXPECT_EQ(table->item(row, 0)->data(Qt::UserRole + 1).toString(), expectedPaths[row]);
+        EXPECT_EQ(selectedPaths(), selected);
+        EXPECT_EQ(table->item(table->currentRow(), 0)->data(Qt::UserRole + 1).toString(), currentPath);
+    }
+    page.reset();
+    VNH::ProjectsPage reopened(&store);
+    reopened.setVersionsProvider([=]() { return std::vector<VNH::InstalledVersion>{newer, older}; });
+    reopened.refresh();
+    const auto* reopenedTable = reopened.findChild<QTableWidget*>();
+    EXPECT_EQ(reopenedTable->horizontalHeader()->sortIndicatorSection(), 2);
+    EXPECT_EQ(reopenedTable->horizontalHeader()->sortIndicatorOrder(), Qt::DescendingOrder);
+    EXPECT_EQ(reopenedTable->item(0, 0)->data(Qt::UserRole + 1).toString(), paths[0]);
 }
 
 TEST_F(ProjectsPageSelectionTest, BatchMenuOnlyRemovesSelectedRecordsAndKeepsFiles)
@@ -203,12 +256,14 @@ TEST_F(ProjectsPageSelectionTest, BatchMenuOnlyRemovesSelectedRecordsAndKeepsFil
     }
 }
 
-TEST_F(ProjectsPageSelectionTest, RightClickingUnselectedRowKeepsSingleProjectActions)
+TEST_F(ProjectsPageSelectionTest, UnselectedRowMenuKeepsProjectIdentityAfterSorting)
 {
     clickRow(0);
     clickRow(1, Qt::LeftButton, Qt::ControlModifier);
     ASSERT_EQ(selectedPaths().size(), 2);
-    const QString clickedPath = table->item(2, 0)->data(Qt::UserRole + 1).toString();
+    clickHeader(0);
+    const QString clickedPath = table->item(0, 0)->data(Qt::UserRole + 1).toString();
+    ASSERT_EQ(clickedPath, paths[2]);
     QTimer::singleShot(0, page.get(), [&]() {
         auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
         ASSERT_NE(menu, nullptr);
@@ -217,7 +272,9 @@ TEST_F(ProjectsPageSelectionTest, RightClickingUnselectedRowKeepsSingleProjectAc
         EXPECT_EQ(selectedPaths(), QSet<QString>{clickedPath});
         menu->actions().last()->trigger();
     });
-    clickRow(2, Qt::RightButton);
+    auto* menuButton = table->cellWidget(0, 3)->findChild<QToolButton*>(QStringLiteral("rowMenuButton"));
+    ASSERT_NE(menuButton, nullptr);
+    menuButton->click();
     EXPECT_EQ(store.listProjects().size(), 2u);
     EXPECT_FALSE(store.contains(clickedPath));
     EXPECT_TRUE(QFileInfo::exists(clickedPath));
@@ -235,4 +292,56 @@ TEST_F(ProjectsPageSelectionTest, NewProjectTemplateRowIsHidden)
     ASSERT_NE(templates, nullptr);
     EXPECT_TRUE(templates->parentWidget()->isHidden());
     EXPECT_FALSE(templates->isVisible());
+}
+
+TEST_F(ProjectsPageSelectionTest, ExplicitCreateVersionSurvivesGuidanceAndRefreshWithoutChangingDefault)
+{
+    VNH::InstalledVersion latest;
+    latest.buildId = "latest-build";
+    latest.semanticVersion = "2.0.0";
+    latest.installPath = dir.path();
+    auto older = latest;
+    older.buildId = "older-build";
+    older.semanticVersion = "1.0.0";
+    auto local = older;
+    local.buildId = "local-build";
+    local.runtimeBuildId = "local-runtime";
+    local.source = VNH::VersionSource::LocalBuild;
+    page->setVersionsProvider([=]() {
+        return std::vector<VNH::InstalledVersion>{latest, older, local};
+    });
+    const QString previousDefault = VNH::StudioLaunchTarget::pinnedBuildId();
+    auto* create = page->findChild<QPushButton*>(QStringLiteral("newProjectButton"));
+    auto* versions = page->findChild<QComboBox*>(QStringLiteral("newProjectVersion"));
+    auto* guidance = page->findChild<QVariantAnimation*>();
+    ASSERT_NE(create, nullptr);
+    ASSERT_NE(versions, nullptr);
+    ASSERT_NE(guidance, nullptr);
+
+    for (const QString& buildId : {older.buildId, local.buildId}) {
+        page->showProjectLaunchGuidance(buildId);
+        guidance->setCurrentTime(guidance->totalDuration());
+        page->refreshVersions();
+        create->click();
+        EXPECT_TRUE(versions->isVisible());
+        EXPECT_EQ(versions->currentData().toString(), buildId);
+        page->refreshVersions();
+        EXPECT_EQ(versions->currentData().toString(), buildId);
+
+        const QString manualBuildId = buildId == older.buildId ? local.buildId : older.buildId;
+        versions->setCurrentIndex(versions->findData(manualBuildId));
+        page->refreshVersions();
+        EXPECT_EQ(versions->currentData().toString(), manualBuildId);
+        EXPECT_EQ(VNH::StudioLaunchTarget::pinnedBuildId(), previousDefault);
+
+        page->showProjectsList();
+        create->click();
+        EXPECT_EQ(versions->currentData().toString(), latest.buildId);
+    }
+
+    page->showProjectLaunchGuidance(older.buildId);
+    page->hide();
+    page->show();
+    create->click();
+    EXPECT_EQ(versions->currentData().toString(), latest.buildId);
 }

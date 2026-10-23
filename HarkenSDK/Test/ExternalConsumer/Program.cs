@@ -17,6 +17,11 @@ internal static class Program
         {
             Require(typeof(HarkenEngine).Assembly != typeof(Program).Assembly, "SDK must be a separate assembly.");
             if (args.Length == 2 && args[0] == "--surface") CheckSurface(args[1]);
+            else if (args.Length == 2 && args[0] == "--companion")
+            {
+                NativeLibrary.SetDllImportResolver(typeof(HarkenEngine).Assembly, ResolveNative);
+                CheckCompanionSource(args[1]);
+            }
             else if (args.Length == 2 && args[0] == "--host")
             {
                 NativeLibrary.SetDllImportResolver(typeof(HarkenEngine).Assembly, ResolveNative);
@@ -27,10 +32,35 @@ internal static class Program
                 CheckHost(args[1], true);
                 Require(Harken.Test.RemoteCommunicationContract.RunNative() == 0, "External host Remote failed.");
             }
-            else throw new ArgumentException("Expected --surface policy.json or --host publication.");
+            else throw new ArgumentException("Expected --surface policy.json, --host publication or --companion directory.");
             return 0;
         }
         catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+    }
+
+    private static void CheckCompanionSource(string directory)
+    {
+        int reads = 0;
+        var source = PackSource.FromReader(path =>
+        {
+            ++reads;
+            string file = Path.Combine(directory, path);
+            return File.Exists(file) ? File.ReadAllBytes(file) : null;
+        });
+        var config = HarkenEngine.DefaultConfig();
+        config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
+        Require(PackBootstrap.Start(source, ref config, out PackBootstrapSession session) == VnResult.VN_OK, "Companion startup");
+        using (session)
+        {
+            Require(reads == 2 && session.Publication == null, "Init-only source has no fabricated publication");
+            ActionPreparationResult ready = session.PrepareActionsAsync(new[] { "Play_Head" }, session.ProjectId).GetAwaiter().GetResult();
+            Require(ready.Result == VnResult.VN_OK && reads == 4, "External preparation reads one Action pair");
+            Require(Actions.Resolve("Play_Head", session.ProjectId, out ActionResolved action) == VnResult.VN_OK, "Companion resolve");
+            Require(Actions.Post(in action, Emitter.None, 1, out ActionFiring firing) == VnResult.VN_OK, "Companion post");
+            Require(firing.IsValid, "Accepted firing");
+            Require(ready.Preparation.Release() == VnResult.VN_OK, "Companion lease release");
+        }
+        Console.WriteLine("Separate non-friend companion source, preparation and playback PASS.");
     }
 
     private static IntPtr ResolveNative(string name, Assembly assembly, DllImportSearchPath? search)
@@ -63,6 +93,17 @@ internal static class Program
             FieldInfo field = typeof(VnConstants).GetField(symbol.Name, BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
             Require(field != null && field.IsPublic == ExpectedPublic(symbol), "Incorrect constant visibility: " + symbol.Name);
         }
+        JsonElement excluded = policy.GetProperty("managed_projection").GetProperty("excluded_prefixes");
+        void RequireNoExcluded(string category, IEnumerable<string> names)
+        {
+            foreach (JsonElement prefix in excluded.GetProperty(category).EnumerateArray())
+                Require(!names.Any(name => name.StartsWith(prefix.GetString(), StringComparison.Ordinal)),
+                    "Excluded native contract in SDK: " + prefix.GetString());
+        }
+        RequireNoExcluded("types", sdk.GetTypes().Select(type => type.Name));
+        RequireNoExcluded("constants", typeof(VnConstants).GetFields(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic).Select(field => field.Name));
+        RequireNoExcluded("results", Enum.GetNames(typeof(VnResult)));
+        RequireNoExcluded("functions", sdk.GetType("Harken.HarkenNative", true).GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic).Select(method => method.Name));
         Console.WriteLine("Separate, non-friend consumer and all generated type/constant visibility PASS.");
     }
 
@@ -139,7 +180,14 @@ internal static class Program
             File.WriteAllBytes(missing, content);
             Expect(session.PrepareStartupPacks(), VnResult.VN_OK, "Explicit file recovery");
             Require(session.IsStartupComplete, "Restored file must complete the same session.");
-            Expect(Actions.Post(action.Name, Emitter.None, out _), VnResult.VN_OK, "Recovered Action");
+            if (withGameplayCatalog)
+                Expect(Actions.Post(action.Name, Emitter.None, out _), VnResult.VN_OK, "Recovered Action name");
+            else
+            {
+                Expect(Actions.Post(action.Name, Emitter.None, out _), VnResult.VN_CAPABILITY_UNAVAILABLE,
+                    "Legacy name lookup without a catalog");
+                Expect(Actions.Post(action.ActionStableId, Emitter.None, out _), VnResult.VN_OK, "Recovered Action identity");
+            }
             Expect(session.Shutdown(), VnResult.VN_OK, "Recovered session shutdown");
             Console.WriteLine("Missing/corrupt file recovery (gameplay catalog=" + withGameplayCatalog + ") PASS.");
         }

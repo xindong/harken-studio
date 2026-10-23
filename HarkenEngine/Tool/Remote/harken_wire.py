@@ -2516,6 +2516,532 @@ TABLE_JSON = r'''
         ]
       ]
     },
+    "VnPackVariableNameV1": {
+      "fields": [
+        [
+          "variableId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "utf8Name",
+          {
+            "ptr": "string",
+            "ctype": "const char*"
+          }
+        ]
+      ]
+    },
+    "VnPackLabelNameV1": {
+      "fields": [
+        [
+          "variableId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "labelId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "utf8Name",
+          {
+            "ptr": "string",
+            "ctype": "const char*"
+          }
+        ]
+      ]
+    },
+    "VnPackNamesV1": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "flags",
+          "u32"
+        ],
+        [
+          "projectId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "rootActionId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "utf8RootName",
+          {
+            "ptr": "string",
+            "ctype": "const char*"
+          }
+        ],
+        [
+          "utf8Language",
+          {
+            "ptr": "string",
+            "ctype": "const char*"
+          }
+        ],
+        [
+          "variableCount",
+          "u32"
+        ],
+        [
+          "labelCount",
+          "u32"
+        ],
+        [
+          "variables",
+          {
+            "ptr": {
+              "kind": "array",
+              "count": "variableCount",
+              "stride": "VnPackVariableNameV1"
+            },
+            "ctype": "const VnPackVariableNameV1*"
+          }
+        ],
+        [
+          "labels",
+          {
+            "ptr": {
+              "kind": "array",
+              "count": "labelCount",
+              "stride": "VnPackLabelNameV1"
+            },
+            "ctype": "const VnPackLabelNameV1*"
+          }
+        ]
+      ]
+    },
+    "VnCanonicalPackSetMemberV2": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "operation",
+          "u32"
+        ],
+        [
+          "source",
+          {
+            "struct": "VnCanonicalPackSetMemberV1"
+          }
+        ],
+        [
+          "names",
+          {
+            "ptr": "opaque",
+            "ctype": "const VnPackNamesV1*"
+          }
+        ]
+      ]
+    },
+    "VnCanonicalPackSetActivationDescV2": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "flags",
+          "u32"
+        ],
+        [
+          "expectedCurrentInitHandle",
+          "u64"
+        ],
+        [
+          "baseSetRevision",
+          "u64"
+        ],
+        [
+          "setRevision",
+          "u64"
+        ],
+        [
+          "memberCount",
+          "u32"
+        ],
+        [
+          "memberStructSize",
+          "u32"
+        ],
+        [
+          "members",
+          {
+            "ptr": {
+              "kind": "array",
+              "count": "memberCount",
+              "stride": "VnCanonicalPackSetMemberV2"
+            },
+            "ctype": "const VnCanonicalPackSetMemberV2*"
+          }
+        ],
+        [
+          "outputMemberCapacity",
+          "u32"
+        ],
+        [
+          "outputMemberStructSize",
+          "u32"
+        ],
+        [
+          "outputMembers",
+          {
+            "ptr": {
+              "kind": "array",
+              "count": "outputMemberCapacity",
+              "stride": "VnCanonicalPackSetMemberResultV1"
+            },
+            "ctype": "VnCanonicalPackSetMemberResultV1*"
+          }
+        ]
+      ]
+    },
+    "VnPackVariableFactV1": {
+      "fields": [
+        [
+          "variableId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "kind",
+          "u32"
+        ],
+        [
+          "writers",
+          "u32"
+        ],
+        [
+          "rangeMin",
+          "f32"
+        ],
+        [
+          "rangeMax",
+          "f32"
+        ],
+        [
+          "defaultValue",
+          "f32"
+        ],
+        [
+          "reserved0",
+          "u32"
+        ],
+        [
+          "executionFingerprint",
+          "u64"
+        ],
+        [
+          "labelMappingFingerprint",
+          "u64"
+        ]
+      ]
+    },
+    "VnPackLabelFactV1": {
+      "fields": [
+        [
+          "variableId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "labelId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "anchor",
+          "i32"
+        ],
+        [
+          "reserved0",
+          "u32"
+        ]
+      ]
+    },
+    "VnPackMediaFactV1": {
+      "fields": [
+        [
+          "soundId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "mediaChecksum",
+          "u64"
+        ],
+        [
+          "frameCount",
+          "u64"
+        ],
+        [
+          "sampleRate",
+          "u32"
+        ],
+        [
+          "channelCount",
+          "u32"
+        ]
+      ]
+    },
+    "VnPackOccurrenceFactV1": {
+      "fields": [
+        [
+          "rootPlayableId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "soundId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "rootPlayableKind",
+          "u32"
+        ],
+        [
+          "childOrdinal",
+          "u32"
+        ],
+        [
+          "rootProgramFingerprint",
+          "u64"
+        ],
+        [
+          "soundProgramFingerprint",
+          "u64"
+        ],
+        [
+          "occurrenceFingerprint",
+          "u64"
+        ],
+        [
+          "mediaChecksum",
+          "u64"
+        ],
+        [
+          "mediaFrameCount",
+          "u64"
+        ],
+        [
+          "sampleRate",
+          "u32"
+        ],
+        [
+          "channelCount",
+          "u32"
+        ],
+        [
+          "flags",
+          "u32"
+        ],
+        [
+          "reserved0",
+          "u32"
+        ],
+        [
+          "fixedGainDb",
+          "f32"
+        ],
+        [
+          "fixedGainLinear",
+          "f32"
+        ],
+        [
+          "durationSeconds",
+          "f64"
+        ]
+      ]
+    },
+    "VnPackInspectDescV1": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "flags",
+          "u32"
+        ],
+        [
+          "pack",
+          {
+            "struct": "VnPackByteSpan"
+          }
+        ],
+        [
+          "init",
+          {
+            "struct": "VnPackByteSpan"
+          }
+        ],
+        [
+          "names",
+          {
+            "ptr": "opaque",
+            "ctype": "const VnPackNamesV1*"
+          }
+        ],
+        [
+          "maxInputBytes",
+          "u64"
+        ],
+        [
+          "variableCapacity",
+          "u32"
+        ],
+        [
+          "labelCapacity",
+          "u32"
+        ],
+        [
+          "occurrenceCapacity",
+          "u32"
+        ],
+        [
+          "mediaCapacity",
+          "u32"
+        ],
+        [
+          "variables",
+          {
+            "ptr": {
+              "kind": "array",
+              "count": "variableCapacity",
+              "stride": "VnPackVariableFactV1"
+            },
+            "ctype": "VnPackVariableFactV1*"
+          }
+        ],
+        [
+          "labels",
+          {
+            "ptr": {
+              "kind": "array",
+              "count": "labelCapacity",
+              "stride": "VnPackLabelFactV1"
+            },
+            "ctype": "VnPackLabelFactV1*"
+          }
+        ],
+        [
+          "occurrences",
+          {
+            "ptr": {
+              "kind": "array",
+              "count": "occurrenceCapacity",
+              "stride": "VnPackOccurrenceFactV1"
+            },
+            "ctype": "VnPackOccurrenceFactV1*"
+          }
+        ],
+        [
+          "media",
+          {
+            "ptr": {
+              "kind": "array",
+              "count": "mediaCapacity",
+              "stride": "VnPackMediaFactV1"
+            },
+            "ctype": "VnPackMediaFactV1*"
+          }
+        ]
+      ]
+    },
+    "VnPackInspectReportV1": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "packKind",
+          "u32"
+        ],
+        [
+          "projectId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "rootActionId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "packStableId",
+          "u64"
+        ],
+        [
+          "initPackStableId",
+          "u64"
+        ],
+        [
+          "contentRevision",
+          "u64"
+        ],
+        [
+          "contentHash",
+          "u64"
+        ],
+        [
+          "initContentHash",
+          "u64"
+        ],
+        [
+          "executionFingerprint",
+          "u64"
+        ],
+        [
+          "variableCount",
+          "u32"
+        ],
+        [
+          "labelCount",
+          "u32"
+        ],
+        [
+          "occurrenceCount",
+          "u32"
+        ],
+        [
+          "previewKind",
+          "u32"
+        ],
+        [
+          "mediaCount",
+          "u32"
+        ],
+        [
+          "reserved0",
+          "u32"
+        ]
+      ]
+    },
     "VnInitPackInspectReport": {
       "fields": [
         [
@@ -6729,9 +7255,115 @@ TABLE_JSON = r'''
           }
         ]
       ]
+    },
+    "VnMonitorFactActivity": {
+      "fields": [
+        [
+          "actionOutcome",
+          "u32"
+        ],
+        [
+          "stepIndex",
+          "u32"
+        ],
+        [
+          "stepExecutionOrdinal",
+          "u32"
+        ],
+        [
+          "stepOpcode",
+          "u32"
+        ],
+        [
+          "reservedStep",
+          "u32"
+        ],
+        [
+          "stepTargetKind",
+          "u32"
+        ],
+        [
+          "variableValueBits",
+          "u32"
+        ],
+        [
+          "variableScope",
+          "u32"
+        ],
+        [
+          "variableOutcome",
+          "u32"
+        ],
+        [
+          "reserved0",
+          "u32"
+        ],
+        [
+          "stepTargetId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "variableTicket",
+          "u64"
+        ]
+      ]
+    },
+    "VnMonitorExecutionFactV2": {
+      "fields": [
+        [
+          "fact",
+          {
+            "struct": "VnMonitorExecutionFactV1"
+          }
+        ],
+        [
+          "activity",
+          {
+            "struct": "VnMonitorFactActivity"
+          }
+        ]
+      ]
     }
   },
   "functions": [
+    {
+      "name": "Vn_ActivateCanonicalPackSetV2",
+      "note": "Atomic companion names/content. Process-local providers, no remote opcode.",
+      "params": [
+        {
+          "name": "desc",
+          "ctype": "const VnCanonicalPackSetActivationDescV2*",
+          "wire": "desc",
+          "type": "VnCanonicalPackSetActivationDescV2"
+        },
+        {
+          "name": "outReport",
+          "ctype": "VnCanonicalPackSetActivationReportV1*",
+          "wire": "outstruct",
+          "type": "VnCanonicalPackSetActivationReportV1"
+        }
+      ]
+    },
+    {
+      "name": "Vn_InspectCanonicalPackV1",
+      "note": "Inspect immutable Pack spans without an engine. No remote opcode.",
+      "params": [
+        {
+          "name": "desc",
+          "ctype": "const VnPackInspectDescV1*",
+          "wire": "desc",
+          "type": "VnPackInspectDescV1"
+        },
+        {
+          "name": "outReport",
+          "ctype": "VnPackInspectReportV1*",
+          "wire": "outstruct",
+          "type": "VnPackInspectReportV1"
+        }
+      ]
+    },
     {
       "opcode": 1,
       "name": "Vn_Init",
@@ -7088,6 +7720,23 @@ TABLE_JSON = r'''
           "name": "forward",
           "ctype": "VnVec3",
           "wire": "vec3"
+        }
+      ]
+    },
+    {
+      "name": "Vn_SetGameplayCatalog",
+      "note": "public Runtime API; binds the publication directory independently of Init. No remote opcode.",
+      "params": [
+        {
+          "name": "expectedInitHandle",
+          "ctype": "VnPackHandle",
+          "wire": "u64"
+        },
+        {
+          "name": "catalog",
+          "ctype": "const VnPackByteSpan*",
+          "wire": "desc",
+          "type": "VnPackByteSpan"
         }
       ]
     },
@@ -9888,7 +10537,10 @@ TABLE_JSON = r'''
           "VN_MONITOR_FACT_WAITING": 36,
           "VN_MONITOR_FACT_SOURCE_APPLIED": 37,
           "VN_MONITOR_FACT_SEEK_APPLIED": 38,
-          "VN_MONITOR_FACT_RESOURCE_RETIRED": 39
+          "VN_MONITOR_FACT_RESOURCE_RETIRED": 39,
+          "VN_MONITOR_FACT_PLAYABLE_STARTED": 40,
+          "VN_MONITOR_FACT_STEP_EXECUTED": 41,
+          "VN_MONITOR_FACT_VARIABLE_RESULT": 42
         }
       },
       "VnMonitorExecutionField": {
@@ -9967,7 +10619,10 @@ TABLE_JSON = r'''
           "VN_MONITOR_FACT_FIELD_TARGET_REVISION": 70,
           "VN_MONITOR_FACT_FIELD_TARGET_KIND": 71,
           "VN_MONITOR_FACT_FIELD_TARGET_CONTENT_KIND": 72,
-          "VN_MONITOR_FACT_FIELD_TARGET_SCOPE": 73
+          "VN_MONITOR_FACT_FIELD_TARGET_SCOPE": 73,
+          "VN_MONITOR_FACT_FIELD_ACTIVITY_STEP": 74,
+          "VN_MONITOR_FACT_FIELD_ACTIVITY_VARIABLE": 75,
+          "VN_MONITOR_FACT_FIELD_ACTION_OUTCOME": 76
         }
       },
       "VnMonitorExecutionNamespace": {
@@ -9993,7 +10648,18 @@ TABLE_JSON = r'''
           "VN_MONITOR_CONTENT_TRACK": 3,
           "VN_MONITOR_CONTENT_PIECE": 4,
           "VN_MONITOR_CONTENT_ACTION": 5,
-          "VN_MONITOR_CONTENT_MEDIA": 6
+          "VN_MONITOR_CONTENT_MEDIA": 6,
+          "VN_MONITOR_CONTENT_VARIABLE": 7
+        }
+      },
+      "VnMonitorExecutionTerminalKind": {
+        "backing": "u32",
+        "values": {
+          "VN_MONITOR_TERMINAL_NATURAL_COMPLETION": 1,
+          "VN_MONITOR_TERMINAL_REQUESTED_STOP": 2,
+          "VN_MONITOR_TERMINAL_PARENT_CANCELLATION": 3,
+          "VN_MONITOR_TERMINAL_REPLACEMENT_RESET": 4,
+          "VN_MONITOR_TERMINAL_FAILURE": 5
         }
       },
       "VnMonitorExecutionTargetKind": {
@@ -10053,7 +10719,8 @@ TABLE_JSON = r'''
           "VN_MONITOR_OPERATION_SET_EMITTER_VALUES": 13,
           "VN_MONITOR_OPERATION_POST_ACTION_PINNED": 14,
           "VN_MONITOR_OPERATION_POST_ACTION_RESOLVED": 15,
-          "VN_MONITOR_OPERATION_STOP_EMITTER": 16
+          "VN_MONITOR_OPERATION_STOP_EMITTER": 16,
+          "VN_MONITOR_OPERATION_RESET_VALUES": 19
         }
       },
       "VnMonitorLifecycle": {
@@ -10781,7 +11448,8 @@ TABLE_JSON = r'''
         "values": {
           "VN_MONITOR_HOST_UNKNOWN": 0,
           "VN_MONITOR_HOST_UNITY_EMITTER": 1,
-          "VN_MONITOR_HOST_UNITY_SPATIAL_SOURCE": 2
+          "VN_MONITOR_HOST_UNITY_SPATIAL_SOURCE": 2,
+          "VN_MONITOR_HOST_STUDIO_DEFAULT_EMITTER": 3
         }
       },
       "VnMonitorHostSymbolField": {
@@ -10865,6 +11533,38 @@ TABLE_JSON = r'''
         "value": 1
       },
       "VN_CANONICAL_PACK_SET_MEMBER_ROOT": {
+        "type": "u32",
+        "value": 2
+      },
+      "VN_PACK_MEMBER_KEEP": {
+        "type": "u32",
+        "value": 0
+      },
+      "VN_PACK_MEMBER_CONTENT": {
+        "type": "u32",
+        "value": 1
+      },
+      "VN_PACK_MEMBER_NAME_ONLY": {
+        "type": "u32",
+        "value": 2
+      },
+      "VN_PACK_PREVIEW_UNSUPPORTED": {
+        "type": "u32",
+        "value": 0
+      },
+      "VN_PACK_PREVIEW_SOUND": {
+        "type": "u32",
+        "value": 1
+      },
+      "VN_PACK_PREVIEW_RANDOM_SOUNDS": {
+        "type": "u32",
+        "value": 2
+      },
+      "VN_PACK_OCCURRENCE_FIXED_GAIN": {
+        "type": "u32",
+        "value": 1
+      },
+      "VN_PACK_OCCURRENCE_DURATION": {
         "type": "u32",
         "value": 2
       },
@@ -11095,6 +11795,10 @@ TABLE_JSON = r'''
       "VN_MONITOR_HARD_RAW_AUDIO_BYTE_RATE": {
         "type": "u64",
         "value": 67108864
+      },
+      "VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_ID": {
+        "type": "u64",
+        "value": 1
       },
       "VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES": {
         "type": "u32",

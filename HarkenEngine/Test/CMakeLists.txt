@@ -16,7 +16,7 @@ target_include_directories(harken_object_identity_tests PRIVATE
     ${HARKEN_RUNTIME_DIR}/render/include
     ${CMAKE_SOURCE_DIR}/HarkenEngine/Tool/Remote/include
     ${CMAKE_SOURCE_DIR}/HarkenEngine/Tool/Remote/generated)
-target_link_libraries(harken_object_identity_tests PRIVATE harken_core GTest::gtest_main)
+target_link_libraries(harken_object_identity_tests PRIVATE harken_core harken_buildinfo GTest::gtest_main)
 if(WIN32 AND TARGET harken_host)
     add_dependencies(harken_object_identity_tests harken_host)
     target_compile_definitions(harken_object_identity_tests PRIVATE
@@ -26,7 +26,7 @@ endif()
 gtest_discover_tests(harken_object_identity_tests)
 
 add_executable(harken_remote_runtime_tests UnitTest/RuntimeRemoteTest.cpp)
-target_link_libraries(harken_remote_runtime_tests PRIVATE harken_core harken_remote_protocol GTest::gtest_main)
+target_link_libraries(harken_remote_runtime_tests PRIVATE harken_core harken_buildinfo harken_remote_protocol GTest::gtest_main)
 target_include_directories(harken_remote_runtime_tests PRIVATE
     ${HARKEN_RUNTIME_DIR}/api/src
     ${HARKEN_RUNTIME_DIR}/core/include
@@ -57,7 +57,7 @@ add_executable(harken_monitor_runtime_tests
     UnitTest/monitor_fixture_decode.cpp
     UnitTest/monitor_session_codec.cpp
     UnitTest/monitor_remote_codec.cpp)
-target_link_libraries(harken_monitor_runtime_tests PRIVATE harken_core GTest::gtest_main)
+target_link_libraries(harken_monitor_runtime_tests PRIVATE harken_core harken_buildinfo GTest::gtest_main)
 target_include_directories(harken_monitor_runtime_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/HarkenEngine/Tool/Remote/generated
     ${HARKEN_RUNTIME_DIR}/api/src
@@ -82,7 +82,7 @@ add_executable(harken_pack_storage_tests
     UnitTest/AllocationProbe.cpp
     UnitTest/CanonicalPackSetStorageTest.cpp
     UnitTest/CanonicalAttenuationGenerationTest.cpp)
-target_link_libraries(harken_pack_storage_tests PRIVATE harken_core GTest::gtest_main)
+target_link_libraries(harken_pack_storage_tests PRIVATE harken_core harken_buildinfo GTest::gtest_main)
 target_include_directories(harken_pack_storage_tests PRIVATE
     ${HARKEN_RUNTIME_DIR}/core/include
     ${HARKEN_RUNTIME_DIR}/core/contract/include
@@ -290,6 +290,7 @@ add_executable(harken_runtime_tests
     UnitTest/ResolvedSlotTicketTest.cpp
     UnitTest/LogicCommitBundleTest.cpp
     UnitTest/ActionFiringTableTest.cpp
+    UnitTest/RuntimeWorkIndexTest.cpp
     UnitTest/MonitorRequestTest.cpp
     UnitTest/ActionSeekTableTest.cpp
     UnitTest/ActionCooldownTableTest.cpp
@@ -320,7 +321,7 @@ add_executable(harken_runtime_tests
 # the engine-free harken/media/ResourceFactsValue.h from a separate include root.
 # The interface target carries that root (and no linked code), so the test can
 # resolve it without this target learning the whole media include layout.
-target_link_libraries(harken_runtime_tests PRIVATE harken_core harken_remote
+target_link_libraries(harken_runtime_tests PRIVATE harken_core harken_buildinfo harken_remote
                       harken_reference_slots harken_resource_facts_contract
                       harken_program_registration harken_current_world_compiler
                       harken_preview
@@ -362,7 +363,6 @@ target_compile_definitions(harken_runtime_tests PRIVATE HARKEN_EFFECT_TYPE_STATS
 # Tests drive internals directly (null backend pump, guard state); they see
 # module-internal headers the public API deliberately does not expose.
 target_include_directories(harken_runtime_tests PRIVATE
-    ${HARKEN_SCHEMA_GENERATED_CORE_DIR}
     ${HARKEN_RUNTIME_DIR}/api/src
     ${HARKEN_RUNTIME_DIR}/core/include
     ${HARKEN_RUNTIME_DIR}/core/contract/include
@@ -397,7 +397,6 @@ add_dependencies(harken_runtime_tests harken_packc)
 target_compile_definitions(harken_runtime_tests PRIVATE
     HARKEN_HOST_PATH="$<TARGET_FILE:harken_host>")
 add_dependencies(harken_runtime_tests harken_host)
-add_dependencies(harken_runtime_tests harken_schema_codegen)
 
 set(_harken_runtime_daily_suites
     ActionFiringApi.*
@@ -430,9 +429,8 @@ gtest_discover_tests(harken_runtime_tests
 
 add_executable(harken_variable_name_set_test
     UnitTest/VariableNameSetTest.cpp)
-target_link_libraries(harken_variable_name_set_test PRIVATE harken_core GTest::gtest_main)
+target_link_libraries(harken_variable_name_set_test PRIVATE harken_core harken_buildinfo GTest::gtest_main)
 target_include_directories(harken_variable_name_set_test PRIVATE
-    ${HARKEN_SCHEMA_GENERATED_CORE_DIR}
     ${HARKEN_RUNTIME_DIR}/api/src
     ${HARKEN_RUNTIME_DIR}/core/include
     ${HARKEN_RUNTIME_DIR}/core/contract/include
@@ -450,7 +448,7 @@ gtest_discover_tests(harken_variable_name_set_test)
 add_executable(harken_pack_schema_tests
     UnitTest/PackFoundationQualificationTest.cpp)
 target_link_libraries(harken_pack_schema_tests PRIVATE
-    harken_core harken_resource_facts_contract GTest::gtest_main)
+    harken_core harken_buildinfo harken_resource_facts_contract GTest::gtest_main)
 target_include_directories(harken_pack_schema_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${HARKEN_RUNTIME_DIR}/api/src
@@ -486,7 +484,7 @@ add_executable(harken_runtime_tests_hub_absent
     UnitTest/PassthroughGoldenTest.cpp
 )
 target_link_libraries(harken_runtime_tests_hub_absent PRIVATE
-    harken_core_hub_absent GTest::gtest_main)
+    harken_core_hub_absent harken_buildinfo GTest::gtest_main)
 target_include_directories(harken_runtime_tests_hub_absent PRIVATE
     ${HARKEN_RUNTIME_DIR}/api/src
     ${HARKEN_RUNTIME_DIR}/core/include
@@ -760,7 +758,7 @@ add_executable(harken_benchmarks
     Benchmark/LimiterReleaseBenchmark.cpp
     Benchmark/RenderWorkerScalingBenchmark.cpp
 )
-target_link_libraries(harken_benchmarks PRIVATE harken_core)
+target_link_libraries(harken_benchmarks PRIVATE harken_core harken_buildinfo)
 # Same library/consumer macro agreement as harken_runtime_tests (the benchmark's
 # own sources do not read taps, but the discipline is uniform).
 if(HARKEN_ENABLE_STAGE_TAPS)
@@ -786,7 +784,7 @@ target_include_directories(harken_benchmarks PRIVATE
 add_executable(harken_resample_benchmark
     Benchmark/ResampleStretchBenchmark.cpp
 )
-target_link_libraries(harken_resample_benchmark PRIVATE harken_core)
+target_link_libraries(harken_resample_benchmark PRIVATE harken_core harken_buildinfo)
 if(HARKEN_ENABLE_STAGE_TAPS)
     target_compile_definitions(harken_resample_benchmark PRIVATE
         HARKEN_ENABLE_STAGE_TAPS)
@@ -808,7 +806,7 @@ target_include_directories(harken_resample_benchmark PRIVATE
 add_executable(harken_runtime_capacity_benchmark
     Benchmark/RuntimeCapacityBenchmark.cpp
 )
-target_link_libraries(harken_runtime_capacity_benchmark PRIVATE harken_core)
+target_link_libraries(harken_runtime_capacity_benchmark PRIVATE harken_core harken_buildinfo)
 if(WIN32)
     target_link_libraries(harken_runtime_capacity_benchmark PRIVATE Psapi)
 endif()
@@ -877,7 +875,7 @@ target_include_directories(harken_exported_pack_qualification PRIVATE
 add_executable(harken_denormal_probe
     Benchmark/DenormalProbeBenchmark.cpp
 )
-target_link_libraries(harken_denormal_probe PRIVATE harken_core)
+target_link_libraries(harken_denormal_probe PRIVATE harken_core harken_buildinfo)
 if(HARKEN_ENABLE_STAGE_TAPS)
     target_compile_definitions(harken_denormal_probe PRIVATE
         HARKEN_ENABLE_STAGE_TAPS)
@@ -904,7 +902,7 @@ target_include_directories(harken_denormal_probe PRIVATE
 add_executable(harken_meter_benchmark
     Benchmark/MeterScanBenchmark.cpp
 )
-target_link_libraries(harken_meter_benchmark PRIVATE harken_core)
+target_link_libraries(harken_meter_benchmark PRIVATE harken_core harken_buildinfo)
 target_include_directories(harken_meter_benchmark PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${HARKEN_RUNTIME_DIR}/api/src

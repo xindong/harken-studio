@@ -3,6 +3,7 @@
 #include "AssetPipeline/AssetTypes.h"
 #include "AssetPipeline/MediaPool.h"
 #include "AssetPipeline/PathUtils.h"
+#include "AssetPipeline/SourceFileSystem.h"
 #include "AssetPipeline/WaveformCache.h"
 #include "Core/ProjectManager.h"
 #include "Core/ProjectPlatformActivity.h"
@@ -838,6 +839,149 @@ TEST(MediaPoolRefreshTest, CacheRemovalInvalidatesPendingWaveformPublication)
     waveform.waitForFinished();
     EXPECT_FALSE(waveform.result());
     EXPECT_FALSE(WaveformCache::isValid(path));
+}
+
+TEST(MediaPoolRefreshTest, SourceChangesInvalidateQueuedReadsAndResumeDeferredWaveforms)
+{
+    using namespace VNX;
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    auto& registry = AssetRegistry::instance();
+    auto& media = MediaPool::instance();
+    registry.clear();
+    registry.setProjectRoot(dir.path());
+    const auto clearRegistry = qScopeGuard([&] { registry.clear(); });
+    const QString path = QDir(PathUtils::getAudioSourcesDir(dir.path()))
+        .filePath(QStringLiteral("pending.wav"));
+    const QString replacement = dir.filePath(QStringLiteral("replacement.wav"));
+    writeWav(path, 480, 0.1f);
+    writeWav(replacement, 240, 0.7f);
+    AssetImporter importer;
+    importer.setProjectRoot(dir.path());
+    AssetInfo asset;
+    asset.sourceID = 8699;
+    asset.relativePath = QStringLiteral("pending.wav");
+    asset.absolutePath = path;
+    asset.metadata = importer.analyzeFile(path);
+    asset.contentHash = AssetImporter::computeContentHash(path);
+    ASSERT_TRUE(registry.registerAsset(asset, false));
+
+    auto* pool = QThreadPool::globalInstance();
+    pool->waitForDone();
+    const int threadCount = pool->maxThreadCount();
+    pool->setMaxThreadCount(1);
+    QSemaphore started;
+    QSemaphore resume;
+    auto blocker = QtConcurrent::run([&] {
+        started.release();
+        resume.acquire();
+    });
+    const auto restorePool = qScopeGuard([&] {
+        resume.release();
+        blocker.waitForFinished();
+        pool->waitForDone();
+        pool->setMaxThreadCount(threadCount);
+    });
+    started.acquire();
+    auto queued = WaveformCache::generateAsync(path, 64);
+    {
+        media.beginSourceFileChange();
+        const auto finishChange = qScopeGuard([&] { media.endSourceFileChange(); });
+        ASSERT_TRUE(SourceFileSystem::copyFile(replacement, path));
+    }
+    resume.release();
+    queued.waitForFinished();
+    EXPECT_FALSE(queued.result());
+    pool->waitForDone();
+    const auto resumed = WaveformCache::loadShared(path);
+    ASSERT_NE(resumed, nullptr);
+    EXPECT_EQ(resumed->numPeaks, 64u);
+    EXPECT_FLOAT_EQ(resumed->peaks[1], 0.7f);
+    EXPECT_EQ(AssetImporter::computeContentHash(path), AssetImporter::computeContentHash(replacement));
+
+    ASSERT_TRUE(WaveformCache::remove(path));
+    {
+        media.beginSourceFileChange();
+        const auto finishOuter = qScopeGuard([&] { media.endSourceFileChange(); });
+        {
+            media.beginSourceFileChange();
+            const auto finishInner = qScopeGuard([&] { media.endSourceFileChange(); });
+            media.refreshWaveform(asset.sourceID);
+        }
+        EXPECT_FALSE(WaveformCache::isValid(path));
+    }
+    pool->waitForDone();
+    const auto waveform = WaveformCache::loadShared(path);
+    ASSERT_NE(waveform, nullptr);
+    EXPECT_FLOAT_EQ(waveform->peaks[1], 0.7f);
+    const auto range = WaveformCache::readRange(path, 0, 240, 32);
+    ASSERT_TRUE(range.isValid());
+    EXPECT_FLOAT_EQ(range.peaks[1], 0.7f);
+}
+
+TEST(MediaPoolRefreshTest, SourceChangesPublishCompletedReplacementsBeforeQueuedNotifications)
+{
+    using namespace VNX;
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    auto& manager = ProjectManager::instance();
+    auto& registry = AssetRegistry::instance();
+    auto& media = MediaPool::instance();
+    const auto cleanup = qScopeGuard([&] {
+        if (manager.isProjectOpen())
+            EXPECT_TRUE(manager.closeProject());
+    });
+    ProjectConfig config;
+    config.name = QStringLiteral("ReplacementOrdering");
+    config.location = dir.path();
+    config.platforms = HarkenTest::platforms({QStringLiteral("Windows")});
+    ASSERT_TRUE(manager.createProject(config));
+    manager.fileWatcher()->stopWatching();
+    const QString path = QDir(PathUtils::getAudioSourcesDir(registry.projectRoot()))
+        .filePath(QStringLiteral("replace.wav"));
+    const QString replacement = dir.filePath(QStringLiteral("replacement.wav"));
+    const QString nextReplacement = dir.filePath(QStringLiteral("next.wav"));
+    writeWav(path, 480, 0.1f);
+    writeWav(replacement, 240, 0.7f);
+    writeWav(nextReplacement, 120, 0.3f);
+    const QString replacementHash = AssetImporter::computeContentHash(replacement);
+    const QString nextHash = AssetImporter::computeContentHash(nextReplacement);
+    AssetImporter importer;
+    importer.setProjectRoot(registry.projectRoot());
+    AssetInfo asset;
+    asset.sourceID = 8700;
+    asset.relativePath = QStringLiteral("replace.wav");
+    asset.absolutePath = path;
+    asset.metadata = importer.analyzeFile(path);
+    asset.contentHash = AssetImporter::computeContentHash(path);
+    ASSERT_TRUE(registry.registerAsset(asset, false));
+    int completed = 0;
+    const auto connection = QObject::connect(&media, &MediaPool::batchReplaceFinished,
+        [&](const QVector<BatchReplaceResult>& results) {
+            ++completed;
+            ASSERT_EQ(results.size(), 1);
+            EXPECT_TRUE(results.front().success);
+            const auto* updated = registry.getAsset(asset.sourceID);
+            ASSERT_NE(updated, nullptr);
+            EXPECT_EQ(updated->metadata.totalSamples, 240u);
+            EXPECT_EQ(updated->contentHash, replacementHash);
+        });
+    const auto disconnect = qScopeGuard([&] { QObject::disconnect(connection); });
+    media.batchReplaceAsync({{asset.sourceID, replacement}});
+    QString error;
+    auto command = SourceFileSystem::replaceFiles({{asset.relativePath, nextReplacement}}, &error);
+    ASSERT_NE(command, nullptr) << error.toStdString();
+    EXPECT_EQ(completed, 1);
+    EXPECT_EQ(AssetImporter::computeContentHash(path), nextHash);
+    ASSERT_NE(registry.getAsset(asset.sourceID), nullptr);
+    EXPECT_EQ(registry.getAsset(asset.sourceID)->contentHash, nextHash);
+    ASSERT_TRUE(command->tryReplay(false));
+    EXPECT_EQ(AssetImporter::computeContentHash(path), replacementHash);
+    ASSERT_NE(registry.getAsset(asset.sourceID), nullptr);
+    EXPECT_EQ(registry.getAsset(asset.sourceID)->metadata.totalSamples, 240u);
+    EXPECT_EQ(registry.getAsset(asset.sourceID)->contentHash, replacementHash);
+    QCoreApplication::processEvents();
+    EXPECT_EQ(completed, 1);
 }
 
 TEST(MediaPoolRefreshTest, SupersedingWaveformJobsNotifyViewsAfterProjectReopen)

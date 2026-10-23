@@ -8,6 +8,7 @@
 #include "AudioEngine.h"
 #include "AttenuationStore.h"
 #include "BindingEditing.h"
+#include "CanonicalPackSetExport.h"
 #include "CompileTargetProfileCatalog.h"
 #include "ActionManager.h"
 #include "AssetPipeline/AssetRegistry.h"
@@ -79,6 +80,7 @@
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QElapsedTimer>
+#include <QScopedValueRollback>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QTimer>
@@ -4893,10 +4895,11 @@ TEST(AudioEnginePreview, AbsoluteSchedulesOverlapAlignAndLoadFromFormalPacks)
     options.onlyActionStableIds = {actionId};
     const auto exported = exporter.ExportAllPacks(*project, outputDirectory, options);
     ASSERT_TRUE(exported.success) << exported.error.toStdString();
-    QFile manifestFile(QDir(outputDirectory).filePath(HarkenEditor::Bridge::packManifestFileName()));
-    ASSERT_TRUE(manifestFile.open(QIODevice::ReadOnly));
-    const auto manifest = QJsonDocument::fromJson(manifestFile.readAll()).object();
-    const QJsonArray packs = manifest.value(QStringLiteral("packs")).toArray();
+    QJsonArray packs;
+    QStringList publicationFiles;
+    QString publicationError;
+    ASSERT_TRUE(ReadPackPublication(outputDirectory, project->projectId, options.platform,
+        &packs, &publicationFiles, &publicationError)) << publicationError.toStdString();
     ASSERT_GE(packs.size(), 2);
     ASSERT_FALSE(project->busses.empty());
     ASSERT_NE(project->busses.front().rootItem, nullptr);
@@ -4919,15 +4922,9 @@ TEST(AudioEnginePreview, AbsoluteSchedulesOverlapAlignAndLoadFromFormalPacks)
     sound->fieldGroups.send = originalSend;
     sound->fieldGroups.mainOutput = originalMainOutput;
     ASSERT_TRUE(sendExported.success) << sendExported.error.toStdString();
-    QFile sendManifestFile(QDir(sendOutputDirectory).filePath(
-        HarkenEditor::Bridge::packManifestFileName()));
-    ASSERT_TRUE(sendManifestFile.open(QIODevice::ReadOnly));
-    const auto sendPacks = QJsonDocument::fromJson(sendManifestFile.readAll())
-        .object().value(QStringLiteral("packs")).toArray();
     uint32_t checkedMasterSends = 0;
-    for (const auto& value : sendPacks) {
-        QFile file(QDir(sendOutputDirectory).filePath(
-            value.toObject().value(QStringLiteral("path")).toString()));
+    for (const auto& artifact : sendExported.artifacts) {
+        QFile file(artifact.outputPath);
         ASSERT_TRUE(file.open(QIODevice::ReadOnly));
         const QByteArray bytes = file.readAll();
         harken::PackCanonicalImage canonical;
@@ -5141,18 +5138,6 @@ TEST(AudioEnginePreview, RuntimeRestartCancelsPendingPreviewStart)
     ASSERT_TRUE(engine.startOutput());
     ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
 
-    constexpr harkenstudio::ObjectId foreignBus = harkentest::StudioObjectId(7001);
-    ASSERT_FALSE(harkenstudio::IsNull(foreignBus));
-    ASSERT_NE(foreignBus, harkenstudio::kMasterBusObjectId);
-    ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ToRuntime(foreignBus),harkentest::ToRuntime(harkenstudio::kMasterBusObjectId)));
-    VnResult saturation = VN_OK;
-    int saturatedCommands = 0;
-    while (saturation == VN_OK && saturatedCommands < 512) {
-        saturation = Vn_SetBusVolume(harkentest::ToRuntime(foreignBus), -1.0f, 0);
-        ++saturatedCommands;
-    }
-    ASSERT_EQ(saturation, VN_BACKPRESSURE);
-
     HarkenEditor::AuditionManager audition(&engine);
     int startedCount = 0;
     int failedCount = 0;
@@ -5170,7 +5155,14 @@ TEST(AudioEnginePreview, RuntimeRestartCancelsPendingPreviewStart)
             failedPlay = playingId;
             failedResult = result;
         });
-    const uint32_t secondPlay = audition.playItem(*second);
+    auto* runtime = harken::detail::ActiveEngine();
+    ASSERT_NE(runtime, nullptr);
+    uint32_t secondPlay = 0;
+    {
+        QScopedValueRollback admissionClosed(
+            runtime->currentWorldReplacementAdmissionClosed, true);
+        secondPlay = audition.playItem(*second);
+    }
     ASSERT_NE(secondPlay, 0u);
     ASSERT_TRUE(audition.lastPlayPending());
     ASSERT_TRUE(audition.getAudition(secondPlay).previewStartPending);

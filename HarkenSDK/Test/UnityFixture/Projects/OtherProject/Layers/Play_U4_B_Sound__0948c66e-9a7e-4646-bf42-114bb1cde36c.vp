@@ -1,0 +1,64 @@
+{
+    "content": {
+        "children": [
+        ],
+        "components": {
+            "sound": {
+                "sources": {
+                    "localized": {
+                    },
+                    "plain": {
+                        "active": "e30b4e2b-4f98-4f88-89a6-20ebc2be81b4",
+                        "entries": [
+                            {
+                                "entryId": "e30b4e2b-4f98-4f88-89a6-20ebc2be81b4",
+                                "rangeContentHash": "89c59927c1bb1beb488ad28164c1a50aef60e14c260d3ddd8bcc8371a595371e",
+                                "sourceId": 3390291576
+                            }
+                        ],
+                        "platforms": {
+                        }
+                    }
+                }
+            },
+            "spatial": {
+                "spatializationMix": 1
+            }
+        },
+        "expanded": true,
+        "fieldGroups": {
+            "shared": {
+                "mainOutput": {
+                    "inherit": true
+                },
+                "send": {
+                    "inherit": true
+                },
+                "spatialRating": {
+                    "inherit": true
+                }
+            }
+        },
+        "guid": "0948c66e-9a7e-4646-bf42-114bb1cde36c",
+        "name": "Play_U4_B_Sound",
+        "objectPath": "\\Sounds\\Play_U4_B_Sound",
+        "order": 1,
+        "parentRef": {
+            "documentId": "e315d6fc-5843-4176-a432-f0bd35affca1",
+            "id": "e315d6fc-5843-4176-a432-f0bd35affca1",
+            "kind": "item"
+        },
+        "playableProperties": {
+            "presence": "0000000000000000"
+        },
+        "type": "Sound"
+    },
+    "harkenDocument": {
+        "id": "0948c66e-9a7e-4646-bf42-114bb1cde36c",
+        "projectId": "9747c67e-39ac-4483-8b3f-2c673596b388",
+        "propertyModel": "fieldGroupsV1",
+        "savedStudioVersion": "0.7.2",
+        "schemaVersion": 7,
+        "type": "project.layer"
+    }
+}

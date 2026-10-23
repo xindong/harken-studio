@@ -6,11 +6,15 @@
         <file>Resources/shaders/scene3d_fragment.glsl</file>
         <file>Resources/shaders/scene3d_line_vertex.glsl</file>
         <file>Resources/shaders/scene3d_line_fragment.glsl</file>
-        <file>Resources/icons/V_256x256.png</file>
+        <file>Resources/icons/HarkenStudioTransparent.png</file>
+        <file>Resources/icons/HarkenStudio.ico</file>
+        <file>Resources/branding/HarkenStudioBlueGradient.png</file>
+        <file>Resources/branding/HarkenStudioWhite.png</file>
         <file>Resources/help/help.en.json</file>
         <file>Resources/help/help.zh-CN.json</file>
     </qresource>
     <qresource prefix="/icons">
+        <file alias="settings.svg">Resources/icons/settings.svg</file>
         <file alias="mouse-pointer.svg">Resources/icons/mouse-pointer.svg</file>
         <file alias="hand.svg">Resources/icons/hand.svg</file>
         <file alias="magnet.svg">Resources/icons/magnet.svg</file>

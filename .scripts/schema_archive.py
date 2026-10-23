@@ -20,7 +20,6 @@ PROJECT_SCHEMA_NAME = "ProjectSerializedSchema.json"
 PACK_SCHEMA_NAME = "PackManifestSchema.json"
 TREE_SCHEMA_NAMES = {"Editor": PROJECT_SCHEMA_NAME, "Pack": PACK_SCHEMA_NAME}
 GENERATED_PROJECT_HEADER = "ProjectSchemaGenerated.h"
-GENERATED_PACK_HEADER = "PackSchemaGenerated.h"
 GENERATED_VALIDATOR_HEADER = "ProjectSchemaValidator.generated.h"
 GENERATED_VALIDATOR_SOURCE = "ProjectSchemaValidator.generated.cpp"
 GENERATED_BUILD_HEADER = "SchemaBuildGenerated.h"
@@ -388,15 +387,19 @@ def validate_pack_source(source: dict[str, Any]) -> None:
     if not isinstance(source, dict):
         raise ValueError("Pack contract must be a JSON object")
     metadata = source.get("x-harken-format")
-    if not isinstance(metadata, dict) or metadata.get("formatId") != "generated.pack-manifest":
-        raise ValueError("Pack contract must describe generated.pack-manifest")
+    if not isinstance(metadata, dict) or metadata.get("formatId") not in (
+        "generated.pack-manifest", "generated.pack-companion"
+    ):
+        raise ValueError("Pack contract must describe a Pack publication format")
+    companion = metadata["formatId"] == "generated.pack-companion"
     version = metadata.get("formatVersion")
     if not isinstance(version, int) or isinstance(version, bool) or version < 1:
         raise ValueError("Pack contract needs a positive formatVersion")
     if metadata.get("validationMode") != "generated-json":
         raise ValueError("Pack contract must use generated-json validation")
-    if metadata.get("versionLocator") != "json:$.schema_version":
-        raise ValueError("Pack contract must locate schema_version")
+    expected_locator = "json:$.schemaVersion" if companion else "json:$.schema_version"
+    if metadata.get("versionLocator") != expected_locator:
+        raise ValueError(f"Pack contract must use {expected_locator}")
     if metadata.get("rebuildPolicy") != "rebuild":
         raise ValueError("Pack contract must be rebuildable")
     for field in ("pathPatterns", "readers", "writers", "validators"):
@@ -408,10 +411,19 @@ def validate_pack_source(source: dict[str, Any]) -> None:
     schema = {key: value for key, value in source.items() if key != "x-harken-format"}
     if schema.get("$schema") != "https://json-schema.org/draft/2020-12/schema" or schema.get("type") != "object":
         raise ValueError("Pack contract needs a JSON object schema")
-    if schema.get("properties", {}).get("schema_version", {}).get("const") != version:
+    if companion and "schema_version" in schema.get("properties", {}):
+        raise ValueError("Pack companions must not embed a schema_version")
+    if not companion and schema.get("properties", {}).get("schema_version", {}).get("const") != version:
         raise ValueError("Pack contract schema_version does not match formatVersion")
-    validate_schema_language(schema, "Pack")
-    validate_local_refs(schema, schema.get("$defs", {}))
+    definitions = schema.get("$defs", {})
+    if not isinstance(definitions, dict):
+        raise ValueError("Pack definitions must be an object")
+    if companion and definitions.get("schemaVersion", {}).get("const") != version:
+        raise ValueError("Pack schemaVersion does not match formatVersion")
+    for name, definition in definitions.items():
+        validate_schema_language(definition, f"Pack.$defs.{name}")
+    validate_schema_language({key: value for key, value in schema.items() if key != "$defs"}, "Pack")
+    validate_local_refs(schema, definitions)
 
 
 def validate_tree_manifest(tree: str, manifest: Any) -> None:
@@ -483,11 +495,17 @@ def materialize_source(tree: str, source: dict[str, Any], version: int) -> dict[
         metadata = result.get("x-harken-format")
         if not isinstance(metadata, dict) or "formatVersion" in metadata:
             raise ValueError("Pack current must omit the formatVersion product integer")
-        slot = result.get("properties", {}).get("schema_version")
-        if slot != {"type": "integer"}:
-            raise ValueError("Pack current schema_version must be an integer without a fixed value")
         metadata["formatVersion"] = version
-        slot["const"] = version
+        if metadata.get("formatId") == "generated.pack-companion":
+            slot = result.get("$defs", {}).get("schemaVersion")
+            if slot != {"type": "integer"}:
+                raise ValueError("Pack current schemaVersion must be an integer without a fixed value")
+            slot["const"] = version
+        else:
+            slot = result.get("properties", {}).get("schema_version")
+            if slot != {"type": "integer"}:
+                raise ValueError("Pack current schema_version must be an integer without a fixed value")
+            slot["const"] = version
     else:
         raise ValueError(f"unknown schema tree: {tree}")
     validate_tree_source(tree, result)
@@ -566,25 +584,10 @@ def generated_project_header(source: dict[str, Any], versions: list[int]) -> byt
         "",
         "namespace VNX::ProjectSchema {",
         "",
-        f"inline constexpr int kProjectSchemaVersion = {source['projectSchemaVersion']};",
+        "inline constexpr int kProjectSchemaVersion = HARKEN_PROJECT_SCHEMA_VERSION;",
         "inline constexpr int kProjectSchemaVersions[] = {"
         + ", ".join(str(version) for version in versions) + "};",
         *property_model,
-        "",
-        "}",
-        "",
-    ]
-    return "\n".join(lines).encode("ascii")
-
-
-def generated_pack_header(pack: list[dict[str, Any]]) -> bytes:
-    version = pack[-1]["x-harken-format"]["formatVersion"]
-    lines = [
-        "#pragma once",
-        "",
-        "namespace VNX::PackSchema {",
-        "",
-        f"inline constexpr int kPackManifestSchemaVersion = {version};",
         "",
         "}",
         "",
@@ -1235,7 +1238,6 @@ def build_bundle(schema_root: Path | None = None) -> dict[str, Any]:
         GENERATED_PROJECT_HEADER: generated_project_header(
             editor["current"], tree_versions["Editor"]["supportedVersions"]
         ),
-        GENERATED_PACK_HEADER: generated_pack_header(pack["supported"]),
         GENERATED_VALIDATOR_HEADER: validator_header,
         GENERATED_VALIDATOR_SOURCE: validator_source,
     }

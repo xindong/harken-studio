@@ -58,6 +58,7 @@ private:
     bool projectPrepared_ = false;
     ProjectUpgradeApprovalCallback upgradeApproval_;
     bool windowInitialized_ = false;
+    bool presentationStarted_ = false;
     bool terminal_ = false;
 };
 

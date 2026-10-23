@@ -39,6 +39,7 @@ public:
 
 protected:
     bool event(QEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
     virtual void presenterInstalled() {}
 
 private:
@@ -57,6 +58,7 @@ private:
     int compactValueColumnWidth_ = 0;
     int primaryColumnStretch_ = 0;
     int valueColumnStretch_ = 0;
+    bool resetClick_ = false;
 };
 
 }

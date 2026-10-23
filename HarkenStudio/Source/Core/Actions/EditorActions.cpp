@@ -117,7 +117,7 @@ void registerEditorActions(ActionManager& mgr,
             }
 
             if (!blueprintCanvas)
-                return {false, {}, "BLUEPRINT_CANVAS_NOT_AVAILABLE", "BlueprintCanvasWidget is not available"};
+                return {false, {}, "BLUEPRINT_CANVAS_NOT_AVAILABLE", "Blueprint is not available"};
             return {false, {}, "BLUEPRINT_CONNECT_FAILED",
                     QString("No Blueprint object resolved for %1 -> %2")
                         .arg(outputNode).arg(inputNode)};
@@ -183,7 +183,7 @@ void registerEditorActions(ActionManager& mgr,
             }
 
             if (!blueprintCanvas)
-                return {false, {}, "BLUEPRINT_CANVAS_NOT_AVAILABLE", "BlueprintCanvasWidget is not available"};
+                return {false, {}, "BLUEPRINT_CANVAS_NOT_AVAILABLE", "Blueprint is not available"};
             return {false, {}, "BLUEPRINT_DISCONNECT_FAILED",
                     QString("No Blueprint object resolved for %1 -> %2")
                         .arg(outputNode).arg(inputNode)};
@@ -208,7 +208,7 @@ void registerEditorActions(ActionManager& mgr,
 
             auto* bp = findBlueprintCanvas();
             if (!bp)
-                return {false, {}, "BLUEPRINT_NOT_AVAILABLE", "Blueprint Canvas not available"};
+                return {false, {}, "BLUEPRINT_NOT_AVAILABLE", "Blueprint not available"};
             if (!bp->setNodeOverride(static_cast<uint32_t>(nodeId), ov))
                 return {false, {}, "BLUEPRINT_SET_OVERRIDE_FAILED",
                         QString("setNodeOverride failed for node %1").arg(nodeId)};
@@ -222,7 +222,7 @@ void registerEditorActions(ActionManager& mgr,
     {
         ActionDef def;
         def.id = "set_canvas_flow";
-        def.displayName = "Set Blueprint Canvas Flow Direction";
+        def.displayName = "Set Blueprint Flow Direction";
         def.category = "editor";
         def.paramSchema = QJsonObject{{"direction", "string"}};
         def.undoable = false;
@@ -253,7 +253,7 @@ void registerEditorActions(ActionManager& mgr,
     {
         ActionDef def;
         def.id = "get_canvas_flow";
-        def.displayName = "Get Blueprint Canvas Flow Direction";
+        def.displayName = "Get Blueprint Flow Direction";
         def.category = "editor";
         def.undoable = false;
         def.handler = [](const QJsonObject& ) -> ActionResult {

@@ -2,6 +2,7 @@
 
 #include "UI/NoHoverItemDelegate.h"
 #include "UI/BoundedHeaderView.h"
+#include "UI/TableSorting.h"
 #include "UI/HubIcons.h"
 #include "Launch/ProjectCreateFlow.h"
 #include "Launch/ProjectOpenFlow.h"
@@ -53,6 +54,7 @@
 #include <QUrl>
 #include <QVariantAnimation>
 #include <QVBoxLayout>
+#include <QVersionNumber>
 
 #include <unordered_map>
 
@@ -198,27 +200,17 @@ QString relativeTime(const QString& isoTimestamp)
     if (!then.isValid())
         return isoTimestamp;
 
-    const QDateTime now = QDateTime::currentDateTime();
-    const qint64 seconds = then.secsTo(now);
-    if (seconds < 60)
-        return QCoreApplication::translate("HarkenHub", "Just now");
-    if (seconds < 3600) {
-        const qint64 minutes = seconds / 60;
-        return minutes == 1 ? QCoreApplication::translate("HarkenHub", "1 minute ago")
-                            : QCoreApplication::translate("HarkenHub", "%1 minutes ago").arg(minutes);
-    }
-    if (then.date() == now.date()) {
-        const qint64 hours = seconds / 3600;
-        return hours == 1 ? QCoreApplication::translate("HarkenHub", "1 hour ago")
-                          : QCoreApplication::translate("HarkenHub", "%1 hours ago").arg(hours);
-    }
-    if (then.date() == now.date().addDays(-1))
-        return QCoreApplication::translate("HarkenHub", "Yesterday");
-
-    const qint64 days = then.date().daysTo(now.date());
-    if (days < 30)
-        return QCoreApplication::translate("HarkenHub", "%1 days ago").arg(days);
-    return then.date().toString(QStringLiteral("yyyy-MM-dd"));
+    const qint64 totalMinutes = qMax<qint64>(0, then.secsTo(QDateTime::currentDateTimeUtc()) / 60);
+    const qint64 days = totalMinutes / (24 * 60);
+    const qint64 hours = totalMinutes / 60 % 24;
+    const qint64 minutes = totalMinutes % 60;
+    if (totalMinutes < 60)
+        return QCoreApplication::translate("HarkenHub", "%1m ago").arg(minutes);
+    if (days > 0)
+        return QCoreApplication::translate("HarkenHub", "%1d %2h %3m ago")
+            .arg(days).arg(hours).arg(minutes);
+    return QCoreApplication::translate("HarkenHub", "%1h %2m ago")
+        .arg(hours).arg(minutes);
 }
 
 QWidget* makeActionCell(
@@ -257,7 +249,6 @@ QWidget* makeActionCell(
 void configureHeader(QTableWidget* table)
 {
     table->horizontalHeader()->setHighlightSections(false);
-    table->horizontalHeader()->setSectionsClickable(false);
     table->horizontalHeader()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
 }
 
@@ -358,6 +349,7 @@ ProjectsPage::ProjectsPage(ProjectStore* store, QWidget* parent)
                                        QCoreApplication::translate("HarkenHub", "LAST OPENED"),
                                        QCoreApplication::translate("HarkenHub", "VERSION"), QString()});
     configureHeader(table_);
+    sorting_ = new TableSorting(table_, QStringLiteral("projects"), kColumnMenu);
     table_->horizontalHeader()->setSectionResizeMode(kColumnProject, QHeaderView::Interactive);
     table_->horizontalHeader()->setSectionResizeMode(kColumnLastOpened, QHeaderView::Interactive);
     table_->horizontalHeader()->setSectionResizeMode(kColumnVersion, QHeaderView::Stretch);
@@ -416,6 +408,7 @@ void ProjectsPage::showProjectLaunchGuidance(const QString& buildId)
     projectLaunchGuidanceAnimation_->stop();
     clearProjectLaunchGuidance();
     projectLaunchGuidanceBuildId_ = buildId;
+    pendingCreateBuildId_ = buildId;
     projectLaunchGuidanceAnimation_->start();
 }
 
@@ -648,7 +641,7 @@ QWidget* ProjectsPage::createNewProjectPage()
     return page;
 }
 
-void ProjectsPage::loadProjectVersions()
+void ProjectsPage::loadProjectVersions(const QString& preferredBuildId)
 {
     createVersions_ = versionsProvider_ ? versionsProvider_()
                                         : std::vector<InstalledVersion>{};
@@ -667,7 +660,8 @@ void ProjectsPage::loadProjectVersions()
     }
 
     const InstalledVersion* target = StudioLaunchTarget::pick(
-        createVersions_, StudioLaunchTarget::pinnedBuildId(),
+        createVersions_, preferredBuildId.isEmpty()
+            ? StudioLaunchTarget::pinnedBuildId() : preferredBuildId,
         needsRepairBuildIds());
     int selectedIndex = -1;
     if (target) {
@@ -866,13 +860,13 @@ void ProjectsPage::persistProjectLocation(const QString& path)
         QMessageBox::warning(
             this, QCoreApplication::translate("HarkenHub", "New Project"),
             QCoreApplication::translate("HarkenHub", "The project location could not be saved. It will "
-                           "not be restored after restarting Harken Hub."));
+                           "not be restored after restarting Harken Studio Hub."));
     }
 }
 
 void ProjectsPage::onNewProjectClicked()
 {
-    loadProjectVersions();
+    loadProjectVersions(pendingCreateBuildId_);
     if (createTarget_.installPath.isEmpty()) {
         QMessageBox::warning(
             this, QCoreApplication::translate("HarkenHub", "New Project"),
@@ -881,6 +875,7 @@ void ProjectsPage::onNewProjectClicked()
         return;
     }
 
+    pendingCreateBuildId_.clear();
     projectNameEdit_->clear();
     loadProjectTemplates();
     updateNewProjectCreateEnabled();
@@ -895,6 +890,7 @@ void ProjectsPage::showNewProjectPage()
 
 void ProjectsPage::showProjectsList()
 {
+    pendingCreateBuildId_.clear();
     viewStack_->setCurrentWidget(projectsView_);
     refresh();
 }
@@ -1046,6 +1042,7 @@ void ProjectsPage::refreshProjectMetadata()
 
 void ProjectsPage::renderProjects()
 {
+    sorting_->beginRefresh();
     QSet<QString> selectedPaths;
     for (const auto& index : table_->selectionModel()->selectedRows(kColumnProject))
         selectedPaths.insert(index.data(kPathRole).toString());
@@ -1056,8 +1053,10 @@ void ProjectsPage::renderProjects()
 
     std::unordered_map<QString, QString> versionNames;
     std::unordered_map<QString, QString> versionPaths;
+    QHash<QString, QVersionNumber> versionNumbers;
     if (versionsProvider_) {
         for (const auto& version : versions) {
+            versionNumbers.insert(version.buildId, QVersionNumber::fromString(version.semanticVersion).normalized());
             QString name = version.semanticVersion;
             if (version.isLocalBuild())
                 name += QCoreApplication::translate("HarkenHub", " (Standalone)");
@@ -1091,18 +1090,22 @@ void ProjectsPage::renderProjects()
         if (!projectMetadata_.contains(record.canonicalPath) && record.preferredStudioBuildId.isEmpty())
             selection = {};
 
-        auto* projectItem = new QTableWidgetItem(record.displayName);
+        auto* projectItem = new SortableTableItem(record.displayName);
         projectItem->setData(kPathRole, record.canonicalPath);
         projectItem->setToolTip(
             QDir::toNativeSeparators(record.canonicalPath));
         table_->setItem(row, kColumnProject, projectItem);
 
+        const auto openedAt = QDateTime::fromString(record.lastOpenedAt, Qt::ISODate);
         table_->setItem(row, kColumnLastOpened,
-                        new QTableWidgetItem(relativeTime(record.lastOpenedAt)));
-        auto* versionItem = new QTableWidgetItem(
+                       new SortableTableItem(relativeTime(record.lastOpenedAt),
+                           openedAt.isValid() ? QVariant(openedAt) : QVariant()));
+        const auto versionNumber = versionNumbers.value(selection.buildId);
+        auto* versionItem = new SortableTableItem(
             selection.buildId.isEmpty()
                 ? QCoreApplication::translate("HarkenHub", "Select Version")
-                : versionLabel(selection.buildId));
+                : versionLabel(selection.buildId),
+            versionNumber.isNull() ? QVariant() : QVariant::fromValue(versionNumber));
         versionItem->setData(kBuildIdRole, selection.buildId);
         QStringList versionTooltip{selection.source, selection.reason, probe.metadataWarning,
             QCoreApplication::translate("HarkenHub", "Build: %1")
@@ -1127,13 +1130,18 @@ void ProjectsPage::renderProjects()
             makeActionCell(
                 table_, selection.buildId,
                 [this, canonicalPath]() { openProject(canonicalPath); },
-                [this, row](QToolButton* button) {
-                    showRowMenu(
-                        row, button->mapToGlobal(button->rect().bottomLeft()));
+                [this, canonicalPath](QToolButton* button) {
+                    for (int row = 0; row < table_->rowCount(); ++row) {
+                        if (table_->item(row, kColumnProject)->data(kPathRole).toString() == canonicalPath) {
+                            showRowMenu(row, button->mapToGlobal(button->rect().bottomLeft()));
+                            break;
+                        }
+                    }
                 }));
     }
 
     table_->selectionModel()->select(rowSelection, QItemSelectionModel::ClearAndSelect);
+    sorting_->endRefresh();
     updateLaunchTarget();
 }
 
@@ -1142,7 +1150,7 @@ void ProjectsPage::refreshVersions()
     refresh();
     if (viewStack_->currentWidget() != newProjectView_)
         return;
-    loadProjectVersions();
+    loadProjectVersions(createTarget_.buildId);
     loadProjectTemplates();
     updateNewProjectCreateEnabled();
 }
@@ -1156,6 +1164,7 @@ void ProjectsPage::showEvent(QShowEvent* event)
 
 void ProjectsPage::hideEvent(QHideEvent* event)
 {
+    pendingCreateBuildId_.clear();
     projectLaunchGuidanceAnimation_->stop();
     clearProjectLaunchGuidance();
     QWidget::hideEvent(event);
@@ -1262,7 +1271,7 @@ void ProjectsPage::showRowMenu(int row, const QPoint& globalPos)
         }
         refresh();
         if (!failures.isEmpty())
-            QMessageBox::warning(this, QCoreApplication::translate("HarkenHub", "Harken Hub"),
+            QMessageBox::warning(this, QCoreApplication::translate("HarkenHub", "Harken Studio Hub"),
                 QCoreApplication::translate("HarkenHub", "These projects could not be removed from the list:\n%1")
                     .arg(failures.join(QLatin1Char('\n'))));
     };

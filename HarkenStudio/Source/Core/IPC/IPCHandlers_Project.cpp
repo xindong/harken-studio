@@ -129,7 +129,8 @@ QJsonObject IPCServer::handleGetActionPackPlan(const QJsonObject& args)
                 .arg(kMaximumPackPlanVariants));
 
     const auto plan = PackBuildPlanning::buildForAction(
-        *project, stableId, platforms, languages);
+        *project, stableId, platforms, languages, {}, false,
+        projectManager_->packExportSelection());
     QJsonArray variants;
     for (const auto& variant : plan.variants) {
         if (variant.actionStableId != stableId)

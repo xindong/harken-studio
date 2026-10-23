@@ -2,24 +2,12 @@
 #include "harken/core/CompletionMutationBinding.h"
 #include "harken/core/VoiceLedger.h"
 #include "Common/TestUtil.h"
-#include "PlayableStorageTestSupport.h"
 #include "harken/param/EffectParamLocator.h"
 #include "harken/render/BuiltinEffects.h"
 
 #include <gtest/gtest.h>
 
 namespace {
-
-class CompletionMutationGuard : public testing::Test {
-    harkentest::PlayableCapacityScope playableCapacity_{8, 1};
-};
-
-VnConfig CompletionConfig(std::uint32_t maxVoices) {
-    auto config = harkentest::MakeNullConfig(maxVoices, 256, 48000);
-    config.maxTriggerDepth = 1;
-    config.maxActionFirings = 8;
-    return config;
-}
 
 harken::CompletionOwnerRef Owner(std::uint32_t slot,
                                 std::uint32_t generation,
@@ -87,7 +75,7 @@ VnBindingAttachDesc MakeVoiceAttach(VnSoundId soundId) {
     return desc;
 }
 
-TEST_F(CompletionMutationGuard,
+TEST(CompletionMutationGuard,
      CanonicalUnboundAllowsAndEveryBoundAuthorityMismatchFailsClosed) {
     const harken::CompletionMutationBinding unbound{};
     EXPECT_EQ(harken::CompletionMutationGuardResult::Allowed,
@@ -109,7 +97,7 @@ TEST_F(CompletionMutationGuard,
               harken::EvaluateCompletionMutationBinding(malformed, nullptr));
 }
 
-TEST_F(CompletionMutationGuard,
+TEST(CompletionMutationGuard,
      LedgerMirrorAndReverseIndexRemainExactAcrossEveryVoiceLifecycle) {
     harken::VoiceLedger ledger(3, 2);
     VnVoiceHandle publicHandle = 0;
@@ -180,9 +168,9 @@ TEST_F(CompletionMutationGuard,
     EXPECT_FALSE(ledger.CaptureCompletionMutation(reusedHandle, &captured));
 }
 
-TEST_F(CompletionMutationGuard,
+TEST(CompletionMutationGuard,
      PitchRefusesPinnedCompletionOwnerBeforePendingParkedOrLiveMutation) {
-    VnConfig config = CompletionConfig(4);
+    VnConfig config = harkentest::MakeNullConfig(4, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -250,9 +238,9 @@ TEST_F(CompletionMutationGuard,
     EXPECT_EQ(backpressure + 3u, engine->commands.BackpressureCount());
 }
 
-TEST_F(CompletionMutationGuard,
+TEST(CompletionMutationGuard,
      PitchPreservesUnboundPendingParkedLiveAndStaleSemantics) {
-    VnConfig config = CompletionConfig(4);
+    VnConfig config = harkentest::MakeNullConfig(4, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -282,9 +270,9 @@ TEST_F(CompletionMutationGuard,
               Vn_SetVoicePitch(UINT64_C(0x0000007700000077), 1.5f));
 }
 
-TEST_F(CompletionMutationGuard,
+TEST(CompletionMutationGuard,
      StopRefusesPinnedCompletionOwnerBeforePendingParkedOrLiveMutation) {
-    VnConfig config = CompletionConfig(4);
+    VnConfig config = harkentest::MakeNullConfig(4, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -351,9 +339,9 @@ TEST_F(CompletionMutationGuard,
     EXPECT_FALSE(engine->logicNotifications.TryPop(notification));
 }
 
-TEST_F(CompletionMutationGuard,
+TEST(CompletionMutationGuard,
      StopFailsClosedForStaleCompletionMirrorInEveryVoiceState) {
-    VnConfig config = CompletionConfig(4);
+    VnConfig config = harkentest::MakeNullConfig(4, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -411,9 +399,9 @@ TEST_F(CompletionMutationGuard,
     EXPECT_EQ(backpressure + 3u, engine->commands.BackpressureCount());
 }
 
-TEST_F(CompletionMutationGuard,
+TEST(CompletionMutationGuard,
      StopPreservesUnboundPendingParkedLiveAndStaleSemantics) {
-    VnConfig config = CompletionConfig(4);
+    VnConfig config = harkentest::MakeNullConfig(4, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -453,9 +441,9 @@ TEST_F(CompletionMutationGuard,
     EXPECT_EQ(backpressure, engine->commands.BackpressureCount());
 }
 
-TEST_F(CompletionMutationGuard,
+TEST(CompletionMutationGuard,
      ApplyPitchBindingRefusesPinnedPendingParkedAndLiveBeforeMutation) {
-    VnConfig config = CompletionConfig(4);
+    VnConfig config = harkentest::MakeNullConfig(4, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -508,9 +496,9 @@ TEST_F(CompletionMutationGuard,
     EXPECT_EQ(backpressure + 2u, engine->commands.BackpressureCount());
 }
 
-TEST_F(CompletionMutationGuard,
+TEST(CompletionMutationGuard,
      ClearPitchBindingRefusesPinnedParkedAndLiveBeforeMutation) {
-    VnConfig config = CompletionConfig(4);
+    VnConfig config = harkentest::MakeNullConfig(4, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -567,9 +555,9 @@ TEST_F(CompletionMutationGuard,
     EXPECT_EQ(backpressure + 2u, engine->commands.BackpressureCount());
 }
 
-TEST_F(CompletionMutationGuard,
+TEST(CompletionMutationGuard,
      BindingGuardPreservesRefusalPriorityAndAllowsNonPitchBindings) {
-    VnConfig config = CompletionConfig(2);
+    VnConfig config = harkentest::MakeNullConfig(2, 256, 48000);
     config.fxSlotsPerVoice = 1;
     config.gainEffectPoolCapacity = 2;
     harkentest::EngineSession session(config);
@@ -631,9 +619,9 @@ TEST_F(CompletionMutationGuard,
     EXPECT_EQ(backpressure, engine->commands.BackpressureCount());
 }
 
-TEST_F(CompletionMutationGuard,
+TEST(CompletionMutationGuard,
      ReplacePitchBindingRefusesAllVoicesAtomicallyAndBooksOneOutcome) {
-    VnConfig config = CompletionConfig(4);
+    VnConfig config = harkentest::MakeNullConfig(4, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -725,9 +713,9 @@ TEST_F(CompletionMutationGuard,
     EXPECT_EQ(refused + 4u, engine->hotReloadRefusedCount);
 }
 
-TEST_F(CompletionMutationGuard,
+TEST(CompletionMutationGuard,
      DetachPitchBindingRefusesLiveAndParkedInstancesAtomically) {
-    VnConfig config = CompletionConfig(4);
+    VnConfig config = harkentest::MakeNullConfig(4, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -794,9 +782,9 @@ TEST_F(CompletionMutationGuard,
     EXPECT_EQ(backpressure + 1u, engine->commands.BackpressureCount());
 }
 
-TEST_F(CompletionMutationGuard,
+TEST(CompletionMutationGuard,
      VoicePitchAttachIsFutureOnlyAndPendingOnlyDetachRemainsAllowed) {
-    VnConfig config = CompletionConfig(3);
+    VnConfig config = harkentest::MakeNullConfig(3, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -841,9 +829,9 @@ TEST_F(CompletionMutationGuard,
     EXPECT_EQ(backpressure, engine->commands.BackpressureCount());
 }
 
-TEST_F(CompletionMutationGuard,
+TEST(CompletionMutationGuard,
      ReplaceSkipsInertRowsAndAllowsNonPitchOrFutureOnlyDefinitions) {
-    VnConfig config = CompletionConfig(3);
+    VnConfig config = harkentest::MakeNullConfig(3, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -894,9 +882,9 @@ TEST_F(CompletionMutationGuard,
     EXPECT_EQ(VN_OK, Vn_ReplaceBinding(harkentest::ObjectId(98), &replacementPitch));
 }
 
-TEST_F(CompletionMutationGuard,
+TEST(CompletionMutationGuard,
      AggregatePitchBindingMutationsFailClosedForStaleLiveMirror) {
-    VnConfig config = CompletionConfig(2);
+    VnConfig config = harkentest::MakeNullConfig(2, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -938,9 +926,9 @@ TEST_F(CompletionMutationGuard,
     EXPECT_EQ(backpressure + 2u, engine->commands.BackpressureCount());
 }
 
-TEST_F(CompletionMutationGuard,
+TEST(CompletionMutationGuard,
      PendingPitchRevisionDefersWhenOwnerPinsAfterReplaceThenInstallsOnce) {
-    VnConfig config = CompletionConfig(2);
+    VnConfig config = harkentest::MakeNullConfig(2, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -997,9 +985,9 @@ TEST_F(CompletionMutationGuard,
     EXPECT_EQ(revision + 1u, engine->bindings.Find(harkentest::ObjectId(101))->revision);
 }
 
-TEST_F(CompletionMutationGuard,
+TEST(CompletionMutationGuard,
      UnregisterPcmRefusesPinnedCurrentGenerationBeforeRegistryMutation) {
-    VnConfig config = CompletionConfig(2);
+    VnConfig config = harkentest::MakeNullConfig(2, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -1033,9 +1021,9 @@ TEST_F(CompletionMutationGuard,
     EXPECT_EQ(backpressure + 1u, engine->commands.BackpressureCount());
 }
 
-TEST_F(CompletionMutationGuard,
+TEST(CompletionMutationGuard,
      ReplacePcmValidatesThenRefusesPinnedCurrentGenerationExactlyOnce) {
-    VnConfig config = CompletionConfig(2);
+    VnConfig config = harkentest::MakeNullConfig(2, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -1073,9 +1061,9 @@ TEST_F(CompletionMutationGuard,
     EXPECT_EQ(refused + 2u, engine->hotReloadRefusedCount);
 }
 
-TEST_F(CompletionMutationGuard,
+TEST(CompletionMutationGuard,
      PcmCurrentGenerationGuardIncludesPendingAndParkedLogicalVoices) {
-    VnConfig config = CompletionConfig(3);
+    VnConfig config = harkentest::MakeNullConfig(3, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -1126,9 +1114,9 @@ TEST_F(CompletionMutationGuard,
     EXPECT_EQ(backpressure + 2u, engine->commands.BackpressureCount());
 }
 
-TEST_F(CompletionMutationGuard,
+TEST(CompletionMutationGuard,
      PcmGuardIgnoresUnrelatedAndRetiringOldGenerationOwners) {
-    VnConfig config = CompletionConfig(2);
+    VnConfig config = harkentest::MakeNullConfig(2, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -1158,9 +1146,9 @@ TEST_F(CompletionMutationGuard,
     EXPECT_EQ(backpressure, engine->commands.BackpressureCount());
 }
 
-TEST_F(CompletionMutationGuard,
+TEST(CompletionMutationGuard,
      StopEmitterRefusesTargetSetAtomicallyWhenPendingOwnerIsPinned) {
-    VnConfig config = CompletionConfig(4);
+    VnConfig config = harkentest::MakeNullConfig(4, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -1206,9 +1194,9 @@ TEST_F(CompletionMutationGuard,
     EXPECT_EQ(backpressure + 1u, engine->commands.BackpressureCount());
 }
 
-TEST_F(CompletionMutationGuard,
+TEST(CompletionMutationGuard,
      StopAllRefusesEveryTargetBeforeStoppingVoices) {
-    VnConfig config = CompletionConfig(4);
+    VnConfig config = harkentest::MakeNullConfig(4, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -1237,9 +1225,9 @@ TEST_F(CompletionMutationGuard,
     EXPECT_EQ(backpressure + 1u, engine->commands.BackpressureCount());
 }
 
-TEST_F(CompletionMutationGuard,
+TEST(CompletionMutationGuard,
      VoiceStealProtectsPinnedVictimBeforeClaimantAdmission) {
-    VnConfig config = CompletionConfig(1);
+    VnConfig config = harkentest::MakeNullConfig(1, 256, 48000);
     config.voiceStealPolicy = 2;
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -1280,9 +1268,9 @@ TEST_F(CompletionMutationGuard,
     EXPECT_EQ(1u, engine->ledger.PendingStartCount());
 }
 
-TEST_F(CompletionMutationGuard,
+TEST(CompletionMutationGuard,
      AutomaticPcmParkRefusesPinnedOwnerBeforeAnyParkMutation) {
-    VnConfig config = CompletionConfig(1);
+    VnConfig config = harkentest::MakeNullConfig(1, 256, 48000);
     config.maxParkedVoices = 1;
     config.audibilityParkEnabled = 1;
     config.parkThresholdDb = -40.0f;
@@ -1343,9 +1331,9 @@ TEST_F(CompletionMutationGuard,
     EXPECT_EQ(backpressure + 1u, engine->commands.BackpressureCount());
 }
 
-TEST_F(CompletionMutationGuard,
+TEST(CompletionMutationGuard,
      DirectVirtualCommitRefusesPinnedPendingBeforeCreatingParkRecord) {
-    VnConfig config = CompletionConfig(1);
+    VnConfig config = harkentest::MakeNullConfig(1, 256, 48000);
     config.maxParkedVoices = 1;
     config.audibilityParkEnabled = 1;
     config.parkThresholdDb = -40.0f;

@@ -17,6 +17,7 @@ class QAbstractScrollArea;
 class QHeaderView;
 class QHBoxLayout;
 class QLabel;
+class QListWidget;
 class QMimeData;
 class QScrollArea;
 class QTableView;
@@ -35,13 +36,19 @@ class TableCell : public QWidget
 public:
     void addWidget(QWidget* widget, int stretch = 1, Qt::Alignment alignment = {});
 
+protected:
+    void resizeEvent(QResizeEvent* event) override;
+    void paintEvent(QPaintEvent* event) override;
+
 private:
     friend class TableWidget;
     explicit TableCell(QWidget* parent, ThemeManager* themeManager);
     void applyTheme();
+    void positionHandle();
 
     ThemeManager* themeManager_;
     QHBoxLayout* layout_;
+    QPointer<QWidget> handle_;
 };
 
 enum class TableKind { Config, Display };
@@ -100,6 +107,7 @@ public:
     TableGroupHeader* createGroupHeader(const QString& text, const TableGroupOptions& options = {});
     ListFooter* createGroupFooter(bool standardButtons = true);
     QTableView* createModelView(const QString& name, QAbstractItemModel* model);
+    QListWidget* createNavigationView(const QString& name);
     ProportionalTreeWidget* createItemView(const QString& name, const QStringList& headers,
                                          const QList<int>& columnWeights);
     template<typename Factory>
@@ -120,6 +128,7 @@ public:
                      const QString& groupId = {});
     QWidget* rowForWidget(QWidget* widget) const;
     QLabel* createRowNumber(QWidget* row, int index, std::optional<int> displayNumber = {});
+    QWidget* createRowHandle(TableCell* cell, int index);
     void setRowMoveHandler(std::function<void(int, int)> handler,
                            std::function<bool(int, int)> guard = {});
     void setDropHandler(std::function<bool(const QMimeData*)> handler,
@@ -152,6 +161,8 @@ private:
         QPointer<QWidget> widget;
         QList<QPointer<QWidget>> cells;
         QPointer<QWidget> number;
+        QPointer<QWidget> handle;
+        QPointer<QWidget> selectionCell;
         QPointer<QWidget> details;
         QPointer<QFrame> detailsNumber;
         int detailsIndent = 0;
@@ -193,6 +204,7 @@ private:
     QLabel* message_ = nullptr;
     ListFooter* footer_ = nullptr;
     QAbstractItemView* view_ = nullptr;
+    bool navigation_ = false;
     QList<QMetaObject::Connection> modelConnections_;
     QList<TableColumn> columns_;
     QList<QLabel*> labels_;

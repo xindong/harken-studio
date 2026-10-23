@@ -40,11 +40,11 @@ struct SpectrumSlot {
     bool occupied = false;
 };
 
-thread_local std::array<SpectrumSlot, VN_MONITOR_HARD_MEASUREMENTS_PER_PLAN>
-    g_slots{};
-thread_local std::array<std::uint8_t, kSpectrumPackCap> g_pack{};
-thread_local std::array<float, core::kMonitorSpectrumMaxFft> g_workTime{};
-thread_local std::array<float, core::kMonitorSpectrumMaxFft * 2u> g_workFft{};
+struct SpectrumScratch {
+    std::array<std::uint8_t, kSpectrumPackCap> pack{};
+    std::array<float, core::kMonitorSpectrumMaxFft> workTime{};
+    std::array<float, core::kMonitorSpectrumMaxFft * 2u> workFft{};
+};
 
 float MixMonoAverage(const float* interleaved, std::uint32_t frame,
                      std::uint32_t channels) {
@@ -55,7 +55,7 @@ float MixMonoAverage(const float* interleaved, std::uint32_t frame,
     return static_cast<float>(sum / static_cast<double>(channels));
 }
 
-void EmitSpectrum(const VnMonitorMeasurementRequest& request,
+void EmitSpectrum(SpectrumScratch& scratch, const VnMonitorMeasurementRequest& request,
                   const VnMonitorTapDescriptor& tap,
                   const core::MonitorSpectrumWindow& window,
                   std::uint32_t sampleRate, std::uint64_t sourceSequence,
@@ -74,7 +74,7 @@ void EmitSpectrum(const VnMonitorMeasurementRequest& request,
     payload.sampleRate = sampleRate;
     payload.channelMode = request.channelMode;
     const std::uint32_t bytes = PackSpectrumRecord(
-        g_pack.data(), static_cast<std::uint32_t>(g_pack.size()), sourceSequence,
+        scratch.pack.data(), static_cast<std::uint32_t>(scratch.pack.size()), sourceSequence,
         capturePlanGeneration, executeFrame, tap.tapDescriptorId,
         tap.tapDescriptorGeneration, payload, window.bins, window.binCount,
         VN_MONITOR_VALID_ARMED | VN_MONITOR_VALID_NUMERIC);
@@ -82,7 +82,7 @@ void EmitSpectrum(const VnMonitorMeasurementRequest& request,
         return;
     }
     DerivedEmit emitRec{};
-    emitRec.bytes = g_pack.data();
+    emitRec.bytes = scratch.pack.data();
     emitRec.size = bytes;
     (void)emit(emitCtx, emitRec);
 }
@@ -92,15 +92,15 @@ VnResult ValidateSpectrum(const VnMonitorMeasurementRequest& request,
     return core::ValidateSpectrumRequest(request);
 }
 
-void ConsumeSpectrum(const VnMonitorMeasurementRequest& request,
+void ConsumeSpectrum(void* state, void* workspace,
+                     const VnMonitorMeasurementRequest& request,
                      const VnMonitorTapDescriptor& tap,
                      const std::uint8_t* packedAudioChunk,
-                     std::uint32_t packedBytes, std::uint32_t measurementIndex,
+                     std::uint32_t packedBytes,
                      DerivedEmitFn emit, void* emitCtx) {
     if (emit == nullptr || packedAudioChunk == nullptr ||
         packedBytes < VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES +
-                          sizeof(VnMonitorAudioChunk) ||
-        measurementIndex >= g_slots.size()) {
+                          sizeof(VnMonitorAudioChunk)) {
         return;
     }
     if (core::ValidateSpectrumRequest(request) != VN_OK) {
@@ -136,7 +136,8 @@ void ConsumeSpectrum(const VnMonitorMeasurementRequest& request,
     const std::uint64_t segmentGeneration = ReadPackedU64(
         packedAudioChunk, kPackedMeasurementSegmentGenerationOffset);
 
-    SpectrumSlot& slot = g_slots[measurementIndex];
+    auto& slot = *static_cast<SpectrumSlot*>(state);
+    auto& scratch = *static_cast<SpectrumScratch*>(workspace);
     const std::uint64_t activeGeneration = DerivedDrainCapturePlanGeneration();
     if (activeGeneration != 0 && capturePlanGeneration != activeGeneration) {
         return;
@@ -182,9 +183,9 @@ void ConsumeSpectrum(const VnMonitorMeasurementRequest& request,
         core::MonitorSpectrumWindow window{};
         if (core::PushSpectrumSample(&slot.state, sample,
                                      chunk.sourceFrameBegin + i,
-                                     g_workTime.data(), g_workFft.data(),
+                                     scratch.workTime.data(), scratch.workFft.data(),
                                      &window)) {
-            EmitSpectrum(request, tap, window, chunk.sampleRate, sourceSequence,
+            EmitSpectrum(scratch, request, tap, window, chunk.sampleRate, sourceSequence,
                          capturePlanGeneration, executeFrame, emit, emitCtx);
         }
     }
@@ -195,28 +196,23 @@ struct SpectrumAutoRegister {
         DerivedHandler handler{};
         handler.validate = &ValidateSpectrum;
         handler.consume = &ConsumeSpectrum;
+        handler.createState = [](const VnMonitorMeasurementRequest&,
+                                 std::uint32_t) -> std::shared_ptr<void> {
+            return std::make_shared<SpectrumSlot>();
+        };
+        handler.createScratch = []() -> std::shared_ptr<void> {
+            return std::make_shared<SpectrumScratch>();
+        };
         RegisterDerivedHandler(VN_MONITOR_MEASURE_SPECTRUM, handler);
     }
 };
 
 const SpectrumAutoRegister kRegister{};
 
-void ResetSlots() {
-    for (SpectrumSlot& slot : g_slots) {
-        slot.occupied = false;
-        slot.capturePlanGeneration = 0;
-        slot.fftSize = 0;
-        slot.nextSourceFrame = 0;
-        slot.state.filled = 0;
-        slot.state.fftSize = 0;
-    }
-}
 
 } // namespace
 
 void ForceLinkMonitorSpectrumHandler() {}
-
-void ResetMonitorSpectrumSlotsForTests() { ResetSlots(); }
 
 } // namespace monitor
 } // namespace harken

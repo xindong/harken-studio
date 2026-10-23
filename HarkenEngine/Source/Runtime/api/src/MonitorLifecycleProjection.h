@@ -10,6 +10,7 @@ constexpr unsigned LifecycleFactKind(MonitorLifecyclePhase phase) noexcept {
     switch (phase) {
     case MonitorLifecyclePhase::PreparedCandidate: return VN_MONITOR_FACT_PLAYABLE_PREPARED;
     case MonitorLifecyclePhase::PlayableStart: return VN_MONITOR_FACT_PLAYABLE_ACTIVE;
+    case MonitorLifecyclePhase::PlayableStarted: return VN_MONITOR_FACT_PLAYABLE_STARTED;
     case MonitorLifecyclePhase::PlayableLogicalComplete: return VN_MONITOR_FACT_PLAYABLE_LOGICAL_COMPLETE;
     case MonitorLifecyclePhase::PlayableAudibleRetiring: return VN_MONITOR_FACT_PLAYABLE_AUDIBLE_RETIRING;
     case MonitorLifecyclePhase::PlayableRetired: return VN_MONITOR_FACT_PLAYABLE_RETIRED;
@@ -18,6 +19,8 @@ constexpr unsigned LifecycleFactKind(MonitorLifecyclePhase phase) noexcept {
     case MonitorLifecyclePhase::ActionStop: return VN_MONITOR_FACT_ACTION_STOPPED;
     case MonitorLifecyclePhase::ActionResult: return VN_MONITOR_FACT_ACTION_RESULT;
     case MonitorLifecyclePhase::ActionReject: return VN_MONITOR_FACT_ACTION_REJECTED;
+    case MonitorLifecyclePhase::StepExecuted: return VN_MONITOR_FACT_STEP_EXECUTED;
+    case MonitorLifecyclePhase::ActionTerminal: return VN_MONITOR_FACT_ACTION_TERMINAL;
     case MonitorLifecyclePhase::VoicePending: return VN_MONITOR_FACT_VOICE_PENDING;
     case MonitorLifecyclePhase::VoiceLive: return VN_MONITOR_FACT_VOICE_LIVE;
     case MonitorLifecyclePhase::VoicePark: return VN_MONITOR_FACT_VOICE_PARKED;
@@ -111,6 +114,12 @@ inline MonitorExecutionFact CaptureEntityFact(unsigned kind, unsigned subject,
     SetSourceField(fact, VN_MONITOR_FACT_FIELD_LOGIC_COMMIT, source.logicCommitSequence != 0);
     SetSourceField(fact, VN_MONITOR_FACT_FIELD_ARRANGING, source.arrangingInstance != 0);
     SetSourceField(fact, VN_MONITOR_FACT_FIELD_OWNER_EPOCH, source.ownerEpoch != 0);
+    if (source.startedAudioBlock != 0) {
+        body.position.audioBlock = source.startedAudioBlock;
+        body.position.frame = source.startedFrame;
+        SetSourceField(fact, VN_MONITOR_FACT_FIELD_AUDIO_BLOCK);
+        SetSourceField(fact, VN_MONITOR_FACT_FIELD_EXECUTE_FRAME);
+    }
     const auto& occurrence = source.occurrenceIdentity;
     if (occurrence.valid) {
         body.position.clip = occurrence.clipId;
@@ -126,6 +135,14 @@ inline MonitorExecutionFact CaptureEntityFact(unsigned kind, unsigned subject,
     }
     fact.reason = source.reasonKnown ? reason : 0;
     SetSourceField(fact, VN_MONITOR_FACT_FIELD_REASON, source.reasonKnown);
+    if (source.terminalKind != 0) {
+        fact.terminalKind = source.terminalKind;
+        fact.result = source.terminalResult;
+        fact.reason = source.terminalReason;
+        SetSourceField(fact, VN_MONITOR_FACT_FIELD_TERMINAL_KIND);
+        SetSourceField(fact, VN_MONITOR_FACT_FIELD_RESULT);
+        SetSourceField(fact, VN_MONITOR_FACT_FIELD_REASON);
+    }
     if (source.controlObservationIncomplete) fact.flags |= kMonitorFactControlIncomplete;
     if (source.identityObservationIncomplete) fact.flags |= kMonitorFactIdentityIncomplete;
     return fact;
@@ -136,15 +153,43 @@ inline MonitorExecutionFact CaptureLifecycleFact(MonitorLifecyclePhase phase,
     std::uint64_t world, VnObjectId object, std::uint64_t actionHandle,
     std::uint32_t reason, std::uint8_t playableKind,
     const MonitorLifecycleFacts& source, const MonitorEmitterBinding& binding) noexcept {
-    const bool action = phase >= MonitorLifecyclePhase::ActionAccept && phase <= MonitorLifecyclePhase::ActionReject;
+    const bool action = (phase >= MonitorLifecyclePhase::ActionAccept && phase <= MonitorLifecyclePhase::ActionReject) ||
+        phase == MonitorLifecyclePhase::StepExecuted || phase == MonitorLifecyclePhase::ActionTerminal;
     const bool voice = (phase >= MonitorLifecyclePhase::VoicePending && phase <= MonitorLifecyclePhase::VoiceEnd) ||
         phase == MonitorLifecyclePhase::SelectionCommitted;
     const bool queue = phase == MonitorLifecyclePhase::QueueAdvance || phase == MonitorLifecyclePhase::QueueFail;
     const bool transition = phase >= MonitorLifecyclePhase::TransitionStart && phase <= MonitorLifecyclePhase::TransitionReject;
     const auto subject = action ? VN_MONITOR_SUBJECT_ACTION : voice ? VN_MONITOR_SUBJECT_LOGICAL_VOICE :
         queue ? VN_MONITOR_SUBJECT_QUEUE : transition ? VN_MONITOR_SUBJECT_TRANSITION : VN_MONITOR_SUBJECT_PLAYABLE;
-    return CaptureEntityFact(LifecycleFactKind(phase), subject, engine, handle, generation,
+    auto fact = CaptureEntityFact(LifecycleFactKind(phase), subject, engine, handle, generation,
         world, object, actionHandle, reason, playableKind, source, binding);
+    if ((phase == MonitorLifecyclePhase::ActionResult || phase == MonitorLifecyclePhase::ActionReject) && source.actionOutcome != 0) {
+        fact.terminalKind = 0;
+        fact.result = 0;
+        SetSourceField(fact, VN_MONITOR_FACT_FIELD_TERMINAL_KIND, false);
+        SetSourceField(fact, VN_MONITOR_FACT_FIELD_RESULT, false);
+    }
+    if (IsActivityFactKind(fact.kind)) {
+        auto& activity = fact.body.execution.activity;
+        activity = {};
+        activity.logicCommit = source.logicCommitSequence;
+        if (phase == MonitorLifecyclePhase::StepExecuted) {
+            activity.stepIndex = source.stepIndex;
+            activity.stepExecutionOrdinal = source.stepExecutionOrdinal;
+            activity.stepOpcode = source.stepOpcode;
+            activity.stepTargetKind = source.stepTargetKind;
+            activity.stepTargetId = source.stepTargetId;
+            fact.result = source.terminalResult;
+            SetSourceField(fact, VN_MONITOR_FACT_FIELD_RESULT);
+            SetSourceField(fact, VN_MONITOR_FACT_FIELD_TERMINAL_KIND, false);
+            fact.terminalKind = 0;
+            SetSourceField(fact, VN_MONITOR_FACT_FIELD_ACTIVITY_STEP);
+        } else {
+            activity.actionOutcome = source.actionOutcome;
+            SetSourceField(fact, VN_MONITOR_FACT_FIELD_ACTION_OUTCOME);
+        }
+    }
+    return fact;
 }
 
 } // namespace harken::monitor

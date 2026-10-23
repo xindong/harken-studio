@@ -9,7 +9,6 @@
 #include "Core/PlayablePropertyAuthoringV1.h"
 #include "Core/ProjectManager.h"
 #include "Core/ProjectTypes.h"
-#include "Core/ToastManager.h"
 #include "Core/UndoCommands.h"
 #include "NodeItem.h"
 
@@ -660,15 +659,12 @@ bool SignalChainSource::onConnect(uint32_t fromId, uint32_t toId,
                                   const QString& fromKind,
                                   const QString& toKind)
 {
-    auto r = doConnect(fromId, toId, edgeType, fromKind, toKind);
-    if (r.success) {
-        lastError_.clear();
+    lastResult_ = doConnect(fromId, toId, edgeType, fromKind, toKind);
+    if (lastResult_.success) {
         rebuildViewForCurrentTarget();
         emit sourceChanged();
-    } else {
-        lastError_ = r.error;
     }
-    return r.success;
+    return lastResult_.success;
 }
 
 bool SignalChainSource::onDisconnect(uint32_t fromId, uint32_t toId,
@@ -677,12 +673,13 @@ bool SignalChainSource::onDisconnect(uint32_t fromId, uint32_t toId,
                                      const QString& toKind)
 {
     const bool ok = doDisconnect(fromId, toId, edgeType, fromKind, toKind);
+    lastResult_ = {};
+    lastResult_.success = ok;
     if (ok) {
-        lastError_.clear();
         rebuildViewForCurrentTarget();
         emit sourceChanged();
     } else {
-        lastError_ = QStringLiteral("no_matching_edge");
+        lastResult_.error = QStringLiteral("no_matching_edge");
     }
     return ok;
 }
@@ -743,9 +740,6 @@ SignalChainSource::doConnect(uint32_t fromId, uint32_t toId,
         if (eff == QStringLiteral("send")) {
             if (!toBus) { r.error = QStringLiteral("send_target_not_bus"); return r; }
             if (pm.sendWouldCycle(fromId, toId)) {
-                ToastManager::instance().showToast(
-                    tr("Send would create a cycle; connection rejected"),
-                    3000, ToastType::Warning);
                 r.error = QStringLiteral("send_cycle");
                 return r;
             }
@@ -759,9 +753,6 @@ SignalChainSource::doConnect(uint32_t fromId, uint32_t toId,
                 return r;
             }
             if (!pm.sendTargetSelectable(fromId, toId)) {
-                ToastManager::instance().showToast(
-                    tr("Send target is the main output bus; connection rejected"),
-                    3000, ToastType::Warning);
                 r.error = QStringLiteral("send_rejected");
                 return r;
             }
@@ -774,6 +765,10 @@ SignalChainSource::doConnect(uint32_t fromId, uint32_t toId,
         }
         if (eff == QStringLiteral("bus_route")) {
             if (!toBus) { r.error = QStringLiteral("invalid_bus_target"); return r; }
+            if (!pm.validateMoveConstraints(fromBus, toBus, &r.feedback)) {
+                r.error = QStringLiteral("invalid_bus_target");
+                return r;
+            }
             const uint32_t oldParentId =
                 fromBus->parent ? fromBus->parent->objectID : 0;
             QString oldParentName;
@@ -785,13 +780,11 @@ SignalChainSource::doConnect(uint32_t fromId, uint32_t toId,
             undoMgr.endMacro();
             if (!moved) {
                 r.error = QStringLiteral("invalid_bus_target");
+                r.operationFailed = true;
                 return r;
             }
-            if (!oldParentName.isEmpty()) {
-                ToastManager::instance().showToast(
-                    tr("Previous bus parent %1 was disconnected.").arg(oldParentName),
-                    3000, ToastType::Info);
-            }
+            if (!oldParentName.isEmpty())
+                r.feedback = tr("Previous bus parent %1 was disconnected.").arg(oldParentName);
             r.success = true;
             r.effectiveType = QStringLiteral("bus_route");
             return r;
@@ -807,6 +800,10 @@ SignalChainSource::doConnect(uint32_t fromId, uint32_t toId,
             r.effectiveType = QStringLiteral("containment");
             return r;
         }
+        if (!pm.validateMoveConstraints(fromItem, toItem, &r.feedback)) {
+            r.error = QStringLiteral("containment_target_invalid");
+            return r;
+        }
         const bool fieldGroups = PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(fromItem->type);
         if (!fieldGroups)
             undoMgr.beginMacro(QStringLiteral("Blueprint Connect (Containment)"));
@@ -818,6 +815,7 @@ SignalChainSource::doConnect(uint32_t fromId, uint32_t toId,
         if (!fieldGroups) undoMgr.endMacro();
         if (!moved) {
             r.error = QStringLiteral("containment_target_invalid");
+            r.operationFailed = true;
             return r;
         }
         r.success = true;
@@ -844,9 +842,6 @@ SignalChainSource::doConnect(uint32_t fromId, uint32_t toId,
     if (eff == QStringLiteral("bus_route")) {
         if (!toBus) { r.error = QStringLiteral("bus_route_target_not_bus"); return r; }
         if (!pm.outputBusSelectable(fromId, toId)) {
-            ToastManager::instance().showToast(
-                tr("Target bus already receives a send from this item; connection rejected"),
-                3000, ToastType::Warning);
             r.error = QStringLiteral("output_rejected");
             return r;
         }
@@ -864,9 +859,7 @@ SignalChainSource::doConnect(uint32_t fromId, uint32_t toId,
             undoMgr.push(new BlueprintConnectCommand(
                 fromId, toId, BlueprintConnectCommand::Effective::Override));
             undoMgr.endMacro();
-            ToastManager::instance().showToast(
-                tr("Existing parent container: routing via main output override."),
-                3000, ToastType::Info);
+            r.feedback = tr("Existing parent container: routing via main output override.");
             r.success = true;
             r.effectiveType = QStringLiteral("override");
             return r;
@@ -888,9 +881,6 @@ SignalChainSource::doConnect(uint32_t fromId, uint32_t toId,
     if (eff == QStringLiteral("override")) {
         if (!toBus) { r.error = QStringLiteral("override_target_not_bus"); return r; }
         if (!pm.outputBusSelectable(fromId, toId)) {
-            ToastManager::instance().showToast(
-                tr("Target bus already receives a send from this item; connection rejected"),
-                3000, ToastType::Warning);
             r.error = QStringLiteral("output_rejected");
             return r;
         }

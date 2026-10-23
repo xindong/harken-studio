@@ -157,6 +157,8 @@ void PlayableInstanceTable::ReturnOriginalLifetime(OriginalLifetimePin& original
     if (entry.originalLifetimeCount == 0) {
         entry.originalLifetimeMarker = 0;
         entry.originalLifetimeInput = {};
+        if (entry.originalDisposition != Entry::OriginalDisposition::None)
+            --m_originalDispositionCount;
         entry.originalDisposition = Entry::OriginalDisposition::None;
         entry.originalDispositionPrepared = {};
         entry.originalLifetimeEnding = false;
@@ -231,6 +233,8 @@ bool PlayableInstanceTable::RequestOriginalLifetimeDisposition(Entry& entry, Pla
         return true;
     if (entry.originalDisposition != Entry::OriginalDisposition::None && entry.originalDisposition != requested)
         return false;
+    if (entry.originalDisposition == Entry::OriginalDisposition::None)
+        ++m_originalDispositionCount;
     entry.originalDisposition = requested;
     if (prepared != nullptr) entry.originalDispositionPrepared = *prepared;
     return true;
@@ -304,6 +308,8 @@ bool PlayableInstanceTable::BeginOriginalLifetimeRetirement(OriginalLifetimePin&
     OriginalLifetimePin hold;
     if (!originalBaseline.Borrow(&hold)) return false;
     // No fallible operation follows: the actual row remains live and reserved.
+    if (entry.originalDisposition == Entry::OriginalDisposition::None)
+        ++m_originalDispositionCount;
     entry.originalDisposition = Entry::OriginalDisposition::Retired;
     entry.originalLifetimeRetirementHeld = true;
     out->loan_ = std::move(hold);
@@ -327,7 +333,7 @@ bool PlayableInstanceTable::TryFinishOriginalLifetimeDisposition(OriginalLifetim
 }
 bool PlayableInstanceTable::IssueOriginalPreparedLifetimeBaselines(
     const PreparedParentLinksProof& preparation, std::span<OriginalLifetimePin> stableBaselines) noexcept {
-    if (preparation.owner_ != this || !preparation.Valid() || stableBaselines.size() != m_entries.size()) return false;
+    if (preparation.owner_ != this || !preparation.Valid() || stableBaselines.size() != Capacity()) return false;
     const auto count = preparation.nodeCount_ + preparation.anchorCount_;
     const auto nodeAt = [&preparation](std::size_t index) -> const PreparedParentLinksProof::Node& {
         return index < preparation.nodeCount_ ? preparation.nodes_[index]
@@ -739,7 +745,9 @@ bool DelayedPlayableCancellation::Valid() const noexcept {
 }
 
 PlayableInstanceTable::PlayableInstanceTable(std::uint32_t capacity)
-    : m_entries(capacity) {}
+{
+    if (!m_entries.Reserve(capacity)) throw std::bad_alloc{};
+}
 
 PlayableInstanceTable::~PlayableInstanceTable() {
     for (const auto& entry : m_entries) assert(entry.originalLifetimeCount == 0);
@@ -877,6 +885,7 @@ PlayableInstanceHandle PlayableInstanceTable::Acquire(
     if (parent != 0 && (Find(parent) == nullptr || ParentLinksHeld(parent))) {
         return 0;
     }
+    if (!PrepareStorage()) return 0;
     for (std::uint32_t slot = 0; slot < m_entries.size(); ++slot) {
         Entry& entry = m_entries[slot];
         if (!Reusable(entry.lifecycle) || entry.quarantined ||
@@ -903,6 +912,7 @@ PlayableInstanceHandle PlayableInstanceTable::Acquire(
         entry.contentIdentity = {};
         entry.monitorPreparedCandidateIdentity = {};
         entry.monitorPreparedCandidateObserved = false;
+        entry.monitorStartedObserved = false;
         entry.playbackRequest = parent != 0 ? FindAny(parent)->playbackRequest : request;
         entry.emitterOrigin = parent != 0 ? FindAny(parent)->emitterOrigin : emitterOrigin;
         entry.controlCause = {};
@@ -948,6 +958,7 @@ bool PlayableInstanceTable::PrepareAcquire(
         return false;
     }
     *out = {};
+    if (!PrepareStorage()) return false;
     for (std::uint32_t slot = 0; slot < m_entries.size(); ++slot) {
         Entry& entry = m_entries[slot];
         if (!Reusable(entry.lifecycle) || entry.quarantined ||
@@ -973,6 +984,7 @@ bool PlayableInstanceTable::PrepareAcquire(
         entry.contentIdentity = {};
         entry.monitorPreparedCandidateIdentity = {};
         entry.monitorPreparedCandidateObserved = false;
+        entry.monitorStartedObserved = false;
         entry.playbackRequest = parent != 0 ? FindAny(parent)->playbackRequest : request;
         entry.emitterOrigin = parent != 0 ? FindAny(parent)->emitterOrigin : emitterOrigin;
         entry.controlCause = {};
@@ -1269,6 +1281,8 @@ bool PlayableInstanceTable::RollbackCommitted(
     }
     // A successful native rollback supersedes a not-yet-ending Retired request.
     // Failed Source/child/unlink preflights leave that authentic request intact.
+    if (entry->originalDisposition != Entry::OriginalDisposition::None)
+        --m_originalDispositionCount;
     entry->originalDisposition = Entry::OriginalDisposition::None;
     entry->originalDispositionPrepared = {};
     entry->prepared = true;
@@ -1296,6 +1310,9 @@ void PlayableInstanceTable::FillMonitorFacts(const Entry& entry,
     out.contentObject = entry.contentIdentity.stableId;
     out.contentWorld = entry.contentIdentity.worldGeneration;
     out.contentKind = static_cast<std::uint8_t>(entry.kind);
+    out.terminalKind = static_cast<std::uint8_t>(entry.terminalOutcome.kind);
+    out.terminalResult = entry.terminalOutcome.resultCode;
+    out.terminalReason = entry.terminalOutcome.reasonCode;
     out.parentPlayable = entry.parent;
     out.ownerEpoch = entry.scheduleEpoch;
     const Entry* ancestor = &entry;
@@ -1338,6 +1355,28 @@ bool PlayableInstanceTable::CaptureMonitorFacts(PlayableInstanceHandle handle,
     if (entry == nullptr) return false;
     FillMonitorFacts(*entry, handle, *out);
     return true;
+}
+
+void PlayableInstanceTable::ObserveStarted(PlayableInstanceHandle handle,
+    std::uint64_t audioBlock, std::uint64_t frame) noexcept {
+    auto* entry = FindMut(handle);
+    if (entry == nullptr || entry->kind != PlayableKind::Sound ||
+        entry->monitorStartedObserved || audioBlock == 0) return;
+    entry->monitorStartedObserved = true;
+    MonitorLifecycleFacts facts{};
+    FillMonitorFacts(*entry, handle, facts);
+    facts.publishLegacy = false;
+    facts.reasonKnown = false;
+    facts.controlCause = {};
+    facts.terminalKind = 0;
+    facts.terminalResult = 0;
+    facts.terminalReason = 0;
+    facts.startedAudioBlock = audioBlock;
+    facts.startedFrame = frame;
+    ObserveMonitorLifecycle(MonitorLifecyclePhase::PlayableStarted, handle,
+        GenerationOf(handle), entry->contentIdentity.worldGeneration,
+        entry->contentIdentity.stableId, handle, facts.relatedAction, 0,
+        static_cast<std::uint8_t>(entry->kind), 0, facts);
 }
 
 bool PlayableInstanceTable::CaptureRootMetadata(
@@ -1782,7 +1821,7 @@ bool PlayableInstanceTable::AdvanceLifecycle(PlayableInstanceHandle handle,
 }
 
 std::uint32_t PlayableInstanceTable::FreeCount() const {
-    std::uint32_t free = 0;
+    std::uint32_t free = Capacity() - m_entries.ConstructedCount();
     for (const Entry& entry : m_entries) {
         if (!entry.quarantined && !entry.prepared && entry.originalLifetimeCount == 0 &&
             entry.completedOriginalCancellation.owner_ == nullptr &&

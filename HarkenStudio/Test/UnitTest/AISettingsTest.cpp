@@ -126,26 +126,45 @@ protected:
     std::shared_ptr<MemorySettingsStorage> storage_;
 };
 
-TEST_F(AISettingsTest, ApiKeyFieldIsWriteOnlyAndLoadNeverEchoesStoredKey)
+TEST_F(AISettingsTest, ApiKeyFieldLoadsStoredKeyWithPasswordMask)
 {
     FakeSecretStore fake;
     fake.storedKey = QStringLiteral("vault-secret");
     PreferencesDialog dialog(fake.access());
-    EXPECT_EQ(fake.loadCalls, 1);
     EXPECT_EQ(fake.lastService, QStringLiteral("HarkenStudio.ai"));
     EXPECT_EQ(fake.lastAccount, QStringLiteral("api_key"));
 
     auto* keyEdit = dialog.findChild<QLineEdit*>(QStringLiteral("aiApiKeyEdit"));
     ASSERT_NE(keyEdit, nullptr);
     EXPECT_EQ(keyEdit->echoMode(), QLineEdit::Password);
-    EXPECT_TRUE(keyEdit->text().isEmpty());
+    EXPECT_EQ(keyEdit->text(), QStringLiteral("vault-secret"));
+    EXPECT_NE(keyEdit->displayText(), keyEdit->text());
     EXPECT_EQ(fake.storeCalls, 0);
+    EXPECT_EQ(fake.eraseCalls, 0);
 }
 
-TEST_F(AISettingsTest, BlankKeyPreservesStoredKeyNewKeyStoresClearErases)
+TEST_F(AISettingsTest, ApiKeyChangesPersistOnlyOnApplyAndCancelDiscardsDraft)
 {
     FakeSecretStore fake;
     fake.storedKey = QStringLiteral("old-key");
+    for (const auto& draft : {QString(), QStringLiteral("draft-key")})
+    {
+        PreferencesDialog dialog(fake.access());
+        dialog.show();
+
+        auto* keyEdit = dialog.findChild<QLineEdit*>(QStringLiteral("aiApiKeyEdit"));
+        auto* cancel = dialog.findChild<QPushButton*>(QStringLiteral("settingsCancelButton"));
+        ASSERT_NE(keyEdit, nullptr);
+        ASSERT_NE(cancel, nullptr);
+
+        keyEdit->setText(draft);
+        cancel->click();
+        EXPECT_EQ(fake.storedKey, QStringLiteral("old-key"));
+        EXPECT_EQ(fake.storeCalls, 0);
+        EXPECT_EQ(fake.eraseCalls, 0);
+        EXPECT_EQ(dialog.result(), QDialog::Rejected);
+    }
+
     {
         PreferencesDialog dialog(fake.access());
         dialog.show();
@@ -167,6 +186,11 @@ TEST_F(AISettingsTest, BlankKeyPreservesStoredKeyNewKeyStoresClearErases)
         EXPECT_EQ(applied, 0);
         EXPECT_TRUE(dialog.isVisible());
 
+        keyEdit->clear();
+        EXPECT_TRUE(apply->isEnabled());
+        keyEdit->setText(QStringLiteral("old-key"));
+        EXPECT_FALSE(apply->isEnabled());
+
         keyEdit->setText(QStringLiteral("new-key"));
         EXPECT_TRUE(apply->isEnabled());
         apply->click();
@@ -175,7 +199,7 @@ TEST_F(AISettingsTest, BlankKeyPreservesStoredKeyNewKeyStoresClearErases)
         EXPECT_EQ(fake.lastAccount, QStringLiteral("api_key"));
         EXPECT_EQ(fake.lastStoredSecret, QStringLiteral("new-key"));
         EXPECT_EQ(fake.storedKey, QStringLiteral("new-key"));
-        EXPECT_TRUE(keyEdit->text().isEmpty());
+        EXPECT_EQ(keyEdit->text(), QStringLiteral("new-key"));
         EXPECT_EQ(applied, 1);
         EXPECT_FALSE(dialog.isVisible());
         EXPECT_EQ(dialog.result(), QDialog::Accepted);
@@ -187,19 +211,17 @@ TEST_F(AISettingsTest, BlankKeyPreservesStoredKeyNewKeyStoresClearErases)
 
         auto* keyEdit = dialog.findChild<QLineEdit*>(QStringLiteral("aiApiKeyEdit"));
         auto* apply = applyButton(dialog);
-        auto* clearButton = dialog.findChild<QPushButton*>(QStringLiteral("aiApiKeyClearButton"));
         ASSERT_NE(keyEdit, nullptr);
         ASSERT_NE(apply, nullptr);
-        ASSERT_NE(clearButton, nullptr);
 
         int applied = 0;
         QObject::connect(&dialog, &PreferencesDialog::aiAgentConfigApplied, &dialog,
                          [&applied]() { ++applied; });
 
-        EXPECT_TRUE(keyEdit->text().isEmpty());
+        EXPECT_EQ(keyEdit->text(), QStringLiteral("new-key"));
         EXPECT_FALSE(apply->isEnabled());
 
-        clearButton->click();
+        keyEdit->clear();
         EXPECT_EQ(fake.eraseCalls, 0);
         EXPECT_EQ(fake.storedKey, QStringLiteral("new-key"));
         EXPECT_TRUE(keyEdit->text().isEmpty());
@@ -216,7 +238,7 @@ TEST_F(AISettingsTest, BlankKeyPreservesStoredKeyNewKeyStoresClearErases)
     }
 }
 
-TEST_F(AISettingsTest, ConnectionTestUsesUnsavedValuesTypedKeyThenSavedKeyFallback)
+TEST_F(AISettingsTest, ConnectionTestUsesCurrentDraftWithoutPersistingIt)
 {
     TestSupport::SyntheticHttpServer server;
     ASSERT_TRUE(server.listen(true));
@@ -259,13 +281,12 @@ TEST_F(AISettingsTest, ConnectionTestUsesUnsavedValuesTypedKeyThenSavedKeyFallba
     storage_->endGroup();
 
     keyEdit->clear();
-    server.enqueueResponse({200, connectionOkBody(), {}, 0, false});
     testButton->click();
-    ASSERT_TRUE(TestSupport::spinUntil([&]() {
-        return server.requestCount() == 2 && testButton->isEnabled();
-    }, 5000));
-    EXPECT_EQ(server.lastHeader("Authorization"), QByteArrayLiteral("Bearer saved-key"));
     EXPECT_TRUE(testButton->isEnabled());
+    EXPECT_EQ(server.requestCount(), 1);
+    EXPECT_EQ(fake.storedKey, QStringLiteral("saved-key"));
+    EXPECT_EQ(fake.storeCalls, 0);
+    EXPECT_EQ(fake.eraseCalls, 0);
 }
 
 TEST_F(AISettingsTest, ConnectionTestValidationFailsBeforeAnyNetworkOrSecretUse)
@@ -299,12 +320,13 @@ TEST_F(AISettingsTest, ConnectionTestValidationFailsBeforeAnyNetworkOrSecretUse)
     baseUrlEdit->setText(QStringLiteral("https://example.invalid/v1"));
     testButton->click();
     EXPECT_TRUE(testButton->isEnabled());
-    EXPECT_EQ(fake.loadCalls, loadsAfterConstruction + 1);
+    EXPECT_EQ(fake.loadCalls, loadsAfterConstruction);
 }
 
 TEST_F(AISettingsTest, ApplyWritesOnlyWhenChangedAndBypassNormalizesToAsk)
 {
     FakeSecretStore fake;
+    fake.storedKey = QStringLiteral("saved-key");
     {
         PreferencesDialog dialog(fake.access());
         dialog.show();
@@ -331,6 +353,9 @@ TEST_F(AISettingsTest, ApplyWritesOnlyWhenChangedAndBypassNormalizesToAsk)
         EXPECT_TRUE(apply->isEnabled());
         apply->click();
         EXPECT_EQ(applied, 1);
+        EXPECT_EQ(fake.storedKey, QStringLiteral("saved-key"));
+        EXPECT_EQ(fake.storeCalls, 0);
+        EXPECT_EQ(fake.eraseCalls, 0);
         EXPECT_FALSE(dialog.isVisible());
         EXPECT_EQ(dialog.result(), QDialog::Accepted);
         {
@@ -372,6 +397,9 @@ TEST_F(AISettingsTest, ApplyWritesOnlyWhenChangedAndBypassNormalizesToAsk)
         EXPECT_TRUE(apply->isEnabled());
         apply->click();
         EXPECT_EQ(applied, 1);
+        EXPECT_EQ(fake.storedKey, QStringLiteral("saved-key"));
+        EXPECT_EQ(fake.storeCalls, 0);
+        EXPECT_EQ(fake.eraseCalls, 0);
         EXPECT_FALSE(dialog.isVisible());
         {
             const AIAgentConfig saved = AIAgentConfigStore().load();

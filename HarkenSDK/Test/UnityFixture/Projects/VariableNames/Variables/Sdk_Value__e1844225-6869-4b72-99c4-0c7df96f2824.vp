@@ -1,0 +1,28 @@
+{
+    "content": {
+        "components": {
+            "variable": {
+                "defaultValue": 0,
+                "kind": 1,
+                "rangeMax": 1,
+                "rangeMin": 0
+            }
+        },
+        "expanded": true,
+        "guid": "e1844225-6869-4b72-99c4-0c7df96f2824",
+        "name": "Sdk_Value",
+        "objectPath": "\\Sdk_Value",
+        "parentRef": {
+            "kind": "root"
+        },
+        "type": "Variable"
+    },
+    "harkenDocument": {
+        "id": "e1844225-6869-4b72-99c4-0c7df96f2824",
+        "projectId": "a434bb37-8ab4-4504-bb2f-3b4de5251e32",
+        "propertyModel": "fieldGroupsV1",
+        "savedStudioVersion": "0.7.2",
+        "schemaVersion": 7,
+        "type": "project.variable"
+    }
+}

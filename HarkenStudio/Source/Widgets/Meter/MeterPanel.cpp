@@ -377,6 +377,7 @@ void MeterPanel::sampleLevels()
         return;
     }
     acceptPeak(left, right);
+    updateDisplay();
 }
 
 void MeterPanel::acceptPeak(float left, float right)

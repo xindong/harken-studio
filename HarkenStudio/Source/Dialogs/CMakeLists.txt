@@ -22,18 +22,24 @@ add_library(harken_editor_dialogs STATIC
     Settings/PreferencesDialog.h
     Settings/ProjectSettingsDialog.cpp
     Settings/ProjectSettingsDialog.h
-    Settings/Pages/GeneralPage.cpp
-    Settings/Pages/GeneralPage.h
+    Settings/Pages/AppearancePage.cpp
+    Settings/Pages/AppearancePage.h
+    Settings/Pages/ExtensionPage.cpp
+    Settings/Pages/ExtensionPage.h
     Settings/Pages/ShortcutsPage.cpp
     Settings/Pages/ShortcutsPage.h
     Settings/Pages/LayoutPage.cpp
     Settings/Pages/LayoutPage.h
     Settings/Pages/AIAgentPage.cpp
     Settings/Pages/AIAgentPage.h
-    Settings/Pages/ProjectBuildPage.cpp
-    Settings/Pages/ProjectBuildPage.h
+    Settings/Pages/ProjectConfigPage.cpp
+    Settings/Pages/ProjectConfigPage.h
+    Settings/Pages/ProjectPublishPage.cpp
+    Settings/Pages/ProjectPublishPage.h
     Settings/ProjectPlatformDialog.cpp
     Settings/ProjectPlatformDialog.h
+    Settings/ProjectPlatformEditor.cpp
+    Settings/ProjectPlatformEditor.h
     StartupLoadingWindow.cpp
     StartupLoadingWindow.h
     StartupRenderer.cpp

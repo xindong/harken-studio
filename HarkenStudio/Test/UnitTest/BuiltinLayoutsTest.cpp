@@ -45,11 +45,15 @@ TEST(LayoutController, MigratesRenamedDockObjectNames)
 
     EXPECT_FALSE(migrated.contains("AuditionDock"));
     EXPECT_FALSE(migrated.contains("MonitorMeterDock"));
-    EXPECT_TRUE(migrated.contains("Name=\"PreviewDock\""));
+    EXPECT_TRUE(migrated.contains("Name=\"ControlDock\""));
     EXPECT_TRUE(migrated.contains("Name=\"MeterDock_1\""));
     EXPECT_TRUE(migrated.contains("Name=\"MeterDock_2\""));
     EXPECT_TRUE(migrated.contains("Name=\"ExplorerDock\""));
     EXPECT_EQ(VNX::migrateDockNames(migrated), migrated);
+
+    QByteArray previous = saved;
+    previous.replace("AuditionDock", "PreviewDock");
+    EXPECT_EQ(VNX::migrateDockNames(previous), migrated);
 }
 TEST(BuiltinLayouts, FindsIdAndStableSourceName)
 {

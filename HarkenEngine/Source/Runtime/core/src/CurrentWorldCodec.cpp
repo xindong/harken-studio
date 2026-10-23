@@ -1456,7 +1456,7 @@ bool EncodeCurrentWorldBodyImpl(
             for (std::uint32_t i = 0; i < world.actionCount; ++i) {
                 const auto& action = world.actions[i];
                 if (!CountPointer(action.stepCount, action.steps,
-                                  kMaxActionSteps) ||
+                                  kHardActionStepCapacity) ||
                     action.stepCount == 0) {
                     out.clear();
                     return false;
@@ -2376,7 +2376,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                 action.expandedStepOccurrenceCount = reader.U32();
                 action.expandedFiringCount = reader.U32();
                 actionStepTotal += stepCount;
-                if (stepCount == 0 || stepCount > kMaxActionSteps ||
+                if (stepCount == 0 || stepCount > kHardActionStepCapacity ||
                     actionStepTotal > kHardActionStepCapacity ||
                     static_cast<std::uint64_t>(stepCount) *
                             kCurrentWorldActionStepWireBytes >

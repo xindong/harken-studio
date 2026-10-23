@@ -36,6 +36,66 @@ void RetireServiceRow(harken::EnginePlayableStartRow* start,
     service->selectionCount = 0;
 }
 
+int NestedFiringSelectionSelfTest() {
+    constexpr const char* kLeaf = "3dfbe430-399d-4e1c-88ff-5af4a56d6e96";
+    constexpr const char* kOtherLeaf = "519dd49c-982e-4986-a814-3643256e430e";
+    VnObjectId action{}, childAction{}, nestedAction{};
+    harken::ActionFiringTable table;
+    harken::PreparedActionFiring root, child, nested, otherRoot, otherChild;
+    if (!harken::ParseObjectId(kLeaf, &action) ||
+        !harken::ParseObjectId(kOtherLeaf, &childAction) ||
+        !harken::ParseObjectId("11111111-2222-3333-4444-555555555555", &nestedAction) ||
+        !table.Reset(5) ||
+        !table.PrepareRoot(action, 1, 1, &root) ||
+        !table.PrepareChild(root, childAction, 1, 1, &child) ||
+        !table.PrepareChild(child, nestedAction, 1, 1, &nested) ||
+        !table.CommitTree(&root, 1) ||
+        !table.PrepareRoot(action, 1, 1, &otherRoot) ||
+        !table.PrepareChild(otherRoot, childAction, 1, 1, &otherChild) ||
+        !table.CommitTree(&otherRoot, 2)) {
+        std::fprintf(stderr, "error: nested firing fixture failed\n");
+        return 38;
+    }
+    static harken::EnginePlayableStartRow starts[2];
+    static harken::EnginePlayableServiceRow services[2];
+    if (!BindValidAction(&starts[0], &services[0], nested.Handle(), 1, kLeaf) ||
+        !BindValidAction(&starts[1], &services[1], otherChild.Handle(), 2, kOtherLeaf)) {
+        return 39;
+    }
+    starts[1].slot = 1;
+    starts[1].rootService = {1, 1};
+    services[1].identity = {1, 1};
+    for (unsigned index = 0; index < 2; ++index) {
+        const auto firing = index == 0 ? root.Handle() : otherRoot.Handle();
+        const auto& expected = services[index].leaf.stableId;
+        harkenhost::FiringSelectionCopy selection;
+        harkenhost::FiringQueueWindowCopy window;
+        harkenhost::FiringQueueEndCopy end;
+        if (!harkenhost::CaptureFiringSelection(starts, 2, services, 2, firing, &selection, &table) ||
+            selection.leafId != expected ||
+            !harkenhost::ObserveFiringQueueWindow(starts, 2, services, 2, firing, &window, &table) ||
+            window.starts != 1 ||
+            !harkenhost::CaptureFiringQueueEnd(starts, 2, services, 2, firing, &end, &table) ||
+            !end.rowPresent || end.leafId != expected) {
+            std::fprintf(stderr, "error: nested diagnostics lost or mixed firing trees\n");
+            return 40;
+        }
+    }
+    harkenhost::FiringSelectionCopy selection;
+    harkenhost::FiringQueueWindowCopy window;
+    harkenhost::FiringQueueEndCopy end;
+    if (harkenhost::CaptureFiringSelection(starts + 1, 1, services, 2, root.Handle(), &selection, &table) ||
+        !harkenhost::ObserveFiringQueueWindow(starts + 1, 1, services, 2, root.Handle(), &window, &table) ||
+        window.starts != 0 ||
+        !harkenhost::CaptureFiringQueueEnd(starts + 1, 1, services, 2, root.Handle(), &end, &table) ||
+        end.rowPresent) {
+        std::fprintf(stderr, "error: unrelated firing was included\n");
+        return 41;
+    }
+    std::printf("selection-copy-self-test nested descendants exclude unrelated trees\n");
+    return 0;
+}
+
 
 int QueueWindowDiagSelfTest() {
     constexpr VnActionFiringHandle kFiring = 42;
@@ -472,6 +532,9 @@ int QueueEndProbeSelfTest() {
 }
 
 int main() {
+    if (const int nested = NestedFiringSelectionSelfTest()) {
+        return nested;
+    }
     if (const int initFailure = harkenhost::RunPackPlayInitFailureSelfTest()) {
         return initFailure;
     }

@@ -73,7 +73,7 @@ VariableControlInstanceTable::InitialSideReplacement::~InitialSideReplacement() 
 
 bool VariableControlInstanceTable::MatchesInitialSideEntry(
     const OriginalInitialSideReceipt& original) const noexcept {
-    if (original.owner_ != this || !original.token_.Valid() || original.token_.slot >= capacity_ ||
+    if (original.owner_ != this || !original.token_.Valid() || original.token_.slot >= entries_.ConstructedCount() ||
         original.entry_ != &entries_[original.token_.slot]) return false;
     const auto& entry = *original.entry_;
     const auto& create = original.create_;
@@ -89,7 +89,7 @@ bool VariableControlInstanceTable::IssueOriginalInitialSideReceipt(
     const PreparedVariableControlInstance& original, VariableControlSide selected,
     OriginalInitialSideReceipt* out) noexcept {
     if (out == nullptr || out->Valid() || original.owner_ != this || !original.prepared_ ||
-        !original.token_.Valid() || original.token_.slot >= capacity_ ||
+        !original.token_.Valid() || original.token_.slot >= entries_.ConstructedCount() ||
         (selected != VariableControlSide::Discrete && selected != VariableControlSide::Continuous)) return false;
     auto& entry = entries_[original.token_.slot];
     const auto slotState = entry.state.load(std::memory_order_acquire);
@@ -291,7 +291,7 @@ void VariableControlInstanceTable::PreparedCommitProof::Release() noexcept {
 }
 
 bool VariableControlInstanceTable::PreparedCommitHeld(VariableControlInstanceToken token) const noexcept {
-    return token.Valid() && token.slot < capacity_ &&
+    return token.Valid() && token.slot < entries_.ConstructedCount() &&
         entries_[token.slot].generation.load(std::memory_order_acquire) == token.generation &&
         entries_[token.slot].state.load(std::memory_order_acquire) == SlotState::PreparedCommitHeld;
 }
@@ -299,7 +299,7 @@ bool VariableControlInstanceTable::PreparedCommitHeld(VariableControlInstanceTok
 bool VariableControlInstanceTable::ProvePreparedCommit(
     PreparedVariableControlInstance& original, PreparedCommitProof* out) noexcept {
     if (out == nullptr || out->Valid() || original.owner_ != this || !original.prepared_ ||
-        !original.token_.Valid() || original.token_.slot >= capacity_) return false;
+        !original.token_.Valid() || original.token_.slot >= entries_.ConstructedCount()) return false;
     auto& entry = entries_[original.token_.slot];
     if (entry.generation.load(std::memory_order_acquire) != original.token_.generation) return false;
     SlotState expected = SlotState::Initializing;
@@ -438,13 +438,14 @@ bool ResolveVariableControlCadenceFrame(
 
 VariableControlInstanceTable::VariableControlInstanceTable(
     std::uint32_t capacity)
-    : entries_(capacity == 0 ? nullptr : std::make_unique<Entry[]>(capacity)),
-      capacity_(capacity) {}
+    : capacity_(capacity) {
+    if (!entries_.Reserve(capacity)) throw std::bad_alloc{};
+}
 
 VariableControlInstanceTable::Entry*
 VariableControlInstanceTable::Resolve(
     VariableControlInstanceToken token) noexcept {
-    if (!token.Valid() || token.slot >= capacity_) return nullptr;
+    if (!token.Valid() || token.slot >= entries_.ConstructedCount()) return nullptr;
     Entry& entry = entries_[token.slot];
     return entry.state.load(std::memory_order_acquire) == SlotState::Live &&
                    entry.generation.load(std::memory_order_acquire) ==
@@ -456,7 +457,7 @@ VariableControlInstanceTable::Resolve(
 const VariableControlInstanceTable::Entry*
 VariableControlInstanceTable::Resolve(
     VariableControlInstanceToken token) const noexcept {
-    if (!token.Valid() || token.slot >= capacity_) return nullptr;
+    if (!token.Valid() || token.slot >= entries_.ConstructedCount()) return nullptr;
     const Entry& entry = entries_[token.slot];
     return entry.state.load(std::memory_order_acquire) == SlotState::Live &&
                    entry.generation.load(std::memory_order_acquire) ==
@@ -468,7 +469,7 @@ VariableControlInstanceTable::Resolve(
 VariableControlInstanceTable::Entry*
 VariableControlInstanceTable::ResolvePreparing(
     VariableControlInstanceToken token) noexcept {
-    if (!token.Valid() || token.slot >= capacity_) return nullptr;
+    if (!token.Valid() || token.slot >= entries_.ConstructedCount()) return nullptr;
     Entry& entry = entries_[token.slot];
     const SlotState state = entry.state.load(std::memory_order_acquire);
     return (state == SlotState::Initializing || state == SlotState::Live) &&
@@ -705,6 +706,7 @@ VariableControlInstanceStatus VariableControlInstanceTable::AcquireInternal(
         return VariableControlInstanceStatus::Invalid;
     }
     for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
+        if (!entries_.ConstructThrough(slot + 1u)) return VariableControlInstanceStatus::Capacity;
         Entry& entry = entries_[slot];
         SlotState expected = SlotState::Free;
         if (!entry.state.compare_exchange_strong(
@@ -744,7 +746,7 @@ bool VariableControlInstanceTable::CommitPreparedAcquire(
     VariableControlInstanceToken* out) noexcept {
     if (prepared == nullptr || prepared->owner_ != this ||
         !prepared->prepared_ || out == nullptr ||
-        !prepared->token_.Valid() || prepared->token_.slot >= capacity_) {
+        !prepared->token_.Valid() || prepared->token_.slot >= entries_.ConstructedCount()) {
         return false;
     }
     Entry& entry = entries_[prepared->token_.slot];
@@ -772,7 +774,7 @@ bool VariableControlInstanceTable::CancelPreparedAcquire(
     PreparedVariableControlInstance* prepared) noexcept {
     if (prepared == nullptr || prepared->owner_ != this ||
         !prepared->prepared_ || !prepared->token_.Valid() ||
-        prepared->token_.slot >= capacity_) {
+        prepared->token_.slot >= entries_.ConstructedCount()) {
         return false;
     }
     Entry& entry = entries_[prepared->token_.slot];

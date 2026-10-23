@@ -17,6 +17,7 @@
 
 #include "Common/StreamBuilder.h"
 #include "Common/TestUtil.h"
+#include "VoicePoolReleaseTestAccess.h"
 
 #include "harken/core/AllocGuard.h"
 #include "harken/core/CommandQueue.h"
@@ -74,16 +75,9 @@ VnSnapshot CaptureFull() {
     return snap;
 }
 
-// Detecting a load-triggered batch abandonment across the parallel byte-identity
-// gates. When a block's worker rendezvous overruns its real-time deadline the
-// coordinator abandons the batch, quarantines the unfinished voices (a designed
-// degradation under host overload) AND drops the pool to serial fallback for the
-// rest of the session — so the snapshot's active renderWorkerCount reads 0 for a
-// render that was configured parallel. That published 0 is the reliable,
-// cadence-free signal the gates below use to skip rather than compare a degraded
-// (or never-actually-parallel) run against the serial reference; byte-identity
-// is defined only for a completed parallel render.
-bool ParallelRenderAbandoned(std::uint32_t configuredWorkers,
+// A failed worker setup or wake primitive disables parallel rendering.
+// Deadline deferral preserves voices and does not disable the worker set.
+bool ParallelRenderUnavailable(std::uint32_t configuredWorkers,
                              const VnSnapshot& snap) {
     return configuredWorkers > 0 && snap.renderWorkerCount == 0;
 }
@@ -92,6 +86,8 @@ struct BusyPeakChainLoad {
     std::atomic<std::uint32_t> started{0};
     std::uint32_t participantCount = 0;
     std::uint64_t spinTicks = 0;
+    std::uint64_t workerSpinTicks = 0;
+    std::thread::id coordinator = std::this_thread::get_id();
 
     static void Process(void* state, float* const*, std::uint32_t,
                         std::uint32_t, std::uint32_t) {
@@ -102,7 +98,9 @@ struct BusyPeakChainLoad {
             std::this_thread::yield();
         }
         const std::uint64_t deadline =
-            harken::CpuClockTicks() + load->spinTicks;
+            harken::CpuClockTicks() +
+            (std::this_thread::get_id() == load->coordinator
+                ? load->spinTicks : load->workerSpinTicks);
         while (harken::CpuClockTicks() < deadline) {
         }
     }
@@ -119,7 +117,7 @@ void RenderScene(std::uint32_t workerCount, std::uint32_t mixLayout,
                  std::uint32_t deviceLayout, std::uint32_t blocks,
                  CaptureMulti& out, std::uint32_t arenaBytes = 1u << 20,
                  std::uint64_t* outOverflow = nullptr,
-                 bool* outBatchAbandoned = nullptr) {
+                 bool* outParallelUnavailable = nullptr) {
     VnConfig config =
         MakeNullConfigLayout(16, kBlock, kRate, mixLayout, deviceLayout);
     config.fxSlotsPerVoice = 2;
@@ -194,15 +192,15 @@ void RenderScene(std::uint32_t workerCount, std::uint32_t mixLayout,
     PumpAndCaptureMulti(engine, blocks, out);
     EXPECT_EQ(0u, harken::memguard::HitCount())
         << "the allocation guard fired during the render";
-    if (outOverflow != nullptr || outBatchAbandoned != nullptr) {
+    if (outOverflow != nullptr || outParallelUnavailable != nullptr) {
         const VnSnapshot snap = CaptureFull();
         if (outOverflow != nullptr) {
             // Cumulative arena-overflow count for the whole run — the degradation
             // fingerprint the tight-arena gate compares across worker counts.
             *outOverflow = snap.arenaOverflowCount;
         }
-        if (outBatchAbandoned != nullptr) {
-            *outBatchAbandoned = ParallelRenderAbandoned(workerCount, snap);
+        if (outParallelUnavailable != nullptr) {
+            *outParallelUnavailable = ParallelRenderUnavailable(workerCount, snap);
         }
     }
 }
@@ -241,26 +239,19 @@ void RunDeterminismCase(std::uint32_t mixLayout, std::uint32_t deviceLayout) {
     constexpr std::uint32_t kBlocks = 48;
     CaptureMulti serial;
     // Serial rendering (renderWorkerCount = 0) dispatches no worker batch, so it
-    // cannot abandon; only the parallel renders below are guarded.
+    // cannot lose its worker set; only the parallel renders below are guarded.
     RenderScene(0, mixLayout, deviceLayout, kBlocks, serial);
     ExpectNonSilent(serial);
     for (std::uint32_t workers : {1u, 2u, 4u}) {
         CaptureMulti parallel;
-        bool abandoned = false;
+        bool unavailable = false;
         RenderScene(workers, mixLayout, deviceLayout, kBlocks, parallel,
-                    1u << 20, nullptr, &abandoned);
-        if (abandoned) {
-            // The rendezvous overran its real-time deadline and the coordinator
-            // quarantined the unfinished voices — a designed degradation under
-            // host overload, not a determinism violation. Byte-identity with the
-            // serial fold is defined only for a completed render, so the honest
-            // outcome is to skip, not to compare a degraded block or to weaken
-            // the invariant. A genuine parallel-fold nondeterminism would surface
-            // on a completed (non-abandoned) render, which this still checks in
-            // full.
+                    1u << 20, nullptr, &unavailable);
+        if (unavailable) {
+            // Byte identity requires a run that actually used workers.
             GTEST_SKIP()
                 << "renderWorkerCount=" << workers
-                << " abandoned a batch past its real-time deadline (host "
+                << " could not keep its worker set available (host "
                    "overloaded); byte-identity holds only for a completed render";
         }
         ExpectNonSilent(parallel);
@@ -316,18 +307,17 @@ TEST(RenderWorkerDeterminism, TightArenaDegradesIdenticallyAcrossWorkerCounts) {
     for (std::uint32_t workers : {1u, 2u, 4u}) {
         CaptureMulti parallel;
         std::uint64_t parallelOverflow = 0;
-        bool abandoned = false;
+        bool unavailable = false;
         RenderScene(workers, VN_CHANNEL_LAYOUT_STEREO, VN_CHANNEL_LAYOUT_STEREO,
                     kBlocks, parallel, kTightArena, &parallelOverflow,
-                    &abandoned);
-        if (abandoned) {
-            // Serial fallback after a deadline overrun (host overloaded); the
+                    &unavailable);
+        if (unavailable) {
+            // Serial fallback after worker setup or wake failure; the
             // degrade-identically invariant is defined only for a completed
             // parallel render.
             GTEST_SKIP()
                 << "renderWorkerCount=" << workers
-                << " fell back to serial after abandoning a batch past its "
-                   "real-time deadline (host overloaded)";
+                << " fell back to serial after a worker setup or wake failure";
         }
         ExpectNonSilent(parallel);
         ExpectBitIdentical(serial, parallel, workers);
@@ -344,7 +334,7 @@ struct SidechainWorkerResult {
 };
 
 void RenderSidechainScene(std::uint32_t workerCount, SidechainWorkerResult& out,
-                          bool* outAbandoned = nullptr) {
+                          bool* outUnavailable = nullptr) {
     VnConfig config = MakeNullConfigLayout(16, kBlock, kRate,
                                            VN_CHANNEL_LAYOUT_STEREO,
                                            VN_CHANNEL_LAYOUT_STEREO);
@@ -441,20 +431,20 @@ void RenderSidechainScene(std::uint32_t workerCount, SidechainWorkerResult& out,
     out.attenuatedPeak = snapshot.busPeaks[musicBusIndex];
     EXPECT_EQ(0u, harken::memguard::HitCount())
         << "the allocation guard fired during the sidechain render";
-    if (outAbandoned != nullptr) {
-        *outAbandoned = ParallelRenderAbandoned(workerCount, snapshot);
+    if (outUnavailable != nullptr) {
+        *outUnavailable = ParallelRenderUnavailable(workerCount, snapshot);
     }
 }
 
 TEST(RenderWorkerDeterminism, SidechainActiveByteIdenticalAcrossWorkerCounts) {
     SidechainWorkerResult reference;
-    bool referenceAbandoned = false;
-    RenderSidechainScene(1, reference, &referenceAbandoned);
-    if (referenceAbandoned) {
-        // The 1-worker reference itself dispatches a batch and can abandon under
+    bool referenceUnavailable = false;
+    RenderSidechainScene(1, reference, &referenceUnavailable);
+    if (referenceUnavailable) {
+        // The 1-worker reference also depends on successful worker setup under
         // host overload; comparing against a degraded reference is meaningless.
         GTEST_SKIP() << "the 1-worker reference fell back to serial after "
-                        "abandoning a batch past its real-time deadline (host "
+                        "a worker setup or wake failure (host "
                         "overloaded)";
     }
     ExpectNonSilent(reference.capture);
@@ -465,12 +455,11 @@ TEST(RenderWorkerDeterminism, SidechainActiveByteIdenticalAcrossWorkerCounts) {
 
     for (std::uint32_t workers : {2u, 4u}) {
         SidechainWorkerResult parallel;
-        bool abandoned = false;
-        RenderSidechainScene(workers, parallel, &abandoned);
-        if (abandoned) {
+        bool unavailable = false;
+        RenderSidechainScene(workers, parallel, &unavailable);
+        if (unavailable) {
             GTEST_SKIP() << "renderWorkerCount=" << workers
-                         << " fell back to serial after abandoning a batch past "
-                            "its real-time deadline (host overloaded)";
+                         << " fell back to serial after a worker setup or wake failure";
         }
         ExpectNonSilent(parallel.capture);
         ASSERT_NEAR(parallel.attenuatedPeak / parallel.baselinePeak,
@@ -489,7 +478,7 @@ struct RawVoiceSidechainWorkerResult {
 void RenderRawVoiceSidechainScene(
     std::uint32_t workerCount,
     RawVoiceSidechainWorkerResult& out,
-    bool* outAbandoned = nullptr) {
+    bool* outUnavailable = nullptr) {
     VnConfig config = MakeNullConfigLayout(
         4, kBlock, kRate, VN_CHANNEL_LAYOUT_STEREO,
         VN_CHANNEL_LAYOUT_STEREO);
@@ -561,8 +550,8 @@ void RenderRawVoiceSidechainScene(
     out.detectorPeak = state->telemetry.detectorPeak;
     EXPECT_EQ(0u, harken::memguard::HitCount())
         << "the allocation guard fired during raw Voice sidechain render";
-    if (outAbandoned != nullptr) {
-        *outAbandoned = ParallelRenderAbandoned(workerCount, CaptureFull());
+    if (outUnavailable != nullptr) {
+        *outUnavailable = ParallelRenderUnavailable(workerCount, CaptureFull());
     }
 }
 
@@ -575,12 +564,11 @@ TEST(RenderWorkerDeterminism,
 
     for (std::uint32_t workers : {1u, 2u, 4u}) {
         RawVoiceSidechainWorkerResult parallel;
-        bool abandoned = false;
-        RenderRawVoiceSidechainScene(workers, parallel, &abandoned);
-        if (abandoned) {
+        bool unavailable = false;
+        RenderRawVoiceSidechainScene(workers, parallel, &unavailable);
+        if (unavailable) {
             GTEST_SKIP() << "renderWorkerCount=" << workers
-                         << " fell back to serial after abandoning a batch past "
-                            "its real-time deadline (host overloaded)";
+                         << " fell back to serial after a worker setup or wake failure";
         }
         ExpectNonSilent(parallel.capture);
         EXPECT_FLOAT_EQ(reference.detectorPeak, parallel.detectorPeak);
@@ -619,7 +607,7 @@ struct StarveResult {
 // serial path that only shows up at the arena-exhaustion boundary.
 void RenderStarveScene(std::uint32_t workerCount, std::uint32_t arenaBytes,
                        bool sendOnStream, std::uint32_t blocks,
-                       StarveResult& out, bool* outAbandoned = nullptr) {
+                       StarveResult& out, bool* outUnavailable = nullptr) {
     VnConfig config = MakeNullConfigLayout(8, kBlock, kRate,
                                            VN_CHANNEL_LAYOUT_STEREO,
                                            VN_CHANNEL_LAYOUT_STEREO);
@@ -692,8 +680,8 @@ void RenderStarveScene(std::uint32_t workerCount, std::uint32_t arenaBytes,
     out.starved = snap.voiceStarvedCount;
     EXPECT_EQ(0u, harken::memguard::HitCount())
         << "the allocation guard fired during the starvation render";
-    if (outAbandoned != nullptr) {
-        *outAbandoned = ParallelRenderAbandoned(workerCount, snap);
+    if (outUnavailable != nullptr) {
+        *outUnavailable = ParallelRenderUnavailable(workerCount, snap);
     }
 }
 
@@ -739,17 +727,16 @@ TEST(RenderWorkerDeterminism, ZeroProducedSendVoiceReservesTapAndStaysDeterminis
         << "the tight arena did not degrade — the boundary corner is vacuous";
     for (std::uint32_t workers : {1u, 2u, 4u}) {
         StarveResult parallel;
-        bool abandoned = false;
+        bool unavailable = false;
         RenderStarveScene(workers, kTightArena, /*sendOnStream=*/true, kBlocks,
-                          parallel, &abandoned);
-        if (abandoned) {
-            // Serial fallback after a deadline overrun (host overloaded): the
+                          parallel, &unavailable);
+        if (unavailable) {
+            // Serial fallback after worker setup or wake failure: the
             // degradation fingerprint and byte-identity are defined only for a
             // completed parallel render.
             GTEST_SKIP()
                 << "renderWorkerCount=" << workers
-                << " fell back to serial after abandoning a batch past its "
-                   "real-time deadline (host overloaded)";
+                << " fell back to serial after a worker setup or wake failure";
         }
         ExpectNonSilent(parallel.capture);
         ExpectBitIdentical(serial.capture, parallel.capture, workers);
@@ -814,16 +801,9 @@ TEST(RenderWorkerBusyPeak, NonzeroUnderLoadAndZeroWhenSerial) {
         ASSERT_EQ(VN_OK, Vn_Update());
         PumpAndCaptureMulti(session.Engine(), 200, discard);
         const VnSnapshot snap = CaptureFull();
-        // Two host-scheduling facts, neither a measurement fault, break the
-        // strong assertions below and are handled by skipping with the observed
-        // figures rather than failing:
-        //   * renderWorkerCount == 0 — under host overload a block's worker
-        //     rendezvous can overrun its real-time deadline; the pool then
-        //     abandons the batch and drops to serial fallback for the rest of the
-        //     session, so the active worker count reads 0 despite a config of 4.
-        //   * busy peak == 0 — even while parallel, the coordinator (which shares
-        //     the job-claim cursor) can drain every job before a worker thread
-        //     wakes, so no worker records a busy span.
+        // A failed worker setup/wake disables the pool. Even with workers,
+        // the coordinator may claim every job before any worker wakes, leaving
+        // no worker busy span to measure.
         // The busy-span measurement itself is proven under a controlled load,
         // independent of the host, by
         // RenderWorkerBusyPeak.MeasuresBusySpanUnderControlledLoad.
@@ -886,8 +866,8 @@ TEST(RenderWorkerBusyPeak, MeasuresBusySpanUnderControlledLoad) {
 
     const harken::RenderWorkerPool::RunResult result =
         pool.Run(load.jobCount, &Load::Job, &load);
-    ASSERT_FALSE(result.abandoned)
-        << "the controlled batch abandoned; an abandoned batch reports no busy "
+    ASSERT_FALSE(result.deferred)
+        << "the controlled batch deferred; a deferred batch reports no busy "
            "peak by design";
     const std::uint64_t micros =
         harken::CpuTicksToMicros(0, result.busyPeakTicks, ticksPerSecond);
@@ -900,7 +880,7 @@ TEST(RenderWorkerBusyPeak, MeasuresBusySpanUnderControlledLoad) {
 
 TEST(RenderWorkerBusyPeak,
      VoicePoolPeakConvertsPublishesAndReachesPublicSnapshot) {
-    VnConfig config = MakeNullConfigLayout(2, kBlock, kRate,
+    VnConfig config = MakeNullConfigLayout(2, 480, kRate,
                                            VN_CHANNEL_LAYOUT_STEREO,
                                            VN_CHANNEL_LAYOUT_STEREO);
     config.fxSlotsPerVoice = 1;
@@ -928,6 +908,9 @@ TEST(RenderWorkerBusyPeak,
     BusyPeakChainLoad load;
     load.participantCount = static_cast<std::uint32_t>(handles.size());
     load.spinTicks = std::max<std::uint64_t>(1, ticksPerSecond / 10000);
+    // The worker needs 2 ms while the callback has a 10 ms block. Finishing
+    // this valid quantum must not be cut short by a fixed 1 ms wait budget.
+    load.workerSpinTicks = std::max<std::uint64_t>(1, ticksPerSecond / 500);
     for (const VnVoiceHandle publicHandle : handles) {
         const VnVoiceHandle renderHandle =
             harkentest::RenderHandle(engine, publicHandle);
@@ -939,7 +922,10 @@ TEST(RenderWorkerBusyPeak,
         context->fxSlots[0].state = &load;
     }
 
+    const auto completedBefore = engine->mixer.BlocksRendered();
     engine->nullBackend.Pump(1);
+    harken::detail::VoicePoolReleaseTestAccess::JoinWorkers(engine->voices);
+    EXPECT_EQ(completedBefore + 1u, engine->mixer.BlocksRendered());
     EXPECT_EQ(load.started.load(std::memory_order_acquire), handles.size());
     const std::uint64_t peakTicks = engine->voices.RenderWorkerBusyPeakTicks();
     ASSERT_GT(peakTicks, 0u);
@@ -1071,36 +1057,23 @@ std::uint64_t DeadlineMicros(const harken::MixerLoop& mixer) {
 
 } // namespace
 
-TEST(RenderWorkerDeadlineBudget, AbsoluteFigureRulesAtOrdinaryBlockSizes) {
-    // The budget is an absolute duration, capped by the block period but never
-    // raised by it. At the ordinary block sizes the absolute figure is what is in
-    // force, and the same figure at two very different block widths is the point:
-    // what it has to clear is machine jitter, which does not scale with the block.
-    std::uint64_t micros[2] = {0, 0};
-    const std::uint32_t blocks[2] = {256, 480};
-    for (int i = 0; i < 2; ++i) {
-        VnConfig config = MakeNullConfigLayout(4, blocks[i], kRate,
-                                               VN_CHANNEL_LAYOUT_STEREO,
-                                               VN_CHANNEL_LAYOUT_STEREO);
+TEST(RenderWorkerDeadlineBudget, BlockPeriodReservesHalfForMixTail) {
+    for (const std::uint32_t frames : {64u, 256u, 480u}) {
+        VnConfig config = MakeNullConfigLayout(4, frames, kRate,
+            VN_CHANNEL_LAYOUT_STEREO, VN_CHANNEL_LAYOUT_STEREO);
         config.renderWorkerCount = 2;
         EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
-        micros[i] = DeadlineMicros(session.Engine()->mixer);
-        EXPECT_GT(micros[i], 0u) << "blockFrames=" << blocks[i];
+        const auto micros = DeadlineMicros(session.Engine()->mixer);
+        const auto halfPeriodUs = static_cast<std::uint64_t>(frames) * 500000u / kRate;
+        EXPECT_NEAR(static_cast<double>(halfPeriodUs), static_cast<double>(micros), 1.0);
+        EXPECT_GT(micros, 0u);
     }
-    EXPECT_EQ(micros[0], micros[1])
-        << "the budget scaled with the block period instead of staying absolute";
-    // Above the worst rendezvous span measured on an idle machine (~338 us) with
-    // room to spare, and still inside the shortest block period it may run at.
-    EXPECT_GE(micros[0], 900u);
-    EXPECT_LE(micros[0], 1100u);
 }
 
-TEST(RenderWorkerDeadlineBudget, ShortBlocksCapTheBudgetAndEmitLogCode) {
-    // Short enough that half the block period is below the absolute figure, so
-    // the ceiling binds. The configuration is accepted -- refusing it would be a
-    // judgement about the host's hardware -- and the cut is reported, because at
-    // this block size the deadline can fire on a batch that was merely unlucky.
+TEST(RenderWorkerDeadlineBudget, ShortBlocksKeepTheirBudgetAndEmitLogCode) {
+    // A short block keeps its own deadline and reports the small scheduling
+    // margin; the warning must not extend it to a fixed minimum duration.
     constexpr std::uint32_t kShortBlock = 64; // 1333 us at 48 kHz
     DeadlineLogSink sink;
     VnConfig config = MakeNullConfigLayout(4, kShortBlock, kRate,

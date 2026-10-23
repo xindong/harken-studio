@@ -511,10 +511,7 @@ void buildExportedPack(VNX::ProjectData& project, const QString& projectRoot)
     project.name = QStringLiteral("ExportedPack");
     project.projectId = QString::fromLatin1(kExportedPackProjectId);
     project.projectPath = QDir(projectRoot).filePath(QStringLiteral("ExportedPack.vproj"));
-    project.conversionFailurePolicy = VNX::ConversionFailurePolicy::AbortBuild;
     project.platforms = HarkenTest::platforms({QStringLiteral("Windows")});
-    project.packExportSelectedPlatformIds = project.platformIds();
-    project.packExportCurrentPlatformId = project.platformIds().first();
     project.projectLanguages = {};
 
     ASSERT_NO_FATAL_FAILURE(addAudioSource(project, kSharedSourceId));
@@ -881,13 +878,6 @@ void buildExportedPack(VNX::ProjectData& project, const QString& projectRoot)
         actionsRoot, QStringLiteral("ExportedPackSpatialNearFar"),
         kSpatialNearFarActionObjectId, *spatialSound);
     addBinding(project.actions, actionsRoot);
-
-    for (const auto& action : {immediateAction, delayedAction, verticalAction, randomAction,
-                               nestedRandomAction, queueSoundAction, queueTrackAction, queuePieceAction,
-                               discreteAction, continuousAction, initiallySilentAction, directTrackAction,
-                               directPieceAction, sharedLeafAction, twoPlayAction, packBAction, spatialAction})
-        project.actionPackTargeting.push_back({action->runtimeId(), false,
-            {HarkenTest::platformIdString("Windows")}});
 
 }
 
@@ -1832,8 +1822,6 @@ TEST_F(AuthoredPackLifecycle, SavedWindowsProjectPreviewAndPackRenderSameBusVolu
     actionBinding.rootItem = *actionChild;
     actionBinding.rootItem->parent = nullptr;
     project_.actions = {actionBinding};
-    project_.actionPackTargeting = {{actionBinding.rootItem->runtimeId(), false,
-        {HarkenTest::platformIdString("Windows")}}};
     project_.variables.clear();
     project_.attenuationItems.clear();
     project_.nextObjectID = 1000;
@@ -2064,8 +2052,6 @@ TEST_F(AuthoredPackLifecycle, SavedWindowsProjectPreviewAndPackRenderSameBusSend
     actionBinding.rootItem = *actionChild;
     actionBinding.rootItem->parent = nullptr;
     project_.actions = {actionBinding};
-    project_.actionPackTargeting = {{actionBinding.rootItem->runtimeId(), false,
-        {HarkenTest::platformIdString("Windows")}}};
     project_.variables.clear();
     project_.attenuationItems.clear();
     project_.nextObjectID = 1000;
@@ -3630,8 +3616,6 @@ TEST_F(AuthoredPackLifecycle, QuantizedActionsMatchPreviewAndExecuteFromReloaded
         step.quantize.referenceObjectID = directPiece->objectID;
         step.quantize.referenceName = directPiece->name;
         action->comp<VNX::VAction>()->steps = {step};
-        project_.actionPackTargeting.push_back({action->runtimeId(), false,
-            {HarkenTest::platformIdString("Windows")}});
         addChild(actionsRoot, action);
     }
 
@@ -3648,8 +3632,6 @@ TEST_F(AuthoredPackLifecycle, QuantizedActionsMatchPreviewAndExecuteFromReloaded
     quantizedStop.quantize.referenceName = directPiece->name;
     quantizedStop.fadeTime = 10.0f;
     stopAction->comp<VNX::VAction>()->steps = {immediatePlay, quantizedStop};
-    project_.actionPackTargeting.push_back({stopAction->runtimeId(), false,
-        {HarkenTest::platformIdString("Windows")}});
     addChild(actionsRoot, stopAction);
 
     struct DelayedCompositeCase {
@@ -3678,8 +3660,6 @@ TEST_F(AuthoredPackLifecycle, QuantizedActionsMatchPreviewAndExecuteFromReloaded
         stop.fadeTime = 2.0f;
         action->comp<VNX::VAction>()->steps = {
             playStep(*test.target), stop};
-        project_.actionPackTargeting.push_back({action->runtimeId(), false,
-            {HarkenTest::platformIdString("Windows")}});
         addChild(actionsRoot, action);
     }
 

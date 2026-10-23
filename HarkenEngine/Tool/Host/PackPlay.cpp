@@ -1,6 +1,7 @@
 #include "PackPlay.h"
 #include "PackPlayPath.h"
 #include "PackSidecar.h"
+#include "PackCompanion.h"
 
 #include "Engine.h"
 #include "PackPlaySelection.h"
@@ -44,6 +45,7 @@ constexpr float kSilenceFloor = 1.0e-4f;
 struct Options {
     std::string root;
     VnObjectId actionId{};
+    std::string actionName;
     std::string contentPackName;
     std::string platformId;
     std::string platformName;
@@ -130,6 +132,9 @@ bool ParseOptions(int argc, char** argv, Options* out) {
             if (!harken::ParseObjectId(argv[++i], &out->actionId)) {
                 return false;
             }
+        } else if (arg == "--action-name" && i + 1 < argc) {
+            out->actionName = argv[++i];
+            if (!PackCompanionName(out->actionName) || out->actionName == "Init") return false;
         } else if (arg == "--content" && i + 1 < argc) {
             out->contentPackName = argv[++i];
         } else if (arg == "--seconds" && i + 1 < argc) {
@@ -183,7 +188,12 @@ bool ParseOptions(int argc, char** argv, Options* out) {
         ? harken::IsNull(out->variableId)
         : !harken::IsNull(out->variableId) &&
               out->variableValues.size() == out->repeats;
-    return (out->platformId.empty() || out->platformName.empty()) && !out->root.empty() && !harken::IsNull(out->actionId) &&
+    const bool companion = !out->actionName.empty();
+    const bool selectionValid = companion
+        ? harken::IsNull(out->actionId) && out->contentPackName.empty() && out->platformId.empty() &&
+            out->platformName.empty() && PackCompanionLanguage(out->language)
+        : !harken::IsNull(out->actionId);
+    return (out->platformId.empty() || out->platformName.empty()) && !out->root.empty() && selectionValid &&
            variableOptionsValid;
 }
 
@@ -683,6 +693,9 @@ void PrintPackPlayUsage() {
                  "[--caller-seed N] "
                  "[--variable-id ID --variable-values v1,v2] "
                  "[--no-recovery] [--null]\n"
+                 "  harken_host pack-play --root <platform-dir> --action-name <name> "
+                 "[--language NAME] [--seconds N] [--repeats N] [--null]\n"
+                 "  --action-name reads Init and Action companion pairs; root is already the selected platform.\n"
                  "  --null is smoke only. Default device is VN_DEVICE_REAL.\n");
 }
 
@@ -718,65 +731,94 @@ int RunPackPlay(int argc, char** argv) {
                      options.root.c_str());
         return 1;
     }
-    std::filesystem::path rootPath;
+    const bool companion = !options.actionName.empty();
+    PackCompanion companionInit, companionContent;
+    std::filesystem::path rootPath = requestedRoot;
+    std::string root, initPath;
     std::string sidecarError;
-    if (!ResolvePackSidecarRoot(requestedRoot, options.platformId, options.platformName,
-            HostBasePlatform(), &rootPath, &sidecarError, options.language)) {
-        std::fprintf(stderr, "error: %s\n", sidecarError.c_str());
-        return 1;
-    }
-    const std::string root = Utf8Path(rootPath);
-    PackSidecarPlatform platform;
     std::vector<ManifestPack> packs;
-    if (!LoadPackSidecarManifest(rootPath, &platform, &packs, &sidecarError, options.language)) {
-        std::fprintf(stderr, "error: %s\n", sidecarError.c_str());
-        return 1;
-    }
-    const auto initPack = std::find_if(packs.begin(), packs.end(), [](const auto& pack) { return pack.isInit; });
-    const std::string initPath = Utf8Path(PackFilePath(rootPath, *initPack));
-    const ManifestPack* content = nullptr;
-    if (!options.contentPackName.empty()) {
-        content = FindPack(packs, options.contentPackName);
-    } else {
-        content = FindPack(packs, "F6GoldVerticalContainer");
-        if (content == nullptr) {
-            content = FindPack(packs, "F6GoldImmediateSound");
-        }
-    }
-    if (content == nullptr) {
-        std::fprintf(stderr,
-                     "error: manifest is missing the requested content pack\n");
-        return 1;
-    }
-
     std::vector<const ManifestPack*> loadOrder;
-    std::vector<std::uint8_t> visiting(packs.size());
-    const auto visit = [&](auto&& self, const ManifestPack& pack) -> bool {
-        const auto index = static_cast<std::size_t>(&pack - packs.data());
-        if (visiting[index] == 2) return true;
-        if (visiting[index] == 1) return false;
-        visiting[index] = 1;
-        for (const auto& dependency : pack.dependencies) {
-            std::uint64_t id = 0;
-            if (!PackSidecarU64(dependency, &id)) return false;
-            const auto provider = std::find_if(packs.begin(), packs.end(),
-                [id](const auto& row) { return row.packStableId == id; });
-            if (provider == packs.end() || !self(self, *provider)) return false;
+    if (companion) {
+        PackCompanionDiagnostic diagnostic;
+        VnResult result = CapturePackCompanion(rootPath, {}, {}, nullptr, &companionInit, &diagnostic);
+        if (result == VN_OK)
+            result = CapturePackCompanion(rootPath, options.actionName, options.language, &companionInit, &companionContent, &diagnostic);
+        if (result != VN_OK) {
+            auto binaryPath = diagnostic.jsonPath;
+            binaryPath.replace_extension(".bytes");
+            std::fprintf(stderr, "error: %s companion '%s' (bytes '%s'): %s failed (%d)\n",
+                diagnostic.kind, Utf8Path(diagnostic.jsonPath).c_str(), Utf8Path(binaryPath).c_str(),
+                diagnostic.stage, result);
+            if (std::strcmp(diagnostic.stage, "schemaVersion") == 0)
+                std::fprintf(stderr, "Re-export with the matching Studio version (required schemaVersion: %u).\n",
+                    static_cast<unsigned>(HARKEN_PACK_SCHEMA_VERSION));
+            return 3;
         }
-        visiting[index] = 2;
-        if (!pack.isInit) loadOrder.push_back(&pack);
-        return true;
-    };
-    if (!visit(visit, *content)) {
-        std::fprintf(stderr, "error: invalid content pack dependency closure\n");
-        return 1;
+    } else {
+        if (!ResolvePackSidecarRoot(requestedRoot, options.platformId, options.platformName,
+                HostBasePlatform(), &rootPath, &sidecarError, options.language)) {
+            std::fprintf(stderr, "error: %s\n", sidecarError.c_str());
+            return 1;
+        }
+        root = Utf8Path(rootPath);
+        PackSidecarPlatform platform;
+        if (!LoadPackSidecarManifest(rootPath, &platform, &packs, &sidecarError, options.language)) {
+            std::fprintf(stderr, "error: %s\n", sidecarError.c_str());
+            return 1;
+        }
+        const auto initPack = std::find_if(packs.begin(), packs.end(), [](const auto& pack) { return pack.isInit; });
+        initPath = Utf8Path(PackFilePath(rootPath, *initPack));
+        const ManifestPack* content = nullptr;
+        if (!options.contentPackName.empty()) {
+            content = FindPack(packs, options.contentPackName);
+        } else {
+            content = FindPack(packs, "F6GoldVerticalContainer");
+            if (content == nullptr) {
+                content = FindPack(packs, "F6GoldImmediateSound");
+            }
+        }
+        if (content == nullptr) {
+            std::fprintf(stderr,
+                         "error: manifest is missing the requested content pack\n");
+            return 1;
+        }
+
+        std::vector<std::uint8_t> visiting(packs.size());
+        const auto visit = [&](auto&& self, const ManifestPack& pack) -> bool {
+            const auto index = static_cast<std::size_t>(&pack - packs.data());
+            if (visiting[index] == 2) return true;
+            if (visiting[index] == 1) return false;
+            visiting[index] = 1;
+            for (const auto& dependency : pack.dependencies) {
+                std::uint64_t id = 0;
+                if (!PackSidecarU64(dependency, &id)) return false;
+                const auto provider = std::find_if(packs.begin(), packs.end(),
+                    [id](const auto& row) { return row.packStableId == id; });
+                if (provider == packs.end() || !self(self, *provider)) return false;
+            }
+            visiting[index] = 2;
+            if (!pack.isInit) loadOrder.push_back(&pack);
+            return true;
+        };
+        if (!visit(visit, *content)) {
+            std::fprintf(stderr, "error: invalid content pack dependency closure\n");
+            return 1;
+        }
     }
 
     VnPackLoadDesc inspectDesc{};
     inspectDesc.structSize = sizeof(inspectDesc);
-    inspectDesc.flags = VN_PACK_LOAD_FLAG_ROOT;
-    inspectDesc.utf8Path = initPath.c_str();
-    inspectDesc.utf8ContainmentRoot = root.c_str();
+    if (companion) {
+        inspectDesc.flags = VN_PACK_LOAD_FLAG_PROVIDER;
+        inspectDesc.packStableId = companionInit.facts.packStableId;
+        inspectDesc.providerUserData = &companionInit;
+        inspectDesc.provide = PackCompanion::Provide;
+        inspectDesc.release = PackCompanion::Release;
+    } else {
+        inspectDesc.flags = VN_PACK_LOAD_FLAG_ROOT;
+        inspectDesc.utf8Path = initPath.c_str();
+        inspectDesc.utf8ContainmentRoot = root.c_str();
+    }
     VnInitPackInspectReport inspection{};
     inspection.structSize = sizeof(inspection);
     const VnResult inspected = Vn_InspectInitPack(&inspectDesc, &inspection);
@@ -794,6 +836,12 @@ int RunPackPlay(int argc, char** argv) {
     config.maxVoices = 16;
     config.maxPacks = 8;
     config.maxActions = 64;
+    if (companion) {
+        config.maxCatalogEntries = inspection.recommendedMaxCatalogEntries;
+        config.maxCatalogBytes = inspection.recommendedCatalogBytes;
+        config.maxActions = std::max(config.maxActions, inspection.recommendedMaxActions);
+        config.maxResidentDefinitionBytes = inspection.recommendedResidentDefinitionBytes;
+    }
     const VnResult init = Vn_Init(&config);
     if (init != VN_OK) {
         const harkenhost::PackPlayInitFailure failure =
@@ -826,12 +874,31 @@ int RunPackPlay(int argc, char** argv) {
               [](const auto* a, const auto* b) {
                   return a->packStableId < b->packStableId;
               });
-    const VnResult activated = ActivatePublicPackSet(
-        initPath, root, inspection.packStableId, loadOrder, rootPath);
+    const auto activate = [&]() {
+        return companion ? ActivatePackCompanions(companionInit, companionContent)
+            : ActivatePublicPackSet(initPath, root, inspection.packStableId, loadOrder, rootPath);
+    };
+    const VnResult activated = activate();
     if (activated != VN_OK) {
-        std::fprintf(stderr, "error: freeze public pack load failed\n");
+        std::fprintf(stderr, "error: freeze public pack load failed (%d)\n", activated);
         Vn_Term();
         return 3;
+    }
+
+    if (companion) {
+        VnPostActionByNameDesc named{};
+        named.structSize = sizeof(named);
+        named.utf8Name = options.actionName.c_str();
+        harken::StoreObjectId(named.projectGuid, companionInit.facts.projectId);
+        VnActionResolved resolved{};
+        resolved.structSize = sizeof(resolved);
+        const auto result = Vn_ResolveActionByName(&named, &resolved);
+        if (result != VN_OK) {
+            std::fprintf(stderr, "error: companion name resolution failed (%d)\n", result);
+            Vn_Term();
+            return 3;
+        }
+        options.actionId = resolved.actionId;
     }
 
     VnPostActionDesc post{};
@@ -1011,8 +1078,7 @@ int RunPackPlay(int argc, char** argv) {
                 Vn_Term();
                 return 3;
             }
-            const VnResult reactivated = ActivatePublicPackSet(
-                initPath, root, inspection.packStableId, loadOrder, rootPath);
+            const VnResult reactivated = activate();
             if (reactivated != VN_OK) {
                 std::fprintf(stderr, "error: pack-play reload after restart failed\n");
                 Vn_Term();

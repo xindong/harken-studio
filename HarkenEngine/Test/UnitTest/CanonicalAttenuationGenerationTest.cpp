@@ -79,8 +79,14 @@ TEST(CanonicalAttenuationGeneration, MirrorsAndDelayedBindingsKeepExactOldCurves
     spatial.OnVoiceStarted(first, true, 5.0f, 0.0f, 0.0f);
     ASSERT_EQ(VN_OK, spatial.BindVoice(first, harkentest::ObjectId(17), 1));
     const auto oldDb = spatial.AttenuationVolumeDb(harkentest::ObjectId(17), 5.0f, 0.0f, 0.0f, 1.0f, 1);
+    spatial.SetRetainCommitPageLimitForTests(0);
+    EXPECT_EQ(VN_BACKPRESSURE, Install(spatial, Profile(20), 2, Generations(1)));
+    EXPECT_EQ(nullptr, spatial.FindProfile(harkentest::ObjectId(17), 2));
+    EXPECT_FLOAT_EQ(oldDb, spatial.AttenuationVolumeDb(harkentest::ObjectId(17), 5.0f, 0.0f, 0.0f, 1.0f, 1));
+    spatial.SetRetainCommitPageLimitForTests(SIZE_MAX);
     ASSERT_EQ(VN_OK, Install(spatial, Profile(20), 2, Generations(1)));
     ASSERT_EQ(VN_OK, Install(spatial, Profile(30), 3, Generations(2)));
+    spatial.SetRetainCommitPageLimitForTests(0);
     harken::Spatializer::SpatialVoiceState parked{};
     ASSERT_TRUE(spatial.CaptureVoice(first, &parked));
     EXPECT_EQ(harkentest::ObjectId(17u), parked.attenuationId);

@@ -17,6 +17,7 @@
 #include "harken/Harken.h"
 #include <harken/param/ParamTargetTable.h>
 #include "harken/media/PackFormatV2.h"
+#include <harken_studio_build/PackImage.h>
 
 #include <gtest/gtest.h>
 
@@ -130,10 +131,10 @@ constexpr harkenstudio::ObjectId kVoiceObjectId = harkentest::StudioObjectId(710
 
 } // namespace
 
-TEST(EditorProjectPackExporterInitPack, GeneratedPackBinaryStaysFormatVersion2)
+TEST(EditorProjectPackExporterInitPack, GeneratedPackBinaryUsesSchemaVersion)
 {
-    static_assert(harken::kPackFormatVersion2 == 4);
-    EXPECT_EQ(harken::kPackFormatVersion2, 4u);
+    static_assert(harken::kPackFormatVersion2 == HARKEN_PACK_SCHEMA_VERSION);
+    EXPECT_EQ(harken::kPackFormatVersion2, HARKEN_PACK_SCHEMA_VERSION);
 }
 
 TEST(EditorProjectPackExporterInitPack, DefaultMasterExportsItsUuidAndEffectOwner)
@@ -189,6 +190,125 @@ TEST(EditorProjectPackExporterInitPack, DefaultMasterExportsItsUuidAndEffectOwne
         effectEntry->size, &packedEffect));
     EXPECT_EQ(packedEffect.effectId, effectId);
     EXPECT_EQ(packedEffect.busId, masterId);
+}
+
+TEST(EditorProjectPackExporterInitPack, NamesAndPresentationStayOutsideExecutableBytes)
+{
+    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    VNX::ProjectConfig config;
+    config.name = QStringLiteral("ExecutionBoundary");
+    config.location = dir.path();
+    auto prepared = VNX::ProjectManager::prepareProject(config);
+    ASSERT_NE(prepared.project, nullptr) << prepared.error.toStdString();
+    auto& project = *prepared.project;
+    auto item = makeItem(QStringLiteral("GameplayModeOriginal"), VNX::ProjectItem::Type::Variable, 31);
+    auto* variable = item->comp<VNX::VVariable>();
+    ASSERT_NE(variable, nullptr);
+    variable->kind = VNX::VariableKind::Step;
+    variable->rangeMin = 0.0f;
+    variable->rangeMax = 10.0f;
+    variable->defaultValue = 0.0f;
+    const QUuid labelId = QUuid::createUuid();
+    variable->labels = {{0, QStringLiteral("GameplayLabelDefault"), QUuid::createUuid()},
+                        {3, QString(), labelId}};
+    VNX::ProjectFileBinding binding;
+    binding.rootItem = item;
+    project.variables.push_back(std::move(binding));
+    const QString output = QDir(dir.path()).filePath(QStringLiteral("packs"));
+    const QString platform = project.platformIds().first();
+    VNX::ProjectPackExporter exporter;
+    QByteArray bytes;
+    QJsonObject companion;
+    harkenstudiobuild::PackCanonicalImage image;
+    const auto publish = [&] {
+        const auto result = exporter.ExportAllPacks(project, output, {.platform = platform});
+        ASSERT_TRUE(result.success) << result.error.toStdString();
+        QJsonArray packs;
+        QStringList files;
+        QString error;
+        ASSERT_TRUE(VNX::ReadPackPublication(output, project.projectId, platform,
+            &packs, &files, &error)) << error.toStdString();
+        ASSERT_EQ(packs.size(), 1);
+        const auto row = packs.at(0).toObject();
+        companion = row.value("companion").toObject();
+        QFile file(QDir(output).filePath(row.value("path").toString()));
+        ASSERT_TRUE(file.open(QIODevice::ReadOnly));
+        bytes = file.readAll();
+        ASSERT_EQ(harkenstudiobuild::kPackOk, harkenstudiobuild::ParsePackCanonicalImage(
+            reinterpret_cast<const std::uint8_t*>(bytes.constData()), bytes.size(), &image));
+    };
+    ASSERT_NO_FATAL_FAILURE(publish());
+    const auto originalBytes = bytes;
+    const auto originalRevision = image.requirement.packContentRevision;
+    EXPECT_FALSE(image.hasVariableNameCatalog);
+    EXPECT_FALSE(image.hasGameplayCatalog);
+    EXPECT_FALSE(image.hasCatalog);
+    ASSERT_EQ(image.variablePolicyOverlays.size(), 1u);
+    const auto originalPolicy = image.variablePolicyOverlays.front();
+    ASSERT_EQ(originalPolicy.labels.size(), 2u);
+    EXPECT_EQ(originalPolicy.variableId, item->runtimeId());
+    EXPECT_EQ(originalPolicy.labels.back().labelId, VNX::runtimeObjectId(labelId));
+    EXPECT_EQ(originalPolicy.labels.back().anchor, 3);
+    for (const auto& label : originalPolicy.labels)
+        EXPECT_TRUE(label.name.empty());
+    EXPECT_EQ(originalPolicy.catalogFingerprint, 0u);
+    EXPECT_FALSE(bytes.contains(item->name.toUtf8()));
+    const auto originalVariables = companion.value("variables").toArray();
+    ASSERT_EQ(originalVariables.size(), 1);
+    const auto originalLabels = originalVariables.at(0).toObject().value("labels").toArray();
+    ASSERT_EQ(originalLabels.size(), 1);
+    EXPECT_EQ(originalLabels.at(0).toObject().value("guid").toString(),
+        variable->labels.front().id.toString(QUuid::WithoutBraces));
+
+    variable->labels.back().name = QStringLiteral("GameplayLabelOriginal");
+    ASSERT_NO_FATAL_FAILURE(publish());
+    EXPECT_EQ(bytes, originalBytes);
+    EXPECT_EQ(image.requirement.packContentRevision, originalRevision);
+    const auto namedLabels = companion.value("variables").toArray().at(0).toObject().value("labels").toArray();
+    ASSERT_EQ(namedLabels.size(), 2);
+    EXPECT_EQ(namedLabels.at(1).toObject().value("name").toString(), variable->labels.back().name);
+    EXPECT_EQ(namedLabels.at(1).toObject().value("guid").toString(), labelId.toString(QUuid::WithoutBraces));
+    EXPECT_FALSE(bytes.contains(variable->labels.back().name.toUtf8()));
+
+    item->name = QStringLiteral("GameplayModeRenamed");
+    variable->labels.back().name = QStringLiteral("GameplayLabelRenamed");
+    ASSERT_NO_FATAL_FAILURE(publish());
+    EXPECT_EQ(bytes, originalBytes);
+    EXPECT_EQ(image.requirement.packContentRevision, originalRevision);
+    const auto renamedCompanion = companion;
+    const auto names = companion.value("variables").toArray();
+    ASSERT_EQ(names.size(), 1);
+    const auto name = names.at(0).toObject();
+    EXPECT_EQ(name.value("name").toString(), item->name);
+    EXPECT_EQ(name.value("guid").toString(), item->guid.toString(QUuid::WithoutBraces));
+    const auto labels = name.value("labels").toArray();
+    ASSERT_EQ(labels.size(), 2);
+    EXPECT_EQ(labels.at(1).toObject().value("name").toString(), variable->labels.back().name);
+    EXPECT_EQ(labels.at(1).toObject().value("guid").toString(), labelId.toString(QUuid::WithoutBraces));
+
+    variable->description = QStringLiteral("AuthoringOnlyDescription_27182");
+    variable->unit = QStringLiteral("AuthoringOnlyUnit_31415");
+    variable->precision = 4;
+    variable->displayScale = 1;
+    ASSERT_NO_FATAL_FAILURE(publish());
+    EXPECT_EQ(bytes, originalBytes);
+    EXPECT_EQ(companion, renamedCompanion);
+    EXPECT_FALSE(bytes.contains(variable->description.toUtf8()));
+    EXPECT_FALSE(bytes.contains(variable->unit.toUtf8()));
+
+    variable->labels.back().anchor = 4;
+    ASSERT_NO_FATAL_FAILURE(publish());
+    EXPECT_NE(bytes, originalBytes);
+    EXPECT_NE(image.requirement.packContentRevision, originalRevision);
+    EXPECT_EQ(companion, renamedCompanion);
+    ASSERT_EQ(image.variablePolicyOverlays.size(), 1u);
+    const auto& changedPolicy = image.variablePolicyOverlays.front();
+    EXPECT_NE(changedPolicy.labelMappingFingerprint, originalPolicy.labelMappingFingerprint);
+    ASSERT_EQ(changedPolicy.labels.size(), 2u);
+    EXPECT_EQ(changedPolicy.labels.back().labelId, originalPolicy.labels.back().labelId);
+    EXPECT_EQ(changedPolicy.labels.back().anchor, 4);
 }
 
 TEST(EditorPackBuildSessionInitSections, ResidentPackCarriesSupportedLogicSections)

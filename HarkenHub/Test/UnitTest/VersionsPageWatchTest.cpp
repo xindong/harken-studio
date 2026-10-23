@@ -3,16 +3,24 @@
 #include "Projects/ProjectStore.h"
 #include "Support/StudioProtocolTestUtils.h"
 #include "Transactions/UninstallExecutor.h"
+#include "Transactions/InstallExecutor.h"
+#include "Update/UpdateStateStore.h"
 
 #include <QComboBox>
+#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QFrame>
 #include <QJsonDocument>
 #include <QLabel>
+#include <QLockFile>
 #include <QPushButton>
+#include <QProcess>
 #include <QTableWidget>
 #include <QTemporaryDir>
+#include <QSemaphore>
+#include <QScopeGuard>
+#include <QThreadPool>
 
 #include <gtest/gtest.h>
 
@@ -148,6 +156,52 @@ TEST_F(VersionsPageIssuesTest, LegacyVersionIsVisibleAndDoesNotNeedRepair)
     EXPECT_TRUE(page.findChild<QFrame*>("installationIssueBanner")->isHidden());
 }
 
+TEST_F(VersionsPageIssuesTest, AsyncInstallationOwnsAllCacheInputsAfterViewCloses)
+{
+    VNH::UpdateStateRecord record;
+    record.product = QStringLiteral("HarkenStudio");
+    record.state = QStringLiteral("AwaitingUserInstall");
+    record.buildId = QStringLiteral("build");
+    record.downloadPath = VNH::userDataDir() + QStringLiteral("/downloads/build.zip");
+    record.manifestEnvelopePath = VNH::userDataDir() + QStringLiteral("/downloads/manual/build.manifest");
+    write(record.downloadPath, "package");
+    write(record.manifestEnvelopePath, "manifest");
+    ASSERT_TRUE(VNH::UpdateStateStore::save(record, QDateTime::currentDateTimeUtc()));
+
+    auto* pool = QThreadPool::globalInstance();
+    pool->waitForDone();
+    const int maxThreads = pool->maxThreadCount();
+    pool->setMaxThreadCount(1);
+    QSemaphore started;
+    QSemaphore release;
+    pool->start([&]() { started.release(); release.acquire(); });
+    const auto guard = qScopeGuard([&]() {
+        release.release();
+        pool->waitForDone();
+        pool->setMaxThreadCount(maxThreads);
+    });
+    ASSERT_TRUE(started.tryAcquire(1, 5000));
+    {
+        VersionsPage page(&store);
+        page.refresh();
+        QPushButton* installButton = nullptr;
+        for (auto* button : page.findChildren<QPushButton*>())
+            if (button->text() == QCoreApplication::translate("HarkenHub", "Install"))
+                installButton = button;
+        ASSERT_NE(installButton, nullptr);
+        ASSERT_TRUE(installButton->isEnabled());
+        installButton->click();
+        EXPECT_FALSE(VNH::DownloadLease::acquire(record.downloadPath));
+        EXPECT_FALSE(VNH::DownloadLease::acquire(record.manifestEnvelopePath));
+    }
+    EXPECT_FALSE(VNH::DownloadLease::acquire(record.downloadPath));
+    EXPECT_FALSE(VNH::DownloadLease::acquire(record.manifestEnvelopePath));
+    release.release();
+    ASSERT_TRUE(pool->waitForDone(5000));
+    EXPECT_TRUE(VNH::DownloadLease::acquire(record.downloadPath));
+    EXPECT_TRUE(VNH::DownloadLease::acquire(record.manifestEnvelopePath));
+}
+
 TEST_F(VersionsPageIssuesTest, NewerProtocolRemainsInstalledWithSpecificHubLimitations)
 {
     const auto record = install("newer-protocol");
@@ -178,6 +232,34 @@ TEST_F(VersionsPageIssuesTest, MultipleIssuesExposeTheSelectedCauseAndPreserveSe
     EXPECT_FALSE(page.findChild<QPushButton*>("installationRepairButton")->isEnabled());
     page.refresh();
     EXPECT_EQ(selector->currentData().toString(), second.buildId);
+}
+
+TEST_F(VersionsPageIssuesTest, ActiveInstallDoesNotAppearAsDamagedButInterruptedInstallDoes)
+{
+    install("pending", "Installing");
+    QProcess installer;
+    installer.start(QString::fromUtf8(HARKEN_HUB_STUDIO_FIXTURE),
+                    {QStringLiteral("--hold-lock"), VNH::InstallExecutor::lockFilePath()});
+    ASSERT_TRUE(installer.waitForStarted());
+    const auto stopInstaller = qScopeGuard([&]() {
+        if (installer.state() != QProcess::NotRunning) {
+            installer.kill();
+            installer.waitForFinished();
+        }
+    });
+    ASSERT_TRUE(installer.waitForReadyRead());
+    ASSERT_EQ(installer.readAllStandardOutput().trimmed(), QByteArrayLiteral("locked"));
+    VersionsPage page(&store);
+    page.refresh();
+    EXPECT_TRUE(page.installedVersions().empty());
+    EXPECT_TRUE(page.findChild<QFrame*>("installationIssueBanner")->isHidden());
+    installer.kill();
+    ASSERT_TRUE(installer.waitForFinished());
+    ASSERT_TRUE(QFileInfo::exists(VNH::InstallExecutor::lockFilePath()));
+    page.refresh();
+    EXPECT_FALSE(page.findChild<QFrame*>("installationIssueBanner")->isHidden());
+    EXPECT_TRUE(page.findChild<QPushButton*>("installationRepairButton")->isEnabled());
+    EXPECT_TRUE(QFileInfo::exists(VNH::InstallExecutor::lockFilePath()));
 }
 
 TEST_F(VersionsPageIssuesTest, RepairMarkerCanBeCheckedWithoutACachedPackage)

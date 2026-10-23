@@ -11,9 +11,12 @@
 #include <QApplication>
 #include <QDoubleSpinBox>
 #include <QComboBox>
+#include <QContextMenuEvent>
 #include <QEvent>
 #include <QHBoxLayout>
 #include <QLayout>
+#include <QMenu>
+#include <QMouseEvent>
 
 namespace VNX {
 
@@ -46,13 +49,76 @@ ParameterControlHost::ParameterControlHost(
             [this]() { rebuildPresenter(); });
 }
 
-ParameterControlHost::~ParameterControlHost() = default;
+ParameterControlHost::~ParameterControlHost()
+{
+    if (presenter_)
+        presenter_->primaryEditor()->removeEventFilter(this);
+}
 
 bool ParameterControlHost::event(QEvent* event)
 {
     if (event->type() == QEvent::ToolTipChange)
         syncToolTips();
     return QWidget::event(event);
+}
+
+bool ParameterControlHost::eventFilter(QObject* watched, QEvent* event)
+{
+    if (!presenter_ || watched != presenter_->primaryEditor() || !isEnabled())
+        return QWidget::eventFilter(watched, event);
+
+    switch (event->type()) {
+        case QEvent::MouseButtonPress:
+        case QEvent::MouseButtonDblClick: {
+            const auto* mouse = static_cast<QMouseEvent*>(event);
+            if (mouse->button() == Qt::LeftButton
+                && mouse->buttons() == Qt::LeftButton
+                && mouse->modifiers() == Qt::ControlModifier
+                && !presenter_->isGestureActive()) {
+                resetClick_ = true;
+                event->accept();
+                binding_->commitValue(binding_->defaultValue());
+                return true;
+            }
+            break;
+        }
+        case QEvent::MouseMove:
+            if (resetClick_) {
+                event->accept();
+                return true;
+            }
+            break;
+        case QEvent::MouseButtonRelease:
+            if (resetClick_ && static_cast<QMouseEvent*>(event)->button() == Qt::LeftButton) {
+                resetClick_ = false;
+                event->accept();
+                return true;
+            }
+            break;
+        case QEvent::UngrabMouse:
+        case QEvent::Hide:
+        case QEvent::WindowDeactivate:
+            resetClick_ = false;
+            break;
+        case QEvent::ContextMenu: {
+            auto* menu = new QMenu(presenter_->primaryEditor());
+            connect(menu, &QMenu::aboutToHide, menu, &QObject::deleteLater);
+            auto* reset = menu->addAction(tr("Reset"));
+            reset->setEnabled(!binding_->isEditing()
+                && (binding_->mixedValue()
+                    || !qFuzzyCompare(binding_->value() + 1.0, binding_->defaultValue() + 1.0)));
+            connect(reset, &QAction::triggered, this, [this] {
+                if (isEnabled())
+                    binding_->commitValue(binding_->defaultValue());
+            });
+            menu->popup(static_cast<QContextMenuEvent*>(event)->globalPos());
+            event->accept();
+            return true;
+        }
+        default:
+            break;
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 void ParameterControlHost::syncToolTips()
@@ -121,6 +187,8 @@ void ParameterControlHost::rebuildPresenter()
     const FocusRole focusRole = currentFocusRole();
     if (presenter_ && presenter_->isGestureActive())
         binding_->commitEdit();
+    if (presenter_)
+        presenter_->primaryEditor()->removeEventFilter(this);
     delete presenter_;
     presenter_ = nullptr;
     installPresenter(focusRole);
@@ -152,6 +220,7 @@ ParameterControlHost::FocusRole ParameterControlHost::currentFocusRole() const
 
 void ParameterControlHost::installPresenter(FocusRole focusRole)
 {
+    resetClick_ = false;
     switch (selectedPresenterId())
     {
         case ParameterPresenterId::SliderWithValue:
@@ -172,6 +241,7 @@ void ParameterControlHost::installPresenter(FocusRole focusRole)
             break;
     }
     layout()->addWidget(presenter_);
+    presenter_->primaryEditor()->installEventFilter(this);
     if (compactValueColumnWidth_ > 0)
         presenter_->setCompactValueColumn(compactValueColumnWidth_);
     if (valueColumnStretch_ > 0)

@@ -564,19 +564,48 @@ TEST_F(MixingEditorWidgetTest, RowsFitPanelAndUseEditableObjectReferences)
         EXPECT_TRUE(page->rect().contains(ref->geometry()));
         EXPECT_TRUE(page->rect().contains(children->geometry()));
     }
-    const auto numbers = editor.findChildren<QLabel*>(QStringLiteral("tableRowNumber"));
-    ASSERT_EQ(numbers.size(), 2);
-    const auto center = numbers[0]->rect().center();
-    QMouseEvent select(QEvent::MouseButtonPress, center, numbers[0]->mapToGlobal(center),
+    view->setRowHeight(0, 260);
+    drainEvents();
+    const auto handles = editor.findChildren<QWidget*>(QStringLiteral("tableRowHandle"));
+    ASSERT_EQ(handles.size(), 2);
+    const auto center = handles[0]->rect().center();
+    QMouseEvent select(QEvent::MouseButtonPress, center, handles[0]->mapToGlobal(center),
         Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
-    QApplication::sendEvent(numbers[0], &select);
-    QMouseEvent releaseSelection(QEvent::MouseButtonRelease, center, numbers[0]->mapToGlobal(center),
+    QApplication::sendEvent(handles[0], &select);
+    QMouseEvent releaseSelection(QEvent::MouseButtonRelease, center, handles[0]->mapToGlobal(center),
         Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
-    QApplication::sendEvent(numbers[0], &releaseSelection);
-    EXPECT_TRUE(numbers[0]->parentWidget()->property("selected").toBool());
-    EXPECT_FALSE(numbers[1]->parentWidget()->property("selected").toBool());
+    QApplication::sendEvent(handles[0], &releaseSelection);
+    auto* page = view->indexWidget(view->model()->index(0, 1));
+    auto* children = page->findChild<VNX::TableWidget*>();
+    ASSERT_NE(children, nullptr);
+    EXPECT_TRUE(children->rowForWidget(handles[0])->property("selected").toBool());
+    EXPECT_FALSE(children->rowForWidget(handles[1])->property("selected").toBool());
     ASSERT_EQ(editor.canvas(0)->overlays().size(), 1);
     EXPECT_TRUE(editor.canvas(0)->overlays()[0].selectable);
+    const auto beforeMove = selection()->mixing().toJson();
+    auto* targetRow = children->rowForWidget(handles[1]);
+    const QPoint destination = targetRow->mapToGlobal(QPoint(targetRow->width() / 2, targetRow->height() - 2));
+    QMouseEvent dragPress(QEvent::MouseButtonPress, center, handles[0]->mapToGlobal(center),
+        Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(handles[0], &dragPress);
+    QMouseEvent dragMove(QEvent::MouseMove, handles[0]->mapFromGlobal(destination), destination,
+        Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(handles[0], &dragMove);
+    QMouseEvent dragRelease(QEvent::MouseButtonRelease, handles[0]->mapFromGlobal(destination), destination,
+        Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(handles[0], &dragRelease);
+    drainEvents();
+    ASSERT_EQ(selection()->mixing().rows[0].children.size(), 2);
+    EXPECT_EQ(selection()->mixing().rows[0].children[0].target, childB_->guid);
+    EXPECT_EQ(selection()->mixing().rows[0].children[1].target, childA_->guid);
+    page = view->indexWidget(view->model()->index(0, 1));
+    children = page->findChild<VNX::TableWidget*>();
+    const auto movedHandles = children->findChildren<QWidget*>(QStringLiteral("tableRowHandle"));
+    ASSERT_EQ(movedHandles.size(), 2);
+    EXPECT_TRUE(children->rowForWidget(movedHandles[1])->property("selected").toBool());
+    undoStack()->undo();
+    drainEvents();
+    EXPECT_EQ(selection()->mixing().toJson(), beforeMove);
     editor.selectChild(0, -1);
     editor.reload();
     drainEvents();
@@ -845,15 +874,15 @@ TEST_F(MixingEditorWidgetTest, NestedSelectionKeepsChildAndVariableRemovalSepara
     auto* view = editor.findChild<VNX::ResizableTableView*>();
     ASSERT_NE(view, nullptr);
     auto* first = view->indexWidget(view->model()->index(0, 1));
-    auto* number = first->findChild<QLabel*>(QStringLiteral("tableRowNumber"));
-    ASSERT_NE(number, nullptr);
-    const auto center = number->rect().center();
-    QMouseEvent press(QEvent::MouseButtonPress, center, number->mapToGlobal(center),
+    auto* handle = first->findChild<QWidget*>(QStringLiteral("tableRowHandle"));
+    ASSERT_NE(handle, nullptr);
+    const auto center = handle->rect().center();
+    QMouseEvent press(QEvent::MouseButtonPress, center, handle->mapToGlobal(center),
         Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
-    QApplication::sendEvent(number, &press);
-    QMouseEvent release(QEvent::MouseButtonRelease, center, number->mapToGlobal(center),
+    QApplication::sendEvent(handle, &press);
+    QMouseEvent release(QEvent::MouseButtonRelease, center, handle->mapToGlobal(center),
         Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
-    QApplication::sendEvent(number, &release);
+    QApplication::sendEvent(handle, &release);
     EXPECT_EQ(view->currentIndex().row(), 0);
     first->findChild<VNX::TableWidget*>()->footer()->removeButton()->click();
     drainEvents();

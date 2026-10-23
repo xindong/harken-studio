@@ -19,6 +19,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
+#include <limits>
 
 namespace {
 
@@ -377,6 +379,219 @@ TEST(ResamplerGolden, UnityRatioIsIdentityForEveryFamily) {
             }
         }
     }
+}
+
+TEST(ResamplerGolden, LinearUnityPreservesChannelsAcrossUnevenRingRefills) {
+    constexpr std::uint32_t kFrames = 3 * kResampleFifoFrames + 29;
+    constexpr std::uint32_t kOffset = 5;
+    constexpr std::uint32_t kGuardFrames = 401;
+    constexpr float kGuard = -123.0f;
+    const std::uint32_t feedSizes[] = {1, 37, 137, 3, 251, 83};
+    const std::uint32_t outputSizes[] = {0, 31, 19, 401, 1, 257, 128};
+
+    for (const std::uint32_t channels : {1u, 2u, harken::kMaxChannels}) {
+        for (const bool interleaved : {false, true}) {
+            SCOPED_TRACE(::testing::Message()
+                         << channels << " channels, interleaved="
+                         << interleaved);
+            const std::uint32_t stride = interleaved ? channels + 1 : 1;
+            std::vector<float> input(
+                static_cast<std::size_t>(kFrames) * (channels + 1), kGuard);
+            PCMView view;
+            view.channelCount = channels;
+            view.stride = stride;
+            view.sampleRate = 48000;
+            view.frames = kFrames;
+            for (std::uint32_t ch = 0; ch < channels; ++ch) {
+                float* channel = input.data() + (interleaved ? ch : ch * kFrames);
+                view.channels[ch] = channel;
+                for (std::uint32_t i = 0; i < kFrames; ++i) {
+                    channel[i * stride] =
+                        static_cast<float>(static_cast<int>(i % 251) - 125) /
+                            256.0f +
+                        static_cast<float>(ch);
+                }
+                channel[0] = -0.0f;
+                channel[stride] = std::numeric_limits<float>::infinity();
+                channel[2 * stride] = -std::numeric_limits<float>::infinity();
+                channel[3 * stride] = std::numeric_limits<float>::quiet_NaN();
+            }
+
+            std::vector<float> ringStorage(channels * kResampleFifoFrames);
+            std::vector<std::vector<float>> output(
+                channels, std::vector<float>(kOffset + kFrames + kGuardFrames,
+                                              kGuard));
+            float* rings[harken::kMaxChannels] = {};
+            float* dst[harken::kMaxChannels] = {};
+            for (std::uint32_t ch = 0; ch < channels; ++ch) {
+                rings[ch] = ringStorage.data() + ch * kResampleFifoFrames;
+                dst[ch] = output[ch].data();
+            }
+            Resampler rs;
+            rs.Reset(rings, channels, ResampleQuality::Linear, 1.0, Tables());
+            std::uint32_t cursor = 0;
+            std::uint32_t produced = 0;
+            std::uint32_t padding = 0;
+            for (std::uint32_t iteration = 0;
+                 iteration < 4 * kFrames && produced < kFrames; ++iteration) {
+                const std::uint32_t request = outputSizes[iteration % 7];
+                const std::uint32_t buffered = cursor + padding - produced;
+                const std::uint32_t available = buffered > 0 ? buffered - 1 : 0;
+                const std::uint32_t expected =
+                    std::min({request, available, kFrames - produced});
+                ASSERT_EQ(expected, rs.Produce(dst, kOffset + produced, request));
+                produced += expected;
+                EXPECT_EQ(kResampleHistoryPad + produced, rs.SourceFrame());
+                EXPECT_DOUBLE_EQ(0.0, rs.SourceFraction());
+                EXPECT_DOUBLE_EQ(static_cast<double>(rs.SourceFrame()), rs.readPos);
+                EXPECT_EQ(kResampleHistoryPad + cursor + padding, rs.writeIndex);
+                EXPECT_EQ(cursor == kFrames && produced == kFrames, rs.Exhausted());
+
+                if (cursor < kFrames) {
+                    const std::uint32_t feed = std::min(
+                        {feedSizes[iteration % 6], kFrames - cursor,
+                         rs.FreeFrames()});
+                    rs.PushPCM(view, cursor, feed);
+                    cursor += feed;
+                    if (cursor == kFrames)
+                        rs.MarkInputEnd();
+                } else if (padding == 0) {
+                    padding = 9;
+                    ASSERT_GE(rs.FreeFrames(), padding);
+                    rs.PushSilence(padding);
+                }
+            }
+            ASSERT_EQ(kFrames, produced);
+            EXPECT_TRUE(rs.Exhausted());
+            for (std::uint32_t ch = 0; ch < channels; ++ch) {
+                for (std::uint32_t i = 0; i < kFrames; ++i) {
+                    ASSERT_EQ(0, std::memcmp(&output[ch][kOffset + i],
+                                              view.SamplePtr(ch, i), sizeof(float)))
+                        << "channel " << ch << ", sample " << i;
+                }
+                for (std::uint32_t i = 0; i < kOffset; ++i)
+                    EXPECT_EQ(kGuard, output[ch][i]);
+                for (std::uint32_t i = kOffset + kFrames; i < output[ch].size(); ++i)
+                    EXPECT_EQ(kGuard, output[ch][i]);
+            }
+        }
+    }
+}
+
+TEST(ResamplerGolden, LinearInputEndKeepsLookaheadAndSilenceAcrossRingWrap) {
+    constexpr std::uint32_t kFrames =
+        kResampleFifoFrames - kResampleHistoryPad - 3;
+    const std::vector<float> input(kFrames, 0.5f);
+    PCMView view;
+    view.channels[0] = input.data();
+    view.channelCount = 1;
+    view.frames = input.size();
+    std::vector<float> ring(kResampleFifoFrames);
+    float* rings[1] = {ring.data()};
+    std::vector<float> output(kFrames + 16, -1.0f);
+    float* dst[1] = {output.data()};
+    Resampler rs;
+    rs.Reset(rings, 1, ResampleQuality::Linear, 1.0, Tables());
+
+    const std::uint32_t initialFree = rs.FreeFrames();
+    EXPECT_EQ(0u, rs.Produce(dst, 0, 0));
+    EXPECT_EQ(0u, rs.Produce(dst, 0, kFrames));
+    EXPECT_EQ(initialFree, rs.FreeFrames());
+    EXPECT_EQ(kResampleHistoryPad, rs.SourceFrame());
+    rs.PushPCM(view, 0, kFrames);
+    rs.MarkInputEnd();
+    ASSERT_EQ(kFrames - 1, rs.Produce(dst, 2, kFrames + 8));
+    EXPECT_FALSE(rs.Exhausted());
+    EXPECT_EQ(0u, rs.Produce(dst, kFrames + 1, 8));
+
+    rs.UpdateRatio(0.5, 0);
+    rs.PushSilence(13);
+    ASSERT_EQ(2u, rs.Produce(dst, kFrames + 1, 8));
+    EXPECT_EQ(0.5f, output[kFrames + 1]);
+    EXPECT_EQ(0.25f, output[kFrames + 2]);
+    EXPECT_EQ(-1.0f, output[kFrames + 3]);
+    EXPECT_EQ(-1.0f, output[0]);
+    EXPECT_EQ(-1.0f, output[1]);
+    EXPECT_EQ(kResampleHistoryPad + kFrames, rs.SourceFrame());
+    EXPECT_DOUBLE_EQ(0.0, rs.SourceFraction());
+    EXPECT_TRUE(rs.Exhausted());
+    EXPECT_EQ(0u, rs.Produce(dst, 0, kFrames));
+}
+
+TEST(ResamplerGolden, LinearUnityReentryPreservesFractionAndRatioRamps) {
+    std::vector<float> input(128);
+    for (std::uint32_t i = 0; i < input.size(); ++i)
+        input[i] = static_cast<float>(i) / 128.0f;
+    PCMView view;
+    view.channels[0] = input.data();
+    view.channelCount = 1;
+    view.frames = input.size();
+    std::vector<float> ring(kResampleFifoFrames);
+    float* rings[1] = {ring.data()};
+    Resampler rs;
+    rs.Reset(rings, 1, ResampleQuality::Linear, 1.0, Tables());
+    rs.PushPCM(view, 0, static_cast<std::uint32_t>(input.size()));
+
+    const auto check = [&](std::initializer_list<double> positions) {
+        std::vector<float> output(positions.size() + 6, -1.0f);
+        float* dst[1] = {output.data()};
+        ASSERT_EQ(positions.size(), rs.Produce(
+            dst, 3, static_cast<std::uint32_t>(positions.size())));
+        std::size_t i = 3;
+        for (const double position : positions)
+            EXPECT_EQ(static_cast<float>(position / 128.0), output[i++]);
+        EXPECT_EQ(-1.0f, output[2]);
+        EXPECT_EQ(-1.0f, output[i]);
+    };
+    check({0, 1, 2, 3, 4, 5, 6});
+    rs.UpdateRatio(1.5, 0);
+    check({7});
+    rs.UpdateRatio(1.0, 0);
+    check({8.5, 9.5, 10.5, 11.5, 12.5, 13.5, 14.5, 15.5, 16.5});
+    EXPECT_DOUBLE_EQ(0.5, rs.SourceFraction());
+    rs.UpdateRatio(0.5, 0);
+    check({17.5});
+    rs.UpdateRatio(1.0, 0);
+    check({18, 19, 20, 21, 22, 23, 24});
+    rs.UpdateRatio(2.0, 4);
+    check({25, 26.25, 27.75, 29.5});
+    EXPECT_EQ(0u, rs.RampFramesRemaining());
+    rs.UpdateRatio(1.0, 2);
+    check({31.5, 33});
+    EXPECT_DOUBLE_EQ(0.0, rs.SourceFraction());
+    check({34, 35, 36, 37});
+    EXPECT_EQ(kResampleHistoryPad + 38u, rs.SourceFrame());
+    EXPECT_DOUBLE_EQ(1.0, rs.CurrentRatio());
+    EXPECT_EQ(0u, rs.RampFramesRemaining());
+}
+
+TEST(ResamplerGolden, LinearUnityTimelineRemainsExactBeyondDoubleIntegerRange) {
+    constexpr std::uint64_t kLargeFrame = std::uint64_t{1} << 54;
+    const std::vector<float> input(64, 0.25f);
+    PCMView view;
+    view.channels[0] = input.data();
+    view.channelCount = 1;
+    view.frames = input.size();
+    std::vector<float> ring(kResampleFifoFrames);
+    float* rings[1] = {ring.data()};
+    Resampler rs;
+    rs.Reset(rings, 1, ResampleQuality::Linear, 1.0, Tables());
+    rs.readIndex += kLargeFrame;
+    rs.writeIndex += kLargeFrame;
+    rs.readPos = static_cast<double>(rs.readIndex);
+    rs.PushPCM(view, 0, static_cast<std::uint32_t>(input.size()));
+    rs.MarkInputEnd();
+    float output[64] = {};
+    float* dst[1] = {output};
+    ASSERT_EQ(63u, rs.Produce(dst, 0, 64));
+    EXPECT_EQ(kLargeFrame + kResampleHistoryPad + 63u, rs.SourceFrame());
+    rs.PushSilence(1);
+    ASSERT_EQ(1u, rs.Produce(dst, 63, 1));
+    EXPECT_EQ(kLargeFrame + kResampleHistoryPad + 64u, rs.SourceFrame());
+    EXPECT_DOUBLE_EQ(0.0, rs.SourceFraction());
+    EXPECT_TRUE(rs.Exhausted());
+    for (const float sample : output)
+        EXPECT_EQ(0.25f, sample);
 }
 
 TEST(ResamplerGolden, KnownRatioSineMatchesAnalyticFrequency) {

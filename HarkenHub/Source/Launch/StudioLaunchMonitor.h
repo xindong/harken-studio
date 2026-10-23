@@ -30,6 +30,7 @@ public:
     bool helloAccepted() const { return helloAccepted_; }
     QString lastStage() const { return lastStage_; }
     QString failureCode() const { return failureCode_; }
+    QString failureDetails() const { return failureDetails_; }
 
 signals:
     void stageChanged(const QString& stage);
@@ -57,6 +58,7 @@ private:
     QString expectedLaunchIntent_;
     QString lastStage_;
     QString failureCode_;
+    QString failureDetails_;
     bool helloAccepted_ = false;
     bool finished_ = false;
 };

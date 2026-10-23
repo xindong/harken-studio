@@ -34,10 +34,11 @@
 // the old value fail its check on arrival. The epoch is never 0, so an
 // unstamped record cannot be mistaken for a current one.
 //
-// Logic thread only. Storage is sized once at construction; acquire,
-// lifecycle advance, and lookup allocate nothing.
+// Logic thread only. Storage keeps its original address and prepares before
+// acquisition; lifecycle advance and lookup never grow storage.
 #ifndef HARKEN_CORE_PLAYABLE_INSTANCE_TABLE_H
 #define HARKEN_CORE_PLAYABLE_INSTANCE_TABLE_H
+#include "harken/core/StableRowStorage.h"
 
 #include "harken/core/CheckedIssuer.h"
 #include "harken/core/MonitorIdentity.h"
@@ -192,10 +193,18 @@ private:
 class PlayableInstanceTable {
     struct Entry;
 public:
-    // Capacity is the number of concurrently live instances. Allocated here
-    // and never grown, so a running session cannot resize a container while
-    // the logic thread walks it.
+    // Capacity is the number of concurrently live instances. Reservation
+    // fixes every row's address before any original lifetime can name it.
     explicit PlayableInstanceTable(std::uint32_t capacity);
+    bool PrepareStorage() noexcept {
+        return m_entries.ConstructThrough(m_entries.Capacity());
+    }
+    std::size_t StorageBytes() const noexcept { return m_entries.RequestedBytes(); }
+    std::size_t StorageCommittedBytes() const noexcept { return m_entries.CommittedBytes(); }
+    std::size_t StorageReservedBytes() const noexcept { return m_entries.ReservedBytes(); }
+    void SetCommitPageLimitForTests(std::size_t pages) noexcept {
+        m_entries.SetCommitPageLimitForTests(pages);
+    }
     ~PlayableInstanceTable();
     PlayableInstanceTable(const PlayableInstanceTable&) = delete;
     PlayableInstanceTable& operator=(const PlayableInstanceTable&) = delete;
@@ -282,6 +291,9 @@ public:
         PlayableInstanceHandle handle) const noexcept;
     bool TryFinishOriginalLifetimeDisposition(OriginalLifetimePin& originalBaseline) noexcept;
     bool HasRequestedOriginalLifetimeDisposition(const OriginalLifetimePin& original) const noexcept;
+    bool HasRequestedOriginalLifetimeDispositions() const noexcept {
+        return m_originalDispositionCount != 0;
+    }
     using OriginalLifetimeBaselineResolver = OriginalLifetimePin* (*)(
         void*, PlayableInstanceTable&, PlayableInstanceHandle) noexcept;
     using OriginalLifetimeDispositionFn = void (*)(
@@ -363,10 +375,10 @@ public:
         std::span<OriginalLifetimePin> stableBaselines) noexcept;
     static void ConsumePreparedParentLinks(PreparedParentLinksProof&& proof) noexcept;
 
-    // Physical storage reserved at construction. FreeCount reports the
+    // Logical capacity reserved at construction. FreeCount reports the
     // currently reusable subset after generation exhaustion is accounted for.
     std::uint32_t Capacity() const {
-        return static_cast<std::uint32_t>(m_entries.size());
+        return m_entries.Capacity();
     }
 
     // Reserves a non-quarantined slot for a new instance and returns its
@@ -439,6 +451,8 @@ public:
         MonitorLifecycleFacts* out) const noexcept;
     bool CaptureMonitorFacts(PlayableInstanceHandle handle,
                              MonitorLifecycleFacts* out) const noexcept;
+    void ObserveStarted(PlayableInstanceHandle handle, std::uint64_t audioBlock,
+                        std::uint64_t frame) noexcept;
     bool CaptureRootMetadata(PlayableInstanceHandle handle,
                              PlayableRootMetadata* out) const noexcept;
 
@@ -570,6 +584,7 @@ private:
         MonitorContentIdentity contentIdentity{};
         MonitorContentIdentity monitorPreparedCandidateIdentity{};
         bool monitorPreparedCandidateObserved = false;
+        bool monitorStartedObserved = false;
         MonitorRequestContext playbackRequest{};
         MonitorEmitterOrigin emitterOrigin{};
         MonitorControlCause controlCause{};
@@ -631,7 +646,8 @@ private:
     bool BorrowOriginalLifetime(const OriginalLifetimePin& original, OriginalLifetimePin* out) noexcept;
     void ReturnOriginalLifetime(OriginalLifetimePin& original) noexcept;
     void ReturnOriginalLifetimeRetirementHold(OriginalLifetimeRetirementHold& original) noexcept;
-    std::vector<Entry> m_entries;
+    StableRowStorage<Entry> m_entries;
+    std::uint32_t m_originalDispositionCount = 0;
     std::uint64_t m_nextOriginalLifetimeMarker = 1;
     bool m_originalLifetimeMarkerExhausted = false;
     void* m_originalLifetimeBaselineContext = nullptr;

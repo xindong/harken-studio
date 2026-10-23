@@ -3,6 +3,9 @@
 <TS version="2.1" language="zh_CN" sourcelanguage="en">
 <context>
     <name>HubLog</name>
+    <message><source>Install recovery failed: %1</source><translation>恢复安装状态失败：%1</translation></message>
+    <message><source>Repair failed: %1 %2</source><translation>修复失败：%1 %2</translation></message>
+    <message><source>Install failed: %1 %2</source><translation>安装失败：%1 %2</translation></message>
     <message>
         <location filename="../Source/UI/LogConsoleDialog.cpp" line="23"/>
         <source>AwaitingBridge</source>
@@ -115,8 +118,8 @@
     </message>
     <message>
         <location filename="../Source/UI/LogConsoleDialog.cpp" line="135"/>
-        <source>Harken Hub %1</source>
-        <translation>Harken Hub 构建：%1</translation>
+        <source>Harken Studio Hub %1</source>
+        <translation>Harken Studio Hub 构建：%1</translation>
     </message>
     <message>
         <location filename="../Source/UI/LogConsoleDialog.cpp" line="143"/>
@@ -156,6 +159,83 @@
 </context>
 <context>
     <name>HubReleaseNotes</name>
+    <message><source>The quick SDK change menu lists newer versions first, with separators between upgrades, the installed version, and older versions. Sources with the same SDK version list newer Studio versions first.</source><translation>快捷更换 SDK 菜单将新版本放在前面，并在可升级版本、当前版本和较旧版本之间添加分割线。同一 SDK 版本的来源优先显示较新的 Studio 版本。</translation></message>
+    <message><source>Successful SDK installation and update results are highlighted in green.</source><translation>SDK 安装或更新成功后，结果文字以绿色突出显示。</translation></message>
+    <message><source>Restored the blue H icon for Hub windows, the app bundle, Windows shortcuts, the taskbar, and the system tray.</source><translation>Hub 窗口、应用、Windows 快捷方式、任务栏和系统托盘恢复使用蓝色 H 图标。</translation></message>
+    <message><source>Unity SDK checks recognize equivalent text across UTF-8, UTF-16, UTF-32, and common legacy encodings, including BOM and line-ending conversions. Encoding-only differences are listed as Review recommended without blocking updates, and equivalent read-only files retain their existing bytes.</source><translation>Unity SDK 检查支持 UTF-8、UTF-16、UTF-32 及常见传统编码之间的等价文本，包括 BOM 和换行格式转换。纯编码差异列为“建议关注”，不阻塞更新；内容等价的只读文件保留现有字节。</translation></message>
+    <message><source>Hub uses the refreshed light application icon for its windows, app bundle, Windows shortcuts, taskbar, and system tray.</source><translation>Hub 窗口、应用、Windows 快捷方式、任务栏和系统托盘统一使用新版浅色图标。</translation></message>
+    <message><source>Integration-list tooltips show only the SDK installation path. Version tooltips appear only when a newer local SDK is available and show its version number.</source><translation>集成列表的 SDK 状态悬浮提示仅显示安装路径。版本悬浮提示仅在本地存在可更新 SDK 时出现，并显示最新版本号。</translation></message>
+    <message><source>SDK check logs retain the file list and count for line-ending-only differences. Non-blocking items are labeled Review recommended. The SDK status shows normal for unchanged files, line-ending-only differences, and missing documentation or samples, with details kept in the check log.</source><translation>SDK 检查日志保留纯换行差异的文件列表和数量，非阻塞提示统一表述为“建议关注”。文件一致、仅换行差异或仅文档和示例缺失时，列表统一显示“正常”，详情保留在检查日志中。</translation></message>
+    <message><source>Unity SDK checks and updates recognize LF, CRLF, and mixed line endings as unchanged text, including conversions after an update, avoiding false modification warnings and unnecessary write-access checks. Binary files and actual content changes remain strictly checked.</source><translation>Unity SDK 检查与更新将 LF、CRLF 及混合换行之间的纯换行差异视为内容一致，更新后再次转换换行也不会误报文件修改或触发不必要的写入权限检查。二进制文件和实际内容变化仍严格校验。</translation></message>
+    <message><source>Missing Unity SDK documentation and samples are reported separately and no longer fail SDK verification or block updates. Required SDK files retain their integrity and write-protection checks.</source><translation>Unity SDK 的文档和示例缺失会单独说明，不再导致 SDK 验证失败或阻塞更新。必要 SDK 文件仍保留完整性及写保护检查。</translation></message>
+    <message><source>Engine Integrations shows the installed SDK version and file status. The quick-change menu lists local SDK versions and identifies the current source.</source><translation>集成列表显示已安装的 SDK 版本和文件状态。快捷更换菜单列出本地 SDK 版本，并标明当前使用的来源。</translation></message>
+    <message><source>SDK changes keep safety checks, confirmation, progress, and results in one window, with clear downgrade warnings and separate lists of modified and missing files.</source><translation>更换 SDK 的安全检查、确认、执行进度和结果集中在同一窗口，明确提示降级，并分别列出已修改和缺失的文件。</translation></message>
+    <message><source>SDK updates, repairs, and removal check write protection before confirmation and again before changing files. Failures highlight read-only or inaccessible files and explain how to restore write access.</source><translation>SDK 更新、修复和卸载在确认前及实际修改前检查写入权限。失败时醒目标出只读或无法写入的文件，并说明如何恢复写入权限。</translation></message>
+    <message><source>Automatic SDK scans run quietly in the background. Local SDK choices refresh after Studio installation and when opening the source menus.</source><translation>自动 SDK 扫描在后台静默运行。Studio 安装完成后以及打开 SDK 来源菜单时，会刷新本地可选版本。</translation></message>
+    <message><source>SDK operation windows show a red engine-running warning only when the target project is open. Unity integration reports open as text files stored in Hub's application-data folder.</source><translation>SDK 操作窗口仅在目标工程已打开时显示红色引擎运行提示。Unity 集成报告改为文本文件，并保存在 Hub 的应用数据目录中。</translation></message>
+    <message><source>Integration menus distinguish full SDK and project-association management from quick SDK changes. Project columns offer clearly named folder actions, including right-click access, and SDK status tooltips label the installation path.</source><translation>集成菜单明确区分完整的 SDK 与工程关联管理和快捷更换入口。工程列提供名称清楚的文件夹操作并支持右键打开，SDK 状态悬浮提示明确标注安装路径。</translation></message>
+    <message><source>Project-association guidance explains that each Harken project and game project can belong to only one local association.</source><translation>工程关联说明明确指出，每个 Harken 工程和游戏工程只能属于一个本地关联。</translation></message>
+    <message><source>Double-clicking a Studio version preselects that version when creating a new project.</source><translation>双击 Studio 版本后，新建工程会默认选择刚才双击的版本。</translation></message>
+    <message><source>Hub uses the updated application icon for its windows, app bundle, Windows shortcuts, taskbar, and system tray.</source><translation>Hub 的工具窗口、应用程序、Windows 快捷方式、任务栏及系统托盘使用更新后的应用图标。</translation></message>
+    <message>
+        <source>Unity SDK management no longer reports that a closed project is still open because of a leftover lock file. SDK checks, installation, updates, removal, moves, and recovery can proceed once the project is no longer in use.</source>
+        <translation>修复 Unity 工程关闭后，因残留锁文件仍被误判为正在运行的问题。工程不再被占用后，即可正常检查、安装、更新、卸载、移动和恢复 SDK。</translation>
+    </message>
+    <message>
+        <source>When Hub cannot check whether a Unity project is in use, it reports the access error and affected path instead of claiming that Unity is running.</source>
+        <translation>无法检查 Unity 工程是否被占用时，Hub 会显示访问错误和受影响路径，不再误报 Unity 正在运行。</translation>
+    </message>
+    <message>
+        <source>Click the Project, Last Opened, or Version column header to sort the project list in ascending or descending order. Engine Integrations supports the same sorting for the HARKEN Project and Game Project columns. Each page remembers its sorting preference.</source>
+        <translation>点击工程列表的“工程”“上次启动”或“版本”列标题，可切换升序和降序；引擎集成页的“HARKEN 工程”“游戏工程”列也支持排序。各页面会分别记住排序方式。</translation>
+    </message>
+    <message>
+        <source>The project list shows minutes since the last launch, adds hours after one hour, and adds days after 24 hours instead of using vague labels such as Yesterday.</source>
+        <translation>工程列表的上次启动时间不足 1 小时只显示分，满 1 小时显示小时、分，满 24 小时显示天、小时、分，不再使用“昨天”等模糊提示。</translation>
+    </message>
+    <message>
+        <source>Unity SDK verification reports separately how many files differ from their contents at installation, are missing, or cannot be read, with guidance for each problem.</source>
+        <translation>Unity SDK 验证会分别显示内容与安装时不同、已缺失或无法读取的文件数量，并针对各类问题给出处理建议。</translation>
+    </message>
+    <message>
+        <source>Studio installations retain recovery information if saving the installation record fails, and Hub checks interrupted installations on startup. Installations in progress are no longer shown as damaged. If recovery needs administrator access, choose Repair in Versions.</source>
+        <translation>Studio 安装记录保存失败时保留恢复信息，Hub 启动时会检查中断的安装。正在安装的版本不再被显示为已损坏。若恢复需要管理员权限，请在“版本”页选择“修复”。</translation>
+    </message>
+    <message>
+        <source>Studio repair checks for running programs in the installation folder before replacing files and explains which programs need to be closed.</source>
+        <translation>Studio 修复在替换文件前检查安装目录中的程序是否仍在运行，并提示需要关闭的程序。</translation>
+    </message>
+    <message>
+        <source>Hub update installers are kept separately from temporary Studio installation files so Studio cleanup cannot remove a pending Hub update.</source>
+        <translation>Hub 更新安装包与 Studio 安装临时文件分开存放，避免 Studio 清理临时文件时误删待安装的 Hub 更新。</translation>
+    </message>
+    <message>
+        <source>Unity SDK management no longer treats normal embedded-package records as dependency conflicts. Genuine dependency restrictions use neutral text, and successful SDK verification is shown in green in both languages.</source>
+        <translation>Unity SDK 管理不再将正常的嵌入包记录误判为依赖冲突。实际的依赖限制使用中性提示，SDK 验证成功的提示在中英文下均显示为绿色。</translation>
+    </message>
+    <message>
+        <source>SDK file replacement failures show the affected paths and system error, with guidance for write protection, permissions, files in use, and version-control checkout when applicable. Related Hub prompts and log messages support Chinese and English.</source>
+        <translation>SDK 文件替换失败时显示相关路径和系统错误，并提供写保护、权限、文件占用以及适用情况下版本管理签出的处理指引。相关 Hub 提示和日志信息支持中英文。</translation>
+    </message>
+    <message>
+        <source>Unreal SDK checks detect missing, unreadable, or empty native libraries and core headers for the current platform before installation and when verifying an installed SDK.</source>
+        <translation>Unreal SDK 在安装前和验证已安装 SDK 时，检查当前平台必需的原生库与核心头文件是否缺失、不可读取或为空。</translation>
+    </message>
+    <message>
+        <source>With a Studio build that supports the new checks, project upgrades detect existing files that cannot be written before changing project data. Hub lists the affected files and explains how to restore write access.</source>
+        <translation>配合支持新检查的 Studio 构建，工程升级会在修改工程数据前检查已有文件是否可写。Hub 会列出无法写入的文件，并提示如何恢复写入权限。</translation>
+    </message>
+    <message><source>On Windows, new installations default to HarkenStudioHub directly under Program Files, and the main application and setup use the HarkenStudioHub name. Existing installation locations and older Studio launchers remain supported.</source><translation>Windows &#x65b0;&#x5b89;&#x88c5;&#x9ed8;&#x8ba4;&#x76f4;&#x63a5;&#x4f7f;&#x7528; Program Files &#x4e0b;&#x7684; HarkenStudioHub &#x76ee;&#x5f55;&#xff0c;&#x4e3b;&#x7a0b;&#x5e8f;&#x53ca;&#x5b89;&#x88c5;&#x7a0b;&#x5e8f;&#x7edf;&#x4e00;&#x4f7f;&#x7528; HarkenStudioHub &#x540d;&#x79f0;&#x3002;&#x4fdd;&#x7559;&#x73b0;&#x6709;&#x5b89;&#x88c5;&#x4f4d;&#x7f6e;&#xff0c;&#x5e76;&#x517c;&#x5bb9;&#x65e7;&#x7248; Studio &#x7684;&#x542f;&#x52a8;&#x65b9;&#x5f0f;&#x3002;</translation></message>
+    <message><source>Windows desktop shortcuts and taskbar icons now display the H logo with crisp images for different icon sizes.</source><translation>&#x4fee;&#x590d; Windows &#x684c;&#x9762;&#x5feb;&#x6377;&#x65b9;&#x5f0f;&#x548c;&#x4efb;&#x52a1;&#x680f;&#x56fe;&#x6807;&#xff0c;&#x4f7f;&#x7528;&#x9002;&#x914d;&#x4e0d;&#x540c;&#x5c3a;&#x5bf8;&#x7684;&#x6e05;&#x6670; H &#x6807;&#x5fd7;&#x3002;</translation></message>
+    <message><source>Project association prompts in Engine Integrations now refer only to Unity projects.</source><translation>&#x5f15;&#x64ce;&#x96c6;&#x6210;&#x4e2d;&#x7684;&#x5de5;&#x7a0b;&#x5173;&#x8054;&#x63d0;&#x793a;&#x4ec5;&#x4fdd;&#x7559; Unity &#x5de5;&#x7a0b;&#x4fe1;&#x606f;&#x3002;</translation></message>
+    <message><source>Hub uses the gradient Harken Studio logo and matching H window and tray icons, and consistently displays Harken Studio Hub in menus, notifications, dialogs, and installer details.</source><translation>Hub 使用渐变 Harken Studio 标识以及一致的 H 窗口和托盘图标，菜单、通知、对话框及安装器详情统一显示 Harken Studio Hub。</translation></message>
+    <message><source>Hub displays the Harken Studio logo above a separate Hub label, updates its window title and repository link, and removes the previous application icon.</source><translation>Hub 左上角改为 Harken Studio 标识，下方独立显示 Hub；窗口标题与仓库链接使用 Harken Studio 名称，并移除原有应用图标。</translation></message>
+    <message><source>Project format incompatibility messages show the selected Studio version and the project and Studio Schema versions from the compatibility check.</source><translation>工程格式不兼容提示显示当前选择的 Studio 版本，并展示兼容性检查返回的工程与 Studio Schema 版本。</translation></message>
+    <message><source>Hub and Studio updates preserve each other's progress when running together, and outdated operations cannot overwrite newer update state.</source><translation>Hub 与 Studio 同时更新时，各自的进度不会相互覆盖；过时操作也不会覆盖已经推进的更新状态。</translation></message>
+    <message><source>Manual and background Studio downloads can run together. Packages remain protected from competing downloads and cache cleanup until installation handoff finishes.</source><translation>Studio 手动下载可与后台下载同时进行。下载包在交接给安装程序前，持续受到保护，避免被其他下载覆盖或被缓存清理删除。</translation></message>
+    <message><source>Updates and local build checks recover from temporary file locks on Windows without reporting unsaved state as complete.</source><translation>Windows 上的更新与本地构建检查可在文件短暂占用后恢复，不再将尚未保存的状态报告为完成。</translation></message>
+    <message><source>Studio installation, repair, and removal recover when Windows briefly locks the installation index.</source><translation>Windows 短暂占用安装索引时，Studio 的安装、修复和卸载可自动恢复。</translation></message>
+    <message><source>Reopening a project in a compatible Studio version activates its existing window, and Hub recognizes a successful handoff.</source><translation>使用支持此功能的 Studio 版本重复打开工程时，会激活已有窗口，Hub 会正确识别转交成功。</translation></message>
     <message>
         <source>Hub and Studio updates now use the new GitHub repository, with COS downloads retained as a fallback.</source>
         <translation>Hub 与 Studio 的更新入口已迁移到新的 GitHub 仓库，并保留 COS 备用下载。</translation>
@@ -177,8 +257,8 @@
         <translation>新安装的 Studio 使用更简短的目录名，移除冗长的构建标识；同一版本的不同构建仍可同时安装。</translation>
     </message>
     <message>
-        <source>Windows now displays the application name as Harken Hub without an additional description.</source>
-        <translation>Windows 中的应用名称简化为 Harken Hub，不再附带额外说明。</translation>
+        <source>Windows now displays the application name without an additional description.</source>
+        <translation>Windows 中仅显示应用名称，不再附带额外说明。</translation>
     </message>
     <message><source>Engine Integrations uses system file and folder pickers, restoring address-bar path navigation on Windows.</source><translation>&#x5f15;&#x64ce;&#x96c6;&#x6210;&#x6062;&#x590d;&#x4f7f;&#x7528;&#x7cfb;&#x7edf;&#x539f;&#x751f;&#x6587;&#x4ef6;&#x548c;&#x6587;&#x4ef6;&#x5939;&#x9009;&#x62e9;&#x7a97;&#x53e3;&#xff0c;&#x53ef;&#x5728; Windows &#x5730;&#x5740;&#x680f;&#x7c98;&#x8d34;&#x8def;&#x5f84;&#x540e;&#x6309;&#x56de;&#x8f66;&#x76f4;&#x63a5;&#x5b9a;&#x4f4d;&#x3002;</translation></message>
     <message><source>Unreal SDK installation now rejects incomplete native headers before changing the game project.</source><translation>Unreal SDK &#x5b89;&#x88c5;&#x4f1a;&#x5728;&#x4fee;&#x6539;&#x6e38;&#x620f;&#x5de5;&#x7a0b;&#x524d;&#x62e6;&#x622a;&#x7f3a;&#x5c11;&#x5fc5;&#x9700;&#x539f;&#x751f;&#x5934;&#x6587;&#x4ef6;&#x7684; SDK&#x3002;</translation></message>
@@ -338,8 +418,8 @@
     <message>
         <location filename="../Source/UI/ConsentDialog.cpp" line="56"/>
         <location filename="../Source/UI/ConsentDialog.cpp" line="111"/>
-        <source>Harken Hub</source>
-        <translation>Harken Hub</translation>
+        <source>Harken Studio Hub</source>
+        <translation>Harken Studio Hub</translation>
     </message>
     <message>
         <location filename="../Source/UI/ConsentDialog.cpp" line="65"/>
@@ -374,10 +454,6 @@
 <context>
     <name>VNH::HubWindow</name>
     <message>
-        <source>License Agreement &amp;&amp; Privacy Policy</source>
-        <translation>许可协议与隐私政策</translation>
-    </message>
-    <message>
         <location filename="../Source/UI/HubWindow.cpp" line="99"/>
         <location filename="../Source/UI/HubWindow.cpp" line="158"/>
         <location filename="../Source/UI/HubWindow.cpp" line="166"/>
@@ -387,8 +463,12 @@
         <location filename="../Source/UI/HubWindow.cpp" line="617"/>
         <location filename="../Source/UI/HubWindow.cpp" line="656"/>
         <location filename="../Source/UI/HubWindow.cpp" line="681"/>
-        <source>Harken Hub</source>
-        <translation>Harken Hub</translation>
+        <source>Harken Studio Hub</source>
+        <translation>Harken Studio Hub</translation>
+    </message>
+    <message>
+        <source>License Agreement &amp;&amp; Privacy Policy</source>
+        <translation>许可协议与隐私政策</translation>
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="105"/>
@@ -422,8 +502,8 @@
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="167"/>
-        <source>The language change will take effect after restarting Harken Hub.</source>
-        <translation>语言更改将在重启 Harken Hub 后生效。</translation>
+        <source>The language change will take effect after restarting Harken Studio Hub.</source>
+        <translation>语言更改将在重启 Harken Studio Hub 后生效。</translation>
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="196"/>
@@ -442,8 +522,8 @@
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="544"/>
-        <source>The current Harken Hub is up to date, and the latest HarkenStudio is already in the Versions list.</source>
-        <translation>当前 Harken Hub 已是最新版本，最新的 HarkenStudio 已在版本列表中。</translation>
+        <source>The current Harken Studio Hub is up to date, and the latest HarkenStudio is already in the Versions list.</source>
+        <translation>当前 Harken Studio Hub 已是最新版本，最新的 HarkenStudio 已在版本列表中。</translation>
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="175"/>
@@ -453,7 +533,7 @@
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="172"/>
-        <source>Automatically Update Harken Hub Silently</source>
+        <source>Automatically Update Harken Studio Hub Silently</source>
         <translation>是否自动静默更新Hub</translation>
     </message>
     <message>
@@ -478,15 +558,13 @@
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="240"/>
-        <source>A Harken Hub update is ready. Click to close the hub, install it, and restart.</source>
-        <translation>Harken Hub 更新已就绪。点击以关闭 Hub、安装更新并重启。</translation>
+        <source>A Harken Studio Hub update is ready. Click to close the hub, install it, and restart.</source>
+        <translation>Harken Studio Hub 更新已就绪。点击以关闭 Hub、安装更新并重启。</translation>
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="252"/>
-        <source>Harken
-Hub</source>
-        <translation>Harken
-Hub</translation>
+        <source>Hub</source>
+        <translation>Hub</translation>
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="261"/>
@@ -495,8 +573,8 @@ Hub</translation>
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="274"/>
-        <source>&lt;a href=&quot;https://harken.xd.com&quot; style=&quot;color:#00F0FF;&quot;&gt;Harken Website&lt;/a&gt;&lt;br/&gt;&lt;a href=&quot;https://github.com/xindong/harken-studio&quot; style=&quot;color:#00F0FF;&quot;&gt;Harken Repository&lt;/a&gt;</source>
-        <translation>&lt;a href=&quot;https://harken.xd.com&quot; style=&quot;color:#00F0FF;&quot;&gt;Harken 网站&lt;/a&gt;&lt;br/&gt;&lt;a href=&quot;https://github.com/xindong/harken-studio&quot; style=&quot;color:#00F0FF;&quot;&gt;Harken 仓库&lt;/a&gt;</translation>
+        <source>&lt;a href=&quot;https://harken.xd.com&quot; style=&quot;color:#00F0FF;&quot;&gt;Harken Website&lt;/a&gt;&lt;br/&gt;&lt;a href=&quot;https://github.com/xindong/harken-studio&quot; style=&quot;color:#00F0FF;&quot;&gt;Harken Studio Repository&lt;/a&gt;</source>
+        <translation>&lt;a href=&quot;https://harken.xd.com&quot; style=&quot;color:#00F0FF;&quot;&gt;Harken 网站&lt;/a&gt;&lt;br/&gt;&lt;a href=&quot;https://github.com/xindong/harken-studio&quot; style=&quot;color:#00F0FF;&quot;&gt;Harken Studio 仓库&lt;/a&gt;</translation>
     </message>
     <message>
         <source>The Hub update check failed.
@@ -511,7 +589,7 @@ Hub</translation>
         <translation type="vanished">服务器返回了无效的 Hub 更新清单。</translation>
     </message>
     <message>
-        <source>The current Harken Hub version is up to date.</source>
+        <source>The current Harken Studio Hub version is up to date.</source>
         <translation type="vanished">当前Hub版本已是最新</translation>
     </message>
     <message>
@@ -534,8 +612,8 @@ Hub</translation>
 %1</translation>
     </message>
     <message>
-        <source>The current Harken Hub and HarkenStudio versions are up to date.</source>
-        <translation type="vanished">当前 Harken Hub 和 HarkenStudio 版本均为最新。</translation>
+        <source>The current Harken Studio Hub and HarkenStudio versions are up to date.</source>
+        <translation type="vanished">当前 Harken Studio Hub 和 HarkenStudio 版本均为最新。</translation>
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="592"/>
@@ -549,16 +627,16 @@ Hub</translation>
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="657"/>
-        <source>Harken Hub will close now, update in the background, and restart automatically. This usually takes a few seconds.
+        <source>Harken Studio Hub will close now, update in the background, and restart automatically. This usually takes a few seconds.
 
-If Harken Hub does not come back within 2 minutes, close any remaining Harken Hub processes and start it manually.
+If Harken Studio Hub does not come back within 2 minutes, close any remaining Harken Studio Hub processes and start it manually.
 
 Development builds can be unstable - if the wait drags on, download the latest installer from the Harken website and install it over the current version.
 
 Continue?</source>
-        <translation>Harken Hub 将立即关闭、在后台更新并自动重启。此过程通常只需几秒。
+        <translation>Harken Studio Hub 将立即关闭、在后台更新并自动重启。此过程通常只需几秒。
 
-如果 Harken Hub 在 2 分钟内没有重新启动，请关闭所有残留的 Harken Hub 进程，然后手动启动。
+如果 Harken Studio Hub 在 2 分钟内没有重新启动，请关闭所有残留的 Harken Studio Hub 进程，然后手动启动。
 
 开发版本可能不稳定。如果等待时间过长，请从 Harken 网站下载最新安装程序并覆盖当前版本。
 
@@ -602,8 +680,8 @@ Continue?</source>
     <name>VNH::LogConsoleDialog</name>
     <message>
         <location filename="../Source/UI/LogConsoleDialog.cpp" line="211"/>
-        <source>Harken Hub Activity Log (%1)</source>
-        <translation>Harken Hub 活动日志（%1）</translation>
+        <source>Harken Studio Hub Activity Log (%1)</source>
+        <translation>Harken Studio Hub 活动日志（%1）</translation>
     </message>
     <message>
         <location filename="../Source/UI/LogConsoleDialog.cpp" line="229"/>
@@ -678,40 +756,40 @@ Continue?</source>
     </message>
     <message>
         <location filename="../Source/Update/UpdateNotifier.cpp" line="60"/>
-        <source>HarkenStudio %1 has been downloaded and verified. Open Harken Hub to install it.</source>
-        <translation>HarkenStudio %1 已下载并验证。打开 Harken Hub 即可安装。</translation>
+        <source>HarkenStudio %1 has been downloaded and verified. Open Harken Studio Hub to install it.</source>
+        <translation>HarkenStudio %1 已下载并验证。打开 Harken Studio Hub 即可安装。</translation>
     </message>
     <message>
         <location filename="../Source/Update/UpdateNotifier.cpp" line="68"/>
-        <source>Harken Hub update ready</source>
-        <translation>Harken Hub 更新已就绪</translation>
+        <source>Harken Studio Hub update ready</source>
+        <translation>Harken Studio Hub 更新已就绪</translation>
     </message>
     <message>
         <location filename="../Source/Update/UpdateNotifier.cpp" line="70"/>
-        <source>Harken Hub %1 is ready to install. Open Harken Hub to approve the update.</source>
-        <translation>Harken Hub %1 已可安装。打开 Harken Hub 以确认更新。</translation>
+        <source>Harken Studio Hub %1 is ready to install. Open Harken Studio Hub to approve the update.</source>
+        <translation>Harken Studio Hub %1 已可安装。打开 Harken Studio Hub 以确认更新。</translation>
     </message>
     <message>
         <location filename="../Source/Update/UpdateNotifier.cpp" line="83"/>
-        <source>Harken Hub updated</source>
-        <translation>Harken Hub 已更新</translation>
+        <source>Harken Studio Hub updated</source>
+        <translation>Harken Studio Hub 已更新</translation>
     </message>
     <message>
         <location filename="../Source/Update/UpdateNotifier.cpp" line="85"/>
-        <source>Harken Hub has been updated to %1.</source>
-        <translation>Harken Hub 已更新至 %1。</translation>
+        <source>Harken Studio Hub has been updated to %1.</source>
+        <translation>Harken Studio Hub 已更新至 %1。</translation>
     </message>
     <message>
         <location filename="../Source/Update/UpdateNotifier.cpp" line="115"/>
         <location filename="../Source/Update/UpdateNotifier.cpp" line="173"/>
-        <source>Harken Hub</source>
-        <translation>Harken Hub</translation>
+        <source>Harken Studio Hub</source>
+        <translation>Harken Studio Hub</translation>
     </message>
     <message>
         <location filename="../Source/Update/UpdateNotifier.cpp" line="132"/>
         <location filename="../Source/Update/UpdateNotifier.cpp" line="175"/>
-        <source>Open Harken Hub</source>
-        <translation>打开 Harken Hub</translation>
+        <source>Open Harken Studio Hub</source>
+        <translation>打开 Harken Studio Hub</translation>
     </message>
     <message>
         <location filename="../Source/Update/UpdateNotifier.cpp" line="135"/>
@@ -722,6 +800,78 @@ Continue?</source>
 </context>
 <context>
     <name>HarkenHub</name>
+    <message><source>Latest local SDK version: %1</source><translation>本地最新 SDK 版本：%1</translation></message>
+    <message><source>Review recommended: %1 SDK text file(s) use a different encoding; text contents match after normalizing encoding and line endings. SDK updates can continue.</source><translation>建议关注：%1 个 SDK 文本文件的编码不同；统一编码和换行格式后，正文内容一致，不影响 SDK 更新。</translation></message>
+    <message><source>%1 SDK text file(s) differ only in LF/CRLF line endings; contents are unchanged.</source><translation>%1 个 SDK 文本文件仅换行格式不同（LF/CRLF），内容一致。</translation></message>
+    <message><source>Missing documentation/sample files (does not block SDK updates):</source><translation>缺失的文档/示例文件（不影响 SDK 更新）：</translation></message>
+    <message><source>%1 documentation/sample file(s) are missing; SDK updates can continue.</source><translation>%1 个文档/示例文件缺失，不影响 SDK 更新。</translation></message>
+    <message><source>Not a directory: %1</source><translation>此路径不是目录：%1</translation></message>
+    <message><source>Directories without required create or rename access:
+%1</source><translation>以下目录缺少创建或重命名所需的权限：
+%1</translation></message>
+    <message><source>Could not prepare the Hub report directory.</source><translation>无法准备 Hub 报告目录。</translation></message>
+    <message><source>Cannot create the Hub application-data directory: %1</source><translation>无法创建 Hub 应用数据目录：%1</translation></message>
+    <message><source>Cannot resolve the Hub application-data directory: %1</source><translation>无法解析 Hub 应用数据目录的实际路径：%1</translation></message>
+    <message><source>SDK file write access check failed.</source><translation>SDK 文件写入权限检查未通过。</translation></message>
+    <message><source>Some files required for this SDK operation cannot be changed. No SDK files were changed.</source><translation>本次 SDK 操作需要修改的部分文件无法更改，SDK 文件未发生变更。</translation></message>
+    <message><source>Read-only files:
+%1</source><translation>以下文件处于只读状态：
+%1</translation></message>
+    <message><source>Files that could not be opened for writing:
+%1</source><translation>以下文件无法以写入方式打开：
+%1</translation></message>
+    <message><source>%1
+Reason: %2</source><translation>%1
+原因：%2</translation></message>
+    <message><source>Check out or unlock the listed files if required by version control. Otherwise, check write protection, access permissions and programs using these files, then run the safety check again.</source><translation>如果版本控制要求签出或解锁，请先处理以上文件；否则请检查文件的只读属性、访问权限和占用程序，然后重新运行安全检查。</translation></message>
+    <message><source>JSON report was written, but the text removal report failed.</source><translation>JSON 报告已写入，但 TXT 卸载报告写入失败。</translation></message>
+    <message><source>JSON report was written, but the text report failed.</source><translation>JSON 报告已写入，但 TXT 报告写入失败。</translation></message>
+    <message><source>SDK %1 | Studio %2</source><translation>SDK %1 | Studio %2</translation></message>
+    <message><source>Manage SDK and Project Links</source><translation>管理 SDK 与工程关联</translation></message>
+    <message><source>Open Harken Project Folder</source><translation>打开 Harken 工程文件夹</translation></message>
+    <message><source>Open Game Project Folder</source><translation>打开游戏工程文件夹</translation></message>
+    <message><source>Quick Change SDK</source><translation>快捷更换 SDK</translation></message>
+    <message><source>Manage project links, verify SDK files, change versions, move or uninstall the SDK, and view detailed reports.</source><translation>管理工程关联、校验 SDK 文件、更换版本、迁移或卸载 SDK，并查看详细报告。</translation></message>
+    <message><source>Installed: %1</source><translation>已安装：%1</translation></message>
+    <message><source>Installed SDK: %1</source><translation>当前已安装 SDK：%1</translation></message>
+    <message><source>Current SDK installation path:
+%1</source><translation>SDK 当前安装路径：
+%1</translation></message>
+    <message><source>Normal</source><translation>正常</translation></message>
+    <message><source>Checking SDK status...</source><translation>正在检查 SDK 状态…</translation></message>
+    <message><source>Files modified</source><translation>文件已修改</translation></message>
+    <message><source>Files missing</source><translation>文件缺失</translation></message>
+    <message><source>Files modified and missing</source><translation>文件已修改且有缺失</translation></message>
+    <message><source>File verification incomplete</source><translation>文件校验未完成</translation></message>
+    <message><source> (Installed source)</source><translation>（当前安装来源）</translation></message>
+    <message><source> (Same version number as installed)</source><translation>（与已安装版本同号）</translation></message>
+    <message><source>This is the source recorded for the installed SDK. File verification compares the installed files with their installation record; the source folder may have changed since installation.</source><translation>这是安装记录中的 SDK 来源。文件校验对照的是安装时的记录；来源目录本身可能已在安装后发生变化。</translation></message>
+    <message><source>Unknown</source><translation>未知</translation></message>
+    <message><source>Update available: %1</source><translation>可升级至 %1</translation></message>
+    <message><source>Local SDK packages available: %1</source><translation>本机有 %1 个 SDK 安装包可选</translation></message>
+    <message><source>No local SDK sources are available.</source><translation>没有可用的本地 SDK 来源。</translation></message>
+    <message><source>SDKs with the same version number can contain different files. Select a source to check its contents.</source><translation>版本号相同的 SDK 也可能包含不同的文件。选择来源后将检查实际内容。</translation></message>
+    <message><source> (Upgrade)</source><translation>（可升级）</translation></message>
+    <message><source> (Older version)</source><translation>（较旧版本）</translation></message>
+    <message><source>SDK files will be checked before you confirm the change.</source><translation>确认更换前会先检查 SDK 文件。</translation></message>
+    <message><source>The installed SDK is no longer available. Open Manage Integration to review its status.</source><translation>已安装的 SDK 已不可用。请打开“集成管理”查看状态。</translation></message>
+    <message><source>Change SDK — %1</source><translation>更换 SDK — %1</translation></message>
+    <message><source>HarkenStudio is still running from this version: %1</source><translation>此版本的 HarkenStudio 仍在运行：%1</translation></message>
+    <message><source>Close Studio and other programs running from this installation, then retry Repair. No installation files were replaced.</source><translation>请关闭此安装目录中的 Studio 及其他正在运行的程序，然后重试“修复”。安装文件未被替换。</translation></message>
+    <message><source>Another install transaction is running</source><translation>另一个安装任务正在运行</translation></message>
+    <message><source>Cannot move the install into place: %1</source><translation>无法将安装文件移入目标目录：%1</translation></message>
+    <message><source>Installation retained at %1. In Versions, choose Repair to recover it.</source><translation>安装文件已保留在 %1。请在“版本”页选择“修复”以恢复安装状态。</translation></message>
+    <message><source>Installation was interrupted. Choose Repair to verify and finish recovery. Administrator permission may be required.</source><translation>安装曾被中断。请选择“修复”进行校验并完成恢复，可能需要管理员授权。</translation></message>
+    <message><source>Cannot open the install index for reading: %1 (Qt error %2: %3)</source><translation>无法打开安装索引以供读取：%1（Qt 错误 %2：%3）</translation></message>
+    <message><source>Cannot read the install index: %1 (Qt error %2: %3)</source><translation>无法读取安装索引：%1（Qt 错误 %2：%3）</translation></message>
+    <message><source>Install index is corrupt: %1 (offset %2: %3)</source><translation>安装索引已损坏：%1（偏移 %2：%3）</translation></message>
+    <message><source>Cannot create file directory: %1</source><translation>无法创建文件所在目录：%1</translation></message>
+    <message><source>Cannot open file for writing: %1 (Qt error %2: %3)</source><translation>无法打开文件以供写入：%1（Qt 错误 %2：%3）</translation></message>
+    <message><source>Cannot write file: %1 (Qt error %2: %3)</source><translation>无法写入文件：%1（Qt 错误 %2：%3）</translation></message>
+    <message><source>Cannot commit file: %1 (Qt error %2: %3)</source><translation>无法保存文件：%1（Qt 错误 %2：%3）</translation></message>
+    <message><source>Cannot create the download directory</source><translation>无法创建下载目录</translation></message>
+    <message><source>This package is in use by another operation</source><translation>此安装包正在被另一项操作使用</translation></message>
+    <message><source>Cannot lock the download cache</source><translation>无法锁定下载缓存</translation></message>
     <message><source>The Unreal SDK is missing a readable, nonempty header: %1. Select a complete SDK source.</source><translation>Unreal SDK &#x7f3a;&#x5c11;&#x53ef;&#x8bfb;&#x53d6;&#x4e14;&#x975e;&#x7a7a;&#x7684;&#x5934;&#x6587;&#x4ef6;&#xff1a;%1&#x3002;&#x8bf7;&#x9009;&#x62e9;&#x5b8c;&#x6574;&#x7684; SDK &#x6765;&#x6e90;&#x3002;</translation></message>
     <message>
         <source>Project Association</source>
@@ -894,8 +1044,32 @@ Continue?</source>
         <translation>请从可信备份中恢复安装记录，再重新验证。</translation>
     </message>
     <message>
-        <source>Installed SDK verification data is valid.</source>
-        <translation>已安装 SDK 的校验记录有效。</translation>
+        <source>The installation record is complete. File contents are checked in the next step.</source>
+        <translation>安装时保存的文件校验记录完整，实际文件内容的检查结果见下一项。</translation>
+    </message>
+    <message>
+        <source>%1 SDK file(s) differ from their contents at installation.</source>
+        <translation>%1 个 SDK 文件与安装时的内容不同。</translation>
+    </message>
+    <message>
+        <source>%1 SDK file(s) recorded at installation are missing.</source>
+        <translation>%1 个安装时记录的 SDK 文件已缺失。</translation>
+    </message>
+    <message>
+        <source>%1 SDK file(s) could not be read, so verification could not finish.</source>
+        <translation>%1 个 SDK 文件无法读取，未能完成验证。</translation>
+    </message>
+    <message>
+        <source>Review the listed content differences to confirm whether they were intentional. To restore the original SDK files, use Change SDK and select the complete package for the installed version.</source>
+        <translation>请确认下方文件的内容变化是否符合预期。如需恢复原版 SDK，请通过“更换 SDK”选择与已安装版本对应的完整 SDK 包。</translation>
+    </message>
+    <message>
+        <source>Restore the listed missing files from a matching backup, or use Change SDK and select the complete package for the installed version.</source>
+        <translation>请从对应版本的备份中恢复下方缺失文件，或通过“更换 SDK”选择与已安装版本对应的完整 SDK 包。</translation>
+    </message>
+    <message>
+        <source>Check read permissions and whether another program is preventing access to the listed files, then check the SDK status again.</source>
+        <translation>请检查下方文件的读取权限，以及其他程序是否阻止了文件访问，然后重新点击“检查 SDK 当前状态”。</translation>
     </message>
     <message>
         <source>Installed SDK files do not match the installation record or could not be read.</source>
@@ -910,8 +1084,8 @@ Continue?</source>
         <translation>缺失的 SDK 文件：</translation>
     </message>
     <message>
-        <source>Modified SDK files:</source>
-        <translation>被修改的 SDK 文件：</translation>
+        <source>SDK files with contents different from installation:</source>
+        <translation>内容与安装时不同的 SDK 文件：</translation>
     </message>
     <message>
         <source>Unreadable SDK files:</source>
@@ -1020,8 +1194,8 @@ SDK 安装位置：
         <translation>SDK 内容一致，未修改 SDK 文件。</translation>
     </message>
     <message>
-        <source>Close the game engine before continuing.</source>
-        <translation>请先关闭游戏引擎，再继续操作。</translation>
+        <source>Check write permission for the Hub report directory: %1</source>
+        <translation>请检查 Hub 报告目录的写入权限：%1</translation>
     </message>
     <message>
         <source>Check Passed</source>
@@ -1266,39 +1440,16 @@ Error code: %1</source>
         <translation>此版本可以打开已有工程，但不支持从 Hub 创建工程。</translation>
     </message>
     <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="118"/>
-        <source>Just now</source>
-        <translation>刚刚</translation>
+        <source>%1d %2h %3m ago</source>
+        <translation>%1天%2小时%3分前</translation>
     </message>
     <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="121"/>
-        <source>1 minute ago</source>
-        <translation>1 分钟前</translation>
+        <source>%1m ago</source>
+        <translation>%1分前</translation>
     </message>
     <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="122"/>
-        <source>%1 minutes ago</source>
-        <translation>%1 分钟前</translation>
-    </message>
-    <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="126"/>
-        <source>1 hour ago</source>
-        <translation>1 小时前</translation>
-    </message>
-    <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="127"/>
-        <source>%1 hours ago</source>
-        <translation>%1 小时前</translation>
-    </message>
-    <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="130"/>
-        <source>Yesterday</source>
-        <translation>昨天</translation>
-    </message>
-    <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="134"/>
-        <source>%1 days ago</source>
-        <translation>%1 天前</translation>
+        <source>%1h %2m ago</source>
+        <translation>%1小时%2分前</translation>
     </message>
     <message>
         <location filename="../Source/UI/ProjectsPage.cpp" line="152"/>
@@ -1439,8 +1590,8 @@ Error code: %1</source>
     </message>
     <message>
         <location filename="../Source/UI/ProjectsPage.cpp" line="788"/>
-        <source>The project location could not be saved. It will not be restored after restarting Harken Hub.</source>
-        <translation>无法保存工程位置。重启 Harken Hub 后不会恢复此位置。</translation>
+        <source>The project location could not be saved. It will not be restored after restarting Harken Studio Hub.</source>
+        <translation>无法保存工程位置。重启 Harken Studio Hub 后不会恢复此位置。</translation>
     </message>
     <message>
         <location filename="../Source/UI/ProjectsPage.cpp" line="799"/>
@@ -1778,13 +1929,13 @@ Channel: %2</source>
     </message>
     <message>
         <location filename="../Source/UI/VersionsPage.cpp" line="648"/>
-        <source>Harken Hub %1 is ready to install.</source>
-        <translation>Harken Hub %1 已可安装。</translation>
+        <source>Harken Studio Hub %1 is ready to install.</source>
+        <translation>Harken Studio Hub %1 已可安装。</translation>
     </message>
     <message>
         <location filename="../Source/UI/VersionsPage.cpp" line="657"/>
-        <source>Harken Hub %1 update is installing. The hub closes and restarts automatically.</source>
-        <translation>正在安装 Harken Hub %1 更新。Hub 将自动关闭并重启。</translation>
+        <source>Harken Studio Hub %1 update is installing. The hub closes and restarts automatically.</source>
+        <translation>正在安装 Harken Studio Hub %1 更新。Hub 将自动关闭并重启。</translation>
     </message>
     <message>
         <location filename="../Source/UI/VersionsPage.cpp" line="676"/>
@@ -1803,13 +1954,13 @@ Channel: %2</source>
     </message>
     <message>
         <location filename="../Source/UI/VersionsPage.cpp" line="720"/>
-        <source>Downloading Harken Hub %1 - %2 of %3</source>
-        <translation>正在下载 Harken Hub %1 — %2 / %3</translation>
+        <source>Downloading Harken Studio Hub %1 - %2 of %3</source>
+        <translation>正在下载 Harken Studio Hub %1 — %2 / %3</translation>
     </message>
     <message>
         <location filename="../Source/UI/VersionsPage.cpp" line="724"/>
-        <source>Downloading Harken Hub %1...</source>
-        <translation>正在下载 Harken Hub %1…</translation>
+        <source>Downloading Harken Studio Hub %1...</source>
+        <translation>正在下载 Harken Studio Hub %1…</translation>
     </message>
     <message>
         <location filename="../Source/UI/VersionsPage.cpp" line="770"/>
@@ -1831,15 +1982,15 @@ Channel: %2</source>
         <location filename="../Source/UI/VersionsPage.cpp" line="1250"/>
         <location filename="../Source/UI/VersionsPage.cpp" line="1276"/>
         <location filename="../Source/UI/VersionsPage.cpp" line="1332"/>
-        <source>Harken Hub</source>
-        <translation>Harken Hub</translation>
+        <source>Harken Studio Hub</source>
+        <translation>Harken Studio Hub</translation>
     </message>
     <message>
         <location filename="../Source/UI/VersionsPage.cpp" line="771"/>
-        <source>Harken Hub will close to install the update. Open HarkenStudio sessions are not affected.
+        <source>Harken Studio Hub will close to install the update. Open HarkenStudio sessions are not affected.
 
 Continue?</source>
-        <translation>Harken Hub 将关闭以安装更新。已打开的 HarkenStudio 会话不受影响。
+        <translation>Harken Studio Hub 将关闭以安装更新。已打开的 HarkenStudio 会话不受影响。
 
 是否继续？</translation>
     </message>
@@ -1893,10 +2044,10 @@ Continue?</source>
 %1</translation>
     </message>
     <message>
-        <source>Remove this local build from Harken Hub?
+        <source>Remove this local build from Harken Studio Hub?
 
 The build files will not be deleted. Projects linked to it cannot open until the same build is added again.</source>
-        <translation type="vanished">是否从 Harken Hub 中移除此本地构建？
+        <translation type="vanished">是否从 Harken Studio Hub 中移除此本地构建？
 
 构建文件不会被删除。重新添加同一构建之前，与其关联的工程将无法打开。</translation>
     </message>
@@ -1968,10 +2119,10 @@ The build files will not be deleted. Projects linked to it cannot open until the
     </message>
     <message>
         <location filename="../Source/UI/VersionsPage.cpp" line="892"/>
-        <source>Remove this standalone build from Harken Hub?
+        <source>Remove this standalone build from Harken Studio Hub?
 
 The build files will not be deleted. Projects linked to it cannot open until the same build is added again.</source>
-        <translation>是否从 Harken Hub 中移除此独立版本？
+        <translation>是否从 Harken Studio Hub 中移除此独立版本？
 
 版本文件不会被删除。关联到此版本的工程将无法打开，直到再次添加同一个版本。</translation>
     </message>
@@ -2418,8 +2569,8 @@ Diagnostic log: %2</source>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="800"/>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1542"/>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1558"/>
-        <source>Edit Integration</source>
-        <translation>编辑集成</translation>
+        <source>Manage Integration</source>
+        <translation>集成管理</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="146"/>
@@ -2494,8 +2645,8 @@ Diagnostic log: %2</source>
         <translation>检查日志</translation>
     </message>
     <message>
-        <source>Check Log (warnings: %1)</source>
-        <translation>检查日志（%1 项提醒）</translation>
+        <source>Check Log (review recommended: %1)</source>
+        <translation>检查日志（%1 项建议关注）</translation>
     </message>
     <message>
         <source>SDK version: %1 → %2</source>
@@ -2522,8 +2673,8 @@ Diagnostic log: %2</source>
         <translation>无需更改 SDK 文件。</translation>
     </message>
     <message>
-        <source>Items needing attention: %1. View check log.</source>
-        <translation>有 %1 项需要留意，查看检查日志。</translation>
+        <source>Review recommended for %1 item(s). View check log.</source>
+        <translation>有 %1 项建议关注，查看检查日志。</translation>
     </message>
     <message>
         <source>SDK check failed. Review the check log for details.</source>
@@ -2930,6 +3081,10 @@ Close Unity before continuing. Any paths hard-coded in your project must be upda
         <translation>该 Unity 工程仍在运行。请先关闭工程，再重新进行安全检查，通过后才能修改 SDK。</translation>
     </message>
     <message>
+        <source>Cannot check whether this Unity project is open: %1 (system error %2). Check project permissions and try again.</source>
+        <translation>无法检查该 Unity 工程是否正在运行：%1（系统错误 %2）。请检查工程访问权限后重试。</translation>
+    </message>
+    <message>
         <source>The SDK installation location is not safe to use.</source>
         <translation>SDK 安装位置未通过安全检查。</translation>
     </message>
@@ -3203,21 +3358,21 @@ Close Unity before continuing. Any paths hard-coded in your project must be upda
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="716"/>
-        <source>This Unity or Unreal project already belongs to an engine integration.</source>
-        <translation>该 Unity 或 Unreal 工程已经建立过引擎集成。</translation>
+        <source>This Unity project already belongs to an engine integration.</source>
+        <translation>&#x8be5; Unity &#x5de5;&#x7a0b;&#x5df2;&#x7ecf;&#x5efa;&#x7acb;&#x8fc7;&#x5f15;&#x64ce;&#x96c6;&#x6210;&#x3002;</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="772"/>
-        <source>Select a valid Unity project folder or Unreal .uproject file.</source>
-        <translation>请选择有效的 Unity 工程文件夹或 Unreal .uproject 文件。</translation>
+        <source>Select a valid Unity project folder.</source>
+        <translation>&#x8bf7;&#x9009;&#x62e9;&#x6709;&#x6548;&#x7684; Unity &#x5de5;&#x7a0b;&#x6587;&#x4ef6;&#x5939;&#x3002;</translation>
     </message>
     <message>
         <source>Select a Harken project before checking integration.</source>
         <translation>请先选择 Harken 工程，再检查集成。</translation>
     </message>
     <message>
-        <source>Select a Unity or Unreal project before checking integration.</source>
-        <translation>请先选择 Unity 或 Unreal 工程，再检查集成。</translation>
+        <source>Select a Unity project before checking integration.</source>
+        <translation>&#x8bf7;&#x5148;&#x9009;&#x62e9; Unity &#x5de5;&#x7a0b;&#xff0c;&#x518d;&#x68c0;&#x67e5;&#x96c6;&#x6210;&#x3002;</translation>
     </message>
     <message>
         <source>Select a Runtime / SDK source before checking integration.</source>
@@ -3335,8 +3490,8 @@ Close Unity before continuing.</source>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1142"/>
-        <source>The Unity SDK and runtimes were backed up and removed with a cleanup warning. Backup: %1</source>
-        <translation>Unity SDK 和 Runtime 已备份并移除，但清理过程存在警告。备份：%1</translation>
+        <source>The Unity SDK and runtimes were backed up and removed. Review is recommended for cleanup details. Backup: %1</source>
+        <translation>Unity SDK 和运行库已备份并移除，建议关注清理详情。备份：%1</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1147"/>
@@ -3402,8 +3557,8 @@ Close Unity before continuing.</source>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1206"/>
-        <source>Check completed with guidance for additional target platforms.</source>
-        <translation>检查完成，请查看其他目标平台的相关提示。</translation>
+        <source>Check completed. Review is recommended for the highlighted steps.</source>
+        <translation>检查完成，建议关注高亮步骤中的说明。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1208"/>
@@ -3422,8 +3577,8 @@ Close Unity before continuing.</source>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1214"/>
-        <source>SDK integration completed with warnings. Review the highlighted steps.</source>
-        <translation>SDK 集成完成，但存在警告，请查看高亮步骤。</translation>
+        <source>SDK integration completed. Review is recommended for the highlighted steps.</source>
+        <translation>SDK 集成完成，建议关注高亮步骤中的说明。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1216"/>
@@ -3603,8 +3758,8 @@ Close Unity before continuing.</source>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1423"/>
-        <source>Warning</source>
-        <translation>警告</translation>
+        <source>Review recommended</source>
+        <translation>建议关注</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1425"/>
@@ -3685,7 +3840,7 @@ Engine project:
     </message>
     <message>
         <source>SDK VERSION</source>
-        <translation type="vanished">SDK 版本</translation>
+        <translation>SDK 版本</translation>
     </message>
     <message>
         <source>STATUS</source>
@@ -4458,8 +4613,8 @@ To integrate again later, select or drop this SDK source: %2</source>
         <translation>HarkenStudio 在完成打开工程前已退出</translation>
     </message>
     <message>
-        <source>HarkenStudio did not connect to Harken Hub within 15 seconds</source>
-        <translation>HarkenStudio 未能在 15 秒内连接到 Harken Hub</translation>
+        <source>HarkenStudio did not connect to Harken Studio Hub within 15 seconds</source>
+        <translation>HarkenStudio 未能在 15 秒内连接到 Harken Studio Hub</translation>
     </message>
     <message>
         <source>HarkenStudio did not finish opening the project within 2 minutes</source>
@@ -4534,8 +4689,8 @@ The previous version association was kept. You can retry, select another version
         <translation>此工程需要更新后才能打开。</translation>
     </message>
     <message>
-        <source>Return to Harken Hub and choose a newer Studio version to open it once. No project was changed.</source>
-        <translation>请返回 Harken Hub，选择较新的 Studio 版本并使用“一次打开”。工程未发生更改。</translation>
+        <source>Return to Harken Studio Hub and choose a newer Studio version to open it once. No project was changed.</source>
+        <translation>请返回 Harken Studio Hub，选择较新的 Studio 版本并使用“一次打开”。工程未发生更改。</translation>
     </message>
     <message>
         <source>The project changed while Harken Studio was preparing the update.</source>
@@ -4702,8 +4857,8 @@ The previous version association was kept. You can retry, select another version
         <translation>HarkenStudio 回报的构建 ID 为 %1，但应为 %2</translation>
     </message>
     <message>
-        <source>This HarkenStudio version cannot create projects from Harken Hub. Update HarkenStudio and try again.</source>
-        <translation>此 HarkenStudio 版本无法从 Harken Hub 创建工程。请更新 HarkenStudio 后重试。</translation>
+        <source>This HarkenStudio version cannot create projects from Harken Studio Hub. Update HarkenStudio and try again.</source>
+        <translation>此 HarkenStudio 版本无法从 Harken Studio Hub 创建工程。请更新 HarkenStudio 后重试。</translation>
     </message>
     <message>
         <source>HarkenStudio reported an unexpected launch operation</source>
@@ -5027,8 +5182,24 @@ Harken Studio %2 使用 Schema %3。
     </message>
     <message>
         <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="67"/>
-        <source>This project requires a newer Studio. Choose or install a newer version.</source>
-        <translation>此工程需要较新的 Studio，请选择或安装较新版本。</translation>
+        <source>The selected Harken Studio %1 does not support this project format.
+Project format version: Schema %2
+Current Studio format version: Schema %3
+
+Choose or install a Harken Studio version that supports this project format.</source>
+        <translation>当前选择的 Harken Studio %1 不支持此工程格式。
+工程格式版本：Schema %2
+当前 Studio 格式版本：Schema %3
+
+请选择或安装支持此工程格式的 Harken Studio 版本。</translation>
+    </message>
+    <message>
+        <source>The selected Harken Studio %1 does not support this project format.
+
+Choose or install a Harken Studio version that supports this project format.</source>
+        <translation>当前选择的 Harken Studio %1 不支持此工程格式。
+
+请选择或安装支持此工程格式的 Harken Studio 版本。</translation>
     </message>
     <message>
         <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="72"/>
@@ -5042,9 +5213,9 @@ Harken Studio %2 使用 Schema %3。
         <translation>暂时无法读取工程详情，将由所选 Studio 检查工程。</translation>
     </message>
     <message><source>Select Game Project</source><translation>选择游戏工程</translation></message>
-    <message><source>Select a Unity or Unreal project</source><translation>选择 Unity 或 Unreal 工程</translation></message>
-    <message><source>Select a Unity or Unreal project folder, or an Unreal .uproject file.</source><translation>请选择 Unity 或 Unreal 工程目录，或 Unreal 的 .uproject 文件。</translation></message>
-    <message><source>Both Unity and Unreal projects were found. Select the Unreal .uproject file or a separate Unity project folder.</source><translation>目录中同时发现 Unity 和 Unreal 工程。请选择 Unreal 的 .uproject 文件，或独立的 Unity 工程目录。</translation></message>
+    <message><source>Select a Unity project</source><translation>&#x9009;&#x62e9; Unity &#x5de5;&#x7a0b;</translation></message>
+    <message><source>Select a Unity project folder.</source><translation>&#x8bf7;&#x9009;&#x62e9; Unity &#x5de5;&#x7a0b;&#x6587;&#x4ef6;&#x5939;&#x3002;</translation></message>
+    <message><source>Multiple game projects were found. Select a separate Unity project folder.</source><translation>&#x76ee;&#x5f55;&#x4e2d;&#x53d1;&#x73b0;&#x591a;&#x4e2a;&#x6e38;&#x620f;&#x5de5;&#x7a0b;&#x3002;&#x8bf7;&#x9009;&#x62e9;&#x72ec;&#x7acb;&#x7684; Unity &#x5de5;&#x7a0b;&#x76ee;&#x5f55;&#x3002;</translation></message>
     <message><source>Uninstall SDK...</source><translation>卸载 SDK...</translation></message>
     <message><source>Installed SDK files match the installation record.</source><translation>已安装 SDK 文件与安装记录一致。</translation></message>
     <message><source>Safety check passed. No SDK files were changed.</source><translation>安全检查通过，未修改 SDK 文件。</translation></message>
@@ -5063,7 +5234,7 @@ Harken Studio %2 使用 Schema %3。
     <message><source>SDK files changed after the safety check. Run the check again before continuing.</source><translation>安全检查后 SDK 文件发生了变化，请重新检查后再继续。</translation></message>
     <message><source>Installed SDK verification failed. Review the backup and restore the project before retrying.</source><translation>安装后的 SDK 验证失败，请检查备份并恢复工程后再重试。</translation></message>
     <message><source>An Unreal Editor uses a relative project path with the same project name as this target. Reopen it with an absolute .uproject path so Hub can identify the project before changing SDK files.</source><translation>有 Unreal 编辑器使用相对路径打开了与目标同名的工程，Hub 无法确认是否为本工程。请使用 .uproject 的绝对路径重新打开，再进行 SDK 安全检查。</translation></message>
-        <message><source>Association only controls whether this project pair appears in Engine Integrations. SDK checks and management do not require association.</source><translation>关联仅决定这组工程是否显示在 Hub 的“引擎集成”列表中。未关联也可检查和管理 SDK。</translation></message>
+        <message><source>Linking adds this project pair to Engine Integrations and establishes a one-to-one relationship in this Hub. Unlink the pair before linking either project to another. SDK checks and management do not require linking.</source><translation>关联会将这组工程加入“引擎集成”列表，并在本机 Hub 中建立一对一关系。任一工程如需关联其他工程，请先解除当前关联。未关联也可检查和管理 SDK。</translation></message>
         <message><source>Add this project pair to Engine Integrations. No project or SDK files are changed.</source><translation>将这组工程加入 Hub 的“引擎集成”列表，不修改工程或 SDK 文件。</translation></message>
         <message><source>Remove this project pair from Engine Integrations. Project files and the installed SDK are kept.</source><translation>将这组工程从 Hub 的“引擎集成”列表移除，保留工程文件和已安装的 SDK。</translation></message>
         <message><source>View Resolution...</source><translation>查看解决办法...</translation></message>
@@ -5096,9 +5267,9 @@ Uninstall SDK: %3</source><translation>更换 SDK：%1
         <message><source>SDK metadata needs repair</source><translation>SDK 描述文件需要修复</translation></message>
         <message><source>The installation record is available, but package.json or harken-integration.json is missing or invalid.</source><translation>安装记录有效，但 package.json 或 harken-integration.json 缺失或无效。</translation></message>
         <message><source>Use Change SDK with a complete SDK source to repair the managed files. Move and uninstall require readable package metadata, so repair it first. Existing safety checks still run before applying any change.</source><translation>可点击“更换 SDK”，选择完整的 SDK 来源修复文件。迁移和卸载需要有效的包描述文件，请先修复。实际修改前仍须通过安全检查。</translation></message>
-        <message><source>SDK dependency present</source><translation>工程仍有 SDK 包依赖</translation></message>
-        <message><source>Change SDK remains available. Before moving or uninstalling, resolve the SDK dependencies in Unity Package Manager and package manifests so Unity cannot load another referenced copy or lose a package reference.</source><translation>仍可更换 SDK。迁移或卸载前，请先处理 Unity 包管理器和包清单中的 SDK 依赖，避免 Unity 加载另一份 SDK，或出现引用路径失效。</translation></message>
-        <message><source>Local package dependency</source><translation>SDK 存在本地包路径依赖</translation></message>
+        <message><source>Installed; move and uninstall restricted by dependencies</source><translation>已安装；包依赖限制了迁移和卸载</translation></message>
+        <message><source>The SDK is installed. Change SDK remains available. Before moving or uninstalling, resolve the SDK dependencies in Unity Package Manager and package manifests so Unity cannot load another referenced copy or lose a package reference.</source><translation>SDK 已安装，可继续更换或更新。如需迁移或卸载，请先处理 Unity Package Manager 和包清单中的 SDK 依赖，避免 Unity 加载另一份副本或丢失包引用。</translation></message>
+        <message><source>Installed; move restricted by local dependencies</source><translation>已安装；本地包依赖限制了迁移</translation></message>
         <message><source>Change and uninstall remain available. Before moving the SDK, resolve local file: dependencies that belong to or reference this installation, then check again.</source><translation>仍可更换和卸载 SDK。迁移前，请先处理 SDK 自身或指向其位置的 file: 本地包依赖，再重新检查。</translation></message>
         <message><source>The Unreal project descriptor is missing.</source><translation>Unreal 工程的 .uproject 文件不存在。</translation></message>
         <message><source>Restore the .uproject file or select the current Unreal project location, then check again.</source><translation>请恢复 .uproject 文件，或重新选择 Unreal 工程当前的位置，再重新检查。</translation></message>
@@ -5163,5 +5334,59 @@ Close Unreal Editor before continuing. Any paths hard-coded in your project must
 %3
 
 请先关闭此 Unreal 工程。工程中写死的路径需要另行调整。</translation></message>
-    </context>
+        <message><source>View Dependencies...</source><translation>查看依赖…</translation></message>
+        <message><source>SDK Dependencies</source><translation>SDK 包依赖</translation></message>
+        <message><source>Could not back up the existing Unity SDK.</source><translation>无法备份现有 Unity SDK。</translation></message>
+        <message><source>Could not activate the staged Unity SDK.</source><translation>无法启用准备好的 Unity SDK。</translation></message>
+        <message><source>Cannot move directory from %1 to %2 (system error %3: %4).</source><translation>无法将目录从 %1 移动到 %2（系统错误 %3：%4）。</translation></message>
+        <message><source>Check file write protection, directory permissions and processes holding files open at %1. If checkout or unlocking is required, do that first, then retry. The existing SDK was not changed.</source><translation>请检查 %1 下的文件写保护、目录权限及占用文件的进程。如需签出或解锁，请先完成后重试。现有 SDK 未被修改。</translation></message>
+        <message><source>The Unreal SDK is missing a readable, nonempty file required on this platform: %1. Select a complete SDK source.</source><translation>Unreal SDK 缺少当前平台必需的可读取、非空文件：%1。请选择完整的 SDK 来源。</translation></message>
+        <message><source>Some files needed for the project upgrade are read-only or not writable.</source><translation>工程升级需要修改的部分文件处于只读状态或不可写。</translation></message>
+        <message><source>Check file write protection and access permissions, then try again. If your version control workflow requires checkout or unlocking, do that first. No project data was changed.</source><translation>请检查文件写保护和访问权限后重试。如果版本管理流程要求签出或解锁，请先完成相应操作。工程数据未被修改。</translation></message>
+        <message><source>Affected files:
+%1</source><translation>受影响的文件：
+%1</translation></message>
+        <message><source>Project and SDK Paths</source><translation>工程与 SDK 路径</translation></message>
+    <message><source>Open Report</source><translation>打开报告</translation></message>
+    <message><source>SDK integration failed. Review the log for details.</source><translation>SDK 集成失败，请查看日志中的详细原因。</translation></message>
+    <message><source>Applying SDK...</source><translation>正在更换 SDK…</translation></message>
+    <message><source>Checking SDK...</source><translation>正在检查 SDK…</translation></message>
+    <message><source>Confirm SDK Change</source><translation>确认更换 SDK</translation></message>
+    <message><source>Confirm SDK Installation</source><translation>确认安装 SDK</translation></message>
+    <message><source>Game project: %1 | Harken project: %2</source><translation>游戏工程：%1 | Harken 工程：%2</translation></message>
+    <message><source> (Downgrade)</source><translation>（降级）</translation></message>
+    <message><source>Harken project:
+%1
+
+Game project:
+%2
+
+SDK source:
+%3
+
+SDK installation location:
+%4</source><translation>Harken 工程：
+%1
+
+游戏工程：
+%2
+
+SDK 来源：
+%3
+
+SDK 安装位置：
+%4</translation></message>
+    <message><source>SDK files changed. Review the refreshed results and confirm again. No SDK files were changed.</source><translation>检查后文件发生了变化，请查看更新后的检查结果并重新确认。本次操作未修改 SDK 文件。</translation></message>
+    <message><source>Check complete. Review the changes, then confirm to continue.</source><translation>检查完成，请查看文件变化，再确认执行。</translation></message>
+    <message><source>Locally modified files to overwrite or remove: %1</source><translation>将被覆盖或移除的本地修改文件：%1 个</translation></message>
+    <message><source>Missing installed SDK files: %1</source><translation>当前 SDK 缺失文件：%1 个</translation></message>
+    <message><source>The SDK files could not be checked safely.</source><translation>SDK 文件未通过安全检查。</translation></message>
+    <message><source>The SDK contains an unsafe path.</source><translation>SDK 中存在不安全的路径。</translation></message>
+    <message><source>Cannot read SDK file: %1</source><translation>无法读取 SDK 文件：%1</translation></message>
+    <message><source>Locally modified files overwritten or removed: %1</source><translation>已覆盖或移除的本地修改文件：%1 个</translation></message>
+    <message><source>SDK files missing before the change: %1</source><translation>更换前缺失的 SDK 文件：%1 个</translation></message>
+    <message><source>Files added</source><translation>已新增文件</translation></message>
+    <message><source>Files updated</source><translation>已更新文件</translation></message>
+    <message><source>Files removed</source><translation>已移除文件</translation></message>
+</context>
 </TS>

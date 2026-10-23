@@ -363,3 +363,30 @@ TEST(MonitorAdapterRuntime, RecordingNullDescIsInvalidArgWithoutTrace)
     EXPECT_EQ(adapter.startRecording(1, 1, nullptr), VN_INVALID_ARG);
     EXPECT_FALSE(tracesContain(adapter, "Vn_MonitorStartRecording"));
 }
+
+TEST(MonitorAdapterRuntime, BridgeNegotiatesExecutionWithoutChangingLegacySessions)
+{
+    namespace Monitoring = HarkenEditor::Bridge::Monitoring;
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    ASSERT_EQ(engine.InitResult(), VN_OK);
+    for (const auto version : {0u, 1u}) {
+        SCOPED_TRACE(version);
+        VNX::Monitor::MonitorSessionDesc desc{};
+        desc.requestedStreamKindMask = VN_MONITOR_STREAM_EVENT;
+        desc.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS;
+        desc.requestedExecutionFactVersion = version;
+        desc.consumerQueueBytes = 65536;
+        uint64_t handle = 0;
+        ASSERT_EQ(Monitoring::openEventSession(&desc, &handle), VN_OK);
+        VNX::Monitor::MonitorEventSessionStatus status{};
+        EXPECT_EQ(Monitoring::getEventSessionStatus(handle, &status), VN_OK);
+        EXPECT_EQ(status.acceptedExecutionFactVersion, version);
+        EXPECT_NE(status.monitorSessionEpoch, 0u);
+        EXPECT_NE(status.startedTimestampNs, 0u);
+        if (version) {
+            EXPECT_NE(status.supportedFactKinds[0], 0u);
+            EXPECT_EQ(status.acceptedStreamKindMask, VN_MONITOR_STREAM_EVENT);
+        }
+        EXPECT_EQ(Monitoring::closeSession(handle), VN_OK);
+    }
+}

@@ -2154,6 +2154,7 @@ TEST(Trace, DynamicRouteDetectorCountsOnlyValuesAboveFloatMaxAsSaturated) {
         config.dynamicRoutePlanPoolCapacity = 2;
         config.dynamicBusTapCapacity = 1;
         harken::DynamicRouteSystem routes(config);
+        EXPECT_EQ(0u, routes.TapSampleStorageBytes());
 
         std::uint32_t tableIndex = 0;
         EXPECT_TRUE(routes.AllocateRouteSlot(&tableIndex));
@@ -2168,7 +2169,14 @@ TEST(Trace, DynamicRouteDetectorCountsOnlyValuesAboveFloatMaxAsSaturated) {
         route.sourceIndex = 1;
         route.tap = VN_DYNAMIC_TAP_BUS_PRE_FADER;
         route.levelLinear = levelLinear;
+        routes.SetTapSampleCommitPageLimitsForTests(0, SIZE_MAX);
+        EXPECT_FALSE(routes.AcquireRouteTap(route));
+        EXPECT_EQ(0u, routes.BusTapInUse());
+        EXPECT_EQ(0u, routes.TapGeneration(VN_DYNAMIC_SOURCE_BUS, 0));
+        routes.SetTapSampleCommitPageLimitsForTests(SIZE_MAX, SIZE_MAX);
         EXPECT_TRUE(routes.AcquireRouteTap(route));
+        const auto preparedBytes = routes.TapSampleStorageBytes();
+        EXPECT_GT(preparedBytes, 0u);
         routes.CommitSet(route);
 
         const std::uint32_t plan = routes.AcquirePlan();
@@ -2186,6 +2194,7 @@ TEST(Trace, DynamicRouteDetectorCountsOnlyValuesAboveFloatMaxAsSaturated) {
         result.detector = detector != nullptr ? detector[0] : 0.0f;
         result.totalNonFinite = routes.DetectorNonFiniteCount();
         result.totalSaturation = routes.DetectorSaturationCount();
+        EXPECT_EQ(preparedBytes, routes.TapSampleStorageBytes());
         return result;
     };
 
@@ -2227,6 +2236,7 @@ TEST(Trace, VoiceTapReturnRearmsEverySharedRouteBeforeSilentPublication) {
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::DynamicRouteSystem& routes = session.Engine()->dynamicRoutes;
+    EXPECT_EQ(0u, routes.TapSampleStorageBytes());
 
     constexpr VnVoiceHandle kIdentity =
         (static_cast<VnVoiceHandle>(9) << 32) | 7u;
@@ -2247,6 +2257,13 @@ TEST(Trace, VoiceTapReturnRearmsEverySharedRouteBeforeSilentPublication) {
             static_cast<std::uint32_t>(kIdentity >> 32);
         route.tap = VN_DYNAMIC_TAP_VOICE_POST_GAIN_PRE_SPATIAL;
         route.armFirstBlock = true;
+        if (routeSlot == 0) {
+            routes.SetTapSampleCommitPageLimitsForTests(SIZE_MAX, 0);
+            EXPECT_FALSE(routes.AcquireRouteTap(route));
+            EXPECT_EQ(0u, routes.VoiceTapInUse());
+            EXPECT_EQ(0u, routes.TapGeneration(VN_DYNAMIC_SOURCE_VOICE, 0));
+            routes.SetTapSampleCommitPageLimitsForTests(SIZE_MAX, SIZE_MAX);
+        }
         ASSERT_TRUE(routes.AcquireRouteTap(route));
         routes.CommitSet(route);
     }

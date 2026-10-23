@@ -1,0 +1,145 @@
+{
+    "content": {
+        "actionPublishedNameHistory": [
+            {
+                "event": "created",
+                "name": "Play_Nested",
+                "nameBindingRevision": 1,
+                "objectGuid": "5b134ae8-b195-477f-95be-97fa0291251f"
+            },
+            {
+                "event": "created",
+                "name": "Play_Tail",
+                "nameBindingRevision": 1,
+                "objectGuid": "9e0380d1-9eb1-4a48-9b37-b3a1ed570289"
+            },
+            {
+                "event": "created",
+                "name": "Play_Head",
+                "nameBindingRevision": 1,
+                "objectGuid": "09bfda03-95e3-40a9-bd32-67382e7c5808"
+            }
+        ],
+        "metadata": {
+            "author": "",
+            "channelConfig": 1,
+            "createdDate": "2026-10-22T21:41:14",
+            "description": "",
+            "enableLFE": true,
+            "modifiedDate": "2026-10-22T21:41:15",
+            "name": "CompanionFixture",
+            "platforms": [
+                {
+                    "basePlatform": "Windows",
+                    "id": "c072e056-21ef-4c60-9292-77e99d40563e",
+                    "name": "Windows",
+                    "profile": {
+                        "performResample": false,
+                        "sizePolicies": [
+                            {
+                                "config": {
+                                    "format": 1,
+                                    "targetSampleRate": 48000,
+                                    "vorbisAverageBitrate": 0,
+                                    "vorbisEncodeMode": 0,
+                                    "vorbisMaxBitrate": 0,
+                                    "vorbisMinBitrate": 0,
+                                    "vorbisQuality": 0.6000000238418579
+                                },
+                                "maxBytes": null
+                            }
+                        ]
+                    }
+                },
+                {
+                    "basePlatform": "Android",
+                    "id": "320dad84-0978-4aed-b9af-ffb473c4c2fe",
+                    "name": "Android",
+                    "profile": {
+                        "performResample": false,
+                        "sizePolicies": [
+                            {
+                                "config": {
+                                    "format": 1,
+                                    "targetSampleRate": 48000,
+                                    "vorbisAverageBitrate": 0,
+                                    "vorbisEncodeMode": 0,
+                                    "vorbisMaxBitrate": 0,
+                                    "vorbisMinBitrate": 0,
+                                    "vorbisQuality": 0.6000000238418579
+                                },
+                                "maxBytes": null
+                            }
+                        ]
+                    }
+                },
+                {
+                    "basePlatform": "macOS",
+                    "id": "fafd1e49-bc3e-4700-adfc-44cd22461ec9",
+                    "name": "macOS",
+                    "profile": {
+                        "performResample": false,
+                        "sizePolicies": [
+                            {
+                                "config": {
+                                    "format": 1,
+                                    "targetSampleRate": 48000,
+                                    "vorbisAverageBitrate": 0,
+                                    "vorbisEncodeMode": 0,
+                                    "vorbisMaxBitrate": 0,
+                                    "vorbisMinBitrate": 0,
+                                    "vorbisQuality": 0.6000000238418579
+                                },
+                                "maxBytes": null
+                            }
+                        ]
+                    }
+                },
+                {
+                    "basePlatform": "iOS",
+                    "id": "a8613c67-51b5-415f-86a9-4d197353375d",
+                    "name": "iOS",
+                    "profile": {
+                        "performResample": false,
+                        "sizePolicies": [
+                            {
+                                "config": {
+                                    "format": 1,
+                                    "targetSampleRate": 48000,
+                                    "vorbisAverageBitrate": 0,
+                                    "vorbisEncodeMode": 0,
+                                    "vorbisMaxBitrate": 0,
+                                    "vorbisMinBitrate": 0,
+                                    "vorbisQuality": 0.6000000238418579
+                                },
+                                "maxBytes": null
+                            }
+                        ]
+                    }
+                }
+            ],
+            "projectTemplateId": "",
+            "sampleRate": 48000,
+            "toolVersion": "HarkenStudio 1.0.0",
+            "version": "1.0"
+        },
+        "paths": {
+            "audioFolder": "Layers",
+            "packFolder": "Packs"
+        },
+        "projectLanguages": [
+            "English"
+        ],
+        "sourceAssets": {
+            "2514908749": "tone.wav"
+        }
+    },
+    "harkenDocument": {
+        "id": "77b2c1cc-416d-4c88-986d-262c7fc1705e",
+        "projectId": "77b2c1cc-416d-4c88-986d-262c7fc1705e",
+        "propertyModel": "fieldGroupsV1",
+        "savedStudioVersion": "0.8.0",
+        "schemaVersion": 8,
+        "type": "project.root"
+    }
+}

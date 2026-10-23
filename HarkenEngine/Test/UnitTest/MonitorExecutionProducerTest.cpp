@@ -424,7 +424,7 @@ TEST(MonitorExecutionHub, OrdinaryV2SourceLossRemainsQueryableWhenItsSummaryIsAl
             EXPECT_EQ(1u, summaries[i].firstSourceSequence);
             EXPECT_EQ(3u, summaries[i].lastSourceSequence);
             EXPECT_EQ(3u, summaries[i].recordCount);
-            EXPECT_EQ(3u * kExecutionRecordBytes, summaries[i].byteCount);
+            EXPECT_EQ(3u * sizeof(MonitorExecutionFact), summaries[i].byteCount);
         }
         EXPECT_EQ(1u, found);
     }

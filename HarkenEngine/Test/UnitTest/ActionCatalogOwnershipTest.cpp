@@ -250,6 +250,76 @@ TEST(ActionCatalogOwnership, KeepAndPrepareCommitExposeSessionCatalog) {
     EXPECT_TRUE(keep.hasGameplayCatalog);
     EXPECT_EQ(published->gameplayCatalog.header.digest,
               keep.gameplayCatalog.header.digest);
+    const auto bareBytes = BuildInitBare();
+    PackCanonicalImage bare;
+    ASSERT_EQ(VN_OK, ParsePackCanonicalImage(bareBytes.data(), bareBytes.size(), &bare));
+    PackComposition::CandidateOwner replacement;
+    ASSERT_EQ(VN_OK, composition.PrepareCandidate(bare, kInitHandle, &replacement));
+    ASSERT_EQ(VN_OK, composition.Commit({std::move(replacement)}, &bare, kInitHandle, 8, 2));
+    EXPECT_TRUE(composition.Published()->hasGameplayCatalog);
+    EXPECT_FALSE(composition.Published()->owners.front().hasGameplayCatalog);
+    ++bare.requirement.packContentRevision;
+    ASSERT_EQ(VN_OK, composition.PrepareCandidate(bare, kInitHandle, &replacement));
+    ASSERT_EQ(VN_OK, composition.Commit({std::move(replacement)}, &bare, kInitHandle, 8, 3));
+    EXPECT_FALSE(composition.Published()->hasGameplayCatalog);
+}
+
+TEST(ActionCatalogOwnership, IndependentDirectorySurvivesContentActivationAndRejectsInvalidReplacement) {
+    EngineSession session(MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    const std::string paths[] = {
+        WriteTemp("directory-init.pack", BuildInitBare()),
+        WriteTemp("directory-content.pack", BuildContentPack(1, kActionId, 0x3f000000u))};
+    VnCanonicalPackSetMemberV1 members[2]{};
+    VnCanonicalPackSetMemberResultV1 rows[2]{};
+    for (std::size_t i = 0; i < 2; ++i) {
+        members[i].structSize = sizeof(members[i]);
+        members[i].packStableId = i == 0 ? kInitId : kContentId;
+        members[i].packKind = i == 0 ? VN_CANONICAL_PACK_SET_MEMBER_INIT : VN_CANONICAL_PACK_SET_MEMBER_CONTENT;
+        members[i].utf8Path = paths[i].c_str();
+        rows[i].structSize = sizeof(rows[i]);
+    }
+    VnCanonicalPackSetActivationReportV1 initial{};
+    ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(members, 1, rows, initial));
+    const auto initHandle = initial.initHandle;
+    EXPECT_FALSE(session.Engine()->packComposition.Published()->hasGameplayCatalog);
+    PackGameplayCatalogHeader header;
+    StoreObjectId(header.projectGuid.data(), kProjectId);
+    header.initPackStableId = kInitId;
+    header.initContentRevision = 1;
+    std::vector<std::uint8_t> bytes;
+    ASSERT_TRUE(EncodeGameplayCatalog(header, {MakeActive("Play_Fire", kActionId)}, {}, &bytes));
+    VnPackByteSpan span{};
+    span.structSize = sizeof(span);
+    span.bytes = bytes.data();
+    span.byteCount = bytes.size();
+    ASSERT_EQ(VN_OK, Vn_SetGameplayCatalog(initHandle, &span));
+    VnPostActionByNameDesc name{};
+    name.structSize = sizeof(name);
+    name.utf8Name = "Play_Fire";
+    VnActionFiringHandle firing = 0;
+    EXPECT_EQ(VN_CONTENT_NOT_LOADED, Vn_PostActionByName(&name, &firing));
+    members[0].expectedHandle = initHandle;
+    VnCanonicalPackSetActivationReportV1 loaded{};
+    ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(members, 2, rows, loaded,
+        initHandle, initial.resultSetRevision));
+    ASSERT_EQ(VN_OK, Vn_PostActionByName(&name, &firing));
+    const auto* before = session.Engine()->packComposition.Published();
+    auto invalid = MakeActive("Play_Fire", kActionId);
+    invalid.ownerPackStableId = 33;
+    ASSERT_TRUE(EncodeGameplayCatalog(header, {invalid}, {}, &bytes));
+    span.bytes = bytes.data();
+    span.byteCount = bytes.size();
+    EXPECT_EQ(VN_PACK_STALE_REVISION, Vn_SetGameplayCatalog(initHandle, &span));
+    EXPECT_EQ(before, session.Engine()->packComposition.Published());
+    ASSERT_TRUE(EncodeGameplayCatalog(header, {MakeActive("Play_Renamed", kActionId)}, {}, &bytes));
+    span.bytes = bytes.data();
+    span.byteCount = bytes.size();
+    ASSERT_EQ(VN_OK, Vn_SetGameplayCatalog(initHandle, &span));
+    EXPECT_EQ(VN_UNKNOWN_ID, Vn_PostActionByName(&name, &firing));
+    name.utf8Name = "Play_Renamed";
+    EXPECT_EQ(VN_OK, Vn_PostActionByName(&name, &firing));
+    EXPECT_FALSE(session.Engine()->packComposition.Published()->owners.front().hasGameplayCatalog);
 }
 
 TEST(ActionCatalogOwnership, MissingKind25ReplaceIsNoOp) {

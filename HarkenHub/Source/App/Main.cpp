@@ -98,6 +98,7 @@ QMainWindow { background-color: #06080D; }
 }
   #pageTitle { font-size: 16px; font-weight: 600; color: #00F0FF; background: transparent; }
   #pageSubtitle { color: #888888; background: transparent; }
+  #sidebarLogo { background: transparent; }
   #sidebarProduct { color: #00F0FF; background: transparent; font-size: 24px; font-weight: 700; }
 #sidebarNote { color: #6B7488; background: transparent; font-size: 11px; }
 #sidebarLinks { background: transparent; font-size: 11px; }
@@ -535,9 +536,14 @@ int main(int argc, char* argv[])
         }
         if (qstrcmp(argv[i], "--repair-version") == 0) {
             QCoreApplication app(argc, argv);
+            QString transactionId;
+            for (int j = 1; j + 1 < argc; ++j) {
+                if (qstrcmp(argv[j], "--transaction-id") == 0)
+                    transactionId = QString::fromLatin1(argv[j + 1]);
+            }
             const auto outcome = VNH::RepairExecutor::run(
                 QString::fromLatin1(argv[i + 1]),
-                QDateTime::currentDateTimeUtc());
+                QDateTime::currentDateTimeUtc(), transactionId);
             if (!outcome.ok) {
                 qCritical().noquote() << "Repair failed:"
                                       << outcome.failureCode << outcome.error;
@@ -716,6 +722,8 @@ int main(int argc, char* argv[])
 
             const auto reclaim = VNH::TransactionReclaimer::reclaimAtStartup(
                 QDateTime::currentDateTimeUtc());
+            for (const QString& error : reclaim.installRecoveryErrors)
+                qWarning().noquote() << "Install recovery failed:" << error;
             for (const QString& transactionId : reclaim.reclaimedTransactionIds)
                 qInfo().noquote()
                     << "Reclaimed unfinished install transaction"
@@ -888,6 +896,7 @@ int main(int argc, char* argv[])
     }
 
     QApplication app(argc, argv);
+    app.setWindowIcon(QIcon(QStringLiteral(":/Resources/icons/HubIcon.ico")));
     VNH::HubLocalization::install(&app);
     app.styleHints()->setColorScheme(Qt::ColorScheme::Dark);
     if (QStyle* fusion = QStyleFactory::create(QStringLiteral("Fusion")))
@@ -897,7 +906,7 @@ int main(int argc, char* argv[])
         QString::fromUtf8(Harken::BuildInfo::HubVersion.data(),
                           static_cast<int>(Harken::BuildInfo::HubVersion.size())));
 
-    qInfo().noquote() << "Harken Hub"
+    qInfo().noquote() << "Harken Studio Hub"
                       << QString::fromUtf8(Harken::BuildInfo::Label.data(),
                                            static_cast<int>(Harken::BuildInfo::Label.size()));
 
@@ -912,8 +921,8 @@ int main(int argc, char* argv[])
             return 0;
         if (!guard.retryPrimary()) {
             QMessageBox::critical(
-                nullptr, hubTr("Harken Hub"),
-                hubTr("Another Harken Hub instance is running but not "
+                nullptr, hubTr("Harken Studio Hub"),
+                hubTr("Another Harken Studio Hub instance is running but not "
                       "responding. Please close it and try again."));
             return 1;
         }
@@ -952,8 +961,7 @@ int main(int argc, char* argv[])
         }
     }
 
-    app.setWindowIcon(
-        QIcon(QStringLiteral(":/Resources/icons/HarkenHub_256x256.png")));
+    app.setApplicationDisplayName(QStringLiteral("Harken Studio Hub"));
     app.setStyleSheet(QString::fromLatin1(kStyleSheet));
 
     QTimer::singleShot(0, &app, [&app]() {
@@ -1006,6 +1014,8 @@ int main(int argc, char* argv[])
 
     const auto reclaim =
         VNH::TransactionReclaimer::reclaimAtStartup(QDateTime::currentDateTimeUtc());
+    for (const QString& error : reclaim.installRecoveryErrors)
+        qWarning().noquote() << "Install recovery failed:" << error;
     for (const QString& transactionId : reclaim.reclaimedTransactionIds)
         qInfo().noquote() << "Reclaimed unfinished install transaction"
                           << transactionId;

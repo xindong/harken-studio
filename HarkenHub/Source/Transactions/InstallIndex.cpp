@@ -1,14 +1,13 @@
 #include "Transactions/InstallIndex.h"
 
+#include "Platform/AtomicFile.h"
 #include "Platform/PlatformPaths.h"
 
-#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QSaveFile>
 
 #include <algorithm>
 
@@ -94,30 +93,8 @@ bool saveIndex(const InstallIndexSnapshot& data, QString* error)
     root[QStringLiteral("lastReleaseSequence")] = data.lastReleaseSequence;
     root[QStringLiteral("installed")] = installed;
 
-    const QString path = InstallIndex::filePath();
-    if (!QDir().mkpath(QFileInfo(path).dir().path())) {
-        *error = QStringLiteral("Cannot create the install index directory: %1")
-                     .arg(QFileInfo(path).dir().path());
-        return false;
-    }
-    QSaveFile file(path);
-    if (!file.open(QIODevice::WriteOnly)) {
-        *error = QStringLiteral("Cannot open the install index for writing: %1 (Qt error %2: %3)")
-                     .arg(path).arg(file.error()).arg(file.errorString());
-        return false;
-    }
-    const QByteArray json = QJsonDocument(root).toJson(QJsonDocument::Indented);
-    if (file.write(json) != json.size()) {
-        *error = QStringLiteral("Cannot write the install index: %1 (Qt error %2: %3)")
-                     .arg(path).arg(file.error()).arg(file.errorString());
-        return false;
-    }
-    if (!file.commit()) {
-        *error = QStringLiteral("Cannot commit the install index: %1 (Qt error %2: %3)")
-                     .arg(path).arg(file.error()).arg(file.errorString());
-        return false;
-    }
-    return true;
+    return writeAtomicFile(InstallIndex::filePath(),
+                           QJsonDocument(root).toJson(QJsonDocument::Indented), error);
 }
 
 }

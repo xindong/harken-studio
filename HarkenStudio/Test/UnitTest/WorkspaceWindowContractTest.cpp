@@ -1,11 +1,15 @@
 #include "WorkspaceWindowTypes.h"
+#include "Core/WindowPlacement.h"
 #include "WorkspaceWindowManager.h"
 #include "PanelInstanceRegistry.h"
+#include "Widgets/Common/StatusTip.h"
 #include "Widgets/SourceEditor/SourceEditorPanel.h"
 
 #include <gtest/gtest.h>
 
 #include <QSet>
+#include <QStatusBar>
+#include <QTemporaryDir>
 
 using namespace VNX;
 
@@ -64,6 +68,28 @@ TEST(EditorWorkspaceWindowContract, DisabledWindowsCannotBeCreatedOrRestored)
     EXPECT_EQ(creations, 0);
     EXPECT_EQ(restorations, 0);
     EXPECT_TRUE(manager.registry().instanceEntries(descriptor.typeId).isEmpty());
+}
+
+TEST(EditorWorkspaceWindowContract, FloatingPanelStatusStaysWithItsOwningWindow)
+{
+    QMainWindow firstWindow;
+    QMainWindow secondWindow;
+    auto* firstStatus = firstWindow.statusBar();
+    auto* secondStatus = secondWindow.statusBar();
+    QWidget firstFloating(&firstWindow, Qt::Window);
+    QWidget firstPanel(&firstFloating);
+    QWidget secondFloating(&secondWindow, Qt::Window);
+    QWidget secondPanel(&secondFloating);
+
+    ASSERT_TRUE(firstFloating.isWindow());
+    ASSERT_TRUE(secondFloating.isWindow());
+    showStatusTip(&firstPanel, QStringLiteral("First panel feedback"));
+    EXPECT_EQ(firstStatus->currentMessage(), QStringLiteral("First panel feedback"));
+    EXPECT_TRUE(secondStatus->currentMessage().isEmpty());
+
+    showStatusTip(&secondPanel, QStringLiteral("Second panel feedback"));
+    EXPECT_EQ(firstStatus->currentMessage(), QStringLiteral("First panel feedback"));
+    EXPECT_EQ(secondStatus->currentMessage(), QStringLiteral("Second panel feedback"));
 }
 
 TEST(EditorWorkspaceWindowContract, MultiInstanceWindowsUseDescriptorRestoreSpecIdentity)
@@ -166,4 +192,92 @@ TEST(EditorWorkspaceWindowContract, SourceEditorPrefixIsUnambiguousAmongPanelTyp
         EXPECT_FALSE(prefix.startsWith(SourceEditorPanel::dockObjectPrefix()));
         EXPECT_FALSE(SourceEditorPanel::dockObjectPrefix().startsWith(prefix));
     }
+}
+
+TEST(EditorWorkspaceWindowContract, WindowFrameIsCenteredInTheSelectedWorkArea)
+{
+    for (const QRect& available : QList<QRect>{{0, 40, 1920, 1040},
+                                               {-1920, 40, 1920, 1040},
+                                               {1920, 80, 1536, 824}}) {
+        const QRect frame = centeredWindowFrame({1100, 700}, available);
+        EXPECT_TRUE(available.contains(frame));
+        EXPECT_EQ(frame.size(), QSize(1100, 700));
+        EXPECT_LE(qAbs(frame.center().x() - available.center().x()), 1);
+        EXPECT_LE(qAbs(frame.center().y() - available.center().y()), 1);
+    }
+}
+
+TEST(EditorWorkspaceWindowContract, OversizedWindowFramesFitTheSelectedScreen)
+{
+    const QRect available(-1920, 40, 1312, 734);
+    EXPECT_EQ(centeredWindowFrame(kDefaultStudioWindowSize, available), available);
+    EXPECT_FALSE(centeredWindowFrame({}, available).isValid());
+    EXPECT_FALSE(centeredWindowFrame({1000, 700}, {}).isValid());
+}
+
+TEST(EditorWorkspaceWindowContract, PresentationRoundTripStoresSizeAndStateWithoutCoordinates)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    QSettings settings(directory.filePath("window.ini"), QSettings::IniFormat);
+    for (const Qt::WindowStates state : {Qt::WindowStates{},
+             Qt::WindowStates(Qt::WindowMaximized), Qt::WindowStates(Qt::WindowFullScreen),
+             Qt::WindowStates(Qt::WindowMinimized | Qt::WindowMaximized)}) {
+        QWidget window;
+        window.resize(640, 480);
+        window.move(-3839, 27);
+        window.setWindowState(state);
+        settings.setValue("geometry", window.saveGeometry());
+        saveWindowPresentation(settings, window);
+        const auto presentation = readWindowPresentation(settings);
+        EXPECT_EQ(presentation.normalSize, QSize(640, 480));
+        EXPECT_EQ(presentation.state, persistentWindowState(state));
+        EXPECT_FALSE(settings.contains("geometry"));
+        EXPECT_EQ(settings.allKeys(), (QStringList{"normalSize", "presentationState"}));
+    }
+}
+
+TEST(EditorWorkspaceWindowContract, LegacyPresentationMigrationDiscardsPosition)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    QSettings settings(directory.filePath("window.ini"), QSettings::IniFormat);
+    for (const auto state : {Qt::WindowNoState, Qt::WindowMaximized, Qt::WindowFullScreen}) {
+        SCOPED_TRACE(int(state));
+        settings.clear();
+        QWidget legacy;
+        legacy.resize(640, 480);
+        legacy.move(-3839, 27);
+        legacy.setWindowState(state);
+        settings.setValue("geometry", legacy.saveGeometry());
+        const auto migrated = readWindowPresentation(settings);
+        EXPECT_EQ(migrated.normalSize, QSize(640, 480));
+        EXPECT_EQ(migrated.state, state);
+        EXPECT_EQ(settings.allKeys(), (QStringList{"geometry"}));
+        saveWindowPresentation(settings, legacy, migrated.normalSize);
+        EXPECT_EQ(settings.value("normalSize").toSize(), QSize(640, 480));
+        EXPECT_EQ(settings.value("presentationState").toInt(), int(state));
+        EXPECT_FALSE(settings.contains("geometry"));
+    }
+    settings.clear();
+    settings.setValue("geometry", QByteArray("invalid"));
+    EXPECT_EQ(readWindowPresentation(settings).normalSize, kDefaultStudioWindowSize);
+}
+
+TEST(EditorWorkspaceWindowContract, NewPresentationFieldsDoNotMixWithLegacyState)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    QSettings settings(directory.filePath("window.ini"), QSettings::IniFormat);
+    QWidget legacy;
+    legacy.resize(640, 480);
+    legacy.setWindowState(Qt::WindowMaximized);
+    settings.setValue("geometry", legacy.saveGeometry());
+    settings.setValue("normalSize", QSize(1100, 700));
+    EXPECT_EQ(readWindowPresentation(settings).normalSize, QSize(1100, 700));
+    EXPECT_EQ(readWindowPresentation(settings).state, Qt::WindowNoState);
+    settings.setValue("normalSize", QStringLiteral("invalid-size"));
+    settings.setValue("presentationState", int(Qt::WindowMinimized));
+    EXPECT_EQ(readWindowPresentation(settings).normalSize, kDefaultStudioWindowSize);
+    EXPECT_EQ(readWindowPresentation(settings).state, Qt::WindowNoState);
 }

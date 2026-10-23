@@ -520,6 +520,49 @@ TEST(MonitorTypedRecording, OwnerPollCannotStealRecordsAndRawWindowsExcludeEarli
     RemoveIfExists(path);
 }
 
+TEST(MonitorTypedRecording, OlderOwnerRecordsCompleteCurrentSchemaWithoutExpandingPermissions) {
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, engine.InitResult());
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        harkentest::InstallSmoothDefinitions(engine.Engine(), {harkentest::ObjectId(7)}).status);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    const auto owner = OpenTypedRecordingOwner(VN_MONITOR_STREAM_EVENT);
+    VnMonitorSubscriptionStatusV2 subscription{};
+    subscription.structSize = sizeof(subscription);
+    ASSERT_EQ(VN_OK, Vn_MonitorGetSubscriptionStatus(owner,
+        reinterpret_cast<VnMonitorSubscriptionStatus*>(&subscription)));
+    ASSERT_EQ(1u, subscription.acceptedExecutionFactVersion);
+    VnMonitorCaptureControlStatus lease{};
+    ASSERT_EQ(VN_OK, Acquire(owner, &lease));
+    const auto path = TempSessionPath("typed-current-schema.vnmon");
+    auto desc = MakeRecordingDesc(path.c_str(), 1024 * 1024);
+    ASSERT_EQ(VN_OK, Vn_MonitorStartRecording(owner, lease.leaseGeneration, &desc));
+    ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(7), 0.25f));
+    ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(engine.Engine()));
+    ASSERT_EQ(VN_OK, Vn_MonitorStopRecording(owner, lease.leaseGeneration));
+    const auto status = PumpTypedRecording(owner);
+    ASSERT_EQ(VN_MONITOR_RECORDING_STATE_STOPPED, status.state);
+    EXPECT_EQ(0u, status.recoveryNeeded);
+    const auto file = ReadTypedFile(path);
+    EXPECT_EQ(2u, file.descriptor.schema);
+    EXPECT_EQ(subscription.resolvedStreamKindMask, file.descriptor.streams);
+    EXPECT_EQ(subscription.acceptedPermissionMask, file.descriptor.permissions);
+    EXPECT_NE(0u, file.descriptor.supported[0] & (UINT64_C(1) << VN_MONITOR_FACT_VARIABLE_RESULT));
+    EXPECT_NE(0u, file.descriptor.supported[0] & (UINT64_C(1) << VN_MONITOR_FACT_STEP_EXECUTED));
+    EXPECT_NE(0u, file.descriptor.supported[0] & (UINT64_C(1) << VN_MONITOR_FACT_ACTION_TERMINAL));
+    unsigned activities = 0;
+    for (const auto& record : file.records) {
+        EXPECT_EQ(VN_MONITOR_STREAM_EVENT, record.streamKind);
+        if (record.recordKind == VN_MONITOR_RECORD_EXECUTION_FACT && record.recordVersion == 2) {
+            ++activities;
+            EXPECT_EQ(harkentest::ObjectId(7), record.stableId);
+        }
+    }
+    EXPECT_EQ(1u, activities);
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(owner));
+    RemoveIfExists(path);
+}
+
 TEST(MonitorTypedRecording, DerivedMeasurementsRetainTheirParentTicketsAndControlActivation) {
     harkentest::EngineSession engine(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
@@ -729,6 +772,9 @@ TEST(MonitorTypedRecording, SelectionPoolLossIsFencedBeforeStopAndCannotProduceA
     VnMonitorCaptureControlStatus lease{};
     ASSERT_EQ(VN_OK, Acquire(owner, &lease));
     harken::VoiceLedger ledger(1, 1, 1);
+    harken::VoiceLedger::MonitorSelectionBacking monitorBacking;
+    ASSERT_TRUE(ledger.PrepareMonitorSelectionBacking(
+        static_cast<std::uint32_t>(ledger.MonitorSelectionCapacity()), &monitorBacking));
     VnVoiceHandle voice = 0;
     std::uint32_t slot = 0;
     ASSERT_TRUE(ledger.Acquire(&voice, &slot));
@@ -1388,7 +1434,9 @@ TEST(MonitorTypedRecordingCodec, AcceptsProductionGainReductionAndRejectsItsMalf
         tap.tapDescriptorId, tap.tapDescriptorGeneration, 0, 48000, 1, 0, 0, 4, samples.data(), 4);
     ASSERT_NE(0u, bytes);
     std::vector<std::vector<std::uint8_t>> records;
-    DispatchDerivedAudioChunk(&request, 1, &tap, 1, packed.data(), bytes,
+    harken::monitor::DerivedDrainState derived;
+    ASSERT_TRUE(derived.Prepare(&request, 1, 48000));
+    derived.Dispatch(&request, 1, &tap, 1, packed.data(), bytes,
         [](void* raw, const DerivedEmit& value) {
             auto& output = *static_cast<std::vector<std::vector<std::uint8_t>>*>(raw);
             output.emplace_back(value.bytes, value.bytes + value.size);

@@ -22,9 +22,11 @@
 #include <QHeaderView>
 #include <QHelpEvent>
 #include <QLabel>
+#include <QListWidget>
 #include <QKeyEvent>
 #include <QMenu>
 #include <QMouseEvent>
+#include <QPainter>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QScopedValueRollback>
@@ -42,11 +44,43 @@ namespace VNX {
 
 namespace {
 
+class TableNavigationList : public QListWidget
+{
+public:
+    using QListWidget::QListWidget;
+
+protected:
+    QItemSelectionModel::SelectionFlags selectionCommand(const QModelIndex& index,
+                                                         const QEvent* event) const override
+    {
+        if (!index.isValid()) return QItemSelectionModel::NoUpdate;
+        const auto command = QListWidget::selectionCommand(index, event);
+        return command.testFlag(QItemSelectionModel::Deselect) || command.testFlag(QItemSelectionModel::Toggle)
+            ? QItemSelectionModel::ClearAndSelect : command;
+    }
+};
+
 class TableRowsScrollArea : public QScrollArea
 {
 public:
     using QScrollArea::QScrollArea;
     using QScrollArea::setViewportMargins;
+};
+
+class TableRowHandle : public QWidget
+{
+public:
+    TableRowHandle(QWidget* parent, ThemeManager* theme) : QWidget(parent), theme_(theme) {}
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter painter(this);
+        QtControlSkin(theme_->snapshot()).paintDragHandle(painter, rect(), isEnabled());
+    }
+
+private:
+    ThemeManager* theme_;
 };
 
 QBoxLayout* cellLayout(QLayout* layout, QWidget* cell)
@@ -86,6 +120,33 @@ void TableCell::applyTheme()
     layout_->setContentsMargins(metrics.cellPaddingX, metrics.cellPaddingY,
                                metrics.cellPaddingX, metrics.cellPaddingY);
     layout_->setSpacing(metrics.cellPaddingX * 2);
+    positionHandle();
+    if (handle_) handle_->update();
+}
+
+void TableCell::positionHandle()
+{
+    if (!handle_) return;
+    const auto geometry = QtControlSkin(themeManager_->snapshot()).tableHandleLayout(rect(), this);
+    handle_->setGeometry(geometry.handle);
+    layout_->setContentsMargins(geometry.content.left(), geometry.content.top(),
+        width() - geometry.content.x() - geometry.content.width(),
+        height() - geometry.content.y() - geometry.content.height());
+}
+
+void TableCell::resizeEvent(QResizeEvent* event)
+{
+    QWidget::resizeEvent(event);
+    positionHandle();
+}
+
+void TableCell::paintEvent(QPaintEvent* event)
+{
+    QWidget::paintEvent(event);
+    if (handle_ && property("selected").toBool()) {
+        QPainter painter(this);
+        QtControlSkin(themeManager_->snapshot()).paintTableCellSelection(painter, rect());
+    }
 }
 
 TableWidget::TableWidget(QWidget* parent, ThemeManager* themeManager)
@@ -279,6 +340,17 @@ QTableView* TableWidget::createModelView(const QString& name, QAbstractItemModel
     return view;
 }
 
+QListWidget* TableWidget::createNavigationView(const QString& name)
+{
+    Q_ASSERT(!rows_ && !view_);
+    navigation_ = true;
+    auto* view = new TableNavigationList(this);
+    view->setObjectName(name);
+    view->setSelectionMode(QAbstractItemView::SingleSelection);
+    attachView(view);
+    return view;
+}
+
 ProportionalTreeWidget* TableWidget::createItemView(const QString& name, const QStringList& headers,
                                                   const QList<int>& columnWeights)
 {
@@ -345,7 +417,8 @@ void TableWidget::attachView(QAbstractItemView* view)
     Q_ASSERT(!rows_ && !view_);
     view_ = view;
     view->setParent(this);
-    QtControlSkin::setSemanticProperty(view, "tableRole", QStringLiteral("data"));
+    QtControlSkin::setSemanticProperty(view, "tableRole",
+        navigation_ ? QStringLiteral("navigation") : QStringLiteral("data"));
     view->setAlternatingRowColors(false);
     view->setMouseTracking(true);
     view->viewport()->installEventFilter(this);
@@ -356,7 +429,7 @@ void TableWidget::attachView(QAbstractItemView* view)
     }
     if (auto* tree = qobject_cast<ProportionalTreeWidget*>(view)) {
         tree->setColumnLayoutKey(view->objectName());
-    } else
+    } else if (!navigation_)
         view->setItemDelegate(new TableItemDelegate(view, themeManager_));
     if (auto* header = viewHeader()) {
         header->installEventFilter(this);
@@ -482,11 +555,16 @@ void TableWidget::registerRow(QWidget* row, const QList<QWidget*>& cells, QWidge
         binding.cells.append(cell);
         if (options_.kind == TableKind::Config && cell->property("tableRowNumber").toBool()) {
             binding.number = cell;
-            QtControlSkin::setSemanticProperty(this, "rowNumberSelection", true);
+            binding.handle = cell;
+            binding.selectionCell = cell;
+        } else if (auto* tableCell = qobject_cast<TableCell*>(cell); tableCell && tableCell->handle_) {
+            binding.handle = tableCell->handle_;
+            binding.selectionCell = cell;
         }
         updateCellMetrics(cell);
         if (hiddenColumns_[i]) cell->hide();
     }
+    if (binding.selectionCell) QtControlSkin::setSemanticProperty(this, "cellSelection", true);
     if (details) {
         Q_ASSERT(details->parentWidget() == rows_ && details->layout());
         binding.details = details;
@@ -521,7 +599,7 @@ void TableWidget::refreshRowState(const Row& row)
 {
     if (!row.widget) return;
     const bool selected = row.widget->property("selected").toBool();
-    QtControlSkin::setSemanticProperty(row.number, "selected", selected);
+    QtControlSkin::setSemanticProperty(row.selectionCell, "selected", selected);
     QtControlSkin::setSemanticProperty(row.widget, "rowDetailsVisible",
         row.details && !row.details->isHidden());
     if (row.details) {
@@ -557,6 +635,20 @@ QLabel* TableWidget::createRowNumber(QWidget* row, int index, std::optional<int>
     number->setToolTip(tr("Move Row"));
     updateCellMetrics(number);
     return number;
+}
+
+QWidget* TableWidget::createRowHandle(TableCell* cell, int index)
+{
+    Q_ASSERT(!cell->handle_);
+    auto* handle = new TableRowHandle(cell, themeManager_);
+    handle->setObjectName(QStringLiteral("tableRowHandle"));
+    handle->setProperty("dragHandleRow", index);
+    handle->setCursor(Qt::SizeVerCursor);
+    handle->setFocusPolicy(Qt::StrongFocus);
+    handle->setToolTip(tr("Move Row"));
+    cell->handle_ = handle;
+    cell->applyTheme();
+    return handle;
 }
 
 TableGroupHeader* TableWidget::createGroupHeader(const QString& text, const TableGroupOptions& options)
@@ -798,9 +890,9 @@ QList<QWidget*> TableWidget::movableRows() const
     QList<QWidget*> rows;
     for (const auto& binding : rowBindings_)
         if (binding.widget && binding.widget->parentWidget() == rows_
-            && !binding.widget->isHidden() && !binding.cells.isEmpty()
-            && binding.cells.front() && binding.cells.front()->property("dragHandleRow").isValid())
-            rows.append(binding.cells.front());
+            && !binding.widget->isHidden() && binding.handle
+            && binding.handle->isVisibleTo(binding.widget))
+            rows.append(binding.handle);
     return rows;
 }
 
@@ -897,7 +989,7 @@ int TableWidget::rowMoveTarget(const QPoint& globalPosition, int* indicatorY) co
                                                   : view_->visualRect(rows.back()).bottom() - 1;
         return to;
     }
-    if (!draggedNumber_ || draggedNumber_->parentWidget()->isHidden()
+    if (!draggedNumber_
         || !scroll_->viewport()->rect().contains(scroll_->viewport()->mapFromGlobal(globalPosition)))
         return -1;
     const auto rows = movableRows();
@@ -906,15 +998,15 @@ int TableWidget::rowMoveTarget(const QPoint& globalPosition, int* indicatorY) co
     const int y = rows_->mapFromGlobal(globalPosition).y();
     int insertion = 0;
     for (auto* number : rows)
-        if (y >= number->parentWidget()->geometry().center().y()) ++insertion;
+        if (y >= rowForWidget(number)->geometry().center().y()) ++insertion;
     const int toPosition = std::clamp(insertion - (insertion > fromPosition ? 1 : 0),
                                       0, static_cast<int>(rows.size()) - 1);
     const int from = draggedNumber_->property("dragHandleRow").toInt();
     const int to = rows[toPosition]->property("dragHandleRow").toInt();
     if (!canMoveRow(from, to)) return -1;
     if (indicatorY)
-        *indicatorY = insertion < rows.size() ? rows[insertion]->parentWidget()->geometry().top()
-                                               : rows.back()->parentWidget()->geometry().bottom() - 1;
+        *indicatorY = insertion < rows.size() ? rowForWidget(rows[insertion])->geometry().top()
+                                               : rowForWidget(rows.back())->geometry().bottom() - 1;
     return to;
 }
 
@@ -1072,6 +1164,7 @@ void TableWidget::refreshViewLayout()
                 const auto index = view_->model()->index(row, 0, parent);
                 QStyleOptionViewItem option;
                 option.initFrom(view_);
+                option.widget = view_;
                 height += table ? table->rowHeight(row)
                     : view_->itemDelegateForIndex(index)->sizeHint(option, index).height();
                 if (tree && tree->isExpanded(index)) height += contentHeight(index);
@@ -1306,7 +1399,7 @@ bool TableWidget::eventFilter(QObject* watched, QEvent* event)
         }
     }
     const bool isNumber = widget && widget->property("dragHandleRow").isValid()
-        && rows_ && rows_->isAncestorOf(widget) && rowMoveHandler_;
+        && rowMoveHandler_ && movableRows().contains(widget);
     QModelIndex viewNumber;
     if (view_ && rowMoveHandler_ && view_->property("rowNumberColumn").isValid()) {
         if (watched == view_->viewport()) {
@@ -1337,14 +1430,14 @@ bool TableWidget::eventFilter(QObject* watched, QEvent* event)
         if (view_->viewport()->cursor().shape() != cursor)
             view_->viewport()->setCursor(cursor);
     }
-    if (view_ && watched == view_ && event->type() == QEvent::FocusIn
+    if (!navigation_ && view_ && watched == view_ && event->type() == QEvent::FocusIn
         && !view_->currentIndex().isValid()) {
         const auto mode = view_->selectionMode();
         view_->setSelectionMode(QAbstractItemView::NoSelection);
         view_->setCurrentIndex({});
         view_->setSelectionMode(mode);
     }
-    if (event->type() == QEvent::KeyPress
+    if (!navigation_ && event->type() == QEvent::KeyPress
         && (watched == this || watched == view_ || isNumber)) {
         auto* key = static_cast<QKeyEvent*>(event);
         if (key->key() == Qt::Key_Escape && key->modifiers() == Qt::NoModifier) {
@@ -1358,7 +1451,7 @@ bool TableWidget::eventFilter(QObject* watched, QEvent* event)
             }
         }
     }
-    if (event->type() == QEvent::MouseButtonPress && hasSelection()) {
+    if (!navigation_ && event->type() == QEvent::MouseButtonPress && hasSelection()) {
         auto* mouse = static_cast<QMouseEvent*>(event);
         if (mouse->button() == Qt::LeftButton) {
             const QPoint global = mouse->globalPosition().toPoint();
@@ -1427,7 +1520,7 @@ bool TableWidget::eventFilter(QObject* watched, QEvent* event)
             if (target >= 0)
                 QTimer::singleShot(0, this, [this, number, index, generation, from, target] {
                     if (generation != selectionGeneration_) return;
-                    if ((number && !number->parentWidget()->isHidden())
+                    if ((number && movableRows().contains(number))
                         || (index.isValid() && index.row() == from))
                         moveRow(from, target);
                 });
@@ -1463,7 +1556,7 @@ bool TableWidget::eventFilter(QObject* watched, QEvent* event)
             const QPointer<QWidget> number(isNumber ? widget : nullptr);
             const QPersistentModelIndex index(viewNumber);
             const auto* chosen = menu.exec(static_cast<QContextMenuEvent*>(event)->globalPos());
-            if (self && chosen && ((number && !number->parentWidget()->isHidden())
+            if (self && chosen && ((number && self->movableRows().contains(number))
                                    || (index.isValid() && index.row() == from)))
                 self->moveRow(from, chosen == moveUp ? up : down);
             return true;

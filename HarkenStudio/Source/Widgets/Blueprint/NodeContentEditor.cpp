@@ -23,6 +23,7 @@
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QStackedWidget>
+#include <QStyleOptionSpinBox>
 #include <QToolButton>
 
 #include <algorithm>
@@ -176,6 +177,7 @@ NodeContentEditor::NodeContentEditor(const NodeContentInfo& info, NodeContentFie
             row->binding->setRange(row->property.min.toDouble(), row->property.max.toDouble());
             row->binding->setDecimals(row->property.decimals);
             row->binding->setQuantum(std::pow(10.0, -row->property.decimals));
+            row->binding->setDefaultValue(row->property.def.isValid() ? row->property.def.toDouble() : 0.0);
             row->binding->setUnit(row->property.unit);
             row->editor = new DecimalSpinBox(row->valueStack);
             row->editor->setObjectName(QStringLiteral("nodeEditor_") + row->property.field);
@@ -413,8 +415,15 @@ void NodeContentEditor::updateMetrics()
             row->editor->ensurePolished();
             const QString text = row->editingValue ? row->editor->text()
                 : formatDecimal(row->binding->value(), row->property.decimals, row->editor->locale());
+            QStyleOptionSpinBox option;
+            option.initFrom(row->editor);
+            option.buttonSymbols = row->editor->buttonSymbols();
+            option.frame = row->editor->hasFrame();
+            const QSize textSize(row->editor->fontMetrics().horizontalAdvance(text) + 2,
+                row->editor->fontMetrics().height());
             valueWidth = std::max(valueWidth,
-                row->editor->fontMetrics().horizontalAdvance(text) + 8);
+                row->editor->style()->sizeFromContents(QStyle::CT_SpinBox, &option,
+                    textSize, row->editor).width());
         }
     }
     if (isEditing()) valueWidth = std::max(valueWidth, valueColumnWidth_);

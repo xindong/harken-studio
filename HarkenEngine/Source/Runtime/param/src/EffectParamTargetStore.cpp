@@ -1,4 +1,5 @@
 #include "harken/param/EffectParamTargetStore.h"
+#include "harken/param/BindingTable.h"
 
 #include <algorithm>
 #include <cassert>
@@ -13,8 +14,18 @@ EffectParamTargetStore::EffectParamTargetStore(std::uint32_t sampleRate,
                                                std::uint32_t retiringCapacity)
     : m_sampleRate(sampleRate), m_activeCapacity(capacity),
       m_totalCapacity(capacity + retiringCapacity) {
-    m_records.reserve(m_totalCapacity);
-    m_projection.resize(m_totalCapacity);
+    if (retiringCapacity > UINT32_MAX - capacity || !m_records.Reserve(m_totalCapacity))
+        throw std::bad_alloc{};
+}
+
+bool EffectParamTargetStore::PrepareAdditionalRecords(std::uint32_t count) noexcept {
+    if (count > m_totalCapacity - m_records.size() || (m_projectionActive && count != 0)) return false;
+    return m_records.ConstructThrough(m_records.size() + count, [this](std::uint32_t required) noexcept {
+        try {
+            if (m_projection.size() < required) m_projection.resize(required);
+            return true;
+        } catch (...) { return false; }
+    });
 }
 
 bool EffectParamTargetStore::BeginVariableProjection() noexcept {
@@ -272,6 +283,13 @@ bool EffectParamTargetStore::PrepareInstalledEffectSeed(
     if (m_prepareSeedFailureAfterForTests == 0) {
         return false;
     }
+    std::uint32_t reusable = 0;
+    for (const auto& record : m_records) {
+        if (!record.reserved && (record.lifecycle == Lifecycle::Free ||
+            (record.lifecycle == Lifecycle::Live && record.scope == scope && record.objectId == objectId &&
+                record.objectGeneration == objectGeneration && record.slot == slot))) ++reusable;
+    }
+    if (!PrepareAdditionalRecords(paramCount > reusable ? paramCount - reusable : 0u)) return false;
     if (m_prepareSeedFailureAfterForTests > 0) {
         --m_prepareSeedFailureAfterForTests;
     }
@@ -318,17 +336,6 @@ bool EffectParamTargetStore::PrepareInstalledEffectSeed(
             record.slot = slot;
             prepared.m_recordIndices[selected++] = i;
         }
-    }
-    while (selected < paramCount && m_records.size() < m_totalCapacity) {
-        m_records.emplace_back();
-        Record& record = m_records.back();
-        record.reserved = true;
-        record.scope = scope;
-        record.objectId = objectId;
-        record.objectGeneration = objectGeneration;
-        record.slot = slot;
-        prepared.m_recordIndices[selected++] =
-            static_cast<std::uint32_t>(m_records.size() - 1);
     }
     if (selected != paramCount) {
         prepared.m_paramCount = selected;
@@ -412,6 +419,22 @@ void EffectParamTargetStore::CommitPreparedInstalledEffectSeed(
         record.meterProbeRebuild = record.meterProbeContribution;
         record.lastCommitted = ReduceRecord(record);
         record.revision = token->m_revision;
+        if (m_dependencies != nullptr) {
+            BindingDependencyIdentity identity{};
+            identity.object = record.objectId;
+            identity.scope = record.scope == Scope::Bus
+                ? VN_TARGET_SCOPE_BUS_EFFECT_PARAM : VN_TARGET_SCOPE_VOICE_EFFECT_PARAM;
+            identity.target = PackEffectParamLocator(record.effectType, record.slot, record.paramIndex);
+            for (const auto source : {BindingSourceKind::Variable, BindingSourceKind::MeterProbe}) {
+                identity.detail = static_cast<std::uint32_t>(source);
+                identity.generation = record.objectGeneration;
+                m_dependencies->Notify(BindingDependencyKind::Target, identity);
+                if (record.scope == Scope::Voice && identity.generation != 0) {
+                    identity.generation = 0;
+                    m_dependencies->Notify(BindingDependencyKind::Target, identity);
+                }
+            }
+        }
     }
     for (std::uint32_t i = 0; i < token->m_slotRecordCount; ++i) {
         const std::uint32_t index = token->m_slotRecordIndices[i];
@@ -466,6 +489,7 @@ bool EffectParamTargetStore::ReplacePreparedInstalledEffectSeed(
             ++available;
         }
     }
+    const auto constructedAvailable = available;
     available += static_cast<std::uint32_t>(
         m_totalCapacity - m_records.size());
     if (replacedCount > activeCount ||
@@ -474,6 +498,8 @@ bool EffectParamTargetStore::ReplacePreparedInstalledEffectSeed(
         paramCount > available) {
         return false;
     }
+    if (!PrepareAdditionalRecords(paramCount > constructedAvailable ? paramCount - constructedAvailable : 0u))
+        return false;
     if (m_prepareSeedFailureAfterForTests > 0) {
         --m_prepareSeedFailureAfterForTests;
     }
@@ -504,17 +530,6 @@ bool EffectParamTargetStore::ReplacePreparedInstalledEffectSeed(
             record.slot = token->m_slot;
             token->m_recordIndices[selected++] = i;
         }
-    }
-    while (selected < paramCount && m_records.size() < m_totalCapacity) {
-        m_records.emplace_back();
-        Record& record = m_records.back();
-        record.reserved = true;
-        record.scope = token->m_scope;
-        record.objectId = token->m_objectId;
-        record.objectGeneration = token->m_objectGeneration;
-        record.slot = token->m_slot;
-        token->m_recordIndices[selected++] =
-            static_cast<std::uint32_t>(m_records.size() - 1);
     }
     assert(selected == paramCount);
     for (std::uint32_t i = paramCount; i < token->m_paramCount; ++i) {
@@ -669,6 +684,15 @@ void EffectParamTargetStore::BeginContributionSweep() {
     }
 }
 
+void EffectParamTargetStore::BeginTargetContribution(
+    Scope scope, std::uint64_t objectId, std::uint32_t slot,
+    std::uint32_t paramIndex, std::uint32_t effectType) {
+    Record* record = Find(scope, objectId, slot, paramIndex);
+    if (record != nullptr && record->effectType == effectType) {
+        record->foldedThisSweep = false;
+    }
+}
+
 void EffectParamTargetStore::AccumulateBinding(Scope scope,
                                                std::uint64_t objectId,
                                                std::uint32_t slot,
@@ -755,19 +779,28 @@ void EffectParamTargetStore::ClearMeterProbeContribution(
 
 void EffectParamTargetStore::EndContributionSweep() {
     for (Record& r : m_records) {
-        if (r.lifecycle != Lifecycle::Live) {
-            continue;
+        if (r.lifecycle == Lifecycle::Live) {
+            EndRecordContribution(r);
         }
-        // A record folded this sweep takes its accumulation; one whose bindings
-        // all detached (or whose variables have no value) returns to the domain
-        // neutral, so its resolved value returns to the base alone.
-        const float folded =
-            r.foldedThisSweep ? r.rebuildAccum : NeutralOf(r.combine);
-        r.bindingActive = r.foldedThisSweep;
-        if (r.contribution != folded) {
-            r.contribution = folded;
-            SetDirty(r);
-        }
+    }
+}
+
+void EffectParamTargetStore::EndTargetContribution(
+    Scope scope, std::uint64_t objectId, std::uint32_t slot,
+    std::uint32_t paramIndex, std::uint32_t effectType) {
+    Record* record = Find(scope, objectId, slot, paramIndex);
+    if (record != nullptr && record->effectType == effectType) {
+        EndRecordContribution(*record);
+    }
+}
+
+void EffectParamTargetStore::EndRecordContribution(Record& r) {
+    const float folded =
+        r.foldedThisSweep ? r.rebuildAccum : NeutralOf(r.combine);
+    r.bindingActive = r.foldedThisSweep;
+    if (r.contribution != folded) {
+        r.contribution = folded;
+        SetDirty(r);
     }
 }
 

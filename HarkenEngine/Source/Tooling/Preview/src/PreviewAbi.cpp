@@ -1,6 +1,6 @@
 #include "harken_preview/PreviewAbi.h"
 
-#include "PlayableRuntime.h"
+#include "HarkenApiInternal.h"
 
 #include <cstdint>
 
@@ -175,10 +175,13 @@ VnPreviewResult VnPreview_PlayPlayable(
         return VN_PREVIEW_INVALID_ARG;
     }
     try {
+        const auto request = harken::detail::BeginMonitorRequest(
+            harken::MonitorRequestOrigin::StudioPreview,
+            VN_MONITOR_OPERATION_PLAY_PREVIEW);
         const harken::PlayableStartResult result =
             harken::StartCurrentPlayableByIdentity(
                 ToKind(desc->playableKind), desc->stableId,
-                desc->emitterHandle);
+                desc->emitterHandle, request);
         const VnPreviewResult mapped = MapStart(result.status);
         if (mapped == VN_PREVIEW_OK) {
             *outHandle = ToPreviewHandle(result.instance);

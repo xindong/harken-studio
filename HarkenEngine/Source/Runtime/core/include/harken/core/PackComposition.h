@@ -8,7 +8,9 @@
 #include "harken/core/CurrentWorldCodec.h"
 #include "harken/core/PackPlaybackView.h"
 #include "harken/core/PackReadinessContract.h"
+#include "harken/core/PackCompanionNames.h"
 #include "harken/core/PlayablePropertyCut.h"
+#include "harken/core/StableRowStorage.h"
 #include "harken/media/PackLogicImage.h"
 
 #include <cstddef>
@@ -105,6 +107,8 @@ public:
     bool HasOriginalLeaseEpisode(const PackPartitionLease& lease) const noexcept;
     struct PublishedOwner {
         std::uint64_t packStableId = 0;
+        std::uint64_t contentHash = 0;
+        std::shared_ptr<const PackCompanionNames> companionNames;
         VnPackHandle handle = 0;
         std::uint64_t contentRevision = 0;
         std::uint64_t partitionRevision = 0;
@@ -167,7 +171,15 @@ public:
     };
 
     struct PublishedView {
+        struct ActionName {
+            std::string name;
+            VnObjectId actionId{};
+            std::uint64_t ownerPackId = 0;
+            std::uint64_t fingerprint = 0;
+        };
         VnObjectId projectId{};
+        bool companionNames = false;
+        std::vector<ActionName> actionNames;
         std::uint64_t compositeGeneration = 0;
         std::vector<PublishedOwner> owners;
         std::vector<IdentityIndexEntry> index;
@@ -186,6 +198,8 @@ public:
 
     struct CandidateOwner {
         std::uint64_t packStableId = 0;
+        std::uint64_t contentHash = 0;
+        std::shared_ptr<const PackCompanionNames> companionNames;
         VnPackHandle handle = 0;
         std::uint64_t contentRevision = 0;
         std::uint64_t partitionRevision = 0;
@@ -225,6 +239,7 @@ public:
         PreparedCommit& operator=(PreparedCommit&&) noexcept = default;
 
         bool IsPrepared() const noexcept { return owner_ != nullptr; }
+        bool NamesOnly() const noexcept { return namesOnly_; }
         const PublishedView* Published() const noexcept {
             return published_.get();
         }
@@ -234,11 +249,14 @@ public:
         PackComposition* owner_ = nullptr;
         std::shared_ptr<PublishedView> published_;
         PackOwnerLocalFacts facts_{};
+        bool namesOnly_ = false;
     };
 
     static CandidateOwner Keep(const PublishedOwner& existing) {
         CandidateOwner keep;
         keep.packStableId = existing.packStableId;
+        keep.contentHash = existing.contentHash;
+        keep.companionNames = existing.companionNames;
         keep.handle = existing.handle;
         keep.contentRevision = existing.contentRevision;
         keep.partitionRevision = existing.partitionRevision;
@@ -305,7 +323,8 @@ public:
                            PreparedCommit* out,
                            const PackAttenuationBindingMapV1* attenuationBindings = nullptr,
                            const CanonicalPackSetLedgerV1* ledger = nullptr,
-                           bool clearInit = false);
+                           bool clearInit = false,
+                           const GameplayCatalogImage* gameplayCatalog = nullptr);
     void CommitPrepared(PreparedCommit* prepared) noexcept;
     void RestorePublished(std::shared_ptr<const PublishedView> previous) noexcept;
     VnResult ValidateLease(const PackPartitionLease& lease) const noexcept;
@@ -317,6 +336,12 @@ public:
         return retagBackpressureCountForTests_;
     }
     VnResult SetNextLeaseTokenForTests(std::uint64_t nextToken) noexcept;
+    void SetLeaseStorageCommitPageLimitsForTests(std::size_t leases,
+        std::size_t originals, std::size_t closures) noexcept {
+        leases_.SetCommitPageLimitForTests(leases);
+        originalLeaseRecords_.SetCommitPageLimitForTests(originals);
+        frozenClosures_.SetCommitPageLimitForTests(closures);
+    }
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
     mutable bool refuseOriginalLeaseCommitOnceForTest = false;
 #endif
@@ -329,6 +354,8 @@ public:
         const PackPartitionLease& lease,
         PackResourceRevisionToken* outTokens, std::size_t tokenCapacity,
         std::size_t* outTokenCount) const noexcept;
+    VnResult PreparedResourceClosureBacking(const PackPartitionLease& lease,
+        std::shared_ptr<const std::vector<PackResourceRevisionToken>>* out) const noexcept;
     VnResult CommitPreparedLease(
         PackPartitionLease* lease,
         PackResourceClosureToken resourceClosureToken,
@@ -406,8 +433,6 @@ private:
         PackLeaseSlice tag = PackLeaseSlice::SharedActionAndDeferred;
         PackPartitionLease lease{};
         std::uint32_t refs = 0;
-        std::shared_ptr<const CurrentWorldBodyImage> definitionBody;
-        ContainerWorldInstallViewV1 definitionView{};
     };
 
     static bool SameIdentity(const IdentityIndexEntry& a,
@@ -422,9 +447,11 @@ private:
     VnResult PrepareLease(const PublishedOwner& owner, PackLeaseSlice slice,
                           PackPartitionLease* out,
                           OriginalLeaseEpisode* original) const noexcept;
+    bool PrepareLeaseStorage() const noexcept;
     std::size_t LeaseIndex(const LeaseRow& row) const noexcept;
     PackFrozenClosure& FrozenClosure(LeaseRow& row) const noexcept;
     const PackFrozenClosure& FrozenClosure(const LeaseRow& row) const noexcept;
+    const ContainerWorldInstallViewV1* DefinitionView(const LeaseRow& row) const noexcept;
     void ClearLeaseRow(LeaseRow& row) const noexcept;
     VnResult SnapshotFrozenClosure(const PublishedOwner& root,
                                    LeaseRow& row) const noexcept;
@@ -439,11 +466,11 @@ private:
     std::uint64_t generationFloor_ = 0;
     mutable std::size_t sharedOccupied_ = 0;
     mutable std::size_t playableOccupied_ = 0;
-    mutable std::vector<LeaseRow> leases_;
-    mutable std::vector<OriginalLeaseRecord> originalLeaseRecords_;
+    mutable StableRowStorage<LeaseRow, std::size_t> leases_;
+    mutable StableRowStorage<OriginalLeaseRecord, std::size_t> originalLeaseRecords_;
     std::uint64_t originalLeaseIncarnation_ = 0;
     mutable bool originalLeasesQuiesced_ = false;
-    mutable std::vector<PackFrozenClosure> frozenClosures_;
+    mutable StableRowStorage<PackFrozenClosure, std::size_t> frozenClosures_;
     mutable std::uint64_t nextLeaseToken_ = 1;
     std::uint64_t retagBackpressureCountForTests_ = 0;
     mutable bool leaseTokensExhausted_ = false;

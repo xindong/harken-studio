@@ -3,6 +3,7 @@
 
 #include "harken/core/CommandQueue.h"
 #include "harken/core/CheckedIssuer.h"
+#include "harken/core/StableSlotStorage.h"
 #include "harken/core/TimelineProgram.h"
 #include "harken/render/VoicePool.h"
 
@@ -78,18 +79,25 @@ public:
     OriginalSourceSubmissionRegistry(TimelineArmTable& arms, VoicePool& voices,
         CommandQueue& commands, EffectPoolBank& effects)
         : arms_(arms), voices_(voices), commands_(commands), effects_(effects),
-          capacity_(arms.Capacity()), rows_(std::make_unique<Record[]>(capacity_)),
-          incarnation_(NextIncarnation()) {}
+          capacity_(arms.Capacity()), incarnation_(NextIncarnation()) {
+        if (!rows_.Reserve(capacity_)) throw std::bad_alloc{};
+    }
     ~OriginalSourceSubmissionRegistry() {
-        for (std::uint32_t i = 0; i < capacity_; ++i) {
-            assert((rows_[i].originalLifetime_.load(std::memory_order_relaxed) & kPinMask) == 0);
-            assert(OriginCount(rows_[i].originWord_.load(std::memory_order_relaxed)) == 0);
-            assert(!rows_[i].rangeActor_.Valid());
-            assert(!rows_[i].catalogOrigin_.Valid());
+        for (auto& row : rows_) {
+            assert((row.originalLifetime_.load(std::memory_order_relaxed) & kPinMask) == 0);
+            assert(OriginCount(row.originWord_.load(std::memory_order_relaxed)) == 0);
+            assert(!row.rangeActor_.Valid());
+            assert(!row.catalogOrigin_.Valid());
         }
     }
     OriginalSourceSubmissionRegistry(const OriginalSourceSubmissionRegistry&) = delete;
     OriginalSourceSubmissionRegistry& operator=(const OriginalSourceSubmissionRegistry&) = delete;
+
+    std::size_t StorageBytes() const noexcept {
+        return rows_.RequestedBytes() + rows_.DirectoryBytes();
+    }
+    bool PrepareSlotBacking(std::uint32_t slot) noexcept { return rows_.Emplace(slot); }
+    void SetCommitPageLimitForTests(std::size_t pages) noexcept { rows_.SetCommitPageLimitForTests(pages); }
 
     bool CapturePreparedSource(const CommandRecord& header,
         const TimelineArmTable::PreparedCommitProof& armProof,
@@ -139,6 +147,7 @@ private:
             for (std::size_t j = 0; j < i; ++j)
                 if (SameEffect(incoming[i], incoming[j])) return false;
         }
+        if (!rows_.Emplace(token.slot)) return false;
         auto& row = rows_[token.slot];
         const auto phase = row.State();
         if (phase == Phase::Preparing) {
@@ -227,7 +236,7 @@ public:
         CommandRecord header{};
         if (!commands_.ReadPreparedAt(batch, offset, &header)) return false;
         const auto token = TokenOf(header);
-        if (token.slot >= capacity_ || count == 0 || count > kMaxCommands ||
+        if (!rows_.IsConstructed(token.slot) || count == 0 || count > kMaxCommands ||
             !HeaderMatches(header, token) || header.payload.play.batch.batchCommandCount != count)
             return false;
         auto& row = rows_[token.slot];
@@ -257,7 +266,11 @@ public:
         }
         for (std::uint32_t i = 0; i < row.incomingCount_; ++i)
             if (!seen[i]) return false;
-        if (!commands_.IssueOriginalBatchRange(batch, offset, count, &row, &row.range_))
+        const bool issued = batch.InitialSource()
+            ? offset == 0 && count == 3 && commands_.IssueInitialSourceRange(batch,
+                {row.nativeSourceEpisode_, token.slot, 1}, row.body_.data(), &row, &row.range_)
+            : commands_.IssueOriginalBatchRange(batch, offset, count, &row, &row.range_);
+        if (!issued)
             return false;
         row.count_ = count;
         row.phase_.store(Phase::QueuePrepared, std::memory_order_release);
@@ -363,8 +376,8 @@ public:
             row.voice_.Valid() && row.voice_.RenderHandle() == RenderOf(row.token_) &&
             row.range_.State() == CommandQueue::OriginalRangeState::Completed &&
             row.range_.owner_ == &commands_ && row.range_.client_ == &row && row.range_.origin_ != 0 &&
-            row.count_ != 0 && row.range_.count_ == row.count_ &&
-            row.range_.kind_ == CommandQueue::OriginalRangeKind::Source &&
+            row.count_ != 0 && row.range_.FactCount() == row.count_ &&
+            row.range_.IsSource() &&
             voices_.IsOriginalSourceBodyLifetimePinFor(body, row.token_, row.originalSourceIdentity_) &&
             voices_.CanReturnPublishedOriginalSourceBodyStorage(row.voice_, body, release, &installation) &&
             installation != nullptr &&
@@ -676,8 +689,8 @@ public:
             row->range_.origin_ == 0 && row->range_.head_ == 0 && row->range_.count_ == 0 && row->count_ == 0;
         const bool genuineCancelled = range == CommandQueue::OriginalRangeState::UnpublishedCancelled &&
             row->range_.owner_ == &commands_ && row->range_.client_ == row && row->range_.origin_ != 0 &&
-            row->range_.count_ != 0 && row->range_.count_ == row->count_ &&
-            row->range_.kind_ == CommandQueue::OriginalRangeKind::Source;
+            row->range_.count_ != 0 && row->range_.FactCount() == row->count_ &&
+            row->range_.IsSource();
         if (!row->wasPublished_ && row->nativeSourceEpisode_ != 0 && row->originalSourceIdentity_ != 0 &&
             row->arm_.Valid() && row->voice_.Valid() && row->unpublishedVoiceDispositionComplete_ &&
             voices_.OriginalVoiceReleased(row->voice_) && (genuineUnbound || genuineCancelled)) {
@@ -735,11 +748,11 @@ public:
     }
 
     Record* Find(TimelineArmToken token) noexcept {
-        return token.slot < capacity_ && SameToken(rows_[token.slot].token_, token)
+        return rows_.IsConstructed(token.slot) && SameToken(rows_[token.slot].token_, token)
             ? &rows_[token.slot] : nullptr;
     }
     const Record* Find(TimelineArmToken token) const noexcept {
-        return token.slot < capacity_ && SameToken(rows_[token.slot].token_, token)
+        return rows_.IsConstructed(token.slot) && SameToken(rows_[token.slot].token_, token)
             ? &rows_[token.slot] : nullptr;
     }
 
@@ -748,8 +761,7 @@ public:
     void ShutdownAfterQuiescence() noexcept {
         pending_ = nullptr;
         commands_.DiscardPublishedAfterQuiescence();
-        for (std::uint32_t index = 0; index < capacity_; ++index) {
-            auto& row = rows_[index];
+        for (auto& row : rows_) {
             // The actual worker/callback join precedes this final return.
             // Even a Disposed range may have retained a deferred actor.
             row.rangeActor_.Release();
@@ -814,7 +826,7 @@ public:
 private:
     bool RetireRequestedInstalledSource(const OriginalSourceInstallationLoan& installation,
         std::uint64_t blockIndex) noexcept {
-        if (installation.token_.slot >= capacity_) return false;
+        if (!rows_.IsConstructed(installation.token_.slot)) return false;
         auto& row = rows_[installation.token_.slot];
         if (!MatchesInstallationForSource(installation, &row, row.token_, row.originalSourceIdentity_) ||
             row.State() != Phase::Disposed || !row.voice_.Valid() || !row.arm_.Valid()) return false;
@@ -1070,9 +1082,9 @@ private:
         const auto mode = OriginState(row.originWord_.load(std::memory_order_acquire));
         if (mode == OriginMode::Disabled) return true;
         if (row.rangeActor_.Valid()) return MatchesActor(row.rangeActor_);
-        if (&row.range_ != commands_.OriginalRangeAtFront() ||
+        if (!commands_.IsOriginalSourceFront(row.range_) ||
             row.range_.Owner() != &commands_ || row.range_.Client() != &row ||
-            row.range_.Kind() != CommandQueue::OriginalRangeKind::Source ||
+            !row.range_.IsSource() ||
             row.State() != Phase::Published || row.originalMarker_ == 0 ||
             !IsLiveOrigin(mode)) return false;
         auto lifetime = row.originalLifetime_.load(std::memory_order_acquire);
@@ -1099,7 +1111,7 @@ private:
     bool BorrowInstallationMutation(const OriginalSourceInstallationLoan& installation,
         OriginalSourceMutationActor* out) noexcept {
         const auto token = installation.token_;
-        if (out == nullptr || out->Valid() || token.slot >= capacity_ ||
+        if (out == nullptr || out->Valid() || !rows_.IsConstructed(token.slot) ||
             !MatchesInstallationLoan(installation, &rows_[token.slot], token)) return false;
         auto& row = rows_[token.slot];
         const auto mode = OriginState(row.originWord_.load(std::memory_order_acquire));
@@ -1136,7 +1148,7 @@ private:
 
     bool MatchesInstallationLoan(const OriginalSourceInstallationLoan& installation,
         const void* actualSubmission, TimelineArmToken token) const noexcept {
-        if (installation.owner_ != this || installation.token_.slot >= capacity_ ||
+        if (installation.owner_ != this || !rows_.IsConstructed(token.slot) ||
             installation.marker_ == 0 || !SameToken(installation.token_, token)) return false;
         const auto& row = rows_[token.slot];
         return actualSubmission == &row && SameToken(row.token_, token) &&
@@ -1155,7 +1167,7 @@ private:
     }
     void ReleaseInstallationLoan(OriginalSourceInstallationLoan& installation) noexcept {
         const auto token = installation.token_;
-        const bool matches = token.slot < capacity_ &&
+        const bool matches = rows_.IsConstructed(token.slot) &&
             MatchesInstallationLoan(installation, &rows_[token.slot], token);
         assert(matches);
         if (!matches) return;
@@ -1175,7 +1187,7 @@ private:
     }
     bool MatchesOriginal(const OriginalSourceLifetimePin& original) const noexcept {
         if (original.owner_ != this || original.row_ == nullptr ||
-            original.token_.slot >= capacity_ || original.row_ != &rows_[original.token_.slot] ||
+            !rows_.IsConstructed(original.token_.slot) || original.row_ != &rows_[original.token_.slot] ||
             original.marker_ == 0) return false;
         const auto& row = rows_[original.token_.slot];
         return row.originalMarker_ == original.marker_ && SameToken(row.token_, original.token_) &&
@@ -1231,12 +1243,23 @@ private:
     }
     Record* BorrowFront() noexcept {
         auto* range = commands_.OriginalRangeAtFront();
+        return BorrowRange(range);
+    }
+    Record* BorrowInitialFront(const CommandQueue::InitialSourceEntry& entry) noexcept {
+        auto* row = BorrowRange(entry.range);
+        return row != nullptr && row->range_.Kind() == CommandQueue::OriginalRangeKind::InitialSource &&
+            entry.source == CommandQueue::InitialSourceIdentity{row->nativeSourceEpisode_, row->token_.slot, 1} &&
+            entry.facts == row->body_.data() && row->count_ == 3 ? row : nullptr;
+    }
+    Record* BorrowRange(CommandQueue::OriginalBatchRange* range) noexcept {
         if (range == nullptr) return nullptr;
         const auto client = reinterpret_cast<std::uintptr_t>(range->Client());
-        const auto begin = reinterpret_cast<std::uintptr_t>(rows_.get());
+        const auto begin = reinterpret_cast<std::uintptr_t>(rows_.BackingAddress());
         if (client < begin || client - begin >= sizeof(Record) * capacity_ ||
             (client - begin) % sizeof(Record) != 0) return nullptr;
-        auto& row = rows_[(client - begin) / sizeof(Record)];
+        const auto slot = static_cast<std::uint32_t>((client - begin) / sizeof(Record));
+        if (!rows_.IsConstructed(slot)) return nullptr;
+        auto& row = rows_[slot];
         return &row.range_ == range && row.State() == Phase::Published ? &row : nullptr;
     }
     static bool HeaderMatches(const CommandRecord& header, TimelineArmToken token) noexcept {
@@ -1263,7 +1286,7 @@ private:
     CommandQueue& commands_;
     EffectPoolBank& effects_;
     const std::uint32_t capacity_;
-    std::unique_ptr<Record[]> rows_;
+    StableSlotStorage<Record> rows_;
     const std::uint64_t incarnation_;
     Record* pending_ = nullptr;
     std::uint64_t nextOriginalMarker_ = 1;

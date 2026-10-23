@@ -7,6 +7,8 @@ add_executable(harken_hub_tests
     UnitTest/Support/ManifestTestUtils.h
     UnitTest/Support/RangeHttpServer.h
     UnitTest/Support/RangeHttpServer.cpp
+    UnitTest/Support/UnityProjectLock.cpp
+    UnitTest/Support/UnityProjectLock.h
     UnitTest/AclHardeningTest.cpp
     UnitTest/BackoffPolicyTest.cpp
     UnitTest/ConsentStoreTest.cpp

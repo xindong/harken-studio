@@ -174,8 +174,18 @@ public:
     const Counters& Stats() const { return counters_; }
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
     std::size_t DecodedEventCapacityForTest() const noexcept {
-        return decoded_.size();
+        return decoded_.Capacity();
     }
+#endif
+#if !defined(HARKEN_RT_QUALIFICATION)
+    std::size_t EventStorageBytesForTest() const noexcept {
+        return decoded_.RequestedBytes() + nextEvent_.RequestedBytes() + deferredDigest_.RequestedBytes();
+    }
+    void SetDecodedCommitPageLimitForTest(std::size_t pages) noexcept {
+        decoded_.SetCommitPageLimitForTests(pages);
+    }
+#endif
+#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
     std::size_t PageGroupCapacityForTest() const noexcept {
         return pageGroups_.size();
     }
@@ -198,6 +208,7 @@ private:
     void CleanupCancelledArms(std::uint64_t audioSequence) noexcept;
     void PrepassPlan03Deadlines(std::uint64_t absoluteQuantum,
                                 const TimelineExecutionPlan& plan) noexcept;
+    bool PrepareEventStorage(ScheduledTransactionPool::PendingEventStorageDemand demand) noexcept;
 
     std::uint32_t quantumFrames_ = 0;
     ScheduledTransactionPool* pool_ = nullptr;
@@ -205,13 +216,14 @@ private:
     TimelineExecutorSink* sink_ = nullptr;
     DecisionTable* decisionTable_ = nullptr;
     TimelineDigestSink* digestSink_ = nullptr;
-    std::vector<ConsumedEvent> decoded_;
-    std::vector<std::uint32_t> nextEvent_;
+    StableRowStorage<ConsumedEvent, std::size_t> decoded_;
+    StableRowStorage<std::uint32_t, std::size_t> nextEvent_;
     std::vector<TransactionScratch> transactions_;
     std::vector<std::uint32_t> touchedTransactions_;
     std::vector<TimelineSinkEvent> sinkEvents_;
     std::vector<Plan03PageGroupView> pageGroups_;
-    std::vector<TimelineDigestRecord> deferredDigest_;
+    StableRowStorage<TimelineDigestRecord, std::size_t> deferredDigest_;
+    ScheduledTransactionPool::PendingEventStorageRegistration eventStorageRegistration_;
     std::size_t deferredDigestCount_ = 0;
     bool deferDigest_ = false;
     Counters counters_{};

@@ -30,7 +30,6 @@
 #include "Core/Timeline/TimelineSemantics.h"
 #include "Core/AssetPipeline/AudioImportGate.h"
 #include "Core/AssetPipeline/ImportAssetsCommand.h"
-#include "Core/ToastManager.h"
 #include "Core/UndoCommands.h"
 #include "Widgets/Common/DecimalSpinBox.h"
 #include "Widgets/Common/FocusFilter.h"
@@ -1658,7 +1657,6 @@ bool TimelineEditorPanel::commitTimelineActions(std::vector<ActionResult> result
 void TimelineEditorPanel::rejectInteraction(const QString& error)
 {
     lastInteractionError_ = error.isEmpty() ? tr("Timeline edit was rejected.") : error;
-    ToastManager::instance().showToast(lastInteractionError_, 2500, ToastType::Warning);
     setStatusMessage(lastInteractionError_, true);
 }
 

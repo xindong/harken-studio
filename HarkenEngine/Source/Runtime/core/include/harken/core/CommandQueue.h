@@ -19,8 +19,10 @@
 #include "harken/dsp/Biquad.h"
 #include "harken/core/TimelineArmTable.h"
 #include "harken/core/OriginalCatalogStageLoan.h"
+#include "harken/core/SparseRowStorage.h"
 
 #include <atomic>
+#include <array>
 #include <cassert>
 #include <cstdint>
 #include <cstring>
@@ -486,6 +488,7 @@ class CommandQueue {
     friend struct detail::CommandQueueSubmissionTestAccess;
     friend struct Engine;
     friend class MixerLoop;
+    friend class OriginalSourceSubmissionRegistry;
     friend struct detail::OriginalControlOriginTestAccess;
 public:
     struct BatchReservation {
@@ -495,12 +498,13 @@ public:
         std::uint64_t id = 0;
         std::uint64_t head = 0;
         std::uint32_t count = 0;
+        bool initialSource = false;
     };
 
     enum class OriginalRangeState : std::uint8_t {
         Empty, Prepared, Published, UnpublishedCancelled, Completed
     };
-    enum class OriginalRangeKind : std::uint8_t { Source, ControlHeader };
+    enum class OriginalRangeKind : std::uint8_t { Source, ControlHeader, InitialSource };
     enum class OriginalControlDisposition : std::uint8_t {
         None, Settled, Cancelled, Invalid, QuiescedDiscard
     };
@@ -571,7 +575,12 @@ public:
         const CommandQueue* Owner() const noexcept { return owner_; }
         const void* Client() const noexcept { return client_; }
         std::uint32_t Count() const noexcept { return count_; }
+        std::uint32_t FactCount() const noexcept { return factCount_; }
+        std::uint64_t PublicationSequence() const noexcept { return publicationSequence_; }
         OriginalRangeKind Kind() const noexcept { return kind_; }
+        bool IsSource() const noexcept {
+            return kind_ == OriginalRangeKind::Source || kind_ == OriginalRangeKind::InitialSource;
+        }
         const TimelineArmTable::OriginalControlHeaderRowOwner* ControlOwner() const noexcept {
             return kind_ == OriginalRangeKind::ControlHeader ? &controlOwner_ : nullptr;
         }
@@ -600,6 +609,8 @@ public:
             origin_ = 0;
             head_ = 0;
             count_ = 0;
+            factCount_ = 0;
+            publicationSequence_ = 0;
             state_.store(OriginalRangeState::Empty, std::memory_order_release);
             return true;
         }
@@ -616,6 +627,8 @@ public:
         std::uint64_t origin_ = 0;
         std::uint64_t head_ = 0;
         std::uint32_t count_ = 0;
+        std::uint32_t factCount_ = 0;
+        std::uint64_t publicationSequence_ = 0;
         OriginalRangeKind kind_ = OriginalRangeKind::Source;
         TimelineArmTable::OriginalControlHeaderRowOwner controlOwner_;
         CommandRecord controlRecord_{};
@@ -678,6 +691,7 @@ public:
         bool Valid() const noexcept {
             return owner_ != nullptr && owner_->FrozenProofMatches(*this);
         }
+        bool InitialSource() const noexcept { return Valid() && owner_->m_frozenInitialSource; }
         void Release() noexcept {
             if (owner_ != nullptr) owner_->AbortPreparedBatch(*this);
             owner_ = nullptr;
@@ -700,6 +714,29 @@ public:
         const CommandQueue* owner_ = nullptr;
         std::uint64_t origin_ = 0;
         std::uint32_t count_ = 0;
+        bool initialSource_ = false;
+    };
+
+    struct InitialSourceIdentity {
+        std::uint64_t generation = 0;
+        std::uint32_t slot = UINT32_MAX;
+        std::uint32_t domain = 0;
+        bool operator==(const InitialSourceIdentity&) const noexcept = default;
+    };
+    struct InitialSourceEntry {
+        InitialSourceIdentity source{};
+        const CommandRecord* facts = nullptr;
+        OriginalBatchRange* range = nullptr;
+        std::uint64_t publishSequence = 0;
+        std::uint64_t rawBefore = 0;
+        std::uint64_t ordinal = 0;
+        std::uint64_t origin = 0;
+    };
+    static_assert(sizeof(InitialSourceEntry) == 64);
+    struct BlockInputCut {
+        std::uint64_t acceptedTail = 0;
+        std::uint64_t rawHead = 0;
+        std::uint64_t initialHead = 0;
     };
 
     // Depth rounds up to a power of two so index masking replaces modulo.
@@ -713,6 +750,7 @@ public:
         m_publicationScratch.resize(cap);
         m_originalRanges.resize(cap, nullptr);
         m_preparedOriginalRanges.resize(cap, nullptr);
+        if (!m_initialSources.Reserve(cap)) throw std::bad_alloc();
         m_mask = cap - 1;
     }
 
@@ -777,7 +815,39 @@ public:
         out->id = m_nextReservationId;
         out->head = head;
         out->count = count;
+        out->initialSource = false;
         m_liveReservationId = m_nextReservationId;
+        m_reservationLive = true;
+        return true;
+    }
+
+    // Admission reserves one physical entry and three immutable initial facts.
+    bool HasInitialSourceRoom() const noexcept {
+        const auto head = m_initialHead.load(std::memory_order_relaxed);
+        return !m_reservationLive && m_nextSourcePublication != UINT64_MAX &&
+            head != UINT64_MAX &&
+            head - m_initialTail.load(std::memory_order_acquire) < m_initialSources.Capacity();
+    }
+
+    bool ReserveInitialSource(BatchReservation* out) noexcept {
+        if (out == nullptr || m_reservationLive || m_nextSourcePublication == UINT64_MAX)
+            return false;
+        const auto head = m_initialHead.load(std::memory_order_relaxed);
+        const auto tail = m_initialTail.load(std::memory_order_acquire);
+        if (head == UINT64_MAX || head - tail >= m_initialSources.Capacity()) {
+            ++m_backpressure;
+            return false;
+        }
+        if (!m_initialSources.ConstructPageFor(static_cast<std::uint32_t>(head & m_mask)))
+            return false;
+        ++m_nextReservationId;
+        if (m_nextReservationId == 0) ++m_nextReservationId;
+        out->owner = this;
+        out->id = m_nextReservationId;
+        out->head = head;
+        out->count = 3;
+        out->initialSource = true;
+        m_liveReservationId = out->id;
         m_reservationLive = true;
         return true;
     }
@@ -786,7 +856,8 @@ public:
     // one release-store. No capacity check or allocation remains in commit.
     bool CommitReservedBatch(BatchReservation* reservation,
                              const CommandRecord* records) noexcept {
-        if (m_liveFrozenOrigin != 0 || !ReservationMatches(reservation) || records == nullptr) {
+        if (m_liveFrozenOrigin != 0 || !ReservationMatches(reservation) ||
+            reservation->initialSource || records == nullptr) {
             return false;
         }
         CommitPreparedBatch(reservation, records);
@@ -798,7 +869,7 @@ public:
     // performs only the bounded copy and one release publication.
     void CommitPreparedBatch(BatchReservation* reservation,
                              const CommandRecord* records) noexcept {
-        if (m_liveFrozenOrigin != 0) {
+        if (m_liveFrozenOrigin != 0 || reservation->initialSource) {
             assert(false && "frozen batches require their genuine consume proof");
             return;
         }
@@ -833,6 +904,7 @@ public:
             m_liveFrozenOrigin != 0 || m_nextFrozenOrigin == UINT64_MAX ||
             !ReservationMatches(reservation) || count != reservation->count)
             return false;
+        if (reservation->initialSource && !InitialSourceFactsMatch(records, count)) return false;
         for (std::uint32_t i = 0; i < count; ++i)
             if (records[i].opcode < kOpcodePlay || records[i].opcode > kMaxKnownOpcode)
                 return false;
@@ -842,15 +914,26 @@ public:
             auto record = records[i];
             record.version = kCommandVersion;
             record.sequence = m_sequence + i;
-            m_slots[(head + i) & m_mask] = record;
-            m_publicationScratch[i] = record;
-            m_originalRanges[(head + i) & m_mask] = nullptr;
+            if (reservation->initialSource) m_initialPreparation[i] = record;
+            else {
+                m_slots[(head + i) & m_mask] = record;
+                m_publicationScratch[i] = record;
+                m_originalRanges[(head + i) & m_mask] = nullptr;
+            }
         }
         m_liveFrozenOrigin = ++m_nextFrozenOrigin;
         m_frozenReservation = reservation;
         m_frozenReservationId = reservation->id;
         m_frozenHead = reservation->head;
         m_frozenCount = count;
+        m_frozenInitialSource = reservation->initialSource;
+        if (m_frozenInitialSource) {
+            auto& entry = m_initialSources[static_cast<std::uint32_t>(head & m_mask)];
+            entry = {};
+            entry.rawBefore = m_head.load(std::memory_order_relaxed);
+            entry.ordinal = head + 1u;
+            entry.origin = m_liveFrozenOrigin;
+        }
         m_preparedOriginalRangeCount = 0;
         out->owner_ = this;
         out->reservation_ = reservation;
@@ -872,7 +955,7 @@ public:
         CommandRecord* out) const noexcept {
         if (out == nullptr || !FrozenProofMatches(proof) ||
             offset >= m_frozenCount) return false;
-        *out = m_publicationScratch[offset];
+        *out = m_frozenInitialSource ? m_initialPreparation[offset] : m_publicationScratch[offset];
         return true;
     }
 
@@ -896,6 +979,7 @@ public:
             count == 0 || offset >= m_frozenCount ||
             count > m_frozenCount - offset ||
             m_preparedOriginalRangeCount >= m_preparedOriginalRanges.size()) return false;
+        if (m_frozenInitialSource) return false;
         const auto head = m_frozenHead + offset;
         for (std::uint32_t i = 0; i < count; ++i)
             if (m_originalRanges[(head + i) & m_mask] != nullptr) return false;
@@ -904,6 +988,8 @@ public:
         out->origin_ = proof.origin_;
         out->head_ = head;
         out->count_ = count;
+        out->factCount_ = count;
+        out->kind_ = OriginalRangeKind::Source;
         out->state_.store(OriginalRangeState::Prepared, std::memory_order_relaxed);
         for (std::uint32_t i = 0; i < count; ++i)
             m_originalRanges[(head + i) & m_mask] = out;
@@ -952,20 +1038,39 @@ public:
         published.owner_ = this;
         published.origin_ = proof.origin_;
         published.count_ = m_frozenCount;
+        published.initialSource_ = m_frozenInitialSource;
         auto* reservation = proof.reservation_;
         const auto head = m_frozenHead;
         const auto count = m_frozenCount;
+        if (m_frozenInitialSource && (m_preparedOriginalRangeCount != 1 ||
+            m_preparedOriginalRanges[0]->Kind() != OriginalRangeKind::InitialSource)) {
+            assert(false && "initial installation requires its original joint factory");
+            return {};
+        }
         for (std::uint32_t i = 0; i < count; ++i) {
-            const auto opcode = m_publicationScratch[i].opcode;
+            const auto opcode = m_frozenInitialSource ? m_initialPreparation[i].opcode :
+                m_publicationScratch[i].opcode;
             if (opcode < 32u) m_opcodeSeen |= 1u << opcode;
         }
         m_sequence += count;
+        bool sourcePublication = false;
+        for (std::uint32_t i = 0; i < m_preparedOriginalRangeCount; ++i)
+            sourcePublication = sourcePublication || m_preparedOriginalRanges[i]->IsSource();
+        if (sourcePublication) {
+            assert(m_nextSourcePublication != UINT64_MAX);
+            ++m_nextSourcePublication;
+        }
         for (std::uint32_t i = 0; i < m_preparedOriginalRangeCount; ++i) {
+            if (m_preparedOriginalRanges[i]->IsSource())
+                m_preparedOriginalRanges[i]->publicationSequence_ = m_nextSourcePublication;
             m_preparedOriginalRanges[i]->state_.store(
                 OriginalRangeState::Published, std::memory_order_release);
             m_preparedOriginalRanges[i] = nullptr;
         }
         m_preparedOriginalRangeCount = 0;
+        if (m_frozenInitialSource)
+            m_initialSources[static_cast<std::uint32_t>(head & m_mask)].publishSequence =
+                m_nextSourcePublication;
         m_lastPublishedFrozenOrigin = proof.origin_;
         if (m_frozenDispositionReceipt != nullptr) {
             assert(DispositionReceiptMatches(*m_frozenDispositionReceipt, proof));
@@ -976,10 +1081,12 @@ public:
         m_frozenReservation = nullptr;
         m_frozenReservationId = 0;
         m_frozenCount = 0;
+        m_frozenInitialSource = false;
         proof.owner_ = nullptr;
         proof.reservation_ = nullptr;
         proof.origin_ = 0;
-        m_head.store(head + count, std::memory_order_release);
+        if (published.initialSource_) m_initialHead.store(head + 1u, std::memory_order_release);
+        else m_head.store(head + count, std::memory_order_release);
         ClearReservation(reservation);
         return published;
     }
@@ -989,9 +1096,32 @@ public:
         if (out == nullptr || published.owner_ != this || published.origin_ == 0 ||
             published.origin_ != m_lastPublishedFrozenOrigin || offset >= published.count_)
             return false;
-        *out = m_publicationScratch[offset];
+        *out = published.initialSource_ ? m_initialPreparation[offset] : m_publicationScratch[offset];
         return true;
     }
+
+    BlockInputCut CaptureBlockInputCut() const noexcept {
+        BlockInputCut cut;
+        cut.acceptedTail = m_sourceAcceptedTail.load(std::memory_order_acquire);
+        cut.rawHead = m_head.load(std::memory_order_acquire);
+        cut.initialHead = m_initialHead.load(std::memory_order_acquire);
+        return cut;
+    }
+    const InitialSourceEntry* InitialSourceAtFront(std::uint64_t capturedHead) const noexcept {
+        const auto tail = m_initialTail.load(std::memory_order_relaxed);
+        if (tail >= capturedHead || tail == m_initialHead.load(std::memory_order_acquire)) return nullptr;
+        const auto& entry = m_initialSources[static_cast<std::uint32_t>(tail & m_mask)];
+        return entry.ordinal == tail + 1u && entry.range != nullptr &&
+            entry.range->owner_ == this && entry.range->head_ == tail &&
+            entry.range->origin_ == entry.origin &&
+            entry.range->Kind() == OriginalRangeKind::InitialSource &&
+            entry.range->State() == OriginalRangeState::Published ? &entry : nullptr;
+    }
+    std::uint64_t InitialSourcesConsumed() const noexcept {
+        return m_initialTail.load(std::memory_order_relaxed);
+    }
+    std::size_t InitialSourceCommittedBytes() const noexcept { return m_initialSources.CommittedBytes(); }
+    std::size_t InitialSourceDirectoryBytes() const noexcept { return m_initialSources.DirectoryBytes(); }
 
     // Audio-side lookup comes from the actual ring position, never its header.
     OriginalBatchRange* OriginalRangeAtFront() const noexcept {
@@ -1006,7 +1136,9 @@ public:
         if (range.owner_ != this || range.State() != OriginalRangeState::Published ||
             (range.kind_ == OriginalRangeKind::ControlHeader &&
                 range.controlDisposition_ == OriginalControlDisposition::None) ||
-            m_tail.load(std::memory_order_relaxed) - range.head_ < range.count_)
+            (range.kind_ == OriginalRangeKind::InitialSource
+                ? m_initialTail.load(std::memory_order_relaxed)
+                : m_tail.load(std::memory_order_relaxed)) - range.head_ < range.count_)
             return false;
         range.state_.store(OriginalRangeState::Completed, std::memory_order_release);
         return true;
@@ -1043,7 +1175,10 @@ public:
                     if (!wrote) return;
                 }
             }
-            if (!TryPop(discarded)) return;
+            if (!TryPop(discarded)) {
+                m_initialTail.store(m_initialHead.load(std::memory_order_acquire), std::memory_order_release);
+                return;
+            }
             if (range != nullptr && range->kind_ == OriginalRangeKind::ControlHeader) {
                 actor.Release();
                 const bool completed = CompleteOriginalControlHeaderRange(*range,
@@ -1200,7 +1335,16 @@ public:
         return m_settledFrontier.load(std::memory_order_acquire);
     }
 
+    std::uint64_t InitialSourcePublishedHead() const noexcept {
+        return m_initialHead.load(std::memory_order_acquire);
+    }
+
+    std::uint64_t InitialSourceSettledFrontier() const noexcept {
+        return m_initialSettledFrontier.load(std::memory_order_acquire);
+    }
+
     void PublishSettledFrontier() noexcept {
+        m_initialSettledFrontier.store(InitialSourcesConsumed(), std::memory_order_release);
         m_settledFrontier.store(ConsumedCount(), std::memory_order_release);
     }
 
@@ -1232,6 +1376,58 @@ public:
     std::uint64_t BackpressureCount() const { return m_backpressure; }
 
 private:
+    static bool InitialSourceFactsMatch(const CommandRecord* facts, std::uint32_t count) noexcept {
+        if (facts == nullptr || count != 3) return false;
+        const auto render = facts[0].payload.play.handle;
+        return facts[0].opcode == kOpcodePlay && facts[0].flags == 0 &&
+            facts[0].payload.play.batch.batchKind == PlayLedBatchKind::TimelineArm &&
+            facts[0].payload.play.batch.batchCommandCount == 3 && render != 0 &&
+            facts[1].opcode == kOpcodeSetVoicePan && facts[1].flags == 0 &&
+            facts[1].payload.setVoicePan.handle == render &&
+            facts[2].opcode == kOpcodeSetVoiceSpatialScalar && facts[2].flags == 0 &&
+            facts[2].payload.setVoiceSpatialScalar.handle == render &&
+            facts[2].payload.setVoiceSpatialScalar.kind == kSpatialScalarKindWidth;
+    }
+    bool IssueInitialSourceRange(const PreparedBatchProof& proof, InitialSourceIdentity source,
+        const CommandRecord* facts, const void* client, OriginalBatchRange* out) noexcept {
+        if (!FrozenProofMatches(proof) || !m_frozenInitialSource ||
+            source.generation == 0 || source.slot == UINT32_MAX || source.domain == 0 ||
+            facts == nullptr || client == nullptr || out == nullptr || out->Owner() != nullptr ||
+            out->State() != OriginalRangeState::Empty || m_preparedOriginalRangeCount != 0 ||
+            !InitialSourceFactsMatch(facts, m_frozenCount) ||
+            std::memcmp(facts, m_initialPreparation.data(), sizeof(CommandRecord) * 3u) != 0)
+            return false;
+        auto& entry = m_initialSources[static_cast<std::uint32_t>(m_frozenHead & m_mask)];
+        out->owner_ = this;
+        out->client_ = client;
+        out->origin_ = proof.origin_;
+        out->head_ = m_frozenHead;
+        out->count_ = 1;
+        out->factCount_ = 3;
+        out->kind_ = OriginalRangeKind::InitialSource;
+        out->state_.store(OriginalRangeState::Prepared, std::memory_order_relaxed);
+        entry.source = source;
+        entry.facts = facts;
+        entry.range = out;
+        m_preparedOriginalRanges[m_preparedOriginalRangeCount++] = out;
+        return true;
+    }
+    bool PopInitialSource(OriginalBatchRange& range) noexcept {
+        const auto* entry = InitialSourceAtFront(m_initialHead.load(std::memory_order_acquire));
+        if (entry == nullptr || entry->range != &range) return false;
+        const auto next = range.head_ + 1u;
+        m_initialTail.store(next, std::memory_order_release);
+        return true;
+    }
+    bool IsOriginalSourceFront(const OriginalBatchRange& range) const noexcept {
+        if (range.Kind() == OriginalRangeKind::Source) return OriginalRangeAtFront() == &range;
+        const auto* entry = InitialSourceAtFront(m_initialHead.load(std::memory_order_acquire));
+        return range.Kind() == OriginalRangeKind::InitialSource && entry != nullptr &&
+            entry->range == &range && entry->rawBefore == ConsumedCount();
+    }
+    void AcceptSourcePublications() noexcept {
+        m_sourceAcceptedTail.store(m_nextSourcePublication, std::memory_order_release);
+    }
     static bool HasAuthenticOriginalPreparedControlScope(
         const TimelineArmTable::OriginalControlHeaderRowOwner& owner,
         const TimelineArmTable* receiver) noexcept {
@@ -1544,7 +1740,8 @@ private:
                proof.origin_ == m_liveFrozenOrigin && m_reservationLive &&
                proof.reservation_ == m_frozenReservation &&
                m_liveReservationId == m_frozenReservationId && m_frozenCount != 0 &&
-               m_head.load(std::memory_order_relaxed) == m_frozenHead;
+               (m_frozenInitialSource ? m_initialHead.load(std::memory_order_relaxed) :
+                   m_head.load(std::memory_order_relaxed)) == m_frozenHead;
     }
 
     bool DispositionReceiptMatches(const PreparedBatchDispositionReceipt& receipt,
@@ -1579,8 +1776,9 @@ private:
         assert(m_frozenDispositionReceipt == nullptr ||
             DispositionReceiptMatches(*m_frozenDispositionReceipt, proof));
         const auto head = m_frozenHead;
-        for (std::uint32_t i = 0; i < m_frozenCount; ++i)
-            m_originalRanges[(head + i) & m_mask] = nullptr;
+        if (!m_frozenInitialSource)
+            for (std::uint32_t i = 0; i < m_frozenCount; ++i)
+                m_originalRanges[(head + i) & m_mask] = nullptr;
         for (std::uint32_t i = 0; i < m_preparedOriginalRangeCount; ++i) {
             CloseControlOriginWhenFinished(*m_preparedOriginalRanges[i]);
             m_preparedOriginalRanges[i]->state_.store(
@@ -1597,6 +1795,7 @@ private:
         m_frozenReservation = nullptr;
         m_frozenReservationId = 0;
         m_frozenCount = 0;
+        m_frozenInitialSource = false;
         ClearReservation(proof.reservation_);
     }
 
@@ -1604,7 +1803,9 @@ private:
         return reservation != nullptr && m_reservationLive &&
                reservation->owner == this &&
                reservation->id == m_liveReservationId &&
-               reservation->head == m_head.load(std::memory_order_relaxed) &&
+               reservation->head == (reservation->initialSource
+                   ? m_initialHead.load(std::memory_order_relaxed)
+                   : m_head.load(std::memory_order_relaxed)) &&
                reservation->count != 0;
     }
 
@@ -1613,11 +1814,19 @@ private:
         reservation->id = 0;
         reservation->head = 0;
         reservation->count = 0;
+        reservation->initialSource = false;
         m_liveReservationId = 0;
         m_reservationLive = false;
     }
 
     std::vector<CommandRecord> m_slots;
+    SparseRowStorage<InitialSourceEntry> m_initialSources;
+    std::array<CommandRecord, 3> m_initialPreparation{};
+    std::atomic<std::uint64_t> m_initialHead{0};
+    std::atomic<std::uint64_t> m_initialTail{0};
+    std::atomic<std::uint64_t> m_initialSettledFrontier{0};
+    std::atomic<std::uint64_t> m_sourceAcceptedTail{0};
+    std::uint64_t m_nextSourcePublication = 0;
     const TimelineArmTable* const m_controlReceiver;
     std::vector<CommandRecord> m_publicationScratch;
     std::vector<OriginalBatchRange*> m_originalRanges;
@@ -1631,6 +1840,7 @@ private:
     std::uint64_t m_frozenReservationId = 0;
     std::uint64_t m_frozenHead = 0;
     std::uint32_t m_frozenCount = 0;
+    bool m_frozenInitialSource = false;
     std::uint32_t m_mask = 0;
     std::atomic<std::uint64_t> m_head{0}; // next write (producer-owned)
     std::atomic<std::uint64_t> m_tail{0}; // next read (consumer-owned)

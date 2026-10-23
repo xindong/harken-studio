@@ -19,7 +19,7 @@
 
 namespace harkenstudiobuild {
 
-inline constexpr std::uint32_t kPackFormatVersion2 = 4;
+inline constexpr std::uint32_t kPackFormatVersion2 = HARKEN_PACK_SCHEMA_VERSION;
 inline constexpr std::uint32_t kPackV2HeaderBytes = 44;
 inline constexpr std::uint32_t kPackV2DirectoryEntryBytes = 56;
 inline constexpr std::uint32_t kPackKindResident = 0;
@@ -48,6 +48,7 @@ inline constexpr std::uint32_t kPackEntryKindGameplayCatalog = 25;
 inline constexpr std::uint32_t kPackEntryKindVariablePolicyOverlay = 26;
 inline constexpr std::uint32_t kPackEntryKindVariableRequirements = 27;
 inline constexpr std::uint32_t kPackEntryKindVariableNameCatalog = 28;
+inline constexpr std::uint32_t kPackVariablePolicyOverlayFormat = 2;
 inline constexpr std::uint32_t kPackCanonicalEntryVintage = 1;
 inline constexpr std::uint32_t kPackCanonicalRequirementVintage = 2;
 inline constexpr std::uint32_t kPackBusDefinitionSnapshotVintage = 1;

@@ -143,8 +143,9 @@ public:
     // This is the actual observer captured and authenticated by the original
     // paired Source/Voice factory. Disposed command storage is not audio release.
     bool OriginalPhysicalReleaseObserved() const noexcept {
-        return (componentsClosed_ ? HasOriginalPlayableRetention() : Valid()) && voices_ != nullptr &&
-            originalPhysicalRelease_.Valid() && voices_->ReleaseObserved(originalPhysicalRelease_);
+        return voices_ != nullptr && originalPhysicalRelease_.Valid() &&
+            voices_->ReleaseObserved(originalPhysicalRelease_) &&
+            (componentsClosed_ ? HasOriginalPlayableRetention() : Valid());
     }
     bool HasOriginalPlayableRetention() const noexcept {
         return playableRetention_ && instances_ != nullptr &&

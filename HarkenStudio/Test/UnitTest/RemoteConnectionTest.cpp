@@ -1,14 +1,14 @@
 #include "UnitTest/StudioObjectIdTestSupport.h"
 #include "ActionManager.h"
-#include "Core/ToastManager.h"
 #include "Dialogs/RemoteConnectDialog.h"
 #include "MainWindow.h"
 #include "ProjectManager.h"
 #include "ProjectTypes.h"
 #include "RuntimeBridge/RemoteConnection.h"
 #include "Monitor/EventCaptureController.h"
-#include "Widgets/Monitor/MonitorCatalogPanel.h"
+#include "Widgets/Monitor/MonitorPanel.h"
 #include "MonitorRecordPack.h"
+#include "MonitorExecutionCodec.h"
 #include "UndoCommands.h"
 #include "Widgets/Common/ListFooter.h"
 #include "Widgets/Common/ProportionalTreeWidget.h"
@@ -21,6 +21,7 @@
 #include <gtest/gtest.h>
 
 #include <QAction>
+#include <QAbstractProxyModel>
 #include <QApplication>
 #include <QComboBox>
 #include <QDialog>
@@ -107,6 +108,7 @@ public:
 
     RemotePeer()
     {
+        identity.capabilities &= ~Wire::kCapabilityExecutionObservation;
         identity.instanceId = 42;
         identity.sessionId = 11;
         identity.applicationName = "Remote game";
@@ -227,7 +229,8 @@ public:
                 status.planGeneration = 1;
             }
             send(Wire::MakeFrame(Wire::Message::MonitorStatus, frame.requestId, status));
-        } else if (frame.type == Wire::Message::EventStart || frame.type == Wire::Message::EventSeal) {
+        } else if (frame.type == Wire::Message::EventStart || frame.type == Wire::Message::EventStartV2 ||
+                   frame.type == Wire::Message::EventSeal) {
             if (eventResponder) eventResponder(frame);
         } else if (frame.type == Wire::Message::Command) {
             Wire::Command command;
@@ -264,12 +267,86 @@ Wire::MonitorRecords eventRecords(quint64 epoch, quint64 firstSequence, int coun
         harken::monitor::PackHeader(packed, header);
         VNX::Monitor::MonitorEventDetail detail{};
         detail.structSize = sizeof(detail);
-        detail.category = VN_MONITOR_EVENT_CATEGORY_OPERATION;
-        detail.code = VN_MONITOR_OPERATION_STOP_ALL;
+        detail.category = VN_MONITOR_EVENT_CATEGORY_DIAGNOSTIC;
+        detail.level = VN_LOG_WARN;
         detail.timestampNs = firstTimestamp + i;
         std::memcpy(packed + VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES, &detail, sizeof(detail));
     }
     return records;
+}
+
+TEST(RemoteConnection, ExecutionCaptureNegotiatesAndSealsWithoutLegacyFallback)
+{
+    ensureRemoteTestApp();
+    using HarkenEditor::Bridge::RemoteEventCaptureState;
+    for (const bool reject : {false, true}) {
+        SCOPED_TRACE(reject);
+        RemotePeer peer;
+        peer.identity.capabilities = Wire::kCapabilityExecutionObservation;
+        RemoteConnection connection;
+        int starts = 0;
+        Wire::EventCaptureStatusV2 sealedStatus;
+        peer.eventResponder = [&](const Wire::Frame& request) {
+            EXPECT_NE(request.type, Wire::Message::EventStart);
+            Wire::EventCaptureStatusV2 status;
+            status.base.sessionEpoch = 79;
+            status.base.startedTimestampNs = 100;
+            status.acceptedExecutionFactVersion = 2;
+            status.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS | VN_MONITOR_PERM_OBSERVE_STATE | VN_MONITOR_PERM_SYMBOLS;
+            status.acceptedPermissionMask = status.requestedPermissionMask;
+            status.acceptedStreamKindMask = VN_MONITOR_STREAM_EVENT | VN_MONITOR_STREAM_STATE;
+            status.supportedFactKinds[0] = UINT64_C(1) << VN_MONITOR_FACT_REQUEST_SUBMITTED;
+            status.identityUnavailableCount = 3;
+            if (request.type == Wire::Message::EventStartV2) {
+                ++starts;
+                Wire::EventCaptureRequestV2 decoded;
+                ASSERT_TRUE(Wire::DecodePayload(request, decoded));
+                EXPECT_EQ(decoded.executionFactVersion, 2u);
+                EXPECT_EQ(decoded.requestedStreamKindMask, VN_MONITOR_STREAM_EVENT | VN_MONITOR_STREAM_STATE);
+                EXPECT_EQ(decoded.requestedPermissionMask, status.requestedPermissionMask);
+                EXPECT_EQ(decoded.requestSymbols, 1u);
+                if (reject) status.base.result = VN_MONITOR_UNSUPPORTED;
+            } else {
+                EXPECT_EQ(request.type, Wire::Message::EventSeal);
+                status.base.state = VN_MONITOR_EVENT_SESSION_SEALED;
+                status.identityUnavailableCount = 4;
+                status.base.sourceDroppedRecords = 7;
+                status.base.transportDroppedRecords = 5;
+                sealedStatus = status;
+            }
+            peer.send(Wire::MakeFrame(Wire::Message::EventStatusV2, request.requestId, status));
+        };
+        connection.connectTarget(QStringLiteral("127.0.0.1"), peer.server.serverPort());
+        ASSERT_TRUE(waitUntil([&] { return connection.canCaptureEvents(); }));
+        connection.startEventCapture();
+        ASSERT_TRUE(waitUntil([&] {
+            return connection.eventCaptureStatus().state ==
+                (reject ? RemoteEventCaptureState::Failed : RemoteEventCaptureState::Capturing);
+        }));
+        EXPECT_EQ(starts, 1);
+        EXPECT_EQ(connection.state(), RemoteConnectionState::Connected);
+        if (reject) {
+            EXPECT_EQ(connection.eventCaptureStatus().result, VN_MONITOR_UNSUPPORTED);
+            continue;
+        }
+        EXPECT_EQ(connection.eventCaptureStatus().acceptedExecutionFactVersion, 2u);
+        EXPECT_EQ(connection.eventCaptureStatus().identityUnavailableCount, 3u);
+        EXPECT_EQ(connection.eventCaptureStatus().supportedFactKinds[0], UINT64_C(1) << VN_MONITOR_FACT_REQUEST_SUBMITTED);
+        connection.stopEventCapture();
+        ASSERT_TRUE(waitUntil([&] {
+            return connection.eventCaptureStatus().identityUnavailableCount == 4 ||
+                connection.state() == RemoteConnectionState::Failed;
+        }));
+        ASSERT_EQ(connection.state(), RemoteConnectionState::Connected);
+        EXPECT_EQ(connection.eventCaptureStatus().state, RemoteEventCaptureState::Stopping);
+        EXPECT_EQ(connection.eventCaptureStatus().stoppedTimestampNs, 0u);
+        sealedStatus.base.state = VN_MONITOR_EVENT_SESSION_DRAINED;
+        sealedStatus.base.stoppedTimestampNs = 200;
+        peer.send(Wire::MakeFrame(Wire::Message::EventStatusV2, 0, sealedStatus));
+        ASSERT_TRUE(waitUntil([&] { return connection.eventCaptureStatus().state == RemoteEventCaptureState::Stopped; }));
+        EXPECT_EQ(connection.eventCaptureStatus().sourceDroppedRecords, 7u);
+        EXPECT_EQ(connection.eventCaptureStatus().transportDroppedRecords, 5u);
+    }
 }
 
 TEST(EventCaptureController, RemoteTailRestartFailureAndEpochIsolation)
@@ -338,52 +415,89 @@ TEST(EventCaptureController, BoundsHistoryAndPreservesItOnMalformedPayload)
     ensureRemoteTestApp();
     using namespace VNX::Monitor;
     RemotePeer peer;
+    peer.identity.capabilities |= Wire::kCapabilityExecutionObservation;
     RemoteConnection connection;
     EventCaptureController capture(&connection);
     connection.connectTarget(QStringLiteral("127.0.0.1"), peer.server.serverPort());
     ASSERT_TRUE(waitUntil([&] { return connection.canCaptureEvents(); }));
-    VNX::MonitorCatalogPanel panel;
+    VNX::MonitorPanel panel;
     panel.setCaptureController(&capture);
-    panel.findChild<QToolButton*>(QStringLiteral("MonitorCatalogAutoScroll"))->setChecked(false);
+    panel.findChild<QToolButton*>(QStringLiteral("MonitorAutoScroll"))->setChecked(false);
     peer.eventResponder = [&](const Wire::Frame& request) {
-        Wire::EventCaptureStatus status;
-        status.sessionEpoch = 99;
-        status.startedTimestampNs = 100;
+        Wire::EventCaptureStatusV2 status;
+        status.base.sessionEpoch = 99;
+        status.base.startedTimestampNs = 100;
+        status.acceptedExecutionFactVersion = 2;
+        status.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS | VN_MONITOR_PERM_OBSERVE_STATE | VN_MONITOR_PERM_SYMBOLS;
+        status.acceptedPermissionMask = status.requestedPermissionMask;
+        status.acceptedStreamKindMask = VN_MONITOR_STREAM_EVENT | VN_MONITOR_STREAM_STATE;
         if (request.type == Wire::Message::EventSeal) {
-            status.state = VN_MONITOR_EVENT_SESSION_DRAINED;
-            status.stoppedTimestampNs = 100000;
+            status.base.state = VN_MONITOR_EVENT_SESSION_DRAINED;
+            status.base.stoppedTimestampNs = 100000;
         }
-        peer.send(Wire::MakeFrame(Wire::Message::EventStatus, request.requestId, status));
+        peer.send(Wire::MakeFrame(Wire::Message::EventStatusV2, request.requestId, status));
+    };
+    const auto variableRecords = [](quint64 firstSequence, int count) {
+        Wire::MonitorRecords records;
+        records.sessionEpoch = 99;
+        records.recordCount = count;
+        constexpr auto bytes = harken::monitor::kActivityRecordBytes;
+        records.bytes.resize(bytes * count);
+        for (int i = 0; i < count; ++i) {
+            harken::MonitorExecutionFact source{};
+            source.engine = 42;
+            source.sourceSequence = firstSequence + i;
+            source.kind = VN_MONITOR_FACT_VARIABLE_RESULT;
+            source.contentKind = VN_MONITOR_CONTENT_VARIABLE;
+            source.timestamp = firstSequence + i + 100;
+            source.body.execution.identity.object = harkentest::ObjectId(7);
+            source.body.execution.activity.variableOutcome = VN_VARIABLE_OUTCOME_APPLIED;
+            source.body.execution.activity.variableTicket = firstSequence + i;
+            for (const auto field : {VN_MONITOR_FACT_FIELD_CONTENT_OBJECT,
+                    VN_MONITOR_FACT_FIELD_TIMESTAMP, VN_MONITOR_FACT_FIELD_ACTIVITY_VARIABLE})
+                EXPECT_TRUE(harken::monitor::SetSourceField(source, field));
+            auto* packed = records.bytes.data() + i * bytes;
+            EXPECT_EQ(bytes, harken::monitor::PackExecutionFact(packed, bytes, source, 1, 1));
+            harken::monitor::WriteU64(packed + 64, records.sessionEpoch);
+        }
+        return records;
     };
     capture.start();
     ASSERT_TRUE(waitUntil([&] { return capture.state() == EventCaptureState::Capturing; }));
     quint64 sequence = 1;
     QPersistentModelIndex selected;
+    quint64 selectedSequence = 0;
+    auto* proxy = qobject_cast<QAbstractProxyModel*>(panel.table()->model());
+    ASSERT_NE(proxy, nullptr);
     for (int batch = 0; batch < 110; ++batch) {
         peer.send(Wire::MakeFrame(Wire::Message::EventRecords, 0,
-                                  eventRecords(99, sequence, 100, sequence + 100)));
+                                  variableRecords(sequence, 100)));
         sequence += 100;
         ASSERT_TRUE(waitUntil([&] {
             return capture.rowCount() > 0 &&
                 capture.eventAt(capture.rowCount() - 1).header.sourceSequence == sequence - 1;
         }));
         ASSERT_LE(capture.rowCount(), EventCaptureController::kMaxRows);
+        ASSERT_LE(capture.rowCount() * sizeof(CapturedEvent), EventCaptureController::kMaxBytes);
         ASSERT_EQ(panel.visibleRowCount(), capture.rowCount());
         if (batch == 50) {
             panel.table()->selectRow(panel.visibleRowCount() - 1);
             selected = panel.table()->currentIndex();
+            selectedSequence = capture.eventAt(proxy->mapToSource(selected).row()).header.sourceSequence;
         }
     }
     ASSERT_TRUE(selected.isValid());
-    EXPECT_EQ(selected.row(), 4099);
+    EXPECT_EQ(selectedSequence, capture.eventAt(proxy->mapToSource(selected).row()).header.sourceSequence);
     EXPECT_EQ(selected, panel.table()->currentIndex());
-    EXPECT_EQ(1000u, capture.trimmedRecords());
-    EXPECT_EQ(1001u, capture.eventAt(0).header.sourceSequence);
-    auto invalid = eventRecords(99, sequence, 1, sequence + 100);
-    harken::monitor::WriteU32(invalid.bytes.data() + VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES + 52, 193);
+    EXPECT_EQ(11000u, capture.trimmedRecords() + capture.rowCount());
+    EXPECT_EQ(capture.trimmedRecords() + 1, capture.eventAt(0).header.sourceSequence);
+    const int retainedRows = capture.rowCount();
+    auto invalid = variableRecords(sequence, 1);
+    invalid.bytes.pop_back();
     peer.send(Wire::MakeFrame(Wire::Message::EventRecords, 0, invalid));
     ASSERT_TRUE(waitUntil([&] { return capture.state() == EventCaptureState::Failed; }));
-    EXPECT_EQ(EventCaptureController::kMaxRows, capture.rowCount());
+    EXPECT_EQ(retainedRows, capture.rowCount());
+    EXPECT_EQ(11000u, capture.trimmedRecords() + capture.rowCount());
     EXPECT_TRUE(capture.incomplete());
 }
 
@@ -404,19 +518,31 @@ TEST(EventCaptureController, LocalCaptureStopsWhenRemoteTargetConnects)
     ASSERT_EQ(EventCaptureState::Capturing, capture.state());
     EXPECT_EQ(EventCaptureTarget::Local, capture.target());
     ASSERT_EQ(VN_OK, Vn_StopAll(19));
+    const auto hasCompletedStopRequest = [&] {
+        quint64 submitted = 0, returned = 0;
+        for (int row = 0; row < capture.rowCount(); ++row) {
+            const auto& event = capture.eventAt(row);
+            if (!event.isExecution() || event.execution.request.operation != VN_MONITOR_OPERATION_STOP_ALL) continue;
+            if (event.execution.factKind == VN_MONITOR_FACT_REQUEST_SUBMITTED)
+                submitted = event.execution.request.sequence;
+            if (event.execution.factKind == VN_MONITOR_FACT_REQUEST_RETURNED &&
+                monitorFactHas(event.execution, kMonitorFactFieldResult) && event.execution.result == VN_OK)
+                returned = event.execution.request.sequence;
+        }
+        return submitted != 0 && submitted == returned;
+    };
     ASSERT_TRUE(waitUntil([&] {
         Vn_Update();
         capture.pollLocal();
-        return capture.rowCount() == 1;
+        return hasCompletedStopRequest();
     }));
-    EXPECT_EQ(19u, capture.eventAt(0).detail.arg0);
     connection.connectTarget(QStringLiteral("127.0.0.1"), peer.server.serverPort());
     ASSERT_TRUE(waitUntil([&] {
         Vn_Update();
         capture.pollLocal();
         return capture.state() == EventCaptureState::Stopped;
     }));
-    EXPECT_EQ(1, capture.rowCount());
+    EXPECT_TRUE(hasCompletedStopRequest());
     EXPECT_EQ(HarkenEditor::Bridge::RemoteEventCaptureState::Idle, connection.eventCaptureStatus().state);
     EXPECT_TRUE(capture.canStart());
 }
@@ -445,7 +571,7 @@ TEST(EventCaptureController, ProjectAndObjectIdentityGateNamesAndJumps)
     RemotePeer peer;
     RemoteConnection connection;
     EventCaptureController capture(&connection);
-    VNX::MonitorCatalogPanel panel;
+    VNX::MonitorPanel panel;
     panel.setCaptureController(&capture);
     const QUuid project = QUuid::createUuid();
     const QUuid object = VNX::authoringUuid(harkentest::StudioObjectId(7));
@@ -493,8 +619,8 @@ TEST(EventCaptureController, ProjectAndObjectIdentityGateNamesAndJumps)
         harken::monitor::PackHeader(records.bytes.data(), header);
         VNX::Monitor::MonitorEventDetailV2 detail{};
         detail.structSize = sizeof(detail);
-        detail.category = VN_MONITOR_EVENT_CATEGORY_OPERATION;
-        detail.code = VN_MONITOR_OPERATION_POST_ACTION;
+        detail.category = VN_MONITOR_EVENT_CATEGORY_DIAGNOSTIC;
+        detail.level = VN_LOG_WARN;
         detail.timestampNs = 200 + sequence;
         const auto guid = sourceProject.toRfc4122();
         std::memcpy(detail.projectGuid, guid.constData(), sizeof(detail.projectGuid));
@@ -508,8 +634,8 @@ TEST(EventCaptureController, ProjectAndObjectIdentityGateNamesAndJumps)
     EXPECT_EQ(capture.eventAt(0).objectName, QStringLiteral("Engine Start"));
     EXPECT_TRUE(capture.eventAt(1).objectName.isEmpty());
     EXPECT_EQ(capture.eventAt(2).objectName, QStringLiteral("Engine Start"));
-    EXPECT_EQ(panel.table()->model()->index(0, 3).data().toString(), QStringLiteral("Engine Start"));
-    auto* search = panel.findChild<QLineEdit*>(QStringLiteral("MonitorCatalogTextFilter"));
+    EXPECT_EQ(panel.table()->model()->index(0, VNX::MonitorCatalogModel::Object).data().toString(), QStringLiteral("Engine Start"));
+    auto* search = panel.findChild<QLineEdit*>(QStringLiteral("MonitorTextFilter"));
     search->setText(QStringLiteral("Engine Start"));
     EXPECT_EQ(panel.visibleRowCount(), 2);
     search->clear();
@@ -1078,7 +1204,6 @@ TEST(RemoteConnection, MainToolbarOpensWithoutProjectAndReflectsTheActualSession
     const auto cleanup = qScopeGuard([&] {
         VNX::ProjectManager::instance().closeProject();
         QObject::disconnect(&VNX::UndoRedoManager::instance(), nullptr, window.get(), nullptr);
-        VNX::ToastManager::instance().setParentWidget(nullptr);
         window.reset();
         VNX::ActionManager::instance().setTransactionCallbacks({});
         VNX::ActionManager::instance().clearAllForTesting();

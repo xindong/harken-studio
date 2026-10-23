@@ -5,6 +5,7 @@
 #include <harken/Harken.h>
 
 #include "harken/core/CurrentWorld.h"
+#include "harken/core/CurrentSliceBacking.h"
 #include "harken/core/BankVersionToken.h"
 #include "harken/core/LogicCommitCoordinator.h"
 #include "harken/core/ActionFiringTable.h"
@@ -14,6 +15,7 @@
 #include "harken/core/TimelineArmTable.h"
 #include "harken/core/DecisionTable.h"
 #include "harken/core/VariableLabel.h"
+#include "harken/core/StableSlotStorage.h"
 #include "harken/render/OriginalSourceMutationActor.h"
 #include "harken/param/ParamTargets.h"
 
@@ -189,6 +191,11 @@ struct VariableAcceptResult {
     VnResult result = VN_INVALID_ARG;
     VariableCallObservation observation{};
     LogicCommitTicket ticket{};
+
+private:
+    friend class VariableServiceV1;
+    std::array<std::uint32_t, kVariableBatchWriteCapacity> writeSlots_{};
+    std::uint32_t writeCount_ = 0;
 };
 
 class VariableServiceV1;
@@ -261,7 +268,10 @@ private:
 };
 
 class VariableServiceV1 {
+    struct ReadCutRow;
 public:
+    using ReadCutBackingPreparation = StableSlotStorage<ReadCutRow>::Preparation;
+    using ReadCutBackingUse = StableSlotStorage<ReadCutRow>::PreparedUse;
     friend void test::SetSdkCatalogFingerprint(VariableServiceV1&,
                                                std::uint64_t) noexcept;
     friend bool test::SetDefinitionExecutionFingerprint(VariableServiceV1&,
@@ -480,6 +490,13 @@ public:
     bool SealPreparedActionSources(Engine& engine,
         const ActionFiringTable::PreparedChildIdentity& child) noexcept;
     void CancelPreparedWrite(PreparedVariableWriteToken* prepared) noexcept;
+    void BindMonitorRequest(const VariableAcceptResult& accepted,
+        const MonitorRequestContext& request,
+        const MonitorEmitterOrigin& emitterOrigin, VnObjectId projectId) noexcept;
+    void BindPreparedMonitorRequest(const PreparedVariableWriteToken& prepared,
+        const MonitorRequestContext& request,
+        const MonitorEmitterOrigin& emitterOrigin,
+        std::uint64_t actionFiring, VnObjectId projectId) noexcept;
 
     void BeginService(Engine& engine, std::uint64_t blocksRendered,
                       std::uint32_t blockFrames);
@@ -551,6 +568,8 @@ public:
                                            float* out) noexcept;
     VariableReadCutReader ReadCutReader(VariableReadCutRef cut) noexcept;
     bool ReadCutHasSources(VariableReadCutRef cut) const noexcept;
+    bool TakeReadCutSourceChange(VariableReadCutRef cut) noexcept;
+    std::uint32_t ReadCutSourceSubscriptionCount(VariableReadCutRef cut) const noexcept;
     VariableReadCutStatus PublishReadCut(VariableReadCutRef cut,
                                         std::uint64_t finalFrame) noexcept;
     // Source proof only; the start consumer must also validate its published identities.
@@ -677,14 +696,24 @@ public:
         VnVoiceHandle nativeHandle, TimelineArmToken arm) const noexcept;
     void AcknowledgeFinishedTimelineReadUses(std::uint64_t completedAudioSequence) noexcept;
     std::uint32_t ReadCutCapacity() const noexcept { return readCutCapacity_; }
+    bool PrepareReadCutBacking(std::uint32_t count, ReadCutBackingPreparation* out) noexcept;
+    bool PrepareActionResultBacking(std::uint32_t futureWrites,
+        ActionVariableResultBacking* out) noexcept;
+    void AttachTargetRetirementStorage(void* context,
+        bool (*prepare)(void*) noexcept) noexcept {
+        targetRetirementStorageContext_ = context;
+        prepareTargetRetirementStorage_ = prepare;
+    }
     std::uint32_t TimelineReadUseCapacity() const noexcept { return timelineReadUseCapacity_; }
     std::size_t ReadCutStorageBytes() const noexcept;
     std::size_t StorageBytes() const noexcept;
+    void ReleaseUnusedReadCutBacking() noexcept;
     std::uint32_t RevisionCapacity() const noexcept { return revisionCapacity_; }
-    std::uint32_t RevisionStorageCapacity() const noexcept { return static_cast<std::uint32_t>(history_.size()); }
+    std::uint32_t RevisionStorageCapacity() const noexcept { return history_.Capacity(); }
+    std::uint32_t ConstructedRevisionCount() const noexcept { return history_.ConstructedCount(); }
     std::uint32_t CompletionCapacity() const noexcept { return completionCapacity_; }
     std::uint32_t ApplyPayloadCapacity() const noexcept { return applyPayloadCapacity_; }
-    bool HasStagedOutcomes() const noexcept { return !outcomes_.empty(); }
+    bool HasStagedOutcomes() const noexcept { return outcomeCount_ != 0; }
     bool CaptureCurrentBank(VnEmitterHandle emitter,
                             const VnVariableId* variableIds,
                             std::uint32_t variableCount,
@@ -1078,7 +1107,16 @@ private:
     bool PrepareActionReadCutSourcesImpl(Engine& engine, VariableReadCutRef cut,
         const ActionOrderIdentity& identity);
 
+    struct MonitorWriteOrigin {
+        MonitorRequestContext request{};
+        MonitorEmitterOrigin emitterOrigin{};
+        VnObjectId projectId{};
+        std::uint64_t actionFiring = 0;
+    };
+
     struct WriteRow {
+        MonitorWriteOrigin monitorOrigin{};
+        CurrentSliceBacking calendarBacking;
         bool used = false;
         bool reserved = false;
         ActionOrderIdentity preparedIssue{};
@@ -1097,6 +1135,7 @@ private:
         LogicCommitTicket ticket{};
         std::uint32_t executionOrdinal = 0;
         std::uint64_t requiredCommandFrontier = 0;
+        std::uint64_t requiredInitialSourceFrontier = 0;
         std::uint64_t committedFrame = 0;
         std::uint64_t bankOrdinal = 0;
         VariableSliceRef slice{};
@@ -1118,6 +1157,8 @@ private:
         std::uint64_t consumedFence = 0;
         bool outcomeDelivered = false;
         VariableOutcomeKind finalOutcome = VariableOutcomeKind::Session;
+        std::uint64_t candidateEpoch = 0;
+        VariableSourceSubscription* sourceHead = nullptr;
     };
 
     struct HistoryRef {
@@ -1130,18 +1171,27 @@ private:
     struct ReadCutValueRow {
         VnVariableId variableId{};
         float value = 0.0f;
+        float baselineValue = 0.0f;
         HistoryRef source{};
         std::uint64_t baselineOrdinal = 0;
+        VariableSliceSource publishedSource{};
+        VariableSourceSubscription subscription{};
         bool read = false;
+        bool historyRetained = false;
+        bool sliceRetained = false;
+        bool subscribedToSlice = false;
+        std::uint32_t sourceOrdinal = 0;
     };
+    static_assert(sizeof(ReadCutValueRow) == 128);
     enum class ReadCutState : std::uint8_t { Free, Capturing, Published, Quarantined };
     enum class EntryReadUseState : std::uint8_t { None, Prepared, Published };
     struct CandidatePins {
-        std::span<std::uint64_t> words;
+        std::vector<std::uint64_t> words;
         void reset() noexcept { std::fill(words.begin(), words.end(), 0); }
         void set(std::size_t index) noexcept { words[index / 64] |= std::uint64_t{1} << (index % 64); }
         bool test(std::size_t index) const noexcept {
-            return (words[index / 64] & (std::uint64_t{1} << (index % 64))) != 0;
+            return index / 64 < words.size() &&
+                (words[index / 64] & (std::uint64_t{1} << (index % 64))) != 0;
         }
         std::size_t count() const noexcept {
             std::size_t result = 0;
@@ -1150,6 +1200,7 @@ private:
         }
     };
     struct ReadCutRow {
+        CurrentSliceBacking calendarBacking;
         std::atomic<std::uint32_t> generation{1};
         std::atomic<ReadCutState> state{ReadCutState::Free};
         WorldGeneration world = 0;
@@ -1162,7 +1213,6 @@ private:
         bool pendingPlacement = false;
         bool finalPlacementCaptured = false;
         bool actionOrderConsumed = false;
-        std::array<float, kVariableDefinitionCapacity> baselineValues{};
         // Each set bit owns an observer, so the slot cannot recycle while retained.
         CandidatePins candidatePins{};
         bool candidateAdmissionFailed = false;
@@ -1170,6 +1220,7 @@ private:
         std::uint32_t sourceCount = 0;
         std::uint32_t publishedSourceCount = 0;
         bool needsRebuild = false;
+        std::atomic<bool> sourceChanged{false};
         std::atomic<bool> preparationFailed{false};
         std::atomic<VariableNativeStartReceipt> nativeReceipt{VariableNativeStartReceipt::None};
         bool nativeCalendarRequired = false;
@@ -1183,12 +1234,24 @@ private:
         DecisionTable* entryDecisions = nullptr;
         ScheduledTransactionPool* entryPool = nullptr;
         DecisionFuturePin entryPin;
-        std::array<ReadCutValueRow, kVariableDefinitionCapacity> values{};
-        std::array<HistoryRef, kVariableDefinitionCapacity> sources{};
-        std::array<VariableSliceSource, kVariableDefinitionCapacity> publishedSources{};
+        std::vector<ReadCutValueRow> values;
     };
 
+    bool PrepareHistoryBacking(std::uint32_t slot) noexcept;
+    static HistoryRef& ReadCutHistorySource(ReadCutRow& cut, std::uint32_t index) noexcept;
+    static const HistoryRef& ReadCutHistorySource(const ReadCutRow& cut, std::uint32_t index) noexcept;
+    static VariableSliceSource& ReadCutPublishedSource(ReadCutRow& cut, std::uint32_t index) noexcept;
+    static const VariableSliceSource& ReadCutPublishedSource(const ReadCutRow& cut, std::uint32_t index) noexcept;
+    void UnsubscribeReadCutValue(ReadCutValueRow& value) noexcept;
+    void SubscribeReadCutHistory(ReadCutRow& cut, ReadCutValueRow& value) noexcept;
+    void RemoveCapturingCut(std::uint32_t slot) noexcept;
+    static void NotifyReadCutSource(void* context, VariableReadCutRef target) noexcept;
+    void NotifyHistorySource(WriteRow& row) noexcept;
+
     ReadCutRow* ResolveReadCut(VariableReadCutRef cut) noexcept;
+    bool ConstructReadCut(std::uint32_t slot) noexcept;
+    bool PrepareReadCutColumns(ReadCutRow& cut) noexcept;
+    bool ReadCutBackingAvailable(const ReadCutRow& cut) const noexcept;
     bool CaptureReadCutImpl(VnEmitterHandle emitter, std::uint64_t executeFrame,
         LogicCommitSequence sequence, std::uint32_t executionOrdinalExclusive,
         VariableReadCutRef* out, const ActionOrderIdentity* privateIssue,
@@ -1403,6 +1466,8 @@ private:
     TransportEpochOwner& transport_;
     VariableSliceTable& slices_;
     ScheduledTransactionPool& timeline_;
+    void* targetRetirementStorageContext_ = nullptr;
+    bool (*prepareTargetRetirementStorage_)(void*) noexcept = nullptr;
     std::vector<DefinitionRow> definitions_;
     std::vector<VariableDefinitionV1> definitionViews_;
     std::vector<OwnedPropertyProgram> playableProperties_;
@@ -1422,11 +1487,11 @@ private:
     std::vector<EmitterBank> emitterBanks_;
     std::vector<std::uint32_t> emitterBankVersionGenerations_;
     // History reuse requires outcome delivery, zero observers and an audio fence.
-    std::vector<WriteRow> history_;
-    std::vector<HeldCurrentSliceToken> preparedWritePlacements_;
+    StableRowStorage<WriteRow> history_;
+    StableRowStorage<HeldCurrentSliceToken> preparedWritePlacements_;
     std::vector<std::uint32_t> historyGenerations_;
     std::vector<std::uint32_t> freeSlots_;
-    std::vector<std::uint32_t> scheduledGroups_;
+    StableRowStorage<std::uint32_t> scheduledGroups_;
     std::uint32_t scheduledGroupCount_ = 0;
     std::size_t workCandidateCount_ = 0;
     HistoryRef ordinaryDebt_{};
@@ -1435,21 +1500,22 @@ private:
     std::uint32_t completionCapacity_ = 0;
     std::uint32_t applyPayloadCapacity_ = 0;
     std::uint32_t occupiedRevisions_ = 0;
-    std::vector<WriteRow*> sealRows_, commitRows_, prefixRows_, readCutRows_, actionReadCutRows_;
-    std::vector<WriteRow*> preparationRows_, settledRows_, supersedeRows_;
-    std::vector<std::size_t> serviceCandidates_;
+    StableRowStorage<WriteRow*> sealRows_, commitRows_, prefixRows_, readCutRows_, actionReadCutRows_;
+    StableRowStorage<WriteRow*> preparationRows_, settledRows_, supersedeRows_;
+    std::uint64_t candidateEpoch_ = 0;
     mutable std::vector<VariableSliceRef> dependencyVisited_;
     std::uint32_t readCutCapacity_ = 0;
-    std::unique_ptr<ReadCutRow[]> readCuts_;
-    std::vector<std::uint64_t> candidatePinStorage_;
+    StableSlotStorage<ReadCutRow> readCuts_;
+    std::vector<std::uint32_t> capturingCuts_;
     std::uint32_t timelineReadUseCapacity_ = 0;
-    std::unique_ptr<TimelineReadUseRow[]> timelineReadUses_;
+    StableRowStorage<TimelineReadUseRow> timelineReadUses_;
     // Terminal records are delivered after each completed logic operation.
-    std::vector<VariableOutcomeRecord> outcomes_;
-    std::vector<TicketQueryRecord> ticketQueryRecords_;
+    StableRowStorage<VariableOutcomeRecord> outcomes_;
+    std::size_t outcomeCount_ = 0;
+    StableRowStorage<TicketQueryRecord> ticketQueryRecords_;
     std::uint32_t ticketQueryBegin_ = 0;
     std::uint32_t ticketQueryCount_ = 0;
-    std::vector<VnVariableTicketV1> expiredTicketRecords_;
+    StableRowStorage<VnVariableTicketV1> expiredTicketRecords_;
     std::uint32_t expiredTicketBegin_ = 0;
     std::uint32_t expiredTicketCount_ = 0;
     std::size_t outcomeRead_ = 0;

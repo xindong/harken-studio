@@ -112,7 +112,7 @@ bool ActionFiringTable::MatchesChildIdentity(const PreparedChildIdentity& identi
     if (identity.owner_ != this || identity.child_ == 0 || identity.parent_ == 0 || identity.root_ == 0 ||
         identity.sequence_ == 0 || identity.epoch_ == 0 || identity.rootEpoch_ == 0) return false;
     const auto slot = SlotOf(identity.child_);
-    if (slot >= rows_.size()) return false;
+    if (slot >= rows_.ConstructedCount()) return false;
     const auto& child = rows_[slot];
     const auto* parent = Resolve(identity.parent_);
     const auto* root = Resolve(identity.root_);
@@ -151,23 +151,51 @@ std::uint64_t ActionFiringTable::GenerationOf(
 }
 
 bool ActionFiringTable::Reset(std::uint32_t capacity) {
-    if (capacity == 0 || capacity > kMaxActionFiringsHard) {
+    if (memguard::IsAudioTagged() || capacity == 0 || capacity > kMaxActionFiringsHard) {
         return false;
     }
-    try {
-        std::vector<Row> rows(capacity);
-        std::vector<ActionFiringStepResult> results(
-            static_cast<std::size_t>(capacity) * kMaxActionSteps);
-        rows_ = std::move(rows);
-        results_ = std::move(results);
-    } catch (const std::bad_alloc&) {
-        return false;
-    }
+    StableRowStorage<Row> rows;
+    if (!rows.Reserve(capacity)) return false;
+    rows_.Swap(rows);
     liveCount_ = 0;
     highWater_ = 0;
     quarantinedCount_ = 0;
     refusalCount_ = 0;
+    failResultAllocationForTests_ = false;
     return true;
+}
+
+bool ActionFiringTable::PrepareResults(Row& row, std::uint32_t count) noexcept {
+    std::vector<ActionFiringStepResult> results;
+    std::vector<std::uint64_t> monitorExecutedSteps;
+    const auto resultCount = static_cast<std::size_t>(count);
+    if (memguard::IsAudioTagged() || count > kHardActionStepCapacity ||
+        resultCount > std::numeric_limits<std::size_t>::max() / sizeof(ActionFiringStepResult) ||
+        resultCount > results.max_size() || (failResultAllocationForTests_ && count != 0)) {
+        ++refusalCount_;
+        return false;
+    }
+    try {
+        results.resize(resultCount);
+        monitorExecutedSteps.resize((resultCount + 63u) / 64u);
+        row.results.swap(results);
+        row.monitorExecutedSteps.swap(monitorExecutedSteps);
+        return true;
+    } catch (const std::bad_alloc&) {
+        ++refusalCount_;
+        return false;
+    }
+}
+
+std::uint64_t ActionFiringTable::ResultStorageBytes() const noexcept {
+    std::uint64_t bytes = 0;
+    for (std::uint32_t slot = 0; slot < rows_.ConstructedCount(); ++slot) {
+        const auto& row = rows_[slot];
+        bytes += row.results.capacity() * sizeof(ActionFiringStepResult);
+        bytes += row.monitorExecutedSteps.capacity() * sizeof(std::uint64_t);
+        if (row.variableResultBacking != nullptr) bytes += sizeof(ActionVariableResultBacking);
+    }
+    return bytes;
 }
 
 ActionFiringTable::Row* ActionFiringTable::Resolve(
@@ -176,7 +204,7 @@ ActionFiringTable::Row* ActionFiringTable::Resolve(
         return nullptr;
     }
     const std::uint32_t slot = SlotOf(handle);
-    if (slot >= rows_.size()) {
+    if (slot >= rows_.ConstructedCount()) {
         return nullptr;
     }
     Row& row = rows_[slot];
@@ -199,7 +227,7 @@ ActionFiringTable::Row* ActionFiringTable::ResolvePrepared(
         return nullptr;
     }
     const std::uint32_t slot = SlotOf(prepared.handle_);
-    if (slot >= rows_.size()) {
+    if (slot >= rows_.ConstructedCount()) {
         return nullptr;
     }
     Row& row = rows_[slot];
@@ -217,6 +245,25 @@ bool ActionFiringTable::SetPreparedProgramFingerprint(
     return true;
 }
 
+bool ActionFiringTable::AdoptPreparedVariableResultBacking(
+    const PreparedActionFiring& prepared,
+    std::unique_ptr<ActionVariableResultBacking> backing) noexcept {
+    auto* row = ResolvePrepared(prepared);
+    if (row == nullptr || row->parent != 0 || row->root != prepared.Handle() ||
+        row->variableResultBacking != nullptr || backing == nullptr ||
+        !backing->outcomes.Valid() || !backing->queries.Valid() || !backing->expired.Valid()) return false;
+    row->variableResultBacking = std::move(backing);
+    return true;
+}
+
+const ActionVariableResultBacking* ActionFiringTable::VariableResultBackingFor(
+    ActionFiringHandle handle) const noexcept {
+    const auto* row = Resolve(handle);
+    const auto* root = row == nullptr ? nullptr : Resolve(row->root);
+    return root != nullptr && root->parent == 0 && root->root == row->root
+        ? root->variableResultBacking.get() : nullptr;
+}
+
 bool ActionFiringTable::PrepareRoot(
     VnObjectId actionId, std::uint64_t worldGeneration,
     std::uint32_t directStepCount, PreparedActionFiring* out,
@@ -230,12 +277,16 @@ bool ActionFiringTable::PrepareRoot(
     VnObjectId actionId, const ActionFiringOwnerStamp& owner,
     std::uint32_t directStepCount, PreparedActionFiring* out,
     const MonitorRequestContext& request, const MonitorEmitterOrigin& emitterOrigin) noexcept {
-    if (out == nullptr || actionId == VnObjectId{} || !owner.Valid() ||
-        directStepCount > kMaxActionSteps) {
+    if (memguard::IsAudioTagged() || out == nullptr || actionId == VnObjectId{} || !owner.Valid() ||
+        directStepCount > kHardActionStepCapacity) {
         return false;
     }
     *out = {};
-    for (std::uint32_t slot = 0; slot < rows_.size(); ++slot) {
+    for (std::uint32_t slot = 0; slot < rows_.Capacity(); ++slot) {
+        if (!rows_.ConstructThrough(slot + 1)) {
+            ++refusalCount_;
+            return false;
+        }
         Row& row = rows_[slot];
         if (row.state != SlotState::Free) {
             continue;
@@ -248,6 +299,7 @@ bool ActionFiringTable::PrepareRoot(
                 continue;
             }
         }
+        if (!PrepareResults(row, directStepCount)) return false;
         row.state = SlotState::Prepared;
         row.playbackRequest = request;
         row.emitterOrigin = emitterOrigin;
@@ -272,10 +324,6 @@ bool ActionFiringTable::PrepareRoot(
         row.directStepTerminalCount = 0;
         row.childFiringCount = 0;
         row.livePlayableCount = 0;
-        const std::size_t base =
-            static_cast<std::size_t>(slot) * kMaxActionSteps;
-        std::fill_n(results_.begin() + base, kMaxActionSteps,
-                    ActionFiringStepResult{});
         out->owner_ = this;
         out->handle_ = MakeHandle(slot, row.generation);
         out->prepared_ = true;
@@ -300,12 +348,16 @@ bool ActionFiringTable::PrepareChild(
     const ActionFiringOwnerStamp& owner, std::uint32_t directStepCount,
     PreparedActionFiring* out) noexcept {
     Row* parentRow = ResolvePrepared(parent);
-    if (out == nullptr || parentRow == nullptr || actionId == VnObjectId{} ||
-        !owner.Valid() || directStepCount > kMaxActionSteps) {
+    if (memguard::IsAudioTagged() || out == nullptr || parentRow == nullptr || actionId == VnObjectId{} ||
+        !owner.Valid() || directStepCount > kHardActionStepCapacity) {
         return false;
     }
     *out = {};
-    for (std::uint32_t slot = 0; slot < rows_.size(); ++slot) {
+    for (std::uint32_t slot = 0; slot < rows_.Capacity(); ++slot) {
+        if (!rows_.ConstructThrough(slot + 1)) {
+            ++refusalCount_;
+            return false;
+        }
         Row& row = rows_[slot];
         if (row.state != SlotState::Free) {
             continue;
@@ -319,6 +371,7 @@ bool ActionFiringTable::PrepareChild(
             }
         }
         const ActionFiringHandle handle = MakeHandle(slot, row.generation);
+        if (!PrepareResults(row, directStepCount)) return false;
         row.state = SlotState::Prepared;
         row.playbackRequest = parentRow->playbackRequest;
         row.emitterOrigin = parentRow->emitterOrigin;
@@ -345,10 +398,6 @@ bool ActionFiringTable::PrepareChild(
         row.livePlayableCount = 0;
         parentRow->firstChild = handle;
         ++parentRow->childFiringCount;
-        const std::size_t base =
-            static_cast<std::size_t>(slot) * kMaxActionSteps;
-        std::fill_n(results_.begin() + base, kMaxActionSteps,
-                    ActionFiringStepResult{});
         out->owner_ = this;
         out->handle_ = handle;
         out->prepared_ = true;
@@ -364,8 +413,8 @@ bool ActionFiringTable::PrepareChild(
     PreparedActionFiring* out) noexcept {
     Row* parentRow = Resolve(parent);
     const Row* rootRow = parentRow == nullptr ? nullptr : Resolve(parentRow->root);
-    if (out == nullptr || parentRow == nullptr || actionId == VnObjectId{} ||
-        !owner.Valid() || directStepCount > kMaxActionSteps ||
+    if (memguard::IsAudioTagged() || out == nullptr || parentRow == nullptr || actionId == VnObjectId{} ||
+        !owner.Valid() || directStepCount > kHardActionStepCapacity ||
         rootRow == nullptr || rootRow->state != SlotState::Active ||
         (parent != parentRow->root && rootRow->cancellationEpoch != parentRow->rootCancellationEpoch) ||
         (parentRow->state != SlotState::Active &&
@@ -373,7 +422,11 @@ bool ActionFiringTable::PrepareChild(
         return false;
     }
     *out = {};
-    for (std::uint32_t slot = 0; slot < rows_.size(); ++slot) {
+    for (std::uint32_t slot = 0; slot < rows_.Capacity(); ++slot) {
+        if (!rows_.ConstructThrough(slot + 1)) {
+            ++refusalCount_;
+            return false;
+        }
         Row& row = rows_[slot];
         if (row.state != SlotState::Free) {
             continue;
@@ -387,6 +440,7 @@ bool ActionFiringTable::PrepareChild(
             }
         }
         const ActionFiringHandle handle = MakeHandle(slot, row.generation);
+        if (!PrepareResults(row, directStepCount)) return false;
         row.state = SlotState::Prepared;
         row.playbackRequest = parentRow->playbackRequest;
         row.emitterOrigin = parentRow->emitterOrigin;
@@ -413,10 +467,6 @@ bool ActionFiringTable::PrepareChild(
         row.livePlayableCount = 0;
         parentRow->firstChild = handle;
         ++parentRow->childFiringCount;
-        const std::size_t base =
-            static_cast<std::size_t>(slot) * kMaxActionSteps;
-        std::fill_n(results_.begin() + base, kMaxActionSteps,
-                    ActionFiringStepResult{});
         out->owner_ = this;
         out->handle_ = handle;
         out->prepared_ = true;
@@ -450,6 +500,7 @@ bool ActionFiringTable::CommitPreparedChild(
     prepared->prepared_ = false;
     liveCount_ += committed;
     highWater_ = (std::max)(highWater_, liveCount_);
+    ObserveCommittedSubtree(handle);
     if (out != nullptr) out->identity_ = identity;
     return true;
 }
@@ -461,10 +512,7 @@ bool ActionFiringTable::SetPreparedStep(
     if (row == nullptr || index >= row->directStepCount) {
         return false;
     }
-    ActionFiringStepResult& stored =
-        results_[static_cast<std::size_t>(SlotOf(prepared.handle_)) *
-                     kMaxActionSteps +
-                 index];
+    ActionFiringStepResult& stored = row->results[index];
     const bool wasTerminal = IsTerminalStep(stored.state);
     const bool isTerminal = IsTerminalStep(result.state);
     stored = result;
@@ -486,9 +534,7 @@ bool ActionFiringTable::UpdateStep(
         result.authoredEventIndex != index) {
         return false;
     }
-    ActionFiringStepResult& stored =
-        results_[static_cast<std::size_t>(SlotOf(handle)) * kMaxActionSteps +
-                 index];
+    ActionFiringStepResult& stored = row->results[index];
     const bool wasTerminal = IsTerminalStep(stored.state);
     const bool isTerminal = IsTerminalStep(result.state);
     stored = result;
@@ -512,9 +558,7 @@ bool ActionFiringTable::TransitionStep(
         result.authoredEventIndex != index) {
         return false;
     }
-    ActionFiringStepResult& stored =
-        results_[static_cast<std::size_t>(SlotOf(handle)) * kMaxActionSteps +
-                 index];
+    ActionFiringStepResult& stored = row->results[index];
     if (stored.state != expected) {
         return false;
     }
@@ -539,10 +583,7 @@ bool ActionFiringTable::SetPreparedDeferredStopCount(
     if (row == nullptr || index >= row->directStepCount) {
         return false;
     }
-    ActionFiringStepResult& stored =
-        results_[static_cast<std::size_t>(SlotOf(prepared.handle_)) *
-                     kMaxActionSteps +
-                 index];
+    ActionFiringStepResult& stored = row->results[index];
     if (stored.state != ActionStepState::AwaitingMaterialization ||
         stored.capturedPlayableCount != 0 ||
         stored.remainingPlayableCount != 0) {
@@ -567,9 +608,7 @@ bool ActionFiringTable::SettleDeferredStopLeaf(
         index >= row->directStepCount) {
         return false;
     }
-    ActionFiringStepResult& stored =
-        results_[static_cast<std::size_t>(SlotOf(handle)) * kMaxActionSteps +
-                 index];
+    ActionFiringStepResult& stored = row->results[index];
     if ((stored.state != ActionStepState::AwaitingMaterialization &&
          stored.state != ActionStepState::Active) ||
         stored.capturedPlayableCount == 0 ||
@@ -626,7 +665,7 @@ bool ActionFiringTable::AddLivePlayableCount(
 }
 
 bool ActionFiringTable::AcquireDeferred(ActionFiringHandle handle) noexcept {
-    if (handle == 0 || SlotOf(handle) >= rows_.size()) {
+    if (handle == 0 || SlotOf(handle) >= rows_.ConstructedCount()) {
         return false;
     }
     Row& candidate = rows_[SlotOf(handle)];
@@ -642,7 +681,7 @@ bool ActionFiringTable::AcquireDeferred(ActionFiringHandle handle) noexcept {
 }
 
 bool ActionFiringTable::ReleaseDeferred(ActionFiringHandle handle) noexcept {
-    if (handle == 0 || SlotOf(handle) >= rows_.size()) {
+    if (handle == 0 || SlotOf(handle) >= rows_.ConstructedCount()) {
         return false;
     }
     Row& candidate = rows_[SlotOf(handle)];
@@ -694,11 +733,9 @@ bool ActionFiringTable::CompletePlayable(
         return false;
     }
     const bool stopping = row->state == SlotState::Stopping;
-    const std::size_t base =
-        static_cast<std::size_t>(SlotOf(handle)) * kMaxActionSteps;
     ActionFiringStepResult* matched = nullptr;
     for (std::uint32_t index = 0; index < row->directStepCount; ++index) {
-        ActionFiringStepResult& candidate = results_[base + index];
+        ActionFiringStepResult& candidate = row->results[index];
         if (candidate.executionOrdinal == executionOrdinal &&
             candidate.producedPlayableInstance != 0) {
             matched = &candidate;
@@ -742,11 +779,9 @@ bool ActionFiringTable::CompleteAuthoredStop(
     if (row == nullptr || row->state != SlotState::Active) {
         return false;
     }
-    const std::size_t base =
-        static_cast<std::size_t>(SlotOf(handle)) * kMaxActionSteps;
     ActionFiringStepResult* matched = nullptr;
     for (std::uint32_t index = 0; index < row->directStepCount; ++index) {
-        ActionFiringStepResult& candidate = results_[base + index];
+        ActionFiringStepResult& candidate = row->results[index];
         if (candidate.executionOrdinal == executionOrdinal &&
             candidate.capturedPlayableCount != 0) {
             matched = &candidate;
@@ -779,13 +814,10 @@ bool ActionFiringTable::PropagateTerminal(Row& row) noexcept {
     if (parent == nullptr) {
         return false;
     }
-    const ActionFiringHandle handle = MakeHandle(
-        static_cast<std::uint32_t>(&row - rows_.data()), row.generation);
-    const std::size_t parentBase =
-        static_cast<std::size_t>(SlotOf(row.parent)) * kMaxActionSteps;
+    const ActionFiringHandle handle = MakeHandle(rows_.IndexOf(row), row.generation);
     ActionFiringStepResult* post = nullptr;
     for (std::uint32_t index = 0; index < parent->directStepCount; ++index) {
-        ActionFiringStepResult& candidate = results_[parentBase + index];
+        ActionFiringStepResult& candidate = parent->results[index];
         if (candidate.childFiring == handle) {
             post = &candidate;
             break;
@@ -850,10 +882,8 @@ bool ActionFiringTable::TryFinalize(Row& row) noexcept {
     bool hasCancellation = false;
     std::int32_t terminalResult = 0;
     ActionTerminalReason terminalReason = ActionTerminalReason::None;
-    const std::size_t base =
-        static_cast<std::size_t>(&row - rows_.data()) * kMaxActionSteps;
     for (std::uint32_t index = 0; index < row.directStepCount; ++index) {
-        const ActionFiringStepResult& result = results_[base + index];
+        const ActionFiringStepResult& result = row.results[index];
         if (result.state == ActionStepState::Succeeded ||
             result.state == ActionStepState::NoOp) {
             hasSuccess = true;
@@ -873,6 +903,7 @@ bool ActionFiringTable::TryFinalize(Row& row) noexcept {
     }
     const bool stopping = row.state == SlotState::Stopping;
     row.state = SlotState::TerminalRetained;
+    row.variableResultBacking.reset();
     if (stopping || hasCancellation) {
         row.outcome = ActionFiringOutcome::Cancelled;
         if (row.terminalReason == ActionTerminalReason::None) {
@@ -893,6 +924,7 @@ bool ActionFiringTable::TryFinalize(Row& row) noexcept {
         row.terminalReason = ActionTerminalReason::Natural;
         row.terminalResult = 0;
     }
+    ObserveActionTerminal(row);
     return row.parent == 0 || PropagateTerminal(row);
 }
 
@@ -916,6 +948,91 @@ bool ActionFiringTable::TryFinalizeSubtree(
     return TryFinalize(*row);
 }
 
+MonitorLifecycleFacts ActionFiringTable::CaptureMonitorFacts(const Row& row) const noexcept {
+    MonitorLifecycleFacts facts{};
+    facts.playbackRequest = row.playbackRequest;
+    facts.emitterOrigin = row.emitterOrigin;
+    facts.controlCause = row.controlCause;
+    facts.projectId = row.owner.projectId;
+    facts.parentAction = row.parent;
+    facts.root = row.root;
+    facts.programSemanticFingerprint = row.programSemanticFingerprint;
+    facts.logicCommitSequence = row.acceptedLogicSequence;
+    return facts;
+}
+
+void ActionFiringTable::ObserveCommittedSubtree(ActionFiringHandle handle) noexcept {
+    const Row* row = Resolve(handle);
+    if (row == nullptr) return;
+    const auto facts = CaptureMonitorFacts(*row);
+    ObserveMonitorLifecycle(MonitorLifecyclePhase::ActionAccept, handle,
+        row->generation, row->worldGeneration, row->actionId, 0, handle,
+        0, 0, 0, facts);
+    for (std::uint32_t index = 0; index < row->directStepCount; ++index) {
+        if (row->results[index].monitorExecutionOnCommit)
+            ObserveStepExecution(handle, index);
+    }
+    for (ActionFiringHandle child = row->firstChild; child != 0;) {
+        const Row* childRow = Resolve(child);
+        if (childRow == nullptr) return;
+        ObserveCommittedSubtree(child);
+        child = childRow->nextSibling;
+    }
+}
+
+void ActionFiringTable::ObserveStepExecution(ActionFiringHandle handle, std::uint32_t index) noexcept {
+    Row* row = Resolve(handle);
+    if (row == nullptr || row->state != SlotState::Active || index >= row->directStepCount) return;
+    const std::uint64_t mask = UINT64_C(1) << (index % 64u);
+    auto& executed = row->monitorExecutedSteps[index / 64u];
+    if ((executed & mask) != 0) return;
+    executed |= mask;
+    const auto& result = row->results[index];
+    auto facts = CaptureMonitorFacts(*row);
+    facts.publishLegacy = false;
+    facts.stepIndex = result.authoredEventIndex;
+    facts.stepExecutionOrdinal = result.executionOrdinal;
+    facts.stepOpcode = result.opcode;
+    facts.stepTargetId = result.targetStableId;
+    facts.stepTargetKind = result.targetKind;
+    facts.relatedAction = result.childFiring;
+    ObserveMonitorLifecycle(MonitorLifecyclePhase::StepExecuted, handle,
+        row->generation, row->worldGeneration, row->actionId,
+        result.producedPlayableInstance, handle, 0, 0, 0, facts);
+}
+
+void ActionFiringTable::ObserveActionTerminal(Row& row) noexcept {
+    if (row.monitorTerminalPublished) return;
+    row.monitorTerminalPublished = true;
+    const auto handle = MakeHandle(static_cast<std::uint32_t>(&row - rows_.data()), row.generation);
+    auto facts = CaptureMonitorFacts(row);
+    facts.actionOutcome = static_cast<std::uint8_t>(row.outcome);
+    facts.terminalResult = row.terminalResult;
+    facts.terminalReason = static_cast<std::uint32_t>(row.terminalReason);
+    if (row.outcome == ActionFiringOutcome::Failed ||
+        row.outcome == ActionFiringOutcome::SucceededWithStepFailure) {
+        facts.terminalKind = 5;
+    } else if (row.terminalReason == ActionTerminalReason::StopRequested) {
+        facts.terminalKind = 2;
+    } else if (row.terminalReason == ActionTerminalReason::WorldReplaced ||
+               row.terminalReason == ActionTerminalReason::TransportReset) {
+        facts.terminalKind = 4;
+    } else if (row.outcome == ActionFiringOutcome::Cancelled) {
+        facts.terminalKind = 3;
+    } else {
+        facts.terminalKind = 1;
+    }
+    const bool reject = row.outcome == ActionFiringOutcome::Failed ||
+                        row.outcome == ActionFiringOutcome::Cancelled;
+    ObserveMonitorLifecycle(reject ? MonitorLifecyclePhase::ActionReject : MonitorLifecyclePhase::ActionResult,
+        handle, row.generation, row.worldGeneration, row.actionId, 0, handle,
+        facts.terminalReason, 0, 0, facts);
+    facts.publishLegacy = false;
+    ObserveMonitorLifecycle(MonitorLifecyclePhase::ActionTerminal, handle,
+        row.generation, row.worldGeneration, row.actionId, 0, handle,
+        facts.terminalReason, 0, 0, facts);
+}
+
 bool ActionFiringTable::Commit(
     PreparedActionFiring* prepared,
     std::uint64_t acceptedLogicSequence) noexcept {
@@ -934,17 +1051,15 @@ bool ActionFiringTable::CommitTree(
     }
     const ActionFiringHandle rootHandle = prepared->handle_;
     std::uint32_t committed = 0;
-    for (Row& candidate : rows_) {
+    for (std::uint32_t slot = 0; slot < rows_.ConstructedCount(); ++slot) {
+        Row& candidate = rows_[slot];
         if (candidate.state == SlotState::Prepared &&
             candidate.root == prepared->handle_) {
             candidate.acceptedLogicSequence = acceptedLogicSequence;
             candidate.state = SlotState::Active;
-            const std::size_t base =
-                static_cast<std::size_t>(&candidate - rows_.data()) *
-                kMaxActionSteps;
             for (std::uint32_t index = 0;
                  index < candidate.directStepCount; ++index) {
-                results_[base + index].logicCommitSequence =
+                candidate.results[index].logicCommitSequence =
                     acceptedLogicSequence;
             }
             ++committed;
@@ -953,47 +1068,8 @@ bool ActionFiringTable::CommitTree(
     prepared->prepared_ = false;
     liveCount_ += committed;
     highWater_ = (std::max)(highWater_, liveCount_);
-    const bool ok = committed != 0 && TryFinalizeSubtree(rootHandle);
-    if (ok) {
-        MonitorLifecycleFacts facts{};
-        facts.playbackRequest = row->playbackRequest;
-        facts.emitterOrigin = row->emitterOrigin;
-        facts.controlCause = row->controlCause;
-        facts.projectId = row->owner.projectId;
-        facts.parentAction = row->parent;
-        facts.root = row->root;
-        facts.relatedAction = 0;
-        facts.programSemanticFingerprint = row->programSemanticFingerprint;
-        facts.logicCommitSequence = acceptedLogicSequence;
-        ObserveMonitorLifecycle(
-            MonitorLifecyclePhase::ActionAccept, rootHandle,
-            GenerationOf(rootHandle), row->worldGeneration, row->actionId, 0,
-            rootHandle, 0, 0, 0, facts);
-        Row* live = Resolve(rootHandle);
-        if (live != nullptr && live->state == SlotState::TerminalRetained) {
-            const bool reject =
-                live->outcome == ActionFiringOutcome::Failed ||
-                live->outcome == ActionFiringOutcome::Cancelled;
-            MonitorLifecycleFacts terminalFacts{};
-            terminalFacts.playbackRequest = live->playbackRequest;
-            terminalFacts.emitterOrigin = live->emitterOrigin;
-            terminalFacts.controlCause = live->controlCause;
-            terminalFacts.projectId = live->owner.projectId;
-            terminalFacts.parentAction = live->parent;
-            terminalFacts.root = live->root;
-            terminalFacts.relatedAction = rootHandle;
-            terminalFacts.programSemanticFingerprint = live->programSemanticFingerprint;
-            terminalFacts.logicCommitSequence = live->acceptedLogicSequence;
-            ObserveMonitorLifecycle(
-                reject ? MonitorLifecyclePhase::ActionReject
-                       : MonitorLifecyclePhase::ActionResult,
-                rootHandle, GenerationOf(rootHandle), live->worldGeneration,
-                live->actionId, 0, rootHandle,
-                static_cast<std::uint32_t>(live->terminalReason), 0, 0,
-                terminalFacts);
-        }
-    }
-    return ok;
+    ObserveCommittedSubtree(rootHandle);
+    return committed != 0 && TryFinalizeSubtree(rootHandle);
 }
 
 bool ActionFiringTable::UnlinkChild(
@@ -1002,7 +1078,7 @@ bool ActionFiringTable::UnlinkChild(
     while (*link != 0) {
         if (*link == child) {
             const std::uint32_t slot = SlotOf(child);
-            if (slot >= rows_.size()) {
+            if (slot >= rows_.ConstructedCount()) {
                 return false;
             }
             *link = rows_[slot].nextSibling;
@@ -1028,7 +1104,7 @@ bool ActionFiringTable::ActivatePreparedSubtree(
         return false;
     }
     const std::uint32_t slot = SlotOf(handle);
-    if (slot >= rows_.size()) {
+    if (slot >= rows_.ConstructedCount()) {
         return false;
     }
     Row& row = rows_[slot];
@@ -1039,7 +1115,7 @@ bool ActionFiringTable::ActivatePreparedSubtree(
     ActionFiringHandle child = row.firstChild;
     while (child != 0) {
         const std::uint32_t childSlot = SlotOf(child);
-        if (childSlot >= rows_.size()) {
+        if (childSlot >= rows_.ConstructedCount()) {
             return false;
         }
         const ActionFiringHandle next = rows_[childSlot].nextSibling;
@@ -1050,9 +1126,8 @@ bool ActionFiringTable::ActivatePreparedSubtree(
         child = next;
     }
     row.acceptedLogicSequence = acceptedLogicSequence;
-    const std::size_t base = static_cast<std::size_t>(slot) * kMaxActionSteps;
     for (std::uint32_t index = 0; index < row.directStepCount; ++index) {
-        results_[base + index].logicCommitSequence = acceptedLogicSequence;
+        row.results[index].logicCommitSequence = acceptedLogicSequence;
     }
     row.state = SlotState::Active;
     ++*committed;
@@ -1060,6 +1135,7 @@ bool ActionFiringTable::ActivatePreparedSubtree(
 }
 
 bool ActionFiringTable::Recycle(std::uint32_t slot, Row& row) noexcept {
+    if (memguard::IsAudioTagged()) return false;
     row.actionId = {};
     row.programSemanticFingerprint = 0;
     row.worldGeneration = 0;
@@ -1070,6 +1146,8 @@ bool ActionFiringTable::Recycle(std::uint32_t slot, Row& row) noexcept {
     row.outcome = ActionFiringOutcome::Pending;
     row.terminalReason = ActionTerminalReason::None;
     row.terminalResult = 0;
+    row.monitorTerminalPublished = false;
+    std::vector<std::uint64_t>{}.swap(row.monitorExecutedSteps);
     row.parent = 0;
     row.root = 0;
     row.firstChild = 0;
@@ -1079,9 +1157,8 @@ bool ActionFiringTable::Recycle(std::uint32_t slot, Row& row) noexcept {
     row.childFiringCount = 0;
     row.livePlayableCount = 0;
     row.ownedDeferredCount = 0;
-    const std::size_t base = static_cast<std::size_t>(slot) * kMaxActionSteps;
-    std::fill_n(results_.begin() + base, kMaxActionSteps,
-                ActionFiringStepResult{});
+    std::vector<ActionFiringStepResult>{}.swap(row.results);
+    row.variableResultBacking.reset();
     if (row.generation == kMaxActionFiringGeneration) {
         row.state = SlotState::Quarantined;
         ++quarantinedCount_;
@@ -1098,6 +1175,7 @@ bool ActionFiringTable::Recycle(std::uint32_t slot, Row& row) noexcept {
 }
 
 bool ActionFiringTable::Abandon(PreparedActionFiring* prepared) noexcept {
+    if (memguard::IsAudioTagged()) return false;
     if (prepared == nullptr) {
         return false;
     }
@@ -1124,7 +1202,7 @@ bool ActionFiringTable::Abandon(PreparedActionFiring* prepared) noexcept {
 bool ActionFiringTable::AbandonPreparedSubtree(
     ActionFiringHandle handle) noexcept {
     const std::uint32_t slot = SlotOf(handle);
-    if (handle == 0 || slot >= rows_.size()) {
+    if (handle == 0 || slot >= rows_.ConstructedCount()) {
         return false;
     }
     Row& row = rows_[slot];
@@ -1136,7 +1214,7 @@ bool ActionFiringTable::AbandonPreparedSubtree(
     ActionFiringHandle child = row.firstChild;
     while (child != 0) {
         const std::uint32_t childSlot = SlotOf(child);
-        if (childSlot >= rows_.size()) {
+        if (childSlot >= rows_.ConstructedCount()) {
             return false;
         }
         const ActionFiringHandle next = rows_[childSlot].nextSibling;
@@ -1177,10 +1255,8 @@ bool ActionFiringTable::MarkStoppingSubtree(
         }
         child = next;
     }
-    const std::size_t base =
-        static_cast<std::size_t>(SlotOf(handle)) * kMaxActionSteps;
     for (std::uint32_t index = 0; index < row->directStepCount; ++index) {
-        ActionFiringStepResult& result = results_[base + index];
+        ActionFiringStepResult& result = row->results[index];
         if (!IsTerminalStep(result.state)) {
             result.state = ActionStepState::Cancelled;
             result.result = 0;
@@ -1289,13 +1365,12 @@ bool ActionFiringTable::MarkTerminal(
         child = childRow->nextSibling;
     }
     row->state = SlotState::TerminalRetained;
+    row->variableResultBacking.reset();
     row->outcome = outcome;
     row->terminalReason = reason;
     row->terminalResult = 0;
-    const std::size_t base =
-        static_cast<std::size_t>(SlotOf(handle)) * kMaxActionSteps;
     for (std::uint32_t index = 0; index < row->directStepCount; ++index) {
-        const ActionFiringStepResult& result = results_[base + index];
+        const ActionFiringStepResult& result = row->results[index];
         if (result.state == ActionStepState::Failed ||
             result.state == ActionStepState::Cancelled) {
             row->terminalResult = result.result;
@@ -1303,28 +1378,8 @@ bool ActionFiringTable::MarkTerminal(
         }
     }
     row->livePlayableCount = 0;
-    const bool ok = row->parent == 0 || PropagateTerminal(*row);
-    if (ok) {
-        const bool reject =
-            outcome == ActionFiringOutcome::Failed ||
-            outcome == ActionFiringOutcome::Cancelled;
-        MonitorLifecycleFacts facts{};
-        facts.playbackRequest = row->playbackRequest;
-        facts.emitterOrigin = row->emitterOrigin;
-        facts.controlCause = row->controlCause;
-        facts.projectId = row->owner.projectId;
-        facts.parentAction = row->parent;
-        facts.root = row->root;
-        facts.relatedAction = 0;
-        facts.programSemanticFingerprint = row->programSemanticFingerprint;
-        facts.logicCommitSequence = row->acceptedLogicSequence;
-        ObserveMonitorLifecycle(
-            reject ? MonitorLifecyclePhase::ActionReject
-                   : MonitorLifecyclePhase::ActionResult,
-            handle, GenerationOf(handle), row->worldGeneration, row->actionId,
-            0, handle, static_cast<std::uint32_t>(reason), 0, 0, facts);
-    }
-    return ok;
+    ObserveActionTerminal(*row);
+    return row->parent == 0 || PropagateTerminal(*row);
 }
 
 bool ActionFiringTable::ReleaseTerminalSubtree(
@@ -1353,6 +1408,7 @@ bool ActionFiringTable::ReleaseTerminalSubtree(
 }
 
 bool ActionFiringTable::ReleaseRoot(ActionFiringHandle handle) noexcept {
+    if (memguard::IsAudioTagged()) return false;
     Row* row = Resolve(handle);
     if (row == nullptr || row->state != SlotState::TerminalRetained ||
         row->parent != 0) {
@@ -1412,13 +1468,13 @@ ActionFiringHandle ActionFiringTable::CaptureMonitorIdentityAt(
     std::uint32_t slot, ActionFiringSnapshot* out) const noexcept {
     if (out == nullptr) return 0;
     *out = {};
-    if (slot >= rows_.size()) return 0;
+    if (slot >= rows_.ConstructedCount()) return 0;
     const auto handle = MakeHandle(slot, rows_[slot].generation);
     return Capture(handle, out) ? handle : 0;
 }
 
 ActionFiringHandle ActionFiringTable::ActiveRootAt(std::uint32_t slot) const noexcept {
-    if (slot >= rows_.size()) return 0;
+    if (slot >= rows_.ConstructedCount()) return 0;
     const Row& row = rows_[slot];
     if (row.parent != 0 ||
         (row.state != SlotState::Active && row.state != SlotState::Stopping)) return 0;
@@ -1439,7 +1495,8 @@ bool ActionFiringTable::CaptureTerminalTreeOwners(
         rootRow->state != SlotState::TerminalRetained) {
         return false;
     }
-    for (const Row& row : rows_) {
+    for (std::uint32_t slot = 0; slot < rows_.ConstructedCount(); ++slot) {
+        const Row& row = rows_[slot];
         if (row.root != root || row.state == SlotState::Free ||
             row.state == SlotState::Prepared ||
             row.state == SlotState::Quarantined) {
@@ -1488,7 +1545,8 @@ bool ActionFiringTable::TreeLivePlayableCount(
         return false;
     }
     std::uint32_t total = 0;
-    for (const Row& row : rows_) {
+    for (std::uint32_t slot = 0; slot < rows_.ConstructedCount(); ++slot) {
+        const Row& row = rows_[slot];
         if ((row.state == SlotState::Active ||
              row.state == SlotState::Stopping ||
              row.state == SlotState::TerminalRetained) &&
@@ -1514,7 +1572,8 @@ bool ActionFiringTable::TreeOwnedDeferredCount(
         return false;
     }
     std::uint32_t total = 0;
-    for (const Row& row : rows_) {
+    for (std::uint32_t slot = 0; slot < rows_.ConstructedCount(); ++slot) {
+        const Row& row = rows_[slot];
         if ((row.state == SlotState::Active ||
              row.state == SlotState::Stopping ||
              row.state == SlotState::TerminalRetained) &&
@@ -1539,22 +1598,22 @@ bool ActionFiringTable::CaptureStep(
     if (row == nullptr || index >= row->directStepCount) {
         return false;
     }
-    *out = results_[static_cast<std::size_t>(SlotOf(handle)) *
-                        kMaxActionSteps +
-                    index];
+    *out = row->results[index];
     return true;
 }
 
 std::uint32_t ActionFiringTable::FreeCount() const noexcept {
-    return static_cast<std::uint32_t>(std::count_if(
-        rows_.begin(), rows_.end(),
-        [](const Row& row) { return row.state == SlotState::Free; }));
+    auto free = rows_.Capacity() - rows_.ConstructedCount();
+    for (std::uint32_t slot = 0; slot < rows_.ConstructedCount(); ++slot)
+        if (rows_[slot].state == SlotState::Free) ++free;
+    return free;
 }
 
 bool ActionFiringTable::SetFreeGenerationForTests(
     std::uint32_t slot, std::uint64_t generation) noexcept {
-    if (slot >= rows_.size() || generation == 0 ||
+    if (slot >= rows_.Capacity() || generation == 0 ||
         generation > kMaxActionFiringGeneration ||
+        !rows_.ConstructThrough(slot + 1) ||
         rows_[slot].state != SlotState::Free) {
         return false;
     }
@@ -1567,7 +1626,7 @@ bool ActionFiringTable::IsPrepared(ActionFiringHandle handle) const noexcept {
         return false;
     }
     const std::uint32_t slot = SlotOf(handle);
-    return slot < rows_.size() && rows_[slot].state == SlotState::Prepared &&
+    return slot < rows_.ConstructedCount() && rows_[slot].state == SlotState::Prepared &&
            rows_[slot].generation == GenerationOf(handle);
 }
 

@@ -24,7 +24,7 @@ namespace harken {
 // Header magic: the four bytes 'V' 'S' 'P' 'K' at file offset 0.
 inline constexpr std::uint8_t kPackMagic[4] = {'V', 'S', 'P', 'K'};
 
-inline constexpr std::uint32_t kPackFormatVersion = 3;
+inline constexpr std::uint32_t kPackFormatVersion = HARKEN_PACK_SCHEMA_VERSION;
 
 // Serialized sizes. Header: magic(4) + formatVersion(4) + headerBytes(4) +
 // fileBytes(8) + entryCount(4) + tocOffset(4) + tocChecksum(8).

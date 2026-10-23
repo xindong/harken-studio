@@ -18,7 +18,6 @@ public:
         QString cmd;
         QJsonObject args;
         QString permissionProfile;
-        QString toolProfile;
         QString requestId;
         QString grantId;
     };

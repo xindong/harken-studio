@@ -12,12 +12,30 @@
 #include <QCoreApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QSet>
 #include <QTemporaryDir>
 #include <tuple>
 
 using namespace VNX;
 
 namespace {
+
+QJsonArray enabledToolsPayload()
+{
+    QJsonArray tools;
+    for (const AICommandSpec& spec : AICommandCatalog::enabled())
+    {
+        tools.append(QJsonObject{
+            {QStringLiteral("type"), QStringLiteral("function")},
+            {QStringLiteral("function"), QJsonObject{
+                {QStringLiteral("name"), spec.cmd},
+                {QStringLiteral("description"), spec.description},
+                {QStringLiteral("parameters"), spec.argumentSchema}
+            }}
+        });
+    }
+    return tools;
+}
 
 QJsonObject pingCommand(const QString& requestId)
 {
@@ -300,16 +318,17 @@ TEST_F(AIAssistantServiceTest,
         std::make_shared<AIDurableMemoryService>(store));
     service.setConversationScope(projectScope);
     service.setUnrestrictedMode(false);
+    const QJsonArray tools = enabledToolsPayload();
+    const int contextWindow = 8192
+        + QJsonDocument(tools).toJson(QJsonDocument::Compact).size() - 2;
     service.setSettingsValueLoaderForTesting(
-        [](const QString& key, const QVariant& defaultValue) {
+        [contextWindow](const QString& key, const QVariant& defaultValue) {
         if (key == QLatin1String("base_url"))
             return QVariant(QStringLiteral("https://example.test/v1"));
         if (key == QLatin1String("model"))
             return QVariant(QStringLiteral("small-context-model"));
-        if (key == QLatin1String("tool_profile"))
-            return QVariant(QStringLiteral("future_profile"));
         if (key == QLatin1String("context_window_tokens"))
-            return QVariant(8192);
+            return QVariant(contextWindow);
         return defaultValue;
     });
 
@@ -351,9 +370,9 @@ TEST_F(AIAssistantServiceTest,
         wireMessages.append(message);
     const int requestBytes = QJsonDocument(QJsonObject{
         {QStringLiteral("messages"), wireMessages},
-        {QStringLiteral("tools"), QJsonArray{}}
+        {QStringLiteral("tools"), tools}
     }).toJson(QJsonDocument::Compact).size();
-    EXPECT_LE(requestBytes, 8192 - 1024 - 2048);
+    EXPECT_LE(requestBytes, contextWindow - 1024 - 2048);
 }
 
 TEST_F(AIAssistantServiceTest,
@@ -685,16 +704,16 @@ TEST_F(AIAssistantServiceTest, ContextBudgetEvictsHistoryBeforeNextProviderReque
     auto* provider = new MockLLMProvider;
     service.setProvider(provider);
     service.setUnrestrictedMode(false);
+    const int contextWindow = 4096
+        + QJsonDocument(enabledToolsPayload()).toJson(QJsonDocument::Compact).size() - 2;
     service.setSettingsValueLoaderForTesting(
-        [](const QString& key, const QVariant& defaultValue) {
+        [contextWindow](const QString& key, const QVariant& defaultValue) {
         if (key == QLatin1String("base_url"))
             return QVariant(QStringLiteral("https://example.test/v1"));
         if (key == QLatin1String("model"))
             return QVariant(QStringLiteral("small-context-model"));
-        if (key == QLatin1String("tool_profile"))
-            return QVariant(QStringLiteral("future_profile"));
         if (key == QLatin1String("context_window_tokens"))
-            return QVariant(4096);
+            return QVariant(contextWindow);
         return defaultValue;
     });
     provider->enqueueTextResponse(QString(700, QLatin1Char('a')));
@@ -722,16 +741,16 @@ TEST_F(AIAssistantServiceTest, CurrentTurnOverContextBudgetFailsBeforeProvider)
     auto* provider = new MockLLMProvider;
     service.setProvider(provider);
     service.setUnrestrictedMode(false);
+    const int contextWindow = 4096
+        + QJsonDocument(enabledToolsPayload()).toJson(QJsonDocument::Compact).size() - 2;
     service.setSettingsValueLoaderForTesting(
-        [](const QString& key, const QVariant& defaultValue) {
+        [contextWindow](const QString& key, const QVariant& defaultValue) {
         if (key == QLatin1String("base_url"))
             return QVariant(QStringLiteral("https://example.test/v1"));
         if (key == QLatin1String("model"))
             return QVariant(QStringLiteral("small-context-model"));
-        if (key == QLatin1String("tool_profile"))
-            return QVariant(QStringLiteral("future_profile"));
         if (key == QLatin1String("context_window_tokens"))
-            return QVariant(4096);
+            return QVariant(contextWindow);
         return defaultValue;
     });
     provider->enqueueTextResponse(QStringLiteral("first answer"));
@@ -992,7 +1011,7 @@ TEST_F(AIAssistantServiceTest, SettingsPathClampsLegacyBypassModeToAsk)
     EXPECT_FALSE(provider->lastRequest().systemPrompt.contains(QStringLiteral("bypass")));
 }
 
-TEST_F(AIAssistantServiceTest, ToolProfileSelectionChangesRequestToolsAndPermission)
+TEST_F(AIAssistantServiceTest, PermissionModeSelectsCompleteAllowedToolSet)
 {
     IPCServer server(nullptr);
     AIAssistantService service(&server);
@@ -1007,8 +1026,6 @@ TEST_F(AIAssistantServiceTest, ToolProfileSelectionChangesRequestToolsAndPermiss
             return QVariant(QStringLiteral("https://example.test/v1"));
         if (key == QLatin1String("model"))
             return QVariant(QStringLiteral("test-model"));
-        if (key == QLatin1String("tool_profile"))
-            return QVariant(QStringLiteral("read_only"));
         if (key == QLatin1String("permission_mode"))
             return QVariant(QStringLiteral("read_only"));
         return defaultValue;
@@ -1020,8 +1037,6 @@ TEST_F(AIAssistantServiceTest, ToolProfileSelectionChangesRequestToolsAndPermiss
     for (const auto& spec : provider->lastRequest().tools)
     {
         EXPECT_EQ(spec.effect, AICommandSpec::Effect::Query) << spec.cmd.toStdString();
-        EXPECT_TRUE(spec.toolProfiles.contains(QStringLiteral("read_only")))
-            << spec.cmd.toStdString();
     }
     EXPECT_TRUE(provider->lastRequest().systemPrompt.contains(
         QStringLiteral("permission profile is read_only")));
@@ -1033,60 +1048,25 @@ TEST_F(AIAssistantServiceTest, ToolProfileSelectionChangesRequestToolsAndPermiss
             return QVariant(QStringLiteral("https://example.test/v1"));
         if (key == QLatin1String("model"))
             return QVariant(QStringLiteral("test-model"));
-        if (key == QLatin1String("tool_profile"))
-            return QVariant(QStringLiteral("live"));
         if (key == QLatin1String("permission_mode"))
             return QVariant(QStringLiteral("ask"));
         return defaultValue;
     });
-    provider->enqueueTextResponse(QStringLiteral("live"));
-    service.submitUserMessage(QStringLiteral("Inspect live state."));
+    provider->enqueueTextResponse(QStringLiteral("ready"));
+    service.submitUserMessage(QStringLiteral("Use all available tools."));
     ASSERT_EQ(provider->submitCount(), 2);
-    EXPECT_FALSE(provider->lastRequest().tools.isEmpty());
+    QSet<QString> expectedCommands;
+    for (const auto& spec : AICommandCatalog::all())
+    {
+        if (spec.availability == AICommandSpec::Availability::Enabled)
+            expectedCommands.insert(spec.cmd);
+    }
+    QSet<QString> actualCommands;
     for (const auto& spec : provider->lastRequest().tools)
-        EXPECT_TRUE(spec.toolProfiles.contains(QStringLiteral("live")))
-            << spec.cmd.toStdString();
+        actualCommands.insert(spec.cmd);
+    EXPECT_EQ(actualCommands, expectedCommands);
     EXPECT_TRUE(provider->lastRequest().systemPrompt.contains(
         QStringLiteral("permission profile is ask")));
-}
-
-TEST_F(AIAssistantServiceTest, InvalidToolProfileSubmitsTextOnlyAndEmitsSafeEvent)
-{
-    QList<AIStepEvent> steps;
-    QList<AIServiceDiagnostic> diagnostics;
-    IPCServer server(nullptr);
-    AIAssistantService service(&server);
-    service.setUnrestrictedMode(false);
-    auto* provider = new MockLLMProvider;
-    provider->setAutoDelivery(false);
-    service.setProvider(provider);
-    service.setSettingsValueLoaderForTesting(
-        [](const QString& key, const QVariant& defaultValue) {
-        if (key == QLatin1String("base_url"))
-            return QVariant(QStringLiteral("https://example.test/v1"));
-        if (key == QLatin1String("model"))
-            return QVariant(QStringLiteral("test-model"));
-        if (key == QLatin1String("tool_profile"))
-            return QVariant(QStringLiteral("not-a-profile"));
-        return defaultValue;
-    });
-    provider->enqueueTextResponse(QStringLiteral("text only"));
-    QObject::connect(&service, &AIAssistantService::stepEventReady, &service,
-                     [&](const AIStepEvent& value) { steps.append(value); });
-    QObject::connect(&service, &AIAssistantService::diagnosticReady, &service,
-                     [&](const AIServiceDiagnostic& value) { diagnostics.append(value); });
-
-    service.submitUserMessage(QStringLiteral("Continue without tools."));
-    ASSERT_EQ(provider->submitCount(), 1);
-    EXPECT_TRUE(provider->lastRequest().tools.isEmpty());
-    ASSERT_EQ(diagnostics.size(), 1);
-    const auto& warning = diagnostics.constFirst();
-    EXPECT_EQ(warning.code, QStringLiteral("AI_TOOL_PROFILE_INVALID"));
-    const QString eventMessage = warning.message;
-    EXPECT_FALSE(eventMessage.contains(QStringLiteral("not-a-profile")));
-    EXPECT_TRUE(eventMessage.contains(QStringLiteral("text-only")));
-    ASSERT_EQ(steps.size(), 1);
-    EXPECT_EQ(steps.at(0).phase, AIStepPhase::ModelWaiting);
 }
 
 TEST_F(AIAssistantServiceTest, DestructorSilentlyTearsDownActiveTurn)
@@ -1160,8 +1140,6 @@ TEST_F(AIAssistantServiceTest, EmitsConfirmationWaitingAndCancelledStepEvents)
             return QVariant(QStringLiteral("https://example.test/v1"));
         if (key == QLatin1String("model"))
             return QVariant(QStringLiteral("test-model"));
-        if (key == QLatin1String("tool_profile"))
-            return QVariant(QStringLiteral("authoring"));
         if (key == QLatin1String("permission_mode"))
             return QVariant(QStringLiteral("ask"));
         return defaultValue;
@@ -2021,7 +1999,7 @@ TEST_F(AIAssistantServiceTest, ForcedSummaryContextOverflowGuidesUserToAIAgentSe
             return QVariant(QStringLiteral("https://example.test/v1"));
         if (key == QLatin1String("model"))
             return QVariant(QStringLiteral("small-context-model"));
-        if (key == QLatin1String("tool_profile"))
+        if (key == QLatin1String("permission_mode"))
             return QVariant(QStringLiteral("read_only"));
         if (key == QLatin1String("context_window_tokens"))
             return QVariant(16384);

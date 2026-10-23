@@ -1,5 +1,4 @@
 #include "Core/ProjectSchemaGenerated.h"
-#include "Core/PackSchemaGenerated.h"
 #include "Core/ProjectContract.h"
 #include "Core/ProjectSerializer.h"
 #include "Core/ProjectTypes.h"
@@ -216,7 +215,7 @@ TEST(SchemaArchive, BuildSnapshotMatchesCompiledIdentityAndSeparateGenerations)
                   .value(QStringLiteral("supportedVersions")).toArray(), editorVersions);
     EXPECT_EQ(trees.value(QStringLiteral("Pack")).toObject()
                   .value(QStringLiteral("currentVersion")).toInt(),
-              VNX::PackSchema::kPackManifestSchemaVersion);
+              HARKEN_PACK_SCHEMA_VERSION);
     const QDir root(archive.rootPath());
     for (const int version : VNX::ProjectSchema::kProjectSchemaVersions) {
         EXPECT_TRUE(root.exists(QStringLiteral("Editor/%1/ProjectSerializedSchema.json").arg(version)));
@@ -228,7 +227,7 @@ TEST(SchemaArchive, BuildSnapshotMatchesCompiledIdentityAndSeparateGenerations)
     EXPECT_FALSE(root.exists(QStringLiteral("Editor/2")));
     const auto packVersions = trees.value(QStringLiteral("Pack")).toObject()
                                   .value(QStringLiteral("supportedVersions")).toArray();
-    EXPECT_TRUE(packVersions.contains(VNX::PackSchema::kPackManifestSchemaVersion));
+    EXPECT_TRUE(packVersions.contains(HARKEN_PACK_SCHEMA_VERSION));
     for (const auto versionValue : packVersions) {
         const int version = versionValue.toInt();
         EXPECT_TRUE(root.exists(QStringLiteral("Pack/%1/PackManifestSchema.json").arg(version)));
@@ -240,7 +239,7 @@ TEST(SchemaArchive, BuildSnapshotMatchesCompiledIdentityAndSeparateGenerations)
     EXPECT_FALSE(root.exists(QStringLiteral("Editor/current")));
     EXPECT_FALSE(root.exists(QStringLiteral("Pack/current")));
     EXPECT_FALSE(root.exists(QStringLiteral("Pack/%1").arg(
-        VNX::PackSchema::kPackManifestSchemaVersion + 1)));
+        HARKEN_PACK_SCHEMA_VERSION + 1)));
     EXPECT_FALSE(root.exists(QStringLiteral("versions")));
     EXPECT_FALSE(root.exists(QStringLiteral("Editor/versions")));
     EXPECT_FALSE(root.exists(QStringLiteral("Pack/versions")));
@@ -250,14 +249,14 @@ TEST(SchemaArchive, BuildSnapshotMatchesCompiledIdentityAndSeparateGenerations)
               VNX::ProjectSchema::kProjectSchemaVersion);
     EXPECT_EQ(current.value(QStringLiteral("x-harken-documentTypes")).toArray().size(), 6);
     const QJsonObject pack = archive.packSchema(
-        VNX::PackSchema::kPackManifestSchemaVersion, &error);
+        HARKEN_PACK_SCHEMA_VERSION, &error);
     ASSERT_FALSE(pack.isEmpty()) << error.toStdString();
     EXPECT_EQ(pack.value(QStringLiteral("x-harken-format")).toObject()
                   .value(QStringLiteral("formatId")).toString(),
-              QStringLiteral("generated.pack-manifest"));
+              QStringLiteral("generated.pack-companion"));
     EXPECT_TRUE(archive.projectSchema(VNX::ProjectSchema::kProjectSchemaVersion + 1, &error).isEmpty());
-    EXPECT_TRUE(archive.packSchema(VNX::PackSchema::kPackManifestSchemaVersion + 1, &error).isEmpty());
-    EXPECT_TRUE(archive.packSchema(VNX::PackSchema::kPackManifestSchemaVersion + 2, &error).isEmpty());
+    EXPECT_TRUE(archive.packSchema(HARKEN_PACK_SCHEMA_VERSION + 1, &error).isEmpty());
+    EXPECT_TRUE(archive.packSchema(HARKEN_PACK_SCHEMA_VERSION + 2, &error).isEmpty());
 
 }
 
@@ -342,11 +341,11 @@ TEST(ProjectSchemaValidator, RegistryCoversFormalVersions)
     EXPECT_FALSE(VNX::ProjectSchemaValidator::supportsProjectVersion(
         VNX::ProjectSchema::kProjectSchemaVersion + 1));
     EXPECT_TRUE(VNX::ProjectSchemaValidator::supportsPackVersion(
-        VNX::PackSchema::kPackManifestSchemaVersion));
+        HARKEN_PACK_SCHEMA_VERSION));
     EXPECT_FALSE(VNX::ProjectSchemaValidator::supportsPackVersion(
-        VNX::PackSchema::kPackManifestSchemaVersion + 1));
+        HARKEN_PACK_SCHEMA_VERSION + 1));
     EXPECT_FALSE(VNX::ProjectSchemaValidator::supportsPackVersion(
-        VNX::PackSchema::kPackManifestSchemaVersion + 2));
+        HARKEN_PACK_SCHEMA_VERSION + 2));
 
 }
 
@@ -689,17 +688,25 @@ TEST(ProjectSchemaValidator, AcceptsRetiredSignalGraphInputButRejectsBindingProp
 
 TEST(ProjectSchemaValidator, PackSidecarAcceptsCurrentAndRejectsUnlistedVersions)
 {
-    constexpr int current = VNX::PackSchema::kPackManifestSchemaVersion;
-    const QString path = QStringLiteral("HarkenPackManifest.json");
-    EXPECT_TRUE(VNX::ProjectSchemaValidator::validatePackManifest(
-                    current, QJsonObject{{QStringLiteral("schema_version"), current}, {QStringLiteral("platforms"), QJsonArray{}}}, path)
-                    .isEmpty());
-    for (const int version : {0, current + 1, current + 2}) {
-        const QJsonObject obsolete{{QStringLiteral("schema_version"), version}};
+    constexpr int current = HARKEN_PACK_SCHEMA_VERSION;
+    const QJsonObject action{{"schemaVersion", current},
+                             {"name", "Play_Sound"},
+                             {"guid", "11111111-2222-3333-4444-555555555555"}};
+    const QJsonObject init{{"schemaVersion", current}, {"variables", QJsonArray{}}};
+    for (const QJsonObject& companion : {action, init}) {
+        EXPECT_TRUE(VNX::ProjectSchemaValidator::validatePackManifest(
+                        current, companion, QStringLiteral("Pack companion")).isEmpty());
+        auto invalid = companion;
+        invalid.remove("schemaVersion");
         EXPECT_FALSE(VNX::ProjectSchemaValidator::validatePackManifest(
-                         current, obsolete, path).isEmpty());
-        EXPECT_FALSE(VNX::ProjectSchemaValidator::validatePackManifest(
-                         version, obsolete, path).isEmpty());
+                         current, invalid, QStringLiteral("Pack companion")).isEmpty());
+        for (const int version : {0, current + 1, current + 2}) {
+            EXPECT_FALSE(VNX::ProjectSchemaValidator::validatePackManifest(
+                             version, companion, QStringLiteral("Pack companion")).isEmpty());
+            invalid.insert("schemaVersion", version);
+            EXPECT_FALSE(VNX::ProjectSchemaValidator::validatePackManifest(
+                             current, invalid, QStringLiteral("Pack companion")).isEmpty());
+        }
     }
 }
 
@@ -707,24 +714,37 @@ TEST(ProjectSchemaValidator, PackSidecarRequiresExactlyOneCurrentDocumentShape)
 {
     const auto validate = [](const QJsonObject& value) {
         return VNX::ProjectSchemaValidator::validatePackManifest(
-            VNX::PackSchema::kPackManifestSchemaVersion, value, QStringLiteral("Pack sidecar"));
+            HARKEN_PACK_SCHEMA_VERSION, value, QStringLiteral("Pack sidecar"));
     };
-    QJsonObject index{{"schema_version", VNX::PackSchema::kPackManifestSchemaVersion}, {"platforms", QJsonArray{}}};
-    EXPECT_TRUE(validate(index).isEmpty());
-    EXPECT_FALSE(validate(QJsonObject{{"schema_version", VNX::PackSchema::kPackManifestSchemaVersion}}).isEmpty());
-    index.insert("platform", "Windows");
-    EXPECT_FALSE(validate(index).isEmpty());
-    index.remove("platform");
-    index.insert("platformId", "11111111-2222-3333-4444-555555555555");
-    EXPECT_FALSE(validate(index).isEmpty());
-    index.remove("platformId");
-    QJsonObject entry{{"id", "11111111-2222-3333-4444-555555555555"},
-                      {"name", "Mobile"}, {"basePlatform", "Android"}, {"path", "Mobile"}};
-    index.insert("platforms", QJsonArray{entry});
-    EXPECT_TRUE(validate(index).isEmpty());
-    entry.insert("id", "00000000-0000-0000-0000-000000000000");
-    index.insert("platforms", QJsonArray{entry});
-    EXPECT_FALSE(validate(index).isEmpty());
+    QJsonObject action{{"schemaVersion", HARKEN_PACK_SCHEMA_VERSION},
+                       {"name", "Play_Sound"},
+                       {"guid", "11111111-2222-3333-4444-555555555555"}};
+    EXPECT_TRUE(validate(action).isEmpty());
+    EXPECT_FALSE(validate(QJsonObject{}).isEmpty());
+    action.insert("schema_version", HARKEN_PACK_SCHEMA_VERSION);
+    EXPECT_FALSE(validate(action).isEmpty());
+    action.remove("schema_version");
+    action.insert("variables", QJsonArray{});
+    EXPECT_FALSE(validate(action).isEmpty());
+    action.remove("variables");
+    action.insert("guid", "00000000-0000-0000-0000-000000000000");
+    EXPECT_FALSE(validate(action).isEmpty());
+
+    QJsonObject label{{"name", "Stone"},
+                      {"guid", "22222222-3333-4444-5555-666666666666"}};
+    QJsonObject variable{{"name", "Surface"},
+                         {"guid", "33333333-4444-5555-6666-777777777777"},
+                         {"labels", QJsonArray{label}}};
+    EXPECT_TRUE(validate(QJsonObject{{"schemaVersion", HARKEN_PACK_SCHEMA_VERSION},
+                                    {"variables", QJsonArray{variable}}}).isEmpty());
+    variable.insert("unit", "meters");
+    EXPECT_FALSE(validate(QJsonObject{{"schemaVersion", HARKEN_PACK_SCHEMA_VERSION},
+                                     {"variables", QJsonArray{variable}}}).isEmpty());
+    variable.remove("unit");
+    label.insert("guid", "00000000-0000-0000-0000-000000000000");
+    variable.insert("labels", QJsonArray{label});
+    EXPECT_FALSE(validate(QJsonObject{{"schemaVersion", HARKEN_PACK_SCHEMA_VERSION},
+                                     {"variables", QJsonArray{variable}}}).isEmpty());
 }
 
 TEST(ProjectSchemaValidator, CurrentVersionPreservesMetadataBoundariesAcrossDocumentTypes)

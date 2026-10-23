@@ -50,6 +50,7 @@ public:
         bool installToAssets = false;
         bool checkOnly = false;
         bool confirmTargetChanges = false;
+        QByteArray approvedPlanHash;
         bool removeIntegration = false;
         bool confirmRemoval = false;
         QString removalBackupPath;
@@ -73,6 +74,13 @@ public:
         bool integrationRemoved = false;
         bool removalBackupCreated = false;
         bool changesDetected = false;
+        QByteArray planHash;
+        QStringList modifiedFiles;
+        QStringList lineEndingFiles;
+        QStringList encodingFiles;
+        QStringList missingFiles;
+        QStringList missingOptionalFiles;
+        QStringList unreadableFiles;
         bool integrationMigrated = false;
         bool migrationRecovered = false;
         QString migrationBackupPath;
@@ -85,7 +93,7 @@ public:
         QString sdkInstallPath;
         QString removalBackupPath;
         QString jsonReportPath;
-        QString markdownReportPath;
+        QString textReportPath;
         int sdkFilesCopied = 0;
         int filesAdded = 0;
         int filesChanged = 0;

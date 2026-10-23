@@ -331,6 +331,7 @@ struct FrontierTrace {
     void Capture(harken::Engine& engine) {
         for (std::uint32_t slot = 0; slot < engine.timelineArms.Capacity(); ++slot) {
             const auto* arm = engine.timelineArms.RowAt(slot);
+            if (arm == nullptr) continue;
             if (arm->startedBlockSequence.load() == 0 && arm->frontierLastReadSequence.load() == 0) continue;
             const auto matches = [&](const harken::TimelineArmToken& token) {
                 return token.slot == slot && token.generation == arm->generation &&
@@ -352,9 +353,8 @@ struct FrontierTrace {
                         classify(service.variableControlDiscreteRetargetEvents[index].armToken,
                             service.variableControlDiscreteRetargetPayloads[index]);
                 }
-                for (std::size_t index = 0; index < engine.variableControlRetargetEvents.size(); ++index)
-                    classify(engine.variableControlRetargetEvents[index].armToken,
-                        engine.variableControlRetargetPayloads[index]);
+                for (const auto& program : engine.variableControlRetargetPrograms)
+                    classify(program.event.armToken, program.payload);
                 control = std::find_if(controls.begin(), controls.end(),
                     [&](const auto& item) { return matches(item.token); });
             }
@@ -368,11 +368,11 @@ struct FrontierTrace {
             });
             if (found == heard.end()) {
                 harken::PlayableInstanceHandle leafHandle = 0;
-                for (std::size_t logical = 0; leafHandle == 0 && logical < engine.playableMemberReferences.size(); ++logical) {
+                for (std::size_t logical = 0; leafHandle == 0 && logical < engine.playableStorage.memberCount; ++logical) {
                     std::size_t physical = 0;
                     if (engine.ResolvePlayableMemberSlot(logical, &physical) &&
-                        matches(engine.playableScheduleArms[physical]))
-                        leafHandle = engine.playableMemberReferences[logical].leaf;
+                        matches(engine.ReadPlayableMember(physical).arm))
+                        leafHandle = engine.ReadPlayableMemberReference(logical).leaf;
                 }
                 for (const auto& service : engine.playableServices) {
                     if (leafHandle == 0 && service.partition.Valid() && matches(service.arm) && service.activeLeafInstance != 0) {

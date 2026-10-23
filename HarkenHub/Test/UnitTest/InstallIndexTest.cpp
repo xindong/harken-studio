@@ -6,6 +6,11 @@
 #include <QFile>
 #include <QTemporaryDir>
 
+#if defined(Q_OS_WIN)
+#include <chrono>
+#include <thread>
+#endif
+
 using VNH::InstalledVersionRecord;
 using VNH::InstallIndex;
 
@@ -99,6 +104,30 @@ TEST(InstallIndex, SetHealthStateUpdatesOnlyKnownBuilds)
 }
 
 #if defined(Q_OS_WIN)
+TEST(InstallIndex, TemporaryReplacementLockAllowsCompleteCommit)
+{
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    MachineRootGuard guard(dir.path());
+    QString error;
+    ASSERT_TRUE(InstallIndex::commitInstallation(makeRecord("original"), 7, &error));
+    QFile reader(InstallIndex::filePath());
+    ASSERT_TRUE(reader.open(QIODevice::ReadOnly));
+    std::thread release([&reader] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(35));
+        reader.close();
+    });
+    const bool saved = InstallIndex::commitInstallation(makeRecord("replacement"), 8, &error);
+    release.join();
+    ASSERT_TRUE(saved) << error.toStdString();
+    const auto snapshot = InstallIndex::snapshot();
+    ASSERT_TRUE(snapshot.ok);
+    ASSERT_EQ(snapshot.records.size(), 2u);
+    EXPECT_EQ(snapshot.records.front().buildId, QStringLiteral("original"));
+    EXPECT_EQ(snapshot.records.back().buildId, QStringLiteral("replacement"));
+    EXPECT_EQ(snapshot.lastReleaseSequence, 8);
+}
+
 TEST(InstallIndex, FailedReplacementPreservesIndexAndReportsStorageError)
 {
     QTemporaryDir dir;
@@ -113,6 +142,8 @@ TEST(InstallIndex, FailedReplacementPreservesIndexAndReportsStorageError)
     EXPECT_TRUE(error.contains(InstallIndex::filePath())) << error.toStdString();
     EXPECT_TRUE(error.contains("commit")) << error.toStdString();
     EXPECT_TRUE(error.contains("Qt error 10:")) << error.toStdString();
+    EXPECT_FALSE(InstallIndex::setHealthState("original", "NeedsRepair", &error));
+    EXPECT_FALSE(InstallIndex::removeRecord("original", &error));
     ASSERT_TRUE(reader.seek(0));
     EXPECT_EQ(reader.readAll(), original);
     reader.close();
@@ -121,6 +152,10 @@ TEST(InstallIndex, FailedReplacementPreservesIndexAndReportsStorageError)
     ASSERT_EQ(snapshot.records.size(), 1u);
     EXPECT_EQ(snapshot.records.front().buildId, QStringLiteral("original"));
     EXPECT_EQ(snapshot.lastReleaseSequence, 7);
+    ASSERT_TRUE(InstallIndex::setHealthState("original", "NeedsRepair", &error));
+    EXPECT_EQ(InstallIndex::snapshot().records.front().healthState, QStringLiteral("NeedsRepair"));
+    ASSERT_TRUE(InstallIndex::removeRecord("original", &error));
+    EXPECT_TRUE(InstallIndex::snapshot().records.empty());
 }
 #endif
 

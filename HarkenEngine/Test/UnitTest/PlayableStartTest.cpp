@@ -12,6 +12,7 @@
 #include "Common/MonitorExecutionTestSupport.h"
 #include "monitor_fixture_decode.h"
 #include "harken/core/CurrentWorld.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/VariableControlGrid.h"
 
 #include <gtest/gtest.h>
@@ -3828,12 +3829,12 @@ std::string OccupancyDump(const harken::Engine& engine) {
             << " leaf=" << harken::ObjectIdString(row.leaf.stableId) << " render=" << row.renderHandle << "]";
         for (std::size_t index = 0; index < engine.playableStorage.memberStride; ++index) {
             const auto slot = engine.playableStorage.MemberBase(row.partition.slot) + index;
-            const auto& member = engine.variableControlMemberCompletions[slot];
+            const auto& member = engine.ReadPlayableMember(slot).completion;
             if (member.leafInstance == 0) continue;
             const auto leaf = engine.playableInstances.Classify(member.leafInstance);
             const auto* source = engine.sourceTerminals.Resolve(member.source);
             harken::TimelineArmObservation arm{};
-            const bool observed = engine.timelineArms.Observe(engine.playableScheduleArms[slot], &arm);
+            const bool observed = engine.timelineArms.Observe(engine.ReadPlayableMember(slot).arm, &arm);
             out << " [member=" << index << " leaf=" << member.leafInstance
                 << " live=" << leaf.live << " lifecycle=" << static_cast<unsigned>(leaf.lifecycle)
                 << " source=" << (source != nullptr) << " retired=" << member.resourcesRetired
@@ -4451,6 +4452,7 @@ void ExpectContainerStartsThroughM2(
     const std::uint32_t freeInstances = engine->playableInstances.FreeCount();
     const std::uint64_t issued = engine->logicCommits.Current();
     const std::uint64_t commandHead = engine->commands.PublishedHead();
+    const std::uint64_t initialSourceHead = engine->commands.InitialSourcePublishedHead();
     const std::uint32_t activeVoices = engine->voices.ActiveCount();
     const std::uint32_t liveArms = engine->timelineArms.LiveCount();
     const std::uint32_t liveTransactions =
@@ -4466,7 +4468,8 @@ void ExpectContainerStartsThroughM2(
     EXPECT_EQ(started.ticket, issued + 1u);
     EXPECT_EQ(engine->selectionMemory.FreeDeltaCount(), freeDeltas - 1u);
     EXPECT_EQ(engine->playableInstances.FreeCount(), freeInstances - 2u);
-    EXPECT_EQ(engine->commands.PublishedHead(), commandHead + 3u);
+    EXPECT_EQ(engine->commands.PublishedHead(), commandHead);
+    EXPECT_EQ(engine->commands.InitialSourcePublishedHead(), initialSourceHead + 1u);
     EXPECT_EQ(engine->voices.ActiveCount(), activeVoices + 1u);
     EXPECT_EQ(engine->timelineArms.LiveCount(), liveArms + 1u);
     EXPECT_EQ(engine->timelinePool.LiveTransactionCount(),
@@ -4846,7 +4849,7 @@ TEST(PlayableStart, DirectStartRemainsAudibleWhenAudioOutrunsLogicService) {
     harken::Engine* engine = session.Engine();
     ASSERT_NE(engine, nullptr);
 
-    std::vector<float> samples(4096, 0.25f);
+    std::vector<float> samples(32, 0.25f);
     const VnPCMDesc pcm = harkentest::MonoDesc(samples, 48000);
     ASSERT_EQ(Vn_RegisterPCM(kSound, &pcm), VN_OK);
     const harken::PCMView media = engine->registry.Lookup(kSound);
@@ -4861,12 +4864,37 @@ TEST(PlayableStart, DirectStartRemainsAudibleWhenAudioOutrunsLogicService) {
     const std::uint64_t observedBlocks = engine->mixer.BlocksRendered();
     ASSERT_EQ(observedBlocks, 12u);
 
+    const auto capture = harkentest::monitor::OpenIdentityEvents();
     harken::PlayableStartRequest request{};
     request.root = image.Root();
     request.callerSeed = 77;
+    const auto freeInstances = engine->playableInstances.FreeCount();
+    const auto refuseBacking = [&](auto& storage) {
+        storage.SetCommitPageLimitForTests(0);
+        const auto refused = harken::StartPlayable(*engine, request);
+        EXPECT_EQ(harken::PlayableStartStatus::Backpressure, refused.status);
+        EXPECT_EQ(0u, refused.instance);
+        EXPECT_EQ(freeInstances, engine->playableInstances.FreeCount());
+        EXPECT_EQ(0u, engine->playableInstances.LiveCount());
+        storage.SetCommitPageLimitForTests(SIZE_MAX);
+    };
+    refuseBacking(engine->playableInstances);
+    refuseBacking(engine->originalPlayableLifetimeHolders);
+    refuseBacking(engine->originalSingleCurrentHolders);
+    engine->spatial.SetVoiceCommitPageLimitForTests(0);
+    const auto refusedSpatial = harken::StartPlayable(*engine, request);
+    EXPECT_EQ(harken::PlayableStartStatus::Backpressure, refusedSpatial.status);
+    EXPECT_EQ(0u, refusedSpatial.instance);
+    EXPECT_EQ(freeInstances, engine->playableInstances.FreeCount());
+    EXPECT_FALSE(engine->runtimeRecreateRequired);
+    engine->spatial.SetVoiceCommitPageLimitForTests(SIZE_MAX);
     const harken::PlayableStartResult started =
         harken::StartPlayable(*engine, request);
     ASSERT_EQ(started.status, harken::PlayableStartStatus::Accepted);
+    engine->playableInstances.SetCommitPageLimitForTests(0);
+    engine->originalPlayableLifetimeHolders.SetCommitPageLimitForTests(0);
+    engine->originalSingleCurrentHolders.SetCommitPageLimitForTests(0);
+    engine->spatial.SetVoiceCommitPageLimitForTests(0);
 
     const auto row = std::find_if(
         engine->playableServices.begin(), engine->playableServices.end(),
@@ -4876,7 +4904,34 @@ TEST(PlayableStart, DirectStartRemainsAudibleWhenAudioOutrunsLogicService) {
     ASSERT_NE(row, engine->playableServices.end());
     EXPECT_GT(row->startFrame,
               observedBlocks * engine->config.blockFrames);
-    EXPECT_TRUE(PumpUntilAudible(*engine));
+    ASSERT_TRUE(PumpUntilAudible(*engine));
+    engine->nullBackend.Pump(8);
+    std::vector<harkentest::monitor::IdentityRecord> records;
+    for (unsigned block = 0; block != 32; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine->nullBackend.Pump(1);
+        harkentest::monitor::CollectIdentityEvents(capture, records);
+        if (!engine->playableInstances.Classify(started.instance).live) break;
+    }
+    std::uint64_t soundInstance = 0;
+    unsigned starts = 0, retirements = 0;
+    for (const auto& record : records) {
+        if (record.fact.root != started.instance ||
+            record.fact.contentKind != VN_MONITOR_CONTENT_SOUND) continue;
+        if (record.fact.factKind == VN_MONITOR_FACT_PLAYABLE_STARTED) {
+            ++starts;
+            soundInstance = record.header.instanceHandle;
+        } else if (record.fact.factKind == VN_MONITOR_FACT_PLAYABLE_RETIRED) {
+            ++retirements;
+            EXPECT_EQ(1u, starts);
+            EXPECT_EQ(soundInstance, record.header.instanceHandle);
+            EXPECT_EQ(VN_MONITOR_TERMINAL_NATURAL_COMPLETION, record.fact.terminalKind);
+        }
+    }
+    EXPECT_EQ(1u, starts);
+    EXPECT_EQ(1u, retirements);
+    EXPECT_FALSE(engine->playableInstances.Classify(started.instance).live);
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(capture));
 }
 
 TEST(PlayableStart, DirectStartUsesCanonicalEntryResolverBeforeAdmission) {
@@ -5631,8 +5686,10 @@ TEST(PlayableStart, SequenceQueueNestedQueueChildOwnsBothQueueLifecycles) {
         row->queueInstance, &parentQueueSnapshot));
     EXPECT_EQ(started.instance, parentQueueSnapshot.rootInstance);
     EXPECT_FALSE(nestedService->queueNaturalEnd);
+    const auto* nestedInstall = engine->ResolvePlayableServiceVoice(*nestedService);
+    ASSERT_NE(nullptr, nestedInstall);
     harkentest::ExpectTimelineInstallIdentity(*engine, nestedService->renderHandle,
-        started.instance, nestedService->voice.target, nestedService->startFrame, nestedService->arm);
+        started.instance, nestedInstall->Facts().target, nestedService->startFrame, nestedService->arm);
     harken::QueueInstanceSnapshot initialQueue{};
     ASSERT_TRUE(engine->queueInstances.Capture(nestedQueue, &initialQueue));
     EXPECT_EQ(1u, initialQueue.logicMirror.version);
@@ -6073,7 +6130,7 @@ TEST(PlayableStart,
         row->variableControlInstance, &before));
     ASSERT_TRUE(before.discrete.lastApplied.Valid());
     const VnVoiceHandle render =
-        engine->playableScheduleRenderHandles[row->scheduleStorageBase];
+        engine->ReadPlayableMember(row->scheduleStorageBase).render;
 
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 3.0f));
     harken::VariableControlInstanceSnapshot after{};
@@ -6136,7 +6193,7 @@ TEST(PlayableStart,
     const auto coordinator = row->frontierEntry.coordinator;
     ASSERT_TRUE(coordinator.Valid());
     const VnVoiceHandle initial =
-        engine->playableScheduleRenderHandles[row->scheduleStorageBase];
+        engine->ReadPlayableMember(row->scheduleStorageBase).render;
     ASSERT_NE(nullptr, engine->voices.Resolve(initial));
 
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 4.0f));
@@ -6250,9 +6307,9 @@ TEST(PlayableStart,
     const std::size_t continuousSlot =
         row->scheduleStorageBase + row->variableControlContinuousMemberOffset;
     ASSERT_LT(continuousSlot,
-              engine->playableScheduleRenderHandles.size());
+              engine->playableStorage.memberCount);
     const VnVoiceHandle continuousRender =
-        engine->playableScheduleRenderHandles[continuousSlot];
+        engine->ReadPlayableMember(continuousSlot).render;
     const harken::VoiceRenderContext* continuousVoice =
         engine->voices.Resolve(continuousRender);
     ASSERT_NE(nullptr, continuousVoice);
@@ -6316,10 +6373,10 @@ TEST(PlayableStart,
     ASSERT_NE(engine->playableServices.end(), row);
     const std::size_t base = row->scheduleStorageBase;
     const VnVoiceHandle discrete =
-        engine->playableScheduleRenderHandles[base];
+        engine->ReadPlayableMember(base).render;
     const VnVoiceHandle continuous =
-        engine->playableScheduleRenderHandles[
-            base + row->variableControlContinuousMemberOffset];
+        engine->ReadPlayableMember(
+            base + row->variableControlContinuousMemberOffset).render;
     ASSERT_NE(discrete, continuous);
 
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 7.0f));
@@ -6400,11 +6457,11 @@ TEST(PlayableStart,
     ASSERT_NE(engine->playableServices.end(), row);
     const std::size_t base = row->scheduleStorageBase;
     const VnVoiceHandle exiting =
-        engine->playableScheduleRenderHandles[base];
+        engine->ReadPlayableMember(base).render;
     ASSERT_EQ(7u,
-              engine->playableScheduleVoices[base].target.occurrenceOrdinal);
+              engine->ReadPlayableMember(base).voice.Facts().target.occurrenceOrdinal);
 
-    const auto initialLeaf = engine->playableMemberReferences[base].leaf;
+    const auto initialLeaf = engine->ReadPlayableMemberReference(base).leaf;
     harken::MonitorContentIdentity initialContent{};
     ASSERT_TRUE(engine->playableInstances.CaptureContentIdentity(initialLeaf, &initialContent));
     EXPECT_EQ(harkentest::ObjectId(kSound), initialContent.stableId);
@@ -6418,8 +6475,8 @@ TEST(PlayableStart,
         ASSERT_EQ(VN_OK, Vn_Update());
         if (row->variableControlDiscreteRetargetPrepared) {
             const VnVoiceHandle entering =
-                engine->playableScheduleRenderHandles[
-                    base + row->variableControlDiscreteTransitionOffset];
+                engine->ReadPlayableMember(
+                    base + row->variableControlDiscreteTransitionOffset).render;
             sawEnteringBeforeExit = sawEnteringBeforeExit ||
                 (engine->voices.Resolve(entering) != nullptr &&
                  engine->voices.Resolve(exiting) != nullptr);
@@ -6427,13 +6484,13 @@ TEST(PlayableStart,
         engine->nullBackend.Pump(1);
         changed = row->variableControlDiscreteMemberCount == 1 &&
             row->scheduleLeafCount == 1 &&
-            engine->playableScheduleVoices[CurrentMemberSlot(*engine, base)].target.occurrenceOrdinal ==
+            engine->ReadPlayableMember(CurrentMemberSlot(*engine, base)).voice.Facts().target.occurrenceOrdinal ==
                 9u &&
             engine->voices.Resolve(exiting) == nullptr;
     }
     EXPECT_TRUE(sawEnteringBeforeExit);
     ASSERT_TRUE(changed);
-    const auto replacementLeaf = engine->playableMemberReferences[base].leaf;
+    const auto replacementLeaf = engine->ReadPlayableMemberReference(base).leaf;
     EXPECT_NE(initialLeaf, replacementLeaf);
     harken::MonitorContentIdentity replacementContent{};
     ASSERT_TRUE(engine->playableInstances.CaptureContentIdentity(replacementLeaf, &replacementContent));
@@ -6446,6 +6503,7 @@ TEST(PlayableStart,
     ExpectTreePlaybackRequest(*engine, started.instance, request.playbackRequest);
     EXPECT_FALSE(engine->runtimeRecreateRequired);
     ASSERT_TRUE(StopUntilStale(*engine, started.instance));
+    harken::monitor::StopDrainForTests();
     harken::monitor::DrainOnceForTests();
     std::array<std::uint8_t, 65536> capture{};
     VnMonitorPollDesc poll{};
@@ -6536,7 +6594,7 @@ TEST(PlayableStart,
     ASSERT_NE(engine->playableServices.end(), row);
     const std::size_t base = row->scheduleStorageBase;
     const VnVoiceHandle sourceVoice =
-        engine->playableScheduleRenderHandles[base];
+        engine->ReadPlayableMember(base).render;
 
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 7.0f));
     for (std::uint32_t block = 0;
@@ -6588,8 +6646,8 @@ TEST(PlayableStart,
     EXPECT_TRUE(row->variableControlDiscreteRetargetSlice.Valid());
 
     const VnVoiceHandle targetVoice =
-        engine->playableScheduleRenderHandles[
-            base + row->variableControlDiscreteTransitionOffset];
+        engine->ReadPlayableMember(
+            base + row->variableControlDiscreteTransitionOffset).render;
     ASSERT_NE(sourceVoice, targetVoice);
     while (engine->mixer.BlocksRendered() * engine->config.blockFrames <=
            decisionFrame) {
@@ -6687,7 +6745,7 @@ TEST(PlayableStart,
     ASSERT_NE(engine->playableServices.end(), row);
     const std::size_t base = row->scheduleStorageBase;
     const VnVoiceHandle sourceVoice =
-        engine->playableScheduleRenderHandles[base];
+        engine->ReadPlayableMember(base).render;
 
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 7.0f));
     for (std::uint32_t block = 0;
@@ -6721,8 +6779,8 @@ TEST(PlayableStart,
     EXPECT_TRUE(exiting[1].authoredFadeOutCandidate);
 
     const VnVoiceHandle targetVoice =
-        engine->playableScheduleRenderHandles[
-            base + row->variableControlDiscreteTransitionOffset];
+        engine->ReadPlayableMember(
+            base + row->variableControlDiscreteTransitionOffset).render;
     while (engine->mixer.BlocksRendered() * engine->config.blockFrames <=
            decisionFrame) {
         ASSERT_EQ(VN_OK, Vn_Update());
@@ -6789,7 +6847,7 @@ TEST(PlayableStart,
     ASSERT_NE(engine->playableServices.end(), row);
     const std::size_t base = row->scheduleStorageBase;
     const VnVoiceHandle sourceVoice =
-        engine->playableScheduleRenderHandles[base];
+        engine->ReadPlayableMember(base).render;
 
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 7.0f));
     for (std::uint32_t block = 0;
@@ -6818,8 +6876,8 @@ TEST(PlayableStart,
     EXPECT_TRUE(exiting[1].authoredFadeOutCandidate);
 
     const VnVoiceHandle targetVoice =
-        engine->playableScheduleRenderHandles[
-            base + row->variableControlDiscreteTransitionOffset];
+        engine->ReadPlayableMember(
+            base + row->variableControlDiscreteTransitionOffset).render;
     while (engine->mixer.BlocksRendered() * engine->config.blockFrames <=
            decisionFrame + 1u) {
         ASSERT_EQ(VN_OK, Vn_Update());
@@ -6879,9 +6937,9 @@ TEST(PlayableStart,
     ASSERT_NE(engine->playableServices.end(), row);
     const std::size_t base = row->scheduleStorageBase;
     const std::uint64_t naturalEndFrame =
-        engine->playableScheduleStartFrames[base] + samples.size();
+        engine->ReadPlayableMember(base).startFrame + samples.size();
     const VnVoiceHandle sourceVoice =
-        engine->playableScheduleRenderHandles[base];
+        engine->ReadPlayableMember(base).render;
 
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 7.0f));
     for (std::uint32_t block = 0;
@@ -6920,8 +6978,8 @@ TEST(PlayableStart,
                   entryAnchorFrame);
 
     const VnVoiceHandle targetVoice =
-        engine->playableScheduleRenderHandles[
-            base + row->variableControlDiscreteTransitionOffset];
+        engine->ReadPlayableMember(
+            base + row->variableControlDiscreteTransitionOffset).render;
     while (engine->mixer.BlocksRendered() * engine->config.blockFrames <=
            naturalEndFrame - 256u) {
         ASSERT_EQ(VN_OK, Vn_Update());
@@ -6984,9 +7042,9 @@ TEST(PlayableStart,
     ASSERT_NE(engine->playableServices.end(), row);
     const std::size_t base = row->scheduleStorageBase;
     const std::uint64_t naturalEndFrame =
-        engine->playableScheduleStartFrames[base] + samples.size();
+        engine->ReadPlayableMember(base).startFrame + samples.size();
     const VnVoiceHandle sourceVoice =
-        engine->playableScheduleRenderHandles[base];
+        engine->ReadPlayableMember(base).render;
 
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 7.0f));
     for (std::uint32_t block = 0;
@@ -7004,11 +7062,11 @@ TEST(PlayableStart,
               row->variableControlDiscreteRetargetEndFrame);
 
     const VnVoiceHandle targetVoice =
-        engine->playableScheduleRenderHandles[
-            base + row->variableControlDiscreteTransitionOffset];
+        engine->ReadPlayableMember(
+            base + row->variableControlDiscreteTransitionOffset).render;
     ASSERT_NE(0u, targetVoice);
-    const auto targetArm = engine->playableScheduleArms[
-        base + row->variableControlDiscreteTransitionOffset];
+    const auto targetArm = engine->ReadPlayableMember(
+        base + row->variableControlDiscreteTransitionOffset).arm;
     harken::TimelineArmObservation beforeOnset{};
     ASSERT_TRUE(engine->timelineArms.Observe(targetArm, &beforeOnset));
     ASSERT_EQ(0u, beforeOnset.startedBlockSequence);
@@ -7090,7 +7148,7 @@ TEST(PlayableStart,
     ASSERT_TRUE(coordinator.Valid());
     const std::size_t base = row->scheduleStorageBase;
     const VnVoiceHandle incumbent =
-        engine->playableScheduleRenderHandles[base];
+        engine->ReadPlayableMember(base).render;
 
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 7.0f));
     for (std::uint32_t block = 0; block < 48; ++block) {
@@ -7100,7 +7158,7 @@ TEST(PlayableStart,
     }
     EXPECT_NE(nullptr, engine->voices.Resolve(incumbent));
     EXPECT_EQ(7u,
-              engine->playableScheduleVoices[base].target.occurrenceOrdinal);
+              engine->ReadPlayableMember(base).voice.Facts().target.occurrenceOrdinal);
     EXPECT_EQ(decisionBaseline + 1u, engine->decisions.LiveCount());
     EXPECT_TRUE(engine->decisions.Contains(coordinator));
     EXPECT_EQ(coordinator.slot, engine->decisionRetirements[coordinator.slot].decision.slot);
@@ -7164,7 +7222,7 @@ TEST(PlayableStart,
         });
     ASSERT_NE(engine->playableServices.end(), row);
     const auto base = row->scheduleStorageBase;
-    const auto incumbent = engine->playableScheduleRenderHandles[base];
+    const auto incumbent = engine->ReadPlayableMember(base).render;
 
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 7.0f));
     bool targetPrepared = false;
@@ -7207,9 +7265,9 @@ TEST(PlayableStart,
         engine->nullBackend.Pump(1);
         for (std::uint32_t index = 0; index < engine->playableStorage.memberStride; ++index) {
             const auto slot = base + index;
-            const auto render = engine->playableScheduleRenderHandles[slot];
+            const auto render = engine->ReadPlayableMember(slot).render;
             const auto* voice = engine->voices.Resolve(render);
-            if (engine->playableScheduleVoices[slot].target.occurrenceOrdinal == 9 &&
+            if (engine->ReadPlayableMember(slot).voice.Facts().target.occurrenceOrdinal == 9 &&
                 voice != nullptr && !voice->timelineGated && voice->cascade.runnable &&
                 std::find(targetOnsets.begin(), targetOnsets.end(), render) == targetOnsets.end())
                 targetOnsets.push_back(render);
@@ -7406,7 +7464,7 @@ TEST(PlayableStart,
     ASSERT_NE(engine->playableServices.end(), row);
     const std::size_t base = row->scheduleStorageBase;
     ASSERT_EQ(7u,
-              engine->playableScheduleVoices[base].target.occurrenceOrdinal);
+              engine->ReadPlayableMember(base).voice.Facts().target.occurrenceOrdinal);
 
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 7.0f));
     bool prepared = false;
@@ -7434,7 +7492,7 @@ TEST(PlayableStart,
             engine->decisions.CaptureCommitted(olderDecision, &older);
         olderBecameCurrent = olderBecameCurrent ||
             (row->variableControlDiscreteMemberCount == 1 &&
-             engine->playableScheduleVoices[CurrentMemberSlot(*engine, base)].target.occurrenceOrdinal ==
+             engine->ReadPlayableMember(CurrentMemberSlot(*engine, base)).voice.Facts().target.occurrenceOrdinal ==
                  9u);
         engine->nullBackend.Pump(1);
         harken::VariableControlInstanceSnapshot side{};
@@ -7443,7 +7501,7 @@ TEST(PlayableStart,
         latestApplied = !row->variableControlDiscreteRetargetPrepared &&
             side.discrete.lastApplied.generation > olderBank.generation &&
             row->variableControlDiscreteMemberCount == 1 &&
-            engine->playableScheduleVoices[CurrentMemberSlot(*engine, base)].target.occurrenceOrdinal ==
+            engine->ReadPlayableMember(CurrentMemberSlot(*engine, base)).voice.Facts().target.occurrenceOrdinal ==
                 7u;
     }
     EXPECT_FALSE(olderCommitted);
@@ -7517,7 +7575,7 @@ TEST(PlayableStart,
     for (std::uint32_t block = 0; block < 128 && !latestApplied; ++block) {
         olderBecameCurrent = olderBecameCurrent ||
             (row->variableControlDiscreteMemberCount == 1 &&
-             engine->playableScheduleVoices[CurrentMemberSlot(*engine, base)].target.occurrenceOrdinal ==
+             engine->ReadPlayableMember(CurrentMemberSlot(*engine, base)).voice.Facts().target.occurrenceOrdinal ==
                  9u);
         engine->nullBackend.Pump(1);
         ASSERT_EQ(VN_OK, Vn_Update());
@@ -7527,7 +7585,7 @@ TEST(PlayableStart,
         latestApplied = !row->variableControlDiscreteRetargetPrepared &&
             side.discrete.lastApplied.generation > olderBank.generation &&
             row->variableControlDiscreteMemberCount == 1 &&
-            engine->playableScheduleVoices[CurrentMemberSlot(*engine, base)].target.occurrenceOrdinal ==
+            engine->ReadPlayableMember(CurrentMemberSlot(*engine, base)).voice.Facts().target.occurrenceOrdinal ==
                 7u;
     }
     EXPECT_TRUE(olderBecameCurrent);
@@ -7581,7 +7639,7 @@ TEST_P(VariableControlAudibleLockBoundaryTest,
     ASSERT_NE(engine->playableServices.end(), row);
     const std::size_t base = row->scheduleStorageBase;
     ASSERT_EQ(7u,
-              engine->playableScheduleVoices[base].target.occurrenceOrdinal);
+              engine->ReadPlayableMember(base).voice.Facts().target.occurrenceOrdinal);
 
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 7.0f));
     harken::DecisionCommittedSnapshot pending{};
@@ -7638,7 +7696,7 @@ TEST_P(VariableControlAudibleLockBoundaryTest,
             side.discrete.lastApplied.slot == firstBank.slot &&
             side.discrete.lastApplied.generation > firstBank.generation &&
             row->variableControlDiscreteMemberCount == 1 &&
-            engine->playableScheduleVoices[base].target.occurrenceOrdinal ==
+            engine->ReadPlayableMember(base).voice.Facts().target.occurrenceOrdinal ==
                 7u;
     }
     EXPECT_EQ(GetParam() >= 0, firstBecameCurrent);
@@ -7709,7 +7767,7 @@ TEST(PlayableStart,
     ASSERT_NE(engine->playableServices.end(), row);
     const std::size_t base = row->scheduleStorageBase;
     ASSERT_EQ(7u,
-              engine->playableScheduleVoices[base].target.occurrenceOrdinal);
+              engine->ReadPlayableMember(base).voice.Facts().target.occurrenceOrdinal);
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 7.0f));
     harken::DecisionCommittedSnapshot pending{};
     bool committedPending = false;
@@ -7757,12 +7815,12 @@ TEST(PlayableStart,
     ASSERT_TRUE(engine->variableControlInstances.Capture(
         row->variableControlInstance, &sideBefore));
     const VnVoiceHandle currentRender =
-        engine->playableScheduleRenderHandles[base];
+        engine->ReadPlayableMember(base).render;
     const harken::VoiceLedger::RenderOwner ownerBefore =
         engine->ledger.OwnerForRender(currentRender);
     ASSERT_TRUE(ownerBefore.live);
     const harken::TimelineSemanticTarget targetBefore =
-        engine->playableScheduleVoices[base].target;
+        engine->ReadPlayableMember(base).voice.Facts().target;
 
     StopAfterVariableControlSliceClaimContext context{};
     context.engine = engine;
@@ -7825,7 +7883,7 @@ TEST(PlayableStart,
     const harken::VoiceLedger::RenderOwner ownerWhileClaimed =
         engine->ledger.OwnerForRender(currentRender);
     const harken::TimelineSemanticTarget targetWhileClaimed =
-        engine->playableScheduleVoices[base].target;
+        engine->ReadPlayableMember(base).voice.Facts().target;
 
     context.releaseClaim.store(true, std::memory_order_release);
     pumpThread.join();
@@ -7871,12 +7929,12 @@ TEST(PlayableStart,
         ASSERT_EQ(VN_OK, Vn_Update());
         firstAppliedWhole = firstAppliedWhole ||
             (row->variableControlDiscreteMemberCount == 1 &&
-             engine->playableScheduleVoices[CurrentMemberSlot(*engine, base)].target.occurrenceOrdinal ==
+             engine->ReadPlayableMember(CurrentMemberSlot(*engine, base)).voice.Facts().target.occurrenceOrdinal ==
                   9u);
         intermediateAppliedAfterFirst = intermediateAppliedAfterFirst ||
             (firstAppliedWhole &&
              row->variableControlDiscreteMemberCount == 1 &&
-             engine->playableScheduleVoices[CurrentMemberSlot(*engine, base)].target.occurrenceOrdinal ==
+             engine->ReadPlayableMember(CurrentMemberSlot(*engine, base)).voice.Facts().target.occurrenceOrdinal ==
                  7u);
         engine->nullBackend.Pump(1);
         harken::VariableControlInstanceSnapshot side{};
@@ -7887,7 +7945,7 @@ TEST(PlayableStart,
             side.discrete.lastApplied.slot == firstBank.slot &&
             side.discrete.lastApplied.generation > firstBank.generation &&
             row->variableControlDiscreteMemberCount == 1 &&
-            engine->playableScheduleVoices[CurrentMemberSlot(*engine, base)].target.occurrenceOrdinal ==
+            engine->ReadPlayableMember(CurrentMemberSlot(*engine, base)).voice.Facts().target.occurrenceOrdinal ==
                 9u;
     }
     EXPECT_TRUE(firstAppliedWhole);
@@ -7898,7 +7956,7 @@ TEST(PlayableStart,
         engine->nullBackend.Pump(1);
     }
     EXPECT_EQ(9u,
-              engine->playableScheduleVoices[CurrentMemberSlot(*engine, base)].target.occurrenceOrdinal);
+              engine->ReadPlayableMember(CurrentMemberSlot(*engine, base)).voice.Facts().target.occurrenceOrdinal);
     ASSERT_EQ(harken::PlayableControlStatus::Ok,
               harken::StopPlayable(*engine, started.instance, 0));
     for (std::uint32_t block = 0;
@@ -8111,8 +8169,8 @@ TEST(PlayableStart,
         engine->nullBackend.Pump(1);
         replaced = discreteRow->variableControlDiscreteMemberCount == 1 &&
             discreteRow->scheduleLeafCount == 1 &&
-            engine->playableScheduleVoices[CurrentMemberSlot(*engine, reusedBase)]
-                    .target.occurrenceOrdinal == 9u &&
+            engine->ReadPlayableMember(CurrentMemberSlot(*engine, reusedBase)).voice
+                    .Facts().target.occurrenceOrdinal == 9u &&
             !discreteRow->variableControlDiscreteRetargetPrepared;
     }
     ASSERT_TRUE(replaced);
@@ -8133,9 +8191,9 @@ TEST(PlayableStart,
     }
     ASSERT_TRUE(discreteStale);
     for (std::uint32_t index = 0; index < engine->playableStorage.memberStride; ++index) {
-        EXPECT_EQ(0u, engine->variableControlDynamicMembers[reusedBase + index]);
-        EXPECT_EQ(0u, engine->playableScheduleRenderHandles[reusedBase + index]);
-        EXPECT_FALSE(engine->playableMemberReferences[reusedBase + index].service.Valid());
+        EXPECT_EQ(0u, engine->ReadPlayableMember(reusedBase + index).dynamic);
+        EXPECT_EQ(0u, engine->ReadPlayableMember(reusedBase + index).render);
+        EXPECT_FALSE(engine->ReadPlayableMemberReference(reusedBase + index).service.Valid());
     }
     harken::VariableControlInstanceSnapshot control{};
     EXPECT_FALSE(engine->variableControlInstances.Capture(
@@ -8228,7 +8286,7 @@ TEST(PlayableStart,
     const std::size_t base = row->scheduleStorageBase +
         row->variableControlContinuousMemberOffset;
     ASSERT_EQ(7u,
-              engine->playableScheduleVoices[base].target.occurrenceOrdinal);
+              engine->ReadPlayableMember(base).voice.Facts().target.occurrenceOrdinal);
 
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 7.0f));
     bool prepared = false;
@@ -8262,7 +8320,7 @@ TEST(PlayableStart,
         }
         olderBecameCurrent = olderBecameCurrent ||
             (row->variableControlContinuousMemberCount == 2u &&
-             FrontierOwnedVariableWeight(*engine->voices.Resolve(engine->playableScheduleRenderHandles[base]), *row)->segment.endWeight == 0.0f);
+             FrontierOwnedVariableWeight(*engine->voices.Resolve(engine->ReadPlayableMember(base).render), *row)->segment.endWeight == 0.0f);
         engine->nullBackend.Pump(1);
         harken::VariableControlInstanceSnapshot side{};
         ASSERT_TRUE(engine->variableControlInstances.Capture(
@@ -8270,7 +8328,7 @@ TEST(PlayableStart,
         latestApplied = !row->variableControlRetargetPrepared &&
             side.continuous.lastApplied.generation > olderBank.generation &&
             row->variableControlContinuousMemberCount == 2u &&
-            engine->playableScheduleVoices[base].target.
+            engine->ReadPlayableMember(base).voice.Facts().target.
                 occurrenceOrdinal == 7u;
     }
     EXPECT_FALSE(olderCommitted);
@@ -8362,7 +8420,7 @@ TEST(PlayableStart,
         }
         olderBecameCurrent = olderBecameCurrent ||
             (row->variableControlContinuousMemberCount == 2 &&
-             FrontierOwnedVariableWeight(*engine->voices.Resolve(engine->playableScheduleRenderHandles[base]), *row)->segment.endWeight == 0.0f);
+             FrontierOwnedVariableWeight(*engine->voices.Resolve(engine->ReadPlayableMember(base).render), *row)->segment.endWeight == 0.0f);
         engine->nullBackend.Pump(1);
         ASSERT_EQ(VN_OK, Vn_Update());
         harken::VariableControlInstanceSnapshot side{};
@@ -8371,7 +8429,7 @@ TEST(PlayableStart,
         latestApplied = !row->variableControlRetargetPrepared &&
             side.continuous.lastApplied.generation > olderBank.generation &&
             row->variableControlContinuousMemberCount == 2 &&
-            engine->playableScheduleVoices[base].target.occurrenceOrdinal ==
+            engine->ReadPlayableMember(base).voice.Facts().target.occurrenceOrdinal ==
                 7u;
     }
     EXPECT_FALSE(olderAdmitted);
@@ -8427,7 +8485,7 @@ TEST_P(LateAppliedVariableControlSupersedeTest,
     const std::size_t base = row->scheduleStorageBase +
         (continuous ? row->variableControlContinuousMemberOffset : 0u);
     ASSERT_EQ(7u,
-              engine->playableScheduleVoices[base].target.occurrenceOrdinal);
+              engine->ReadPlayableMember(base).voice.Facts().target.occurrenceOrdinal);
 
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 7.0f));
     bool committedPending = false;
@@ -8534,7 +8592,7 @@ TEST_P(LateAppliedVariableControlSupersedeTest,
             !(continuous ? row->variableControlRetargetPrepared
                          : row->variableControlDiscreteRetargetPrepared) &&
             selected.lastApplied.generation > olderBank.generation &&
-            engine->playableScheduleVoices[base].target.
+            engine->ReadPlayableMember(base).voice.Facts().target.
                     occurrenceOrdinal == 7u;
     }
     EXPECT_TRUE(latestApplied);
@@ -8592,7 +8650,7 @@ TEST(PlayableStart,
     ASSERT_NE(engine->playableServices.end(), row);
     const std::size_t base = row->scheduleStorageBase;
     ASSERT_EQ(7u,
-              engine->playableScheduleVoices[base].target.occurrenceOrdinal);
+              engine->ReadPlayableMember(base).voice.Facts().target.occurrenceOrdinal);
 
     ASSERT_EQ(VN_OK, Vn_SetEmitterValue(emitter, harkentest::ObjectId(41), 7.0f));
     bool changed = false;
@@ -8603,7 +8661,7 @@ TEST(PlayableStart,
         engine->nullBackend.Pump(1);
         changed = row->variableControlDiscreteMemberCount == 1u &&
             row->scheduleLeafCount == 1u &&
-            engine->playableScheduleVoices[CurrentMemberSlot(*engine, base)].target.
+            engine->ReadPlayableMember(CurrentMemberSlot(*engine, base)).voice.Facts().target.
                 occurrenceOrdinal == 9u;
     }
     float overriddenValue = 0.0f;
@@ -8684,8 +8742,8 @@ TEST(PlayableStart,
         });
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_EQ(1u, row->variableControlDiscreteMemberCount);
-    EXPECT_EQ(9u, engine->playableScheduleVoices[
-                      row->scheduleStorageBase].target.occurrenceOrdinal);
+    EXPECT_EQ(9u, engine->ReadPlayableMember(
+                      row->scheduleStorageBase).voice.Facts().target.occurrenceOrdinal);
     EXPECT_FALSE(engine->runtimeRecreateRequired);
 }
 
@@ -8771,9 +8829,9 @@ TEST(PlayableStart,
     const std::size_t initialContinuousSlot =
         row->scheduleStorageBase + row->variableControlContinuousMemberOffset;
     const VnVoiceHandle continuousRender =
-        engine->playableScheduleRenderHandles[initialContinuousSlot];
+        engine->ReadPlayableMember(initialContinuousSlot).render;
     const harken::TimelineArmToken continuousArm =
-        engine->playableScheduleArms[initialContinuousSlot];
+        engine->ReadPlayableMember(initialContinuousSlot).arm;
     ASSERT_NE(nullptr, engine->voices.Resolve(continuousRender));
     ASSERT_TRUE(continuousArm.Valid());
 
@@ -8789,16 +8847,16 @@ TEST(PlayableStart,
     const std::size_t continuousSlot =
         row->scheduleStorageBase + row->variableControlContinuousMemberOffset;
     ASSERT_LT(continuousSlot,
-              engine->playableScheduleRenderHandles.size());
+              engine->playableStorage.memberCount);
     EXPECT_EQ(continuousRender,
-              engine->playableScheduleRenderHandles[continuousSlot]);
+              engine->ReadPlayableMember(continuousSlot).render);
     EXPECT_EQ(continuousArm.slot,
-              engine->playableScheduleArms[continuousSlot].slot);
+              engine->ReadPlayableMember(continuousSlot).arm.slot);
     EXPECT_EQ(continuousArm.generation,
-              engine->playableScheduleArms[continuousSlot].generation);
+              engine->ReadPlayableMember(continuousSlot).arm.generation);
     EXPECT_NE(continuousRender,
-              engine->playableScheduleRenderHandles[
-                  row->scheduleStorageBase]);
+              engine->ReadPlayableMember(
+                  row->scheduleStorageBase).render);
     EXPECT_NE(nullptr, engine->voices.Resolve(continuousRender));
     EXPECT_EQ(voiceBaseline + 2u, engine->voices.ActiveCount());
 
@@ -9062,7 +9120,7 @@ static void ExpectVariableControlCancelledDiscreteRetargetReclaimsEverything(boo
     ASSERT_TRUE(prepared);
     const auto entry = row->frontierLifetimeEntry;
     const auto entering = row->variableControlDiscreteRetargetEnteringArm;
-    const auto source = engine->variableControlMemberCompletions[row->scheduleStorageBase].source;
+    const auto source = engine->ReadPlayableMember(row->scheduleStorageBase).completion.source;
     const auto sourceRender = row->renderHandle;
     if (rejectFuture) {
         for (std::uint32_t block = 0; block < 8 && !row->variableControlDiscreteRetargetDecisionCommitted; ++block) {
@@ -9384,13 +9442,13 @@ TEST_P(ClaimedVariableControlSliceCancellationTest,
         row->variableControlInstance, &sideBefore));
     const std::size_t currentSlot = row->scheduleStorageBase;
     const VnVoiceHandle currentRender =
-        engine->playableScheduleRenderHandles[currentSlot];
+        engine->ReadPlayableMember(currentSlot).render;
     ASSERT_NE(0u, currentRender);
     const harken::VoiceLedger::RenderOwner currentOwnerBefore =
         engine->ledger.OwnerForRender(currentRender);
     ASSERT_TRUE(currentOwnerBefore.live);
     const harken::TimelineSemanticTarget currentTargetBefore =
-        engine->playableScheduleVoices[currentSlot].target;
+        engine->ReadPlayableMember(currentSlot).voice.Facts().target;
 
     StopAfterVariableControlSliceClaimContext context{};
     context.engine = engine;
@@ -9470,7 +9528,7 @@ TEST_P(ClaimedVariableControlSliceCancellationTest,
     const harken::VoiceLedger::RenderOwner currentOwnerWhileClaimed =
         engine->ledger.OwnerForRender(currentRender);
     const harken::TimelineSemanticTarget currentTargetWhileClaimed =
-        engine->playableScheduleVoices[currentSlot].target;
+        engine->ReadPlayableMember(currentSlot).voice.Facts().target;
     const bool rowRetargetPreserved =
         row->variableControlDiscreteRetargetPrepared &&
         row->variableControlDiscreteRetargetDecisionCommitted &&
@@ -9665,9 +9723,6 @@ TEST_P(ClaimedInitialVariableControlSliceCancellationTest,
     const harken::DecisionToken decision = continuous
         ? row->variableControlContinuousDecision
         : row->variableControlDiscreteDecision;
-    const std::size_t rowIndex = row->partition.slot;
-    const std::size_t continuousBase =
-        engine->playableStorage.ContinuousBase(rowIndex);
     const std::size_t memberBase =
         static_cast<std::size_t>(row->scheduleStorageBase) +
         (continuous ? row->variableControlContinuousMemberOffset : 0u);
@@ -9676,11 +9731,11 @@ TEST_P(ClaimedInitialVariableControlSliceCancellationTest,
         : row->variableControlInitialDiscreteMemberCount;
     ASSERT_EQ(continuous ? continuousImage.children.size() : 1u, memberCount);
     const harken::TimelineArmToken member = continuous
-        ? engine->variableControlInitialContinuousArms[continuousBase]
+        ? row->variableControlInitialArms.Continuous()[0]
         : row->arm;
     ASSERT_TRUE(member.Valid());
     const VnVoiceHandle render =
-        engine->playableScheduleRenderHandles[memberBase];
+        engine->ReadPlayableMember(memberBase).render;
     ASSERT_NE(0u, render);
     const auto* activation = engine->decisions.ResolveFrontierActivation(row->frontierEntry.coordinator);
     ASSERT_NE(nullptr, activation);
@@ -9706,7 +9761,7 @@ TEST_P(ClaimedInitialVariableControlSliceCancellationTest,
         engine->ledger.OwnerForRender(render);
     ASSERT_TRUE(ownerBefore.live);
     const harken::TimelineSemanticTarget targetBefore =
-        engine->playableScheduleVoices[memberBase].target;
+        engine->ReadPlayableMember(memberBase).voice.Facts().target;
     PlayableWorldImage replacement(
         engine->registry.Lookup(kSound).contentRevision,
         harken::ContainerModeV1::Random);
@@ -9779,7 +9834,7 @@ TEST_P(ClaimedInitialVariableControlSliceCancellationTest,
     const harken::VoiceLedger::RenderOwner ownerWhileClaimed =
         engine->ledger.OwnerForRender(render);
     const harken::TimelineSemanticTarget targetWhileClaimed =
-        engine->playableScheduleVoices[memberBase].target;
+        engine->ReadPlayableMember(memberBase).voice.Facts().target;
     const bool rowDecisionPreserved = continuous
         ? row->variableControlContinuousDecisionCommitted &&
               row->variableControlContinuousDecision.slot == decision.slot &&
@@ -10428,9 +10483,9 @@ TEST(PlayableStart,
     ASSERT_NE(engine->playableServices.end(), row);
     const std::size_t slot =
         row->scheduleStorageBase + row->variableControlContinuousMemberOffset;
-    ASSERT_LT(slot, engine->playableScheduleRenderHandles.size());
+    ASSERT_LT(slot, engine->playableStorage.memberCount);
     const VnVoiceHandle render =
-        engine->playableScheduleRenderHandles[slot];
+        engine->ReadPlayableMember(slot).render;
     const harken::VoiceRenderContext* voice = engine->voices.Resolve(render);
     ASSERT_NE(nullptr, voice);
     const auto* ownedWeight = FrontierOwnedVariableWeight(*voice, *row);
@@ -10595,7 +10650,7 @@ TEST(PlayableStart,
     ASSERT_EQ(2u, row->variableControlContinuousMemberCount);
     std::array<harken::EngineTimelineVoiceInstallIdentity, 2> initial{};
     for (unsigned index = 0; index < initial.size(); ++index) {
-        const auto render = engine->playableScheduleRenderHandles[CurrentMemberSlot(*engine, base + index)];
+        const auto render = engine->ReadPlayableMember(CurrentMemberSlot(*engine, base + index)).render;
         ASSERT_TRUE(engine->CaptureTimelineVoiceInstallIdentity(render, &initial[index]));
         EXPECT_FALSE(engine->voices.ReleaseObserved(initial[index].releaseObserver));
     }
@@ -10792,14 +10847,11 @@ TEST(PlayableStart,
     ASSERT_NE(engine->playableServices.end(), row);
     const std::size_t currentBase = row->scheduleStorageBase +
         row->variableControlContinuousMemberOffset;
-    const std::size_t continuousTransitionBase =
-        row->scheduleStorageBase +
-        row->variableControlContinuousTransitionOffset;
     const std::size_t discreteTransitionSlot =
         row->scheduleStorageBase +
         row->variableControlDiscreteTransitionOffset;
     ASSERT_GE(discreteTransitionSlot,
-              continuousTransitionBase +
+              currentBase +
                   engine->config.maxVariableControlLiveRows);
 
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 7.0f));
@@ -10813,13 +10865,18 @@ TEST(PlayableStart,
             row->variableControlRetargetPrepared) {
             simultaneous = true;
             EXPECT_EQ(2u,
-                      engine->playableScheduleVoices[
-                          discreteTransitionSlot].target.
+                      engine->ReadPlayableMember(
+                          discreteTransitionSlot).voice.Facts().target.
                           occurrenceOrdinal);
             for (std::uint32_t index = 0; index < 16; ++index) {
+                ASSERT_LT(index, row->variableControlRetargetMembers.size());
+                harken::EnginePlayableServiceRow* owner = nullptr;
+                std::size_t memberSlot = 0;
+                ASSERT_TRUE(engine->ResolvePlayableMember(row->variableControlRetargetMembers[index].reference,
+                    &owner, &memberSlot));
                 EXPECT_EQ(index + 2u,
-                          engine->playableScheduleVoices[
-                              CurrentMemberSlot(*engine, continuousTransitionBase + index)].target.
+                          engine->ReadPlayableMember(
+                              memberSlot).voice.Facts().target.
                               occurrenceOrdinal);
             }
         }
@@ -10827,9 +10884,9 @@ TEST(PlayableStart,
             !row->variableControlRetargetPrepared &&
             row->variableControlDiscreteMemberCount == 1u &&
             row->variableControlContinuousMemberCount == 16u &&
-            engine->playableScheduleVoices[
-                CurrentMemberSlot(*engine, row->scheduleStorageBase)].target.occurrenceOrdinal == 2u &&
-            engine->playableScheduleVoices[CurrentMemberSlot(*engine, currentBase)].target.
+            engine->ReadPlayableMember(
+                CurrentMemberSlot(*engine, row->scheduleStorageBase)).voice.Facts().target.occurrenceOrdinal == 2u &&
+            engine->ReadPlayableMember(CurrentMemberSlot(*engine, currentBase)).voice.Facts().target.
                     occurrenceOrdinal == 2u;
     }
     EXPECT_TRUE(simultaneous);
@@ -12475,7 +12532,9 @@ TEST(PlayableStart,
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_TRUE(row->queueContinuationPrepared);
     ASSERT_TRUE(row->queueTransition.Valid());
-    ASSERT_EQ(1u, row->voice.effectCount);
+    const auto* initialInstall = engine->ResolvePlayableServiceVoice(*row);
+    ASSERT_NE(nullptr, initialInstall);
+    ASSERT_EQ(1u, initialInstall->Input().effects.size());
     EXPECT_FALSE(row->queueSourceArm.Valid());
     EXPECT_EQ(0u, row->queueSourceRuntimeProgram.payloadCount);
     harken::ArmGroupSnapshot group{};
@@ -15128,7 +15187,9 @@ TEST(PlayableStart, AuthoredClipDurationFloorsStartAndEndSeparately) {
         });
     ASSERT_NE(engine->playableServices.end(), row);
     EXPECT_EQ(0u, row->scheduleLeafCount);
-    EXPECT_EQ(1u, row->voice.authoredDurationFrames);
+    const auto* initialInstall = engine->ResolvePlayableServiceVoice(*row);
+    ASSERT_NE(nullptr, initialInstall);
+    EXPECT_EQ(1u, initialInstall->Facts().authoredDurationFrames);
 }
 
 TEST(PlayableStart, ZeroAuthoredClipDurationKeepsNaturalBoundary) {
@@ -15155,7 +15216,9 @@ TEST(PlayableStart, ZeroAuthoredClipDurationKeepsNaturalBoundary) {
         });
     ASSERT_NE(engine->playableServices.end(), row);
     EXPECT_EQ(0u, row->scheduleLeafCount);
-    EXPECT_EQ(UINT64_MAX, row->voice.authoredDurationFrames);
+    const auto* initialInstall = engine->ResolvePlayableServiceVoice(*row);
+    ASSERT_NE(nullptr, initialInstall);
+    EXPECT_EQ(UINT64_MAX, initialInstall->Facts().authoredDurationFrames);
 }
 
 TEST(PlayableStart, SubFrameAuthoredClipPublishesZeroWorkLogicalCompletion) {
@@ -15982,12 +16045,12 @@ TEST(PlayableStart,
             row->variableControlContinuousMemberOffset,
         &physicalSlot));
     ASSERT_FALSE(
-        engine->variableControlMemberCompletions[physicalSlot].resourcesRetired);
+        engine->ReadPlayableMember(physicalSlot).completion.resourcesRetired);
     ASSERT_NE(nullptr, engine->voices.Resolve(
-                           engine->playableScheduleRenderHandles[physicalSlot]));
-    ASSERT_EQ(7u, engine->playableMemberReferences[
+                           engine->ReadPlayableMember(physicalSlot).render));
+    ASSERT_EQ(7u, engine->ReadPlayableMemberReference(
                       row->scheduleStorageBase +
-                      row->variableControlContinuousMemberOffset]
+                      row->variableControlContinuousMemberOffset)
                       .authoredChildOrdinal);
     const std::uint64_t retainedBoundary =
         row->variableControlContinuousLogicalCompletionFrames[0];
@@ -16491,13 +16554,13 @@ TEST(PlayableStart, OverlappingClipsKeepIndependentAuthoredDeadlines) {
     ASSERT_EQ(2u, row->scheduleLeafCount);
     const std::uint32_t base = row->scheduleStorageBase;
     EXPECT_EQ(240u,
-              engine->playableScheduleVoices[base].authoredDurationFrames);
+              engine->ReadPlayableMember(base).voice.Facts().authoredDurationFrames);
     EXPECT_EQ(480u,
-              engine->playableScheduleVoices[base + 1u]
-                  .authoredDurationFrames);
-    EXPECT_EQ(kSound, engine->playableScheduleVoices[base].soundId);
+              engine->ReadPlayableMember(base + 1u).voice
+                  .Facts().authoredDurationFrames);
+    EXPECT_EQ(kSound, engine->ReadPlayableMember(base).voice.Facts().soundId);
     EXPECT_EQ(kSecondSound,
-              engine->playableScheduleVoices[base + 1u].soundId);
+              engine->ReadPlayableMember(base + 1u).voice.Facts().soundId);
 }
 
 TEST(PlayableStart, NestedClipsUseTheEarliestAuthoredDeadline) {
@@ -16538,7 +16601,9 @@ TEST(PlayableStart, NestedClipsUseTheEarliestAuthoredDeadline) {
         });
     ASSERT_NE(engine->playableServices.end(), row);
     EXPECT_EQ(0u, row->scheduleLeafCount);
-    EXPECT_EQ(1680u, row->voice.authoredDurationFrames);
+    const auto* initialInstall = engine->ResolvePlayableServiceVoice(*row);
+    ASSERT_NE(nullptr, initialInstall);
+    EXPECT_EQ(1680u, initialInstall->Facts().authoredDurationFrames);
 }
 
 TEST(PlayableStart, StopThenRestartBuildsAFreshAbsoluteClipDeadline) {
@@ -16848,10 +16913,17 @@ TEST(PlayableStart, DirectTrackDefersFutureLeafAtItsAuthoredFrame) {
     image.placements[1].authoredDuration = INT64_C(8000000);
     image.track.scheduleSemanticFingerprint =
         harken::ComputeTrackScheduleFingerprintV1(image.track);
+    const auto capture = harkentest::monitor::OpenIdentityEvents();
     harken::PlayableStartRequest request{};
     request.root = image.Root();
+    request.playbackRequest = engine->monitorRequests.Begin(
+        harken::MonitorRequestOrigin::StudioPreview, VN_MONITOR_OPERATION_PLAY_PREVIEW);
     const auto started = harken::StartPlayable(*engine, image.world, request);
     ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
+    auto records = harkentest::monitor::ReadIdentityEvents(capture);
+    EXPECT_TRUE(std::none_of(records.begin(), records.end(), [](const auto& record) {
+        return record.fact.factKind == VN_MONITOR_FACT_PLAYABLE_STARTED;
+    }));
     ASSERT_EQ(1u, engine->timelineDeferred.Count());
     const auto row = std::find_if(
         engine->playableServices.begin(), engine->playableServices.end(),
@@ -16862,14 +16934,14 @@ TEST(PlayableStart, DirectTrackDefersFutureLeafAtItsAuthoredFrame) {
     ASSERT_EQ(2u, row->scheduleLeafCount);
     const std::size_t base = row->scheduleStorageBase;
     const std::uint64_t firstStart =
-        engine->playableScheduleStartFrames[base];
+        engine->ReadPlayableMember(base).startFrame;
     const std::uint64_t secondStart =
-        engine->playableScheduleStartFrames[base + 1u];
+        engine->ReadPlayableMember(base + 1u).startFrame;
     EXPECT_EQ(futureOffsetFrames, secondStart - firstStart);
     const auto* firstVoice = engine->voices.Resolve(
-        engine->playableScheduleRenderHandles[base]);
+        engine->ReadPlayableMember(base).render);
     const auto* secondVoice = engine->voices.Resolve(
-        engine->playableScheduleRenderHandles[base + 1u]);
+        engine->ReadPlayableMember(base + 1u).render);
     ASSERT_NE(nullptr, firstVoice);
     ASSERT_NE(nullptr, secondVoice);
     EXPECT_EQ(firstStart + 192u, firstVoice->authoredSourceDeadlineFrame);
@@ -16885,6 +16957,13 @@ TEST(PlayableStart, DirectTrackDefersFutureLeafAtItsAuthoredFrame) {
     bool checkedBeforeFuture = false;
     for (std::uint64_t block = 0; block < blockBudget; ++block) {
         ASSERT_EQ(VN_OK, Vn_Update());
+        const auto delivered = harkentest::monitor::ReadIdentityEvents(capture);
+        for (const auto& record : delivered) {
+            if (record.fact.factKind != VN_MONITOR_FACT_PLAYABLE_STARTED) continue;
+            EXPECT_NE(UINT64_MAX,
+                record.header.stableId == kSound ? firstHeard : secondHeard);
+        }
+        records.insert(records.end(), delivered.begin(), delivered.end());
         engine->nullBackend.Pump(1);
         if (!checkedBeforeFuture &&
             engine->mixer.BlocksRendered() * config.blockFrames +
@@ -16894,12 +16973,12 @@ TEST(PlayableStart, DirectTrackDefersFutureLeafAtItsAuthoredFrame) {
             EXPECT_TRUE(
                 engine->playableInstances.Classify(started.instance).live);
             EXPECT_NE(nullptr, engine->voices.Resolve(
-                                   engine->playableScheduleRenderHandles[
-                                       base + 1u]));
+                                   engine->ReadPlayableMember(
+                                       base + 1u).render));
         }
         harken::TimelineArmObservation secondObservation{};
         if (engine->timelineArms.Observe(
-                engine->playableScheduleArms[base + 1u],
+                engine->ReadPlayableMember(base + 1u).arm,
                 &secondObservation)) {
             secondStarted = secondStarted ||
                 secondObservation.startedBlockSequence != 0;
@@ -16908,7 +16987,7 @@ TEST(PlayableStart, DirectTrackDefersFutureLeafAtItsAuthoredFrame) {
                 secondObservation.startedBlockSequence);
         }
         if (const auto* currentSecond = engine->voices.Resolve(
-                engine->playableScheduleRenderHandles[base + 1u])) {
+                engine->ReadPlayableMember(base + 1u).render)) {
             maxSecondCursor = std::max(maxSecondCursor,
                                        currentSecond->srcCursor);
         }
@@ -16956,8 +17035,84 @@ TEST(PlayableStart, DirectTrackDefersFutureLeafAtItsAuthoredFrame) {
          ++block) {
         ASSERT_EQ(VN_OK, Vn_Update());
         engine->nullBackend.Pump(1);
+        harkentest::monitor::CollectIdentityEvents(capture, records);
     }
     EXPECT_FALSE(engine->playableInstances.Classify(started.instance).live);
+    harkentest::monitor::CollectIdentityEvents(capture, records);
+    std::array<unsigned, 2> startCounts{};
+    for (const auto& record : records) {
+        if (record.fact.factKind != VN_MONITOR_FACT_PLAYABLE_STARTED) continue;
+        ASSERT_TRUE(record.header.stableId == kSound || record.header.stableId == kSecondSound);
+        const auto index = record.header.stableId == kSound ? 0u : 1u;
+        ++startCounts[index];
+        EXPECT_EQ(VN_MONITOR_SUBJECT_PLAYABLE, record.fact.subjectNamespace);
+        EXPECT_EQ(VN_MONITOR_CONTENT_SOUND, record.fact.contentKind);
+        EXPECT_EQ(started.instance, record.fact.root);
+        EXPECT_EQ(started.instance, record.header.playableInstanceHandle);
+        EXPECT_NE(started.instance, record.header.instanceHandle);
+        EXPECT_EQ(request.playbackRequest.key.sequence, record.fact.playbackRequest.sequence);
+        EXPECT_EQ(index == 0 ? firstHeard : secondHeard, record.header.executeFrame);
+        const auto sameInstance = [&](const auto& candidate, unsigned kind) {
+            return candidate.fact.factKind == kind &&
+                candidate.header.instanceHandle == record.header.instanceHandle &&
+                candidate.header.stableId == record.header.stableId;
+        };
+        EXPECT_TRUE(std::any_of(records.begin(), records.end(), [&](const auto& candidate) {
+            return sameInstance(candidate, VN_MONITOR_FACT_PLAYABLE_ACTIVE);
+        }));
+        EXPECT_TRUE(std::any_of(records.begin(), records.end(), [&](const auto& candidate) {
+            return sameInstance(candidate, VN_MONITOR_FACT_PLAYABLE_RETIRED);
+        }));
+    }
+    EXPECT_EQ((std::array<unsigned, 2>{1u, 1u}), startCounts);
+
+    request.playbackRequest = engine->monitorRequests.Begin(
+        harken::MonitorRequestOrigin::StudioPreview, VN_MONITOR_OPERATION_PLAY_PREVIEW);
+    const auto cancelled = harken::StartPlayable(*engine, image.world, request);
+    ASSERT_EQ(harken::PlayableStartStatus::Accepted, cancelled.status);
+    records = harkentest::monitor::ReadIdentityEvents(capture);
+    EXPECT_TRUE(std::none_of(records.begin(), records.end(), [](const auto& record) {
+        return record.fact.factKind == VN_MONITOR_FACT_PLAYABLE_STARTED;
+    }));
+    bool firstStarted = false;
+    for (unsigned block = 0; block != 16 && !firstStarted; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine->nullBackend.Pump(1);
+        harkentest::monitor::CollectIdentityEvents(capture, records);
+        const auto* output = engine->nullBackend.LastBlock();
+        firstStarted = std::any_of(output, output + config.blockFrames * 2u,
+            [](float sample) { return sample > 0.00001f; });
+    }
+    ASSERT_TRUE(firstStarted);
+    ASSERT_EQ(harken::PlayableControlStatus::Ok,
+        harken::StopPlayable(*engine, cancelled.instance, 0));
+    for (std::uint64_t block = 0; block < blockBudget; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine->nullBackend.Pump(1);
+        harkentest::monitor::CollectIdentityEvents(capture, records);
+        const auto* output = engine->nullBackend.LastBlock();
+        EXPECT_TRUE(std::none_of(output, output + config.blockFrames * 2u,
+            [](float sample) { return sample < -0.00001f; }));
+    }
+    unsigned cancelledAudibleStarts = 0, cancelledFutureStarts = 0, cancelledFutureRetirements = 0;
+    for (const auto& record : records) {
+        if (record.fact.root != cancelled.instance) continue;
+        if (record.header.stableId == kSound) {
+            cancelledAudibleStarts += record.fact.factKind == VN_MONITOR_FACT_PLAYABLE_STARTED;
+        }
+        if (record.header.stableId != kSecondSound) continue;
+        cancelledFutureStarts += record.fact.factKind == VN_MONITOR_FACT_PLAYABLE_STARTED;
+        cancelledFutureRetirements += record.fact.factKind == VN_MONITOR_FACT_PLAYABLE_RETIRED;
+    }
+    EXPECT_EQ(1u, cancelledAudibleStarts);
+    EXPECT_EQ(0u, cancelledFutureStarts);
+    EXPECT_EQ(1u, cancelledFutureRetirements);
+    EXPECT_FALSE(engine->playableInstances.Classify(cancelled.instance).live);
+    EXPECT_EQ(0u, engine->voices.ActiveCount());
+    EXPECT_EQ(0u, engine->timelineDeferred.Count());
+    EXPECT_EQ(0u, engine->timelineArms.LiveCount());
+    EXPECT_FALSE(engine->runtimeRecreateRequired);
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(capture));
 }
 
 TEST(PlayableStart,
@@ -17089,11 +17244,11 @@ TEST(PlayableStart, DirectTrackStartsEverySimultaneousLeaf) {
         for (std::uint32_t index = 0; index < 2; ++index) {
             const std::size_t slot = row->scheduleStorageBase + index;
             const harken::VoiceRenderContext* source = engine->voices.Resolve(
-                engine->playableScheduleRenderHandles[slot]);
+                engine->ReadPlayableMember(slot).render);
             if (source == nullptr) continue;
             harken::TimelineArmObservation arm{};
             ASSERT_TRUE(engine->timelineArms.Observe(
-                engine->playableScheduleArms[slot], &arm));
+                engine->ReadPlayableMember(slot).arm, &arm));
             startedLeaves[index] = startedLeaves[index] ||
                 (arm.startedBlockSequence != 0 && !source->timelineGated);
             advancedLeaves[index] =
@@ -17191,16 +17346,18 @@ TEST(PlayableStart, PieceTracksSharingOrdinalZeroInstallEachLeafGroupSnapshot) {
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_EQ(2u, row->scheduleLeafCount);
     for (std::uint32_t index = 0; index < 2; ++index) {
-        const auto& voice = engine->playableScheduleVoices[row->scheduleStorageBase + index];
+        const auto input = engine->ReadPlayableMember(row->scheduleStorageBase + index).voice.Input();
+        ASSERT_NE(nullptr, input.facts);
+        const auto& voice = *input.facts;
         EXPECT_EQ(properties[index].stableId, voice.soundId);
         EXPECT_EQ(index == 0 ? VN_BUS_MASTER : harkentest::ObjectId(2), voice.outputBusId);
         EXPECT_FLOAT_EQ(index == 0 ? -3.0f : -9.0f, voice.outputBusVolumeDb);
         EXPECT_FLOAT_EQ(index == 0 ? -0.4f : 0.4f, voice.pan);
         EXPECT_FLOAT_EQ(index == 0 ? 0.2f : 0.4f, voice.spread);
         EXPECT_FLOAT_EQ(index == 0 ? 2.0f : 4.0f, voice.attenuationDistanceScaling);
-        ASSERT_EQ(1u, voice.sendCount);
-        EXPECT_EQ(sends[index].targetBusId, voice.sends[0].targetBusId);
-        EXPECT_FLOAT_EQ(sends[index].sendLevel, voice.sends[0].levelDb);
+        ASSERT_EQ(1u, input.sends.size());
+        EXPECT_EQ(sends[index].targetBusId, input.sends[0].targetBusId);
+        EXPECT_FLOAT_EQ(sends[index].sendLevel, input.sends[0].levelDb);
     }
     std::array<bool, 2> observed{};
     for (std::uint32_t block = 0; block < 16 && !(observed[0] && observed[1]); ++block) {
@@ -17208,7 +17365,7 @@ TEST(PlayableStart, PieceTracksSharingOrdinalZeroInstallEachLeafGroupSnapshot) {
         engine->nullBackend.Pump(1);
         for (std::uint32_t index = 0; index < 2; ++index) {
             const auto slot = row->scheduleStorageBase + index;
-            const auto* voice = engine->voices.Resolve(engine->playableScheduleRenderHandles[slot]);
+            const auto* voice = engine->voices.Resolve(engine->ReadPlayableMember(slot).render);
             if (voice == nullptr) continue;
             EXPECT_EQ(engine->registry.Lookup(properties[index].stableId).channels[0], voice->pcm.channels[0]);
             EXPECT_FLOAT_EQ(index == 0 ? 0.2f : 0.4f, voice->width);
@@ -17279,11 +17436,11 @@ TEST(PlayableStart, DirectPieceStartsEverySimultaneousLeaf) {
         for (std::uint32_t index = 0; index < 2; ++index) {
             const std::size_t slot = row->scheduleStorageBase + index;
             const harken::VoiceRenderContext* source = engine->voices.Resolve(
-                engine->playableScheduleRenderHandles[slot]);
+                engine->ReadPlayableMember(slot).render);
             if (source == nullptr) continue;
             harken::TimelineArmObservation arm{};
             ASSERT_TRUE(engine->timelineArms.Observe(
-                engine->playableScheduleArms[slot], &arm));
+                engine->ReadPlayableMember(slot).arm, &arm));
             startedLeaves[index] = startedLeaves[index] ||
                 (arm.startedBlockSequence != 0 && !source->timelineGated);
             advancedLeaves[index] =
@@ -17473,7 +17630,12 @@ TEST(PlayableStart, QueueSingleLeafTrackSuccessorKeepsAuthoredClipDeadline) {
         });
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_TRUE(row->queueContinuationPrepared);
-    EXPECT_EQ(480u, row->queueSuccessorVoice.authoredDurationFrames);
+    const auto* successorMember = engine->FindQueueProgramMember(
+        row->queueSuccessorProgramBank, row->queueSuccessorPrograms.first);
+    ASSERT_NE(nullptr, successorMember);
+    const auto& successorVoice = successorMember->voice;
+    ASSERT_TRUE(successorVoice.Valid());
+    EXPECT_EQ(480u, successorVoice.Facts().authoredDurationFrames);
 
     unsigned initialVoices = 0;
     unsigned successorVoices = 0;
@@ -17577,7 +17739,12 @@ TEST(PlayableStart,
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_TRUE(row->queueContinuationPrepared);
     EXPECT_FALSE(row->queueSameProgramKey);
-    EXPECT_EQ(480u, row->queueSuccessorVoice.authoredDurationFrames);
+    const auto* successorMember = engine->FindQueueProgramMember(
+        row->queueSuccessorProgramBank, row->queueSuccessorPrograms.first);
+    ASSERT_NE(nullptr, successorMember);
+    const auto& successorVoice = successorMember->voice;
+    ASSERT_TRUE(successorVoice.Valid());
+    EXPECT_EQ(480u, successorVoice.Facts().authoredDurationFrames);
     EXPECT_EQ(row->queueCompletionFrame + 240u,
               row->queueSuccessorSchedule.entryAnchorFrame);
 
@@ -18038,8 +18205,10 @@ TEST(PlayableStart,
     ASSERT_TRUE(engine->transitionInstances.Capture(
         delayedTransition, &transition));
     ASSERT_EQ(delayedStartFrame, transition.audibleFrame);
+    ASSERT_NE(nullptr, delayedSchedule.runtimeProgram.program);
+    ASSERT_EQ(2u, delayedSchedule.runtimeProgram.program->payloadCount);
     const harken::CurveLUT* delayedCurve =
-        row->queueProgramPayloads[delayedPlane][1].envelopeCurve;
+        delayedSchedule.runtimeProgram.program->payloads[1].envelopeCurve;
     ASSERT_NE(nullptr, delayedCurve);
     const float preparedMidpoint = delayedCurve->Eval(0.5f);
     ASSERT_LT(preparedMidpoint, 0.25f);
@@ -18913,6 +19082,25 @@ TEST(PlayableStart, QueueCompositeTrackWaitsForItsLatestFiniteLeaf) {
     const harken::PlayableStartResult started =
         harken::StartPlayable(*engine, image.world, request);
     ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
+    auto* initialRow = FindPlayableRow(*engine, started.instance);
+    ASSERT_NE(nullptr, initialRow);
+    auto* initial = initialRow->queueCurrentProgramBank;
+    ASSERT_NE(nullptr, initial);
+    ASSERT_EQ(2u, initial->programCount);
+    std::array<harken::EnginePlayableMemberToken, 2> members{};
+    std::array<harken::PlayableRefV1, 2> leaves{};
+    std::array<VnVoiceHandle, 2> renders{};
+    for (std::uint32_t index = 0; index < members.size(); ++index) {
+        members[index] = initial->members[index];
+        const auto* member = engine->FindPlayableMember(members[index]);
+        ASSERT_NE(nullptr, member);
+        leaves[index] = member->leaf;
+        renders[index] = member->render;
+    }
+    auto* holder = engine->OriginalQueueBankHolderFor(initial);
+    ASSERT_NE(nullptr, holder);
+    harken::EngineQueueProgramBank::OriginalLifetimePin reader;
+    ASSERT_TRUE(holder->baseline.Borrow(&reader));
     bool heardFirstLeaf = false;
     bool heardLatestLeaf = false;
     bool heardSuccessorAfterLatest = false;
@@ -18948,6 +19136,19 @@ TEST(PlayableStart, QueueCompositeTrackWaitsForItsLatestFiniteLeaf) {
                   queue.failureReason);
         EXPECT_EQ(0u, queue.failureFrame);
     }
+    EXPECT_TRUE(initial->occupied);
+    for (std::uint32_t index = 0; index < members.size(); ++index) {
+        const auto* member = engine->FindPlayableMember(members[index]);
+        ASSERT_NE(nullptr, member);
+        EXPECT_EQ(leaves[index].stableId, member->leaf.stableId);
+        EXPECT_EQ(renders[index], member->render);
+        EXPECT_FALSE(member->primaryOwned);
+    }
+    reader.Release();
+    ASSERT_TRUE(PumpBlocks(*engine, 8));
+    EXPECT_FALSE(initial->occupied);
+    for (const auto member : members) EXPECT_EQ(nullptr, engine->FindPlayableMember(member));
+    EXPECT_FALSE(engine->runtimeRecreateRequired);
 }
 
 TEST(PlayableStart, QueueCompositeTrackStartsEverySimultaneousSourceLeaf) {
@@ -18986,8 +19187,8 @@ TEST(PlayableStart, QueueCompositeTrackStartsEverySimultaneousSourceLeaf) {
     ASSERT_EQ(2u, prepared->queueCurrentScheduleLeafCount);
     const std::size_t base = prepared->queueCurrentScheduleBase;
     const std::array<VnVoiceHandle, 2> sources{
-        engine->playableScheduleRenderHandles[base],
-        engine->playableScheduleRenderHandles[base + 1u]};
+        engine->ReadPlayableMember(base).render,
+        engine->ReadPlayableMember(base + 1u).render};
     std::array<bool, 2> startedLeaves{};
     std::array<bool, 2> advancedLeaves{};
     for (std::uint32_t block = 0; block < 8; ++block) {
@@ -18996,7 +19197,7 @@ TEST(PlayableStart, QueueCompositeTrackStartsEverySimultaneousSourceLeaf) {
         for (std::uint32_t index = 0; index < sources.size(); ++index) {
             harken::TimelineArmObservation arm{};
             ASSERT_TRUE(engine->timelineArms.Observe(
-                engine->playableScheduleArms[base + index], &arm));
+                engine->ReadPlayableMember(base + index).arm, &arm));
             const harken::VoiceRenderContext* source =
                 engine->voices.Resolve(sources[index]);
             ASSERT_NE(nullptr, source);
@@ -19200,8 +19401,8 @@ TEST(PlayableStart, QueueCompositeTrackSuccessorStartsEveryLeafAtomically) {
             for (std::uint32_t index = 0; index < 2; ++index) {
                 harken::TimelineArmObservation arm{};
                 if (engine->timelineArms.Observe(
-                        engine->playableScheduleArms[
-                            active->scheduleStorageBase + index],
+                        engine->ReadPlayableMember(
+                            active->scheduleStorageBase + index).arm,
                         &arm)) {
                     leafStarted[index] = leafStarted[index] ||
                         arm.startedBlockSequence != 0;
@@ -19271,8 +19472,8 @@ TEST(PlayableStart, QueueCompositePieceSuccessorStartsEveryLeafAtomically) {
             for (std::uint32_t index = 0; index < 2; ++index) {
                 harken::TimelineArmObservation arm{};
                 if (engine->timelineArms.Observe(
-                        engine->playableScheduleArms[
-                            active->scheduleStorageBase + index],
+                        engine->ReadPlayableMember(
+                            active->scheduleStorageBase + index).arm,
                         &arm)) {
                     leafStarted[index] = leafStarted[index] ||
                         arm.startedBlockSequence != 0;
@@ -19400,11 +19601,11 @@ TEST(PlayableStart,
         EXPECT_EQ(harken::TimelineEnvelopeDirection::FadeIn,
                   successor.payloads[2u * index + 1u].envelopeDirection);
     }
-    const std::size_t successorBase =
-        prepared->queueSuccessorScheduleBase;
+    ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*prepared, 0));
+    ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*prepared, 1));
     const std::array<VnVoiceHandle, 2> targets{
-        engine->playableSuccessorRenderHandles[successorBase],
-        engine->playableSuccessorRenderHandles[successorBase + 1u]};
+        engine->FindQueueSuccessorMember(*prepared, 0)->render,
+        engine->FindQueueSuccessorMember(*prepared, 1)->render};
 
     std::array<bool, 2> fadeObserved{};
     for (std::uint32_t block = 0; block < 64; ++block) {
@@ -19565,11 +19766,11 @@ TEST(PlayableStart,
         EXPECT_EQ(harken::TimelineEnvelopeDirection::FadeIn,
                   successor.payloads[2u * index + 1u].envelopeDirection);
     }
-    const std::size_t successorBase =
-        prepared->queueSuccessorScheduleBase;
+    ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*prepared, 0));
+    ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*prepared, 1));
     const std::array<VnVoiceHandle, 2> targets{
-        engine->playableSuccessorRenderHandles[successorBase],
-        engine->playableSuccessorRenderHandles[successorBase + 1u]};
+        engine->FindQueueSuccessorMember(*prepared, 0)->render,
+        engine->FindQueueSuccessorMember(*prepared, 1)->render};
 
     std::array<bool, 2> fadeObserved{};
     for (std::uint32_t block = 0; block < 64; ++block) {
@@ -19640,8 +19841,8 @@ TEST(PlayableStart,
     }
     const std::size_t currentBase = prepared->queueCurrentScheduleBase;
     const std::array<VnVoiceHandle, 2> sources{
-        engine->playableScheduleRenderHandles[currentBase],
-        engine->playableScheduleRenderHandles[currentBase + 1u]};
+        engine->ReadPlayableMember(currentBase).render,
+        engine->ReadPlayableMember(currentBase + 1u).render};
     ASSERT_NE(sources[0], sources[1]);
     for (std::uint32_t index = 0; index < sources.size(); ++index) {
         const harken::TimelineArmToken sourceControl =
@@ -19882,8 +20083,8 @@ TEST(PlayableStart,
     }
     const std::size_t currentBase = prepared->queueCurrentScheduleBase;
     const std::array<VnVoiceHandle, 2> sources{
-        engine->playableScheduleRenderHandles[currentBase],
-        engine->playableScheduleRenderHandles[currentBase + 1u]};
+        engine->ReadPlayableMember(currentBase).render,
+        engine->ReadPlayableMember(currentBase + 1u).render};
     const std::uint64_t audibleFrame =
         prepared->queueSourceRuntimeProgram.payloads[0].envelopeStartFrame;
     const std::uint64_t completionFrame = prepared->queueCompletionFrame;
@@ -19994,9 +20195,11 @@ TEST(PlayableStart, QueueCompositeSuccessorAdvancesOnlyAfterLatestLeaf) {
             [&](const harken::EnginePlayableServiceRow& candidate) {
                 return candidate.rootInstance == started.instance;
             });
-        if (active != engine->playableServices.end() &&
+        const auto* activeInstall = active == engine->playableServices.end()
+            ? nullptr : engine->ResolvePlayableServiceVoice(*active);
+        if (activeInstall != nullptr &&
             active->queueInstance.Valid() && heardLatestCompositeLeaf &&
-            active->voice.soundId == kSound) {
+            activeInstall->Facts().soundId == kSound) {
             harken::QueueInstanceSnapshot queue{};
             harken::TimelineArmObservation arm{};
             finalStartedAfterLatest = finalStartedAfterLatest ||
@@ -20088,9 +20291,11 @@ TEST(PlayableStart,
             [&](const harken::EnginePlayableServiceRow& candidate) {
                 return candidate.rootInstance == started.instance;
             });
-        if (active != engine->playableServices.end() &&
+        const auto* activeInstall = active == engine->playableServices.end()
+            ? nullptr : engine->ResolvePlayableServiceVoice(*active);
+        if (activeInstall != nullptr &&
             active->queueInstance.Valid() && heardCompositeNegativeLeaf &&
-            active->voice.soundId == kSound) {
+            activeInstall->Facts().soundId == kSound) {
             harken::QueueInstanceSnapshot queue{};
             harken::TimelineArmObservation arm{};
             finalStartedAfterComposite = finalStartedAfterComposite ||
@@ -20145,8 +20350,38 @@ TEST(PlayableStart,
     ASSERT_NE(engine->playableServices.end(), row);
     const std::size_t base = row->scheduleStorageBase;
     const VnVoiceHandle sourceVoice =
-        engine->playableScheduleRenderHandles[base];
+        engine->ReadPlayableMember(base).render;
+    for (unsigned block = 0; block < 3; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine->nullBackend.Pump(1);
+    }
+    ASSERT_EQ(VN_OK, Vn_Update());
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 7.0f));
+    bool captureRefused = false;
+    for (unsigned block = 0; block < 64 && !captureRefused; ++block) {
+        const auto voicesBefore = engine->voices.ActiveCount();
+        const auto armsBefore = engine->timelineArms.LiveCount();
+        const auto ledgerBefore = engine->ledger.AvailableEntryCount();
+        const auto commandsBefore = engine->commands.PublishedHead();
+        harken::detail::ArmLogicAllocFaultForTests(
+            2, harken::detail::LogicAllocSite::CapturedVoiceInstall);
+        const auto updated = Vn_Update();
+        captureRefused = harken::detail::g_logicAllocFault.remaining == 0;
+        harken::detail::DisarmLogicAllocFaultForTests();
+        ASSERT_EQ(VN_OK, updated);
+        ASSERT_FALSE(row->variableControlDiscreteRetargetPrepared);
+        if (captureRefused) {
+            EXPECT_EQ(voicesBefore, engine->voices.ActiveCount());
+            EXPECT_EQ(armsBefore, engine->timelineArms.LiveCount());
+            EXPECT_EQ(ledgerBefore, engine->ledger.AvailableEntryCount());
+            EXPECT_EQ(commandsBefore, engine->commands.PublishedHead());
+            EXPECT_NE(nullptr, engine->voices.Resolve(sourceVoice));
+            EXPECT_FALSE(engine->runtimeRecreateRequired);
+        } else {
+            engine->nullBackend.Pump(1);
+        }
+    }
+    ASSERT_TRUE(captureRefused);
     for (std::uint32_t block = 0;
          block < 64 && !row->variableControlDiscreteRetargetPrepared;
          ++block) {
@@ -20199,14 +20434,14 @@ TEST(PlayableStart,
 
     std::array<VnVoiceHandle, 2> targetVoices{};
     for (std::uint32_t index = 0; index < targetVoices.size(); ++index) {
-        targetVoices[index] = engine->playableScheduleRenderHandles[
-            base + row->variableControlDiscreteTransitionOffset + index];
+        targetVoices[index] = engine->ReadPlayableMember(
+            base + row->variableControlDiscreteTransitionOffset + index).render;
         ASSERT_NE(0u, targetVoices[index]);
         EXPECT_NE(sourceVoice, targetVoices[index]);
         const auto member = base + row->variableControlDiscreteTransitionOffset + index;
         harkentest::ExpectTimelineInstallIdentity(*engine, targetVoices[index],
-            row->rootInstance, engine->playableScheduleVoices[member].target,
-            decisionFrame, engine->playableScheduleArms[member]);
+            row->rootInstance, engine->ReadPlayableMember(member).voice.Facts().target,
+            decisionFrame, engine->ReadPlayableMember(member).arm);
     }
     EXPECT_NE(targetVoices[0], targetVoices[1]);
     while (engine->mixer.BlocksRendered() * engine->config.blockFrames <=
@@ -20243,8 +20478,8 @@ TEST(PlayableStart,
         promoted = row->variableControlDiscreteRetargetSourceExited &&
             row->variableControlDiscreteMemberCount == 2u &&
             engine->voices.Resolve(sourceVoice) == nullptr &&
-            engine->playableScheduleRenderHandles[CurrentMemberSlot(*engine, base)] == targetVoices[0] &&
-            engine->playableScheduleRenderHandles[CurrentMemberSlot(*engine, base + 1u)] ==
+            engine->ReadPlayableMember(CurrentMemberSlot(*engine, base)).render == targetVoices[0] &&
+            engine->ReadPlayableMember(CurrentMemberSlot(*engine, base + 1u)).render ==
                 targetVoices[1];
     }
     EXPECT_TRUE(bothTargetsAdvanced);
@@ -20258,8 +20493,8 @@ TEST(PlayableStart,
         << " members=" << row->variableControlDiscreteMemberCount
         << " sourceAlive="
         << (engine->voices.Resolve(sourceVoice) != nullptr)
-        << " current0=" << engine->playableScheduleRenderHandles[base]
-        << " current1=" << engine->playableScheduleRenderHandles[base + 1u]
+        << " current0=" << engine->ReadPlayableMember(base).render
+        << " current1=" << engine->ReadPlayableMember(base + 1u).render
         << " target0=" << targetVoices[0]
         << " target1=" << targetVoices[1]
         << " recreate=" << engine->runtimeRecreateRequired;
@@ -20436,8 +20671,8 @@ TEST(PlayableStart,
     ASSERT_EQ(2u, row->variableControlDiscreteMemberCount);
     const std::size_t base = row->scheduleStorageBase;
     const std::array<VnVoiceHandle, 2> sourceVoices = {
-        engine->playableScheduleRenderHandles[base],
-        engine->playableScheduleRenderHandles[base + 1u]};
+        engine->ReadPlayableMember(base).render,
+        engine->ReadPlayableMember(base + 1u).render};
     ASSERT_NE(sourceVoices[0], sourceVoices[1]);
 
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 3.0f));
@@ -20477,8 +20712,8 @@ TEST(PlayableStart,
                   runtime.payloads[1].kind);
     }
     const VnVoiceHandle targetVoice =
-        engine->playableScheduleRenderHandles[
-            base + row->variableControlDiscreteTransitionOffset];
+        engine->ReadPlayableMember(
+            base + row->variableControlDiscreteTransitionOffset).render;
     ASSERT_NE(0u, targetVoice);
     while (engine->mixer.BlocksRendered() * engine->config.blockFrames <=
            decisionFrame) {
@@ -20507,7 +20742,7 @@ TEST(PlayableStart,
             row->variableControlDiscreteMemberCount == 1u &&
             engine->voices.Resolve(sourceVoices[0]) == nullptr &&
             engine->voices.Resolve(sourceVoices[1]) == nullptr &&
-            engine->playableScheduleRenderHandles[CurrentMemberSlot(*engine, base)] == targetVoice;
+            engine->ReadPlayableMember(CurrentMemberSlot(*engine, base)).render == targetVoice;
     }
     EXPECT_TRUE(promoted);
     for (std::uint32_t block = 0;
@@ -20563,11 +20798,11 @@ TEST(PlayableStart,
     ASSERT_EQ(2u, row->variableControlDiscreteMemberCount);
     const std::size_t base = row->scheduleStorageBase;
     const std::array<VnVoiceHandle, 2> sourceVoices = {
-        engine->playableScheduleRenderHandles[base],
-        engine->playableScheduleRenderHandles[base + 1u]};
+        engine->ReadPlayableMember(base).render,
+        engine->ReadPlayableMember(base + 1u).render};
     const std::uint64_t naturalEndFrame = std::max(
-        engine->playableScheduleStartFrames[base] + first.size(),
-        engine->playableScheduleStartFrames[base + 1u] + second.size());
+        engine->ReadPlayableMember(base).startFrame + first.size(),
+        engine->ReadPlayableMember(base + 1u).startFrame + second.size());
 
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 3.0f));
     for (std::uint32_t block = 0;
@@ -20597,8 +20832,8 @@ TEST(PlayableStart,
                   runtime.payloads[0].envelopeEndFrame);
     }
     const VnVoiceHandle targetVoice =
-        engine->playableScheduleRenderHandles[
-            base + row->variableControlDiscreteTransitionOffset];
+        engine->ReadPlayableMember(
+            base + row->variableControlDiscreteTransitionOffset).render;
     while (engine->mixer.BlocksRendered() * engine->config.blockFrames <=
            naturalEndFrame - 1024u) {
         ASSERT_EQ(VN_OK, Vn_Update());
@@ -20672,8 +20907,8 @@ TEST(PlayableStart,
     ASSERT_EQ(2u, row->variableControlDiscreteMemberCount);
     const std::size_t base = row->scheduleStorageBase;
     const std::array<VnVoiceHandle, 2> sourceVoices = {
-        engine->playableScheduleRenderHandles[base],
-        engine->playableScheduleRenderHandles[base + 1u]};
+        engine->ReadPlayableMember(base).render,
+        engine->ReadPlayableMember(base + 1u).render};
 
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 3.0f));
     for (std::uint32_t block = 0;
@@ -20688,8 +20923,8 @@ TEST(PlayableStart,
     EXPECT_EQ(1u,
               row->variableControlDiscreteRetargetTargetMemberCount);
     const VnVoiceHandle targetVoice =
-        engine->playableScheduleRenderHandles[
-            base + row->variableControlDiscreteTransitionOffset];
+        engine->ReadPlayableMember(
+            base + row->variableControlDiscreteTransitionOffset).render;
     bool promoted = false;
     for (std::uint32_t block = 0; block < 32 && !promoted; ++block) {
         ASSERT_EQ(VN_OK, Vn_Update());
@@ -20698,7 +20933,7 @@ TEST(PlayableStart,
             row->variableControlDiscreteMemberCount == 1u &&
             engine->voices.Resolve(sourceVoices[0]) == nullptr &&
             engine->voices.Resolve(sourceVoices[1]) == nullptr &&
-            engine->playableScheduleRenderHandles[CurrentMemberSlot(*engine, base)] == targetVoice;
+            engine->ReadPlayableMember(CurrentMemberSlot(*engine, base)).render == targetVoice;
     }
     EXPECT_TRUE(promoted);
     for (std::uint32_t block = 0;
@@ -20911,8 +21146,8 @@ TEST(PlayableStart,
     ASSERT_NE(engine->playableServices.end(), row);
     const std::size_t base = row->scheduleStorageBase;
     const std::array<VnVoiceHandle, 2> sourceVoices = {
-        engine->playableScheduleRenderHandles[base],
-        engine->playableScheduleRenderHandles[base + 1u]};
+        engine->ReadPlayableMember(base).render,
+        engine->ReadPlayableMember(base + 1u).render};
 
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 3.0f));
     for (std::uint32_t block = 0;
@@ -20929,8 +21164,8 @@ TEST(PlayableStart,
     const harken::TimelineArmToken olderEnteringArm =
         row->variableControlDiscreteRetargetEnteringArm;
     const VnVoiceHandle supersededTarget =
-        engine->playableScheduleRenderHandles[
-            base + row->variableControlDiscreteTransitionOffset];
+        engine->ReadPlayableMember(
+            base + row->variableControlDiscreteTransitionOffset).render;
     ASSERT_NE(0u, supersededTarget);
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 7.0f));
 
@@ -21018,8 +21253,8 @@ TEST(PlayableStart,
     ASSERT_EQ(2u, row->variableControlDiscreteMemberCount);
     const std::size_t base = row->scheduleStorageBase;
     const std::array<VnVoiceHandle, 2> initialTrack = {
-        engine->playableScheduleRenderHandles[base],
-        engine->playableScheduleRenderHandles[base + 1u]};
+        engine->ReadPlayableMember(base).render,
+        engine->ReadPlayableMember(base + 1u).render};
     VnPlayDesc fillerPlay = harkentest::MakePlayDesc(kSound);
     std::array<VnVoiceHandle, 2> fillers{};
     ASSERT_EQ(VN_OK, harkentest::PlayRaw(&fillerPlay, &fillers[0]));
@@ -21052,7 +21287,7 @@ TEST(PlayableStart,
         << " transitions=" << engine->transitionInstances.LiveCount()
         << " recreate=" << engine->runtimeRecreateRequired;
     const VnVoiceHandle intermediateSound =
-        engine->playableScheduleRenderHandles[CurrentMemberSlot(*engine, base)];
+        engine->ReadPlayableMember(CurrentMemberSlot(*engine, base)).render;
     EXPECT_EQ(nullptr, engine->voices.Resolve(initialTrack[0]));
     EXPECT_EQ(nullptr, engine->voices.Resolve(initialTrack[1]));
     ASSERT_NE(nullptr, engine->voices.Resolve(intermediateSound));
@@ -21068,8 +21303,8 @@ TEST(PlayableStart,
     }
     ASSERT_TRUE(expanded);
     const std::array<VnVoiceHandle, 2> replacementTrack = {
-        engine->playableScheduleRenderHandles[CurrentMemberSlot(*engine, base)],
-        engine->playableScheduleRenderHandles[CurrentMemberSlot(*engine, base + 1u)]};
+        engine->ReadPlayableMember(CurrentMemberSlot(*engine, base)).render,
+        engine->ReadPlayableMember(CurrentMemberSlot(*engine, base + 1u)).render};
     std::array<std::uint32_t, 2> initialSlots = {
         static_cast<std::uint32_t>(initialTrack[0]),
         static_cast<std::uint32_t>(initialTrack[1])};
@@ -21146,8 +21381,8 @@ TEST(PlayableStart,
     ASSERT_NE(engine->playableServices.end(), row);
     const std::size_t base = row->scheduleStorageBase;
     const std::array<VnVoiceHandle, 2> sources = {
-        engine->playableScheduleRenderHandles[base],
-        engine->playableScheduleRenderHandles[base + 1u]};
+        engine->ReadPlayableMember(base).render,
+        engine->ReadPlayableMember(base + 1u).render};
     for (std::uint32_t block = 0; block < 16; ++block) {
         ASSERT_EQ(VN_OK, Vn_Update());
         engine->nullBackend.Pump(1);
@@ -21180,8 +21415,8 @@ TEST(PlayableStart,
     }
     EXPECT_FALSE(row->variableControlDiscreteRetargetPrepared);
     EXPECT_EQ(2u, row->variableControlDiscreteMemberCount);
-    EXPECT_EQ(sources[0], engine->playableScheduleRenderHandles[base]);
-    EXPECT_EQ(sources[1], engine->playableScheduleRenderHandles[base + 1u]);
+    EXPECT_EQ(sources[0], engine->ReadPlayableMember(base).render);
+    EXPECT_EQ(sources[1], engine->ReadPlayableMember(base + 1u).render);
     EXPECT_NE(nullptr, engine->voices.Resolve(sources[0]));
     EXPECT_NE(nullptr, engine->voices.Resolve(sources[1]));
     EXPECT_EQ(voicesBefore, engine->voices.ActiveCount());
@@ -21250,9 +21485,9 @@ TEST(PlayableStart,
         entered = row->variableControlDiscreteMemberCount == 2u &&
             row->scheduleLeafCount == 2u &&
             engine->voices.Resolve(
-                engine->playableScheduleRenderHandles[base]) != nullptr &&
+                engine->ReadPlayableMember(base).render) != nullptr &&
             engine->voices.Resolve(
-                engine->playableScheduleRenderHandles[base + 1u]) != nullptr;
+                engine->ReadPlayableMember(base + 1u).render) != nullptr;
     }
     EXPECT_TRUE(entered);
     EXPECT_FALSE(row->variableControlDiscreteSilent);
@@ -21300,8 +21535,8 @@ TEST(PlayableStart,
     ASSERT_EQ(2u, row->variableControlDiscreteMemberCount);
     const std::size_t base = row->scheduleStorageBase;
     const std::array<VnVoiceHandle, 2> sources = {
-        engine->playableScheduleRenderHandles[base],
-        engine->playableScheduleRenderHandles[base + 1u]};
+        engine->ReadPlayableMember(base).render,
+        engine->ReadPlayableMember(base + 1u).render};
 
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 4.0f));
     for (std::uint32_t block = 0;
@@ -21398,15 +21633,15 @@ TEST(PlayableStart,
             !row->variableControlDiscreteSilent &&
             row->variableControlDiscreteMemberCount == 2u &&
             engine->voices.Resolve(
-                engine->playableScheduleRenderHandles[base]) != nullptr &&
+                engine->ReadPlayableMember(base).render) != nullptr &&
             engine->voices.Resolve(
-                engine->playableScheduleRenderHandles[base + 1u]) != nullptr;
+                engine->ReadPlayableMember(base + 1u).render) != nullptr;
     }
     ASSERT_TRUE(entered);
     const std::size_t base = row->scheduleStorageBase;
     const std::array<VnVoiceHandle, 2> pieceVoices = {
-        engine->playableScheduleRenderHandles[base],
-        engine->playableScheduleRenderHandles[base + 1u]};
+        engine->ReadPlayableMember(base).render,
+        engine->ReadPlayableMember(base + 1u).render};
 
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 4.0f));
     bool silent = false;
@@ -22157,9 +22392,11 @@ static void CheckQueueSuccessorPreservesEffectCut(bool actionEntry, bool signalO
     ASSERT_NE(engine->playableServices.end(), row);
     const auto firstRender = row->renderHandle;
     const auto queueToken = row->queueInstance;
-    ASSERT_EQ(1u, row->voice.effectCount);
-    ASSERT_EQ(1u, row->voice.sendCount);
-    ASSERT_EQ(2u, row->voice.loopCount);
+    const auto* initialInstall = engine->ResolvePlayableServiceVoice(*row);
+    ASSERT_NE(nullptr, initialInstall);
+    ASSERT_EQ(1u, initialInstall->Input().effects.size());
+    ASSERT_EQ(1u, initialInstall->Input().sends.size());
+    ASSERT_EQ(2u, initialInstall->Facts().loopCount);
     bool heardFirst = false;
     bool heardSecond = false;
     bool heardFirstAgain = false;
@@ -22189,12 +22426,15 @@ static void CheckQueueSuccessorPreservesEffectCut(bool actionEntry, bool signalO
                 heardSecond = true;
             }
         }
-        if (row->voice.soundId == kSound && row->renderHandle != firstRender && row->renderHandle != 0) {
-            EXPECT_EQ(1u, row->voice.effectCount);
-            EXPECT_EQ(1u, row->voice.sendCount);
-            EXPECT_EQ(2u, row->voice.loopCount);
-            EXPECT_EQ(harkentest::ObjectId(2u), row->voice.sends[0].targetBusId);
-            EXPECT_FLOAT_EQ(-6.0206f, row->voice.sends[0].levelDb);
+        const auto* currentInstall = engine->ResolvePlayableServiceVoice(*row);
+        if (currentInstall != nullptr && currentInstall->Facts().soundId == kSound &&
+            row->renderHandle != firstRender && row->renderHandle != 0) {
+            const auto input = currentInstall->Input();
+            EXPECT_EQ(1u, input.effects.size());
+            ASSERT_EQ(1u, input.sends.size());
+            EXPECT_EQ(2u, currentInstall->Facts().loopCount);
+            EXPECT_EQ(harkentest::ObjectId(2u), input.sends[0].targetBusId);
+            EXPECT_FLOAT_EQ(-6.0206f, input.sends[0].levelDb);
             const auto* voice = engine->voices.Resolve(row->renderHandle);
             if (voice != nullptr && voice->fxSlots[0].process != nullptr && voice->voiceSendActiveCount == 1u) {
                 EXPECT_EQ(engine->buses.FindRef(harkentest::ObjectId(2)).index, voice->voiceSends[0].targetBusIndex);
@@ -22360,8 +22600,10 @@ TEST(PlayableStart, TimelineInstallIdentityRetainsExactExitAcrossReuseAndQuarant
     ASSERT_NE(nullptr, row);
     harken::EngineTimelineVoiceInstallIdentity original{};
     ASSERT_TRUE(engine->CaptureTimelineVoiceInstallIdentity(row->renderHandle, &original));
+    const auto* initialInstall = engine->ResolvePlayableServiceVoice(*row);
+    ASSERT_NE(nullptr, initialInstall);
     harkentest::ExpectTimelineInstallIdentity(*engine, row->renderHandle, row->rootInstance,
-        row->voice.target, row->startFrame, row->arm);
+        initialInstall->Facts().target, row->startFrame, row->arm);
     EXPECT_FALSE(engine->voices.ReleaseObserved(original.releaseObserver));
     ASSERT_TRUE(PumpUntilAudible(*engine));
     ASSERT_TRUE(StopUntilStale(*engine, first.instance));
@@ -22664,7 +22906,7 @@ TEST(PlayableStart,
         std::size_t slot = 0;
         ASSERT_TRUE(engine->ResolvePlayableMemberSlot(base + index, &slot));
         harken::TimelineArmObservation observed{};
-        ASSERT_TRUE(engine->timelineArms.Observe(engine->playableScheduleArms[slot], &observed));
+        ASSERT_TRUE(engine->timelineArms.Observe(engine->ReadPlayableMember(slot).arm, &observed));
         EXPECT_EQ(startFrame / config.blockFrames + 1u, observed.startedBlockSequence);
     }
 
@@ -22762,7 +23004,7 @@ TEST(PlayableStart,
     ASSERT_NE(engine->playableServices.end(), row);
     const std::size_t base = row->scheduleStorageBase;
     const harken::TimelineArmToken exitingArm =
-        engine->playableScheduleArms[base];
+        engine->ReadPlayableMember(base).arm;
     harken::TimelineArmObservation exitingInitial{};
     ASSERT_TRUE(engine->timelineArms.Observe(exitingArm, &exitingInitial));
 
@@ -22908,10 +23150,6 @@ TEST(PlayableStart,
             return candidate.rootInstance == started.instance;
         });
     ASSERT_NE(engine->playableServices.end(), row);
-    const std::size_t rowIndex = row->partition.slot;
-    const std::size_t continuousBase =
-        engine->playableStorage.ContinuousBase(rowIndex);
-
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 7.0f));
     bool prepared = false;
     for (std::uint32_t block = 0; block < 32 && !prepared; ++block) {
@@ -22920,9 +23158,7 @@ TEST(PlayableStart,
         if (!prepared) engine->nullBackend.Pump(1);
     }
     ASSERT_TRUE(prepared);
-    ASSERT_EQ(1u, row->variableControlRetargetUnionMemberCount);
-    ASSERT_EQ(0u,
-              engine->variableControlRetargetMemberKinds[continuousBase]);
+    ASSERT_EQ(1u, row->variableControlRetargetMembers.size());
     harken::PlayableControlState state{};
     ASSERT_EQ(harken::PlayableControlStatus::Ok,
               harken::QueryPlayable(*engine, started.instance, &state));
@@ -23126,7 +23362,7 @@ TEST(PlayableStart, StopAfterPublishedNaturalSourcePreservesObservationBeforeUpd
         ASSERT_EQ(VN_OK, Vn_Update());
         for (const auto& row : engine->playableServices) {
             if (row.rootInstance == started.instance)
-                sourceToken = engine->variableControlMemberCompletions[row.scheduleStorageBase].source;
+                sourceToken = engine->ReadPlayableMember(row.scheduleStorageBase).completion.source;
         }
         if (const auto* held = engine->sourceTerminals.Resolve(sourceToken)) {
             if (auto* render = engine->voices.Resolve(held->render)) {
@@ -23353,8 +23589,9 @@ TEST(PlayableStart,
     ASSERT_EQ(0u, engine->voices.ActiveCount());
     const auto partition = row->partition;
     const auto service = row->identity;
-    const auto programBase = engine->playableStorage.InitialProgramBase(partition.slot);
-    const auto program = engine->variableControlSchedules[programBase].runtimeProgram;
+    const auto* record = engine->ResolveMemberProgram(engine->ReadPlayableMemberReference(row->scheduleStorageBase));
+    ASSERT_NE(nullptr, record);
+    const auto program = record->schedule.runtimeProgram;
     ASSERT_NE(0u, program.programGeneration);
     harken::ScheduledEventInput heldEvent{};
     heldEvent.executeFrame = engine->timelinePool.WindowEndFrame() - 1u;
@@ -24344,6 +24581,20 @@ TEST(PlayableStart, SequenceLoopCountTwoPlaysTwoChildren) {
     ASSERT_TRUE(root.live);
     const auto firstSound = root.firstChild;
     ASSERT_NE(firstSound, 0u);
+    const auto service = std::find_if(engine->playableServices.begin(), engine->playableServices.end(),
+        [&](const auto& candidate) { return candidate.ownerInstance == started.instance; });
+    ASSERT_NE(engine->playableServices.end(), service);
+    auto* const initial = service->queueCurrentProgramBank;
+    ASSERT_NE(nullptr, initial);
+    auto* const original = engine->OriginalQueueBankHolderFor(initial);
+    ASSERT_NE(nullptr, original);
+    harken::EngineQueueProgramBank::OriginalLifetimePin reader;
+    ASSERT_TRUE(original->baseline.Borrow(&reader));
+    const auto initialMember = initial->members[0];
+    const auto* retained = engine->FindPlayableMember(initialMember);
+    ASSERT_NE(nullptr, retained);
+    const auto initialRender = retained->render;
+    const auto initialProgram = initial->schedules[0].runtimeProgram;
     bool observedSecondLeaf = false;
     bool heardPositive = false;
     bool heardNegative = false;
@@ -24372,6 +24623,15 @@ TEST(PlayableStart, SequenceLoopCountTwoPlaysTwoChildren) {
     EXPECT_TRUE(heardPositive);
     EXPECT_TRUE(heardNegative);
     EXPECT_FALSE(engine->runtimeRecreateRequired);
+    retained = engine->FindPlayableMember(initialMember);
+    ASSERT_NE(nullptr, retained);
+    EXPECT_EQ(initialRender, retained->render);
+    EXPECT_FALSE(retained->primaryOwned);
+    EXPECT_EQ(initialProgram.program, initial->schedules[0].runtimeProgram.program);
+    EXPECT_EQ(initialProgram.programGeneration, initial->schedules[0].runtimeProgram.programGeneration);
+    reader.Release();
+    ASSERT_TRUE(PumpBlocks(*engine, 4));
+    EXPECT_EQ(nullptr, engine->FindPlayableMember(initialMember));
     ASSERT_TRUE(StopUntilStale(*engine, started.instance));
     EXPECT_EQ(0u, engine->playableInstances.LiveCount());
     EXPECT_EQ(0u, engine->containerPlayback.LiveCount());
@@ -24969,6 +25229,26 @@ TEST(PlayableStart, SequenceLoopSuccessorRefusalFailsWithoutRetry) {
     EXPECT_FALSE(engine->runtimeRecreateRequired);
 }
 
+void ConfigureOrdinaryCompositeLoop(
+    SequenceQueueCompositeTrackWorldImage& image, std::uint32_t loopCount) {
+    image.container.mode = harken::ContainerModeV1::Sequence;
+    image.container.childCount = 1;
+    image.world.identity.capabilityMask =
+        harken::kWorldCapabilityPlayableProperties | harken::kWorldCapabilitySequence;
+    const auto loopIndex = static_cast<std::uint32_t>(
+        harken::playableproperties::PlayablePropertyIdV1::LoopCount) - 1u;
+    image.properties[3].payload.presentMask |= UINT64_C(1) << loopIndex;
+    image.properties[3].payload.values[loopIndex].bits = loopCount;
+    image.properties[3].programSemanticFingerprint =
+        harken::ComputePlayablePropertyFingerprintV1(image.properties[3]);
+    image.container.programSemanticFingerprint = image.properties[3].programSemanticFingerprint;
+    for (std::uint32_t index = 0; index < 2; ++index) {
+        image.occurrences[index].parentProgramSemanticFingerprint = image.container.programSemanticFingerprint;
+        image.occurrences[index].occurrenceSemanticFingerprint =
+            harken::ComputePlayableOccurrenceFingerprintV1(image.occurrences[index]);
+    }
+}
+
 void ExpectSequenceLoopPostFailureRetention(bool composite, bool stopWhileRetained = false) {
     auto config = harkentest::MakeNullConfig(4, 64, 48000);
     harkentest::EngineSession session(config);
@@ -24986,24 +25266,7 @@ void ExpectSequenceLoopPostFailureRetention(bool composite, bool stopWhileRetain
     SequenceQueueCompositeTrackWorldImage compositeImage(
         engine.registry.Lookup(kSound).contentRevision,
         engine.registry.Lookup(kSecondSound).contentRevision);
-    compositeImage.container.mode = harken::ContainerModeV1::Sequence;
-    compositeImage.container.childCount = 1;
-    compositeImage.world.identity.capabilityMask =
-        harken::kWorldCapabilityPlayableProperties | harken::kWorldCapabilitySequence;
-    const auto loopIndex = static_cast<std::uint32_t>(
-        harken::playableproperties::PlayablePropertyIdV1::LoopCount) - 1u;
-    compositeImage.properties[3].payload.presentMask |= UINT64_C(1) << loopIndex;
-    compositeImage.properties[3].payload.values[loopIndex].bits = 2;
-    compositeImage.properties[3].programSemanticFingerprint =
-        harken::ComputePlayablePropertyFingerprintV1(compositeImage.properties[3]);
-    compositeImage.container.programSemanticFingerprint =
-        compositeImage.properties[3].programSemanticFingerprint;
-    for (std::uint32_t index = 0; index < 2; ++index) {
-        compositeImage.occurrences[index].parentProgramSemanticFingerprint =
-            compositeImage.container.programSemanticFingerprint;
-        compositeImage.occurrences[index].occurrenceSemanticFingerprint =
-            harken::ComputePlayableOccurrenceFingerprintV1(compositeImage.occurrences[index]);
-    }
+    ConfigureOrdinaryCompositeLoop(compositeImage, 2);
     harken::PlayableStartRequest request{};
     request.root = composite ? compositeImage.Root() : image.Root();
     const auto started = composite
@@ -25040,6 +25303,10 @@ void ExpectSequenceLoopPostFailureRetention(bool composite, bool stopWhileRetain
             if (composite) {
                 EXPECT_GT(engine.timelineOccurrences.OccupiedCount(), 0u);
                 EXPECT_TRUE(retained->queueCurrentCompositeOwner.Valid());
+                ASSERT_NE(nullptr, retained->frontierProgramBank);
+                EXPECT_TRUE(retained->frontierProgramBank->occupied);
+                EXPECT_FALSE(retained->frontierProgramBank->published);
+                EXPECT_EQ(2u, retained->frontierProgramBank->programCount);
             }
             const auto generation = retained->storage.generation;
             if (stopWhileRetained) {
@@ -25060,6 +25327,7 @@ void ExpectSequenceLoopPostFailureRetention(bool composite, bool stopWhileRetain
             EXPECT_EQ(generation, retained->storage.generation);
             EXPECT_EQ(harken::EngineFrontierAttemptPhase::Free, retained->storage.phase);
             EXPECT_TRUE(retained->storage.ownerLedger.Empty());
+            EXPECT_EQ(nullptr, retained->frontierProgramBank);
             break;
         }
         engine.nullBackend.Pump(1);
@@ -25078,6 +25346,86 @@ TEST(PlayableStart, SequenceLoopPostFailureRetainsAttemptUntilVoiceRollbackSucce
 
 TEST(PlayableStart, SequenceLoopCompositePostFailureRetainsAttemptUntilUnbindSucceeds) {
     ExpectSequenceLoopPostFailureRetention(true);
+}
+
+TEST(PlayableStart, SequenceLoopCompositeProgramsSurviveOldReaderAndReclaimAfterReturn) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig(4, 64, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    std::vector<float> samples(64, 0.25f);
+    const auto pcm = harkentest::MonoDesc(samples, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &pcm));
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSecondSound, &pcm));
+    SequenceQueueCompositeTrackWorldImage image(
+        engine.registry.Lookup(kSound).contentRevision,
+        engine.registry.Lookup(kSecondSound).contentRevision);
+    ConfigureOrdinaryCompositeLoop(image, 3);
+    harken::PlayableStartRequest request{};
+    request.root = image.Root();
+    const auto started = harken::StartPlayable(engine, image.world, request);
+    ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
+    auto* row = FindPlayableRow(engine, started.instance);
+    ASSERT_NE(nullptr, row);
+    auto* const initial = row->queueCurrentProgramBank;
+    ASSERT_NE(nullptr, initial);
+    ASSERT_EQ(2u, initial->programCount);
+    const auto initialGeneration = initial->Generation();
+    const auto initialOwner = initial->schedules[0].ownerInstance;
+    const auto* const initialPayloads = initial->runtimes[0].payloads;
+    const std::array<harken::EnginePlayableMemberToken, 2> initialMembers{
+        initial->members[0], initial->members[1]};
+    std::array<VnVoiceHandle, 2> initialRenders{};
+    for (std::uint32_t index = 0; index < initialMembers.size(); ++index) {
+        const auto* member = engine.FindPlayableMember(initialMembers[index]);
+        ASSERT_NE(nullptr, member);
+        initialRenders[index] = member->render;
+    }
+    auto* const original = engine.OriginalQueueBankHolderFor(initial);
+    ASSERT_NE(nullptr, original);
+    harken::EngineQueueProgramBank::OriginalLifetimePin reader;
+    ASSERT_TRUE(original->baseline.Borrow(&reader));
+    std::uint32_t observedPrograms = 1;
+    auto* previous = initial;
+    bool completed = false;
+    for (unsigned block = 0; block < 128 && !completed; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        row = FindPlayableRow(engine, started.instance);
+        if (row != nullptr && row->queueCurrentProgramBank != previous) {
+            ASSERT_NE(nullptr, row->queueCurrentProgramBank);
+            ASSERT_EQ(2u, row->queueCurrentProgramBank->programCount);
+            EXPECT_NE(initial, row->queueCurrentProgramBank);
+            previous = row->queueCurrentProgramBank;
+            ++observedPrograms;
+        }
+        EXPECT_TRUE(reader.Valid());
+        EXPECT_TRUE(initial->occupied);
+        EXPECT_EQ(initialGeneration, initial->Generation());
+        EXPECT_EQ(initialOwner, initial->schedules[0].ownerInstance);
+        EXPECT_EQ(initialPayloads, initial->runtimes[0].payloads);
+        for (std::uint32_t index = 0; index < initialMembers.size(); ++index) {
+            const auto* member = engine.FindPlayableMember(initialMembers[index]);
+            ASSERT_NE(nullptr, member);
+            EXPECT_EQ(initialRenders[index], member->render);
+            if (observedPrograms > 1) EXPECT_FALSE(member->primaryOwned);
+        }
+        EXPECT_FALSE(engine.runtimeRecreateRequired);
+        engine.nullBackend.Pump(1);
+        completed = !engine.playableInstances.Classify(started.instance).live;
+    }
+    ASSERT_TRUE(completed);
+    EXPECT_EQ(3u, observedPrograms);
+    EXPECT_EQ(0u, engine.voices.ActiveCount());
+    EXPECT_TRUE(initial->occupied);
+    reader.Release();
+    ASSERT_TRUE(PumpBlocks(engine, 8));
+    EXPECT_FALSE(initial->occupied);
+    for (const auto token : initialMembers) EXPECT_EQ(nullptr, engine.FindPlayableMember(token));
+    for (const auto& bank : engine.queueProgramBanks) EXPECT_FALSE(bank.occupied);
+    ASSERT_TRUE(engine.queueScheduleStorage.CollectUnused());
+    EXPECT_EQ(0u, engine.timelinePool.LiveTransactionCount());
+    EXPECT_EQ(0u, engine.timelineOccurrences.OccupiedCount());
+    EXPECT_EQ(0u, engine.playableInstances.LiveCount());
+    EXPECT_EQ(0u, engine.compositeCompletionOwners.OccupiedCount());
 }
 
 TEST(PlayableStart, SequenceLoopPendingRollbackPinsOriginalServiceThroughStop) {
@@ -26430,7 +26778,7 @@ TEST(PlayableStart, VariableControlLongChildrenAllowOverlappingTriggersPastTimel
             std::size_t slot = 0;
             ASSERT_TRUE(engine->ResolvePlayableMemberSlot(row->scheduleStorageBase +
                 (continuous ? row->variableControlContinuousMemberOffset : 0u), &slot));
-            const auto expectedStart = engine->playableScheduleStartFrames[slot] / 256 + 1;
+            const auto expectedStart = engine->ReadPlayableMember(slot).startFrame / 256 + 1;
             const auto before = engine->mixer.BlocksRendered();
             for (unsigned block = 0; block < 12; ++block) {
                 ASSERT_EQ(VN_OK, Vn_Update());
@@ -26442,7 +26790,7 @@ TEST(PlayableStart, VariableControlLongChildrenAllowOverlappingTriggersPastTimel
                 engine->nullBackend.BlockFrames() * engine->nullBackend.Channels()), 0.001f);
             ASSERT_NE(nullptr, engine->voices.Resolve(render));
             EXPECT_FALSE(engine->voices.Resolve(render)->timelineGated);
-            EXPECT_EQ(expectedStart, engine->variableControlMemberCompletions[slot].sourceStartedBlockSequence);
+            EXPECT_EQ(expectedStart, engine->ReadPlayableMember(slot).completion.sourceStartedBlockSequence);
             if (previousRender != 0) EXPECT_NE(nullptr, engine->voices.Resolve(previousRender));
             previousRender = render;
             harken::PlayableControlState state{};
@@ -26571,6 +26919,9 @@ TEST(PlayableStart, BlendChangesWeightsWithoutReplacingMembersAndThenCompletes) 
     const auto root = engine->playableInstances.Classify(started.instance);
     const auto leaf = root.firstChild;
     ASSERT_NE(0u, leaf);
+    const auto* service = FindPlayableRow(*engine, started.instance);
+    ASSERT_NE(nullptr, service);
+    ASSERT_EQ(2u, service->variableControlChildWeightCount);
     const auto pump = [&]() {
         for (unsigned block = 0; block < 32; ++block) {
             ASSERT_EQ(VN_OK, Vn_Update());
@@ -26578,15 +26929,48 @@ TEST(PlayableStart, BlendChangesWeightsWithoutReplacingMembersAndThenCompletes) 
             ASSERT_FALSE(engine->runtimeRecreateRequired);
         }
     };
+    EXPECT_EQ(0u, engine->variableControlRetargetPrograms.ConstructedCount());
     ASSERT_EQ(VN_OK, Vn_SetValue(variable.variableId, 7.0f));
+    engine->nativeBackingAllocationFailureCountdownForTest = 0;
+    for (unsigned block = 0; block < 4; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine->nullBackend.Pump(1);
+    }
+    engine->nativeBackingAllocationFailureCountdownForTest = -1;
+    EXPECT_EQ(0u, service->variableControlRetargetMembers.capacity());
+    EXPECT_FALSE(service->variableControlRetargetPrepared);
+    EXPECT_FLOAT_EQ(1.0f, service->variableControlMemberWeights.Children()[0].current.endWeight);
+    EXPECT_FLOAT_EQ(0.0f, service->variableControlMemberWeights.Children()[1].current.endWeight);
+    engine->variableControlRetargetPrograms.SetCommitPageLimitForTests(0);
+    ASSERT_EQ(VN_OK, Vn_SetValue(variable.variableId, 7.0f));
+    for (unsigned block = 0; block < 4; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine->nullBackend.Pump(1);
+    }
+    EXPECT_EQ(0u, engine->variableControlRetargetPrograms.ConstructedCount());
+    EXPECT_EQ(0u, service->variableControlRetargetMembers.capacity());
+    EXPECT_TRUE(engine->playableInstances.Classify(leaf).live);
+    EXPECT_EQ(2u, engine->voices.ActiveCount());
+    EXPECT_FALSE(engine->runtimeRecreateRequired);
+    EXPECT_FLOAT_EQ(1.0f, service->variableControlMemberWeights.Children()[0].current.endWeight);
+    EXPECT_FLOAT_EQ(0.0f, service->variableControlMemberWeights.Children()[1].current.endWeight);
+    engine->variableControlRetargetPrograms.SetCommitPageLimitForTests(SIZE_MAX);
     pump();
+    EXPECT_FLOAT_EQ(0.0f, service->variableControlMemberWeights.Children()[0].current.endWeight);
+    EXPECT_FLOAT_EQ(1.0f, service->variableControlMemberWeights.Children()[1].current.endWeight);
     ASSERT_TRUE(engine->playableInstances.Classify(leaf).live);
     EXPECT_EQ(leaf, engine->playableInstances.Classify(started.instance).firstChild);
     EXPECT_EQ(2u, engine->voices.ActiveCount());
     EXPECT_GT(harkentest::Peak(engine->nullBackend.LastBlock(),
         engine->nullBackend.BlockFrames() * engine->nullBackend.Channels()), 0.001f);
+    const auto controlRecords = engine->variableControlRetargetPrograms.ConstructedCount();
+    EXPECT_NE(0u, controlRecords);
+    engine->variableControlRetargetPrograms.SetCommitPageLimitForTests(0);
     ASSERT_EQ(VN_OK, Vn_SetValue(variable.variableId, 3.0f));
     pump();
+    EXPECT_EQ(controlRecords, engine->variableControlRetargetPrograms.ConstructedCount());
+    EXPECT_FLOAT_EQ(1.0f, service->variableControlMemberWeights.Children()[0].current.endWeight);
+    EXPECT_FLOAT_EQ(0.0f, service->variableControlMemberWeights.Children()[1].current.endWeight);
     ASSERT_TRUE(engine->playableInstances.Classify(leaf).live);
     EXPECT_EQ(leaf, engine->playableInstances.Classify(started.instance).firstChild);
     EXPECT_EQ(2u, engine->voices.ActiveCount());
@@ -27055,7 +27439,7 @@ TEST(PlayableStart, BlendPendingParentWeightUpdatesExistingNestedMembers) {
         std::size_t slot = 0;
         ASSERT_TRUE(engine->ResolvePlayableMemberSlot(child->scheduleStorageBase +
             child->variableControlContinuousMemberOffset + index, &slot));
-        initialRenders[index] = engine->playableScheduleRenderHandles[slot];
+        initialRenders[index] = engine->ReadPlayableMember(slot).render;
     }
     const auto nextEvaluation = child->variableControlNextEvaluationFrame;
     // Hold only the child's evaluation clock so the real parent decision can commit first.
@@ -27074,8 +27458,8 @@ TEST(PlayableStart, BlendPendingParentWeightUpdatesExistingNestedMembers) {
     }
     ASSERT_TRUE(committed);
     ASSERT_FALSE(child->variableControlRetargetPrepared);
-    const auto expected = engine->variableControlPendingWeightSegments[
-        engine->playableStorage.ContinuousBase(parent->partition.slot)];
+    ASSERT_FALSE(parent->variableControlRetargetMembers.empty());
+    const auto expected = parent->variableControlRetargetMembers[0].pendingWeight;
     ASSERT_FLOAT_EQ(0.125f, expected.endWeight);
     const std::array<VnObjectId, 2> ids{{variables[0].variableId, variables[1].variableId}};
     std::array<float, 2> values{};
@@ -27187,7 +27571,7 @@ TEST(PlayableStart, BlendResponseRetainsEveryInitialMemberIncludingSilentRows) {
             std::size_t slot = 0;
             ASSERT_TRUE(engine->ResolvePlayableMemberSlot(row->scheduleStorageBase +
                 row->variableControlContinuousMemberOffset + index, &slot));
-            renders[index] = engine->playableScheduleRenderHandles[slot];
+            renders[index] = engine->ReadPlayableMember(slot).render;
             const auto* voice = engine->voices.Resolve(renders[index]);
             ASSERT_NE(nullptr, voice);
             const auto* weight = FrontierOwnedVariableWeight(*voice, *row);
@@ -27435,12 +27819,44 @@ TEST(PlayableStart, BlendOrdinaryLoopSoundAndTrackSuccessorsKeepChildGain) {
                 engine->ResolvePlayableService(row.parentService) == &*parent &&
                 !row.variableControlInstance.Valid() && !row.queueMode; });
         ASSERT_NE(engine->playableServices.end(), ordinary);
+        auto* const initialProgram = engine->FindMemberProgram(*ordinary, 0);
+        ASSERT_NE(nullptr, initialProgram);
+        const auto initialMember = initialProgram->memberToken;
+        const auto initialLeaf = initialProgram->member.leaf;
+        const auto initialProgramGeneration = initialProgram->generation;
+        const auto program = initialProgram->schedule.runtimeProgram;
+        harken::ScheduledEventInput heldEvent{};
+        heldEvent.executeFrame = engine->timelinePool.WindowEndFrame() - 1u;
+        harken::TransactionRequest heldRequest{};
+        heldRequest.transactionId = UINT64_MAX - 1u;
+        heldRequest.transportEpoch = engine->timelinePool.Epoch();
+        heldRequest.program = program;
+        heldRequest.events = &heldEvent;
+        heldRequest.eventCount = 1;
+        harken::PreparedTransactionBatch heldReference{};
+        ASSERT_EQ(harken::ReserveRefusal::None,
+            engine->timelinePool.PrepareTransactionBatch(&heldRequest, 1,
+                engine->timelinePool.PublishCutoffFrame(), &heldReference));
+        bool returnedReader = false;
         std::array<VnVoiceHandle, 3> renders{};
         unsigned renderCount = 0;
         for (unsigned block = 0; block < 160; ++block) {
             ASSERT_EQ(VN_OK, Vn_Update());
             engine->nullBackend.Pump(1);
             ASSERT_FALSE(engine->runtimeRecreateRequired);
+            if (!returnedReader && ordinary->members[0] != initialMember) {
+                EXPECT_TRUE(initialProgram->occupied);
+                EXPECT_FALSE(initialProgram->directoryOwned);
+                EXPECT_EQ(initialProgramGeneration, initialProgram->generation);
+                const auto* retained = engine->FindPlayableMember(initialMember);
+                ASSERT_NE(nullptr, retained);
+                EXPECT_EQ(initialLeaf, retained->completion.leafInstance);
+                EXPECT_FALSE(retained->primaryOwned);
+                EXPECT_TRUE(engine->RetiredMemberProgramsHoldService(*ordinary));
+                EXPECT_TRUE(engine->RetiredMemberProgramsHoldService(*parent));
+                ASSERT_TRUE(engine->timelinePool.CancelPreparedTransactionBatch(&heldReference));
+                returnedReader = true;
+            }
             const auto render = ordinary->renderHandle;
             const auto* voice = engine->voices.Resolve(render);
             if (voice == nullptr || voice->srcCursor < 256 ||
@@ -27454,6 +27870,9 @@ TEST(PlayableStart, BlendOrdinaryLoopSoundAndTrackSuccessorsKeepChildGain) {
                 harkentest::Peak(engine->nullBackend.LastBlock(), 512), 0.001f);
         }
         EXPECT_EQ(3u, renderCount);
+        EXPECT_TRUE(returnedReader);
+        EXPECT_EQ(nullptr, engine->FindPlayableMember(initialMember));
+        EXPECT_EQ(0u, engine->retiredMemberProgramCount);
         EXPECT_FALSE(engine->playableInstances.Classify(started.instance).live);
         EXPECT_EQ(0u, engine->voices.ActiveCount());
         EXPECT_EQ(0u, engine->variableControlInstances.LiveCount());
@@ -27685,7 +28104,7 @@ TEST(PlayableStart, BlendQueueAfterLogicalTrackInheritsVariableResponseGain) {
                 << " superseded=" << parent->variableControlRetargetSuperseded
                 << " frame=" << parent->variableControlRetargetFrame
                 << " envelopeEnd=" << parent->variableControlRetargetEnvelopeEndFrame
-                << " members=" << parent->variableControlRetargetUnionMemberCount
+                << " members=" << parent->variableControlRetargetMembers.size()
                 << " decision=" << capturedDecision << '/'
                 << static_cast<unsigned>(retargetDecision.audioState) << '/'
                 << retargetDecision.lastAudioSequence

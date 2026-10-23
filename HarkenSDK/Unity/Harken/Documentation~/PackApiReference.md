@@ -7,6 +7,17 @@ allocate managed memory. Prepare content before a timing-sensitive trigger.
 
 ## Export identity and selection
 
+For the companion entry (`PackBootstrap.StartDirectory` or `PackSource`), supply
+`Init.bytes` / `Init.json` and the requested Action's `.bytes` / `.json` pair.
+Both JSON files require top-level numeric `schemaVersion: 3`. Exact integer
+spellings such as `3.0` and `3e0` are valid; missing, mistyped, fractional or
+unsupported versions return `VN_BAD_PACK`. Re-export incompatible resources
+with the matching Studio release. Optional `metadata` and `waveforms` are not
+playback dependencies. A bad localized version cannot fall back to General.
+A refused Init leaves no session; a refused Action refresh preserves the
+accepted names, playback and leases, and can be retried after correcting the
+resource. The manifest APIs below retain their existing publication contract.
+
 A complete export has a root `HarkenPackIndex.json`, one selected platform
 directory, its `HarkenPackManifest.json`, and the Pack files named by that
 manifest. If the index is absent, directory selection tries the supplied path
@@ -271,3 +282,89 @@ cleanup succeeds. `HarkenAudioSystem.IsReady` alone does not imply complete
 startup Content or scene Pack preparation; use `IsPreparationComplete` and
 the individual failure results. A `VN_OK` startup return does mean that specific
 startup Pack request completed successfully.
+# Companion sources and asynchronous preparation
+
+`PackSource` selects one platform source containing `Init.bytes` / `Init.json`
+and `<Action>.bytes` / `<Action>.json`. It does not require an index, manifest,
+or `GameplayPublication`. Startup reads Init only; preparing an Action reads
+only its pair. Its transitive executable closure is already in that Pack.
+
+| Source | Entry point |
+| --- | --- |
+| Filesystem directory | `PackSource.FromDirectory(platformDirectory, language)` |
+| Synchronous custom reader | `PackSource.FromReader(readBytes, language, revision)` |
+| Asynchronous custom reader | `PackSource.FromAsyncReader(readBytesAsync, language, revision)` |
+| Unity TextAssets | `HarkenPackSource.CaptureCompanion(initJson, out source, out error, language)` |
+| Packaged or HTTP URI | `HarkenStreamingPackSource.Create(platformRoot, language)` |
+
+Reader paths are relative, use `/`, and name exactly the requested files.
+Return `null` only for Missing; throw for read errors. A localized Action falls
+back to General only when both localized files are Missing. A half pair, read
+error, invalid JSON or mismatched Pack fails preparation without publication.
+Reader arrays are copied when returned; keep each array stable until then.
+
+Without `revision`, the source must remain immutable for its whole lifetime.
+A mutable source supplies a monotonic, never-reused `Func<ulong>`: advance it
+**before** changing bytes, throw while an update is in progress, and make the
+new value readable only after the complete publication is available. The SDK
+checks before and after capture and again before committing. This callback is
+not a file watcher or an automatic refresh service. Use `RefreshAction` /
+`RefreshActionAsync` for an intentional change to a discovered Action.
+
+TextAssets freeze references from the existing `initPack` and `content` fields;
+include both Action files in `content` with their relative paths. `initJson` is
+passed explicitly. Content bytes are accessed only when requested. Keep these
+assets (and their AssetBundle) alive while the source can read them. Destroyed
+assets are errors, not Missing. Capture and reads occur on the Unity thread.
+
+The streaming adapter takes an explicitly selected platform URI, including an
+Android `jar:file://...!/assets/...` URI. Filesystem paths and `file://` URIs
+reuse the directory reader. URI reads use UnityWebRequest: HTTP 404 is Missing;
+network, permission and other HTTP failures are errors. It does not choose a
+platform, enumerate content or download the whole project. The legacy Android
+index-based auto-start remains a separate entry; wire a new companion URI at
+the project's resource bootstrap.
+
+```csharp
+PackSource source = HarkenStreamingPackSource.Create(platformUri, language);
+VnResult started = await runtime.StartRuntimeAsync(source, cancellation);
+if (started != VnResult.VN_OK) return;
+
+ActionPreparationResult ready = await runtime.Session.PrepareActionsAsync(
+    new[] { "Play_Footstep" }, runtime.Session.ProjectId, cancellation);
+if (ready.Result != VnResult.VN_OK) return;
+// Existing synchronous PlayAction / HarkenAction calls can now reuse this resource.
+runtime.PlayAction("Play_Footstep", runtime.Session.ProjectId, out ActionFiring firing);
+// Retain the preparation while wanted; retry Release if unloading is refused.
+VnResult released = ready.Preparation.Release();
+```
+
+For a single cold play use `await runtime.PlayActionAsync(name, projectId,
+cancellation)` (or the overload with a spatial source). Its
+`HarkenActionPlayResult` contains `Result` and `Firing`; the same managed firing
+ownership as `PlayAction` applies. The task completes after preparation and Post
+acceptance, not after audible completion. The existing synchronous methods
+remain available; a cold async-only source returns `VN_CAPABILITY_UNAVAILABLE`
+there. Preloading once allows existing game playback calls to stay unchanged.
+
+`PackBootstrap.Start(source, ref config, out session)` serves synchronous hosts;
+`StartAsync(source, config, cancellation)` returns `PackStartupResult` with
+`Result` and `Session`. `ActionPreparation.PrepareAsync` retries an existing
+scope. Each successful preparation owns one lease, even when requests share
+one in-flight read. Cancelling one waiter does not cancel the others; the last
+waiter cancels the provider. Failure is not permanently cached. Cancellation
+before commit throws `OperationCanceledException`; a successful commit always
+returns its lease, even if cancellation races with its completion.
+
+Call async APIs on the Unity main thread or a custom host's owner thread with
+a SynchronizationContext that returns continuations to that thread. A missing
+or default context is refused for cold async work. Native mutations never move
+to the thread pool. Shutdown invalidates pending reads only after it succeeds;
+component Disable also cancels a pending startup. Late completions cannot
+initialize or publish into a later session. Configure auto-start with
+`ConfigureCompanionSourceBeforeStartup(source)` before the component's Awake.
+
+SDK requests finish cancellation even when a reader ignores its token. Such a
+reader still owns its underlying I/O and should cooperate with cancellation.
+A reader and its asynchronous continuations cannot prepare on the same session
+(`VN_IN_USE`); unrelated callers can still share the pending read.

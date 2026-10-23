@@ -81,6 +81,7 @@ set(HARKEN_HUB_SOURCES
     Source/App/SingleInstanceGuard.cpp
     Source/Download/BackoffPolicy.cpp
     Source/Download/Downloader.cpp
+    Source/Download/DownloadLease.cpp
     Source/Packaging/PackageReader.cpp
     Source/Packaging/PackageVerifier.cpp
     Source/Security/BinaryTrustPolicy.cpp
@@ -94,6 +95,7 @@ set(HARKEN_HUB_SOURCES
     Source/Templates/ProjectTemplateCatalog.cpp
     Source/UI/ButtonPulseAnimator.cpp
     Source/UI/NoHoverItemDelegate.cpp
+    Source/UI/TableSorting.cpp
     Source/Transactions/InstallExecutor.cpp
     Source/Transactions/InstallIndex.cpp
     Source/Transactions/InstallPackageCache.cpp
@@ -124,6 +126,8 @@ set(HARKEN_HUB_SOURCES
     Source/Integrations/Unity/UnityInstallation.h
     Source/Integrations/Unity/UnityIntegrationService.cpp
     Source/Integrations/Unity/UnityIntegrationService.h
+    Source/Integrations/Unity/UnityProjectAccess.cpp
+    Source/Integrations/Unity/UnityProjectAccess.h
     Source/Projects/ProjectStore.cpp
     Source/Projects/ProjectProbe.cpp
     Source/Projects/ProjectVersionSelection.cpp
@@ -233,13 +237,11 @@ if(HARKEN_BUILD_HUB_UNIT_TESTS)
 endif()
 
 if(WIN32)
-    add_executable(harken_hub WIN32 Source/App/Main.cpp "resources.qrc"
-        "HarkenHub.rc")
+    set_source_files_properties("HarkenHub.rc" PROPERTIES
+        OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Resources/icons/HubIcon.ico")
+    add_executable(harken_hub WIN32 Source/App/Main.cpp "resources.qrc" "HarkenHub.rc")
 else()
-    set_source_files_properties("Resources/macOS/HarkenHub.icns"
-        PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
-    add_executable(harken_hub Source/App/Main.cpp "resources.qrc"
-        "Resources/macOS/HarkenHub.icns")
+    add_executable(harken_hub Source/App/Main.cpp "resources.qrc")
 endif()
 
 target_link_libraries(harken_hub PRIVATE harken_hub_lib)
@@ -270,17 +272,25 @@ else()
         "Qt Simplified Chinese translation is unavailable; Qt-provided UI will remain in English")
 endif()
 
-set_target_properties(harken_hub PROPERTIES OUTPUT_NAME "HarkenHub")
+if(WIN32)
+    set_target_properties(harken_hub PROPERTIES OUTPUT_NAME "HarkenStudioHub")
+else()
+    set_target_properties(harken_hub PROPERTIES OUTPUT_NAME "HarkenHub")
+endif()
 
 harken_attach_version_resource(
     harken_hub
-    "Harken Hub"
-    "HarkenHub.exe"
+    "Harken Studio Hub"
+    "HarkenStudioHub.exe"
     hub)
 
 if(APPLE)
+    set_source_files_properties(Resources/icons/HubIcon.icns PROPERTIES
+        MACOSX_PACKAGE_LOCATION Resources)
+    target_sources(harken_hub PRIVATE Resources/icons/HubIcon.icns)
     set_target_properties(harken_hub PROPERTIES
         MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_ICON_FILE "HubIcon.icns"
         MACOSX_BUNDLE_BUNDLE_NAME "HarkenHub"
         MACOSX_BUNDLE_GUI_IDENTIFIER "com.harkensound.harkenhub"
         MACOSX_BUNDLE_BUNDLE_VERSION "${HARKEN_BI_HUB_VERSION_QUAD}"
@@ -308,16 +318,15 @@ if(APPLE)
         COMMAND ${MACDEPLOYQT_EXE}
             $<TARGET_BUNDLE_DIR:harken_hub>
             -always-overwrite
-        COMMENT "Deploying Qt runtime for Harken Hub"
+        COMMENT "Deploying Qt runtime for Harken Studio Hub"
     )
 endif()
 
 if(WIN32)
     add_executable(harken_hub_setup WIN32
-        Source/Setup/SetupStubMain.cpp
-        "HarkenHubSetup.rc")
+        Source/Setup/SetupStubMain.cpp "HarkenHub.rc")
     set_target_properties(harken_hub_setup PROPERTIES
-        OUTPUT_NAME "HarkenHubSetup"
+        OUTPUT_NAME "HarkenStudioHubSetup"
         AUTOMOC OFF
         AUTORCC OFF
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
@@ -326,9 +335,23 @@ if(WIN32)
         "/MANIFESTUAC:level='requireAdministrator'")
     harken_attach_version_resource(
         harken_hub_setup
-        "Harken Hub Setup"
-        "HarkenHubSetup.exe"
+        "Harken Studio Hub Setup"
+        "HarkenStudioHubSetup.exe"
         hub)
+
+    add_executable(harken_hub_legacy_launcher WIN32
+        Source/App/LegacyLauncherMain.cpp "HarkenHub.rc")
+    set_target_properties(harken_hub_legacy_launcher PROPERTIES
+        OUTPUT_NAME "HarkenHub"
+        AUTOMOC OFF
+        AUTORCC OFF
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    harken_attach_version_resource(
+        harken_hub_legacy_launcher
+        "Harken Studio Hub Compatibility Launcher"
+        "HarkenHub.exe"
+        hub)
+    add_dependencies(harken_hub harken_hub_legacy_launcher)
 
     if(NOT TARGET harken_editor)
         file(GENERATE
@@ -352,7 +375,7 @@ if(WIN32)
             --no-opengl-sw
             --no-quick-import
             $<TARGET_FILE:harken_hub>
-        COMMENT "Deploying Qt runtime for Harken Hub"
+        COMMENT "Deploying Qt runtime for Harken Studio Hub"
     )
 
     add_executable(harken_hub_update_bridge WIN32
@@ -363,7 +386,7 @@ if(WIN32)
     target_link_libraries(harken_hub_update_bridge PRIVATE harken_hub_lib)
     harken_attach_version_resource(
         harken_hub_update_bridge
-        "Harken Hub Update Bridge"
+        "Harken Studio Hub Update Bridge"
         "HarkenHubUpdateBridge.exe"
         hub)
 
