@@ -1,12 +1,32 @@
 # Unity API reference: Editor catalog, preview, and tools
 
-The `Harken.Unity.Editor` assembly is available only in the Unity Editor. It
-validates a selected publication for inspectors and provides a preview session;
-Player code must use the Runtime and Unity component APIs. Calls involving
-Unity objects, `AssetDatabase`, or preview lifecycle run on the Editor main
-thread.
+The `Harken.Unity.Editor` assembly is available only in the Unity Editor.
+Publication tools are temporarily suspended while their readers are adapted to
+current-schema Pack companions. Player and Play Mode playback use the Runtime
+and Unity component APIs.
 
-## `HarkenEditorCatalog`
+The Action Inspector accepts **Action Name** and **Project Id** manually. Enter
+the exact authored name and the audio project's GUID; a running companion
+session exposes the validated identity through `Session.ProjectId`. Automatic
+catalog binding, waveform browsing and preview controls are hidden.
+`HarkenEditorCatalog.Refresh*`, all preview `Prepare` entry points including
+`Scope.Prepare`, and generator validation/generation return
+`VN_CAPABILITY_UNAVAILABLE` before reading publication files or starting audio.
+The symbol-generation menu is unregistered. Plugin importers, Project Settings,
+and runtime components remain available; the legacy Platform Id setting is hidden.
+When an ID was previously saved, **Project Settings > Harken > Project** shows
+**Clear legacy platform selection** so it can be removed before companion startup.
+
+The catalog, waveform and preview descriptions below retain the existing API
+contracts for maintainers. They are not currently executable setup instructions.
+Pure parsers and data models remain available for historical data; they do not
+make the suspended workflows supported for current exports. Restore each
+workflow only after it consumes current-schema companions without requiring a
+separate legacy manifest or fixed schema number, and validate it before removing
+the capability gate. Calls involving Unity objects or `AssetDatabase` run on
+the Editor main thread.
+
+## `HarkenEditorCatalog` (suspended workflow reference)
 
 Create a catalog and refresh it when the selected export, platform, language,
 or source changes. On success, `Publication` is the validated catalog.
@@ -65,7 +85,7 @@ capability-unavailable for Random; they never return its upper bound as an exact
 duration. Refresh clears old preview data even when the new companion is missing
 or invalid. No waveform result is a prerequisite for playback.
 
-## `HarkenEditorPreview` and scopes
+## `HarkenEditorPreview` and scopes (suspended workflow reference)
 
 An Editor preview owns its native session. `CreateScope()` gives a disposable
 `HarkenEditorPreview.Scope` for a selection or Inspector; dispose it when that
@@ -131,24 +151,22 @@ before storing a request. The Inspector should not start its own gameplay
 
 ## Generated symbols and project settings
 
-`HarkenVariableCatalogGenerator` exposes these Editor-only entry points:
+`HarkenVariableCatalogGenerator` retains these Editor-only declarations:
 
 | Signature | Purpose |
 | --- | --- |
-| `static void GenerateFromMenu()` | **Harken > Generate SDK Symbols From Publication**; opens the publication picker. |
-| `static VnResult GeneratePublication(string jsonPath, string variablePath, out string error)` | Read a publication file, write Variable symbols to `variablePath` and Action symbols beside them, then import both. |
-| `static VnResult Generate(string jsonPath, string csharpPath, out string error)` | Write and import only Variable symbols. |
-| `static VnResult ValidatePublication(string json, string sourceLabel, out string error)` | Validate Variable catalog JSON content without writing files. This is not a filename parameter. |
+| `static void GenerateFromMenu()` | No registered menu. An explicit call displays the temporary-unavailability diagnostic without opening a publication picker. |
+| `static VnResult GeneratePublication(string jsonPath, string variablePath, out string error)` | Returns `VN_CAPABILITY_UNAVAILABLE`; no files are read, written or imported. |
+| `static VnResult Generate(string jsonPath, string csharpPath, out string error)` | Returns `VN_CAPABILITY_UNAVAILABLE`; no files are read, written or imported. |
+| `static VnResult ValidatePublication(string json, string sourceLabel, out string error)` | Returns `VN_CAPABILITY_UNAVAILABLE`; no publication validation occurs. |
 | `static string ResolveOutputPath()` | Reuse a discovered generated asset, otherwise choose the package location or `Assets/Harken/Generated`. |
 
-Generation reads the selected publication; generated names are aliases for
-stable IDs, not a replacement for validating the runtime publication.
-`ValidatePublication` does not validate the Action catalog, Pack files or
-manifest/Init pairing; a missing Variable list can be a valid empty catalog.
-Its `VN_OK` is not proof that the full export is playable. The underlying
-`ActionCatalogEmitter`, `VariableCatalogEmitter` and guard are internal.
-For generation, IDE completion and output ownership, follow the
-[menu walkthrough](../README.md#generate-symbols-and-use-code-completion).
+Existing generated names remain aliases for stable IDs; they do not replace
+validation of the loaded runtime content. Before suspension, `ValidatePublication`
+validated only the Variable catalog, not the complete publication. The underlying
+`ActionCatalogEmitter`, `VariableCatalogEmitter` and guard remain internal.
+Use [name-based calls](../README.md#action-and-variable-calls) while generation
+is unavailable.
 Installation and migration use the current [package instructions](../README.md);
 the removed legacy script/settings migration classes are not callable APIs.
 

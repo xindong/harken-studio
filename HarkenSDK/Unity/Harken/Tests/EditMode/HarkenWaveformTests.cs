@@ -15,6 +15,7 @@ namespace Harken.Unity.Tests
         [Test]
         public void DirectoryRefreshClearsMissingMalformedAndStaleWaveformsWithoutLosingTheCatalog()
         {
+            HarkenEditorServiceTests.RequirePublicationTooling();
             string root = Path.Combine(Application.temporaryCachePath, "HarkenWaveform_" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(root);
             try
@@ -60,6 +61,7 @@ namespace Harken.Unity.Tests
         [Test]
         public void TextAssetRefreshUsesOnlyItsExplicitCompanionAndOwnsTheCapturedEnvelope()
         {
+            HarkenEditorServiceTests.RequirePublicationTooling();
             string folder = "Assets/HarkenWaveform_" + Guid.NewGuid().ToString("N");
             AssetDatabase.CreateFolder("Assets", Path.GetFileName(folder));
             var source = ScriptableObject.CreateInstance<HarkenPackSource>();
@@ -102,6 +104,7 @@ namespace Harken.Unity.Tests
         [Test]
         public void RandomBytesPublicationCachesAllCandidatesAndInvalidatesBothApiProjections()
         {
+            HarkenEditorServiceTests.RequirePublicationTooling();
             string random = Path.Combine(Application.streamingAssetsPath, "Audio", "EditorPreviewRandom");
             string direct = Path.Combine(Application.streamingAssetsPath, "Audio", "EditorPreviewDirect");
             string root = Path.Combine(Application.dataPath, "HarkenPreview_" + Guid.NewGuid().ToString("N"));

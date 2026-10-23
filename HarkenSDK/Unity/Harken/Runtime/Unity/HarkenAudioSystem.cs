@@ -861,22 +861,15 @@ namespace Harken.Unity
                 return;
             }
 #if UNITY_ANDROID && !UNITY_EDITOR
-            if (!HarkenProjectSettings.TryResolveStreamingPackDirectory(
-                HarkenProjectSettings.ActiveForStartup().PackDirectory, Application.streamingAssetsPath,
-                out androidPackRoot, out string directoryError))
+            // Restore Android directory auto-start after it consumes current-schema companions without a legacy inventory.
+            if (!TryBeginStartup(out _)) return;
+            try
             {
-                if (!TryBeginStartup(out _)) return;
-                try
-                {
-                    LastStartupError = string.IsNullOrEmpty(directoryError)
-                        ? "The selected GeneratedPacks directory is not readable on this player."
-                        : directoryError;
-                    CompleteSessionStartup(VnResult.VN_INVALID_ARG, string.Empty);
-                }
-                finally { starting = false; }
-                return;
+                LastStartupError = "Android directory auto-start is temporarily unavailable. " +
+                    "Use HarkenStreamingPackSource with StartRuntimeAsync or configure a companion source before startup.";
+                CompleteSessionStartup(VnResult.VN_CAPABILITY_UNAVAILABLE, string.Empty);
             }
-            if (TryBeginStartup(out _)) startupCoroutine = StartCoroutine(StartAndroidRuntime());
+            finally { starting = false; }
 #else
             StartFromProjectPackDirectory();
 #endif
@@ -979,7 +972,7 @@ namespace Harken.Unity
 
         internal void QueuePackLoad(HarkenPack pack)
         {
-            if (pack != null && !pack.IsLoaded &&
+            if (pack != null && pack.LoadOnReady && !pack.IsLoaded &&
                 !pendingPackLoads.Contains(pack))
             {
                 pendingPackLoads.Add(pack);
@@ -1573,7 +1566,7 @@ namespace Harken.Unity
             {
                 HarkenPack next = pendingPackLoads[0];
                 pendingPackLoads.RemoveAt(0);
-                if (next != null && next.isActiveAndEnabled)
+                if (next != null && next.isActiveAndEnabled && next.LoadOnReady)
                 {
                     next.Load();
                 }

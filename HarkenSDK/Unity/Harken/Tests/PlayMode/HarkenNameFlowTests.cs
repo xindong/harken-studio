@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -321,14 +322,20 @@ namespace Harken.Unity.Tests
                 companionRoot = Path.Combine(Application.streamingAssetsPath, "harken-companion-" + Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(companionRoot);
                 File.Copy(Path.Combine(original, publication.InitPack.Path), Path.Combine(companionRoot, "Init.bytes"));
-                File.WriteAllText(Path.Combine(companionRoot, "Init.json"), "{\"variables\":[]}");
+                string schemaVersion;
+                using (var init = new BinaryReader(File.OpenRead(Path.Combine(companionRoot, "Init.bytes"))))
+                {
+                    init.BaseStream.Position = 4;
+                    schemaVersion = init.ReadUInt32().ToString(CultureInfo.InvariantCulture);
+                }
+                File.WriteAllText(Path.Combine(companionRoot, "Init.json"), "{\"schemaVersion\":" + schemaVersion + ",\"variables\":[]}");
                 foreach (string name in new[] { "Play_U4_A", "Play_U4_B" })
                 {
                     GameplayAction row = Row(name);
                     Assert.That(publication.TryFindPack(row.OwnerPackStableId, out PackManifestEntry pack), Is.True);
                     File.Copy(Path.Combine(original, pack.Path), Path.Combine(companionRoot, name + ".bytes"));
                     File.WriteAllText(Path.Combine(companionRoot, name + ".json"),
-                        "{\"name\":\"" + name + "\",\"guid\":\"" + row.ActionStableId + "\"}");
+                        "{\"schemaVersion\":" + schemaVersion + ",\"name\":\"" + name + "\",\"guid\":\"" + row.ActionStableId + "\"}");
                 }
                 File.WriteAllText(Path.Combine(companionRoot, "Unused.json"), "invalid");
                 settingsLease.Settings.SetPackDirectory(companionRoot);

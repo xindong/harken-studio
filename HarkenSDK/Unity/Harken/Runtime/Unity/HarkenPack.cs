@@ -2,12 +2,15 @@ using UnityEngine;
 
 namespace Harken.Unity
 {
+    // Restore the component menu when cold preloading can discover Packs from current-schema companions by Action name.
+    [AddComponentMenu("")]
     [DefaultExecutionOrder(-9000)]
     public sealed class HarkenPack : MonoBehaviour, IHarkenRuntimeParticipant
     {
         [SerializeField] private HarkenAudioSystem runtime;
         [SerializeField] private ulong packStableId;
-        [SerializeField] private bool loadOnReady = true;
+        // Restore this control with companion-aware preloading; explicit Load still leases already discovered Packs.
+        [SerializeField, HideInInspector] private bool loadOnReady = true;
 
         private Pack pack;
         private PackBootstrapSession owningSession;
@@ -20,7 +23,9 @@ namespace Harken.Unity
         public ulong PackStableId => packStableId;
         public Pack Handle => IsLoaded ? pack : default;
         public bool IsLoaded => pack.IsValid && owningSession != null && owningSession.IsActive;
-        public bool LoadOnReady => loadOnReady;
+        // Companion sessions discover cold Pack IDs through PrepareActions by name before an explicit Load can lease them.
+        public bool LoadOnReady => loadOnReady &&
+            (runtime == null || runtime.Session == null || runtime.Session.Publication != null);
         public VnResult LastResult { get; private set; } = VnResult.VN_OK;
 
         private void OnEnable()
@@ -50,7 +55,7 @@ namespace Harken.Unity
             runtime.BecameReady += HandleRuntimeReady;
             boundRuntime = runtime;
             runtimeBound = true;
-            if (runtime.IsReady && loadOnReady)
+            if (runtime.IsReady && LoadOnReady)
             {
                 runtime.QueuePackLoad(this);
             }
@@ -105,7 +110,7 @@ namespace Harken.Unity
         private void HandleRuntimeReady(HarkenAudioSystem owner)
         {
             owner.RegisterParticipant(this);
-            if (loadOnReady)
+            if (LoadOnReady)
             {
                 owner.QueuePackLoad(this);
             }

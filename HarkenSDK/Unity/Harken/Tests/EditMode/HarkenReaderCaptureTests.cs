@@ -51,13 +51,16 @@ namespace Harken.Unity.Tests
             Assert.That(prepared.Publication.TryFindAction("Play_U4_A", out GameplayAction action), Is.True);
             Assert.That(prepared.Publication.TryFindPack(action.OwnerPackStableId, out PackManifestEntry pack), Is.True);
             Assert.That(PackManifest.VerifyPackBytes(files[U4Logical + "/" + pack.Path], pack), Is.True);
-            using (var preview = new HarkenEditorPreview())
+            VnConfig config = HarkenEngine.DefaultConfig();
+            config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
+            PackBootstrapSession session = null;
+            try
             {
-                Assert.That(preview.Prepare(prepared, new[] { pack.PackStableId }, true),
-                    Is.EqualTo(VnResult.VN_OK), preview.Diagnostic);
-                Assert.That(preview.Session.AcquirePack(pack.PackStableId, out Pack demanded), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(prepared.Start(new[] { pack.PackStableId }, ref config, out session), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(session.AcquirePack(pack.PackStableId, out Pack demanded), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(demanded.IsValid, Is.True);
             }
+            finally { session?.Dispose(); }
 
             Dictionary<string, byte[]> rootFiles = LogicalFiles(string.Empty, "U4Original");
             Assert.That(HarkenPreparedPacks.Capture(PackManifest.ManifestFileName, MemoryReader(rootFiles),
@@ -101,11 +104,15 @@ namespace Harken.Unity.Tests
             Assert.That(prepared.Publication.TryFindAction("Play_U4_A", out GameplayAction action), Is.True);
             Assert.That(prepared.Publication.TryFindPack(action.OwnerPackStableId, out PackManifestEntry pack), Is.True);
             contentFiles[U4Logical + "/" + pack.Path] = Mutate(contentFiles[U4Logical + "/" + pack.Path]);
-            using (var preview = new HarkenEditorPreview())
+            VnConfig config = HarkenEngine.DefaultConfig();
+            config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
+            PackBootstrapSession session = null;
+            try
             {
-                Assert.That(preview.Prepare(prepared, new[] { pack.PackStableId }, true),
+                Assert.That(prepared.Start(new[] { pack.PackStableId }, ref config, out session),
                     Is.EqualTo(VnResult.VN_PACK_HASH_MISMATCH));
             }
+            finally { session?.Dispose(); }
         }
 
         [Test]
@@ -130,14 +137,21 @@ namespace Harken.Unity.Tests
         }
 
         [Test]
-        public void CaptureAllowsCrossPlatformPublicationAndCatalogReaderRefreshClearsOnEditorMismatch()
+        public void CaptureAllowsCrossPlatformPublication()
         {
             Dictionary<string, byte[]> android = LogicalFiles(AndroidLogical, "PlatformContractPacks/Android_Low");
             string androidManifest = Manifest(AndroidLogical);
             Assert.That(HarkenPreparedPacks.Capture(androidManifest, MemoryReader(android),
                 out HarkenPreparedPacks prepared, out _, out string error), Is.EqualTo(VnResult.VN_OK), error);
             Assert.That(prepared.Publication.Platform.BasePlatform, Is.EqualTo("Android"));
+        }
 
+        [Test]
+        public void CatalogReaderRefreshClearsOnEditorMismatch()
+        {
+            HarkenEditorServiceTests.RequirePublicationTooling();
+            Dictionary<string, byte[]> android = LogicalFiles(AndroidLogical, "PlatformContractPacks/Android_Low");
+            string androidManifest = Manifest(AndroidLogical);
             Dictionary<string, byte[]> windows = LogicalFiles(U4Logical, "U4Original");
             var catalog = new HarkenEditorCatalog();
             Assert.That(catalog.Refresh(Manifest(U4Logical), MemoryReader(windows)), Is.EqualTo(VnResult.VN_OK),
@@ -218,6 +232,7 @@ namespace Harken.Unity.Tests
         [Test]
         public void CatalogReaderRefreshKeepsActionsWhenWaveformIsMissingOversizedOrCorrupt()
         {
+            HarkenEditorServiceTests.RequirePublicationTooling();
             Dictionary<string, byte[]> files = LogicalFiles(U4Logical, "U4Original");
             string manifestPath = Manifest(U4Logical);
             string companionPath = U4Logical + "/" + HarkenWaveformPublication.FileName;

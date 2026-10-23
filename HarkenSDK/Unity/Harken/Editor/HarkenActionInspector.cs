@@ -20,6 +20,8 @@ namespace Harken.Unity.Editor
 
         private void OnEnable()
         {
+            // Temporarily avoid automatic manifest capture until publication tooling supports current Pack companions.
+            if (!HarkenEditorPublicationSupport.IsAvailable) return;
             var action = (HarkenAction)target;
             var runtime = serializedObject.FindProperty("runtime").objectReferenceValue as HarkenAudioSystem;
             if (runtime != null)
@@ -49,9 +51,16 @@ namespace Harken.Unity.Editor
             serializedObject.Update();
             DrawPropertiesExcluding(serializedObject, "m_Script", "actionName", "projectId");
             EditorGUILayout.PropertyField(serializedObject.FindProperty("actionName"));
-            using (new EditorGUI.DisabledScope(true))
+            using (new EditorGUI.DisabledScope(HarkenEditorPublicationSupport.IsAvailable))
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("projectId"));
             serializedObject.ApplyModifiedProperties();
+
+            // Keep manual runtime configuration available while catalog binding and Editor preview are suspended.
+            if (!HarkenEditorPublicationSupport.IsAvailable)
+            {
+                EditorGUILayout.HelpBox(HarkenEditorPublicationSupport.Diagnostic, MessageType.Info);
+                return;
+            }
 
             EditorGUILayout.Space();
             EditorGUI.BeginChangeCheck();

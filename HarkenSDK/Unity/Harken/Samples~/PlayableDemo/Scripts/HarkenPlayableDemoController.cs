@@ -3,8 +3,15 @@ using Harken.Unity;
 
 namespace Harken.Samples.PlayableDemo
 {
+    [DefaultExecutionOrder(-11000)]
     public sealed class HarkenPlayableDemoController : MonoBehaviour
     {
+        // Restore the sample only after its exported Packs, scene binding and startup use current companions.
+        // Run before HarkenAudioSystem so an already imported scene cannot auto-start the legacy publication.
+        public static bool IsAvailable => false;
+        public const string UnavailableReason =
+            "PlayableDemo is temporarily unavailable while its Pack publication and startup are updated.";
+
         [SerializeField] private HarkenAudioSystem runtime;
         [SerializeField] private HarkenAction[] actions;
         [SerializeField] private string[] labels;
@@ -15,8 +22,29 @@ namespace Harken.Samples.PlayableDemo
         private GUIStyle statusStyle;
         private GUIStyle buttonStyle;
 
+        private void Awake()
+        {
+            if (IsAvailable) return;
+            // Disabling only the component still runs Awake and claims the global Runtime owner.
+            if (runtime != null) runtime.gameObject.SetActive(false);
+            // These sample-owned objects also contain automatic Variable and Emitter startup callbacks.
+            if (variable != null) variable.gameObject.SetActive(false);
+            if (actions != null)
+                foreach (HarkenAction action in actions)
+                    if (action != null) action.gameObject.SetActive(false);
+            // The sample listener has no Runtime reference; suspend it so it cannot attach to another host.
+            foreach (GameObject root in gameObject.scene.GetRootGameObjects())
+                foreach (HarkenListener listener in root.GetComponentsInChildren<HarkenListener>(true))
+                    listener.enabled = false;
+        }
+
         private void OnGUI()
         {
+            if (!IsAvailable)
+            {
+                GUI.Label(new Rect(16, 16, Screen.width - 32, 64), UnavailableReason);
+                return;
+            }
             EnsureStyles();
             float width = Mathf.Min(760.0f, Screen.width - 32.0f);
             float height = Mathf.Min(600.0f, Screen.height - 32.0f);

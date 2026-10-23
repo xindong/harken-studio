@@ -16,6 +16,98 @@ namespace Harken.Unity.Tests
 {
     public sealed class HarkenEditorServiceTests
     {
+        internal static void RequirePublicationTooling()
+        {
+            if (!HarkenEditorPublicationSupport.IsAvailable)
+                Assert.Ignore("Temporarily suspended until Editor publication tools consume current Pack companions. Restore this coverage with the capability.");
+        }
+
+        [Test]
+        public void UnavailableCatalogRejectsAllSourcesWithoutReadingOrPublishingCandidates()
+        {
+            var catalog = new HarkenEditorCatalog();
+            var source = ScriptableObject.CreateInstance<HarkenPackSource>();
+            var companion = new TextAsset("{}");
+            int reads = 0;
+            try
+            {
+                Assert.That(catalog.Refresh("missing-publication"), Is.EqualTo(VnResult.VN_CAPABILITY_UNAVAILABLE));
+                Assert.That(catalog.RefreshPlatform("missing-publication", null, null, "Windows"),
+                    Is.EqualTo(VnResult.VN_CAPABILITY_UNAVAILABLE));
+                Assert.That(catalog.Refresh(source), Is.EqualTo(VnResult.VN_CAPABILITY_UNAVAILABLE));
+                Assert.That(catalog.Refresh(source, null, companion), Is.EqualTo(VnResult.VN_CAPABILITY_UNAVAILABLE));
+                Assert.That(catalog.Refresh("publication.json", path => { ++reads; throw new IOException(path); }),
+                    Is.EqualTo(VnResult.VN_CAPABILITY_UNAVAILABLE));
+                Assert.That(reads, Is.Zero);
+                Assert.That(catalog.Publication, Is.Null);
+                Assert.That(catalog.PreparedPacks, Is.Null);
+                Assert.That(catalog.DirectoryPath, Is.Null);
+                Assert.That(catalog.GetPreparationOrder("Play", out ulong[] ids, out _), Is.EqualTo(VnResult.VN_CAPABILITY_UNAVAILABLE));
+                Assert.That(ids, Is.Empty);
+                Assert.That(catalog.GetActionPreview("Play", out var preview, out _), Is.EqualTo(VnResult.VN_CAPABILITY_UNAVAILABLE));
+                Assert.That(preview, Is.Null);
+                Assert.That(catalog.GetWaveform("Play", out var samples, out var duration, out _),
+                    Is.EqualTo(VnResult.VN_CAPABILITY_UNAVAILABLE));
+                Assert.That(samples, Is.Empty);
+                Assert.That(duration, Is.Null);
+            }
+            finally { Object.DestroyImmediate(source); Object.DestroyImmediate(companion); }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void UnavailablePreviewCannotAcquireOrTerminateNativeOwnership(bool externalEngine)
+        {
+            VnConfig config = HarkenEngine.DefaultConfig();
+            config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
+            if (externalEngine) Assert.That(HarkenEngine.Init(in config), Is.EqualTo(VnResult.VN_OK));
+            var source = ScriptableObject.CreateInstance<HarkenPackSource>();
+            try
+            {
+                using (var preview = new HarkenEditorPreview())
+                using (var scope = preview.CreateScope())
+                {
+                    Assert.That(preview.Prepare("missing-publication", null, Array.Empty<ulong>(), true),
+                        Is.EqualTo(VnResult.VN_CAPABILITY_UNAVAILABLE));
+                    Assert.That(preview.Prepare(source, Array.Empty<ulong>(), true), Is.EqualTo(VnResult.VN_CAPABILITY_UNAVAILABLE));
+                    Assert.That(preview.Prepare((HarkenPreparedPacks)null, Array.Empty<ulong>(), true),
+                        Is.EqualTo(VnResult.VN_CAPABILITY_UNAVAILABLE));
+                    Assert.That(scope.Prepare(null, new[] { "Play" }), Is.EqualTo(VnResult.VN_CAPABILITY_UNAVAILABLE));
+                    Assert.That(preview.IsPrepared, Is.False);
+                    Assert.That(preview.Session, Is.Null);
+                    Assert.That(scope.IsPrepared, Is.False);
+                }
+                if (!externalEngine) Assert.That(HarkenEngine.Init(in config), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(HarkenEngine.Update(), Is.EqualTo(VnResult.VN_OK));
+            }
+            finally { Object.DestroyImmediate(source); HarkenEngine.Term(); }
+        }
+
+        [Test]
+        public void UnavailableSymbolGenerationDoesNotReadOrWriteFiles()
+        {
+            string root = Path.Combine(Application.temporaryCachePath, "HarkenSymbols_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            string input = Path.Combine(root, "publication.json");
+            string output = Path.Combine(root, "Generated", "HarkenVariables.g.cs");
+            File.WriteAllText(input, "{}");
+            try
+            {
+                using (File.Open(input, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                {
+                    Assert.That(HarkenVariableCatalogGenerator.Generate(input, output, out _),
+                        Is.EqualTo(VnResult.VN_CAPABILITY_UNAVAILABLE));
+                    Assert.That(HarkenVariableCatalogGenerator.GeneratePublication(input, output, out _),
+                        Is.EqualTo(VnResult.VN_CAPABILITY_UNAVAILABLE));
+                }
+                Assert.That(HarkenVariableCatalogGenerator.ValidatePublication("{}", input, out _),
+                    Is.EqualTo(VnResult.VN_CAPABILITY_UNAVAILABLE));
+                Assert.That(Directory.Exists(Path.GetDirectoryName(output)), Is.False);
+                Assert.That(File.ReadAllText(input), Is.EqualTo("{}"));
+            }
+            finally { Directory.Delete(root, true); }
+        }
+
         private static string Root(string name = "U4Original")
             => Path.Combine(Application.streamingAssetsPath, "Audio", name);
 
@@ -44,6 +136,7 @@ namespace Harken.Unity.Tests
         [Test]
         public void RefreshInvalidatesOldExactNameAndInvalidPairClearsPreviousCandidate()
         {
+            RequirePublicationTooling();
             var empty = new HarkenEditorCatalog();
             Assert.That(empty.GetPreparationOrder("Play_U4_A", out ulong[] pending, out string missing),
                 Is.EqualTo(VnResult.VN_CAPABILITY_UNAVAILABLE));
@@ -82,7 +175,8 @@ namespace Harken.Unity.Tests
         public void SessionlessReplacePackRefusesCanonicalLifecycleWithoutNativeCall()
         {
             string root = Root();
-            string initPath = Path.Combine(root, Catalog().Publication.InitPack.Path);
+            Assert.That(GameplayPublication.Read(root, null, out var publication, out string error), Is.EqualTo(VnResult.VN_OK), error);
+            string initPath = Path.Combine(root, publication.InitPack.Path);
             Assert.That(File.Exists(initPath), Is.True);
             Assert.That(Packs.ReplacePack(default, initPath, root),
                 Is.EqualTo(VnResult.VN_INVALID_ARG));
@@ -112,8 +206,8 @@ namespace Harken.Unity.Tests
         [Test]
         public void PublicationBindingSavesUnderCurrentPublicationIdOnly()
         {
-            HarkenEditorCatalog catalog = Catalog();
-            string publicationId = catalog.Publication.ProjectId;
+            Assert.That(GameplayPublication.Read(Root(), null, out var publication, out string error), Is.EqualTo(VnResult.VN_OK), error);
+            string publicationId = publication.ProjectId;
             string staleId = "11111111-1111-1111-1111-111111111111";
             var binding = new HarkenEditorPublicationBinding(string.Empty, Root(), string.Empty, string.Empty,
                 string.Empty, string.Empty);
@@ -168,6 +262,7 @@ namespace Harken.Unity.Tests
         [Test]
         public void UnityAssetBytesDirectoryRefreshCapturesPreparedPacks()
         {
+            RequirePublicationTooling();
             using (var fixture = new AssetFixture())
             {
                 string dest = fixture.Folder + "/U4Bytes";
@@ -193,6 +288,7 @@ namespace Harken.Unity.Tests
         [Test]
         public void PlatformDiscoveryUsesIdAndRefusesAmbiguousAutomaticSelection()
         {
+            RequirePublicationTooling();
             string root = Root("PlatformContractPacks");
             Assert.That(PackManifest.TryParseIndex(File.ReadAllText(Path.Combine(root, PackManifest.IndexFileName)),
                 out PackIndexEntry[] platforms), Is.True);
@@ -216,6 +312,7 @@ namespace Harken.Unity.Tests
         [Test]
         public void TypedNameCanBindAndProjectChangesNeedExplicitRebindWithUndo()
         {
+            RequirePublicationTooling();
             var owner = new GameObject("Editor selected Action");
             owner.SetActive(false);
             try
@@ -252,35 +349,37 @@ namespace Harken.Unity.Tests
             using (var fixture = new AssetFixture())
             {
                 HarkenPackSource source = fixture.CreateSource();
-                var catalog = new HarkenEditorCatalog();
-                Assert.That(catalog.Refresh(source), Is.EqualTo(VnResult.VN_OK), catalog.Diagnostic);
-                HarkenPreparedPacks captured = catalog.PreparedPacks;
+                Assert.That(source.Capture(out HarkenPreparedPacks captured, out string error), Is.EqualTo(VnResult.VN_OK), error);
                 VnResult background = Task.Run(() => source.Capture(out _, out _)).GetAwaiter().GetResult();
                 Assert.That(background, Is.EqualTo(VnResult.VN_INVALID_ARG));
                 Set(source, "initPack", new TextAsset("invalid bytes"));
                 TextAsset invalid = Get<TextAsset>(source, "initPack");
                 try
                 {
-                    Assert.That(catalog.Refresh(source), Is.Not.EqualTo(VnResult.VN_OK));
-                    Assert.That(catalog.Publication, Is.Null);
-                    Assert.That(catalog.PreparedPacks, Is.Null);
+                    Assert.That(source.Capture(out HarkenPreparedPacks failed, out _), Is.Not.EqualTo(VnResult.VN_OK));
+                    Assert.That(failed, Is.Null);
                 }
                 finally { Object.DestroyImmediate(invalid); }
                 Object.DestroyImmediate(source);
                 fixture.DeleteAssets();
-                using (var preview = new HarkenEditorPreview())
+                VnConfig config = HarkenEngine.DefaultConfig();
+                config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
+                PackBootstrapSession session = null;
+                try
                 {
-                    Assert.That(preview.Prepare(captured, Array.Empty<ulong>(), true), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(captured.Start(Array.Empty<ulong>(), ref config, out session), Is.EqualTo(VnResult.VN_OK));
                     foreach (PackManifestEntry pack in captured.Publication.Packs.Where(row => row.PackStableId != captured.Publication.InitPackStableId)
                         .OrderBy(row => row.Dependencies.Length))
-                        Assert.That(preview.Session.AcquirePack(pack.PackStableId, out _), Is.EqualTo(VnResult.VN_OK));
+                        Assert.That(session.AcquirePack(pack.PackStableId, out _), Is.EqualTo(VnResult.VN_OK));
                 }
+                finally { session?.Dispose(); }
             }
         }
 
         [Test]
         public void MissingPreparedContentNeedsExplicitSupplyAndPrepare()
         {
+            RequirePublicationTooling();
             using (var fixture = new AssetFixture())
             using (var preview = new HarkenEditorPreview())
             {
@@ -311,20 +410,22 @@ namespace Harken.Unity.Tests
         [Test]
         public void RefusedPreviewPrepareNeverTerminatesAnExternalEngine()
         {
-            HarkenEditorCatalog catalog = Catalog();
-            Assert.That(catalog.GetPreparationOrder("Play_U4_A", out ulong[] ids, out string error), Is.EqualTo(VnResult.VN_OK), error);
+            Assert.That(GameplayPublication.Read(Root(), null, out var publication, out string error), Is.EqualTo(VnResult.VN_OK), error);
+            Assert.That(publication.GetActionPreparationOrder(new[] { "Play_U4_A" }, publication.ProjectId, out ulong[] ids),
+                Is.EqualTo(VnResult.VN_OK));
             VnConfig config = HarkenEngine.DefaultConfig();
             config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
             PackBootstrapSession external = null;
             try
             {
-                Assert.That(PackBootstrap.Start(Path.Combine(Root(), catalog.Publication.InitPack.Path), Root(), ids,
+                Assert.That(PackBootstrap.Start(Path.Combine(Root(), publication.InitPack.Path), Root(), ids,
                     ref config, out external), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(Actions.Resolve("Play_U4_A", catalog.Publication.ProjectId, out ActionResolved resolved), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(Actions.Resolve("Play_U4_A", publication.ProjectId, out ActionResolved resolved), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(Actions.Post(in resolved, Emitter.None, 0, out ActionFiring retained), Is.EqualTo(VnResult.VN_OK));
                 using (var refused = new HarkenEditorPreview())
                 {
-                    Assert.That(refused.Prepare(Root(), null, ids, true), Is.EqualTo(VnResult.VN_ALREADY_INITIALIZED));
+                    Assert.That(refused.Prepare(Root(), null, ids, true), Is.EqualTo(HarkenEditorPublicationSupport.IsAvailable
+                        ? VnResult.VN_ALREADY_INITIALIZED : VnResult.VN_CAPABILITY_UNAVAILABLE));
                     Assert.That(refused.Shutdown(), Is.EqualTo(VnResult.VN_OK));
                 }
                 Assert.That(external.IsActive, Is.True);
@@ -338,6 +439,7 @@ namespace Harken.Unity.Tests
         [TestCase("Missing_Refresh_Target")]
         public void InspectorRefreshStopsOnlyItsOwnPreparedPreview(string nextDirectory)
         {
+            RequirePublicationTooling();
             var owner = new GameObject("Inspector Refresh");
             owner.SetActive(false);
             UnityEditor.Editor inspector = null;
@@ -371,6 +473,7 @@ namespace Harken.Unity.Tests
         [UnityTest]
         public IEnumerator PreviewStopsIndependentFiringsAndClosesAfterNewAudioBlocks()
         {
+            RequirePublicationTooling();
             HarkenEditorCatalog catalog = Catalog();
             Assert.That(catalog.GetPreparationOrder("Play_U4_A", out ulong[] ids, out _), Is.EqualTo(VnResult.VN_OK));
             using (var preview = new HarkenEditorPreview())
@@ -423,6 +526,7 @@ namespace Harken.Unity.Tests
         [Test]
         public void FirstExplicitPreviewPlayAfterEditorGapKeepsThePriorFiringPlaying()
         {
+            RequirePublicationTooling();
             HarkenEditorCatalog catalog = Catalog();
             Assert.That(catalog.GetPreparationOrder("Play_U4_A", out ulong[] ids, out _), Is.EqualTo(VnResult.VN_OK));
             using (var preview = new HarkenEditorPreview())
@@ -472,6 +576,7 @@ namespace Harken.Unity.Tests
         [Test]
         public void NullPreviewStopKeepsOtherFiringsAndClosesOnlyAfterTheLastStop()
         {
+            RequirePublicationTooling();
             HarkenEditorCatalog catalog = Catalog();
             Assert.That(catalog.GetPreparationOrder("Play_U4_A", out ulong[] ids, out _), Is.EqualTo(VnResult.VN_OK));
             using (var preview = new HarkenEditorPreview())
@@ -516,6 +621,7 @@ namespace Harken.Unity.Tests
         [Test]
         public void PreviewPlayAfterTheLastIndividualStopKeepsTheSessionAndReleasesTheOldFiring()
         {
+            RequirePublicationTooling();
             HarkenEditorCatalog catalog = Catalog();
             using (var preview = new HarkenEditorPreview())
             {
@@ -540,6 +646,7 @@ namespace Harken.Unity.Tests
         [Test]
         public void FailedPreviewPlayAfterTheLastIndividualStopStillClosesOnTheNextTick()
         {
+            RequirePublicationTooling();
             HarkenEditorCatalog catalog = Catalog();
             using (var preview = new HarkenEditorPreview())
             {
@@ -565,6 +672,7 @@ namespace Harken.Unity.Tests
         [Test]
         public void PreviewGlobalStopStillRefusesPlayBeforeIdleShutdown()
         {
+            RequirePublicationTooling();
             HarkenEditorCatalog catalog = Catalog();
             using (var preview = new HarkenEditorPreview())
             {
@@ -590,6 +698,7 @@ namespace Harken.Unity.Tests
         [Test]
         public void SecondScopePrepareReusesTheSessionWithoutPublicCanPrepare()
         {
+            RequirePublicationTooling();
             using (var fixture = new AssetFixture())
             using (var preview = new HarkenEditorPreview())
             {
@@ -616,6 +725,7 @@ namespace Harken.Unity.Tests
         [Test]
         public void PreviewScopesKeepIndependentStateOnlyIdentityUntilDispose()
         {
+            RequirePublicationTooling();
             using (var fixture = new AssetFixture())
             using (var preview = new HarkenEditorPreview())
             {
@@ -657,6 +767,7 @@ namespace Harken.Unity.Tests
         [Test]
         public void ScopeIdleTickDoesNotReleasePreparationBeforePlay()
         {
+            RequirePublicationTooling();
             using (var fixture = new AssetFixture())
             using (var preview = new HarkenEditorPreview())
             {
@@ -679,6 +790,7 @@ namespace Harken.Unity.Tests
         [Test]
         public void ScopeLocalStopLeavesPreparationPlayableAfterIdleTick()
         {
+            RequirePublicationTooling();
             using (var fixture = new AssetFixture())
             using (var preview = new HarkenEditorPreview())
             {
@@ -704,6 +816,7 @@ namespace Harken.Unity.Tests
         [Test]
         public void ScopeStopOnALeavesIdleBPlayable()
         {
+            RequirePublicationTooling();
             using (var fixture = new AssetFixture())
             using (var preview = new HarkenEditorPreview())
             {
@@ -732,6 +845,7 @@ namespace Harken.Unity.Tests
         [Test]
         public void ScopeStopAllStopsDiscardedMarkerHandles()
         {
+            RequirePublicationTooling();
             using (var fixture = new AssetFixture())
             using (var preview = new HarkenEditorPreview())
             {
@@ -758,6 +872,7 @@ namespace Harken.Unity.Tests
         [Test]
         public void ScopeRetargetBThenCPreparesOnlyTheLastRequestOnTick()
         {
+            RequirePublicationTooling();
             using (var fixture = new AssetFixture())
             using (var preview = new HarkenEditorPreview())
             {
@@ -784,6 +899,7 @@ namespace Harken.Unity.Tests
         [Test]
         public void ScopeDisposeDuringProviderCallbackCancelsAndDefersNativeRelease()
         {
+            RequirePublicationTooling();
             using (var fixture = new AssetFixture())
             using (var preview = new HarkenEditorPreview())
             {
@@ -820,6 +936,7 @@ namespace Harken.Unity.Tests
         [Test]
         public void ScopeRecoversAfterPrepareStopAndReleaseRefusals()
         {
+            RequirePublicationTooling();
             using (var fixture = new AssetFixture())
             using (var preview = new HarkenEditorPreview())
             {
@@ -850,6 +967,7 @@ namespace Harken.Unity.Tests
         [Test]
         public void ScopePublicPreparePlayStopReentryReturnsInUse()
         {
+            RequirePublicationTooling();
             using (var fixture = new AssetFixture())
             using (var preview = new HarkenEditorPreview())
             {
@@ -878,6 +996,7 @@ namespace Harken.Unity.Tests
         [Test]
         public void ScopeDoesNotBindAnOldSessionOntoANewOne()
         {
+            RequirePublicationTooling();
             using (var fixture = new AssetFixture())
             using (var preview = new HarkenEditorPreview())
             {
@@ -907,6 +1026,7 @@ namespace Harken.Unity.Tests
         [Test]
         public void ShutdownKeepsClosingWhenFirstAttemptRefusesWithLiveScopesAndNoFirings()
         {
+            RequirePublicationTooling();
             using (var fixture = new AssetFixture())
             using (var preview = new HarkenEditorPreview())
             {
@@ -1004,6 +1124,7 @@ namespace Harken.Unity.Tests
         [Test]
         public void PreviewPlayMaintenanceCannotPostIntoAReplacementSession()
         {
+            RequirePublicationTooling();
             HarkenEditorCatalog catalog = Catalog();
             Assert.That(catalog.GetPreparationOrder("Play_U4_A", out ulong[] ids, out _), Is.EqualTo(VnResult.VN_OK));
             using (var preview = new HarkenEditorPreview())
@@ -1060,6 +1181,7 @@ namespace Harken.Unity.Tests
         [Test]
         public void PreviewPlayMaintenanceRejectsReentrantPlayWithoutRecursiveNotificationDispatch()
         {
+            RequirePublicationTooling();
             HarkenEditorCatalog catalog = Catalog();
             Assert.That(catalog.GetPreparationOrder("Play_U4_A", out ulong[] ids, out _), Is.EqualTo(VnResult.VN_OK));
             using (var preview = new HarkenEditorPreview())
@@ -1165,12 +1287,12 @@ namespace Harken.Unity.Tests
 
             public HarkenPackSource CreateSource(bool includeContent = true)
             {
-                HarkenEditorCatalog catalog = Catalog();
+                Assert.That(GameplayPublication.Read(Root(), null, out var publication, out string error), Is.EqualTo(VnResult.VN_OK), error);
                 var source = ScriptableObject.CreateInstance<HarkenPackSource>();
                 Set(source, "inventory", Import(Path.Combine(Root(), PackManifest.ManifestFileName), "Inventory.json"));
-                Set(source, "initPack", Import(Path.Combine(Root(), catalog.Publication.InitPack.Path), "Init.bytes"));
+                Set(source, "initPack", Import(Path.Combine(Root(), publication.InitPack.Path), "Init.bytes"));
                 if (includeContent)
-                    Set(source, "content", catalog.Publication.Packs.Where(row => row.PackStableId != catalog.Publication.InitPackStableId)
+                    Set(source, "content", publication.Packs.Where(row => row.PackStableId != publication.InitPackStableId)
                         .Select(row => new HarkenPackSource.ContentAsset
                         {
                             relativePath = row.Path,

@@ -4,6 +4,14 @@
 The package root contains Unity content only. `HarkenSDK/VERSION` defines the
 SDK product version; this package's `package.json` must match that version.
 
+Editor catalog binding, preview, waveform browsing and symbol generation are
+temporarily unavailable while they are adapted to current-schema Pack companions.
+Configure **Action Name** and **Project Id** manually in the Action Inspector, or
+use the runtime APIs by name. Android's default directory auto-start and the
+PlayableDemo are also suspended; explicit companion sources and runtime playback
+remain available. See the entry points below and the
+[Editor API status](Documentation~/EditorApiReference.md).
+
 ## API reference manual
 
 The manual describes the public APIs in this SDK, including their parameters,
@@ -18,7 +26,7 @@ resource ownership, lifecycle and failure behavior.
 - [Custom hosts and public types](Documentation~/HostAndTypesReference.md)
 
 Each chapter covers signatures, parameters, lifecycle, ownership and failure
-behavior. For the symbol-generation menu and IDE completion, see
+behavior. For symbol-generation availability and existing IDE completion, see
 [Generate symbols and use code completion](#generate-symbols-and-use-code-completion).
 
 ## Public API
@@ -33,7 +41,7 @@ components in `Harken.Unity`. Editor integrations use the separate
 | Session and content ownership | `HarkenAudioSystem` for Unity-managed sessions; `HarkenEngine`, `PackBootstrap`, `PackBootstrapSession`, `Packs` and `PackByteProvider` for custom hosts. |
 | Voice and Bus runtime controls | `Voice`, including `Voice.SetFilter`; `HarkenEngine.SetBusVolume`, `SetBusOutputVolume` and `SetBusMute`. |
 | Optional Player communication | `HarkenEngine.StartRemoteCommunication`, `StopRemoteCommunication` and `QueryRemoteCommunication`; Unity settings and component retry/status methods are described under Remote communication. |
-| Editor preview, waveform and symbol generation | `HarkenEditorPreview`, `HarkenEditorCatalog` and `HarkenVariableCatalogGenerator` in `Harken.Unity.Editor`. |
+| Editor preview, waveform and symbol generation | Temporarily suspended. `HarkenEditorPreview`, `HarkenEditorCatalog` and `HarkenVariableCatalogGenerator` retain their declarations but refuse preparation, refresh and generation with `VN_CAPABILITY_UNAVAILABLE`. |
 
 The complete generated P/Invoke facade (`HarkenNative`), ABI inspection helper
 (`HarkenAbi`), Snapshot/Monitor DTOs, Bus topology/solo/filter operations, and
@@ -154,11 +162,20 @@ The same `HarkenSDK/Unity/Harken` source is used for package and Assets installs
 Copy the package contents directly into the selected root. The Editor hook
 locates the installed SDK by its script GUID and package identity, then configures
 its native plugins after imports, moves and deletions.
-Runtime Pack and audio data stay outside the SDK. Auto-start uses the single GeneratedPacks directory selected under Project Settings > Harken > Project in both Editor and Player. The project team's build/deployment pipeline is responsible for including the Packs; the SDK does not copy them or choose a different directory.
+Runtime Pack and audio data stay outside the SDK. Filesystem auto-start uses the directory selected under Project Settings > Harken > Project in the Editor and desktop Player. Select the exported platform directory containing `Init.bytes` and `Init.json`, or select its parent and set the exact Platform Name. The project team's build/deployment pipeline is responsible for including the Packs; the SDK does not copy them or choose a different directory.
 
-For the default filesystem loader, relative paths start at the Unity project root in the Editor. In a desktop Player, they start at the parent of `Application.dataPath` (the executable directory on Windows). For example, `GameContent/GeneratedPacks` resolves to that same relative layout under either root. Editor auto-start through Project Settings requires a directory inside the Unity project; a desktop Player can use an external absolute directory as configured. Unity's `Assets/StreamingAssets/...` paths map to the actual `Application.streamingAssetsPath/...` in the Player, so moving the installed game does not retain the Editor path. Missing directories fail startup without searching another location. Android's packaged-assets startup continues to require a selected directory inside StreamingAssets.
+For the default filesystem loader, relative paths start at the Unity project root in the Editor. In a desktop Player, they start at the parent of `Application.dataPath` (the executable directory on Windows). For example, `GameContent/GeneratedPacks` resolves to that same relative layout under either root. Editor auto-start through Project Settings requires a directory inside the Unity project; a desktop Player can use an external absolute directory as configured. Unity's `Assets/StreamingAssets/...` paths map to the actual `Application.streamingAssetsPath/...` in the Player, so moving the installed game does not retain the Editor path. Missing directories fail startup without searching another location.
 
-For AssetBundles or another project-owned resource system, disable auto-initialization and pass the selected publication's manifest address and a byte reader to `StartRuntime(manifestPath, readBytes)`. The integration derives that address from the same configured Pack root and its platform selection. This route keeps logical resource addresses unchanged; it does not resolve them against the filesystem or require a disk directory. The project owns packaging and resource loading, while the SDK validates and consumes the supplied Pack bytes.
+For AssetBundles or another project-owned resource system, disable Auto Start
+before `Awake` and supply a `PackSource` through `StartRuntime` or
+`StartRuntimeAsync`. Use `PackSource.FromReader` for synchronous bytes,
+`HarkenPackSource.CaptureCompanion` for TextAssets, or
+`HarkenStreamingPackSource.Create(platformRoot, language)` for packaged/HTTP
+URIs, including Android jar URIs. The reader supplies paired `.bytes` and `.json`
+files by their logical relative paths. Android's default directory auto-start
+returns `VN_CAPABILITY_UNAVAILABLE`; configure a companion source before startup
+or call `StartRuntimeAsync` explicitly. See the
+[companion source reference](Documentation~/PackApiReference.md).
 
 The repository deliberately does not track generated native binaries. Studio
 builds and SDK release artifacts inject binaries produced by the
@@ -209,16 +226,15 @@ generated-catalog guard.
 
 ## GameObject components
 
-- `HarkenAudioSystem` is the single global owner. When auto-start is enabled, it reads the GeneratedPacks directory selected under Project Settings > Harken > Project. It does not initialize from StreamingAssets/Audio/GeneratedPacks and does not fall back there. It reads HarkenPackIndex.json in the selected directory to pick the platform subdirectory, then loads the Init path from the selected manifest (`Init.bytes` in new exports). An invalid index fails startup. On a built player, that platform directory must also be named in the selected player exports. Android additionally requires the directory to be inside StreamingAssets. It
+- `HarkenAudioSystem` is the single global owner. Filesystem auto-start reads the selected companion platform directory and starts with `Init.bytes` plus `Init.json`. It does not fall back to StreamingAssets/Audio/GeneratedPacks. On a built desktop Player, the platform directory must also be included in the selected player exports. Android requires an explicit companion source while its default directory startup is suspended. The owner
   pumps `Vn_Update`, observes suspend/resume results, shuts participants down
   in dependency order, terminates the native session, then clears managed
   ownership and callback registrations at the safe completion boundary.
-  Copy the whole `GeneratedPacks/` tree, including the root index and each
-  platform folder. Android copies the index first, then that platform's
-  `HarkenPackManifest.json`.
-- `HarkenPack` loads and unloads one authored Pack by stable ID. The SDK
-  resolves the file from the platform `HarkenPackManifest.json`; the Init Pack is
-  not a file directory.
+  Keep every exported `.bytes` file together with its matching `.json` companion.
+- `HarkenPack` is hidden from Add Component, and its Load On Ready control is
+  hidden. Companion sessions disable automatic cold-ID loading. After content
+  is discovered with `Session.PrepareActions`, explicit `Load()` and `Unload()`
+  can still acquire and release a lease for that known Pack ID.
 - `HarkenListener` publishes a Unity Transform as the listener.
 - `HarkenEmitter` owns one native emitter and follows its Transform.
 - `HarkenAction` persists an exact authored `actionName` and validated `projectId`.
@@ -272,18 +288,14 @@ host has been disabled or destroyed. Custom managed hosts must pump through
 `HarkenEngine.Update()` to preserve this completion boundary. The generated
 P/Invoke layer is internal and is not a game integration entry point.
 
-Pack platforms are project instances. Set `Pack Platform Id` to the instance
-UUID from the index, or set `Pack Platform` to its exact instance name. Leave
-both empty to match the host's base platform automatically. Automatic selection
-requires exactly one candidate; two Android instances require an explicit
-selection even if one is named `Android`. `LastStartupError` reports missing or
-ambiguous selections. Code can call `ConfigurePlatformBeforeStartup(id)` on an
-inactive Runtime before activating its GameObject.
-
-File-system loading and Android extraction use the same selection and identity
-checks. The index, platform manifest, and every Pack must agree. After rebuilding,
-copy the updated index, manifest, and Pack files together. A failed or canceled
-platform build is removed from the index while its old files remain on disk.
+Companion startup uses an explicitly selected platform directory. Platform Name
+can select a direct child of the configured root; when the root is already the
+platform directory, that name must match its basename. The legacy Platform Id
+control is hidden because companions have no index inventory. If a platform ID
+was previously saved, use **Clear legacy platform selection** in **Project
+Settings > Harken > Project**. Code can override it with
+`ConfigurePlatformBeforeStartup(null, platformName)` before startup. Keep startup
+Pack IDs empty and preload Actions by name.
 
 ## Lifecycle
 
@@ -291,13 +303,16 @@ platform build is removed from the index while its old files remain on disk.
 when game resources must be prepared first. Awake still claims singleton
 ownership and applies the background/persistence settings, but leaves `State`
 at `Stopped` without reading Packs or scheduling startup. After Awake, configure
-the component and call `StartRuntime(preparedPacks)` with supplied bytes. Failed
+the component and call `StartRuntime(source)` or `StartRuntimeAsync(source)` with
+a companion `PackSource`. Failed
 requests are returned directly and never retried automatically. Repeated starts
 and duplicate components return `VN_ALREADY_INITIALIZED` without another session.
 
 Runtime initialization transitions through `Starting` to `Ready` or `Failed`.
 `Ready` means the engine session exists; use `IsPreparationComplete` before
-enabling an automatic gameplay trigger. A missing startup Content Pack leaves
+enabling an automatic gameplay trigger. Companion sessions start with Init only
+and discover Actions by name. For retained legacy startup-ID sources, a missing
+startup Content Pack leaves
 the valid session available and exposes `Session.StartupResult` and
 `Session.FailedStartupPackStableId`. After supplying the missing Content, call
 `Session.PrepareStartupPacks()` explicitly. Existing firing requests are not
@@ -316,7 +331,15 @@ own application lifecycle.
 
 ## Pack filenames and existing publications
 
-New Studio exports use `Init.bytes`, `ActionName.bytes`, and the same suffix for shared, grouped, and localized Packs. The binary format and logical Pack/Action identities are unchanged. Manifest paths and the Editor waveform companion are generated together; do not rename files or rewrite manifests after export.
+Current companion exports use `Init.bytes` with `Init.json` and
+`ActionName.bytes` with `ActionName.json`, including any selected language
+directory. Keep each pair from the same export; do not rename files or rewrite
+their metadata. No separate legacy manifest is required for companion playback.
+
+The remaining filename notes in this section describe retained legacy reader
+APIs. They do not enable the suspended Editor tools or replace current companion
+startup. Re-export old Packs with the matching Studio and update SDK/native
+libraries together when changing the Pack schema.
 
 Unity imports these files as TextAssets for the project's existing AssetBundle pipeline. Readers retain support for legacy `.pack` files and `.pack.bytes` wrappers. A manifest path ending in `.bytes` is a complete filename and never falls back to `.bytes.bytes`. Only competing files for the selected resource are ambiguous; unrelated old Init files do not block a new publication.
 
@@ -328,62 +351,44 @@ When migrating a game from `Name.pack.bytes` to `Name.bytes`, the project team m
 
 ## Unity Editor and prepared bytes
 
-`Harken.Unity.Editor` contains the Action Inspector, paired catalog discovery,
-plugin importer setup, and a separately owned Editor preview
-session. Select exact names from a valid Init/catalog pair; project changes
-require explicit binding. Refresh ends the Inspector's own preview before
-adopting another candidate. Missing names remain invalid, and a
-failed refresh clears the previous candidate.
+The Action Inspector keeps runtime, emitter, **Action Name**, **Project Id**,
+play-on-enable and stop settings available. Enter the exact authored Action name
+and the intended audio project's GUID manually. A running companion session
+exposes its validated identity as `Session.ProjectId`. Automatic name lists,
+project binding, preview and waveform controls are hidden. Direct catalog refresh,
+preview preparation and symbol generation return `VN_CAPABILITY_UNAVAILABLE`.
 
-The SDK ships stable script identities for reproducible sample imports.
-Preserve each asset's `.meta` file when moving its script or assembly definition.
+Plugin importers and Project Settings remain available. Keep each script and
+assembly definition's `.meta` file when moving assets.
 
-Preview preparation and checked Play are separate operations. Each successful
-Play has its own stop/fade handle. Preview shutdown, assembly reload, and
-Play-mode transitions end the owned Editor session. A refused initialization
-does not terminate another owner's engine. `HarkenEditorWaveforms.json` is optional
-Editor metadata generated from the exact exported manifest and Pack PCM bytes.
-`GetActionWaveform` exposes per-channel source min/max envelopes and exact source
-frame/rate duration. Its separate nullable `OneShotDurationSeconds` is available
-only for proven ordinary one-shot Actions. Source duration is never substituted
-for unknown Action duration. `GetWaveform` projects alternating merged min/max
-extrema across channels without averaging, preserving right-only and opposite-phase
-signals. Missing, stale, or malformed companions clear old waveform data while a
-valid catalog remains usable; refresh reports the independent `WaveformResult`.
-Directory refresh reads the selected manifest's sibling companion. TextAsset
-refresh accepts an explicit optional companion and does not search directories.
+`HarkenPackSource.CaptureCompanion(initJson, out source, out error, language)`
+captures the configured Init/content TextAsset references on the Unity main
+thread. Pass the resulting `PackSource` to the Runtime startup APIs. The old
+inventory and selected-manifest Inspector fields are hidden. Explicit
+`HarkenPreparedPacks` APIs remain as legacy reader contracts; they are not the
+current companion or Editor-preview setup path. Do not decode Pack bytes as text.
+Preload with `Session.PrepareActions` when synchronous cold I/O would be too late
+for a gameplay trigger, or use the asynchronous preparation/playback APIs.
 
-`HarkenPackSource` captures JSON TextAssets and original Pack `.bytes` TextAssets
-on the Unity main thread into `HarkenPreparedPacks`. Native provider calls use
-that captured managed data or an explicit synchronous `SetDemandProvider`.
-`SupplyPack` snapshots take precedence over demand bytes; demand results are not
-retained as an unbounded cache. Providers may perform cold I/O, so preload when
-latency matters. Do not decode Pack bytes as text. Assign the
-source to the Runtime or call `ConfigurePreparedBytesBeforeStartup` on an
-inactive Runtime. Explicit later `SupplyPack` and preparation can recover
-missing Content without automatically replaying a failed Action. The same
-language, platform, publication, and shared-session contracts apply to file and
-prepared-byte startup.
+`Samples~/PlayableDemo` is temporarily unavailable. Importing it does not install
+Packs, its installation/rebuild menus are hidden, and an imported scene displays
+an unavailable message instead of starting its legacy publication. See the
+[sample restoration requirements](Samples~/PlayableDemo/README.md).
 
-Startup provider exceptions return `VN_PACK_PROVIDER_FAILED` and follow normal
-startup cleanup. Missing startup Content is recoverable on both file and byte
-paths: retain the returned live session, restore the file or supply the bytes,
-then explicitly call `PrepareStartupPacks`. A missing/invalid Init or corrupt
-Content cannot be treated as a usable publication. Editor directory preview
-also uses captured prepared bytes when the selected publication contains native `.bytes` or legacy `.pack.bytes`
-assets instead of bare `.pack` files.
-
-The repository-owned `Samples~/PlayableDemo` demonstrates six exact Action
-names, explicit startup preparation, and the global `Demo_Choice` Variable.
-Its README documents importing and regenerating the sample assets.
+Maintainers must adapt catalog binding, preview, waveform and symbol generation
+to the current companion contract before restoring their capability gate. These
+workflows must not require a separate legacy manifest or a fixed schema number.
+Restore Android directory auto-start only after its packaged reader uses the
+same current companion contract. The explicit streaming source is already
+available and does not use that suspended extraction path.
 
 ## Remote communication
 
 `Edit > Project Settings > Harken` contains `Enable Communication in Builds`,
 enabled by default. It controls all packaged Players, including Development
 Builds. Clear it before building to keep communication stopped in that Player.
-Editor Play Mode and active Editor preview sessions always start communication
-with their audio session. The same native library supports communication in
+Editor Play Mode starts communication with its audio session. Editor preview
+preparation is temporarily unavailable. The same native library supports communication in
 Release builds; no Development Build or separate host process is required.
 
 The page initially creates its project-wide configuration at
@@ -460,18 +465,10 @@ cannot start another Action. Ending follow is not a Stop command: loops still
 require explicit firing Stop or runtime shutdown. Native handles and resource
 release remain owned by the SDK. Sources cannot cross runtime sessions.
 
-For Edit Mode, prepare a `HarkenEditorPreview.Scope`, call
-`scope.SetListener(camera.transform)`, create the source through
-`scope.CreateSpatialSource`, and call `scope.Play(name, source, out firing)`.
-The existing preview tick follows source and listener transforms. Only one
-scope owns the session listener; another scope receives `VN_IN_USE` until the
-owner stops/disposes and its firings and sources finish cleanup. StopAll ends
-that scope's source instances and releases its listener ownership. Before the
-next spatial playback, call `SetListener` again and check for success, then
-recreate the sources. If another scope acquired the listener, `SetListener`
-returns `VN_IN_USE`; wait for that owner to finish before explicitly trying again.
-The editor must choose an exact actor/effect instance and camera. Missing or
-invalid spatial context is refused, not replaced with source-free playback.
+Edit Mode spatial preview is temporarily unavailable: both parent and scope
+`Prepare` calls return `VN_CAPABILITY_UNAVAILABLE`. Runtime spatial playback
+remains available. The retained scope contracts are documented in the
+[Editor API reference](Documentation~/EditorApiReference.md).
 
 ## Action and Variable Calls
 
@@ -520,103 +517,22 @@ publication step. Old names are not automatically aliased to current names.
 
 ### Generate symbols and use code completion
 
-Generated symbols let game programmers select authored Actions and Variables
-from the code editor's completion list instead of typing their names as strings.
-The menu generates C# fields containing the objects' stable GUIDs; Visual Studio
-or Rider provides completion after it indexes those fields. This is optional:
-the name-based calls shown above remain available. Generating symbols does not
-export or load Packs, change Pack paths, or initialize the audio runtime.
+Symbol generation is temporarily unavailable. The **Harken > Generate SDK
+Symbols From Publication** menu is hidden; `GeneratePublication`, `Generate`
+and `ValidatePublication` return `VN_CAPABILITY_UNAVAILABLE` without reading or
+writing assets. Use authored Action and Variable names with the intended project
+ID while this workflow is suspended.
 
-1. Save and export the audio project from Studio for the intended platform.
-   Locate that export's `HarkenPackManifest.json`, for example
-   `Assets/Audio/GeneratedPacks/Windows/HarkenPackManifest.json`. Use the
-   publication that the game will load, rather than the root `HarkenPackIndex.json`
-   or the authoring project's `.hsp` file.
-2. In Unity, choose **Harken > Generate SDK Symbols From Publication** and select
-   that manifest. The success dialog confirms generation of both
-   `HarkenActions.g.cs` and `HarkenVariables.g.cs`.
-3. Locate the generated files. The generator reuses a discoverable
-   `HarkenVariables.g.cs` and writes `HarkenActions.g.cs` beside it. For the
-   standard embedded package this is normally
-   `Packages/com.harken.core/Runtime/Generated`; when no existing output is found,
-   the fallback is `Assets/Harken/Generated`. Custom Assets installations can
-   therefore retain the generated files under their actual SDK location. Make
-   the output files writable or check them out in version control before
-   generation. Existing generated content is overwritten.
-4. Wait for Unity to finish importing and compiling, then open a game C# script
-   in Visual Studio or Rider through Unity. Add `using Harken.Generated;`.
-   In a method, type `HarkenActions.` to list generated Actions, or
-   `HarkenVariables.` to list generated Variables. Filter by typing part of a name
-   and accept a completion with the editor's completion key (usually Tab or Enter).
-   For an Action named `Play_Footstep`, selecting it inserts
-   `HarkenActions.Play_Footstep`.
+Existing generated GUID fields and the corresponding runtime overloads remain
+available when they identify the loaded content. IDE completion for existing
+fields still comes from Visual Studio or Rider. It does not discover newly
+exported Actions or Variables, and a stale symbol file must not be treated as
+proof that the loaded content contains those objects.
 
-For a publication containing the Action `Play_Footstep` and Variable `Speed`,
-the completed references can be used in these wrappers. Replace those example
-symbols with names present in your publication. The runtime must already be
-initialized, the emitter valid, and the Action's required Packs prepared.
-
-```csharp
-using Harken;
-using Harken.Generated;
-
-public static class ProjectAudioCalls
-{
-    public static VnResult PostFootstep(Emitter emitter, out ActionFiring firing)
-    {
-        return Actions.Post(HarkenActions.Play_Footstep, emitter, out firing);
-    }
-
-    public static VnResult SetEmitterSpeed(Emitter emitter, float speed)
-    {
-        return Values.SetValue(HarkenVariables.Speed, speed, emitter);
-    }
-}
-```
-
-The caller checks each `VnResult`. After a successful `Actions.Post`, it owns the
-returned firing: retain it, query completion, and release it only after
-`VN_ACTION_FIRING_TERMINAL_RETAINED`, keeping the required content loaded until
-cleanup succeeds. These wrappers do not implement that lifecycle. Generated
-fields are `VnObjectId` values for the GUID overloads of `Actions.Post` and
-`Values.SetValue`; the component-level `HarkenAudioSystem.PlayAction` overloads
-continue to take an Action name and project ID.
-
-Regenerate after exporting additions, removals, or renames, and update affected
-call sites. Generation is a manual step; it does not watch Studio changes.
-Do not hand-edit the generated catalogs. Language keywords use `A_` or `V_`
-prefixes in generated symbols; names already starting with that prefix receive
-another prefix to avoid collisions. Authored names and GUIDs remain unchanged.
-A previously resolved GUID continues to identify the same object after a rename,
-while the regenerated C# field name reflects the new authored name.
-
-If completion is missing:
-
-- **The class is missing:** confirm generation succeeded and the files imported
-  without Unity Console compilation errors. Add `using Harken.Generated;` or use
-  the full name, such as `Harken.Generated.HarkenActions`. If the calling script
-  has an `.asmdef`, reference the assembly containing the generated files
-  (`Harken.Core` for SDK-local output). Keep fallback output in an assembly the
-  caller can reference.
-- **The class exists but an event or variable is missing:** open the generated
-  file and check the selected manifest. An empty or sample catalog has no entries
-  for your game. Export the correct project/platform and generate again; also
-  check whether the symbol uses the `A_` or `V_` prefix described above.
-- **Unity compiles but the editor has no suggestions:** let Visual Studio/Rider
-  finish indexing the Unity solution. If it remains stale, regenerate the IDE
-  project files from Unity's External Tools settings and reopen the solution.
-  Completion comes from the IDE's C# integration, not from a Harken background
-  connection to Studio.
-- **Duplicate definitions or unexpected entries appear:** search the Unity
-  project for both generated class names and identify which publication and
-  assembly owns each copy. Keep one intended catalog pair for this workflow;
-  remove obsolete duplicate outputs only after confirming they are unused.
-
-Editor code can call `HarkenVariableCatalogGenerator.GeneratePublication` to
-generate both symbol catalogs. `ValidatePublication` validates only the Variable
-catalog without writing assets; it is not a full publication or Action-catalog
-validator. The underlying `VariableCatalogEmitter` and `ActionCatalogEmitter`
-are internal.
+Restore generation only after the generator consumes current-schema Pack
+companions and its output has been validated against those exports. The retained
+Editor declarations and their current results are listed in the
+[Editor API reference](Documentation~/EditorApiReference.md).
 
 ## Generated ABI
 

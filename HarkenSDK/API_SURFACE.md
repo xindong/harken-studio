@@ -65,7 +65,7 @@ requirement.
 | Voice SetSend/ClearSend | Both remain public and are classified as structural compatibility exceptions. They create/replace/remove a route, unlike `SetSendLevel`; their continued presence must not be described as a fully removed structural API surface. This classification records current SDK behavior, not a claim that production projects depend on these calls. |
 | Bus topology/solo/filter and Effect/Binding/raw media mutation | Internal in the Unity managed SDK. Complete native ABI support remains for Studio, Preview, Remote and tests; the C projection is unchanged. |
 | Remote communication | Preserve optional Player settings, status, retry and host lifecycle. The direct managed bridge is internal; public host methods and the Unity integration remain usable in Players. |
-| SDK Editor services | Keep explicit Editor preview/waveform/catalog services usable by game editor integrations. They are a separate Editor assembly contract. |
+| SDK Editor services | Catalog discovery, waveform browsing, preview preparation and symbol generation are temporarily suspended until they consume current-schema Pack companions. Public declarations remain, but catalog refresh, preview preparation and generator validation/generation return `VN_CAPABILITY_UNAVAILABLE`. The Action Inspector supports manual Action name and project ID configuration. |
 | Generated types | Supported public signature dependencies and their transitive fields, callback parameters, and semantic enum vocabulary (for example device mode and Action outcomes) remain public. Tool-only Unity DTOs, including Snapshot/Monitor types, are internal. Numeric field types do not justify hiding their enum vocabulary. |
 | Helpers and probes | Full P/Invoke, generation helpers, callback pointer fields, mutable catalog/thread probes and byte-provider counters are implementation details. Existing internal consumers remain wired through precise SDK assembly access. |
 
@@ -94,7 +94,7 @@ usage sections for the available entry points and ownership rules.
 | Action Seek | `ActionFiring.Seek` returns an explicitly owned `ActionSeekTicket` with `Query`/`Release`. Native admission, asynchronous completion and capability limits are preserved. |
 | Remote communication | Public `HarkenEngine.StartRemoteCommunication`, `StopRemoteCommunication` and `QueryRemoteCommunication` wrap the internal bridge with explicit opt-in and retry semantics. |
 | Voice filter | `Voice.SetFilter` is public; the raw-handle `HarkenEngine.SetVoiceFilter` helper is internal. |
-| Variable/Action catalog generation | Public Editor service `HarkenVariableCatalogGenerator.GeneratePublication` generates both symbol catalogs. `ValidatePublication` validates only the Variable catalog without writing assets; it does not validate the complete publication or Action catalog. The underlying emitters are internal. |
+| Variable/Action catalog generation | Temporarily unavailable. The menu is hidden; `GeneratePublication`, `Generate` and `ValidatePublication` return `VN_CAPABILITY_UNAVAILABLE` before reading or writing assets. Existing GUID/name runtime calls remain available. The underlying emitters are internal. |
 | Bus topology/solo/filter, Snapshot/Monitor DTOs and raw media/effect/binding DTOs | Internal tool APIs. Public Bus volume/output volume/mute controls remain available. |
 | Callbacks and byte providers | Registrations and resource-provider APIs remain public. Callback pointer fields and pin counters are internal implementation details. |
 
@@ -108,6 +108,16 @@ internal access. Imported game samples and external consumers have no friend gra
 Repository source checks, independent consumer compilation and SDK tests verify
 this boundary. They establish which APIs are accessible and how supported calls
 behave; they do not establish compatibility with an installed production project.
+
+Temporary capability gates do not change schema or product versions. Restore
+Editor publication services only after all exposed workflows consume the current
+Pack companion contract without a separate legacy manifest or version source.
+Android's default manifest-based directory auto-start and the PlayableDemo are
+also suspended. Explicit companion sources, including
+`HarkenStreamingPackSource` with `StartRuntimeAsync`, and runtime playback by
+Action name remain supported. `HarkenPack` automatic cold-ID loading is disabled
+for companion sessions; discover content with `Session.PrepareActions` before
+using its explicit lease API.
 
 ## Check and change the surface
 

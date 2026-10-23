@@ -16,8 +16,9 @@ namespace Harken.Unity
             public TextAsset asset;
         }
 
-        [SerializeField] private TextAsset inventory;
-        [SerializeField] private TextAsset selectedManifest;
+        // Restore publication fields only after this workflow consumes current-schema companions without a legacy manifest.
+        [SerializeField, HideInInspector] private TextAsset inventory;
+        [SerializeField, HideInInspector] private TextAsset selectedManifest;
         [SerializeField] private string language = string.Empty;
         [SerializeField] private TextAsset initPack;
         [SerializeField] private ContentAsset[] content = Array.Empty<ContentAsset>();

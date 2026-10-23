@@ -7,6 +7,16 @@ using UnityEngine;
 
 namespace Harken.Unity.Editor
 {
+    internal static class HarkenEditorPublicationSupport
+    {
+        // Temporarily suspend manifest-backed tooling. Restore these entry points only after
+        // catalog, preview, waveform and symbol generation consume the current Pack companions.
+        // Keep this capability independent of schema numbers so a schema release needs no UI edits.
+        internal static bool IsAvailable => false;
+        internal const string Diagnostic =
+            "Editor publication tools are temporarily unavailable. Configure Action names and project ids manually for runtime playback.";
+    }
+
     public sealed class HarkenEditorCatalog
     {
         public GameplayPublication Publication { get; private set; }
@@ -22,6 +32,8 @@ namespace Harken.Unity.Editor
         public VnResult RefreshPlatform(string root, string platformId, string platformName,
             string basePlatform, string language = null)
         {
+            if (!HarkenEditorPublicationSupport.IsAvailable)
+                return Adopt(VnResult.VN_CAPABILITY_UNAVAILABLE, null, null, null, HarkenEditorPublicationSupport.Diagnostic);
             if (!PackManifest.TryReadPlatformDirectory(root, platformId, platformName, basePlatform,
                 language, out string directory, out string error))
                 return Adopt(VnResult.VN_INVALID_ARG, null, null, null, error);
@@ -30,6 +42,8 @@ namespace Harken.Unity.Editor
 
         public VnResult Refresh(string directory, string language = null)
         {
+            if (!HarkenEditorPublicationSupport.IsAvailable)
+                return Adopt(VnResult.VN_CAPABILITY_UNAVAILABLE, null, null, null, HarkenEditorPublicationSupport.Diagnostic);
             if (string.IsNullOrEmpty(directory))
                 return Adopt(VnResult.VN_INVALID_ARG, null, null, null, "No publication directory is selected.");
             try
@@ -107,6 +121,8 @@ namespace Harken.Unity.Editor
 
         public VnResult Refresh(HarkenPackSource source, string language, TextAsset companion)
         {
+            if (!HarkenEditorPublicationSupport.IsAvailable)
+                return Adopt(VnResult.VN_CAPABILITY_UNAVAILABLE, null, null, null, HarkenEditorPublicationSupport.Diagnostic);
             if (source == null) return Adopt(VnResult.VN_CONTENT_NOT_LOADED, null, null, null,
                 "The prepared Pack source is missing.");
             VnResult result = source.Capture(out HarkenPreparedPacks prepared, out byte[] manifest, out string error, language);
@@ -122,6 +138,8 @@ namespace Harken.Unity.Editor
 
         public VnResult Refresh(string manifestPath, Func<string, byte[]> readBytes, string language = null)
         {
+            if (!HarkenEditorPublicationSupport.IsAvailable)
+                return Adopt(VnResult.VN_CAPABILITY_UNAVAILABLE, null, null, null, HarkenEditorPublicationSupport.Diagnostic);
             VnResult result = HarkenPreparedPacks.Capture(manifestPath, readBytes,
                 out HarkenPreparedPacks prepared, out byte[] manifest, out string error, language);
             if (result != VnResult.VN_OK) return Adopt(result, null, null, null, error);

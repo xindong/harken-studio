@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.IO;
 using System.Text;
 using Harken;
@@ -33,6 +34,11 @@ namespace Harken.Test
                 WriteInit(directory, initBytes, null);
                 Assert(PackBootstrap.StartDirectory(directory, "French", ref config, out session) == VnResult.VN_BAD_PACK &&
                     session == null, "missing Init version leaves no session");
+                byte[] unsupportedInit = (byte[])initBytes.Clone();
+                for (int i = 4; i < 8; ++i) unsupportedInit[i] = 0xff;
+                WriteInit(directory, unsupportedInit, uint.MaxValue.ToString(CultureInfo.InvariantCulture));
+                Assert(PackBootstrap.StartDirectory(directory, "French", ref config, out session) == VnResult.VN_BAD_PACK &&
+                    session == null, "matching unsupported pair leaves no session");
                 WriteInit(directory, initBytes);
                 Require(PackBootstrap.StartDirectory(directory, "French", ref config, out session), "Init-only startup");
                 Assert(session.ProjectId == publication.ProjectId && session.Publication == null &&
@@ -184,24 +190,37 @@ namespace Harken.Test
         private static void VersionContract()
         {
             const string action = "\"name\":\"Play_Head\",\"guid\":\"11111111-2222-3333-4444-555555555555\"";
+            byte[] pack = { (byte)'V', (byte)'S', (byte)'P', (byte)'K', 3, 0, 0, 0 };
             foreach (bool init in new[] { true, false })
             {
                 string fields = init ? "\"variables\":[]" : action;
                 foreach (string version in new[] { "3", "3.0", "3e0", "30e-1", "0.03E+2", "300e-2", "3e-0000" })
                     Require(PackCompanion.Parse(Encoding.UTF8.GetBytes("{\"schemaVersion\":" + version + "," + fields +
-                        ",\"metadata\":false,\"waveforms\":42}"), init ? null : "Play_Head", "", default, out _),
+                        ",\"metadata\":false,\"waveforms\":42}"), pack, init ? null : "Play_Head", "", default, out _),
                         "exact companion version " + version);
                 foreach (string version in new[] { null, "999", "\"3\"", "true", "null", "[]", "{}", "3.5", "-3",
                     "0", "3.0000000000000001", "2.9999999999999999", "3e999999999999999999999", "3e-999999999999999999999" })
                 {
                     string field = version == null ? "" : "\"schemaVersion\":" + version + ",";
                     Assert(PackCompanion.Parse(Encoding.UTF8.GetBytes("{" + field + fields +
-                        ",\"schema_version\":3,\"metadata\":{\"schemaVersion\":3}}"), init ? null : "Play_Head", "", default, out _) ==
+                        ",\"schema_version\":3,\"metadata\":{\"schemaVersion\":3}}"), pack, init ? null : "Play_Head", "", default, out _) ==
                         VnResult.VN_BAD_PACK, "reject companion version " + (version ?? "missing"));
                 }
             }
             Require(PackCompanion.Parse(Encoding.UTF8.GetBytes("{\"schemaVersion\":3,\"variables\":[{\"name\":\"Choice\"," +
-                "\"guid\":\"11111111-2222-3333-4444-555555555555\",\"labels\":[]}]}"), null, "", default, out _), "empty labels");
+                "\"guid\":\"11111111-2222-3333-4444-555555555555\",\"labels\":[]}]}"), pack, null, "", default, out _), "empty labels");
+            byte[] json = Encoding.UTF8.GetBytes("{\"schemaVersion\":3,\"variables\":[]}");
+            foreach (byte[] invalid in new[] { null, Array.Empty<byte>(), new byte[7], new byte[8] })
+                Assert(PackCompanion.Parse(json, invalid, null, "", default, out _) == VnResult.VN_BAD_PACK,
+                    "missing or invalid Pack version prefix");
+            foreach (uint version in new[] { 10u, 0x01020304u, uint.MaxValue })
+            {
+                for (int i = 0; i < 4; ++i) pack[4 + i] = (byte)(version >> (i * 8));
+                json = Encoding.UTF8.GetBytes("{\"schemaVersion\":" + version.ToString(CultureInfo.InvariantCulture) +
+                    ",\"variables\":[]}");
+                Require(PackCompanion.Parse(json, pack, null, "", default, out _),
+                    "pair comparison is independent of the supported schema");
+            }
         }
 
         private static void WriteInit(string directory, byte[] bytes, string version = "3")

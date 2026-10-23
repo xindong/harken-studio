@@ -52,6 +52,7 @@ namespace Harken.Unity.Tests
         [TestCase(false)]
         public void SpatialPlaybackRendersMovementRotationDistanceAndFrozenTails(bool editorPreview)
         {
+            if (editorPreview) HarkenEditorServiceTests.RequirePublicationTooling();
             using (var fixture = new Fixture(editorPreview, "SpatialPacks"))
             {
                 // The authored attenuation profile widens near sources toward center.
@@ -104,6 +105,7 @@ namespace Harken.Unity.Tests
         [TestCase(false)]
         public void EndedSourceRetainsDeferredPlaybackThenReleasesItsEmitter(bool editorPreview)
         {
+            if (editorPreview) HarkenEditorServiceTests.RequirePublicationTooling();
             using (var fixture = new Fixture(editorPreview, "SpatialPacks"))
             {
                 fixture.Actor.position = Vector3.right * 80;
@@ -131,6 +133,7 @@ namespace Harken.Unity.Tests
         [TestCase(false)]
         public void Authored2DPlaybackIgnoresSpatialSourceMovement(bool editorPreview)
         {
+            if (editorPreview) HarkenEditorServiceTests.RequirePublicationTooling();
             Vector2 stationary = RenderAuthored2D(editorPreview, false);
             Vector2 moving = RenderAuthored2D(editorPreview, true);
             // Compare the same playback window; the authored waveform varies over time.
@@ -171,10 +174,10 @@ namespace Harken.Unity.Tests
             {
                 owner.SetActive(false);
                 string root = Path.Combine(Application.streamingAssetsPath, "Audio", publication);
-                var catalog = new HarkenEditorCatalog();
-                Assert.That(catalog.Refresh(PackManifest.ManifestFileName, path => File.ReadAllBytes(Path.Combine(root, path))),
-                    Is.EqualTo(VnResult.VN_OK), catalog.Diagnostic);
-                projectId = catalog.Publication.ProjectId;
+                Assert.That(HarkenPreparedPacks.Capture(PackManifest.ManifestFileName,
+                    path => File.ReadAllBytes(Path.Combine(root, path)), out var prepared, out _, out string error),
+                    Is.EqualTo(VnResult.VN_OK), error);
+                projectId = prepared.Publication.ProjectId;
                 if (editorPreview)
                 {
                     preview = new HarkenEditorPreview();
@@ -182,7 +185,7 @@ namespace Harken.Unity.Tests
                     scope = preview.CreateScope();
                     string[] names = publication == "SpatialPacks"
                         ? new[] { "Play_U4_A", "Play_Spatial_Delayed" } : new[] { "Play_U4_A" };
-                    Assert.That(scope.Prepare(catalog.PreparedPacks, names), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(scope.Prepare(prepared, names), Is.EqualTo(VnResult.VN_OK));
                     Assert.That(scope.SetListener(Listener), Is.EqualTo(VnResult.VN_OK));
                 }
                 else
@@ -190,11 +193,11 @@ namespace Harken.Unity.Tests
                     runtime = owner.AddComponent<HarkenAudioSystem>();
                     Set(runtime, "autoInitialize", false);
                     Set(runtime, "persistAcrossScenes", false);
-                    Assert.That(runtime.ConfigureBeforeStartup("Audio/" + publication, catalog.Publication.InitPack.Path,
+                    Assert.That(runtime.ConfigureBeforeStartup("Audio/" + publication, prepared.Publication.InitPack.Path,
                         Array.Empty<ulong>(), true, false), Is.EqualTo(VnResult.VN_OK));
                     owner.SetActive(true);
                     typeof(HarkenAudioSystem).GetMethod("Awake", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(runtime, null);
-                    Assert.That(runtime.StartRuntime(catalog.PreparedPacks), Is.EqualTo(VnResult.VN_OK), runtime.LastStartupError);
+                    Assert.That(runtime.StartRuntime(prepared), Is.EqualTo(VnResult.VN_OK), runtime.LastStartupError);
                 }
             }
 
