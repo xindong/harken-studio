@@ -2138,7 +2138,8 @@ int RunSpatial(const SpatialCase& scenario, bool smoke, bool once) {
     for (std::uint32_t repetition = 0; repetition < repetitions; ++repetition) {
         auto run = RunSpatialOnce(scenario, warmup, ticks);
         if (repetition == 0) reference = run.hash;
-        passed = passed && run.passed && run.hash == reference;
+        const bool repetitionIntegrity = run.passed && run.hash == reference;
+        passed = passed && repetitionIntegrity;
         std::printf("{\"benchmark\":\"spatial-update\",\"schema\":\"spatial-update-v1\","
             "\"mode\":\"%s\",\"repetition\":%u,\"voices\":%u,\"voices_per_emitter\":%u,"
             "\"motion\":\"%s\",\"curves\":%s,\"logic_hz\":60,\"sample_rate\":48000,"
@@ -2186,14 +2187,14 @@ int RunSpatial(const SpatialCase& scenario, bool smoke, bool once) {
             static_cast<unsigned long long>(run.snapshot.paramPublicationDeferredCount),
             run.warmupStable ? "true" : "false", run.snapshot.activeVoiceCount,
             run.warmupEvaluated ? "true" : "false",
-            !smoke && run.warmupStable && run.passed && EnvironmentQualified(environment) &&
+            !smoke && run.warmupStable && repetitionIntegrity && EnvironmentQualified(environment) &&
                 environment.sourceCommit != "unknown" && environment.sourceDirty == "0" ? "true" : "false",
             static_cast<unsigned long long>(run.snapshot.parkedVoiceCount), run.pendingPeak,
             run.residencyEvents, run.profileChanges,
             static_cast<unsigned long long>(run.setterCalls),
             static_cast<unsigned long long>(run.hash), run.peak,
             static_cast<unsigned long long>(run.nonfinite),
-            run.passed && run.hash == reference ? "true" : "false", run.failure, run.stage);
+            repetitionIntegrity ? "true" : "false", run.failure, run.stage);
         std::fflush(stdout);
         if (!run.passed) break;
     }
