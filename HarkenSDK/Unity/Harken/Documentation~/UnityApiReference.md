@@ -543,7 +543,7 @@ callbacks inside that boundary. Native destruction freezes each attached
 playback's last accepted source pose and scale; a new emitter identity starts at 1.
 
 An explicit distance reference changes only distance contributions (volume,
-low-pass filtering, width and proximity); pan and cone continue to use the actual Listener.
+low-pass and high-pass filtering, width and proximity); pan and cone continue to use the actual Listener.
 The runtime keeps one selection across same-session Listener changes and clears
 it on shutdown. New selections validate their pose before changing the choice.
 Selection and clear reject publication reentry with `VN_IN_USE`.
@@ -558,6 +558,15 @@ reference with an invalid pose rejects that spatial submission and preserves the
 previously accepted spatial state. Async Play captures the current selection
 after content preparation. Callbacks that replace the selection cannot be
 overwritten by an older publication or cleanup result.
+
+Distance high-pass filtering comes from the attenuation profile in published
+content. A disabled curve or a value of 0 Hz contributes no high-pass filtering.
+Game code consumes that content through the existing playback APIs; profile
+descriptors and curve construction remain internal tooling types. Use the SDK,
+native library and published content from a matching delivery. The managed ABI
+layout check does not detect native high-pass support. An older native library
+rejects the new attenuation descriptor with `VN_INVALID_ARG`, including when
+its high-pass curve is disabled; the SDK does not shorten it or discard the curve.
 
 For pooled Transform sources, call `EndFollow()` before reassigning the object
 and create a new source for the new identity; existing tails keep the frozen

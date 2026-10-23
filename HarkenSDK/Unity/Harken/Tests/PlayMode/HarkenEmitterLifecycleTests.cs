@@ -74,6 +74,35 @@ namespace Harken.Unity.Tests
         }
 
         [UnityTest]
+        public IEnumerator AttenuationHighpassTailReachesNativeValidation()
+        {
+            using (var f = new Fixture())
+            {
+                f.Start();
+                Assert.That(HarkenAbi.CheckLayout(), Is.Empty);
+                var id = new VnObjectId(0, 0xe30003);
+                var desc = new VnAttenuationDesc
+                {
+                    structSize = (uint)Marshal.SizeOf<VnAttenuationDesc>(),
+                    minDistance = 2,
+                    maxDistance = 102,
+                    airAbsorptionNearHz = 1.0e9f,
+                    airAbsorptionFarHz = 1.0e9f
+                };
+                Assert.That(HarkenNative.Vn_RegisterAttenuation(id, in desc), Is.EqualTo(VnResult.VN_OK));
+                desc.highpassCurve.enabled = 1;
+                desc.highpassCurve.pointCount = 1;
+                Assert.That(HarkenNative.Vn_ReplaceAttenuation(id, in desc), Is.EqualTo(VnResult.VN_OK),
+                    "An enabled single zero-Hz point must bypass the distance high-pass contribution.");
+                desc.highpassCurve.enabled = 2;
+                Assert.That(HarkenNative.Vn_ReplaceAttenuation(id, in desc), Is.EqualTo(VnResult.VN_INVALID_ARG),
+                    "The native library must read and validate the generated descriptor tail.");
+                Debug.Log($"ATTENUATION_HPF_ABI size={desc.structSize} offset={Marshal.OffsetOf<VnAttenuationDesc>(nameof(VnAttenuationDesc.highpassCurve))} zeroHz=accepted invalidEnabled=rejected");
+            }
+            yield break;
+        }
+
+        [UnityTest]
         public IEnumerator DistanceScaleRejectsInvalidAndRetiredIdentities()
         {
             using (var f = new Fixture())
