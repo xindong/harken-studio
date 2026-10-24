@@ -586,7 +586,7 @@ namespace Harken.Unity.Tests
             Vector2 reference = default;
             for (int pass = 0; pass < 2; ++pass)
             {
-                using (var f = new Fixture(companion: pass != 0))
+                using (var f = new Fixture())
                 {
                     var content = new TaskCompletionSource<byte[]>();
                     Dictionary<string, byte[]> companion = f.CompanionBytes();
@@ -1026,7 +1026,7 @@ namespace Harken.Unity.Tests
             private HarkenProjectSettingsLease lease;
             private readonly float[] samples = new float[8192];
 
-            public Fixture(bool companion = false)
+            public Fixture()
             {
                 lease = HarkenProjectSettingsLease.Acquire();
                 Owner.SetActive(false);
@@ -1044,13 +1044,12 @@ namespace Harken.Unity.Tests
                 Set(Action, "stopFadeMs", 0U);
                 var listener = Camera.AddComponent<HarkenListener>();
                 Set(listener, "runtime", Runtime);
-                Assert.That(GameplayPublication.Read(root, null, out GameplayPublication publication, out string error), Is.EqualTo(VnResult.VN_OK), error);
-                Assert.That(publication.TryFindAction("Play_U4_A", out GameplayAction selected), Is.True);
+                Assert.That(CompanionTestPublication.Read(root, null, out CompanionTestPublication publication, out string error), Is.EqualTo(VnResult.VN_OK), error);
+                Assert.That(publication.TryFindAction("Play_U4_A", out CompanionTestAction selected), Is.True);
                 Set(Action, "actionName", selected.Name);
                 Set(Action, "projectId", publication.ProjectId);
-                Assert.That(Runtime.ConfigureBeforeStartup("Audio/SpatialPacks", publication.InitPack.Path,
-                    companion ? Array.Empty<ulong>() : new[] { selected.OwnerPackStableId }, true, false), Is.EqualTo(VnResult.VN_OK));
-                if (companion) Assert.That(Runtime.ConfigurePlatformBeforeStartup(null), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(Runtime.ConfigureBeforeStartup("Audio/SpatialPacks", publication.InitPack.Path, Array.Empty<ulong>(), true, false), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(Runtime.ConfigurePlatformBeforeStartup(null), Is.EqualTo(VnResult.VN_OK));
                 Owner.SetActive(true);
             }
 
@@ -1063,10 +1062,10 @@ namespace Harken.Unity.Tests
                     reader.BaseStream.Position = 4;
                     version = reader.ReadUInt32().ToString(CultureInfo.InvariantCulture);
                 }
-                Assert.That(GameplayPublication.Read(root, null, out GameplayPublication publication, out string error),
+                Assert.That(CompanionTestPublication.Read(root, null, out CompanionTestPublication publication, out string error),
                     Is.EqualTo(VnResult.VN_OK), error);
-                Assert.That(publication.TryFindAction(Action.ActionName, out GameplayAction action), Is.True);
-                Assert.That(publication.TryFindPack(action.OwnerPackStableId, out PackManifestEntry pack), Is.True);
+                Assert.That(publication.TryFindAction(Action.ActionName, out CompanionTestAction action), Is.True);
+                Assert.That(publication.TryFindPack(action.OwnerPackStableId, out CompanionTestPack pack), Is.True);
                 return new Dictionary<string, byte[]>
                 {
                     ["Init.bytes"] = init,

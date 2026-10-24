@@ -706,17 +706,30 @@ class ReleaseEvidenceTest(unittest.TestCase):
         for item in record["notices"]:
             self.assertEqual(item["sha256"], evidence.sha256(output.parent / item["path"]))
 
+    def test_sdk_payload_version_must_match_the_source_checkout(self):
+        for root, version in ((self.repo, "2.3.4"), (self.payload, "2.3.5")):
+            plugin = root / "HarkenSDK/Unity/Harken"
+            plugin.mkdir(parents=True)
+            (plugin / "LICENSE.md").write_text("license\n", encoding="utf-8")
+            (plugin / "NOTICE.md").write_text("notice\n", encoding="utf-8")
+            evidence.write_json(plugin / "package.json", {"version": version})
+        evidence.write_json(self.root / "runtime/runtime-build.json", {
+            "identity": self.identity,
+            "sourceState": {"configuredDirty": False, "checkoutDirty": False}})
+        with mock.patch.object(evidence.collect_legal_texts, "REPO_ROOT", self.repo):
+            with self.assertRaisesRegex(ValueError, "SDK version differs from the source checkout"):
+                evidence.prepare_sdk(self.payload, self.root / "runtime", self.output)
+
     def test_sdk_retains_dirty_runtime_receipts_and_notices(self):
         sdk_source = self.repo / "HarkenSDK"
         sdk = self.payload / "HarkenSDK"
         for root in (sdk_source, sdk):
             root.mkdir(parents=True)
-            (root / "VERSION").write_text("1.0.0\n", encoding="utf-8")
             plugin = root / "Unity/Harken"
             plugin.mkdir(parents=True)
             (plugin / "LICENSE.md").write_text("license\n", encoding="utf-8")
             (plugin / "NOTICE.md").write_text("notice\n", encoding="utf-8")
-            evidence.write_json(plugin / "package.json", {"version": "1.0.0"})
+            evidence.write_json(plugin / "package.json", {"version": "2.3.4"})
         binaries = [sdk / "Unity/Harken/Runtime/Plugins/Windows/HarkenCore.dll"]
         for binary in binaries:
             binary.parent.mkdir(parents=True)
@@ -750,10 +763,11 @@ class ReleaseEvidenceTest(unittest.TestCase):
         sums = dict(line.split("  ", 1)[::-1] for line in (self.payload / "SHA256SUMS.txt").read_text().splitlines())
         for binary in binaries:
             self.assertEqual(sums[binary.relative_to(self.payload).as_posix()], evidence.sha256(binary))
-        self.assertNotIn("HarkenSDK/VERSION", sums)
+        self.assertNotIn("HarkenSDK/Unity/Harken/package.json", sums)
         evidence.finalize(directory, [], self.payload)
         package_receipt = evidence.read_json(directory / "receipt.json")
         self.assertEqual(package_receipt["identity"]["gitCommit"], commit)
+        self.assertEqual(package_receipt["identity"]["version"], "2.3.4")
         self.assertTrue(package_receipt["identity"]["gitDirty"])
         self.assertTrue(package_receipt["sourceState"]["runtimeDirty"])
         self.assertEqual(package_receipt["checks"]["cleanMatchingSource"], "dirty")

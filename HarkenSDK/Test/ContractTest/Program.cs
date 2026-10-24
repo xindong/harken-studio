@@ -23,7 +23,6 @@ namespace Harken.Test
     {
         private static int Main(string[] args)
         {
-            if (args.Length == 1 && args[0] == "--waveform-only") return EditorWaveformContract.Run() ? 0 : 1;
             if (args.Length == 1 && (args[0] == "--attenuation-only" || args[0] == "--attenuation-old-native"))
             {
                 if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("HARKEN_NATIVE_DIR")))
@@ -56,10 +55,7 @@ namespace Harken.Test
             bool requireNative = false;
             string currentWorldPath = null;
             string packRoot = null;
-            string platformRoot = null;
-            string languageRoot = null;
-            string gameplayRoot = null;
-            string renamedGameplayRoot = null;
+            string companionRoot = null;
             for (int i = 0; i < args.Length; i++)
             {
                 string arg = args[i];
@@ -78,32 +74,18 @@ namespace Harken.Test
                     packRoot = args[++i];
                     continue;
                 }
-                if (arg == "--platform-root" && i + 1 < args.Length)
+                if (arg == "--companion-root" && i + 1 < args.Length)
                 {
-                    platformRoot = args[++i];
-                    continue;
-                }
-                if (arg == "--language-root" && i + 1 < args.Length)
-                {
-                    languageRoot = args[++i];
-                    continue;
-                }
-                if (arg == "--gameplay-root" && i + 1 < args.Length)
-                {
-                    gameplayRoot = args[++i];
-                    continue;
-                }
-                if (arg == "--renamed-gameplay-root" && i + 1 < args.Length)
-                {
-                    renamedGameplayRoot = args[++i];
+                    companionRoot = args[++i];
                     continue;
                 }
                 Console.Error.WriteLine("Unknown argument: " + arg);
-                Console.Error.WriteLine("Usage: dotnet run --project HarkenSDK/Test/ContractTest -- [--require-native] [--current-world path] [--pack-root path] [--platform-root path] [--language-root path] [--gameplay-root path --renamed-gameplay-root path]");
+                Console.Error.WriteLine("Usage: dotnet run --project HarkenSDK/Test/ContractTest -- [--require-native] [--current-world path] [--pack-root path] [--companion-root path]");
                 return 2;
             }
 
             InstallNativeResolver(requireNative);
+            if (companionRoot != null) return RepositoryPublicationContract.Run(companionRoot) ? 0 : 1;
 
             Console.WriteLine("== Harken C# binding gates ==");
             Console.WriteLine("Native mode : " + (requireNative ? "REQUIRED" : "OPTIONAL"));
@@ -111,16 +93,8 @@ namespace Harken.Test
             bool variableSdkOk = VariableSdkContract.Run();
             bool coordinatesOk = RunCoordinateConversions();
             bool bootstrapOk = RunPackBootstrapContract();
-            bool manifestOk = RunPackManifestContract();
-            bool waveformOk = EditorWaveformContract.Run();
-            Console.WriteLine("[PackSidecar] schema_version " + PackManifest.SchemaVersion);
-            int namePost = RunNamePostAndProvider(languageRoot);
+            int namePost = RunNamePostAndProvider();
             int nativeBootstrap = RunNativePackBootstrap(packRoot);
-            bool platformNativeOk = platformRoot == null || PackPlatformContract.RunNative(platformRoot);
-            bool languageNativeOk = languageRoot == null || PackPlatformContract.RunLanguageNative(languageRoot);
-            bool gameplayRequested = gameplayRoot != null || renamedGameplayRoot != null;
-            bool gameplayOk = !gameplayRequested ||
-                GameplayPublicationContract.Run(gameplayRoot, renamedGameplayRoot, languageRoot);
             int zeroGc = RunZeroGc(currentWorldPath);   // 0 PASS, 1 FAIL, 2 SKIP
             int remoteNative = RemoteCommunicationContract.RunNative();
             bool repositoryNativeOk = !requireNative || RepositoryPublicationContract.Run();
@@ -131,21 +105,14 @@ namespace Harken.Test
             Console.WriteLine("ABI fidelity : " + (abiOk ? "PASS" : "FAIL"));
             Console.WriteLine("Coordinates  : " + (coordinatesOk ? "PASS" : "FAIL"));
             Console.WriteLine("Pack bootstrap: " + (bootstrapOk ? "PASS" : "FAIL"));
-            Console.WriteLine("Pack sidecars : " + (manifestOk ? "PASS" : "FAIL"));
             Console.WriteLine("Name post     : " +
                 (namePost == 0 ? "PASS" : namePost == 2 ? "SKIP" : "FAIL"));
             Console.WriteLine("Pack native   : " +
                 (nativeBootstrap == 0 ? "PASS" :
                  nativeBootstrap == 2 ? "SKIP" :
                  nativeBootstrap == 3 ? "NOT REQUESTED" : "FAIL"));
-            Console.WriteLine("Platform native: " +
-                (platformRoot == null ? "NOT REQUESTED" : platformNativeOk ? "PASS" : "FAIL"));
-            Console.WriteLine("Language native: " +
-                (languageRoot == null ? "NOT REQUESTED" : languageNativeOk ? "PASS" : "FAIL"));
             Console.WriteLine("Zero-GC hot  : " + (zeroGc == 0 ? "PASS" : zeroGc == 2 ? "SKIP" : "FAIL"));
             Console.WriteLine("Remote native: " + (remoteNative == 0 ? "PASS" : remoteNative == 2 ? "SKIP" : "FAIL"));
-            Console.WriteLine("Gameplay publication: " +
-                (!gameplayRequested ? "NOT REQUESTED" : gameplayOk ? "PASS" : "FAIL"));
             if (requireNative)
             {
                 Console.WriteLine("Repository publications: " + (repositoryNativeOk ? "PASS" : "FAIL"));
@@ -157,7 +124,7 @@ namespace Harken.Test
                 }
             }
 
-            bool ok = companionNativeOk && repositoryNativeOk && waveformOk && variableSdkOk && abiOk && coordinatesOk && bootstrapOk && manifestOk && platformNativeOk && languageNativeOk && gameplayOk &&
+            bool ok = companionNativeOk && repositoryNativeOk && variableSdkOk && abiOk && coordinatesOk && bootstrapOk &&
                 (nativeBootstrap == 0 || nativeBootstrap == 3 ||
                  (!requireNative && nativeBootstrap == 2)) &&
                 (namePost == 0 || (!requireNative && namePost == 2)) &&
@@ -276,7 +243,7 @@ namespace Harken.Test
             }
         }
 
-        static int RunNamePostAndProvider(string languageRoot)
+        static int RunNamePostAndProvider()
         {
             try
             {
@@ -380,49 +347,6 @@ namespace Harken.Test
                         " releases=" + PackByteProvider.LastReleaseCalls +
                         " pins=" + PackByteProvider.OutstandingPinCount + ".");
                     ok = false;
-                }
-
-                if (languageRoot != null)
-                {
-                    if (!PackManifest.TryLoadManifest(languageRoot, "English", out _, out var entries))
-                        return 1;
-                    if (!PackManifest.TryReadManifest(languageRoot, "English", out _,
-                            out _, out _, out ulong initId)) return 1;
-                    Array.Sort(entries, (left, right) => left.PackStableId == right.PackStableId ? 0 :
-                        left.PackStableId == initId ? -1 : right.PackStableId == initId ? 1 :
-                        left.PackStableId.CompareTo(right.PackStableId));
-                    var members = new CanonicalPackMember[entries.Length];
-                    for (int i = 0; i < entries.Length; ++i)
-                    {
-                        var entry = entries[i];
-                        byte[] payload = File.ReadAllBytes(Path.Combine(languageRoot, entry.Path));
-                        members[i] = new CanonicalPackMember(entry.PackStableId, i == 0 ? 2u : 3u,
-                            provider: ValidProvider, providerState: payload);
-                    }
-                    int providesBefore = PackByteProvider.LastProvideCalls;
-                    int releasesBefore = PackByteProvider.LastReleaseCalls;
-                    result = Packs.ActivateCanonicalPackSet(members, 1, out var report, out var rows);
-                    bool providerOk = result == VnResult.VN_OK && rows.Length == members.Length &&
-                        rows.Length > 0 && entries[0].PackStableId == initId &&
-                        Array.TrueForAll(rows, row => row.handle != 0) &&
-                        PackByteProvider.LastProvideCalls - providesBefore == members.Length &&
-                        PackByteProvider.LastReleaseCalls - releasesBefore == members.Length &&
-                        PackByteProvider.OutstandingPinCount == 0;
-                    ok &= providerOk;
-                    Console.WriteLine("[NamePost] exported provider set: " + result +
-                        " " + (providerOk ? "PASS" : "FAIL"));
-                    if (!providerOk) return 1;
-                    result = Packs.UnloadCanonicalPackSet(new Pack(rows[0].handle),
-                        report.resultSetRevision, report.resultSetRevision + 1);
-                    if (result != VnResult.VN_OK) return 1;
-                    var spoken = Array.Find(entries, entry => entry.Name == "Spoken");
-                    result = Harken.Samples.NameFirstPost.LoadAndPost(
-                        Path.Combine(languageRoot, entries[0].Path), languageRoot,
-                        spoken.PackStableId, "Spoken", out firing);
-                    bool sampleOk = result == VnResult.VN_OK && firing.IsValid;
-                    ok &= sampleOk;
-                    Console.WriteLine("[NamePost] explicit activation sample: " + result +
-                        " " + (sampleOk ? "PASS" : "FAIL"));
                 }
 
                 Console.WriteLine(
@@ -570,8 +494,6 @@ namespace Harken.Test
             return ok;
         }
 
-        private static bool RunPackManifestContract() => PackPlatformContract.Run();
-
         private static int RunNativePackBootstrap(string packRoot)
         {
             if (string.IsNullOrEmpty(packRoot))
@@ -589,82 +511,57 @@ namespace Harken.Test
                 return 1;
             }
 
-            string sidecarRoot = Path.GetFullPath(Path.Combine(
-                ".temp", "sdk-pack-native-" + Guid.NewGuid().ToString("N")));
+            bool initialized = false;
             try
             {
-                string platformRoot = Path.Combine(sidecarRoot, "Windows");
-                Directory.CreateDirectory(platformRoot);
-                File.Copy(initPath, Path.Combine(platformRoot, "Init.pack"));
-                File.Copy(Path.Combine(fullRoot, "Content.pack"),
-                    Path.Combine(platformRoot, "Content.pack"));
-                File.WriteAllText(Path.Combine(sidecarRoot, PackManifest.IndexFileName),
-                    PackPlatformContract.Index(PackPlatformContract.Windows));
-                File.WriteAllText(Path.Combine(platformRoot, PackManifest.ManifestFileName),
-                    PackPlatformContract.Manifest(PackPlatformContract.Windows,
-                        File.ReadAllBytes(Path.Combine(platformRoot, "Init.pack")),
-                        File.ReadAllBytes(Path.Combine(platformRoot, "Content.pack"))));
-                if (!PackManifest.TryResolvePlatformDirectory(sidecarRoot, "Windows", out fullRoot) ||
-                    !PackManifest.TryResolvePackPath(fullRoot, 11, out initPath))
-                {
-                    Console.WriteLine("[PackNative] FAIL: Pack sidecar resolution failed.");
-                    return 1;
-                }
+                VnResult result = Packs.InspectInitPack(initPath, out InitPackInspection inspection);
+                if (result != VnResult.VN_OK) return 1;
                 VnConfig config = HarkenEngine.DefaultConfig();
                 config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
                 config.maxPacks = 4;
                 config.maxActions = 64;
                 config.maxResidentDefinitionBytes = 32UL << 20;
-                VnResult result = PackBootstrap.Start(
-                    initPath, fullRoot, new[] { 22UL }, ref config,
-                    out PackBootstrapSession session);
-                if (result != VnResult.VN_OK || session == null)
-                {
-                    Console.WriteLine(
-                        "[PackNative] FAIL: PackBootstrap.Start returned " +
-                        result + ".");
-                    return 1;
-                }
-
-                using (session)
-                {
-                    bool ok = session.IsActive && session.InitPack.IsValid &&
-                        session.StartupPacks.Length == 1 &&
-                        session.StartupPacks[0].IsValid &&
-                        session.Inspection.CatalogEntries == 1000;
-                    result = Actions.Post(
-                        new VnObjectId(0x3da91a64b9474560UL, 0xAC710100UL), Emitter.None, out ActionFiring firing);
-                    ok &= result == VnResult.VN_OK && firing.IsValid;
-                    result = Actions.Post(
-                        new VnObjectId(0x3da91a64b9474560UL, 0xAC710140UL), Emitter.None, out _);
-                    ok &= result == VnResult.VN_CONTENT_NOT_LOADED;
-                    result = session.Shutdown();
-                    ok &= result == VnResult.VN_OK && !session.IsActive;
-                    Console.WriteLine(
-                        ok
-                            ? "[PackNative] shared Init/content fixture PASS."
-                            : "[PackNative] shared Init/content fixture FAIL.");
-                    return ok ? 0 : 1;
-                }
+                if (PackBootstrap.ApplyRecommendations(ref config, inspection, 1) != VnResult.VN_OK ||
+                    HarkenEngine.Init(config) != VnResult.VN_OK) return 1;
+                initialized = true;
+                var members = new[] {
+                    new CanonicalPackMember(inspection.PackStableId, 2, provider: ValidProvider,
+                        providerState: File.ReadAllBytes(initPath)),
+                    new CanonicalPackMember(22, 3, provider: ValidProvider,
+                        providerState: File.ReadAllBytes(Path.Combine(fullRoot, "Content.pack")))
+                };
+                int provides = PackByteProvider.LastProvideCalls;
+                int releases = PackByteProvider.LastReleaseCalls;
+                result = Packs.ActivateCanonicalPackSet(members, 1, out var report, out var rows);
+                bool ok = result == VnResult.VN_OK && inspection.CatalogEntries == 1000 &&
+                    rows.Length == 2 && Array.TrueForAll(rows, row => row.handle != 0) &&
+                    PackByteProvider.LastProvideCalls - provides == 2 &&
+                    PackByteProvider.LastReleaseCalls - releases == 2 && PackByteProvider.OutstandingPinCount == 0;
+                if (!ok) return 1;
+                result = Actions.Post(new VnObjectId(0x3da91a64b9474560UL, 0xAC710100UL),
+                    Emitter.None, out ActionFiring firing);
+                ok &= result == VnResult.VN_OK && firing.IsValid;
+                ok &= Actions.Post(new VnObjectId(0x3da91a64b9474560UL, 0xAC710140UL),
+                    Emitter.None, out _) == VnResult.VN_CONTENT_NOT_LOADED;
+                ok &= Packs.UnloadCanonicalPackSet(new Pack(report.initHandle),
+                    report.resultSetRevision, report.resultSetRevision + 1) == VnResult.VN_OK;
+                Console.WriteLine(ok ? "[PackNative] shared Init/content fixture PASS."
+                    : "[PackNative] shared Init/content fixture FAIL.");
+                return ok ? 0 : 1;
             }
             catch (DllNotFoundException)
             {
-                Console.WriteLine(
-                    "[PackNative] SKIP: native 'HarkenCore' library not found.");
+                Console.WriteLine("[PackNative] SKIP: native 'HarkenCore' library not found.");
                 return 2;
             }
             catch (BadImageFormatException)
             {
-                Console.WriteLine(
-                    "[PackNative] SKIP: native library architecture mismatch.");
+                Console.WriteLine("[PackNative] SKIP: native library architecture mismatch.");
                 return 2;
             }
             finally
             {
-                if (Directory.Exists(sidecarRoot))
-                {
-                    Directory.Delete(sidecarRoot, true);
-                }
+                if (initialized) HarkenEngine.Term();
             }
         }
 

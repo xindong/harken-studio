@@ -33,8 +33,6 @@ namespace Harken
             {
                 return VnResult.VN_BAD_PACK;
             }
-            if (root.TryGetValue("variableCatalog", out object nested) && nested is Dictionary<string, object> catalog)
-                root = catalog;
             if (!TryReadVariables(root, out List<Variable> variables, out error))
                 return VnResult.VN_BAD_PACK;
             HashCatalog(variables, out ulong execution, out ulong sdk);
@@ -100,13 +98,8 @@ namespace Harken
         private static bool TryReadVariables(Dictionary<string, object> root, out List<Variable> variables, out string error)
         {
             variables = new List<Variable>();
-            error = "variableCatalog.variables is missing or invalid.";
-            if (!root.TryGetValue("variables", out object raw))
-            {
-                error = null;
-                return true;
-            }
-            if (!(raw is List<object> rows)) return false;
+            error = "variables is missing or invalid.";
+            if (!root.TryGetValue("variables", out object raw) || !(raw is List<object> rows)) return false;
             var seenIds = new HashSet<VnObjectId>();
             var seenNames = new HashSet<string>(StringComparer.Ordinal);
             foreach (object row in rows)

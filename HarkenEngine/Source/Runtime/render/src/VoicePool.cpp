@@ -247,8 +247,8 @@ VoicePool::~VoicePool() {
     assert(m_liveOriginalVoiceOwners.load(std::memory_order_relaxed) == 0 &&
         "original physical owners must retire before the pool");
     for (const auto& slot : m_slots) {
-        assert(!slot.originalCallbackStorageReader.load(std::memory_order_relaxed));
-        assert((slot.originalBodyLifetime.load(std::memory_order_relaxed) & kOriginalBodyPinMask) == 0);
+        assert((slot.originalBodyLifetime.load(std::memory_order_relaxed) &
+            (kOriginalBodyPinMask | kOriginalBodyCallbackReader)) == 0);
         assert(!slot.pendingOriginalSource.Valid() && !slot.installedOriginalSource.Valid());
     }
 }
@@ -604,10 +604,9 @@ bool VoicePool::CaptureStreamRingToken(
 
 bool VoicePool::CanClaimSlot(const Slot& slot) noexcept {
     if (slot.state.load(std::memory_order_acquire) != SlotState::Free ||
-        slot.originalCallbackStorageReader.load(std::memory_order_acquire) ||
         slot.releaseSequence.load(std::memory_order_acquire) == UINT64_MAX) return false;
     const auto lifetime = slot.originalBodyLifetime.load(std::memory_order_acquire);
-    return (lifetime & kOriginalBodyPinMask) == 0 &&
+    return (lifetime & (kOriginalBodyPinMask | kOriginalBodyCallbackReader)) == 0 &&
         (slot.originalBodyMarker == 0 || (lifetime & kOriginalBodyLoanReturned) != 0);
 }
 
@@ -1242,7 +1241,7 @@ bool VoicePool::CancelTimelineBindingFromAudio(
     const auto& lease = m_originalCallbackStorage[renderSlot];
     if (!m_originalSourceCallbackOpen ||
         slot.generation.load(std::memory_order_acquire) != renderGeneration ||
-        !slot.originalCallbackStorageReader.load(std::memory_order_acquire) ||
+        (slot.originalBodyLifetime.load(std::memory_order_acquire) & kOriginalBodyCallbackReader) == 0 ||
         !lease.storageHeld || !lease.actor.Valid() || lease.bodyMarker == 0 ||
         lease.bodyMarker != slot.originalBodyMarker ||
         !OriginalSourceSubmissionRegistry::SameToken(lease.arm, slot.originalBodyArm) ||
@@ -1494,8 +1493,8 @@ bool VoicePool::CanReturnUnpublishedOriginalSourceBodyStorage(const OriginalSour
     const auto& slot = m_slots[body.slot_];
     const auto lifetime = slot.originalBodyLifetime.load(std::memory_order_acquire);
     if ((lifetime & kOriginalBodyPinMask) != 1u || (lifetime & kOriginalBodyDisposed) == 0 ||
-        (lifetime & (kOriginalBodyLoanReturned | kOriginalBodyReturnClaimed)) != 0 ||
-        slot.originalCallbackStorageReader.load(std::memory_order_acquire) ||
+        (lifetime & (kOriginalBodyLoanReturned | kOriginalBodyReturnClaimed |
+            kOriginalBodyCallbackReader)) != 0 ||
         !slot.pendingOriginalSource.Valid() || slot.installedOriginalSource.Valid()) return false;
     *installation = &slot.pendingOriginalSource;
     return true;
@@ -1509,8 +1508,8 @@ bool VoicePool::CanReturnPublishedOriginalSourceBodyStorage(const OriginalVoiceO
     const auto& slot = m_slots[body.slot_];
     const auto lifetime = slot.originalBodyLifetime.load(std::memory_order_acquire);
     if ((lifetime & kOriginalBodyPinMask) == 0 || (lifetime & kOriginalBodyDisposed) == 0 ||
-        (lifetime & (kOriginalBodyLoanReturned | kOriginalBodyReturnClaimed)) != 0 ||
-        slot.originalCallbackStorageReader.load(std::memory_order_acquire) ||
+        (lifetime & (kOriginalBodyLoanReturned | kOriginalBodyReturnClaimed |
+            kOriginalBodyCallbackReader)) != 0 ||
         slot.pendingOriginalSource.Valid() == slot.installedOriginalSource.Valid()) return false;
     // Cancellation before installation keeps the pending association.
     // Extra storage loans retain their own episode after this holder returns.
@@ -1526,7 +1525,7 @@ bool VoicePool::ConsumeOriginalSourceBodyRetirement(Slot& slot, std::uint64_t bl
     const auto index = static_cast<std::size_t>(&slot - m_slots.data());
     const auto& lease = m_originalCallbackStorage[index];
     if (!lease.storageHeld || !lease.actor.Valid() || lease.bodyMarker != marker ||
-        !slot.originalCallbackStorageReader.load(std::memory_order_acquire) ||
+        (slot.originalBodyLifetime.load(std::memory_order_acquire) & kOriginalBodyCallbackReader) == 0 ||
         !OriginalSourceSubmissionRegistry::SameToken(lease.arm, slot.originalBodyArm) ||
         !slot.installedOriginalSource.Valid()) return false;
     return slot.installedOriginalSource.owner_->RetireRequestedInstalledSource(
@@ -1557,7 +1556,8 @@ void VoicePool::ReleaseOriginalSourceBody(OriginalSourceBodyLifetimePin& origina
     auto& slot = m_slots[original.slot_];
     const auto previous = slot.originalBodyLifetime.fetch_sub(1u, std::memory_order_acq_rel);
     assert((previous & kOriginalBodyPinMask) != 0 && (previous & kOriginalBodyLoanReturned) == 0);
-    if ((previous & kOriginalBodyPinMask) == 1u && (previous & kOriginalBodyDisposed) != 0)
+    if ((previous & kOriginalBodyPinMask) == 1u &&
+        (previous & (kOriginalBodyDisposed | kOriginalBodyCallbackReader)) == kOriginalBodyDisposed)
         ReturnOriginalSourceInstallation(slot);
     original.pool_ = nullptr;
     original.slot_ = UINT32_MAX;
@@ -1587,10 +1587,11 @@ void VoicePool::AcquireOriginalCallbackStorage(Slot& slot,
     }
     const auto index = static_cast<std::size_t>(&slot - m_slots.data());
     auto& lease = m_originalCallbackStorage[index];
-    assert(!lease.storageHeld && !slot.originalCallbackStorageReader.load(std::memory_order_acquire));
+    assert(!lease.storageHeld &&
+        (slot.originalBodyLifetime.load(std::memory_order_acquire) & kOriginalBodyCallbackReader) == 0);
     assert(slot.installedOriginalSource.Valid() &&
         (slot.originalBodyLifetime.load(std::memory_order_acquire) & kOriginalBodyDisposed) == 0);
-    slot.originalCallbackStorageReader.store(true, std::memory_order_release);
+    slot.originalBodyLifetime.fetch_or(kOriginalBodyCallbackReader, std::memory_order_acq_rel);
     lease.bodyMarker = slot.originalBodyMarker;
     lease.arm = slot.originalBodyArm;
     lease.storageHeld = true;
@@ -1605,7 +1606,8 @@ void VoicePool::AcquireOriginalCallbackStorage(Slot& slot,
 
 void VoicePool::ReturnOriginalCallbackStorage(Slot& slot,
     OriginalCallbackStorageLease& lease) noexcept {
-    assert(lease.storageHeld && slot.originalCallbackStorageReader.load(std::memory_order_acquire));
+    assert(lease.storageHeld &&
+        (slot.originalBodyLifetime.load(std::memory_order_acquire) & kOriginalBodyCallbackReader) != 0);
     // Clear the reusable holder before any last native Return can publish reuse.
     auto actor = std::move(lease.actor);
     lease.arm = {};
@@ -1617,16 +1619,21 @@ void VoicePool::ReturnOriginalCallbackStorage(Slot& slot,
     (void)slot.state.compare_exchange_strong(expected, SlotState::Rendering,
         std::memory_order_acq_rel, std::memory_order_acquire);
     actor.Release();
-    slot.originalCallbackStorageReader.store(false, std::memory_order_release);
-    ReturnOriginalSourceInstallation(slot);
+    // Body returns and callback exit share one modification order, so the last
+    // user observes all preceding exits before claiming the installation.
+    const auto previous = slot.originalBodyLifetime.fetch_and(~kOriginalBodyCallbackReader,
+        std::memory_order_acq_rel);
+    assert((previous & kOriginalBodyCallbackReader) != 0);
+    if ((previous & (kOriginalBodyDisposed | kOriginalBodyPinMask)) == kOriginalBodyDisposed)
+        ReturnOriginalSourceInstallation(slot);
     // No Slot or Source payload access follows the final installation Return.
 }
 
 void VoicePool::ReturnOriginalSourceInstallation(Slot& slot) noexcept {
-    if (slot.originalCallbackStorageReader.load(std::memory_order_acquire)) return;
     auto lifetime = slot.originalBodyLifetime.load(std::memory_order_acquire);
     for (;;) {
-        if ((lifetime & kOriginalBodyDisposed) == 0 || (lifetime & kOriginalBodyPinMask) != 0 ||
+        if ((lifetime & kOriginalBodyDisposed) == 0 ||
+            (lifetime & (kOriginalBodyPinMask | kOriginalBodyCallbackReader)) != 0 ||
             (lifetime & (kOriginalBodyReturnClaimed | kOriginalBodyLoanReturned)) != 0) return;
         if (slot.originalBodyLifetime.compare_exchange_weak(lifetime,
                 lifetime | kOriginalBodyReturnClaimed, std::memory_order_acq_rel,
@@ -1644,13 +1651,12 @@ void VoicePool::CompleteOriginalSourceBodyDisposition(Slot& slot) noexcept {
     slot.originalBodyInstallationCompleted.store(false, std::memory_order_release);
     const auto previous = slot.originalBodyLifetime.fetch_or(kOriginalBodyDisposed,
         std::memory_order_acq_rel);
-    if ((previous & (kOriginalBodyDisposed | kOriginalBodyPinMask)) == 0)
+    if ((previous & (kOriginalBodyDisposed | kOriginalBodyPinMask | kOriginalBodyCallbackReader)) == 0)
         ReturnOriginalSourceInstallation(slot);
 }
 void VoicePool::ResetOriginalSourceBodyForReuse(Slot& slot) noexcept {
     const auto lifetime = slot.originalBodyLifetime.load(std::memory_order_acquire);
-    assert(!slot.originalCallbackStorageReader.load(std::memory_order_acquire) &&
-        (lifetime & kOriginalBodyPinMask) == 0 &&
+    assert((lifetime & (kOriginalBodyPinMask | kOriginalBodyCallbackReader)) == 0 &&
         (slot.originalBodyMarker == 0 || (lifetime & kOriginalBodyLoanReturned) != 0) &&
         !slot.pendingOriginalSource.Valid() && !slot.installedOriginalSource.Valid());
     slot.originalBodyMarker = 0;
@@ -1801,7 +1807,8 @@ void VoicePool::FinishSourceCommandInstallation(SourceCommandInstallProof& proof
         if (proof.pool_->m_originalSourceCallbackOpen)
             proof.pool_->AcquireOriginalCallbackStorage(*proof.slot_, &proof);
     }
-    const auto installedState = proof.slot_->originalCallbackStorageReader.load(std::memory_order_acquire)
+    const auto installedState =
+        (proof.slot_->originalBodyLifetime.load(std::memory_order_acquire) & kOriginalBodyCallbackReader) != 0
         ? SlotState::OriginalCallbackHeld : SlotState::Rendering;
     proof.slot_->state.store(installedState, std::memory_order_release);
     proof.originalBodyMarker_ = 0;

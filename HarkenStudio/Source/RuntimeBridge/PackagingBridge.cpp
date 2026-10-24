@@ -570,8 +570,6 @@ QString findPackcExecutable()
 } // namespace
 
 QString packArtifactExtension() { return QStringLiteral(".bytes"); }
-QString packManifestFileName() { return QStringLiteral("HarkenPackManifest.json"); }
-QString packIndexFileName() { return QStringLiteral("HarkenPackIndex.json"); }
 QString packVorbisCodecName() { return QStringLiteral("unavailable"); }
 QString packOpusCodecName() { return QStringLiteral("unavailable"); }
 uint32_t legacyPackContainerMagic() { return 0; }

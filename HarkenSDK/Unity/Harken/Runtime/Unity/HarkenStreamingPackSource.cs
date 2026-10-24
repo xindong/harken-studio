@@ -23,7 +23,7 @@ namespace Harken.Unity
         private static async Task<byte[]> Read(string root, string path, int thread, CancellationToken cancellation)
         {
             if (Environment.CurrentManagedThreadId != thread) throw new InvalidOperationException("Packaged reads require their Unity thread.");
-            if (!PackManifest.IsSafeRelativePath(path)) throw new ArgumentException("Invalid Pack path.");
+            if (!PackPaths.IsSafeRelativePath(path)) throw new ArgumentException("Invalid Pack path.");
             string url = root + "/" + string.Join("/", Array.ConvertAll(path.Split('/'), Uri.EscapeDataString));
             using (UnityWebRequest request = UnityWebRequest.Get(url))
             {

@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import io
 import json
 import re
 import shutil
 import subprocess
 import tempfile
 import unittest
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -346,24 +347,32 @@ class ReleaseLifecycleTest(unittest.TestCase):
         shutil.copytree(REPO_ROOT / "HarkenSchema", self.root / "HarkenSchema")
         (self.root / ".scripts").mkdir()
         shutil.copy2(REPO_ROOT / MODULE.RELEASE_SCOPE_CONFIG_PATH, self.root / MODULE.RELEASE_SCOPE_CONFIG_PATH)
-        (self.root / MODULE.CONFIG_PATH).write_text('{"auditVersion":4,"product":"HarkenStudio","publication":"unpublished"}', encoding="utf-8")
         (self.root / "VERSION").write_text("1.0.0", encoding="utf-8")
         self.patch_root = patch.object(MODULE, "REPO_ROOT", self.root)
         self.patch_root.start()
         self.addCleanup(self.patch_root.stop)
+        self.published_tags = set()
+        publication = patch.object(MODULE, "github_studio_release_tags", side_effect=lambda tags: tags & self.published_tags)
+        publication.start()
+        self.addCleanup(publication.stop)
         MODULE.run_git(["init", "--quiet"])
         self.commit()
 
     def commit(self) -> None:
         MODULE.run_git(["add", "."])
-        MODULE.run_git(["-c", "user.name=Schema Test", "-c", "user.email=schema@example.invalid", "commit", "--quiet", "-m", "fixture"])
+        MODULE.run_git(["-c", "user.name=Schema Test", "-c", "user.email=schema@example.invalid", "commit", "--quiet", "--allow-empty", "-m", "fixture"])
 
-    def publish_tag(self, tag: str, receipt_tag: str | None = None) -> None:
-        record = {"auditVersion": 4, "product": "HarkenStudio", "publication": "released", "releaseTag": receipt_tag or tag,
-                  "trees": MODULE.tree_summary(self.root / "HarkenSchema")}
-        (self.root / MODULE.CONFIG_PATH).write_text(json.dumps(record), encoding="utf-8")
+    def synchronize_current(self) -> None:
+        for tree in MODULE.TREE_NAMES:
+            loaded = MODULE.schema_archive.load_tree(tree, self.root / "HarkenSchema")
+            path = self.root / "HarkenSchema" / tree / str(loaded["currentVersion"]) / MODULE.SCHEMA_NAMES[tree]
+            path.write_text(json.dumps(loaded["current"]), encoding="utf-8")
+
+    def publish_tag(self, tag: str) -> None:
+        self.synchronize_current()
         self.commit()
         MODULE.run_git(["tag", tag])
+        self.published_tags.add(tag)
 
     def test_development_current_and_version_are_not_frozen(self) -> None:
         path = self.root / "HarkenSchema/Editor/current/ProjectSerializedSchema.json"
@@ -374,32 +383,27 @@ class ReleaseLifecycleTest(unittest.TestCase):
         (self.root / "VERSION").write_text("1.0.1", encoding="utf-8")
         self.assertEqual(MODULE.audit("HEAD", "WORKTREE")["errors"], [])
 
-    def test_unpublished_baseline_cannot_pass_formal_release(self) -> None:
-        errors = MODULE.verify_current_release()["errors"]
-        self.assertTrue(any("no verified release receipt" in error for error in errors))
+    def test_publication_identity_is_rebuilt_from_the_frozen_tag(self) -> None:
+        self.publish_tag("studio-first")
+        commit = MODULE.run_git(["rev-parse", "HEAD"]).stdout.strip()
+        trees = MODULE.tree_summary(self.root / "HarkenSchema")
+        (self.root / "VERSION").write_text("1.1.0", encoding="utf-8")
+        self.commit()
+        record = MODULE.published_releases()["studio-first"]
+        self.assertEqual(record["product"], "HarkenStudio")
+        self.assertEqual(record["version"], "1.0.0")
+        self.assertEqual(record["gitCommit"], commit)
+        self.assertEqual(record["trees"], trees)
 
-    def test_release_receipts_without_matching_product_are_not_baselines(self) -> None:
-        for index, product in enumerate((None, "UnrelatedStudio")):
-            tag = f"other-product-{index}"
-            record = {"auditVersion": 4, "publication": "released", "releaseTag": tag,
-                      "trees": MODULE.tree_summary(self.root / "HarkenSchema")}
-            if product is not None:
-                record["product"] = product
-            (self.root / MODULE.CONFIG_PATH).write_text(json.dumps(record), encoding="utf-8")
-            self.commit()
-            MODULE.run_git(["tag", tag])
-        with patch.object(MODULE, "github_studio_release_tags") as query:
-            self.assertEqual(MODULE.published_releases(), {})
-            query.assert_not_called()
-        self.assertTrue(any("no verified release receipt" in error
-                            for error in MODULE.verify_current_release()["errors"]))
-
-    def test_hash_only_receipt_does_not_replace_real_checks(self) -> None:
-        record = {"auditVersion": 4, "product": "HarkenStudio", "publication": "released", "releaseTag": "future",
-                  "trees": MODULE.tree_summary(self.root / "HarkenSchema"),
-                  "sourceFingerprint": MODULE.source_fingerprint("WORKTREE")}
-        (self.root / MODULE.CONFIG_PATH).write_text(json.dumps(record), encoding="utf-8")
-        self.assertTrue(any("controlled reader/writer" in error for error in MODULE.verify_current_release()["errors"]))
+    def test_formal_contract_checks_require_current_to_match_its_numbered_archive(self) -> None:
+        self.synchronize_current()
+        self.assertEqual(MODULE.verify_current_release()["errors"], [])
+        path = self.root / "HarkenSchema/Editor/current/ProjectSerializedSchema.json"
+        source = json.loads(path.read_text(encoding="utf-8"))
+        source["x-harken-documentTypes"][0]["schema"]["properties"]["harkenDocument"]["properties"]["newNote"] = {}
+        path.write_text(json.dumps(source), encoding="utf-8")
+        self.assertTrue(MODULE.verify_current_release()["errors"])
+        self.assertEqual(MODULE.release_schema_errors(self.root / "HarkenSchema"), [])
 
     def test_current_tag_is_excluded_without_losing_prior_same_generation(self) -> None:
         self.publish_tag("first")
@@ -412,7 +416,8 @@ class ReleaseLifecycleTest(unittest.TestCase):
 
     def test_publisher_tag_freezes_contracts_and_requires_its_reader(self) -> None:
         tag = "release-123-abcdef"
-        self.publish_tag(tag, "studio-first")
+        self.publish_tag(tag)
+        self.commit()
         MODULE.run_git(["tag", "hub-only"])
         with patch.object(MODULE, "github_studio_release_tags", return_value={tag}):
             self.assertEqual(set(MODULE.published_releases()), {tag})
@@ -420,13 +425,15 @@ class ReleaseLifecycleTest(unittest.TestCase):
             self.assertEqual(MODULE.release_schema_errors(self.root / "HarkenSchema"), [])
             with self.assertRaisesRegex(ValueError, re.escape(tag)):
                 MODULE.verify_release_readers(Path("missing"), {})
-            path = self.root / "HarkenSchema/Editor/current/ProjectSerializedSchema.json"
+            version = MODULE.schema_archive.load_tree("Editor", self.root / "HarkenSchema")["currentVersion"]
+            path = self.root / f"HarkenSchema/Editor/{version}/ProjectSerializedSchema.json"
             source = json.loads(path.read_text(encoding="utf-8"))
             source["x-harken-documentTypes"][0]["schema"]["properties"]["content"]["required"].remove("name")
             path.write_text(json.dumps(source), encoding="utf-8")
             errors = MODULE.release_schema_errors(self.root / "HarkenSchema")
             self.assertTrue(any(tag in error for error in errors))
-            path = self.root / "HarkenSchema/Pack/current/PackManifestSchema.json"
+            version = MODULE.schema_archive.load_tree("Pack", self.root / "HarkenSchema")["currentVersion"]
+            path = self.root / f"HarkenSchema/Pack/{version}/PackManifestSchema.json"
             source = json.loads(path.read_text(encoding="utf-8"))
             source["$defs"]["identity"]["properties"]["future"] = {}
             path.write_text(json.dumps(source), encoding="utf-8")
@@ -436,8 +443,8 @@ class ReleaseLifecycleTest(unittest.TestCase):
     def test_verifying_a_published_commit_excludes_itself_but_not_prior_readers(self) -> None:
         first = "release-123-first"
         second = "release-124-second"
-        self.publish_tag(first, "studio-first")
-        self.publish_tag(second, "studio-next")
+        self.publish_tag(first)
+        self.publish_tag(second)
         with patch.object(MODULE, "github_studio_release_tags", return_value={first, second}):
             commit = MODULE.run_git(["rev-parse", "HEAD"]).stdout.strip()
             self.assertEqual(set(MODULE.required_baselines(self.root / "HarkenSchema", "studio-next", commit)), {first})
@@ -446,12 +453,12 @@ class ReleaseLifecycleTest(unittest.TestCase):
             commit = MODULE.run_git(["rev-parse", "HEAD"]).stdout.strip()
             self.assertEqual(set(MODULE.required_baselines(self.root / "HarkenSchema", "studio-next", commit)), {first, second})
 
-    def test_unrelated_tag_with_a_copied_receipt_is_not_a_baseline(self) -> None:
+    def test_unrelated_tag_at_a_published_commit_is_not_a_baseline(self) -> None:
         self.publish_tag("studio-first")
         MODULE.run_git(["tag", "internal-build"])
-        with patch.object(MODULE, "github_studio_release_tags", return_value=set()) as discover:
+        with patch.object(MODULE, "github_studio_release_tags", return_value={"studio-first"}) as discover:
             self.assertEqual(set(MODULE.published_releases()), {"studio-first"})
-            discover.assert_called_once_with({"internal-build"})
+            discover.assert_called_once_with({"studio-first", "internal-build"})
 
     def test_same_generation_rejects_a_lost_published_metadata_property(self) -> None:
         path = self.root / "HarkenSchema/Editor/current/ProjectSerializedSchema.json"
@@ -464,15 +471,44 @@ class ReleaseLifecycleTest(unittest.TestCase):
         (self.root / f"HarkenSchema/Editor/{version}/ProjectSerializedSchema.json").write_text(json.dumps(contract), encoding="utf-8")
         self.publish_tag("latest")
         path.write_text(json.dumps(original), encoding="utf-8")
+        self.assertEqual(MODULE.release_schema_errors(self.root / "HarkenSchema"), [])
+        contract = MODULE.schema_archive.materialize_source("Editor", original, version)
+        (self.root / f"HarkenSchema/Editor/{version}/ProjectSerializedSchema.json").write_text(json.dumps(contract), encoding="utf-8")
         self.assertTrue(any("removed" in error for error in MODULE.release_schema_errors(self.root / "HarkenSchema")))
 
     def test_sdk_source_changes_are_not_a_generation_hash_lock(self) -> None:
-        reader = self.root / "HarkenSDK/Unity/Harken/Runtime/Sdk/PackManifest.cs"
+        reader = self.root / "HarkenSDK/Unity/Harken/Runtime/Sdk/PackCompanion.cs"
         reader.parent.mkdir(parents=True)
         reader.write_text("old reader", encoding="utf-8")
         self.publish_tag("sdk-baseline")
         reader.write_text("changed reader", encoding="utf-8")
         self.assertEqual(MODULE.release_schema_errors(self.root / "HarkenSchema"), [])
+
+    def test_release_archive_can_return_to_a_main_with_newer_development(self) -> None:
+        self.publish_tag("first")
+        path = self.root / "HarkenSchema/Editor/current/ProjectSerializedSchema.json"
+        original = json.loads(path.read_text(encoding="utf-8"))
+        released = copy.deepcopy(original)
+        released["x-harken-documentTypes"][0]["schema"]["properties"]["harkenDocument"]["properties"]["releasedNote"] = {}
+        path.write_text(json.dumps(released), encoding="utf-8")
+        self.publish_tag("second")
+        release_commit = MODULE.run_git(["rev-parse", "HEAD"]).stdout.strip()
+        version = MODULE.schema_archive.load_tree("Editor", self.root / "HarkenSchema")["currentVersion"]
+        archive = self.root / f"HarkenSchema/Editor/{version}/ProjectSerializedSchema.json"
+        release_archive = archive.read_bytes()
+        MODULE.run_git(["reset", "--hard", "first"])
+        original["x-harken-documentTypes"][0]["schema"]["properties"]["content"]["required"].remove("name")
+        path.write_text(json.dumps(original), encoding="utf-8")
+        reader = self.root / "HarkenSDK/Unity/Harken/Runtime/Sdk/PackCompanion.cs"
+        reader.parent.mkdir(parents=True)
+        reader.write_text("new development", encoding="utf-8")
+        self.commit()
+        main_commit = MODULE.run_git(["rev-parse", "HEAD"]).stdout.strip()
+        archive.write_bytes(release_archive)
+        self.commit()
+        self.assertNotEqual(MODULE.run_git(["rev-parse", "HEAD"]).stdout.strip(), release_commit)
+        self.assertEqual(MODULE.audit(main_commit, "HEAD")["errors"], [])
+        self.assertTrue(MODULE.verify_current_release("HEAD")["errors"])
 
     def test_retired_generation_still_keeps_latest_published_contract(self) -> None:
         source_root = self.root / "HarkenSchema"
@@ -525,12 +561,15 @@ class ReleaseLifecycleTest(unittest.TestCase):
         for changed in ({**reader, "gitDirty": True}, {**reader, "gitCommit": "old"}):
             with self.assertRaises(ValueError):
                 MODULE.require_current_reader({"currentReader": changed})
-        with patch.object(MODULE, "source_fingerprint", side_effect=["changed", "committed"]):
-            with self.assertRaises(ValueError):
-                MODULE.require_current_reader({"currentReader": reader})
+        (self.root / "VERSION").write_text("1.0.1", encoding="utf-8")
+        with self.assertRaises(ValueError):
+            MODULE.require_current_reader({"currentReader": reader})
+        MODULE.run_git(["add", "VERSION"])
+        with self.assertRaises(ValueError):
+            MODULE.require_current_reader({"currentReader": reader})
 
     def test_changed_persistence_paths_are_reviewed_without_internal_format_scopes(self) -> None:
-        paths = ["HarkenStudio/Source/Core/ProjectSchemaValidator.cpp", "HarkenSDK/Unity/Harken/Runtime/Sdk/PackManifest.cs",
+        paths = ["HarkenStudio/Source/Core/ProjectSchemaValidator.cpp", "HarkenSDK/Unity/Harken/Runtime/Sdk/PackCompanion.cs",
                  "HarkenStudio/Source/Core/MigrationManager.cpp", "HarkenStudio/Source/Core/ProjectMigration.cpp",
                  "HarkenStudio/Source/Core/ProjectMigration.h"]
         with patch.object(MODULE, "changed_files", return_value=paths):
@@ -625,9 +664,10 @@ class ReaderGateTest(unittest.TestCase):
         self.pack_root.mkdir()
         native_name = "HarkenCore.dll" if MODULE.os.name == "nt" else "libHarkenCore.dylib" \
             if MODULE.sys.platform == "darwin" else "libHarkenCore.so"
-        self.old_source = self.old_binary.parent / "HarkenSDK/Unity/Harken/Runtime/Sdk/PackManifest.cs"
-        for path in (self.binary, self.old_binary, self.old_source, self.pack_reader,
-                     self.binary.parent / native_name, self.pack_root / "Init.pack", self.pack_root / "Content.pack"):
+        for path in (self.binary, self.old_binary, self.pack_reader,
+                     self.binary.parent / native_name, self.pack_root / "Init.bytes", self.pack_root / "Init.json",
+                     self.pack_root / "Play.bytes", self.pack_root / "Play.json",
+                     self.pack_root / "English/Play.bytes", self.pack_root / "English/Play.json"):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"fixture")
         self.calls = []
@@ -650,51 +690,66 @@ class ReaderGateTest(unittest.TestCase):
                 "packSchemaVersion": expected["trees"]["Pack"]["currentVersion"],
                 "schemaSnapshotHash": expected["snapshotHash"], "projectPath": str(project), "edits": edits}
 
-    def verify(self, old_version: int | None = None, protected: bool = True, sdk_version: int | None = None) -> tuple:
+    def verify(self, old_version: int | None = None, sdk_version: int | None = None,
+               native_returncode: int = 0, native_output: str | None = None) -> tuple:
         if sdk_version is None:
             sdk_version = self.pack_schema_version
         expected = copy.deepcopy(MODULE.schema_archive.build_bundle(self.source)["manifest"])
         if old_version is not None:
             expected["trees"]["Editor"]["currentVersion"] = old_version
         baselines = {"baseline": self.old_binary.parent} if old_version is not None else {}
-        package = {"_schemaManifest": expected, "buildId": "released",
-                   "_protectedFiles": {self.old_source.relative_to(self.old_binary.parent).as_posix()} if protected else set()}
-        native = SimpleNamespace(returncode=0, stdout=f"[PackNative] shared Init/content fixture PASS.\n[PackSidecar] schema_version {sdk_version}\n", stderr="")
+        package = {"_schemaManifest": expected, "buildId": "released"}
+        if native_output is None:
+            native_output = f"[PackCompanion] native publication PASS.\n[PackCompanion] schemaVersion {sdk_version}\n"
+        native = SimpleNamespace(returncode=native_returncode, stdout=native_output, stderr="")
         with patch.object(MODULE, "required_baselines", return_value={tag: {} for tag in baselines}), \
                 patch.object(MODULE, "release_schema_errors", return_value=[]), \
+                patch.object(MODULE, "run_git", return_value=SimpleNamespace(returncode=0, stdout="a" * 40)), \
                 patch.object(MODULE, "checked_baseline_package", return_value=(self.old_binary, package)), \
                 patch.object(MODULE, "run_probe", side_effect=self.probe), \
-                patch.object(MODULE, "verify_pack_reader", return_value={"ok": True, "schemaVersion": self.pack_schema_version}) as parser, \
-                patch.object(MODULE.subprocess, "run", return_value=native):
+                patch.object(MODULE.subprocess, "run", return_value=native) as native_run:
             report = MODULE.verify_release_readers(self.binary, baselines, self.pack_reader, self.pack_root, self.source)
-            return report, parser.call_args_list
+            return report, native_run.call_args_list
 
-    def test_old_same_generation_reader_executes_pack_parser_and_project_edits(self) -> None:
+    def test_old_same_generation_editor_and_current_companion_reader_execute(self) -> None:
         report, calls = self.verify(old_version=MODULE.schema_archive.load_tree("Editor", self.source)["currentVersion"])
         self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0].args[:3], (self.old_source, self.pack_root, self.pack_schema_version))
+        self.assertEqual(calls[0].args[0], ["dotnet", str(self.pack_reader), "--require-native",
+                                          "--companion-root", str(self.pack_root)])
         self.assertIn((self.old_binary, "edit"), self.calls)
-        self.assertIn("old-pack-parser-reads-current-sidecars", report["readers"][1]["checks"])
+        self.assertEqual(set(report["pack"]["fixtureSha256"]), {
+            "Init.bytes", "Init.json", "Play.bytes", "Play.json", "English/Play.bytes", "English/Play.json"})
 
-    def test_pack_only_baseline_does_not_enter_unsupported_editor_chain(self) -> None:
-        path = self.source / "Editor/manifest.json"
-        manifest = json.loads(path.read_text(encoding="utf-8"))
-        manifest["supportedHistorical"] = []
-        path.write_text(json.dumps(manifest), encoding="utf-8")
-        report, calls = self.verify(old_version=1)
-        self.assertEqual(len(calls), 1)
-        self.assertFalse(any(binary == self.old_binary for binary, _ in self.calls))
-        self.assertEqual(report["readers"][1]["checks"], ["old-pack-parser-reads-current-sidecars"])
+    def test_pack_generation_does_not_require_unsupported_editor_baselines(self) -> None:
+        releases = {"pack-only": {"trees": {"Editor": {"generation": -1},
+                                          "Pack": {"generation": self.pack_schema_version}}}}
+        with patch.object(MODULE, "published_releases", return_value=releases):
+            self.assertEqual(MODULE.required_baselines(self.source), {})
 
-    def test_unprotected_old_pack_parser_is_rejected(self) -> None:
-        with self.assertRaises(ValueError):
-            self.verify(old_version=2, protected=False)
+    def test_incomplete_companion_pair_stops_before_current_reader(self) -> None:
+        (self.pack_root / "English/Play.json").unlink()
+        with self.assertRaisesRegex(ValueError, "incomplete companion pair"):
+            self.verify()
+        self.assertEqual(self.calls, [])
 
-    def test_native_pass_cannot_certify_a_different_sidecar_generation(self) -> None:
+    def test_native_pass_cannot_certify_a_different_companion_generation(self) -> None:
         with self.assertRaises(ValueError):
             self.verify(sdk_version=self.pack_schema_version - 1)
         with self.assertRaises(ValueError):
             self.verify(sdk_version=self.pack_schema_version + 1)
+
+    def test_previous_success_cannot_replace_executing_readers_and_native_checks(self) -> None:
+        report, _ = self.verify()
+        self.assertEqual(report["errors"], [])
+        with self.assertRaisesRegex(ValueError, "Native Pack gate failed"):
+            self.verify(native_output=f"[PackCompanion] schemaVersion {self.pack_schema_version}\n")
+        previous_calls = len(self.calls)
+        with self.assertRaises(ValueError):
+            self.verify(native_returncode=1)
+        self.assertGreater(len(self.calls), previous_calls)
+        with patch.object(self, "probe", side_effect=ValueError("reader failed")):
+            with self.assertRaisesRegex(ValueError, "reader failed"):
+                self.verify()
 
     def test_missing_promised_package_stops_before_current_reader(self) -> None:
         with patch.object(MODULE, "required_baselines", return_value={"missing": {}}), \
@@ -702,6 +757,44 @@ class ReaderGateTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 MODULE.verify_release_readers(self.binary, {}, self.pack_reader, self.pack_root, self.source)
             probe.assert_not_called()
+
+
+class ReleaseCommandTest(unittest.TestCase):
+    def run_command(self, *arguments: str) -> tuple[int, str]:
+        output = io.StringIO()
+        with patch.object(MODULE.sys, "argv", ["audit", "--verify-readers", "--reader", "studio",
+                "--pack-reader", "HarkenAbiFidelity.dll", "--pack-root", "packs", *arguments]), \
+                redirect_stdout(output):
+            result = MODULE.main()
+        return result, output.getvalue()
+
+    def test_unprepared_sources_cannot_reach_binary_verification(self) -> None:
+        with patch.object(MODULE, "verify_current_release", return_value={
+                "status": "failed", "errors": ["unprepared contracts"]}), \
+                patch.object(MODULE, "verify_release_readers") as readers:
+            code, output = self.run_command()
+        self.assertEqual(code, 1)
+        self.assertIn("unprepared contracts", output)
+        readers.assert_not_called()
+
+    def test_live_failures_cannot_be_replaced_by_a_previous_success(self) -> None:
+        with patch.object(MODULE, "verify_current_release", side_effect=lambda: {
+                "status": "passed", "errors": []}), \
+                patch.object(MODULE, "verify_release_readers", side_effect=[
+                    {"errors": []}, ValueError("native check failed"), {"errors": []}]) as readers, \
+                patch.object(MODULE, "require_current_reader", side_effect=[
+                    None, ValueError("reader belongs to another commit")]):
+            self.assertEqual(self.run_command()[0], 0)
+            for message in ("native check failed", "reader belongs to another commit"):
+                code, output = self.run_command()
+                self.assertEqual(code, 1)
+                self.assertIn(message, output)
+        self.assertEqual(readers.call_count, 3)
+
+    def test_live_verification_cannot_claim_another_revision(self) -> None:
+        with patch.object(MODULE, "verify_release_readers") as readers:
+            self.assertEqual(self.run_command("--head", "HEAD~1")[0], 1)
+        readers.assert_not_called()
 
 
 if __name__ == "__main__":

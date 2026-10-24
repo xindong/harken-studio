@@ -38,7 +38,9 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bit>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -50,6 +52,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <type_traits>
 #include <vector>
 
@@ -10512,7 +10515,8 @@ static std::array<std::uint64_t, 21> CaptureRootQueueOwners(const harken::Engine
 static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
     std::uint32_t stopPhase = UINT32_MAX, bool rejectIdentities = false,
     bool holdPrivateReaderThroughRelease = false, bool exhaustC0Groups = false,
-    bool failAfterC0Publication = false, bool holdPublishedReaderThroughRelease = false) {
+    bool failAfterC0Publication = false, bool holdPublishedReaderThroughRelease = false,
+    bool stopAfterC0Apply = false) {
     constexpr VnObjectId kFirstSoundId = harkentest::ObjectId(4511);
     constexpr VnObjectId kSecondSoundId = harkentest::ObjectId(4512);
     constexpr VnObjectId kContainerId = harkentest::ObjectId(4510);
@@ -10614,6 +10618,91 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
     EXPECT_TRUE(row->queueDeferredNeedsFullPreparation);
     EXPECT_FALSE(row->queueWorldUsesCurrentAuthority);
     EXPECT_NE(0u, row->Invocation().packLease.leaseToken);
+    if (stopAfterC0Apply) {
+        auto& engine = *session.Engine();
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        ASSERT_EQ(harken::EnginePlayableStartPhase::Filed, row->phase);
+        const auto entry = row->frontierEntry;
+        ASSERT_TRUE(entry.Valid());
+        const auto* activation = engine.decisions.ResolveFrontierActivation(entry.coordinator);
+        ASSERT_NE(nullptr, activation);
+        const auto primary = activation->Descriptor().primary;
+        ASSERT_TRUE(primary.Valid());
+        harken::DecisionCommittedSnapshot before{};
+        ASSERT_TRUE(engine.decisions.CaptureCommitted(entry.coordinator, &before));
+        ASSERT_EQ(0u, before.participantCount);
+        ASSERT_EQ(1u, before.sliceCount);
+        ASSERT_EQ(0u, before.consumedSlices);
+        const auto attempts = engine.immediateEntryAttempts.data();
+        const auto end = attempts + engine.immediateEntryAttempts.size();
+        const auto attempt = std::find_if(attempts, end,
+            [firing](const auto& candidate) { return candidate.active && candidate.root == firing; });
+        ASSERT_NE(end, attempt);
+        EXPECT_EQ(entry.coordinator.slot, attempt->initialQueueCoordinator.slot);
+        EXPECT_EQ(entry.coordinator.generation, attempt->initialQueueCoordinator.generation);
+        const auto quantum = row->startFrame / engine.config.blockFrames;
+        while (engine.mixer.BlocksRendered() < quantum) engine.nullBackend.Pump(1);
+        ASSERT_EQ(quantum, engine.mixer.BlocksRendered());
+        struct Pause {
+            std::atomic<bool> entered{false}, released{false}, done{false};
+            std::uint64_t quantum = 0;
+        } pause;
+        pause.quantum = quantum;
+        engine.mixer.SetTimelineFinalizedHookForTest(
+            +[](void* context, std::uint64_t quantum) noexcept {
+                auto& pause = *static_cast<Pause*>(context);
+                if (quantum != pause.quantum) return;
+                pause.entered.store(true, std::memory_order_release);
+                while (!pause.released.load(std::memory_order_acquire)) std::this_thread::yield();
+            }, &pause);
+        std::thread audio([&] {
+            engine.nullBackend.Pump(1);
+            pause.done.store(true, std::memory_order_release);
+        });
+        struct AudioScope {
+            harken::Engine& engine;
+            Pause& pause;
+            std::thread& audio;
+            ~AudioScope() {
+                pause.released.store(true, std::memory_order_release);
+                audio.join();
+                engine.mixer.SetTimelineFinalizedHookForTest(nullptr, nullptr);
+            }
+        };
+        {
+            AudioScope scope{engine, pause, audio};
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+            while (!pause.entered.load(std::memory_order_acquire) && !pause.done.load(std::memory_order_acquire) &&
+                std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+            ASSERT_TRUE(pause.entered.load(std::memory_order_acquire));
+            ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
+            ASSERT_TRUE(row->variableControlDeferredCancellation);
+            EXPECT_EQ(primary, row->variableControlDeferredCancellationSlice);
+            ASSERT_TRUE(engine.decisions.CaptureCommitted(entry.coordinator, &before));
+            EXPECT_EQ(1u, before.consumedSlices);
+            EXPECT_LT(engine.mixer.BlocksRendered(), before.lastAudioSequence);
+            harken::Plan03PageGroupView group{};
+            ASSERT_TRUE(engine.timelinePool.ResolvePlan03GroupSliceProducer(primary, &group));
+            ASSERT_NE(nullptr, group.lease);
+            EXPECT_EQ(harken::AudioSliceState::SliceApplied, group.lease->Capture().state);
+        }
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        for (unsigned block = 0; block < 128u; ++block) {
+            engine.nullBackend.Pump(1);
+            ASSERT_EQ(VN_OK, Vn_Update());
+        }
+        VnActionFiringInfo info{};
+        info.structSize = sizeof(info);
+        ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
+        EXPECT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state);
+        EXPECT_EQ(0u, info.livePlayableCount);
+        EXPECT_FALSE(row->variableControlDeferredCancellation);
+        EXPECT_FALSE(engine.runtimeRecreateRequired);
+        ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+        return;
+    }
     struct PublicationProof {
         bool called = false;
         bool committed = false;
@@ -11134,6 +11223,11 @@ TEST(PackComposition, OriginalPackStorageLastCompoundFailureKeepsActualInvocatio
 
 TEST(PackComposition, PackQueueSuccessorOutsideWindowUsesFullFrozenPreparation) {
     ASSERT_NO_FATAL_FAILURE(CheckPackQueueSuccessorOutsideWindow(false));
+}
+
+TEST(PackComposition, PackQueueStopAfterApplicationWaitsForCompletedBlockBeforeRetiringCoordinator) {
+    ASSERT_NO_FATAL_FAILURE(CheckPackQueueSuccessorOutsideWindow(false, UINT32_MAX,
+        false, false, false, false, false, true));
 }
 
 TEST(PackComposition, PackQueueOutsideWindowLateFirstUpdateReanchorsRealSourceAndCompletes) {

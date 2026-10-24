@@ -42,7 +42,7 @@ jobs:
         if: inputs.build-channel != 'stable' && inputs.build-channel != 'beta'
         run: python .scripts/studio_schema_release_audit.py --head HEAD
 
-      - name: Verify formal Studio Schema release receipt
+      - name: Verify formal Studio Schema inputs
         if: inputs.build-channel == 'stable' || inputs.build-channel == 'beta'
         env:
           GH_TOKEN: ${{ github.token }}

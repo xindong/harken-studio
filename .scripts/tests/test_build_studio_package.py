@@ -81,7 +81,6 @@ class BuildStudioPackageTest(unittest.TestCase):
         self.publish_schema(self.input_dir / "schema")
         unity = self.input_dir / "HarkenSDK" / "Unity" / "Harken"
         unity.mkdir(parents=True)
-        (self.input_dir / "HarkenSDK" / "VERSION").write_text(sdk_version + "\n", encoding="utf-8")
         (unity / "package.json").write_text(
             json.dumps({"name": "com.harken.core", "version": sdk_version}),
             encoding="utf-8",
@@ -129,7 +128,7 @@ class BuildStudioPackageTest(unittest.TestCase):
             for path in (self.input_dir / "schema").rglob("*")
             if path.is_file()
         }
-        self.assertEqual(summary["fileCount"], 4 + len(schema_files) + len(self.legal_paths))
+        self.assertEqual(summary["fileCount"], 3 + len(schema_files) + len(self.legal_paths))
 
         with zipfile.ZipFile(package) as archive:
             names = set(archive.namelist())
@@ -157,7 +156,6 @@ class BuildStudioPackageTest(unittest.TestCase):
             self.assertEqual(set(by_path), schema_files | self.legal_paths | {
                     "HarkenStudio.exe",
                     "data/asset.bin",
-                    "HarkenSDK/VERSION",
                     "HarkenSDK/Unity/Harken/package.json",
                 })
             self.assertEqual(by_path["HarkenStudio.exe"]["size"], len(b"stub-binary"))
@@ -213,15 +211,21 @@ class BuildStudioPackageTest(unittest.TestCase):
                 self.assertFalse(self.output_dir.exists())
                 path.write_bytes(content)
 
-    def test_mismatched_sdk_versions_are_rejected(self):
+    def test_invalid_sdk_versions_are_rejected(self):
         self.make_input()
         plugin = self.input_dir / "HarkenSDK/Unity" / "Harken" / "package.json"
-        plugin.write_text(
-            json.dumps({"name": "com.harken.core", "version": "0.1.0"}),
-            encoding="utf-8",
-        )
-        with self.assertRaises(SystemExit):
-            self.run_build()
+        for identity in (
+            {},
+            {"name": "com.harken.core", "version": ""},
+            {"name": "com.harken.core", "version": "   "},
+            {"name": "com.harken.core", "version": "0.2.0 "},
+            {"name": "com.harken.core", "version": None},
+            {"name": "com.harken.core", "version": 2},
+        ):
+            with self.subTest(identity=identity):
+                plugin.write_text(json.dumps(identity), encoding="utf-8")
+                with self.assertRaises(SystemExit):
+                    self.run_build()
 
     def test_missing_unity_sdk_is_rejected(self):
         self.make_input()
@@ -236,7 +240,6 @@ class BuildStudioPackageTest(unittest.TestCase):
         self.publish_schema(app / "schema")
         unity = app / "HarkenSDK" / "Unity" / "Harken"
         unity.mkdir(parents=True)
-        (app / "HarkenSDK" / "VERSION").write_text("0.2.0\n", encoding="utf-8")
         (unity / "package.json").write_text(
             json.dumps({"version": "0.2.0"}), encoding="utf-8")
         self.publish_legal(app, app.parent / "Resources" / "Legal")
@@ -327,12 +330,12 @@ class BuildStudioPackageTest(unittest.TestCase):
             self.run_build()
         self.assertEqual(package.read_bytes(), original)
 
-    def test_formal_packages_reject_invalid_or_stale_release_receipts(self):
+    def test_formal_packages_reject_unprepared_release_contracts(self):
         self.make_input()
         self.module.verify_release_candidate = self.verify_release_candidate
         for error in (
-            "Formal Studio release has no verified release receipt",
-            "Formal Schema release receipt does not match reader/writer sources",
+            "Editor current has not been synchronized to its release generation",
+            "Published Pack generation cannot be removed",
         ):
             with self.subTest(error=error), mock.patch.object(
                 self.module.studio_schema_release_audit,
@@ -350,8 +353,7 @@ class BuildStudioPackageTest(unittest.TestCase):
         self_test = self.module.run_studio_self_test
         with (
             mock.patch.object(audit, "verify_current_release", return_value={"errors": []}),
-            mock.patch.object(audit, "run_git", return_value=mock.Mock(stdout="b" * 40)),
-            mock.patch.object(audit, "source_fingerprint", return_value="fingerprint"),
+            mock.patch.object(audit, "run_git", return_value=mock.Mock(stdout="b" * 40, returncode=0)),
         ):
             for channel in ("stable", "beta"):
                 self.self_test_channel = channel
@@ -370,19 +372,18 @@ class BuildStudioPackageTest(unittest.TestCase):
         audit = self.module.studio_schema_release_audit
         with (
             mock.patch.object(audit, "verify_current_release", return_value={"errors": []}),
-            mock.patch.object(audit, "run_git", return_value=mock.Mock(stdout="b" * 40)),
-            mock.patch.object(audit, "source_fingerprint", side_effect=["worktree", "head"]),
+            mock.patch.object(audit, "run_git", return_value=mock.Mock(stdout="b" * 40, returncode=1)),
         ):
             with self.assertRaises(SystemExit):
                 self.run_build()
         self.assertFalse(self.output_dir.exists())
 
-    def test_development_packages_do_not_require_a_release_receipt(self):
+    def test_development_packages_do_not_run_formal_release_checks(self):
         self.make_input()
         self.module.verify_release_candidate = self.verify_release_candidate
         audit = self.module.studio_schema_release_audit
         with (
-            mock.patch.object(audit, "verify_current_release", side_effect=AssertionError("release receipt required")),
+            mock.patch.object(audit, "verify_current_release", side_effect=AssertionError("formal contracts required")),
             mock.patch.object(audit, "require_current_reader", side_effect=AssertionError("formal reader required")),
         ):
             for channel in ("dev", "nightly"):
@@ -392,15 +393,14 @@ class BuildStudioPackageTest(unittest.TestCase):
                     summary = self.run_build(["--channel", channel])
                     self.assertTrue(Path(summary["package"]).is_file())
 
-    def test_formal_packages_accept_verified_receipt_without_test_inputs(self):
+    def test_formal_packages_verify_contracts_and_identity_without_a_receipt(self):
         self.make_input()
         self.module.verify_release_candidate = self.verify_release_candidate
         audit = self.module.studio_schema_release_audit
         with (
             mock.patch.object(audit, "verify_current_release", return_value={"errors": []}),
-            mock.patch.object(audit, "run_git", return_value=mock.Mock(stdout="b" * 40)),
-            mock.patch.object(audit, "source_fingerprint", return_value="fingerprint"),
-            mock.patch.object(audit, "verify_release_readers", side_effect=AssertionError("reader validation repeated")),
+            mock.patch.object(audit, "run_git", return_value=mock.Mock(stdout="b" * 40, returncode=0)),
+            mock.patch.object(audit, "verify_release_readers", side_effect=AssertionError("development reader validation requested")),
             mock.patch.object(audit.subprocess, "run", side_effect=AssertionError("external build or test requested")),
         ):
             for channel in ("stable", "beta"):

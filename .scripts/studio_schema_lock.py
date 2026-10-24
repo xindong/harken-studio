@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import shutil
 import sys
 from pathlib import Path
@@ -48,7 +47,7 @@ def stage_candidate(target: Path, modes: dict[str, str], source_root: Path | Non
 def candidate_updates(candidate_root: Path) -> dict[Path, bytes]:
     candidate_root = candidate_root.resolve()
     if candidate_root == SCHEMA_ROOT.resolve() or candidate_root.is_relative_to(SCHEMA_ROOT.resolve()):
-        raise ValueError("Publish requires an isolated candidate Schema tree")
+        raise ValueError("Archive requires an isolated candidate Schema tree")
     updates = {}
     for tree in audit.TREE_NAMES:
         previous = schema_archive.load_tree(tree, SCHEMA_ROOT)
@@ -77,35 +76,19 @@ def candidate_updates(candidate_root: Path) -> dict[Path, bytes]:
     return updates
 
 
-def publish_candidate(candidate_root: Path, release_tag: str, current_binary: Path,
-                      baseline_readers: dict[str, Path], pack_reader: Path, pack_root: Path) -> dict[str, Any]:
-    if audit.run_git(["check-ref-format", f"refs/tags/{release_tag}"], check=False).returncode != 0:
-        raise ValueError("Release tag is invalid")
-    if audit.run_git(["rev-parse", "--verify", f"refs/tags/{release_tag}"], check=False).returncode == 0:
-        raise ValueError("Published release tags cannot be reused or overwritten")
+def archive_candidate(candidate_root: Path) -> dict[str, Any]:
     updates = candidate_updates(candidate_root)
-    fingerprint = audit.source_fingerprint("WORKTREE")
-    if fingerprint != audit.source_fingerprint("HEAD"):
-        raise ValueError("Commit reader/writer source changes before building a formal release candidate")
-    verification = audit.verify_release_readers(current_binary, baseline_readers, pack_reader, pack_root,
-                                               schema_root=candidate_root, release_tag=release_tag)
-    if verification.get("errors"):
-        raise ValueError("; ".join(verification["errors"]))
-    audit.require_current_reader(verification)
-    if fingerprint != audit.source_fingerprint("WORKTREE") or updates != candidate_updates(candidate_root):
-        raise ValueError("Release inputs changed while reader/writer checks were running")
-    record = {"auditVersion": 4, "product": "HarkenStudio", "publication": "released", "releaseTag": release_tag,
-              "trees": audit.tree_summary(candidate_root), "sourceFingerprint": fingerprint,
-              "verification": verification}
-    updates[REPO_ROOT / audit.CONFIG_PATH] = audit.canonical_text(record).encode("utf-8")
     originals = {path: path.read_bytes() if path.exists() else None for path in updates}
     try:
         for path, data in updates.items():
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
-        errors = audit.verify_current_release("WORKTREE")["errors"]
-        if errors:
-            raise ValueError("; ".join(errors))
+        bundle = schema_archive.build_bundle(SCHEMA_ROOT)
+        for tree, data in bundle["trees"].items():
+            if data["published"][data["currentVersion"]] != data["current"]:
+                raise ValueError(f"{tree} archive does not match current")
+        report = {"trees": audit.tree_summary(SCHEMA_ROOT),
+                  "schemaSnapshotHash": bundle["manifest"]["snapshotHash"]}
     except Exception:
         for path, original in originals.items():
             if original is not None:
@@ -115,15 +98,7 @@ def publish_candidate(candidate_root: Path, release_tag: str, current_binary: Pa
                 if path.parent.name.isdigit() and not any(path.parent.iterdir()):
                     path.parent.rmdir()
         raise
-    return record
-
-
-def reset_unpublished() -> None:
-    if audit.published_releases():
-        raise ValueError("An externally published baseline cannot be reset")
-    schema_archive.build_bundle(SCHEMA_ROOT)
-    (REPO_ROOT / audit.CONFIG_PATH).write_text(
-        audit.canonical_text({"auditVersion": 4, "product": "HarkenStudio", "publication": "unpublished"}), encoding="utf-8")
+    return report
 
 
 def main() -> int:
@@ -133,26 +108,14 @@ def main() -> int:
     stage.add_argument("--candidate-root", type=Path, required=True)
     stage.add_argument("--editor", choices=("same", "next"), default="same")
     stage.add_argument("--pack", choices=("same", "next"), default="same")
-    publish = commands.add_parser("publish")
-    publish.add_argument("--candidate-root", type=Path, required=True)
-    publish.add_argument("--release-tag", required=True)
-    publish.add_argument("--reader", type=Path, required=True)
-    publish.add_argument("--baseline-reader", action="append", default=[])
-    publish.add_argument("--baseline-readers-file", type=Path)
-    publish.add_argument("--pack-reader", type=Path, required=True)
-    publish.add_argument("--pack-root", type=Path, required=True)
-    commands.add_parser("reset-unpublished")
+    archive = commands.add_parser("archive")
+    archive.add_argument("--candidate-root", type=Path, required=True)
     args = parser.parse_args()
     try:
         if args.command == "stage":
             report = stage_candidate(args.candidate_root, {"Editor": args.editor, "Pack": args.pack})
-        elif args.command == "publish":
-            readers = audit.parse_baseline_readers(args.baseline_reader, args.baseline_readers_file)
-            report = publish_candidate(args.candidate_root, args.release_tag, args.reader.resolve(), readers,
-                                       args.pack_reader.resolve(), args.pack_root.resolve())
         else:
-            reset_unpublished()
-            report = {"publication": "unpublished"}
+            report = archive_candidate(args.candidate_root)
         print(audit.canonical_text(report), end="")
         return 0
     except (OSError, ValueError, RuntimeError) as error:

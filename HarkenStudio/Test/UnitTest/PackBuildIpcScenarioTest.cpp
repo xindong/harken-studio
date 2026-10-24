@@ -596,7 +596,7 @@ TEST_F(PackBuildIpcScenarioTest, DirectoryExportKeepsTheNamedActionSeparateFromS
     ASSERT_EQ(status.value(QStringLiteral("message")).toString(), QStringLiteral("Export complete"));
     EXPECT_EQ(status.value(QStringLiteral("progress")).toInt(), 100);
     EXPECT_FALSE(QFileInfo::exists(QDir(output).filePath(
-        HarkenEditor::Bridge::packIndexFileName())));
+        QStringLiteral("HarkenPackIndex.json"))));
 
     const QDir platformDir(QDir(output).filePath(QStringLiteral("Windows")));
     QJsonArray packs;

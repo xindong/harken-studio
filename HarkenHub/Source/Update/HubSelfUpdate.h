@@ -24,6 +24,7 @@ public:
         QString currentVersion;
         qint64 checkIntervalMs = UpdateChecker::kDefaultIntervalMs;
         QString downloadDir;
+        bool automaticUpdateEnabled = true;
     };
 
     explicit HubSelfUpdate(QObject* parent = nullptr);
@@ -31,6 +32,7 @@ public:
     void configure(const Options& options);
     bool start(const Options& options);
     void stop();
+    void setAutomaticUpdateEnabled(bool enabled);
     UpdateStateRecord currentState() const;
 
     void handleCheckResult(const UpdateCheckResult& result,
@@ -74,6 +76,7 @@ private:
     QString activeObjectPath_;
     QElapsedTimer progressPersistTimer_;
     bool downloading_ = false;
+    bool automaticDownloadPauseRequested_ = false;
 };
 
 }

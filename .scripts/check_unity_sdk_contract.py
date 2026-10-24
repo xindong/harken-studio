@@ -243,7 +243,7 @@ def verify_manifests(sdk: Path, errors: list[str]) -> None:
         errors.append("package.json name must be com.harken.core")
     expected_version = version()
     if package.get("version") != expected_version:
-        errors.append(f"package.json version must match HarkenSDK/VERSION ({expected_version})")
+        errors.append(f"package.json version must match the source checkout ({expected_version})")
     if "samples" in package:
         errors.append("package.json must not declare repository-owned Samples")
 

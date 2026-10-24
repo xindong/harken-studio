@@ -17,18 +17,16 @@ namespace Harken.Unity.Tests
         public IEnumerator ThrowingStartupProviderCleansCallbacksAndAllowsExplicitRetry()
         {
             string root = Path.Combine(Application.streamingAssetsPath, "Audio", "U4Original");
-            Assert.That(GameplayPublication.Read(root, null, out GameplayPublication publication, out string error),
+            Assert.That(CompanionTestPublication.Read(root, null, out CompanionTestPublication publication, out string error),
                 Is.EqualTo(VnResult.VN_OK), error);
-            Assert.That(HarkenPreparedPacks.Create(publication, File.ReadAllBytes(Path.Combine(root, publication.InitPack.Path)),
-                out HarkenPreparedPacks prepared, out error), Is.EqualTo(VnResult.VN_OK), error);
-            Assert.That(publication.TryFindAction("Play_U4_A", out GameplayAction row), Is.True);
+            Assert.That(publication.TryFindAction("Play_U4_A", out CompanionTestAction row), Is.True);
             bool throwProvider = true;
-            Assert.That(prepared.SetDemandProvider((ulong id, string path, uint variant, ulong hash, out byte[] bytes, object state) =>
+            PackSource prepared = PackSource.FromReader(path =>
             {
-                if (throwProvider) throw new InvalidOperationException("Expected startup provider failure.");
-                bytes = File.ReadAllBytes(Path.Combine(root, path));
-                return VnResult.VN_OK;
-            }), Is.EqualTo(VnResult.VN_OK));
+                if (throwProvider) throw new IOException("Expected startup provider failure.");
+                string file = Path.Combine(root, path);
+                return File.Exists(file) ? File.ReadAllBytes(file) : null;
+            });
             var owner = new GameObject("Throwing startup provider");
             owner.SetActive(false);
             var runtime = owner.AddComponent<HarkenAudioSystem>();
@@ -36,7 +34,7 @@ namespace Harken.Unity.Tests
             Set(runtime, "persistAcrossScenes", false);
             try
             {
-                Assert.That(runtime.ConfigureBeforeStartup("Unused", publication.InitPack.Path, new[] { row.OwnerPackStableId }, true, false),
+                Assert.That(runtime.ConfigureBeforeStartup("Unused", publication.InitPack.Path, Array.Empty<ulong>(), true, false),
                     Is.EqualTo(VnResult.VN_OK));
                 owner.SetActive(true);
                 ExpectStartupFailure(VnResult.VN_PACK_PROVIDER_FAILED);
@@ -65,11 +63,10 @@ namespace Harken.Unity.Tests
         private static extern VnResult HarkenSdkTest_PumpNull(uint blocks);
 
         [UnityTest]
-        public IEnumerator VariableComponentUsesTypedBindingAndPreservesMatchingNameBinding()
+        public IEnumerator VariableComponentRejectsStaleCatalogAndPreservesMatchingNameBinding()
         {
-            string root = Path.Combine(Application.streamingAssetsPath, "Audio", "U4Sample", "Windows");
-            Assert.That(HarkenPreparedPacks.Capture(PackManifest.ManifestFileName, path => File.ReadAllBytes(Path.Combine(root, path)),
-                out HarkenPreparedPacks prepared, out _, out string error), Is.EqualTo(VnResult.VN_OK), error);
+            string root = Path.Combine(Application.streamingAssetsPath, "Audio", "VariableNames");
+            PackSource prepared = PackSource.FromDirectory(root);
             var owner = new GameObject("Variable binding runtime");
             owner.SetActive(false);
             var runtime = owner.AddComponent<HarkenAudioSystem>();
@@ -77,33 +74,34 @@ namespace Harken.Unity.Tests
             Set(runtime, "persistAcrossScenes", false);
             try
             {
-                Assert.That(runtime.ConfigureBeforeStartup("Unused", prepared.Publication.InitPack.Path, Array.Empty<ulong>(), true, false),
+                Assert.That(runtime.ConfigureBeforeStartup("Unused", "Init.bytes", Array.Empty<ulong>(), true, false),
                     Is.EqualTo(VnResult.VN_OK));
                 owner.SetActive(true);
                 Assert.That(runtime.StartRuntime(prepared), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(Values.Resolve("Demo_Choice", out VnObjectId id), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(Values.Resolve("Sdk_Value", out VnObjectId id), Is.EqualTo(VnResult.VN_OK));
                 var component = owner.AddComponent<HarkenVariable>();
                 Set(component, "setOnEnable", false);
                 Set(component, "variableName", "OldName");
-                Set(component, "projectId", prepared.Publication.ProjectId);
-                component.Variable = HarkenVariableId.FromGenerated("Demo_Choice", id);
+                Set(component, "projectId", runtime.Session.ProjectId);
+                component.Variable = HarkenVariableId.FromGenerated("Sdk_Value", id);
                 Assert.That(component.VariableName, Is.Empty);
                 Assert.That(component.ProjectId, Is.Empty);
+                LogAssert.Expect(LogType.Error, new Regex("HarkenVariable.SetValue.*VN_VARIABLE_CATALOG_MISMATCH"));
+                Assert.That(component.SetValue(1), Is.EqualTo(VnResult.VN_VARIABLE_CATALOG_MISMATCH));
+                AssertVariableValue(id, 0);
+                Set(component, "variableName", "Sdk_Value");
+                Set(component, "projectId", runtime.Session.ProjectId);
                 Assert.That(component.SetValue(1), Is.EqualTo(VnResult.VN_OK));
                 AssertVariableValue(id, 1);
-                Set(component, "variableName", "Demo_Choice");
-                Set(component, "projectId", prepared.Publication.ProjectId);
-                Assert.That(component.SetValue(0), Is.EqualTo(VnResult.VN_OK));
-                AssertVariableValue(id, 0);
                 Set(component, "variable", HarkenVariableId.FromGenerated("Other", new VnObjectId(1, 2)));
                 Set(component, "projectId", "00000000-0000-4000-8000-000000000001");
                 LogAssert.Expect(LogType.Error, new Regex("HarkenVariable.SetValue.*VN_GAMEPLAY_WRONG_PROJECT"));
                 Assert.That(component.SetValue(1), Is.EqualTo(VnResult.VN_GAMEPLAY_WRONG_PROJECT));
-                AssertVariableValue(id, 0);
-                Set(component, "projectId", prepared.Publication.ProjectId);
+                AssertVariableValue(id, 1);
+                Set(component, "projectId", runtime.Session.ProjectId);
                 LogAssert.Expect(LogType.Error, new Regex("HarkenVariable.SetValue.*VN_INVALID_ARG"));
                 Assert.That(component.SetValue(1), Is.EqualTo(VnResult.VN_INVALID_ARG));
-                AssertVariableValue(id, 0);
+                AssertVariableValue(id, 1);
             }
             finally
             {
@@ -139,7 +137,7 @@ namespace Harken.Unity.Tests
         {
             HarkenPackSource asset = Resources.Load<HarkenPackSource>("HarkenSdkFixture/VariableSource");
             Assert.That(asset, Is.Not.Null, "Run HarkenUnityFixtureAssets.PrepareVariableSource before this test.");
-            Assert.That(asset.Capture(out HarkenPreparedPacks captured, out string error), Is.EqualTo(VnResult.VN_OK), error);
+            PackSource captured = CaptureSource(asset, "VariableSourceInit");
             var owner = new GameObject("Named variable Runtime");
             owner.SetActive(false);
             var runtime = owner.AddComponent<HarkenAudioSystem>();
@@ -147,21 +145,18 @@ namespace Harken.Unity.Tests
             Set(runtime, "persistAcrossScenes", false);
             try
             {
-                Assert.That(runtime.ConfigureBeforeStartup("UnusedTextAssetPath", captured.Publication.InitPack.Path,
+                Assert.That(runtime.ConfigureBeforeStartup("UnusedTextAssetPath", "Init.bytes",
                     Array.Empty<ulong>(), true, false), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(runtime.ConfigurePreparedSourceBeforeStartup(asset), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(runtime.ConfigureCompanionSourceBeforeStartup(captured), Is.EqualTo(VnResult.VN_OK));
                 owner.SetActive(true);
-                Assert.That(runtime.StartRuntime((string)null), Is.EqualTo(VnResult.VN_OK), runtime.LastStartupError);
-                AssertNamedWrite(captured.Publication.ProjectId);
+                Assert.That(runtime.StartRuntime(captured), Is.EqualTo(VnResult.VN_OK), runtime.LastStartupError);
+                AssertNamedWrite(runtime.Session.ProjectId);
                 Assert.That(runtime.ShutdownRuntime(), Is.EqualTo(VnResult.VN_OK));
 
-                string root = Path.Combine(Application.streamingAssetsPath, "Audio/U4Sample/Windows");
-                Assert.That(GameplayPublication.Read(root, null, out GameplayPublication publication, out error),
-                    Is.EqualTo(VnResult.VN_OK), error);
-                Assert.That(HarkenPreparedPacks.Create(publication, File.ReadAllBytes(Path.Combine(root, publication.InitPack.Path)),
-                    out HarkenPreparedPacks prepared, out error), Is.EqualTo(VnResult.VN_OK), error);
+                string root = Path.Combine(Application.streamingAssetsPath, "Audio/VariableNames");
+                PackSource prepared = PackSource.FromDirectory(root);
                 Assert.That(runtime.StartRuntime(prepared), Is.EqualTo(VnResult.VN_OK), runtime.LastStartupError);
-                AssertNamedWrite(publication.ProjectId);
+                AssertNamedWrite(runtime.Session.ProjectId);
             }
             finally
             {
@@ -173,7 +168,7 @@ namespace Harken.Unity.Tests
 
         private static void AssertNamedWrite(string projectId)
         {
-            Assert.That(Values.Resolve("Demo_Choice", out VnObjectId variableId), Is.EqualTo(VnResult.VN_OK));
+            Assert.That(Values.Resolve("Sdk_Value", out VnObjectId variableId), Is.EqualTo(VnResult.VN_OK));
             var query = new VnVariableQueryDescV1
             {
                 structSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf<VnVariableQueryDescV1>(),
@@ -186,7 +181,7 @@ namespace Harken.Unity.Tests
             Assert.That(Values.QueryVariable(in query, ref value), Is.EqualTo(VnResult.VN_OK));
             Assert.That(value.currentValue, Is.Zero);
             Assert.That(value.pendingCount, Is.Zero);
-            Assert.That(Values.SetValue("Demo_Choice", projectId, 1), Is.EqualTo(VnResult.VN_OK));
+            Assert.That(Values.SetValue("Sdk_Value", projectId, 1), Is.EqualTo(VnResult.VN_OK));
             for (int i = 0; i < 32; ++i)
             {
                 Assert.That(HarkenEngine.Update(), Is.EqualTo(VnResult.VN_OK));
@@ -196,7 +191,7 @@ namespace Harken.Unity.Tests
             Assert.That(Values.QueryVariable(in query, ref value), Is.EqualTo(VnResult.VN_OK));
             Assert.That(value.pendingCount, Is.Zero);
             Assert.That(value.currentValue, Is.EqualTo(1));
-            Assert.That(Values.SetValue("Demo_Choice", "00000000-0000-4000-8000-000000000001", 0),
+            Assert.That(Values.SetValue("Sdk_Value", "00000000-0000-4000-8000-000000000001", 0),
                 Is.EqualTo(VnResult.VN_GAMEPLAY_WRONG_PROJECT));
             Assert.That(Values.QueryVariable(in query, ref value), Is.EqualTo(VnResult.VN_OK));
             Assert.That(value.currentValue, Is.EqualTo(1));
@@ -242,27 +237,29 @@ namespace Harken.Unity.Tests
                 ExpectStartupFailure(VnResult.VN_ALREADY_INITIALIZED);
                 Assert.That(duplicate.StartRuntime("unused"), Is.EqualTo(VnResult.VN_ALREADY_INITIALIZED));
                 ExpectStartupFailure(VnResult.VN_ALREADY_INITIALIZED);
-                Assert.That(duplicate.StartRuntime((HarkenPreparedPacks)null), Is.EqualTo(VnResult.VN_ALREADY_INITIALIZED));
+                Assert.That(duplicate.StartRuntime((PackSource)null), Is.EqualTo(VnResult.VN_ALREADY_INITIALIZED));
                 Assert.That(duplicate.Session, Is.Null);
                 ExpectStartupFailure(VnResult.VN_INVALID_ARG);
-                Assert.That(runtime.StartRuntime((HarkenPreparedPacks)null), Is.EqualTo(VnResult.VN_INVALID_ARG));
+                Assert.That(runtime.StartRuntime((PackSource)null), Is.EqualTo(VnResult.VN_INVALID_ARG));
                 Assert.That(runtime.Session, Is.Null);
 
                 HarkenPackSource asset = Resources.Load<HarkenPackSource>("HarkenSdkFixture/Source");
                 Assert.That(asset, Is.Not.Null, "Prepare HarkenUnityFixtureAssets before running this test.");
-                Assert.That(asset.Capture(out HarkenPreparedPacks prepared, out string error), Is.EqualTo(VnResult.VN_OK), error);
-                Assert.That(prepared.Publication.TryFindAction("Play_U4_A", out GameplayAction row), Is.True);
-                Assert.That(runtime.ConfigureBeforeStartup("UnusedSuppliedBytes", prepared.Publication.InitPack.Path,
-                    new[] { row.OwnerPackStableId }, true, false), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(runtime.ConfigurePlatformBeforeStartup(prepared.Publication.Platform.Id), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(runtime.ConfigureLanguageBeforeStartup(prepared.Publication.Language), Is.EqualTo(VnResult.VN_OK));
+                PackSource prepared = CaptureSource(asset, "SourceInit");
+                string root = Path.Combine(Application.streamingAssetsPath, "Audio/U4Original");
+                Assert.That(CompanionTestPublication.Read(root, null, out CompanionTestPublication publication, out string error),
+                    Is.EqualTo(VnResult.VN_OK), error);
+                Assert.That(publication.TryFindAction("Play_U4_A", out CompanionTestAction row), Is.True);
+                Assert.That(runtime.ConfigureBeforeStartup("UnusedSuppliedBytes", "Init.bytes", Array.Empty<ulong>(),
+                    true, false), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(runtime.ConfigureLanguageBeforeStartup(prepared.Language), Is.EqualTo(VnResult.VN_OK));
                 var emitter = source.AddComponent<HarkenEmitter>();
                 var action = source.AddComponent<HarkenAction>();
                 Set(emitter, "runtime", runtime);
                 Set(action, "runtime", runtime);
                 Set(action, "emitter", emitter);
                 Set(action, "actionName", row.Name);
-                Set(action, "projectId", prepared.Publication.ProjectId);
+                Set(action, "projectId", publication.ProjectId);
                 source.SetActive(true);
                 Assert.That(emitter.IsCreated, Is.False);
 
@@ -302,8 +299,11 @@ namespace Harken.Unity.Tests
             HarkenPackSource asset = Resources.Load<HarkenPackSource>("HarkenSdkFixture/Source");
             Assert.That(asset, Is.Not.Null,
                 "Run Harken.Unity.Tests.HarkenUnityFixtureAssets.Prepare before Editor or Player tests.");
-            Assert.That(asset.Capture(out HarkenPreparedPacks captured, out string error), Is.EqualTo(VnResult.VN_OK), error);
-            Assert.That(captured.Publication.TryFindAction("Play_U4_A", out GameplayAction row), Is.True);
+            PackSource captured = CaptureSource(asset, "SourceInit");
+            string root = Path.Combine(Application.streamingAssetsPath, "Audio/U4Original");
+            Assert.That(CompanionTestPublication.Read(root, null, out CompanionTestPublication publication, out string error),
+                Is.EqualTo(VnResult.VN_OK), error);
+            Assert.That(publication.TryFindAction("Play_U4_A", out CompanionTestAction row), Is.True);
             var owner = new GameObject("Serialized prepared Runtime");
             var source = new GameObject("Serialized prepared Action");
             owner.SetActive(false);
@@ -315,18 +315,18 @@ namespace Harken.Unity.Tests
             Set(action, "runtime", runtime);
             Set(action, "emitter", emitter);
             Set(action, "actionName", row.Name);
-            Set(action, "projectId", captured.Publication.ProjectId);
+            Set(action, "projectId", publication.ProjectId);
             try
             {
-                Assert.That(runtime.ConfigureBeforeStartup("UnusedTextAssetPath", captured.Publication.InitPack.Path,
-                    new[] { row.OwnerPackStableId }, true, false), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(runtime.ConfigurePreparedSourceBeforeStartup(asset), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(runtime.ConfigureBeforeStartup("UnusedTextAssetPath", "Init.bytes",
+                    Array.Empty<ulong>(), true, false), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(runtime.ConfigureCompanionSourceBeforeStartup(captured), Is.EqualTo(VnResult.VN_OK));
                 owner.SetActive(true);
                 source.SetActive(true);
                 Assert.That(runtime.IsPreparationComplete, Is.True, runtime.LastStartupError);
                 Assert.That(runtime.PackRootPath, Is.Empty);
-                Assert.That(runtime.Session.Publication.ProjectId, Is.EqualTo(captured.Publication.ProjectId));
-                Assert.That(runtime.Session.StartupPacks.Length, Is.EqualTo(1));
+                Assert.That(runtime.Session.ProjectId, Is.EqualTo(publication.ProjectId));
+                Assert.That(runtime.Session.StartupPacks, Is.Empty);
                 Assert.That(HarkenEngine.Update(), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(action.Play(), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(action.Firing.Query(out VnActionFiringInfo info), Is.EqualTo(VnResult.VN_OK));
@@ -345,12 +345,18 @@ namespace Harken.Unity.Tests
         public IEnumerator CapturedBytesUseSharedPreparationWithoutReplayingARefusedAutomaticTrigger()
         {
             string root = Path.Combine(Application.streamingAssetsPath, "Audio/U4Original");
-            Assert.That(GameplayPublication.Read(root, null, out GameplayPublication publication, out string error),
+            Assert.That(CompanionTestPublication.Read(root, null, out CompanionTestPublication publication, out string error),
                 Is.EqualTo(VnResult.VN_OK), error);
-            Assert.That(publication.TryFindAction("Play_U4_A", out GameplayAction row), Is.True);
-            Assert.That(publication.TryFindPack(row.OwnerPackStableId, out PackManifestEntry pack), Is.True);
-            Assert.That(HarkenPreparedPacks.Create(publication, File.ReadAllBytes(Path.Combine(root, publication.InitPack.Path)),
-                out HarkenPreparedPacks prepared, out error), Is.EqualTo(VnResult.VN_OK), error);
+            Assert.That(publication.TryFindAction("Play_U4_A", out CompanionTestAction row), Is.True);
+            Assert.That(publication.TryFindPack(row.OwnerPackStableId, out CompanionTestPack pack), Is.True);
+            bool supplied = false;
+            ulong revision = 0;
+            PackSource prepared = PackSource.FromReader(path =>
+            {
+                if (!supplied && (path == "Play_U4_A.bytes" || path == "Play_U4_A.json")) return null;
+                string file = Path.Combine(root, path);
+                return File.Exists(file) ? File.ReadAllBytes(file) : null;
+            }, revision: () => revision);
             var owner = new GameObject("Prepared Runtime");
             var source = new GameObject("Prepared Action");
             owner.SetActive(false);
@@ -368,7 +374,7 @@ namespace Harken.Unity.Tests
             {
                 Assert.That(runtime.ConfigureBeforeStartup("UnusedPreparedPath", publication.InitPack.Path, Array.Empty<ulong>(), true, false),
                     Is.EqualTo(VnResult.VN_OK));
-                Assert.That(runtime.ConfigurePreparedBytesBeforeStartup(prepared), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(runtime.ConfigureCompanionSourceBeforeStartup(prepared), Is.EqualTo(VnResult.VN_OK));
                 owner.SetActive(true);
                 Assert.That(runtime.IsReady, Is.True, runtime.LastStartupError);
                 Assert.That(runtime.PackRootPath, Is.Empty);
@@ -379,8 +385,10 @@ namespace Harken.Unity.Tests
                 Assert.That(action.LastResult, Is.EqualTo(VnResult.VN_CONTENT_NOT_LOADED));
                 Assert.That(action.Firing.IsValid, Is.False);
                 ulong attemptedSeed = Get<ulong>(action, "callerSeed");
-                Assert.That(prepared.SupplyPack(pack.PackStableId, File.ReadAllBytes(Path.Combine(root, pack.Path))),
-                    Is.EqualTo(VnResult.VN_OK));
+                ++revision;
+                supplied = true;
+                Assert.That(runtime.Session.PrepareActions(new[] { row.Name }, publication.ProjectId,
+                    out ActionPreparation ready), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(runtime.Session.AcquirePack(pack.PackStableId, out Pack first), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(runtime.Session.AcquirePack(pack.PackStableId, out Pack shared), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(shared.Handle, Is.EqualTo(first.Handle));
@@ -406,13 +414,14 @@ namespace Harken.Unity.Tests
         {
             const string logicalRoot = "Assets/Audio/U4Original";
             Dictionary<string, byte[]> files = LogicalFiles(logicalRoot, "U4Original");
-            string manifestPath = logicalRoot + "/" + PackManifest.ManifestFileName;
-            Assert.That(HarkenPreparedPacks.Capture(manifestPath, MemoryReader(files),
-                out HarkenPreparedPacks captured, out _, out string error), Is.EqualTo(VnResult.VN_OK), error);
-            Assert.That(captured.Publication.TryFindAction("Play_U4_A", out GameplayAction row), Is.True);
+            PackSource captured = PackSource.FromReader(path => MemoryReader(files)(logicalRoot + "/" + path));
+            string root = Path.Combine(Application.streamingAssetsPath, "Audio/U4Original");
+            Assert.That(CompanionTestPublication.Read(root, null, out CompanionTestPublication publication, out string error),
+                Is.EqualTo(VnResult.VN_OK), error);
+            Assert.That(publication.TryFindAction("Play_U4_A", out CompanionTestAction row), Is.True);
             HarkenPackSource asset = Resources.Load<HarkenPackSource>("HarkenSdkFixture/Source");
             Assert.That(asset, Is.Not.Null, "Prepare HarkenUnityFixtureAssets before running this test.");
-            Assert.That(asset.Capture(out HarkenPreparedPacks textAssetPrepared, out error), Is.EqualTo(VnResult.VN_OK), error);
+            PackSource textAssetPrepared = CaptureSource(asset, "SourceInit");
             var owner = new GameObject("Reader Runtime");
             owner.SetActive(false);
             var runtime = owner.AddComponent<HarkenAudioSystem>();
@@ -420,14 +429,15 @@ namespace Harken.Unity.Tests
             Set(runtime, "persistAcrossScenes", false);
             try
             {
-                Assert.That(runtime.ConfigureBeforeStartup("UnusedReaderPath", captured.Publication.InitPack.Path,
-                    new[] { row.OwnerPackStableId }, true, false), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(runtime.ConfigurePlatformBeforeStartup(captured.Publication.Platform.Id), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(runtime.ConfigureBeforeStartup("UnusedReaderPath", "Init.bytes",
+                    Array.Empty<ulong>(), true, false), Is.EqualTo(VnResult.VN_OK));
                 owner.SetActive(true);
-                Assert.That(runtime.StartRuntime(manifestPath, MemoryReader(files)), Is.EqualTo(VnResult.VN_OK),
+                Assert.That(runtime.StartRuntime(captured), Is.EqualTo(VnResult.VN_OK),
                     runtime.LastStartupError);
                 Assert.That(runtime.IsReady, Is.True);
                 Assert.That(runtime.IsPreparationComplete, Is.True, runtime.LastStartupError);
+                Assert.That(runtime.Session.PrepareActions(new[] { row.Name }, runtime.Session.ProjectId,
+                    out ActionPreparation ready), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(runtime.Session.AcquirePack(row.OwnerPackStableId, out Pack demanded), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(demanded.IsValid, Is.True);
                 Assert.That(runtime.ShutdownRuntime(), Is.EqualTo(VnResult.VN_OK));
@@ -441,9 +451,6 @@ namespace Harken.Unity.Tests
                 Assert.That(runtime.IsReady, Is.True);
                 Assert.That(runtime.ShutdownRuntime(), Is.EqualTo(VnResult.VN_OK));
 
-                Assert.That(runtime.ConfigurePreparedSourceBeforeStartup(asset), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(runtime.StartRuntime((string)null), Is.EqualTo(VnResult.VN_OK), runtime.LastStartupError);
-                Assert.That(runtime.IsReady, Is.True);
             }
             finally
             {
@@ -458,7 +465,7 @@ namespace Harken.Unity.Tests
         {
             HarkenPackSource asset = Resources.Load<HarkenPackSource>("HarkenSdkFixture/Source");
             Assert.That(asset, Is.Not.Null, "Prepare HarkenUnityFixtureAssets before running this test.");
-            Assert.That(asset.Capture(out HarkenPreparedPacks prepared, out string error), Is.EqualTo(VnResult.VN_OK), error);
+            PackSource prepared = CaptureSource(asset, "SourceInit");
             var owner = new GameObject("Master volume Runtime");
             owner.SetActive(false);
             var runtime = owner.AddComponent<HarkenAudioSystem>();
@@ -466,9 +473,8 @@ namespace Harken.Unity.Tests
             Set(runtime, "persistAcrossScenes", false);
             try
             {
-                Assert.That(runtime.ConfigureBeforeStartup("UnusedMasterVolumePath", prepared.Publication.InitPack.Path,
+                Assert.That(runtime.ConfigureBeforeStartup("UnusedMasterVolumePath", "Init.bytes",
                     Array.Empty<ulong>(), true, false), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(runtime.ConfigurePlatformBeforeStartup(prepared.Publication.Platform.Id), Is.EqualTo(VnResult.VN_OK));
                 owner.SetActive(true);
                 ExpectVolumeFailure(VnResult.VN_NOT_INITIALIZED);
                 Assert.That(runtime.SetMasterVolume(1f), Is.EqualTo(VnResult.VN_NOT_INITIALIZED));
@@ -494,6 +500,15 @@ namespace Harken.Unity.Tests
                 Object.Destroy(owner);
             }
             yield return null;
+        }
+
+        private static PackSource CaptureSource(HarkenPackSource asset, string initName)
+        {
+            TextAsset init = Resources.Load<TextAsset>("HarkenSdkFixture/" + initName);
+            Assert.That(init, Is.Not.Null);
+            Assert.That(asset.CaptureCompanion(init, out PackSource source, out string error),
+                Is.EqualTo(VnResult.VN_OK), error);
+            return source;
         }
 
         private static void ExpectStartupFailure(VnResult result)

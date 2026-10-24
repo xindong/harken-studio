@@ -47,12 +47,6 @@ namespace Harken
             bool refresh, CancellationToken cancellation)
         {
             cancellation.ThrowIfCancellationRequested();
-            if (companionSource == null)
-            {
-                if (refresh) return new ActionPreparationResult(VnResult.VN_CAPABILITY_UNAVAILABLE);
-                VnResult legacy = PrepareActions(names, projectId, out ActionPreparation scope);
-                return new ActionPreparationResult(legacy, scope);
-            }
             VnResult allowed = CompanionMutationAllowed();
             if (allowed != VnResult.VN_OK) return new ActionPreparationResult(allowed);
             if (names == null || !Guid.TryParseExact(projectId, "D", out Guid project) || project == Guid.Empty)

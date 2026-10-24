@@ -32,26 +32,17 @@
     <Compile Include="..\..\..\HarkenSDK\Unity\Harken\Runtime\Generated\**\*.cs" />
     <Compile Include="..\..\..\HarkenSDK\Unity\Harken\Runtime\Sdk\**\*.cs" />
     <Compile Include="..\..\..\HarkenSDK\Unity\Harken\Runtime\Unity\UnityCoordinates.cs" />
-    <Compile Include="..\..\..\HarkenSDK\Unity\Harken\Editor\HarkenActionWaveform.cs" />
     <!-- The harness itself. -->
     <Compile Include="Program.cs" />
-    <Compile Include="PackPlatformContract.cs" />
-    <Compile Include="NameFirstSample.cs" />
-    <Compile Include="GameplayPublicationContract.cs" />
     <Compile Include="VariableSdkContract.cs" />
     <Compile Include="RemoteCommunicationContract.cs" />
-    <Compile Include="EditorWaveformContract.cs" />
     <Compile Include="RepositoryPublicationContract.cs" />
     <Compile Include="CompanionDirectoryContract.cs" />
     <Compile Include="CompanionSourceContract.cs" />
-    <Content Include="..\Fixtures\EditorMetadata\1\**\*.json"
-             Link="EditorMetadata\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="..\Fixtures\EditorMetadata\2\**\*.json;..\Fixtures\EditorMetadata\2\**\*.pack"
-             Link="EditorMetadataV2\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="..\UnityFixture\Data\**\*.json;..\UnityFixture\Data\**\*.pack;..\UnityFixture\Data\**\*.bytes"
-             Link="NativePublications\UnityFixture\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="..\..\Unity\Harken\Samples~\PlayableDemo\PackSource\**\*.json;..\..\Unity\Harken\Samples~\PlayableDemo\PackSource\**\*.bytes"
-             Link="NativePublications\PlayableDemo\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\UnityFixture\Data\CompanionPacks\**\*.json;..\UnityFixture\Data\CompanionPacks\**\*.bytes"
+             Link="NativePublications\UnityFixture\CompanionPacks\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\UnityFixture\Data\U4Original\**\*.json;..\UnityFixture\Data\U4Original\**\*.bytes"
+             Link="NativePublications\UnityFixture\U4Original\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\..\..\HarkenEngine\Source\Tooling\VariableCatalog\variable_catalog.json"
              Link="VariableCatalog.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import copy
 import importlib.util
 import json
 import shutil
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -27,8 +25,6 @@ class StudioSchemaLockTest(unittest.TestCase):
         self.editor_version = MODULE.schema_archive.load_tree("Editor")["currentVersion"]
         self.editor_history = MODULE.schema_archive.load_tree("Editor")["manifest"]["supportedHistorical"]
         shutil.copytree(REPO_ROOT / "HarkenSchema", self.source)
-        (self.root / ".scripts").mkdir()
-        (self.root / MODULE.audit.CONFIG_PATH).write_text('{"auditVersion":4,"product":"HarkenStudio","publication":"unpublished"}', encoding="utf-8")
         for name, value in (("SCHEMA_ROOT", self.source), ("REPO_ROOT", self.root)):
             active = patch.object(MODULE, name, value)
             active.start()
@@ -66,7 +62,7 @@ class StudioSchemaLockTest(unittest.TestCase):
         self.assertEqual(result["trees"]["Pack"]["generation"], current + 1)
         pack = MODULE.schema_archive.load_tree("Pack", self.candidate)
         self.assertNotIn("formatVersion", pack["currentSource"]["x-harken-format"])
-        self.assertEqual(pack["current"]["properties"]["schema_version"]["const"], current + 1)
+        self.assertEqual(pack["current"]["$defs"]["schemaVersion"]["const"], current + 1)
         self.assertFalse((self.source / "Pack" / str(current + 1)).exists())
 
     def test_next_editor_generation_preserves_latest_previous_snapshot(self) -> None:
@@ -112,68 +108,37 @@ class StudioSchemaLockTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             MODULE.candidate_updates(self.candidate)
 
-    def test_failed_reader_verification_never_updates_repository(self) -> None:
-        self.add_metadata()
-        self.stage()
-        before = self.snapshot()
-        with patch.object(MODULE.audit, "run_git", side_effect=[SimpleNamespace(returncode=0), SimpleNamespace(returncode=1)]), \
-                patch.object(MODULE.audit, "source_fingerprint", return_value="fingerprint"), \
-                patch.object(MODULE.audit, "verify_release_readers", side_effect=ValueError("lost metadata")) as verify:
-            with self.assertRaisesRegex(ValueError, "lost metadata"):
-                MODULE.publish_candidate(self.candidate, "release", Path("reader"), {}, Path("gate"), Path("pack"))
-            verify.assert_called_once()
-        self.assertEqual(self.snapshot(), before)
-
-    def test_existing_release_tag_cannot_be_reused(self) -> None:
-        self.stage()
-        with patch.object(MODULE.audit, "run_git", return_value=SimpleNamespace(returncode=0)):
-            with self.assertRaises(ValueError):
-                MODULE.publish_candidate(self.candidate, "release", Path("reader"), {}, Path("gate"), Path("pack"))
-
-    def test_uncommitted_reader_sources_cannot_sign_a_release(self) -> None:
-        self.stage()
-        with patch.object(MODULE.audit, "run_git", side_effect=[SimpleNamespace(returncode=0), SimpleNamespace(returncode=1)]), \
-                patch.object(MODULE.audit, "source_fingerprint", side_effect=["worktree", "head"]), \
-                patch.object(MODULE.audit, "verify_release_readers") as verify:
-            with self.assertRaises(ValueError):
-                MODULE.publish_candidate(self.candidate, "release", Path("reader"), {}, Path("gate"), Path("pack"))
-            verify.assert_not_called()
-
-    def test_verified_same_generation_updates_snapshot_and_keeps_tip(self) -> None:
+    def test_same_generation_archive_updates_snapshot_and_keeps_tip(self) -> None:
         source = self.add_metadata()
         self.stage()
-        verification = {"errors": [], "protocol": "schema-roundtrip-v1"}
-        with patch.object(MODULE.audit, "run_git", side_effect=[SimpleNamespace(returncode=0), SimpleNamespace(returncode=1)]), \
-                patch.object(MODULE.audit, "source_fingerprint", return_value="fingerprint"), \
-                patch.object(MODULE.audit, "verify_release_readers", return_value=verification) as verify, \
-                patch.object(MODULE.audit, "require_current_reader") as require, \
-                patch.object(MODULE.audit, "verify_current_release", return_value={"errors": []}):
-            result = MODULE.publish_candidate(self.candidate, "release", Path("reader"), {}, Path("gate"), Path("pack"))
-            verify.assert_called_once()
-            require.assert_called_once_with(verification)
+        result = MODULE.archive_candidate(self.candidate)
         tree = MODULE.schema_archive.load_tree("Editor", self.source)
         self.assertEqual(tree["currentSource"], source)
         self.assertEqual(tree["published"][self.editor_version], tree["current"])
-        self.assertEqual(result["publication"], "released")
+        self.assertEqual(result["trees"]["Editor"]["generation"], self.editor_version)
         self.assertFalse((self.source / f"Editor/{self.editor_version + 1}").exists())
 
-    def test_failed_final_verification_rolls_back_snapshot_and_receipt(self) -> None:
-        self.stage(editor="next")
+    def test_failed_archive_validation_rolls_back_all_contracts(self) -> None:
+        self.stage(editor="next", pack="next")
         before = self.snapshot()
-        with patch.object(MODULE.audit, "run_git", side_effect=[SimpleNamespace(returncode=0), SimpleNamespace(returncode=1)]), \
-                patch.object(MODULE.audit, "source_fingerprint", return_value="fingerprint"), \
-                patch.object(MODULE.audit, "verify_release_readers", return_value={"errors": []}), \
-                patch.object(MODULE.audit, "require_current_reader"), \
-                patch.object(MODULE.audit, "verify_current_release", return_value={"errors": ["stale"]}):
-            with self.assertRaisesRegex(ValueError, "stale"):
-                MODULE.publish_candidate(self.candidate, "release", Path("reader"), {}, Path("gate"), Path("pack"))
+        with patch.object(MODULE.schema_archive, "build_bundle", side_effect=ValueError("invalid archive")):
+            with self.assertRaisesRegex(ValueError, "invalid archive"):
+                MODULE.archive_candidate(self.candidate)
         self.assertEqual(self.snapshot(), before)
         self.assertFalse((self.source / f"Editor/{self.editor_version + 1}").exists())
 
-    def test_external_baseline_cannot_be_reset(self) -> None:
-        with patch.object(MODULE.audit, "published_releases", return_value={"release": {}}):
-            with self.assertRaises(ValueError):
-                MODULE.reset_unpublished()
+    def test_archive_only_updates_manifests_and_numbered_contracts(self) -> None:
+        self.stage(editor="next", pack="next")
+        before = self.snapshot()
+        result = MODULE.archive_candidate(self.candidate)
+        after = self.snapshot()
+        changed = {path for path in before.keys() | after.keys() if before.get(path) != after.get(path)}
+        expected = set()
+        for tree, summary in result["trees"].items():
+            expected.add(f"HarkenSchema/{tree}/manifest.json")
+            expected.add(f"HarkenSchema/{tree}/{summary['generation']}/{MODULE.audit.SCHEMA_NAMES[tree]}")
+        self.assertEqual(changed, expected)
+        self.assertEqual(result["schemaSnapshotHash"], MODULE.schema_archive.build_bundle(self.source)["manifest"]["snapshotHash"])
 
 
 if __name__ == "__main__":

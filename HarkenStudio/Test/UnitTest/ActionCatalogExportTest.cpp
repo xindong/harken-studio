@@ -296,7 +296,7 @@ TEST_F(ActionCatalogExportTest, RepeatedExportKeepsCompanionsAndExecutableBytes)
     EXPECT_EQ(packBytes(firstDir, packRow(firstDir, actionGuid)),
               packBytes(secondDir, packRow(secondDir, actionGuid)));
     EXPECT_FALSE(QFileInfo::exists(QDir(firstDir).filePath(
-        HarkenEditor::Bridge::packManifestFileName())));
+        QStringLiteral("HarkenPackManifest.json"))));
 
     const auto image = parseInit(firstDir);
     EXPECT_FALSE(image.hasGameplayCatalog);

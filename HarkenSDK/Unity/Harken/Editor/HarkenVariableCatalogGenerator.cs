@@ -11,83 +11,27 @@ namespace Harken.Unity.Editor
         /// <summary>Validates a publication's Variable catalog without writing assets.</summary>
         public static VnResult ValidatePublication(string json, string sourceLabel, out string error)
         {
-            if (!HarkenEditorPublicationSupport.IsAvailable)
-            {
-                error = HarkenEditorPublicationSupport.Diagnostic;
-                return VnResult.VN_CAPABILITY_UNAVAILABLE;
-            }
-            return VariableCatalogEmitter.EmitCSharpFromJson(json, sourceLabel, out _, out error);
+            error = HarkenEditorPublicationSupport.Diagnostic;
+            return VnResult.VN_CAPABILITY_UNAVAILABLE;
         }
 
         // Temporarily unregistered until symbol generation reads current Pack companions instead of a legacy manifest.
         // [MenuItem("Harken/Generate SDK Symbols From Publication")]
         public static void GenerateFromMenu()
         {
-            if (!HarkenEditorPublicationSupport.IsAvailable)
-            {
-                EditorUtility.DisplayDialog("Harken SDK Symbols", HarkenEditorPublicationSupport.Diagnostic, "OK");
-                return;
-            }
-            string path = EditorUtility.OpenFilePanel("Select Harken publication JSON",
-                Application.dataPath, "json");
-            if (string.IsNullOrEmpty(path)) return;
-            if (GeneratePublication(path, ResolveOutputPath(), out string error) != VnResult.VN_OK)
-                EditorUtility.DisplayDialog("Harken SDK Symbols", error, "OK");
-            else
-                EditorUtility.DisplayDialog("Harken SDK Symbols",
-                    "Generated Action and Variable symbols from " + path, "OK");
+            EditorUtility.DisplayDialog("Harken SDK Symbols", HarkenEditorPublicationSupport.Diagnostic, "OK");
         }
 
         public static VnResult GeneratePublication(string jsonPath, string variablePath, out string error)
         {
-            // Keep direct callers behind the same temporary gate as the menu before reading or writing assets.
-            if (!HarkenEditorPublicationSupport.IsAvailable)
-            {
-                error = HarkenEditorPublicationSupport.Diagnostic;
-                return VnResult.VN_CAPABILITY_UNAVAILABLE;
-            }
-            error = "A publication path and Variable output path are required.";
-            if (string.IsNullOrEmpty(jsonPath) || string.IsNullOrEmpty(variablePath)) return VnResult.VN_INVALID_ARG;
-            try
-            {
-                string json = File.ReadAllText(jsonPath);
-                VnResult result = VariableCatalogEmitter.EmitCSharpFromJson(json, jsonPath, out string variables, out error);
-                if (result != VnResult.VN_OK) return result;
-                result = ActionCatalogEmitter.EmitCSharpFromJson(json, out string actions, out error);
-                if (result != VnResult.VN_OK) return result;
-                string directory = Path.GetDirectoryName(Path.GetFullPath(variablePath));
-                string actionPath = Path.Combine(directory, "HarkenActions.g.cs");
-                Directory.CreateDirectory(directory);
-                File.WriteAllText(variablePath, variables, new System.Text.UTF8Encoding(false));
-                File.WriteAllText(actionPath, actions, new System.Text.UTF8Encoding(false));
-                AssetDatabase.ImportAsset(ToAssetPath(variablePath), ImportAssetOptions.ForceUpdate);
-                AssetDatabase.ImportAsset(ToAssetPath(actionPath), ImportAssetOptions.ForceUpdate);
-                return VnResult.VN_OK;
-            }
-            catch (IOException exception) { error = exception.Message; return VnResult.VN_BAD_PACK; }
-            catch (System.UnauthorizedAccessException exception) { error = exception.Message; return VnResult.VN_BAD_PACK; }
+            error = HarkenEditorPublicationSupport.Diagnostic;
+            return VnResult.VN_CAPABILITY_UNAVAILABLE;
         }
 
         public static VnResult Generate(string jsonPath, string csharpPath, out string error)
         {
-            if (!HarkenEditorPublicationSupport.IsAvailable)
-            {
-                error = HarkenEditorPublicationSupport.Diagnostic;
-                return VnResult.VN_CAPABILITY_UNAVAILABLE;
-            }
-            error = "A publication JSON path and C# output path are required.";
-            if (string.IsNullOrEmpty(jsonPath) || string.IsNullOrEmpty(csharpPath)) return VnResult.VN_INVALID_ARG;
-            string json;
-            try { json = File.ReadAllText(jsonPath); }
-            catch (IOException exception)
-            {
-                error = exception.Message;
-                return VnResult.VN_BAD_PACK;
-            }
-            VnResult result = VariableCatalogEmitter.WriteCSharpFromJson(json, jsonPath, csharpPath, out error);
-            if (result != VnResult.VN_OK) return result;
-            AssetDatabase.ImportAsset(ToAssetPath(csharpPath), ImportAssetOptions.ForceUpdate);
-            return VnResult.VN_OK;
+            error = HarkenEditorPublicationSupport.Diagnostic;
+            return VnResult.VN_CAPABILITY_UNAVAILABLE;
         }
 
         public static string ResolveOutputPath()
@@ -102,16 +46,5 @@ namespace Harken.Unity.Editor
             return File.Exists(package) ? package : Path.GetFullPath("Assets/Harken/Generated/HarkenVariables.g.cs");
         }
 
-        private static string ToAssetPath(string filesystemPath)
-        {
-            string full = Path.GetFullPath(filesystemPath).Replace('\\', '/');
-            string data = Path.GetFullPath(Application.dataPath).Replace('\\', '/');
-            if (full.StartsWith(data, System.StringComparison.OrdinalIgnoreCase))
-                return "Assets" + full.Substring(data.Length);
-            string packages = Path.GetFullPath(Path.Combine(data, "..", "Packages")).Replace('\\', '/');
-            if (full.StartsWith(packages, System.StringComparison.OrdinalIgnoreCase))
-                return "Packages" + full.Substring(packages.Length);
-            return filesystemPath.Replace('\\', '/');
-        }
     }
 }

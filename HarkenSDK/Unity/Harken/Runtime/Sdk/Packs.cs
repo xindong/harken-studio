@@ -95,21 +95,6 @@ namespace Harken
         private static readonly uint InspectReportSize =
             (uint)Marshal.SizeOf<VnInitPackInspectReport>();
 
-        public static unsafe VnResult SetGameplayCatalog(Pack init, GameplayPublication publication)
-        {
-            if (!init.IsValid || publication == null) return VnResult.VN_INVALID_ARG;
-            var result = GameplayCatalogPairing.Encode(publication, out byte[] bytes, out _);
-            if (result != VnResult.VN_OK) return result;
-            fixed (byte* data = bytes)
-            {
-                VnPackByteSpan span = default;
-                span.structSize = (uint)sizeof(VnPackByteSpan);
-                span.bytes = (IntPtr)data;
-                span.byteCount = (ulong)bytes.Length;
-                return ObserveMutation(HarkenNative.Vn_SetGameplayCatalog(init.Handle, span));
-            }
-        }
-
         public static unsafe VnResult ActivateCanonicalPackSet(
             CanonicalPackMember[] members, ulong setRevision,
             out VnCanonicalPackSetActivationReportV1 report,
@@ -275,23 +260,6 @@ namespace Harken
         {
             return LoadCanonicalPack(
                 0, utf8Path, utf8ContainmentRoot, out pack);
-        }
-
-        public static unsafe VnResult LoadPack(
-            ulong packStableId, string utf8ContainmentRoot, out Pack pack)
-            => LoadPack(packStableId, utf8ContainmentRoot, null, out pack);
-
-        public static unsafe VnResult LoadPack(
-            ulong packStableId, string utf8ContainmentRoot, string language, out Pack pack)
-        {
-            pack = default;
-            if (!PackManifest.TryResolvePackPath(
-                    utf8ContainmentRoot, packStableId, language, out string packPath))
-            {
-                return VnResult.VN_UNKNOWN_ID;
-            }
-            return LoadCanonicalPack(
-                packStableId, packPath, utf8ContainmentRoot, out pack);
         }
 
         public static VnResult ReplacePack(

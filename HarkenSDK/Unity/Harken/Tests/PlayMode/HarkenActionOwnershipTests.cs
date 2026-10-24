@@ -21,9 +21,10 @@ namespace Harken.Unity.Tests
             {
                 fixture.Start();
                 PackBootstrapSession session = fixture.Runtime.Session;
-                Assert.That(GameplayPublication.Read(fixture.Root, null, out GameplayPublication publication, out string error),
+                Assert.That(CompanionTestPublication.Read(fixture.Root, null, out CompanionTestPublication publication, out string error),
                     Is.EqualTo(VnResult.VN_OK), error);
-                Assert.That(publication.TryFindAction("Play_U4_B", out GameplayAction other), Is.True);
+                Assert.That(publication.TryFindAction("Play_U4_B", out CompanionTestAction other), Is.True);
+                Assert.That(session.PrepareActions(new[] { other.Name }, publication.ProjectId, out ActionPreparation otherPreparation), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(session.AcquirePack(other.OwnerPackStableId, out Pack extra), Is.EqualTo(VnResult.VN_OK));
                 yield return WaitForNewBlock(fixture, CaptureBlock());
                 Assert.That(HarkenEngine.Update(), Is.EqualTo(VnResult.VN_OK));
@@ -36,6 +37,7 @@ namespace Harken.Unity.Tests
                 ulong version = Packs.ChangeVersion;
                 ulong revision = Get<ulong>(session, "SetRevision");
                 ulong beforeMutation = CaptureBlock();
+                Assert.That(otherPreparation.Release(), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(session.ReleasePack(other.OwnerPackStableId, extra), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(Packs.ChangeVersion, Is.EqualTo(version + 1));
                 Assert.That(Get<ulong>(session, "SetRevision"), Is.EqualTo(revision + 1));
@@ -520,16 +522,17 @@ namespace Harken.Unity.Tests
             public void Start(bool nullDevice = false)
             {
                 NullDevice = nullDevice;
-                Assert.That(GameplayPublication.Read(Root, null, out GameplayPublication publication, out string error),
+                Assert.That(CompanionTestPublication.Read(Root, null, out CompanionTestPublication publication, out string error),
                     Is.EqualTo(VnResult.VN_OK), error);
-                Assert.That(publication.TryFindAction("Play_U4_A", out GameplayAction selected), Is.True);
+                Assert.That(publication.TryFindAction("Play_U4_A", out CompanionTestAction selected), Is.True);
                 Set(Action, "actionName", selected.Name);
                 Set(Action, "projectId", publication.ProjectId);
                 settingsLease.Settings.SetPackDirectory(Root);
                 Assert.That(Runtime.ConfigureBeforeStartup("Audio/U4Original", publication.InitPack.Path,
-                    new[] { selected.OwnerPackStableId }, nullDevice, false), Is.EqualTo(VnResult.VN_OK));
+                    Array.Empty<ulong>(), nullDevice, false), Is.EqualTo(VnResult.VN_OK));
                 Owner.SetActive(true);
                 Assert.That(Runtime.IsReady, Is.True);
+                Assert.That(Runtime.Session.PrepareActions(new[] { selected.Name }, publication.ProjectId, out _), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(HarkenNative.Vn_SetBusMute(VnConstants.VN_BUS_MASTER, 1, 0), Is.EqualTo(VnResult.VN_IN_USE));
                 Source.SetActive(true);
             }

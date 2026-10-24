@@ -32,7 +32,7 @@ namespace Harken.Unity.Tests
                 LogAssert.Expect(LogType.Error, new Regex("HarkenEngine.Suspend: VN_NOT_INITIALIZED"));
                 Assert.That(fixture.Runtime.SetSuspended(true), Is.EqualTo(VnResult.VN_NOT_INITIALIZED));
                 ExpectFailure(VnResult.VN_INVALID_ARG);
-                Assert.That(fixture.Runtime.StartRuntime((HarkenPreparedPacks)null), Is.EqualTo(VnResult.VN_INVALID_ARG));
+                Assert.That(fixture.Runtime.StartRuntime((PackSource)null), Is.EqualTo(VnResult.VN_INVALID_ARG));
                 int failureObservations = observed;
                 NotifyApplicationPause(fixture.Runtime, true);
                 NotifyApplicationPause(fixture.Runtime, false);
@@ -83,33 +83,7 @@ namespace Harken.Unity.Tests
             yield return null;
         }
 
-        [UnityTest]
-        public IEnumerator PausedPartialContentFailureDefersReadinessWithoutDiscardingSession()
-        {
-            using (var fixture = new Fixture())
-            {
-                Assert.That(HarkenPreparedPacks.Create(fixture.Prepared.Publication,
-                    File.ReadAllBytes(Path.Combine(fixture.Root, fixture.Prepared.Publication.InitPack.Path)),
-                    out HarkenPreparedPacks incomplete, out string error), Is.EqualTo(VnResult.VN_OK), error);
-                fixture.Activate();
-                NotifyApplicationPause(fixture.Runtime, true);
-                ExpectFailure(VnResult.VN_CONTENT_NOT_LOADED);
-                Assert.That(fixture.Runtime.StartRuntime(incomplete), Is.EqualTo(VnResult.VN_CONTENT_NOT_LOADED));
-                PackBootstrapSession session = fixture.Runtime.Session;
-                Assert.That(session.IsActive, Is.True);
-                Assert.That(fixture.Runtime.State, Is.EqualTo(HarkenRuntimeState.Suspended));
-                Assert.That(fixture.FailedCount, Is.EqualTo(1));
-                Assert.That(fixture.StartupReadyCount, Is.Zero);
-                Assert.That(fixture.ReadyCount, Is.Zero);
-                NotifyApplicationPause(fixture.Runtime, false);
-                Assert.That(fixture.Runtime.Session, Is.SameAs(session));
-                Assert.That(fixture.Runtime.IsReady, Is.True);
-                Assert.That(fixture.Runtime.IsPreparationComplete, Is.False);
-                Assert.That(fixture.StartupReadyCount, Is.EqualTo(1));
-                Assert.That(fixture.ReadyCount, Is.EqualTo(1));
-            }
-            yield return null;
-        }
+
 
         [UnityTest]
         public IEnumerator ApplicationPauseDuringPreparationUsesLatestState()
@@ -120,7 +94,7 @@ namespace Harken.Unity.Tests
                 {
                     fixture.Activate();
                     bool readStarted = false;
-                    Assert.That(fixture.Runtime.StartRuntime(PackManifest.ManifestFileName, path =>
+                    Assert.That(fixture.Runtime.StartRuntime(PackSource.FromReader(path =>
                     {
                         Assert.That(fixture.Runtime.State, Is.EqualTo(HarkenRuntimeState.Starting));
                         readStarted = true;
@@ -128,7 +102,7 @@ namespace Harken.Unity.Tests
                         NotifyApplicationPause(fixture.Runtime, false);
                         NotifyApplicationPause(fixture.Runtime, pausedAtCompletion);
                         return File.ReadAllBytes(Path.Combine(fixture.Root, path));
-                    }), Is.EqualTo(VnResult.VN_OK));
+                    })), Is.EqualTo(VnResult.VN_OK));
                     Assert.That(readStarted, Is.True);
                     Assert.That(fixture.Runtime.State, Is.EqualTo(pausedAtCompletion
                         ? HarkenRuntimeState.Suspended : HarkenRuntimeState.Ready));
@@ -385,7 +359,7 @@ namespace Harken.Unity.Tests
                 fixture.AssertFailed(VnResult.VN_INVALID_ARG, 1);
                 Assert.That(fixture.ReadyCount, Is.Zero);
                 ExpectFailure(VnResult.VN_INVALID_ARG);
-                Assert.That(fixture.Runtime.StartRuntime((HarkenPreparedPacks)null), Is.EqualTo(VnResult.VN_INVALID_ARG));
+                Assert.That(fixture.Runtime.StartRuntime((PackSource)null), Is.EqualTo(VnResult.VN_INVALID_ARG));
                 fixture.AssertFailed(VnResult.VN_INVALID_ARG, 2);
                 Assert.That(fixture.Runtime.StartRuntime(fixture.Prepared), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(fixture.Runtime.IsReady, Is.True);
@@ -402,19 +376,15 @@ namespace Harken.Unity.Tests
             using (var fixture = new Fixture())
             {
                 fixture.Activate();
-                Assert.That(fixture.Runtime.ConfigurePlatformBeforeStartup("00000000-0000-0000-0000-000000000001"),
-                    Is.EqualTo(VnResult.VN_OK));
-                ExpectFailure(VnResult.VN_INVALID_ARG);
-                Assert.That(fixture.Runtime.StartRuntime(fixture.Prepared), Is.EqualTo(VnResult.VN_INVALID_ARG));
-                fixture.AssertFailed(VnResult.VN_INVALID_ARG, 1);
+                Assert.That(fixture.Runtime.ConfigurePlatformBeforeStartup(null, "MissingPlatform"), Is.EqualTo(VnResult.VN_OK));
                 ExpectFailure(VnResult.VN_INVALID_ARG);
                 Assert.That(fixture.Runtime.StartRuntime(fixture.Root), Is.EqualTo(VnResult.VN_INVALID_ARG));
-                fixture.AssertFailed(VnResult.VN_INVALID_ARG, 2);
+                fixture.AssertFailed(VnResult.VN_INVALID_ARG, 1);
                 Assert.That(fixture.Runtime.ConfigurePlatformBeforeStartup(null), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(fixture.Runtime.ConfigureLanguageBeforeStartup("UnpublishedLanguage"), Is.EqualTo(VnResult.VN_OK));
                 ExpectFailure(VnResult.VN_PACK_STALE_REVISION);
                 Assert.That(fixture.Runtime.StartRuntime(fixture.Prepared), Is.EqualTo(VnResult.VN_PACK_STALE_REVISION));
-                fixture.AssertFailed(VnResult.VN_PACK_STALE_REVISION, 3);
+                fixture.AssertFailed(VnResult.VN_PACK_STALE_REVISION, 2);
                 Assert.That(fixture.Runtime.ConfigureLanguageBeforeStartup(null), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(fixture.Runtime.StartRuntime(fixture.Prepared), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(fixture.Runtime.IsPreparationComplete, Is.True);
@@ -428,13 +398,13 @@ namespace Harken.Unity.Tests
             using (var fixture = new Fixture())
             {
                 fixture.Activate();
-                HarkenProjectSettings.ActiveForStartup().SetMaxPacks(1);
+                HarkenProjectSettings.ActiveForStartup().SetMaxVoices(20000);
                 ExpectFailure(VnResult.VN_INVALID_CONFIG);
                 Assert.That(fixture.Runtime.StartRuntime(fixture.Prepared), Is.EqualTo(VnResult.VN_INVALID_CONFIG));
                 fixture.AssertFailed(VnResult.VN_INVALID_CONFIG, 1);
                 for (int i = 0; i < 3; ++i) yield return null;
                 fixture.AssertFailed(VnResult.VN_INVALID_CONFIG, 1);
-                HarkenProjectSettings.ActiveForStartup().SetMaxPacks(16);
+                HarkenProjectSettings.ActiveForStartup().SetMaxVoices(HarkenProjectSettings.DefaultMaxVoices);
                 Assert.That(fixture.Runtime.StartRuntime(fixture.Prepared), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(fixture.Runtime.IsReady, Is.True);
             }
@@ -481,7 +451,7 @@ namespace Harken.Unity.Tests
                 };
                 Get<HarkenRuntimeResultEvent>(fixture.Runtime, "failed").AddListener(retry);
                 ExpectFailure(VnResult.VN_INVALID_ARG);
-                Assert.That(fixture.Runtime.StartRuntime((HarkenPreparedPacks)null), Is.EqualTo(VnResult.VN_INVALID_ARG));
+                Assert.That(fixture.Runtime.StartRuntime((PackSource)null), Is.EqualTo(VnResult.VN_INVALID_ARG));
                 Assert.That(fixture.FailedCount, Is.EqualTo(1));
                 Assert.That(fixture.Runtime.Session, Is.Null);
                 Get<HarkenRuntimeResultEvent>(fixture.Runtime, "failed").RemoveListener(retry);
@@ -618,37 +588,7 @@ namespace Harken.Unity.Tests
             yield return null;
         }
 
-        [UnityTest]
-        public IEnumerator PartialContentFailureKeepsTheSessionWithoutAutomaticPreparation()
-        {
-            using (var fixture = new Fixture())
-            {
-                Assert.That(HarkenPreparedPacks.Create(fixture.Prepared.Publication,
-                    File.ReadAllBytes(Path.Combine(fixture.Root, fixture.Prepared.Publication.InitPack.Path)),
-                    out HarkenPreparedPacks incomplete, out string error), Is.EqualTo(VnResult.VN_OK), error);
-                fixture.Activate();
-                ExpectFailure(VnResult.VN_CONTENT_NOT_LOADED);
-                Assert.That(fixture.Runtime.StartRuntime(incomplete), Is.EqualTo(VnResult.VN_CONTENT_NOT_LOADED));
-                PackBootstrapSession session = fixture.Runtime.Session;
-                Assert.That(fixture.Runtime.IsReady, Is.True);
-                Assert.That(session.IsActive, Is.True);
-                Assert.That(fixture.Runtime.IsPreparationComplete, Is.False);
-                Assert.That(fixture.Runtime.LastResult, Is.EqualTo(VnResult.VN_CONTENT_NOT_LOADED));
-                Assert.That(fixture.FailedCount, Is.EqualTo(1));
-                Assert.That(fixture.ReadyCount, Is.EqualTo(1));
-                Assert.That(fixture.Prepared.Publication.TryFindPack(fixture.Action.OwnerPackStableId,
-                    out PackManifestEntry pack), Is.True);
-                Assert.That(incomplete.SupplyPack(pack.PackStableId, File.ReadAllBytes(Path.Combine(fixture.Root, pack.Path))),
-                    Is.EqualTo(VnResult.VN_OK));
-                for (int i = 0; i < 3; ++i) yield return null;
-                Assert.That(fixture.Runtime.Session, Is.SameAs(session));
-                Assert.That(fixture.Runtime.IsPreparationComplete, Is.False);
-                Assert.That(fixture.FailedCount, Is.EqualTo(1));
-                Assert.That(session.PrepareStartupPacks(), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(fixture.Runtime.IsPreparationComplete, Is.True);
-            }
-            yield return null;
-        }
+
 
         [UnityTest]
         public IEnumerator AutomaticInvalidRootNotifiesOnceAndAllowsExplicitPreparedRetry()
@@ -670,29 +610,7 @@ namespace Harken.Unity.Tests
             yield return null;
         }
 
-        [UnityTest]
-        public IEnumerator AutomaticCaptureFailureNotifiesOnceAndLeavesNoSession()
-        {
-            using (var fixture = new Fixture())
-            {
-                var missingSource = ScriptableObject.CreateInstance<HarkenPackSource>();
-                try
-                {
-                    Set(fixture.Runtime, "autoInitialize", true);
-                    Assert.That(fixture.Runtime.ConfigurePreparedSourceBeforeStartup(missingSource), Is.EqualTo(VnResult.VN_OK));
-                    ExpectFailure(VnResult.VN_CONTENT_NOT_LOADED);
-                    fixture.Activate();
-                    fixture.AssertFailed(VnResult.VN_CONTENT_NOT_LOADED, 1);
-                    for (int i = 0; i < 3; ++i) yield return null;
-                    fixture.AssertFailed(VnResult.VN_CONTENT_NOT_LOADED, 1);
-                    Assert.That(fixture.Runtime.ConfigurePreparedBytesBeforeStartup(fixture.Prepared), Is.EqualTo(VnResult.VN_OK));
-                    Assert.That(fixture.Runtime.StartRuntime((string)null), Is.EqualTo(VnResult.VN_OK));
-                    Assert.That(fixture.Runtime.IsReady, Is.True);
-                }
-                finally { Object.Destroy(missingSource); }
-            }
-            yield return null;
-        }
+
 
 
         [UnityTest]
@@ -755,8 +673,8 @@ namespace Harken.Unity.Tests
         {
             public readonly GameObject Owner = new GameObject("Startup result audio system");
             public readonly HarkenAudioSystem Runtime;
-            public readonly HarkenPreparedPacks Prepared;
-            public readonly GameplayAction Action;
+            public readonly PackSource Prepared;
+            public readonly CompanionTestAction Action;
             private readonly HarkenProjectSettingsLease settingsLease = HarkenProjectSettingsLease.Acquire();
             public readonly string Root = Path.Combine(Application.streamingAssetsPath, "Audio/U4Original");
             public int FailedCount { get; private set; }
@@ -772,10 +690,11 @@ namespace Harken.Unity.Tests
                 Set(Runtime, "autoInitialize", false);
                 HarkenPackSource source = Resources.Load<HarkenPackSource>("HarkenSdkFixture/Source");
                 Assert.That(source, Is.Not.Null, "Prepare HarkenUnityFixtureAssets before this test.");
-                Assert.That(source.Capture(out Prepared, out string error), Is.EqualTo(VnResult.VN_OK), error);
-                Assert.That(Prepared.Publication.TryFindAction("Play_U4_A", out Action), Is.True);
-                Assert.That(Runtime.ConfigureBeforeStartup("UnusedStartupResultPath", Prepared.Publication.InitPack.Path,
-                    new[] { Action.OwnerPackStableId }, true, false), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(source.CaptureCompanion(Resources.Load<TextAsset>("HarkenSdkFixture/SourceInit"), out Prepared, out string error), Is.EqualTo(VnResult.VN_OK), error);
+                Assert.That(CompanionTestPublication.Read(Root, null, out CompanionTestPublication publication, out error), Is.EqualTo(VnResult.VN_OK), error);
+                Assert.That(publication.TryFindAction("Play_U4_A", out Action), Is.True);
+                Assert.That(Runtime.ConfigureBeforeStartup("UnusedStartupResultPath", "Init.bytes",
+                    Array.Empty<ulong>(), true, false), Is.EqualTo(VnResult.VN_OK));
                 Get<HarkenRuntimeResultEvent>(Runtime, "failed").AddListener(_ =>
                 {
                     ++FailedCount;

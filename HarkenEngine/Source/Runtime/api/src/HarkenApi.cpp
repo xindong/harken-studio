@@ -8497,6 +8497,15 @@ bool CompleteDeferredPlayableCancellation(harken::Engine& engine,
     harken::EnginePlayableServiceRow& row, std::uint64_t observed) noexcept {
     if (!row.variableControlDeferredCancellation) return true;
     const auto identity = row.variableControlDeferredCancellationSlice;
+    // A claimed slice can be aborted before application when its bucket loses
+    // cancellation arbitration. It will never publish consumedSlices.
+    if (engine.timelinePool.IsInvalidatedPlan03GroupAudioReadComplete(
+            identity, row.variableControlDeferredCancellationReasonBit, observed)) {
+        row.variableControlDeferredCancellation = false;
+        row.variableControlDeferredCancellationSlice = {};
+        row.variableControlDeferredCancellationReasonBit = 0;
+        return true;
+    }
     harken::DecisionCommittedSnapshot decision{};
     if (!engine.decisions.CaptureCommitted(identity.decision, &decision)) {
 engine.runtimeRecreateRequired = true;
@@ -10278,13 +10287,13 @@ engine.runtimeRecreateRequired = true;
 }
 
 bool ClearQueueCompletionOwner(
-    harken::Engine& engine, VnVoiceHandle render, harken::OccurrenceToken occurrence,
+    harken::Engine& engine, VnVoiceHandle render,
     const harken::KnownCompletionPredicateV1& completion) noexcept {
     if (!harken::IsBoundKnownCompletionPredicate(completion)) return true;
     const auto renderOwner = engine.ledger.OwnerForRender(render);
     return (!renderOwner.live || engine.ledger.ClearCompletionMutationExact(
-                renderOwner.ledgerSlot, {occurrence, completion.owner})) &&
-        engine.timelineOccurrences.ClearCompletionOwnerExact(occurrence, completion.owner);
+                renderOwner.ledgerSlot, {completion.occurrence, completion.owner})) &&
+        engine.timelineOccurrences.ClearCompletionOwnerExact(completion.occurrence, completion.owner);
 }
 
 void ServiceAuthoredStops(
@@ -10370,13 +10379,15 @@ void ServiceAuthoredStops(
             for (auto& row : engine.playableServices) {
                 if (AuthoredStopPublicRoot(engine, row.rootInstance) == identity.root) {
                     if (row.queueMode) {
-                        (void)ClearQueueCompletionOwner(engine, row.renderHandle,
-                            row.queueCurrentOccurrence, row.queueCurrentCompletion);
-                        (void)ClearQueueCompletionOwner(engine, row.queueSuccessorRenderHandle,
-                            row.queueSuccessorOccurrence, row.queueSuccessorCompletion);
-                        row.queueCurrentCompletion = {};
-                        row.queueSuccessorCompletion = {};
-                        row.queueSuccessorOwner = {};
+                        if (ClearQueueCompletionOwner(engine, row.renderHandle,
+                                row.queueCurrentCompletion)) {
+                            row.queueCurrentCompletion = {};
+                        }
+                        if (ClearQueueCompletionOwner(engine, row.queueSuccessorRenderHandle,
+                                row.queueSuccessorCompletion)) {
+                            row.queueSuccessorCompletion = {};
+                            row.queueSuccessorOwner = {};
+                        }
                         row.queueAbortRequested = true;
                         row.queueNaturalEnd = true;
                         row.queueSignalOnlyNoOverlap = false;
@@ -12134,6 +12145,23 @@ engine.runtimeRecreateRequired = true;
 engine.runtimeRecreateRequired = true;
         return false;
     }
+    // Cancellation can borrow this coordinator or a member's shared lease.
+    // Settle those readers before reconciliation retires their completion evidence.
+    for (std::uint32_t cursor = 0;
+         auto* borrower = engine.NextOccupiedPlayableService(&cursor);) {
+        if (!borrower->variableControlDeferredCancellation) continue;
+        const auto identity = borrower->variableControlDeferredCancellationSlice;
+        bool belongs = identity.decision.slot == row.frontierEntry.coordinator.slot &&
+            identity.decision.generation == row.frontierEntry.coordinator.generation;
+        if (!belongs) {
+            harken::Plan03PageGroupView group{};
+            belongs = engine.timelinePool.ResolvePlan03GroupSliceProducer(identity, &group) &&
+                group.identity == identity && group.frontier != nullptr &&
+                group.frontier->entry == row.frontierEntry;
+        }
+        if (belongs && !CompleteDeferredPlayableCancellation(
+                engine, *borrower, completedAudioSequence)) return false;
+    }
     if (row.frontierAcceptedSignal.Valid()) {
         const auto outcome = receipt.outcome == harken::FrontierReceiptOutcome::Applied
             ? harken::QueueSignalOutcomeV1::Applied : harken::QueueSignalOutcomeV1::DefinitivelyNotApplied;
@@ -13335,7 +13363,7 @@ bool ReleaseQueueStopNativeOccupancy(
             }
             // The original occurrence may already have moved to retiring storage.
             if (!ClearQueueCompletionOwner(
-                    engine, render, completion.occurrence, completion)) return false;
+                    engine, render, completion)) return false;
             completion = {};
             return true;
         };
@@ -28459,7 +28487,7 @@ QueueContinuationPrepareStatus StartSignalOnlyNoOverlapSuccessor(
     coordinatorCommit.armGroup = scratch.frontierCoordinatorGroup;
     if (!engine.decisions.Commit(scratch.frontierCoordinator, coordinatorCommit) ||
         !ClearQueueCompletionOwner(engine, row.renderHandle,
-            row.queueCurrentCompletion.occurrence, row.queueCurrentCompletion))
+            row.queueCurrentCompletion))
         return QueueContinuationPrepareStatus::Failed;
     if (row.queueDecision.Valid() && !row.queueDecisionCommitted) {
         if (!engine.decisions.Cancel(row.queueDecision) ||
@@ -31046,16 +31074,8 @@ bool FailQueueForInvalidation(
     }
     if (harken::IsBoundKnownCompletionPredicate(
             row.queueCurrentCompletion)) {
-        const harken::VoiceLedger::RenderOwner renderOwner =
-            engine.ledger.OwnerForRender(row.renderHandle);
-        if ((renderOwner.live &&
-             !engine.ledger.ClearCompletionMutationExact(
-                 renderOwner.ledgerSlot,
-                 {row.queueCurrentOccurrence,
-                  row.queueCurrentCompletion.owner})) ||
-            !engine.timelineOccurrences.ClearCompletionOwnerExact(
-                row.queueCurrentOccurrence,
-                row.queueCurrentCompletion.owner)) {
+        if (!ClearQueueCompletionOwner(engine, row.renderHandle,
+                row.queueCurrentCompletion)) {
             return false;
         }
         row.queueCurrentCompletion = {};
@@ -34476,22 +34496,25 @@ bool RestoreDeferredQueueSourceObservation(
     if (observation != nullptr && row.queueMode && row.queueDeferredNeedsFullPreparation &&
         engine.ResolvePlayableMemberSlot(row.scheduleStorageBase, &sourceSlot) &&
         HasPlayableMemberSource(engine, sourceSlot)) {
-        const auto& source = engine.ReadPlayableMember(sourceSlot).completion;
-        const auto arm = engine.ReadPlayableMember(sourceSlot).arm;
-        if (source.resourcesRetired && source.completedSource.kind == harken::SourceTerminalKind::Natural &&
-            source.sourceCompletionSequence != 0 && source.sourceReleaseSequence != 0 &&
-            source.sourceReleaseSequence < engine.mixer.BlocksRendered() &&
-            source.sourceRender == row.renderHandle && arm.slot == row.arm.slot &&
+        const auto& member = engine.ReadPlayableMember(sourceSlot);
+        const auto arm = member.arm;
+        if (member.render == row.renderHandle && arm.slot == row.arm.slot &&
             arm.generation == row.arm.generation && arm.renderSlot == row.arm.renderSlot &&
             arm.renderGeneration == row.arm.renderGeneration) {
-            *observation = {};
-            observation->state = harken::ArmState::Tombstoned;
-            observation->startedBlockSequence = source.sourceStartedBlockSequence;
-            observation->logicalCompletionSequence = source.sourceCompletionSequence;
-            observation->tombstoneAudioSequence = source.sourceReleaseSequence;
-            return true;
+            const auto& source = member.completion;
+            if (source.resourcesRetired && source.completedSource.kind == harken::SourceTerminalKind::Natural &&
+                source.sourceCompletionSequence != 0 && source.sourceReleaseSequence != 0 &&
+                source.sourceReleaseSequence < engine.mixer.BlocksRendered() &&
+                source.sourceRender == row.renderHandle) {
+                *observation = {};
+                observation->state = harken::ArmState::Tombstoned;
+                observation->startedBlockSequence = source.sourceStartedBlockSequence;
+                observation->logicalCompletionSequence = source.sourceCompletionSequence;
+                observation->tombstoneAudioSequence = source.sourceReleaseSequence;
+                return true;
+            }
+            return false;
         }
-        return false;
     }
     const auto& retained = row.queueDeferredSource;
     if (observation == nullptr || !row.queueMode || !row.queueSignalOnlyNoOverlap ||
@@ -35451,7 +35474,7 @@ bool PrivateStoppedRootQueueCoordinatorReady(
     return true;
 }
 
-bool PublishedFailedRootQueueCoordinatorOwned(
+bool FailedRootQueueCoordinatorOwned(
     harken::Engine& engine, const harken::EngineImmediateEntryAttempt& attempt,
     std::uint64_t observedAudioSequence) noexcept {
     const auto coordinator = attempt.initialQueueCoordinator;
@@ -35495,19 +35518,32 @@ bool PublishedFailedRootQueueCoordinatorOwned(
         descriptor.primary.sliceIndex != 0 ||
         !engine.timelinePool.ResolvePlan03GroupSliceProducer(descriptor.primary, &primary) ||
         !(primary.identity == descriptor.primary) ||
-        primary.memberCount != 0 || primary.sourceControlCount != 0 ||
-        primary.frontier == nullptr || !primary.frontier->Valid()) return false;
-    const auto& binding = *primary.frontier;
-    if (binding.role != harken::FrontierGroupRole::Coordinator ||
+        primary.memberCount != 0 || primary.sourceControlCount != 0) return false;
+    const auto* activation = engine.decisions.ResolveFrontierActivation(coordinator);
+    const bool privateCancelled = attempt.gate.Observe(attempt.generation) ==
+        harken::ImmediateEntryAttemptState::Aborted &&
+        decision.audioState == harken::AudioGroupState::Pending && decision.lastAudioSequence == 0;
+    const bool detached = (primary.frontier == nullptr || !primary.frontier->Valid()) &&
+        !engine.timelinePool.HasFrontierOwnerOperations(descriptor.entry.owner, coordinator);
+    if (attempt.privateInitialActivationCancelled)
+        return privateCancelled && activation == nullptr && detached && decision.futurePinCount == 0 &&
+            engine.timelinePool.PrivateImmediateLaneGroupRetirementReady(descriptor.primary,
+                observedAudioSequence);
+    if (activation == nullptr) return false;
+    const bool prepared = activation->State() == harken::FrontierReceiptState::Prepared;
+    // A previous cleanup pass may have detached bindings before cancelling the activation.
+    if (!detached) {
+        if (primary.frontier == nullptr || !primary.frontier->Valid()) return false;
+        const auto& binding = *primary.frontier;
+        if (binding.role != harken::FrontierGroupRole::Coordinator ||
         !(binding.entry == descriptor.entry) || !(binding.primary == descriptor.primary) ||
         binding.operation.kind != harken::FrontierOperationKind::Entry ||
         !(binding.operation.owner == descriptor.entry.owner) ||
         !(binding.operation.group == descriptor.primary) ||
         !(binding.operation.order == descriptor.order) ||
-        binding.operation.world != decision.world || binding.operation.transport != decision.transport)
-        return false;
-    const auto* activation = engine.decisions.ResolveFrontierActivation(coordinator);
-    if (activation == nullptr) return false;
+            binding.operation.world != decision.world || binding.operation.transport != decision.transport)
+            return false;
+    } else if (!prepared) return false;
     const auto& actual = activation->Descriptor();
     if (!(actual.entry == descriptor.entry) || !(actual.primary == descriptor.primary) ||
         !(actual.order == descriptor.order) || actual.worldGeneration != descriptor.worldGeneration ||
@@ -35518,6 +35554,11 @@ bool PublishedFailedRootQueueCoordinatorOwned(
     if (!engine.decisions.CaptureFrontierActivationSidecar(coordinator, descriptor.entry,
             observedAudioSequence, &sidecar) || !(sidecar.primary == descriptor.primary) ||
         decision.futurePinCount != (sidecar.observerPinHeld ? 1u : 0u)) return false;
+    if (prepared)
+        return privateCancelled && sidecar.pagePinHeld && sidecar.observerPinHeld &&
+            engine.decisions.MatchesPreparedFrontierActivationPool(descriptor.entry, engine.timelinePool) &&
+            engine.timelinePool.PrivatePlan03GroupBindable(descriptor.primary) &&
+            (detached || engine.timelinePool.PrivateImmediateLaneFrontierRollbackReady(descriptor.primary));
     if (activation->State() == harken::FrontierReceiptState::Pending)
         return sidecar.pagePinHeld && sidecar.observerPinHeld;
     harken::FrontierActivationReceipt receipt{};
@@ -35592,15 +35633,34 @@ bool ReleasePreHandoffCommittedInitialQueue(
     std::uint64_t observedAudioSequence) noexcept {
     const auto settle = [&](harken::DecisionToken& coordinator,
                             harken::FrontierActivationDescriptor& descriptor,
-                            harken::ArmGroupToken group) {
+                            harken::ArmGroupToken group,
+                            bool& preparedActivationCancelled) {
         if (!coordinator.Valid()) return true;
         if (descriptor.Valid()) {
             auto* activation = engine.decisions.ResolveFrontierActivation(
                 coordinator);
-            if (activation == nullptr) return false;
-            if (activation->State() == harken::FrontierReceiptState::Empty) {
-                // A previous pass already cancelled this prepared activation.
-            } else if (!(activation->Descriptor().entry == descriptor.entry)) {
+            if (preparedActivationCancelled) {
+                harken::DecisionCommittedSnapshot decision{};
+                harken::Plan03PageGroupView primary{};
+                if (activation != nullptr ||
+                    !SameCanonicalDecision(coordinator, descriptor.entry.coordinator) ||
+                    !engine.decisions.CaptureCommitted(coordinator, &decision) ||
+                    decision.continuationGeneration != attempt.generation ||
+                    decision.ticket.sequence != descriptor.order.logicCommitSequence ||
+                    decision.world != descriptor.worldGeneration ||
+                    decision.transport != engine.timelinePool.Epoch() ||
+                    decision.futurePinCount != 0 || decision.lastAudioSequence != 0 ||
+                    decision.audioState != harken::AudioGroupState::Pending ||
+                    decision.pages.slot != descriptor.primary.committedRow ||
+                    decision.pages.generation != descriptor.primary.rowClaimGeneration ||
+                    decision.armGroup.slot != group.slot || decision.armGroup.generation != group.generation ||
+                    engine.decisions.HasFrontierDecisionBinding(coordinator) ||
+                    engine.timelinePool.HasFrontierOwnerOperations(descriptor.entry.owner, coordinator) ||
+                    !engine.timelinePool.ResolvePlan03GroupSliceProducer(descriptor.primary, &primary) ||
+                    (primary.frontier != nullptr && primary.frontier->Valid()) ||
+                    !engine.timelinePool.PrivateImmediateLaneGroupRetirementReady(descriptor.primary,
+                        observedAudioSequence)) return false;
+            } else if (activation == nullptr || !(activation->Descriptor().entry == descriptor.entry)) {
                 return false;
             } else if (activation->State() ==
                     harken::FrontierReceiptState::Prepared) {
@@ -35608,6 +35668,7 @@ bool ReleasePreHandoffCommittedInitialQueue(
                         observedAudioSequence) ||
                     !engine.decisions.CancelPreparedFrontierActivation(
                         coordinator)) return false;
+                preparedActivationCancelled = true;
             } else {
                 harken::FrontierActivationReceipt receipt{};
                 auto read = activation->Read(descriptor.entry,
@@ -35639,10 +35700,12 @@ bool ReleasePreHandoffCommittedInitialQueue(
     };
     return settle(attempt.initialQueueCoordinator,
                attempt.initialQueueDescriptor,
-               attempt.initialQueueCoordinatorArmGroup) &&
+               attempt.initialQueueCoordinatorArmGroup,
+               attempt.privateInitialActivationCancelled) &&
         settle(attempt.queueContinuationCoordinator,
                attempt.queueContinuationDescriptor,
-               attempt.queueContinuationCoordinatorArmGroup);
+               attempt.queueContinuationCoordinatorArmGroup,
+               attempt.privateContinuationActivationCancelled);
 }
 
 bool InitialQueueNativeManifestOwnerMatches(const harken::Engine& engine,
@@ -38182,19 +38245,19 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                     return row.identity == attempt.initialService &&
                         row.pendingImmediateCohortRoot == attempt.root;
                 });
-            bool publishedRootFailure = false;
+            bool ownedRootFailure = false;
             if (!privateCleanupFinished && attempt.queueContinuationFailed &&
                 attempt.producerSlot == UINT32_MAX &&
                 attempt.initialQueueCoordinator.Valid()) {
                 harken::DecisionCommittedSnapshot decision{};
                 if (!engine.decisions.CaptureCommitted(attempt.initialQueueCoordinator, &decision)) continue;
                 if (decision.participantCount == 0 && attempt.initialQueueDescriptor.Valid()) {
-                    if (!PublishedFailedRootQueueCoordinatorOwned(engine, attempt,
+                    if (!FailedRootQueueCoordinatorOwned(engine, attempt,
                             observedAudioSequence)) continue;
-                    publishedRootFailure = true;
+                    ownedRootFailure = true;
                 }
             }
-            const bool preHandoffFailure = publishedRootFailure || (
+            const bool preHandoffFailure = ownedRootFailure || (
                 attempt.queueContinuationFailed &&
                 initialService != engine.playableServices.end() &&
                 !initialService->frontierEntry.Valid());
@@ -38478,8 +38541,9 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                     attempt.root &&
                 !ReleaseInitialQueueEntryDecisionOwners(engine,
                     attempt.root)) continue;
-            if (!attempt.gate.Abort(attempt.generation) ||
-                !attempt.gate.Retire(attempt.generation)) {
+            // An already committed or missed gate needs retirement, not another abort.
+            (void)attempt.gate.Abort(attempt.generation);
+            if (!attempt.gate.Retire(attempt.generation)) {
                 engine.runtimeRecreateRequired = true;
                 continue;
             }
@@ -38490,9 +38554,10 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
             ClearPrivateImmediateVcProducerChain(attempt);
             continue;
         }
+        const bool laneInvalidated = observation.missed ||
+            (observation.cancelled && !engine.HasSelectedOriginalQueueReplacement(attempt));
         const bool initialQueueContinuationFailed =
-            attempt.queueContinuationCoordinator.Valid() &&
-            (observation.missed || (observation.cancelled && !engine.HasSelectedOriginalQueueReplacement(attempt)));
+            attempt.queueContinuationCoordinator.Valid() && laneInvalidated;
         bool variableControlQueueFailed = false;
         if (attempt.queueContinuationCount != 0 && observation.complete) {
             auto recordIndex = attempt.queueContinuationHead;
@@ -38645,7 +38710,8 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
         attempt.queueContinuationFailed =
             attempt.queueContinuationFailed ||
             initialQueueContinuationFailed || variableControlQueueFailed;
-        if (initialQueueContinuationFailed) {
+        if (laneInvalidated && (attempt.initialQueueCoordinator.Valid() ||
+            attempt.queueContinuationCoordinator.Valid())) {
             const auto cancelEntry = [&](harken::DecisionToken coordinator,
                     const harken::FrontierActivationDescriptor& descriptor) {
                 if (!coordinator.Valid() || !descriptor.Valid()) return true;
@@ -38874,10 +38940,15 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
             harken::FrontierActivationReceipt receipt{};
             if (activation == nullptr ||
                 !(activation->Descriptor().entry ==
-                  attempt.initialQueueDescriptor.entry) ||
-                activation->Read(attempt.initialQueueDescriptor.entry,
-                    observedAudioSequence, &receipt) !=
-                    harken::FrontierReceiptRead::Ready) {
+                  attempt.initialQueueDescriptor.entry)) {
+                engine.runtimeRecreateRequired = true;
+                continue;
+            }
+            const auto read = activation->Read(attempt.initialQueueDescriptor.entry,
+                observedAudioSequence, &receipt);
+            // Audio can finish after this service pass captured its completion fence.
+            if (read == harken::FrontierReceiptRead::InFlight) continue;
+            if (read != harken::FrontierReceiptRead::Ready) {
                 engine.runtimeRecreateRequired = true;
                 continue;
             }
@@ -45910,8 +45981,10 @@ void ServicePendingImmediateEntries(
             }
         }
         harken::PrivateImmediateLanePlacementProof originalC0Placement;
-        const bool originalC0Requested = engine.OriginalInitialC0FactoryRequested(*attempt);
-        const bool originalQueueClockRequested = engine.HasOriginalQueueClockPlacement(*attempt);
+        const bool originalC0Requested = attempt != nullptr &&
+            engine.OriginalInitialC0FactoryRequested(*attempt);
+        const bool originalQueueClockRequested = attempt != nullptr &&
+            engine.HasOriginalQueueClockPlacement(*attempt);
         if (!filingFailed) {
             filingFailed = !engine.immediateActionLane.Prepare(attempt->lane,
                 engine.pendingImmediateLaneEventsScratch.data(), eventCount) ||
@@ -45936,8 +46009,9 @@ void ServicePendingImmediateEntries(
                 continue;
             }
         }
-        PendingSelectionCensusPublication selectionPublication(engine, *attempt);
-        if (!filingFailed && ordinarySelection && !selectionPublication.Prepare()) filingFailed = true;
+        std::optional<PendingSelectionCensusPublication> selectionPublication;
+        if (ordinarySelection) selectionPublication.emplace(engine, *attempt);
+        if (!filingFailed && ordinarySelection && !selectionPublication->Prepare()) filingFailed = true;
         if (filingFailed && !fixedDeadlineExpired && !invalidTiming)
             refusal = harken::ReserveRefusal::PoolFull;
         // Capacity placement can move the relative anchor. Check every real due
@@ -46569,7 +46643,7 @@ void ServicePendingImmediateEntries(
             } else if (!engine.immediateActionLane.Publish(attempt->lane))
                 filingFailed = true;
         }
-        if (!filingFailed && ordinarySelection && !selectionPublication.Apply()) {
+        if (!filingFailed && ordinarySelection && !selectionPublication->Apply()) {
             engine.runtimeRecreateRequired = true;
             filingFailed = true;
         }
@@ -46636,7 +46710,9 @@ void ServicePendingImmediateEntries(
                 const auto* activation = rootCurrentOnly
                     ? engine.decisions.ResolveFrontierActivation(attempt->initialQueueCoordinator)
                     : nullptr;
-                if (activation != nullptr && activation->State() == harken::FrontierReceiptState::Pending)
+                if (activation != nullptr &&
+                    (activation->State() == harken::FrontierReceiptState::Prepared ||
+                     activation->State() == harken::FrontierReceiptState::Pending))
                     attempt->queueContinuationFailed = true;
                 const auto preparedActivationMatches = [&](harken::DecisionToken token,
                     const harken::FrontierActivationDescriptor& expected) noexcept {
@@ -46711,10 +46787,11 @@ void ServicePendingImmediateEntries(
                         engine, *attempt);
                 } else {
                     (void)engine.immediateActionLane.Cancel(attempt->lane);
-                    if (engine.RetireOriginalImmediateEntryLane(*attempt, engine.mixer.BlocksRendered()))
+                    if (engine.RetireOriginalImmediateEntryLane(*attempt, engine.mixer.BlocksRendered())) {
                         attempt->lane = {};
-                    (void)attempt->gate.Abort(attempt->generation);
-                    (void)attempt->gate.Retire(attempt->generation);
+                        (void)attempt->gate.Abort(attempt->generation);
+                        // Keep cancellation authority until the coordinator and its groups retire.
+                    }
                 }
                 // Keep the cohort owner until its pinned lane groups retire.
             }
@@ -47556,8 +47633,11 @@ engine.runtimeRecreateRequired = true;
                     disposition != harken::DecisionInvalidationDisposition::AlreadyInvalidated)
                     return false;
             }
-            if (!engine.decisions.Retire(
-                    decision, snapshot.maxTombstoneSequence)) {
+            const auto retirement = engine.decisions.TryRetire(
+                decision, snapshot.maxTombstoneSequence);
+            if (retirement == harken::DecisionRetirementDisposition::DeferredByFrontier)
+                return true;
+            if (retirement != harken::DecisionRetirementDisposition::Retired) {
                 return false;
             }
             cleanupStarted = true;
@@ -52009,7 +52089,7 @@ engine.runtimeRecreateRequired = true;
                             }
                             if (resumeStatus == QueueContinuationPrepareStatus::NaturalEnd) {
                                 if (!ClearQueueCompletionOwner(engine, row.renderHandle,
-                                        row.queueRetiringOccurrence, row.queueCurrentCompletion)) {
+                                        row.queueCurrentCompletion)) {
 engine.runtimeRecreateRequired = true;
                                     continue;
                                 }
@@ -60974,7 +61054,7 @@ bool Engine::ServicePendingVariableQueueReprepare(EngineActionPlayScratch& scrat
     if (!captured.physicalReturned) {
         const auto clearCompletion = [&](VnVoiceHandle render, KnownCompletionPredicateV1& completion) noexcept {
             if (completion.owner.kind != CompletionOwnerKind::SingleQueue) return true;
-            if (!ClearQueueCompletionOwner(*this, render, completion.occurrence, completion)) return false;
+            if (!ClearQueueCompletionOwner(*this, render, completion)) return false;
             completion = {};
             return true;
         };
@@ -72606,15 +72686,15 @@ engine.runtimeRecreateRequired = true;
     }
 
     if (row->queueMode) {
-        (void)ClearQueueCompletionOwner(engine, row->renderHandle,
-                         row->queueCurrentOccurrence,
-                         row->queueCurrentCompletion);
-        (void)ClearQueueCompletionOwner(engine, row->queueSuccessorRenderHandle,
-                         row->queueSuccessorOccurrence,
-                         row->queueSuccessorCompletion);
-        row->queueCurrentCompletion = {};
-        row->queueSuccessorCompletion = {};
-        row->queueSuccessorOwner = {};
+        if (ClearQueueCompletionOwner(engine, row->renderHandle,
+                row->queueCurrentCompletion)) {
+            row->queueCurrentCompletion = {};
+        }
+        if (ClearQueueCompletionOwner(engine, row->queueSuccessorRenderHandle,
+                row->queueSuccessorCompletion)) {
+            row->queueSuccessorCompletion = {};
+            row->queueSuccessorOwner = {};
+        }
         if (row->queueContinuationPrepared &&
             row->queueDecision.Valid() &&
             row->queueConditional.Valid() &&

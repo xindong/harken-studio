@@ -860,6 +860,8 @@ if(WIN32)
     target_link_libraries(harken_exported_pack_qualification PRIVATE Psapi)
 endif()
 target_include_directories(harken_exported_pack_qualification PRIVATE
+    ${CMAKE_SOURCE_DIR}/HarkenEngine/Tool/Host
+    ${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Common
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${HARKEN_RUNTIME_DIR}/api/src
     ${HARKEN_RUNTIME_DIR}/core/include

@@ -8896,7 +8896,14 @@ bool ScheduledTransactionPool::BindPlan03GroupFrontier(const Plan03GroupSliceIde
 
 bool ScheduledTransactionPool::InvalidateFrontierOwnerOperations(
     const FrontierOwnerIdentity& owner, DecisionToken decision, AudioSliceInvalidateReason reason) const noexcept {
-    if (!owner.Valid()) return false;
+    return TryInvalidateFrontierOwnerOperations(owner, decision, reason) ==
+        FrontierOwnerInvalidationDisposition::Ready;
+}
+
+FrontierOwnerInvalidationDisposition ScheduledTransactionPool::TryInvalidateFrontierOwnerOperations(
+    const FrontierOwnerIdentity& owner, DecisionToken decision, AudioSliceInvalidateReason reason) const noexcept {
+    if (!owner.Valid() || reason > AudioSliceInvalidateReason::TransportReset)
+        return FrontierOwnerInvalidationDisposition::NotEligible;
     // Check all matching shared gates before changing even the first invalid bit.
     for (std::size_t index = 0; index < immediateLaneGroups_.ConstructedCount(); ++index) {
         const auto& row = immediateLaneGroups_[index];
@@ -8904,9 +8911,10 @@ bool ScheduledTransactionPool::InvalidateFrontierOwnerOperations(
         if (row.publicationProof != nullptr && row.frontierPinsOwned &&
             heldOwner.serviceSlot == owner.serviceSlot && heldOwner.serviceGeneration == owner.serviceGeneration &&
             (!decision.Valid() || (row.decision.slot == decision.slot && row.decision.generation == decision.generation)))
-            return false;
+            return FrontierOwnerInvalidationDisposition::NotEligible;
     }
     bool mutableOwner = true;
+    bool eligible = true;
     const auto invalidateGate = [reason](LaneFrontierGate& gate,
                                          std::uint64_t generation) noexcept {
         if (gate.generation.load(std::memory_order_acquire) != generation)
@@ -8938,11 +8946,26 @@ bool ScheduledTransactionPool::InvalidateFrontierOwnerOperations(
             (decision.Valid() && (binding.operation.group.decision.slot != decision.slot ||
              binding.operation.group.decision.generation != decision.generation))) continue;
         auto* lease = EffectivePlan03GroupLease(i);
-        if (lease == nullptr) mutableOwner = false;
-        else if (lease->Invalidate(reason) ==
-                 AudioSliceInvalidateDisposition::DeferredAfterClaim) mutableOwner = false;
+        if (lease == nullptr) {
+            eligible = false;
+            continue;
+        }
+        switch (lease->Invalidate(reason)) {
+        case AudioSliceInvalidateDisposition::DeferredAfterClaim:
+            mutableOwner = false;
+            break;
+        case AudioSliceInvalidateDisposition::InvalidatedReady:
+        case AudioSliceInvalidateDisposition::AppliedNeedsLifecycle:
+        case AudioSliceInvalidateDisposition::AlreadyInvalidated:
+            break;
+        default:
+            eligible = false;
+            break;
+        }
     }
-    return mutableOwner;
+    if (!eligible) return FrontierOwnerInvalidationDisposition::NotEligible;
+    return mutableOwner ? FrontierOwnerInvalidationDisposition::Ready :
+        FrontierOwnerInvalidationDisposition::DeferredAfterClaim;
 }
 
 void ScheduledTransactionPool::SettleInvalidatedImmediateLaneFrontiers(
@@ -9299,6 +9322,35 @@ bool ScheduledTransactionPool::NotePlan03GroupReadRt(
         audioSequence < readers.lastAudioSequence.load(std::memory_order_relaxed)) return false;
     readers.lastAudioSequence.store(audioSequence, std::memory_order_release);
     return true;
+}
+
+bool ScheduledTransactionPool::IsInvalidatedPlan03GroupAudioReadComplete(
+    const Plan03GroupSliceIdentity& identity, std::uint32_t expectedReasonBit,
+    std::uint64_t completedAudioSequence) const noexcept {
+    Plan03PageGroupView group{};
+    if (!identity.Exact() || expectedReasonBit == 0 ||
+        !ResolvePlan03GroupSliceProducer(identity, &group) ||
+        group.identity != identity || group.lease == nullptr) return false;
+    const auto lease = group.lease->Capture();
+    if (lease.state != AudioSliceState::SliceInvalidated ||
+        (lease.pendingReasonBits & expectedReasonBit) != expectedReasonBit) return false;
+    const auto lastRead = [&](const Plan03GroupSliceIdentity& exact) noexcept {
+        return exact.backing == Plan03GroupBacking::ImmediateLane
+            ? immediateLaneGroups_[exact.committedRow].readers.lastAudioSequence.load(std::memory_order_acquire)
+            : PageGroupData(exact.committedRow).readers.lastAudioSequence.load(std::memory_order_acquire);
+    };
+    // Read the fence after the terminal lease's acquire publication. Entry
+    // members borrow their coordinator's lease but retain their own readers.
+    auto last = lastRead(identity);
+    if (group.frontier != nullptr && group.frontier->role == FrontierGroupRole::EntryMember) {
+        Plan03PageGroupView primary{};
+        if (!group.frontier->Valid() || !group.frontier->primary.Exact() ||
+            !ResolvePlan03GroupSliceProducer(group.frontier->primary, &primary) ||
+            primary.identity != group.frontier->primary) return false;
+        if (primary.lease == group.lease)
+            last = std::max(last, lastRead(primary.identity));
+    }
+    return last != 0 && completedAudioSequence > last;
 }
 
 bool Plan03GroupReaderPin::Release(std::uint64_t completedAudioSequence) noexcept {

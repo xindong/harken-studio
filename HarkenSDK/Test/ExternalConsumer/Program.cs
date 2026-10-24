@@ -6,7 +6,6 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using Harken;
 
 internal static class Program
@@ -26,8 +25,7 @@ internal static class Program
             {
                 NativeLibrary.SetDllImportResolver(typeof(HarkenEngine).Assembly, ResolveNative);
                 CheckStartupProviderFailure(args[1]);
-                CheckMissingFileRecovery(args[1], true);
-                CheckMissingFileRecovery(args[1], false);
+                CheckMissingFileRecovery(args[1]);
                 CheckHost(args[1], false);
                 CheckHost(args[1], true);
                 Require(Harken.Test.RemoteCommunicationContract.RunNative() == 0, "External host Remote failed.");
@@ -109,37 +107,30 @@ internal static class Program
 
     private sealed class Provider
     {
-        public GameplayPublication Publication;
-        public readonly Dictionary<ulong, byte[]> Bytes = new Dictionary<ulong, byte[]>();
+        public readonly Dictionary<string, byte[]> Bytes = new Dictionary<string, byte[]>();
         public int Calls;
         public bool Throw;
-    }
-
-    private static VnResult Provide(ulong id, string locator, uint variant, ulong hash, out byte[] bytes, object state)
-    {
-        var provider = (Provider)state;
-        ++provider.Calls;
-        if (provider.Throw) throw new InvalidOperationException("Expected provider failure.");
-        Require(provider.Publication.TryFindPack(id, out PackManifestEntry pack) &&
-            pack.Path == locator && pack.VariantKey == variant && pack.ContentHash == hash, "Provider identity mismatch.");
-        return provider.Bytes.TryGetValue(id, out bytes) ? VnResult.VN_OK : VnResult.VN_CONTENT_NOT_LOADED;
+        public ulong Revision;
+        public byte[] Read(string path)
+        {
+            ++Calls;
+            if (Throw) throw new IOException("Expected provider failure.");
+            return Bytes.TryGetValue(path, out byte[] bytes) ? bytes : null;
+        }
     }
 
     private static void CheckStartupProviderFailure(string root)
     {
-        Expect(GameplayPublication.Read(root, null, out GameplayPublication publication, out string error), VnResult.VN_OK, error);
-        Require(publication.TryFindAction("Play_U4_A", out GameplayAction action), "Fixture Action missing.");
-        var provider = new Provider { Publication = publication, Throw = true };
-        VnConfig config = HarkenEngine.DefaultConfig();
+        var provider = new Provider { Throw = true };
+        var config = HarkenEngine.DefaultConfig();
         config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
-        Expect(PackBootstrap.Start(publication, File.ReadAllBytes(Path.Combine(root, publication.InitPack.Path)),
-            new[] { action.OwnerPackStableId }, Provide, provider, ref config, out PackBootstrapSession session),
+        Expect(PackBootstrap.Start(PackSource.FromReader(provider.Read), ref config, out PackBootstrapSession session),
             VnResult.VN_PACK_PROVIDER_FAILED, "Throwing startup provider");
         Require(session == null, "Failed startup must not leave a session.");
         Console.WriteLine("Startup provider exception isolation PASS.");
     }
 
-    private static void CheckMissingFileRecovery(string root, bool withGameplayCatalog)
+    private static void CheckMissingFileRecovery(string root)
     {
         string copy = Path.Combine(Path.GetTempPath(), "HarkenMissingContent_" + Guid.NewGuid().ToString("N"));
         PackBootstrapSession session = null;
@@ -151,45 +142,33 @@ internal static class Program
                 Directory.CreateDirectory(Path.GetDirectoryName(target));
                 File.Copy(file, target);
             }
-            Expect(GameplayPublication.Read(copy, null, out GameplayPublication publication, out string error), VnResult.VN_OK, error);
-            Require(publication.TryFindAction("Play_U4_A", out GameplayAction action), "Fixture Action missing.");
-            Require(publication.TryFindPack(action.OwnerPackStableId, out PackManifestEntry pack), "Content missing.");
-            if (!withGameplayCatalog)
-            {
-                string manifestPath = Path.Combine(copy, PackManifest.ManifestFileName);
-                JsonNode manifest = JsonNode.Parse(File.ReadAllText(manifestPath));
-                Require(manifest.AsObject().Remove("gameplayCatalog"), "Fixture gameplay catalog missing.");
-                File.WriteAllText(manifestPath, manifest.ToJsonString());
-            }
-            string missing = Path.Combine(copy, pack.Path);
-            byte[] content = File.ReadAllBytes(missing);
+            const string action = "Play_U4_A";
+            string missing = Path.Combine(copy, action + ".bytes");
+            string json = Path.Combine(copy, action + ".json");
+            byte[] content = File.ReadAllBytes(missing), metadata = File.ReadAllBytes(json);
             File.Delete(missing);
+            File.Delete(json);
             VnConfig config = HarkenEngine.DefaultConfig();
             config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
-            Expect(PackBootstrap.Start(Path.Combine(copy, publication.InitPack.Path), copy,
-                new[] { action.OwnerPackStableId }, ref config, out session), VnResult.VN_CONTENT_NOT_LOADED, "Missing file startup");
-            Require(session != null && session.IsActive && !session.IsStartupComplete &&
-                session.FailedStartupPackStableId == action.OwnerPackStableId, "Missing Content must retain a recoverable session.");
-            Require((session.Publication != null) == withGameplayCatalog, "Unexpected gameplay catalog state.");
-            Expect(session.AcquirePack(ulong.MaxValue, out _), VnResult.VN_UNKNOWN_ID, "Unknown Content identity");
+            Expect(PackBootstrap.StartDirectory(copy, null, ref config, out session), VnResult.VN_OK, "Init-only startup");
+            Expect(session.PrepareActions(new[] { action }, session.ProjectId, out _),
+                VnResult.VN_CONTENT_NOT_LOADED, "Missing Action pair");
+            Require(session.IsActive, "Missing Content must retain the session.");
+            File.WriteAllBytes(json, metadata);
+            Expect(session.PrepareActions(new[] { action }, session.ProjectId, out _), VnResult.VN_BAD_PACK, "Half Action pair");
             byte[] corrupt = (byte[])content.Clone();
             corrupt[corrupt.Length - 1] ^= 1;
             File.WriteAllBytes(missing, corrupt);
-            Expect(session.PrepareStartupPacks(), VnResult.VN_PACK_HASH_MISMATCH, "Corrupt replacement Content");
-            Require(session.IsActive && !session.IsStartupComplete, "Failed recovery must retain the session.");
+            Require(session.PrepareActions(new[] { action }, session.ProjectId, out _) != VnResult.VN_OK,
+                "Corrupt replacement cannot be accepted.");
+            Require(session.IsActive, "Failed recovery must retain the session.");
             File.WriteAllBytes(missing, content);
-            Expect(session.PrepareStartupPacks(), VnResult.VN_OK, "Explicit file recovery");
-            Require(session.IsStartupComplete, "Restored file must complete the same session.");
-            if (withGameplayCatalog)
-                Expect(Actions.Post(action.Name, Emitter.None, out _), VnResult.VN_OK, "Recovered Action name");
-            else
-            {
-                Expect(Actions.Post(action.Name, Emitter.None, out _), VnResult.VN_CAPABILITY_UNAVAILABLE,
-                    "Legacy name lookup without a catalog");
-                Expect(Actions.Post(action.ActionStableId, Emitter.None, out _), VnResult.VN_OK, "Recovered Action identity");
-            }
+            Expect(session.PrepareActions(new[] { action }, session.ProjectId, out ActionPreparation ready),
+                VnResult.VN_OK, "Explicit file recovery");
+            Expect(Actions.Post(action, Emitter.None, out _), VnResult.VN_OK, "Recovered Action name");
+            Expect(ready.Release(), VnResult.VN_OK, "Release recovered Action");
             Expect(session.Shutdown(), VnResult.VN_OK, "Recovered session shutdown");
-            Console.WriteLine("Missing/corrupt file recovery (gameplay catalog=" + withGameplayCatalog + ") PASS.");
+            Console.WriteLine("Missing/half/corrupt pair recovery PASS.");
         }
         finally
         {
@@ -200,13 +179,11 @@ internal static class Program
 
     private static void CheckHost(string root, bool fromBytes)
     {
-        Expect(GameplayPublication.Read(root, null, out GameplayPublication publication, out string error), VnResult.VN_OK, error);
-        Require(publication.TryFindAction("Play_U4_A", out GameplayAction action), "Fixture Action missing.");
-        byte[] initBytes = File.ReadAllBytes(Path.Combine(root, publication.InitPack.Path));
-        var provider = new Provider { Publication = publication };
-        foreach (PackManifestEntry pack in publication.Packs)
-            if (pack.PackStableId != publication.InitPackStableId)
-                provider.Bytes.Add(pack.PackStableId, File.ReadAllBytes(Path.Combine(root, pack.Path)));
+        var provider = new Provider();
+        foreach (string file in Directory.GetFiles(root, "*", SearchOption.AllDirectories))
+            provider.Bytes.Add(Path.GetRelativePath(root, file).Replace('\\', '/'), File.ReadAllBytes(file));
+        PackSource source = fromBytes ? PackSource.FromReader(provider.Read, revision: () => provider.Revision)
+            : PackSource.FromDirectory(root);
         VnConfig config = HarkenEngine.DefaultConfig();
         config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
         object marker = new object();
@@ -225,11 +202,9 @@ internal static class Program
         PackBootstrapSession session = null;
         try
         {
-            ulong[] startup = { action.OwnerPackStableId };
-            VnResult started = fromBytes
-                ? PackBootstrap.Start(publication, initBytes, startup, Provide, provider, ref config, out session)
-                : PackBootstrap.Start(Path.Combine(root, publication.InitPack.Path), root, startup, ref config, out session);
-            Expect(started, VnResult.VN_OK, "Host startup");
+            Expect(PackBootstrap.Start(source, ref config, out session), VnResult.VN_OK, "Host startup");
+            Expect(session.PrepareActions(new[] { "Play_U4_A" }, session.ProjectId, out ActionPreparation prepared),
+                VnResult.VN_OK, "Host preparation");
             Expect(HarkenEngine.QueryRemoteCommunication(out VnRemoteStatus status), VnResult.VN_OK, "Default Remote status");
             Require(status.state == (uint)VnRemoteState.VN_REMOTE_STOPPED, "Remote must remain opt-in.");
             Expect(Emitter.CreateStateOnly(out Emitter stateOnly), VnResult.VN_OK, "Create state-only emitter");
@@ -245,20 +220,19 @@ internal static class Program
             Expect(Listener.Set(default, new VnVec3 { z = 1 }, new VnVec3 { y = 1 }), VnResult.VN_OK, "Listener");
             Expect(Listener.SetDistanceReference(emitter), VnResult.VN_OK, "Listener distance reference");
             Expect(Listener.SetDistanceReference(Emitter.None), VnResult.VN_OK, "Clear listener distance reference");
-            Expect(Actions.Post(action.Name, emitter, out ActionFiring firing), VnResult.VN_OK, "Action");
+            Expect(Actions.Post("Play_U4_A", emitter, out ActionFiring firing), VnResult.VN_OK, "Action");
             Expect(firing.Query(out _), VnResult.VN_OK, "Query firing");
             Expect(firing.Stop(0), VnResult.VN_OK, "Stop firing");
-            // Stop is asynchronous. The production null device has no audio pump;
-            // terminal release is exercised by the separate Unity player fixture.
             Expect(firing.Release(), VnResult.VN_IN_USE, "Release before audio retirement");
             Expect(emitter.Destroy(), VnResult.VN_OK, "Destroy emitter");
             Expect(emitter.SetDistanceScale(1), VnResult.VN_STALE_HANDLE, "Destroyed emitter distance scale");
             Expect(Listener.SetDistanceReference(emitter), VnResult.VN_STALE_HANDLE, "Destroyed listener distance reference");
             Expect(HarkenEngine.Update(), VnResult.VN_OK, "Pump callbacks");
-            if (fromBytes) CheckProviderFailure(publication, provider, session);
-            Expect(PackBootstrap.Start(publication, initBytes, Array.Empty<ulong>(), Provide, provider,
-                ref config, out PackBootstrapSession second), VnResult.VN_ALREADY_INITIALIZED, "Second host");
+            if (fromBytes) CheckProviderFailure(provider, session);
+            Expect(PackBootstrap.Start(source, ref config, out PackBootstrapSession second),
+                VnResult.VN_ALREADY_INITIALIZED, "Second host");
             Require(second == null && session.IsActive, "Second startup must not take ownership.");
+            Expect(prepared.Release(), VnResult.VN_OK, "Host preparation release");
             Expect(session.Shutdown(), VnResult.VN_OK, "Shutdown");
         }
         finally { session?.Dispose(); }
@@ -267,24 +241,30 @@ internal static class Program
         Console.WriteLine($"External host {(fromBytes ? "bytes" : "files")}, Action/spatial/lifecycle PASS; notifications={notifications}.");
     }
 
-    private static void CheckProviderFailure(GameplayPublication publication, Provider provider, PackBootstrapSession session)
+    private static void CheckProviderFailure(Provider provider, PackBootstrapSession session)
     {
-        Require(publication.TryFindAction("Play_U4_B", out GameplayAction other), "Second Action missing.");
-        byte[] good = provider.Bytes[other.OwnerPackStableId];
-        provider.Bytes.Remove(other.OwnerPackStableId);
-        Expect(session.AcquirePack(other.OwnerPackStableId, out _), VnResult.VN_CONTENT_NOT_LOADED, "Missing bytes");
+        const string name = "Play_U4_B", binary = name + ".bytes", json = name + ".json";
+        byte[] good = provider.Bytes[binary], metadata = provider.Bytes[json];
+        ++provider.Revision;
+        provider.Bytes.Remove(binary); provider.Bytes.Remove(json);
+        Expect(session.PrepareActions(new[] { name }, session.ProjectId, out _),
+            VnResult.VN_CONTENT_NOT_LOADED, "Missing pair");
         int calls = provider.Calls;
-        Expect(Actions.Post(other.Name, Emitter.None, out _), VnResult.VN_CONTENT_NOT_LOADED, "Unprepared Action");
+        Require(Actions.Post(name, Emitter.None, out _) != VnResult.VN_OK, "Unprepared Action");
         Require(provider.Calls == calls, "Action cannot implicitly retry resource loading.");
         provider.Throw = true;
-        Expect(session.AcquirePack(other.OwnerPackStableId, out _), VnResult.VN_PACK_PROVIDER_FAILED, "Throwing provider");
+        Expect(session.PrepareActions(new[] { name }, session.ProjectId, out _),
+            VnResult.VN_PACK_PROVIDER_FAILED, "Throwing provider");
         provider.Throw = false;
+        ++provider.Revision;
         byte[] corrupt = (byte[])good.Clone(); corrupt[corrupt.Length - 1] ^= 1;
-        provider.Bytes[other.OwnerPackStableId] = corrupt;
-        Expect(session.AcquirePack(other.OwnerPackStableId, out _), VnResult.VN_PACK_HASH_MISMATCH, "Bad bytes");
-        provider.Bytes[other.OwnerPackStableId] = good;
-        Expect(session.AcquirePack(other.OwnerPackStableId, out Pack pack), VnResult.VN_OK, "Explicit retry");
-        Require(pack.IsValid && session.IsActive, "Explicit retry must preserve the session.");
+        provider.Bytes[binary] = corrupt; provider.Bytes[json] = metadata;
+        Require(session.PrepareActions(new[] { name }, session.ProjectId, out _) != VnResult.VN_OK, "Bad bytes");
+        ++provider.Revision;
+        provider.Bytes[binary] = good;
+        Expect(session.PrepareActions(new[] { name }, session.ProjectId, out ActionPreparation ready), VnResult.VN_OK, "Explicit retry");
+        Require(ready.IsPrepared && session.IsActive, "Explicit retry must preserve the session.");
+        Expect(ready.Release(), VnResult.VN_OK, "Recovered provider lease release");
     }
 
     // Compiled public signatures supplement the executed file/byte host flow.

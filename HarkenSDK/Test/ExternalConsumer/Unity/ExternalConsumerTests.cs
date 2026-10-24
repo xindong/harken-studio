@@ -19,9 +19,6 @@ public class ExternalConsumerTests
     {
         Assert.That(typeof(HarkenEngine).Assembly, Is.Not.EqualTo(GetType().Assembly));
         string root = Path.Combine(Application.streamingAssetsPath, "Audio/U4Original");
-        Assert.That(GameplayPublication.Read(root, null, out GameplayPublication publication, out string error),
-            Is.EqualTo(VnResult.VN_OK), error);
-        Assert.That(publication.TryFindAction("Play_U4_A", out GameplayAction action), Is.True);
         VnConfig config = HarkenEngine.DefaultConfig();
         config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
         object marker = new object();
@@ -37,17 +34,19 @@ public class ExternalConsumerTests
             }, marker))
         {
             GC.Collect(); GC.WaitForPendingFinalizers();
-            Assert.That(PackBootstrap.Start(Path.Combine(root, publication.InitPack.Path), root,
-                new[] { action.OwnerPackStableId }, ref config, out PackBootstrapSession session), Is.EqualTo(VnResult.VN_OK));
+            Assert.That(PackBootstrap.StartDirectory(root, null, ref config, out PackBootstrapSession session),
+                Is.EqualTo(VnResult.VN_OK));
             using (session)
             {
+                Assert.That(session.PrepareActions(new[] { "Play_U4_A" }, session.ProjectId,
+                    out ActionPreparation prepared), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(Emitter.Create(out Emitter emitter), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(emitter.SetPosition(new VnVec3 { x = 1 }), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(emitter.SetDistanceScale(2), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(Listener.Set(default, new VnVec3 { z = 1 }, new VnVec3 { y = 1 }), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(Listener.SetDistanceReference(emitter), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(Listener.SetDistanceReference(Emitter.None), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(Actions.Post(action.Name, emitter, out ActionFiring firing), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(Actions.Post("Play_U4_A", emitter, out ActionFiring firing), Is.EqualTo(VnResult.VN_OK));
                 // Allow the authored start to pass through admission and audio-start acknowledgement.
                 for (int block = 0; block < 8; ++block)
                 {
@@ -96,6 +95,7 @@ public class ExternalConsumerTests
                 Assert.That(HarkenEngine.Update(), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(notifications, Is.GreaterThan(before));
                 Assert.That(callbackStateValid, Is.True);
+                Assert.That(prepared.Release(), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(session.Shutdown(), Is.EqualTo(VnResult.VN_OK));
             }
             registration.Dispose(); registration.Dispose();

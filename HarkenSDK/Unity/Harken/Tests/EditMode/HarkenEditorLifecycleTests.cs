@@ -17,25 +17,6 @@ namespace Harken.Unity.Tests
 {
     public sealed class HarkenEditorLifecycleTests
     {
-        [Serializable]
-        private sealed class SampleManifest
-        {
-            public SampleVariables variableCatalog;
-        }
-
-        [Serializable]
-        private sealed class SampleVariables
-        {
-            public SampleVariable[] variables;
-        }
-
-        [Serializable]
-        private sealed class SampleVariable
-        {
-            public string codeName;
-            public string variableId;
-        }
-
         private static readonly string DomainToken = Guid.NewGuid().ToString("N");
         [SerializeField] private string folder;
         [SerializeField] private string scenePath;
@@ -252,76 +233,7 @@ namespace Harken.Unity.Tests
             SetString(action, "actionName", "Play_U4_Renamed");
             Post(action);
             Assert.That(action.Firing.Query(out VnActionFiringInfo info), Is.EqualTo(VnResult.VN_OK));
-            Assert.That(ReadPublication("U4Renamed").TryFindAction("Play_U4_Renamed", out GameplayAction row), Is.True);
-            Assert.That(info.actionId, Is.EqualTo(row.ActionStableId));
-            yield return new ExitPlayMode();
-        }
-
-        [UnityTest]
-        [Ignore("Temporarily suspended until PlayableDemo scene generation and playback consume current Pack companions.")]
-        public IEnumerator RebuiltSampleKeepsAssetIdentityAndRunsAllSixPreparedNames()
-        {
-            string source = PublicationRoot("U4Sample");
-            foreach (string file in Directory.GetFiles(source, "*", SearchOption.AllDirectories).Where(path => !path.EndsWith(".meta")))
-            {
-                string target = Path.Combine(folder, "PackSource", Path.GetRelativePath(source, file));
-                Directory.CreateDirectory(Path.GetDirectoryName(target));
-                File.Copy(file, target);
-            }
-            AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
-            Type builder = AppDomain.CurrentDomain.GetAssemblies().Select(assembly =>
-                assembly.GetType("Harken.Samples.PlayableDemo.Editor.HarkenDemoSceneBuilder")).SingleOrDefault(type => type != null);
-            Assert.That(builder, Is.Not.Null, "Import PlayableDemo scripts before running sample generation tests.");
-            MethodInfo rebuild = builder.GetMethod("RebuildAtPath", BindingFlags.Public | BindingFlags.Static);
-            Assert.That(rebuild, Is.Not.Null);
-            rebuild.Invoke(null, new object[] { folder });
-            string[] paths = { folder + "/Scenes/HarkenPlayableDemo.unity", folder + "/Prefabs/HarkenAudioSystem.prefab",
-                folder + "/Prefabs/HarkenEmitter.prefab" };
-            string[] guids = paths.Select(AssetDatabase.AssetPathToGUID).ToArray();
-            Assert.That(guids.All(guid => !string.IsNullOrEmpty(guid)), Is.True);
-            rebuild.Invoke(null, new object[] { folder });
-            Assert.That(paths.Select(AssetDatabase.AssetPathToGUID).ToArray(), Is.EqualTo(guids));
-            scenePath = paths[0];
-            ValidateSampleBindings();
-            var properties = new SerializedObject(Find<HarkenAudioSystem>());
-            properties.FindProperty("nullDevice").boolValue = true;
-            properties.ApplyModifiedPropertiesWithoutUndo();
-            Assert.That(EditorSceneManager.SaveScene(SceneManager.GetActiveScene(), scenePath), Is.True);
-            yield return new EnterPlayMode();
-            HarkenAudioSystem runtime = Find<HarkenAudioSystem>();
-            ownedEngine = runtime.IsReady;
-            Assert.That(runtime.IsPreparationComplete, Is.True, runtime.LastStartupError);
-            ValidateSampleBindings();
-            ulong[] handles = runtime.Session.StartupPacks.Select(pack => pack.Handle).ToArray();
-            Assert.That(handles.Length, Is.EqualTo(6));
-            Assert.That(Actions.Resolve("Play_Random_Draw", runtime.Session.Publication.ProjectId, out ActionResolved baseline),
-                Is.EqualTo(VnResult.VN_OK));
-            foreach (HarkenAction action in FindAll<HarkenAction>())
-            {
-                Post(action);
-                Assert.That(action.Firing.Query(out VnActionFiringInfo info), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(runtime.Session.Publication.TryFindAction(action.ActionName, out GameplayAction row), Is.True);
-                Assert.That(info.actionId, Is.EqualTo(row.ActionStableId));
-                Assert.That(runtime.Session.StartupPacks.Select(pack => pack.Handle).ToArray(), Is.EqualTo(handles));
-                Assert.That(Actions.Resolve(action.ActionName, action.ProjectId, out ActionResolved resolved), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(resolved.PublicationGeneration, Is.EqualTo(baseline.PublicationGeneration));
-            }
-            HarkenVariable variable = Find<HarkenVariable>();
-            Assert.That(PackManifest.TryResolvePlatformDirectory(Path.Combine(folder, "PackSource"),
-                null, null, HarkenAudioSystem.CurrentPackBasePlatform(), out string platformRoot, out string error),
-                Is.True, error);
-            SampleManifest manifest = JsonUtility.FromJson<SampleManifest>(
-                File.ReadAllText(Path.Combine(platformRoot, "HarkenPackManifest.json")));
-            SampleVariable choice = manifest.variableCatalog.variables.Single(row => row.codeName == "Demo_Choice");
-            Assert.That(VnObjectId.TryParse(choice.variableId, out VnObjectId choiceId), Is.True);
-            Assert.That(choiceId.high, Is.Not.Zero);
-            Assert.That(variable.VariableStableId, Is.EqualTo(choiceId));
-            Assert.That(runtime.Session.Publication.ValidateInit(File.ReadAllBytes(
-                Path.Combine(platformRoot, runtime.Session.Publication.InitPack.Path)), out error),
-                Is.EqualTo(VnResult.VN_OK), error);
-            Assert.That(variable.SetValue(0), Is.EqualTo(VnResult.VN_OK));
-            Assert.That(variable.SetValue(1), Is.EqualTo(VnResult.VN_OK));
-            Assert.That(runtime.ShutdownRuntime(), Is.EqualTo(VnResult.VN_OK));
+            Assert.That(info.actionId, Is.EqualTo(ReadAction("U4Renamed", "Play_U4_Renamed").Names.RootId));
             yield return new ExitPlayMode();
         }
 
@@ -377,7 +289,7 @@ namespace Harken.Unity.Tests
             SetReference(action, "runtime", runtime);
             SetReference(action, "emitter", emitter);
             SetString(action, "actionName", name);
-            SetString(action, "projectId", ReadPublication(directory).ProjectId);
+            SetString(action, "projectId", ReadInit(directory).Facts.projectId.ToString());
             owner.SetActive(true);
             source.SetActive(true);
             Assert.That(EditorSceneManager.SaveScene(SceneManager.GetActiveScene(), scenePath), Is.True);
@@ -385,44 +297,23 @@ namespace Harken.Unity.Tests
 
         private static void ConfigureRuntime(HarkenAudioSystem runtime, string directory, string name)
         {
-            GameplayPublication publication = ReadPublication(directory);
-            Assert.That(publication.GetActionPreparationOrder(new[] { name }, publication.ProjectId, out ulong[] ids), Is.EqualTo(VnResult.VN_OK));
-            Assert.That(runtime.ConfigureBeforeStartup("Audio/" + directory, publication.InitPack.Path, ids, true, false),
+            Assert.That(runtime.ConfigureBeforeStartup("Audio/" + directory, "Init.bytes", Array.Empty<ulong>(), true, false),
                 Is.EqualTo(VnResult.VN_OK));
             var projectSettings = HarkenProjectSettingsProvider.GetOrCreateSettings();
             var serializedSettings = new SerializedObject(projectSettings);
+            serializedSettings.FindProperty("initPack").stringValue = "Init.bytes";
             serializedSettings.FindProperty("packDirectory").stringValue =
                 Path.Combine(Application.streamingAssetsPath, "Audio", directory);
             serializedSettings.ApplyModifiedPropertiesWithoutUndo();
             AssetDatabase.SaveAssetIfDirty(projectSettings);
-            Assert.That(runtime.ConfigurePlatformBeforeStartup(publication.Platform.Id), Is.EqualTo(VnResult.VN_OK));
-        }
-
-        private static void ValidateSampleBindings()
-        {
-            string[] expected = { "Play_Random_Draw", "Play_Shuffle", "Play_Random_Queue", "Play_Sequence",
-                "Play_Sequence_Queue", "Play_Variable_Control" };
-            HarkenAction[] actions = FindAll<HarkenAction>();
-            Assert.That(actions.Select(action => action.ActionName), Is.EquivalentTo(expected));
-            var catalog = new HarkenEditorCatalog();
-            Assert.That(catalog.RefreshPlatform(PublicationRoot("U4Sample"), null, null,
-                HarkenAudioSystem.CurrentPackBasePlatform()), Is.EqualTo(VnResult.VN_OK), catalog.Diagnostic);
-            foreach (HarkenAction action in actions)
-            {
-                Assert.That(action.ProjectId, Is.EqualTo(catalog.Publication.ProjectId));
-                AssertNoSerializedCache(action);
-            }
-            var runtime = new SerializedObject(Find<HarkenAudioSystem>());
-            SerializedProperty startup = runtime.FindProperty("startupPackStableIds");
-            ulong[] ids = Enumerable.Range(0, startup.arraySize).Select(index => startup.GetArrayElementAtIndex(index).ulongValue).ToArray();
-            Assert.That(ids, Is.EquivalentTo(catalog.Publication.Actions.Select(row => row.OwnerPackStableId)));
+            Assert.That(runtime.ConfigurePlatformBeforeStartup(null), Is.EqualTo(VnResult.VN_OK));
         }
 
         private static void RefuseOldName(HarkenAction action)
         {
             Assert.That(HarkenEngine.Update(), Is.EqualTo(VnResult.VN_OK));
-            LogAssert.Expect(LogType.Error, new Regex("Harken operation failed: Action .*VN_UNKNOWN_ID"));
-            Assert.That(action.Play(), Is.EqualTo(VnResult.VN_UNKNOWN_ID));
+            LogAssert.Expect(LogType.Error, new Regex("Harken operation failed: Action .*VN_CONTENT_NOT_LOADED"));
+            Assert.That(action.Play(), Is.EqualTo(VnResult.VN_CONTENT_NOT_LOADED));
             Assert.That(action.Firing.IsValid, Is.False);
         }
 
@@ -440,11 +331,19 @@ namespace Harken.Unity.Tests
             return catalog;
         }
 
-        private static GameplayPublication ReadPublication(string directory)
+        private static CompanionInput ReadInit(string directory)
         {
-            Assert.That(GameplayPublication.Read(PublicationRoot(directory), null, out var publication, out string error),
-                Is.EqualTo(VnResult.VN_OK), error);
-            return publication;
+            var source = new PackDirectorySource(PublicationRoot(directory), null);
+            Assert.That(source.Capture(null, default, null, out CompanionInput input), Is.EqualTo(VnResult.VN_OK));
+            return input;
+        }
+
+        private static CompanionInput ReadAction(string directory, string name)
+        {
+            CompanionInput init = ReadInit(directory);
+            var source = new PackDirectorySource(PublicationRoot(directory), null);
+            Assert.That(source.Capture(name, init.Facts.projectId, init.Bytes, out CompanionInput input), Is.EqualTo(VnResult.VN_OK));
+            return input;
         }
 
         private static string PublicationRoot(string name) => Path.Combine(Application.streamingAssetsPath, "Audio", name);

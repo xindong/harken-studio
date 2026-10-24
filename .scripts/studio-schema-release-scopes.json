@@ -56,12 +56,14 @@
       "HarkenStudio/Test/UnitTest/ProjectMigrationTest.cpp"
     ],
     "Pack": [
-      ".scripts/release/verify_pack_reader.py",
       ".scripts/schema_archive.py",
       ".scripts/studio-schema-release-scopes.json",
       ".scripts/studio_schema_lock.py",
       ".scripts/studio_schema_release_audit.py",
-      "HarkenSDK/Unity/Harken/Runtime/Sdk/PackManifest.cs",
+      "HarkenSDK/Unity/Harken/Runtime/Sdk/PackCompanion.cs",
+      "HarkenSDK/Unity/Harken/Runtime/Sdk/PackDirectorySource.cs",
+      "HarkenSDK/Unity/Harken/Runtime/Sdk/PackPaths.cs",
+      "HarkenEngine/Tool/Host/PackCompanion.h",
       "HarkenStudio/Source/Core/CanonicalPackSetExport.*",
       "HarkenStudio/Source/Core/ProjectPackExporter.*",
       "HarkenStudio/Source/RuntimeBridge/PackagingBridge.*",

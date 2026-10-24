@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import check_sdk_version
 from release import collect_legal_texts
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -632,11 +633,9 @@ def prepare_sdk(payload: Path, receipts_root: Path, output: Path, channel: str =
     receipts = read_runtime_receipts(receipts_root, commit, channel)
     sdk = payload / "HarkenSDK"
     collect_legal_texts.verify_sdk(sdk)
-    version = (sdk / "VERSION").read_text(encoding="utf-8").strip()
-    if version != (REPO_ROOT / "HarkenSDK/VERSION").read_text(encoding="utf-8").strip():
+    version = check_sdk_version.version(sdk / "Unity/Harken/package.json")
+    if version != check_sdk_version.version(REPO_ROOT / "HarkenSDK/Unity/Harken/package.json"):
         raise ValueError("SDK version differs from the source checkout")
-    if not version or read_json(sdk / "Unity/Harken/package.json")["version"] != version:
-        raise ValueError("SDK version differs from the Unity package")
     for path in receipts_root.rglob("runtime-build.json"):
         destination = sdk / "BuildEvidence" / path.relative_to(receipts_root)
         destination.parent.mkdir(parents=True, exist_ok=True)

@@ -11,7 +11,7 @@ FIXTURE_ROOT = Path(__file__).resolve().parent
 REPOSITORY = FIXTURE_ROOT.parents[2]
 DATA_NAMES = (
     "U4Original", "U4Renamed", "U4OtherProject", "NameFirstPacks",
-    "PlatformContractPacks", "SpatialPacks", "CompanionPacks",
+    "PlatformContractPacks", "SpatialPacks", "CompanionPacks", "VariableNames",
 )
 
 
@@ -29,16 +29,7 @@ def main() -> int:
     project = args.project.resolve()
     if not (project / "Assets").is_dir() or not (project / "ProjectSettings/ProjectVersion.txt").is_file():
         parser.error("--project must name an existing Unity project with Assets and ProjectSettings/ProjectVersion.txt")
-    sample = REPOSITORY / "HarkenSDK/Unity/Harken/Samples~/PlayableDemo/PackSource"
-    golden = REPOSITORY / "HarkenSDK/Test/Fixtures/EditorMetadata/1/golden"
     sources = [(FIXTURE_ROOT / "Data" / name, name) for name in DATA_NAMES]
-    sources.extend((
-        (sample, "GeneratedPacks"),
-        (sample, "U4Sample"),
-        (golden, "EditorWaveformGolden"),
-        (REPOSITORY / "HarkenSDK/Test/Fixtures/EditorMetadata/2/golden", "EditorPreviewDirect"),
-        (REPOSITORY / "HarkenSDK/Test/Fixtures/EditorMetadata/2/random", "EditorPreviewRandom"),
-    ))
     copies = []
     dest_roots = []
     for source_root, name in sources:

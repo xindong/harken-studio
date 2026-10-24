@@ -1,6 +1,10 @@
 #include <QtTranslation>
 
 static const char* const kReleaseNotesStrings[] = {
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Windows installation no longer fails when opening the installer dialogs or when an existing Hub executable does not need to be replaced."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Hub self-updates preserve existing desktop and Start menu shortcuts without creating additional shortcuts or restoring shortcuts you removed."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "When the Hub icon changes, Hub asks Windows to refresh its icon cache and existing Hub shortcuts once for the signed-in user. Updates with the same icon do not repeat the refresh."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Hub windows, the app bundle, Windows shortcuts, the taskbar, the system tray, and the installer use the refreshed Hub icon."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Hub windows, the app bundle, Windows shortcuts, the taskbar, and the system tray use the new white icon on a black background."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "The quick SDK change menu lists newer versions first, with separators between upgrades, the installed version, and older versions. Sources with the same SDK version list newer Studio versions first."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Successful SDK installation and update results are highlighted in green."),

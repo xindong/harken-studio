@@ -12,16 +12,14 @@ namespace Harken
         public static VnResult EmitCSharpFromJson(string json, out string csharp, out string error)
         {
             csharp = null;
-            error = "Publication gameplayCatalog.actions is missing or invalid.";
+            error = "Action catalog actions are missing or invalid.";
             if (string.IsNullOrEmpty(json)) return VnResult.VN_INVALID_ARG;
             try
             {
                 var parser = new JsonParser(json);
                 var root = parser.Read(0) as Dictionary<string, object>;
                 if (root == null || !parser.End ||
-                    !root.TryGetValue("gameplayCatalog", out object rawCatalog) ||
-                    !(rawCatalog is Dictionary<string, object> catalog) ||
-                    !catalog.TryGetValue("actions", out object rawActions) ||
+                    !root.TryGetValue("actions", out object rawActions) ||
                     !(rawActions is List<object> actions)) return VnResult.VN_BAD_PACK;
                 var rows = new SortedDictionary<string, VnObjectId>(StringComparer.Ordinal);
                 var ids = new HashSet<VnObjectId>();

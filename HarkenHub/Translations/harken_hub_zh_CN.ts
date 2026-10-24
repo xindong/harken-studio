@@ -159,6 +159,11 @@
 </context>
 <context>
     <name>HubReleaseNotes</name>
+    <message><source>Windows installation no longer fails when opening the installer dialogs or when an existing Hub executable does not need to be replaced.</source><translation>&#x4fee;&#x590d; Windows &#x5b89;&#x88c5;&#x5668;&#x6253;&#x5f00;&#x5b89;&#x88c5;&#x9875;&#x9762;&#x65f6;&#xff0c;&#x4ee5;&#x53ca;&#x5df2;&#x6709; Hub &#x7a0b;&#x5e8f;&#x65e0;&#x9700;&#x66ff;&#x6362;&#x65f6;&#x7684;&#x5b89;&#x88c5;&#x62a5;&#x9519;&#x3002;</translation></message>
+    <message><source>Hub self-updates preserve existing desktop and Start menu shortcuts without creating additional shortcuts or restoring shortcuts you removed.</source><translation>Hub &#x81ea;&#x66f4;&#x65b0;&#x4f1a;&#x4fdd;&#x7559;&#x73b0;&#x6709;&#x684c;&#x9762;&#x548c;&#x5f00;&#x59cb;&#x83dc;&#x5355;&#x5feb;&#x6377;&#x65b9;&#x5f0f;&#xff0c;&#x4e0d;&#x518d;&#x989d;&#x5916;&#x521b;&#x5efa;&#x5feb;&#x6377;&#x65b9;&#x5f0f;&#xff0c;&#x4e5f;&#x4e0d;&#x4f1a;&#x6062;&#x590d;&#x5df2;&#x5220;&#x9664;&#x7684;&#x5feb;&#x6377;&#x65b9;&#x5f0f;&#x3002;</translation></message>
+    <message><source>When the Hub icon changes, Hub asks Windows to refresh its icon cache and existing Hub shortcuts once for the signed-in user. Updates with the same icon do not repeat the refresh.</source><translation>Hub &#x56fe;&#x6807;&#x53d8;&#x5316;&#x540e;&#xff0c;&#x4f1a;&#x4e3a;&#x5f53;&#x524d;&#x767b;&#x5f55;&#x7528;&#x6237;&#x901a;&#x77e5; Windows &#x5237;&#x65b0;&#x4e00;&#x6b21;&#x56fe;&#x6807;&#x7f13;&#x5b58;&#x53ca;&#x73b0;&#x6709; Hub &#x5feb;&#x6377;&#x65b9;&#x5f0f;&#xff1b;&#x56fe;&#x6807;&#x672a;&#x53d8;&#x5316;&#x7684;&#x5347;&#x7ea7;&#x4e0d;&#x4f1a;&#x91cd;&#x590d;&#x5237;&#x65b0;&#x3002;</translation></message>
+    <message><source>Hub windows, the app bundle, Windows shortcuts, the taskbar, the system tray, and the installer use the refreshed Hub icon.</source><translation>Hub &#x7a97;&#x53e3;&#x3001;&#x5e94;&#x7528;&#x3001;Windows &#x5feb;&#x6377;&#x65b9;&#x5f0f;&#x3001;&#x4efb;&#x52a1;&#x680f;&#x3001;&#x7cfb;&#x7edf;&#x6258;&#x76d8;&#x548c;&#x5b89;&#x88c5;&#x7a0b;&#x5e8f;&#x7edf;&#x4e00;&#x4f7f;&#x7528;&#x65b0;&#x7248; Hub &#x56fe;&#x6807;&#x3002;</translation></message>
+    <message><source>Disabling automatic updates stops background checks and downloads for the corresponding product. Manual update checks remain available.</source><translation>关闭自动更新后，会停止对应产品的后台检查和下载，仍可手动检查更新。</translation></message>
     <message><source>Hub windows, the app bundle, Windows shortcuts, the taskbar, and the system tray use the new white icon on a black background.</source><translation>Hub 窗口、应用、Windows 快捷方式、任务栏和系统托盘统一使用新版黑底白色图标。</translation></message>
     <message><source>The quick SDK change menu lists newer versions first, with separators between upgrades, the installed version, and older versions. Sources with the same SDK version list newer Studio versions first.</source><translation>快捷更换 SDK 菜单将新版本放在前面，并在可升级版本、当前版本和较旧版本之间添加分割线。同一 SDK 版本的来源优先显示较新的 Studio 版本。</translation></message>
     <message><source>Successful SDK installation and update results are highlighted in green.</source><translation>SDK 安装或更新成功后，结果文字以绿色突出显示。</translation></message>
@@ -508,8 +513,8 @@
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="196"/>
-        <source>Automatically Download the Latest Studio</source>
-        <translation>是否自动下载最新版Studio</translation>
+        <source>Automatically Check and Download the Latest Studio</source>
+        <translation>是否自动检查并下载最新版Studio</translation>
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="222"/>
@@ -534,8 +539,8 @@
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="172"/>
-        <source>Automatically Update Harken Studio Hub Silently</source>
-        <translation>是否自动静默更新Hub</translation>
+        <source>Automatically Check and Silently Update Hub</source>
+        <translation>是否自动检查并静默更新Hub</translation>
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="176"/>

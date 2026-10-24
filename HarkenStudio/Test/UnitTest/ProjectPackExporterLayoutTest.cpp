@@ -23,7 +23,7 @@ TEST(EditorProjectPackExporterLayout, RejectsUnbuiltPlatformWithoutCreatingOutpu
     EXPECT_FALSE(VNX::ProjectPackExporter::ValidatePackOutputs(
         dir.path(), HarkenTest::platforms({"Windows"}), &error));
     EXPECT_FALSE(error.isEmpty());
-    EXPECT_FALSE(QFile::exists(QDir(dir.path()).filePath(HarkenEditor::Bridge::packIndexFileName())));
+    EXPECT_FALSE(QFile::exists(QDir(dir.path()).filePath(QStringLiteral("HarkenPackIndex.json"))));
 }
 
 TEST(EditorProjectPackExporterLayout, FailedFirstBuildLeavesNoPublishedIndex)
@@ -45,7 +45,7 @@ TEST(EditorProjectPackExporterLayout, MultiPlatformRootKeepsPlatformDirectoriesW
     ASSERT_TRUE(VNX::ProjectPackExporter::FinalizePackOutputs(dir.path(), platforms, {}, {}, &error))
         << error.toStdString();
     EXPECT_FALSE(QFileInfo::exists(
-        QDir(dir.path()).filePath(HarkenEditor::Bridge::packIndexFileName())));
+        QDir(dir.path()).filePath(QStringLiteral("HarkenPackIndex.json"))));
     for (const auto& platform : platforms) {
         const QString nested = VNX::ProjectPackExporter::platformOutputDir(
             dir.path(), platform);

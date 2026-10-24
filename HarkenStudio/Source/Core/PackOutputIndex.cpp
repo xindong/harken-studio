@@ -4,7 +4,6 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QJsonDocument>
 #include <QLockFile>
 
 #include <filesystem>
@@ -101,49 +100,7 @@ bool ProjectPackExporter::FinalizePackOutputs(const QString& baseDir,
         completed.append(*platform);
     }
     if (completed.isEmpty()) return true;
-    if (!ValidatePackOutputs(baseDir, completed, error, artifacts)) return false;
-    QLockFile publicationLock(QDir(baseDir).filePath(QStringLiteral(".harken-pack-index.lock")));
-    publicationLock.setStaleLockTime(0);
-    if (!publicationLock.tryLock(2000)) {
-        if (error) *error = QStringLiteral("Pack output is being finalized by another build");
-        return false;
-    }
-    const QString legacyPath = QDir(baseDir).filePath(QStringLiteral("HarkenPackIndex.json"));
-    if (!QFileInfo::exists(legacyPath)) return true;
-    QFile legacy(legacyPath);
-    if (QFileInfo(legacyPath).isSymLink() || !legacy.open(QIODevice::ReadOnly)) {
-        if (error) *error = QStringLiteral("Cannot inspect previous Pack index");
-        return false;
-    }
-    const auto index = QJsonDocument::fromJson(legacy.readAll()).object();
-    legacy.close();
-    if (index.value(QStringLiteral("schema_version")).toInt() != 3
-        || !index.value(QStringLiteral("platforms")).isArray()
-        || index.value(QStringLiteral("platforms")).toArray().isEmpty()) {
-        if (error) *error = QStringLiteral("Cannot establish ownership of previous Pack index");
-        return false;
-    }
-    QSet<QString> ids;
-    QSet<QString> paths;
-    for (const auto& value : index.value(QStringLiteral("platforms")).toArray()) {
-        const auto row = value.toObject();
-        const QString id = row.value(QStringLiteral("id")).toString();
-        const QString path = row.value(QStringLiteral("path")).toString();
-        if (QUuid(id).isNull() || ids.contains(id) || path.isEmpty() || paths.contains(path.toCaseFolded())
-            || path == QStringLiteral(".") || path == QStringLiteral("..") || QDir::isAbsolutePath(path)
-            || path.contains(QLatin1Char('/')) || path.contains(QLatin1Char('\\')) || path.contains(QLatin1Char(':'))
-            || QFileInfo(QDir(baseDir).filePath(path)).isSymLink()) {
-            if (error) *error = QStringLiteral("Previous Pack index contains an invalid platform path or identity");
-            return false;
-        }
-        ids.insert(id);
-        paths.insert(path.toCaseFolded());
-    }
-    if (!QFile::remove(legacyPath)) {
-        if (error) *error = QStringLiteral("Cannot remove previous Pack index");
-        return false;
-    }
-    return true;
+    return ValidatePackOutputs(baseDir, completed, error, artifacts);
 }
 
 }

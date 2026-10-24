@@ -157,49 +157,44 @@ namespace Harken.Unity.Tests
         }
 
         [UnityTest]
-        public IEnumerator DemandSourceRejectsInvalidTriggersBeforeIOAndExplicitSnapshotsWin()
+        public IEnumerator DemandSourceRejectsInvalidTriggersWithoutReservingSlots()
         {
             using (var fixture = new Fixture(1, false))
             {
                 var source = new DemandSource(fixture);
                 fixture.Start(source.Prepared);
-                ExpectPlayFailure(VnResult.VN_UNKNOWN_ID);
+                ExpectPlayFailure(VnResult.VN_CONTENT_NOT_LOADED);
                 Assert.That(fixture.Runtime.PlayAction("Missing_Action", fixture.Publication.ProjectId, out _),
-                    Is.EqualTo(VnResult.VN_UNKNOWN_ID));
+                    Is.EqualTo(VnResult.VN_CONTENT_NOT_LOADED));
                 ExpectPlayFailure(VnResult.VN_GAMEPLAY_WRONG_PROJECT);
                 Assert.That(fixture.Runtime.PlayAction(fixture.Action.Name,
                     "11111111-2222-3333-4444-555555555555", out _), Is.EqualTo(VnResult.VN_GAMEPLAY_WRONG_PROJECT));
                 Assert.That(source.Calls, Is.Empty);
                 Assert.That(Pending(fixture.Runtime), Is.Zero);
-                fixture.Publication.TryFindPack(fixture.Action.OwnerPackStableId, out PackManifestEntry entry);
-                byte[] bytes = File.ReadAllBytes(Path.Combine(fixture.Root, entry.Path));
-                Assert.That(source.Prepared.SupplyPack(entry.PackStableId, bytes), Is.EqualTo(VnResult.VN_OK));
-                Array.Clear(bytes, 0, bytes.Length);
-                source.FailureId = entry.PackStableId;
                 fixture.Play();
-                Assert.That(source.Calls, Is.Empty);
+                Assert.That(source.Calls.Count, Is.EqualTo(1));
                 ExpectPlayFailure(VnResult.VN_NO_ACTION);
                 Assert.That(fixture.Runtime.PlayAction("Play_U4_B", fixture.Publication.ProjectId, out _),
                     Is.EqualTo(VnResult.VN_NO_ACTION));
-                Assert.That(source.Calls, Is.Empty);
+                Assert.That(source.Calls.Count, Is.EqualTo(1));
             }
             yield return null;
         }
 
 #if HARKEN_SDK_TEST_NULL_PUMP
         [UnityTest]
-        public IEnumerator ReusableActionScopesDeduplicateDependenciesAndShareReferences()
+        public IEnumerator ReusableActionScopesDeduplicateNamesAndShareReferences()
         {
             using (var fixture = new Fixture(2, false))
             {
                 var source = new DemandSource(fixture);
                 fixture.Start(source.Prepared);
-                fixture.Publication.TryFindAction("Play_U4_B", out GameplayAction dependency);
-                fixture.Publication.TryFindAction("Play_U4_Caller", out GameplayAction caller);
+                fixture.Publication.TryFindAction("Play_U4_B", out CompanionTestAction dependency);
+                fixture.Publication.TryFindAction("Play_U4_Caller", out CompanionTestAction caller);
                 PackBootstrapSession owner = fixture.Runtime.Session;
                 Assert.That(owner.PrepareActions(new[] { caller.Name, dependency.Name, caller.Name },
                     fixture.Publication.ProjectId, out ActionPreparation first), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(source.Calls, Is.EqualTo(new[] { dependency.OwnerPackStableId, caller.OwnerPackStableId }));
+                Assert.That(source.Calls, Is.EqualTo(new[] { caller.OwnerPackStableId, dependency.OwnerPackStableId }));
                 Assert.That(first.IsPrepared, Is.True);
                 Assert.That(owner.PrepareActions(new[] { dependency.Name }, fixture.Publication.ProjectId,
                     out ActionPreparation second), Is.EqualTo(VnResult.VN_OK));
@@ -220,19 +215,19 @@ namespace Harken.Unity.Tests
 
 #if HARKEN_SDK_TEST_NULL_PUMP
         [UnityTest]
-        public IEnumerator DemandFailureRollsBackDependenciesAndNeverReplays()
+        public IEnumerator DemandFailureDoesNotPublishOrReplay()
         {
             using (var fixture = new Fixture(2, false))
             {
-                fixture.Publication.TryFindAction("Play_U4_B", out GameplayAction dependency);
-                fixture.Publication.TryFindAction("Play_U4_Caller", out GameplayAction caller);
+                fixture.Publication.TryFindAction("Play_U4_B", out CompanionTestAction dependency);
+                fixture.Publication.TryFindAction("Play_U4_Caller", out CompanionTestAction caller);
                 var source = new DemandSource(fixture) { FailureId = caller.OwnerPackStableId };
                 fixture.Start(source.Prepared);
                 ExpectPlayFailure(VnResult.VN_PACK_PROVIDER_FAILED);
                 Assert.That(fixture.Runtime.PlayAction(caller.Name, fixture.Publication.ProjectId, out ActionFiring refused),
                     Is.EqualTo(VnResult.VN_PACK_PROVIDER_FAILED));
                 Assert.That(refused.IsValid, Is.False);
-                Assert.That(source.Calls, Is.EqualTo(new[] { dependency.OwnerPackStableId, caller.OwnerPackStableId }));
+                Assert.That(source.Calls, Is.EqualTo(new[] { caller.OwnerPackStableId }));
                 Assert.That(Pending(fixture.Runtime), Is.Zero);
                 AssertUnprepared(dependency.Name, fixture.Publication.ProjectId);
                 source.FailureId = 0;
@@ -241,54 +236,11 @@ namespace Harken.Unity.Tests
                     AdvanceNullAudioAndNormalService(fixture);
                     yield return null;
                 }
+                Assert.That(source.Calls.Count, Is.EqualTo(1));
+                Assert.That(Pending(fixture.Runtime), Is.Zero);
+                Assert.That(fixture.Runtime.PlayAction(caller.Name, fixture.Publication.ProjectId, out _),
+                    Is.EqualTo(VnResult.VN_OK));
                 Assert.That(source.Calls.Count, Is.EqualTo(2));
-                Assert.That(Pending(fixture.Runtime), Is.Zero);
-                Assert.That(fixture.Runtime.PlayAction(caller.Name, fixture.Publication.ProjectId, out _),
-                    Is.EqualTo(VnResult.VN_OK));
-                Assert.That(source.Calls.Count, Is.EqualTo(4));
-            }
-            yield return null;
-        }
-#endif
-
-#if HARKEN_SDK_TEST_NULL_PUMP
-        [UnityTest]
-        public IEnumerator FailedRollbackRetainsScopeUntilExternalDependentIsReleased()
-        {
-            using (var fixture = new Fixture(2, false))
-            {
-                fixture.Publication.TryFindAction("Play_U4_B", out GameplayAction dependency);
-                fixture.Publication.TryFindAction("Play_U4_Caller", out GameplayAction caller);
-                var source = new DemandSource(fixture) { FailureId = caller.OwnerPackStableId };
-                fixture.Start(source.Prepared);
-                Pack external = default;
-                source.BeforeRead = id =>
-                {
-                    if (id != caller.OwnerPackStableId) return;
-                    Assert.That(fixture.Runtime.Session.AcquirePack(dependency.OwnerPackStableId, out external),
-                        Is.EqualTo(VnResult.VN_OK));
-                };
-                ExpectPlayFailure(VnResult.VN_PACK_PROVIDER_FAILED);
-                Assert.That(fixture.Runtime.PlayAction(caller.Name, fixture.Publication.ProjectId, out _),
-                    Is.EqualTo(VnResult.VN_PACK_PROVIDER_FAILED));
-                // Extra session request lets ReleaseCore drop Requests 2→1 and
-                // clear the managed slot. The leftover request keeps the pack
-                // resident until Session.ReleasePack; public LoadPack no longer
-                // can hold an independent native handle for kind 2/3.
-                Assert.That(Pending(fixture.Runtime), Is.Zero);
-                Invoke(fixture.Runtime, "AdvanceFrame");
-                Assert.That(Pending(fixture.Runtime), Is.Zero);
-                Assert.That(Actions.Resolve(dependency.Name, fixture.Publication.ProjectId, out ActionResolved held),
-                    Is.EqualTo(VnResult.VN_OK));
-                Assert.That(Actions.Post(in held, Emitter.None, 0, out ActionFiring resident),
-                    Is.EqualTo(VnResult.VN_OK));
-                PumpUntilTerminal(fixture.Runtime.Session, resident);
-                Assert.That(resident.Release(), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(fixture.Runtime.Session.ReleasePack(dependency.OwnerPackStableId, external),
-                    Is.EqualTo(VnResult.VN_OK));
-                Invoke(fixture.Runtime, "AdvanceFrame");
-                Assert.That(Pending(fixture.Runtime), Is.Zero);
-                AssertUnprepared(dependency.Name, fixture.Publication.ProjectId);
             }
             yield return null;
         }
@@ -448,9 +400,6 @@ namespace Harken.Unity.Tests
         private sealed class PreparationSlot { public ActionPreparation Value; }
 
 #if HARKEN_SDK_TEST_NULL_PUMP
-        [DllImport(HarkenNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
-        private static extern VnResult HarkenSdkTest_CaptureTopologyPool(out uint capacity, out uint acquired);
-
         private static void AdvanceNullAudioAndNormalService(Fixture fixture)
         {
             float[] samples = new float[4096];
@@ -463,57 +412,12 @@ namespace Harken.Unity.Tests
         }
 
 #endif
-#if HARKEN_SDK_TEST_NULL_PUMP
-        [UnityTest]
-        public IEnumerator ScopeReleaseRetainsOriginalOwnerAtCapacityUntilRealAudioRetirement()
-        {
-            using (var fixture = new Fixture(2, false))
-            {
-                var source = new DemandSource(fixture);
-                fixture.Start(source.Prepared);
-                PackBootstrapSession owner = fixture.Runtime.Session;
-                Assert.That(owner.PrepareActions(new[] { "Play_U4_A", "Play_U4_B" },
-                    fixture.Publication.ProjectId, out ActionPreparation scope), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(owner.AcquirePack(fixture.Action.OwnerPackStableId, out Pack original),
-                    Is.EqualTo(VnResult.VN_OK));
-                Assert.That(owner.ReleasePack(fixture.Action.OwnerPackStableId, original), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(HarkenSdkTest_CaptureTopologyPool(out uint capacity, out uint acquired),
-                    Is.EqualTo(VnResult.VN_OK));
-                Assert.That(capacity, Is.EqualTo(4U));
-                Assert.That(acquired, Is.EqualTo(3U));
-                Assert.That(scope.Release(), Is.EqualTo(VnResult.VN_BACKPRESSURE));
-                Assert.That(scope.LastReleaseResult, Is.EqualTo(VnResult.VN_BACKPRESSURE));
-                Assert.That(scope.IsReleased, Is.False);
-                Assert.That(scope.IsPrepared, Is.False);
-                Assert.That(HarkenSdkTest_CaptureTopologyPool(out _, out acquired), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(acquired, Is.EqualTo(capacity));
-                Assert.That(owner.AcquirePack(fixture.Action.OwnerPackStableId, out Pack retained),
-                    Is.EqualTo(VnResult.VN_OK));
-                Assert.That(retained.Handle, Is.EqualTo(original.Handle));
-                Assert.That(owner.ReleasePack(fixture.Action.OwnerPackStableId, retained), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(source.Calls.Count, Is.EqualTo(2));
-                Assert.That(Pending(fixture.Runtime), Is.Zero);
-                AdvanceNullAudioAndNormalService(fixture);
-                Assert.That(HarkenSdkTest_CaptureTopologyPool(out _, out acquired), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(acquired, Is.LessThan(capacity));
-                Assert.That(scope.Release(), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(scope.IsReleased, Is.True);
-                Assert.That(source.Calls.Count, Is.EqualTo(2));
-                AssertUnprepared("Play_U4_A", fixture.Publication.ProjectId);
-                AssertUnprepared("Play_U4_B", fixture.Publication.ProjectId);
-                Assert.That(Pending(fixture.Runtime), Is.Zero);
-            }
-            yield return null;
-        }
-#endif
+
 
         private static void AssertUnprepared(string name, string projectId)
         {
             Assert.That(HarkenEngine.Update(), Is.EqualTo(VnResult.VN_OK));
-            Assert.That(Actions.Resolve(name, projectId, out ActionResolved resolved), Is.EqualTo(VnResult.VN_OK));
-            Assert.That(Actions.Post(in resolved, Emitter.None, 0, out ActionFiring firing),
-                Is.EqualTo(VnResult.VN_CONTENT_NOT_LOADED));
-            Assert.That(firing.IsValid, Is.False);
+            Assert.That(Actions.Resolve(name, projectId, out _), Is.EqualTo(VnResult.VN_UNKNOWN_ID));
         }
 
 #if HARKEN_SDK_TEST_NULL_PUMP
@@ -552,41 +456,7 @@ namespace Harken.Unity.Tests
         }
 #endif
 
-        [UnityTest]
-        public IEnumerator PartialStartupPreservesUnityAudioUntilExplicitPreparationCompletes()
-        {
-            bool originalPause = AudioListener.pause;
-            float originalVolume = AudioListener.volume;
-            using (var fixture = new Fixture(2))
-            {
-                Assert.That(fixture.Runtime.ConfigureLifecycleBeforeStartup(true, true), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(HarkenPreparedPacks.Create(fixture.Publication,
-                    File.ReadAllBytes(Path.Combine(fixture.Root, fixture.Publication.InitPack.Path)),
-                    out HarkenPreparedPacks prepared, out string error), Is.EqualTo(VnResult.VN_OK), error);
-                LogAssert.Expect(LogType.Error, new Regex("Harken operation failed: PackBootstrap.Start: VN_CONTENT_NOT_LOADED"));
-                Assert.That(fixture.Runtime.StartRuntime(prepared), Is.EqualTo(VnResult.VN_CONTENT_NOT_LOADED));
-                Assert.That(fixture.Runtime.Session.IsActive, Is.True);
-                Assert.That(fixture.Runtime.IsPreparationComplete, Is.False);
-                Assert.That(AudioListener.pause, Is.EqualTo(originalPause));
-                Assert.That(AudioListener.volume, Is.EqualTo(originalVolume));
-                ExpectPlayFailure(VnResult.VN_CONTENT_NOT_LOADED);
-                Assert.That(fixture.TryPlay(out _), Is.EqualTo(VnResult.VN_CONTENT_NOT_LOADED));
-                Assert.That(Pending(fixture.Runtime), Is.Zero);
-                Assert.That(fixture.Publication.TryFindPack(fixture.Action.OwnerPackStableId,
-                    out PackManifestEntry pack), Is.True);
-                Assert.That(prepared.SupplyPack(pack.PackStableId,
-                    File.ReadAllBytes(Path.Combine(fixture.Root, pack.Path))), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(fixture.Runtime.Session.PrepareStartupPacks(), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(fixture.Runtime.IsPreparationComplete, Is.True);
-                Assert.That(HarkenEngine.Update(), Is.EqualTo(VnResult.VN_OK));
-                fixture.Play();
-                Assert.That(AudioListener.pause, Is.True);
-                Assert.That(AudioListener.volume, Is.Zero);
-            }
-            Assert.That(AudioListener.pause, Is.EqualTo(originalPause));
-            Assert.That(AudioListener.volume, Is.EqualTo(originalVolume));
-            yield return null;
-        }
+
 
         [UnityTest]
         public IEnumerator ShutdownCompletesOwnershipAndRestoresAudioBeforeAListenerRestarts()
@@ -780,48 +650,7 @@ namespace Harken.Unity.Tests
             yield return null;
         }
 
-        [UnityTest]
-        public IEnumerator ReadyPackPreparationDoesNotMuteUnityAudioUntilLoaded()
-        {
-            bool originalPause = AudioListener.pause;
-            float originalVolume = AudioListener.volume;
-            GameObject packObject = null;
-            try
-            {
-                AudioListener.pause = false;
-                AudioListener.volume = 0.43f;
-                using (var fixture = new Fixture(2, false))
-                {
-                    fixture.Runtime.ConfigureLifecycleBeforeStartup(true, true);
-                    packObject = new GameObject("Pending managed playback Pack");
-                    packObject.SetActive(false);
-                    HarkenPack pack = packObject.AddComponent<HarkenPack>();
-                    Set(pack, "runtime", fixture.Runtime);
-                    Set(pack, "packStableId", fixture.Action.OwnerPackStableId);
-                    packObject.SetActive(true);
-                    fixture.Start();
-                    Assert.That(fixture.Runtime.IsPreparationComplete, Is.False);
-                    Assert.That(fixture.Runtime.PendingPackLoadCount, Is.EqualTo(1));
-                    Assert.That(AudioListener.pause, Is.False);
-                    Assert.That(AudioListener.volume, Is.EqualTo(0.43f));
-                    Invoke(fixture.Runtime, "AdvanceFrame");
-                    Assert.That(pack.IsLoaded, Is.True);
-                    Invoke(fixture.Runtime, "AdvanceFrame");
-                    Assert.That(fixture.Runtime.IsPreparationComplete, Is.True);
-                    Assert.That(AudioListener.pause, Is.True);
-                    Assert.That(AudioListener.volume, Is.Zero);
-                }
-                Assert.That(AudioListener.pause, Is.False);
-                Assert.That(AudioListener.volume, Is.EqualTo(0.43f));
-            }
-            finally
-            {
-                if (packObject != null) Object.Destroy(packObject);
-                AudioListener.pause = originalPause;
-                AudioListener.volume = originalVolume;
-            }
-            yield return null;
-        }
+
 
 #if HARKEN_SDK_TEST_NULL_PUMP
         // This export exists only in the isolated SDK fixture DLL, never in a shipped plugin.
@@ -1411,7 +1240,6 @@ namespace Harken.Unity.Tests
                     Assert.That(first.Query(out _), Is.EqualTo(VnResult.VN_STALE_HANDLE));
                     Assert.That(second.Query(out _), Is.EqualTo(VnResult.VN_STALE_HANDLE));
                     AssertUnprepared(fixture.Action.Name, fixture.Publication.ProjectId);
-                    Assert.That(Get<IDictionary>(source.Prepared, "content").Count, Is.Zero);
                     Assert.That(PackByteProvider.OutstandingPinCount, Is.Zero);
                 }
             }
@@ -1615,23 +1443,25 @@ namespace Harken.Unity.Tests
             public readonly string Root = Path.Combine(Application.streamingAssetsPath, "Audio/U4Original");
             public readonly GameObject Owner = new GameObject("Managed playback Runtime");
             public readonly HarkenAudioSystem Runtime;
-            public readonly GameplayPublication Publication;
-            public readonly GameplayAction Action;
+            public readonly CompanionTestPublication Publication;
+            public readonly CompanionTestAction Action;
             private HarkenProjectSettingsLease settingsLease;
+            private readonly bool prepare;
 
             public Fixture(uint capacity, bool prepare = true, bool activate = true)
             {
+                this.prepare = prepare;
                 Owner.SetActive(false);
                 Runtime = Owner.AddComponent<HarkenAudioSystem>();
                 Set(Runtime, "autoInitialize", false);
                 Set(Runtime, "persistAcrossScenes", false);
                 settingsLease = HarkenProjectSettingsLease.Acquire();
                 settingsLease.Settings.SetMaxActionFirings(capacity);
-                Assert.That(GameplayPublication.Read(Root, null, out Publication, out string error),
+                Assert.That(CompanionTestPublication.Read(Root, null, out Publication, out string error),
                     Is.EqualTo(VnResult.VN_OK), error);
                 Assert.That(Publication.TryFindAction("Play_U4_A", out Action), Is.True);
                 Assert.That(Runtime.ConfigureBeforeStartup("Audio/U4Original", Publication.InitPack.Path,
-                    prepare ? new[] { Action.OwnerPackStableId } : Array.Empty<ulong>(), true, false),
+                    Array.Empty<ulong>(), true, false),
                     Is.EqualTo(VnResult.VN_OK));
                 if (activate) Owner.SetActive(true);
             }
@@ -1640,13 +1470,15 @@ namespace Harken.Unity.Tests
             {
                 Assert.That(Runtime.StartRuntime(Root), Is.EqualTo(VnResult.VN_OK), Runtime.LastStartupError);
                 Assert.That(Runtime.IsReady, Is.True);
+                if (prepare) Assert.That(Runtime.Session.PrepareActions(new[] { Action.Name }, Publication.ProjectId, out _), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(HarkenEngine.Update(), Is.EqualTo(VnResult.VN_OK));
             }
 
-            public void Start(HarkenPreparedPacks prepared)
+            public void Start(PackSource prepared)
             {
                 Assert.That(Runtime.StartRuntime(prepared), Is.EqualTo(VnResult.VN_OK), Runtime.LastStartupError);
                 Assert.That(Runtime.IsReady, Is.True);
+                if (prepare) Assert.That(Runtime.Session.PrepareActions(new[] { Action.Name }, Publication.ProjectId, out _), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(HarkenEngine.Update(), Is.EqualTo(VnResult.VN_OK));
             }
 
@@ -1674,7 +1506,7 @@ namespace Harken.Unity.Tests
         private sealed class DemandSource
         {
             private readonly Fixture fixture;
-            public readonly HarkenPreparedPacks Prepared;
+            public readonly PackSource Prepared;
             public readonly List<ulong> Calls = new List<ulong>();
             public ulong FailureId;
             public Action<ulong> BeforeRead;
@@ -1682,20 +1514,21 @@ namespace Harken.Unity.Tests
             public DemandSource(Fixture fixture)
             {
                 this.fixture = fixture;
-                Assert.That(HarkenPreparedPacks.Create(fixture.Publication,
-                    File.ReadAllBytes(Path.Combine(fixture.Root, fixture.Publication.InitPack.Path)),
-                    out Prepared, out string error), Is.EqualTo(VnResult.VN_OK), error);
-                Assert.That(Prepared.SetDemandProvider(Read), Is.EqualTo(VnResult.VN_OK));
+                Prepared = PackSource.FromReader(Read);
             }
 
-            private VnResult Read(ulong id, string path, uint variant, ulong hash, out byte[] bytes, object state)
+            private byte[] Read(string path)
             {
-                Calls.Add(id);
-                BeforeRead?.Invoke(id);
-                bytes = null;
-                if (id == FailureId) return VnResult.VN_PACK_PROVIDER_FAILED;
-                bytes = File.ReadAllBytes(Path.Combine(fixture.Root, path));
-                return VnResult.VN_OK;
+                if (Path.GetExtension(path) == ".bytes" && Path.GetFileName(path) != "Init.bytes" &&
+                    fixture.Publication.TryFindAction(Path.GetFileNameWithoutExtension(path), out CompanionTestAction action))
+                {
+                    ulong id = action.OwnerPackStableId;
+                    Calls.Add(id);
+                    BeforeRead?.Invoke(id);
+                    if (id == FailureId) throw new IOException("Fixture provider refusal.");
+                }
+                string absolute = Path.Combine(fixture.Root, path);
+                return File.Exists(absolute) ? File.ReadAllBytes(absolute) : null;
             }
         }
     }

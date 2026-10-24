@@ -520,40 +520,10 @@ namespace Harken.Unity.Tests
             }
         }
 
-        [Test]
-        public void TextAssetBytesDoNotFailUnlessBothPackCopiesExist()
-        {
-            string folder = Path.Combine(Path.GetTempPath(), "HarkenU2Packs_" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(folder);
-            try
-            {
-                string pack = Path.Combine(folder, "Init.pack");
-                File.WriteAllBytes(pack + ".bytes", new byte[] { 1, 2, 3 });
-                Assert.That(HarkenPackFiles.Read(pack), Is.EqualTo(new byte[] { 1, 2, 3 }));
-                File.WriteAllBytes(pack, new byte[] { 4 });
-                Assert.Throws<IOException>(() => HarkenPackFiles.Read(pack));
-            }
-            finally { Directory.Delete(folder, true); }
-        }
 
 
-        [TestCase("Init.bytes")]
-        [TestCase("HarkenPackManifest.json")]
-        [TestCase("HarkenEditorWaveforms.json")]
-        public void CompleteAssetPathNeverResolvesOrConflictsWithAnExtraSuffix(string name)
-        {
-            string folder = Path.Combine(Path.GetTempPath(), "HarkenBytes_" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(folder);
-            try
-            {
-                string path = Path.Combine(folder, name);
-                File.WriteAllBytes(path + ".bytes", new byte[] { 9 });
-                Assert.That(HarkenPackFiles.Read(path), Is.Null);
-                File.WriteAllBytes(path, new byte[] { 1, 2, 3 });
-                Assert.That(HarkenPackFiles.Read(path), Is.EqualTo(new byte[] { 1, 2, 3 }));
-            }
-            finally { Directory.Delete(folder, true); }
-        }
+
+
 
         [TestCase(false)]
         [TestCase(true)]

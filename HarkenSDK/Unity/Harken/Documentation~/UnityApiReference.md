@@ -176,7 +176,7 @@ asset when present; its relevant read-only properties are `PackDirectory`,
 | `bool IsPreparationComplete { get; }` | True when the session is ready, startup Packs are complete, and queued or active load-on-ready `HarkenPack` components are loaded. |
 | `PackBootstrapSession Session { get; }` | Current session; null before startup or after complete shutdown. Do not dispose an owner component's session directly. |
 | `VnResult LastResult { get; }`, `string LastOperation { get; }` | Last observed component operation and its immediate result. |
-| `string LastStartupError { get; }`, `string PackRootPath { get; }` | Startup diagnostic text and selected filesystem platform directory; the path can be empty for prepared-byte startup. |
+| `string LastStartupError { get; }`, `string PackRootPath { get; }` | Startup diagnostic text and selected filesystem platform directory; the path can be empty for reader-based companion startup. |
 | `string Language { get; }`, `int PendingPackLoadCount { get; }` | Selected language and queued component Pack loads. |
 | `event Action<HarkenAudioSystem> BecameReady` | Raised after session readiness and again after a successful resume. Check `IsPreparationComplete` for gameplay triggers. |
 | `event Action<HarkenAudioSystem, string, VnResult> OperationCompleted` | Reports an observed operation name and result. |
@@ -194,17 +194,17 @@ the Inspector's Failed and Result Observed callbacks.
 | Signature | Parameters, timing, and result |
 | --- | --- |
 | `VnResult ConfigureLifecycleBeforeStartup(bool suppressAudio, bool stopWhenDisabled)` | Before startup: optionally pause/mute Unity audio while Runtime owns the session, and end the session on disable. Both default to false. Returns `VN_INVALID_ARG` during a session or transition. |
-| `VnResult ConfigureBeforeStartup(string relativePackRoot, string relativeInitPack, ulong[] startupPacks, bool useNullDevice, bool keepAcrossScenes)` | Before startup: validate and store relative Pack/Init paths, startup Pack IDs, Null device, and scene persistence. `startupPacks` cannot be null; invalid input or an active/starting session returns `VN_INVALID_ARG`. The stored `relativePackRoot` does not select Auto Start content: Project Settings supplies that directory, or pass an explicit root to `StartRuntime(string)`. Scene persistence is applied in `Awake`, so changing `keepAcrossScenes` after `Awake` does not reapply `DontDestroyOnLoad` to that GameObject. |
-| `VnResult ConfigurePlatformBeforeStartup(string platformId, string platformName = null)` | Before startup: pass either a legacy platform instance ID or exact directory name, not both. For companion directories, pass a null/empty ID and an optional exact name. Invalid selection format or an active/starting session returns `VN_INVALID_ARG`. |
+| `VnResult ConfigureBeforeStartup(string relativePackRoot, string relativeInitPack, ulong[] startupPacks, bool useNullDevice, bool keepAcrossScenes)` | Before startup: validate and store relative Pack/Init paths, Null device, and scene persistence. Current startup requires `relativeInitPack` to be `Init.bytes` and `startupPacks` to be an empty array; invalid input or an active/starting session returns `VN_INVALID_ARG`. The stored `relativePackRoot` does not select Auto Start content: Project Settings supplies that directory, or pass an explicit root to `StartRuntime(string)`. Scene persistence is applied in `Awake`, so changing `keepAcrossScenes` after `Awake` does not reapply `DontDestroyOnLoad` to that GameObject. |
+| `VnResult ConfigurePlatformBeforeStartup(string platformId, string platformName = null)` | Before startup: pass a null/empty platform ID and an optional exact directory name. Legacy platform IDs are unsupported. Invalid selection format or an active/starting session returns `VN_INVALID_ARG`. |
 | `VnResult ConfigureLanguageBeforeStartup(string selectedLanguage)` | Before startup: select a language key (empty means publication default). Invalid path-like input or an active/starting session returns `VN_INVALID_ARG`. |
 | `VnResult ConfigureCompanionSourceBeforeStartup(PackSource source)` | Configure an explicit companion source before startup; Auto Start can use it on Android as well as filesystem hosts. |
 | `VnResult StartRuntime(PackSource source)` | Start from a synchronous companion source and initialize its Init pair. |
 | `Task<VnResult> StartRuntimeAsync(PackSource source, CancellationToken cancellation = default)` | Await companion Init readiness, including asynchronous packaged/HTTP reads. Start on the Unity main thread. |
-| `VnResult ConfigurePreparedSourceBeforeStartup(HarkenPackSource source)` | Retained legacy manifest source configuration. For current TextAssets use `CaptureCompanion` and a `PackSource` startup overload. |
-| `VnResult ConfigurePreparedBytesBeforeStartup(HarkenPreparedPacks source)` | Retained legacy prepared-byte configuration. Null or an existing/starting session returns `VN_INVALID_ARG`. |
-| `VnResult StartRuntime(string containmentRoot)` | Start from a selected companion platform directory, or its parent with an exact configured platform name. Legacy indexed roots remain accepted by the retained reader. A previously configured legacy prepared source/bytes takes precedence. `null` is suitable only when such a source is configured. |
-| `VnResult StartRuntime(HarkenPreparedPacks source)` | Retained legacy prepared-byte startup; source must be non-null and match configured language/platform. |
-| `VnResult StartRuntime(string manifestPath, Func<string, byte[]> readBytes, string selectedLanguage = null)` | Retained legacy manifest-reader startup. Current companion readers use `PackSource` startup overloads. |
+| `VnResult ConfigurePreparedSourceBeforeStartup(HarkenPackSource source)` | Returns `VN_PACK_INCOMPATIBLE`. For current TextAssets use `CaptureCompanion` and a `PackSource` startup overload. |
+| `VnResult ConfigurePreparedBytesBeforeStartup(HarkenPreparedPacks source)` | Returns `VN_PACK_INCOMPATIBLE`; legacy prepared bytes are unsupported. |
+| `VnResult StartRuntime(string containmentRoot)` | Start from a selected companion platform directory, or its parent with an exact configured platform name. Legacy manifest/index roots and prepared publication sources are unsupported. |
+| `VnResult StartRuntime(HarkenPreparedPacks source)` | Retained Editor signature; returns `VN_PACK_INCOMPATIBLE`. |
+| `VnResult StartRuntime(string manifestPath, Func<string, byte[]> readBytes, string selectedLanguage = null)` | Rejects legacy manifest readers with `VN_PACK_INCOMPATIBLE` without invoking the callback. Current readers use `PackSource`. |
 | `VnResult SetSuspended(bool suspended)` | Suspend or resume the active session. Without one returns `VN_NOT_INITIALIZED`; resume success moves state to `Ready` and raises `BecameReady`. |
 | `VnResult ShutdownRuntime()` | Stop owned firings and participants, release Packs and emitters, then terminate the Runtime. Check its result. A failed native termination retains the session for cleanup. |
 | `VnResult SetMasterVolume(float volume)` | Set the master bus output volume from a finite linear value clamped to `[0, 1]`; invalid values return `VN_INVALID_ARG`, no ready session returns `VN_NOT_INITIALIZED`. |
@@ -250,32 +250,12 @@ have no filename mapping in this source, so discover new content by name.
 For Unity TextAssets, configure `HarkenPackSource`'s Init Pack, Content and
 Language fields, then call `CaptureCompanion(initJson, out source, out error,
 language)` on the Unity main thread. Supply the paired Init JSON TextAsset
-explicitly and start the resulting `PackSource`. The old inventory and selected
-manifest fields are hidden. See [Pack sources](PackApiReference.md) for streaming
+explicitly and start the resulting `PackSource`. The old inventory and selected manifest fields have been removed. See [Pack sources](PackApiReference.md) for streaming
 and reader-backed alternatives.
 
-The following `HarkenPreparedPacks` details describe retained legacy APIs.
-They do not provide current companion discovery or restore suspended Editor tools.
-
-`HarkenPackSource` is a `ScriptableObject` containing the selected publication
-and Pack `TextAsset`s. `Capture(out HarkenPreparedPacks prepared, out string
-error, string selectedLanguage = null)` and its overload with `out byte[]
-manifestBytes` snapshot them on the Unity main thread. `HarkenPreparedPacks`
-can also be obtained with `Capture(string manifestPath,
-Func<string, byte[]> readBytes, out HarkenPreparedPacks prepared, out byte[]
-manifestBytes, out string error, string language = null)` or
-`Create(GameplayPublication publication, byte[] init, out HarkenPreparedPacks
-prepared, out string error)`. Its `SupplyPack(ulong id, byte[] bytes)` verifies
-and snapshots a Content Pack; `SetDemandProvider(PackByteProvider.Handler
-provider, object state = null)` supplies missing Content synchronously.
-`Start(ulong[] startupIds, ref VnConfig config, out PackBootstrapSession
-session)` is the lower-level owner path; use a `HarkenAudioSystem` startup
-overload when that component owns the Runtime. `Publication` and
-`SelectedManifestPath` expose the captured identity and manifest location.
-The source's legacy inventory and selected manifest fields remain serialized
-but are hidden from the Inspector. Dynamic legacy code uses the public
-`HarkenPreparedPacks.Capture/Create` factories. `SelectedManifestPath` is set by
-reader `Capture`; it may be null for `Create` or `HarkenPackSource.Capture`.
+`HarkenPreparedPacks` remains only as a signature dependency of suspended
+Editor tooling. `Capture`, `Create`, `SupplyPack`, `SetDemandProvider`, and
+`Start` return `VN_PACK_INCOMPATIBLE` and never load legacy publications.
 
 `Session.PrepareActions(string[] names, string projectId, out
 ActionPreparation preparation)` computes and acquires the declared Pack
@@ -283,9 +263,7 @@ closure for exact Action names. It may perform cold I/O. Keep every non-null
 scope even after a failed preparation: `ActionPreparation.Release()` must
 finish cleanup, and a failed release retains its remaining ownership.
 `IsPrepared`, `IsReleased`, and `LastReleaseResult` expose its state;
-`Prepare()` reacquires a released scope on its original live session. Use
-`Session.PrepareStartupPacks()` to recover startup Packs after supplying missing
-Content. `Session.StartupResult`, `FailedStartupPackStableId`,
+`Prepare()` reacquires a released scope on its original live session. Companion startup acquires Init only; retry `PrepareActions` after repairing missing content. `Session.StartupResult`, `FailedStartupPackStableId`,
 `IsStartupComplete`, and `IsActive` distinguish those states. `HarkenPack`
 offers a scene component for one authored Pack ID: `PackStableId`, `IsLoaded`,
 `LoadOnReady`, `Handle`, and `LastResult` report it; `Load()` and `Unload()`

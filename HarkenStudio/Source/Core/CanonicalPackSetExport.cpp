@@ -267,17 +267,6 @@ void removeMatchingDirs(const QDir& parent, const QString& prefix)
     }
 }
 
-QString uniqueMatchingDir(const QDir& parent, const QString& prefix)
-{
-    QString found;
-    for (const QFileInfo& info : parent.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden)) {
-        if (!info.fileName().startsWith(prefix)) continue;
-        if (!found.isEmpty() || info.isSymLink()) return {};
-        found = info.absoluteFilePath();
-    }
-    return found;
-}
-
 bool safePublicationPath(const QDir& dir, const QString& relative)
 {
     if (QFileInfo(dir.absolutePath()).isSymLink() || relative.isEmpty() || QDir::isAbsolutePath(relative)
@@ -386,20 +375,6 @@ bool scanCleanupFiles(const QDir& root, const QStringList& selectedPlatforms,
     return true;
 }
 
-bool publishedRelativeNames(const QDir& dir, QStringList* names, QString* error,
-                            bool requireComplete = false, QStringList* packNames = nullptr)
-{
-    QJsonArray rows;
-    if (!ReadPackPublication(dir.absolutePath(), {}, {}, &rows, names, error, requireComplete))
-        return false;
-    if (packNames) {
-        packNames->clear();
-        for (const auto& value : rows)
-            packNames->append(value.toObject().value(QStringLiteral("path")).toString());
-    }
-    return true;
-}
-
 bool copyRelativeFile(const QDir& fromDir, const QDir& toDir, const QString& relative)
 {
     const QString source = fromDir.filePath(relative);
@@ -493,47 +468,33 @@ bool recoverInterruptedPublish(const QDir& liveDir, QString* error)
     if (!markerFile.open(QIODevice::ReadOnly)) return reject(QStringLiteral("marker is unreadable"));
     const QByteArray markerBytes = markerFile.readAll();
     markerFile.close();
-    QString previous = uniqueMatchingDir(liveDir, QString::fromLatin1(kPreviousPrefix));
-    QString next = uniqueMatchingDir(liveDir, QString::fromLatin1(kNextPrefix));
     QStringList previousNames, nextNames;
-    if (!markerBytes.isEmpty()) {
-        const QJsonObject transaction = QJsonDocument::fromJson(markerBytes).object();
-        const QString previousName = transaction.value(QStringLiteral("previous")).toString();
-        const QString nextName = transaction.value(QStringLiteral("next")).toString();
-        if (transaction.value(QStringLiteral("version")).toInt() != 1
-            || !previousName.startsWith(QString::fromLatin1(kPreviousPrefix))
-            || previousName.contains(QLatin1Char('/')) || previousName.contains(QLatin1Char('\\')) || previousName.contains(QLatin1Char(':'))
-            || !nextName.startsWith(QString::fromLatin1(kNextPrefix))
-            || nextName.contains(QLatin1Char('/')) || nextName.contains(QLatin1Char('\\')) || nextName.contains(QLatin1Char(':')))
-            return reject(QStringLiteral("invalid transaction record"));
-        previous = liveDir.filePath(previousName);
-        next = liveDir.filePath(nextName);
-        const auto readNames = [&](const QString& key, QStringList* names) {
-            if (!transaction.value(key).isArray()) return false;
-            for (const QJsonValue& value : transaction.value(key).toArray()) {
-                const QString name = value.toString();
-                if (!safePublicationPath(liveDir, name)
-                    || !safePublicationPath(QDir(previous), name)
-                    || !safePublicationPath(QDir(next), name)) return false;
-                names->append(name);
-            }
-            names->removeDuplicates();
-            return true;
-        };
-        if (!readNames(QStringLiteral("previousFiles"), &previousNames)
-            || !readNames(QStringLiteral("nextFiles"), &nextNames))
-            return reject(QStringLiteral("unsafe transaction inventory"));
-    } else {
-        QString detail;
-        if (previous.isEmpty() || !publishedRelativeNames(QDir(previous), &previousNames, &detail, true))
-            return reject(detail.isEmpty() ? QStringLiteral("previous pack set is missing") : detail);
-        // Older failed rollbacks deleted next. Restore the proven previous set
-        // and retain any unproven live files instead of guessing their ownership.
-        if (!next.isEmpty() && !publishedRelativeNames(QDir(next), &nextNames, &detail))
-            nextNames.clear();
-        if (previousNames.isEmpty() && (!QDir(previous).isEmpty() || nextNames.isEmpty()))
-            return reject(QStringLiteral("previous publication ownership is unavailable"));
-    }
+    const QJsonObject transaction = QJsonDocument::fromJson(markerBytes).object();
+    const QString previousName = transaction.value(QStringLiteral("previous")).toString();
+    const QString nextName = transaction.value(QStringLiteral("next")).toString();
+    if (transaction.value(QStringLiteral("version")).toInt() != 1
+        || !previousName.startsWith(QString::fromLatin1(kPreviousPrefix))
+        || previousName.contains(QLatin1Char('/')) || previousName.contains(QLatin1Char('\\')) || previousName.contains(QLatin1Char(':'))
+        || !nextName.startsWith(QString::fromLatin1(kNextPrefix))
+        || nextName.contains(QLatin1Char('/')) || nextName.contains(QLatin1Char('\\')) || nextName.contains(QLatin1Char(':')))
+        return reject(QStringLiteral("invalid transaction record"));
+    const QString previous = liveDir.filePath(previousName);
+    const QString next = liveDir.filePath(nextName);
+    const auto readNames = [&](const QString& key, QStringList* names) {
+        if (!transaction.value(key).isArray()) return false;
+        for (const QJsonValue& value : transaction.value(key).toArray()) {
+            const QString name = value.toString();
+            if (!safePublicationPath(liveDir, name)
+                || !safePublicationPath(QDir(previous), name)
+                || !safePublicationPath(QDir(next), name)) return false;
+            names->append(name);
+        }
+        names->removeDuplicates();
+        return true;
+    };
+    if (!readNames(QStringLiteral("previousFiles"), &previousNames)
+        || !readNames(QStringLiteral("nextFiles"), &nextNames))
+        return reject(QStringLiteral("unsafe transaction inventory"));
     if (!QDir(previous).exists()) return reject(QStringLiteral("previous pack set is missing"));
     for (const QString& name : previousNames) {
         if (!QFileInfo(QDir(previous).filePath(name)).isFile())
@@ -2216,85 +2177,6 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
         std::stable_sort(binaries.begin(), binaries.end(), [&](const auto& left, const auto& right) {
             return expectedPackPaths.contains(left) && !expectedPackPaths.contains(right);
         });
-    QHash<QString, QJsonObject> legacyRows;
-    QHash<QString, QJsonObject> legacyCompanions;
-    QHash<QString, QStringList> legacyReferences;
-    QHash<QString, QString> legacyProjects;
-    QStringList legacyFiles;
-    for (const auto& relative : files) {
-        if (exportCanceled(cancelCheck, error)) return false;
-        if (QFileInfo(relative).fileName() != QStringLiteral("HarkenPackManifest.json")) continue;
-        QByteArray bytes;
-        if (!readAll(dir.filePath(relative), &bytes, &detail)) return reject(detail);
-        const auto manifest = QJsonDocument::fromJson(bytes).object();
-        if (ProjectSchemaValidator::validatePackManifest(
-                HARKEN_PACK_SCHEMA_VERSION, manifest, relative).isEmpty()) continue;
-        const auto catalog = manifest.value(QStringLiteral("gameplayCatalog")).toObject();
-        if (manifest.value(QStringLiteral("schema_version")).toInt() != 3
-            || QUuid(catalog.value(QStringLiteral("projectId")).toString()).isNull()
-            || !manifest.value(QStringLiteral("packs")).isArray())
-            return reject(QStringLiteral("Cannot establish ownership of previous publication '%1'").arg(relative));
-        if ((!projectId.isEmpty() && QUuid(catalog.value(QStringLiteral("projectId")).toString()) != QUuid(projectId))
-            || (!platformId.isEmpty() && manifest.value(QStringLiteral("platformId")).toString() != platformId))
-            return reject(QStringLiteral("Pack publication belongs to another project or platform"));
-        legacyFiles.append(relative);
-        legacyReferences.insert(relative, {});
-        legacyProjects.insert(relative, catalog.value(QStringLiteral("projectId")).toString());
-        const auto waveform = QDir::cleanPath(QDir(QFileInfo(relative).path()).filePath(
-            QStringLiteral("HarkenEditorWaveforms.json")));
-        if (files.contains(waveform)) {
-            QByteArray waveformBytes;
-            if (!readAll(dir.filePath(waveform), &waveformBytes, &detail)) return reject(detail);
-            const auto metadata = QJsonDocument::fromJson(waveformBytes).object();
-            if (metadata.value(QStringLiteral("manifestFnv1a64")).toString().toULongLong()
-                    == harkenstudiobuild::Fnv1a64(bytes.constData(), bytes.size())
-                && metadata.value(QStringLiteral("manifestByteLength")).toInteger() == bytes.size())
-                legacyFiles.append(waveform);
-        }
-        for (const auto& value : manifest.value(QStringLiteral("packs")).toArray()) {
-            auto row = value.toObject();
-            QString path = row.value(QStringLiteral("path")).toString();
-            if (!path.endsWith(QStringLiteral(".bytes"), Qt::CaseInsensitive)
-                && files.contains(path + QStringLiteral(".bytes"))) path += QStringLiteral(".bytes");
-            if (!safePublicationPath(dir, path))
-                return reject(QStringLiteral("Unsafe previous Pack path '%1'").arg(path));
-            row.insert(QStringLiteral("path"), path);
-            row.insert(QStringLiteral("projectId"), catalog.value(QStringLiteral("projectId")));
-            row.insert(QStringLiteral("platformId"), manifest.value(QStringLiteral("platformId")));
-            legacyReferences[relative].append(path);
-            if (legacyRows.contains(path)) continue;
-            legacyRows.insert(path, row);
-            QJsonObject companion;
-            if (row.value(QStringLiteral("packKind")).toInt() == harkenstudiobuild::kPackKindInit) {
-                QJsonArray variables;
-                for (const auto& variableValue : manifest.value(QStringLiteral("variableCatalog")).toObject()
-                        .value(QStringLiteral("variables")).toArray()) {
-                    const auto variable = variableValue.toObject();
-                    QJsonArray labels;
-                    for (const auto& labelValue : variable.value(QStringLiteral("labels")).toArray()) {
-                        const auto label = labelValue.toObject();
-                        if (label.value(QStringLiteral("name")).toString().isEmpty()) continue;
-                        labels.append(QJsonObject{{QStringLiteral("name"), label.value(QStringLiteral("name"))},
-                            {QStringLiteral("guid"), label.value(QStringLiteral("labelId"))}});
-                    }
-                    variables.append(QJsonObject{{QStringLiteral("name"), variable.value(QStringLiteral("codeName"))},
-                        {QStringLiteral("guid"), variable.value(QStringLiteral("variableId"))},
-                        {QStringLiteral("labels"), labels}});
-                }
-                companion.insert(QStringLiteral("variables"), variables);
-            } else {
-                for (const auto& actionValue : catalog.value(QStringLiteral("actions")).toArray()) {
-                    const auto action = actionValue.toObject();
-                    if (action.value(QStringLiteral("ownerPackStableId")) != row.value(QStringLiteral("packStableId"))) continue;
-                    if (!companion.isEmpty()) return reject(QStringLiteral("Previous Pack contains multiple Actions: %1").arg(path));
-                    companion = QJsonObject{{QStringLiteral("name"), action.value(QStringLiteral("name"))},
-                        {QStringLiteral("guid"), action.value(QStringLiteral("actionStableId"))}};
-                }
-            }
-            companion.insert(QStringLiteral("schemaVersion"), HARKEN_PACK_SCHEMA_VERSION);
-            legacyCompanions.insert(path, companion);
-        }
-    }
     harkenstudio::ObjectId expectedProject = runtimeObjectId(QUuid(projectId));
     std::uint64_t initId = 0;
     bool selectedInit = false;
@@ -2320,7 +2202,7 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
                 bytes.size(), &image) != harkenstudiobuild::kPackOk
             || !body.Decode(image.partitionBody.data(), image.partitionBody.size(),
                 harkenstudiobuild::kCanonicalDefinitionPartitionBodyVintage)) {
-            if (requireComplete && selected && (hasCompanion || legacyRows.contains(path)))
+            if (requireComplete && selected && hasCompanion)
                 return reject(QStringLiteral("Invalid published Pack '%1'").arg(path));
             continue;
         }
@@ -2340,7 +2222,7 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
                         image.dependencyEdges, edge.prerequisitePackStableId) == harkenstudiobuild::kPackOk)
                     return reject(QStringLiteral("Pack publication contains another platform's content: %1").arg(path));
         }
-        if (!hasCompanion && !legacyRows.contains(path)) continue;
+        if (!hasCompanion) continue;
         const auto hash = harkenstudiobuild::Fnv1a64(bytes.constData(), bytes.size());
         QJsonObject row;
         QString pairError;
@@ -2351,33 +2233,22 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
             };
             QJsonObject companion;
             QByteArray companionBytes;
-            if (hasCompanion) {
-                if (!readAll(dir.filePath(companionPath), &companionBytes, &detail)) return rejectPair(detail);
-                QJsonParseError parseError;
-                const auto document = QJsonDocument::fromJson(companionBytes, &parseError);
-                if (parseError.error != QJsonParseError::NoError || !document.isObject())
-                    return rejectPair(QStringLiteral("Invalid Pack companion '%1'").arg(companionPath));
-                companion = document.object();
-            } else {
-                companion = legacyCompanions.value(path);
-            }
+            if (!readAll(dir.filePath(companionPath), &companionBytes, &detail)) return rejectPair(detail);
+            QJsonParseError parseError;
+            const auto document = QJsonDocument::fromJson(companionBytes, &parseError);
+            if (parseError.error != QJsonParseError::NoError || !document.isObject())
+                return rejectPair(QStringLiteral("Invalid Pack companion '%1'").arg(companionPath));
+            companion = document.object();
             const auto companionErrors = ProjectSchemaValidator::validatePackManifest(
                 HARKEN_PACK_SCHEMA_VERSION, companion, companionPath);
             if (!companionErrors.isEmpty()) return rejectPair(companionErrors.join(QLatin1Char('\n')));
-            if (!hasCompanion && legacyRows.value(path).value(QStringLiteral("contentHash")).toString().toULongLong() != hash)
-                return rejectPair(QStringLiteral("Previous Pack differs from its publication: %1").arg(path));
-            if (!hasCompanion && (runtimeObjectId(QUuid(legacyRows.value(path).value(QStringLiteral("projectId")).toString()))
-                    != world.identity.projectId
-                    || legacyRows.value(path).value(QStringLiteral("packStableId")).toString().toULongLong() != image.packStableId
-                    || legacyRows.value(path).value(QStringLiteral("packKind")).toInt() != image.packKind))
-                return rejectPair(QStringLiteral("Previous Pack identity differs from its publication: %1").arg(path));
             if (harkenstudio::IsNull(pairProject))
                 return rejectPair(QStringLiteral("Pack publication contains an invalid project identity: %1").arg(path));
             if (requireComplete && selected && ids.contains(image.packStableId))
                 return rejectPair(QStringLiteral("Pack publication repeats a Pack identity: %1").arg(path));
             QString name;
             if (image.packKind == harkenstudiobuild::kPackKindInit) {
-                if ((selected && initId != 0) || (hasCompanion && path != QStringLiteral("Init.bytes"))
+                if ((selected && initId != 0) || path != QStringLiteral("Init.bytes")
                     || (!platformId.isEmpty() && image.packStableId != fnvName(platformId + QStringLiteral("/Init")))
                     || companion.size() != 2 + companion.contains(QStringLiteral("waveforms"))
                         + companion.contains(QStringLiteral("metadata"))
@@ -2520,7 +2391,7 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
             }
         }
         managedFiles->append(path);
-        if (hasCompanion) managedFiles->append(companionPath);
+        managedFiles->append(companionPath);
         if (!selected) continue;
         selectedPaths.insert(path);
         ids.insert(image.packStableId);
@@ -2528,7 +2399,7 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
         dependencyEdges.insert(dependencyEdges.end(), image.dependencyEdges.begin(), image.dependencyEdges.end());
         packs->append(row);
     }
-    if (requireComplete && !selectedInit) return reject(QStringLiteral("Pack publication is missing Init.bytes and Init.json"));
+    if (requireComplete && !selectedInit) return reject(QStringLiteral("Pack publication is missing Init.bytes and Init.json; re-export all Packs with the current Studio version"));
     if (requireComplete && initId != 0) {
         for (const auto& value : *packs) {
             const auto row = value.toObject();
@@ -2547,14 +2418,10 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
         for (const auto& path : expectedPackPaths)
             if (!selectedPaths.contains(path))
                 return reject(QStringLiteral("Pack publication is missing requested Pack: %1").arg(path));
-        for (auto row = legacyRows.cbegin(); row != legacyRows.cend(); ++row)
-            if ((expectedPackPaths.isEmpty() || expectedPackPaths.contains(row.key()))
-                && !managedFiles->contains(row.key()))
-                return reject(QStringLiteral("Previous publication is missing Pack: %1").arg(row.key()));
         for (const auto& relative : files) {
             if (exportCanceled(cancelCheck, error)) return false;
             if (!relative.endsWith(QStringLiteral(".json"), Qt::CaseInsensitive)
-                || managedFiles->contains(relative) || legacyFiles.contains(relative)) continue;
+                || managedFiles->contains(relative)) continue;
             const QFileInfo info(relative);
             const auto binary = QDir::cleanPath(QDir(info.path()).filePath(info.completeBaseName() + QStringLiteral(".bytes")));
             if (!expectedPackPaths.isEmpty() && !expectedPackPaths.contains(binary)) continue;
@@ -2581,7 +2448,7 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
             if (managedFiles->contains(path)) continue;
             const QFileInfo info(path);
             const auto companion = QDir::cleanPath(QDir(info.path()).filePath(info.completeBaseName() + QStringLiteral(".json")));
-            if (files.contains(companion) || legacyRows.contains(path)) continue;
+            if (files.contains(companion)) continue;
             QByteArray bytes;
             harkenstudiobuild::PackCanonicalImage image;
             harkenstudiobuild::CurrentWorldBodyImage body;
@@ -2598,14 +2465,6 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
                 managedFiles->append(path);
         }
     }
-    for (auto manifest = legacyReferences.cbegin(); manifest != legacyReferences.cend(); ++manifest) {
-        const bool verified = std::any_of(manifest.value().begin(), manifest.value().end(), [&](const auto& path) {
-            return managedFiles->contains(path)
-                && expectedProject == runtimeObjectId(QUuid(legacyProjects.value(manifest.key())));
-        });
-        if (!verified) return reject(QStringLiteral("Previous publication has no verifiable Pack ownership: %1").arg(manifest.key()));
-    }
-    managedFiles->append(legacyFiles);
     managedFiles->removeDuplicates();
     return !exportCanceled(cancelCheck, error);
 }

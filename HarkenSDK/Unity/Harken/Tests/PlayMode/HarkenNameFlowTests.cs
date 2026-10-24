@@ -1,7 +1,6 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -34,9 +33,8 @@ namespace Harken.Unity.Tests
                 LogAssert.Expect(LogType.Error, new Regex("Harken operation failed: PackBootstrap.Start: VN_INVALID_ARG"));
                 Assert.That(fixture.Runtime.StartRuntime(root), Is.EqualTo(VnResult.VN_INVALID_ARG));
                 Assert.That(fixture.Runtime.IsReady, Is.False);
-                Assert.That(fixture.Runtime.ConfigurePlatformBeforeStartup(fixture.Publication.Platform.Id), Is.EqualTo(VnResult.VN_OK));
-                LogAssert.Expect(LogType.Error, new Regex("Harken operation failed: PackBootstrap.Start: VN_INVALID_ARG"));
-                Assert.That(fixture.Runtime.StartRuntime(root), Is.EqualTo(VnResult.VN_INVALID_ARG));
+                LogAssert.Expect(LogType.Error, new Regex("HarkenAudioSystem.ConfigurePlatformBeforeStartup: VN_INVALID_ARG"));
+                Assert.That(fixture.Runtime.ConfigurePlatformBeforeStartup("11111111-2222-3333-4444-555555555555"), Is.EqualTo(VnResult.VN_INVALID_ARG));
                 Assert.That(fixture.Runtime.ConfigurePlatformBeforeStartup(null, Path.GetFileName(root)), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(fixture.Runtime.StartRuntime(Path.GetDirectoryName(root)), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(fixture.Runtime.IsReady, Is.True);
@@ -132,7 +130,7 @@ namespace Harken.Unity.Tests
         }
 
         [UnityTest]
-        public IEnumerator AnotherProjectRejectsPersistedConfigurationUntilExplicitRebindAndRejectsTheOldPin()
+        public IEnumerator AnotherProjectRejectsPersistedConfigurationUntilExplicitRebind()
         {
             using (var fixture = new Fixture())
             {
@@ -140,16 +138,6 @@ namespace Harken.Unity.Tests
                 yield return NewBlock(fixture, CaptureBlock());
                 Post(fixture.Action);
                 string persistedProject = fixture.Action.ProjectId;
-                GameplayAction row = fixture.Row("Play_U4_A");
-                var pin = new ActionReference
-                {
-                    ProjectGuid = WireGuid(persistedProject),
-                    ExpectedName = row.Name, ActionId = row.ActionStableId,
-                    NameBindingRevision = row.NameBindingRevision, CallableFingerprint = row.CallableFingerprint
-                };
-                Assert.That(HarkenEngine.Update(), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(Actions.Post(in pin, fixture.Emitter.Handle, 99, out ActionFiring pinned), Is.EqualTo(VnResult.VN_OK));
-                AssertAction(pinned, row.ActionStableId);
                 fixture.Restart("U4OtherProject");
                 yield return NewBlock(fixture, CaptureBlock());
                 Assert.That(fixture.Action.ProjectId, Is.EqualTo(persistedProject));
@@ -159,9 +147,7 @@ namespace Harken.Unity.Tests
                 Set(fixture.Action, "projectId", fixture.Publication.ProjectId);
                 AssertAction(Post(fixture.Action), fixture.Row("Play_U4_A").ActionStableId);
                 Assert.That(HarkenEngine.Update(), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(Actions.Post(in pin, fixture.Emitter.Handle, 100, out ActionFiring refused),
-                    Is.EqualTo(VnResult.VN_GAMEPLAY_WRONG_PROJECT));
-                Assert.That(refused.IsValid, Is.False);
+
             }
             yield return null;
         }
@@ -180,7 +166,7 @@ namespace Harken.Unity.Tests
                 yield return NewBlock(fixture, CaptureBlock());
                 Assert.That(fixture.Action.ActionName, Is.EqualTo("Play_U4_A"));
                 Assert.That(fixture.Action.ProjectId, Is.EqualTo(project));
-                ExpectFailure(fixture.Action, VnResult.VN_UNKNOWN_ID);
+                ExpectFailure(fixture.Action, VnResult.VN_CONTENT_NOT_LOADED);
                 Assert.That(fixture.Action.ActionName, Is.EqualTo("Play_U4_A"));
                 Assert.That(fixture.Action.Firing.IsValid, Is.False);
                 Set(fixture.Action, "actionName", "Play_U4_Renamed");
@@ -254,15 +240,6 @@ namespace Harken.Unity.Tests
             return snapshot.blockIndex;
         }
 
-        private static byte[] WireGuid(string value)
-        {
-            byte[] bytes = Guid.Parse(value).ToByteArray();
-            Array.Reverse(bytes, 0, 4);
-            Array.Reverse(bytes, 4, 2);
-            Array.Reverse(bytes, 6, 2);
-            return bytes;
-        }
-
         private static T Get<T>(object target, string name)
             => (T)target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(target);
 
@@ -280,7 +257,7 @@ namespace Harken.Unity.Tests
             private ulong[] preparedHandles;
             private ulong generation;
             private string companionRoot;
-            public GameplayPublication Publication { get; private set; }
+            public CompanionTestPublication Publication { get; private set; }
 
             private readonly HarkenProjectSettingsLease settingsLease = HarkenProjectSettingsLease.Acquire();
 
@@ -316,27 +293,13 @@ namespace Harken.Unity.Tests
             public string StartCompanion(bool projectStartup)
             {
                 string original = Path.Combine(Application.streamingAssetsPath, "Audio", "U4Original");
-                Assert.That(GameplayPublication.Read(original, null, out GameplayPublication publication, out string error),
+                Assert.That(CompanionTestPublication.Read(original, null, out CompanionTestPublication publication, out string error),
                     Is.EqualTo(VnResult.VN_OK), error);
                 Publication = publication;
                 companionRoot = Path.Combine(Application.streamingAssetsPath, "harken-companion-" + Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(companionRoot);
-                File.Copy(Path.Combine(original, publication.InitPack.Path), Path.Combine(companionRoot, "Init.bytes"));
-                string schemaVersion;
-                using (var init = new BinaryReader(File.OpenRead(Path.Combine(companionRoot, "Init.bytes"))))
-                {
-                    init.BaseStream.Position = 4;
-                    schemaVersion = init.ReadUInt32().ToString(CultureInfo.InvariantCulture);
-                }
-                File.WriteAllText(Path.Combine(companionRoot, "Init.json"), "{\"schemaVersion\":" + schemaVersion + ",\"variables\":[]}");
-                foreach (string name in new[] { "Play_U4_A", "Play_U4_B" })
-                {
-                    GameplayAction row = Row(name);
-                    Assert.That(publication.TryFindPack(row.OwnerPackStableId, out PackManifestEntry pack), Is.True);
-                    File.Copy(Path.Combine(original, pack.Path), Path.Combine(companionRoot, name + ".bytes"));
-                    File.WriteAllText(Path.Combine(companionRoot, name + ".json"),
-                        "{\"schemaVersion\":" + schemaVersion + ",\"name\":\"" + name + "\",\"guid\":\"" + row.ActionStableId + "\"}");
-                }
+                foreach (string file in Directory.GetFiles(original))
+                    File.Copy(file, Path.Combine(companionRoot, Path.GetFileName(file)));
                 File.WriteAllText(Path.Combine(companionRoot, "Unused.json"), "invalid");
                 settingsLease.Settings.SetPackDirectory(companionRoot);
                 settingsLease.Settings.SetPlayerExports(new[] { Path.GetFileName(companionRoot) });
@@ -369,30 +332,29 @@ namespace Harken.Unity.Tests
             private void Configure(string directory)
             {
                 string root = Path.Combine(Application.streamingAssetsPath, "Audio", directory);
-                Assert.That(GameplayPublication.Read(root, null, out GameplayPublication publication, out string error),
+                Assert.That(CompanionTestPublication.Read(root, null, out CompanionTestPublication publication, out string error),
                     Is.EqualTo(VnResult.VN_OK), error);
                 Publication = publication;
                 settingsLease.Settings.SetPackDirectory(root);
-                ulong[] ids = Publication.Actions.Where(row => row.Name != "Play_U4_Caller")
-                    .Select(row => row.OwnerPackStableId).Distinct().ToArray();
-                Assert.That(ids.Length, Is.EqualTo(2));
                 Assert.That(Runtime.ConfigureBeforeStartup("Audio/" + directory, Publication.InitPack.Path,
-                    ids, false, false), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(Runtime.ConfigurePlatformBeforeStartup(Publication.Platform.Id), Is.EqualTo(VnResult.VN_OK));
+                    Array.Empty<ulong>(), false, false), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(Runtime.ConfigurePlatformBeforeStartup(null), Is.EqualTo(VnResult.VN_OK));
             }
 
             private void AfterStartup()
             {
                 Assert.That(Runtime.IsPreparationComplete, Is.True, Runtime.LastStartupError);
                 Assert.That(HarkenNative.Vn_SetBusMute(VnConstants.VN_BUS_MASTER, 1, 0), Is.EqualTo(VnResult.VN_IN_USE));
+                Assert.That(Runtime.Session.PrepareActions(Publication.Actions.Where(row => row.Name != "Play_U4_Caller")
+                    .Select(row => row.Name).ToArray(), Publication.ProjectId, out _), Is.EqualTo(VnResult.VN_OK));
                 preparedHandles = Runtime.Session.StartupPacks.Select(pack => pack.Handle).ToArray();
                 Assert.That(Actions.Resolve("Play_U4_B", Publication.ProjectId, out ActionResolved resolved), Is.EqualTo(VnResult.VN_OK));
                 generation = resolved.PublicationGeneration;
             }
 
-            public GameplayAction Row(string name)
+            public CompanionTestAction Row(string name)
             {
-                Assert.That(Publication.TryFindAction(name, out GameplayAction row), Is.True, name);
+                Assert.That(Publication.TryFindAction(name, out CompanionTestAction row), Is.True, name);
                 return row;
             }
 
@@ -415,4 +377,84 @@ namespace Harken.Unity.Tests
             }
         }
     }
+
+    internal sealed class CompanionTestAction
+    {
+        internal string Name;
+        internal VnObjectId ActionStableId;
+        internal ulong OwnerPackStableId;
+    }
+
+    internal sealed class CompanionTestPack
+    {
+        internal string Name;
+        internal string Path;
+        internal ulong PackStableId;
+        internal ulong ContentHash;
+    }
+
+    internal sealed class CompanionTestPublication
+    {
+        internal string ProjectId;
+        internal string Language;
+        internal CompanionTestPack InitPack;
+        internal ulong InitPackStableId => InitPack.PackStableId;
+        internal readonly List<CompanionTestAction> Actions = new List<CompanionTestAction>();
+        internal readonly List<CompanionTestPack> Packs = new List<CompanionTestPack>();
+
+        internal bool TryFindAction(string name, out CompanionTestAction action)
+        {
+            action = Actions.Find(row => row.Name == name);
+            return action != null;
+        }
+
+        internal bool TryFindPack(ulong id, out CompanionTestPack pack)
+        {
+            pack = Packs.Find(row => row.PackStableId == id);
+            return pack != null;
+        }
+
+        internal static VnResult Read(string root, string language,
+            out CompanionTestPublication publication, out string error)
+        {
+            publication = null;
+            var source = new PackDirectorySource(root, language);
+            VnResult result = source.Capture(null, default, null, out CompanionInput init);
+            error = result.ToString();
+            if (result != VnResult.VN_OK) return result;
+            publication = new CompanionTestPublication
+            {
+                ProjectId = init.Facts.projectId.ToString(),
+                Language = language ?? string.Empty,
+                InitPack = new CompanionTestPack { Name = "Init", Path = "Init.bytes",
+                    PackStableId = init.Facts.packStableId, ContentHash = init.Facts.contentHash }
+            };
+            publication.Packs.Add(publication.InitPack);
+            IEnumerable<string> files = Directory.GetFiles(root, "*.bytes");
+            if (!string.IsNullOrEmpty(language) && Directory.Exists(Path.Combine(root, language)))
+                files = files.Concat(Directory.GetFiles(Path.Combine(root, language), "*.bytes"));
+            foreach (string name in files.Select(Path.GetFileNameWithoutExtension)
+                .Where(name => name != "Init").Distinct().OrderBy(name => name, StringComparer.Ordinal))
+            {
+                result = source.Capture(name, init.Facts.projectId, init.Bytes, out CompanionInput action);
+                error = result.ToString();
+                if (result != VnResult.VN_OK) return result;
+                publication.Actions.Add(new CompanionTestAction { Name = name,
+                    ActionStableId = action.Facts.rootActionId, OwnerPackStableId = action.Facts.packStableId });
+                publication.Packs.Add(new CompanionTestPack { Name = name,
+                    Path = (string.IsNullOrEmpty(action.Names.Language) ? "" : action.Names.Language + "/") + name + ".bytes",
+                    PackStableId = action.Facts.packStableId, ContentHash = action.Facts.contentHash });
+            }
+            error = string.Empty;
+            return VnResult.VN_OK;
+        }
+
+        internal static PackSource Snapshot(string root)
+        {
+            var files = Directory.GetFiles(root, "*", SearchOption.AllDirectories)
+                .ToDictionary(path => Path.GetRelativePath(root, path).Replace('\\', '/'), File.ReadAllBytes);
+            return PackSource.FromReader(path => files.TryGetValue(path, out byte[] bytes) ? bytes : null);
+        }
+    }
+
 }

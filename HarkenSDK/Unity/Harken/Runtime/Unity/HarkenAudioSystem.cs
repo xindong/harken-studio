@@ -2,12 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
-#if UNITY_ANDROID && !UNITY_EDITOR
-using System.Collections;
-using System.Security.Cryptography;
-using System.Text;
-using UnityEngine.Networking;
-#endif
 using UnityEngine;
 using UnityEngine.Events;
 using Harken;
@@ -41,7 +35,7 @@ namespace Harken.Unity
         private const int SuccessMessageCacheCapacity = 64;
         [SerializeField] private bool autoInitialize = true;
         [SerializeField, HideInInspector] private string packRoot = "Audio/GeneratedPacks";
-        [SerializeField, HideInInspector] private string initPack = "Init.pack";
+        [SerializeField, HideInInspector] private string initPack = "Init.bytes";
         [SerializeField, HideInInspector] private string packPlatform = string.Empty;
         [SerializeField, HideInInspector] private string packPlatformId = string.Empty;
         [SerializeField, HideInInspector] private string language = string.Empty;
@@ -52,7 +46,6 @@ namespace Harken.Unity
         private bool languageConfigured;
         private bool platformConfigured;
         private bool initPackConfigured;
-        private string androidPackRoot;
         [SerializeField, HideInInspector] private bool nullDevice;
         [SerializeField] private bool persistAcrossScenes = true;
         [SerializeField, HideInInspector] private uint maxVoices = 32;
@@ -452,9 +445,8 @@ namespace Harken.Unity
         public VnResult ConfigurePlatformBeforeStartup(string platformId, string platformName = null)
         {
             if (session != null || State == HarkenRuntimeState.Starting || State == HarkenRuntimeState.Ready ||
-                (!string.IsNullOrEmpty(platformId) && !PackManifest.IsPlatformId(platformId)) ||
-                (!string.IsNullOrEmpty(platformName) && !PackManifest.IsPlatformName(platformName)) ||
-                (!string.IsNullOrEmpty(platformId) && !string.IsNullOrEmpty(platformName)))
+                !string.IsNullOrEmpty(platformId) ||
+                (!string.IsNullOrEmpty(platformName) && !PackPaths.IsPlatformName(platformName)))
                 return ObserveResult("HarkenAudioSystem.ConfigurePlatformBeforeStartup", VnResult.VN_INVALID_ARG);
             packPlatformId = platformId ?? string.Empty;
             packPlatform = platformName ?? string.Empty;
@@ -475,35 +467,13 @@ namespace Harken.Unity
 
         public VnResult ConfigurePreparedSourceBeforeStartup(HarkenPackSource source)
         {
-            if (session != null || State == HarkenRuntimeState.Starting || source == null)
-                return ObserveResult("HarkenAudioSystem.ConfigurePreparedSourceBeforeStartup", VnResult.VN_INVALID_ARG);
-            preparedPackSource = source;
-            preparedPacks = null;
-            return ObserveResult("HarkenAudioSystem.ConfigurePreparedSourceBeforeStartup", VnResult.VN_OK);
+            return ObserveResult("HarkenAudioSystem.ConfigurePreparedSourceBeforeStartup", VnResult.VN_PACK_INCOMPATIBLE);
         }
 
         public VnResult ConfigurePreparedBytesBeforeStartup(HarkenPreparedPacks source)
         {
-            if (session != null || State == HarkenRuntimeState.Starting || source == null)
-                return ObserveResult("HarkenAudioSystem.ConfigurePreparedBytesBeforeStartup", VnResult.VN_INVALID_ARG);
-            preparedPacks = source;
-            preparedPackSource = null;
-            return ObserveResult("HarkenAudioSystem.ConfigurePreparedBytesBeforeStartup", VnResult.VN_OK);
+            return ObserveResult("HarkenAudioSystem.ConfigurePreparedBytesBeforeStartup", VnResult.VN_PACK_INCOMPATIBLE);
         }
-
-#if UNITY_ANDROID && !UNITY_EDITOR
-        private sealed class PackagedFile
-        {
-            public PackagedFile(string sourcePath, string targetPath)
-            {
-                SourcePath = sourcePath;
-                TargetPath = targetPath;
-            }
-
-            public string SourcePath { get; }
-            public string TargetPath { get; }
-        }
-#endif
 
         public VnResult StartRuntime(string containmentRoot)
         {
@@ -514,57 +484,17 @@ namespace Harken.Unity
 
         private VnResult StartRuntimeCore(string containmentRoot)
         {
-            if (preparedPackSource != null)
+            if (preparedPackSource != null || preparedPacks != null)
             {
-                VnResult captured = preparedPackSource.Capture(out HarkenPreparedPacks source,
-                    out string error, language);
-                LastStartupError = error ?? string.Empty;
-                return captured == VnResult.VN_OK ? StartRuntimeCore(source)
-                    : CompleteSessionStartup(captured, string.Empty);
+                LastStartupError = HarkenPreparedPacks.Diagnostic;
+                return CompleteSessionStartup(VnResult.VN_PACK_INCOMPATIBLE, string.Empty);
             }
-            if (preparedPacks != null) return StartRuntimeCore(preparedPacks);
-            if (string.IsNullOrEmpty(containmentRoot) ||
-                !IsSafeRelativePath(initPack))
+            if (string.IsNullOrEmpty(containmentRoot) || !IsSafeRelativePath(initPack))
             {
-                LastStartupError = "A Pack root and a safe relative Init Pack path are required.";
+                LastStartupError = "A Pack root and Init.bytes are required.";
                 return CompleteSessionStartup(VnResult.VN_INVALID_ARG, string.Empty);
             }
-            string platformRoot = ResolvePlatformRoot(containmentRoot);
-            if (string.IsNullOrEmpty(platformRoot))
-            {
-                return CompleteSessionStartup(VnResult.VN_INVALID_ARG, string.Empty);
-            }
-            if (IsCompanionDirectory(platformRoot)) return StartCompanionDirectory(platformRoot);
-            if (!PackManifest.TryReadManifest(platformRoot, language, out _,
-                    out PackManifestEntry[] manifestPacks, out string selectedLanguage, out ulong initId))
-            {
-                LastStartupError = "Init Pack is not listed in the selected platform manifest.";
-                return CompleteSessionStartup(VnResult.VN_INVALID_ARG, string.Empty);
-            }
-            PackManifestEntry selectedInit = Array.Find(manifestPacks, entry => entry.PackStableId == initId);
-            if (!MatchesConfiguredInit(selectedInit.Path))
-            {
-                LastStartupError = "Configured Init Pack does not match the selected language publication.";
-                return CompleteSessionStartup(VnResult.VN_PACK_STALE_REVISION, string.Empty);
-            }
-            if (Array.Exists(manifestPacks, entry => HarkenPackFiles.HasWrapper(Path.Combine(platformRoot, entry.Path))))
-            {
-                VnResult captured = HarkenPreparedPacks.Capture(PackManifest.ManifestFileName,
-                    logical => ReadSelectedPack(platformRoot, logical), out HarkenPreparedPacks source,
-                    out _, out string error, selectedLanguage);
-                LastStartupError = error ?? string.Empty;
-                if (captured != VnResult.VN_OK) return CompleteSessionStartup(captured, platformRoot);
-                VnResult started = StartRuntimeCore(source);
-                if (session != null && session.IsActive) PackRootPath = platformRoot;
-                return started;
-            }
-            string initPath = Path.Combine(platformRoot, selectedInit.Path);
-            VnResult result = CreateStartupConfig(out VnConfig config);
-            if (result != VnResult.VN_OK) return CompleteSessionStartup(result, platformRoot);
-            result = PackBootstrap.Start(
-                initPath, platformRoot, startupPackStableIds, selectedLanguage,
-                ref config, out session);
-            return CompleteSessionStartup(result, platformRoot);
+            return StartResolvedDirectory(containmentRoot);
         }
 
         public VnResult StartRuntime(HarkenPreparedPacks source)
@@ -590,35 +520,12 @@ namespace Harken.Unity
         }
 
         private bool MatchesConfiguredInit(string selectedPath)
-            => (!initPackConfigured && initPack == "Init.pack") || initPack == selectedPath;
+            => initPack == selectedPath;
 
         private VnResult StartRuntimeCore(HarkenPreparedPacks source)
         {
-            if (source == null)
-            {
-                LastStartupError = "Prepared Pack bytes are required.";
-                return CompleteSessionStartup(VnResult.VN_INVALID_ARG, string.Empty);
-            }
-            if (!MatchesConfiguredInit(source.Publication.InitPack.Path))
-            {
-                LastStartupError = "Configured Init Pack does not match the selected language publication.";
-                return CompleteSessionStartup(VnResult.VN_PACK_STALE_REVISION, string.Empty);
-            }
-            if (!string.IsNullOrEmpty(language) && source.Publication.Language != language)
-            {
-                LastStartupError = "Prepared Pack language does not match the configured language.";
-                return CompleteSessionStartup(VnResult.VN_PACK_STALE_REVISION, string.Empty);
-            }
-            if (!PackManifest.TrySelectPlatform(new[] { source.Publication.Platform }, packPlatformId,
-                packPlatform, CurrentPackBasePlatform(), out _, out string error))
-            {
-                LastStartupError = error;
-                return CompleteSessionStartup(VnResult.VN_INVALID_ARG, string.Empty);
-            }
-            VnResult result = CreateStartupConfig(out VnConfig config);
-            if (result != VnResult.VN_OK) return CompleteSessionStartup(result, string.Empty);
-            result = source.Start(startupPackStableIds, ref config, out session);
-            return CompleteSessionStartup(result, string.Empty);
+            LastStartupError = HarkenPreparedPacks.Diagnostic;
+            return CompleteSessionStartup(VnResult.VN_PACK_INCOMPATIBLE, string.Empty);
         }
 
         private bool TryBeginStartup(out VnResult rejection)
@@ -641,7 +548,6 @@ namespace Harken.Unity
             ApplyProjectStartupPolicy();
             return true;
         }
-
 
         private void ApplyProjectStartupPolicy()
         {
@@ -689,35 +595,7 @@ namespace Harken.Unity
             string platformRoot = ResolvePlatformRoot(directory);
             if (string.IsNullOrEmpty(platformRoot))
                 return CompleteSessionStartup(VnResult.VN_INVALID_ARG, string.Empty);
-            if (IsCompanionDirectory(platformRoot)) return StartCompanionDirectory(platformRoot);
-            if (!PackManifest.TryReadManifest(platformRoot, language, out _,
-                    out PackManifestEntry[] manifestPacks, out string selectedLanguage, out ulong initId))
-            {
-                LastStartupError = "Init Pack is not listed in the selected platform manifest.";
-                return CompleteSessionStartup(VnResult.VN_INVALID_ARG, string.Empty);
-            }
-            PackManifestEntry selectedInit = Array.Find(manifestPacks, entry => entry.PackStableId == initId);
-            if (!MatchesConfiguredInit(selectedInit.Path))
-            {
-                LastStartupError = "Configured Init Pack does not match the selected language publication.";
-                return CompleteSessionStartup(VnResult.VN_PACK_STALE_REVISION, string.Empty);
-            }
-            string relativeManifest = RelativePackPath(directory, Path.Combine(platformRoot, PackManifest.ManifestFileName));
-            if (!PackManifest.IsSafeRelativePath(relativeManifest))
-            {
-                LastStartupError = "The selected GeneratedPacks directory does not contain a readable manifest.";
-                return CompleteSessionStartup(VnResult.VN_INVALID_ARG, string.Empty);
-            }
-            VnResult captured = HarkenPreparedPacks.Capture(relativeManifest,
-                logical => ReadSelectedPack(directory, logical),
-                out HarkenPreparedPacks source, out _, out string captureError, selectedLanguage ?? language);
-            LastStartupError = captureError ?? string.Empty;
-            if (captured != VnResult.VN_OK)
-                return CompleteSessionStartup(captured, string.Empty);
-            VnResult started = StartRuntimeCore(source);
-            if (session != null && session.IsActive)
-                PackRootPath = platformRoot;
-            return started;
+            return StartCompanionDirectory(platformRoot);
         }
 
         private VnResult StartCompanionDirectory(string platformRoot)
@@ -735,27 +613,11 @@ namespace Harken.Unity
             VnResult result = CreateStartupConfig(out VnConfig config);
             if (result != VnResult.VN_OK) return CompleteSessionStartup(result, platformRoot);
             result = PackBootstrap.StartDirectory(platformRoot, language, ref config, out session);
+            if (result == VnResult.VN_CONTENT_NOT_LOADED && session == null)
+                LastStartupError = "The selected directory requires the current Init.bytes and Init.json pair. Re-export Packs with the current Studio.";
+            else if (result == VnResult.VN_BAD_PACK || result == VnResult.VN_PACK_INCOMPATIBLE)
+                LastStartupError = "Invalid or unsupported Pack publication. Re-export with the current Studio and provide the paired .bytes and .json files.";
             return CompleteSessionStartup(result, platformRoot);
-        }
-
-        private static bool HasLegacyDirectoryMetadata(string directory)
-            => File.Exists(Path.Combine(directory, PackManifest.ManifestFileName)) ||
-               File.Exists(Path.Combine(directory, PackManifest.IndexFileName));
-
-        private static bool IsCompanionDirectory(string directory)
-            => File.Exists(Path.Combine(directory, "Init.json")) || !HasLegacyDirectoryMetadata(directory);
-
-        private static byte[] ReadSelectedPack(string root, string logical)
-        {
-            if (!PackManifest.TryJoinContainedPath(root, logical, out string full))
-                throw new IOException("Pack path leaves the selected directory.");
-            return HarkenPackFiles.Read(full);
-        }
-
-        private static string RelativePackPath(string root, string fullPath)
-        {
-            string relative = Path.GetRelativePath(root, fullPath).Replace('\\', '/');
-            return relative == "." ? PackManifest.ManifestFileName : relative;
         }
 
         private VnResult CreateStartupConfig(out VnConfig config)
@@ -903,35 +765,21 @@ namespace Harken.Unity
 #endif
         }
 
-
         private static bool IsSafeRelativePath(string value)
         {
-            return PackManifest.IsSafeRelativePath(value);
+            return PackPaths.IsSafeRelativePath(value);
         }
 
         private string ResolvePlatformRoot(string exportRoot)
         {
-            if (string.IsNullOrEmpty(exportRoot))
-            {
-                return null;
-            }
-            // A new source is already a selected platform directory. A configured platform name
-            // may select its direct child; an absent inventory is never fabricated or enumerated.
+            if (string.IsNullOrEmpty(exportRoot)) return null;
             if (File.Exists(Path.Combine(exportRoot, "Init.json"))) return SelectCompanionDirectory(exportRoot);
-            if (!string.IsNullOrEmpty(packPlatform) && PackManifest.IsPlatformName(packPlatform))
+            if (!string.IsNullOrEmpty(packPlatform) && PackPaths.IsPlatformName(packPlatform))
             {
                 string selected = Path.Combine(exportRoot, packPlatform);
-                if (Directory.Exists(selected) && IsCompanionDirectory(selected)) return SelectCompanionDirectory(selected);
+                if (Directory.Exists(selected)) return SelectCompanionDirectory(selected);
             }
-            if (!HasLegacyDirectoryMetadata(exportRoot)) return SelectCompanionDirectory(exportRoot);
-            if (PackManifest.TryReadPlatformDirectory(exportRoot, packPlatformId, packPlatform,
-                    CurrentPackBasePlatform(), language, out string platformDirectory, out string error))
-            {
-                LastStartupError = string.Empty;
-                return platformDirectory;
-            }
-            LastStartupError = error;
-            return null;
+            return SelectCompanionDirectory(exportRoot);
         }
 
         private string SelectCompanionDirectory(string directory)
@@ -941,7 +789,7 @@ namespace Harken.Unity
                 LastStartupError = "A companion directory has no platform ID inventory. Clear the legacy platform ID and select its directory by name.";
                 return null;
             }
-            if (!string.IsNullOrEmpty(packPlatform) && (!PackManifest.IsPlatformName(packPlatform) ||
+            if (!string.IsNullOrEmpty(packPlatform) && (!PackPaths.IsPlatformName(packPlatform) ||
                 !string.Equals(Path.GetFileName(directory.TrimEnd(Path.DirectorySeparatorChar,
                     Path.AltDirectorySeparatorChar)), packPlatform, StringComparison.Ordinal)))
             {
@@ -1201,362 +1049,6 @@ namespace Harken.Unity
             }
             return result;
         }
-
-#if UNITY_ANDROID && !UNITY_EDITOR
-        private IEnumerator StartAndroidRuntime()
-        {
-            try { yield return PrepareAndroidRuntime(); }
-            finally
-            {
-                starting = false;
-                startupCoroutine = null;
-            }
-        }
-
-        private IEnumerator PrepareAndroidRuntime()
-        {
-            string sourceRoot = Application.streamingAssetsPath.TrimEnd('/', '\\');
-            string normalizedPackRoot = androidPackRoot.Replace('\\', '/').Trim('/');
-            byte[] indexBytes = null;
-            yield return DownloadPackagedFile(sourceRoot,
-                normalizedPackRoot + "/" + PackManifest.IndexFileName,
-                value => indexBytes = value);
-            if (indexBytes == null)
-            {
-                yield break;
-            }
-            if (!PackManifest.TryParseIndex(
-                    Encoding.UTF8.GetString(indexBytes),
-                    out PackIndexEntry[] platforms))
-            {
-                FailStartup("invalid Pack index");
-                yield break;
-            }
-            if (!PackManifest.TrySelectPlatform(platforms, packPlatformId, packPlatform,
-                    CurrentPackBasePlatform(), out PackIndexEntry selected, out string selectionError))
-            {
-                FailStartup(selectionError);
-                yield break;
-            }
-            string platformRelative = normalizedPackRoot + "/" + selected.Path;
-            if (!HarkenProjectSettings.PlayerIncludesExport(selected.Path, out string exportError))
-            {
-                FailStartup(exportError);
-                yield break;
-            }
-
-            string manifestSourcePath =
-                platformRelative + "/" + PackManifest.ManifestFileName;
-            byte[] manifestBytes = null;
-            yield return DownloadPackagedFile(
-                sourceRoot, manifestSourcePath, value => manifestBytes = value);
-            if (manifestBytes == null)
-            {
-                yield break;
-            }
-            string inventoryJson = Encoding.UTF8.GetString(manifestBytes);
-            if (!PackManifest.TryParseManifest(inventoryJson,
-                    out PackIndexEntry manifestPlatform, out PackManifestEntry[] packs) ||
-                !PackManifest.MatchesPlatform(selected, manifestPlatform))
-            {
-                FailStartup("Pack index and manifest platform identities do not match");
-                yield break;
-            }
-
-            if (!PackManifest.TryGetSelectedManifestPath(inventoryJson, language, out string selectedManifestPath))
-            {
-                FailStartup("Invalid selected publication language");
-                yield break;
-            }
-            byte[] selectedManifestBytes = null;
-            if (selectedManifestPath != null)
-            {
-                yield return DownloadPackagedFile(sourceRoot, platformRelative + "/" + selectedManifestPath,
-                    value => selectedManifestBytes = value);
-                if (selectedManifestBytes == null) yield break;
-                if (!PackManifest.TryParseManifest(Encoding.UTF8.GetString(selectedManifestBytes),
-                        out PackIndexEntry languagePlatform, out packs) ||
-                    !PackManifest.MatchesPlatform(selected, languagePlatform))
-                {
-                    FailStartup("Selected publication platform does not match the Pack index");
-                    yield break;
-                }
-            }
-
-            if ((initPackConfigured || initPack != "Init.pack") && !Array.Exists(packs, entry => entry.Path == initPack))
-            {
-                FailStartup("Init Pack is not listed in the selected platform manifest");
-                yield break;
-            }
-            var packagedFiles = new List<PackagedFile>();
-            foreach (PackManifestEntry entry in packs)
-            {
-                if (!TryAddManifestPack(
-                        packagedFiles, platformRelative, entry.Path))
-                {
-                    yield break;
-                }
-            }
-
-            int selectedLength = selectedManifestBytes != null ? selectedManifestBytes.Length : 0;
-            byte[] cacheIdentity = new byte[indexBytes.Length + manifestBytes.Length + selectedLength];
-            Buffer.BlockCopy(indexBytes, 0, cacheIdentity, 0, indexBytes.Length);
-            Buffer.BlockCopy(manifestBytes, 0, cacheIdentity, indexBytes.Length, manifestBytes.Length);
-            if (selectedLength != 0)
-                Buffer.BlockCopy(selectedManifestBytes, 0, cacheIdentity,
-                    indexBytes.Length + manifestBytes.Length, selectedLength);
-            string cacheKey = ComputeCacheKey(cacheIdentity);
-            if (platformRelative.Length <= normalizedPackRoot.Length + 1)
-            {
-                FailStartup("Pack index path is not nested under Pack root");
-                yield break;
-            }
-            string exportCacheRoot = Path.Combine(
-                Application.persistentDataPath, "HarkenPackCache", cacheKey);
-            string platformCacheRoot = Path.Combine(
-                exportCacheRoot,
-                platformRelative.Substring(normalizedPackRoot.Length + 1)
-                    .Replace('/', Path.DirectorySeparatorChar));
-            string readyPath = Path.Combine(platformCacheRoot, ".ready");
-            if (!IsPreparedCache(
-                    platformCacheRoot, readyPath, cacheKey, packagedFiles))
-            {
-                if (!TryResetDirectory(platformCacheRoot))
-                {
-                    yield break;
-                }
-
-                foreach (PackagedFile file in packagedFiles)
-                {
-                    byte[] packBytes = null;
-                    yield return DownloadPackagedFile(
-                        sourceRoot, file.SourcePath,
-                        value => packBytes = value);
-                    PackManifestEntry expected = Array.Find(packs, entry => entry.Path == file.TargetPath);
-                    if (packBytes != null && !PackManifest.VerifyPackBytes(packBytes, expected))
-                    {
-                        FailStartup("Pack bytes do not match the selected platform manifest: " + file.TargetPath);
-                        TryDeleteDirectory(platformCacheRoot);
-                        yield break;
-                    }
-                    if (packBytes == null ||
-                        !TryWriteContainedFile(
-                            platformCacheRoot, file.TargetPath, packBytes))
-                    {
-                        TryDeleteDirectory(platformCacheRoot);
-                        yield break;
-                    }
-                }
-                if ((indexBytes != null &&
-                     !TryWriteContainedFile(
-                         exportCacheRoot, PackManifest.IndexFileName, indexBytes)) ||
-                    !TryWriteContainedFile(
-                        platformCacheRoot, PackManifest.ManifestFileName,
-                        manifestBytes) ||
-                    (selectedManifestBytes != null && !TryWriteContainedFile(
-                        platformCacheRoot, selectedManifestPath, selectedManifestBytes)) ||
-                    !TryWriteReadyFile(readyPath, cacheKey))
-                {
-                    TryDeleteDirectory(platformCacheRoot);
-                    yield break;
-                }
-            }
-            StartRuntimeCore(exportCacheRoot);
-        }
-
-        private IEnumerator DownloadPackagedFile(
-            string sourceRoot, string relativePath, Action<byte[]> complete)
-        {
-            string url = sourceRoot.TrimEnd('/') + "/" +
-                string.Join("/", Array.ConvertAll(relativePath.Replace('\\', '/').Split('/'), Uri.EscapeDataString));
-            using (UnityWebRequest request = UnityWebRequest.Get(url))
-            {
-                yield return request.SendWebRequest();
-                if (request.result != UnityWebRequest.Result.Success)
-                {
-                    FailStartup(
-                        "cannot read packaged Pack " + relativePath + ": " +
-                        request.error);
-                    complete(null);
-                    yield break;
-                }
-                complete(request.downloadHandler.data);
-            }
-        }
-
-        private bool TryAddManifestPack(
-            List<PackagedFile> files, string normalizedPackRoot,
-            string manifestPath)
-        {
-            if (!IsSafeRelativePath(manifestPath))
-            {
-                FailStartup("invalid packaged Pack path");
-                return false;
-            }
-            string normalizedPath = manifestPath.Replace('\\', '/');
-            string prefix = normalizedPackRoot + "/";
-            bool includesPackRoot = normalizedPath.StartsWith(
-                prefix, StringComparison.Ordinal);
-            string sourcePath = includesPackRoot
-                ? normalizedPath
-                : prefix + normalizedPath;
-            string targetPath = includesPackRoot
-                ? normalizedPath.Substring(prefix.Length)
-                : normalizedPath;
-            return TryAddPackagedFile(
-                files, sourcePath, targetPath);
-        }
-
-        private bool TryAddPackagedFile(
-            List<PackagedFile> files, string sourcePath, string targetPath)
-        {
-            if (!IsSafeRelativePath(sourcePath) ||
-                !IsSafeRelativePath(targetPath))
-            {
-                FailStartup("invalid packaged Pack path");
-                return false;
-            }
-            foreach (PackagedFile file in files)
-            {
-                if (!string.Equals(
-                        file.TargetPath, targetPath, StringComparison.Ordinal))
-                {
-                    continue;
-                }
-                if (!string.Equals(
-                        file.SourcePath, sourcePath, StringComparison.Ordinal))
-                {
-                    FailStartup("duplicate packaged Pack destination");
-                    return false;
-                }
-                return true;
-            }
-            files.Add(new PackagedFile(sourcePath, targetPath));
-            return true;
-        }
-
-        private static bool IsPreparedCache(
-            string targetRoot, string readyPath, string cacheKey,
-            List<PackagedFile> files)
-        {
-            try
-            {
-                if (!File.Exists(readyPath) ||
-                    File.ReadAllText(readyPath, Encoding.ASCII) != cacheKey)
-                {
-                    return false;
-                }
-                foreach (PackagedFile file in files)
-                {
-                    if (!File.Exists(Path.Combine(targetRoot, file.TargetPath)))
-                    {
-                        return false;
-                    }
-                }
-                return true;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        private bool TryResetDirectory(string path)
-        {
-            try
-            {
-                if (Directory.Exists(path))
-                {
-                    Directory.Delete(path, true);
-                }
-                Directory.CreateDirectory(path);
-                return true;
-            }
-            catch (Exception error)
-            {
-                FailStartup("cannot prepare Pack cache: " + error.Message);
-                return false;
-            }
-        }
-
-        private void TryDeleteDirectory(string path)
-        {
-            try
-            {
-                if (Directory.Exists(path))
-                {
-                    Directory.Delete(path, true);
-                }
-            }
-            catch (Exception error)
-            {
-                Debug.LogError("Harken Pack cache cleanup failed: " + error.Message);
-            }
-        }
-
-        private bool TryWriteContainedFile(
-            string root, string relativePath, byte[] bytes)
-        {
-            try
-            {
-                string fullRoot = Path.GetFullPath(root).TrimEnd(
-                    Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) +
-                    Path.DirectorySeparatorChar;
-                string destination = Path.GetFullPath(
-                    Path.Combine(fullRoot, relativePath));
-                StringComparison comparison = Path.DirectorySeparatorChar == '\\'
-                    ? StringComparison.OrdinalIgnoreCase
-                    : StringComparison.Ordinal;
-                if (!destination.StartsWith(fullRoot, comparison))
-                {
-                    FailStartup("packaged Pack path escapes cache root");
-                    return false;
-                }
-                Directory.CreateDirectory(Path.GetDirectoryName(destination));
-                File.WriteAllBytes(destination, bytes);
-                return true;
-            }
-            catch (Exception error)
-            {
-                FailStartup("cannot write Pack cache: " + error.Message);
-                return false;
-            }
-        }
-
-        private bool TryWriteReadyFile(string path, string cacheKey)
-        {
-            try
-            {
-                File.WriteAllText(path, cacheKey, Encoding.ASCII);
-                return true;
-            }
-            catch (Exception error)
-            {
-                FailStartup("cannot publish Pack cache: " + error.Message);
-                return false;
-            }
-        }
-
-        private static string ComputeCacheKey(byte[] manifestBytes)
-        {
-            byte[] digest;
-            using (SHA256 sha256 = SHA256.Create())
-            {
-                byte[] buildBytes = Encoding.UTF8.GetBytes(Application.buildGUID);
-                sha256.TransformBlock(
-                    buildBytes, 0, buildBytes.Length, buildBytes, 0);
-                sha256.TransformFinalBlock(
-                    manifestBytes, 0, manifestBytes.Length);
-                digest = sha256.Hash;
-            }
-            var result = new StringBuilder(digest.Length * 2);
-            foreach (byte value in digest)
-            {
-                result.Append(value.ToString("x2"));
-            }
-            return result.ToString();
-        }
-#endif
 
         private static bool IsGameplayThread()
         {
