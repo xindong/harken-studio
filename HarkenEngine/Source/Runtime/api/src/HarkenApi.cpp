@@ -5619,6 +5619,7 @@ struct ImmediateActionPlan {
     bool multiVariableControlPendingSelection = false;
     bool originalPlainSoundRoute = false;
     bool initialSoundSequenceQueueRoute = false;
+    bool ordinaryLeafContainerBatch = false;
     std::uint32_t firingCount = 0;
     std::uint32_t stepCount = 0;
     std::uint32_t playCount = 0;
@@ -78360,11 +78361,14 @@ bool PrepareImmediateActionSingleLeafPlay(
     }
     const bool mixedSoundTiming = instanceKind == harken::PlayableKind::Sound &&
         plan.playCount > 1u && hasRelativeSoundMember;
+    // Ordinary leaf batches share placement after all source acknowledgements.
+    // Queue and variable-control cohorts retain their own publication owners.
     bool pendingImmediateEntry =
         enablePendingImmediate &&
         (instanceKind == harken::PlayableKind::Sound ||
          (instanceKind == harken::PlayableKind::Container &&
-          (plan.playCount == 1u || plan.initialSoundSequenceQueueRoute))) &&
+          (plan.playCount == 1u || plan.initialSoundSequenceQueueRoute ||
+           plan.ordinaryLeafContainerBatch))) &&
         plan.playCount != 0 &&
         ((plan.stopCount == 0 && plan.variableWriteCount == 0) ||
          (instanceKind == harken::PlayableKind::Sound && plan.originalPlainSoundRoute)) &&
@@ -87138,6 +87142,34 @@ bool OriginalInitialSingleQueueOriginRouteEligible(ImmediateActionPlan& plan,
         row.pendingImmediateFixedEntryFrame == 0;
 }
 
+bool ImmediateOrdinaryLeafBatchEligible(const ImmediateActionPlan& plan) noexcept {
+    if (plan.engine == nullptr || plan.playCount < 2u || plan.stopCount != 0 ||
+        plan.variableWriteCount != 0 || plan.deferredCount != 0 ||
+        plan.selectionResetCount != 0 || plan.queueResetCount != 0 ||
+        plan.queueReplacementCount != 0 || plan.materializingDeferred) return false;
+    const auto* lease = plan.targetPackLease.leaseToken != 0
+        ? &plan.targetPackLease : plan.postedActionLease;
+    for (std::uint32_t index = 0; index < plan.stepCount; ++index) {
+        const auto& member = plan.engine->actionStepPlanScratch[index];
+        if (member.step == nullptr) return false;
+        if (member.step->opcode != harken::ActionOpcodeV1::Play ||
+            member.cooldownSuppressed || member.quantizeSuppressed) continue;
+        if (member.step->target.kind != harken::ActionTargetKindV1::Container ||
+            member.deferredFrame != 0 || member.deferred) return false;
+        const auto* program = FindCanonicalContainerProgram(
+            *plan.engine, member.step->target.stableId, lease);
+        if (program == nullptr || program->programSemanticFingerprint !=
+                member.step->target.expectedProgramSemanticFingerprint ||
+            (program->mode != harken::ContainerModeV1::Random &&
+             program->mode != harken::ContainerModeV1::Sequence) ||
+            program->childCount == 0 || program->children == nullptr) return false;
+        for (std::uint32_t child = 0; child < program->childCount; ++child)
+            if (program->children[child].playable.kind != harken::PlayableKindV1::Sound)
+                return false;
+    }
+    return true;
+}
+
 bool InitialSoundSequenceQueueRouteEligible(const ImmediateActionPlan& plan) noexcept {
     if (plan.engine == nullptr || plan.engine->originalQueueConditionalHolders.Capacity() == 0 ||
         plan.engine->packComposition.Authority() == harken::PackAuthorityMode::Pack ||
@@ -87224,6 +87256,7 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
         }
     }
     plan->originalPlainSoundRoute &= hasRelativePlainPlay;
+    plan->ordinaryLeafContainerBatch = ImmediateOrdinaryLeafBatchEligible(*plan);
     plan->initialSoundSequenceQueueRoute = InitialSoundSequenceQueueRouteEligible(*plan);
     if (!PrepareImmediateActionMultiVcSelection(*plan)) return false;
     std::uint32_t preparedCount = 0;

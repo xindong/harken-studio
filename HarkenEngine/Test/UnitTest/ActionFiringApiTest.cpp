@@ -36720,6 +36720,75 @@ TEST(ActionFiringApi, ImmediateRandomContainerSurvivesLateNormalUpdate) {
     EXPECT_NE(VN_ACTION_TERMINAL_DEADLINE, info.terminalReason);
 }
 
+TEST(ActionFiringApi, ImmediateContainerBatchSurvivesLateFirstUpdateAndRetires) {
+    (void)Vn_Term();
+    constexpr std::uint32_t frames = 256;
+    harkentest::EngineSession session(harkentest::MakeNullConfig(8, frames, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    std::vector<float> samples(4096, 0.125f);
+    const auto pcm = harkentest::MonoDesc(samples, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &pcm));
+    CanonicalActionWorld image(engine->registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision);
+    image.MakeImmediateRandomContainerPlayAction();
+    std::array<harken::ActionStepProgramViewV1, 4> steps{};
+    for (std::uint32_t index = 0; index < steps.size(); ++index) {
+        steps[index] = image.actions[9].steps[0];
+        steps[index].authoredEventIndex = index;
+    }
+    auto& action = image.actions[9];
+    action.steps = steps.data();
+    action.stepCount = static_cast<std::uint32_t>(steps.size());
+    action.expandedStepOccurrenceCount = action.stepCount;
+    action.programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(action);
+    image.world.capacity.maxActionStepsPerDefinition = action.stepCount;
+    image.world.capacity.maxActionStepsTotal += action.stepCount - 1u;
+    image.world.capacity.maxActionExpandedWork = action.stepCount;
+    image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(image.world);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(*engine, image.world).status);
+    auto desc = ValidPostDesc();
+    desc.actionId = action.actionStableId;
+    VnActionFiringHandle firing = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+
+    // A game frame can arrive after the originally admitted audio boundary.
+    const auto row = std::find_if(engine->playableServices.begin(), engine->playableServices.end(),
+        [firing](const auto& current) {
+            return current.InvocationValid() && current.Invocation().actionFiring == firing;
+        });
+    ASSERT_NE(engine->playableServices.end(), row);
+    const auto start = row->startFrame / frames;
+    const auto rendered = engine->mixer.BlocksRendered();
+    ASSERT_LE(rendered, start);
+    ASSERT_LT(start - rendered, 64u);
+    engine->nullBackend.Pump(static_cast<std::uint32_t>(start - rendered + 1u));
+    bool audible = false;
+    VnActionFiringInfo info{};
+    info.structSize = sizeof(info);
+    for (std::uint32_t block = 0; block < 64; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine->nullBackend.Pump(1);
+        const auto* output = engine->nullBackend.LastBlock();
+        audible |= std::any_of(output, output + frames * 2,
+            [](float sample) { return std::abs(sample) > 0.001f; });
+        ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
+        if (info.state == VN_ACTION_FIRING_TERMINAL_RETAINED) break;
+    }
+    EXPECT_TRUE(audible);
+    EXPECT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state);
+    EXPECT_EQ(VN_ACTION_OUTCOME_SUCCEEDED, info.outcome);
+    EXPECT_EQ(VN_ACTION_TERMINAL_NATURAL, info.terminalReason);
+    for (std::uint32_t index = 0; index < steps.size(); ++index) {
+        VnActionStepResult result{};
+        result.structSize = sizeof(result);
+        ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, index, &result));
+        EXPECT_EQ(VN_ACTION_STEP_SUCCEEDED, result.state);
+    }
+    EXPECT_EQ(0u, engine->voices.ActiveCount());
+    EXPECT_EQ(0u, engine->playableInstances.LiveCount());
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+}
+
 TEST(ActionFiringApi, ImmediateSequenceContainerPlayCompletesAfterSelectedLeafRetires) {
     (void)Vn_Term();
     VnConfig config = harkentest::MakeNullConfig(8, 64, 48000);
