@@ -1,6 +1,7 @@
 #include <QtTranslation>
 
 static const char* const kReleaseNotesStrings[] = {
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Hub windows, the app bundle, Windows shortcuts, the taskbar, the system tray, and the installer use the new curved white Hub icon with a transparent background."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Windows installation no longer fails when opening the installer dialogs or when an existing Hub executable does not need to be replaced."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Hub self-updates preserve existing desktop and Start menu shortcuts without creating additional shortcuts or restoring shortcuts you removed."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "When the Hub icon changes, Hub asks Windows to refresh its icon cache and existing Hub shortcuts once for the signed-in user. Updates with the same icon do not repeat the refresh."),
