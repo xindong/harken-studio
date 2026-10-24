@@ -241,12 +241,12 @@ bool HasTopologyBusConsumersV1(Engine& engine, BusSlotRef ref) noexcept {
     };
     for (std::size_t i = 0; i < engine.voicePlayFacts.size(); ++i) {
         const auto& facts = engine.voicePlayFacts[i];
-        if (!facts.valid || facts.renderHandle == 0 || engine.voices.Resolve(facts.renderHandle) == nullptr) continue;
+        if (!facts.valid || facts.renderHandle == 0 || !engine.voices.IsAlive(facts.renderHandle)) continue;
         if (matches(facts.busIndex, facts.busGeneration) ||
             (i < engine.voiceSendConfig.size() && sendsMatch(engine.voiceSendConfig[i]))) return true;
     }
     for (const auto& identity : engine.timelineVoiceInstallIdentities) {
-        if (identity.renderHandle != 0 && engine.voices.Resolve(identity.renderHandle) != nullptr &&
+        if (identity.renderHandle != 0 && engine.voices.IsAlive(identity.renderHandle) &&
             (matches(identity.busIndex, identity.busGeneration) || sendsMatch(identity.voiceSends))) return true;
     }
     for (const auto& pending : engine.pendingStarts) {

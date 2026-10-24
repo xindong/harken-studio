@@ -2264,6 +2264,10 @@ TEST(TimelineVoiceInstall, OriginalSourceCancelReleaseHeldAcrossBlocksUsesFinalD
             EXPECT_EQ(before + i + 1u, context.engine->mixer.BlocksRendered());
             EXPECT_EQ(context.tail, context.engine->commands.ConsumedCount());
             EXPECT_FALSE(context.engine->voices.ReleaseObserved(context.release));
+            const auto render = SourceRegistry::RenderOf(context.token);
+            EXPECT_EQ(nullptr, context.engine->voices.Resolve(render));
+            EXPECT_TRUE(context.engine->voices.IsAlive(render));
+            EXPECT_EQ(VN_OK, context.engine->voices.CheckLive(render));
             ASSERT_TRUE(context.service->capturedVoice.Valid());
             EXPECT_EQ(context.facts, context.service->capturedVoice.Input().facts);
             const auto* row = context.engine->timelineArms.RowAt(context.token.slot);
@@ -2274,6 +2278,7 @@ TEST(TimelineVoiceInstall, OriginalSourceCancelReleaseHeldAcrossBlocksUsesFinalD
     ASSERT_TRUE(engine.voices.AbortClaimedVoice(SourceRegistry::RenderOf(token)));
     ASSERT_EQ(1u, held.calls);
     ASSERT_TRUE(engine.voices.ReleaseObserved(release));
+    EXPECT_FALSE(engine.voices.IsAlive(SourceRegistry::RenderOf(token)));
     const auto finalSequence = engine.mixer.BlocksRendered() + 1u;
     engine.nullBackend.Pump(1);
     const auto* row = engine.timelineArms.RowAt(token.slot);

@@ -1366,6 +1366,9 @@ TEST(VoicePool, OriginalOwnerActualSourceInstallationHoldDefersPhysicalDisposal)
     ASSERT_EQ(VN_OK, ClaimObserverVoice(engine, &handle, true));
     harken::VoicePool::PreparedCommitProof proof;
     ASSERT_TRUE(CaptureOriginalPreparation(engine, handle, &proof));
+    EXPECT_EQ(nullptr, engine.voices.Resolve(handle));
+    EXPECT_TRUE(engine.voices.IsAlive(handle));
+    EXPECT_EQ(VN_OK, engine.voices.CheckLive(handle));
     harken::VoicePool::OriginalVoiceOwner owner;
     ASSERT_TRUE(engine.voices.IssueOriginalVoiceOwner(proof, &owner));
     harken::VoicePool::ConsumePreparedCommit(std::move(proof));
@@ -1377,10 +1380,16 @@ TEST(VoicePool, OriginalOwnerActualSourceInstallationHoldDefersPhysicalDisposal)
     harken::VoicePool::SourceCommandInstallProof physical;
     ASSERT_EQ(harken::VoicePool::SourceCommandInstallStatus::Ready,
         engine.voices.ProveSourceCommandInstallation(core, &physical));
+    EXPECT_EQ(nullptr, engine.voices.Resolve(handle));
+    EXPECT_TRUE(engine.voices.IsAlive(handle));
+    EXPECT_EQ(VN_OK, engine.voices.CheckLive(handle));
     EXPECT_EQ(harken::VoicePool::OriginalVoiceDisposal::Deferred,
         engine.voices.TryDisposeOriginalTimelineVoice(owner));
     harken::VoicePool::BeginSourceCommandInstallation(physical, handle, 0,
         engine.mixer.BlocksRendered());
+    EXPECT_EQ(nullptr, engine.voices.Resolve(handle));
+    EXPECT_TRUE(engine.voices.IsAlive(handle));
+    EXPECT_EQ(VN_OK, engine.voices.CheckLive(handle));
     EXPECT_EQ(harken::VoicePool::OriginalVoiceDisposal::Deferred,
         engine.voices.TryDisposeOriginalTimelineVoice(owner));
     harken::TimelineArmTable::AcknowledgeSourceCommand(core, engine.mixer.BlocksRendered() + 1u);
@@ -1388,6 +1397,8 @@ TEST(VoicePool, OriginalOwnerActualSourceInstallationHoldDefersPhysicalDisposal)
     core.Release();
     EXPECT_EQ(harken::VoicePool::OriginalVoiceDisposal::Released,
         engine.voices.TryDisposeOriginalTimelineVoice(owner));
+    EXPECT_FALSE(engine.voices.IsAlive(handle));
+    EXPECT_EQ(VN_STALE_HANDLE, engine.voices.CheckLive(handle));
     RetireOriginalArm(engine, arm);
 }
 

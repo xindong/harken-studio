@@ -4071,7 +4071,7 @@ VnResult UnregisterBindingImpl(Engine& engine, BindingId id,
     }
     bool referenced = false;
     engine.params.ForEachInstanceOf(id, [&](VnVoiceHandle render) {
-        if (engine.voices.Resolve(render) != nullptr) {
+        if (engine.voices.IsAlive(render)) {
             referenced = true;
         }
     });
@@ -4082,10 +4082,10 @@ VnResult UnregisterBindingImpl(Engine& engine, BindingId id,
     // parked voice's instances keep their slots as a held reservation, so they
     // are caught by this same scan (no separate parked-id list): a parked
     // instance is an unconditional reference (its render handle no longer
-    // resolves), a live one only while its render voice resolves.
+    // resolves), a live one while its render identity is alive.
     engine.bindings.ForEachVoiceEffectInstanceOf(
         id, [&](VnVoiceHandle render, bool parked) {
-            if (parked || engine.voices.Resolve(render) != nullptr) {
+            if (parked || engine.voices.IsAlive(render)) {
                 referenced = true;
             }
         });
@@ -4784,7 +4784,7 @@ VnResult CapturePropertyTargets(Engine& engine, VnPropertyTargetInfo* out,
     // target), and the row reports the caller's PUBLIC handle.
     engine.params.ForEachActiveTarget(
         [&](const ParamSystem::TargetCaptureRow& r) {
-            if (engine.voices.Resolve(r.handle) == nullptr) {
+            if (!engine.voices.IsAlive(r.handle)) {
                 return;
             }
             VnPropertyTargetInfo row{};
@@ -4874,7 +4874,7 @@ VnResult CapturePropertyBindings(Engine& engine, VnPropertyBindingInfo* out,
     // the Variable's value right now at the voice's emitter scope.
     engine.params.ForEachInstance(
         [&](const ParamSystem::InstanceCaptureRow& r) {
-            if (engine.voices.Resolve(r.handle) == nullptr) {
+            if (!engine.voices.IsAlive(r.handle)) {
                 return; // inert leftover awaiting slot reuse
             }
             VnPropertyBindingInfo row{};
@@ -7955,7 +7955,7 @@ bool CancelPreparedTimelineVoiceStart(
             ? engine.originalSourceSubmissions.DisposeUnpublishedVoice(prepared->arm)
             : engine.voices.CancelPreparedVoice(prepared->renderHandle) ||
               engine.voices.AbortClaimedVoice(prepared->renderHandle) ||
-              engine.voices.Resolve(prepared->renderHandle) == nullptr;
+              !engine.voices.IsAlive(prepared->renderHandle);
         if (disposed) {
             prepared->voiceOwnershipHeld = false;
         } else {
@@ -8236,7 +8236,7 @@ bool RollbackCommittedTimelineVoiceStart(
         const bool disposed = original != nullptr
             ? engine.originalSourceSubmissions.DisposeUnpublishedVoice(prepared->arm)
             : engine.voices.AbortClaimedVoice(prepared->renderHandle) ||
-              engine.voices.Resolve(prepared->renderHandle) == nullptr;
+              !engine.voices.IsAlive(prepared->renderHandle);
         if (!disposed) {
             return false;
         }
@@ -12780,7 +12780,7 @@ bool ClearTimelineVoiceInstallationAfterNativeEnd(harken::Engine& engine,
     if (!harken::OriginalSourceSubmissionRegistry::SameToken(installation.startArm, arm)) return true;
     if (!installation.releaseObserver.Valid() ||
         !engine.voices.ReleaseObserved(installation.releaseObserver) ||
-        engine.voices.Resolve(render) != nullptr ||
+        engine.voices.IsAlive(render) ||
         engine.originalSourceSubmissions.HasOriginalVoice(arm)) return false;
     if (const auto* source = engine.originalSourceSubmissions.Find(arm)) {
         if (source->State() != harken::OriginalSourceSubmissionRegistry::Phase::Disposed) return false;
@@ -13230,7 +13230,7 @@ bool ServiceRetainedImmediateRetryCleanup(harken::Engine& engine) noexcept {
     if (!disposed || !held.ownerWithdrawn || !held.sourceReleased ||
         engine.timelineOccurrences.CaptureCompletionOwner(held.occurrence, &actualOwner) ||
         engine.timelineOccurrences.CompletionProgressOf(held.occurrence) != nullptr ||
-        engine.voices.Resolve(held.render) != nullptr || engine.ledger.OwnerForRender(held.render).live) return false;
+        engine.voices.IsAlive(held.render) || engine.ledger.OwnerForRender(held.render).live) return false;
     row->queueCurrentCompletion = {};
     held = {};
     scratch.occupied = false;
@@ -14359,7 +14359,7 @@ void CatchUpTimelineWindowIfSilent(harken::Engine& engine) noexcept {
         if (row.phase == harken::EnginePlayableStartPhase::Free) {
             continue;
         }
-        if (engine.voices.Resolve(row.renderHandle) != nullptr) {
+        if (engine.voices.IsAlive(row.renderHandle)) {
             return;
         }
     }
@@ -14464,7 +14464,7 @@ void ReclaimSilentStartOccupancy(harken::Engine& engine) noexcept {
         if (AcceptedVariableControlAlive(engine, row)) {
             continue;
         }
-        bool voiceLive = engine.voices.Resolve(row.renderHandle) != nullptr;
+        bool voiceLive = engine.voices.IsAlive(row.renderHandle);
         const std::size_t base = row.scheduleStorageBase;
         const std::uint32_t span =
             row.variableControlInstance.Valid()
@@ -14480,9 +14480,8 @@ void ReclaimSilentStartOccupancy(harken::Engine& engine) noexcept {
                 break;
             }
             voiceLive =
-                engine.voices.Resolve(
-                    engine.ReadPlayableMember(base + index).render) !=
-                nullptr;
+                engine.voices.IsAlive(
+                    engine.ReadPlayableMember(base + index).render);
         }
         if (voiceLive) {
             continue;
@@ -14494,7 +14493,7 @@ void ReclaimSilentStartOccupancy(harken::Engine& engine) noexcept {
         if (row.phase == harken::EnginePlayableStartPhase::Free) {
             continue;
         }
-        if (engine.voices.Resolve(row.renderHandle) != nullptr) {
+        if (engine.voices.IsAlive(row.renderHandle)) {
             anyVoice = true;
             break;
         }
@@ -36023,7 +36022,7 @@ bool ServicePrivateInitialQueuePinGroupCleanup(
             auto& voice = attempt.privateVoices[i];
             if (voice.stopQueued || engine.voices.ReleaseObserved(voice.release))
                 continue;
-            if (engine.voices.Resolve(voice.render) == nullptr ||
+            if (!engine.voices.IsAlive(voice.render) ||
                 engine.ledger.IsTerminating(voice.render)) continue;
             if (engine.forceInitialQueuePrivateStopPushFailureAtForTest == i) {
                 harken::CommandRecord filler{};
@@ -36061,7 +36060,7 @@ bool ServicePrivateInitialQueuePinGroupCleanup(
             const auto fence = voice.stopQueued
                 ? voice.stopQueuedAudioSequence : voice.capturedAudioSequence;
             if (!engine.voices.ReleaseObserved(voice.release) ||
-                engine.voices.Resolve(voice.render) != nullptr ||
+                engine.voices.IsAlive(voice.render) ||
                 completed <= fence ||
                 engine.ledger.OwnerForRender(voice.render).live) return false;
         }
@@ -36681,7 +36680,7 @@ bool ServiceFullyPrivateAbortVoices(harken::Engine& engine,
         auto& voice = attempt.privateVoices[index];
         if (voice.stopQueued || engine.voices.ReleaseObserved(voice.release))
             continue;
-        if (engine.voices.Resolve(voice.render) == nullptr) continue;
+        if (!engine.voices.IsAlive(voice.render)) continue;
         if (engine.ledger.IsTerminating(voice.render)) {
             voice.stopQueued = true;
             voice.stopQueuedAudioSequence = observedAudioSequence;
@@ -36727,7 +36726,7 @@ bool ServiceFullyPrivateAbortVoices(harken::Engine& engine,
         const auto fence = voice.stopQueued
             ? voice.stopQueuedAudioSequence : voice.capturedAudioSequence;
         if (!engine.voices.ReleaseObserved(voice.release) ||
-            engine.voices.Resolve(voice.render) != nullptr ||
+            engine.voices.IsAlive(voice.render) ||
             observedAudioSequence <= fence ||
             engine.ledger.OwnerForRender(voice.render).live ||
             engine.sourceTerminals.Resolve(voice.source) != nullptr ||
@@ -38804,7 +38803,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                         const auto successor =
                             member.queueSuccessorRenderHandle;
                         if (successor != 0 &&
-                            engine.voices.Resolve(successor) != nullptr &&
+                            engine.voices.IsAlive(successor) &&
                             !engine.ledger.IsTerminating(successor)) {
                             harken::CommandRecord stop{};
                             stop.opcode = harken::kOpcodeStop;
@@ -38837,7 +38836,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                                     PendingImmediateEntry &&
                                 member.pendingImmediateRetry;
                     }
-                    if (engine.voices.Resolve(render) != nullptr && !engine.ledger.IsTerminating(render)) {
+                    if (engine.voices.IsAlive(render) && !engine.ledger.IsTerminating(render)) {
                         harken::CommandRecord stop{};
                         stop.opcode = harken::kOpcodeStop;
                         stop.payload.stop.handle = render;
@@ -40426,6 +40425,21 @@ bool StageRegisteredPendingVariableGroupInitializers(harken::Engine& engine,
     const harken::PrivateImmediateLanePlacementProof& placement,
     const harken::VariableReadCutReader& reader) noexcept;
 
+bool PendingVariableSourceInstallationInFlight(harken::Engine& engine,
+    const harken::EngineActionPlayScratch& producer) noexcept {
+    if (producer.row == nullptr ||
+        !engine.acceptedPendingVariableGroups.IsConstructed(producer.row->identity.slot)) return false;
+    const auto& group = engine.acceptedPendingVariableGroups[producer.row->identity.slot];
+    const auto completed = engine.mixer.BlocksRendered();
+    for (std::uint32_t index = 0; index < group.leafCount && index < group.leafArms.size(); ++index) {
+        harken::TimelineArmObservation arm{};
+        if (group.leafRetained[index] && engine.timelineArms.Observe(group.leafArms[index], &arm) &&
+            (arm.state == harken::ArmState::PendingApply || arm.armedCompletionSequence > completed))
+            return true;
+    }
+    return false;
+}
+
 bool FilePendingVariableControlLane(harken::Engine& engine,
     harken::EnginePlayableServiceRow& row,
     harken::EngineActionPlayScratch& scratch,
@@ -40438,6 +40452,12 @@ bool FilePendingVariableControlLane(harken::Engine& engine,
     std::size_t queueGroupCount,
     bool* outWaiting) noexcept {
     if (outWaiting != nullptr) *outWaiting = false;
+    // The source ACK precedes installation completion within the audio callback.
+    // Defer both initial placement and reselection until that callback has returned.
+    if (PendingVariableSourceInstallationInFlight(engine, scratch)) {
+        if (outWaiting != nullptr) *outWaiting = true;
+        return false;
+    }
     std::uint32_t eventCount = 0;
     harken::PrivateImmediateLanePlacementProof placement;
     auto* group = engine.acceptedPendingVariableGroups.IsConstructed(row.identity.slot)
@@ -40534,6 +40554,16 @@ bool FileRegisteredPrivateVcRoot(harken::Engine& engine,
     if (outWaiting != nullptr) *outWaiting = false;
     if (attempt.privateVcProducerCount == 0 || attempt.initialQueueCoordinator.Valid() ||
         !MatchesPrivateImmediateVcProducerChain(engine, attempt, true)) return false;
+    auto pendingToken = attempt.privateVcProducerHead;
+    for (std::uint32_t index = 0; index < attempt.privateVcProducerCount; ++index) {
+        const auto* producer = FindFrontierAttempt(engine, pendingToken);
+        if (producer == nullptr) return false;
+        if (PendingVariableSourceInstallationInFlight(engine, *producer)) {
+            if (outWaiting != nullptr) *outWaiting = true;
+            return false;
+        }
+        pendingToken = producer->privateInitialVcPageCohort.rootProducerNext;
+    }
     std::uint32_t eventCount = 0;
     auto token = attempt.privateVcProducerHead;
     harken::PrivateImmediateLanePlacementProof placement;
@@ -44614,7 +44644,7 @@ void ServicePendingImmediateEntries(
                 bool allIssued = true;
                 for (std::uint32_t leaf = 0; leaf < leafCount(member); ++leaf) {
                     const auto render = renderAt(leaf);
-                    if (engine.voices.Resolve(render) == nullptr ||
+                    if (!engine.voices.IsAlive(render) ||
                         engine.ledger.IsTerminating(render)) continue;
                     harken::CommandRecord stop{};
                     stop.opcode = harken::kOpcodeStop;
@@ -44632,7 +44662,7 @@ void ServicePendingImmediateEntries(
                     ? engine.ReadPlayableMember(bases.member + leaf).release
                     : member.releaseObserver;
                 memberGenerationLive =
-                    engine.voices.Resolve(render) != nullptr ||
+                    engine.voices.IsAlive(render) ||
                     !engine.voices.ReleaseObserved(observer) ||
                     memberGenerationLive;
                 for (std::uint32_t sourceIndex = 0;
@@ -44944,7 +44974,7 @@ void ServicePendingImmediateEntries(
                         if (!held.ownerWithdrawn || !held.sourceReleased ||
                             engine.timelineOccurrences.CaptureCompletionOwner(held.occurrence, &actualOwner) ||
                             engine.timelineOccurrences.CompletionProgressOf(held.occurrence) != nullptr ||
-                            (held.render != 0 && (engine.voices.Resolve(held.render) != nullptr ||
+                            (held.render != 0 && (engine.voices.IsAlive(held.render) ||
                                 engine.ledger.OwnerForRender(held.render).live)) ||
                             (installed != nullptr && installed->renderHandle != 0)) {
                             starts.RetainRetryCleanup(held);
@@ -48547,9 +48577,9 @@ engine.runtimeRecreateRequired = true;
                              variableControlDiscreteRetargetSourceMemberCount;
                          ++index) {
                         allSourcesExited = allSourcesExited &&
-                            engine.voices.Resolve(
+                            !engine.voices.IsAlive(
                                 engine.ReadPlayableMember(
-                                    sourceSlots[index]).render) == nullptr;
+                                    sourceSlots[index]).render);
                     }
                     const auto incomingView = engine.playableInstances.Classify(
                         row.variableControlDiscreteRetargetIncomingChild);
@@ -48677,9 +48707,9 @@ engine.runtimeRecreateRequired = true;
                              variableControlDiscreteRetargetSourceMemberCount;
                          ++index) {
                         allSourcesExited = allSourcesExited &&
-                            engine.voices.Resolve(
+                            !engine.voices.IsAlive(
                                 engine.ReadPlayableMember(
-                                    sourceSlots[index]).render) == nullptr;
+                                    sourceSlots[index]).render);
                     }
                     if (allSourcesExited) {
                         row.variableControlDiscreteMemberCount = 0;
@@ -50419,9 +50449,9 @@ engine.runtimeRecreateRequired = true;
                 for (std::uint32_t index = 0;
                      index < memberStorageSpan; ++index) {
                     if (!memberPresent(index)) continue;
-                    if (engine.voices.Resolve(
+                    if (engine.voices.IsAlive(
                             engine.ReadPlayableMember(
-                                observedMemberSlots[index]).render) != nullptr) {
+                                observedMemberSlots[index]).render)) {
                         voiceLive = true;
                         break;
                     }
@@ -50848,7 +50878,7 @@ engine.runtimeRecreateRequired = true;
                     const VnVoiceHandle render =
                         engine.ReadPlayableMember(slot).render;
                     const bool active =
-                        engine.voices.Resolve(render) != nullptr;
+                        engine.voices.IsAlive(render);
                     const auto& member = engine.ReadPlayableMember(slot).completion;
                     harken::SourceTerminalPayload sourceResult{};
                     const bool terminal = member.resourcesRetired || engine.sourceTerminals.Capture(
@@ -50893,7 +50923,7 @@ engine.runtimeRecreateRequired = true;
                         render == ((static_cast<std::uint64_t>(arm.renderGeneration) << 32) |
                             arm.renderSlot) && release.Valid() &&
                         engine.voices.ReleaseObserved(release) &&
-                        engine.voices.Resolve(render) == nullptr &&
+                        !engine.voices.IsAlive(render) &&
                         !engine.ledger.OwnerForRender(render).live &&
                         bank != nullptr && bank->occupied &&
                         row.queueCurrentScheduleBase == row.scheduleStorageBase &&
@@ -50945,9 +50975,8 @@ engine.runtimeRecreateRequired = true;
                     observation.startedBlockSequence != 0;
                 anyActiveVoice =
                     anyActiveVoice ||
-                    engine.voices.Resolve(
-                        engine.ReadPlayableMember(slot).render) !=
-                        nullptr;
+                    engine.voices.IsAlive(
+                        engine.ReadPlayableMember(slot).render);
                 if (observation.startedBlockSequence != 0 &&
                     (row.lastAppliedBlockSequence == 0 ||
                      observation.startedBlockSequence <
@@ -66699,7 +66728,7 @@ bool GatherStealCandidates(harken::Engine& engine) {
     engine.ledger.ForEachLive(
         [&](VnVoiceHandle render, std::uint32_t priority,
             std::uint64_t startOrder, bool stolen) {
-            if (!complete || engine.voices.Resolve(render) == nullptr) {
+            if (!complete || !engine.voices.IsAlive(render)) {
                 return;
             }
             const std::uint32_t slot = static_cast<std::uint32_t>(render);
@@ -68316,7 +68345,7 @@ void RunAudibilityPass(harken::Engine& engine) {
     bool candidatesComplete = true;
     engine.ledger.ForEachLive([&](VnVoiceHandle render, std::uint32_t priority,
                                   std::uint64_t startOrder, bool stolen) {
-        if (!candidatesComplete || engine.voices.Resolve(render) == nullptr) {
+        if (!candidatesComplete || !engine.voices.IsAlive(render)) {
             return;
         }
         if (stolen || engine.ledger.IsTerminating(render) ||
@@ -72290,7 +72319,7 @@ static PlayableControlStatus BeginPlayableCancellation(
             const VoiceLedger::PlayableParentRef& parent) {
             const auto* row = serviceForOwnedRender(render, parent.internalToken);
             if (row != nullptr &&
-                engine.voices.Resolve(render) != nullptr) {
+                engine.voices.IsAlive(render)) {
                 const auto storageBases = StorageBasesForRow(engine, *row);
                 ++liveChildCount;
                 CompletionMutationBinding binding{};
@@ -72951,7 +72980,7 @@ engine.runtimeRecreateRequired = true;
                 const VoiceLedger::PlayableParentRef& parent) {
                 const auto* renderService = serviceForOwnedRender(render, parent.internalToken);
                 if (renderService == nullptr ||
-                    engine.voices.Resolve(render) == nullptr) {
+                    !engine.voices.IsAlive(render)) {
                     return;
                 }
                 if (renderService == row && !row->queueMode && aborted &&
@@ -86583,7 +86612,7 @@ bool PrepareImmediateActionStop(
                 }
             }
         } else if (row.renderHandle != 0 &&
-                   engine.voices.Resolve(row.renderHandle) != nullptr) {
+                   engine.voices.IsAlive(row.renderHandle)) {
             commandCount = 1;
         }
         if (plan.stopCaptureCount >= engine.actionStopScratch.size() ||
@@ -94171,7 +94200,7 @@ VnResult Vn_Update(void) {
      * sweeps the orphans a dropped notification left behind, so the ledger
      * can never leak identity. */
     engine->ledger.SweepEnded([engine](VnVoiceHandle renderHandle) {
-        const bool live = engine->voices.Resolve(renderHandle) != nullptr;
+        const bool live = engine->voices.IsAlive(renderHandle);
         if (!live) {
             // The voice ended: drop its effect-parameter binding instances and
             // the store records so a stale base can never leak to the render
@@ -94306,15 +94335,15 @@ VnResult Vn_Update(void) {
             if (engine->variables.HasNativePublicationHold(commit.handle))
                 return harken::FlushOutcome::Retry;
             /* Gather-phase defenses, applied before staging so the
-             * batch holds only pushable commits. Advisory liveness
-             * only: the pointer is a null-check, never dereferenced —
+             * batch holds only pushable commits. Advisory identity liveness
+             * only: no render payload is accessed —
              * the audio side stays the authority and no-ops a handle
              * that dies after this look. */
             if (engine->params.ForeignClaim(commit.handle,
                                             commit.targetId)) {
                 return harken::FlushOutcome::Retry;
             }
-            if (engine->voices.Resolve(commit.handle) == nullptr) {
+            if (!engine->voices.IsAlive(commit.handle)) {
                 /* Voice ended: the commit is inert. Consumed,
                  * uncounted — benign lifecycle, not degradation. */
                 return harken::FlushOutcome::Dropped;
@@ -101968,7 +101997,7 @@ VnResult Vn_CaptureSnapshot(VnSnapshot* outSnapshot) {
         [engine, outSnapshot](
             VnVoiceHandle renderHandle,
             const harken::VoiceLedger::PlayableParentRef&) {
-            if (engine->voices.Resolve(renderHandle) == nullptr) {
+            if (!engine->voices.IsAlive(renderHandle)) {
                 return;
             }
             const std::uint32_t slot =
@@ -102022,7 +102051,7 @@ VnResult Vn_CaptureSnapshot(VnSnapshot* outSnapshot) {
         engine->ledger.FillPublicHandles(
             outSnapshot->voicePublicHandles, VN_SNAPSHOT_MAX_VOICES,
             [engine](VnVoiceHandle renderHandle) {
-                return engine->voices.Resolve(renderHandle) != nullptr;
+                return engine->voices.IsAlive(renderHandle);
             });
         /* Logic-owned degradation counter for the logic-side notification queue;
          * merges here like the other logic-owned counters. */
@@ -104505,7 +104534,7 @@ VnResult Vn_SeekActionFiring(const VnActionSeekDescV1* desc,
                 row.renderHandle == 0) {
                 return VN_CAPABILITY_UNAVAILABLE;
             }
-            if (engine->voices.Resolve(row.renderHandle) == nullptr) {
+            if (!engine->voices.IsAlive(row.renderHandle)) {
                 return VN_STALE_HANDLE;
             }
             if (targetCount >= engine->actionSeekCommandScratch.size() ||
@@ -107227,7 +107256,7 @@ VnResult ScreenPackBindingRemoval(Engine& engine,
     }
     bool referenced = false;
     engine.params.ForEachInstanceOf(id, [&](VnVoiceHandle render) {
-        if (engine.voices.Resolve(render) != nullptr) {
+        if (engine.voices.IsAlive(render)) {
             referenced = true;
         }
     });
@@ -107238,10 +107267,10 @@ VnResult ScreenPackBindingRemoval(Engine& engine,
     // inner UnregisterBinding would then refuse VN_IN_USE mid-unwind, breaking
     // the gate's all-or-nothing contract. A parked instance keeps its slot, so
     // this one scan catches the parked case too (unconditional reference), while
-    // a live one references only while its render voice resolves.
+    // a live one references while its render identity is alive.
     engine.bindings.ForEachVoiceEffectInstanceOf(
         id, [&](VnVoiceHandle render, bool parked) {
-            if (parked || engine.voices.Resolve(render) != nullptr) {
+            if (parked || engine.voices.IsAlive(render)) {
                 referenced = true;
             }
         });
@@ -111746,7 +111775,7 @@ VnResult ScreenCanonicalBindingRemoval(
     if (live != nullptr && live->scopeKind == VN_TARGET_SCOPE_VOICE) {
         bool referenced = false;
         engine.params.ForEachInstanceOf(id, [&](VnVoiceHandle render) {
-            if (engine.voices.Resolve(render) != nullptr) {
+            if (engine.voices.IsAlive(render)) {
                 referenced = true;
             }
         });
@@ -112758,9 +112787,8 @@ void CollectRetainedProfileKeys(const Engine& engine,
 
 bool AttenuationMirrorVoiceAlive(void* context, VnVoiceHandle handle) noexcept {
     auto* engine = static_cast<Engine*>(context);
-    // Resolve is null for Free and Quarantined slots. Prepared remains
-    // reachable, so a prepared voice is still alive and is not reaped.
-    return engine != nullptr && engine->voices.Resolve(handle) != nullptr;
+    // An exclusively held render payload is inaccessible but still alive.
+    return engine != nullptr && engine->voices.IsAlive(handle);
 }
 
 void ReclaimRetiredAttenuationProfiles(Engine& engine) noexcept {

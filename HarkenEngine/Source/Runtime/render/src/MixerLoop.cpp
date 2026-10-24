@@ -19,6 +19,17 @@
 
 namespace harken {
 
+#if defined(HARKEN_TEST_PACK_RESOURCE_OBSERVATION)
+namespace detail {
+static void (*sourceAcknowledgedHook)(void*) = nullptr;
+static void* sourceAcknowledgedContext = nullptr;
+void SetSourceAcknowledgedHookForTest(void (*hook)(void*), void* context) noexcept {
+    sourceAcknowledgedHook = hook;
+    sourceAcknowledgedContext = context;
+}
+}
+#endif
+
 namespace {
 
 std::size_t CurrentSliceScratchCapacity(
@@ -833,6 +844,10 @@ bool MixerLoop::DrainOriginalSource(std::uint64_t blockIndex, std::uint64_t& owe
     if (row->disposition_ == Registry::Disposition::Apply) {
         TimelineArmTable::AcknowledgeSourceCommand(row->rowProof_, row->completion_,
             row->range_.PublicationSequence());
+#if defined(HARKEN_TEST_PACK_RESOURCE_OBSERVATION)
+        if (detail::sourceAcknowledgedHook != nullptr)
+            detail::sourceAcknowledgedHook(detail::sourceAcknowledgedContext);
+#endif
         VoicePool::FinishSourceCommandInstallation(row->installProof_);
         row->originalInstallationCompleted_.store(true, std::memory_order_release);
         if (row->groupInstallPublication_.Valid()) {

@@ -54,6 +54,10 @@
 #error "HARKEN_TEMP_DIR must point at the repository's .temp directory"
 #endif
 
+namespace harken::detail {
+void SetSourceAcknowledgedHookForTest(void (*hook)(void*), void* context) noexcept;
+}
+
 namespace harken::test {
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
 void ServiceImmediateLaneReceiptsAtObservedFenceForTest(
@@ -43344,6 +43348,94 @@ void CheckSequenceQueueBeyondPublicationWindow(
         EXPECT_EQ(0u, engine->voices.ActiveCount());
         EXPECT_EQ(0u, engine->queueInstances.LiveCount());
         EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+    }
+}
+
+TEST(ActionFiringApi, MatchWaitsForAcknowledgedSourceInstallationAndKeepsVoiceState) {
+    (void)Vn_Term();
+    auto config = harkentest::MakeNullConfig(8, 256, 48000);
+    harkentest::EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const std::vector<float> first(36000, 0.25f), second(36000, -0.25f);
+    const auto firstPcm = harkentest::MonoDesc(first, 48000);
+    const auto secondPcm = harkentest::MonoDesc(second, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &firstPcm));
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kSecondSound, &secondPcm));
+    CanonicalActionWorld image(engine.registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision,
+        engine.registry.Lookup(CanonicalActionWorld::kSecondSound).contentRevision);
+    image.MakeImmediateVariableControlPlayAction();
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
+    auto desc = ValidPostDesc();
+    desc.actionId = image.actions[9].actionStableId;
+    VnActionFiringHandle firing = 0;
+    ASSERT_EQ(VN_OK, Vn_SetValue(image.variables[3].variableId, 1.0f));
+    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    std::vector<VnVoiceHandle> originalVoices;
+    engine.ledger.ForEachPlayableOwnedLive([&](VnVoiceHandle render,
+        const harken::VoiceLedger::PlayableParentRef&) { originalVoices.push_back(render); });
+    ASSERT_FALSE(originalVoices.empty());
+    struct Pause {
+        std::atomic<bool> entered{false}, released{false}, done{false};
+    } pause;
+    harken::detail::SetSourceAcknowledgedHookForTest(+[](void* opaque) {
+        auto& state = *static_cast<Pause*>(opaque);
+        if (state.entered.exchange(true, std::memory_order_acq_rel)) return;
+        while (!state.released.load(std::memory_order_acquire)) std::this_thread::yield();
+    }, &pause);
+    std::thread audio([&] {
+        engine.nullBackend.Pump(1);
+        pause.done.store(true, std::memory_order_release);
+    });
+    struct Join {
+        Pause& state;
+        std::thread& audio;
+        ~Join() {
+            state.released.store(true, std::memory_order_release);
+            audio.join();
+            harken::detail::SetSourceAcknowledgedHookForTest(nullptr, nullptr);
+        }
+    };
+    {
+        Join join{pause, audio};
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+        while (!pause.entered.load(std::memory_order_acquire) &&
+            !pause.done.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::yield();
+        ASSERT_TRUE(pause.entered.load(std::memory_order_acquire));
+        ASSERT_EQ(VN_OK, Vn_Update());
+        for (const auto render : originalVoices) {
+            EXPECT_TRUE(engine.voices.IsAlive(render));
+            EXPECT_EQ(VN_OK, engine.voices.CheckLive(render));
+            EXPECT_TRUE(engine.ledger.OwnerForRender(render).live);
+            harken::Spatializer::SpatialVoiceState spatial{};
+            EXPECT_TRUE(engine.spatial.CaptureVoice(render, &spatial));
+        }
+    }
+    VnActionFiringInfo info{};
+    info.structSize = sizeof(info);
+    bool heard = false;
+    for (unsigned tick = 0; tick < 240; ++tick) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
+        if (info.state == VN_ACTION_FIRING_TERMINAL_RETAINED) break;
+        for (unsigned block = 0; block < 3; ++block) {
+            engine.nullBackend.Pump(1);
+            const auto* output = engine.nullBackend.LastBlock();
+            for (unsigned sample = 0; sample < 512; ++sample) heard |= std::abs(output[sample]) > 0.1f;
+        }
+    }
+    EXPECT_TRUE(heard);
+    EXPECT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state);
+    EXPECT_EQ(VN_ACTION_OUTCOME_SUCCEEDED, info.outcome);
+    EXPECT_EQ(VN_ACTION_TERMINAL_NATURAL, info.terminalReason);
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+    for (const auto render : originalVoices) {
+        EXPECT_FALSE(engine.voices.IsAlive(render));
+        EXPECT_FALSE(engine.ledger.OwnerForRender(render).live);
+        harken::Spatializer::SpatialVoiceState spatial{};
+        EXPECT_FALSE(engine.spatial.CaptureVoice(render, &spatial));
     }
 }
 
