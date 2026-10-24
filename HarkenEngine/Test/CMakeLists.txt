@@ -696,7 +696,7 @@ _harken_add_python_check_test(monitor_public_api_probe_includes_check
     "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Runtime/api/monitor/fixtures/check_monitor_public_api_probe_includes.py"
     --check)
 _harken_add_python_check_test(public_abi_manifest_unit
-    "${CMAKE_SOURCE_DIR}/.scripts/tests/test_runtime_abi_manifest.py")
+    "${CMAKE_CURRENT_SOURCE_DIR}/UnitTest/test_runtime_abi_manifest.py")
 _harken_add_python_check_test(public_abi_history_unit
     "${CMAKE_SOURCE_DIR}/.scripts/tests/test_runtime_repository_history.py")
 _harken_add_python_check_test(monitor_record_fixture_unit
