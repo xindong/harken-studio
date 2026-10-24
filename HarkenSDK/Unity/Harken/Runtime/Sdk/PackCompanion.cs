@@ -264,22 +264,9 @@ namespace Harken
                     if (providers[i] == 0) return VnResult.VN_BACKPRESSURE;
                     PackByteProvider.BindMember(ref member.source, providers[i]);
                 }
-                fixed (VnCanonicalPackSetMemberV2* membersPtr = native)
-                fixed (VnCanonicalPackSetMemberResultV1* rowsPtr = rows)
-                {
-                    var desc = new VnCanonicalPackSetActivationDescV2
-                    {
-                        structSize = (uint)sizeof(VnCanonicalPackSetActivationDescV2),
-                        expectedCurrentInitHandle = init.Handle, baseSetRevision = revision, setRevision = revision + 1,
-                        memberCount = (uint)members.Length, memberStructSize = (uint)sizeof(VnCanonicalPackSetMemberV2),
-                        members = (IntPtr)membersPtr, outputMemberCapacity = (uint)rows.Length,
-                        outputMemberStructSize = (uint)sizeof(VnCanonicalPackSetMemberResultV1), outputMembers = (IntPtr)rowsPtr
-                    };
-                    report.structSize = (uint)sizeof(VnCanonicalPackSetActivationReportV1);
-                    VnResult result = HarkenNative.Vn_ActivateCanonicalPackSetV2(desc, ref report);
-                    if (result == VnResult.VN_OK) results = rows;
-                    return Packs.ObserveMutation(result);
-                }
+                VnResult result = ActivatePrepared(native, rows, members.Length, init, revision, out report);
+                if (result == VnResult.VN_OK) results = rows;
+                return result;
             }
             catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }
             catch (EncoderFallbackException) { return VnResult.VN_BAD_PACK; }
@@ -287,6 +274,27 @@ namespace Harken
             {
                 if (providers != null) foreach (int key in providers) if (key != 0) PackByteProvider.Unregister(key);
                 if (names != null) foreach (PinnedNames pinned in names) pinned?.Dispose();
+            }
+        }
+
+        internal static unsafe VnResult ActivatePrepared(VnCanonicalPackSetMemberV2[] members,
+            VnCanonicalPackSetMemberResultV1[] rows, int count, Pack init, ulong revision,
+            out VnCanonicalPackSetActivationReportV1 report)
+        {
+            report = default;
+            fixed (VnCanonicalPackSetMemberV2* membersPtr = members)
+            fixed (VnCanonicalPackSetMemberResultV1* rowsPtr = rows)
+            {
+                var desc = new VnCanonicalPackSetActivationDescV2
+                {
+                    structSize = (uint)sizeof(VnCanonicalPackSetActivationDescV2),
+                    expectedCurrentInitHandle = init.Handle, baseSetRevision = revision, setRevision = revision + 1,
+                    memberCount = (uint)count, memberStructSize = (uint)sizeof(VnCanonicalPackSetMemberV2),
+                    members = (IntPtr)membersPtr, outputMemberCapacity = (uint)count,
+                    outputMemberStructSize = (uint)sizeof(VnCanonicalPackSetMemberResultV1), outputMembers = (IntPtr)rowsPtr
+                };
+                report.structSize = (uint)sizeof(VnCanonicalPackSetActivationReportV1);
+                return Packs.ObserveMutation(HarkenNative.Vn_ActivateCanonicalPackSetV2(desc, ref report));
             }
         }
     }
