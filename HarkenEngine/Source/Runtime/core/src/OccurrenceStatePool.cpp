@@ -423,6 +423,7 @@ void OccurrenceStatePool::RecycleOriginalStorage(Entry& entry) noexcept {
     entry.completionOwnerReleaseFenceArmed = false;
     entry.completionOwnerReleaseTerminal = false;
     entry.completionOwnerReleaseAfterBlock = 0;
+    entry.completionOwnerPendingFactsRevision = 0;
     ClearOriginalSingleMetadata(entry);
 }
 
@@ -532,6 +533,7 @@ bool OccurrenceStatePool::AcquireInternal(const OccurrenceKey& key,
         entry.completionOwnerReleaseFenceArmed = false;
         entry.completionOwnerReleaseTerminal = false;
         entry.completionOwnerReleaseAfterBlock = 0;
+        entry.completionOwnerPendingFactsRevision = 0;
         ++m_occupiedCount;
         if (!prepared && m_occupiedCount > m_highWater) {
             m_highWater = m_occupiedCount;
@@ -614,6 +616,7 @@ bool OccurrenceStatePool::CancelPreparedAcquire(
     entry->completionOwnerReleaseFenceArmed = false;
     entry->completionOwnerReleaseTerminal = false;
     entry->completionOwnerReleaseAfterBlock = 0;
+    entry->completionOwnerPendingFactsRevision = 0;
     --m_occupiedCount;
     return true;
 }
@@ -642,7 +645,8 @@ bool OccurrenceStatePool::BindCompletionProgress(
     std::uint64_t completedThroughBlockSequence) {
     Entry* entry = FindMut(token);
     if (entry == nullptr || entry->originalSinglePreparedCommitHeld || entry->completionProgressBound ||
-        entry->originalSinglePinCount != 0 || renderGeneration == 0) {
+        entry->originalSinglePinCount != 0 || renderGeneration == 0 ||
+        entry->completionOwnerReleaseFenceArmed || entry->completionOwnerReleaseTerminal) {
         return false;
     }
     CompletionProgressSnapshot snapshot{};
@@ -677,7 +681,8 @@ const CompletionProgressRow* OccurrenceStatePool::CompletionProgressOf(
 bool OccurrenceStatePool::UnbindCompletionProgress(
     const OccurrenceToken& token, std::uint32_t renderGeneration) {
     Entry* entry = FindMut(token);
-    if (entry == nullptr || entry->originalSinglePreparedCommitHeld || !entry->completionProgressBound) {
+    if (entry == nullptr || entry->originalSinglePreparedCommitHeld || !entry->completionProgressBound ||
+        !CaptureCompletionOwnerReleaseFence(token)) {
         return false;
     }
     CompletionProgressSnapshot snapshot{};
@@ -720,7 +725,7 @@ bool OccurrenceStatePool::TryPinCompletionOwnerInternal(
     OriginalSingleCompletionOwnerPin* original, bool compositeFactory) {
     Entry* entry = FindMut(token);
     if (entry == nullptr || entry->originalSinglePreparedCommitHeld || !entry->completionProgressBound ||
-        entry->completionOwnerReleaseFenceArmed) {
+        entry->completionOwnerReleaseFenceArmed || entry->completionOwnerReleaseTerminal) {
         return false;
     }
     CompletionProgressSnapshot progress{};
@@ -782,6 +787,24 @@ bool OccurrenceStatePool::ReplaceCompletionOwnerExact(
            entry->completionOwner.ReplaceExact(expected, replacement);
 }
 
+bool OccurrenceStatePool::CaptureCompletionOwnerReleaseFence(const OccurrenceToken& token) {
+    Entry* entry = FindMut(token);
+    if (entry == nullptr || entry->completionOwnerReleaseTerminal) return false;
+    if (entry->completionOwnerPendingFactsRevision == 0) return true;
+    CompletionProgressSnapshot progress{};
+    if (!entry->completionProgressBound ||
+        !CaptureCompletionProgress(entry->completionProgress, &progress)) return false;
+    if (progress.occurrence.slot != token.slot ||
+        progress.occurrence.generation != token.generation ||
+        progress.playbackFactsRevision != entry->completionOwnerPendingFactsRevision) {
+        entry->completionOwnerReleaseTerminal = true;
+        return false;
+    }
+    entry->completionOwnerReleaseAfterBlock = progress.completedThroughBlockSequence;
+    entry->completionOwnerPendingFactsRevision = 0;
+    return true;
+}
+
 bool OccurrenceStatePool::ClearCompletionOwnerExact(
     const OccurrenceToken& token, const CompletionOwnerRef& owner) {
     Entry* entry = FindMut(token);
@@ -793,22 +816,16 @@ bool OccurrenceStatePool::ClearCompletionOwnerExact(
     if (!entry->completionOwner.ClearExact(owner)) {
         return false;
     }
+    // A busy progress publication delays the fence, not the completed owner clear.
+    // Keep the occurrence unavailable until a later bounded capture succeeds.
+    entry->completionOwnerReleaseFenceArmed = true;
+    entry->completionOwnerPendingFactsRevision = owner.factsRevision;
     if (m_afterCompletionOwnerClearHookForTest != nullptr) {
         m_afterCompletionOwnerClearHookForTest(
             m_afterCompletionOwnerClearHookContextForTest);
     }
-    CompletionProgressSnapshot progress{};
-    if (!CaptureCompletionProgress(entry->completionProgress, &progress) ||
-        progress.occurrence.slot != token.slot ||
-        progress.occurrence.generation != token.generation ||
-        progress.playbackFactsRevision != owner.factsRevision) {
-        entry->completionOwnerReleaseTerminal = true;
-        return false;
-    }
-    entry->completionOwnerReleaseAfterBlock =
-        progress.completedThroughBlockSequence;
-    entry->completionOwnerReleaseFenceArmed = true;
-    return true;
+    (void)CaptureCompletionOwnerReleaseFence(token);
+    return !entry->completionOwnerReleaseTerminal;
 }
 
 bool OccurrenceStatePool::RollbackCompletionOwnerPinExact(
@@ -820,10 +837,10 @@ bool OccurrenceStatePool::RollbackCompletionOwnerPinExact(
 
 bool OccurrenceStatePool::CompletionOwnerReleaseFencePassed(
     const OccurrenceToken& token,
-    std::uint64_t observedCompletionBlockSequence) const {
+    std::uint64_t observedCompletionBlockSequence) {
     const Entry* entry = Find(token);
     return entry != nullptr && entry->completionOwnerReleaseFenceArmed &&
-           !entry->completionOwnerReleaseTerminal &&
+           CaptureCompletionOwnerReleaseFence(token) &&
            entry->completionOwner.IsUnpinnedForRelease() &&
            observedCompletionBlockSequence >
                entry->completionOwnerReleaseAfterBlock;
@@ -895,8 +912,7 @@ bool OccurrenceStatePool::ReleaseAfterFence(
         !entry->completionOwner.IsUnpinnedForRelease() ||
         entry->completionOwnerReleaseTerminal ||
         (entry->completionOwnerReleaseFenceArmed &&
-         observedCompletionBlockSequence <=
-             entry->completionOwnerReleaseAfterBlock)) {
+         !CompletionOwnerReleaseFencePassed(token, observedCompletionBlockSequence))) {
         return false;
     }
     if (storageBaseline != nullptr) storageBaseline->Release();
@@ -925,6 +941,7 @@ bool OccurrenceStatePool::ReleaseAfterFence(
     entry->completionOwnerReleaseFenceArmed = false;
     entry->completionOwnerReleaseTerminal = false;
     entry->completionOwnerReleaseAfterBlock = 0;
+    entry->completionOwnerPendingFactsRevision = 0;
     --m_awaitingFenceCount;
     --m_occupiedCount;
     return true;

@@ -1,4 +1,6 @@
 #include "harken/core/CompletionProgress.h"
+#include "harken/core/OccurrenceStatePool.h"
+#include "harken/core/CompositeCompletionOwnerPool.h"
 
 #include <gtest/gtest.h>
 
@@ -283,4 +285,117 @@ TEST(CompletionProgress, ConcurrentPublicationNeverTearsSnapshot) {
         row, initial.occurrence, initial.renderGeneration, &final));
     EXPECT_EQ(publications, final.progressRevision);
     EXPECT_EQ(publications, final.logicalOutputFramesProduced);
+}
+
+
+TEST(CompletionProgress, BusyPublicationAfterOwnerClearRetainsFenceAndEventuallyReleases) {
+    harken::OccurrenceStatePool pool(1);
+    harken::OccurrenceToken occurrence{};
+    ASSERT_TRUE(pool.Acquire({}, &occurrence));
+    ASSERT_TRUE(pool.BindCompletionProgress(occurrence, 13, 11));
+    const auto owner = harken::CompletionOwnerRef::Single({5, 7}, 11);
+    ASSERT_TRUE(pool.TryPinCompletionOwner(occurrence, owner));
+    ASSERT_TRUE(pool.Advance(occurrence, harken::OccurrenceStage::AwaitingEventFence));
+    auto& progress = *pool.CompletionProgressOf(occurrence);
+    const auto sequence = harken::detail::CompletionProgressTestAccess::Seqlock(progress);
+    harken::detail::CompletionProgressTestAccess::SeedSeqlock(progress, sequence + 1);
+    EXPECT_TRUE(pool.ClearCompletionOwnerExact(occurrence, owner));
+    harken::CompletionOwnerRef captured{};
+    EXPECT_FALSE(pool.CaptureCompletionOwner(occurrence, &captured));
+    EXPECT_FALSE(pool.CompletionOwnerReleaseFencePassed(occurrence, UINT64_MAX));
+    EXPECT_FALSE(pool.ReleaseAfterFence(occurrence, UINT64_MAX));
+    EXPECT_FALSE(pool.UnbindCompletionProgress(occurrence, 13));
+    harken::detail::CompletionProgressTestAccess::SeedSeqlock(progress, sequence);
+    EXPECT_FALSE(pool.TryPinCompletionOwner(occurrence, owner));
+    harken::CompletionProgressBlockUpdate update{};
+    update.occurrence = occurrence;
+    update.renderGeneration = 13;
+    update.playbackFactsRevision = 11;
+    update.completedThroughBlockSequence = 8;
+    ASSERT_EQ(harken::CompletionProgressPublishStatus::Ok,
+              harken::PublishCompletionProgressBlock(progress, update));
+    EXPECT_TRUE(pool.UnbindCompletionProgress(occurrence, 13));
+    EXPECT_FALSE(pool.BindCompletionProgress(occurrence, 13, 11));
+    EXPECT_FALSE(pool.CompletionOwnerReleaseFencePassed(occurrence, 8));
+    EXPECT_TRUE(pool.CompletionOwnerReleaseFencePassed(occurrence, 9));
+    EXPECT_FALSE(pool.ReleaseAfterFence(occurrence, 8));
+    EXPECT_TRUE(pool.ReleaseAfterFence(occurrence, 9));
+    EXPECT_EQ(0u, pool.OccupiedCount());
+}
+
+
+TEST(CompletionProgress, DeferredOwnerFenceRejectsChangedPlaybackFacts) {
+    harken::OccurrenceStatePool pool(1);
+    harken::OccurrenceToken occurrence{};
+    ASSERT_TRUE(pool.Acquire({}, &occurrence));
+    ASSERT_TRUE(pool.BindCompletionProgress(occurrence, 13, 11));
+    const auto owner = harken::CompletionOwnerRef::Single({5, 7}, 11);
+    ASSERT_TRUE(pool.TryPinCompletionOwner(occurrence, owner));
+    ASSERT_TRUE(pool.Advance(occurrence, harken::OccurrenceStage::AwaitingEventFence));
+    auto& progress = *pool.CompletionProgressOf(occurrence);
+    const auto sequence = harken::detail::CompletionProgressTestAccess::Seqlock(progress);
+    harken::detail::CompletionProgressTestAccess::SeedSeqlock(progress, sequence + 1);
+    ASSERT_TRUE(pool.ClearCompletionOwnerExact(occurrence, owner));
+    harken::detail::CompletionProgressTestAccess::SeedSeqlock(progress, sequence);
+    harken::CompletionProgressBlockUpdate update{};
+    update.occurrence = occurrence;
+    update.renderGeneration = 13;
+    update.playbackFactsRevision = 99;
+    update.completedThroughBlockSequence = 8;
+    ASSERT_EQ(harken::CompletionProgressPublishStatus::Ok,
+              harken::PublishCompletionProgressBlock(progress, update));
+    EXPECT_FALSE(pool.CompletionOwnerReleaseFencePassed(occurrence, UINT64_MAX));
+    EXPECT_FALSE(pool.ReleaseAfterFence(occurrence, UINT64_MAX));
+    EXPECT_FALSE(pool.TryPinCompletionOwner(occurrence, owner));
+    EXPECT_FALSE(pool.UnbindCompletionProgress(occurrence, 13));
+    EXPECT_EQ(1u, pool.OccupiedCount());
+}
+
+TEST(CompletionProgress, CompositeBusyLeafDefersReclamationWithoutQuarantine) {
+    harken::OccurrenceStatePool occurrences(3);
+    harken::CompositeCompletionOwnerPool pool(1, 2);
+    harken::OccurrenceToken composed{};
+    ASSERT_TRUE(occurrences.Acquire({}, &composed));
+    std::array<harken::KnownScheduleLeafV1, 2> leaves{};
+    for (std::uint32_t i = 0; i < leaves.size(); ++i) {
+        auto& leaf = leaves[i];
+        ASSERT_TRUE(occurrences.Acquire({}, &leaf.occurrence));
+        leaf.stableLeafOrdinal = i + 1;
+        leaf.authoredOffset.denominator = 1;
+        leaf.renderGeneration = 13 + i;
+        leaf.absoluteLeafStartFrame = 0;
+        leaf.predicate.occurrence = leaf.occurrence;
+        leaf.predicate.renderGeneration = leaf.renderGeneration;
+        leaf.predicate.absoluteLogicalStartFrame = 0;
+        leaf.predicate.absoluteLogicalCompleteFrame = 100;
+        leaf.predicate.totalLogicalOutputFrames = 100;
+        leaf.predicate.playbackFactsRevision = 11 + i;
+        leaf.predicate.program.kind = harken::PlayableKindV1::Sound;
+        leaf.predicate.program.stableId = {1, 101 + i};
+        leaf.predicate.program.world = 13;
+        leaf.predicate.program.runtimeSemanticFingerprint = 17;
+        ASSERT_TRUE(occurrences.BindCompletionProgress(leaf.occurrence, leaf.renderGeneration,
+                                                       leaf.predicate.playbackFactsRevision));
+    }
+    harken::CompositeCompletionOwnerToken token{};
+    ASSERT_EQ(harken::CompositeCompletionAcquireStatus::Ok,
+              pool.Acquire(composed, 47, leaves.data(), leaves.size(), occurrences, &token));
+    auto& progress = *occurrences.CompletionProgressOf(leaves[1].occurrence);
+    const auto sequence = harken::detail::CompletionProgressTestAccess::Seqlock(progress);
+    harken::detail::CompletionProgressTestAccess::SeedSeqlock(progress, sequence + 1);
+    EXPECT_FALSE(pool.Release(token, occurrences, UINT64_MAX));
+    EXPECT_EQ(1u, pool.OccupiedCount());
+    EXPECT_EQ(0u, pool.QuarantinedCount());
+    harken::detail::CompletionProgressTestAccess::SeedSeqlock(progress, sequence);
+    harken::CompletionProgressBlockUpdate update{};
+    update.occurrence = leaves[1].occurrence;
+    update.renderGeneration = leaves[1].renderGeneration;
+    update.playbackFactsRevision = leaves[1].predicate.playbackFactsRevision;
+    update.completedThroughBlockSequence = 8;
+    ASSERT_EQ(harken::CompletionProgressPublishStatus::Ok,
+              harken::PublishCompletionProgressBlock(progress, update));
+    EXPECT_FALSE(pool.Release(token, occurrences, 8));
+    EXPECT_TRUE(pool.Release(token, occurrences, 9));
+    EXPECT_EQ(0u, pool.OccupiedCount());
+    EXPECT_EQ(0u, pool.QuarantinedCount());
 }

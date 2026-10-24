@@ -131,6 +131,12 @@ enum class DecisionInvalidationDisposition : std::uint8_t {
     DeferredByFrontier = 4,
 };
 
+enum class DecisionRetirementDisposition : std::uint8_t {
+    Retired,
+    DeferredByFrontier,
+    NotEligible,
+};
+
 class DecisionTable;
 class ScheduledTransactionPool;
 namespace detail { struct DecisionOriginalLifetimeTestAccess; struct QueueDecisionIssuerLimitTestAccess; }
@@ -399,6 +405,8 @@ public:
                             std::uint64_t audioSequence) noexcept;
     bool Retire(DecisionToken token,
                 std::uint64_t audioSequence) noexcept;
+    DecisionRetirementDisposition TryRetire(DecisionToken token,
+        std::uint64_t audioSequence) noexcept;
     bool ReclaimRetired(DecisionToken token,
         OriginalDecisionLifetimePin* originalBaseline = nullptr) noexcept;
     // Predicates authenticate the immutable original family, not execution state.

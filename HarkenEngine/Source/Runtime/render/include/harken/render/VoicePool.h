@@ -944,7 +944,6 @@ private:
         std::atomic<std::uint64_t> releaseSequence{0};
         std::uint64_t issuedOriginalReleaseTarget = 0;
         std::atomic<std::uint64_t> originalBodyLifetime{0};
-        std::atomic<bool> originalCallbackStorageReader{false};
         std::atomic<std::uint64_t> originalBodyRetirementRequest{0};
         std::uint64_t originalBodyMarker = 0;
         TimelineArmToken originalBodyArm{};
@@ -1012,6 +1011,7 @@ private:
     static constexpr std::uint64_t kOriginalBodyDisposed = UINT64_C(1) << 63;
     static constexpr std::uint64_t kOriginalBodyLoanReturned = UINT64_C(1) << 62;
     static constexpr std::uint64_t kOriginalBodyReturnClaimed = UINT64_C(1) << 61;
+    static constexpr std::uint64_t kOriginalBodyCallbackReader = UINT64_C(1) << 60;
     bool CanIssueOriginalSourceBody(const PreparedCommitProof& proof,
         const OriginalSourceBodyLifetimePin* out) const noexcept;
     void IssueOriginalSourceBody(const PreparedCommitProof& proof,
