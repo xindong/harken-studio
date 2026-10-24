@@ -13,8 +13,9 @@
 /HarkenSDK/ @zqm-web
 /HarkenStudio/ @Probus-XD
 /HarkenSchema/ @Probus-XD @liuxin2-sys
-/LICENSE @liuxin2-sys
 /README* @Probus-XD
+/LICENSE @liuxin2-sys
 /NOTICE @liuxin2-sys
-/requirements.txt @Probus-XD
 /VERSION @liuxin2-sys
+/HarkenHub/VERSION @liuxin2-sys
+/HarkenSDK/Unity/Harken/package.json @liuxin2-sys
