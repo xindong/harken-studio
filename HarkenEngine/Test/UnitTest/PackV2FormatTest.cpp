@@ -37,7 +37,6 @@ TEST(PackV2Format, CurveWireSizesArePinned) {
     EXPECT_EQ(184u, kPackV2CurveWireBytes);
     EXPECT_EQ(600u, kPackV2AttenuationPayloadBytes);
     EXPECT_EQ(608u, kPackV3AttenuationPayloadBytes);
-    EXPECT_EQ(792u, kPackV4AttenuationPayloadBytes);
     EXPECT_EQ(180u, kPackV2BindingCurveWireBytes);
     EXPECT_EQ(228u, kPackV2BindingDefinitionPayloadBytes);
     EXPECT_EQ(32u, kPackV2BusPayloadBytes);
@@ -948,15 +947,16 @@ TEST(PackV2Format, AttenuationPayloadMatchesOuterVersionExactly) {
     desc.maxDistance = 100;
     desc.airAbsorptionNearHz = desc.airAbsorptionFarHz = 20000;
     desc.proximityFrequency = 400;
-    desc.highpassCurve.enabled = 1;
-    desc.highpassCurve.pointCount = 1;
-    desc.highpassCurve.points[0] = {0, 1000};
-    for (const auto version : {3u, 4u}) {
-        for (const auto size : {607u, 608u, 609u, 791u, 792u, 793u}) {
+    std::vector<std::uint32_t> versions{kPackFormatVersion, kPackFormatVersion + 1};
+    if (kPackFormatVersion3 < kPackFormatVersion) {
+        versions.push_back(kPackFormatVersion3);
+    }
+    for (const auto version : versions) {
+        for (const auto size : {kPackV3AttenuationPayloadBytes - 1,
+                               kPackV3AttenuationPayloadBytes,
+                               kPackV3AttenuationPayloadBytes + 1,
+                               kPackV3AttenuationPayloadBytes + kPackV2CurveWireBytes}) {
             auto payload = AttenuationPayload(desc);
-            payload.resize(kPackV4AttenuationPayloadBytes);
-            SerializePackV2AttenuationCurve(desc.highpassCurve,
-                payload.data() + kPackV3AttenuationPayloadBytes);
             payload.resize(size);
             ImageBuilder builder(kPackKindResident);
             builder.AddEntry(kPackEntryKindAttenuation, 500, std::move(payload),
@@ -964,19 +964,18 @@ TEST(PackV2Format, AttenuationPayloadMatchesOuterVersionExactly) {
             auto bytes = builder.Build();
             StoreLE32(bytes.data() + 4, version);
             PackLogicImage image;
-            const bool valid = (version == 3 && size == 608) ||
-                               (version == 4 && size == 792);
+            const bool valid = version != kPackFormatVersion + 1 &&
+                               size == kPackV3AttenuationPayloadBytes;
             ASSERT_EQ(valid ? VN_OK : VN_BAD_PACK,
                       ParsePackV2Image(bytes.data(), bytes.size(), &image))
                 << version << "/" << size;
             if (valid) {
                 ASSERT_EQ(1u, image.attenuations.size());
                 const auto& parsed = image.attenuations[0].desc;
-                EXPECT_EQ(version == 3 ? 612u : 796u, parsed.structSize);
+                EXPECT_EQ(612u, parsed.structSize);
                 EXPECT_FLOAT_EQ(400, parsed.proximityFrequency);
-                EXPECT_EQ(version == 4 ? 1u : 0u, parsed.highpassCurve.enabled);
-                EXPECT_FLOAT_EQ(version == 4 ? 1000.0f : 0.0f,
-                                parsed.highpassCurve.points[0].y);
+                EXPECT_EQ(0u, parsed.highpassCurve.enabled);
+                EXPECT_FLOAT_EQ(0.0f, parsed.highpassCurve.points[0].y);
             }
         }
     }
@@ -1119,7 +1118,7 @@ TEST(PackV2Format, RefusesWrongMagic) {
 
 TEST(PackV2Format, RefusesOtherSchemaVersions) {
     for (const auto version : {kPackFormatVersion3 - 1,
-                               kPackFormatVersion4 + 1}) {
+                               kPackFormatVersion + 1}) {
         std::vector<std::uint8_t> bytes = MinimalContentBytes();
         StoreLE32(bytes.data() + 4, version);
         ExpectRefused(bytes);

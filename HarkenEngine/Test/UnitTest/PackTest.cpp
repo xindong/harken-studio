@@ -172,7 +172,11 @@ TEST(Pack, LoadRegistersEntriesAndUnloadRemovesThem) {
     ASSERT_EQ(VN_OK, session.InitResult());
 
     const std::string path = TempPath("pack_basic.pack");
-    for (const auto version : {3u, 4u}) {
+    std::vector<std::uint32_t> versions{harken::kPackFormatVersion};
+    if (harken::kPackFormatVersion3 < harken::kPackFormatVersion) {
+        versions.push_back(harken::kPackFormatVersion3);
+    }
+    for (const auto version : versions) {
         auto bytes = BuildPackBytes({MakeSineEntry(harkentest::ObjectId(11), 64),
                                     MakeSineEntry(harkentest::ObjectId(12), 128)});
         harken::StoreLE32(bytes.data() + 4, version);
@@ -432,7 +436,7 @@ TEST(Pack, HeaderDispatchRequiresSupportedSchemaAndKnownLayout) {
 
     for (const auto& valid : layouts) {
         for (const auto version : {harken::kPackFormatVersion3 - 1,
-                                   harken::kPackFormatVersion4 + 1}) {
+                                   harken::kPackFormatVersion + 1}) {
             auto bytes = valid;
             harken::StoreLE32(bytes.data() + 4, version);
             WriteFileBytes(path, bytes);

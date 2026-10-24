@@ -26,10 +26,10 @@ inline constexpr std::uint8_t kPackMagic[4] = {'V', 'S', 'P', 'K'};
 
 inline constexpr std::uint32_t kPackFormatVersion = HARKEN_PACK_SCHEMA_VERSION;
 inline constexpr std::uint32_t kPackFormatVersion3 = 3;
-inline constexpr std::uint32_t kPackFormatVersion4 = 4;
 
 inline constexpr bool SupportedPackFormatVersion(std::uint32_t version) noexcept {
-    return version == kPackFormatVersion3 || version == kPackFormatVersion4;
+    return version == kPackFormatVersion ||
+           (version == kPackFormatVersion3 && version < kPackFormatVersion);
 }
 
 // Serialized sizes. Header: magic(4) + formatVersion(4) + headerBytes(4) +

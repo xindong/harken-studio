@@ -162,8 +162,6 @@ inline constexpr std::uint64_t kPackV2AttenuationPayloadBytes =
     48 + 3 * kPackV2CurveWireBytes;                        // 600
 inline constexpr std::uint64_t kPackV3AttenuationPayloadBytes =
     kPackV2AttenuationPayloadBytes + 8;                    // 608
-inline constexpr std::uint64_t kPackV4AttenuationPayloadBytes =
-    kPackV3AttenuationPayloadBytes + kPackV2CurveWireBytes; // 792
 inline constexpr std::uint64_t kPackV2DiscreteVariablePayloadBytes = 16;
 inline constexpr std::uint64_t kPackV2MeterWiringPayloadBytes = 40;
 inline constexpr std::uint64_t kPackV2BindingCurveWireBytes = 180;
@@ -734,17 +732,13 @@ inline bool ParsePackV3Attenuation(const std::uint8_t* in, std::uint64_t size,
 inline bool ParsePackAttenuation(const std::uint8_t* in, std::uint64_t size,
                                   std::uint32_t formatVersion,
                                   VnAttenuationDesc* out) {
-    if (formatVersion == kPackFormatVersion3) {
+    if (formatVersion == kPackFormatVersion) {
         return ParsePackV3Attenuation(in, size, out);
     }
-    if (formatVersion != kPackFormatVersion4 || size != kPackV4AttenuationPayloadBytes ||
-        !ParsePackV3Attenuation(in, kPackV3AttenuationPayloadBytes, out) ||
-        !ParsePackV2AttenuationCurve(in + kPackV3AttenuationPayloadBytes,
-                                    &out->highpassCurve)) {
-        return false;
+    if (formatVersion == kPackFormatVersion3 && formatVersion < kPackFormatVersion) {
+        return ParsePackV3Attenuation(in, size, out);
     }
-    out->structSize = sizeof(VnAttenuationDesc);
-    return true;
+    return false;
 }
 
 inline void SerializePackV2DiscreteVariable(VnVariableId id,

@@ -975,12 +975,16 @@ void ExpectMixedResidentStateUnchanged(
 
 // --- load: resident happy path ---
 
-TEST(PackLogicLoad, ContainerVersionsThreeAndFourReachLogicLoader) {
+TEST(PackLogicLoad, CurrentAndHistoricalContainerVersionsReachLogicLoader) {
     EngineSession session(PackLogicConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto sound = harkentest::ObjectId(71);
     const auto path = TempPath("pll_container_versions.pack");
-    for (const auto version : {3u, 4u}) {
+    std::vector<std::uint32_t> versions{harken::kPackFormatVersion};
+    if (harken::kPackFormatVersion3 < harken::kPackFormatVersion) {
+        versions.push_back(harken::kPackFormatVersion3);
+    }
+    for (const auto version : versions) {
         V2Builder builder(harken::kPackKindContent);
         builder.AddMedia(sound, harkentest::MakeDC(16, 0.25f));
         auto bytes = builder.Build();
