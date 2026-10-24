@@ -627,8 +627,10 @@ void RunSpatialScene(std::uint32_t queueDepth, LogCodeSink* sink,
         VnVoiceHandle handle = 0;
         ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
         ASSERT_EQ(VN_OK, Vn_BindVoiceAttenuation(handle, harkentest::ObjectId(9)));
+        // Drain each atomic start so setup does not consume the queue space
+        // whose later spatial publication overflow this scene measures.
+        engine->nullBackend.Pump(1);
     }
-    engine->nullBackend.Pump(1); // drain the plays
 
     bool invariant = true;
     for (int wave = 0; wave < 2; ++wave) {
@@ -712,7 +714,7 @@ TEST(PropertyPressureGolden, ConfigCapacityEstimateIsInformationalAndNotRuntimeP
         std::uint32_t queueDepth;
         std::uint64_t estimate;
         std::uint32_t resolvedQueueDepth;
-    } cases[] = {{0, 0, 1344, 256}, {8, 4, 104, 4}, {1024, 256, 5184, 256}};
+    } cases[] = {{0, 0, 1600, 256}, {8, 4, 112, 4}, {1024, 256, 6208, 256}};
     for (const auto& test : cases) {
         SCOPED_TRACE(test.voices);
         LogCodeSink sink;
@@ -748,7 +750,7 @@ TEST(PropertyPressureGolden, ConfigCapacityEstimateIsInformationalAndNotRuntimeP
     {
         LogCodeSink sink;
         VnConfig config = MakeNullConfig(2, kBlockFrames, 48000);
-        // 2 * 5 spatial + 64 bus rows = 74 <= 256: within the queue.
+        // 2 * 6 spatial + 64 bus rows = 76 <= 256: within the queue.
         config.logCallback = &LogCodeSink::Callback;
         config.logUserData = &sink;
         EngineSession session(config);

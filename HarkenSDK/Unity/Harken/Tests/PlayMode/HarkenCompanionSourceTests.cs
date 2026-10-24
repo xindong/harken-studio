@@ -204,6 +204,36 @@ namespace Harken.Unity.Tests
         }
 
         [UnityTest]
+        public IEnumerator AsyncPreparationRevalidatesAnEndedTransformSourceBeforePost()
+        {
+            using (var fixture = new Fixture())
+            {
+                var actor = new GameObject("Deferred spatial source");
+                try
+                {
+                    var content = new TaskCompletionSource<byte[]>();
+                    var start = fixture.Runtime.StartRuntimeAsync(PackSource.FromAsyncReader((path, token) =>
+                        path == "Play_Head.bytes" ? content.Task : Task.FromResult(Read(path))));
+                    yield return Until(start);
+                    Assert.That(start.GetAwaiter().GetResult(), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(fixture.Runtime.CreateSpatialSource(actor.transform, out HarkenSpatialSource source),
+                        Is.EqualTo(VnResult.VN_OK));
+                    var play = fixture.Runtime.PlayActionAsync("Play_Head", fixture.Runtime.Session.ProjectId, source);
+                    Assert.That(play.IsCompleted, Is.False);
+                    Assert.That(source.EndFollow(), Is.EqualTo(VnResult.VN_OK));
+                    LogAssert.Expect(LogType.Error, new Regex("Harken operation failed: HarkenAudioSystem.PlayAction: VN_(INVALID_ARG|STALE_HANDLE)"));
+                    content.SetResult(Read("Play_Head.bytes"));
+                    yield return Until(play);
+                    HarkenActionPlayResult result = play.GetAwaiter().GetResult();
+                    Assert.That(result.Result, Is.EqualTo(VnResult.VN_INVALID_ARG).Or.EqualTo(VnResult.VN_STALE_HANDLE));
+                    Assert.That(result.Firing.IsValid, Is.False);
+                    Assert.That(source.IsFollowing, Is.False);
+                }
+                finally { Object.DestroyImmediate(actor); }
+            }
+        }
+
+        [UnityTest]
         public IEnumerator CallerCancelledStartupReleasesCallbacksBeforeRetry()
         {
             using (var fixture = new Fixture())

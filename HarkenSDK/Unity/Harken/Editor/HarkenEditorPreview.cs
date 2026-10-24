@@ -202,6 +202,7 @@ namespace Harken.Unity.Editor
                         result = spatialSource.Retain(this, playingSession);
                         retained = result == VnResult.VN_OK;
                         if (retained) result = spatialSource.Validate(this, playingSession, out emitter);
+                        if (result == VnResult.VN_OK) result = spatialSource.Publish();
                     }
                     if (result == VnResult.VN_OK)
                     {
@@ -488,7 +489,9 @@ namespace Harken.Unity.Editor
                     scope.spatialSources.EndAll();
                     scope.releaseListener = true;
                 }
-                VnResult result = scope.spatialSources.Maintain();
+                VnResult result = scope.spatialSources.Publish();
+                VnResult maintenance = scope.spatialSources.Maintain();
+                if (result == VnResult.VN_OK) result = maintenance;
                 if (result != VnResult.VN_OK) scope.Observe(result, "<source>");
                 if (!ReferenceEquals(listenerOwner, scope)) continue;
                 if (scope.releaseListener && !HasOwnedFiring(scope) && scope.spatialSources.Count == 0)

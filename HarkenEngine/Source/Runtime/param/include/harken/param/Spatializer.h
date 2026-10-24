@@ -26,6 +26,7 @@
 #include "harken/core/EngineConfig.h"
 #include "harken/core/StableRowStorage.h"
 #include "harken/param/Curve.h"
+#include "harken/param/EmitterTable.h"
 #include "harken/param/ParamSystem.h"
 
 #include <cstdint>
@@ -34,21 +35,16 @@
 
 namespace harken {
 
-// The emitter table an attached voice derives its geometry from each tick.
-// Forward-declared: the spatializer reads emitter poses through a reference,
-// no ownership.
-class EmitterTable;
-
 // Attenuation profile capacity is independent of its prepared storage.
 inline constexpr std::uint32_t kMaxAttenuationProfiles = 64;
 
 // The distinct targets one spatialized voice's evaluation can dirty in a
-// single tick: the engine-computed pan plus the four profile-driven
-// outputs (volume, lowpass cutoff, width, low-shelf gain) — the exact
+// single tick: the engine-computed pan plus the five profile-driven
+// outputs (volume, lowpass/highpass cutoff, width, low-shelf gain), the
 // SetAttenuationSlot destinations in Evaluate(). Config-time worst-case
 // publication estimates multiply this by maxVoices; keep it in step with
 // the evaluation whenever a spatial contribution is added or removed.
-inline constexpr std::uint32_t kSpatialDrivenTargetsPerVoice = 5;
+inline constexpr std::uint32_t kSpatialDrivenTargetsPerVoice = 6;
 
 // A registered attenuation profile in evaluated form: validated scalars
 // plus prebuilt override curves (distance in, target-domain value out).
@@ -70,9 +66,11 @@ struct AttenuationProfile {
     bool volumeOverride = false;
     bool lowpassOverride = false;
     bool widthOverride = false;
+    bool highpassOverride = false;
     Curve volumeCurve;
     Curve lowpassCurve;
     Curve widthCurve;
+    Curve highpassCurve;
 };
 
 class Spatializer {
@@ -175,6 +173,14 @@ public:
     // forward or up, or parallel forward and up — because the panning
     // right axis is their cross product.
     VnResult SetListener(VnVec3 pos, VnVec3 forward, VnVec3 up);
+    VnResult SetListenerDistanceReference(VnEmitterHandle handle,
+                                          const EmitterTable& emitters);
+    void NoteEmitterDestroyed(VnEmitterHandle handle) noexcept;
+
+    void CaptureListener(VnVec3& position, VnVec3& right) const noexcept {
+        position = {m_listenerX, m_listenerY, m_listenerZ};
+        right = {m_rightX, m_rightY, m_rightZ};
+    }
 
     // Profile registration: validates the descriptor, builds override
     // curves, and stores the evaluated form. VN_INVALID_ARG for a null or
@@ -232,6 +238,7 @@ public:
     void OnVoiceStarted(VnVoiceHandle handle, bool spatialized, float x,
                         float y, float z, VnEmitterHandle emitterHandle = 0);
     void SetVoicePosition(VnVoiceHandle handle, float x, float y, float z);
+    void RestoreVoiceSource(VnVoiceHandle handle, const SpatialSourceState& source);
     void SetVoiceDistanceScale(VnVoiceHandle handle, float scale);
     void SetVoiceSpatializationMix(VnVoiceHandle handle, float mix);
 
@@ -270,18 +277,28 @@ public:
     // change write identical values, which the slot writer treats as no-ops.
     void Evaluate(ParamSystem& params, const EmitterTable& emitters);
 
+    // Prepares one voice's spatial contributions without publishing commands.
+    // The start transaction primes these targets together with its bindings.
+    // A bound profile whose retained identity no longer resolves is refused.
+    VnResult EvaluateVoice(VnVoiceHandle handle, ParamSystem& params,
+                           const EmitterTable& emitters,
+                           std::uint32_t* targetMask = nullptr);
+
     // The distance-driven volume attenuation in dB that Evaluate() writes to
     // the volume attenuation slot for a voice at world position (px,py,pz)
     // bound to this profile — the non-cone term (override curve or rolloff).
     // Recomputes a parked voice's audibility contribution from its stored (or
-    // its live emitter's) position against the current listener, without a
-    // render slot. Returns 0 for id 0 or an unregistered profile. The cone
+    // its live emitter's) position against the current distance reference
+    // (the listener when unset), without a render slot. Returns 0 for id 0 or
+    // an unregistered profile. The cone
     // angular term is deliberately excluded: a parked voice's cone contribution
     // stays frozen at its park value (distance-driven return is tracked;
     // cone-angle-driven return is not).
-    float AttenuationVolumeDb(VnAttenuationId attenuationId, float px, float py,
+    float AttenuationVolumeDb(const EmitterTable& emitters,
+                              VnAttenuationId attenuationId, float px, float py,
                               float pz, float distanceScale,
-                              std::uint64_t generation = 0) const;
+                              std::uint64_t generation = 0,
+                              float emitterDistanceScale = 1.0f) const;
 
     // A portable snapshot of a voice's spatial mirror, for park/return. Return
     // re-applies it to the new render slot (OnVoiceStarted + BindVoice +
@@ -291,14 +308,17 @@ public:
         float posX = 0.0f, posY = 0.0f, posZ = 0.0f;
         float fwdX = 0.0f, fwdY = 0.0f, fwdZ = -1.0f;
         float distanceScale = 1.0f;
+        float emitterDistanceScale = 1.0f;
         float spatializationMix = 1.0f;
         VnAttenuationId attenuationId{}; // 0 = no profile bound
         std::uint64_t attenuationGeneration = 0;
         VnEmitterHandle emitterHandle = 0; // 0 = none
     };
     // Captures the live voice's spatial mirror into *out. False for a stale
-    // voice handle (no mirror owns it).
-    bool CaptureVoice(VnVoiceHandle handle, SpatialVoiceState* out) const;
+    // voice handle (no mirror owns it). The optional distance term is the last
+    // one written to the attenuation slot, excluding the cone contribution.
+    bool CaptureVoice(VnVoiceHandle handle, SpatialVoiceState* out,
+                       float* appliedDistanceVolumeDb = nullptr) const;
 
     std::uint32_t ProfileCount() const { return m_profileCount; }
     std::uint32_t ProfileCapacity() const { return kMaxAttenuationProfiles; }
@@ -311,12 +331,14 @@ private:
         bool evaluated = false; // first spatial installation may snap
         float posX = 0.0f, posY = 0.0f, posZ = 0.0f;
         float distanceScale = 1.0f;
+        float emitterDistanceScale = 1.0f;
         float spatializationMix = 1.0f;
         // Emitter forward, unit length; the cone's axis.
         float fwdX = 0.0f, fwdY = 0.0f, fwdZ = -1.0f;
         std::int32_t profileIndex = -1; // -1 = no attenuation bound
         std::int32_t retainIndex = -1;
         std::uint32_t retainEpoch = 0;
+        float appliedDistanceVolumeDb = 0.0f;
         std::uint64_t profileGeneration = 0;
     };
 
@@ -342,11 +364,14 @@ private:
     void ReleaseRetainedMirror(VoiceMirror& mirror) noexcept;
 
     VoiceMirror* MirrorFor(VnVoiceHandle handle);
+    double DistanceToReference(const EmitterTable& emitters, float px, float py,
+                                float pz, double listenerDistance) const;
 
     // Listener pose. rightX/Y/Z is the normalized forward x up cross
     // product, rebuilt at SetListener so evaluation is pure arithmetic.
     float m_listenerX = 0.0f, m_listenerY = 0.0f, m_listenerZ = 0.0f;
     float m_rightX = 1.0f, m_rightY = 0.0f, m_rightZ = 0.0f;
+    VnEmitterHandle m_distanceReference = 0;
 
     StableRowStorage<VoiceMirror> m_mirrors; // indexed by prepared voice slot
     mutable StableRowStorage<AttenuationProfile> m_profiles;

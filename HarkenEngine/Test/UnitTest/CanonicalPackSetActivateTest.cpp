@@ -1137,7 +1137,7 @@ TEST(CanonicalPackSetActivate, PendingVoiceRecipePinsPackAttenuationGeneration) 
 
     VnVoiceHandle incoming = 0;
     VnPlayDesc play3d =
-        harkentest::MakePlayDesc3D(sound, 0.0f, 0.0f, 0.0f, 0.0f);
+        harkentest::MakePlayDesc3D(sound, 0.0f, 0.0f, -50.5f, 0.0f);
     play3d.priority = 128;
     ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play3d, &incoming));
     ASSERT_EQ(harken::VoiceLedger::HandleKind::Pending,
@@ -1164,7 +1164,15 @@ TEST(CanonicalPackSetActivate, PendingVoiceRecipePinsPackAttenuationGeneration) 
 
     engine->nullBackend.Pump(1);
     ASSERT_EQ(VN_OK, Vn_Update());
-    engine->nullBackend.Pump(1);
+    const auto before = engine->mixer.BlocksRendered();
+    harkentest::Capture firstBlock;
+    harkentest::PumpAndCapture(engine, 1, firstBlock);
+    ASSERT_EQ(before + 1, engine->mixer.BlocksRendered());
+    ASSERT_EQ(kBlock, firstBlock.left.size());
+    for (std::uint32_t frame = 0; frame < kBlock; ++frame) {
+        EXPECT_NEAR(0.25f, firstBlock.left[frame], 1e-5f) << frame;
+        EXPECT_NEAR(0.25f, firstBlock.right[frame], 1e-5f) << frame;
+    }
     harken::Spatializer::SpatialVoiceState spatial{};
     ASSERT_TRUE(engine->spatial.CaptureVoice(
         harkentest::RenderHandle(engine, incoming), &spatial));

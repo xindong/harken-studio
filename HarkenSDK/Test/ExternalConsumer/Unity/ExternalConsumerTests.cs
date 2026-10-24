@@ -42,7 +42,10 @@ public class ExternalConsumerTests
                     out ActionPreparation prepared), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(Emitter.Create(out Emitter emitter), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(emitter.SetPosition(new VnVec3 { x = 1 }), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(emitter.SetDistanceScale(2), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(Listener.Set(default, new VnVec3 { z = 1 }, new VnVec3 { y = 1 }), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(Listener.SetDistanceReference(emitter), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(Listener.SetDistanceReference(Emitter.None), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(Actions.Post("Play_U4_A", emitter, out ActionFiring firing), Is.EqualTo(VnResult.VN_OK));
                 // Allow the authored start to pass through admission and audio-start acknowledgement.
                 for (int block = 0; block < 8; ++block)

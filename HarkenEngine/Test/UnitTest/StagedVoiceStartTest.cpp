@@ -216,6 +216,104 @@ TEST(StagedVoiceStart, CommittedInstallPansFromItsFirstSample) {
     EXPECT_EQ(0u, Snapshot().pendingStartCount);
 }
 
+TEST(StagedVoiceStart, SpatialCommitInstallsEveryInitialTargetBeforeRendering) {
+    const std::vector<float> dc = MakeDC(kRate, kAmp);
+    const auto render = [&](bool staged, Capture* output) {
+        EngineSession session(StagedConfig());
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto* engine = session.Engine();
+        ASSERT_NO_FATAL_FAILURE(RegisterSource(dc));
+        const auto attenuation = harkentest::ObjectId(71);
+        auto profile = harkentest::MakeAttenuationDesc(1.0f, 11.0f);
+        profile.airAbsorptionNearHz = profile.airAbsorptionFarHz = 1200.0f;
+        profile.proximityRadius = 12.0f;
+        profile.proximityMaxBoostDb = 6.0f;
+        profile.proximityFrequency = 1234.0f;
+        profile.widthCurve.enabled = 1;
+        profile.widthCurve.pointCount = 2;
+        profile.widthCurve.points[0] = {1.0f, 0.6f};
+        profile.widthCurve.points[1] = {11.0f, 0.6f};
+        profile.widthCurve.handles[0] = harkentest::EndpointHandles(
+            profile.widthCurve.points[0], profile.widthCurve.points[1]);
+        profile.highpassCurve.enabled = 1;
+        profile.highpassCurve.pointCount = 1;
+        profile.highpassCurve.points[0] = {0, 350};
+        ASSERT_EQ(VN_OK, Vn_RegisterAttenuation(attenuation, &profile));
+        auto play = harkentest::MakePlayDesc3D(kSound, 6.0f, 0.0f, 0.0f, -3.0f);
+        play.reserved0 = staged ? VN_PLAY_FLAG_STAGED_INSTALL : 0u;
+        VnVoiceHandle voice = 0;
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+        ASSERT_EQ(VN_OK, Vn_BindVoiceAttenuation(voice, attenuation));
+        ASSERT_EQ(VN_OK, Vn_SetVoiceDistanceScale(voice, 2.0f));
+        ASSERT_EQ(VN_OK, Vn_SetVoiceVolume(voice, -6.0f, 0));
+        ASSERT_EQ(VN_OK, Vn_SetVoicePan(voice, -0.25f));
+        if (staged) {
+            Capture silent;
+            PumpAndCapture(engine, 1, silent);
+            EXPECT_LE(Peak(silent.left), harkentest::kSilenceFloor);
+            EXPECT_LE(Peak(silent.right), harkentest::kSilenceFloor);
+            ASSERT_EQ(VN_OK, Vn_CommitVoiceStart(voice));
+        } else {
+            ASSERT_EQ(VN_OK, Vn_Update());
+        }
+        const auto handle = harkentest::RenderHandle(engine, voice);
+        EXPECT_NEAR(-9.0f + 20.0f * std::log10(0.8f),
+            engine->params.ResolvedValue(handle, harken::kTargetVoiceVolume), 1e-5f);
+        EXPECT_FLOAT_EQ(0.75f, engine->params.ResolvedValue(handle, harken::kTargetVoicePan));
+        EXPECT_FLOAT_EQ(1200.0f, engine->params.ResolvedValue(handle, harken::kTargetVoiceLowpassCutoff));
+        EXPECT_FLOAT_EQ(350.0f, engine->params.ResolvedValue(handle, harken::kTargetVoiceHighpassCutoff));
+        EXPECT_FLOAT_EQ(0.6f, engine->params.ResolvedValue(handle, harken::kTargetVoiceWidth));
+        EXPECT_GT(engine->params.ResolvedValue(handle, harken::kTargetVoiceLowShelfGainDb), 0.0f);
+        EXPECT_FLOAT_EQ(1234.0f, engine->params.ResolvedValue(handle, harken::kTargetVoiceLowShelfFreqHz));
+        PumpAndCapture(engine, 1, *output);
+        const auto* context = engine->voices.Resolve(handle);
+        ASSERT_NE(nullptr, context);
+        EXPECT_EQ(0u, context->gain.remainingFrames);
+    };
+    Capture reference, committed;
+    ASSERT_NO_FATAL_FAILURE(render(false, &reference));
+    ASSERT_NO_FATAL_FAILURE(render(true, &committed));
+    HARKENTEST_ASSERT_NON_SILENT(committed.right);
+    ASSERT_EQ(reference.right.size(), committed.right.size());
+    for (std::size_t frame = 0; frame < reference.right.size(); ++frame) {
+        EXPECT_NEAR(reference.left[frame], committed.left[frame], 1e-6f) << frame;
+        EXPECT_NEAR(reference.right[frame], committed.right[frame], 1e-6f) << frame;
+    }
+}
+
+TEST(StagedVoiceStart, MissingCapturedProfileRefusesWithoutPublishingAndCanBeCancelled) {
+    const std::vector<float> dc = MakeDC(kRate, kAmp);
+    EngineSession session(StagedConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    ASSERT_NO_FATAL_FAILURE(RegisterSource(dc));
+    const auto attenuation = harkentest::ObjectId(72);
+    const auto profile = harkentest::MakeAttenuationDesc(1.0f, 101.0f);
+    ASSERT_EQ(VN_OK, Vn_RegisterAttenuation(attenuation, &profile));
+    auto play = harkentest::MakePlayDesc3D(kSound, 0.0f, 0.0f, -51.0f);
+    play.reserved0 = VN_PLAY_FLAG_STAGED_INSTALL;
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    ASSERT_EQ(VN_OK, Vn_BindVoiceAttenuation(voice, attenuation));
+    auto& pending = engine->pendingStarts[engine->ledger.Classify(voice).ledgerSlot];
+    pending.attenuationGeneration = 99;
+    const auto head = engine->commands.PublishedHead();
+    const auto freeVoices = engine->voices.AvailableSlotCount();
+    EXPECT_EQ(VN_UNKNOWN_ID, Vn_CommitVoiceStart(voice));
+    EXPECT_EQ(head, engine->commands.PublishedHead());
+    EXPECT_EQ(freeVoices, engine->voices.AvailableSlotCount());
+    EXPECT_EQ(0u, engine->params.DirtyTargetCount());
+    EXPECT_EQ(harken::VoiceLedger::HandleKind::Pending, engine->ledger.Classify(voice).kind);
+    Capture silent;
+    PumpAndCapture(engine, 1, silent);
+    EXPECT_LE(Peak(silent.left), harkentest::kSilenceFloor);
+    EXPECT_LE(Peak(silent.right), harkentest::kSilenceFloor);
+    ASSERT_EQ(VN_OK, Vn_Stop(voice, 0));
+    EXPECT_EQ(0u, Snapshot().pendingStartCount);
+    EXPECT_EQ(freeVoices, engine->voices.AvailableSlotCount());
+    EXPECT_EQ(0u, engine->spatial.RetainedProfileCount());
+}
+
 // The staged effect chain is running on the first audible block: the same source
 // committed with a -20 dB Gain step is quieter than without it from block one,
 // rather than playing one block at full level first.
@@ -372,29 +470,35 @@ TEST(StagedVoiceStart, CommitRefusesDeterministicallyWithoutBackpressure) {
     harken::Engine* const engine = session.Engine();
     RegisterSource(dc);
 
-    const VnPlayDesc play = StagedPlayDesc();
+    const auto attenuation = harkentest::ObjectId(73);
+    const auto profile = harkentest::MakeAttenuationDesc(1.0f, 101.0f);
+    ASSERT_EQ(VN_OK, Vn_RegisterAttenuation(attenuation, &profile));
+    auto play = StagedPlayDesc();
+    play.spatialized = 1;
+    play.positionX = -51.0f;
     VnVoiceHandle handle = 0;
     ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
+    ASSERT_EQ(VN_OK, Vn_BindVoiceAttenuation(handle, attenuation));
     // Staging publishes nothing, so a saturated queue does not obstruct the
     // install itself: every setter below succeeds on an empty-room queue.
     const VnGainDesc gain = GainDesc(-6.0f);
     ASSERT_EQ(VN_OK, Vn_SetVoiceEffect(handle, 0, VN_EFFECT_GAIN,
                                        AsBase(&gain)));
     ASSERT_EQ(VN_OK, Vn_SetVoicePan(handle, -1.0f));
-    ASSERT_EQ(VN_OK, Vn_SetVoiceWidth(handle, 1.0f));
+    ASSERT_EQ(VN_OK, Vn_SetVoiceWidth(handle, 0.0f));
 
-    // The install's batch is the play plus pan, width and the effect. Leave it
-    // one short.
-    while (engine->commands.FreeSlots() > 3u) {
+    // Play, API pan/width, effect and the six spatial physical commands.
+    constexpr auto demand = 4u + harken::kSpatialDrivenTargetsPerVoice;
+    while (engine->commands.FreeSlots() > demand - 1u) {
         ASSERT_EQ(VN_OK, Vn_SetBusVolume(VN_BUS_MASTER, -1.0f, 0));
     }
-    ASSERT_EQ(3u, engine->commands.FreeSlots());
+    ASSERT_EQ(demand - 1u, engine->commands.FreeSlots());
 
     const VnResult refused = Vn_CommitVoiceStart(handle);
     EXPECT_NE(VN_BACKPRESSURE, refused)
         << "the commit must not hand a mid-install caller a retry contract";
     EXPECT_EQ(VN_NO_VOICE, refused);
-    EXPECT_EQ(3u, engine->commands.FreeSlots())
+    EXPECT_EQ(demand - 1u, engine->commands.FreeSlots())
         << "a refused commit published nothing";
 
     const VnSnapshot afterRefusal = Snapshot();
@@ -408,7 +512,7 @@ TEST(StagedVoiceStart, CommitRefusesDeterministicallyWithoutBackpressure) {
     // Once the queue has drained, the same install commits and is dressed on its
     // first audible block: the refusal cost it nothing.
     engine->nullBackend.Pump(2);
-    ASSERT_GE(engine->commands.FreeSlots(), 4u);
+    ASSERT_GE(engine->commands.FreeSlots(), demand);
     ASSERT_EQ(VN_OK, Vn_CommitVoiceStart(handle));
     Capture committed;
     PumpAndCapture(engine, 1, committed);

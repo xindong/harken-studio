@@ -209,16 +209,24 @@ internal static class Program
             Require(status.state == (uint)VnRemoteState.VN_REMOTE_STOPPED, "Remote must remain opt-in.");
             Expect(Emitter.CreateStateOnly(out Emitter stateOnly), VnResult.VN_OK, "Create state-only emitter");
             Expect(stateOnly.SetPosition(new VnVec3 { x = 1 }), VnResult.VN_CAPABILITY_UNAVAILABLE, "State-only has no pose");
+            Expect(stateOnly.SetDistanceScale(2), VnResult.VN_CAPABILITY_UNAVAILABLE, "State-only has no distance scale");
+            Expect(Listener.SetDistanceReference(stateOnly), VnResult.VN_CAPABILITY_UNAVAILABLE, "State-only cannot be a distance reference");
             Expect(stateOnly.Stop(0), VnResult.VN_OK, "State-only stop");
             Expect(stateOnly.Destroy(), VnResult.VN_OK, "Destroy state-only emitter");
             Expect(Emitter.Create(out Emitter emitter), VnResult.VN_OK, "Create emitter");
             Expect(emitter.SetPosition(new VnVec3 { x = 1 }), VnResult.VN_OK, "Emitter position");
+            Expect(emitter.SetDistanceScale(2), VnResult.VN_OK, "Emitter distance scale");
+            Expect(emitter.SetDistanceScale(float.NaN), VnResult.VN_INVALID_ARG, "Invalid emitter distance scale");
             Expect(Listener.Set(default, new VnVec3 { z = 1 }, new VnVec3 { y = 1 }), VnResult.VN_OK, "Listener");
+            Expect(Listener.SetDistanceReference(emitter), VnResult.VN_OK, "Listener distance reference");
+            Expect(Listener.SetDistanceReference(Emitter.None), VnResult.VN_OK, "Clear listener distance reference");
             Expect(Actions.Post("Play_U4_A", emitter, out ActionFiring firing), VnResult.VN_OK, "Action");
             Expect(firing.Query(out _), VnResult.VN_OK, "Query firing");
             Expect(firing.Stop(0), VnResult.VN_OK, "Stop firing");
             Expect(firing.Release(), VnResult.VN_IN_USE, "Release before audio retirement");
             Expect(emitter.Destroy(), VnResult.VN_OK, "Destroy emitter");
+            Expect(emitter.SetDistanceScale(1), VnResult.VN_STALE_HANDLE, "Destroyed emitter distance scale");
+            Expect(Listener.SetDistanceReference(emitter), VnResult.VN_STALE_HANDLE, "Destroyed listener distance reference");
             Expect(HarkenEngine.Update(), VnResult.VN_OK, "Pump callbacks");
             if (fromBytes) CheckProviderFailure(provider, session);
             Expect(PackBootstrap.Start(source, ref config, out PackBootstrapSession second),

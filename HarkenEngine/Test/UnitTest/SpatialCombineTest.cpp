@@ -102,7 +102,7 @@ TEST(SpatialCombine, WidthTakesTheWidestContribution) {
     EXPECT_FLOAT_EQ(1.0f, resolved); // clamped to the unit span
 }
 
-TEST(SpatialCombine, UnboundSpatializedVoicePansButNeverAttenuates) {
+TEST(SpatialCombine, UnboundSpatializedVoicePansFromFirstBlockWithoutImplicitAttenuation) {
     EngineSession session(MakeNullConfig(2, kBlockFrames, 48000));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -116,7 +116,6 @@ TEST(SpatialCombine, UnboundSpatializedVoicePansButNeverAttenuates) {
     VnPlayDesc play = MakePlayDesc3D(harkentest::ObjectId(1), 1000.0f, 0.0f, 0.0f);
     VnVoiceHandle handle = 0;
     ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
-    ASSERT_EQ(VN_OK, Vn_Update());
 
     EXPECT_FLOAT_EQ(1.0f, engine->params.ResolvedValue(harkentest::RenderHandle(
         engine, handle), harken::kTargetVoicePan));
@@ -124,9 +123,9 @@ TEST(SpatialCombine, UnboundSpatializedVoicePansButNeverAttenuates) {
         engine, handle), harken::kTargetVoiceVolume));
 
     Capture captured;
-    harkentest::PumpAndCapture(engine, 2, captured);
-    const float l = captured.left[kBlockFrames + kBlockFrames / 2];
-    const float r = captured.right[kBlockFrames + kBlockFrames / 2];
+    harkentest::PumpAndCapture(engine, 1, captured);
+    const float l = captured.left.front();
+    const float r = captured.right.front();
     ASSERT_GT(std::fabs(r), harkentest::kSilenceFloor)
         << "silence-guard: compared signal is silent";
     EXPECT_NEAR(0.0f, l, 1e-6f);   // pan applied

@@ -59,41 +59,31 @@ TEST_F(AbiExceptionFirewallSweep, DestroyBusDetachesCheckpoint) {
     EXPECT_EQ(before.busCount, after.busCount);
 }
 
-TEST_F(AbiExceptionFirewallSweep, AudibilityRowsCheckpoint) {
+TEST_F(AbiExceptionFirewallSweep, AudibilityScratchInitCheckpoints) {
     VnConfig config = harkentest::MakeNullConfig(4, 256, 48000);
-    LogicAllocLogCapture logCapture;
     config.maxParkedVoices = 4;
     config.audibilityParkEnabled = 1;
-    config.parkThresholdDb = -40.0f;
-    config.logCallback = &LogicAllocLogCapture::Callback;
-    config.logUserData = &logCapture;
-    harkentest::EngineSession session(config);
-    ASSERT_EQ(VN_OK, session.InitResult());
-    const std::vector<float> pcm = harkentest::MakeDC(48000, 0.25f);
-    const VnPCMDesc pcmDesc = harkentest::MonoDesc(pcm, 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(11), &pcmDesc));
-    const VnAttenuationDesc attenuation =
-        harkentest::MakeAttenuationDesc(1.0f, 100.0f);
-    ASSERT_EQ(VN_OK, Vn_RegisterAttenuation(harkentest::ObjectId(12), &attenuation));
-    const VnPlayDesc play =
-        harkentest::MakePlayDesc3D(harkentest::ObjectId(11), 100.0f, 0.0f, 0.0f);
-    VnVoiceHandle first = 0;
-    VnVoiceHandle second = 0;
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &first));
-    ASSERT_EQ(VN_OK, Vn_BindVoiceAttenuation(first, harkentest::ObjectId(12)));
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &second));
-    ASSERT_EQ(VN_OK, Vn_BindVoiceAttenuation(second, harkentest::ObjectId(12)));
-    ASSERT_EQ(VN_OK, Vn_SetListener({0.0f, 0.0f, 0.0f},
-                                    {0.0f, 0.0f, -1.0f},
-                                    {0.0f, 1.0f, 0.0f}));
-    session.Engine()->nullBackend.Pump(1);
-    ArmLogicAllocFaultForTests(1, LogicAllocSite::AudibilityRows);
-    VnResult result = VN_DEVICE_ERROR;
-    EXPECT_NO_THROW(result = Vn_Update());
-    EXPECT_EQ(VN_OK, result);
-    EXPECT_TRUE(logCapture.sawFailure);
-    DisarmLogicAllocFaultForTests();
-    EXPECT_EQ(VN_OK, Vn_Update());
+    struct FaultCase { LogicAllocSite site; std::size_t nth; };
+    const FaultCase cases[] = {
+        {LogicAllocSite::AudibilityRows, 1},
+        {LogicAllocSite::AudibilityParked, 1},
+        {LogicAllocSite::AudibilityParked, 2},
+    };
+    for (const auto& fault : cases) {
+        SCOPED_TRACE(static_cast<unsigned int>(fault.site));
+        SCOPED_TRACE(fault.nth);
+        ArmLogicAllocFaultForTests(fault.nth, fault.site);
+        VnResult result = VN_DEVICE_ERROR;
+        EXPECT_NO_THROW(result = Vn_Init(&config));
+        if (result == VN_OK) Vn_Term();
+        ASSERT_EQ(VN_INVALID_CONFIG, result);
+        EXPECT_EQ(nullptr, harken::detail::ActiveEngine());
+        EXPECT_EQ(VN_NOT_INITIALIZED, Vn_Update());
+        DisarmLogicAllocFaultForTests();
+        harkentest::EngineSession retry(config);
+        ASSERT_EQ(VN_OK, retry.InitResult());
+        EXPECT_EQ(VN_OK, Vn_Update());
+    }
 }
 
 TEST_F(AbiExceptionFirewallSweep, ParkCaptureStorageCheckpoint) {

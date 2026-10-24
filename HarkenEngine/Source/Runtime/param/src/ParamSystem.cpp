@@ -2062,13 +2062,15 @@ void ParamSystem::CaptureVoiceInstances(
 std::uint32_t ParamSystem::PrimeVoiceBindings(VnVoiceHandle handle,
                                               const EmitterTable* emitters,
                                               PrimedValue* out,
-                                              std::uint32_t capacity) {
-    return PrimeVoiceBindingsImpl(handle, emitters, out, capacity, nullptr);
+                                              std::uint32_t capacity,
+                                              std::uint32_t initialTargetMask) {
+    return PrimeVoiceBindingsImpl(handle, emitters, out, capacity, nullptr, false, initialTargetMask);
 }
 
 bool ParamSystem::TryPrimeVoiceBindings(VnVoiceHandle handle, const VariableReadCutReader& reader,
                                         PrimedValue* out, std::uint32_t capacity,
-                                        std::uint32_t* written, bool includeUnchanged) {
+                                        std::uint32_t* written, bool includeUnchanged,
+                                        std::uint32_t initialTargetMask) {
     if (written == nullptr) return false;
     *written = 0;
     if (StateFor(handle) == nullptr || out == nullptr || capacity < kBuiltinTargetCount) return false;
@@ -2081,14 +2083,16 @@ bool ParamSystem::TryPrimeVoiceBindings(VnVoiceHandle handle, const VariableRead
         if (status == VariableReadCutValueStatus::Failed) return false;
         m_primingInputs[i] = {input, status == VariableReadCutValueStatus::Value};
     }
-    *written = PrimeVoiceBindingsImpl(handle, nullptr, out, capacity, m_primingInputs.data(), includeUnchanged);
+    *written = PrimeVoiceBindingsImpl(handle, nullptr, out, capacity, m_primingInputs.data(),
+                                      includeUnchanged, initialTargetMask);
     return true;
 }
 
 std::uint32_t ParamSystem::PrimeVoiceBindingsImpl(VnVoiceHandle handle,
                                                   const EmitterTable* emitters,
                                                   PrimedValue* out, std::uint32_t capacity,
-                                                  const PrimingInput* capturedInputs, bool includeUnchanged) {
+                                                  const PrimingInput* capturedInputs, bool includeUnchanged,
+                                                  std::uint32_t initialTargetMask) {
     VoiceState* state = StateFor(handle);
     if (state == nullptr) {
         return 0;
@@ -2164,7 +2168,7 @@ std::uint32_t ParamSystem::PrimeVoiceBindingsImpl(VnVoiceHandle handle,
     }
     std::uint32_t written = 0;
     for (std::uint32_t t = 0; t < kBuiltinTargetCount; ++t) {
-        if (!fed[t]) {
+        if (!fed[t] && (initialTargetMask & (1u << t)) == 0) {
             continue;
         }
         TargetState& target = state->targets[t];

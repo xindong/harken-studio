@@ -1516,6 +1516,7 @@ namespace Harken
     public VnAttenuationCurve lowpassCurve;
     public VnAttenuationCurve widthCurve;
     public float proximityFrequency;
+    public VnAttenuationCurve highpassCurve;
     }
 
     [StructLayout(LayoutKind.Sequential)]

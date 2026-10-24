@@ -34,6 +34,22 @@ posts each Action, releases preparation and shuts down. Its version marker comes
 from the validated binary. `.scripts/studio_schema_release_audit.py` uses this
 entry point for development validation; shipping builds do not depend on it.
 
+For the attenuation descriptor boundary, run `--attenuation-only` with
+`HARKEN_NATIVE_DIR` pointing to the matching production library. It calls the
+generated Register/Replace bindings with the 608/612-byte prefixes and the new
+descriptor, including an enabled 1000 Hz high-pass point, a zero-Hz bypass point
+and invalid tail values. This proves native argument transfer and validation;
+it does not measure the resulting sound.
+
+Run the same newly built runner in a separate process with
+`--attenuation-old-native` and `HARKEN_NATIVE_DIR` pointing to the preserved
+pre-high-pass production library. The old library must initialize and accept
+the historical prefixes, then return `VN_INVALID_ARG` for both Register and
+Replace with the new descriptor, including its disabled high-pass curve.
+Neither mode skips a missing library or retries with a shortened descriptor.
+`HarkenAbi.CheckLayout()` alone is a managed-layout check, not a native capability
+probe; old gameplay calls can still work with the old library.
+
 The separate native foundation fixture remains available through `--pack-root`:
 
 ```powershell

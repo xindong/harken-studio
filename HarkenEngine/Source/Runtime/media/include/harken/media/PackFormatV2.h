@@ -162,6 +162,8 @@ inline constexpr std::uint64_t kPackV2AttenuationPayloadBytes =
     48 + 3 * kPackV2CurveWireBytes;                        // 600
 inline constexpr std::uint64_t kPackV3AttenuationPayloadBytes =
     kPackV2AttenuationPayloadBytes + 8;                    // 608
+inline constexpr std::uint64_t kPackV4AttenuationPayloadBytes =
+    kPackV3AttenuationPayloadBytes + kPackV2CurveWireBytes; // 792
 inline constexpr std::uint64_t kPackV2DiscreteVariablePayloadBytes = 16;
 inline constexpr std::uint64_t kPackV2MeterWiringPayloadBytes = 40;
 inline constexpr std::uint64_t kPackV2BindingCurveWireBytes = 180;
@@ -690,7 +692,7 @@ inline bool ParsePackV2Attenuation(const std::uint8_t* in, std::uint64_t size,
         return false;
     }
     *out = VnAttenuationDesc{};
-    out->structSize = sizeof(VnAttenuationDesc);
+    out->structSize = static_cast<std::uint32_t>(offsetof(VnAttenuationDesc, highpassCurve));
     out->rolloff = LoadLE32(in + 0);
     out->minDistance = LoadLEF32(in + 4);
     out->maxDistance = LoadLEF32(in + 8);
@@ -726,6 +728,22 @@ inline bool ParsePackV3Attenuation(const std::uint8_t* in, std::uint64_t size,
     }
     out->proximityFrequency =
         LoadLEF32(in + kPackV2AttenuationPayloadBytes);
+    return true;
+}
+
+inline bool ParsePackAttenuation(const std::uint8_t* in, std::uint64_t size,
+                                  std::uint32_t formatVersion,
+                                  VnAttenuationDesc* out) {
+    if (formatVersion == kPackFormatVersion3) {
+        return ParsePackV3Attenuation(in, size, out);
+    }
+    if (formatVersion != kPackFormatVersion4 || size != kPackV4AttenuationPayloadBytes ||
+        !ParsePackV3Attenuation(in, kPackV3AttenuationPayloadBytes, out) ||
+        !ParsePackV2AttenuationCurve(in + kPackV3AttenuationPayloadBytes,
+                                    &out->highpassCurve)) {
+        return false;
+    }
+    out->structSize = sizeof(VnAttenuationDesc);
     return true;
 }
 

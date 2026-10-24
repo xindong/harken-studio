@@ -1598,7 +1598,7 @@ static_assert(offsetof(VnAttenuationCurve, points) == 8,
 static_assert(offsetof(VnAttenuationCurve, handles) == 72,
               "wire table offset drift: VnAttenuationCurve.handles");
 
-static_assert(sizeof(VnAttenuationDesc) == 612,
+static_assert(sizeof(VnAttenuationDesc) == 796,
               "wire table size drift: VnAttenuationDesc");
 static_assert(offsetof(VnAttenuationDesc, structSize) == 0,
               "wire table offset drift: VnAttenuationDesc.structSize");
@@ -1636,6 +1636,8 @@ static_assert(offsetof(VnAttenuationDesc, widthCurve) == 424,
               "wire table offset drift: VnAttenuationDesc.widthCurve");
 static_assert(offsetof(VnAttenuationDesc, proximityFrequency) == 608,
               "wire table offset drift: VnAttenuationDesc.proximityFrequency");
+static_assert(offsetof(VnAttenuationDesc, highpassCurve) == 612,
+              "wire table offset drift: VnAttenuationDesc.highpassCurve");
 
 static_assert(sizeof(VnEffectDesc) == 24,
               "wire table size drift: VnEffectDesc");

@@ -229,7 +229,8 @@ bool ReadPortableDesc(ByteReader& r, VnAttenuationDesc* out) {
     const std::uint32_t vintage = r.U32();
     const std::size_t nativeBytes =
         vintage == 1 ? offsetof(VnAttenuationDesc, proximityFrequency)
-                     : vintage == 2 ? sizeof(VnAttenuationDesc) : 0;
+                     : vintage == 2 ? offsetof(VnAttenuationDesc, highpassCurve)
+                     : vintage == 3 ? sizeof(VnAttenuationDesc) : 0;
     if (nativeBytes == 0 || nativeBytes % 4 != 0) return false;
     std::memset(out, 0, sizeof(*out));
     out->structSize = static_cast<std::uint32_t>(nativeBytes);
@@ -2320,6 +2321,25 @@ int ExecuteCall(std::uint16_t callId, ByteReader& r, BlobStore& blobs,
                 : recorded;
         const VnVec3 forward = r.Vec3();
         result = Vn_SetEmitterOrientation(handle, forward);
+        break;
+    }
+    case harken::kTraceCallSetEmitterDistanceScale: {
+        const std::uint64_t recorded = r.U64();
+        const std::uint64_t handle =
+            r.formatVersion >= harken::kTraceFormatVersionV4
+                ? RemapEmitterHandle(emitterHandles, recorded)
+                : recorded;
+        const float scale = r.F32();
+        result = Vn_SetEmitterDistanceScale(handle, scale);
+        break;
+    }
+    case harken::kTraceCallSetListenerDistanceReference: {
+        const std::uint64_t recorded = r.U64();
+        const std::uint64_t handle =
+            r.formatVersion >= harken::kTraceFormatVersionV4
+                ? RemapEmitterHandle(emitterHandles, recorded)
+                : recorded;
+        result = Vn_SetListenerDistanceReference(handle);
         break;
     }
     case harken::kTraceCallStopEmitter: {

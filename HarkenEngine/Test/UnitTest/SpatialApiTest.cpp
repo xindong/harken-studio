@@ -8,7 +8,9 @@
 #include "harken/param/ParamTargets.h"
 
 #include <cmath>
+#include <cstring>
 #include <limits>
+#include <memory>
 
 namespace {
 
@@ -33,6 +35,75 @@ TEST(SpatialApi, EverySpatialCallRefusesWithoutInit) {
     EXPECT_EQ(VN_NOT_INITIALIZED, Vn_RegisterAttenuation(harkentest::ObjectId(1), &desc));
     EXPECT_EQ(VN_NOT_INITIALIZED, Vn_BindVoiceAttenuation(1, harkentest::ObjectId(1)));
     EXPECT_EQ(VN_NOT_INITIALIZED, Vn_SetVoiceOrientation(1, v));
+    EXPECT_EQ(VN_NOT_INITIALIZED, Vn_SetEmitterDistanceScale(1, 2.0f));
+    EXPECT_EQ(VN_NOT_INITIALIZED, Vn_SetListenerDistanceReference(0));
+}
+
+TEST(SpatialApi, DistanceReferenceValidatesFullHandleAndResetsAtInit) {
+    const auto profile = MakeAttenuationDesc(1.0f, 101.0f);
+    {
+        auto config = MakeNullConfig(1);
+        config.maxEmitters = 2;
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto* engine = session.Engine();
+        ASSERT_EQ(VN_OK, Vn_RegisterAttenuation(harkentest::ObjectId(9), &profile));
+        const auto distanceDb = [&] {
+            return engine->spatial.AttenuationVolumeDb(
+                engine->emitters, harkentest::ObjectId(9), 100, 0, 0, 1);
+        };
+        const float fallback = distanceDb();
+        VnEmitterHandle reference = 0, state = 0;
+        ASSERT_EQ(VN_OK, Vn_CreateEmitter(&reference));
+        VnEmitterCreateDescV1 create{sizeof(create), VN_EMITTER_CREATE_STATE_ONLY};
+        ASSERT_EQ(VN_OK, Vn_CreateEmitterEx(&create, &state));
+        ASSERT_EQ(VN_OK, Vn_SetEmitterPosition(reference, Vec3(99, 0, 0)));
+        ASSERT_EQ(VN_OK, Vn_SetListenerDistanceReference(reference));
+        const auto freeCommands = engine->commands.FreeSlots();
+        EXPECT_EQ(VN_OK, Vn_SetListenerDistanceReference(reference));
+        EXPECT_EQ(VN_STALE_HANDLE, Vn_SetListenerDistanceReference(UINT64_MAX));
+        EXPECT_EQ(VN_STALE_HANDLE, Vn_SetListenerDistanceReference(engine->emitters.DefaultState()));
+        EXPECT_EQ(VN_CAPABILITY_UNAVAILABLE, Vn_SetListenerDistanceReference(state));
+        EXPECT_EQ(VN_INVALID_ARG, Vn_SetEmitterPosition(reference, Vec3(kNan, 0, 0)));
+        EXPECT_FLOAT_EQ(0.0f, distanceDb());
+        EXPECT_EQ(freeCommands, engine->commands.FreeSlots());
+        ASSERT_EQ(VN_OK, Vn_DestroyEmitter(state));
+        EXPECT_FLOAT_EQ(0.0f, distanceDb());
+        // Bypass the public cleanup to prove even a same-handle probe checks
+        // native liveness, and the resolver defensively falls back.
+        ASSERT_TRUE(engine->emitters.Destroy(reference));
+        EXPECT_EQ(VN_STALE_HANDLE, Vn_SetListenerDistanceReference(reference));
+        EXPECT_FLOAT_EQ(fallback, distanceDb());
+        VnEmitterHandle replacement = 0;
+        ASSERT_EQ(VN_OK, Vn_CreateEmitter(&replacement));
+        EXPECT_EQ(static_cast<std::uint32_t>(reference), static_cast<std::uint32_t>(replacement));
+        EXPECT_NE(reference, replacement);
+        ASSERT_EQ(VN_OK, Vn_SetEmitterPosition(replacement, Vec3(99, 0, 0)));
+        EXPECT_FLOAT_EQ(fallback, distanceDb());
+        ASSERT_EQ(VN_OK, Vn_SetListenerDistanceReference(replacement));
+        EXPECT_EQ(VN_STALE_HANDLE, Vn_DestroyEmitter(reference));
+        EXPECT_FLOAT_EQ(0.0f, distanceDb());
+        ASSERT_EQ(VN_OK, Vn_SetListenerDistanceReference(0));
+        EXPECT_FLOAT_EQ(fallback, distanceDb());
+        ASSERT_EQ(VN_OK, Vn_SetListenerDistanceReference(replacement));
+    }
+    VnEmitterHandle selectedBeforeRestart = 0;
+    {
+        EngineSession next(MakeNullConfig(1));
+        ASSERT_EQ(VN_OK, next.InitResult());
+        ASSERT_EQ(VN_OK, Vn_RegisterAttenuation(harkentest::ObjectId(9), &profile));
+        ASSERT_EQ(VN_OK, Vn_CreateEmitter(&selectedBeforeRestart));
+        ASSERT_EQ(VN_OK, Vn_SetListenerDistanceReference(selectedBeforeRestart));
+    }
+    EngineSession next(MakeNullConfig(1));
+    ASSERT_EQ(VN_OK, next.InitResult());
+    ASSERT_EQ(VN_OK, Vn_RegisterAttenuation(harkentest::ObjectId(9), &profile));
+    VnEmitterHandle replacement = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&replacement));
+    EXPECT_EQ(selectedBeforeRestart, replacement);
+    ASSERT_EQ(VN_OK, Vn_SetEmitterPosition(replacement, Vec3(99, 0, 0)));
+    EXPECT_LT(next.Engine()->spatial.AttenuationVolumeDb(
+        next.Engine()->emitters, harkentest::ObjectId(9), 100, 0, 0, 1), -30.0f);
 }
 
 TEST(SpatialApi, ListenerRefusesNonFiniteAndDegenerateBases) {
@@ -151,6 +222,64 @@ TEST(SpatialApi, RegisterRefusesMalformedCones) {
     // fields are dormant, not validated.
     desc.coneEnabled = 0;
     EXPECT_EQ(VN_OK, Vn_RegisterAttenuation(harkentest::ObjectId(1), &desc));
+}
+
+TEST(SpatialApi, AttenuationVintagesReadOnlyTheirCompleteFields) {
+    EngineSession session(MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    for (const auto size : {608u, 612u, 796u}) {
+        auto desc = MakeAttenuationDesc(1, 20);
+        desc.structSize = size;
+        desc.proximityFrequency = 400;
+        desc.highpassCurve.enabled = 1;
+        desc.highpassCurve.pointCount = 1;
+        desc.highpassCurve.points[0] = {0, 1000};
+        auto bytes = std::make_unique<std::uint32_t[]>(size / sizeof(std::uint32_t));
+        std::memcpy(bytes.get(), &desc, size);
+        const auto* prefix = reinterpret_cast<const VnAttenuationDesc*>(bytes.get());
+        const auto id = harkentest::ObjectId(size);
+        ASSERT_EQ(VN_OK, Vn_RegisterAttenuation(id, prefix)) << size;
+        ASSERT_EQ(VN_OK, Vn_ReplaceAttenuation(id, prefix)) << size;
+        const auto* profile = session.Engine()->spatial.FindProfile(id);
+        ASSERT_NE(nullptr, profile);
+        EXPECT_FLOAT_EQ(size == 608 ? 250 : 400, profile->proximityFrequency);
+        EXPECT_EQ(size == 796, profile->highpassOverride);
+    }
+    for (const auto size : {607u, 609u, 611u, 613u, 795u, 797u}) {
+        auto desc = MakeAttenuationDesc(1, 20);
+        desc.structSize = size;
+        EXPECT_EQ(VN_INVALID_ARG, Vn_RegisterAttenuation(harkentest::ObjectId(1), &desc));
+        EXPECT_EQ(VN_INVALID_ARG, Vn_ReplaceAttenuation(harkentest::ObjectId(612), &desc));
+    }
+}
+
+TEST(SpatialApi, HighpassOverrideValidatesNonnegativeFiniteHz) {
+    EngineSession session(MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto valid = MakeAttenuationDesc(1, 20);
+    valid.highpassCurve.enabled = 1;
+    valid.highpassCurve.pointCount = 2;
+    valid.highpassCurve.points[0] = {1, 0};
+    valid.highpassCurve.points[1] = {20, 1000};
+    valid.highpassCurve.handles[0] = harkentest::EndpointHandles(
+        valid.highpassCurve.points[0], valid.highpassCurve.points[1]);
+    ASSERT_EQ(VN_OK, Vn_RegisterAttenuation(harkentest::ObjectId(1), &valid));
+    for (std::uint32_t fault = 0; fault < 7; ++fault) {
+        auto desc = valid;
+        switch (fault) {
+        case 0: desc.highpassCurve.enabled = 2; break;
+        case 1: desc.highpassCurve.pointCount = 0; break;
+        case 2: desc.highpassCurve.pointCount = 9; break;
+        case 3: desc.highpassCurve.points[0].y = -1; break;
+        case 4: desc.highpassCurve.points[1].y = kInf; break;
+        case 5: desc.highpassCurve.handles[0].h1y = -1; break;
+        case 6: desc.highpassCurve.handles[6].h1y = -0.0f; break;
+        }
+        EXPECT_EQ(VN_INVALID_ARG, Vn_ReplaceAttenuation(harkentest::ObjectId(1), &desc)) << fault;
+        const auto* profile = session.Engine()->spatial.FindProfile(harkentest::ObjectId(1));
+        ASSERT_NE(nullptr, profile);
+        EXPECT_TRUE(profile->highpassOverride);
+    }
 }
 
 TEST(SpatialApi, RegisterRefusesMalformedOverrideCurves) {
@@ -433,6 +562,12 @@ TEST(SpatialApi, DistanceScaleMatchesEffectiveDistanceAcrossDomainTargets) {
     overrideDesc.widthCurve.handles[0] = harkentest::EndpointHandles(
         overrideDesc.widthCurve.points[0],
         overrideDesc.widthCurve.points[1]);
+    overrideDesc.highpassCurve.enabled = 1;
+    overrideDesc.highpassCurve.pointCount = 2;
+    overrideDesc.highpassCurve.points[0] = {1, 0};
+    overrideDesc.highpassCurve.points[1] = {20, 1000};
+    overrideDesc.highpassCurve.handles[0] = harkentest::EndpointHandles(
+        overrideDesc.highpassCurve.points[0], overrideDesc.highpassCurve.points[1]);
     ASSERT_EQ(VN_OK, Vn_RegisterAttenuation(harkentest::ObjectId(11), &overrideDesc));
 
     VnVoiceHandle builtScaled = 0;
@@ -475,6 +610,7 @@ TEST(SpatialApi, DistanceScaleMatchesEffectiveDistanceAcrossDomainTargets) {
     for (const DistanceScaleCase& testCase : cases) {
         for (const auto target : {harken::kTargetVoiceVolume,
                                   harken::kTargetVoiceLowpassCutoff,
+                                  harken::kTargetVoiceHighpassCutoff,
                                   harken::kTargetVoiceWidth,
                                   harken::kTargetVoiceLowShelfGainDb}) {
             EXPECT_NEAR(
@@ -506,23 +642,186 @@ TEST(SpatialApi, DistanceScaleLeavesPanAndConeAnglePhysical) {
     desc.coneOuterGainDb = -12.0f;
     desc.coneOuterLowpassHz = 20000.0f;
     ASSERT_EQ(VN_OK, Vn_RegisterAttenuation(harkentest::ObjectId(12), &desc));
+    VnEmitterHandle emitter = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+    ASSERT_EQ(VN_OK, Vn_SetEmitterPosition(emitter, Vec3(8.0f, 0.0f, -6.0f)));
+    ASSERT_EQ(VN_OK, Vn_SetEmitterOrientation(emitter, Vec3(1.0f, 0.0f, 0.0f)));
     VnPlayDesc play = MakePlayDesc3D(harkentest::ObjectId(1), 8.0f, 0.0f, -6.0f);
+    play.emitterHandle = emitter;
     VnVoiceHandle handle = 0;
     ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
     ASSERT_EQ(VN_OK, Vn_BindVoiceAttenuation(handle, harkentest::ObjectId(12)));
-    ASSERT_EQ(VN_OK, Vn_SetVoiceOrientation(handle, Vec3(1.0f, 0.0f, 0.0f)));
     ASSERT_EQ(VN_OK, Vn_Update());
     const VnVoiceHandle render = harkentest::RenderHandle(engine, handle);
     const float pan = engine->params.ResolvedValue(render, harken::kTargetVoicePan);
     const float volume =
         engine->params.ResolvedValue(render, harken::kTargetVoiceVolume);
     ASSERT_EQ(VN_OK, Vn_SetVoiceDistanceScale(handle, 4.0f));
+    ASSERT_EQ(VN_OK, Vn_SetEmitterDistanceScale(emitter, 200.0f));
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_FLOAT_EQ(pan, engine->params.ResolvedValue(render,
                                                       harken::kTargetVoicePan));
     EXPECT_FLOAT_EQ(volume,
                     engine->params.ResolvedValue(render,
                                                  harken::kTargetVoiceVolume));
+}
+
+TEST(SpatialApi, EmitterScaleCombinesWithVoiceScaleAcrossWideFiniteGeometry) {
+    EngineSession session(MakeNullConfig(2, kBlockFrames, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    const auto samples = harkentest::MakeDC(48000, 0.25f);
+    const auto pcm = MonoDesc(samples, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &pcm));
+    auto profile = MakeAttenuationDesc(1.0f, 20.0f);
+    profile.airAbsorptionNearHz = 18000.0f;
+    profile.airAbsorptionFarHz = 2000.0f;
+    profile.proximityRadius = 8.0f;
+    profile.proximityMaxBoostDb = 6.0f;
+    profile.widthCurve.enabled = 1;
+    profile.widthCurve.pointCount = 2;
+    profile.widthCurve.points[0] = {1.0f, 0.9f};
+    profile.widthCurve.points[1] = {20.0f, 0.1f};
+    profile.widthCurve.handles[0] = harkentest::EndpointHandles(
+        profile.widthCurve.points[0], profile.widthCurve.points[1]);
+    profile.highpassCurve.enabled = 1;
+    profile.highpassCurve.pointCount = 2;
+    profile.highpassCurve.points[0] = {1, 0};
+    profile.highpassCurve.points[1] = {20, 1000};
+    profile.highpassCurve.handles[0] = harkentest::EndpointHandles(
+        profile.highpassCurve.points[0], profile.highpassCurve.points[1]);
+    ASSERT_EQ(VN_OK, Vn_RegisterAttenuation(harkentest::ObjectId(9), &profile));
+    VnEmitterHandle emitter = 0, distanceReference = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&distanceReference));
+    auto play = MakePlayDesc3D(harkentest::ObjectId(1), 4.0f, 0.0f, 0.0f);
+    VnVoiceHandle reference = 0, scaled = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &reference));
+    play.emitterHandle = emitter;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &scaled));
+    ASSERT_EQ(VN_OK, Vn_BindVoiceAttenuation(reference, harkentest::ObjectId(9)));
+    ASSERT_EQ(VN_OK, Vn_BindVoiceAttenuation(scaled, harkentest::ObjectId(9)));
+    const auto referenceRender = harkentest::RenderHandle(engine, reference);
+    const auto scaledRender = harkentest::RenderHandle(engine, scaled);
+    const auto targets = {harken::kTargetVoiceVolume, harken::kTargetVoiceLowpassCutoff,
+                              harken::kTargetVoiceWidth, harken::kTargetVoiceLowShelfGainDb};
+    const float max = std::numeric_limits<float>::max();
+    const float tiny = std::numeric_limits<float>::denorm_min();
+    struct Case { float sourceX, listenerX, emitterScale, voiceScale, effectiveDistance; };
+    const Case cases[] = {
+        {16.0f, 0.0f, 2.0f, 2.0f, 4.0f},
+        {max, -max, max, 0.5f, 4.0f},
+        {max, -max, max, 100.0f, 0.02f},
+        {tiny * 4.0f, 0.0f, tiny, 1.0f, 4.0f},
+        {8.0f, 0.0f, tiny, 1.0f, max},
+    };
+    for (const auto& test : cases) {
+        SCOPED_TRACE(test.emitterScale);
+        ASSERT_EQ(VN_OK, Vn_SetListenerDistanceReference(0));
+        ASSERT_EQ(VN_OK, Vn_SetListener(Vec3(0, 0, 0), Vec3(0, 0, -1), Vec3(0, 1, 0)));
+        ASSERT_EQ(VN_OK, Vn_SetVoicePosition(reference, Vec3(test.effectiveDistance, 0, 0)));
+        ASSERT_EQ(VN_OK, Vn_Update());
+        std::vector<float> expected;
+        for (const auto target : targets)
+            expected.push_back(engine->params.ResolvedValue(referenceRender, target));
+        for (const bool independentReference : {false, true}) {
+            SCOPED_TRACE(independentReference);
+            ASSERT_EQ(VN_OK, Vn_SetEmitterPosition(emitter, Vec3(test.sourceX, 0, 0)));
+            ASSERT_EQ(VN_OK, Vn_SetEmitterDistanceScale(emitter, test.emitterScale));
+            ASSERT_EQ(VN_OK, Vn_SetVoiceDistanceScale(scaled, test.voiceScale));
+            ASSERT_EQ(VN_OK, Vn_SetEmitterPosition(distanceReference, Vec3(test.listenerX, 0, 0)));
+            ASSERT_EQ(VN_OK, Vn_SetListenerDistanceReference(independentReference ? distanceReference : 0));
+            ASSERT_EQ(VN_OK, Vn_SetListener(Vec3(independentReference ? 0 : test.listenerX, 0, 0),
+                                            Vec3(0, 0, -1), Vec3(0, 1, 0)));
+            ASSERT_EQ(VN_OK, Vn_Update());
+            std::size_t index = 0;
+            for (const auto target : targets) {
+                const auto actual = engine->params.ResolvedValue(scaledRender, target);
+                EXPECT_TRUE(std::isfinite(actual));
+                EXPECT_NEAR(expected[index++], actual, 1e-4f) << target;
+            }
+            EXPECT_FLOAT_EQ(1.0f, engine->params.ResolvedValue(scaledRender, harken::kTargetVoicePan));
+            EXPECT_NEAR(expected.front(), engine->spatial.AttenuationVolumeDb(
+                engine->emitters, harkentest::ObjectId(9), test.sourceX, 0, 0, test.voiceScale, 0,
+                test.emitterScale), 1e-4f);
+        }
+    }
+}
+
+TEST(SpatialApi, DistanceReferenceControlsDistanceTargetsButListenerKeepsPanAndCone) {
+    EngineSession session(MakeNullConfig(1));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    const auto samples = harkentest::MakeDC(48000, 0.25f);
+    const auto pcm = MonoDesc(samples, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &pcm));
+    auto profile = MakeAttenuationDesc(1, 20);
+    profile.airAbsorptionNearHz = 18000;
+    profile.airAbsorptionFarHz = 2000;
+    profile.proximityRadius = 8;
+    profile.proximityMaxBoostDb = 6;
+    profile.widthCurve.enabled = 1;
+    profile.widthCurve.pointCount = 2;
+    profile.widthCurve.points[0] = {1, 0.9f};
+    profile.widthCurve.points[1] = {20, 0.1f};
+    profile.widthCurve.handles[0] = harkentest::EndpointHandles(
+        profile.widthCurve.points[0], profile.widthCurve.points[1]);
+    profile.highpassCurve.enabled = 1;
+    profile.highpassCurve.pointCount = 2;
+    profile.highpassCurve.points[0] = {1, 0};
+    profile.highpassCurve.points[1] = {20, 1000};
+    profile.highpassCurve.handles[0] = harkentest::EndpointHandles(
+        profile.highpassCurve.points[0], profile.highpassCurve.points[1]);
+    profile.coneEnabled = 1;
+    profile.coneInnerDeg = 30;
+    profile.coneOuterDeg = 60;
+    profile.coneOuterGainDb = -12;
+    profile.coneOuterLowpassHz = 20000;
+    ASSERT_EQ(VN_OK, Vn_RegisterAttenuation(harkentest::ObjectId(9), &profile));
+    auto play = MakePlayDesc3D(harkentest::ObjectId(1), 0, 0, -1);
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    ASSERT_EQ(VN_OK, Vn_SetVoiceOrientation(voice, Vec3(0, 0, 1)));
+    ASSERT_EQ(VN_OK, Vn_BindVoiceAttenuation(voice, harkentest::ObjectId(9)));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    const auto render = harkentest::RenderHandle(engine, voice);
+    const auto targets = {harken::kTargetVoiceVolume, harken::kTargetVoiceLowpassCutoff,
+                          harken::kTargetVoiceWidth, harken::kTargetVoiceLowShelfGainDb,
+                          harken::kTargetVoiceHighpassCutoff};
+    std::vector<float> nearTargets;
+    for (const auto target : targets) nearTargets.push_back(engine->params.ResolvedValue(render, target));
+    ASSERT_EQ(VN_OK, Vn_SetVoicePosition(voice, Vec3(0, 0, -10)));
+    VnEmitterHandle reference = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&reference));
+    ASSERT_EQ(VN_OK, Vn_SetEmitterPosition(reference, Vec3(0, 0, -9)));
+    ASSERT_EQ(VN_OK, Vn_SetEmitterDistanceScale(reference, 200));
+    ASSERT_EQ(VN_OK, Vn_SetEmitterOrientation(reference, Vec3(0, 1, 0)));
+    ASSERT_EQ(VN_OK, Vn_SetListenerDistanceReference(reference));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    std::size_t index = 0;
+    for (const auto target : targets)
+        EXPECT_NEAR(nearTargets[index++], engine->params.ResolvedValue(render, target), 1e-4f) << target;
+    EXPECT_FLOAT_EQ(0.0f, engine->params.ResolvedValue(render, harken::kTargetVoicePan));
+    ASSERT_EQ(VN_OK, Vn_SetListener(Vec3(0, 0, -20), Vec3(0, 0, -1), Vec3(0, 1, 0)));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_NEAR(nearTargets.front() - 12, engine->params.ResolvedValue(render, harken::kTargetVoiceVolume), 1e-4f);
+    EXPECT_NEAR(nearTargets.front(), engine->spatial.AttenuationVolumeDb(
+        engine->emitters, harkentest::ObjectId(9), 0, 0, -10, 1), 1e-4f);
+    index = 1;
+    for (const auto target : {harken::kTargetVoiceLowpassCutoff, harken::kTargetVoiceWidth,
+                              harken::kTargetVoiceLowShelfGainDb, harken::kTargetVoiceHighpassCutoff})
+        EXPECT_NEAR(nearTargets[index++], engine->params.ResolvedValue(render, target), 1e-4f) << target;
+    ASSERT_EQ(VN_OK, Vn_SetListener(Vec3(10, 0, -10), Vec3(0, 0, -1), Vec3(0, 1, 0)));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_FLOAT_EQ(-1.0f, engine->params.ResolvedValue(render, harken::kTargetVoicePan));
+    ASSERT_EQ(VN_OK, Vn_SetEmitterPosition(reference, Vec3(0, 0, 0)));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_LT(engine->params.ResolvedValue(render, harken::kTargetVoiceVolume), nearTargets.front() - 12);
+    EXPECT_LT(engine->params.ResolvedValue(render, harken::kTargetVoiceLowpassCutoff), nearTargets[1]);
+    EXPECT_LT(engine->params.ResolvedValue(render, harken::kTargetVoiceWidth), nearTargets[2]);
+    EXPECT_LT(engine->params.ResolvedValue(render, harken::kTargetVoiceLowShelfGainDb), nearTargets[3]);
+    EXPECT_GT(engine->params.ResolvedValue(render, harken::kTargetVoiceHighpassCutoff), nearTargets[4]);
+    EXPECT_FLOAT_EQ(-1.0f, engine->params.ResolvedValue(render, harken::kTargetVoicePan));
 }
 
 } // namespace

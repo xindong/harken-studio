@@ -975,6 +975,26 @@ void ExpectMixedResidentStateUnchanged(
 
 // --- load: resident happy path ---
 
+TEST(PackLogicLoad, ContainerVersionsThreeAndFourReachLogicLoader) {
+    EngineSession session(PackLogicConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    const auto sound = harkentest::ObjectId(71);
+    const auto path = TempPath("pll_container_versions.pack");
+    for (const auto version : {3u, 4u}) {
+        V2Builder builder(harken::kPackKindContent);
+        builder.AddMedia(sound, harkentest::MakeDC(16, 0.25f));
+        auto bytes = builder.Build();
+        harken::StoreLE32(bytes.data() + 4, version);
+        WriteFileBytes(path, bytes);
+        VnPackHandle pack = 0;
+        ASSERT_EQ(VN_OK, LoadPack(path, &pack)) << version;
+        EXPECT_TRUE(session.Engine()->registry.Lookup(sound).Valid());
+        EXPECT_NE(nullptr, session.Engine()->logicPacks.RecordFor(pack));
+        ASSERT_EQ(VN_OK, Vn_UnloadPack(pack));
+        EXPECT_FALSE(session.Engine()->registry.Lookup(sound).Valid());
+    }
+}
+
 TEST(PackLogicLoad, LegacyContainerRowsRefuseBeforeLoadOrReplaceMutation) {
     const std::string wavPath = TempPath("pll_legacy_container.wav");
     WriteWavF32(wavPath, harkentest::MakeDC(kBlock * 4, 0.25f), 1, kRate);

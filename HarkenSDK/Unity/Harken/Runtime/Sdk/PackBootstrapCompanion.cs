@@ -9,6 +9,9 @@ namespace Harken
     public sealed partial class PackBootstrapSession
     {
         private PackSource companionSource;
+        private SharedPack[] companionOwners = Array.Empty<SharedPack>();
+        private VnCanonicalPackSetMemberV2[] companionKeepMembers = Array.Empty<VnCanonicalPackSetMemberV2>();
+        private VnCanonicalPackSetMemberResultV1[] companionKeepResults = Array.Empty<VnCanonicalPackSetMemberResultV1>();
         private Dictionary<string, SharedPack> companionNames = new Dictionary<string, SharedPack>(StringComparer.Ordinal);
         private Dictionary<(ulong Id, ulong Handle), RawCompanionLease> rawCompanionLeases =
             new Dictionary<(ulong, ulong), RawCompanionLease>();
@@ -170,7 +173,7 @@ namespace Harken
                         if (current != VnResult.VN_OK) return current;
                     }
                     cancellation.ThrowIfCancellationRequested();
-                    VnResult result = CommitCompanions(nextPacks, nextNames, changes, null);
+                    VnResult result = CommitCompanions(nextPacks, nextNames, changes);
                     if (result != VnResult.VN_OK) return result;
                 }
                 // Everything which can allocate or reject preceded native publication.
@@ -182,11 +185,11 @@ namespace Harken
         }
 
         private VnResult CommitCompanions(Dictionary<ulong, SharedPack> nextPacks,
-            Dictionary<string, SharedPack> nextNames, Dictionary<SharedPack, CompanionInput> changes, SharedPack removed)
+            Dictionary<string, SharedPack> nextNames, Dictionary<SharedPack, CompanionInput> changes)
         {
             var ids = new List<ulong>();
             foreach (var pair in nextPacks)
-                if (!ReferenceEquals(pair.Value, removed) && (pair.Value.Handle.IsValid || changes.ContainsKey(pair.Value)))
+                if (pair.Value.Handle.IsValid || changes.ContainsKey(pair.Value))
                     ids.Add(pair.Key);
             ids.Sort();
             var members = new CompanionMember[ids.Count + 1];
@@ -206,6 +209,14 @@ namespace Harken
                 }
                 else members[i + 1] = new CompanionMember(ids[i], VnConstants.VN_CANONICAL_PACK_SET_MEMBER_CONTENT, expected);
             }
+            // Reserve release buffers before publication so firing retirement never allocates.
+            if (companionKeepMembers.Length < members.Length)
+            {
+                var keepMembers = new VnCanonicalPackSetMemberV2[members.Length];
+                var keepResults = new VnCanonicalPackSetMemberResultV1[members.Length];
+                companionKeepMembers = keepMembers;
+                companionKeepResults = keepResults;
+            }
             mutationPhase = MutationPhase.ApplyingNative;
             VnResult result = CompanionNative.Activate(members, InitPack, SetRevision, out var report, out var rows);
             if (result != VnResult.VN_OK) return result;
@@ -220,7 +231,7 @@ namespace Harken
                     owners[i].Names = input.Names;
                 }
             }
-            if (removed != null) removed.Handle = default;
+            companionOwners = owners;
             packs = nextPacks;
             companionNames = nextNames;
             InitPack = new Pack(report.initHandle);
@@ -228,7 +239,7 @@ namespace Harken
             return VnResult.VN_OK;
         }
 
-        internal VnResult ReleaseCompanion(SharedPack owner)
+        internal unsafe VnResult ReleaseCompanion(SharedPack owner)
         {
             VnResult allowed = CompanionMutationAllowed();
             if (allowed != VnResult.VN_OK) return allowed;
@@ -238,12 +249,44 @@ namespace Harken
             if (owner.Requests > 1) { --owner.Requests; return VnResult.VN_OK; }
             try
             {
-                VnResult result = CommitCompanions(packs, companionNames, new Dictionary<SharedPack, CompanionInput>(), owner);
-                if (result == VnResult.VN_OK) --owner.Requests;
-                return result;
+                int count = 0;
+                SetKeepMember(count++, Inspection.PackStableId, VnConstants.VN_CANONICAL_PACK_SET_MEMBER_INIT, InitPack);
+                foreach (SharedPack retained in companionOwners)
+                    if (!ReferenceEquals(retained, owner) && retained.Handle.IsValid)
+                        SetKeepMember(count++, retained.StableId, VnConstants.VN_CANONICAL_PACK_SET_MEMBER_CONTENT, retained.Handle);
+                mutationPhase = MutationPhase.ApplyingNative;
+                VnResult result = CompanionNative.ActivatePrepared(companionKeepMembers, companionKeepResults,
+                    count, InitPack, SetRevision, out var report);
+                if (result != VnResult.VN_OK) return result;
+                for (int i = 1; i < count; ++i)
+                {
+                    ref VnCanonicalPackSetMemberResultV1 row = ref companionKeepResults[i];
+                    packs[row.packStableId].Handle = new Pack(row.handle);
+                }
+                owner.Handle = default;
+                --owner.Requests;
+                InitPack = new Pack(report.initHandle);
+                SetRevision = report.resultSetRevision;
+                return VnResult.VN_OK;
             }
             catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }
             finally { mutationPhase = MutationPhase.Idle; }
+        }
+
+        private unsafe void SetKeepMember(int index, ulong id, uint kind, Pack expected)
+        {
+            companionKeepMembers[index] = new VnCanonicalPackSetMemberV2
+            {
+                structSize = (uint)sizeof(VnCanonicalPackSetMemberV2),
+                operation = VnConstants.VN_PACK_MEMBER_KEEP,
+                source = new VnCanonicalPackSetMemberV1
+                {
+                    structSize = (uint)sizeof(VnCanonicalPackSetMemberV1),
+                    packStableId = id, packKind = kind, expectedHandle = expected.Handle
+                }
+            };
+            companionKeepResults[index] = new VnCanonicalPackSetMemberResultV1
+                { structSize = (uint)sizeof(VnCanonicalPackSetMemberResultV1) };
         }
 
         private VnResult AcquireCompanionPack(ulong id, out Pack pack)

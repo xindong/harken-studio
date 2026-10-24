@@ -70,6 +70,10 @@ namespace Harken
         public VnResult SetOrientation(VnVec3 forward)
             => HarkenNative.Vn_SetEmitterOrientation(Handle, forward);
 
+        /// <summary>Sets a positive finite range multiplier; new emitters start at 1.</summary>
+        public VnResult SetDistanceScale(float scale)
+            => HarkenNative.Vn_SetEmitterDistanceScale(Handle, scale);
+
         public VnResult Stop(uint fadeMs) => HarkenNative.Vn_StopEmitter(Handle, fadeMs);
 
         [Obsolete("Use Values.SetValue(variable, value, emitter).")]

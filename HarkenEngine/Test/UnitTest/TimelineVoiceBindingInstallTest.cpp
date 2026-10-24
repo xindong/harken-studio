@@ -979,6 +979,116 @@ TEST(TimelineVoiceInstall, DirectWorldPostActionAttachesVoiceBinding) {
     EXPECT_NE(0u, BindingInstanceCount(engine, render));
 }
 
+TEST(TimelineVoiceInstall, SpatialActionFirstBlockCombinesInitialContributions) {
+    struct StartCase { std::uint32_t precedingAudioBlocks; std::uint32_t delayMode; };
+    for (const auto test : {StartCase{0, 0}, StartCase{2, 0}, StartCase{0, 1}, StartCase{0, 2}}) {
+        SCOPED_TRACE(test.precedingAudioBlocks);
+        SCOPED_TRACE(test.delayMode);
+        EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
+        const VnAttenuationId attenuation = harkentest::ObjectId(73);
+        const auto profile = harkentest::MakeAttenuationDesc(1.0f, 101.0f, VN_ROLLOFF_LINEAR);
+        ASSERT_EQ(VN_OK, Vn_RegisterAttenuation(attenuation, &profile));
+        DirectWorldSoundPlayAction image(engine.registry.Lookup(kSound).contentRevision);
+        image.property.payload.presentMask |= UINT64_C(1);
+        image.property.payload.values[0].bits = std::bit_cast<std::uint32_t>(-6.0f);
+        image.property.payload.values[10].bits = 1;
+        image.property.payload.values[13].objectId = attenuation;
+        image.property.programSemanticFingerprint =
+            harken::ComputePlayablePropertyFingerprintV1(image.property);
+        image.step.target.expectedProgramSemanticFingerprint =
+            image.property.programSemanticFingerprint;
+        if (test.delayMode == 1) image.step.delay.numerator = 4000000;
+        const auto deferredFrame = engine.timelinePool.WindowEndFrame();
+        if (test.delayMode == 2) image.step.delay.numerator =
+            static_cast<std::int64_t>((deferredFrame * UINT64_C(1000000000) + kRate - 1) / kRate);
+        if (test.delayMode != 0) {
+            image.action.directFeatureMask = 1;
+            image.action.transitiveFeatureMask = 1;
+        }
+        image.action.programSemanticFingerprint =
+            harken::ComputeActionProgramFingerprintV1(image.action);
+        image.world.identity.runtimeSemanticFingerprint =
+            harken::ComputeCurrentWorldFingerprintV4(image.world);
+        ASSERT_EQ(harken::WorldInstallStatus::Ok,
+            harken::InstallContainerWorldV1(engine, image.world).status);
+        ASSERT_NO_FATAL_FAILURE(AttachVoiceVolume(-6.0f));
+        VnEmitterHandle emitter = 0;
+        ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+        ASSERT_EQ(VN_OK, Vn_SetEmitterPosition(emitter,
+            {test.delayMode == 2 ? -51.0f : 51.0f, 0.0f, 0.0f}));
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine.nullBackend.Pump(test.precedingAudioBlocks);
+        VnPostActionDesc desc{};
+        desc.structSize = sizeof(desc);
+        desc.actionId = kAction;
+        desc.emitter = emitter;
+        VnActionFiringHandle firing = 0;
+        ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+        ASSERT_NE(0u, firing);
+        if (test.delayMode == 2) {
+            ASSERT_EQ(1u, engine.actionDeferredRecords.LiveCount());
+            ASSERT_EQ(VN_OK, Vn_SetEmitterPosition(emitter, {51.0f, 0.0f, 0.0f}));
+        }
+        bool checkedFarInstall = false;
+        if (test.delayMode == 2) {
+            engine.immediateEntryAfterPublishContextForTest = &checkedFarInstall;
+            engine.immediateEntryAfterPublishHookForTest = [](harken::Engine& current, void* context) {
+                auto& checked = *static_cast<bool*>(context);
+                if (checked) return;
+                for (const auto& row : current.playableServices) {
+                    harken::Spatializer::SpatialVoiceState spatial{};
+                    if (row.renderHandle == 0 ||
+                        !current.spatial.CaptureVoice(row.renderHandle, &spatial) || !spatial.spatialized) continue;
+                    checked = true;
+                    EXPECT_FLOAT_EQ(51.0f, spatial.posX);
+                    EXPECT_FLOAT_EQ(1.0f, current.params.ResolvedValue(row.renderHandle, harken::kTargetVoicePan));
+                    EXPECT_NEAR(-12.0f + 20.0f * std::log10(0.5f),
+                        current.params.ResolvedValue(row.renderHandle, harken::kTargetVoiceVolume), 1e-5f);
+                    break;
+                }
+            };
+        }
+        harkentest::Capture captured;
+        const auto blocks = test.delayMode == 2 ? deferredFrame / kBlock + 16u : 16u;
+        for (std::uint32_t block = 0; block < blocks; ++block) {
+            harkentest::PumpAndCapture(&engine, 1, captured);
+            if (test.delayMode == 2) {
+                ASSERT_EQ(VN_OK, Vn_Update());
+            } else {
+                // ACK/onset/Variable publication is serviced without spatial evaluation.
+                engine.timelineService->Service();
+            }
+        }
+        if (test.delayMode == 2) EXPECT_TRUE(checkedFarInstall);
+        engine.immediateEntryAfterPublishHookForTest = nullptr;
+        engine.immediateEntryAfterPublishContextForTest = nullptr;
+        const auto audible = std::find_if(captured.right.begin(), captured.right.end(),
+            [](float value) { return std::abs(value) > harkentest::kSilenceFloor; });
+        VnActionStepResult step{};
+        step.structSize = sizeof(step);
+        ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &step));
+        ASSERT_NE(captured.right.end(), audible)
+            << "step=" << step.state << " result=" << step.result
+            << " deferred=" << engine.actionDeferredRecords.LiveCount()
+            << " instances=" << engine.playableInstances.LiveCount()
+            << " recreate=" << engine.runtimeRecreateRequired
+            << " leftPeak=" << harkentest::Peak(captured.left)
+            << " rendered=" << engine.mixer.BlocksRendered()
+            << " window=" << engine.timelinePool.WindowEndFrame()
+            << " cutoff=" << engine.timelinePool.PublishCutoffFrame();
+        const auto first = static_cast<std::uint32_t>(audible - captured.right.begin());
+        const float expectedRight = 0.5f * std::pow(10.0f, -12.0f / 20.0f) *
+            0.5f * std::sqrt(2.0f);
+        for (std::uint32_t frame = first; frame < (first / kBlock + 1) * kBlock; ++frame) {
+            ASSERT_NEAR(0.0f, captured.left[frame], 1e-5f) << frame;
+            ASSERT_NEAR(expectedRight, captured.right[frame], 1e-5f) << frame;
+        }
+    }
+}
+
 TEST(TimelineVoiceInstall, DirectWorldPostActionWithoutAttachmentHasNoInstance) {
     EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());

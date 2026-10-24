@@ -113,25 +113,33 @@ namespace Harken.Unity
             HarkenSpatialSource source, CancellationToken cancellation = default)
         {
             cancellation.ThrowIfCancellationRequested();
+            if (publishingSpatial) return new HarkenActionPlayResult(VnResult.VN_IN_USE);
             PackBootstrapSession owner = session;
             if (!IsReady || owner == null || !owner.IsActive || shuttingDown)
                 return new HarkenActionPlayResult(VnResult.VN_NOT_INITIALIZED);
             ulong seed = managedCallerSeed++;
             ActionPreparationResult prepared = await owner.PrepareActionsAsync(new[] { actionName }, projectId, cancellation);
+            HarkenActionPlayResult outcome;
             try
             {
                 cancellation.ThrowIfCancellationRequested();
-                if (!this || !ReferenceEquals(owner, session) || !owner.IsActive)
-                    return new HarkenActionPlayResult(VnResult.VN_NOT_INITIALIZED);
-                if (prepared.Result != VnResult.VN_OK) return new HarkenActionPlayResult(prepared.Result);
-                VnResult result = PlayActionCore(actionName, projectId, seed, source, out ActionFiring firing);
-                return new HarkenActionPlayResult(result, firing);
+                if (!SpatialSessionIsCurrent(owner))
+                    outcome = new HarkenActionPlayResult(VnResult.VN_NOT_INITIALIZED);
+                else if (prepared.Result != VnResult.VN_OK)
+                    outcome = new HarkenActionPlayResult(prepared.Result);
+                else
+                {
+                    VnResult result = PlayActionCore(actionName, projectId, seed, source, out ActionFiring firing);
+                    outcome = new HarkenActionPlayResult(result, firing);
+                }
             }
             finally
             {
                 if (prepared.Preparation != null && prepared.Preparation.Release() != VnResult.VN_OK && this)
                     TakeFiringCleanup(default, owner, 0, prepared.Preparation);
             }
+            return SpatialSessionIsCurrent(owner)
+                ? outcome : new HarkenActionPlayResult(VnResult.VN_NOT_INITIALIZED);
         }
     }
 }

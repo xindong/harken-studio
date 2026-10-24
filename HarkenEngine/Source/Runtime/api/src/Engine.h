@@ -380,9 +380,7 @@ struct PendingStartRecord {
     std::uint32_t busIndex = 0;
     std::uint32_t busGeneration = 0;
     bool spatialized = false;
-    float posX = 0.0f;
-    float posY = 0.0f;
-    float posZ = 0.0f;
+    SpatialSourceState source;
     std::uint32_t priority = 128;
     VnEmitterHandle emitterHandle = 0;  // emitter to attach at deferred start
     VnSoundId originPlayable{};       // Sound id named by a raw start or an Action
@@ -406,8 +404,6 @@ struct PendingStartRecord {
     float setPosX = 0.0f;
     float setPosY = 0.0f;
     float setPosZ = 0.0f;
-    bool hasOrientation = false;
-    VnVec3 orientation{};
     bool hasAttenuation = false;
     VnAttenuationId attenuationId{};
     std::uint64_t attenuationGeneration = 0;
@@ -2996,7 +2992,7 @@ struct EnginePreparedTimelineVoiceStart {
     EngineMonitorSelection monitorSelection{};
     static constexpr std::uint32_t kMaxCommandCount =
         3u + kTimelineMaxVoiceSends + kTimelineMaxVoiceEffects + 2u +
-        kMaxVoiceBindingInstanceSlots;
+        kMaxVoiceBindingInstanceSlots + kSpatialDrivenTargetsPerVoice;
 
     std::uint32_t ledgerSlot = UINT32_MAX;
     VnVoiceHandle renderHandle = 0;
@@ -6385,6 +6381,17 @@ public:
         // One park record per Logical Voice entry, indexed by ledger slot; only
         // Virtual Voices are active.
         if (!parkRecords.Reserve(resolved.voiceCapacity.Logical())) throw std::bad_alloc();
+        if (resolved.audibilityParkEnabled != 0) {
+            detail::CheckedGrow(audibilityCursorRows, sourceCursors.SlotCount(),
+                                detail::LogicAllocSite::AudibilityRows);
+            audibilityCursorRows.resize(sourceCursors.SlotCount());
+            detail::CheckedGrow(audibilityParkedSlots, resolved.voiceCapacity.Virtual(),
+                                detail::LogicAllocSite::AudibilityParked);
+            audibilityParkedSlots.reserve(resolved.voiceCapacity.Virtual());
+            detail::CheckedGrow(audibilityParkedHandles, resolved.voiceCapacity.Virtual(),
+                                detail::LogicAllocSite::AudibilityParked);
+            audibilityParkedHandles.reserve(resolved.voiceCapacity.Virtual());
+        }
         spatial.AttachRetainedProfileStorage(this, [](void* context) noexcept {
             return static_cast<Engine*>(context)->PrepareRetainedProfileKeyStorage();
         });
@@ -13619,6 +13626,11 @@ public:
     // different updates do not share an entry-time assumption. Counters surface
     // in the snapshot; parkedVoiceCount is the live ledger.ParkedCount().
     StableSlotStorage<ParkRecord> parkRecords;
+    // Bounded scratch for one logic-side audibility pass; cursors are captured
+    // anew and parked identities are rebuilt on every pass.
+    std::vector<SourceCursorMirror::Row> audibilityCursorRows;
+    std::vector<std::uint32_t> audibilityParkedSlots;
+    std::vector<VnVoiceHandle> audibilityParkedHandles;
     std::uint64_t parkedHighWater = 0;
     std::uint64_t voiceParkedCount = 0;    // cumulative park transitions
     std::uint64_t voiceReturnedCount = 0;  // cumulative return transitions

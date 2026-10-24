@@ -33,6 +33,10 @@ namespace Harken.Unity
         internal bool Matches(Transform value, PackBootstrapSession current)
             => IsFollowing && target == value && ReferenceEquals(session, current);
 
+        internal bool Matches(object expectedOwner, PackBootstrapSession expectedSession, Emitter handle)
+            => IsFollowing && ReferenceEquals(owner, expectedOwner) && ReferenceEquals(session, expectedSession) &&
+                emitter.IsValid && emitter.Handle == handle.Handle;
+
         public VnResult EndFollow()
         {
             if (ended) return LastResult;
@@ -44,6 +48,19 @@ namespace Harken.Unity
 
         public void Dispose() => EndFollow();
 
+        /// <summary>Changes the followed identity's range; an ended source cannot be changed.</summary>
+        public VnResult SetDistanceScale(float scale)
+        {
+            if (owner is HarkenAudioSystem runtime)
+            {
+                if (runtime == null || !ReferenceEquals(runtime.Session, session))
+                    return LastResult = VnResult.VN_STALE_HANDLE;
+                if (runtime.IsPublishingSpatial) return LastResult = VnResult.VN_IN_USE;
+            }
+            VnResult result = Validate(owner, session, out Emitter handle);
+            return LastResult = result == VnResult.VN_OK ? handle.SetDistanceScale(scale) : result;
+        }
+
         internal VnResult Validate(object expectedOwner, PackBootstrapSession expectedSession, out Emitter handle)
         {
             handle = default;
@@ -51,9 +68,8 @@ namespace Harken.Unity
                 !session.IsActive || !emitter.IsValid)
                 return LastResult = VnResult.VN_STALE_HANDLE;
             if (!IsFollowing) return LastResult = VnResult.VN_INVALID_ARG;
-            VnResult result = Publish();
-            if (result == VnResult.VN_OK) handle = emitter;
-            return result;
+            handle = emitter;
+            return VnResult.VN_OK;
         }
 
         internal VnResult Retain(object expectedOwner, PackBootstrapSession expectedSession)
@@ -72,12 +88,21 @@ namespace Harken.Unity
                 Invalidate();
                 return VnResult.VN_OK;
             }
-            VnResult result = Publish();
+            if (target == null || !target.gameObject.activeInHierarchy)
+            {
+                ended = true;
+                target = null;
+            }
+            VnResult result = VnResult.VN_OK;
             if (ended && users == 0 && emitter.IsValid)
             {
                 VnResult released = emitter.Destroy();
                 if (released == VnResult.VN_OK || released == VnResult.VN_STALE_HANDLE)
+                {
+                    if (owner is HarkenAudioSystem runtime && runtime != null)
+                        runtime.ForgetDestroyedDistanceReference(session, emitter);
                     emitter = default;
+                }
                 else result = released;
             }
             return LastResult = result;
@@ -91,7 +116,26 @@ namespace Harken.Unity
             users = 0;
         }
 
-        private VnResult Publish()
+        internal VnResult CapturePose(out UnitySpatialPose pose)
+            => UnitySpatialPose.Capture(target, out pose);
+
+        internal void RecordSpatialResult(VnResult result) => LastResult = result;
+
+        internal VnResult PublishPose(in UnitySpatialPose pose, out bool changed)
+        {
+            changed = !published || pose.Position != position || pose.Rotation != rotation;
+            if (!changed) return LastResult = VnResult.VN_OK;
+            VnResult result = UnitySpatial.SetEmitterTransform(emitter, pose.Position, pose.Forward);
+            if (result == VnResult.VN_OK)
+            {
+                position = pose.Position;
+                rotation = pose.Rotation;
+                published = true;
+            }
+            return LastResult = result;
+        }
+
+        internal VnResult Publish()
         {
             if (!session.IsActive) return LastResult = VnResult.VN_NOT_INITIALIZED;
             if (ended) return VnResult.VN_OK;
@@ -101,14 +145,8 @@ namespace Harken.Unity
                 target = null;
                 return VnResult.VN_OK;
             }
-            if (published && target.position == position && target.rotation == rotation) return VnResult.VN_OK;
-            VnResult result = UnitySpatial.SetEmitterTransform(emitter, target);
-            if (result == VnResult.VN_OK)
-            {
-                position = target.position;
-                rotation = target.rotation;
-                published = true;
-            }
+            VnResult result = CapturePose(out UnitySpatialPose pose);
+            if (result == VnResult.VN_OK) result = PublishPose(in pose, out _);
             return LastResult = result;
         }
     }
@@ -117,6 +155,7 @@ namespace Harken.Unity
     {
         private readonly List<HarkenSpatialSource> sources = new List<HarkenSpatialSource>();
         internal int Count => sources.Count;
+        internal HarkenSpatialSource this[int index] => sources[index];
 
         internal VnResult Create(object owner, PackBootstrapSession session, Transform target, out HarkenSpatialSource source)
         {
@@ -129,7 +168,7 @@ namespace Harken.Unity
             if (result != VnResult.VN_OK) return result;
             var created = new HarkenSpatialSource(owner, session, target, emitter);
             sources.Add(created);
-            result = created.Validate(owner, session, out _);
+            result = created.CapturePose(out _);
             if (result == VnResult.VN_OK) source = created;
             else
             {
@@ -147,6 +186,17 @@ namespace Harken.Unity
                 VnResult result = sources[i].Maintain();
                 if (first == VnResult.VN_OK) first = result;
                 if (sources[i].IsReleased) sources.RemoveAt(i);
+            }
+            return first;
+        }
+
+        internal VnResult Publish()
+        {
+            VnResult first = VnResult.VN_OK;
+            for (int i = 0; i < sources.Count; ++i)
+            {
+                VnResult result = sources[i].Publish();
+                if (first == VnResult.VN_OK) first = result;
             }
             return first;
         }

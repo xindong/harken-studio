@@ -6773,6 +6773,12 @@ private:
     VnResult status_ = VN_DEVICE_ERROR;
 };
 
+std::uint32_t SpatialStartCommandDemand(bool spatialized, bool hasProfile) noexcept {
+    // The initial mask also includes shelf frequency. Its value shares the
+    // shelf-gain tuple command, so seven targets require six physical commands.
+    return !spatialized ? 0u : hasProfile ? harken::kSpatialDrivenTargetsPerVoice : 1u;
+}
+
 VnResult TimelineVoiceStartCommandBudget(
     const harken::TimelineVoiceInstallInput& input, std::uint32_t* out) noexcept {
     if (out == nullptr) return VN_INVALID_ARG;
@@ -6780,7 +6786,8 @@ VnResult TimelineVoiceStartCommandBudget(
     if (status != VN_OK) return status;
     *out = 3u + static_cast<std::uint32_t>(input.bindings.size()) +
         static_cast<std::uint32_t>(input.sends.size()) +
-        static_cast<std::uint32_t>(input.effects.size());
+        static_cast<std::uint32_t>(input.effects.size()) +
+        SpatialStartCommandDemand(input.facts->spatialized, input.facts->attenuationResolved);
     return VN_OK;
 }
 
@@ -6789,18 +6796,21 @@ VnResult TimelineVoiceStartCommandBudget(
     if (out == nullptr) return VN_INVALID_ARG;
     const auto status = ValidateLegacyTimelineVoiceInstallCounts(install);
     if (status != VN_OK) return status;
-    *out = 3u + install.sendCount + install.effectCount + install.bindingCount;
+    *out = 3u + install.sendCount + install.effectCount + install.bindingCount +
+        SpatialStartCommandDemand(install.spatialized, install.attenuationResolved);
     return VN_OK;
 }
 
 bool InitialSourceInputEligible(const harken::TimelineVoiceInstallInput& input) noexcept {
-    return input.facts != nullptr && !input.facts->streamed && input.bindings.empty() &&
+    return input.facts != nullptr && !input.facts->streamed && !input.facts->spatialized &&
+        input.bindings.empty() &&
         input.sends.empty() && input.effects.empty();
 }
 
 bool AppendTimelineBindingCommands(
     harken::Engine& engine, VnVoiceHandle render, std::uint32_t* commandIndex,
-    const harken::VariableReadCutReader* reader = nullptr);
+    const harken::VariableReadCutReader* reader = nullptr,
+    std::uint32_t initialTargetMask = 0);
 
 void ReleaseTimelineVoiceBindings(harken::Engine& engine, VnVoiceHandle render,
                                   bool snapshotOnly = false) {
@@ -7293,6 +7303,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         (void)engine.originalSourceSubmissions.CancelBoundPreparation(
             arm, engine.preparedVoiceCommandBatchProof);
         ReleaseTimelineVoiceBindings(engine, render);
+        engine.spatial.NoteVoiceEnded(render);
         if (completionProgressBound) {
             (void)engine.timelineOccurrences.UnbindCompletionProgress(
                 *progressOccurrence, renderGeneration);
@@ -7362,6 +7373,19 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         }
         pitchFixed = pitchFixed && definition.targetId != harken::kTargetVoicePitch;
     }
+    engine.spatial.OnVoiceStarted(render, install.spatialized, 0.0f, 0.0f,
+                                  0.0f, engine.emitters.Context(emitter).spatialEmitter);
+    engine.spatial.SetVoiceSpatializationMix(render, install.spatializationMix);
+    engine.spatial.SetVoiceDistanceScale(render, install.attenuationDistanceScaling);
+    if (install.attenuationResolved &&
+        engine.spatial.BindVoice(render, install.attenuationId,
+            engine.spatial.CurrentProfileGeneration(install.attenuationId)) != VN_OK) {
+        return rollback(VN_UNKNOWN_ID);
+    }
+    std::uint32_t spatialInitialTargets = 0;
+    const auto spatialInitial = engine.spatial.EvaluateVoice(
+        render, engine.params, engine.emitters, &spatialInitialTargets);
+    if (spatialInitial != VN_OK) return rollback(spatialInitial);
     float resolvedVolumeDb = 0.0f;
     if (!engine.params.TryPeekResolvedVolume(
             render, &engine.emitters, &resolvedVolumeDb, initialReader) ||
@@ -7500,25 +7524,13 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         effectCommand.payload.setVoiceEffect.poolIndex = ref.poolIndex;
         effectCommand.payload.setVoiceEffect.poolGeneration = ref.generation;
     }
-    if (!AppendTimelineBindingCommands(engine, render, &commandIndex, initialReader)) {
+    if (!AppendTimelineBindingCommands(engine, render, &commandIndex, initialReader,
+                                       spatialInitialTargets)) {
         return rollback(VN_INVALID_ARG);
     }
     assert(commandIndex <= commandCount);
     commandCount = commandIndex;
     playCommand.payload.play.batch.batchCommandCount = commandCount;
-    engine.spatial.OnVoiceStarted(render, install.spatialized, 0.0f, 0.0f,
-                                  0.0f, engine.emitters.Context(emitter).spatialEmitter);
-    engine.spatial.SetVoiceSpatializationMix(render,
-                                             install.spatializationMix);
-    engine.spatial.SetVoiceDistanceScale(
-        render, install.attenuationDistanceScaling);
-    if (install.attenuationResolved &&
-        engine.spatial.BindVoice(
-            render, install.attenuationId,
-            engine.spatial.CurrentProfileGeneration(install.attenuationId)) !=
-            VN_OK) {
-        return rollback(VN_UNKNOWN_ID);
-    }
     harken::CompletionPredictability completionPredictability =
         harken::CompletionPredictability::SignalOnly;
     harken::KnownCompletionPredicateV1 completionPredicate{};
@@ -63815,7 +63827,8 @@ template <typename Writer>
 bool PushPrimedInitialValuesWith(harken::Engine& engine, VnVoiceHandle render,
                                  Writer& writer,
                                  const harken::VariableReadCutReader* reader = nullptr,
-                                 bool includeUnchanged = false) {
+                                 bool includeUnchanged = false,
+                                 std::uint32_t initialTargetMask = 0) {
     float voiceDb = 0.0f;
     if (!engine.params.TryPeekResolvedVolume(
             render, &engine.emitters, &voiceDb, reader) ||
@@ -63826,17 +63839,17 @@ bool PushPrimedInitialValuesWith(harken::Engine& engine, VnVoiceHandle render,
     std::uint32_t count = 0;
     if (reader != nullptr) {
         if (!engine.params.TryPrimeVoiceBindings(render, *reader, primed,
-                harken::kBuiltinTargetCount, &count, includeUnchanged)) return false;
+                harken::kBuiltinTargetCount, &count, includeUnchanged, initialTargetMask)) return false;
     } else {
         count = engine.params.PrimeVoiceBindings(
-            render, &engine.emitters, primed, harken::kBuiltinTargetCount);
+            render, &engine.emitters, primed, harken::kBuiltinTargetCount, initialTargetMask);
     }
     return PushPrimedParamCommandsWith(engine, render, primed, count, writer);
 }
 
 bool AppendTimelineBindingCommands(
     harken::Engine& engine, VnVoiceHandle render, std::uint32_t* commandIndex,
-    const harken::VariableReadCutReader* reader) {
+    const harken::VariableReadCutReader* reader, std::uint32_t initialTargetMask) {
     if (commandIndex == nullptr) {
         return false;
     }
@@ -63849,7 +63862,7 @@ bool AppendTimelineBindingCommands(
             return true;
         }
     } writer{engine, *commandIndex};
-    if (!PushPrimedInitialValuesWith(engine, render, writer, reader)) {
+    if (!PushPrimedInitialValuesWith(engine, render, writer, reader, false, initialTargetMask)) {
         return false;
     }
     *commandIndex = writer.count;
@@ -64007,7 +64020,8 @@ bool InstantiatePinnedAndPrimeWith(
     const harken::PendingStartRecord::PinnedBinding* pinned,
     std::uint32_t count, std::uint32_t reservedTargets,
     std::span<harken::ParamSystem::PreparedBindingToken> preparations, Writer& writer,
-    const harken::VariableReadCutReader* reader = nullptr) {
+    const harken::VariableReadCutReader* reader = nullptr,
+    std::uint32_t initialTargetMask = 0) {
     if (preparations.size() < count) return false;
     if (reservedTargets > 0) {
         engine.propertyPublisher.ShrinkWorstCase(reservedTargets);
@@ -64027,7 +64041,7 @@ bool InstantiatePinnedAndPrimeWith(
             return false;
         }
     }
-    return PushPrimedInitialValuesWith(engine, render, writer, reader);
+    return PushPrimedInitialValuesWith(engine, render, writer, reader, false, initialTargetMask);
 }
 
 bool InstantiatePinnedAndPrime(
@@ -64046,9 +64060,10 @@ bool InstantiatePinnedAndPrime(
     std::uint32_t count, std::uint32_t reservedTargets,
     std::span<harken::ParamSystem::PreparedBindingToken> preparations,
     AdmittedCommandWriter& writer,
-    const harken::VariableReadCutReader* reader = nullptr) {
+    const harken::VariableReadCutReader* reader = nullptr,
+    std::uint32_t initialTargetMask = 0) {
     return InstantiatePinnedAndPrimeWith(engine, render, pinned, count,
-                                         reservedTargets, preparations, writer, reader);
+                                         reservedTargets, preparations, writer, reader, initialTargetMask);
 }
 
 const harken::PackLogicImage::VoiceRecipe* FindPlayVoiceRecipe(
@@ -64991,32 +65006,11 @@ DirectParkPendingResult CommitDirectParkPending(
     if (GuardCompletionMutation(engine, rec.publicHandle) != VN_OK) {
         return DirectParkPendingResult::CompletionGuarded;
     }
-    // Resolve the would-be spatial state: position from the play descriptor
-    // unless a setVoicePosition was staged; the emitter attaches only if still
-    // live, and when attached its pose overrides the staged position and
-    // orientation (the return-time and evaluate-time rule).
+    // Sample all source facts together. A dead emitter preserves this record's
+    // last sample, including orientation and distance scale.
     const VnEmitterHandle em =
         engine.emitters.IsLive(rec.emitterHandle) ? rec.emitterHandle : 0u;
-    float px = rec.hasPosition ? rec.setPosX : rec.posX;
-    float py = rec.hasPosition ? rec.setPosY : rec.posY;
-    float pz = rec.hasPosition ? rec.setPosZ : rec.posZ;
-    float fwdX = 0.0f, fwdY = 0.0f, fwdZ = -1.0f;
-    if (rec.hasOrientation) {
-        fwdX = rec.orientation.x;
-        fwdY = rec.orientation.y;
-        fwdZ = rec.orientation.z;
-    }
-    if (em != 0) {
-        float ex, ey, ez, efx, efy, efz;
-        if (engine.emitters.Pose(em, &ex, &ey, &ez, &efx, &efy, &efz)) {
-            px = ex;
-            py = ey;
-            pz = ez;
-            fwdX = efx;
-            fwdY = efy;
-            fwdZ = efz;
-        }
-    }
+    (void)engine.emitters.Pose(em, &rec.source);
     const VnAttenuationId attenId = rec.hasAttenuation ? rec.attenuationId : VnAttenuationId{};
     const float distanceScale =
         rec.hasDistanceScale ? rec.distanceScale : 1.0f;
@@ -65062,8 +65056,10 @@ DirectParkPendingResult CommitDirectParkPending(
     double attenDb = 0.0;
     if (rec.spatialized && attenId != VnObjectId{}) {
         attenDb = static_cast<double>(
-            engine.spatial.AttenuationVolumeDb(attenId, px, py, pz,
-                                               distanceScale));
+            engine.spatial.AttenuationVolumeDb(
+                engine.emitters, attenId, rec.source.posX, rec.source.posY, rec.source.posZ,
+                distanceScale, rec.attenuationGeneration,
+                rec.source.emitterDistanceScale));
     }
     // Below threshold: park directly. Build the play facts locally — there is no
     // render slot to key RecordPlayFacts on.
@@ -65160,16 +65156,18 @@ DirectParkPendingResult CommitDirectParkPending(
     prec.instanceReservedTargets = rec.pinnedReservedTargets;
     prec.preparedBindings = std::move(rec.preparedBindings);
     prec.spatial.spatialized = rec.spatialized;
-    prec.spatial.posX = px;
-    prec.spatial.posY = py;
-    prec.spatial.posZ = pz;
-    prec.spatial.fwdX = fwdX;
-    prec.spatial.fwdY = fwdY;
-    prec.spatial.fwdZ = fwdZ;
+    prec.spatial.posX = rec.source.posX;
+    prec.spatial.posY = rec.source.posY;
+    prec.spatial.posZ = rec.source.posZ;
+    prec.spatial.fwdX = rec.source.fwdX;
+    prec.spatial.fwdY = rec.source.fwdY;
+    prec.spatial.fwdZ = rec.source.fwdZ;
     prec.spatial.distanceScale = distanceScale;
+    prec.spatial.emitterDistanceScale = rec.source.emitterDistanceScale;
     prec.spatial.spatializationMix =
         rec.hasSpatializationMix ? rec.spatializationMix : 1.0f;
     prec.spatial.attenuationId = attenId;
+    prec.spatial.attenuationGeneration = rec.attenuationGeneration;
     prec.stateEmitter = em;
     prec.spatial.emitterHandle = engine.emitters.Context(em).spatialEmitter;
     // Staged API-direct values, captured in each target's combine domain so the
@@ -65306,6 +65304,7 @@ std::uint32_t PendingStartCommandDemand(harken::Engine& engine,
     needed += UniqueRecipeTargetCount(
         engine, rec.recipeBindingIds.data(), rec.recipeBindingCount);
     needed += rec.hasTonePreset ? 4u : 0u;
+    needed += SpatialStartCommandDemand(rec.spatialized, rec.hasAttenuation);
     return needed;
 }
 
@@ -65328,6 +65327,7 @@ enum class PendingStartOutcome : std::uint8_t {
     CompletionGuarded, // a pinned completion owner forbids this onset mutation
     DeviceError,  // a logic-side store refused the prepared state
     InvalidInput, // initial volume cannot convert; the start is refused
+    UnknownProfile, // a captured attenuation identity no longer resolves
 };
 
 struct NativeReadCutPreparation {
@@ -65470,6 +65470,7 @@ PendingStartOutcome StartDeferredVoice(
     }
     const VnEmitterHandle startEmitter =
         engine.emitters.IsLive(rec.emitterHandle) ? rec.emitterHandle : 0u;
+    (void)engine.emitters.Pose(startEmitter, &rec.source);
     const auto* initialReader = variableCut.Reader();
     float voiceDb = 0;
     if (!TryPendingStartVoiceDb(engine, rec, &voiceDb, initialReader)) return PendingStartOutcome::BankBlocked;
@@ -65575,7 +65576,7 @@ PendingStartOutcome StartDeferredVoice(
         const VnResult played = engine.voices.PlayStream(
             engine.streams.RingOf(streamSlot), facts.channelCount,
             facts.sampleRate, prebufferFrames, rec.baseVolumeDb, rec.ratio,
-            rec.busIndex, rec.spatialized, rec.posX, rec.posY, rec.posZ,
+            rec.busIndex, rec.spatialized, rec.source.posX, rec.source.posY, rec.source.posZ,
             harken::ResolvePanGains(engine.config.mixChannelLayout, 0.0f),
             /*activationStartFrame=*/0, facts.frameCount,
             rec.loopStartFrame, rec.loopEndFrame, rec.loopCount,
@@ -65602,7 +65603,7 @@ PendingStartOutcome StartDeferredVoice(
     } else {
         const VnResult played = engine.voices.Play(
             rec.view, rec.baseVolumeDb, rec.ratio, rec.busIndex,
-            rec.spatialized, rec.posX, rec.posY, rec.posZ,
+            rec.spatialized, rec.source.posX, rec.source.posY, rec.source.posZ,
             harken::ResolvePanGains(engine.config.mixChannelLayout, 0.0f),
             rec.loopStartFrame, rec.loopEndFrame, rec.loopCount,
             rec.resampleProfile, &render, rec.busGeneration, target.slot,
@@ -65630,8 +65631,9 @@ PendingStartOutcome StartDeferredVoice(
     if (rec.hasTonePreset) {
         ApplyTonePresetAndPrime(engine, render, rec.tonePreset, commands);
     }
-    engine.spatial.OnVoiceStarted(render, rec.spatialized, rec.posX, rec.posY,
-                                  rec.posZ, engine.emitters.Context(startEmitter).spatialEmitter);
+    engine.spatial.OnVoiceStarted(render, rec.spatialized, rec.source.posX, rec.source.posY,
+                                  rec.source.posZ, engine.emitters.Context(startEmitter).spatialEmitter);
+    engine.spatial.RestoreVoiceSource(render, rec.source);
     const std::uint32_t renderSlot = static_cast<std::uint32_t>(render);
     if (renderSlot < engine.effectSlotTypes.size()) {
         engine.effectSlotTypes[renderSlot].fill(harken::kEffectTypeNone);
@@ -65679,15 +65681,12 @@ PendingStartOutcome StartDeferredVoice(
         cmd.payload.setVoicePosition.y = rec.setPosY;
         cmd.payload.setVoicePosition.z = rec.setPosZ;
         (void)commands.Push(cmd);
-        engine.spatial.SetVoicePosition(render, rec.setPosX, rec.setPosY,
-                                        rec.setPosZ);
-    }
-    if (rec.hasOrientation) {
-        (void)engine.spatial.SetVoiceOrientation(render, rec.orientation);
     }
     if (rec.hasAttenuation) {
-        (void)engine.spatial.BindVoice(render, rec.attenuationId,
-                                       rec.attenuationGeneration);
+        if (engine.spatial.BindVoice(render, rec.attenuationId,
+                                      rec.attenuationGeneration) != VN_OK) {
+            return PendingStartOutcome::UnknownProfile;
+        }
     }
     if (rec.hasDistanceScale) {
         engine.spatial.SetVoiceDistanceScale(render, rec.distanceScale);
@@ -65837,10 +65836,15 @@ PendingStartOutcome StartDeferredVoice(
     // command-run contract above. Runs after the staged setters so the primed
     // reduction includes their API-direct slots. The acceptance reservation
     // hands over to the binds inside.
+    std::uint32_t spatialInitialTargets = 0;
+    const auto spatialInitial = engine.spatial.EvaluateVoice(
+        render, engine.params, engine.emitters, &spatialInitialTargets);
+    if (spatialInitial != VN_OK) return PendingStartOutcome::UnknownProfile;
     preparationGuard.pinnedTransferred = true;
     if (!InstantiatePinnedAndPrime(engine, render, rec.pinnedBindings.data(),
                                    rec.pinnedBindingCount,
-                                   rec.pinnedReservedTargets, rec.preparedBindings, commands, initialReader)) {
+                                   rec.pinnedReservedTargets, rec.preparedBindings, commands,
+                                   initialReader, spatialInitialTargets)) {
         return PendingStartOutcome::InvalidInput;
     }
     if (commands.Overflowed()) return PendingStartOutcome::BatchTooLarge;
@@ -66075,23 +66079,22 @@ VnResult StopAllCore(harken::Engine& engine, std::uint32_t fadeMs,
 // threshold does not flap between live and parked.
 inline constexpr float kParkReturnHysteresisDb = 6.0f;
 
-// A parked voice's current world position: its live emitter's pose if attached,
-// else its frozen stored position.
-void ParkedPosition(harken::Engine& engine, const harken::ParkRecord& rec,
-                    float* x, float* y, float* z) {
+// Retain the complete last sampled source even without a render slot.
+void SampleParkedSource(harken::Engine& engine, harken::ParkRecord& rec) {
     if (rec.spatial.emitterHandle != 0) {
-        float ex, ey, ez, efx, efy, efz;
-        if (engine.emitters.Pose(rec.spatial.emitterHandle, &ex, &ey, &ez, &efx,
-                                 &efy, &efz)) {
-            *x = ex;
-            *y = ey;
-            *z = ez;
-            return;
+        harken::SpatialSourceState source;
+        if (engine.emitters.Pose(rec.spatial.emitterHandle, &source)) {
+            rec.spatial.posX = source.posX;
+            rec.spatial.posY = source.posY;
+            rec.spatial.posZ = source.posZ;
+            rec.spatial.fwdX = source.fwdX;
+            rec.spatial.fwdY = source.fwdY;
+            rec.spatial.fwdZ = source.fwdZ;
+            rec.spatial.emitterDistanceScale = source.emitterDistanceScale;
+        } else {
+            rec.spatial.emitterHandle = 0;
         }
     }
-    *x = rec.spatial.posX;
-    *y = rec.spatial.posY;
-    *z = rec.spatial.posZ;
 }
 
 // A parked voice's recomputed audibility metric: the non-spatial,
@@ -66099,15 +66102,16 @@ void ParkedPosition(harken::Engine& engine, const harken::ParkRecord& rec,
 // instance volume term (re-evaluated each tick — section 5.6), plus the
 // live distance attenuation. Distance- and binding-driven return are both
 // tracked; the cone angular term stayed frozen at park.
-float ParkedMetricDb(harken::Engine& engine, const harken::ParkRecord& rec) {
+float ParkedMetricDb(harken::Engine& engine, harken::ParkRecord& rec) {
+    SampleParkedSource(engine, rec);
     if (!rec.spatial.spatialized || rec.spatial.attenuationId == VnObjectId{}) {
         return rec.frozenNonSpatialDb + rec.instanceVolumeDb;
     }
-    float x, y, z;
-    ParkedPosition(engine, rec, &x, &y, &z);
     return rec.frozenNonSpatialDb + rec.instanceVolumeDb +
-           engine.spatial.AttenuationVolumeDb(rec.spatial.attenuationId, x, y,
-                                               z, rec.spatial.distanceScale);
+           engine.spatial.AttenuationVolumeDb(
+               engine.emitters, rec.spatial.attenuationId, rec.spatial.posX, rec.spatial.posY,
+               rec.spatial.posZ, rec.spatial.distanceScale,
+               rec.spatial.attenuationGeneration, rec.spatial.emitterDistanceScale);
 }
 
 // The section-5.6 per-tick re-evaluation of a parked voice's binding
@@ -66173,13 +66177,8 @@ void DoParkVoice(harken::Engine& engine, VnVoiceHandle render,
         engine.params.ResolvedValue(render, harken::kTargetVoiceVolume);
 
     harken::Spatializer::SpatialVoiceState spatial;
-    engine.spatial.CaptureVoice(render, &spatial);
     float attenAtPark = 0.0f;
-    if (spatial.spatialized && spatial.attenuationId != VnObjectId{}) {
-        attenAtPark = engine.spatial.AttenuationVolumeDb(
-            spatial.attenuationId, spatial.posX, spatial.posY, spatial.posZ,
-            spatial.distanceScale);
-    }
+    engine.spatial.CaptureVoice(render, &spatial, &attenAtPark);
 
     const harken::VoiceLedger::Resolved resolved =
         engine.ledger.Classify(publicHandle);
@@ -66449,13 +66448,8 @@ StreamVictimWaitResult TryWaitStreamVictim(
     }
 
     harken::Spatializer::SpatialVoiceState spatial;
-    engine.spatial.CaptureVoice(victim, &spatial);
     float attenAtPark = 0.0f;
-    if (spatial.spatialized && spatial.attenuationId != VnObjectId{}) {
-        attenAtPark = engine.spatial.AttenuationVolumeDb(
-            spatial.attenuationId, spatial.posX, spatial.posY,
-            spatial.posZ, spatial.distanceScale);
-    }
+    engine.spatial.CaptureVoice(victim, &spatial, &attenAtPark);
     const float metric =
         engine.params.ResolvedValue(victim, harken::kTargetVoiceVolume);
     const float instanceVolumeDb = engine.params.InstanceContribution(
@@ -67038,6 +67032,8 @@ bool PrimeParkedEffectBindings(harken::Engine& engine, const harken::ParkRecord&
 std::uint32_t ParkReturnCommandDemand(harken::Engine& engine,
                                       const harken::ParkRecord& rec, VnVoiceHandle publicHandle) {
     std::uint32_t needed = 2; // play plus spatialization mix
+    needed += SpatialStartCommandDemand(rec.spatial.spatialized,
+                                         rec.spatial.attenuationId != VnObjectId{});
     needed += static_cast<std::uint32_t>(rec.apiDirect.size());
     std::uint32_t mask = 0;
     for (const harken::ParamSystem::BindingState& binding : rec.bindings) {
@@ -67079,6 +67075,7 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
         *bankBlocked = false;
     }
     harken::ParkRecord& rec = engine.parkRecords[ledgerSlot];
+    SampleParkedSource(engine, rec);
     if (engine.variables.AdmissionClosed()) {
         if (bankBlocked != nullptr) {
             *bankBlocked = true;
@@ -67376,6 +67373,10 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
     engine.spatial.OnVoiceStarted(newRender, rec.spatial.spatialized,
                                   rec.spatial.posX, rec.spatial.posY,
                                   rec.spatial.posZ, spatialEmitter);
+    engine.spatial.RestoreVoiceSource(newRender, {
+        rec.spatial.posX, rec.spatial.posY, rec.spatial.posZ,
+        rec.spatial.fwdX, rec.spatial.fwdY, rec.spatial.fwdZ,
+        rec.spatial.emitterDistanceScale});
     engine.spatial.SetVoiceDistanceScale(newRender,
                                          rec.spatial.distanceScale);
     engine.spatial.SetVoiceSpatializationMix(
@@ -67389,8 +67390,8 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
         harken::kSpatialScalarKindSpatializationMix;
     (void)commands.Push(mixCommand);
     if (rec.spatial.attenuationId != VnObjectId{}) {
-        (void)engine.spatial.BindVoice(newRender, rec.spatial.attenuationId,
-                                       rec.spatial.attenuationGeneration);
+        if (engine.spatial.BindVoice(newRender, rec.spatial.attenuationId,
+                                      rec.spatial.attenuationGeneration) != VN_OK) return false;
     }
     // Re-apply the captured orientation for a detached spatialized voice.
     // OnVoiceStarted seeded the mirror with the default forward, so without this
@@ -67460,14 +67461,17 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
         }
     }
     // First-block correctness for the return (section 5.6): evaluate the
-    // re-applied bindings and instances now and push their resolved
+    // re-applied bindings, instances and spatial state now and push their resolved
     // values into this admitted batch — the returned voice's first block
     // renders with current binding state (a replaced curve included),
-    // not with a one-tick hole. Values equal to the authored base
-    // publish nothing, so a binding-free return pushes exactly what it
-    // always did. An illegal initial volume abandons the unpublished
+    // not with a one-tick hole. Values equal to the published base
+    // need no command. An illegal initial volume abandons the unpublished
     // return batch and leaves the voice parked.
-    if (!PushPrimedInitialValuesWith(engine, newRender, commands, variableCut.Reader())) return false;
+    std::uint32_t spatialInitialTargets = 0;
+    if (engine.spatial.EvaluateVoice(newRender, engine.params, engine.emitters,
+                                     &spatialInitialTargets) != VN_OK) return false;
+    if (!PushPrimedInitialValuesWith(engine, newRender, commands, variableCut.Reader(),
+                                     false, spatialInitialTargets)) return false;
 
     const std::uint32_t newSlot = static_cast<std::uint32_t>(newRender);
     if (newSlot < engine.voiceOriginPlayable.size()) {
@@ -67705,7 +67709,7 @@ bool AdvanceFiniteParkedTimeline(harken::ParkRecord& rec, double advance) {
 }
 
 double PendingRequestAudibility(harken::Engine& engine,
-                                 const harken::PendingStartRecord& rec,
+                                 harken::PendingStartRecord& rec,
                                  const harken::VariableReadCutReader* reader = nullptr) {
     double metric = static_cast<double>(rec.baseVolumeDb);
     if (rec.hasVolume) {
@@ -67713,17 +67717,12 @@ double PendingRequestAudibility(harken::Engine& engine,
     }
     const VnEmitterHandle emitter =
         engine.emitters.IsLive(rec.emitterHandle) ? rec.emitterHandle : 0u;
-    float px = rec.hasPosition ? rec.setPosX : rec.posX;
-    float py = rec.hasPosition ? rec.setPosY : rec.posY;
-    float pz = rec.hasPosition ? rec.setPosZ : rec.posZ;
-    if (emitter != 0) {
-        float fx = 0.0f, fy = 0.0f, fz = 0.0f;
-        (void)engine.emitters.Pose(emitter, &px, &py, &pz, &fx, &fy, &fz);
-    }
+    (void)engine.emitters.Pose(emitter, &rec.source);
     if (rec.spatialized && rec.hasAttenuation && rec.attenuationId != VnObjectId{}) {
         metric += static_cast<double>(engine.spatial.AttenuationVolumeDb(
-            rec.attenuationId, px, py, pz,
-            rec.hasDistanceScale ? rec.distanceScale : 1.0f));
+            engine.emitters, rec.attenuationId, rec.source.posX, rec.source.posY, rec.source.posZ,
+            rec.hasDistanceScale ? rec.distanceScale : 1.0f,
+            rec.attenuationGeneration, rec.source.emitterDistanceScale));
     }
     for (std::uint32_t i = 0; i < rec.pinnedBindingCount; ++i) {
         const harken::BindingTable::Definition* def =
@@ -67959,7 +67958,8 @@ void RunAudibilityPass(harken::Engine& engine) {
             const PendingStartOutcome outcome =
                 ServicePendingRenderRequest(engine, request.ledgerSlot);
             if (outcome == PendingStartOutcome::BatchTooLarge ||
-                outcome == PendingStartOutcome::InvalidInput) {
+                outcome == PendingStartOutcome::InvalidInput ||
+                outcome == PendingStartOutcome::UnknownProfile) {
                 CancelPendingStart(engine, request.ledgerSlot, 0);
             }
         }
@@ -67970,30 +67970,11 @@ void RunAudibilityPass(harken::Engine& engine) {
     const std::uint32_t blockFrames =
         engine.config.blockFrames == 0 ? 1 : engine.config.blockFrames;
 
-    std::vector<harken::SourceCursorMirror::Row> rows;
-    std::vector<std::uint32_t> parkedSlots;
-    std::vector<VnVoiceHandle> parkedHandles;
-    harken::detail::LogicAllocSite failedSite =
-        harken::detail::LogicAllocSite::AudibilityRows;
-    try {
-        failedSite = harken::detail::LogicAllocSite::AudibilityRows;
-        harken::detail::CheckedGrow(
-            rows, engine.sourceCursors.SlotCount(),
-            harken::detail::LogicAllocSite::AudibilityRows);
-        rows.resize(engine.sourceCursors.SlotCount());
-        failedSite = harken::detail::LogicAllocSite::AudibilityParked;
-        harken::detail::CheckedGrow(
-            parkedSlots, engine.config.voiceCapacity.Virtual(),
-            harken::detail::LogicAllocSite::AudibilityParked);
-        harken::detail::CheckedGrow(
-            parkedHandles, engine.config.voiceCapacity.Virtual(),
-            harken::detail::LogicAllocSite::AudibilityParked);
-        parkedSlots.reserve(engine.config.voiceCapacity.Virtual());
-        parkedHandles.reserve(engine.config.voiceCapacity.Virtual());
-    } catch (const std::bad_alloc&) {
-        LogLogicAllocFailure(engine, failedSite);
-        return;
-    }
+    auto& rows = engine.audibilityCursorRows;
+    auto& parkedSlots = engine.audibilityParkedSlots;
+    auto& parkedHandles = engine.audibilityParkedHandles;
+    parkedSlots.clear();
+    parkedHandles.clear();
     // Coherent snapshot of the per-slot source cursors (timeline authority).
     std::uint64_t mirrorBlock = 0;
     const bool haveMirror =
@@ -68234,7 +68215,8 @@ void RunAudibilityPass(harken::Engine& engine) {
             const PendingStartOutcome outcome =
                 ServicePendingRenderRequest(engine, request.ledgerSlot);
             if (outcome == PendingStartOutcome::BatchTooLarge ||
-                outcome == PendingStartOutcome::InvalidInput) {
+                outcome == PendingStartOutcome::InvalidInput ||
+                outcome == PendingStartOutcome::UnknownProfile) {
                 CancelPendingStart(engine, request.ledgerSlot, 0);
             }
         }
@@ -95052,7 +95034,7 @@ static VnResult LoadPackObserved(const VnPackDesc* desc,
         std::uint32_t packHeaderBytes = 0;
         if (!harken::PeekPackHeader(desc->utf8Path, &packFormatVersion,
                                     &packHeaderBytes) ||
-            packFormatVersion != HARKEN_PACK_SCHEMA_VERSION) {
+            !harken::SupportedPackFormatVersion(packFormatVersion)) {
             return VN_BAD_PACK;
         }
         if (packHeaderBytes == harken::kPackV2HeaderBytes) {
@@ -95694,6 +95676,11 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
             ? 1.0
             : ClampWireRatio(static_cast<double>(desc->pitchRatio));
 
+    harken::SpatialSourceState acceptedSource;
+    acceptedSource.posX = desc->positionX;
+    acceptedSource.posY = desc->positionY;
+    acceptedSource.posZ = desc->positionZ;
+    (void)engine->emitters.Pose(emitterHandle, &acceptedSource);
     double immediateAudibilityDb = static_cast<double>(desc->volumeDb);
     for (std::uint32_t i = 0; i < matchedBindingCount; ++i) {
         const harken::BindingTable::Definition* def =
@@ -95709,20 +95696,12 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
     }
     if (spatialized && voiceRecipe != nullptr &&
         voiceRecipe->spatial.attenuationId != VnObjectId{}) {
-        float px = desc->positionX;
-        float py = desc->positionY;
-        float pz = desc->positionZ;
-        if (engine->emitters.IsLive(emitterHandle)) {
-            float fx = 0.0f;
-            float fy = 0.0f;
-            float fz = 0.0f;
-            (void)engine->emitters.Pose(emitterHandle, &px, &py, &pz,
-                                        &fx, &fy, &fz);
-        }
         immediateAudibilityDb +=
             static_cast<double>(engine->spatial.AttenuationVolumeDb(
-                voiceRecipe->spatial.attenuationId, px, py, pz,
-                voiceRecipe->spatial.distanceScale));
+                engine->emitters, voiceRecipe->spatial.attenuationId, acceptedSource.posX,
+                acceptedSource.posY, acceptedSource.posZ,
+                voiceRecipe->spatial.distanceScale, 0,
+                acceptedSource.emitterDistanceScale));
     }
     harken::VoiceManager::RenderRequest freshRequest;
     freshRequest.kind = harken::VoiceManager::RequestKind::Fresh;
@@ -95785,9 +95764,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         rec.busIndex = busIndex;
         rec.busGeneration = engine->buses.GenerationAt(busIndex);
         rec.spatialized = spatialized;
-        rec.posX = desc->positionX;
-        rec.posY = desc->positionY;
-        rec.posZ = desc->positionZ;
+        rec.source = acceptedSource;
         rec.priority = priority;
         rec.emitterHandle = emitterHandle;
         for (std::uint32_t i = 0; i < matchedBindingCount; ++i) {
@@ -95861,9 +95838,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         rec.busIndex = busIndex;
         rec.busGeneration = engine->buses.GenerationAt(busIndex);
         rec.spatialized = spatialized;
-        rec.posX = desc->positionX;
-        rec.posY = desc->positionY;
-        rec.posZ = desc->positionZ;
+        rec.source = acceptedSource;
         rec.loopStartFrame = loopStart;
         rec.loopEndFrame = loopEnd;
         rec.loopCount = loopCount;
@@ -96009,9 +95984,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         rec.busIndex = busIndex;
         rec.busGeneration = engine->buses.GenerationAt(busIndex);
         rec.spatialized = spatialized;
-        rec.posX = desc->positionX;
-        rec.posY = desc->positionY;
-        rec.posZ = desc->positionZ;
+        rec.source = acceptedSource;
         rec.loopStartFrame = loopStart;
         rec.loopEndFrame = loopEnd;
         rec.loopCount = loopCount;
@@ -96135,7 +96108,9 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
             }
         }
     }
-    const std::uint32_t initialCommandBound = 1 + pinnedTargets + recipeCommands;
+    const std::uint32_t initialCommandBound = 1 + pinnedTargets + recipeCommands +
+        SpatialStartCommandDemand(spatialized, voiceRecipe != nullptr &&
+            voiceRecipe->spatial.attenuationId != VnObjectId{});
     // Reserve the owning Logical identity before preparing successor-generation
     // records or staging effect instances. A ledger-full play must refuse as
     // VN_NO_VOICE without consulting the seed budget, and every prepared set is
@@ -96334,19 +96309,19 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
     if (hasRecipeTonePreset) {
         ApplyTonePresetAndPrime(*engine, renderHandle, recipeTonePreset, writer);
     }
-    // The spatializer mirrors the emitter geometry on the logic side;
-    // spatial contributions first apply at the next Vn_Update. When attached,
-    // the emitter's pose overrides the play-descriptor position at that tick.
+    // Known start-time geometry joins the same admitted batch as the source.
     engine->spatial.OnVoiceStarted(renderHandle, spatialized,
                                    desc->positionX, desc->positionY,
                                    desc->positionZ,
                                    engine->emitters.Context(emitterHandle).spatialEmitter);
+    engine->spatial.RestoreVoiceSource(renderHandle, acceptedSource);
     if (voiceRecipe != nullptr &&
         voiceRecipe->spatial.attenuationId != VnObjectId{}) {
-        (void)engine->spatial.BindVoice(
+        const auto bound = engine->spatial.BindVoice(
             renderHandle, voiceRecipe->spatial.attenuationId,
             engine->spatial.CurrentProfileGeneration(
                 voiceRecipe->spatial.attenuationId));
+        if (bound != VN_OK) return bound;
         engine->spatial.SetVoiceDistanceScale(
             renderHandle, voiceRecipe->spatial.distanceScale);
     }
@@ -96415,10 +96390,15 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
     // above): the voice's first block renders with bound initial values.
     // The acceptance reservation hands over to the binds inside
     // (release-then-regrow), so the guard disarms first.
-    if (matchedBindingCount > 0) {
+    std::uint32_t spatialInitialTargets = 0;
+    const auto spatialInitial = engine->spatial.EvaluateVoice(
+        renderHandle, engine->params, engine->emitters, &spatialInitialTargets);
+    if (spatialInitial != VN_OK) return spatialInitial;
+    if (matchedBindingCount > 0 || spatialInitialTargets != 0) {
         pinGuard.armed = false;
         if (!InstantiatePinnedAndPrime(*engine, renderHandle, pinnedBindings,
-                                       matchedBindingCount, pinnedTargets, preparedBindings, writer, initialReader)) {
+                                       matchedBindingCount, pinnedTargets, preparedBindings, writer,
+                                       initialReader, spatialInitialTargets)) {
             return writer.Overflowed() ? VN_INVALID_CONFIG : VN_INVALID_ARG;
         }
     }
@@ -96542,6 +96522,9 @@ VnResult Vn_CommitVoiceStart(VnVoiceHandle handle) {
         break;
     case PendingStartOutcome::InvalidInput:
         result = VN_INVALID_ARG;
+        break;
+    case PendingStartOutcome::UnknownProfile:
+        result = VN_UNKNOWN_ID;
         break;
     }
     if (result != VN_OK) {
@@ -101133,6 +101116,9 @@ VnResult Vn_SetVoicePosition(VnVoiceHandle handle, VnVec3 position) {
         rec.setPosX = position.x;
         rec.setPosY = position.y;
         rec.setPosZ = position.z;
+        rec.source.posX = position.x;
+        rec.source.posY = position.y;
+        rec.source.posZ = position.z;
         return VN_OK;
     }
     if (resolved.kind == harken::VoiceLedger::HandleKind::Parked) {
@@ -102277,6 +102263,25 @@ VnResult Vn_SetListener(VnVec3 pos, VnVec3 forward, VnVec3 up) {
         return VN_DEVICE_ERROR;
     }}
 
+VnResult Vn_SetListenerDistanceReference(VnEmitterHandle handle) {
+    try {
+    if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
+    harken::Engine* engine = harken::detail::g_engine;
+    if (engine == nullptr || engine->callbackFatalSticky) {
+        return VN_NOT_INITIALIZED;
+    }
+    TraceStateful(engine, harken::kTraceCallSetListenerDistanceReference)
+        .U64(engine->trace != nullptr && engine->trace->Active()
+                  ? engine->trace->RecordedEmitterHandle(handle)
+                  : handle);
+    return engine->spatial.SetListenerDistanceReference(handle, engine->emitters);
+
+    } catch (const std::bad_alloc&) {
+        return VN_DEVICE_ERROR;
+    } catch (...) {
+        return VN_DEVICE_ERROR;
+    }}
+
 VnResult Vn_RegisterAttenuation(VnAttenuationId id,
                                 const VnAttenuationDesc* desc) {
     try {
@@ -102393,8 +102398,10 @@ VnResult Vn_SetVoiceOrientation(VnVoiceHandle handle, VnVec3 forward) {
             return VN_INVALID_ARG;
         }
         // A pending-start voice stages the orientation; applied at start.
-        rec.hasOrientation = true;
-        rec.orientation = forward;
+        const double length = std::sqrt(lengthSq);
+        rec.source.fwdX = static_cast<float>(forward.x / length);
+        rec.source.fwdY = static_cast<float>(forward.y / length);
+        rec.source.fwdZ = static_cast<float>(forward.z / length);
         return VN_OK;
     }
     if (resolved.kind == harken::VoiceLedger::HandleKind::Parked) {
@@ -102552,6 +102559,7 @@ VnResult Vn_DestroyEmitter(VnEmitterHandle handle) {
         engine->runtimeRecreateRequired = true;
         return VN_RUNTIME_RECREATE_REQUIRED;
     }
+    engine->spatial.NoteEmitterDestroyed(handle);
     (void)engine->actionCooldowns.RemoveEmitter(handle);
     engine->selectionMemory.RetireEmitter(
         static_cast<std::uint32_t>(handle),
@@ -102597,6 +102605,32 @@ VnResult Vn_SetEmitterPosition(VnEmitterHandle handle, VnVec3 position) {
                                         position.z)
                ? VN_OK
                : VN_STALE_HANDLE;
+
+    } catch (const std::bad_alloc&) {
+        return VN_DEVICE_ERROR;
+    } catch (...) {
+        return VN_DEVICE_ERROR;
+    }}
+
+VnResult Vn_SetEmitterDistanceScale(VnEmitterHandle handle, float scale) {
+    try {
+    if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
+    harken::Engine* engine = harken::detail::g_engine;
+    if (engine == nullptr || engine->callbackFatalSticky) {
+        return VN_NOT_INITIALIZED;
+    }
+    TraceStateful(engine, harken::kTraceCallSetEmitterDistanceScale)
+        .U64(engine->trace != nullptr && engine->trace->Active()
+                  ? engine->trace->RecordedEmitterHandle(handle)
+                  : handle)
+        .F32(scale);
+    if (!std::isfinite(scale) || !(scale > 0.0f)) {
+        return VN_INVALID_ARG;
+    }
+    if (!engine->emitters.IsPublicLive(handle)) return VN_STALE_HANDLE;
+    if (engine->emitters.Context(handle).spatialEmitter == 0)
+        return VN_CAPABILITY_UNAVAILABLE;
+    return engine->emitters.SetDistanceScale(handle, scale) ? VN_OK : VN_STALE_HANDLE;
 
     } catch (const std::bad_alloc&) {
         return VN_DEVICE_ERROR;

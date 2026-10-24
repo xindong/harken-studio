@@ -12614,6 +12614,12 @@ TEST(ActionFiringApi, DelayedSoundPlayMaterializesThroughTimelineService) {
     CanonicalActionWorld image(
         engine->registry.Lookup(CanonicalActionWorld::kFirstSound)
             .contentRevision);
+    const auto attenuation = harkentest::ObjectId(73);
+    const auto profile = harkentest::MakeAttenuationDesc(1.0f, 101.0f);
+    ASSERT_EQ(VN_OK, Vn_RegisterAttenuation(attenuation, &profile));
+    image.properties[0].payload.values[10].bits = 1;
+    image.properties[0].payload.values[13].objectId = attenuation;
+    image.RelinkFirstSound();
     image.MakeDelayedSoundPlayAction(DelayNanosecondsForTargetFrame(
         *engine, engine->timelinePool.WindowEndFrame()));
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
@@ -12621,6 +12627,8 @@ TEST(ActionFiringApi, DelayedSoundPlayMaterializesThroughTimelineService) {
 
     VnPostActionDesc desc = ValidPostDesc();
     desc.actionId = image.actions[9].actionStableId;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&desc.emitter));
+    ASSERT_EQ(VN_OK, Vn_SetEmitterPosition(desc.emitter, {-51.0f, 0.0f, 0.0f}));
     VnActionFiringHandle firing = 0;
     const auto capture = harkentest::monitor::OpenIdentityEvents();
     std::vector<harkentest::monitor::IdentityRecord> records;
@@ -12635,6 +12643,24 @@ TEST(ActionFiringApi, DelayedSoundPlayMaterializesThroughTimelineService) {
     ASSERT_NE(0u, firing);
     EXPECT_EQ(1u, engine->actionDeferredRecords.LiveCount());
     EXPECT_EQ(0u, engine->playableInstances.LiveCount());
+    ASSERT_EQ(VN_OK, Vn_SetEmitterPosition(desc.emitter, {51.0f, 0.0f, 0.0f}));
+    bool checkedSpatialInstall = false;
+    engine->immediateEntryAfterPublishContextForTest = &checkedSpatialInstall;
+    engine->immediateEntryAfterPublishHookForTest = [](harken::Engine& current, void* context) {
+        auto& checked = *static_cast<bool*>(context);
+        if (checked) return;
+        for (const auto& row : current.playableServices) {
+            harken::Spatializer::SpatialVoiceState spatial{};
+            if (row.renderHandle == 0 ||
+                !current.spatial.CaptureVoice(row.renderHandle, &spatial) || !spatial.spatialized) continue;
+            checked = true;
+            EXPECT_FLOAT_EQ(51.0f, spatial.posX);
+            EXPECT_FLOAT_EQ(1.0f, current.params.ResolvedValue(row.renderHandle, harken::kTargetVoicePan));
+            EXPECT_NEAR(20.0f * std::log10(0.5f),
+                current.params.ResolvedValue(row.renderHandle, harken::kTargetVoiceVolume), 1e-5f);
+            break;
+        }
+    };
 
     VnActionStepResult step{};
     step.structSize = sizeof(step);
@@ -12658,6 +12684,24 @@ TEST(ActionFiringApi, DelayedSoundPlayMaterializesThroughTimelineService) {
     EXPECT_NE(0u, step.producedPlayableInstance);
     EXPECT_EQ(1u, engine->playableInstances.LiveCount());
     EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(firing));
+    EXPECT_TRUE(checkedSpatialInstall);
+    engine->immediateEntryAfterPublishHookForTest = nullptr;
+    engine->immediateEntryAfterPublishContextForTest = nullptr;
+    engine->mixer.ArenaForTests().SetCommitPageLimitForTests(SIZE_MAX);
+    bool heard = false;
+    for (std::uint32_t block = 0;
+         block < engine->timelinePool.PageCount() + 16u && !heard; ++block) {
+        engine->timelineService->Service();
+        engine->nullBackend.Pump(1);
+        const auto* output = engine->nullBackend.LastBlock();
+        for (std::uint32_t frame = 0; frame < engine->config.blockFrames; ++frame) {
+            ASSERT_NEAR(0.0f, output[2 * frame], 1e-5f) << frame;
+            if (std::abs(output[2 * frame + 1]) <= harkentest::kSilenceFloor) continue;
+            heard = true;
+            ASSERT_NEAR(0.25f * 0.5f * std::sqrt(2.0f), output[2 * frame + 1], 1e-5f) << frame;
+        }
+    }
+    EXPECT_TRUE(heard);
     unsigned selected = 0;
     for (const auto& record : records) {
         if (record.fact.factKind != VN_MONITOR_FACT_SELECTION_COMMITTED) continue;

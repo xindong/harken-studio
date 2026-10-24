@@ -65,6 +65,12 @@ namespace Harken
         [DllImport(LibraryName, EntryPoint = "Vn_SetVoicePosition", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_SetVoicePosition(ulong handle, VnVec3 position);
 
+        [DllImport(LibraryName, EntryPoint = "Vn_SetListenerDistanceReference", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_SetListenerDistanceReference(ulong handle);
+
+        [DllImport(LibraryName, EntryPoint = "Vn_SetEmitterDistanceScale", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_SetEmitterDistanceScale(ulong handle, float scale);
+
         [DllImport(LibraryName, EntryPoint = "Vn_SetVoiceDistanceScale", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_SetVoiceDistanceScale(ulong handle, float scale);
 

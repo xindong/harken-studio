@@ -355,6 +355,12 @@ Transform and session returns the same source; an ended source cannot be used
 for another Play. `HarkenSpatialSource.IsFollowing` and `LastResult` report its
 state. `Dispose()` calls `EndFollow()`.
 
+`source.SetDistanceScale(float scale)` sets a positive finite range multiplier
+for that followed identity. It requires the original live session and a source
+that is still following; an ended source returns `VN_INVALID_ARG`, and a released
+or obsolete source returns `VN_STALE_HANDLE`. A new source starts at 1. The value
+is stored by the native emitter, with no serialized Unity copy.
+
 ### Low-level `Harken.Actions`
 
 These calls submit directly to the active native session. They do not acquire
@@ -433,28 +439,117 @@ progress while the session is active.
 ### Unity components
 
 `HarkenEmitter` serializes `runtime` and `stopFadeMs` (default 50 ms). It
-creates one native emitter when its Runtime becomes ready, publishes its
-Transform position and orientation when changed, and transfers cleanup to the
-Runtime when disabled. A retained emitter keeps emitter-local Variable values;
+creates and registers one native emitter when its Runtime becomes ready. The
+Runtime publishes its Transform when changed. The component transfers cleanup
+to the Runtime when disabled. A retained emitter keeps emitter-local Variable values;
 destroy and recreate it when pooling assigns a new object identity.
 
 | Member | Contract |
 | --- | --- |
 | `Emitter Handle { get; }`, `bool IsCreated { get; }` | Live native handle and creation state. An unavailable handle is `default`. |
 | `VnResult LastResult { get; }` | Last component operation, including transform publication. |
-| `VnResult Create()` | Create/publish after a live session exists. Repeated creation of this component's current emitter returns `VN_OK`; no session returns `VN_NOT_INITIALIZED`. |
+| `VnResult Create()` | Create/register after a live session exists. Pose publication happens at the shared frame boundary or immediately before an SDK Post. Repeated creation of this component's current emitter returns `VN_OK`; no session returns `VN_NOT_INITIALIZED`. |
 | `VnResult Stop()` | Stop the emitter's current playback using `stopFadeMs`; no created emitter returns `VN_OK`. |
+| `VnResult SetDistanceScale(float scale)` | Set a positive finite range multiplier on this enabled component's current identity. An unavailable/obsolete identity returns `VN_STALE_HANDLE`; an active spatial publication returns `VN_IN_USE`. Destroy/recreate resets the multiplier to 1. |
 | `VnResult DestroyEmitter()` | Stop, then destroy the owned emitter. Check the result; failed cleanup retains ownership. |
 
 `ShutdownOrder` and `BeforeRuntimeShutdown()` serve owner cleanup. Do not
 destroy the component's `Handle` through the low-level wrapper.
 
-`HarkenListener` serializes an optional `runtime` reference. When the owner
-is ready, it publishes its Transform from `LateUpdate` and exposes
+`HarkenListener` serializes an optional `runtime` reference and exposes
 `VnResult LastResult { get; }`. Attach it to the camera or player whose pose
-should drive spatial audio.
-Re-enabling the listener clears its publication cache and republishes even an
-unchanged Transform on the next ready update.
+should drive spatial audio. Enabled listeners register as candidates. The
+first candidate that successfully publishes its pose becomes the selected
+listener; later candidates remain registered with `LastResult = VN_IN_USE`
+and cannot overwrite the selected pose.
+
+| AudioSystem member | Contract |
+| --- | --- |
+| `HarkenListener SelectedListener { get; }` | Current listener component, or `null` when none is selected. |
+| `VnResult SelectListener(HarkenListener listener)` | Validate and publish an enabled candidate belonging to this session, then select it. Failure preserves the previous selection. Selecting the current owner republishes its pose without creating another identity. |
+| `VnResult SetDistanceReference(HarkenEmitter emitter)` | Use this enabled component's current emitter for distance evaluation. The component must belong to this runtime and session. |
+| `VnResult SetDistanceReference(HarkenSpatialSource source)` | Use an existing source still following in this runtime and session. This does not create an emitter or keep the source alive. |
+| `VnResult ClearDistanceReference()` | Restore distance evaluation from the actual listener position. |
+
+Disabling or destroying the selected listener clears the selection. Existing
+candidates do not automatically take over; select one explicitly. With no
+selected component, native audio retains its default or last accepted
+listener pose. Restarting the Runtime clears session ownership; still-enabled
+components register again and retransmit even an unchanged Transform.
+
+```csharp
+VnResult selected = runtime.SelectListener(cutsceneListener);
+if (selected != VnResult.VN_OK) Debug.LogWarning(selected);
+```
+
+### Pose sampling and playback timing
+
+Each AudioSystem owns one internal coordinator with
+`DefaultExecutionOrder(+10000)`. Its `LateUpdate` captures the selected
+listener and all active component/Transform sources, publishes the captured
+values, then performs the normal Runtime update. Place camera and gameplay
+Transform writes before this boundary. A script with the same or later order,
+a project execution-order override, or a custom PlayerLoop must explicitly
+arrange that ordering. Writes after the boundary enter the next submission.
+The AudioSystem keeps its early initialization order of `-10000`.
+
+`HarkenAction.Play` and spatial `HarkenAudioSystem.PlayAction` capture and
+publish the selected listener and that request's source immediately before
+the actual Post, after resource preparation. `PlayActionAsync` waits for
+preparation, revalidates the session/source, and captures the current pose at
+that point. A cancelled or obsolete request cannot post into a new session.
+The existing installation/ACK service can still be required before the first
+audible block; these calls do not promise synchronous sound. A later normal
+frame submission can legitimately accept a newer pose. Game code does not
+need to add an extra `HarkenEngine.Update` or position setter.
+
+Pose publication contains no user callbacks or maintenance pumps. Publication
+results are notified after firing/resource ownership is registered, or after
+the normal native update returns. Play/Stop/Destroy in those safe callbacks
+retain their existing ownership rules; callbacks cannot recursively pump the
+Runtime. Invalid listener input preserves the last accepted snapshot. Invalid
+source input preserves that source's last accepted pose and reports the result.
+
+Emitter distance scale multiplies the existing authored/Voice range scale.
+Distance contributions use physical distance divided by the combined scale;
+pan and cone direction still use physical geometry. Set the scale before Play
+to affect its initial spatial state. An asynchronous Play uses the current
+native scale when it actually posts after preparation. Live changes use the
+existing target smoothing. Component and Transform-source scale setters reject
+reentry during spatial publication with `VN_IN_USE`, without invoking result
+callbacks inside that boundary. Native destruction freezes each attached
+playback's last accepted source pose and scale; a new emitter identity starts at 1.
+
+An explicit distance reference changes only distance contributions (volume,
+low-pass and high-pass filtering, width and proximity); pan and cone continue to use the actual Listener.
+The runtime keeps one selection across same-session Listener changes and clears
+it on shutdown. New selections validate their pose before changing the choice.
+Selection and clear reject publication reentry with `VN_IN_USE`.
+
+An already-selected source that ends following, or component that disables,
+uses its original native identity's last published position while that identity
+remains alive. It does not follow a recycled Transform or a new emitter generation.
+Actual native destruction falls back to the Listener; selecting an ended source
+anew is rejected. Before each Post or frame submission, the runtime validates
+the complete native identity before reading the reference Transform. A live
+reference with an invalid pose rejects that spatial submission and preserves the
+previously accepted spatial state. Async Play captures the current selection
+after content preparation. Callbacks that replace the selection cannot be
+overwritten by an older publication or cleanup result.
+
+Distance high-pass filtering comes from the attenuation profile in published
+content. A disabled curve or a value of 0 Hz contributes no high-pass filtering.
+Game code consumes that content through the existing playback APIs; profile
+descriptors and curve construction remain internal tooling types. Use the SDK,
+native library and published content from a matching delivery. The managed ABI
+layout check does not detect native high-pass support. An older native library
+rejects the new attenuation descriptor with `VN_INVALID_ARG`, including when
+its high-pass curve is disabled; the SDK does not shorten it or discard the curve.
+
+For pooled Transform sources, call `EndFollow()` before reassigning the object
+and create a new source for the new identity; existing tails keep the frozen
+pose. Raw `Emitter` handles have no Unity Transform association: their caller
+must explicitly submit the listener/source pose before low-level `Actions.Post`.
 
 ### Raw `Harken.Emitter` and coordinate adapters
 
@@ -465,6 +560,7 @@ unchanged Transform on the next ready update.
 | `static VnResult CreateStateOnly(out Emitter emitter)` | Create independent state without a pose; uses the same public emitter quota. |
 | `VnResult SetPosition(VnVec3 position)` | Set a position in Harken coordinates, meters. StateOnly returns `VN_CAPABILITY_UNAVAILABLE`. |
 | `VnResult SetOrientation(VnVec3 forward)` | Set its forward direction in Harken coordinates. |
+| `VnResult SetDistanceScale(float scale)` | Set a positive finite range multiplier, default 1. Nonpositive/NaN/infinite values return `VN_INVALID_ARG`, StateOnly returns `VN_CAPABILITY_UNAVAILABLE`, and stale handles return `VN_STALE_HANDLE`; refused writes preserve the previous value. |
 | `VnResult Stop(uint fadeMs)` | Request stop for playback on this emitter; fade is in milliseconds. |
 | `VnResult Destroy()` | Destroy this caller-owned native emitter after its users finish. |
 | `VnResult QueryVariable(HarkenVariableId variable, out VnVariableQueryResultV1 result)` | Query this emitter's value after a typed catalog check; see Variable documentation for that separate feature. |
@@ -478,7 +574,10 @@ to `VnVec3`. `SetEmitterTransform(Emitter, Transform)` and
 world-space pose; the latter rejects nonfinite positions or invalid forward
 vectors with `VN_INVALID_ARG`. `SetListener(Transform)` and
 `SetListener(Vector3 position, Vector3 forward, Vector3 up)` publish a listener
-pose. Raw `Harken.Listener.Set(VnVec3 position, VnVec3 forward, VnVec3 up)`
+pose. Raw `Harken.Listener.SetDistanceReference(Emitter emitter)` selects a live
+spatial emitter; `Emitter.None` clears it. StateOnly returns
+`VN_CAPABILITY_UNAVAILABLE`, a stale handle returns `VN_STALE_HANDLE`, and refused
+selections preserve the current choice. Raw `Harken.Listener.Set(VnVec3 position, VnVec3 forward, VnVec3 up)`
 accepts Harken coordinates. All setter calls return a `VnResult`.
 
 ## Common immediate failures

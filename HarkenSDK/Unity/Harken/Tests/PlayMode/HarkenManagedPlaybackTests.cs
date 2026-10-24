@@ -256,7 +256,7 @@ namespace Harken.Unity.Tests
                 source.BeforeRead = id =>
                 {
                     Assert.That(fixture.Runtime.Session.AcquirePack(id, out _), Is.EqualTo(VnResult.VN_IN_USE));
-                    Invoke(fixture.Runtime, "Update");
+                    Invoke(fixture.Runtime, "AdvanceFrame");
                     ExpectPlayFailure(VnResult.VN_NO_ACTION);
                     Assert.That(fixture.TryPlay(out _), Is.EqualTo(VnResult.VN_NO_ACTION));
                 };
@@ -365,7 +365,7 @@ namespace Harken.Unity.Tests
                 fixture.Start(source.Prepared);
                 HarkenAction action = AddAction(fixture);
                 source.BeforeRead = id => action.enabled = false;
-                LogAssert.Expect(LogType.Error, new Regex("Harken operation failed: Action .*VN_NOT_INITIALIZED"));
+                // An invalidated component returns the failure without publishing an old operation result.
                 Assert.That(action.Play(), Is.EqualTo(VnResult.VN_NOT_INITIALIZED));
                 Assert.That(action.Firing.IsValid, Is.False);
                 Assert.That(Get<ulong>(action, "callerSeed"), Is.Zero);
@@ -408,7 +408,7 @@ namespace Harken.Unity.Tests
             Assert.That(frames, Is.GreaterThan(0U));
             Assert.That(channels, Is.GreaterThan(0U));
             Assert.That((ulong)frames * channels, Is.LessThanOrEqualTo((ulong)samples.Length));
-            Invoke(fixture.Runtime, "Update");
+            Invoke(fixture.Runtime, "AdvanceFrame");
         }
 
 #endif
@@ -674,7 +674,7 @@ namespace Harken.Unity.Tests
                 PrimeFreshPcmSnapshot(samples);
                 fixture.Play();
                 AssertSilentFreshBlocks(samples, 1);
-                Invoke(fixture.Runtime, "Update");
+                Invoke(fixture.Runtime, "AdvanceFrame");
                 AssertImmediatePcm(samples);
                 ulong before = CaptureBlock();
                 Assert.That(HarkenSdkTest_PumpAndCopy(samples, (uint)samples.Length,
@@ -721,11 +721,11 @@ namespace Harken.Unity.Tests
                 var samples = new float[4096];
                 PrimeFreshPcmSnapshot(samples);
                 ActionFiring firing = fixture.Play();
-                Invoke(fixture.Runtime, "Update");
+                Invoke(fixture.Runtime, "AdvanceFrame");
                 AssertSilentFreshBlocks(samples, 6);
                 Assert.That(firing.Query(out VnActionFiringInfo pending), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(pending.state, Is.EqualTo((uint)VnActionFiringState.VN_ACTION_FIRING_ACTIVE));
-                Invoke(fixture.Runtime, "Update");
+                Invoke(fixture.Runtime, "AdvanceFrame");
                 AssertImmediatePcm(samples);
                 AssertNaturalTailAfterPureAudio(fixture, firing, samples);
             }
@@ -740,7 +740,7 @@ namespace Harken.Unity.Tests
                 var samples = new float[4096];
                 PrimeFreshPcmSnapshot(samples);
                 HarkenAction action = component ? AddAction(fixture) : null;
-                Invoke(fixture.Runtime, "Update");
+                Invoke(fixture.Runtime, "AdvanceFrame");
                 ActionFiring firing;
                 if (component)
                 {
@@ -750,7 +750,7 @@ namespace Harken.Unity.Tests
                 else firing = fixture.Play();
                 AssertSilentFreshBlocks(samples, 8);
                 Assert.That(firing.IsValid, Is.True);
-                Invoke(fixture.Runtime, "Update");
+                Invoke(fixture.Runtime, "AdvanceFrame");
                 AssertImmediatePcm(samples);
                 AssertNaturalTailAfterPureAudio(fixture, firing, samples);
             }
@@ -903,13 +903,17 @@ namespace Harken.Unity.Tests
                 // Publication was already proven before EOF; these cycles retire completion/read fences.
                 for (int i = 0; i < 16 && !observed; ++i)
                 {
-                    Invoke(fixture.Runtime, "Update");
+                    Invoke(fixture.Runtime, "AdvanceFrame");
                     if (!observed) Assert.That(PumpFreshPcm(samples, out _), Is.EqualTo(-1));
                 }
             }
             finally { fixture.Runtime.OperationCompleted -= observer; }
             Assert.That(observed, Is.True);
+            // Frame maintenance precedes the native update that first reports terminal completion.
+            if (Pending(fixture.Runtime) != 0)
+                Invoke(fixture.Runtime, "AdvanceFrame");
             Assert.That(Pending(fixture.Runtime), Is.Zero);
+            Assert.That(PumpFreshPcm(samples, out _), Is.EqualTo(-1));
         }
 
         [UnityTest]
@@ -937,7 +941,7 @@ namespace Harken.Unity.Tests
                 }
                 else firing = fixture.Play();
                 AssertSilentFreshBlocks(samples, 1);
-                Invoke(fixture.Runtime, "Update");
+                Invoke(fixture.Runtime, "AdvanceFrame");
                 AssertImmediatePcm(samples);
                 AssertNaturalTailAfterPureAudio(fixture, firing, samples);
             }
@@ -1094,7 +1098,7 @@ namespace Harken.Unity.Tests
                 // Inject only the notification into the real native queue; Update and Term remain production code.
                 Assert.That(HarkenSdkTest_PumpNull(1), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(HarkenSdkTest_QueueNotification(), Is.EqualTo(VnResult.VN_OK));
-                if (sdkUpdate) Invoke(fixture.Runtime, "Update");
+                if (sdkUpdate) Invoke(fixture.Runtime, "AdvanceFrame");
                 else Assert.That(HarkenEngine.Update(), Is.EqualTo(VnResult.VN_OK));
                 // Assertions stay outside native callbacks so failures cannot unwind through P/Invoke.
                 Assert.That(notified, Is.True, "The injected notification must pass through native dispatch.");
@@ -1150,14 +1154,14 @@ namespace Harken.Unity.Tests
                     PumpUntilTerminal(owner, first, second);
                     Assert.That(CaptureBlock(), Is.GreaterThan(baseline));
                     baseline = CaptureBlock();
-                    Invoke(fixture.Runtime, "Update");
+                    Invoke(fixture.Runtime, "AdvanceFrame");
                     Assert.That(fixture.Runtime.Session, Is.SameAs(owner));
                     Assert.That(first.Query(out _), Is.EqualTo(VnResult.VN_STALE_HANDLE));
                     Assert.That(second.Query(out _), Is.EqualTo(VnResult.VN_STALE_HANDLE));
                     Assert.That(Pending(fixture.Runtime), Is.Zero);
                     Assert.That(Get<ICollection>(fixture.Runtime, "firingCleanup").Count, Is.Zero);
                     Assert.That(HarkenSdkTest_PumpNull(4), Is.EqualTo(VnResult.VN_OK));
-                    Invoke(fixture.Runtime, "Update");
+                    Invoke(fixture.Runtime, "AdvanceFrame");
                     Assert.That(Pending(fixture.Runtime), Is.Zero);
                 }
             }
@@ -1231,7 +1235,7 @@ namespace Harken.Unity.Tests
                     Assert.That(source.Calls.Count, Is.EqualTo(iteration + 1));
                     PumpUntilTerminal(fixture.Runtime.Session, first, second);
                     Assert.That(CaptureBlock(), Is.GreaterThan(baseline));
-                    Invoke(fixture.Runtime, "Update");
+                    Invoke(fixture.Runtime, "AdvanceFrame");
                     Assert.That(Pending(fixture.Runtime), Is.Zero);
                     Assert.That(first.Query(out _), Is.EqualTo(VnResult.VN_STALE_HANDLE));
                     Assert.That(second.Query(out _), Is.EqualTo(VnResult.VN_STALE_HANDLE));
@@ -1254,7 +1258,7 @@ namespace Harken.Unity.Tests
                 ActionFiring first = fixture.Play();
                 ActionFiring second = fixture.Play();
                 PumpUntilTerminal(fixture.Runtime.Session, first, second);
-                Invoke(fixture.Runtime, "Update");
+                Invoke(fixture.Runtime, "AdvanceFrame");
                 Assert.That(Pending(fixture.Runtime), Is.Zero);
                 Assert.That(preload.IsPrepared, Is.True);
                 ActionFiring third = fixture.Play();
@@ -1262,7 +1266,7 @@ namespace Harken.Unity.Tests
                 Assert.That(preload.Release(), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(third.Query(out _), Is.EqualTo(VnResult.VN_OK));
                 PumpUntilTerminal(fixture.Runtime.Session, third);
-                Invoke(fixture.Runtime, "Update");
+                Invoke(fixture.Runtime, "AdvanceFrame");
                 Assert.That(Pending(fixture.Runtime), Is.Zero);
                 AssertUnprepared(fixture.Action.Name, fixture.Publication.ProjectId);
             }
@@ -1358,7 +1362,7 @@ namespace Harken.Unity.Tests
                 for (int i = 0; i < 8192 && Get<ICollection>(fixture.Runtime, "firingCleanup").Count != 0; ++i)
                 {
                     Assert.That(HarkenSdkTest_PumpNull(1), Is.EqualTo(VnResult.VN_OK));
-                    Invoke(fixture.Runtime, "Update");
+                    Invoke(fixture.Runtime, "AdvanceFrame");
                 }
                 Assert.That(Get<ICollection>(fixture.Runtime, "firingCleanup").Count, Is.Zero);
                 Assert.That(firing.Query(out _), Is.EqualTo(VnResult.VN_STALE_HANDLE));
@@ -1403,7 +1407,7 @@ namespace Harken.Unity.Tests
                     Assert.That(first.Handle, Is.Not.EqualTo(second.Handle));
                     Assert.That(source.EndFollow(), Is.EqualTo(VnResult.VN_OK));
                     actor.transform.position = Vector3.left * 20;
-                    Invoke(fixture.Runtime, "Update");
+                    Invoke(fixture.Runtime, "AdvanceFrame");
                     Assert.That(first.Query(out _), Is.EqualTo(VnResult.VN_OK));
                     Assert.That(second.Query(out _), Is.EqualTo(VnResult.VN_OK));
                     ExpectPlayFailure(VnResult.VN_INVALID_ARG);

@@ -163,9 +163,10 @@ TABLE_JSON = r'''
       "VnAttenuationDesc": {
         "mode": "exact-discrete-prefix",
         "boundaryFields": [
-          "proximityFrequency"
+          "proximityFrequency",
+          "highpassCurve"
         ],
-        "missingFields": "legacy-proximity-frequency",
+        "missingFields": "legacy-proximity-frequency-and-disabled-highpass",
         "unknownSize": "reject"
       }
     },
@@ -3671,6 +3672,12 @@ TABLE_JSON = r'''
         [
           "proximityFrequency",
           "f32"
+        ],
+        [
+          "highpassCurve",
+          {
+            "struct": "VnAttenuationCurve"
+          }
         ]
       ]
     },
@@ -7540,6 +7547,33 @@ TABLE_JSON = r'''
           "name": "position",
           "ctype": "VnVec3",
           "wire": "vec3"
+        }
+      ]
+    },
+    {
+      "name": "Vn_SetListenerDistanceReference",
+      "note": "public Runtime API; not part of the remote wire protocol (no opcode).",
+      "params": [
+        {
+          "name": "handle",
+          "ctype": "VnEmitterHandle",
+          "wire": "u64"
+        }
+      ]
+    },
+    {
+      "name": "Vn_SetEmitterDistanceScale",
+      "note": "public Runtime API; not part of the remote wire protocol (no opcode).",
+      "params": [
+        {
+          "name": "handle",
+          "ctype": "VnEmitterHandle",
+          "wire": "u64"
+        },
+        {
+          "name": "scale",
+          "ctype": "float",
+          "wire": "f32"
         }
       ]
     },

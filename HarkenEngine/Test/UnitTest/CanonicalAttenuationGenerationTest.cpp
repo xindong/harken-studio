@@ -74,15 +74,16 @@ TEST(CanonicalAttenuationGeneration, MirrorsAndDelayedBindingsKeepExactOldCurves
     harken::EngineConfig config{};
     ASSERT_TRUE(harken::VoiceCapacityModel::TryCreate(4, 4, &config.voiceCapacity));
     harken::Spatializer spatial(config);
+    const harken::EmitterTable emitters(config);
     ASSERT_EQ(VN_OK, Install(spatial, Profile(), 1));
     const VnVoiceHandle first = (1ull << 32), delayed = first + 1;
     spatial.OnVoiceStarted(first, true, 5.0f, 0.0f, 0.0f);
     ASSERT_EQ(VN_OK, spatial.BindVoice(first, harkentest::ObjectId(17), 1));
-    const auto oldDb = spatial.AttenuationVolumeDb(harkentest::ObjectId(17), 5.0f, 0.0f, 0.0f, 1.0f, 1);
+    const auto oldDb = spatial.AttenuationVolumeDb(emitters, harkentest::ObjectId(17), 5.0f, 0.0f, 0.0f, 1.0f, 1);
     spatial.SetRetainCommitPageLimitForTests(0);
     EXPECT_EQ(VN_BACKPRESSURE, Install(spatial, Profile(20), 2, Generations(1)));
     EXPECT_EQ(nullptr, spatial.FindProfile(harkentest::ObjectId(17), 2));
-    EXPECT_FLOAT_EQ(oldDb, spatial.AttenuationVolumeDb(harkentest::ObjectId(17), 5.0f, 0.0f, 0.0f, 1.0f, 1));
+    EXPECT_FLOAT_EQ(oldDb, spatial.AttenuationVolumeDb(emitters, harkentest::ObjectId(17), 5.0f, 0.0f, 0.0f, 1.0f, 1));
     spatial.SetRetainCommitPageLimitForTests(SIZE_MAX);
     ASSERT_EQ(VN_OK, Install(spatial, Profile(20), 2, Generations(1)));
     ASSERT_EQ(VN_OK, Install(spatial, Profile(30), 3, Generations(2)));
@@ -91,7 +92,7 @@ TEST(CanonicalAttenuationGeneration, MirrorsAndDelayedBindingsKeepExactOldCurves
     ASSERT_TRUE(spatial.CaptureVoice(first, &parked));
     EXPECT_EQ(harkentest::ObjectId(17u), parked.attenuationId);
     EXPECT_EQ(1u, parked.attenuationGeneration);
-    EXPECT_FLOAT_EQ(oldDb, spatial.AttenuationVolumeDb(harkentest::ObjectId(17), 5.0f, 0.0f, 0.0f, 1.0f, 1));
+    EXPECT_FLOAT_EQ(oldDb, spatial.AttenuationVolumeDb(emitters, harkentest::ObjectId(17), 5.0f, 0.0f, 0.0f, 1.0f, 1));
     spatial.OnVoiceStarted(delayed, true, 5.0f, 0.0f, 0.0f);
     ASSERT_EQ(VN_OK, spatial.BindVoice(delayed, parked.attenuationId, parked.attenuationGeneration));
     ASSERT_EQ(VN_OK, spatial.BindVoice(first, harkentest::ObjectId(17), 3));
@@ -125,6 +126,44 @@ TEST(CanonicalAttenuationGeneration, UnchangedAndCancellationConsumeNoRetainSlot
     }
     ASSERT_EQ(VN_OK, Install(spatial, desc, 300, Generations(1)));
     EXPECT_EQ(1u, spatial.RetainedProfileCount());
+}
+
+TEST(CanonicalAttenuationGeneration, HighpassOnlyChangeRetainsParkedAndDelayedCurves) {
+    harken::EngineConfig config{};
+    ASSERT_TRUE(harken::VoiceCapacityModel::TryCreate(2, 2, &config.voiceCapacity));
+    harken::Spatializer spatial(config);
+    auto desc = Profile();
+    desc.highpassCurve.enabled = 1;
+    desc.highpassCurve.pointCount = 1;
+    desc.highpassCurve.points[0] = {0, 100};
+    ASSERT_EQ(VN_OK, Install(spatial, desc, 1));
+    const VnVoiceHandle first = UINT64_C(1) << 32, delayed = first + 1;
+    spatial.OnVoiceStarted(first, true, 5, 0, 0);
+    ASSERT_EQ(VN_OK, spatial.BindVoice(first, harkentest::ObjectId(17), 1));
+    desc.highpassCurve.points[0].y = 500;
+    spatial.SetRetainCommitPageLimitForTests(0);
+    EXPECT_EQ(VN_BACKPRESSURE, Install(spatial, desc, 2));
+    EXPECT_EQ(nullptr, spatial.FindProfile(harkentest::ObjectId(17), 2));
+    EXPECT_FLOAT_EQ(100, spatial.FindProfile(harkentest::ObjectId(17), 1)->highpassCurve.Eval(5));
+    spatial.SetRetainCommitPageLimitForTests(SIZE_MAX);
+    ASSERT_EQ(VN_OK, Install(spatial, desc, 2));
+    EXPECT_EQ(1u, spatial.RetainedProfileCount());
+    ASSERT_EQ(VN_OK, Install(spatial, desc, 3));
+    EXPECT_EQ(1u, spatial.RetainedProfileCount());
+    EXPECT_EQ(nullptr, spatial.FindProfile(harkentest::ObjectId(17), 3));
+    harken::Spatializer::SpatialVoiceState parked{};
+    ASSERT_TRUE(spatial.CaptureVoice(first, &parked));
+    EXPECT_EQ(1u, parked.attenuationGeneration);
+    spatial.OnVoiceStarted(delayed, true, 5, 0, 0);
+    ASSERT_EQ(VN_OK, spatial.BindVoice(delayed, parked.attenuationId, parked.attenuationGeneration));
+    ASSERT_EQ(VN_OK, spatial.BindVoice(first, harkentest::ObjectId(17), 2));
+    ASSERT_EQ(VN_OK, spatial.SweepRetainedProfiles());
+    ASSERT_NE(nullptr, spatial.FindProfile(harkentest::ObjectId(17), 1));
+    EXPECT_FLOAT_EQ(100, spatial.FindProfile(harkentest::ObjectId(17), 1)->highpassCurve.Eval(5));
+    EXPECT_FLOAT_EQ(500, spatial.FindProfile(harkentest::ObjectId(17), 2)->highpassCurve.Eval(5));
+    spatial.NoteVoiceEnded(delayed);
+    ASSERT_EQ(VN_OK, spatial.SweepRetainedProfiles());
+    EXPECT_EQ(nullptr, spatial.FindProfile(harkentest::ObjectId(17), 1));
 }
 
 TEST(CanonicalAttenuationGeneration, EndAndSlotReuseSweepWithoutNotifications) {

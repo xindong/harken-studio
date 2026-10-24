@@ -6,6 +6,7 @@
 
 #include "Engine.h"
 #include "Common/RawVoiceTestSupport.h"
+#include "UnitTest/AllocationProbe.h"
 #include "harken/core/VoiceLedger.h"
 #include "harken/media/StreamFormat.h"
 
@@ -21,6 +22,7 @@
 #include <fstream>
 #include <limits>
 #include <numeric>
+#include <new>
 #include <string>
 #include <thread>
 #include <vector>
@@ -1782,9 +1784,465 @@ void PrintOperation(const char* name, const TimingSummary& aggregate,
     std::putchar('}');
 }
 
+// Opt-in spatial characterization leaves the established capacity catalog intact.
+struct SpatialCase {
+    std::uint32_t voices = 32;
+    std::uint32_t voicesPerEmitter = 1;
+    std::string motion;
+    bool curves = false;
+    bool highpass = false;
+};
+
+VnAttenuationDesc SpatialProfile(bool curves, bool alternate = false, bool highpass = false) {
+    VnAttenuationDesc desc{};
+    desc.structSize = sizeof(desc);
+    desc.rolloff = VN_ROLLOFF_LINEAR;
+    desc.minDistance = 1.0f;
+    desc.maxDistance = 100.0f;
+    desc.airAbsorptionNearHz = 18000.0f;
+    desc.airAbsorptionFarHz = 2000.0f;
+    desc.proximityRadius = 20.0f;
+    desc.proximityMaxBoostDb = 3.0f;
+    desc.proximityFrequency = 200.0f;
+    desc.coneEnabled = 1;
+    desc.coneInnerDeg = 30.0f;
+    desc.coneOuterDeg = 120.0f;
+    desc.coneOuterGainDb = -6.0f;
+    desc.coneOuterLowpassHz = 4000.0f;
+    const auto fill = [](VnAttenuationCurve& curve, float nearValue, float farValue) {
+        curve.enabled = 1;
+        curve.pointCount = VN_ATTENUATION_MAX_CURVE_POINTS;
+        for (std::uint32_t i = 0; i < curve.pointCount; ++i) {
+            const float fraction = static_cast<float>(i) / 7.0f;
+            curve.points[i] = {1.0f + 99.0f * fraction,
+                nearValue + (farValue - nearValue) * fraction};
+            if (i == 0) continue;
+            const auto a = curve.points[i - 1];
+            const auto b = curve.points[i];
+            curve.handles[i - 1] = {a.x + (b.x - a.x) * 0.2f, a.y,
+                a.x + (b.x - a.x) * 0.8f, b.y};
+        }
+    };
+    if (highpass) fill(desc.highpassCurve, 0.0f, alternate ? 1800.0f : 1000.0f);
+    if (!curves) {
+        if (alternate) desc.maxDistance = 90.0f;
+        return desc;
+    }
+    fill(desc.volumeCurve, 0.0f, alternate ? -50.0f : -60.0f);
+    fill(desc.lowpassCurve, 18000.0f, 2000.0f);
+    fill(desc.widthCurve, 0.8f, 0.1f);
+    return desc;
+}
+
+struct SpatialRun {
+    bool passed = false;
+    VnResult failure = VN_OK;
+    const char* stage = "setup";
+    std::vector<double> publishUs, updateUs, mainUs, renderUs;
+    std::vector<double> eventMainUs;
+    std::uint64_t hash = kFnvOffset;
+    std::uint64_t nonfinite = 0;
+    std::uint64_t setterCalls = 0;
+    std::size_t mainAllocations = 0, renderAllocations = 0;
+    std::size_t mainBytes = 0, renderBytes = 0;
+    std::size_t nonEventMainAllocations = 0, nonEventMainBytes = 0;
+    std::uint64_t maxBacklog = 0, remainingBacklog = 0;
+    std::uint32_t maxDrainBlocks = 0;
+    std::uint32_t pendingPeak = 0, residencyEvents = 0, profileChanges = 0;
+    bool warmupEvaluated = false;
+    bool warmupStable = false;
+    VnSnapshot snapshot{};
+    float peak = 0.0f;
+};
+
+SpatialRun RunSpatialOnce(const SpatialCase& scenario, std::uint32_t warmup,
+                          std::uint32_t ticks) {
+    SpatialRun run;
+    VnConfig config{};
+    config.structSize = sizeof(config);
+    config.sampleRate = 48000;
+    config.blockFrames = kBlockFrames;
+    config.maxVoices = scenario.voices;
+    config.maxEmitters = scenario.voices / scenario.voicesPerEmitter;
+    config.maxParkedVoices = 16;
+    config.arenaBytes = kArenaBytes;
+    config.deviceMode = VN_DEVICE_NULL;
+    config.commandQueueDepth = 16384;
+    config.maxControlCommandsPerQuantum = 8192;
+    config.notificationQueueDepth = 2048;
+    config.mixChannelLayout = VN_CHANNEL_LAYOUT_STEREO;
+    config.deviceChannelLayout = VN_CHANNEL_LAYOUT_STEREO;
+    config.renderWorkerCount = 0;
+    const bool residency = scenario.motion == "residency";
+    if (residency) {
+        config.voiceStealPolicy = 2;
+        config.audibilityParkEnabled = 1;
+        config.parkThresholdDb = -90.0f;
+    }
+    run.failure = Vn_Init(&config);
+    if (run.failure != VN_OK) return run;
+    EngineGuard guard(true);
+    auto* engine = harken::detail::ActiveEngine();
+    const auto source = MakeInterleavedSource(48000, 1);
+    VnPCMDesc pcm{};
+    pcm.structSize = sizeof(pcm);
+    pcm.sampleRate = 48000;
+    pcm.channels = 1;
+    pcm.layout = VN_PCM_LAYOUT_INTERLEAVED;
+    pcm.policy = VN_PCM_POLICY_REFERENCE;
+    pcm.frames = source.size();
+    pcm.samplesInterleaved = source.data();
+    const auto sound = harkentest::ObjectId(0x5350415449414c01ull);
+    const auto profile = harkentest::ObjectId(0x5350415449414c02ull);
+    auto desc = SpatialProfile(scenario.curves, false, scenario.highpass);
+    if ((run.failure = Vn_RegisterPCM(sound, &pcm)) != VN_OK ||
+        (run.failure = Vn_RegisterAttenuation(profile, &desc)) != VN_OK) return run;
+    std::vector<VnEmitterHandle> emitters(config.maxEmitters);
+    std::vector<VnVoiceHandle> voices(scenario.voices);
+    std::array<VnVoiceHandle, 8> parked{};
+    for (std::uint32_t i = 0; i < emitters.size(); ++i) {
+        if ((run.failure = Vn_CreateEmitter(&emitters[i])) != VN_OK ||
+            (run.failure = Vn_SetEmitterPosition(emitters[i],
+                {static_cast<float>(i % 9u) - 4.0f, 0.0f, -40.0f})) != VN_OK ||
+            (run.failure = Vn_SetEmitterOrientation(emitters[i], {0, 0, 1})) != VN_OK)
+            return run;
+    }
+    if (residency) {
+        run.stage = "parked setup";
+        for (auto& voice : parked) {
+            VnPlayDesc play{};
+            play.structSize = sizeof(play);
+            play.soundId = sound;
+            play.busId = VN_BUS_MASTER;
+            play.volumeDb = -100.0f;
+            play.pitchRatio = 1.0f;
+            play.spatialized = 1;
+            play.emitterHandle = emitters.front();
+            play.priority = 128;
+            if ((run.failure = harkentest::PlayRaw(&play, &voice)) != VN_OK ||
+                (run.failure = Vn_BindVoiceAttenuation(voice, profile)) != VN_OK) return run;
+        }
+        engine->nullBackend.Pump(1);
+        if ((run.failure = Vn_Update()) != VN_OK) return run;
+        engine->nullBackend.Pump(1);
+        if ((run.failure = Vn_Update()) != VN_OK) return run;
+        engine->nullBackend.Pump(1);
+        for (auto voice : parked) {
+            if (engine->ledger.Classify(voice).kind != harken::VoiceLedger::HandleKind::Parked) {
+                run.failure = VN_IN_USE;
+                return run;
+            }
+        }
+    }
+    for (std::uint32_t i = 0; i < voices.size(); ++i) {
+        VnPlayDesc play{};
+        play.structSize = sizeof(play);
+        play.soundId = sound;
+        play.busId = VN_BUS_MASTER;
+        play.volumeDb = -60.0f;
+        play.pitchRatio = 1.0f;
+        play.spatialized = 1;
+        play.emitterHandle = emitters[i / scenario.voicesPerEmitter];
+        play.priority = 128;
+        if ((run.failure = harkentest::PlayRaw(&play, &voices[i])) != VN_OK ||
+            (run.failure = Vn_BindVoiceAttenuation(voices[i], profile)) != VN_OK)
+            return run;
+    }
+    if ((run.failure = Vn_Update()) != VN_OK) return run;
+    engine->nullBackend.Pump(1);
+    run.publishUs.reserve(ticks);
+    run.updateUs.reserve(ticks);
+    run.mainUs.reserve(ticks);
+    run.renderUs.reserve(static_cast<std::size_t>(ticks) * 4);
+    run.eventMainUs.reserve(ticks);
+    std::vector<double> warmupMain, warmupRender;
+    warmupMain.reserve(warmup);
+    warmupRender.reserve(warmup);
+    std::uint32_t audioFrames = 0;
+    bool alternateProfile = false;
+    for (std::uint32_t tick = 0; tick < warmup + ticks; ++tick) {
+        const bool measure = tick >= warmup;
+        const bool residencyEvent = residency && (tick == warmup || tick % 60u == 0);
+        const bool replaceEvent = scenario.motion == "replace" && (tick == warmup || tick % 60u == 0);
+        const bool transition = residencyEvent || engine->ledger.PendingStartCount() != 0 ||
+            replaceEvent;
+        allocation_probe::count = 0;
+        allocation_probe::bytes = 0;
+        allocation_probe::enabled = measure;
+        const auto start = std::chrono::steady_clock::now();
+        const float offset = static_cast<float>(tick % 120u) * 0.05f;
+        if (scenario.motion == "listener") {
+            run.failure = Vn_SetListener({offset, 0, 0}, {0, 0, -1}, {0, 1, 0});
+            if (measure) ++run.setterCalls;
+        } else if (scenario.motion == "all" || scenario.motion == "ten" || residency) {
+            const std::uint32_t moving = scenario.motion == "all" || residency
+                ? static_cast<std::uint32_t>(emitters.size())
+                : std::max(1u, static_cast<std::uint32_t>((emitters.size() + 9u) / 10u));
+            for (std::uint32_t i = 0; i < moving && run.failure == VN_OK; ++i) {
+                run.failure = Vn_SetEmitterPosition(emitters[i],
+                    {static_cast<float>(i % 9u) - 4.0f + offset, 0.0f, -40.0f});
+                if (run.failure == VN_OK)
+                    run.failure = Vn_SetEmitterOrientation(emitters[i], {offset * 0.1f, 0, 1});
+                if (measure) run.setterCalls += 2;
+            }
+        } else if (replaceEvent) {
+            alternateProfile = !alternateProfile;
+            desc = SpatialProfile(scenario.curves, alternateProfile, scenario.highpass);
+            run.failure = Vn_ReplaceAttenuation(profile, &desc);
+            if (measure && run.failure == VN_OK) ++run.profileChanges;
+        }
+        if (run.failure == VN_OK && residencyEvent) {
+            alternateProfile = !alternateProfile;
+            desc = SpatialProfile(scenario.curves, alternateProfile, scenario.highpass);
+            run.failure = Vn_ReplaceAttenuation(profile, &desc);
+            if (measure && run.failure == VN_OK) ++run.profileChanges;
+            const auto retired = emitters.front();
+            if (run.failure == VN_OK) run.failure = Vn_DestroyEmitter(retired);
+            if (run.failure == VN_OK) run.failure = Vn_CreateEmitter(&emitters.front());
+            if (run.failure == VN_OK && emitters.front() == retired) run.failure = VN_STALE_HANDLE;
+            if (run.failure == VN_OK)
+                run.failure = Vn_SetEmitterPosition(emitters.front(), {offset, 0, -40});
+            if (run.failure == VN_OK)
+                run.failure = Vn_SetEmitterOrientation(emitters.front(), {0, 0, 1});
+            for (std::uint32_t i = 0; i < 8 && run.failure == VN_OK; ++i) {
+                VnPlayDesc play{};
+                play.structSize = sizeof(play);
+                play.soundId = sound;
+                play.busId = VN_BUS_MASTER;
+                play.volumeDb = -60.0f;
+                play.pitchRatio = 1.0f;
+                play.spatialized = 1;
+                play.emitterHandle = emitters.front();
+                play.priority = 128;
+                VnVoiceHandle voice = 0;
+                run.failure = harkentest::PlayRaw(&play, &voice);
+                if (run.failure == VN_OK) run.failure = Vn_BindVoiceAttenuation(voice, profile);
+            }
+            if (measure) {
+                ++run.residencyEvents;
+                run.setterCalls += 2;
+                run.pendingPeak = std::max(run.pendingPeak, engine->ledger.PendingStartCount());
+            }
+        }
+        const auto published = std::chrono::steady_clock::now();
+        if (run.failure == VN_OK) run.failure = Vn_Update();
+        const auto updated = std::chrono::steady_clock::now();
+        allocation_probe::enabled = false;
+        if (measure) {
+            run.mainAllocations += allocation_probe::count;
+            run.mainBytes += allocation_probe::bytes;
+            if (!transition) {
+                run.nonEventMainAllocations += allocation_probe::count;
+                run.nonEventMainBytes += allocation_probe::bytes;
+            }
+        }
+        run.stage = "publish/update";
+        if (run.failure != VN_OK) return run;
+        if (measure) {
+            run.publishUs.push_back(std::chrono::duration<double, std::micro>(published - start).count());
+            run.updateUs.push_back(std::chrono::duration<double, std::micro>(updated - published).count());
+            run.mainUs.push_back(std::chrono::duration<double, std::micro>(updated - start).count());
+            if (residencyEvent) run.eventMainUs.push_back(run.mainUs.back());
+        } else {
+            warmupMain.push_back(std::chrono::duration<double, std::micro>(updated - start).count());
+        }
+        const auto targetHead = engine->commands.PublishedHead();
+        if (measure) run.maxBacklog = std::max(run.maxBacklog, targetHead - engine->commands.ConsumedCount());
+        std::uint32_t tickBlocks = 0;
+        std::uint32_t drainedAt = targetHead == engine->commands.ConsumedCount() ? 0u : UINT32_MAX;
+        double warmupRenderTotal = 0.0;
+        // A 60 Hz logic cadence produces exactly 800 audio frames per tick.
+        audioFrames += 800;
+        while (audioFrames >= kBlockFrames) {
+            audioFrames -= kBlockFrames;
+            const auto before = engine->mixer.BlocksRendered();
+            allocation_probe::count = 0;
+            allocation_probe::bytes = 0;
+            allocation_probe::enabled = measure;
+            const auto renderStart = std::chrono::steady_clock::now();
+            engine->nullBackend.Pump(1);
+            const auto renderEnd = std::chrono::steady_clock::now();
+            allocation_probe::enabled = false;
+            if (measure) {
+                run.renderAllocations += allocation_probe::count;
+                run.renderBytes += allocation_probe::bytes;
+            }
+            ++tickBlocks;
+            if (drainedAt == UINT32_MAX && engine->commands.ConsumedCount() >= targetHead)
+                drainedAt = tickBlocks;
+            warmupRenderTotal += std::chrono::duration<double, std::micro>(renderEnd - renderStart).count();
+            run.stage = "fresh render block";
+            if (engine->mixer.BlocksRendered() != before + 1u) {
+                run.failure = VN_IN_USE;
+                return run;
+            }
+            if (measure) {
+                run.renderUs.push_back(std::chrono::duration<double, std::micro>(renderEnd - renderStart).count());
+                HashAndInspect(engine->nullBackend.LastBlock(), kBlockFrames * 2,
+                    &run.hash, &run.peak, &run.nonfinite);
+            }
+        }
+        if (!measure) warmupRender.push_back(warmupRenderTotal / tickBlocks);
+        else run.maxDrainBlocks = std::max(run.maxDrainBlocks, drainedAt);
+    }
+    run.remainingBacklog = engine->commands.PublishedHead() - engine->commands.ConsumedCount();
+    run.warmupEvaluated = warmup >= 128;
+    run.warmupStable = run.warmupEvaluated &&
+        (WarmupWindowsStable(warmupMain, 96, 112) && WarmupWindowsStable(warmupRender, 96, 112));
+    run.stage = "live voice identities";
+    const auto* retained = residency ? parked.data() : voices.data();
+    const auto retainedCount = residency ? parked.size() : voices.size();
+    const auto expected = residency ? harken::VoiceLedger::HandleKind::Parked : harken::VoiceLedger::HandleKind::Live;
+    for (std::size_t index = 0; index < retainedCount; ++index) {
+        if (engine->ledger.Classify(retained[index]).kind != expected) {
+            run.failure = VN_STALE_HANDLE;
+            return run;
+        }
+    }
+    run.stage = "snapshot";
+    run.snapshot.structSize = sizeof(run.snapshot);
+    run.failure = Vn_CaptureSnapshot(&run.snapshot);
+    if (run.failure != VN_OK) return run;
+    run.passed = run.peak > kOutputFloor && run.nonfinite == 0 &&
+        run.snapshot.blockIndex + 1 == engine->mixer.BlocksRendered() &&
+        run.snapshot.activeVoiceCount == scenario.voices &&
+        run.snapshot.arenaOverflowCount == 0 &&
+        run.snapshot.paramPublicationDeferredCount == 0 &&
+        run.remainingBacklog == 0 && run.maxDrainBlocks <= 1 &&
+        (!residency || (run.pendingPeak == 8 && run.snapshot.parkedVoiceCount == 8 &&
+                       engine->ledger.PendingStartCount() == 0));
+    run.stage = "complete";
+    return run;
+}
+
+int RunSpatial(const SpatialCase& scenario, bool smoke, bool once) {
+#if !defined(NDEBUG)
+    std::fprintf(stderr, "Optimized build required\n");
+    return 4;
+#else
+    const auto environment = ConfigureEnvironment();
+    allocation_probe::count = 0;
+    allocation_probe::bytes = 0;
+    allocation_probe::enabled = true;
+    void* control = ::operator new(8);
+    allocation_probe::enabled = false;
+    const bool allocationProbeAlive = allocation_probe::count == 1 && allocation_probe::bytes == 8;
+    ::operator delete(control);
+    if (!allocationProbeAlive) {
+        std::fprintf(stderr, "Allocation probe positive control failed\n");
+        return 1;
+    }
+    const std::uint32_t repetitions = smoke || once ? 1u : 5u;
+    const std::uint32_t ticks = smoke ? 16u : 400u;
+    const std::uint32_t warmup = smoke ? 8u : 128u;
+    bool passed = true;
+    std::uint64_t reference = 0;
+    for (std::uint32_t repetition = 0; repetition < repetitions; ++repetition) {
+        auto run = RunSpatialOnce(scenario, warmup, ticks);
+        if (repetition == 0) reference = run.hash;
+        const bool repetitionIntegrity = run.passed && run.hash == reference;
+        passed = passed && repetitionIntegrity;
+        std::printf("{\"benchmark\":\"spatial-update\",\"schema\":\"spatial-update-v1\","
+            "\"mode\":\"%s\",\"repetition\":%u,\"voices\":%u,\"voices_per_emitter\":%u,"
+            "\"motion\":\"%s\",\"curves\":%s,\"distance_highpass\":%s,\"logic_hz\":60,\"sample_rate\":48000,"
+            "\"queue_depth\":16384,\"control_commands_per_block\":8192,\"render_workers\":0,"
+            "\"block_frames\":256,\"warmup_ticks\":%u,\"measured_ticks\":%u,"
+            "\"environment_qualified\":%s,\"pinned_cpu\":%d,\"source_commit\":",
+            smoke ? "smoke" : "formal", repetition, scenario.voices, scenario.voicesPerEmitter,
+            scenario.motion.c_str(), scenario.curves ? "true" : "false",
+            scenario.highpass ? "true" : "false", warmup, ticks,
+            EnvironmentQualified(environment) ? "true" : "false", environment.pinnedCpuIndex);
+        PrintJsonString(environment.sourceCommit.c_str());
+        std::fputs(",\"source_dirty\":", stdout);
+        PrintJsonString(environment.sourceDirty.c_str());
+        const auto print = [](const char* name, const std::vector<double>& samples, double budget) {
+            const auto stats = SummarizeTiming(samples, budget);
+            std::printf(",\"%s\":{\"samples\":%llu,\"p50_us\":%.3f,\"p95_us\":%.3f,"
+                "\"p99_us\":%.3f,\"max_us\":%.3f,\"budget_us\":%.3f,\"exceeds\":%llu}",
+                name, static_cast<unsigned long long>(samples.size()), stats.p50Us, stats.p95Us,
+                stats.p99Us, stats.maximumUs, budget,
+                static_cast<unsigned long long>(stats.nominalPeriodExceedCount));
+        };
+        print("publish", run.publishUs, 1000.0);
+        print("update", run.updateUs, 1000.0);
+        print("main", run.mainUs, 1000.0);
+        print("residency_event_main", run.eventMainUs, 1000.0);
+        print("render", run.renderUs, 1000000.0 * kBlockFrames / 48000.0);
+        std::printf(",\"main_new_allocations\":%llu,\"render_new_allocations\":%llu,"
+            "\"main_new_bytes\":%llu,\"render_new_bytes\":%llu,\"probe_control_passed\":true,"
+            "\"non_event_main_new_allocations\":%llu,\"non_event_main_new_bytes\":%llu,"
+            "\"max_backlog\":%llu,\"remaining_backlog\":%llu,\"max_drain_blocks\":%u,"
+            "\"publisher_deferrals\":%llu,\"warmup_stable\":%s,\"live_voices\":%u,"
+            "\"warmup_evaluated\":%s,\"timing_qualified\":%s,"
+            "\"parked_voices\":%llu,\"pending_peak\":%u,\"residency_events\":%u,\"profile_changes\":%u,"
+            "\"allocation_scope\":\"current_thread_cpp_new_family\",\"setter_calls\":%llu,"
+            "\"output_hash\":\"%016llx\",\"peak\":%.9g,\"nonfinite\":%llu,"
+            "\"integrity_passed\":%s,\"result\":%d,\"stage\":\"%s\","
+            "\"support_claim\":false,\"real_device_qualification\":false}\n",
+            static_cast<unsigned long long>(run.mainAllocations),
+            static_cast<unsigned long long>(run.renderAllocations),
+            static_cast<unsigned long long>(run.mainBytes),
+            static_cast<unsigned long long>(run.renderBytes),
+            static_cast<unsigned long long>(run.nonEventMainAllocations),
+            static_cast<unsigned long long>(run.nonEventMainBytes),
+            static_cast<unsigned long long>(run.maxBacklog),
+            static_cast<unsigned long long>(run.remainingBacklog), run.maxDrainBlocks,
+            static_cast<unsigned long long>(run.snapshot.paramPublicationDeferredCount),
+            run.warmupStable ? "true" : "false", run.snapshot.activeVoiceCount,
+            run.warmupEvaluated ? "true" : "false",
+            !smoke && run.warmupStable && repetitionIntegrity && EnvironmentQualified(environment) &&
+                environment.sourceCommit != "unknown" && environment.sourceDirty == "0" ? "true" : "false",
+            static_cast<unsigned long long>(run.snapshot.parkedVoiceCount), run.pendingPeak,
+            run.residencyEvents, run.profileChanges,
+            static_cast<unsigned long long>(run.setterCalls),
+            static_cast<unsigned long long>(run.hash), run.peak,
+            static_cast<unsigned long long>(run.nonfinite),
+            repetitionIntegrity ? "true" : "false", run.failure, run.stage);
+        std::fflush(stdout);
+        if (!run.passed) break;
+    }
+    return passed ? 0 : 1;
+#endif
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
+    if (argc >= 2 && std::strcmp(argv[1], "--spatial") == 0) {
+        if (argc < 6 || argc > 8) return 2;
+        SpatialCase scenario;
+        bool smoke = false;
+        bool once = false;
+        for (int i = 6; i < argc; ++i) {
+            if (std::strcmp(argv[i], "--highpass") == 0 && !scenario.highpass) {
+                scenario.highpass = true;
+            } else if (std::strcmp(argv[i], "--smoke") == 0 && !smoke && !once) {
+                smoke = true;
+            } else if (std::strcmp(argv[i], "--once") == 0 && !smoke && !once) {
+                once = true;
+            } else {
+                return 2;
+            }
+        }
+        const auto parse = [](const char* text, std::uint32_t* out) {
+            char* end = nullptr;
+            const auto value = std::strtoul(text, &end, 10);
+            if (text == end || *end != '\0' || value == 0 || value > 512) return false;
+            *out = static_cast<std::uint32_t>(value);
+            return true;
+        };
+        if (!parse(argv[2], &scenario.voices) || !parse(argv[3], &scenario.voicesPerEmitter) ||
+            (scenario.voicesPerEmitter != 1 && scenario.voicesPerEmitter != 4) ||
+            scenario.voices % scenario.voicesPerEmitter != 0) return 2;
+        scenario.motion = argv[4];
+        if (scenario.motion != "static" && scenario.motion != "ten" &&
+            scenario.motion != "all" && scenario.motion != "listener" &&
+            scenario.motion != "replace" && scenario.motion != "residency") return 2;
+        if (scenario.motion == "residency" && scenario.voices < 32) return 2;
+        if (std::strcmp(argv[5], "builtin") != 0 && std::strcmp(argv[5], "curves") != 0) return 2;
+        scenario.curves = std::strcmp(argv[5], "curves") == 0;
+        return RunSpatial(scenario, smoke, once);
+    }
     bool list = false;
     bool listResources = false;
     std::string resourceId;
@@ -1808,7 +2266,9 @@ int main(int argc, char* argv[]) {
             std::printf(
                 "Usage: harken_runtime_capacity_benchmark "
                 "--list | --list-resources | --resource <id> | "
-                "--scenario <id> [--pilot|--smoke]\n");
+                "--scenario <id> [--pilot|--smoke] | "
+                "--spatial <voices:1..512> <voices-per-emitter:1|4> "
+                "<static|ten|all|listener|replace|residency> <builtin|curves> [--highpass] [--smoke|--once]\n");
             return 0;
         } else {
             std::fprintf(stderr, "Unknown or incomplete argument\n");

@@ -23,6 +23,16 @@ namespace Harken.Test
     {
         private static int Main(string[] args)
         {
+            if (args.Length == 1 && (args[0] == "--attenuation-only" || args[0] == "--attenuation-old-native"))
+            {
+                if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("HARKEN_NATIVE_DIR")))
+                {
+                    Console.Error.WriteLine(args[0] + " requires an explicit HARKEN_NATIVE_DIR.");
+                    return 2;
+                }
+                InstallNativeResolver(true);
+                return RunAbiFidelity() && RunAttenuationAbi(args[0] == "--attenuation-old-native") ? 0 : 1;
+            }
             if (args.Length == 1 && args[0] == "--variables-only")
             {
                 InstallNativeResolver(true);
@@ -148,6 +158,69 @@ namespace Harken.Test
                 Console.WriteLine("      " + f);
             }
             return false;
+        }
+
+        private static unsafe bool RunAttenuationAbi(bool oldNative)
+        {
+            VnConfig config = HarkenEngine.DefaultConfig();
+            config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
+            VnResult initialized = HarkenEngine.Init(config);
+            Console.WriteLine("[Attenuation ABI] Init=" + initialized);
+            if (initialized != VnResult.VN_OK) return false;
+            try
+            {
+                bool ok = true;
+                var existing = new VnObjectId(0, 0xe30001);
+                var unused = new VnObjectId(0, 0xe30002);
+                var desc = new VnAttenuationDesc
+                {
+                    structSize = 608,
+                    minDistance = 2,
+                    maxDistance = 102,
+                    airAbsorptionNearHz = 1.0e9f,
+                    airAbsorptionFarHz = 1.0e9f
+                };
+                ok &= AttenuationResult("Register prefix608", HarkenNative.Vn_RegisterAttenuation(existing, in desc), VnResult.VN_OK);
+                desc.structSize = 612;
+                desc.proximityFrequency = 400;
+                ok &= AttenuationResult("Replace prefix612", HarkenNative.Vn_ReplaceAttenuation(existing, in desc), VnResult.VN_OK);
+
+                desc.structSize = (uint)Marshal.SizeOf<VnAttenuationDesc>();
+                VnResult expected = oldNative ? VnResult.VN_INVALID_ARG : VnResult.VN_OK;
+                ok &= AttenuationResult("Register current HPF off size=" + desc.structSize,
+                    HarkenNative.Vn_RegisterAttenuation(unused, in desc), expected);
+                ok &= AttenuationResult("Replace current HPF off",
+                    HarkenNative.Vn_ReplaceAttenuation(existing, in desc), expected);
+                desc.highpassCurve.enabled = 1;
+                desc.highpassCurve.pointCount = 1;
+                desc.highpassCurve.pointsRaw[1] = BitConverter.SingleToUInt32Bits(1000);
+                ok &= AttenuationResult("Replace current HPF 1000Hz",
+                    HarkenNative.Vn_ReplaceAttenuation(existing, in desc), expected);
+                ok &= AttenuationResult("Register current HPF 1000Hz",
+                    HarkenNative.Vn_RegisterAttenuation(new VnObjectId(0, 0xe30004), in desc), expected);
+                if (!oldNative)
+                {
+                    desc.highpassCurve.pointsRaw[1] = 0;
+                    ok &= AttenuationResult("Replace current HPF 0Hz",
+                        HarkenNative.Vn_ReplaceAttenuation(existing, in desc), VnResult.VN_OK);
+                    desc.highpassCurve.pointsRaw[1] = BitConverter.SingleToUInt32Bits(-1);
+                    ok &= AttenuationResult("Replace negative HPF",
+                        HarkenNative.Vn_ReplaceAttenuation(existing, in desc), VnResult.VN_INVALID_ARG);
+                    desc.highpassCurve.pointsRaw[1] = 0;
+                    desc.highpassCurve.enabled = 2;
+                    ok &= AttenuationResult("Replace invalid HPF enabled",
+                        HarkenNative.Vn_ReplaceAttenuation(existing, in desc), VnResult.VN_INVALID_ARG);
+                }
+                Console.WriteLine("[Attenuation ABI] " + (oldNative ? "old native rejects current descriptor: " : "current native: ") + (ok ? "PASS" : "FAIL"));
+                return ok;
+            }
+            finally { HarkenEngine.Term(); }
+        }
+
+        private static bool AttenuationResult(string operation, VnResult actual, VnResult expected)
+        {
+            Console.WriteLine("[Attenuation ABI] " + operation + " actual=" + actual + " expected=" + expected);
+            return actual == expected;
         }
 
         static void CheckCallbackAbi(List<string> failures)

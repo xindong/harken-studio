@@ -1521,7 +1521,7 @@ static_assert(offsetof(VnAttenuationCurve, enabled) == 0, "binding offset drift:
 static_assert(offsetof(VnAttenuationCurve, pointCount) == 4, "binding offset drift: VnAttenuationCurve.pointCount");
 static_assert(offsetof(VnAttenuationCurve, points) == 8, "binding offset drift: VnAttenuationCurve.points");
 static_assert(offsetof(VnAttenuationCurve, handles) == 72, "binding offset drift: VnAttenuationCurve.handles");
-static_assert(sizeof(VnAttenuationDesc) == 612, "binding size drift: VnAttenuationDesc");
+static_assert(sizeof(VnAttenuationDesc) == 796, "binding size drift: VnAttenuationDesc");
 static_assert(offsetof(VnAttenuationDesc, structSize) == 0, "binding offset drift: VnAttenuationDesc.structSize");
 static_assert(offsetof(VnAttenuationDesc, rolloff) == 4, "binding offset drift: VnAttenuationDesc.rolloff");
 static_assert(offsetof(VnAttenuationDesc, minDistance) == 8, "binding offset drift: VnAttenuationDesc.minDistance");
@@ -1540,6 +1540,7 @@ static_assert(offsetof(VnAttenuationDesc, volumeCurve) == 56, "binding offset dr
 static_assert(offsetof(VnAttenuationDesc, lowpassCurve) == 240, "binding offset drift: VnAttenuationDesc.lowpassCurve");
 static_assert(offsetof(VnAttenuationDesc, widthCurve) == 424, "binding offset drift: VnAttenuationDesc.widthCurve");
 static_assert(offsetof(VnAttenuationDesc, proximityFrequency) == 608, "binding offset drift: VnAttenuationDesc.proximityFrequency");
+static_assert(offsetof(VnAttenuationDesc, highpassCurve) == 612, "binding offset drift: VnAttenuationDesc.highpassCurve");
 static_assert(sizeof(VnEffectDesc) == 24, "binding size drift: VnEffectDesc");
 static_assert(offsetof(VnEffectDesc, structSize) == 0, "binding offset drift: VnEffectDesc.structSize");
 static_assert(offsetof(VnEffectDesc, reserved0) == 4, "binding offset drift: VnEffectDesc.reserved0");
@@ -2428,6 +2429,8 @@ extern "C" {
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_SetVoiceVolume)(VnVoiceHandle, float, uint32_t) = &Vn_SetVoiceVolume;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_SetVoicePitch)(VnVoiceHandle, float) = &Vn_SetVoicePitch;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_SetVoicePosition)(VnVoiceHandle, VnVec3) = &Vn_SetVoicePosition;
+[[maybe_unused]] static VnResult (*const binding_sig_Vn_SetListenerDistanceReference)(VnEmitterHandle) = &Vn_SetListenerDistanceReference;
+[[maybe_unused]] static VnResult (*const binding_sig_Vn_SetEmitterDistanceScale)(VnEmitterHandle, float) = &Vn_SetEmitterDistanceScale;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_SetVoiceDistanceScale)(VnVoiceHandle, float) = &Vn_SetVoiceDistanceScale;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_SetVoiceSpatializationMix)(VnVoiceHandle, float) = &Vn_SetVoiceSpatializationMix;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_SetVoicePan)(VnVoiceHandle, float) = &Vn_SetVoicePan;

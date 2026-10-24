@@ -12,7 +12,7 @@ static_assert(sizeof(harken::Curve) == 180,
               "curve storage footprint drifted");
 static_assert(sizeof(harken::BindingTable::Definition) == 456,
               "binding definition footprint drifted");
-static_assert(sizeof(harken::AttenuationProfile) == 616,
+static_assert(sizeof(harken::AttenuationProfile) == 792,
               "attenuation profile footprint drifted");
 
 } // namespace

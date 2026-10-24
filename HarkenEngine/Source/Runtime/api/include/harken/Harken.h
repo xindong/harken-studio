@@ -1511,7 +1511,7 @@ enum {
 #define VN_ATTENUATION_MAX_CURVE_POINTS 8
 
 /* One override control point: x is distance (engine units), y is the
- * target's value in its own domain (dB for volume, Hz for lowpass,
+ * target's value in its own domain (dB for volume, Hz for lowpass/highpass,
  * 0..1 for width). */
 typedef struct VnAttenuationCurvePoint {
     float x;
@@ -1536,10 +1536,12 @@ typedef struct VnCurveHandlePair {
  * Values above 1 are reserved and refused (VN_INVALID_ARG). Point and handle
  * coordinates must be finite. Volume y values are dB in [-96, 0] and are
  * evaluated in linear amplitude before conversion back to dB; lowpass y must
- * be > 0; width y must be in [0, 1]. Unused handle slots (i >= pointCount
+ * be > 0; highpass y must be >= 0; width y must be in [0, 1]. Unused handle slots (i >= pointCount
  * - 1) must be bitwise +0.0f. Outside the x span the curve clamps to its
  * end values. A disabled width curve contributes zero width at every
- * distance; authored/API width contributions still combine by maximum. */
+ * distance; authored/API width contributions still combine by maximum.
+ * A disabled highpass curve contributes 0 Hz; authored/API/Variable
+ * highpass contributions still combine by maximum. */
 typedef struct VnAttenuationCurve {
     uint32_t enabled;
     uint32_t pointCount;
@@ -1573,6 +1575,7 @@ typedef struct VnAttenuationDesc {
     VnAttenuationCurve lowpassCurve; /* overrides air absorption; y in Hz */
     VnAttenuationCurve widthCurve;   /* overrides zero width; y 0..1 */
     float proximityFrequency; /* authored near-field shelf corner in Hz */
+    VnAttenuationCurve highpassCurve; /* distance highpass; y >= 0 Hz */
 } VnAttenuationDesc;
 
 /* Sets the listener's position and orientation. Components must be finite
@@ -1582,6 +1585,17 @@ typedef struct VnAttenuationDesc {
  * re-evaluate. Before the first call the listener sits at the origin
  * facing (0,0,-1) with up (0,1,0). */
 VnResult Vn_SetListener(VnVec3 pos, VnVec3 forward, VnVec3 up);
+
+/* Selects an optional spatial emitter as the distance reference. Zero clears
+ * the selection and uses the listener position (the default). Distance-driven
+ * attenuation uses the reference position; pan and cone still use the actual
+ * listener. The reference's orientation and distance scale are ignored.
+ * Does not retain the emitter: destruction clears a matching full handle,
+ * and Init starts with no selection. A stale/non-public handle returns
+ * VN_STALE_HANDLE; StateOnly returns VN_CAPABILITY_UNAVAILABLE, without
+ * changing the selection. Re-selecting the same handle still validates it.
+ * Consumed at spatial evaluation and start installation. Logic thread only. */
+VnResult Vn_SetListenerDistanceReference(VnEmitterHandle handle);
 
 /* Registers an attenuation profile under an id. The descriptor is copied;
  * caller memory is free to go. Refusals: null desc or structSize mismatch,
@@ -1593,7 +1607,7 @@ VnResult Vn_RegisterAttenuation(VnAttenuationId id,
 
 /* Binds a spatialized voice to a registered attenuation profile. From the
  * next Vn_Update the profile's distance-driven contributions (volume,
- * lowpass, width, near-field shelf, cone) apply to the voice; an unbound
+ * lowpass, highpass, width, near-field shelf, cone) apply to the voice; an unbound
  * 3D voice pans but does not attenuate. An unknown attenuation id is
  * VN_UNKNOWN_ID; a stale handle is a benign no-op returning
  * VN_STALE_HANDLE. Binding a 2D voice is accepted and has no acoustic
@@ -2548,6 +2562,14 @@ VnResult Vn_SetEmitterPosition(VnEmitterHandle handle, VnVec3 position);
  * otherwise); the engine normalizes it. A stale handle is a benign no-op
  * returning VN_STALE_HANDLE. Logic thread only. */
 VnResult Vn_SetEmitterOrientation(VnEmitterHandle handle, VnVec3 forward);
+
+/* Sets the emitter's distance scale (default 1). Must be positive and finite
+ * (VN_INVALID_ARG otherwise). Distance attenuation uses source-to-reference distance
+ * divided by this scale and the voice's distance scale; pan and cone angles
+ * remain physical. Attached voices observe it at their next spatial sample.
+ * VN_STALE_HANDLE for a stale handle; VN_CAPABILITY_UNAVAILABLE for a
+ * StateOnly emitter. Refused calls leave state unchanged. Logic thread only. */
+VnResult Vn_SetEmitterDistanceScale(VnEmitterHandle handle, float scale);
 
 /* Stops every voice currently attached to the emitter — live voices fade over
  * fadeMs (0 = immediate cut) and voices still awaiting a render slot are

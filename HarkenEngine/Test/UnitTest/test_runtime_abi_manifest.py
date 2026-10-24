@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT_PATH = (
     REPO_ROOT
     / "HarkenEngine"
@@ -314,7 +314,7 @@ class RuntimeAbiManifestTest(unittest.TestCase):
             policies["VnPlayDesc"]["acceptedSizes"],
         )
         self.assertEqual(
-            [608, 612],
+            [608, 612, 796],
             policies["VnAttenuationDesc"]["acceptedSizes"],
         )
         self.assertEqual(

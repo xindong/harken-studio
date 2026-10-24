@@ -246,8 +246,11 @@ namespace Harken.Unity
         public VnResult CreateSpatialSource(Transform target, out HarkenSpatialSource source)
         {
             source = null;
+            if (publishingSpatial) return VnResult.VN_IN_USE;
             if (!IsReady || shuttingDown) return VnResult.VN_NOT_INITIALIZED;
-            return spatialSources.Create(this, session, target, out source);
+            VnResult result = spatialSources.Create(this, session, target, out source);
+            ReserveSpatialRecords();
+            return result;
         }
 
         public VnResult PlayAction(string actionName, string projectId, HarkenSpatialSource source, out ActionFiring firing)
@@ -262,6 +265,7 @@ namespace Harken.Unity
         {
             const string operation = "HarkenAudioSystem.PlayAction";
             firing = default;
+            if (publishingSpatial) return VnResult.VN_IN_USE;
             PackBootstrapSession owner = session;
             if (!IsReady || owner == null || !owner.IsActive || shuttingDown)
                 return ObserveResult(operation, VnResult.VN_NOT_INITIALIZED);
@@ -300,16 +304,35 @@ namespace Harken.Unity
             Emitter emitter = Emitter.None;
             if (result == VnResult.VN_OK && source != null)
                 result = source.Validate(this, owner, out emitter);
-            if (result == VnResult.VN_OK)
-                result = Actions.Post(in resolved, emitter, callerSeed, out firing);
+            SpatialPost publication = default;
+            try
+            {
+                if (result == VnResult.VN_OK)
+                    result = BeginSpatialPost(owner, null, source, out publication);
+                if (result == VnResult.VN_OK)
+                    result = Actions.Post(in resolved, emitter, callerSeed, out firing);
+                if (result == VnResult.VN_OK) slots[slot].Firing = firing;
+            }
+            finally { EndSpatialPost(in publication); }
             if (!owner.IsActive || !ReferenceEquals(owner, session))
             {
                 firing = default;
                 return ObserveResult(operation, VnResult.VN_NOT_INITIALIZED);
             }
-            if (result == VnResult.VN_OK) slots[slot].Firing = firing;
-            else ReleaseManagedResources(slots, slot);
-            return ObserveResult(operation, result);
+            if (result != VnResult.VN_OK) ReleaseManagedResources(slots, slot);
+            NotifySpatialPost(in publication);
+            if (!SpatialSessionIsCurrent(owner))
+            {
+                firing = default;
+                return VnResult.VN_NOT_INITIALIZED;
+            }
+            if (SpatialPostIsCurrent(in publication)) ObserveResult(operation, result);
+            if (!SpatialSessionIsCurrent(owner))
+            {
+                firing = default;
+                return VnResult.VN_NOT_INITIALIZED;
+            }
+            return result;
         }
 
         private void ReleaseManagedResources(ManagedFiring[] slots, int index)
@@ -627,6 +650,7 @@ namespace Harken.Unity
             if (completedSession != null && completedSession.IsActive)
             {
                 managedCallerSeed = 0;
+                ResetSpatialSession();
                 PackRootPath = platformRoot;
                 State = HarkenRuntimeState.Ready;
                 startupReadyPending = true;
@@ -703,6 +727,10 @@ namespace Harken.Unity
                 return;
             }
             Instance = this;
+            HarkenSpatialUpdate spatialUpdate = GetComponent<HarkenSpatialUpdate>();
+            if (spatialUpdate == null) spatialUpdate = gameObject.AddComponent<HarkenSpatialUpdate>();
+            spatialUpdate.hideFlags = HideFlags.HideInInspector;
+            spatialUpdate.Owner = this;
             gameThreadId = Thread.CurrentThread.ManagedThreadId;
             VariableGameplay.GameThreadProbe = IsGameplayThread;
             VariableGameplay.NotifySessionChanged();
@@ -922,7 +950,10 @@ namespace Harken.Unity
                     if (pending.StopAccepted) result = pending.Emitter.Destroy();
                     bool changed = !pending.Observed || result != pending.LastResult;
                     if (result == VnResult.VN_OK || result == VnResult.VN_STALE_HANDLE)
+                    {
+                        ForgetDestroyedDistanceReference(pending.Session, pending.Emitter);
                         emitterCleanup.RemoveAt(i);
+                    }
                     else
                     {
                         pending.Observed = true;
@@ -1026,7 +1057,15 @@ namespace Harken.Unity
                 Thread.CurrentThread.ManagedThreadId == owner.gameThreadId;
         }
 
-        private void Update()
+        internal void AdvanceFrame()
+        {
+            if (advancingSpatialFrame || publishingSpatial || HarkenEngine.IsUpdating) return;
+            advancingSpatialFrame = true;
+            try { AdvanceFrameCore(); }
+            finally { advancingSpatialFrame = false; }
+        }
+
+        private void AdvanceFrameCore()
         {
             PackBootstrapSession updatingSession = session;
             if (updatingSession == null || !updatingSession.IsActive || !ReferenceEquals(session, updatingSession))
@@ -1035,15 +1074,6 @@ namespace Harken.Unity
             }
             VnResult spatial = spatialSources.Maintain();
             if (spatial != VnResult.VN_OK) ObserveResult("SpatialSource.Update", spatial);
-            if (!updatingSession.IsActive || !ReferenceEquals(session, updatingSession)) return;
-            VnResult result = HarkenEngine.Update();
-            if (!updatingSession.IsActive || !ReferenceEquals(session, updatingSession)) return;
-            if (result != VnResult.VN_OK)
-            {
-                FailRuntime("HarkenEngine.Update", result);
-                return;
-            }
-            ObserveResult("HarkenEngine.Update", result);
             if (!updatingSession.IsActive || !ReferenceEquals(session, updatingSession)) return;
             if (IsPreparationComplete) CaptureUnityAudio();
             CollectManagedFirings();
@@ -1063,6 +1093,30 @@ namespace Harken.Unity
                     next.Load();
                 }
             }
+            if (!SpatialSessionIsCurrent(updatingSession)) return;
+            int count = PublishSpatialFrame(out VnResult referenceResult);
+            SpatialRecord[] records = spatialRecords;
+            ulong revision = listenerRevision;
+            ulong referenceStamp = referenceRevision;
+            VnResult result = HarkenEngine.Update();
+            if (!SpatialSessionIsCurrent(updatingSession)) return;
+            if (result != VnResult.VN_OK)
+            {
+                FailRuntime("HarkenEngine.Update", result);
+                return;
+            }
+            if (referenceResult != VnResult.VN_OK)
+            {
+                if (revision == listenerRevision && referenceStamp == referenceRevision)
+                    ObserveResult("HarkenAudioSystem.DistanceReference", referenceResult);
+                return;
+            }
+            for (int i = 0; i < count; ++i)
+            {
+                NotifySpatialRecord(in records[i], updatingSession, revision, referenceStamp);
+                if (!SpatialStateIsCurrent(updatingSession, revision, referenceStamp)) return;
+            }
+            ObserveResult("HarkenEngine.Update", result);
         }
 
         private void OnApplicationPause(bool paused)
@@ -1196,6 +1250,7 @@ namespace Harken.Unity
             {
                 managedFirings = Array.Empty<ManagedFiring>();
                 spatialSources.ClearEndedSession();
+                ResetSpatialSession();
                 firingCleanup.Clear();
                 emitterCleanup.Clear();
                 packCleanup.Clear();
@@ -1273,6 +1328,8 @@ namespace Harken.Unity
 
         private void OnDestroy()
         {
+            HarkenSpatialUpdate spatialUpdate = GetComponent<HarkenSpatialUpdate>();
+            if (spatialUpdate != null && ReferenceEquals(spatialUpdate.Owner, this)) spatialUpdate.Owner = null;
             hostExiting = true;
             if (Instance == this)
             {
