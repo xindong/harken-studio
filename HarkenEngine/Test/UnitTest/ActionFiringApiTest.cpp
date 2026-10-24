@@ -43186,6 +43186,56 @@ TEST(ActionFiringApi, ImmediateSequenceQueueSameProgramCycleRestartPreparesOneNe
     CheckImmediateSameProgramQueue(true);
 }
 
+TEST(ActionFiringApi, SequenceQueueBeyondPublicationWindowPlaysSuccessorAndRetires) {
+    (void)Vn_Term();
+    harkentest::EngineSession session(harkentest::MakeNullConfig(8, 256, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    std::vector<float> first(36000, 0.25f);
+    std::vector<float> second(36000, -0.25f);
+    const auto firstPcm = harkentest::MonoDesc(first, 48000);
+    const auto secondPcm = harkentest::MonoDesc(second, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &firstPcm));
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kSecondSound, &secondPcm));
+    CanonicalActionWorld image(
+        engine->registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision,
+        engine->registry.Lookup(CanonicalActionWorld::kSecondSound).contentRevision);
+    image.MakeImmediateSequenceQueuePlayAction();
+    image.EnableImmediateQueueTransition(24000, 24000);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+              harken::InstallContainerWorldV1(*engine, image.world).status);
+    auto desc = ValidPostDesc();
+    desc.actionId = image.actions[9].actionStableId;
+    VnActionFiringHandle firing = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    VnActionFiringInfo info{};
+    info.structSize = sizeof(info);
+    bool heardFirst = false;
+    bool heardSecond = false;
+    for (unsigned tick = 0; tick < 400; ++tick) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
+        if (info.state == VN_ACTION_FIRING_TERMINAL_RETAINED) break;
+        for (unsigned block = 0; block < 3; ++block) {
+            engine->nullBackend.Pump(1);
+            const auto* output = engine->nullBackend.LastBlock();
+            for (unsigned sample = 0; sample < 256u * 2u; ++sample) {
+                heardFirst |= output[sample] > 0.1f;
+                heardSecond |= output[sample] < -0.1f;
+            }
+        }
+    }
+    EXPECT_TRUE(heardFirst);
+    EXPECT_TRUE(heardSecond);
+    ASSERT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state);
+    EXPECT_EQ(VN_ACTION_OUTCOME_SUCCEEDED, info.outcome);
+    EXPECT_EQ(VN_ACTION_TERMINAL_NATURAL, info.terminalReason);
+    EXPECT_EQ(0u, info.livePlayableCount);
+    EXPECT_EQ(0u, engine->voices.ActiveCount());
+    EXPECT_EQ(0u, engine->queueInstances.LiveCount());
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+}
+
 void ExpectImmediateActionQueueTransitionPrepared(
     bool naturalEnd, bool compositeSource, bool compositeTarget, bool targetFade = true,
     std::uint32_t replayCount = 1u) {

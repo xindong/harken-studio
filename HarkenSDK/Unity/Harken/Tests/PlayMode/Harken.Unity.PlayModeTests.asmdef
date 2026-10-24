@@ -8,5 +8,6 @@
   "optionalUnityReferences": [
     "TestAssemblies"
   ],
-  "autoReferenced": false
+  "autoReferenced": false,
+  "allowUnsafeCode": true
 }

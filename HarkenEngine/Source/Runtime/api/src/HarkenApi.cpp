@@ -25976,13 +25976,9 @@ std::uint64_t QueueEarliestContinuationFrame(
 
 std::uint64_t QueueEarliestRetiredContinuationFrame(
     const harken::Engine& engine) noexcept {
-    const std::uint32_t blockFrames = engine.config.blockFrames;
-    const std::uint64_t sequence = engine.mixer.BlocksRendered();
-    const std::uint64_t nowFrame =
-        blockFrames == 0 || sequence > UINT64_MAX / blockFrames
-            ? UINT64_MAX
-            : sequence * blockFrames;
-    return std::max(nowFrame, engine.timelinePool.PublishCutoffFrame());
+    // A retired source resumes through command application and arm acknowledgement.
+    // Its successor needs the normal publication lead before the group can start.
+    return QueueEarliestContinuationFrame(engine);
 }
 
 bool ResolveVariableControlNestedQueueOwner(
