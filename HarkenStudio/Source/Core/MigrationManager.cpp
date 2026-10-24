@@ -70,26 +70,30 @@ void expandWriteSetPlaceholders(QStringList* writeSet,
 
 MigrationManager::MigrationManager()
 {
-    ProjectMigrationStep step;
-    step.id = QStringLiteral("project-schema-7-to-8");
-    step.fromSchema = 7;
-    step.toSchema = 8;
-    step.writeSet = {QStringLiteral("<all-documents>")};
-    step.transform = [](ProjectMigrationWorkspace& workspace,
-                        QStringList*, QString* error) {
-        for (const QString& relative : workspace.writeSet()) {
-            QJsonObject document;
-            if (!workspace.readObject(relative, &document, error))
-                return false;
-            QJsonObject header = document.value(QStringLiteral("harkenDocument")).toObject();
-            header.insert(QStringLiteral("schemaVersion"), 8);
-            document.insert(QStringLiteral("harkenDocument"), header);
-            if (!workspace.writeObject(relative, document, error))
-                return false;
-        }
-        return true;
-    };
-    registry_.registerStep(std::move(step));
+    for (const int sourceSchema : {7, 8}) {
+        const int targetSchema = sourceSchema + 1;
+        ProjectMigrationStep step;
+        step.id = QStringLiteral("project-schema-%1-to-%2")
+                      .arg(sourceSchema).arg(targetSchema);
+        step.fromSchema = sourceSchema;
+        step.toSchema = targetSchema;
+        step.writeSet = {QStringLiteral("<all-documents>")};
+        step.transform = [targetSchema](ProjectMigrationWorkspace& workspace,
+                                       QStringList*, QString* error) {
+            for (const QString& relative : workspace.writeSet()) {
+                QJsonObject document;
+                if (!workspace.readObject(relative, &document, error))
+                    return false;
+                QJsonObject header = document.value(QStringLiteral("harkenDocument")).toObject();
+                header.insert(QStringLiteral("schemaVersion"), targetSchema);
+                document.insert(QStringLiteral("harkenDocument"), header);
+                if (!workspace.writeObject(relative, document, error))
+                    return false;
+            }
+            return true;
+        };
+        registry_.registerStep(std::move(step));
+    }
 }
 
 MigrationManager::MigrationManager(ProjectMigrationRegistry registry)

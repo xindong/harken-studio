@@ -2,10 +2,12 @@
   "manifestVersion": 1,
   "published": [
     7,
-    8
+    8,
+    9
   ],
   "supportedHistorical": [
-    7
+    7,
+    8
   ],
   "tip": "current"
 }
