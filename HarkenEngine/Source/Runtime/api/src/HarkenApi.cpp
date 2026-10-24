@@ -87147,8 +87147,6 @@ bool ImmediateOrdinaryLeafBatchEligible(const ImmediateActionPlan& plan) noexcep
         plan.variableWriteCount != 0 || plan.deferredCount != 0 ||
         plan.selectionResetCount != 0 || plan.queueResetCount != 0 ||
         plan.queueReplacementCount != 0 || plan.materializingDeferred) return false;
-    const auto* lease = plan.targetPackLease.leaseToken != 0
-        ? &plan.targetPackLease : plan.postedActionLease;
     for (std::uint32_t index = 0; index < plan.stepCount; ++index) {
         const auto& member = plan.engine->actionStepPlanScratch[index];
         if (member.step == nullptr) return false;
@@ -87156,8 +87154,10 @@ bool ImmediateOrdinaryLeafBatchEligible(const ImmediateActionPlan& plan) noexcep
             member.cooldownSuppressed || member.quantizeSuppressed) continue;
         if (member.step->target.kind != harken::ActionTargetKindV1::Container ||
             member.deferredFrame != 0 || member.deferred) return false;
+        // Match immediate playable anchoring: each target has its own owner,
+        // which can differ from the root Action's Pack after PostAction expansion.
         const auto* program = FindCanonicalContainerProgram(
-            *plan.engine, member.step->target.stableId, lease);
+            *plan.engine, member.step->target.stableId);
         if (program == nullptr || program->programSemanticFingerprint !=
                 member.step->target.expectedProgramSemanticFingerprint ||
             (program->mode != harken::ContainerModeV1::Random &&

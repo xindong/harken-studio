@@ -406,7 +406,7 @@ std::uint64_t SetValueActionFingerprint(VnObjectId actionId,
 std::vector<std::uint8_t> PostActionPartitionPayload(
     std::uint64_t packStableId, std::uint64_t revision,
     VnObjectId actionId, VnObjectId targetActionId,
-    std::uint64_t targetFingerprint) {
+    std::uint64_t targetFingerprint, std::uint32_t childStepCount = 1) {
     ActionStepProgramViewV1 step{};
     step.opcode = ActionOpcodeV1::PostAction;
     step.target.kind = ActionTargetKindV1::Action;
@@ -420,7 +420,7 @@ std::vector<std::uint8_t> PostActionPartitionPayload(
     action.actionStableId = actionId;
     action.steps = &step;
     action.stepCount = 1;
-    action.expandedStepOccurrenceCount = 2;
+    action.expandedStepOccurrenceCount = childStepCount + 1u;
     action.expandedFiringCount = 2;
     action.programSemanticFingerprint =
         ComputeActionProgramFingerprintV1(action);
@@ -1453,7 +1453,7 @@ std::vector<std::uint8_t> BuildPostActionPack(
     std::uint64_t packStableId, std::uint64_t contentRevision,
     std::uint64_t partitionRevision, VnObjectId actionId,
     VnObjectId targetActionId, std::uint64_t targetFingerprint,
-    std::uint64_t requiredProvider) {
+    std::uint64_t requiredProvider, std::uint32_t childStepCount = 1) {
     ImageBuilder builder(kPackKindCanonicalContent);
     builder.AddEntry(kPackEntryKindPackRequirementBlock, packStableId,
                      RequirementPayload(packStableId, contentRevision,
@@ -1461,7 +1461,7 @@ std::vector<std::uint8_t> BuildPostActionPack(
     builder.AddEntry(
         kPackEntryKindCanonicalDefinitionPartition, packStableId,
         PostActionPartitionPayload(packStableId, partitionRevision, actionId,
-                                   targetActionId, targetFingerprint));
+                                   targetActionId, targetFingerprint, childStepCount));
     builder.AddEntry(kPackEntryKindPackDependencyEdge, 0,
                      RequiredEdgePayload(requiredProvider));
     return builder.Build();
@@ -7403,7 +7403,8 @@ std::vector<std::uint8_t> ImmediateContainerPlayPartitionPayload(
     std::uint64_t packStableId, std::uint64_t partitionRevision,
     VnObjectId actionId, VnObjectId containerId, VnObjectId soundId,
     std::uint64_t contentRevision, bool mismatchTargetFingerprint = false,
-    MemoryScopeV1 memoryScope = MemoryScopeV1::Global) {
+    MemoryScopeV1 memoryScope = MemoryScopeV1::Global,
+    std::uint32_t playCount = 1, std::uint64_t* actionFingerprint = nullptr) {
     PlayablePropertyProgramViewV1 sound = MakeSoundProperty(soundId);
     sound.contentRevision = contentRevision;
     sound.programSemanticFingerprint = ComputePlayablePropertyFingerprintV1(sound);
@@ -7439,15 +7440,19 @@ std::vector<std::uint8_t> ImmediateContainerPlayPartitionPayload(
     SetAbsoluteTime(&step.delay, 0);
     SetAbsoluteTime(&step.fade, 0);
     SetAbsoluteTime(&step.cooldown, 0);
+    std::vector<ActionStepProgramViewV1> steps(playCount, step);
+    for (std::uint32_t index = 0; index < playCount; ++index)
+        steps[index].authoredEventIndex = index;
     ActionProgramViewV1 action{};
     action.actionStableId = actionId;
-    action.steps = &step;
-    action.stepCount = 1;
+    action.steps = steps.data();
+    action.stepCount = playCount;
     action.directFeatureMask = 0;
     action.transitiveFeatureMask = 0;
-    action.expandedStepOccurrenceCount = 1;
+    action.expandedStepOccurrenceCount = playCount;
     action.expandedFiringCount = 1;
     action.programSemanticFingerprint = ComputeActionProgramFingerprintV1(action);
+    if (actionFingerprint != nullptr) *actionFingerprint = action.programSemanticFingerprint;
 
     ContainerWorldInstallViewV1 world{};
     world.identity.capabilityMask = kWorldCapabilityActionDefinitions |
@@ -7473,7 +7478,8 @@ std::vector<std::uint8_t> BuildImmediateContainerPlayPack(
     std::uint64_t partitionRevision, VnObjectId actionId,
     VnObjectId containerId, VnObjectId soundId,
     std::vector<float> planar, bool mismatchTargetFingerprint = false,
-    MemoryScopeV1 memoryScope = MemoryScopeV1::Global) {
+    MemoryScopeV1 memoryScope = MemoryScopeV1::Global,
+    std::uint32_t playCount = 1, std::uint64_t* actionFingerprint = nullptr) {
     const float* channels[1] = {planar.data()};
     std::uint64_t mediaRevision = 0;
     EXPECT_TRUE(ComputeMediaPcmContentRevisionV1(
@@ -7487,7 +7493,7 @@ std::vector<std::uint8_t> BuildImmediateContainerPlayPack(
                      ImmediateContainerPlayPartitionPayload(
                          packStableId, partitionRevision, actionId, containerId,
                          soundId, mediaRevision, mismatchTargetFingerprint,
-                         memoryScope));
+                          memoryScope, playCount, actionFingerprint));
     builder.AddMedia(soundId, std::move(planar));
     return builder.Build();
 }
@@ -9505,6 +9511,89 @@ TEST(PackComposition, PackActionImmediateSoundRenders) {
     }
     HARKENTEST_ASSERT_NON_SILENT(capture.left);
     ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+}
+
+TEST(PackCompositionContract, CrossPackContainerBatchSurvivesLateUpdateAndRetires) {
+    constexpr auto actionId = harkentest::ObjectId(2002);
+    constexpr auto childId = harkentest::ObjectId(3003);
+    constexpr std::uint32_t frames = 256;
+    std::uint64_t childFingerprint = 0;
+    const auto childPack = BuildImmediateContainerPlayPack(
+        33, 1, 9, childId, harkentest::ObjectId(4510), harkentest::ObjectId(4511),
+        harkentest::MakeDC(4096, 0.125f), false, MemoryScopeV1::Global, 4, &childFingerprint);
+    const auto rootPack = BuildPostActionPack(22, 1, 7, actionId, childId, childFingerprint, 33, 4);
+    const auto init = BuildKeepIdentityInit(Fnv1a64(rootPack.data(), rootPack.size()),
+                                          Fnv1a64(childPack.data(), childPack.size()));
+    const std::string paths[] = {
+        WriteTemp("late-container-batch-init.pack", init),
+        WriteTemp("late-container-batch-root.pack", rootPack),
+        WriteTemp("late-container-batch-child.pack", childPack)};
+    EngineSession session(MakeNullConfig(8, frames, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    VnCanonicalPackSetMemberV1 members[3]{};
+    VnCanonicalPackSetMemberResultV1 rows[3]{};
+    for (std::uint32_t index = 0; index < 3; ++index) {
+        members[index].structSize = sizeof(members[index]);
+        members[index].packStableId = 11u * (index + 1u);
+        members[index].packKind = index == 0 ? VN_CANONICAL_PACK_SET_MEMBER_INIT
+                                            : VN_CANONICAL_PACK_SET_MEMBER_CONTENT;
+        members[index].utf8Path = paths[index].c_str();
+        rows[index].structSize = sizeof(rows[index]);
+    }
+    VnCanonicalPackSetActivationReportV1 report{};
+    ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(members, 3, rows, report));
+    VnPostActionDesc post{};
+    post.structSize = sizeof(post);
+    post.actionId = actionId;
+    VnActionFiringHandle firing = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+    ActionFiringStepResult posted{};
+    ASSERT_TRUE(engine->actionFirings.CaptureStep(firing, 0, &posted));
+    ASSERT_NE(0u, posted.childFiring);
+    const auto row = std::find_if(engine->playableServices.begin(), engine->playableServices.end(),
+        [&](const auto& current) {
+            return current.InvocationValid() && current.Invocation().actionFiring == posted.childFiring;
+        });
+    ASSERT_NE(engine->playableServices.end(), row);
+    const auto start = row->startFrame / frames;
+    const auto rendered = engine->mixer.BlocksRendered();
+    ASSERT_LE(rendered, start);
+    ASSERT_LT(start - rendered, 64u);
+    engine->nullBackend.Pump(static_cast<std::uint32_t>(start - rendered + 1u));
+    float peak = 0.0f;
+    VnActionFiringInfo info{};
+    info.structSize = sizeof(info);
+    for (std::uint32_t block = 0; block < 64; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine->nullBackend.Pump(1);
+        for (std::uint32_t sample = 0; sample < frames * 2; ++sample)
+            peak = std::max(peak, std::abs(engine->nullBackend.LastBlock()[sample]));
+        ASSERT_EQ(VN_OK, Vn_QueryActionFiring(posted.childFiring, &info));
+        if (info.state == VN_ACTION_FIRING_TERMINAL_RETAINED) break;
+    }
+    EXPECT_NEAR(0.5f, peak, 0.0001f);
+    EXPECT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state);
+    EXPECT_EQ(VN_ACTION_OUTCOME_SUCCEEDED, info.outcome);
+    EXPECT_EQ(VN_ACTION_TERMINAL_NATURAL, info.terminalReason);
+    for (std::uint32_t index = 0; index < 4; ++index) {
+        VnActionStepResult result{};
+        result.structSize = sizeof(result);
+        ASSERT_EQ(VN_OK, Vn_QueryActionStep(posted.childFiring, index, &result));
+        EXPECT_EQ(VN_ACTION_STEP_SUCCEEDED, result.state);
+    }
+    ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+    EXPECT_EQ(0u, engine->voices.ActiveCount());
+    EXPECT_EQ(0u, engine->playableInstances.LiveCount());
+    for (std::uint32_t index = 1; index < 3; ++index) {
+        VnResult unloaded = VN_IN_USE;
+        for (std::uint32_t block = 0; block < 128 && unloaded == VN_IN_USE; ++block) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            engine->nullBackend.Pump(1);
+            unloaded = Vn_UnloadPackEx(rows[index].handle, VN_PACK_UNLOAD_REFUSE_IF_USED);
+        }
+        EXPECT_EQ(VN_OK, unloaded);
+    }
 }
 
 TEST(PackCompositionContract, RepeatedPackActionPostsReclaimRetiredContainerSelection) {
