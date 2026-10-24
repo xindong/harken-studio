@@ -13934,12 +13934,12 @@ namespace detail {
 inline bool ActionConsumerCanReachImmediateQuantum(
     std::uint64_t target, std::uint64_t frontier, std::uint64_t rendered,
     std::uint32_t pageCount, std::size_t effectiveCapacity,
-    std::uint32_t maxSlicesPerPage) noexcept {
+    std::uint32_t maxSlicesPerPage, std::size_t preparedSliceRows) noexcept {
     if (target < frontier || target < rendered) return false;
     if (frontier >= rendered) return true;
     const auto lag = rendered - frontier;
     return lag <= pageCount && lag < target - rendered &&
-        effectiveCapacity / 2 >= maxSlicesPerPage;
+        (effectiveCapacity / 2 >= maxSlicesPerPage || effectiveCapacity >= preparedSliceRows);
 }
 
 // The live engine instance, or nullptr outside Init/Term. For host and test

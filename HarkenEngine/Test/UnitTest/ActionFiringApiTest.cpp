@@ -10331,9 +10331,9 @@ static void CheckDeferredQueueCompletionAtFutureStop(bool compositeSuccessor, bo
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &firstPcm));
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kSecondSound, &secondPcm));
     CanonicalActionWorld image(engine->registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision,
-        engine->registry.Lookup(CanonicalActionWorld::kSecondSound).contentRevision);
+        engine->registry.Lookup(CanonicalActionWorld::kSecondSound).contentRevision, !nestedParent);
     image.MakeDelayedSeparateSoundStopAction(DelayNanosecondsForTargetFrame(
-        *engine, nestedParent ? 15000u : advanceBeforeFinalOnset ? 6144u : 4096u));
+        *engine, nestedParent ? 15000u : advanceBeforeFinalOnset ? 6144u : 5120u));
     image.MakeImmediateSequenceQueuePlayAction();
     auto nestedChild = image.queueChildren[0];
     if (nestedParent) {
@@ -10346,6 +10346,9 @@ static void CheckDeferredQueueCompletionAtFutureStop(bool compositeSuccessor, bo
         image.containers[0].queueSplice = harken::QueueSpliceV1::Butt;
         image.containers[0].children = &nestedChild;
     } else {
+        // A real source tail and a fade longer than the publication window keep
+        // this successor deferred even when ordinary finite queues prepare early.
+        image.EnableImmediateQueueTransition(24000, 0);
         if (compositeSuccessor) image.MakeSecondQueueChildCompositeTrack();
     }
     image.steps[10].target = image.steps[11].target;
@@ -10385,6 +10388,7 @@ static void CheckDeferredQueueCompletionAtFutureStop(bool compositeSuccessor, bo
             engine->nullBackend.Pump(1);
             ASSERT_EQ(VN_OK, Vn_Update());
         }
+        ASSERT_FALSE(row.queueContinuationPrepared);
     }
     post.actionId = image.actions[8].actionStableId;
     VnActionFiringHandle stop = 0;
@@ -24197,7 +24201,11 @@ TEST(ActionFiringApi,
 }
 
 TEST(ActionFiringApi, ImmediateConsumerDebtArithmeticRejectsUnreachableOrWrappedInputs) {
-    const auto reachable = harken::detail::ActionConsumerCanReachImmediateQuantum;
+    const auto reachable = [](std::uint64_t target, std::uint64_t frontier, std::uint64_t rendered,
+                              std::uint32_t pages, std::size_t capacity, std::uint32_t maxSlices) {
+        return harken::detail::ActionConsumerCanReachImmediateQuantum(
+            target, frontier, rendered, pages, capacity, maxSlices, static_cast<std::size_t>(maxSlices) * 2u);
+    };
     EXPECT_TRUE(reachable(104, 100, 100, 256, 0, 8));
     EXPECT_TRUE(reachable(104, 101, 100, 256, 0, 8));
     EXPECT_FALSE(reachable(100, 101, 100, 256, 16, 8));
@@ -24214,6 +24222,9 @@ TEST(ActionFiringApi, ImmediateConsumerDebtArithmeticRejectsUnreachableOrWrapped
     EXPECT_TRUE(reachable(UINT64_MAX, UINT64_MAX - 4, UINT64_MAX - 3, 256, 16, 8));
     EXPECT_FALSE(reachable(UINT64_MAX, 0, UINT64_MAX - 1, 256, 16, 8));
     EXPECT_FALSE(reachable(UINT64_MAX - 1, UINT64_MAX, UINT64_MAX - 1, 256, 16, 8));
+    EXPECT_TRUE(harken::detail::ActionConsumerCanReachImmediateQuantum(104, 99, 100, 256, 0, 8, 0));
+    EXPECT_TRUE(harken::detail::ActionConsumerCanReachImmediateQuantum(104, 99, 100, 256, 3, 8, 3));
+    EXPECT_FALSE(harken::detail::ActionConsumerCanReachImmediateQuantum(104, 99, 100, 256, 2, 8, 3));
 }
 
 class ImmediateConsumerDebtTest : public testing::TestWithParam<ImmediateConsumerDebtSetup> {};
@@ -43255,7 +43266,12 @@ TEST(ActionFiringApi, ImmediateSequenceQueueSameProgramCycleRestartPreparesOneNe
     CheckImmediateSameProgramQueue(true);
 }
 
-TEST(ActionFiringApi, SequenceQueueBeyondPublicationWindowPlaysSuccessorAndRetires) {
+void CheckSequenceQueueBeyondPublicationWindow(
+    unsigned blocksPerUpdate, bool longTransition = false,
+    unsigned lateTick = UINT_MAX, unsigned lateBlocks = 0, bool expectDeadline = false) {
+    SCOPED_TRACE(blocksPerUpdate);
+    SCOPED_TRACE(longTransition);
+    SCOPED_TRACE(lateTick);
     (void)Vn_Term();
     harkentest::EngineSession session(harkentest::MakeNullConfig(8, 256, 48000));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -43270,39 +43286,78 @@ TEST(ActionFiringApi, SequenceQueueBeyondPublicationWindowPlaysSuccessorAndRetir
         engine->registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision,
         engine->registry.Lookup(CanonicalActionWorld::kSecondSound).contentRevision);
     image.MakeImmediateSequenceQueuePlayAction();
-    image.EnableImmediateQueueTransition(24000, 24000);
+    if (longTransition) image.EnableImmediateQueueTransition(24000, 24000);
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
               harken::InstallContainerWorldV1(*engine, image.world).status);
     auto desc = ValidPostDesc();
     desc.actionId = image.actions[9].actionStableId;
-    VnActionFiringHandle firing = 0;
-    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
-    VnActionFiringInfo info{};
-    info.structSize = sizeof(info);
-    bool heardFirst = false;
-    bool heardSecond = false;
-    for (unsigned tick = 0; tick < 400; ++tick) {
-        ASSERT_EQ(VN_OK, Vn_Update());
-        ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
-        if (info.state == VN_ACTION_FIRING_TERMINAL_RETAINED) break;
-        for (unsigned block = 0; block < 3; ++block) {
-            engine->nullBackend.Pump(1);
-            const auto* output = engine->nullBackend.LastBlock();
-            for (unsigned sample = 0; sample < 256u * 2u; ++sample) {
-                heardFirst |= output[sample] > 0.1f;
-                heardSecond |= output[sample] < -0.1f;
+    for (unsigned replay = 0; replay < (expectDeadline ? 2u : 1u); ++replay) {
+        SCOPED_TRACE(replay);
+        VnActionFiringHandle firing = 0;
+        ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+        VnActionFiringInfo info{};
+        info.structSize = sizeof(info);
+        bool heardFirst = false;
+        bool heardSecond = false;
+        bool missedHandoff = false;
+        for (unsigned tick = 0; tick < 400; ++tick) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
+            if (info.state == VN_ACTION_FIRING_TERMINAL_RETAINED) break;
+            std::uint64_t blocks = replay == 0 && tick == lateTick ? lateBlocks : blocksPerUpdate;
+            if (expectDeadline && replay == 0 && !missedHandoff) {
+                for (const auto& row : engine->playableServices) {
+                    if (!row.queueContinuationPrepared || row.queueDecisionCommitted ||
+                        row.Invocation().actionFiring != firing) continue;
+                    const auto* arm = engine->timelineArms.RowAt(row.queueSuccessorArm.slot);
+                    ASSERT_NE(nullptr, arm);
+                    const auto start = arm->startFrame / 256u;
+                    ASSERT_GE(start, engine->mixer.BlocksRendered());
+                    // Withhold Update until the acknowledged handoff can no longer be published on time.
+                    blocks = start - engine->mixer.BlocksRendered() + 2u;
+                    missedHandoff = true;
+                    break;
+                }
+            }
+            for (std::uint64_t block = 0; block < blocks; ++block) {
+                engine->nullBackend.Pump(1);
+                const auto* output = engine->nullBackend.LastBlock();
+                for (unsigned sample = 0; sample < 256u * 2u; ++sample) {
+                    heardFirst |= output[sample] > 0.1f;
+                    heardSecond |= output[sample] < -0.1f;
+                }
             }
         }
+        EXPECT_TRUE(heardFirst);
+        ASSERT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state);
+        if (expectDeadline && replay == 0) {
+            EXPECT_TRUE(missedHandoff);
+            EXPECT_FALSE(heardSecond);
+            EXPECT_EQ(VN_ACTION_OUTCOME_FAILED, info.outcome);
+            EXPECT_EQ(VN_ACTION_TERMINAL_DEADLINE, info.terminalReason);
+        } else {
+            EXPECT_TRUE(heardSecond);
+            EXPECT_EQ(VN_ACTION_OUTCOME_SUCCEEDED, info.outcome);
+            EXPECT_EQ(VN_ACTION_TERMINAL_NATURAL, info.terminalReason);
+        }
+        EXPECT_EQ(0u, info.livePlayableCount);
+        EXPECT_EQ(0u, engine->voices.ActiveCount());
+        EXPECT_EQ(0u, engine->queueInstances.LiveCount());
+        EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
     }
-    EXPECT_TRUE(heardFirst);
-    EXPECT_TRUE(heardSecond);
-    ASSERT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state);
-    EXPECT_EQ(VN_ACTION_OUTCOME_SUCCEEDED, info.outcome);
-    EXPECT_EQ(VN_ACTION_TERMINAL_NATURAL, info.terminalReason);
-    EXPECT_EQ(0u, info.livePlayableCount);
-    EXPECT_EQ(0u, engine->voices.ActiveCount());
-    EXPECT_EQ(0u, engine->queueInstances.LiveCount());
-    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+}
+
+TEST(ActionFiringApi, SequenceQueueBeyondPublicationWindowPlaysSuccessorAndRetires) {
+    for (const unsigned blocks : {3u, 6u, 8u}) {
+        CheckSequenceQueueBeyondPublicationWindow(blocks);
+        CheckSequenceQueueBeyondPublicationWindow(blocks, true);
+    }
+    CheckSequenceQueueBeyondPublicationWindow(3, false, 50, 8);
+    CheckSequenceQueueBeyondPublicationWindow(3, true, 50, 8);
+}
+
+TEST(ActionFiringApi, SequenceQueueMissedHandoffDeadlineReclaimsResourcesAndAcceptsNewPlayback) {
+    CheckSequenceQueueBeyondPublicationWindow(3, false, UINT_MAX, 0, true);
 }
 
 void ExpectImmediateActionQueueTransitionPrepared(
