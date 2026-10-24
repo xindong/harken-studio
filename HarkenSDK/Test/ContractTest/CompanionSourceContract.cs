@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Harken;
@@ -182,8 +183,28 @@ namespace Harken.Test
             {
                 await Task.Yield();
                 byte[] bytes = Read(path);
-                return path == invalid ? Encoding.UTF8.GetBytes(System.Text.RegularExpressions.Regex.Replace(
-                    Encoding.UTF8.GetString(bytes), "\"schemaVersion\"\\s*:\\s*3", "\"schemaVersion\":999")) : bytes;
+                if (path != invalid) return bytes;
+                string json = Encoding.UTF8.GetString(bytes);
+                var parser = new JsonParser(json, "schemaVersion");
+                var root = parser.Read(0) as Dictionary<string, object>;
+                Check(parser.End && root != null && root.TryGetValue("schemaVersion", out object version) &&
+                    version is JsonParser.NumberToken, "version injection requires a top-level numeric schemaVersion");
+                Check(((JsonParser.NumberToken)root["schemaVersion"]).Text != "0",
+                    "version injection requires a different source version");
+                foreach (Match match in Regex.Matches(json,
+                    "\"schemaVersion\"\\s*:\\s*(?<value>-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)"))
+                {
+                    Group value = match.Groups["value"];
+                    string changed = json.Remove(value.Index, value.Length).Insert(value.Index, "0");
+                    var changedParser = new JsonParser(changed, "schemaVersion");
+                    var changedRoot = (Dictionary<string, object>)changedParser.Read(0);
+                    if (changedParser.End && changedRoot["schemaVersion"] is JsonParser.NumberToken changedVersion && changedVersion.Text == "0")
+                    {
+                        Check(changed != json, "version injection must change the companion");
+                        return Encoding.UTF8.GetBytes(changed);
+                    }
+                }
+                throw new InvalidOperationException("version injection did not replace the top-level schemaVersion");
             });
             var start = await PackBootstrap.StartAsync(source, Config());
             Check(start.Result == VnResult.VN_BAD_PACK && start.Session == null, "async bad Init leaves no session");
