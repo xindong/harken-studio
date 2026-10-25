@@ -194,8 +194,8 @@ TEST_F(TimelineVariableStart, MultipleWaitingCallbacksRetainLaterEnvelopeAndOrig
     const auto* voice = engine->voices.Resolve(render);
     ASSERT_NE(nullptr, voice);
     ASSERT_EQ(2u, voice->timelineEvents.eventCount);
-    EXPECT_EQ(harken::TimelineEventKind::Start, voice->timelineEvents.events[0].kind);
-    EXPECT_EQ(harken::TimelineEventKind::Envelope, voice->timelineEvents.events[1].kind);
+    EXPECT_EQ(harken::TimelineEventKind::Start, voice->timelineEvents.events[0].Kind());
+    EXPECT_EQ(harken::TimelineEventKind::Envelope, voice->timelineEvents.events[1].Kind());
     EXPECT_EQ(0u, voice->timelineEvents.events[0].offset);
     EXPECT_EQ(0u, voice->timelineEvents.events[1].offset);
     EXPECT_EQ(700u, voice->timelineEvents.events[1].endFrame);
@@ -234,9 +234,9 @@ TEST_F(TimelineVariableStart, AppliedSourcePreservesStartThenStopShortSegment) {
     const auto* voice = engine->voices.Resolve(render);
     ASSERT_NE(nullptr, voice);
     ASSERT_EQ(2u, voice->timelineEvents.eventCount);
-    EXPECT_EQ(harken::TimelineEventKind::Start, voice->timelineEvents.events[0].kind);
+    EXPECT_EQ(harken::TimelineEventKind::Start, voice->timelineEvents.events[0].Kind());
     EXPECT_EQ(16u, voice->timelineEvents.events[0].offset);
-    EXPECT_EQ(harken::TimelineEventKind::Stop, voice->timelineEvents.events[1].kind);
+    EXPECT_EQ(harken::TimelineEventKind::Stop, voice->timelineEvents.events[1].Kind());
     EXPECT_EQ(100u, voice->timelineEvents.events[1].offset);
     EXPECT_EQ(1u, Observe().startedBlockSequence);
 }

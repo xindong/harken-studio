@@ -1364,8 +1364,7 @@ TEST(VoicePool, OriginalOwnerGatedDisposalDoesNotInventCoreRetirement) {
     harken::VoiceTimelineReservation reservation{};
     ASSERT_TRUE(engine.voices.ReserveLaneTimelineEvents(static_cast<std::uint32_t>(handle),
         static_cast<std::uint32_t>(handle >> 32), quantum, 1, &reservation));
-    harken::VoiceTimelineEvent event{};
-    event.kind = harken::TimelineEventKind::Stop;
+    harken::VoiceTimelineEvent event{harken::TimelineEventKind::Stop};
     event.frontierProof.state = harken::FrontierEventState::Pending;
     event.frontierProof.quantum = quantum;
     event.frontierProof.renderGeneration = static_cast<std::uint32_t>(handle >> 32);

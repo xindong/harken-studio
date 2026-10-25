@@ -124,16 +124,14 @@ struct StopAudioHarness {
 };
 
 harken::VoiceTimelineEvent StopAt(std::uint16_t offset, bool root = true) {
-    harken::VoiceTimelineEvent event{};
-    event.kind = harken::TimelineEventKind::Stop;
+    harken::VoiceTimelineEvent event{harken::TimelineEventKind::Stop};
     event.offset = offset;
     event.authoredRootStop = root;
     return event;
 }
 
 harken::VoiceTimelineEvent StartAt(std::uint16_t offset) {
-    harken::VoiceTimelineEvent event{};
-    event.kind = harken::TimelineEventKind::Start;
+    harken::VoiceTimelineEvent event{harken::TimelineEventKind::Start};
     event.offset = offset;
     return event;
 }
@@ -1447,8 +1445,7 @@ TEST(AuthoredStopAudio, LaneStagedStartRequiresExactOriginalAndHeldNativeProofs)
     harken::VoiceTimelineReservation reservation;
     ASSERT_TRUE(h.audio.engine->voices.ReserveLaneTimelineEvents(original.armToken.renderSlot,
         original.armToken.renderGeneration, 0u, 1u, &reservation));
-    harken::VoiceTimelineEvent event{};
-    event.kind = harken::TimelineEventKind::Start;
+    harken::VoiceTimelineEvent event{harken::TimelineEventKind::Start};
     event.offset = 16u;
     event.order = {original.executeFrame, original.logicCommitSequence, original.executionOrdinal,
         original.eventIndex, original.transactionOrdinal, original.subeventPhase, original.rowSequence};
@@ -2098,8 +2095,8 @@ TEST(AuthoredStopAudio, FrontierReservationMustBeCompleteAndExactBeforeNonFailin
         ASSERT_TRUE(voices.ReserveTimelineEvents(slot, generation, h.quantum, 2, &reservation));
         harken::VoiceTimelineReservationProof proof{};
         EXPECT_FALSE(voices.ProveTimelineReservation(reservation, &proof));
-        auto cursor = StartAt(8);
-        cursor.kind = harken::TimelineEventKind::SetStartCursor;
+        harken::VoiceTimelineEvent cursor{harken::TimelineEventKind::SetStartCursor};
+        cursor.offset = 8;
         cursor.value = 128;
         cursor = WithFrontierGuard(cursor, render, h.quantum, harken::FrontierEventState::Pending);
         EXPECT_FALSE(voices.StageReservedTimelineEvent(reservation, 0, cursor, {}, TestFrontierOperation(cursor)));
@@ -2345,8 +2342,8 @@ TEST(AuthoredStopAudio, RejectedAndUnfinalizedFrontierEventsHaveNoCascadeEffects
             StopAudioHarness h(workers);
             const auto render = h.Play();
             h.Begin();
-            auto cursor = StartAt(8);
-            cursor.kind = harken::TimelineEventKind::SetStartCursor;
+            harken::VoiceTimelineEvent cursor{harken::TimelineEventKind::SetStartCursor};
+            cursor.offset = 8;
             cursor.value = 1024;
             h.Append(render, WithFrontierGuard(cursor, render, h.quantum, state));
             h.Append(render, WithFrontierGuard(StartAt(8), render, h.quantum, state));
@@ -2383,19 +2380,19 @@ TEST(AuthoredStopAudio, FrozenFrontierProofKeepsExactQuantumGenerationAndStopFac
         late.frontierProof.cutoffFrame = 32;
         AppendProvenFrontier(h, render, late);
         auto stop = StopAt(32);
-        stop.authoredStopOperation = {2, 3, 1, 1, 4, 0, 32};
+        stop.Stop().authoredStopOperation = {2, 3, 1, 1, 4, 0, 32};
         h.Append(render, stop);
         const auto* context = h.engine->voices.Resolve(render);
         ASSERT_NE(nullptr, context);
         const auto cutoff = harken::SelectAuthoredRootStop(context->timelineEvents, kBlock, UINT64_MAX);
-        EXPECT_EQ(stop.authoredStopOperation, cutoff.operation);
+        EXPECT_EQ(stop.Stop().authoredStopOperation, cutoff.operation);
         h.Render();
         context = h.engine->voices.Resolve(render);
         ASSERT_NE(nullptr, context);
         EXPECT_LT(context->srcCursor, 1024.0);
         for (std::uint32_t i = 0; i < 8; ++i) EXPECT_EQ(0.0f, h.Sample(i));
         for (std::uint32_t i = 8; i < 32; ++i) EXPECT_NEAR(0.25f, h.Sample(i), 1e-6f);
-        EXPECT_EQ(stop.authoredStopOperation, context->authoredRootStopControl.authoredStopOperation);
+        EXPECT_EQ(stop.Stop().authoredStopOperation, context->authoredRootStopControl.Stop().authoredStopOperation);
     }
 }
 
@@ -2812,7 +2809,7 @@ TEST(AuthoredStopAudio, GatedRootStopReleasesWithoutStartingInSerialAndWorker) {
             const auto observer = h.lastObserver;
             h.Begin();
             auto stop = StopAt(17);
-            stop.controlCause.request.key = {5, 17};
+            stop.Stop().controlCause.request.key = {5, 17};
             h.Append(render, stop);
             if (laterStart) h.Append(render, StartAt(static_cast<std::uint16_t>(laterStart)));
             h.Render();
@@ -2821,7 +2818,7 @@ TEST(AuthoredStopAudio, GatedRootStopReleasesWithoutStartingInSerialAndWorker) {
             harken::MonitorVoiceControlFact control{};
             ASSERT_TRUE(h.controls[0].TryRead(h.controlBindings[0], &control));
             EXPECT_TRUE(control.timelineControl);
-            EXPECT_EQ(stop.controlCause.request.key, control.cause.request.key);
+            EXPECT_EQ(stop.Stop().controlCause.request.key, control.cause.request.key);
             EXPECT_EQ(harken::SourceTerminalKind::Stop, control.sourceKind);
             for (std::uint32_t i = 0; i < kBlock; ++i) EXPECT_EQ(0.0f, h.Sample(i));
             h.Begin();
@@ -2931,19 +2928,19 @@ std::vector<float> RenderDominanceStream(std::uint32_t workers, int adversarialO
         if (h.engine->voices.Resolve(render) != nullptr) {
             if (block == 0 && adversarialOrder != 2) h.Append(render, StopAt(17));
             if (adversarialOrder != 0) {
-                auto envelope = StartAt(17);
-                envelope.kind = harken::TimelineEventKind::Envelope;
+                harken::VoiceTimelineEvent envelope{harken::TimelineEventKind::Envelope};
+                envelope.offset = 17;
                 envelope.envelopeDirection = harken::TimelineEnvelopeDirection::FadeIn;
                 envelope.frame = 0;
                 envelope.endFrame = 256;
                 h.Append(render, envelope);
-                auto weight = StartAt(17);
-                weight.kind = harken::TimelineEventKind::VariableWeight;
-                weight.variableWeight = {0, 256, 0.0f, 0.0f, 1, {1, 1}, {1, 1}};
+                harken::VoiceTimelineEvent weight{harken::TimelineEventKind::VariableWeight};
+                weight.offset = 17;
+                weight.Weight().variableWeight = {0, 256, 0.0f, 0.0f, 1, {1, 1}, {1, 1}};
                 h.Append(render, weight);
                 h.Append(render, StartAt(17));
-                auto cursor = StartAt(17);
-                cursor.kind = harken::TimelineEventKind::SetStartCursor;
+                harken::VoiceTimelineEvent cursor{harken::TimelineEventKind::SetStartCursor};
+                cursor.offset = 17;
                 cursor.value = 1024;
                 h.Append(render, cursor);
                 h.Append(render, StopAt(17, false));
@@ -3185,8 +3182,8 @@ TEST(AuthoredStopAudio, ResetTimelineStopCapturesOnlyItsActualSourceWinner) {
                 h.Begin();
                 if (block < 2 && h.engine->voices.Resolve(render) != nullptr) {
                     auto stop = StopAt(block == 0 ? 17 : 0, false);
-                    stop.controlCause = cause;
-                    if (block != 0) stop.controlCause.request.key.sequence = 99;
+                    stop.Stop().controlCause = cause;
+                    if (block != 0) stop.Stop().controlCause.request.key.sequence = 99;
                     h.Append(render, stop);
                 }
                 h.Render();
@@ -3217,8 +3214,8 @@ TEST(AuthoredStopAudio, FirstAppliedControlSurvivesTimelineAndApiStopMixing) {
                 const auto render = h.Play(false);
                 const auto observer = h.lastObserver;
                 auto stop = StopAt(17, false);
-                stop.controlCause.request.key = {11, 17};
-                stop.controlCause.actionFiring = 23;
+                stop.Stop().controlCause.request.key = {11, 17};
+                stop.Stop().controlCause.actionFiring = 23;
                 h.Begin();
                 if (timelineFirst) h.Append(render, stop);
                 else h.engine->voices.ApplyStop(render, immediate ? 0 : 5, 0,
@@ -3238,7 +3235,7 @@ TEST(AuthoredStopAudio, FirstAppliedControlSurvivesTimelineAndApiStopMixing) {
                 ASSERT_TRUE(h.controls[0].TryRead(h.controlBindings[0], &observed));
                 EXPECT_EQ(harken::SourceTerminalKind::Stop, observed.sourceKind);
                 EXPECT_EQ(timelineFirst, observed.timelineControl);
-                EXPECT_EQ(timelineFirst ? stop.controlCause.request.key : harken::MonitorRequestKey{},
+                EXPECT_EQ(timelineFirst ? stop.Stop().controlCause.request.key : harken::MonitorRequestKey{},
                     observed.cause.request.key);
             }
         }
@@ -3256,14 +3253,14 @@ TEST(AuthoredStopAudio, RootStopDominatesLaterControlsAcrossQuanta) {
             h.Begin();
             if (block == 0) {
                 auto stop = StopAt(17);
-                stop.controlCause.request.key = {7, 31};
-                stop.controlCause.actionFiring = 43;
+                stop.Stop().controlCause.request.key = {7, 31};
+                stop.Stop().controlCause.actionFiring = 43;
                 h.Append(render, stop);
             }
             if (h.engine->voices.Resolve(render) != nullptr) {
-                auto weight = StartAt(31);
-                weight.kind = harken::TimelineEventKind::VariableWeight;
-                weight.variableWeight = {31, 35, 0.0f, 0.0f, 1, {1, 1}, {1, 1}};
+                harken::VoiceTimelineEvent weight{harken::TimelineEventKind::VariableWeight};
+                weight.offset = 31;
+                weight.Weight().variableWeight = {31, 35, 0.0f, 0.0f, 1, {1, 1}, {1, 1}};
                 h.Append(render, weight);
                 h.Append(render, StopAt(40, false));
                 h.Append(render, StartAt(50));
@@ -4242,7 +4239,7 @@ TEST(AuthoredStopAudio, TypedLaneStopRefusalReturnsEveryProofWithoutChangingEarl
         ASSERT_NE(nullptr, context);
         bool foundStart = false;
         for (const auto& event : context->timelineEvents.events) {
-            if (event.kind == harken::TimelineEventKind::Start &&
+            if (event.Kind() == harken::TimelineEventKind::Start &&
                 event.frontierProof.state == harken::FrontierEventState::LaneApplied) {
                 foundStart = true;
                 EXPECT_EQ(UINT64_MAX, event.frontierProof.cutoffFrame);
@@ -4303,7 +4300,7 @@ TEST(AuthoredStopAudio, FinalizedCurrentSpanMergesOnlyTrueEligibleCutoffAcrossPa
                 EXPECT_TRUE(voices.ReserveLaneTimelineEvents(slot, generation, 0, 1, &lane));
                 auto event = StopAt(32);
                 event.order.executeFrame = 32;
-                event.authoredStopOperation = identity;
+                event.Stop().authoredStopOperation = identity;
                 event.frontierProof.state = harken::FrontierEventState::Pending;
                 event.frontierProof.quantum = 0;
                 event.frontierProof.renderGeneration = generation;
@@ -4322,7 +4319,7 @@ TEST(AuthoredStopAudio, FinalizedCurrentSpanMergesOnlyTrueEligibleCutoffAcrossPa
             ASSERT_NE(nullptr, context);
             for (std::uint32_t index = 0; index < context->timelineEvents.eventCount; ++index) {
                 const auto& event = context->timelineEvents.events[index];
-                if (event.kind != harken::TimelineEventKind::Start) continue;
+                if (event.Kind() != harken::TimelineEventKind::Start) continue;
                 EXPECT_EQ(rejectStop ? UINT64_MAX : 32u, event.frontierProof.cutoffFrame);
                 EXPECT_EQ(rejectStop ? harken::AuthoredStopOperationIdentity{} : identity,
                     event.frontierProof.cutoffOperation);
@@ -5056,7 +5053,7 @@ TEST(AuthoredStopAudio, TypedLaneOriginalControlAndNoneFenceProofsSurviveActualC
         auto event = StopAt(32);
         event.order = {input.executeFrame, input.logicCommitSequence, input.executionOrdinal,
             input.eventIndex, input.transactionOrdinal, input.subeventPhase, input.rowSequence};
-        event.authoredStopOperation = h.record.operation.Identity();
+        event.Stop().authoredStopOperation = h.record.operation.Identity();
         event.frontierProof.state = harken::FrontierEventState::Pending;
         event.frontierProof.quantum = 0;
         event.frontierProof.renderGeneration = static_cast<std::uint32_t>(h.render >> 32);

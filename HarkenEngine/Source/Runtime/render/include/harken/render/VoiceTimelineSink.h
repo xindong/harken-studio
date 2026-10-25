@@ -733,12 +733,13 @@ public:
                 // Refused publication is terminal before any later payload reader.
                 if (!publicationRefused) {
                     auto& stored = pendingEvents[pending.count + i];
-                    stored = {};
-                    stored.kind = payload.kind;
+                    stored = VoiceTimelineEvent{payload.kind};
                     stored.authoredRootStop = payload.kind == TimelineEventKind::Stop &&
                         (payload.reserved & kTimelineEventAuthoredRootStop) != 0;
-                    stored.authoredStopOperation = payload.authoredStopOperation;
-                    stored.controlCause = payload.controlCause;
+                    if (payload.kind == TimelineEventKind::Stop) {
+                        stored.Stop().authoredStopOperation = payload.authoredStopOperation;
+                        stored.Stop().controlCause = payload.controlCause;
+                    }
                     stored.offset = static_cast<std::uint16_t>(events[i].effectiveOffset);
                     stored.envelopeDirection = payload.envelopeDirection;
                     stored.authoredFadeOutCandidate = events[i].authoredFadeOutCandidate;
@@ -746,8 +747,10 @@ public:
                     stored.endFrame = payload.envelopeEndFrame;
                     stored.value = payload.sourceStartFrame;
                     stored.envelopeCurve = payload.envelopeCurve;
-                    stored.variableWeight = payload.variableWeight;
-                    stored.variableWeightOwner = payload.variableWeightOwner;
+                    if (payload.kind == TimelineEventKind::VariableWeight) {
+                        stored.Weight().variableWeight = payload.variableWeight;
+                        stored.Weight().variableWeightOwner = payload.variableWeightOwner;
+                    }
                     stored.order = events[i].order;
                 }
                 transaction.transient = transaction.transient ||
@@ -775,8 +778,7 @@ public:
         bool transientControl = false;
         for (std::uint32_t i = 0; i < eventCount; ++i) {
             const TimelineEventPayload& payload = *events[i].payload;
-            VoiceTimelineEvent event{};
-            event.kind = payload.kind;
+            VoiceTimelineEvent event{payload.kind};
             event.authoredRootStop = payload.kind == TimelineEventKind::Stop &&
                 (payload.reserved & kTimelineEventAuthoredRootStop) != 0;
             event.offset = static_cast<std::uint16_t>(events[i].effectiveOffset);
@@ -787,11 +789,15 @@ public:
             event.endFrame = payload.envelopeEndFrame;
             event.value = payload.sourceStartFrame;
             event.envelopeCurve = payload.envelopeCurve;
-            event.variableWeight = payload.variableWeight;
-            event.variableWeightOwner = payload.variableWeightOwner;
+            if (payload.kind == TimelineEventKind::VariableWeight) {
+                event.Weight().variableWeight = payload.variableWeight;
+                event.Weight().variableWeightOwner = payload.variableWeightOwner;
+            }
             event.order = events[i].order;
-            event.authoredStopOperation = payload.authoredStopOperation;
-            event.controlCause = payload.controlCause;
+            if (payload.kind == TimelineEventKind::Stop) {
+                event.Stop().authoredStopOperation = payload.authoredStopOperation;
+                event.Stop().controlCause = payload.controlCause;
+            }
             if (!voices_.AppendTimelineEvent(renderSlot, renderGeneration,
                                              quantumIndex, event)) {
                 return false;
@@ -1020,8 +1026,8 @@ private:
             std::uint64_t stopFrame = UINT64_MAX;
             for (std::uint32_t i = 0; i < pending.count; ++i) {
                 const auto& event = pendingEvents[i];
-                if (event.kind == TimelineEventKind::Start) startFrame = std::min(startFrame, event.order.executeFrame);
-                if (event.kind == TimelineEventKind::Stop) stopFrame = std::min(stopFrame, event.order.executeFrame);
+                if (event.Kind() == TimelineEventKind::Start) startFrame = std::min(startFrame, event.order.executeFrame);
+                if (event.Kind() == TimelineEventKind::Stop) stopFrame = std::min(stopFrame, event.order.executeFrame);
             }
             const bool stopDominates = status != VariableReadCutStatus::Failed &&
                 stopFrame != UINT64_MAX && (status == VariableReadCutStatus::Waiting ||

@@ -347,23 +347,23 @@ TailFrameAggregate AggregateTailFrames(const VoiceRenderContext& ctx) {
 void ApplyTimelineControlEvent(VoiceRenderContext& ctx,
                                const VoiceTimelineEvent& event,
                                std::uint32_t blockFrames) noexcept {
-    if (event.kind == TimelineEventKind::VariableWeight) {
-        if (event.variableWeightOwner.Valid()) {
-            (void)ctx.ApplyVariableWeightControl(event.variableWeightOwner, event.variableWeight);
+    if (event.Kind() == TimelineEventKind::VariableWeight) {
+        if (event.Weight().variableWeightOwner.Valid()) {
+            (void)ctx.ApplyVariableWeightControl(event.Weight().variableWeightOwner, event.Weight().variableWeight);
             return;
         }
         if (ctx.variableWeightControlCount != 0) return;
         float validated = 0.0f;
         if ((!ctx.variableWeightActive ||
-             event.variableWeight.segmentGeneration >
+             event.Weight().variableWeight.segmentGeneration >
                  ctx.variableWeightSegment.segmentGeneration) &&
-            ResolveWeightSegment(event.variableWeight,
-                                 event.variableWeight.startFrame,
+            ResolveWeightSegment(event.Weight().variableWeight,
+                                 event.Weight().variableWeight.startFrame,
                                  &validated)) {
-            ctx.variableWeightSegment = event.variableWeight;
+            ctx.variableWeightSegment = event.Weight().variableWeight;
             ctx.variableWeightActive = true;
         }
-    } else if (event.kind == TimelineEventKind::Envelope) {
+    } else if (event.Kind() == TimelineEventKind::Envelope) {
         const std::uint32_t envelopeIndex =
             event.envelopeDirection == TimelineEnvelopeDirection::FadeOut ? 1u
                                                                           : 0u;
@@ -381,7 +381,7 @@ void ApplyTimelineControlEvent(VoiceRenderContext& ctx,
             ctx.timelineFadeOutCoveredSample =
                 event.endFrame == event.frame;
         }
-    } else if (event.kind == TimelineEventKind::Stop) {
+    } else if (event.Kind() == TimelineEventKind::Stop) {
         if (event.authoredRootStop) {
             ctx.authoredRootStopApplied = true;
             // The root deadline cannot restart an earlier timeline declick.
@@ -391,7 +391,7 @@ void ApplyTimelineControlEvent(VoiceRenderContext& ctx,
         if (!ctx.monitorControlAdopted) {
             ctx.monitorControlAdopted = true;
             ctx.monitorTimelineControlAdopted = true;
-            ctx.monitorAdoptedControlCause = event.controlCause;
+            ctx.monitorAdoptedControlCause = event.Stop().controlCause;
         }
         ctx.timelineStopPending = true;
         ctx.timelineStopOffset = event.offset;
@@ -639,7 +639,7 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
 
     const auto rootCutoff = SelectAuthoredRootStop(
         timelineSpan, blockFrames, ctx.authoredRootStopFrame,
-        ctx.authoredRootStopControl.authoredStopOperation);
+        ctx.authoredRootStopControl.Stop().authoredStopOperation);
     ctx.authoredRootStopFrame = rootCutoff.frame;
     ctx.authoredRootStopEvent = rootCutoff.eventIndex;
     if (rootCutoff.eventIndex != UINT32_MAX) {
@@ -650,7 +650,7 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
         if (!TimelineEventGuardEligible(timelineSpan, i)) continue;
         const auto& event = timelineSpan.events[i];
         if (event.offset >= blockFrames) continue;
-        if (event.kind == TimelineEventKind::Start) {
+        if (event.Kind() == TimelineEventKind::Start) {
             earliestStart = std::min<std::uint32_t>(earliestStart, event.offset);
         }
     }
@@ -668,7 +668,7 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
         if (!ctx.monitorControlAdopted) {
             ctx.monitorControlAdopted = true;
             ctx.monitorTimelineControlAdopted = true;
-            ctx.monitorAdoptedControlCause = ctx.authoredRootStopControl.controlCause;
+            ctx.monitorAdoptedControlCause = ctx.authoredRootStopControl.Stop().controlCause;
         }
         ctx.stagedSourceTerminal = SourceTerminalKind::Stop;
         ctx.stagedSourceTerminalOffset = static_cast<std::uint32_t>(
@@ -728,13 +728,13 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
     for (std::uint32_t i = 0; i < timelineSpan.eventCount; ++i) {
         const VoiceTimelineEvent& event = timelineSpan.events[i];
         if (!TimelineEventPrecedesRootStop(ctx, i, blockFrames)) continue;
-        if (event.kind == TimelineEventKind::SetStartCursor) {
+        if (event.Kind() == TimelineEventKind::SetStartCursor) {
             if (ctx.timelineGated) {
                 ctx.srcCursor = event.value;
             }
             continue;
         }
-        if (event.kind == TimelineEventKind::Start) {
+        if (event.Kind() == TimelineEventKind::Start) {
             if (ctx.timelineGated) {
                 offset = std::min<std::uint32_t>(event.offset, blockFrames);
                 if (ctx.pendingImmediateWeightRebase) {
@@ -783,9 +783,9 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
             }
             continue;
         }
-        if ((event.kind == TimelineEventKind::Envelope ||
-             event.kind == TimelineEventKind::VariableWeight ||
-             event.kind == TimelineEventKind::Stop) &&
+        if ((event.Kind() == TimelineEventKind::Envelope ||
+             event.Kind() == TimelineEventKind::VariableWeight ||
+             event.Kind() == TimelineEventKind::Stop) &&
             event.offset == offset) {
             ApplyTimelineControlEvent(ctx, event, blockFrames);
         }
@@ -1169,8 +1169,8 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
          eventIndex < timelineSpan.eventCount; ++eventIndex) {
         const VoiceTimelineEvent& event = timelineSpan.events[eventIndex];
         if (!TimelineEventPrecedesRootStop(ctx, eventIndex, blockFrames)) continue;
-        if (event.kind == TimelineEventKind::VariableWeight &&
-            !event.variableWeightOwner.Valid() &&
+        if (event.Kind() == TimelineEventKind::VariableWeight &&
+            !event.Weight().variableWeightOwner.Valid() &&
             event.offset > offset && event.offset < offset + produced) {
             priorWeight = ctx.variableWeightSegment;
             priorWeightActive = ctx.variableWeightActive;
@@ -1228,7 +1228,7 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
         for (std::uint32_t index = 0; index < produced; ++index) {
             for (std::uint32_t eventIndex = 0; eventIndex < timelineSpan.eventCount; ++eventIndex) {
                 const auto& event = timelineSpan.events[eventIndex];
-                if (event.kind == TimelineEventKind::VariableWeight && event.variableWeightOwner.Valid() &&
+                if (event.Kind() == TimelineEventKind::VariableWeight && event.Weight().variableWeightOwner.Valid() &&
                     event.offset == offset + index && event.offset > offset &&
                     TimelineEventPrecedesRootStop(ctx, eventIndex, blockFrames))
                     ApplyTimelineControlEvent(ctx, event, blockFrames);
@@ -1255,8 +1255,8 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
         const VoiceTimelineEvent& event = timelineSpan.events[eventIndex];
         if (!TimelineEventPrecedesRootStop(ctx, eventIndex, blockFrames)) continue;
         if (event.offset > offset && event.offset < offset + produced &&
-            (event.kind == TimelineEventKind::Envelope ||
-             event.kind == TimelineEventKind::Stop)) {
+            (event.Kind() == TimelineEventKind::Envelope ||
+             event.Kind() == TimelineEventKind::Stop)) {
             ApplyTimelineControlEvent(ctx, event, blockFrames);
         }
     }

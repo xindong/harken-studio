@@ -31,9 +31,12 @@
 #include "harken/render/SpatialMatrix.h"
 
 #include <algorithm>
+#include <cassert>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <span>
+#include <type_traits>
 
 namespace harken {
 
@@ -164,24 +167,69 @@ struct VoiceSendSlot {
 };
 
 struct VoiceTimelineEvent {
-    TimelineEventKind kind = TimelineEventKind::Start;
+    struct StopPayload {
+        AuthoredStopOperationIdentity authoredStopOperation{};
+        MonitorControlCause controlCause{};
+    };
+    struct WeightPayload {
+        WeightSegmentV1 variableWeight{};
+        VariableWeightControlIdentity variableWeightOwner{};
+    };
+
+    VoiceTimelineEvent() noexcept = default;
+    explicit VoiceTimelineEvent(TimelineEventKind kind) noexcept : kind_(kind) {
+        if (kind == TimelineEventKind::Stop) std::construct_at(&payload_.stop);
+        else if (kind == TimelineEventKind::VariableWeight) std::construct_at(&payload_.weight);
+    }
+
+    TimelineEventKind Kind() const noexcept { return kind_; }
+    StopPayload& Stop() noexcept {
+        assert(kind_ == TimelineEventKind::Stop);
+        return payload_.stop;
+    }
+    const StopPayload& Stop() const noexcept {
+        assert(kind_ == TimelineEventKind::Stop);
+        return payload_.stop;
+    }
+    WeightPayload& Weight() noexcept {
+        assert(kind_ == TimelineEventKind::VariableWeight);
+        return payload_.weight;
+    }
+    const WeightPayload& Weight() const noexcept {
+        assert(kind_ == TimelineEventKind::VariableWeight);
+        return payload_.weight;
+    }
+
+private:
+    // A kind transition copies a complete event, including its active payload.
+    TimelineEventKind kind_ = TimelineEventKind::Start;
+
+public:
     std::uint16_t offset = 0;
     TimelineEnvelopeDirection envelopeDirection =
         TimelineEnvelopeDirection::FadeIn;
     bool authoredFadeOutCandidate = false;
     bool authoredRootStop = false;
+    bool firstOutputDeferred = false;
     std::uint64_t frame = 0;
     std::uint64_t endFrame = 0;
     std::uint64_t value = 0;
-    WeightSegmentV1 variableWeight{};
-    VariableWeightControlIdentity variableWeightOwner{};
-    bool firstOutputDeferred = false;
     const CurveLUT* envelopeCurve = nullptr;
     TimelineExecutionOrder order{};
-    AuthoredStopOperationIdentity authoredStopOperation{};
-    MonitorControlCause controlCause{};
     FrozenFrontierEventProof frontierProof{};
+
+private:
+    union Payload {
+        std::uint8_t empty;
+        StopPayload stop;
+        WeightPayload weight;
+        Payload() noexcept : empty{} {}
+    } payload_{};
 };
+
+static_assert(std::is_trivially_copyable_v<VoiceTimelineEvent>);
+static_assert(std::is_trivially_copy_assignable_v<VoiceTimelineEvent>);
+static_assert(std::is_trivially_destructible_v<VoiceTimelineEvent>);
 
 struct VoiceEventSpan {
     std::uint32_t renderGeneration = 0;
@@ -485,7 +533,7 @@ struct VoiceRenderContext {
     std::uint64_t authoredRootStopFrame = UINT64_MAX;
     std::uint32_t authoredRootStopEvent = UINT32_MAX;
     bool authoredRootStopApplied = false;
-    VoiceTimelineEvent authoredRootStopControl{};
+    VoiceTimelineEvent authoredRootStopControl{TimelineEventKind::Stop};
 
     SourcePhase phase = SourcePhase::Done;
     StageResult lastResult; // most recent block's protocol facts

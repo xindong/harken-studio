@@ -927,7 +927,7 @@ void VoicePool::FinalizeTimelineQuantum(std::uint64_t quantumIndex) noexcept {
         // including stops from another Page/lane, before any worker reads guards.
         const auto cutoff = SelectAuthoredRootStop(span, m_blockFrames,
             slot.render.authoredRootStopFrame,
-            slot.render.authoredRootStopControl.authoredStopOperation);
+            slot.render.authoredRootStopControl.Stop().authoredStopOperation);
         if (cutoff.frame != UINT64_MAX) {
             for (std::uint32_t index = 0; index < span.eventCount; ++index) {
                 auto& guard = span.events[index].frontierProof;
@@ -1119,7 +1119,7 @@ bool VoicePool::MatchesHeldLaneStart(std::uint32_t renderSlot,
     const TimelineArmTable::LaneAudioProof& arm,
     const VariableTimelineInitializerProof& initializer) noexcept {
     if (renderSlot >= m_slots.size() || !proof.Valid() || proof.count_ != 1u ||
-        expected.kind != TimelineEventKind::Start || proof.mask_ == 0u ||
+        expected.Kind() != TimelineEventKind::Start || proof.mask_ == 0u ||
         (proof.mask_ & (proof.mask_ - 1u)) != 0u) return false;
     const auto& slot = m_slots[renderSlot];
     const auto& span = slot.render.timelineEvents;
@@ -1136,7 +1136,7 @@ bool VoicePool::MatchesHeldLaneStart(std::uint32_t renderSlot,
     if (index >= span.eventCount || proof.events_ != &span.events[index] ||
         slot.timelineReservationCounts[index] != 1u) return false;
     const auto& actual = *proof.events_;
-    if (actual.kind != expected.kind || actual.offset != expected.offset ||
+    if (actual.Kind() != expected.Kind() || actual.offset != expected.offset ||
         !(actual.order == expected.order) || actual.frame != 0u || actual.endFrame != 0u ||
         actual.authoredRootStop || actual.authoredFadeOutCandidate ||
         actual.envelopeCurve != nullptr || actual.value != 0u || actual.firstOutputDeferred ||
@@ -2328,12 +2328,12 @@ void VoicePool::PrepareFirstOutputTimelineWeights(Slot& slot) noexcept {
     if (!FirstOutputProtected(slot)) return;
     auto& span = slot.render.timelineEvents;
     const auto cutoff = SelectAuthoredRootStop(span, m_blockFrames, slot.render.authoredRootStopFrame,
-        slot.render.authoredRootStopControl.authoredStopOperation);
+        slot.render.authoredRootStopControl.Stop().authoredStopOperation);
     const auto handle = MakeHandle(static_cast<std::uint32_t>(&slot - m_slots.data()),
         slot.generation.load(std::memory_order_relaxed));
     for (std::uint32_t index = 0; index < span.eventCount; ++index) {
         auto& event = span.events[index];
-        if (event.kind != TimelineEventKind::VariableWeight || !event.variableWeightOwner.Valid() ||
+        if (event.Kind() != TimelineEventKind::VariableWeight || !event.Weight().variableWeightOwner.Valid() ||
             event.offset >= m_blockFrames || !TimelineEventPrecedesRootStop(span, index,
                 m_blockFrames, cutoff, slot.render.authoredRootStopApplied)) continue;
         const auto& cut = slot.firstOutputOrder;
@@ -2342,8 +2342,8 @@ void VoicePool::PrepareFirstOutputTimelineWeights(Slot& slot) noexcept {
             ? span.quantumIndex * m_blockFrames + event.offset : order.executeFrame;
         const bool included = frame <= cut.frame && (order.logicCommitSequence < cut.sequence ||
             (order.logicCommitSequence == cut.sequence && order.executionOrdinal < cut.ordinal));
-        if (!included) (void)ApplyOwnedVariableWeightSegment(handle, event.variableWeightOwner,
-            event.variableWeight);
+        if (!included) (void)ApplyOwnedVariableWeightSegment(handle, event.Weight().variableWeightOwner,
+            event.Weight().variableWeight);
         event.firstOutputDeferred = true;
     }
 }

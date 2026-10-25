@@ -309,7 +309,7 @@ struct FrontierTimelineFinalizer::Impl {
         event.completesControl = payload.kind == TimelineEventKind::VariableWeight ||
             (payload.kind == TimelineEventKind::Start && (payload.reserved & kTimelineEventTransientStartArm) != 0) ||
             (payload.kind == TimelineEventKind::Stop && (payload.reserved & kTimelineEventTransientControlArm) != 0);
-        event.voice.kind = payload.kind;
+        event.voice = VoiceTimelineEvent{payload.kind};
         event.voice.offset = offset;
         event.voice.envelopeDirection = payload.envelopeDirection;
         event.voice.authoredFadeOutCandidate = event.source.authoredFadeOutCandidate;
@@ -318,12 +318,16 @@ struct FrontierTimelineFinalizer::Impl {
         event.voice.frame = payload.envelopeStartFrame;
         event.voice.endFrame = payload.envelopeEndFrame;
         event.voice.value = payload.sourceStartFrame;
-        event.voice.variableWeight = payload.variableWeight;
-        event.voice.variableWeightOwner = payload.variableWeightOwner;
+        if (payload.kind == TimelineEventKind::VariableWeight) {
+            event.voice.Weight().variableWeight = payload.variableWeight;
+            event.voice.Weight().variableWeightOwner = payload.variableWeightOwner;
+        }
         event.voice.envelopeCurve = payload.envelopeCurve;
         event.voice.order = event.order;
-        event.voice.authoredStopOperation = payload.authoredStopOperation;
-        event.voice.controlCause = payload.controlCause;
+        if (payload.kind == TimelineEventKind::Stop) {
+            event.voice.Stop().authoredStopOperation = payload.authoredStopOperation;
+            event.voice.Stop().controlCause = payload.controlCause;
+        }
     }
     std::uint64_t DueQuantum() const noexcept { return laneSourceResumed ? laneOriginalQuantum : quantum; }
     QueueFrontierSourceWaitContext SourceWaitContext() const noexcept {
@@ -884,16 +888,16 @@ struct FrontierTimelineFinalizer::Impl {
             const auto* voice = voices.Resolve(handle);
             if (voice != nullptr && voice->authoredRootStopFrame < cutoff) {
                 cutoff = voice->authoredRootStopFrame;
-                *identity = voice->authoredRootStopControl.authoredStopOperation;
+                *identity = voice->authoredRootStopControl.Stop().authoredStopOperation;
             }
             if (voice != nullptr) {
                 for (std::uint32_t i = 0; i < voice->timelineEvents.eventCount; ++i) {
                     const auto& control = voice->timelineEvents.events[i];
-                    if (control.kind != TimelineEventKind::Stop || !control.authoredRootStop ||
+                    if (control.Kind() != TimelineEventKind::Stop || !control.authoredRootStop ||
                         !control.frontierProof.Eligible(quantum, token.renderGeneration)) continue;
                     if (control.order.executeFrame < cutoff) {
                         cutoff = control.order.executeFrame;
-                        *identity = control.authoredStopOperation;
+                        *identity = control.Stop().authoredStopOperation;
                     }
                 }
             }
@@ -1017,7 +1021,7 @@ struct FrontierTimelineFinalizer::Impl {
     }
 
     bool VariableSourceReady(const Event& event) const noexcept {
-        return event.controller || event.voice.kind != TimelineEventKind::Start ||
+        return event.controller || event.voice.Kind() != TimelineEventKind::Start ||
             voices.TimelineVariableSourcesStatus(event.source.armToken.renderSlot,
                 event.source.armToken.renderGeneration) == VariableReadCutStatus::Applied;
     }
@@ -1106,7 +1110,7 @@ struct FrontierTimelineFinalizer::Impl {
             if (event.disposition != kTimelineDispositionApplied &&
                 !(group.savedPending && event.disposition == kTimelineDispositionArmPending))
                 return VariableReadCutStatus::Failed;
-            if (!event.controller && event.voice.kind == TimelineEventKind::Start) {
+            if (!event.controller && event.voice.Kind() == TimelineEventKind::Start) {
                 const auto status = voices.TimelineVariableSourcesStatus(event.source.armToken.renderSlot,
                     event.source.armToken.renderGeneration);
                 if (status == VariableReadCutStatus::Failed) return status;
@@ -1151,10 +1155,10 @@ struct FrontierTimelineFinalizer::Impl {
                 const auto& other = events[prior];
                 if (other.stop == nullptr && other.group == UINT32_MAX && other.representative == representative &&
                     (other.source.rowSequence == event.source.rowSequence ||
-                     (other.voice.kind == event.voice.kind && event.voice.kind != TimelineEventKind::Envelope)))
+                     (other.voice.Kind() == event.voice.Kind() && event.voice.Kind() != TimelineEventKind::Envelope)))
                     return VariableReadCutStatus::Failed;
             }
-            if (!event.controller && event.voice.kind == TimelineEventKind::Start) {
+            if (!event.controller && event.voice.Kind() == TimelineEventKind::Start) {
                 const auto status = voices.TimelineVariableSourcesStatus(
                     event.source.armToken.renderSlot, event.source.armToken.renderGeneration);
                 if (status == VariableReadCutStatus::Failed) return status;
@@ -1197,7 +1201,7 @@ struct FrontierTimelineFinalizer::Impl {
     }
 
     void FinishVariableSourceRead(const Event& event) noexcept {
-        if (!event.controller && event.voice.kind == TimelineEventKind::Start)
+        if (!event.controller && event.voice.Kind() == TimelineEventKind::Start)
             voices.FinishTimelineVariableSourceRead(event.source.armToken.renderSlot,
                 event.source.armToken.renderGeneration);
     }
@@ -1404,7 +1408,7 @@ struct FrontierTimelineFinalizer::Impl {
             for (std::uint32_t phase = 0; phase < 2u; ++phase)
                 for (std::uint32_t index = 0; index < eventCount; ++index) {
                     auto& event = events[index];
-                    if (event.group != groupIndex || (phase == 0u) != (event.voice.kind == TimelineEventKind::Start)) continue;
+                    if (event.group != groupIndex || (phase == 0u) != (event.voice.Kind() == TimelineEventKind::Start)) continue;
                     if (event.armProof.Valid()) arms.ApplyBoundFrontierArm(event.armProof, event.completesControl);
                     voices.ApplyProvenLaneTimelineReservation(event.appendProof);
                     FinishVariableSourceRead(event);
@@ -1453,11 +1457,11 @@ struct FrontierTimelineFinalizer::Impl {
                     !(payload->target == mapped->event.program.program->payloads[mapped->event.payload].target) ||
                     source.frontier.operationEventCount != 1u + targetEvents ||
                     source.executeFrame != member.view.frontier->operation.order.executeFrame) return false;
-                if (event.voice.kind == TimelineEventKind::Start) {
+                if (event.voice.Kind() == TimelineEventKind::Start) {
                     if (start != nullptr || !(event.order == OrderOf(mapped->event)) ||
                         payload->reserved != 0u) return false;
                     start = &event;
-                } else if (event.voice.kind == TimelineEventKind::Envelope) {
+                } else if (event.voice.Kind() == TimelineEventKind::Envelope) {
                     if (envelope != nullptr || payload->envelopeDirection != TimelineEnvelopeDirection::FadeIn)
                         return false;
                     envelope = &event;
@@ -1593,11 +1597,11 @@ struct FrontierTimelineFinalizer::Impl {
                 for (std::uint32_t prior = 0; prior < index; ++prior)
                     if (events[prior].group == group.index &&
                         events[prior].source.frontier.entryEventOrdinal == source.frontier.entryEventOrdinal) return false;
-                if (event.voice.kind == TimelineEventKind::Start) {
+                if (event.voice.Kind() == TimelineEventKind::Start) {
                     if (start != nullptr || payload->reserved != 0u || source.subeventPhase != 20u ||
                         !(event.order == OrderOf(mapped->event))) return false;
                     start = &event;
-                } else if (event.voice.kind == TimelineEventKind::Envelope) {
+                } else if (event.voice.Kind() == TimelineEventKind::Envelope) {
                     if (envelope != nullptr || payload->envelopeDirection != TimelineEnvelopeDirection::FadeIn) return false;
                     envelope = &event;
                 } else return false;
@@ -1942,11 +1946,11 @@ struct FrontierTimelineFinalizer::Impl {
                 EffectiveFrame(event) >= CutoffFor(event, &stop) ||
                 !event.reserved || !voices.ProveTimelineReservation(event.reservation, &event.appendProof))
                 return false;
-            if (event.voice.kind == TimelineEventKind::Start) {
+            if (event.voice.Kind() == TimelineEventKind::Start) {
                 if (start != nullptr || payload->reserved != kTimelineEventTransientStartArm ||
                     source.subeventPhase != 20u || !(event.order == OrderOf(mapped->event))) return false;
                 start = &event;
-            } else if (event.voice.kind == TimelineEventKind::Envelope) {
+            } else if (event.voice.Kind() == TimelineEventKind::Envelope) {
                 if (envelope != nullptr) return false;
                 envelope = &event;
             } else return false;
@@ -2639,16 +2643,16 @@ struct FrontierTimelineFinalizer::Impl {
                 if (!event.reserved || !voices.ProveTimelineReservation(event.reservation, &event.appendProof))
                     group.failure = FrontierReceiptReason::AppendCapacity;
                 bool firstArm = true;
-                bool starts = event.voice.kind == TimelineEventKind::Start;
+                bool starts = event.voice.Kind() == TimelineEventKind::Start;
                 bool completesControl = false;
                 std::uint32_t startCount = 0;
                 for (std::uint32_t other = 0; other < eventCount; ++other) {
                     if (events[other].stop != nullptr || events[other].group != index ||
                         events[other].controller || !SameArm(event.source.armToken, events[other].source.armToken)) continue;
                     firstArm = firstArm && other >= i;
-                    starts = starts || events[other].voice.kind == TimelineEventKind::Start;
+                    starts = starts || events[other].voice.Kind() == TimelineEventKind::Start;
                     completesControl = completesControl || events[other].completesControl;
-                    startCount += events[other].voice.kind == TimelineEventKind::Start ? 1u : 0u;
+                    startCount += events[other].voice.Kind() == TimelineEventKind::Start ? 1u : 0u;
                 }
                 event.completesControl = completesControl;
                 if (startCount > 1) group.failure = FrontierReceiptReason::DuplicateMember;
@@ -2795,7 +2799,7 @@ struct FrontierTimelineFinalizer::Impl {
                 if (candidate.stop != nullptr || candidate.group != index || candidate.controller ||
                     !SameArm(candidate.source.armToken, event.source.armToken)) continue;
                 firstArm = firstArm && other >= i;
-                starts += candidate.voice.kind == TimelineEventKind::Start ? 1u : 0u;
+                starts += candidate.voice.Kind() == TimelineEventKind::Start ? 1u : 0u;
             }
             if (starts > 1) group.failure = FrontierReceiptReason::DuplicateMember;
             if (firstArm && !arms.ProveGroupedFrontierOperation(event.source.armToken, binding,
@@ -2883,13 +2887,13 @@ struct FrontierTimelineFinalizer::Impl {
                 if (other.stop == nullptr && other.group == UINT32_MAX &&
                     other.representative == representative &&
                     (other.source.rowSequence == event.source.rowSequence ||
-                     (other.voice.kind == event.voice.kind &&
-                      event.voice.kind != TimelineEventKind::Envelope))) valid = false;
+                     (other.voice.Kind() == event.voice.Kind() &&
+                      event.voice.Kind() != TimelineEventKind::Envelope))) valid = false;
             }
             valid = valid && event.disposition == kTimelineDispositionApplied && event.reserved;
-            duplicateStart = duplicateStart || (starts && event.voice.kind == TimelineEventKind::Start);
-            starts = starts || event.voice.kind == TimelineEventKind::Start;
-            const auto status = event.controller || event.voice.kind != TimelineEventKind::Start
+            duplicateStart = duplicateStart || (starts && event.voice.Kind() == TimelineEventKind::Start);
+            starts = starts || event.voice.Kind() == TimelineEventKind::Start;
+            const auto status = event.controller || event.voice.Kind() != TimelineEventKind::Start
                 ? VariableReadCutStatus::Applied : voices.TimelineVariableSourcesStatus(
                     event.source.armToken.renderSlot, event.source.armToken.renderGeneration);
             failedSource = failedSource || status == VariableReadCutStatus::Failed;
@@ -3183,7 +3187,7 @@ VariableReadCutStatus FrontierTimelineFinalizer::VariableSourcesStatus(
     }
     for (std::uint32_t index = 0; index < self.eventCount; ++index) {
         const auto& event = self.events[index];
-        if (event.controller || event.stop != nullptr || event.voice.kind != TimelineEventKind::Start) continue;
+        if (event.controller || event.stop != nullptr || event.voice.Kind() != TimelineEventKind::Start) continue;
         const auto status = self.voices.TimelineVariableSourcesStatus(event.source.armToken.renderSlot,
             event.source.armToken.renderGeneration);
         if (status == VariableReadCutStatus::Failed) return status;
@@ -3671,7 +3675,7 @@ bool FrontierTimelineFinalizer::FinishLaneContinuationBucket(
                 controllerCount += event.controller &&
                     event.source.frontier.kind == FrontierOperationKind::Entry &&
                     event.source.frontier.entry == control.entry;
-                envelopeCount += event.voice.kind == TimelineEventKind::Envelope &&
+                envelopeCount += event.voice.Kind() == TimelineEventKind::Envelope &&
                     event.source.frontier.kind == FrontierOperationKind::Dependent &&
                     event.source.frontier.group == member->view.identity &&
                     event.source.frontier.entry == control.entry;
@@ -3894,7 +3898,7 @@ bool FrontierTimelineFinalizer::FinishLaneContinuationBucket(
         if (ordinaryEvent == nullptr) return false;
         const auto& event = *ordinaryEvent;
         if (event.stop != nullptr || !event.controller ||
-            event.voice.kind != TimelineEventKind::ControllerActivation ||
+            event.voice.Kind() != TimelineEventKind::ControllerActivation ||
             event.disposition != kTimelineDispositionApplied ||
             event.source.frontier.kind != FrontierOperationKind::Entry ||
             !(event.source.frontier.entry == control.entry) ||

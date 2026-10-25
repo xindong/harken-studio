@@ -9181,11 +9181,10 @@ TEST(VariableCurrentSlice, FirstOutputOwnedWeightsKeepInitialMixAndAbsoluteSegme
                         auto& input = *static_cast<Injection*>(context);
                         if (phase != CurrentSliceHookPhase::AfterExecuteBeforeApply || input.injected) return;
                         for (const auto& weight : input.weights) {
-                            harken::VoiceTimelineEvent event{};
-                            event.kind = harken::TimelineEventKind::VariableWeight;
+                            harken::VoiceTimelineEvent event{harken::TimelineEventKind::VariableWeight};
                             event.offset = 10;
-                            event.variableWeightOwner = weight.owner;
-                            event.variableWeight = weight.segment;
+                            event.Weight().variableWeightOwner = weight.owner;
+                            event.Weight().variableWeight = weight.segment;
                             event.order = {block * kBlockFrames + event.offset, 2, 0};
                             EXPECT_TRUE(input.voices->AppendTimelineEvent(static_cast<std::uint32_t>(input.voice),
                                 static_cast<std::uint32_t>(input.voice >> 32), block, event));
