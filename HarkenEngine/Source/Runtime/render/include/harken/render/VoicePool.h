@@ -113,7 +113,7 @@ private:
 };
 
 class VoicePool {
-    struct Slot;
+    struct alignas(64) Slot;
 public:
     VoicePool(const EngineConfig& config, const ResampleTables* tables,
               const MultirateResampleTables* multirateTables,
@@ -970,7 +970,7 @@ private:
         WeightSegmentV1 weightSegment{};
         bool weightRemoved = false;
     };
-    struct Slot {
+    struct alignas(64) Slot {
         std::atomic<SlotState> state{SlotState::Free};
         std::atomic<std::uint32_t> generation{1};
         std::atomic<std::uint64_t> releaseSequence{0};
@@ -1006,6 +1006,8 @@ private:
         std::uint32_t timelinePageEventCount = 0;
         std::uint32_t timelineLaneEventCount = 0;
         std::uint8_t timelineReservationCounts[kTimelineMaxCombinedEventsPerVoiceQuantum]{};
+        // An odd cache-line stride spreads hot fields across cache sets.
+        std::uint64_t cacheSetSpacer = 0;
     };
     VariableNativeStartAuthority m_nativeVariableStartAuthority{};
     VariableTimelineStartAuthority m_timelineVariableStartAuthority{};
