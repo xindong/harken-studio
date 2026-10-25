@@ -329,7 +329,7 @@ void TitleBarWidget::syncChromeMetrics() {
     const int barHeight = qMax(36, itemHeight);
     setFixedHeight(barHeight);
     logoLabel_->setFixedSize(barHeight, barHeight);
-    const QSize logoSize(28, 28);
+    const QSize logoSize(20, 20);
     const auto logo = ThemeManager::instance().resolveImage(
         QString::fromLatin1(ThemeAssetIds::AppIcon));
     if (logo.resource) {
