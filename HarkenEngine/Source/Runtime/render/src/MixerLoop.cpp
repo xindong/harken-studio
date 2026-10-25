@@ -118,6 +118,7 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
       m_arenaBytesPerSlot(std::min<std::uint64_t>(config.arenaBytes,
           static_cast<std::uint64_t>(2u * kMaxChannels + config.mixChannelCount) *
           config.blockFrames * sizeof(float) * (config.renderWorkerCount == 0 ? 1u : 2u))),
+      m_arenaBatchAllowance(config.renderWorkerCount == 0 ? 1u : 2u),
       m_busPlanes(static_cast<std::size_t>(config.maxBuses) *
                       config.mixChannelCount,
                   nullptr),
@@ -132,7 +133,7 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
     m_currentSliceScratchLimitForTest = m_currentSliceScratch.Capacity();
     if (!m_voices.AttachSlotStoragePreparation(m_arenaStorageRegistration, this,
         [](void* context, std::uint32_t count) noexcept {
-            return static_cast<MixerLoop*>(context)->PrepareVoiceBacking(count);
+            return static_cast<MixerLoop*>(context)->PreparePreparedChannelBacking(count);
         })) throw std::bad_alloc{};
     InitializeVariableSliceConsumptionStorage();
     m_voices.AttachFirstOutputCommandConsumer(this,
@@ -188,6 +189,18 @@ bool MixerLoop::PrepareVoiceBacking(std::uint32_t count) noexcept {
     if (count > m_voices.Capacity()) return false;
     // A timed-out worker batch keeps its span; subsequent blocks use the second allowance.
     const auto highBytes = count == 0 ? 0u : m_arenaBytesPerSlot * count + alignof(float) - 1u;
+    return m_arena.PrepareBacking(m_arenaLowBytes, highBytes);
+}
+
+bool MixerLoop::PreparePreparedChannelBacking(std::uint32_t count) noexcept {
+    if (count > m_voices.Capacity()) return false;
+    // Source columns precede this callback and never shrink. Include high slots
+    // when a low slot widens, plus dry/blend and all send taps for every voice.
+    const auto slots = std::max(count, m_voices.ConstructedSlotCount());
+    const auto planes = 2u * m_voices.PreparedSourceChannelRows() +
+        static_cast<std::uint64_t>(m_mixChannels) * slots;
+    const auto highBytes = slots == 0 ? 0u : planes * m_voices.BlockFrames() *
+        sizeof(float) * m_arenaBatchAllowance + alignof(float) - 1u;
     return m_arena.PrepareBacking(m_arenaLowBytes, highBytes);
 }
 

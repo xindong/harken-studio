@@ -1643,6 +1643,9 @@ TEST(VoicePool, GenericFutureBackingFillsSparseWeightHolesBeforePreparedUse) {
     const auto samples = harkentest::MakeDC(8192, 0.25f);
     const auto desc = MonoDesc(samples, kSampleRate);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &desc));
+    const auto wideSamples = harkentest::MakeDC(8192 * harken::kMaxChannels, 0.01f);
+    const auto wideDesc = harkentest::InterleavedDesc(wideSamples, harken::kMaxChannels, kSampleRate);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(2), &wideDesc));
     auto& engine = *session.Engine();
     VnVoiceHandle high = 0;
     ASSERT_EQ(VN_OK, ClaimObserverVoice(engine, &high, true, 3));
@@ -1657,24 +1660,95 @@ TEST(VoicePool, GenericFutureBackingFillsSparseWeightHolesBeforePreparedUse) {
     EXPECT_FALSE(engine.voices.PrepareSlotBacking(1, &held));
     EXPECT_FALSE(held.Valid());
     engine.voices.SetVariableWeightCommitPageLimitForTests(SIZE_MAX);
+    engine.mixer.ArenaForTests().SetCommitPageLimitForTests(0);
+    EXPECT_FALSE(engine.voices.PrepareSlotBacking(1, &held));
+    EXPECT_FALSE(held.Valid());
+    engine.mixer.ArenaForTests().SetCommitPageLimitForTests(SIZE_MAX);
     ASSERT_TRUE(engine.voices.PrepareSlotBacking(1, &held));
     EXPECT_EQ(backing, highContext->variableWeightControls.data());
     EXPECT_EQ(1u, highContext->variableWeightControlCount);
     EXPECT_EQ(first.owner, highContext->variableWeightControls[0].owner);
     engine.voices.SetVariableWeightCommitPageLimitForTests(0);
+    engine.mixer.ArenaForTests().SetCommitPageLimitForTests(0);
     {
         auto use = held.Use();
         VnVoiceHandle low = 0;
-        const auto pcm = engine.registry.Lookup(harkentest::ObjectId(1));
+        const auto pcm = engine.registry.Lookup(harkentest::ObjectId(2));
         ASSERT_EQ(VN_OK, engine.voices.Play(pcm, 0, 1, 0, false, 0, 0, 0,
             harken::ResolvePanGains(engine.config.mixChannelLayout, 0), 0, pcm.frames, 1,
             harken::ResampleProfile::LegacyCompatibility, &low, 1, 0, 0, true));
         ASSERT_EQ(harken::kSelectionPathNodeCapacity,
             engine.voices.Resolve(low)->variableWeightControls.size());
+        EXPECT_EQ(harken::kMaxChannels, engine.voices.Resolve(low)->pcm.channelCount);
         ASSERT_TRUE(engine.voices.PrepareVariableWeightControls(low, &first, 1));
         ASSERT_TRUE(engine.voices.CancelPreparedVoice(low));
     }
     ASSERT_TRUE(engine.voices.CancelPreparedVoice(high));
+}
+
+TEST(VoicePool, WiderLowSlotPreservesLiveHighSlotsWithBlendAndSends) {
+    constexpr std::uint32_t voiceCount = 16;
+    std::array<harkentest::Capture, 2> captures;
+    for (std::uint32_t pass = 0; pass < captures.size(); ++pass) {
+        SCOPED_TRACE(pass);
+        auto config = VoicePoolConfig(voiceCount, kBlockFrames, kSampleRate);
+        config.fxSlotsPerVoice = 1;
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        const auto mono = harkentest::MakeDC(8192, 0.001f);
+        const auto monoDesc = MonoDesc(mono, kSampleRate);
+        const auto wide = harkentest::MakeDC(8192 * harken::kMaxChannels, 0.001f);
+        const auto wideDesc = harkentest::InterleavedDesc(wide, harken::kMaxChannels, kSampleRate);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &monoDesc));
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(2), &wideDesc));
+        if (pass == 0) ASSERT_TRUE(engine.mixer.PrepareVoiceBacking(voiceCount));
+        const auto activate = [&](VnVoiceHandle voice) {
+            auto* context = engine.voices.Resolve(voice);
+            ASSERT_NE(nullptr, context);
+            context->fxSlots[0].process = IdentityTailProcess;
+            context->fxBypassMix[0] = 0.5f;
+            for (std::uint32_t send = 0; send < harken::kMaxVoiceSendSlots; ++send)
+                engine.voices.ApplySetVoiceSend(voice, send, 0, 0.0f, 1);
+            engine.voices.ApplyPlay(voice, voice, 0, engine.mixer.BlocksRendered());
+        };
+        std::array<VnVoiceHandle, voiceCount> voices{};
+        for (std::uint32_t slot = 0; slot < voiceCount; ++slot) {
+            ASSERT_EQ(VN_OK, ClaimObserverVoice(engine, &voices[slot], false, slot));
+            activate(voices[slot]);
+        }
+        auto& captured = captures[pass];
+        harkentest::PumpAndCapture(&engine, 2, captured);
+        engine.voices.ApplyStop(voices[0], 0, 0, engine.notifications, engine.mixer.BlocksRendered());
+        harkentest::PumpAndCapture(&engine, 2, captured);
+        ASSERT_EQ(nullptr, engine.voices.Resolve(voices[0]));
+        const auto pcm = engine.registry.Lookup(harkentest::ObjectId(2));
+        const auto claimWide = [&](VnVoiceHandle* out) {
+            return engine.voices.Play(pcm, 0, 1, 0, false, 0, 0, 0,
+                harken::ResolvePanGains(engine.config.mixChannelLayout, 0), 0, pcm.frames, 1,
+                harken::ResampleProfile::LegacyCompatibility, out, 1, 0);
+        };
+        if (pass != 0) {
+            engine.mixer.ArenaForTests().SetCommitPageLimitForTests(0);
+            VnVoiceHandle refused = 0;
+            EXPECT_EQ(VN_NO_VOICE, claimWide(&refused));
+            EXPECT_EQ(0u, refused);
+            EXPECT_EQ(1u, engine.voices.AvailableSlotCount());
+        }
+        harkentest::PumpAndCapture(&engine, 1, captured);
+        engine.mixer.ArenaForTests().SetCommitPageLimitForTests(SIZE_MAX);
+        ASSERT_EQ(VN_OK, claimWide(&voices[0]));
+        activate(voices[0]);
+        engine.mixer.ArenaForTests().SetCommitPageLimitForTests(0);
+        harkentest::PumpAndCapture(&engine, 3, captured);
+        EXPECT_EQ(0u, engine.mixer.Arena().OverflowCount());
+        EXPECT_EQ(0u, engine.voices.AvailableSlotCount());
+        for (const auto voice : voices) ASSERT_NE(nullptr, engine.voices.Resolve(voice));
+        EXPECT_GT(captured.left.back(), 0.01f);
+        EXPECT_GT(captured.right.back(), 0.01f);
+    }
+    EXPECT_EQ(captures[0].left, captures[1].left);
+    EXPECT_EQ(captures[0].right, captures[1].right);
 }
 
 TEST(VoicePool, ProfessionalWorkingSetSurvivesPreflightSeekAndSlotReuse) {

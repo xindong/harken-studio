@@ -227,10 +227,11 @@ public:
         frontier_.Begin(quantumIndex, blockFrames_);
         voices_.BeginTimelineQuantum(quantumIndex);
         RetryRetiringPlainArms();
-        for (auto& pending : pendingVariableStarts_)
-            if (pending.count != 0 && !voices_.TimelineBindingValid(
-                    pending.arm.renderSlot, pending.arm.renderGeneration))
-                RetirePendingVariableStart(pending);
+        if (pendingVariableStartSeen_)
+            for (auto& pending : pendingVariableStarts_)
+                if (pending.count != 0 && !voices_.TimelineBindingValid(
+                        pending.arm.renderSlot, pending.arm.renderGeneration))
+                    RetirePendingVariableStart(pending);
         return true;
     }
 
@@ -748,6 +749,7 @@ public:
                     (payload.kind == TimelineEventKind::Start &&
                         (payload.reserved & kTimelineEventTransientStartArm) != 0);
             }
+            pendingVariableStartSeen_ = true;
             pending.count += eventCount;
             if (publicationRefused) {
                 // Scheduled pages retain their absolute time; a missed permit
@@ -977,6 +979,7 @@ private:
     }
 
     void FinishPendingVariableStarts(std::uint64_t quantumIndex) noexcept {
+        if (!pendingVariableStartSeen_) return;
         const auto sequence = quantumIndex == UINT64_MAX ? UINT64_MAX : quantumIndex + 1u;
         for (auto& pending : pendingVariableStarts_) {
             if (pending.count == 0) continue;
@@ -1431,6 +1434,7 @@ private:
     FrontierTimelineFinalizer laneFrontier_;
     ImmediateLaneTimelineFinalizer immediate_;
     StableRowStorage<PendingVariableStart> pendingVariableStarts_;
+    bool pendingVariableStartSeen_ = false;
     VoicePool::SlotStorageRegistration slotStorageRegistration_;
     std::vector<PlainTransactionResult> plainResults_;
     std::vector<TimelineArmToken> retiringPlainArms_;

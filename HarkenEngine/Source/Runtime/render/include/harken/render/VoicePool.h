@@ -262,6 +262,12 @@ public:
         return m_slots.Capacity();
     }
     std::uint32_t ConstructedSlotCount() const noexcept { return m_slots.ConstructedCount(); }
+    // Control-side bound over every prepared source channel, including sparse high slots.
+    std::uint64_t PreparedSourceChannelRows() const noexcept {
+        std::uint64_t rows = 0;
+        for (const auto& channel : m_ringStorage) rows += channel.ConstructedCount();
+        return rows;
+    }
     std::size_t SlotStorageBytes() const noexcept { return m_slots.RequestedBytes(); }
     // Attach and detach only while the corresponding consumer is quiescent.
     class SlotStorageRegistration {
