@@ -575,13 +575,15 @@ public:
             (static_cast<std::size_t>(eventPlacementOrder_ != nullptr) +
              static_cast<std::size_t>(groupPlacementOrder_ != nullptr));
     }
-    std::size_t EventStorageBytes() const noexcept { return eventStorageBytes_; }
+    std::size_t EventStorageBytes() const noexcept {
+        return eventStorageBytes_ + singleEvents_.RequestedBytes();
+    }
     std::size_t MemberStorageBytes() const noexcept { return memberStorageBytes_; }
     std::size_t PayloadCommittedBytes() const noexcept {
-        return eventStorage_.CommittedBytes() + memberStorage_.CommittedBytes();
+        return eventStorage_.CommittedBytes() + singleEvents_.CommittedBytes() + memberStorage_.CommittedBytes();
     }
     std::size_t PayloadReservedBytes() const noexcept {
-        return eventStorage_.ReservedBytes() + memberStorage_.ReservedBytes();
+        return eventStorage_.ReservedBytes() + singleEvents_.ReservedBytes() + memberStorage_.ReservedBytes();
     }
     std::size_t PayloadDirectoryBytes() const noexcept {
         return eventStorage_.DirectoryBytes() + memberStorage_.DirectoryBytes();
@@ -609,7 +611,7 @@ public:
     }
     void SetPayloadCommitPageLimitsForTests(std::size_t eventPages,
         std::size_t memberPages) noexcept {
-        eventStorage_.SetCommitPageLimitForTests(eventPages);
+        eventCommitPagesRemaining_ = eventPages;
         memberStorage_.SetCommitPageLimitForTests(memberPages);
     }
 #endif
@@ -1012,7 +1014,7 @@ private:
         ~AttemptMetadataBacking();
         bool Initialize(ImmediateLaneDemand requested, const Config& config,
             std::size_t pageLimit) noexcept;
-        void InitializeSingleEvent(SingleEventMetadata& cell) noexcept;
+        void InitializeSingleEvent(SingleEventMetadata& cell, ImmediateLaneEvent* payload) noexcept;
         bool Fits(ImmediateLaneDemand requested, const Config& config) const noexcept;
         void Swap(AttemptMetadataBacking& other) noexcept;
         detail::StablePageReservation storage;
@@ -1021,6 +1023,7 @@ private:
         std::uint32_t waitingScratchCount = 0;
         std::size_t privateBucketCount = 0;
         std::size_t requestedBytes = 0;
+        ImmediateLaneEvent* events = nullptr;
         ImmediateLaneGroupRef* groups = nullptr;
         ImmediateLaneDeclaredGroup* declaredGroups = nullptr;
         Plan03GroupReaderPin* groupPins = nullptr;
@@ -1170,6 +1173,7 @@ private:
     Config config_{};
     std::atomic<std::uint32_t> outstandingAttemptCount_{0};
     StableRowStorage<ImmediateLaneAttempt> attempts_;
+    StableRowStorage<ImmediateLaneEvent> singleEvents_;
     StableRowStorage<SingleEventMetadata> singleEventMetadata_;
     StableRowStorage<AttemptMetadata> metadata_;
     detail::StablePageReservation eventStorage_;
@@ -1191,6 +1195,7 @@ private:
     MetadataColumn<&AttemptMetadataBacking::groupPins> groupPins_{this};
     ScheduledTransactionPool* groupPool_ = nullptr;
 #if !defined(HARKEN_RT_QUALIFICATION)
+    std::size_t eventCommitPagesRemaining_ = SIZE_MAX;
     std::size_t groupCommitPageLimit_ = SIZE_MAX;
     std::size_t sourceWaitCommitPageLimit_ = SIZE_MAX;
     std::size_t stateCommitPageLimit_ = SIZE_MAX;

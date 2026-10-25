@@ -147,8 +147,13 @@ TEST(ImmediateActionLane, SingleEventCellsPreserveConcurrentCaptureAcrossRefusal
     const auto firstScratch = lane.CapturedSourceWaitScratch(first.slot, firstBucket);
     ASSERT_EQ(1u, firstScratch.size());
     firstScratch[0].attempt = 77;
+    const auto* firstPayload = lane.Events(first.slot, firstBucket);
 
     harken::ImmediateLaneHandle second;
+    lane.SetPayloadCommitPageLimitsForTests(0, SIZE_MAX);
+    EXPECT_FALSE(lane.Reserve(2, {1, 0, 0, 1}, &second));
+    EXPECT_FALSE(second.Valid());
+    lane.SetPayloadCommitPageLimitsForTests(SIZE_MAX, SIZE_MAX);
     lane.SetStateCommitPageLimitForTests(0);
     EXPECT_FALSE(lane.Reserve(2, {1, 0, 0, 1}, &second));
     EXPECT_FALSE(second.Valid());
@@ -191,6 +196,7 @@ TEST(ImmediateActionLane, SingleEventCellsPreserveConcurrentCaptureAcrossRefusal
     EXPECT_EQ(44u, lane.Events(second.slot, secondBucket)[0].event.executionOrdinal);
     EXPECT_EQ(firstScratch.data(), lane.CapturedSourceWaitScratch(first.slot, firstBucket).data());
     EXPECT_EQ(77u, firstScratch[0].attempt);
+    EXPECT_EQ(firstPayload, lane.Events(first.slot, firstBucket));
     EXPECT_EQ(42u, lane.Events(first.slot, firstBucket)[0].event.executionOrdinal);
     EXPECT_FALSE(lane.Retire(first));
     EXPECT_TRUE(lane.HasOutstandingAttempts());
@@ -259,6 +265,7 @@ TEST(ImmediateActionLane, PreparedPayloadBackingProtectsFutureAcquireAndActiveCo
     ASSERT_TRUE(lane.Reset({1, 128, 8, 64}));
     harken::OriginalImmediateLaneAttemptLifetimePin original;
     ordinary = {};
+    lane.SetPayloadCommitPageLimitsForTests(1, SIZE_MAX);
     ASSERT_TRUE(lane.Reserve(3, {1, 0, 0, 1}, &ordinary, &original));
     ASSERT_TRUE(lane.Prepare(ordinary, &event, 1));
     ASSERT_TRUE(lane.TryPlace(ordinary, 64, 0, &anchor));
@@ -267,14 +274,23 @@ TEST(ImmediateActionLane, PreparedPayloadBackingProtectsFutureAcquireAndActiveCo
     ASSERT_NE(nullptr, bucket);
     const auto scratch = lane.CapturedSourceWaitScratch(ordinary.slot, bucket);
     ASSERT_EQ(1u, scratch.size());
+    const auto* payload = lane.Events(ordinary.slot, bucket);
+    const auto smallPayloadBytes = lane.PayloadCommittedBytes();
+    EXPECT_FALSE(lane.PrepareAttemptBacking(&backing));
+    EXPECT_FALSE(backing.Valid());
+    EXPECT_EQ(smallPayloadBytes, lane.PayloadCommittedBytes());
+    EXPECT_EQ(payload, lane.Events(ordinary.slot, bucket));
+    lane.SetPayloadCommitPageLimitsForTests(SIZE_MAX, SIZE_MAX);
     lane.SetStateCommitPageLimitForTests(0);
     EXPECT_FALSE(lane.PrepareAttemptBacking(&backing));
     EXPECT_FALSE(backing.Valid());
     EXPECT_EQ(scratch.data(), lane.CapturedSourceWaitScratch(ordinary.slot, bucket).data());
+    EXPECT_EQ(payload, lane.Events(ordinary.slot, bucket));
     lane.SetStateCommitPageLimitForTests(SIZE_MAX);
     ASSERT_TRUE(lane.PrepareAttemptBacking(&backing));
     ASSERT_TRUE(lane.PrepareAttemptBacking(&secondBacking));
     EXPECT_EQ(scratch.data(), lane.CapturedSourceWaitScratch(ordinary.slot, bucket).data());
+    EXPECT_EQ(payload, lane.Events(ordinary.slot, bucket));
     EXPECT_EQ(42u, lane.Events(ordinary.slot, bucket)[0].event.executionOrdinal);
     EXPECT_FALSE(lane.Retire(ordinary));
     ASSERT_TRUE(lane.Claim(ordinary, bucket));

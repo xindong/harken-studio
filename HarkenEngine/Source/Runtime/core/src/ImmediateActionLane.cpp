@@ -803,11 +803,12 @@ bool ImmediateActionLane::AttemptMetadataBacking::Initialize(ImmediateLaneDemand
 }
 
 void ImmediateActionLane::AttemptMetadataBacking::InitializeSingleEvent(
-    SingleEventMetadata& cell) noexcept {
-    assert(requestedBytes == 0 && storage.Address() == nullptr);
+    SingleEventMetadata& cell, ImmediateLaneEvent* payload) noexcept {
+    assert(requestedBytes == 0 && storage.Address() == nullptr && payload != nullptr);
     demand = {1, 0, 0, 1};
     sourceWaitCount = waitingScratchCount = 1;
     requestedBytes = sizeof(cell);
+    events = payload;
     eventState = &cell.eventState;
     sourceWaitEntries = &cell.sourceWait;
     buckets = &cell.bucket;
@@ -817,7 +818,8 @@ void ImmediateActionLane::AttemptMetadataBacking::InitializeSingleEvent(
 bool ImmediateActionLane::AttemptMetadataBacking::Fits(ImmediateLaneDemand requested,
     const Config& config) const noexcept {
     const auto entries = static_cast<std::uint64_t>(requested.events) + requested.groups;
-    return requestedBytes != 0 && demand.events >= requested.events && demand.groups >= requested.groups &&
+    return requestedBytes != 0 && (requested.events == 0 || events != nullptr) &&
+        demand.events >= requested.events && demand.groups >= requested.groups &&
         demand.members >= requested.members && demand.buckets >= requested.buckets &&
         sourceWaitCount >= std::min<std::uint64_t>(config.eventsPerAttempt, entries) &&
         waitingScratchCount >= std::min<std::uint64_t>(config.maxEventsPerQuantum, entries) &&
@@ -831,6 +833,7 @@ void ImmediateActionLane::AttemptMetadataBacking::Swap(AttemptMetadataBacking& o
     std::swap(waitingScratchCount, other.waitingScratchCount);
     std::swap(privateBucketCount, other.privateBucketCount);
     std::swap(requestedBytes, other.requestedBytes);
+    std::swap(events, other.events);
     std::swap(groups, other.groups);
     std::swap(declaredGroups, other.declaredGroups);
     std::swap(groupPins, other.groupPins);
@@ -896,6 +899,8 @@ bool ImmediateActionLane::Reset(Config config) {
     groupPool_ = nullptr;
     valid_ = false;
     outstandingAttemptCount_.store(0, std::memory_order_relaxed);
+    StableRowStorage<ImmediateLaneEvent> oldSingleEvents;
+    singleEvents_.Swap(oldSingleEvents);
     StableRowStorage<SingleEventMetadata> oldSingleEventMetadata;
     singleEventMetadata_.Swap(oldSingleEventMetadata);
     StableRowStorage<AttemptMetadata> oldMetadata;
@@ -904,6 +909,9 @@ bool ImmediateActionLane::Reset(Config config) {
     eventStorage_.Swap(oldEvents);
     memberStorage_.Swap(oldMembers);
     eventStorageBytes_ = memberStorageBytes_ = 0;
+#if !defined(HARKEN_RT_QUALIFICATION)
+    eventCommitPagesRemaining_ = SIZE_MAX;
+#endif
     StableRowStorage<ImmediateLaneAttempt> oldAttempts;
     attempts_.Swap(oldAttempts);
     events_ = nullptr;
@@ -924,6 +932,7 @@ bool ImmediateActionLane::Reset(Config config) {
     StableRowStorage<PrivateEntryAssociation> privateEntries;
     if (slots > UINT32_MAX || !privateEntries.Reserve(static_cast<std::uint32_t>(slots)) ||
         !metadata_.Reserve(config.attempts) ||
+        !singleEvents_.Reserve(config.attempts) ||
         !singleEventMetadata_.Reserve(config.attempts)) return false;
     if (slots > static_cast<std::size_t>(PTRDIFF_MAX) / sizeof(ImmediateLaneEvent) ||
         slots > static_cast<std::size_t>(PTRDIFF_MAX) / sizeof(ImmediateLaneMemberManifest) ||
@@ -960,7 +969,7 @@ void ImmediateActionLane::EventStorageRegistration::Detach() noexcept {
 }
 
 std::uint32_t ImmediateActionLane::EventStorageHighWater() const noexcept {
-    std::uint32_t count = 0;
+    std::uint32_t count = singleEvents_.size() == 0 ? 0u : 1u;
     for (std::uint32_t slot = 0; slot < attempts_.size(); ++slot)
         count = std::max(count, attempts_[slot].eventStorageCount);
     return count;
@@ -985,15 +994,52 @@ bool ImmediateActionLane::PrepareAttemptStorage(std::uint32_t slot,
     const auto metadataReady = [&]() noexcept {
         return metadata.active.Fits(demand, config_) || metadata.standby.Fits(demand, config_);
     };
-    if (demand.events <= attempt.eventStorageCount && demand.members <= attempt.memberStorageCount &&
-        metadataReady()) return true;
+    if (demand.members <= attempt.memberStorageCount && metadataReady()) return true;
     if (memguard::IsAudioTagged() || payloadGrowth_.preparedUsers != 0) return false;
     const auto base = static_cast<std::size_t>(slot) * config_.eventsPerAttempt;
-    if (demand.events > attempt.eventStorageCount) {
+    const bool singleEvent = demand.events == 1 && demand.groups == 0 &&
+        demand.members == 0 && demand.buckets == 1;
+    const auto availableEvents = std::max(attempt.eventStorageCount,
+        singleEvents_.size() > slot ? 1u : 0u);
+    if (demand.events > availableEvents) {
         for (auto* consumer = eventStorageConsumers_; consumer != nullptr; consumer = consumer->next_)
             if (!consumer->prepare_(consumer->context_, demand.events)) return false;
-        if (!eventStorage_.CommitRange((base + attempt.eventStorageCount) * sizeof(ImmediateLaneEvent),
-                (demand.events - attempt.eventStorageCount) * sizeof(ImmediateLaneEvent))) return false;
+    }
+#if !defined(HARKEN_RT_QUALIFICATION)
+    const auto committedEvents = eventStorage_.CommittedBytes() + singleEvents_.CommittedBytes();
+    const auto chargeEventPages = [&]() noexcept {
+        if (eventCommitPagesRemaining_ == SIZE_MAX) return;
+        const auto pages = (eventStorage_.CommittedBytes() + singleEvents_.CommittedBytes() -
+            committedEvents) / detail::StablePageReservation::SystemPageBytes();
+        assert(pages <= eventCommitPagesRemaining_);
+        eventCommitPagesRemaining_ -= pages;
+    };
+#endif
+    auto* selectedEvents = events_ + base;
+    if (singleEvent && attempt.eventStorageCount == 0) {
+        if (singleEvents_.size() <= slot) {
+#if !defined(HARKEN_RT_QUALIFICATION)
+            if (eventCommitPagesRemaining_ == 0) return false;
+            singleEvents_.SetCommitPageLimitForTests(eventCommitPagesRemaining_);
+#endif
+            const bool prepared = singleEvents_.ConstructThrough(slot + 1u);
+#if !defined(HARKEN_RT_QUALIFICATION)
+            chargeEventPages();
+#endif
+            if (!prepared) return false;
+        }
+        selectedEvents = &singleEvents_[slot];
+    } else if (demand.events > attempt.eventStorageCount) {
+#if !defined(HARKEN_RT_QUALIFICATION)
+        eventStorage_.SetCommitPageLimitForTests(eventCommitPagesRemaining_);
+#endif
+        const bool prepared = eventStorage_.CommitRange(
+            (base + attempt.eventStorageCount) * sizeof(ImmediateLaneEvent),
+            (demand.events - attempt.eventStorageCount) * sizeof(ImmediateLaneEvent));
+#if !defined(HARKEN_RT_QUALIFICATION)
+        chargeEventPages();
+#endif
+        if (!prepared) return false;
         for (auto index = attempt.eventStorageCount; index < demand.events; ++index)
             std::construct_at(events_ + base + index);
         eventStorageBytes_ += (demand.events - attempt.eventStorageCount) * sizeof(ImmediateLaneEvent);
@@ -1014,13 +1060,16 @@ bool ImmediateActionLane::PrepareAttemptStorage(std::uint32_t slot,
     if (demand.groups != 0) pageLimit = std::min(pageLimit, groupCommitPageLimit_);
 #endif
     AttemptMetadataBacking prepared;
-    if (demand.events == 1 && demand.groups == 0 && demand.members == 0 && demand.buckets == 1) {
+    if (singleEvent) {
         // New views retain allocation refusal even when a neighboring cell committed the page.
         if (pageLimit == 0) return false;
         singleEventMetadata_.SetCommitPageLimitForTests(pageLimit);
         if (!singleEventMetadata_.ConstructThrough(slot + 1u)) return false;
-        prepared.InitializeSingleEvent(singleEventMetadata_[slot]);
-    } else if (!prepared.Initialize(demand, config_, pageLimit)) return false;
+        prepared.InitializeSingleEvent(singleEventMetadata_[slot], selectedEvents);
+    } else {
+        if (!prepared.Initialize(demand, config_, pageLimit)) return false;
+        prepared.events = selectedEvents;
+    }
     // Preparing a busy identity must leave every active reader's address unchanged.
     metadata.standby.Swap(prepared);
     return true;
@@ -1127,8 +1176,7 @@ const ImmediateLaneAttempt* ImmediateActionLane::Resolve(
 
 ImmediateLaneEvent* ImmediateActionLane::EventBase(
     std::uint32_t slot) noexcept {
-    return events_ + static_cast<std::size_t>(slot) *
-                               config_.eventsPerAttempt;
+    return metadata_[slot].active.events;
 }
 
 const ImmediateLaneEvent* ImmediateActionLane::EventBase(
@@ -5229,9 +5277,9 @@ bool ImmediateActionLane::FutureMember(std::uint32_t slot,
         if (!(member.group == group) ||
             member.memberIndex != memberIndex ||
             !SameArm(member.arm, arm) || !member.future ||
-            !ValidMemberEventOrdinals(member, events_ + base,
+            !ValidMemberEventOrdinals(member, EventBase(slot),
                 attempt.eventCount, config_.quantumFrames)) return false;
-        const auto& future = events_[base + member.eventOrdinal];
+        const auto& future = EventBase(slot)[member.eventOrdinal];
         std::uint64_t due = 0;
         if (!future.futureGroupedStart || !SameTimeSpec(future, member) ||
             !ResolveLaneDue(future, attempt.anchorFrame, &due) ||
@@ -5291,7 +5339,7 @@ bool ImmediateActionLane::CaptureFrozenFutureTarget(
         declaration = &candidate;
     }
     if (declaration == nullptr || !(declaration->relatedGroup == target) ||
-        !ValidMemberEventOrdinals(*declaration, events_ + base,
+        !ValidMemberEventOrdinals(*declaration, EventBase(handle.slot),
             attempt->eventCount, config_.quantumFrames) ||
         declaration->memberIndex >= groupState_[base + sourceIndex].memberCount ||
         declaration->ownerInstance == 0 || declaration->ownerEpoch == 0) return false;
@@ -5312,9 +5360,9 @@ bool ImmediateActionLane::CaptureFrozenFutureTarget(
     if (historical == nullptr || current == nullptr ||
         !(historical->relatedGroup == source) || historical->memberIndex != 0u ||
         historical->eventSpanCount != 1u ||
-        !ValidMemberEventOrdinals(*historical, events_ + base,
+        !ValidMemberEventOrdinals(*historical, EventBase(handle.slot),
             attempt->eventCount, config_.quantumFrames) ||
-        !ValidMemberEventOrdinals(*current, events_ + base,
+        !ValidMemberEventOrdinals(*current, EventBase(handle.slot),
             attempt->eventCount, config_.quantumFrames) ||
         current->memberIndex != declaration->memberIndex || current->eventSpanCount != declaration->eventSpanCount ||
         current->eventOrdinal != declaration->eventOrdinal ||
@@ -5324,7 +5372,7 @@ bool ImmediateActionLane::CaptureFrozenFutureTarget(
         !SameArm(current->arm, declaration->arm) || !(current->target == declaration->target) ||
         current->ownerInstance != declaration->ownerInstance ||
         current->ownerEpoch != declaration->ownerEpoch) return false;
-    const auto& historicalEvent = events_[base + historical->eventOrdinal];
+    const auto& historicalEvent = EventBase(handle.slot)[historical->eventOrdinal];
     const auto* historicalProgram = historicalEvent.event.program.program;
     if (!eventState_[base + historical->eventOrdinal].arm.Valid() ||
         !(historicalEvent.event.frontier.group == source) ||
@@ -5340,7 +5388,7 @@ bool ImmediateActionLane::CaptureFrozenFutureTarget(
         !(historicalProgram->payloads[historicalEvent.event.payload].target == historical->target)) return false;
     for (std::uint32_t offset = 0; offset < declaration->eventSpanCount; ++offset) {
         const auto ordinal = offset == 0u ? declaration->eventOrdinal : declaration->secondEventOrdinal;
-        const auto& event = events_[base + ordinal];
+        const auto& event = EventBase(handle.slot)[ordinal];
         const auto* program = event.event.program.program;
         std::uint64_t effectiveDue = 0;
         if (!eventState_[base + ordinal].arm.Valid() ||
