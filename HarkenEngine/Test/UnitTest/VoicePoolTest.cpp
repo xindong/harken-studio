@@ -273,6 +273,12 @@ TEST(VoicePool, ReleaseObserverSurvivesNaturalExitAndSlotReuse) {
     EXPECT_EQ(0u, engine.voiceSendConfig.RequestedBytes());
     EXPECT_EQ(0u, engine.params.VoiceStorageBytes());
     const auto emptyStartBytes = engine.timelineSink.VariableStartStorageBytes();
+    engine.voices.SetHighRatioCommitPageLimitForTests(0);
+    EXPECT_EQ(VN_NO_VOICE, ClaimObserverVoice(engine, &first));
+    EXPECT_EQ(0u, first);
+    EXPECT_EQ(0u, engine.voices.ConstructedSlotCount());
+    EXPECT_EQ(1u, engine.voices.AvailableSlotCount());
+    engine.voices.SetHighRatioCommitPageLimitForTests(SIZE_MAX);
     harken::VoiceTimelineSink secondSink(engine.voices, engine.timelineArms);
     harken::VoicePool::SlotStorageRegistration refusedStorage;
     ASSERT_TRUE(engine.voices.AttachSlotStoragePreparation(refusedStorage, nullptr,
@@ -1657,6 +1663,13 @@ TEST(VoicePool, GenericFutureBackingFillsSparseWeightHolesBeforePreparedUse) {
     harken::StableStoragePreparation held;
     for (std::uint32_t slot = 0; slot < 4; ++slot)
         EXPECT_TRUE(engine.voices.PendingTimelineVariableEvents(slot).empty());
+    engine.voices.SetHighRatioCommitPageLimitForTests(0);
+    EXPECT_FALSE(engine.voices.PrepareSlotBacking(1, &held));
+    EXPECT_FALSE(held.Valid());
+    EXPECT_EQ(highContext, engine.voices.Resolve(high));
+    EXPECT_EQ(backing, highContext->variableWeightControls.data());
+    EXPECT_EQ(first.owner, highContext->variableWeightControls[0].owner);
+    engine.voices.SetHighRatioCommitPageLimitForTests(SIZE_MAX);
     engine.voices.SetPendingTimelineVariableEventCommitPageLimitForTests(0);
     EXPECT_FALSE(engine.voices.PrepareSlotBacking(1, &held));
     EXPECT_FALSE(held.Valid());
@@ -1684,6 +1697,7 @@ TEST(VoicePool, GenericFutureBackingFillsSparseWeightHolesBeforePreparedUse) {
     EXPECT_EQ(first.owner, highContext->variableWeightControls[0].owner);
     engine.voices.SetVariableWeightCommitPageLimitForTests(0);
     engine.mixer.ArenaForTests().SetCommitPageLimitForTests(0);
+    engine.voices.SetHighRatioCommitPageLimitForTests(0);
     {
         auto use = held.Use();
         VnVoiceHandle low = 0;

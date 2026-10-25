@@ -57,12 +57,16 @@ bool VoicePool::PrepareFirstOutputBacking(std::uint32_t count) noexcept {
 }
 
 bool VoicePool::PrepareRenderSlotBacking(std::uint32_t count, std::uint32_t channelCount,
-    bool firstOutput) noexcept {
-    if (count > m_slots.Capacity() || channelCount > kMaxChannels) return false;
+    bool firstOutput, std::uint32_t highRatioChannels) noexcept {
+    if (count > m_slots.Capacity() || channelCount > kMaxChannels ||
+        highRatioChannels > kMaxChannels) return false;
     for (std::uint32_t ch = 0; ch < channelCount; ++ch) {
         if (!m_ringStorage[ch].ConstructThrough(count) ||
             !m_monitorPreChainStorage[ch].ConstructThrough(count * m_blockFrames)) return false;
     }
+    highRatioChannels = std::max(channelCount, highRatioChannels);
+    for (std::uint32_t ch = 0; ch < highRatioChannels; ++ch)
+        if (!m_highRatioStorage[ch].ConstructThrough(count)) return false;
     if (firstOutput) {
         if (!PrepareFirstOutputBacking(count)) return false;
         for (std::uint32_t slot = 0; slot < count; ++slot)
@@ -73,13 +77,26 @@ bool VoicePool::PrepareRenderSlotBacking(std::uint32_t count, std::uint32_t chan
     return true;
 }
 
-bool VoicePool::RenderSlotBackingReady(std::uint32_t count, std::uint32_t channelCount) const noexcept {
-    if (count > m_slots.Capacity() || channelCount > kMaxChannels) return false;
+bool VoicePool::RenderSlotBackingReady(std::uint32_t count, std::uint32_t channelCount,
+    std::uint32_t highRatioChannels) const noexcept {
+    if (count > m_slots.Capacity() || channelCount > kMaxChannels ||
+        highRatioChannels > kMaxChannels) return false;
     for (std::uint32_t ch = 0; ch < channelCount; ++ch) {
         if (m_ringStorage[ch].ConstructedCount() < count ||
             m_monitorPreChainStorage[ch].ConstructedCount() < count * m_blockFrames) return false;
     }
+    highRatioChannels = std::max(channelCount, highRatioChannels);
+    for (std::uint32_t ch = 0; ch < highRatioChannels; ++ch)
+        if (m_highRatioStorage[ch].ConstructedCount() < count) return false;
     return true;
+}
+
+void VoicePool::BindHighRatioBacking(std::uint32_t slot) noexcept {
+    // Construction always extends a channel prefix and never shrinks it.
+    std::uint32_t channels = 0;
+    while (channels < kMaxChannels && m_highRatioStorage[channels].ConstructedCount() > slot)
+        ++channels;
+    m_slots[slot].render.resampler.BindHighRatioColumns(m_highRatioColumns, slot, channels);
 }
 
 bool VoicePool::PrepareVariableWeightBacking(std::uint32_t slot) noexcept {
@@ -96,16 +113,18 @@ void VoicePool::BindVariableWeightBacking(std::uint32_t slot) noexcept {
 }
 
 bool VoicePool::PrepareSlotWorkingSet(std::uint32_t renderSlot, std::uint32_t channelCount,
-    ResampleProfile profile, bool prepareOwnedWeights) noexcept {
-    if (renderSlot >= m_slots.Capacity() || channelCount == 0 || channelCount > kMaxChannels) return false;
+    ResampleProfile profile, bool prepareOwnedWeights, std::uint32_t highRatioChannels) noexcept {
+    if (renderSlot >= m_slots.Capacity() || channelCount == 0 || channelCount > kMaxChannels ||
+        highRatioChannels > kMaxChannels) return false;
     if (profile != ResampleProfile::LegacyCompatibility &&
         profile != ResampleProfile::Professional44148) return false;
-    if (!m_slots.ConstructThrough(renderSlot + 1u, [this, channelCount](std::uint32_t required) noexcept {
+    highRatioChannels = std::max(channelCount, highRatioChannels);
+    if (!m_slots.ConstructThrough(renderSlot + 1u, [this, channelCount, highRatioChannels](std::uint32_t required) noexcept {
         const bool held = m_slots.HasPreparedBacking();
         return PrepareRenderSlotBacking(held ? std::max(required, m_slots.ConstructedCount()) : required,
-            held ? kMaxChannels : channelCount, held);
+            held ? kMaxChannels : channelCount, held, highRatioChannels);
     })) return false;
-    return RenderSlotBackingReady(renderSlot + 1u, channelCount) &&
+    return RenderSlotBackingReady(renderSlot + 1u, channelCount, highRatioChannels) &&
         (!prepareOwnedWeights || PrepareVariableWeightBacking(renderSlot)) &&
         (profile != ResampleProfile::Professional44148 || m_professionalStorage.Emplace(renderSlot));
 }
@@ -245,8 +264,10 @@ VoicePool::VoicePool(const EngineConfig& config, const ResampleTables* tables,
         !m_pendingTimelineVariableEvents.Reserve(config.voiceCapacity.Render())) throw std::bad_alloc{};
     for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
         if (!m_ringStorage[ch].Reserve(config.voiceCapacity.Render()) ||
+            !m_highRatioStorage[ch].Reserve(config.voiceCapacity.Render()) ||
             !m_monitorPreChainStorage[ch].Reserve(static_cast<std::uint32_t>(monitorCapacity)))
             throw std::bad_alloc{};
+        m_highRatioColumns.channels[ch] = m_highRatioStorage[ch].data();
     }
     // Create the fixed worker set on the logic thread. Real-device workers stay
     // disabled until the backend binds them to its callback scheduling domain
@@ -336,6 +357,7 @@ VnResult VoicePool::Play(const PCMView& view, float volumeDb,
     slot.monitorControl = {};
     slot.monitorSourceTerminalPublished = false;
     slot.render = VoiceRenderContext{};
+    BindHighRatioBacking(slotIndex);
     BindVariableWeightBacking(slotIndex);
     ClearFirstOutput(slot);
     slot.render.biquadTrig = m_biquadTrig;
@@ -476,7 +498,8 @@ VnResult VoicePool::PlayStream(StreamRing* ring, std::uint32_t channelCount,
     }
     if (slotIndex >= m_slots.Capacity() ||
         (slotIndex >= m_slots.ConstructedCount() && expectedGeneration > 1u) ||
-        !PrepareSlotWorkingSet(slotIndex, channelCount, resampleProfile) ||
+        !PrepareSlotWorkingSet(slotIndex, channelCount, resampleProfile, true,
+            saved != nullptr ? ResamplerView::RequiredHighRatioChannels(saved->resampler) : channelCount) ||
         !CanClaimSlot(m_slots[slotIndex]) ||
         (expectedGeneration != 0 &&
          m_slots[slotIndex].generation.load(std::memory_order_relaxed) !=
@@ -493,6 +516,7 @@ VnResult VoicePool::PlayStream(StreamRing* ring, std::uint32_t channelCount,
     slot.monitorControl = {};
     slot.monitorSourceTerminalPublished = false;
     slot.render = VoiceRenderContext{};
+    BindHighRatioBacking(slotIndex);
     BindVariableWeightBacking(slotIndex);
     ClearFirstOutput(slot);
     slot.render.biquadTrig = m_biquadTrig;

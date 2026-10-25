@@ -336,7 +336,7 @@ struct VoiceRenderContext {
     VoiceSendSlot voiceSends[kMaxVoiceSendSlots];
     std::uint32_t voiceSendActiveCount = 0;
 
-    Resampler resampler;
+    ResamplerView resampler;
 
     // Insert-effect chain: a fixed-capacity slot array processed in
     // ascending order, with fxSlotCount slots active (the resolved

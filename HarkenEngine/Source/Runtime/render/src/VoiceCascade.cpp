@@ -82,7 +82,7 @@ void ScatterVoiceSends(VoiceRenderContext& ctx, float* const* busPlanes,
 // it is a feed property, not a special case. MarkInputEnd fires only when the
 // final traversal reaches the true file end.
 bool FeedResampler(VoiceRenderContext& ctx) {
-    Resampler& rs = ctx.resampler;
+    ResamplerView& rs = ctx.resampler;
     if (ctx.srcCursor < ctx.pcm.frames) {
         // A wrap is due at the region end while more traversals remain; the
         // final traversal instead reads on through the outro to the file
@@ -147,7 +147,7 @@ bool FeedResampler(VoiceRenderContext& ctx) {
 // (natural end of file and mid-stream integrity abort look identical)
 // converts a drained ring into MarkInputEnd and the normal look-ahead flush.
 bool FeedResamplerFromStream(VoiceRenderContext& ctx) {
-    Resampler& rs = ctx.resampler;
+    ResamplerView& rs = ctx.resampler;
     StreamRing& ring = *ctx.streamRing;
     // Sample end-of-data BEFORE reading the write index. The producer
     // release-publishes the terminal winner after the final PublishWrite, so

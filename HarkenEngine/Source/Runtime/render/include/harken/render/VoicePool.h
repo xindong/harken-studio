@@ -304,7 +304,7 @@ public:
     bool PrepareSlotBacking(std::uint32_t count, StableStoragePreparation* out) noexcept;
     bool PrepareSlotWorkingSet(std::uint32_t renderSlot, std::uint32_t channelCount,
         ResampleProfile profile = ResampleProfile::LegacyCompatibility,
-        bool prepareOwnedWeights = true) noexcept;
+        bool prepareOwnedWeights = true, std::uint32_t highRatioChannels = 0) noexcept;
     std::size_t SlotCommittedBytes() const noexcept { return m_slots.CommittedBytes(); }
     std::size_t SlotReservedBytes() const noexcept { return m_slots.ReservedBytes(); }
     std::size_t RenderWorksetStorageBytes() const noexcept {
@@ -312,7 +312,8 @@ public:
             m_pendingTimelineVariableEvents.RequestedBytes() +
             m_professionalStorage.RequestedBytes() + m_variableWeightStorage.RequestedBytes();
         for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch)
-            bytes += m_ringStorage[ch].RequestedBytes() + m_monitorPreChainStorage[ch].RequestedBytes();
+            bytes += m_ringStorage[ch].RequestedBytes() + m_monitorPreChainStorage[ch].RequestedBytes() +
+                m_highRatioStorage[ch].RequestedBytes();
         return bytes;
     }
     std::size_t RenderWorksetCommittedBytes() const noexcept {
@@ -320,7 +321,8 @@ public:
             m_pendingTimelineVariableEvents.CommittedBytes() +
             m_professionalStorage.CommittedBytes() + m_variableWeightStorage.CommittedBytes();
         for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch)
-            bytes += m_ringStorage[ch].CommittedBytes() + m_monitorPreChainStorage[ch].CommittedBytes();
+            bytes += m_ringStorage[ch].CommittedBytes() + m_monitorPreChainStorage[ch].CommittedBytes() +
+                m_highRatioStorage[ch].CommittedBytes();
         return bytes;
     }
     std::size_t RenderWorksetReservedBytes() const noexcept {
@@ -328,7 +330,8 @@ public:
             m_pendingTimelineVariableEvents.ReservedBytes() +
             m_professionalStorage.ReservedBytes() + m_variableWeightStorage.ReservedBytes();
         for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch)
-            bytes += m_ringStorage[ch].ReservedBytes() + m_monitorPreChainStorage[ch].ReservedBytes();
+            bytes += m_ringStorage[ch].ReservedBytes() + m_monitorPreChainStorage[ch].ReservedBytes() +
+                m_highRatioStorage[ch].ReservedBytes();
         return bytes;
     }
     void SetSlotCommitPageLimitForTests(std::size_t pages) noexcept {
@@ -339,6 +342,9 @@ public:
     }
     void SetProfessionalCommitPageLimitForTests(std::size_t pages) noexcept {
         m_professionalStorage.SetCommitPageLimitForTests(pages);
+    }
+    void SetHighRatioCommitPageLimitForTests(std::size_t pages) noexcept {
+        for (auto& channel : m_highRatioStorage) channel.SetCommitPageLimitForTests(pages);
     }
     std::size_t ProfessionalStorageBytes() const noexcept { return m_professionalStorage.RequestedBytes(); }
     std::size_t ProfessionalDirectoryBytes() const noexcept { return m_professionalStorage.DirectoryBytes(); }
@@ -1190,9 +1196,13 @@ private:
     std::uint32_t m_pendingStreamParkMailboxes = 0;
     StableRowStorage<StreamParkTokenSlot> m_streamParkTokens;
     bool PrepareRenderSlotBacking(std::uint32_t count, std::uint32_t channelCount,
-        bool firstOutput) noexcept;
-    bool RenderSlotBackingReady(std::uint32_t count, std::uint32_t channelCount) const noexcept;
+        bool firstOutput, std::uint32_t highRatioChannels = 0) noexcept;
+    bool RenderSlotBackingReady(std::uint32_t count, std::uint32_t channelCount,
+        std::uint32_t highRatioChannels) const noexcept;
     std::array<StableRowStorage<std::array<float, kResampleFifoFrames>>, kMaxChannels> m_ringStorage;
+    std::array<StableRowStorage<ResamplerHighRatioChannelState>, kMaxChannels> m_highRatioStorage;
+    ResamplerHighRatioColumns m_highRatioColumns{};
+    void BindHighRatioBacking(std::uint32_t slot) noexcept;
     StableSlotStorage<MultirateResamplerCandidate> m_professionalStorage;
     using VariableWeightStorage = std::array<VoiceRenderContext::OwnedVariableWeight, kSelectionPathNodeCapacity>;
     StableSlotStorage<VariableWeightStorage> m_variableWeightStorage;

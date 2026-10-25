@@ -68,6 +68,7 @@ struct CascadeHarness {
         ctx.gain.Set(1.0f, 0);
         float* rings[2] = {ring.data(), right != nullptr
             ? ring.data() + harken::kResampleFifoFrames : nullptr};
+        ctx.resampler = resamplerBacking;
         ctx.resampler.Reset(rings, ctx.pcm.channelCount, quality, ratio,
                             Tables());
     }
@@ -84,6 +85,7 @@ struct CascadeHarness {
     }
 
     harken::BiquadTrigTable trig;
+    harken::Resampler resamplerBacking;
     VoiceRenderContext ctx;
     std::vector<float> ring;
     BlockArena arena{65536};
