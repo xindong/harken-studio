@@ -50,6 +50,7 @@ struct ConsumedCurrentSlice;
 class OriginalSourceSubmissionRegistry;
 class ImmediateActionLane;
 class PrivatePlainLayoutCommitProof;
+class PrivateReservedPlainLayoutCommitProof;
 class PrivateImmediateLanePlacementProof;
 class PrivateImmediateLaneGroupsPublicationProof;
 
@@ -606,6 +607,9 @@ public:
         OriginalSourceSubmissionRegistry& sources, OriginalSourceLifetimePin&& original) noexcept;
     bool BeginPendingTimelineReadUsePlacement(VariableTimelineReadUseRef use,
         const ImmediateActionLane& lane, const PrivatePlainLayoutCommitProof& placement,
+        VariableReadCutRef* cut) noexcept;
+    bool BeginPendingTimelineReadUsePlacement(VariableTimelineReadUseRef use,
+        const ImmediateActionLane& lane, const PrivateReservedPlainLayoutCommitProof& placement,
         VariableReadCutRef* cut) noexcept;
     bool BeginPendingTimelineReadUsePlacement(VariableTimelineReadUseRef use,
         const ImmediateActionLane& lane, const PrivateImmediateLanePlacementProof& placement,

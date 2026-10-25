@@ -124,14 +124,34 @@ bool SameArm(TimelineArmToken a, TimelineArmToken b) noexcept {
 
 PrivatePlainLayoutEdit::~PrivatePlainLayoutEdit() { Abort(); }
 
-PrivatePlainLayoutEdit::PrivatePlainLayoutEdit(PrivatePlainLayoutEdit&& other) noexcept {
-    *this = std::move(other);
+PrivatePlainLayoutEdit::PrivatePlainLayoutEdit(PrivatePlainLayoutEdit&& other) noexcept
+    : PrivatePlainLayoutEdit() {
+    Take(other);
 }
 
 PrivatePlainLayoutEdit& PrivatePlainLayoutEdit::operator=(
     PrivatePlainLayoutEdit&& other) noexcept {
-    if (this == &other) return *this;
+    Take(other);
+    return *this;
+}
+
+PrivateReservedPlainLayoutEdit::~PrivateReservedPlainLayoutEdit() { Abort(); }
+
+PrivateReservedPlainLayoutEdit::PrivateReservedPlainLayoutEdit(
+    PrivateReservedPlainLayoutEdit&& other) noexcept : PrivateReservedPlainLayoutEdit() {
+    Take(other);
+}
+
+PrivateReservedPlainLayoutEdit& PrivateReservedPlainLayoutEdit::operator=(
+    PrivateReservedPlainLayoutEdit&& other) noexcept {
+    Take(other);
+    return *this;
+}
+
+void PrivatePlainLayoutState::Take(PrivatePlainLayoutState& other) noexcept {
+    if (this == &other) return;
     Abort();
+    assert((snapshots_ == nullptr) == (other.snapshots_ == nullptr));
     owner_ = other.owner_;
     handle_ = other.handle_;
     originalState_ = other.originalState_;
@@ -139,9 +159,7 @@ PrivatePlainLayoutEdit& PrivatePlainLayoutEdit::operator=(
     originalBucketCount_ = other.originalBucketCount_;
     originalNextBucket_ = other.originalNextBucket_;
     originalAnchor_ = other.originalAnchor_;
-    originalEvents_ = other.originalEvents_;
-    originalBuckets_ = other.originalBuckets_;
-    authoredLayout_ = other.authoredLayout_;
+    if (snapshots_ != nullptr) *snapshots_ = *other.snapshots_;
     hasAuthoredLayout_ = other.hasAuthoredLayout_;
     originalWasPristineReserved_ = other.originalWasPristineReserved_;
     ready_ = other.ready_;
@@ -149,14 +167,13 @@ PrivatePlainLayoutEdit& PrivatePlainLayoutEdit::operator=(
         owner_->attempts_[handle_.slot].privateLayoutEdit = this;
     other.owner_ = nullptr;
     other.ready_ = false;
-    return *this;
 }
 
-void PrivatePlainLayoutEdit::Abort() noexcept {
+void PrivatePlainLayoutState::Abort() noexcept {
     if (owner_ != nullptr) owner_->FinishPrivateLayout(*this, false);
 }
 
-void PrivatePlainLayoutEdit::ClearCandidate() noexcept {
+void PrivatePlainLayoutState::ClearCandidate() noexcept {
     if (owner_ == nullptr) return;
     ready_ = false;
     auto& attempt = owner_->attempts_[handle_.slot];
@@ -179,7 +196,7 @@ void PrivatePlainLayoutEdit::ClearCandidate() noexcept {
     attempt.nextBucket.store(0, std::memory_order_relaxed);
 }
 
-bool PrivatePlainLayoutEdit::StageCandidate(const ImmediateLaneEvent* events,
+bool PrivatePlainLayoutState::StageCandidate(const ImmediateLaneEvent* events,
     std::uint32_t count, std::uint64_t anchorFrame,
     std::uint64_t firstSafeFrame) noexcept {
     if (hasAuthoredLayout_) {
@@ -189,13 +206,14 @@ bool PrivatePlainLayoutEdit::StageCandidate(const ImmediateLaneEvent* events,
     return StageFixedCandidate(events, count, anchorFrame, firstSafeFrame);
 }
 
-bool PrivatePlainLayoutEdit::StageAuthoredControlCandidate(
+bool PrivatePlainLayoutState::StageAuthoredControlCandidate(
     std::uint64_t anchorFrame, std::uint64_t firstSafeFrame) noexcept {
     if (owner_ == nullptr) return false;
     ClearCandidate();
     if (!hasAuthoredLayout_) return false;
+    const auto& authoredLayout = snapshots_->authoredLayout;
     std::uint64_t onset = 0;
-    if (!ResolveLaneDue(authoredLayout_.start, anchorFrame, &onset) ||
+    if (!ResolveLaneDue(authoredLayout.start, anchorFrame, &onset) ||
         onset == UINT64_MAX) return false;
     const auto fixed = [](ImmediateLaneEvent event, std::uint64_t due) noexcept {
         event.timeDomain = ImmediateLaneTimeDomain::FixedAbsoluteFrame;
@@ -204,23 +222,23 @@ bool PrivatePlainLayoutEdit::StageAuthoredControlCandidate(
         event.event.executeFrame = due;
         return event;
     };
-    const bool hasEnvelope = authoredLayout_.fadeStartFrame < authoredLayout_.stopFrame &&
-        onset < authoredLayout_.stopFrame;
+    const bool hasEnvelope = authoredLayout.fadeStartFrame < authoredLayout.stopFrame &&
+        onset < authoredLayout.stopFrame;
     std::array<ImmediateLaneEvent, 3> events{};
     std::uint32_t count = 0;
-    events[count++] = fixed(authoredLayout_.start, onset);
+    events[count++] = fixed(authoredLayout.start, onset);
     if (hasEnvelope) {
-        const auto dispatch = std::min(authoredLayout_.stopFrame,
-            std::max(authoredLayout_.fadeStartFrame, onset));
-        events[count++] = fixed(authoredLayout_.envelope, dispatch);
+        const auto dispatch = std::min(authoredLayout.stopFrame,
+            std::max(authoredLayout.fadeStartFrame, onset));
+        events[count++] = fixed(authoredLayout.envelope, dispatch);
     }
-    auto stop = fixed(authoredLayout_.stop, authoredLayout_.stopFrame);
+    auto stop = fixed(authoredLayout.stop, authoredLayout.stopFrame);
     stop.event.authoredFadeOutCandidate = hasEnvelope;
     events[count++] = stop;
     return StageFixedCandidate(events.data(), count, anchorFrame, firstSafeFrame);
 }
 
-bool PrivatePlainLayoutEdit::StageFixedCandidate(const ImmediateLaneEvent* events,
+bool PrivatePlainLayoutState::StageFixedCandidate(const ImmediateLaneEvent* events,
     std::uint32_t count, std::uint64_t anchorFrame,
     std::uint64_t firstSafeFrame) noexcept {
     if (owner_ == nullptr) return false;
@@ -259,6 +277,16 @@ void PrivatePlainLayoutCommitProof::Consume() noexcept {
     if (Valid()) edit_.owner_->FinishPrivateLayout(edit_, true);
 }
 
+bool PrivateReservedPlainLayoutEdit::SealCandidate(PrivateReservedPlainLayoutCommitProof* out) noexcept {
+    if (!Valid() || !ready_ || out == nullptr || out->edit_.Valid()) return false;
+    out->edit_ = std::move(*this);
+    return true;
+}
+
+void PrivateReservedPlainLayoutCommitProof::Consume() noexcept {
+    if (Valid()) edit_.owner_->FinishPrivateLayout(edit_, true);
+}
+
 PrivateImmediateLanePlacementProof::PrivateImmediateLanePlacementProof(
     PrivateImmediateLanePlacementProof&& other) noexcept { Take(other); }
 PrivateImmediateLanePlacementProof& PrivateImmediateLanePlacementProof::operator=(
@@ -292,9 +320,24 @@ bool ImmediateActionLane::CapturePrivatePendingVariableStartGeometry(
     const PrivatePlainLayoutCommitProof& proof, const TimelineArmTable& arms,
     TimelineArmToken arm, std::uint64_t authoredOffset,
     std::uint64_t* logicalFrame, std::uint64_t* onsetFrame) const noexcept {
-    const auto& edit = proof.edit_;
+    return CapturePrivatePlainVariableStartGeometry(proof.edit_, arms, arm,
+        authoredOffset, logicalFrame, onsetFrame);
+}
+
+bool ImmediateActionLane::CapturePrivatePendingVariableStartGeometry(
+    const PrivateReservedPlainLayoutCommitProof& proof, const TimelineArmTable& arms,
+    TimelineArmToken arm, std::uint64_t authoredOffset,
+    std::uint64_t* logicalFrame, std::uint64_t* onsetFrame) const noexcept {
+    return CapturePrivatePlainVariableStartGeometry(proof.edit_, arms, arm,
+        authoredOffset, logicalFrame, onsetFrame);
+}
+
+bool ImmediateActionLane::CapturePrivatePlainVariableStartGeometry(
+    const PrivatePlainLayoutState& edit, const TimelineArmTable& arms,
+    TimelineArmToken arm, std::uint64_t authoredOffset,
+    std::uint64_t* logicalFrame, std::uint64_t* onsetFrame) const noexcept {
     const auto* attempt = edit.owner_ == this ? Resolve(edit.handle_) : nullptr;
-    if (!proof.Valid() || attempt == nullptr || attempt->privateLayoutEdit != &edit ||
+    if (!edit.Valid() || !edit.ready_ || attempt == nullptr || attempt->privateLayoutEdit != &edit ||
         attempt->state.load(std::memory_order_acquire) != ImmediateLaneAttemptState::PrivateLayoutHeld)
         return false;
     return CapturePrivatePendingVariableStartGeometryImpl(edit.handle_, arms, arm,
@@ -470,10 +513,16 @@ bool ImmediateActionLane::AcquirePrivateReservedPlainLayoutEdit(ImmediateLaneHan
     return AcquirePrivatePlainLayoutEditImpl(handle, root, originalDemand, out, true);
 }
 
+bool ImmediateActionLane::AcquirePrivateReservedPlainLayoutEdit(ImmediateLaneHandle handle,
+    std::uint64_t root, ImmediateLaneDemand originalDemand,
+    PrivateReservedPlainLayoutEdit* out) noexcept {
+    return AcquirePrivatePlainLayoutEditImpl(handle, root, originalDemand, out, true);
+}
+
 bool ImmediateActionLane::AcquirePrivatePlainLayoutEditImpl(ImmediateLaneHandle handle,
     std::uint64_t root, ImmediateLaneDemand originalDemand,
-    PrivatePlainLayoutEdit* out, bool pristineReserved) noexcept {
-    if (out == nullptr || out->Valid()) return false;
+    PrivatePlainLayoutState* out, bool pristineReserved) noexcept {
+    if (out == nullptr || out->Valid() || (!pristineReserved && out->snapshots_ == nullptr)) return false;
     auto* attempt = Resolve(handle);
     if (attempt == nullptr) return false;
     const auto initial = attempt->state.load(std::memory_order_acquire);
@@ -527,10 +576,10 @@ bool ImmediateActionLane::AcquirePrivatePlainLayoutEditImpl(ImmediateLaneHandle 
     out->hasAuthoredLayout_ = false;
     out->originalWasPristineReserved_ = pristineReserved;
     if (!pristineReserved) {
-        std::copy_n(EventBase(handle.slot), attempt->eventCredit, out->originalEvents_.begin());
+        std::copy_n(EventBase(handle.slot), attempt->eventCredit, out->snapshots_->originalEvents.begin());
         for (std::uint32_t i = 0; i < attempt->bucketCredit; ++i) {
             const auto& b = BucketBase(handle.slot)[i];
-            out->originalBuckets_[i] = {b.state.load(std::memory_order_relaxed),
+            out->snapshots_->originalBuckets[i] = {b.state.load(std::memory_order_relaxed),
                 b.admissionFailure.load(std::memory_order_relaxed), b.attemptGeneration,
                 b.quantum, b.firstEvent, b.eventCount, b.firstGroup, b.groupCount, b.memberCount};
         }
@@ -560,22 +609,22 @@ bool ImmediateActionLane::AcquirePrivatePlainAuthoredControlLayoutEdit(
         input.envelope.event.subeventPhase != 30 || input.stop.event.subeventPhase != 50 ||
         originalDemand.events < worstCase || originalDemand.buckets < worstCase ||
         !AcquirePrivatePlainLayoutEdit(handle, root, originalDemand, out)) return false;
-    out->authoredLayout_ = input;
+    out->snapshots_->authoredLayout = input;
     out->hasAuthoredLayout_ = true;
     return true;
 }
 
-void ImmediateActionLane::FinishPrivateLayout(PrivatePlainLayoutEdit& edit,
+void ImmediateActionLane::FinishPrivateLayout(PrivatePlainLayoutState& edit,
     bool commit) noexcept {
     auto& attempt = attempts_[edit.handle_.slot];
     if (!commit && edit.originalWasPristineReserved_) {
         edit.ClearCandidate();
     } else if (!commit) {
-        std::copy_n(edit.originalEvents_.begin(), attempt.eventCredit,
+        std::copy_n(edit.snapshots_->originalEvents.begin(), attempt.eventCredit,
                     EventBase(edit.handle_.slot));
         for (std::uint32_t i = 0; i < attempt.bucketCredit; ++i) {
             auto& b = BucketBase(edit.handle_.slot)[i];
-            const auto& saved = edit.originalBuckets_[i];
+            const auto& saved = edit.snapshots_->originalBuckets[i];
             b.state.store(saved.state, std::memory_order_relaxed);
             b.admissionFailure.store(saved.failure, std::memory_order_relaxed);
             b.attemptGeneration = saved.generation;
@@ -1686,11 +1735,11 @@ bool ImmediateActionLane::HasProgramReferenceImpl(ProgramGeneration generation,
             const auto* edit = attempt.privateLayoutEdit;
             if (edit != nullptr) {
                 for (std::uint32_t event = 0; event < edit->originalEventCount_; ++event)
-                    if (matches(edit->originalEvents_[event].event.program)) return true;
+                    if (matches(edit->snapshots_->originalEvents[event].event.program)) return true;
                 if (edit->hasAuthoredLayout_ &&
-                    (matches(edit->authoredLayout_.start.event.program) ||
-                     matches(edit->authoredLayout_.envelope.event.program) ||
-                     matches(edit->authoredLayout_.stop.event.program))) return true;
+                    (matches(edit->snapshots_->authoredLayout.start.event.program) ||
+                     matches(edit->snapshots_->authoredLayout.envelope.event.program) ||
+                     matches(edit->snapshots_->authoredLayout.stop.event.program))) return true;
             }
             continue;
         }
@@ -3895,9 +3944,9 @@ bool ImmediateActionLane::CandidateFits(std::uint32_t slot,
         if (attempt.privateLayoutEdit != nullptr) {
             const auto& edit = *attempt.privateLayoutEdit;
             for (std::uint32_t i = 0; i < edit.originalBucketCount_; ++i)
-                if (edit.originalBuckets_[i].quantum == quantum)
+                if (edit.snapshots_->originalBuckets[i].quantum == quantum)
                     occupiedEvents = std::max(occupiedEvents,
-                        static_cast<std::uint64_t>(edit.originalBuckets_[i].eventCount));
+                        static_cast<std::uint64_t>(edit.snapshots_->originalBuckets[i].eventCount));
         }
         for (std::uint32_t other = 0; other < attempts_.size(); ++other) {
             if (other == slot) continue;
@@ -3911,8 +3960,8 @@ bool ImmediateActionLane::CandidateFits(std::uint32_t slot,
                 std::uint32_t oldCount = 0, tentativeCount = 0;
                 const auto& edit = *live.privateLayoutEdit;
                 for (std::uint32_t i = 0; i < edit.originalBucketCount_; ++i)
-                    if (edit.originalBuckets_[i].quantum == quantum)
-                        oldCount = edit.originalBuckets_[i].eventCount;
+                    if (edit.snapshots_->originalBuckets[i].quantum == quantum)
+                        oldCount = edit.snapshots_->originalBuckets[i].eventCount;
                 const auto* staged = BucketBase(other);
                 for (std::uint32_t i = 0; i < live.bucketCount; ++i)
                     if (staged[i].quantum == quantum)

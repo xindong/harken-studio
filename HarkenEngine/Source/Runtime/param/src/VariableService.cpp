@@ -5472,6 +5472,16 @@ bool VariableServiceV1::BeginPendingTimelineReadUsePlacement(VariableTimelineRea
 }
 
 bool VariableServiceV1::BeginPendingTimelineReadUsePlacement(VariableTimelineReadUseRef ref,
+    const ImmediateActionLane& lane, const PrivateReservedPlainLayoutCommitProof& placement,
+    VariableReadCutRef* cut) noexcept {
+    auto* use = ResolveTimelineReadUse(ref);
+    std::uint64_t logical = 0, onset = 0;
+    return use != nullptr && lane.CapturePrivatePendingVariableStartGeometry(placement,
+        *use->lifetime.Owner(), use->lifetime.Token(), use->authoredStartOffset, &logical, &onset) &&
+        BeginPendingTimelineReadUsePlacement(*use, logical, onset, cut);
+}
+
+bool VariableServiceV1::BeginPendingTimelineReadUsePlacement(VariableTimelineReadUseRef ref,
     const ImmediateActionLane& lane, const PrivateImmediateLanePlacementProof& placement,
     VariableReadCutRef* cut) noexcept {
     auto* use = ResolveTimelineReadUse(ref);

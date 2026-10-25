@@ -671,7 +671,7 @@ bool ServiceOriginalPlainReceipt(harken::Engine&, harken::EngineImmediateEntryAt
     std::uint64_t) noexcept;
 void ServiceOriginalPlainEntry(harken::Engine&, harken::EngineImmediateEntryAttempt&) noexcept;
 bool FinalizePendingTimelineVariableInitializer(harken::Engine&, VnVoiceHandle,
-    const harken::PrivatePlainLayoutCommitProof&) noexcept;
+    const harken::PrivateReservedPlainLayoutCommitProof&) noexcept;
 bool FinalizePendingTimelineVariableInitializer(harken::Engine&, VnVoiceHandle,
     const harken::PrivateImmediateLanePlacementProof&) noexcept;
 
@@ -44282,7 +44282,7 @@ void ServiceOriginalPlainEntry(harken::Engine& engine,
             if (original.timeDomain == harken::ImmediateLaneTimeDomain::FixedAbsoluteFrame &&
                 original.fixedFrame < safe) { fail(harken::ActionTerminalReason::Deadline); return; }
         }
-        harken::PrivatePlainLayoutEdit edit;
+        harken::PrivateReservedPlainLayoutEdit edit;
         if (!engine.immediateActionLane.AcquirePrivateReservedPlainLayoutEdit(attempt.lane,
                 attempt.root, attempt.originalLaneDemand, &edit)) return;
         bool chosen = false;
@@ -64047,7 +64047,7 @@ bool FinalizePendingTimelineVariableInitializerWith(harken::Engine& engine, VnVo
 }
 
 bool FinalizePendingTimelineVariableInitializer(harken::Engine& engine, VnVoiceHandle render,
-    const harken::PrivatePlainLayoutCommitProof& placement) noexcept {
+    const harken::PrivateReservedPlainLayoutCommitProof& placement) noexcept {
     return FinalizePendingTimelineVariableInitializerWith(engine, render, placement);
 }
 

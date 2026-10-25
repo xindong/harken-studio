@@ -268,27 +268,29 @@ struct ImmediateLaneBucket {
 
 class ImmediateActionLane;
 class PrivatePlainLayoutCommitProof;
+class PrivateReservedPlainLayoutCommitProof;
 
-class PrivatePlainLayoutEdit {
+class PrivatePlainLayoutState {
 public:
-    PrivatePlainLayoutEdit() noexcept = default;
-    ~PrivatePlainLayoutEdit();
-    PrivatePlainLayoutEdit(const PrivatePlainLayoutEdit&) = delete;
-    PrivatePlainLayoutEdit& operator=(const PrivatePlainLayoutEdit&) = delete;
-    PrivatePlainLayoutEdit(PrivatePlainLayoutEdit&& other) noexcept;
-    PrivatePlainLayoutEdit& operator=(PrivatePlainLayoutEdit&& other) noexcept;
+    PrivatePlainLayoutState(const PrivatePlainLayoutState&) = delete;
+    PrivatePlainLayoutState& operator=(const PrivatePlainLayoutState&) = delete;
     bool Valid() const noexcept { return owner_ != nullptr; }
     void ClearCandidate() noexcept;
     bool StageCandidate(const ImmediateLaneEvent* events, std::uint32_t count,
         std::uint64_t anchorFrame, std::uint64_t firstSafeFrame) noexcept;
     bool StageAuthoredControlCandidate(std::uint64_t anchorFrame,
         std::uint64_t firstSafeFrame) noexcept;
-    bool SealCandidate(PrivatePlainLayoutCommitProof* out) noexcept;
     void Abort() noexcept;
+
+protected:
+    ~PrivatePlainLayoutState() = default;
 
 private:
     friend class ImmediateActionLane;
+    friend class PrivatePlainLayoutEdit;
     friend class PrivatePlainLayoutCommitProof;
+    friend class PrivateReservedPlainLayoutEdit;
+    friend class PrivateReservedPlainLayoutCommitProof;
     bool StageFixedCandidate(const ImmediateLaneEvent* events, std::uint32_t count,
         std::uint64_t anchorFrame, std::uint64_t firstSafeFrame) noexcept;
     struct BucketSnapshot {
@@ -299,18 +301,36 @@ private:
         std::uint32_t firstEvent = 0, eventCount = 0;
         std::uint32_t firstGroup = 0, groupCount = 0, memberCount = 0;
     };
+    struct Snapshots {
+        std::array<ImmediateLaneEvent, 3> originalEvents{};
+        std::array<BucketSnapshot, 3> originalBuckets{};
+        PlainAuthoredControlLayoutInput authoredLayout{};
+    };
+    explicit PrivatePlainLayoutState(Snapshots* snapshots) noexcept : snapshots_(snapshots) {}
+    void Take(PrivatePlainLayoutState& other) noexcept;
+    Snapshots* const snapshots_;
     ImmediateActionLane* owner_ = nullptr;
     ImmediateLaneHandle handle_{};
     ImmediateLaneAttemptState originalState_ = ImmediateLaneAttemptState::Free;
     std::uint32_t originalEventCount_ = 0, originalBucketCount_ = 0;
     std::uint32_t originalNextBucket_ = 0;
     std::uint64_t originalAnchor_ = 0;
-    std::array<ImmediateLaneEvent, 3> originalEvents_{};
-    std::array<BucketSnapshot, 3> originalBuckets_{};
-    PlainAuthoredControlLayoutInput authoredLayout_{};
     bool hasAuthoredLayout_ = false;
     bool originalWasPristineReserved_ = false;
     bool ready_ = false;
+};
+
+class PrivatePlainLayoutEdit : public PrivatePlainLayoutState {
+public:
+    PrivatePlainLayoutEdit() noexcept : PrivatePlainLayoutState(&snapshotStorage_) {}
+    ~PrivatePlainLayoutEdit();
+    PrivatePlainLayoutEdit(const PrivatePlainLayoutEdit&) = delete;
+    PrivatePlainLayoutEdit& operator=(const PrivatePlainLayoutEdit&) = delete;
+    PrivatePlainLayoutEdit(PrivatePlainLayoutEdit&& other) noexcept;
+    PrivatePlainLayoutEdit& operator=(PrivatePlainLayoutEdit&& other) noexcept;
+    bool SealCandidate(PrivatePlainLayoutCommitProof* out) noexcept;
+private:
+    Snapshots snapshotStorage_{};
 };
 
 class PrivatePlainLayoutCommitProof {
@@ -326,6 +346,33 @@ private:
     friend class ImmediateActionLane;
     friend class PrivatePlainLayoutEdit;
     PrivatePlainLayoutEdit edit_{};
+};
+
+// Only the native pristine Reserved factory can issue this snapshot-free hold.
+class PrivateReservedPlainLayoutEdit : public PrivatePlainLayoutState {
+public:
+    PrivateReservedPlainLayoutEdit() noexcept : PrivatePlainLayoutState(nullptr) {}
+    ~PrivateReservedPlainLayoutEdit();
+    PrivateReservedPlainLayoutEdit(const PrivateReservedPlainLayoutEdit&) = delete;
+    PrivateReservedPlainLayoutEdit& operator=(const PrivateReservedPlainLayoutEdit&) = delete;
+    PrivateReservedPlainLayoutEdit(PrivateReservedPlainLayoutEdit&& other) noexcept;
+    PrivateReservedPlainLayoutEdit& operator=(PrivateReservedPlainLayoutEdit&& other) noexcept;
+    bool SealCandidate(PrivateReservedPlainLayoutCommitProof* out) noexcept;
+};
+
+class PrivateReservedPlainLayoutCommitProof {
+public:
+    PrivateReservedPlainLayoutCommitProof() noexcept = default;
+    PrivateReservedPlainLayoutCommitProof(const PrivateReservedPlainLayoutCommitProof&) = delete;
+    PrivateReservedPlainLayoutCommitProof& operator=(const PrivateReservedPlainLayoutCommitProof&) = delete;
+    PrivateReservedPlainLayoutCommitProof(PrivateReservedPlainLayoutCommitProof&&) noexcept = default;
+    PrivateReservedPlainLayoutCommitProof& operator=(PrivateReservedPlainLayoutCommitProof&&) noexcept = default;
+    bool Valid() const noexcept { return edit_.Valid() && edit_.ready_; }
+    void Consume() noexcept;
+private:
+    friend class ImmediateActionLane;
+    friend class PrivateReservedPlainLayoutEdit;
+    PrivateReservedPlainLayoutEdit edit_{};
 };
 
 class ImmediateActionLane;
@@ -401,7 +448,7 @@ struct ImmediateLaneAttempt {
     std::atomic<std::uint32_t> nextBucket{0};
     std::uint32_t capturedBucketOrdinal = UINT32_MAX;
     std::uint64_t capturedAudioSequence = 0;
-    PrivatePlainLayoutEdit* privateLayoutEdit = nullptr;
+    PrivatePlainLayoutState* privateLayoutEdit = nullptr;
     PrivateImmediateLanePlacementProof* privatePlacementProof = nullptr;
     PrivateImmediateLanePublicationProof* privatePublicationProof = nullptr;
     std::uint64_t originalLifetimeMarker = 0;
@@ -505,6 +552,9 @@ public:
     bool AcquirePrivateReservedPlainLayoutEdit(ImmediateLaneHandle handle,
         std::uint64_t root, ImmediateLaneDemand originalDemand,
         PrivatePlainLayoutEdit* out) noexcept;
+    bool AcquirePrivateReservedPlainLayoutEdit(ImmediateLaneHandle handle,
+        std::uint64_t root, ImmediateLaneDemand originalDemand,
+        PrivateReservedPlainLayoutEdit* out) noexcept;
     bool AcquirePrivatePlainAuthoredControlLayoutEdit(ImmediateLaneHandle handle,
         std::uint64_t root, ImmediateLaneDemand originalDemand,
         const PlainAuthoredControlLayoutInput& input,
@@ -684,6 +734,9 @@ public:
     bool CapturePrivatePlacedLastQuantum(ImmediateLaneHandle handle,
         std::uint64_t* out) const noexcept;
     bool CapturePrivatePendingVariableStartGeometry(const PrivatePlainLayoutCommitProof& proof,
+        const TimelineArmTable& arms, TimelineArmToken arm, std::uint64_t authoredOffset,
+        std::uint64_t* logicalFrame, std::uint64_t* onsetFrame) const noexcept;
+    bool CapturePrivatePendingVariableStartGeometry(const PrivateReservedPlainLayoutCommitProof& proof,
         const TimelineArmTable& arms, TimelineArmToken arm, std::uint64_t authoredOffset,
         std::uint64_t* logicalFrame, std::uint64_t* onsetFrame) const noexcept;
     bool CapturePrivatePendingVariableStartGeometry(const PrivateImmediateLanePlacementProof& proof,
@@ -890,6 +943,8 @@ private:
     friend class OriginalConditionalReplacementBatch;
     friend class PrivatePlainLayoutEdit;
     friend class PrivatePlainLayoutCommitProof;
+    friend class PrivatePlainLayoutState;
+    friend class PrivateReservedPlainLayoutCommitProof;
     friend class PrivateImmediateLanePlacementProof;
     friend class PrivateImmediateLanePublicationProof;
     bool ValidatePrivatePublication(ImmediateLaneHandle handle,
@@ -897,17 +952,20 @@ private:
     void ApplyPrivatePublicationImpl(ImmediateLaneHandle handle,
         ImmediateLaneAttempt& attempt) noexcept;
     bool MatchesPrivatePlacementProof(const PrivateImmediateLanePlacementProof& proof) const noexcept;
+    bool CapturePrivatePlainVariableStartGeometry(const PrivatePlainLayoutState& edit,
+        const TimelineArmTable& arms, TimelineArmToken arm, std::uint64_t authoredOffset,
+        std::uint64_t* logicalFrame, std::uint64_t* onsetFrame) const noexcept;
     bool CapturePrivatePendingVariableStartGeometryImpl(ImmediateLaneHandle handle,
         const TimelineArmTable& arms, TimelineArmToken arm, std::uint64_t authoredOffset,
         std::uint64_t* logicalFrame, std::uint64_t* onsetFrame, bool unbound = false) const noexcept;
     void ReturnPrivatePlacementProof(PrivateImmediateLanePlacementProof& proof) noexcept;
     void InstallPlacement(ImmediateLaneHandle handle, std::uint64_t anchor) noexcept;
-    void FinishPrivateLayout(PrivatePlainLayoutEdit& edit, bool commit) noexcept;
+    void FinishPrivateLayout(PrivatePlainLayoutState& edit, bool commit) noexcept;
     bool HasProgramReferenceImpl(ProgramGeneration generation,
         const TimelineProgramView* program) const noexcept;
     bool AcquirePrivatePlainLayoutEditImpl(ImmediateLaneHandle handle,
         std::uint64_t root, ImmediateLaneDemand originalDemand,
-        PrivatePlainLayoutEdit* out, bool pristineReserved) noexcept;
+        PrivatePlainLayoutState* out, bool pristineReserved) noexcept;
     struct EventState {
         TimelineArmReaderPin arm;
         AuthoredStopFenceLaneReference fence;

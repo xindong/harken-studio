@@ -2026,15 +2026,16 @@ TEST(ImmediateActionLane, PristineReservedPlainWholeBankConsumesActualSixBucketP
     const harken::ImmediateLaneDemand demand{8, 0, 0, 8};
     harken::ImmediateLaneHandle handle{};
     ASSERT_TRUE(lane.Reserve(1, demand, &handle));
-    harken::PrivatePlainLayoutEdit edit;
-    EXPECT_FALSE(lane.AcquirePrivatePlainLayoutEdit(handle, 1, demand, &edit));
+    harken::PrivateReservedPlainLayoutEdit edit;
+    harken::PrivatePlainLayoutEdit generic;
+    EXPECT_FALSE(lane.AcquirePrivatePlainLayoutEdit(handle, 1, demand, &generic));
     ASSERT_TRUE(lane.AcquirePrivateReservedPlainLayoutEdit(handle, 1, demand, &edit));
     ASSERT_TRUE(edit.StageCandidate(events.data(), static_cast<std::uint32_t>(events.size()), 64, 64));
     EXPECT_FALSE(lane.Prepare(handle, events.data(), 6));
     EXPECT_FALSE(lane.Publish(handle));
     EXPECT_FALSE(lane.Cancel(handle));
     EXPECT_FALSE(lane.Retire(handle));
-    harken::PrivatePlainLayoutCommitProof ready;
+    harken::PrivateReservedPlainLayoutCommitProof ready;
     ASSERT_TRUE(edit.SealCandidate(&ready));
     EXPECT_FALSE(lane.Publish(handle));
     ready.Consume();
@@ -2066,10 +2067,10 @@ TEST(ImmediateActionLane, PristineReservedPlainLastBucketCollisionRefusesWholeCa
     std::uint64_t anchor = 0;
     ASSERT_TRUE(lane.TryPlace(peer, 64, 0, &anchor));
     ASSERT_TRUE(lane.Publish(peer));
-    harken::PrivatePlainLayoutEdit edit;
+    harken::PrivateReservedPlainLayoutEdit edit;
     ASSERT_TRUE(lane.AcquirePrivateReservedPlainLayoutEdit(handle, 1, demand, &edit));
     EXPECT_FALSE(edit.StageCandidate(events.data(), 6, 64, 64));
-    harken::PrivatePlainLayoutCommitProof ready;
+    harken::PrivateReservedPlainLayoutCommitProof ready;
     EXPECT_FALSE(edit.SealCandidate(&ready));
     ASSERT_TRUE(lane.Cancel(peer));
     ASSERT_TRUE(lane.Retire(peer));
@@ -2092,7 +2093,7 @@ TEST(ImmediateActionLane, PristineReservedPlainRepeatedLargeSmallShapesKeepOnlyA
     ASSERT_TRUE(lane.Prepare(last, &events.back(), 1));
     ASSERT_TRUE(lane.Reserve(3, 1, &first));
     ASSERT_TRUE(lane.Prepare(first, &events.front(), 1));
-    harken::PrivatePlainLayoutEdit edit;
+    harken::PrivateReservedPlainLayoutEdit edit;
     ASSERT_TRUE(lane.AcquirePrivateReservedPlainLayoutEdit(handle, 1, demand, &edit));
     ASSERT_TRUE(edit.StageCandidate(events.data(), 6, 64, 64));
     std::uint64_t anchor = 0;
@@ -2100,7 +2101,7 @@ TEST(ImmediateActionLane, PristineReservedPlainRepeatedLargeSmallShapesKeepOnlyA
     ASSERT_TRUE(edit.StageCandidate(events.data(), 2, 64, 64));
     ASSERT_TRUE(lane.TryPlace(last, 64, 0, &anchor));
     EXPECT_FALSE(edit.StageCandidate(events.data(), 6, 64, 64));
-    harken::PrivatePlainLayoutCommitProof ready;
+    harken::PrivateReservedPlainLayoutCommitProof ready;
     EXPECT_FALSE(edit.SealCandidate(&ready));
     ASSERT_TRUE(lane.TryPlace(first, 64, 0, &anchor));
     ASSERT_TRUE(lane.Cancel(first));
@@ -2167,7 +2168,7 @@ TEST(ImmediateActionLane, PristineReservedPlainIssuesFromActualLocalReservationA
     const harken::ImmediateLaneDemand demand{8, 0, 0, 8};
     harken::ImmediateLaneHandle local{}, equal{};
     ASSERT_TRUE(lane.Reserve(1, demand, &local));
-    harken::PrivatePlainLayoutEdit edit;
+    harken::PrivateReservedPlainLayoutEdit edit;
     EXPECT_FALSE(other.AcquirePrivateReservedPlainLayoutEdit(local, 1, demand, &edit));
     EXPECT_FALSE(lane.AcquirePrivateReservedPlainLayoutEdit(local, 2, demand, &edit));
     EXPECT_FALSE(lane.AcquirePrivateReservedPlainLayoutEdit({local.slot, local.generation + 1}, 1, demand, &edit));
@@ -2182,7 +2183,7 @@ TEST(ImmediateActionLane, PristineReservedPlainIssuesFromActualLocalReservationA
     ASSERT_TRUE(edit.StageCandidate(events.data(), 6, 64, 64));
     EXPECT_FALSE(other.Prepare(equal, events.data(), 6));
     ASSERT_TRUE(lane.Prepare(local, events.data(), 6));
-    harken::PrivatePlainLayoutEdit refused;
+    harken::PrivateReservedPlainLayoutEdit refused;
     EXPECT_FALSE(lane.AcquirePrivateReservedPlainLayoutEdit(local, 1, demand, &refused));
     edit.Abort();
     ASSERT_TRUE(other.Prepare(equal, events.data(), 6));
@@ -2196,14 +2197,14 @@ TEST(ImmediateActionLane, PristineReservedPlainMoveAssignmentAndOwnerFirstDestru
     const harken::TimelineProgramView program{};
     const auto events = PlainBank(&program);
     const harken::ImmediateLaneDemand demand{8, 0, 0, 8};
-    harken::PrivatePlainLayoutCommitProof survivor;
+    harken::PrivateReservedPlainLayoutCommitProof survivor;
     {
         harken::ImmediateActionLane lane;
         ASSERT_TRUE(lane.Reset({2, 8, 2, 64}));
         harken::ImmediateLaneHandle first{}, second{};
         ASSERT_TRUE(lane.Reserve(1, demand, &first));
         ASSERT_TRUE(lane.Reserve(2, demand, &second));
-        harken::PrivatePlainLayoutEdit a, b;
+        harken::PrivateReservedPlainLayoutEdit a, b;
         ASSERT_TRUE(lane.AcquirePrivateReservedPlainLayoutEdit(first, 1, demand, &a));
         ASSERT_TRUE(lane.AcquirePrivateReservedPlainLayoutEdit(second, 2, demand, &b));
         ASSERT_TRUE(a.StageCandidate(events.data(), 6, 64, 64));
@@ -2211,6 +2212,12 @@ TEST(ImmediateActionLane, PristineReservedPlainMoveAssignmentAndOwnerFirstDestru
         b = std::move(a);
         EXPECT_FALSE(a.Valid());
         ASSERT_TRUE(lane.Prepare(second, events.data(), 6));
+        ASSERT_TRUE(lane.Cancel(second));
+        ASSERT_TRUE(lane.Retire(second));
+        second = {};
+        ASSERT_TRUE(lane.Reserve(3, demand, &second));
+        ASSERT_TRUE(lane.AcquirePrivateReservedPlainLayoutEdit(second, 3, demand, &a));
+        a.Abort();
         EXPECT_FALSE(lane.Reset({}));
         EXPECT_EQ(nullptr, lane.CaptureDue(first.slot, 1));
         ASSERT_TRUE(b.SealCandidate(&survivor));

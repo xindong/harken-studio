@@ -2055,9 +2055,6 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     std::uint16_t queueInitialCurrentDelayedCount = 0;
     CompletionOwnerRef queueSuccessorOwner{};
     OccurrenceToken queueRetiringOccurrence{};
-    CompositeCompletionOwnerToken queueRetiringCompositeOwner{};
-    std::uint32_t queueRetiringScheduleBase = 0;
-    std::uint32_t queueRetiringScheduleLeafCount = 0;
     OccurrenceToken queueAbortedSuccessorOccurrence{};
     CompletionOwnerRef queueRetiringOwner{};
     EffectiveQueueState queueNextState{};
@@ -2077,9 +2074,7 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
         queueSourceRuntimeProgram = {};
         queueSourceSchedule = {};
     }
-    TimelineEventPayload queueSuccessorPayload{};
     TimelineProgramView queueSuccessorRuntimeProgram{};
-    EventTemplate queueSuccessorEvent{};
     ArmGroupToken queueInitialLaneArmGroup{};
     TimelineArmToken queueArrivalArm{};
     TimelineArmToken queueArrivalSourceArm{};
@@ -2713,7 +2708,7 @@ struct EngineImmediateEntryAttempt {
     bool privateContinuationActivationCancelled = false;
     std::vector<EnginePlainImmediateSource> plainSources;
     std::vector<EnginePlainImmediateStopRef> plainStops;
-    PrivatePlainLayoutCommitProof plainLayout{};
+    PrivateReservedPlainLayoutCommitProof plainLayout{};
     std::uint32_t plainSourceCount = 0;
     std::uint32_t plainStopCount = 0;
     std::uint64_t plainAnchor = 0;
