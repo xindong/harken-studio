@@ -101,7 +101,8 @@ inline void MixMonoToStereoScaledImpl(const float* src, float* left, float* righ
     const __m128 voice = _mm_set1_ps(voiceGain);
     const __m128 leftGain = _mm_set1_ps(leftScale);
     const __m128 rightGain = _mm_set1_ps(rightScale);
-    for (; i + 4 <= frames; i += 4) {
+    const auto vectorFrames = frames & ~std::uint32_t{3};
+    for (; i < vectorFrames; i += 4) {
         __m128 value = _mm_loadu_ps(src + i);
         if constexpr (ApplyVoiceGain) value = _mm_mul_ps(value, voice);
         const __m128 leftContribution = _mm_mul_ps(value, leftGain);
@@ -113,7 +114,12 @@ inline void MixMonoToStereoScaledImpl(const float* src, float* left, float* righ
             rightContribution));
     }
 #endif
+#if defined(HARKEN_OUTPUT_GAIN_SSE2)
+    // Complete vectors leave at most three ordered scalar contributions.
+    for (std::uint32_t tail = 0; tail < 3 && i < frames; ++tail, ++i) {
+#else
     for (; i < frames; ++i) {
+#endif
         float value = src[i];
         if constexpr (ApplyVoiceGain) value *= voiceGain;
         const float leftContribution = value * leftScale;

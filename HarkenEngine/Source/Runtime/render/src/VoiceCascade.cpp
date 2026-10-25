@@ -551,9 +551,11 @@ void FoldPlainPcm(VoiceRenderContext& ctx, float* const* busPlanes,
         float* right = bus[1] + ctx.cascade.offset;
         output_gain_detail::MixMonoToStereoScaled(ctx.resampler.ring[0] + span.ringOffset,
             left, right, span.firstFrames, ctx.gain.target, leftScale, rightScale);
-        output_gain_detail::MixMonoToStereoScaled(ctx.resampler.ring[0],
-            left + span.firstFrames, right + span.firstFrames, span.frames - span.firstFrames,
-            ctx.gain.target, leftScale, rightScale);
+        if (span.frames > span.firstFrames) {
+            output_gain_detail::MixMonoToStereoScaled(ctx.resampler.ring[0],
+                left + span.firstFrames, right + span.firstFrames, span.frames - span.firstFrames,
+                ctx.gain.target, leftScale, rightScale);
+        }
     } else {
         for (std::uint32_t ch = 0; ch < mixChannels; ++ch) {
             const auto mix = [&](std::uint32_t source, float matrixGain) {
