@@ -924,9 +924,12 @@ TEST(AuthoredStopAudio, DeferredWorkerRetainsFrozenFrontierUntilCompletion) {
     for (std::uint32_t index = 0; index < gate.before.eventCount; ++index) {
         const auto& before = gate.before.events[index];
         const auto& after = gate.span->events[index];
-        EXPECT_EQ(before.kind, after.kind);
+        EXPECT_EQ(before.Kind(), after.Kind());
         EXPECT_EQ(before.offset, after.offset);
-        EXPECT_EQ(before.authoredStopOperation, after.authoredStopOperation);
+        if (before.Kind() == harken::TimelineEventKind::Stop &&
+            after.Kind() == harken::TimelineEventKind::Stop) {
+            EXPECT_EQ(before.Stop().authoredStopOperation, after.Stop().authoredStopOperation);
+        }
         EXPECT_EQ(before.frontierProof.state, after.frontierProof.state);
         EXPECT_EQ(before.order, after.order);
         EXPECT_EQ(before.frontierProof.Eligible(gate.before.quantumIndex, gate.before.renderGeneration),
@@ -2374,8 +2377,9 @@ TEST(AuthoredStopAudio, FrozenFrontierProofKeepsExactQuantumGenerationAndStopFac
         auto start = WithFrontierGuard(StartAt(8), render, h.quantum, harken::FrontierEventState::Applied);
         start.frontierProof.cutoffFrame = 32;
         AppendProvenFrontier(h, render, start);
-        auto late = WithFrontierGuard(StartAt(32), render, h.quantum, harken::FrontierEventState::Applied);
-        late.kind = harken::TimelineEventKind::SetStartCursor;
+        harken::VoiceTimelineEvent late{harken::TimelineEventKind::SetStartCursor};
+        late.offset = 32;
+        late = WithFrontierGuard(late, render, h.quantum, harken::FrontierEventState::Applied);
         late.value = 1024;
         late.frontierProof.cutoffFrame = 32;
         AppendProvenFrontier(h, render, late);
