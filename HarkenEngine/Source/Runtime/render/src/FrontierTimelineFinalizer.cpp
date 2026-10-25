@@ -513,8 +513,7 @@ struct FrontierTimelineFinalizer::Impl {
                 payload->reserved != (original.futureGroupedStart ? kTimelineEventTransientStartArm : 0u) ||
                 event.subeventPhase != 20u || event.executeFrame / frames != DueQuantum() ||
                 staged->arm == nullptr || staged->reservation == nullptr || staged->initializer == nullptr) return false;
-            VoiceTimelineEvent expected{};
-            expected.kind = TimelineEventKind::Start;
+            VoiceTimelineEvent expected{TimelineEventKind::Start};
             expected.offset = static_cast<std::uint16_t>(event.executeFrame % frames);
             if (!LaneEventOffset(event, &expected.offset)) return false;
             expected.order = OrderOf(event);
