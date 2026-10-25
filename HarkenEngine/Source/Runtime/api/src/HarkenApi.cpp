@@ -34122,15 +34122,16 @@ engine.runtimeRecreateRequired = true;
     return VariableRetargetPrepareStatus::Prepared;
 }
 
-bool HasPlayableMemberSource(const harken::Engine& engine, std::size_t slot) noexcept {
-    const auto& member = engine.ReadPlayableMember(slot).completion;
-    const auto render = engine.ReadPlayableMember(slot).render;
+bool HasPlayableMemberSource(const harken::Engine& engine,
+    const harken::EnginePlayableMemberRecord& record) noexcept {
+    const auto& member = record.completion;
+    const auto render = record.render;
     if (member.leafInstance == 0 || member.leafEpoch == 0 || render == 0) return false;
     const auto* source = engine.sourceTerminals.Resolve(member.source);
     if (source != nullptr)
         return source->leaf == member.leafInstance && source->acceptedEpoch == member.leafEpoch &&
             source->render == render;
-    const auto arm = engine.ReadPlayableMember(slot).arm;
+    const auto arm = record.arm;
     return member.resourcesRetired && member.completedSource.kind != harken::SourceTerminalKind::None &&
         member.sourceRender == render && member.sourceStartArm.slot == arm.slot &&
         member.sourceStartArm.generation == arm.generation &&
@@ -34138,13 +34139,18 @@ bool HasPlayableMemberSource(const harken::Engine& engine, std::size_t slot) noe
         member.sourceStartArm.renderGeneration == arm.renderGeneration;
 }
 
+bool HasPlayableMemberSource(const harken::Engine& engine, std::size_t slot) noexcept {
+    return HasPlayableMemberSource(engine, engine.ReadPlayableMember(slot));
+}
+
 std::uint64_t PlayableMemberStartSequence(const harken::Engine& engine, std::size_t slot) noexcept {
-    if (!HasPlayableMemberSource(engine, slot)) return 0;
-    const auto arm = engine.ReadPlayableMember(slot).arm;
+    const auto& record = engine.ReadPlayableMember(slot);
+    if (!HasPlayableMemberSource(engine, record)) return 0;
+    const auto arm = record.arm;
     harken::TimelineArmObservation observed{};
     if (engine.timelineArms.Observe(arm, &observed)) return observed.startedBlockSequence;
-    const auto& member = engine.ReadPlayableMember(slot).completion;
-    return member.sourceRender == engine.ReadPlayableMember(slot).render &&
+    const auto& member = record.completion;
+    return member.sourceRender == record.render &&
         member.sourceStartArm.slot == arm.slot && member.sourceStartArm.generation == arm.generation &&
         member.sourceStartArm.renderSlot == arm.renderSlot && member.sourceStartArm.renderGeneration == arm.renderGeneration
         ? member.sourceStartedBlockSequence : 0;
@@ -34156,14 +34162,15 @@ bool ObservePlayableSourceLifecycle(const harken::Engine& engine,
     const harken::EnginePlayableServiceRow& row, harken::TimelineArmObservation* observation) noexcept {
     const bool armObserved = engine.timelineArms.Observe(row.arm, observation);
     std::size_t slot = 0;
-    if (!engine.ResolvePlayableMemberSlot(row.scheduleStorageBase, &slot) ||
-        !HasPlayableMemberSource(engine, slot)) return armObserved;
-    const auto arm = engine.ReadPlayableMember(slot).arm;
-    if (engine.ReadPlayableMember(slot).render != row.renderHandle ||
+    if (!engine.ResolvePlayableMemberSlot(row.scheduleStorageBase, &slot)) return armObserved;
+    const auto& record = engine.ReadPlayableMember(slot);
+    if (!HasPlayableMemberSource(engine, record)) return armObserved;
+    const auto arm = record.arm;
+    if (record.render != row.renderHandle ||
         arm.slot != row.arm.slot || arm.generation != row.arm.generation ||
         arm.renderSlot != row.arm.renderSlot || arm.renderGeneration != row.arm.renderGeneration)
         return armObserved;
-    const auto& member = engine.ReadPlayableMember(slot).completion;
+    const auto& member = record.completion;
     const bool retainedStart = member.sourceRender == row.renderHandle &&
         member.sourceStartArm.slot == arm.slot && member.sourceStartArm.generation == arm.generation &&
         member.sourceStartArm.renderSlot == arm.renderSlot &&
