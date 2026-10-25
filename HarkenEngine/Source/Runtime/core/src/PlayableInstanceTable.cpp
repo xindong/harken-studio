@@ -938,6 +938,7 @@ PlayableInstanceHandle PlayableInstanceTable::Acquire(
             --m_liveCount;
             return 0;
         }
+        if (kind == PlayableKind::Sound) ++m_pendingStartedObservationCount;
         MonitorLifecycleFacts facts{};
         FillMonitorFacts(entry, handle, facts);
         ObserveMonitorLifecycle(
@@ -1135,6 +1136,8 @@ void PlayableInstanceTable::ActivatePreparedEntry(Entry& actual,
     entry->preparingCommitOwned = false;
     entry->lifecycle = PlayableLifecycle::Active;
     ++m_liveCount;
+    if (entry->kind == PlayableKind::Sound && !entry->monitorStartedObserved)
+        ++m_pendingStartedObservationCount;
     if (m_liveCount > m_highWater) {
         m_highWater = m_liveCount;
     }
@@ -1285,6 +1288,7 @@ bool PlayableInstanceTable::RollbackCommitted(
         --m_originalDispositionCount;
     entry->originalDisposition = Entry::OriginalDisposition::None;
     entry->originalDispositionPrepared = {};
+    RemovePendingStartedObservation(*entry);
     entry->prepared = true;
     entry->lifecycle = PlayableLifecycle::Free;
     if (entry->delayedCancellationEpoch != 0) {
@@ -1362,11 +1366,18 @@ bool PlayableInstanceTable::NeedsStartedObservation(PlayableInstanceHandle handl
     return entry != nullptr && entry->kind == PlayableKind::Sound && !entry->monitorStartedObserved;
 }
 
+void PlayableInstanceTable::RemovePendingStartedObservation(const Entry& entry) noexcept {
+    if (entry.kind != PlayableKind::Sound || entry.monitorStartedObserved) return;
+    assert(m_pendingStartedObservationCount != 0);
+    --m_pendingStartedObservationCount;
+}
+
 void PlayableInstanceTable::ObserveStarted(PlayableInstanceHandle handle,
     std::uint64_t audioBlock, std::uint64_t frame) noexcept {
     auto* entry = FindMut(handle);
     if (entry == nullptr || entry->kind != PlayableKind::Sound ||
         entry->monitorStartedObserved || audioBlock == 0) return;
+    RemovePendingStartedObservation(*entry);
     entry->monitorStartedObserved = true;
     MonitorLifecycleFacts facts{};
     FillMonitorFacts(*entry, handle, facts);
@@ -1771,6 +1782,7 @@ bool PlayableInstanceTable::AdvanceLifecycle(PlayableInstanceHandle handle,
         return false;
     }
     if (to == PlayableLifecycle::Retired && originalBaseline != nullptr) originalBaseline->Release();
+    if (to == PlayableLifecycle::Retired) RemovePendingStartedObservation(*entry);
     const PlayableKind kind = entry->kind;
     const std::uint32_t generation = entry->generation;
     const VnObjectId stableId = entry->contentIdentity.stableId;

@@ -11646,6 +11646,7 @@ bool ObserveActiveArrivalMembers(
 }
 
 void ObservePlayableStarts(harken::Engine& engine) noexcept {
+    if (!engine.playableInstances.HasPendingStartedObservations()) return;
     const auto observedAudioSequence = engine.mixer.BlocksRendered();
     for (std::uint32_t slot = 0, count = engine.timelineArms.ConstructedRowCount();
          slot < count; ++slot) {

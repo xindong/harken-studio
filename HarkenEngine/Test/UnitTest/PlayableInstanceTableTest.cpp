@@ -355,32 +355,85 @@ TEST(PlayableInstanceTable, WithdrawUnpublishedParentLinkPreservesIdentityAndSib
 
 TEST(PlayableInstanceTable, StartedObservationIsOncePerCommittedSoundGeneration) {
     PlayableInstanceTable table(1);
+    EXPECT_FALSE(table.HasPendingStartedObservations());
     harken::PreparedPlayableInstance prepared;
     ASSERT_TRUE(table.PrepareAcquire(PlayableKind::Sound, 0, &prepared));
     const auto first = prepared.Handle();
     EXPECT_FALSE(table.NeedsStartedObservation(first));
+    EXPECT_FALSE(table.HasPendingStartedObservations());
     table.ObserveStarted(first, 5, 256);
     ASSERT_TRUE(table.CommitPrepared(&prepared));
     EXPECT_TRUE(table.NeedsStartedObservation(first));
+    EXPECT_TRUE(table.HasPendingStartedObservations());
     table.ObserveStarted(first, 0, 256);
     EXPECT_TRUE(table.NeedsStartedObservation(first));
+    EXPECT_TRUE(table.HasPendingStartedObservations());
     table.ObserveStarted(first, 5, 256);
     EXPECT_FALSE(table.NeedsStartedObservation(first));
+    EXPECT_FALSE(table.HasPendingStartedObservations());
     table.ObserveStarted(first, 6, 512);
     EXPECT_FALSE(table.NeedsStartedObservation(first));
+    EXPECT_FALSE(table.HasPendingStartedObservations());
     RetireFully(table, first);
     EXPECT_FALSE(table.NeedsStartedObservation(first));
+    EXPECT_FALSE(table.HasPendingStartedObservations());
     const auto reused = table.Acquire(PlayableKind::Sound, 0);
     ASSERT_NE(0u, reused);
     EXPECT_EQ(static_cast<std::uint32_t>(first), static_cast<std::uint32_t>(reused));
     EXPECT_NE(first, reused);
     EXPECT_FALSE(table.NeedsStartedObservation(first));
     EXPECT_TRUE(table.NeedsStartedObservation(reused));
+    table.ObserveStarted(first, 7, 768);
+    EXPECT_TRUE(table.HasPendingStartedObservations());
     RetireFully(table, reused);
+    EXPECT_FALSE(table.HasPendingStartedObservations());
     const auto container = table.Acquire(PlayableKind::Container, 0);
     ASSERT_NE(0u, container);
     EXPECT_FALSE(table.NeedsStartedObservation(container));
+    EXPECT_FALSE(table.HasPendingStartedObservations());
     RetireFully(table, container);
+}
+
+TEST(PlayableInstanceTable, PendingStartedObservationsFollowActualRollbackAndRecommit) {
+    PlayableInstanceTable table(3);
+    harken::PreparedPlayableInstance prepared;
+    ASSERT_TRUE(table.PrepareAcquire(PlayableKind::Sound, 0, &prepared));
+    const auto direct = table.Acquire(PlayableKind::Sound, 0);
+    ASSERT_NE(0u, direct);
+    ASSERT_TRUE(table.CommitPrepared(&prepared));
+    const auto handle = prepared.Handle();
+    table.ObserveStarted(direct, 1, 0);
+    EXPECT_TRUE(table.HasPendingStartedObservations());
+    ASSERT_TRUE(table.AcquireSourceRetirementHold(handle, prepared.ScheduleEpoch()));
+    EXPECT_FALSE(table.RollbackCommitted(handle));
+    EXPECT_FALSE(table.AdvanceLifecycle(handle, PlayableLifecycle::Retired));
+    EXPECT_TRUE(table.HasPendingStartedObservations());
+    ASSERT_TRUE(table.ReleaseSourceRetirementHold(handle));
+    ASSERT_TRUE(table.RollbackCommitted(handle));
+    EXPECT_FALSE(table.HasPendingStartedObservations());
+    ASSERT_TRUE(table.CommitPrepared(&prepared));
+    EXPECT_TRUE(table.HasPendingStartedObservations());
+    table.ObserveStarted(handle, 2, 256);
+    EXPECT_FALSE(table.HasPendingStartedObservations());
+    ASSERT_TRUE(table.RollbackCommitted(handle));
+    EXPECT_FALSE(table.HasPendingStartedObservations());
+    ASSERT_TRUE(table.CommitPrepared(&prepared));
+    EXPECT_FALSE(table.HasPendingStartedObservations());
+    RetireFully(table, handle);
+
+    harken::PreparedPlayableInstance cancelled;
+    ASSERT_TRUE(table.PrepareAcquire(PlayableKind::Sound, 0, &cancelled));
+    auto stale = cancelled;
+    ASSERT_TRUE(table.CancelPrepared(&cancelled));
+    const auto next = table.Acquire(PlayableKind::Sound, 0);
+    ASSERT_NE(0u, next);
+    EXPECT_FALSE(table.CancelPrepared(&stale));
+    table.ObserveStarted(handle, 3, 512);
+    EXPECT_TRUE(table.HasPendingStartedObservations());
+    RetireFully(table, next);
+    EXPECT_FALSE(table.HasPendingStartedObservations());
+    RetireFully(table, direct);
+    EXPECT_FALSE(table.HasPendingStartedObservations());
 }
 
 TEST(PlayableInstanceTable, AcquiredInstanceReportsItsKindAndParent)
@@ -2582,9 +2635,11 @@ TEST(PlayableInstanceTable, PreparedCommitHeldFreezesActualInputsAliasesAndSourc
     EXPECT_FALSE(rootProof.Valid());
     EXPECT_FALSE(root.Valid());
     EXPECT_EQ(1u, table.LiveCount());
+    EXPECT_FALSE(table.HasPendingStartedObservations());
     EXPECT_FALSE(table.PublishPreparedLink(childHandle));
     EXPECT_EQ(0u, table.FirstChild(rootHandle));
     PlayableInstanceTable::ConsumePreparedCommit(std::move(childProof));
+    EXPECT_TRUE(table.HasPendingStartedObservations());
     ASSERT_TRUE(table.PublishPreparedLink(childHandle));
     EXPECT_EQ(childHandle, table.FirstChild(rootHandle));
     EXPECT_EQ(2u, table.LiveCount());

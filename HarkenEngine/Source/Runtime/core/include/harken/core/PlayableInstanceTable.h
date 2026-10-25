@@ -452,6 +452,7 @@ public:
     bool CaptureMonitorFacts(PlayableInstanceHandle handle,
                              MonitorLifecycleFacts* out) const noexcept;
     bool NeedsStartedObservation(PlayableInstanceHandle handle) const noexcept;
+    bool HasPendingStartedObservations() const noexcept { return m_pendingStartedObservationCount != 0; }
     void ObserveStarted(PlayableInstanceHandle handle, std::uint64_t audioBlock,
                         std::uint64_t frame) noexcept;
     bool CaptureRootMetadata(PlayableInstanceHandle handle,
@@ -618,6 +619,7 @@ private:
     Entry* FindAnyMut(PlayableInstanceHandle handle) noexcept;
     Entry* FindPrepared(const PreparedPlayableInstance& prepared) noexcept;
     void ActivatePreparedEntry(Entry& entry, PlayableInstanceHandle handle) noexcept;
+    void RemovePendingStartedObservation(const Entry& entry) noexcept;
     bool IsCancellationPrepared(
         const PreparedPlayableCancellation& prepared) const noexcept;
     bool OwnsDelayedCancellation(
@@ -657,6 +659,7 @@ private:
     std::uint64_t m_nextScheduleEpoch = 1;
     bool m_scheduleEpochExhausted = false;
     std::uint32_t m_liveCount = 0;
+    std::uint32_t m_pendingStartedObservationCount = 0;
     std::uint32_t m_highWater = 0;
     std::uint32_t m_quarantinedCount = 0;
     std::uint64_t m_preparedCancellationCount = 0;
