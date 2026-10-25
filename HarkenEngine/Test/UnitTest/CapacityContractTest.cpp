@@ -519,6 +519,49 @@ VnConfig MakeNullConfig() {
     return config;
 }
 
+TEST(StableBackingPreparation, ServiceFeaturePromiseSurvivesResetAndFailedProtectedGrowth) {
+    auto config = MakeNullConfig();
+    config.maxVoices = 8;
+    harkentest::EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    harken::StableStoragePreparation backing;
+    ASSERT_TRUE(engine.PreparePlayableServiceBacking(2, &backing));
+    ASSERT_GE(engine.playableServices.size(), 2u);
+    auto& first = engine.playableServices[0];
+    auto* path = first.selectionPath.data();
+    ASSERT_NE(nullptr, path);
+    first.selectionPath[0].childOrdinal = 7;
+    first.Reset();
+    EXPECT_EQ(path, first.selectionPath.data());
+    EXPECT_EQ(0u, first.selectionPath[0].childOrdinal);
+
+    // Occupy the current prefix so growth must preserve the promised spare rows.
+    for (auto& row : engine.playableServices) row.actionPrepared = true;
+    const auto prefix = engine.playableServices.size();
+    struct FaultGuard {
+        ~FaultGuard() { harken::detail::DisarmLogicAllocFaultForTests(); }
+    } fault;
+    harken::detail::ArmLogicAllocFaultForTests(2,
+        harken::detail::LogicAllocSite::PlayableServiceFeatures);
+    EXPECT_EQ(nullptr, engine.PrepareFreePlayableService());
+    ASSERT_GT(engine.playableServices.size(), prefix);
+    EXPECT_TRUE(backing.Valid());
+    harken::detail::DisarmLogicAllocFaultForTests();
+    auto* recovered = engine.PrepareFreePlayableService();
+    ASSERT_NE(nullptr, recovered);
+    for (const auto& row : engine.playableServices) EXPECT_TRUE(row.HasFeatureArrays());
+    {
+        const auto use = backing.Use();
+        harken::detail::ArmLogicAllocFaultForTests(1,
+            harken::detail::LogicAllocSite::PlayableServiceFeatures);
+        EXPECT_TRUE(engine.PreparePlayableFeatureBacking());
+        EXPECT_EQ(recovered, engine.PrepareFreePlayableService());
+        EXPECT_EQ(1u, harken::detail::g_logicAllocFault.remaining);
+    }
+    for (auto& row : engine.playableServices) row.actionPrepared = false;
+}
+
 TEST(CapacityContract, StartupDefaultsAre256AndExplicitCapacitiesRemainEffective) {
     VnConfig config = MakeNullConfig();
     harken::EngineConfig resolved;

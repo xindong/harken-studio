@@ -8418,7 +8418,7 @@ static void CheckDelayedStopMatchEnteringNestedDecision(bool refuseLastArm) {
     std::vector<harken::TimelineArmToken> blockers;
     const auto originalChild = row.variableControlChildInstances[0];
     const auto originalEpoch = engine->playableInstances.Classify(root).scheduleEpoch;
-    const auto originalChildren = row.variableControlChildInstances;
+    const auto originalChildren = row.variableControlChildInstances.Snapshot();
     const auto originalInstances = engine->playableInstances.LiveCount();
     const auto originalDecisions = engine->decisions.LiveCount();
     std::vector<VnVoiceHandle> originalStopVoices;
@@ -8446,7 +8446,7 @@ static void CheckDelayedStopMatchEnteringNestedDecision(bool refuseLastArm) {
         }
         EXPECT_EQ(originalEpoch, engine->playableInstances.Classify(root).scheduleEpoch);
         EXPECT_EQ(originalChild, row.variableControlChildInstances[0]);
-        EXPECT_EQ(originalChildren, row.variableControlChildInstances);
+        EXPECT_EQ(originalChildren, row.variableControlChildInstances.Snapshot());
         EXPECT_EQ(originalInstances, engine->playableInstances.LiveCount());
         EXPECT_EQ(originalDecisions, engine->decisions.LiveCount());
         EXPECT_EQ(originalResources, std::count_if(engine->authoredStopResources.begin(),
@@ -8629,7 +8629,7 @@ static void CheckInheritedStopSuccessorLastCommand(bool nestedQueue) {
     const auto sourceRelease = sourceService->releaseObserver;
     const auto sourceRender = sourceService->renderHandle;
     const auto originalLeaf = sourceService->activeLeafInstance;
-    const auto originalOrdinals = row.selectedChildOrdinals;
+    const auto originalOrdinals = row.selectedChildOrdinals.Snapshot();
     const auto originalIteration = row.containerLoopIteration;
     const auto rootEpoch = engine->playableInstances.Classify(root).scheduleEpoch;
     const auto originalQueue = sourceService->queueInstance;
@@ -8708,7 +8708,7 @@ static void CheckInheritedStopSuccessorLastCommand(bool nestedQueue) {
             EXPECT_EQ(1u, after.completedSelections);
             EXPECT_EQ(originalLeaf, after.lastConsumedChild);
             EXPECT_EQ(originalLeaf, row.activeLeafInstance);
-            EXPECT_EQ(originalOrdinals, row.selectedChildOrdinals);
+            EXPECT_EQ(originalOrdinals, row.selectedChildOrdinals.Snapshot());
             EXPECT_EQ(originalIteration, row.containerLoopIteration);
         }
         for (std::uint32_t index = availableCommands; index < engine->commands.Capacity(); ++index) {
@@ -47879,7 +47879,7 @@ static void CheckPendingVariableSelectionShape(PendingVariableSelectionShape sha
     }
     const auto& originalGroup = engine.acceptedPendingVariableGroups[service.slot];
     ASSERT_TRUE(engine.MatchesPendingVariableGroupTopology(originalGroup, *row));
-    const auto oldLeaves = row->variableControlLeafInstances;
+    const auto oldLeaves = row->variableControlLeafInstances.Snapshot();
     const auto oldTop = row->variableControlChildInstances[0];
     harken::PlayableInstanceTable::OriginalLifetimePin foreignTreeLoan;
     if (foreignLoanTarget != PendingVariableTreeLoan::None) {
@@ -48006,7 +48006,7 @@ static void CheckPendingVariableSelectionShape(PendingVariableSelectionShape sha
         if (foreignTreeLoan.Valid()) {
             ASSERT_EQ(service, row->identity);
             if (!stopRequested) EXPECT_EQ(harken::EnginePlayableStartPhase::PendingImmediateEntry, row->phase);
-            EXPECT_EQ(oldLeaves, row->variableControlLeafInstances);
+            EXPECT_EQ(oldLeaves, row->variableControlLeafInstances.Snapshot());
             if (quantum == 8) {
                 EXPECT_TRUE(originalGroup.RepreparePending());
                 EXPECT_FALSE(originalGroup.ReprepareReady());

@@ -231,7 +231,7 @@ std::size_t Engine::ActionPlayDynamicBytes() const noexcept {
             column(scratch.sourceLeafEventCounts) + column(scratch.replacementGroupArms);
     }
     for (const auto& row : playableServices) {
-        bytes += column(row.memberPrograms) + column(row.members) + column(row.variableControlRetargetMembers) +
+        bytes += row.FeatureArrayStorageBytes() + column(row.memberPrograms) + column(row.members) + column(row.variableControlRetargetMembers) +
             row.variableControlMemberWeights.StorageBytes() + row.variableControlInitialArms.StorageBytes() +
             row.variableControlRetargetIncoming.StorageBytes() +
             column(row.variableControlControllers) + column(row.variableControlContainers) +
@@ -10707,7 +10707,8 @@ bool PreparePlayableServiceRow(
     harken::EnginePlayableStartRow* invocationOwner = nullptr,
     harken::EngineActionPlayScratch::PreparedVariableControlOwnerContext* originalContext = nullptr,
     harken::EngineActionPlayStorage* preparingStorage = nullptr,
-    const harken::EnginePlayableServiceRow* preparingParent = nullptr) noexcept {
+    const harken::EnginePlayableServiceRow* preparingParent = nullptr,
+    bool requireFeatureArrays = true) noexcept {
     if (originalContext != nullptr && !originalContext->CanPrepareOriginalService()) return false;
     if (row.phase != harken::EnginePlayableStartPhase::Free || row.actionPrepared ||
         row.partition.Valid() || row.quarantined ||
@@ -10727,6 +10728,8 @@ bool PreparePlayableServiceRow(
                &engine.playableStarts[invocationOwner->slot] != invocationOwner) {
         return false;
     }
+    if (requireFeatureArrays && !row.HasFeatureArrays() &&
+        (engine.playableServices.PreparedUseActive() || !row.PrepareFeatureArrays())) return false;
     return engine.PrepareOriginalPlayableServiceStorage(
         row, owner, epoch, *invocationOwner, rootService, originalContext, preparingStorage, preparingParent);
 }
@@ -16773,9 +16776,9 @@ bool SetNestedVariableControlPropertyPath(harken::EnginePlayableServiceRow& serv
         prefix > service.selectedChildOrdinals.size() - suffix ||
         prefix > parent.containerInstanceCount || parent.ownerInstance == 0) return false;
     const auto root = inherited ? parent.variableControlPropertyRoot : parent.root;
-    service.selectionPath = {};
-    service.selectedChildOrdinals = {};
-    service.containerInstances = {};
+    service.selectionPath.Clear();
+    service.selectedChildOrdinals.Clear();
+    service.containerInstances.Clear();
     std::copy_n(parent.selectionPath.begin(), prefix, service.selectionPath.begin());
     std::copy_n(parent.selectedChildOrdinals.begin(), prefix, service.selectedChildOrdinals.begin());
     std::copy_n(parent.containerInstances.begin(), prefix, service.containerInstances.begin());
@@ -21085,7 +21088,7 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
         propertyPrefix = scratch->variableControlNestedPrefixOrdinals.data();
         propertyPrefixCount = scratch->variableControlNestedPrefixCount;
     }
-    if (propertyPrefixCount > row.selectedChildOrdinals.size() ||
+    if (propertyPrefixCount > row.selectedChildOrdinals.Capacity() ||
         (propertyPrefixCount != 0 && (propertyPrefix == nullptr ||
             (continuationParent != nullptr && (continuationNodes == nullptr || continuationInstances == nullptr))))) {
         result.status = harken::PlayableStartStatus::InvalidInput;
@@ -28233,7 +28236,7 @@ QueueContinuationPrepareStatus StartSignalOnlyNoOverlapSuccessor(
     harken::EnginePlayableServiceRow* childService = nullptr;
     harken::EnginePlayableServiceRow* firstChildService = nullptr;
     std::array<harken::SelectionPathNodeV1, harken::kSelectionPathNodeCapacity> nextPath = row.selectionPath;
-    auto nextContainers = row.containerInstances;
+    auto nextContainers = row.containerInstances.Snapshot();
     nextPath[selectedCount - 1u] = MakeContainerSelectionPathNode(program.containerStableId, selected);
     if (frontierOwnedQueue && childKind == harken::PlayableKindV1::Sound) {
         if (!scratch.playableTreeExecutor.PrepareInstance(engine.playableInstances,
@@ -28902,7 +28905,7 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
         row.selectionPath;
     std::array<std::uint32_t, harken::kSelectionPathNodeCapacity>
         nextSelectedChildOrdinals = row.selectedChildOrdinals;
-    auto nextContainerInstances = row.containerInstances;
+    auto nextContainerInstances = row.containerInstances.Snapshot();
     nextContainerInstances[frame.pathPrefixCount] = frame.instance;
     std::uint32_t nextSelectionCount = frame.pathPrefixCount;
     auto* attempt = AcquireFrontierAttempt(engine);
@@ -30954,7 +30957,7 @@ engine.runtimeRecreateRequired = true;
     row.variableControlNestedQueueOwnerIndex =
         row.variableControlDiscreteRetargetIncomingQueueOwnerIndex;
     if (row.variableControlPropertyRoot.stableId == VnObjectId{}) {
-        row.selectionPath = {};
+        row.selectionPath.Clear();
         row.selectionCount =
             std::min(row.variableControlDiscreteRetargetIncomingSelectionCount,
                      static_cast<std::uint32_t>(row.selectionPath.size()));
@@ -34083,9 +34086,9 @@ engine.runtimeRecreateRequired = true;
         retargetHasZeroWorkCompletion;
     row.variableControlRetargetZeroWorkCompletionFrame =
         retargetZeroWorkCompletionFrame;
-    row.variableControlRetargetLogicalOrdinals = {};
-    row.variableControlRetargetLogicalCompletionFrames = {};
-    row.variableControlRetargetLogicalCompleted = {};
+    row.variableControlRetargetLogicalOrdinals.Clear();
+    row.variableControlRetargetLogicalCompletionFrames.Clear();
+    row.variableControlRetargetLogicalCompleted.Clear();
     row.variableControlRetargetLogicalCount = pendingLogicalCount;
     std::copy_n(pendingLogicalOrdinals.begin(), pendingLogicalCount,
                 row.variableControlRetargetLogicalOrdinals.begin());
@@ -48787,9 +48790,9 @@ engine.runtimeRecreateRequired = true;
                     engine.ClearPlayableMemberReferences(currentBase + index, 1);
                 row.variableControlContinuousMemberCount = memberCount;
                 row.scheduleLeafCount = row.variableControlDiscreteMemberCount + memberCount;
-                row.variableControlRetargetLogicalOrdinals = {};
-                row.variableControlRetargetLogicalCompletionFrames = {};
-                row.variableControlRetargetLogicalCompleted = {};
+                row.variableControlRetargetLogicalOrdinals.Clear();
+                row.variableControlRetargetLogicalCompletionFrames.Clear();
+                row.variableControlRetargetLogicalCompleted.Clear();
                 row.variableControlRetargetLogicalCount = 0;
                 row.variableControlRetargetHasZeroWorkCompletion = false;
                 row.variableControlRetargetZeroWorkCompletionFrame = 0;
@@ -48827,9 +48830,9 @@ engine.runtimeRecreateRequired = true;
             row.variableControlRetargetEnvelopeEndFrame = 0;
             row.variableControlRetargetZeroWorkCompletionFrame = 0;
             row.variableControlRetargetHasZeroWorkCompletion = false;
-            row.variableControlRetargetLogicalOrdinals = {};
-            row.variableControlRetargetLogicalCompletionFrames = {};
-            row.variableControlRetargetLogicalCompleted = {};
+            row.variableControlRetargetLogicalOrdinals.Clear();
+            row.variableControlRetargetLogicalCompletionFrames.Clear();
+            row.variableControlRetargetLogicalCompleted.Clear();
             row.variableControlRetargetLogicalCount = 0;
             row.variableControlRetargetPrepared = false;
             row.variableControlRetargetDecisionCommitted = false;
@@ -53530,7 +53533,7 @@ bool PreparePendingOrdinaryMemberDirectories(Engine& engine, EnginePlayableServi
             [&](std::uint32_t required) noexcept {
                 return engine.PreparePlayableServiceDependencies(required);
             })) return false;
-    engine.InitializePlayableServiceRows(previous);
+    if (!engine.InitializePlayableServiceRows(previous)) return false;
     for (auto slot = previous; slot < previous + childCount; ++slot)
         if (!engine.PreparePlayableMemberDirectory(engine.playableServices[slot])) return false;
     return true;
@@ -58416,18 +58419,18 @@ bool Engine::TransferPendingVariableGroupReplacementPublication(EngineActionPlay
         service->controlLifecycle = PlayableControlLifecycle::Preparing;
         if (service->queueSuccessorProgramBank != nullptr) service->queueSuccessorProgramBank->published = true;
     }
-    row.variableControlChildInstances = {};
-    row.variableControlChildKinds = {};
-    row.variableControlChildEpochs = {};
-    row.variableControlLeafInstances = {};
-    row.variableControlLeafEpochs = {};
+    row.variableControlChildInstances.Clear();
+    row.variableControlChildKinds.Clear();
+    row.variableControlChildEpochs.Clear();
+    row.variableControlLeafInstances.Clear();
+    row.variableControlLeafEpochs.Clear();
     std::ranges::fill(row.variableControlInitialArms.ValuesView(), TimelineArmToken{});
     std::ranges::fill(row.variableControlMemberWeights.Children(), EngineVariableMemberWeights::ChildWeight{});
     row.variableControlDiscreteHasZeroWorkCompletion = false;
     row.variableControlDiscreteZeroWorkCompletionFrame = 0;
-    row.variableControlContinuousLogicalOrdinals = {};
-    row.variableControlContinuousLogicalCompletionFrames = {};
-    row.variableControlContinuousLogicalCompleted = {};
+    row.variableControlContinuousLogicalOrdinals.Clear();
+    row.variableControlContinuousLogicalCompletionFrames.Clear();
+    row.variableControlContinuousLogicalCompleted.Clear();
     row.variableControlContinuousLogicalCount = 0;
     row.variableControlDiscreteMemberCount = counts[0];
     row.variableControlInitialDiscreteMemberCount = child.pendingVariableReplacementControls[0].nativeMemberCount;
@@ -78548,7 +78551,8 @@ bool PrepareImmediateActionSingleLeafPlay(
     }
 
     if (!PreparePlayableServiceRow(engine, *row, scratch->instance.Handle(),
-                                  scratch->instance.ScheduleEpoch(), nullptr, nullptr, &scratch->storage)) {
+                                  scratch->instance.ScheduleEpoch(), nullptr, nullptr, &scratch->storage, nullptr,
+                                  instanceKind != harken::PlayableKind::Sound)) {
         (void)scratch->playableTreeExecutor.Cancel(engine.playableInstances);
         (void)ReleaseImmediateActionPlayableLease(engine, scratch, &plan);
         plan.result = VN_NO_VOICE;

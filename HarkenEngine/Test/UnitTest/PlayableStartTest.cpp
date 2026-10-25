@@ -15889,8 +15889,8 @@ TEST(PlayableStart,
     EXPECT_EQ(0u, row->variableControlContinuousMemberCount);
     ASSERT_EQ(2u, row->variableControlContinuousLogicalCount);
     ASSERT_EQ(2u, row->variableControlChildCount);
-    const auto originalChildren = row->variableControlChildInstances;
-    const auto originalBoundaries = row->variableControlContinuousLogicalCompletionFrames;
+    const auto originalChildren = row->variableControlChildInstances.Snapshot();
+    const auto originalBoundaries = row->variableControlContinuousLogicalCompletionFrames.Snapshot();
     const auto finalBoundary = row->zeroWorkCompletionFrame;
     ASSERT_EQ(row->startFrame + 96000u, finalBoundary);
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 7.0f));
@@ -15899,8 +15899,8 @@ TEST(PlayableStart,
         engine->nullBackend.Pump(1);
         ASSERT_FALSE(engine->runtimeRecreateRequired);
     }
-    EXPECT_EQ(originalChildren, row->variableControlChildInstances);
-    EXPECT_EQ(originalBoundaries, row->variableControlContinuousLogicalCompletionFrames);
+    EXPECT_EQ(originalChildren, row->variableControlChildInstances.Snapshot());
+    EXPECT_EQ(originalBoundaries, row->variableControlContinuousLogicalCompletionFrames.Snapshot());
     EXPECT_FALSE(row->variableControlRetargetPrepared);
     for (unsigned block = 0; block < 2048; ++block) {
         ASSERT_EQ(VN_OK, Vn_Update());
@@ -15956,8 +15956,8 @@ TEST(PlayableStart,
     ASSERT_EQ(0u, row->variableControlContinuousMemberCount);
     ASSERT_EQ(2u, row->variableControlContinuousLogicalCount);
     ASSERT_EQ(2u, row->variableControlChildCount);
-    const auto originalChildren = row->variableControlChildInstances;
-    const auto originalBoundaries = row->variableControlContinuousLogicalCompletionFrames;
+    const auto originalChildren = row->variableControlChildInstances.Snapshot();
+    const auto originalBoundaries = row->variableControlContinuousLogicalCompletionFrames.Snapshot();
     const auto finalBoundary = row->zeroWorkCompletionFrame;
     ASSERT_EQ(row->startFrame + 96000u, finalBoundary);
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 3.0f));
@@ -15966,8 +15966,8 @@ TEST(PlayableStart,
         engine->nullBackend.Pump(1);
         ASSERT_FALSE(engine->runtimeRecreateRequired);
     }
-    EXPECT_EQ(originalChildren, row->variableControlChildInstances);
-    EXPECT_EQ(originalBoundaries, row->variableControlContinuousLogicalCompletionFrames);
+    EXPECT_EQ(originalChildren, row->variableControlChildInstances.Snapshot());
+    EXPECT_EQ(originalBoundaries, row->variableControlContinuousLogicalCompletionFrames.Snapshot());
     EXPECT_FALSE(row->variableControlRetargetPrepared);
     for (unsigned block = 0; block < 2048; ++block) {
         ASSERT_EQ(VN_OK, Vn_Update());

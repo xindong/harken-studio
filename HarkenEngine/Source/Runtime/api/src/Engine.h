@@ -1645,6 +1645,76 @@ struct EngineVariableInitialArms {
     }
 };
 
+// Views never allocate or acquire ownership. Only the service binds its own backing.
+template<class T, std::size_t N>
+class EngineServiceArrayView {
+public:
+    using Array = std::array<T, N>;
+    EngineServiceArrayView() noexcept = default;
+    EngineServiceArrayView(const EngineServiceArrayView&) = delete;
+    EngineServiceArrayView(EngineServiceArrayView&&) = delete;
+    EngineServiceArrayView& operator=(const Array& values) noexcept {
+        assert(values_ != nullptr);
+        *values_ = values;
+        return *this;
+    }
+    EngineServiceArrayView& operator=(const EngineServiceArrayView& other) noexcept {
+        if (other.values_ == nullptr) Clear();
+        else *this = *other.values_;
+        return *this;
+    }
+    std::size_t size() const noexcept { return values_ == nullptr ? 0u : N; }
+    static constexpr std::size_t Capacity() noexcept { return N; }
+    T* data() noexcept { return values_ == nullptr ? nullptr : values_->data(); }
+    const T* data() const noexcept { return values_ == nullptr ? nullptr : values_->data(); }
+    T* begin() noexcept { return data(); }
+    const T* begin() const noexcept { return data(); }
+    T* end() noexcept { return values_ == nullptr ? nullptr : data() + N; }
+    const T* end() const noexcept { return values_ == nullptr ? nullptr : data() + N; }
+    T& operator[](std::size_t index) noexcept {
+        assert(values_ != nullptr && index < N);
+        return (*values_)[index];
+    }
+    const T& operator[](std::size_t index) const noexcept {
+        assert(values_ != nullptr && index < N);
+        return (*values_)[index];
+    }
+    void Clear() noexcept { if (values_ != nullptr) values_->fill(T{}); }
+    void fill(const T& value) noexcept {
+        assert(values_ != nullptr);
+        values_->fill(value);
+    }
+    const Array& Snapshot() const noexcept {
+        static const Array empty{};
+        return values_ == nullptr ? empty : *values_;
+    }
+    operator const Array&() const noexcept { return Snapshot(); }
+private:
+    friend struct EnginePlayableServiceRow;
+    void Bind(Array& values) noexcept { values_ = &values; }
+    Array* values_ = nullptr;
+};
+
+struct EngineServiceFeatureArrays {
+    std::array<SelectionDeltaRefV1, kSelectionPathNodeCapacity> selectionDeltas{};
+    std::array<std::uint32_t, kSelectionPathNodeCapacity> selectedChildOrdinals{};
+    std::array<PlayableInstanceHandle, kMaxKnownScheduleLeaves + 64u> variableControlChildInstances{};
+    std::array<PlayableKind, kMaxKnownScheduleLeaves + 64u> variableControlChildKinds{};
+    std::array<std::uint64_t, kMaxKnownScheduleLeaves + 64u> variableControlChildEpochs{};
+    std::array<PlayableInstanceHandle, kMaxKnownScheduleLeaves> variableControlLeafInstances{};
+    std::array<std::uint64_t, kMaxKnownScheduleLeaves> variableControlLeafEpochs{};
+    std::array<std::uint32_t, 64> variableControlContinuousLogicalOrdinals{};
+    std::array<std::uint64_t, 64> variableControlContinuousLogicalCompletionFrames{};
+    std::array<bool, 64> variableControlContinuousLogicalCompleted{};
+    std::array<std::uint32_t, 64> variableControlRetargetLogicalOrdinals{};
+    std::array<std::uint64_t, 64> variableControlRetargetLogicalCompletionFrames{};
+    std::array<bool, 64> variableControlRetargetLogicalCompleted{};
+    std::array<std::uint16_t, kMaxKnownScheduleLeaves> queueInitialCurrentMemberIndices{};
+    std::array<TimelineArmToken, kMaxKnownScheduleLeaves> queueInitialCurrentDelayedArms{};
+    std::array<PlayableInstanceHandle, kSelectionPathNodeCapacity> containerInstances{};
+    std::array<SelectionPathNodeV1, kSelectionPathNodeCapacity> selectionPath{};
+};
+
 struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     struct UnpublishedVariableGroupCancellation {
         EnginePlayableServiceToken service{};
@@ -1758,10 +1828,8 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     bool pendingImmediateRetryStopIssued = false;
     ActionFiringHandle pendingImmediateCohortRoot = 0;
     std::uint64_t zeroWorkCompletionFrame = 0;
-    std::array<SelectionDeltaRefV1, kSelectionPathNodeCapacity>
-        selectionDeltas{};
-    std::array<std::uint32_t, kSelectionPathNodeCapacity>
-        selectedChildOrdinals{};
+    EngineServiceArrayView<SelectionDeltaRefV1, kSelectionPathNodeCapacity> selectionDeltas{};
+    EngineServiceArrayView<std::uint32_t, kSelectionPathNodeCapacity> selectedChildOrdinals{};
     std::uint32_t selectionCount = 0;
     std::uint32_t selectionDeltaCount = 0;
     SelectionSeedProbeCopyV1 selectionSeedProbe{};
@@ -1793,12 +1861,9 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     // One child instance per published VariableControl member.  The root
     // remains the owner of the VariableControl decision state; these handles
     // own the playable voice/schedule lifetime and are retired with the tree.
-    std::array<PlayableInstanceHandle, kMaxKnownScheduleLeaves + 64u>
-        variableControlChildInstances{};
-    std::array<PlayableKind, kMaxKnownScheduleLeaves + 64u>
-        variableControlChildKinds{};
-    std::array<std::uint64_t, kMaxKnownScheduleLeaves + 64u>
-        variableControlChildEpochs{};
+    EngineServiceArrayView<PlayableInstanceHandle, kMaxKnownScheduleLeaves + 64u> variableControlChildInstances{};
+    EngineServiceArrayView<PlayableKind, kMaxKnownScheduleLeaves + 64u> variableControlChildKinds{};
+    EngineServiceArrayView<std::uint64_t, kMaxKnownScheduleLeaves + 64u> variableControlChildEpochs{};
     // Nested child handles remain indexed after the top-level row members so
     // lifecycle cleanup and diagnostics can enumerate the full subtree.
     std::uint32_t variableControlNestedChildCount = 0;
@@ -1809,10 +1874,8 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     std::uint32_t variableControlNestedVariableControlCount = 0;
     std::vector<EngineVariableTreeStorage::Instance> variableControlContainers;
     std::uint32_t variableControlNestedContainerCount = 0;
-    std::array<PlayableInstanceHandle, kMaxKnownScheduleLeaves>
-        variableControlLeafInstances{};
-    std::array<std::uint64_t, kMaxKnownScheduleLeaves>
-        variableControlLeafEpochs{};
+    EngineServiceArrayView<PlayableInstanceHandle, kMaxKnownScheduleLeaves> variableControlLeafInstances{};
+    EngineServiceArrayView<std::uint64_t, kMaxKnownScheduleLeaves> variableControlLeafEpochs{};
     // The nested Queue owns its cursor and occurrences on the exact
     // Container instance that represents the Queue program. This is not
     // necessarily the first nested Container in a deep VariableControl path.
@@ -1835,9 +1898,9 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     bool variableControlDiscreteHasZeroWorkCompletion = false;
     std::uint64_t variableControlContinuousZeroWorkCompletionFrame = 0;
     bool variableControlContinuousHasZeroWorkCompletion = false;
-    std::array<std::uint32_t, 64> variableControlContinuousLogicalOrdinals{};
-    std::array<std::uint64_t, 64> variableControlContinuousLogicalCompletionFrames{};
-    std::array<bool, 64> variableControlContinuousLogicalCompleted{};
+    EngineServiceArrayView<std::uint32_t, 64> variableControlContinuousLogicalOrdinals{};
+    EngineServiceArrayView<std::uint64_t, 64> variableControlContinuousLogicalCompletionFrames{};
+    EngineServiceArrayView<bool, 64> variableControlContinuousLogicalCompleted{};
     std::uint32_t variableControlContinuousLogicalCount = 0;
     std::uint32_t variableControlChildWeightCount = 0;
     BankVersionToken variableControlDiscreteMissedBank{};
@@ -1923,9 +1986,9 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     std::uint64_t variableControlRetargetEnvelopeEndFrame = 0;
     std::uint64_t variableControlRetargetZeroWorkCompletionFrame = 0;
     bool variableControlRetargetHasZeroWorkCompletion = false;
-    std::array<std::uint32_t, 64> variableControlRetargetLogicalOrdinals{};
-    std::array<std::uint64_t, 64> variableControlRetargetLogicalCompletionFrames{};
-    std::array<bool, 64> variableControlRetargetLogicalCompleted{};
+    EngineServiceArrayView<std::uint32_t, 64> variableControlRetargetLogicalOrdinals{};
+    EngineServiceArrayView<std::uint64_t, 64> variableControlRetargetLogicalCompletionFrames{};
+    EngineServiceArrayView<bool, 64> variableControlRetargetLogicalCompleted{};
     std::uint32_t variableControlRetargetLogicalCount = 0;
     struct VariableControlRetargetMember {
         EnginePlayableMemberReference reference{};
@@ -1986,10 +2049,8 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     EngineQueueProgramRange queueCurrentPrograms{};
     std::uint32_t queueCurrentScheduleBase = 0;
     std::uint32_t queueCurrentScheduleLeafCount = 0;
-    std::array<std::uint16_t, kMaxKnownScheduleLeaves>
-        queueInitialCurrentMemberIndices{};
-    std::array<TimelineArmToken, kMaxKnownScheduleLeaves>
-        queueInitialCurrentDelayedArms{};
+    EngineServiceArrayView<std::uint16_t, kMaxKnownScheduleLeaves> queueInitialCurrentMemberIndices{};
+    EngineServiceArrayView<TimelineArmToken, kMaxKnownScheduleLeaves> queueInitialCurrentDelayedArms{};
     std::uint32_t queueInitialCurrentMemberLeafCount = 0;
     std::uint16_t queueInitialCurrentDelayedCount = 0;
     CompletionOwnerRef queueSuccessorOwner{};
@@ -2066,11 +2127,9 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     CompositeCompletionOwnerToken containerLoopCompositeOwner{};
     bool containerLoopOwnsScheduleResources = false;
     bool ordinaryFinalSourceTransferred = false;
-    std::array<PlayableInstanceHandle, kSelectionPathNodeCapacity>
-        containerInstances{};
+    EngineServiceArrayView<PlayableInstanceHandle, kSelectionPathNodeCapacity> containerInstances{};
     std::uint32_t containerInstanceCount = 0;
-    std::array<SelectionPathNodeV1, kSelectionPathNodeCapacity>
-        selectionPath{};
+    EngineServiceArrayView<SelectionPathNodeV1, kSelectionPathNodeCapacity> selectionPath{};
     std::uint32_t containerLoopIteration = 0;
     bool queueFinalSourceTombstoned = false;
     bool queueAbortRequested = false;
@@ -2101,6 +2160,60 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
         return *invocation;
     }
 
+    bool HasFeatureArrays() const noexcept { return featureArrays_ != nullptr; }
+    std::size_t FeatureArrayStorageBytes() const noexcept {
+        return featureArrays_ == nullptr ? 0u : sizeof(EngineServiceFeatureArrays);
+    }
+    bool PrepareFeatureArrays() noexcept {
+        if (featureArrays_ != nullptr) return true;
+        if (memguard::IsAudioTagged()) return false;
+        try {
+            detail::LogicAllocCheckpoint(detail::LogicAllocSite::PlayableServiceFeatures);
+            featureArrays_ = std::make_unique<EngineServiceFeatureArrays>();
+        } catch (...) { return false; }
+        BindFeatureArrays();
+        return true;
+    }
+    void ClearFeatureArrays() noexcept {
+        selectionDeltas.Clear();
+        selectedChildOrdinals.Clear();
+        variableControlChildInstances.Clear();
+        variableControlChildKinds.Clear();
+        variableControlChildEpochs.Clear();
+        variableControlLeafInstances.Clear();
+        variableControlLeafEpochs.Clear();
+        variableControlContinuousLogicalOrdinals.Clear();
+        variableControlContinuousLogicalCompletionFrames.Clear();
+        variableControlContinuousLogicalCompleted.Clear();
+        variableControlRetargetLogicalOrdinals.Clear();
+        variableControlRetargetLogicalCompletionFrames.Clear();
+        variableControlRetargetLogicalCompleted.Clear();
+        queueInitialCurrentMemberIndices.Clear();
+        queueInitialCurrentDelayedArms.Clear();
+        containerInstances.Clear();
+        selectionPath.Clear();
+    }
+    void BindFeatureArrays() noexcept {
+        if (featureArrays_ == nullptr) return;
+        selectionDeltas.Bind(featureArrays_->selectionDeltas);
+        selectedChildOrdinals.Bind(featureArrays_->selectedChildOrdinals);
+        variableControlChildInstances.Bind(featureArrays_->variableControlChildInstances);
+        variableControlChildKinds.Bind(featureArrays_->variableControlChildKinds);
+        variableControlChildEpochs.Bind(featureArrays_->variableControlChildEpochs);
+        variableControlLeafInstances.Bind(featureArrays_->variableControlLeafInstances);
+        variableControlLeafEpochs.Bind(featureArrays_->variableControlLeafEpochs);
+        variableControlContinuousLogicalOrdinals.Bind(featureArrays_->variableControlContinuousLogicalOrdinals);
+        variableControlContinuousLogicalCompletionFrames.Bind(featureArrays_->variableControlContinuousLogicalCompletionFrames);
+        variableControlContinuousLogicalCompleted.Bind(featureArrays_->variableControlContinuousLogicalCompleted);
+        variableControlRetargetLogicalOrdinals.Bind(featureArrays_->variableControlRetargetLogicalOrdinals);
+        variableControlRetargetLogicalCompletionFrames.Bind(featureArrays_->variableControlRetargetLogicalCompletionFrames);
+        variableControlRetargetLogicalCompleted.Bind(featureArrays_->variableControlRetargetLogicalCompleted);
+        queueInitialCurrentMemberIndices.Bind(featureArrays_->queueInitialCurrentMemberIndices);
+        queueInitialCurrentDelayedArms.Bind(featureArrays_->queueInitialCurrentDelayedArms);
+        containerInstances.Bind(featureArrays_->containerInstances);
+        selectionPath.Bind(featureArrays_->selectionPath);
+    }
+
     void Reset() noexcept {
         const auto serviceIdentity = identity;
         const bool exhausted = quarantined;
@@ -2111,6 +2224,8 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
         assert(std::none_of(members.begin(), members.end(),
             [](const auto& token) noexcept { return token.Valid(); }));
         auto memberDirectory = std::move(members);
+        ClearFeatureArrays();
+        auto featureArrays = std::move(featureArrays_);
         // Reinitialize the stable row in place; a full temporary overflows the
         // producer stack when nested preparation rolls back at capacity.
         std::destroy_at(this);
@@ -2119,7 +2234,11 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
         quarantined = exhausted;
         memberPrograms = std::move(programDirectory);
         members = std::move(memberDirectory);
+        featureArrays_ = std::move(featureArrays);
+        BindFeatureArrays();
     }
+private:
+    std::unique_ptr<EngineServiceFeatureArrays> featureArrays_;
 };
 
 struct EngineTimelineOccurrence {
@@ -12572,6 +12691,8 @@ public:
     }
 
     bool PreparePlayableMemberDirectory(EnginePlayableServiceRow& row) noexcept {
+        if (!row.HasFeatureArrays() &&
+            (playableServices.PreparedUseActive() || !row.PrepareFeatureArrays())) return false;
         if (row.members.size() == playableStorage.memberStride) return true;
         if (memguard::IsAudioTagged() || playableMemberRecords.PreparedUseActive()) return false;
         try { row.members.resize(playableStorage.memberStride); }
@@ -12902,13 +13023,21 @@ public:
         return row.phase == EnginePlayableStartPhase::Free && !row.actionPrepared &&
             !row.partition.Valid() && !row.quarantined;
     }
-    void InitializePlayableServiceRows(std::uint32_t previous) noexcept {
+    bool InitializePlayableServiceRows(std::uint32_t previous) noexcept {
         for (auto slot = previous; slot < playableServices.size(); ++slot) {
             auto& row = playableServices[slot];
             row.identity = {slot, 1};
             row.invocation = &playableStarts[slot];
             row.invocationGeneration = playableStarts[slot].generation;
         }
+        return !playableServices.HasPreparedBacking() || PreparePlayableFeatureBacking();
+    }
+    bool PreparePlayableFeatureBacking() noexcept {
+        for (auto& row : playableServices) {
+            if (row.HasFeatureArrays()) continue;
+            if (playableServices.PreparedUseActive() || !row.PrepareFeatureArrays()) return false;
+        }
+        return true;
     }
     bool PrepareOriginalPlayableStorage() noexcept {
         return playableInstances.PrepareStorage() &&
@@ -12969,7 +13098,7 @@ public:
                 [this](std::uint32_t required) noexcept {
                     return PreparePlayableServiceDependencies(required);
                 })) return nullptr;
-        InitializePlayableServiceRows(previous);
+        if (!InitializePlayableServiceRows(previous)) return nullptr;
         return &playableServices[slot];
     }
     bool PreparePlayableServiceBacking(std::uint32_t count, StableStoragePreparation* out) noexcept {
@@ -12981,7 +13110,10 @@ public:
                 [this](std::uint32_t required) noexcept {
                     return PreparePlayableServiceDependencies(required);
                 })) return false;
-        InitializePlayableServiceRows(previous);
+        if (!InitializePlayableServiceRows(previous) || !PreparePlayableFeatureBacking()) {
+            out->Release();
+            return false;
+        }
         for (auto& row : playableServices)
             if (!PrepareMemberProgramDirectory(row) || !PreparePlayableMemberDirectory(row)) return false;
         return true;
