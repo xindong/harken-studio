@@ -11,6 +11,7 @@
 #ifndef HARKEN_DSP_GAIN_RAMP_H
 #define HARKEN_DSP_GAIN_RAMP_H
 
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -92,7 +93,7 @@ inline void MixScaled(const float* src, float* dst, std::uint32_t frames,
 }
 
 // Reuse the rounded mono voice sample without combining either output scale.
-template<bool ApplyVoiceGain>
+template<bool ApplyVoiceGain, bool EqualOutputScale>
 inline void MixMonoToStereoScaledImpl(const float* src, float* left, float* right,
     std::uint32_t frames, float voiceGain, float leftScale, float rightScale) noexcept {
     std::uint32_t i = 0;
@@ -103,26 +104,38 @@ inline void MixMonoToStereoScaledImpl(const float* src, float* left, float* righ
     for (; i + 4 <= frames; i += 4) {
         __m128 value = _mm_loadu_ps(src + i);
         if constexpr (ApplyVoiceGain) value = _mm_mul_ps(value, voice);
+        const __m128 leftContribution = _mm_mul_ps(value, leftGain);
         _mm_storeu_ps(left + i, _mm_add_ps(_mm_loadu_ps(left + i),
-            _mm_mul_ps(value, leftGain)));
+            leftContribution));
+        const __m128 rightContribution = EqualOutputScale
+            ? leftContribution : _mm_mul_ps(value, rightGain);
         _mm_storeu_ps(right + i, _mm_add_ps(_mm_loadu_ps(right + i),
-            _mm_mul_ps(value, rightGain)));
+            rightContribution));
     }
 #endif
     for (; i < frames; ++i) {
         float value = src[i];
         if constexpr (ApplyVoiceGain) value *= voiceGain;
-        left[i] += value * leftScale;
-        right[i] += value * rightScale;
+        const float leftContribution = value * leftScale;
+        left[i] += leftContribution;
+        const float rightContribution = EqualOutputScale ? leftContribution : value * rightScale;
+        right[i] += rightContribution;
     }
 }
 
 inline void MixMonoToStereoScaled(const float* src, float* left, float* right,
     std::uint32_t frames, float voiceGain, float leftScale, float rightScale) noexcept {
-    if (voiceGain == 1.0f)
-        MixMonoToStereoScaledImpl<false>(src, left, right, frames, voiceGain, leftScale, rightScale);
-    else
-        MixMonoToStereoScaledImpl<true>(src, left, right, frames, voiceGain, leftScale, rightScale);
+    if (std::bit_cast<std::uint32_t>(leftScale) == std::bit_cast<std::uint32_t>(rightScale)) {
+        if (voiceGain == 1.0f)
+            MixMonoToStereoScaledImpl<false, true>(src, left, right, frames, voiceGain, leftScale, rightScale);
+        else
+            MixMonoToStereoScaledImpl<true, true>(src, left, right, frames, voiceGain, leftScale, rightScale);
+    } else {
+        if (voiceGain == 1.0f)
+            MixMonoToStereoScaledImpl<false, false>(src, left, right, frames, voiceGain, leftScale, rightScale);
+        else
+            MixMonoToStereoScaledImpl<true, false>(src, left, right, frames, voiceGain, leftScale, rightScale);
+    }
 }
 
 inline std::uint32_t CappedInterp(std::uint64_t remainingFrames,

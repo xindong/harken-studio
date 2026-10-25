@@ -13385,8 +13385,10 @@ public:
             spatial.PrepareVoiceStorage(config.voiceCapacity.Render()) &&
             PreparePlayablePublicationStorage();
     }
-    bool PreparePlayableServiceDependencies(std::uint32_t required) noexcept {
+    bool PreparePlayableServiceDependencies(std::uint32_t required,
+                                            bool requireQueueTiming = true) noexcept {
         if (!originalPlayableServiceLifetimeHolders.ConstructThrough(required)) return false;
+        if (!requireQueueTiming) return true;
         // One service contributes one selected future. Its source and successor
         // programs contain at most Start/Envelope or Envelope/Stop events.
         const auto programs = std::min<std::uint64_t>(initialQueueTimingProgramsScratch.Capacity(),
@@ -13400,14 +13402,15 @@ public:
             initialQueueTimingEventsScratch.ConstructThrough(static_cast<std::uint32_t>(events)) &&
             initialQueueTimingGroupsScratch.ConstructThrough(static_cast<std::uint32_t>(groups));
     }
-    EnginePlayableServiceRow* PrepareFreePlayableService() noexcept {
+    EnginePlayableServiceRow* PrepareFreePlayableService(bool requireQueueTiming = true) noexcept {
         const auto free = std::find_if(playableServices.begin(), playableServices.end(), PlayableServiceReusable);
         const auto slot = free == playableServices.end() ? playableServices.size() : free->identity.slot;
         if (slot >= playableServices.Capacity()) return nullptr;
         const auto previous = playableServices.size();
         if (!playableServices.ConstructThrough(slot + 1u,
-                [this](std::uint32_t required) noexcept {
-                    return PreparePlayableServiceDependencies(required);
+                [this, requireQueueTiming](std::uint32_t required) noexcept {
+                    return PreparePlayableServiceDependencies(required,
+                        requireQueueTiming || playableServices.HasPreparedBacking());
                 })) return nullptr;
         if (!InitializePlayableServiceRows(previous)) return nullptr;
         return &playableServices[slot];

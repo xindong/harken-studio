@@ -78411,7 +78411,7 @@ bool PrepareImmediateActionSingleLeafPlay(
     assert(voiceBorrow.Status() == VN_OK);
     const auto& voice = voiceBorrow.Input();
 
-    auto* row = engine.PrepareFreePlayableService();
+    auto* row = engine.PrepareFreePlayableService(instanceKind != harken::PlayableKind::Sound);
     if (row == nullptr ||
         !PreparePlayableExecution(
             engine, scratch, instanceKind, plan.playbackRequest, plan.emitterOrigin)) {

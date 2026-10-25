@@ -525,8 +525,15 @@ TEST(StableBackingPreparation, ServiceFeaturePromiseSurvivesResetAndFailedProtec
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
+    ASSERT_NE(nullptr, engine.PrepareFreePlayableService(false));
+    EXPECT_EQ(0u, engine.initialQueueTimingProgramsScratch.ConstructedCount());
+    EXPECT_EQ(0u, engine.initialQueueTimingEventsScratch.ConstructedCount());
+    EXPECT_EQ(0u, engine.initialQueueTimingGroupsScratch.ConstructedCount());
     harken::StableStoragePreparation backing;
     ASSERT_TRUE(engine.PreparePlayableServiceBacking(2, &backing));
+    EXPECT_GT(engine.initialQueueTimingProgramsScratch.ConstructedCount(), 0u);
+    EXPECT_GT(engine.initialQueueTimingEventsScratch.ConstructedCount(), 0u);
+    EXPECT_GT(engine.initialQueueTimingGroupsScratch.ConstructedCount(), 0u);
     ASSERT_GE(engine.playableServices.size(), 2u);
     auto& first = engine.playableServices[0];
     auto* path = first.selectionPath.data();
@@ -636,11 +643,11 @@ TEST(StableBackingPreparation, ServiceFeaturePromiseSurvivesResetAndFailedProtec
     } fault;
     harken::detail::ArmLogicAllocFaultForTests(2,
         harken::detail::LogicAllocSite::PlayableServiceFeatures);
-    EXPECT_EQ(nullptr, engine.PrepareFreePlayableService());
+    EXPECT_EQ(nullptr, engine.PrepareFreePlayableService(false));
     ASSERT_GT(engine.playableServices.size(), prefix);
     EXPECT_TRUE(backing.Valid());
     harken::detail::DisarmLogicAllocFaultForTests();
-    auto* recovered = engine.PrepareFreePlayableService();
+    auto* recovered = engine.PrepareFreePlayableService(false);
     ASSERT_NE(nullptr, recovered);
     for (const auto& row : engine.playableServices) EXPECT_TRUE(row.HasFeatureArrays());
     {
@@ -648,7 +655,7 @@ TEST(StableBackingPreparation, ServiceFeaturePromiseSurvivesResetAndFailedProtec
         harken::detail::ArmLogicAllocFaultForTests(1,
             harken::detail::LogicAllocSite::PlayableServiceFeatures);
         EXPECT_TRUE(engine.PreparePlayableFeatureBacking());
-        EXPECT_EQ(recovered, engine.PrepareFreePlayableService());
+        EXPECT_EQ(recovered, engine.PrepareFreePlayableService(false));
         EXPECT_EQ(1u, harken::detail::g_logicAllocFault.remaining);
     }
     for (auto& row : engine.playableServices) row.actionPrepared = false;
