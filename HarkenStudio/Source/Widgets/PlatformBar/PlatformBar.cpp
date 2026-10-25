@@ -64,36 +64,27 @@ PlatformBar::PlatformBar(PlatformContextService& service, QWidget* parent)
     layout->setSpacing(6);
     layout->setColumnStretch(0, 1);
     layout->setColumnStretch(2, 1);
-    leading_ = new QWidget(host_);
-    auto* leadingLayout = new QHBoxLayout(leading_);
+    auto* leading = new QWidget(host_);
+    auto* leadingLayout = new QHBoxLayout(leading);
     leadingLayout->setContentsMargins(0, 0, 0, 0);
     leadingLayout->setSpacing(layout->spacing());
+    layout->addWidget(leading, 0, 0, Qt::AlignLeft | Qt::AlignVCenter);
+
+    leading_ = new QWidget(leading);
+    auto* actionsLayout = new QHBoxLayout(leading_);
+    actionsLayout->setContentsMargins(0, 0, 0, 0);
+    actionsLayout->setSpacing(layout->spacing());
     leading_->hide();
-    layout->addWidget(leading_, 0, 0, Qt::AlignLeft | Qt::AlignVCenter);
+    leadingLayout->addWidget(leading_);
 
-    auto* trailing = new QWidget(host_);
-    auto* trailingLayout = new QHBoxLayout(trailing);
-    trailingLayout->setContentsMargins(0, 0, 0, 0);
-    trailingLayout->setSpacing(layout->spacing());
-    layout->addWidget(trailing, 0, 2, Qt::AlignRight | Qt::AlignVCenter);
-
-    languageCombo_ = new QComboBox(trailing);
-    languageCombo_->setObjectName(QStringLiteral("platformBarLanguages"));
-    languageCombo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
-    languageCombo_->setMinimumContentsLength(12);
-    languageCombo_->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
-    languageCombo_->setAccessibleName(tr("Edit and Audition Language"));
-    languageCombo_->setToolTip(tr("Edit and Audition Language"));
-    trailingLayout->addWidget(languageCombo_);
-
-    platformCombo_ = new QComboBox(trailing);
+    platformCombo_ = new QComboBox(leading);
     platformCombo_->setObjectName(QStringLiteral("platformBarSelector"));
     platformCombo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
     platformCombo_->setMinimumContentsLength(12);
     platformCombo_->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
-    trailingLayout->addWidget(platformCombo_);
+    leadingLayout->addWidget(platformCombo_);
 
-    allButton_ = new QToolButton(trailing);
+    allButton_ = new QToolButton(leading);
     allButton_->setObjectName(QStringLiteral("platformBarAll"));
     allButton_->setProperty("flatIconButton", true);
     allButton_->setText(QStringLiteral("ALL"));
@@ -104,7 +95,23 @@ PlatformBar::PlatformBar(PlatformContextService& service, QWidget* parent)
     allButton_->setToolButtonStyle(Qt::ToolButtonTextOnly);
     allButton_->setCursor(Qt::PointingHandCursor);
     allButton_->setFocusPolicy(Qt::NoFocus);
-    trailingLayout->addWidget(allButton_);
+    leadingLayout->addWidget(allButton_);
+
+    languageCombo_ = new QComboBox(leading);
+    languageCombo_->setObjectName(QStringLiteral("platformBarLanguages"));
+    languageCombo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    languageCombo_->setMinimumContentsLength(12);
+    languageCombo_->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
+    languageCombo_->setAccessibleName(tr("Edit and Audition Language"));
+    languageCombo_->setToolTip(tr("Edit and Audition Language"));
+    leadingLayout->addWidget(languageCombo_);
+
+    trailing_ = new QWidget(host_);
+    auto* trailingLayout = new QHBoxLayout(trailing_);
+    trailingLayout->setContentsMargins(0, 0, 0, 0);
+    trailingLayout->setSpacing(layout->spacing());
+    trailing_->hide();
+    layout->addWidget(trailing_, 0, 2, Qt::AlignRight | Qt::AlignVCenter);
 
     addWidget(host_);
 
@@ -152,6 +159,13 @@ void PlatformBar::addCenterWidget(QWidget* widget)
     setVisible(true);
 }
 
+void PlatformBar::addTrailingWidget(QWidget* widget)
+{
+    trailing_->layout()->addWidget(widget);
+    trailing_->show();
+    setVisible(true);
+}
+
 void PlatformBar::rebuild()
 {
     updating_ = true;
@@ -169,7 +183,8 @@ void PlatformBar::rebuild()
     updating_ = false;
     applyContext(service_->context());
     rebuildLanguages();
-    setVisible(ProjectManager::instance().isProjectOpen() || center_ || leading_->layout()->count() != 0);
+    setVisible(ProjectManager::instance().isProjectOpen() || center_
+               || leading_->layout()->count() != 0 || trailing_->layout()->count() != 0);
 }
 
 void PlatformBar::rebuildLanguages()

@@ -2,7 +2,6 @@
 #include "Core/ThemeAssetCatalog.h"
 #include "Core/ThemeManager.h"
 #include <QAction>
-#include <QCoreApplication>
 #include <QEvent>
 #include <QFontMetrics>
 #include <QHBoxLayout>
@@ -214,43 +213,28 @@ void TitleBarWidget::layoutVersionLabel() {
         }
     }
 
-    QString version = QStringLiteral("Harken Studio %1")
-                          .arg(QCoreApplication::applicationVersion());
-    if (!projectName_.isEmpty())
-        version.prepend(QStringLiteral(" - "));
     const QString suffix = projectModified_ && !projectName_.isEmpty()
                                ? QStringLiteral(" *") : QString();
-    const QFontMetrics versionMetrics(versionLabel_->font());
     QFont projectFont = versionLabel_->font();
     projectFont.setItalic(projectModified_);
     const QFontMetrics projectMetrics(projectFont);
-    const int versionWidth = versionMetrics.horizontalAdvance(version);
     const int titleWidth = qMin(qMax(0, available.width()),
-        versionWidth + projectMetrics.horizontalAdvance(projectName_ + suffix) + 2);
+        projectMetrics.horizontalAdvance(projectName_ + suffix) + 2);
     const int textWidth = qMax(0, titleWidth - 2);
-    QString title;
-    if (projectName_.isEmpty()) {
-        title = versionMetrics.elidedText(version, Qt::ElideRight, textWidth).toHtmlEscaped();
-    } else {
-        const int suffixWidth = projectMetrics.horizontalAdvance(suffix);
-        const int minimumProjectWidth = qMin(projectMetrics.horizontalAdvance(projectName_ + suffix),
-            projectMetrics.horizontalAdvance(QString(QChar(0x2026)) + suffix));
-        if (textWidth < versionWidth + minimumProjectWidth)
-            version.clear();
-        const int projectWidth = textWidth - versionMetrics.horizontalAdvance(version);
-        QString projectTitle = projectWidth < minimumProjectWidth
-            ? projectMetrics.elidedText(projectName_ + suffix, Qt::ElideRight, projectWidth)
-            : projectMetrics.elidedText(projectName_, Qt::ElideRight, projectWidth - suffixWidth) + suffix;
-        projectTitle = projectTitle.toHtmlEscaped();
-        if (projectModified_)
-            projectTitle = QStringLiteral("<i>%1</i>").arg(projectTitle);
-        title = projectTitle + version.toHtmlEscaped();
-    }
+    const int suffixWidth = projectMetrics.horizontalAdvance(suffix);
+    const int minimumProjectWidth = qMin(projectMetrics.horizontalAdvance(projectName_ + suffix),
+        projectMetrics.horizontalAdvance(QString(QChar(0x2026)) + suffix));
+    QString title = textWidth < minimumProjectWidth
+        ? projectMetrics.elidedText(projectName_ + suffix, Qt::ElideRight, textWidth)
+        : projectMetrics.elidedText(projectName_, Qt::ElideRight, textWidth - suffixWidth) + suffix;
+    title = title.toHtmlEscaped();
+    if (projectModified_)
+        title = QStringLiteral("<i>%1</i>").arg(title);
     versionLabel_->setText(title);
     versionLabel_->setGeometry(qBound(available.left(), (width() - titleWidth) / 2,
                                      available.x() + available.width() - titleWidth),
                               0, titleWidth, height());
-    versionLabel_->setVisible(titleWidth > 0);
+    versionLabel_->setVisible(!projectName_.isEmpty() && titleWidth > 0);
 }
 
 void TitleBarWidget::trackWindow(QWidget* window) {

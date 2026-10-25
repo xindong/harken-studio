@@ -22,6 +22,7 @@ public:
     explicit PlatformBar(PlatformContextService& service, QWidget* parent = nullptr);
     QToolButton* addLeadingAction(QAction* action, const QString& objectName = {});
     void addCenterWidget(QWidget* widget);
+    void addTrailingWidget(QWidget* widget);
 
 private:
     void rebuild();
@@ -36,6 +37,7 @@ private:
     QWidget* host_ = nullptr;
     QWidget* leading_ = nullptr;
     QWidget* center_ = nullptr;
+    QWidget* trailing_ = nullptr;
     QToolButton* allButton_ = nullptr;
     QComboBox* platformCombo_ = nullptr;
     QComboBox* languageCombo_ = nullptr;
