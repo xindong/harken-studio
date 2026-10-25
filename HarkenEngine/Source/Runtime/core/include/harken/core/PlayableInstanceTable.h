@@ -451,6 +451,7 @@ public:
         MonitorLifecycleFacts* out) const noexcept;
     bool CaptureMonitorFacts(PlayableInstanceHandle handle,
                              MonitorLifecycleFacts* out) const noexcept;
+    bool NeedsStartedObservation(PlayableInstanceHandle handle) const noexcept;
     void ObserveStarted(PlayableInstanceHandle handle, std::uint64_t audioBlock,
                         std::uint64_t frame) noexcept;
     bool CaptureRootMetadata(PlayableInstanceHandle handle,

@@ -353,6 +353,36 @@ TEST(PlayableInstanceTable, WithdrawUnpublishedParentLinkPreservesIdentityAndSib
     EXPECT_EQ(after, table.NextSibling(before));
 }
 
+TEST(PlayableInstanceTable, StartedObservationIsOncePerCommittedSoundGeneration) {
+    PlayableInstanceTable table(1);
+    harken::PreparedPlayableInstance prepared;
+    ASSERT_TRUE(table.PrepareAcquire(PlayableKind::Sound, 0, &prepared));
+    const auto first = prepared.Handle();
+    EXPECT_FALSE(table.NeedsStartedObservation(first));
+    table.ObserveStarted(first, 5, 256);
+    ASSERT_TRUE(table.CommitPrepared(&prepared));
+    EXPECT_TRUE(table.NeedsStartedObservation(first));
+    table.ObserveStarted(first, 0, 256);
+    EXPECT_TRUE(table.NeedsStartedObservation(first));
+    table.ObserveStarted(first, 5, 256);
+    EXPECT_FALSE(table.NeedsStartedObservation(first));
+    table.ObserveStarted(first, 6, 512);
+    EXPECT_FALSE(table.NeedsStartedObservation(first));
+    RetireFully(table, first);
+    EXPECT_FALSE(table.NeedsStartedObservation(first));
+    const auto reused = table.Acquire(PlayableKind::Sound, 0);
+    ASSERT_NE(0u, reused);
+    EXPECT_EQ(static_cast<std::uint32_t>(first), static_cast<std::uint32_t>(reused));
+    EXPECT_NE(first, reused);
+    EXPECT_FALSE(table.NeedsStartedObservation(first));
+    EXPECT_TRUE(table.NeedsStartedObservation(reused));
+    RetireFully(table, reused);
+    const auto container = table.Acquire(PlayableKind::Container, 0);
+    ASSERT_NE(0u, container);
+    EXPECT_FALSE(table.NeedsStartedObservation(container));
+    RetireFully(table, container);
+}
+
 TEST(PlayableInstanceTable, AcquiredInstanceReportsItsKindAndParent)
 {
     PlayableInstanceTable table(4);

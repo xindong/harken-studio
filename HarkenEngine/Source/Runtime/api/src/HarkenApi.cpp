@@ -11651,7 +11651,8 @@ void ObservePlayableStarts(harken::Engine& engine) noexcept {
          slot < count; ++slot) {
         const auto* arm = engine.timelineArms.RowAt(slot);
         if (arm == nullptr || arm->originalSourceSubmission == nullptr ||
-            arm->programGeneration == 0) continue;
+            arm->programGeneration == 0 ||
+            !engine.playableInstances.NeedsStartedObservation(arm->programGeneration)) continue;
         const harken::TimelineArmToken token{
             slot, arm->generation, arm->renderSlot, arm->renderGeneration};
         harken::TimelineArmObservation onset{};

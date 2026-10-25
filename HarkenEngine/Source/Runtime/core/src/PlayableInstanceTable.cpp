@@ -1357,6 +1357,11 @@ bool PlayableInstanceTable::CaptureMonitorFacts(PlayableInstanceHandle handle,
     return true;
 }
 
+bool PlayableInstanceTable::NeedsStartedObservation(PlayableInstanceHandle handle) const noexcept {
+    const auto* entry = Find(handle);
+    return entry != nullptr && entry->kind == PlayableKind::Sound && !entry->monitorStartedObserved;
+}
+
 void PlayableInstanceTable::ObserveStarted(PlayableInstanceHandle handle,
     std::uint64_t audioBlock, std::uint64_t frame) noexcept {
     auto* entry = FindMut(handle);
