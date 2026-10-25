@@ -91,6 +91,40 @@ inline void MixScaled(const float* src, float* dst, std::uint32_t frames,
     }
 }
 
+// Reuse the rounded mono voice sample without combining either output scale.
+template<bool ApplyVoiceGain>
+inline void MixMonoToStereoScaledImpl(const float* src, float* left, float* right,
+    std::uint32_t frames, float voiceGain, float leftScale, float rightScale) noexcept {
+    std::uint32_t i = 0;
+#if defined(HARKEN_OUTPUT_GAIN_SSE2)
+    const __m128 voice = _mm_set1_ps(voiceGain);
+    const __m128 leftGain = _mm_set1_ps(leftScale);
+    const __m128 rightGain = _mm_set1_ps(rightScale);
+    for (; i + 4 <= frames; i += 4) {
+        __m128 value = _mm_loadu_ps(src + i);
+        if constexpr (ApplyVoiceGain) value = _mm_mul_ps(value, voice);
+        _mm_storeu_ps(left + i, _mm_add_ps(_mm_loadu_ps(left + i),
+            _mm_mul_ps(value, leftGain)));
+        _mm_storeu_ps(right + i, _mm_add_ps(_mm_loadu_ps(right + i),
+            _mm_mul_ps(value, rightGain)));
+    }
+#endif
+    for (; i < frames; ++i) {
+        float value = src[i];
+        if constexpr (ApplyVoiceGain) value *= voiceGain;
+        left[i] += value * leftScale;
+        right[i] += value * rightScale;
+    }
+}
+
+inline void MixMonoToStereoScaled(const float* src, float* left, float* right,
+    std::uint32_t frames, float voiceGain, float leftScale, float rightScale) noexcept {
+    if (voiceGain == 1.0f)
+        MixMonoToStereoScaledImpl<false>(src, left, right, frames, voiceGain, leftScale, rightScale);
+    else
+        MixMonoToStereoScaledImpl<true>(src, left, right, frames, voiceGain, leftScale, rightScale);
+}
+
 inline std::uint32_t CappedInterp(std::uint64_t remainingFrames,
                                  std::uint32_t startFrame,
                                  std::uint32_t limit) noexcept {

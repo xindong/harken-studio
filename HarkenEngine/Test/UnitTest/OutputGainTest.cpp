@@ -8,6 +8,8 @@
 #include "Common/SignalTestSupport.h"
 
 #include <array>
+#include <bit>
+#include <cstring>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -423,6 +425,47 @@ TEST(OutputGain, FillAndMixAddMatchAtWhenRemainingExceeds32Bits) {
     for (std::uint32_t i = 0; i < 64; ++i) {
         EXPECT_EQ(gain.At(i), wide[i]) << i;
         EXPECT_NE(gain.target, wide[i]) << i;
+    }
+}
+
+TEST(OutputGain, MonoStereoMixPreservesSeparateRoundingAndShortUnalignedSpans) {
+    std::array<float, 264> source{}, left{}, right{}, expectedLeft{}, expectedRight{};
+    std::uint32_t seed = 17;
+    for (auto& value : source) {
+        seed = 1664525u * seed + 1013904223u;
+        value = static_cast<float>(static_cast<std::int32_t>(seed >> 8) - 0x800000) / 0x800000;
+    }
+    source[2] = std::bit_cast<float>(std::uint32_t{1});
+    source[3] = -0.0f;
+    for (const auto offset : {0u, 1u, 3u}) {
+        for (const auto frames : {0u, 1u, 2u, 3u, 4u, 5u, 7u, 16u, 31u, 255u, 256u, 257u}) {
+            for (const auto voiceGain : {0.0f, 0.001f, 0.67f, 1.0f, -0.5f}) {
+                for (const auto scale : {0.0f, -1.0f, 0.7071067f, 1.0f}) {
+                    left.fill(kCanary);
+                    right.fill(kCanary);
+                    for (std::uint32_t i = offset; i < offset + frames; ++i) {
+                        left[i] = source[(i + 17u) % source.size()] * 0.13f;
+                        right[i] = -source[(i + 11u) % source.size()] * 0.07f;
+                    }
+                    expectedLeft = left;
+                    expectedRight = right;
+                    const float rightScale = -scale * 0.3f;
+                    for (std::uint32_t i = offset; i < offset + frames; ++i) {
+                        volatile float value = voiceGain == 1.0f ? source[i] : source[i] * voiceGain;
+                        volatile float leftContribution = value * scale;
+                        volatile float rightContribution = value * rightScale;
+                        expectedLeft[i] += leftContribution;
+                        expectedRight[i] += rightContribution;
+                    }
+                    harken::output_gain_detail::MixMonoToStereoScaled(source.data() + offset,
+                        left.data() + offset, right.data() + offset, frames, voiceGain, scale, rightScale);
+                    EXPECT_EQ(0, std::memcmp(left.data(), expectedLeft.data(), sizeof(left)))
+                        << offset << " " << frames << " " << voiceGain << " " << scale;
+                    EXPECT_EQ(0, std::memcmp(right.data(), expectedRight.data(), sizeof(right)))
+                        << offset << " " << frames << " " << voiceGain << " " << scale;
+                }
+            }
+        }
     }
 }
 

@@ -94,8 +94,8 @@ bool FeedResampler(VoiceRenderContext& ctx) {
             wrapAtLimit ? ctx.loopEndFrame : ctx.pcm.frames;
         const std::uint64_t remaining = limit - ctx.srcCursor;
         const std::uint32_t chunk = static_cast<std::uint32_t>(
-            std::min<std::uint64_t>(
-                {kResampleChunkFrames, remaining, rs.FreeFrames()}));
+            std::min<std::uint64_t>(kResampleChunkFrames,
+                std::min<std::uint64_t>(remaining, rs.FreeFrames())));
         if (chunk == 0) {
             return false;
         }
@@ -160,8 +160,8 @@ bool FeedResamplerFromStream(VoiceRenderContext& ctx) {
     const float* planes[kMaxChannels] = {};
     const std::uint32_t span = ring.ContiguousRead(planes);
     if (span > 0) {
-        const std::uint32_t chunk = std::min<std::uint32_t>(
-            {kResampleChunkFrames, span, rs.FreeFrames()});
+        const std::uint32_t chunk = std::min(kResampleChunkFrames,
+            std::min(span, rs.FreeFrames()));
         if (chunk == 0) {
             return false; // resampler FIFO full; output emission is due
         }
@@ -542,25 +542,39 @@ void FoldPlainPcm(VoiceRenderContext& ctx, float* const* busPlanes,
                   std::uint32_t mixChannels) {
     const auto span = ctx.cascade.borrowed;
     float* const* bus = busPlanes + ctx.busIndex * mixChannels;
-    for (std::uint32_t ch = 0; ch < mixChannels; ++ch) {
-        const auto mix = [&](std::uint32_t source, float matrixGain) {
-            if (source >= ctx.pcm.channelCount) return;
-            const float scale = matrixGain * ctx.outputGain.target;
-            float* dst = bus[ch] + ctx.cascade.offset;
-            MixPlainPcm(ctx.resampler.ring[source] + span.ringOffset, dst,
-                         span.firstFrames, ctx.gain.target, scale);
-            MixPlainPcm(ctx.resampler.ring[source], dst + span.firstFrames,
-                         span.frames - span.firstFrames, ctx.gain.target, scale);
-        };
-        const float a = ctx.spatialMatrix.target.gain[0][ch];
-        const float b = ctx.spatialMatrix.target.gain[1][ch];
-        if (b == 0.0f) {
-            if (a != 0.0f) mix(0, a);
-        } else if (a == 0.0f) {
-            mix(1, b);
-        } else {
-            mix(0, a);
-            mix(1, b);
+    if (ctx.pcm.channelCount == 1 && mixChannels == 2 &&
+        ctx.spatialMatrix.target.gain[0][0] != 0.0f &&
+        ctx.spatialMatrix.target.gain[0][1] != 0.0f) {
+        const float leftScale = ctx.spatialMatrix.target.gain[0][0] * ctx.outputGain.target;
+        const float rightScale = ctx.spatialMatrix.target.gain[0][1] * ctx.outputGain.target;
+        float* left = bus[0] + ctx.cascade.offset;
+        float* right = bus[1] + ctx.cascade.offset;
+        output_gain_detail::MixMonoToStereoScaled(ctx.resampler.ring[0] + span.ringOffset,
+            left, right, span.firstFrames, ctx.gain.target, leftScale, rightScale);
+        output_gain_detail::MixMonoToStereoScaled(ctx.resampler.ring[0],
+            left + span.firstFrames, right + span.firstFrames, span.frames - span.firstFrames,
+            ctx.gain.target, leftScale, rightScale);
+    } else {
+        for (std::uint32_t ch = 0; ch < mixChannels; ++ch) {
+            const auto mix = [&](std::uint32_t source, float matrixGain) {
+                if (source >= ctx.pcm.channelCount) return;
+                const float scale = matrixGain * ctx.outputGain.target;
+                float* dst = bus[ch] + ctx.cascade.offset;
+                MixPlainPcm(ctx.resampler.ring[source] + span.ringOffset, dst,
+                             span.firstFrames, ctx.gain.target, scale);
+                MixPlainPcm(ctx.resampler.ring[source], dst + span.firstFrames,
+                             span.frames - span.firstFrames, ctx.gain.target, scale);
+            };
+            const float a = ctx.spatialMatrix.target.gain[0][ch];
+            const float b = ctx.spatialMatrix.target.gain[1][ch];
+            if (b == 0.0f) {
+                if (a != 0.0f) mix(0, a);
+            } else if (a == 0.0f) {
+                mix(1, b);
+            } else {
+                mix(0, a);
+                mix(1, b);
+            }
         }
     }
     ctx.spatialMatrixHasRendered = true;
