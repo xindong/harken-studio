@@ -181,6 +181,11 @@ public:
         return Find(probeStableId) != nullptr;
     }
     std::uint32_t ActiveCount() const noexcept { return activeCount_; }
+    // The native generation mint never wraps or resets during this session.
+    // Withdrawal and retirement preserve the history of the first installation.
+    bool HasInstallationHistory() const noexcept {
+        return nextProbeGeneration_ != 1;
+    }
     std::uint64_t HighWater() const noexcept { return highWater_; }
     std::uint64_t RefusalCount() const noexcept { return refusalCount_; }
     void NoteRefusal() noexcept { ++refusalCount_; }
