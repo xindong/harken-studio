@@ -744,7 +744,7 @@ void ImmediateActionLane::ReturnOriginalAttempt(
 }
 
 ImmediateActionLane::AttemptMetadataBacking::~AttemptMetadataBacking() {
-    if (requestedBytes == 0) return;
+    if (requestedBytes == 0 || storage.Address() == nullptr) return;
     std::destroy_n(groups, demand.groups);
     std::destroy_n(declaredGroups, demand.groups);
     std::destroy_n(groupPins, demand.groups);
@@ -800,6 +800,18 @@ bool ImmediateActionLane::AttemptMetadataBacking::Initialize(ImmediateLaneDemand
     return true;
 }
 
+void ImmediateActionLane::AttemptMetadataBacking::InitializeSingleEvent(
+    SingleEventMetadata& cell) noexcept {
+    assert(requestedBytes == 0 && storage.Address() == nullptr);
+    demand = {1, 0, 0, 1};
+    sourceWaitCount = waitingScratchCount = 1;
+    requestedBytes = sizeof(cell);
+    eventState = &cell.eventState;
+    sourceWaitEntries = &cell.sourceWait;
+    buckets = &cell.bucket;
+    waitingScratch = &cell.waitingScratch;
+}
+
 bool ImmediateActionLane::AttemptMetadataBacking::Fits(ImmediateLaneDemand requested,
     const Config& config) const noexcept {
     const auto entries = static_cast<std::uint64_t>(requested.events) + requested.groups;
@@ -830,20 +842,26 @@ void ImmediateActionLane::AttemptMetadataBacking::Swap(AttemptMetadataBacking& o
 }
 
 std::size_t ImmediateActionLane::MetadataStorageBytes() const noexcept {
-    auto bytes = attempts_.RequestedBytes() + metadata_.RequestedBytes();
-    for (const auto& row : metadata_) bytes += row.active.requestedBytes + row.standby.requestedBytes;
+    auto bytes = attempts_.RequestedBytes() + metadata_.RequestedBytes() +
+        singleEventMetadata_.RequestedBytes();
+    for (const auto& row : metadata_) {
+        if (row.active.storage.Address() != nullptr) bytes += row.active.requestedBytes;
+        if (row.standby.storage.Address() != nullptr) bytes += row.standby.requestedBytes;
+    }
     return bytes;
 }
 
 std::size_t ImmediateActionLane::MetadataCommittedBytes() const noexcept {
-    auto bytes = attempts_.CommittedBytes() + metadata_.CommittedBytes();
+    auto bytes = attempts_.CommittedBytes() + metadata_.CommittedBytes() +
+        singleEventMetadata_.CommittedBytes();
     for (const auto& row : metadata_)
         bytes += row.active.storage.CommittedBytes() + row.standby.storage.CommittedBytes();
     return bytes;
 }
 
 std::size_t ImmediateActionLane::MetadataReservedBytes() const noexcept {
-    auto bytes = attempts_.ReservedBytes() + metadata_.ReservedBytes();
+    auto bytes = attempts_.ReservedBytes() + metadata_.ReservedBytes() +
+        singleEventMetadata_.ReservedBytes();
     for (const auto& row : metadata_)
         bytes += row.active.storage.ReservedBytes() + row.standby.storage.ReservedBytes();
     return bytes;
@@ -875,6 +893,8 @@ bool ImmediateActionLane::Reset(Config config) {
     while (eventStorageConsumers_ != nullptr) eventStorageConsumers_->Detach();
     groupPool_ = nullptr;
     valid_ = false;
+    StableRowStorage<SingleEventMetadata> oldSingleEventMetadata;
+    singleEventMetadata_.Swap(oldSingleEventMetadata);
     StableRowStorage<AttemptMetadata> oldMetadata;
     metadata_.Swap(oldMetadata);
     detail::StablePageReservation oldEvents, oldMembers;
@@ -900,7 +920,8 @@ bool ImmediateActionLane::Reset(Config config) {
                        config.eventsPerAttempt;
     StableRowStorage<PrivateEntryAssociation> privateEntries;
     if (slots > UINT32_MAX || !privateEntries.Reserve(static_cast<std::uint32_t>(slots)) ||
-        !metadata_.Reserve(config.attempts)) return false;
+        !metadata_.Reserve(config.attempts) ||
+        !singleEventMetadata_.Reserve(config.attempts)) return false;
     if (slots > static_cast<std::size_t>(PTRDIFF_MAX) / sizeof(ImmediateLaneEvent) ||
         slots > static_cast<std::size_t>(PTRDIFF_MAX) / sizeof(ImmediateLaneMemberManifest) ||
         !eventStorage_.Reserve(slots * sizeof(ImmediateLaneEvent), alignof(ImmediateLaneEvent), true) ||
@@ -990,7 +1011,13 @@ bool ImmediateActionLane::PrepareAttemptStorage(std::uint32_t slot,
     if (demand.groups != 0) pageLimit = std::min(pageLimit, groupCommitPageLimit_);
 #endif
     AttemptMetadataBacking prepared;
-    if (!prepared.Initialize(demand, config_, pageLimit)) return false;
+    if (demand.events == 1 && demand.groups == 0 && demand.members == 0 && demand.buckets == 1) {
+        // New views retain allocation refusal even when a neighboring cell committed the page.
+        if (pageLimit == 0) return false;
+        singleEventMetadata_.SetCommitPageLimitForTests(pageLimit);
+        if (!singleEventMetadata_.ConstructThrough(slot + 1u)) return false;
+        prepared.InitializeSingleEvent(singleEventMetadata_[slot]);
+    } else if (!prepared.Initialize(demand, config_, pageLimit)) return false;
     // Preparing a busy identity must leave every active reader's address unchanged.
     metadata.standby.Swap(prepared);
     return true;

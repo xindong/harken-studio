@@ -998,11 +998,18 @@ private:
         FrontierEntryReceiptRef entry{};
         std::uint64_t sequence = 0;
     };
-    // Columns remain contiguous within one attempt and share a single page reservation.
+    struct SingleEventMetadata {
+        EventState eventState;
+        SourceWaitEntry sourceWait;
+        ImmediateLaneBucket bucket;
+        FrontierEntryReceiptRef waitingScratch;
+    };
+    // Columns own one reservation or view a stable single-event cell owned by the lane.
     struct AttemptMetadataBacking {
         ~AttemptMetadataBacking();
         bool Initialize(ImmediateLaneDemand requested, const Config& config,
             std::size_t pageLimit) noexcept;
+        void InitializeSingleEvent(SingleEventMetadata& cell) noexcept;
         bool Fits(ImmediateLaneDemand requested, const Config& config) const noexcept;
         void Swap(AttemptMetadataBacking& other) noexcept;
         detail::StablePageReservation storage;
@@ -1159,6 +1166,7 @@ private:
     std::uint64_t nextOriginalLifetimeMarker_ = 0;
     Config config_{};
     StableRowStorage<ImmediateLaneAttempt> attempts_;
+    StableRowStorage<SingleEventMetadata> singleEventMetadata_;
     StableRowStorage<AttemptMetadata> metadata_;
     detail::StablePageReservation eventStorage_;
     detail::StablePageReservation memberStorage_;
