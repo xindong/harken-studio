@@ -22225,7 +22225,7 @@ static void CheckVariableControlRetargetFromSoundCompletesNestedQueueTree(
         if (nestedControl && !continuous) {
             for (const auto& control : engine->playableServices) {
                 if (control.variableControlDiscreteRetargetIncomingNestedVariableControlCount != 0) {
-                    nestedEntryQuantum = control.variableControlDiscreteRetargetEnteringSchedule.entryAnchorFrame /
+                    nestedEntryQuantum = control.VariableControlDiscreteRetargetEnteringSchedule().entryAnchorFrame /
                         engine->config.blockFrames + 1u;
                 }
             }

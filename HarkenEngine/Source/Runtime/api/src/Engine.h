@@ -1746,6 +1746,13 @@ struct EngineServiceFeatureArrays {
     std::array<SelectionPathNodeV1, kSelectionPathNodeCapacity> selectionPath{};
     CurveLUT transitionSourceFadeCurve{};
     CurveLUT transitionTargetFadeCurve{};
+    PlayableWorldViewV1 variableControlWorld{};
+    PlayableWorldViewV1 queueWorld{};
+    PlayableWorldViewV1 containerLoopWorld{};
+    TimelineProgramView variableControlDiscreteRetargetRuntimeProgram{};
+    TimelineProgramView variableControlDiscreteRetargetEnteringRuntimeProgram{};
+    ProgramView variableControlDiscreteRetargetSchedule{};
+    ProgramView variableControlDiscreteRetargetEnteringSchedule{};
 };
 
 struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
@@ -1924,7 +1931,6 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     std::uint32_t variableControlContinuousMemberCount = 0;
     std::uint32_t variableControlInitialContinuousMemberCount = 0;
     bool variableControlWorldUsesCurrentAuthority = false;
-    PlayableWorldViewV1 variableControlWorld{};
     VnEmitterHandle variableControlEmitter = 0;
     std::uint64_t variableControlDiscreteNextEvaluationFrame = 0;
     std::uint64_t variableControlDiscreteZeroWorkCompletionFrame = 0;
@@ -1972,8 +1978,6 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
         variableControlDiscreteRetargetPayloads{};
     std::vector<TimelineEventPayload>
         variableControlDiscreteRetargetEnteringPayloads{};
-    TimelineProgramView variableControlDiscreteRetargetRuntimeProgram{};
-    TimelineProgramView variableControlDiscreteRetargetEnteringRuntimeProgram{};
     std::vector<TimelineProgramView>
         variableControlDiscreteRetargetRuntimePrograms{};
     std::vector<TimelineProgramView>
@@ -1982,8 +1986,6 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
         variableControlDiscreteRetargetEvents{};
     std::vector<EventTemplate>
         variableControlDiscreteRetargetEnteringEvents{};
-    ProgramView variableControlDiscreteRetargetSchedule{};
-    ProgramView variableControlDiscreteRetargetEnteringSchedule{};
     std::vector<ProgramView>
         variableControlDiscreteRetargetSchedules{};
     std::vector<ProgramView>
@@ -2049,7 +2051,6 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     bool pendingRegisteredStopCapture = false;
     bool queueWorldUsesCurrentAuthority = false;
     bool queueResumePosition = false;
-    PlayableWorldViewV1 queueWorld{};
     VnObjectId queueContainerStableId{};
     std::uint64_t queueProgramSemanticFingerprint = 0;
     QueueInstanceToken queueInstance{};
@@ -2145,7 +2146,6 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     EngineQueueDeferredSourceObservation queueDeferredSource{};
     PlayableExecutionAuthorityKind containerLoopAuthorityKind =
         PlayableExecutionAuthorityKind::FrozenWorld;
-    PlayableWorldViewV1 containerLoopWorld{};
     OccurrenceToken containerLoopOccurrence{};
     CompositeCompletionOwnerToken containerLoopCompositeOwner{};
     bool containerLoopOwnsScheduleResources = false;
@@ -2216,6 +2216,62 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
         assert(featureArrays_ != nullptr);
         return featureArrays_->queueNextState;
     }
+    PlayableWorldViewV1& VariableControlWorld() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->variableControlWorld;
+    }
+    const PlayableWorldViewV1& VariableControlWorld() const noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->variableControlWorld;
+    }
+    PlayableWorldViewV1& QueueWorld() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->queueWorld;
+    }
+    const PlayableWorldViewV1& QueueWorld() const noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->queueWorld;
+    }
+    PlayableWorldViewV1& ContainerLoopWorld() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->containerLoopWorld;
+    }
+    const PlayableWorldViewV1& ContainerLoopWorld() const noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->containerLoopWorld;
+    }
+    TimelineProgramView& VariableControlDiscreteRetargetRuntimeProgram() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->variableControlDiscreteRetargetRuntimeProgram;
+    }
+    const TimelineProgramView& VariableControlDiscreteRetargetRuntimeProgram() const noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->variableControlDiscreteRetargetRuntimeProgram;
+    }
+    TimelineProgramView& VariableControlDiscreteRetargetEnteringRuntimeProgram() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->variableControlDiscreteRetargetEnteringRuntimeProgram;
+    }
+    const TimelineProgramView& VariableControlDiscreteRetargetEnteringRuntimeProgram() const noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->variableControlDiscreteRetargetEnteringRuntimeProgram;
+    }
+    ProgramView& VariableControlDiscreteRetargetSchedule() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->variableControlDiscreteRetargetSchedule;
+    }
+    const ProgramView& VariableControlDiscreteRetargetSchedule() const noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->variableControlDiscreteRetargetSchedule;
+    }
+    ProgramView& VariableControlDiscreteRetargetEnteringSchedule() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->variableControlDiscreteRetargetEnteringSchedule;
+    }
+    const ProgramView& VariableControlDiscreteRetargetEnteringSchedule() const noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->variableControlDiscreteRetargetEnteringSchedule;
+    }
     std::size_t FeatureArrayStorageBytes() const noexcept {
         return featureArrays_ == nullptr ? 0u : sizeof(EngineServiceFeatureArrays);
     }
@@ -2254,6 +2310,13 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
             featureArrays_->queueParentInitialState = {};
             featureArrays_->queueParentResetInitialState = {};
             featureArrays_->queueNextState = {};
+            featureArrays_->variableControlWorld = {};
+            featureArrays_->queueWorld = {};
+            featureArrays_->containerLoopWorld = {};
+            featureArrays_->variableControlDiscreteRetargetRuntimeProgram = {};
+            featureArrays_->variableControlDiscreteRetargetEnteringRuntimeProgram = {};
+            featureArrays_->variableControlDiscreteRetargetSchedule = {};
+            featureArrays_->variableControlDiscreteRetargetEnteringSchedule = {};
         }
     }
     void BindFeatureArrays() noexcept {

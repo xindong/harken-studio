@@ -5899,7 +5899,7 @@ TEST(PlayableStart, SequenceQueueNestedQueueOnceCompletesOwningQueue) {
         << " parentFp=" << finalRow.queueParentProgramSemanticFingerprint
         << " parentValid=" << finalRow.queueParentInstance.Valid()
         << " composite=" << finalRow.queueCurrentCompositeOwner.Valid()
-        << " world=" << finalRow.queueWorld.containerCount;
+        << " world=" << finalRow.QueueWorld().containerCount;
 }
 
 TEST(PlayableStart, NestedSequenceReservesCompleteInstanceFrontier) {
@@ -6617,15 +6617,15 @@ TEST(PlayableStart,
     EXPECT_EQ(harken::TransitionAudibleGateState::Replaceable,
               transitionBefore.state);
     ASSERT_EQ(2u,
-              row->variableControlDiscreteRetargetEnteringRuntimeProgram.
+              row->VariableControlDiscreteRetargetEnteringRuntimeProgram().
                   payloadCount);
     ASSERT_EQ(2u,
-              row->variableControlDiscreteRetargetRuntimeProgram.payloadCount);
+              row->VariableControlDiscreteRetargetRuntimeProgram().payloadCount);
 
     const std::uint64_t decisionFrame =
         row->variableControlDiscreteRetargetFrame;
     const auto* entering =
-        row->variableControlDiscreteRetargetEnteringRuntimeProgram.payloads;
+        row->VariableControlDiscreteRetargetEnteringRuntimeProgram().payloads;
     EXPECT_EQ(harken::TimelineEventKind::Start, entering[0].kind);
     EXPECT_EQ(harken::TimelineEventKind::Envelope, entering[1].kind);
     EXPECT_EQ(harken::TimelineEnvelopeDirection::FadeIn,
@@ -6634,7 +6634,7 @@ TEST(PlayableStart,
     EXPECT_EQ(decisionFrame + 192u, entering[1].envelopeEndFrame);
 
     const auto* exiting =
-        row->variableControlDiscreteRetargetRuntimeProgram.payloads;
+        row->VariableControlDiscreteRetargetRuntimeProgram().payloads;
     EXPECT_EQ(harken::TimelineEventKind::Envelope, exiting[0].kind);
     EXPECT_EQ(harken::TimelineEnvelopeDirection::FadeOut,
               exiting[0].envelopeDirection);
@@ -6758,20 +6758,20 @@ TEST(PlayableStart,
     }
     ASSERT_TRUE(row->variableControlDiscreteRetargetPrepared);
     ASSERT_EQ(2u,
-              row->variableControlDiscreteRetargetEnteringRuntimeProgram.
+              row->VariableControlDiscreteRetargetEnteringRuntimeProgram().
                   payloadCount);
     ASSERT_EQ(2u,
-              row->variableControlDiscreteRetargetRuntimeProgram.payloadCount);
+              row->VariableControlDiscreteRetargetRuntimeProgram().payloadCount);
 
     const std::uint64_t decisionFrame =
         row->variableControlDiscreteRetargetFrame;
     const auto* entering =
-        row->variableControlDiscreteRetargetEnteringRuntimeProgram.payloads;
+        row->VariableControlDiscreteRetargetEnteringRuntimeProgram().payloads;
     EXPECT_EQ(harken::TimelineEventKind::Envelope, entering[1].kind);
     EXPECT_EQ(decisionFrame, entering[1].envelopeStartFrame);
     EXPECT_EQ(decisionFrame, entering[1].envelopeEndFrame);
     const auto* exiting =
-        row->variableControlDiscreteRetargetRuntimeProgram.payloads;
+        row->VariableControlDiscreteRetargetRuntimeProgram().payloads;
     EXPECT_EQ(harken::TimelineEventKind::Envelope, exiting[0].kind);
     EXPECT_EQ(decisionFrame, exiting[0].envelopeStartFrame);
     EXPECT_EQ(decisionFrame, exiting[0].envelopeEndFrame);
@@ -6860,18 +6860,18 @@ TEST(PlayableStart,
     }
     ASSERT_TRUE(row->variableControlDiscreteRetargetPrepared);
     ASSERT_EQ(2u,
-              row->variableControlDiscreteRetargetEnteringRuntimeProgram.
+              row->VariableControlDiscreteRetargetEnteringRuntimeProgram().
                   payloadCount);
     ASSERT_EQ(2u,
-              row->variableControlDiscreteRetargetRuntimeProgram.payloadCount);
+              row->VariableControlDiscreteRetargetRuntimeProgram().payloadCount);
 
     const std::uint64_t decisionFrame =
         row->variableControlDiscreteRetargetFrame;
     const auto* entering =
-        row->variableControlDiscreteRetargetEnteringRuntimeProgram.payloads;
+        row->VariableControlDiscreteRetargetEnteringRuntimeProgram().payloads;
     EXPECT_EQ(decisionFrame + 1u, entering[1].envelopeEndFrame);
     const auto* exiting =
-        row->variableControlDiscreteRetargetRuntimeProgram.payloads;
+        row->VariableControlDiscreteRetargetRuntimeProgram().payloads;
     EXPECT_EQ(decisionFrame + 1u, exiting[0].envelopeEndFrame);
     EXPECT_TRUE(exiting[1].authoredFadeOutCandidate);
 
@@ -6958,23 +6958,23 @@ TEST(PlayableStart,
               row->variableControlDiscreteRetargetEndFrame);
 
     const auto* exiting =
-        row->variableControlDiscreteRetargetRuntimeProgram.payloads;
+        row->VariableControlDiscreteRetargetRuntimeProgram().payloads;
     ASSERT_EQ(1u,
-              row->variableControlDiscreteRetargetRuntimeProgram.payloadCount);
+              row->VariableControlDiscreteRetargetRuntimeProgram().payloadCount);
     EXPECT_EQ(harken::TimelineEventKind::Envelope, exiting[0].kind);
     EXPECT_EQ(naturalEndFrame - 256u, exiting[0].envelopeStartFrame);
     EXPECT_EQ(naturalEndFrame, exiting[0].envelopeEndFrame);
 
     const auto* entering =
-        row->variableControlDiscreteRetargetEnteringRuntimeProgram.payloads;
+        row->VariableControlDiscreteRetargetEnteringRuntimeProgram().payloads;
     ASSERT_EQ(2u,
-              row->variableControlDiscreteRetargetEnteringRuntimeProgram.
+              row->VariableControlDiscreteRetargetEnteringRuntimeProgram().
                   payloadCount);
     EXPECT_EQ(harken::TimelineEventKind::Start, entering[0].kind);
     EXPECT_EQ(naturalEndFrame, entering[1].envelopeStartFrame);
     EXPECT_EQ(naturalEndFrame + 192u, entering[1].envelopeEndFrame);
     EXPECT_EQ(naturalEndFrame,
-              row->variableControlDiscreteRetargetEnteringSchedule.
+              row->VariableControlDiscreteRetargetEnteringSchedule().
                   entryAnchorFrame);
 
     const VnVoiceHandle targetVoice =
@@ -20424,12 +20424,12 @@ TEST(PlayableStart,
     EXPECT_EQ(3u,
               row->variableControlDiscreteRetargetGroupMemberCount);
     ASSERT_EQ(4u,
-              row->variableControlDiscreteRetargetEnteringRuntimeProgram.
+              row->VariableControlDiscreteRetargetEnteringRuntimeProgram().
                   payloadCount);
     const std::uint64_t decisionFrame =
         row->variableControlDiscreteRetargetFrame;
     const auto* entering =
-        row->variableControlDiscreteRetargetEnteringRuntimeProgram.payloads;
+        row->VariableControlDiscreteRetargetEnteringRuntimeProgram().payloads;
     for (std::uint32_t index = 0; index < 2; ++index) {
         const std::uint32_t eventBase = 2u * index;
         EXPECT_EQ(harken::TimelineEventKind::Start,
@@ -20448,9 +20448,9 @@ TEST(PlayableStart,
                       .payloadCount);
     }
     const auto* exiting =
-        row->variableControlDiscreteRetargetRuntimeProgram.payloads;
+        row->VariableControlDiscreteRetargetRuntimeProgram().payloads;
     ASSERT_EQ(2u,
-              row->variableControlDiscreteRetargetRuntimeProgram.payloadCount);
+              row->VariableControlDiscreteRetargetRuntimeProgram().payloadCount);
     EXPECT_EQ(harken::TimelineEventKind::Envelope, exiting[0].kind);
     EXPECT_EQ(harken::TimelineEnvelopeDirection::FadeOut,
               exiting[0].envelopeDirection);
@@ -20718,9 +20718,9 @@ TEST(PlayableStart,
     EXPECT_EQ(3u,
               row->variableControlDiscreteRetargetGroupMemberCount);
     ASSERT_EQ(4u,
-              row->variableControlDiscreteRetargetRuntimeProgram.payloadCount);
+              row->VariableControlDiscreteRetargetRuntimeProgram().payloadCount);
     ASSERT_EQ(2u,
-              row->variableControlDiscreteRetargetEnteringRuntimeProgram.
+              row->VariableControlDiscreteRetargetEnteringRuntimeProgram().
                   payloadCount);
     const std::uint64_t decisionFrame =
         row->variableControlDiscreteRetargetFrame;
@@ -21580,13 +21580,13 @@ TEST(PlayableStart,
     EXPECT_EQ(2u,
               row->variableControlDiscreteRetargetGroupMemberCount);
     ASSERT_EQ(2u,
-              row->variableControlDiscreteRetargetRuntimeProgram.
+              row->VariableControlDiscreteRetargetRuntimeProgram().
                   payloadCount);
     EXPECT_EQ(harken::TimelineEventKind::Stop,
-              row->variableControlDiscreteRetargetRuntimeProgram.
+              row->VariableControlDiscreteRetargetRuntimeProgram().
                   payloads[0].kind);
     EXPECT_EQ(harken::TimelineEventKind::Stop,
-              row->variableControlDiscreteRetargetRuntimeProgram.
+              row->VariableControlDiscreteRetargetRuntimeProgram().
                   payloads[1].kind);
 
     bool silent = false;

@@ -782,7 +782,7 @@ harken::MonitorContentIdentity MonitorVariableControlContentFor(
         return MonitorContentFor(row.Invocation().packPlaybackView, content);
     }
     return MonitorContentFor(row.variableControlWorldUsesCurrentAuthority
-        ? engine.variables.CurrentPlayableWorld() : row.variableControlWorld, content);
+        ? engine.variables.CurrentPlayableWorld() : row.VariableControlWorld(), content);
 }
 
 // Runtime-owned frontier materialization for every playback adapter.  The
@@ -10770,7 +10770,7 @@ harken::EnginePlayableServiceRow* PrepareNestedPlayableService(
     service.startFrame = parent.startFrame;
     service.variableControlEmitter = parent.variableControlEmitter;
     service.variableControlWorldUsesCurrentAuthority = parent.variableControlWorldUsesCurrentAuthority;
-    service.variableControlWorld = parent.variableControlWorld;
+    service.VariableControlWorld() = parent.VariableControlWorld();
     service.variableControlContinuousMemberOffset = engine.config.maxKnownScheduleLeaves;
     service.variableControlDiscreteTransitionOffset =
         service.variableControlContinuousMemberOffset + engine.config.maxVariableControlLiveRows;
@@ -10792,7 +10792,7 @@ harken::EnginePlayableServiceRow* PrepareFrontierPathService(
             CommitFrontierServiceOwner, CancelFrontierServiceOwner)) return nullptr;
     service->root = parent.root;
     service->containerLoopAuthorityKind = parent.containerLoopAuthorityKind;
-    service->containerLoopWorld = parent.containerLoopWorld;
+    service->ContainerLoopWorld() = parent.ContainerLoopWorld();
     service->ordinaryLifecycleOwned = true;
     service->selectionCount = parent.selectionCount;
     service->selectionPath = parent.selectionPath;
@@ -10845,7 +10845,7 @@ bool PrepareQueueInstanceOwner(harken::Engine& engine, harken::EngineQueueInstan
     service.queueInstance = context.prepared.Token();
     service.queueMode = true;
     service.queueWorldUsesCurrentAuthority = service.containerLoopAuthorityKind == harken::PlayableExecutionAuthorityKind::CurrentWorld;
-    service.queueWorld = service.containerLoopWorld;
+    service.QueueWorld() = service.ContainerLoopWorld();
     service.queueContainerStableId = program.containerStableId;
     service.queueProgramSemanticFingerprint = program.programSemanticFingerprint;
     service.queueResumePosition = program.resumePosition != 0;
@@ -14872,7 +14872,7 @@ QueueProgramResolveStatus ResolveQueueProgram(
         *outProgram = program.programView;
         return QueueProgramResolveStatus::Ok;
     }
-    harken::PlayableWorldViewV1 world = row.queueWorld;
+    harken::PlayableWorldViewV1 world = row.QueueWorld();
     if (row.queueWorldUsesCurrentAuthority) {
         world = engine.variables.CurrentPlayableWorld();
         if (world.generation != row.Invocation().worldGeneration) {
@@ -16537,7 +16537,7 @@ void BindVariableControlWorldAuthority(
         world.trackSchedules == currentWorld.trackSchedules &&
         world.pieceSchedules == currentWorld.pieceSchedules &&
         world.containers == currentWorld.containers;
-    row.variableControlWorld =
+    row.VariableControlWorld() =
         row.variableControlWorldUsesCurrentAuthority
             ? harken::PlayableWorldViewV1{}
             : world;
@@ -16548,7 +16548,7 @@ void BindVariableControlWorldAuthority(
     harken::EnginePlayableServiceRow& row,
     const harken::PackPlaybackView&) noexcept {
     row.variableControlWorldUsesCurrentAuthority = false;
-    row.variableControlWorld = {};
+    row.VariableControlWorld() = {};
 }
 
 ScheduleMaterializeStatus MaterializeVariableControlDiscreteSchedule(
@@ -17038,7 +17038,7 @@ bool PrepareVariableControlRetargetSubtree(
         service->parentService = PlayableServiceReference(parent);
         if (program->mode != harken::ContainerModeV1::VariableControl) service->root = parentService.root;
         service->containerLoopAuthorityKind = parentService.containerLoopAuthorityKind;
-        service->containerLoopWorld = parentService.containerLoopWorld;
+        service->ContainerLoopWorld() = parentService.ContainerLoopWorld();
         service->ordinaryLifecycleOwned = program->mode != harken::ContainerModeV1::VariableControl;
         if (&parent != &parentService && !parent.variableControlInstance.Valid())
             parent.frontierChildService = PlayableServiceReference(*service);
@@ -17772,7 +17772,7 @@ bool ResolveVariableControlLeafBinding(harken::Engine& engine,
                 : owner->Invocation().packLease.leaseToken != 0
                 ? FindVariableControlNestedContainer(owner->Invocation().packPlaybackView, parent.authored)
                 : FindVariableControlNestedContainer(owner->variableControlWorldUsesCurrentAuthority
-                    ? engine.variables.CurrentPlayableWorld() : owner->variableControlWorld, parent.authored);
+                    ? engine.variables.CurrentPlayableWorld() : owner->VariableControlWorld(), parent.authored);
             if (owner == nullptr || program == nullptr || out->memberCount >= out->members.size()) return false;
             out->members[out->memberCount++] = {owner, child.occurrenceOrdinal, !child.continuousMember};
             if (child.continuousMember) {
@@ -17889,7 +17889,7 @@ bool ObserveRetargetNestedControllerEntry(harken::Engine& engine,
         const auto* program = service->Invocation().packLease.leaseToken != 0
             ? FindVariableControlNestedContainer(service->Invocation().packPlaybackView, service->root)
             : FindVariableControlNestedContainer(service->variableControlWorldUsesCurrentAuthority
-                  ? engine.variables.CurrentPlayableWorld() : service->variableControlWorld, service->root);
+                  ? engine.variables.CurrentPlayableWorld() : service->VariableControlWorld(), service->root);
         if (program == nullptr || program->evaluationPeriodFrames > UINT64_MAX - onset) return false;
         service->lastAppliedBlockSequence = decision.lastAudioSequence;
         service->startFrame = onset;
@@ -18337,7 +18337,7 @@ bool MaterializeVariableControlDiscreteLeafSchedule(
     const harken::PlayableWorldViewV1 world =
         row.variableControlWorldUsesCurrentAuthority
             ? engine.variables.CurrentPlayableWorld()
-            : row.variableControlWorld;
+            : row.VariableControlWorld();
     const auto status = MaterializeContainerChildSchedule(
         world, program, childStableOrdinal,
         engine.config.mixRate.SampleRate(), targetSchedule);
@@ -22128,7 +22128,7 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
     scratch->variableControl = true;
     row.containerLoopAuthorityKind = packLease != nullptr
         ? harken::PlayableExecutionAuthorityKind::Pack : harken::PlayableExecutionAuthorityKind::CurrentWorld;
-    if constexpr (!std::is_same_v<WorldView, harken::PackPlaybackView>) row.containerLoopWorld = world;
+    if constexpr (!std::is_same_v<WorldView, harken::PackPlaybackView>) row.ContainerLoopWorld() = world;
     if (!engine.PrepareVariableControlMemberWeights(row, continuousLeafCount) ||
         !engine.PrepareVariableControlChildWeights(row, continuousCount)) {
         (void)CancelPreparedVariableControlInitial(engine, scratch);
@@ -26208,7 +26208,7 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
         ? harken::PlayableExecutionAuthority::Pack(row.Invocation().packPlaybackView)
         : row.queueWorldUsesCurrentAuthority
             ? harken::PlayableExecutionAuthority::Current(world)
-            : harken::PlayableExecutionAuthority::Frozen(row.queueWorld);
+            : harken::PlayableExecutionAuthority::Frozen(row.QueueWorld());
     if (!resetNext) {
         harken::EffectiveQueueState resetInitial{};
         harken::EffectiveQueueState resolvedNext{};
@@ -27130,7 +27130,7 @@ QueueContinuationPrepareStatus ValidateQueueSuccessorTarget(
         ? harken::PlayableExecutionAuthority::Pack(row.Invocation().packPlaybackView)
         : row.queueWorldUsesCurrentAuthority
             ? harken::PlayableExecutionAuthority::Current(world)
-            : harken::PlayableExecutionAuthority::Frozen(row.queueWorld);
+            : harken::PlayableExecutionAuthority::Frozen(row.QueueWorld());
     const harken::ContainerChildProgramViewV2* selectedChild = nullptr;
     if (!ResolveSharedContainerChild(
             authority, program, next.currentChildOrdinal, &selectedChild)) {
@@ -28171,7 +28171,7 @@ QueueContinuationPrepareStatus StartSignalOnlyNoOverlapSuccessor(
         ? harken::PlayableExecutionAuthority::Pack(row.Invocation().packPlaybackView)
         : row.queueWorldUsesCurrentAuthority
             ? harken::PlayableExecutionAuthority::Current(world)
-            : harken::PlayableExecutionAuthority::Frozen(row.queueWorld);
+            : harken::PlayableExecutionAuthority::Frozen(row.QueueWorld());
     if (!resetNext) {
         harken::EffectiveQueueState resetInitial{};
         harken::EffectiveQueueState resolvedNext{};
@@ -28601,7 +28601,7 @@ QueueContinuationPrepareStatus PromoteNestedQueueParent(
     } else if (row.Invocation().packLease.leaseToken != 0) {
         return QueueContinuationPrepareStatus::Failed;
     } else {
-        world = row.queueWorld;
+        world = row.QueueWorld();
     }
     for (std::uint32_t index = 0; index < world.containerCount; ++index) {
         const auto& candidate = world.containers[index];
@@ -28751,12 +28751,12 @@ const harken::PlayableWorldViewV1* ContainerLoopWorld(
         if (current.generation != row.Invocation().worldGeneration) {
             return nullptr;
         }
-        row.containerLoopWorld = current;
+        row.ContainerLoopWorld() = current;
     }
-    if (row.containerLoopWorld.generation != row.Invocation().worldGeneration) {
+    if (row.ContainerLoopWorld().generation != row.Invocation().worldGeneration) {
         return nullptr;
     }
-    return &row.containerLoopWorld;
+    return &row.ContainerLoopWorld();
 }
 
 enum class ContainerLoopSuccessorStatus : std::uint8_t {
@@ -31147,7 +31147,7 @@ const harken::ContainerProgramViewV3* ResolveVariableControlProgram(
     const harken::PlayableWorldViewV1 world =
         row.variableControlWorldUsesCurrentAuthority
             ? engine.variables.CurrentPlayableWorld()
-            : row.variableControlWorld;
+            : row.VariableControlWorld();
     if (world.generation != row.Invocation().worldGeneration) return nullptr;
     for (std::uint32_t index = 0; index < world.containerCount; ++index) {
         const harken::ContainerProgramViewV3& candidate =
@@ -31510,29 +31510,29 @@ engine.runtimeRecreateRequired = true;
         schedule.runtimeProgram = {row.rootInstance, &runtime};
         schedule.armToken = exitingArms[index];
     }
-    row.variableControlDiscreteRetargetRuntimeProgram = {};
-    row.variableControlDiscreteRetargetRuntimeProgram.generation =
+    row.VariableControlDiscreteRetargetRuntimeProgram() = {};
+    row.VariableControlDiscreteRetargetRuntimeProgram().generation =
         row.rootInstance;
-    row.variableControlDiscreteRetargetRuntimeProgram.payloads =
+    row.VariableControlDiscreteRetargetRuntimeProgram().payloads =
         row.variableControlDiscreteRetargetPayloads.data();
-    row.variableControlDiscreteRetargetRuntimeProgram.payloadCount =
+    row.VariableControlDiscreteRetargetRuntimeProgram().payloadCount =
         sourceMemberCount;
-    row.variableControlDiscreteRetargetSchedule = {};
-    row.variableControlDiscreteRetargetSchedule.ownerInstance =
+    row.VariableControlDiscreteRetargetSchedule() = {};
+    row.VariableControlDiscreteRetargetSchedule().ownerInstance =
         row.rootInstance;
-    row.variableControlDiscreteRetargetSchedule.
+    row.VariableControlDiscreteRetargetSchedule().
         ownerInstanceScheduleEpoch = instance.scheduleEpoch;
-    row.variableControlDiscreteRetargetSchedule.transactionId = ticket;
-    row.variableControlDiscreteRetargetSchedule.entryAnchorFrame =
+    row.VariableControlDiscreteRetargetSchedule().transactionId = ticket;
+    row.VariableControlDiscreteRetargetSchedule().entryAnchorFrame =
         decisionFrame;
-    row.variableControlDiscreteRetargetSchedule.events =
+    row.VariableControlDiscreteRetargetSchedule().events =
         row.variableControlDiscreteRetargetEvents.data();
-    row.variableControlDiscreteRetargetSchedule.eventCount =
+    row.VariableControlDiscreteRetargetSchedule().eventCount =
         sourceMemberCount;
-    row.variableControlDiscreteRetargetSchedule.runtimeProgram = {
+    row.VariableControlDiscreteRetargetSchedule().runtimeProgram = {
         row.rootInstance,
-        &row.variableControlDiscreteRetargetRuntimeProgram};
-    row.variableControlDiscreteRetargetSchedule.armToken = exitingArms[0];
+        &row.VariableControlDiscreteRetargetRuntimeProgram()};
+    row.VariableControlDiscreteRetargetSchedule().armToken = exitingArms[0];
     bool postedAll = true;
     for (std::uint32_t index = 0; index < sourceMemberCount; ++index) {
         postedAll = postedAll && starts.PrepareProgram(
@@ -31722,7 +31722,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteEntry(
             const auto nestedWorld =
                 row.variableControlWorldUsesCurrentAuthority
                     ? engine.variables.CurrentPlayableWorld()
-                    : row.variableControlWorld;
+                    : row.VariableControlWorld();
             targetReady = PrepareVariableControlRetargetSelection(
                 engine, nestedWorld, row, program,
                 selected.childStableOrdinal, ticket, &targetSchedule, &incomingTree);
@@ -31734,7 +31734,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteEntry(
     const bool packTargets = row.Invocation().packLease.leaseToken != 0 &&
         (nestedTargets || !row.variableControlWorldUsesCurrentAuthority);
     const auto targetWorld = row.variableControlWorldUsesCurrentAuthority
-        ? engine.variables.CurrentPlayableWorld() : row.variableControlWorld;
+        ? engine.variables.CurrentPlayableWorld() : row.VariableControlWorld();
     const auto captureStatus = packTargets
         ? CaptureVariableControlRetargetLeafStarts(engine, row.Invocation().packPlaybackView,
             row, program, targetSchedule, captureSpan)
@@ -31965,7 +31965,7 @@ engine.runtimeRecreateRequired = true;
         } else {
             const auto nestedWorld = row.variableControlWorldUsesCurrentAuthority
                 ? engine.variables.CurrentPlayableWorld()
-                : row.variableControlWorld;
+                : row.VariableControlWorld();
             prepared = PrepareVariableControlRetargetSubtree(
                 engine, row, nestedWorld, program, *desired, targetSchedule,
                 incomingChildPrepared, incomingLeafPrepared, 0, bank,
@@ -32141,29 +32141,29 @@ engine.runtimeRecreateRequired = true;
             return VariableRetargetPrepareStatus::Retry;
         }
     }
-    row.variableControlDiscreteRetargetRuntimeProgram = {};
-    row.variableControlDiscreteRetargetRuntimeProgram.generation =
+    row.VariableControlDiscreteRetargetRuntimeProgram() = {};
+    row.VariableControlDiscreteRetargetRuntimeProgram().generation =
         row.rootInstance;
-    row.variableControlDiscreteRetargetRuntimeProgram.payloads =
+    row.VariableControlDiscreteRetargetRuntimeProgram().payloads =
         row.variableControlDiscreteRetargetPayloads.data();
-    row.variableControlDiscreteRetargetRuntimeProgram.payloadCount =
+    row.VariableControlDiscreteRetargetRuntimeProgram().payloadCount =
         targetSchedule.leafCount;
-    row.variableControlDiscreteRetargetSchedule = {};
-    row.variableControlDiscreteRetargetSchedule.ownerInstance =
+    row.VariableControlDiscreteRetargetSchedule() = {};
+    row.VariableControlDiscreteRetargetSchedule().ownerInstance =
         row.rootInstance;
-    row.variableControlDiscreteRetargetSchedule.
+    row.VariableControlDiscreteRetargetSchedule().
         ownerInstanceScheduleEpoch = instance.scheduleEpoch;
-    row.variableControlDiscreteRetargetSchedule.transactionId = ticket;
-    row.variableControlDiscreteRetargetSchedule.entryAnchorFrame =
+    row.VariableControlDiscreteRetargetSchedule().transactionId = ticket;
+    row.VariableControlDiscreteRetargetSchedule().entryAnchorFrame =
         decisionFrame;
-    row.variableControlDiscreteRetargetSchedule.events =
+    row.VariableControlDiscreteRetargetSchedule().events =
         row.variableControlDiscreteRetargetEvents.data();
-    row.variableControlDiscreteRetargetSchedule.eventCount =
+    row.VariableControlDiscreteRetargetSchedule().eventCount =
         targetSchedule.leafCount;
-    row.variableControlDiscreteRetargetSchedule.runtimeProgram = {
+    row.VariableControlDiscreteRetargetSchedule().runtimeProgram = {
         row.rootInstance,
-        &row.variableControlDiscreteRetargetRuntimeProgram};
-    row.variableControlDiscreteRetargetSchedule.armToken =
+        &row.VariableControlDiscreteRetargetRuntimeProgram()};
+    row.VariableControlDiscreteRetargetSchedule().armToken =
         targetSchedule.leafCount == 0
             ? harken::TimelineArmToken{}
             : installedTargets[0].armToken;
@@ -32443,7 +32443,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
             const auto nestedWorld =
                 row.variableControlWorldUsesCurrentAuthority
                     ? engine.variables.CurrentPlayableWorld()
-                    : row.variableControlWorld;
+                    : row.VariableControlWorld();
             targetReady = PrepareVariableControlRetargetSelection(
                 engine, nestedWorld, row, program,
                 selected.childStableOrdinal, ticket, &targetSchedule, &incomingTree);
@@ -32463,7 +32463,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
     const bool packTargets = row.Invocation().packLease.leaseToken != 0 &&
         (nestedTargets || !row.variableControlWorldUsesCurrentAuthority);
     const auto targetWorld = row.variableControlWorldUsesCurrentAuthority
-        ? engine.variables.CurrentPlayableWorld() : row.variableControlWorld;
+        ? engine.variables.CurrentPlayableWorld() : row.VariableControlWorld();
     const auto captureStatus = packTargets
         ? CaptureVariableControlRetargetLeafStarts(engine, row.Invocation().packPlaybackView,
             row, program, targetSchedule, captureSpan)
@@ -32475,7 +32475,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
         const harken::PlayableWorldViewV1 world =
             row.variableControlWorldUsesCurrentAuthority
                 ? engine.variables.CurrentPlayableWorld()
-                : row.variableControlWorld;
+                : row.VariableControlWorld();
         const std::uint32_t currentOrdinal =
             row.variableControlDiscreteCurrentChildOrdinal;
         const harken::ContainerChildProgramViewV2* currentChild =
@@ -32913,7 +32913,7 @@ engine.runtimeRecreateRequired = true;
         } else {
             const auto nestedWorld = row.variableControlWorldUsesCurrentAuthority
                 ? engine.variables.CurrentPlayableWorld()
-                : row.variableControlWorld;
+                : row.VariableControlWorld();
             prepared = PrepareVariableControlRetargetSubtree(
                 engine, row, nestedWorld, program, *desired, targetSchedule,
                 incomingChildPrepared, incomingLeafPrepared, 0, bank,
@@ -33141,29 +33141,29 @@ engine.runtimeRecreateRequired = true;
     }
     row.scheduleLeafCount = row.variableControlDiscreteMemberCount +
         row.variableControlContinuousMemberCount;
-    row.variableControlDiscreteRetargetEnteringRuntimeProgram = {};
-    row.variableControlDiscreteRetargetEnteringRuntimeProgram.generation =
+    row.VariableControlDiscreteRetargetEnteringRuntimeProgram() = {};
+    row.VariableControlDiscreteRetargetEnteringRuntimeProgram().generation =
         row.rootInstance;
-    row.variableControlDiscreteRetargetEnteringRuntimeProgram.payloads =
+    row.VariableControlDiscreteRetargetEnteringRuntimeProgram().payloads =
         row.variableControlDiscreteRetargetEnteringPayloads.data();
-    row.variableControlDiscreteRetargetEnteringRuntimeProgram.payloadCount =
+    row.VariableControlDiscreteRetargetEnteringRuntimeProgram().payloadCount =
         enteringEventCount;
-    row.variableControlDiscreteRetargetEnteringSchedule = {};
-    row.variableControlDiscreteRetargetEnteringSchedule.ownerInstance =
+    row.VariableControlDiscreteRetargetEnteringSchedule() = {};
+    row.VariableControlDiscreteRetargetEnteringSchedule().ownerInstance =
         row.rootInstance;
-    row.variableControlDiscreteRetargetEnteringSchedule.
+    row.VariableControlDiscreteRetargetEnteringSchedule().
         ownerInstanceScheduleEpoch = instance.scheduleEpoch;
-    row.variableControlDiscreteRetargetEnteringSchedule.transactionId = ticket;
-    row.variableControlDiscreteRetargetEnteringSchedule.entryAnchorFrame =
+    row.VariableControlDiscreteRetargetEnteringSchedule().transactionId = ticket;
+    row.VariableControlDiscreteRetargetEnteringSchedule().entryAnchorFrame =
         targetStartFrame;
-    row.variableControlDiscreteRetargetEnteringSchedule.events =
+    row.VariableControlDiscreteRetargetEnteringSchedule().events =
         row.variableControlDiscreteRetargetEnteringEvents.data();
-    row.variableControlDiscreteRetargetEnteringSchedule.eventCount =
+    row.VariableControlDiscreteRetargetEnteringSchedule().eventCount =
         enteringEventCount;
-    row.variableControlDiscreteRetargetEnteringSchedule.runtimeProgram = {
+    row.VariableControlDiscreteRetargetEnteringSchedule().runtimeProgram = {
         row.rootInstance,
-        &row.variableControlDiscreteRetargetEnteringRuntimeProgram};
-    row.variableControlDiscreteRetargetEnteringSchedule.armToken =
+        &row.VariableControlDiscreteRetargetEnteringRuntimeProgram()};
+    row.VariableControlDiscreteRetargetEnteringSchedule().armToken =
         targetSchedule.leafCount == 0
             ? harken::TimelineArmToken{}
             : installedTargets[0].armToken;
@@ -33240,28 +33240,28 @@ engine.runtimeRecreateRequired = true;
         schedule.runtimeProgram = {row.rootInstance, &runtime};
         schedule.armToken = arm;
     }
-    row.variableControlDiscreteRetargetRuntimeProgram = {};
-    row.variableControlDiscreteRetargetRuntimeProgram.generation =
+    row.VariableControlDiscreteRetargetRuntimeProgram() = {};
+    row.VariableControlDiscreteRetargetRuntimeProgram().generation =
         row.rootInstance;
-    row.variableControlDiscreteRetargetRuntimeProgram.payloads =
+    row.VariableControlDiscreteRetargetRuntimeProgram().payloads =
         row.variableControlDiscreteRetargetPayloads.data();
-    row.variableControlDiscreteRetargetRuntimeProgram.payloadCount =
+    row.VariableControlDiscreteRetargetRuntimeProgram().payloadCount =
         exitingEventCount;
-    row.variableControlDiscreteRetargetSchedule = {};
-    row.variableControlDiscreteRetargetSchedule.ownerInstance =
+    row.VariableControlDiscreteRetargetSchedule() = {};
+    row.VariableControlDiscreteRetargetSchedule().ownerInstance =
         row.rootInstance;
-    row.variableControlDiscreteRetargetSchedule.
+    row.VariableControlDiscreteRetargetSchedule().
         ownerInstanceScheduleEpoch = instance.scheduleEpoch;
-    row.variableControlDiscreteRetargetSchedule.transactionId = ticket;
-    row.variableControlDiscreteRetargetSchedule.entryAnchorFrame =
+    row.VariableControlDiscreteRetargetSchedule().transactionId = ticket;
+    row.VariableControlDiscreteRetargetSchedule().entryAnchorFrame =
         audibleFrame;
-    row.variableControlDiscreteRetargetSchedule.events =
+    row.VariableControlDiscreteRetargetSchedule().events =
         row.variableControlDiscreteRetargetEvents.data();
-    row.variableControlDiscreteRetargetSchedule.eventCount =
+    row.VariableControlDiscreteRetargetSchedule().eventCount =
         exitingEventCount;
-    row.variableControlDiscreteRetargetSchedule.runtimeProgram = {
-        row.rootInstance, &row.variableControlDiscreteRetargetRuntimeProgram};
-    row.variableControlDiscreteRetargetSchedule.armToken = exitingArms[0];
+    row.VariableControlDiscreteRetargetSchedule().runtimeProgram = {
+        row.rootInstance, &row.VariableControlDiscreteRetargetRuntimeProgram()};
+    row.VariableControlDiscreteRetargetSchedule().armToken = exitingArms[0];
 
     bool enteringPosted = true;
     for (std::uint32_t index = 0; index < targetSchedule.leafCount; ++index) {
@@ -33688,7 +33688,7 @@ VariableRetargetPrepareStatus PrepareVariableControlRetarget(
     if (!packVariableControl) {
         world = row.variableControlWorldUsesCurrentAuthority
                     ? engine.variables.CurrentPlayableWorld()
-                    : row.variableControlWorld;
+                    : row.VariableControlWorld();
         if (world.generation != row.Invocation().worldGeneration) {
             return VariableRetargetPrepareStatus::Fatal;
         }
@@ -40061,7 +40061,7 @@ bool EvaluatePendingVariableGroupSelection(harken::Engine& engine,
         ? PrepareSharedVariableControlDecision(engine, row.Invocation().packPlaybackView, program,
             values.data(), decision.variableCount, &decision)
         : PrepareSharedVariableControlDecision(engine, row.variableControlWorldUsesCurrentAuthority
-                ? engine.variables.CurrentPlayableWorld() : row.variableControlWorld,
+                ? engine.variables.CurrentPlayableWorld() : row.VariableControlWorld(),
             program, values.data(), decision.variableCount, &decision);
     return status == harken::GridEvaluationStatus::Ok;
 }
@@ -40112,7 +40112,7 @@ bool PreparePendingVariableGroupSelection(harken::Engine& engine,
             ready = !row.variableControlWorldUsesCurrentAuthority && row.Invocation().packLease.leaseToken != 0
                 ? expand(row.Invocation().packPlaybackView)
                 : expand(row.variableControlWorldUsesCurrentAuthority
-                    ? engine.variables.CurrentPlayableWorld() : row.variableControlWorld);
+                    ? engine.variables.CurrentPlayableWorld() : row.VariableControlWorld());
         } else ready = MaterializeVariableControlDiscreteLeafSchedule(engine, row, program, ordinal,
             &materialized, capacity);
         if (!ready || anchor == UINT64_MAX ||
@@ -40148,7 +40148,7 @@ bool PreparePendingVariableGroupSelection(harken::Engine& engine,
                 ? BuildVariableControlScheduleLeafStart(engine, row.Invocation().packPlaybackView,
                     row, materialized.leaves[index], &prepared)
                 : BuildVariableControlScheduleLeafStart(engine, row.variableControlWorldUsesCurrentAuthority
-                    ? engine.variables.CurrentPlayableWorld() : row.variableControlWorld,
+                    ? engine.variables.CurrentPlayableWorld() : row.VariableControlWorld(),
                     row, materialized.leaves[index], &prepared);
             if (status != harken::PlayableStartStatus::Accepted) return false;
             if (prepared.startOffsetFrames > UINT64_MAX - anchor ||
@@ -48491,7 +48491,7 @@ engine.runtimeRecreateRequired = true;
                     if (!ObserveRetargetNestedControllerEntry(engine,
                             row.variableControlRetargetIncoming.controllers.data(),
                             row.variableControlDiscreteRetargetIncomingNestedVariableControlCount, decision,
-                            row.variableControlDiscreteRetargetEnteringSchedule.entryAnchorFrame,
+                            row.VariableControlDiscreteRetargetEnteringSchedule().entryAnchorFrame,
                             observedAudioSequence, row.variableControlDiscreteRetargetIncomingChild)) engine.runtimeRecreateRequired = true;
                     bool anyTombstoned = memberCount == 0 && decision.lastAudioSequence != 0 &&
                         decision.lastAudioSequence <= observedAudioSequence;
@@ -52142,7 +52142,7 @@ engine.runtimeRecreateRequired = true;
                                           ? harken::PlayableExecutionAuthority::
                                                 Current(queueWorld)
                                           : harken::PlayableExecutionAuthority::
-                                                Frozen(row.queueWorld);
+                                                Frozen(row.QueueWorld());
                                 const harken::ContainerChildProgramViewV2*
                                     successor = nullptr;
                                 if (ResolveSharedContainerChild(
@@ -53049,7 +53049,7 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
                 limits.currentScheduleDepth = kSelectionPathNodeCapacity;
                 limits.directFutureScheduleDepth = WorldCapacitySummaryV1{}.maxTrackPieceScheduleDepth;
             } else {
-                world = row.variableControlWorldUsesCurrentAuthority ? variables.CurrentPlayableWorld() : row.variableControlWorld;
+                world = row.variableControlWorldUsesCurrentAuthority ? variables.CurrentPlayableWorld() : row.VariableControlWorld();
                 if (world.generation != row.Invocation().worldGeneration) return false;
                 stamp = {world.generation, world.identity.runtimeSemanticFingerprint};
                 limits.currentScheduleDepth = limits.directFutureScheduleDepth = world.maxTrackPieceScheduleDepth;
@@ -53072,7 +53072,7 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
             }
             if (!result || ResolveVariableControlProgram(*this, row) != program) return false;
             if (!pack) {
-                const auto after = row.variableControlWorldUsesCurrentAuthority ? variables.CurrentPlayableWorld() : row.variableControlWorld;
+                const auto after = row.variableControlWorldUsesCurrentAuthority ? variables.CurrentPlayableWorld() : row.VariableControlWorld();
                 if (after.generation != stamp.generation || after.identity.runtimeSemanticFingerprint != stamp.semanticFingerprint)
                     return false;
             } else if (packComposition.ValidateLease(row.Invocation().packLease) != VN_OK ||
@@ -53332,7 +53332,7 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
                     row.Invocation().packPlaybackView.CompositeGeneration() != row.Invocation().worldGeneration) return false;
             } else {
                 const auto world = row.variableControlWorldUsesCurrentAuthority
-                    ? variables.CurrentPlayableWorld() : row.variableControlWorld;
+                    ? variables.CurrentPlayableWorld() : row.VariableControlWorld();
                 if (world.generation != row.Invocation().worldGeneration) return false;
             }
             token = nextToken(*producer, ordinal);
@@ -55725,7 +55725,7 @@ bool Engine::PreparePendingVariableGroupChildren(EngineActionPlayScratch& produc
     const auto authority = !row.variableControlWorldUsesCurrentAuthority && row.Invocation().packLease.leaseToken != 0
         ? PlayableExecutionAuthority::Pack(row.Invocation().packPlaybackView)
         : PlayableExecutionAuthority::Current(row.variableControlWorldUsesCurrentAuthority
-            ? variables.CurrentPlayableWorld() : row.variableControlWorld);
+            ? variables.CurrentPlayableWorld() : row.VariableControlWorld());
     for (std::uint32_t policyIndex = 0; policyIndex < child->frontierPolicyCount; ++policyIndex) {
         auto& node = child->storage.frontierPolicies[policyIndex];
         std::uint32_t tokenIndex = UINT32_MAX;
@@ -55760,7 +55760,7 @@ bool Engine::PreparePendingVariableGroupChildren(EngineActionPlayScratch& produc
         const bool resolved = !row.variableControlWorldUsesCurrentAuthority && row.Invocation().packLease.leaseToken != 0
             ? ResolveSharedContainerProgram(authority, row.Invocation().packPlaybackView, node.authored, &program)
             : ResolveSharedContainerProgram(authority, row.variableControlWorldUsesCurrentAuthority
-                ? variables.CurrentPlayableWorld() : row.variableControlWorld, node.authored, &program);
+                ? variables.CurrentPlayableWorld() : row.VariableControlWorld(), node.authored, &program);
         if (!resolved || program == nullptr ||
             (program->mode != ContainerModeV1::Random && program->mode != ContainerModeV1::Sequence &&
              program->mode != ContainerModeV1::VariableControl && program->mode != ContainerModeV1::SequenceQueue &&
@@ -55771,7 +55771,7 @@ bool Engine::PreparePendingVariableGroupChildren(EngineActionPlayScratch& produc
         const auto loopLimit = !row.variableControlWorldUsesCurrentAuthority && row.Invocation().packLease.leaseToken != 0
             ? ReadPlayableLoopCount(row.Invocation().packPlaybackView, program->containerStableId)
             : ReadPlayableLoopCount(row.variableControlWorldUsesCurrentAuthority
-                ? variables.CurrentPlayableWorld() : row.variableControlWorld, program->containerStableId);
+                ? variables.CurrentPlayableWorld() : row.VariableControlWorld(), program->containerStableId);
         if (!containerPlayback.Prepare(playableInstances, node.instance, node.instanceEpoch,
                 program->containerStableId, program->programSemanticFingerprint, static_cast<std::uint8_t>(program->mode),
                 loopLimit, &container) || !child->playableTreeExecutor.AdoptPreparedContainerReservation(&container)) return refuse();
@@ -55814,7 +55814,7 @@ bool Engine::PreparePendingVariableGroupChildren(EngineActionPlayScratch& produc
             const auto fingerprint = !row.variableControlWorldUsesCurrentAuthority && row.Invocation().packLease.leaseToken != 0
                 ? row.Invocation().packPlaybackView.WorldSemanticFingerprint()
                 : (row.variableControlWorldUsesCurrentAuthority
-                    ? variables.CurrentPlayableWorld() : row.variableControlWorld).identity.runtimeSemanticFingerprint;
+                    ? variables.CurrentPlayableWorld() : row.VariableControlWorld()).identity.runtimeSemanticFingerprint;
             const SharedInitialFrontierRequest request{
                 {row.Invocation().worldGeneration, fingerprint, row.root.stableId,
                  row.Invocation().invocationEmitter, child->storage.initialSelection.identity.callerSeed, row.ticket},
@@ -55824,7 +55824,7 @@ bool Engine::PreparePendingVariableGroupChildren(EngineActionPlayScratch& produc
                 ? PrepareSharedInitialFrontier(*this, row.Invocation().packPlaybackView, node.authored, program,
                     nullptr, request, &frontier)
                 : PrepareSharedInitialFrontier(*this, row.variableControlWorldUsesCurrentAuthority
-                    ? variables.CurrentPlayableWorld() : row.variableControlWorld, node.authored, program,
+                    ? variables.CurrentPlayableWorld() : row.VariableControlWorld(), node.authored, program,
                     nullptr, request, &frontier);
             if ((status != SharedInitialFrontierStatus::Ok && status != SharedInitialFrontierStatus::ZeroWork) ||
                 frontier.authoredChild == nullptr ||
@@ -55842,7 +55842,7 @@ bool Engine::PreparePendingVariableGroupChildren(EngineActionPlayScratch& produc
         const bool resolved = !row.variableControlWorldUsesCurrentAuthority && row.Invocation().packLease.leaseToken != 0
             ? ResolveSharedContainerProgram(authority, row.Invocation().packPlaybackView, ref, &program)
             : ResolveSharedContainerProgram(authority, row.variableControlWorldUsesCurrentAuthority
-                ? variables.CurrentPlayableWorld() : row.variableControlWorld, ref, &program);
+                ? variables.CurrentPlayableWorld() : row.VariableControlWorld(), ref, &program);
         return resolved ? program : nullptr;
     };
     if (!PopulateNestedVariableControlInitialChildren(*this, *child, anchor, resolveNested) ||
@@ -55905,7 +55905,7 @@ bool Engine::PreparePendingVariableGroupChildren(EngineActionPlayScratch& produc
             ? MaterializeSchedule(row.Invocation().packPlaybackView, node.authored, config.mixRate.SampleRate(),
                 config.maxKnownScheduleLeaves, kSelectionPathNodeCapacity, &materialized)
             : MaterializeSchedule(row.variableControlWorldUsesCurrentAuthority
-                ? variables.CurrentPlayableWorld() : row.variableControlWorld, node.authored,
+                ? variables.CurrentPlayableWorld() : row.VariableControlWorld(), node.authored,
                 config.mixRate.SampleRate(), &materialized);
         if (status == ScheduleMaterializeStatus::ZeroWork) {
             if (materialized.zeroWorkCompletionOffsetFrames > UINT64_MAX - anchor) return refuse();
@@ -70379,7 +70379,7 @@ engine.runtimeRecreateRequired = true;
             row.containerLoopAuthorityKind = worldUsesCurrentAuthority
                 ? PlayableExecutionAuthorityKind::CurrentWorld
                 : PlayableExecutionAuthorityKind::FrozenWorld;
-            row.containerLoopWorld =
+            row.ContainerLoopWorld() =
                 worldUsesCurrentAuthority ? PlayableWorldViewV1{} : world;
             row.startFrame = baseStartFrame + zeroWorkOffset;
             row.zeroWorkMarker = true;
@@ -70997,7 +70997,7 @@ engine.runtimeRecreateRequired = true;
     row.containerLoopAuthorityKind = worldUsesCurrentAuthority
         ? PlayableExecutionAuthorityKind::CurrentWorld
         : PlayableExecutionAuthorityKind::FrozenWorld;
-    row.containerLoopWorld =
+    row.ContainerLoopWorld() =
         worldUsesCurrentAuthority ? PlayableWorldViewV1{} : world;
     row.ordinaryLifecycleOwned = ordinaryLifecycleOwned;
     row.containerInstances[0] = instance;
@@ -71245,7 +71245,7 @@ engine.runtimeRecreateRequired = true;
         row.queueMode = true;
         row.queueWorldUsesCurrentAuthority = worldUsesCurrentAuthority;
         row.queueResumePosition = queueProgram->resumePosition != 0;
-        row.queueWorld = worldUsesCurrentAuthority
+        row.QueueWorld() = worldUsesCurrentAuthority
             ? PlayableWorldViewV1{}
             : world;
         row.queueContainerStableId = queueProgram->containerStableId;
@@ -78664,7 +78664,7 @@ bool PrepareImmediateActionSingleLeafPlay(
                     row->selectedChildOrdinals[index] = selectedOrdinals[index];
                     cursor = child->playable;
                 }
-                row->containerLoopWorld = scratch->packLeaseOwned ? harken::PlayableWorldViewV1{} : world;
+                row->ContainerLoopWorld() = scratch->packLeaseOwned ? harken::PlayableWorldViewV1{} : world;
                 const auto seed = DeriveImmediateActionPlayCallerSeed(plan, planned.executionOrdinal);
                 const bool servicesPrepared = scratch->packLeaseOwned
                     ? PrepareInitialFrontierPathServices(engine, *scratch, *row, authority, scratch->packPlaybackView,
@@ -85190,7 +85190,7 @@ engine.runtimeRecreateRequired = true;
                     scratch->selectionPlays[0]);
         }
         row.containerLoopAuthorityKind = containerLoopAuthorityKind;
-        row.containerLoopWorld = scratch->packLeaseOwned
+        row.ContainerLoopWorld() = scratch->packLeaseOwned
             ? harken::PlayableWorldViewV1{}
             : world;
         row.ordinaryLifecycleOwned = false;
@@ -91086,7 +91086,7 @@ bool ResolveImmediateActionQueueReset(
         ? harken::PlayableExecutionAuthority::Pack(row.Invocation().packPlaybackView)
         : row.queueWorldUsesCurrentAuthority
             ? harken::PlayableExecutionAuthority::Current(world)
-            : harken::PlayableExecutionAuthority::Frozen(row.queueWorld);
+            : harken::PlayableExecutionAuthority::Frozen(row.QueueWorld());
     harken::EffectiveQueueState current{};
     harken::EffectiveQueueState next{};
     if (!engine.queueInstances.ResolveResetSelection(
@@ -91120,7 +91120,7 @@ bool ResolveImmediateActionQueueReset(
                 harken::kSelectionPathNodeCapacity, &out->materialized);
         }
         const auto& resolvedWorld = row.queueWorldUsesCurrentAuthority
-            ? world : row.queueWorld;
+            ? world : row.QueueWorld();
         return MaterializeContainerChildSchedule(
             resolvedWorld, *program, next.currentChildOrdinal,
             engine.config.mixRate.SampleRate(), &out->materialized);
@@ -91152,7 +91152,7 @@ bool ResolveImmediateActionQueueReset(
                   row.Invocation().packPlaybackView, selectedChild->playable,
                   &scheduleFingerprint)
             : ResolveScheduleFingerprint(
-                  row.queueWorldUsesCurrentAuthority ? world : row.queueWorld,
+                  row.queueWorldUsesCurrentAuthority ? world : row.QueueWorld(),
                   selectedChild->playable, &scheduleFingerprint);
         if (!fingerprintResolved ||
             !SameScheduleKey(selectedChild->timingHint.payload.schedule,
@@ -91181,7 +91181,7 @@ bool ResolveImmediateActionQueueReset(
                   &leaves[index])
             : BuildScheduleLeafStart(
                   engine,
-                  row.queueWorldUsesCurrentAuthority ? world : row.queueWorld,
+                  row.queueWorldUsesCurrentAuthority ? world : row.QueueWorld(),
                   row.root, out->materialized.leaves[index],
                   &leaves[index]);
         if (leafStatus != harken::PlayableStartStatus::Accepted) {
@@ -91205,7 +91205,7 @@ bool ResolveImmediateActionQueueReset(
         out->targetProgram.stableId = first.leaf.stableId;
         out->targetProgram.world = packAuthority
             ? row.Invocation().packLease.compositeGeneration
-            : (row.queueWorldUsesCurrentAuthority ? world : row.queueWorld)
+            : (row.queueWorldUsesCurrentAuthority ? world : row.QueueWorld())
                   .generation;
         out->targetProgram.runtimeSemanticFingerprint =
             first.leaf.expectedProgramSemanticFingerprint;
@@ -91226,7 +91226,7 @@ bool ResolveImmediateActionQueueReset(
             return false;
         }
         out->transitionRule = ResolveBasicTransitionRule(
-            row.queueWorldUsesCurrentAuthority ? world : row.queueWorld,
+            row.queueWorldUsesCurrentAuthority ? world : row.QueueWorld(),
             *program, currentChild->playable,
             selectedChild->playable);
         if (out->transitionRule == nullptr) return false;
