@@ -48,6 +48,29 @@ Run EditMode and PlayMode, including `ExternalConsumerTests`. Tests using
 define enabled for Standalone. The bridge is test-only and must not ship in the
 SDK. Editor results do not establish Android, IL2CPP or audible device behavior.
 
+### Production Windows Player checks
+
+The `ProductionDevice` category contains three tests for cold/warm playback,
+explicit restart, nested/direct ownership and cancellation of pending reads.
+Use a separate project with the same prepared fixtures, a matching production
+`HarkenCore.dll`, an available Windows output device, and no
+`HARKEN_SDK_TEST_NULL_PUMP` define. These tests are excluded from bridge builds
+and only run in a Windows Player.
+
+Run each scripting backend separately with Unity Test Framework:
+
+```powershell
+Unity.exe -batchmode -nographics -projectPath <production-test-project> -runTests -testPlatform StandaloneWindows64 -assemblyNames Harken.Unity.PlayModeTests -testCategory ProductionDevice -testSettingsFile <backend-settings.json> -buildPlayerPath <fresh-output>/Player.exe -testResults <fresh-output>/tests.xml -logFile <fresh-output>/unity.log
+```
+
+Set `backend-settings.json` to `{"scriptingBackend":"Mono2x"}` or
+`{"scriptingBackend":"IL2CPP"}`. Require all three tests to pass with no skips
+or inconclusive results, and retain the native library hash, actual Player
+backend, test results and log. Apply an outer process timeout and use separate
+output directories for each run. The tests check new native audio blocks;
+device switching, system suspend/resume and human listening remain separate
+acceptance work.
+
 ## Regenerate publications
 
 Copy the authored projects under `Projects` into a temporary working directory.

@@ -25,6 +25,7 @@
 
 namespace harken {
 class OriginalImmediateLaneConditionalProjection;
+class QueueContinuationLane;
 class PrivatePendingQueueFrontierBinding;
 
 class OccurrenceStatePool;
@@ -585,6 +586,7 @@ public:
           expectedDecision_(other.expectedDecision_),
           replacement_(other.replacement_), projectionFirst_(other.projectionFirst_),
           projectionCount_(other.projectionCount_), prepared_(other.prepared_),
+          stagedOwner_(std::exchange(other.stagedOwner_, nullptr)),
           currentOccurrence_(std::move(other.currentOccurrence_)),
           currentDecision_(std::move(other.currentDecision_)) {
         other.owner_ = nullptr;
@@ -607,6 +609,7 @@ public:
             projectionFirst_ = other.projectionFirst_;
             projectionCount_ = other.projectionCount_;
             prepared_ = other.prepared_;
+            stagedOwner_ = std::exchange(other.stagedOwner_, nullptr);
             other.owner_ = nullptr;
             other.queue_ = {};
             other.expectedVersion_ = {};
@@ -621,6 +624,8 @@ public:
 
 private:
     friend class QueueInstanceTable;
+    friend class QueueContinuationLane;
+    friend class OriginalConditionalReplacementBatch;
     QueueInstanceTable* owner_ = nullptr;
     QueueInstanceToken queue_{};
     ConditionalQueueVersionToken expectedVersion_{};
@@ -629,6 +634,7 @@ private:
     EffectiveQueueState projectionFirst_{};
     std::uint32_t projectionCount_ = 0;
     bool prepared_ = false;
+    const QueueContinuationLane* stagedOwner_ = nullptr;
     OccurrenceStatePool::OriginalSingleCompletionOwnerPin currentOccurrence_{};
     OriginalDecisionLifetimePin currentDecision_{};
 };
@@ -1067,7 +1073,8 @@ public:
         ConditionalQueueVersionToken expectedVersion,
         DecisionToken expectedDecision,
         const ConditionalQueuePrepareRequest& replacement,
-        PreparedQueueConditionalReplacementV1* out) noexcept;
+        PreparedQueueConditionalReplacementV1* out,
+        const QueueContinuationLane* stagedOwner = nullptr) noexcept;
     // Retain the actual immutable Current while replacing its separate future.
     QueueResetStatusV1 PrepareConditionalReplacementRetainingOriginalCurrent(
         QueueInstanceToken token, ConditionalQueueVersionToken expectedVersion,
@@ -1075,7 +1082,8 @@ public:
         OccurrenceStatePool& occurrences,
         const OccurrenceStatePool::OriginalSingleCompletionOwnerPin& current,
         DecisionTable& decisions, const OriginalDecisionLifetimePin& currentDecision,
-        PreparedQueueConditionalReplacementV1* out) noexcept;
+        PreparedQueueConditionalReplacementV1* out,
+        const QueueContinuationLane* stagedOwner = nullptr) noexcept;
     QueueResetStatusV1 CommitPreparedConditionalReplacement(
         PreparedQueueConditionalReplacementV1* prepared,
         LogicCommitSequence sequence) noexcept;
@@ -1184,7 +1192,11 @@ private:
     QueueResetStatusV1 PrepareConditionalReplacementInternal(
         QueueInstanceToken token, ConditionalQueueVersionToken expectedVersion,
         DecisionToken expectedDecision, const ConditionalQueuePrepareRequest& replacement,
-        PreparedQueueConditionalReplacementV1* out, bool retainedCurrent) noexcept;
+        PreparedQueueConditionalReplacementV1* out, bool retainedCurrent,
+        const QueueContinuationLane* stagedOwner = nullptr) noexcept;
+    QueueResetStatusV1 CommitConditionalReplacementInternal(
+        PreparedQueueConditionalReplacementV1* prepared, LogicCommitSequence sequence,
+        bool acceptedStaged) noexcept;
     friend class PrivateSelectedQueueFutureSpanPool;
     friend class OriginalConditionalReplacementBatch;
     friend class OriginalImmediateLaneConditionalProjection;
@@ -1258,6 +1270,7 @@ private:
         AcceptedQueueSignalAdvanceV1 signalIdentity{};
         std::atomic<bool> conditionalReserved{false};
         std::atomic<bool> conditionalReplacementReserved{false};
+        const QueueContinuationLane* stagedReplacementOwner = nullptr;
         std::atomic<bool> pendingConsumesReset{false};
         std::atomic<std::uint64_t> mirrorSequence{0};
         std::atomic<std::uint64_t> mirrorVersion{0};

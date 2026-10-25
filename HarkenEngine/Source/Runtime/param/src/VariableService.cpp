@@ -2506,7 +2506,7 @@ void VariableServiceV1::ForEachTarget(Engine& engine, WriteRow& batchRow,
             row.variableId, [&](VnVoiceHandle handle, VnEmitterHandle emitter,
                                 std::uint32_t targetId) {
                 if (!voiceScopeMatches(emitter) ||
-                    engine.voices.Resolve(handle) == nullptr) {
+                    !engine.voices.IsAlive(handle)) {
                     return;
                 }
                 VariableTargetLocator locator{};
@@ -2540,7 +2540,7 @@ void VariableServiceV1::ForEachTarget(Engine& engine, WriteRow& batchRow,
                 if (scope == EffectParamTargetStore::Scope::Voice) {
                     const VnVoiceHandle handle =
                         static_cast<VnVoiceHandle>(object);
-                    if (engine.voices.Resolve(handle) == nullptr ||
+                    if (!engine.voices.IsAlive(handle) ||
                         !voiceScopeMatches(
                             engine.params.EmitterHandleOf(handle))) {
                         return;

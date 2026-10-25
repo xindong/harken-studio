@@ -346,6 +346,11 @@ public:
     // side's apply path, where a command for a dead handle is a no-op.
     VnResult CheckLive(VnVoiceHandle handle);
 
+    // Observes identity lifetime without accessing the render payload. Exclusive
+    // installation/release states remain alive until generation retirement.
+    // The audio thread may retire the voice immediately after this observation.
+    bool IsAlive(VnVoiceHandle handle) const noexcept;
+
     // Command application, audio side, at block start. A handle that went
     // stale between enqueue and apply (the voice ended on its own) is a
     // benign no-op - the call was valid when it was made. sourceStartFrame

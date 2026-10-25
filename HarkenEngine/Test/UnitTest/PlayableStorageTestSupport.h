@@ -8,6 +8,18 @@
 
 namespace harkentest {
 
+inline harken::Plan03GroupSliceIdentity QueueContinuationSlice(
+    const harken::Engine& engine, harken::DecisionToken decision,
+    std::uint16_t slice) {
+    for (const auto& bank : engine.queueProgramBanks) {
+        const auto& lane = bank.continuationLane;
+        if (lane.Active() && lane.Decision().slot == decision.slot &&
+            lane.Decision().generation == decision.generation)
+            return lane.GroupIdentity(slice);
+    }
+    return {};
+}
+
 class PlayableCapacityScope {
 public:
     PlayableCapacityScope(std::uint32_t playable, std::uint32_t modes) {

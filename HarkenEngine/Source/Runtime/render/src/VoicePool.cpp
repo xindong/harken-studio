@@ -685,8 +685,18 @@ VnResult VoicePool::CheckCapacityForPlay() {
     return VN_NO_VOICE;
 }
 
+bool VoicePool::IsAlive(VnVoiceHandle handle) const noexcept {
+    const auto index = static_cast<std::uint32_t>(handle);
+    if (handle == 0 || index >= m_slots.size()) return false;
+    const auto& slot = m_slots[index];
+    const auto state = slot.state.load(std::memory_order_acquire);
+    return state != SlotState::Free && state != SlotState::Quarantined &&
+        slot.generation.load(std::memory_order_acquire) ==
+            static_cast<std::uint32_t>(handle >> 32);
+}
+
 VnResult VoicePool::CheckLive(VnVoiceHandle handle) {
-    if (SlotFor(handle) == nullptr) {
+    if (!IsAlive(handle)) {
         ++m_staleHandleHits;
         return VN_STALE_HANDLE;
     }

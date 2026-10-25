@@ -15,6 +15,7 @@ class FrontierTimelineFinalizer;
 class ScheduledTransactionPool;
 class DecisionTable;
 class BlockArena;
+struct ImmediateLaneBucket;
 struct Plan03ScratchDecisionState;
 
 // Stages every voice in a due bucket before claiming or exposing any Start.
@@ -24,6 +25,9 @@ public:
     ImmediateLaneTimelineFinalizer(VoicePool& voices, TimelineArmTable& arms);
     ~ImmediateLaneTimelineFinalizer();
     bool Attach(ImmediateActionLane& lane, std::uint32_t blockFrames);
+    using QueueBucketApply = bool (*)(void*, ImmediateActionLane&, std::uint32_t,
+        const ImmediateLaneBucket*, std::uint64_t, bool*) noexcept;
+    void AttachQueueSink(void* context, QueueBucketApply apply) noexcept;
     bool AttachFrontier(FrontierTimelineFinalizer& frontier,
                         const ScheduledTransactionPool& pool) noexcept;
     std::uint64_t EventStorageBytes() const noexcept;
