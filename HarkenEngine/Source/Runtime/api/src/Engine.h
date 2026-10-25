@@ -1739,6 +1739,9 @@ struct EngineServiceFeatureArrays {
     std::array<std::uint16_t, kMaxKnownScheduleLeaves> queueInitialCurrentMemberIndices{};
     std::array<TimelineArmToken, kMaxKnownScheduleLeaves> queueInitialCurrentDelayedArms{};
     std::array<TimelineArmToken, 2u * kMaxKnownScheduleLeaves> queueTransitionGroupArms{};
+    EffectiveQueueState queueParentInitialState{};
+    EffectiveQueueState queueParentResetInitialState{};
+    EffectiveQueueState queueNextState{};
     std::array<PlayableInstanceHandle, kSelectionPathNodeCapacity> containerInstances{};
     std::array<SelectionPathNodeV1, kSelectionPathNodeCapacity> selectionPath{};
     CurveLUT transitionSourceFadeCurve{};
@@ -2054,8 +2057,6 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     VnObjectId queueParentContainerStableId{};
     std::uint64_t queueParentProgramSemanticFingerprint = 0;
     QueueCheckpointKey queueParentCheckpointKey{};
-    EffectiveQueueState queueParentInitialState{};
-    EffectiveQueueState queueParentResetInitialState{};
     RandomQueueSeedContext queueParentRandomSeed{};
     bool queueParentRandomSeedValid = false;
     bool queueParentResumePosition = false;
@@ -2085,7 +2086,6 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     OccurrenceToken queueRetiringOccurrence{};
     OccurrenceToken queueAbortedSuccessorOccurrence{};
     CompletionOwnerRef queueRetiringOwner{};
-    EffectiveQueueState queueNextState{};
     PlayableRefV1 queueSuccessorLeaf{};
     TimelineArmToken queueSourceArm{};
     std::span<TimelineEventPayload> queueSourcePayloads{};
@@ -2192,6 +2192,30 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
         assert(featureArrays_ != nullptr);
         return featureArrays_->transitionTargetFadeCurve;
     }
+    EffectiveQueueState& QueueParentInitialState() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->queueParentInitialState;
+    }
+    const EffectiveQueueState& QueueParentInitialState() const noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->queueParentInitialState;
+    }
+    EffectiveQueueState& QueueParentResetInitialState() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->queueParentResetInitialState;
+    }
+    const EffectiveQueueState& QueueParentResetInitialState() const noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->queueParentResetInitialState;
+    }
+    EffectiveQueueState& QueueNextState() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->queueNextState;
+    }
+    const EffectiveQueueState& QueueNextState() const noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->queueNextState;
+    }
     std::size_t FeatureArrayStorageBytes() const noexcept {
         return featureArrays_ == nullptr ? 0u : sizeof(EngineServiceFeatureArrays);
     }
@@ -2227,6 +2251,9 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
         if (featureArrays_ != nullptr) {
             featureArrays_->transitionSourceFadeCurve = {};
             featureArrays_->transitionTargetFadeCurve = {};
+            featureArrays_->queueParentInitialState = {};
+            featureArrays_->queueParentResetInitialState = {};
+            featureArrays_->queueNextState = {};
         }
     }
     void BindFeatureArrays() noexcept {
@@ -2676,7 +2703,7 @@ struct EngineImmediateEntryAttempt {
     ActionFiringHandle originalLaneFactoryRoot = 0;
     std::uint64_t originalLaneFactoryAttemptGeneration = 0;
     ImmediateLaneDemand originalLaneDemand{};
-    OriginalInitialC0FactoryRecord originalC0Factory{};
+    std::unique_ptr<OriginalInitialC0FactoryRecord> originalC0Factory;
     ImmediateEntryAttemptGate gate{};
     PreparedDecisionReservation initialQueueCoordinatorReservation{};
     DecisionToken initialQueueCoordinator{};
@@ -7201,7 +7228,8 @@ public:
         for (const auto& attempt : immediateEntryAttempts)
             bytes += column(attempt.selectionProducers) + column(attempt.selectionCommitInputs) +
                 column(attempt.selectionPublicationCells) +
-                column(attempt.plainSources) + column(attempt.plainStops) + column(attempt.privateVoices);
+                column(attempt.plainSources) + column(attempt.plainStops) + column(attempt.privateVoices) +
+                (attempt.originalC0Factory == nullptr ? 0u : sizeof(OriginalInitialC0FactoryRecord));
         return bytes;
     }
 
@@ -9518,7 +9546,8 @@ public:
             attempt.originalLaneFactoryAttemptGeneration = 0;
             // Owner teardown is joined and foreign caps must already be returned.
             // This clears only the certificate, never a native count or receipt.
-            attempt.originalC0Factory.ClearCertificateAfterNativeDisposition();
+            if (attempt.originalC0Factory != nullptr)
+                attempt.originalC0Factory->ClearCertificateAfterNativeDisposition();
             for (auto& source : attempt.plainSources) {
                 if (!source.bindingReader.Valid()) continue;
                 const bool released = source.bindingReader.Release(0);
@@ -10141,7 +10170,8 @@ public:
         ImmediateLaneDemand demand, bool issueOriginal = false) noexcept {
         if (attempt.originalLaneLifetime.HandleObservation().Valid() ||
             attempt.originalLaneFactoryRoot != 0 || attempt.originalLaneFactoryAttemptGeneration != 0 ||
-            attempt.originalC0Factory.phase_ != OriginalInitialC0FactoryRecord::Phase::Empty) return false;
+            (attempt.originalC0Factory != nullptr &&
+             attempt.originalC0Factory->phase_ != OriginalInitialC0FactoryRecord::Phase::Empty)) return false;
         // Preserve every legacy no-output native precondition and result.
         if (!issueOriginal) return immediateActionLane.Reserve(attempt.root, demand, &attempt.lane);
         if (!OwnsImmediateEntryAttemptStorage(attempt) || !attempt.active ||
@@ -10174,7 +10204,8 @@ public:
         std::uint64_t completedAudioSequence) noexcept {
         if (!attempt.originalLaneLifetime.HandleObservation().Valid()) {
             if (attempt.originalLaneFactoryRoot != 0 || attempt.originalLaneFactoryAttemptGeneration != 0 ||
-                attempt.originalC0Factory.phase_ != OriginalInitialC0FactoryRecord::Phase::Empty) return false;
+                (attempt.originalC0Factory != nullptr &&
+                 attempt.originalC0Factory->phase_ != OriginalInitialC0FactoryRecord::Phase::Empty)) return false;
             return immediateActionLane.Retire(attempt.lane, completedAudioSequence);
         }
         if (!OwnsImmediateEntryAttemptStorage(attempt) || !attempt.active ||
@@ -10195,7 +10226,8 @@ public:
                 &attempt.originalLaneLifetime)) return false;
         attempt.originalLaneFactoryRoot = 0;
         attempt.originalLaneFactoryAttemptGeneration = 0;
-        attempt.originalC0Factory.ClearCertificateAfterNativeDisposition();
+        if (attempt.originalC0Factory != nullptr)
+            attempt.originalC0Factory->ClearCertificateAfterNativeDisposition();
         return true;
     }
     bool HasInitialSoundQueueCohort(const EngineImmediateEntryAttempt& attempt) const noexcept {
@@ -10730,19 +10762,28 @@ public:
 #endif
 
     bool BeginOriginalInitialC0Factory(EngineImmediateEntryAttempt& attempt) noexcept {
-        auto& record = attempt.originalC0Factory;
         if (!OwnsImmediateEntryAttemptStorage(attempt) || !attempt.active ||
-            record.phase_ != OriginalInitialC0FactoryRecord::Phase::Empty ||
+            (attempt.originalC0Factory != nullptr &&
+             attempt.originalC0Factory->phase_ != OriginalInitialC0FactoryRecord::Phase::Empty) ||
             attempt.gate.Observe(attempt.generation) != ImmediateEntryAttemptState::Preparing ||
             attempt.originalLaneFactoryRoot != attempt.root ||
             attempt.originalLaneFactoryAttemptGeneration != attempt.generation ||
             !immediateActionLane.IsOriginalAttemptLifetimePinFor(attempt.originalLaneLifetime, attempt.lane, attempt.root)) return false;
+        if (attempt.originalC0Factory == nullptr) {
+            if (memguard::IsAudioTagged()) return false;
+            try {
+                detail::LogicAllocCheckpoint(detail::LogicAllocSite::ImmediateEntryStorage);
+                attempt.originalC0Factory = std::make_unique<OriginalInitialC0FactoryRecord>();
+            } catch (...) { return false; }
+        }
+        auto& record = *attempt.originalC0Factory;
         record.receiver_ = this; record.root_ = attempt.root; record.attemptGeneration_ = attempt.generation;
         record.lane_ = attempt.lane; record.phase_ = OriginalInitialC0FactoryRecord::Phase::Staging;
         return true;
     }
     bool OriginalInitialC0FactoryRequested(const EngineImmediateEntryAttempt& attempt) const noexcept {
-        const auto& record = attempt.originalC0Factory;
+        if (attempt.originalC0Factory == nullptr) return false;
+        const auto& record = *attempt.originalC0Factory;
         return OwnsImmediateEntryAttemptStorage(attempt) && attempt.active && record.receiver_ == this &&
             record.root_ == attempt.root && record.attemptGeneration_ == attempt.generation &&
             record.lane_.slot == attempt.lane.slot && record.lane_.generation == attempt.lane.generation &&
@@ -10755,7 +10796,8 @@ private:
     bool RecordOriginalInitialC0GroupFactoryOutput(EngineImmediateEntryAttempt& attempt,
         std::uint32_t role, std::uint64_t anchor, const Plan03GroupSliceInput& input,
         OriginalQueueFutureGroupRegistration& actual) noexcept {
-        auto& record = attempt.originalC0Factory;
+        if (attempt.originalC0Factory == nullptr) return false;
+        auto& record = *attempt.originalC0Factory;
         if (role >= 4 || !OriginalInitialC0FactoryRequested(attempt) ||
             record.phase_ != OriginalInitialC0FactoryRecord::Phase::Staging || record.originals_[role] != nullptr ||
             attempt.gate.Observe(attempt.generation) != ImmediateEntryAttemptState::Preparing ||
@@ -10777,7 +10819,8 @@ public:
         bool conditional, std::uint64_t anchor, const Plan03GroupSliceInput& input,
         Plan03GroupSliceIdentity* out, OriginalQueueFutureGroupRegistration** issued) noexcept {
         const auto role = conditional ? 3u : 1u;
-        auto& record = attempt.originalC0Factory;
+        if (attempt.originalC0Factory == nullptr) return false;
+        auto& record = *attempt.originalC0Factory;
         if (out == nullptr || (issued != nullptr && *issued != nullptr) ||
             !OriginalInitialC0FactoryRequested(attempt) ||
             record.phase_ != OriginalInitialC0FactoryRecord::Phase::Staging ||
@@ -10831,7 +10874,8 @@ public:
         const LogicCommitCoordinator::PreparedIssue& actualIssue,
         const DecisionTable::PreparedTicketCommitProof& actualCurrentTicket) noexcept {
         const auto sequence = actualIssue.Sequence();
-        auto& record = attempt.originalC0Factory;
+        if (attempt.originalC0Factory == nullptr) return false;
+        auto& record = *attempt.originalC0Factory;
         if (!OriginalInitialC0FactoryRequested(attempt) ||
             record.phase_ != OriginalInitialC0FactoryRecord::Phase::Staging || record.marker_ != 0 ||
             nextOriginalInitialC0FactoryMarker == UINT64_MAX ||
@@ -10960,7 +11004,8 @@ public:
 
     bool BorrowOriginalPreparedInitialSingleQueueOrigin(const EngineImmediateEntryAttempt& attempt,
         OriginalPreparedInitialSingleQueueOrigin* out) noexcept {
-        const auto& record = attempt.originalC0Factory;
+        if (attempt.originalC0Factory == nullptr) return false;
+        const auto& record = *attempt.originalC0Factory;
         if (out == nullptr || out->record_ != nullptr || !OriginalInitialC0FactoryRequested(attempt) ||
             (record.phase_ != OriginalInitialC0FactoryRecord::Phase::Prepared &&
              record.phase_ != OriginalInitialC0FactoryRecord::Phase::Bound) || record.marker_ == 0 || record.current_ == nullptr ||
@@ -10995,7 +11040,8 @@ public:
     // structural borrower cannot call this using a captured Entry/anchor DTO.
     bool BindOriginalInitialC0SourceOnce(EngineImmediateEntryAttempt& attempt,
         PrivateOriginalQueueGroupClockProof& proof) noexcept {
-        auto& record = attempt.originalC0Factory;
+        if (attempt.originalC0Factory == nullptr) return false;
+        auto& record = *attempt.originalC0Factory;
         if (!OriginalInitialC0FactoryRequested(attempt) || record.marker_ == 0 || record.current_ == nullptr ||
             record.phase_ != OriginalInitialC0FactoryRecord::Phase::Prepared ||
             record.originals_[0] == nullptr || record.originals_[1] == nullptr ||
@@ -11060,7 +11106,8 @@ public:
 
     bool BindOriginalInitialC0SourceFromActualPlacement(EngineImmediateEntryAttempt& attempt,
         PrivateImmediateLanePlacementProof* placement) noexcept {
-        auto& record = attempt.originalC0Factory;
+        if (attempt.originalC0Factory == nullptr) return false;
+        auto& record = *attempt.originalC0Factory;
         if (placement == nullptr || !OriginalInitialC0FactoryRequested(attempt) ||
             record.phase_ != OriginalInitialC0FactoryRecord::Phase::Prepared ||
             record.originals_[0] == nullptr || record.originals_[1] == nullptr ||

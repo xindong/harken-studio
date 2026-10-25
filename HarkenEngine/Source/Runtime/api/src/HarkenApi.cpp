@@ -25651,7 +25651,7 @@ engine.runtimeRecreateRequired = true;
         abortPrepared();
         return QueueContinuationPrepareStatus::Failed;
     }
-    row.queueNextState = next;
+    row.QueueNextState() = next;
     row.queueSuccessorProgramPlane = successorProgramPlane;
     harken::TimelineProgramView& successorRuntime =
         row.queueSuccessorProgramPlane == 0
@@ -26005,7 +26005,7 @@ bool PrepareSameKeyQueueContinuation(
 engine.runtimeRecreateRequired = true;
         return false;
     }
-    row.queueNextState = next;
+    row.QueueNextState() = next;
     row.queueArmGroup = armGroup;
     row.queueSuccessorProgramBank = starts.QueueBank();
     row.queueSameProgramKey = true;
@@ -26821,7 +26821,7 @@ engine.runtimeRecreateRequired = true;
             return QueueContinuationPrepareStatus::Failed;
         }
     }
-    row.queueNextState = next;
+    row.QueueNextState() = next;
     row.queueSuccessorProgramPlane = successorProgramPlane;
     harken::TimelineProgramView& successorRuntime =
         row.queueSuccessorProgramPlane == 0
@@ -28641,7 +28641,7 @@ QueueContinuationPrepareStatus PromoteNestedQueueParent(
             row.queueDecisionCommitted, row.queueCurrentCompletion, row.queueDecision,
             row.queueConditional, row.queueParentContainerStableId,
             row.queueParentProgramSemanticFingerprint, row.queueParentCheckpointKey,
-            row.queueParentInitialState, row.queueParentResetInitialState,
+            row.QueueParentInitialState(), row.QueueParentResetInitialState(),
             row.queueParentRandomSeed, row.queueParentRandomSeedValid, row.queueParentResumePosition);
     };
     const auto original = std::apply([](const auto&... fields) { return std::tuple{fields...}; }, stagedFields());
@@ -28667,8 +28667,8 @@ QueueContinuationPrepareStatus PromoteNestedQueueParent(
     row.queueParentContainerStableId = {};
     row.queueParentProgramSemanticFingerprint = 0;
     row.queueParentCheckpointKey = {};
-    row.queueParentInitialState = {};
-    row.queueParentResetInitialState = {};
+    row.QueueParentInitialState() = {};
+    row.QueueParentResetInitialState() = {};
     row.queueParentRandomSeed = {};
     row.queueParentRandomSeedValid = false;
     row.queueParentResumePosition = false;
@@ -70971,8 +70971,8 @@ engine.runtimeRecreateRequired = true;
         row.queueParentProgramSemanticFingerprint =
             queueParentProgram->programSemanticFingerprint;
         row.queueParentCheckpointKey = queueParentCheckpointKey;
-        row.queueParentInitialState = queueParentInitialState;
-        row.queueParentResetInitialState = queueParentResetInitialState;
+        row.QueueParentInitialState() = queueParentInitialState;
+        row.QueueParentResetInitialState() = queueParentResetInitialState;
         row.queueParentRandomSeed = queueParentRandomSeed;
         row.queueParentRandomSeedValid = queueParentRandomSeedValid;
         row.queueParentResumePosition = queueParentProgram->resumePosition != 0;
@@ -71113,13 +71113,13 @@ engine.runtimeRecreateRequired = true;
             parentCreate.emitterSlot = row.queueParentCheckpointKey.emitterSlot;
             parentCreate.emitterGeneration =
                 row.queueParentCheckpointKey.emitterGeneration;
-            if (row.queueParentInitialState.version != 0 &&
-                row.queueParentInitialState.currentChildOrdinal != 0 &&
-                row.queueParentInitialState.cursor <
+            if (row.QueueParentInitialState().version != 0 &&
+                row.QueueParentInitialState().currentChildOrdinal != 0 &&
+                row.QueueParentInitialState().cursor <
                     queueParentProgram->childCount &&
-                row.queueParentResetInitialState.version != 0) {
-                parentCreate.initial = row.queueParentInitialState;
-                parentCreate.resetInitial = row.queueParentResetInitialState;
+                row.QueueParentResetInitialState().version != 0) {
+                parentCreate.initial = row.QueueParentInitialState();
+                parentCreate.resetInitial = row.QueueParentResetInitialState();
             } else {
                 parentCreate.initial.version = 1;
                 parentCreate.initial.cursor =
@@ -80469,7 +80469,7 @@ bool PrepareQueueTransitionContinuation(
         (void)entry.ReleasePrefix(scratch);
         return false;
     }
-    row.queueNextState = next;
+    row.QueueNextState() = next;
     if (!row.queueTimingPending)
         row.queuePreparedPages = {
             page + 1u,
@@ -80596,7 +80596,7 @@ bool PrepareQueueSameKeyContinuation(
         return false;
     }
 
-    row.queueNextState = next;
+    row.QueueNextState() = next;
     if (!row.queueTimingPending)
         row.queuePreparedPages = {
             page + 1u,
@@ -81986,7 +81986,7 @@ bool PrepareQueueContinuation(
         (void)entry.ReleasePrefix(scratch);
         return false;
     }
-    row.queueNextState = next;
+    row.QueueNextState() = next;
     std::copy_n(groupMembers.begin(), leafCount,
                 row.queueTransitionGroupArms.begin());
     row.queueTransitionGroupArmCount = leafCount;
@@ -84859,8 +84859,8 @@ engine.runtimeRecreateRequired = true;
                 scratch->row->queueParentContainerStableId = rootProgram->containerStableId;
                 scratch->row->queueParentProgramSemanticFingerprint =
                     rootProgram->programSemanticFingerprint;
-                scratch->row->queueParentInitialState = initial;
-                scratch->row->queueParentResetInitialState = resetInitial;
+                scratch->row->QueueParentInitialState() = initial;
+                scratch->row->QueueParentResetInitialState() = resetInitial;
                 scratch->row->queueParentRandomSeed = randomSeed;
                 scratch->row->queueParentRandomSeedValid = randomQueue;
                 scratch->row->queueParentResumePosition = rootProgram->resumePosition != 0;
@@ -92521,7 +92521,7 @@ bool CommitNativeImmediateActionQueueReplacement(harken::Engine& engine,
     row.queueSuccessorDecision = scratch.nativeSourceDecision;
     row.queueTicket = sequence;
     row.queueSuccessorTicket = scratch.nativeSourceDecision.Valid() ? sequence : 0;
-    row.queueNextState = scratch.next;
+    row.QueueNextState() = scratch.next;
     row.queueConditional = selected.version;
     row.queueArmGroup = scratch.armGroup;
     row.queueSourceArm = {};
@@ -92723,7 +92723,7 @@ void CommitImmediateActionQueueReplacements(
         row.queueSuccessorTicket =
             scratch.successorHasContinuation ? sequence : 0;
         row.queueCurrentCompletion = scratch.replacementCompletion;
-        row.queueNextState = scratch.next;
+        row.QueueNextState() = scratch.next;
         row.queueConditional.version = scratch.next.version;
         row.queueArmGroup = scratch.armGroup;
         row.queueSourceArm = {};

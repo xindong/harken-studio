@@ -10,6 +10,7 @@ bool BindValidAction(harken::EnginePlayableStartRow* start,
                      harken::EnginePlayableServiceRow* service,
                      VnActionFiringHandle firing, std::uint32_t ordinal,
                      const char* guid) {
+    if (!service->PrepareFeatureArrays()) return false;
     start->slot = 0;
     start->generation = 1;
     start->serviceCount = 1;
@@ -102,6 +103,8 @@ int QueueWindowDiagSelfTest() {
     constexpr const char* kSuccessor = "519dd49c-982e-4986-a814-3643256e430e";
     static harken::EnginePlayableStartRow starts[2];
     static harken::EnginePlayableServiceRow services[2];
+    for (auto& service : services)
+        if (!service.PrepareFeatureArrays()) return 1;
     const auto bind = [](harken::EnginePlayableStartRow* start,
                          harken::EnginePlayableServiceRow* service,
                          std::uint32_t startSlot, std::uint64_t generation,
@@ -117,9 +120,9 @@ int QueueWindowDiagSelfTest() {
     };
 
     services[0].queueSuccessorLeaf = {};
-    services[0].queueNextState = {};
+    services[0].QueueNextState() = {};
     services[1].queueSuccessorLeaf = {};
-    services[1].queueNextState = {};
+    services[1].QueueNextState() = {};
     bind(&starts[0], &services[0], 0, 1, 0, kFiring);
     starts[1].actionFiring = 0;
 
@@ -168,14 +171,14 @@ int QueueWindowDiagSelfTest() {
         std::fprintf(stderr, "error: queue-window successor guid rejected\n");
         return 10;
     }
-    services[0].queueNextState.currentChildOrdinal = 3;
+    services[0].QueueNextState().currentChildOrdinal = 3;
     bind(&starts[1], &services[1], 1, 4, 1, kFiring);
     if (!harkenhost::ObserveFiringQueueWindow(starts, 2, services, 2, kFiring, &later)) {
         std::fprintf(stderr, "error: queue-window second tick observe failed\n");
         return 11;
     }
     services[0].queueSuccessorLeaf.stableId = {};
-    services[0].queueNextState.currentChildOrdinal = 0;
+    services[0].QueueNextState().currentChildOrdinal = 0;
     starts[0].actionFiring = 0;
     if (!harkenhost::ObserveFiringQueueWindow(starts, 2, services, 2, kFiring, &later)) {
         std::fprintf(stderr, "error: queue-window retire tick observe failed\n");
@@ -236,6 +239,7 @@ int QueueHeardDiagSelfTest() {
     constexpr std::uint64_t kFrame = 76800;
     static harken::EnginePlayableStartRow starts[1];
     static harken::EnginePlayableServiceRow service;
+    if (!service.PrepareFeatureArrays()) return 1;
     starts[0].slot = 0;
     starts[0].generation = 1;
     starts[0].serviceCount = 1;
@@ -245,7 +249,7 @@ int QueueHeardDiagSelfTest() {
     service.invocation = &starts[0];
     service.invocationGeneration = 1;
     service.queueSuccessorLeaf = {};
-    service.queueNextState = {};
+    service.QueueNextState() = {};
     service.queueSuccessorProgramPlane = 1;
     service.queueSuccessorSchedule = {};
     service.schedule = {};
@@ -281,7 +285,7 @@ int QueueHeardDiagSelfTest() {
         std::fprintf(stderr, "error: queue-heard successor guid rejected\n");
         return 17;
     }
-    service.queueNextState.currentChildOrdinal = 3;
+    service.QueueNextState().currentChildOrdinal = 3;
     service.queueSuccessorSchedule.eventCount = 1;
     service.queueSuccessorSchedule.entryAnchorFrame = kFrame;
     service.startFrame = 1000;

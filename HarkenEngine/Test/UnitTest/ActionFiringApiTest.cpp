@@ -11345,7 +11345,7 @@ TEST(ActionFiringApi, SameKeyProjectionStartsDifferentSoundAtOriginalOffsetWitho
     const auto target = row.queueSuccessorArm;
     const auto originalArm = row.arm;
     ASSERT_EQ(3u, row.queueConditional.version);
-    ASSERT_EQ(2u, row.queueNextState.cursor);
+    ASSERT_EQ(2u, row.QueueNextState().cursor);
     ASSERT_FALSE(row.queueSameProgramKey);
     ASSERT_EQ(2u, engine->voices.ActiveCount());
     ASSERT_TRUE(target.Valid());
@@ -40095,7 +40095,7 @@ void CaptureImmediateRootQueuePlay(bool direct,
         rootPlayback.activeChildEpoch == childView.scheduleEpoch;
     trace.parentEpoch = childView.scheduleEpoch;
     const std::uint32_t current = row->selectedChildOrdinals[0];
-    const std::uint32_t successor = row->queueNextState.currentChildOrdinal;
+    const std::uint32_t successor = row->QueueNextState().currentChildOrdinal;
     ASSERT_NE(current, successor);
     ASSERT_TRUE((current == 7u && successor == 8u) ||
                 (current == 8u && successor == 7u));
@@ -42743,7 +42743,7 @@ void CheckImmediateSameProgramQueue(bool restartCycle, bool requireTerminalC1 = 
     harken::EffectiveQueueState following{};
     EXPECT_EQ(restartCycle ? harken::QueueSequenceStepStatus::Successor : harken::QueueSequenceStepStatus::NaturalEnd,
         harken::ResolveSequenceQueueStep(image.containers[2], sameWithinCycle, &following));
-    ExpectEffectiveQueueState(restartCycle ? following : sameWithinCycle, row->queueNextState);
+    ExpectEffectiveQueueState(restartCycle ? following : sameWithinCycle, row->QueueNextState());
 
     const auto* attempt = std::find_if(
         engine->immediateEntryAttempts.data(),
@@ -58367,7 +58367,7 @@ TEST(ActionFiringApi,
     EXPECT_TRUE(row->queueContinuationPrepared);
     EXPECT_TRUE(row->queueDecision.slot != oldDecision.slot ||
                 row->queueDecision.generation != oldDecision.generation);
-    ExpectEffectiveQueueState(expectedReset, row->queueNextState);
+    ExpectEffectiveQueueState(expectedReset, row->QueueNextState());
     EXPECT_EQ(originalBoundary, row->queueCompletionFrame);
     EXPECT_NE(current, row->queueSuccessorRenderHandle);
     const auto* successorMember = engine->FindQueueProgramMember(
@@ -58626,7 +58626,7 @@ TEST(ActionFiringApi,
     EXPECT_FALSE(row->queueSameProgramKey);
     EXPECT_TRUE(row->queueContinuationPrepared);
     EXPECT_EQ(image.queueChildren[0].stableChildOrdinal,
-              row->queueNextState.currentChildOrdinal);
+              row->QueueNextState().currentChildOrdinal);
     EXPECT_EQ(CanonicalActionWorld::kFirstSound,
               row->queueSuccessorLeaf.stableId);
     EXPECT_NE(0u, row->queueSuccessorRenderHandle);
@@ -58730,7 +58730,7 @@ TEST(ActionFiringApi,
     EXPECT_FALSE(row->queueSameProgramKey);
     EXPECT_TRUE(row->queueContinuationPrepared);
     EXPECT_EQ(image.queueChildren[0].stableChildOrdinal,
-              row->queueNextState.currentChildOrdinal);
+              row->QueueNextState().currentChildOrdinal);
     ASSERT_EQ(2u, row->queueSuccessorScheduleLeafCount);
     EXPECT_TRUE(row->queueSuccessorCompositeOwner.Valid());
     ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 0));
@@ -59946,7 +59946,7 @@ TEST(ActionFiringApi,
     const harken::DecisionToken decision = row->queueDecision;
     const harken::ConditionalQueueVersionToken conditional =
         row->queueConditional;
-    const harken::EffectiveQueueState next = row->queueNextState;
+    const harken::EffectiveQueueState next = row->QueueNextState();
     const std::uint32_t activeVoicesBefore = engine->voices.ActiveCount();
     const std::uint32_t voiceHighWaterBefore =
         engine->voices.HighWaterVoices();
@@ -59978,9 +59978,9 @@ TEST(ActionFiringApi,
     EXPECT_EQ(decision.slot, row->queueDecision.slot);
     EXPECT_EQ(decision.generation, row->queueDecision.generation);
     EXPECT_EQ(conditional.version, row->queueConditional.version);
-    EXPECT_EQ(next.version, row->queueNextState.version);
+    EXPECT_EQ(next.version, row->QueueNextState().version);
     EXPECT_EQ(next.currentChildOrdinal,
-              row->queueNextState.currentChildOrdinal);
+              row->QueueNextState().currentChildOrdinal);
     EXPECT_NE(nullptr, engine->voices.Resolve(current));
     EXPECT_NE(nullptr, engine->voices.Resolve(successor));
     EXPECT_EQ(activeVoicesBefore, engine->voices.ActiveCount());
@@ -60187,7 +60187,7 @@ TEST(ActionFiringApi,
     EXPECT_NE(nullptr, engine->voices.Resolve(current));
     EXPECT_FALSE(row->queueSameProgramKey);
     EXPECT_TRUE(row->queueTransition.Valid());
-    ExpectEffectiveQueueState(expectedReset, row->queueNextState);
+    ExpectEffectiveQueueState(expectedReset, row->QueueNextState());
     EXPECT_EQ(originalBoundary, row->queueCompletionFrame);
     EXPECT_NE(current, row->queueSuccessorRenderHandle);
     EXPECT_NE(oldSuccessor, row->queueSuccessorRenderHandle);
@@ -60309,7 +60309,7 @@ TEST(ActionFiringApi,
     EXPECT_NE(nullptr, engine->voices.Resolve(current));
     EXPECT_FALSE(row->queueSameProgramKey);
     EXPECT_TRUE(row->queueTransition.Valid());
-    ExpectEffectiveQueueState(expectedReset, row->queueNextState);
+    ExpectEffectiveQueueState(expectedReset, row->QueueNextState());
     EXPECT_EQ(originalBoundary, row->queueCompletionFrame);
     EXPECT_EQ(oldTransition.slot, row->queueArrivalTransition.slot);
     EXPECT_EQ(oldTransition.generation,
@@ -60431,7 +60431,7 @@ TEST(ActionFiringApi,
     EXPECT_NE(nullptr, engine->voices.Resolve(current));
     EXPECT_FALSE(row->queueSameProgramKey);
     EXPECT_TRUE(row->queueTransition.Valid());
-    ExpectEffectiveQueueState(expectedReset, row->queueNextState);
+    ExpectEffectiveQueueState(expectedReset, row->QueueNextState());
     EXPECT_EQ(secondSliceFrame, row->queueCompletionFrame);
     EXPECT_EQ(firstSliceFrame, row->queueSourceSchedule.entryAnchorFrame);
     EXPECT_EQ(oldTransition.slot, row->queueArrivalTransition.slot);
@@ -60746,7 +60746,7 @@ TEST(ActionFiringApi,
     const harken::DecisionToken decision = row->queueDecision;
     const harken::ConditionalQueueVersionToken conditional =
         row->queueConditional;
-    const harken::EffectiveQueueState next = row->queueNextState;
+    const harken::EffectiveQueueState next = row->QueueNextState();
     harken::QueueInstanceSnapshot queueBefore{};
     ASSERT_TRUE(engine->queueInstances.Capture(row->queueInstance,
                                                &queueBefore));
@@ -60782,9 +60782,9 @@ TEST(ActionFiringApi,
     EXPECT_EQ(decision.slot, row->queueDecision.slot);
     EXPECT_EQ(decision.generation, row->queueDecision.generation);
     EXPECT_EQ(conditional.version, row->queueConditional.version);
-    EXPECT_EQ(next.version, row->queueNextState.version);
+    EXPECT_EQ(next.version, row->QueueNextState().version);
     EXPECT_EQ(next.currentChildOrdinal,
-              row->queueNextState.currentChildOrdinal);
+              row->QueueNextState().currentChildOrdinal);
     EXPECT_NE(nullptr, engine->voices.Resolve(current));
     EXPECT_NE(nullptr, engine->voices.Resolve(successor));
 

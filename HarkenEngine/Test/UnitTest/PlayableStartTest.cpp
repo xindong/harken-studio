@@ -3997,10 +3997,10 @@ std::string WrapProbeDump(
             << " sel=" << current.selectionOrdinal
             << " recent=" << current.randomInitialRecentCount << "}";
     }
-    out << " rowNext{ver=" << row->queueNextState.version
-        << " cur=" << row->queueNextState.cursor
-        << " child=" << row->queueNextState.currentChildOrdinal
-        << " cycle=" << row->queueNextState.cycleOrdinal << "}";
+    out << " rowNext{ver=" << row->QueueNextState().version
+        << " cur=" << row->QueueNextState().cursor
+        << " child=" << row->QueueNextState().currentChildOrdinal
+        << " cycle=" << row->QueueNextState().cycleOrdinal << "}";
     if (!resolved || !row->queueRandomSeedValid ||
         engine.queueSelectionChildScratch.size() < program.childCount ||
         engine.queueRemainingScratch.size() < program.childCount ||

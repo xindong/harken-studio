@@ -23969,8 +23969,8 @@ SharedQueueTrace RunRootQueuePackTrace(
         seed.rootStableId = context.rootStableId;
         seed.callerSeed = context.callerSeed;
         seed.acceptedPostOrdinal = context.acceptedPostOrdinal;
-        seed.queueCycleOrdinal = row->queueNextState.cycleOrdinal;
-        seed.selectionOrdinal = row->queueNextState.selectionOrdinal;
+        seed.queueCycleOrdinal = row->QueueNextState().cycleOrdinal;
+        seed.selectionOrdinal = row->QueueNextState().selectionOrdinal;
         seed.discipline = SelectionDisciplineV1::Rotation;
         if (!ComputeSelectionSeedV1(seed, outRandomSeed)) return trace;
     }
@@ -23988,7 +23988,7 @@ SharedQueueTrace RunRootQueuePackTrace(
         rootPlayback.activeChildEpoch == childView.scheduleEpoch;
     trace.parentEpoch = childView.scheduleEpoch;
     const auto current = row->selectedChildOrdinals[0];
-    const auto successor = row->queueNextState.currentChildOrdinal;
+    const auto successor = row->QueueNextState().currentChildOrdinal;
     if (current == successor ||
         !((current == 7u && successor == 8u) ||
           (current == 8u && successor == 7u))) return trace;

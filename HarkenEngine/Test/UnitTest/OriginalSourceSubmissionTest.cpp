@@ -7713,6 +7713,18 @@ TEST(OriginalSourceSubmission, EngineOriginalLaneSameReserveForeignBusyKeepsExac
     const harken::ImmediateLaneDemand demand{1, 0, 0, 1};
     ASSERT_TRUE(engine.ReserveOriginalImmediateEntryLane(attempt, demand, true));
     const auto originalHandle = attempt.lane;
+    struct FaultGuard {
+        ~FaultGuard() { harken::detail::DisarmLogicAllocFaultForTests(); }
+    } fault;
+    harken::detail::ArmLogicAllocFaultForTests(1,
+        harken::detail::LogicAllocSite::ImmediateEntryStorage);
+    EXPECT_FALSE(engine.BeginOriginalInitialC0Factory(attempt));
+    EXPECT_FALSE(engine.OriginalInitialC0FactoryRequested(attempt));
+    EXPECT_EQ(harken::ImmediateEntryAttemptState::Preparing, attempt.gate.Observe(attempt.generation));
+    harken::detail::DisarmLogicAllocFaultForTests();
+    ASSERT_TRUE(engine.BeginOriginalInitialC0Factory(attempt));
+    const auto* factory = attempt.originalC0Factory.get();
+    EXPECT_TRUE(engine.OriginalInitialC0FactoryRequested(attempt));
     ASSERT_TRUE(engine.immediateActionLane.IsOriginalAttemptLifetimePinFor(
         attempt.originalLaneLifetime, originalHandle, 1201));
     EXPECT_EQ(1201u, attempt.originalLaneFactoryRoot);
@@ -7726,6 +7738,8 @@ TEST(OriginalSourceSubmission, EngineOriginalLaneSameReserveForeignBusyKeepsExac
     ASSERT_TRUE(engine.immediateActionLane.Cancel(originalHandle));
     EXPECT_FALSE(engine.RetireOriginalImmediateEntryLane(attempt, 0));
     EXPECT_FALSE(engine.RetireOriginalImmediateEntryLane(attempt, 0));
+    EXPECT_EQ(factory, attempt.originalC0Factory.get());
+    EXPECT_TRUE(engine.OriginalInitialC0FactoryRequested(attempt));
     EXPECT_TRUE(attempt.active);
     EXPECT_EQ(originalHandle.slot, attempt.lane.slot);
     EXPECT_EQ(originalHandle.generation, attempt.lane.generation);
@@ -7739,10 +7753,17 @@ TEST(OriginalSourceSubmission, EngineOriginalLaneSameReserveForeignBusyKeepsExac
     moved.Return();
     EXPECT_FALSE(moved.Valid());
     ASSERT_TRUE(engine.RetireOriginalImmediateEntryLane(attempt, 0));
+    EXPECT_FALSE(engine.OriginalInitialC0FactoryRequested(attempt));
     EXPECT_FALSE(engine.immediateActionLane.Observe(originalHandle, &cancelled));
     ASSERT_NO_FATAL_FAILURE(FinishEngineOriginalLaneAttempt(engine, attempt));
     ASSERT_NO_FATAL_FAILURE(PrepareEngineOriginalLaneAttempt(engine, attempt, 1202, 2));
     ASSERT_TRUE(engine.ReserveOriginalImmediateEntryLane(attempt, demand, true));
+    harken::detail::ArmLogicAllocFaultForTests(1,
+        harken::detail::LogicAllocSite::ImmediateEntryStorage);
+    ASSERT_TRUE(engine.BeginOriginalInitialC0Factory(attempt));
+    EXPECT_EQ(factory, attempt.originalC0Factory.get());
+    EXPECT_EQ(1u, harken::detail::g_logicAllocFault.remaining);
+    harken::detail::DisarmLogicAllocFaultForTests();
     EXPECT_EQ(originalHandle.slot, attempt.lane.slot);
     EXPECT_NE(originalHandle.generation, attempt.lane.generation);
     EXPECT_FALSE(engine.immediateActionLane.Observe(originalHandle, &cancelled));

@@ -160,7 +160,7 @@ inline void NoteQueueSuccessorLeaf(const harken::EnginePlayableServiceRow& row,
     }
     copy->successorId = row.queueSuccessorLeaf.stableId;
     copy->successorPresent = true;
-    copy->successorOrdinal = row.queueNextState.currentChildOrdinal;
+    copy->successorOrdinal = row.QueueNextState().currentChildOrdinal;
     copy->successorOrdinalPresent = true;
     const auto& successorSchedule = row.queueSuccessorProgramPlane == 0
         ? row.schedule
