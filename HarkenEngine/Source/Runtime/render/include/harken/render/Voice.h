@@ -512,7 +512,6 @@ struct VoiceRenderContext {
     std::uint32_t timelineArmGeneration = 0;
     ParentAudioGroupRef timelineParentGroup{};
     std::uint16_t timelineGroupMemberIndex = UINT16_MAX;
-    VoiceEventSpan timelineEvents{};
     struct TimelineEnvelopeState {
         bool active = false;
         bool fadeOut = false;
@@ -575,6 +574,8 @@ struct VoiceRenderContext {
     std::uint32_t monitorRenderGeneration = 0;
     float* monitorPreChain[kMaxChannels] = {};
     std::uint32_t monitorPreChainFrames = 0;
+    // Keep frequently read block state ahead of the large resident event array.
+    VoiceEventSpan timelineEvents{};
 };
 
 // True if any tail contribution at a position in [lo, hi) is currently
