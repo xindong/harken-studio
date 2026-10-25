@@ -482,10 +482,9 @@ void CopyPlainPcm(const VoiceRenderContext& ctx, float* const* planes,
 }
 
 bool RunPlainPcm(VoiceRenderContext& ctx, std::uint32_t frames) {
-    if (ctx.cascade.plainPcmFeedFrames != 0) {
-        // Preparation proved this complete feed stays inside the source limit.
-        ctx.resampler.PushPCM(ctx.pcm, ctx.srcCursor, ctx.cascade.plainPcmFeedFrames);
-        ctx.srcCursor += ctx.cascade.plainPcmFeedFrames;
+    for (std::uint32_t fed = 0; fed < ctx.cascade.plainPcmFeedFrames;
+         fed += kResampleChunkFrames) {
+        if (!FeedResampler(ctx)) return false;
     }
     if (!ctx.resampler.BorrowLinearUnity(frames, ctx.cascade.borrowed)) return false;
     ctx.monitorPreChainFrames = 0;
