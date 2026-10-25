@@ -22,6 +22,8 @@ constexpr std::uint64_t kProjectionStamp = 32u;
 constexpr std::uint64_t kProjectionFlags = kProjectionStamp - 1u;
 static_assert(std::atomic<std::uint64_t>::is_always_lock_free,
     "Original conditional admission must remain lock-free");
+static_assert(std::atomic<std::uint32_t>::is_always_lock_free,
+    "Lane occupancy observation must remain lock-free");
 
 class AttemptReadAccess {
 public:
@@ -893,6 +895,7 @@ bool ImmediateActionLane::Reset(Config config) {
     while (eventStorageConsumers_ != nullptr) eventStorageConsumers_->Detach();
     groupPool_ = nullptr;
     valid_ = false;
+    outstandingAttemptCount_.store(0, std::memory_order_relaxed);
     StableRowStorage<SingleEventMetadata> oldSingleEventMetadata;
     singleEventMetadata_.Swap(oldSingleEventMetadata);
     StableRowStorage<AttemptMetadata> oldMetadata;
@@ -1257,6 +1260,8 @@ bool ImmediateActionLane::Reserve(std::uint64_t root,
             eventState_[offset + index].lastCaptureSequence = 0;
         }
         attempt.nextBucket.store(0, std::memory_order_relaxed);
+        // Count the identity before audio can observe its Reserved publication.
+        outstandingAttemptCount_.fetch_add(1, std::memory_order_release);
         attempt.state.store(ImmediateLaneAttemptState::Reserved,
                             std::memory_order_release);
         *out = {slot, attempt.generation};
@@ -5488,6 +5493,9 @@ bool ImmediateActionLane::Retire(ImmediateLaneHandle handle,
     attempt->nextBucket.store(0, std::memory_order_relaxed);
     attempt->state.store(ImmediateLaneAttemptState::Free,
                          std::memory_order_release);
+    const auto previous = outstandingAttemptCount_.fetch_sub(1, std::memory_order_release);
+    assert(previous != 0);
+    (void)previous;
     return true;
 }
 

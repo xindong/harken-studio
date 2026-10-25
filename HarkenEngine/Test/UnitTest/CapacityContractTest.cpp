@@ -532,9 +532,21 @@ TEST(StableBackingPreparation, ServiceFeaturePromiseSurvivesResetAndFailedProtec
     auto* path = first.selectionPath.data();
     ASSERT_NE(nullptr, path);
     first.selectionPath[0].childOrdinal = 7;
+    auto* sourceCurve = &first.TransitionSourceFadeCurve();
+    auto* targetCurve = &first.TransitionTargetFadeCurve();
+    sourceCurve->values[harken::kCurveLutEntries] = 0.25f;
+    targetCurve->values[0] = 0.75f;
+    sourceCurve->xMax = 2.0f;
+    targetCurve->xMin = -1.0f;
     first.Reset();
     EXPECT_EQ(path, first.selectionPath.data());
     EXPECT_EQ(0u, first.selectionPath[0].childOrdinal);
+    EXPECT_EQ(sourceCurve, &first.TransitionSourceFadeCurve());
+    EXPECT_EQ(targetCurve, &first.TransitionTargetFadeCurve());
+    EXPECT_EQ(0.0f, sourceCurve->values[harken::kCurveLutEntries]);
+    EXPECT_EQ(0.0f, targetCurve->values[0]);
+    EXPECT_EQ(0.0f, sourceCurve->xMax);
+    EXPECT_EQ(0.0f, targetCurve->xMin);
 
     // Occupy the current prefix so growth must preserve the promised spare rows.
     for (auto& row : engine.playableServices) row.actionPrepared = true;
@@ -1226,6 +1238,9 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
         ASSERT_TRUE(lane.Finish(laneHandle.slot, bucket, true));
         ASSERT_TRUE(lane.Retire(laneHandle));
     };
+    EXPECT_FALSE(laneConsumer.Capture(0));
+    EXPECT_FALSE(laneConsumer.Capture(0));
+    laneConsumer.Finish();
     publishLaneWork();
     ASSERT_TRUE(laneConsumer.Capture(1));
     laneConsumer.Discard();

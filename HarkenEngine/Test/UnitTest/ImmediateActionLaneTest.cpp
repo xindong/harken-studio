@@ -64,6 +64,7 @@ TEST(ImmediateActionLane, FutureBucketsAreDueWithoutAnotherLogicService) {
 TEST(ImmediateActionLane, SparsePayloadFailureRetainsNoIdentityAndOnlyActualHighSlotRows) {
     harken::ImmediateActionLane lane;
     ASSERT_TRUE(lane.Reset({8, 128, 8, 64}));
+    EXPECT_FALSE(lane.HasOutstandingAttempts());
     EXPECT_EQ(0u, lane.EventStorageBytes());
     EXPECT_EQ(0u, lane.MemberStorageBytes());
     EXPECT_EQ(0u, lane.PayloadCommittedBytes());
@@ -82,6 +83,7 @@ TEST(ImmediateActionLane, SparsePayloadFailureRetainsNoIdentityAndOnlyActualHigh
     lane.SetStateCommitPageLimitForTests(0);
     EXPECT_FALSE(lane.Reserve(1, {0, 1, 0, 1}, &refused));
     EXPECT_FALSE(refused.Valid());
+    EXPECT_FALSE(lane.HasOutstandingAttempts());
     lane.SetStateCommitPageLimitForTests(SIZE_MAX);
     std::array<harken::ImmediateLaneHandle, 7> empty;
     for (auto& handle : empty) ASSERT_TRUE(lane.Reserve(1, {0, 1, 0, 1}, &handle));
@@ -130,10 +132,12 @@ TEST(ImmediateActionLane, SparsePayloadFailureRetainsNoIdentityAndOnlyActualHigh
 TEST(ImmediateActionLane, SingleEventCellsPreserveConcurrentCaptureAcrossRefusalAndReuse) {
     harken::ImmediateActionLane lane;
     ASSERT_TRUE(lane.Reset({2, 128, 8, 64}));
+    EXPECT_FALSE(lane.HasOutstandingAttempts());
     const harken::TimelineProgramView program{};
     const auto firstEvent = Event(0, &program, 42);
     harken::ImmediateLaneHandle first;
     ASSERT_TRUE(lane.Reserve(1, {1, 0, 0, 1}, &first));
+    EXPECT_TRUE(lane.HasOutstandingAttempts());
     ASSERT_TRUE(lane.Prepare(first, &firstEvent, 1));
     std::uint64_t anchor = 0;
     ASSERT_TRUE(lane.TryPlace(first, 64, 0, &anchor));
@@ -171,6 +175,7 @@ TEST(ImmediateActionLane, SingleEventCellsPreserveConcurrentCaptureAcrossRefusal
     ASSERT_TRUE(lane.Claim(second, secondBucket));
     ASSERT_TRUE(lane.Finish(second.slot, secondBucket, true));
     ASSERT_TRUE(lane.Retire(second));
+    EXPECT_TRUE(lane.HasOutstandingAttempts());
 
     const auto retired = second;
     second = {};
@@ -188,13 +193,17 @@ TEST(ImmediateActionLane, SingleEventCellsPreserveConcurrentCaptureAcrossRefusal
     EXPECT_EQ(77u, firstScratch[0].attempt);
     EXPECT_EQ(42u, lane.Events(first.slot, firstBucket)[0].event.executionOrdinal);
     EXPECT_FALSE(lane.Retire(first));
+    EXPECT_TRUE(lane.HasOutstandingAttempts());
     ASSERT_TRUE(lane.Claim(second, secondBucket));
     ASSERT_TRUE(lane.Finish(second.slot, secondBucket, true));
     ASSERT_TRUE(lane.Retire(second));
     ASSERT_TRUE(lane.Claim(first, firstBucket));
     ASSERT_TRUE(lane.Finish(first.slot, firstBucket, true));
+    EXPECT_TRUE(lane.HasOutstandingAttempts());
     ASSERT_TRUE(lane.Retire(first));
+    EXPECT_FALSE(lane.HasOutstandingAttempts());
     ASSERT_TRUE(lane.Reset({1, 1, 1, 64}));
+    EXPECT_FALSE(lane.HasOutstandingAttempts());
     EXPECT_EQ(0u, lane.MetadataStorageBytes());
     EXPECT_EQ(0u, lane.MetadataCommittedBytes());
 }
@@ -352,6 +361,7 @@ TEST(ImmediateActionLane, SourceWaitSuspensionReturnsCaptureAndResumesExactBucke
     std::uint64_t quantum = 0;
     EXPECT_FALSE(lane.CapturedSourceWaitQuantum(handle.slot, original, &quantum));
     ASSERT_TRUE(lane.SuspendCaptureForSourceWait(handle.slot, original));
+    EXPECT_TRUE(lane.HasOutstandingAttempts());
     EXPECT_FALSE(lane.CapturedSourceWaitQuantum(handle.slot, original, &quantum));
     harken::ImmediateLaneObservation observation{};
     ASSERT_TRUE(lane.Observe(handle, &observation));
@@ -376,6 +386,7 @@ TEST(ImmediateActionLane, SourceWaitSuspensionReturnsCaptureAndResumesExactBucke
     EXPECT_TRUE(observation.applied);
     EXPECT_FALSE(observation.missed);
     EXPECT_TRUE(lane.Retire(handle, 8));
+    EXPECT_FALSE(lane.HasOutstandingAttempts());
 }
 
 TEST(ImmediateActionLane, SuspendedSourceWaitAllowsCancellationAndRejectsReusedGeneration) {
@@ -885,12 +896,15 @@ TEST(ImmediateActionLane, ReservedAttemptRetirementRetriesAfterAudioReaderGate) 
     lane.SetCaptureGateHookForTest(nullptr, nullptr);
     EXPECT_FALSE(probe.cancelSucceeded);
     EXPECT_FALSE(probe.retiredWhilePinned);
+    EXPECT_TRUE(lane.HasOutstandingAttempts());
     ASSERT_TRUE(lane.OwnsPrivate(handle, 17));
     ASSERT_TRUE(lane.Cancel(handle));
     harken::ImmediateLaneObservation observation{};
     ASSERT_TRUE(lane.Observe(handle, &observation));
     EXPECT_TRUE(observation.complete);
+    EXPECT_TRUE(lane.HasOutstandingAttempts());
     ASSERT_TRUE(lane.Retire(handle));
+    EXPECT_FALSE(lane.HasOutstandingAttempts());
     harken::ImmediateLaneHandle reused{};
     ASSERT_TRUE(lane.Reserve(18, 1, &reused));
     EXPECT_EQ(handle.slot, reused.slot);

@@ -561,6 +561,9 @@ public:
         PrivatePlainLayoutEdit* out) noexcept;
     bool Valid() const noexcept { return valid_; }
     std::uint32_t AttemptCapacity() const noexcept { return config_.attempts; }
+    bool HasOutstandingAttempts() const noexcept {
+        return outstandingAttemptCount_.load(std::memory_order_acquire) != 0;
+    }
     std::uint32_t EventsPerAttempt() const noexcept { return config_.eventsPerAttempt; }
     std::size_t PrivateEntryStorageBytes() const noexcept {
         return privateEntries_.RequestedBytes();
@@ -1165,6 +1168,7 @@ private:
     void ReturnOriginalAttempt(OriginalImmediateLaneAttemptLifetimePin& original) noexcept;
     std::uint64_t nextOriginalLifetimeMarker_ = 0;
     Config config_{};
+    std::atomic<std::uint32_t> outstandingAttemptCount_{0};
     StableRowStorage<ImmediateLaneAttempt> attempts_;
     StableRowStorage<SingleEventMetadata> singleEventMetadata_;
     StableRowStorage<AttemptMetadata> metadata_;

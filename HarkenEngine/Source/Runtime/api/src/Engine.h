@@ -1713,6 +1713,8 @@ struct EngineServiceFeatureArrays {
     std::array<TimelineArmToken, kMaxKnownScheduleLeaves> queueInitialCurrentDelayedArms{};
     std::array<PlayableInstanceHandle, kSelectionPathNodeCapacity> containerInstances{};
     std::array<SelectionPathNodeV1, kSelectionPathNodeCapacity> selectionPath{};
+    CurveLUT transitionSourceFadeCurve{};
+    CurveLUT transitionTargetFadeCurve{};
 };
 
 struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
@@ -1939,8 +1941,6 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
         variableControlDiscreteRetargetPayloads{};
     std::vector<TimelineEventPayload>
         variableControlDiscreteRetargetEnteringPayloads{};
-    CurveLUT transitionSourceFadeCurve{};
-    CurveLUT transitionTargetFadeCurve{};
     TimelineProgramView variableControlDiscreteRetargetRuntimeProgram{};
     TimelineProgramView variableControlDiscreteRetargetEnteringRuntimeProgram{};
     std::vector<TimelineProgramView>
@@ -2156,6 +2156,14 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     }
 
     bool HasFeatureArrays() const noexcept { return featureArrays_ != nullptr; }
+    CurveLUT& TransitionSourceFadeCurve() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->transitionSourceFadeCurve;
+    }
+    CurveLUT& TransitionTargetFadeCurve() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->transitionTargetFadeCurve;
+    }
     std::size_t FeatureArrayStorageBytes() const noexcept {
         return featureArrays_ == nullptr ? 0u : sizeof(EngineServiceFeatureArrays);
     }
@@ -2187,6 +2195,10 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
         queueInitialCurrentDelayedArms.Clear();
         containerInstances.Clear();
         selectionPath.Clear();
+        if (featureArrays_ != nullptr) {
+            featureArrays_->transitionSourceFadeCurve = {};
+            featureArrays_->transitionTargetFadeCurve = {};
+        }
     }
     void BindFeatureArrays() noexcept {
         if (featureArrays_ == nullptr) return;

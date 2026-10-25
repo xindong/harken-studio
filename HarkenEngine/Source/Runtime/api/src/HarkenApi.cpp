@@ -32561,11 +32561,11 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
         ((sourceFadeActive &&
           !BakeTransitionFadeCurve(
               program, transitionRule->sourceFade,
-              &row.transitionSourceFadeCurve)) ||
+              &row.TransitionSourceFadeCurve())) ||
          (targetFadeActive &&
           !BakeTransitionFadeCurve(
               program, transitionRule->targetFade,
-              &row.transitionTargetFadeCurve)))) {
+              &row.TransitionTargetFadeCurve())))) {
         return VariableRetargetPrepareStatus::Fatal;
     }
     std::uint64_t audibleFrame = decisionFrame;
@@ -33099,7 +33099,7 @@ engine.runtimeRecreateRequired = true;
             fade.target = engine.ReadPlayableMember(enteringSlot).voice.Facts().target;
             fade.envelopeStartFrame = leafStartFrame;
             fade.envelopeEndFrame = leafStartFrame + targetFadeFrames;
-            fade.envelopeCurve = &row.transitionTargetFadeCurve;
+            fade.envelopeCurve = &row.TransitionTargetFadeCurve();
             auto& fadeEvent = events[1];
             fadeEvent = {};
             fadeEvent.logicCommitSequence = ticket;
@@ -33187,7 +33187,7 @@ engine.runtimeRecreateRequired = true;
             fade.target = sourceTarget;
             fade.envelopeStartFrame = audibleFrame;
             fade.envelopeEndFrame = sourceStopFrame;
-            fade.envelopeCurve = &row.transitionSourceFadeCurve;
+            fade.envelopeCurve = &row.TransitionSourceFadeCurve();
             fade.authoredFadeOutCandidate = true;
             auto& fadeEvent =
                 row.variableControlDiscreteRetargetEvents[fadeIndex];
