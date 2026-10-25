@@ -65036,6 +65036,7 @@ void EndParkedVoice(harken::Engine& engine, std::uint32_t ledgerSlot,
 }
 
 void DrainStreamParkMailboxes(harken::Engine& engine) {
+    if (!engine.voices.HasPendingStreamParkMailboxes()) return;
     for (std::uint32_t slot = 0; slot < engine.voices.Capacity(); ++slot) {
         harken::StreamParkOutcome outcome;
         bool cancelled = false;

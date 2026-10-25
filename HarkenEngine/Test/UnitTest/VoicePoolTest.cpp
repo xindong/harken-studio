@@ -209,6 +209,46 @@ bool BindHeldSource(harken::Engine& engine, VnVoiceHandle voice, HeldSource* sou
         engine.sourceTerminals.Resolve(source->token), source->token);
 }
 
+TEST(VoicePool, StreamParkPendingOwnershipSurvivesPartialAndStaleRelease) {
+    EngineSession session(VoicePoolConfig(2, kBlockFrames));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    const auto samples = harkentest::MakeDC(64, 0.25f);
+    const auto desc = MonoDesc(samples, kSampleRate);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &desc));
+    auto& voices = session.Engine()->voices;
+    VnVoiceHandle first = 0;
+    VnVoiceHandle second = 0;
+    ASSERT_EQ(VN_OK, ClaimObserverVoice(*session.Engine(), &first));
+    ASSERT_EQ(VN_OK, ClaimObserverVoice(*session.Engine(), &second));
+    EXPECT_FALSE(voices.HasPendingStreamParkMailboxes());
+    ASSERT_TRUE(voices.ReserveStreamPark(first, first, 1));
+    ASSERT_TRUE(voices.ReserveStreamPark(second, second, 2));
+    voices.AbortStreamParkReservation(first, first, 1);
+    voices.AbortStreamParkReservation(first, first, 1);
+    voices.AbortStreamParkReservation(second, second, 1);
+    EXPECT_TRUE(voices.HasPendingStreamParkMailboxes());
+    harken::StreamParkOutcome outcome;
+    bool cancelled = false;
+    EXPECT_FALSE(voices.ConsumeStreamParkOutcomeExact(
+        second, second, 2, &outcome, &cancelled));
+    EXPECT_TRUE(voices.HasPendingStreamParkMailboxes());
+    // A non-stream render publishes the original StaleRender outcome.
+    voices.ApplyStop(second, 0, 0, session.Engine()->notifications, 0,
+        harken::kStopModeStreamPark, second, 2);
+    EXPECT_FALSE(voices.ConsumeStreamParkOutcomeExact(
+        second, second, 1, &outcome, &cancelled));
+    EXPECT_TRUE(voices.HasPendingStreamParkMailboxes());
+    ASSERT_TRUE(voices.ConsumeStreamParkOutcome(
+        static_cast<std::uint32_t>(second), &outcome, &cancelled));
+    EXPECT_EQ(harken::StreamParkDisposition::StaleRender, outcome.disposition);
+    EXPECT_FALSE(voices.HasPendingStreamParkMailboxes());
+    EXPECT_FALSE(voices.ConsumeStreamParkOutcome(
+        static_cast<std::uint32_t>(second), &outcome, &cancelled));
+    ASSERT_TRUE(voices.ReserveStreamPark(first, first, 3));
+    voices.DiscardAllStreamParkMailboxes();
+    EXPECT_FALSE(voices.HasPendingStreamParkMailboxes());
+}
+
 TEST(VoicePool, ReleaseObserverSurvivesNaturalExitAndSlotReuse) {
     EngineSession session(VoicePoolConfig(1, kBlockFrames));
     ASSERT_EQ(VN_OK, session.InitResult());

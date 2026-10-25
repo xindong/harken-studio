@@ -467,6 +467,10 @@ public:
         VnVoiceHandle renderHandle, VnVoiceHandle publicHandle,
         std::uint64_t requestSequence, StreamParkOutcome* out,
         bool* outCancelled);
+    // Logic-owned reservations remain pending through cancellation and audio publication.
+    bool HasPendingStreamParkMailboxes() const noexcept {
+        return m_pendingStreamParkMailboxes != 0;
+    }
     void DiscardAllStreamParkMailboxes();
     const StreamParkToken* ResolveParkOwnedToken(
         StreamParkTokenRef ref) const;
@@ -1157,6 +1161,7 @@ private:
     std::vector<OriginalCallbackStorageLease> m_originalCallbackStorage;
     bool m_originalSourceCallbackOpen = false;
     std::vector<StreamParkMailbox> m_streamParkMailboxes;
+    std::uint32_t m_pendingStreamParkMailboxes = 0;
     StableRowStorage<StreamParkTokenSlot> m_streamParkTokens;
     bool PrepareRenderSlotBacking(std::uint32_t count, std::uint32_t channelCount,
         bool firstOutput) noexcept;

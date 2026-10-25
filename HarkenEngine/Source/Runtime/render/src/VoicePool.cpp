@@ -3071,6 +3071,7 @@ bool VoicePool::ReserveStreamPark(VnVoiceHandle renderHandle,
         mailbox.outcome = StreamParkOutcome{};
         return false;
     }
+    ++m_pendingStreamParkMailboxes;
     mailbox.state.store(StreamParkMailboxState::Reserved,
                         std::memory_order_release);
     return true;
@@ -3097,6 +3098,7 @@ void VoicePool::AbortStreamParkReservation(
         }
         mailbox.state.store(StreamParkMailboxState::Empty,
                             std::memory_order_release);
+        --m_pendingStreamParkMailboxes;
     }
 }
 
@@ -3151,6 +3153,7 @@ bool VoicePool::ConsumeStreamParkOutcome(std::uint32_t renderSlot,
     *outCancelled = mailbox.outcome.cancelled;
     mailbox.state.store(StreamParkMailboxState::Empty,
                         std::memory_order_release);
+    --m_pendingStreamParkMailboxes;
     if (out->token.IsValid()) {
         StreamParkTokenSlot* token = ResolveStreamParkToken(
             out->token, StreamParkTokenState::Published);
@@ -3190,6 +3193,7 @@ bool VoicePool::ConsumeStreamParkOutcomeExact(
     *outCancelled = mailbox.outcome.cancelled;
     mailbox.state.store(StreamParkMailboxState::Empty,
                         std::memory_order_release);
+    --m_pendingStreamParkMailboxes;
     if (out->token.IsValid()) {
         StreamParkTokenSlot* token = ResolveStreamParkToken(
             out->token, StreamParkTokenState::Published);
@@ -3226,6 +3230,7 @@ void VoicePool::DiscardAllStreamParkMailboxes() {
         mailbox.state.store(StreamParkMailboxState::Empty,
                             std::memory_order_release);
     }
+    m_pendingStreamParkMailboxes = 0;
     for (StreamParkTokenSlot& token : m_streamParkTokens) {
         token.state.store(StreamParkTokenState::Free,
                           std::memory_order_release);
