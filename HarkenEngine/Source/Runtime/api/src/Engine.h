@@ -9914,6 +9914,7 @@ public:
         // Both outputs and their observer now belong to this genuine factory.
         // There is no fallible operation after issuance and before registration.
         holder.receiver_ = this;
+        originalSingleSourcePreparationSeen = true;
         holder.arm_ = arm;
         holder.sourceIdentity_ = originalHeader.payload.play.sourceIdentity;
         holder.physicalRelease_ = physicalRelease;
@@ -9972,6 +9973,7 @@ public:
         } else if (!originalSourceSubmissions.CapturePreparedSource(originalHeader, originalArm,
                 originalVoice, originalEffects, &holder.source_, &holder.body_)) return false;
         holder.receiver_ = this;
+        originalQueueSourcePreparationSeen = true;
         holder.arm_ = arm;
         holder.sourceIdentity_ = originalHeader.payload.play.sourceIdentity;
         holder.physicalRelease_ = physicalRelease;
@@ -9994,6 +9996,7 @@ public:
         return true;
     }
     void ServiceOriginalQueueSourcePreparations() noexcept {
+        if (!originalQueueSourcePreparationSeen) return;
         for (auto& holder : originalQueueSourcePreparationHolders) {
             if (holder.receiver_ == this && !holder.returned_)
                 (void)ReturnOriginalQueueSourcePreparationAfterPhysicalRelease(holder.arm_);
@@ -10612,6 +10615,7 @@ public:
         return true;
     }
     void ServiceOriginalSingleSourcePreparations() noexcept {
+        if (!originalSingleSourcePreparationSeen) return;
         for (auto& holder : originalSinglePreparationHolders)
             if (holder.receiver_ == this && !holder.returned_)
                 (void)ReturnOriginalSingleSourcePreparationAfterPhysicalRelease(holder.arm_);
@@ -13666,6 +13670,8 @@ public:
     // Fixed actual Arm factory slots; every Source/Body receiver outlives them.
     StableSlotStorage<OriginalSinglePreparationHolder> originalSinglePreparationHolders;
     StableSlotStorage<OriginalQueueSourcePreparationHolder> originalQueueSourcePreparationHolders;
+    bool originalSingleSourcePreparationSeen = false;
+    bool originalQueueSourcePreparationSeen = false;
     std::uint32_t originalSourceBackingPrefix = 0;
     void (*originalQueueSourcePreparationHookForTest)(Engine&, const OriginalQueueSourcePreparationHolder&, void*) = nullptr;
     void* originalQueueSourcePreparationContextForTest = nullptr;
