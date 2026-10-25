@@ -76,6 +76,8 @@ public:
     bool hasNamedLayout() const { return !currentLayoutName_.isEmpty(); }
     void onResetCurrentLayout();
     bool resetCurrentLayout();
+    bool resetAllLayouts();
+    bool saveNamedLayout(const QString& name, QString* pathOut = nullptr);
     QString saveCurrentLayout(QWidget* dialogParent);
     void onLoadNamedLayout(const QString& name);
     bool loadNamedLayout(const QString& name);
@@ -93,6 +95,7 @@ signals:
     void statusMessage(const QString& text);
     void dockStateRestored();
     void manageLayoutsRequested();
+    void currentLayoutChanged(const QString& name);
 
 private:
     struct ZoneSpec { ads::CDockWidget* dock; ads::DockWidgetArea area; bool open; };
@@ -122,7 +125,12 @@ private:
     void collapsedZonesFromJson(const QJsonArray& zones);
 
     void ensureDocksForSpecs(const QList<VNX::DockInstanceSpec>& specs);
-    bool applyNamedLayoutJson(const QString& name, const QJsonObject& json);
+    QJsonObject captureLayoutState() const;
+    void restoreLayoutState(const QJsonObject& json);
+    void activateLayout(const QString& name, const QJsonObject& json);
+    bool switchLayout(const QString& name);
+    bool resetLayouts(bool all);
+    void setCurrentLayoutName(const QString& name);
 
     void restoreDockState(const QByteArray& state);
     ads::CDockWidget* dockForWindow(const QString& typeId) const;
@@ -150,6 +158,7 @@ private:
     QHash<QString, ads::DockWidgetArea> zoneHomeArea_;
     QHash<QString, ZoneCollapse> collapsedZones_;
     QString currentLayoutName_;
+    QJsonObject workingLayouts_;
     bool firstShowDone_ = false;
     bool currentLayoutFromCache_ = false;
 };

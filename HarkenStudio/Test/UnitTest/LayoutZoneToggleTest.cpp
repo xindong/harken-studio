@@ -502,6 +502,182 @@ TEST(LayoutZoneToggleTest, RenamedDocksKeepCollapsedGroupsAcrossLayoutStores)
     }
 }
 
+TEST(LayoutZoneToggleTest, WorkingLayoutsSurviveSwitchingAndReopenWithoutChangingSavedPresets)
+{
+    ZoneFixture fixture;
+    NamedLayoutGuard first{QStringLiteral("WorkingLayoutFirst")};
+    NamedLayoutGuard second{QStringLiteral("WorkingLayoutSecond")};
+    ASSERT_TRUE(fixture.controller->saveNamedLayout(first.name));
+    fixture.information->toggleView(false);
+    ASSERT_TRUE(fixture.controller->saveNamedLayout(second.name));
+    QJsonObject firstSaved;
+    QJsonObject secondSaved;
+    ASSERT_TRUE(VNX::NamedLayoutStore::read(first.name, &firstSaved));
+    ASSERT_TRUE(VNX::NamedLayoutStore::read(second.name, &secondSaved));
+
+    ASSERT_TRUE(fixture.controller->loadNamedLayout(first.name));
+    EXPECT_FALSE(fixture.information->isClosed());
+    fixture.controller->setZoneCollapsed(fixture.ai, true);
+    ASSERT_TRUE(fixture.controller->loadNamedLayout(second.name));
+    EXPECT_FALSE(fixture.ai->isClosed());
+    EXPECT_TRUE(fixture.information->isClosed());
+    fixture.controller->setZoneCollapsed(fixture.projectExplorer, true);
+    ASSERT_TRUE(fixture.controller->selectBuiltinLayout(QStringLiteral("default_layout")));
+    EXPECT_FALSE(fixture.projectExplorer->isClosed());
+    EXPECT_TRUE(fixture.information->isClosed());
+    ASSERT_TRUE(fixture.controller->loadNamedLayout(first.name));
+    EXPECT_TRUE(fixture.ai->isClosed());
+    EXPECT_FALSE(fixture.projectExplorer->isClosed());
+    fixture.reopenFromCache();
+    EXPECT_EQ(fixture.controller->currentNamedLayout(), first.name);
+    EXPECT_TRUE(fixture.ai->isClosed());
+    ASSERT_TRUE(fixture.controller->loadNamedLayout(second.name));
+    EXPECT_TRUE(fixture.projectExplorer->isClosed());
+    EXPECT_FALSE(fixture.ai->isClosed());
+
+    ASSERT_TRUE(fixture.controller->resetCurrentLayout());
+    EXPECT_FALSE(fixture.projectExplorer->isClosed());
+    EXPECT_TRUE(fixture.information->isClosed());
+    ASSERT_TRUE(fixture.controller->loadNamedLayout(first.name));
+    EXPECT_TRUE(fixture.ai->isClosed());
+    ASSERT_TRUE(fixture.controller->resetAllLayouts());
+    EXPECT_FALSE(fixture.ai->isClosed());
+    fixture.reopenFromCache();
+    ASSERT_TRUE(fixture.controller->loadNamedLayout(second.name));
+    EXPECT_FALSE(fixture.projectExplorer->isClosed());
+    EXPECT_TRUE(fixture.information->isClosed());
+    ASSERT_TRUE(fixture.controller->selectBuiltinLayout(QStringLiteral("default_layout")));
+    EXPECT_FALSE(fixture.projectExplorer->isClosed());
+    EXPECT_FALSE(fixture.information->isClosed());
+
+    QJsonObject afterReset;
+    ASSERT_TRUE(VNX::NamedLayoutStore::read(first.name, &afterReset));
+    EXPECT_EQ(afterReset, firstSaved);
+    ASSERT_TRUE(VNX::NamedLayoutStore::read(second.name, &afterReset));
+    EXPECT_EQ(afterReset, secondSaved);
+}
+
+TEST(LayoutZoneToggleTest, LegacyCacheRestoresAndWorkingLayoutsStayWithinTheirProject)
+{
+    ZoneFixture fixture;
+    NamedLayoutGuard saved{QStringLiteral("ProjectScopedLayout")};
+    ASSERT_TRUE(fixture.controller->saveNamedLayout(saved.name));
+    ASSERT_TRUE(fixture.controller->loadNamedLayout(saved.name));
+    fixture.controller->setZoneCollapsed(fixture.projectExplorer, true);
+    fixture.controller->saveProjectLayout();
+    QJsonObject legacy = fixture.cachedLayout();
+    legacy.remove(QStringLiteral("workingLayouts"));
+    QFile file(VNX::PathUtils::getDotCacheDir(fixture.projectDir.path())
+               + QStringLiteral("/editor_layout.json"));
+    ASSERT_TRUE(file.open(QIODevice::WriteOnly));
+    file.write(QJsonDocument(legacy).toJson());
+    file.close();
+    fixture.reopenFromCache();
+    EXPECT_EQ(fixture.controller->currentNamedLayout(), saved.name);
+    EXPECT_TRUE(fixture.projectExplorer->isClosed());
+
+    QTemporaryDir otherProject;
+    ASSERT_TRUE(otherProject.isValid());
+    VNX::AssetRegistry::instance().setProjectRoot(otherProject.path());
+    fixture.controller->loadProjectLayout();
+    ASSERT_TRUE(fixture.controller->loadNamedLayout(saved.name));
+    EXPECT_FALSE(fixture.projectExplorer->isClosed());
+    fixture.controller->setZoneCollapsed(fixture.ai, true);
+    fixture.controller->saveProjectLayout();
+
+    VNX::AssetRegistry::instance().setProjectRoot(fixture.projectDir.path());
+    fixture.controller->loadProjectLayout();
+    EXPECT_TRUE(fixture.projectExplorer->isClosed());
+    EXPECT_FALSE(fixture.ai->isClosed());
+}
+
+TEST(LayoutZoneToggleTest, PresetRenameAndRemovalKeepOtherWorkingLayoutsIntact)
+{
+    ZoneFixture fixture;
+    NamedLayoutGuard saved{QStringLiteral("WorkingLayoutBeforeRename")};
+    ASSERT_TRUE(fixture.controller->saveNamedLayout(saved.name));
+    fixture.controller->setZoneCollapsed(fixture.projectExplorer, true);
+    ASSERT_TRUE(fixture.controller->loadNamedLayout(saved.name));
+    fixture.controller->setZoneCollapsed(fixture.ai, true);
+    ASSERT_TRUE(fixture.controller->selectBuiltinLayout(QStringLiteral("default_layout")));
+    EXPECT_TRUE(fixture.projectExplorer->isClosed());
+
+    const QString renamed = QStringLiteral("WorkingLayoutAfterRename");
+    ASSERT_TRUE(VNX::NamedLayoutStore::rename(saved.name, renamed));
+    fixture.controller->onNamedLayoutRenamed(saved.name, renamed);
+    saved.name = renamed;
+    fixture.reopenFromCache();
+    ASSERT_TRUE(fixture.controller->loadNamedLayout(renamed));
+    EXPECT_TRUE(fixture.ai->isClosed());
+    EXPECT_FALSE(fixture.projectExplorer->isClosed());
+
+    ASSERT_TRUE(VNX::NamedLayoutStore::remove(renamed));
+    EXPECT_FALSE(fixture.controller->resetAllLayouts());
+    EXPECT_TRUE(fixture.ai->isClosed());
+    fixture.controller->onNamedLayoutRemoved(renamed);
+    EXPECT_TRUE(fixture.controller->currentNamedLayout().isEmpty());
+    EXPECT_TRUE(fixture.projectExplorer->isClosed());
+    EXPECT_FALSE(fixture.ai->isClosed());
+}
+
+TEST(LayoutZoneToggleTest, MissingSharedPresetsRestoreProjectDefaultOnReopen)
+{
+    for (bool renamePreset : {false, true}) {
+        SCOPED_TRACE(renamePreset ? "renamed" : "removed");
+        for (bool cachedDefault : {false, true}) {
+            SCOPED_TRACE(cachedDefault ? "working default" : "legacy cache");
+            ZoneFixture fixture;
+            NamedLayoutGuard saved{QStringLiteral("MissingSharedLayout")};
+            ASSERT_TRUE(fixture.controller->saveNamedLayout(saved.name));
+            fixture.controller->setZoneCollapsed(fixture.projectExplorer, true);
+            ASSERT_TRUE(fixture.controller->loadNamedLayout(saved.name));
+            fixture.controller->setZoneCollapsed(fixture.ai, true);
+            fixture.controller->saveProjectLayout();
+
+            if (!cachedDefault) {
+                QJsonObject legacy = fixture.cachedLayout();
+                legacy.remove(QStringLiteral("workingLayouts"));
+                QFile file(VNX::PathUtils::getDotCacheDir(fixture.projectDir.path())
+                           + QStringLiteral("/editor_layout.json"));
+                ASSERT_TRUE(file.open(QIODevice::WriteOnly));
+                const QByteArray bytes = QJsonDocument(legacy).toJson();
+                ASSERT_EQ(file.write(bytes), bytes.size());
+            }
+
+            {
+                ZoneFixture otherProject;
+                ASSERT_TRUE(otherProject.controller->loadNamedLayout(saved.name));
+                if (renamePreset) {
+                    const QString renamed = QStringLiteral("RenamedSharedLayout");
+                    ASSERT_TRUE(VNX::NamedLayoutStore::rename(saved.name, renamed));
+                    otherProject.controller->onNamedLayoutRenamed(saved.name, renamed);
+                    saved.name = renamed;
+                } else {
+                    ASSERT_TRUE(VNX::NamedLayoutStore::remove(saved.name));
+                    otherProject.controller->onNamedLayoutRemoved(saved.name);
+                }
+            }
+
+            VNX::AssetRegistry::instance().setProjectRoot(fixture.projectDir.path());
+            fixture.reopenFromCache();
+            EXPECT_TRUE(fixture.controller->currentNamedLayout().isEmpty());
+            EXPECT_EQ(fixture.projectExplorer->isClosed(), cachedDefault);
+            EXPECT_EQ(fixture.information->isClosed(), cachedDefault);
+            EXPECT_FALSE(fixture.ai->isClosed());
+            ASSERT_TRUE(fixture.controller->selectBuiltinLayout(QStringLiteral("default_layout")));
+            EXPECT_EQ(fixture.projectExplorer->isClosed(), cachedDefault);
+            EXPECT_FALSE(fixture.ai->isClosed());
+
+            fixture.controller->saveProjectLayout();
+            fixture.reopenFromCache();
+            EXPECT_TRUE(fixture.controller->currentNamedLayout().isEmpty());
+            EXPECT_EQ(fixture.projectExplorer->isClosed(), cachedDefault);
+            EXPECT_EQ(fixture.information->isClosed(), cachedDefault);
+            EXPECT_FALSE(fixture.ai->isClosed());
+        }
+    }
+}
+
 TEST(LayoutZoneToggleTest, ACacheWithoutCollapseRecordsLeavesEveryZoneOpen)
 {
     ZoneFixture fixture;

@@ -839,12 +839,18 @@ static QString projectLayoutCacheFile()
     return PathUtils::getDotCacheDir(root) + "/editor_layout.json";
 }
 
+static bool validLayoutState(const QJsonObject& json)
+{
+    return json.value(QLatin1String("instances")).isArray()
+        && json.value(QLatin1String("collapsedZones")).isArray()
+        && json.value(QLatin1String("dockState")).isString();
+}
+
 void LayoutController::loadProjectLayout()
 {
-    QByteArray state;
-    QList<VNX::DockInstanceSpec> specs;
-    QVariantMap singletons;
-    QJsonArray collapsed;
+    workingLayouts_ = {};
+    QJsonObject current;
+    QString name;
 
     const QString path = projectLayoutCacheFile();
     if (!path.isEmpty()) {
@@ -853,40 +859,37 @@ void LayoutController::loadProjectLayout()
             QJsonParseError parseError;
             const QJsonDocument document = QJsonDocument::fromJson(
                 file.readAll(), &parseError);
-            const QJsonObject obj = document.isObject() ? document.object()
-                                                          : QJsonObject();
+            QJsonObject obj = document.object();
             file.close();
-            const bool valid = parseError.error == QJsonParseError::NoError
-                && obj.value(QLatin1String("instances")).isArray()
-                && obj.value(QLatin1String("collapsedZones")).isArray()
-                && obj.value(QLatin1String("baseLayout")).isString()
-                && (!obj.contains(QLatin1String("state"))
-                    || obj.value(QLatin1String("state")).isString());
-            if (valid) {
-                state = QByteArray::fromBase64(
-                    obj.value(QLatin1String("state")).toString().toLatin1());
-                specs = workspaceWindowInstanceSpecsFromJson(
-                    obj.value(QLatin1String("instances")).toArray());
-                singletons = obj.value(QLatin1String("singletons")).toObject().toVariantMap();
-                collapsed = obj.value(QLatin1String("collapsedZones")).toArray();
-                currentLayoutName_ = obj.value(QLatin1String("baseLayout")).toString();
+            obj["dockState"] = obj.take(QLatin1String("state"));
+            if (parseError.error == QJsonParseError::NoError && validLayoutState(obj)
+                && obj.value(QLatin1String("baseLayout")).isString()) {
+                workingLayouts_ = obj.take(QLatin1String("workingLayouts")).toObject();
+                for (const QString& key : workingLayouts_.keys()) {
+                    if (!validLayoutState(workingLayouts_.value(key).toObject()))
+                        workingLayouts_.remove(key);
+                }
+                name = obj.take(QLatin1String("baseLayout")).toString();
+                current = obj;
             }
         }
     }
 
-    ensureDocksForSpecs(specs);
+    if (!name.isEmpty() && !NamedLayoutStore::read(name, nullptr)) {
+        workingLayouts_.remove(name);
+        name.clear();
+        current = workingLayouts_.value(name).toObject();
+    }
+
     seedZoneHomeAreas();
 
-    if (dockManager_ && !state.isEmpty()) {
-        if (singletonStateRestorer_)
-            singletonStateRestorer_(singletons);
-        restoreDockState(state);
-        collapsedZonesFromJson(collapsed);
+    if (dockManager_ && !current.value(QLatin1String("dockState")).toString().isEmpty()) {
+        restoreLayoutState(current);
         currentLayoutFromCache_ = true;
-        relayoutDockSplitters(false);
+        setCurrentLayoutName(name);
     } else {
         currentLayoutFromCache_ = false;
-        currentLayoutName_.clear();
+        setCurrentLayoutName({});
         applyDefaultLayout();
     }
 
@@ -895,6 +898,8 @@ void LayoutController::loadProjectLayout()
 
 void LayoutController::saveProjectLayout()
 {
+    QJsonObject obj = captureLayoutState();
+    workingLayouts_.insert(currentLayoutName_, obj);
     const QString path = projectLayoutCacheFile();
     if (path.isEmpty())
         return;
@@ -904,16 +909,9 @@ void LayoutController::saveProjectLayout()
         return;
     }
 
-    QJsonObject obj;
-    if (dockManager_)
-        obj["state"] = QString::fromLatin1(dockManager_->saveState().toBase64());
-    obj["instances"] = workspaceWindowInstanceSpecsToJson(instanceSnapshotProvider_
-                                        ? instanceSnapshotProvider_()
-                                        : QList<VNX::DockInstanceSpec>());
-    if (singletonSnapshotProvider_)
-        obj["singletons"] = QJsonObject::fromVariantMap(singletonSnapshotProvider_());
-    obj["collapsedZones"] = collapsedZonesToJson();
+    obj["state"] = obj.take(QLatin1String("dockState"));
     obj["baseLayout"] = currentLayoutName_;
+    obj["workingLayouts"] = workingLayouts_;
 
     QSaveFile file(path);
     if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
@@ -945,19 +943,16 @@ void LayoutController::ensureDocksForSpecs(const QList<VNX::DockInstanceSpec>& s
 
 void LayoutController::selectDefaultLayout()
 {
-    if (instanceCloser_)
-        instanceCloser_();
-    currentLayoutName_.clear();
-    applyDefaultLayout();
-    saveProjectLayout();
-    emit statusMessage(tr("Layout 'Default' loaded"));
+    if (hasNamedLayout())
+        workingLayouts_.insert(currentLayoutName_, captureLayoutState());
+    workingLayouts_.remove(QString());
+    activateLayout({}, {});
 }
 
 bool LayoutController::selectBuiltinLayout(const QString& builtinId)
 {
     if (builtinId == QLatin1String("default_layout")) {
-        selectDefaultLayout();
-        return true;
+        return switchLayout({});
     }
     return false;
 }
@@ -969,21 +964,46 @@ void LayoutController::onResetCurrentLayout()
 
 bool LayoutController::resetCurrentLayout()
 {
-    if (currentLayoutName_.isEmpty()) {
-        selectDefaultLayout();
-        return true;
-    }
+    return resetLayouts(false);
+}
 
-    const QString name = currentLayoutName_;
+bool LayoutController::resetAllLayouts()
+{
+    return resetLayouts(true);
+}
+
+bool LayoutController::resetLayouts(bool all)
+{
     QJsonObject json;
-    if (!NamedLayoutStore::read(name, &json)) {
-        emit statusMessage(tr("Layout '%1' not found").arg(name));
+    if (hasNamedLayout() && !NamedLayoutStore::read(currentLayoutName_, &json)) {
+        emit statusMessage(tr("Layout '%1' not found").arg(currentLayoutName_));
         return false;
     }
 
-    if (instanceCloser_)
-        instanceCloser_();
-    return applyNamedLayoutJson(name, json);
+    if (all)
+        workingLayouts_ = {};
+    else
+        workingLayouts_.remove(currentLayoutName_);
+    activateLayout(currentLayoutName_, json);
+    if (all)
+        emit statusMessage(tr("All layouts reset to their saved states"));
+    return true;
+}
+
+bool LayoutController::saveNamedLayout(const QString& name, QString* pathOut)
+{
+    const QString trimmed = name.trimmed();
+    if (trimmed.isEmpty() || !dockManager_)
+        return false;
+    const QJsonObject state = captureLayoutState();
+    QJsonObject json = state;
+    json["name"] = trimmed;
+    json["savedAt"] = QDateTime::currentDateTime().toString(Qt::ISODate);
+    if (!NamedLayoutStore::write(trimmed, json, pathOut))
+        return false;
+    workingLayouts_.insert(trimmed, state);
+    saveProjectLayout();
+    return true;
 }
 
 QString LayoutController::saveCurrentLayout(QWidget* dialogParent)
@@ -991,7 +1011,7 @@ QString LayoutController::saveCurrentLayout(QWidget* dialogParent)
     bool ok = false;
     QString name = QInputDialog::getText(dialogParent, tr("Save Layout"),
                                          tr("Layout name:"), QLineEdit::Normal,
-                                         QString(), &ok);
+                                         currentLayoutName_, &ok);
     if (!ok || name.trimmed().isEmpty()) return {};
     name = name.trimmed();
 
@@ -1001,22 +1021,8 @@ QString LayoutController::saveCurrentLayout(QWidget* dialogParent)
         return {};
     }
 
-    if (!dockManager_) return {};
-    QByteArray dockState = dockManager_->saveState();
-
-    QJsonObject json;
-    json["name"] = name;
-    json["dockState"] = QString::fromLatin1(dockState.toBase64());
-    json["instances"] = workspaceWindowInstanceSpecsToJson(instanceSnapshotProvider_
-                                        ? instanceSnapshotProvider_()
-                                        : QList<VNX::DockInstanceSpec>());
-    if (singletonSnapshotProvider_)
-        json["singletons"] = QJsonObject::fromVariantMap(singletonSnapshotProvider_());
-    json["collapsedZones"] = collapsedZonesToJson();
-    json["savedAt"] = QDateTime::currentDateTime().toString(Qt::ISODate);
-
-    if (NamedLayoutStore::write(name, json)) {
-        currentLayoutName_ = name;
+    if (saveNamedLayout(name)) {
+        setCurrentLayoutName(name);
         saveProjectLayout();
         emit statusMessage(tr("Layout '%1' saved").arg(name));
         return name;
@@ -1033,15 +1039,40 @@ void LayoutController::onLoadNamedLayout(const QString& name)
 
 bool LayoutController::loadNamedLayout(const QString& name)
 {
+    return !name.isEmpty() && switchLayout(name);
+}
+
+bool LayoutController::switchLayout(const QString& name)
+{
     QJsonObject json;
-    if (!NamedLayoutStore::read(name, &json)) {
+    if (!name.isEmpty() && !NamedLayoutStore::read(name, &json)) {
         emit statusMessage(tr("Layout '%1' not found").arg(name));
         return false;
     }
-    return applyNamedLayoutJson(name, json);
+    if (name == currentLayoutName_)
+        return true;
+    workingLayouts_.insert(currentLayoutName_, captureLayoutState());
+    if (workingLayouts_.contains(name))
+        json = workingLayouts_.value(name).toObject();
+    activateLayout(name, json);
+    return true;
 }
 
-bool LayoutController::applyNamedLayoutJson(const QString& name, const QJsonObject& json)
+QJsonObject LayoutController::captureLayoutState() const
+{
+    QJsonObject json;
+    if (dockManager_)
+        json["dockState"] = QString::fromLatin1(dockManager_->saveState().toBase64());
+    json["instances"] = workspaceWindowInstanceSpecsToJson(instanceSnapshotProvider_
+                                        ? instanceSnapshotProvider_()
+                                        : QList<VNX::DockInstanceSpec>());
+    if (singletonSnapshotProvider_)
+        json["singletons"] = QJsonObject::fromVariantMap(singletonSnapshotProvider_());
+    json["collapsedZones"] = collapsedZonesToJson();
+    return json;
+}
+
+void LayoutController::restoreLayoutState(const QJsonObject& json)
 {
     ensureDocksForSpecs(
         workspaceWindowInstanceSpecsFromJson(json.value("instances").toArray()));
@@ -1055,35 +1086,54 @@ bool LayoutController::applyNamedLayoutJson(const QString& name, const QJsonObje
         relayoutDockSplitters(false);
     }
     enforceDisabledDocks();
-    currentLayoutName_ = name;
+}
+
+void LayoutController::activateLayout(const QString& name, const QJsonObject& json)
+{
+    if (instanceCloser_)
+        instanceCloser_();
+    currentLayoutFromCache_ = !json.isEmpty();
+    if (name.isEmpty() && json.isEmpty())
+        applyDefaultLayout();
+    else
+        restoreLayoutState(json);
+    setCurrentLayoutName(name);
     saveProjectLayout();
-    emit statusMessage(tr("Layout '%1' loaded").arg(name));
-    return true;
+    emit statusMessage(tr("Layout '%1' loaded").arg(name.isEmpty() ? tr("Default") : name));
 }
 
 void LayoutController::onDeleteNamedLayout(const QString& name)
 {
     if (NamedLayoutStore::remove(name)) {
-        if (currentLayoutName_ == name)
-            currentLayoutName_.clear();
+        onNamedLayoutRemoved(name);
         emit statusMessage(tr("Layout '%1' deleted").arg(name));
     }
 }
 
 void LayoutController::onNamedLayoutRenamed(const QString& oldName, const QString& newName)
 {
-    if (currentLayoutName_ != oldName)
-        return;
-    currentLayoutName_ = newName;
+    if (workingLayouts_.contains(oldName))
+        workingLayouts_.insert(newName, workingLayouts_.take(oldName));
+    if (currentLayoutName_ == oldName)
+        setCurrentLayoutName(newName);
     saveProjectLayout();
 }
 
 void LayoutController::onNamedLayoutRemoved(const QString& name)
 {
-    if (currentLayoutName_ != name)
+    workingLayouts_.remove(name);
+    if (currentLayoutName_ == name)
+        activateLayout({}, workingLayouts_.value(QString()).toObject());
+    else
+        saveProjectLayout();
+}
+
+void LayoutController::setCurrentLayoutName(const QString& name)
+{
+    if (currentLayoutName_ == name)
         return;
-    currentLayoutName_.clear();
-    saveProjectLayout();
+    currentLayoutName_ = name;
+    emit currentLayoutChanged(name);
 }
 
 void LayoutController::rebuildLayoutsMenu()
@@ -1095,15 +1145,21 @@ void LayoutController::rebuildLayoutsMenu()
     layoutActionGroup_->setExclusive(true);
 
     const QList<NamedLayoutInfo> layouts = NamedLayoutStore::list();
-
-    if (!currentLayoutName_.isEmpty()) {
-        const bool exists = std::any_of(layouts.cbegin(), layouts.cend(),
-            [this](const NamedLayoutInfo& info) { return info.name == currentLayoutName_; });
-        if (!exists) {
-            currentLayoutName_.clear();
-            saveProjectLayout();
+    QSet<QString> availableNames{QString()};
+    for (const NamedLayoutInfo& info : layouts)
+        availableNames.insert(info.name);
+    bool removedWorkingLayout = false;
+    for (const QString& name : workingLayouts_.keys()) {
+        if (!availableNames.contains(name)) {
+            workingLayouts_.remove(name);
+            removedWorkingLayout = true;
         }
     }
+
+    if (!availableNames.contains(currentLayoutName_))
+        onNamedLayoutRemoved(currentLayoutName_);
+    else if (removedWorkingLayout)
+        saveProjectLayout();
 
     for (const BuiltinLayouts::Entry& builtin : BuiltinLayouts::entries()) {
         const QString label = builtin.reservedName == QLatin1String("Default")
@@ -1125,7 +1181,7 @@ void LayoutController::rebuildLayoutsMenu()
     }
 
     for (const NamedLayoutInfo& info : layouts) {
-        QAction* action = layoutsMenu_->addAction(info.name);
+        QAction* action = layoutsMenu_->addAction(QString(info.name).replace(QLatin1Char('&'), QStringLiteral("&&")));
         action->setCheckable(true);
         action->setActionGroup(layoutActionGroup_);
         action->setChecked(info.name == currentLayoutName_);
@@ -1137,20 +1193,31 @@ void LayoutController::rebuildLayoutsMenu()
 
     layoutsMenu_->addSeparator();
 
-    QAction* manageAction = layoutsMenu_->addAction(tr("Manage Layouts..."));
-    manageAction->setObjectName("manageLayoutsAction");
-    connect(manageAction, &QAction::triggered,
-            this, &LayoutController::manageLayoutsRequested);
+    QAction* saveAction = layoutsMenu_->addAction(tr("Save Current Layout..."));
+    saveAction->setObjectName("saveLayoutAction");
+    connect(saveAction, &QAction::triggered,
+            this, [this] { saveCurrentLayout(host_); });
 
     QAction* resetAction = layoutsMenu_->addAction(tr("Reset Current Layout"));
     resetAction->setObjectName("resetLayoutAction");
     connect(resetAction, &QAction::triggered,
             this, &LayoutController::onResetCurrentLayout);
 
-    QAction* saveAction = layoutsMenu_->addAction(tr("Save Current Layout..."));
-    saveAction->setObjectName("saveLayoutAction");
-    connect(saveAction, &QAction::triggered,
-            this, [this] { saveCurrentLayout(host_); });
+    QAction* resetAllAction = layoutsMenu_->addAction(tr("Reset All Layouts"));
+    resetAllAction->setObjectName("resetAllLayoutsAction");
+    connect(resetAllAction, &QAction::triggered, this, [this] {
+        const auto reply = QMessageBox::question(host_, tr("Reset All Layouts"),
+            tr("Restore every layout in this project's workspace to its saved state? "
+               "Unsaved layout adjustments will be lost. Saved layouts will be kept."),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (reply == QMessageBox::Yes)
+            resetAllLayouts();
+    });
+
+    QAction* manageAction = layoutsMenu_->addAction(tr("Manage Layouts..."));
+    manageAction->setObjectName("manageLayoutsAction");
+    connect(manageAction, &QAction::triggered,
+            this, &LayoutController::manageLayoutsRequested);
 }
 
 }

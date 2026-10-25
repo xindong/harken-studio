@@ -86,6 +86,7 @@
 #include "Widgets/ControlPanel/ControlPanel.h"
 #include "Widgets/PlatformBar/PlatformBar.h"
 #include "Widgets/PlatformBar/PlaybackControls.h"
+#include "Widgets/Common/MenuComboBox.h"
 #include "Monitor/MonitorAdapter.h"
 #include "Monitor/MonitorCaptureControlHost.h"
 #include "Monitor/MonitorHostContext.h"
@@ -1142,12 +1143,6 @@ void MainWindow::setupMenuBar()
     editMenu->addSeparator();
     shortcuts.createMenuAction(Shortcuts::SelectAll, editMenu);
 
-    QMenu* layoutsMenu = menuBar->addMenu(tr("&Layout"));
-    layoutsMenu->setObjectName("layoutsMenu");
-    layoutController_->setLayoutsMenu(layoutsMenu);
-    connect(layoutsMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildLayoutsMenu);
-    layoutController_->rebuildLayoutsMenu();
-
     QMenu* viewsMenu = menuBar->addMenu(tr("&View"));
     viewsMenu->setObjectName("viewsMenu");
 
@@ -1240,15 +1235,15 @@ void MainWindow::setupMenuBar()
         }
     });
 
-    QMenu* toolsMenu = menuBar->addMenu(tr("&Tool"));
+    QMenu* helpMenu = menuBar->addMenu(tr("&Help"));
 
-    QAction* manageIntegrationsAction = toolsMenu->addAction(
+    QAction* manageIntegrationsAction = helpMenu->addAction(
         tr("Manage Engine &Integrations..."));
-    manageIntegrationsAction->setObjectName("toolsMenu_manageEngineIntegrations");
+    manageIntegrationsAction->setObjectName("helpMenu_manageEngineIntegrations");
     connect(manageIntegrationsAction, &QAction::triggered,
             this, &MainWindow::onEngineIntegrations);
 
-    QMenu* helpMenu = menuBar->addMenu(tr("&Help"));
+    helpMenu->addSeparator();
 
     QAction* websiteAction = helpMenu->addAction(tr("Harken &Website"));
     websiteAction->setObjectName("helpMenu_harkenWebsite");
@@ -1286,6 +1281,27 @@ void MainWindow::setupMainToolBar()
     connect(playbackControls_, &PlaybackControls::playClicked, this, &MainWindow::onPlayRequested);
     connect(playbackControls_, &PlaybackControls::stopClicked, this, &MainWindow::onStopPressed);
     connect(playbackControls_, &PlaybackControls::resetClicked, this, &MainWindow::onResetPressed);
+
+    auto* layoutSelector = new MenuComboBox(toolbar);
+    layoutSelector->setObjectName(QStringLiteral("layoutSelector"));
+    layoutSelector->setMinimumContentsLength(12);
+    layoutSelector->setAccessibleName(tr("Layout"));
+    toolbar->addTrailingWidget(layoutSelector);
+    auto* layoutsMenu = layoutSelector->menu();
+    layoutsMenu->setTitle(tr("Layout"));
+    layoutsMenu->setObjectName(QStringLiteral("layoutsMenu"));
+    layoutController_->setLayoutsMenu(layoutsMenu);
+    connect(layoutsMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildLayoutsMenu);
+    const auto refreshLayout = [this, layoutSelector] {
+        const QString name = layoutController_->hasNamedLayout()
+            ? layoutController_->currentNamedLayout() : tr("Default");
+        layoutSelector->setDisplayText(name);
+        layoutSelector->setToolTip(tr("Layout: %1").arg(name));
+    };
+    connect(layoutController_, &LayoutController::currentLayoutChanged, layoutSelector, refreshLayout);
+    layoutController_->rebuildLayoutsMenu();
+    refreshLayout();
+
     auto* remoteAction = new QAction(tr("Remote Connect"), toolbar);
     remoteAction->setCheckable(true);
     auto* button = toolbar->addLeadingAction(remoteAction, QStringLiteral("remoteConnectButton"));
@@ -3920,30 +3936,13 @@ void MainWindow::saveProjectLayout()
 
 bool MainWindow::saveNamedLayout(const QString& name, QString* pathOut)
 {
-    const QString trimmed = name.trimmed();
-    if (trimmed.isEmpty() || !dockManager_)
-        return false;
-
-    QJsonObject json;
-    json[QStringLiteral("name")] = trimmed;
-    json[QStringLiteral("dockState")] =
-        QString::fromLatin1(dockManager_->saveState().toBase64());
-    json[QStringLiteral("instances")] =
-        workspaceWindowInstanceSpecsToJson(workspaceWindowInstanceSpecs());
-    json[QStringLiteral("singletons")] =
-        QJsonObject::fromVariantMap(workspaceWindowManager_->singletonStates());
-    json[QStringLiteral("savedAt")] = QDateTime::currentDateTime().toString(Qt::ISODate);
-
-    return NamedLayoutStore::write(trimmed, json, pathOut);
+    return layoutController_->saveNamedLayout(name, pathOut);
 }
 
 bool MainWindow::loadNamedLayout(const QString& name)
 {
     const QString trimmed = name.trimmed();
-    if (trimmed.isEmpty() || !NamedLayoutStore::read(trimmed, nullptr))
-        return false;
-    layoutController_->onLoadNamedLayout(trimmed);
-    return true;
+    return layoutController_->loadNamedLayout(trimmed);
 }
 
 bool MainWindow::deleteNamedLayout(const QString& name)
