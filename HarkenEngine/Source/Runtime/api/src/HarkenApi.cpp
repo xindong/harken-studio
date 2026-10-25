@@ -75648,7 +75648,8 @@ bool ReserveImmediateActionFirings(void* opaque,
         if (!plan->materializingDeferred && plan->firingCount == 1 && plan->stepCount == 1) {
             const auto& planned = engine.actionStepPlanScratch[0];
             // Only an independent immediate Sound has no container-owned future.
-            needsContainerState = !(planned.step != nullptr && planned.depth == 0 &&
+            needsContainerState = !(planned.step != nullptr && planned.depth == 1 &&
+                planned.firingIndex == 0 && engine.actionFiringPlanScratch[0].parentIndex == UINT32_MAX &&
                 !planned.deferred && planned.deferredFrame == 0 &&
                 !planned.cooldownSuppressed && !planned.quantizeSuppressed &&
                 planned.step->opcode == harken::ActionOpcodeV1::Play &&
