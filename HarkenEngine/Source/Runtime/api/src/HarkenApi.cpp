@@ -7011,7 +7011,8 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
     harken::VariablePlaybackOrder initialVariableOrder = {},
     bool shareInitialVariableCut = false,
     std::uint64_t initialVariableAuthoredOffset = 0,
-    const harken::MonitorControlCause* selectionCause = nullptr) {
+    const harken::MonitorControlCause* selectionCause = nullptr,
+    const harken::EnginePlayableServiceRow* directSoundPreparationOwner = nullptr) {
     TimelineVoiceInstallResult result;
     std::uint32_t commandCount = 0;
     const auto shape = TimelineVoiceStartCommandBudget(input, &commandCount);
@@ -7193,7 +7194,18 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
             view.loop.startFrame, view.LoopEndFrame(), install.loopCount,
             harken::ResampleProfile::LegacyCompatibility, &render,
             bus.generation, ~std::uint32_t{0}, 0, true,
-            install.outputBusVolumeDb, install.spatializationMix);
+            install.outputBusVolumeDb, install.spatializationMix,
+            !(directSoundPreparationOwner != nullptr &&
+                engine.MatchesOriginalPlayableServiceStorage(*directSoundPreparationOwner) &&
+                directSoundPreparationOwner->InvocationValid() &&
+                directSoundPreparationOwner->root.kind == harken::PlayableKindV1::Sound &&
+                directSoundPreparationOwner->leaf.kind == harken::PlayableKindV1::Sound &&
+                directSoundPreparationOwner->ownerInstance == parentInstance &&
+                directSoundPreparationOwner->rootInstance == parentInstance &&
+                playableRoot == parentInstance && parentInstance != 0 &&
+                !directSoundPreparationOwner->parentService.Valid() &&
+                !directSoundPreparationOwner->variableControlInstance.Valid() &&
+                directSoundPreparationOwner->Invocation().variableControlOuterRootInstance == 0));
     }
     if (play != VN_OK) {
         if (render != 0) {
@@ -78740,7 +78752,8 @@ bool PrepareImmediateActionSingleLeafPlay(
             retainOriginalQueueCurrentSource, false,
             retainOrdinaryVariables ? &scratch->storage.initialVariableCut :
                 captureVariables ? &initialVariables.ref : nullptr,
-            {startFrame, provisionalSequence, planned.executionOrdinal}, retainOrdinaryVariables, 0);
+            {startFrame, provisionalSequence, planned.executionOrdinal}, retainOrdinaryVariables, 0, nullptr,
+            instanceKind == harken::PlayableKind::Sound ? row : nullptr);
     // A later preparation refusal can retain this real fixed-slot owner.
     if (scratch->voiceStarts[0].prepared) scratch->voiceStartCount = 1;
     if (installed.status != VN_OK) {

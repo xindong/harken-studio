@@ -47,12 +47,14 @@ PCMView MakeMonoView(const std::vector<float>& samples) {
 // Drives one voice context block-by-block the way the mixer loop does,
 // with a fresh planar master accumulator per block.
 struct CascadeHarness {
+    std::array<VoiceRenderContext::OwnedVariableWeight, harken::kSelectionPathNodeCapacity> weights{};
     explicit CascadeHarness(const std::vector<float>& input,
                             double ratio = 1.0,
                             ResampleQuality quality = ResampleQuality::Hermite,
                             const std::vector<float>* right = nullptr)
         : ring(harken::kResampleFifoFrames * (right != nullptr ? 2u : 1u), 0.0f) {
         ctx.biquadTrig = &trig;
+        ctx.variableWeightControls = weights;
         ctx.pcm = MakeMonoView(input);
         if (right != nullptr) {
             ctx.pcm.channels[1] = right->data();

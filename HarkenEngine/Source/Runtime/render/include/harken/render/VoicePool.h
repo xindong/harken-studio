@@ -148,7 +148,7 @@ public:
                   std::uint32_t requestedSlot = ~std::uint32_t{0},
                   std::uint32_t expectedGeneration = 0,
                   bool prepared = false, float outputBusVolumeDb = 0.0f,
-                  float spatializationMix = 1.0f);
+                  float spatializationMix = 1.0f, bool prepareOwnedWeights = true);
 
     // Claims a Render Voice slot for a streamed Logical Voice. The independent
     // stream slot is owned by StreamManager; the source decode stage feeds
@@ -284,26 +284,27 @@ public:
         void* context, SlotStorageRegistration::Prepare prepare) noexcept;
     bool PrepareSlotBacking(std::uint32_t count, StableStoragePreparation* out) noexcept;
     bool PrepareSlotWorkingSet(std::uint32_t renderSlot, std::uint32_t channelCount,
-        ResampleProfile profile = ResampleProfile::LegacyCompatibility) noexcept;
+        ResampleProfile profile = ResampleProfile::LegacyCompatibility,
+        bool prepareOwnedWeights = true) noexcept;
     std::size_t SlotCommittedBytes() const noexcept { return m_slots.CommittedBytes(); }
     std::size_t SlotReservedBytes() const noexcept { return m_slots.ReservedBytes(); }
     std::size_t RenderWorksetStorageBytes() const noexcept {
         std::size_t bytes = m_firstOutputEndpoints.RequestedBytes() + m_firstOutputWeights.RequestedBytes() +
-            m_professionalStorage.RequestedBytes();
+            m_professionalStorage.RequestedBytes() + m_variableWeightStorage.RequestedBytes();
         for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch)
             bytes += m_ringStorage[ch].RequestedBytes() + m_monitorPreChainStorage[ch].RequestedBytes();
         return bytes;
     }
     std::size_t RenderWorksetCommittedBytes() const noexcept {
         std::size_t bytes = m_firstOutputEndpoints.CommittedBytes() + m_firstOutputWeights.CommittedBytes() +
-            m_professionalStorage.CommittedBytes();
+            m_professionalStorage.CommittedBytes() + m_variableWeightStorage.CommittedBytes();
         for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch)
             bytes += m_ringStorage[ch].CommittedBytes() + m_monitorPreChainStorage[ch].CommittedBytes();
         return bytes;
     }
     std::size_t RenderWorksetReservedBytes() const noexcept {
         std::size_t bytes = m_firstOutputEndpoints.ReservedBytes() + m_firstOutputWeights.ReservedBytes() +
-            m_professionalStorage.ReservedBytes();
+            m_professionalStorage.ReservedBytes() + m_variableWeightStorage.ReservedBytes();
         for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch)
             bytes += m_ringStorage[ch].ReservedBytes() + m_monitorPreChainStorage[ch].ReservedBytes();
         return bytes;
@@ -319,6 +320,11 @@ public:
     }
     std::size_t ProfessionalStorageBytes() const noexcept { return m_professionalStorage.RequestedBytes(); }
     std::size_t ProfessionalDirectoryBytes() const noexcept { return m_professionalStorage.DirectoryBytes(); }
+    void SetVariableWeightCommitPageLimitForTests(std::size_t pages) noexcept {
+        m_variableWeightStorage.SetCommitPageLimitForTests(pages);
+    }
+    std::size_t VariableWeightStorageBytes() const noexcept { return m_variableWeightStorage.RequestedBytes(); }
+    std::size_t VariableWeightDirectoryBytes() const noexcept { return m_variableWeightStorage.DirectoryBytes(); }
     std::uint32_t BlockFrames() const { return m_blockFrames; }
 
     // Records a voice admission refused with VN_NO_VOICE outside
@@ -1157,6 +1163,10 @@ private:
     bool RenderSlotBackingReady(std::uint32_t count, std::uint32_t channelCount) const noexcept;
     std::array<StableRowStorage<std::array<float, kResampleFifoFrames>>, kMaxChannels> m_ringStorage;
     StableSlotStorage<MultirateResamplerCandidate> m_professionalStorage;
+    using VariableWeightStorage = std::array<VoiceRenderContext::OwnedVariableWeight, kSelectionPathNodeCapacity>;
+    StableSlotStorage<VariableWeightStorage> m_variableWeightStorage;
+    bool PrepareVariableWeightBacking(std::uint32_t slot) noexcept;
+    void BindVariableWeightBacking(std::uint32_t slot) noexcept;
     std::uint64_t m_staleHandleHits = 0;
     std::uint64_t m_invalidVolumeApplies = 0;
     std::uint64_t m_noVoiceRefusals = 0;

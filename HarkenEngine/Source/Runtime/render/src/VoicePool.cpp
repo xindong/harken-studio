@@ -61,7 +61,11 @@ bool VoicePool::PrepareRenderSlotBacking(std::uint32_t count, std::uint32_t chan
         if (!m_ringStorage[ch].ConstructThrough(count) ||
             !m_monitorPreChainStorage[ch].ConstructThrough(count * m_blockFrames)) return false;
     }
-    if (firstOutput && !PrepareFirstOutputBacking(count)) return false;
+    if (firstOutput) {
+        if (!PrepareFirstOutputBacking(count)) return false;
+        for (std::uint32_t slot = 0; slot < count; ++slot)
+            if (!PrepareVariableWeightBacking(slot)) return false;
+    }
     for (auto* registration = m_slotStorageRegistrations; registration != nullptr; registration = registration->next_)
         if (!registration->prepare_(registration->context_, count)) return false;
     return true;
@@ -76,8 +80,21 @@ bool VoicePool::RenderSlotBackingReady(std::uint32_t count, std::uint32_t channe
     return true;
 }
 
+bool VoicePool::PrepareVariableWeightBacking(std::uint32_t slot) noexcept {
+    if (m_variableWeightStorage.IsConstructed(slot)) return true;
+    if (memguard::IsAudioTagged() || m_slots.PreparedUseActive()) return false;
+    return m_variableWeightStorage.Emplace(slot);
+}
+
+void VoicePool::BindVariableWeightBacking(std::uint32_t slot) noexcept {
+    if (!m_variableWeightStorage.IsConstructed(slot)) return;
+    auto& weights = m_variableWeightStorage[slot];
+    weights = {};
+    m_slots[slot].render.variableWeightControls = weights;
+}
+
 bool VoicePool::PrepareSlotWorkingSet(std::uint32_t renderSlot, std::uint32_t channelCount,
-    ResampleProfile profile) noexcept {
+    ResampleProfile profile, bool prepareOwnedWeights) noexcept {
     if (renderSlot >= m_slots.Capacity() || channelCount == 0 || channelCount > kMaxChannels) return false;
     if (profile != ResampleProfile::LegacyCompatibility &&
         profile != ResampleProfile::Professional44148) return false;
@@ -87,6 +104,7 @@ bool VoicePool::PrepareSlotWorkingSet(std::uint32_t renderSlot, std::uint32_t ch
             held ? kMaxChannels : channelCount, held);
     })) return false;
     return RenderSlotBackingReady(renderSlot + 1u, channelCount) &&
+        (!prepareOwnedWeights || PrepareVariableWeightBacking(renderSlot)) &&
         (profile != ResampleProfile::Professional44148 || m_professionalStorage.Emplace(renderSlot));
 }
 
@@ -213,6 +231,7 @@ VoicePool::VoicePool(const EngineConfig& config, const ResampleTables* tables,
       m_jobGenerations(config.voiceCapacity.Render(), 0) {
     if (!m_slots.Reserve(config.voiceCapacity.Render()) ||
         !m_professionalStorage.Reserve(config.voiceCapacity.Render()) ||
+        !m_variableWeightStorage.Reserve(config.voiceCapacity.Render()) ||
         !m_streamParkTokens.Reserve(config.voiceCapacity.Virtual())) throw std::bad_alloc{};
     m_firstOutputStride = kFirstOutputBuiltinEndpoints + config.fxSlotsPerVoice * kMaxEffectParamCount;
     const auto monitorCapacity = static_cast<std::uint64_t>(config.voiceCapacity.Render()) * m_blockFrames;
@@ -265,7 +284,7 @@ VnResult VoicePool::Play(const PCMView& view, float volumeDb,
                          std::uint32_t requestedSlot,
                          std::uint32_t expectedGeneration,
                          bool prepared, float outputBusVolumeDb,
-                         float spatializationMix) {
+                         float spatializationMix, bool prepareOwnedWeights) {
     float linearGain = 0.0f;
     float outputLinearGain = 0.0f;
     if (!TryVolumeGainFromDb(volumeDb, &linearGain) ||
@@ -289,7 +308,7 @@ VnResult VoicePool::Play(const PCMView& view, float volumeDb,
     }
     if (slotIndex >= m_slots.Capacity() ||
         (slotIndex >= m_slots.ConstructedCount() && expectedGeneration > 1u) ||
-        !PrepareSlotWorkingSet(slotIndex, view.channelCount, resampleProfile) ||
+        !PrepareSlotWorkingSet(slotIndex, view.channelCount, resampleProfile, prepareOwnedWeights) ||
         !CanClaimSlot(m_slots[slotIndex]) ||
         (expectedGeneration != 0 &&
          m_slots[slotIndex].generation.load(std::memory_order_relaxed) !=
@@ -314,6 +333,7 @@ VnResult VoicePool::Play(const PCMView& view, float volumeDb,
     slot.monitorControl = {};
     slot.monitorSourceTerminalPublished = false;
     slot.render = VoiceRenderContext{};
+    BindVariableWeightBacking(slotIndex);
     ClearFirstOutput(slot);
     slot.render.biquadTrig = m_biquadTrig;
     slot.render.engineSampleRate = m_sampleRate;
@@ -470,6 +490,7 @@ VnResult VoicePool::PlayStream(StreamRing* ring, std::uint32_t channelCount,
     slot.monitorControl = {};
     slot.monitorSourceTerminalPublished = false;
     slot.render = VoiceRenderContext{};
+    BindVariableWeightBacking(slotIndex);
     ClearFirstOutput(slot);
     slot.render.biquadTrig = m_biquadTrig;
     slot.render.engineSampleRate = m_sampleRate;
@@ -3480,7 +3501,7 @@ bool VoicePool::PrepareVariableWeightControls(VnVoiceHandle handle,
     const VariableWeightControlBinding* bindings, std::uint32_t count) noexcept {
     auto* slot = SlotFor(handle);
     if (slot == nullptr || slot->state.load(std::memory_order_acquire) != SlotState::Prepared ||
-        (bindings == nullptr && count != 0) || count > slot->render.variableWeightControls.size() ||
+        (bindings == nullptr && count != 0) || count > kSelectionPathNodeCapacity ||
         slot->render.variableWeightControlCount != 0 || slot->render.variableWeightActive) return false;
     for (std::uint32_t index = 0; index < count; ++index) {
         float checked = 0.0f;
@@ -3488,6 +3509,11 @@ bool VoicePool::PrepareVariableWeightControls(VnVoiceHandle handle,
                 bindings[index].segment.startFrame, &checked)) return false;
         for (std::uint32_t prior = 0; prior < index; ++prior)
             if (bindings[prior].owner == bindings[index].owner) return false;
+    }
+    if (count != 0 && slot->render.variableWeightControls.empty()) {
+        const auto slotIndex = static_cast<std::uint32_t>(handle);
+        if (!PrepareVariableWeightBacking(slotIndex)) return false;
+        slot->render.variableWeightControls = m_variableWeightStorage[slotIndex];
     }
     for (std::uint32_t index = 0; index < count; ++index)
         slot->render.variableWeightControls[index] = {bindings[index].owner, bindings[index].segment, true,

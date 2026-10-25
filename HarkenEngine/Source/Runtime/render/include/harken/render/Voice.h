@@ -33,6 +33,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <limits>
+#include <span>
 
 namespace harken {
 
@@ -366,7 +367,7 @@ struct VoiceRenderContext {
         std::uint32_t initialRebaseGeneration = 0;
         double inverseSpan = 0.0;
     };
-    std::array<OwnedVariableWeight, kSelectionPathNodeCapacity> variableWeightControls{};
+    std::span<OwnedVariableWeight> variableWeightControls{};
     std::uint32_t variableWeightControlCount = 0;
 
     bool ApplyVariableWeightControl(VariableWeightControlIdentity owner,
