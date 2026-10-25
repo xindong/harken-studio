@@ -1906,6 +1906,13 @@ TEST(PackLogicLoad, FiniteAuthoredMixPlusMeterProbeOverflowLeavesAuthoredIntact)
     const std::uint32_t generation =
         engine->busTargets.ActiveGeneration(index);
 
+    // Enter the native probe lifecycle before injecting an orphan contribution.
+    std::uint32_t probeGeneration = 0;
+    ASSERT_EQ(VN_OK, harken::InstallMeterProbe(*engine,
+        harkentest::ObjectId(13173), harkentest::ObjectId(13172),
+        VN_BUS_METER_TAP_POST_EFFECTS, 0, 0, &probeGeneration));
+    ASSERT_NE(0u, probeGeneration);
+
     engine->busTargets.BeginMeterProbeSweep();
     engine->busTargets.AccumulateMeterProbe(
         index, generation, harken::kBusTargetBusVolume, 3.0e38f, true, 17);
