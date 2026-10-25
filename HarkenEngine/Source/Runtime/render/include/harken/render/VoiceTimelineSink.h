@@ -703,6 +703,11 @@ public:
              (hasStart && voices_.HasTimelineVariableSourceRead(renderSlot, renderGeneration)))) {
             auto& pending = pendingVariableStarts_[renderSlot];
             if (pending.count != 0 && pending.arm.renderGeneration != renderGeneration) return false;
+            const auto pendingEvents = voices_.PendingTimelineVariableEvents(renderSlot);
+            if (!pending.failed && !publicationRefused) {
+                assert(pendingEvents.size() == kTimelineMaxEventsPerVoiceQuantum);
+                if (pendingEvents.size() != kTimelineMaxEventsPerVoiceQuantum) return false;
+            }
             if (pending.count == 0) {
                 pending.arm = armToken;
                 pending.source = voices_.TimelineVariableSourceRead(renderSlot, renderGeneration);
@@ -717,31 +722,34 @@ public:
             }
             auto& transaction = pending.transactions[transactionIndex];
             transaction.starts = transaction.starts || hasStart;
-            if (pending.failed || eventCount > pending.events.size() - pending.count) {
+            if (pending.failed || eventCount > kTimelineMaxEventsPerVoiceQuantum - pending.count) {
                 pending.failed = true;
                 RecordPlainResult(armToken, pending.failureDisposition);
                 (void)CancelBinding(renderSlot, renderGeneration);
                 return true;
             }
             for (std::uint32_t i = 0; i < eventCount; ++i) {
-                auto& stored = pending.events[pending.count + i];
                 const auto& payload = *events[i].payload;
-                stored = {};
-                stored.kind = payload.kind;
-                stored.authoredRootStop = payload.kind == TimelineEventKind::Stop &&
-                    (payload.reserved & kTimelineEventAuthoredRootStop) != 0;
-                stored.authoredStopOperation = payload.authoredStopOperation;
-                stored.controlCause = payload.controlCause;
-                stored.offset = static_cast<std::uint16_t>(events[i].effectiveOffset);
-                stored.envelopeDirection = payload.envelopeDirection;
-                stored.authoredFadeOutCandidate = events[i].authoredFadeOutCandidate;
-                stored.frame = payload.envelopeStartFrame;
-                stored.endFrame = payload.envelopeEndFrame;
-                stored.value = payload.sourceStartFrame;
-                stored.envelopeCurve = payload.envelopeCurve;
-                stored.variableWeight = payload.variableWeight;
-                stored.variableWeightOwner = payload.variableWeightOwner;
-                stored.order = events[i].order;
+                // Refused publication is terminal before any later payload reader.
+                if (!publicationRefused) {
+                    auto& stored = pendingEvents[pending.count + i];
+                    stored = {};
+                    stored.kind = payload.kind;
+                    stored.authoredRootStop = payload.kind == TimelineEventKind::Stop &&
+                        (payload.reserved & kTimelineEventAuthoredRootStop) != 0;
+                    stored.authoredStopOperation = payload.authoredStopOperation;
+                    stored.controlCause = payload.controlCause;
+                    stored.offset = static_cast<std::uint16_t>(events[i].effectiveOffset);
+                    stored.envelopeDirection = payload.envelopeDirection;
+                    stored.authoredFadeOutCandidate = events[i].authoredFadeOutCandidate;
+                    stored.frame = payload.envelopeStartFrame;
+                    stored.endFrame = payload.envelopeEndFrame;
+                    stored.value = payload.sourceStartFrame;
+                    stored.envelopeCurve = payload.envelopeCurve;
+                    stored.variableWeight = payload.variableWeight;
+                    stored.variableWeightOwner = payload.variableWeightOwner;
+                    stored.order = events[i].order;
+                }
                 transaction.transient = transaction.transient ||
                     payload.kind == TimelineEventKind::VariableWeight ||
                     (payload.kind == TimelineEventKind::Stop &&
@@ -933,7 +941,6 @@ private:
         bool failed = false;
         std::uint8_t failureDisposition = kTimelineDispositionArmFailed;
         std::array<PendingVariableTransaction, kTimelineMaxEventsPerVoiceQuantum + 1u> transactions{};
-        std::array<VoiceTimelineEvent, kTimelineMaxEventsPerVoiceQuantum> events{};
     };
 
     void RetirePendingVariableStart(PendingVariableStart& pending) noexcept {
@@ -993,6 +1000,13 @@ private:
                 (void)CancelBinding(arm.renderSlot, arm.renderGeneration);
                 continue;
             }
+            const auto pendingEvents = voices_.PendingTimelineVariableEvents(arm.renderSlot);
+            assert(pendingEvents.size() == kTimelineMaxEventsPerVoiceQuantum);
+            if (pendingEvents.size() != kTimelineMaxEventsPerVoiceQuantum) {
+                pending.failed = true;
+                (void)CancelBinding(arm.renderSlot, arm.renderGeneration);
+                continue;
+            }
             TimelineArmObservation observation{};
             const bool observed = arms_.Observe(arm, &observation);
             const auto source = voices_.TimelineVariableSourceRead(arm.renderSlot, arm.renderGeneration);
@@ -1005,7 +1019,7 @@ private:
             std::uint64_t startFrame = UINT64_MAX;
             std::uint64_t stopFrame = UINT64_MAX;
             for (std::uint32_t i = 0; i < pending.count; ++i) {
-                const auto& event = pending.events[i];
+                const auto& event = pendingEvents[i];
                 if (event.kind == TimelineEventKind::Start) startFrame = std::min(startFrame, event.order.executeFrame);
                 if (event.kind == TimelineEventKind::Stop) stopFrame = std::min(stopFrame, event.order.executeFrame);
             }
@@ -1059,7 +1073,7 @@ private:
             }
             voices_.ApplyTimelineVariableInitializer(initializer);
             for (std::uint32_t i = 0; i < pending.count; ++i) {
-                auto event = pending.events[i];
+                auto event = pendingEvents[i];
                 const auto quantumStart = quantumIndex * blockFrames_;
                 event.offset = static_cast<std::uint16_t>(event.order.executeFrame < quantumStart
                     ? 0 : event.order.executeFrame - quantumStart);

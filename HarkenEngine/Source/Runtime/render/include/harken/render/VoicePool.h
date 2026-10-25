@@ -234,6 +234,14 @@ public:
         m_firstOutputCommandConsumer = apply;
     }
     std::size_t FirstOutputStorageBytes() const noexcept;
+    // Backing only: native timeline authority still governs every pending event.
+    std::span<VoiceTimelineEvent> PendingTimelineVariableEvents(std::uint32_t renderSlot) noexcept {
+        if (!m_pendingTimelineVariableEvents.IsConstructed(renderSlot)) return {};
+        return m_pendingTimelineVariableEvents[renderSlot];
+    }
+    void SetPendingTimelineVariableEventCommitPageLimitForTests(std::size_t pages) noexcept {
+        m_pendingTimelineVariableEvents.SetCommitPageLimitForTests(pages);
+    }
     bool CaptureStreamRingToken(VnVoiceHandle handle,
                                 std::uint64_t* outToken) const noexcept;
 
@@ -296,6 +304,7 @@ public:
     std::size_t SlotReservedBytes() const noexcept { return m_slots.ReservedBytes(); }
     std::size_t RenderWorksetStorageBytes() const noexcept {
         std::size_t bytes = m_firstOutputEndpoints.RequestedBytes() + m_firstOutputWeights.RequestedBytes() +
+            m_pendingTimelineVariableEvents.RequestedBytes() +
             m_professionalStorage.RequestedBytes() + m_variableWeightStorage.RequestedBytes();
         for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch)
             bytes += m_ringStorage[ch].RequestedBytes() + m_monitorPreChainStorage[ch].RequestedBytes();
@@ -303,6 +312,7 @@ public:
     }
     std::size_t RenderWorksetCommittedBytes() const noexcept {
         std::size_t bytes = m_firstOutputEndpoints.CommittedBytes() + m_firstOutputWeights.CommittedBytes() +
+            m_pendingTimelineVariableEvents.CommittedBytes() +
             m_professionalStorage.CommittedBytes() + m_variableWeightStorage.CommittedBytes();
         for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch)
             bytes += m_ringStorage[ch].CommittedBytes() + m_monitorPreChainStorage[ch].CommittedBytes();
@@ -310,6 +320,7 @@ public:
     }
     std::size_t RenderWorksetReservedBytes() const noexcept {
         std::size_t bytes = m_firstOutputEndpoints.ReservedBytes() + m_firstOutputWeights.ReservedBytes() +
+            m_pendingTimelineVariableEvents.ReservedBytes() +
             m_professionalStorage.ReservedBytes() + m_variableWeightStorage.ReservedBytes();
         for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch)
             bytes += m_ringStorage[ch].ReservedBytes() + m_monitorPreChainStorage[ch].ReservedBytes();
@@ -1005,6 +1016,8 @@ private:
     std::uint32_t m_firstOutputStride = 0;
     StableRowStorage<DeferredFirstOutputEndpoint> m_firstOutputEndpoints;
     StableRowStorage<DeferredFirstOutputWeight> m_firstOutputWeights;
+    StableRowStorage<std::array<VoiceTimelineEvent, kTimelineMaxEventsPerVoiceQuantum>>
+        m_pendingTimelineVariableEvents;
     bool FirstOutputBackingReady(std::uint32_t count) const noexcept;
     bool PrepareFirstOutputBacking(std::uint32_t count) noexcept;
     void* m_firstOutputCommandContext = nullptr;

@@ -44,14 +44,16 @@ bool VoicePool::AttachSlotStoragePreparation(SlotStorageRegistration& registrati
 bool VoicePool::FirstOutputBackingReady(std::uint32_t count) const noexcept {
     return count <= m_slots.Capacity() &&
         m_firstOutputEndpoints.ConstructedCount() >= count * m_firstOutputStride &&
-        m_firstOutputWeights.ConstructedCount() >= count * kSelectionPathNodeCapacity;
+        m_firstOutputWeights.ConstructedCount() >= count * kSelectionPathNodeCapacity &&
+        m_pendingTimelineVariableEvents.ConstructedCount() >= count;
 }
 
 bool VoicePool::PrepareFirstOutputBacking(std::uint32_t count) noexcept {
     if (FirstOutputBackingReady(count)) return true;
     if (count > m_slots.Capacity() || memguard::IsAudioTagged() || m_slots.PreparedUseActive()) return false;
     return m_firstOutputEndpoints.ConstructThrough(count * m_firstOutputStride) &&
-        m_firstOutputWeights.ConstructThrough(count * kSelectionPathNodeCapacity);
+        m_firstOutputWeights.ConstructThrough(count * kSelectionPathNodeCapacity) &&
+        m_pendingTimelineVariableEvents.ConstructThrough(count);
 }
 
 bool VoicePool::PrepareRenderSlotBacking(std::uint32_t count, std::uint32_t channelCount,
@@ -239,7 +241,8 @@ VoicePool::VoicePool(const EngineConfig& config, const ResampleTables* tables,
     const auto weightCapacity = static_cast<std::uint64_t>(config.voiceCapacity.Render()) * kSelectionPathNodeCapacity;
     if (monitorCapacity > UINT32_MAX || endpointCapacity > UINT32_MAX || weightCapacity > UINT32_MAX ||
         !m_firstOutputEndpoints.Reserve(static_cast<std::uint32_t>(endpointCapacity)) ||
-        !m_firstOutputWeights.Reserve(static_cast<std::uint32_t>(weightCapacity))) throw std::bad_alloc{};
+        !m_firstOutputWeights.Reserve(static_cast<std::uint32_t>(weightCapacity)) ||
+        !m_pendingTimelineVariableEvents.Reserve(config.voiceCapacity.Render())) throw std::bad_alloc{};
     for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
         if (!m_ringStorage[ch].Reserve(config.voiceCapacity.Render()) ||
             !m_monitorPreChainStorage[ch].Reserve(static_cast<std::uint32_t>(monitorCapacity)))
@@ -2109,6 +2112,7 @@ bool VoicePool::FirstOutputProtected(const Slot& slot) noexcept {
 
 std::size_t VoicePool::FirstOutputStorageBytes() const noexcept {
     return m_firstOutputEndpoints.RequestedBytes() + m_firstOutputWeights.RequestedBytes() +
+        m_pendingTimelineVariableEvents.RequestedBytes() +
         m_slots.size() * (sizeof(VariablePlaybackOrder) + sizeof(FirstOutputPhase) +
             sizeof(VariableTimelineReadUseRef));
 }

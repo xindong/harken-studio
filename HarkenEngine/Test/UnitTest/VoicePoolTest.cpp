@@ -1656,6 +1656,15 @@ TEST(VoicePool, GenericFutureBackingFillsSparseWeightHolesBeforePreparedUse) {
     ASSERT_NE(nullptr, highContext);
     auto* const backing = highContext->variableWeightControls.data();
     harken::StableStoragePreparation held;
+    for (std::uint32_t slot = 0; slot < 4; ++slot)
+        EXPECT_TRUE(engine.voices.PendingTimelineVariableEvents(slot).empty());
+    engine.voices.SetPendingTimelineVariableEventCommitPageLimitForTests(0);
+    EXPECT_FALSE(engine.voices.PrepareSlotBacking(1, &held));
+    EXPECT_FALSE(held.Valid());
+    EXPECT_EQ(highContext, engine.voices.Resolve(high));
+    EXPECT_EQ(backing, highContext->variableWeightControls.data());
+    EXPECT_EQ(first.owner, highContext->variableWeightControls[0].owner);
+    engine.voices.SetPendingTimelineVariableEventCommitPageLimitForTests(SIZE_MAX);
     engine.voices.SetVariableWeightCommitPageLimitForTests(0);
     EXPECT_FALSE(engine.voices.PrepareSlotBacking(1, &held));
     EXPECT_FALSE(held.Valid());
@@ -1665,6 +1674,12 @@ TEST(VoicePool, GenericFutureBackingFillsSparseWeightHolesBeforePreparedUse) {
     EXPECT_FALSE(held.Valid());
     engine.mixer.ArenaForTests().SetCommitPageLimitForTests(SIZE_MAX);
     ASSERT_TRUE(engine.voices.PrepareSlotBacking(1, &held));
+    for (std::uint32_t slot = 0; slot < 4; ++slot)
+        ASSERT_EQ(harken::kTimelineMaxEventsPerVoiceQuantum,
+            engine.voices.PendingTimelineVariableEvents(slot).size());
+    auto* const pendingEvents = engine.voices.PendingTimelineVariableEvents(3).data();
+    pendingEvents[0].value = 173;
+    engine.voices.SetPendingTimelineVariableEventCommitPageLimitForTests(0);
     EXPECT_EQ(backing, highContext->variableWeightControls.data());
     EXPECT_EQ(1u, highContext->variableWeightControlCount);
     EXPECT_EQ(first.owner, highContext->variableWeightControls[0].owner);
@@ -1682,6 +1697,8 @@ TEST(VoicePool, GenericFutureBackingFillsSparseWeightHolesBeforePreparedUse) {
         EXPECT_EQ(harken::kMaxChannels, engine.voices.Resolve(low)->pcm.channelCount);
         ASSERT_TRUE(engine.voices.PrepareVariableWeightControls(low, &first, 1));
         ASSERT_TRUE(engine.voices.CancelPreparedVoice(low));
+        EXPECT_EQ(pendingEvents, engine.voices.PendingTimelineVariableEvents(3).data());
+        EXPECT_EQ(173u, pendingEvents[0].value);
     }
     ASSERT_TRUE(engine.voices.CancelPreparedVoice(high));
 }
