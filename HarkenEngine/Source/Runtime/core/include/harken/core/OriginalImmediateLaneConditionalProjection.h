@@ -103,11 +103,19 @@ public:
     bool PrepareDeferred(QueueInstanceTable& queues,
         QueueInstanceTable::PreparedCatalogResetScope* scope,
         const PreparedActionFiring& originalChild) noexcept;
+    bool PrepareContinuations(QueueInstanceTable& queues,
+        LogicCommitCoordinator::PreparedIssue* sequence) noexcept;
+    bool PrepareContinuations(QueueInstanceTable& queues,
+        const PreparedActionFiring& originalChild) noexcept;
     const QueueInstanceTable::PreparedCatalogResetScope& Scope() const noexcept { return scope_; }
     const LogicCommitCoordinator::PreparedIssue& SequenceIssue() const noexcept { return sequence_; }
     bool Attach(const OriginalImmediateLaneConditionalProjection& original,
         PrivateSelectedQueueFutureSpanPool& spans,
         const PrivateSelectedQueueFutureSpanPool::Owner& selected) noexcept;
+    bool AttachContinuation(QueueContinuationLane& original, QueueContinuationLane& replacement,
+        PreparedQueueConditionalReplacementV1& conditional) noexcept;
+    bool CommitContinuation(PreparedQueueConditionalReplacementV1& conditional,
+        LogicCommitSequence sequence) noexcept;
     bool TryAccept(const ActionCommitBundle& reservedAction) noexcept;
     // Prepare only the Queue/reset participant. The caller must retain every
     // other Action participant and publication proof through TryAccept.
@@ -123,12 +131,18 @@ public:
     bool Close() noexcept;
 private:
     friend class ImmediateActionLane;
+    friend class QueueContinuationLane;
+    bool PrepareContinuationScope(QueueInstanceTable& queues) noexcept;
     bool PrepareScope(QueueInstanceTable& queues,
         QueueInstanceTable::PreparedCatalogResetScope* scope) noexcept;
     LogicCommitSequence Sequence() const noexcept {
         return sequence_.Valid() ? sequence_.Sequence() : deferredChild_.InheritedSequence();
     }
     struct Member {
+        QueueContinuationLane* continuation = nullptr;
+        QueueContinuationLane* replacementContinuation = nullptr;
+        PreparedQueueConditionalReplacementV1* stagedConditional = nullptr;
+        OriginalImmediateLaneAttemptLifetimePin continuationPin;
         OriginalImmediateLaneConditionalProjection original;
         PrivateSelectedQueueFutureSpanPool::Retention selected;
         PrivateSelectedQueueFutureSpanPool* spans = nullptr;
@@ -141,7 +155,7 @@ private:
     void ReturnOldRead() noexcept;
     static constexpr std::uint64_t kAborted = 1u, kAccepted = 2u, kRead = 4u;
     std::unique_ptr<Member[]> members_;
-    std::uint32_t capacity_ = 0, count_ = 0;
+    std::uint32_t capacity_ = 0, count_ = 0, continuationCount_ = 0;
     QueueInstanceTable* queues_ = nullptr;
     QueueInstanceTable::PreparedCatalogResetScope scope_;
     LogicCommitCoordinator::PreparedIssue sequence_;
@@ -149,6 +163,7 @@ private:
     std::uint64_t generation_ = 0;
     std::uint32_t queueSelectionsPrepared_ = 0;
     bool orderConsumed_ = false;
+    LogicCommitSequence acceptedSequence_ = 0;
     std::atomic<std::uint64_t> word_{0};
 };
 

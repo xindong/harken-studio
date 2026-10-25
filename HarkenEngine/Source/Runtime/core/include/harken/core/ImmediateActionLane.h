@@ -20,6 +20,7 @@
 #include <span>
 
 namespace harken {
+class QueueContinuationLane;
 class OriginalImmediateLaneConditionalProjection;
 class OriginalConditionalReplacementBatch;
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
@@ -377,6 +378,7 @@ struct ImmediateLaneAttempt {
     std::atomic<bool> captureActive{false};
     std::atomic<ImmediateLaneAttemptState> state{ImmediateLaneAttemptState::Free};
     std::uint64_t root = 0;
+    const QueueContinuationLane* queueContinuation = nullptr;
     std::uint32_t generation = 0;
     std::uint32_t eventCredit = 0;
     std::uint32_t groupCredit = 0;
@@ -446,6 +448,7 @@ private:
 // immutable descriptors, then publishes a complete bank with a release store.
 // The audio reader scans one bucket head per attempt and never allocates.
 class ImmediateActionLane {
+    friend class QueueContinuationLane;
 public:
     ImmediateActionLane() noexcept = default;
     ~ImmediateActionLane();
@@ -664,6 +667,8 @@ public:
     bool Prepare(ImmediateLaneHandle handle,
                  const ImmediateLaneEvent* events,
                  std::uint32_t eventCount) noexcept;
+    const QueueContinuationLane* CapturedQueueContinuation(
+        std::uint32_t slot, const ImmediateLaneBucket* bucket) const noexcept;
     bool PinArms(ImmediateLaneHandle handle,
                   TimelineArmTable& arms) noexcept;
     bool PinGroups(ImmediateLaneHandle handle,

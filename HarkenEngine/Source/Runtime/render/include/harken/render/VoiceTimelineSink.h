@@ -5,6 +5,7 @@
 #include "harken/core/TimelineExecutor.h"
 #include "harken/core/OccurrenceStatePool.h"
 #include "harken/core/QueueRuntime.h"
+#include "harken/core/QueueContinuationLane.h"
 #include "harken/core/TransitionInstancePool.h"
 #include "harken/core/VariableControlRuntime.h"
 #include "harken/render/VoicePool.h"
@@ -80,8 +81,13 @@ public:
 #endif
 
     bool AttachImmediateLane(ImmediateActionLane& lane, std::uint32_t blockFrames) {
-        return immediate_.Attach(lane, blockFrames) &&
-            (pool_ == nullptr || immediate_.AttachFrontier(laneFrontier_, *pool_));
+        if (!immediate_.Attach(lane, blockFrames) ||
+            (pool_ != nullptr && !immediate_.AttachFrontier(laneFrontier_, *pool_))) return false;
+        immediate_.AttachQueueSink(this, [](void* context, ImmediateActionLane& owner,
+            std::uint32_t slot, const ImmediateLaneBucket* bucket, std::uint64_t quantum, bool* claimed) noexcept {
+            return static_cast<VoiceTimelineSink*>(context)->ApplyQueueLaneBucket(owner, slot, bucket, quantum, claimed);
+        });
+        return true;
     }
 
     bool CaptureIndependentWork(std::uint64_t quantumIndex) noexcept override {
@@ -297,257 +303,191 @@ public:
         const std::size_t count = pool_->CapturePlan03PageGroupsRt(
             quantumIndex, pageGroups_.data(), pageGroups_.size());
         if (count > pageGroups_.size()) return false;
-        for (std::size_t index = 0; index < count; ++index) {
-            const Plan03PageGroupView& group = pageGroups_[index];
-            if (group.frontier != nullptr) continue;
-            DecisionCommittedSnapshot decision{};
-            if (!decisions_->CaptureCommitted(group.identity.decision,
-                                              &decision)) {
-                // Cancelled private Decisions may retire before their invalidated
-                // page rows are consumed. They cannot claim audio or block other groups.
-                if (group.lease != nullptr &&
-                    group.lease->Capture().state == AudioSliceState::SliceInvalidated &&
-                    (decisions_->IsOpen(group.identity.decision) ||
-                     decisions_->IsCancelled(group.identity.decision) ||
-                     !decisions_->Contains(group.identity.decision))) continue;
-                return false;
-            }
-            if (decision.authoredStopInvalidated) {
-                if (group.lease == nullptr) return false;
-                (void)group.lease->Invalidate(AudioSliceInvalidateReason::Cancel);
-                continue;
-            }
-            const AudioSliceLeaseSnapshot lease =
-                group.lease != nullptr ? group.lease->Capture()
-                                       : AudioSliceLeaseSnapshot{};
+        for (std::size_t index = 0; index < count; ++index)
+            if (!ApplyNativeGroup(pageGroups_[index], quantumIndex)) return false;
+        return true;
+    }
+
+    bool ApplyNativeGroup(const Plan03PageGroupView& group, std::uint64_t quantumIndex) noexcept {
+        if (group.frontier != nullptr) return true;
+        DecisionCommittedSnapshot decision{};
+        if (!decisions_->CaptureCommitted(group.identity.decision,
+                                          &decision)) {
+            // Cancelled private Decisions may retire before their invalidated
+            // page rows are consumed. They cannot claim audio or block other groups.
             if (group.lease != nullptr &&
-                lease.state == AudioSliceState::SliceInvalidated &&
-                (decision.audioState == AudioGroupState::Invalidated ||
-                 decision.audioState ==
-                     AudioGroupState::DeadlineInvalidated ||
-                 decision.audioState ==
-                     AudioGroupState::PostStartInvalidated ||
-                 decision.audioState == AudioGroupState::Retired)) {
-                continue;
-            }
-            if (group.lease == nullptr) {
+                group.lease->Capture().state == AudioSliceState::SliceInvalidated &&
+                (decisions_->IsOpen(group.identity.decision) ||
+                 decisions_->IsCancelled(group.identity.decision) ||
+                 !decisions_->Contains(group.identity.decision))) return true;
+            return false;
+        }
+        if (decision.authoredStopInvalidated) {
+            if (group.lease == nullptr) return false;
+            (void)group.lease->Invalidate(AudioSliceInvalidateReason::Cancel);
+            return true;
+        }
+        const AudioSliceLeaseSnapshot lease =
+            group.lease != nullptr ? group.lease->Capture()
+                                   : AudioSliceLeaseSnapshot{};
+        if (group.lease != nullptr &&
+            lease.state == AudioSliceState::SliceInvalidated &&
+            (decision.audioState == AudioGroupState::Invalidated ||
+             decision.audioState ==
+                 AudioGroupState::DeadlineInvalidated ||
+             decision.audioState ==
+                 AudioGroupState::PostStartInvalidated ||
+             decision.audioState == AudioGroupState::Retired)) {
+            return true;
+        }
+        if (group.lease == nullptr) {
+            return false;
+        }
+        Plan03PageGroupView checked{};
+        if (!decision.pages.Valid() || group.identity.sliceIndex >= decision.sliceCount ||
+            !pool_->ResolvePlan03GroupSliceRt(group.identity, &checked) ||
+            checked.lease != group.lease || checked.members != group.members) return false;
+        TransitionInstanceSnapshot transitionSnapshot{};
+        const bool transitionCaptured =
+            decision.transitionGate.Valid() &&
+            transitions_ != nullptr &&
+            transitions_->Capture(decision.transitionGate,
+                                  &transitionSnapshot);
+        const bool transitionAlreadyLocked =
+            transitionCaptured &&
+            transitionSnapshot.state ==
+                TransitionAudibleGateState::Locked;
+        const bool delayedTargetLockSlice =
+            group.identity.sliceIndex == 1 &&
+            decision.sliceCount == 2 && group.memberCount == 1 &&
+            decision.audioState == AudioGroupState::Admitted &&
+            transitionCaptured &&
+            transitionSnapshot.state ==
+                TransitionAudibleGateState::Replaceable;
+        const bool naturalEndCompletionSlice =
+            group.identity.sliceIndex == 1 &&
+            decision.sliceCount == 2 &&
+            transitionAlreadyLocked;
+        const bool naturalEndPreludeSlice =
+            group.identity.sliceIndex == 0 &&
+            decision.sliceCount == 2 && transitionCaptured &&
+            transitionSnapshot.state ==
+                TransitionAudibleGateState::Replaceable &&
+            group.sourceControlCount != 0 &&
+            group.sourceControlCount < group.memberCount;
+        if (decision.audioState == AudioGroupState::Admitted &&
+            !delayedTargetLockSlice && !naturalEndCompletionSlice) {
+            return true;
+        }
+        ArmGroupSnapshot armGroup{};
+        const bool validArmGroupState =
+            decision.armGroup.Valid() &&
+            armGroups_->Capture(decision.armGroup, &armGroup) &&
+            (armGroup.state == ArmGroupState::Ready ||
+             (delayedTargetLockSlice &&
+              armGroup.state == ArmGroupState::Retiring));
+        if (!validArmGroupState ||
+            armGroup.parent.slot != group.identity.decision.slot ||
+            armGroup.parent.generation !=
+                group.identity.decision.generation ||
+            armGroup.memberCount != group.memberCount ||
+            armGroup.ackedCount != group.memberCount) {
+            return false;
+        }
+        const bool naturalEndCompletionDecision =
+            naturalEndCompletionSlice &&
+            (decision.audioState == AudioGroupState::AudioClaimed ||
+             decision.audioState == AudioGroupState::Admitted);
+        if (decision.audioState != AudioGroupState::Pending &&
+            !naturalEndCompletionDecision &&
+            !delayedTargetLockSlice) {
+            return false;
+        }
+        for (std::uint16_t member = 0; member < group.memberCount;
+             ++member) {
+            TimelineArmObservation arm{};
+            if (!arms_.Observe(group.members[member], &arm)) {
                 return false;
             }
-            Plan03PageGroupView checked{};
-            if (!decision.pages.Valid() || group.identity.sliceIndex >= decision.sliceCount ||
-                !pool_->ResolvePlan03GroupSliceRt(group.identity, &checked) ||
-                checked.lease != group.lease || checked.members != group.members) return false;
-            TransitionInstanceSnapshot transitionSnapshot{};
-            const bool transitionCaptured =
-                decision.transitionGate.Valid() &&
-                transitions_ != nullptr &&
-                transitions_->Capture(decision.transitionGate,
-                                      &transitionSnapshot);
-            const bool transitionAlreadyLocked =
-                transitionCaptured &&
-                transitionSnapshot.state ==
-                    TransitionAudibleGateState::Locked;
-            const bool delayedTargetLockSlice =
-                group.identity.sliceIndex == 1 &&
-                decision.sliceCount == 2 && group.memberCount == 1 &&
-                decision.audioState == AudioGroupState::Admitted &&
-                transitionCaptured &&
-                transitionSnapshot.state ==
-                    TransitionAudibleGateState::Replaceable;
-            const bool naturalEndCompletionSlice =
-                group.identity.sliceIndex == 1 &&
-                decision.sliceCount == 2 &&
-                transitionAlreadyLocked;
-            const bool naturalEndPreludeSlice =
-                group.identity.sliceIndex == 0 &&
-                decision.sliceCount == 2 && transitionCaptured &&
-                transitionSnapshot.state ==
-                    TransitionAudibleGateState::Replaceable &&
-                group.sourceControlCount != 0 &&
-                group.sourceControlCount < group.memberCount;
-            if (decision.audioState == AudioGroupState::Admitted &&
-                !delayedTargetLockSlice && !naturalEndCompletionSlice) {
-                continue;
-            }
-            ArmGroupSnapshot armGroup{};
-            const bool validArmGroupState =
-                decision.armGroup.Valid() &&
-                armGroups_->Capture(decision.armGroup, &armGroup) &&
-                (armGroup.state == ArmGroupState::Ready ||
-                 (delayedTargetLockSlice &&
-                  armGroup.state == ArmGroupState::Retiring));
-            if (!validArmGroupState ||
-                armGroup.parent.slot != group.identity.decision.slot ||
-                armGroup.parent.generation !=
-                    group.identity.decision.generation ||
-                armGroup.memberCount != group.memberCount ||
-                armGroup.ackedCount != group.memberCount) {
-                return false;
-            }
-            const bool naturalEndCompletionDecision =
+            const bool completedNaturalEndSource =
                 naturalEndCompletionSlice &&
-                (decision.audioState == AudioGroupState::AudioClaimed ||
-                 decision.audioState == AudioGroupState::Admitted);
-            if (decision.audioState != AudioGroupState::Pending &&
-                !naturalEndCompletionDecision &&
-                !delayedTargetLockSlice) {
+                member < group.sourceControlCount &&
+                arm.memberIndex == member &&
+                arm.state == ArmState::AudioClaimed;
+            if ((arm.state != ArmState::Published &&
+                 !completedNaturalEndSource) ||
+                arm.parentGroup.decision.slot !=
+                    group.identity.decision.slot ||
+                arm.parentGroup.decision.generation !=
+                    group.identity.decision.generation ||
+                (!completedNaturalEndSource &&
+                 !BindingValid(group.members[member].renderSlot,
+                               group.members[member].renderGeneration))) {
                 return false;
             }
-            for (std::uint16_t member = 0; member < group.memberCount;
-                 ++member) {
-                TimelineArmObservation arm{};
-                if (!arms_.Observe(group.members[member], &arm)) {
-                    return false;
-                }
-                const bool completedNaturalEndSource =
-                    naturalEndCompletionSlice &&
-                    member < group.sourceControlCount &&
-                    arm.memberIndex == member &&
-                    arm.state == ArmState::AudioClaimed;
-                if ((arm.state != ArmState::Published &&
-                     !completedNaturalEndSource) ||
-                    arm.parentGroup.decision.slot !=
-                        group.identity.decision.slot ||
-                    arm.parentGroup.decision.generation !=
-                        group.identity.decision.generation ||
-                    (!completedNaturalEndSource &&
-                     !BindingValid(group.members[member].renderSlot,
-                                   group.members[member].renderGeneration))) {
-                    return false;
-                }
+        }
+        std::uint32_t participantCount = 0;
+        if (!decisions_->CopyCommittedParticipants(
+                group.identity.decision, participants_.data(),
+                static_cast<std::uint32_t>(participants_.size()),
+                &participantCount)) {
+            return false;
+        }
+        QueueInstanceToken queue{};
+        VariableControlInstanceToken variableControl{};
+        for (std::uint32_t participant = 0;
+             participant < participantCount; ++participant) {
+            if (participants_[participant].kind ==
+                DecisionParticipantKind::QueueInstance) {
+                if (queue.Valid()) return false;
+                queue = {participants_[participant].slot,
+                         participants_[participant].generation};
+            } else if (participants_[participant].kind ==
+                       DecisionParticipantKind::Variable) {
+                if (variableControl.Valid()) return false;
+                variableControl = {
+                    participants_[participant].slot,
+                    participants_[participant].generation};
             }
-            std::uint32_t participantCount = 0;
-            if (!decisions_->CopyCommittedParticipants(
-                    group.identity.decision, participants_.data(),
-                    static_cast<std::uint32_t>(participants_.size()),
-                    &participantCount)) {
-                return false;
-            }
-            QueueInstanceToken queue{};
-            VariableControlInstanceToken variableControl{};
-            for (std::uint32_t participant = 0;
-                 participant < participantCount; ++participant) {
-                if (participants_[participant].kind ==
-                    DecisionParticipantKind::QueueInstance) {
-                    if (queue.Valid()) return false;
-                    queue = {participants_[participant].slot,
-                             participants_[participant].generation};
-                } else if (participants_[participant].kind ==
-                           DecisionParticipantKind::Variable) {
-                    if (variableControl.Valid()) return false;
-                    variableControl = {
-                        participants_[participant].slot,
-                        participants_[participant].generation};
-                }
-            }
-            if (queue.Valid() == variableControl.Valid()) return false;
-            if (variableControl.Valid()) {
-                const bool variableNaturalEndCompletion =
-                    naturalEndCompletionSlice &&
-                    decision.audioState == AudioGroupState::AudioClaimed;
-                if (decision.audioState != AudioGroupState::Pending &&
-                    !variableNaturalEndCompletion &&
-                    !delayedTargetLockSlice) {
-                    return false;
-                }
-                if (variableControls_ == nullptr || group.memberCount == 0) {
-                    return false;
-                }
-                VariableControlSliceContext context{};
-                context.sink = this;
-                context.lease = group.lease;
-                context.instance = variableControl;
-                context.decision = group.identity.decision;
-                context.members = group.members;
-                context.memberCount = group.memberCount;
-                context.sourceControlCount = group.sourceControlCount;
-                context.quantumIndex = quantumIndex;
-                context.transition = decision.transitionGate;
-                context.naturalEndPrelude = naturalEndPreludeSlice;
-                context.naturalEndCompletion =
-                    variableNaturalEndCompletion;
-                AudioSliceOperation operation{};
-                operation.context = &context;
-                operation.validate = &ValidateVariableControlSlice;
-                operation.afterClaim = &AfterVariableControlSliceClaim;
-                operation.apply = &ApplyVariableControlSlice;
-                const AudioSliceApplyStatus applied =
-                    ApplyAudioSliceWhole(*group.lease, &operation, 1);
-                if (applied == AudioSliceApplyStatus::ValidationFailed) {
-                    (void)decisions_->Invalidate(context.decision);
-                    (void)group.lease->Invalidate(
-                        AudioSliceInvalidateReason::Identity);
-                    continue;
-                }
-                if ((applied != AudioSliceApplyStatus::Applied &&
-                     applied != AudioSliceApplyStatus::
-                                    AppliedWithDeferredInvalidation) ||
-                    !context.applied) {
-                    if (applied == AudioSliceApplyStatus::SliceUnavailable &&
-                        group.lease->Capture().state ==
-                            AudioSliceState::SliceInvalidated) {
-                        continue;
-                    }
-                    return false;
-                }
-                if (!decisions_->RecordAppliedSlice(context.decision, decision.pages,
-                        group.identity.sliceIndex, quantumIndex + 1u)) return false;
-                if (applied == AudioSliceApplyStatus::
-                                   AppliedWithDeferredInvalidation) {
-                    AudioSliceInvalidateReason reason =
-                        AudioSliceInvalidateReason::Cancel;
-                    if (!group.lease->ConsumePostSliceInvalidation(
-                            &reason)) {
-                        return false;
-                    }
-                    if (reason == AudioSliceInvalidateReason::Deadline) {
-                        (void)decisions_->InvalidateForDeadline(
-                            context.decision);
-                    } else {
-                        (void)decisions_->Invalidate(context.decision);
-                    }
-                }
-                continue;
-            }
-            const bool queueNaturalEndCompletion =
+        }
+        if (queue.Valid() == variableControl.Valid()) return false;
+        if (variableControl.Valid()) {
+            const bool variableNaturalEndCompletion =
                 naturalEndCompletionSlice &&
                 decision.audioState == AudioGroupState::AudioClaimed;
             if (decision.audioState != AudioGroupState::Pending &&
-                !queueNaturalEndCompletion && !delayedTargetLockSlice) {
+                !variableNaturalEndCompletion &&
+                !delayedTargetLockSlice) {
                 return false;
             }
-            QueueInstanceSnapshot queueSnapshot{};
-            if (queues_ == nullptr ||
-                (!delayedTargetLockSlice &&
-                 (occurrences_ == nullptr ||
-                  !queues_->Capture(queue, &queueSnapshot) ||
-                  queueSnapshot.pendingVersion == 0))) {
+            if (variableControls_ == nullptr || group.memberCount == 0) {
                 return false;
             }
-            QueueSliceContext context{};
+            VariableControlSliceContext context{};
             context.sink = this;
-            context.queue = queue;
-            context.version = {queueSnapshot.pendingVersion};
-            context.quantumIndex = quantumIndex;
+            context.lease = group.lease;
+            context.instance = variableControl;
             context.decision = group.identity.decision;
-            context.transition = decision.transitionGate;
             context.members = group.members;
             context.memberCount = group.memberCount;
             context.sourceControlCount = group.sourceControlCount;
-            context.sliceIndex = group.identity.sliceIndex;
-            context.sliceCount = decision.sliceCount;
-            context.delayedTargetLock = delayedTargetLockSlice;
+            context.quantumIndex = quantumIndex;
+            context.transition = decision.transitionGate;
+            context.naturalEndPrelude = naturalEndPreludeSlice;
+            context.naturalEndCompletion =
+                variableNaturalEndCompletion;
             AudioSliceOperation operation{};
             operation.context = &context;
-            operation.validate = &ValidateQueueSlice;
-            operation.afterClaim = &AfterQueueSliceClaim;
-            operation.apply = &ApplyQueueSlice;
+            operation.validate = &ValidateVariableControlSlice;
+            operation.afterClaim = &AfterVariableControlSliceClaim;
+            operation.apply = &ApplyVariableControlSlice;
             const AudioSliceApplyStatus applied =
                 ApplyAudioSliceWhole(*group.lease, &operation, 1);
             if (applied == AudioSliceApplyStatus::ValidationFailed) {
-                if (context.delayedTargetLock) return false;
-                FailQueueSlice(context);
-                continue;
+                (void)decisions_->Invalidate(context.decision);
+                (void)group.lease->Invalidate(
+                    AudioSliceInvalidateReason::Identity);
+                return true;
             }
             if ((applied != AudioSliceApplyStatus::Applied &&
                  applied != AudioSliceApplyStatus::
@@ -556,16 +496,181 @@ public:
                 if (applied == AudioSliceApplyStatus::SliceUnavailable &&
                     group.lease->Capture().state ==
                         AudioSliceState::SliceInvalidated) {
-                    continue;
+                    return true;
                 }
                 return false;
             }
             if (!decisions_->RecordAppliedSlice(context.decision, decision.pages,
                     group.identity.sliceIndex, quantumIndex + 1u)) return false;
+            if (applied == AudioSliceApplyStatus::
+                               AppliedWithDeferredInvalidation) {
+                AudioSliceInvalidateReason reason =
+                    AudioSliceInvalidateReason::Cancel;
+                if (!group.lease->ConsumePostSliceInvalidation(
+                        &reason)) {
+                    return false;
+                }
+                if (reason == AudioSliceInvalidateReason::Deadline) {
+                    (void)decisions_->InvalidateForDeadline(
+                        context.decision);
+                } else {
+                    (void)decisions_->Invalidate(context.decision);
+                }
+            }
+            return true;
+        }
+        const bool queueNaturalEndCompletion =
+            naturalEndCompletionSlice &&
+            decision.audioState == AudioGroupState::AudioClaimed;
+        if (decision.audioState != AudioGroupState::Pending &&
+            !queueNaturalEndCompletion && !delayedTargetLockSlice) {
+            return false;
+        }
+        QueueInstanceSnapshot queueSnapshot{};
+        if (queues_ == nullptr ||
+            (!delayedTargetLockSlice &&
+             (occurrences_ == nullptr ||
+              !queues_->Capture(queue, &queueSnapshot) ||
+              queueSnapshot.pendingVersion == 0))) {
+            return false;
+        }
+        QueueSliceContext context{};
+        context.sink = this;
+        context.queue = queue;
+        context.version = {queueSnapshot.pendingVersion};
+        context.quantumIndex = quantumIndex;
+        context.decision = group.identity.decision;
+        context.transition = decision.transitionGate;
+        context.members = group.members;
+        context.memberCount = group.memberCount;
+        context.sourceControlCount = group.sourceControlCount;
+        context.sliceIndex = group.identity.sliceIndex;
+        context.sliceCount = decision.sliceCount;
+        context.delayedTargetLock = delayedTargetLockSlice;
+        AudioSliceOperation operation{};
+        operation.context = &context;
+        operation.validate = &ValidateQueueSlice;
+        operation.afterClaim = &AfterQueueSliceClaim;
+        operation.apply = &ApplyQueueSlice;
+        const AudioSliceApplyStatus applied =
+            ApplyAudioSliceWhole(*group.lease, &operation, 1);
+        if (applied == AudioSliceApplyStatus::ValidationFailed) {
+            if (context.delayedTargetLock) return false;
+            FailQueueSlice(context);
+            return true;
+        }
+        if ((applied != AudioSliceApplyStatus::Applied &&
+             applied != AudioSliceApplyStatus::
+                            AppliedWithDeferredInvalidation) ||
+            !context.applied) {
+            if (applied == AudioSliceApplyStatus::SliceUnavailable &&
+                group.lease->Capture().state ==
+                    AudioSliceState::SliceInvalidated) {
+                return true;
+            }
+            return false;
+        }
+        if (!decisions_->RecordAppliedSlice(context.decision, decision.pages,
+                group.identity.sliceIndex, quantumIndex + 1u)) return false;
 #if !defined(HARKEN_RT_QUALIFICATION)
-            if (queueSliceAppliedHook_ != nullptr)
-                queueSliceAppliedHook_(queueSliceAppliedHookContext_, group.identity.sliceIndex);
+        if (queueSliceAppliedHook_ != nullptr)
+            queueSliceAppliedHook_(queueSliceAppliedHookContext_, group.identity.sliceIndex);
 #endif
+        return true;
+    }
+
+    bool ApplyQueueLaneBucket(ImmediateActionLane& lane, std::uint32_t slot,
+        const ImmediateLaneBucket* bucket, std::uint64_t quantum, bool* claimed) noexcept {
+        const auto* owner = lane.CapturedQueueContinuation(slot, bucket);
+        if (claimed == nullptr || owner == nullptr || !owner->Uses(pool_, queues_, decisions_) ||
+            blockFrames_ == 0 || quantum >= UINT64_MAX / blockFrames_) return false;
+        const auto start = quantum * blockFrames_;
+        const auto* events = lane.Events(slot, bucket);
+        const auto* groups = lane.Groups(slot, bucket);
+        const ImmediateLaneHandle handle{slot, bucket->attemptGeneration};
+        if ((bucket->eventCount != 0 && events == nullptr) ||
+            (bucket->groupCount != 0 && groups == nullptr)) return false;
+        const auto sameArm = [](TimelineArmToken a, TimelineArmToken b) noexcept {
+            return a.slot == b.slot && a.generation == b.generation &&
+                a.renderSlot == b.renderSlot && a.renderGeneration == b.renderGeneration;
+        };
+        // Validate every member before the Queue's existing whole-slice claim.
+        for (std::uint32_t index = 0; index < bucket->groupCount; ++index) {
+            Plan03PageGroupView group{};
+            if (!pool_->ResolvePlan03GroupSliceRt(groups[index].identity, &group) || !owner->Owns(group)) return false;
+        }
+        for (std::uint32_t index = 0; index < bucket->eventCount; ++index) {
+            const auto& event = events[index].event;
+            const auto* program = event.program.program;
+            TimelineArmObservation arm{};
+            TimelineSemanticTarget target{};
+            ArmState state{};
+            const auto decision = owner->Decision();
+            if (!event.frozenTxnValid || event.frontier.Present() || events[index].futureGroupedStart ||
+                event.executeFrame < start || event.executeFrame - start >= blockFrames_ ||
+                program == nullptr || program->role != TimelineProgramRole::Voice || program->payloads == nullptr ||
+                program->generation != event.program.programGeneration || event.payload >= program->payloadCount ||
+                lane.CapturedArmReader(handle, bucket, bucket->firstEvent + index) == nullptr ||
+                !arms_.Observe(event.armToken, &arm) ||
+                !arms_.Snapshot(event.armToken, &state, &target) ||
+                arm.parentGroup.decision.slot != decision.slot || arm.parentGroup.decision.generation != decision.generation ||
+                (state != ArmState::Published && state != ArmState::AudioClaimed && state != ArmState::Started)) return false;
+            const auto& payload = program->payloads[event.payload];
+            if (!(payload.target == target) ||
+                (payload.kind != TimelineEventKind::Start && payload.kind != TimelineEventKind::Envelope &&
+                 payload.kind != TimelineEventKind::Stop) ||
+                event.subeventPhase != (payload.kind == TimelineEventKind::Start ? 20u :
+                    payload.kind == TimelineEventKind::Envelope ? 30u : 50u)) return false;
+            std::uint32_t count = 0;
+            for (std::uint32_t other = 0; other < bucket->eventCount; ++other) {
+                const auto token = events[other].event.armToken;
+                count += token.renderSlot == event.armToken.renderSlot &&
+                    token.renderGeneration == event.armToken.renderGeneration ? 1u : 0u;
+            }
+            if (!voices_.CanAppendTimelineEvents(event.armToken.renderSlot, event.armToken.renderGeneration, quantum, count))
+                return false;
+            if (payload.kind == TimelineEventKind::Start &&
+                voices_.TimelineStartSourcesStatus(arms_, event.armToken) != VariableReadCutStatus::Applied) return false;
+        }
+        *claimed = lane.ClaimRetainingCaptureOnRefusal(handle, bucket);
+        if (!*claimed) return false;
+        for (std::uint32_t index = 0; index < bucket->groupCount; ++index) {
+            Plan03PageGroupView group{};
+            if (!pool_->ResolvePlan03GroupSliceRt(groups[index].identity, &group) ||
+                !owner->Owns(group) || !ApplyNativeGroup(group, quantum)) return false;
+        }
+        for (std::uint32_t index = 0; index < bucket->eventCount; ++index) {
+            const auto& event = events[index].event;
+            bool prior = false;
+            for (std::uint32_t other = 0; other < index; ++other)
+                prior = prior || sameArm(event.armToken, events[other].event.armToken);
+            if (prior) continue;
+            DecisionCommittedSnapshot decision{};
+            TimelineArmObservation arm{};
+            if (!decisions_->CaptureCommitted(owner->Decision(), &decision) || !arms_.Observe(event.armToken, &arm)) return false;
+            if (decision.authoredStopInvalidated) continue;
+            const bool admitted = decision.audioState == AudioGroupState::Admitted ||
+                (arm.state == ArmState::AudioClaimed &&
+                 (decision.audioState == AudioGroupState::AudioClaimed ||
+                  decision.audioState == AudioGroupState::PostStartInvalidated ||
+                  decision.audioState == AudioGroupState::PostStartDeadlineInvalidated));
+            if (!admitted) continue;
+            std::array<TimelineSinkEvent, kTimelineMaxEventsPerVoiceQuantum> due{};
+            std::uint32_t count = 0;
+            for (std::uint32_t other = index; other < bucket->eventCount; ++other) {
+                const auto& input = events[other].event;
+                if (!sameArm(event.armToken, input.armToken)) continue;
+                if (count == due.size()) return false;
+                const auto* program = input.program.program;
+                const auto* payload = &program->payloads[input.payload];
+                due[count++] = {static_cast<std::uint32_t>(input.executeFrame - start), payload,
+                    input.authoredFadeOutCandidate,
+                    {input.executeFrame, input.logicCommitSequence, input.executionOrdinal, input.eventIndex,
+                        input.transactionOrdinal, input.subeventPhase, input.rowSequence}};
+                if (program->readFence != nullptr) program->readFence->RecordRead(quantum);
+            }
+            if (!ApplyTransaction(event.armToken.renderSlot, event.armToken.renderGeneration,
+                    quantum, due.data(), count, event.armToken)) return false;
         }
         return true;
     }

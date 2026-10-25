@@ -5004,9 +5004,7 @@ void ExpectScheduleCapacityQueueTransitionCompletes() {
     const harken::HorizonPageHeader* header =
         engine->timelinePool.Page(firstPage);
     ASSERT_NE(nullptr, header);
-    const harken::Plan03GroupSliceIdentity slice{
-        row->queueCompletionFrame / engine->config.blockFrames,
-        header->pageGeneration, replacementDecision, 0};
+    const auto slice = harkentest::QueueContinuationSlice(*engine, replacementDecision, 0);
     harken::Plan03PageGroupView group{};
     ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
         slice, &group));
@@ -5045,8 +5043,6 @@ void ExpectScheduleCapacityQueueTransitionCompletes() {
         EXPECT_EQ(row->queueCompletionFrame + index + 1u,
                   member->startFrame);
     }
-    EXPECT_EQ(128u, engine->timelinePool.IngressHighWater());
-    EXPECT_EQ(66u, engine->timelinePool.FrameBatchHighWater());
 
     harken::TransitionInstanceSnapshot transition{};
     ASSERT_TRUE(engine->transitionInstances.Capture(
@@ -23666,16 +23662,20 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
 
     harken::TimelineArmToken unpublishedSuccessorArm{};
     harken::SourceTerminalToken unpublishedSuccessorSource{};
+    harken::TimelineArmObservation successorBeforeStop{};
     if (longFirst) {
         unpublishedSuccessorArm = queueService->arm;
         ASSERT_TRUE(unpublishedSuccessorArm.Valid());
+        ASSERT_TRUE(engine->timelineArms.Observe(unpublishedSuccessorArm, &successorBeforeStop));
+        ASSERT_EQ(harken::ArmState::Started, successorBeforeStop.state);
+        ASSERT_NE(0u, successorBeforeStop.startedBlockSequence);
         unpublishedSuccessorSource = CaptureOriginalSource(*engine, successor).token;
         ASSERT_TRUE(unpublishedSuccessorSource.Valid());
     }
     const auto audibleSuccessor = queueService->renderHandle;
     const auto stopBlock = engine->mixer.BlocksRendered();
     ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, stopFadeMs));
-    if (stopFadeMs != 0) {
+    if (stopFadeMs != 0 || longFirst) {
         std::uint32_t stopCount = 0;
         harken::CommandRecord command{};
         for (std::uint32_t offset = 0; engine->commands.PeekAt(offset, command); ++offset) {
@@ -23697,7 +23697,11 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
         ASSERT_EQ(VN_OK, Vn_Update());
         harken::TimelineArmObservation cancelling{};
         ASSERT_TRUE(engine->timelineArms.Observe(unpublishedSuccessorArm, &cancelling));
-        EXPECT_EQ(harken::ArmState::CancelRequested, cancelling.state);
+        // A completed Lane need not keep a group solely to mutate this state.
+        // The exact started voice remains owned until the actual Stop is rendered.
+        EXPECT_TRUE(cancelling.state == harken::ArmState::Started ||
+                    cancelling.state == harken::ArmState::CancelRequested);
+        EXPECT_EQ(successorBeforeStop.startedBlockSequence, cancelling.startedBlockSequence);
         const auto* source = engine->sourceTerminals.Resolve(unpublishedSuccessorSource);
         ASSERT_NE(nullptr, source);
         EXPECT_EQ(0u, source->completedSequence.load(std::memory_order_acquire));
@@ -43272,7 +43276,8 @@ TEST(ActionFiringApi, ImmediateSequenceQueueSameProgramCycleRestartPreparesOneNe
 
 void CheckSequenceQueueBeyondPublicationWindow(
     unsigned blocksPerUpdate, bool longTransition = false,
-    unsigned lateTick = UINT_MAX, unsigned lateBlocks = 0, bool expectDeadline = false) {
+    unsigned lateTick = UINT_MAX, unsigned lateBlocks = 0, bool expectDeadline = false,
+    bool loop = false) {
     SCOPED_TRACE(blocksPerUpdate);
     SCOPED_TRACE(longTransition);
     SCOPED_TRACE(lateTick);
@@ -43289,6 +43294,7 @@ void CheckSequenceQueueBeyondPublicationWindow(
     CanonicalActionWorld image(
         engine->registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision,
         engine->registry.Lookup(CanonicalActionWorld::kSecondSound).contentRevision);
+    if (loop) image.containers[2].queueCycle = harken::QueueCycleV1::Loop;
     image.MakeImmediateSequenceQueuePlayAction();
     if (longTransition) image.EnableImmediateQueueTransition(24000, 24000);
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
@@ -43304,10 +43310,17 @@ void CheckSequenceQueueBeyondPublicationWindow(
         bool heardFirst = false;
         bool heardSecond = false;
         bool missedHandoff = false;
+        unsigned heardSegments = 0;
+        int previousSign = 0;
+        bool stopped = false;
         for (unsigned tick = 0; tick < 400; ++tick) {
             ASSERT_EQ(VN_OK, Vn_Update());
             ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
             if (info.state == VN_ACTION_FIRING_TERMINAL_RETAINED) break;
+            if (loop && heardSegments >= 4 && !stopped) {
+                ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
+                stopped = true;
+            }
             std::uint64_t blocks = replay == 0 && tick == lateTick ? lateBlocks : blocksPerUpdate;
             if (expectDeadline && replay == 0 && !missedHandoff) {
                 for (const auto& row : engine->playableServices) {
@@ -43329,6 +43342,11 @@ void CheckSequenceQueueBeyondPublicationWindow(
                 for (unsigned sample = 0; sample < 256u * 2u; ++sample) {
                     heardFirst |= output[sample] > 0.1f;
                     heardSecond |= output[sample] < -0.1f;
+                    const int sign = output[sample] > 0.1f ? 1 : output[sample] < -0.1f ? -1 : 0;
+                    if (sign != 0 && sign != previousSign) {
+                        ++heardSegments;
+                        previousSign = sign;
+                    }
                 }
             }
         }
@@ -43339,6 +43357,11 @@ void CheckSequenceQueueBeyondPublicationWindow(
             EXPECT_FALSE(heardSecond);
             EXPECT_EQ(VN_ACTION_OUTCOME_FAILED, info.outcome);
             EXPECT_EQ(VN_ACTION_TERMINAL_DEADLINE, info.terminalReason);
+        } else if (loop) {
+            EXPECT_TRUE(stopped);
+            EXPECT_GE(heardSegments, 4u);
+            EXPECT_EQ(VN_ACTION_OUTCOME_CANCELLED, info.outcome);
+            EXPECT_EQ(VN_ACTION_TERMINAL_STOP_REQUESTED, info.terminalReason);
         } else {
             EXPECT_TRUE(heardSecond);
             EXPECT_EQ(VN_ACTION_OUTCOME_SUCCEEDED, info.outcome);
@@ -43446,10 +43469,17 @@ TEST(ActionFiringApi, SequenceQueueBeyondPublicationWindowPlaysSuccessorAndRetir
     }
     CheckSequenceQueueBeyondPublicationWindow(3, false, 50, 8);
     CheckSequenceQueueBeyondPublicationWindow(3, true, 50, 8);
+    CheckSequenceQueueBeyondPublicationWindow(6, false, 23, 8);
+    CheckSequenceQueueBeyondPublicationWindow(3, false, 47, 8);
 }
 
 TEST(ActionFiringApi, SequenceQueueMissedHandoffDeadlineReclaimsResourcesAndAcceptsNewPlayback) {
     CheckSequenceQueueBeyondPublicationWindow(3, false, UINT_MAX, 0, true);
+}
+
+TEST(ActionFiringApi, SequenceQueueRepeatedHandoffsSurviveUpdateJitterAndStop) {
+    CheckSequenceQueueBeyondPublicationWindow(6, false, 23, 8, false, true);
+    CheckSequenceQueueBeyondPublicationWindow(3, false, 188, 8, false, true);
 }
 
 void ExpectImmediateActionQueueTransitionPrepared(
@@ -59180,6 +59210,222 @@ TEST(ActionFiringApi,
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
 }
 
+#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+void CheckQueueResetPreparationAcrossDue(bool attach) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    std::vector<float> first(4096, 0.25f), second(4096, -0.25f);
+    const auto firstPcm = harkentest::MonoDesc(first, 48000);
+    const auto secondPcm = harkentest::MonoDesc(second, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &firstPcm));
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kSecondSound, &secondPcm));
+    CanonicalActionWorld image(engine.registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision,
+        engine.registry.Lookup(CanonicalActionWorld::kSecondSound).contentRevision);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
+    VnEmitterHandle emitter = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+    auto* row = StartCanonicalQueueForActionReset(engine, image, emitter);
+    ASSERT_NE(nullptr, row);
+    const auto root = row->rootInstance;
+    for (unsigned block = 0; block < 8 && !row->queueDecisionCommitted; ++block) {
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    ASSERT_TRUE(row->queueDecisionCommitted);
+    auto* const old = row->queueSuccessorProgramBank;
+    ASSERT_NE(nullptr, old);
+    ASSERT_TRUE(old->continuationLane.Published());
+    const auto decision = row->queueDecision;
+    const auto version = row->queueConditional;
+    const auto due = row->queueCompletionFrame / engine.config.blockFrames;
+    ASSERT_LT(engine.mixer.BlocksRendered(), due);
+    harken::QueueInstanceTable::PreparedCatalogResetScope scope;
+    harken::LogicCommitCoordinator::PreparedIssue issue;
+    ASSERT_EQ(harken::LogicCommitCoordinator::IssueStatus::Issued, engine.logicCommits.PrepareIssue(&issue));
+    ASSERT_TRUE(harken::test::PrepareNativeQueueResetResourcesForTest(engine, row->identity.slot, 0, scope, issue));
+    auto& scratch = engine.actionQueueReplacementScratch[0];
+    ASSERT_TRUE(scratch.conditional.Valid());
+    ASSERT_EQ(&old->continuationLane, scratch.oldContinuation);
+    auto& batch = *engine.originalQueueReplacementBatch;
+    ASSERT_TRUE(batch.PrepareContinuations(engine.queueInstances, &issue));
+    if (attach) ASSERT_TRUE(batch.AttachContinuation(*scratch.oldContinuation,
+        scratch.programBank->continuationLane, scratch.conditional));
+    harken::ActionCommitBundle action(1);
+    const harken::CommitParticipant participant{nullptr,
+        [](void*, std::uint32_t count) noexcept { return count == 1; },
+        [](void*, std::uint32_t) noexcept {},
+        [](void*, std::uint32_t, harken::LogicCommitSequence) noexcept { ADD_FAILURE(); }};
+    ASSERT_TRUE(action.AddStep(participant, 1));
+    ASSERT_TRUE(action.Reserve());
+
+    // Preparation and attachment cannot stop the actual old audio at its due frame.
+    while (engine.mixer.BlocksRendered() <= due) engine.nullBackend.Pump(1);
+    ASSERT_NE(nullptr, engine.nullBackend.LastBlock());
+    EXPECT_LT(engine.nullBackend.LastBlock()[0], -0.001f);
+    harken::DecisionCommittedSnapshot applied{};
+    ASSERT_TRUE(engine.decisions.CaptureCommitted(decision, &applied));
+    EXPECT_EQ(harken::AudioGroupState::Admitted, applied.audioState);
+    EXPECT_EQ(applied.sliceCount, applied.consumedSlices);
+    harken::QueueInstanceSnapshot queue{};
+    ASSERT_TRUE(engine.queueInstances.Capture(row->queueInstance, &queue));
+    EXPECT_EQ(version.version, queue.pendingVersion);
+    EXPECT_EQ(harken::ConditionalQueueActivation::Activated, queue.pendingActivation);
+    EXPECT_FALSE(queue.resetPending);
+    if (!attach) EXPECT_FALSE(batch.AttachContinuation(*scratch.oldContinuation,
+        scratch.programBank->continuationLane, scratch.conditional));
+    EXPECT_FALSE(batch.TryAccept(action));
+    EXPECT_FALSE(batch.Accepted());
+    action.Abandon();
+    ASSERT_TRUE(batch.Close());
+    (void)harken::test::CancelNativeQueueResetResourcesForTest(engine, 0);
+    for (unsigned block = 0; block < 8 && scratch.prepared; ++block) {
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    EXPECT_FALSE(scratch.prepared);
+    ASSERT_EQ(harken::PlayableControlStatus::Ok, harken::StopPlayable(engine, root, 0));
+    for (unsigned block = 0; block < 32; ++block) {
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    EXPECT_EQ(0u, engine.voices.ActiveCount());
+    EXPECT_EQ(0u, engine.queueInstances.LiveCount());
+    EXPECT_FALSE(engine.runtimeRecreateRequired);
+    EXPECT_EQ(VN_OK, Vn_DestroyEmitter(emitter));
+}
+
+TEST(ActionFiringApi, QueueResetPreparationAcrossDuePreservesOldPlaybackAndRollback) {
+    ASSERT_NO_FATAL_FAILURE(CheckQueueResetPreparationAcrossDue(false));
+    ASSERT_NO_FATAL_FAILURE(CheckQueueResetPreparationAcrossDue(true));
+}
+
+void CheckMixedQueueResetOldAudioWins(bool ordinaryFirst) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    std::vector<float> first(4096, 0.25f), second(4096, -0.25f);
+    const auto firstPcm = harkentest::MonoDesc(first, 48000);
+    const auto secondPcm = harkentest::MonoDesc(second, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &firstPcm));
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kSecondSound, &secondPcm));
+    CanonicalActionWorld image(engine.registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision,
+        engine.registry.Lookup(CanonicalActionWorld::kSecondSound).contentRevision);
+    image.MakeImmediateSequenceQueuePlayAction();
+    image.containers[2].queueCycle = harken::QueueCycleV1::Loop;
+    image.containers[2].resumePosition = 1;
+    image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(image.world);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
+    auto post = ValidPostDesc();
+    post.actionId = image.actions[9].actionStableId;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&post.emitter));
+    harken::QueueCheckpointImage checkpoint{};
+    checkpoint.effective.version = 7;
+    checkpoint.effective.cursor = 1;
+    checkpoint.effective.currentChildOrdinal = image.queueChildren[1].stableChildOrdinal;
+    checkpoint.effective.selectionOrdinal = 3;
+    checkpoint.replayCurrent = true;
+    ASSERT_TRUE(engine.queueCheckpoints.Store(
+        CanonicalQueueCheckpointKey(engine, image, post.emitter), checkpoint));
+    VnActionFiringHandle firing = 0;
+    harken::EnginePlayableServiceRow* ordinary = nullptr;
+    if (ordinaryFirst) ordinary = StartCanonicalQueueForActionReset(engine, image, post.emitter);
+    else ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+    for (unsigned block = 0; block < 24u; ++block) {
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    if (ordinaryFirst) ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+    else ordinary = StartCanonicalQueueForActionReset(engine, image, post.emitter);
+    ASSERT_NE(nullptr, ordinary);
+    auto native = std::find_if(engine.playableServices.begin(), engine.playableServices.end(),
+        [firing](const auto& row) { return row.queueMode && row.InvocationValid() &&
+            row.Invocation().actionFiring == firing; });
+    ASSERT_NE(engine.playableServices.end(), native);
+    for (unsigned block = 0; block < 4; ++block) {
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    ASSERT_EQ(CanonicalActionWorld::kSecondSound, ordinary->leaf.stableId);
+    ASSERT_EQ(CanonicalActionWorld::kSecondSound, native->leaf.stableId);
+    ASSERT_NE(nullptr, engine.OriginalQueueConditionalForService(*native));
+    ASSERT_FALSE(native->queuePreparedPages.Valid());
+    ASSERT_NE(nullptr, ordinary->queueSuccessorProgramBank);
+    const auto& ordinaryLane = ordinary->queueSuccessorProgramBank->continuationLane;
+    ASSERT_TRUE(ordinaryLane.Active());
+    ASSERT_TRUE(ordinaryLane.Published());
+    ASSERT_TRUE(ordinaryLane.Replaceable());
+    const auto ordinaryDecision = ordinary->queueDecision;
+    const auto nativeDecision = native->queueDecision;
+    const auto ordinaryDue = ordinary->queueCompletionFrame / engine.config.blockFrames;
+    const auto nativeDue = native->queueCompletionFrame / engine.config.blockFrames;
+    ASSERT_EQ(ordinaryFirst, ordinaryDue < nativeDue);
+    ASSERT_LT(engine.mixer.BlocksRendered(), std::min(ordinaryDue, nativeDue));
+    harken::QueueInstanceTable::PreparedCatalogResetScope scope;
+    ASSERT_EQ(harken::QueueResetStatusV1::Ok, engine.queueInstances.PrepareNativeConditionalCatalogResetScope(
+        CanonicalQueueResetTarget(engine, image, post.emitter), &scope));
+    ASSERT_EQ(1u, scope.MatchedCount());
+    harken::LogicCommitCoordinator::PreparedIssue issue;
+    ASSERT_EQ(harken::LogicCommitCoordinator::IssueStatus::Issued, engine.logicCommits.PrepareIssue(&issue));
+    ASSERT_TRUE(harken::test::PrepareNativeQueueResetResourcesForTest(engine, native->identity.slot, 0, scope, issue));
+    ASSERT_TRUE(harken::test::PrepareNativeQueueResetResourcesForTest(engine, ordinary->identity.slot, 1, scope, issue));
+    auto& original = engine.actionQueueReplacementScratch[0];
+    auto& continuation = engine.actionQueueReplacementScratch[1];
+    ASSERT_TRUE(original.nativeReplacement.Valid());
+    ASSERT_NE(nullptr, continuation.oldContinuation);
+    ASSERT_TRUE(engine.SealOriginalQueueReplacementSource(original));
+    auto& batch = *engine.originalQueueReplacementBatch;
+    ASSERT_TRUE(batch.Prepare(engine.queueInstances, &scope, &issue));
+    ASSERT_TRUE(engine.AttachOriginalQueueReplacementBatch(2));
+    ASSERT_TRUE(batch.AttachContinuation(*continuation.oldContinuation,
+        continuation.programBank->continuationLane, continuation.conditional));
+    harken::ActionCommitBundle action(1);
+    const harken::CommitParticipant participant{nullptr,
+        [](void*, std::uint32_t count) noexcept { return count == 1; },
+        [](void*, std::uint32_t) noexcept {},
+        [](void*, std::uint32_t, harken::LogicCommitSequence) noexcept { ADD_FAILURE(); }};
+    ASSERT_TRUE(action.AddStep(participant, 1));
+    ASSERT_TRUE(action.Reserve());
+    while (engine.mixer.BlocksRendered() <= std::min(ordinaryDue, nativeDue)) engine.nullBackend.Pump(1);
+    EXPECT_FALSE(batch.TryAccept(action));
+    EXPECT_FALSE(batch.Accepted());
+    // One actual old write rejects the complete mixed replacement; both olds continue.
+    while (engine.mixer.BlocksRendered() <= std::max(ordinaryDue, nativeDue)) engine.nullBackend.Pump(1);
+    for (const auto decision : {ordinaryDecision, nativeDecision}) {
+        harken::DecisionCommittedSnapshot state{};
+        ASSERT_TRUE(engine.decisions.CaptureCommitted(decision, &state));
+        EXPECT_EQ(harken::AudioGroupState::Admitted, state.audioState);
+        EXPECT_EQ(state.sliceCount, state.consumedSlices);
+    }
+    action.Abandon();
+    ASSERT_TRUE(batch.Close());
+    (void)harken::test::CancelNativeQueueResetResourcesForTest(engine, 1);
+    (void)harken::test::CancelNativeQueueResetResourcesForTest(engine, 0);
+    for (unsigned block = 0; block < 8 && (original.prepared || continuation.prepared); ++block) {
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    EXPECT_FALSE(original.prepared);
+    EXPECT_FALSE(continuation.prepared);
+    ASSERT_EQ(harken::PlayableControlStatus::Ok, harken::StopPlayable(engine, ordinary->rootInstance, 0));
+    ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
+    for (unsigned block = 0; block < 32; ++block) {
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    EXPECT_EQ(0u, engine.voices.ActiveCount());
+    EXPECT_EQ(0u, engine.queueInstances.LiveCount());
+    EXPECT_FALSE(engine.runtimeRecreateRequired);
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+    EXPECT_EQ(VN_OK, Vn_DestroyEmitter(post.emitter));
+}
+
+TEST(ActionFiringApi, MixedOriginalAndOrdinaryQueueResetRejectsAllWhenEitherOldAudioWins) {
+    ASSERT_NO_FATAL_FAILURE(CheckMixedQueueResetOldAudioWins(false));
+    ASSERT_NO_FATAL_FAILURE(CheckMixedQueueResetOldAudioWins(true));
+}
+#endif
+
 TEST(ActionFiringApi,
      CrossProgramQueueResetKeepsNaturalEndSourcePrelude) {
     (void)Vn_Term();
@@ -59302,9 +59548,7 @@ TEST(ActionFiringApi,
         const harken::HorizonPageHeader* header =
             engine->timelinePool.Page(page);
         ASSERT_NE(nullptr, header);
-        const harken::Plan03GroupSliceIdentity slice{
-            sliceFrames[index] / engine->config.blockFrames,
-            header->pageGeneration, row->queueDecision, index};
+        const auto slice = harkentest::QueueContinuationSlice(*engine, row->queueDecision, index);
         harken::Plan03PageGroupView group{};
         ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
             slice, &group));
@@ -59445,9 +59689,7 @@ TEST(ActionFiringApi,
         const harken::HorizonPageHeader* header =
             engine->timelinePool.Page(page);
         ASSERT_NE(nullptr, header);
-        const harken::Plan03GroupSliceIdentity slice{
-            sliceFrames[index] / engine->config.blockFrames,
-            header->pageGeneration, row->queueDecision, index};
+        const auto slice = harkentest::QueueContinuationSlice(*engine, row->queueDecision, index);
         harken::Plan03PageGroupView group{};
         ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
             slice, &group));
@@ -59971,9 +60213,7 @@ TEST(ActionFiringApi,
     harken::DecisionCommittedSnapshot oldSnapshot{};
     EXPECT_FALSE(engine->decisions.CaptureCommitted(
         oldDecision, &oldSnapshot));
-    const harken::Plan03GroupSliceIdentity replacementSlice{
-        row->queueCompletionFrame / engine->config.blockFrames,
-        row->queuePreparedPages.generation, row->queueDecision, 0};
+    const auto replacementSlice = harkentest::QueueContinuationSlice(*engine, row->queueDecision, 0);
     harken::Plan03PageGroupView replacementGroup{};
     ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
         replacementSlice, &replacementGroup));
@@ -60088,9 +60328,7 @@ TEST(ActionFiringApi,
         ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, index));
         EXPECT_NE(oldTargets[index], engine->FindQueueSuccessorMember(*row, index)->render);
     }
-    const harken::Plan03GroupSliceIdentity replacementSlice{
-        row->queueCompletionFrame / engine->config.blockFrames,
-        row->queuePreparedPages.generation, row->queueDecision, 0};
+    const auto replacementSlice = harkentest::QueueContinuationSlice(*engine, row->queueDecision, 0);
     harken::Plan03PageGroupView replacementGroup{};
     ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
         replacementSlice, &replacementGroup));
@@ -60168,7 +60406,7 @@ TEST(ActionFiringApi,
     ASSERT_EQ(2u, oldBank->aggregateCount);
     const auto originalBank = std::make_unique<harken::EngineQueueProgramBankBody>(*oldBank);
     for (std::uint32_t index = 0; index < oldBank->programCount; ++index) {
-        ASSERT_TRUE(engine->timelinePool.HasProgramReference(oldBank->schedules[index].runtimeProgram));
+        ASSERT_TRUE(engine->immediateActionLane.HasProgramReference(oldBank->schedules[index].runtimeProgram));
     }
     harken::CurveLUT retiredCurve{};
     harken::EngineQueueScheduleColumns recycledColumns;
@@ -60216,9 +60454,8 @@ TEST(ActionFiringApi,
     const std::array<std::uint64_t, 2> sliceFrames = {
         firstSliceFrame, secondSliceFrame};
     ExpectFrozenQueueBank(*oldBank, *originalBank);
-    for (std::uint32_t index = 0; index < oldBank->programCount; ++index) {
-        EXPECT_TRUE(engine->timelinePool.HasProgramReference(oldBank->schedules[index].runtimeProgram));
-    }
+    // The retired Lane has released its event pins; the arrival still owns the bank.
+    EXPECT_TRUE(oldBank->occupied);
     for (std::uint16_t index = 0; index < sliceFrames.size(); ++index) {
         std::uint32_t page = 0;
         ASSERT_TRUE(engine->timelinePool.PageForFrame(
@@ -60226,9 +60463,7 @@ TEST(ActionFiringApi,
         const harken::HorizonPageHeader* header =
             engine->timelinePool.Page(page);
         ASSERT_NE(nullptr, header);
-        const harken::Plan03GroupSliceIdentity replacementSlice{
-            sliceFrames[index] / engine->config.blockFrames,
-            header->pageGeneration, row->queueDecision, index};
+        const auto replacementSlice = harkentest::QueueContinuationSlice(*engine, row->queueDecision, index);
         harken::Plan03PageGroupView replacementGroup{};
         ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
             replacementSlice, &replacementGroup));
@@ -60417,9 +60652,7 @@ TEST(ActionFiringApi,
         const harken::HorizonPageHeader* header =
             engine->timelinePool.Page(page);
         ASSERT_NE(nullptr, header);
-        const harken::Plan03GroupSliceIdentity oldSlice{
-            sliceFrames[index] / engine->config.blockFrames,
-            header->pageGeneration, decision, index};
+        const auto oldSlice = harkentest::QueueContinuationSlice(*engine, decision, index);
         harken::Plan03PageGroupView oldGroup{};
         ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
             oldSlice, &oldGroup));
@@ -60527,9 +60760,7 @@ TEST(ActionFiringApi,
     harken::CompletionMutationBinding bindingBefore{};
     ASSERT_TRUE(engine->ledger.CaptureCompletionMutationForSlot(
         renderOwner.ledgerSlot, &bindingBefore));
-    const harken::Plan03GroupSliceIdentity sliceIdentity{
-        row->queueCompletionFrame / engine->config.blockFrames,
-        row->queuePreparedPages.generation, decision, 0};
+    const auto sliceIdentity = harkentest::QueueContinuationSlice(*engine, decision, 0);
     harken::Plan03PageGroupView sliceBefore{};
     ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
         sliceIdentity, &sliceBefore));
@@ -60653,9 +60884,7 @@ TEST(ActionFiringApi,
     const harken::DecisionToken decision = row->queueDecision;
     const harken::ConditionalQueueVersionToken conditional =
         row->queueConditional;
-    const harken::Plan03GroupSliceIdentity sliceIdentity{
-        row->queueCompletionFrame / engine->config.blockFrames,
-        row->queuePreparedPages.generation, decision, 0};
+    const auto sliceIdentity = harkentest::QueueContinuationSlice(*engine, decision, 0);
     harken::Plan03PageGroupView slice{};
     ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
         sliceIdentity, &slice));

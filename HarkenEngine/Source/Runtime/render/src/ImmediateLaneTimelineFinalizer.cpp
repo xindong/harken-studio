@@ -37,6 +37,8 @@ struct ImmediateLaneTimelineFinalizer::Impl {
         AuthoredStopFenceLaneProof proof{};
     };
     ImmediateActionLane* lane = nullptr;
+    void* queueContext = nullptr;
+    QueueBucketApply applyQueue = nullptr;
     FrontierTimelineFinalizer* frontier = nullptr;
     const ScheduledTransactionPool* pool = nullptr;
     std::uint32_t blockFrames = 0;
@@ -96,6 +98,12 @@ bool ImmediateLaneTimelineFinalizer::AttachFrontier(
     impl_->frontier = &frontier;
     impl_->pool = &pool;
     return true;
+}
+
+void ImmediateLaneTimelineFinalizer::AttachQueueSink(void* context, QueueBucketApply apply) noexcept {
+    if (impl_ == nullptr) return;
+    impl_->queueContext = context;
+    impl_->applyQueue = apply;
 }
 
 std::uint64_t ImmediateLaneTimelineFinalizer::EventStorageBytes() const noexcept {
@@ -230,6 +238,13 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
         auto& receipt = state.receipts[receiptIndex];
         const auto slot = receipt.slot;
         const auto* bucket = receipt.bucket;
+        if (state.lane->CapturedQueueContinuation(slot, bucket) != nullptr) {
+            receipt.applied = state.applyQueue != nullptr &&
+                state.applyQueue(state.queueContext, *state.lane, slot, bucket, quantum, &receipt.claimed);
+            if (!receipt.applied && !receipt.claimed)
+                (void)state.lane->RejectCapturedBucket({slot, bucket->attemptGeneration}, bucket);
+            continue;
+        }
         std::uint64_t resumeQuantum = 0;
         const bool resuming = state.lane->CapturedSourceWaitQuantum(slot, bucket, &resumeQuantum) &&
             resumeQuantum == quantum;

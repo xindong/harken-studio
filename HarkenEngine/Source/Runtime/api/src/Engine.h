@@ -61,6 +61,7 @@
 #include "harken/core/ImmediateActionLane.h"
 #include "harken/core/OriginalImmediateLaneConditionalProjection.h"
 #include "harken/core/PrivateSelectedQueueFutureCalendar.h"
+#include "harken/core/QueueContinuationLane.h"
 #include "harken/core/PrivateOriginalQueueGroupClockProof.h"
 #include "harken/core/TimelinePlanner.h"
 #include "harken/core/TransitionInstancePool.h"
@@ -696,6 +697,7 @@ struct EngineQueueProgramBankBody : EngineQueueScheduleColumns {
 // Lifetime issuance and return belong to the serialized logic producer.
 // Bank storage stays at its original fixed Engine address for every loan.
 struct EngineQueueProgramBank : EngineQueueProgramBankBody {
+    QueueContinuationLane continuationLane;
     EngineQueueScheduleStorage::Loan scheduleStorageLoan;
     TimelineProgramReadFence readFence;
     class OriginalReservation {
@@ -813,7 +815,7 @@ struct EngineQueueProgramBank : EngineQueueProgramBankBody {
 
     // Callers still own the actual program/observer/read-fence qualification.
     bool TryResetStorage() noexcept {
-        if (HasOriginalLifetimeOwners()) return false;
+        if (HasOriginalLifetimeOwners() || continuationLane.Active()) return false;
         for (const auto token : members) if (token.Valid()) return false;
         scheduleStorageLoan.Reset();
         programCount = 0; eventCount = 0; curveCount = 0; aggregateCount = 0;
@@ -3087,6 +3089,7 @@ struct EngineTimelineStartScratch {
     // Both complete leaf sides plus one coordinator program per frontier slice.
     std::array<PreparedTransactionBatch, 2u * kMaxKnownScheduleLeaves + 2u> transactions{};
     std::array<CommandRecord, kMaxKnownScheduleLeaves> extraCommands{};
+    std::array<ImmediateLaneEvent, EngineQueueProgramBank::kEventCapacity> queueEvents{};
     bool occupied = false;
     EngineImmediateRetryCleanup retryCleanup{};
 };
@@ -4636,6 +4639,7 @@ struct EngineActionQueueReplacementScratch {
     std::uint64_t resetExecuteFrame = 0;
     std::uint32_t resetExecutionOrdinal = 0;
     EngineQueueProgramBank* programBank = nullptr;
+    QueueContinuationLane* oldContinuation = nullptr;
     EngineActionPlayScratch* successorTree = nullptr;
     std::vector<EnginePlayableMemberReference> successorMembers;
     StableStoragePreparation successorRelationBacking;
@@ -9404,6 +9408,7 @@ public:
             resource.nativeStopLaneOwner.Return();
         }
         queueInstances.EndOriginalConditionalAssociationsAfterQuiescence();
+        for (auto& bank : queueProgramBanks) bank.continuationLane.ReturnAfterQuiescence();
         if (originalQueueReplacementHolders.data() != nullptr)
             for (std::uint32_t i = 0; i < originalQueueReplacementHolders.size(); ++i) {
                 auto& holder = originalQueueReplacementHolders[i];

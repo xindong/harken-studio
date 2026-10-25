@@ -2128,6 +2128,7 @@ private:
         Plan03PageGroupView* out) const noexcept;
     friend class PrivateSelectedQueueFutureDomain;
     bool ReturnPrivateSelectedQueueFutureDomain(PrivateSelectedQueueFutureDomain& domain) noexcept;
+    friend class QueueContinuationLane;
     std::uint64_t nextSelectedFutureDomain_ = 0;
     std::uint32_t selectedFutureDomains_ = 0;
     bool ReserveImmediateLaneGroupInDomain(

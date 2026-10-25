@@ -1,4 +1,5 @@
 #include "harken/core/ImmediateActionLane.h"
+#include "harken/core/QueueContinuationLane.h"
 #include "harken/core/OriginalImmediateLaneConditionalProjection.h"
 
 #include <algorithm>
@@ -1136,6 +1137,7 @@ bool ImmediateActionLane::Reserve(std::uint64_t root,
                 !EnsureAttemptBacking(payloadGrowth_.heldRows, slot))) return false;
         ++attempt.generation;
         attempt.root = root;
+        attempt.queueContinuation = nullptr;
         attempt.sourceWaitEntryCount = 0;
         attempt.originalLifetimeMarker = 0;
         attempt.originalLifetimePins = 0;
@@ -2021,8 +2023,11 @@ bool ImmediateActionLane::PinGroups(ImmediateLaneHandle handle,
     auto* groupRows = groupState_.At(static_cast<std::size_t>(handle.slot) * config_.eventsPerAttempt);
     auto* groups = GroupBase(handle.slot);
     const auto* events = EventBase(handle.slot);
-    const auto selectedCount = pool.CapturePrivateSelectedLaneGroupsForPinning(
-        *this, handle, attempt->root, groups, attempt->groupCredit);
+    const auto* queue = attempt->queueContinuation;
+    const auto selectedCount = queue != nullptr
+        ? queue->CaptureGroups(*this, handle, pool, groups, attempt->groupCredit)
+        : pool.CapturePrivateSelectedLaneGroupsForPinning(
+            *this, handle, attempt->root, groups, attempt->groupCredit);
     const auto liveCount = selectedCount != 0 ? selectedCount :
         pool.CaptureImmediateLaneCohortGroups(
             attempt->root, groups, attempt->groupCredit);
@@ -2065,7 +2070,7 @@ bool ImmediateActionLane::PinGroups(ImmediateLaneHandle handle,
         Plan03PageGroupView view{};
         if (!identity.Exact() || groups[i].dueQuantum == UINT64_MAX ||
             !pool.ResolvePlan03GroupSliceProducer(identity, &view) ||
-            view.frontier == nullptr ||
+            (queue != nullptr ? !queue->Owns(view) : view.frontier == nullptr) ||
             !pool.AcquirePlan03GroupReader(identity, &groupPins[count])) {
             rollback();
             return false;
@@ -2128,12 +2133,13 @@ bool ImmediateActionLane::PinGroups(ImmediateLaneHandle handle,
         groups[groupIndex].futureDependent = false;
         Plan03PageGroupView view{};
         if (!pool.ResolvePlan03GroupSliceProducer(groups[groupIndex].identity,
-                &view) || view.frontier == nullptr) {
+                &view) || (queue != nullptr ? !queue->Owns(view) : view.frontier == nullptr)) {
             rollback();
             return false;
         }
         groupRows[groupIndex].memberBase = memberCount;
         groupRows[groupIndex].memberCount = 0;
+        if (queue != nullptr) continue;
         if ((view.frontier->role != FrontierGroupRole::EntryMember &&
              view.frontier->role != FrontierGroupRole::Future) ||
             (!view.frontier->variableSide.Valid() &&
@@ -4298,6 +4304,15 @@ const ImmediateLaneBucket* ImmediateActionLane::CaptureDue(
                 kEventWithdrawalRequested) != 0;
         const auto sourceWait = bucket.sourceWaitSequence.load(std::memory_order_acquire);
         const bool resuming = sourceWait != 0 && sourceWait <= quantum + 1u && bucket.quantum <= quantum;
+        if (attempt.queueContinuation != nullptr && bucket.quantum <= quantum &&
+            state == ImmediateLaneBucketState::Committed && !attempt.queueContinuation->BeginAudio()) {
+            auto expected = ImmediateLaneBucketState::Committed;
+            (void)bucket.state.compare_exchange_strong(expected, ImmediateLaneBucketState::Cancelled,
+                std::memory_order_acq_rel, std::memory_order_acquire);
+            attempt.nextBucket.store(attempt.bucketCount, std::memory_order_release);
+            attempt.queueContinuation->EndAudio();
+            return nullptr;
+        }
         if (bucket.quantum < quantum && state == ImmediateLaneBucketState::Committed && !withdrawnOld && !resuming) {
             BeginConditionalProjection(slot, bucket, quantum + 1u);
             if (attempt.capturedConditionalProjection) {
@@ -4315,6 +4330,7 @@ const ImmediateLaneBucket* ImmediateActionLane::CaptureDue(
                 attempt.state.store(ImmediateLaneAttemptState::Cancelling, std::memory_order_release);
                 attempt.nextBucket.store(attempt.bucketCount, std::memory_order_release);
             }
+            if (attempt.queueContinuation != nullptr) attempt.queueContinuation->EndAudio();
             return nullptr;
         }
         if ((bucket.quantum == quantum || withdrawnOld || resuming) && state == ImmediateLaneBucketState::Committed) {
@@ -4341,6 +4357,16 @@ const ImmediateLaneBucket* ImmediateActionLane::CaptureDue(
         return nullptr;
     }
     return nullptr;
+}
+
+const QueueContinuationLane* ImmediateActionLane::CapturedQueueContinuation(
+    std::uint32_t slot, const ImmediateLaneBucket* bucket) const noexcept {
+    if (!valid_ || slot >= attempts_.size() || bucket == nullptr) return nullptr;
+    const auto& attempt = attempts_[slot];
+    return attempt.captureActive.load(std::memory_order_acquire) &&
+        attempt.capturedBucketOrdinal < attempt.bucketCount &&
+        bucket == BucketBase(slot) + attempt.capturedBucketOrdinal &&
+        bucket->attemptGeneration == attempt.generation ? attempt.queueContinuation : nullptr;
 }
 
 bool ImmediateActionLane::CapturedSourceWaitQuantum(std::uint32_t slot,
@@ -5372,6 +5398,7 @@ bool ImmediateActionLane::Retire(ImmediateLaneHandle handle,
         BucketBase(handle.slot)[index].admissionFailure.store(
             ImmediateLaneAdmissionFailure::None, std::memory_order_relaxed);
     attempt->root = 0;
+    attempt->queueContinuation = nullptr;
     attempt->eventCredit = 0;
     attempt->eventCount = 0;
     attempt->groupCount = 0;
@@ -5450,6 +5477,7 @@ void ImmediateActionLane::BeginConditionalProjection(std::uint32_t slot,
 
 void ImmediateActionLane::EndConditionalProjection(std::uint32_t slot) noexcept {
     auto& row = attempts_[slot];
+    if (row.queueContinuation != nullptr) row.queueContinuation->EndAudio();
     if (row.capturedConditionalReplacementRead) {
         row.conditionalReplacement->ReturnOldRead();
         row.capturedConditionalReplacementRead = false;
@@ -5536,12 +5564,114 @@ bool OriginalConditionalReplacementBatch::PrepareScope(QueueInstanceTable& queue
     return true;
 }
 
+bool OriginalConditionalReplacementBatch::PrepareContinuationScope(QueueInstanceTable& queues) noexcept {
+    if (queues_ != nullptr || count_ != 0 || generation_ == UINT64_MAX || capacity_ == 0) return false;
+    queues_ = &queues;
+    ++generation_;
+    word_.store(0, std::memory_order_release);
+    return true;
+}
+
+bool OriginalConditionalReplacementBatch::PrepareContinuations(QueueInstanceTable& queues,
+    LogicCommitCoordinator::PreparedIssue* sequence) noexcept {
+    if (sequence == nullptr || !sequence->Valid() || !PrepareContinuationScope(queues)) return false;
+    sequence_ = std::move(*sequence);
+    return true;
+}
+
+bool OriginalConditionalReplacementBatch::PrepareContinuations(QueueInstanceTable& queues,
+    const PreparedActionFiring& child) noexcept {
+    if (child.InheritedSequence() == 0 || !PrepareContinuationScope(queues)) return false;
+    deferredChild_ = child;
+    return true;
+}
+
+bool OriginalConditionalReplacementBatch::AttachContinuation(QueueContinuationLane& original,
+    QueueContinuationLane& replacement, PreparedQueueConditionalReplacementV1& conditional) noexcept {
+    if (queues_ == nullptr || Sequence() == 0 || count_ == capacity_ ||
+        (word_.load(std::memory_order_acquire) & (kAborted | kAccepted)) != 0 ||
+        !conditional.Valid() || conditional.owner_ != queues_ || conditional.stagedOwner_ != &original ||
+        !original.Replaceable() || !replacement.prepared_ || replacement.published_ ||
+        replacement.queues_ != queues_ || replacement.decision_.slot != conditional.replacement_.rootDecision.slot ||
+        replacement.decision_.generation != conditional.replacement_.rootDecision.generation ||
+        replacement.conditional_.version != conditional.replacement_.next.version ||
+        replacement.queue_.slot != original.queue_.slot || replacement.queue_.generation != original.queue_.generation)
+        return false;
+    for (std::uint32_t i = 0; i < count_; ++i) {
+        const auto existing = members_[i].continuation != nullptr ? members_[i].continuation->queue_
+            : members_[i].original.conditional_.Token();
+        if (existing.slot == original.queue_.slot && existing.generation == original.queue_.generation) return false;
+    }
+    OriginalImmediateLaneAttemptLifetimePin pin;
+    if (!original.originalLane_.Borrow(&pin)) return false;
+    std::uint64_t expected = 0;
+    if (!original.admission_.compare_exchange_strong(expected, QueueContinuationLane::kChanging,
+            std::memory_order_acq_rel, std::memory_order_acquire)) return false;
+    original.replacement_ = this;
+    original.replacementGeneration_ = generation_;
+    expected = QueueContinuationLane::kChanging;
+    if (!original.admission_.compare_exchange_strong(expected, QueueContinuationLane::kAttached,
+            std::memory_order_release, std::memory_order_acquire)) {
+        original.replacement_ = nullptr;
+        original.replacementGeneration_ = 0;
+        original.admission_.fetch_and(~QueueContinuationLane::kChanging, std::memory_order_release);
+        word_.fetch_or(kAborted, std::memory_order_acq_rel);
+        return false;
+    }
+    auto& member = members_[count_++];
+    member.continuation = &original;
+    member.replacementContinuation = &replacement;
+    member.stagedConditional = &conditional;
+    member.continuationPin = std::move(pin);
+    ++continuationCount_;
+    return true;
+}
+
+bool OriginalConditionalReplacementBatch::CommitContinuation(
+    PreparedQueueConditionalReplacementV1& conditional, LogicCommitSequence sequence) noexcept {
+    if (!Accepted() || !orderConsumed_ || sequence != acceptedSequence_ || !conditional.Valid()) return false;
+    for (std::uint32_t i = 0; i < count_; ++i) {
+        auto& member = members_[i];
+        if (member.stagedConditional != &conditional || member.continuation == nullptr) continue;
+        if (queues_->CommitConditionalReplacementInternal(&conditional, sequence, true) != QueueResetStatusV1::Ok)
+            return false;
+        member.stagedConditional = nullptr;
+        return true;
+    }
+    return false;
+}
+
+bool QueueContinuationLane::BeginAudio() const noexcept {
+    const auto before = admission_.fetch_or(kReading, std::memory_order_acq_rel);
+    assert((before & kReading) == 0 && !audioRead_);
+    audioRead_ = true;
+    if ((before & kWithdrawn) != 0) return false;
+    if ((before & kAttached) != 0) {
+        replacementRead_ = replacement_->BorrowOldRead(replacementGeneration_);
+        if (!replacementRead_) {
+            admission_.fetch_or(kWithdrawn, std::memory_order_acq_rel);
+            return false;
+        }
+        replacement_->BeforeOldWrite();
+    }
+    admission_.fetch_or(kWritten, std::memory_order_acq_rel);
+    return true;
+}
+
+void QueueContinuationLane::EndAudio() const noexcept {
+    if (!audioRead_) return;
+    if (replacementRead_) replacement_->ReturnOldRead();
+    replacementRead_ = audioRead_ = false;
+    admission_.fetch_and(~kReading, std::memory_order_release);
+}
+
 bool OriginalConditionalReplacementBatch::Attach(
     const OriginalImmediateLaneConditionalProjection& original,
     PrivateSelectedQueueFutureSpanPool& spans,
     const PrivateSelectedQueueFutureSpanPool::Owner& selected) noexcept {
     if (queues_ == nullptr || Sequence() == 0 || !scope_.Valid() ||
-        count_ >= scope_.MatchedCount() || (word_.load(std::memory_order_acquire) & (kAborted | kAccepted)) != 0 ||
+        count_ == capacity_ || count_ - continuationCount_ >= scope_.MatchedCount() ||
+        (word_.load(std::memory_order_acquire) & (kAborted | kAccepted)) != 0 ||
         !original.withdrawalOwner_ || !original.Valid() ||
         !queues_->MatchesOriginalConditionalFutureReservation(original.conditional_)) return false;
     const auto queue = original.conditional_.Token();
@@ -5554,7 +5684,8 @@ bool OriginalConditionalReplacementBatch::Attach(
     }
     if (!matched) return false;
     for (std::uint32_t i = 0; i < count_; ++i) {
-        const auto existing = members_[i].original.conditional_.Token();
+        const auto existing = members_[i].continuation != nullptr ? members_[i].continuation->queue_
+            : members_[i].original.conditional_.Token();
         if (existing.slot == queue.slot && existing.generation == queue.generation) return false;
     }
     Member pending;
@@ -5595,12 +5726,24 @@ bool OriginalConditionalReplacementBatch::Attach(
 }
 
 bool OriginalConditionalReplacementBatch::TryAccept(const ActionCommitBundle& action) noexcept {
-    if (queues_ == nullptr || !scope_.Valid() || Sequence() == 0 ||
+    const auto originalCount = count_ - continuationCount_;
+    if (queues_ == nullptr || Sequence() == 0 ||
         action.State() != BundleState::Reserved || action.StepCount() == 0 ||
-        count_ == 0 || count_ != scope_.MatchedCount() ||
-        (queueSelectionsPrepared_ != 0 && queueSelectionsPrepared_ != count_)) return false;
+        count_ == 0 || originalCount != (scope_.Valid() ? scope_.MatchedCount() : 0) ||
+        (queueSelectionsPrepared_ != 0 && queueSelectionsPrepared_ != originalCount)) return false;
     for (std::uint32_t i = 0; i < count_; ++i) {
         const auto& member = members_[i];
+        if (member.continuation != nullptr) {
+            const auto* next = member.replacementContinuation;
+            const auto* candidate = member.stagedConditional;
+            if (!member.continuationPin.Valid() || !member.continuation->Replaceable() ||
+                candidate == nullptr || !candidate->Valid() || candidate->stagedOwner_ != member.continuation ||
+                candidate->owner_ != queues_ || next == nullptr || !next->prepared_ || next->published_ ||
+                member.continuation->replacement_ != this || member.continuation->replacementGeneration_ != generation_ ||
+                member.continuation->admission_.load(std::memory_order_acquire) != QueueContinuationLane::kAttached)
+                return false;
+            continue;
+        }
         if (!member.original.Valid() || member.attempt == nullptr ||
             member.attempt->privatePublicationProof != nullptr ||
             !queues_->IsCurrentOriginalConditionalFutureReservation(member.original.conditional_) ||
@@ -5621,11 +5764,15 @@ bool OriginalConditionalReplacementBatch::TryAccept(const ActionCommitBundle& ac
             std::memory_order_acq_rel, std::memory_order_acquire)) return false;
     // The shared word already selects every attached scope. These infallible
     // copies preserve that same result after the batch's native readers retire.
-    for (std::uint32_t i = 0; i < count_; ++i)
-        members_[i].attempt->conditionalProjectionAdmission.fetch_or(kEventWithdrawalRequested, std::memory_order_acq_rel);
+    for (std::uint32_t i = 0; i < count_; ++i) {
+        if (members_[i].continuation != nullptr)
+            members_[i].continuation->admission_.fetch_or(QueueContinuationLane::kWithdrawn, std::memory_order_acq_rel);
+        else members_[i].attempt->conditionalProjectionAdmission.fetch_or(kEventWithdrawalRequested, std::memory_order_acq_rel);
+    }
     if (queueSelectionsPrepared_)
         for (std::uint32_t i = 0; i < count_; ++i)
-            members_[i].spans->ConsumeQueueSelection(members_[i].selected, members_[i].order);
+            if (members_[i].continuation == nullptr)
+                members_[i].spans->ConsumeQueueSelection(members_[i].selected, members_[i].order);
     return true;
 }
 
@@ -5687,6 +5834,7 @@ LogicCommitSequence OriginalConditionalReplacementBatch::ConsumeAcceptedOrder(
         if (consumed != nullptr) *consumed = std::move(receipt);
     }
     orderConsumed_ = true;
+    acceptedSequence_ = order;
     return order;
 }
 
@@ -5722,6 +5870,21 @@ bool OriginalConditionalReplacementBatch::Close() noexcept {
     bool closed = true;
     for (std::uint32_t i = 0; i < count_; ++i) {
         auto& member = members_[i];
+        if (member.continuation != nullptr) {
+            auto& old = *member.continuation;
+            auto before = old.admission_.load(std::memory_order_acquire);
+            if ((before & QueueContinuationLane::kReading) != 0 ||
+                !old.admission_.compare_exchange_strong(before,
+                    (before & ~QueueContinuationLane::kAttached) | QueueContinuationLane::kChanging,
+                    std::memory_order_acq_rel, std::memory_order_acquire)) { closed = false; continue; }
+            old.replacement_ = nullptr;
+            old.replacementGeneration_ = 0;
+            old.admission_.fetch_and(~QueueContinuationLane::kChanging, std::memory_order_release);
+            member.continuationPin.Return();
+            member.continuation = member.replacementContinuation = nullptr;
+            member.stagedConditional = nullptr;
+            continue;
+        }
         if (member.attempt == nullptr) continue;
         auto& row = *member.attempt;
         auto before = row.conditionalProjectionAdmission.load(std::memory_order_acquire);
@@ -5746,8 +5909,10 @@ bool OriginalConditionalReplacementBatch::Close() noexcept {
     scope_.Release();
     queues_ = nullptr;
     count_ = 0;
+    continuationCount_ = 0;
     queueSelectionsPrepared_ = 0;
     orderConsumed_ = false;
+    acceptedSequence_ = 0;
     return true;
 }
 

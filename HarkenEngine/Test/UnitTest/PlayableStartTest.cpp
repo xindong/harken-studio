@@ -12992,12 +12992,10 @@ TEST(PlayableStart,
     }
     ASSERT_TRUE(row->queueDecisionCommitted);
     ASSERT_LT(engine->mixer.BlocksRendered(), transitionQuantum);
-    const auto preparedPages = row->queuePreparedPages;
     const auto completionFrame = row->queueCompletionFrame;
     for (std::uint16_t index = 0; index < 2; ++index) {
         harken::Plan03PageGroupView prepared{};
-        const harken::Plan03GroupSliceIdentity identity{
-            transitionQuantum, preparedPages.generation, decision, index};
+        const auto identity = harkentest::QueueContinuationSlice(*engine, decision, index);
         ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(identity, &prepared));
         ASSERT_NE(nullptr, prepared.lease);
         EXPECT_EQ(harken::AudioSliceState::Ready, prepared.lease->Capture().state);
@@ -13012,33 +13010,11 @@ TEST(PlayableStart,
     ASSERT_LT(engine->mixer.BlocksRendered(), transitionQuantum);
     EXPECT_EQ(completionFrame, row->queueCompletionFrame);
     ASSERT_EQ(VN_OK, Vn_Update());
-    std::vector<harken::Plan03PageGroupView> groups(
-        engine->timelinePool.MaxPlan03GroupHeadersPerPage());
-    const std::size_t groupCount =
-        engine->timelinePool.CapturePlan03PageGroupsRt(
-            transitionQuantum, groups.data(), groups.size());
-    ASSERT_LE(groupCount, groups.size());
-    const auto matchesSlice = [&](const harken::Plan03PageGroupView& group,
-                                  std::uint16_t sliceIndex) {
-        return group.identity.decision.slot == decision.slot &&
-            group.identity.decision.generation ==
-                decision.generation &&
-            group.identity.sliceIndex == sliceIndex;
-    };
-    const auto prelude = std::find_if(
-        groups.begin(), groups.begin() + groupCount,
-        [&](const harken::Plan03PageGroupView& group) {
-            return matchesSlice(group, 0);
-        });
-    const auto completion = std::find_if(
-        groups.begin(), groups.begin() + groupCount,
-        [&](const harken::Plan03PageGroupView& group) {
-            return matchesSlice(group, 1);
-        });
-    ASSERT_NE(groups.begin() + groupCount, prelude);
-    ASSERT_NE(groups.begin() + groupCount, completion);
-    const harken::Plan03PageGroupView preludeGroup = *prelude;
-    const harken::Plan03PageGroupView completionGroup = *completion;
+    harken::Plan03PageGroupView preludeGroup{}, completionGroup{};
+    ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceRt(
+        harkentest::QueueContinuationSlice(*engine, decision, 0), &preludeGroup));
+    ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceRt(
+        harkentest::QueueContinuationSlice(*engine, decision, 1), &completionGroup));
     ASSERT_NE(nullptr, preludeGroup.lease);
     ASSERT_NE(nullptr, completionGroup.lease);
 
@@ -13054,8 +13030,58 @@ TEST(PlayableStart,
               completionGroup.lease->Capture().state);
 }
 
+// These private scheduling declarations consume real Lane capacity without
+// publishing events, pinning resources or acquiring any audio authority.
+class QueueLaneCapacityPressure {
+public:
+    explicit QueueLaneCapacityPressure(harken::Engine& engine) : lane_(engine.immediateActionLane) {}
+    ~QueueLaneCapacityPressure() {
+        for (const auto handle : handles_) {
+            EXPECT_TRUE(lane_.Cancel(handle));
+            EXPECT_TRUE(lane_.Retire(handle));
+        }
+    }
+    bool Place(std::uint64_t frame, std::uint32_t events, std::uint32_t groups) {
+        while (events != 0 || groups != 0) {
+            const auto eventCount = std::min(events, lane_.EventsPerAttempt());
+            const auto groupCount = std::min(groups, lane_.EventsPerAttempt());
+            harken::ImmediateLaneHandle handle{};
+            if (!lane_.Reserve(1, {eventCount, groupCount, 0, 1}, &handle)) return false;
+            handles_.push_back(handle);
+            for (std::uint32_t i = 0; i < groupCount; ++i) {
+                harken::ImmediateLaneDeclaredGroup group{};
+                group.identity = {0, 1, {0, 1}, static_cast<std::uint16_t>(i)};
+                group.identity.committedRow = i;
+                group.identity.rowClaimGeneration = 1;
+                group.identity.transportEpoch = 1;
+                if (!lane_.DeclareGroup(handle, group)) return false;
+            }
+            std::vector<harken::ImmediateLaneEvent> input(eventCount);
+            for (auto& event : input) event.event.program.program = &program_;
+            if (!lane_.Prepare(handle, input.data(), eventCount) ||
+                !lane_.TryPlaceExactPrivate(handle, frame)) return false;
+            events -= eventCount;
+            groups -= groupCount;
+        }
+        return true;
+    }
+    bool ExhaustAttempts() {
+        for (std::uint32_t i = 0; i < lane_.AttemptCapacity(); ++i) {
+            harken::ImmediateLaneHandle handle{};
+            if (!lane_.Reserve(1, {1, 0, 0, 1}, &handle)) return false;
+            handles_.push_back(handle);
+        }
+        harken::ImmediateLaneHandle extra{};
+        return !lane_.Reserve(1, {1, 0, 0, 1}, &extra);
+    }
+private:
+    harken::ImmediateActionLane& lane_;
+    harken::TimelineProgramView program_{};
+    std::vector<harken::ImmediateLaneHandle> handles_;
+};
+
 TEST(PlayableStart,
-     SequenceQueueNaturalEndSamePageCapacityPublishesNeitherSlice) {
+     SequenceQueueNaturalEndSameQuantumLaneCapacityPublishesNeitherSlice) {
     VnConfig config = harkentest::MakeNullConfig(4, 64, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -13080,32 +13106,10 @@ TEST(PlayableStart,
     ASSERT_EQ(preludeFrame / engine->config.blockFrames,
               completionFrame / engine->config.blockFrames);
 
-    harken::DecisionReserveRequest reserve{};
-    reserve.ticket.sequence = 1;
-    reserve.world = 1;
-    reserve.transport = 1;
-    reserve.expectedContinuationGeneration = 1;
-    reserve.sliceCount = 1;
-    harken::DecisionToken fillerDecision{};
-    ASSERT_TRUE(engine->decisions.Reserve(reserve, &fillerDecision));
-    harken::Plan03GroupSliceInput filler{};
-    filler.executeFrame = preludeFrame;
-    filler.decision = fillerDecision;
-    const std::uint32_t pageCapacity =
-        engine->timelinePool.MaxPlan03GroupHeadersPerPage();
-    ASSERT_GE(pageCapacity, 2u);
-    for (std::uint32_t index = 0; index + 1u < pageCapacity; ++index) {
-        filler.sliceIndex = static_cast<std::uint16_t>(index);
-        ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-                  engine->timelinePool.ReservePlan03GroupSlice(
-                      filler, engine->timelineArms));
-    }
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-              engine->timelinePool.PreflightPlan03GroupSlices(
-                  preludeFrame, 1));
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::PageGroupCapacity,
-              engine->timelinePool.PreflightPlan03GroupSlices(
-                  preludeFrame, 2));
+    const auto groupCapacity = engine->config.maxPlan03GroupHeadersPerPage;
+    ASSERT_GE(groupCapacity, 2u);
+    QueueLaneCapacityPressure pressure(*engine);
+    ASSERT_TRUE(pressure.Place(preludeFrame, 0, groupCapacity - 1u));
     const std::uint32_t transitionBaseline =
         engine->transitionInstances.LiveCount();
 
@@ -13124,23 +13128,17 @@ TEST(PlayableStart,
     EXPECT_FALSE(row->queueContinuationPrepared);
     EXPECT_FALSE(row->queueConditional.Valid());
     EXPECT_FALSE(row->queueTransition.Valid());
-    EXPECT_FALSE(row->queueArmGroup.Valid());
-    EXPECT_FALSE(row->queueSuccessorArm.Valid());
-    EXPECT_EQ(0u, row->queueSuccessorRenderHandle);
+    harken::ArmGroupSnapshot abandonedGroup{};
+    EXPECT_FALSE(engine->armGroups.Capture(row->queueArmGroup, &abandonedGroup));
+    EXPECT_EQ(nullptr, engine->timelineArms.Resolve(row->queueSuccessorArm));
+    EXPECT_EQ(nullptr, engine->voices.Resolve(row->queueSuccessorRenderHandle));
     EXPECT_EQ(transitionBaseline,
               engine->transitionInstances.LiveCount());
-    EXPECT_EQ(harken::Plan03GroupReserveStatus::Committed,
-              engine->timelinePool.PreflightPlan03GroupSlices(
-                  preludeFrame, 1));
-
-    filler.sliceIndex = static_cast<std::uint16_t>(pageCapacity - 1u);
-    EXPECT_EQ(harken::Plan03GroupReserveStatus::Committed,
-              engine->timelinePool.ReservePlan03GroupSlice(
-                  filler, engine->timelineArms));
+    EXPECT_TRUE(pressure.Place(preludeFrame, 0, 1));
 }
 
 TEST(PlayableStart,
-     SequenceQueueTransitionPageShortfallHasZeroMutation) {
+     SequenceQueueTransitionLaneEventShortfallHasZeroMutation) {
     VnConfig config = harkentest::MakeNullConfig(4, 64, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -13168,34 +13166,10 @@ TEST(PlayableStart,
     ASSERT_EQ(completionFrame / engine->config.blockFrames,
               (completionFrame + 1u) / engine->config.blockFrames);
 
-    std::array<harken::ScheduledEventInput, 128> firstEvents{};
-    std::array<harken::ScheduledEventInput, 125> secondEvents{};
-    for (std::uint32_t index = 0; index < firstEvents.size(); ++index) {
-        firstEvents[index].executeFrame = completionFrame;
-        firstEvents[index].logicCommitSequence = index + 1u;
-        firstEvents[index].eventIndex = index;
-    }
-    for (std::uint32_t index = 0; index < secondEvents.size(); ++index) {
-        secondEvents[index].executeFrame = completionFrame;
-        secondEvents[index].logicCommitSequence = index + 129u;
-        secondEvents[index].eventIndex = index;
-    }
-    harken::TransactionRequest filler{};
-    filler.transactionId = UINT64_C(0x51554555450001);
-    filler.transportEpoch = engine->timelinePool.Epoch();
-    filler.events = firstEvents.data();
-    filler.eventCount = firstEvents.size();
-    ASSERT_EQ(harken::ReserveStatus::Committed,
-              engine->timelinePool.Reserve(
-                  filler, harken::PrePublishLatePolicy::Refuse,
-                  engine->timelinePool.PublishCutoffFrame()).status);
-    filler.transactionId = UINT64_C(0x51554555450002);
-    filler.events = secondEvents.data();
-    filler.eventCount = secondEvents.size();
-    ASSERT_EQ(harken::ReserveStatus::Committed,
-              engine->timelinePool.Reserve(
-                  filler, harken::PrePublishLatePolicy::Refuse,
-                  engine->timelinePool.PublishCutoffFrame()).status);
+    QueueLaneCapacityPressure pressure(*engine);
+    const auto eventCapacity = engine->immediateActionLane.MaxEventsPerQuantum();
+    ASSERT_GT(eventCapacity, 3u);
+    ASSERT_TRUE(pressure.Place(completionFrame, eventCapacity - 3u, 0));
 
     std::uint32_t page = 0;
     ASSERT_TRUE(engine->timelinePool.PageForFrame(completionFrame, &page));
@@ -13224,9 +13198,10 @@ TEST(PlayableStart,
     EXPECT_FALSE(row->queueConditional.Valid());
     EXPECT_FALSE(row->queueTransition.Valid());
     EXPECT_FALSE(row->queueSourceArm.Valid());
-    EXPECT_FALSE(row->queueArmGroup.Valid());
-    EXPECT_FALSE(row->queueSuccessorArm.Valid());
-    EXPECT_EQ(0u, row->queueSuccessorRenderHandle);
+    harken::ArmGroupSnapshot abandonedGroup{};
+    EXPECT_FALSE(engine->armGroups.Capture(row->queueArmGroup, &abandonedGroup));
+    EXPECT_EQ(nullptr, engine->timelineArms.Resolve(row->queueSuccessorArm));
+    EXPECT_EQ(nullptr, engine->voices.Resolve(row->queueSuccessorRenderHandle));
     EXPECT_EQ(transitionsBefore,
               engine->transitionInstances.LiveCount());
     const harken::HorizonPageHeader* pageAfter =
@@ -13234,6 +13209,23 @@ TEST(PlayableStart,
     ASSERT_NE(nullptr, pageAfter);
     EXPECT_EQ(transactionsBefore,
               pageAfter->committedTransactionCount);
+    EXPECT_FALSE(engine->runtimeRecreateRequired);
+    bool heardCurrent = false;
+    for (std::uint32_t block = 0; block < 40; ++block) {
+        engine->nullBackend.Pump(1);
+        const auto* output = engine->nullBackend.LastBlock();
+        ASSERT_NE(nullptr, output);
+        for (std::uint32_t sample = 0; sample < 2u * config.blockFrames; ++sample)
+            heardCurrent = heardCurrent || output[sample] > 0.01f;
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    EXPECT_TRUE(heardCurrent);
+    EXPECT_EQ(0u, engine->voices.ActiveCount());
+    EXPECT_EQ(0u, engine->playableInstances.LiveCount());
+    EXPECT_EQ(0u, engine->queueInstances.LiveCount());
+    EXPECT_EQ(0u, engine->armGroups.LiveCount());
+    EXPECT_EQ(0u, engine->timelineArms.LiveCount());
+    EXPECT_EQ(0u, engine->timelineOccurrences.OccupiedCount());
     EXPECT_FALSE(engine->runtimeRecreateRequired);
 }
 
@@ -13582,15 +13574,12 @@ TEST_P(ClaimedQueueSliceCancellationTest,
         engine->timelinePool.Page(page);
     ASSERT_NE(nullptr, header);
     harken::Plan03PageGroupView group{};
-    const harken::Plan03GroupSliceIdentity identity{
-        preludeQuantum, header->pageGeneration, decision, 0};
+    const auto identity = harkentest::QueueContinuationSlice(*engine, decision, 0);
     ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
         identity, &group));
     ASSERT_NE(nullptr, group.lease);
     harken::Plan03PageGroupView completionGroup{};
-    const harken::Plan03GroupSliceIdentity completionIdentity{
-        row->queueCompletionFrame / engine->config.blockFrames,
-        row->queuePreparedPages.generation, decision, 1};
+    const auto completionIdentity = harkentest::QueueContinuationSlice(*engine, decision, 1);
     ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
         completionIdentity, &completionGroup));
     ASSERT_NE(nullptr, completionGroup.lease);
@@ -18273,9 +18262,7 @@ TEST(PlayableStart,
         engine->timelinePool.Page(delayedPage);
     ASSERT_NE(nullptr, delayedHeader);
     harken::Plan03PageGroupView delayedLockGroup{};
-    const harken::Plan03GroupSliceIdentity delayedLockIdentity{
-        delayedStartFrame / engine->config.blockFrames,
-        delayedHeader->pageGeneration, delayedDecision, 1};
+    const auto delayedLockIdentity = harkentest::QueueContinuationSlice(*engine, delayedDecision, 1);
     ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
         delayedLockIdentity, &delayedLockGroup));
     ASSERT_NE(nullptr, delayedLockGroup.lease);
@@ -18334,7 +18321,7 @@ TEST(PlayableStart,
 }
 
 TEST(PlayableStart,
-     QueueDelayedTargetFullSecondPageLeavesFirstPageUnchanged) {
+     QueueDelayedTargetFullSecondLaneBucketLeavesFirstBucketUnchanged) {
     VnConfig config = harkentest::MakeNullConfig(4, 64, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -18386,32 +18373,9 @@ TEST(PlayableStart,
     ASSERT_NE(completionFrame / engine->config.blockFrames,
               delayedStartFrame / engine->config.blockFrames);
 
-    harken::DecisionReserveRequest reserve{};
-    reserve.ticket.sequence = 1;
-    reserve.world = 1;
-    reserve.transport = 1;
-    reserve.expectedContinuationGeneration = 1;
-    reserve.sliceCount = 1;
-    harken::DecisionToken fillerDecision{};
-    ASSERT_TRUE(engine->decisions.Reserve(reserve, &fillerDecision));
-    harken::Plan03GroupSliceInput filler{};
-    filler.executeFrame = delayedStartFrame;
-    filler.decision = fillerDecision;
-    const std::uint32_t pageCapacity =
-        engine->timelinePool.MaxPlan03GroupHeadersPerPage();
-    ASSERT_GE(pageCapacity, 2u);
-    for (std::uint32_t index = 0; index < pageCapacity; ++index) {
-        filler.sliceIndex = static_cast<std::uint16_t>(index);
-        ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-                  engine->timelinePool.ReservePlan03GroupSlice(
-                      filler, engine->timelineArms));
-    }
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-              engine->timelinePool.PreflightPlan03GroupSlices(
-                  completionFrame, pageCapacity));
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::PageGroupCapacity,
-              engine->timelinePool.PreflightPlan03GroupSlices(
-                  delayedStartFrame, 1));
+    const auto groupCapacity = engine->config.maxPlan03GroupHeadersPerPage;
+    QueueLaneCapacityPressure pressure(*engine);
+    ASSERT_TRUE(pressure.Place(delayedStartFrame, 0, groupCapacity));
     const std::uint32_t transitionBaseline =
         engine->transitionInstances.LiveCount();
 
@@ -18430,25 +18394,13 @@ TEST(PlayableStart,
     EXPECT_FALSE(row->queueContinuationPrepared);
     EXPECT_FALSE(row->queueConditional.Valid());
     EXPECT_FALSE(row->queueTransition.Valid());
-    EXPECT_FALSE(row->queueArmGroup.Valid());
-    EXPECT_FALSE(row->queueSuccessorArm.Valid());
-    EXPECT_EQ(0u, row->queueSuccessorRenderHandle);
+    harken::ArmGroupSnapshot abandonedGroup{};
+    EXPECT_FALSE(engine->armGroups.Capture(row->queueArmGroup, &abandonedGroup));
+    EXPECT_EQ(nullptr, engine->timelineArms.Resolve(row->queueSuccessorArm));
+    EXPECT_EQ(nullptr, engine->voices.Resolve(row->queueSuccessorRenderHandle));
     EXPECT_EQ(transitionBaseline,
               engine->transitionInstances.LiveCount());
-    EXPECT_EQ(harken::Plan03GroupReserveStatus::Committed,
-              engine->timelinePool.PreflightPlan03GroupSlices(
-                  completionFrame, pageCapacity));
-    EXPECT_EQ(harken::Plan03GroupReserveStatus::PageGroupCapacity,
-              engine->timelinePool.PreflightPlan03GroupSlices(
-                  delayedStartFrame, 1));
-
-    filler.executeFrame = completionFrame;
-    for (std::uint32_t index = 0; index < pageCapacity; ++index) {
-        filler.sliceIndex = static_cast<std::uint16_t>(index);
-        EXPECT_EQ(harken::Plan03GroupReserveStatus::Committed,
-                  engine->timelinePool.ReservePlan03GroupSlice(
-                      filler, engine->timelineArms));
-    }
+    EXPECT_TRUE(pressure.Place(completionFrame, 0, groupCapacity));
 }
 
 struct NaturalPlayableRetirementProbe {
@@ -18468,6 +18420,7 @@ void CaptureNaturalPlayableRetirement(
         probe->observed = true;
     }
 }
+
 
 TEST(PlayableStart, QueueStartsWithZeroWorkTrackAndAdvancesToSound) {
     VnConfig config = harkentest::MakeNullConfig(4, 64, 48000);
@@ -19887,9 +19840,7 @@ TEST(PlayableStart,
     const harken::HorizonPageHeader* audibleHeader =
         engine->timelinePool.Page(audiblePage);
     ASSERT_NE(nullptr, audibleHeader);
-    const harken::Plan03GroupSliceIdentity preludeIdentity{
-        audibleFrame / engine->config.blockFrames,
-        audibleHeader->pageGeneration, prepared->queueDecision, 0};
+    const auto preludeIdentity = harkentest::QueueContinuationSlice(*engine, prepared->queueDecision, 0);
     harken::Plan03PageGroupView prelude{};
     ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
         preludeIdentity, &prelude));
@@ -19976,7 +19927,7 @@ TEST(PlayableStart,
 }
 
 TEST(PlayableStart,
-     QueueCompositeSourceTransactionShortfallHasZeroPartialPublication) {
+     QueueCompositeSourceLaneAttemptShortfallHasZeroPartialPublication) {
     VnConfig config = harkentest::MakeNullConfig(6, 64, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -19989,44 +19940,8 @@ TEST(PlayableStart,
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &firstPcm));
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSecondSound, &secondPcm));
 
-    const harken::PlayableInstanceHandle fillerOwner =
-        engine->playableInstances.Acquire(harken::PlayableKind::Piece, 0);
-    ASSERT_NE(0u, fillerOwner);
-    const harken::PlayableInstanceView filler =
-        engine->playableInstances.Classify(fillerOwner);
-    std::uint64_t transactionId = 1000;
-    for (std::uint32_t round = 0; round < 4; ++round) {
-        const std::uint32_t count = round == 3 ? 60u : 64u;
-        const std::uint64_t frame =
-            engine->timelinePool.WindowEndFrame() - 1u;
-        for (std::uint32_t index = 0; index < count; ++index) {
-            harken::ScheduledEventInput event{};
-            event.executeFrame = frame;
-            event.logicCommitSequence = transactionId;
-            event.eventIndex = index;
-            harken::TransactionRequest transaction{};
-            transaction.transactionId = transactionId++;
-            transaction.transportEpoch = engine->timelinePool.Epoch();
-            transaction.ownerInstanceHandle = fillerOwner;
-            transaction.ownerInstanceScheduleEpoch = filler.scheduleEpoch;
-            transaction.events = &event;
-            transaction.eventCount = 1;
-            const harken::ReserveResult reserved =
-                engine->timelinePool.Reserve(
-                    transaction,
-                    harken::PrePublishLatePolicy::Refuse);
-            ASSERT_EQ(harken::ReserveStatus::Committed, reserved.status)
-                << "round=" << round << " index=" << index
-                << " refusal="
-                << static_cast<std::uint32_t>(reserved.refusal);
-        }
-        if (round != 3) {
-            engine->nullBackend.Pump(1);
-            ASSERT_EQ(VN_OK, Vn_Update());
-            ASSERT_EQ(0u, engine->timelinePool.IngressThisQuantum());
-        }
-    }
-    ASSERT_EQ(252u, engine->timelinePool.LiveTransactionCount());
+    QueueLaneCapacityPressure pressure(*engine);
+    ASSERT_TRUE(pressure.ExhaustAttempts());
 
     SequenceQueueCompositeTrackWorldImage image(
         engine->registry.Lookup(kSound).contentRevision,
@@ -20054,8 +19969,8 @@ TEST(PlayableStart,
     EXPECT_FALSE(row->queueSuccessorArm.Valid());
     EXPECT_FALSE(row->queueTransition.Valid());
     EXPECT_FALSE(row->queueArmGroup.Valid());
-    EXPECT_EQ(254u, engine->timelinePool.LiveTransactionCount());
-    EXPECT_EQ(254u, engine->timelinePool.TransactionHighWater());
+    EXPECT_EQ(2u, engine->timelinePool.LiveTransactionCount());
+    EXPECT_EQ(2u, engine->timelinePool.TransactionHighWater());
 }
 
 TEST(PlayableStart,
@@ -21814,7 +21729,7 @@ TEST(PlayableStart, SequenceQueueArmGroupPreflightHasZeroSuccessorMutation) {
     EXPECT_EQ(armBaseline, engine->timelineArms.LiveCount());
 }
 
-TEST(PlayableStart, SequenceQueuePageGroupPreflightHasZeroSuccessorMutation) {
+TEST(PlayableStart, SequenceQueueLaneGroupCapacityHasZeroSuccessorMutation) {
     VnConfig config = harkentest::MakeNullConfig(8, 64, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);
@@ -21840,26 +21755,8 @@ TEST(PlayableStart, SequenceQueuePageGroupPreflightHasZeroSuccessorMutation) {
     target.programSemanticFingerprint = 1;
     const std::uint64_t successorFrame =
         KnownFiniteQueuePublishableStart(*engine) + first.size();
-    harken::TimelineArmToken fillerArm{};
-    ASSERT_TRUE(engine->timelineArms.ReserveGrouped(
-        1000, 1, successorFrame, successorFrame, 1, target,
-        {fillerDecision}, 0, &fillerArm));
-    harken::Plan03GroupSliceInput filler{};
-    filler.executeFrame = successorFrame;
-    filler.decision = fillerDecision;
-    filler.members = &fillerArm;
-    filler.memberCount = 1;
-    harken::Plan03GroupReserveStatus fillStatus =
-        harken::Plan03GroupReserveStatus::Committed;
-    for (std::uint16_t slice = 0;
-         fillStatus == harken::Plan03GroupReserveStatus::Committed;
-         ++slice) {
-        filler.sliceIndex = slice;
-        fillStatus = engine->timelinePool.ReservePlan03GroupSlice(
-            filler, engine->timelineArms);
-    }
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::PageGroupCapacity,
-              fillStatus);
+    QueueLaneCapacityPressure pressure(*engine);
+    ASSERT_TRUE(pressure.Place(successorFrame, 0, engine->config.maxPlan03GroupHeadersPerPage));
 
     harken::TimelineArmToken guardArm{};
     ASSERT_TRUE(engine->timelineArms.ReserveGrouped(
@@ -21894,18 +21791,23 @@ TEST(PlayableStart, SequenceQueuePageGroupPreflightHasZeroSuccessorMutation) {
         failedRow->queueInstance, &failed));
     EXPECT_EQ(harken::QueueFailureReason::TargetPreparationFailed,
               failed.failureReason);
-    EXPECT_FALSE(failedRow->queueArmGroup.Valid());
-    EXPECT_EQ(0u, failedRow->queueAbortedSuccessorOccurrence.generation);
-    EXPECT_FALSE(failedRow->queueSuccessorArm.Valid());
+    harken::ArmGroupSnapshot abandonedGroup{};
+    EXPECT_FALSE(engine->armGroups.Capture(failedRow->queueArmGroup, &abandonedGroup));
+    EXPECT_EQ(nullptr, engine->timelineArms.Resolve(failedRow->queueSuccessorArm));
+    EXPECT_EQ(nullptr, engine->voices.Resolve(failedRow->queueSuccessorRenderHandle));
     EXPECT_EQ(0u, failedRow->queueSuccessorScheduleLeafCount);
     EXPECT_EQ(groupBaseline, engine->armGroups.LiveCount());
-    EXPECT_EQ(occurrenceBaseline + 1u,
-              engine->timelineOccurrences.OccupiedCount());
     EXPECT_EQ(armBaseline + 1u, engine->timelineArms.LiveCount());
+    bool heardCurrent = false;
     for (std::uint32_t block = 0; block < 40; ++block) {
         ASSERT_EQ(VN_OK, Vn_Update());
         engine->nullBackend.Pump(1);
+        const auto* output = engine->nullBackend.LastBlock();
+        ASSERT_NE(nullptr, output);
+        for (std::uint32_t sample = 0; sample < 2u * config.blockFrames; ++sample)
+            heardCurrent = heardCurrent || output[sample] > 0.01f;
     }
+    EXPECT_TRUE(heardCurrent);
 
     EXPECT_EQ(queueBaseline, engine->queueInstances.LiveCount());
     EXPECT_EQ(decisionBaseline, engine->decisions.LiveCount());
@@ -21915,7 +21817,7 @@ TEST(PlayableStart, SequenceQueuePageGroupPreflightHasZeroSuccessorMutation) {
     harken::TimelineArmObservation guard{};
     ASSERT_TRUE(engine->timelineArms.Observe(guardArm, &guard));
     EXPECT_EQ(harken::ArmState::PendingApply, guard.state);
-    EXPECT_EQ(armBaseline - 1u, engine->timelineArms.LiveCount());
+    EXPECT_EQ(armBaseline, engine->timelineArms.LiveCount());
 }
 
 TEST(PlayableStart, SequenceQueueFailureCheckpointSavesLastEffectiveCurrent) {
