@@ -1175,17 +1175,17 @@ void ExpectVariableControlRetargetTree(
               row.variableControlDiscreteRetargetIncomingLeafCount);
     for (std::uint32_t index = 0; index < incomingLeafCount; ++index) {
         const auto leaf = engine.playableInstances.Classify(
-            row.variableControlRetargetIncoming.leaves[index].handle);
+            row.VariableControlRetargetIncoming().leaves[index].handle);
         ASSERT_TRUE(leaf.live);
         if (incomingKind != harken::PlayableKind::Track &&
             incomingKind != harken::PlayableKind::Piece) {
-            EXPECT_EQ(row.variableControlRetargetIncoming.leaves[index].handle,
+            EXPECT_EQ(row.VariableControlRetargetIncoming().leaves[index].handle,
                       row.variableControlDiscreteRetargetIncomingChild);
         } else {
-            EXPECT_NE(row.variableControlRetargetIncoming.leaves[index].handle,
+            EXPECT_NE(row.VariableControlRetargetIncoming().leaves[index].handle,
                       row.variableControlDiscreteRetargetIncomingChild);
         }
-        EXPECT_EQ(row.variableControlRetargetIncoming.leaves[index].epoch,
+        EXPECT_EQ(row.VariableControlRetargetIncoming().leaves[index].epoch,
                   leaf.scheduleEpoch);
         EXPECT_EQ(incomingKind == harken::PlayableKind::Track ||
                       incomingKind == harken::PlayableKind::Piece
@@ -1194,9 +1194,9 @@ void ExpectVariableControlRetargetTree(
                   leaf.parent);
         const auto& schedule =
             row.variableControlDiscreteRetargetEnteringSchedules[index];
-        EXPECT_EQ(row.variableControlRetargetIncoming.leaves[index].handle,
+        EXPECT_EQ(row.VariableControlRetargetIncoming().leaves[index].handle,
                   schedule.ownerInstance);
-        EXPECT_EQ(row.variableControlRetargetIncoming.leaves[index].epoch,
+        EXPECT_EQ(row.VariableControlRetargetIncoming().leaves[index].epoch,
                   schedule.ownerInstanceScheduleEpoch);
     }
 }
@@ -1213,7 +1213,7 @@ void ExpectVariableControlRetargetTreeRetired(
          index < row.variableControlDiscreteRetargetIncomingLeafCount;
          ++index) {
         EXPECT_FALSE(engine.playableInstances
-                         .Classify(row.variableControlRetargetIncoming.leaves[index].handle)
+                         .Classify(row.VariableControlRetargetIncoming().leaves[index].handle)
                          .live);
     }
 }
@@ -5230,7 +5230,7 @@ void ExpectScheduleCapacityVariableControlTransitionCompletes(
 
     harken::Plan03PageGroupView group{};
     ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
-        row->variableControlDiscreteRetargetSlice, &group));
+        row->VariableControlDiscreteRetargetSlice(), &group));
     ASSERT_EQ(63u, group.sourceControlCount);
     ASSERT_EQ(127u, group.memberCount);
     ASSERT_NE(nullptr, group.members);
@@ -8463,7 +8463,7 @@ static void CheckDelayedStopMatchEnteringNestedDecision(bool refuseLastArm) {
     for (std::uint32_t block = 0; block < 16 && !captured; ++block) {
         ASSERT_EQ(VN_OK, Vn_Update());
         if (row.variableControlDiscreteRetargetIncomingNestedVariableControlCount != 0) {
-            incoming = row.variableControlRetargetIncoming.controllers[0].decision;
+            incoming = row.VariableControlRetargetIncoming().controllers[0].decision;
             captured = incoming.Valid();
         }
         engine->nullBackend.Pump(1);
@@ -17683,7 +17683,7 @@ TEST(ActionFiringApi, VariableControlCleanupWaitsForAppliedLaneClaim) {
         ASSERT_EQ(VN_OK, Vn_Update());
     }
     ASSERT_EQ(harken::EnginePlayableStartPhase::Filed, row->phase);
-    const auto group = row->initialLaneDiscreteGroup;
+    const auto group = row->InitialLaneDiscreteGroup();
     const auto decision = row->variableControlDiscreteDecision;
     const auto armGroup = row->variableControlDiscreteArmGroup;
     ASSERT_TRUE(group.Exact());
@@ -17790,8 +17790,8 @@ TEST(ActionFiringApi,
     ASSERT_EQ(harken::EnginePlayableStartPhase::Filed, row->phase);
     ASSERT_GT(row->startFrame, originalStart);
     const auto finalStart = row->startFrame;
-    const auto discreteGroup = row->initialLaneDiscreteGroup;
-    const auto continuousGroup = row->initialLaneContinuousGroup;
+    const auto discreteGroup = row->InitialLaneDiscreteGroup();
+    const auto continuousGroup = row->InitialLaneContinuousGroup();
 
     std::uint64_t firstAudibleFrame = UINT64_MAX;
     for (std::uint32_t block = 0; block < 16; ++block) {
@@ -17894,7 +17894,7 @@ TEST(ActionFiringApi,
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_EQ(harken::EnginePlayableStartPhase::PendingImmediateEntry,
         row->phase);
-    const auto sideGroup = row->initialLaneDiscreteGroup;
+    const auto sideGroup = row->InitialLaneDiscreteGroup();
     ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
     EXPECT_FALSE(engine->runtimeRecreateRequired);
 
@@ -20030,7 +20030,7 @@ void ExpectImmediateVariableControlFutureLeafStopped(
         engine->ReadPlayableMember(base + 1u).arm, &secondArm);
     harken::Plan03PageGroupView groupView{};
     const bool groupResolved = engine->timelinePool.ResolvePlan03GroupSliceProducer(
-        row->initialLaneDiscreteGroup, &groupView);
+        row->InitialLaneDiscreteGroup(), &groupView);
     const auto leaseState = groupResolved && groupView.lease != nullptr
         ? groupView.lease->Capture().state : harken::AudioSliceState::Ready;
     EXPECT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state)
@@ -23529,8 +23529,8 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
             ASSERT_LE(injectedConsumerDebt, engine->timelinePool.PageCount());
             testing::Test::RecordProperty("injected_consumer_debt", std::to_string(injectedConsumerDebt));
         }
-        if (queueService->queueDeferredSource.member.service.Valid()) {
-            const auto& saved = queueService->queueDeferredSource;
+        if (queueService->QueueDeferredSource().member.service.Valid()) {
+            const auto& saved = queueService->QueueDeferredSource();
             EXPECT_EQ(memberReference.service.token, saved.member.service.token);
             EXPECT_EQ(memberReference.partitionGeneration, saved.member.partitionGeneration);
             EXPECT_EQ(innerLeaf, saved.member.leaf);
@@ -23640,7 +23640,7 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
             EXPECT_EQ(nullptr, engine->queueContinuationFinalOnsetHookForTest);
             EXPECT_TRUE(sourceProofOutlivedArm);
         }
-        EXPECT_FALSE(queueService->queueDeferredSource.member.service.Valid());
+        EXPECT_FALSE(queueService->QueueDeferredSource().member.service.Valid());
         EXPECT_EQ(successor, queueService->activeLeafInstance);
         const auto successorSource = CaptureOriginalSource(*engine, successor);
         const auto* sourceOwner = engine->sourceTerminals.Resolve(successorSource.token);
@@ -25827,22 +25827,22 @@ static void ExpectImmediateVariableControlNestedRetargetPromotesCompleteInstance
               engine->playableInstances.LiveCount());
     const auto incomingRoot = row->variableControlDiscreteRetargetIncomingChild;
     const auto nestedRoot =
-        row->variableControlRetargetIncoming.containers[0].handle;
+        row->VariableControlRetargetIncoming().containers[0].handle;
     const auto nestedChild =
-        row->variableControlRetargetIncoming.containers[1].handle;
+        row->VariableControlRetargetIncoming().containers[1].handle;
     ASSERT_EQ(incomingRoot, nestedRoot);
     ASSERT_EQ(row->rootInstance,
               engine->playableInstances.Classify(nestedRoot).parent);
     ASSERT_EQ(nestedRoot,
               engine->playableInstances.Classify(nestedChild).parent);
     const auto incomingLeaf =
-        row->variableControlRetargetIncoming.leaves[0].handle;
+        row->VariableControlRetargetIncoming().leaves[0].handle;
     ASSERT_EQ(nestedChild,
               engine->playableInstances.Classify(incomingLeaf).parent);
 
     ASSERT_EQ(1u, row->variableControlDiscreteRetargetIncomingNestedVariableControlCount);
     auto* nestedControlService = engine->ResolvePlayableService(
-        row->variableControlRetargetIncoming.controllers[0].service);
+        row->VariableControlRetargetIncoming().controllers[0].service);
     ASSERT_NE(nullptr, nestedControlService);
     EXPECT_EQ(nestedRoot, nestedControlService->ownerInstance);
     const auto resource = std::find_if(engine->playableServices.begin(), engine->playableServices.end(),
@@ -31083,7 +31083,7 @@ void ExpectImmediateVariableControlTransitionCompletesForCompositeTarget(
 
     harken::Plan03PageGroupView group{};
     ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
-        row->variableControlDiscreteRetargetSlice, &group));
+        row->VariableControlDiscreteRetargetSlice(), &group));
     EXPECT_EQ(1u, group.sourceControlCount);
 
     bool sourceExited = false;
@@ -31282,7 +31282,7 @@ void ExpectImmediateVariableControlTransitionCompletesForCompositeSource(
 
     harken::Plan03PageGroupView group{};
     ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
-        row->variableControlDiscreteRetargetSlice, &group));
+        row->VariableControlDiscreteRetargetSlice(), &group));
     EXPECT_EQ(2u, group.sourceControlCount);
     const std::uint64_t decisionFrame =
         row->variableControlDiscreteRetargetFrame;
@@ -31509,7 +31509,7 @@ void ExpectNaturalEndVariableControlTransitionUsesLatestCompositeSourceLeaf(
 
     harken::Plan03PageGroupView group{};
     ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
-        row->variableControlDiscreteRetargetSlice, &group));
+        row->VariableControlDiscreteRetargetSlice(), &group));
     EXPECT_EQ(2u, group.sourceControlCount);
 
     const std::uint64_t fadeStart = latestNaturalEnd - 1024u;
@@ -35218,8 +35218,8 @@ TEST(ActionFiringApi, DeferredQueueStopReleasesCompletionAfterSourceMigration) {
     harken::CompletionOwnerRef owner{};
     ASSERT_TRUE(engine.timelineOccurrences.CaptureCompletionOwner(occurrence, &owner));
     ASSERT_TRUE(harken::SameCompletionOwner(completion.owner, owner));
-    ASSERT_TRUE(queue->queueDeferredSource.service.Valid());
-    ASSERT_EQ(&*queue, engine.ResolvePlayableService(queue->queueDeferredSource.service));
+    ASSERT_TRUE(queue->QueueDeferredSource().service.Valid());
+    ASSERT_EQ(&*queue, engine.ResolvePlayableService(queue->QueueDeferredSource().service));
     std::size_t foreignSlot = 0;
     ASSERT_TRUE(engine.ResolvePlayableMemberSlot(queue->scheduleStorageBase, &foreignSlot));
     const auto& foreign = engine.ReadPlayableMember(foreignSlot);
@@ -40102,7 +40102,7 @@ void CaptureImmediateRootQueuePlay(bool direct,
     const VnObjectId expectedSound =
         successor == 8u ? CanonicalActionWorld::kSecondSound
                         : CanonicalActionWorld::kFirstSound;
-    ASSERT_EQ(expectedSound, row->queueSuccessorLeaf.stableId);
+    ASSERT_EQ(expectedSound, row->QueueSuccessorLeaf().stableId);
     trace.selectedOrdinals = {current, successor};
     trace.successorObserved = true;
     trace.successorOrdinal = successor;
@@ -40248,8 +40248,8 @@ TEST(ActionFiringApi,
     const auto defaultState = engine->emitters.DefaultState();
     EXPECT_EQ(static_cast<std::uint32_t>(defaultState), emitterQueue.emitterSlot);
     EXPECT_EQ(static_cast<std::uint32_t>(defaultState >> 32), emitterQueue.emitterGeneration);
-    EXPECT_EQ(emitterQueue.emitterSlot, emitterRow->queueCheckpointKey.emitterSlot);
-    EXPECT_EQ(emitterQueue.emitterGeneration, emitterRow->queueCheckpointKey.emitterGeneration);
+    EXPECT_EQ(emitterQueue.emitterSlot, emitterRow->QueueCheckpointKey().emitterSlot);
+    EXPECT_EQ(emitterQueue.emitterGeneration, emitterRow->QueueCheckpointKey().emitterGeneration);
     ASSERT_EQ(harken::PlayableControlStatus::Ok,
               harken::StopPlayable(*engine, emitterStarted.instance, 0));
     for (std::uint32_t block = 0; block < 128; ++block) {
@@ -40343,8 +40343,8 @@ void CheckDirectQueueContext(bool randomQueue, bool invalidIdentity) {
     const auto state = engine->emitters.DefaultState();
     EXPECT_EQ(static_cast<std::uint32_t>(state), queue.emitterSlot);
     EXPECT_EQ(static_cast<std::uint32_t>(state >> 32), queue.emitterGeneration);
-    EXPECT_EQ(queue.emitterSlot, row->queueCheckpointKey.emitterSlot);
-    EXPECT_EQ(queue.emitterGeneration, row->queueCheckpointKey.emitterGeneration);
+    EXPECT_EQ(queue.emitterSlot, row->QueueCheckpointKey().emitterSlot);
+    EXPECT_EQ(queue.emitterGeneration, row->QueueCheckpointKey().emitterGeneration);
     harkentest::Capture capture;
     for (unsigned block = 0; block < 128; ++block) {
         ASSERT_EQ(VN_OK, Vn_Update());
@@ -43845,9 +43845,9 @@ TEST(ActionFiringApi,
     EXPECT_EQ(expectedChild->playable.stableId,
               initialRow->leaf.stableId);
     EXPECT_EQ(expectedSeed.callerSeed,
-              initialRow->queueRandomSeed.callerSeed);
+              initialRow->QueueRandomSeed().callerSeed);
     EXPECT_EQ(expectedSeed.acceptedPostOrdinal,
-              initialRow->queueRandomSeed.acceptedPostOrdinal);
+              initialRow->QueueRandomSeed().acceptedPostOrdinal);
     bool observedFirst = false;
     bool observedSecond = false;
     const auto observeCurrent = [&]() {
@@ -43981,9 +43981,9 @@ TEST(ActionFiringApi,
     ASSERT_NE(std::end(image.queueChildren), expectedChild);
     EXPECT_EQ(expectedChild->playable.stableId, row->leaf.stableId);
     EXPECT_EQ(checkpoint.randomSeed.callerSeed,
-              row->queueRandomSeed.callerSeed);
+              row->QueueRandomSeed().callerSeed);
     EXPECT_EQ(checkpoint.randomSeed.acceptedPostOrdinal,
-              row->queueRandomSeed.acceptedPostOrdinal);
+              row->QueueRandomSeed().acceptedPostOrdinal);
     harken::QueueInstanceSnapshot queue{};
     ASSERT_TRUE(engine->queueInstances.Capture(row->queueInstance, &queue));
     EXPECT_EQ(checkpoint.effective.cursor, queue.logicMirror.cursor);
@@ -46200,13 +46200,13 @@ static void CheckPendingVariableControlAtActualPlacement(bool requireReselection
                     EXPECT_FALSE(actual.BeginRegisteredPendingVariableCohortReprepare(attempt, empty));
                     EXPECT_FALSE(actual.BeginRegisteredPendingVariableCohortReprepare(foreign, placement));
                     const auto oldPrimary = producer.frontierDescriptor.primary;
-                    const auto oldSide = producer.row->initialLaneDiscreteGroup;
+                    const auto oldSide = producer.row->InitialLaneDiscreteGroup();
                     producer.frontierDescriptor.primary = oldSide;
-                    producer.row->initialLaneDiscreteGroup = oldPrimary;
+                    producer.row->InitialLaneDiscreteGroup() = oldPrimary;
                     EXPECT_FALSE(actual.BeginRegisteredPendingVariableCohortReprepare(attempt, placement));
                     EXPECT_FALSE(mutableGroup.RepreparePending());
                     producer.frontierDescriptor.primary = oldPrimary;
-                    producer.row->initialLaneDiscreteGroup = oldSide;
+                    producer.row->InitialLaneDiscreteGroup() = oldSide;
                     ASSERT_TRUE(actual.BeginRegisteredPendingVariableCohortReprepare(attempt, placement));
                     EXPECT_TRUE(actual.MatchesRegisteredPendingVariableCohortReprepare(producer, attempt));
                     ASSERT_TRUE(actual.originalQueueGroupHolders[oldSide.committedRow].BorrowLifetime(
@@ -46239,13 +46239,13 @@ static void CheckPendingVariableControlAtActualPlacement(bool requireReselection
                     EXPECT_FALSE(actual.BeginPendingVariableGroupReprepare(producer, attempt, empty));
                     EXPECT_FALSE(actual.BeginPendingVariableGroupReprepare(producer, foreign, placement));
                     const auto oldPrimary = producer.frontierDescriptor.primary;
-                    const auto oldSide = producer.row->initialLaneDiscreteGroup;
+                    const auto oldSide = producer.row->InitialLaneDiscreteGroup();
                     producer.frontierDescriptor.primary = oldSide;
-                    producer.row->initialLaneDiscreteGroup = oldPrimary;
+                    producer.row->InitialLaneDiscreteGroup() = oldPrimary;
                     EXPECT_FALSE(actual.BeginPendingVariableGroupReprepare(producer, attempt, placement));
                     EXPECT_EQ(attempt.privateVcProducerCount != 0, mutableGroup.RepreparePending());
                     producer.frontierDescriptor.primary = oldPrimary;
-                    producer.row->initialLaneDiscreteGroup = oldSide;
+                    producer.row->InitialLaneDiscreteGroup() = oldSide;
                     for (std::uint32_t leaf = 0; leaf < mutableGroup.leafCount; ++leaf) {
                         harken::TimelineArmObservation retired{};
                         ASSERT_TRUE(actual.timelineArms.Observe(mutableGroup.leafArms[leaf], &retired));
@@ -46417,7 +46417,7 @@ static void CheckPendingVariableControlAtActualPlacement(bool requireReselection
                 groupLoan = std::move(placementProbe.registeredGroupLoan);
                 ASSERT_TRUE(groupLoan.Valid());
             } else if (sideProbe == 11 || sideProbe == 12) {
-                const auto identity = row->initialLaneDiscreteGroup;
+                const auto identity = row->InitialLaneDiscreteGroup();
                 ASSERT_TRUE(identity.Exact());
                 ASSERT_TRUE(engine.originalQueueGroupHolders[identity.committedRow].BorrowLifetime(&groupLoan));
             }
@@ -50053,9 +50053,9 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
                         candidate.generation == service->queueArmGroup.generation; }));
             }
             property("canonical_request_matches", engine.decisions.MatchesOpenReservation(
-                service->canonicalInitialQueueDecision, service->canonicalInitialQueueRequest) ||
+                service->canonicalInitialQueueDecision, service->CanonicalInitialQueueRequest()) ||
                 engine.decisions.MatchesCancelledReservation(
-                    service->canonicalInitialQueueDecision, service->canonicalInitialQueueRequest));
+                    service->canonicalInitialQueueDecision, service->CanonicalInitialQueueRequest()));
             property("transition_slot", service->queueTransition.slot);
             harken::TransitionInstanceSnapshot transition{};
             if (engine.transitionInstances.Capture(service->queueTransition, &transition)) {
@@ -50595,7 +50595,7 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
             EXPECT_NE(root.partition.slot, service->partition.slot);
             EXPECT_EQ(&root.Invocation(), &service->Invocation());
             EXPECT_EQ(root.ownerInstance, service->parentService.owner);
-            EXPECT_EQ(root.root.stableId, service->variableControlPropertyRoot.stableId);
+            EXPECT_EQ(root.root.stableId, service->VariableControlPropertyRoot().stableId);
             EXPECT_EQ(probe.bothSides ? 2u : 1u, service->variableControlChildCount);
             EXPECT_TRUE(service->variableControlIndependentFrontier);
             EXPECT_TRUE(child.variableControlNestedVariableControls[0].Valid());
@@ -53367,7 +53367,7 @@ TEST(ActionFiringApi, PendingVariableGroupZeroNativeQueueCancelsRetriesAndReturn
         limits.immediateFutureSides = static_cast<std::uint32_t>(std::min({
             static_cast<std::size_t>(producer.storage.queueRoleCapacity), producer.storage.queueFutureAttempts.size(),
             producer.storage.queueFutureOwners.size(), static_cast<std::size_t>(engine.config.maxPlayableInstances)}));
-        limits.propertyPrefixCount = producer.row->variableControlPropertyRoot.stableId != VnObjectId{}
+        limits.propertyPrefixCount = producer.row->VariableControlPropertyRoot().stableId != VnObjectId{}
             ? producer.row->selectionCount : 0;
         limits.seedPrefixCount = producer.storage.initialSelection.BoundFor(producer.storage.generation)
             ? producer.storage.initialSelection.prefixCount : 0;
@@ -58609,7 +58609,7 @@ TEST(ActionFiringApi,
     ASSERT_EQ(CanonicalActionWorld::kSecondSound,
               row->queueCurrentCompletion.program.stableId);
     ASSERT_EQ(CanonicalActionWorld::kFirstSound,
-              row->queueSuccessorLeaf.stableId);
+              row->QueueSuccessorLeaf().stableId);
     const VnVoiceHandle current = row->renderHandle;
     const VnVoiceHandle oldSuccessor = row->queueSuccessorRenderHandle;
     const harken::DecisionToken oldDecision = row->queueDecision;
@@ -58628,7 +58628,7 @@ TEST(ActionFiringApi,
     EXPECT_EQ(image.queueChildren[0].stableChildOrdinal,
               row->QueueNextState().currentChildOrdinal);
     EXPECT_EQ(CanonicalActionWorld::kFirstSound,
-              row->queueSuccessorLeaf.stableId);
+              row->QueueSuccessorLeaf().stableId);
     EXPECT_NE(0u, row->queueSuccessorRenderHandle);
     EXPECT_NE(oldSuccessor, row->queueSuccessorRenderHandle);
     harken::DecisionCommittedSnapshot oldSnapshot{};
@@ -62628,14 +62628,14 @@ TEST(ActionFiringApi, PreinitPageFutureAOneGraphPublishedAndRetired) {
     ASSERT_TRUE(row->variableControlDiscreteRetargetPrepared);
     harken::Plan03PageGroupView preparedGroup{};
     ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
-        row->variableControlDiscreteRetargetSlice, &preparedGroup));
+        row->VariableControlDiscreteRetargetSlice(), &preparedGroup));
     const auto future = preparedGroup.identity;
     const auto memberDecision = row->variableControlDiscreteRetargetDecision;
     const auto armGroup = row->variableControlDiscreteRetargetArmGroup;
     const auto targetArm = row->variableControlDiscreteRetargetGroupArms[0];
     const auto targetChild = row->variableControlDiscreteRetargetIncomingChild;
-    const auto targetLeaf = row->variableControlRetargetIncoming.leaves[0].handle;
-    const auto targetEpoch = row->variableControlRetargetIncoming.leaves[0].epoch;
+    const auto targetLeaf = row->VariableControlRetargetIncoming().leaves[0].handle;
+    const auto targetEpoch = row->VariableControlRetargetIncoming().leaves[0].epoch;
     ASSERT_TRUE(future.Exact());
     ASSERT_TRUE(memberDecision.Valid());
     ASSERT_TRUE(armGroup.Valid());
@@ -63077,14 +63077,14 @@ TEST(ActionFiringApi, PreinitPageFutureATwoGraphsSamePage) {
         first->variableControlDiscreteRetargetPrepared,
         second->variableControlDiscreteRetargetPrepared,
         static_cast<unsigned long long>(engine->mixer.BlocksRendered()),
-        first->variableControlDiscreteRetargetSlice.committedRow,
-        second->variableControlDiscreteRetargetSlice.committedRow);
+        first->VariableControlDiscreteRetargetSlice().committedRow,
+        second->VariableControlDiscreteRetargetSlice().committedRow);
     ASSERT_TRUE(bothPrepared);
     for (std::size_t index = 0; index < graphs.size(); ++index) {
         auto* row = serviceRow(graphs[index].root);
         harken::Plan03PageGroupView prepared{};
         ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
-            row->variableControlDiscreteRetargetSlice, &prepared));
+            row->VariableControlDiscreteRetargetSlice(), &prepared));
         graphs[index].future = prepared.identity;
         ASSERT_TRUE(graphs[index].future.Exact());
         std::fprintf(stderr, "A2 future graph=%zu q=%llu generation=%llu row=%zu\n",
@@ -63127,8 +63127,8 @@ TEST(ActionFiringApi, PreinitPageFutureATwoGraphsSamePage) {
         graph.decision = row->variableControlDiscreteRetargetDecision;
         graph.armGroup = row->variableControlDiscreteRetargetArmGroup;
         graph.arm = row->variableControlDiscreteRetargetGroupArms[0];
-        graph.targetLeaf = row->variableControlRetargetIncoming.leaves[0].handle;
-        graph.targetEpoch = row->variableControlRetargetIncoming.leaves[0].epoch;
+        graph.targetLeaf = row->VariableControlRetargetIncoming().leaves[0].handle;
+        graph.targetEpoch = row->VariableControlRetargetIncoming().leaves[0].epoch;
         ASSERT_TRUE(graph.decision.Valid());
         ASSERT_TRUE(graph.armGroup.Valid());
         ASSERT_TRUE(graph.arm.Valid());
@@ -63642,14 +63642,14 @@ TEST(ActionFiringApi, PreinitPageFutureAFourGraphsTwoPages) {
             first->variableControlDiscreteRetargetPrepared,
             second->variableControlDiscreteRetargetPrepared,
             static_cast<unsigned long long>(engine->mixer.BlocksRendered()),
-            first->variableControlDiscreteRetargetSlice.committedRow,
-            second->variableControlDiscreteRetargetSlice.committedRow);
+            first->VariableControlDiscreteRetargetSlice().committedRow,
+            second->VariableControlDiscreteRetargetSlice().committedRow);
         ASSERT_TRUE(bothPrepared);
         for (std::size_t index = 0; index < pair.size(); ++index) {
             auto* row = serviceRow(pair[index]->root);
             harken::Plan03PageGroupView prepared{};
             ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
-                row->variableControlDiscreteRetargetSlice, &prepared));
+                row->VariableControlDiscreteRetargetSlice(), &prepared));
             pair[index]->future = prepared.identity;
             ASSERT_TRUE(pair[index]->future.Exact());
             std::fprintf(stderr, "A4 future graph=%zu q=%llu generation=%llu row=%zu\n",
@@ -63694,8 +63694,8 @@ TEST(ActionFiringApi, PreinitPageFutureAFourGraphsTwoPages) {
             graph.decision = row->variableControlDiscreteRetargetDecision;
             graph.armGroup = row->variableControlDiscreteRetargetArmGroup;
             graph.arm = row->variableControlDiscreteRetargetGroupArms[0];
-            graph.targetLeaf = row->variableControlRetargetIncoming.leaves[0].handle;
-            graph.targetEpoch = row->variableControlRetargetIncoming.leaves[0].epoch;
+            graph.targetLeaf = row->VariableControlRetargetIncoming().leaves[0].handle;
+            graph.targetEpoch = row->VariableControlRetargetIncoming().leaves[0].epoch;
             ASSERT_TRUE(graph.decision.Valid());
             ASSERT_TRUE(graph.armGroup.Valid());
             ASSERT_TRUE(graph.arm.Valid());
@@ -64267,7 +64267,7 @@ TEST(ActionFiringApi, PreinitPageFutureAFourGraphsAdjacentF2Period144) {
                     row->variableControlDiscreteRetargetFrame),
                 static_cast<unsigned long long>(
                     row->variableControlDiscreteNextEvaluationFrame),
-                row->variableControlDiscreteRetargetSlice.committedRow);
+                row->VariableControlDiscreteRetargetSlice().committedRow);
         }
         if (allPrepared) break;
         const auto rendered = engine->mixer.BlocksRendered();
@@ -64287,7 +64287,7 @@ TEST(ActionFiringApi, PreinitPageFutureAFourGraphsAdjacentF2Period144) {
         ASSERT_NE(nullptr, row);
         harken::Plan03PageGroupView prepared{};
         ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
-            row->variableControlDiscreteRetargetSlice, &prepared));
+            row->VariableControlDiscreteRetargetSlice(), &prepared));
         graphs[index].future = prepared.identity;
         ASSERT_TRUE(graphs[index].future.Exact());
         groupQuanta[index] = graphs[index].future.absoluteQuantum;
@@ -64365,8 +64365,8 @@ TEST(ActionFiringApi, PreinitPageFutureAFourGraphsAdjacentF2Period144) {
         graph.decision = row->variableControlDiscreteRetargetDecision;
         graph.armGroup = row->variableControlDiscreteRetargetArmGroup;
         graph.arm = row->variableControlDiscreteRetargetGroupArms[0];
-        graph.targetLeaf = row->variableControlRetargetIncoming.leaves[0].handle;
-        graph.targetEpoch = row->variableControlRetargetIncoming.leaves[0].epoch;
+        graph.targetLeaf = row->VariableControlRetargetIncoming().leaves[0].handle;
+        graph.targetEpoch = row->VariableControlRetargetIncoming().leaves[0].epoch;
         ASSERT_TRUE(graph.decision.Valid());
         ASSERT_TRUE(graph.armGroup.Valid());
         ASSERT_TRUE(graph.arm.Valid());
@@ -65630,7 +65630,7 @@ static void RunP100FullLoadFixture(P100FullLoadArenaTrial* arenaTrial) {
                     row->variableControlDiscreteRetargetFrame),
                 static_cast<unsigned long long>(
                     row->variableControlDiscreteNextEvaluationFrame),
-                row->variableControlDiscreteRetargetSlice.committedRow);
+                row->VariableControlDiscreteRetargetSlice().committedRow);
         }
         if (allPrepared) break;
         const auto rendered = engine->mixer.BlocksRendered();
@@ -65699,7 +65699,7 @@ static void RunP100FullLoadFixture(P100FullLoadArenaTrial* arenaTrial) {
         ASSERT_NE(nullptr, row);
         harken::Plan03PageGroupView prepared{};
         ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
-            row->variableControlDiscreteRetargetSlice, &prepared));
+            row->VariableControlDiscreteRetargetSlice(), &prepared));
         graphs[index].future = prepared.identity;
         ASSERT_TRUE(graphs[index].future.Exact());
         groupQuanta[index] = graphs[index].future.absoluteQuantum;
@@ -65901,8 +65901,8 @@ static void RunP100FullLoadFixture(P100FullLoadArenaTrial* arenaTrial) {
         ASSERT_EQ(graph.emitter, row->variableControlEmitter);
         ASSERT_TRUE(row->frontierLifetimeEntry == graph.entry);
         ASSERT_TRUE(row->frontierLifetimePin.Valid());
-        graph.targetLeaf = row->variableControlRetargetIncoming.leaves[0].handle;
-        graph.targetEpoch = row->variableControlRetargetIncoming.leaves[0].epoch;
+        graph.targetLeaf = row->VariableControlRetargetIncoming().leaves[0].handle;
+        graph.targetEpoch = row->VariableControlRetargetIncoming().leaves[0].epoch;
         ASSERT_NE(0u, graph.targetLeaf);
         ASSERT_NE(0u, graph.targetEpoch);
         ASSERT_EQ(0u, row->variableControlDiscreteRetargetSourceMemberCount);

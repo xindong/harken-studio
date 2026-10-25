@@ -233,7 +233,7 @@ std::size_t Engine::ActionPlayDynamicBytes() const noexcept {
     for (const auto& row : playableServices) {
         bytes += row.FeatureArrayStorageBytes() + column(row.memberPrograms) + column(row.members) + column(row.variableControlRetargetMembers) +
             row.variableControlMemberWeights.StorageBytes() + row.variableControlInitialArms.StorageBytes() +
-            row.variableControlRetargetIncoming.StorageBytes() +
+            (row.HasFeatureArrays() ? row.VariableControlRetargetIncoming().StorageBytes() : 0u) +
             column(row.variableControlControllers) + column(row.variableControlContainers) +
             column(row.variableControlDiscreteRetargetGroupArms) +
             column(row.variableControlDiscreteRetargetPayloads) +
@@ -2185,7 +2185,7 @@ bool CommitFrontierQueueCurrentOwner(void* opaque, std::uint64_t ticket) noexcep
             !SameCanonicalDecision(row->initialQueueEntryDecision, current.canonicalDecision)) return false;
         current.canonicalTicket = ticket;
         current.canonicalRequest.ticket = {ticket};
-        row->canonicalInitialQueueRequest = current.canonicalRequest;
+        row->CanonicalInitialQueueRequest() = current.canonicalRequest;
         current.canonicalProgress = harken::EngineInitialQueueDecisionProgress::PrivateOpen;
     }
     row->queueTicket = ticket;
@@ -3760,7 +3760,7 @@ bool CancelInitialVariableControlArmGroups(harken::Engine& engine,
             const auto count = side == harken::VariableControlSide::Discrete
                 ? row.variableControlInitialDiscreteMemberCount : row.variableControlInitialContinuousMemberCount;
             auto& receipt = side == harken::VariableControlSide::Discrete
-                ? row.variableControlDiscreteGroupCancellation : row.variableControlContinuousGroupCancellation;
+                ? row.VariableControlDiscreteGroupCancellation() : row.VariableControlContinuousGroupCancellation();
             harken::VariableControlInstanceSnapshot instance{};
             const bool liveInstance = engine.variableControlInstances.Capture(row.variableControlInstance, &instance);
             if (snapshot.parent.slot != decision.slot || snapshot.parent.generation != decision.generation ||
@@ -10849,9 +10849,9 @@ bool PrepareQueueInstanceOwner(harken::Engine& engine, harken::EngineQueueInstan
     service.queueContainerStableId = program.containerStableId;
     service.queueProgramSemanticFingerprint = program.programSemanticFingerprint;
     service.queueResumePosition = program.resumePosition != 0;
-    service.queueCheckpointKey = {create.world, create.containerStableId, create.programSemanticFingerprint,
+    service.QueueCheckpointKey() = {create.world, create.containerStableId, create.programSemanticFingerprint,
         create.resetEpoch, create.emitterSlot, create.emitterGeneration};
-    service.queueRandomSeed = seed;
+    service.QueueRandomSeed() = seed;
     service.queueRandomSeedValid = program.mode == harken::ContainerModeV1::RandomQueue;
     service.queueNaturalEnd = !hasSuccessor;
     service.queueSignalOnlyNoOverlap = hasSuccessor;
@@ -12390,7 +12390,7 @@ bool TransferActiveQueueArrival(
     if (!bankOwnsGroup) return false;
     const bool canonical = SameCanonicalDecision(row.canonicalInitialQueueDecision, decision);
     if (canonical) {
-        const auto& request = row.canonicalInitialQueueRequest;
+        const auto& request = row.CanonicalInitialQueueRequest();
         harken::TransitionInstanceSnapshot transition{};
         if (!row.InvocationValid() || request.sliceCount != 2 || committed.sliceCount != 2 ||
             request.world != row.Invocation().worldGeneration ||
@@ -12545,7 +12545,7 @@ bool TransferCanonicalQueueRetirement(harken::Engine& engine,
     const auto retirePending = [&]() noexcept {
         harken::QueueInstanceSnapshot queue{};
         if (!row.queueInstance.Valid() || !engine.queueInstances.Capture(row.queueInstance, &queue) ||
-            queue.rootInstance != row.ownerInstance || queue.world != row.canonicalInitialQueueRequest.world) return false;
+            queue.rootInstance != row.ownerInstance || queue.world != row.CanonicalInitialQueueRequest().world) return false;
         if (arrival) {
             if (SameCanonicalDecision(row.queueDecision, decision)) return false;
             if (queue.pendingVersion == 0) return !row.queueConditional.Valid();
@@ -12575,7 +12575,7 @@ bool TransferCanonicalQueueRetirement(harken::Engine& engine,
         harken::DecisionCommittedSnapshot committed{};
         harken::ArmGroupSnapshot arms{};
         harken::TransitionInstanceSnapshot gate{};
-        const auto& request = row.canonicalInitialQueueRequest;
+        const auto& request = row.CanonicalInitialQueueRequest();
         const bool actualCommitted = engine.decisions.CaptureCommitted(decision, &committed);
         const bool actualCancellation = engine.decisions.MatchesOpenReservation(decision, request) ||
             engine.decisions.MatchesCancelledReservation(decision, request);
@@ -13468,7 +13468,7 @@ bool ReleaseQueueStopNativeOccupancy(
     if (GuardQueueCancellationSlices(
             engine, row, harken::AudioSliceInvalidateReason::Cancel, true) !=
         QueueCancellationLeaseStatus::Clear) return false;
-    row.queueDeferredSource = {};
+    if (row.HasFeatureArrays()) row.QueueDeferredSource() = {};
     const auto clearSingleCompletion =
         [&](VnVoiceHandle render, harken::KnownCompletionPredicateV1& completion) {
             if (completion.owner.kind != harken::CompletionOwnerKind::SingleQueue) {
@@ -16749,7 +16749,7 @@ harken::PlayableStartStatus BuildVariableControlScheduleLeafStart(
     harken::Engine& engine, const WorldView& world,
     const harken::EnginePlayableServiceRow& row,
     MaterializedScheduleLeaf materialized, PreparedScheduleLeafStart* out) noexcept {
-    const bool inherited = row.variableControlPropertyRoot.stableId != VnObjectId{};
+    const bool inherited = row.VariableControlPropertyRoot().stableId != VnObjectId{};
     if (inherited) {
         if (row.selectionCount > materialized.selectedOrdinals.size() - materialized.selectionCount)
             return harken::PlayableStartStatus::Capacity;
@@ -16763,7 +16763,7 @@ harken::PlayableStartStatus BuildVariableControlScheduleLeafStart(
         std::copy_n(row.selectedChildOrdinals.begin(), row.selectionCount, materialized.selectedOrdinals.begin());
         materialized.selectionCount += row.selectionCount;
     }
-    const auto& root = inherited ? row.variableControlPropertyRoot : row.root;
+    const auto& root = inherited ? row.VariableControlPropertyRoot() : row.root;
     if constexpr (std::is_same_v<WorldView, harken::PackPlaybackView>)
         return BuildScheduleLeafStart(engine, world, root, materialized, row.Invocation().packLease, out);
     else return BuildScheduleLeafStart(engine, world, root, materialized, out);
@@ -16783,13 +16783,13 @@ bool SetNestedVariableControlPropertyPath(harken::EnginePlayableServiceRow& serv
         reverse[count++] = policyIndex;
         policyIndex = node.parentIndex;
     }
-    const bool inherited = parent.variableControlPropertyRoot.stableId != VnObjectId{};
+    const bool inherited = parent.VariableControlPropertyRoot().stableId != VnObjectId{};
     const auto prefix = inherited ? parent.selectionCount : 0u;
     const auto suffix = count + static_cast<std::uint32_t>(includeSelectedChild);
     if (count == 0 || suffix > service.selectedChildOrdinals.size() ||
         prefix > service.selectedChildOrdinals.size() - suffix ||
         prefix > parent.containerInstanceCount || parent.ownerInstance == 0) return false;
-    const auto root = inherited ? parent.variableControlPropertyRoot : parent.root;
+    const auto root = inherited ? parent.VariableControlPropertyRoot() : parent.root;
     service.selectionPath.Clear();
     service.selectedChildOrdinals.Clear();
     service.containerInstances.Clear();
@@ -16812,7 +16812,7 @@ bool SetNestedVariableControlPropertyPath(harken::EnginePlayableServiceRow& serv
     }
     service.selectionCount = service.containerInstanceCount = prefix + suffix;
     if (includeSelectedChild) service.root = root;
-    else service.variableControlPropertyRoot = root;
+    else service.VariableControlPropertyRoot() = root;
     return true;
 }
 
@@ -21484,7 +21484,7 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
         row.parentService = PlayableServiceReference(*continuationParent);
     }
     if (propertyPrefixCount != 0) {
-        row.variableControlPropertyRoot = propertyRoot;
+        row.VariableControlPropertyRoot() = propertyRoot;
         row.selectionCount = propertyPrefixCount;
         std::copy_n(propertyPrefix, propertyPrefixCount, row.selectedChildOrdinals.begin());
         row.containerInstanceCount = propertyPrefixCount;
@@ -23829,7 +23829,6 @@ engine.runtimeRecreateRequired = true;
                 &scratch->variableControlOuterContainerRow)) {
             ok = false;
         } else {
-            row.variableControlOuterContainerRowCommitted = true;
             const auto child = initialChildOf(outer);
             if (child == 0) {
                 ok = false;
@@ -23998,8 +23997,8 @@ engine.runtimeRecreateRequired = true;
                 decision.slot == service.variableControlDiscreteDecision.slot &&
                 decision.generation == service.variableControlDiscreteDecision.generation;
             auto& identity = discrete
-                ? service.initialLaneDiscreteGroup
-                : service.initialLaneContinuousGroup;
+                ? service.InitialLaneDiscreteGroup()
+                : service.InitialLaneContinuousGroup();
             auto& held = scratch->privateInitialVcPageCohort;
             if (&service == &row && held.backing ==
                     harken::EngineActionPlayScratch::PrivateInitialVcPageCohort::Backing::ImmediateLane &&
@@ -25567,13 +25566,13 @@ QueueContinuationPrepareStatus PrepareCompositeQueueContinuation(
     }
     if (materialized.leafCount != 0) {
         const auto& member = *engine.FindQueueProgramMember(starts.QueueBank(), 0);
-        row.queueSuccessorLeaf = member.leaf;
+        row.QueueSuccessorLeaf() = member.leaf;
         row.queueSuccessorArm = member.arm;
         row.queueMonitorSelection = member.monitorSelection;
         row.queueSuccessorRenderHandle = member.render;
         row.queueSuccessorTailFrames = member.postSourceTailFrames;
     } else {
-        row.queueSuccessorLeaf = {};
+        row.QueueSuccessorLeaf() = {};
         row.queueSuccessorArm = {};
         row.queueSuccessorRenderHandle = 0;
         row.queueSuccessorTailFrames = 0;
@@ -26216,7 +26215,7 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
         harken::QueueSequenceStepStatus step =
             harken::QueueSequenceStepStatus::Invalid;
         if (!ResolveSharedQueueFrontier(
-                engine, program, row.queueRandomSeed,
+                engine, program, row.QueueRandomSeed(),
                 program.mode == harken::ContainerModeV1::RandomQueue,
                 &current, &resetInitial, &resolvedNext, &ignored, &step) ||
             step != harken::QueueSequenceStepStatus::Successor) {
@@ -26227,14 +26226,14 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
     PreparedQueueProjection projection(engine);
     if (!projection.Resolve(world, packQueue ? &row.Invocation().packPlaybackView : nullptr,
             packQueue ? row.Invocation().packLease.compositeGeneration : world.generation,
-            row, program, row.queueRandomSeed, current, &next, !sourceAlreadyRetired)) return QueueContinuationPrepareStatus::Failed;
+            row, program, row.QueueRandomSeed(), current, &next, !sourceAlreadyRetired)) return QueueContinuationPrepareStatus::Failed;
     harken::EffectiveQueueState afterNext{};
     harken::EffectiveQueueState resetAfterNext{};
     const harken::ContainerChildProgramViewV2* child = nullptr;
     harken::QueueSequenceStepStatus afterNextStatus =
         harken::QueueSequenceStepStatus::Invalid;
     if (!ResolveSharedQueueFrontier(
-            engine, program, row.queueRandomSeed,
+            engine, program, row.QueueRandomSeed(),
             program.mode == harken::ContainerModeV1::RandomQueue, &next,
             &resetAfterNext, &afterNext, &child, &afterNextStatus) ||
         child == nullptr ||
@@ -26703,7 +26702,7 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
         }
         return QueueContinuationPrepareStatus::Failed;
     }
-    row.queueSuccessorLeaf = cut.leaf;
+    row.QueueSuccessorLeaf() = cut.leaf;
     row.queueSuccessorArm = installed.armToken;
     row.queueMonitorSelection = installed.monitorSelection;
     row.queueSuccessorRenderHandle = installed.renderHandle;
@@ -27223,7 +27222,7 @@ QueueContinuationPrepareStatus PrepareQueueContinuation(
         harken::QueueSequenceStepStatus step =
             harken::QueueSequenceStepStatus::Invalid;
         if (!ResolveSharedQueueFrontier(
-                engine, program, row.queueRandomSeed,
+                engine, program, row.QueueRandomSeed(),
                 program.mode == harken::ContainerModeV1::RandomQueue,
                 &current, &resetInitial, &resolvedNext, &ignored, &step)) {
             return QueueContinuationPrepareStatus::Failed;
@@ -27924,8 +27923,8 @@ bool PrepareFrontierContainerPath(
         if (service == nullptr) return false;
         service->selectionPath = result.path;
         if (!service->variableControlInstance.Valid()) {
-            service->root = parentService.variableControlPropertyRoot.stableId != VnObjectId{}
-                ? parentService.variableControlPropertyRoot : parentService.root;
+            service->root = parentService.VariableControlPropertyRoot().stableId != VnObjectId{}
+                ? parentService.VariableControlPropertyRoot() : parentService.root;
             service->selectedChildOrdinals = result.ordinals;
             service->selectionCount = result.selectionCount;
         }
@@ -27978,7 +27977,7 @@ bool PrepareVariableControlChildFrontier(harken::Engine& engine, const WorldView
         else return world.identity.runtimeSemanticFingerprint;
     }();
     PreparedFrontierPath path{};
-    const auto prefix = row.variableControlPropertyRoot.stableId != VnObjectId{} ? row.selectionCount : 0u;
+    const auto prefix = row.VariableControlPropertyRoot().stableId != VnObjectId{} ? row.selectionCount : 0u;
     if (prefix > path.path.size() - pathLeaf.selectionCount || prefix > row.containerInstanceCount) return false;
     path.adoptedSelectionCount = prefix + pathLeaf.selectionCount;
     std::copy_n(row.selectionPath.begin(), prefix, path.path.begin());
@@ -28179,7 +28178,7 @@ QueueContinuationPrepareStatus StartSignalOnlyNoOverlapSuccessor(
         harken::QueueSequenceStepStatus step =
             harken::QueueSequenceStepStatus::Invalid;
         if (!ResolveSharedQueueFrontier(
-                engine, program, row.queueRandomSeed,
+                engine, program, row.QueueRandomSeed(),
                 program.mode == harken::ContainerModeV1::RandomQueue,
                 &current, &resetInitial, &resolvedNext, &ignored, &step) ||
             step != harken::QueueSequenceStepStatus::Successor) {
@@ -28193,7 +28192,7 @@ QueueContinuationPrepareStatus StartSignalOnlyNoOverlapSuccessor(
     harken::QueueSequenceStepStatus afterNextStatus =
         harken::QueueSequenceStepStatus::Invalid;
     if (!ResolveSharedQueueFrontier(
-            engine, program, row.queueRandomSeed,
+            engine, program, row.QueueRandomSeed(),
             program.mode == harken::ContainerModeV1::RandomQueue, &next,
             &resetAfterNext, &afterNext, &child, &afterNextStatus) ||
         child == nullptr ||
@@ -28508,7 +28507,7 @@ engine.runtimeRecreateRequired = true;
     row.frontierCoordinatorGroup = scratch.frontierCoordinatorGroup;
     row.frontierArmPin = std::move(scratch.frontierArmPin);
     row.queueCurrentCompletion = {};
-    row.queueSuccessorLeaf = cut.leaf;
+    row.QueueSuccessorLeaf() = cut.leaf;
     row.queueSuccessorArm = installed.armToken;
     row.queueMonitorSelection = installed.monitorSelection;
     row.queueSuccessorRenderHandle = installed.renderHandle;
@@ -28628,21 +28627,21 @@ QueueContinuationPrepareStatus PromoteNestedQueueParent(
     const harken::QueueSequenceStepStatus parentStep =
         parentReset
             ? harken::QueueSequenceStepStatus::Successor
-            : ResolveQueueStep(engine, *program, row.queueParentRandomSeed,
+            : ResolveQueueStep(engine, *program, row.QueueParentRandomSeed(),
                                parentCurrent, &parentNext);
     if (parentStep == harken::QueueSequenceStepStatus::Invalid) return QueueContinuationPrepareStatus::Failed;
     const harken::QueueInstanceToken nested = row.queueInstance;
     const auto stagedFields = [&]() {
         return std::tie(row.queueInstance, row.queueParentInstance, row.queueContainerStableId,
-            row.queueProgramSemanticFingerprint, row.queueCheckpointKey, row.queueRandomSeed,
+            row.queueProgramSemanticFingerprint, row.QueueCheckpointKey(), row.QueueRandomSeed(),
             row.queueRandomSeedValid, row.queueResumePosition, row.queueNestedParentPending,
             row.queueNaturalEnd, row.queueFinalSourceTombstoned, row.queueSignalOnlyNoOverlap,
             row.queueDeferredNeedsFullPreparation, row.queueContinuationPrepared,
             row.queueDecisionCommitted, row.queueCurrentCompletion, row.queueDecision,
             row.queueConditional, row.queueParentContainerStableId,
-            row.queueParentProgramSemanticFingerprint, row.queueParentCheckpointKey,
+            row.queueParentProgramSemanticFingerprint, row.QueueParentCheckpointKey(),
             row.QueueParentInitialState(), row.QueueParentResetInitialState(),
-            row.queueParentRandomSeed, row.queueParentRandomSeedValid, row.queueParentResumePosition);
+            row.QueueParentRandomSeed(), row.queueParentRandomSeedValid, row.queueParentResumePosition);
     };
     const auto original = std::apply([](const auto&... fields) { return std::tuple{fields...}; }, stagedFields());
     row.queueInstance = row.queueParentInstance;
@@ -28650,8 +28649,8 @@ QueueContinuationPrepareStatus PromoteNestedQueueParent(
     row.queueContainerStableId = row.queueParentContainerStableId;
     row.queueProgramSemanticFingerprint =
         row.queueParentProgramSemanticFingerprint;
-    row.queueCheckpointKey = row.queueParentCheckpointKey;
-    row.queueRandomSeed = row.queueParentRandomSeed;
+    row.QueueCheckpointKey() = row.QueueParentCheckpointKey();
+    row.QueueRandomSeed() = row.QueueParentRandomSeed();
     row.queueRandomSeedValid = row.queueParentRandomSeedValid;
     row.queueResumePosition = row.queueParentResumePosition;
     row.queueNestedParentPending = false;
@@ -28666,10 +28665,10 @@ QueueContinuationPrepareStatus PromoteNestedQueueParent(
     row.queueConditional = {};
     row.queueParentContainerStableId = {};
     row.queueParentProgramSemanticFingerprint = 0;
-    row.queueParentCheckpointKey = {};
+    row.QueueParentCheckpointKey() = {};
     row.QueueParentInitialState() = {};
     row.QueueParentResetInitialState() = {};
-    row.queueParentRandomSeed = {};
+    row.QueueParentRandomSeed() = {};
     row.queueParentRandomSeedValid = false;
     row.queueParentResumePosition = false;
     if (parentStep == harken::QueueSequenceStepStatus::NaturalEnd) {
@@ -30776,7 +30775,7 @@ bool ActivateVariableControlNestedQueueSuccessor(
         ? successorMember != nullptr ? &successorMember->voice : nullptr
         : engine.ResolvePlayableServiceVoice(row);
     if (captured == nullptr || !captured->Valid() || captured->Facts().soundId !=
-            (successorPending ? row.queueSuccessorLeaf.stableId : row.leaf.stableId)) return false;
+            (successorPending ? row.QueueSuccessorLeaf().stableId : row.leaf.stableId)) return false;
     const bool existingMember = engine.FindPlayableMember(memberSlot) != nullptr;
     if (ownsQueue) {
         if (!existingMember) return false;
@@ -30801,7 +30800,7 @@ bool ActivateVariableControlNestedQueueSuccessor(
     engine.MutablePlayableMember(memberSlot).startFrame = successorPending
         ? row.queueSuccessorSchedule.entryAnchorFrame : row.startFrame;
     engine.MutablePlayableMember(memberSlot).voice = captured->Share();
-    engine.MutablePlayableMember(memberSlot).leaf = successorPending ? row.queueSuccessorLeaf : row.leaf;
+    engine.MutablePlayableMember(memberSlot).leaf = successorPending ? row.QueueSuccessorLeaf() : row.leaf;
     engine.MutablePlayableMember(memberSlot).release = source->release;
     engine.SetPlayableMemberCompletion(memberSlot,
         {successor, view.scheduleEpoch,
@@ -30834,8 +30833,8 @@ bool VariableControlDiscreteTargetStarted(
     const auto arm = engine.ReadPlayableMember(slot).arm;
     const auto& member = engine.ReadPlayableMember(slot).completion;
     if (!arm.Valid() || member.leafInstance == 0 || member.leafEpoch == 0 ||
-        member.leafInstance != row.variableControlRetargetIncoming.leaves[index].handle ||
-        member.leafEpoch != row.variableControlRetargetIncoming.leaves[index].epoch) return false;
+        member.leafInstance != row.VariableControlRetargetIncoming().leaves[index].handle ||
+        member.leafEpoch != row.VariableControlRetargetIncoming().leaves[index].epoch) return false;
     const auto* entering = engine.voices.Resolve(render);
     if (entering != nullptr && !entering->timelineGated) return true;
     return member.completedSource.kind == harken::SourceTerminalKind::Natural &&
@@ -30860,7 +30859,7 @@ bool PromoteVariableControlDiscreteRetargetSubtree(
         row.variableControlDiscreteRetargetIncomingNestedCount;
     const auto incomingContainerCount =
         row.variableControlDiscreteRetargetIncomingContainerCount;
-    const auto& incoming = row.variableControlRetargetIncoming;
+    const auto& incoming = row.VariableControlRetargetIncoming();
     if (incomingRoot == 0 ||
         incomingLeafCount > incoming.leaves.size() ||
         incomingNestedCount > incoming.nestedInstances.size() ||
@@ -30888,11 +30887,11 @@ bool PromoteVariableControlDiscreteRetargetSubtree(
                 !VariableControlDiscreteTargetStarted(engine, row, index, engine.mixer.BlocksRendered()) ||
                 !engine.ReadPlayableMember(slot).completion.resourcesRetired ||
                 engine.playableInstances.Classify(
-                    row.variableControlRetargetIncoming.leaves[index].handle).live) return false;
+                    row.VariableControlRetargetIncoming().leaves[index].handle).live) return false;
         }
         for (std::uint32_t index = 0; index < incomingNestedCount; ++index) {
             if (engine.playableInstances.Classify(
-                    row.variableControlRetargetIncoming.nestedInstances[index]).live) return false;
+                    row.VariableControlRetargetIncoming().nestedInstances[index]).live) return false;
         }
     }
     const auto outgoingRoot = row.variableControlChildCount == 0
@@ -30940,18 +30939,18 @@ engine.runtimeRecreateRequired = true;
         row.variableControlDiscreteRetargetIncomingNestedVariableControlCount;
     row.variableControlNestedVariableControlCount =
         incomingNestedVariableControlCount;
-    row.variableControlControllers.swap(row.variableControlRetargetIncoming.controllers);
-    row.variableControlContainers.swap(row.variableControlRetargetIncoming.containers);
+    row.variableControlControllers.swap(row.VariableControlRetargetIncoming().controllers);
+    row.variableControlContainers.swap(row.VariableControlRetargetIncoming().containers);
     row.variableControlDiscreteRetargetIncomingNestedVariableControlCount = 0;
     row.variableControlDiscreteRetargetIncomingContainerCount = 0;
     for (std::uint32_t index = 0; index < incomingLeafCount; ++index) {
         row.variableControlLeafInstances[index] =
             engine.playableInstances.Classify(
-                row.variableControlRetargetIncoming.leaves[index].handle).live
-                ? row.variableControlRetargetIncoming.leaves[index].handle : 0;
+                row.VariableControlRetargetIncoming().leaves[index].handle).live
+                ? row.VariableControlRetargetIncoming().leaves[index].handle : 0;
         row.variableControlLeafEpochs[index] =
             row.variableControlLeafInstances[index] != 0
-                ? row.variableControlRetargetIncoming.leaves[index].epoch : 0;
+                ? row.VariableControlRetargetIncoming().leaves[index].epoch : 0;
     }
     for (std::uint32_t index = incomingLeafCount;
          index < row.variableControlLeafInstances.size(); ++index) {
@@ -30970,14 +30969,14 @@ engine.runtimeRecreateRequired = true;
         row.variableControlDiscreteRetargetIncomingQueueOwnerEpoch;
     row.variableControlNestedQueueOwnerIndex =
         row.variableControlDiscreteRetargetIncomingQueueOwnerIndex;
-    if (row.variableControlPropertyRoot.stableId == VnObjectId{}) {
+    if (row.VariableControlPropertyRoot().stableId == VnObjectId{}) {
         row.selectionPath.Clear();
         row.selectionCount =
             std::min(row.variableControlDiscreteRetargetIncomingSelectionCount,
                      static_cast<std::uint32_t>(row.selectionPath.size()));
         for (std::uint32_t index = 0; index < row.selectionCount; ++index) {
             row.selectionPath[index] =
-                row.variableControlRetargetIncoming.selectionPath[index];
+                row.VariableControlRetargetIncoming().selectionPath[index];
         }
     }
     row.variableControlDiscreteHasZeroWorkCompletion =
@@ -31205,7 +31204,7 @@ bool PrepareDiscreteRetargetStorage(harken::Engine& engine,
             prepare(row.variableControlDiscreteRetargetEnteringRuntimePrograms, enteringPrograms) &&
             prepare(row.variableControlDiscreteRetargetEnteringSchedules, enteringPrograms))) return false;
         if (incoming == nullptr) return true;
-        auto& storage = row.variableControlRetargetIncoming;
+        auto& storage = row.VariableControlRetargetIncoming();
         const auto prepareIncoming = [&](auto& column, std::uint32_t count) {
             harken::detail::CheckedGrow(column, count, harken::detail::LogicAllocSite::RetargetIncomingStorage);
             return prepare(column, count);
@@ -31615,7 +31614,7 @@ engine.runtimeRecreateRequired = true;
     row.variableControlDiscreteRetargetPages = {
         page + 1u,
         static_cast<std::uint32_t>(header->pageGeneration)};
-    row.variableControlDiscreteRetargetSlice = {
+    row.VariableControlDiscreteRetargetSlice() = {
         decisionFrame / engine.config.blockFrames,
         header->pageGeneration, decision, 0};
     row.variableControlDiscreteRetargetFrame = decisionFrame;
@@ -32268,9 +32267,9 @@ engine.runtimeRecreateRequired = true;
     row.variableControlDiscreteRetargetIncomingChildEpoch = incomingChildEpoch;
     row.variableControlDiscreteRetargetIncomingLeafCount = incomingLeafCount;
     for (std::uint32_t index = 0; index < incomingLeafCount; ++index) {
-        row.variableControlRetargetIncoming.leaves[index].handle =
+        row.VariableControlRetargetIncoming().leaves[index].handle =
             incomingLeaves[index];
-        row.variableControlRetargetIncoming.leaves[index].epoch =
+        row.VariableControlRetargetIncoming().leaves[index].epoch =
             incomingLeafEpochs[index];
     }
     row.variableControlDiscreteRetargetIncomingNestedCount =
@@ -32280,25 +32279,25 @@ engine.runtimeRecreateRequired = true;
     row.variableControlDiscreteRetargetIncomingContainerCount =
         incomingTree.containerCount;
     for (std::uint32_t index = 0; index < incomingTree.nestedCount; ++index) {
-        row.variableControlRetargetIncoming.nestedInstances[index] =
+        row.VariableControlRetargetIncoming().nestedInstances[index] =
             incomingTree.nestedInstances[index].Handle();
     }
     for (std::uint32_t index = 0; index < incomingTree.containerCount;
          ++index) {
-        row.variableControlRetargetIncoming.containers[index].handle =
+        row.VariableControlRetargetIncoming().containers[index].handle =
             incomingTree.containerInstances[index];
-        row.variableControlRetargetIncoming.containers[index].epoch =
+        row.VariableControlRetargetIncoming().containers[index].epoch =
             engine.playableInstances.Classify(
                 incomingTree.containerInstances[index]).scheduleEpoch;
     }
     for (std::uint32_t index = 0;
          index < incomingTree.nestedVariableControlCount; ++index) {
-        row.variableControlRetargetIncoming.controllers[index].instance = incomingTree.committedNestedVariableControls[index];
-        row.variableControlRetargetIncoming.controllers[index].service = incomingTree.nestedServices[index];
-        row.variableControlRetargetIncoming.controllers[index].decision = incomingTree.committedNestedVariableControlDecisions[index];
-        row.variableControlRetargetIncoming.controllers[index].continuous = incomingTree.nestedVariableControlDecisionContinuous[index];
-        row.variableControlRetargetIncoming.controllers[index].selectedOrdinal = incomingTree.nestedVariableControlSelectedChildOrdinals[index];
-        row.variableControlRetargetIncoming.controllers[index].continuationOrdinal = incomingTree.nestedVariableControlContinuationOrdinals[index];
+        row.VariableControlRetargetIncoming().controllers[index].instance = incomingTree.committedNestedVariableControls[index];
+        row.VariableControlRetargetIncoming().controllers[index].service = incomingTree.nestedServices[index];
+        row.VariableControlRetargetIncoming().controllers[index].decision = incomingTree.committedNestedVariableControlDecisions[index];
+        row.VariableControlRetargetIncoming().controllers[index].continuous = incomingTree.nestedVariableControlDecisionContinuous[index];
+        row.VariableControlRetargetIncoming().controllers[index].selectedOrdinal = incomingTree.nestedVariableControlSelectedChildOrdinals[index];
+        row.VariableControlRetargetIncoming().controllers[index].continuationOrdinal = incomingTree.nestedVariableControlContinuationOrdinals[index];
     }
     PublishPlayableServiceOwnership(engine, &row);
     row.variableControlDiscreteRetargetIncomingQueueSuccessorInstance =
@@ -32317,12 +32316,12 @@ engine.runtimeRecreateRequired = true;
         incomingTree.queueSuccessorOwnerEpoch;
     row.variableControlDiscreteRetargetIncomingQueueOwnerIndex =
         incomingTree.queueOwnerContainerIndex;
-    std::ranges::fill(row.variableControlRetargetIncoming.selectionPath, harken::SelectionPathNodeV1{});
+    std::ranges::fill(row.VariableControlRetargetIncoming().selectionPath, harken::SelectionPathNodeV1{});
     row.variableControlDiscreteRetargetIncomingSelectionCount = incomingTree.selectionCount;
     for (std::uint32_t index = 0;
          index < row.variableControlDiscreteRetargetIncomingSelectionCount;
          ++index) {
-        row.variableControlRetargetIncoming.selectionPath[index] =
+        row.VariableControlRetargetIncoming().selectionPath[index] =
             incomingTree.selectionPath[index];
     }
     incomingChildCommitted = false;
@@ -32352,7 +32351,7 @@ engine.runtimeRecreateRequired = true;
     row.variableControlDiscreteRetargetPages = {
         page + 1u,
         static_cast<std::uint32_t>(header->pageGeneration)};
-    row.variableControlDiscreteRetargetSlice = {
+    row.VariableControlDiscreteRetargetSlice() = {
         decisionFrame / engine.config.blockFrames,
         header->pageGeneration, decision, 0};
     row.variableControlDiscreteRetargetFrame = decisionFrame;
@@ -33378,9 +33377,9 @@ engine.runtimeRecreateRequired = true;
         incomingChildEpoch;
     row.variableControlDiscreteRetargetIncomingLeafCount = incomingLeafCount;
     for (std::uint32_t index = 0; index < incomingLeafCount; ++index) {
-        row.variableControlRetargetIncoming.leaves[index].handle =
+        row.VariableControlRetargetIncoming().leaves[index].handle =
             incomingLeaves[index];
-        row.variableControlRetargetIncoming.leaves[index].epoch =
+        row.VariableControlRetargetIncoming().leaves[index].epoch =
             incomingLeafEpochs[index] != 0
                 ? incomingLeafEpochs[index]
                 : incomingChildEpoch;
@@ -33392,25 +33391,25 @@ engine.runtimeRecreateRequired = true;
     row.variableControlDiscreteRetargetIncomingContainerCount =
         incomingTree.containerCount;
     for (std::uint32_t index = 0; index < incomingTree.nestedCount; ++index) {
-        row.variableControlRetargetIncoming.nestedInstances[index] =
+        row.VariableControlRetargetIncoming().nestedInstances[index] =
             incomingTree.nestedInstances[index].Handle();
     }
     for (std::uint32_t index = 0; index < incomingTree.containerCount;
          ++index) {
-        row.variableControlRetargetIncoming.containers[index].handle =
+        row.VariableControlRetargetIncoming().containers[index].handle =
             incomingTree.containerInstances[index];
-        row.variableControlRetargetIncoming.containers[index].epoch =
+        row.VariableControlRetargetIncoming().containers[index].epoch =
             engine.playableInstances.Classify(
                 incomingTree.containerInstances[index]).scheduleEpoch;
     }
     for (std::uint32_t index = 0;
          index < incomingTree.nestedVariableControlCount; ++index) {
-        row.variableControlRetargetIncoming.controllers[index].instance = incomingTree.committedNestedVariableControls[index];
-        row.variableControlRetargetIncoming.controllers[index].service = incomingTree.nestedServices[index];
-        row.variableControlRetargetIncoming.controllers[index].decision = incomingTree.committedNestedVariableControlDecisions[index];
-        row.variableControlRetargetIncoming.controllers[index].continuous = incomingTree.nestedVariableControlDecisionContinuous[index];
-        row.variableControlRetargetIncoming.controllers[index].selectedOrdinal = incomingTree.nestedVariableControlSelectedChildOrdinals[index];
-        row.variableControlRetargetIncoming.controllers[index].continuationOrdinal = incomingTree.nestedVariableControlContinuationOrdinals[index];
+        row.VariableControlRetargetIncoming().controllers[index].instance = incomingTree.committedNestedVariableControls[index];
+        row.VariableControlRetargetIncoming().controllers[index].service = incomingTree.nestedServices[index];
+        row.VariableControlRetargetIncoming().controllers[index].decision = incomingTree.committedNestedVariableControlDecisions[index];
+        row.VariableControlRetargetIncoming().controllers[index].continuous = incomingTree.nestedVariableControlDecisionContinuous[index];
+        row.VariableControlRetargetIncoming().controllers[index].selectedOrdinal = incomingTree.nestedVariableControlSelectedChildOrdinals[index];
+        row.VariableControlRetargetIncoming().controllers[index].continuationOrdinal = incomingTree.nestedVariableControlContinuationOrdinals[index];
     }
     PublishPlayableServiceOwnership(engine, &row);
     row.variableControlDiscreteRetargetIncomingQueueSuccessorInstance =
@@ -33429,12 +33428,12 @@ engine.runtimeRecreateRequired = true;
         incomingTree.queueSuccessorOwnerEpoch;
     row.variableControlDiscreteRetargetIncomingQueueOwnerIndex =
         incomingTree.queueOwnerContainerIndex;
-    std::ranges::fill(row.variableControlRetargetIncoming.selectionPath, harken::SelectionPathNodeV1{});
+    std::ranges::fill(row.VariableControlRetargetIncoming().selectionPath, harken::SelectionPathNodeV1{});
     row.variableControlDiscreteRetargetIncomingSelectionCount = incomingTree.selectionCount;
     for (std::uint32_t index = 0;
          index < row.variableControlDiscreteRetargetIncomingSelectionCount;
          ++index) {
-        row.variableControlRetargetIncoming.selectionPath[index] =
+        row.VariableControlRetargetIncoming().selectionPath[index] =
             incomingTree.selectionPath[index];
     }
     incomingChildCommitted = false;
@@ -33462,7 +33461,7 @@ engine.runtimeRecreateRequired = true;
     row.variableControlDiscreteRetargetPages = {
         page + 1u,
         static_cast<std::uint32_t>(header->pageGeneration)};
-    row.variableControlDiscreteRetargetSlice = {
+    row.VariableControlDiscreteRetargetSlice() = {
         audibleFrame / engine.config.blockFrames,
         header->pageGeneration, decision, 0};
     row.variableControlDiscreteRetargetFrame = audibleFrame;
@@ -34090,7 +34089,7 @@ engine.runtimeRecreateRequired = true;
     row.variableControlRetargetPages = {
         page + 1u,
         static_cast<std::uint32_t>(header->pageGeneration)};
-    row.variableControlRetargetSlice = {
+    row.VariableControlRetargetSlice() = {
         decisionFrame / engine.config.blockFrames,
         header->pageGeneration, decision, 0};
     row.variableControlRetargetFrame = decisionFrame;
@@ -34157,6 +34156,7 @@ std::uint64_t PlayableMemberStartSequence(const harken::Engine& engine, std::siz
 bool ObservePlayableSourceLifecycle(const harken::Engine& engine,
     const harken::EnginePlayableServiceRow& row, harken::TimelineArmObservation* observation) noexcept {
     const bool armObserved = engine.timelineArms.Observe(row.arm, observation);
+    if (engine.playableMemberRecords.ConstructedCount() == 0) return armObserved;
     std::size_t slot = 0;
     if (!engine.ResolvePlayableMemberSlot(row.scheduleStorageBase, &slot) ||
         !HasPlayableMemberSource(engine, slot)) return armObserved;
@@ -34529,11 +34529,11 @@ bool RestoreDeferredQueueSourceObservation(
             return false;
         }
     }
-    const auto& retained = row.queueDeferredSource;
     if (observation == nullptr || !row.queueMode || !row.queueSignalOnlyNoOverlap ||
         row.queueNaturalEnd ||
-        row.controlLifecycle != harken::PlayableControlLifecycle::Active ||
-        (!retained.member.service.Valid() && !retained.service.Valid())) return false;
+        row.controlLifecycle != harken::PlayableControlLifecycle::Active) return false;
+    const auto& retained = row.QueueDeferredSource();
+    if (!retained.member.service.Valid() && !retained.service.Valid()) return false;
     harken::EnginePlayableServiceRow* owner = nullptr;
     std::size_t slot = 0;
     if (retained.member.service.Valid()) {
@@ -36530,7 +36530,7 @@ bool ProveUnboundInitialVariableControlAbort(
                 const harken::VariableControlInstanceTable::OriginalInitialSideReceipt& receipt,
                 harken::VariableControlSide side) noexcept {
                 const bool discrete = side == harken::VariableControlSide::Discrete;
-                const auto native = discrete ? service.initialLaneDiscreteGroup : service.initialLaneContinuousGroup;
+                const auto native = discrete ? service.InitialLaneDiscreteGroup() : service.InitialLaneContinuousGroup();
                 if (!(native == group.identity)) return true;
                 const auto decision = discrete ? service.variableControlDiscreteDecision : service.variableControlContinuousDecision;
                 const auto armGroup = discrete ? service.variableControlDiscreteArmGroup : service.variableControlContinuousArmGroup;
@@ -37053,8 +37053,8 @@ bool ObserveRegisteredPrivateVcInvalidatedGroups(harken::Engine& engine,
                     if (group.identity == identity) { ++matches; originalEntry = &held.laneEntry; }
                 };
                 outer(producer->frontierDescriptor.primary);
-                outer(producer->row->initialLaneDiscreteGroup);
-                outer(producer->row->initialLaneContinuousGroup);
+                outer(producer->row->InitialLaneDiscreteGroup());
+                outer(producer->row->InitialLaneContinuousGroup());
                 for (std::uint32_t side = 0; side < original.nestedInitialSideCount; ++side)
                     outer(original.nestedInitialSides[side].group);
                 for (const auto& origin : engine.pendingVariableQueueNativeOrigins) {
@@ -38400,9 +38400,9 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                 if (!engine.queueInstances.Capture(initial->queueInstance, &actualQueue) ||
                     actualQueue.world != descriptor.worldGeneration ||
                     actualQueue.rootInstance != initial->ownerInstance ||
-                    actualQueue.containerStableId != initial->queueCheckpointKey.containerStableId ||
+                    actualQueue.containerStableId != initial->QueueCheckpointKey().containerStableId ||
                     actualQueue.programSemanticFingerprint !=
-                        initial->queueCheckpointKey.programSemanticFingerprint) continue;
+                        initial->QueueCheckpointKey().programSemanticFingerprint) continue;
                 bool voiceReceiptsReady = attempt.privateVoiceCount != 0 &&
                     attempt.privateVoiceCount <= attempt.privateVoices.size();
                 for (std::uint32_t voice = 0; voice < attempt.privateVoiceCount &&
@@ -39262,10 +39262,10 @@ bool AppendPendingVariableControlLaneEvents(harken::Engine& engine,
     const auto addControl = [&](harken::EnginePlayableServiceRow& service) {
         return addSide(service, service.variableControlDiscreteDecision,
                    service.variableControlDiscreteArmGroup,
-                   service.initialLaneDiscreteGroup) &&
+                   service.InitialLaneDiscreteGroup()) &&
             addSide(service, service.variableControlContinuousDecision,
                    service.variableControlContinuousArmGroup,
-                   service.initialLaneContinuousGroup);
+                   service.InitialLaneContinuousGroup());
     };
     if (!addControl(row)) return false;
     for (std::uint32_t index = 0;
@@ -41701,8 +41701,8 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
              selectedBranch->continuousMember != continuous)) return false;
         const auto decision = arm.parentGroup.decision;
         const auto group = continuous
-            ? controller->initialLaneContinuousGroup
-            : controller->initialLaneDiscreteGroup;
+            ? controller->InitialLaneContinuousGroup()
+            : controller->InitialLaneDiscreteGroup();
         const auto bank = continuous
             ? controller->variableControlContinuousBank
             : controller->variableControlDiscreteBank;
@@ -42213,7 +42213,7 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
         commit.armGroup = holder->queueArmGroup;
         const bool canonical = SameCanonicalDecision(holder->canonicalInitialQueueDecision,
             holder->initialQueueEntryDecision);
-        const auto& canonicalRequest = holder->canonicalInitialQueueRequest;
+        const auto& canonicalRequest = holder->CanonicalInitialQueueRequest();
         harken::TransitionInstanceSnapshot canonicalGate{};
         if (canonical && (!SameCanonicalDecision(holder->queueDecision, holder->initialQueueEntryDecision) ||
                 !SameCanonicalDecision(identities[0].decision, holder->initialQueueEntryDecision) ||
@@ -42266,7 +42266,7 @@ bool CapturePendingPrivateVcLaneEntryMapping(harken::Engine& engine,
                 mapping.ownedGroupCount != originalEntry.laneOwnedGroupCount ||
                 originalEntry.laneOwnedGroupCount > storage.privateInitialVcLaneGroups.size()) return false;
             const harken::Plan03GroupSliceIdentity outer[] = {
-                row.initialLaneDiscreteGroup, row.initialLaneContinuousGroup, descriptor.primary};
+                row.InitialLaneDiscreteGroup(), row.InitialLaneContinuousGroup(), descriptor.primary};
             for (std::size_t index = 0; index < mapping.groups.size(); ++index) {
                 harken::Plan03GroupSliceIdentity actual{};
                 if (!engine.immediateActionLane.CapturePrivatePinGroup(attempt.lane, mapping.groups[index], &actual) ||
@@ -42284,8 +42284,8 @@ bool CapturePendingPrivateVcLaneEntryMapping(harken::Engine& engine,
             const auto& transferred = storage.initialFrontierSides[side];
             const auto* service = engine.ResolvePlayableService(transferred.service);
             if (service == nullptr) return false;
-            const auto& serviceGroup = side == 0 ? service->initialLaneDiscreteGroup :
-                service->initialLaneContinuousGroup;
+            const auto& serviceGroup = side == 0 ? service->InitialLaneDiscreteGroup() :
+                service->InitialLaneContinuousGroup();
             const auto memberCount = originalEntry.descriptors[side].memberCount;
             if (memberCount == 0 || memberBase >= originalEntry.laneMemberCount ||
                 memberCount > originalEntry.laneMemberCount - memberBase ||
@@ -47414,14 +47414,16 @@ engine.runtimeRecreateRequired = true;
             return bank.Valid();
         };
         if (!startedRootSound) {
-            if (!waitForDeferredSupersede(
-                    row.variableControlDiscreteDeferredSupersedeSlice,
+            if ((row.variableControlDiscreteDeferredSupersede &&
+                 !waitForDeferredSupersede(
+                    row.VariableControlDiscreteDeferredSupersedeSlice(),
                     row.variableControlDiscreteDeferredSupersedeBank,
-                    row.variableControlDiscreteDeferredSupersede) ||
-                !waitForDeferredSupersede(
-                    row.variableControlDeferredSupersedeSlice,
+                    row.variableControlDiscreteDeferredSupersede)) ||
+                (row.variableControlDeferredSupersede &&
+                 !waitForDeferredSupersede(
+                    row.VariableControlDeferredSupersedeSlice(),
                     row.variableControlDeferredSupersedeBank,
-                    row.variableControlDeferredSupersede)) {
+                    row.variableControlDeferredSupersede))) {
                 continue;
             }
             if (row.variableControlDiscreteDeferredSupersedeBank.Valid() &&
@@ -47547,16 +47549,16 @@ engine.runtimeRecreateRequired = true;
                     if (engine.queueInstances.ResolveEffective(
                             row.queueInstance, &effective)) {
                         checkpoint.effective = effective;
-                        checkpoint.randomSeed = row.queueRandomSeed;
+                        checkpoint.randomSeed = row.QueueRandomSeed();
                         checkpoint.randomSeedValid =
                             row.queueRandomSeedValid;
                         checkpoint.replayCurrent = true;
                         (void)engine.StoreOriginalQueueCheckpoint(
-                            row.queueInstance, row.queueCheckpointKey, checkpoint);
+                            row.queueInstance, row.QueueCheckpointKey(), checkpoint);
                     }
                 } else {
                     (void)engine.queueCheckpoints.Clear(
-                        row.queueCheckpointKey);
+                        row.QueueCheckpointKey());
                 }
             }
             row.queueFinalSourceTombstoned = true;
@@ -47722,7 +47724,7 @@ engine.runtimeRecreateRequired = true;
                     actualSide.state != harken::VariableControlSideState::Terminal) ||
                 (!engine.decisions.IsOpen(decision) && !engine.decisions.IsCancelled(decision))) return false;
             auto& receipt = side == harken::VariableControlSide::Discrete
-                ? row.variableControlDiscreteGroupCancellation : row.variableControlContinuousGroupCancellation;
+                ? row.VariableControlDiscreteGroupCancellation() : row.VariableControlContinuousGroupCancellation();
             bool producerCancelledGroup = !group.Valid() && receipt.group.Valid() &&
                 receipt.service == row.identity && receipt.partition.slot == row.partition.slot &&
                 receipt.partition.generation == row.partition.generation &&
@@ -47837,29 +47839,29 @@ engine.runtimeRecreateRequired = true;
             for (std::uint32_t index = 0;
                  index < row.variableControlDiscreteRetargetIncomingNestedVariableControlCount;
                  ++index) {
-                if (row.variableControlRetargetIncoming.controllers[index].service.Valid()) {
+                if (row.VariableControlRetargetIncoming().controllers[index].service.Valid()) {
                     if (!RetireNestedVariableControlService(engine,
-                            row.variableControlRetargetIncoming.controllers[index].service, true)) {
+                            row.VariableControlRetargetIncoming().controllers[index].service, true)) {
 engine.runtimeRecreateRequired = true;
                         return;
                     }
-                    row.variableControlRetargetIncoming.controllers[index].instance = {};
-                    row.variableControlRetargetIncoming.controllers[index].decision = {};
+                    row.VariableControlRetargetIncoming().controllers[index].instance = {};
+                    row.VariableControlRetargetIncoming().controllers[index].decision = {};
                     continue;
                 }
-                if (row.variableControlRetargetIncoming.controllers[index].instance.Valid()) {
+                if (row.VariableControlRetargetIncoming().controllers[index].instance.Valid()) {
                     (void)engine.variableControlInstances.Release(
-                        row.variableControlRetargetIncoming.controllers[index].instance);
-                    row.variableControlRetargetIncoming.controllers[index].instance = {};
+                        row.VariableControlRetargetIncoming().controllers[index].instance);
+                    row.VariableControlRetargetIncoming().controllers[index].instance = {};
                 }
                 const auto nestedDecision =
-                    row.variableControlRetargetIncoming.controllers[index].decision;
+                    row.VariableControlRetargetIncoming().controllers[index].decision;
                 if (nestedDecision.Valid()) {
                     if (!RetireNestedVariableControlDecision(engine, nestedDecision)) {
 engine.runtimeRecreateRequired = true;
                         return;
                     }
-                    row.variableControlRetargetIncoming.controllers[index].decision = {};
+                    row.VariableControlRetargetIncoming().controllers[index].decision = {};
                 }
             }
             row.variableControlDiscreteRetargetIncomingNestedVariableControlCount =
@@ -47891,7 +47893,7 @@ engine.runtimeRecreateRequired = true;
             row.variableControlDiscreteRetargetDesiredChildOrdinal = 0;
             row.variableControlDiscreteRetargetArmGroup = {};
             row.variableControlDiscreteRetargetPages = {};
-            row.variableControlDiscreteRetargetSlice = {};
+            row.VariableControlDiscreteRetargetSlice() = {};
             row.variableControlDiscreteRetargetFrame = 0;
             row.variableControlDiscreteRetargetEndFrame = 0;
             row.variableControlDiscreteRetargetZeroWorkCompletionFrame = 0;
@@ -47904,7 +47906,7 @@ engine.runtimeRecreateRequired = true;
             row.variableControlDiscreteRetargetEntering = false;
             row.variableControlDiscreteRetargetReplacement = false;
             row.variableControlDiscreteRetargetSuperseded = false;
-            row.variableControlDiscreteDeferredSupersedeSlice = {};
+            row.VariableControlDiscreteDeferredSupersedeSlice() = {};
             row.variableControlDiscreteDeferredSupersede = false;
         }
         auto blockAt = [&](std::uint64_t frame) {
@@ -48097,7 +48099,7 @@ engine.runtimeRecreateRequired = true;
                         return;
                     }
                     const harken::Plan03GroupSliceIdentity identity =
-                        row.variableControlDiscreteRetargetSlice;
+                        row.VariableControlDiscreteRetargetSlice();
                     harken::Plan03PageGroupView group{};
                     if (!engine.timelinePool.ResolvePlan03GroupSliceProducer(
                             identity, &group) || group.lease == nullptr) {
@@ -48205,7 +48207,7 @@ engine.runtimeRecreateRequired = true;
                                 newestFrame;
                         }
                         const harken::Plan03GroupSliceIdentity identity =
-                            row.variableControlDiscreteRetargetSlice;
+                            row.VariableControlDiscreteRetargetSlice();
                         harken::Plan03PageGroupView group{};
                         if (!engine.timelinePool.ResolvePlan03GroupSliceProducer(
                                 identity, &group) || group.lease == nullptr) {
@@ -48489,7 +48491,7 @@ engine.runtimeRecreateRequired = true;
                     }
                     row.variableControlDiscreteRetargetApplied = true;
                     if (!ObserveRetargetNestedControllerEntry(engine,
-                            row.variableControlRetargetIncoming.controllers.data(),
+                            row.VariableControlRetargetIncoming().controllers.data(),
                             row.variableControlDiscreteRetargetIncomingNestedVariableControlCount, decision,
                             row.VariableControlDiscreteRetargetEnteringSchedule().entryAnchorFrame,
                             observedAudioSequence, row.variableControlDiscreteRetargetIncomingChild)) engine.runtimeRecreateRequired = true;
@@ -48839,7 +48841,7 @@ engine.runtimeRecreateRequired = true;
             row.variableControlRetargetBank = {};
             row.variableControlRetargetArmGroup = {};
             row.variableControlRetargetPages = {};
-            row.variableControlRetargetSlice = {};
+            row.VariableControlRetargetSlice() = {};
             row.variableControlRetargetFrame = 0;
             row.variableControlRetargetEnvelopeEndFrame = 0;
             row.variableControlRetargetZeroWorkCompletionFrame = 0;
@@ -48855,7 +48857,7 @@ engine.runtimeRecreateRequired = true;
             row.variableControlRetargetExitsIssued = false;
             row.variableControlRetargetMembershipFinalized = false;
             row.variableControlRetargetSuperseded = false;
-            row.variableControlDeferredSupersedeSlice = {};
+            row.VariableControlDeferredSupersedeSlice() = {};
             row.variableControlDeferredSupersede = false;
         }
         if (!startedRootSound && row.variableControlRetargetPrepared &&
@@ -48889,7 +48891,7 @@ engine.runtimeRecreateRequired = true;
                         return;
                     }
                     const harken::Plan03GroupSliceIdentity identity =
-                        row.variableControlRetargetSlice;
+                        row.VariableControlRetargetSlice();
                     harken::Plan03PageGroupView group{};
                     if (!engine.timelinePool.ResolvePlan03GroupSliceProducer(
                             identity, &group) || group.lease == nullptr) {
@@ -48901,7 +48903,7 @@ engine.runtimeRecreateRequired = true;
                             harken::AudioSliceInvalidateReason::Supersede);
                     if (disposition == harken::AudioSliceInvalidateDisposition::
                                            DeferredAfterClaim) {
-                        row.variableControlDeferredSupersedeSlice = identity;
+                        row.VariableControlDeferredSupersedeSlice() = identity;
                         row.variableControlDeferredSupersedeBank = desired;
                         row.variableControlDeferredSupersede = true;
                         return;
@@ -48995,7 +48997,7 @@ engine.runtimeRecreateRequired = true;
                             row.variableControlEmitter, variableIds.data(),
                             program->continuousAxisCount)) {
                         const harken::Plan03GroupSliceIdentity identity =
-                            row.variableControlRetargetSlice;
+                            row.VariableControlRetargetSlice();
                         harken::Plan03PageGroupView group{};
                         if (!engine.timelinePool.ResolvePlan03GroupSliceProducer(
                                 identity, &group) || group.lease == nullptr) {
@@ -49492,8 +49494,8 @@ engine.runtimeRecreateRequired = true;
                 SameCanonicalDecision(abortedGroup.parent, row.canonicalInitialQueueDecision);
             const bool conflictingCanonical = row.canonicalInitialQueueDecision.Valid() && !canonicalCurrent &&
                 (SameCanonicalDecision(row.queueDecision, row.canonicalInitialQueueDecision) ||
-                 (row.queueTransition.slot == row.canonicalInitialQueueRequest.transitionGate.slot &&
-                  row.queueTransition.generation == row.canonicalInitialQueueRequest.transitionGate.generation));
+                 (row.queueTransition.slot == row.CanonicalInitialQueueRequest().transitionGate.slot &&
+                  row.queueTransition.generation == row.CanonicalInitialQueueRequest().transitionGate.generation));
             bool transitionRetired = groupComplete && !conflictingCanonical;
             // Canonical retirement validates ownership and reuses an actual
             // Retired sequence in TransferCanonicalQueueRetirement below.
@@ -50179,7 +50181,7 @@ engine.runtimeRecreateRequired = true;
                     row.usesCapturedVoice = false;
                     row.arm = row.queueSuccessorArm;
                     row.renderHandle = row.queueSuccessorRenderHandle;
-                    row.leaf = row.queueSuccessorLeaf;
+                    row.leaf = row.QueueSuccessorLeaf();
                     row.schedule = *successor;
                     row.runtimeProgram = *successor->runtimeProgram.program;
                     row.startFrame = successor->entryAnchorFrame;
@@ -51118,7 +51120,7 @@ engine.runtimeRecreateRequired = true;
                         completed.logicalCompletionSequence == 0 || completed.tombstoneAudioSequence == 0) continue;
                     retired = {row.arm, row.renderHandle, completed.logicalCompletionSequence,
                         completed.tombstoneAudioSequence};
-                    row.queueDeferredSource = {
+                    row.QueueDeferredSource() = {
                         row.parentService.Valid()
                             ? engine.ReadPlayableMemberReference(row.scheduleStorageBase)
                             : harken::EnginePlayableMemberReference{},
@@ -51142,7 +51144,7 @@ engine.runtimeRecreateRequired = true;
                     ? PrepareQueueContinuation(engine, queueWorld, *queueProgram, row, retired)
                     : QueueContinuationPrepareStatus::Failed;
                 if (status == QueueContinuationPrepareStatus::Prepared) {
-                    row.queueDeferredSource = {};
+                    row.QueueDeferredSource() = {};
                     row.queueSignalOnlyNoOverlap = false;
                     continue;
                 }
@@ -51816,9 +51818,9 @@ engine.runtimeRecreateRequired = true;
                             row.queueDeferredNeedsFullPreparation &&
                             !row.queueNaturalEnd) {
                             row.queueSignalOnlyNoOverlap = true;
-                            if (!row.queueDeferredSource.member.service.Valid() &&
-                                !row.queueDeferredSource.service.Valid()) {
-                                row.queueDeferredSource = {
+                            if (!row.QueueDeferredSource().member.service.Valid() &&
+                                !row.QueueDeferredSource().service.Valid()) {
+                                row.QueueDeferredSource() = {
                                     row.parentService.Valid()
                                         ? engine.ReadPlayableMemberReference(
                                               row.scheduleStorageBase)
@@ -51869,13 +51871,13 @@ engine.runtimeRecreateRequired = true;
                                         : QueueContinuationPrepareStatus::Failed;
                                 if (status ==
                                     QueueContinuationPrepareStatus::Prepared) {
-                                    row.queueDeferredSource = {};
+                                    row.QueueDeferredSource() = {};
                                     row.queueSignalOnlyNoOverlap = false;
                                     continue;
                                 }
                                 if (status == QueueContinuationPrepareStatus::
                                                   NaturalEnd) {
-                                    row.queueDeferredSource = {};
+                                    row.QueueDeferredSource() = {};
                                     row.queueNaturalEnd = true;
                                     row.queueNestedParentPending =
                                         row.queueParentInstance.Valid();
@@ -52116,11 +52118,11 @@ engine.runtimeRecreateRequired = true;
                                                 Successor
                                           : ResolveQueueStep(
                                                 engine, *queueProgram,
-                                                row.queueRandomSeed,
+                                                row.QueueRandomSeed(),
                                                 current, &next);
                             if (step == harken::QueueSequenceStepStatus::
                                     NaturalEnd) {
-                                row.queueDeferredSource = {};
+                                row.QueueDeferredSource() = {};
                                 row.queueNaturalEnd = true;
                                 row.queueNestedParentPending =
                                     row.queueParentInstance.Valid();
@@ -52194,9 +52196,9 @@ engine.runtimeRecreateRequired = true;
                                           engine, queueWorld, *queueProgram,
                                           row);
                             if (resumeStatus == QueueContinuationPrepareStatus::Deferred &&
-                                !row.queueDeferredSource.member.service.Valid() && !row.queueDeferredSource.service.Valid()) {
+                                !row.QueueDeferredSource().member.service.Valid() && !row.QueueDeferredSource().service.Valid()) {
                                 // Retain the original observation before the arm slot becomes reusable.
-                                row.queueDeferredSource = {
+                                row.QueueDeferredSource() = {
                                     row.parentService.Valid() ? engine.ReadPlayableMemberReference(row.scheduleStorageBase)
                                         : harken::EnginePlayableMemberReference{},
                                     completedArm, arm, PlayableServiceReference(row)};
@@ -52206,7 +52208,7 @@ engine.runtimeRecreateRequired = true;
                                     continue;
                                 }
                             } else if (resumeStatus != QueueContinuationPrepareStatus::Deferred) {
-                                row.queueDeferredSource = {};
+                                row.QueueDeferredSource() = {};
                             }
                             if (resumeStatus == QueueContinuationPrepareStatus::NaturalEnd) {
                                 if (!ClearQueueCompletionOwner(engine, row.renderHandle,
@@ -52238,7 +52240,7 @@ engine.runtimeRecreateRequired = true;
                                 continue;
                             }
                         }
-                        row.queueDeferredSource = {};
+                        row.QueueDeferredSource() = {};
                         (void)engine.queueInstances.
                             FailContainerBeforeConditional(
                                 row.queueInstance,
@@ -52321,12 +52323,12 @@ engine.runtimeRecreateRequired = true;
                             } else {
                                 checkpoint.effective = effective;
                                 checkpoint.randomSeed =
-                                    row.queueRandomSeed;
+                                    row.QueueRandomSeed();
                                 checkpoint.randomSeedValid =
                                     row.queueRandomSeedValid;
                                 checkpoint.replayCurrent = true;
                                 if (!engine.StoreOriginalQueueCheckpoint(
-                                        row.queueInstance, row.queueCheckpointKey,
+                                        row.queueInstance, row.QueueCheckpointKey(),
                                         checkpoint)) {
 engine.runtimeRecreateRequired = true;
                                 }
@@ -53035,7 +53037,7 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
             if (futureCapacity > UINT32_MAX || row.selectionCount > row.selectedChildOrdinals.size()) return false;
             limits.immediateFutureSides = static_cast<std::uint32_t>(futureCapacity);
             limits.queueRoleCapacity = producer->storage.queueRoleCapacity;
-            limits.propertyPrefixCount = row.variableControlPropertyRoot.stableId != VnObjectId{} ? row.selectionCount : 0;
+            limits.propertyPrefixCount = row.VariableControlPropertyRoot().stableId != VnObjectId{} ? row.selectionCount : 0;
             limits.seedPrefixCount = boundSelection ? selection.prefixCount : 0;
             const bool pack = !row.variableControlWorldUsesCurrentAuthority && row.Invocation().packLease.leaseToken != 0;
             PlayableWorldViewV1 world{};
@@ -54107,7 +54109,7 @@ bool Engine::MatchesPendingVariableRetiredInitialSide(const OriginalPendingVaria
             !SameCanonicalDecision(saved.decision, decision) || saved.bank.slot != bank.slot || saved.bank.generation != bank.generation ||
             saved.armGroup.slot != armGroup.slot || saved.armGroup.generation != armGroup.generation ||
             saved.memberCount != members || saved.group !=
-                (discrete ? service.initialLaneDiscreteGroup : service.initialLaneContinuousGroup)) return false;
+                (discrete ? service.InitialLaneDiscreteGroup() : service.InitialLaneContinuousGroup())) return false;
         input = &saved.input;
     }
     if (input == nullptr || !variableControlInstances.MatchesOriginalInitialSideReceipt(receipt,
@@ -54480,7 +54482,7 @@ bool Engine::CanTransferPendingVariableQueueNativeOrigins(EngineActionPlayScratc
                     !(native.frontier->entry == record.parentEntry) ||
                     !(native.frontier->operation.group == side.group)) return false;
                 const bool discrete = SameCanonicalDecision(side.decision, parent->variableControlDiscreteDecision);
-                if (!(side.group == (discrete ? parent->initialLaneDiscreteGroup : parent->initialLaneContinuousGroup))) return false;
+                if (!(side.group == (discrete ? parent->InitialLaneDiscreteGroup() : parent->InitialLaneContinuousGroup()))) return false;
                 const auto bank = discrete ? parent->variableControlDiscreteBank : parent->variableControlContinuousBank;
                 const auto kind = discrete ? VariableControlSide::Discrete : VariableControlSide::Continuous;
                 const VariableControlInstanceTable::OriginalInitialSideReceipt* receipt = nullptr;
@@ -58480,14 +58482,14 @@ bool Engine::TransferPendingVariableGroupReplacementPublication(EngineActionPlay
             service->variableControlDiscreteArmGroup = control.armGroup;
             service->variableControlDiscretePages = pages;
             service->variableControlDiscreteDecisionCommitted = child.pendingVariableReplacementEntry.sideCommitted[index];
-            service->initialLaneDiscreteGroup = native;
+            service->InitialLaneDiscreteGroup() = native;
             service->variableControlInitialDiscreteMemberCount = control.nativeMemberCount;
             service->variableControlInitialArms.continuousOffset = control.nativeMemberCount;
         } else {
             service->variableControlContinuousArmGroup = control.armGroup;
             service->variableControlContinuousPages = pages;
             service->variableControlContinuousDecisionCommitted = child.pendingVariableReplacementEntry.sideCommitted[index];
-            service->initialLaneContinuousGroup = native;
+            service->InitialLaneContinuousGroup() = native;
             service->variableControlInitialContinuousMemberCount = control.nativeMemberCount;
         }
     }
@@ -58517,12 +58519,12 @@ bool Engine::TransferPendingVariableGroupReplacementPublication(EngineActionPlay
     row.variableControlContinuousArmGroup = child.pendingVariableReplacementEntry.sideGroups[1];
     row.variableControlDiscreteDecisionCommitted = child.pendingVariableReplacementEntry.sideCommitted[0];
     row.variableControlContinuousDecisionCommitted = child.pendingVariableReplacementEntry.sideCommitted[1];
-    row.initialLaneDiscreteGroup = child.pendingVariableReplacementGroups[1];
-    row.initialLaneContinuousGroup = child.pendingVariableReplacementGroups[2];
-    row.variableControlDiscretePages = {static_cast<std::uint32_t>(row.initialLaneDiscreteGroup.committedRow),
-        row.initialLaneDiscreteGroup.rowClaimGeneration};
-    row.variableControlContinuousPages = {static_cast<std::uint32_t>(row.initialLaneContinuousGroup.committedRow),
-        row.initialLaneContinuousGroup.rowClaimGeneration};
+    row.InitialLaneDiscreteGroup() = child.pendingVariableReplacementGroups[1];
+    row.InitialLaneContinuousGroup() = child.pendingVariableReplacementGroups[2];
+    row.variableControlDiscretePages = {static_cast<std::uint32_t>(row.InitialLaneDiscreteGroup().committedRow),
+        row.InitialLaneDiscreteGroup().rowClaimGeneration};
+    row.variableControlContinuousPages = {static_cast<std::uint32_t>(row.InitialLaneContinuousGroup().committedRow),
+        row.InitialLaneContinuousGroup().rowClaimGeneration};
     row.frontierEntry = descriptor.entry;
     row.frontierCoordinatorGroup = child.pendingVariableReplacementEntry.coordinatorGroup;
     row.frontierLifetimeEntry = descriptor.entry;
@@ -60494,8 +60496,8 @@ bool Engine::BeginRegisteredPendingVariableCohortReprepare(EngineImmediateEntryA
             const auto* producer = FindFrontierAttempt(*this, token);
             if (producer == nullptr || producer->row == nullptr) return false;
             matches += identity == producer->frontierDescriptor.primary;
-            matches += identity == producer->row->initialLaneDiscreteGroup;
-            matches += identity == producer->row->initialLaneContinuousGroup;
+            matches += identity == producer->row->InitialLaneDiscreteGroup();
+            matches += identity == producer->row->InitialLaneContinuousGroup();
             const auto& group = acceptedPendingVariableGroups[producer->row->identity.slot];
             for (std::uint32_t side = 0; side < group.nestedInitialSideCount; ++side)
                 matches += identity == group.nestedInitialSides[side].group;
@@ -60939,7 +60941,7 @@ bool Engine::CanBeginPendingVariableQueueReprepare(EngineActionPlayScratch& scra
         const auto decision = side == 0 ? scratch.row->variableControlDiscreteDecision : scratch.row->variableControlContinuousDecision;
         const auto bank = side == 0 ? scratch.row->variableControlDiscreteBank : scratch.row->variableControlContinuousBank;
         const auto armGroup = side == 0 ? scratch.row->variableControlDiscreteArmGroup : scratch.row->variableControlContinuousArmGroup;
-        const auto native = side == 0 ? scratch.row->initialLaneDiscreteGroup : scratch.row->initialLaneContinuousGroup;
+        const auto native = side == 0 ? scratch.row->InitialLaneDiscreteGroup() : scratch.row->InitialLaneContinuousGroup();
         if (!bank.Valid()) {
             if (decision.Valid() || armGroup.Valid() || native.Valid()) return false;
             continue;
@@ -60970,8 +60972,8 @@ bool Engine::CanBeginPendingVariableQueueReprepare(EngineActionPlayScratch& scra
     for (std::size_t index = 0; index < actualNativeCount; ++index) {
         const auto identity = census[index].identity;
         std::uint32_t matches = identity == scratch.frontierDescriptor.primary;
-        matches += identity == scratch.row->initialLaneDiscreteGroup;
-        matches += identity == scratch.row->initialLaneContinuousGroup;
+        matches += identity == scratch.row->InitialLaneDiscreteGroup();
+        matches += identity == scratch.row->InitialLaneContinuousGroup();
         for (std::uint32_t side = 0; side < group.nestedInitialSideCount; ++side)
             matches += identity == group.nestedInitialSides[side].group;
         for (const auto& origin : pendingVariableQueueNativeOrigins)
@@ -61302,8 +61304,8 @@ bool Engine::ServicePendingVariableGroupReprepare(EngineActionPlayScratch& scrat
             scratch.frontierCoordinatorCancelled = false;
             issued.coordinatorReturned = true;
         }
-        row.initialLaneDiscreteGroup = {};
-        row.initialLaneContinuousGroup = {};
+        row.InitialLaneDiscreteGroup() = {};
+        row.InitialLaneContinuousGroup() = {};
         for (std::uint32_t index = 0; index < group->nestedInitialSideCount; ++index) {
             auto& captured = group->nestedInitialSides[index];
             auto* owner = ResolvePlayableService(captured.service);
@@ -61329,11 +61331,11 @@ bool Engine::ServicePendingVariableGroupReprepare(EngineActionPlayScratch& scrat
                 captured.decisionReturned = true;
             }
             if (captured.side == VariableControlSide::Discrete) {
-                owner->initialLaneDiscreteGroup = {};
+                owner->InitialLaneDiscreteGroup() = {};
                 owner->variableControlDiscretePages = {};
                 owner->variableControlDiscreteBank = {};
             } else {
-                owner->initialLaneContinuousGroup = {};
+                owner->InitialLaneContinuousGroup() = {};
                 owner->variableControlContinuousPages = {};
                 owner->variableControlContinuousBank = {};
             }
@@ -70970,10 +70972,10 @@ engine.runtimeRecreateRequired = true;
             queueParentProgram->containerStableId;
         row.queueParentProgramSemanticFingerprint =
             queueParentProgram->programSemanticFingerprint;
-        row.queueParentCheckpointKey = queueParentCheckpointKey;
+        row.QueueParentCheckpointKey() = queueParentCheckpointKey;
         row.QueueParentInitialState() = queueParentInitialState;
         row.QueueParentResetInitialState() = queueParentResetInitialState;
-        row.queueParentRandomSeed = queueParentRandomSeed;
+        row.QueueParentRandomSeed() = queueParentRandomSeed;
         row.queueParentRandomSeedValid = queueParentRandomSeedValid;
         row.queueParentResumePosition = queueParentProgram->resumePosition != 0;
     }
@@ -71109,10 +71111,10 @@ engine.runtimeRecreateRequired = true;
             parentCreate.childCount = queueParentProgram->childCount;
             parentCreate.cycle = queueParentProgram->queueCycle;
             parentCreate.resumePosition = queueParentProgram->resumePosition != 0;
-            parentCreate.resetEpoch = row.queueParentCheckpointKey.resetEpoch;
-            parentCreate.emitterSlot = row.queueParentCheckpointKey.emitterSlot;
+            parentCreate.resetEpoch = row.QueueParentCheckpointKey().resetEpoch;
+            parentCreate.emitterSlot = row.QueueParentCheckpointKey().emitterSlot;
             parentCreate.emitterGeneration =
-                row.queueParentCheckpointKey.emitterGeneration;
+                row.QueueParentCheckpointKey().emitterGeneration;
             if (row.QueueParentInitialState().version != 0 &&
                 row.QueueParentInitialState().currentChildOrdinal != 0 &&
                 row.QueueParentInitialState().cursor <
@@ -71251,8 +71253,8 @@ engine.runtimeRecreateRequired = true;
         row.queueContainerStableId = queueProgram->containerStableId;
         row.queueProgramSemanticFingerprint =
             queueProgram->programSemanticFingerprint;
-        row.queueCheckpointKey = queueCheckpointKey;
-        row.queueRandomSeed = queueRandomSeed;
+        row.QueueCheckpointKey() = queueCheckpointKey;
+        row.QueueRandomSeed() = queueRandomSeed;
         row.queueRandomSeedValid = queueRandomSeedValid;
         row.queueSignalOnlyNoOverlap =
             queueInitialSignalOnlyNoOverlap;
@@ -72531,16 +72533,18 @@ static PlayableControlStatus BeginPlayableCancellation(
                         sliceReasonBit);
         };
     if (preflightOnly &&
-        (!canInvalidateCommittedDecision(
+        ((row->variableControlDiscreteDecisionCommitted &&
+          !canInvalidateCommittedDecision(
              row->variableControlDiscreteDecisionCommitted,
              row->variableControlDiscreteDecision, row->startFrame,
              row->variableControlDiscretePages,
-             row->initialLaneDiscreteGroup) ||
-         !canInvalidateCommittedDecision(
+             row->InitialLaneDiscreteGroup())) ||
+         (row->variableControlContinuousDecisionCommitted &&
+          !canInvalidateCommittedDecision(
              row->variableControlContinuousDecisionCommitted,
              row->variableControlContinuousDecision, row->startFrame,
              row->variableControlContinuousPages,
-             row->initialLaneContinuousGroup) ||
+             row->InitialLaneContinuousGroup())) ||
          !canInvalidateCommittedDecision(
              row->variableControlDiscreteRetargetDecisionCommitted,
              row->variableControlDiscreteRetargetDecision,
@@ -72699,20 +72703,22 @@ engine.runtimeRecreateRequired = true;
     bool continuousInitialDeferred = false;
     bool discreteRetargetDeferred = false;
     bool continuousRetargetDeferred = false;
-    if (!invalidateCommittedDecision(
+    if ((row->variableControlDiscreteDecisionCommitted &&
+         !invalidateCommittedDecision(
             row->variableControlDiscreteDecisionCommitted,
             row->variableControlDiscreteDecision,
             row->startFrame,
             row->variableControlDiscretePages,
-            row->initialLaneDiscreteGroup,
-            &discreteInitialDeferred) ||
-        !invalidateCommittedDecision(
+            row->InitialLaneDiscreteGroup(),
+            &discreteInitialDeferred)) ||
+        (row->variableControlContinuousDecisionCommitted &&
+         !invalidateCommittedDecision(
             row->variableControlContinuousDecisionCommitted,
             row->variableControlContinuousDecision,
             row->startFrame,
             row->variableControlContinuousPages,
-            row->initialLaneContinuousGroup,
-            &continuousInitialDeferred) ||
+            row->InitialLaneContinuousGroup(),
+            &continuousInitialDeferred)) ||
         !invalidateCommittedDecision(
             row->variableControlDiscreteRetargetDecisionCommitted,
             row->variableControlDiscreteRetargetDecision,
@@ -78951,7 +78957,7 @@ bool PrepareImmediateActionQueueInstance(
     row.queueContainerStableId = program.containerStableId;
     row.queueProgramSemanticFingerprint = program.programSemanticFingerprint;
     row.queueInstance = scratch->queueInstance.Token();
-    row.queueCheckpointKey = checkpoint;
+    row.QueueCheckpointKey() = checkpoint;
     row.queueNaturalEnd = !hasContinuation;
     scratch->queueProgram = &program;
     scratch->queueHasContinuation = hasContinuation;
@@ -80087,7 +80093,7 @@ bool PrepareQueueTransitionContinuation(
         engine.FindQueueProgramMember(&bank, 0)->nativeCompletion = row.queueSuccessorCompletion;
 
     const auto& firstMember = *engine.FindQueueProgramMember(&bank, 0);
-    row.queueSuccessorLeaf = firstMember.leaf;
+    row.QueueSuccessorLeaf() = firstMember.leaf;
     row.queueSuccessorArm = firstMember.arm;
     row.queueMonitorSelection = firstMember.monitorSelection;
     row.queueSuccessorRenderHandle = firstMember.render;
@@ -80121,7 +80127,7 @@ bool PrepareQueueTransitionContinuation(
     }
     if (scratch->queueFutureCanonicalCurrent != nullptr) {
         scratch->queueFutureCanonicalCurrent->canonicalRequest.transitionGate = scratch->queueTransition;
-        row.canonicalInitialQueueRequest = scratch->queueFutureCanonicalCurrent->canonicalRequest;
+        row.CanonicalInitialQueueRequest() = scratch->queueFutureCanonicalCurrent->canonicalRequest;
     }
 
     row.queueTransitionGroupArms.Clear();
@@ -81132,12 +81138,12 @@ public:
 
         next = initialNext;
         if (!projection.Resolve(world, packQueue ? &scratch->packPlaybackView : nullptr,
-                queueWorldGeneration, row, program, row.queueRandomSeed, current, &next)) return false;
+                queueWorldGeneration, row, program, row.QueueRandomSeed(), current, &next)) return false;
         nextState = next;
         const bool randomQueue =
             program.mode == harken::ContainerModeV1::RandomQueue;
         if (!ResolveSharedQueueFrontier(
-                engine, program, row.queueRandomSeed, randomQueue, &nextState,
+                engine, program, row.QueueRandomSeed(), randomQueue, &nextState,
                 &resetAfterNext, &afterNext, &selected, &afterNextStatus)) {
             return false;
         }
@@ -81834,13 +81840,13 @@ bool PrepareQueueContinuation(
     row.queueSuccessorOccurrence = scratch->queueSuccessorOccurrence;
     if (leafCount != 0) {
         const auto& firstMember = *engine.FindQueueProgramMember(&bank, 0);
-        row.queueSuccessorLeaf = firstMember.leaf;
+        row.QueueSuccessorLeaf() = firstMember.leaf;
         row.queueSuccessorArm = firstMember.arm;
         row.queueMonitorSelection = firstMember.monitorSelection;
         row.queueSuccessorRenderHandle = firstMember.render;
         row.queueSuccessorTailFrames = firstMember.postSourceTailFrames;
     } else {
-        row.queueSuccessorLeaf = {};
+        row.QueueSuccessorLeaf() = {};
         row.queueSuccessorArm = {};
         row.queueSuccessorRenderHandle = 0;
         row.queueSuccessorTailFrames = 0;
@@ -82249,7 +82255,7 @@ bool PrepareCanonicalQueueCurrentDecision(harken::Engine& engine, VnActionFiring
     row.queueDecision = current.canonicalDecision;
     row.privateInitialQueueCurrent = &current;
     row.canonicalInitialQueueDecision = current.canonicalDecision;
-    row.canonicalInitialQueueRequest = request;
+    row.CanonicalInitialQueueRequest() = request;
     row.initialQueueEntryDecision = current.canonicalDecision;
     return true;
 }
@@ -83156,7 +83162,7 @@ bool PrepareImmediateActionCompositeQueueChildPlay(
         }
         return false;
     }
-    row->queueRandomSeed = randomSeed;
+    row->QueueRandomSeed() = randomSeed;
     row->queueRandomSeedValid = randomQueue;
 
     row->queueCurrentProgramBank = ReserveQueueProgramBank(engine,
@@ -84805,7 +84811,7 @@ engine.runtimeRecreateRequired = true;
                 scratch->row->selectedChildOrdinals[pathIndex] =
                     nestedOrdinals[pathIndex];
             }
-            scratch->row->queueRandomSeed = randomSeed;
+            scratch->row->QueueRandomSeed() = randomSeed;
             scratch->row->queueRandomSeedValid = randomQueue;
             if (scratch->frontierInitialChild.Valid() && scratch->row->queueInstance.Valid()) return true;
             if (nestedQueueProgram != nullptr) {
@@ -84872,7 +84878,7 @@ engine.runtimeRecreateRequired = true;
                     rootProgram->programSemanticFingerprint;
                 scratch->row->QueueParentInitialState() = initial;
                 scratch->row->QueueParentResetInitialState() = resetInitial;
-                scratch->row->queueParentRandomSeed = randomSeed;
+                scratch->row->QueueParentRandomSeed() = randomSeed;
                 scratch->row->queueParentRandomSeedValid = randomQueue;
                 scratch->row->queueParentResumePosition = rootProgram->resumePosition != 0;
                 if (!PrepareImmediateActionQueueRoot(
@@ -84888,7 +84894,7 @@ engine.runtimeRecreateRequired = true;
                 scratch->row->queueNestedParentPending =
                     scratch->queueParentInstance.Valid() &&
                     scratch->row->queueNaturalEnd;
-                scratch->row->queueRandomSeed = nestedQueueSeed;
+                scratch->row->QueueRandomSeed() = nestedQueueSeed;
                 scratch->row->queueRandomSeedValid = nestedQueueRandom;
                 return true;
             }
@@ -84953,7 +84959,7 @@ engine.runtimeRecreateRequired = true;
         scratch->row->selectionCount = 1;
         scratch->row->selectedChildOrdinals[0] =
             selected->stableChildOrdinal;
-        scratch->row->queueRandomSeed = randomSeed;
+        scratch->row->QueueRandomSeed() = randomSeed;
         scratch->row->queueRandomSeedValid = randomQueue;
         if (!PrepareImmediateActionQueueRoot(
                 plan, plannedStepIndex, scratch, *rootProgram,
@@ -85434,7 +85440,7 @@ engine.runtimeRecreateRequired = true;
             rollbackPrepared();
             return false;
         }
-        scratch->row->queueRandomSeed = nestedQueueSeed;
+        scratch->row->QueueRandomSeed() = nestedQueueSeed;
         scratch->row->queueRandomSeedValid = nestedQueueRandom;
     }
     return true;
@@ -86323,7 +86329,7 @@ bool PrepareScheduledActionStop(
         if (!captureDecision(row.variableControlControllers[index].decision)) return false;
     }
     for (std::uint32_t index = 0; index < row.variableControlDiscreteRetargetIncomingNestedVariableControlCount; ++index) {
-        if (!captureDecision(row.variableControlRetargetIncoming.controllers[index].decision)) return false;
+        if (!captureDecision(row.VariableControlRetargetIncoming().controllers[index].decision)) return false;
     }
     for (std::uint32_t index = 0; index < plan.queueReplacementCount; ++index) {
         const auto& replacement = engine.actionQueueReplacementScratch[index];
@@ -89040,7 +89046,7 @@ bool DeclareAcceptedPrivateInitialVcCohort(ImmediateActionPlan& plan,
         scope.firstMember = held.laneFirstMemberOrdinal;
         scope.memberCount = held.laneMemberCount;
         scope.members = held.laneMemberManifests.data();
-        scope.outerGroups = {producer.row->initialLaneDiscreteGroup, producer.row->initialLaneContinuousGroup,
+        scope.outerGroups = {producer.row->InitialLaneDiscreteGroup(), producer.row->InitialLaneContinuousGroup(),
             producer.frontierDescriptor.primary};
         scope.groups = producer.storage.privateInitialVcLaneGroups.data();
         scope.groupCount = held.laneOwnedGroupCount;
@@ -91096,14 +91102,14 @@ bool ResolveImmediateActionQueueReset(
     out->expectedCurrentVersion = current.version;
     if (!projection.Resolve(world, packAuthority ? &row.Invocation().packPlaybackView : nullptr,
             packAuthority ? row.Invocation().packLease.compositeGeneration : world.generation,
-            row, *program, row.queueRandomSeed, current, &next)) return false;
+            row, *program, row.QueueRandomSeed(), current, &next)) return false;
     harken::EffectiveQueueState resetInitial{};
     harken::EffectiveQueueState afterNext{};
     harken::QueueSequenceStepStatus afterNextStatus =
         harken::QueueSequenceStepStatus::Invalid;
     const harken::ContainerChildProgramViewV2* selectedChild = nullptr;
     if (!ResolveSharedQueueFrontier(
-            engine, *program, row.queueRandomSeed,
+            engine, *program, row.QueueRandomSeed(),
             program->mode == harken::ContainerModeV1::RandomQueue, &next,
             &resetInitial, &afterNext, &selectedChild, &afterNextStatus) ||
         selectedChild == nullptr ||
@@ -92546,7 +92552,7 @@ bool CommitNativeImmediateActionQueueReplacement(harken::Engine& engine,
     row.queueSuccessorOwner = {};
     row.queueSuccessorCompositeOwner = {};
     row.queueSuccessorOccurrence = {};
-    row.queueSuccessorLeaf = {};
+    row.QueueSuccessorLeaf() = {};
     row.queueSuccessorArm = {};
     row.queueSuccessorScheduleBase = row.queueSuccessorScheduleLeafCount = 0;
     row.queueSuccessorTailFrames = 0;
@@ -92568,7 +92574,7 @@ bool CommitNativeImmediateActionQueueReplacement(harken::Engine& engine,
         auto* member = engine.FindQueueProgramMember(&bank, 0);
         if (member == nullptr || !member->voice.Valid()) return false;
         member->nativeCompletion = scratch.successorCompletion;
-        row.queueSuccessorLeaf = scratch.successorLeaves[0];
+        row.QueueSuccessorLeaf() = scratch.successorLeaves[0];
         row.queueSuccessorArm = start.arm;
         row.queueMonitorSelection = start.monitorSelection;
         row.queueSuccessorRenderHandle = start.renderHandle;
@@ -92749,7 +92755,7 @@ void CommitImmediateActionQueueReplacements(
         row.queueSuccessorOwner = {};
         row.queueSuccessorCompositeOwner = {};
         row.queueSuccessorOccurrence = {};
-        row.queueSuccessorLeaf = {};
+        row.QueueSuccessorLeaf() = {};
         row.queueSuccessorArm = {};
         row.queueSuccessorScheduleBase = 0;
         row.queueSuccessorScheduleLeafCount = 0;
@@ -92875,7 +92881,7 @@ void CommitImmediateActionQueueReplacements(
 
             row.queueSuccessorOccurrence = scratch.successorOccurrence;
             if (scratch.successorLeafCount != 0) {
-                row.queueSuccessorLeaf = scratch.successorLeaves[0];
+                row.QueueSuccessorLeaf() = scratch.successorLeaves[0];
                 row.queueSuccessorArm = scratch.successorStarts[0].arm;
                 row.queueMonitorSelection = scratch.successorStarts[0].monitorSelection;
                 row.queueSuccessorRenderHandle =

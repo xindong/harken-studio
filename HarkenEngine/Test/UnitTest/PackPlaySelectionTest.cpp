@@ -119,9 +119,9 @@ int QueueWindowDiagSelfTest() {
         service->invocationGeneration = generation;
     };
 
-    services[0].queueSuccessorLeaf = {};
+    services[0].QueueSuccessorLeaf() = {};
     services[0].QueueNextState() = {};
-    services[1].queueSuccessorLeaf = {};
+    services[1].QueueSuccessorLeaf() = {};
     services[1].QueueNextState() = {};
     bind(&starts[0], &services[0], 0, 1, 0, kFiring);
     starts[1].actionFiring = 0;
@@ -167,7 +167,7 @@ int QueueWindowDiagSelfTest() {
         std::fprintf(stderr, "error: queue-window early tick saw a successor\n");
         return 9;
     }
-    if (!harken::ParseObjectId(kSuccessor, &services[0].queueSuccessorLeaf.stableId)) {
+    if (!harken::ParseObjectId(kSuccessor, &services[0].QueueSuccessorLeaf().stableId)) {
         std::fprintf(stderr, "error: queue-window successor guid rejected\n");
         return 10;
     }
@@ -177,7 +177,7 @@ int QueueWindowDiagSelfTest() {
         std::fprintf(stderr, "error: queue-window second tick observe failed\n");
         return 11;
     }
-    services[0].queueSuccessorLeaf.stableId = {};
+    services[0].QueueSuccessorLeaf().stableId = {};
     services[0].QueueNextState().currentChildOrdinal = 0;
     starts[0].actionFiring = 0;
     if (!harkenhost::ObserveFiringQueueWindow(starts, 2, services, 2, kFiring, &later)) {
@@ -239,7 +239,6 @@ int QueueHeardDiagSelfTest() {
     constexpr std::uint64_t kFrame = 76800;
     static harken::EnginePlayableStartRow starts[1];
     static harken::EnginePlayableServiceRow service;
-    if (!service.PrepareFeatureArrays()) return 1;
     starts[0].slot = 0;
     starts[0].generation = 1;
     starts[0].serviceCount = 1;
@@ -248,8 +247,6 @@ int QueueHeardDiagSelfTest() {
     service.identity = {0, 1};
     service.invocation = &starts[0];
     service.invocationGeneration = 1;
-    service.queueSuccessorLeaf = {};
-    service.QueueNextState() = {};
     service.queueSuccessorProgramPlane = 1;
     service.queueSuccessorSchedule = {};
     service.schedule = {};
@@ -281,7 +278,8 @@ int QueueHeardDiagSelfTest() {
         return 24;
     }
 
-    if (!harken::ParseObjectId(kSuccessor, &service.queueSuccessorLeaf.stableId)) {
+    if (!service.PrepareFeatureArrays()) return 1;
+    if (!harken::ParseObjectId(kSuccessor, &service.QueueSuccessorLeaf().stableId)) {
         std::fprintf(stderr, "error: queue-heard successor guid rejected\n");
         return 17;
     }

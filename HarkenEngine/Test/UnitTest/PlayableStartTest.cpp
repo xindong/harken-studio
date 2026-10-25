@@ -3970,7 +3970,7 @@ std::string WrapProbeDump(
         << " completePastWin="
         << (row->queueCompletionFrame >=
             engine.timelinePool.WindowEndFrame())
-        << " seedPost=" << row->queueRandomSeed.acceptedPostOrdinal;
+        << " seedPost=" << row->QueueRandomSeed().acceptedPostOrdinal;
     const harken::Plan03GroupReserveStatus pageGroupStatus =
         engine.timelinePool.PreflightPlan03GroupSlices(
             row->queueCompletionFrame, 1);
@@ -4011,7 +4011,7 @@ std::string WrapProbeDump(
     harken::EffectiveQueueState stepNext{};
     const harken::QueueSequenceStepStatus step =
         harken::ResolveRandomQueueStep(
-            program, row->queueRandomSeed, current,
+            program, row->QueueRandomSeed(), current,
             engine.queueSelectionChildScratch.data(),
             engine.queueRemainingScratch.data(),
             engine.queuePermutationScratch.data(),
@@ -4118,7 +4118,7 @@ bool RandomQueueWrapsSameChild(
     harken::EffectiveQueueState stepNext{};
     const harken::QueueSequenceStepStatus step =
         harken::ResolveRandomQueueStep(
-            program, row->queueRandomSeed, current,
+            program, row->QueueRandomSeed(), current,
             engine.queueSelectionChildScratch.data(),
             engine.queueRemainingScratch.data(),
             engine.queuePermutationScratch.data(),
@@ -4163,7 +4163,7 @@ bool FillRandomQueueExpectedRoster(
     std::uint32_t previousCycleLastChild = UINT32_MAX;
     for (std::uint32_t cycle = 0; cycle < cycleCount; ++cycle) {
         if (harken::BuildRandomQueuePermutationV1(
-                program, row->queueRandomSeed, current, childScratch.data(),
+                program, row->QueueRandomSeed(), current, childScratch.data(),
                 remainingScratch.data(), permutation.data(),
                 program.childCount) != harken::SelectionStatusV1::Ok) {
             return false;
@@ -4185,7 +4185,7 @@ bool FillRandomQueueExpectedRoster(
         for (std::uint32_t cursor = 0; cursor < program.childCount; ++cursor) {
             harken::EffectiveQueueState next{};
             if (harken::ResolveRandomQueueStep(
-                    program, row->queueRandomSeed, current, childScratch.data(),
+                    program, row->QueueRandomSeed(), current, childScratch.data(),
                     remainingScratch.data(), permutation.data(),
                     program.childCount, &next) !=
                 harken::QueueSequenceStepStatus::Successor) {
@@ -6643,7 +6643,7 @@ TEST(PlayableStart,
     EXPECT_EQ(harken::TimelineEventKind::Stop, exiting[1].kind);
     EXPECT_EQ(decisionFrame + 128u, exiting[1].envelopeEndFrame);
     EXPECT_EQ(2u, row->variableControlDiscreteRetargetGroupMemberCount);
-    EXPECT_TRUE(row->variableControlDiscreteRetargetSlice.Valid());
+    EXPECT_TRUE(row->VariableControlDiscreteRetargetSlice().Valid());
 
     const VnVoiceHandle targetVoice =
         engine->ReadPlayableMember(
@@ -7789,7 +7789,7 @@ TEST(PlayableStart,
         row->variableControlDiscreteRetargetEnteringArm;
     ASSERT_TRUE(entering.Valid());
     const harken::Plan03GroupSliceIdentity identity =
-        row->variableControlDiscreteRetargetSlice;
+        row->VariableControlDiscreteRetargetSlice();
     ASSERT_EQ(row->variableControlDiscreteRetargetFrame /
                   engine->config.blockFrames,
               identity.absoluteQuantum);
@@ -8086,7 +8086,7 @@ TEST(PlayableStart,
     const harken::DecisionToken continuousDecision =
         row->variableControlRetargetDecision;
     const harken::Plan03GroupSliceIdentity continuousSlice =
-        row->variableControlRetargetSlice;
+        row->VariableControlRetargetSlice();
     while (engine->mixer.BlocksRendered() <
            continuousSlice.absoluteQuantum) {
         engine->nullBackend.Pump(1);
@@ -8517,8 +8517,8 @@ TEST_P(LateAppliedVariableControlSupersedeTest,
         continuous ? row->variableControlRetargetBank
                    : row->variableControlDiscreteRetargetBank;
     const harken::Plan03GroupSliceIdentity identity =
-        continuous ? row->variableControlRetargetSlice
-                   : row->variableControlDiscreteRetargetSlice;
+        continuous ? row->VariableControlRetargetSlice()
+                   : row->VariableControlDiscreteRetargetSlice();
     harken::Plan03PageGroupView group{};
     ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceRt(
         identity, &group));
@@ -9129,7 +9129,7 @@ static void ExpectVariableControlCancelledDiscreteRetargetReclaimsEverything(boo
         }
         ASSERT_TRUE(row->variableControlDiscreteRetargetDecisionCommitted);
         harken::Plan03PageGroupView group{};
-        ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(row->variableControlDiscreteRetargetSlice, &group));
+        ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(row->VariableControlDiscreteRetargetSlice(), &group));
         ASSERT_NE(nullptr, group.frontier);
         ASSERT_EQ(harken::FrontierGroupRole::Future, group.frontier->role);
         ASSERT_EQ(entry, group.frontier->entry);
@@ -15017,7 +15017,7 @@ TEST(PlayableStart, RandomQueueResumeUsesOriginalSeedAndExactCurrent) {
     ASSERT_NE(engine->playableServices.end(), row);
     EXPECT_TRUE(row->queueRandomSeedValid);
     EXPECT_EQ(seed.acceptedPostOrdinal,
-              row->queueRandomSeed.acceptedPostOrdinal);
+              row->QueueRandomSeed().acceptedPostOrdinal);
     EXPECT_EQ(permutation[1], row->payload.target.occurrenceOrdinal);
 
     std::vector<std::uint32_t> heard;
@@ -17911,8 +17911,8 @@ TEST(PlayableStart,
         << " lifecycle=" << static_cast<std::uint32_t>(row->controlLifecycle)
         << " reason=" << static_cast<std::uint32_t>(row->controlReason)
         << " deferredSource="
-        << (row->queueDeferredSource.arm.Valid() ||
-            row->queueDeferredSource.service.Valid())
+        << (row->QueueDeferredSource().arm.Valid() ||
+            row->QueueDeferredSource().service.Valid())
         << " windowEnd=" << engine->timelinePool.WindowEndFrame()
         << " boundary=" << expectedBoundary;
     EXPECT_EQ(expectedBoundary, row->queueTransitionEndFrame);
@@ -22084,7 +22084,7 @@ static void CheckSignalQueueReceiptStop(bool applyBeforeStop) {
         [&](const auto& candidate) { return candidate.rootInstance == started.instance; });
     ASSERT_NE(engine->playableServices.end(), row);
     const auto queue = row->queueInstance;
-    const auto checkpointKey = row->queueCheckpointKey;
+    const auto checkpointKey = row->QueueCheckpointKey();
     for (std::uint32_t block = 0; block < 32 && !row->frontierAcceptedSignal.Valid(); ++block) {
         ASSERT_EQ(VN_OK, Vn_Update());
         harkentest::monitor::CollectIdentityEvents(capture, records);

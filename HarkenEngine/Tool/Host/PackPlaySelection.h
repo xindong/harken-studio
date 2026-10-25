@@ -154,11 +154,11 @@ struct FiringQueueWindowCopy {
 
 inline void NoteQueueSuccessorLeaf(const harken::EnginePlayableServiceRow& row,
                                    FiringQueueWindowCopy* copy) {
-    if (copy == nullptr || copy->successorPresent ||
-        harken::IsNull(row.queueSuccessorLeaf.stableId)) {
+    if (copy == nullptr || copy->successorPresent || !row.HasFeatureArrays() ||
+        harken::IsNull(row.QueueSuccessorLeaf().stableId)) {
         return;
     }
-    copy->successorId = row.queueSuccessorLeaf.stableId;
+    copy->successorId = row.QueueSuccessorLeaf().stableId;
     copy->successorPresent = true;
     copy->successorOrdinal = row.QueueNextState().currentChildOrdinal;
     copy->successorOrdinalPresent = true;

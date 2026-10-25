@@ -12712,7 +12712,7 @@ void DiagnoseDeferredPackVariableControlHandoffPartial(
               << '/' << parent->variableControlDiscreteDecision.generation
               << " group=" << parent->variableControlDiscreteArmGroup.slot
               << '/' << parent->variableControlDiscreteArmGroup.generation
-              << " pageGeneration=" << parent->initialLaneDiscreteGroup.pageGeneration
+              << " pageGeneration=" << parent->InitialLaneDiscreteGroup().pageGeneration
               << " memberCount=" << parent->variableControlInitialDiscreteMemberCount
               << " invocation=" << parent->invocationGeneration
               << " attempt=" << scratch.storage.generation
@@ -17496,8 +17496,8 @@ TEST(PackComposition,
                                                            &queue));
     EXPECT_EQ(UINT32_MAX, queue.emitterSlot);
     EXPECT_EQ(0u, queue.emitterGeneration);
-    EXPECT_EQ(UINT32_MAX, queueService->queueCheckpointKey.emitterSlot);
-    EXPECT_EQ(0u, queueService->queueCheckpointKey.emitterGeneration);
+    EXPECT_EQ(UINT32_MAX, queueService->QueueCheckpointKey().emitterSlot);
+    EXPECT_EQ(0u, queueService->QueueCheckpointKey().emitterGeneration);
     EXPECT_EQ(outerPlayback.activeChild, queue.rootInstance);
     EXPECT_EQ(nestedPlayback.activeChild,
               session.Engine()->playableInstances.Classify(queue.rootInstance)
@@ -23946,18 +23946,18 @@ SharedQueueTrace RunRootQueuePackTrace(
         !row->queueContinuationPrepared) return trace;
     if (randomQueue) {
         EXPECT_EQ(expectedSeed.worldSemanticFingerprint,
-                  row->queueRandomSeed.worldSemanticFingerprint);
-        EXPECT_EQ(expectedSeed.callerSeed, row->queueRandomSeed.callerSeed);
+                  row->QueueRandomSeed().worldSemanticFingerprint);
+        EXPECT_EQ(expectedSeed.callerSeed, row->QueueRandomSeed().callerSeed);
         EXPECT_EQ(expectedSeed.acceptedPostOrdinal,
-                  row->queueRandomSeed.acceptedPostOrdinal);
-        EXPECT_EQ(expectedSeed.emitterSlot, row->queueRandomSeed.emitterSlot);
+                  row->QueueRandomSeed().acceptedPostOrdinal);
+        EXPECT_EQ(expectedSeed.emitterSlot, row->QueueRandomSeed().emitterSlot);
         EXPECT_EQ(expectedSeed.emitterGeneration,
-                  row->queueRandomSeed.emitterGeneration);
-        EXPECT_EQ(expectedSeed.resetEpoch, row->queueRandomSeed.resetEpoch);
+                  row->QueueRandomSeed().emitterGeneration);
+        EXPECT_EQ(expectedSeed.resetEpoch, row->QueueRandomSeed().resetEpoch);
     }
     if (outRandomSeed != nullptr) {
         if (!row->queueRandomSeedValid) return trace;
-        const auto& context = row->queueRandomSeed;
+        const auto& context = row->QueueRandomSeed();
         SelectionSeedInputV1 seed{};
         seed.worldSemanticFingerprint = context.worldSemanticFingerprint;
         seed.programStableId = row->root.stableId;
@@ -23993,7 +23993,7 @@ SharedQueueTrace RunRootQueuePackTrace(
         !((current == 7u && successor == 8u) ||
           (current == 8u && successor == 7u))) return trace;
     const auto expectedSound = harkentest::ObjectId(successor == 8u ? 4512u : 4511u);
-    if (row->queueSuccessorLeaf.stableId != expectedSound) return trace;
+    if (row->QueueSuccessorLeaf().stableId != expectedSound) return trace;
     trace.selectedOrdinals = {current, successor};
     if (randomQueue) {
         EXPECT_EQ(expectedPermutation, trace.selectedOrdinals);

@@ -1723,6 +1723,39 @@ private:
 };
 
 struct EngineServiceFeatureArrays {
+    struct UnpublishedVariableGroupCancellation {
+        EnginePlayableServiceToken service{};
+        EnginePlayablePartitionToken partition{};
+        VariableControlInstanceToken instance{};
+        VariableControlSide side = VariableControlSide::Discrete;
+        DecisionToken decision{};
+        ArmGroupToken group{};
+        PlayableInstanceHandle rootInstance = 0;
+        PlayableInstanceHandle serviceRootInstance = 0;
+        PlayableInstanceHandle ownerInstance = 0;
+        std::uint64_t ownerEpoch = 0;
+        std::uint64_t invocationGeneration = 0;
+        std::uint64_t world = 0;
+        ActionFiringHandle firing = 0;
+        std::uint32_t memberCount = 0;
+    };
+    PlayableRefV1 variableControlPropertyRoot{};
+    Plan03GroupSliceIdentity initialLaneDiscreteGroup{};
+    Plan03GroupSliceIdentity initialLaneContinuousGroup{};
+    UnpublishedVariableGroupCancellation variableControlDiscreteGroupCancellation{};
+    UnpublishedVariableGroupCancellation variableControlContinuousGroupCancellation{};
+    EngineVariableTreeStorage variableControlRetargetIncoming;
+    Plan03GroupSliceIdentity variableControlDiscreteRetargetSlice{};
+    Plan03GroupSliceIdentity variableControlRetargetSlice{};
+    Plan03GroupSliceIdentity variableControlDiscreteDeferredSupersedeSlice{};
+    Plan03GroupSliceIdentity variableControlDeferredSupersedeSlice{};
+    QueueCheckpointKey queueParentCheckpointKey{};
+    QueueCheckpointKey queueCheckpointKey{};
+    RandomQueueSeedContext queueParentRandomSeed{};
+    RandomQueueSeedContext queueRandomSeed{};
+    EngineQueueDeferredSourceObservation queueDeferredSource{};
+    PlayableRefV1 queueSuccessorLeaf{};
+    DecisionReserveRequest canonicalInitialQueueRequest{};
     std::array<SelectionDeltaRefV1, kSelectionPathNodeCapacity> selectionDeltas{};
     std::array<std::uint32_t, kSelectionPathNodeCapacity> selectedChildOrdinals{};
     std::array<PlayableInstanceHandle, kMaxKnownScheduleLeaves + 64u> variableControlChildInstances{};
@@ -1756,22 +1789,8 @@ struct EngineServiceFeatureArrays {
 };
 
 struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
-    struct UnpublishedVariableGroupCancellation {
-        EnginePlayableServiceToken service{};
-        EnginePlayablePartitionToken partition{};
-        VariableControlInstanceToken instance{};
-        VariableControlSide side = VariableControlSide::Discrete;
-        DecisionToken decision{};
-        ArmGroupToken group{};
-        PlayableInstanceHandle rootInstance = 0;
-        PlayableInstanceHandle serviceRootInstance = 0;
-        PlayableInstanceHandle ownerInstance = 0;
-        std::uint64_t ownerEpoch = 0;
-        std::uint64_t invocationGeneration = 0;
-        std::uint64_t world = 0;
-        ActionFiringHandle firing = 0;
-        std::uint32_t memberCount = 0;
-    };
+    using UnpublishedVariableGroupCancellation =
+        EngineServiceFeatureArrays::UnpublishedVariableGroupCancellation;
     // Keep common lifecycle observations together, ahead of container-specific state.
     EnginePlayableServiceToken identity{};
     EnginePlayablePartitionToken partition{};
@@ -1839,7 +1858,6 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     std::uint64_t ordinaryStartProofInvocationGeneration = 0;
     TimelineArmToken ordinaryStartProofArm{};
     TimelineTransactionProgramRef ordinaryStartProofProgram{};
-    PlayableRefV1 variableControlPropertyRoot{};
     std::uint64_t startFrame = 0;
     ImmediateLaneTimeDomain pendingImmediateTimeDomain =
         ImmediateLaneTimeDomain::RelativeToAnchor;
@@ -1874,26 +1892,20 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     std::uint32_t selectionDeltaCount = 0;
     SelectionSeedProbeCopyV1 selectionSeedProbe{};
     std::uint64_t variableControlAcceptedEpoch = 0;
-    PreparedContainerPlaybackRow variableControlOuterContainerRow{};
-    bool variableControlOuterContainerRowCommitted = false;
     DecisionToken variableControlDiscreteDecision{};
     LogicCommitSequence variableControlDiscreteTicket = 0;
     BankVersionToken variableControlDiscreteBank{};
     ArmGroupToken variableControlDiscreteArmGroup{};
     PreparedGroupToken variableControlDiscretePages{};
-    Plan03GroupSliceIdentity initialLaneDiscreteGroup{};
     bool variableControlDiscreteDecisionCommitted = false;
     bool variableControlDiscreteCleanupStarted = false;
-    UnpublishedVariableGroupCancellation variableControlDiscreteGroupCancellation{};
     DecisionToken variableControlContinuousDecision{};
     LogicCommitSequence variableControlContinuousTicket = 0;
     BankVersionToken variableControlContinuousBank{};
     ArmGroupToken variableControlContinuousArmGroup{};
     PreparedGroupToken variableControlContinuousPages{};
-    Plan03GroupSliceIdentity initialLaneContinuousGroup{};
     bool variableControlContinuousDecisionCommitted = false;
     bool variableControlContinuousCleanupStarted = false;
-    UnpublishedVariableGroupCancellation variableControlContinuousGroupCancellation{};
     std::uint32_t variableControlDiscreteMemberCount = 0;
     std::uint32_t variableControlInitialDiscreteMemberCount = 0;
     std::uint32_t variableControlDiscreteCurrentChildOrdinal = 0;
@@ -1959,7 +1971,6 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     std::uint32_t variableControlDiscreteRetargetDesiredChildOrdinal = 0;
     PlayableInstanceHandle variableControlDiscreteRetargetIncomingChild = 0;
     std::uint64_t variableControlDiscreteRetargetIncomingChildEpoch = 0;
-    EngineVariableTreeStorage variableControlRetargetIncoming;
     std::uint32_t variableControlDiscreteRetargetIncomingLeafCount = 0;
     std::uint32_t variableControlDiscreteRetargetIncomingNestedCount = 0;
     std::uint32_t variableControlDiscreteRetargetIncomingNestedVariableControlCount = 0;
@@ -1973,7 +1984,6 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     std::uint32_t variableControlDiscreteRetargetIncomingSelectionCount = 0;
     ArmGroupToken variableControlDiscreteRetargetArmGroup{};
     PreparedGroupToken variableControlDiscreteRetargetPages{};
-    Plan03GroupSliceIdentity variableControlDiscreteRetargetSlice{};
     std::vector<TimelineEventPayload>
         variableControlDiscreteRetargetPayloads{};
     std::vector<TimelineEventPayload>
@@ -2004,7 +2014,6 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     bool variableControlDiscreteRetargetSuperseded = false;
     std::uint64_t variableControlDiscretePendingDesiredOrdinal = 0;
     std::uint64_t variableControlDiscretePendingDesiredFrame = 0;
-    Plan03GroupSliceIdentity variableControlDiscreteDeferredSupersedeSlice{};
     BankVersionToken variableControlDiscreteDeferredSupersedeBank{};
     bool variableControlDiscreteDeferredSupersede = false;
     bool variableControlDiscreteSilent = false;
@@ -2014,7 +2023,6 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     BankVersionToken variableControlRetargetBank{};
     ArmGroupToken variableControlRetargetArmGroup{};
     PreparedGroupToken variableControlRetargetPages{};
-    Plan03GroupSliceIdentity variableControlRetargetSlice{};
     std::uint64_t variableControlRetargetFrame = 0;
     std::uint64_t variableControlRetargetEnvelopeEndFrame = 0;
     std::uint64_t variableControlRetargetZeroWorkCompletionFrame = 0;
@@ -2039,7 +2047,6 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     bool variableControlRetargetMembershipFinalized = false;
     bool variableControlMembershipExitObserved = false;
     bool variableControlRetargetSuperseded = false;
-    Plan03GroupSliceIdentity variableControlDeferredSupersedeSlice{};
     BankVersionToken variableControlDeferredSupersedeBank{};
     bool variableControlDeferredSupersede = false;
     Plan03GroupSliceIdentity variableControlDeferredCancellationSlice{};
@@ -2057,13 +2064,9 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     QueueInstanceToken queueParentInstance{};
     VnObjectId queueParentContainerStableId{};
     std::uint64_t queueParentProgramSemanticFingerprint = 0;
-    QueueCheckpointKey queueParentCheckpointKey{};
-    RandomQueueSeedContext queueParentRandomSeed{};
     bool queueParentRandomSeedValid = false;
     bool queueParentResumePosition = false;
     bool queueNestedParentPending = false;
-    QueueCheckpointKey queueCheckpointKey{};
-    RandomQueueSeedContext queueRandomSeed{};
     bool queueRandomSeedValid = false;
     DecisionToken initialQueueEntryDecision{};
     std::uint64_t initialQueueEntryAttemptGeneration = 0;
@@ -2087,7 +2090,6 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     OccurrenceToken queueRetiringOccurrence{};
     OccurrenceToken queueAbortedSuccessorOccurrence{};
     CompletionOwnerRef queueRetiringOwner{};
-    PlayableRefV1 queueSuccessorLeaf{};
     TimelineArmToken queueSourceArm{};
     std::span<TimelineEventPayload> queueSourcePayloads{};
     std::span<EventTemplate> queueSourceEvents{};
@@ -2123,7 +2125,6 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     std::uint32_t queueUnplacedTransactionCount = 0;
     EngineFrontierQueueCurrentOwnerContext* privateInitialQueueCurrent = nullptr;
     DecisionToken canonicalInitialQueueDecision{};
-    DecisionReserveRequest canonicalInitialQueueRequest{};
     // The service owns one frozen target, shared by its preparing frontier.
     CapturedTimelineVoiceInstall canonicalInitialQueueTargetVoice{};
     bool queueTimingFinalized = false;
@@ -2143,7 +2144,6 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     bool queueNaturalEnd = false;
     bool queueSignalOnlyNoOverlap = false;
     bool queueDeferredNeedsFullPreparation = false;
-    EngineQueueDeferredSourceObservation queueDeferredSource{};
     PlayableExecutionAuthorityKind containerLoopAuthorityKind =
         PlayableExecutionAuthorityKind::FrozenWorld;
     OccurrenceToken containerLoopOccurrence{};
@@ -2184,6 +2184,142 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     }
 
     bool HasFeatureArrays() const noexcept { return featureArrays_ != nullptr; }
+    PlayableRefV1& VariableControlPropertyRoot() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->variableControlPropertyRoot;
+    }
+    const PlayableRefV1& VariableControlPropertyRoot() const noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->variableControlPropertyRoot;
+    }
+    Plan03GroupSliceIdentity& InitialLaneDiscreteGroup() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->initialLaneDiscreteGroup;
+    }
+    const Plan03GroupSliceIdentity& InitialLaneDiscreteGroup() const noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->initialLaneDiscreteGroup;
+    }
+    Plan03GroupSliceIdentity& InitialLaneContinuousGroup() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->initialLaneContinuousGroup;
+    }
+    const Plan03GroupSliceIdentity& InitialLaneContinuousGroup() const noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->initialLaneContinuousGroup;
+    }
+    UnpublishedVariableGroupCancellation& VariableControlDiscreteGroupCancellation() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->variableControlDiscreteGroupCancellation;
+    }
+    const UnpublishedVariableGroupCancellation& VariableControlDiscreteGroupCancellation() const noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->variableControlDiscreteGroupCancellation;
+    }
+    UnpublishedVariableGroupCancellation& VariableControlContinuousGroupCancellation() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->variableControlContinuousGroupCancellation;
+    }
+    const UnpublishedVariableGroupCancellation& VariableControlContinuousGroupCancellation() const noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->variableControlContinuousGroupCancellation;
+    }
+    EngineVariableTreeStorage& VariableControlRetargetIncoming() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->variableControlRetargetIncoming;
+    }
+    const EngineVariableTreeStorage& VariableControlRetargetIncoming() const noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->variableControlRetargetIncoming;
+    }
+    Plan03GroupSliceIdentity& VariableControlDiscreteRetargetSlice() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->variableControlDiscreteRetargetSlice;
+    }
+    const Plan03GroupSliceIdentity& VariableControlDiscreteRetargetSlice() const noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->variableControlDiscreteRetargetSlice;
+    }
+    Plan03GroupSliceIdentity& VariableControlRetargetSlice() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->variableControlRetargetSlice;
+    }
+    const Plan03GroupSliceIdentity& VariableControlRetargetSlice() const noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->variableControlRetargetSlice;
+    }
+    Plan03GroupSliceIdentity& VariableControlDiscreteDeferredSupersedeSlice() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->variableControlDiscreteDeferredSupersedeSlice;
+    }
+    const Plan03GroupSliceIdentity& VariableControlDiscreteDeferredSupersedeSlice() const noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->variableControlDiscreteDeferredSupersedeSlice;
+    }
+    Plan03GroupSliceIdentity& VariableControlDeferredSupersedeSlice() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->variableControlDeferredSupersedeSlice;
+    }
+    const Plan03GroupSliceIdentity& VariableControlDeferredSupersedeSlice() const noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->variableControlDeferredSupersedeSlice;
+    }
+    QueueCheckpointKey& QueueParentCheckpointKey() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->queueParentCheckpointKey;
+    }
+    const QueueCheckpointKey& QueueParentCheckpointKey() const noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->queueParentCheckpointKey;
+    }
+    harken::QueueCheckpointKey& QueueCheckpointKey() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->queueCheckpointKey;
+    }
+    const harken::QueueCheckpointKey& QueueCheckpointKey() const noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->queueCheckpointKey;
+    }
+    RandomQueueSeedContext& QueueParentRandomSeed() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->queueParentRandomSeed;
+    }
+    const RandomQueueSeedContext& QueueParentRandomSeed() const noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->queueParentRandomSeed;
+    }
+    RandomQueueSeedContext& QueueRandomSeed() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->queueRandomSeed;
+    }
+    const RandomQueueSeedContext& QueueRandomSeed() const noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->queueRandomSeed;
+    }
+    EngineQueueDeferredSourceObservation& QueueDeferredSource() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->queueDeferredSource;
+    }
+    const EngineQueueDeferredSourceObservation& QueueDeferredSource() const noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->queueDeferredSource;
+    }
+    PlayableRefV1& QueueSuccessorLeaf() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->queueSuccessorLeaf;
+    }
+    const PlayableRefV1& QueueSuccessorLeaf() const noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->queueSuccessorLeaf;
+    }
+    DecisionReserveRequest& CanonicalInitialQueueRequest() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->canonicalInitialQueueRequest;
+    }
+    const DecisionReserveRequest& CanonicalInitialQueueRequest() const noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->canonicalInitialQueueRequest;
+    }
     CurveLUT& TransitionSourceFadeCurve() noexcept {
         assert(featureArrays_ != nullptr);
         return featureArrays_->transitionSourceFadeCurve;
@@ -2305,6 +2441,23 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
         containerInstances.Clear();
         selectionPath.Clear();
         if (featureArrays_ != nullptr) {
+            featureArrays_->variableControlPropertyRoot = {};
+            featureArrays_->initialLaneDiscreteGroup = {};
+            featureArrays_->initialLaneContinuousGroup = {};
+            featureArrays_->variableControlDiscreteGroupCancellation = {};
+            featureArrays_->variableControlContinuousGroupCancellation = {};
+            featureArrays_->variableControlRetargetIncoming = {};
+            featureArrays_->variableControlDiscreteRetargetSlice = {};
+            featureArrays_->variableControlRetargetSlice = {};
+            featureArrays_->variableControlDiscreteDeferredSupersedeSlice = {};
+            featureArrays_->variableControlDeferredSupersedeSlice = {};
+            featureArrays_->queueParentCheckpointKey = {};
+            featureArrays_->queueCheckpointKey = {};
+            featureArrays_->queueParentRandomSeed = {};
+            featureArrays_->queueRandomSeed = {};
+            featureArrays_->queueDeferredSource = {};
+            featureArrays_->queueSuccessorLeaf = {};
+            featureArrays_->canonicalInitialQueueRequest = {};
             featureArrays_->transitionSourceFadeCurve = {};
             featureArrays_->transitionTargetFadeCurve = {};
             featureArrays_->queueParentInitialState = {};
@@ -8644,7 +8797,7 @@ public:
                 captured.input = reservation.OriginalRequest();
                 captured.bank = bank;
                 captured.armGroup = side == 0 ? nested->variableControlDiscreteArmGroup : nested->variableControlContinuousArmGroup;
-                captured.group = side == 0 ? nested->initialLaneDiscreteGroup : nested->initialLaneContinuousGroup;
+                captured.group = side == 0 ? nested->InitialLaneDiscreteGroup() : nested->InitialLaneContinuousGroup();
                 captured.memberCount = side == 0 ? nested->variableControlInitialDiscreteMemberCount
                     : nested->variableControlInitialContinuousMemberCount;
                 if (reservation.Token().slot != decision.slot || reservation.Token().generation != decision.generation ||
@@ -8934,8 +9087,8 @@ public:
             groupSpan > nativeGroups.size()) return false;
         std::fill(nativeGroups.begin(), nativeGroups.end(), Plan03GroupSliceIdentity{});
         nativeGroups[0] = scratch.frontierDescriptor.primary;
-        nativeGroups[1] = row.initialLaneDiscreteGroup;
-        nativeGroups[2] = row.initialLaneContinuousGroup;
+        nativeGroups[1] = row.InitialLaneDiscreteGroup();
+        nativeGroups[2] = row.InitialLaneContinuousGroup();
         std::array<std::uint32_t, EngineActionPlayScratch::kPendingVariableReplacementControlCapacity>
             nativeCounts{row.variableControlInitialDiscreteMemberCount, row.variableControlInitialContinuousMemberCount};
         std::uint32_t nativeCount = 1;
@@ -8997,7 +9150,7 @@ public:
                 arms.memberCount != captured.memberCount ||
                 (discrete ? service->variableControlDiscreteDecision.slot : service->variableControlContinuousDecision.slot) != captured.decision.slot ||
                 (discrete ? service->variableControlDiscreteDecision.generation : service->variableControlContinuousDecision.generation) != captured.decision.generation ||
-                (discrete ? service->initialLaneDiscreteGroup : service->initialLaneContinuousGroup) != captured.group)
+                (discrete ? service->InitialLaneDiscreteGroup() : service->InitialLaneContinuousGroup()) != captured.group)
                 return false;
             sideDecisions[side] = captured.decision;
             sideGroups[side] = captured.armGroup;

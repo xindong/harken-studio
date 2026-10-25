@@ -740,7 +740,7 @@ int RunPreviewPlay(int argc, char** argv) {
                         ToneName(row.leaf.stableId),
                         row.queueContinuationPrepared ? 1u : 0u,
                         row.queueContinuationPrepared
-                            ? ToneName(row.queueSuccessorLeaf.stableId)
+                            ? ToneName(row.QueueSuccessorLeaf().stableId)
                             : "-");
                 }
                 break;
