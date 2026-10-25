@@ -875,13 +875,17 @@ void LayoutController::loadProjectLayout()
         }
     }
 
+    if (!name.isEmpty() && !NamedLayoutStore::read(name, nullptr)) {
+        workingLayouts_.remove(name);
+        name.clear();
+        current = workingLayouts_.value(name).toObject();
+    }
+
     seedZoneHomeAreas();
 
     if (dockManager_ && !current.value(QLatin1String("dockState")).toString().isEmpty()) {
         restoreLayoutState(current);
         currentLayoutFromCache_ = true;
-        if (!name.isEmpty() && !NamedLayoutStore::read(name, nullptr))
-            name.clear();
         setCurrentLayoutName(name);
     } else {
         currentLayoutFromCache_ = false;
