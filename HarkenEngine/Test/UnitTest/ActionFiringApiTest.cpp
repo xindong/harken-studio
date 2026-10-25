@@ -70210,6 +70210,11 @@ TEST(ActionFiringApi, OriginalSingleProducerDefaultPureSoundNeverIssuesQueueCurr
     auto desc = ValidPostDesc();
     desc.actionId = image.actions[9].actionStableId;
     ASSERT_EQ(VN_OK, Vn_CreateEmitter(&desc.emitter));
+    engine.initialFrontierEvents.SetCommitPageLimitForTests(0);
+    engine.initialFrontierRequests.SetCommitPageLimitForTests(0);
+    engine.pendingVariableLeafSources.SetCommitPageLimitForTests(0);
+    engine.pendingVariableFutureSources.SetCommitPageLimitForTests(0);
+    engine.pendingVariableFutureNodes.SetCommitPageLimitForTests(0);
     VnActionFiringHandle firing = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
     for (const auto& original : engine.originalQueueSourcePreparationHolders) {
@@ -70242,6 +70247,18 @@ TEST(ActionFiringApi, OriginalSingleProducerDefaultPureSoundNeverIssuesQueueCurr
     }
     engine.nullBackend.Pump(1);
     ASSERT_EQ(entryQuantum + 1u, engine.mixer.BlocksRendered());
+    EXPECT_GT(harkentest::Peak(engine.nullBackend.LastBlock(), 128u), 0.001f);
+    engine.initialFrontierEvents.SetCommitPageLimitForTests(SIZE_MAX);
+    EXPECT_FALSE(engine.PreparePlayableStateStorage());
+    EXPECT_FALSE(engine.runtimeRecreateRequired);
+    engine.initialFrontierRequests.SetCommitPageLimitForTests(SIZE_MAX);
+    engine.pendingVariableLeafSources.SetCommitPageLimitForTests(SIZE_MAX);
+    engine.pendingVariableFutureSources.SetCommitPageLimitForTests(SIZE_MAX);
+    engine.pendingVariableFutureNodes.SetCommitPageLimitForTests(SIZE_MAX);
+    ASSERT_TRUE(engine.PreparePlayableStateStorage());
+    ASSERT_EQ(VN_OK, Vn_Update());
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(entryQuantum + 2u, engine.mixer.BlocksRendered());
     EXPECT_GT(harkentest::Peak(engine.nullBackend.LastBlock(), 128u), 0.001f);
     ASSERT_EQ(VN_OK, Vn_Term());
 }

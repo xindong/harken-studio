@@ -75644,8 +75644,18 @@ bool ReserveImmediateActionFirings(void* opaque,
                 needsStopStorage = CountActionOperations(*plan, *planned.step,
                     harken::ActionOpcodeV1::Stop, planned.depth, 1) != 0;
         }
+        bool needsContainerState = true;
+        if (!plan->materializingDeferred && plan->firingCount == 1 && plan->stepCount == 1) {
+            const auto& planned = engine.actionStepPlanScratch[0];
+            // Only an independent immediate Sound has no container-owned future.
+            needsContainerState = !(planned.step != nullptr && planned.depth == 0 &&
+                !planned.deferred && planned.deferredFrame == 0 &&
+                !planned.cooldownSuppressed && !planned.quantizeSuppressed &&
+                planned.step->opcode == harken::ActionOpcodeV1::Play &&
+                planned.step->target.kind == harken::ActionTargetKindV1::Sound);
+        }
         // Deferred children and later successors reuse this backing without growth.
-        if ((needsPlayableStorage && !engine.PreparePlayableStateStorage()) ||
+        if ((needsPlayableStorage && !engine.PreparePlayableStateStorage(needsContainerState)) ||
             (needsStopStorage && !engine.authoredStopResources.ConstructThrough(engine.authoredStopResources.Capacity()))) {
             plan->result = VN_BACKPRESSURE;
             return false;

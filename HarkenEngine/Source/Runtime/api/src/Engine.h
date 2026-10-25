@@ -10595,6 +10595,8 @@ public:
         }
         bool ResetAfterNativeRetirement(Engine& engine) noexcept {
             if (!ClearInstallAfterNativeRetirement(engine)) return false;
+            assert(engine.originalSingleCurrentCount != 0);
+            --engine.originalSingleCurrentCount;
             state = State::Empty;
             originalTable = nullptr; originalRoot = 0; originalArranging = 0;
             originalCurrentSingleDecision = {}; originalCurrentOccurrence = {};
@@ -10696,10 +10698,12 @@ public:
         holder.originalCurrentSourceIdentity = holder.bundle.OriginalCurrentSourceIdentity();
         holder.originalCurrentPhysicalRelease = physical.originalRelease;
         holder.state = OriginalSingleCurrentHolder::State::Prepared;
+        ++originalSingleCurrentCount;
         if (outOriginal != nullptr) *outOriginal = &holder;
         return true;
     }
     void ServiceOriginalSingleCurrentEndings() noexcept {
+        if (originalSingleCurrentCount == 0) return;
         for (auto& current : originalSingleCurrentHolders) {
             if ((current.state != OriginalSingleCurrentHolder::State::Prepared &&
                  current.state != OriginalSingleCurrentHolder::State::Closing) ||
@@ -10718,6 +10722,7 @@ public:
                 current.retirementHold.Release();
     }
     void ServiceOriginalSingleRetiredInstallations() noexcept {
+        if (originalSingleCurrentCount == 0) return;
         for (auto& current : originalSingleCurrentHolders)
             if (current.state == OriginalSingleCurrentHolder::State::Ending)
                 (void)current.ClearInstallAfterNativeRetirement(*this);
@@ -12532,6 +12537,7 @@ public:
     // Stable backing. Native tables outlive every genuine cap and bundle.
     StableRowStorage<PlayableInstanceTable::OriginalLifetimePin> originalPlayableLifetimeHolders;
     StableRowStorage<OriginalSingleCurrentHolder> originalSingleCurrentHolders;
+    std::uint32_t originalSingleCurrentCount = 0;
     void (*originalPlayableTreePreparationHookForTest)(Engine&, PlayableTreeExecutor&, void*) = nullptr;
     void* originalPlayableTreePreparationContextForTest = nullptr;
     ContainerPlaybackTable containerPlayback;
@@ -13148,13 +13154,14 @@ public:
         catch (...) { return false; }
         return true;
     }
-    bool PreparePlayableStateStorage() noexcept {
+    bool PreparePlayableStateStorage(bool needsContainerState = true) noexcept {
         return PrepareOriginalPlayableStorage() &&
-            initialFrontierEvents.ConstructThrough(initialFrontierEvents.Capacity()) &&
-            initialFrontierRequests.ConstructThrough(initialFrontierRequests.Capacity()) &&
-            pendingVariableLeafSources.ConstructThrough(pendingVariableLeafSources.Capacity()) &&
-            pendingVariableFutureSources.ConstructThrough(pendingVariableFutureSources.Capacity()) &&
-            pendingVariableFutureNodes.ConstructThrough(pendingVariableFutureNodes.Capacity()) &&
+            (!needsContainerState ||
+                (initialFrontierEvents.ConstructThrough(initialFrontierEvents.Capacity()) &&
+                 initialFrontierRequests.ConstructThrough(initialFrontierRequests.Capacity()) &&
+                 pendingVariableLeafSources.ConstructThrough(pendingVariableLeafSources.Capacity()) &&
+                 pendingVariableFutureSources.ConstructThrough(pendingVariableFutureSources.Capacity()) &&
+                 pendingVariableFutureNodes.ConstructThrough(pendingVariableFutureNodes.Capacity()))) &&
             spatial.PrepareVoiceStorage(config.voiceCapacity.Render()) &&
             PreparePlayablePublicationStorage();
     }
