@@ -9513,7 +9513,8 @@ TEST(VariableCurrentSlice, NativeReadCutCalendarWithoutSourcesBlocksResetUntilDr
     ASSERT_TRUE(e.variables.FinishNativeReadCut(identity, false));
     EXPECT_FALSE(e.variables.ResetTransport(0));
     EXPECT_EQ(identity.transport, e.variables.CurrentTransportEpoch());
-    e.timelinePool.Publish(frame + kBlockFrames);
+    e.variables.PrepareClaimedSlices(e);
+    EXPECT_GE(e.timelinePool.PublishCutoffFrame(), frame + kBlockFrames);
     harken::ConsumedCurrentSlice consumed{};
     ASSERT_EQ(1u, e.timelinePool.ConsumeCurrentSlicesRt(4, &consumed, 1));
     ASSERT_TRUE(e.variables.ConsumeNativeReadCutCalendar(consumed));

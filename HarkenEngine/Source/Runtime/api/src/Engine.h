@@ -1538,36 +1538,6 @@ struct EnginePlainInitialRetryRetirement {
     PlayableProgramKey program{};
 };
 
-// Future filing data is separate from the playable service's Current owners.
-// A retained copy is scheduling data, never a native publication/apply right.
-struct EngineQueueFutureFilingLayout {
-    EngineMonitorSelection queueMonitorSelection{};
-    DecisionToken queueDecision{};
-    ConditionalQueueVersionToken queueConditional{};
-    std::uint8_t queueSuccessorProgramPlane = 1;
-    EngineQueueProgramBank* queueSuccessorProgramBank = nullptr;
-    EngineQueueProgramRange queueSuccessorPrograms{};
-    std::uint32_t queueSuccessorScheduleBase = 0;
-    std::uint32_t queueSuccessorScheduleLeafCount = 0;
-    KnownCompletionPredicateV1 queueSuccessorCompletion{};
-    CompositeCompletionOwnerToken queueSuccessorCompositeOwner{};
-    bool queueSuccessorHasZeroWorkCompletion = false;
-    std::uint64_t queueSuccessorZeroWorkCompletionFrame = 0;
-    OccurrenceToken queueSuccessorOccurrence{};
-    TimelineArmToken queueSuccessorArm{};
-    ArmGroupToken queueArmGroup{};
-    TransitionInstanceToken queueTransition{};
-    std::uint64_t queueTransitionEndFrame = 0;
-    std::array<TimelineArmToken, 2u * kMaxKnownScheduleLeaves>
-        queueTransitionGroupArms{};
-    std::uint32_t queueTransitionGroupArmCount = 0;
-    std::uint32_t queueSourceControlArmCount = 0;
-    ProgramView queueSourceSchedule{};
-    ProgramView queueSuccessorSchedule{};
-    bool queueSameProgramKey = false;
-    bool queueDecisionCommitted = false;
-};
-
 struct EngineVariableTreeStorage {
     struct Instance {
         PlayableInstanceHandle handle = 0;
@@ -1645,7 +1615,7 @@ struct EngineVariableInitialArms {
     }
 };
 
-// Views never allocate or acquire ownership. Only the service binds its own backing.
+// Views never allocate or acquire ownership. Native owners bind their own backing.
 template<class T, std::size_t N>
 class EngineServiceArrayView {
 public:
@@ -1691,8 +1661,65 @@ public:
     operator const Array&() const noexcept { return Snapshot(); }
 private:
     friend struct EnginePlayableServiceRow;
+    friend struct EngineOwnedQueueFutureFiling;
     void Bind(Array& values) noexcept { values_ = &values; }
     Array* values_ = nullptr;
+};
+
+// Future filing data is separate from the playable service's Current owners.
+// A retained copy is scheduling data, never a native publication/apply right.
+struct EngineQueueFutureFilingLayout {
+    EngineMonitorSelection queueMonitorSelection{};
+    DecisionToken queueDecision{};
+    ConditionalQueueVersionToken queueConditional{};
+    std::uint8_t queueSuccessorProgramPlane = 1;
+    EngineQueueProgramBank* queueSuccessorProgramBank = nullptr;
+    EngineQueueProgramRange queueSuccessorPrograms{};
+    std::uint32_t queueSuccessorScheduleBase = 0;
+    std::uint32_t queueSuccessorScheduleLeafCount = 0;
+    KnownCompletionPredicateV1 queueSuccessorCompletion{};
+    CompositeCompletionOwnerToken queueSuccessorCompositeOwner{};
+    bool queueSuccessorHasZeroWorkCompletion = false;
+    std::uint64_t queueSuccessorZeroWorkCompletionFrame = 0;
+    OccurrenceToken queueSuccessorOccurrence{};
+    TimelineArmToken queueSuccessorArm{};
+    ArmGroupToken queueArmGroup{};
+    TransitionInstanceToken queueTransition{};
+    std::uint64_t queueTransitionEndFrame = 0;
+    EngineServiceArrayView<TimelineArmToken, 2u * kMaxKnownScheduleLeaves>
+        queueTransitionGroupArms{};
+    std::uint32_t queueTransitionGroupArmCount = 0;
+    std::uint32_t queueSourceControlArmCount = 0;
+    ProgramView queueSourceSchedule{};
+    ProgramView queueSuccessorSchedule{};
+    bool queueSameProgramKey = false;
+    bool queueDecisionCommitted = false;
+};
+
+struct EngineOwnedQueueFutureFiling : EngineQueueFutureFilingLayout {
+    EngineOwnedQueueFutureFiling() noexcept {
+        queueTransitionGroupArms.Bind(arms_);
+    }
+    explicit EngineOwnedQueueFutureFiling(const EngineQueueFutureFilingLayout& other) noexcept
+        : EngineOwnedQueueFutureFiling() {
+        EngineQueueFutureFilingLayout::operator=(other);
+    }
+    EngineOwnedQueueFutureFiling(const EngineOwnedQueueFutureFiling& other) noexcept
+        : EngineOwnedQueueFutureFiling(static_cast<const EngineQueueFutureFilingLayout&>(other)) {}
+    EngineOwnedQueueFutureFiling(EngineOwnedQueueFutureFiling&& other) noexcept
+        : EngineOwnedQueueFutureFiling(static_cast<const EngineQueueFutureFilingLayout&>(other)) {}
+    EngineOwnedQueueFutureFiling& operator=(const EngineQueueFutureFilingLayout& other) noexcept {
+        EngineQueueFutureFilingLayout::operator=(other);
+        return *this;
+    }
+    EngineOwnedQueueFutureFiling& operator=(const EngineOwnedQueueFutureFiling& other) noexcept {
+        return *this = static_cast<const EngineQueueFutureFilingLayout&>(other);
+    }
+    EngineOwnedQueueFutureFiling& operator=(EngineOwnedQueueFutureFiling&& other) noexcept {
+        return *this = static_cast<const EngineQueueFutureFilingLayout&>(other);
+    }
+private:
+    std::array<TimelineArmToken, 2u * kMaxKnownScheduleLeaves> arms_{};
 };
 
 struct EngineServiceFeatureArrays {
@@ -1711,6 +1738,7 @@ struct EngineServiceFeatureArrays {
     std::array<bool, 64> variableControlRetargetLogicalCompleted{};
     std::array<std::uint16_t, kMaxKnownScheduleLeaves> queueInitialCurrentMemberIndices{};
     std::array<TimelineArmToken, kMaxKnownScheduleLeaves> queueInitialCurrentDelayedArms{};
+    std::array<TimelineArmToken, 2u * kMaxKnownScheduleLeaves> queueTransitionGroupArms{};
     std::array<PlayableInstanceHandle, kSelectionPathNodeCapacity> containerInstances{};
     std::array<SelectionPathNodeV1, kSelectionPathNodeCapacity> selectionPath{};
     CurveLUT transitionSourceFadeCurve{};
@@ -2193,6 +2221,7 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
         variableControlRetargetLogicalCompleted.Clear();
         queueInitialCurrentMemberIndices.Clear();
         queueInitialCurrentDelayedArms.Clear();
+        queueTransitionGroupArms.Clear();
         containerInstances.Clear();
         selectionPath.Clear();
         if (featureArrays_ != nullptr) {
@@ -2217,6 +2246,7 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
         variableControlRetargetLogicalCompleted.Bind(featureArrays_->variableControlRetargetLogicalCompleted);
         queueInitialCurrentMemberIndices.Bind(featureArrays_->queueInitialCurrentMemberIndices);
         queueInitialCurrentDelayedArms.Bind(featureArrays_->queueInitialCurrentDelayedArms);
+        queueTransitionGroupArms.Bind(featureArrays_->queueTransitionGroupArms);
         containerInstances.Bind(featureArrays_->containerInstances);
         selectionPath.Bind(featureArrays_->selectionPath);
     }
@@ -11136,7 +11166,7 @@ public:
         QueueInstanceTable::OriginalConditionalFutureReservation baseline;
         QueueInstanceTable::OriginalConditionalLaneClock clock;
         OriginalImmediateLaneConditionalProjection projection;
-        EngineQueueFutureFilingLayout initialFuture{};
+        EngineOwnedQueueFutureFiling initialFuture{};
         EngineQueueProgramBank::OriginalLifetimePin initialFutureBank;
         bool initialFutureCaptured = false;
         // Same-factory associations; the clock retains both native group rows.
@@ -11178,7 +11208,7 @@ public:
         std::array<EffectPoolBank::PreparedCommitProof, kTimelineMaxVoiceEffects> sourceEffectCommits;
         EngineQueueProgramBank::OriginalLifetimePin bankRetention;
         EngineQueueProgramBank::OriginalLifetimePin oldBankRetention;
-        EngineQueueFutureFilingLayout oldFuture{};
+        EngineOwnedQueueFutureFiling oldFuture{};
         DecisionToken oldSourceDecision{};
         OccurrenceToken oldSourceOccurrence{};
         const EngineImmediateEntryAttempt* originalAttempt = nullptr;
@@ -11611,7 +11641,7 @@ public:
         holder.decisions = {};
         holder.groups = {};
         holder.entry = {};
-        holder.oldFuture = {};
+        holder.oldFuture = EngineOwnedQueueFutureFiling{};
         holder.oldSourceDecision = {};
         holder.oldSourceOccurrence = {};
         holder.relativeFrame = holder.sequence = 0;
@@ -11668,7 +11698,7 @@ public:
         holder.clock.Release();
         holder.bankRetention.Release();
         holder.oldBankRetention.Release();
-        holder.oldFuture = {};
+        holder.oldFuture = EngineOwnedQueueFutureFiling{};
         holder.oldSourceDecision = {};
         holder.oldSourceOccurrence = {};
         holder.originalAttempt = nullptr;
@@ -11735,7 +11765,7 @@ public:
         }
         holder.projection.Return();
         holder.initialFutureBank.Release();
-        holder.initialFuture = {};
+        holder.initialFuture = EngineOwnedQueueFutureFiling{};
         holder.initialFutureCaptured = false;
         holder.clock.Release();
         holder.baseline.Release();

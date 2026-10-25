@@ -13953,7 +13953,7 @@ TEST(ActionFiringApi, OriginalInitialFilingRetainsFactoryFutureAcrossSelectedAli
     VnActionFiringHandle firing = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
     auto& row = engine.playableServices[0];
-    const auto selected = static_cast<const harken::EngineQueueFutureFilingLayout&>(row);
+    const harken::EngineOwnedQueueFutureFiling selected(row);
     const auto queue = row.queueInstance;
     const auto* original = engine.OriginalQueueInitialFilingFor(row);
     ASSERT_NE(nullptr, original);
@@ -13978,7 +13978,7 @@ TEST(ActionFiringApi, OriginalInitialFilingRetainsFactoryFutureAcrossSelectedAli
     row.queueDecision = {};
     row.queueConditional = {};
     row.queueSuccessorProgramBank = nullptr;
-    row.queueTransitionGroupArms = {};
+    row.queueTransitionGroupArms.Clear();
     row.queueTransitionGroupArmCount = 0;
     row.queueSuccessorCompletion = {};
     std::size_t members = 0, programs = 0, events = 0, leaves = 0, groups = 0, holders = 0;
@@ -59784,7 +59784,7 @@ TEST(ActionFiringApi,
         row->queueTransition;
     const harken::CompositeCompletionOwnerToken composite =
         row->queueSuccessorCompositeOwner;
-    const auto groupArms = row->queueTransitionGroupArms;
+    const auto groupArms = row->queueTransitionGroupArms.Snapshot();
     ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 0));
     ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 1));
     const std::array<VnVoiceHandle, 2> successors = {
@@ -60295,7 +60295,7 @@ TEST(ActionFiringApi,
     auto* const oldBank = row->queueSuccessorProgramBank;
     ASSERT_NE(nullptr, oldBank);
     const auto oldBody = std::make_unique<harken::EngineQueueProgramBankBody>(*oldBank);
-    const auto oldArms = row->queueTransitionGroupArms;
+    const auto oldArms = row->queueTransitionGroupArms.Snapshot();
     harken::EffectiveQueueState expectedReset{};
     ASSERT_NO_FATAL_FAILURE(CaptureCanonicalResetProjection(*engine, *row, image, &expectedReset));
     const auto originalBoundary = row->queueCompletionFrame;
@@ -60587,7 +60587,7 @@ TEST(ActionFiringApi,
         row->queueConditional;
     const harken::TransitionInstanceToken transition =
         row->queueTransition;
-    const auto groupArms = row->queueTransitionGroupArms;
+    const auto groupArms = row->queueTransitionGroupArms.Snapshot();
     const std::uint64_t firstSliceFrame =
         row->queueSourceSchedule.entryAnchorFrame;
     const std::uint64_t secondSliceFrame = row->queueCompletionFrame;

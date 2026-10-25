@@ -532,6 +532,17 @@ TEST(StableBackingPreparation, ServiceFeaturePromiseSurvivesResetAndFailedProtec
     auto* path = first.selectionPath.data();
     ASSERT_NE(nullptr, path);
     first.selectionPath[0].childOrdinal = 7;
+    auto* arms = first.queueTransitionGroupArms.data();
+    ASSERT_NE(nullptr, arms);
+    first.queueTransitionGroupArms[0] = {1u, 2u, 3u, 4u};
+    first.queueTransitionGroupArmCount = 1;
+    first.queueSuccessorProgramPlane = 2;
+    const harken::EngineOwnedQueueFutureFiling initial(first);
+    harken::EngineOwnedQueueFutureFiling old(initial);
+    EXPECT_NE(arms, initial.queueTransitionGroupArms.data());
+    EXPECT_NE(arms, old.queueTransitionGroupArms.data());
+    EXPECT_NE(initial.queueTransitionGroupArms.data(), old.queueTransitionGroupArms.data());
+    first.queueTransitionGroupArms[0].generation = 9;
     auto* sourceCurve = &first.TransitionSourceFadeCurve();
     auto* targetCurve = &first.TransitionTargetFadeCurve();
     sourceCurve->values[harken::kCurveLutEntries] = 0.25f;
@@ -547,6 +558,24 @@ TEST(StableBackingPreparation, ServiceFeaturePromiseSurvivesResetAndFailedProtec
     EXPECT_EQ(0.0f, targetCurve->values[0]);
     EXPECT_EQ(0.0f, sourceCurve->xMax);
     EXPECT_EQ(0.0f, targetCurve->xMin);
+    EXPECT_EQ(arms, first.queueTransitionGroupArms.data());
+    EXPECT_FALSE(first.queueTransitionGroupArms[0].Valid());
+    EXPECT_EQ(0u, first.queueTransitionGroupArmCount);
+    EXPECT_EQ(2u, initial.queueTransitionGroupArms[0].generation);
+    EXPECT_EQ(2u, old.queueTransitionGroupArms[0].generation);
+    static_cast<harken::EngineQueueFutureFilingLayout&>(first) = initial;
+    EXPECT_EQ(arms, first.queueTransitionGroupArms.data());
+    EXPECT_EQ(2u, first.queueTransitionGroupArms[0].generation);
+    EXPECT_EQ(1u, first.queueTransitionGroupArmCount);
+    EXPECT_EQ(2u, first.queueSuccessorProgramPlane);
+    auto* oldArms = old.queueTransitionGroupArms.data();
+    old = harken::EngineOwnedQueueFutureFiling{};
+    EXPECT_EQ(oldArms, old.queueTransitionGroupArms.data());
+    EXPECT_FALSE(old.queueTransitionGroupArms[0].Valid());
+    old = initial;
+    EXPECT_EQ(oldArms, old.queueTransitionGroupArms.data());
+    EXPECT_EQ(2u, old.queueTransitionGroupArms[0].generation);
+    first.Reset();
 
     // Occupy the current prefix so growth must preserve the promised spare rows.
     for (auto& row : engine.playableServices) row.actionPrepared = true;

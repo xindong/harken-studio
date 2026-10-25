@@ -13732,7 +13732,7 @@ bool ReleaseQueueStopFactories(
     row.queueSourceArm = {};
     row.queueSuccessorArm = {};
     row.queueTransition = {};
-    row.queueTransitionGroupArms = {};
+    row.queueTransitionGroupArms.Clear();
     row.queueSourceControlArmCount = 0;
     row.ClearQueueSourcePrograms();
     row.queueTransitionGroupArmCount = 0;
@@ -25583,7 +25583,7 @@ QueueContinuationPrepareStatus PrepareCompositeQueueContinuation(
         row.queueSourceControlArmCount = 0;
         row.ClearQueueSourcePrograms();
         row.queueTransitionGroupArmCount = 0;
-        row.queueTransitionGroupArms = {};
+        row.queueTransitionGroupArms.Clear();
         if (row.queueTransition.Valid()) {
             if (!engine.transitionInstances.CancelBeforePublication(row.queueTransition))
 engine.runtimeRecreateRequired = true;
@@ -25593,7 +25593,7 @@ engine.runtimeRecreateRequired = true;
     row.queueSourceArm = {};
     row.queueSourceControlArmCount = 0;
     row.ClearQueueSourcePrograms();
-    row.queueTransitionGroupArms = {};
+    row.queueTransitionGroupArms.Clear();
     row.queueTransitionGroupArmCount = 0;
     if (transitionRule != nullptr) {
         const std::uint64_t audibleFrame = sourceControlRequired
@@ -26747,7 +26747,7 @@ engine.runtimeRecreateRequired = true;
         row.queueSourceControlArmCount = 0;
         row.ClearQueueSourcePrograms();
         row.queueTransitionGroupArmCount = 0;
-        row.queueTransitionGroupArms = {};
+        row.queueTransitionGroupArms.Clear();
         if (row.queueTransition.Valid()) {
             if (!engine.transitionInstances.CancelBeforePublication(row.queueTransition))
 engine.runtimeRecreateRequired = true;
@@ -26758,7 +26758,7 @@ engine.runtimeRecreateRequired = true;
     row.queueSourceControlArmCount = 0;
     row.ClearQueueSourcePrograms();
     row.queueTransitionGroupArmCount = 0;
-    row.queueTransitionGroupArms = {};
+    row.queueTransitionGroupArms.Clear();
     if (transitionRule != nullptr) {
         if (!engine.transitionInstances.Acquire(
                 {sourceControlRequired ? sourcePhaseFrame
@@ -31061,7 +31061,7 @@ bool FailQueueForInvalidation(
         row.queueSourceControlArmCount = 0;
         row.ClearQueueSourcePrograms();
         row.queueTransitionGroupArmCount = 0;
-        row.queueTransitionGroupArms = {};
+        row.queueTransitionGroupArms.Clear();
         row.queueTransition = {};
         row.queueTransitionEndFrame = 0;
         row.queueSameProgramKey = false;
@@ -49534,7 +49534,7 @@ engine.runtimeRecreateRequired = true;
                 row.queueSourceControlArmCount = 0;
                 row.ClearQueueSourcePrograms();
                 row.queueTransitionGroupArmCount = 0;
-                row.queueTransitionGroupArms = {};
+                row.queueTransitionGroupArms.Clear();
                 row.queueTransition = {};
                 row.queueTransitionEndFrame = 0;
                 if (row.queueDecision.Valid() &&
@@ -50284,7 +50284,7 @@ engine.runtimeRecreateRequired = true;
                 row.queueSourceControlArmCount = 0;
                 row.ClearQueueSourcePrograms();
                 row.queueTransitionGroupArmCount = 0;
-                row.queueTransitionGroupArms = {};
+                row.queueTransitionGroupArms.Clear();
                 row.queueTransition = {};
                 row.queueTransitionEndFrame = 0;
                 row.queueSameProgramKey = false;
@@ -72863,7 +72863,7 @@ engine.runtimeRecreateRequired = true;
             row->queueSourceControlArmCount = 0;
             row->ClearQueueSourcePrograms();
             row->queueTransitionGroupArmCount = 0;
-            row->queueTransitionGroupArms = {};
+            row->queueTransitionGroupArms.Clear();
             row->queueTransition = {};
             row->queueTransitionEndFrame = 0;
             row->queueSameProgramKey = false;
@@ -80113,7 +80113,7 @@ bool PrepareQueueTransitionContinuation(
         row.canonicalInitialQueueRequest = scratch->queueFutureCanonicalCurrent->canonicalRequest;
     }
 
-    row.queueTransitionGroupArms = {};
+    row.queueTransitionGroupArms.Clear();
     for (std::uint32_t index = 0;
          index < sourceControlCount; ++index) {
         const VnVoiceHandle handle = sourceSet.renderHandles[index];
@@ -92527,7 +92527,7 @@ bool CommitNativeImmediateActionQueueReplacement(harken::Engine& engine,
     row.queueSourceArm = {};
     row.queueSourceControlArmCount = 0;
     row.ClearQueueSourcePrograms();
-    row.queueTransitionGroupArms = {};
+    row.queueTransitionGroupArms.Clear();
     row.queueTransitionGroupArmCount = 0;
     row.queueTransition = {};
     row.queueTransitionEndFrame = 0;
@@ -92729,7 +92729,7 @@ void CommitImmediateActionQueueReplacements(
         row.queueSourceArm = {};
         row.queueSourceControlArmCount = 0;
         row.ClearQueueSourcePrograms();
-        row.queueTransitionGroupArms = {};
+        row.queueTransitionGroupArms.Clear();
         row.queueTransitionGroupArmCount = 0;
         row.queueTransition = {};
         row.queueTransitionEndFrame = 0;

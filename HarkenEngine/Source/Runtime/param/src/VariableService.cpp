@@ -3395,6 +3395,10 @@ VariableServiceV1::WorkSpan VariableServiceV1::BuildWorkSet(Engine& engine,
         for (auto& row : history_) row.candidateEpoch = 0;
         candidateEpoch_ = 2;
     }
+    if (scheduledGroupCount_ == 0) {
+        workCandidateCount_ = 0;
+        return {};
+    }
     const auto nextOpenFrame = EarliestReadCutFrame(engine);
     const auto world = cut != nullptr ? cut->world : worldGeneration_;
     const auto transport = cut != nullptr ? cut->transport : transport_.Current();
@@ -3469,6 +3473,7 @@ bool VariableServiceV1::CensusCanClaim(const Engine& engine, const WriteRow& row
 
 void VariableServiceV1::RefreshOrdinaryDebt(Engine& engine) noexcept {
     ordinaryDebt_ = {};
+    if (scheduledGroupCount_ == 0) return;
     const auto nextOpenFrame = EarliestReadCutFrame(engine);
     WriteRow* earliest = nullptr;
     for (std::uint32_t i = 0; i < scheduledGroupCount_; ++i) {
@@ -3638,6 +3643,12 @@ void VariableServiceV1::PrepareClaimedSlices(Engine& engine) {
 void VariableServiceV1::PrepareClaimedSlicesImpl(Engine& engine, WorkSpan work,
     bool allowUnsettledFrontier, bool publishPages,
     const ActionOrderIdentity* privateIssue, bool reserveOnly) {
+    if (workCandidateCount_ == 0) {
+        assert(work.empty());
+        RefreshOrdinaryDebt(engine);
+        if (!reserveOnly && publishPages) PublishPreparedPlaybackPages();
+        return;
+    }
     const std::uint64_t nextOpenFrame = EarliestReadCutFrame(engine);
     // Each selected identity is attempted once; actual placement can only grow the closure.
     for (;;) {
