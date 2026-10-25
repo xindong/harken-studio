@@ -236,7 +236,7 @@ public:
     std::size_t FirstOutputStorageBytes() const noexcept;
     // Backing only: native timeline authority still governs every pending event.
     std::span<VoiceTimelineEvent> PendingTimelineVariableEvents(std::uint32_t renderSlot) noexcept {
-        if (!m_pendingTimelineVariableEvents.IsConstructed(renderSlot)) return {};
+        if (renderSlot >= m_pendingTimelineVariableEvents.ConstructedCount()) return {};
         return m_pendingTimelineVariableEvents[renderSlot];
     }
     void SetPendingTimelineVariableEventCommitPageLimitForTests(std::size_t pages) noexcept {
