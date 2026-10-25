@@ -688,9 +688,10 @@ StageResult RenderVoiceBlock(VoiceRenderContext& ctx, BlockArena& arena,
 //
 // Phase 1 (serial): reserve arena scratch for one voice's cascade — the source
 // scratch, the blend planes, and (when the voice has active sends) the
-// mix-layout-wide send tap — and resolve the block offset. This is the ONLY
-// phase that touches the arena, and it runs in slot order, so the allocation
-// sequence (and hence any degradation under a tight arena) is identical whether
+// mix-layout-wide send tap — and resolve the block offset. Blend and tap planes
+// may share storage because Run completes before Fold overwrites the tap image.
+// This is the only phase that touches the arena, and it runs in slot order, so
+// the allocation sequence (and hence tight-arena degradation) is identical whether
 // rendering is serial or fanned across workers. Returns true when the cascade
 // should run this block; false when the voice contributes nothing — a streamed
 // voice still prebuffering, or a scratch/blend shortfall — in which case

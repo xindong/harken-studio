@@ -116,7 +116,8 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
       m_arenaLowBytes(static_cast<std::uint64_t>(config.maxBuses) *
                       config.mixChannelCount * config.blockFrames * sizeof(float)),
       m_arenaBytesPerSlot(std::min<std::uint64_t>(config.arenaBytes,
-          static_cast<std::uint64_t>(2u * kMaxChannels + config.mixChannelCount) *
+          static_cast<std::uint64_t>(kMaxChannels +
+              std::max<std::uint32_t>(kMaxChannels, config.mixChannelCount)) *
           config.blockFrames * sizeof(float) * (config.renderWorkerCount == 0 ? 1u : 2u))),
       m_arenaBatchAllowance(config.renderWorkerCount == 0 ? 1u : 2u),
       m_busPlanes(static_cast<std::size_t>(config.maxBuses) *
@@ -195,10 +196,9 @@ bool MixerLoop::PrepareVoiceBacking(std::uint32_t count) noexcept {
 bool MixerLoop::PreparePreparedChannelBacking(std::uint32_t count) noexcept {
     if (count > m_voices.Capacity()) return false;
     // Source columns precede this callback and never shrink. Include high slots
-    // when a low slot widens, plus dry/blend and all send taps for every voice.
+    // when a low slot widens, with the complete future blend/send allowance.
     const auto slots = std::max(count, m_voices.ConstructedSlotCount());
-    const auto planes = 2u * m_voices.PreparedSourceChannelRows() +
-        static_cast<std::uint64_t>(m_mixChannels) * slots;
+    const auto planes = m_voices.PreparedCascadeChannelRows(m_mixChannels, slots);
     const auto highBytes = slots == 0 ? 0u : planes * m_voices.BlockFrames() *
         sizeof(float) * m_arenaBatchAllowance + alignof(float) - 1u;
     return m_arena.PrepareBacking(m_arenaLowBytes, highBytes);

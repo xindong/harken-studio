@@ -490,69 +490,82 @@ TEST(BusSend, PlanOrderEvaluatesSourceBeforeReceiver) {
 // channels by the same factor as the dry ones; a disabled send would not double
 // at all.
 TEST(BusSend, VoiceSendCarriesPostPanImage) {
-    // Renders a 3D voice hard-panned right (listener at origin facing -Z, source
-    // at +X) into bus A, optionally sending a unity copy into sibling bus B; both
-    // A and B fold to master at unity. Captures one settled block into `out`.
-    auto renderPanned = [](bool withSend, Capture& out, float outputDb = 0.0f,
-                           float amplitude = 0.25f) {
-        VnConfig config = MakeNullConfig(2, kBlockFrames);
-        config.maxBuses = 4;
-        EngineSession session(config);
-        ASSERT_EQ(VN_OK, session.InitResult());
-        // Keep the linear send comparison below the final device ceiling.
-        std::vector<float> dc = MakeDC(kBlockFrames, amplitude);
-        const VnPCMDesc desc = MonoDesc(dc, 48000);
-        ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &desc));
+    // A neutral bypassed insert preserves the oracle while exercising blending.
+    for (const bool withBypass : {false, true}) {
+        SCOPED_TRACE(withBypass);
+        // Renders a 3D voice hard-panned right (listener at origin facing -Z, source
+        // at +X) into bus A, optionally sending a unity copy into sibling bus B; both
+        // A and B fold to master at unity. Captures one settled block into `out`.
+        auto renderPanned = [withBypass](bool withSend, Capture& out,
+                                       float outputDb = 0.0f, float amplitude = 0.25f) {
+            VnConfig config = MakeNullConfig(2, kBlockFrames);
+            config.maxBuses = 4;
+            if (withBypass) config.fxSlotsPerVoice = 1;
+            EngineSession session(config);
+            ASSERT_EQ(VN_OK, session.InitResult());
+            // Keep the linear send comparison below the final device ceiling.
+            std::vector<float> dc = MakeDC(kBlockFrames, amplitude);
+            const VnPCMDesc desc = MonoDesc(dc, 48000);
+            ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &desc));
 
-        ASSERT_EQ(VN_OK, Vn_CreateBus(kBusA, VN_BUS_MASTER));
-        ASSERT_EQ(VN_OK, Vn_CreateBus(kBusB, VN_BUS_MASTER));
+            ASSERT_EQ(VN_OK, Vn_CreateBus(kBusA, VN_BUS_MASTER));
+            ASSERT_EQ(VN_OK, Vn_CreateBus(kBusB, VN_BUS_MASTER));
 
-        VnPlayDesc play = MakePlayDesc3D(harkentest::ObjectId(1), 10.0f, 0.0f, 0.0f);
-        play.busId = kBusA;
-        VnVoiceHandle handle = 0;
-        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
-        if (withSend) {
-            ASSERT_EQ(VN_OK, Vn_SetVoiceSend(handle, 0, kBusB, 0.0f));
+            VnPlayDesc play = MakePlayDesc3D(harkentest::ObjectId(1), 10.0f, 0.0f, 0.0f);
+            play.busId = kBusA;
+            VnVoiceHandle handle = 0;
+            ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
+            if (withBypass) {
+                VnGainDesc gain{};
+                gain.structSize = sizeof(gain);
+                gain.gainDb = 0.0f;
+                ASSERT_EQ(VN_OK, Vn_SetVoiceEffect(handle, 0, VN_EFFECT_GAIN,
+                    static_cast<const VnEffectDesc*>(static_cast<const void*>(&gain))));
+                ASSERT_EQ(VN_OK, Vn_SetVoiceEffectBypass(handle, 0, 1));
+            }
+            if (withSend) {
+                ASSERT_EQ(VN_OK, Vn_SetVoiceSend(handle, 0, kBusB, 0.0f));
+            }
+            ASSERT_EQ(VN_OK, Vn_SetVoiceOutputVolume(handle, outputDb, 0));
+            // Commit the spatializer pan before rendering, so the dry block (and
+            // therefore its send copy) is actually panned.
+            Vn_Update();
+            PumpAndCapture(session.Engine(), 1, out);
+        };
+
+        Capture dryOnly;
+        renderPanned(false, dryOnly);
+        HARKENTEST_ASSERT_NON_SILENT(dryOnly.right);
+        Capture withSend;
+        renderPanned(true, withSend);
+        HARKENTEST_ASSERT_NON_SILENT(withSend.right);
+        Capture scaledOutput;
+        renderPanned(true, scaledOutput, -6.0206f);
+        Capture clippedOutput;
+        renderPanned(true, clippedOutput, 0.0f, 0.5f);
+
+        // Guard against a vacuous pass: the voice must be genuinely panned, not
+        // centered, or "both channels doubled" would hold trivially.
+        ASSERT_GT(dryOnly.right[kBlockFrames / 2],
+                  dryOnly.left[kBlockFrames / 2] + 0.1f);
+        // A unity send adds an identical post-pan copy of each channel, so both
+        // channels double exactly, sample for sample: x + x == 2*x is exact in IEEE
+        // float. A pre-pan equal-channel copy would add the same value to both
+        // channels and fail this on the panned channel; a dropped send would not
+        // double at all.
+        for (std::size_t i = 0; i < kBlockFrames; ++i) {
+            ASSERT_NEAR(0.25f * std::sqrt(2.0f), dryOnly.right[i], 1e-6f);
+            ASSERT_FLOAT_EQ(2.0f * dryOnly.left[i], withSend.left[i])
+                << "left sample " << i;
+            ASSERT_FLOAT_EQ(2.0f * dryOnly.right[i], withSend.right[i])
+                << "right sample " << i;
+            ASSERT_NEAR(1.5f * dryOnly.left[i], scaledOutput.left[i], 1e-5f);
+            ASSERT_NEAR(1.5f * dryOnly.right[i], scaledOutput.right[i], 1e-5f);
+            // Two 0.5 sources at the hard-right endpoint exceed unity only at
+            // final output; the existing device clamp remains authoritative.
+            ASSERT_FLOAT_EQ(0.0f, clippedOutput.left[i]);
+            ASSERT_FLOAT_EQ(1.0f, clippedOutput.right[i]);
         }
-        ASSERT_EQ(VN_OK, Vn_SetVoiceOutputVolume(handle, outputDb, 0));
-        // Commit the spatializer pan before rendering, so the dry block (and
-        // therefore its send copy) is actually panned.
-        Vn_Update();
-        PumpAndCapture(session.Engine(), 1, out);
-    };
-
-    Capture dryOnly;
-    renderPanned(false, dryOnly);
-    HARKENTEST_ASSERT_NON_SILENT(dryOnly.right);
-    Capture withSend;
-    renderPanned(true, withSend);
-    HARKENTEST_ASSERT_NON_SILENT(withSend.right);
-    Capture scaledOutput;
-    renderPanned(true, scaledOutput, -6.0206f);
-    Capture clippedOutput;
-    renderPanned(true, clippedOutput, 0.0f, 0.5f);
-
-    // Guard against a vacuous pass: the voice must be genuinely panned, not
-    // centered, or "both channels doubled" would hold trivially.
-    ASSERT_GT(dryOnly.right[kBlockFrames / 2],
-              dryOnly.left[kBlockFrames / 2] + 0.1f);
-    // A unity send adds an identical post-pan copy of each channel, so both
-    // channels double exactly, sample for sample: x + x == 2*x is exact in IEEE
-    // float. A pre-pan equal-channel copy would add the same value to both
-    // channels and fail this on the panned channel; a dropped send would not
-    // double at all.
-    for (std::size_t i = 0; i < kBlockFrames; ++i) {
-        ASSERT_NEAR(0.25f * std::sqrt(2.0f), dryOnly.right[i], 1e-6f);
-        ASSERT_FLOAT_EQ(2.0f * dryOnly.left[i], withSend.left[i])
-            << "left sample " << i;
-        ASSERT_FLOAT_EQ(2.0f * dryOnly.right[i], withSend.right[i])
-            << "right sample " << i;
-        ASSERT_NEAR(1.5f * dryOnly.left[i], scaledOutput.left[i], 1e-5f);
-        ASSERT_NEAR(1.5f * dryOnly.right[i], scaledOutput.right[i], 1e-5f);
-        // Two 0.5 sources at the hard-right endpoint exceed unity only at
-        // final output; the existing device clamp remains authoritative.
-        ASSERT_FLOAT_EQ(0.0f, clippedOutput.left[i]);
-        ASSERT_FLOAT_EQ(1.0f, clippedOutput.right[i]);
     }
 }
 

@@ -184,8 +184,9 @@ void RenderScene(std::uint32_t workerCount, std::uint32_t mixLayout,
     ASSERT_EQ(VN_OK, Vn_SetVoiceEffect(handles[1], 0, VN_EFFECT_THREE_BAND_TONE,
                                        AsBase(&tone)));
 
-    // Two voices send to the aux bus, exercising the fold's send scatter.
-    ASSERT_EQ(VN_OK, Vn_SetVoiceSend(handles[2], 0, kSendBus, -3.0f));
+    // Voice 1 blends its insert before the same voice's send image is folded.
+    ASSERT_EQ(VN_OK, Vn_SetVoiceEffectBypass(handles[1], 0, 1));
+    ASSERT_EQ(VN_OK, Vn_SetVoiceSend(handles[1], 0, kSendBus, -3.0f));
     ASSERT_EQ(VN_OK, Vn_SetVoiceSend(handles[5], 0, kSendBus, -6.0f));
 
     ASSERT_EQ(VN_OK, Vn_Update());
@@ -281,8 +282,8 @@ TEST(RenderWorkerDeterminism, FiveOneToStereoDownmixByteIdentical) {
 
 TEST(RenderWorkerDeterminism, TightArenaDegradesIdenticallyAcrossWorkerCounts) {
     // Determinism at the arena boundary. Every per-voice arena reservation —
-    // source scratch, blend planes, AND the send-scatter tap — is made in the
-    // serial slot-order pre-pass (scratch -> dry -> tap for one voice, then the
+    // source scratch and the blend/send planes — is made in the serial
+    // slot-order pre-pass (scratch -> blend/tap for one voice, then the
     // next voice); the cascade and fold phases touch the arena zero times. So
     // the allocation SEQUENCE, and therefore exactly which voices degrade to
     // silence when the arena runs short, is fixed by slot order and independent

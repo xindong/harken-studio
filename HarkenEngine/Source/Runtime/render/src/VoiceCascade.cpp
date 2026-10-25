@@ -613,14 +613,10 @@ void ApplyPendingTailRearm(VoiceRenderContext& ctx,
 std::uint64_t VoiceCascadeScratchBytes(
     const VoiceRenderContext& ctx, std::uint32_t blockFrames,
     std::uint32_t mixChannels) noexcept {
-    std::uint32_t planes = ctx.pcm.channelCount;
     const bool needsBlendScratch = NeedsBlendScratch(ctx);
-    if (needsBlendScratch) {
-        planes += ctx.pcm.channelCount;
-    }
-    if (ctx.voiceSendActiveCount > 0) {
-        planes += mixChannels;
-    }
+    const std::uint32_t planes = ctx.pcm.channelCount + std::max(
+        needsBlendScratch ? ctx.pcm.channelCount : 0u,
+        ctx.voiceSendActiveCount > 0 ? mixChannels : 0u);
     return static_cast<std::uint64_t>(planes) * blockFrames * sizeof(float);
 }
 
@@ -851,32 +847,12 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
             }
         }
     }
-    // Send-scatter tap: reserved here, right after this voice's blend planes and
-    // before the next voice's scratch, so the per-voice arena order is
-    // scratch -> dry -> tap — the allocation sequence that makes any tight-arena
-    // degradation independent of the worker count.
-    //
-    // The reservation is gated on the voice having active sends, NOT on how many
-    // frames the block will produce. That is deliberate, and it is the one point
-    // where the reservation is coarser than the pre-split serial pass, which
-    // reserved the tap in the fold under `produced > 0`. `produced` is a fact of
-    // the cascade, which runs AFTER this reservation and is fanned across worker
-    // threads, so a "reserve only when produced > 0" rule would make the arena
-    // allocation sequence depend on the interleaving of cascade completions —
-    // exactly what no parallel schedule can reproduce and what the determinism
-    // invariant forbids. Reserving unconditionally, in fixed slot order, is what
-    // keeps serial and parallel byte-identical (and their overflow / high-water
-    // counts equal) right up to the arena boundary. The price is that a voice
-    // with sends that produces zero frames this block (a source-exhausted tail,
-    // or a still-active stream whose ring ran dry — the base-spec "produced 0
-    // while Active" state) reserves a tap it will not fill. That reservation is
-    // output-invisible (a zero-produced block folds nothing) but it does consume
-    // arena, so at the exhaustion boundary the serial default path can now drop a
-    // later voice the pre-split M4 path would have kept. This is a knowingly
-    // accepted, recorded deviation from "serial rendering is bit-identical to
-    // M4" — narrow to the arena-exhaustion corner, taken because worker-count
-    // independence and the produced-conditioned M4 reservation order cannot both
-    // hold under a single bump arena.
+    // This voice's blend planes are dead when Fold starts, after Run completes.
+    // Fold fills every produced tap sample before scattering, so these planes
+    // can also hold its send image. Only extra mix channels need new planes.
+    // Reserve in fixed slot/channel order before any worker runs, including
+    // active sends that will produce zero frames. Reservation and tight-arena
+    // degradation therefore remain independent of worker completion order.
     //
     // A tap shortfall does NOT decline the voice: it only drops this block's
     // sends (the pre-split fold's "partial reserve consumed, sends dropped"
@@ -886,7 +862,8 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
     if (ctx.voiceSendActiveCount > 0) {
         tapReady = true;
         for (std::uint32_t ch = 0; ch < mixChannels; ++ch) {
-            tap[ch] = arena.AllocFloatsHigh(blockFrames);
+            tap[ch] = needsBlendScratch && ch < channels
+                ? dry[ch] : arena.AllocFloatsHigh(blockFrames);
             if (tap[ch] == nullptr) {
                 tapReady = false;
                 break;

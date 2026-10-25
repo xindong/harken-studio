@@ -270,10 +270,15 @@ public:
         return m_slots.Capacity();
     }
     std::uint32_t ConstructedSlotCount() const noexcept { return m_slots.ConstructedCount(); }
-    // Control-side bound over every prepared source channel, including sparse high slots.
-    std::uint64_t PreparedSourceChannelRows() const noexcept {
-        std::uint64_t rows = 0;
-        for (const auto& channel : m_ringStorage) rows += channel.ConstructedCount();
+    // Control-side bound for source plus max(blend, send) planes in every row.
+    std::uint64_t PreparedCascadeChannelRows(
+        std::uint32_t mixChannels, std::uint32_t slots) const noexcept {
+        std::uint64_t rows = static_cast<std::uint64_t>(mixChannels) * slots;
+        for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
+            const auto count = m_ringStorage[ch].ConstructedCount();
+            rows += count;
+            if (ch >= mixChannels) rows += count;
+        }
         return rows;
     }
     std::size_t SlotStorageBytes() const noexcept { return m_slots.RequestedBytes(); }
