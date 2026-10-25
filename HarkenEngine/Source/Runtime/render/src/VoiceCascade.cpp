@@ -895,14 +895,13 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
     }
     ctx.firstBlock = false;
 
-    // Hand the reserved scratch to the cascade and fold phases. Every channel
-    // slot is copied (null beyond the source's channel count), so the phases
-    // read a stable base regardless of which thread runs the cascade.
-    for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
-        ctx.cascade.scratch[ch] = scratch[ch];
-        ctx.cascade.dry[ch] = dry[ch];
-        ctx.cascade.tap[ch] = tap[ch];
-    }
+    // Scratch always includes nulls beyond the source channels. Optional planes
+    // are read only when this block needs blending or has a complete send tap;
+    // otherwise their old non-owning pointers remain unread. Re-enabling either
+    // path republishes its full array before any worker or fold can consume it.
+    std::copy_n(scratch, kMaxChannels, ctx.cascade.scratch);
+    if (needsBlendScratch) std::copy_n(dry, kMaxChannels, ctx.cascade.dry);
+    if (tapReady) std::copy_n(tap, kMaxChannels, ctx.cascade.tap);
     ctx.cascade.needBlend = needsBlendScratch;
     ctx.cascade.tapReady = tapReady;
     ctx.cascade.offset = offset;
