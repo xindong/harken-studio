@@ -25133,7 +25133,7 @@ struct PreparedQueueContinuationTree {
     }
 };
 
-bool PrepareCompositeQueueContinuation(
+QueueContinuationPrepareStatus PrepareCompositeQueueContinuation(
     harken::Engine& engine, const harken::PlayableWorldViewV1& world,
     const harken::ContainerProgramViewV3& program,
     harken::EnginePlayableServiceRow& row,
@@ -25150,23 +25150,23 @@ bool PrepareCompositeQueueContinuation(
         materialized.hasZeroWorkCompletion;
     if ((materialized.leafCount == 0 && !pureLogical) ||
         materialized.leafCount > engine.config.maxKnownScheduleLeaves) {
-        return false;
+        return QueueContinuationPrepareStatus::Failed;
     }
     std::uint64_t successorZeroWorkCompletionFrame = 0;
     if (!ResolveZeroWorkCompletionFrame(
             materialized, completionFrame,
             &successorZeroWorkCompletionFrame)) {
-        return false;
+        return QueueContinuationPrepareStatus::Failed;
     }
     const PlayableStorageBases bases = StorageBasesForRow(engine, row);
     const std::size_t base = bases.endpoint;
     if (base > UINT32_MAX ||
         base + materialized.leafCount >
             engine.playableStorage.endpointCount) {
-        return false;
+        return QueueContinuationPrepareStatus::Failed;
     }
     auto preparedStorage = AllocatePreparedScheduleLeaves(engine);
-    if (!preparedStorage) return false;
+    if (!preparedStorage) return QueueContinuationPrepareStatus::Failed;
     auto& prepared = *preparedStorage;
     const bool sourceAlreadyRetired = retiredSource.sourceArm.Valid();
     const bool packQueue = !row.queueWorldUsesCurrentAuthority && row.Invocation().packLease.leaseToken != 0;
@@ -25174,14 +25174,14 @@ bool PrepareCompositeQueueContinuation(
     if (preparedTree.scratch != nullptr && preparedTree.scratch->frontierResourceService.Valid()) {
         const auto owner = std::find(row.containerInstances.begin(),
             row.containerInstances.begin() + row.containerInstanceCount, row.ownerInstance);
-        if (owner == row.containerInstances.begin() + row.containerInstanceCount) return false;
+        if (owner == row.containerInstances.begin() + row.containerInstanceCount) return QueueContinuationPrepareStatus::Failed;
         prefixCount = static_cast<std::uint32_t>(owner - row.containerInstances.begin()) + 1u;
     }
     for (std::uint32_t index = 0; index < materialized.leafCount; ++index) {
         MaterializedScheduleLeaf rooted = materialized.leaves[index];
         if (prefixCount == 0 || rooted.selectionCount + prefixCount >
             rooted.selectedOrdinals.size()) {
-            return false;
+            return QueueContinuationPrepareStatus::Failed;
         }
         std::move_backward(
             rooted.selectedOrdinals.begin(),
@@ -25205,7 +25205,7 @@ bool PrepareCompositeQueueContinuation(
                       row.Invocation().packLease, &prepared[index])
                 : BuildScheduleLeafStart(
                       engine, world, row.root, rooted, &prepared[index]);
-        if (status != harken::PlayableStartStatus::Accepted) return false;
+        if (status != harken::PlayableStartStatus::Accepted) return QueueContinuationPrepareStatus::Failed;
         prepared[index].voice.target.programSemanticFingerprint =
             program.programSemanticFingerprint;
         prepared[index].voice.target.subjectId =
@@ -25228,6 +25228,9 @@ bool PrepareCompositeQueueContinuation(
             harken::TransitionSourceExitV1::NaturalEnd;
     const bool sourceFadeRequired =
         naturalEnd && sourceFadeFrames != 0;
+    if (!pureLogical && prepared[0].startOffsetFrames > UINT64_MAX - completionFrame) {
+        return QueueContinuationPrepareStatus::Failed;
+    }
     const std::uint64_t successorStartFrame = pureLogical
         ? completionFrame
         : completionFrame + prepared[0].startOffsetFrames;
@@ -25242,7 +25245,7 @@ bool PrepareCompositeQueueContinuation(
           !BakeTransitionFadeCurve(
               program, transitionRule->targetFade,
               &targetFadeCurve)))) {
-        return false;
+        return QueueContinuationPrepareStatus::Failed;
     }
     if ((naturalEnd &&
          (completionFrame < row.startFrame ||
@@ -25250,7 +25253,7 @@ bool PrepareCompositeQueueContinuation(
               completionFrame - row.startFrame)) ||
         (!naturalEnd &&
          sourceFadeFrames > UINT64_MAX - completionFrame)) {
-        return false;
+        return QueueContinuationPrepareStatus::Failed;
     }
     const std::uint64_t sourcePhaseFrame = sourceAlreadyRetired ? completionFrame : naturalEnd
         ? completionFrame - sourceFadeFrames
@@ -25260,7 +25263,7 @@ bool PrepareCompositeQueueContinuation(
         !ResolveQueueTransitionSources(
             engine, row, naturalEnd, sourceFadeRequired,
             sourcePhaseFrame, &sourceSet)) {
-        return false;
+        return QueueContinuationPrepareStatus::Failed;
     }
     const std::uint32_t sourceControlCount = sourceSet.count;
     const bool sourceControlRequired = sourceControlCount != 0;
@@ -25272,39 +25275,45 @@ bool PrepareCompositeQueueContinuation(
     const bool delayedTargetLock = transitionRule != nullptr &&
         !sourceControlRequired &&
         successorStartFrame > completionFrame;
-    const auto inWindow = [&](std::uint64_t frame) noexcept {
-        return frame >= engine.timelinePool.WindowStartFrame() &&
-               frame < engine.timelinePool.WindowEndFrame();
-    };
-    if (!inWindow(completionFrame) ||
-        (delayedTargetLock && !inWindow(successorStartFrame)) ||
-        (sourceControlRequired &&
-         ((sourceFadeActive && !inWindow(sourcePhaseFrame)) ||
-          (!naturalEnd && !inWindow(sourceStopFrame))))) {
-        return false;
+    std::uint64_t firstRequiredFrame = completionFrame;
+    std::uint64_t lastRequiredFrame = completionFrame;
+    if (sourceControlRequired) {
+        if (sourceFadeActive) firstRequiredFrame = std::min(firstRequiredFrame, sourcePhaseFrame);
+        if (!naturalEnd) lastRequiredFrame = std::max(lastRequiredFrame, sourceStopFrame);
     }
     std::uint64_t transitionEndFrame = sourceStopFrame;
     for (std::uint32_t index = 0; index < materialized.leafCount; ++index) {
         if (prepared[index].startOffsetFrames > UINT64_MAX - completionFrame) {
-            return false;
+            return QueueContinuationPrepareStatus::Failed;
         }
         const auto startFrame = completionFrame + prepared[index].startOffsetFrames;
-        if (!inWindow(startFrame) || targetFadeFrames > UINT64_MAX - startFrame) {
-            return false;
+        if (targetFadeFrames > UINT64_MAX - startFrame) {
+            return QueueContinuationPrepareStatus::Failed;
         }
+        lastRequiredFrame = std::max(lastRequiredFrame, startFrame);
         if (targetFadeActive) {
             transitionEndFrame = std::max(
                 transitionEndFrame, startFrame + targetFadeFrames);
         }
     }
+    if (firstRequiredFrame < engine.timelinePool.WindowStartFrame()) {
+        return QueueContinuationPrepareStatus::Failed;
+    }
+    if (lastRequiredFrame >= engine.timelinePool.WindowEndFrame()) {
+        // A live source keeps its fixed completion frame while the window advances.
+        // Defer before reserving or publishing any part of the composite successor.
+        return !sourceAlreadyRetired && row.queueDeferredNeedsFullPreparation
+            ? QueueContinuationPrepareStatus::Deferred
+            : QueueContinuationPrepareStatus::Failed;
+    }
     std::uint32_t targetCommandCount = 0;
     for (std::uint32_t index = 0; index < materialized.leafCount; ++index) {
         std::uint32_t demand = 0;
-        if (TimelineVoiceStartCommandBudget(prepared[index].voice, &demand) != VN_OK) return false;
-        if (demand > UINT32_MAX - targetCommandCount) return false;
+        if (TimelineVoiceStartCommandBudget(prepared[index].voice, &demand) != VN_OK) return QueueContinuationPrepareStatus::Failed;
+        if (demand > UINT32_MAX - targetCommandCount) return QueueContinuationPrepareStatus::Failed;
         targetCommandCount += demand;
     }
-    if (sourceControlCount > UINT32_MAX - targetCommandCount) return false;
+    if (sourceControlCount > UINT32_MAX - targetCommandCount) return QueueContinuationPrepareStatus::Failed;
     const std::uint32_t combinedCommandCount =
         targetCommandCount + sourceControlCount;
     const harken::PlayableStartStatus schedulePreflight =
@@ -25327,20 +25336,20 @@ bool PrepareCompositeQueueContinuation(
         !commandBatchAdmitted ||
         (transitionRule != nullptr &&
           engine.transitionInstances.FreeCount() == 0)) {
-        return false;
+        return QueueContinuationPrepareStatus::Failed;
     }
     PreparedTimelineStarts starts(engine);
     preparedTree.Attach(starts);
     if (!(packQueue ? preparedTree.PrepareLeaves(row.Invocation().packPlaybackView, prepared.data(), materialized.leafCount)
-                    : preparedTree.PrepareLeaves(world, prepared.data(), materialized.leafCount))) return false;
+                    : preparedTree.PrepareLeaves(world, prepared.data(), materialized.leafCount))) return QueueContinuationPrepareStatus::Failed;
     if (!starts.ReserveQueuePrograms(row, {sourceControlCount + materialized.leafCount,
             sourceControlCount * (static_cast<std::uint32_t>(sourceFadeActive) + !naturalEnd) +
-                materialized.leafCount * (1u + static_cast<std::uint32_t>(targetFadeActive))})) return false;
+                materialized.leafCount * (1u + static_cast<std::uint32_t>(targetFadeActive))})) return QueueContinuationPrepareStatus::Failed;
     if (successorHasContinuation &&
         !ReserveQueueDecision(
             engine, row, &row.queueSuccessorDecision,
             &row.queueSuccessorTicket)) {
-        return false;
+        return QueueContinuationPrepareStatus::Failed;
     }
     harken::OccurrenceKey successorKey{};
     successorKey.arrangingInstance = row.rootInstance;
@@ -25355,7 +25364,7 @@ bool PrepareCompositeQueueContinuation(
             row.queueSuccessorDecision = {};
             row.queueSuccessorTicket = 0;
         }
-        return false;
+        return QueueContinuationPrepareStatus::Failed;
     }
     row.queueSuccessorScheduleBase = static_cast<std::uint32_t>(base);
     row.queueSuccessorScheduleLeafCount = 0;
@@ -25385,7 +25394,7 @@ bool PrepareCompositeQueueContinuation(
             if (!engine.timelineOccurrences.Acquire(
                     leafKey, &knownLeaves[index].occurrence)) {
                 abortPrepared();
-                return false;
+                return QueueContinuationPrepareStatus::Failed;
             }
             progressOccurrence = &knownLeaves[index].occurrence;
             programKey.kind = harken::PlayableKindV1::Sound;
@@ -25399,11 +25408,11 @@ bool PrepareCompositeQueueContinuation(
         if (CaptureTimelineVoiceInstall(prepared[index].voice, &captured) !=
                 harken::PlayableStartStatus::Accepted) {
             abortPrepared();
-            return false;
+            return QueueContinuationPrepareStatus::Failed;
         }
         if (!preparedTree.PrepareMember()) {
             abortPrepared();
-            return false;
+            return QueueContinuationPrepareStatus::Failed;
         }
         const TimelineVoiceInstallResult installed =
             InstallTimelineVoiceStart(
@@ -25421,13 +25430,13 @@ bool PrepareCompositeQueueContinuation(
              installed.completionPredictability !=
                  harken::CompletionPredictability::KnownFinite)) {
             abortPrepared();
-            return false;
+            return QueueContinuationPrepareStatus::Failed;
         }
         if (!preparedTree.BindMember(*starts.QueueBank(), index, installed, captured,
                 prepared[index].leaf, startFrame, successorHasContinuation
                     ? knownLeaves[index].occurrence : row.queueSuccessorOccurrence)) {
             abortPrepared();
-            return false;
+            return QueueContinuationPrepareStatus::Failed;
         }
         const std::size_t eventBase = targetFadeActive
             ? static_cast<std::size_t>(2u * index)
@@ -25520,7 +25529,7 @@ bool PrepareCompositeQueueContinuation(
                 &composite) !=
             harken::CompositeCompletionAcquireStatus::Ok) {
             abortPrepared();
-            return false;
+            return QueueContinuationPrepareStatus::Failed;
         }
         row.queueSuccessorCompositeOwner = composite;
         for (std::uint32_t index = 0; index < materialized.leafCount;
@@ -25533,7 +25542,7 @@ bool PrepareCompositeQueueContinuation(
                     starts.At(index)->ledgerSlot,
                     {bound.occurrence, bound.predicate.owner})) {
                 abortPrepared();
-                return false;
+                return QueueContinuationPrepareStatus::Failed;
             }
             if (auto* member = engine.FindQueueProgramMember(starts.QueueBank(), index))
                 member->nativeCompletion = bound.predicate;
@@ -25582,7 +25591,7 @@ engine.runtimeRecreateRequired = true;
                 (naturalEndPrelude || delayedTargetLock) ? 2u : 1u)) {
             rollbackUnpublishedTransition();
             abortPrepared();
-            return false;
+            return QueueContinuationPrepareStatus::Failed;
         }
         if (sourceControlRequired) {
             const std::uint64_t armDeadline =
@@ -25602,7 +25611,7 @@ engine.runtimeRecreateRequired = true;
                         &row.queueTransitionGroupArms[index])) {
                     rollbackUnpublishedTransition();
                     abortPrepared();
-                    return false;
+                    return QueueContinuationPrepareStatus::Failed;
                 }
                 row.queueSourceControlArmCount = index + 1u;
             }
@@ -25623,7 +25632,7 @@ engine.runtimeRecreateRequired = true;
             &row.queueArmGroup)) {
         rollbackUnpublishedTransition();
         abortPrepared();
-        return false;
+        return QueueContinuationPrepareStatus::Failed;
     }
     row.queueNextState = next;
     row.queueSuccessorProgramPlane = successorProgramPlane;
@@ -25661,7 +25670,7 @@ engine.runtimeRecreateRequired = true;
                 sourceControlCount * (static_cast<std::uint32_t>(sourceFadeActive) + !naturalEnd))) {
             rollbackUnpublishedTransition();
             abortPrepared();
-            return false;
+            return QueueContinuationPrepareStatus::Failed;
         }
         std::uint32_t sourceEventCount = 0;
         for (std::uint32_t sourceIndex = 0;
@@ -25753,14 +25762,14 @@ engine.runtimeRecreateRequired = true;
         if (!starts.PrepareQueueProgram(successorScheduleStorage[index])) {
             rollbackUnpublishedTransition();
             abortPrepared();
-            return false;
+            return QueueContinuationPrepareStatus::Failed;
         }
     }
     for (std::uint32_t index = 0; index < sourceControlCount; ++index) {
         if (!starts.PrepareQueueProgram(row.queueSourceSchedules[index])) {
             rollbackUnpublishedTransition();
             abortPrepared();
-            return false;
+            return QueueContinuationPrepareStatus::Failed;
         }
     }
     if ((materialized.leafCount != 0 &&
@@ -25771,7 +25780,7 @@ engine.runtimeRecreateRequired = true;
         !BindQueueSuccessorPrograms(row, *starts.QueueBank(), 0, materialized.leafCount)) {
         rollbackUnpublishedTransition();
         abortPrepared();
-        return false;
+        return QueueContinuationPrepareStatus::Failed;
     }
     starts.QueueBank()->transition = row.queueTransition;
     if (sourceControlCount != 0) {
@@ -25799,14 +25808,14 @@ engine.runtimeRecreateRequired = true;
             if (!starts.AddCommand(commands[index])) {
                 rollbackUnpublishedTransition();
                 abortPrepared();
-                return false;
+                return QueueContinuationPrepareStatus::Failed;
             }
         }
     }
     if (!starts.ReserveCommands()) {
         rollbackUnpublishedTransition();
         abortPrepared();
-        return false;
+        return QueueContinuationPrepareStatus::Failed;
     }
     harken::Plan03GroupSliceInput group{};
     group.executeFrame = naturalEndPrelude
@@ -25819,7 +25828,7 @@ engine.runtimeRecreateRequired = true;
     if (!starts.PrepareGroup(group)) {
         rollbackUnpublishedTransition();
         abortPrepared();
-        return false;
+        return QueueContinuationPrepareStatus::Failed;
     }
     if (naturalEndPrelude || delayedTargetLock) {
         harken::Plan03GroupSliceInput second = group;
@@ -25829,27 +25838,27 @@ engine.runtimeRecreateRequired = true;
         if (!starts.PrepareGroup(second)) {
             rollbackUnpublishedTransition();
             abortPrepared();
-            return false;
+            return QueueContinuationPrepareStatus::Failed;
         }
     }
     if (!starts.FinalizeQueuePlacement()) {
         rollbackUnpublishedTransition();
         abortPrepared();
-        return false;
+        return QueueContinuationPrepareStatus::Failed;
     }
     std::uint32_t page = 0;
     if (!engine.timelinePool.PageForFrame(
             completionFrame, &page)) {
         rollbackUnpublishedTransition();
         abortPrepared();
-        return false;
+        return QueueContinuationPrepareStatus::Failed;
     }
     const harken::HorizonPageHeader* header = engine.timelinePool.Page(page);
     if (header == nullptr || header->pageGeneration == 0 ||
         header->pageGeneration > UINT32_MAX || page == UINT32_MAX) {
         rollbackUnpublishedTransition();
         abortPrepared();
-        return false;
+        return QueueContinuationPrepareStatus::Failed;
     }
     row.queuePreparedPages = {
         page + 1u, static_cast<std::uint32_t>(header->pageGeneration)};
@@ -25880,14 +25889,14 @@ engine.runtimeRecreateRequired = true;
             row.queueInstance, prepare, &row.queueConditional)) {
         rollbackUnpublishedTransition();
         abortPrepared();
-        return false;
+        return QueueContinuationPrepareStatus::Failed;
     }
     if (!preparedTree.BindPrograms(*starts.QueueBank(), materialized.leafCount, successorStartFrame,
             materialized.hasZeroWorkCompletion, successorZeroWorkCompletionFrame) || !starts.Commit(row.queueTicket)) {
         rollbackUnpublishedTransition();
         abortPrepared();
 engine.runtimeRecreateRequired = true;
-        return false;
+        return QueueContinuationPrepareStatus::Failed;
     }
     row.queueSuccessorProgramBank = starts.QueueBank();
     row.queueSuccessorHasZeroWorkCompletion =
@@ -25897,7 +25906,7 @@ engine.runtimeRecreateRequired = true;
     row.queueContinuationPrepared = true;
     row.queueTransitionEndFrame = transitionEndFrame;
     ++row.pendingFutureCount;
-    return true;
+    return QueueContinuationPrepareStatus::Prepared;
 }
 
 bool PrepareSameKeyQueueContinuation(
@@ -26315,7 +26324,7 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
         if (completionFrame >= engine.timelinePool.WindowEndFrame()) return QueueContinuationPrepareStatus::Deferred;
         return PrepareCompositeQueueContinuation(engine, world, program, row, current, next, successorHasContinuation,
             *selectedChild, materializedSchedule, transitionRule, preparedTree, completionFrame,
-            retiredSource, resetObservation.cause) ? QueueContinuationPrepareStatus::Prepared : QueueContinuationPrepareStatus::Failed;
+            retiredSource, resetObservation.cause);
     }
     if ((selectedKind == harken::PlayableKindV1::Track ||
          selectedKind == harken::PlayableKindV1::Piece) &&
@@ -26382,9 +26391,7 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
             return PrepareCompositeQueueContinuation(
                 engine, world, program, row, current, next,
                 successorHasContinuation, *selectedChild,
-                materializedSchedule, transitionRule, preparedTree, completionFrame, retiredSource, resetObservation.cause)
-                    ? QueueContinuationPrepareStatus::Prepared
-                    : QueueContinuationPrepareStatus::Failed;
+                materializedSchedule, transitionRule, preparedTree, completionFrame, retiredSource, resetObservation.cause);
         }
         if (selectedCount + materializedSchedule.leaves[0].selectionCount >
                 selectedPath.size()) {

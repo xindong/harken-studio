@@ -19390,6 +19390,97 @@ TEST(PlayableStart, QueueCompositeTrackSuccessorStartsEveryLeafAtomically) {
     EXPECT_TRUE(leafStarted[1]);
 }
 
+TEST(PlayableStart, QueueStaggeredCompositeSuccessorWaitsUntilAllStartsEnterWindow) {
+    VnConfig config = harkentest::MakeNullConfig(4, 64, 48000);
+    harkentest::EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    harken::Engine* engine = session.Engine();
+    ASSERT_NE(nullptr, engine);
+    const auto windowFrames = engine->timelinePool.WindowEndFrame();
+    std::vector<float> first(static_cast<std::size_t>(windowFrames + 256u), 0.25f);
+    std::vector<float> second(512, -0.5f);
+    const VnPCMDesc firstPcm = harkentest::MonoDesc(first, 48000);
+    const VnPCMDesc secondPcm = harkentest::MonoDesc(second, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &firstPcm));
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSecondSound, &secondPcm));
+    SequenceQueueCompositeTrackWorldImage image(
+        engine->registry.Lookup(kSound).contentRevision,
+        engine->registry.Lookup(kSecondSound).contentRevision);
+    constexpr std::uint64_t leafDurationFrames = 240;
+    constexpr std::uint64_t secondOffsetFrames = 480;
+    image.schedule.placements[0].authoredDuration = INT64_C(5000000);
+    image.schedule.placements[1].authoredStart = INT64_C(10000000);
+    image.schedule.placements[1].authoredDuration = INT64_C(5000000);
+    image.schedule.track.scheduleSemanticFingerprint =
+        harken::ComputeTrackScheduleFingerprintV1(image.schedule.track);
+    image.children[0].timingHint = harken::MakeScheduleReferenceTimingHint(
+        harken::PlayableKindV1::Track, image.schedule.track.rootDefinition.stableId,
+        image.schedule.track.scheduleSemanticFingerprint);
+    std::swap(image.children[0], image.children[1]);
+    image.children[0].stableChildOrdinal = 7;
+    image.children[1].stableChildOrdinal = 8;
+    image.children[0].timingHint.payload.inlineSound.startOffset = {
+        harken::AuthoredTimeDomainV1::SourceFrames, 0, 1};
+    image.children[0].timingHint.payload.inlineSound.duration = {
+        harken::AuthoredTimeDomainV1::NaturalMediaEnd, 0, 1};
+    for (std::uint32_t index = 0; index < image.children.size(); ++index) {
+        image.occurrences[index].stableOccurrenceOrdinal =
+            image.children[index].stableChildOrdinal;
+        image.occurrences[index].childPlayable = image.children[index].playable;
+        image.occurrences[index].occurrenceSemanticFingerprint =
+            harken::ComputePlayableOccurrenceFingerprintV1(image.occurrences[index]);
+    }
+    const auto decisionBaseline = engine->decisions.LiveCount();
+    const auto groupBaseline = engine->armGroups.LiveCount();
+    const auto occurrenceBaseline = engine->timelineOccurrences.OccupiedCount();
+    harken::PlayableStartRequest request{};
+    request.root = image.Root();
+    const auto started = harken::StartPlayable(*engine, image.world, request);
+    ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
+
+    bool sawPartiallyReadySuccessor = false;
+    std::uint64_t firstPositiveFrame = UINT64_MAX;
+    std::uint64_t firstNegativeFrame = UINT64_MAX;
+    std::uint64_t positiveFrames = 0;
+    std::uint64_t negativeFrames = 0;
+    const auto listenBlocks =
+        (first.size() + secondOffsetFrames + leafDurationFrames) / config.blockFrames + 128u;
+    for (std::uint64_t block = 0; block < listenBlocks; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        if (firstPositiveFrame != UINT64_MAX) {
+            const auto completionFrame = firstPositiveFrame + first.size();
+            sawPartiallyReadySuccessor = sawPartiallyReadySuccessor ||
+                (completionFrame < engine->timelinePool.WindowEndFrame() &&
+                 completionFrame + secondOffsetFrames >= engine->timelinePool.WindowEndFrame());
+        }
+        const auto blockStartFrame = engine->mixer.BlocksRendered() * config.blockFrames;
+        engine->nullBackend.Pump(1);
+        const float* output = engine->nullBackend.LastBlock();
+        for (std::uint32_t frame = 0; frame < config.blockFrames; ++frame) {
+            if (output[2u * frame] > 0.0f) {
+                if (firstPositiveFrame == UINT64_MAX) firstPositiveFrame = blockStartFrame + frame;
+                ++positiveFrames;
+            } else if (output[2u * frame] < 0.0f) {
+                if (firstNegativeFrame == UINT64_MAX) firstNegativeFrame = blockStartFrame + frame;
+                ++negativeFrames;
+            }
+        }
+    }
+    EXPECT_TRUE(sawPartiallyReadySuccessor);
+    ASSERT_NE(UINT64_MAX, firstPositiveFrame);
+    ASSERT_NE(UINT64_MAX, firstNegativeFrame);
+    EXPECT_EQ(first.size() + leafDurationFrames, positiveFrames);
+    EXPECT_EQ(leafDurationFrames, negativeFrames);
+    EXPECT_EQ(firstPositiveFrame + first.size() + secondOffsetFrames, firstNegativeFrame);
+    harken::PlayableControlState state{};
+    EXPECT_EQ(harken::PlayableControlStatus::StaleHandle,
+              harken::QueryPlayable(*engine, started.instance, &state));
+    EXPECT_EQ(0u, engine->voices.ActiveCount());
+    EXPECT_EQ(decisionBaseline, engine->decisions.LiveCount());
+    EXPECT_EQ(groupBaseline, engine->armGroups.LiveCount());
+    EXPECT_EQ(occurrenceBaseline, engine->timelineOccurrences.OccupiedCount());
+}
+
 TEST(PlayableStart, QueueCompositePieceSuccessorStartsEveryLeafAtomically) {
     VnConfig config = harkentest::MakeNullConfig(4, 64, 48000);
     harkentest::EngineSession session(config);
