@@ -346,7 +346,7 @@ std::size_t Engine::PreparationStorageBytes() const noexcept {
     for (const auto& pending : pendingStarts) bindingBytes += column(pending.preparedBindings);
     for (const auto& parked : parkRecords) bindingBytes += column(parked.preparedBindings);
     return ActionPlayStorageBytes() + ActionPlayDirectoryBytes() + ActionPlayDynamicBytes() +
-        memberProgramRecords.DirectoryBytes() + playableMemberRecords.DirectoryBytes() +
+        memberProgramRecords.DirectoryBytes() + playableMemberRecords.DirectoryBytes() + column(sourcePlayableMembers) +
         column(actionFiringPlanScratch) + column(actionStepPlanScratch) + column(actionVariableWriteScratch) +
         column(actionSelectionResetScratch) + column(actionFixedSelectionCommitInputs) + column(actionQueueResetScratch) +
         column(actionQueueCheckpointResetScratch) + column(actionPlayAttemptTokens) +
@@ -6552,7 +6552,7 @@ void CaptureQueueProgramMember(harken::Engine& engine, harken::EnginePlayableMem
     member.voice = std::move(voice);
     SetQueueProgramMemberFacts(member, leaf, installed, startFrame, occurrence);
     if (const auto* source = engine.sourceTerminals.Resolve(installed.sourceTerminal))
-        member.completion = {source->leaf, source->acceptedEpoch, installed.sourceTerminal};
+        engine.SetPlayableMemberCompletion(member, {source->leaf, source->acceptedEpoch, installed.sourceTerminal});
 }
 
 harken::EnginePlayableMemberRecord* RetainQueueProgramMemberAt(
@@ -28582,7 +28582,7 @@ QueueContinuationPrepareStatus StartSignalOnlyNoOverlapSuccessor(
     if (member == nullptr) return QueueContinuationPrepareStatus::Failed;
     CaptureQueueProgramMember(engine, *member, captured.Share(), cut.leaf,
         installed, startFrame, successorOccurrence);
-    member->completion = {successorVoiceInstance, successorView.scheduleEpoch, installed.sourceTerminal};
+    engine.SetPlayableMemberCompletion(*member, {successorVoiceInstance, successorView.scheduleEpoch, installed.sourceTerminal});
     member->nativeCompletion = completion;
     harken::StableStoragePreparation relationBacking;
     if (!engine.PrepareMemberRelationWrite(1, &relationBacking) ||
@@ -29961,8 +29961,8 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
             CaptureQueueProgramMember(engine, member, std::move(capturedLeaves[index]),
                 preparedScheduleLeaves[index].leaf, installedLeaves[index], leafStartFrame, leafOccurrences[index]);
             member.nativeCompletion = boundCompletions[index];
-            member.completion = {scheduleLeafInstances[index], scheduleLeafEpochs[index],
-                installedLeaves[index].sourceTerminal};
+            engine.SetPlayableMemberCompletion(member, {scheduleLeafInstances[index], scheduleLeafEpochs[index],
+                installedLeaves[index].sourceTerminal});
             if (FreezeQueueProgram(engine, programBank, schedules[index]) == nullptr) {
                 installFailed = true;
                 break;
@@ -30282,7 +30282,7 @@ engine.runtimeRecreateRequired = true;
     nextSchedule.runtimeProgram = {leafInstance, &nextRuntimeProgram};
     nextSchedule.armToken = installed.armToken;
     CaptureQueueProgramMember(engine, *member, std::move(captured), cut.leaf, installed, startFrame, {});
-    member->completion = {leafInstance, nextSchedule.ownerInstanceScheduleEpoch, installed.sourceTerminal};
+    engine.SetPlayableMemberCompletion(*member, {leafInstance, nextSchedule.ownerInstanceScheduleEpoch, installed.sourceTerminal});
     if (FreezeQueueProgram(engine, programBank, nextSchedule) == nullptr ||
         !engine.PreparePlayableMemberBinding(scheduleRow, 0, programBank.members[0])) {
         rollbackCommitted();
@@ -34652,18 +34652,14 @@ void ObserveVariableControlMemberCompletion(
         if (leaf.scheduleEpoch != source.acceptedEpoch &&
             terminal == harken::PlayableTerminalKind::NaturalCompletion) continue;
         // Preserve the original source proof before its record and leaf recycle.
-        for (auto& record : engine.playableMemberRecords) {
-            if (!record.occupied) continue;
-            auto& member = record.completion;
-            if (member.source.slot != token.slot || member.source.generation != token.generation ||
-                member.leafInstance != source.leaf || member.leafEpoch != source.acceptedEpoch ||
-                record.render != source.render) continue;
+        if (auto* record = engine.FindSourcePlayableMember(token, source)) {
+            auto& member = record->completion;
             member.completedSource = {result, completed ? payload.frame : 0};
             member.sourceCompletionSequence = completed
                 ? source.completedSequence.load(std::memory_order_relaxed) : 0;
             member.sourceRender = source.render;
-            member.sourceStartArm = record.arm;
-            ObservePlayableMemberArm(engine, record);
+            member.sourceStartArm = record->arm;
+            ObservePlayableMemberArm(engine, *record);
         }
         const VnResult terminalResult = terminal != harken::PlayableTerminalKind::Failure
             ? VN_OK : result == harken::SourceTerminalKind::IntegrityAbort
@@ -34712,17 +34708,12 @@ engine.runtimeRecreateRequired = true;
 
         // Drop every membership reference before releasing the original leaf
         // hold. Accepted selection descriptors remain available for retarget.
-        for (auto& record : engine.playableMemberRecords) {
-            if (!record.occupied) continue;
-            auto& member = record.completion;
-            if (member.source.slot == token.slot && member.source.generation == token.generation &&
-                member.leafInstance == source.leaf && member.leafEpoch == source.acceptedEpoch &&
-                record.render == source.render) {
-                member.source = {};
-                member.resourcesRetired = true;
-                member.sourceReleaseSequence = source.releaseSeenAt;
-                if (record.primaryOwned) engine.RefreshPlayableMemberOnset(record.physicalSlot);
-            }
+        if (auto* record = engine.FindSourcePlayableMember(token, source)) {
+            engine.SetPlayableMemberSource(*record, {});
+            auto& member = record->completion;
+            member.resourcesRetired = true;
+            member.sourceReleaseSequence = source.releaseSeenAt;
+            if (record->primaryOwned) engine.RefreshPlayableMemberOnset(record->physicalSlot);
         }
         const auto originalLeaf = source.leaf;
         const auto controller = source.controller;
@@ -45131,8 +45122,8 @@ void ServicePendingImmediateEntries(
                             }
                             CaptureQueueProgramMember(engine, *replacement, oldSingle->voice.Share(), oldSingle->leaf,
                                 installed, oldSingle->startFrame, oldSingle->occurrence);
-                            replacement->completion = {oldSingle->completion.leafInstance,
-                                oldSingle->completion.leafEpoch, installed.sourceTerminal};
+                            engine.SetPlayableMemberCompletion(*replacement, {oldSingle->completion.leafInstance,
+                                oldSingle->completion.leafEpoch, installed.sourceTerminal});
                             auto schedule = *currentProgram;
                             auto event = schedule.events[0];
                             event.armToken = installed.armToken;
@@ -45281,7 +45272,7 @@ void ServicePendingImmediateEntries(
                                 }
                                 member.queueCurrentCompletion = rebound;
                                 const auto slot = member.queueCurrentScheduleBase;
-                                engine.MutablePlayableMember(slot).completion.source = installed->sourceTerminal;
+                                engine.SetPlayableMemberSource(engine.MutablePlayableMember(slot), installed->sourceTerminal);
                                 engine.MutablePlayableMember(slot).monitorSelection = installed->monitorSelection;
                                 engine.RefreshPlayableMemberOnset(slot);
                                 engine.MutablePlayableMember(slot).arm = installed->arm;
@@ -54230,7 +54221,7 @@ Engine::PendingOrdinarySelectionResult Engine::ServicePendingOrdinarySelections(
         child->voiceStarts.Owners()[0] = {this, &start, false};
         if (installed.status != VN_OK) return temporary(installed.status) ? Result::Waiting : reject(installed.status);
         CaptureQueueProgramMember(*this, *replacementMember, holder->replacementVoice.Share(), actualLeaf, installed, anchor, {});
-        replacementMember->completion = {newLeaf, newLeafEpoch, installed.sourceTerminal};
+        SetPlayableMemberCompletion(*replacementMember, {newLeaf, newLeafEpoch, installed.sourceTerminal});
         auto payload = row.payload;
         payload.target = voice.target;
         auto runtime = row.runtimeProgram;
@@ -71779,8 +71770,7 @@ engine.runtimeRecreateRequired = true;
                     leafInstalled.renderHandle;
                 engine.MutablePlayableMember(memberSlot).release =
                     leafInstalled.releaseObserver;
-                engine.MutablePlayableMember(memberSlot).completion.source =
-                    leafInstalled.sourceTerminal;
+                engine.SetPlayableMemberSource(engine.MutablePlayableMember(memberSlot), leafInstalled.sourceTerminal);
                 engine.MutablePlayableMember(memberSlot).monitorSelection = leafInstalled.monitorSelection;
                 engine.RefreshPlayableMemberOnset(memberSlot);
                 engine.MutablePlayableMember(memberSlot).startFrame = leafStart;
@@ -83698,7 +83688,7 @@ bool PrepareImmediateActionCompositeQueueChildPlay(
             installed.renderHandle;
         engine.MutablePlayableMember(memberSlot).startFrame = startFrame;
         engine.MutablePlayableMember(memberSlot).release = installed.releaseObserver;
-        engine.MutablePlayableMember(memberSlot).completion.source = installed.sourceTerminal;
+        engine.SetPlayableMemberSource(engine.MutablePlayableMember(memberSlot), installed.sourceTerminal);
         engine.MutablePlayableMember(memberSlot).monitorSelection = installed.monitorSelection;
         engine.RefreshPlayableMemberOnset(memberSlot);
         engine.MutablePlayableMember(memberSlot).postSourceTailFrames =
@@ -92184,7 +92174,7 @@ bool PrepareImmediateActionQueueReplacement(
                     {reference.leaf, reference.leafEpoch, installed.sourceTerminal});
             } else if (scratch.successorTree != nullptr) {
                 const auto& reference = scratch.successorMembers[index];
-                retainedMember->completion = {reference.leaf, reference.leafEpoch, installed.sourceTerminal};
+                engine.SetPlayableMemberCompletion(*retainedMember, {reference.leaf, reference.leafEpoch, installed.sourceTerminal});
             }
             SetQueueProgramMemberFacts(*retainedMember, leaf.leaf,
                 installed, startFrame, resolution.successorHasContinuation

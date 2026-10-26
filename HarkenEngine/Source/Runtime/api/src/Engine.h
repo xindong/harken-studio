@@ -5849,6 +5849,7 @@ public:
           influenceVisited(resolved.maxBuses, 0),
           influenceStack(resolved.maxBuses, 0),
           sourceTerminals(resolved.maxPlayableInstances),
+          sourcePlayableMembers(resolved.maxPlayableInstances),
           timelineOccurrences(resolved.maxDeferredIntents),
           voices(resolved, &tables, &multirateTables, &biquadTrig, effectBank,
                  dynamicRoutes, &timelineArms),
@@ -12287,6 +12288,7 @@ public:
     std::vector<std::uint8_t> influenceVisited;
     std::vector<std::uint32_t> influenceStack;
     SourceTerminalRecords sourceTerminals;
+    std::vector<EnginePlayableMemberToken> sourcePlayableMembers;
     OccurrenceStatePool timelineOccurrences;
     VoicePool voices;
     StableRowStorage<EngineTimelineVoiceInstallIdentity> timelineVoiceInstallIdentities;
@@ -12602,6 +12604,44 @@ public:
         if (!token.Valid() || !playableMemberRecords.IsConstructed(token.slot)) return nullptr;
         auto& record = playableMemberRecords[token.slot];
         return record.occupied && record.generation == token.generation ? &record : nullptr;
+    }
+    EnginePlayableMemberRecord* FindSourcePlayableMember(SourceTerminalToken token,
+        const SourceTerminalRecord& source) noexcept {
+        if (!token.Valid() || token.slot >= sourcePlayableMembers.size()) return nullptr;
+        auto* record = FindPlayableMember(sourcePlayableMembers[token.slot]);
+        if (record == nullptr) return nullptr;
+        const auto& member = record->completion;
+        return member.source.slot == token.slot && member.source.generation == token.generation &&
+            member.leafInstance == source.leaf && member.leafEpoch == source.acceptedEpoch &&
+            record->render == source.render ? record : nullptr;
+    }
+    bool SetPlayableMemberSource(EnginePlayableMemberRecord& record, SourceTerminalToken source) noexcept {
+        const EnginePlayableMemberToken token{playableMemberRecords.IndexOf(record), record.generation};
+        if (FindPlayableMember(token) != &record ||
+            (source.Valid() && source.slot >= sourcePlayableMembers.size())) {
+            runtimeRecreateRequired = true;
+            return false;
+        }
+        if (source.Valid()) {
+            const auto* existing = FindPlayableMember(sourcePlayableMembers[source.slot]);
+            if (existing != nullptr && existing != &record &&
+                existing->completion.source.slot == source.slot &&
+                existing->completion.source.generation == source.generation) {
+                runtimeRecreateRequired = true;
+                return false;
+            }
+        }
+        const auto previous = record.completion.source;
+        if (previous.Valid() && previous.slot < sourcePlayableMembers.size() &&
+            sourcePlayableMembers[previous.slot] == token)
+            sourcePlayableMembers[previous.slot] = {};
+        record.completion.source = source;
+        if (source.Valid()) sourcePlayableMembers[source.slot] = token;
+        return true;
+    }
+    void SetPlayableMemberCompletion(EnginePlayableMemberRecord& record,
+        VariableControlMemberCompletion value) noexcept {
+        if (SetPlayableMemberSource(record, value.source)) record.completion = value;
     }
     EnginePlayableMemberRecord* FindPlayableMember(const EnginePlayableServiceRow& row,
         std::uint32_t offset) noexcept {
@@ -13288,7 +13328,7 @@ public:
             if (value.leafInstance != 0) runtimeRecreateRequired = true;
             return;
         }
-        record->completion = value;
+        SetPlayableMemberCompletion(*record, value);
         record->monitorSelection = {};
         RefreshPlayableMemberOnset(slot);
     }
