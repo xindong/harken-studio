@@ -3740,7 +3740,8 @@ TEST(OriginalSourceSubmission, NativeCallbackTrueFinishHandoffAndRenderingProgre
     EXPECT_GT(next.progressRevision, installed.progressRevision);
     EXPECT_EQ(baseline + 2u, next.completedThroughBlockSequence);
     const auto second = SourceOriginAccess::Observe(engine.originalSourceSubmissions, episode.source.arm);
-    EXPECT_GT(second.epoch, first.epoch);
+    EXPECT_EQ(first.epoch + 1u, second.epoch);
+    EXPECT_EQ(first.lifetime, second.lifetime);
     EXPECT_EQ(0u, second.count);
     ASSERT_NO_FATAL_FAILURE(CheckActualNativeCallbackReturned(engine, episode.source));
     ASSERT_NO_FATAL_FAILURE(RetireCallbackSingleEpisode(engine, episode));
@@ -3980,10 +3981,12 @@ TEST(OriginalSourceSubmission, NativeCallbackActualActorChildrenMoveAndReturnKee
     EXPECT_TRUE(NativeCallbackAccess::ObserveOriginalCallback(engine.voices,
         static_cast<std::uint32_t>(body.source)).callbackHeld);
     EXPECT_TRUE(engine.voices.IsOriginalSourceBodyCurrent(original));
+    const auto callbackEpoch = SourceOriginAccess::Observe(engine.originalSourceSubmissions, body.arm).epoch;
     SourceActor first, second;
     ASSERT_TRUE(NativeCallbackAccess::BorrowActualCallbackActor(engine.voices,
         static_cast<std::uint32_t>(body.source), &first));
     ASSERT_TRUE(first.Borrow(&second));
+    EXPECT_EQ(callbackEpoch, SourceOriginAccess::Observe(engine.originalSourceSubmissions, body.arm).epoch);
     EXPECT_FALSE(first.Borrow(&second));
     Registry foreign(engine.timelineArms, engine.voices, engine.commands, engine.effectBank);
     EXPECT_FALSE(SourceOriginAccess::Matches(foreign, first));
@@ -3992,6 +3995,10 @@ TEST(OriginalSourceSubmission, NativeCallbackActualActorChildrenMoveAndReturnKee
     EXPECT_FALSE(first.Valid());
     moved = std::move(second);
     EXPECT_FALSE(second.Valid());
+    ASSERT_TRUE(moved.BeforeFirstWrite());
+    EXPECT_EQ(callbackEpoch + 1u, SourceOriginAccess::Observe(engine.originalSourceSubmissions, body.arm).epoch);
+    ASSERT_TRUE(moved.BeforeFirstWrite());
+    EXPECT_EQ(callbackEpoch + 1u, SourceOriginAccess::Observe(engine.originalSourceSubmissions, body.arm).epoch);
     engine.voices.StageCompletionProgressForSilentBlock(engine.mixer.BlocksRendered());
     (void)engine.voices.PublishCompletionProgress(engine.mixer.BlocksRendered());
     engine.voices.EndAudioBlock();

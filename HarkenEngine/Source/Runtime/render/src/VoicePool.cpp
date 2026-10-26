@@ -1398,8 +1398,8 @@ bool OriginalSourceInstallationLoan::Matches(const void* actualSubmission,
 void OriginalSourceInstallationLoan::Release() noexcept {
     if (owner_ != nullptr) owner_->ReleaseInstallationLoan(*this);
 }
-bool OriginalSourceInstallationLoan::BorrowMutation(OriginalSourceMutationActor* out) const noexcept {
-    return owner_ != nullptr && owner_->BorrowInstallationMutation(*this, out);
+bool OriginalSourceInstallationLoan::BorrowMutationForFirstWrite(OriginalSourceMutationActor* out) const noexcept {
+    return owner_ != nullptr && owner_->BorrowInstallationMutation(*this, out, true);
 }
 
 VoicePool::OriginalSourceBodyLifetimePin::OriginalSourceBodyLifetimePin(
@@ -1669,7 +1669,7 @@ void VoicePool::AcquireOriginalCallbackStorage(Slot& slot,
     lease.bodyMarker = slot.originalBodyMarker;
     lease.arm = slot.originalBodyArm;
     lease.storageHeld = true;
-    const bool borrowed = slot.installedOriginalSource.BorrowMutation(&lease.actor);
+    const bool borrowed = slot.installedOriginalSource.BorrowMutationForFirstWrite(&lease.actor);
     assert(borrowed);
     if (borrowed) {
         const bool wrote = lease.actor.BeforeFirstWrite();

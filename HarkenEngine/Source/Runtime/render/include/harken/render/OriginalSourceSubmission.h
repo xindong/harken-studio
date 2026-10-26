@@ -1048,14 +1048,25 @@ private:
             ? IsExhaustedOrigin(OriginState(word))
             : IsLiveOrigin(OriginState(word)) && OriginCount(word) != 0;
     }
-    bool AddOriginActivity(Record& row, bool native) noexcept {
+    bool AddOriginActivity(Record& row, bool native, bool* beganFirstWrite = nullptr) noexcept {
+        if (beganFirstWrite != nullptr) *beganFirstWrite = false;
         auto word = row.originWord_.load(std::memory_order_acquire);
         for (unsigned attempt = 0; attempt < kOriginNativeAttempts; ++attempt) {
             if (!IsLiveOrigin(OriginState(word))) return false;
             const auto limit = native ? 255u : 255u - kNativeActorReserve;
             if (OriginCount(word) >= limit) { ExhaustOrigin(row); return false; }
-            if (row.originWord_.compare_exchange_strong(word, word + kOriginCountOne,
-                std::memory_order_acq_rel, std::memory_order_acquire)) return true;
+            // Only the real callback combines its count and first write. Its
+            // held count excludes a Catalog attachment until it returns.
+            const bool begin = beganFirstWrite != nullptr &&
+                OriginState(word) == OriginMode::Normal && OriginEpoch(word) < kOriginEpochMax;
+            const auto desired = begin
+                ? OriginPack(OriginMode::Normal, OriginCount(word) + 1u, OriginEpoch(word) + 1u)
+                : word + kOriginCountOne;
+            if (row.originWord_.compare_exchange_strong(word, desired,
+                std::memory_order_acq_rel, std::memory_order_acquire)) {
+                if (beganFirstWrite != nullptr) *beganFirstWrite = begin;
+                return true;
+            }
         }
         ExhaustOrigin(row);
         return false;
@@ -1158,7 +1169,7 @@ private:
         return true;
     }
     bool BorrowInstallationMutation(const OriginalSourceInstallationLoan& installation,
-        OriginalSourceMutationActor* out) noexcept {
+        OriginalSourceMutationActor* out, bool beginFirstWrite = false) noexcept {
         const auto token = installation.token_;
         if (out == nullptr || out->Valid() || !rows_.IsConstructed(token.slot) ||
             !MatchesInstallationLoan(installation, &rows_[token.slot], token)) return false;
@@ -1182,12 +1193,14 @@ private:
             ExhaustOrigin(row);
             return false;
         }
-        const bool activity = AddOriginActivity(row, true);
+        bool beganFirstWrite = false;
+        const bool activity = AddOriginActivity(row, true,
+            beginFirstWrite ? &beganFirstWrite : nullptr);
         out->lifetime_ = std::move(lifetime);
         out->borrowedMode_ = static_cast<std::uint8_t>(activity
             ? OriginMode::Normal : OriginMode::ExhaustedNormal);
         out->callbackStanding_ = true;
-        out->wrote_ = false;
+        out->wrote_ = beganFirstWrite;
         RetainRedirectForActualActor(row, *out);
         return true;
     }
