@@ -482,9 +482,12 @@ void CopyPlainPcm(const VoiceRenderContext& ctx, float* const* planes,
 }
 
 bool RunPlainPcm(VoiceRenderContext& ctx, std::uint32_t frames) {
-    for (std::uint32_t fed = 0; fed < ctx.cascade.plainPcmFeedFrames;
-         fed += kResampleChunkFrames) {
-        if (!FeedResampler(ctx)) return false;
+    const auto feedFrames = ctx.cascade.plainPcmFeedFrames;
+    if (feedFrames != 0) {
+        // Preparation proved that every complete chunk fits before the next
+        // source boundary. One push preserves the same ring contents and cursors.
+        ctx.resampler.PushPCM(ctx.pcm, ctx.srcCursor, feedFrames);
+        ctx.srcCursor += feedFrames;
     }
     if (!ctx.resampler.BorrowLinearUnity(frames, ctx.cascade.borrowed)) return false;
     ctx.monitorPreChainFrames = 0;

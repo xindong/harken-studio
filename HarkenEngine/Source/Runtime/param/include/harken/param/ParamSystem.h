@@ -138,7 +138,7 @@ public:
     ParamSystem(const EngineConfig& config, std::uint32_t initialVoiceRows);
     bool PrepareVoiceStorage(std::uint32_t count) noexcept;
     std::size_t VoiceStorageBytes() const noexcept {
-        return m_voiceStates.RequestedBytes() + m_projectionVoices.capacity() * sizeof(VoiceEvaluation);
+        return m_voiceStates.RequestedBytes() + m_projectionVoices.RequestedBytes();
     }
     ParamSystem(const ParamSystem& other);
     ParamSystem& operator=(const ParamSystem&) = delete;
@@ -1213,7 +1213,7 @@ private:
     std::vector<PrimingInput> m_primingInputs;
     std::vector<Variable> m_projectionVariables;
     std::vector<BindingEvaluation> m_projectionBindings;
-    std::vector<VoiceEvaluation> m_projectionVoices;
+    StableRowStorage<VoiceEvaluation> m_projectionVoices;
     bool m_projectionActive = false;
     std::uint32_t m_projectionVariableCount = 0;
     std::uint32_t m_projectionBindingCount = 0;

@@ -1204,6 +1204,7 @@ private:
     std::array<StableRowStorage<ResamplerHighRatioChannelState>, kMaxChannels> m_highRatioStorage;
     ResamplerHighRatioColumns m_highRatioColumns{};
     void BindHighRatioBacking(std::uint32_t slot) noexcept;
+    void BindMonitorPreChainBacking(std::uint32_t slot) noexcept;
     StableSlotStorage<MultirateResamplerCandidate> m_professionalStorage;
     using VariableWeightStorage = std::array<VoiceRenderContext::OwnedVariableWeight, kSelectionPathNodeCapacity>;
     StableSlotStorage<VariableWeightStorage> m_variableWeightStorage;

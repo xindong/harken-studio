@@ -65,6 +65,7 @@ ParamSystem::ParamSystem(const EngineConfig& config, std::uint32_t initialVoiceR
     if (!m_retiringTargets.Reserve(config.maxVariableSliceTargetsTotal) ||
         !m_bindings.Reserve(ResolveBindingCapacity(config)) ||
         !m_voiceStates.Reserve(config.voiceCapacity.Render()) ||
+        !m_projectionVoices.Reserve(config.voiceCapacity.Render()) ||
         !PrepareVoiceStorage(initialVoiceRows)) throw std::bad_alloc{};
     m_projectionVariables.resize(m_variables.size());
 }
@@ -76,7 +77,6 @@ ParamSystem::ParamSystem(const ParamSystem& other)
       m_primingInputs(other.m_primingInputs),
       m_projectionVariables(other.m_projectionVariables),
       m_projectionBindings(other.m_projectionBindings),
-      m_projectionVoices(other.m_projectionVoices),
       m_projectionActive(other.m_projectionActive),
       m_projectionVariableCount(other.m_projectionVariableCount),
       m_projectionBindingCount(other.m_projectionBindingCount),
@@ -101,9 +101,12 @@ ParamSystem::ParamSystem(const ParamSystem& other)
         !m_retiringTargets.ConstructThrough(other.m_retiringTargets.ConstructedCount()) ||
         !m_voiceStates.Reserve(other.m_voiceStates.Capacity()) ||
         !m_voiceStates.ConstructThrough(other.m_voiceStates.size()) ||
+        !m_projectionVoices.Reserve(other.m_projectionVoices.Capacity()) ||
+        !m_projectionVoices.ConstructThrough(other.m_projectionVoices.size()) ||
         !m_bindings.Reserve(other.m_bindings.Capacity()) ||
         !m_bindings.ConstructThrough(other.m_bindings.size())) throw std::bad_alloc{};
     std::copy(other.m_voiceStates.begin(), other.m_voiceStates.end(), m_voiceStates.begin());
+    std::copy(other.m_projectionVoices.begin(), other.m_projectionVoices.end(), m_projectionVoices.begin());
     std::copy(other.m_retiringTargets.begin(), other.m_retiringTargets.end(), m_retiringTargets.begin());
     std::copy(other.m_bindings.begin(), other.m_bindings.end(), m_bindings.begin());
     // Private copies evaluate their own facts without borrowing the live index.
@@ -120,10 +123,7 @@ bool ParamSystem::PrepareVoiceStorage(std::uint32_t count) noexcept {
     if (count <= m_voiceStates.size()) return true;
     if (m_projectionActive) return false;
     return m_voiceStates.ConstructThrough(count, [this](std::uint32_t required) noexcept {
-        try {
-            if (m_projectionVoices.size() < required) m_projectionVoices.resize(required);
-            return true;
-        } catch (...) { return false; }
+        return m_projectionVoices.ConstructThrough(required);
     });
 }
 
@@ -368,7 +368,7 @@ void ParamSystem::MoveBinding(std::uint32_t from, std::uint32_t to) noexcept {
 
 bool ParamSystem::BeginVariableProjection() noexcept {
     if (m_projectionActive) return false;
-    std::copy(m_variables.begin(), m_variables.end(), m_projectionVariables.begin());
+    std::copy_n(m_variables.begin(), m_variableCount, m_projectionVariables.begin());
     m_projectionVariableCount = m_variableCount;
     m_projectionBindingCount = m_bindingCount;
     m_projectionVoiceCount = m_voiceStates.size();
@@ -399,7 +399,11 @@ void ParamSystem::RestoreVariableProjection() noexcept {
     if (!m_projectionActive) return;
     assert(m_bindingCount == m_projectionBindingCount);
     assert(m_voiceStates.size() == m_projectionVoiceCount);
-    std::copy(m_projectionVariables.begin(), m_projectionVariables.end(), m_variables.begin());
+    std::copy_n(m_projectionVariables.begin(), m_projectionVariableCount, m_variables.begin());
+    // Appended candidates occupied previously empty rows; restore that empty tail.
+    if (m_variableCount > m_projectionVariableCount)
+        std::fill(m_variables.begin() + m_projectionVariableCount,
+                  m_variables.begin() + m_variableCount, Variable{});
     m_variableCount = m_projectionVariableCount;
     for (std::uint32_t i = 0; i < m_bindingCount; ++i) {
         auto& b = m_bindings[i];

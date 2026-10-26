@@ -115,6 +115,17 @@ void VoicePool::BindHighRatioBacking(std::uint32_t slot) noexcept {
     m_slots[slot].render.resampler.BindHighRatioColumns(m_highRatioColumns, slot, channels);
 }
 
+void VoicePool::BindMonitorPreChainBacking(std::uint32_t slot) noexcept {
+    auto& render = m_slots[slot].render;
+    // Reserved addresses and source width stay fixed for this voice generation.
+    // A later capture plan constructs the backing before publishing live audio.
+    for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
+        render.monitorPreChain[ch] = ch < render.pcm.channelCount
+            ? m_monitorPreChainStorage[ch].data() + static_cast<std::size_t>(slot) * m_blockFrames
+            : nullptr;
+    }
+}
+
 bool VoicePool::PrepareVariableWeightBacking(std::uint32_t slot) noexcept {
     if (m_variableWeightStorage.IsConstructed(slot)) return true;
     if (memguard::IsAudioTagged() || m_slots.PreparedUseActive()) return false;
@@ -379,6 +390,7 @@ VnResult VoicePool::Play(const PCMView& view, float volumeDb,
     slot.render.biquadTrig = m_biquadTrig;
     slot.render.engineSampleRate = m_sampleRate;
     slot.render.pcm = view;
+    BindMonitorPreChainBacking(slotIndex);
     slot.render.busIndex = busIndex;
     slot.render.busGeneration = busGeneration;
     slot.render.phase = SourcePhase::Active;
@@ -541,6 +553,7 @@ VnResult VoicePool::PlayStream(StreamRing* ring, std::uint32_t channelCount,
     // two facts; the data planes stay null because the stream feed path
     // never dereferences pcm (frames == 0 keeps every pcm read unreachable).
     slot.render.pcm.channelCount = channelCount;
+    BindMonitorPreChainBacking(slotIndex);
     slot.render.pcm.sampleRate = sourceSampleRate;
     slot.render.busIndex = busIndex;
     slot.render.busGeneration = busGeneration;
@@ -4319,11 +4332,6 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
             slot.render.monitorRenderSlot = i;
             slot.render.monitorRenderGeneration =
                 slot.generation.load(std::memory_order_relaxed);
-            for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
-                slot.render.monitorPreChain[ch] = ch < slot.render.pcm.channelCount
-                    ? m_monitorPreChainStorage[ch].data() + static_cast<std::size_t>(i) * m_blockFrames
-                    : nullptr;
-            }
             slot.render.monitorPreChainFrames = 0;
             slot.render.dynamicVoiceTapActive =
                 m_dynamicRoutes.HasVoiceTap(slot.render.dynamicSourceIdentity);
@@ -4387,11 +4395,6 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
             slot.render.monitorRenderSlot = i;
             slot.render.monitorRenderGeneration =
                 slot.generation.load(std::memory_order_relaxed);
-            for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
-                slot.render.monitorPreChain[ch] = ch < slot.render.pcm.channelCount
-                    ? m_monitorPreChainStorage[ch].data() + static_cast<std::size_t>(i) * m_blockFrames
-                    : nullptr;
-            }
             slot.render.monitorPreChainFrames = 0;
             slot.render.dynamicVoiceTapActive =
                 m_dynamicRoutes.HasVoiceTap(slot.render.dynamicSourceIdentity);
