@@ -218,7 +218,7 @@ function(harken_configure_hub_library target)
             userenv
             wintrust
             wtsapi32
-            comsuppw)
+            comsuppw propsys)
     elseif(APPLE)
         target_link_libraries(${target} PRIVATE
             "-framework CoreFoundation"

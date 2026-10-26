@@ -27,6 +27,7 @@ private:
     HICON iconHandle(int size);
 
     QIcon icon_;
+    QString iconPath_;
     QHash<int, HICON> handles_;
 };
 

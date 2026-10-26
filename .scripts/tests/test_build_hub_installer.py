@@ -2,6 +2,7 @@ import ctypes
 import hashlib
 import importlib.util
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -189,6 +190,17 @@ class BuildHubInstallerTest(unittest.TestCase):
         package = Path(result["package"])
         with Database(package, 0) as db:
             properties = dict(db.query("SELECT `Property`, `Value` FROM `Property`"))
+            app_id_source = (REPO_ROOT / "HarkenHub/Source/Platform/Windows/ShellIcons.h").read_text(encoding="utf-8")
+            app_id = re.search(r'hubAppUserModelId\[\] = L"([^"]+)"', app_id_source).group(1)
+            shortcuts = {row[0] for row in db.query("SELECT `Shortcut` FROM `Shortcut`")}
+            identities = {row[0]: row[1] for row in db.query(
+                "SELECT `Shortcut_`, `PropVariantValue` FROM `MsiShortcutProperty` "
+                "WHERE `PropertyKey`='System.AppUserModel.ID'")}
+            self.assertEqual(identities, dict.fromkeys(shortcuts, app_id))
+            association = db.query(
+                "SELECT `Value` FROM `Registry` WHERE `Key`='HarkenSound.HarkenProject' "
+                "AND `Name`='AppUserModelID'")
+            self.assertEqual(association, [[app_id]])
             self.assertEqual(properties["UpgradeCode"], "{4EA0003D-209E-45E6-8343-67529D7E7E5A}")
             self.assertEqual(properties["ALLUSERS"], "1")
             for name in ("HARKENSELFUPDATE", "HARKENBRIDGE", "INSTALLFOLDER"):

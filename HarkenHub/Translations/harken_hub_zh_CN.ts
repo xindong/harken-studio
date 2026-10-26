@@ -159,6 +159,7 @@
 </context>
 <context>
     <name>HubReleaseNotes</name>
+    <message><source>The running Hub taskbar button now uses the correct icon color when Windows uses a light theme, including existing Hub shortcuts pinned to the taskbar.</source><translation>修复 Windows 浅色主题下运行中的 Hub 任务栏按钮图标颜色错误的问题，同时覆盖已有的 Hub 任务栏固定快捷方式。</translation></message>
     <message><source>Hub uses the Harken Hub name throughout installation, updates, and Studio integration, and includes the updated legal terms.</source><translation>Hub 的安装、更新及 Studio 联动统一恢复 Harken Hub 名称，并更新相关法务条款。</translation></message>
     <message><source>Running Hub taskbar and tray icons follow the Windows theme. The dark Hub window keeps its white icon, and the installed-app list shows the correct Hub icon.</source><translation>Hub 运行中的任务栏和托盘图标跟随 Windows 主题切换。深色 Hub 窗口保留白色图标，已安装应用列表显示正确的 Hub 图标。</translation></message>
     <message><source>Engine Integrations uses Integration and Integration Package terminology throughout its controls, checks, and operation reports.</source><translation>引擎集成的控件、检查提示及操作报告统一使用“集成”和“集成包”名称。</translation></message>
