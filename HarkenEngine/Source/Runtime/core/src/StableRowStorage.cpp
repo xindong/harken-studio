@@ -97,12 +97,31 @@ bool StablePageReservation::CommitThrough(std::size_t bytes) noexcept {
     if (bytes <= committedBytes_) return true;
     std::size_t target = 0;
     if (!RoundUp(bytes, pageBytes_, &target) || target > reservedBytes_) return false;
+    const auto requested = (target - committedBytes_) / pageBytes_;
+    const auto committed = CommitPages(committedBytes_, requested);
     // Each successful page stays charged, including an unconstructed failure prefix.
-    while (committedBytes_ < target) {
-        if (!CommitPage(committedBytes_)) return false;
-        committedBytes_ += pageBytes_;
+    committedBytes_ += committed * pageBytes_;
+    return committed == requested;
+}
+
+std::size_t StablePageReservation::CommitPages(std::size_t offset, std::size_t count) noexcept {
+    const auto permitted = std::min(count, remainingPagesForTests_);
+    if (permitted == 0) return 0;
+#if defined(_WIN32)
+    auto* first = static_cast<std::byte*>(address_) + offset;
+    if (permitted > 1 &&
+        VirtualAlloc(first, permitted * pageBytes_, MEM_COMMIT, PAGE_READWRITE) != nullptr) {
+        // Complete physical preparation before any caller publishes a row or backing hold.
+        for (std::size_t index = 0; index < permitted; ++index)
+            *reinterpret_cast<volatile unsigned char*>(first + index * pageBytes_) = 0;
+        if (remainingPagesForTests_ != SIZE_MAX) remainingPagesForTests_ -= permitted;
+        return permitted;
     }
-    return true;
+#endif
+    // Preserve the original successful prefix if a larger Windows commitment is refused.
+    std::size_t committed = 0;
+    while (committed < permitted && CommitPage(offset + committed * pageBytes_)) ++committed;
+    return committed;
 }
 
 bool StablePageReservation::CommitPage(std::size_t offset) noexcept {
@@ -125,13 +144,20 @@ bool StablePageReservation::CommitRange(std::size_t offset, std::size_t bytes) n
     if (committedPages_.empty()) return false;
     const auto first = offset / pageBytes_;
     const auto last = (offset + bytes - 1u) / pageBytes_;
-    for (auto index = first; index <= last; ++index) {
-        const auto mask = std::uint64_t{1} << (index % 64u);
-        auto& word = committedPages_[index / 64u];
-        if ((word & mask) != 0) continue;
-        if (!CommitPage(index * pageBytes_)) return false;
-        word |= mask;
-        committedBytes_ += pageBytes_;
+    const auto isCommitted = [&](std::size_t index) noexcept {
+        return (committedPages_[index / 64u] & (std::uint64_t{1} << (index % 64u))) != 0;
+    };
+    for (auto index = first; index <= last;) {
+        if (isCommitted(index)) { ++index; continue; }
+        auto end = index + 1u;
+        while (end <= last && !isCommitted(end)) ++end;
+        const auto requested = end - index;
+        const auto committed = CommitPages(index * pageBytes_, requested);
+        for (std::size_t page = index; page < index + committed; ++page)
+            committedPages_[page / 64u] |= std::uint64_t{1} << (page % 64u);
+        committedBytes_ += committed * pageBytes_;
+        if (committed != requested) return false;
+        index = end;
     }
     return true;
 }

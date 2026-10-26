@@ -10,6 +10,7 @@ bool BindValidAction(harken::EnginePlayableStartRow* start,
                      harken::EnginePlayableServiceRow* service,
                      VnActionFiringHandle firing, std::uint32_t ordinal,
                      const char* guid) {
+    if (!service->PrepareFeatureArrays()) return false;
     start->slot = 0;
     start->generation = 1;
     start->serviceCount = 1;
@@ -102,6 +103,8 @@ int QueueWindowDiagSelfTest() {
     constexpr const char* kSuccessor = "519dd49c-982e-4986-a814-3643256e430e";
     static harken::EnginePlayableStartRow starts[2];
     static harken::EnginePlayableServiceRow services[2];
+    for (auto& service : services)
+        if (!service.PrepareFeatureArrays()) return 1;
     const auto bind = [](harken::EnginePlayableStartRow* start,
                          harken::EnginePlayableServiceRow* service,
                          std::uint32_t startSlot, std::uint64_t generation,
@@ -116,10 +119,10 @@ int QueueWindowDiagSelfTest() {
         service->invocationGeneration = generation;
     };
 
-    services[0].queueSuccessorLeaf = {};
-    services[0].queueNextState = {};
-    services[1].queueSuccessorLeaf = {};
-    services[1].queueNextState = {};
+    services[0].QueueSuccessorLeaf() = {};
+    services[0].QueueNextState() = {};
+    services[1].QueueSuccessorLeaf() = {};
+    services[1].QueueNextState() = {};
     bind(&starts[0], &services[0], 0, 1, 0, kFiring);
     starts[1].actionFiring = 0;
 
@@ -164,18 +167,18 @@ int QueueWindowDiagSelfTest() {
         std::fprintf(stderr, "error: queue-window early tick saw a successor\n");
         return 9;
     }
-    if (!harken::ParseObjectId(kSuccessor, &services[0].queueSuccessorLeaf.stableId)) {
+    if (!harken::ParseObjectId(kSuccessor, &services[0].QueueSuccessorLeaf().stableId)) {
         std::fprintf(stderr, "error: queue-window successor guid rejected\n");
         return 10;
     }
-    services[0].queueNextState.currentChildOrdinal = 3;
+    services[0].QueueNextState().currentChildOrdinal = 3;
     bind(&starts[1], &services[1], 1, 4, 1, kFiring);
     if (!harkenhost::ObserveFiringQueueWindow(starts, 2, services, 2, kFiring, &later)) {
         std::fprintf(stderr, "error: queue-window second tick observe failed\n");
         return 11;
     }
-    services[0].queueSuccessorLeaf.stableId = {};
-    services[0].queueNextState.currentChildOrdinal = 0;
+    services[0].QueueSuccessorLeaf().stableId = {};
+    services[0].QueueNextState().currentChildOrdinal = 0;
     starts[0].actionFiring = 0;
     if (!harkenhost::ObserveFiringQueueWindow(starts, 2, services, 2, kFiring, &later)) {
         std::fprintf(stderr, "error: queue-window retire tick observe failed\n");
@@ -244,10 +247,6 @@ int QueueHeardDiagSelfTest() {
     service.identity = {0, 1};
     service.invocation = &starts[0];
     service.invocationGeneration = 1;
-    service.queueSuccessorLeaf = {};
-    service.queueNextState = {};
-    service.queueSuccessorProgramPlane = 1;
-    service.queueSuccessorSchedule = {};
     service.schedule = {};
 
     char line[320] = {};
@@ -277,13 +276,14 @@ int QueueHeardDiagSelfTest() {
         return 24;
     }
 
-    if (!harken::ParseObjectId(kSuccessor, &service.queueSuccessorLeaf.stableId)) {
+    if (!service.PrepareFeatureArrays()) return 1;
+    if (!harken::ParseObjectId(kSuccessor, &service.QueueSuccessorLeaf().stableId)) {
         std::fprintf(stderr, "error: queue-heard successor guid rejected\n");
         return 17;
     }
-    service.queueNextState.currentChildOrdinal = 3;
-    service.queueSuccessorSchedule.eventCount = 1;
-    service.queueSuccessorSchedule.entryAnchorFrame = kFrame;
+    service.QueueNextState().currentChildOrdinal = 3;
+    service.QueueFiling().queueSuccessorSchedule.eventCount = 1;
+    service.QueueFiling().queueSuccessorSchedule.entryAnchorFrame = kFrame;
     service.startFrame = 1000;
     harkenhost::FiringQueueWindowCopy silent{};
     if (!harkenhost::ObserveFiringQueueWindow(starts, 1, &service, 1, kFiring, &silent) ||
@@ -333,7 +333,7 @@ int QueueHeardDiagSelfTest() {
         return 23;
     }
 
-    service.queueSuccessorProgramPlane = 0;
+    service.QueueFiling().queueSuccessorProgramPlane = 0;
     service.startFrame = 1000;
     service.schedule = {};
     service.schedule.eventCount = 1;
@@ -351,17 +351,17 @@ int QueueHeardDiagSelfTest() {
         std::fprintf(stderr, "error: queue-heard plane0 used schedule as first: %s\n", line);
         return 25;
     }
-    service.queueSuccessorProgramPlane = 1;
+    service.QueueFiling().queueSuccessorProgramPlane = 1;
     service.schedule = {};
-    service.queueSuccessorSchedule = {};
+    service.QueueFiling().queueSuccessorSchedule = {};
     harkenhost::FiringQueueWindowCopy unknown{};
     if (!harkenhost::ObserveFiringQueueWindow(starts, 1, &service, 1, kFiring, &unknown) ||
         !unknown.successorPresent || unknown.scheduledKnown) {
         std::fprintf(stderr, "error: queue-heard missing frame was treated as known\n");
         return 21;
     }
-    service.queueSuccessorSchedule.eventCount = 1;
-    service.queueSuccessorSchedule.entryAnchorFrame = 1;
+    service.QueueFiling().queueSuccessorSchedule.eventCount = 1;
+    service.QueueFiling().queueSuccessorSchedule.entryAnchorFrame = 1;
     service.startFrame = 4242;
     if (!harkenhost::ObserveFiringQueueWindow(starts, 1, &service, 1, kFiring, &unknown) ||
         unknown.scheduledKnown || unknown.firstFrame != 1000 || !unknown.firstKnown ||
@@ -408,8 +408,6 @@ int QueueEndProbeSelfTest() {
     service.invocation = &start;
     service.invocationGeneration = 1;
     service.startFrame = 4096;
-    service.queueSuccessorRenderHandle = 0;
-    service.queueSuccessorArm = {};
     service.queueSignalOnlyNoOverlap = false;
     service.queueContinuationPrepared = false;
     service.queueNaturalEnd = false;
@@ -427,11 +425,12 @@ int QueueEndProbeSelfTest() {
         std::fprintf(stderr, "error: queue-end first row was %s\n", line);
         return 28;
     }
-    service.queueSuccessorRenderHandle = 9;
-    service.queueSuccessorArm.slot = 1;
-    service.queueSuccessorArm.generation = 1;
-    service.queueSuccessorArm.renderSlot = 2;
-    service.queueSuccessorArm.renderGeneration = 3;
+    if (!service.PrepareFeatureArrays()) return 1;
+    service.QueuePayload().queueSuccessorRenderHandle = 9;
+    service.QueueFiling().queueSuccessorArm.slot = 1;
+    service.QueueFiling().queueSuccessorArm.generation = 1;
+    service.QueueFiling().queueSuccessorArm.renderSlot = 2;
+    service.QueueFiling().queueSuccessorArm.renderGeneration = 3;
     harkenhost::FiringQueueEndCopy installed{};
     if (!harkenhost::CaptureFiringQueueEnd(&start, 1, &service, 1, kFiring, &installed) ||
         !installed.successorRender || !installed.successorArm ||
@@ -454,8 +453,8 @@ int QueueEndProbeSelfTest() {
     }
     service.startFrame = 33792;
     // Promote copies successor handles onto arm/renderHandle, then clears them.
-    service.queueSuccessorRenderHandle = 0;
-    service.queueSuccessorArm = {};
+    service.QueuePayload().queueSuccessorRenderHandle = 0;
+    service.QueueFiling().queueSuccessorArm = {};
     harkenhost::FiringQueueEndCopy promoted{};
     if (!harkenhost::CaptureFiringQueueEnd(&start, 1, &service, 1, kFiring, &promoted) ||
         !harkenhost::FormatFiringQueueEndLine(promoted, 1, 1, kFiring, line, sizeof(line)) ||

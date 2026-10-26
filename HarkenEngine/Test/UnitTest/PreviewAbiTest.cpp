@@ -1875,17 +1875,17 @@ TEST(PreviewAbi,
         harken::ArmGroupSnapshot continuousRetargetGroup{};
         const bool discreteRetargetCaptured =
             engine->decisions.CaptureCommitted(
-            row->variableControlDiscreteRetargetDecision,
+            row->VariablePayload().variableControlDiscreteRetargetDecision,
             &discreteRetarget);
         const bool continuousRetargetCaptured =
             engine->decisions.CaptureCommitted(
-            row->variableControlRetargetDecision,
+            row->VariablePayload().variableControlRetargetDecision,
             &continuousRetarget);
         const bool discreteGroupCaptured = engine->armGroups.Capture(
-            row->variableControlDiscreteRetargetArmGroup,
+            row->VariablePayload().variableControlDiscreteRetargetArmGroup,
             &discreteRetargetGroup);
         const bool continuousGroupCaptured = engine->armGroups.Capture(
-            row->variableControlRetargetArmGroup,
+            row->VariablePayload().variableControlRetargetArmGroup,
             &continuousRetargetGroup);
         ADD_FAILURE()
             << "failureBlock=" << failureBlock

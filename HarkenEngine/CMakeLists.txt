@@ -83,6 +83,8 @@ set(HARKEN_RUNTIME_SOURCES
     ${HARKEN_RUNTIME_DIR}/core/src/Utf8Path.cpp
     ${HARKEN_RUNTIME_DIR}/core/src/VoiceLedger.cpp
     ${HARKEN_RUNTIME_DIR}/core/src/VoiceManager.cpp
+    ${HARKEN_RUNTIME_DIR}/dsp/src/MonoStereoMix.cpp
+    ${HARKEN_RUNTIME_DIR}/dsp/src/MonoStereoMixAvx.cpp
     ${HARKEN_RUNTIME_DIR}/dsp/src/Resampler.cpp
     ${HARKEN_RUNTIME_DIR}/media/src/PcmRegistry.cpp
     ${HARKEN_RUNTIME_DIR}/media/src/ResolvedSlotTicket.cpp
@@ -114,6 +116,13 @@ set(HARKEN_RUNTIME_SOURCES
     ${HARKEN_RUNTIME_DIR}/render/src/FrontierTimelineFinalizer.cpp
     ${HARKEN_RUNTIME_DIR}/render/src/ImmediateLaneTimelineFinalizer.cpp
 )
+# Only this isolated kernel may require AVX; startup and fallback stay baseline.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" AND
+   MSVC_CXX_ARCHITECTURE_ID STREQUAL "x64")
+    set_source_files_properties(${HARKEN_RUNTIME_DIR}/dsp/src/MonoStereoMixAvx.cpp
+        PROPERTIES COMPILE_OPTIONS "/arch:AVX;/fp:strict")
+endif()
+
 # Private include dirs shared by the static and shared runtime libraries.
 set(HARKEN_RUNTIME_PRIVATE_INCLUDES
     ${HARKEN_RUNTIME_DIR}/remote/include

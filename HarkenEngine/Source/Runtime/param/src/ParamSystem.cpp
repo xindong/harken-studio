@@ -66,6 +66,7 @@ ParamSystem::ParamSystem(const EngineConfig& config, std::uint32_t initialVoiceR
     if (!m_retiringTargets.Reserve(config.maxVariableSliceTargetsTotal) ||
         !m_bindings.Reserve(ResolveBindingCapacity(config)) ||
         !m_voiceStates.Reserve(config.voiceCapacity.Render()) ||
+        !m_projectionVoices.Reserve(config.voiceCapacity.Render()) ||
         !PrepareVoiceStorage(initialVoiceRows)) throw std::bad_alloc{};
     m_projectionVariables.resize(m_variables.size());
 }
@@ -77,7 +78,6 @@ ParamSystem::ParamSystem(const ParamSystem& other)
       m_primingInputs(other.m_primingInputs),
       m_projectionVariables(other.m_projectionVariables),
       m_projectionBindings(other.m_projectionBindings),
-      m_projectionVoices(other.m_projectionVoices),
       m_projectionActive(other.m_projectionActive),
       m_projectionVariableCount(other.m_projectionVariableCount),
       m_projectionBindingCount(other.m_projectionBindingCount),
@@ -102,9 +102,12 @@ ParamSystem::ParamSystem(const ParamSystem& other)
         !m_retiringTargets.ConstructThrough(other.m_retiringTargets.ConstructedCount()) ||
         !m_voiceStates.Reserve(other.m_voiceStates.Capacity()) ||
         !m_voiceStates.ConstructThrough(other.m_voiceStates.size()) ||
+        !m_projectionVoices.Reserve(other.m_projectionVoices.Capacity()) ||
+        !m_projectionVoices.ConstructThrough(other.m_projectionVoices.size()) ||
         !m_bindings.Reserve(other.m_bindings.Capacity()) ||
         !m_bindings.ConstructThrough(other.m_bindings.size())) throw std::bad_alloc{};
     std::copy(other.m_voiceStates.begin(), other.m_voiceStates.end(), m_voiceStates.begin());
+    std::copy(other.m_projectionVoices.begin(), other.m_projectionVoices.end(), m_projectionVoices.begin());
     std::copy(other.m_retiringTargets.begin(), other.m_retiringTargets.end(), m_retiringTargets.begin());
     std::copy(other.m_bindings.begin(), other.m_bindings.end(), m_bindings.begin());
     // Private copies evaluate their own facts without borrowing the live index.
@@ -121,10 +124,7 @@ bool ParamSystem::PrepareVoiceStorage(std::uint32_t count) noexcept {
     if (count <= m_voiceStates.size()) return true;
     if (m_projectionActive) return false;
     return m_voiceStates.ConstructThrough(count, [this](std::uint32_t required) noexcept {
-        try {
-            if (m_projectionVoices.size() < required) m_projectionVoices.resize(required);
-            return true;
-        } catch (...) { return false; }
+        return m_projectionVoices.ConstructThrough(required);
     });
 }
 
@@ -369,7 +369,7 @@ void ParamSystem::MoveBinding(std::uint32_t from, std::uint32_t to) noexcept {
 
 bool ParamSystem::BeginVariableProjection() noexcept {
     if (m_projectionActive) return false;
-    std::copy(m_variables.begin(), m_variables.end(), m_projectionVariables.begin());
+    std::copy_n(m_variables.begin(), m_variableCount, m_projectionVariables.begin());
     m_projectionVariableCount = m_variableCount;
     m_projectionBindingCount = m_bindingCount;
     m_projectionVoiceCount = m_voiceStates.size();
@@ -385,7 +385,6 @@ bool ParamSystem::BeginVariableProjection() noexcept {
         const auto& voice = m_voiceStates[i];
         auto& saved = m_projectionVoices[i];
         saved.handle = voice.handle;
-        saved.anyDirty = voice.anyDirty;
         for (std::uint32_t t = 0; t < kBuiltinTargetCount; ++t) {
             const auto& target = voice.targets[t];
             saved.targets[t] = {target.slots[kSlotVariableBindings], target.pendingRampMs,
@@ -401,7 +400,11 @@ void ParamSystem::RestoreVariableProjection() noexcept {
     if (!m_projectionActive) return;
     assert(m_bindingCount == m_projectionBindingCount);
     assert(m_voiceStates.size() == m_projectionVoiceCount);
-    std::copy(m_projectionVariables.begin(), m_projectionVariables.end(), m_variables.begin());
+    std::copy_n(m_projectionVariables.begin(), m_projectionVariableCount, m_variables.begin());
+    // Appended candidates occupied previously empty rows; restore that empty tail.
+    if (m_variableCount > m_projectionVariableCount)
+        std::fill(m_variables.begin() + m_projectionVariableCount,
+                  m_variables.begin() + m_variableCount, Variable{});
     m_variableCount = m_projectionVariableCount;
     for (std::uint32_t i = 0; i < m_bindingCount; ++i) {
         auto& b = m_bindings[i];
@@ -418,7 +421,6 @@ void ParamSystem::RestoreVariableProjection() noexcept {
         auto& voice = m_voiceStates[i];
         const auto& saved = m_projectionVoices[i];
         assert(voice.handle == saved.handle);
-        voice.anyDirty = saved.anyDirty;
         for (std::uint32_t t = 0; t < kBuiltinTargetCount; ++t) {
             auto& target = voice.targets[t];
             const auto& eval = saved.targets[t];
@@ -576,7 +578,6 @@ void ParamSystem::RetireVoiceTargets(VnVoiceHandle handle) noexcept {
         ClearTargetPendingInput(state.targets[targetId]);
         SetTargetClean(state.targets[targetId]);
     }
-    state.anyDirty = false;
     state.emitterHandle = 0;
     state.retired = true;
 }
@@ -612,7 +613,7 @@ void ParamSystem::ApplyTonePreset(VnVoiceHandle handle,
         const float before = Reduce(*state, targetId);
         state->base[targetId] = value;
         if (Reduce(*state, targetId) != before) {
-            SetTargetDirty(*state, state->targets[targetId]);
+            SetTargetDirty(state->targets[targetId]);
         }
     };
     setBase(kTargetVoiceLowpassCutoff,
@@ -651,7 +652,7 @@ void ParamSystem::ApplyProximityFrequency(VnVoiceHandle handle,
     const float before = Reduce(*state, targetId);
     state->base[targetId] = frequencyHz;
     if (Reduce(*state, targetId) != before) {
-        SetTargetDirty(*state, state->targets[targetId]);
+        SetTargetDirty(state->targets[targetId]);
     }
 }
 
@@ -764,7 +765,7 @@ void ParamSystem::SetMeterProbeContribution(
     if (!target.suppressClaimRamp) {
         target.pendingRampMs = std::max(target.pendingRampMs, transitionMs);
     }
-    SetTargetDirty(*state, target);
+    SetTargetDirty(target);
 }
 
 void ParamSystem::ClearMeterProbeContribution(
@@ -805,7 +806,7 @@ void ParamSystem::ClearMeterProbeContribution(
     if (!target.suppressClaimRamp) {
         target.pendingRampMs = std::max(target.pendingRampMs, transitionMs);
     }
-    SetTargetDirty(*state, target);
+    SetTargetDirty(target);
 }
 
 void ParamSystem::SetAttenuationSlot(VnVoiceHandle handle,
@@ -826,7 +827,7 @@ void ParamSystem::SetAttenuationSlot(VnVoiceHandle handle,
     if (!target.suppressClaimRamp && rampMs > target.pendingRampMs) {
         target.pendingRampMs = rampMs;
     }
-    SetTargetDirty(*state, target);
+    SetTargetDirty(target);
 }
 
 void ParamSystem::ClearAttenuationSlot(VnVoiceHandle handle,
@@ -841,7 +842,7 @@ void ParamSystem::ClearAttenuationSlot(VnVoiceHandle handle,
     }
     target.active[kSlotAttenuation] = false;
     target.slots[kSlotAttenuation] = 0.0f;
-    SetTargetDirty(*state, target);
+    SetTargetDirty(target);
 }
 
 VnResult ParamSystem::SetValue(VnVariableId id, float value) {
@@ -1362,7 +1363,7 @@ void ParamSystem::PurgeInstancesOf(VnObjectId definitionId) {
                 target.slots[kSlotVariableBindings] = 0.0f;
                 ++m_forcedRebuilds;
             }
-            SetTargetDirty(*state, target);
+            SetTargetDirty(target);
         }
         // Only the last feeder of a still-tracked voice's target
         // releases worst-case demand — once per unique pair, matching
@@ -1472,7 +1473,7 @@ void ParamSystem::CommitPreparedPurgeInstances(
                 target.slots[kSlotVariableBindings] = 0.0f;
                 ++m_forcedRebuilds;
             }
-            SetTargetDirty(*state, target);
+            SetTargetDirty(target);
         }
         if (m_capacityPublisher != nullptr &&
             !HasBinding(exit.handle, exit.targetId)) {
@@ -1720,7 +1721,7 @@ void ParamSystem::RestorePublicationRamp(VnVoiceHandle handle,
         state->targets[targetId].preparedOwner != owner || rampMs == 0) return;
     auto& target = state->targets[targetId];
     target.pendingRampMs = std::max(target.pendingRampMs, rampMs);
-    SetTargetDirty(*state, target);
+    SetTargetDirty(target);
 }
 
 void ParamSystem::ClearCandidateBaseline(VnVoiceHandle handle,
@@ -1951,7 +1952,7 @@ void ParamSystem::MarkSliceCommitted(VnVoiceHandle handle,
             if (owner.Shared()) {
                 if (PublicationChanged(*state, targetId, Reduce(*state, targetId), Pan2dOf(*state)) ||
                     target.pendingInput || target.pendingRampMs != 0) {
-                    SetTargetDirty(*state, target);
+                    SetTargetDirty(target);
                 } else {
                     SetTargetClean(target);
                 }
@@ -1961,7 +1962,7 @@ void ParamSystem::MarkSliceCommitted(VnVoiceHandle handle,
             }
             if (PublicationChanged(*state, targetId, Reduce(*state, targetId),
                                    Pan2dOf(*state))) {
-                SetTargetDirty(*state, target);
+                SetTargetDirty(target);
             } else {
                 target.pendingRampMs = 0;
                 SetTargetClean(target);
@@ -2198,7 +2199,7 @@ std::uint32_t ParamSystem::PrimeVoiceBindingsImpl(VnVoiceHandle handle,
                 // Defensive only (callers size to kBuiltinTargetCount):
                 // an unwritten value stays dirty for the ordinary flush
                 // rather than being silently lost.
-                SetTargetDirty(*state, target);
+                SetTargetDirty(target);
                 continue;
             }
             out[written].targetId = t;
@@ -2244,7 +2245,7 @@ std::uint32_t ParamSystem::PrimeTargets(VnVoiceHandle handle,
             // Defensive only (callers size to the requested list): an
             // unwritten value stays dirty for the ordinary flush rather
             // than being silently lost.
-            SetTargetDirty(*state, target);
+            SetTargetDirty(target);
             continue;
         }
         out[written].targetId = t;
@@ -2611,7 +2612,7 @@ void ParamSystem::EvalDirtyBindings(const EmitterTable* emitters) {
             TargetState& target = state.targets[t];
             if (target.rebuild) {
                 target.rebuild = false;
-                SetTargetDirty(state, target);
+                SetTargetDirty(target);
             }
         }
     }
@@ -2699,7 +2700,7 @@ void ParamSystem::EvalIndexedBindings(const EmitterTable* emitters) {
             target.active[kSlotVariableBindings] = active;
             target.slots[kSlotVariableBindings] = combined;
             target.rebuild = false;
-            if (changed) SetTargetDirty(*state, target);
+            if (changed) SetTargetDirty(target);
             ClearTargetPendingInput(target);
         }
         if (!m_dependencies->CommitTarget(dirty, version)) ++cursor;

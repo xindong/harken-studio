@@ -154,17 +154,17 @@ struct FiringQueueWindowCopy {
 
 inline void NoteQueueSuccessorLeaf(const harken::EnginePlayableServiceRow& row,
                                    FiringQueueWindowCopy* copy) {
-    if (copy == nullptr || copy->successorPresent ||
-        harken::IsNull(row.queueSuccessorLeaf.stableId)) {
+    if (copy == nullptr || copy->successorPresent || !row.HasFeatureArrays() ||
+        harken::IsNull(row.QueueSuccessorLeaf().stableId)) {
         return;
     }
-    copy->successorId = row.queueSuccessorLeaf.stableId;
+    copy->successorId = row.QueueSuccessorLeaf().stableId;
     copy->successorPresent = true;
-    copy->successorOrdinal = row.queueNextState.currentChildOrdinal;
+    copy->successorOrdinal = row.QueueNextState().currentChildOrdinal;
     copy->successorOrdinalPresent = true;
-    const auto& successorSchedule = row.queueSuccessorProgramPlane == 0
+    const auto& successorSchedule = row.QueueFiling().queueSuccessorProgramPlane == 0
         ? row.schedule
-        : row.queueSuccessorSchedule;
+        : row.QueueFiling().queueSuccessorSchedule;
     if (successorSchedule.eventCount != 0) {
         copy->scheduledKnown = true;
         copy->scheduledFrame = successorSchedule.entryAnchorFrame;
@@ -429,8 +429,8 @@ inline bool CaptureFiringQueueEnd(
         seen.leafPresent = !harken::IsNull(row.leaf.stableId);
         seen.leafId = row.leaf.stableId;
         seen.startFrame = row.startFrame;
-        seen.successorRender = row.queueSuccessorRenderHandle != 0;
-        seen.successorArm = row.queueSuccessorArm.Valid();
+        seen.successorRender = row.HasFeatureArrays() && row.QueuePayload().queueSuccessorRenderHandle != 0;
+        seen.successorArm = row.HasFeatureArrays() && row.QueueFiling().queueSuccessorArm.Valid();
         seen.signalOnly = row.queueSignalOnlyNoOverlap;
         seen.continuationPrepared = row.queueContinuationPrepared;
         seen.lifecycle = static_cast<unsigned>(row.controlLifecycle);

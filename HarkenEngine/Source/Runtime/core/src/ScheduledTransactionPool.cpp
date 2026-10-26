@@ -10458,10 +10458,12 @@ std::uint32_t ScheduledTransactionPool::Advance() {
         return 0;
     }
     std::uint64_t heldIngress = 0;
-    for (const auto& claim : preparedTransactionClaims_) {
-        if (claim.transferProof == nullptr) continue;
-        assert(claim.used && !claim.committed && claim.preparedIngressQuantum == baseQuantumIndex_);
-        heldIngress += claim.transactionCount;
+    if (preparedTransactionClaimCount_ != 0) {
+        for (const auto& claim : preparedTransactionClaims_) {
+            if (claim.transferProof == nullptr) continue;
+            assert(claim.used && !claim.committed && claim.preparedIngressQuantum == baseQuantumIndex_);
+            heldIngress += claim.transactionCount;
+        }
     }
     assert(heldIngress <= preparedIngressThisQuantum_);
     if (WindowEndFrame() > UINT64_MAX - quantumFrames_) {
@@ -10627,8 +10629,10 @@ std::uint32_t ScheduledTransactionPool::Advance() {
     baseQuantumIndex_ += 1;
     ingressThisQuantum_ = 0; // ingress is bounded per quantum
     preparedIngressThisQuantum_ = static_cast<std::uint32_t>(heldIngress);
-    for (auto& claim : preparedTransactionClaims_)
-        if (claim.transferProof != nullptr) claim.preparedIngressQuantum = baseQuantumIndex_;
+    if (preparedTransactionClaimCount_ != 0) {
+        for (auto& claim : preparedTransactionClaims_)
+            if (claim.transferProof != nullptr) claim.preparedIngressQuantum = baseQuantumIndex_;
+    }
     unplacedIngressThisQuantum_ = 0;
     return dropped;
 }

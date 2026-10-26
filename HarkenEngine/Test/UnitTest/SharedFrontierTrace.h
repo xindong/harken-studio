@@ -349,9 +349,10 @@ struct FrontierTrace {
                 };
                 // Retarget tables include entering Start arms as well as dedicated controls.
                 for (const auto& service : engine.playableServices) {
-                    for (std::size_t index = 0; index < service.variableControlDiscreteRetargetEvents.size(); ++index)
-                        classify(service.variableControlDiscreteRetargetEvents[index].armToken,
-                            service.variableControlDiscreteRetargetPayloads[index]);
+                    if (!service.HasFeatureArrays()) continue;
+                    for (std::size_t index = 0; index < service.DiscreteRetargetStorage().events.size(); ++index)
+                        classify(service.DiscreteRetargetStorage().events[index].armToken,
+                            service.DiscreteRetargetStorage().payloads[index]);
                 }
                 for (const auto& program : engine.variableControlRetargetPrograms)
                     classify(program.event.armToken, program.payload);

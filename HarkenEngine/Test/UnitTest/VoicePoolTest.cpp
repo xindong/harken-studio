@@ -209,6 +209,46 @@ bool BindHeldSource(harken::Engine& engine, VnVoiceHandle voice, HeldSource* sou
         engine.sourceTerminals.Resolve(source->token), source->token);
 }
 
+TEST(VoicePool, StreamParkPendingOwnershipSurvivesPartialAndStaleRelease) {
+    EngineSession session(VoicePoolConfig(2, kBlockFrames));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    const auto samples = harkentest::MakeDC(64, 0.25f);
+    const auto desc = MonoDesc(samples, kSampleRate);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &desc));
+    auto& voices = session.Engine()->voices;
+    VnVoiceHandle first = 0;
+    VnVoiceHandle second = 0;
+    ASSERT_EQ(VN_OK, ClaimObserverVoice(*session.Engine(), &first));
+    ASSERT_EQ(VN_OK, ClaimObserverVoice(*session.Engine(), &second));
+    EXPECT_FALSE(voices.HasPendingStreamParkMailboxes());
+    ASSERT_TRUE(voices.ReserveStreamPark(first, first, 1));
+    ASSERT_TRUE(voices.ReserveStreamPark(second, second, 2));
+    voices.AbortStreamParkReservation(first, first, 1);
+    voices.AbortStreamParkReservation(first, first, 1);
+    voices.AbortStreamParkReservation(second, second, 1);
+    EXPECT_TRUE(voices.HasPendingStreamParkMailboxes());
+    harken::StreamParkOutcome outcome;
+    bool cancelled = false;
+    EXPECT_FALSE(voices.ConsumeStreamParkOutcomeExact(
+        second, second, 2, &outcome, &cancelled));
+    EXPECT_TRUE(voices.HasPendingStreamParkMailboxes());
+    // A non-stream render publishes the original StaleRender outcome.
+    voices.ApplyStop(second, 0, 0, session.Engine()->notifications, 0,
+        harken::kStopModeStreamPark, second, 2);
+    EXPECT_FALSE(voices.ConsumeStreamParkOutcomeExact(
+        second, second, 1, &outcome, &cancelled));
+    EXPECT_TRUE(voices.HasPendingStreamParkMailboxes());
+    ASSERT_TRUE(voices.ConsumeStreamParkOutcome(
+        static_cast<std::uint32_t>(second), &outcome, &cancelled));
+    EXPECT_EQ(harken::StreamParkDisposition::StaleRender, outcome.disposition);
+    EXPECT_FALSE(voices.HasPendingStreamParkMailboxes());
+    EXPECT_FALSE(voices.ConsumeStreamParkOutcome(
+        static_cast<std::uint32_t>(second), &outcome, &cancelled));
+    ASSERT_TRUE(voices.ReserveStreamPark(first, first, 3));
+    voices.DiscardAllStreamParkMailboxes();
+    EXPECT_FALSE(voices.HasPendingStreamParkMailboxes());
+}
+
 TEST(VoicePool, ReleaseObserverSurvivesNaturalExitAndSlotReuse) {
     EngineSession session(VoicePoolConfig(1, kBlockFrames));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -233,6 +273,12 @@ TEST(VoicePool, ReleaseObserverSurvivesNaturalExitAndSlotReuse) {
     EXPECT_EQ(0u, engine.voiceSendConfig.RequestedBytes());
     EXPECT_EQ(0u, engine.params.VoiceStorageBytes());
     const auto emptyStartBytes = engine.timelineSink.VariableStartStorageBytes();
+    engine.voices.SetHighRatioCommitPageLimitForTests(0);
+    EXPECT_EQ(VN_NO_VOICE, ClaimObserverVoice(engine, &first));
+    EXPECT_EQ(0u, first);
+    EXPECT_EQ(0u, engine.voices.ConstructedSlotCount());
+    EXPECT_EQ(1u, engine.voices.AvailableSlotCount());
+    engine.voices.SetHighRatioCommitPageLimitForTests(SIZE_MAX);
     harken::VoiceTimelineSink secondSink(engine.voices, engine.timelineArms);
     harken::VoicePool::SlotStorageRegistration refusedStorage;
     ASSERT_TRUE(engine.voices.AttachSlotStoragePreparation(refusedStorage, nullptr,
@@ -1324,8 +1370,7 @@ TEST(VoicePool, OriginalOwnerGatedDisposalDoesNotInventCoreRetirement) {
     harken::VoiceTimelineReservation reservation{};
     ASSERT_TRUE(engine.voices.ReserveLaneTimelineEvents(static_cast<std::uint32_t>(handle),
         static_cast<std::uint32_t>(handle >> 32), quantum, 1, &reservation));
-    harken::VoiceTimelineEvent event{};
-    event.kind = harken::TimelineEventKind::Stop;
+    harken::VoiceTimelineEvent event{harken::TimelineEventKind::Stop};
     event.frontierProof.state = harken::FrontierEventState::Pending;
     event.frontierProof.quantum = quantum;
     event.frontierProof.renderGeneration = static_cast<std::uint32_t>(handle >> 32);
@@ -1552,6 +1597,188 @@ TEST(VoicePool, DefaultPlayUsesLinearBrickForAllRatePairs) {
     ExpectStreamResampleProfile(
         32000u, 44100u,
         harken::ResampleProfile::LegacyCompatibility);
+}
+
+TEST(VoicePool, DeferredWeightPreparationFailsBeforePublicationAndKeepsFullOwnerCapacity) {
+    EngineSession session(VoicePoolConfig(1, kBlockFrames, kSampleRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    const auto samples = harkentest::MakeDC(8192, 0.25f);
+    const auto desc = MonoDesc(samples, kSampleRate);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &desc));
+    auto& engine = *session.Engine();
+    const auto pcm = engine.registry.Lookup(harkentest::ObjectId(1));
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, engine.voices.Play(pcm, 0, 1, 0, false, 0, 0, 0,
+        harken::ResolvePanGains(engine.config.mixChannelLayout, 0), 0, pcm.frames, 1,
+        harken::ResampleProfile::LegacyCompatibility, &voice, 1, UINT32_MAX, 0, true, 0, 1, false));
+    auto* context = engine.voices.Resolve(voice);
+    ASSERT_NE(nullptr, context);
+    EXPECT_TRUE(context->variableWeightControls.empty());
+    EXPECT_EQ(0u, engine.voices.VariableWeightStorageBytes());
+    const harken::VariableWeightControlBinding first{{101, 7, 0},
+        {0, 2, 0.5f, 0.5f, 1, {1, 1}, {1, 1}}};
+    engine.voices.SetVariableWeightCommitPageLimitForTests(0);
+    EXPECT_FALSE(engine.voices.PrepareVariableWeightControls(voice, &first, 1));
+    EXPECT_TRUE(context->variableWeightControls.empty());
+    EXPECT_EQ(0u, context->variableWeightControlCount);
+    engine.voices.SetVariableWeightCommitPageLimitForTests(SIZE_MAX);
+    ASSERT_TRUE(engine.voices.PrepareVariableWeightControls(voice, &first, 1));
+    ASSERT_EQ(harken::kSelectionPathNodeCapacity, context->variableWeightControls.size());
+    auto* const backing = context->variableWeightControls.data();
+    for (std::uint32_t i = 1; i < harken::kSelectionPathNodeCapacity; ++i)
+        ASSERT_TRUE(engine.voices.ApplyOwnedVariableWeightSegment(voice, {101u + i, 7, 0}, first.segment));
+    ASSERT_TRUE(engine.voices.RemoveOwnedVariableWeightSegment(voice, first.owner, 1));
+    EXPECT_FALSE(engine.voices.ApplyOwnedVariableWeightSegment(voice, {1000, 7, 0}, first.segment));
+    ASSERT_TRUE(engine.voices.CancelPreparedVoice(voice));
+    ASSERT_EQ(VN_OK, ClaimObserverVoice(engine, &voice, true));
+    context = engine.voices.Resolve(voice);
+    ASSERT_NE(nullptr, context);
+    EXPECT_EQ(backing, context->variableWeightControls.data());
+    EXPECT_EQ(0u, context->variableWeightControlCount);
+    for (const auto& entry : context->variableWeightControls) {
+        EXPECT_FALSE(entry.active);
+        EXPECT_FALSE(entry.owner.Valid());
+    }
+    ASSERT_TRUE(engine.voices.CancelPreparedVoice(voice));
+}
+
+TEST(VoicePool, GenericFutureBackingFillsSparseWeightHolesBeforePreparedUse) {
+    EngineSession session(VoicePoolConfig(4, kBlockFrames, kSampleRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    const auto samples = harkentest::MakeDC(8192, 0.25f);
+    const auto desc = MonoDesc(samples, kSampleRate);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &desc));
+    const auto wideSamples = harkentest::MakeDC(8192 * harken::kMaxChannels, 0.01f);
+    const auto wideDesc = harkentest::InterleavedDesc(wideSamples, harken::kMaxChannels, kSampleRate);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(2), &wideDesc));
+    auto& engine = *session.Engine();
+    VnVoiceHandle high = 0;
+    ASSERT_EQ(VN_OK, ClaimObserverVoice(engine, &high, true, 3));
+    const harken::VariableWeightControlBinding first{{101, 7, 0},
+        {0, 2, 0.5f, 0.5f, 1, {1, 1}, {1, 1}}};
+    ASSERT_TRUE(engine.voices.PrepareVariableWeightControls(high, &first, 1));
+    const auto* highContext = engine.voices.Resolve(high);
+    ASSERT_NE(nullptr, highContext);
+    auto* const backing = highContext->variableWeightControls.data();
+    harken::StableStoragePreparation held;
+    for (std::uint32_t slot = 0; slot < 4; ++slot)
+        EXPECT_TRUE(engine.voices.PendingTimelineVariableEvents(slot).empty());
+    engine.voices.SetHighRatioCommitPageLimitForTests(0);
+    EXPECT_FALSE(engine.voices.PrepareSlotBacking(1, &held));
+    EXPECT_FALSE(held.Valid());
+    EXPECT_EQ(highContext, engine.voices.Resolve(high));
+    EXPECT_EQ(backing, highContext->variableWeightControls.data());
+    EXPECT_EQ(first.owner, highContext->variableWeightControls[0].owner);
+    engine.voices.SetHighRatioCommitPageLimitForTests(SIZE_MAX);
+    engine.voices.SetPendingTimelineVariableEventCommitPageLimitForTests(0);
+    EXPECT_FALSE(engine.voices.PrepareSlotBacking(1, &held));
+    EXPECT_FALSE(held.Valid());
+    EXPECT_EQ(highContext, engine.voices.Resolve(high));
+    EXPECT_EQ(backing, highContext->variableWeightControls.data());
+    EXPECT_EQ(first.owner, highContext->variableWeightControls[0].owner);
+    engine.voices.SetPendingTimelineVariableEventCommitPageLimitForTests(SIZE_MAX);
+    engine.voices.SetVariableWeightCommitPageLimitForTests(0);
+    EXPECT_FALSE(engine.voices.PrepareSlotBacking(1, &held));
+    EXPECT_FALSE(held.Valid());
+    engine.voices.SetVariableWeightCommitPageLimitForTests(SIZE_MAX);
+    engine.mixer.ArenaForTests().SetCommitPageLimitForTests(0);
+    EXPECT_FALSE(engine.voices.PrepareSlotBacking(1, &held));
+    EXPECT_FALSE(held.Valid());
+    engine.mixer.ArenaForTests().SetCommitPageLimitForTests(SIZE_MAX);
+    ASSERT_TRUE(engine.voices.PrepareSlotBacking(1, &held));
+    for (std::uint32_t slot = 0; slot < 4; ++slot)
+        ASSERT_EQ(harken::kTimelineMaxEventsPerVoiceQuantum,
+            engine.voices.PendingTimelineVariableEvents(slot).size());
+    auto* const pendingEvents = engine.voices.PendingTimelineVariableEvents(3).data();
+    pendingEvents[0].value = 173;
+    engine.voices.SetPendingTimelineVariableEventCommitPageLimitForTests(0);
+    EXPECT_EQ(backing, highContext->variableWeightControls.data());
+    EXPECT_EQ(1u, highContext->variableWeightControlCount);
+    EXPECT_EQ(first.owner, highContext->variableWeightControls[0].owner);
+    engine.voices.SetVariableWeightCommitPageLimitForTests(0);
+    engine.mixer.ArenaForTests().SetCommitPageLimitForTests(0);
+    engine.voices.SetHighRatioCommitPageLimitForTests(0);
+    {
+        auto use = held.Use();
+        VnVoiceHandle low = 0;
+        const auto pcm = engine.registry.Lookup(harkentest::ObjectId(2));
+        ASSERT_EQ(VN_OK, engine.voices.Play(pcm, 0, 1, 0, false, 0, 0, 0,
+            harken::ResolvePanGains(engine.config.mixChannelLayout, 0), 0, pcm.frames, 1,
+            harken::ResampleProfile::LegacyCompatibility, &low, 1, 0, 0, true));
+        ASSERT_EQ(harken::kSelectionPathNodeCapacity,
+            engine.voices.Resolve(low)->variableWeightControls.size());
+        EXPECT_EQ(harken::kMaxChannels, engine.voices.Resolve(low)->pcm.channelCount);
+        ASSERT_TRUE(engine.voices.PrepareVariableWeightControls(low, &first, 1));
+        ASSERT_TRUE(engine.voices.CancelPreparedVoice(low));
+        EXPECT_EQ(pendingEvents, engine.voices.PendingTimelineVariableEvents(3).data());
+        EXPECT_EQ(173u, pendingEvents[0].value);
+    }
+    ASSERT_TRUE(engine.voices.CancelPreparedVoice(high));
+}
+
+TEST(VoicePool, WiderLowSlotPreservesLiveHighSlotsWithBlendAndSends) {
+    constexpr std::uint32_t voiceCount = 16;
+    std::array<harkentest::Capture, 2> captures;
+    for (std::uint32_t pass = 0; pass < captures.size(); ++pass) {
+        SCOPED_TRACE(pass);
+        auto config = VoicePoolConfig(voiceCount, kBlockFrames, kSampleRate);
+        config.fxSlotsPerVoice = 1;
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        const auto mono = harkentest::MakeDC(8192, 0.001f);
+        const auto monoDesc = MonoDesc(mono, kSampleRate);
+        const auto wide = harkentest::MakeDC(8192 * harken::kMaxChannels, 0.001f);
+        const auto wideDesc = harkentest::InterleavedDesc(wide, harken::kMaxChannels, kSampleRate);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &monoDesc));
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(2), &wideDesc));
+        if (pass == 0) ASSERT_TRUE(engine.mixer.PrepareVoiceBacking(voiceCount));
+        const auto activate = [&](VnVoiceHandle voice) {
+            auto* context = engine.voices.Resolve(voice);
+            ASSERT_NE(nullptr, context);
+            context->fxSlots[0].process = IdentityTailProcess;
+            context->fxBypassMix[0] = 0.5f;
+            for (std::uint32_t send = 0; send < harken::kMaxVoiceSendSlots; ++send)
+                engine.voices.ApplySetVoiceSend(voice, send, 0, 0.0f, 1);
+            engine.voices.ApplyPlay(voice, voice, 0, engine.mixer.BlocksRendered());
+        };
+        std::array<VnVoiceHandle, voiceCount> voices{};
+        for (std::uint32_t slot = 0; slot < voiceCount; ++slot) {
+            ASSERT_EQ(VN_OK, ClaimObserverVoice(engine, &voices[slot], false, slot));
+            activate(voices[slot]);
+        }
+        auto& captured = captures[pass];
+        harkentest::PumpAndCapture(&engine, 2, captured);
+        engine.voices.ApplyStop(voices[0], 0, 0, engine.notifications, engine.mixer.BlocksRendered());
+        harkentest::PumpAndCapture(&engine, 2, captured);
+        ASSERT_EQ(nullptr, engine.voices.Resolve(voices[0]));
+        const auto pcm = engine.registry.Lookup(harkentest::ObjectId(2));
+        const auto claimWide = [&](VnVoiceHandle* out) {
+            return engine.voices.Play(pcm, 0, 1, 0, false, 0, 0, 0,
+                harken::ResolvePanGains(engine.config.mixChannelLayout, 0), 0, pcm.frames, 1,
+                harken::ResampleProfile::LegacyCompatibility, out, 1, 0);
+        };
+        if (pass != 0) {
+            engine.mixer.ArenaForTests().SetCommitPageLimitForTests(0);
+            VnVoiceHandle refused = 0;
+            EXPECT_EQ(VN_NO_VOICE, claimWide(&refused));
+            EXPECT_EQ(0u, refused);
+            EXPECT_EQ(1u, engine.voices.AvailableSlotCount());
+        }
+        harkentest::PumpAndCapture(&engine, 1, captured);
+        engine.mixer.ArenaForTests().SetCommitPageLimitForTests(SIZE_MAX);
+        ASSERT_EQ(VN_OK, claimWide(&voices[0]));
+        activate(voices[0]);
+        engine.mixer.ArenaForTests().SetCommitPageLimitForTests(0);
+        harkentest::PumpAndCapture(&engine, 3, captured);
+        EXPECT_EQ(0u, engine.mixer.Arena().OverflowCount());
+        EXPECT_EQ(0u, engine.voices.AvailableSlotCount());
+        for (const auto voice : voices) ASSERT_NE(nullptr, engine.voices.Resolve(voice));
+        EXPECT_GT(captured.left.back(), 0.01f);
+        EXPECT_GT(captured.right.back(), 0.01f);
+    }
+    EXPECT_EQ(captures[0].left, captures[1].left);
+    EXPECT_EQ(captures[0].right, captures[1].right);
 }
 
 TEST(VoicePool, ProfessionalWorkingSetSurvivesPreflightSeekAndSlotReuse) {

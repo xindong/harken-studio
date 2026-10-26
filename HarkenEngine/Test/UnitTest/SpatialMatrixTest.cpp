@@ -655,6 +655,7 @@ TEST(SpatialMatrix, StreamGateAndFirstStarvationKeepLatestUnrenderedTarget) {
         fifo[ch].resize(harken::kResampleFifoFrames);
         fifoPlanes[ch] = fifo[ch].data();
     }
+    harken::Resampler resamplerBacking;
     harken::VoiceRenderContext ctx;
     ctx.biquadTrig = &trig;
     ctx.pcm.channelCount = 2;
@@ -665,6 +666,7 @@ TEST(SpatialMatrix, StreamGateAndFirstStarvationKeepLatestUnrenderedTarget) {
     ctx.spatialized = true;
     ctx.gain.Set(1, 0);
     ctx.outputGain.Set(1);
+    ctx.resampler = resamplerBacking;
     ctx.resampler.Reset(fifoPlanes, 2, harken::ResampleQuality::Linear, 1, &tables);
     harken::BlockArena arena{65536};
     std::array<std::array<float, kBlock>, 2> output{};

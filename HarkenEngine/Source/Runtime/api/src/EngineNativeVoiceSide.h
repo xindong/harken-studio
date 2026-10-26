@@ -115,6 +115,22 @@ public:
         shape_ = 0;
     }
 
+    void ResetOrdinaryAfterSafeReset() noexcept {
+        for (std::uint32_t i = 0; i < capacity_; ++i) {
+            std::destroy_at(&contexts_[i]);
+            std::construct_at(&contexts_[i]);
+            std::destroy_at(&starts_[i]);
+            std::construct_at(&starts_[i]);
+            if (captures_ != nullptr) {
+                // External shares own their immutable bodies independently.
+                // Old staged targets may already have ended; never visit them.
+                std::destroy_at(&captures_[i]);
+                std::construct_at(&captures_[i]);
+            }
+        }
+        shape_ = 0;
+    }
+
     bool Empty() const noexcept {
         return starts_ == nullptr && contexts_ == nullptr && captures_ == nullptr &&
             capacity_ == 0 && shape_ == 0;

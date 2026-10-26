@@ -25,7 +25,8 @@ private:
     friend class VoicePool;
     // Called only while the real native installation or rendering standing
     // prevents this self-loan from returning. Numeric lookup cannot issue it.
-    bool BorrowMutation(OriginalSourceMutationActor* out) const noexcept;
+    // The actual callback immediately begins its first write under this loan.
+    bool BorrowMutationForFirstWrite(OriginalSourceMutationActor* out) const noexcept;
     bool Matches(const void* actualSubmission, TimelineArmToken token,
         VnVoiceHandle sourceIdentity) const noexcept;
     OriginalSourceSubmissionRegistry* owner_ = nullptr;

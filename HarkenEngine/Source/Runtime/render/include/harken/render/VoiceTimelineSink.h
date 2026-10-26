@@ -227,10 +227,11 @@ public:
         frontier_.Begin(quantumIndex, blockFrames_);
         voices_.BeginTimelineQuantum(quantumIndex);
         RetryRetiringPlainArms();
-        for (auto& pending : pendingVariableStarts_)
-            if (pending.count != 0 && !voices_.TimelineBindingValid(
-                    pending.arm.renderSlot, pending.arm.renderGeneration))
-                RetirePendingVariableStart(pending);
+        if (pendingVariableStartSeen_)
+            for (auto& pending : pendingVariableStarts_)
+                if (pending.count != 0 && !voices_.TimelineBindingValid(
+                        pending.arm.renderSlot, pending.arm.renderGeneration))
+                    RetirePendingVariableStart(pending);
         return true;
     }
 
@@ -702,6 +703,11 @@ public:
              (hasStart && voices_.HasTimelineVariableSourceRead(renderSlot, renderGeneration)))) {
             auto& pending = pendingVariableStarts_[renderSlot];
             if (pending.count != 0 && pending.arm.renderGeneration != renderGeneration) return false;
+            const auto pendingEvents = voices_.PendingTimelineVariableEvents(renderSlot);
+            if (!pending.failed && !publicationRefused) {
+                assert(pendingEvents.size() == kTimelineMaxEventsPerVoiceQuantum);
+                if (pendingEvents.size() != kTimelineMaxEventsPerVoiceQuantum) return false;
+            }
             if (pending.count == 0) {
                 pending.arm = armToken;
                 pending.source = voices_.TimelineVariableSourceRead(renderSlot, renderGeneration);
@@ -716,31 +722,37 @@ public:
             }
             auto& transaction = pending.transactions[transactionIndex];
             transaction.starts = transaction.starts || hasStart;
-            if (pending.failed || eventCount > pending.events.size() - pending.count) {
+            if (pending.failed || eventCount > kTimelineMaxEventsPerVoiceQuantum - pending.count) {
                 pending.failed = true;
                 RecordPlainResult(armToken, pending.failureDisposition);
                 (void)CancelBinding(renderSlot, renderGeneration);
                 return true;
             }
             for (std::uint32_t i = 0; i < eventCount; ++i) {
-                auto& stored = pending.events[pending.count + i];
                 const auto& payload = *events[i].payload;
-                stored = {};
-                stored.kind = payload.kind;
-                stored.authoredRootStop = payload.kind == TimelineEventKind::Stop &&
-                    (payload.reserved & kTimelineEventAuthoredRootStop) != 0;
-                stored.authoredStopOperation = payload.authoredStopOperation;
-                stored.controlCause = payload.controlCause;
-                stored.offset = static_cast<std::uint16_t>(events[i].effectiveOffset);
-                stored.envelopeDirection = payload.envelopeDirection;
-                stored.authoredFadeOutCandidate = events[i].authoredFadeOutCandidate;
-                stored.frame = payload.envelopeStartFrame;
-                stored.endFrame = payload.envelopeEndFrame;
-                stored.value = payload.sourceStartFrame;
-                stored.envelopeCurve = payload.envelopeCurve;
-                stored.variableWeight = payload.variableWeight;
-                stored.variableWeightOwner = payload.variableWeightOwner;
-                stored.order = events[i].order;
+                // Refused publication is terminal before any later payload reader.
+                if (!publicationRefused) {
+                    auto& stored = pendingEvents[pending.count + i];
+                    stored = VoiceTimelineEvent{payload.kind};
+                    stored.authoredRootStop = payload.kind == TimelineEventKind::Stop &&
+                        (payload.reserved & kTimelineEventAuthoredRootStop) != 0;
+                    if (payload.kind == TimelineEventKind::Stop) {
+                        stored.Stop().authoredStopOperation = payload.authoredStopOperation;
+                        stored.Stop().controlCause = payload.controlCause;
+                    }
+                    stored.offset = static_cast<std::uint16_t>(events[i].effectiveOffset);
+                    stored.envelopeDirection = payload.envelopeDirection;
+                    stored.authoredFadeOutCandidate = events[i].authoredFadeOutCandidate;
+                    stored.frame = payload.envelopeStartFrame;
+                    stored.endFrame = payload.envelopeEndFrame;
+                    stored.value = payload.sourceStartFrame;
+                    stored.envelopeCurve = payload.envelopeCurve;
+                    if (payload.kind == TimelineEventKind::VariableWeight) {
+                        stored.Weight().variableWeight = payload.variableWeight;
+                        stored.Weight().variableWeightOwner = payload.variableWeightOwner;
+                    }
+                    stored.order = events[i].order;
+                }
                 transaction.transient = transaction.transient ||
                     payload.kind == TimelineEventKind::VariableWeight ||
                     (payload.kind == TimelineEventKind::Stop &&
@@ -748,6 +760,7 @@ public:
                     (payload.kind == TimelineEventKind::Start &&
                         (payload.reserved & kTimelineEventTransientStartArm) != 0);
             }
+            pendingVariableStartSeen_ = true;
             pending.count += eventCount;
             if (publicationRefused) {
                 // Scheduled pages retain their absolute time; a missed permit
@@ -765,8 +778,7 @@ public:
         bool transientControl = false;
         for (std::uint32_t i = 0; i < eventCount; ++i) {
             const TimelineEventPayload& payload = *events[i].payload;
-            VoiceTimelineEvent event{};
-            event.kind = payload.kind;
+            VoiceTimelineEvent event{payload.kind};
             event.authoredRootStop = payload.kind == TimelineEventKind::Stop &&
                 (payload.reserved & kTimelineEventAuthoredRootStop) != 0;
             event.offset = static_cast<std::uint16_t>(events[i].effectiveOffset);
@@ -777,11 +789,15 @@ public:
             event.endFrame = payload.envelopeEndFrame;
             event.value = payload.sourceStartFrame;
             event.envelopeCurve = payload.envelopeCurve;
-            event.variableWeight = payload.variableWeight;
-            event.variableWeightOwner = payload.variableWeightOwner;
+            if (payload.kind == TimelineEventKind::VariableWeight) {
+                event.Weight().variableWeight = payload.variableWeight;
+                event.Weight().variableWeightOwner = payload.variableWeightOwner;
+            }
             event.order = events[i].order;
-            event.authoredStopOperation = payload.authoredStopOperation;
-            event.controlCause = payload.controlCause;
+            if (payload.kind == TimelineEventKind::Stop) {
+                event.Stop().authoredStopOperation = payload.authoredStopOperation;
+                event.Stop().controlCause = payload.controlCause;
+            }
             if (!voices_.AppendTimelineEvent(renderSlot, renderGeneration,
                                              quantumIndex, event)) {
                 return false;
@@ -931,7 +947,6 @@ private:
         bool failed = false;
         std::uint8_t failureDisposition = kTimelineDispositionArmFailed;
         std::array<PendingVariableTransaction, kTimelineMaxEventsPerVoiceQuantum + 1u> transactions{};
-        std::array<VoiceTimelineEvent, kTimelineMaxEventsPerVoiceQuantum> events{};
     };
 
     void RetirePendingVariableStart(PendingVariableStart& pending) noexcept {
@@ -977,6 +992,7 @@ private:
     }
 
     void FinishPendingVariableStarts(std::uint64_t quantumIndex) noexcept {
+        if (!pendingVariableStartSeen_) return;
         const auto sequence = quantumIndex == UINT64_MAX ? UINT64_MAX : quantumIndex + 1u;
         for (auto& pending : pendingVariableStarts_) {
             if (pending.count == 0) continue;
@@ -987,6 +1003,13 @@ private:
                 continue;
             }
             if (pending.failed) {
+                (void)CancelBinding(arm.renderSlot, arm.renderGeneration);
+                continue;
+            }
+            const auto pendingEvents = voices_.PendingTimelineVariableEvents(arm.renderSlot);
+            assert(pendingEvents.size() == kTimelineMaxEventsPerVoiceQuantum);
+            if (pendingEvents.size() != kTimelineMaxEventsPerVoiceQuantum) {
+                pending.failed = true;
                 (void)CancelBinding(arm.renderSlot, arm.renderGeneration);
                 continue;
             }
@@ -1002,9 +1025,9 @@ private:
             std::uint64_t startFrame = UINT64_MAX;
             std::uint64_t stopFrame = UINT64_MAX;
             for (std::uint32_t i = 0; i < pending.count; ++i) {
-                const auto& event = pending.events[i];
-                if (event.kind == TimelineEventKind::Start) startFrame = std::min(startFrame, event.order.executeFrame);
-                if (event.kind == TimelineEventKind::Stop) stopFrame = std::min(stopFrame, event.order.executeFrame);
+                const auto& event = pendingEvents[i];
+                if (event.Kind() == TimelineEventKind::Start) startFrame = std::min(startFrame, event.order.executeFrame);
+                if (event.Kind() == TimelineEventKind::Stop) stopFrame = std::min(stopFrame, event.order.executeFrame);
             }
             const bool stopDominates = status != VariableReadCutStatus::Failed &&
                 stopFrame != UINT64_MAX && (status == VariableReadCutStatus::Waiting ||
@@ -1056,7 +1079,7 @@ private:
             }
             voices_.ApplyTimelineVariableInitializer(initializer);
             for (std::uint32_t i = 0; i < pending.count; ++i) {
-                auto event = pending.events[i];
+                auto event = pendingEvents[i];
                 const auto quantumStart = quantumIndex * blockFrames_;
                 event.offset = static_cast<std::uint16_t>(event.order.executeFrame < quantumStart
                     ? 0 : event.order.executeFrame - quantumStart);
@@ -1431,6 +1454,7 @@ private:
     FrontierTimelineFinalizer laneFrontier_;
     ImmediateLaneTimelineFinalizer immediate_;
     StableRowStorage<PendingVariableStart> pendingVariableStarts_;
+    bool pendingVariableStartSeen_ = false;
     VoicePool::SlotStorageRegistration slotStorageRegistration_;
     std::vector<PlainTransactionResult> plainResults_;
     std::vector<TimelineArmToken> retiringPlainArms_;

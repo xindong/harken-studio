@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -1726,6 +1727,129 @@ TEST(ResamplerProfessionalFacade,
     EXPECT_DOUBLE_EQ(kHighCombinedRatio,
                      restoredRamp.TargetRatio());
     EXPECT_EQ(64u, restoredRamp.RampFramesRemaining());
+}
+
+TEST(ResamplerHighRatio, OwnedCopiesKeepIndependentCompleteFilterHistory) {
+    std::vector<float> ring(kResampleFifoFrames, 0.0f);
+    float* rings[1] = {ring.data()};
+    Resampler original;
+    original.Reset(rings, 1, ResampleQuality::Sinc16, 32.0, Tables());
+    harken::ResamplerParkState state;
+    ASSERT_TRUE(original.CaptureParkState(&state));
+    state.legacyHighRatioFilter[0][2].z1 = 0.125;
+    state.legacyHighRatioFilter[7][3].z2 = 0.5;
+    state.legacyHighRatioPrevious[7] = -0.0;
+    state.legacyHighRatioCurrent[7] = std::numeric_limits<double>::quiet_NaN();
+    ASSERT_TRUE(original.RestoreParkState(state, rings, 1, Tables(), CandidateTables()));
+
+    Resampler copied(original);
+    Resampler moved(std::move(original));
+    Resampler assigned;
+    assigned = copied;
+    Resampler moveAssigned;
+    moveAssigned = std::move(copied);
+    for (const Resampler* source : {&original, &copied}) {
+        harken::ResamplerParkState afterMove;
+        ASSERT_TRUE(source->CaptureParkState(&afterMove));
+        EXPECT_EQ(0, std::memcmp(state.legacyHighRatioFilter, afterMove.legacyHighRatioFilter,
+                                  sizeof(state.legacyHighRatioFilter)));
+    }
+    original.Reset(rings, 1, ResampleQuality::Linear, 1.0, Tables());
+    copied.Reset(rings, 1, ResampleQuality::Linear, 1.0, Tables());
+    for (const Resampler* destination : {&moved, &assigned, &moveAssigned}) {
+        harken::ResamplerParkState afterReset;
+        ASSERT_TRUE(destination->CaptureParkState(&afterReset));
+        EXPECT_DOUBLE_EQ(state.ratio, destination->CurrentRatio());
+        EXPECT_EQ(rings[0], destination->ring[0]);
+        EXPECT_EQ(0, std::memcmp(state.legacyHighRatioFilter, afterReset.legacyHighRatioFilter,
+                                  sizeof(state.legacyHighRatioFilter)));
+        EXPECT_EQ(0, std::memcmp(state.legacyHighRatioPrevious, afterReset.legacyHighRatioPrevious,
+                                  sizeof(state.legacyHighRatioPrevious)));
+        EXPECT_EQ(0, std::memcmp(state.legacyHighRatioCurrent, afterReset.legacyHighRatioCurrent,
+                                  sizeof(state.legacyHighRatioCurrent)));
+    }
+}
+
+TEST(ResamplerHighRatio, ActiveParkRestoresPreparedColumnsAndPreservesInactiveValues) {
+    const auto input = harkentest::MakeSine(1024, 375.0, 48000, 0.25f);
+    PCMView pcm;
+    pcm.channels[0] = input.data();
+    pcm.channelCount = 1;
+    pcm.stride = 1;
+    pcm.frames = input.size();
+    pcm.sampleRate = 48000;
+    std::vector<float> ringA(kResampleFifoFrames), ringB(kResampleFifoFrames);
+    float* ringsA[1] = {ringA.data()};
+    float* ringsB[1] = {ringB.data()};
+    Resampler original;
+    original.Reset(ringsA, 1, ResampleQuality::Sinc16, 32.0, Tables());
+    ASSERT_GE(original.FreeFrames(), 256u);
+    original.PushPCM(pcm, 0, 256);
+    float warm[7]{};
+    float* warmPlanes[1] = {warm};
+    ASSERT_EQ(7u, original.Produce(warmPlanes, 0, 7));
+    harken::ResamplerParkState state;
+    ASSERT_TRUE(original.CaptureParkState(&state));
+    ASSERT_TRUE(state.legacyHighRatioFilterActive);
+
+    harken::ResamplerHighRatioChannelState channels[harken::kMaxChannels]{};
+    const harken::ResamplerHighRatioColumns narrow{{&channels[0]}};
+    harken::ResamplerHighRatioColumns full;
+    for (std::uint32_t ch = 0; ch < harken::kMaxChannels; ++ch)
+        full.channels[ch] = &channels[ch];
+    harken::ResamplerView restored;
+    restored.BindHighRatioColumns(narrow, 0, 1);
+    ASSERT_TRUE(restored.RestoreParkState(state, ringsB, 1, Tables(), CandidateTables()));
+    ASSERT_GE(original.FreeFrames(), 128u);
+    ASSERT_GE(restored.FreeFrames(), 128u);
+    original.PushPCM(pcm, 256, 128);
+    restored.PushPCM(pcm, 256, 128);
+    float expected[4]{}, actual[4]{};
+    float* expectedPlanes[1] = {expected};
+    float* actualPlanes[1] = {actual};
+    ASSERT_EQ(4u, original.Produce(expectedPlanes, 0, 4));
+    ASSERT_EQ(4u, restored.Produce(actualPlanes, 0, 4));
+    EXPECT_EQ(0, std::memcmp(expected, actual, sizeof(expected)));
+
+    state.legacyHighRatioFilter[7][3].z1 = 0.5;
+    state.legacyHighRatioPrevious[7] = -0.0;
+    state.legacyHighRatioCurrent[7] = std::numeric_limits<double>::quiet_NaN();
+    ASSERT_TRUE(Resampler::ValidateParkState(state));
+    harken::ResamplerParkState before;
+    ASSERT_TRUE(restored.CaptureParkState(&before));
+    const auto ringBefore = ringB;
+    EXPECT_FALSE(restored.RestoreParkState(state, ringsB, 1, Tables(), CandidateTables()));
+    harken::ResamplerParkState after;
+    ASSERT_TRUE(restored.CaptureParkState(&after));
+    EXPECT_EQ(before.legacyReadIndex, after.legacyReadIndex);
+    EXPECT_EQ(before.legacyWriteIndex, after.legacyWriteIndex);
+    EXPECT_DOUBLE_EQ(before.legacyReadFraction, after.legacyReadFraction);
+    EXPECT_EQ(ringBefore, ringB);
+    EXPECT_EQ(0, std::memcmp(before.legacyHighRatioFilter, after.legacyHighRatioFilter,
+                              sizeof(before.legacyHighRatioFilter)));
+    EXPECT_EQ(0, std::memcmp(before.legacyHighRatioPrevious, after.legacyHighRatioPrevious,
+                              sizeof(before.legacyHighRatioPrevious)));
+    EXPECT_EQ(0, std::memcmp(before.legacyHighRatioCurrent, after.legacyHighRatioCurrent,
+                              sizeof(before.legacyHighRatioCurrent)));
+
+    restored.BindHighRatioColumns(full, 0, harken::kMaxChannels);
+    ASSERT_TRUE(restored.RestoreParkState(state, ringsB, 1, Tables(), CandidateTables()));
+    ASSERT_TRUE(restored.CaptureParkState(&after));
+    EXPECT_EQ(0, std::memcmp(state.legacyHighRatioFilter, after.legacyHighRatioFilter,
+                              sizeof(state.legacyHighRatioFilter)));
+    EXPECT_EQ(0, std::memcmp(state.legacyHighRatioPrevious, after.legacyHighRatioPrevious,
+                              sizeof(state.legacyHighRatioPrevious)));
+    EXPECT_EQ(0, std::memcmp(state.legacyHighRatioCurrent, after.legacyHighRatioCurrent,
+                              sizeof(state.legacyHighRatioCurrent)));
+    restored.Reset(ringsB, 1, ResampleQuality::Linear, 1.0, Tables());
+    ASSERT_TRUE(restored.CaptureParkState(&after));
+    const harken::ResamplerParkState zero{};
+    EXPECT_EQ(0, std::memcmp(zero.legacyHighRatioFilter, after.legacyHighRatioFilter,
+                              sizeof(zero.legacyHighRatioFilter)));
+    EXPECT_EQ(0, std::memcmp(zero.legacyHighRatioPrevious, after.legacyHighRatioPrevious,
+                              sizeof(zero.legacyHighRatioPrevious)));
+    EXPECT_EQ(0, std::memcmp(zero.legacyHighRatioCurrent, after.legacyHighRatioCurrent,
+                              sizeof(zero.legacyHighRatioCurrent)));
 }
 
 TEST(ResamplerProfessionalFacade,

@@ -1156,9 +1156,10 @@ TEST(ParamCombine, SharedPublicationSettlesOneSnapshotAndKeepsLaterDemandAndClai
 
 TEST(ParamCombine, VariableProjectionRestoresInsertedValuesCachesAndDemand) {
     harken::BindingDependencyIndex index;
-    ParamSystem params(DefaultConfig());
+    ParamSystem params(DefaultConfig(), 1);
     AttachIndex(params, index);
     params.OnVoiceStarted(kVoice0, 0.0f, 1.0);
+    ASSERT_TRUE(params.PrepareVoiceStorage(3));
     const auto variable = harkentest::ObjectId(7);
     const auto inserted = harkentest::ObjectId(8);
     ASSERT_TRUE(params.BindVoiceTarget(variable, kVoice0,
@@ -1175,6 +1176,7 @@ TEST(ParamCombine, VariableProjectionRestoresInsertedValuesCachesAndDemand) {
     const auto demand = params.DirtyTargetCount();
     ASSERT_TRUE(params.BeginVariableProjection());
     EXPECT_FALSE(params.BeginVariableProjection());
+    EXPECT_FALSE(params.PrepareVoiceStorage(4));
     ASSERT_EQ(VN_OK, params.SetInstalledValue(variable, 1.0f));
     ASSERT_EQ(VN_OK, params.SetInstalledValue(inserted, 0.5f));
     params.NoteVariableWrite(variable);
@@ -1182,6 +1184,21 @@ TEST(ParamCombine, VariableProjectionRestoresInsertedValuesCachesAndDemand) {
     EXPECT_EQ(1u, DirtyDependencyCount(index));
     EXPECT_EQ(pendingVersion, index.TargetVersion(pending));
     EXPECT_FLOAT_EQ(-12.0f, params.ResolvedValue(kVoice0, harken::kTargetVoiceVolume));
+    {
+        ParamSystem copy(params);
+        copy.RestoreVariableProjection();
+        EXPECT_EQ(count, copy.VariableCount());
+        EXPECT_FLOAT_EQ(0.0f, copy.ResolvedValue(kVoice0, harken::kTargetVoiceVolume));
+        ASSERT_TRUE(copy.BeginVariableProjection());
+        copy.ClearInstalledValues();
+        ASSERT_EQ(VN_OK, copy.SetInstalledValue(inserted, 0.5f));
+        copy.RestoreVariableProjection();
+        float restored = -1.0f;
+        ASSERT_TRUE(copy.ScopedVariableValue(nullptr, 0, variable, &restored));
+        EXPECT_FLOAT_EQ(0.0f, restored);
+        EXPECT_FALSE(copy.ScopedVariableValue(nullptr, 0, inserted, &restored));
+        EXPECT_FLOAT_EQ(-12.0f, params.ResolvedValue(kVoice0, harken::kTargetVoiceVolume));
+    }
     params.RestoreVariableProjection();
     EXPECT_EQ(count, params.VariableCount());
     EXPECT_EQ(demand, params.DirtyTargetCount());

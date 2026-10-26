@@ -138,7 +138,7 @@ public:
     ParamSystem(const EngineConfig& config, std::uint32_t initialVoiceRows);
     bool PrepareVoiceStorage(std::uint32_t count) noexcept;
     std::size_t VoiceStorageBytes() const noexcept {
-        return m_voiceStates.RequestedBytes() + m_projectionVoices.capacity() * sizeof(VoiceEvaluation);
+        return m_voiceStates.RequestedBytes() + m_projectionVoices.RequestedBytes();
     }
     ParamSystem(const ParamSystem& other);
     ParamSystem& operator=(const ParamSystem&) = delete;
@@ -588,9 +588,6 @@ public:
     template <typename PushFn>
     void FlushCommits(PushFn&& push, const EmitterTable* emitters = nullptr) {
         EvalDirtyBindings(emitters);
-        for (VoiceState& state : m_voiceStates) {
-            state.anyDirty = false;
-        }
         if (m_dirtyTargetCount == 0) {
             ++m_flushTick;
             return;
@@ -609,7 +606,6 @@ public:
                 continue;
             }
             if (target.preparedOwner.Valid()) {
-                state.anyDirty = true;
                 continue;
             }
             const float resolved = Reduce(state, t);
@@ -649,7 +645,6 @@ public:
             case FlushOutcome::Retry:
             default:
                 target.pendingRampMs = commit.rampMs;
-                state.anyDirty = true;
                 break;
             }
         }
@@ -943,7 +938,6 @@ private:
     };
     struct VoiceEvaluation {
         VnVoiceHandle handle = 0;
-        bool anyDirty = false;
         TargetEvaluation targets[kBuiltinTargetCount]{};
     };
     struct Variable {
@@ -1060,7 +1054,6 @@ private:
         float base[kBuiltinTargetCount] = {};
         bool lowShelfFrequencyAuthoredByTone = false;
         TargetState targets[kBuiltinTargetCount];
-        bool anyDirty = false;
         bool retired = false;
         float lastCommittedPan2d = 0.0f;
     };
@@ -1153,13 +1146,11 @@ private:
     // counts once whether dirty, pending-input, or both — the admission
     // reservation reads it live). OnVoiceStarted routes a reset slot's
     // marks through these too — no path writes the flags directly.
-    void SetTargetDirty(VoiceState& state,
-                        TargetState& target) noexcept {
+    void SetTargetDirty(TargetState& target) noexcept {
         if (!target.dirty && !target.pendingInput) {
             ++m_dirtyTargetCount;
         }
         target.dirty = true;
-        state.anyDirty = true;
     }
     // Cleans the plain dirty state a setter or a published commit owns.
     // A pending-input target stays counted: its demand belongs to the
@@ -1223,7 +1214,7 @@ private:
     std::vector<PrimingInput> m_primingInputs;
     std::vector<Variable> m_projectionVariables;
     std::vector<BindingEvaluation> m_projectionBindings;
-    std::vector<VoiceEvaluation> m_projectionVoices;
+    StableRowStorage<VoiceEvaluation> m_projectionVoices;
     bool m_projectionActive = false;
     std::uint32_t m_projectionVariableCount = 0;
     std::uint32_t m_projectionBindingCount = 0;

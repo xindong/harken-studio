@@ -115,19 +115,20 @@ std::uint32_t HistoryReserve(ResampleQuality quality) {
 }
 
 void SeedHighRatioFilter(
-    Resampler& resampler, std::uint64_t index,
+    ResamplerView& resampler, std::uint64_t index,
     const HighRatioSectionCoefficients
         (&coefficients)[kResampleHighRatioFilterSections]) {
     for (std::uint32_t ch = 0; ch < resampler.channelCount; ++ch) {
+        auto& channel = resampler.HighRatioChannel(ch);
         const double seed =
             static_cast<double>(resampler.ring[ch][index & kRingMask]);
-        resampler.highRatioPrevious[ch] = seed;
-        resampler.highRatioCurrent[ch] = seed;
+        channel.previous = seed;
+        channel.current = seed;
         for (std::uint32_t section = 0;
              section < kResampleHighRatioFilterSections; ++section) {
             const HighRatioSectionCoefficients& c = coefficients[section];
             ResampleFilterSectionState& state =
-                resampler.highRatioFilter[ch][section];
+                channel.filter[section];
             // Steady-state transposed-direct-form state for a constant seed.
             // Starting from the actual render sample avoids a zero-state click
             // when a ramp first crosses into the streaming-filter domain.
@@ -140,29 +141,30 @@ void SeedHighRatioFilter(
 }
 
 void ProcessHighRatioInput(
-    Resampler& resampler, std::uint64_t index,
+    ResamplerView& resampler, std::uint64_t index,
     const HighRatioSectionCoefficients
         (&coefficients)[kResampleHighRatioFilterSections]) {
     for (std::uint32_t ch = 0; ch < resampler.channelCount; ++ch) {
+        auto& channel = resampler.HighRatioChannel(ch);
         double value =
             static_cast<double>(resampler.ring[ch][index & kRingMask]);
         for (std::uint32_t section = 0;
              section < kResampleHighRatioFilterSections; ++section) {
             const HighRatioSectionCoefficients& c = coefficients[section];
             ResampleFilterSectionState& state =
-                resampler.highRatioFilter[ch][section];
+                channel.filter[section];
             const double filtered = c.b0 * value + state.z1;
             state.z1 = c.b1 * value - c.a1 * filtered + state.z2;
             state.z2 = c.b2 * value - c.a2 * filtered;
             value = filtered;
         }
-        resampler.highRatioPrevious[ch] = resampler.highRatioCurrent[ch];
-        resampler.highRatioCurrent[ch] = value;
+        channel.previous = channel.current;
+        channel.current = value;
     }
 }
 
 bool PrepareHighRatioSample(
-    Resampler& resampler, std::uint64_t index,
+    ResamplerView& resampler, std::uint64_t index,
     const HighRatioSectionCoefficients
         (&coefficients)[kResampleHighRatioFilterSections]) {
     if (!resampler.highRatioFilterActive) {
@@ -1968,9 +1970,68 @@ MultirateResamplerCandidate::ProducePerChannelResidualForTesting(
     return produced;
 }
 
-void Resampler::Reset(float* const* ringStorage, std::uint32_t channels,
+void Resampler::BindOwnedHighRatioColumns() noexcept {
+    for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch)
+        highRatioOwnedColumns_.channels[ch] = &highRatioOwned_[ch];
+    BindHighRatioColumns(highRatioOwnedColumns_, 0, kMaxChannels);
+}
+
+Resampler::Resampler() noexcept {
+    BindOwnedHighRatioColumns();
+}
+
+Resampler::Resampler(const Resampler& other) noexcept : ResamplerView(other) {
+    std::memcpy(highRatioOwned_, other.highRatioOwned_, sizeof(highRatioOwned_));
+    BindOwnedHighRatioColumns();
+}
+
+Resampler& Resampler::operator=(const Resampler& other) noexcept {
+    if (this != &other) {
+        ResamplerView::operator=(other);
+        std::memcpy(highRatioOwned_, other.highRatioOwned_, sizeof(highRatioOwned_));
+        BindOwnedHighRatioColumns();
+    }
+    return *this;
+}
+
+Resampler::Resampler(Resampler&& other) noexcept
+    : Resampler(static_cast<const Resampler&>(other)) {}
+
+Resampler& Resampler::operator=(Resampler&& other) noexcept {
+    return operator=(static_cast<const Resampler&>(other));
+}
+
+bool ResamplerView::HasHighRatioBacking(std::uint32_t channels) const noexcept {
+    if (channels > highRatioPreparedChannels_ || highRatioPreparedChannels_ > kMaxChannels)
+        return false;
+    if (highRatioPreparedChannels_ == 0) return true;
+    if (highRatioColumns_ == nullptr) return false;
+    for (std::uint32_t ch = 0; ch < highRatioPreparedChannels_; ++ch)
+        if (highRatioColumns_->channels[ch] == nullptr) return false;
+    return true;
+}
+
+std::uint32_t ResamplerView::RequiredHighRatioChannels(
+    const ResamplerParkState& state) noexcept {
+    if (state.profile == ResampleProfile::Professional44148)
+        return state.channelCount;
+    const ResamplerHighRatioChannelState zero{};
+    for (std::uint32_t ch = kMaxChannels; ch > state.channelCount; --ch) {
+        if (std::memcmp(state.legacyHighRatioFilter[ch - 1u], zero.filter,
+                        sizeof(zero.filter)) != 0 ||
+            std::memcmp(&state.legacyHighRatioPrevious[ch - 1u], &zero.previous,
+                        sizeof(zero.previous)) != 0 ||
+            std::memcmp(&state.legacyHighRatioCurrent[ch - 1u], &zero.current,
+                        sizeof(zero.current)) != 0)
+            return ch;
+    }
+    return state.channelCount;
+}
+
+void ResamplerView::Reset(float* const* ringStorage, std::uint32_t channels,
                       ResampleQuality q, double inRatio,
                       const ResampleTables* t) {
+    assert(HasHighRatioBacking(channels));
     resampleProfile = ResampleProfile::LegacyCompatibility;
     professional = nullptr;
     channelCount = channels;
@@ -1993,14 +2054,13 @@ void Resampler::Reset(float* const* ringStorage, std::uint32_t channels,
     readPos = static_cast<double>(kResampleHistoryPad);
     inputEndIndex = 0;
     inputEnded = false;
-    std::memset(highRatioFilter, 0, sizeof(highRatioFilter));
-    std::memset(highRatioPrevious, 0, sizeof(highRatioPrevious));
-    std::memset(highRatioCurrent, 0, sizeof(highRatioCurrent));
+    for (std::uint32_t ch = 0; ch < highRatioPreparedChannels_; ++ch)
+        std::memset(&HighRatioChannel(ch), 0, sizeof(ResamplerHighRatioChannelState));
     highRatioFilterIndex = kResampleHistoryPad;
     highRatioFilterActive = false;
 }
 
-void Resampler::Reset(
+void ResamplerView::Reset(
     float* const* ringStorage, std::uint32_t channels,
     ResampleQuality q, double inRatio, const ResampleTables* t,
     ResampleProfile profile,
@@ -2016,7 +2076,7 @@ void Resampler::Reset(
     }
 }
 
-std::uint32_t Resampler::FreeFrames() const {
+std::uint32_t ResamplerView::FreeFrames() const {
     if (resampleProfile == ResampleProfile::Professional44148)
         return professional->FreeFrames();
 
@@ -2054,7 +2114,7 @@ std::uint32_t Resampler::FreeFrames() const {
                : kResampleFifoFrames - static_cast<std::uint32_t>(occupied);
 }
 
-void Resampler::PushPCM(const PCMView& pcm, std::uint64_t startFrame,
+void ResamplerView::PushPCM(const PCMView& pcm, std::uint64_t startFrame,
                         std::uint32_t frames) {
     if (resampleProfile == ResampleProfile::Professional44148) {
         professional->PushPCM(pcm, startFrame, frames);
@@ -2081,7 +2141,7 @@ void Resampler::PushPCM(const PCMView& pcm, std::uint64_t startFrame,
     writeIndex += frames;
 }
 
-void Resampler::PushSilence(std::uint32_t frames) {
+void ResamplerView::PushSilence(std::uint32_t frames) {
     if (resampleProfile == ResampleProfile::Professional44148) {
         professional->PushSilence(frames);
         return;
@@ -2104,7 +2164,7 @@ void Resampler::PushSilence(std::uint32_t frames) {
     writeIndex += frames;
 }
 
-void Resampler::MarkInputEnd() {
+void ResamplerView::MarkInputEnd() {
     if (resampleProfile == ResampleProfile::Professional44148) {
         professional->MarkInputEnd();
         return;
@@ -2113,13 +2173,13 @@ void Resampler::MarkInputEnd() {
     inputEnded = true;
 }
 
-bool Resampler::Exhausted() const {
+bool ResamplerView::Exhausted() const {
     return resampleProfile == ResampleProfile::Professional44148
                ? professional->Exhausted()
                : inputEnded && readIndex >= inputEndIndex;
 }
 
-void Resampler::UpdateRatio(double newRatio, std::uint32_t rampFrames) {
+void ResamplerView::UpdateRatio(double newRatio, std::uint32_t rampFrames) {
     if (resampleProfile == ResampleProfile::Professional44148) {
         professional->UpdateRatio(newRatio, rampFrames);
         return;
@@ -2141,7 +2201,7 @@ void Resampler::UpdateRatio(double newRatio, std::uint32_t rampFrames) {
     rampRemaining = rampFrames;
 }
 
-bool Resampler::BorrowLinearUnity(std::uint32_t frames,
+bool ResamplerView::BorrowLinearUnity(std::uint32_t frames,
                                   ResamplerUnitySpan& out) noexcept {
     if (frames == 0 ||
         resampleProfile != ResampleProfile::LegacyCompatibility ||
@@ -2160,7 +2220,7 @@ bool Resampler::BorrowLinearUnity(std::uint32_t frames,
     return true;
 }
 
-std::uint32_t Resampler::Produce(float* const* dst, std::uint32_t dstOffset,
+std::uint32_t ResamplerView::Produce(float* const* dst, std::uint32_t dstOffset,
                                  std::uint32_t maxFrames) {
     if (resampleProfile == ResampleProfile::Professional44148) {
         return professional->Produce(dst, dstOffset, maxFrames);
@@ -2269,9 +2329,10 @@ std::uint32_t Resampler::Produce(float* const* dst, std::uint32_t dstOffset,
             const float* r = ring[ch];
             float value = 0.0f;
             if (highRatio) {
+                const auto& channel = HighRatioChannel(ch);
                 const double filtered =
-                    highRatioPrevious[ch] +
-                    (highRatioCurrent[ch] - highRatioPrevious[ch]) *
+                    channel.previous +
+                    (channel.current - channel.previous) *
                         static_cast<double>(frac);
                 value = static_cast<float>(filtered);
             } else if (downsampling) {
@@ -2330,7 +2391,7 @@ std::uint32_t Resampler::Produce(float* const* dst, std::uint32_t dstOffset,
     return produced;
 }
 
-bool Resampler::CaptureProfessional(
+bool ResamplerView::CaptureProfessional(
     ProfessionalResamplerState* out) const {
     if (out == nullptr ||
         resampleProfile != ResampleProfile::Professional44148 ||
@@ -2401,7 +2462,7 @@ bool Resampler::CaptureProfessional(
     return true;
 }
 
-bool Resampler::ValidateProfessionalState(
+bool ResamplerView::ValidateProfessionalState(
     const ProfessionalResamplerState& state) {
     if (state.formatVersion !=
             ProfessionalResamplerState::kFormatVersion ||
@@ -2527,7 +2588,7 @@ bool Resampler::ValidateProfessionalState(
     return !transition.initialized;
 }
 
-bool Resampler::RestoreProfessional(
+bool ResamplerView::RestoreProfessional(
     const ProfessionalResamplerState& state,
     float* const* ringStorage, std::uint32_t channels,
     const ResampleTables* legacyTables,
@@ -2536,7 +2597,7 @@ bool Resampler::RestoreProfessional(
     if (workspace == nullptr || !ValidateProfessionalState(state) ||
         ringStorage == nullptr ||
         multirateTables == nullptr ||
-        channels != state.channelCount) {
+        channels != state.channelCount || !HasHighRatioBacking(channels)) {
         return false;
     }
     for (std::uint32_t ch = 0; ch < channels; ++ch) {
@@ -2586,10 +2647,11 @@ bool Resampler::RestoreProfessional(
     return true;
 }
 
-bool Resampler::CaptureParkState(ResamplerParkState* out) const {
+bool ResamplerView::CaptureParkState(ResamplerParkState* out) const {
     if (resampleProfile == ResampleProfile::Professional44148)
         return CaptureProfessional(out);
-    if (out == nullptr || channelCount == 0 || channelCount > kMaxChannels)
+    if (out == nullptr || channelCount == 0 || channelCount > kMaxChannels ||
+        !HasHighRatioBacking(channelCount))
         return false;
 
     *out = {};
@@ -2606,12 +2668,12 @@ bool Resampler::CaptureParkState(ResamplerParkState* out) const {
     out->legacyWriteIndex = writeIndex;
     out->legacyInputEndIndex = inputEndIndex;
     out->legacyInputEnded = inputEnded;
-    std::memcpy(out->legacyHighRatioFilter, highRatioFilter,
-                sizeof(highRatioFilter));
-    std::memcpy(out->legacyHighRatioPrevious, highRatioPrevious,
-                sizeof(highRatioPrevious));
-    std::memcpy(out->legacyHighRatioCurrent, highRatioCurrent,
-                sizeof(highRatioCurrent));
+    for (std::uint32_t ch = 0; ch < highRatioPreparedChannels_; ++ch) {
+        const auto& channel = HighRatioChannel(ch);
+        std::memcpy(out->legacyHighRatioFilter[ch], channel.filter, sizeof(channel.filter));
+        std::memcpy(&out->legacyHighRatioPrevious[ch], &channel.previous, sizeof(channel.previous));
+        std::memcpy(&out->legacyHighRatioCurrent[ch], &channel.current, sizeof(channel.current));
+    }
     out->legacyHighRatioFilterIndex = highRatioFilterIndex;
     out->legacyHighRatioFilterActive = highRatioFilterActive;
 
@@ -2636,7 +2698,7 @@ bool Resampler::CaptureParkState(ResamplerParkState* out) const {
     return ValidateParkState(*out);
 }
 
-bool Resampler::ValidateParkState(const ResamplerParkState& state) {
+bool ResamplerView::ValidateParkState(const ResamplerParkState& state) {
     if (state.profile == ResampleProfile::Professional44148)
         return ValidateProfessionalState(state);
     if (state.formatVersion != ResamplerParkState::kFormatVersion ||
@@ -2695,7 +2757,7 @@ bool Resampler::ValidateParkState(const ResamplerParkState& state) {
     return true;
 }
 
-bool Resampler::RestoreParkState(
+bool ResamplerView::RestoreParkState(
     const ResamplerParkState& state,
     float* const* ringStorage, std::uint32_t channels,
     const ResampleTables* legacyTables,
@@ -2706,7 +2768,8 @@ bool Resampler::RestoreParkState(
                                    legacyTables, multirateTables, workspace);
     }
     if (!ValidateParkState(state) || ringStorage == nullptr ||
-        legacyTables == nullptr || channels != state.channelCount) {
+        legacyTables == nullptr || channels != state.channelCount ||
+        !HasHighRatioBacking(RequiredHighRatioChannels(state))) {
         return false;
     }
     for (std::uint32_t ch = 0; ch < channels; ++ch) {
@@ -2726,12 +2789,12 @@ bool Resampler::RestoreParkState(
     writeIndex = state.legacyWriteIndex;
     inputEndIndex = state.legacyInputEndIndex;
     inputEnded = state.legacyInputEnded;
-    std::memcpy(highRatioFilter, state.legacyHighRatioFilter,
-                sizeof(highRatioFilter));
-    std::memcpy(highRatioPrevious, state.legacyHighRatioPrevious,
-                sizeof(highRatioPrevious));
-    std::memcpy(highRatioCurrent, state.legacyHighRatioCurrent,
-                sizeof(highRatioCurrent));
+    for (std::uint32_t ch = 0; ch < highRatioPreparedChannels_; ++ch) {
+        auto& channel = HighRatioChannel(ch);
+        std::memcpy(channel.filter, state.legacyHighRatioFilter[ch], sizeof(channel.filter));
+        std::memcpy(&channel.previous, &state.legacyHighRatioPrevious[ch], sizeof(channel.previous));
+        std::memcpy(&channel.current, &state.legacyHighRatioCurrent[ch], sizeof(channel.current));
+    }
     highRatioFilterIndex = state.legacyHighRatioFilterIndex;
     highRatioFilterActive = state.legacyHighRatioFilterActive;
     for (std::uint32_t ch = 0; ch < channels; ++ch) {

@@ -366,6 +366,9 @@ private:
     void ReleaseRetainedMirror(VoiceMirror& mirror) noexcept;
 
     VoiceMirror* MirrorFor(VnVoiceHandle handle);
+    static bool NeedsEvaluation(const VoiceMirror& mirror) noexcept {
+        return mirror.handle != 0 && (mirror.spatialized || mirror.emitterHandle != 0);
+    }
     double DistanceToReference(const EmitterTable& emitters, float px, float py,
                                 float pz, double listenerDistance) const;
 
@@ -376,6 +379,7 @@ private:
     VnEmitterHandle m_distanceReference = 0;
 
     StableRowStorage<VoiceMirror> m_mirrors; // indexed by prepared voice slot
+    std::uint32_t m_evaluationVoiceCount = 0;
     mutable StableRowStorage<AttenuationProfile> m_profiles;
     std::vector<std::uint64_t> m_profileGenerations;
     std::vector<std::uint8_t> m_profileOccupied;

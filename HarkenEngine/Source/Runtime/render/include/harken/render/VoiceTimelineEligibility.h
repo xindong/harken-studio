@@ -25,10 +25,10 @@ inline AuthoredRootStopCutoff SelectAuthoredRootStop(
     for (std::uint32_t i = 0; i < span.eventCount; ++i) {
         if (!TimelineEventGuardEligible(span, i)) continue;
         const auto& event = span.events[i];
-        if (event.offset >= blockFrames || event.kind != TimelineEventKind::Stop ||
+        if (event.offset >= blockFrames || event.Kind() != TimelineEventKind::Stop ||
             !event.authoredRootStop) continue;
         const auto frame = span.quantumIndex * blockFrames + event.offset;
-        if (frame < cutoff.frame) cutoff = {frame, i, event.authoredStopOperation};
+        if (frame < cutoff.frame) cutoff = {frame, i, event.Stop().authoredStopOperation};
     }
     return cutoff;
 }
@@ -42,9 +42,9 @@ inline bool TimelineEventPrecedesRootStop(
     const auto& proof = event.frontierProof;
     if (proof.state != FrontierEventState::Legacy) {
         return event.order.executeFrame < proof.cutoffFrame ||
-            (event.kind == TimelineEventKind::Stop && event.authoredRootStop &&
-             event.authoredStopOperation.Valid() &&
-             event.authoredStopOperation == proof.cutoffOperation);
+            (event.Kind() == TimelineEventKind::Stop && event.authoredRootStop &&
+             event.Stop().authoredStopOperation.Valid() &&
+             event.Stop().authoredStopOperation == proof.cutoffOperation);
     }
     const auto frame = span.quantumIndex * blockFrames + span.events[eventIndex].offset;
     return frame < cutoff.frame || (!cutoffApplied && eventIndex == cutoff.eventIndex);

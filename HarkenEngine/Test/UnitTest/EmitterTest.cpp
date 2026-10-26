@@ -525,15 +525,27 @@ TEST(Emitter, DestroyDetachesVoiceWithFrozenStateAndReenablesPerVoice) {
     VnVoiceHandle voice = 0;
     ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
     ASSERT_EQ(VN_OK, Vn_BindVoiceAttenuation(voice, harkentest::ObjectId(9)));
+    auto flatPlay = play;
+    flatPlay.spatialized = 0;
+    VnVoiceHandle flatVoice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&flatPlay, &flatVoice));
+    ASSERT_EQ(VN_OK, Vn_SetEmitterPosition(emitter, Vec3(12.0f, 0.0f, 0.0f)));
     ASSERT_EQ(VN_OK, Vn_Update());
+    harken::Spatializer::SpatialVoiceState flatState;
+    ASSERT_TRUE(engine->spatial.CaptureVoice(RenderHandle(engine, flatVoice), &flatState));
+    EXPECT_FLOAT_EQ(12.0f, flatState.posX);
+    EXPECT_EQ(emitter, flatState.emitterHandle);
     const float attachedDb = engine->params.ResolvedValue(
         RenderHandle(engine, voice), harken::kTargetVoiceVolume);
-    EXPECT_LT(attachedDb, 0.0f); // driven by the emitter at distance 10
+    EXPECT_LT(attachedDb, 0.0f); // driven by the emitter at distance 12
 
     // Destroy the emitter: the voice detaches, keeps playing, and freezes at
     // its last emitter-derived state.
     ASSERT_EQ(VN_OK, Vn_DestroyEmitter(emitter));
     ASSERT_EQ(VN_OK, Vn_Update());
+    ASSERT_TRUE(engine->spatial.CaptureVoice(RenderHandle(engine, flatVoice), &flatState));
+    EXPECT_FLOAT_EQ(12.0f, flatState.posX);
+    EXPECT_EQ(0u, flatState.emitterHandle);
     EXPECT_NE(nullptr,
               engine->voices.Resolve(RenderHandle(engine, voice))); // still live
     EXPECT_FLOAT_EQ(attachedDb, engine->params.ResolvedValue(
@@ -546,7 +558,7 @@ TEST(Emitter, DestroyDetachesVoiceWithFrozenStateAndReenablesPerVoice) {
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_GT(engine->params.ResolvedValue(RenderHandle(engine, voice),
                                            harken::kTargetVoiceVolume),
-              attachedDb); // closer than distance 10 -> louder
+              attachedDb); // closer than distance 12 -> louder
 }
 
 TEST(Emitter, StaleEmitterOpsAreBenign) {

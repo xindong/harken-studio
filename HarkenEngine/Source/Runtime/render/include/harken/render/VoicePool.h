@@ -113,7 +113,7 @@ private:
 };
 
 class VoicePool {
-    struct Slot;
+    struct alignas(64) Slot;
 public:
     VoicePool(const EngineConfig& config, const ResampleTables* tables,
               const MultirateResampleTables* multirateTables,
@@ -148,7 +148,7 @@ public:
                   std::uint32_t requestedSlot = ~std::uint32_t{0},
                   std::uint32_t expectedGeneration = 0,
                   bool prepared = false, float outputBusVolumeDb = 0.0f,
-                  float spatializationMix = 1.0f);
+                  float spatializationMix = 1.0f, bool prepareOwnedWeights = true);
 
     // Claims a Render Voice slot for a streamed Logical Voice. The independent
     // stream slot is owned by StreamManager; the source decode stage feeds
@@ -234,6 +234,14 @@ public:
         m_firstOutputCommandConsumer = apply;
     }
     std::size_t FirstOutputStorageBytes() const noexcept;
+    // Backing only: native timeline authority still governs every pending event.
+    std::span<VoiceTimelineEvent> PendingTimelineVariableEvents(std::uint32_t renderSlot) noexcept {
+        if (renderSlot >= m_pendingTimelineVariableEvents.ConstructedCount()) return {};
+        return m_pendingTimelineVariableEvents[renderSlot];
+    }
+    void SetPendingTimelineVariableEventCommitPageLimitForTests(std::size_t pages) noexcept {
+        m_pendingTimelineVariableEvents.SetCommitPageLimitForTests(pages);
+    }
     bool CaptureStreamRingToken(VnVoiceHandle handle,
                                 std::uint64_t* outToken) const noexcept;
 
@@ -262,6 +270,17 @@ public:
         return m_slots.Capacity();
     }
     std::uint32_t ConstructedSlotCount() const noexcept { return m_slots.ConstructedCount(); }
+    // Control-side bound for source plus max(blend, send) planes in every row.
+    std::uint64_t PreparedCascadeChannelRows(
+        std::uint32_t mixChannels, std::uint32_t slots) const noexcept {
+        std::uint64_t rows = static_cast<std::uint64_t>(mixChannels) * slots;
+        for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
+            const auto count = m_ringStorage[ch].ConstructedCount();
+            rows += count;
+            if (ch >= mixChannels) rows += count;
+        }
+        return rows;
+    }
     std::size_t SlotStorageBytes() const noexcept { return m_slots.RequestedBytes(); }
     // Attach and detach only while the corresponding consumer is quiescent.
     class SlotStorageRegistration {
@@ -283,29 +302,37 @@ public:
     bool AttachSlotStoragePreparation(SlotStorageRegistration& registration,
         void* context, SlotStorageRegistration::Prepare prepare) noexcept;
     bool PrepareSlotBacking(std::uint32_t count, StableStoragePreparation* out) noexcept;
+    bool PrepareMonitorPreChainBacking() noexcept;
     bool PrepareSlotWorkingSet(std::uint32_t renderSlot, std::uint32_t channelCount,
-        ResampleProfile profile = ResampleProfile::LegacyCompatibility) noexcept;
+        ResampleProfile profile = ResampleProfile::LegacyCompatibility,
+        bool prepareOwnedWeights = true, std::uint32_t highRatioChannels = 0) noexcept;
     std::size_t SlotCommittedBytes() const noexcept { return m_slots.CommittedBytes(); }
     std::size_t SlotReservedBytes() const noexcept { return m_slots.ReservedBytes(); }
     std::size_t RenderWorksetStorageBytes() const noexcept {
         std::size_t bytes = m_firstOutputEndpoints.RequestedBytes() + m_firstOutputWeights.RequestedBytes() +
-            m_professionalStorage.RequestedBytes();
+            m_pendingTimelineVariableEvents.RequestedBytes() +
+            m_professionalStorage.RequestedBytes() + m_variableWeightStorage.RequestedBytes();
         for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch)
-            bytes += m_ringStorage[ch].RequestedBytes() + m_monitorPreChainStorage[ch].RequestedBytes();
+            bytes += m_ringStorage[ch].RequestedBytes() + m_monitorPreChainStorage[ch].RequestedBytes() +
+                m_highRatioStorage[ch].RequestedBytes();
         return bytes;
     }
     std::size_t RenderWorksetCommittedBytes() const noexcept {
         std::size_t bytes = m_firstOutputEndpoints.CommittedBytes() + m_firstOutputWeights.CommittedBytes() +
-            m_professionalStorage.CommittedBytes();
+            m_pendingTimelineVariableEvents.CommittedBytes() +
+            m_professionalStorage.CommittedBytes() + m_variableWeightStorage.CommittedBytes();
         for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch)
-            bytes += m_ringStorage[ch].CommittedBytes() + m_monitorPreChainStorage[ch].CommittedBytes();
+            bytes += m_ringStorage[ch].CommittedBytes() + m_monitorPreChainStorage[ch].CommittedBytes() +
+                m_highRatioStorage[ch].CommittedBytes();
         return bytes;
     }
     std::size_t RenderWorksetReservedBytes() const noexcept {
         std::size_t bytes = m_firstOutputEndpoints.ReservedBytes() + m_firstOutputWeights.ReservedBytes() +
-            m_professionalStorage.ReservedBytes();
+            m_pendingTimelineVariableEvents.ReservedBytes() +
+            m_professionalStorage.ReservedBytes() + m_variableWeightStorage.ReservedBytes();
         for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch)
-            bytes += m_ringStorage[ch].ReservedBytes() + m_monitorPreChainStorage[ch].ReservedBytes();
+            bytes += m_ringStorage[ch].ReservedBytes() + m_monitorPreChainStorage[ch].ReservedBytes() +
+                m_highRatioStorage[ch].ReservedBytes();
         return bytes;
     }
     void SetSlotCommitPageLimitForTests(std::size_t pages) noexcept {
@@ -317,8 +344,16 @@ public:
     void SetProfessionalCommitPageLimitForTests(std::size_t pages) noexcept {
         m_professionalStorage.SetCommitPageLimitForTests(pages);
     }
+    void SetHighRatioCommitPageLimitForTests(std::size_t pages) noexcept {
+        for (auto& channel : m_highRatioStorage) channel.SetCommitPageLimitForTests(pages);
+    }
     std::size_t ProfessionalStorageBytes() const noexcept { return m_professionalStorage.RequestedBytes(); }
     std::size_t ProfessionalDirectoryBytes() const noexcept { return m_professionalStorage.DirectoryBytes(); }
+    void SetVariableWeightCommitPageLimitForTests(std::size_t pages) noexcept {
+        m_variableWeightStorage.SetCommitPageLimitForTests(pages);
+    }
+    std::size_t VariableWeightStorageBytes() const noexcept { return m_variableWeightStorage.RequestedBytes(); }
+    std::size_t VariableWeightDirectoryBytes() const noexcept { return m_variableWeightStorage.DirectoryBytes(); }
     std::uint32_t BlockFrames() const { return m_blockFrames; }
 
     // Records a voice admission refused with VN_NO_VOICE outside
@@ -461,6 +496,10 @@ public:
         VnVoiceHandle renderHandle, VnVoiceHandle publicHandle,
         std::uint64_t requestSequence, StreamParkOutcome* out,
         bool* outCancelled);
+    // Logic-owned reservations remain pending through cancellation and audio publication.
+    bool HasPendingStreamParkMailboxes() const noexcept {
+        return m_pendingStreamParkMailboxes != 0;
+    }
     void DiscardAllStreamParkMailboxes();
     const StreamParkToken* ResolveParkOwnedToken(
         StreamParkTokenRef ref) const;
@@ -943,7 +982,7 @@ private:
         WeightSegmentV1 weightSegment{};
         bool weightRemoved = false;
     };
-    struct Slot {
+    struct alignas(64) Slot {
         std::atomic<SlotState> state{SlotState::Free};
         std::atomic<std::uint32_t> generation{1};
         std::atomic<std::uint64_t> releaseSequence{0};
@@ -979,6 +1018,8 @@ private:
         std::uint32_t timelinePageEventCount = 0;
         std::uint32_t timelineLaneEventCount = 0;
         std::uint8_t timelineReservationCounts[kTimelineMaxCombinedEventsPerVoiceQuantum]{};
+        // An odd cache-line stride spreads hot fields across cache sets.
+        std::uint64_t cacheSetSpacer[7] = {};
     };
     VariableNativeStartAuthority m_nativeVariableStartAuthority{};
     VariableTimelineStartAuthority m_timelineVariableStartAuthority{};
@@ -989,6 +1030,8 @@ private:
     std::uint32_t m_firstOutputStride = 0;
     StableRowStorage<DeferredFirstOutputEndpoint> m_firstOutputEndpoints;
     StableRowStorage<DeferredFirstOutputWeight> m_firstOutputWeights;
+    StableRowStorage<std::array<VoiceTimelineEvent, kTimelineMaxEventsPerVoiceQuantum>>
+        m_pendingTimelineVariableEvents;
     bool FirstOutputBackingReady(std::uint32_t count) const noexcept;
     bool PrepareFirstOutputBacking(std::uint32_t count) noexcept;
     void* m_firstOutputCommandContext = nullptr;
@@ -1132,6 +1175,7 @@ private:
     // default, at which the fold-in takes the frozen two-channel law.
     std::uint32_t m_mixChannels;
     std::uint32_t m_mixLayout;
+    const output_gain_detail::MonoStereoMixKernel m_monoStereoMix;
     const ResampleTables* m_tables;
     const MultirateResampleTables* m_multirateTables;
     const BiquadTrigTable* m_biquadTrig;
@@ -1152,12 +1196,22 @@ private:
     std::vector<OriginalCallbackStorageLease> m_originalCallbackStorage;
     bool m_originalSourceCallbackOpen = false;
     std::vector<StreamParkMailbox> m_streamParkMailboxes;
+    std::uint32_t m_pendingStreamParkMailboxes = 0;
     StableRowStorage<StreamParkTokenSlot> m_streamParkTokens;
     bool PrepareRenderSlotBacking(std::uint32_t count, std::uint32_t channelCount,
-        bool firstOutput) noexcept;
-    bool RenderSlotBackingReady(std::uint32_t count, std::uint32_t channelCount) const noexcept;
+        bool firstOutput, std::uint32_t highRatioChannels = 0) noexcept;
+    bool RenderSlotBackingReady(std::uint32_t count, std::uint32_t channelCount,
+        std::uint32_t highRatioChannels) const noexcept;
     std::array<StableRowStorage<std::array<float, kResampleFifoFrames>>, kMaxChannels> m_ringStorage;
+    std::array<StableRowStorage<ResamplerHighRatioChannelState>, kMaxChannels> m_highRatioStorage;
+    ResamplerHighRatioColumns m_highRatioColumns{};
+    void BindHighRatioBacking(std::uint32_t slot) noexcept;
+    void BindMonitorPreChainBacking(std::uint32_t slot) noexcept;
     StableSlotStorage<MultirateResamplerCandidate> m_professionalStorage;
+    using VariableWeightStorage = std::array<VoiceRenderContext::OwnedVariableWeight, kSelectionPathNodeCapacity>;
+    StableSlotStorage<VariableWeightStorage> m_variableWeightStorage;
+    bool PrepareVariableWeightBacking(std::uint32_t slot) noexcept;
+    void BindVariableWeightBacking(std::uint32_t slot) noexcept;
     std::uint64_t m_staleHandleHits = 0;
     std::uint64_t m_invalidVolumeApplies = 0;
     std::uint64_t m_noVoiceRefusals = 0;
@@ -1186,6 +1240,7 @@ private:
     std::uint32_t m_jobBlockFrames = 0; // block width for the in-flight batch
     std::uint64_t m_jobSourceFrameBegin = 0;
     std::array<StableRowStorage<float>, kMaxChannels> m_monitorPreChainStorage;
+    std::atomic<bool> m_monitorPreChainPrepared{false};
     std::uint64_t m_workerBusyPeakTicks = 0; // running peak, audio-thread-owned
 };
 

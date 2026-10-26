@@ -865,6 +865,11 @@ TEST(MeterProbe, SidechainWaveformReachesBoundBusAndReleases) {
     ASSERT_EQ(VN_OK, Vn_CreateBus(kSourceBus, VN_BUS_MASTER));
     ASSERT_EQ(VN_OK, Vn_CreateBus(kTargetBus, VN_BUS_MASTER));
 
+    // Service the untouched session before installing its first real probe.
+    ASSERT_EQ(VN_OK, Vn_Update());
+    engine->nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
+
     std::uint32_t generation = 0;
     ASSERT_EQ(VN_OK, harken::InstallMeterProbe(
                          *engine, kProbe, kSourceBus,

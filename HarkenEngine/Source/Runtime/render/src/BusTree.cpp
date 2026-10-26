@@ -949,7 +949,12 @@ void BusTree::FinalizeBus(Bus& bus, float* const* planes,
     }
     m_dynamicRoutes.CaptureBus(busIndex, VN_DYNAMIC_TAP_BUS_PRE_FADER,
                                planes, m_mixChannels, blockFrames);
-    bus.preFaderPeak = StageTapPeak(planes, m_mixChannels, 0, blockFrames);
+    const bool unchangedFaderSamples = bus.gain.remainingFrames == 0 &&
+        bus.gain.target == 1.0f && !ToneSectionActive(bus.busLpf) &&
+        !ToneSectionActive(bus.busHpf);
+    float unchangedChannelPeaks[kMaxChannels];
+    bus.preFaderPeak = StageTapPeak(planes, m_mixChannels, 0, blockFrames,
+        unchangedFaderSamples && fader == m_fxSlots ? unchangedChannelPeaks : nullptr);
     if (harken::monitor::AudioLiveArmed()) {
         harken::monitor::PublishPlanarAudioChunk(
             VN_MONITOR_TAP_BUS_PRE_FADER, busIndex + 1u, bus.generation, 0, planes,
@@ -964,8 +969,14 @@ void BusTree::FinalizeBus(Bus& bus, float* const* planes,
                           m_sampleRate, planes, m_mixChannels, blockFrames);
     m_dynamicRoutes.CaptureBus(busIndex, VN_DYNAMIC_TAP_BUS_POST_FADER,
                                planes, m_mixChannels, blockFrames);
-    bus.postFaderPeak = StageTapPeak(planes, m_mixChannels, 0, blockFrames,
-        fader == m_fxSlots ? bus.outputChannelPeaks : nullptr);
+    if (unchangedFaderSamples) {
+        bus.postFaderPeak = bus.preFaderPeak;
+        if (fader == m_fxSlots)
+            std::copy_n(unchangedChannelPeaks, m_mixChannels, bus.outputChannelPeaks);
+    } else {
+        bus.postFaderPeak = StageTapPeak(planes, m_mixChannels, 0, blockFrames,
+            fader == m_fxSlots ? bus.outputChannelPeaks : nullptr);
+    }
     if (harken::monitor::AudioLiveArmed()) {
         harken::monitor::PublishPlanarAudioChunk(
             VN_MONITOR_TAP_BUS_POST_FADER, busIndex + 1u, bus.generation, 0, planes,

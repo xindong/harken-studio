@@ -22,6 +22,8 @@ constexpr std::uint64_t kProjectionStamp = 32u;
 constexpr std::uint64_t kProjectionFlags = kProjectionStamp - 1u;
 static_assert(std::atomic<std::uint64_t>::is_always_lock_free,
     "Original conditional admission must remain lock-free");
+static_assert(std::atomic<std::uint32_t>::is_always_lock_free,
+    "Lane occupancy observation must remain lock-free");
 
 class AttemptReadAccess {
 public:
@@ -124,14 +126,34 @@ bool SameArm(TimelineArmToken a, TimelineArmToken b) noexcept {
 
 PrivatePlainLayoutEdit::~PrivatePlainLayoutEdit() { Abort(); }
 
-PrivatePlainLayoutEdit::PrivatePlainLayoutEdit(PrivatePlainLayoutEdit&& other) noexcept {
-    *this = std::move(other);
+PrivatePlainLayoutEdit::PrivatePlainLayoutEdit(PrivatePlainLayoutEdit&& other) noexcept
+    : PrivatePlainLayoutEdit() {
+    Take(other);
 }
 
 PrivatePlainLayoutEdit& PrivatePlainLayoutEdit::operator=(
     PrivatePlainLayoutEdit&& other) noexcept {
-    if (this == &other) return *this;
+    Take(other);
+    return *this;
+}
+
+PrivateReservedPlainLayoutEdit::~PrivateReservedPlainLayoutEdit() { Abort(); }
+
+PrivateReservedPlainLayoutEdit::PrivateReservedPlainLayoutEdit(
+    PrivateReservedPlainLayoutEdit&& other) noexcept : PrivateReservedPlainLayoutEdit() {
+    Take(other);
+}
+
+PrivateReservedPlainLayoutEdit& PrivateReservedPlainLayoutEdit::operator=(
+    PrivateReservedPlainLayoutEdit&& other) noexcept {
+    Take(other);
+    return *this;
+}
+
+void PrivatePlainLayoutState::Take(PrivatePlainLayoutState& other) noexcept {
+    if (this == &other) return;
     Abort();
+    assert((snapshots_ == nullptr) == (other.snapshots_ == nullptr));
     owner_ = other.owner_;
     handle_ = other.handle_;
     originalState_ = other.originalState_;
@@ -139,9 +161,7 @@ PrivatePlainLayoutEdit& PrivatePlainLayoutEdit::operator=(
     originalBucketCount_ = other.originalBucketCount_;
     originalNextBucket_ = other.originalNextBucket_;
     originalAnchor_ = other.originalAnchor_;
-    originalEvents_ = other.originalEvents_;
-    originalBuckets_ = other.originalBuckets_;
-    authoredLayout_ = other.authoredLayout_;
+    if (snapshots_ != nullptr) *snapshots_ = *other.snapshots_;
     hasAuthoredLayout_ = other.hasAuthoredLayout_;
     originalWasPristineReserved_ = other.originalWasPristineReserved_;
     ready_ = other.ready_;
@@ -149,14 +169,13 @@ PrivatePlainLayoutEdit& PrivatePlainLayoutEdit::operator=(
         owner_->attempts_[handle_.slot].privateLayoutEdit = this;
     other.owner_ = nullptr;
     other.ready_ = false;
-    return *this;
 }
 
-void PrivatePlainLayoutEdit::Abort() noexcept {
+void PrivatePlainLayoutState::Abort() noexcept {
     if (owner_ != nullptr) owner_->FinishPrivateLayout(*this, false);
 }
 
-void PrivatePlainLayoutEdit::ClearCandidate() noexcept {
+void PrivatePlainLayoutState::ClearCandidate() noexcept {
     if (owner_ == nullptr) return;
     ready_ = false;
     auto& attempt = owner_->attempts_[handle_.slot];
@@ -179,7 +198,7 @@ void PrivatePlainLayoutEdit::ClearCandidate() noexcept {
     attempt.nextBucket.store(0, std::memory_order_relaxed);
 }
 
-bool PrivatePlainLayoutEdit::StageCandidate(const ImmediateLaneEvent* events,
+bool PrivatePlainLayoutState::StageCandidate(const ImmediateLaneEvent* events,
     std::uint32_t count, std::uint64_t anchorFrame,
     std::uint64_t firstSafeFrame) noexcept {
     if (hasAuthoredLayout_) {
@@ -189,13 +208,14 @@ bool PrivatePlainLayoutEdit::StageCandidate(const ImmediateLaneEvent* events,
     return StageFixedCandidate(events, count, anchorFrame, firstSafeFrame);
 }
 
-bool PrivatePlainLayoutEdit::StageAuthoredControlCandidate(
+bool PrivatePlainLayoutState::StageAuthoredControlCandidate(
     std::uint64_t anchorFrame, std::uint64_t firstSafeFrame) noexcept {
     if (owner_ == nullptr) return false;
     ClearCandidate();
     if (!hasAuthoredLayout_) return false;
+    const auto& authoredLayout = snapshots_->authoredLayout;
     std::uint64_t onset = 0;
-    if (!ResolveLaneDue(authoredLayout_.start, anchorFrame, &onset) ||
+    if (!ResolveLaneDue(authoredLayout.start, anchorFrame, &onset) ||
         onset == UINT64_MAX) return false;
     const auto fixed = [](ImmediateLaneEvent event, std::uint64_t due) noexcept {
         event.timeDomain = ImmediateLaneTimeDomain::FixedAbsoluteFrame;
@@ -204,23 +224,23 @@ bool PrivatePlainLayoutEdit::StageAuthoredControlCandidate(
         event.event.executeFrame = due;
         return event;
     };
-    const bool hasEnvelope = authoredLayout_.fadeStartFrame < authoredLayout_.stopFrame &&
-        onset < authoredLayout_.stopFrame;
+    const bool hasEnvelope = authoredLayout.fadeStartFrame < authoredLayout.stopFrame &&
+        onset < authoredLayout.stopFrame;
     std::array<ImmediateLaneEvent, 3> events{};
     std::uint32_t count = 0;
-    events[count++] = fixed(authoredLayout_.start, onset);
+    events[count++] = fixed(authoredLayout.start, onset);
     if (hasEnvelope) {
-        const auto dispatch = std::min(authoredLayout_.stopFrame,
-            std::max(authoredLayout_.fadeStartFrame, onset));
-        events[count++] = fixed(authoredLayout_.envelope, dispatch);
+        const auto dispatch = std::min(authoredLayout.stopFrame,
+            std::max(authoredLayout.fadeStartFrame, onset));
+        events[count++] = fixed(authoredLayout.envelope, dispatch);
     }
-    auto stop = fixed(authoredLayout_.stop, authoredLayout_.stopFrame);
+    auto stop = fixed(authoredLayout.stop, authoredLayout.stopFrame);
     stop.event.authoredFadeOutCandidate = hasEnvelope;
     events[count++] = stop;
     return StageFixedCandidate(events.data(), count, anchorFrame, firstSafeFrame);
 }
 
-bool PrivatePlainLayoutEdit::StageFixedCandidate(const ImmediateLaneEvent* events,
+bool PrivatePlainLayoutState::StageFixedCandidate(const ImmediateLaneEvent* events,
     std::uint32_t count, std::uint64_t anchorFrame,
     std::uint64_t firstSafeFrame) noexcept {
     if (owner_ == nullptr) return false;
@@ -259,6 +279,16 @@ void PrivatePlainLayoutCommitProof::Consume() noexcept {
     if (Valid()) edit_.owner_->FinishPrivateLayout(edit_, true);
 }
 
+bool PrivateReservedPlainLayoutEdit::SealCandidate(PrivateReservedPlainLayoutCommitProof* out) noexcept {
+    if (!Valid() || !ready_ || out == nullptr || out->edit_.Valid()) return false;
+    out->edit_ = std::move(*this);
+    return true;
+}
+
+void PrivateReservedPlainLayoutCommitProof::Consume() noexcept {
+    if (Valid()) edit_.owner_->FinishPrivateLayout(edit_, true);
+}
+
 PrivateImmediateLanePlacementProof::PrivateImmediateLanePlacementProof(
     PrivateImmediateLanePlacementProof&& other) noexcept { Take(other); }
 PrivateImmediateLanePlacementProof& PrivateImmediateLanePlacementProof::operator=(
@@ -292,9 +322,24 @@ bool ImmediateActionLane::CapturePrivatePendingVariableStartGeometry(
     const PrivatePlainLayoutCommitProof& proof, const TimelineArmTable& arms,
     TimelineArmToken arm, std::uint64_t authoredOffset,
     std::uint64_t* logicalFrame, std::uint64_t* onsetFrame) const noexcept {
-    const auto& edit = proof.edit_;
+    return CapturePrivatePlainVariableStartGeometry(proof.edit_, arms, arm,
+        authoredOffset, logicalFrame, onsetFrame);
+}
+
+bool ImmediateActionLane::CapturePrivatePendingVariableStartGeometry(
+    const PrivateReservedPlainLayoutCommitProof& proof, const TimelineArmTable& arms,
+    TimelineArmToken arm, std::uint64_t authoredOffset,
+    std::uint64_t* logicalFrame, std::uint64_t* onsetFrame) const noexcept {
+    return CapturePrivatePlainVariableStartGeometry(proof.edit_, arms, arm,
+        authoredOffset, logicalFrame, onsetFrame);
+}
+
+bool ImmediateActionLane::CapturePrivatePlainVariableStartGeometry(
+    const PrivatePlainLayoutState& edit, const TimelineArmTable& arms,
+    TimelineArmToken arm, std::uint64_t authoredOffset,
+    std::uint64_t* logicalFrame, std::uint64_t* onsetFrame) const noexcept {
     const auto* attempt = edit.owner_ == this ? Resolve(edit.handle_) : nullptr;
-    if (!proof.Valid() || attempt == nullptr || attempt->privateLayoutEdit != &edit ||
+    if (!edit.Valid() || !edit.ready_ || attempt == nullptr || attempt->privateLayoutEdit != &edit ||
         attempt->state.load(std::memory_order_acquire) != ImmediateLaneAttemptState::PrivateLayoutHeld)
         return false;
     return CapturePrivatePendingVariableStartGeometryImpl(edit.handle_, arms, arm,
@@ -470,10 +515,16 @@ bool ImmediateActionLane::AcquirePrivateReservedPlainLayoutEdit(ImmediateLaneHan
     return AcquirePrivatePlainLayoutEditImpl(handle, root, originalDemand, out, true);
 }
 
+bool ImmediateActionLane::AcquirePrivateReservedPlainLayoutEdit(ImmediateLaneHandle handle,
+    std::uint64_t root, ImmediateLaneDemand originalDemand,
+    PrivateReservedPlainLayoutEdit* out) noexcept {
+    return AcquirePrivatePlainLayoutEditImpl(handle, root, originalDemand, out, true);
+}
+
 bool ImmediateActionLane::AcquirePrivatePlainLayoutEditImpl(ImmediateLaneHandle handle,
     std::uint64_t root, ImmediateLaneDemand originalDemand,
-    PrivatePlainLayoutEdit* out, bool pristineReserved) noexcept {
-    if (out == nullptr || out->Valid()) return false;
+    PrivatePlainLayoutState* out, bool pristineReserved) noexcept {
+    if (out == nullptr || out->Valid() || (!pristineReserved && out->snapshots_ == nullptr)) return false;
     auto* attempt = Resolve(handle);
     if (attempt == nullptr) return false;
     const auto initial = attempt->state.load(std::memory_order_acquire);
@@ -527,10 +578,10 @@ bool ImmediateActionLane::AcquirePrivatePlainLayoutEditImpl(ImmediateLaneHandle 
     out->hasAuthoredLayout_ = false;
     out->originalWasPristineReserved_ = pristineReserved;
     if (!pristineReserved) {
-        std::copy_n(EventBase(handle.slot), attempt->eventCredit, out->originalEvents_.begin());
+        std::copy_n(EventBase(handle.slot), attempt->eventCredit, out->snapshots_->originalEvents.begin());
         for (std::uint32_t i = 0; i < attempt->bucketCredit; ++i) {
             const auto& b = BucketBase(handle.slot)[i];
-            out->originalBuckets_[i] = {b.state.load(std::memory_order_relaxed),
+            out->snapshots_->originalBuckets[i] = {b.state.load(std::memory_order_relaxed),
                 b.admissionFailure.load(std::memory_order_relaxed), b.attemptGeneration,
                 b.quantum, b.firstEvent, b.eventCount, b.firstGroup, b.groupCount, b.memberCount};
         }
@@ -560,22 +611,22 @@ bool ImmediateActionLane::AcquirePrivatePlainAuthoredControlLayoutEdit(
         input.envelope.event.subeventPhase != 30 || input.stop.event.subeventPhase != 50 ||
         originalDemand.events < worstCase || originalDemand.buckets < worstCase ||
         !AcquirePrivatePlainLayoutEdit(handle, root, originalDemand, out)) return false;
-    out->authoredLayout_ = input;
+    out->snapshots_->authoredLayout = input;
     out->hasAuthoredLayout_ = true;
     return true;
 }
 
-void ImmediateActionLane::FinishPrivateLayout(PrivatePlainLayoutEdit& edit,
+void ImmediateActionLane::FinishPrivateLayout(PrivatePlainLayoutState& edit,
     bool commit) noexcept {
     auto& attempt = attempts_[edit.handle_.slot];
     if (!commit && edit.originalWasPristineReserved_) {
         edit.ClearCandidate();
     } else if (!commit) {
-        std::copy_n(edit.originalEvents_.begin(), attempt.eventCredit,
+        std::copy_n(edit.snapshots_->originalEvents.begin(), attempt.eventCredit,
                     EventBase(edit.handle_.slot));
         for (std::uint32_t i = 0; i < attempt.bucketCredit; ++i) {
             auto& b = BucketBase(edit.handle_.slot)[i];
-            const auto& saved = edit.originalBuckets_[i];
+            const auto& saved = edit.snapshots_->originalBuckets[i];
             b.state.store(saved.state, std::memory_order_relaxed);
             b.admissionFailure.store(saved.failure, std::memory_order_relaxed);
             b.attemptGeneration = saved.generation;
@@ -695,7 +746,7 @@ void ImmediateActionLane::ReturnOriginalAttempt(
 }
 
 ImmediateActionLane::AttemptMetadataBacking::~AttemptMetadataBacking() {
-    if (requestedBytes == 0) return;
+    if (requestedBytes == 0 || storage.Address() == nullptr) return;
     std::destroy_n(groups, demand.groups);
     std::destroy_n(declaredGroups, demand.groups);
     std::destroy_n(groupPins, demand.groups);
@@ -751,10 +802,24 @@ bool ImmediateActionLane::AttemptMetadataBacking::Initialize(ImmediateLaneDemand
     return true;
 }
 
+void ImmediateActionLane::AttemptMetadataBacking::InitializeSingleEvent(
+    SingleEventMetadata& cell, ImmediateLaneEvent* payload) noexcept {
+    assert(requestedBytes == 0 && storage.Address() == nullptr && payload != nullptr);
+    demand = {1, 0, 0, 1};
+    sourceWaitCount = waitingScratchCount = 1;
+    requestedBytes = sizeof(cell);
+    events = payload;
+    eventState = &cell.eventState;
+    sourceWaitEntries = &cell.sourceWait;
+    buckets = &cell.bucket;
+    waitingScratch = &cell.waitingScratch;
+}
+
 bool ImmediateActionLane::AttemptMetadataBacking::Fits(ImmediateLaneDemand requested,
     const Config& config) const noexcept {
     const auto entries = static_cast<std::uint64_t>(requested.events) + requested.groups;
-    return requestedBytes != 0 && demand.events >= requested.events && demand.groups >= requested.groups &&
+    return requestedBytes != 0 && (requested.events == 0 || events != nullptr) &&
+        demand.events >= requested.events && demand.groups >= requested.groups &&
         demand.members >= requested.members && demand.buckets >= requested.buckets &&
         sourceWaitCount >= std::min<std::uint64_t>(config.eventsPerAttempt, entries) &&
         waitingScratchCount >= std::min<std::uint64_t>(config.maxEventsPerQuantum, entries) &&
@@ -768,6 +833,7 @@ void ImmediateActionLane::AttemptMetadataBacking::Swap(AttemptMetadataBacking& o
     std::swap(waitingScratchCount, other.waitingScratchCount);
     std::swap(privateBucketCount, other.privateBucketCount);
     std::swap(requestedBytes, other.requestedBytes);
+    std::swap(events, other.events);
     std::swap(groups, other.groups);
     std::swap(declaredGroups, other.declaredGroups);
     std::swap(groupPins, other.groupPins);
@@ -781,20 +847,26 @@ void ImmediateActionLane::AttemptMetadataBacking::Swap(AttemptMetadataBacking& o
 }
 
 std::size_t ImmediateActionLane::MetadataStorageBytes() const noexcept {
-    auto bytes = attempts_.RequestedBytes() + metadata_.RequestedBytes();
-    for (const auto& row : metadata_) bytes += row.active.requestedBytes + row.standby.requestedBytes;
+    auto bytes = attempts_.RequestedBytes() + metadata_.RequestedBytes() +
+        singleEventMetadata_.RequestedBytes();
+    for (const auto& row : metadata_) {
+        if (row.active.storage.Address() != nullptr) bytes += row.active.requestedBytes;
+        if (row.standby.storage.Address() != nullptr) bytes += row.standby.requestedBytes;
+    }
     return bytes;
 }
 
 std::size_t ImmediateActionLane::MetadataCommittedBytes() const noexcept {
-    auto bytes = attempts_.CommittedBytes() + metadata_.CommittedBytes();
+    auto bytes = attempts_.CommittedBytes() + metadata_.CommittedBytes() +
+        singleEventMetadata_.CommittedBytes();
     for (const auto& row : metadata_)
         bytes += row.active.storage.CommittedBytes() + row.standby.storage.CommittedBytes();
     return bytes;
 }
 
 std::size_t ImmediateActionLane::MetadataReservedBytes() const noexcept {
-    auto bytes = attempts_.ReservedBytes() + metadata_.ReservedBytes();
+    auto bytes = attempts_.ReservedBytes() + metadata_.ReservedBytes() +
+        singleEventMetadata_.ReservedBytes();
     for (const auto& row : metadata_)
         bytes += row.active.storage.ReservedBytes() + row.standby.storage.ReservedBytes();
     return bytes;
@@ -826,12 +898,20 @@ bool ImmediateActionLane::Reset(Config config) {
     while (eventStorageConsumers_ != nullptr) eventStorageConsumers_->Detach();
     groupPool_ = nullptr;
     valid_ = false;
+    outstandingAttemptCount_.store(0, std::memory_order_relaxed);
+    StableRowStorage<ImmediateLaneEvent> oldSingleEvents;
+    singleEvents_.Swap(oldSingleEvents);
+    StableRowStorage<SingleEventMetadata> oldSingleEventMetadata;
+    singleEventMetadata_.Swap(oldSingleEventMetadata);
     StableRowStorage<AttemptMetadata> oldMetadata;
     metadata_.Swap(oldMetadata);
     detail::StablePageReservation oldEvents, oldMembers;
     eventStorage_.Swap(oldEvents);
     memberStorage_.Swap(oldMembers);
     eventStorageBytes_ = memberStorageBytes_ = 0;
+#if !defined(HARKEN_RT_QUALIFICATION)
+    eventCommitPagesRemaining_ = SIZE_MAX;
+#endif
     StableRowStorage<ImmediateLaneAttempt> oldAttempts;
     attempts_.Swap(oldAttempts);
     events_ = nullptr;
@@ -851,7 +931,9 @@ bool ImmediateActionLane::Reset(Config config) {
                        config.eventsPerAttempt;
     StableRowStorage<PrivateEntryAssociation> privateEntries;
     if (slots > UINT32_MAX || !privateEntries.Reserve(static_cast<std::uint32_t>(slots)) ||
-        !metadata_.Reserve(config.attempts)) return false;
+        !metadata_.Reserve(config.attempts) ||
+        !singleEvents_.Reserve(config.attempts) ||
+        !singleEventMetadata_.Reserve(config.attempts)) return false;
     if (slots > static_cast<std::size_t>(PTRDIFF_MAX) / sizeof(ImmediateLaneEvent) ||
         slots > static_cast<std::size_t>(PTRDIFF_MAX) / sizeof(ImmediateLaneMemberManifest) ||
         !eventStorage_.Reserve(slots * sizeof(ImmediateLaneEvent), alignof(ImmediateLaneEvent), true) ||
@@ -887,7 +969,7 @@ void ImmediateActionLane::EventStorageRegistration::Detach() noexcept {
 }
 
 std::uint32_t ImmediateActionLane::EventStorageHighWater() const noexcept {
-    std::uint32_t count = 0;
+    std::uint32_t count = singleEvents_.size() == 0 ? 0u : 1u;
     for (std::uint32_t slot = 0; slot < attempts_.size(); ++slot)
         count = std::max(count, attempts_[slot].eventStorageCount);
     return count;
@@ -912,15 +994,52 @@ bool ImmediateActionLane::PrepareAttemptStorage(std::uint32_t slot,
     const auto metadataReady = [&]() noexcept {
         return metadata.active.Fits(demand, config_) || metadata.standby.Fits(demand, config_);
     };
-    if (demand.events <= attempt.eventStorageCount && demand.members <= attempt.memberStorageCount &&
-        metadataReady()) return true;
+    if (demand.members <= attempt.memberStorageCount && metadataReady()) return true;
     if (memguard::IsAudioTagged() || payloadGrowth_.preparedUsers != 0) return false;
     const auto base = static_cast<std::size_t>(slot) * config_.eventsPerAttempt;
-    if (demand.events > attempt.eventStorageCount) {
+    const bool singleEvent = demand.events == 1 && demand.groups == 0 &&
+        demand.members == 0 && demand.buckets == 1;
+    const auto availableEvents = std::max(attempt.eventStorageCount,
+        singleEvents_.size() > slot ? 1u : 0u);
+    if (demand.events > availableEvents) {
         for (auto* consumer = eventStorageConsumers_; consumer != nullptr; consumer = consumer->next_)
             if (!consumer->prepare_(consumer->context_, demand.events)) return false;
-        if (!eventStorage_.CommitRange((base + attempt.eventStorageCount) * sizeof(ImmediateLaneEvent),
-                (demand.events - attempt.eventStorageCount) * sizeof(ImmediateLaneEvent))) return false;
+    }
+#if !defined(HARKEN_RT_QUALIFICATION)
+    const auto committedEvents = eventStorage_.CommittedBytes() + singleEvents_.CommittedBytes();
+    const auto chargeEventPages = [&]() noexcept {
+        if (eventCommitPagesRemaining_ == SIZE_MAX) return;
+        const auto pages = (eventStorage_.CommittedBytes() + singleEvents_.CommittedBytes() -
+            committedEvents) / detail::StablePageReservation::SystemPageBytes();
+        assert(pages <= eventCommitPagesRemaining_);
+        eventCommitPagesRemaining_ -= pages;
+    };
+#endif
+    auto* selectedEvents = events_ + base;
+    if (singleEvent && attempt.eventStorageCount == 0) {
+        if (singleEvents_.size() <= slot) {
+#if !defined(HARKEN_RT_QUALIFICATION)
+            if (eventCommitPagesRemaining_ == 0) return false;
+            singleEvents_.SetCommitPageLimitForTests(eventCommitPagesRemaining_);
+#endif
+            const bool prepared = singleEvents_.ConstructThrough(slot + 1u);
+#if !defined(HARKEN_RT_QUALIFICATION)
+            chargeEventPages();
+#endif
+            if (!prepared) return false;
+        }
+        selectedEvents = &singleEvents_[slot];
+    } else if (demand.events > attempt.eventStorageCount) {
+#if !defined(HARKEN_RT_QUALIFICATION)
+        eventStorage_.SetCommitPageLimitForTests(eventCommitPagesRemaining_);
+#endif
+        const bool prepared = eventStorage_.CommitRange(
+            (base + attempt.eventStorageCount) * sizeof(ImmediateLaneEvent),
+            (demand.events - attempt.eventStorageCount) * sizeof(ImmediateLaneEvent));
+#if !defined(HARKEN_RT_QUALIFICATION)
+        chargeEventPages();
+#endif
+        if (!prepared) return false;
         for (auto index = attempt.eventStorageCount; index < demand.events; ++index)
             std::construct_at(events_ + base + index);
         eventStorageBytes_ += (demand.events - attempt.eventStorageCount) * sizeof(ImmediateLaneEvent);
@@ -941,7 +1060,16 @@ bool ImmediateActionLane::PrepareAttemptStorage(std::uint32_t slot,
     if (demand.groups != 0) pageLimit = std::min(pageLimit, groupCommitPageLimit_);
 #endif
     AttemptMetadataBacking prepared;
-    if (!prepared.Initialize(demand, config_, pageLimit)) return false;
+    if (singleEvent) {
+        // New views retain allocation refusal even when a neighboring cell committed the page.
+        if (pageLimit == 0) return false;
+        singleEventMetadata_.SetCommitPageLimitForTests(pageLimit);
+        if (!singleEventMetadata_.ConstructThrough(slot + 1u)) return false;
+        prepared.InitializeSingleEvent(singleEventMetadata_[slot], selectedEvents);
+    } else {
+        if (!prepared.Initialize(demand, config_, pageLimit)) return false;
+        prepared.events = selectedEvents;
+    }
     // Preparing a busy identity must leave every active reader's address unchanged.
     metadata.standby.Swap(prepared);
     return true;
@@ -1048,8 +1176,7 @@ const ImmediateLaneAttempt* ImmediateActionLane::Resolve(
 
 ImmediateLaneEvent* ImmediateActionLane::EventBase(
     std::uint32_t slot) noexcept {
-    return events_ + static_cast<std::size_t>(slot) *
-                               config_.eventsPerAttempt;
+    return metadata_[slot].active.events;
 }
 
 const ImmediateLaneEvent* ImmediateActionLane::EventBase(
@@ -1181,6 +1308,8 @@ bool ImmediateActionLane::Reserve(std::uint64_t root,
             eventState_[offset + index].lastCaptureSequence = 0;
         }
         attempt.nextBucket.store(0, std::memory_order_relaxed);
+        // Count the identity before audio can observe its Reserved publication.
+        outstandingAttemptCount_.fetch_add(1, std::memory_order_release);
         attempt.state.store(ImmediateLaneAttemptState::Reserved,
                             std::memory_order_release);
         *out = {slot, attempt.generation};
@@ -1686,11 +1815,11 @@ bool ImmediateActionLane::HasProgramReferenceImpl(ProgramGeneration generation,
             const auto* edit = attempt.privateLayoutEdit;
             if (edit != nullptr) {
                 for (std::uint32_t event = 0; event < edit->originalEventCount_; ++event)
-                    if (matches(edit->originalEvents_[event].event.program)) return true;
+                    if (matches(edit->snapshots_->originalEvents[event].event.program)) return true;
                 if (edit->hasAuthoredLayout_ &&
-                    (matches(edit->authoredLayout_.start.event.program) ||
-                     matches(edit->authoredLayout_.envelope.event.program) ||
-                     matches(edit->authoredLayout_.stop.event.program))) return true;
+                    (matches(edit->snapshots_->authoredLayout.start.event.program) ||
+                     matches(edit->snapshots_->authoredLayout.envelope.event.program) ||
+                     matches(edit->snapshots_->authoredLayout.stop.event.program))) return true;
             }
             continue;
         }
@@ -3895,9 +4024,9 @@ bool ImmediateActionLane::CandidateFits(std::uint32_t slot,
         if (attempt.privateLayoutEdit != nullptr) {
             const auto& edit = *attempt.privateLayoutEdit;
             for (std::uint32_t i = 0; i < edit.originalBucketCount_; ++i)
-                if (edit.originalBuckets_[i].quantum == quantum)
+                if (edit.snapshots_->originalBuckets[i].quantum == quantum)
                     occupiedEvents = std::max(occupiedEvents,
-                        static_cast<std::uint64_t>(edit.originalBuckets_[i].eventCount));
+                        static_cast<std::uint64_t>(edit.snapshots_->originalBuckets[i].eventCount));
         }
         for (std::uint32_t other = 0; other < attempts_.size(); ++other) {
             if (other == slot) continue;
@@ -3911,8 +4040,8 @@ bool ImmediateActionLane::CandidateFits(std::uint32_t slot,
                 std::uint32_t oldCount = 0, tentativeCount = 0;
                 const auto& edit = *live.privateLayoutEdit;
                 for (std::uint32_t i = 0; i < edit.originalBucketCount_; ++i)
-                    if (edit.originalBuckets_[i].quantum == quantum)
-                        oldCount = edit.originalBuckets_[i].eventCount;
+                    if (edit.snapshots_->originalBuckets[i].quantum == quantum)
+                        oldCount = edit.snapshots_->originalBuckets[i].eventCount;
                 const auto* staged = BucketBase(other);
                 for (std::uint32_t i = 0; i < live.bucketCount; ++i)
                     if (staged[i].quantum == quantum)
@@ -5148,9 +5277,9 @@ bool ImmediateActionLane::FutureMember(std::uint32_t slot,
         if (!(member.group == group) ||
             member.memberIndex != memberIndex ||
             !SameArm(member.arm, arm) || !member.future ||
-            !ValidMemberEventOrdinals(member, events_ + base,
+            !ValidMemberEventOrdinals(member, EventBase(slot),
                 attempt.eventCount, config_.quantumFrames)) return false;
-        const auto& future = events_[base + member.eventOrdinal];
+        const auto& future = EventBase(slot)[member.eventOrdinal];
         std::uint64_t due = 0;
         if (!future.futureGroupedStart || !SameTimeSpec(future, member) ||
             !ResolveLaneDue(future, attempt.anchorFrame, &due) ||
@@ -5210,7 +5339,7 @@ bool ImmediateActionLane::CaptureFrozenFutureTarget(
         declaration = &candidate;
     }
     if (declaration == nullptr || !(declaration->relatedGroup == target) ||
-        !ValidMemberEventOrdinals(*declaration, events_ + base,
+        !ValidMemberEventOrdinals(*declaration, EventBase(handle.slot),
             attempt->eventCount, config_.quantumFrames) ||
         declaration->memberIndex >= groupState_[base + sourceIndex].memberCount ||
         declaration->ownerInstance == 0 || declaration->ownerEpoch == 0) return false;
@@ -5231,9 +5360,9 @@ bool ImmediateActionLane::CaptureFrozenFutureTarget(
     if (historical == nullptr || current == nullptr ||
         !(historical->relatedGroup == source) || historical->memberIndex != 0u ||
         historical->eventSpanCount != 1u ||
-        !ValidMemberEventOrdinals(*historical, events_ + base,
+        !ValidMemberEventOrdinals(*historical, EventBase(handle.slot),
             attempt->eventCount, config_.quantumFrames) ||
-        !ValidMemberEventOrdinals(*current, events_ + base,
+        !ValidMemberEventOrdinals(*current, EventBase(handle.slot),
             attempt->eventCount, config_.quantumFrames) ||
         current->memberIndex != declaration->memberIndex || current->eventSpanCount != declaration->eventSpanCount ||
         current->eventOrdinal != declaration->eventOrdinal ||
@@ -5243,7 +5372,7 @@ bool ImmediateActionLane::CaptureFrozenFutureTarget(
         !SameArm(current->arm, declaration->arm) || !(current->target == declaration->target) ||
         current->ownerInstance != declaration->ownerInstance ||
         current->ownerEpoch != declaration->ownerEpoch) return false;
-    const auto& historicalEvent = events_[base + historical->eventOrdinal];
+    const auto& historicalEvent = EventBase(handle.slot)[historical->eventOrdinal];
     const auto* historicalProgram = historicalEvent.event.program.program;
     if (!eventState_[base + historical->eventOrdinal].arm.Valid() ||
         !(historicalEvent.event.frontier.group == source) ||
@@ -5259,7 +5388,7 @@ bool ImmediateActionLane::CaptureFrozenFutureTarget(
         !(historicalProgram->payloads[historicalEvent.event.payload].target == historical->target)) return false;
     for (std::uint32_t offset = 0; offset < declaration->eventSpanCount; ++offset) {
         const auto ordinal = offset == 0u ? declaration->eventOrdinal : declaration->secondEventOrdinal;
-        const auto& event = events_[base + ordinal];
+        const auto& event = EventBase(handle.slot)[ordinal];
         const auto* program = event.event.program.program;
         std::uint64_t effectiveDue = 0;
         if (!eventState_[base + ordinal].arm.Valid() ||
@@ -5412,6 +5541,9 @@ bool ImmediateActionLane::Retire(ImmediateLaneHandle handle,
     attempt->nextBucket.store(0, std::memory_order_relaxed);
     attempt->state.store(ImmediateLaneAttemptState::Free,
                          std::memory_order_release);
+    const auto previous = outstandingAttemptCount_.fetch_sub(1, std::memory_order_release);
+    assert(previous != 0);
+    (void)previous;
     return true;
 }
 

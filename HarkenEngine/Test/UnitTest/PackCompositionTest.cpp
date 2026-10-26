@@ -10131,11 +10131,11 @@ TEST(PackComposition,
         ASSERT_EQ(before + 1u, engine->mixer.BlocksRendered());
     }
     ASSERT_TRUE(row->variableControlDiscreteRetargetPrepared);
-    EXPECT_EQ(0u, row->variableControlDiscreteRetargetTargetMemberCount);
+    EXPECT_EQ(0u, row->VariablePayload().variableControlDiscreteRetargetTargetMemberCount);
     EXPECT_TRUE(row->variableControlDiscreteRetargetHasZeroWorkCompletion);
     const std::uint64_t logicalBoundary =
-        row->variableControlDiscreteRetargetZeroWorkCompletionFrame;
-    EXPECT_EQ(row->variableControlDiscreteRetargetFrame + 4800u,
+        row->VariablePayload().variableControlDiscreteRetargetZeroWorkCompletionFrame;
+    EXPECT_EQ(row->VariablePayload().variableControlDiscreteRetargetFrame + 4800u,
               logicalBoundary);
     for (std::uint32_t block = 0;
          block < 64 && row->variableControlDiscreteRetargetPrepared; ++block) {
@@ -10163,7 +10163,7 @@ TEST(PackComposition,
         ASSERT_EQ(before + 1u, engine->mixer.BlocksRendered());
     }
     ASSERT_TRUE(row->variableControlDiscreteRetargetPrepared);
-    EXPECT_EQ(1u, row->variableControlDiscreteRetargetTargetMemberCount);
+    EXPECT_EQ(1u, row->VariablePayload().variableControlDiscreteRetargetTargetMemberCount);
     for (std::uint32_t block = 0;
          block < 64 && row->variableControlDiscreteRetargetPrepared; ++block) {
         const auto before = engine->mixer.BlocksRendered();
@@ -10703,7 +10703,7 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
             return candidate.rootInstance == play.producedPlayableInstance;
         });
     ASSERT_NE(session.Engine()->playableServices.end(), row);
-    ASSERT_GT(row->queueCompletionFrame,
+    ASSERT_GT(row->QueuePayload().queueCompletionFrame,
               session.Engine()->timelinePool.WindowEndFrame());
     EXPECT_TRUE(row->queueSignalOnlyNoOverlap);
     EXPECT_TRUE(row->queueDeferredNeedsFullPreparation);
@@ -10730,8 +10730,8 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
         const auto attempt = std::find_if(attempts, end,
             [firing](const auto& candidate) { return candidate.active && candidate.root == firing; });
         ASSERT_NE(end, attempt);
-        EXPECT_EQ(entry.coordinator.slot, attempt->initialQueueCoordinator.slot);
-        EXPECT_EQ(entry.coordinator.generation, attempt->initialQueueCoordinator.generation);
+        EXPECT_EQ(entry.coordinator.slot, attempt->QueueCoordinators().initialQueueCoordinator.slot);
+        EXPECT_EQ(entry.coordinator.generation, attempt->QueueCoordinators().initialQueueCoordinator.generation);
         const auto quantum = row->startFrame / engine.config.blockFrames;
         while (engine.mixer.BlocksRendered() < quantum) engine.nullBackend.Pump(1);
         ASSERT_EQ(quantum, engine.mixer.BlocksRendered());
@@ -10824,8 +10824,8 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
                 attempts + session.Engine()->immediateEntryAttempts.size(),
                 [firing](const auto& attempt) { return attempt.active && attempt.root == firing; });
             ASSERT_NE(attempts + session.Engine()->immediateEntryAttempts.size(), held);
-            publication.coordinator = held->initialQueueCoordinator;
-            publication.primary = held->initialQueuePrimaryGroup;
+            publication.coordinator = held->QueueCoordinators().initialQueueCoordinator;
+            publication.primary = held->QueueCoordinators().initialQueuePrimaryGroup;
             publication.attempt = held;
             ASSERT_TRUE(session.Engine()->timelinePool.AcquirePlan03GroupReader(
                 publication.primary, &publication.reader));
@@ -10836,9 +10836,9 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
             auto& proof = *static_cast<PublicationProof*>(context);
             proof.called = true;
             harken::DecisionCommittedSnapshot decision{};
-            proof.committed = engine.decisions.CaptureCommitted(attempt.initialQueueCoordinator, &decision) &&
+            proof.committed = engine.decisions.CaptureCommitted(attempt.QueueCoordinators().initialQueueCoordinator, &decision) &&
                 decision.participantCount == 0 && decision.consumedSlices == 0;
-            const auto* activation = engine.decisions.ResolveFrontierActivation(attempt.initialQueueCoordinator);
+            const auto* activation = engine.decisions.ResolveFrontierActivation(attempt.QueueCoordinators().initialQueueCoordinator);
             proof.pending = activation != nullptr && activation->State() == harken::FrontierReceiptState::Pending;
             harken::ImmediateLaneObservation lane{};
             proof.laneUnpublished = engine.immediateActionLane.Observe(attempt.lane, &lane) && !lane.committed;
@@ -10848,13 +10848,13 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
             proof.sourcePublished = source != engine.playableServices.end() &&
                 engine.timelineArms.State(source->arm, &arm) && arm == harken::ArmState::Published;
             proof.privateRetirementRefused = !engine.timelinePool.PrivateImmediateLaneGroupRetirementReady(
-                attempt.initialQueuePrimaryGroup, engine.mixer.BlocksRendered());
+                attempt.QueueCoordinators().initialQueuePrimaryGroup, engine.mixer.BlocksRendered());
             if (proof.holdReader) {
                 proof.readerAcquired = proof.reader.Valid() &&
-                    proof.reader.Identity() == attempt.initialQueuePrimaryGroup &&
-                    proof.primary == attempt.initialQueuePrimaryGroup &&
-                    proof.coordinator.slot == attempt.initialQueueCoordinator.slot &&
-                    proof.coordinator.generation == attempt.initialQueueCoordinator.generation;
+                    proof.reader.Identity() == attempt.QueueCoordinators().initialQueuePrimaryGroup &&
+                    proof.primary == attempt.QueueCoordinators().initialQueuePrimaryGroup &&
+                    proof.coordinator.slot == attempt.QueueCoordinators().initialQueueCoordinator.slot &&
+                    proof.coordinator.generation == attempt.QueueCoordinators().initialQueueCoordinator.generation;
             }
         };
         session.Engine()->forceImmediateQueuePostC0PublishFailureForTest = 2;
@@ -10866,11 +10866,11 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
         session.Engine()->nullBackend.Pump(1);
         const auto held = CaptureRootQueueOwners(*session.Engine());
         const auto phase = row->phase;
-        const auto owner = row->queueCurrentCompletion.owner;
-        const auto occurrence = row->queueCurrentOccurrence;
+        const auto owner = row->QueuePayload().queueCurrentCompletion.owner;
+        const auto occurrence = row->QueuePayload().queueCurrentOccurrence;
         const auto partition = row->partition;
-        auto* bank = row->queueCurrentProgramBank;
-        const auto programs = row->queueCurrentPrograms.Resolve(bank);
+        auto* bank = row->QueuePayload().queueCurrentProgramBank;
+        const auto programs = row->QueuePayload().queueCurrentPrograms.Resolve(bank);
         ASSERT_EQ(1u, programs.size());
         ASSERT_EQ(1u, programs[0].eventCount);
         ASSERT_NE(nullptr, programs[0].events);
@@ -10884,13 +10884,13 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
             session.Engine()->immediateEntryAttempts.data() + session.Engine()->immediateEntryAttempts.size(),
             [firing](const auto& attempt) { return attempt.active && attempt.root == firing; });
         ASSERT_NE(session.Engine()->immediateEntryAttempts.data() + session.Engine()->immediateEntryAttempts.size(), attempt);
-        ASSERT_TRUE(attempt->initialQueueCoordinator.Valid());
+        ASSERT_TRUE(attempt->QueueCoordinators().initialQueueCoordinator.Valid());
         for (unsigned identity = 0; identity < 8u; ++identity) {
             SCOPED_TRACE(identity);
-            if (identity == 0) row->queueCurrentCompletion.owner.singleDecision = attempt->initialQueueCoordinator;
+            if (identity == 0) row->QueuePayload().queueCurrentCompletion.owner.singleDecision = attempt->QueueCoordinators().initialQueueCoordinator;
             if (identity == 1) ++event.armToken.generation;
             if (identity == 2) ++bank->schedules[0].entryAnchorFrame;
-            if (identity == 3) ++row->queueCurrentOccurrence.generation;
+            if (identity == 3) ++row->QueuePayload().queueCurrentOccurrence.generation;
             if (identity == 4) ++row->partition.generation;
             if (identity == 5) ++row->ticket;
             if (identity == 6) ++row->schedule.transactionId;
@@ -10900,10 +10900,10 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
             EXPECT_TRUE(row->pendingImmediateEntry);
             EXPECT_FALSE(row->pendingImmediateRetry);
             EXPECT_EQ(held, CaptureRootQueueOwners(*session.Engine()));
-            row->queueCurrentCompletion.owner = owner;
+            row->QueuePayload().queueCurrentCompletion.owner = owner;
             event.armToken = eventArm;
             bank->schedules[0].entryAnchorFrame = bankAnchor;
-            row->queueCurrentOccurrence = occurrence;
+            row->QueuePayload().queueCurrentOccurrence = occurrence;
             row->partition = partition;
             row->ticket = ticket;
             row->schedule.transactionId = transaction;
@@ -10920,16 +10920,16 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
         heldAttempt = std::find_if(attempts, end,
             [firing](const auto& candidate) { return candidate.active && candidate.root == firing; });
         ASSERT_NE(end, heldAttempt);
-        heldCoordinator = heldAttempt->initialQueueCoordinator;
-        heldPrimary = heldAttempt->initialQueuePrimaryGroup;
+        heldCoordinator = heldAttempt->QueueCoordinators().initialQueueCoordinator;
+        heldPrimary = heldAttempt->QueueCoordinators().initialQueuePrimaryGroup;
         ASSERT_TRUE(session.Engine()->timelinePool.AcquirePlan03GroupReader(heldPrimary, &heldPrivateReader));
     }
     if (stopPhase == 0u) ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
     if (lateFirstUpdate) {
         const auto provisional = row->startFrame;
         const auto arm = row->arm;
-        const auto occurrence = row->queueCurrentOccurrence;
-        const auto owner = row->queueCurrentCompletion.owner;
+        const auto occurrence = row->QueuePayload().queueCurrentOccurrence;
+        const auto owner = row->QueuePayload().queueCurrentCompletion.owner;
         const auto* progress = session.Engine()->timelineOccurrences.CompletionProgressOf(occurrence);
         ASSERT_NE(nullptr, progress);
         harken::CompletionProgressSnapshot before{};
@@ -10948,10 +10948,10 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
         EXPECT_EQ(arm.generation, row->arm.generation);
         EXPECT_EQ(arm.renderGeneration, row->arm.renderGeneration);
         EXPECT_EQ(row->startFrame, row->schedule.entryAnchorFrame);
-        ASSERT_NE(nullptr, row->queueCurrentProgramBank);
-        EXPECT_EQ(row->startFrame, row->queueCurrentProgramBank->schedules[0].entryAnchorFrame);
-        EXPECT_EQ(row->startFrame, row->queueCurrentCompletion.absoluteLogicalStartFrame);
-        EXPECT_TRUE(harken::SameCompletionOwner(owner, row->queueCurrentCompletion.owner));
+        ASSERT_NE(nullptr, row->QueuePayload().queueCurrentProgramBank);
+        EXPECT_EQ(row->startFrame, row->QueuePayload().queueCurrentProgramBank->schedules[0].entryAnchorFrame);
+        EXPECT_EQ(row->startFrame, row->QueuePayload().queueCurrentCompletion.absoluteLogicalStartFrame);
+        EXPECT_TRUE(harken::SameCompletionOwner(owner, row->QueuePayload().queueCurrentCompletion.owner));
         EXPECT_EQ(progress, session.Engine()->timelineOccurrences.CompletionProgressOf(occurrence));
         harken::CompletionProgressSnapshot after{};
         ASSERT_TRUE(harken::CaptureCompletionProgress(*progress, &after));
@@ -10982,7 +10982,7 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
             [](float sample) { return sample > 0.001f; });
         ASSERT_TRUE(heardFirst);
         if (stopPhase == 2u) {
-            while (session.Engine()->mixer.BlocksRendered() <= row->queueCompletionFrame / 256u)
+            while (session.Engine()->mixer.BlocksRendered() <= row->QueuePayload().queueCompletionFrame / 256u)
                 session.Engine()->nullBackend.Pump(1);
             harken::TimelineArmObservation completed{};
             ASSERT_TRUE(session.Engine()->timelineArms.Observe(row->arm, &completed));
@@ -11031,7 +11031,7 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
     if (holdPublishedReaderThroughRelease) {
         ASSERT_TRUE(publication.readerAcquired);
         ASSERT_NE(nullptr, publication.attempt);
-        for (unsigned block = 0; block < 16u && publication.attempt->initialQueueCoordinator.Valid(); ++block) {
+        for (unsigned block = 0; block < 16u && publication.attempt->QueueCoordinators().initialQueueCoordinator.Valid(); ++block) {
             session.Engine()->nullBackend.Pump(1);
             ASSERT_EQ(VN_OK, Vn_Update());
             const auto* output = session.Engine()->nullBackend.LastBlock();
@@ -11041,7 +11041,7 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
         }
         EXPECT_TRUE(publication.attempt->active);
         EXPECT_FALSE(publication.attempt->lane.Valid());
-        EXPECT_FALSE(publication.attempt->initialQueueCoordinator.Valid());
+        EXPECT_FALSE(publication.attempt->QueueCoordinators().initialQueueCoordinator.Valid());
         ASSERT_LT(publication.coordinator.slot, session.Engine()->decisionRetirements.size());
         const auto retired = session.Engine()->decisionRetirements[publication.coordinator.slot].decision;
         EXPECT_EQ(publication.coordinator.slot, retired.slot);
@@ -11055,9 +11055,9 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
         EXPECT_TRUE(heldAttempt->active);
         EXPECT_FALSE(heldAttempt->lane.Valid());
         EXPECT_EQ(harken::ImmediateEntryAttemptState::Aborted, heldAttempt->gate.Observe(heldAttempt->generation));
-        EXPECT_EQ(heldPrimary, heldAttempt->initialQueuePrimaryGroup);
-        EXPECT_EQ(heldCoordinator.slot, heldAttempt->initialQueueCoordinator.slot);
-        EXPECT_EQ(heldCoordinator.generation, heldAttempt->initialQueueCoordinator.generation);
+        EXPECT_EQ(heldPrimary, heldAttempt->QueueCoordinators().initialQueuePrimaryGroup);
+        EXPECT_EQ(heldCoordinator.slot, heldAttempt->QueueCoordinators().initialQueueCoordinator.slot);
+        EXPECT_EQ(heldCoordinator.generation, heldAttempt->QueueCoordinators().initialQueueCoordinator.generation);
         EXPECT_TRUE(session.Engine()->decisions.Contains(heldCoordinator));
         EXPECT_EQ(nullptr, session.Engine()->decisions.ResolveFrontierActivation(heldCoordinator));
         EXPECT_NE(baseline, CaptureRootQueueOwners(*session.Engine()));
@@ -12714,7 +12714,7 @@ void DiagnoseDeferredPackVariableControlHandoffPartial(
               << '/' << parent->variableControlDiscreteDecision.generation
               << " group=" << parent->variableControlDiscreteArmGroup.slot
               << '/' << parent->variableControlDiscreteArmGroup.generation
-              << " pageGeneration=" << parent->initialLaneDiscreteGroup.pageGeneration
+              << " pageGeneration=" << parent->InitialLaneDiscreteGroup().pageGeneration
               << " memberCount=" << parent->variableControlInitialDiscreteMemberCount
               << " invocation=" << parent->invocationGeneration
               << " attempt=" << scratch.storage.generation
@@ -17498,8 +17498,8 @@ TEST(PackComposition,
                                                            &queue));
     EXPECT_EQ(UINT32_MAX, queue.emitterSlot);
     EXPECT_EQ(0u, queue.emitterGeneration);
-    EXPECT_EQ(UINT32_MAX, queueService->queueCheckpointKey.emitterSlot);
-    EXPECT_EQ(0u, queueService->queueCheckpointKey.emitterGeneration);
+    EXPECT_EQ(UINT32_MAX, queueService->QueueCheckpointKey().emitterSlot);
+    EXPECT_EQ(0u, queueService->QueueCheckpointKey().emitterGeneration);
     EXPECT_EQ(outerPlayback.activeChild, queue.rootInstance);
     EXPECT_EQ(nestedPlayback.activeChild,
               session.Engine()->playableInstances.Classify(queue.rootInstance)
@@ -17583,15 +17583,15 @@ TEST(PackComposition,
         });
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_TRUE(row->queueContinuationPrepared);
-    EXPECT_FALSE(row->queueSameProgramKey);
+    EXPECT_FALSE(row->QueueFiling().queueSameProgramKey);
     const auto* successorMember = engine->FindQueueProgramMember(
-        row->queueSuccessorProgramBank, row->queueSuccessorPrograms.first);
+        row->QueueFiling().queueSuccessorProgramBank, row->QueueFiling().queueSuccessorPrograms.first);
     ASSERT_NE(nullptr, successorMember);
     const auto& successorVoice = successorMember->voice;
     ASSERT_TRUE(successorVoice.Valid());
     EXPECT_EQ(480u, successorVoice.Facts().authoredDurationFrames);
-    EXPECT_EQ(row->queueCompletionFrame + 240u,
-              row->queueSuccessorSchedule.entryAnchorFrame);
+    EXPECT_EQ(row->QueuePayload().queueCompletionFrame + 240u,
+              row->QueueFiling().queueSuccessorSchedule.entryAnchorFrame);
 
     std::vector<std::uint64_t> audibleRuns;
     std::uint64_t currentRun = 0;
@@ -17679,31 +17679,31 @@ void RunPackQueueResetPreservesLogicalTrackCompletion(
         });
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_TRUE(row->queueContinuationPrepared);
-    ASSERT_EQ(0u, row->queueSuccessorScheduleLeafCount);
+    ASSERT_EQ(0u, row->QueueFiling().queueSuccessorScheduleLeafCount);
     if (logicalOnlyTrack) {
-        ASSERT_EQ(0u, row->queueSuccessorRenderHandle);
-        ASSERT_FALSE(row->queueSuccessorArm.Valid());
+        ASSERT_EQ(0u, row->QueuePayload().queueSuccessorRenderHandle);
+        ASSERT_FALSE(row->QueueFiling().queueSuccessorArm.Valid());
     } else {
-        ASSERT_NE(0u, row->queueSuccessorRenderHandle);
+        ASSERT_NE(0u, row->QueuePayload().queueSuccessorRenderHandle);
     }
-    ASSERT_TRUE(row->queueSuccessorHasZeroWorkCompletion);
+    ASSERT_TRUE(row->QueueFiling().queueSuccessorHasZeroWorkCompletion);
     post.actionId = kResetActionId;
     VnActionFiringHandle resetFiring = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&post, &resetFiring));
     ASSERT_FALSE(engine->runtimeRecreateRequired) << "after reset post";
     EXPECT_TRUE(row->queueContinuationPrepared);
-    EXPECT_FALSE(row->queueSameProgramKey);
-    ASSERT_EQ(0u, row->queueSuccessorScheduleLeafCount);
+    EXPECT_FALSE(row->QueueFiling().queueSameProgramKey);
+    ASSERT_EQ(0u, row->QueueFiling().queueSuccessorScheduleLeafCount);
     if (logicalOnlyTrack) {
-        ASSERT_EQ(0u, row->queueSuccessorRenderHandle);
-        ASSERT_FALSE(row->queueSuccessorArm.Valid());
+        ASSERT_EQ(0u, row->QueuePayload().queueSuccessorRenderHandle);
+        ASSERT_FALSE(row->QueueFiling().queueSuccessorArm.Valid());
     } else {
-        ASSERT_NE(0u, row->queueSuccessorRenderHandle);
+        ASSERT_NE(0u, row->QueuePayload().queueSuccessorRenderHandle);
     }
-    ASSERT_TRUE(row->queueSuccessorHasZeroWorkCompletion);
-    const std::uint64_t provisionalBoundary = row->queueSuccessorZeroWorkCompletionFrame;
+    ASSERT_TRUE(row->QueueFiling().queueSuccessorHasZeroWorkCompletion);
+    const std::uint64_t provisionalBoundary = row->QueueFiling().queueSuccessorZeroWorkCompletionFrame;
     const std::uint64_t authoredDuration = logicalOnlyTrack ? 960u : 4800u;
-    EXPECT_EQ(row->queueCompletionFrame + authoredDuration, provisionalBoundary);
+    EXPECT_EQ(row->QueuePayload().queueCompletionFrame + authoredDuration, provisionalBoundary);
     // The first normal service publishes the actual receiving frame. Verify
     // the same authored duration against that frame before promotion.
     for (std::uint32_t block = 0; block < 16u &&
@@ -17713,9 +17713,9 @@ void RunPackQueueResetPreservesLogicalTrackCompletion(
         ASSERT_EQ(VN_OK, Vn_Update());
     }
     ASSERT_FALSE(row->pendingImmediateEntry);
-    ASSERT_TRUE(row->queueSuccessorHasZeroWorkCompletion);
-    const std::uint64_t expectedBoundary = row->queueSuccessorZeroWorkCompletionFrame;
-    EXPECT_EQ(row->queueCompletionFrame + authoredDuration, expectedBoundary);
+    ASSERT_TRUE(row->QueueFiling().queueSuccessorHasZeroWorkCompletion);
+    const std::uint64_t expectedBoundary = row->QueueFiling().queueSuccessorZeroWorkCompletionFrame;
+    EXPECT_EQ(row->QueuePayload().queueCompletionFrame + authoredDuration, expectedBoundary);
     EXPECT_GE(expectedBoundary, provisionalBoundary);
 
     bool promoted = false;
@@ -17727,8 +17727,8 @@ void RunPackQueueResetPreservesLogicalTrackCompletion(
     }
     ASSERT_TRUE(promoted);
     EXPECT_EQ(expectedBoundary, row->zeroWorkCompletionFrame);
-    EXPECT_FALSE(row->queueSuccessorHasZeroWorkCompletion);
-    EXPECT_EQ(0u, row->queueSuccessorZeroWorkCompletionFrame);
+    EXPECT_FALSE(row->QueueFiling().queueSuccessorHasZeroWorkCompletion);
+    EXPECT_EQ(0u, row->QueueFiling().queueSuccessorZeroWorkCompletionFrame);
     const std::uint64_t currentFrame =
         engine->mixer.BlocksRendered() * engine->config.blockFrames;
     ASSERT_LT(currentFrame, expectedBoundary);
@@ -17750,7 +17750,7 @@ void RunPackQueueResetPreservesLogicalTrackCompletion(
     ASSERT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state);
     EXPECT_EQ(VN_ACTION_OUTCOME_CANCELLED, info.outcome);
     EXPECT_EQ(VN_ACTION_TERMINAL_STOP_REQUESTED, info.terminalReason);
-    EXPECT_EQ(0u, row->queueAbortedSuccessorOccurrence.generation);
+    EXPECT_EQ(0u, row->QueuePayload().queueAbortedSuccessorOccurrence.generation);
     ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(playFiring));
     ASSERT_EQ(VN_OK, Vn_DestroyEmitter(post.emitter));
 }
@@ -20524,10 +20524,10 @@ void ExpectShortVariableControlTargetPromotion(ContainerMatrixEntry entry, bool 
                 leaf = source->leaf;
                 leafEpoch = source->acceptedEpoch;
                 DecisionCommittedSnapshot decision{};
-                if (engine.decisions.CaptureCommitted(row->variableControlDiscreteRetargetDecision, &decision) &&
+                if (engine.decisions.CaptureCommitted(row->VariablePayload().variableControlDiscreteRetargetDecision, &decision) &&
                     decision.audioState == AudioGroupState::Admitted) {
                     admitted = true;
-                    decisionToken = row->variableControlDiscreteRetargetDecision;
+                    decisionToken = row->VariablePayload().variableControlDiscreteRetargetDecision;
                 }
                 SourceTerminalPayload result{};
                 if (engine.sourceTerminals.Capture(sourceToken, engine.mixer.BlocksRendered(), &result)) {
@@ -20544,7 +20544,7 @@ void ExpectShortVariableControlTargetPromotion(ContainerMatrixEntry entry, bool 
         SCOPED_TRACE(::testing::Message() << "prepared=" << row->variableControlDiscreteRetargetPrepared
             << " applied=" << row->variableControlDiscreteRetargetApplied
             << " exited=" << row->variableControlDiscreteRetargetSourceExited
-            << " targets=" << row->variableControlDiscreteRetargetTargetMemberCount
+            << " targets=" << row->VariablePayload().variableControlDiscreteRetargetTargetMemberCount
             << " lifecycle=" << static_cast<unsigned>(row->controlLifecycle)
             << " runtime=" << engine.runtimeRecreateRequired << " natural=" << natural
             << " start=" << startSequence << " source=" << sourceSequence
@@ -20663,8 +20663,8 @@ TEST(PackComposition, VariableControlPartialCompletionKeepsSurvivorsWithoutResta
         << " committed=" << row->variableControlRetargetDecisionCommitted
         << " applied=" << row->variableControlRetargetApplied
         << " final=" << row->variableControlRetargetMembershipFinalized
-        << " frame=" << row->variableControlRetargetFrame
-        << " end=" << row->variableControlRetargetEnvelopeEndFrame
+        << " frame=" << row->VariablePayload().variableControlRetargetFrame
+        << " end=" << row->VariablePayload().variableControlRetargetEnvelopeEndFrame
         << " now=" << engine.mixer.BlocksRendered() * 64u
         << " runtime=" << engine.runtimeRecreateRequired;
     std::size_t retainedSlot = 0;
@@ -21688,10 +21688,10 @@ void ExpectQueueSequenceBranchesAcrossEntry(ContainerMatrixEntry entry, std::uin
             for (const auto& service : engine.playableServices) {
                 if (!service.InvocationValid() || service.ownerInstance == root ||
                     !service.variableControlDiscreteRetargetPrepared ||
-                    !service.variableControlDiscreteRetargetDecision.Valid()) continue;
+                    !service.VariablePayload().variableControlDiscreteRetargetDecision.Valid()) continue;
                 ASSERT_TRUE(service.frontierLifetimeEntry.Valid());
                 DecisionCommittedSnapshot decision{};
-                if (!engine.decisions.CaptureCommitted(service.variableControlDiscreteRetargetDecision, &decision)) continue;
+                if (!engine.decisions.CaptureCommitted(service.VariablePayload().variableControlDiscreteRetargetDecision, &decision)) continue;
                 VariableControlInstanceSnapshot side{};
                 ASSERT_TRUE(engine.variableControlInstances.Capture(service.variableControlInstance, &side));
                 if (decision.audioState == AudioGroupState::AudioClaimed) {
@@ -21703,9 +21703,9 @@ void ExpectQueueSequenceBranchesAcrossEntry(ContainerMatrixEntry entry, std::uin
                 if (decision.audioState == AudioGroupState::Admitted) {
                     naturalCompletion = true;
                     EXPECT_EQ(VariableControlSideState::Committed, side.discrete.state);
-                    for (std::uint32_t source = 0; source < service.variableControlDiscreteRetargetSourceMemberCount; ++source) {
+                    for (std::uint32_t source = 0; source < service.VariablePayload().variableControlDiscreteRetargetSourceMemberCount; ++source) {
                         ArmState state{};
-                        ASSERT_TRUE(engine.timelineArms.State(service.variableControlDiscreteRetargetGroupArms[source], &state));
+                        ASSERT_TRUE(engine.timelineArms.State(service.DiscreteRetargetStorage().groupArms[source], &state));
                         EXPECT_EQ(ArmState::Tombstoned, state);
                     }
                 }
@@ -22580,7 +22580,7 @@ void ExpectMultiLeafContainerLoopCompletesAndReclaims(
             harkentest::ExpectTimelineInstallIdentity(*engine, run.renderHandles[i],
                 identityOwner, currentInstall->Facts().target,
                 run.startFrames[i], run.arms[i]);
-            const auto programs = resource->queueCurrentPrograms.Resolve(resource->queueCurrentProgramBank);
+            const auto programs = resource->QueuePayload().queueCurrentPrograms.Resolve(resource->QueuePayload().queueCurrentProgramBank);
             const ProgramView* schedule = &resource->schedule;
             if (currentMultiLeaf) {
                 ASSERT_LT(i, programs.size());
@@ -23497,7 +23497,7 @@ void RunContainerMatrixEntry(ContainerModeV1 mode, ContainerMatrixChild childKin
             ASSERT_NE(nullptr, record);
             observedSchedule = &record->schedule;
         } else {
-            const auto programs = row->queueCurrentPrograms.Resolve(row->queueCurrentProgramBank);
+            const auto programs = row->QueuePayload().queueCurrentPrograms.Resolve(row->QueuePayload().queueCurrentProgramBank);
             ASSERT_FALSE(programs.empty());
             observedSchedule = &programs[0];
         }
@@ -23948,18 +23948,18 @@ SharedQueueTrace RunRootQueuePackTrace(
         !row->queueContinuationPrepared) return trace;
     if (randomQueue) {
         EXPECT_EQ(expectedSeed.worldSemanticFingerprint,
-                  row->queueRandomSeed.worldSemanticFingerprint);
-        EXPECT_EQ(expectedSeed.callerSeed, row->queueRandomSeed.callerSeed);
+                  row->QueueRandomSeed().worldSemanticFingerprint);
+        EXPECT_EQ(expectedSeed.callerSeed, row->QueueRandomSeed().callerSeed);
         EXPECT_EQ(expectedSeed.acceptedPostOrdinal,
-                  row->queueRandomSeed.acceptedPostOrdinal);
-        EXPECT_EQ(expectedSeed.emitterSlot, row->queueRandomSeed.emitterSlot);
+                  row->QueueRandomSeed().acceptedPostOrdinal);
+        EXPECT_EQ(expectedSeed.emitterSlot, row->QueueRandomSeed().emitterSlot);
         EXPECT_EQ(expectedSeed.emitterGeneration,
-                  row->queueRandomSeed.emitterGeneration);
-        EXPECT_EQ(expectedSeed.resetEpoch, row->queueRandomSeed.resetEpoch);
+                  row->QueueRandomSeed().emitterGeneration);
+        EXPECT_EQ(expectedSeed.resetEpoch, row->QueueRandomSeed().resetEpoch);
     }
     if (outRandomSeed != nullptr) {
         if (!row->queueRandomSeedValid) return trace;
-        const auto& context = row->queueRandomSeed;
+        const auto& context = row->QueueRandomSeed();
         SelectionSeedInputV1 seed{};
         seed.worldSemanticFingerprint = context.worldSemanticFingerprint;
         seed.programStableId = row->root.stableId;
@@ -23971,8 +23971,8 @@ SharedQueueTrace RunRootQueuePackTrace(
         seed.rootStableId = context.rootStableId;
         seed.callerSeed = context.callerSeed;
         seed.acceptedPostOrdinal = context.acceptedPostOrdinal;
-        seed.queueCycleOrdinal = row->queueNextState.cycleOrdinal;
-        seed.selectionOrdinal = row->queueNextState.selectionOrdinal;
+        seed.queueCycleOrdinal = row->QueueNextState().cycleOrdinal;
+        seed.selectionOrdinal = row->QueueNextState().selectionOrdinal;
         seed.discipline = SelectionDisciplineV1::Rotation;
         if (!ComputeSelectionSeedV1(seed, outRandomSeed)) return trace;
     }
@@ -23990,12 +23990,12 @@ SharedQueueTrace RunRootQueuePackTrace(
         rootPlayback.activeChildEpoch == childView.scheduleEpoch;
     trace.parentEpoch = childView.scheduleEpoch;
     const auto current = row->selectedChildOrdinals[0];
-    const auto successor = row->queueNextState.currentChildOrdinal;
+    const auto successor = row->QueueNextState().currentChildOrdinal;
     if (current == successor ||
         !((current == 7u && successor == 8u) ||
           (current == 8u && successor == 7u))) return trace;
     const auto expectedSound = harkentest::ObjectId(successor == 8u ? 4512u : 4511u);
-    if (row->queueSuccessorLeaf.stableId != expectedSound) return trace;
+    if (row->QueueSuccessorLeaf().stableId != expectedSound) return trace;
     trace.selectedOrdinals = {current, successor};
     if (randomQueue) {
         EXPECT_EQ(expectedPermutation, trace.selectedOrdinals);

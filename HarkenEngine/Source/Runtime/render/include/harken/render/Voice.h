@@ -31,8 +31,12 @@
 #include "harken/render/SpatialMatrix.h"
 
 #include <algorithm>
+#include <cassert>
 #include <cstdint>
 #include <limits>
+#include <memory>
+#include <span>
+#include <type_traits>
 
 namespace harken {
 
@@ -163,24 +167,69 @@ struct VoiceSendSlot {
 };
 
 struct VoiceTimelineEvent {
-    TimelineEventKind kind = TimelineEventKind::Start;
+    struct StopPayload {
+        AuthoredStopOperationIdentity authoredStopOperation{};
+        MonitorControlCause controlCause{};
+    };
+    struct WeightPayload {
+        WeightSegmentV1 variableWeight{};
+        VariableWeightControlIdentity variableWeightOwner{};
+    };
+
+    VoiceTimelineEvent() noexcept = default;
+    explicit VoiceTimelineEvent(TimelineEventKind kind) noexcept : kind_(kind) {
+        if (kind == TimelineEventKind::Stop) std::construct_at(&payload_.stop);
+        else if (kind == TimelineEventKind::VariableWeight) std::construct_at(&payload_.weight);
+    }
+
+    TimelineEventKind Kind() const noexcept { return kind_; }
+    StopPayload& Stop() noexcept {
+        assert(kind_ == TimelineEventKind::Stop);
+        return payload_.stop;
+    }
+    const StopPayload& Stop() const noexcept {
+        assert(kind_ == TimelineEventKind::Stop);
+        return payload_.stop;
+    }
+    WeightPayload& Weight() noexcept {
+        assert(kind_ == TimelineEventKind::VariableWeight);
+        return payload_.weight;
+    }
+    const WeightPayload& Weight() const noexcept {
+        assert(kind_ == TimelineEventKind::VariableWeight);
+        return payload_.weight;
+    }
+
+private:
+    // A kind transition copies a complete event, including its active payload.
+    TimelineEventKind kind_ = TimelineEventKind::Start;
+
+public:
     std::uint16_t offset = 0;
     TimelineEnvelopeDirection envelopeDirection =
         TimelineEnvelopeDirection::FadeIn;
     bool authoredFadeOutCandidate = false;
     bool authoredRootStop = false;
+    bool firstOutputDeferred = false;
     std::uint64_t frame = 0;
     std::uint64_t endFrame = 0;
     std::uint64_t value = 0;
-    WeightSegmentV1 variableWeight{};
-    VariableWeightControlIdentity variableWeightOwner{};
-    bool firstOutputDeferred = false;
     const CurveLUT* envelopeCurve = nullptr;
     TimelineExecutionOrder order{};
-    AuthoredStopOperationIdentity authoredStopOperation{};
-    MonitorControlCause controlCause{};
     FrozenFrontierEventProof frontierProof{};
+
+private:
+    union Payload {
+        std::uint8_t empty;
+        StopPayload stop;
+        WeightPayload weight;
+        Payload() noexcept : empty{} {}
+    } payload_{};
 };
+
+static_assert(std::is_trivially_copyable_v<VoiceTimelineEvent>);
+static_assert(std::is_trivially_copy_assignable_v<VoiceTimelineEvent>);
+static_assert(std::is_trivially_destructible_v<VoiceTimelineEvent>);
 
 struct VoiceEventSpan {
     std::uint32_t renderGeneration = 0;
@@ -190,6 +239,28 @@ struct VoiceEventSpan {
 };
 
 struct VoiceRenderContext {
+    // Keep authoritative block eligibility state together; all owners and checks remain unchanged.
+    StreamRing* streamRing = nullptr;
+    std::uint32_t voiceSendActiveCount = 0;
+    std::uint32_t fxSlotCount = 0;
+    std::uint32_t variableWeightControlCount = 0;
+    std::uint32_t tailRemaining = 0;
+    std::uint32_t tailRearmPosition = kNoTailRearmPosition;
+    SourcePhase phase = SourcePhase::Done;
+    bool dynamicVoiceTapActive = false;
+    bool streamParkActive = false;
+    bool lpfEnabled = false;
+    bool hpfEnabled = false;
+    bool shelfEnabled = false;
+    bool highShelfEnabled = false;
+    bool variableWeightActive = false;
+    bool spatialMatrixDirty = true;
+    bool fading = false;
+    bool tailStarted = false;
+    bool timelineStopPending = false;
+    bool timelineFallbackStopActive = false;
+    bool authoredRootStopApplied = false;
+
     SourceTerminalRecord* sourceTerminal = nullptr;
     SourceTerminalToken sourceTerminalToken{};
     std::uint32_t sourceTerminalStreamGeneration = 0;
@@ -207,7 +278,6 @@ struct VoiceRenderContext {
     // be released and reused, and a parked voice can return in another slot,
     // without changing this route-facing identity.
     VnVoiceHandle dynamicSourceIdentity = 0;
-    bool dynamicVoiceTapActive = false;
     // Source: immutable registered PCM plus the read cursor.
     PCMView pcm;
     std::uint64_t srcCursor = 0;
@@ -246,7 +316,6 @@ struct VoiceRenderContext {
     // and no loop fields apply). The pointer is wired on the logic side
     // before the play command publishes it, and cleared on release after
     // the audio thread stores Retired into the ring's lifecycle word.
-    StreamRing* streamRing = nullptr;
     std::uint64_t streamRingToken = 0;
 
     std::uint64_t streamActivationStartFrame = 0;
@@ -257,7 +326,6 @@ struct VoiceRenderContext {
     std::uint32_t streamActivationLoopsRemaining = 1;
     std::uint32_t streamFeedActivationLoopsRemaining = 1;
 
-    bool streamParkActive = false;
     VnVoiceHandle streamParkPublicHandle = 0;
     std::uint64_t streamParkRequestSequence = 0;
 
@@ -287,9 +355,8 @@ struct VoiceRenderContext {
     // it is 0 the fold is bit-identical to the pre-send path (no tap captured,
     // no extra arena use), which preserves the no-send invariant.
     VoiceSendSlot voiceSends[kMaxVoiceSendSlots];
-    std::uint32_t voiceSendActiveCount = 0;
 
-    Resampler resampler;
+    ResamplerView resampler;
 
     // Insert-effect chain: a fixed-capacity slot array processed in
     // ascending order, with fxSlotCount slots active (the resolved
@@ -302,7 +369,6 @@ struct VoiceRenderContext {
     // never truncated); bypass only governs how much of the wet result the
     // blend keeps.
     InsertEffect fxSlots[kMaxFxSlotsPerVoice];
-    std::uint32_t fxSlotCount = 0;
     float fxBypassMix[kMaxFxSlotsPerVoice] = {};
     float fxBypassTarget[kMaxFxSlotsPerVoice] = {};
     bool fxBypassRamping[kMaxFxSlotsPerVoice] = {};
@@ -320,8 +386,6 @@ struct VoiceRenderContext {
     // is bit-transparent through this stage; enabling happens when a cutoff
     // is applied (control APIs land in a later segment; tests drive these
     // fields directly today).
-    bool lpfEnabled = false;
-    bool hpfEnabled = false;
     BiquadCoeffs lpfCoeffs;
     BiquadCoeffs hpfCoeffs;
     std::uint32_t lpfTailFrames = 0;
@@ -335,14 +399,12 @@ struct VoiceRenderContext {
 
     // Low and high shelves complete the fixed post-filter Tone Strip before
     // gain. A 0 dB shelf is disabled — an exact bypass, like the filters.
-    bool shelfEnabled = false;
     BiquadCoeffs shelfCoeffs;
     std::uint32_t shelfTailFrames = 0;
     BiquadState shelfState[kMaxChannels];
     BiquadTransitionState<kMaxChannels> shelfTransition;
     BiquadParameterGlide shelfGlide;
 
-    bool highShelfEnabled = false;
     BiquadCoeffs highShelfCoeffs;
     std::uint32_t highShelfTailFrames = 0;
     BiquadState highShelfState[kMaxChannels];
@@ -358,7 +420,6 @@ struct VoiceRenderContext {
     // N = ceil(rampMs * rate / 1000) produced samples; 0 snaps.
     OutputGain gain;
     OutputGain outputGain;
-    bool variableWeightActive = false;
     WeightSegmentV1 variableWeightSegment{};
     struct OwnedVariableWeight {
         VariableWeightControlIdentity owner{};
@@ -368,8 +429,7 @@ struct VoiceRenderContext {
         std::uint32_t initialRebaseGeneration = 0;
         double inverseSpan = 0.0;
     };
-    std::array<OwnedVariableWeight, kSelectionPathNodeCapacity> variableWeightControls{};
-    std::uint32_t variableWeightControlCount = 0;
+    std::span<OwnedVariableWeight> variableWeightControls{};
 
     bool ApplyVariableWeightControl(VariableWeightControlIdentity owner,
         const WeightSegmentV1& segment) noexcept {
@@ -409,7 +469,6 @@ struct VoiceRenderContext {
     std::uint32_t panChannel0 = 0;
     std::uint32_t panChannel1 = kInvalidPanChannel;
     float pan2d = 0.0f;
-    bool spatialMatrixDirty = true;
     bool spatialMatrixHasRendered = false;
     SpatialMatrixTransition spatialMatrix;
     float width = 0.0f; // 0 point source .. 1 full image
@@ -420,7 +479,6 @@ struct VoiceRenderContext {
     SpatialScalarTransition balanceRightTransition{1.0f, 1.0f, 1, 1, 1.0f};
 
     // Fade-stop: linear ramp to zero over fadeTotalFrames, then truncate.
-    bool fading = false;
     std::uint32_t fadeTotalFrames = 0;
     std::uint32_t fadeDoneFrames = 0;
     std::uint32_t fadeStartOffsetInBlock = 0;
@@ -434,10 +492,7 @@ struct VoiceRenderContext {
     // the right position rather than restarting. A state-preserving update
     // records the earliest serial contribution whose suffix must be rearmed
     // at the next aggregate computation. tailStarted marks that drain began.
-    bool tailStarted = false;
-    std::uint32_t tailRemaining = 0;
     std::uint32_t tailElapsed = 0;
-    std::uint32_t tailRearmPosition = kNoTailRearmPosition;
     // True when the suffix at tailRearmPosition (as it stood before any
     // update still pending in this rearm batch was applied) was already
     // reporting an infinite tail. Distinguishes "this batch's suffix was
@@ -465,7 +520,6 @@ struct VoiceRenderContext {
     std::uint32_t timelineArmGeneration = 0;
     ParentAudioGroupRef timelineParentGroup{};
     std::uint16_t timelineGroupMemberIndex = UINT16_MAX;
-    VoiceEventSpan timelineEvents{};
     struct TimelineEnvelopeState {
         bool active = false;
         bool fadeOut = false;
@@ -476,19 +530,15 @@ struct VoiceRenderContext {
     };
     TimelineEnvelopeState timelineEnvelopes[2]{};
     bool timelineFadeOutCoveredSample = false;
-    bool timelineStopPending = false;
     bool timelineStopAuthored = false;
-    bool timelineFallbackStopActive = false;
     std::uint32_t timelineStopOffset = 0;
     std::uint32_t timelineStopDeclickFrames = 0;
     std::uint64_t timelineStopFrame = UINT64_MAX;
     std::uint64_t timelineFallbackStopFrame = UINT64_MAX;
     std::uint64_t authoredRootStopFrame = UINT64_MAX;
     std::uint32_t authoredRootStopEvent = UINT32_MAX;
-    bool authoredRootStopApplied = false;
-    VoiceTimelineEvent authoredRootStopControl{};
+    VoiceTimelineEvent authoredRootStopControl{TimelineEventKind::Stop};
 
-    SourcePhase phase = SourcePhase::Done;
     StageResult lastResult; // most recent block's protocol facts
     CompletionProgressRow* completionProgress = nullptr;
     OccurrenceToken completionOccurrence{};
@@ -528,6 +578,8 @@ struct VoiceRenderContext {
     std::uint32_t monitorRenderGeneration = 0;
     float* monitorPreChain[kMaxChannels] = {};
     std::uint32_t monitorPreChainFrames = 0;
+    // Keep frequently read block state ahead of the large resident event array.
+    VoiceEventSpan timelineEvents{};
 };
 
 // True if any tail contribution at a position in [lo, hi) is currently
@@ -634,16 +686,19 @@ StageResult RenderVoiceBlock(VoiceRenderContext& ctx, BlockArena& arena,
                              float* const* busPlanes, std::uint32_t blockFrames,
                              std::uint32_t mixChannels = kOutputChannels,
                              std::uint32_t mixLayout = VN_CHANNEL_LAYOUT_STEREO,
-                             std::uint64_t sourceFrameBegin = 0);
+                             std::uint64_t sourceFrameBegin = 0,
+                             output_gain_detail::MonoStereoMixKernel monoStereoMix =
+                                 &output_gain_detail::MixMonoToStereoScaled);
 
 // The three phases RenderVoiceBlock is composed of, exposed so the mixer can
 // run the cascade phase across a worker pool while keeping the fold serial.
 //
 // Phase 1 (serial): reserve arena scratch for one voice's cascade — the source
 // scratch, the blend planes, and (when the voice has active sends) the
-// mix-layout-wide send tap — and resolve the block offset. This is the ONLY
-// phase that touches the arena, and it runs in slot order, so the allocation
-// sequence (and hence any degradation under a tight arena) is identical whether
+// mix-layout-wide send tap — and resolve the block offset. Blend and tap planes
+// may share storage because Run completes before Fold overwrites the tap image.
+// This is the only phase that touches the arena, and it runs in slot order, so
+// the allocation sequence (and hence tight-arena degradation) is identical whether
 // rendering is serial or fanned across workers. Returns true when the cascade
 // should run this block; false when the voice contributes nothing — a streamed
 // voice still prebuffering, or a scratch/blend shortfall — in which case
@@ -677,7 +732,9 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames);
 void FoldVoiceIntoBuses(VoiceRenderContext& ctx, float* const* busPlanes,
                         std::uint32_t blockFrames, std::uint32_t mixChannels,
                         std::uint32_t mixLayout,
-                        std::uint64_t sourceFrameBegin = 0);
+                        std::uint64_t sourceFrameBegin = 0,
+                             output_gain_detail::MonoStereoMixKernel monoStereoMix =
+                                 &output_gain_detail::MixMonoToStereoScaled);
 
 } // namespace harken
 

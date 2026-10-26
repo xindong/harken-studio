@@ -216,6 +216,79 @@ TEST(EngineQueueScheduleStorage, ZeroShapeAndMovedLoansRespectGlobalCapacity) {
     for (const auto& column : columns) EXPECT_EQ(0u, column.StorageBytes());
 }
 
+TEST(StableBackingPreparation, PartialPagePrefixRetainsContentsAndResumesAtTheSameAddress) {
+    harken::detail::StablePageReservation storage;
+    const auto page = storage.SystemPageBytes();
+    ASSERT_GT(page, 0u);
+    ASSERT_TRUE(storage.Reserve(8u * page, alignof(std::uint64_t)));
+    auto* const address = static_cast<unsigned char*>(storage.Address());
+    ASSERT_TRUE(storage.CommitThrough(3u * page - 1u));
+    ASSERT_EQ(3u * page, storage.CommittedBytes());
+    std::memset(address, 0x5a, 3u * page);
+
+    storage.SetCommitPageLimitForTests(2);
+    EXPECT_FALSE(storage.CommitThrough(6u * page - 1u));
+    ASSERT_EQ(5u * page, storage.CommittedBytes());
+    EXPECT_EQ(address, storage.Address());
+    EXPECT_TRUE(std::all_of(address, address + 3u * page,
+        [](unsigned char value) { return value == 0x5a; }));
+    EXPECT_TRUE(std::all_of(address + 3u * page, address + 5u * page,
+        [](unsigned char value) { return value == 0; }));
+    EXPECT_TRUE(storage.CommitThrough(5u * page));
+    EXPECT_FALSE(storage.CommitThrough(6u * page));
+    EXPECT_FALSE(storage.CommitThrough(storage.ReservedBytes() + 1u));
+    EXPECT_EQ(5u * page, storage.CommittedBytes());
+
+    storage.SetCommitPageLimitForTests(1);
+    ASSERT_TRUE(storage.CommitThrough(6u * page));
+    EXPECT_EQ(6u * page, storage.CommittedBytes());
+    EXPECT_TRUE(std::all_of(address + 5u * page, address + 6u * page,
+        [](unsigned char value) { return value == 0; }));
+    {
+        harken::memguard::AudioThreadScope audio;
+        EXPECT_FALSE(storage.CommitThrough(7u * page));
+    }
+    EXPECT_EQ(6u * page, storage.CommittedBytes());
+}
+
+TEST(StableBackingPreparation, SparsePageRetryPreservesLiveRunsAcrossDirectoryWords) {
+    harken::detail::StablePageReservation storage;
+    const auto page = storage.SystemPageBytes();
+    ASSERT_GT(page, 0u);
+    ASSERT_TRUE(storage.Reserve(70u * page, alignof(std::uint64_t), true));
+    auto* const address = static_cast<unsigned char*>(storage.Address());
+    ASSERT_TRUE(storage.CommitRange(60u * page, 2u * page));
+    ASSERT_TRUE(storage.CommitRange(65u * page, 2u * page));
+    std::memset(address + 60u * page, 0x5a, 2u * page);
+    std::memset(address + 65u * page, 0xa5, 2u * page);
+    storage.SetCommitPageLimitForTests(4);
+    EXPECT_FALSE(storage.CommitRange(59u * page, 10u * page));
+    ASSERT_EQ(8u * page, storage.CommittedBytes());
+    EXPECT_EQ(address, storage.Address());
+    for (const auto index : {59u, 62u, 63u, 64u})
+        EXPECT_TRUE(std::all_of(address + index * page, address + (index + 1u) * page,
+            [](unsigned char value) { return value == 0; }));
+    EXPECT_TRUE(storage.CommitRange(59u * page, 8u * page));
+    EXPECT_FALSE(storage.CommitRange(67u * page, page));
+    EXPECT_EQ(8u * page, storage.CommittedBytes());
+
+    storage.SetCommitPageLimitForTests(SIZE_MAX);
+    ASSERT_TRUE(storage.CommitRange(59u * page, 10u * page));
+    EXPECT_EQ(10u * page, storage.CommittedBytes());
+    EXPECT_TRUE(std::all_of(address + 60u * page, address + 62u * page,
+        [](unsigned char value) { return value == 0x5a; }));
+    EXPECT_TRUE(std::all_of(address + 65u * page, address + 67u * page,
+        [](unsigned char value) { return value == 0xa5; }));
+    for (const auto index : {67u, 68u})
+        EXPECT_TRUE(std::all_of(address + index * page, address + (index + 1u) * page,
+            [](unsigned char value) { return value == 0; }));
+    storage.SetCommitPageLimitForTests(0);
+    EXPECT_TRUE(storage.CommitThrough(0));
+    EXPECT_TRUE(storage.CommitRange(59u * page + 1u, 10u * page - 2u));
+    EXPECT_FALSE(storage.CommitRange(storage.ReservedBytes(), 1));
+    EXPECT_EQ(10u * page, storage.CommittedBytes());
+}
+
 TEST(StableBackingPreparation, DependenciesPrecedePublicationAndPreparedUseCannotGrow) {
     harken::StableRowStorage<std::uint64_t, std::size_t> rows, dependencies;
     ASSERT_TRUE(rows.Reserve(8));
@@ -517,6 +590,297 @@ VnConfig MakeNullConfig() {
     config.structSize = sizeof(VnConfig);
     config.deviceMode = VN_DEVICE_NULL;
     return config;
+}
+
+TEST(StableBackingPreparation, ServiceFeaturePromiseSurvivesResetAndFailedProtectedGrowth) {
+    auto config = MakeNullConfig();
+    config.maxVoices = 8;
+    harkentest::EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    ASSERT_NE(nullptr, engine.PrepareFreePlayableService(false));
+    EXPECT_EQ(0u, engine.initialQueueTimingProgramsScratch.ConstructedCount());
+    EXPECT_EQ(0u, engine.initialQueueTimingEventsScratch.ConstructedCount());
+    EXPECT_EQ(0u, engine.initialQueueTimingGroupsScratch.ConstructedCount());
+    EXPECT_EQ(nullptr, engine.variableControlRetargetScratch);
+    auto& timeline = engine.timelineStartScratch;
+    EXPECT_EQ(0u, timeline.starts.size());
+    EXPECT_EQ(0u, timeline.transactions.size());
+    EXPECT_EQ(0u, timeline.extraCommands.size());
+    EXPECT_EQ(0u, timeline.queueEvents.size());
+    harken::StableStoragePreparation backing;
+    engine.originalSingleCurrentHolders.SetCommitPageLimitForTests(0);
+    EXPECT_FALSE(engine.PreparePlayableServiceBacking(2, &backing));
+    EXPECT_FALSE(backing.Valid());
+    EXPECT_EQ(0u, engine.originalSingleCurrentHolders.CommittedBytes());
+    EXPECT_EQ(0u, engine.initialFrontierArmPins.capacity());
+    EXPECT_EQ(0u, engine.initialRootArmPublicationInputs.capacity());
+    EXPECT_FALSE(engine.runtimeRecreateRequired);
+    engine.originalSingleCurrentHolders.SetCommitPageLimitForTests(SIZE_MAX);
+    timeline.queueEvents.SetCommitPageLimitForTests(0);
+    EXPECT_FALSE(engine.PreparePlayableServiceBacking(2, &backing));
+    EXPECT_FALSE(backing.Valid());
+    EXPECT_EQ(0u, timeline.queueEvents.size());
+    EXPECT_FALSE(engine.runtimeRecreateRequired);
+    timeline.queueEvents.SetCommitPageLimitForTests(SIZE_MAX);
+    harken::detail::ArmLogicAllocFaultForTests(1,
+        harken::detail::LogicAllocSite::VariableControlRetargetStorage);
+    const auto refused = engine.PreparePlayableServiceBacking(2, &backing);
+    const auto remaining = harken::detail::g_logicAllocFault.remaining;
+    harken::detail::DisarmLogicAllocFaultForTests();
+    EXPECT_FALSE(refused);
+    EXPECT_EQ(0u, remaining);
+    EXPECT_FALSE(backing.Valid());
+    EXPECT_EQ(nullptr, engine.variableControlRetargetScratch);
+    ASSERT_TRUE(engine.PreparePlayableServiceBacking(2, &backing));
+    EXPECT_EQ(harken::kMaxKnownScheduleLeaves, timeline.starts.size());
+    EXPECT_EQ(2u * harken::kMaxKnownScheduleLeaves + 2u, timeline.transactions.size());
+    EXPECT_EQ(harken::kMaxKnownScheduleLeaves, timeline.extraCommands.size());
+    EXPECT_EQ(harken::EngineQueueProgramBank::kEventCapacity, timeline.queueEvents.size());
+    auto* starts = timeline.starts.data();
+    auto* transactions = timeline.transactions.data();
+    auto* extraCommands = timeline.extraCommands.data();
+    auto* queueEvents = timeline.queueEvents.data();
+    EXPECT_EQ(engine.originalSingleCurrentHolders.Capacity(), engine.originalSingleCurrentHolders.size());
+    EXPECT_EQ(engine.timelineArms.Capacity(), engine.initialFrontierArmPins.size());
+    EXPECT_EQ(engine.timelineArms.Capacity(), engine.initialRootArmPublicationInputs.size());
+    auto* currentHolders = engine.originalSingleCurrentHolders.data();
+    auto* frontierPins = engine.initialFrontierArmPins.data();
+    auto* publicationInputs = engine.initialRootArmPublicationInputs.data();
+    auto* retargetTree = engine.variableControlRetargetScratch.get();
+    ASSERT_NE(nullptr, retargetTree);
+    auto* policies = retargetTree->storage.frontierPolicies.data();
+    auto* containers = retargetTree->containerRows.data();
+    EXPECT_EQ(engine.config.maxPlayableInstances, retargetTree->storage.frontierPolicies.size());
+    EXPECT_EQ(engine.config.maxPlayableInstances, retargetTree->nestedInstances.size());
+    EXPECT_EQ(engine.config.maxPlayableInstances, retargetTree->containerRows.size());
+    EXPECT_EQ(harken::kSelectionPathNodeCapacity, retargetTree->selectionPlays.size());
+    EXPECT_GT(engine.initialQueueTimingProgramsScratch.ConstructedCount(), 0u);
+    EXPECT_GT(engine.initialQueueTimingEventsScratch.ConstructedCount(), 0u);
+    EXPECT_GT(engine.initialQueueTimingGroupsScratch.ConstructedCount(), 0u);
+    ASSERT_GE(engine.playableServices.size(), 2u);
+    auto& first = engine.playableServices[0];
+    auto* path = first.selectionPath.data();
+    ASSERT_NE(nullptr, path);
+    first.selectionPath[0].childOrdinal = 7;
+    auto* arms = first.QueueFiling().queueTransitionGroupArms.data();
+    ASSERT_NE(nullptr, arms);
+    auto* decision = &first.QueueFiling().queueDecision;
+    *decision = {1u, 2u};
+    first.QueueFiling().queueTransitionGroupArms[0] = {1u, 2u, 3u, 4u};
+    first.QueueFiling().queueTransitionGroupArmCount = 1;
+    first.QueueFiling().queueSuccessorProgramPlane = 2;
+    const harken::EngineOwnedQueueFutureFiling initial(first.QueueFiling());
+    harken::EngineOwnedQueueFutureFiling old(initial);
+    EXPECT_NE(arms, initial.queueTransitionGroupArms.data());
+    EXPECT_NE(arms, old.queueTransitionGroupArms.data());
+    EXPECT_NE(initial.queueTransitionGroupArms.data(), old.queueTransitionGroupArms.data());
+    first.QueueFiling().queueTransitionGroupArms[0].generation = 9;
+    auto* sourceCurve = &first.TransitionSourceFadeCurve();
+    auto* targetCurve = &first.TransitionTargetFadeCurve();
+    sourceCurve->values[harken::kCurveLutEntries] = 0.25f;
+    targetCurve->values[0] = 0.75f;
+    sourceCurve->xMax = 2.0f;
+    targetCurve->xMin = -1.0f;
+    auto* parentState = &first.QueueParentInitialState();
+    auto* resetState = &first.QueueParentResetInitialState();
+    auto* nextState = &first.QueueNextState();
+    parentState->version = 13;
+    resetState->cursor = 7;
+    nextState->currentChildOrdinal = 4;
+    parentState->randomInitialRecent.back() = 3;
+    resetState->randomInitialRecent.back() = 5;
+    nextState->randomInitialRecent.back() = 7;
+    auto* frozenWorld = &first.ContainerLoopWorld();
+    auto* retargetRuntime = &first.VariableControlDiscreteRetargetRuntimeProgram();
+    auto* retargetSchedule = &first.VariableControlDiscreteRetargetSchedule();
+    frozenWorld->generation = 9;
+    retargetRuntime->generation = 17;
+    retargetRuntime->payloadCount = 2;
+    retargetSchedule->runtimeProgram = {17, retargetRuntime};
+    retargetSchedule->entryAnchorFrame = 1024;
+    auto* initialGroup = &first.InitialLaneDiscreteGroup();
+    auto* cancellation = &first.VariableControlContinuousGroupCancellation();
+    auto* incoming = &first.VariableControlRetargetIncoming();
+    auto* deferredSource = &first.QueueDeferredSource();
+    initialGroup->pageGeneration = 23;
+    cancellation->memberCount = 3;
+    incoming->leaves.push_back({9, 4});
+    deferredSource->arm.generation = 31;
+    auto* retargetStorage = &first.DiscreteRetargetStorage();
+    retargetStorage->groupArms.resize(1);
+    retargetStorage->payloads.resize(1);
+    retargetStorage->enteringPayloads.resize(1);
+    retargetStorage->runtimePrograms.resize(1);
+    retargetStorage->enteringRuntimePrograms.resize(1);
+    retargetStorage->events.resize(1);
+    retargetStorage->enteringEvents.resize(1);
+    retargetStorage->schedules.resize(1);
+    retargetStorage->enteringSchedules.resize(1);
+    auto* queueViews = &first.QueueRuntimeViews();
+    auto* sourceRuntime = &queueViews->queueSourceRuntimeProgram;
+    auto* successorRuntime = &queueViews->queueSuccessorRuntimeProgram;
+    harken::TimelineEventPayload sourcePayload{};
+    harken::EventTemplate sourceEvent{};
+    harken::ProgramView sourceSchedule{};
+    queueViews->queueSourcePayloads = {&sourcePayload, 1};
+    queueViews->queueSourceEvents = {&sourceEvent, 1};
+    queueViews->queueSourceRuntimePrograms = {sourceRuntime, 1};
+    queueViews->queueSourceSchedules = {&sourceSchedule, 1};
+    sourceRuntime->generation = 41;
+    sourceRuntime->payloads = &sourcePayload;
+    sourceRuntime->payloadCount = 1;
+    *successorRuntime = *sourceRuntime;
+    auto* variablePayload = &first.VariablePayload();
+    auto* queuePayload = &first.QueuePayload();
+    auto* logicalOrdinals = variablePayload->variableControlRetargetLogicalOrdinals.data();
+    auto* currentArms = queuePayload->queueInitialCurrentDelayedArms.data();
+    ASSERT_NE(nullptr, logicalOrdinals);
+    ASSERT_NE(nullptr, currentArms);
+    variablePayload->variableControlRetargetDecision = {3, 5};
+    variablePayload->variableControlRetargetLogicalOrdinals[variablePayload->variableControlRetargetLogicalOrdinals.size() - 1] = 19;
+    variablePayload->variableControlRetargetMembers.resize(1);
+    queuePayload->queueCurrentOccurrence = {7, 11};
+    queuePayload->queueInitialCurrentDelayedArms[queuePayload->queueInitialCurrentDelayedArms.size() - 1] = {1, 2, 3, 4};
+    first.Reset();
+    EXPECT_EQ(variablePayload, &first.VariablePayload());
+    EXPECT_EQ(queuePayload, &first.QueuePayload());
+    EXPECT_EQ(logicalOrdinals, variablePayload->variableControlRetargetLogicalOrdinals.data());
+    EXPECT_EQ(currentArms, queuePayload->queueInitialCurrentDelayedArms.data());
+    EXPECT_FALSE(variablePayload->variableControlRetargetDecision.Valid());
+    EXPECT_EQ(0u, variablePayload->variableControlRetargetLogicalOrdinals[variablePayload->variableControlRetargetLogicalOrdinals.size() - 1]);
+    EXPECT_EQ(0u, variablePayload->variableControlRetargetMembers.capacity());
+    EXPECT_EQ(0u, queuePayload->queueCurrentOccurrence.generation);
+    EXPECT_FALSE(queuePayload->queueInitialCurrentDelayedArms[queuePayload->queueInitialCurrentDelayedArms.size() - 1].Valid());
+    EXPECT_EQ(queueViews, &first.QueueRuntimeViews());
+    EXPECT_EQ(sourceRuntime, &queueViews->queueSourceRuntimeProgram);
+    EXPECT_EQ(successorRuntime, &queueViews->queueSuccessorRuntimeProgram);
+    EXPECT_TRUE(queueViews->queueSourcePayloads.empty());
+    EXPECT_TRUE(queueViews->queueSourceEvents.empty());
+    EXPECT_TRUE(queueViews->queueSourceRuntimePrograms.empty());
+    EXPECT_TRUE(queueViews->queueSourceSchedules.empty());
+    for (const auto* runtime : {sourceRuntime, successorRuntime}) {
+        EXPECT_EQ(0u, runtime->generation);
+        EXPECT_EQ(nullptr, runtime->payloads);
+        EXPECT_EQ(0u, runtime->payloadCount);
+    }
+    EXPECT_EQ(path, first.selectionPath.data());
+    EXPECT_EQ(0u, first.selectionPath[0].childOrdinal);
+    EXPECT_EQ(sourceCurve, &first.TransitionSourceFadeCurve());
+    EXPECT_EQ(targetCurve, &first.TransitionTargetFadeCurve());
+    EXPECT_EQ(0.0f, sourceCurve->values[harken::kCurveLutEntries]);
+    EXPECT_EQ(0.0f, targetCurve->values[0]);
+    EXPECT_EQ(0.0f, sourceCurve->xMax);
+    EXPECT_EQ(0.0f, targetCurve->xMin);
+    EXPECT_EQ(parentState, &first.QueueParentInitialState());
+    EXPECT_EQ(resetState, &first.QueueParentResetInitialState());
+    EXPECT_EQ(nextState, &first.QueueNextState());
+    EXPECT_EQ(0u, parentState->version);
+    EXPECT_EQ(0u, resetState->cursor);
+    EXPECT_EQ(0u, nextState->currentChildOrdinal);
+    EXPECT_EQ(0u, parentState->randomInitialRecent.back());
+    EXPECT_EQ(0u, resetState->randomInitialRecent.back());
+    EXPECT_EQ(0u, nextState->randomInitialRecent.back());
+    EXPECT_EQ(frozenWorld, &first.ContainerLoopWorld());
+    EXPECT_EQ(retargetRuntime, &first.VariableControlDiscreteRetargetRuntimeProgram());
+    EXPECT_EQ(retargetSchedule, &first.VariableControlDiscreteRetargetSchedule());
+    EXPECT_EQ(0u, frozenWorld->generation);
+    EXPECT_EQ(0u, retargetRuntime->generation);
+    EXPECT_EQ(0u, retargetRuntime->payloadCount);
+    EXPECT_EQ(nullptr, retargetSchedule->runtimeProgram.program);
+    EXPECT_EQ(0u, retargetSchedule->entryAnchorFrame);
+    EXPECT_EQ(initialGroup, &first.InitialLaneDiscreteGroup());
+    EXPECT_EQ(cancellation, &first.VariableControlContinuousGroupCancellation());
+    EXPECT_EQ(incoming, &first.VariableControlRetargetIncoming());
+    EXPECT_EQ(deferredSource, &first.QueueDeferredSource());
+    EXPECT_EQ(0u, initialGroup->pageGeneration);
+    EXPECT_EQ(0u, cancellation->memberCount);
+    EXPECT_TRUE(incoming->leaves.empty());
+    EXPECT_EQ(0u, incoming->StorageBytes());
+    EXPECT_EQ(0u, deferredSource->arm.generation);
+    EXPECT_EQ(retargetStorage, &first.DiscreteRetargetStorage());
+    EXPECT_EQ(0u, std::max({
+        retargetStorage->groupArms.capacity(),
+        retargetStorage->payloads.capacity(),
+        retargetStorage->enteringPayloads.capacity(),
+        retargetStorage->runtimePrograms.capacity(),
+        retargetStorage->enteringRuntimePrograms.capacity(),
+        retargetStorage->events.capacity(),
+        retargetStorage->enteringEvents.capacity(),
+        retargetStorage->schedules.capacity(),
+        retargetStorage->enteringSchedules.capacity()}));
+    EXPECT_EQ(arms, first.QueueFiling().queueTransitionGroupArms.data());
+    EXPECT_FALSE(first.QueueFiling().queueTransitionGroupArms[0].Valid());
+    EXPECT_EQ(0u, first.QueueFiling().queueTransitionGroupArmCount);
+    EXPECT_EQ(decision, &first.QueueFiling().queueDecision);
+    EXPECT_FALSE(decision->Valid());
+    EXPECT_EQ(1u, first.QueueFiling().queueSuccessorProgramPlane);
+    EXPECT_EQ(2u, initial.queueTransitionGroupArms[0].generation);
+    EXPECT_EQ(2u, old.queueTransitionGroupArms[0].generation);
+    first.QueueFiling() = initial;
+    EXPECT_EQ(arms, first.QueueFiling().queueTransitionGroupArms.data());
+    EXPECT_EQ(2u, first.QueueFiling().queueTransitionGroupArms[0].generation);
+    EXPECT_EQ(1u, first.QueueFiling().queueTransitionGroupArmCount);
+    EXPECT_EQ(2u, first.QueueFiling().queueSuccessorProgramPlane);
+    auto* oldArms = old.queueTransitionGroupArms.data();
+    old = harken::EngineOwnedQueueFutureFiling{};
+    EXPECT_EQ(oldArms, old.queueTransitionGroupArms.data());
+    EXPECT_FALSE(old.queueTransitionGroupArms[0].Valid());
+    old = initial;
+    EXPECT_EQ(oldArms, old.queueTransitionGroupArms.data());
+    EXPECT_EQ(2u, old.queueTransitionGroupArms[0].generation);
+    first.Reset();
+
+    // Occupy the current prefix so growth must preserve the promised spare rows.
+    for (auto& row : engine.playableServices) row.actionPrepared = true;
+    const auto prefix = engine.playableServices.size();
+    struct FaultGuard {
+        ~FaultGuard() { harken::detail::DisarmLogicAllocFaultForTests(); }
+    } fault;
+    harken::detail::ArmLogicAllocFaultForTests(2,
+        harken::detail::LogicAllocSite::PlayableServiceFeatures);
+    EXPECT_EQ(nullptr, engine.PrepareFreePlayableService(false));
+    ASSERT_GT(engine.playableServices.size(), prefix);
+    EXPECT_TRUE(backing.Valid());
+    EXPECT_EQ(variablePayload, &first.VariablePayload());
+    EXPECT_EQ(queuePayload, &first.QueuePayload());
+    harken::detail::DisarmLogicAllocFaultForTests();
+    auto* recovered = engine.PrepareFreePlayableService(false);
+    ASSERT_NE(nullptr, recovered);
+    for (const auto& row : engine.playableServices) EXPECT_TRUE(row.HasFeatureArrays());
+    {
+        const auto use = backing.Use();
+        engine.originalSingleCurrentHolders.SetCommitPageLimitForTests(0);
+        EXPECT_TRUE(engine.PrepareOriginalSingleCurrentStorage());
+        EXPECT_TRUE(engine.PreparePlayablePublicationStorage());
+        EXPECT_EQ(currentHolders, engine.originalSingleCurrentHolders.data());
+        EXPECT_EQ(frontierPins, engine.initialFrontierArmPins.data());
+        EXPECT_EQ(publicationInputs, engine.initialRootArmPublicationInputs.data());
+        timeline.starts.SetCommitPageLimitForTests(0);
+        timeline.transactions.SetCommitPageLimitForTests(0);
+        timeline.extraCommands.SetCommitPageLimitForTests(0);
+        timeline.queueEvents.SetCommitPageLimitForTests(0);
+        EXPECT_TRUE(engine.PrepareTimelineStartStorage());
+        EXPECT_EQ(starts, timeline.starts.data());
+        EXPECT_EQ(transactions, timeline.transactions.data());
+        EXPECT_EQ(extraCommands, timeline.extraCommands.data());
+        EXPECT_EQ(queueEvents, timeline.queueEvents.data());
+        harken::detail::ArmLogicAllocFaultForTests(1,
+            harken::detail::LogicAllocSite::VariableControlRetargetStorage);
+        EXPECT_TRUE(engine.PreparePlayableFeatureBacking());
+        EXPECT_EQ(1u, harken::detail::g_logicAllocFault.remaining);
+        EXPECT_EQ(retargetTree, engine.variableControlRetargetScratch.get());
+        EXPECT_EQ(policies, retargetTree->storage.frontierPolicies.data());
+        EXPECT_EQ(containers, retargetTree->containerRows.data());
+        harken::detail::ArmLogicAllocFaultForTests(1,
+            harken::detail::LogicAllocSite::PlayableServiceFeatures);
+        EXPECT_TRUE(engine.PreparePlayableFeatureBacking());
+        EXPECT_EQ(recovered, engine.PrepareFreePlayableService(false));
+        EXPECT_EQ(variablePayload, &first.VariablePayload());
+        EXPECT_EQ(queuePayload, &first.QueuePayload());
+        EXPECT_EQ(1u, harken::detail::g_logicAllocFault.remaining);
+    }
+    for (auto& row : engine.playableServices) row.actionPrepared = false;
 }
 
 TEST(CapacityContract, StartupDefaultsAre256AndExplicitCapacitiesRemainEffective) {
@@ -1062,7 +1426,10 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     testing::Test::RecordProperty("invocation_pending_stop_capacity_bytes",
         std::to_string(engine->playableStarts.size() * sizeof(harken::PlayableRetirementObserver)));
     testing::Test::RecordProperty("timeline_start_scratch_bytes", std::to_string(sizeof(harken::EngineTimelineStartScratch)));
-    testing::Test::RecordProperty("timeline_start_transaction_count", std::to_string(engine->timelineStartScratch.transactions.size()));
+    testing::Test::RecordProperty("timeline_start_transaction_count", std::to_string(engine->timelineStartScratch.transactions.Capacity()));
+    testing::Test::RecordProperty("timeline_start_constructed_bytes", std::to_string(
+        engine->timelineStartScratch.starts.RequestedBytes() + engine->timelineStartScratch.transactions.RequestedBytes() +
+        engine->timelineStartScratch.extraCommands.RequestedBytes() + engine->timelineStartScratch.queueEvents.RequestedBytes()));
     testing::Test::RecordProperty("timeline_start_two_coordinators_bytes", std::to_string(2u * sizeof(harken::PreparedTransactionBatch)));
     testing::Test::RecordProperty("frontier_completion_proof_row_bytes", std::to_string(sizeof(harken::TimelineArmTable::BoundAudioProof)));
     testing::Test::RecordProperty("frontier_completion_proof_capacity_bytes",
@@ -1184,6 +1551,9 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
         ASSERT_TRUE(lane.Finish(laneHandle.slot, bucket, true));
         ASSERT_TRUE(lane.Retire(laneHandle));
     };
+    EXPECT_FALSE(laneConsumer.Capture(0));
+    EXPECT_FALSE(laneConsumer.Capture(0));
+    laneConsumer.Finish();
     publishLaneWork();
     ASSERT_TRUE(laneConsumer.Capture(1));
     laneConsumer.Discard();
