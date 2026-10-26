@@ -5289,6 +5289,11 @@ VnResult ApplyCapturePlan(VnMonitorSessionHandle handle,
             return VN_MONITOR_BUDGET_EXCEEDED;
         }
     }
+    if ((accepted.streamKindMask & VN_MONITOR_STREAM_OPTIONAL_AUDIO) != 0 &&
+        !owner.engine->voices.PrepareMonitorPreChainBacking()) {
+        ReleaseFailedSlot(&slot);
+        return VN_MONITOR_BUDGET_EXCEEDED;
+    }
     slot.occupancy = SlotOccupancy::Pending;
     slot.empty = PlanLooksEmpty(accepted);
     slot.quarantined = false;
@@ -6298,7 +6303,8 @@ bool TimeSeriesLiveArmed() {
 }
 
 bool AudioLiveArmed() {
-    return Owner().liveAudioArmed.load(std::memory_order_relaxed) != 0;
+    // Capture publication follows preparation of every monitor input buffer.
+    return Owner().liveAudioArmed.load(std::memory_order_acquire) != 0;
 }
 
 bool LiveTapKindArmed(std::uint32_t tapKind) {

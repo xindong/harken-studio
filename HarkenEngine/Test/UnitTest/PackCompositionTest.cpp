@@ -21703,7 +21703,7 @@ void ExpectQueueSequenceBranchesAcrossEntry(ContainerMatrixEntry entry, std::uin
                     EXPECT_EQ(VariableControlSideState::Committed, side.discrete.state);
                     for (std::uint32_t source = 0; source < service.variableControlDiscreteRetargetSourceMemberCount; ++source) {
                         ArmState state{};
-                        ASSERT_TRUE(engine.timelineArms.State(service.variableControlDiscreteRetargetGroupArms[source], &state));
+                        ASSERT_TRUE(engine.timelineArms.State(service.DiscreteRetargetStorage().groupArms[source], &state));
                         EXPECT_EQ(ArmState::Tombstoned, state);
                     }
                 }

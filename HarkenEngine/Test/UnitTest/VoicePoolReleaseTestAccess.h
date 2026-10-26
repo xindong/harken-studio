@@ -10,6 +10,16 @@ struct VoicePoolReleaseTestAccess {
     static void SetRingCommitPageLimit(VoicePool& pool, std::uint32_t channel, std::size_t pages) {
         pool.m_ringStorage[channel].SetCommitPageLimitForTests(pages);
     }
+    static void SetMonitorPreChainCommitPageLimit(VoicePool& pool, std::size_t pages) {
+        for (auto& channel : pool.m_monitorPreChainStorage)
+            channel.SetCommitPageLimitForTests(pages);
+    }
+    static std::size_t MonitorPreChainStorageBytes(const VoicePool& pool) {
+        std::size_t bytes = 0;
+        for (const auto& channel : pool.m_monitorPreChainStorage)
+            bytes += channel.RequestedBytes();
+        return bytes;
+    }
     struct OriginalCallbackObservation {
         bool reader = false;
         bool storageHeld = false;

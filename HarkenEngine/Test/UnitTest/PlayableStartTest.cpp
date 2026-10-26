@@ -7808,7 +7808,7 @@ TEST(PlayableStart,
     ASSERT_EQ(2u, row->variableControlDiscreteRetargetGroupMemberCount);
     for (std::uint32_t index = 0; index < armsBefore.size(); ++index) {
         ASSERT_TRUE(engine->timelineArms.Observe(
-            row->variableControlDiscreteRetargetGroupArms[index],
+            row->DiscreteRetargetStorage().groupArms[index],
             &armsBefore[index]));
     }
     harken::VariableControlInstanceSnapshot sideBefore{};
@@ -7872,7 +7872,7 @@ TEST(PlayableStart,
     bool armsPreserved = true;
     for (std::uint32_t index = 0; index < armsWhileClaimed.size(); ++index) {
         armsPreserved = engine->timelineArms.Observe(
-                            row->variableControlDiscreteRetargetGroupArms[index],
+                            row->DiscreteRetargetStorage().groupArms[index],
                             &armsWhileClaimed[index]) &&
             armsWhileClaimed[index].state == armsBefore[index].state &&
             armsPreserved;
@@ -9434,7 +9434,7 @@ TEST_P(ClaimedVariableControlSliceCancellationTest,
     std::array<harken::TimelineArmObservation, 2> armsBefore{};
     for (std::uint32_t index = 0; index < armsBefore.size(); ++index) {
         ASSERT_TRUE(engine->timelineArms.Observe(
-            row->variableControlDiscreteRetargetGroupArms[index],
+            row->DiscreteRetargetStorage().groupArms[index],
             &armsBefore[index]));
     }
     harken::VariableControlInstanceSnapshot sideBefore{};
@@ -9517,7 +9517,7 @@ TEST_P(ClaimedVariableControlSliceCancellationTest,
     bool armsPreserved = true;
     for (std::uint32_t index = 0; index < armsWhileClaimed.size(); ++index) {
         armsPreserved = engine->timelineArms.Observe(
-                            row->variableControlDiscreteRetargetGroupArms[index],
+                            row->DiscreteRetargetStorage().groupArms[index],
                             &armsWhileClaimed[index]) &&
             armsWhileClaimed[index].state == armsBefore[index].state &&
             armsPreserved;
@@ -20443,7 +20443,7 @@ TEST(PlayableStart,
         EXPECT_EQ(decisionFrame + 192u,
                   entering[eventBase + 1u].envelopeEndFrame);
         EXPECT_EQ(2u,
-                  row->variableControlDiscreteRetargetEnteringRuntimePrograms[
+                  row->DiscreteRetargetStorage().enteringRuntimePrograms[
                           index]
                       .payloadCount);
     }
@@ -20726,7 +20726,7 @@ TEST(PlayableStart,
         row->variableControlDiscreteRetargetFrame;
     for (std::uint32_t index = 0; index < sourceVoices.size(); ++index) {
         const auto& runtime =
-            row->variableControlDiscreteRetargetRuntimePrograms[index];
+            row->DiscreteRetargetStorage().runtimePrograms[index];
         ASSERT_EQ(2u, runtime.payloadCount);
         EXPECT_EQ(harken::TimelineEventKind::Envelope,
                   runtime.payloads[0].kind);
@@ -20849,7 +20849,7 @@ TEST(PlayableStart,
               row->variableControlDiscreteRetargetSourceMemberCount);
     for (std::uint32_t index = 0; index < sourceVoices.size(); ++index) {
         const auto& runtime =
-            row->variableControlDiscreteRetargetRuntimePrograms[index];
+            row->DiscreteRetargetStorage().runtimePrograms[index];
         ASSERT_EQ(1u, runtime.payloadCount);
         EXPECT_EQ(harken::TimelineEventKind::Envelope,
                   runtime.payloads[0].kind);

@@ -302,6 +302,7 @@ public:
     bool AttachSlotStoragePreparation(SlotStorageRegistration& registration,
         void* context, SlotStorageRegistration::Prepare prepare) noexcept;
     bool PrepareSlotBacking(std::uint32_t count, StableStoragePreparation* out) noexcept;
+    bool PrepareMonitorPreChainBacking() noexcept;
     bool PrepareSlotWorkingSet(std::uint32_t renderSlot, std::uint32_t channelCount,
         ResampleProfile profile = ResampleProfile::LegacyCompatibility,
         bool prepareOwnedWeights = true, std::uint32_t highRatioChannels = 0) noexcept;
@@ -1236,6 +1237,7 @@ private:
     std::uint32_t m_jobBlockFrames = 0; // block width for the in-flight batch
     std::uint64_t m_jobSourceFrameBegin = 0;
     std::array<StableRowStorage<float>, kMaxChannels> m_monitorPreChainStorage;
+    std::atomic<bool> m_monitorPreChainPrepared{false};
     std::uint64_t m_workerBusyPeakTicks = 0; // running peak, audio-thread-owned
 };
 

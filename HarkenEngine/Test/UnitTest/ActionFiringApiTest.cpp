@@ -1193,7 +1193,7 @@ void ExpectVariableControlRetargetTree(
                       : row.rootInstance,
                   leaf.parent);
         const auto& schedule =
-            row.variableControlDiscreteRetargetEnteringSchedules[index];
+            row.DiscreteRetargetStorage().enteringSchedules[index];
         EXPECT_EQ(row.VariableControlRetargetIncoming().leaves[index].handle,
                   schedule.ownerInstance);
         EXPECT_EQ(row.VariableControlRetargetIncoming().leaves[index].epoch,
@@ -5255,7 +5255,7 @@ void ExpectScheduleCapacityVariableControlTransitionCompletes(
 
     for (std::uint32_t index = 0; index < group.memberCount; ++index) {
         const harken::TimelineArmToken expected =
-            row->variableControlDiscreteRetargetGroupArms[index];
+            row->DiscreteRetargetStorage().groupArms[index];
         EXPECT_EQ(expected.slot, group.members[index].slot);
         EXPECT_EQ(expected.generation, group.members[index].generation);
         harken::TimelineArmObservation observation{};
@@ -31705,7 +31705,7 @@ void ExpectNaturalEndVariableControlTransitionUsesLatestCompositeSourceLeaf(
     const std::uint64_t fadeStart = latestNaturalEnd - 1024u;
     for (std::uint32_t index = 0; index < sourceVoices.size(); ++index) {
         const auto& runtime =
-            row->variableControlDiscreteRetargetRuntimePrograms[index];
+            row->DiscreteRetargetStorage().runtimePrograms[index];
         ASSERT_EQ(1u, runtime.payloadCount);
         EXPECT_EQ(harken::TimelineEventKind::Envelope,
                   runtime.payloads[0].kind);
@@ -62842,7 +62842,7 @@ TEST(ActionFiringApi, PreinitPageFutureAOneGraphPublishedAndRetired) {
     const auto future = preparedGroup.identity;
     const auto memberDecision = row->variableControlDiscreteRetargetDecision;
     const auto armGroup = row->variableControlDiscreteRetargetArmGroup;
-    const auto targetArm = row->variableControlDiscreteRetargetGroupArms[0];
+    const auto targetArm = row->DiscreteRetargetStorage().groupArms[0];
     const auto targetChild = row->variableControlDiscreteRetargetIncomingChild;
     const auto targetLeaf = row->VariableControlRetargetIncoming().leaves[0].handle;
     const auto targetEpoch = row->VariableControlRetargetIncoming().leaves[0].epoch;
@@ -63336,7 +63336,7 @@ TEST(ActionFiringApi, PreinitPageFutureATwoGraphsSamePage) {
         ASSERT_TRUE(row->frontierLifetimePin.Valid());
         graph.decision = row->variableControlDiscreteRetargetDecision;
         graph.armGroup = row->variableControlDiscreteRetargetArmGroup;
-        graph.arm = row->variableControlDiscreteRetargetGroupArms[0];
+        graph.arm = row->DiscreteRetargetStorage().groupArms[0];
         graph.targetLeaf = row->VariableControlRetargetIncoming().leaves[0].handle;
         graph.targetEpoch = row->VariableControlRetargetIncoming().leaves[0].epoch;
         ASSERT_TRUE(graph.decision.Valid());
@@ -63903,7 +63903,7 @@ TEST(ActionFiringApi, PreinitPageFutureAFourGraphsTwoPages) {
             ASSERT_TRUE(row->frontierLifetimePin.Valid());
             graph.decision = row->variableControlDiscreteRetargetDecision;
             graph.armGroup = row->variableControlDiscreteRetargetArmGroup;
-            graph.arm = row->variableControlDiscreteRetargetGroupArms[0];
+            graph.arm = row->DiscreteRetargetStorage().groupArms[0];
             graph.targetLeaf = row->VariableControlRetargetIncoming().leaves[0].handle;
             graph.targetEpoch = row->VariableControlRetargetIncoming().leaves[0].epoch;
             ASSERT_TRUE(graph.decision.Valid());
@@ -64574,7 +64574,7 @@ TEST(ActionFiringApi, PreinitPageFutureAFourGraphsAdjacentF2Period144) {
         ASSERT_TRUE(row->frontierLifetimePin.Valid());
         graph.decision = row->variableControlDiscreteRetargetDecision;
         graph.armGroup = row->variableControlDiscreteRetargetArmGroup;
-        graph.arm = row->variableControlDiscreteRetargetGroupArms[0];
+        graph.arm = row->DiscreteRetargetStorage().groupArms[0];
         graph.targetLeaf = row->VariableControlRetargetIncoming().leaves[0].handle;
         graph.targetEpoch = row->VariableControlRetargetIncoming().leaves[0].epoch;
         ASSERT_TRUE(graph.decision.Valid());
@@ -66091,7 +66091,7 @@ static void RunP100FullLoadFixture(P100FullLoadArenaTrial* arenaTrial) {
         ASSERT_NE(nullptr, row);
         graph.decision = row->variableControlDiscreteRetargetDecision;
         graph.armGroup = row->variableControlDiscreteRetargetArmGroup;
-        graph.arm = row->variableControlDiscreteRetargetGroupArms[0];
+        graph.arm = row->DiscreteRetargetStorage().groupArms[0];
         ASSERT_TRUE(graph.decision.Valid());
         ASSERT_TRUE(graph.armGroup.Valid());
         ASSERT_TRUE(graph.arm.Valid());

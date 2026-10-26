@@ -656,6 +656,16 @@ TEST(StableBackingPreparation, ServiceFeaturePromiseSurvivesResetAndFailedProtec
     cancellation->memberCount = 3;
     incoming->leaves.push_back({9, 4});
     deferredSource->arm.generation = 31;
+    auto* retargetStorage = &first.DiscreteRetargetStorage();
+    retargetStorage->groupArms.resize(1);
+    retargetStorage->payloads.resize(1);
+    retargetStorage->enteringPayloads.resize(1);
+    retargetStorage->runtimePrograms.resize(1);
+    retargetStorage->enteringRuntimePrograms.resize(1);
+    retargetStorage->events.resize(1);
+    retargetStorage->enteringEvents.resize(1);
+    retargetStorage->schedules.resize(1);
+    retargetStorage->enteringSchedules.resize(1);
     first.Reset();
     EXPECT_EQ(path, first.selectionPath.data());
     EXPECT_EQ(0u, first.selectionPath[0].childOrdinal);
@@ -691,6 +701,17 @@ TEST(StableBackingPreparation, ServiceFeaturePromiseSurvivesResetAndFailedProtec
     EXPECT_TRUE(incoming->leaves.empty());
     EXPECT_EQ(0u, incoming->StorageBytes());
     EXPECT_EQ(0u, deferredSource->arm.generation);
+    EXPECT_EQ(retargetStorage, &first.DiscreteRetargetStorage());
+    EXPECT_EQ(0u, std::max({
+        retargetStorage->groupArms.capacity(),
+        retargetStorage->payloads.capacity(),
+        retargetStorage->enteringPayloads.capacity(),
+        retargetStorage->runtimePrograms.capacity(),
+        retargetStorage->enteringRuntimePrograms.capacity(),
+        retargetStorage->events.capacity(),
+        retargetStorage->enteringEvents.capacity(),
+        retargetStorage->schedules.capacity(),
+        retargetStorage->enteringSchedules.capacity()}));
     EXPECT_EQ(arms, first.QueueFiling().queueTransitionGroupArms.data());
     EXPECT_FALSE(first.QueueFiling().queueTransitionGroupArms[0].Valid());
     EXPECT_EQ(0u, first.QueueFiling().queueTransitionGroupArmCount);

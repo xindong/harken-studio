@@ -1722,7 +1722,20 @@ private:
     std::array<TimelineArmToken, 2u * kMaxKnownScheduleLeaves> arms_{};
 };
 
+struct EngineDiscreteRetargetStorage {
+    std::vector<TimelineArmToken> groupArms;
+    std::vector<TimelineEventPayload> payloads;
+    std::vector<TimelineEventPayload> enteringPayloads;
+    std::vector<TimelineProgramView> runtimePrograms;
+    std::vector<TimelineProgramView> enteringRuntimePrograms;
+    std::vector<EventTemplate> events;
+    std::vector<EventTemplate> enteringEvents;
+    std::vector<ProgramView> schedules;
+    std::vector<ProgramView> enteringSchedules;
+};
+
 struct EngineServiceFeatureArrays {
+    EngineDiscreteRetargetStorage discreteRetarget;
     EngineQueueFutureFilingLayout queueFiling{};
     struct UnpublishedVariableGroupCancellation {
         EnginePlayableServiceToken service{};
@@ -1973,8 +1986,6 @@ public:
     BankVersionToken variableControlDiscreteRetargetBank{};
     TimelineArmToken variableControlDiscreteRetargetArm{};
     TimelineArmToken variableControlDiscreteRetargetEnteringArm{};
-    std::vector<TimelineArmToken>
-        variableControlDiscreteRetargetGroupArms{};
     std::uint32_t variableControlDiscreteRetargetGroupMemberCount = 0;
     std::uint32_t variableControlDiscreteRetargetSourceMemberCount = 0;
     std::uint32_t variableControlDiscreteRetargetTargetMemberCount = 0;
@@ -1994,22 +2005,6 @@ public:
     std::uint32_t variableControlDiscreteRetargetIncomingSelectionCount = 0;
     ArmGroupToken variableControlDiscreteRetargetArmGroup{};
     PreparedGroupToken variableControlDiscreteRetargetPages{};
-    std::vector<TimelineEventPayload>
-        variableControlDiscreteRetargetPayloads{};
-    std::vector<TimelineEventPayload>
-        variableControlDiscreteRetargetEnteringPayloads{};
-    std::vector<TimelineProgramView>
-        variableControlDiscreteRetargetRuntimePrograms{};
-    std::vector<TimelineProgramView>
-        variableControlDiscreteRetargetEnteringRuntimePrograms{};
-    std::vector<EventTemplate>
-        variableControlDiscreteRetargetEvents{};
-    std::vector<EventTemplate>
-        variableControlDiscreteRetargetEnteringEvents{};
-    std::vector<ProgramView>
-        variableControlDiscreteRetargetSchedules{};
-    std::vector<ProgramView>
-        variableControlDiscreteRetargetEnteringSchedules{};
     std::uint64_t variableControlDiscreteRetargetFrame = 0;
     std::uint64_t variableControlDiscreteRetargetEndFrame = 0;
     std::uint64_t variableControlDiscreteRetargetZeroWorkCompletionFrame = 0;
@@ -2426,6 +2421,14 @@ public:
         assert(featureArrays_ != nullptr);
         return featureArrays_->variableControlDiscreteRetargetEnteringSchedule;
     }
+    EngineDiscreteRetargetStorage& DiscreteRetargetStorage() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->discreteRetarget;
+    }
+    const EngineDiscreteRetargetStorage& DiscreteRetargetStorage() const noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->discreteRetarget;
+    }
     std::size_t FeatureArrayStorageBytes() const noexcept {
         return featureArrays_ == nullptr ? 0u : sizeof(EngineServiceFeatureArrays);
     }
@@ -2524,6 +2527,7 @@ public:
             [](const auto& token) noexcept { return token.Valid(); }));
         auto memberDirectory = std::move(members);
         ClearFeatureArrays();
+        if (featureArrays_ != nullptr) featureArrays_->discreteRetarget = {};
         auto featureArrays = std::move(featureArrays_);
         // Reinitialize the stable row in place; a full temporary overflows the
         // producer stack when nested preparation rolls back at capacity.

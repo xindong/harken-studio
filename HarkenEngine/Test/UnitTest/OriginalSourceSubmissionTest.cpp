@@ -3,6 +3,8 @@
 #include "Engine.h"
 #include "CommandQueueSubmissionTestAccess.h"
 #include "VoicePoolReleaseTestAccess.h"
+#include "MonitorCaptureHub.h"
+#include "MonitorCaptureHubTestHooks.h"
 #include "harken/render/BuiltinEffects.h"
 #include "harken/core/PrivateOriginalQueueGroupClockProof.h"
 #include "harken/core/PrivateSelectedQueueFutureSpan.h"
@@ -18,6 +20,7 @@
 #include <array>
 #include <cmath>
 #include <memory>
+#include <limits>
 #include <span>
 #include <vector>
 
@@ -5614,6 +5617,56 @@ void CheckRegisteredDeferredRecovery(int mode) {
     ASSERT_NO_FATAL_FAILURE(DeferRegisteredVariableWorkerSource(engine, episode, gate));
     const auto completed = engine.mixer.BlocksRendered();
     const auto slot = static_cast<std::uint32_t>(episode.body.source);
+    VnMonitorSessionHandle capture = 0;
+    float* originalPreChain = nullptr;
+    if (mode == 0) {
+        EXPECT_EQ(0u, NativeCallbackAccess::MonitorPreChainStorageBytes(engine.voices));
+        ASSERT_FALSE(harken::monitor::AudioLiveArmed());
+        const auto* context = engine.voices.Resolve(episode.body.source);
+        ASSERT_NE(nullptr, context);
+        originalPreChain = context->monitorPreChain[0];
+        ASSERT_NE(nullptr, originalPreChain);
+        VnMonitorSessionDesc desc{};
+        desc.structSize = sizeof(desc);
+        desc.requestedStreamKindMask = VN_MONITOR_STREAM_EVENT | VN_MONITOR_STREAM_STATE |
+            VN_MONITOR_STREAM_OPTIONAL_AUDIO;
+        desc.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS |
+            VN_MONITOR_PERM_OBSERVE_STATE | VN_MONITOR_PERM_OBSERVE_MEASUREMENTS |
+            VN_MONITOR_PERM_CAPTURE_CONTROL | VN_MONITOR_PERM_RAW_AUDIO;
+        desc.consumerQueueBytes = 65536;
+        ASSERT_EQ(VN_OK, Vn_MonitorOpenSession(&desc, &capture));
+        VnMonitorCaptureControlStatus lease{};
+        lease.structSize = sizeof(lease);
+        ASSERT_EQ(VN_OK, Vn_MonitorAcquireCaptureControl(capture, &lease));
+        VnMonitorTapDescriptor tap{};
+        tap.structSize = sizeof(tap);
+        tap.tapKind = VN_MONITOR_TAP_VOICE_PRE_CHAIN;
+        tap.ownerKind = VN_MONITOR_ENTITY_VOICE;
+        tap.selectorMode = VN_MONITOR_TAP_SELECTOR_FOLLOW_SLOT;
+        tap.slotId = slot;
+        VnMonitorCapturePlan plan{};
+        plan.structSize = sizeof(plan);
+        plan.streamKindMask = VN_MONITOR_STREAM_OPTIONAL_AUDIO;
+        plan.tapCount = 1;
+        plan.downsample = 1;
+        plan.taps = &tap;
+        VnMonitorEffectiveCapturePlan accepted{};
+        accepted.structSize = sizeof(accepted);
+        NativeCallbackAccess::SetMonitorPreChainCommitPageLimit(engine.voices, 0);
+        EXPECT_EQ(VN_MONITOR_BUDGET_EXCEEDED,
+            Vn_MonitorApplyCapturePlan(capture, lease.leaseGeneration, &plan, &accepted));
+        EXPECT_FALSE(harken::monitor::AudioLiveArmed());
+        NativeCallbackAccess::SetMonitorPreChainCommitPageLimit(
+            engine.voices, std::numeric_limits<std::size_t>::max());
+        ASSERT_EQ(VN_OK,
+            Vn_MonitorApplyCapturePlan(capture, lease.leaseGeneration, &plan, &accepted));
+        EXPECT_GT(NativeCallbackAccess::MonitorPreChainStorageBytes(engine.voices), 0u);
+        EXPECT_EQ(originalPreChain, context->monitorPreChain[0]);
+        harken::monitor::AdvanceExecuteFrameForTests(1);
+        ASSERT_TRUE(harken::monitor::AudioLiveArmed());
+        EXPECT_EQ(completed, engine.mixer.BlocksRendered());
+        EXPECT_FALSE(gate.leftClaimGate.load(std::memory_order_acquire));
+    }
     const bool queuedStop = mode == 2 || mode == 3;
     const auto consumedBefore = engine.commands.ConsumedCount();
     if (queuedStop) {
@@ -5649,6 +5702,15 @@ void CheckRegisteredDeferredRecovery(int mode) {
         std::this_thread::yield();
     }
     ASSERT_EQ(completed + 1u, engine.mixer.BlocksRendered());
+    if (capture != 0) {
+        const auto* context = engine.voices.Resolve(episode.body.source);
+        ASSERT_NE(nullptr, context);
+        EXPECT_EQ(originalPreChain, context->monitorPreChain[0]);
+        ASSERT_EQ(kFrames, context->monitorPreChainFrames);
+        for (std::uint32_t frame = 0; frame < kFrames; ++frame)
+            EXPECT_NEAR(0.25f, originalPreChain[frame], 1.0e-5f);
+        EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(capture));
+    }
     if (queuedStop) EXPECT_EQ(consumedBefore, engine.commands.ConsumedCount());
     EXPECT_GT(CurrentPeak(engine), 0.1f);
     EXPECT_EQ(static_cast<std::uint32_t>(episode.body.source >> 32),

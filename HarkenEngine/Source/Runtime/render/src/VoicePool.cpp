@@ -60,9 +60,11 @@ bool VoicePool::PrepareRenderSlotBacking(std::uint32_t count, std::uint32_t chan
     bool firstOutput, std::uint32_t highRatioChannels) noexcept {
     if (count > m_slots.Capacity() || channelCount > kMaxChannels ||
         highRatioChannels > kMaxChannels) return false;
+    const bool monitorPrepared = m_monitorPreChainPrepared.load(std::memory_order_acquire);
     for (std::uint32_t ch = 0; ch < channelCount; ++ch) {
         if (!m_ringStorage[ch].ConstructThrough(count) ||
-            !m_monitorPreChainStorage[ch].ConstructThrough(count * m_blockFrames)) return false;
+            (monitorPrepared &&
+             !m_monitorPreChainStorage[ch].ConstructThrough(count * m_blockFrames))) return false;
     }
     highRatioChannels = std::max(channelCount, highRatioChannels);
     for (std::uint32_t ch = 0; ch < highRatioChannels; ++ch)
@@ -77,13 +79,27 @@ bool VoicePool::PrepareRenderSlotBacking(std::uint32_t count, std::uint32_t chan
     return true;
 }
 
+bool VoicePool::PrepareMonitorPreChainBacking() noexcept {
+    if (m_monitorPreChainPrepared.load(std::memory_order_acquire)) return true;
+    if (memguard::IsAudioTagged() || m_slots.PreparedUseActive()) return false;
+    // Include every held source prefix before capture can become live.
+    for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
+        if (!m_monitorPreChainStorage[ch].ConstructThrough(
+                m_ringStorage[ch].ConstructedCount() * m_blockFrames)) return false;
+    }
+    m_monitorPreChainPrepared.store(true, std::memory_order_release);
+    return true;
+}
+
 bool VoicePool::RenderSlotBackingReady(std::uint32_t count, std::uint32_t channelCount,
     std::uint32_t highRatioChannels) const noexcept {
     if (count > m_slots.Capacity() || channelCount > kMaxChannels ||
         highRatioChannels > kMaxChannels) return false;
+    const bool monitorPrepared = m_monitorPreChainPrepared.load(std::memory_order_acquire);
     for (std::uint32_t ch = 0; ch < channelCount; ++ch) {
         if (m_ringStorage[ch].ConstructedCount() < count ||
-            m_monitorPreChainStorage[ch].ConstructedCount() < count * m_blockFrames) return false;
+            (monitorPrepared &&
+             m_monitorPreChainStorage[ch].ConstructedCount() < count * m_blockFrames)) return false;
     }
     highRatioChannels = std::max(channelCount, highRatioChannels);
     for (std::uint32_t ch = 0; ch < highRatioChannels; ++ch)

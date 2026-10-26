@@ -235,15 +235,16 @@ std::size_t Engine::ActionPlayDynamicBytes() const noexcept {
             row.variableControlMemberWeights.StorageBytes() + row.variableControlInitialArms.StorageBytes() +
             (row.HasFeatureArrays() ? row.VariableControlRetargetIncoming().StorageBytes() : 0u) +
             column(row.variableControlControllers) + column(row.variableControlContainers) +
-            column(row.variableControlDiscreteRetargetGroupArms) +
-            column(row.variableControlDiscreteRetargetPayloads) +
-            column(row.variableControlDiscreteRetargetEnteringPayloads) +
-            column(row.variableControlDiscreteRetargetEvents) +
-            column(row.variableControlDiscreteRetargetEnteringEvents) +
-            column(row.variableControlDiscreteRetargetRuntimePrograms) +
-            column(row.variableControlDiscreteRetargetEnteringRuntimePrograms) +
-            column(row.variableControlDiscreteRetargetSchedules) +
-            column(row.variableControlDiscreteRetargetEnteringSchedules);
+            (row.HasFeatureArrays() ?
+                column(row.DiscreteRetargetStorage().groupArms) +
+                column(row.DiscreteRetargetStorage().payloads) +
+                column(row.DiscreteRetargetStorage().enteringPayloads) +
+                column(row.DiscreteRetargetStorage().events) +
+                column(row.DiscreteRetargetStorage().enteringEvents) +
+                column(row.DiscreteRetargetStorage().runtimePrograms) +
+                column(row.DiscreteRetargetStorage().enteringRuntimePrograms) +
+                column(row.DiscreteRetargetStorage().schedules) +
+                column(row.DiscreteRetargetStorage().enteringSchedules) : 0u);
     }
     return bytes + memberProgramRecords.RequestedBytes() +
         playableMemberRecords.RequestedBytes() + memberRelations.RequestedBytes() +
@@ -12752,7 +12753,7 @@ void ReleaseVariableControlOccupancy(
     for (std::uint32_t index = 0;
          index < row.variableControlDiscreteRetargetGroupMemberCount;
          ++index) {
-        dropArm(row.variableControlDiscreteRetargetGroupArms[index]);
+        dropArm(row.DiscreteRetargetStorage().groupArms[index]);
     }
     dropArm(row.variableControlDiscreteRetargetArm);
     dropArm(row.variableControlDiscreteRetargetEnteringArm);
@@ -12787,7 +12788,7 @@ void ReleaseVariableControlOccupancy(
             retireGroupMember(row.variableControlRetargetArmGroup, member.arm);
     }
     retireGroupMembers(row.variableControlDiscreteRetargetArmGroup,
-                       row.variableControlDiscreteRetargetGroupArms.data(),
+                       row.HasFeatureArrays() ? row.DiscreteRetargetStorage().groupArms.data() : nullptr,
                        row.variableControlDiscreteRetargetGroupMemberCount);
 
     const auto retireDecision = [&](harken::DecisionToken decision,
@@ -31228,15 +31229,15 @@ bool PrepareDiscreteRetargetStorage(harken::Engine& engine,
             std::fill(column.begin(), column.end(), Value{});
             return true;
         };
-        if (!(prepare(row.variableControlDiscreteRetargetGroupArms, sourcePrograms + enteringPrograms) &&
-            prepare(row.variableControlDiscreteRetargetPayloads, sourceEvents) &&
-            prepare(row.variableControlDiscreteRetargetEvents, sourceEvents) &&
-            prepare(row.variableControlDiscreteRetargetRuntimePrograms, sourcePrograms) &&
-            prepare(row.variableControlDiscreteRetargetSchedules, sourcePrograms) &&
-            prepare(row.variableControlDiscreteRetargetEnteringPayloads, enteringEvents) &&
-            prepare(row.variableControlDiscreteRetargetEnteringEvents, enteringEvents) &&
-            prepare(row.variableControlDiscreteRetargetEnteringRuntimePrograms, enteringPrograms) &&
-            prepare(row.variableControlDiscreteRetargetEnteringSchedules, enteringPrograms))) return false;
+        if (!(prepare(row.DiscreteRetargetStorage().groupArms, sourcePrograms + enteringPrograms) &&
+            prepare(row.DiscreteRetargetStorage().payloads, sourceEvents) &&
+            prepare(row.DiscreteRetargetStorage().events, sourceEvents) &&
+            prepare(row.DiscreteRetargetStorage().runtimePrograms, sourcePrograms) &&
+            prepare(row.DiscreteRetargetStorage().schedules, sourcePrograms) &&
+            prepare(row.DiscreteRetargetStorage().enteringPayloads, enteringEvents) &&
+            prepare(row.DiscreteRetargetStorage().enteringEvents, enteringEvents) &&
+            prepare(row.DiscreteRetargetStorage().enteringRuntimePrograms, enteringPrograms) &&
+            prepare(row.DiscreteRetargetStorage().enteringSchedules, enteringPrograms))) return false;
         if (incoming == nullptr) return true;
         auto& storage = row.VariableControlRetargetIncoming();
         const auto prepareIncoming = [&](auto& column, std::uint32_t count) {
@@ -31514,31 +31515,31 @@ engine.runtimeRecreateRequired = true;
     }
 
     for (std::uint32_t index = 0; index < sourceMemberCount; ++index) {
-        auto& stop = row.variableControlDiscreteRetargetPayloads[index];
+        auto& stop = row.DiscreteRetargetStorage().payloads[index];
         stop.kind = harken::TimelineEventKind::Stop;
         stop.reserved = harken::kTimelineEventTransientControlArm;
         stop.target = engine.ReadPlayableMember(sourceSlots[index]).voice.Facts().target;
         stop.envelopeEndFrame = decisionFrame;
-        auto& event = row.variableControlDiscreteRetargetEvents[index];
+        auto& event = row.DiscreteRetargetStorage().events[index];
         event.logicCommitSequence = ticket;
         event.eventIndex = index;
         event.transactionOrdinal = index;
         event.subeventPhase = 50;
         event.armToken = exitingArms[index];
         auto& runtime =
-            row.variableControlDiscreteRetargetRuntimePrograms[index];
+            row.DiscreteRetargetStorage().runtimePrograms[index];
         runtime.generation = row.rootInstance;
         runtime.payloads =
-            row.variableControlDiscreteRetargetPayloads.data() + index;
+            row.DiscreteRetargetStorage().payloads.data() + index;
         runtime.payloadCount = 1;
         auto& schedule =
-            row.variableControlDiscreteRetargetSchedules[index];
+            row.DiscreteRetargetStorage().schedules[index];
         schedule.ownerInstance = row.rootInstance;
         schedule.ownerInstanceScheduleEpoch = instance.scheduleEpoch;
         schedule.transactionId = ticket;
         schedule.entryAnchorFrame = decisionFrame;
         schedule.events =
-            row.variableControlDiscreteRetargetEvents.data() + index;
+            row.DiscreteRetargetStorage().events.data() + index;
         schedule.eventCount = 1;
         schedule.runtimeProgram = {row.rootInstance, &runtime};
         schedule.armToken = exitingArms[index];
@@ -31547,7 +31548,7 @@ engine.runtimeRecreateRequired = true;
     row.VariableControlDiscreteRetargetRuntimeProgram().generation =
         row.rootInstance;
     row.VariableControlDiscreteRetargetRuntimeProgram().payloads =
-        row.variableControlDiscreteRetargetPayloads.data();
+        row.DiscreteRetargetStorage().payloads.data();
     row.VariableControlDiscreteRetargetRuntimeProgram().payloadCount =
         sourceMemberCount;
     row.VariableControlDiscreteRetargetSchedule() = {};
@@ -31559,7 +31560,7 @@ engine.runtimeRecreateRequired = true;
     row.VariableControlDiscreteRetargetSchedule().entryAnchorFrame =
         decisionFrame;
     row.VariableControlDiscreteRetargetSchedule().events =
-        row.variableControlDiscreteRetargetEvents.data();
+        row.DiscreteRetargetStorage().events.data();
     row.VariableControlDiscreteRetargetSchedule().eventCount =
         sourceMemberCount;
     row.VariableControlDiscreteRetargetSchedule().runtimeProgram = {
@@ -31569,7 +31570,7 @@ engine.runtimeRecreateRequired = true;
     bool postedAll = true;
     for (std::uint32_t index = 0; index < sourceMemberCount; ++index) {
         postedAll = postedAll && starts.PrepareProgram(
-            row.variableControlDiscreteRetargetSchedules[index]);
+            row.DiscreteRetargetStorage().schedules[index]);
     }
     harken::Plan03GroupSliceInput slice{};
     slice.executeFrame = decisionFrame;
@@ -31635,9 +31636,9 @@ engine.runtimeRecreateRequired = true;
     row.variableControlDiscreteRetargetBank = bank;
     row.variableControlDiscreteRetargetArm = exitingArms[0];
     row.variableControlDiscreteRetargetEnteringArm = {};
-    std::ranges::fill(row.variableControlDiscreteRetargetGroupArms, harken::TimelineArmToken{});
+    std::ranges::fill(row.DiscreteRetargetStorage().groupArms, harken::TimelineArmToken{});
     for (std::uint32_t index = 0; index < sourceMemberCount; ++index) {
-        row.variableControlDiscreteRetargetGroupArms[index] =
+        row.DiscreteRetargetStorage().groupArms[index] =
             exitingArms[index];
     }
     row.variableControlDiscreteRetargetGroupMemberCount = sourceMemberCount;
@@ -32131,13 +32132,13 @@ engine.runtimeRecreateRequired = true;
             (void)engine.decisions.ReclaimCancelled(decision);
             return VariableRetargetPrepareStatus::Retry;
         }
-        auto& payload = &owner == &row ? row.variableControlDiscreteRetargetPayloads[index]
+        auto& payload = &owner == &row ? row.DiscreteRetargetStorage().payloads[index]
             : record->payloads[0];
         payload = {};
         payload.kind = harken::TimelineEventKind::Start;
         payload.reserved = harken::kTimelineEventTransientStartArm;
         payload.target = capturedTargets[index].Facts().target;
-        auto& event = &owner == &row ? row.variableControlDiscreteRetargetEvents[index]
+        auto& event = &owner == &row ? row.DiscreteRetargetStorage().events[index]
             : record->events[0];
         event = {};
         event.logicCommitSequence = ticket;
@@ -32145,14 +32146,14 @@ engine.runtimeRecreateRequired = true;
         event.transactionOrdinal = index;
         event.subeventPhase = 20;
         event.armToken = installedTargets[index].armToken;
-        auto& runtime = &owner == &row ? row.variableControlDiscreteRetargetRuntimePrograms[index]
+        auto& runtime = &owner == &row ? row.DiscreteRetargetStorage().runtimePrograms[index]
             : record->runtime;
         runtime = {};
         if (record != nullptr) runtime.readFence = &record->readFence;
         runtime.generation = incomingLeaves[index];
         runtime.payloads = &payload;
         runtime.payloadCount = 1;
-        auto& schedule = &owner == &row ? row.variableControlDiscreteRetargetSchedules[index]
+        auto& schedule = &owner == &row ? row.DiscreteRetargetStorage().schedules[index]
             : record->schedule;
         schedule = {};
         targetPrograms[index] = &schedule;
@@ -32178,7 +32179,7 @@ engine.runtimeRecreateRequired = true;
     row.VariableControlDiscreteRetargetRuntimeProgram().generation =
         row.rootInstance;
     row.VariableControlDiscreteRetargetRuntimeProgram().payloads =
-        row.variableControlDiscreteRetargetPayloads.data();
+        row.DiscreteRetargetStorage().payloads.data();
     row.VariableControlDiscreteRetargetRuntimeProgram().payloadCount =
         targetSchedule.leafCount;
     row.VariableControlDiscreteRetargetSchedule() = {};
@@ -32190,7 +32191,7 @@ engine.runtimeRecreateRequired = true;
     row.VariableControlDiscreteRetargetSchedule().entryAnchorFrame =
         decisionFrame;
     row.VariableControlDiscreteRetargetSchedule().events =
-        row.variableControlDiscreteRetargetEvents.data();
+        row.DiscreteRetargetStorage().events.data();
     row.VariableControlDiscreteRetargetSchedule().eventCount =
         targetSchedule.leafCount;
     row.VariableControlDiscreteRetargetSchedule().runtimeProgram = {
@@ -32368,10 +32369,10 @@ engine.runtimeRecreateRequired = true;
             : installedTargets[0].armToken;
     row.variableControlDiscreteRetargetEnteringArm =
         row.variableControlDiscreteRetargetArm;
-    std::ranges::fill(row.variableControlDiscreteRetargetGroupArms, harken::TimelineArmToken{});
+    std::ranges::fill(row.DiscreteRetargetStorage().groupArms, harken::TimelineArmToken{});
     for (std::uint32_t index = 0; index < targetSchedule.leafCount;
          ++index) {
-        row.variableControlDiscreteRetargetGroupArms[index] =
+        row.DiscreteRetargetStorage().groupArms[index] =
             installedTargets[index].armToken;
     }
     row.variableControlDiscreteRetargetGroupMemberCount =
@@ -33035,20 +33036,20 @@ engine.runtimeRecreateRequired = true;
         rollbackBeforeInstall();
         return VariableRetargetPrepareStatus::Retry;
     }
-    std::ranges::fill(row.variableControlDiscreteRetargetGroupArms, harken::TimelineArmToken{});
+    std::ranges::fill(row.DiscreteRetargetStorage().groupArms, harken::TimelineArmToken{});
     for (std::uint32_t index = 0; index < sourceMemberCount; ++index) {
-        row.variableControlDiscreteRetargetGroupArms[index] =
+        row.DiscreteRetargetStorage().groupArms[index] =
             exitingArms[index];
     }
     for (std::uint32_t index = 0; index < targetSchedule.leafCount;
          ++index) {
-        row.variableControlDiscreteRetargetGroupArms[
+        row.DiscreteRetargetStorage().groupArms[
             sourceMemberCount + index] =
             installedTargets[index].armToken;
     }
     if (!starts.PrepareArmGroup(
             decision,
-            row.variableControlDiscreteRetargetGroupArms.data(),
+            row.DiscreteRetargetStorage().groupArms.data(),
             static_cast<std::uint16_t>(groupMemberCount),
             &group)) {
         rollbackBeforeInstall();
@@ -33104,10 +33105,10 @@ engine.runtimeRecreateRequired = true;
             return VariableRetargetPrepareStatus::Retry;
         }
         auto* payloads = &resourceOwner == &row
-            ? row.variableControlDiscreteRetargetEnteringPayloads.data() + eventBase
+            ? row.DiscreteRetargetStorage().enteringPayloads.data() + eventBase
             : record->payloads.data();
         auto* events = &resourceOwner == &row
-            ? row.variableControlDiscreteRetargetEnteringEvents.data() + eventBase
+            ? row.DiscreteRetargetStorage().enteringEvents.data() + eventBase
             : record->events.data();
         auto& start = payloads[0];
         start = {};
@@ -33143,7 +33144,7 @@ engine.runtimeRecreateRequired = true;
             fadeEvent.armToken = installed.armToken;
         }
         auto& runtime = &resourceOwner == &row
-            ? row.variableControlDiscreteRetargetEnteringRuntimePrograms[index]
+            ? row.DiscreteRetargetStorage().enteringRuntimePrograms[index]
             : record->runtime;
         runtime = {};
         if (record != nullptr) runtime.readFence = &record->readFence;
@@ -33151,7 +33152,7 @@ engine.runtimeRecreateRequired = true;
         runtime.payloads = payloads;
         runtime.payloadCount = enteringEventsPerTarget;
         auto& schedule = &resourceOwner == &row
-            ? row.variableControlDiscreteRetargetEnteringSchedules[index]
+            ? row.DiscreteRetargetStorage().enteringSchedules[index]
             : record->schedule;
         schedule = {};
         targetPrograms[index] = &schedule;
@@ -33178,7 +33179,7 @@ engine.runtimeRecreateRequired = true;
     row.VariableControlDiscreteRetargetEnteringRuntimeProgram().generation =
         row.rootInstance;
     row.VariableControlDiscreteRetargetEnteringRuntimeProgram().payloads =
-        row.variableControlDiscreteRetargetEnteringPayloads.data();
+        row.DiscreteRetargetStorage().enteringPayloads.data();
     row.VariableControlDiscreteRetargetEnteringRuntimeProgram().payloadCount =
         enteringEventCount;
     row.VariableControlDiscreteRetargetEnteringSchedule() = {};
@@ -33190,7 +33191,7 @@ engine.runtimeRecreateRequired = true;
     row.VariableControlDiscreteRetargetEnteringSchedule().entryAnchorFrame =
         targetStartFrame;
     row.VariableControlDiscreteRetargetEnteringSchedule().events =
-        row.variableControlDiscreteRetargetEnteringEvents.data();
+        row.DiscreteRetargetStorage().enteringEvents.data();
     row.VariableControlDiscreteRetargetEnteringSchedule().eventCount =
         enteringEventCount;
     row.VariableControlDiscreteRetargetEnteringSchedule().runtimeProgram = {
@@ -33211,7 +33212,7 @@ engine.runtimeRecreateRequired = true;
         if (sourceFadeActive) {
             const std::uint32_t fadeIndex = exitingEventCount++;
             auto& fade =
-                row.variableControlDiscreteRetargetPayloads[fadeIndex];
+                row.DiscreteRetargetStorage().payloads[fadeIndex];
             fade.kind = harken::TimelineEventKind::Envelope;
             fade.envelopeDirection =
                 harken::TimelineEnvelopeDirection::FadeOut;
@@ -33223,7 +33224,7 @@ engine.runtimeRecreateRequired = true;
             fade.envelopeCurve = &row.TransitionSourceFadeCurve();
             fade.authoredFadeOutCandidate = true;
             auto& fadeEvent =
-                row.variableControlDiscreteRetargetEvents[fadeIndex];
+                row.DiscreteRetargetStorage().events[fadeIndex];
             fadeEvent.logicCommitSequence = ticket;
             fadeEvent.eventIndex = fadeIndex;
             fadeEvent.transactionOrdinal = sourceIndex;
@@ -33235,14 +33236,14 @@ engine.runtimeRecreateRequired = true;
         if (!naturalEndPrelude) {
             const std::uint32_t stopIndex = exitingEventCount++;
             auto& stop =
-                row.variableControlDiscreteRetargetPayloads[stopIndex];
+                row.DiscreteRetargetStorage().payloads[stopIndex];
             stop.kind = harken::TimelineEventKind::Stop;
             stop.reserved = harken::kTimelineEventTransientControlArm;
             stop.target = sourceTarget;
             stop.envelopeEndFrame = sourceStopFrame;
             stop.authoredFadeOutCandidate = sourceFadeActive;
             auto& stopEvent =
-                row.variableControlDiscreteRetargetEvents[stopIndex];
+                row.DiscreteRetargetStorage().events[stopIndex];
             stopEvent.frameOffsetFromEntry =
                 sourceStopFrame - audibleFrame;
             stopEvent.logicCommitSequence = ticket;
@@ -33255,19 +33256,19 @@ engine.runtimeRecreateRequired = true;
         }
 
         auto& runtime =
-            row.variableControlDiscreteRetargetRuntimePrograms[sourceIndex];
+            row.DiscreteRetargetStorage().runtimePrograms[sourceIndex];
         runtime.generation = row.rootInstance;
         runtime.payloads =
-            row.variableControlDiscreteRetargetPayloads.data() +
+            row.DiscreteRetargetStorage().payloads.data() +
             sourceEventBase;
         runtime.payloadCount = exitingEventCount - sourceEventBase;
         auto& schedule =
-            row.variableControlDiscreteRetargetSchedules[sourceIndex];
+            row.DiscreteRetargetStorage().schedules[sourceIndex];
         schedule.ownerInstance = row.rootInstance;
         schedule.ownerInstanceScheduleEpoch = instance.scheduleEpoch;
         schedule.transactionId = ticket;
         schedule.entryAnchorFrame = audibleFrame;
-        schedule.events = row.variableControlDiscreteRetargetEvents.data() +
+        schedule.events = row.DiscreteRetargetStorage().events.data() +
             sourceEventBase;
         schedule.eventCount = exitingEventCount - sourceEventBase;
         schedule.runtimeProgram = {row.rootInstance, &runtime};
@@ -33277,7 +33278,7 @@ engine.runtimeRecreateRequired = true;
     row.VariableControlDiscreteRetargetRuntimeProgram().generation =
         row.rootInstance;
     row.VariableControlDiscreteRetargetRuntimeProgram().payloads =
-        row.variableControlDiscreteRetargetPayloads.data();
+        row.DiscreteRetargetStorage().payloads.data();
     row.VariableControlDiscreteRetargetRuntimeProgram().payloadCount =
         exitingEventCount;
     row.VariableControlDiscreteRetargetSchedule() = {};
@@ -33289,7 +33290,7 @@ engine.runtimeRecreateRequired = true;
     row.VariableControlDiscreteRetargetSchedule().entryAnchorFrame =
         audibleFrame;
     row.VariableControlDiscreteRetargetSchedule().events =
-        row.variableControlDiscreteRetargetEvents.data();
+        row.DiscreteRetargetStorage().events.data();
     row.VariableControlDiscreteRetargetSchedule().eventCount =
         exitingEventCount;
     row.VariableControlDiscreteRetargetSchedule().runtimeProgram = {
@@ -33303,13 +33304,13 @@ engine.runtimeRecreateRequired = true;
     bool exitingPosted = true;
     for (std::uint32_t index = 0; index < sourceMemberCount; ++index) {
         exitingPosted = exitingPosted && starts.PrepareProgram(
-            row.variableControlDiscreteRetargetSchedules[index]);
+            row.DiscreteRetargetStorage().schedules[index]);
     }
     harken::Plan03GroupSliceInput slice{};
     slice.executeFrame = audibleFrame;
     slice.decision = decision;
     slice.members =
-        row.variableControlDiscreteRetargetGroupArms.data();
+        row.DiscreteRetargetStorage().groupArms.data();
     slice.memberCount = static_cast<std::uint16_t>(groupMemberCount);
     slice.sourceControlCount =
         static_cast<std::uint16_t>(sourceMemberCount);
@@ -47936,7 +47937,7 @@ engine.runtimeRecreateRequired = true;
             row.variableControlDiscreteRetargetBank = {};
             row.variableControlDiscreteRetargetArm = {};
             row.variableControlDiscreteRetargetEnteringArm = {};
-            std::ranges::fill(row.variableControlDiscreteRetargetGroupArms, harken::TimelineArmToken{});
+            std::ranges::fill(row.DiscreteRetargetStorage().groupArms, harken::TimelineArmToken{});
             row.variableControlDiscreteRetargetGroupMemberCount = 0;
             row.variableControlDiscreteRetargetSourceMemberCount = 0;
             row.variableControlDiscreteRetargetTargetMemberCount = 0;
@@ -48288,7 +48289,7 @@ engine.runtimeRecreateRequired = true;
             bool allObserved = memberCount <= observations.size();
             for (std::uint32_t index = 0; index < memberCount; ++index) {
                 memberObserved[index] = engine.timelineArms.Observe(
-                    row.variableControlDiscreteRetargetGroupArms[index],
+                    row.DiscreteRetargetStorage().groupArms[index],
                     &observations[index]);
                 allObserved = memberObserved[index] && allObserved;
             }
@@ -48298,7 +48299,7 @@ engine.runtimeRecreateRequired = true;
                 std::uint64_t maxTombstoneSequence = 0;
                 for (std::uint32_t index = 0; index < memberCount; ++index) {
                     const harken::TimelineArmToken member =
-                        row.variableControlDiscreteRetargetGroupArms[index];
+                        row.DiscreteRetargetStorage().groupArms[index];
                     (void)AbortTimelineArm(engine, member);
                     const bool isControlArm =
                         row.variableControlDiscreteRetargetReplacement
@@ -48368,7 +48369,7 @@ engine.runtimeRecreateRequired = true;
                         if (observations[index].tombstoneAudioSequence == 0) continue;
                         (void)engine.armGroups.Tombstone(
                             row.variableControlDiscreteRetargetArmGroup,
-                            row.variableControlDiscreteRetargetGroupArms[index],
+                            row.DiscreteRetargetStorage().groupArms[index],
                             observations[index].tombstoneAudioSequence);
                     }
                     harken::ArmGroupSnapshot retiringGroup{};
@@ -48474,7 +48475,7 @@ engine.runtimeRecreateRequired = true;
                          ++index) {
                         acknowledged = engine.armGroups.Acknowledge(
                                            row.variableControlDiscreteRetargetArmGroup,
-                                           row.variableControlDiscreteRetargetGroupArms[
+                                           row.DiscreteRetargetStorage().groupArms[
                                                index],
                                            observations[index].
                                                armedCompletionSequence) &&
@@ -48490,7 +48491,7 @@ engine.runtimeRecreateRequired = true;
                     for (std::uint32_t index = 0;
                          index < memberCount && published; ++index) {
                         published = engine.timelineArms.Publish(
-                            row.variableControlDiscreteRetargetGroupArms[
+                            row.DiscreteRetargetStorage().groupArms[
                                 index]);
                     }
                     harken::DecisionParticipantRef participant{};
@@ -48572,7 +48573,7 @@ engine.runtimeRecreateRequired = true;
                                     harken::ArmState::Tombstoned) {
                                 (void)engine.armGroups.Tombstone(
                                     row.variableControlDiscreteRetargetArmGroup,
-                                    row.variableControlDiscreteRetargetGroupArms[
+                                    row.DiscreteRetargetStorage().groupArms[
                                         index],
                                     observations[index].
                                         tombstoneAudioSequence);
