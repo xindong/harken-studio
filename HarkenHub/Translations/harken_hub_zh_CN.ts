@@ -940,7 +940,7 @@ Reason: %2</source><translation>%1
     </message>
     <message>
         <source>(Integration Package Version: %1)</source>
-        <translation>(SDK版本: %1)</translation>
+        <translation>(集成包版本: %1)</translation>
     </message>
     <message>
         <source>Paths</source>
