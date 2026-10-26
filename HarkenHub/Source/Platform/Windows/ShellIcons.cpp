@@ -98,6 +98,8 @@ ShortcutMigrationResult migrateShellShortcuts(const QString& taskbarIconPath)
     for (const KNOWNFOLDERID* folder : {&FOLDERID_Desktop, &FOLDERID_PublicDesktop,
                                       &FOLDERID_Programs, &FOLDERID_CommonPrograms,
                                       &FOLDERID_RoamingAppData}) {
+        if (!taskbarIconPath.isEmpty() && folder != &FOLDERID_RoamingAppData)
+            continue;
         PWSTR folderPath = nullptr;
         if (FAILED(SHGetKnownFolderPath(*folder, KF_FLAG_DEFAULT, nullptr, &folderPath)))
             continue;
@@ -153,7 +155,7 @@ ShortcutMigrationResult migrateShellShortcuts(const QString& taskbarIconPath)
                 changed = true;
             }
             Microsoft::WRL::ComPtr<IPropertyStore> properties;
-            if (SUCCEEDED(link.As(&properties))) {
+            if (!taskbarIconPath.isEmpty() && SUCCEEDED(link.As(&properties))) {
                 PROPVARIANT identity{};
                 const HRESULT read = properties->GetValue(PKEY_AppUserModel_ID, &identity);
                 const bool matches = SUCCEEDED(read) && identity.vt == VT_LPWSTR &&
@@ -187,7 +189,7 @@ ShortcutMigrationResult migrateShellShortcuts(const QString& taskbarIconPath)
                 qWarning() << "Cannot update the Hub shortcut:" << shortcut.filePath();
                 continue;
             }
-            if (changed)
+            if (changed && !taskbarIconPath.isEmpty())
                 SHChangeNotify(SHCNE_UPDATEITEM, SHCNF_PATHW | SHCNF_FLUSHNOWAIT,
                                path.c_str(), nullptr);
             properties.Reset();

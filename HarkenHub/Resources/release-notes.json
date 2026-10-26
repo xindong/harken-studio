@@ -20,10 +20,6 @@
       "changes": [
         {
           "category": "improved",
-          "text": "The running Hub taskbar button now uses the correct icon color when Windows uses a light theme, including existing Hub shortcuts pinned to the taskbar."
-        },
-        {
-          "category": "improved",
           "text": "Hub uses the Harken Hub name throughout installation, updates, and Studio integration, and includes the updated legal terms."
         },
         {

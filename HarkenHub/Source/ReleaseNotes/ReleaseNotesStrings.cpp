@@ -1,7 +1,6 @@
 #include <QtTranslation>
 
 static const char* const kReleaseNotesStrings[] = {
-    QT_TRANSLATE_NOOP("HubReleaseNotes", "The running Hub taskbar button now uses the correct icon color when Windows uses a light theme, including existing Hub shortcuts pinned to the taskbar."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Hub uses the Harken Hub name throughout installation, updates, and Studio integration, and includes the updated legal terms."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Running Hub taskbar and tray icons follow the Windows theme. The dark Hub window keeps its white icon, and the installed-app list shows the correct Hub icon."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Engine Integrations uses Integration and Integration Package terminology throughout its controls, checks, and operation reports."),

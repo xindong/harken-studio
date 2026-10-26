@@ -13,7 +13,6 @@
 #include <QTest>
 #include <windows.h>
 #include <shlobj.h>
-#include <propkey.h>
 #include <wrl/client.h>
 #include <future>
 #include <thread>
@@ -154,6 +153,10 @@ TEST_F(ShellShortcutTest, MigrationPreservesUserChoicesAndIsIdempotent)
     ASSERT_TRUE(otherLink.open(QIODevice::ReadOnly));
     const auto otherBytes = otherLink.readAll();
     otherLink.close();
+    QFile desktopLink(desktop);
+    ASSERT_TRUE(desktopLink.open(QIODevice::ReadOnly));
+    const auto desktopBytes = desktopLink.readAll();
+    desktopLink.close();
     for (const QColor color : {QColor(Qt::black), QColor(Qt::white), QColor(Qt::black)}) {
         const QString path = VNH::saveShellIcon(VNH::HubIcons::applicationIcon(color), directory.filePath(QStringLiteral("shell-icons")));
         ASSERT_FALSE(path.isEmpty());
@@ -161,6 +164,9 @@ TEST_F(ShellShortcutTest, MigrationPreservesUserChoicesAndIsIdempotent)
         EXPECT_EQ(read(pinned), (QStringList{executable, path, arguments}));
         EXPECT_EQ(read(custom), (QStringList{executable, customIcon, arguments}));
         EXPECT_EQ(read(desktop), (QStringList{executable, executable, arguments}));
+        ASSERT_TRUE(desktopLink.open(QIODevice::ReadOnly));
+        EXPECT_EQ(desktopLink.readAll(), desktopBytes);
+        desktopLink.close();
         ASSERT_TRUE(otherLink.open(QIODevice::ReadOnly));
         EXPECT_EQ(otherLink.readAll(), otherBytes);
         otherLink.close();
