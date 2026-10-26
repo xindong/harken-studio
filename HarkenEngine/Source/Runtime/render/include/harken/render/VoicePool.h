@@ -1019,7 +1019,7 @@ private:
         std::uint32_t timelineLaneEventCount = 0;
         std::uint8_t timelineReservationCounts[kTimelineMaxCombinedEventsPerVoiceQuantum]{};
         // An odd cache-line stride spreads hot fields across cache sets.
-        std::uint64_t cacheSetSpacer = 0;
+        std::uint64_t cacheSetSpacer[7] = {};
     };
     VariableNativeStartAuthority m_nativeVariableStartAuthority{};
     VariableTimelineStartAuthority m_timelineVariableStartAuthority{};
