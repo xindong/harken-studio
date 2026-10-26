@@ -2,9 +2,9 @@
 
 核对日期：2026-10-26。
 
-Project Settings > Publish 的 `Export Directory` 与 `Waveform File Directory` 均以工程目录为相对路径基准；可转为相对路径时保存相对路径，跨盘符等无法相对化的情况保留绝对路径。留空时分别使用 `BuildPacks` 与 `BuildPacks/Waveforms`。
+Project Settings > Publish 的 `Publish Directory` 与 `Waveform File Directory` 均以工程目录为相对路径基准；可转为相对路径时保存相对路径，跨盘符等无法相对化的情况保留绝对路径。留空时分别使用 `BuildPacks` 与 `BuildPacks/Waveforms`。`Publish Directory` 仅调整界面名称，沿用 `packBuildOutputDir` 字段，不改变 Schema。
 
-正常发布禁止输出到工程根、工程祖先目录、AudioSources、对象目录及其子目录，并对符号链接解析后的路径执行同样的保护，防止 Self-cleaning 删除工程数据。旧配置仍可加载以便修正，但导出入口、权限预检及最终清理均复查实际输出路径。媒体有效性按本次选中的 Action 依赖、目标平台及语言检查；未参与导出的 Sound 或未使用的基础源不会因缺失而阻止本次导出。
+正常发布禁止输出到工程根、工程祖先目录、AudioSources、对象目录及其子目录，并对符号链接解析后的路径执行同样的保护，防止 Self-cleaning 删除工程数据。旧配置仍可加载以便修正，但导出入口、权限预检及最终清理均复查实际输出路径。旧工程的波形目录若指向 AudioSources 或工程祖先目录，加载时保留配置并报告警告，关闭波形导出时同样不会阻止打开；设置修改和保存继续严格校验，开启波形导出后只警告跳过不安全的波形产物，不写入受保护目录。媒体有效性按本次选中的 Action 依赖、目标平台及语言检查；未参与导出的 Sound 或未使用的基础源不会因缺失而阻止本次导出。
 
 界面与 IPC 在启动打包前，先在平台输出锁保护下恢复未完成的发布，再检查本次已确定要替换或删除的路径，包括强制重建或无效的 Pack、已确定变化的伴随 JSON、根目录项目信息及确定待清理的输出。仅更新选中包时，Init 必须通过内容及发布身份校验才能作为保留项；仅有同名文件不代表可复用。直接导出到平台目录也遵循先恢复、后检查的顺序。
 
@@ -16,7 +16,7 @@ Project Settings > Publish 的 `Export Directory` 与 `Waveform File Directory` 
 
 GUI 与 IPC 的最终产物校验和目录清理均在后台执行；平台定义变化会在事务提交前停止收尾，平台编辑本身仍可使用。媒体处理、各语言编译、逐包写入、附属文件及清理准备之间检查取消；事务进入正式提交后必须完成或回滚。取消结果不记为包失败，也不计入已导出数量。无步骤的独立 Action 或全空包组按警告跳过，不生成包，不计入构建或复用数量，其余包正常发布；PostAction 的无效依赖仍属于结构错误。
 
-Project Settings > Publish > Additional Material 的 `Export Project Information` 控制打包是否输出 `Project.json`，默认关闭。文件位于 `Export Directory` 根目录，与平台目录并列；它是 SDK 可选使用的项目元数据，不是引擎加载包的必要文件。
+Project Settings > Publish > Additional Material 的 `Export Project Information` 控制打包是否输出 `Project.json`，默认关闭。文件位于 `Publish Directory` 根目录，与平台目录并列；它是 SDK 可选使用的项目元数据，不是引擎加载包的必要文件。
 
 ```text
 BuildPacks/

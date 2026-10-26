@@ -4873,6 +4873,60 @@ TEST(EditorProjectPackExporterManifest, OptionalWaveformFailuresKeepPackPublicat
     }
 }
 
+TEST(EditorProjectPackExporterManifest, ProtectedLegacyWaveformLocationsCannotWriteOrCleanProjectData)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    const QString projectRoot = directory.filePath(QStringLiteral("Project"));
+    ASSERT_TRUE(QDir().mkpath(projectRoot));
+    auto& registry = VNX::AssetRegistry::instance();
+    registry.clear();
+    const auto clearRegistry = qScopeGuard([&] { registry.clear(); });
+    registry.setProjectRoot(projectRoot);
+    const auto tone = registerToneAsset(projectRoot, QStringLiteral("tone.wav"), 0.2f);
+    VNX::ProjectData project;
+    ASSERT_NO_FATAL_FAILURE(buildProject(project, projectRoot, tone, tone,
+        {{QStringLiteral("One"), 21, kSharedSoundObjectId}}));
+    const QString sourcePath = QDir(projectRoot).filePath(QStringLiteral("AudioSources/tone.wav"));
+    const QByteArray sourceBytes = readFileBytes(sourcePath);
+    const QString outputRoot = directory.filePath(QStringLiteral("Published"));
+    const QString platform = HarkenTest::platformIdString("Windows");
+    const QDir live(QDir(outputRoot).filePath(QStringLiteral("Windows")));
+    project.packBuildOutputDir = outputRoot;
+    VNX::ProjectPackExporter exporter;
+    VNX::ProjectPackExporter::ExportOptions options;
+    options.platform = platform;
+    options.forceReexport = true;
+    options.selfCleaning = true;
+    for (const QString& destination : {QStringLiteral("AudioSources/Waveforms"), QStringLiteral("..")}) {
+        project.buildWaveformOutputDir = destination;
+        const QDir protectedDirectory(VNX::PathUtils::waveformBuildOutputRoot(project.projectPath, destination));
+        ASSERT_TRUE(QDir().mkpath(protectedDirectory.path()));
+        const QString sentinel = protectedDirectory.filePath(QString(64, QLatin1Char('f')) + QStringLiteral(".vkd"));
+        writeFileBytes(sentinel, "preserved project data");
+        const auto before = protectedDirectory.entryList({QStringLiteral("*.vkd")}, QDir::Files);
+        for (const bool enabled : {false, true}) {
+            project.buildExportWaveforms = enabled;
+            const auto result = exporter.ExportAllPacks(project, {}, options);
+            ASSERT_TRUE(result.success) << result.error.toStdString();
+            if (enabled) EXPECT_FALSE(result.warnings.isEmpty());
+            const auto publication = readPublication(live.path());
+            ASSERT_EQ(publication.size(), 2);
+            for (const auto& value : publication)
+                EXPECT_FALSE(value.toObject().value(QStringLiteral("companion")).toObject()
+                    .contains(QStringLiteral("waveforms")));
+            const auto finalized = VNX::ProjectPackExporter::FinalizePackExport(
+                outputRoot, project, {platform}, true, result.artifacts);
+            EXPECT_TRUE(finalized.success) << finalized.error.toStdString();
+            EXPECT_EQ(readFileBytes(sourcePath), sourceBytes);
+            EXPECT_EQ(readFileBytes(sentinel), QByteArray("preserved project data"));
+            EXPECT_EQ(protectedDirectory.entryList({QStringLiteral("*.vkd")}, QDir::Files), before);
+            EXPECT_FALSE(QFileInfo::exists(protectedDirectory.filePath(QStringLiteral(".harken-pack-waveforms.lock"))));
+        }
+    }
+}
+
 TEST(EditorProjectPackExporterManifest, ConcurrentWaveformPublicationRemainsOptional)
 {
     for (const int location : {0, 1, 2}) {

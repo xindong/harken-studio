@@ -175,6 +175,100 @@ TEST(PackGroupSerialization, MissingPackGroupsKeyLoadsAsEmpty)
     EXPECT_TRUE(loaded.packGroups.empty());
 }
 
+TEST(PackGroupSerialization, LegacyWaveformLocationsLoadWithoutGrantingWriteAccess)
+{
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    auto project = projectWithMaster();
+    project.name = QStringLiteral("LegacyWaveformPaths");
+    const QString path = dir.filePath(QStringLiteral("legacy-waveforms.hsp"));
+    VNX::ProjectSerializer serializer;
+    ASSERT_TRUE(serializer.saveProject(path, project)) << serializer.lastError().toStdString();
+    ASSERT_TRUE(HarkenTest::writeRootBusForProject(path));
+    QFile file(path);
+    ASSERT_TRUE(file.open(QIODevice::ReadOnly));
+    const QJsonObject original = QJsonDocument::fromJson(file.readAll()).object();
+    file.close();
+    const QStringList destinations{
+        QStringLiteral("AudioSources/Waveforms"), QStringLiteral(".."),
+        dir.filePath(QStringLiteral("AudioSources/Waveforms")),
+        QDir(dir.path()).absoluteFilePath(QStringLiteral(".."))};
+    for (const bool enabled : {false, true}) {
+        for (const QString& destination : destinations) {
+            SCOPED_TRACE(destination.toStdString());
+            QJsonObject document = original;
+            QJsonObject content = document.value(QStringLiteral("content")).toObject();
+            content.insert(QStringLiteral("buildExportWaveforms"), enabled);
+            content.insert(QStringLiteral("buildWaveformOutputDir"), destination);
+            document.insert(QStringLiteral("content"), content);
+            const QByteArray stored = QJsonDocument(document).toJson();
+            ASSERT_TRUE(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            ASSERT_EQ(file.write(stored), stored.size());
+            file.close();
+
+            VNX::ProjectData loaded;
+            ASSERT_TRUE(serializer.loadProject(path, loaded)) << serializer.lastError().toStdString();
+            EXPECT_EQ(loaded.buildExportWaveforms, enabled);
+            EXPECT_EQ(loaded.buildWaveformOutputDir,
+                      VNX::PathUtils::normalizePackBuildOutputDir(destination, path));
+            EXPECT_FALSE(serializer.warnings().isEmpty());
+            EXPECT_FALSE(VNX::PathUtils::isValidWaveformBuildOutputDir(
+                loaded.buildWaveformOutputDir, loaded.projectPath));
+            EXPECT_FALSE(serializer.saveProject(path, loaded));
+            ASSERT_TRUE(file.open(QIODevice::ReadOnly));
+            EXPECT_EQ(file.readAll(), stored);
+            file.close();
+
+            loaded.busses = project.busses;
+            loaded.buildWaveformOutputDir = QStringLiteral("Exports/Waveforms");
+            ASSERT_TRUE(serializer.saveProject(path, loaded)) << serializer.lastError().toStdString();
+            VNX::ProjectData repaired;
+            ASSERT_TRUE(serializer.loadProject(path, repaired)) << serializer.lastError().toStdString();
+            EXPECT_EQ(repaired.buildWaveformOutputDir, QStringLiteral("Exports/Waveforms"));
+            EXPECT_EQ(repaired.buildExportWaveforms, enabled);
+            EXPECT_TRUE(serializer.warnings().isEmpty());
+        }
+    }
+}
+
+TEST(PackGroupSerialization, InvalidWaveformLocationsStillRejectProjectLoad)
+{
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    auto project = projectWithMaster();
+    project.name = QStringLiteral("InvalidWaveformPaths");
+    const QString path = dir.filePath(QStringLiteral("invalid-waveforms.hsp"));
+    VNX::ProjectSerializer serializer;
+    ASSERT_TRUE(serializer.saveProject(path, project)) << serializer.lastError().toStdString();
+    ASSERT_TRUE(HarkenTest::writeRootBusForProject(path));
+    QFile file(path);
+    ASSERT_TRUE(file.open(QIODevice::ReadOnly));
+    const QJsonObject original = QJsonDocument::fromJson(file.readAll()).object();
+    file.close();
+    for (const QString& destination : {
+            QStringLiteral("."), QStringLiteral("Exports/.."),
+            QStringLiteral("Wave*forms"), QStringLiteral("Actions/Waveforms"),
+            QStringLiteral("Layers/Waveforms"), QStringLiteral("Busses/Waveforms"),
+            QStringLiteral("Variables/Waveforms"), QStringLiteral("Attenuations/Waveforms")}) {
+        SCOPED_TRACE(destination.toStdString());
+        QJsonObject document = original;
+        QJsonObject content = document.value(QStringLiteral("content")).toObject();
+        content.insert(QStringLiteral("buildExportWaveforms"), false);
+        content.insert(QStringLiteral("buildWaveformOutputDir"), destination);
+        document.insert(QStringLiteral("content"), content);
+        const QByteArray stored = QJsonDocument(document).toJson();
+        ASSERT_TRUE(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        ASSERT_EQ(file.write(stored), stored.size());
+        file.close();
+        VNX::ProjectData loaded;
+        EXPECT_FALSE(serializer.loadProject(path, loaded));
+        EXPECT_FALSE(serializer.lastError().isEmpty());
+        ASSERT_TRUE(file.open(QIODevice::ReadOnly));
+        EXPECT_EQ(file.readAll(), stored);
+        file.close();
+    }
+}
+
 TEST(PackGroupSerialization, PackBuildDirectoryRoundTripsWithoutLegacyDeploymentSettings)
 {
     QTemporaryDir dir;

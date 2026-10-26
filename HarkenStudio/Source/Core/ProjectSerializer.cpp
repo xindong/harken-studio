@@ -1533,10 +1533,17 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
     project.buildExportWaveforms = root["buildExportWaveforms"].toBool(false);
     project.buildWaveformOutputDir = PathUtils::normalizePackBuildOutputDir(
         root["buildWaveformOutputDir"].toString(), project.projectPath);
-    if (!PathUtils::isValidWaveformBuildOutputDir(project.buildWaveformOutputDir, project.projectPath)) {
+    const QString waveformOutputRoot = PathUtils::waveformBuildOutputRoot(
+        project.projectPath, project.buildWaveformOutputDir);
+    if (!PathUtils::isValidPackBuildOutputDir(waveformOutputRoot, project.projectPath, true)
+        || PathUtils::isProjectObjectDirectory(waveformOutputRoot, project.projectPath)) {
         lastError_ = tr("Waveform output must use a valid directory outside the project root and object directories.");
         return false;
     }
+    if (!PathUtils::isValidWaveformBuildOutputDir(project.buildWaveformOutputDir, project.projectPath))
+        warnings_.append(tr("The stored waveform output directory is no longer permitted. "
+            "Correct it in Project Settings > Publish before saving. ")
+            + PathUtils::packBuildOutputLocationError());
 
     project.deploymentProfiles.clear();
     if (root.contains("deploymentProfiles")) {
