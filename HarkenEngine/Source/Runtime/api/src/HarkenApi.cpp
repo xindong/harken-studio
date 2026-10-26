@@ -88935,6 +88935,16 @@ bool PreparePrivateInitialVcPageCohorts(ImmediateActionPlan& plan) noexcept {
         plan.queueReplacementCount != 0) return true;
     auto& engine = *plan.engine;
     bool acceptedOriginals = false;
+    const auto prepareLaneStorage = [&]() noexcept {
+        for (std::uint32_t index = 0; index < plan.playCount; ++index) {
+            auto& scratch = *FindImmediateActionPlay(plan, index);
+            if (scratch.row->pendingImmediateEntry && !engine.PreparePrivateInitialVcLaneStorage(scratch)) {
+                plan.result = VN_BACKPRESSURE;
+                return false;
+            }
+        }
+        return true;
+    };
     if (plan.multiVariableControlImmediateLane) {
         for (std::uint32_t index = 0; index < plan.playCount; ++index) {
             const auto* scratch = FindImmediateActionPlay(plan, index);
@@ -88949,6 +88959,7 @@ bool PreparePrivateInitialVcPageCohorts(ImmediateActionPlan& plan) noexcept {
         const auto* attempt = plan.reservedCohortAttempt;
         if (attempt == nullptr || !attempt->active || !attempt->lane.Valid() ||
             attempt->root != plan.rootHandle || plan.preparedPlayCount != plan.playCount) return false;
+        if (!prepareLaneStorage()) return false;
         for (std::uint32_t index = 0; index < plan.playCount; ++index) {
             auto& scratch = *FindImmediateActionPlay(plan, index);
             auto& held = scratch.privateInitialVcPageCohort;
@@ -88994,6 +89005,7 @@ bool PreparePrivateInitialVcPageCohorts(ImmediateActionPlan& plan) noexcept {
         plan.result = VN_RUNTIME_RECREATE_REQUIRED;
         return false;
     }
+    if (!prepareLaneStorage()) return false;
     const auto sequence = engine.logicCommits.Current() + 1u;
     const auto refuse = [&](harken::Plan03GroupReserveStatus status) noexcept {
         plan.result = status == harken::Plan03GroupReserveStatus::PageGroupCapacity

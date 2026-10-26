@@ -4083,9 +4083,7 @@ struct EngineActionPlayStorage {
           : variableControlRollbackEdges(memberCapacity),
             pendingInitialVcRetirement(memberCapacity), pendingInitialVcRows(memberCapacity),
             retiredInitialVcArms(memberCapacity),
-            privateInitialVcLaneMembers(laneMetadataCapacity),
-            privateInitialVcLaneGroups(laneMetadataCapacity),
-            privateInitialVcArmPreparations(laneMetadataCapacity),
+            privateInitialVcLaneCapacity(laneMetadataCapacity),
             frontierServices(nodeCapacity), queueRoleCapacity(nodeCapacity),
             queueFutureAttempts(nodeCapacity), queueFutureOwners(nodeCapacity),
             frontierPolicies(nodeCapacity), initialControlSlices(2u * nodeCapacity),
@@ -4202,6 +4200,7 @@ struct EngineActionPlayStorage {
     bool initialVcRetirementDecisionsOpen = false;
     bool initialVcUnboundRetirementConsumed = false;
     std::vector<TimelineArmToken> retiredInitialVcArms;
+    std::uint32_t privateInitialVcLaneCapacity = 0;
     std::vector<ImmediateLaneMemberManifest> privateInitialVcLaneMembers;
     std::vector<ImmediateLaneAcceptedPrivateGroup> privateInitialVcLaneGroups;
     struct PrivateInitialVcArmPreparation {
@@ -7550,6 +7549,30 @@ public:
                 &actionPlayOwnerLimits)) return false;
         if (!pendingOrdinarySelections.Emplace(slot) || !preparedPendingVariableGroups.Emplace(slot)) return false;
         return actionPlayScratch.Emplace(slot, actionPlayStorage[slot]);
+    }
+    bool PreparePrivateInitialVcLaneStorage(EngineActionPlayScratch& scratch) noexcept {
+        auto& held = scratch.privateInitialVcPageCohort;
+        if (memguard::IsAudioTagged() || !scratch.prepared || !scratch.variableControl ||
+            held.backing != EngineActionPlayScratch::PrivateInitialVcPageCohort::Backing::None ||
+            held.sequence != 0 || held.laneMemberCount != 0 || held.laneOwnedGroupCount != 0 ||
+            held.laneArmPreparationCount != 0 || held.laneMembersDeclared ||
+            held.laneTransferRequired || held.pageTransferRequired || held.laneAcceptedOriginals) return false;
+        auto& storage = scratch.storage;
+        const auto capacity = storage.privateInitialVcLaneCapacity;
+        try {
+            const auto grow = [capacity](auto& column) {
+                if (column.size() >= capacity) return;
+                detail::CheckedGrow(column, capacity, detail::LogicAllocSite::PrivateVcLaneStorage);
+                column.resize(capacity);
+            };
+            grow(storage.privateInitialVcLaneMembers);
+            grow(storage.privateInitialVcLaneGroups);
+            grow(storage.privateInitialVcArmPreparations);
+            // No reader borrows these arrays before cohort preparation. Retain
+            // their full backing once prepared, including across failed retries.
+            held.laneMemberManifests = storage.privateInitialVcLaneMembers;
+            return true;
+        } catch (...) { return false; }
     }
     static bool ActionPlaySlotReusable(const EngineActionPlayScratch& scratch) noexcept {
         return scratch.storage.phase == EngineFrontierAttemptPhase::Free && scratch.storage.generation != UINT64_MAX;

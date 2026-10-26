@@ -6390,7 +6390,7 @@ TEST(ActionFiringApi, PostResolvesOnlyCanonicalCurrentWorldActions) {
 }
 
 TEST(ActionFiringApi, InitialContainerCompanionBackingFailureDoesNotAcceptAndCanRecover) {
-    for (unsigned refusedStorage = 0; refusedStorage < 18u; ++refusedStorage) {
+    for (unsigned refusedStorage = 0; refusedStorage < 21u; ++refusedStorage) {
         SCOPED_TRACE(refusedStorage);
         harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -6401,7 +6401,9 @@ TEST(ActionFiringApi, InitialContainerCompanionBackingFailureDoesNotAcceptAndCan
         ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kSecondSound, &pcm));
         CanonicalActionWorld image(engine.registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision,
             engine.registry.Lookup(CanonicalActionWorld::kSecondSound).contentRevision);
-        if (refusedStorage == 3u || refusedStorage == 15u || refusedStorage == 16u) image.MakeImmediateVariableControlPlayAction();
+        if (refusedStorage >= 18u) image.MakeImmediateMixedVariableControlPlayAction();
+        else if (refusedStorage == 3u || refusedStorage == 15u || refusedStorage == 16u)
+            image.MakeImmediateVariableControlPlayAction();
         else image.MakeImmediateSequenceQueuePlayAction();
         ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
         auto desc = ValidPostDesc();
@@ -6426,9 +6428,11 @@ TEST(ActionFiringApi, InitialContainerCompanionBackingFailureDoesNotAcceptAndCan
             refusedStorage == 14 ? 1 : 2, harken::detail::LogicAllocSite::ImmediateEntryStorage);
         if (refusedStorage == 15) engine.queueContinuationRecords.SetCommitPageLimitForTests(0);
         if (refusedStorage == 16) engine.queueFutureRecords.SetCommitPageLimitForTests(0);
+        if (refusedStorage >= 18) harken::detail::ArmLogicAllocFaultForTests(
+            refusedStorage - 17u, harken::detail::LogicAllocSite::PrivateVcLaneStorage);
         VnActionFiringHandle firing = 99;
         const auto refused = Vn_PostAction(&desc, &firing);
-        if (refusedStorage == 14 || refusedStorage == 17) {
+        if (refusedStorage == 14 || refusedStorage >= 17) {
             EXPECT_EQ(0u, harken::detail::g_logicAllocFault.remaining);
             harken::detail::DisarmLogicAllocFaultForTests();
         }
