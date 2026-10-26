@@ -144,6 +144,7 @@ inline const PropertySchema& VSelection::schema()
               return true;
           } },
         { .field="selections", .type=PropType::List, .label="Selections", .section=PropertySection::Selection,
+          .flags={.serialize=false},
           .elementSchema={
               {.field="order", .type=PropType::Int, .label="#",
                .flags={.serialize=false, .settableByName=false, .state=true}},

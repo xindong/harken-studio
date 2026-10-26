@@ -235,6 +235,7 @@ private:
     std::vector<QString> gainPositionKeys_;
     std::vector<QPointF> gainDragStartPositions_;
     bool pathRefreshPending_ = false;
+    bool pathContentOnlyRefresh_ = false;
     bool pathRefreshScheduled_ = false;
     bool chainRefreshPending_ = false;
     bool chainRefreshScheduled_ = false;
@@ -259,6 +260,8 @@ private:
     void commitPathPositions_(const PathPositions& positions, const QString& description);
     void scheduleChainRefresh_();
     void schedulePathRefresh_();
+    void queuePathRefresh_(bool contentOnly);
+    void refreshPathContents_();
     void refreshProjectPaths_();
     void applyTreeVisibility_();
     enum class RevealScope { Node, Inputs, Upstream };

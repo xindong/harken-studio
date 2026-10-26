@@ -3,10 +3,13 @@
 #include "Core/ProjectTypes.h"
 
 #include <cstddef>
+#include <memory>
 #include <optional>
 #include <vector>
 
 namespace VNX {
+
+struct FieldGroupEffectiveSnapshot;
 
 struct SignalPathIdentity
 {
@@ -114,6 +117,7 @@ struct SignalPathGraph
 
 SignalPathGraph buildSignalPathGraph(
     const ProjectData& project, const std::vector<SignalPathIdentity>& sources,
-    FieldGroupScope platform = {}, const std::vector<uint32_t>& busRoots = {});
+    FieldGroupScope platform = {}, const std::vector<uint32_t>& busRoots = {},
+    std::shared_ptr<const FieldGroupEffectiveSnapshot> groups = {});
 
 }

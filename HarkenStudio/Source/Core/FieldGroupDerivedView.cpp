@@ -9,8 +9,8 @@ namespace VNX {
 
 bool refreshFieldGroupDerivedViews(ProjectData& project)
 {
-    const auto view = buildFieldGroupProjectView(project);
     const auto source = HarkenEditor::Bridge::canonicalRuntimeProjectSourceIndex(project);
+    const auto view = buildFieldGroupProjectView(project, *source);
     if (!view.ok() || !source->valid || project.busses.empty()
         || !project.busses.front().rootItem)
         return false;

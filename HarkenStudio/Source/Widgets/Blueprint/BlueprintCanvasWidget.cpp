@@ -651,6 +651,17 @@ void BlueprintCanvasWidget::materializeFromSource_()
 
     auto nodes = activeSource_->buildNodes();
     auto* project = ProjectManager::instance().currentProject();
+    QHash<uint32_t, ProjectItem*> objects;
+    if (project) {
+        const auto collect = [&](auto&& self, ProjectItem* item) -> void {
+            if (!item) return;
+            if (!objects.contains(item->objectID)) objects.insert(item->objectID, item);
+            for (const auto& child : item->children) self(self, child.get());
+        };
+        for (const auto* binding : project->allFileBindings()) {
+            if (binding) collect(collect, binding->rootItem.get());
+        }
+    }
     NodeContentFields shownFields;
     for (const auto& desc : nodes) shownFields |= desc.content.fields() & nodeContentFields_;
     const int labelWidth = NodeContentEditor::labelWidth(shownFields);
@@ -695,8 +706,8 @@ void BlueprintCanvasWidget::materializeFromSource_()
                     editor->setLabelWidth(labelWidth);
                 item->refreshContentPresentation();
             }
-            tagContentEditor_(qobject_cast<NodeContentEditor*>(item->contentWidget()),
-                ProjectManager::instance().findItemByGuid(
+            if (auto* editor = qobject_cast<NodeContentEditor*>(item->contentWidget()))
+                tagContentEditor_(editor, ProjectManager::instance().findItemByGuid(
                     pathSource_->graph().nodes[*d.occurrenceIndex].key.objectGuid));
         }
 
@@ -707,7 +718,7 @@ void BlueprintCanvasWidget::materializeFromSource_()
         ProjectItem* owner = nullptr;
         if (isRealNode && !d.occurrenceIndex) {
             owner = (d.kind == BlueprintNodeKind::ProjectItem)
-                        ? canvasFindItem(project, d.id)
+                        ? objects.value(d.id)
                         : ProjectManager::instance().findBusItem(d.id);
         }
 
@@ -727,7 +738,7 @@ void BlueprintCanvasWidget::materializeFromSource_()
             item->setFlag(QGraphicsItem::ItemIsSelectable, true);
             item->setBlueprintGridSnap(!d.occurrenceIndex && gridSnapEnabled_, gridSpacing());
             const auto* definition = d.kind == BlueprintNodeKind::ProjectItem
-                ? canvasFindItem(project, d.id) : ProjectManager::instance().findBusItem(d.id);
+                ? objects.value(d.id) : ProjectManager::instance().findBusItem(d.id);
             if (definition) {
                 item->setTitleRenameHandler(InlineRenameEdit::projectItemHandler(definition->guid));
                 item->setTitleEditFinishedCallback(
@@ -738,8 +749,7 @@ void BlueprintCanvasWidget::materializeFromSource_()
                             item->setTitleDirty(current->isDirtyObject());
                         }
                         if (pathRefreshPending_) {
-                            pathRefreshPending_ = false;
-                            schedulePathRefresh_();
+                            queuePathRefresh_(pathContentOnlyRefresh_);
                         }
                         if (chainRefreshPending_) scheduleChainRefresh_();
                     });
@@ -810,7 +820,8 @@ void BlueprintCanvasWidget::materializeFromSource_()
                 gain->setContentInfo(edges[index].gainContent);
             gainNodes_[index] = gain;
             if (created) installGainEditor_(gain);
-            else tagContentEditor_(qobject_cast<NodeContentEditor*>(gain->contentWidget()), routeGainTopicItem_(index));
+            else if (auto* editor = qobject_cast<NodeContentEditor*>(gain->contentWidget()))
+                tagContentEditor_(editor, routeGainTopicItem_(index));
             const auto key = signalPathEdgeKey_(index);
             QByteArray identity;
             QDataStream stream(&identity, QIODevice::WriteOnly);
@@ -1107,7 +1118,11 @@ void BlueprintCanvasWidget::onItemPropertyChanged(ProjectItem* ,
                                                   const QString& propertyName)
 {
     refreshNodeTitles_();
-    if (activeSource_ == pathSource_.get()) { schedulePathRefresh_(); return; }
+    if (activeSource_ == pathSource_.get()) {
+        if (propertyName == QLatin1String("dirty")) return;
+        queuePathRefresh_(propertyName == QLatin1String("volume"));
+        return;
+    }
     static const QSet<QString> structuralProps = {
         QStringLiteral("outputBus"), QStringLiteral("output_bus"),
         QStringLiteral("outputBusId"),
@@ -1460,8 +1475,7 @@ void BlueprintCanvasWidget::clearExternalDrop_()
     externalDragActive_ = false;
     externalAudioFiles_.clear();
     if (pathRefreshPending_) {
-        pathRefreshPending_ = false;
-        schedulePathRefresh_();
+        queuePathRefresh_(pathContentOnlyRefresh_);
     }
 }
 
@@ -2421,8 +2435,7 @@ void BlueprintCanvasWidget::mouseReleaseEvent(QMouseEvent* event)
         gainDragStartPositions_.clear();
         commitPathPositions_(positions, tr("Move Blueprint Nodes"));
         if (pathRefreshPending_) {
-            pathRefreshPending_ = false;
-            schedulePathRefresh_();
+            queuePathRefresh_(pathContentOnlyRefresh_);
         }
     }
 }
@@ -2735,8 +2748,7 @@ void BlueprintCanvasWidget::cancelConnection_()
     viewport()->unsetCursor();
     QToolTip::hideText();
     if (pathRefreshPending_) {
-        pathRefreshPending_ = false;
-        schedulePathRefresh_();
+        queuePathRefresh_(pathContentOnlyRefresh_);
     }
 }
 
@@ -3184,6 +3196,7 @@ void BlueprintCanvasWidget::clear()
     toast_->dismiss();
     pathSceneState_.reset();
     pathRefreshPending_ = false;
+    pathContentOnlyRefresh_ = false;
     projectView_ = true;
     selectedPathKeys_.clear();
     selectedPathEdgeKeys_.clear();
@@ -3257,7 +3270,13 @@ void BlueprintCanvasWidget::scheduleChainRefresh_()
 
 void BlueprintCanvasWidget::schedulePathRefresh_()
 {
+    queuePathRefresh_(false);
+}
+
+void BlueprintCanvasWidget::queuePathRefresh_(bool contentOnly)
+{
     if (activeSource_ != pathSource_.get() || !projectView_) return;
+    pathContentOnlyRefresh_ = contentOnly && (!pathRefreshPending_ || pathContentOnlyRefresh_);
     pathRefreshPending_ = true;
     if (pathRefreshScheduled_) return;
     pathRefreshScheduled_ = true;
@@ -3265,20 +3284,45 @@ void BlueprintCanvasWidget::schedulePathRefresh_()
         pathRefreshScheduled_ = false;
         if (!pathRefreshPending_) return;
         if (!pathDragStartPositions_.empty() || dragSourcePin_ || externalDragActive_ || nodeFieldEditing_()) return;
-        refreshProjectPaths_();
+        if (pathContentOnlyRefresh_) refreshPathContents_();
+        else refreshProjectPaths_();
     }, Qt::QueuedConnection);
+}
+
+void BlueprintCanvasWidget::refreshPathContents_()
+{
+    if (activeSource_ != pathSource_.get() || !projectView_) return;
+    const auto* project = ProjectManager::instance().currentProject();
+    if (!project || !pathSource_->graph().ok()) {
+        refreshProjectPaths_();
+        return;
+    }
+    pathRefreshPending_ = false;
+    pathContentOnlyRefresh_ = false;
+    pathSource_->refreshNodeContents(*project);
+    const auto nodes = pathSource_->buildNodes();
+    for (size_t index = 0; index < nodes.size(); ++index)
+        signalPathNode(index)->setContentInfo(nodes[index].content);
+    layoutPathNodes_();
+    refreshNodeTitles_();
+    refreshPlaybackActivity_();
+    refreshPathFocus_();
+    emit signalChainViewChanged();
 }
 
 void BlueprintCanvasWidget::refreshProjectPaths_()
 {
     if (activeSource_ != pathSource_.get() || !projectView_) return;
     pathRefreshPending_ = false;
+    pathContentOnlyRefresh_ = false;
     const auto* project = ProjectManager::instance().currentProject();
     if (!project) { clear(); return; }
     pathProjectId_ = project->projectId;
     const auto platform = toFieldGroupScope(
         currentWorldPlatformScope(PlatformContextService::instance().context()));
-    pathSource_->loadGraph(*project, buildProjectSignalPathGraph(*project, platform));
+    const auto groups = std::make_shared<FieldGroupEffectiveSnapshot>(
+        buildFieldGroupEffectiveSnapshot(*project, platform));
+    pathSource_->loadGraph(*project, buildProjectSignalPathGraph(*project, platform, groups), groups);
 }
 
 void BlueprintCanvasWidget::applyTreeVisibility_()
@@ -3456,11 +3500,24 @@ void BlueprintCanvasWidget::revealChain_(const ProjectItem& item, RevealScope re
 
 void BlueprintCanvasWidget::refreshChainPins_()
 {
+    auto& manager = ProjectManager::instance();
+    std::vector<uint32_t> hierarchyIds;
+    if (activeSource_ == pathSource_.get()) {
+        for (const auto& [key, node] : nodeMap_)
+            if (canCollapseChain(key.id) && node->itemType()
+                && supportsHierarchyCollapse(*node->itemType()))
+                hierarchyIds.push_back(key.id);
+    }
+    const auto hierarchies = manager.findItemsByObjectID(hierarchyIds);
+    QHash<uint32_t, bool> validHierarchies;
+    for (size_t index = 0; index < hierarchyIds.size(); ++index)
+        validHierarchies.insert(hierarchyIds[index], hierarchies[index]
+            && supportsHierarchyCollapse(hierarchies[index]->type));
     for (const auto& [key, node] : nodeMap_) {
         std::optional<Qt::CheckState> state;
         if (activeSource_ == pathSource_.get() && canCollapseChain(key.id)) {
             if (node->itemType() && supportsHierarchyCollapse(*node->itemType()))
-                state = hierarchyVisibility(key.id);
+                state = validHierarchies.value(key.id) ? inputVisibility_.at(key.id) : Qt::Unchecked;
             else if (node->itemType() == ProjectItemType::Bus)
                 state = busVisibility(key.id);
         }

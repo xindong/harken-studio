@@ -6,11 +6,14 @@
 #include <QIcon>
 #include <QIconEngine>
 
+#include <memory>
+
 class QPainter;
 
 namespace VNX {
 
 class ThemeAssetResolver;
+struct ThemeImageResource;
 
 class SvgIconEngine : public QIconEngine
 {
@@ -18,8 +21,10 @@ public:
     explicit SvgIconEngine(ThemeAssetResolver* resolver,
                            ThemeSnapshotPtr snapshot,
                            QString onLogicalId,
-                           QString offLogicalId = QString(),
-                           QColor overrideColor = QColor());
+                           QString offLogicalId,
+                           QColor overrideColor,
+                           std::shared_ptr<const ThemeImageResource> onResource,
+                           std::shared_ptr<const ThemeImageResource> offResource = {});
 
     QIconEngine* clone() const override;
     QPixmap pixmap(const QSize& size, QIcon::Mode mode, QIcon::State state) override;
@@ -39,6 +44,8 @@ private:
     QString onLogicalId_;
     QString offLogicalId_;
     QColor overrideColor_;
+    std::shared_ptr<const ThemeImageResource> onResource_;
+    std::shared_ptr<const ThemeImageResource> offResource_;
 };
 
 }
