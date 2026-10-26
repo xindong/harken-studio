@@ -71,8 +71,8 @@ public:
     void updateProgress(quint64 inspected)
     {
         status_->setText(inspected == 0
-            ? QCoreApplication::translate("HarkenHub", "Processing SDK files...")
-            : QCoreApplication::translate("HarkenHub", "Processing SDK files... Items inspected: %1").arg(inspected));
+            ? QCoreApplication::translate("HarkenHub", "Processing Integration Package files...")
+            : QCoreApplication::translate("HarkenHub", "Processing Integration Package files... Items inspected: %1").arg(inspected));
     }
 
 protected:
@@ -98,7 +98,7 @@ public:
         : QDialog(parent)
     {
         setObjectName(QStringLiteral("integrationTaskProgress"));
-        setWindowTitle(QCoreApplication::translate("HarkenHub", "SDK operation"));
+        setWindowTitle(QCoreApplication::translate("HarkenHub", "Integration Package operation"));
         setWindowModality(Qt::ApplicationModal);
         setWindowFlag(Qt::WindowCloseButtonHint, false);
         setMinimumWidth(400);

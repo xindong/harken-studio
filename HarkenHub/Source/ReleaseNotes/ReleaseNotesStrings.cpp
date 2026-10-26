@@ -1,6 +1,10 @@
 #include <QtTranslation>
 
 static const char* const kReleaseNotesStrings[] = {
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Hub uses the Harken Hub name throughout installation, updates, and Studio integration, and includes the updated legal terms."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Running Hub taskbar and tray icons follow the Windows theme. The dark Hub window keeps its white icon, and the installed-app list shows the correct Hub icon."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Engine Integrations uses Integration and Integration Package terminology throughout its controls, checks, and operation reports."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Unity Integration Packages bundled with both new and older Studio versions remain discoverable without changing existing project installations or saved source paths."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Hub windows, the app bundle, Windows shortcuts, the taskbar, the system tray, and the installer use the new curved white Hub icon with a transparent background."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Windows installation no longer fails when opening the installer dialogs or when an existing Hub executable does not need to be replaced."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Hub self-updates preserve existing desktop and Start menu shortcuts without creating additional shortcuts or restoring shortcuts you removed."),

@@ -13,7 +13,7 @@ from script_loader import load_script_module
 SCRIPT = Path(__file__).resolve().parents[1] / "check_unity_sdk_contract.py"
 MODULE = load_script_module("check_unity_sdk_contract", SCRIPT)
 REPOSITORY = Path(__file__).resolve().parents[2]
-SDK_GATE = REPOSITORY / ".github/workflows/pr-gate-sdk.yml"
+SDK_GATE = REPOSITORY / ".github/workflows/pr-gate-integration.yml"
 
 
 def workflow_job(text: str, name: str) -> str:
@@ -188,7 +188,7 @@ class UnitySdkContractTest(unittest.TestCase):
 
     def test_self_hosted_job_rejects_external_pull_requests(self) -> None:
         job = workflow_job(
-            SDK_GATE.read_text(encoding="utf-8"), "sdk-windows"
+            SDK_GATE.read_text(encoding="utf-8"), "integration-windows"
         )
         self.assertIn("github.event_name != 'pull_request'", job)
         self.assertIn(

@@ -180,7 +180,7 @@ bool EngineTargetStore::updateSdkInstallPath(const QString& targetId,
 {
     lastError_.clear();
     if (connectionName_.isEmpty() || !VNX::UnityInstallation::safeRelativePath(relativePath)) {
-        lastError_ = hubTranslate(QStringLiteral("Cannot save the SDK installation location"));
+        lastError_ = hubTranslate(QStringLiteral("Cannot save the Integration Package installation location"));
         return false;
     }
     QSqlQuery query(QSqlDatabase::database(connectionName_));

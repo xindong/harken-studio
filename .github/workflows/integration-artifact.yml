@@ -1,4 +1,4 @@
-name: SDK Artifact
+name: Integration Artifact
 
 on:
   workflow_call:
@@ -13,7 +13,7 @@ on:
         default: dev
 
 concurrency:
-  group: sdk-artifact-${{ github.workflow }}-${{ github.ref }}
+  group: integration-artifact-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
@@ -30,7 +30,7 @@ jobs:
       build-channel: ${{ inputs.build-channel }}
 
   assemble-bundle:
-    name: Assemble complete SDK + Runtime ZIP
+    name: Assemble complete Integration + Runtime ZIP
     needs: runtime
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -44,7 +44,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Verify SDK version identity
+      - name: Verify Integration version identity
         run: python3 .scripts/check_sdk_version.py
 
       - name: Download release Runtime libraries
@@ -54,26 +54,26 @@ jobs:
           path: .temp/runtime
           merge-multiple: true
 
-      - name: Assemble and verify SDK + Runtime bundle
+      - name: Assemble and verify Integration + Runtime bundle
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p .temp/package/HarkenSDK
+          mkdir -p .temp/package/HarkenIntegration
           tar -C HarkenIntegration -cf - API_SURFACE.md Unity Tooling \
-            | tar -C .temp/package/HarkenSDK -xf -
+            | tar -C .temp/package/HarkenIntegration -xf -
           runtime_root=".temp/runtime"
-          unity_plugins=".temp/package/HarkenSDK/Unity/Harken/Runtime/Plugins"
+          unity_plugins=".temp/package/HarkenIntegration/Unity/Harken/Runtime/Plugins"
           install -Dm644 "$runtime_root/windows-x64/HarkenCore.dll" "$unity_plugins/x86_64/HarkenCore.dll"
           install -Dm644 "$runtime_root/macos-universal/libHarkenCore.dylib" "$unity_plugins/macOS/libHarkenCore.dylib"
           install -Dm644 "$runtime_root/ios-arm64/libHarkenCore.a" "$unity_plugins/iOS/libHarkenCore.a"
           install -Dm644 "$runtime_root/linux-x64/libHarkenCore.so" "$unity_plugins/x86_64/libHarkenCore.so"
           install -Dm644 "$runtime_root/android/arm64-v8a/libHarkenCore.so" "$unity_plugins/Android/arm64-v8a/libHarkenCore.so"
 
-          windows_runtime=".temp/package/HarkenSDK/Unity/Harken/Runtime/Plugins/x86_64/HarkenCore.dll"
-          macos_runtime=".temp/package/HarkenSDK/Unity/Harken/Runtime/Plugins/macOS/libHarkenCore.dylib"
-          ios_runtime=".temp/package/HarkenSDK/Unity/Harken/Runtime/Plugins/iOS/libHarkenCore.a"
-          linux_runtime=".temp/package/HarkenSDK/Unity/Harken/Runtime/Plugins/x86_64/libHarkenCore.so"
-          android_arm64_runtime=".temp/package/HarkenSDK/Unity/Harken/Runtime/Plugins/Android/arm64-v8a/libHarkenCore.so"
+          windows_runtime=".temp/package/HarkenIntegration/Unity/Harken/Runtime/Plugins/x86_64/HarkenCore.dll"
+          macos_runtime=".temp/package/HarkenIntegration/Unity/Harken/Runtime/Plugins/macOS/libHarkenCore.dylib"
+          ios_runtime=".temp/package/HarkenIntegration/Unity/Harken/Runtime/Plugins/iOS/libHarkenCore.a"
+          linux_runtime=".temp/package/HarkenIntegration/Unity/Harken/Runtime/Plugins/x86_64/libHarkenCore.so"
+          android_arm64_runtime=".temp/package/HarkenIntegration/Unity/Harken/Runtime/Plugins/Android/arm64-v8a/libHarkenCore.so"
           for runtime in \
             "$windows_runtime" \
             "$macos_runtime" \
@@ -90,7 +90,7 @@ jobs:
           import json
           from pathlib import Path
 
-          sdk = Path('.temp/package/HarkenSDK/Unity/Harken')
+          sdk = Path('.temp/package/HarkenIntegration/Unity/Harken')
           manifest = json.loads((sdk / 'harken-integration.json').read_text(encoding='utf-8'))
           missing = []
           for relative in manifest.get('required_files', []):
@@ -98,12 +98,12 @@ jobs:
               if not path.exists() or (path.is_file() and path.stat().st_size == 0):
                   missing.append(relative)
           if missing:
-              raise SystemExit('Missing required Unity SDK content: ' + ', '.join(missing))
-          print(f"Verified {len(manifest.get('required_files', []))} shared Unity SDK files")
+              raise SystemExit('Missing required Unity Integration content: ' + ', '.join(missing))
+          print(f"Verified {len(manifest.get('required_files', []))} shared Unity Integration files")
           PY
 
           python3 .scripts/check_unity_sdk_contract.py \
-            --sdk-root .temp/package/HarkenSDK/Unity/Harken \
+            --integration-root .temp/package/HarkenIntegration/Unity/Harken \
             --require-binaries
 
           cat > .temp/package/README-FIRST.txt <<EOF
@@ -112,25 +112,25 @@ jobs:
           Channel: ${HARKEN_BUILD_CHANNEL}
           Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
 
-          Extract the HarkenSDK directory beside HarkenStudio.exe, replacing the
-          existing HarkenSDK directory. On a local Windows build from this repository:
-          <your-checkout>\\build\\bin\\Release\\HarkenSDK
+          Extract the HarkenIntegration directory beside HarkenStudio.exe, replacing the
+          existing HarkenIntegration directory. On a local Windows build from this repository:
+          <your-checkout>\\build\\bin\\Release\\HarkenIntegration
 
-          The HarkenSDK directory contains the shared Unity integration package plus
+          The HarkenIntegration directory contains the shared Unity integration package plus
           Windows x64, macOS universal (arm64 + x86_64), iOS device arm64,
           Linux x64, and Android arm64-v8a runtimes.
           EOF
 
-      - name: Record SDK dependencies and build evidence
+      - name: Record Integration dependencies and build evidence
         run: >-
           python3 .scripts/release/release_evidence.py
-          --sdk-payload .temp/package --runtime-receipts .temp/runtime
+          --integration-payload .temp/package --runtime-receipts .temp/runtime
           --output-dir .temp/package
 
-      - name: Upload downloadable HarkenSDK bundle
+      - name: Upload downloadable HarkenIntegration bundle
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: ${{ inputs.artifact-name || format('HarkenSdkBundle-{0}', github.run_number) }}
+          name: ${{ inputs.artifact-name || format('HarkenIntegrationBundle-{0}', github.run_number) }}
           path: .temp/package
           if-no-files-found: error
           retention-days: ${{ (inputs.build-channel == 'stable' || inputs.build-channel == 'beta') && 90 || 14 }}

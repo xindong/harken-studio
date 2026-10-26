@@ -27,7 +27,7 @@ bool checkUnityProjectClosed(const QString& project, QString* error, bool* isOpe
     const QString path = QDir(project).absoluteFilePath(QStringLiteral("Temp/UnityLockfile"));
     const auto inUse = [&]() {
         if (isOpen) *isOpen = true;
-        *error = QStringLiteral("This Unity project is open. Close it before changing the SDK, then run the safety check again.");
+        *error = QStringLiteral("This Unity project is open. Close it before changing the Integration Package, then run the safety check again.");
         return false;
     };
     const auto failed = [&](int code) {

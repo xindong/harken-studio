@@ -159,6 +159,11 @@
 </context>
 <context>
     <name>HubReleaseNotes</name>
+    <message><source>Hub uses the Harken Hub name throughout installation, updates, and Studio integration, and includes the updated legal terms.</source><translation>Hub 的安装、更新及 Studio 联动统一恢复 Harken Hub 名称，并更新相关法务条款。</translation></message>
+    <message><source>Running Hub taskbar and tray icons follow the Windows theme. The dark Hub window keeps its white icon, and the installed-app list shows the correct Hub icon.</source><translation>Hub 运行中的任务栏和托盘图标跟随 Windows 主题切换。深色 Hub 窗口保留白色图标，已安装应用列表显示正确的 Hub 图标。</translation></message>
+    <message><source>Engine Integrations uses Integration and Integration Package terminology throughout its controls, checks, and operation reports.</source><translation>引擎集成的控件、检查提示及操作报告统一使用“集成”和“集成包”名称。</translation></message>
+    <message><source>Unity Integration Packages bundled with both new and older Studio versions remain discoverable without changing existing project installations or saved source paths.</source><translation>Hub 可识别新旧 Studio 附带的 Unity 集成包，已有工程安装和已保存的来源路径继续有效。</translation></message>
+
     <message><source>Hub windows, the app bundle, Windows shortcuts, the taskbar, the system tray, and the installer use the new curved white Hub icon with a transparent background.</source><translation>Hub &#x7a97;&#x53e3;&#x3001;&#x5e94;&#x7528;&#x3001;Windows &#x5feb;&#x6377;&#x65b9;&#x5f0f;&#x3001;&#x4efb;&#x52a1;&#x680f;&#x3001;&#x7cfb;&#x7edf;&#x6258;&#x76d8;&#x548c;&#x5b89;&#x88c5;&#x7a0b;&#x5e8f;&#x7edf;&#x4e00;&#x4f7f;&#x7528;&#x65b0;&#x7248;&#x900f;&#x660e;&#x5e95;&#x767d;&#x8272;&#x5f27;&#x5f62; Hub &#x56fe;&#x6807;&#x3002;</translation></message>
     <message><source>Windows installation no longer fails when opening the installer dialogs or when an existing Hub executable does not need to be replaced.</source><translation>&#x4fee;&#x590d; Windows &#x5b89;&#x88c5;&#x5668;&#x6253;&#x5f00;&#x5b89;&#x88c5;&#x9875;&#x9762;&#x65f6;&#xff0c;&#x4ee5;&#x53ca;&#x5df2;&#x6709; Hub &#x7a0b;&#x5e8f;&#x65e0;&#x9700;&#x66ff;&#x6362;&#x65f6;&#x7684;&#x5b89;&#x88c5;&#x62a5;&#x9519;&#x3002;</translation></message>
     <message><source>Hub self-updates preserve existing desktop and Start menu shortcuts without creating additional shortcuts or restoring shortcuts you removed.</source><translation>Hub &#x81ea;&#x66f4;&#x65b0;&#x4f1a;&#x4fdd;&#x7559;&#x73b0;&#x6709;&#x684c;&#x9762;&#x548c;&#x5f00;&#x59cb;&#x83dc;&#x5355;&#x5feb;&#x6377;&#x65b9;&#x5f0f;&#xff0c;&#x4e0d;&#x518d;&#x989d;&#x5916;&#x521b;&#x5efa;&#x5feb;&#x6377;&#x65b9;&#x5f0f;&#xff0c;&#x4e5f;&#x4e0d;&#x4f1a;&#x6062;&#x590d;&#x5df2;&#x5220;&#x9664;&#x7684;&#x5feb;&#x6377;&#x65b9;&#x5f0f;&#x3002;</translation></message>
@@ -809,11 +814,46 @@ Continue?</source>
 </context>
 <context>
     <name>HarkenHub</name>
-    <message><source>Latest local SDK version: %1</source><translation>本地最新 SDK 版本：%1</translation></message>
-    <message><source>Review recommended: %1 SDK text file(s) use a different encoding; text contents match after normalizing encoding and line endings. SDK updates can continue.</source><translation>建议关注：%1 个 SDK 文本文件的编码不同；统一编码和换行格式后，正文内容一致，不影响 SDK 更新。</translation></message>
-    <message><source>%1 SDK text file(s) differ only in LF/CRLF line endings; contents are unchanged.</source><translation>%1 个 SDK 文本文件仅换行格式不同（LF/CRLF），内容一致。</translation></message>
-    <message><source>Missing documentation/sample files (does not block SDK updates):</source><translation>缺失的文档/示例文件（不影响 SDK 更新）：</translation></message>
-    <message><source>%1 documentation/sample file(s) are missing; SDK updates can continue.</source><translation>%1 个文档/示例文件缺失，不影响 SDK 更新。</translation></message>
+    <message><source>Harken Unity Integration Package could not be located.</source><translation>未找到 Harken Unity 集成包。</translation></message>
+    <message><source>The selected folder is not a valid com.harken.core Integration Package source: %1</source><translation>所选文件夹不是有效的 com.harken.core 集成包来源：%1</translation></message>
+    <message><source>Choose HarkenIntegration, HarkenIntegration/Unity/Harken, or a complete external Unity package root, or clear the Integration Package source field to use automatic discovery.</source><translation>请选择 HarkenIntegration、HarkenIntegration/Unity/Harken 或完整的外部 Unity 包根目录，也可清空集成包来源以启用自动查找。</translation></message>
+    <message><source>No valid com.harken.core package was found beside Harken Studio, in a repository parent, or at HARKEN_UNITY_INTEGRATION_PATH (legacy: HARKEN_UNITY_SDK_PATH).</source><translation>在 Harken Studio 所在目录、仓库上级目录以及 HARKEN_UNITY_INTEGRATION_PATH（兼容 HARKEN_UNITY_SDK_PATH）指定的位置均未找到有效的 com.harken.core 包。</translation></message>
+    <message><source>Use the Integration Package source field to choose or drop HarkenIntegration, Unity/Harken, or a complete external Unity package root.</source><translation>请在集成包来源栏选择或拖入 HarkenIntegration、Unity/Harken 或完整的外部 Unity 包根目录。</translation></message>
+    <message><source>Choose a complete HarkenIntegration/Unity/Harken package, or repair the selected Integration Package source before integrating.</source><translation>请选择完整的 HarkenIntegration/Unity/Harken 包，或修复所选集成包来源后再进行集成。</translation></message>
+    <message><source>Choose or drop HarkenIntegration, HarkenIntegration/Unity/Harken, or a complete external Unity package. If this is the Integration Package bundled with Harken Studio, repair or reinstall the editor package first. Do not copy unknown runtime files from an existing Unity project.</source><translation>请选择或拖入 HarkenIntegration、HarkenIntegration/Unity/Harken 或完整的外部 Unity 包。如果使用的是 Harken Studio 附带的集成包，请先修复或重新安装编辑器包。不要从已有 Unity 工程复制来源不明的运行库。</translation></message>
+    <message><source>A selected Integration Package source file could not be read.</source><translation>无法读取所选集成包来源中的文件。</translation></message>
+    <message><source>Check file locks and permissions, then retry. The existing Integration Package was not changed.</source><translation>请检查文件占用和权限后重试。已有集成包未被修改。</translation></message>
+    <message><source>Check the selected Integration Package folder permissions and contents, then retry.</source><translation>请检查所选集成包文件夹的权限和内容后重试。</translation></message>
+    <message><source>Close any process holding this file and check the Integration Package folder permissions, then run Check only again.</source><translation>请关闭占用该文件的进程，检查集成包文件夹权限，然后重新执行检查。</translation></message>
+    <message><source>Could not create an Integration Package staging directory.</source><translation>无法创建集成包暂存目录。</translation></message>
+    <message><source>Could not detach the installed Harken Integration Package.</source><translation>无法移出已安装的 Harken 集成包。</translation></message>
+    <message><source>Failed to stage the Unity Integration Package update.</source><translation>无法暂存 Unity 集成包更新。</translation></message>
+    <message><source>Installed Integration Package files could not be read, so their integrity is unverified.</source><translation>无法读取已安装的集成包文件，因此尚未验证其完整性。</translation></message>
+    <message><source>Installed Integration Package files do not match the verified source package.</source><translation>已安装的集成包文件与已验证的来源包不一致。</translation></message>
+    <message><source>No Integration Package files were changed; explicit approval is required.</source><translation>尚未修改集成包文件，需要明确确认后才能继续。</translation></message>
+    <message><source>No installed Unity Integration Package exists to verify.</source><translation>没有可供验证的已安装 Unity 集成包。</translation></message>
+    <message><source>Repair or reselect the Integration Package source, check the storage device, then retry. The existing Unity Integration Package was not changed.</source><translation>请修复或重新选择集成包来源，检查存储设备后重试。已有 Unity 集成包未被修改。</translation></message>
+    <message><source>Review this file list, then explicitly approve the update or cancel without changing the Integration Package.</source><translation>请查看文件列表，再确认更新；取消操作不会修改集成包。</translation></message>
+    <message><source>The selected Integration Package installation manifest could not be read.</source><translation>无法读取所选集成包的安装清单。</translation></message>
+    <message><source>The selected Integration Package installation manifest is missing or invalid.</source><translation>所选集成包的安装清单缺失或无效。</translation></message>
+    <message><source>The selected Unity Integration Package source is incomplete. The Unity project was not changed.</source><translation>所选 Unity 集成包来源不完整。Unity 工程未被修改。</translation></message>
+    <message><source>The staged Unity Integration Package failed checksum verification.</source><translation>暂存的 Unity 集成包未通过校验。</translation></message>
+    <message><source>These runtime files must come from the selected Integration Package source, not from the Unity project. Integration stopped before copying anything because the Harken integration cannot verify an Integration Package assembled from incomplete source files.</source><translation>运行库文件必须来自所选集成包来源，不能从 Unity 工程补取。Harken 无法验证由不完整来源拼装的集成包，因此已在复制任何文件之前停止集成。</translation></message>
+    <message><source>Verification will run after the Integration Package update is approved.</source><translation>确认集成包更新后将执行验证。</translation></message>
+    <message><source>%1 exists but cannot be opened, so the runtime files declared by the Harken Integration Package cannot be enumerated.</source><translation>%1 存在但无法打开，因此无法列出 Harken 集成包声明的运行库文件。</translation></message>
+    <message><source>%1 installed Integration Package file(s) could not be read, so the comparison is incomplete.</source><translation>无法读取 %1 个已安装的集成包文件，因此比较未完成。</translation></message>
+    <message><source>Other missing Harken Integration Package content: %1</source><translation>其他缺失的 Harken 集成包内容：%1</translation></message>
+    <message><source>Required Harken Integration Package content is missing from the selected source: %1</source><translation>所选来源缺少必要的 Harken 集成包内容：%1</translation></message>
+    <message><source>The Harken integration cannot distinguish managed Integration Package files from project-specific files inside %1.</source><translation>Harken 无法区分 %1 中由集成包管理的文件和工程自有文件。</translation></message>
+    <message><source>The selected Integration Package source is missing the verified game runtime for: %1. The Unity project was not changed.</source><translation>所选集成包来源缺少以下平台的已验证游戏运行库：%1。Unity 工程未被修改。</translation></message>
+    <message><source>These files exist inside %1 but cannot be opened, so the Harken integration cannot tell whether they still match the Integration Package source. Nothing was compared or changed.</source><translation>这些文件在 %1 中存在但无法打开，因此 Harken 无法判断其是否仍与集成包来源一致。尚未比较或修改任何文件。</translation></message>
+
+    <message><source>Integration</source><translation>集成</translation></message>
+    <message><source>Latest local Integration Package version: %1</source><translation>本地最新集成包版本：%1</translation></message>
+    <message><source>Review recommended: %1 Integration Package text file(s) use a different encoding; text contents match after normalizing encoding and line endings. Integration Package updates can continue.</source><translation>建议关注：%1 个集成包文本文件的编码不同；统一编码和换行格式后，正文内容一致，不影响集成包更新。</translation></message>
+    <message><source>%1 Integration Package text file(s) differ only in LF/CRLF line endings; contents are unchanged.</source><translation>%1 个集成包文本文件仅换行格式不同（LF/CRLF），内容一致。</translation></message>
+    <message><source>Missing documentation/sample files (does not block Integration Package updates):</source><translation>缺失的文档/示例文件（不影响集成包更新）：</translation></message>
+    <message><source>%1 documentation/sample file(s) are missing; Integration Package updates can continue.</source><translation>%1 个文档/示例文件缺失，不影响集成包更新。</translation></message>
     <message><source>Not a directory: %1</source><translation>此路径不是目录：%1</translation></message>
     <message><source>Directories without required create or rename access:
 %1</source><translation>以下目录缺少创建或重命名所需的权限：
@@ -821,8 +861,8 @@ Continue?</source>
     <message><source>Could not prepare the Hub report directory.</source><translation>无法准备 Hub 报告目录。</translation></message>
     <message><source>Cannot create the Hub application-data directory: %1</source><translation>无法创建 Hub 应用数据目录：%1</translation></message>
     <message><source>Cannot resolve the Hub application-data directory: %1</source><translation>无法解析 Hub 应用数据目录的实际路径：%1</translation></message>
-    <message><source>SDK file write access check failed.</source><translation>SDK 文件写入权限检查未通过。</translation></message>
-    <message><source>Some files required for this SDK operation cannot be changed. No SDK files were changed.</source><translation>本次 SDK 操作需要修改的部分文件无法更改，SDK 文件未发生变更。</translation></message>
+    <message><source>Integration Package file write access check failed.</source><translation>集成包文件写入权限检查未通过。</translation></message>
+    <message><source>Some files required for this Integration Package operation cannot be changed. No Integration Package files were changed.</source><translation>本次集成包操作需要修改的部分文件无法更改，集成包文件未发生变更。</translation></message>
     <message><source>Read-only files:
 %1</source><translation>以下文件处于只读状态：
 %1</translation></message>
@@ -835,36 +875,36 @@ Reason: %2</source><translation>%1
     <message><source>Check out or unlock the listed files if required by version control. Otherwise, check write protection, access permissions and programs using these files, then run the safety check again.</source><translation>如果版本控制要求签出或解锁，请先处理以上文件；否则请检查文件的只读属性、访问权限和占用程序，然后重新运行安全检查。</translation></message>
     <message><source>JSON report was written, but the text removal report failed.</source><translation>JSON 报告已写入，但 TXT 卸载报告写入失败。</translation></message>
     <message><source>JSON report was written, but the text report failed.</source><translation>JSON 报告已写入，但 TXT 报告写入失败。</translation></message>
-    <message><source>SDK %1 | Studio %2</source><translation>SDK %1 | Studio %2</translation></message>
-    <message><source>Manage SDK and Project Links</source><translation>管理 SDK 与工程关联</translation></message>
+    <message><source>Integration Package %1 | Studio %2</source><translation>集成包 %1 | Studio %2</translation></message>
+    <message><source>Manage Integration Package and Project Links</source><translation>管理集成包与工程关联</translation></message>
     <message><source>Open Harken Project Folder</source><translation>打开 Harken 工程文件夹</translation></message>
     <message><source>Open Game Project Folder</source><translation>打开游戏工程文件夹</translation></message>
-    <message><source>Quick Change SDK</source><translation>快捷更换 SDK</translation></message>
-    <message><source>Manage project links, verify SDK files, change versions, move or uninstall the SDK, and view detailed reports.</source><translation>管理工程关联、校验 SDK 文件、更换版本、迁移或卸载 SDK，并查看详细报告。</translation></message>
+    <message><source>Quick Change Integration Package</source><translation>快捷更换集成包</translation></message>
+    <message><source>Manage project links, verify Integration Package files, change versions, move or uninstall the Integration Package, and view detailed reports.</source><translation>管理工程关联、校验集成包文件、更换版本、迁移或卸载集成包，并查看详细报告。</translation></message>
     <message><source>Installed: %1</source><translation>已安装：%1</translation></message>
-    <message><source>Installed SDK: %1</source><translation>当前已安装 SDK：%1</translation></message>
-    <message><source>Current SDK installation path:
-%1</source><translation>SDK 当前安装路径：
+    <message><source>Installed Integration Package: %1</source><translation>当前已安装集成包：%1</translation></message>
+    <message><source>Current Integration Package installation path:
+%1</source><translation>集成包当前安装路径：
 %1</translation></message>
     <message><source>Normal</source><translation>正常</translation></message>
-    <message><source>Checking SDK status...</source><translation>正在检查 SDK 状态…</translation></message>
+    <message><source>Checking Integration Package status...</source><translation>正在检查集成包状态…</translation></message>
     <message><source>Files modified</source><translation>文件已修改</translation></message>
     <message><source>Files missing</source><translation>文件缺失</translation></message>
     <message><source>Files modified and missing</source><translation>文件已修改且有缺失</translation></message>
     <message><source>File verification incomplete</source><translation>文件校验未完成</translation></message>
     <message><source> (Installed source)</source><translation>（当前安装来源）</translation></message>
     <message><source> (Same version number as installed)</source><translation>（与已安装版本同号）</translation></message>
-    <message><source>This is the source recorded for the installed SDK. File verification compares the installed files with their installation record; the source folder may have changed since installation.</source><translation>这是安装记录中的 SDK 来源。文件校验对照的是安装时的记录；来源目录本身可能已在安装后发生变化。</translation></message>
+    <message><source>This is the source recorded for the installed Integration Package. File verification compares the installed files with their installation record; the source folder may have changed since installation.</source><translation>这是安装记录中的集成包来源。文件校验对照的是安装时的记录；来源目录本身可能已在安装后发生变化。</translation></message>
     <message><source>Unknown</source><translation>未知</translation></message>
     <message><source>Update available: %1</source><translation>可升级至 %1</translation></message>
-    <message><source>Local SDK packages available: %1</source><translation>本机有 %1 个 SDK 安装包可选</translation></message>
-    <message><source>No local SDK sources are available.</source><translation>没有可用的本地 SDK 来源。</translation></message>
-    <message><source>SDKs with the same version number can contain different files. Select a source to check its contents.</source><translation>版本号相同的 SDK 也可能包含不同的文件。选择来源后将检查实际内容。</translation></message>
+    <message><source>Local Integration Packages available: %1</source><translation>本机有 %1 个集成包可选</translation></message>
+    <message><source>No local Integration Package sources are available.</source><translation>没有可用的本地集成包来源。</translation></message>
+    <message><source>Integration Packages with the same version number can contain different files. Select a source to check its contents.</source><translation>版本号相同的集成包也可能包含不同的文件。选择来源后将检查实际内容。</translation></message>
     <message><source> (Upgrade)</source><translation>（可升级）</translation></message>
     <message><source> (Older version)</source><translation>（较旧版本）</translation></message>
-    <message><source>SDK files will be checked before you confirm the change.</source><translation>确认更换前会先检查 SDK 文件。</translation></message>
-    <message><source>The installed SDK is no longer available. Open Manage Integration to review its status.</source><translation>已安装的 SDK 已不可用。请打开“集成管理”查看状态。</translation></message>
-    <message><source>Change SDK — %1</source><translation>更换 SDK — %1</translation></message>
+    <message><source>Integration Package files will be checked before you confirm the change.</source><translation>确认更换前会先检查集成包文件。</translation></message>
+    <message><source>The installed Integration Package is no longer available. Open Manage Integration to review its status.</source><translation>已安装的集成包已不可用。请打开“集成管理”查看状态。</translation></message>
+    <message><source>Change Integration Package — %1</source><translation>更换集成包 — %1</translation></message>
     <message><source>HarkenStudio is still running from this version: %1</source><translation>此版本的 HarkenStudio 仍在运行：%1</translation></message>
     <message><source>Close Studio and other programs running from this installation, then retry Repair. No installation files were replaced.</source><translation>请关闭此安装目录中的 Studio 及其他正在运行的程序，然后重试“修复”。安装文件未被替换。</translation></message>
     <message><source>Another install transaction is running</source><translation>另一个安装任务正在运行</translation></message>
@@ -881,25 +921,25 @@ Reason: %2</source><translation>%1
     <message><source>Cannot create the download directory</source><translation>无法创建下载目录</translation></message>
     <message><source>This package is in use by another operation</source><translation>此安装包正在被另一项操作使用</translation></message>
     <message><source>Cannot lock the download cache</source><translation>无法锁定下载缓存</translation></message>
-    <message><source>The Unreal SDK is missing a readable, nonempty header: %1. Select a complete SDK source.</source><translation>Unreal SDK &#x7f3a;&#x5c11;&#x53ef;&#x8bfb;&#x53d6;&#x4e14;&#x975e;&#x7a7a;&#x7684;&#x5934;&#x6587;&#x4ef6;&#xff1a;%1&#x3002;&#x8bf7;&#x9009;&#x62e9;&#x5b8c;&#x6574;&#x7684; SDK &#x6765;&#x6e90;&#x3002;</translation></message>
+    <message><source>The Unreal Integration Package is missing a readable, nonempty header: %1. Select a complete Integration Package source.</source><translation>Unreal 集成包 &#x7f3a;&#x5c11;&#x53ef;&#x8bfb;&#x53d6;&#x4e14;&#x975e;&#x7a7a;&#x7684;&#x5934;&#x6587;&#x4ef6;&#xff1a;%1&#x3002;&#x8bf7;&#x9009;&#x62e9;&#x5b8c;&#x6574;&#x7684; 集成包 &#x6765;&#x6e90;&#x3002;</translation></message>
     <message>
         <source>Project Association</source>
         <translation>工程关联</translation>
     </message>
     <message>
-        <source>SDK maintenance</source>
-        <translation>SDK 维护</translation>
+        <source>Integration Package maintenance</source>
+        <translation>集成包维护</translation>
     </message>
     <message>
-        <source>%1 SDK</source>
-        <translation>%1 SDK</translation>
+        <source>%1 Integration</source>
+        <translation>%1 集成</translation>
     </message>
     <message>
-        <source>Current SDK Location</source>
-        <translation>SDK 当前所在位置</translation>
+        <source>Current Integration Package Location</source>
+        <translation>集成包当前所在位置</translation>
     </message>
     <message>
-        <source>(SDK Version: %1)</source>
+        <source>(Integration Package Version: %1)</source>
         <translation>(SDK版本: %1)</translation>
     </message>
     <message>
@@ -911,44 +951,44 @@ Reason: %2</source><translation>%1
         <translation>用于打开此工程的 Studio：%1</translation>
     </message>
     <message>
-        <source>Choose SDK Folder...</source>
-        <translation>选择 SDK 文件夹...</translation>
+        <source>Choose Integration Package Folder...</source>
+        <translation>选择集成包文件夹...</translation>
     </message>
     <message>
-        <source>Choose SDK Folder</source>
-        <translation>选择 SDK 文件夹</translation>
+        <source>Choose Integration Package Folder</source>
+        <translation>选择集成包文件夹</translation>
     </message>
     <message>
         <source>More actions</source>
         <translation>更多操作</translation>
     </message>
     <message>
-        <source>Installed SDK</source>
-        <translation>已安装 SDK</translation>
+        <source>Installed Integration Package</source>
+        <translation>已安装集成包</translation>
     </message>
     <message>
-        <source>Target SDK</source>
-        <translation>目标 SDK</translation>
+        <source>Target Integration Package</source>
+        <translation>目标集成包</translation>
     </message>
     <message>
-        <source>Install SDK...</source>
-        <translation>安装 SDK...</translation>
+        <source>Install Integration Package...</source>
+        <translation>安装集成包...</translation>
     </message>
     <message>
-        <source>Update SDK...</source>
-        <translation>更新 SDK...</translation>
+        <source>Update Integration Package...</source>
+        <translation>更新集成包...</translation>
     </message>
     <message>
         <source>Link Projects...</source>
         <translation>关联工程...</translation>
     </message>
     <message>
-        <source>Install SDK</source>
-        <translation>安装 SDK</translation>
+        <source>Install Integration Package</source>
+        <translation>安装集成包</translation>
     </message>
     <message>
-        <source>Update SDK</source>
-        <translation>更新 SDK</translation>
+        <source>Update Integration Package</source>
+        <translation>更新集成包</translation>
     </message>
     <message>
         <source>Link Projects</source>
@@ -967,8 +1007,8 @@ Reason: %2</source><translation>%1
         <translation>解除工程关联</translation>
     </message>
     <message>
-        <source>Unlink the game and Harken projects? This entry will disappear from Engine Integrations. Project files and the installed SDK will be kept.</source>
-        <translation>是否解除游戏工程与 Harken 工程的关联？此记录将从引擎集成列表中消失。工程文件和已安装的 SDK 都会保留。</translation>
+        <source>Unlink the game and Harken projects? This entry will disappear from Engine Integrations. Project files and the installed Integration Package will be kept.</source>
+        <translation>是否解除游戏工程与 Harken 工程的关联？此记录将从引擎集成列表中消失。工程文件和已安装的集成包都会保留。</translation>
     </message>
     <message>
         <source>Could not unlink the projects.
@@ -977,8 +1017,8 @@ Reason: %2</source><translation>%1
 %1</translation>
     </message>
     <message>
-        <source>Projects unlinked. Project files and the installed SDK were kept.</source>
-        <translation>已解除工程关联。工程文件和已安装的 SDK 均已保留。</translation>
+        <source>Projects unlinked. Project files and the installed Integration Package were kept.</source>
+        <translation>已解除工程关联。工程文件和已安装的集成包均已保留。</translation>
     </message>
     <message>
         <source>Projects linked</source>
@@ -989,44 +1029,44 @@ Reason: %2</source><translation>%1
         <translation>工程未关联</translation>
     </message>
     <message>
-        <source>Change SDK...</source>
-        <translation>更换 SDK...</translation>
+        <source>Change Integration Package...</source>
+        <translation>更换集成包...</translation>
     </message>
     <message>
-        <source>Change SDK</source>
-        <translation>更换 SDK</translation>
+        <source>Change Integration Package</source>
+        <translation>更换集成包</translation>
     </message>
     <message>
-        <source>Apply SDK Change...</source>
-        <translation>确认更换 SDK...</translation>
+        <source>Apply Integration Package Change...</source>
+        <translation>确认更换集成包...</translation>
     </message>
     <message>
-        <source>Move SDK...</source>
+        <source>Move Integration Package...</source>
         <translation>迁移安装位置...</translation>
     </message>
     <message>
-        <source>SDK installed.</source>
-        <translation>已安装 SDK。</translation>
+        <source>Integration Package installed.</source>
+        <translation>已安装集成包。</translation>
     </message>
     <message>
-        <source>Check Current SDK Status</source>
-        <translation>检查 SDK 当前状态</translation>
+        <source>Check Current Integration Package Status</source>
+        <translation>检查集成包当前状态</translation>
     </message>
     <message>
-        <source>Check SDK Changes</source>
-        <translation>检查 SDK 变更</translation>
+        <source>Check Integration Package Changes</source>
+        <translation>检查集成包变更</translation>
     </message>
     <message>
-        <source>Inspect installed Unity SDK</source>
-        <translation>检查工程内的 Unity SDK</translation>
+        <source>Inspect installed Unity Integration Package</source>
+        <translation>检查工程内的 Unity 集成包</translation>
     </message>
     <message>
-        <source>Installed SDK verification passed. No files were changed.</source>
-        <translation>工程内的 SDK 验证通过，未更改任何文件。</translation>
+        <source>Installed Integration Package verification passed. No files were changed.</source>
+        <translation>工程内的集成包验证通过，未更改任何文件。</translation>
     </message>
     <message>
-        <source>Installed SDK verification did not pass. Review the results; no files were changed.</source>
-        <translation>工程内的 SDK 未通过验证，请查看检查结果。未更改任何文件。</translation>
+        <source>Installed Integration Package verification did not pass. Review the results; no files were changed.</source>
+        <translation>工程内的集成包未通过验证，请查看检查结果。未更改任何文件。</translation>
     </message>
     <message>
         <source>Not run because a required check failed.</source>
@@ -1037,16 +1077,16 @@ Reason: %2</source><translation>%1
         <translation>Unity 工程目录结构有效。</translation>
     </message>
     <message>
-        <source>The installed SDK could not be inspected.</source>
-        <translation>无法检查工程内已安装的 SDK。</translation>
+        <source>The installed Integration Package could not be inspected.</source>
+        <translation>无法检查工程内已安装的集成包。</translation>
     </message>
     <message>
-        <source>SDK package references could not be verified.</source>
-        <translation>无法验证工程引用的 SDK 包。</translation>
+        <source>Integration Package references could not be verified.</source>
+        <translation>无法验证工程引用的集成包。</translation>
     </message>
     <message>
-        <source>The installed SDK has incomplete or invalid verification data.</source>
-        <translation>已安装 SDK 的校验记录不完整或无效。</translation>
+        <source>The installed Integration Package has incomplete or invalid verification data.</source>
+        <translation>已安装集成包的校验记录不完整或无效。</translation>
     </message>
     <message>
         <source>Restore the installation record from a trusted backup before verifying again.</source>
@@ -1057,56 +1097,56 @@ Reason: %2</source><translation>%1
         <translation>安装时保存的文件校验记录完整，实际文件内容的检查结果见下一项。</translation>
     </message>
     <message>
-        <source>%1 SDK file(s) differ from their contents at installation.</source>
-        <translation>%1 个 SDK 文件与安装时的内容不同。</translation>
+        <source>%1 Integration Package file(s) differ from their contents at installation.</source>
+        <translation>%1 个集成包文件与安装时的内容不同。</translation>
     </message>
     <message>
-        <source>%1 SDK file(s) recorded at installation are missing.</source>
-        <translation>%1 个安装时记录的 SDK 文件已缺失。</translation>
+        <source>%1 Integration Package file(s) recorded at installation are missing.</source>
+        <translation>%1 个安装时记录的集成包文件已缺失。</translation>
     </message>
     <message>
-        <source>%1 SDK file(s) could not be read, so verification could not finish.</source>
-        <translation>%1 个 SDK 文件无法读取，未能完成验证。</translation>
+        <source>%1 Integration Package file(s) could not be read, so verification could not finish.</source>
+        <translation>%1 个集成包文件无法读取，未能完成验证。</translation>
     </message>
     <message>
-        <source>Review the listed content differences to confirm whether they were intentional. To restore the original SDK files, use Change SDK and select the complete package for the installed version.</source>
-        <translation>请确认下方文件的内容变化是否符合预期。如需恢复原版 SDK，请通过“更换 SDK”选择与已安装版本对应的完整 SDK 包。</translation>
+        <source>Review the listed content differences to confirm whether they were intentional. To restore the original Integration Package files, use Change Integration Package and select the complete package for the installed version.</source>
+        <translation>请确认下方文件的内容变化是否符合预期。如需恢复原版集成包，请通过“更换集成包”选择与已安装版本对应的完整集成包。</translation>
     </message>
     <message>
-        <source>Restore the listed missing files from a matching backup, or use Change SDK and select the complete package for the installed version.</source>
-        <translation>请从对应版本的备份中恢复下方缺失文件，或通过“更换 SDK”选择与已安装版本对应的完整 SDK 包。</translation>
+        <source>Restore the listed missing files from a matching backup, or use Change Integration Package and select the complete package for the installed version.</source>
+        <translation>请从对应版本的备份中恢复下方缺失文件，或通过“更换集成包”选择与已安装版本对应的完整集成包。</translation>
     </message>
     <message>
-        <source>Check read permissions and whether another program is preventing access to the listed files, then check the SDK status again.</source>
-        <translation>请检查下方文件的读取权限，以及其他程序是否阻止了文件访问，然后重新点击“检查 SDK 当前状态”。</translation>
+        <source>Check read permissions and whether another program is preventing access to the listed files, then check the Integration Package status again.</source>
+        <translation>请检查下方文件的读取权限，以及其他程序是否阻止了文件访问，然后重新点击“检查集成包当前状态”。</translation>
     </message>
     <message>
-        <source>Installed SDK files do not match the installation record or could not be read.</source>
-        <translation>已安装的 SDK 文件与安装记录不一致，或无法读取。</translation>
+        <source>Installed Integration Package files do not match the installation record or could not be read.</source>
+        <translation>已安装的集成包文件与安装记录不一致，或无法读取。</translation>
     </message>
     <message>
-        <source>Review the listed files and local changes. Restore missing files from backup or use Change SDK with a complete SDK package.</source>
-        <translation>请检查所列文件及本地修改。从备份恢复缺失文件，或通过“更换 SDK”选择完整的 SDK 包。</translation>
+        <source>Review the listed files and local changes. Restore missing files from backup or use Change Integration Package with a complete Integration Package.</source>
+        <translation>请检查所列文件及本地修改。从备份恢复缺失文件，或通过“更换集成包”选择完整的集成包。</translation>
     </message>
     <message>
-        <source>Missing SDK files:</source>
-        <translation>缺失的 SDK 文件：</translation>
+        <source>Missing Integration Package files:</source>
+        <translation>缺失的集成包文件：</translation>
     </message>
     <message>
-        <source>SDK files with contents different from installation:</source>
-        <translation>内容与安装时不同的 SDK 文件：</translation>
+        <source>Integration Package files with contents different from installation:</source>
+        <translation>内容与安装时不同的集成包文件：</translation>
     </message>
     <message>
-        <source>Unreadable SDK files:</source>
-        <translation>无法读取的 SDK 文件：</translation>
+        <source>Unreadable Integration Package files:</source>
+        <translation>无法读取的集成包文件：</translation>
     </message>
     <message>
         <source>Results and Logs</source>
         <translation>日志与结果</translation>
     </message>
     <message>
-        <source>Projects linked. SDK files were not changed.</source>
-        <translation>工程已关联。SDK 文件未更改。</translation>
+        <source>Projects linked. Integration Package files were not changed.</source>
+        <translation>工程已关联。集成包文件未更改。</translation>
     </message>
     <message>
         <source>Harken project:
@@ -1121,52 +1161,52 @@ Game project:
 %2</translation>
     </message>
     <message>
-        <source>Recover SDK Migration...</source>
-        <translation>恢复 SDK 迁移...</translation>
+        <source>Recover Integration Package Migration...</source>
+        <translation>恢复集成包迁移...</translation>
     </message>
     <message>
-        <source>Uninstall Unity SDK...</source>
-        <translation>卸载 Unity SDK...</translation>
+        <source>Uninstall Unity Integration Package...</source>
+        <translation>卸载 Unity 集成包...</translation>
     </message>
     <message>
-        <source>Uninstall Unity SDK</source>
-        <translation>卸载 Unity SDK</translation>
+        <source>Uninstall Unity Integration Package</source>
+        <translation>卸载 Unity 集成包</translation>
     </message>
     <message>
-        <source>Uninstall SDK</source>
-        <translation>卸载 SDK</translation>
+        <source>Uninstall Integration Package</source>
+        <translation>卸载集成包</translation>
     </message>
     <message>
-        <source>The selected SDK source is unavailable.</source>
-        <translation>所选 SDK 来源不可用。</translation>
+        <source>The selected Integration Package source is unavailable.</source>
+        <translation>所选集成包来源不可用。</translation>
     </message>
     <message>
-        <source>Select a valid SDK source or run a check for details.</source>
-        <translation>请选择有效的 SDK 来源，或检查集成状态以查看原因。</translation>
+        <source>Select a valid Integration Package source or run a check for details.</source>
+        <translation>请选择有效的集成包来源，或检查集成状态以查看原因。</translation>
     </message>
     <message>
         <source>Resolve the failed check before continuing.</source>
         <translation>请先解决检查失败的问题。</translation>
     </message>
     <message>
-        <source>SDK %1 (external or stored source)</source>
-        <translation>SDK %1（外部或已保存的来源）</translation>
+        <source>Integration Package %1 (external or stored source)</source>
+        <translation>集成包 %1（外部或已保存的来源）</translation>
     </message>
     <message>
-        <source>%1 / SDK %2</source>
-        <translation>%1 / SDK %2</translation>
+        <source>%1 / Integration Package %2</source>
+        <translation>%1 / 集成包 %2</translation>
     </message>
     <message>
         <source>No game project selected</source>
         <translation>尚未选择游戏工程</translation>
     </message>
     <message>
-        <source>Installed SDK detected. Target SDK has not been compared yet.</source>
-        <translation>已检测到工程内的 SDK，尚未与目标 SDK 比对。</translation>
+        <source>Installed Integration Package detected. Target Integration Package has not been compared yet.</source>
+        <translation>已检测到工程内的集成包，尚未与目标集成包比对。</translation>
     </message>
     <message>
-        <source>Installed SDK: %1
-Target SDK: %2
+        <source>Installed Integration Package: %1
+Target Integration Package: %2
 
 Harken project:
 %3
@@ -1174,13 +1214,13 @@ Harken project:
 Game project:
 %4
 
-SDK source:
+Integration Package source:
 %5
 
-SDK installation location:
+Integration Package installation location:
 %6</source>
-        <translation>已安装 SDK：%1
-目标 SDK：%2
+        <translation>已安装集成包：%1
+目标集成包：%2
 
 Harken 工程：
 %3
@@ -1188,19 +1228,19 @@ Harken 工程：
 游戏工程：
 %4
 
-SDK 来源：
+集成包来源：
 %5
 
-SDK 安装位置：
+集成包安装位置：
 %6</translation>
     </message>
     <message>
-        <source>The SDK already matches. Only the project relationship will be saved.</source>
-        <translation>SDK 内容一致，本次仅保存工程关联。</translation>
+        <source>The Integration Package already matches. Only the project relationship will be saved.</source>
+        <translation>集成包内容一致，本次仅保存工程关联。</translation>
     </message>
     <message>
-        <source>The SDK already matches. No SDK files were changed.</source>
-        <translation>SDK 内容一致，未修改 SDK 文件。</translation>
+        <source>The Integration Package already matches. No Integration Package files were changed.</source>
+        <translation>集成包内容一致，未修改集成包文件。</translation>
     </message>
     <message>
         <source>Check write permission for the Hub report directory: %1</source>
@@ -1223,33 +1263,33 @@ SDK 安装位置：
         <translation>生成检查报告</translation>
     </message>
     <message>
-        <source>Check report written. No SDK changes were executed.</source>
-        <translation>已生成检查报告，尚未执行 SDK 修改。</translation>
+        <source>Check report written. No Integration Package changes were executed.</source>
+        <translation>已生成检查报告，尚未执行集成包修改。</translation>
     </message>
     <message>
         <source>Cancelled. This step was not executed.</source>
         <translation>已取消，此步骤未执行。</translation>
     </message>
     <message>
-        <source>Cancelled. SDK files and project relationships were not changed.</source>
-        <translation>已取消，SDK 文件和工程关联均未改动。</translation>
+        <source>Cancelled. Integration Package files and project relationships were not changed.</source>
+        <translation>已取消，集成包文件和工程关联均未改动。</translation>
     </message>
     <message>
-        <source>SDK update complete. Installed files passed verification.</source>
-        <translation>SDK 更新完成，已安装文件通过校验。</translation>
+        <source>Integration Package update complete. Installed files passed verification.</source>
+        <translation>集成包更新完成，已安装文件通过校验。</translation>
     </message>
     <message>
-        <source>SDK installation complete. Installed files passed verification.</source>
-        <translation>SDK 安装完成，已安装文件通过校验。</translation>
+        <source>Integration Package installation complete. Installed files passed verification.</source>
+        <translation>集成包安装完成，已安装文件通过校验。</translation>
     </message>
     <message>
-        <source>A verified backup will be created before Harken-managed Unity SDK and runtime files are removed. Project-specific files and the project relationship will be kept.
+        <source>A verified backup will be created before Harken-managed Unity Integration Package and runtime files are removed. Project-specific files and the project relationship will be kept.
 
 Backup folder:
 %1
 
 Close Unity before continuing.</source>
-        <translation>将先创建并校验备份，再卸载由 Harken 管理的 Unity SDK 和运行时文件。工程专属文件和工程关联都会保留。
+        <translation>将先创建并校验备份，再卸载由 Harken 管理的 Unity 集成包和运行时文件。工程专属文件和工程关联都会保留。
 
 备份目录：
 %1
@@ -1257,42 +1297,42 @@ Close Unity before continuing.</source>
 请先关闭 Unity，再继续操作。</translation>
     </message>
     <message>
-        <source>The SDK was uninstalled, but the projects could not be unlinked.
+        <source>The Integration Package was uninstalled, but the projects could not be unlinked.
 %1</source>
-        <translation>SDK 已卸载，但未能解除工程关联。
+        <translation>集成包已卸载，但未能解除工程关联。
 %1</translation>
     </message>
     <message>
-        <source>Review installed Harken SDK</source>
-        <translation>检查已安装的 Harken SDK</translation>
+        <source>Review installed Harken Integration Package</source>
+        <translation>检查已安装的 Harken 集成包</translation>
     </message>
     <message>
-        <source>Back up and remove Harken SDK</source>
-        <translation>备份并卸载 Harken SDK</translation>
+        <source>Back up and remove Harken Integration Package</source>
+        <translation>备份并卸载 Harken 集成包</translation>
     </message>
     <message>
         <source>Write removal report</source>
         <translation>生成卸载报告</translation>
     </message>
     <message>
-        <source>Harken SDK and runtime files that will be removed:</source>
-        <translation>将卸载的 Harken SDK 和运行时文件：</translation>
+        <source>Harken Integration Package and runtime files that will be removed:</source>
+        <translation>将卸载的 Harken 集成包和运行时文件：</translation>
     </message>
     <message>
         <source>Project-specific files that will be preserved:</source>
         <translation>将保留的工程专属文件：</translation>
     </message>
     <message>
-        <source>To integrate again later, select or drop this SDK source: %1</source>
-        <translation>以后如需重新安装，可选择此 SDK 来源：%1</translation>
+        <source>To integrate again later, select or drop this Integration Package source: %1</source>
+        <translation>以后如需重新安装，可选择此集成包来源：%1</translation>
     </message>
     <message>
-        <source>Installed SDK %1 from a verified staging directory; copied %2 managed file(s) and preserved %3 target-only file(s).</source>
-        <translation>已从校验通过的暂存目录安装 SDK %1；复制了 %2 个受管理文件，保留了 %3 个工程原有文件。</translation>
+        <source>Installed Integration Package %1 from a verified staging directory; copied %2 managed file(s) and preserved %3 target-only file(s).</source>
+        <translation>已从校验通过的暂存目录安装集成包 %1；复制了 %2 个受管理文件，保留了 %3 个工程原有文件。</translation>
     </message>
     <message>
-        <source>Verified the content integrity of %1 Harken-managed SDK file(s).</source>
-        <translation>已校验 %1 个 Harken 管理的 SDK 文件，内容完整。</translation>
+        <source>Verified the content integrity of %1 Harken-managed Integration Package file(s).</source>
+        <translation>已校验 %1 个 Harken 管理的集成包文件，内容完整。</translation>
     </message>
     <message>
         <source>Remove Selected from List (%1)</source>
@@ -2593,8 +2633,9 @@ Diagnostic log: %2</source>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="149"/>
-        <source>SDK STATUS</source>
-        <translation>SDK 状态</translation>
+        <source>INTEGRATION
+PACKAGE STATUS</source>
+        <translation>集成包状态</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="209"/>
@@ -2633,17 +2674,17 @@ Diagnostic log: %2</source>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="285"/>
-        <source>Runtime/SDK source path</source>
-        <translation>Runtime/SDK 源路径</translation>
+        <source>Runtime/Integration Package source path</source>
+        <translation>Runtime/集成包源路径</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="282"/>
-        <source>SDK Source Directory</source>
-        <translation>SDK 源目录</translation>
+        <source>Integration Package Source Directory</source>
+        <translation>集成包源目录</translation>
     </message>
     <message>
-        <source>Studio %1 | %2 SDK %3</source>
-        <translation>Studio %1 | %2 SDK %3</translation>
+        <source>Studio %1 | %2 Integration Package %3</source>
+        <translation>Studio %1 | %2 集成包 %3</translation>
     </message>
     <message>
         <source>File Changes</source>
@@ -2658,8 +2699,8 @@ Diagnostic log: %2</source>
         <translation>检查日志（%1 项建议关注）</translation>
     </message>
     <message>
-        <source>SDK version: %1 → %2</source>
-        <translation>SDK 版本：%1 → %2</translation>
+        <source>Integration Package version: %1 → %2</source>
+        <translation>集成包版本：%1 → %2</translation>
     </message>
     <message>
         <source>Add %1</source>
@@ -2678,36 +2719,36 @@ Diagnostic log: %2</source>
         <translation>保留 %1</translation>
     </message>
     <message>
-        <source>No SDK files need to be changed.</source>
-        <translation>无需更改 SDK 文件。</translation>
+        <source>No Integration Package files need to be changed.</source>
+        <translation>无需更改集成包文件。</translation>
     </message>
     <message>
         <source>Review recommended for %1 item(s). View check log.</source>
         <translation>有 %1 项建议关注，查看检查日志。</translation>
     </message>
     <message>
-        <source>SDK check failed. Review the check log for details.</source>
-        <translation>SDK 检查失败，请查看检查日志了解详情。</translation>
+        <source>Integration Package check failed. Review the check log for details.</source>
+        <translation>集成包检查失败，请查看检查日志了解详情。</translation>
     </message>
     <message>
-        <source>All Harken-managed files match SDK %1; %2 Unity metadata file(s) and %3 optional target runtime file(s) are retained as expected.</source>
-        <translation>所有 Harken 管理的文件均与 SDK %1 一致；已正常保留 %2 个 Unity 元数据文件和 %3 个可选目标运行时文件。</translation>
+        <source>All Harken-managed files match Integration Package %1; %2 Unity metadata file(s) and %3 optional target runtime file(s) are retained as expected.</source>
+        <translation>所有 Harken 管理的文件均与集成包 %1 一致；已正常保留 %2 个 Unity 元数据文件和 %3 个可选目标运行时文件。</translation>
     </message>
     <message>
-        <source>All Harken-managed files match SDK %1; %2 project-specific file(s) need review, while %3 Unity metadata and %4 optional runtime file(s) are retained normally.</source>
-        <translation>所有 Harken 管理的文件均与 SDK %1 一致；有 %2 个工程自定义文件需要检查，另有 %3 个 Unity 元数据文件和 %4 个可选运行时文件已正常保留。</translation>
+        <source>All Harken-managed files match Integration Package %1; %2 project-specific file(s) need review, while %3 Unity metadata and %4 optional runtime file(s) are retained normally.</source>
+        <translation>所有 Harken 管理的文件均与集成包 %1 一致；有 %2 个工程自定义文件需要检查，另有 %3 个 Unity 元数据文件和 %4 个可选运行时文件已正常保留。</translation>
     </message>
     <message>
-        <source>The project-specific files are outside Harken SDK ownership, so the check cannot determine whether they are still needed.</source>
-        <translation>这些工程自定义文件不由 Harken SDK 管理，无法自动判断是否仍需保留。</translation>
+        <source>The project-specific files are outside Harken Integration Package ownership, so the check cannot determine whether they are still needed.</source>
+        <translation>这些工程自定义文件不由 Harken 集成包管理，无法自动判断是否仍需保留。</translation>
     </message>
     <message>
         <source>Review only the project-specific files listed below. Unity-generated metadata requires no action.</source>
         <translation>请检查下方列出的工程自定义文件。Unity 自动生成的元数据无需处理。</translation>
     </message>
     <message>
-        <source>SDK Install Location</source>
-        <translation>SDK 安装位置</translation>
+        <source>Integration Package Install Location</source>
+        <translation>集成包安装位置</translation>
     </message>
     <message>
         <source>Migrate...</source>
@@ -2726,16 +2767,16 @@ Diagnostic log: %2</source>
         <translation>恢复</translation>
     </message>
     <message>
-        <source>Migrate SDK</source>
-        <translation>迁移 SDK</translation>
+        <source>Migrate Integration Package</source>
+        <translation>迁移集成包</translation>
     </message>
     <message>
-        <source>Recover SDK Migration</source>
-        <translation>恢复 SDK 迁移</translation>
+        <source>Recover Integration Package Migration</source>
+        <translation>恢复集成包迁移</translation>
     </message>
     <message>
-        <source>New SDK installation location</source>
-        <translation>新的 SDK 安装位置</translation>
+        <source>New Integration Package installation location</source>
+        <translation>新的集成包安装位置</translation>
     </message>
     <message>
         <source>Safety Check</source>
@@ -2750,27 +2791,27 @@ Diagnostic log: %2</source>
         <translation>尚未通过安全检查。</translation>
     </message>
     <message>
-        <source>Checking SDK migration safety...</source>
-        <translation>正在检查 SDK 迁移安全性…</translation>
+        <source>Checking Integration Package migration safety...</source>
+        <translation>正在检查集成包迁移安全性…</translation>
     </message>
     <message>
-        <source>The approved SDK migration is running...</source>
-        <translation>正在执行已确认的 SDK 迁移…</translation>
+        <source>The approved Integration Package migration is running...</source>
+        <translation>正在执行已确认的集成包迁移…</translation>
     </message>
     <message>
         <source>Migration destination changed. Safety check required.</source>
         <translation>迁移目标位置已更改，需要重新进行安全检查。</translation>
     </message>
     <message>
-        <source>Safety check passed. No SDK files were moved.</source>
-        <translation>安全检查通过，尚未移动 SDK 文件。</translation>
+        <source>Safety check passed. No Integration Package files were moved.</source>
+        <translation>安全检查通过，尚未移动集成包文件。</translation>
     </message>
     <message>
-        <source>Safety check failed. No SDK files were moved.</source>
-        <translation>安全检查未通过，未移动 SDK 文件。</translation>
+        <source>Safety check failed. No Integration Package files were moved.</source>
+        <translation>安全检查未通过，未移动集成包文件。</translation>
     </message>
     <message>
-        <source>Restore the SDK to its previous location using the migration record. Project relationships will be kept.
+        <source>Restore the Integration Package to its previous location using the migration record. Project relationships will be kept.
 
 Previous location:
 %1
@@ -2780,7 +2821,7 @@ Migration destination:
 
 Backup:
 %3</source>
-        <translation>根据迁移记录将 SDK 恢复到原位置，工程绑定关系保持不变。
+        <translation>根据迁移记录将集成包恢复到原位置，工程绑定关系保持不变。
 
 原位置：
 %1
@@ -2792,7 +2833,7 @@ Backup:
 %3</translation>
     </message>
     <message>
-        <source>Move the installed SDK with all existing files, modifications and Unity metadata. Project relationships will be kept. A verified backup will be created first.
+        <source>Move the installed Integration Package with all existing files, modifications and Unity metadata. Project relationships will be kept. A verified backup will be created first.
 
 Current location:
 %1
@@ -2804,7 +2845,7 @@ Backup:
 %3
 
 Close Unity before continuing. Any paths hard-coded in your project must be updated separately.</source>
-        <translation>迁移已安装的 SDK，保留全部现有文件、自定义修改和 Unity 元数据，工程绑定关系保持不变。迁移前会创建并验证备份。
+        <translation>迁移已安装的集成包，保留全部现有文件、自定义修改和 Unity 元数据，工程绑定关系保持不变。迁移前会创建并验证备份。
 
 当前位置：
 %1
@@ -2818,46 +2859,46 @@ Close Unity before continuing. Any paths hard-coded in your project must be upda
 继续前请关闭 Unity。工程中写死的旧路径需要单独调整。</translation>
     </message>
     <message>
-        <source>Migration cancelled. No SDK files or project relationships were changed.</source>
-        <translation>已取消迁移，未修改 SDK 文件或工程绑定关系。</translation>
+        <source>Migration cancelled. No Integration Package files or project relationships were changed.</source>
+        <translation>已取消迁移，未修改集成包文件或工程绑定关系。</translation>
     </message>
     <message>
-        <source>The SDK location changed, but Hub could not save it. Reopen this integration to rediscover the location.
+        <source>The Integration Package location changed, but Hub could not save it. Reopen this integration to rediscover the location.
 %1</source>
-        <translation>SDK 位置已更改，但 Hub 未能保存记录。请重新打开此集成以识别实际位置。
+        <translation>集成包位置已更改，但 Hub 未能保存记录。请重新打开此集成以识别实际位置。
 %1</translation>
     </message>
     <message>
-        <source>The SDK was restored to its previous location. Project relationships were kept.</source>
-        <translation>SDK 已恢复到原位置，工程绑定关系保持不变。</translation>
+        <source>The Integration Package was restored to its previous location. Project relationships were kept.</source>
+        <translation>集成包已恢复到原位置，工程绑定关系保持不变。</translation>
     </message>
     <message>
-        <source>SDK migration completed. All installed files, Unity GUIDs and project relationships were kept.</source>
-        <translation>SDK 迁移完成。全部已安装文件、Unity GUID 和工程绑定关系均已保留。</translation>
+        <source>Integration Package migration completed. All installed files, Unity GUIDs and project relationships were kept.</source>
+        <translation>集成包迁移完成。全部已安装文件、Unity GUID 和工程绑定关系均已保留。</translation>
     </message>
     <message>
-        <source>The SDK migration is unfinished. Choose "Recover..." before continuing.</source>
-        <translation>SDK 迁移尚未完成，请先点击“恢复…”再继续操作。</translation>
+        <source>The Integration Package migration is unfinished. Choose "Recover..." before continuing.</source>
+        <translation>集成包迁移尚未完成，请先点击“恢复…”再继续操作。</translation>
     </message>
     <message>
-        <source>SDK migration failed. Select the failed step for details.</source>
-        <translation>SDK 迁移失败，请选择失败步骤查看详情。</translation>
+        <source>Integration Package migration failed. Select the failed step for details.</source>
+        <translation>集成包迁移失败，请选择失败步骤查看详情。</translation>
     </message>
     <message>
         <source>Safety backup: %1</source>
         <translation>安全备份：%1</translation>
     </message>
     <message>
-        <source>An unfinished SDK migration must be recovered before continuing.</source>
-        <translation>存在尚未完成的 SDK 迁移，请先恢复迁移再继续操作。</translation>
+        <source>An unfinished Integration Package migration must be recovered before continuing.</source>
+        <translation>存在尚未完成的集成包迁移，请先恢复迁移再继续操作。</translation>
     </message>
     <message>
-        <source>The SDK contains a path that cannot be migrated safely.</source>
-        <translation>SDK 中包含无法安全迁移的路径。</translation>
+        <source>The Integration Package contains a path that cannot be migrated safely.</source>
+        <translation>集成包中包含无法安全迁移的路径。</translation>
     </message>
     <message>
-        <source>Cannot read SDK file for migration: %1</source>
-        <translation>无法读取待迁移的 SDK 文件：%1</translation>
+        <source>Cannot read Integration Package file for migration: %1</source>
+        <translation>无法读取待迁移的集成包文件：%1</translation>
     </message>
     <message>
         <source>Cannot write %1: %2</source>
@@ -2876,8 +2917,8 @@ Close Unity before continuing. Any paths hard-coded in your project must be upda
         <translation>无法完成 %1 的写入：%2</translation>
     </message>
     <message>
-        <source>SDK contents changed during migration. No existing files will be overwritten.</source>
-        <translation>迁移过程中 SDK 内容发生了变化，不会覆盖现有文件。</translation>
+        <source>Integration Package contents changed during migration. No existing files will be overwritten.</source>
+        <translation>迁移过程中集成包内容发生了变化，不会覆盖现有文件。</translation>
     </message>
     <message>
         <source>The migration destination must be an empty directory.</source>
@@ -2888,72 +2929,72 @@ Close Unity before continuing. Any paths hard-coded in your project must be upda
         <translation>目标位置已有 Unity 元数据。为保留现有 GUID，请选择新的目录。</translation>
     </message>
     <message>
-        <source>Close Unity before migrating or recovering the SDK.</source>
-        <translation>迁移或恢复 SDK 前，请先关闭 Unity。</translation>
+        <source>Close Unity before migrating or recovering the Integration Package.</source>
+        <translation>迁移或恢复集成包前，请先关闭 Unity。</translation>
     </message>
     <message>
-        <source>The current and new SDK locations must be separate directories without containment.</source>
-        <translation>SDK 原位置与新位置必须独立，不能相同或相互包含。</translation>
+        <source>The current and new Integration Package locations must be separate directories without containment.</source>
+        <translation>集成包原位置与新位置必须独立，不能相同或相互包含。</translation>
     </message>
     <message>
-        <source>Resolve SDK package dependencies before migration to avoid loading another SDK or breaking a package reference.</source>
-        <translation>迁移前请先处理 SDK 包依赖，以免加载另一套 SDK 或导致包引用失效。</translation>
+        <source>Resolve Integration Package dependencies before migration to avoid loading another Integration Package or breaking a package reference.</source>
+        <translation>迁移前请先处理集成包依赖，以免加载另一套集成包或导致包引用失效。</translation>
     </message>
     <message>
-        <source>A valid SDK ownership record is required for migration.</source>
-        <translation>迁移需要有效的 SDK 文件归属记录。</translation>
+        <source>A valid Integration Package ownership record is required for migration.</source>
+        <translation>迁移需要有效的集成包文件归属记录。</translation>
     </message>
     <message>
-        <source>The installed SDK identity or integration manifest is invalid.</source>
-        <translation>已安装 SDK 的身份信息或集成清单无效。</translation>
+        <source>The installed Integration Package identity or integration manifest is invalid.</source>
+        <translation>已安装集成包的身份信息或集成清单无效。</translation>
     </message>
     <message>
-        <source>The installed SDK has local package dependencies. Resolve them before migration.</source>
-        <translation>已安装 SDK 存在本地包依赖，请先处理这些依赖再迁移。</translation>
+        <source>The installed Integration Package has local package dependencies. Resolve them before migration.</source>
+        <translation>已安装集成包存在本地包依赖，请先处理这些依赖再迁移。</translation>
     </message>
     <message>
-        <source>The SDK migration record is invalid. Restore the verified backup manually.</source>
-        <translation>SDK 迁移记录无效，请手动恢复已验证的备份。</translation>
+        <source>The Integration Package migration record is invalid. Restore the verified backup manually.</source>
+        <translation>集成包迁移记录无效，请手动恢复已验证的备份。</translation>
     </message>
     <message>
-        <source>SDK migration recovery found conflicting or missing files. Preserve both locations and restore the verified backup manually.</source>
-        <translation>恢复 SDK 迁移时发现文件冲突或缺失。请保留两处内容，并手动恢复已验证的备份。</translation>
+        <source>Integration Package migration recovery found conflicting or missing files. Preserve both locations and restore the verified backup manually.</source>
+        <translation>恢复集成包迁移时发现文件冲突或缺失。请保留两处内容，并手动恢复已验证的备份。</translation>
     </message>
     <message>
-        <source>SDK directory metadata changed. Recovery will not overwrite Unity GUIDs.</source>
-        <translation>SDK 目录元数据发生了变化，恢复操作不会覆盖 Unity GUID。</translation>
+        <source>Integration Package directory metadata changed. Recovery will not overwrite Unity GUIDs.</source>
+        <translation>集成包目录元数据发生了变化，恢复操作不会覆盖 Unity GUID。</translation>
     </message>
     <message>
-        <source>The SDK could not be restored to its previous location. Close programs using these files and retry recovery.</source>
-        <translation>无法将 SDK 恢复到原位置。请关闭占用这些文件的程序，再重试恢复。</translation>
+        <source>The Integration Package could not be restored to its previous location. Close programs using these files and retry recovery.</source>
+        <translation>无法将集成包恢复到原位置。请关闭占用这些文件的程序，再重试恢复。</translation>
     </message>
     <message>
-        <source>The SDK migration record could not be cleared. Retry recovery before continuing.</source>
-        <translation>无法清除 SDK 迁移记录，请先重试恢复再继续操作。</translation>
+        <source>The Integration Package migration record could not be cleared. Retry recovery before continuing.</source>
+        <translation>无法清除集成包迁移记录，请先重试恢复再继续操作。</translation>
     </message>
     <message>
-        <source>SDK migration could not be completed.</source>
-        <translation>未能完成 SDK 迁移。</translation>
+        <source>Integration Package migration could not be completed.</source>
+        <translation>未能完成集成包迁移。</translation>
     </message>
     <message>
-        <source>Review SDK migration</source>
-        <translation>检查 SDK 迁移方案</translation>
+        <source>Review Integration Package migration</source>
+        <translation>检查集成包迁移方案</translation>
     </message>
     <message>
         <source>Migration cannot be combined with installation, removal or check-only mode.</source>
         <translation>迁移不能与安装、移除或仅检查模式同时执行。</translation>
     </message>
     <message>
-        <source>Select a new SDK installation location.</source>
-        <translation>请选择新的 SDK 安装位置。</translation>
+        <source>Select a new Integration Package installation location.</source>
+        <translation>请选择新的集成包安装位置。</translation>
     </message>
     <message>
-        <source>The SDK directory metadata could not be read.</source>
-        <translation>无法读取 SDK 目录元数据。</translation>
+        <source>The Integration Package directory metadata could not be read.</source>
+        <translation>无法读取集成包目录元数据。</translation>
     </message>
     <message>
-        <source>Recovery will restore the SDK to its previous location without changing project relationships.</source>
-        <translation>恢复操作会将 SDK 移回原位置，工程绑定关系保持不变。</translation>
+        <source>Recovery will restore the Integration Package to its previous location without changing project relationships.</source>
+        <translation>恢复操作会将集成包移回原位置，工程绑定关系保持不变。</translation>
     </message>
     <message>
         <source>Migration will preserve all installed files, Unity GUIDs and project relationships.</source>
@@ -2968,72 +3009,72 @@ Close Unity before continuing. Any paths hard-coded in your project must be upda
         <translation>迁移方案已通过安全检查。</translation>
     </message>
     <message>
-        <source>Recover SDK migration</source>
-        <translation>恢复 SDK 迁移</translation>
+        <source>Recover Integration Package migration</source>
+        <translation>恢复集成包迁移</translation>
     </message>
     <message>
-        <source>Back up installed SDK</source>
-        <translation>备份已安装的 SDK</translation>
+        <source>Back up installed Integration Package</source>
+        <translation>备份已安装的集成包</translation>
     </message>
     <message>
-        <source>The SDK migration backup could not be created.</source>
-        <translation>无法创建 SDK 迁移备份。</translation>
+        <source>The Integration Package migration backup could not be created.</source>
+        <translation>无法创建集成包迁移备份。</translation>
     </message>
     <message>
         <source>The backup location overlaps a local Unity package. Choose another backup directory.</source>
         <translation>备份位置与 Unity 引用的本地包相互包含，请选择其他备份目录。</translation>
     </message>
     <message>
-        <source>SDK directory metadata backup verification failed.</source>
-        <translation>SDK 目录元数据的备份验证失败。</translation>
+        <source>Integration Package directory metadata backup verification failed.</source>
+        <translation>集成包目录元数据的备份验证失败。</translation>
     </message>
     <message>
-        <source>All installed SDK files and directory metadata were backed up and verified.</source>
-        <translation>全部已安装 SDK 文件及目录元数据均已备份并通过验证。</translation>
+        <source>All installed Integration Package files and directory metadata were backed up and verified.</source>
+        <translation>全部已安装集成包文件及目录元数据均已备份并通过验证。</translation>
     </message>
     <message>
-        <source>Move installed SDK</source>
-        <translation>移动已安装的 SDK</translation>
+        <source>Move installed Integration Package</source>
+        <translation>移动已安装的集成包</translation>
     </message>
     <message>
-        <source>SDK directory metadata changed. Migration was cancelled.</source>
-        <translation>SDK 目录元数据发生了变化，已取消迁移。</translation>
+        <source>Integration Package directory metadata changed. Migration was cancelled.</source>
+        <translation>集成包目录元数据发生了变化，已取消迁移。</translation>
     </message>
     <message>
-        <source>The SDK migration destination could not be created.</source>
-        <translation>无法创建 SDK 迁移目标目录。</translation>
+        <source>The Integration Package migration destination could not be created.</source>
+        <translation>无法创建集成包迁移目标目录。</translation>
     </message>
     <message>
-        <source>Use Recover to finish the interrupted migration before installing, updating or removing the SDK.</source>
-        <translation>安装、更新或移除 SDK 前，请先使用恢复功能处理已中断的迁移。</translation>
+        <source>Use Recover to finish the interrupted migration before installing, updating or removing the Integration Package.</source>
+        <translation>安装、更新或移除集成包前，请先使用恢复功能处理已中断的迁移。</translation>
     </message>
     <message>
-        <source>The SDK directory could not be moved.</source>
-        <translation>无法移动 SDK 目录。</translation>
+        <source>The Integration Package directory could not be moved.</source>
+        <translation>无法移动集成包目录。</translation>
     </message>
     <message>
-        <source>The SDK directory metadata could not be moved.</source>
-        <translation>无法移动 SDK 目录元数据。</translation>
+        <source>The Integration Package directory metadata could not be moved.</source>
+        <translation>无法移动集成包目录元数据。</translation>
     </message>
     <message>
-        <source>The existing SDK directory was moved without replacing its contents.</source>
-        <translation>现有 SDK 目录已移动，未替换其中的内容。</translation>
+        <source>The existing Integration Package directory was moved without replacing its contents.</source>
+        <translation>现有集成包目录已移动，未替换其中的内容。</translation>
     </message>
     <message>
-        <source>Verify SDK migration</source>
-        <translation>验证 SDK 迁移</translation>
+        <source>Verify Integration Package migration</source>
+        <translation>验证集成包迁移</translation>
     </message>
     <message>
-        <source>The Unity project changed during migration. Review SDK paths and dependencies again.</source>
-        <translation>迁移过程中 Unity 工程发生了变化，请重新检查 SDK 路径和依赖。</translation>
+        <source>The Unity project changed during migration. Review Integration Package paths and dependencies again.</source>
+        <translation>迁移过程中 Unity 工程发生了变化，请重新检查集成包路径和依赖。</translation>
     </message>
     <message>
-        <source>Select SDK Installation Directory</source>
-        <translation>选择 SDK 安装目录</translation>
+        <source>Select Integration Package Installation Directory</source>
+        <translation>选择集成包安装目录</translation>
     </message>
     <message>
-        <source>To change the SDK location, choose "Migrate...". Existing files, your changes and project relationships will be kept.</source>
-        <translation>如需更换 SDK 位置，请点击“迁移…”。现有文件、自定义修改和工程绑定关系都会保留。</translation>
+        <source>To change the Integration Package location, choose "Migrate...". Existing files, your changes and project relationships will be kept.</source>
+        <translation>如需更换集成包位置，请点击“迁移…”。现有文件、自定义修改和工程绑定关系都会保留。</translation>
     </message>
     <message>
         <source>The installation location changed. Check the integration again.</source>
@@ -3046,15 +3087,15 @@ Close Unity before continuing. Any paths hard-coded in your project must be upda
 %1</translation>
     </message>
     <message>
-        <source>The SDK was found, but its installation location could not be saved.
+        <source>The Integration Package was found, but its installation location could not be saved.
 %1</source>
-        <translation>已找到 SDK，但无法保存其安装位置。
+        <translation>已找到集成包，但无法保存其安装位置。
 %1</translation>
     </message>
     <message>
-        <source>The SDK was installed, but its installation location could not be saved.
+        <source>The Integration Package was installed, but its installation location could not be saved.
 %1</source>
-        <translation>SDK 已安装，但无法保存其安装位置。
+        <translation>集成包已安装，但无法保存其安装位置。
 %1</translation>
     </message>
     <message>
@@ -3066,80 +3107,80 @@ Close Unity before continuing. Any paths hard-coded in your project must be upda
         <translation>集成数据库不可用</translation>
     </message>
     <message>
-        <source>Cannot save the SDK installation location</source>
-        <translation>无法保存 SDK 安装位置</translation>
+        <source>Cannot save the Integration Package installation location</source>
+        <translation>无法保存集成包安装位置</translation>
     </message>
     <message>
         <source>The game project record no longer exists</source>
         <translation>游戏工程记录已不存在</translation>
     </message>
     <message>
-        <source>Multiple SDK installations were found:</source>
-        <translation>发现多套 SDK：</translation>
+        <source>Multiple Integration Package installations were found:</source>
+        <translation>发现多套集成包：</translation>
     </message>
     <message>
-        <source>The SDK ownership record is missing, invalid or unreadable. Restore it from backup before updating or removing the SDK.</source>
-        <translation>SDK 文件归属记录缺失、无效或无法读取。更新或移除 SDK 前，请先从备份中恢复该记录。</translation>
+        <source>The Integration Package ownership record is missing, invalid or unreadable. Restore it from backup before updating or removing the Integration Package.</source>
+        <translation>集成包文件归属记录缺失、无效或无法读取。更新或移除集成包前，请先从备份中恢复该记录。</translation>
     </message>
     <message>
         <source>Another integration operation is using this Unity project.</source>
         <translation>另一个集成操作正在使用该 Unity 工程。</translation>
     </message>
     <message>
-        <source>This Unity project is open. Close it before changing the SDK, then run the safety check again.</source>
-        <translation>该 Unity 工程仍在运行。请先关闭工程，再重新进行安全检查，通过后才能修改 SDK。</translation>
+        <source>This Unity project is open. Close it before changing the Integration Package, then run the safety check again.</source>
+        <translation>该 Unity 工程仍在运行。请先关闭工程，再重新进行安全检查，通过后才能修改集成包。</translation>
     </message>
     <message>
         <source>Cannot check whether this Unity project is open: %1 (system error %2). Check project permissions and try again.</source>
         <translation>无法检查该 Unity 工程是否正在运行：%1（系统错误 %2）。请检查工程访问权限后重试。</translation>
     </message>
     <message>
-        <source>The SDK installation location is not safe to use.</source>
-        <translation>SDK 安装位置未通过安全检查。</translation>
+        <source>The Integration Package installation location is not safe to use.</source>
+        <translation>集成包安装位置未通过安全检查。</translation>
     </message>
     <message>
-        <source>Resolve the reported path or SDK conflict, then check again.</source>
-        <translation>请先解决提示的路径问题或 SDK 冲突，再重新检查。</translation>
+        <source>Resolve the reported path or Integration Package conflict, then check again.</source>
+        <translation>请先解决提示的路径问题或集成包冲突，再重新检查。</translation>
     </message>
     <message>
-        <source>The installed SDK manifest contains an unsafe runtime path.</source>
-        <translation>已安装 SDK 的清单中包含不安全的 Runtime 路径。</translation>
+        <source>The installed Integration Package manifest contains an unsafe runtime path.</source>
+        <translation>已安装集成包的清单中包含不安全的 Runtime 路径。</translation>
     </message>
     <message>
-        <source>The SDK or backup location is not safe to use.</source>
-        <translation>SDK 或备份位置未通过安全检查。</translation>
+        <source>The Integration Package or backup location is not safe to use.</source>
+        <translation>集成包或备份位置未通过安全检查。</translation>
     </message>
     <message>
         <source>Choose a backup directory outside the Unity project.</source>
         <translation>请选择 Unity 工程之外的目录存放备份。</translation>
     </message>
     <message>
-        <source>The SDK source and installation location are not safe to use.</source>
-        <translation>SDK 源目录或安装位置未通过安全检查。</translation>
+        <source>The Integration Package source and installation location are not safe to use.</source>
+        <translation>集成包源目录或安装位置未通过安全检查。</translation>
     </message>
     <message>
-        <source>SDK source and target must be separate directories without containment.</source>
-        <translation>SDK 源目录与安装目录必须独立，不能相同或相互包含。</translation>
+        <source>Integration Package source and target must be separate directories without containment.</source>
+        <translation>集成包源目录与安装目录必须独立，不能相同或相互包含。</translation>
     </message>
     <message>
-        <source>This SDK version does not support a custom installation location.</source>
-        <translation>该版本 SDK 不支持自定义安装位置。</translation>
+        <source>This Integration Package version does not support a custom installation location.</source>
+        <translation>该版本集成包不支持自定义安装位置。</translation>
     </message>
     <message>
-        <source>Choose a newer SDK or install to Packages/com.harken.core or Assets/HarkenSDK.</source>
-        <translation>请选择较新版本的 SDK，或安装到 Packages/com.harken.core 或 Assets/HarkenSDK。</translation>
+        <source>Choose a newer Integration Package or install to Packages/com.harken.core or Assets/HarkenSDK.</source>
+        <translation>请选择较新版本的集成包，或安装到 Packages/com.harken.core 或 Assets/HarkenSDK。</translation>
     </message>
     <message>
-        <source>The SDK manifest contains an unsafe file path.</source>
-        <translation>SDK 清单中包含不安全的文件路径。</translation>
+        <source>The Integration Package manifest contains an unsafe file path.</source>
+        <translation>集成包清单中包含不安全的文件路径。</translation>
     </message>
     <message>
-        <source>The SDK manifest contains an unsafe runtime path.</source>
-        <translation>SDK 清单中包含不安全的 Runtime 路径。</translation>
+        <source>The Integration Package manifest contains an unsafe runtime path.</source>
+        <translation>集成包清单中包含不安全的 Runtime 路径。</translation>
     </message>
     <message>
-        <source>The installed SDK could not be compared because its ownership record is missing, invalid or unreadable.</source>
-        <translation>已安装 SDK 的文件归属记录缺失、无效或无法读取，无法比较其内容。</translation>
+        <source>The installed Integration Package could not be compared because its ownership record is missing, invalid or unreadable.</source>
+        <translation>已安装集成包的文件归属记录缺失、无效或无法读取，无法比较其内容。</translation>
     </message>
     <message>
         <source>%1 could not establish which files belong to Harken. Nothing was compared or changed.</source>
@@ -3150,28 +3191,28 @@ Close Unity before continuing. Any paths hard-coded in your project must be upda
         <translation>请从备份中恢复文件归属记录，或解决文件访问错误后重新检查。</translation>
     </message>
     <message>
-        <source>The SDK paths changed after checking. No files were installed.</source>
-        <translation>检查后 SDK 路径发生了变化，未安装任何文件。</translation>
+        <source>The Integration Package paths changed after checking. No files were installed.</source>
+        <translation>检查后集成包路径发生了变化，未安装任何文件。</translation>
     </message>
     <message>
         <source>Check installation directory permissions and free disk space.</source>
         <translation>请检查安装目录权限和磁盘可用空间。</translation>
     </message>
     <message>
-        <source>The SDK installation changed while staging. No files were replaced.</source>
-        <translation>准备安装文件期间，SDK 安装内容发生了变化，未替换任何文件。</translation>
+        <source>The Integration Package installation changed while staging. No files were replaced.</source>
+        <translation>准备安装文件期间，集成包安装内容发生了变化，未替换任何文件。</translation>
     </message>
     <message>
         <source>Invalid JSON object: %1</source>
         <translation>JSON 对象无效：%1</translation>
     </message>
     <message>
-        <source>Cannot determine the SDK package identity: %1</source>
-        <translation>无法确定 SDK 包身份：%1</translation>
+        <source>Cannot determine the Integration Package identity: %1</source>
+        <translation>无法确定集成包身份：%1</translation>
     </message>
     <message>
-        <source>SDK discovery exceeded its safety limits at %1. Check local package references and reduce the scanned content.</source>
-        <translation>SDK 检查在 %1 处超出安全扫描上限。请检查本地包引用，并缩小扫描范围。</translation>
+        <source>Integration Package discovery exceeded its safety limits at %1. Check local package references and reduce the scanned content.</source>
+        <translation>集成包检查在 %1 处超出安全扫描上限。请检查本地包引用，并缩小扫描范围。</translation>
     </message>
     <message>
         <source>A local package path includes the Unity project: %1. Reference a package directory instead.</source>
@@ -3210,36 +3251,36 @@ Close Unity before continuing. Any paths hard-coded in your project must be upda
         <translation>安装位置不是目录：%1</translation>
     </message>
     <message>
-        <source>An SDK is referenced by Unity Package Manager: %1. Resolve this dependency before using Hub installation.</source>
-        <translation>Unity Package Manager 已引用 SDK：%1。请先处理该依赖，再通过 Hub 安装。</translation>
+        <source>An Integration Package is referenced by Unity Package Manager: %1. Resolve this dependency before using Hub installation.</source>
+        <translation>Unity Package Manager 已引用集成包：%1。请先处理该依赖，再通过 Hub 安装。</translation>
     </message>
     <message>
-        <source>SDK files without an identifiable installation root: %1</source>
-        <translation>发现无法确定安装根目录的 SDK 文件：%1</translation>
+        <source>Integration Package files without an identifiable installation root: %1</source>
+        <translation>发现无法确定安装根目录的集成包文件：%1</translation>
     </message>
     <message>
-        <source>Resolve SDK package dependencies before removal; Unity could load the referenced SDK after the embedded copy is removed:</source>
-        <translation>移除前请先处理 SDK 包依赖，否则移除内嵌 SDK 后 Unity 可能加载所引用的 SDK：</translation>
+        <source>Resolve Integration Package dependencies before removal; Unity could load the referenced Integration Package after the embedded copy is removed:</source>
+        <translation>移除前请先处理集成包依赖，否则移除内嵌集成包后 Unity 可能加载所引用的集成包：</translation>
     </message>
     <message>
-        <source>Multiple SDK installations were found. Resolve these conflicts before continuing:</source>
-        <translation>发现多套 SDK，请先解决以下冲突再继续：</translation>
+        <source>Multiple Integration Package installations were found. Resolve these conflicts before continuing:</source>
+        <translation>发现多套集成包，请先解决以下冲突再继续：</translation>
     </message>
     <message>
-        <source>An SDK is already installed at %1. Use that location or remove it before installing elsewhere.</source>
-        <translation>%1 中已安装 SDK。请使用该位置，或先移除现有 SDK 再安装到其他位置。</translation>
+        <source>An Integration Package is already installed at %1. Use that location or remove it before installing elsewhere.</source>
+        <translation>%1 中已安装集成包。请使用该位置，或先移除现有集成包再安装到其他位置。</translation>
     </message>
     <message>
         <source>The installation directory contains unrelated files: %1</source>
-        <translation>安装目录中存在不属于 SDK 的文件：%1</translation>
+        <translation>安装目录中存在不属于集成包的文件：%1</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="295"/>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1072"/>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1103"/>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1155"/>
-        <source>Remove Installed Unity SDK</source>
-        <translation>移除已安装的 Unity SDK</translation>
+        <source>Remove Installed Unity Integration Package</source>
+        <translation>移除已安装的 Unity 集成包</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="300"/>
@@ -3301,13 +3342,13 @@ Close Unity before continuing. Any paths hard-coded in your project must be upda
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="550"/>
-        <source>The game and Harken projects are linked. To unlink them, go back to Engine Integrations and choose "Remove Integration" from the row menu. Project and SDK files will be kept.</source>
-        <translation>游戏工程与 Harken 工程已绑定。如需解绑，请返回“引擎集成”列表，在该行菜单中选择“移除集成”。工程和 SDK 文件都会保留。</translation>
+        <source>The game and Harken projects are linked. To unlink them, go back to Engine Integrations and choose "Remove Integration" from the row menu. Project and Integration Package files will be kept.</source>
+        <translation>游戏工程与 Harken 工程已绑定。如需解绑，请返回“引擎集成”列表，在该行菜单中选择“移除集成”。工程和集成包文件都会保留。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="587"/>
-        <source>Remove this relationship from Engine Integrations? The Harken project and installed SDK files will be kept.</source>
-        <translation>要从引擎集成中移除此关系吗？Harken 工程和已安装的 SDK 文件都会保留。</translation>
+        <source>Remove this relationship from Engine Integrations? The Harken project and installed Integration Package files will be kept.</source>
+        <translation>要从引擎集成中移除此关系吗？Harken 工程和已安装的集成包文件都会保留。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="605"/>
@@ -3321,8 +3362,8 @@ Close Unity before continuing. Any paths hard-coded in your project must be upda
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="634"/>
-        <source>Select Runtime or SDK Source</source>
-        <translation>选择 Runtime 或 SDK 源</translation>
+        <source>Select Runtime or Integration Package Source</source>
+        <translation>选择 Runtime 或集成包源</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="646"/>
@@ -3384,8 +3425,8 @@ Close Unity before continuing. Any paths hard-coded in your project must be upda
         <translation>&#x8bf7;&#x5148;&#x9009;&#x62e9; Unity &#x5de5;&#x7a0b;&#xff0c;&#x518d;&#x68c0;&#x67e5;&#x96c6;&#x6210;&#x3002;</translation>
     </message>
     <message>
-        <source>Select a Runtime / SDK source before checking integration.</source>
-        <translation>请先选择 Runtime / SDK 源，再检查集成。</translation>
+        <source>Select a Runtime / Integration Package source before checking integration.</source>
+        <translation>请先选择 Runtime / 集成包源，再检查集成。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="789"/>
@@ -3400,8 +3441,8 @@ Close Unity before continuing. Any paths hard-coded in your project must be upda
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="801"/>
-        <source>Select the Runtime / SDK source path.</source>
-        <translation>请选择 Runtime / SDK 源路径。</translation>
+        <source>Select the Runtime / Integration Package source path.</source>
+        <translation>请选择 Runtime / 集成包源路径。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="852"/>
@@ -3415,7 +3456,7 @@ Close Unity before continuing. Any paths hard-coded in your project must be upda
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="980"/>
-        <source>Review the checked relationship before integrating or overwriting SDK files.
+        <source>Review the checked relationship before integrating or overwriting Integration Package files.
 
 Harken project:
 %1
@@ -3423,12 +3464,12 @@ Harken project:
 Engine project:
 %2
 
-Runtime / SDK source:
+Runtime / Integration Package source:
 %3
 
-SDK installation location:
+Integration Package installation location:
 %4</source>
-        <translation>集成或覆盖 SDK 文件前，请确认已检查的工程关系。
+        <translation>集成或覆盖集成包文件前，请确认已检查的工程关系。
 
 Harken 工程：
 %1
@@ -3436,10 +3477,10 @@ Harken 工程：
 引擎工程：
 %2
 
-Runtime / SDK 源：
+Runtime / 集成包源：
 %3
 
-SDK 安装位置：
+集成包安装位置：
 %4</translation>
     </message>
     <message>
@@ -3459,23 +3500,23 @@ SDK 安装位置：
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1089"/>
-        <source>Removing the approved Unity SDK integration...</source>
-        <translation>正在移除已确认的 Unity SDK 集成…</translation>
+        <source>Removing the approved Unity Integration Package installation...</source>
+        <translation>正在移除已确认的 Unity 集成包安装…</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1090"/>
-        <source>Reviewing the installed Unity SDK and safety backup plan...</source>
-        <translation>正在检查已安装的 Unity SDK 和安全备份方案…</translation>
+        <source>Reviewing the installed Unity Integration Package and safety backup plan...</source>
+        <translation>正在检查已安装的 Unity 集成包和安全备份方案…</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1104"/>
-        <source>A verified backup will be created before Harken-managed Unity SDK and runtime files are removed. Project-specific files will be preserved.
+        <source>A verified backup will be created before Harken-managed Unity Integration Package and runtime files are removed. Project-specific files will be preserved.
 
 Backup folder:
 %1
 
 Close Unity before continuing.</source>
-        <translation>移除 Harken 管理的 Unity SDK 和 Runtime 文件前，会先创建经过验证的备份。工程自有文件将保留。
+        <translation>移除 Harken 管理的 Unity 集成包和 Runtime 文件前，会先创建经过验证的备份。工程自有文件将保留。
 
 备份文件夹：
 %1
@@ -3484,8 +3525,8 @@ Close Unity before continuing.</source>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1110"/>
-        <source>Remove Installed SDK</source>
-        <translation>移除已安装的 SDK</translation>
+        <source>Remove Installed Integration Package</source>
+        <translation>移除已安装的集成包</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1119"/>
@@ -3494,42 +3535,42 @@ Close Unity before continuing.</source>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1137"/>
-        <source>The Unity SDK was backed up and removed, but the removal report could not be completed. Backup: %1</source>
-        <translation>Unity SDK 已备份并移除，但未能完成移除报告。备份：%1</translation>
+        <source>The Unity Integration Package was backed up and removed, but the removal report could not be completed. Backup: %1</source>
+        <translation>Unity 集成包已备份并移除，但未能完成移除报告。备份：%1</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1142"/>
-        <source>The Unity SDK and runtimes were backed up and removed. Review is recommended for cleanup details. Backup: %1</source>
-        <translation>Unity SDK 和运行库已备份并移除，建议关注清理详情。备份：%1</translation>
+        <source>The Unity Integration Package and runtimes were backed up and removed. Review is recommended for cleanup details. Backup: %1</source>
+        <translation>Unity 集成包和运行库已备份并移除，建议关注清理详情。备份：%1</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1147"/>
-        <source>The Unity SDK and runtimes were backed up and removed. %1 project-specific file(s) were preserved. Backup: %2</source>
-        <translation>Unity SDK 和 Runtime 已备份并移除，同时保留了 %1 个工程自有文件。备份：%2</translation>
+        <source>The Unity Integration Package and runtimes were backed up and removed. %1 project-specific file(s) were preserved. Backup: %2</source>
+        <translation>Unity 集成包和 Runtime 已备份并移除，同时保留了 %1 个工程自有文件。备份：%2</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1156"/>
-        <source>The Unity SDK was removed, but the Engine Integrations relationship could not be removed. Use the row menu to remove it manually.
+        <source>The Unity Integration Package was removed, but the Engine Integrations relationship could not be removed. Use the row menu to remove it manually.
 
 %1</source>
-        <translation>Unity SDK 已移除，但无法删除引擎集成关系。请通过列表行菜单手动移除。
+        <translation>Unity 集成包已移除，但无法删除引擎集成关系。请通过列表行菜单手动移除。
 
 %1</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1160"/>
-        <source>No Harken Unity SDK is installed in this project.</source>
-        <translation>该工程未安装 Harken Unity SDK。</translation>
+        <source>No Harken Unity Integration Package is installed in this project.</source>
+        <translation>该工程未安装 Harken Unity 集成包。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1163"/>
-        <source>The safety backup was created, but the Unity SDK could not be removed. The project was restored or left unchanged. Backup: %1</source>
-        <translation>安全备份已创建，但无法移除 Unity SDK。工程已恢复或保持不变。备份：%1</translation>
+        <source>The safety backup was created, but the Unity Integration Package could not be removed. The project was restored or left unchanged. Backup: %1</source>
+        <translation>安全备份已创建，但无法移除 Unity 集成包。工程已恢复或保持不变。备份：%1</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1168"/>
-        <source>Unity SDK removal failed. Select the first failed step for details.</source>
-        <translation>Unity SDK 移除失败，请选择第一个失败步骤查看详情。</translation>
+        <source>Unity Integration Package removal failed. Select the first failed step for details.</source>
+        <translation>Unity 集成包移除失败，请选择第一个失败步骤查看详情。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1173"/>
@@ -3539,30 +3580,30 @@ Close Unity before continuing.</source>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1185"/>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1231"/>
-        <source>Checking only. No SDK files will be changed...</source>
-        <translation>仅检查，不会修改 SDK 文件…</translation>
+        <source>Checking only. No Integration Package files will be changed...</source>
+        <translation>仅检查，不会修改集成包文件…</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1186"/>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1232"/>
-        <source>The approved SDK integration is running...</source>
-        <translation>正在执行已确认的 SDK 集成…</translation>
+        <source>The approved Integration Package installation is running...</source>
+        <translation>正在执行已确认的集成包安装…</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1200"/>
-        <source>SDK check failed. Select the first failed step for details.</source>
-        <translation>SDK 检查失败，请选择第一个失败步骤查看详情。</translation>
+        <source>Integration Package check failed. Select the first failed step for details.</source>
+        <translation>集成包检查失败，请选择第一个失败步骤查看详情。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1202"/>
-        <source>Check completed. The selected SDK is valid and is not installed in this Unity project.</source>
-        <translation>检查完成。所选 SDK 有效，但尚未安装到该 Unity 工程。</translation>
+        <source>Check completed. The selected Integration Package is valid and is not installed in this Unity project.</source>
+        <translation>检查完成。所选集成包有效，但尚未安装到该 Unity 工程。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1204"/>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1313"/>
-        <source>Check completed. Differences were found; no SDK files were changed.</source>
-        <translation>检查完成。发现差异，未修改任何 SDK 文件。</translation>
+        <source>Check completed. Differences were found; no Integration Package files were changed.</source>
+        <translation>检查完成。发现差异，未修改任何集成包文件。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1206"/>
@@ -3571,29 +3612,29 @@ Close Unity before continuing.</source>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1208"/>
-        <source>Check completed. The installed Unity SDK matches the selected source.</source>
-        <translation>检查完成。已安装的 Unity SDK 与所选源一致。</translation>
+        <source>Check completed. The installed Unity Integration Package matches the selected source.</source>
+        <translation>检查完成。已安装的 Unity 集成包与所选源一致。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1210"/>
-        <source>SDK integration failed. Select the first failed step for details.</source>
-        <translation>SDK 集成失败，请选择第一个失败步骤查看详情。</translation>
+        <source>Integration Package installation failed. Select the first failed step for details.</source>
+        <translation>集成包安装失败，请选择第一个失败步骤查看详情。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1212"/>
-        <source>The Unity SDK is already current and passed verification.</source>
-        <translation>Unity SDK 已是最新状态并通过验证。</translation>
+        <source>The Unity Integration Package is already current and passed verification.</source>
+        <translation>Unity 集成包已是最新状态并通过验证。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1214"/>
-        <source>SDK integration completed. Review is recommended for the highlighted steps.</source>
-        <translation>SDK 集成完成，建议关注高亮步骤中的说明。</translation>
+        <source>Integration Package installation completed. Review is recommended for the highlighted steps.</source>
+        <translation>集成包安装完成，建议关注高亮步骤中的说明。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1216"/>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1335"/>
-        <source>SDK integration completed successfully.</source>
-        <translation>SDK 集成成功完成。</translation>
+        <source>Integration Package installation completed successfully.</source>
+        <translation>集成包安装成功完成。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1221"/>
@@ -3612,48 +3653,48 @@ Close Unity before continuing.</source>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1254"/>
-        <source>Validate SDK source</source>
-        <translation>验证 SDK 源</translation>
+        <source>Validate Integration Package source</source>
+        <translation>验证集成包源</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1258"/>
-        <source>Validated Unreal SDK %1.</source>
-        <translation>已验证 Unreal SDK %1。</translation>
+        <source>Validated Unreal Integration Package %1.</source>
+        <translation>已验证 Unreal 集成包 %1。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1259"/>
-        <source>The Unreal SDK source or installed plugin is not safe to use.</source>
-        <translation>Unreal SDK 源或已安装插件当前不能安全使用。</translation>
+        <source>The Unreal Integration Package source or installed plugin is not safe to use.</source>
+        <translation>Unreal 集成包源或已安装插件当前不能安全使用。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1263"/>
-        <source>Select a complete Harken Unreal SDK source or repair the existing managed plugin, then check again.</source>
-        <translation>请选择完整的 Harken Unreal SDK 源，或修复现有受管理插件后重新检查。</translation>
+        <source>Select a complete Harken Unreal Integration Package source or repair the existing managed plugin, then check again.</source>
+        <translation>请选择完整的 Harken Unreal 集成包源，或修复现有受管理插件后重新检查。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1269"/>
-        <source>Compare installed SDK</source>
-        <translation>比较已安装的 SDK</translation>
+        <source>Compare installed Integration Package</source>
+        <translation>比较已安装的集成包</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1272"/>
-        <source>Comparison was skipped because SDK validation failed.</source>
-        <translation>SDK 验证失败，已跳过比较。</translation>
+        <source>Comparison was skipped because Integration Package validation failed.</source>
+        <translation>集成包验证失败，已跳过比较。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1275"/>
-        <source>The installed Unreal SDK matches the selected source.</source>
-        <translation>已安装的 Unreal SDK 与所选源一致。</translation>
+        <source>The installed Unreal Integration Package matches the selected source.</source>
+        <translation>已安装的 Unreal 集成包与所选源一致。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1280"/>
-        <source>%1 SDK file change(s) were found.</source>
-        <translation>发现 %1 项 SDK 文件变更。</translation>
+        <source>%1 Integration Package file change(s) were found.</source>
+        <translation>发现 %1 项集成包文件变更。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1282"/>
-        <source>%1 SDK file change(s) were found, including %2 locally modified managed file(s) that require confirmation before overwrite.</source>
-        <translation>发现 %1 项 SDK 文件变更，其中有 %2 个受管理文件已被本地修改，覆盖前需要确认。</translation>
+        <source>%1 Integration Package file change(s) were found, including %2 locally modified managed file(s) that require confirmation before overwrite.</source>
+        <translation>发现 %1 项集成包文件变更，其中有 %2 个受管理文件已被本地修改，覆盖前需要确认。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1287"/>
@@ -3664,8 +3705,8 @@ Close Unity before continuing.</source>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1299"/>
-        <source>Apply SDK integration</source>
-        <translation>执行 SDK 集成</translation>
+        <source>Apply Integration Package installation</source>
+        <translation>执行集成包安装</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1302"/>
@@ -3674,33 +3715,33 @@ Close Unity before continuing.</source>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1304"/>
-        <source>SDK check failed. Select the failed step for details.</source>
-        <translation>SDK 检查失败，请选择失败步骤查看详情。</translation>
+        <source>Integration Package check failed. Select the failed step for details.</source>
+        <translation>集成包检查失败，请选择失败步骤查看详情。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1309"/>
-        <source>Check-only mode requested; no SDK files were changed.</source>
-        <translation>已按仅检查模式执行，未修改任何 SDK 文件。</translation>
+        <source>Check-only mode requested; no Integration Package files were changed.</source>
+        <translation>已按仅检查模式执行，未修改任何集成包文件。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1312"/>
-        <source>Check completed. The installed Unreal SDK matches the selected source.</source>
-        <translation>检查完成。已安装的 Unreal SDK 与所选源一致。</translation>
+        <source>Check completed. The installed Unreal Integration Package matches the selected source.</source>
+        <translation>检查完成。已安装的 Unreal 集成包与所选源一致。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1324"/>
-        <source>The Unreal SDK is already current.</source>
-        <translation>Unreal SDK 已是最新状态。</translation>
+        <source>The Unreal Integration Package is already current.</source>
+        <translation>Unreal 集成包已是最新状态。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1325"/>
-        <source>The Unreal SDK integration completed successfully.</source>
-        <translation>Unreal SDK 集成成功完成。</translation>
+        <source>The Unreal Integration Package installation completed successfully.</source>
+        <translation>Unreal 集成包安装成功完成。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1326"/>
-        <source>The Unreal SDK integration failed.</source>
-        <translation>Unreal SDK 集成失败。</translation>
+        <source>The Unreal Integration Package installation failed.</source>
+        <translation>Unreal 集成包安装失败。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1330"/>
@@ -3709,8 +3750,8 @@ Close Unity before continuing.</source>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1336"/>
-        <source>SDK integration failed. Select the failed step for details.</source>
-        <translation>SDK 集成失败，请选择失败步骤查看详情。</translation>
+        <source>Integration Package installation failed. Select the failed step for details.</source>
+        <translation>集成包安装失败，请选择失败步骤查看详情。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1385"/>
@@ -3809,10 +3850,10 @@ Engine project:
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1543"/>
-        <source>The SDK was integrated, but the Runtime / SDK path could not be saved.
+        <source>The Integration Package was integrated, but the Runtime / Integration Package path could not be saved.
 
 %1</source>
-        <translation>SDK 已完成集成，但无法保存 Runtime / SDK 路径。
+        <translation>集成包已完成集成，但无法保存 Runtime / 集成包路径。
 
 %1</translation>
     </message>
@@ -3848,8 +3889,9 @@ Engine project:
         <translation type="vanished">引擎版本</translation>
     </message>
     <message>
-        <source>SDK VERSION</source>
-        <translation>SDK 版本</translation>
+        <source>INTEGRATION
+PACKAGE VERSION</source>
+        <translation>集成包版本</translation>
     </message>
     <message>
         <source>STATUS</source>
@@ -3876,20 +3918,20 @@ Engine project:
         <translation>验证 Unity 工程</translation>
     </message>
     <message>
-        <source>Validate Harken Unity SDK source</source>
-        <translation>验证 Harken Unity SDK 源</translation>
+        <source>Validate Harken Unity Integration Package source</source>
+        <translation>验证 Harken Unity 集成包源</translation>
     </message>
     <message>
-        <source>Compare installed Unity SDK</source>
-        <translation>比较已安装的 Unity SDK</translation>
+        <source>Compare installed Unity Integration Package</source>
+        <translation>比较已安装的 Unity 集成包</translation>
     </message>
     <message>
-        <source>Install or update Unity SDK</source>
-        <translation>安装或更新 Unity SDK</translation>
+        <source>Install or update Unity Integration Package</source>
+        <translation>安装或更新 Unity 集成包</translation>
     </message>
     <message>
-        <source>Verify installed SDK</source>
-        <translation>验证已安装的 SDK</translation>
+        <source>Verify installed Integration Package</source>
+        <translation>验证已安装的集成包</translation>
     </message>
     <message>
         <source>Write integration report</source>
@@ -3900,20 +3942,20 @@ Engine project:
         <translation>Unity 工程结构和写入权限有效。</translation>
     </message>
     <message>
-        <source>Installed SDK verification is represented by the differences reported above.</source>
-        <translation>已安装 SDK 的验证结果已由上方报告的差异体现。</translation>
+        <source>Installed Integration Package verification is represented by the differences reported above.</source>
+        <translation>已安装集成包的验证结果已由上方报告的差异体现。</translation>
     </message>
     <message>
-        <source>Wrote machine-readable and human-readable SDK integration reports.</source>
-        <translation>已写入机器可读和人类可读的 SDK 集成报告。</translation>
+        <source>Wrote machine-readable and human-readable Integration Package installation reports.</source>
+        <translation>已写入机器可读和人类可读的集成包安装报告。</translation>
     </message>
     <message>
-        <source>The installed SDK could not be compared because its ownership record is unreadable.</source>
-        <translation>无法比较已安装的 SDK，因为其所有权记录无法读取。</translation>
+        <source>The installed Integration Package could not be compared because its ownership record is unreadable.</source>
+        <translation>无法比较已安装的集成包，因为其所有权记录无法读取。</translation>
     </message>
     <message>
-        <source>Validated SDK %1: %2 file(s); the %3 runtime required for this editor is present.</source>
-        <translation>已验证 SDK %1：共 %2 个文件；此编辑器所需的 %3 Runtime 已存在。</translation>
+        <source>Validated Integration Package %1: %2 file(s); the %3 runtime required for this editor is present.</source>
+        <translation>已验证集成包 %1：共 %2 个文件；此编辑器所需的 %3 Runtime 已存在。</translation>
     </message>
     <message>
         <source> Target runtimes not included: %1. Available platforms can still be integrated.</source>
@@ -3924,44 +3966,44 @@ Engine project:
         <translation>未包含需要其他编辑器操作系统的 Runtime：%1。</translation>
     </message>
     <message>
-        <source>Native runtimes available in this SDK source: %1</source>
-        <translation>此 SDK 源中可用的原生 Runtime：%1</translation>
+        <source>Native runtimes available in this Integration Package source: %1</source>
+        <translation>此集成包源中可用的原生 Runtime：%1</translation>
     </message>
     <message>
-        <source>Check found SDK differences: %1.</source>
-        <translation>检查发现 SDK 差异：%1。</translation>
+        <source>Check found Integration Package differences: %1.</source>
+        <translation>检查发现集成包差异：%1。</translation>
     </message>
     <message>
-        <source>No embedded Harken SDK is installed; %1 file(s) are ready to install.</source>
-        <translation>未安装内置 Harken SDK；已有 %1 个文件准备安装。</translation>
+        <source>No embedded Harken Integration Package is installed; %1 file(s) are ready to install.</source>
+        <translation>未安装内置 Harken 集成包；已有 %1 个文件准备安装。</translation>
     </message>
     <message>
-        <source>Approved SDK update: %1.</source>
-        <translation>已批准 SDK 更新：%1。</translation>
+        <source>Approved Integration Package update: %1.</source>
+        <translation>已批准集成包更新：%1。</translation>
     </message>
     <message>
-        <source>The installed SDK exactly matches selected SDK source %1.</source>
-        <translation>已安装的 SDK 与所选 SDK 源 %1 完全一致。</translation>
+        <source>The installed Integration Package exactly matches selected Integration Package source %1.</source>
+        <translation>已安装的集成包与所选集成包源 %1 完全一致。</translation>
     </message>
     <message>
-        <source>The existing SDK differs from selected SDK source %1: %2.</source>
-        <translation>现有 SDK 与所选 SDK 源 %1 存在差异：%2。</translation>
+        <source>The existing Integration Package differs from selected Integration Package source %1: %2.</source>
+        <translation>现有集成包与所选集成包源 %1 存在差异：%2。</translation>
     </message>
     <message>
         <source>Target runtimes deferred to another operating system: %1</source>
         <translation>需在其他操作系统上处理的目标 Runtime：%1</translation>
     </message>
     <message>
-        <source>The %1 files in the selected SDK source are complete, but the listed target platforms have no verified runtime in this source. Each target is independent, so their absence does not prevent %1 integration.</source>
-        <translation>所选 SDK 源中的 %1 文件完整，但列出的目标平台在此源中没有经过验证的 Runtime。每个目标相互独立，因此缺少这些 Runtime 不会阻止 %1 集成。</translation>
+        <source>The %1 files in the selected Integration Package source are complete, but the listed target platforms have no verified runtime in this source. Each target is independent, so their absence does not prevent %1 integration.</source>
+        <translation>所选集成包源中的 %1 文件完整，但列出的目标平台在此源中没有经过验证的 Runtime。每个目标相互独立，因此缺少这些 Runtime 不会阻止 %1 集成。</translation>
     </message>
     <message>
         <source>Those targets cannot be completed on %1 under the Harken integration policy, so their missing runtimes do not block this integration.</source>
         <translation>根据 Harken 集成策略，这些目标无法在 %1 上完成，因此缺少对应 Runtime 不会阻止本次集成。</translation>
     </message>
     <message>
-        <source>You may continue integrating and use the available platforms. Before building for a missing target, select a complete SDK source that includes its verified runtime, then run Check only again. Do not copy unknown runtime files from another Unity project.</source>
-        <translation>你可以继续集成并使用已有平台。构建缺失目标前，请选择包含对应已验证 Runtime 的完整 SDK 源，然后再次执行“仅检查”。不要从其他 Unity 工程复制未知 Runtime 文件。</translation>
+        <source>You may continue integrating and use the available platforms. Before building for a missing target, select a complete Integration Package source that includes its verified runtime, then run Check only again. Do not copy unknown runtime files from another Unity project.</source>
+        <translation>你可以继续集成并使用已有平台。构建缺失目标前，请选择包含对应已验证 Runtime 的完整集成包源，然后再次执行“仅检查”。不要从其他 Unity 工程复制未知 Runtime 文件。</translation>
     </message>
     <message>
         <source>Before building targets that require another operating system, open the Unity project with Harken Studio there and run Check and integrate again. Apple targets must be completed on macOS.</source>
@@ -3969,13 +4011,13 @@ Engine project:
     </message>
     <message>
         <source>Missing component: %1 game runtime
-Expected inside the selected SDK source: %2
+Expected inside the selected Integration Package source: %2
 Purpose: %3
-What this means: This SDK source cannot safely prepare the Unity project for %4 builds until a verified runtime is restored.</source>
+What this means: This Integration Package source cannot safely prepare the Unity project for %4 builds until a verified runtime is restored.</source>
         <translation>缺少组件：%1 游戏 Runtime
-应位于所选 SDK 源中：%2
+应位于所选集成包源中：%2
 用途：%3
-这意味着：在恢复经过验证的 Runtime 前，此 SDK 源无法安全地为 %4 构建准备 Unity 工程。</translation>
+这意味着：在恢复经过验证的 Runtime 前，此集成包源无法安全地为 %4 构建准备 Unity 工程。</translation>
     </message>
     <message>
         <source>Unity includes this runtime in Windows games and uses it for Windows Editor play mode.</source>
@@ -4026,12 +4068,12 @@ What this means: This SDK source cannot safely prepare the Unity project for %4 
         <translation>仅检查模式未修改 Packages/com.harken.core。</translation>
     </message>
     <message>
-        <source>Review the file list before confirming the SDK change.</source>
-        <translation>请核对文件列表，再确认更换 SDK。</translation>
+        <source>Review the file list before confirming the Integration Package change.</source>
+        <translation>请核对文件列表，再确认更换集成包。</translation>
     </message>
     <message>
-        <source>%1 missing SDK file(s) will be added; %2 existing SDK file(s) need updating; %3 obsolete Harken-managed file(s) will be removed; %4 project-specific file(s) will be kept unchanged; %5 Unity-generated metadata file(s) and %6 optional target runtime file(s) will be kept automatically</source>
-        <translation>将新增 %1 个缺失的 SDK 文件；更新 %2 个现有 SDK 文件；移除 %3 个已废弃的 Harken 管理文件；保留 %4 个工程专属文件不变；自动保留 %5 个 Unity 生成的元数据文件和 %6 个可选目标运行时文件</translation>
+        <source>%1 missing Integration Package file(s) will be added; %2 existing Integration Package file(s) need updating; %3 obsolete Harken-managed file(s) will be removed; %4 project-specific file(s) will be kept unchanged; %5 Unity-generated metadata file(s) and %6 optional target runtime file(s) will be kept automatically</source>
+        <translation>将新增 %1 个缺失的集成包文件；更新 %2 个现有集成包文件；移除 %3 个已废弃的 Harken 管理文件；保留 %4 个工程专属文件不变；自动保留 %5 个 Unity 生成的元数据文件和 %6 个可选目标运行时文件</translation>
     </message>
     <message>
         <source>Files to add</source>
@@ -4088,16 +4130,16 @@ What this means: This SDK source cannot safely prepare the Unity project for %4 
         <translation>文档和版本信息</translation>
     </message>
     <message>
-        <source>Provides documentation, release notes, or licensing information for this part of the Harken SDK.</source>
-        <translation>提供此 Harken SDK 部分的文档、版本说明或许可信息。</translation>
+        <source>Provides documentation, release notes, or licensing information for this part of the Harken Integration Package.</source>
+        <translation>提供此 Harken 集成包部分的文档、版本说明或许可信息。</translation>
     </message>
     <message>
-        <source>The installed content differs from the verified SDK source and will be updated to the selected version.</source>
-        <translation>已安装内容与经过验证的 SDK 源不同，将更新为所选版本。</translation>
+        <source>The installed content differs from the verified Integration Package source and will be updated to the selected version.</source>
+        <translation>已安装内容与经过验证的集成包源不同，将更新为所选版本。</translation>
     </message>
     <message>
-        <source>Users will see documentation that matches the installed SDK; runtime behavior is unchanged.</source>
-        <translation>用户将看到与已安装 SDK 匹配的文档；运行时行为不会改变。</translation>
+        <source>Users will see documentation that matches the installed Integration Package; runtime behavior is unchanged.</source>
+        <translation>用户将看到与已安装集成包匹配的文档；运行时行为不会改变。</translation>
     </message>
     <message>
         <source>Unity identity and import settings</source>
@@ -4140,16 +4182,16 @@ What this means: This SDK source cannot safely prepare the Unity project for %4 
         <translation>软件包辅助内容</translation>
     </message>
     <message>
-        <source>These files let Unity keep stable asset references and remember how neighboring SDK files should be imported.</source>
-        <translation>这些文件用于让 Unity 保持稳定的资源引用，并记录相邻 SDK 文件的导入方式。</translation>
+        <source>These files let Unity keep stable asset references and remember how neighboring Integration Package files should be imported.</source>
+        <translation>这些文件用于让 Unity 保持稳定的资源引用，并记录相邻集成包文件的导入方式。</translation>
     </message>
     <message>
         <source>Describes the Harken package name, version, Unity compatibility, and optional samples to Unity Package Manager.</source>
         <translation>向 Unity Package Manager 描述 Harken 软件包名称、版本、Unity 兼容性和可选示例。</translation>
     </message>
     <message>
-        <source>Defines which SDK files are mandatory and which Unity target runtimes should be available on each editor operating system.</source>
-        <translation>定义必要的 SDK 文件，以及各编辑器操作系统应提供的 Unity 目标 Runtime。</translation>
+        <source>Defines which Integration Package files are mandatory and which Unity target runtimes should be available on each editor operating system.</source>
+        <translation>定义必要的集成包文件，以及各编辑器操作系统应提供的 Unity 目标 Runtime。</translation>
     </message>
     <message>
         <source>Tells Unity how to compile the Harken C# runtime and host-adapter assemblies and which dependencies they need.</source>
@@ -4172,8 +4214,8 @@ What this means: This SDK source cannot safely prepare the Unity project for %4 
         <translation>包含已编译的 Harken 音频引擎，Unity 会在此文件夹所示的平台上加载它。</translation>
     </message>
     <message>
-        <source>Provides an optional example showing how a Unity project can call the Harken SDK.</source>
-        <translation>提供可选示例，展示 Unity 工程如何调用 Harken SDK。</translation>
+        <source>Provides an optional example showing how a Unity project can call the Harken Integration Package.</source>
+        <translation>提供可选示例，展示 Unity 工程如何调用 Harken 集成包。</translation>
     </message>
     <message>
         <source>Provides supporting content used by the embedded Harken Unity package.</source>
@@ -4184,24 +4226,24 @@ What this means: This SDK source cannot safely prepare the Unity project for %4 
         <translation>保持这些文件不变可保留现有 Unity 引用和平台导入设置。</translation>
     </message>
     <message>
-        <source>Unity will recognize and load the selected Harken SDK version with its current package settings.</source>
-        <translation>Unity 将使用当前软件包设置识别并加载所选 Harken SDK 版本。</translation>
+        <source>Unity will recognize and load the selected Harken Integration Package version with its current package settings.</source>
+        <translation>Unity 将使用当前软件包设置识别并加载所选 Harken 集成包版本。</translation>
     </message>
     <message>
-        <source>Future checks can detect an incomplete or damaged Harken SDK before changing project files.</source>
-        <translation>后续检查可在修改工程文件前发现不完整或损坏的 Harken SDK。</translation>
+        <source>Future checks can detect an incomplete or damaged Harken Integration Package before changing project files.</source>
+        <translation>后续检查可在修改工程文件前发现不完整或损坏的 Harken 集成包。</translation>
     </message>
     <message>
-        <source>Unity scripts can compile against the Harken API using the settings required by this SDK version.</source>
-        <translation>Unity 脚本可使用此 SDK 版本要求的设置针对 Harken API 进行编译。</translation>
+        <source>Unity scripts can compile against the Harken API using the settings required by this Integration Package version.</source>
+        <translation>Unity 脚本可使用此集成包版本要求的设置针对 Harken API 进行编译。</translation>
     </message>
     <message>
         <source>Unity scripts and the native Harken runtime will use matching function and data definitions.</source>
         <translation>Unity 脚本和 Harken 原生 Runtime 将使用相匹配的函数与数据定义。</translation>
     </message>
     <message>
-        <source>Unity gameplay code will use the behavior and API contract supplied by this SDK version.</source>
-        <translation>Unity 游戏逻辑代码将使用此 SDK 版本提供的行为和 API 契约。</translation>
+        <source>Unity gameplay code will use the behavior and API contract supplied by this Integration Package version.</source>
+        <translation>Unity 游戏逻辑代码将使用此集成包版本提供的行为和 API 契约。</translation>
     </message>
     <message>
         <source>Listener and emitter updates will preserve Unity left/right orientation without project-specific conversion code.</source>
@@ -4216,20 +4258,20 @@ What this means: This SDK source cannot safely prepare the Unity project for %4 
         <translation>该示例可供学习或导入；除非用户主动导入，否则不会改变游戏行为。</translation>
     </message>
     <message>
-        <source>The installed package will contain the supporting data expected by this SDK version.</source>
-        <translation>已安装的软件包将包含此 SDK 版本所需的辅助数据。</translation>
+        <source>The installed package will contain the supporting data expected by this Integration Package version.</source>
+        <translation>已安装的软件包将包含此集成包版本所需的辅助数据。</translation>
     </message>
     <message>
-        <source>This content is missing from the Unity project and will be added from the verified SDK.</source>
-        <translation>Unity 工程缺少此内容，将从经过验证的 SDK 中添加。</translation>
+        <source>This content is missing from the Unity project and will be added from the verified Integration Package.</source>
+        <translation>Unity 工程缺少此内容，将从经过验证的集成包中添加。</translation>
     </message>
     <message>
-        <source>A previous Harken SDK installation managed this content, but the current SDK no longer uses it; removing it avoids obsolete code or runtime conflicts.</source>
-        <translation>此前的 Harken SDK 安装曾管理此内容，但当前 SDK 已不再使用；移除它可避免废弃代码或 Runtime 冲突。</translation>
+        <source>A previous Harken Integration Package installation managed this content, but the current Integration Package no longer uses it; removing it avoids obsolete code or runtime conflicts.</source>
+        <translation>此前的 Harken 集成包安装曾管理此内容，但当前集成包已不再使用；移除它可避免废弃代码或 Runtime 冲突。</translation>
     </message>
     <message>
-        <source>This content exists only in the Unity project and is not managed by the selected SDK source, so it will remain unchanged.</source>
-        <translation>此内容仅存在于 Unity 工程中，不受所选 SDK 源管理，因此将保持不变。</translation>
+        <source>This content exists only in the Unity project and is not managed by the selected Integration Package source, so it will remain unchanged.</source>
+        <translation>此内容仅存在于 Unity 工程中，不受所选集成包源管理，因此将保持不变。</translation>
     </message>
     <message>
         <source>Engine target output is unavailable</source>
@@ -4256,12 +4298,12 @@ What this means: This SDK source cannot safely prepare the Unity project for %4 
         <translation>目标不是可读取的 Unreal 工程</translation>
     </message>
     <message>
-        <source>The Unreal SDK source is incomplete</source>
-        <translation>Unreal SDK 源不完整</translation>
+        <source>The Unreal Integration Package source is incomplete</source>
+        <translation>Unreal 集成包源不完整</translation>
     </message>
     <message>
-        <source>The Unreal SDK version is unavailable</source>
-        <translation>无法获取 Unreal SDK 版本</translation>
+        <source>The Unreal Integration Package version is unavailable</source>
+        <translation>无法获取 Unreal 集成包版本</translation>
     </message>
     <message>
         <source>The Unreal plugin is already installed</source>
@@ -4392,8 +4434,8 @@ What this means: This SDK source cannot safely prepare the Unity project for %4 
         <translation>请检查目录权限、版本控制锁定和可用磁盘空间。</translation>
     </message>
     <message>
-        <source>No embedded Harken SDK is installed in this Unity project.</source>
-        <translation>此 Unity 工程中尚未安装内置 Harken SDK。</translation>
+        <source>No embedded Harken Integration Package is installed in this Unity project.</source>
+        <translation>此 Unity 工程中尚未安装内置 Harken 集成包。</translation>
     </message>
     <message>
         <source>The Harken ownership record could not be read.</source>
@@ -4408,17 +4450,17 @@ What this means: This SDK source cannot safely prepare the Unity project for %4 
         <translation>无法读取已安装的集成清单。</translation>
     </message>
     <message>
-        <source>Ready to remove %1 Harken SDK/runtime file(s) and preserve %2 project-specific file(s).</source>
-        <translation>已准备移除 %1 个 Harken SDK/运行时文件，并保留 %2 个工程专属文件。</translation>
+        <source>Ready to remove %1 Harken Integration Package/runtime file(s) and preserve %2 project-specific file(s).</source>
+        <translation>已准备移除 %1 个 Harken 集成包/运行时文件，并保留 %2 个工程专属文件。</translation>
     </message>
     <message>
         <source>Installed package: %1</source>
         <translation>已安装软件包：%1</translation>
     </message>
     <message>
-        <source>Harken SDK and runtime files that will be removed:
+        <source>Harken Integration Package and runtime files that will be removed:
 %1</source>
-        <translation>将移除的 Harken SDK 和运行时文件：
+        <translation>将移除的 Harken 集成包和运行时文件：
 %1</translation>
     </message>
     <message>
@@ -4429,9 +4471,9 @@ What this means: This SDK source cannot safely prepare the Unity project for %4 
     </message>
     <message>
         <source>Safety backup: %1
-To integrate again later, select or drop this SDK source: %2</source>
+To integrate again later, select or drop this Integration Package source: %2</source>
         <translation>安全备份：%1
-以后如需重新集成，请选择或拖入此 SDK 源：%2</translation>
+以后如需重新集成，请选择或拖入此集成包源：%2</translation>
     </message>
     <message>
         <source>Nothing is installed, so no files were removed.</source>
@@ -4482,20 +4524,20 @@ To integrate again later, select or drop this SDK source: %2</source>
         <translation>无法回读安全备份，因此未移除任何内容。</translation>
     </message>
     <message>
-        <source>The safety backup is not a reusable Harken SDK, so nothing was removed.</source>
-        <translation>安全备份不是可重新使用的 Harken SDK，因此未移除任何内容。</translation>
+        <source>The safety backup is not a reusable Harken Integration Package, so nothing was removed.</source>
+        <translation>安全备份不是可重新使用的 Harken 集成包，因此未移除任何内容。</translation>
     </message>
     <message>
-        <source>Run Check only and repair the installed SDK before trying to remove it.</source>
-        <translation>请先执行“仅检查”并修复已安装的 SDK，再尝试移除。</translation>
+        <source>Run Check only and repair the installed Integration Package before trying to remove it.</source>
+        <translation>请先执行“仅检查”并修复已安装的集成包，再尝试移除。</translation>
     </message>
     <message>
         <source>The active integration was removed, but temporary cleanup is incomplete.</source>
         <translation>已移除当前集成，但临时文件清理未完成。</translation>
     </message>
     <message>
-        <source>Backed up and removed the Harken SDK and native runtimes; preserved %1 project-specific file(s).</source>
-        <translation>已备份并移除 Harken SDK 和原生运行时；保留 %1 个工程专属文件。</translation>
+        <source>Backed up and removed the Harken Integration Package and native runtimes; preserved %1 project-specific file(s).</source>
+        <translation>已备份并移除 Harken 集成包和原生运行时；保留 %1 个工程专属文件。</translation>
     </message>
     <message>
         <source>No removal report was written because the Unity project was not valid.</source>
@@ -5225,102 +5267,102 @@ Choose or install a Harken Studio version that supports this project format.</so
     <message><source>Select a Unity project</source><translation>&#x9009;&#x62e9; Unity &#x5de5;&#x7a0b;</translation></message>
     <message><source>Select a Unity project folder.</source><translation>&#x8bf7;&#x9009;&#x62e9; Unity &#x5de5;&#x7a0b;&#x6587;&#x4ef6;&#x5939;&#x3002;</translation></message>
     <message><source>Multiple game projects were found. Select a separate Unity project folder.</source><translation>&#x76ee;&#x5f55;&#x4e2d;&#x53d1;&#x73b0;&#x591a;&#x4e2a;&#x6e38;&#x620f;&#x5de5;&#x7a0b;&#x3002;&#x8bf7;&#x9009;&#x62e9;&#x72ec;&#x7acb;&#x7684; Unity &#x5de5;&#x7a0b;&#x76ee;&#x5f55;&#x3002;</translation></message>
-    <message><source>Uninstall SDK...</source><translation>卸载 SDK...</translation></message>
-    <message><source>Installed SDK files match the installation record.</source><translation>已安装 SDK 文件与安装记录一致。</translation></message>
-    <message><source>Safety check passed. No SDK files were changed.</source><translation>安全检查通过，未修改 SDK 文件。</translation></message>
-    <message><source>SDK removed. Project-specific files and the project relationship were kept.</source><translation>SDK 已卸载，工程自定义文件和工程关联已保留。</translation></message>
-    <message><source>Uninstall the SDK from this game project? A backup will be kept in Saved/HarkenHub/Backups. Project-specific files and the project relationship will be kept.
+    <message><source>Uninstall Integration Package...</source><translation>卸载集成包...</translation></message>
+    <message><source>Installed Integration Package files match the installation record.</source><translation>已安装集成包文件与安装记录一致。</translation></message>
+    <message><source>Safety check passed. No Integration Package files were changed.</source><translation>安全检查通过，未修改集成包文件。</translation></message>
+    <message><source>Integration Package removed. Project-specific files and the project relationship were kept.</source><translation>集成包已卸载，工程自定义文件和工程关联已保留。</translation></message>
+    <message><source>Uninstall the Integration Package from this game project? A backup will be kept in Saved/HarkenHub/Backups. Project-specific files and the project relationship will be kept.
 
-%1</source><translation>卸载此游戏工程中的 SDK？备份将保留在 Saved/HarkenHub/Backups 下。工程自定义文件和工程关联将保留。
+%1</source><translation>卸载此游戏工程中的集成包？备份将保留在 Saved/HarkenHub/Backups 下。工程自定义文件和工程关联将保留。
 
 %1</translation></message>
     <message><source>Could not check Unreal Editor processes. Check permissions and retry the safety check.</source><translation>无法检查 Unreal 编辑器的运行状态，请检查权限后重新进行安全检查。</translation></message>
-    <message><source>This Unreal project is open. Close it before changing the SDK, then run the safety check again.</source><translation>此 Unreal 工程正在运行。请先关闭该工程，再重新进行 SDK 安全检查。</translation></message>
-    <message><source>SDK paths must not contain symbolic links.</source><translation>SDK 路径不能包含符号链接。</translation></message>
-    <message><source>SDK source and installation directories must be separate.</source><translation>SDK 来源目录与安装目录不能相同或相互包含。</translation></message>
-    <message><source>The SDK source would overwrite a project-specific file: %1</source><translation>SDK 来源将覆盖工程自定义文件：%1</translation></message>
-    <message><source>Another SDK operation is running for this project.</source><translation>此工程正在执行另一项 SDK 操作。</translation></message>
-    <message><source>SDK files changed after the safety check. Run the check again before continuing.</source><translation>安全检查后 SDK 文件发生了变化，请重新检查后再继续。</translation></message>
-    <message><source>Installed SDK verification failed. Review the backup and restore the project before retrying.</source><translation>安装后的 SDK 验证失败，请检查备份并恢复工程后再重试。</translation></message>
-    <message><source>An Unreal Editor uses a relative project path with the same project name as this target. Reopen it with an absolute .uproject path so Hub can identify the project before changing SDK files.</source><translation>有 Unreal 编辑器使用相对路径打开了与目标同名的工程，Hub 无法确认是否为本工程。请使用 .uproject 的绝对路径重新打开，再进行 SDK 安全检查。</translation></message>
-        <message><source>Linking adds this project pair to Engine Integrations and establishes a one-to-one relationship in this Hub. Unlink the pair before linking either project to another. SDK checks and management do not require linking.</source><translation>关联会将这组工程加入“引擎集成”列表，并在本机 Hub 中建立一对一关系。任一工程如需关联其他工程，请先解除当前关联。未关联也可检查和管理 SDK。</translation></message>
-        <message><source>Add this project pair to Engine Integrations. No project or SDK files are changed.</source><translation>将这组工程加入 Hub 的“引擎集成”列表，不修改工程或 SDK 文件。</translation></message>
-        <message><source>Remove this project pair from Engine Integrations. Project files and the installed SDK are kept.</source><translation>将这组工程从 Hub 的“引擎集成”列表移除，保留工程文件和已安装的 SDK。</translation></message>
+    <message><source>This Unreal project is open. Close it before changing the Integration Package, then run the safety check again.</source><translation>此 Unreal 工程正在运行。请先关闭该工程，再重新进行集成包安全检查。</translation></message>
+    <message><source>Integration Package paths must not contain symbolic links.</source><translation>集成包路径不能包含符号链接。</translation></message>
+    <message><source>Integration Package source and installation directories must be separate.</source><translation>集成包来源目录与安装目录不能相同或相互包含。</translation></message>
+    <message><source>The Integration Package source would overwrite a project-specific file: %1</source><translation>集成包来源将覆盖工程自定义文件：%1</translation></message>
+    <message><source>Another Integration Package operation is running for this project.</source><translation>此工程正在执行另一项集成包操作。</translation></message>
+    <message><source>Integration Package files changed after the safety check. Run the check again before continuing.</source><translation>安全检查后集成包文件发生了变化，请重新检查后再继续。</translation></message>
+    <message><source>Installed Integration Package verification failed. Review the backup and restore the project before retrying.</source><translation>安装后的集成包验证失败，请检查备份并恢复工程后再重试。</translation></message>
+    <message><source>An Unreal Editor uses a relative project path with the same project name as this target. Reopen it with an absolute .uproject path so Hub can identify the project before changing Integration Package files.</source><translation>有 Unreal 编辑器使用相对路径打开了与目标同名的工程，Hub 无法确认是否为本工程。请使用 .uproject 的绝对路径重新打开，再进行集成包安全检查。</translation></message>
+        <message><source>Linking adds this project pair to Engine Integrations and establishes a one-to-one relationship in this Hub. Unlink the pair before linking either project to another. Integration Package checks and management do not require linking.</source><translation>关联会将这组工程加入“引擎集成”列表，并在本机 Hub 中建立一对一关系。任一工程如需关联其他工程，请先解除当前关联。未关联也可检查和管理集成包。</translation></message>
+        <message><source>Add this project pair to Engine Integrations. No project or Integration Package files are changed.</source><translation>将这组工程加入 Hub 的“引擎集成”列表，不修改工程或集成包文件。</translation></message>
+        <message><source>Remove this project pair from Engine Integrations. Project files and the installed Integration Package are kept.</source><translation>将这组工程从 Hub 的“引擎集成”列表移除，保留工程文件和已安装的集成包。</translation></message>
         <message><source>View Resolution...</source><translation>查看解决办法...</translation></message>
-        <message><source>SDK Resolution</source><translation>SDK 问题与解决办法</translation></message>
+        <message><source>Integration Package Resolution</source><translation>集成包问题与解决办法</translation></message>
         <message><source>Available after safety checks</source><translation>可操作，执行前仍需通过安全检查</translation></message>
         <message><source>Resolve the issue above first</source><translation>需先按上述办法解决问题</translation></message>
-        <message><source>Change SDK: %1
-Move SDK: %2
-Uninstall SDK: %3</source><translation>更换 SDK：%1
-迁移 SDK：%2
-卸载 SDK：%3</translation></message>
-        <message><source>Open SDK Folder</source><translation>打开 SDK 文件夹</translation></message>
+        <message><source>Change Integration Package: %1
+Move Integration Package: %2
+Uninstall Integration Package: %3</source><translation>更换集成包：%1
+迁移集成包：%2
+卸载集成包：%3</translation></message>
+        <message><source>Open Integration Package Folder</source><translation>打开集成包文件夹</translation></message>
         <message><source>Check Again</source><translation>重新检查</translation></message>
         <message><source>The game project directory is missing.</source><translation>游戏工程目录不存在。</translation></message>
-        <message><source>Restore the project directory or select its current location. No SDK files can be changed until the project is available.</source><translation>请恢复工程目录，或重新选择工程当前的位置。找到工程后才能修改 SDK 文件。</translation></message>
-        <message><source>Migration unfinished</source><translation>SDK 迁移尚未完成</translation></message>
-        <message><source>Use Recover SDK Migration to restore a consistent installation before changing, moving or uninstalling the SDK.</source><translation>请先点击“恢复 SDK 迁移”，恢复完整的安装状态，再更换、迁移或卸载 SDK。</translation></message>
-        <message><source>Use Recover SDK Migration first</source><translation>请先点击“恢复 SDK 迁移”</translation></message>
-        <message><source>Multiple SDK installations</source><translation>检测到多份 SDK</translation></message>
-        <message><source>Back up the project, identify the SDK copy used by the game, and remove the extra copies with their original integration tools. Check again when only one installation remains.</source><translation>请先备份工程，确认游戏实际使用的 SDK，再通过各自原有的集成工具移除多余副本。仅保留一份后重新检查。</translation></message>
-        <message><source>Package Manager dependency</source><translation>SDK 由 Unity 包管理器引用</translation></message>
-        <message><source>Manage this SDK dependency in Unity Package Manager. Before switching to a Hub installation, back up the project and remove the existing SDK dependency there, then check again.</source><translation>请在 Unity 包管理器中管理此 SDK。要改用 Hub 安装，请先备份工程，在包管理器中移除现有 SDK 依赖，再返回 Hub 重新检查。</translation></message>
-        <message><source>SDK inspection blocked</source><translation>无法完成 SDK 检查</translation></message>
-        <message><source>Resolve the reported file access, package JSON or path errors, then check again. Hub must identify a single SDK location before changing its files.</source><translation>请根据具体报错修复文件访问权限、包 JSON 或路径问题，再重新检查。Hub 需要确认唯一的 SDK 位置后才能修改文件。</translation></message>
-        <message><source>Unsafe or unreadable SDK path</source><translation>SDK 路径不安全或无法读取</translation></message>
-        <message><source>Resolve the reported path or permission problem. SDK folders must be real directories in the supported project locations, without symbolic links or junctions. Check again after correcting the path.</source><translation>请修复报错所指的路径或权限问题。SDK 必须位于工程支持位置下的实际目录中，不能经过符号链接或目录联接。修复后重新检查。</translation></message>
-        <message><source>Installation record missing</source><translation>SDK 安装记录缺失</translation></message>
-        <message><source>Installation record invalid</source><translation>SDK 安装记录无效或无法读取</translation></message>
-        <message><source>Restore this installation's ownership record from its own backup, then check again. Do not copy a record from another SDK or project. Without the record, Hub cannot distinguish SDK files from project-specific files; use the original installation tool if no backup exists.</source><translation>请从本次安装对应的备份恢复安装记录，再重新检查，不能借用其他 SDK 或工程的记录。缺少记录时，Hub 无法区分 SDK 文件与工程自定义文件；没有备份时，请使用原有安装工具处理。</translation></message>
-        <message><source>SDK metadata needs repair</source><translation>SDK 描述文件需要修复</translation></message>
+        <message><source>Restore the project directory or select its current location. No Integration Package files can be changed until the project is available.</source><translation>请恢复工程目录，或重新选择工程当前的位置。找到工程后才能修改集成包文件。</translation></message>
+        <message><source>Migration unfinished</source><translation>集成包迁移尚未完成</translation></message>
+        <message><source>Use Recover Integration Package Migration to restore a consistent installation before changing, moving or uninstalling the Integration Package.</source><translation>请先点击“恢复集成包迁移”，恢复完整的安装状态，再更换、迁移或卸载集成包。</translation></message>
+        <message><source>Use Recover Integration Package Migration first</source><translation>请先点击“恢复集成包迁移”</translation></message>
+        <message><source>Multiple Integration Package installations</source><translation>检测到多份集成包</translation></message>
+        <message><source>Back up the project, identify the Integration Package copy used by the game, and remove the extra copies with their original integration tools. Check again when only one installation remains.</source><translation>请先备份工程，确认游戏实际使用的集成包，再通过各自原有的集成工具移除多余副本。仅保留一份后重新检查。</translation></message>
+        <message><source>Package Manager dependency</source><translation>集成包由 Unity 包管理器引用</translation></message>
+        <message><source>Manage this Integration Package dependency in Unity Package Manager. Before switching to a Hub installation, back up the project and remove the existing Integration Package dependency there, then check again.</source><translation>请在 Unity 包管理器中管理此集成包。要改用 Hub 安装，请先备份工程，在包管理器中移除现有集成包依赖，再返回 Hub 重新检查。</translation></message>
+        <message><source>Integration Package inspection blocked</source><translation>无法完成集成包检查</translation></message>
+        <message><source>Resolve the reported file access, package JSON or path errors, then check again. Hub must identify a single Integration Package location before changing its files.</source><translation>请根据具体报错修复文件访问权限、包 JSON 或路径问题，再重新检查。Hub 需要确认唯一的集成包位置后才能修改文件。</translation></message>
+        <message><source>Unsafe or unreadable Integration Package path</source><translation>集成包路径不安全或无法读取</translation></message>
+        <message><source>Resolve the reported path or permission problem. Integration Package folders must be real directories in the supported project locations, without symbolic links or junctions. Check again after correcting the path.</source><translation>请修复报错所指的路径或权限问题。集成包必须位于工程支持位置下的实际目录中，不能经过符号链接或目录联接。修复后重新检查。</translation></message>
+        <message><source>Installation record missing</source><translation>集成包安装记录缺失</translation></message>
+        <message><source>Installation record invalid</source><translation>集成包安装记录无效或无法读取</translation></message>
+        <message><source>Restore this installation's ownership record from its own backup, then check again. Do not copy a record from another Integration Package or project. Without the record, Hub cannot distinguish Integration Package files from project-specific files; use the original installation tool if no backup exists.</source><translation>请从本次安装对应的备份恢复安装记录，再重新检查，不能借用其他集成包或工程的记录。缺少记录时，Hub 无法区分集成包文件与工程自定义文件；没有备份时，请使用原有安装工具处理。</translation></message>
+        <message><source>Integration Package metadata needs repair</source><translation>集成包描述文件需要修复</translation></message>
         <message><source>The installation record is available, but package.json or harken-integration.json is missing or invalid.</source><translation>安装记录有效，但 package.json 或 harken-integration.json 缺失或无效。</translation></message>
-        <message><source>Use Change SDK with a complete SDK source to repair the managed files. Move and uninstall require readable package metadata, so repair it first. Existing safety checks still run before applying any change.</source><translation>可点击“更换 SDK”，选择完整的 SDK 来源修复文件。迁移和卸载需要有效的包描述文件，请先修复。实际修改前仍须通过安全检查。</translation></message>
+        <message><source>Use Change Integration Package with a complete Integration Package source to repair the managed files. Move and uninstall require readable package metadata, so repair it first. Existing safety checks still run before applying any change.</source><translation>可点击“更换集成包”，选择完整的集成包来源修复文件。迁移和卸载需要有效的包描述文件，请先修复。实际修改前仍须通过安全检查。</translation></message>
         <message><source>Installed; move and uninstall restricted by dependencies</source><translation>已安装；包依赖限制了迁移和卸载</translation></message>
-        <message><source>The SDK is installed. Change SDK remains available. Before moving or uninstalling, resolve the SDK dependencies in Unity Package Manager and package manifests so Unity cannot load another referenced copy or lose a package reference.</source><translation>SDK 已安装，可继续更换或更新。如需迁移或卸载，请先处理 Unity Package Manager 和包清单中的 SDK 依赖，避免 Unity 加载另一份副本或丢失包引用。</translation></message>
+        <message><source>The Integration Package is installed. Change Integration Package remains available. Before moving or uninstalling, resolve the Integration Package dependencies in Unity Package Manager and package manifests so Unity cannot load another referenced copy or lose a package reference.</source><translation>集成包已安装，可继续更换或更新。如需迁移或卸载，请先处理 Unity Package Manager 和包清单中的集成包依赖，避免 Unity 加载另一份副本或丢失包引用。</translation></message>
         <message><source>Installed; move restricted by local dependencies</source><translation>已安装；本地包依赖限制了迁移</translation></message>
-        <message><source>Change and uninstall remain available. Before moving the SDK, resolve local file: dependencies that belong to or reference this installation, then check again.</source><translation>仍可更换和卸载 SDK。迁移前，请先处理 SDK 自身或指向其位置的 file: 本地包依赖，再重新检查。</translation></message>
+        <message><source>Change and uninstall remain available. Before moving the Integration Package, resolve local file: dependencies that belong to or reference this installation, then check again.</source><translation>仍可更换和卸载集成包。迁移前，请先处理集成包自身或指向其位置的 file: 本地包依赖，再重新检查。</translation></message>
         <message><source>The Unreal project descriptor is missing.</source><translation>Unreal 工程的 .uproject 文件不存在。</translation></message>
         <message><source>Restore the .uproject file or select the current Unreal project location, then check again.</source><translation>请恢复 .uproject 文件，或重新选择 Unreal 工程当前的位置，再重新检查。</translation></message>
         <message><source>The Unreal project descriptor is not valid JSON.</source><translation>Unreal 工程的 .uproject 文件不是有效的 JSON。</translation></message>
         <message><source>Restore or repair the .uproject file, then check again.</source><translation>请恢复或修复 .uproject 文件，再重新检查。</translation></message>
-        <message><source>Installation record or path invalid</source><translation>SDK 安装记录或路径无效</translation></message>
+        <message><source>Installation record or path invalid</source><translation>集成包安装记录或路径无效</translation></message>
         <message><source>Restore this plugin's ownership record from its own backup and resolve any linked or unreadable paths, then check again. Without a valid record, use the original plugin installer to repair or remove the installation.</source><translation>请从此插件对应的备份恢复安装记录，并修复链接路径或读取权限问题，再重新检查。没有有效记录时，请使用原有插件安装工具修复或移除。</translation></message>
         <message><source>Harken.uplugin is missing or invalid, but the plugin ownership record is available.</source><translation>Harken.uplugin 缺失或无效，但插件安装记录有效。</translation></message>
-        <message><source>Use Change SDK with a complete Unreal plugin source to repair it, or Uninstall SDK to remove the recorded files after backup. Repair the plugin metadata before moving it.</source><translation>可点击“更换 SDK”，选择完整的 Unreal 插件来源进行修复；也可点击“卸载 SDK”，备份后移除安装记录中的文件。迁移前需先修复插件信息。</translation></message>
-        <message><source>No SDK is installed. Use Install SDK and select a complete SDK source. Moving and uninstalling require an existing installation.</source><translation>尚未安装 SDK。请点击“新增 SDK”并选择完整的 SDK 来源；迁移和卸载需先有已安装的 SDK。</translation></message>
-        <message><source>No SDK installed</source><translation>尚未安装 SDK</translation></message>
+        <message><source>Use Change Integration Package with a complete Unreal plugin source to repair it, or Uninstall Integration Package to remove the recorded files after backup. Repair the plugin metadata before moving it.</source><translation>可点击“更换集成包”，选择完整的 Unreal 插件来源进行修复；也可点击“卸载集成包”，备份后移除安装记录中的文件。迁移前需先修复插件信息。</translation></message>
+        <message><source>No Integration Package is installed. Use Install Integration Package and select a complete Integration Package source. Moving and uninstalling require an existing installation.</source><translation>尚未安装集成包。请点击“新增集成包”并选择完整的集成包来源；迁移和卸载需先有已安装的集成包。</translation></message>
+        <message><source>No Integration Package installed</source><translation>尚未安装集成包</translation></message>
         <message><source>The original installation state was restored.</source><translation>已恢复原有安装状态。</translation></message>
-        <message><source>The previous SDK could not be restored. Its backup is listed below.</source><translation>未能恢复原有 SDK，备份位置列在下方。</translation></message>
-        <message><source>The original installation state was restored. Review the unverified files listed below and retry with a complete SDK source.</source><translation>已恢复原有安装状态。请检查下方保留的未通过校验的文件，再使用完整的 SDK 来源重试。</translation></message>
-        <message><source>Automatic recovery failed. Close the editor, preserve the listed folders, and restore the previous SDK from the backup before retrying.</source><translation>自动恢复失败。请关闭编辑器，保留下方列出的目录，并从备份恢复原有 SDK 后再重试。</translation></message>
-        <message><source>The SDK passed verification, but its old backup could not be removed.</source><translation>SDK 已通过校验，但旧版本备份未能清理。</translation></message>
-        <message><source>SDK operation</source><translation>SDK 操作</translation></message>
+        <message><source>The previous Integration Package could not be restored. Its backup is listed below.</source><translation>未能恢复原有集成包，备份位置列在下方。</translation></message>
+        <message><source>The original installation state was restored. Review the unverified files listed below and retry with a complete Integration Package source.</source><translation>已恢复原有安装状态。请检查下方保留的未通过校验的文件，再使用完整的集成包来源重试。</translation></message>
+        <message><source>Automatic recovery failed. Close the editor, preserve the listed folders, and restore the previous Integration Package from the backup before retrying.</source><translation>自动恢复失败。请关闭编辑器，保留下方列出的目录，并从备份恢复原有集成包后再重试。</translation></message>
+        <message><source>The Integration Package passed verification, but its old backup could not be removed.</source><translation>集成包已通过校验，但旧版本备份未能清理。</translation></message>
+        <message><source>Integration Package operation</source><translation>集成包操作</translation></message>
         <message><source>Stop Scan</source><translation>停止扫描</translation></message>
         <message><source>Stopping...</source><translation>正在停止...</translation></message>
-        <message><source>SDK scan stopped</source><translation>SDK 扫描已停止</translation></message>
-        <message><source>SDK scan stopped. The check is incomplete; no SDK files were changed.</source><translation>SDK 扫描已停止。检查尚未完成，未修改 SDK 文件。</translation></message>
-        <message><source>Run the SDK check again to finish inspecting this project.</source><translation>请重新检查 SDK，以完成此工程的扫描。</translation></message>
-        <message><source>SDK inspection cancelled.</source><translation>已取消 SDK 检查。</translation></message>
+        <message><source>Integration Package scan stopped</source><translation>集成包扫描已停止</translation></message>
+        <message><source>Integration Package scan stopped. The check is incomplete; no Integration Package files were changed.</source><translation>集成包扫描已停止。检查尚未完成，未修改集成包文件。</translation></message>
+        <message><source>Run the Integration Package check again to finish inspecting this project.</source><translation>请重新检查集成包，以完成此工程的扫描。</translation></message>
+        <message><source>Integration Package inspection cancelled.</source><translation>已取消集成包检查。</translation></message>
         <message><source>External package discovery exceeded its safety limits at %1. Point file: dependencies at individual package directories and remove unrelated content before retrying.</source><translation>外部依赖包扫描在 %1 超过安全限制。请将 file: 依赖指向具体的包目录，移除其中无关的内容后重试。</translation></message>
         <message><source>External package path has no package.json: %1. Point the file: dependency at the package directory.</source><translation>外部依赖路径没有 package.json：%1。请将 file: 依赖指向包所在目录。</translation></message>
-        <message><source>Processing SDK files...</source><translation>正在处理 SDK 文件...</translation></message>
-        <message><source>Processing SDK files... Items inspected: %1</source><translation>正在处理 SDK 文件... 已检查 %1 项</translation></message>
+        <message><source>Processing Integration Package files...</source><translation>正在处理集成包文件...</translation></message>
+        <message><source>Processing Integration Package files... Items inspected: %1</source><translation>正在处理集成包文件... 已检查 %1 项</translation></message>
         <message><source>Choose a directory inside this project's Plugins folder, for example Plugins/Audio/Harken.</source><translation>请选择此工程 Plugins 文件夹内的目录，例如 Plugins/Audio/Harken。</translation></message>
-        <message><source>The SDK cannot be placed inside another Unreal plugin. Choose a separate directory under Plugins.</source><translation>SDK 不能放在其他 Unreal 插件内部。请选择 Plugins 下的独立目录。</translation></message>
+        <message><source>The Integration Package cannot be placed inside another Unreal plugin. Choose a separate directory under Plugins.</source><translation>集成包不能放在其他 Unreal 插件内部。请选择 Plugins 下的独立目录。</translation></message>
         <message><source>Multiple Harken plugins were found. Keep one installation under Plugins and move the others outside Plugins before checking again.
 %1</source><translation>发现多份 Harken 插件。请在 Plugins 下保留一份，将其他副本移出 Plugins 后重新检查。
 %1</translation></message>
-        <message><source>The Unreal migration record is invalid. Preserve both SDK locations and the backup; restore the record from its migration backup before retrying.</source><translation>Unreal 迁移记录无效。请保留迁移前后两个位置的文件和备份，从迁移备份中恢复记录后重试。</translation></message>
-        <message><source>Repair the installed Unreal SDK with Change SDK before moving it.</source><translation>请先通过“更换 SDK”修复已安装的 Unreal SDK，再进行迁移。</translation></message>
-        <message><source>The current and new SDK locations must be separate directories.</source><translation>SDK 的当前位置和新位置必须是互不包含的两个目录。</translation></message>
-        <message><source>The migration backup is missing or changed. Restore the original backup before recovering; no SDK files were changed.</source><translation>迁移备份缺失或已被修改。请恢复原始备份后再执行恢复；未修改 SDK 文件。</translation></message>
-        <message><source>SDK files changed after migration was interrupted, or both locations are occupied. Preserve those files and restore one location to the migration backup's contents before recovering.</source><translation>迁移中断后 SDK 文件发生了变化，或迁移前后两个位置均有文件。请先另行保存这些文件，并将一个位置恢复为迁移备份中的内容、清空另一个位置，再重试恢复。</translation></message>
+        <message><source>The Unreal migration record is invalid. Preserve both Integration Package locations and the backup; restore the record from its migration backup before retrying.</source><translation>Unreal 迁移记录无效。请保留迁移前后两个位置的文件和备份，从迁移备份中恢复记录后重试。</translation></message>
+        <message><source>Repair the installed Unreal Integration Package with Change Integration Package before moving it.</source><translation>请先通过“更换集成包”修复已安装的 Unreal 集成包，再进行迁移。</translation></message>
+        <message><source>The current and new Integration Package locations must be separate directories.</source><translation>集成包的当前位置和新位置必须是互不包含的两个目录。</translation></message>
+        <message><source>The migration backup is missing or changed. Restore the original backup before recovering; no Integration Package files were changed.</source><translation>迁移备份缺失或已被修改。请恢复原始备份后再执行恢复；未修改集成包文件。</translation></message>
+        <message><source>Integration Package files changed after migration was interrupted, or both locations are occupied. Preserve those files and restore one location to the migration backup's contents before recovering.</source><translation>迁移中断后集成包文件发生了变化，或迁移前后两个位置均有文件。请先另行保存这些文件，并将一个位置恢复为迁移备份中的内容、清空另一个位置，再重试恢复。</translation></message>
         <message><source>The migration recovery record could not be saved. Check project permissions and retry.</source><translation>无法保存迁移恢复记录。请检查工程目录权限后重试。</translation></message>
         <message><source>Another Harken plugin exists outside the migration locations. Preserve it outside Plugins before recovering.</source><translation>迁移位置以外还发现另一份 Harken 插件。请先将该副本保存到 Plugins 之外，再执行恢复。</translation></message>
-        <message><source>Resolve the reported plugin locations or path access errors, then check again. Hub must identify one SDK installation before changing its files.</source><translation>请先处理提示中的插件位置或路径访问问题，再重新检查。Hub 需要确定唯一的 SDK 安装位置，才能修改文件。</translation></message>
-        <message><source>SDK migration completed. All installed files and project relationships were kept.</source><translation>SDK 迁移完成。已保留全部安装文件和工程关联。</translation></message>
-        <message><source>Move the installed SDK with all existing files and modifications. Project relationships will be kept. A verified backup will be created first.
+        <message><source>Resolve the reported plugin locations or path access errors, then check again. Hub must identify one Integration Package installation before changing its files.</source><translation>请先处理提示中的插件位置或路径访问问题，再重新检查。Hub 需要确定唯一的集成包安装位置，才能修改文件。</translation></message>
+        <message><source>Integration Package migration completed. All installed files and project relationships were kept.</source><translation>集成包迁移完成。已保留全部安装文件和工程关联。</translation></message>
+        <message><source>Move the installed Integration Package with all existing files and modifications. Project relationships will be kept. A verified backup will be created first.
 
 Current location:
 %1
@@ -5331,7 +5373,7 @@ New location:
 Backup:
 %3
 
-Close Unreal Editor before continuing. Any paths hard-coded in your project must be updated separately.</source><translation>迁移已安装的 SDK，保留所有现有文件和修改，保留工程关联。执行前会先创建并验证备份。
+Close Unreal Editor before continuing. Any paths hard-coded in your project must be updated separately.</source><translation>迁移已安装的集成包，保留所有现有文件和修改，保留工程关联。执行前会先创建并验证备份。
 
 当前位置：
 %1
@@ -5344,24 +5386,24 @@ Close Unreal Editor before continuing. Any paths hard-coded in your project must
 
 请先关闭此 Unreal 工程。工程中写死的路径需要另行调整。</translation></message>
         <message><source>View Dependencies...</source><translation>查看依赖…</translation></message>
-        <message><source>SDK Dependencies</source><translation>SDK 包依赖</translation></message>
-        <message><source>Could not back up the existing Unity SDK.</source><translation>无法备份现有 Unity SDK。</translation></message>
-        <message><source>Could not activate the staged Unity SDK.</source><translation>无法启用准备好的 Unity SDK。</translation></message>
+        <message><source>Integration Package Dependencies</source><translation>集成包依赖</translation></message>
+        <message><source>Could not back up the existing Unity Integration Package.</source><translation>无法备份现有 Unity 集成包。</translation></message>
+        <message><source>Could not activate the staged Unity Integration Package.</source><translation>无法启用准备好的 Unity 集成包。</translation></message>
         <message><source>Cannot move directory from %1 to %2 (system error %3: %4).</source><translation>无法将目录从 %1 移动到 %2（系统错误 %3：%4）。</translation></message>
-        <message><source>Check file write protection, directory permissions and processes holding files open at %1. If checkout or unlocking is required, do that first, then retry. The existing SDK was not changed.</source><translation>请检查 %1 下的文件写保护、目录权限及占用文件的进程。如需签出或解锁，请先完成后重试。现有 SDK 未被修改。</translation></message>
-        <message><source>The Unreal SDK is missing a readable, nonempty file required on this platform: %1. Select a complete SDK source.</source><translation>Unreal SDK 缺少当前平台必需的可读取、非空文件：%1。请选择完整的 SDK 来源。</translation></message>
+        <message><source>Check file write protection, directory permissions and processes holding files open at %1. If checkout or unlocking is required, do that first, then retry. The existing Integration Package was not changed.</source><translation>请检查 %1 下的文件写保护、目录权限及占用文件的进程。如需签出或解锁，请先完成后重试。现有集成包未被修改。</translation></message>
+        <message><source>The Unreal Integration Package is missing a readable, nonempty file required on this platform: %1. Select a complete Integration Package source.</source><translation>Unreal 集成包缺少当前平台必需的可读取、非空文件：%1。请选择完整的集成包来源。</translation></message>
         <message><source>Some files needed for the project upgrade are read-only or not writable.</source><translation>工程升级需要修改的部分文件处于只读状态或不可写。</translation></message>
         <message><source>Check file write protection and access permissions, then try again. If your version control workflow requires checkout or unlocking, do that first. No project data was changed.</source><translation>请检查文件写保护和访问权限后重试。如果版本管理流程要求签出或解锁，请先完成相应操作。工程数据未被修改。</translation></message>
         <message><source>Affected files:
 %1</source><translation>受影响的文件：
 %1</translation></message>
-        <message><source>Project and SDK Paths</source><translation>工程与 SDK 路径</translation></message>
+        <message><source>Project and Integration Package Paths</source><translation>工程与集成包路径</translation></message>
     <message><source>Open Report</source><translation>打开报告</translation></message>
-    <message><source>SDK integration failed. Review the log for details.</source><translation>SDK 集成失败，请查看日志中的详细原因。</translation></message>
-    <message><source>Applying SDK...</source><translation>正在更换 SDK…</translation></message>
-    <message><source>Checking SDK...</source><translation>正在检查 SDK…</translation></message>
-    <message><source>Confirm SDK Change</source><translation>确认更换 SDK</translation></message>
-    <message><source>Confirm SDK Installation</source><translation>确认安装 SDK</translation></message>
+    <message><source>Integration Package installation failed. Review the log for details.</source><translation>集成包安装失败，请查看日志中的详细原因。</translation></message>
+    <message><source>Applying Integration Package...</source><translation>正在更换集成包…</translation></message>
+    <message><source>Checking Integration Package...</source><translation>正在检查集成包…</translation></message>
+    <message><source>Confirm Integration Package Change</source><translation>确认更换集成包</translation></message>
+    <message><source>Confirm Integration Package Installation</source><translation>确认安装集成包</translation></message>
     <message><source>Game project: %1 | Harken project: %2</source><translation>游戏工程：%1 | Harken 工程：%2</translation></message>
     <message><source> (Downgrade)</source><translation>（降级）</translation></message>
     <message><source>Harken project:
@@ -5370,30 +5412,30 @@ Close Unreal Editor before continuing. Any paths hard-coded in your project must
 Game project:
 %2
 
-SDK source:
+Integration Package source:
 %3
 
-SDK installation location:
+Integration Package installation location:
 %4</source><translation>Harken 工程：
 %1
 
 游戏工程：
 %2
 
-SDK 来源：
+集成包来源：
 %3
 
-SDK 安装位置：
+集成包安装位置：
 %4</translation></message>
-    <message><source>SDK files changed. Review the refreshed results and confirm again. No SDK files were changed.</source><translation>检查后文件发生了变化，请查看更新后的检查结果并重新确认。本次操作未修改 SDK 文件。</translation></message>
+    <message><source>Integration Package files changed. Review the refreshed results and confirm again. No Integration Package files were changed.</source><translation>检查后文件发生了变化，请查看更新后的检查结果并重新确认。本次操作未修改集成包文件。</translation></message>
     <message><source>Check complete. Review the changes, then confirm to continue.</source><translation>检查完成，请查看文件变化，再确认执行。</translation></message>
     <message><source>Locally modified files to overwrite or remove: %1</source><translation>将被覆盖或移除的本地修改文件：%1 个</translation></message>
-    <message><source>Missing installed SDK files: %1</source><translation>当前 SDK 缺失文件：%1 个</translation></message>
-    <message><source>The SDK files could not be checked safely.</source><translation>SDK 文件未通过安全检查。</translation></message>
-    <message><source>The SDK contains an unsafe path.</source><translation>SDK 中存在不安全的路径。</translation></message>
-    <message><source>Cannot read SDK file: %1</source><translation>无法读取 SDK 文件：%1</translation></message>
+    <message><source>Missing installed Integration Package files: %1</source><translation>当前集成包缺失文件：%1 个</translation></message>
+    <message><source>The Integration Package files could not be checked safely.</source><translation>集成包文件未通过安全检查。</translation></message>
+    <message><source>The Integration Package contains an unsafe path.</source><translation>集成包中存在不安全的路径。</translation></message>
+    <message><source>Cannot read Integration Package file: %1</source><translation>无法读取集成包文件：%1</translation></message>
     <message><source>Locally modified files overwritten or removed: %1</source><translation>已覆盖或移除的本地修改文件：%1 个</translation></message>
-    <message><source>SDK files missing before the change: %1</source><translation>更换前缺失的 SDK 文件：%1 个</translation></message>
+    <message><source>Integration Package files missing before the change: %1</source><translation>更换前缺失的集成包文件：%1 个</translation></message>
     <message><source>Files added</source><translation>已新增文件</translation></message>
     <message><source>Files updated</source><translation>已更新文件</translation></message>
     <message><source>Files removed</source><translation>已移除文件</translation></message>
