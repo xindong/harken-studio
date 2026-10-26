@@ -95,6 +95,7 @@ ads--CTitleBarButton {
 }
 
 #dockAreaCloseButton,
+#startupLoadingCloseButton,
 #dockPinButton {
     border: none;
     padding: @CLOSE_BUTTON_PADDING@px;
@@ -166,11 +167,13 @@ ads--CDockWidgetTab[focused="true"] QLabel {
 }
 
 #dockAreaCloseButton:hover:enabled,
+#startupLoadingCloseButton:hover:enabled,
 #tabCloseButton:hover:enabled {
     background-color: @CLOSE_BUTTON_HOVER@;
 }
 
 #dockAreaCloseButton:pressed:enabled,
+#startupLoadingCloseButton:pressed:enabled,
 #tabCloseButton:pressed:enabled {
     background-color: @CLOSE_BUTTON_PRESSED@;
 }

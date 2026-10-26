@@ -841,13 +841,20 @@ void MainWindow::initializeFinalState()
 
 void MainWindow::initializeDeferred(
     std::function<void(StartupPhase)> startupProgress,
-    std::function<void()> finished)
+    std::function<void()> finished,
+    std::function<bool()> cancelled)
 {
-    QTimer::singleShot(0, this, [this, startupProgress, finished = std::move(finished)]() mutable {
+    QTimer::singleShot(0, this, [this, startupProgress, finished = std::move(finished), cancelled]() mutable {
+        if (cancelled && cancelled())
+            return;
         initializeStructure(startupProgress);
-        QTimer::singleShot(0, this, [this, finished = std::move(finished)]() mutable {
+        QTimer::singleShot(0, this, [this, finished = std::move(finished), cancelled]() mutable {
+            if (cancelled && cancelled())
+                return;
             initializeServices();
-            QTimer::singleShot(0, this, [this, finished = std::move(finished)]() mutable {
+            QTimer::singleShot(0, this, [this, finished = std::move(finished), cancelled]() mutable {
+                if (cancelled && cancelled())
+                    return;
                 initializeFinalState();
                 if (finished)
                     finished();

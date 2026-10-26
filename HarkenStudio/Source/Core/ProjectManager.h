@@ -190,8 +190,10 @@ public:
     static PreparedProject prepareProject(const QString& filePath,
                                           bool allowUpgrade = false,
                                           ProjectUpgradeProgressCallback upgradeProgress = {},
-                                          ProjectUpgradeApprovalCallback upgradeApproval = {});
-    static PreparedProject prepareProject(const ProjectConfig& config);
+                                          ProjectUpgradeApprovalCallback upgradeApproval = {},
+                                          std::function<bool()> cancelled = {});
+    static PreparedProject prepareProject(const ProjectConfig& config,
+                                          std::function<bool()> cancelled = {});
     bool commitPreparedProject(PreparedProject&& prepared);
     void publishProjectOpened();
     void startWatchingCurrentProject();

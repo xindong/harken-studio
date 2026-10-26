@@ -1,19 +1,24 @@
 #include "StartupLoadingWindow.h"
 #include "StartupRenderer.h"
 
+#include "Core/ThemeAssetCatalog.h"
+#include "Core/ThemeManager.h"
 #include "harken_buildinfo.h"
 
+#include <QCloseEvent>
 #include <QCoreApplication>
 #include <QCursor>
 #include <QGuiApplication>
 #include <QHideEvent>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMouseEvent>
 #include <QProgressBar>
 #include <QScreen>
 #include <QShowEvent>
 #include <QStyle>
 #include <QThread>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 namespace {
@@ -35,11 +40,13 @@ QString versionString()
 
 namespace VNX {
 
-StartupLoadingWindow::StartupLoadingWindow(QWidget* parent)
-    : QWidget(parent, Qt::SplashScreen | Qt::FramelessWindowHint)
+StartupLoadingWindow::StartupLoadingWindow()
+    : QWidget(nullptr, Qt::Window | Qt::FramelessWindowHint
+                           | Qt::WindowSystemMenuHint | Qt::WindowCloseButtonHint)
 {
     setObjectName(QStringLiteral("startupLoadingWindow"));
     setAttribute(Qt::WA_DeleteOnClose, false);
+    setAttribute(Qt::WA_QuitOnClose, false);
     setFixedSize(kWindowWidth, kWindowHeight);
     setWindowTitle(tr("Harken Studio"));
 
@@ -48,6 +55,7 @@ StartupLoadingWindow::StartupLoadingWindow(QWidget* parent)
     layout->setSpacing(0);
 
     renderer_ = std::make_unique<StartupRenderer>();
+    renderer_->window()->installEventFilter(this);
     connect(renderer_.get(), &StartupRenderer::initialFramePresented,
             this, [this]() {
         if (!waitingForInitialFrame_)
@@ -64,6 +72,7 @@ StartupLoadingWindow::StartupLoadingWindow(QWidget* parent)
     }, Qt::QueuedConnection);
     auto* topography = QWidget::createWindowContainer(renderer_->window(), this);
     topography->setObjectName(QStringLiteral("startupLoadingTopography"));
+    topography->setAttribute(Qt::WA_NativeWindow);
     topography->setAttribute(Qt::WA_TransparentForMouseEvents);
     topography->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     topography->setFixedHeight(kTopographyHeight);
@@ -119,6 +128,25 @@ StartupLoadingWindow::StartupLoadingWindow(QWidget* parent)
     version->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     contentLayout->addWidget(version);
 
+    auto& theme = ThemeManager::instance();
+    const auto& metrics = theme.snapshot()->thirdParty.qtAds.metrics;
+    closeButton_ = new QToolButton(this);
+    closeButton_->setAttribute(Qt::WA_NativeWindow);
+    closeButton_->setObjectName(QStringLiteral("startupLoadingCloseButton"));
+    closeButton_->setProperty("flatIconButton", true);
+    closeButton_->setIcon(theme.resolveIcon(
+        QString::fromLatin1(ThemeAssetIds::DockClose)).icon);
+    closeButton_->setIconSize(QSize(metrics.titleBarIconSize, metrics.titleBarIconSize));
+    const int buttonExtent = metrics.closeButtonExtent + metrics.closeButtonPadding * 2;
+    closeButton_->setFixedSize(buttonExtent, buttonExtent);
+    closeButton_->setToolTip(tr("Close"));
+    closeButton_->setAccessibleName(tr("Close Harken Studio"));
+    closeButton_->setFocusPolicy(Qt::NoFocus);
+    closeButton_->move(width() - buttonExtent - metrics.titleBarButtonPadding,
+                       metrics.titleBarButtonPadding);
+    closeButton_->raise();
+    connect(closeButton_, &QToolButton::clicked, this, &QWidget::close);
+
     setPhase(StartupPhase::PreparingApplication);
 }
 
@@ -140,7 +168,7 @@ void StartupLoadingWindow::setProjectName(const QString& projectName)
 
 void StartupLoadingWindow::setPhase(StartupPhase phase, const QString& statusOverride)
 {
-    if (failed_)
+    if (failed_ || cancelling_)
         return;
     const StartupProgress next = startupProgressFor(phase);
     if (next.percent < progress_)
@@ -158,7 +186,7 @@ void StartupLoadingWindow::setPhase(StartupPhase phase, const QString& statusOve
 
 void StartupLoadingWindow::setProgress(int percent, const QString& status)
 {
-    if (failed_)
+    if (failed_ || cancelling_)
         return;
     const int next = qBound(progress_, percent, 99);
     const QString text = status.trimmed().isEmpty()
@@ -174,6 +202,8 @@ void StartupLoadingWindow::setProgress(int percent, const QString& status)
 void StartupLoadingWindow::showFailure(const QString& message)
 {
     Q_ASSERT(QThread::currentThread() == thread());
+    if (cancelling_)
+        return;
     failed_ = true;
     statusLabel_->setText(message.trimmed().isEmpty()
                               ? tr("Harken Studio could not start")
@@ -182,6 +212,22 @@ void StartupLoadingWindow::showFailure(const QString& message)
     setProperty("startupState", QStringLiteral("failed"));
     style()->unpolish(this);
     style()->polish(this);
+}
+
+void StartupLoadingWindow::showCancelling()
+{
+    if (cancelling_)
+        return;
+    cancelling_ = true;
+    closeButton_->setEnabled(false);
+    statusLabel_->setText(tr("Closing Harken Studio…"));
+    statusLabel_->setAccessibleDescription(statusLabel_->text());
+}
+
+void StartupLoadingWindow::dismiss()
+{
+    dismissing_ = true;
+    close();
 }
 
 int StartupLoadingWindow::progressValue() const
@@ -204,10 +250,51 @@ bool StartupLoadingWindow::renderSurfaceOwnedByGuiThread() const
     return renderer_ && renderer_->window()->thread() == thread();
 }
 
+bool StartupLoadingWindow::eventFilter(QObject* watched, QEvent* event)
+{
+    if (renderer_ && watched == renderer_->window()) {
+        if (event->type() == QEvent::MouseButtonPress) {
+            auto* mouseEvent = static_cast<QMouseEvent*>(event);
+            if (mouseEvent->button() == Qt::LeftButton && windowHandle()->startSystemMove())
+                return true;
+        } else if (event->type() == QEvent::Resize
+                   || event->type() == QEvent::DevicePixelRatioChange) {
+            renderer_->setViewport(renderer_->window()->size(),
+                                   renderer_->window()->devicePixelRatio());
+        }
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
+void StartupLoadingWindow::mousePressEvent(QMouseEvent* event)
+{
+    if (event->button() == Qt::LeftButton && windowHandle()->startSystemMove()) {
+        event->accept();
+        return;
+    }
+    QWidget::mousePressEvent(event);
+}
+
+void StartupLoadingWindow::closeEvent(QCloseEvent* event)
+{
+    if (dismissing_) {
+        QWidget::closeEvent(event);
+        return;
+    }
+    event->ignore();
+    if (cancelling_)
+        return;
+    showCancelling();
+    emit cancelRequested();
+}
+
 void StartupLoadingWindow::showEvent(QShowEvent* event)
 {
     QWidget::showEvent(event);
-    centerOnScreen();
+    if (!initialPositionSet_) {
+        centerOnScreen();
+        initialPositionSet_ = true;
+    }
     if (renderer_) {
         auto* topography = findChild<QWidget*>(
             QStringLiteral("startupLoadingTopography"));
@@ -216,6 +303,7 @@ void StartupLoadingWindow::showEvent(QShowEvent* event)
         renderer_->setExposed(true);
         renderer_->start();
     }
+    closeButton_->raise();
 }
 
 void StartupLoadingWindow::hideEvent(QHideEvent* event)

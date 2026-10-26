@@ -123,7 +123,8 @@ public:
         InitializationMode initializationMode = InitializationMode::Immediate);
     void prepareWindowForStartup(QScreen* screen);
     void initializeDeferred(std::function<void(StartupPhase)> startupProgress,
-                            std::function<void()> finished);
+                            std::function<void()> finished,
+                            std::function<bool()> cancelled = {});
     ~MainWindow() override;
     
     Q_INVOKABLE bool switchToView(const QString& viewName);

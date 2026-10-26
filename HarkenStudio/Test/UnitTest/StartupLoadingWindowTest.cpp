@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 
+#include <QAbstractButton>
 #include <QApplication>
 #include <QElapsedTimer>
 #include <QEventLoop>
@@ -75,12 +76,64 @@ TEST(StartupLoadingWindow, DoesNotRegressOrCompleteAfterFailure)
     EXPECT_EQ(loading.progressValue(), 82);
 }
 
-TEST(StartupLoadingWindow, IsFramelessSplash)
+TEST(StartupLoadingWindow, IsFramelessApplicationWindow)
 {
     ensureApp();
     VNX::StartupLoadingWindow loading;
-    EXPECT_EQ(loading.windowType(), Qt::SplashScreen);
+    EXPECT_EQ(loading.windowType(), Qt::Window);
+    EXPECT_EQ(loading.parentWidget(), nullptr);
     EXPECT_TRUE(loading.windowFlags().testFlag(Qt::FramelessWindowHint));
+    const auto buttons = loading.findChildren<QAbstractButton*>();
+    ASSERT_FALSE(buttons.isEmpty());
+    for (const auto* button : buttons)
+        EXPECT_EQ(button->window(), &loading);
+}
+
+TEST(StartupLoadingWindow, UserCloseWaitsForCancellationAndDismissDoesNotCancel)
+{
+    ensureApp();
+    VNX::StartupLoadingWindow loading;
+    int cancellationRequests = 0;
+    QObject::connect(&loading, &VNX::StartupLoadingWindow::cancelRequested,
+                     &loading, [&]() { ++cancellationRequests; });
+    loading.show();
+
+    EXPECT_FALSE(loading.close());
+    EXPECT_TRUE(loading.isVisible());
+    EXPECT_EQ(cancellationRequests, 1);
+    EXPECT_FALSE(loading.close());
+    EXPECT_EQ(cancellationRequests, 1);
+
+    loading.dismiss();
+    EXPECT_FALSE(loading.isVisible());
+    EXPECT_EQ(cancellationRequests, 1);
+
+    VNX::StartupLoadingWindow completed;
+    QObject::connect(&completed, &VNX::StartupLoadingWindow::cancelRequested,
+                     &completed, [&]() { ++cancellationRequests; });
+    completed.show();
+    completed.dismiss();
+    EXPECT_FALSE(completed.isVisible());
+    EXPECT_EQ(cancellationRequests, 1);
+}
+
+TEST(StartupLoadingWindow, CancellationCannotBeOverwrittenByLateProgress)
+{
+    ensureApp();
+    VNX::StartupLoadingWindow loading;
+    loading.setPhase(VNX::StartupPhase::LoadingProjectContent);
+    loading.showCancelling();
+    auto* status = loading.findChild<QLabel*>(
+        QStringLiteral("startupLoadingStatus"));
+    ASSERT_NE(status, nullptr);
+    const QString cancellationStatus = status->text();
+    const int cancellationProgress = loading.progressValue();
+
+    loading.setProgress(90, QStringLiteral("Late project progress"));
+    loading.setPhase(VNX::StartupPhase::Ready);
+    loading.showFailure(QStringLiteral("Late project failure"));
+    EXPECT_EQ(status->text(), cancellationStatus);
+    EXPECT_EQ(loading.progressValue(), cancellationProgress);
 }
 
 TEST(StartupLoadingWindow, WaitsForInitialFrameBeforeBecomingVisible)
@@ -119,7 +172,7 @@ TEST(StartupLoadingWindow, UsesDedicatedRenderThread)
               reinterpret_cast<quintptr>(QThread::currentThreadId()));
     EXPECT_TRUE(loading.renderSurfaceOwnedByGuiThread());
 
-    loading.close();
+    loading.dismiss();
     EXPECT_FALSE(loading.renderThreadRunning());
     EXPECT_EQ(loading.renderThreadId(), 0u);
 }
