@@ -358,6 +358,45 @@ TEST_F(ActionCatalogExportTest, CreateSaveExportTwiceKeepsDigestAndAuthoredName)
               firstCatalog.value(QStringLiteral("digest")).toString());
 }
 
+TEST_F(ActionCatalogExportTest, ExportsUpTo256ActionsAndRefuses257)
+{
+    ASSERT_TRUE(seedPackableAction());
+    auto& manager = ProjectManager::instance();
+    const auto steps = action_->comp<VAction>()->steps;
+    int actionCount = 1;
+    for (const int targetCount : {65, 256, 257}) {
+        SCOPED_TRACE(targetCount);
+        while (actionCount < targetCount) {
+            auto* action = manager.createItem(
+                nullptr, QStringLiteral("Play_Fire_%1").arg(actionCount),
+                ProjectItem::Type::Action);
+            ASSERT_NE(action, nullptr);
+            action->comp<VAction>()->steps = steps;
+            action->markDirty();
+            ++actionCount;
+        }
+        const QString outputDir = QDir(tempDir_.path()).filePath(
+            QStringLiteral("out-%1").arg(targetCount));
+        const auto result = exportPacks(outputDir);
+        if (targetCount <= 256) {
+            ASSERT_TRUE(result.success) << result.error.toStdString();
+            EXPECT_EQ(catalogOf(outputDir)
+                          .value(QStringLiteral("actions")).toArray().size(),
+                      targetCount);
+            EXPECT_EQ(QDir(outputDir).entryList({QStringLiteral("*.bytes")},
+                                               QDir::Files).size(),
+                      targetCount + 1);
+        } else {
+            EXPECT_FALSE(result.success);
+            EXPECT_TRUE(result.error.contains(
+                QStringLiteral("Current World project compilation failed")))
+                << result.error.toStdString();
+            EXPECT_FALSE(QFileInfo::exists(QDir(outputDir).filePath(
+                HarkenEditor::Bridge::packManifestFileName())));
+        }
+    }
+}
+
 TEST_F(ActionCatalogExportTest, RenameExportsOnlyCurrentName)
 {
     auto& manager = ProjectManager::instance();

@@ -479,7 +479,8 @@ RuntimeCapabilityEntry evaluate(const ProjectItem& item,
             definition.contentRevision = 1;
     const auto compiled = harkencurrentworldcompiler::CompileCurrentWorldV1(
         *frontEnd.project, request->variables, materializations,
-        request->containers, {}, request->transitions, request->actions,
+        request->containers, HarkenEditor::Bridge::kStudioCurrentWorldCapacity,
+        request->transitions, request->actions,
         &request->busResult->idSet);
     if (!compiled.ok())
         return refuse(compiled.status == harkencurrentworldcompiler::CompileStatusV1::Capacity

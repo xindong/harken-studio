@@ -13,6 +13,9 @@
 
 namespace HarkenEditor::Bridge {
 
+inline constexpr harkenstudiobuild::WorldCapacitySummaryV1
+    kStudioCurrentWorldCapacity{.maxActionDefinitions = 256};
+
 struct CurrentWorldSoundPreparation {
     struct Sound {
         SoundDesc binding;

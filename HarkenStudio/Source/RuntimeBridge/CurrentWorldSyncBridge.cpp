@@ -467,7 +467,7 @@ CurrentWorldCompileResult compileCurrentWorldRequest(
 
     auto compiled = harkencurrentworldcompiler::CompileCurrentWorldV1(
         *frontEnd.project, request.variables, request.materializations,
-        request.containers, {},
+        request.containers, kStudioCurrentWorldCapacity,
         request.transitions, request.actions, &request.busResult->idSet);
     if (!compiled.ok() || !compiled.world) {
         result.status = CurrentWorldSyncStatus::CompileFailed;
@@ -540,7 +540,8 @@ CurrentWorldSyncResult clearCurrentWorld(CurrentWorldSyncToken token)
         return result;
     }
     auto compiled = harkencurrentworldcompiler::CompileCurrentWorldV1(
-        harkenprojectschema::CanonicalProject{}, {}, {}, {});
+        harkenprojectschema::CanonicalProject{}, {}, {}, {},
+        kStudioCurrentWorldCapacity);
     if (!compiled.ok() || !compiled.world) {
         result.status = CurrentWorldSyncStatus::CompileFailed;
         return result;
