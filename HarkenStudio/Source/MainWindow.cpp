@@ -4200,14 +4200,14 @@ void MainWindow::onNewProjectViaHub()
 {
     QString error;
     if (!HubLauncher::open(HubPage::NewProject, &error))
-        QMessageBox::warning(this, tr("Harken Studio Hub"), error);
+        QMessageBox::warning(this, tr("Harken Hub"), error);
 }
 
 void MainWindow::onOpenProjectViaHub()
 {
     QString error;
     if (!HubLauncher::open(HubPage::Projects, &error))
-        QMessageBox::warning(this, tr("Harken Studio Hub"), error);
+        QMessageBox::warning(this, tr("Harken Hub"), error);
 }
 
 void MainWindow::onSaveProject()

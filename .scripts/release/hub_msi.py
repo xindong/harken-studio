@@ -17,6 +17,7 @@ HANDOFF_SDDL = "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OIIO;FA;;;CO)(A;;0x1200ab;
 UPDATER_SDDL = "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)"
 
 SCHEMA = {
+    "Icon": ("Name CHAR(72) NOT NULL, Data OBJECT NOT NULL", "Name"),
     "Property": ("Property CHAR(72) NOT NULL, Value CHAR(0) NOT NULL", "Property"),
     "Directory": ("Directory CHAR(72) NOT NULL, Directory_Parent CHAR(72), DefaultDir CHAR(255) NOT NULL", "Directory"),
     "Component": ("Component CHAR(72) NOT NULL, ComponentId CHAR(38), Directory_ CHAR(72) NOT NULL, Attributes SHORT NOT NULL, Condition CHAR(255), KeyPath CHAR(72)", "Component"),
@@ -97,10 +98,14 @@ def installer_ui(tables, license_rtf):
         ("LicenseDialog", "Next", "Enable", 'LICENSEACCEPTED="1"'),
         ("LicenseDialog", "Next", "Disable", 'NOT LICENSEACCEPTED="1"'),
     ]
-    dialog("FolderDialog", "Install Harken Studio Hub", "Path", "Next", "Cancel")
+    dialog("FolderDialog", "Install Harken Hub", "Next", "Next", "Cancel")
     control("FolderDialog", "Description", "Text", (18, 55, 384, 42),
-            "Choose the installation folder. Setup will replace an older installation and keep your projects and settings.")
+            "Choose the folder for a new installation. Upgrades keep the existing folder, projects, and settings.")
     control("FolderDialog", "Path", "PathEdit", (18, 112, 384, 20), prop="INSTALLFOLDER", next="Back")
+    tables["ControlCondition"] += [
+        ("FolderDialog", "Path", "Enable", "NOT HARKENPREVIOUSINSTALLDIR"),
+        ("FolderDialog", "Path", "Disable", "HARKENPREVIOUSINSTALLDIR"),
+    ]
     control("FolderDialog", "Back", "PushButton", (170, 285, 72, 20), "Back", next="Next")
     event("FolderDialog", "Back", "NewDialog", "LicenseDialog")
     control("FolderDialog", "Next", "PushButton", (250, 285, 72, 20), "Install", next="Cancel")
@@ -110,7 +115,7 @@ def installer_ui(tables, license_rtf):
 
     dialog("MaintenanceDialog", "Change the existing installation", "Repair", "Repair", "Cancel")
     control("MaintenanceDialog", "Description", "Text", (18, 55, 384, 55),
-            "Repair reinstalls missing or damaged program files. Remove uninstalls Harken Studio Hub and keeps your projects and settings.")
+            "Repair reinstalls missing or damaged program files. Remove uninstalls Harken Hub and keeps your projects and settings.")
     control("MaintenanceDialog", "Repair", "PushButton", (18, 130, 120, 24), "Repair", next="Remove")
     control("MaintenanceDialog", "Remove", "PushButton", (152, 130, 120, 24), "Remove", next="Cancel")
     control("MaintenanceDialog", "Cancel", "PushButton", (330, 285, 72, 20), "Cancel", next="Repair")
@@ -136,14 +141,16 @@ def installer_ui(tables, license_rtf):
 def package_tables(files, input_dir, version, license_rtf):
     tables = {name: [] for name in SCHEMA}
     tables["Property"] = [
-        ("ALLUSERS", "1"), ("Manufacturer", "XD"), ("ProductName", "Harken Studio Hub"),
+        ("ALLUSERS", "1"), ("Manufacturer", "XD"), ("ProductName", "Harken Hub"),
         ("ProductCode", "{" + str(uuid.uuid4()).upper() + "}"), ("ProductLanguage", "1033"),
         ("ProductVersion", version), ("UpgradeCode", UPGRADE_CODE), ("ARPNOMODIFY", "1"),
-        ("SecureCustomProperties", "HARKENBRIDGE;HARKENSELFUPDATE;INSTALLFOLDER;HARKEN_UPGRADE_DETECTED;HARKEN_DOWNGRADE_DETECTED"),
+        ("ARPPRODUCTICON", "HubIcon.ico"),
+        ("SecureCustomProperties", "HARKENBRIDGE;HARKENSELFUPDATE;INSTALLFOLDER;HARKENPREVIOUSINSTALLDIR;HARKEN_UPGRADE_DETECTED;HARKEN_DOWNGRADE_DETECTED"),
     ]
+    tables["Icon"] = [("HubIcon.ico", Path(__file__).resolve().parents[2] / "HarkenHub/Resources/icons/HubIcon.ico")]
     tables["Directory"] = [
         ("TARGETDIR", None, "SourceDir"), ("ProgramFiles64Folder", "TARGETDIR", "PFiles64"),
-        ("INSTALLFOLDER", "ProgramFiles64Folder", "Hub|HarkenStudioHub"),
+        ("INSTALLFOLDER", "ProgramFiles64Folder", "Hub|HarkenHub"),
         ("ProgramMenuFolder", "TARGETDIR", "PMenu"), ("DesktopFolder", "TARGETDIR", "Desktop"),
         ("CommonAppDataFolder", "TARGETDIR", "CommApp"),
         ("HarkenSoundDataDir", "CommonAppDataFolder", "Harken|HarkenSound"),
@@ -165,7 +172,7 @@ def package_tables(files, input_dir, version, license_rtf):
         rel = file.relative_to(input_dir)
         name = rel.as_posix().lower()
         component = stable_id("PayloadCmp", "cmp/" + name)
-        file_id = "HarkenHubExe" if name == "harkenstudiohub.exe" else stable_id("PayloadFile", "file/" + name)
+        file_id = "HarkenHubExe" if name == "harkenhub.exe" else stable_id("PayloadFile", "file/" + name)
         tables["Component"].append((component, component_guid(name), directory_id(rel.parent.as_posix()), 256, None, file_id))
         file_version, language, file_hash = file_metadata(file)
         tables["File"].append((file_id, component, msi_name(rel.name, "file/" + name),
@@ -201,25 +208,28 @@ def package_tables(files, input_dir, version, license_rtf):
         ("HarkenHubShortcut", "ProgramMenuFolder", "StartMenuShortcut"),
         ("HarkenHubDesktopShortcut", "DesktopFolder", "DesktopShortcut"),
     ]:
-        tables["Shortcut"].append((identifier, directory, "Hub|Harken Studio Hub", component,
-                                   "[INSTALLFOLDER]HarkenStudioHub.exe", None, None, None, None, None, None, "INSTALLFOLDER"))
-    tables["Feature"] = [("Hub", None, "Harken Studio Hub", None, 2, 1, None, 0)]
+        tables["Shortcut"].append((identifier, directory, "Hub|Harken Hub", component,
+                                   "[INSTALLFOLDER]HarkenHub.exe", None, None, None, None, None, None, "INSTALLFOLDER"))
+    tables["Feature"] = [("Hub", None, "Harken Hub", None, 2, 1, None, 0)]
     tables["FeatureComponents"] = [("Hub", row[0]) for row in tables["Component"]]
     tables["Upgrade"] = [(UPGRADE_CODE, None, version, "1033", 513, None, "HARKEN_UPGRADE_DETECTED"),
                           (UPGRADE_CODE, version, None, "1033", 2, None, "HARKEN_DOWNGRADE_DETECTED")]
     tables["LaunchCondition"] = [
-        ("NOT HARKEN_DOWNGRADE_DETECTED", "A newer version of Harken Studio Hub is already installed."),
-        ("VersionNT64", "Harken Studio Hub requires 64-bit Windows."),
+        ("NOT HARKEN_DOWNGRADE_DETECTED", "A newer version of Harken Hub is already installed."),
+        ("VersionNT64", "Harken Hub requires 64-bit Windows."),
     ]
-    tables["AppSearch"] = [("INSTALLFOLDER", "PreviousInstallFolder")]
+    tables["AppSearch"] = [("HARKENPREVIOUSINSTALLDIR", "PreviousInstallFolder")]
     tables["RegLocator"] = [("PreviousInstallFolder", 2, registry_key, "InstallDir", 18)]
     tables["CustomAction"] = [
-        ("HarkenHealthHandshake", 1058, "INSTALLFOLDER", '"[INSTALLFOLDER]HarkenStudioHub.exe" --await-health-handshake'),
-        ("HarkenRestartHub", 1762, "INSTALLFOLDER", '"[INSTALLFOLDER]HarkenStudioHub.exe"'),
-        ("HarkenRegisterUpdateBridge", 3106, "INSTALLFOLDER", '"[INSTALLFOLDER]HarkenStudioHub.exe" --register-update-bridge'),
-        ("HarkenUnregisterUpdateBridge", 3170, "INSTALLFOLDER", '"[INSTALLFOLDER]HarkenStudioHub.exe" --unregister-update-bridge'),
+        ("HarkenPreserveInstallFolder", 51, "INSTALLFOLDER", "[HARKENPREVIOUSINSTALLDIR]"),
+        ("HarkenHealthHandshake", 1058, "INSTALLFOLDER", '"[INSTALLFOLDER]HarkenHub.exe" --await-health-handshake'),
+        ("HarkenRestartHub", 1762, "INSTALLFOLDER", '"[INSTALLFOLDER]HarkenHub.exe"'),
+        ("HarkenRegisterUpdateBridge", 3106, "INSTALLFOLDER", '"[INSTALLFOLDER]HarkenHub.exe" --register-update-bridge'),
+        ("HarkenMigrateShellShortcuts", 3682, "INSTALLFOLDER", '"[INSTALLFOLDER]HarkenHub.exe" --migrate-shell-shortcuts'),
+        ("HarkenUnregisterUpdateBridge", 3170, "INSTALLFOLDER", '"[INSTALLFOLDER]HarkenHub.exe" --unregister-update-bridge'),
     ]
     prepare = [("FindRelatedProducts", None, 25), ("AppSearch", None, 50),
+               ("HarkenPreserveInstallFolder", "HARKENPREVIOUSINSTALLDIR", 51),
                ("LaunchConditions", None, 100), ("ValidateProductID", None, 700),
                ("CostInitialize", None, 800), ("FileCost", None, 900),
                ("CostFinalize", None, 1000), ("MigrateFeatureStates", None, 1200)]
@@ -231,10 +241,11 @@ def package_tables(files, input_dir, version, license_rtf):
         ("RemoveFiles", None, 3500), ("RemoveFolders", None, 3600),
         ("CreateFolders", None, 3700), ("InstallFiles", None, 4000),
         ("HarkenRegisterUpdateBridge", "NOT REMOVE", 4001),
-        ("CreateShortcuts", "NOT HARKENSELFUPDATE=1", 4500),
+        ("CreateShortcuts", "NOT HARKENSELFUPDATE=1 AND NOT HARKEN_UPGRADE_DETECTED", 4500),
         ("WriteRegistryValues", None, 5000), ("RegisterUser", None, 6000),
         ("RegisterProduct", None, 6100), ("PublishFeatures", None, 6300),
         ("PublishProduct", None, 6400),
+        ("HarkenMigrateShellShortcuts", "NOT REMOVE", 6597),
         ("HarkenHealthHandshake", "HARKENSELFUPDATE=1 AND NOT REMOVE", 6598),
         ("HarkenRestartHub", "HARKENSELFUPDATE=1 AND NOT HARKENBRIDGE=1 AND NOT REMOVE", 6599),
         ("InstallFinalize", None, 6600), ("RemoveExistingProducts", None, 6601),
@@ -257,7 +268,11 @@ def package_tables(files, input_dir, version, license_rtf):
 def build(files, input_dir, version, license_rtf, msi_path, evidence_dir, run=subprocess.run):
     tables, cabinet_files = package_tables(files, input_dir, version, license_rtf.read_text(encoding="ascii"))
     evidence_dir.mkdir(parents=True, exist_ok=True)
-    (evidence_dir / "msi-tables.json").write_text(json.dumps(tables, indent=2) + "\n", encoding="utf-8")
+    for name, source in tables["Icon"]:
+        shutil.copyfile(source, evidence_dir / name)
+    evidence_tables = dict(tables)
+    evidence_tables["Icon"] = [(name, name) for name, source in tables["Icon"]]
+    (evidence_dir / "msi-tables.json").write_text(json.dumps(evidence_tables, indent=2) + "\n", encoding="utf-8")
     makecab = Path(os.environ["SystemRoot"]) / "System32" / "makecab.exe"
     with tempfile.TemporaryDirectory(prefix="harken-cab-") as temporary:
         work = Path(temporary)
@@ -280,7 +295,7 @@ def build(files, input_dir, version, license_rtf, msi_path, evidence_dir, run=su
                 database.execute(f"CREATE TABLE `{name}` ({definitions} PRIMARY KEY {primary})")
                 database.insert(name, tables[name])
             database.execute("INSERT INTO `_Streams` (`Name`, `Data`) VALUES (?, ?)", ("hub.cab", work / "hub.cab"))
-            database.summary({1: 1252, 2: "Installation Database", 3: "Harken Studio Hub", 4: "XD",
+            database.summary({1: 1252, 2: "Installation Database", 3: "Harken Hub", 4: "XD",
                               7: "x64;1033", 9: "{" + str(uuid.uuid4()).upper() + "}",
                               14: 500, 15: 2, 18: "Harken Windows Installer Builder", 19: 2})
             database.commit()

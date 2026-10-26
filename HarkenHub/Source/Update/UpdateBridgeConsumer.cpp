@@ -417,7 +417,7 @@ UpdateBridgeConsumer::Hooks UpdateBridgeConsumer::defaultHooks()
             hubInstallDir() + QStringLiteral("/HarkenHub");
 #else
         const QString hub = hubInstallDir() +
-                            QStringLiteral("/HarkenStudioHub.exe");
+                            QStringLiteral("/HarkenHub.exe");
 #endif
         return launchInActiveUserSession(hub, arguments, userId, error);
     };

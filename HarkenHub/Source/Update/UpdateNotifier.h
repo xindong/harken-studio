@@ -3,6 +3,7 @@
 #include "Update/UpdateStateStore.h"
 
 #include <QList>
+#include <QIcon>
 #include <QObject>
 #include <QSet>
 #include <QString>
@@ -38,6 +39,7 @@ public:
     void attach(HubSelfUpdate* selfUpdate);
     void showTrayIcon();
     void retranslateTray();
+    void setTrayIcon(const QIcon& icon);
     void handleState(const UpdateStateRecord& record);
     void notifyHubUpdated(const QString& version);
 
@@ -55,6 +57,7 @@ private:
     void flushPendingNotifications();
 
     QSystemTrayIcon* tray_ = nullptr;
+    QIcon trayIcon_;
     QMenu* trayMenu_ = nullptr;
     QAction* openAction_ = nullptr;
     QAction* exitAction_ = nullptr;

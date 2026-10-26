@@ -16,10 +16,10 @@ class ProductLegalTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
 
-    def test_20260930_r2_consent_hashes_match_supplied_documents(self):
+    def test_consent_hashes_match_product_documents(self):
         expected = {
-            ".txt": "16ebe1c481f1fdd462d50353881ee655f3ddfce77e53187cc95296c68c1006f3",
-            ".zh-CN.txt": "c5526d92e4688e55ef525bbd1b8710af37d46adeee1a4c08099d947bf30c03a5",
+            ".txt": "370b273640c25743bb4a51eecc019bda785385e526a1076520f0f8e42dd8d3f7",
+            ".zh-CN.txt": "e3f7dd8901a56b49d2f5731cbbce61d2081ab87177b30666740e4703b88fe528",
         }
         self.module.write_hub_resources(self.root)
         for suffix, digest in expected.items():
@@ -28,9 +28,9 @@ class ProductLegalTest(unittest.TestCase):
                              for name in ("USER_AGREEMENT", "PRIVACY_POLICY")]
                 self.assertEqual(hashlib.sha256(b"\n\n".join(documents)).hexdigest(), digest)
 
-    def test_20260930_r2_installer_text_matches_supplied_documents(self):
+    def test_installer_text_matches_product_documents(self):
         digest = hashlib.sha256(self.module.installer_text().encode("utf-8")).hexdigest()
-        self.assertEqual(digest, "c521305c549a8936129101fec44ac9ad542536c0256ec215e7e36dd832a6daaf")
+        self.assertEqual(digest, "4e4daa38c1fc5e92620174542f61e9b262f484dda14422b99d61dd8f25006aa5")
 
     def test_source_edits_reach_resources_and_installer(self):
         for name in self.module.TERMS_FILES.values():

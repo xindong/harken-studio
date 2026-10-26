@@ -28,7 +28,7 @@ QList<ReleaseNotesEntry> ReleaseNotesCatalog::load(QString* error)
     QList<ReleaseNotesEntry> entries = fromJson(file.readAll(), error);
     if (!entries.isEmpty() &&
         entries.first().version != QCoreApplication::applicationVersion()) {
-        setError(error, QStringLiteral("The release notes do not match this Harken Studio Hub version."));
+        setError(error, QStringLiteral("The release notes do not match this Harken Hub version."));
         return {};
     }
     return entries;

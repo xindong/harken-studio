@@ -1,6 +1,6 @@
 Harken Studio Open-Source Release Notice
 
-Release Date: September 30, 2026
+Release Date: October 28, 2026
 
 I. Release Statement
 
@@ -14,19 +14,21 @@ II. Scope of the Open-Source Release
 
 XD publicly releases all source code in the official Harken Studio repository, including without limitation:
 
-- Harken Studio Hub;
+- Harken Studio；
 
-- Harken Studio Editor;
+- Harken Engine;
 
-- Harken Studio Unity SDK;
+- Harken Engine Unity Integration;
 
-- Harken Studio Runtime;
+- sample code (“Sample”);
 
-- sample code ("Sample");
-
-- documentation ("Documentation"); and
+- documentation (“Documentation”); and
 
 - build, test, release, and legal materials that may lawfully be made public.
+
+Harken Hub is an official distribution and update tool. It is currently used primarily to obtain, install, and update Harken Studio; it may later be used to distribute other Harken products, subject to the actual released version and official descriptions. If this version’s public repository includes Harken Hub source code, that source code is released under this version’s LICENSE. Whether later versions of Harken Hub are open-sourced or continue to be distributed with this project is governed by the release notes and accompanying materials for that version. This Notice does not constitute a commitment to keep Harken Hub open source on an ongoing basis.
+
+Harken Engine and Harken Engine Unity Integration are currently used and distributed with Harken Studio and are not, by that fact, made available to all users as standalone products.
 
 For purposes of this Notice, "public release" means making the source code and corresponding runnable programs described in this Notice publicly available to unspecified users.
 
@@ -34,7 +36,7 @@ XD may change the names, logos, domain names, or other identifiers of the Produc
 
 2.2 Corresponding Runnable Programs
 
-XD publicly releases the official runnable programs built from the publicly released source code described above, including applicable installers, EXE files, dynamic libraries, static libraries, SDK packages, runtime libraries, update packages, and other binary release materials. The specific source code, components and binary release scope are subject to the relevant repositories, licenses and version release materials.
+XD publicly releases the official runnable programs built from the source code described above, including applicable versions of the Harken Studio installer, Harken Hub (if provided in that version), update packages, and other binary release materials. Where Harken Engine and Harken Engine Unity Integration are distributed with Harken Studio, the materials for that version govern.
 
 2.3 Matters Outside the Open-Source Release
 
@@ -52,11 +54,9 @@ Harken Studio may add, modify, suspend, or remove code, features, components, do
 
 III. Release Entity and Download Support
 
-XD is responsible for determining Harken Studio's official releases, public repository, and official release materials, and may provide release notes and download information in accordance with its release arrangements.
+XD is responsible for determining Harken Studio’s official releases, public repository, and official release materials, and may provide download and automatic-update support for publicly released official programs through Harken Hub, the official website, OSS, CDN, or other official download channels. Such download support does not change XD’s status as the official release entity, or the rights granted under the open-source licenses.
 
-XD or service providers designated by XD may use official websites, object-storage services ("OSS"), CDNs, or other official download channels to upload, host, and make available for manual download or automatic update official binary programs that have been publicly released. Such download support does not change XD's status as the official release entity for the source code and corresponding runnable programs, and does not change the rights granted under the applicable open-source licenses.
-
-AK/SK credentials, upload credentials, signing private keys, and other controlled credentials used for OSS, GitHub, CDN, or other release channels are not open-source materials and should not be included in the public repository, client, installer, or update package. The specific GitHub repository or Release, OSS/CDN address, fallback conditions, update frequency, user controls, signature-verification method, and rollback policy for official downloads and automatic updates are governed by the official release page, client documentation, and Privacy Policy.
+The specific GitHub repository or Release, OSS/CDN addresses, fallback conditions, update frequency, user controls, signature verification, and rollback policy for official downloads and automatic updates are governed by the official release page, Harken Hub descriptions, and the Privacy Policy.
 
 IV. Open-Source and Third-Party Licenses
 

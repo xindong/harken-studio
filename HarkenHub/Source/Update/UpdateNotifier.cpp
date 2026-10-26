@@ -16,6 +16,7 @@ namespace VNH {
 
 UpdateNotifier::UpdateNotifier(QObject* parent)
     : QObject(parent)
+    , trayIcon_(QStringLiteral(":/Resources/icons/HubIcon.ico"))
 {
 }
 
@@ -58,16 +59,16 @@ UpdateNotifier::Notification UpdateNotifier::evaluate(
         notification.title = tr("HarkenStudio update ready");
         notification.message =
             tr("HarkenStudio %1 has been downloaded and verified. Open Harken "
-               "Studio Hub to install it.")
+               "Hub to install it.")
                 .arg(record.version);
     } else if (record.product == QStringLiteral("HarkenHub") &&
                record.state == QStringLiteral("AwaitingUserApproval")) {
         notification.show = true;
         notification.key = record.product + QStringLiteral("/") +
                            record.buildId + QStringLiteral("/ready");
-        notification.title = tr("Harken Studio Hub update ready");
+        notification.title = tr("Harken Hub update ready");
         notification.message =
-            tr("Harken Studio Hub %1 is ready to install. Open Harken Studio Hub to approve "
+            tr("Harken Hub %1 is ready to install. Open Harken Hub to approve "
                "the update.")
                 .arg(record.version);
     }
@@ -80,9 +81,9 @@ void UpdateNotifier::notifyHubUpdated(const QString& version)
     notification.show = true;
     notification.key =
         QStringLiteral("HarkenHub/updated/") + version;
-    notification.title = tr("Harken Studio Hub updated");
+    notification.title = tr("Harken Hub updated");
     notification.message =
-        tr("Harken Studio Hub has been updated to %1.").arg(version);
+        tr("Harken Hub has been updated to %1.").arg(version);
     if (notifiedKeys_.contains(notification.key))
         return;
     notifiedKeys_.insert(notification.key);
@@ -109,8 +110,8 @@ bool UpdateNotifier::ensureTray()
         return false;
     if (!tray_) {
         tray_ = new QSystemTrayIcon(this);
-        tray_->setIcon(QIcon(QStringLiteral(":/Resources/icons/HubIcon.ico")));
-        tray_->setToolTip(tr("Harken Studio Hub"));
+        tray_->setIcon(trayIcon_);
+        tray_->setToolTip(tr("Harken Hub"));
         connect(tray_, &QSystemTrayIcon::messageClicked, this,
                 &UpdateNotifier::activateVersionsPage);
         connect(tray_, &QSystemTrayIcon::activated, this,
@@ -127,7 +128,7 @@ bool UpdateNotifier::ensureTray()
             "background: transparent; } "
             "QMenu::item:selected { background-color: #00F0FF; "
             "color: #000000; }"));
-        openAction_ = trayMenu_->addAction(tr("Open Harken Studio Hub"));
+        openAction_ = trayMenu_->addAction(tr("Open Harken Hub"));
         connect(openAction_, &QAction::triggered, this,
                 &UpdateNotifier::activateHubWindow);
         exitAction_ = trayMenu_->addAction(tr("Exit"));
@@ -165,12 +166,19 @@ void UpdateNotifier::showTrayIcon()
     trayRetryTimer_->start();
 }
 
+void UpdateNotifier::setTrayIcon(const QIcon& icon)
+{
+    trayIcon_ = icon;
+    if (tray_)
+        tray_->setIcon(trayIcon_);
+}
+
 void UpdateNotifier::retranslateTray()
 {
     if (tray_)
-        tray_->setToolTip(tr("Harken Studio Hub"));
+        tray_->setToolTip(tr("Harken Hub"));
     if (openAction_)
-        openAction_->setText(tr("Open Harken Studio Hub"));
+        openAction_->setText(tr("Open Harken Hub"));
     if (exitAction_)
         exitAction_->setText(tr("Exit"));
 }

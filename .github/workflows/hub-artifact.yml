@@ -1,6 +1,6 @@
 name: Hub Artifact
 
-# Builds the Harken Studio Hub artifacts: Windows MSI installer and macOS pkg.
+# Builds the Harken Hub artifacts: Windows MSI installer and macOS pkg.
 # Called by release-artifacts.yml.
 on:
   workflow_call:
@@ -82,7 +82,7 @@ jobs:
             --qt-version "$(qmake -query QT_VERSION)" \
             --output build/bin/Release/Legal
 
-      - name: Build Harken Studio Hub MSI and setup EXE
+      - name: Build Harken Hub MSI and setup EXE
         shell: bash
         run: |
           set -euo pipefail
@@ -93,7 +93,7 @@ jobs:
             --output-dir .temp/hub-installer \
             --version "$version" \
             --build-id "$build_id" \
-            --stub-exe build/setup/Release/HarkenStudioHubSetup.exe
+            --stub-exe build/setup/Release/HarkenHubSetup.exe
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -285,7 +285,7 @@ jobs:
           done
           exit $status
 
-      - name: Build Harken Studio Hub pkg
+      - name: Build Harken Hub pkg
         shell: bash
         run: |
           set -euo pipefail

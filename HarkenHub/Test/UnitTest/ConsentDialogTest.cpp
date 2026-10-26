@@ -47,7 +47,7 @@ TEST_F(ConsentDialogTest, BothLanguagesIncludePrivacyAndRenewOldConsent)
         for (const QString& id : {VNH::ConsentDialog::hubDocumentId(),
                                   VNH::ConsentDialog::studioDocumentId()}) {
             ASSERT_TRUE(VNH::ConsentStore::recordConsent(
-                id, QStringLiteral("2026-09-30"), QStringLiteral("old-text"),
+                id, QStringLiteral("2026-09-30-r2"), QStringLiteral("old-text"),
                 QStringLiteral("0.1.0"), QDateTime::currentDateTimeUtc()));
             QStringList shownTexts;
             QTimer::singleShot(0, [&shownTexts]() {
@@ -80,7 +80,7 @@ TEST_F(ConsentDialogTest, BothLanguagesIncludePrivacyAndRenewOldConsent)
             const QString hash = QString::fromLatin1(QCryptographicHash::hash(
                 content, QCryptographicHash::Sha256).toHex());
             EXPECT_TRUE(VNH::ConsentStore::hasConsent(
-                id, QStringLiteral("2026-09-30-r2"), hash));
+                id, QStringLiteral("2026-10-28"), hash));
             EXPECT_TRUE(VNH::ConsentDialog::requestConsent(nullptr, id));
             QFile consent(VNH::ConsentStore::filePath());
             ASSERT_TRUE(consent.open(QIODevice::ReadOnly));
