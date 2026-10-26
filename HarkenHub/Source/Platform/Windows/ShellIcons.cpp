@@ -1,5 +1,9 @@
 #include "Platform/Windows/ShellIcons.h"
+#include "Platform/PlatformPaths.h"
 
+#include <QBuffer>
+#include <QDataStream>
+#include <QSaveFile>
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDebug>
@@ -12,12 +16,52 @@
 #include <QScopeGuard>
 
 #include <windows.h>
+#include <propkey.h>
+#include <propvarutil.h>
 #include <shlobj.h>
 #include <wrl/client.h>
 
 namespace VNH {
 
-void migrateShellShortcuts()
+QString saveShellIcon(const QIcon& icon, const QString& root)
+{
+    const auto sizes = icon.availableSizes();
+    if (sizes.isEmpty())
+        return {};
+    QByteArray data;
+    QDataStream directory(&data, QIODevice::WriteOnly);
+    directory.setByteOrder(QDataStream::LittleEndian);
+    directory << quint16(0) << quint16(1) << quint16(sizes.size());
+    QByteArray images;
+    const quint32 headerSize = 6 + 16 * sizes.size();
+    for (const QSize& size : sizes) {
+        QByteArray png;
+        QBuffer buffer(&png);
+        if (!buffer.open(QIODevice::WriteOnly) ||
+            !icon.pixmap(size, 1.0).save(&buffer, "PNG"))
+            return {};
+        directory << quint8(size.width() == 256 ? 0 : size.width())
+                  << quint8(size.height() == 256 ? 0 : size.height())
+                  << quint8(0) << quint8(0) << quint16(1) << quint16(32)
+                  << quint32(png.size()) << quint32(headerSize + images.size());
+        images += png;
+    }
+    data += images;
+    const QString path = root + QLatin1Char('/') + QString::fromLatin1(
+        QCryptographicHash::hash(data, QCryptographicHash::Sha256).toHex()) + QStringLiteral(".ico");
+    QFile existing(path);
+    if (existing.open(QIODevice::ReadOnly) && existing.readAll() == data)
+        return path;
+    existing.close();
+    if (!QDir().mkpath(root))
+        return {};
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly) || file.write(data) != data.size() || !file.commit())
+        return {};
+    return path;
+}
+
+ShortcutMigrationResult migrateShellShortcuts(const QString& taskbarIconPath)
 {
     const QString pathHash = QString::fromLatin1(QCryptographicHash::hash(
         QCoreApplication::applicationDirPath().toCaseFolded().toUtf8(),
@@ -26,16 +70,18 @@ void migrateShellShortcuts()
         (QStringLiteral("Local\\HarkenHubShortcutMigration-") + pathHash).toStdWString();
     const HANDLE mutex = CreateMutexW(nullptr, FALSE, mutexName.c_str());
     if (!mutex)
-        return;
+        return ShortcutMigrationResult::Failed;
     const auto closeMutex = qScopeGuard([mutex] { CloseHandle(mutex); });
     const DWORD acquired = WaitForSingleObject(mutex, 0);
+    if (acquired == WAIT_TIMEOUT)
+        return ShortcutMigrationResult::Busy;
     if (acquired != WAIT_OBJECT_0 && acquired != WAIT_ABANDONED)
-        return;
+        return ShortcutMigrationResult::Failed;
     const auto releaseMutex = qScopeGuard([mutex] { ReleaseMutex(mutex); });
 
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     if (FAILED(initialized) && initialized != RPC_E_CHANGED_MODE)
-        return;
+        return ShortcutMigrationResult::Failed;
     const auto uninitialize = qScopeGuard([initialized] {
         if (SUCCEEDED(initialized))
             CoUninitialize();
@@ -52,11 +98,22 @@ void migrateShellShortcuts()
     for (const KNOWNFOLDERID* folder : {&FOLDERID_Desktop, &FOLDERID_PublicDesktop,
                                       &FOLDERID_Programs, &FOLDERID_CommonPrograms,
                                       &FOLDERID_RoamingAppData}) {
+        if (!taskbarIconPath.isEmpty() && folder != &FOLDERID_RoamingAppData)
+            continue;
         PWSTR folderPath = nullptr;
         if (FAILED(SHGetKnownFolderPath(*folder, KF_FLAG_DEFAULT, nullptr, &folderPath)))
             continue;
         QString root = QString::fromWCharArray(folderPath);
         CoTaskMemFree(folderPath);
+#ifdef HARKEN_HUB_TEST_OVERRIDES
+        const QString testRoot = qEnvironmentVariable("HARKEN_HUB_SHELL_ROOT");
+        if (!testRoot.isEmpty()) {
+            root = testRoot + ((folder == &FOLDERID_Programs || folder == &FOLDERID_CommonPrograms)
+                                 ? QStringLiteral("/Programs") : QStringLiteral("/Desktop"));
+            if (folder == &FOLDERID_RoamingAppData)
+                root = testRoot;
+        }
+#endif
         if (folder == &FOLDERID_RoamingAppData)
             root += QStringLiteral("/Microsoft/Internet Explorer/Quick Launch/User Pinned/TaskBar");
         const bool recursive = folder == &FOLDERID_Programs || folder == &FOLDERID_CommonPrograms;
@@ -97,10 +154,45 @@ void migrateShellShortcuts()
                     continue;
                 changed = true;
             }
+            Microsoft::WRL::ComPtr<IPropertyStore> properties;
+            if (!taskbarIconPath.isEmpty() && SUCCEEDED(link.As(&properties))) {
+                PROPVARIANT identity{};
+                const HRESULT read = properties->GetValue(PKEY_AppUserModel_ID, &identity);
+                const bool matches = SUCCEEDED(read) && identity.vt == VT_LPWSTR &&
+                                     QString::fromWCharArray(identity.pwszVal) ==
+                                         QString::fromWCharArray(hubAppUserModelId);
+                PropVariantClear(&identity);
+                if (!matches && SUCCEEDED(InitPropVariantFromString(hubAppUserModelId, &identity))) {
+                    const HRESULT written = properties->SetValue(PKEY_AppUserModel_ID, identity);
+                    PropVariantClear(&identity);
+                    if (SUCCEEDED(written) && SUCCEEDED(properties->Commit()))
+                        changed = true;
+                    else
+                        qWarning() << "Cannot set the Hub shortcut identity:" << shortcut.filePath();
+                }
+            }
+            if (folder == &FOLDERID_RoamingAppData && !taskbarIconPath.isEmpty() &&
+                SUCCEEDED(link->GetIconLocation(iconPath, MAX_PATH, &iconIndex))) {
+                const QString currentIcon = normalized(QString::fromWCharArray(iconPath));
+                const QString managedRoot = normalized(userDataDir() + QStringLiteral("/shell-icons"));
+                if ((currentIcon.isEmpty() || targets.contains(currentIcon) ||
+                     normalized(QFileInfo(currentIcon).absolutePath()) == managedRoot) &&
+                    currentIcon != normalized(taskbarIconPath)) {
+                    const std::wstring nativeIcon = QDir::toNativeSeparators(taskbarIconPath).toStdWString();
+                    if (SUCCEEDED(link->SetIconLocation(nativeIcon.c_str(), 0)))
+                        changed = true;
+                    else
+                        qWarning() << "Cannot set the Hub pinned shortcut icon:" << shortcut.filePath();
+                }
+            }
             if (changed && FAILED(file->Save(path.c_str(), TRUE))) {
                 qWarning() << "Cannot update the Hub shortcut:" << shortcut.filePath();
                 continue;
             }
+            if (changed && !taskbarIconPath.isEmpty())
+                SHChangeNotify(SHCNE_UPDATEITEM, SHCNF_PATHW | SHCNF_FLUSHNOWAIT,
+                               path.c_str(), nullptr);
+            properties.Reset();
             file.Reset();
             link.Reset();
             if (folder != &FOLDERID_RoamingAppData &&
@@ -113,6 +205,7 @@ void migrateShellShortcuts()
             }
         }
     }
+    return ShortcutMigrationResult::Complete;
 }
 
 void refreshShellIconsIfChanged()

@@ -4,6 +4,7 @@
 #include <QHash>
 #include <QIcon>
 #include <QObject>
+#include <QTimer>
 #include <windows.h>
 
 class QWindow;
@@ -23,10 +24,14 @@ protected:
     bool nativeEventFilter(const QByteArray& eventType, void* message, qintptr* result) override;
 
 private:
-    void apply(QWindow* window);
+    bool apply(QWindow* window);
+    void updateShortcuts();
+    void refreshTaskbar();
     HICON iconHandle(int size);
 
     QIcon icon_;
+    QString iconPath_;
+    QTimer shortcutRetry_;
     QHash<int, HICON> handles_;
 };
 
