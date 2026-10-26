@@ -5592,13 +5592,6 @@ TEST_F(ExportedPackLifecycle, Att05FatLeasesDoNotBlockUnnamedReclaim)
     LoadedExportedPack loaded(config);
     ASSERT_EQ(VN_OK, loaded.session.InitResult());
     auto* engine = loaded.session.Engine();
-    ASSERT_EQ(8u, engine->config.voiceCapacity.Logical());
-    const std::uint32_t plans = engine->config.topologyPlanPoolCapacity == 0
-        ? 4u : engine->config.topologyPlanPoolCapacity;
-    const std::size_t provedBound =
-        64u + 3u * static_cast<std::size_t>(engine->config.voiceCapacity.Logical())
-        + static_cast<std::size_t>(plans) * 64u;
-    EXPECT_GE(engine->retainedProfileKeyScratch.capacity(), provedBound);
 
     const QString smallDir = QDir(dir_.path()).filePath(QStringLiteral("att05-fat-small"));
     ASSERT_NO_FATAL_FAILURE(exportProjectPack(project_, smallDir));

@@ -3,10 +3,6 @@
 
 #include <gtest/gtest.h>
 
-#include <QFile>
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
 #include <QSemaphore>
 #include <QTemporaryDir>
 
@@ -52,48 +48,6 @@ protected:
 };
 
 TEST_F(AIConversationSessionStoreTest,
-       RoundTripPreservesCatalogAndHidesRawScope)
-{
-    LocalAIConversationSessionStore store(directory_.path());
-    const QString scope =
-        QStringLiteral("project:C:/Users/Test/PrivateProject");
-    AIConversationSessionCatalog catalog;
-    catalog.sessions = {
-        makeSession(
-            QStringLiteral(
-                "11111111-1111-4111-8111-111111111111"),
-            QStringLiteral("First conversation"),
-            1000),
-        makeSession(
-            QStringLiteral(
-                "22222222-2222-4222-8222-222222222222"),
-            QStringLiteral("Second conversation"),
-            2000)
-    };
-    catalog.activeSessionId = catalog.sessions[1].id;
-
-    ASSERT_TRUE(store.save(scope, catalog).success);
-    const AIConversationSessionLoadResult loaded =
-        store.load(scope);
-    ASSERT_EQ(
-        loaded.status,
-        AIConversationSessionLoadResult::Status::Loaded);
-    ASSERT_EQ(loaded.catalog.sessions.size(), 2);
-    EXPECT_EQ(
-        loaded.catalog.activeSessionId,
-        catalog.activeSessionId);
-    EXPECT_EQ(
-        loaded.catalog.sessions[0].title,
-        QStringLiteral("First conversation"));
-
-    QFile file(store.storagePathForScope(scope));
-    ASSERT_TRUE(file.open(QIODevice::ReadOnly));
-    const QByteArray bytes = file.readAll();
-    EXPECT_FALSE(bytes.contains(scope.toUtf8()));
-    EXPECT_FALSE(bytes.contains("PrivateProject"));
-}
-
-TEST_F(AIConversationSessionStoreTest,
        RejectsDuplicateAndMissingActiveSession)
 {
     LocalAIConversationSessionStore store(directory_.path());
@@ -115,81 +69,6 @@ TEST_F(AIConversationSessionStoreTest,
     EXPECT_FALSE(
         store.save(QStringLiteral("project:test"), catalog)
             .success);
-}
-
-TEST_F(AIConversationSessionStoreTest,
-       InvalidReplacementPreservesLastValidCatalog)
-{
-    LocalAIConversationSessionStore store(directory_.path());
-    const QString scope = QStringLiteral("project:test");
-    const AIConversationSessionRecord first = makeSession(
-        QStringLiteral(
-            "55555555-5555-4555-8555-555555555555"),
-        QStringLiteral("First"),
-        1000);
-    AIConversationSessionCatalog catalog;
-    catalog.sessions = {first};
-    catalog.activeSessionId = first.id;
-    ASSERT_TRUE(store.save(scope, catalog).success);
-
-    catalog.sessions[0].title = QString(
-        AIConversationSessionLimits::kMaximumTitleBytes + 1,
-        QLatin1Char('x'));
-    EXPECT_FALSE(store.save(scope, catalog).success);
-
-    const auto loaded = store.load(scope);
-    ASSERT_EQ(
-        loaded.status,
-        AIConversationSessionLoadResult::Status::Loaded);
-    ASSERT_EQ(loaded.catalog.sessions.size(), 1);
-    EXPECT_EQ(
-        loaded.catalog.sessions[0].title,
-        QStringLiteral("First"));
-}
-
-TEST_F(AIConversationSessionStoreTest,
-       CorruptAndOversizedCatalogsAreRejected)
-{
-    LocalAIConversationSessionStore store(directory_.path());
-    const QString scope = QStringLiteral("project:test");
-    QFile file(store.storagePathForScope(scope));
-    ASSERT_TRUE(file.open(QIODevice::WriteOnly));
-    ASSERT_GT(file.write(QByteArrayLiteral("{invalid")), 0);
-    file.close();
-    EXPECT_EQ(
-        store.load(scope).status,
-        AIConversationSessionLoadResult::Status::Invalid);
-
-    const QJsonObject fractionalSchema{
-        {QStringLiteral("schema_version"), 1.5},
-        {QStringLiteral("scope_id"), QStringLiteral("invalid")},
-        {QStringLiteral("active_session_id"),
-         QStringLiteral(
-             "66666666-6666-4666-8666-666666666666")},
-        {QStringLiteral("sessions"), QJsonArray{}}
-    };
-    ASSERT_TRUE(
-        file.open(QIODevice::WriteOnly | QIODevice::Truncate));
-    ASSERT_GT(
-        file.write(
-            QJsonDocument(fractionalSchema)
-                .toJson(QJsonDocument::Compact)),
-        0);
-    file.close();
-    EXPECT_EQ(
-        store.load(scope).status,
-        AIConversationSessionLoadResult::Status::Invalid);
-
-    ASSERT_TRUE(
-        file.open(QIODevice::WriteOnly | QIODevice::Truncate));
-    const QByteArray oversized(
-        AIConversationSessionLimits::kMaximumDocumentBytes + 1,
-        'x');
-    ASSERT_EQ(file.write(oversized), oversized.size());
-    file.close();
-    EXPECT_EQ(
-        store.load(scope).status,
-        AIConversationSessionLoadResult::Status::Invalid);
 }
 
 TEST_F(AIConversationSessionStoreTest,

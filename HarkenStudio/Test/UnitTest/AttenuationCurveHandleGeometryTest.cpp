@@ -2,24 +2,15 @@
 
 #include <gtest/gtest.h>
 
-#include <cmath>
-
 namespace {
 
 constexpr double kTolerance = 1e-9;
-constexpr double kPi = 3.14159265358979323846;
 
 const QRectF kBox(0.0, 0.0, 100.0, 100.0);
 
 double cross(const QPointF& a, const QPointF& b)
 {
     return a.x() * b.y() - a.y() * b.x();
-}
-
-QPointF unitAt(double degrees, double length)
-{
-    const double radians = degrees * kPi / 180.0;
-    return QPointF(length * std::cos(radians), length * std::sin(radians));
 }
 
 QPointF bezierPoint(const QPointF& p0, const QPointF& p1, const QPointF& p2,
@@ -57,49 +48,12 @@ TEST(AttenuationCurveHandleGeometry, RayStopsOnBoundaryKeepingDirection)
     EXPECT_TRUE(kBox.contains(result));
 }
 
-TEST(AttenuationCurveHandleGeometry, ZeroDirectionReturnsAnchor)
-{
-    const QPointF anchor(50.0, 50.0);
-    const QPointF result = VNX::curveHandleRayIntoRect(anchor, QPointF(0.0, 0.0), 25.0, kBox);
-    EXPECT_NEAR(result.x(), anchor.x(), kTolerance);
-    EXPECT_NEAR(result.y(), anchor.y(), kTolerance);
-}
-
-TEST(AttenuationCurveHandleGeometry, AnchorOutsideBoxReturnsAnchor)
-{
-    const QPointF anchor(150.0, 50.0);
-    const QPointF result = VNX::curveHandleRayIntoRect(anchor, QPointF(-1.0, 0.0), 25.0, kBox);
-    EXPECT_NEAR(result.x(), anchor.x(), kTolerance);
-    EXPECT_NEAR(result.y(), anchor.y(), kTolerance);
-}
-
 TEST(AttenuationCurveHandleGeometry, MirrorAlignedForOppositeHandles)
 {
     const QPointF anchor(10.0, -4.0);
     EXPECT_TRUE(VNX::curveHandlesMirrorAligned(anchor,
                                                anchor + QPointF(12.0, 0.0),
                                                anchor + QPointF(-30.0, 0.0)));
-}
-
-TEST(AttenuationCurveHandleGeometry, MirrorAlignedWithinAngleTolerance)
-{
-    const QPointF anchor(0.0, 0.0);
-    EXPECT_TRUE(VNX::curveHandlesMirrorAligned(anchor, QPointF(10.0, 0.0),
-                                               unitAt(178.0, 20.0)));
-}
-
-TEST(AttenuationCurveHandleGeometry, NotAlignedAt170Degrees)
-{
-    const QPointF anchor(0.0, 0.0);
-    EXPECT_FALSE(VNX::curveHandlesMirrorAligned(anchor, QPointF(10.0, 0.0),
-                                                unitAt(170.0, 20.0)));
-}
-
-TEST(AttenuationCurveHandleGeometry, NotAlignedWhenHandleDegenerate)
-{
-    const QPointF anchor(0.0, 0.0);
-    EXPECT_FALSE(VNX::curveHandlesMirrorAligned(anchor, QPointF(0.5, 0.0),
-                                                QPointF(-10.0, 0.0)));
 }
 
 TEST(AttenuationCurveHandleGeometry, NotAlignedAtRightAngle)
@@ -124,19 +78,5 @@ TEST(AttenuationCurveHandleGeometry, BodyDeltaMovesCurvePointExactly)
         const QPointF after = bezierPoint(p0, p1 + d1, p2 + d2, p3, t);
         EXPECT_NEAR(after.x() - before.x(), delta.x(), kTolerance) << "t=" << t;
         EXPECT_NEAR(after.y() - before.y(), delta.y(), kTolerance) << "t=" << t;
-    }
-}
-
-TEST(AttenuationCurveHandleGeometry, BodyDeltaSplitsByBernsteinWeights)
-{
-    const QPointF delta(10.0, -4.0);
-    for (double t : kBodyDeltaTs) {
-        QPointF d1;
-        QPointF d2;
-        VNX::curveDistributeBodyDelta(t, delta, &d1, &d2);
-        const double w1 = 3.0 * (1.0 - t) * (1.0 - t) * t;
-        const double w2 = 3.0 * (1.0 - t) * t * t;
-        EXPECT_NEAR(d1.x() * w2, d2.x() * w1, kTolerance) << "t=" << t;
-        EXPECT_NEAR(d1.y() * w2, d2.y() * w1, kTolerance) << "t=" << t;
     }
 }

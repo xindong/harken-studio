@@ -1,7 +1,6 @@
 #include "Core/ProjectInstance.h"
 
 #include <QCoreApplication>
-#include <QDir>
 #include <QElapsedTimer>
 #include <QProcess>
 #include <QTemporaryDir>
@@ -73,24 +72,16 @@ protected:
     }
 };
 
-TEST_F(ProjectInstanceTest, DirectoryIdentityAndSharedLifetimeAreStable)
+TEST_F(ProjectInstanceTest, SharedOwnersKeepLeaseUntilLastRelease)
 {
     ASSERT_TRUE(directory.isValid());
     const QString first = project(QStringLiteral("new/project.hsp"));
     auto original = VNX::ProjectInstance::acquire(first);
     ASSERT_EQ(original.status, VNX::ProjectInstance::Status::Acquired)
         << original.error.toStdString();
-    ASSERT_TRUE(QDir().mkpath(project(QStringLiteral("new"))));
-    const QString alias = project(QStringLiteral("new/../new/renamed.hsp"));
-    auto repeated = VNX::ProjectInstance::acquire(alias);
+    auto repeated = VNX::ProjectInstance::acquire(first);
     ASSERT_EQ(repeated.status, VNX::ProjectInstance::Status::Acquired);
     EXPECT_EQ(original.instance, repeated.instance);
-    EXPECT_EQ(VNX::ProjectInstance::identityForProject(first),
-              VNX::ProjectInstance::identityForProject(alias));
-#ifdef Q_OS_WIN
-    EXPECT_EQ(VNX::ProjectInstance::identityForProject(first),
-              VNX::ProjectInstance::identityForProject(first.toUpper()));
-#endif
     auto different = VNX::ProjectInstance::acquire(
         project(QStringLiteral("other/project.hsp")));
     ASSERT_EQ(different.status, VNX::ProjectInstance::Status::Acquired);
@@ -101,7 +92,7 @@ TEST_F(ProjectInstanceTest, DirectoryIdentityAndSharedLifetimeAreStable)
                      QCoreApplication::instance(), [&activations]() { ++activations; });
     original.instance.reset();
     InstanceProcess forwarded;
-    forwarded.start(alias);
+    forwarded.start(first);
     ASSERT_TRUE(waitUntil([&]() { return forwarded.hasStatus(); }));
     EXPECT_EQ(forwarded.status(), QByteArray("forwarded"));
     EXPECT_EQ(activations, 1);

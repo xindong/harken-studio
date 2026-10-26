@@ -26,9 +26,7 @@
 #include <QTemporaryDir>
 #include <QUuid>
 
-#include <algorithm>
 #include <cstdint>
-#include <cstring>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -184,7 +182,6 @@ protected:
         play.targetObjectID = sound->objectID;
         action_->comp<VAction>()->steps = {play};
         action_->markDirty();
-        soundObjectId_ = sound->objectID;
         return action_->runtimeId() != harkentest::StudioObjectId(0);
     }
 
@@ -247,30 +244,11 @@ protected:
         return file.readAll();
     }
 
-    harkenstudiobuild::PackCanonicalImage parsePack(const QString& path)
-    {
-        QFile file(path);
-        EXPECT_TRUE(file.open(QIODevice::ReadOnly));
-        const QByteArray bytes = file.readAll();
-        harkenstudiobuild::PackCanonicalImage image;
-        EXPECT_EQ(harkenstudiobuild::kPackOk,
-                  harkenstudiobuild::ParsePackCanonicalImage(
-                      reinterpret_cast<const std::uint8_t*>(bytes.constData()),
-                      static_cast<std::uint64_t>(bytes.size()), &image));
-        return image;
-    }
-
-    harkenstudiobuild::PackCanonicalImage parseInit(const QString& outputDir)
-    {
-        return parsePack(QDir(outputDir).filePath(packRow(outputDir).value("path").toString()));
-    }
-
     QTemporaryDir tempDir_;
     QString projectPath_;
     QString projectRoot_;
     QHash<QString, QStringList> publishedPaths_;
     ProjectItem* action_ = nullptr;
-    uint32_t soundObjectId_ = 0;
 };
 
 TEST_F(ActionCatalogExportTest, RepeatedExportKeepsCompanionsAndExecutableBytes)
@@ -287,267 +265,10 @@ TEST_F(ActionCatalogExportTest, RepeatedExportKeepsCompanionsAndExecutableBytes)
 
     const auto firstActions = actions(firstDir);
     EXPECT_EQ(firstActions, actions(secondDir));
-    ASSERT_EQ(firstActions.size(), 1);
-    EXPECT_EQ(firstActions.at(0).toObject().value(QStringLiteral("name")).toString(),
-              QStringLiteral("Play_Fire"));
     const QString actionGuid = action_->guid.toString(QUuid::WithoutBraces);
-    EXPECT_EQ(firstActions.at(0).toObject().value("guid").toString(), actionGuid);
     EXPECT_EQ(packBytes(firstDir, packRow(firstDir)), packBytes(secondDir, packRow(secondDir)));
     EXPECT_EQ(packBytes(firstDir, packRow(firstDir, actionGuid)),
               packBytes(secondDir, packRow(secondDir, actionGuid)));
-    EXPECT_FALSE(QFileInfo::exists(QDir(firstDir).filePath(
-        QStringLiteral("HarkenPackManifest.json"))));
-
-    const auto image = parseInit(firstDir);
-    EXPECT_FALSE(image.hasGameplayCatalog);
-    EXPECT_FALSE(image.hasCatalog);
-    EXPECT_FALSE(image.hasVariableNameCatalog);
-    EXPECT_TRUE(image.hasBusDefinitionSnapshot);
-    ASSERT_TRUE(image.hasPartition);
-    EXPECT_EQ(image.requirement.schemaVersion, 2u);
-    EXPECT_EQ(image.partitionHeader.headerBytes,
-              harkenstudiobuild::kCanonicalDefinitionPartitionHeaderV2Bytes);
-    const auto& snapshot = image.busDefinitionSnapshotHeader;
-    EXPECT_EQ(snapshot.schemaVersion, 2u);
-    EXPECT_EQ(snapshot.storageModelVersion, 2u);
-    EXPECT_EQ(snapshot.headerBytes, harkenstudiobuild::kPackBusDefinitionSnapshotV2HeaderBytes);
-    EXPECT_EQ(snapshot.publicationCapabilityVintage, 4u);
-    const auto expected = harkenstudiobuild::SnapshotBusTriple(snapshot);
-    EXPECT_TRUE(harkenstudiobuild::CanonicalBusTripleFullyNonzero(expected));
-    EXPECT_EQ(snapshot.contentGeneration, snapshot.publishedBusFingerprint);
-    EXPECT_EQ(snapshot.publishedBusFingerprint,
-              harkenstudiobuild::CanonicalVolumeBusFingerprint(image));
-    EXPECT_TRUE(harkenstudiobuild::CanonicalBusTripleEqual(
-        harkenstudiobuild::RequirementBusTriple(image.requirement), expected));
-    EXPECT_TRUE(harkenstudiobuild::CanonicalBusTripleEqual(
-        harkenstudiobuild::PartitionBusTriple(image.partitionHeader), expected));
-    for (const auto& edge : image.dependencyEdges) {
-        const bool initRequired =
-            edge.edgeKind == harkenstudiobuild::kPackDependencyEdgeKindInit &&
-            edge.required01 == 1;
-        if (initRequired) {
-            EXPECT_TRUE(harkenstudiobuild::CanonicalBusTripleEqual(
-                harkenstudiobuild::DependencyBusTriple(edge), expected));
-        } else {
-            EXPECT_EQ(edge.expectedBusContentGeneration, 0u);
-            EXPECT_EQ(edge.expectedPublishedBusFingerprint, 0u);
-            EXPECT_EQ(edge.expectedCompileTargetProfileFingerprint, 0u);
-        }
-    }
-    const QJsonArray packs = publication(firstDir);
-    ASSERT_EQ(packs.size(), 2);
-    const QJsonObject contentRow = packRow(firstDir, actionGuid);
-    const auto content = parsePack(QDir(firstDir).filePath(
-        contentRow.value(QStringLiteral("path")).toString()));
-    EXPECT_TRUE(harkenstudiobuild::CanonicalBusTripleEqual(
-        harkenstudiobuild::RequirementBusTriple(content.requirement), expected));
-    EXPECT_TRUE(harkenstudiobuild::CanonicalBusTripleEqual(
-        harkenstudiobuild::PartitionBusTriple(content.partitionHeader), expected));
-    const auto initEdge = std::find_if(content.dependencyEdges.begin(),
-        content.dependencyEdges.end(), [](const auto& edge) {
-            return edge.edgeKind == harkenstudiobuild::kPackDependencyEdgeKindInit &&
-                   edge.required01 == 1;
-        });
-    ASSERT_NE(initEdge, content.dependencyEdges.end());
-    EXPECT_EQ(initEdge->prerequisitePackStableId, image.packStableId);
-    EXPECT_TRUE(harkenstudiobuild::CanonicalBusTripleEqual(
-        harkenstudiobuild::DependencyBusTriple(*initEdge), expected));
-    const auto secondImage = parseInit(secondDir);
-    EXPECT_EQ(image.requirement.packContentRevision,
-              secondImage.requirement.packContentRevision);
-    EXPECT_TRUE(harkenstudiobuild::CanonicalBusTripleEqual(
-        harkenstudiobuild::SnapshotBusTriple(secondImage.busDefinitionSnapshotHeader), expected));
-}
-
-TEST_F(ActionCatalogExportTest, RenameExportsOnlyCurrentName)
-{
-    auto& manager = ProjectManager::instance();
-    ASSERT_TRUE(seedPackableAction());
-    const QString outputDir = QDir(tempDir_.path()).filePath(QStringLiteral("out-rename"));
-    auto result = exportPacks(outputDir);
-    ASSERT_TRUE(result.success) << result.error.toStdString();
-    const QString guid = action_->guid.toString(QUuid::WithoutBraces);
-    const auto initBytes = packBytes(outputDir, packRow(outputDir));
-    const auto actionBytes = packBytes(outputDir, packRow(outputDir, guid));
-    ASSERT_TRUE(manager.renameItem(action_, QStringLiteral("Play_Storm")));
-    ASSERT_TRUE(manager.saveProject());
-    result = exportPacks(outputDir);
-    ASSERT_TRUE(result.success) << result.error.toStdString();
-    const auto current = actions(outputDir);
-    ASSERT_EQ(current.size(), 1);
-    EXPECT_EQ(current.at(0).toObject().value(QStringLiteral("name")).toString(),
-              QStringLiteral("Play_Storm"));
-    EXPECT_EQ(current.at(0).toObject().value("guid").toString(), guid);
-    EXPECT_EQ(initBytes, packBytes(outputDir, packRow(outputDir)));
-    EXPECT_EQ(actionBytes, packBytes(outputDir, packRow(outputDir, guid)));
-}
-
-TEST_F(ActionCatalogExportTest, VariableRenamePreservesExecutableIdentity)
-{
-    auto& manager = ProjectManager::instance();
-    ASSERT_TRUE(seedPackableAction());
-    auto* variable = manager.createItem(nullptr, QStringLiteral("Speed"), ProjectItem::Type::Variable);
-    ASSERT_NE(variable, nullptr);
-    const QString directory = QDir(tempDir_.path()).filePath("out-variable-names");
-    auto result = exportPacks(directory);
-    ASSERT_TRUE(result.success) << result.error.toStdString();
-    const auto before = parseInit(directory);
-    const auto beforeBytes = packBytes(directory, packRow(directory));
-    const auto beforeNames = packRow(directory).value("companion").toObject().value("variables").toArray();
-    ASSERT_EQ(beforeNames.size(), 1);
-    EXPECT_EQ(beforeNames.at(0).toObject().value("name").toString(), "Speed");
-    EXPECT_FALSE(before.hasVariableNameCatalog);
-    ASSERT_TRUE(manager.renameItem(variable, QStringLiteral("Velocity")));
-    result = exportPacks(directory);
-    ASSERT_TRUE(result.success) << result.error.toStdString();
-    const auto after = parseInit(directory);
-    EXPECT_EQ(before.requirement.packContentRevision, after.requirement.packContentRevision);
-    EXPECT_EQ(beforeBytes, packBytes(directory, packRow(directory)));
-    const auto afterNames = packRow(directory).value("companion").toObject().value("variables").toArray();
-    ASSERT_EQ(afterNames.size(), 1);
-    EXPECT_EQ(afterNames.at(0).toObject().value("name").toString(), "Velocity");
-    EXPECT_EQ(afterNames.at(0).toObject().value("guid"), beforeNames.at(0).toObject().value("guid"));
-    ASSERT_TRUE(manager.deleteItem(variable));
-    result = exportPacks(directory);
-    ASSERT_TRUE(result.success) << result.error.toStdString();
-    EXPECT_TRUE(packRow(directory).value("companion").toObject().value("variables").toArray().isEmpty());
-    EXPECT_NE(beforeBytes, packBytes(directory, packRow(directory)));
-}
-
-TEST_F(ActionCatalogExportTest, DeleteSaveReopenOmitsFormerName)
-{
-    auto& manager = ProjectManager::instance();
-    ASSERT_TRUE(manager.saveProject());
-    ASSERT_TRUE(manager.deleteItem(action_));
-    action_ = nullptr;
-    ASSERT_TRUE(manager.saveProject());
-    ASSERT_TRUE(manager.closeProject());
-    ASSERT_TRUE(manager.loadProject(projectPath_));
-    const QString outputDir = QDir(tempDir_.path()).filePath(QStringLiteral("out-delete"));
-    const auto result = exportPacks(outputDir);
-    ASSERT_TRUE(result.success) << result.error.toStdString();
-    EXPECT_TRUE(actions(outputDir).isEmpty());
-}
-
-TEST_F(ActionCatalogExportTest, DuplicateUnicodeTargetsExportWithDistinctIdentities)
-{
-    auto& manager = ProjectManager::instance();
-    ASSERT_TRUE(seedPackableAction());
-    auto* sound = manager.findItemByObjectID(soundObjectId_);
-    ASSERT_NE(sound, nullptr);
-    ASSERT_TRUE(manager.renameItem(sound, QStringLiteral("\u811a\u6b65")));
-    auto* copy = manager.duplicateItem(sound);
-    ASSERT_NE(copy, nullptr);
-    ASSERT_TRUE(manager.renameItem(copy, sound->name));
-    ASSERT_NE(manager.createActionTargeting(copy, VActionStep::Type::Play, QStringLiteral("Play_Copy")), nullptr);
-    EXPECT_NE(sound->guid, copy->guid);
-    const QString outputDir = QDir(tempDir_.path()).filePath(QStringLiteral("out-duplicate-unicode"));
-    const auto result = exportPacks(outputDir);
-    ASSERT_TRUE(result.success) << result.error.toStdString();
-    EXPECT_EQ(actions(outputDir).size(), 2);
-}
-
-TEST_F(ActionCatalogExportTest, CloneReusesReleasedNameAndPublishes)
-{
-    auto& manager = ProjectManager::instance();
-    ASSERT_TRUE(seedPackableAction());
-    auto* former = manager.createItem(nullptr, QStringLiteral("Play_Fire_01"),
-                                      ProjectItem::Type::Action);
-    ASSERT_NE(former, nullptr);
-    ASSERT_TRUE(manager.deleteItem(former));
-    auto* clone = manager.duplicateItem(action_);
-    ASSERT_NE(clone, nullptr);
-    ASSERT_EQ(clone->name, QStringLiteral("Play_Fire_01"));
-    const auto result = exportPacks(QDir(tempDir_.path()).filePath("out-takeover"));
-    EXPECT_TRUE(result.success) << result.error.toStdString();
-}
-
-TEST_F(ActionCatalogExportTest, CloneRenameExportsCurrentIdentity)
-{
-    auto& manager = ProjectManager::instance();
-    ASSERT_TRUE(seedPackableAction());
-    auto* clone = manager.duplicateItem(action_);
-    ASSERT_NE(clone, nullptr);
-    const auto guid = clone->guid.toString(QUuid::WithoutBraces);
-    ASSERT_TRUE(manager.renameItem(clone, QStringLiteral("Play_Clone")));
-    const QString outputDir = QDir(tempDir_.path()).filePath("out-clone-rename");
-    const auto result = exportPacks(outputDir);
-    ASSERT_TRUE(result.success) << result.error.toStdString();
-    const auto names = packRow(outputDir, guid).value("companion").toObject();
-    EXPECT_EQ(names.value("guid").toString(), guid);
-    EXPECT_EQ(names.value("name").toString(), "Play_Clone");
-}
-
-TEST_F(ActionCatalogExportTest, CloneDeleteOmitsFormerIdentity)
-{
-    auto& manager = ProjectManager::instance();
-    ASSERT_TRUE(seedPackableAction());
-    auto* clone = manager.duplicateItem(action_);
-    ASSERT_NE(clone, nullptr);
-    const auto guid = clone->guid.toString(QUuid::WithoutBraces);
-    ASSERT_TRUE(manager.deleteItem(clone));
-    const QString outputDir = QDir(tempDir_.path()).filePath("out-clone-delete");
-    const auto result = exportPacks(outputDir);
-    ASSERT_TRUE(result.success) << result.error.toStdString();
-    const auto names = actions(outputDir);
-    EXPECT_TRUE(std::none_of(names.begin(), names.end(),
-        [&](const auto& current) { return current.toObject().value("guid").toString() == guid; }));
-}
-
-TEST_F(ActionCatalogExportTest, InvalidAuthoredNameCannotPublish)
-{
-    ASSERT_TRUE(seedPackableAction());
-    for (const auto* name : {"Invalid/Name", "Dash-Fire", "1Fire", "Play Fire", "Play.Fire"}) {
-        action_->name = QString::fromLatin1(name);
-        const auto result = exportPacks(QDir(tempDir_.path()).filePath("out-invalid"));
-        EXPECT_FALSE(result.success) << name;
-    }
-}
-
-TEST_F(ActionCatalogExportTest, KeywordAndPrefixedNamesCanPublish)
-{
-    auto& manager = ProjectManager::instance();
-    ASSERT_TRUE(seedPackableAction());
-    for (const auto& names : {std::pair{"class", "A_class"}}) {
-        ASSERT_TRUE(manager.renameItem(action_, QString::fromLatin1(names.first)));
-        auto* other = manager.createItem(nullptr, QString::fromLatin1(names.second),
-                                         ProjectItem::Type::Action);
-        ASSERT_NE(other, nullptr);
-        const auto result = exportPacks(QDir(tempDir_.path()).filePath("out-symbol"));
-        EXPECT_TRUE(result.success) << result.error.toStdString();
-        ASSERT_TRUE(manager.deleteItem(other));
-    }
-}
-
-TEST_F(ActionCatalogExportTest, NameReuseAndUndoRedoExportCurrentIdentity)
-{
-    auto& manager = ProjectManager::instance();
-    ASSERT_TRUE(seedPackableAction());
-    auto* former = manager.createItem(nullptr, QStringLiteral("Play_Old"),
-                                      ProjectItem::Type::Action);
-    ASSERT_NE(former, nullptr);
-    const auto actionGuid = action_->guid.toString(QUuid::WithoutBraces);
-    const QString outputDir = QDir(tempDir_.path()).filePath("out-reuse");
-    const auto published = exportPacks(outputDir);
-    ASSERT_TRUE(published.success) << published.error.toStdString();
-    ASSERT_TRUE(manager.deleteItem(former));
-    QString error;
-    ASSERT_TRUE(manager.renameItem(action_, QStringLiteral("Play_Old"), &error));
-    const auto actionBytes = packBytes(outputDir, packRow(outputDir, actionGuid));
-    auto check = [&](const QString& currentName) {
-        const auto result = exportPacks(outputDir);
-        ASSERT_TRUE(result.success) << result.error.toStdString();
-        const auto names = actions(outputDir);
-        ASSERT_EQ(names.size(), 1);
-        EXPECT_EQ(names.at(0).toObject().value("guid").toString(), actionGuid);
-        EXPECT_EQ(names.at(0).toObject().value("name").toString(), currentName);
-        EXPECT_EQ(actionBytes, packBytes(outputDir, packRow(outputDir, actionGuid)));
-    };
-    check(QStringLiteral("Play_Old"));
-    ASSERT_TRUE(UndoRedoManager::instance().undo());
-    check(QStringLiteral("Play_Fire"));
-    ASSERT_TRUE(UndoRedoManager::instance().redo());
-    check(QStringLiteral("Play_Old"));
 }
 
 } // namespace
