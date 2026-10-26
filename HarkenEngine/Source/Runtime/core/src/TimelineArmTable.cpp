@@ -227,7 +227,7 @@ TimelineArmTable::~TimelineArmTable() {
 }
 
 bool TimelineArmTable::AttachRowStoragePreparation(void* context,
-    bool (*prepare)(void*, std::uint32_t) noexcept) noexcept {
+    bool (*prepare)(void*, std::uint32_t, bool) noexcept) noexcept {
     if (memguard::IsAudioTagged() || context == nullptr || prepare == nullptr ||
         prepareRowStorage_ != nullptr || rows_.ConstructedCount() != 0) return false;
     rowStorageContext_ = context;
@@ -235,14 +235,16 @@ bool TimelineArmTable::AttachRowStoragePreparation(void* context,
     return true;
 }
 
-bool TimelineArmTable::PrepareRowDependencies(std::uint32_t count) noexcept {
+bool TimelineArmTable::PrepareRowDependencies(std::uint32_t count, bool fullSourceCommandBacking) noexcept {
+    const auto sourceCount = fullSourceCommandBacking ? std::max(count, rows_.ConstructedCount()) : count;
     return groupMemberScopes_.ConstructThrough(count) &&
-        (prepareRowStorage_ == nullptr || prepareRowStorage_(rowStorageContext_, count));
+        (prepareRowStorage_ == nullptr ||
+            prepareRowStorage_(rowStorageContext_, sourceCount, fullSourceCommandBacking));
 }
 
 bool TimelineArmTable::ConstructRowsThrough(std::uint32_t count) noexcept {
     return rows_.ConstructThrough(count, [this](std::uint32_t required) noexcept {
-        return PrepareRowDependencies(required);
+        return PrepareRowDependencies(required, rows_.HasPreparedBacking());
     });
 }
 
@@ -257,7 +259,7 @@ bool TimelineArmTable::PrepareBacking(std::uint32_t count, StableStoragePreparat
         --occupied;
     }
     return rows_.PrepareBacking(std::min(count, capacity_), occupied, out,
-        [this](std::uint32_t required) noexcept { return PrepareRowDependencies(required); });
+        [this](std::uint32_t required) noexcept { return PrepareRowDependencies(required, true); });
 }
 
 namespace {

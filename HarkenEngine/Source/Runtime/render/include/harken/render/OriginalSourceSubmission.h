@@ -3,6 +3,7 @@
 
 #include "harken/core/CommandQueue.h"
 #include "harken/core/CheckedIssuer.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/StableSlotStorage.h"
 #include "harken/core/TimelineProgram.h"
 #include "harken/render/VoicePool.h"
@@ -23,6 +24,7 @@ namespace detail { struct OriginalSourceMutationActorTestAccess; }
 // share one stable record. Engine quiescence precedes registry destruction.
 class OriginalSourceSubmissionRegistry {
     friend class VoicePool;
+    friend struct Engine;
 public:
     static constexpr std::uint32_t kMaxCommands = 3u + kTimelineMaxVoiceSends +
         kTimelineMaxVoiceEffects + 2u + kMaxVoiceBindingInstanceSlots;
@@ -57,7 +59,23 @@ public:
         TimelineArmTable::OriginalArmRowOwner arm_;
         VoicePool::OriginalVoiceOwner voice_;
         CommandQueue::OriginalBatchRange range_;
-        std::array<CommandRecord, kMaxCommands> body_{};
+        // InitialSource lends this fixed prefix even when complete backing is prepared later.
+        std::array<CommandRecord, 3> bodyPrefix_{};
+        using CommandTail = std::array<CommandRecord, kMaxCommands - 3>;
+        std::unique_ptr<CommandTail> bodyTail_;
+        bool retainCommandBacking_ = true;
+        CommandRecord& BodyAt(std::uint32_t index) noexcept {
+            assert(index < kMaxCommands);
+            if (index < bodyPrefix_.size()) return bodyPrefix_[index];
+            assert(bodyTail_ != nullptr);
+            return (*bodyTail_)[index - bodyPrefix_.size()];
+        }
+        const CommandRecord& BodyAt(std::uint32_t index) const noexcept {
+            assert(index < kMaxCommands);
+            if (index < bodyPrefix_.size()) return bodyPrefix_[index];
+            assert(bodyTail_ != nullptr);
+            return (*bodyTail_)[index - bodyPrefix_.size()];
+        }
         std::uint32_t count_ = 0;
         std::array<EffectInstanceRef, kTimelineMaxVoiceEffects> incoming_{};
         std::array<bool, kTimelineMaxVoiceEffects> incomingDone_{};
@@ -94,9 +112,14 @@ public:
     OriginalSourceSubmissionRegistry& operator=(const OriginalSourceSubmissionRegistry&) = delete;
 
     std::size_t StorageBytes() const noexcept {
-        return rows_.RequestedBytes() + rows_.DirectoryBytes();
+        return rows_.RequestedBytes() + rows_.DirectoryBytes() +
+            allocatedCommandTails_.load(std::memory_order_relaxed) * sizeof(Record::CommandTail);
     }
-    bool PrepareSlotBacking(std::uint32_t slot) noexcept { return rows_.Emplace(slot); }
+    bool PrepareSlotBacking(std::uint32_t slot) noexcept {
+        if (!rows_.Emplace(slot) || !EnsureCommandBacking(rows_[slot])) return false;
+        rows_[slot].retainCommandBacking_ = true;
+        return true;
+    }
     void SetCommitPageLimitForTests(std::size_t pages) noexcept { rows_.SetCommitPageLimitForTests(pages); }
 
     bool CapturePreparedSource(const CommandRecord& header,
@@ -120,6 +143,23 @@ public:
     }
 
 private:
+    bool PrepareRecordBacking(std::uint32_t slot) noexcept {
+        if (rows_.IsConstructed(slot)) return true;
+        if (!rows_.Emplace(slot)) return false;
+        rows_[slot].retainCommandBacking_ = false;
+        return true;
+    }
+    bool EnsureCommandBacking(Record& row) noexcept {
+        if (row.bodyTail_ != nullptr) return true;
+        if (memguard::IsAudioTagged()) return false;
+        try {
+            detail::LogicAllocCheckpoint(detail::LogicAllocSite::SourceCommandBacking);
+            row.bodyTail_ = std::make_unique<Record::CommandTail>();
+        } catch (const std::bad_alloc&) { return false; }
+        allocatedCommandTails_.fetch_add(1u, std::memory_order_relaxed);
+        return true;
+    }
+
     bool CapturePreparedSourceImpl(const CommandRecord& header,
         const TimelineArmTable::PreparedCommitProof& armProof,
         const VoicePool::PreparedCommitProof& voiceProof,
@@ -165,6 +205,7 @@ private:
         const auto lifetime = row.originalLifetime_.load(std::memory_order_acquire);
         if ((lifetime & kPinMask) != 0 ||
             (phase == Phase::Disposed && (lifetime & kOwnersReleased) == 0)) return false;
+        if (!EnsureCommandBacking(row)) return false;
         if (!row.range_.ResetAfterDisposition()) return false;
         row.token_ = token;
         row.originalLifetime_.store(0, std::memory_order_relaxed);
@@ -262,13 +303,13 @@ public:
                 if (owned == UINT32_MAX || seen[owned]) return false;
                 seen[owned] = true;
             }
-            row.body_[i] = command;
+            row.BodyAt(i) = command;
         }
         for (std::uint32_t i = 0; i < row.incomingCount_; ++i)
             if (!seen[i]) return false;
         const bool issued = batch.InitialSource()
             ? offset == 0 && count == 3 && commands_.IssueInitialSourceRange(batch,
-                {row.nativeSourceEpisode_, token.slot, 1}, row.body_.data(), &row, &row.range_)
+                {row.nativeSourceEpisode_, token.slot, 1}, row.bodyPrefix_.data(), &row, &row.range_)
             : commands_.IssueOriginalBatchRange(batch, offset, count, &row, &row.range_);
         if (!issued)
             return false;
@@ -317,8 +358,8 @@ public:
             actualArm != nullptr && actualArm->state.load(std::memory_order_acquire) == ArmState::Prepared &&
             actualArm->originalSourceSubmission == &row &&
             commands_.PreparedBatchContains(batch, row.range_) && row.count_ != 0 &&
-            HeaderMatches(row.body_[0], arm) && row.originalSourceIdentity_ == sourceIdentity &&
-            row.body_[0].payload.play.sourceIdentity == sourceIdentity &&
+            HeaderMatches(row.BodyAt(0), arm) && row.originalSourceIdentity_ == sourceIdentity &&
+            row.BodyAt(0).payload.play.sourceIdentity == sourceIdentity &&
             voices_.IsOriginalSourceBodyLifetimePinFor(originalBody, arm, sourceIdentity) &&
             voices_.MatchesPreparedOriginalSourceStorage(originalBody, voicePreparation, physical, &pending) &&
             pending != nullptr && pending->owner_ == this && pending->marker_ == original.marker_ &&
@@ -529,8 +570,8 @@ private:
             native->tombstoneAudioSequence.load(std::memory_order_acquire) == 0 &&
             native->logicalCompletionSequence.load(std::memory_order_acquire) == 0 &&
             commands_.PreparedBatchContains(batch, row.range_) && row.count_ != 0 &&
-            HeaderMatches(row.body_[0], arm) && row.originalSourceIdentity_ == sourceIdentity &&
-            row.body_[0].payload.play.sourceIdentity == sourceIdentity;
+            HeaderMatches(row.BodyAt(0), arm) && row.originalSourceIdentity_ == sourceIdentity &&
+            row.BodyAt(0).payload.play.sourceIdentity == sourceIdentity;
     }
     // Only the original Engine producer may replace its unpublished children.
     InstalledSourceRetirementRequest RequestPendingInstalledSourceRetirement(
@@ -743,6 +784,14 @@ public:
         auto* row = Find(TokenOf(header));
         assert(row != nullptr && row->State() == Phase::QueuePrepared &&
             row->range_.State() == CommandQueue::OriginalRangeState::Prepared);
+        // Only this native range proves no consumer borrows the complete tail.
+        if (!memguard::IsAudioTagged() && !row->retainCommandBacking_ &&
+            !arms_.rows_.HasPreparedBacking() &&
+            row->range_.Kind() == CommandQueue::OriginalRangeKind::InitialSource &&
+            row->count_ == 3 && row->bodyTail_ != nullptr) {
+            row->bodyTail_.reset();
+            allocatedCommandTails_.fetch_sub(1u, std::memory_order_relaxed);
+        }
         row->wasPublished_ = true;
         row->phase_.store(Phase::Published, std::memory_order_release);
     }
@@ -1162,8 +1211,8 @@ private:
         // Actual frozen commands must agree with the early true factory identity.
         // Release remains a separate family-only operation for unbound prefixes.
         return sourceIdentity != 0 && row.originalSourceIdentity_ == sourceIdentity &&
-            row.count_ != 0 && HeaderMatches(row.body_[0], token) &&
-            row.body_[0].payload.play.sourceIdentity == sourceIdentity;
+            row.count_ != 0 && HeaderMatches(row.BodyAt(0), token) &&
+            row.BodyAt(0).payload.play.sourceIdentity == sourceIdentity;
     }
     void ReleaseInstallationLoan(OriginalSourceInstallationLoan& installation) noexcept {
         const auto token = installation.token_;
@@ -1249,7 +1298,7 @@ private:
         auto* row = BorrowRange(entry.range);
         return row != nullptr && row->range_.Kind() == CommandQueue::OriginalRangeKind::InitialSource &&
             entry.source == CommandQueue::InitialSourceIdentity{row->nativeSourceEpisode_, row->token_.slot, 1} &&
-            entry.facts == row->body_.data() && row->count_ == 3 ? row : nullptr;
+            entry.facts == row->bodyPrefix_.data() && row->count_ == 3 ? row : nullptr;
     }
     Record* BorrowRange(CommandQueue::OriginalBatchRange* range) noexcept {
         if (range == nullptr) return nullptr;
@@ -1287,6 +1336,7 @@ private:
     EffectPoolBank& effects_;
     const std::uint32_t capacity_;
     StableSlotStorage<Record> rows_;
+    std::atomic<std::size_t> allocatedCommandTails_{0};
     const std::uint64_t incarnation_;
     Record* pending_ = nullptr;
     std::uint64_t nextOriginalMarker_ = 1;

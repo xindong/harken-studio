@@ -36,6 +36,7 @@ enum class LogicAllocSite : unsigned int {
     ImmediateEntryStorage,
     RetargetIncomingStorage,
     PlayableServiceFeatures,
+    SourceCommandBacking,
 };
 
 struct LogicAllocFaultState {

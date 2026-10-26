@@ -298,21 +298,54 @@ TEST(OriginalSourceSubmission, InitialEntryReuseKeepsActualBodyReaderAndInstalla
     ASSERT_NE(nullptr, engine.commands.InitialSourceAtFront(cut.initialHead));
     EXPECT_EQ(1u, engine.commands.InitialSourceAtFront(cut.initialHead)->range->Count());
     EXPECT_EQ(3u, engine.commands.InitialSourceAtFront(cut.initialHead)->range->FactCount());
+    const auto* facts = engine.commands.InitialSourceAtFront(cut.initialHead)->facts;
+    std::array<harken::CommandRecord, 3> savedFacts;
+    std::copy_n(facts, savedFacts.size(), savedFacts.begin());
+    struct FaultGuard {
+        ~FaultGuard() { harken::detail::DisarmLogicAllocFaultForTests(); }
+    } fault;
+    harken::StableStoragePreparation backing;
+    harken::detail::ArmLogicAllocFaultForTests(2, harken::detail::LogicAllocSite::SourceCommandBacking);
+    EXPECT_FALSE(engine.timelineArms.PrepareBacking(1, &backing));
+    EXPECT_FALSE(backing.Valid());
+    EXPECT_EQ(0u, harken::detail::g_logicAllocFault.remaining);
+    EXPECT_EQ(facts, engine.commands.InitialSourceAtFront(cut.initialHead)->facts);
+    EXPECT_EQ(0, std::memcmp(facts, savedFacts.data(), sizeof(savedFacts)));
+    harken::detail::DisarmLogicAllocFaultForTests();
+    ASSERT_TRUE(engine.timelineArms.PrepareBacking(1, &backing));
+    EXPECT_EQ(facts, engine.commands.InitialSourceAtFront(cut.initialHead)->facts);
+    EXPECT_EQ(0, std::memcmp(facts, savedFacts.data(), sizeof(savedFacts)));
     engine.nullBackend.Pump(1);
     ASSERT_EQ(Registry::Phase::Disposed, engine.originalSourceSubmissions.Find(first.arm)->State());
     EXPECT_EQ(1u, engine.timelineArms.RowAt(first.arm.slot)->armedCompletionSequence.load());
     EXPECT_EQ(0.0f, CurrentPeak(engine));
     EXPECT_EQ(1u, engine.commands.InitialSourcesConsumed());
     EXPECT_TRUE(engine.voices.IsOriginalSourceBodyLifetimePinFor(body, first.arm, first.source));
-    ASSERT_NO_FATAL_FAILURE(PublishSourceBody(engine, second, false, false, nullptr, false, true));
+    harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::SourceCommandBacking);
+    {
+        auto use = backing.Use();
+        ASSERT_NO_FATAL_FAILURE(PublishSourceBody(engine, second, false, false, nullptr, false, true));
+    }
+    EXPECT_EQ(1u, harken::detail::g_logicAllocFault.remaining);
+    harken::detail::DisarmLogicAllocFaultForTests();
     ASSERT_NO_FATAL_FAILURE(CheckCompletedDisposition(engine, second, false, 1.0f));
     EXPECT_EQ(2u, engine.commands.InitialSourcesConsumed());
     EXPECT_EQ(0u, engine.commands.ConsumedCount());
     EXPECT_TRUE(engine.voices.IsOriginalSourceBodyLifetimePinFor(body, first.arm, first.source));
+    backing.Release();
     body.Release();
     source.Release();
     ASSERT_NO_FATAL_FAILURE(RetireSource(engine, first, false, first.armFreeBefore - 1u));
     ASSERT_NO_FATAL_FAILURE(RetireSource(engine, second, false, first.armFreeBefore));
+    SourceBody reused;
+    harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::SourceCommandBacking);
+    ASSERT_NO_FATAL_FAILURE(PublishSourceBody(engine, reused, false, false, nullptr, false, true));
+    EXPECT_EQ(first.arm.slot, reused.arm.slot);
+    EXPECT_NE(first.arm.generation, reused.arm.generation);
+    EXPECT_EQ(1u, harken::detail::g_logicAllocFault.remaining);
+    harken::detail::DisarmLogicAllocFaultForTests();
+    ASSERT_NO_FATAL_FAILURE(CheckCompletedDisposition(engine, reused, false, 1.0f));
+    ASSERT_NO_FATAL_FAILURE(RetireSource(engine, reused, false));
 }
 
 TEST(OriginalSourceSubmission, InitialBarriersShareRawBudgetAndPreserveFollowingSetter) {
@@ -8237,6 +8270,114 @@ void RegisterNativeDispositionPcm() {
     const auto pcm = harkentest::MonoDesc(samples, kRate);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &pcm));
 }
+}
+
+TEST(OriginalSourceSubmission, CommandBackingRefusalPrecedesOriginalRightsAndEpisode) {
+    harkentest::EngineSession session(SourceBodyConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    ASSERT_NO_FATAL_FAILURE(RegisterNativeDispositionPcm());
+    struct FaultGuard {
+        ~FaultGuard() { harken::detail::DisarmLogicAllocFaultForTests(); }
+    } fault;
+    harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::SourceCommandBacking);
+    NativeUnpublishedDispositionSource refused;
+    ASSERT_NO_FATAL_FAILURE(refused.Prepare(engine, false, false, true, false, {}, true));
+    EXPECT_EQ(0u, harken::detail::g_logicAllocFault.remaining);
+    EXPECT_FALSE(refused.original.Valid());
+    EXPECT_FALSE(refused.originalBody.Valid());
+    EXPECT_EQ(nullptr, engine.originalSourceSubmissions.Find(refused.arm));
+    const auto* row = engine.timelineArms.RowAt(refused.arm.slot);
+    EXPECT_EQ(nullptr, row->originalSourceSubmission);
+    EXPECT_EQ(0u, row->originalSourceEpisode);
+    EXPECT_FALSE(row->originalLifetimePinned.load());
+    EXPECT_EQ(0u, engine.commands.PublishedHead());
+    EXPECT_EQ(0u, engine.commands.CaptureBlockInputCut().initialHead);
+    ASSERT_TRUE(engine.voices.CancelPreparedVoice(refused.render));
+    ASSERT_TRUE(engine.voices.ReleaseObserved(refused.release));
+    ASSERT_TRUE(engine.timelineArms.CancelPrepared(refused.arm));
+    harken::detail::DisarmLogicAllocFaultForTests();
+    NativeUnpublishedDispositionSource retry;
+    ASSERT_NO_FATAL_FAILURE(retry.Prepare(engine, false, false, true, true, {}, true));
+    EXPECT_EQ(refused.arm.slot, retry.arm.slot);
+    EXPECT_EQ(1u, engine.timelineArms.RowAt(retry.arm.slot)->originalSourceEpisode);
+    ASSERT_NO_FATAL_FAILURE(retry.Dispose(engine));
+    retry.originalBody.Release();
+    retry.original.Release();
+    ASSERT_TRUE(engine.timelineArms.CancelPrepared(retry.arm));
+}
+
+TEST(OriginalSourceSubmission, UnpublishedInitialRebindKeepsCompleteCommandCapacity) {
+    harkentest::EngineSession session(SourceBodyConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    SourceBody body;
+    const std::vector<float> samples(kRate, 0.25f);
+    ASSERT_NO_FATAL_FAILURE(StartIndependent(engine, body, samples));
+    body.armFreeBefore = engine.timelineArms.FreeCount();
+    NativeUnpublishedDispositionSource source;
+    ASSERT_NO_FATAL_FAILURE(source.Prepare(engine, true, true, true, true, {}, false,
+        0, false, false, nullptr, true));
+    const auto* record = engine.originalSourceSubmissions.Find(source.arm);
+    const auto episode = engine.timelineArms.RowAt(source.arm.slot)->originalSourceEpisode;
+    ASSERT_TRUE(engine.originalSourceSubmissions.CancelBoundPreparation(source.arm, source.batch));
+    EXPECT_TRUE(source.cancellation.CancelledUnpublishedFrom(engine.commands));
+    std::array<harken::CommandRecord, Registry::kMaxCommands> commands{};
+    commands[0] = source.body[0];
+    commands[0].payload.play.batch.batchCommandCount = Registry::kMaxCommands;
+    for (std::size_t i = 1; i < commands.size(); ++i) {
+        commands[i].opcode = harken::kOpcodeSetVoiceVolume;
+        commands[i].payload.setVoiceVolume.handle = body.independent;
+        commands[i].payload.setVoiceVolume.volumeDb = i + 1 == commands.size() ? -6.0205999f : 0.0f;
+    }
+    struct FaultGuard {
+        ~FaultGuard() { harken::detail::DisarmLogicAllocFaultForTests(); }
+    } fault;
+    harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::SourceCommandBacking);
+    harken::CommandQueue::BatchReservation reservation{};
+    ASSERT_TRUE(engine.commands.ReserveBatch(Registry::kMaxCommands, &reservation));
+    ASSERT_TRUE(engine.commands.ProvePreparedBatch(&reservation, commands.data(), commands.size(), &source.batch));
+    ASSERT_TRUE(engine.originalSourceSubmissions.BindPreparedChild(source.batch, 0, commands.size()));
+    EXPECT_EQ(record, engine.originalSourceSubmissions.Find(source.arm));
+    EXPECT_EQ(episode, engine.timelineArms.RowAt(source.arm.slot)->originalSourceEpisode);
+    EXPECT_TRUE(engine.originalSourceSubmissions.IsOriginalSourceLifetimePinFor(source.original, source.arm));
+    engine.originalSourceSubmissions.PublishPreparedChild(commands[0]);
+    (void)engine.commands.ConsumePreparedBatch(std::move(source.batch));
+    EXPECT_EQ(1u, harken::detail::g_logicAllocFault.remaining);
+    harken::detail::DisarmLogicAllocFaultForTests();
+    source.original.Release();
+    body.source = source.render;
+    body.release = source.release;
+    body.arm = source.arm;
+    body.acceptedHead = engine.commands.PublishedHead();
+    ASSERT_NO_FATAL_FAILURE(CheckCompletedDisposition(engine, body, false, 0.5f));
+    ASSERT_NO_FATAL_FAILURE(RetireSource(engine, body, false));
+    ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, body));
+}
+
+TEST(OriginalSourceSubmission, IndependentRegistryCapturesDuringArmOnlyPreparedUse) {
+    harkentest::EngineSession session(SourceBodyConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    ASSERT_NO_FATAL_FAILURE(RegisterNativeDispositionPcm());
+    harken::StableStoragePreparation backing;
+    ASSERT_TRUE(engine.timelineArms.PrepareBacking(1, &backing));
+    Registry foreign(engine.timelineArms, engine.voices, engine.commands, engine.effectBank);
+    NativeUnpublishedDispositionSource source;
+    {
+        auto use = backing.Use();
+        ASSERT_NO_FATAL_FAILURE(source.Prepare(engine, false, false, true, true, {}, false,
+            0, false, false, &foreign));
+    }
+    EXPECT_TRUE(foreign.IsOriginalSourceLifetimePinFor(source.original, source.arm));
+    EXPECT_EQ(nullptr, engine.originalSourceSubmissions.Find(source.arm));
+    ASSERT_TRUE(foreign.CancelBoundPreparation(source.arm, source.batch));
+    ASSERT_TRUE(foreign.DisposeUnpublishedVoice(source.arm));
+    ASSERT_TRUE(engine.voices.ReleaseObserved(source.release));
+    ASSERT_TRUE(foreign.WithdrawUnpublished(source.arm));
+    source.original.Release();
+    ASSERT_TRUE(engine.timelineArms.CancelPrepared(source.arm));
+    EXPECT_EQ(0u, engine.commands.PublishedHead());
 }
 
 TEST(OriginalSourceSubmission, FinalSourceUnpublishedAbortReturnsOriginalOwnersWithoutPublication) {

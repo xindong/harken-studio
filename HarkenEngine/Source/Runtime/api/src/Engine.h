@@ -6504,8 +6504,8 @@ public:
             !originalQueueSourcePreparationHolders.Reserve(timelineArms.Capacity()))
             throw std::bad_alloc{};
         if (!timelineArms.AttachRowStoragePreparation(this,
-            [](void* context, std::uint32_t count) noexcept {
-                return static_cast<Engine*>(context)->PrepareOriginalSourceRowBacking(count);
+            [](void* context, std::uint32_t count, bool fullSourceCommandBacking) noexcept {
+                return static_cast<Engine*>(context)->PrepareOriginalSourceRowBacking(count, fullSourceCommandBacking);
             })) throw std::bad_alloc{};
         const bool originalPlayableResolver = playableInstances.RegisterOriginalLifetimeBaselineResolver(
             this, &ResolveOriginalPlayableBaseline, &DisposeOriginalPlayableAssociation);
@@ -10069,13 +10069,17 @@ public:
         return a.Valid() && a.slot == b.slot && a.generation == b.generation &&
             a.renderSlot == b.renderSlot && a.renderGeneration == b.renderGeneration;
     }
-    bool PrepareOriginalSourceRowBacking(std::uint32_t count) noexcept {
+    bool PrepareOriginalSourceRowBacking(std::uint32_t count, bool fullSourceCommandBacking) noexcept {
         if (count > timelineArms.Capacity()) return false;
         // Physical Arm allowances include every dependent column, without issuing an owner.
         for (; originalSourceBackingPrefix < count; ++originalSourceBackingPrefix)
-            if (!originalSourceSubmissions.PrepareSlotBacking(originalSourceBackingPrefix) ||
+            if (!originalSourceSubmissions.PrepareRecordBacking(originalSourceBackingPrefix) ||
                 !originalSinglePreparationHolders.Emplace(originalSourceBackingPrefix) ||
                 !originalQueueSourcePreparationHolders.Emplace(originalSourceBackingPrefix)) return false;
+        // Full preparation covers old holes as well as the new physical suffix.
+        if (fullSourceCommandBacking)
+            for (std::uint32_t slot = 0; slot < count; ++slot)
+                if (!originalSourceSubmissions.PrepareSlotBacking(slot)) return false;
         return true;
     }
     OriginalSinglePreparationHolder* OriginalSinglePreparationForArm(TimelineArmToken arm) noexcept {

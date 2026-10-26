@@ -748,7 +748,7 @@ bool MixerLoop::DrainOriginalSource(std::uint64_t blockIndex, std::uint64_t& owe
             CommandRecord wire{};
             if (initial != nullptr) wire = initial->facts[i];
             else if (!m_commands.PeekAt(i, wire)) intact = false;
-            if (std::memcmp(&wire, &row->body_[i], sizeof(wire)) != 0) intact = false;
+            if (std::memcmp(&wire, &row->BodyAt(i), sizeof(wire)) != 0) intact = false;
         }
         row->disposition_ = intact ? Registry::Disposition::Apply : Registry::Disposition::Invalid;
         if (intact && !m_voices.OriginalVoiceReleased(row->voice_)) {
@@ -809,7 +809,7 @@ bool MixerLoop::DrainOriginalSource(std::uint64_t blockIndex, std::uint64_t& owe
             disposed != VoicePool::OriginalVoiceDisposal::AlreadyReleased) return defer();
     }
     while (row->progress_ < row->count_) {
-        const auto& command = row->body_[row->progress_];
+        const auto& command = row->BodyAt(row->progress_);
         const bool applying = row->disposition_ == Registry::Disposition::Apply;
         // Every supported metadata payload begins with its full voice handle.
         const auto target = command.flags == kCommandFlagPreparedCompressor
