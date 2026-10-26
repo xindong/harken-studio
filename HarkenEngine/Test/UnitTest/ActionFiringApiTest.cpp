@@ -40691,12 +40691,12 @@ TEST(ActionFiringApi,
     for (std::uint32_t index = 0;
          index < row->QueueFiling().queueSourceSchedule.eventCount; ++index) {
         EXPECT_EQ(acceptedSequence,
-                  row->queueSourceEvents[index].logicCommitSequence);
+                  row->QueueRuntimeViews().queueSourceEvents[index].logicCommitSequence);
     }
     for (std::uint32_t index = 0;
          index < row->QueueFiling().queueSourceControlArmCount; ++index) {
         EXPECT_EQ(acceptedSequence,
-                  row->queueSourceSchedules[index].transactionId);
+                  row->QueueRuntimeViews().queueSourceSchedules[index].transactionId);
     }
 }
 
@@ -43772,12 +43772,12 @@ void ExpectImmediateActionQueueTransitionPrepared(
         for (std::uint32_t index = 0;
              index < row->QueueFiling().queueSourceSchedule.eventCount; ++index) {
             EXPECT_EQ(info.acceptedLogicSequence,
-                      row->queueSourceEvents[index].logicCommitSequence);
+                      row->QueueRuntimeViews().queueSourceEvents[index].logicCommitSequence);
         }
         for (std::uint32_t index = 0;
              index < expectedSourceCount; ++index) {
             EXPECT_EQ(info.acceptedLogicSequence,
-                      row->queueSourceSchedules[index].transactionId);
+                      row->QueueRuntimeViews().queueSourceSchedules[index].transactionId);
         }
 
         const std::array<std::uint64_t, 2> sliceFrames = {
@@ -59736,19 +59736,19 @@ TEST(ActionFiringApi,
     EXPECT_EQ(sourceFrame, row->QueueFiling().queueSourceSchedule.entryAnchorFrame);
     ASSERT_EQ(1u, row->QueueFiling().queueSourceSchedule.eventCount);
     EXPECT_EQ(harken::TimelineEventKind::Envelope,
-              row->queueSourcePayloads[0].kind);
+              row->QueueRuntimeViews().queueSourcePayloads[0].kind);
     EXPECT_EQ(harken::TimelineEnvelopeDirection::FadeOut,
-              row->queueSourcePayloads[0].envelopeDirection);
-    ASSERT_NE(nullptr, row->queueSourcePayloads[0].envelopeCurve);
+              row->QueueRuntimeViews().queueSourcePayloads[0].envelopeDirection);
+    ASSERT_NE(nullptr, row->QueueRuntimeViews().queueSourcePayloads[0].envelopeCurve);
     harken::CurveLUT expectedSourceCurve{};
     expectedSourceCurve.Bake(image.transitionCurves[0].curve);
     const auto* bank = row->QueueFiling().queueSuccessorProgramBank;
     ASSERT_NE(nullptr, bank);
     ASSERT_NE(bank->curves.begin() + bank->curveCount,
         std::find_if(bank->curves.begin(), bank->curves.begin() + bank->curveCount,
-            [&](const auto& curve) { return &curve == row->queueSourcePayloads[0].envelopeCurve; }));
+            [&](const auto& curve) { return &curve == row->QueueRuntimeViews().queueSourcePayloads[0].envelopeCurve; }));
     for (std::uint32_t index = 0; index <= harken::kCurveLutEntries; ++index)
-        EXPECT_FLOAT_EQ(expectedSourceCurve.values[index], row->queueSourcePayloads[0].envelopeCurve->values[index]);
+        EXPECT_FLOAT_EQ(expectedSourceCurve.values[index], row->QueueRuntimeViews().queueSourcePayloads[0].envelopeCurve->values[index]);
     const std::array<std::uint64_t, 2> sliceFrames = {
         sourceFrame, targetFrame};
     for (std::uint16_t index = 0; index < sliceFrames.size(); ++index) {
@@ -59871,7 +59871,7 @@ TEST(ActionFiringApi,
     EXPECT_EQ(sourceFrame, row->QueueFiling().queueSourceSchedule.entryAnchorFrame);
     ASSERT_EQ(1u, row->QueueFiling().queueSourceSchedule.eventCount);
     EXPECT_EQ(harken::TimelineEnvelopeDirection::FadeOut,
-              row->queueSourcePayloads[0].envelopeDirection);
+              row->QueueRuntimeViews().queueSourcePayloads[0].envelopeDirection);
     auto* const bank = row->QueueFiling().queueSuccessorProgramBank;
     const auto programs = row->QueueFiling().queueSuccessorPrograms.Resolve(bank);
     ASSERT_EQ(2u, programs.size());
@@ -60302,7 +60302,7 @@ TEST(ActionFiringApi,
     const harken::TimelineProgramView& successorRuntime =
         row->QueueFiling().queueSuccessorProgramPlane == 0
             ? row->runtimeProgram
-            : row->queueSuccessorRuntimeProgram;
+            : row->QueueRuntimeViews().queueSuccessorRuntimeProgram;
     ASSERT_EQ(2u, successorRuntime.payloadCount);
     EXPECT_EQ(harken::TimelineEventKind::Start,
               successorRuntime.payloads[0].kind);

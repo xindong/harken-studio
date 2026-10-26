@@ -317,8 +317,10 @@ std::size_t Engine::CapturedVoiceStorageBytes() const noexcept {
             for (const auto& occurrence : set->occurrences) bytes += charge(occurrence.voice);
     }
     for (const auto& service : playableServices) {
-        bytes += charge(service.capturedVoice) + charge(service.canonicalInitialQueueTargetVoice) +
+        bytes += charge(service.capturedVoice) +
             service.capturedScheduleVoices.capacity() * sizeof(CapturedTimelineVoiceInstall);
+        if (service.HasFeatureArrays())
+            bytes += charge(service.QueueRuntimeViews().canonicalInitialQueueTargetVoice);
         for (const auto& voice : service.capturedScheduleVoices) bytes += charge(voice);
     }
     for (const auto& member : playableMemberRecords) bytes += charge(member.voice);
@@ -9465,10 +9467,10 @@ bool BindQueueSourcePrograms(harken::EnginePlayableServiceRow& row,
         eventCount > 2u * programCount || firstProgram > bank.schedules.size() ||
         programCount > bank.schedules.size() - firstProgram || firstEvent > bank.events.size() ||
         eventCount > bank.events.size() - firstEvent) return false;
-    row.queueSourcePayloads = std::span{bank.payloads}.subspan(firstEvent, eventCount);
-    row.queueSourceEvents = std::span{bank.events}.subspan(firstEvent, eventCount);
-    row.queueSourceRuntimePrograms = std::span{bank.runtimes}.subspan(firstProgram, programCount);
-    row.queueSourceSchedules = std::span{bank.schedules}.subspan(firstProgram, programCount);
+    row.QueueRuntimeViews().queueSourcePayloads = std::span{bank.payloads}.subspan(firstEvent, eventCount);
+    row.QueueRuntimeViews().queueSourceEvents = std::span{bank.events}.subspan(firstEvent, eventCount);
+    row.QueueRuntimeViews().queueSourceRuntimePrograms = std::span{bank.runtimes}.subspan(firstProgram, programCount);
+    row.QueueRuntimeViews().queueSourceSchedules = std::span{bank.schedules}.subspan(firstProgram, programCount);
     return true;
 }
 
@@ -9478,10 +9480,10 @@ bool PrepareQueueSourcePrograms(harken::EnginePlayableServiceRow& row,
     std::uint32_t eventCount) noexcept {
     if (bank.published || !BindQueueSourcePrograms(
             row, bank, firstProgram, firstEvent, programCount, eventCount)) return false;
-    std::fill(row.queueSourcePayloads.begin(), row.queueSourcePayloads.end(), harken::TimelineEventPayload{});
-    std::fill(row.queueSourceEvents.begin(), row.queueSourceEvents.end(), harken::EventTemplate{});
-    std::fill(row.queueSourceRuntimePrograms.begin(), row.queueSourceRuntimePrograms.end(), harken::TimelineProgramView{});
-    std::fill(row.queueSourceSchedules.begin(), row.queueSourceSchedules.end(), harken::ProgramView{});
+    std::fill(row.QueueRuntimeViews().queueSourcePayloads.begin(), row.QueueRuntimeViews().queueSourcePayloads.end(), harken::TimelineEventPayload{});
+    std::fill(row.QueueRuntimeViews().queueSourceEvents.begin(), row.QueueRuntimeViews().queueSourceEvents.end(), harken::EventTemplate{});
+    std::fill(row.QueueRuntimeViews().queueSourceRuntimePrograms.begin(), row.QueueRuntimeViews().queueSourceRuntimePrograms.end(), harken::TimelineProgramView{});
+    std::fill(row.QueueRuntimeViews().queueSourceSchedules.begin(), row.QueueRuntimeViews().queueSourceSchedules.end(), harken::ProgramView{});
     return true;
 }
 
@@ -25690,7 +25692,7 @@ engine.runtimeRecreateRequired = true;
     harken::TimelineProgramView& successorRuntime =
         row.QueueFiling().queueSuccessorProgramPlane == 0
             ? row.runtimeProgram
-            : row.queueSuccessorRuntimeProgram;
+            : row.QueueRuntimeViews().queueSuccessorRuntimeProgram;
     harken::ProgramView& successorSchedule =
         row.QueueFiling().queueSuccessorProgramPlane == 0
             ? row.schedule
@@ -25733,7 +25735,7 @@ engine.runtimeRecreateRequired = true;
                 sourceSet.targets[sourceIndex];
             if (sourceFadeActive) {
                 const std::uint32_t fadeIndex = sourceEventCount++;
-                auto& fade = row.queueSourcePayloads[fadeIndex];
+                auto& fade = row.QueueRuntimeViews().queueSourcePayloads[fadeIndex];
                 fade.kind = harken::TimelineEventKind::Envelope;
                 fade.envelopeDirection =
                     harken::TimelineEnvelopeDirection::FadeOut;
@@ -25745,7 +25747,7 @@ engine.runtimeRecreateRequired = true;
                 fade.envelopeCurve =
                     &sourceFadeCurve;
                 fade.authoredFadeOutCandidate = true;
-                auto& event = row.queueSourceEvents[fadeIndex];
+                auto& event = row.QueueRuntimeViews().queueSourceEvents[fadeIndex];
                 event.logicCommitSequence = row.queueTicket;
                 event.eventIndex = fadeIndex;
                 event.transactionOrdinal = sourceIndex;
@@ -25756,14 +25758,14 @@ engine.runtimeRecreateRequired = true;
             }
             if (!naturalEnd) {
                 const std::uint32_t stopIndex = sourceEventCount++;
-                auto& stop = row.queueSourcePayloads[stopIndex];
+                auto& stop = row.QueueRuntimeViews().queueSourcePayloads[stopIndex];
                 stop.kind = harken::TimelineEventKind::Stop;
                 stop.controlCause = selectionCause;
                 stop.reserved = harken::kTimelineEventTransientControlArm;
                 stop.target = target;
                 stop.envelopeEndFrame = sourceStopFrame;
                 stop.authoredFadeOutCandidate = sourceFadeActive;
-                auto& stopEvent = row.queueSourceEvents[stopIndex];
+                auto& stopEvent = row.QueueRuntimeViews().queueSourceEvents[stopIndex];
                 stopEvent.frameOffsetFromEntry =
                     sourceStopFrame - sourcePhaseFrame;
                 stopEvent.logicCommitSequence = row.queueTicket;
@@ -25775,38 +25777,38 @@ engine.runtimeRecreateRequired = true;
                 stopEvent.armToken = arm;
             }
             harken::TimelineProgramView& runtime =
-                row.queueSourceRuntimePrograms[sourceIndex];
+                row.QueueRuntimeViews().queueSourceRuntimePrograms[sourceIndex];
             runtime.generation = row.rootInstance;
             runtime.payloads =
-                row.queueSourcePayloads.data() + sourceEventBase;
+                row.QueueRuntimeViews().queueSourcePayloads.data() + sourceEventBase;
             runtime.payloadCount = sourceEventCount - sourceEventBase;
             harken::ProgramView& schedule =
-                row.queueSourceSchedules[sourceIndex];
+                row.QueueRuntimeViews().queueSourceSchedules[sourceIndex];
             schedule.ownerInstance = row.rootInstance;
             schedule.ownerInstanceScheduleEpoch = instance.scheduleEpoch;
             schedule.transactionId = row.queueTicket;
             schedule.entryAnchorFrame = sourcePhaseFrame;
             schedule.events =
-                row.queueSourceEvents.data() + sourceEventBase;
+                row.QueueRuntimeViews().queueSourceEvents.data() + sourceEventBase;
             schedule.eventCount = sourceEventCount - sourceEventBase;
             schedule.runtimeProgram = {row.rootInstance, &runtime};
             schedule.armToken = arm;
         }
-        row.queueSourceRuntimeProgram = {};
-        row.queueSourceRuntimeProgram.generation = row.rootInstance;
-        row.queueSourceRuntimeProgram.payloads =
-            row.queueSourcePayloads.data();
-        row.queueSourceRuntimeProgram.payloadCount = sourceEventCount;
+        row.QueueRuntimeViews().queueSourceRuntimeProgram = {};
+        row.QueueRuntimeViews().queueSourceRuntimeProgram.generation = row.rootInstance;
+        row.QueueRuntimeViews().queueSourceRuntimeProgram.payloads =
+            row.QueueRuntimeViews().queueSourcePayloads.data();
+        row.QueueRuntimeViews().queueSourceRuntimeProgram.payloadCount = sourceEventCount;
         row.QueueFiling().queueSourceSchedule = {};
         row.QueueFiling().queueSourceSchedule.ownerInstance = row.rootInstance;
         row.QueueFiling().queueSourceSchedule.ownerInstanceScheduleEpoch =
             instance.scheduleEpoch;
         row.QueueFiling().queueSourceSchedule.transactionId = row.queueTicket;
         row.QueueFiling().queueSourceSchedule.entryAnchorFrame = sourcePhaseFrame;
-        row.QueueFiling().queueSourceSchedule.events = row.queueSourceEvents.data();
+        row.QueueFiling().queueSourceSchedule.events = row.QueueRuntimeViews().queueSourceEvents.data();
         row.QueueFiling().queueSourceSchedule.eventCount = sourceEventCount;
         row.QueueFiling().queueSourceSchedule.runtimeProgram = {
-            row.rootInstance, &row.queueSourceRuntimeProgram};
+            row.rootInstance, &row.QueueRuntimeViews().queueSourceRuntimeProgram};
         row.QueueFiling().queueSourceSchedule.armToken = row.queueSourceArm;
     }
     for (std::uint32_t index = 0; index < materialized.leafCount; ++index) {
@@ -25817,7 +25819,7 @@ engine.runtimeRecreateRequired = true;
         }
     }
     for (std::uint32_t index = 0; index < sourceControlCount; ++index) {
-        if (!starts.PrepareQueueProgram(row.queueSourceSchedules[index])) {
+        if (!starts.PrepareQueueProgram(row.QueueRuntimeViews().queueSourceSchedules[index])) {
             rollbackUnpublishedTransition();
             abortPrepared();
             return QueueContinuationPrepareStatus::Failed;
@@ -26860,7 +26862,7 @@ engine.runtimeRecreateRequired = true;
     harken::TimelineProgramView& successorRuntime =
         row.QueueFiling().queueSuccessorProgramPlane == 0
             ? row.runtimeProgram
-            : row.queueSuccessorRuntimeProgram;
+            : row.QueueRuntimeViews().queueSuccessorRuntimeProgram;
     harken::ProgramView& successorSchedule =
         row.QueueFiling().queueSuccessorProgramPlane == 0
             ? row.schedule
@@ -26931,7 +26933,7 @@ engine.runtimeRecreateRequired = true;
                 sourceSet.targets[sourceIndex];
             if (sourceFadeActive) {
                 const std::uint32_t fadeIndex = sourceEventCount++;
-                auto& fade = row.queueSourcePayloads[fadeIndex];
+                auto& fade = row.QueueRuntimeViews().queueSourcePayloads[fadeIndex];
                 fade.kind = harken::TimelineEventKind::Envelope;
                 fade.envelopeDirection =
                     harken::TimelineEnvelopeDirection::FadeOut;
@@ -26943,7 +26945,7 @@ engine.runtimeRecreateRequired = true;
                 fade.envelopeCurve =
                     &sourceFadeCurve;
                 fade.authoredFadeOutCandidate = true;
-                auto& event = row.queueSourceEvents[fadeIndex];
+                auto& event = row.QueueRuntimeViews().queueSourceEvents[fadeIndex];
                 event.logicCommitSequence = row.queueTicket;
                 event.eventIndex = fadeIndex;
                 event.transactionOrdinal = sourceIndex;
@@ -26954,14 +26956,14 @@ engine.runtimeRecreateRequired = true;
             }
             if (!naturalEnd) {
                 const std::uint32_t stopIndex = sourceEventCount++;
-                auto& stop = row.queueSourcePayloads[stopIndex];
+                auto& stop = row.QueueRuntimeViews().queueSourcePayloads[stopIndex];
                 stop.kind = harken::TimelineEventKind::Stop;
                 stop.controlCause = resetObservation.cause;
                 stop.reserved = harken::kTimelineEventTransientControlArm;
                 stop.target = target;
                 stop.envelopeEndFrame = sourceStopFrame;
                 stop.authoredFadeOutCandidate = sourceFadeActive;
-                auto& stopEvent = row.queueSourceEvents[stopIndex];
+                auto& stopEvent = row.QueueRuntimeViews().queueSourceEvents[stopIndex];
                 stopEvent.frameOffsetFromEntry =
                     sourceStopFrame - sourcePhaseFrame;
                 stopEvent.logicCommitSequence = row.queueTicket;
@@ -26973,27 +26975,27 @@ engine.runtimeRecreateRequired = true;
                 stopEvent.armToken = arm;
             }
             harken::TimelineProgramView& runtime =
-                row.queueSourceRuntimePrograms[sourceIndex];
+                row.QueueRuntimeViews().queueSourceRuntimePrograms[sourceIndex];
             runtime.generation = row.rootInstance;
             runtime.payloads =
-                row.queueSourcePayloads.data() + sourceEventBase;
+                row.QueueRuntimeViews().queueSourcePayloads.data() + sourceEventBase;
             runtime.payloadCount = sourceEventCount - sourceEventBase;
             harken::ProgramView& schedule =
-                row.queueSourceSchedules[sourceIndex];
+                row.QueueRuntimeViews().queueSourceSchedules[sourceIndex];
             schedule.ownerInstance = row.rootInstance;
             schedule.ownerInstanceScheduleEpoch = instance.scheduleEpoch;
             schedule.transactionId = row.queueTicket;
             schedule.entryAnchorFrame = sourcePhaseFrame;
-            schedule.events = row.queueSourceEvents.data() + sourceEventBase;
+            schedule.events = row.QueueRuntimeViews().queueSourceEvents.data() + sourceEventBase;
             schedule.eventCount = sourceEventCount - sourceEventBase;
             schedule.runtimeProgram = {row.rootInstance, &runtime};
             schedule.armToken = arm;
         }
-        row.queueSourceRuntimeProgram = {};
-        row.queueSourceRuntimeProgram.generation = row.rootInstance;
-        row.queueSourceRuntimeProgram.payloads =
-            row.queueSourcePayloads.data();
-        row.queueSourceRuntimeProgram.payloadCount = sourceEventCount;
+        row.QueueRuntimeViews().queueSourceRuntimeProgram = {};
+        row.QueueRuntimeViews().queueSourceRuntimeProgram.generation = row.rootInstance;
+        row.QueueRuntimeViews().queueSourceRuntimeProgram.payloads =
+            row.QueueRuntimeViews().queueSourcePayloads.data();
+        row.QueueRuntimeViews().queueSourceRuntimeProgram.payloadCount = sourceEventCount;
         row.QueueFiling().queueSourceSchedule = {};
         row.QueueFiling().queueSourceSchedule.ownerInstance = row.rootInstance;
         row.QueueFiling().queueSourceSchedule.ownerInstanceScheduleEpoch =
@@ -27001,10 +27003,10 @@ engine.runtimeRecreateRequired = true;
         row.QueueFiling().queueSourceSchedule.transactionId = row.queueTicket;
         row.QueueFiling().queueSourceSchedule.entryAnchorFrame =
             sourcePhaseFrame;
-        row.QueueFiling().queueSourceSchedule.events = row.queueSourceEvents.data();
+        row.QueueFiling().queueSourceSchedule.events = row.QueueRuntimeViews().queueSourceEvents.data();
         row.QueueFiling().queueSourceSchedule.eventCount = sourceEventCount;
         row.QueueFiling().queueSourceSchedule.runtimeProgram = {
-            row.rootInstance, &row.queueSourceRuntimeProgram};
+            row.rootInstance, &row.QueueRuntimeViews().queueSourceRuntimeProgram};
         row.QueueFiling().queueSourceSchedule.armToken = row.queueSourceArm;
     }
     if (!starts.PrepareQueueProgram(successorSchedule)) {
@@ -27013,7 +27015,7 @@ engine.runtimeRecreateRequired = true;
         return QueueContinuationPrepareStatus::Failed;
     }
     for (std::uint32_t index = 0; index < sourceControlCount; ++index) {
-        if (!starts.PrepareQueueProgram(row.queueSourceSchedules[index])) {
+        if (!starts.PrepareQueueProgram(row.QueueRuntimeViews().queueSourceSchedules[index])) {
             rollbackUnpublishedTransition();
             abortPrepared();
             return QueueContinuationPrepareStatus::Failed;
@@ -54652,8 +54654,8 @@ bool Engine::BindPendingVariableGroupQueueFutureSources(EngineActionPlayScratch&
             nativeCount > UINT16_MAX || controlCount > nativeCount ||
             nativeCount - controlCount != future->queueSuccessorVoiceStartCount ||
             controlCount != future->queueSourceControlArmCount || controlCount != future->queueSourceCommandCount ||
-            controlCount > future->queueSourceCommands.size() || controlCount > row.queueSourceSchedules.size() ||
-            controlCount > row.queueSourceRuntimePrograms.size() ||
+            controlCount > future->queueSourceCommands.size() || controlCount > row.QueueRuntimeViews().queueSourceSchedules.size() ||
+            controlCount > row.QueueRuntimeViews().queueSourceRuntimePrograms.size() ||
             future->queueArmGroup.slot != future->row->QueueFiling().queueArmGroup.slot ||
             future->queueArmGroup.generation != future->row->QueueFiling().queueArmGroup.generation) return false;
         const auto nativeParent = future->row->queueFirstContinuationLane
@@ -54668,7 +54670,7 @@ bool Engine::BindPendingVariableGroupQueueFutureSources(EngineActionPlayScratch&
         for (std::uint32_t index = 0; index < controlCount; ++index) {
             const auto arm = row.QueueFiling().queueTransitionGroupArms[index];
             const auto& command = future->queueSourceCommands[index];
-            const auto& schedule = row.queueSourceSchedules[index];
+            const auto& schedule = row.QueueRuntimeViews().queueSourceSchedules[index];
             const auto programIndex = future->queueSuccessorVoiceStartCount + index;
             const auto& frozen = bank->schedules[programIndex];
             const auto& program = bank->runtimes[programIndex];
@@ -80309,7 +80311,7 @@ bool PrepareQueueTransitionContinuation(
     }
 
     harken::TimelineProgramView& successorRuntime = successorPlane == 0
-        ? row.runtimeProgram : row.queueSuccessorRuntimeProgram;
+        ? row.runtimeProgram : row.QueueRuntimeViews().queueSuccessorRuntimeProgram;
     harken::ProgramView& successorSchedule = successorPlane == 0
         ? row.schedule : row.QueueFiling().queueSuccessorSchedule;
     successorRuntime = {};
@@ -80356,7 +80358,7 @@ bool PrepareQueueTransitionContinuation(
         std::uint32_t sourceEventCount = 0;
         if (sourceFadeActive) {
             const std::uint32_t eventIndex = sourceEventTotal++;
-            auto& fade = row.queueSourcePayloads[eventIndex];
+            auto& fade = row.QueueRuntimeViews().queueSourcePayloads[eventIndex];
             fade = {};
             fade.kind = harken::TimelineEventKind::Envelope;
             fade.envelopeDirection =
@@ -80369,7 +80371,7 @@ bool PrepareQueueTransitionContinuation(
             fade.envelopeCurve =
                 &sourceFadeCurve;
             fade.authoredFadeOutCandidate = true;
-            auto& event = row.queueSourceEvents[eventIndex];
+            auto& event = row.QueueRuntimeViews().queueSourceEvents[eventIndex];
             event = {};
             event.logicCommitSequence = row.ticket;
             event.eventIndex = eventIndex;
@@ -80392,14 +80394,14 @@ bool PrepareQueueTransitionContinuation(
         }
         if (!naturalEnd) {
             const std::uint32_t eventIndex = sourceEventTotal++;
-            auto& stop = row.queueSourcePayloads[eventIndex];
+            auto& stop = row.QueueRuntimeViews().queueSourcePayloads[eventIndex];
             stop = {};
             stop.kind = harken::TimelineEventKind::Stop;
             stop.reserved = harken::kTimelineEventTransientControlArm;
             stop.target = target;
             stop.envelopeEndFrame = sourceStopFrame;
             stop.authoredFadeOutCandidate = sourceFadeActive;
-            auto& event = row.queueSourceEvents[eventIndex];
+            auto& event = row.QueueRuntimeViews().queueSourceEvents[eventIndex];
             event = {};
             event.frameOffsetFromEntry =
                 sourceStopFrame - sourcePhaseFrame;
@@ -80423,13 +80425,13 @@ bool PrepareQueueTransitionContinuation(
             inputSet[sourceEventCount].armToken = arm;
             ++sourceEventCount;
         }
-        auto& runtime = row.queueSourceRuntimePrograms[sourceIndex];
+        auto& runtime = row.QueueRuntimeViews().queueSourceRuntimePrograms[sourceIndex];
         runtime = {};
         runtime.generation = row.rootInstance;
         runtime.payloads =
-            row.queueSourcePayloads.data() + sourceEventBase;
+            row.QueueRuntimeViews().queueSourcePayloads.data() + sourceEventBase;
         runtime.payloadCount = sourceEventCount;
-        auto& schedule = row.queueSourceSchedules[sourceIndex];
+        auto& schedule = row.QueueRuntimeViews().queueSourceSchedules[sourceIndex];
         schedule = {};
         schedule.ownerInstance = row.rootInstance;
         schedule.ownerInstanceScheduleEpoch =
@@ -80437,7 +80439,7 @@ bool PrepareQueueTransitionContinuation(
         schedule.transactionId = row.ticket;
         schedule.entryAnchorFrame = sourcePhaseFrame;
         schedule.events =
-            row.queueSourceEvents.data() + sourceEventBase;
+            row.QueueRuntimeViews().queueSourceEvents.data() + sourceEventBase;
         schedule.eventCount = sourceEventCount;
         schedule.runtimeProgram = {row.rootInstance, &runtime};
         schedule.armToken = arm;
@@ -80452,27 +80454,27 @@ bool PrepareQueueTransitionContinuation(
         transaction.events = inputSet.data();
         transaction.eventCount = sourceEventCount;
     }
-    row.queueSourceRuntimeProgram = {};
-    row.queueSourceRuntimeProgram.generation = row.rootInstance;
-    row.queueSourceRuntimeProgram.payloads =
-        row.queueSourcePayloads.data();
-    row.queueSourceRuntimeProgram.payloadCount = sourceEventTotal;
+    row.QueueRuntimeViews().queueSourceRuntimeProgram = {};
+    row.QueueRuntimeViews().queueSourceRuntimeProgram.generation = row.rootInstance;
+    row.QueueRuntimeViews().queueSourceRuntimeProgram.payloads =
+        row.QueueRuntimeViews().queueSourcePayloads.data();
+    row.QueueRuntimeViews().queueSourceRuntimeProgram.payloadCount = sourceEventTotal;
     row.QueueFiling().queueSourceSchedule = {};
     row.QueueFiling().queueSourceSchedule.ownerInstance = row.rootInstance;
     row.QueueFiling().queueSourceSchedule.ownerInstanceScheduleEpoch =
         row.ownerEpoch;
     row.QueueFiling().queueSourceSchedule.transactionId = row.ticket;
     row.QueueFiling().queueSourceSchedule.entryAnchorFrame = sourcePhaseFrame;
-    row.QueueFiling().queueSourceSchedule.events = row.queueSourceEvents.data();
+    row.QueueFiling().queueSourceSchedule.events = row.QueueRuntimeViews().queueSourceEvents.data();
     row.QueueFiling().queueSourceSchedule.eventCount = sourceEventTotal;
     row.QueueFiling().queueSourceSchedule.runtimeProgram = {
-        row.rootInstance, &row.queueSourceRuntimeProgram};
+        row.rootInstance, &row.QueueRuntimeViews().queueSourceRuntimeProgram};
     row.QueueFiling().queueSourceSchedule.armToken = row.queueSourceArm;
 
     for (std::uint32_t index = 0; index < leafCount + sourceControlCount; ++index) {
         auto& schedule = index < leafCount
             ? successorScheduleStorage[index]
-            : row.queueSourceSchedules[index - leafCount];
+            : row.QueueRuntimeViews().queueSourceSchedules[index - leafCount];
         const auto* frozen = FreezeQueueProgram(engine, bank, schedule);
         if (frozen == nullptr) {
             (void)entry.ReleasePrefix(scratch);
@@ -81266,8 +81268,8 @@ public:
                 if (!harken::SamePlayableProgramKey(actual, canonical.canonicalTargetProgram)) return false;
                 const auto* canonicalService = engine.ResolvePlayableService(canonical.service);
                 if (canonical.engine != &engine || canonicalService != &row ||
-                    !canonicalService->canonicalInitialQueueTargetVoice.Valid()) return false;
-                capturedTarget = &canonicalService->canonicalInitialQueueTargetVoice;
+                    !canonicalService->QueueRuntimeViews().canonicalInitialQueueTargetVoice.Valid()) return false;
+                capturedTarget = &canonicalService->QueueRuntimeViews().canonicalInitialQueueTargetVoice;
                 materialized.leaves[0].leaf = selected->playable;
             } else if (!ResolveImmediateQueueDirectSoundLeaf(engine, *scratch, row, world,
                     *selected, actualChild, materialized.leaves[0])) return false;
@@ -81948,7 +81950,7 @@ bool PrepareQueueContinuation(
     harken::TimelineProgramView& successorRuntime =
         successorPlane == 0
             ? row.runtimeProgram
-            : row.queueSuccessorRuntimeProgram;
+            : row.QueueRuntimeViews().queueSuccessorRuntimeProgram;
     harken::ProgramView& successorSchedule =
         successorPlane == 0
             ? row.schedule
@@ -82296,7 +82298,7 @@ bool SelectCanonicalInitialQueueProfile(harken::Engine& engine, VnActionFiringHa
     harken::CapturedTimelineVoiceInstall captured;
     if (CaptureTimelineVoiceInstall(resolved.voice, &captured) !=
         harken::PlayableStartStatus::Accepted) return false;
-    row.canonicalInitialQueueTargetVoice = std::move(captured);
+    row.QueueRuntimeViews().canonicalInitialQueueTargetVoice = std::move(captured);
     current.canonicalCurrent = queueOwner.initial;
     current.canonicalNext = queueOwner.next;
     current.canonicalSourceProgram = facts.program;
@@ -92966,7 +92968,7 @@ void CommitImmediateActionQueueReplacements(
                 harken::TimelineProgramView& successorRuntime =
                     row.QueueFiling().queueSuccessorProgramPlane == 0
                         ? row.runtimeProgram
-                        : row.queueSuccessorRuntimeProgram;
+                        : row.QueueRuntimeViews().queueSuccessorRuntimeProgram;
                 harken::ProgramView& successorSchedule =
                     row.QueueFiling().queueSuccessorProgramPlane == 0
                         ? row.schedule
@@ -93002,7 +93004,7 @@ void CommitImmediateActionQueueReplacements(
                     }
                     const auto aggregateIndex = scratch.successorLeafCount != 0 ? 1u : 0u;
                     row.QueueFiling().queueSourceSchedule = bank.aggregateSchedules[aggregateIndex];
-                    row.queueSourceRuntimeProgram = *row.QueueFiling().queueSourceSchedule.runtimeProgram.program;
+                    row.QueueRuntimeViews().queueSourceRuntimeProgram = *row.QueueFiling().queueSourceSchedule.runtimeProgram.program;
                     row.queueSourceArm = scratch.sourceArms[0];
                 } else {
                     ok = false;

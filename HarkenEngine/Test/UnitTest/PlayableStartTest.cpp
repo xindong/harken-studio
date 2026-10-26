@@ -12413,7 +12413,7 @@ TEST(PlayableStart,
 
     ASSERT_TRUE(row->queueSourceArm.Valid());
     const harken::TimelineProgramView& source =
-        row->queueSourceRuntimeProgram;
+        row->QueueRuntimeViews().queueSourceRuntimeProgram;
     ASSERT_EQ(2u, source.payloadCount);
     EXPECT_EQ(harken::TimelineEventKind::Envelope,
               source.payloads[0].kind);
@@ -12435,7 +12435,7 @@ TEST(PlayableStart,
     const harken::TimelineProgramView& successor =
         row->QueueFiling().queueSuccessorProgramPlane == 0
             ? row->runtimeProgram
-            : row->queueSuccessorRuntimeProgram;
+            : row->QueueRuntimeViews().queueSuccessorRuntimeProgram;
     ASSERT_EQ(2u, successor.payloadCount);
     EXPECT_EQ(harken::TimelineEventKind::Start, successor.payloads[0].kind);
     EXPECT_EQ(harken::TimelineEventKind::Envelope,
@@ -12536,7 +12536,7 @@ TEST(PlayableStart,
     ASSERT_NE(nullptr, initialInstall);
     ASSERT_EQ(1u, initialInstall->Input().effects.size());
     EXPECT_FALSE(row->queueSourceArm.Valid());
-    EXPECT_EQ(0u, row->queueSourceRuntimeProgram.payloadCount);
+    EXPECT_EQ(0u, row->QueueRuntimeViews().queueSourceRuntimeProgram.payloadCount);
     harken::ArmGroupSnapshot group{};
     ASSERT_TRUE(engine->armGroups.Capture(row->QueueFiling().queueArmGroup, &group));
     EXPECT_EQ(1u, group.memberCount);
@@ -12604,7 +12604,7 @@ TEST(PlayableStart, SequenceQueueZeroDurationTargetFadeKeepsAuthoredMarker) {
     const harken::TimelineProgramView& successor =
         row->QueueFiling().queueSuccessorProgramPlane == 0
             ? row->runtimeProgram
-            : row->queueSuccessorRuntimeProgram;
+            : row->QueueRuntimeViews().queueSuccessorRuntimeProgram;
     ASSERT_EQ(2u, successor.payloadCount);
     EXPECT_EQ(harken::TimelineEventKind::Start, successor.payloads[0].kind);
     EXPECT_EQ(harken::TimelineEventKind::Envelope,
@@ -12862,14 +12862,14 @@ TEST(PlayableStart,
     const std::uint64_t audibleFrame = naturalEndFrame - 256u;
     ASSERT_TRUE(row->queueSourceArm.Valid());
     const harken::TimelineArmToken sourceArmToken = row->queueSourceArm;
-    ASSERT_EQ(1u, row->queueSourceRuntimeProgram.payloadCount);
+    ASSERT_EQ(1u, row->QueueRuntimeViews().queueSourceRuntimeProgram.payloadCount);
     EXPECT_EQ(harken::TimelineEventKind::Envelope,
-              row->queueSourceRuntimeProgram.payloads[0].kind);
+              row->QueueRuntimeViews().queueSourceRuntimeProgram.payloads[0].kind);
     EXPECT_EQ(audibleFrame,
-              row->queueSourceRuntimeProgram.payloads[0].
+              row->QueueRuntimeViews().queueSourceRuntimeProgram.payloads[0].
                   envelopeStartFrame);
     EXPECT_EQ(naturalEndFrame,
-              row->queueSourceRuntimeProgram.payloads[0].
+              row->QueueRuntimeViews().queueSourceRuntimeProgram.payloads[0].
                   envelopeEndFrame);
     EXPECT_EQ(naturalEndFrame,
               row->QueueFiling().queueSuccessorSchedule.entryAnchorFrame);
@@ -13265,7 +13265,7 @@ TEST(PlayableStart,
     ASSERT_TRUE(row->queueContinuationPrepared);
     ASSERT_TRUE(row->QueueFiling().queueTransition.Valid());
     EXPECT_FALSE(row->queueSourceArm.Valid());
-    EXPECT_EQ(0u, row->queueSourceRuntimeProgram.payloadCount);
+    EXPECT_EQ(0u, row->QueueRuntimeViews().queueSourceRuntimeProgram.payloadCount);
     harken::ArmGroupSnapshot group{};
     ASSERT_TRUE(engine->armGroups.Capture(row->QueueFiling().queueArmGroup, &group));
     EXPECT_EQ(1u, group.memberCount);
@@ -13816,7 +13816,7 @@ TEST(PlayableStart,
     ASSERT_TRUE(row->queueContinuationPrepared);
     EXPECT_EQ(1u, engine->voices.ActiveCount());
     EXPECT_EQ(0u, row->queueSuccessorRenderHandle);
-    EXPECT_EQ(0u, row->queueSuccessorRuntimeProgram.payloadCount);
+    EXPECT_EQ(0u, row->QueueRuntimeViews().queueSuccessorRuntimeProgram.payloadCount);
     harken::ArmGroupSnapshot preparedGroup{};
     ASSERT_TRUE(engine->armGroups.Capture(
         row->QueueFiling().queueArmGroup, &preparedGroup));
@@ -19656,7 +19656,7 @@ TEST(PlayableStart,
     const harken::TimelineProgramView& successor =
         prepared->QueueFiling().queueSuccessorProgramPlane == 0
             ? prepared->runtimeProgram
-            : prepared->queueSuccessorRuntimeProgram;
+            : prepared->QueueRuntimeViews().queueSuccessorRuntimeProgram;
     ASSERT_EQ(4u, successor.payloadCount);
     for (std::uint32_t index = 0; index < 2; ++index) {
         EXPECT_EQ(harken::TimelineEventKind::Start,
@@ -19744,11 +19744,11 @@ TEST(PlayableStart,
     ASSERT_TRUE(engine->armGroups.Capture(
         prepared->QueueFiling().queueArmGroup, &group));
     EXPECT_EQ(3u, group.memberCount);
-    ASSERT_EQ(1u, prepared->queueSourceRuntimePrograms[0].payloadCount);
+    ASSERT_EQ(1u, prepared->QueueRuntimeViews().queueSourceRuntimePrograms[0].payloadCount);
     EXPECT_EQ(harken::TimelineEventKind::Envelope,
-              prepared->queueSourceRuntimePrograms[0].payloads[0].kind);
+              prepared->QueueRuntimeViews().queueSourceRuntimePrograms[0].payloads[0].kind);
     EXPECT_EQ(harken::TimelineEnvelopeDirection::FadeOut,
-              prepared->queueSourceRuntimePrograms[0].
+              prepared->QueueRuntimeViews().queueSourceRuntimePrograms[0].
                   payloads[0].envelopeDirection);
 
     bool fadeObserved = false;
@@ -19821,7 +19821,7 @@ TEST(PlayableStart,
     const harken::TimelineProgramView& successor =
         prepared->QueueFiling().queueSuccessorProgramPlane == 0
             ? prepared->runtimeProgram
-            : prepared->queueSuccessorRuntimeProgram;
+            : prepared->QueueRuntimeViews().queueSuccessorRuntimeProgram;
     ASSERT_EQ(4u, successor.payloadCount);
     for (std::uint32_t index = 0; index < 2; ++index) {
         EXPECT_EQ(harken::TimelineEventKind::Start,
@@ -19896,12 +19896,12 @@ TEST(PlayableStart,
     ASSERT_TRUE(engine->armGroups.Capture(
         prepared->QueueFiling().queueArmGroup, &group));
     EXPECT_EQ(3u, group.memberCount);
-    ASSERT_EQ(2u, prepared->queueSourceRuntimeProgram.payloadCount);
+    ASSERT_EQ(2u, prepared->QueueRuntimeViews().queueSourceRuntimeProgram.payloadCount);
     for (std::uint32_t index = 0; index < 2; ++index) {
         EXPECT_EQ(harken::TimelineEventKind::Envelope,
-                  prepared->queueSourceRuntimeProgram.payloads[index].kind);
+                  prepared->QueueRuntimeViews().queueSourceRuntimeProgram.payloads[index].kind);
         EXPECT_EQ(harken::TimelineEnvelopeDirection::FadeOut,
-                  prepared->queueSourceRuntimeProgram.
+                  prepared->QueueRuntimeViews().queueSourceRuntimeProgram.
                       payloads[index].envelopeDirection);
     }
     const std::size_t currentBase = prepared->queueCurrentScheduleBase;
@@ -19918,7 +19918,7 @@ TEST(PlayableStart,
                   sourceControl.renderGeneration);
     }
     const std::uint64_t audibleFrame =
-        prepared->queueSourceRuntimeProgram.payloads[0].envelopeStartFrame;
+        prepared->QueueRuntimeViews().queueSourceRuntimeProgram.payloads[0].envelopeStartFrame;
     const std::uint64_t completionFrame = prepared->queueCompletionFrame;
     const VnVoiceHandle targetHandle =
         prepared->queueSuccessorRenderHandle;
@@ -20100,12 +20100,12 @@ TEST(PlayableStart,
     ASSERT_TRUE(engine->armGroups.Capture(
         prepared->QueueFiling().queueArmGroup, &group));
     EXPECT_EQ(3u, group.memberCount);
-    ASSERT_EQ(2u, prepared->queueSourceRuntimeProgram.payloadCount);
+    ASSERT_EQ(2u, prepared->QueueRuntimeViews().queueSourceRuntimeProgram.payloadCount);
     for (std::uint32_t index = 0; index < 2; ++index) {
         EXPECT_EQ(harken::TimelineEventKind::Envelope,
-                  prepared->queueSourceRuntimeProgram.payloads[index].kind);
+                  prepared->QueueRuntimeViews().queueSourceRuntimeProgram.payloads[index].kind);
         EXPECT_EQ(harken::TimelineEnvelopeDirection::FadeOut,
-                  prepared->queueSourceRuntimeProgram.
+                  prepared->QueueRuntimeViews().queueSourceRuntimeProgram.
                       payloads[index].envelopeDirection);
     }
     const std::size_t currentBase = prepared->queueCurrentScheduleBase;
@@ -20113,7 +20113,7 @@ TEST(PlayableStart,
         engine->ReadPlayableMember(currentBase).render,
         engine->ReadPlayableMember(currentBase + 1u).render};
     const std::uint64_t audibleFrame =
-        prepared->queueSourceRuntimeProgram.payloads[0].envelopeStartFrame;
+        prepared->QueueRuntimeViews().queueSourceRuntimeProgram.payloads[0].envelopeStartFrame;
     const std::uint64_t completionFrame = prepared->queueCompletionFrame;
     const VnVoiceHandle targetHandle =
         prepared->queueSuccessorRenderHandle;

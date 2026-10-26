@@ -666,7 +666,33 @@ TEST(StableBackingPreparation, ServiceFeaturePromiseSurvivesResetAndFailedProtec
     retargetStorage->enteringEvents.resize(1);
     retargetStorage->schedules.resize(1);
     retargetStorage->enteringSchedules.resize(1);
+    auto* queueViews = &first.QueueRuntimeViews();
+    auto* sourceRuntime = &queueViews->queueSourceRuntimeProgram;
+    auto* successorRuntime = &queueViews->queueSuccessorRuntimeProgram;
+    harken::TimelineEventPayload sourcePayload{};
+    harken::EventTemplate sourceEvent{};
+    harken::ProgramView sourceSchedule{};
+    queueViews->queueSourcePayloads = {&sourcePayload, 1};
+    queueViews->queueSourceEvents = {&sourceEvent, 1};
+    queueViews->queueSourceRuntimePrograms = {sourceRuntime, 1};
+    queueViews->queueSourceSchedules = {&sourceSchedule, 1};
+    sourceRuntime->generation = 41;
+    sourceRuntime->payloads = &sourcePayload;
+    sourceRuntime->payloadCount = 1;
+    *successorRuntime = *sourceRuntime;
     first.Reset();
+    EXPECT_EQ(queueViews, &first.QueueRuntimeViews());
+    EXPECT_EQ(sourceRuntime, &queueViews->queueSourceRuntimeProgram);
+    EXPECT_EQ(successorRuntime, &queueViews->queueSuccessorRuntimeProgram);
+    EXPECT_TRUE(queueViews->queueSourcePayloads.empty());
+    EXPECT_TRUE(queueViews->queueSourceEvents.empty());
+    EXPECT_TRUE(queueViews->queueSourceRuntimePrograms.empty());
+    EXPECT_TRUE(queueViews->queueSourceSchedules.empty());
+    for (const auto* runtime : {sourceRuntime, successorRuntime}) {
+        EXPECT_EQ(0u, runtime->generation);
+        EXPECT_EQ(nullptr, runtime->payloads);
+        EXPECT_EQ(0u, runtime->payloadCount);
+    }
     EXPECT_EQ(path, first.selectionPath.data());
     EXPECT_EQ(0u, first.selectionPath[0].childOrdinal);
     EXPECT_EQ(sourceCurve, &first.TransitionSourceFadeCurve());

@@ -556,6 +556,24 @@ TEST(TimelineVoiceInstall, CapturedCutRefusalPreservesExistingDefinitionAndColum
     EXPECT_FLOAT_EQ(-9.0f, captured.Input().sends[0].levelDb);
     std::memcpy(&gain, captured.Input().effects[0].descriptor, sizeof(gain));
     EXPECT_FLOAT_EQ(-6.0f, gain.gainDb);
+
+    harken::EnginePlayableServiceRow service;
+    ASSERT_TRUE(service.PrepareFeatureArrays());
+    auto* queueViews = &service.QueueRuntimeViews();
+    const auto references = captured.ReferenceCount();
+    queueViews->canonicalInitialQueueTargetVoice = captured.Share();
+    EXPECT_EQ(references + 1, captured.ReferenceCount());
+    EXPECT_EQ(before.facts, queueViews->canonicalInitialQueueTargetVoice.Input().facts);
+    service.Reset();
+    EXPECT_EQ(queueViews, &service.QueueRuntimeViews());
+    EXPECT_FALSE(queueViews->canonicalInitialQueueTargetVoice.HasStorage());
+    EXPECT_EQ(references, captured.ReferenceCount());
+    EXPECT_EQ(before.facts, captured.Input().facts);
+    EXPECT_EQ(before.sends.data(), captured.Input().sends.data());
+    EXPECT_EQ(before.effects.data(), captured.Input().effects.data());
+    EXPECT_FLOAT_EQ(-9.0f, captured.Input().sends[0].levelDb);
+    std::memcpy(&gain, captured.Input().effects[0].descriptor, sizeof(gain));
+    EXPECT_FLOAT_EQ(-6.0f, gain.gainDb);
 }
 
 TEST(TimelineVoiceInstall, NoLeaseAbsenceIsZeroBindings) {

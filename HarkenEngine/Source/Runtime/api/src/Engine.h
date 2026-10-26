@@ -1734,7 +1734,19 @@ struct EngineDiscreteRetargetStorage {
     std::vector<ProgramView> enteringSchedules;
 };
 
+struct EngineQueueRuntimeViews {
+    std::span<TimelineEventPayload> queueSourcePayloads{};
+    std::span<EventTemplate> queueSourceEvents{};
+    TimelineProgramView queueSourceRuntimeProgram{};
+    std::span<TimelineProgramView> queueSourceRuntimePrograms{};
+    std::span<ProgramView> queueSourceSchedules{};
+    TimelineProgramView queueSuccessorRuntimeProgram{};
+    // The service owns one frozen target, shared by its preparing frontier.
+    CapturedTimelineVoiceInstall canonicalInitialQueueTargetVoice{};
+};
+
 struct EngineServiceFeatureArrays {
+    EngineQueueRuntimeViews queueRuntimeViews;
     EngineDiscreteRetargetStorage discreteRetarget;
     EngineQueueFutureFilingLayout queueFiling{};
     struct UnpublishedVariableGroupCancellation {
@@ -2096,21 +2108,17 @@ public:
     OccurrenceToken queueAbortedSuccessorOccurrence{};
     CompletionOwnerRef queueRetiringOwner{};
     TimelineArmToken queueSourceArm{};
-    std::span<TimelineEventPayload> queueSourcePayloads{};
-    std::span<EventTemplate> queueSourceEvents{};
-    TimelineProgramView queueSourceRuntimeProgram{};
-    std::span<TimelineProgramView> queueSourceRuntimePrograms{};
-    std::span<ProgramView> queueSourceSchedules{};
 
     void ClearQueueSourcePrograms() noexcept {
-        queueSourcePayloads = {};
-        queueSourceEvents = {};
-        queueSourceRuntimePrograms = {};
-        queueSourceSchedules = {};
-        queueSourceRuntimeProgram = {};
-        if (HasFeatureArrays()) QueueFiling().queueSourceSchedule = {};
+        if (!HasFeatureArrays()) return;
+        auto& views = QueueRuntimeViews();
+        views.queueSourcePayloads = {};
+        views.queueSourceEvents = {};
+        views.queueSourceRuntimePrograms = {};
+        views.queueSourceSchedules = {};
+        views.queueSourceRuntimeProgram = {};
+        QueueFiling().queueSourceSchedule = {};
     }
-    TimelineProgramView queueSuccessorRuntimeProgram{};
     ArmGroupToken queueInitialLaneArmGroup{};
     TimelineArmToken queueArrivalArm{};
     TimelineArmToken queueArrivalSourceArm{};
@@ -2130,8 +2138,6 @@ public:
     std::uint32_t queueUnplacedTransactionCount = 0;
     EngineFrontierQueueCurrentOwnerContext* privateInitialQueueCurrent = nullptr;
     DecisionToken canonicalInitialQueueDecision{};
-    // The service owns one frozen target, shared by its preparing frontier.
-    CapturedTimelineVoiceInstall canonicalInitialQueueTargetVoice{};
     bool queueTimingFinalized = false;
     bool queueFirstContinuationLane = false;
     std::uint64_t queueInitialCohortEntryFrame = 0;
@@ -2189,6 +2195,14 @@ public:
     }
 
     bool HasFeatureArrays() const noexcept { return featureArrays_ != nullptr; }
+    EngineQueueRuntimeViews& QueueRuntimeViews() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->queueRuntimeViews;
+    }
+    const EngineQueueRuntimeViews& QueueRuntimeViews() const noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->queueRuntimeViews;
+    }
     EngineQueueFutureFilingLayout& QueueFiling() noexcept {
         assert(featureArrays_ != nullptr);
         return featureArrays_->queueFiling;
@@ -2527,7 +2541,10 @@ public:
             [](const auto& token) noexcept { return token.Valid(); }));
         auto memberDirectory = std::move(members);
         ClearFeatureArrays();
-        if (featureArrays_ != nullptr) featureArrays_->discreteRetarget = {};
+        if (featureArrays_ != nullptr) {
+            featureArrays_->discreteRetarget = {};
+            featureArrays_->queueRuntimeViews = {};
+        }
         auto featureArrays = std::move(featureArrays_);
         // Reinitialize the stable row in place; a full temporary overflows the
         // producer stack when nested preparation rolls back at capacity.
