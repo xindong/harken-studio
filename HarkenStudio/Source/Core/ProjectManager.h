@@ -132,6 +132,7 @@ public:
     friend void registerProjectActions(ActionManager&, ProjectManager*, ProjectExplorer*, std::function<Hierarchy*()>);
 
     static void resyncItemToRuntime(ProjectItem* item);
+    static void resyncItemsToRuntime(std::span<ProjectItem* const> items);
     static void resyncSourceToRuntime(uint32_t sourceId);
     static void syncActionNameForPreview(ProjectItem* actionItem);
     static void syncProjectToRuntime(ProjectData* project);

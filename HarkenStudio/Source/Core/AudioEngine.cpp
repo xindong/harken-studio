@@ -205,10 +205,12 @@ void AudioEngine::bindCurrentWorldPlatformContext()
                 lastCurrentWorldPrimary_ = context.primary;
                 resetLivePropertyPreview();
                 if (const auto* project = ProjectManager::instance().currentProject()) {
+                    std::vector<ProjectItem*> sounds;
                     for (auto* item : ProjectPlatformSemantics::referenceOwners(*project)) {
                         if (item->comp<VSound>())
-                            ProjectManager::resyncItemToRuntime(item);
+                            sounds.push_back(item);
                     }
+                    ProjectManager::resyncItemsToRuntime(sounds);
                 }
                 runtimeSyncCoordinator_->markCurrentWorldMutation();
             });
@@ -220,19 +222,21 @@ void AudioEngine::bindCurrentWorldPlatformContext()
                     return;
                 ProjectManager::instance().refreshSoundSourceProjections(
                     PlatformContextService::instance().context().primary, language);
+                std::vector<ProjectItem*> sounds;
                 const auto refresh = [&](ProjectItem* item, const auto& self) -> void {
                     if (!item)
                         return;
                     const auto* sound = item->type == ProjectItem::Type::Sound
                         ? item->comp<VSound>() : nullptr;
                     if (sound && sound->distinguishLanguage)
-                        ProjectManager::resyncItemToRuntime(item);
+                        sounds.push_back(item);
                     for (const auto& child : item->children)
                         self(child.get(), self);
                 };
                 for (auto* binding : project->allFileBindings())
                     if (binding && binding->rootItem)
                         refresh(binding->rootItem.get(), refresh);
+                ProjectManager::resyncItemsToRuntime(sounds);
             });
 }
 

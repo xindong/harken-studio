@@ -436,60 +436,69 @@ void ProjectManager::resyncSourceToRuntime(uint32_t sourceId)
 
 void ProjectManager::resyncItemToRuntime(ProjectItem* item)
 {
+    resyncItemsToRuntime({&item, 1});
+}
+
+void ProjectManager::resyncItemsToRuntime(std::span<ProjectItem* const> items)
+{
     Q_ASSERT(QThread::currentThread() == QCoreApplication::instance()->thread());
 
-    if (!item || item->objectID == 0) return;
+    std::optional<FieldGroupEffectiveSnapshot> snapshot;
+    for (auto* item : items) {
+        if (!item || item->objectID == 0) continue;
 
-    if (item->type == ProjectItem::Type::Action)
-    {
-        syncActionNameForPreview(item);
-        AudioEngine::instance().runtimeSyncCoordinator().markCurrentWorldMutation();
-        return;
-    }
-
-    const harkenstudio::ObjectId runtimeID = runtimeStableIdForItem(item);
-    auto& ae = AudioEngine::instance();
-    const auto* project = ProjectManager::instance().currentProject();
-    if (!project)
-        return;
-    const auto snapshot = buildFieldGroupEffectiveSnapshot(
-        *project, toFieldGroupScope(currentWorldPlatformScope(PlatformContextService::instance().context())));
-    if (!snapshot.ok()) {
-        ae.runtimeSyncCoordinator().markCurrentWorldMutation();
-        return;
-    }
-    ae.removeRuntimeObject(runtimeID);
-
-    harkenstudio::ObjectId parentRuntimeId = {};
-    ProjectItem* parentItem = item->parent;
-    while (parentItem) {
-        if (!harkenstudio::IsNull(parentItem->runtimeId())) {
-            const harkenstudio::ObjectId candidateId = runtimeStableIdForItem(parentItem);
-            if (Bridge::runtimeObjectExists(candidateId)) {
-                parentRuntimeId = candidateId;
-                break;
-            }
+        if (item->type == ProjectItem::Type::Action)
+        {
+            syncActionNameForPreview(item);
+            AudioEngine::instance().runtimeSyncCoordinator().markCurrentWorldMutation();
+            continue;
         }
-        parentItem = parentItem->parent;
-    }
 
-    syncItemToRuntime(item, parentRuntimeId, snapshot);
-
-    if (findSyncHandler(item->type))
-        qDebug() << "[IncrementalSync] Re-synced" << item->name
-                 << "(objectID:" << item->objectID << ") to Runtime";
-    else
-        qDebug() << "[IncrementalSync] Skipped (no sync handler)" << item->name
-                 << "(objectID:" << item->objectID << ")";
-
-    if (affectsCurrentWorld(item->type,
-                            CurrentWorldMutationKind::Structure)) {
-        const auto allocation =
+        const harkenstudio::ObjectId runtimeID = runtimeStableIdForItem(item);
+        auto& ae = AudioEngine::instance();
+        const auto* project = ProjectManager::instance().currentProject();
+        if (!project)
+            continue;
+        if (!snapshot)
+            snapshot = buildFieldGroupEffectiveSnapshot(
+                *project, toFieldGroupScope(currentWorldPlatformScope(PlatformContextService::instance().context())));
+        if (!snapshot->ok()) {
             ae.runtimeSyncCoordinator().markCurrentWorldMutation();
-        if (allocation.state
-            == RuntimeSyncCoordinator::AllocationState::IdentityExhausted) {
-            qCritical()
-                << "[CurrentWorldSync] authoring revision identity exhausted";
+            continue;
+        }
+        ae.removeRuntimeObject(runtimeID);
+
+        harkenstudio::ObjectId parentRuntimeId = {};
+        ProjectItem* parentItem = item->parent;
+        while (parentItem) {
+            if (!harkenstudio::IsNull(parentItem->runtimeId())) {
+                const harkenstudio::ObjectId candidateId = runtimeStableIdForItem(parentItem);
+                if (Bridge::runtimeObjectExists(candidateId)) {
+                    parentRuntimeId = candidateId;
+                    break;
+                }
+            }
+            parentItem = parentItem->parent;
+        }
+
+        syncItemToRuntime(item, parentRuntimeId, *snapshot);
+
+        if (findSyncHandler(item->type))
+            qDebug() << "[IncrementalSync] Re-synced" << item->name
+                     << "(objectID:" << item->objectID << ") to Runtime";
+        else
+            qDebug() << "[IncrementalSync] Skipped (no sync handler)" << item->name
+                     << "(objectID:" << item->objectID << ")";
+
+        if (affectsCurrentWorld(item->type,
+                                CurrentWorldMutationKind::Structure)) {
+            const auto allocation =
+                ae.runtimeSyncCoordinator().markCurrentWorldMutation();
+            if (allocation.state
+                == RuntimeSyncCoordinator::AllocationState::IdentityExhausted) {
+                qCritical()
+                    << "[CurrentWorldSync] authoring revision identity exhausted";
+            }
         }
     }
 }

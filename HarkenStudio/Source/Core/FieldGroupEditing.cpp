@@ -224,6 +224,7 @@ Diagnostics validateView(const EditingContext& context,
         appendGroupDiagnostics(diagnostics, context, resolver.diagnostics());
         return diagnostics;
     }
+    const FieldGroupReferenceCatalog references(context.view.referenceTargets);
     std::vector<FieldGroupScope> scopes{std::nullopt};
     for (const auto platform : context.platforms)
         scopes.push_back(platform);
@@ -236,8 +237,8 @@ Diagnostics validateView(const EditingContext& context,
                 appendGroupDiagnostics(diagnostics, context, result->diagnostics);
                 if (result->value)
                     appendGroupDiagnostics(diagnostics, context,
-                        ValidateActiveFieldGroup(result->value->group,
-                            result->value->payload, context.view.referenceTargets),
+                        references.Validate(result->value->group,
+                            result->value->payload),
                         definition.guid, scope);
             }
             if (!output.ok() || !send.ok()) continue;
