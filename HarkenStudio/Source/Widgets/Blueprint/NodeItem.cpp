@@ -8,6 +8,7 @@
 #include "Core/NumericFormat.h"
 #include "Core/ThemeManager.h"
 #include <QObject>
+#include <QApplication>
 #include <QPainter>
 #include <QPainterPath>
 #include <QStyleOptionGraphicsItem>
@@ -40,6 +41,22 @@ static constexpr float kPinColumnPad = 29.0f;
 static constexpr float kPortPairSpacing = 32.0f;
 
 namespace {
+
+class NodeContentProxy final : public QGraphicsProxyWidget
+{
+public:
+    explicit NodeContentProxy(NodeItem* node) : QGraphicsProxyWidget(node), node_(node) {}
+
+protected:
+    void focusInEvent(QFocusEvent* event) override
+    {
+        node_->ensureContentWidget();
+        QGraphicsProxyWidget::focusInEvent(event);
+    }
+
+private:
+    NodeItem* node_;
+};
 
 class NodeDropOverlay final : public QGraphicsRectItem
 {
@@ -481,9 +498,12 @@ void NodeItem::setCanvasFlowDirection(CanvasFlowDirection dir)
 
 void NodeItem::setContentInfo(const NodeContentInfo& info)
 {
+    if (contentInfo_ == info) return;
     contentInfo_ = info;
     if (auto* editor = qobject_cast<NodeContentEditor*>(contentWidget()))
         editor->setValues(info);
+    else if (contentPresentationFactory_)
+        contentPresentation_ = contentPresentationFactory_();
     updateContentHeight();
     repositionAllPins_();
     update();
@@ -491,10 +511,15 @@ void NodeItem::setContentInfo(const NodeContentInfo& info)
 
 void NodeItem::setContentWidget(QWidget* widget)
 {
-    delete contentProxy_;
-    contentProxy_ = nullptr;
+    if (contentProxy_) {
+        auto* previous = contentProxy_->widget();
+        contentProxy_->setWidget(nullptr);
+        contentProxy_->setMinimumSize(0, 0);
+        contentProxy_->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+        delete previous;
+    }
     if (widget) {
-        contentProxy_ = new QGraphicsProxyWidget(this);
+        if (!contentProxy_) contentProxy_ = new NodeContentProxy(this);
         contentProxy_->setWidget(widget);
         if (auto* editor = qobject_cast<NodeContentEditor*>(widget)) {
             editor->setRouteGainMode(routeGainMode_);
@@ -515,6 +540,50 @@ QWidget* NodeItem::contentWidget() const
     return contentProxy_ ? contentProxy_->widget() : nullptr;
 }
 
+void NodeItem::setContentFactory(std::function<QWidget*()> factory,
+    std::function<NodeContentPresentation()> presentation)
+{
+    contentFactory_ = std::move(factory);
+    contentPresentationFactory_ = std::move(presentation);
+    if (!contentProxy_) contentProxy_ = new NodeContentProxy(this);
+    refreshContentPresentation();
+}
+
+QWidget* NodeItem::ensureContentWidget()
+{
+    if (!contentWidget() && contentFactory_) setContentWidget(contentFactory_());
+    return contentWidget();
+}
+
+bool NodeItem::releaseContentWidget()
+{
+    auto* widget = contentWidget();
+    if (!widget || !contentFactory_) return false;
+    if (const auto* editor = qobject_cast<NodeContentEditor*>(widget); editor && editor->isEditing())
+        return false;
+    const auto owns = [widget](const QWidget* candidate) {
+        return candidate && (candidate == widget || widget->isAncestorOf(candidate));
+    };
+    if (owns(QApplication::focusWidget()) || owns(QWidget::mouseGrabber())) return false;
+    if (scene()) {
+        auto* focused = scene()->focusItem();
+        if (focused && (focused == contentProxy_ || contentProxy_->isAncestorOf(focused))) return false;
+        auto* grabber = scene()->mouseGrabberItem();
+        if (grabber && (grabber == contentProxy_ || contentProxy_->isAncestorOf(grabber))) return false;
+    }
+    contentPresentation_ = contentPresentationFactory_();
+    setContentWidget(nullptr);
+    return true;
+}
+
+void NodeItem::refreshContentPresentation()
+{
+    if (contentPresentationFactory_) contentPresentation_ = contentPresentationFactory_();
+    updateContentHeight();
+    repositionAllPins_();
+    update();
+}
+
 void NodeItem::setWaveformPeaks(const std::vector<float>& peaks)
 {
     waveformPeaks_ = peaks;
@@ -531,6 +600,8 @@ void NodeItem::setContentFields(NodeContentFields fields)
     contentFields_ = fields;
     if (auto* editor = qobject_cast<NodeContentEditor*>(contentWidget()))
         editor->setFields(fields);
+    else if (contentPresentationFactory_)
+        contentPresentation_ = contentPresentationFactory_();
     updateContentHeight();
     repositionAllPins_();
     update();
@@ -551,13 +622,16 @@ void NodeItem::updateContentHeight()
     prepareGeometryChange();
     if (routeGainMode_) {
         const auto* widget = contentWidget();
-        const float contentWidth = widget ? widget->width() : kDefaultWidth - 2 * kBodyPadX;
-        const float contentHeight = widget ? widget->height() : 20.0f;
+        const float contentWidth = widget ? widget->width() : contentPresentation_
+            ? contentPresentation_->size.width() : kDefaultWidth - 2 * kBodyPadX;
+        const float contentHeight = widget ? widget->height() : contentPresentation_
+            ? contentPresentation_->size.height() : 20.0f;
         width_ = contentWidth + 2 * kBodyPadX;
         height_ = std::max(kRouteGainMinimumHeight, contentHeight + 2 * kRouteGainPadY);
         if (contentProxy_) {
             contentProxy_->setVisible(contentHeight > 0);
             contentProxy_->setPos(kBodyPadX, (height_ - contentHeight) * 0.5f);
+            if (!widget) contentProxy_->resize(contentWidth, contentHeight);
         }
         dropOverlay_->setRect(QRectF(6.0, 6.0, width_ - 12.0, height_ - 12.0));
         return;
@@ -568,15 +642,17 @@ void NodeItem::updateContentHeight()
     height_ = heightForContent(contentInfo_, !subtitle_.isEmpty(),
                                blueprintWaveformMode_ || waveformPeakData_.isValid() || !waveformPeaks_.empty(),
                                blueprintWaveformMode_, count, contentFields_);
-    if (auto* widget = contentWidget()) {
-        contentProxy_->setVisible(widget->height() > 0);
-        if (widget->height() > 0)
-            width_ = std::max(width_, static_cast<float>(widget->width()) + 2 * kBodyPadX);
+    if (contentWidget() || contentPresentation_) {
+        const QSize size = contentWidget() ? contentWidget()->size() : contentPresentation_->size;
+        contentProxy_->setVisible(size.height() > 0);
+        if (size.height() > 0)
+            width_ = std::max(width_, static_cast<float>(size.width()) + 2 * kBodyPadX);
         const auto rows = std::popcount(static_cast<unsigned int>(
             (contentInfo_.fields() & contentFields_).toInt()));
-        height_ += widget->height() - rows * kRowHeight;
+        height_ += size.height() - rows * kRowHeight;
         contentProxy_->setPos(kBodyPadX, kHeaderHeight + kBodyPadTop
             + (subtitle_.isEmpty() ? 0.0f : kSubtitleRowHeight));
+        if (!contentWidget()) contentProxy_->resize(size);
     }
     dropOverlay_->setRect(QRectF(6.0, 6.0, width_ - 12.0, height_ - 12.0));
 }
@@ -836,11 +912,17 @@ void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, 
 
 std::optional<NodeContentField> NodeItem::contentFieldAt(const QPointF& localPos) const
 {
-    if (contentProxy_) {
+    if (contentWidget()) {
         auto* editor = qobject_cast<NodeContentEditor*>(contentProxy_->widget());
         if (!editor)
             return std::nullopt;
         return editor->fieldAt(contentProxy_->mapFromItem(this, localPos).toPoint());
+    }
+    if (contentPresentation_) {
+        const auto point = contentProxy_->mapFromItem(this, localPos).toPoint();
+        for (const auto& [field, rect] : contentPresentation_->fields)
+            if (rect.contains(point)) return field;
+        return std::nullopt;
     }
 
     float bodyTop = routeGainMode_ ? (kRouteGainPadY - kBodyPadTop) : kHeaderHeight;
@@ -899,8 +981,13 @@ void NodeItem::paintContentBody(QPainter* painter, float bodyTop) const
     };
 
     const auto fields = contentFields_ & contentInfo_.fields();
-    if (contentProxy_) {
+    if (contentWidget()) {
         y += contentProxy_->widget()->height();
+    } else if (contentPresentation_) {
+        painter->save();
+        painter->drawPicture(contentProxy_->pos(), contentPresentation_->drawing);
+        painter->restore();
+        y += contentPresentation_->size.height();
     } else {
         const auto decibels = [](float value) {
             return value <= -96.0f ? QStringLiteral("-inf") : formatDecimal(value, 1);

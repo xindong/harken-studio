@@ -6751,7 +6751,7 @@ TEST_F(AudioPlaybackRegression, BlueprintVolumeAndInheritedOutputGainChangeTheAc
     const auto& nodes = canvas.activeSignalPathSource()->graph().nodes;
     for (size_t index = 0; index < nodes.size(); ++index)
         if (nodes[index].key.objectGuid == sounds[1]->guid)
-            editor = qobject_cast<VNX::NodeContentEditor*>(canvas.signalPathNode(index)->contentWidget());
+            editor = qobject_cast<VNX::NodeContentEditor*>(canvas.signalPathNode(index)->ensureContentWidget());
     ASSERT_NE(editor, nullptr);
     auto* binding = editor->binding(VNX::NodeContentField::Volume);
     ASSERT_NE(binding, nullptr);
@@ -7470,7 +7470,7 @@ TEST_F(AudioPlaybackRegression, BlueprintSendGainPreviewsOnTheExistingRoute)
     VNX::NodeContentEditor* editor = nullptr;
     for (size_t index = 0; index < edges.size(); ++index)
         if (edges[index].kind == VNX::SignalPathEdgeKind::Send)
-            editor = qobject_cast<VNX::NodeContentEditor*>(canvas.signalPathGainNode(index)->contentWidget());
+            editor = qobject_cast<VNX::NodeContentEditor*>(canvas.signalPathGainNode(index)->ensureContentWidget());
     ASSERT_NE(editor, nullptr);
     auto* binding = editor->binding(VNX::NodeContentField::SendVolume);
     ASSERT_NE(binding, nullptr);
