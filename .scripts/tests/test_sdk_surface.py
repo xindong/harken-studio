@@ -161,7 +161,7 @@ class InventoryTest(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.write("HarkenEngine/Source/Tooling/Remote/wire/harken_wire_table.json",
                    json.dumps({"functions": []}))
-        self.write("HarkenSDK/Unity/Harken/Runtime/Core.asmdef", '{"name":"Core"}')
+        self.write("HarkenIntegration/Unity/Harken/Runtime/Core.asmdef", '{"name":"Core"}')
 
     def write(self, path, content):
         target = self.root / path
@@ -169,7 +169,7 @@ class InventoryTest(unittest.TestCase):
         target.write_text(content, encoding="utf-8")
 
     def source(self, name, content):
-        self.write("HarkenSDK/Unity/Harken/Runtime/" + name, content)
+        self.write("HarkenIntegration/Unity/Harken/Runtime/" + name, content)
 
     def test_partial_access_across_files_is_observed(self):
         self.source("A.cs", "namespace N { public partial class C {} }")

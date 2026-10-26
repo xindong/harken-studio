@@ -21,7 +21,7 @@
 - [ ] `HarkenStudio/*`
 - [ ] `HarkenEngine/*`
 - [ ] `HarkenHub/*`
-- [ ] `HarkenSDK/*`
+- [ ] `HarkenIntegration/*`
 - [ ] 公共文档与脚本 / Shared docs & scripts (`.agents` `.claude` `.codex` `CLAUDE.md` `AGENTS.md` `.docs` `.github` `.scripts`)
     > （波及本项时，需诚实说明改动内容与动机 / If checked, honestly describe what changed and why:）
 - [ ] 其他根目录文件及 `cmake/*` / Other root files and `cmake/*`
@@ -57,8 +57,8 @@
 - [ ] 改变了 HarkenStudio、pack 包体的指纹或工程格式（无论是否相应完善了旧版迁移，无论是否已升级 Schema 或 VERSION）
       / HarkenStudio or pack artifact fingerprint or project-format change, with or without a completed legacy migration, and whether or not Schema or VERSION was already upgraded
     > 详细报告及登记地点 / Details & where registered:
-- [ ] 改变了 HarkenSDK 面向游戏侧的公开接口或其行为语义（无论是否已升级 Schema 或 VERSION）
-      / Game-facing HarkenSDK public API or behavioral-semantics change, whether or not Schema or VERSION was already upgraded
+- [ ] 改变了 HarkenIntegration 面向游戏侧的公开接口或其行为语义（无论是否已升级 Schema 或 VERSION）
+      / Game-facing HarkenIntegration public API or behavioral-semantics change, whether or not Schema or VERSION was already upgraded
     > 详细报告及登记地点 / Details & where registered:
 - [ ] 以上均不涉及 / None of the above
 

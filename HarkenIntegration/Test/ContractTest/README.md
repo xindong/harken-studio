@@ -6,9 +6,9 @@ Variable symbol rules, bootstrap capacity recommendations, byte providers,
 zero-allocation calls, Remote communication and companion lifecycle behavior.
 
 ```powershell
-dotnet run --project HarkenSDK/Test/ContractTest
+dotnet run --project HarkenIntegration/Test/ContractTest
 $env:HARKEN_NATIVE_DIR = (Resolve-Path "build-nc/bin/RelWithDebInfo").Path
-dotnet run --project HarkenSDK/Test/ContractTest --configuration Release -- --require-native
+dotnet run --project HarkenIntegration/Test/ContractTest --configuration Release -- --require-native
 ```
 
 Optional mode reports unavailable native checks as skipped. `--require-native`
@@ -24,7 +24,7 @@ manifest/index publications are not validation inputs.
 To validate a real exported selected-platform directory independently:
 
 ```powershell
-dotnet run --project HarkenSDK/Test/ContractTest --configuration Release -- `
+dotnet run --project HarkenIntegration/Test/ContractTest --configuration Release -- `
   --require-native --companion-root "path/to/Windows"
 ```
 
@@ -53,7 +53,7 @@ probe; old gameplay calls can still work with the old library.
 The separate native foundation fixture remains available through `--pack-root`:
 
 ```powershell
-dotnet run --project HarkenSDK/Test/ContractTest --configuration Release -- `
+dotnet run --project HarkenIntegration/Test/ContractTest --configuration Release -- `
   --require-native --pack-root ".temp/f3-catalog-resident-window"
 ```
 
@@ -68,7 +68,7 @@ For the focused Variable write-scope check, generate the native fixture and run:
 ```powershell
 ctest --test-dir build-nc -C RelWithDebInfo -R '^PackComposition.VariableSdkSetValuePreservesWriteScopeAndPublishesInitFixture$' --output-on-failure
 $env:HARKEN_VARIABLE_INIT = (Resolve-Path ".temp/variable-sdk-init.pack").Path
-dotnet run --project HarkenSDK/Test/ContractTest --configuration Release -- --variables-only
+dotnet run --project HarkenIntegration/Test/ContractTest --configuration Release -- --variables-only
 ```
 
 `--current-world <path>` adds the existing current-world input check.

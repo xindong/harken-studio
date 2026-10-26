@@ -200,7 +200,7 @@ ALL_CHECKED_SECTION_HINTS = ("提交前检查", "pre-submission")
 
 PRODUCT_SOURCE_PREFIXES = (
     "HarkenEngine/",
-    "HarkenSDK/",
+    "HarkenIntegration/",
     "HarkenStudio/",
 )
 

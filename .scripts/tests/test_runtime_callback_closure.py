@@ -1121,7 +1121,7 @@ class RuntimeCallbackClosureTest(unittest.TestCase):
             "HarkenEngine/Source/Runtime/DigestSink.cpp",
             "HarkenStudio/Test/UnitTest/DigestSink.cpp",
             "HarkenHub/Test/UnitTest/DigestSink.cpp",
-            "HarkenSDK/Test/ContractTest/DigestSink.cpp",
+            "HarkenIntegration/Test/ContractTest/DigestSink.cpp",
         ):
             with self.subTest(source=source):
                 with self.assertRaisesRegex(MODULE.ClosureError, "not test-only"):

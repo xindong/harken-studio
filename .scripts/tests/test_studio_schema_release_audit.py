@@ -477,7 +477,7 @@ class ReleaseLifecycleTest(unittest.TestCase):
         self.assertTrue(any("removed" in error for error in MODULE.release_schema_errors(self.root / "HarkenSchema")))
 
     def test_sdk_source_changes_are_not_a_generation_hash_lock(self) -> None:
-        reader = self.root / "HarkenSDK/Unity/Harken/Runtime/Sdk/PackCompanion.cs"
+        reader = self.root / "HarkenIntegration/Unity/Harken/Runtime/Sdk/PackCompanion.cs"
         reader.parent.mkdir(parents=True)
         reader.write_text("old reader", encoding="utf-8")
         self.publish_tag("sdk-baseline")
@@ -499,7 +499,7 @@ class ReleaseLifecycleTest(unittest.TestCase):
         MODULE.run_git(["reset", "--hard", "first"])
         original["x-harken-documentTypes"][0]["schema"]["properties"]["content"]["required"].remove("name")
         path.write_text(json.dumps(original), encoding="utf-8")
-        reader = self.root / "HarkenSDK/Unity/Harken/Runtime/Sdk/PackCompanion.cs"
+        reader = self.root / "HarkenIntegration/Unity/Harken/Runtime/Sdk/PackCompanion.cs"
         reader.parent.mkdir(parents=True)
         reader.write_text("new development", encoding="utf-8")
         self.commit()
@@ -569,7 +569,7 @@ class ReleaseLifecycleTest(unittest.TestCase):
             MODULE.require_current_reader({"currentReader": reader})
 
     def test_changed_persistence_paths_are_reviewed_without_internal_format_scopes(self) -> None:
-        paths = ["HarkenStudio/Source/Core/ProjectSchemaValidator.cpp", "HarkenSDK/Unity/Harken/Runtime/Sdk/PackCompanion.cs",
+        paths = ["HarkenStudio/Source/Core/ProjectSchemaValidator.cpp", "HarkenIntegration/Unity/Harken/Runtime/Sdk/PackCompanion.cs",
                  "HarkenStudio/Source/Core/MigrationManager.cpp", "HarkenStudio/Source/Core/ProjectMigration.cpp",
                  "HarkenStudio/Source/Core/ProjectMigration.h"]
         with patch.object(MODULE, "changed_files", return_value=paths):

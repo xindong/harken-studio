@@ -26,12 +26,12 @@ callback and lifecycle tests consume companion inputs.
 Use a dedicated Unity project with the current SDK package, the matching native
 library and test assemblies enabled. Enable the built-in
 `com.unity.modules.assetbundle` package for the AssetBundle case.
-Copy `HarkenSDK/Test/ExternalConsumer/Unity`
+Copy `HarkenIntegration/Test/ExternalConsumer/Unity`
 to `Assets/ExternalConsumer` to include the unrelated public consumer assembly.
 
 ```powershell
-python HarkenSDK/Test/UnityFixture/prepare.py --project <Unity-project>
-python HarkenSDK/Test/UnityFixture/prepare.py --project <Unity-project> --check
+python HarkenIntegration/Test/UnityFixture/prepare.py --project <Unity-project>
+python HarkenIntegration/Test/UnityFixture/prepare.py --project <Unity-project> --check
 ```
 
 The script synchronizes repository fixture files under

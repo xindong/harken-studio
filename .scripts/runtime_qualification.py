@@ -39,7 +39,7 @@ REQUIRED_SOURCE_CONTRACT_PATHS = (
     "HarkenEngine/Source/Tooling/Binding/gen_binding.py",
     "HarkenEngine/Source/Tooling/Remote/wire/gen_wire.py",
     "HarkenEngine/Source/Tooling/Effects/gen_effect_registry.py",
-    "HarkenSDK/Test/ContractTest/AbiFidelity.csproj",
+    "HarkenIntegration/Test/ContractTest/AbiFidelity.csproj",
 )
 SOURCE_VOLATILE_PREFIXES = (".temp",)
 EXPECTED_TOOL_VERSIONS = {
@@ -2265,7 +2265,7 @@ def validate_record_scope(
 
     sdk_project = (
         source_root
-        / "HarkenSDK"
+        / "HarkenIntegration"
         / "Test"
         / "ContractTest"
         / "AbiFidelity.csproj"

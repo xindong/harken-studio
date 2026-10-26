@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 REPOSITORY = Path(__file__).resolve().parents[1]
-UNITY_PACKAGE = REPOSITORY / "HarkenSDK" / "Unity" / "Harken" / "package.json"
+UNITY_PACKAGE = REPOSITORY / "HarkenIntegration" / "Unity" / "Harken" / "package.json"
 
 
 def version(package: Path | None = None) -> str:

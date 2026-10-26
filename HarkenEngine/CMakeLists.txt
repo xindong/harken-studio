@@ -259,7 +259,7 @@ if(HARKEN_BUILD_RUNTIME_UNIT_TESTS)
     endif()
 endif()
 
-# Optional shared library for the C# binding (HarkenSDK): the native artifact the
+# Optional shared library for the C# binding (HarkenIntegration): the native artifact the
 # UPM package's Plugins/ ships and the managed ABI/zero-GC harness loads. Built
 # from the SAME runtime sources as the static harken_core — no render code is
 # duplicated or altered. The public API is extern "C", and on Windows the DLL

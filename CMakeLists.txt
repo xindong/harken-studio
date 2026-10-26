@@ -344,7 +344,7 @@ endif()
 # harken_buildinfo from the runtime side. Switchable so runtime-focused CI
 # can configure without Qt (the subtree hard-requires Qt6 at find_package).
 if(HARKEN_BUILD_EDITOR OR HARKEN_BUILD_HUB)
-    add_subdirectory(HarkenSDK/Tooling)
+    add_subdirectory(HarkenIntegration/Tooling)
 endif()
 
 if(HARKEN_BUILD_EDITOR)

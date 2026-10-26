@@ -27,12 +27,12 @@ def workflow_job(text: str, name: str) -> str:
 
 class UnitySdkContractTest(unittest.TestCase):
     def copy_sdk(self, directory: str) -> Path:
-        target = Path(directory) / "HarkenSDK"
-        shutil.copytree(REPOSITORY / "HarkenSDK", target)
+        target = Path(directory) / "HarkenIntegration"
+        shutil.copytree(REPOSITORY / "HarkenIntegration", target)
         return target / "Unity" / "Harken"
 
     def test_repository_source_contract_passes(self) -> None:
-        MODULE.verify(REPOSITORY / "HarkenSDK", False)
+        MODULE.verify(REPOSITORY / "HarkenIntegration", False)
 
     def test_unity_meta_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

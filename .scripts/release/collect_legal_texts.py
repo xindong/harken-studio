@@ -117,7 +117,7 @@ def verify(product: str, directory: Path) -> None:
 
 
 def verify_sdk(directory: Path) -> None:
-    source = REPO_ROOT / "HarkenSDK" / "Unity" / "Harken"
+    source = REPO_ROOT / "HarkenIntegration" / "Unity" / "Harken"
     verify_files(tuple((source / name, name) for name in ("LICENSE.md", "NOTICE.md")),
                  directory / "Unity" / "Harken")
 

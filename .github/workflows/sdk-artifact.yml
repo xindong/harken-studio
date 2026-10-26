@@ -59,7 +59,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .temp/package/HarkenSDK
-          tar -C HarkenSDK -cf - API_SURFACE.md Unity Tooling \
+          tar -C HarkenIntegration -cf - API_SURFACE.md Unity Tooling \
             | tar -C .temp/package/HarkenSDK -xf -
           runtime_root=".temp/runtime"
           unity_plugins=".temp/package/HarkenSDK/Unity/Harken/Runtime/Plugins"
@@ -107,7 +107,7 @@ jobs:
             --require-binaries
 
           cat > .temp/package/README-FIRST.txt <<EOF
-          Harken Unity SDK integration bundle
+          Harken Unity integration bundle
           Commit: ${GITHUB_SHA}
           Channel: ${HARKEN_BUILD_CHANNEL}
           Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
@@ -116,7 +116,7 @@ jobs:
           existing HarkenSDK directory. On a local Windows build from this repository:
           <your-checkout>\\build\\bin\\Release\\HarkenSDK
 
-          The HarkenSDK directory contains the shared Unity SDK package plus
+          The HarkenSDK directory contains the shared Unity integration package plus
           Windows x64, macOS universal (arm64 + x86_64), iOS device arm64,
           Linux x64, and Android arm64-v8a runtimes.
           EOF

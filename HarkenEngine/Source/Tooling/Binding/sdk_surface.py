@@ -321,7 +321,7 @@ def inventory(root: Path) -> dict[str, dict]:
         result[f"native:{name}"] = {"language": "native", "owner": name, "kind": "function",
                                    "native_public": fn.get("public", True),
                                    "file": "HarkenEngine/Source/Tooling/Remote/wire/harken_wire_table.json"}
-    sdk = root / "HarkenSDK/Unity/Harken"
+    sdk = root / "HarkenIntegration/Unity/Harken"
     assemblies = {}
     sources = []
     for folder in (sdk / "Runtime", sdk / "Editor"):

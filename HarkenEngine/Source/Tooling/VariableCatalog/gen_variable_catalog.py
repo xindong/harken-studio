@@ -5,7 +5,7 @@ Reads HarkenEngine/Source/Tooling/VariableCatalog/variable_catalog.json (the
 EncodeVariableContractArtifactJsonV1 shape) and emits:
 
   HarkenEngine/Source/Runtime/api/include/harken/generated/HarkenVariables.g.h
-  HarkenSDK/Unity/Harken/Runtime/Generated/HarkenVariables.g.cs
+  HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenVariables.g.cs
 
 The generated files are checked in so the ordinary build stays Python-free.
 
@@ -41,7 +41,7 @@ OUT_PATH = os.path.join(
 )
 CS_OUT_PATH = os.path.join(
     REPO_ROOT,
-    "HarkenSDK",
+    "HarkenIntegration",
     "Unity",
     "Harken",
     "Runtime",

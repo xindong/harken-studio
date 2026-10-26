@@ -21,7 +21,7 @@ SOURCE_ROOTS = (
     "HarkenEngine/Test/",
     "HarkenStudio/Test/",
     "HarkenHub/Test/",
-    "HarkenSDK/Test/",
+    "HarkenIntegration/Test/",
 )
 INCLUDE_SCAN_ROOTS = (
     "HarkenEngine/Source/",
@@ -30,7 +30,7 @@ INCLUDE_SCAN_ROOTS = (
     "HarkenEngine/Test/",
     "HarkenStudio/Test/",
     "HarkenHub/Test/",
-    "HarkenSDK/Test/",
+    "HarkenIntegration/Test/",
 )
 DISCOVERY_ROOTS = tuple(sorted(set(SOURCE_ROOTS + INCLUDE_SCAN_ROOTS)))
 DISCOVERY_EXCLUDED_PREFIXES = (

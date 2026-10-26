@@ -707,8 +707,8 @@ class ReleaseEvidenceTest(unittest.TestCase):
             self.assertEqual(item["sha256"], evidence.sha256(output.parent / item["path"]))
 
     def test_sdk_payload_version_must_match_the_source_checkout(self):
-        for root, version in ((self.repo, "2.3.4"), (self.payload, "2.3.5")):
-            plugin = root / "HarkenSDK/Unity/Harken"
+        for root, version in ((self.repo / "HarkenIntegration", "2.3.4"), (self.payload / "HarkenSDK", "2.3.5")):
+            plugin = root / "Unity/Harken"
             plugin.mkdir(parents=True)
             (plugin / "LICENSE.md").write_text("license\n", encoding="utf-8")
             (plugin / "NOTICE.md").write_text("notice\n", encoding="utf-8")
@@ -721,7 +721,7 @@ class ReleaseEvidenceTest(unittest.TestCase):
                 evidence.prepare_sdk(self.payload, self.root / "runtime", self.output)
 
     def test_sdk_retains_dirty_runtime_receipts_and_notices(self):
-        sdk_source = self.repo / "HarkenSDK"
+        sdk_source = self.repo / "HarkenIntegration"
         sdk = self.payload / "HarkenSDK"
         for root in (sdk_source, sdk):
             root.mkdir(parents=True)
