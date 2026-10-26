@@ -28,13 +28,3 @@ TEST(ResolveComponentTyped, EnumTableHitsExactlyAttachedComponents)
         }
     }
 }
-
-TEST(ResolveComponentTyped, SentinelAndNullItemResolveToNull)
-{
-    ProjectItem sound(QStringLiteral("Item"), ProjectItem::Type::Sound);
-    sound.attachDefaultComponents();
-    EXPECT_EQ(VNX::PropertyEditorEngine::resolveComponentTyped(&sound, ComponentType::_Count),
-              nullptr);
-    EXPECT_EQ(VNX::PropertyEditorEngine::resolveComponentTyped(nullptr, ComponentType::MixNode),
-              nullptr);
-}

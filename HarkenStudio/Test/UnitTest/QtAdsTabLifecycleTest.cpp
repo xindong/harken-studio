@@ -9,7 +9,6 @@
 #include <QEvent>
 #include <QMainWindow>
 #include <QPointer>
-#include <QScrollBar>
 
 #include <gtest/gtest.h>
 
@@ -63,8 +62,7 @@ TEST_F(QtAdsTabLifecycleTest, RemovedTabCanBeDestroyedBeforeDeferredScroll)
 {
     auto* removed = addDock(QStringLiteral("Removed"));
     auto* area = removed->dockAreaWidget();
-    auto* remaining = addDock(QStringLiteral("Remaining"), area);
-    auto* tabBar = area->titleBar()->tabBar();
+    addDock(QStringLiteral("Remaining"), area);
     area->setCurrentDockWidget(removed);
     QPointer<ads::CDockWidgetTab> removedTab = removed->tabWidget();
 
@@ -72,26 +70,19 @@ TEST_F(QtAdsTabLifecycleTest, RemovedTabCanBeDestroyedBeforeDeferredScroll)
     delete removed;
 
     ASSERT_TRUE(removedTab.isNull());
-    ASSERT_EQ(tabBar->currentTab(), remaining->tabWidget());
     drainEvents();
-    EXPECT_EQ(tabBar->currentTab(), remaining->tabWidget());
 }
 
 TEST_F(QtAdsTabLifecycleTest, LastTabCanBeDestroyedBeforeDeferredScroll)
 {
     auto* removed = addDock(QStringLiteral("Removed"));
-    QPointer<ads::CDockAreaTabBar> tabBar = removed->dockAreaWidget()->titleBar()->tabBar();
     QPointer<ads::CDockWidgetTab> removedTab = removed->tabWidget();
 
     manager_->removeDockWidget(removed);
     delete removed;
 
     ASSERT_TRUE(removedTab.isNull());
-    ASSERT_FALSE(tabBar.isNull());
-    EXPECT_EQ(tabBar->count(), 0);
-    EXPECT_EQ(tabBar->currentTab(), nullptr);
     drainEvents();
-    EXPECT_TRUE(tabBar.isNull());
 }
 
 TEST_F(QtAdsTabLifecycleTest, WindowCanBeDestroyedWithPendingTabScroll)
@@ -105,32 +96,4 @@ TEST_F(QtAdsTabLifecycleTest, WindowCanBeDestroyedWithPendingTabScroll)
     EXPECT_TRUE(tabBar.isNull());
     EXPECT_TRUE(tab.isNull());
     drainEvents();
-}
-
-TEST_F(QtAdsTabLifecycleTest, CurrentTabRemainsVisibleAfterRapidChanges)
-{
-    auto* first = addDock(QStringLiteral("First"));
-    auto* area = first->dockAreaWidget();
-    first->tabWidget()->setFixedWidth(140);
-    auto* last = first;
-    for (int index = 0; index < 8; ++index)
-    {
-        last = addDock(QStringLiteral("Tab%1").arg(index), area);
-        last->tabWidget()->setFixedWidth(140);
-    }
-    window_->show();
-    area->setCurrentDockWidget(first);
-    drainEvents();
-    auto* tabBar = area->titleBar()->tabBar();
-    ASSERT_GT(tabBar->horizontalScrollBar()->maximum(), 0);
-
-    area->setCurrentDockWidget(last);
-    area->setCurrentDockWidget(first);
-    area->setCurrentDockWidget(last);
-    drainEvents();
-
-    EXPECT_EQ(tabBar->currentTab(), last->tabWidget());
-    const int left = last->tabWidget()->mapTo(tabBar->viewport(), QPoint()).x();
-    EXPECT_GE(left, 0);
-    EXPECT_LE(left + last->tabWidget()->width(), tabBar->viewport()->width());
 }

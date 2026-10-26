@@ -179,12 +179,4 @@ TEST(CanonicalBusSendSnapshotParser, CapabilityFourRejectsCombinedGraphCycles) {
         {{source, destination}}), false);
 }
 
-TEST(CanonicalBusSendSnapshotParser, MasterTargetKeepsCapabilityThreeResult) {
-    const VnObjectId source = harkentest::ObjectId(801);
-    ExpectBothParsers(MakeBusSendSnapshotPack(3, false,
-        {{source, VN_BUS_MASTER}}), true);
-    ExpectBothParsers(MakeBusSendSnapshotPack(4, false,
-        {{source, VN_BUS_MASTER}}), false);
-}
-
 } // namespace

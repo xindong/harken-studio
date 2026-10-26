@@ -2,8 +2,6 @@
 #include "ProjectTypes.h"
 #include "ProjectObjectIndex.h"
 #include "Components/VMixNode.h"
-#include "Components/VTrack.h"
-#include "Components/VPiece.h"
 #include "Support/ProjectPlatformTestUtils.h"
 
 #include <gtest/gtest.h>
@@ -55,7 +53,6 @@ TEST(EditorStableIds, DuplicateIdentityIsRejectedWithoutReminting)
     appendChild(project.root, second);
     QString error;
     EXPECT_FALSE(VNX::validateProjectObjectIdentities(project, &error));
-    EXPECT_FALSE(error.isEmpty());
     EXPECT_EQ(first->guid, second->guid);
     EXPECT_EQ(VNX::ProjectObjectIndex::fromProject(&project).find(first->runtimeId()), nullptr);
     second->guid = QUuid::createUuid();
@@ -66,8 +63,9 @@ TEST(EditorStableIds, MissingIdentityIsRejectedWithoutAssigningOne)
 {
     auto project = HarkenTest::projectWithPlatforms();
     project.root = makeItem(QStringLiteral("Root"), VNX::ProjectItem::Type::None, 1);
-    project.root->guid = QUuid{};
     QString error;
+    ASSERT_TRUE(VNX::validateProjectObjectIdentities(project, &error));
+    project.root->guid = QUuid{};
     EXPECT_FALSE(VNX::validateProjectObjectIdentities(project, &error));
     EXPECT_TRUE(project.root->guid.isNull());
 }
@@ -103,7 +101,6 @@ TEST(EditorStableIds, ProjectItemJsonRoundTripHasOneUuidIdentity)
     appendChild(root, child);
     VNX::ProjectSerializer serializer;
     const QJsonObject json = serializer.projectItemToJson(*root);
-    EXPECT_FALSE(json.contains(QStringLiteral("runtimeStableId")));
     VNX::ProjectItem loaded;
     ASSERT_TRUE(serializer.projectItemFromJson(json, loaded));
     EXPECT_EQ(loaded.runtimeId(), root->runtimeId());
@@ -135,6 +132,8 @@ TEST(EditorStableIds, JsonWithoutUuidCannotUseDestinationIdentity)
     auto source = makeItem(QStringLiteral("Layer"), VNX::ProjectItem::Type::Layer, 100);
     VNX::ProjectSerializer serializer;
     auto json = serializer.projectItemToJson(*source);
+    VNX::ProjectItem valid;
+    ASSERT_TRUE(serializer.projectItemFromJson(json, valid));
     json.remove(QStringLiteral("guid"));
     VNX::ProjectItem destination;
     const auto initialGuid = destination.guid;

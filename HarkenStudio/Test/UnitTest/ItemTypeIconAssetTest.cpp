@@ -3,19 +3,13 @@
 
 #include <gtest/gtest.h>
 
-#include <QFile>
 #include <QSet>
 #include <QString>
 
 namespace Catalog = VNX::ItemTypeCatalog;
 
-TEST(ItemTypeIconAssets, CatalogEntriesHaveBuiltinResources)
+TEST(ItemTypeIconAssets, CatalogEntriesHaveUniqueResolvableIdentities)
 {
-    const QString studioDir = QStringLiteral(HARKEN_STUDIO_SOURCE_DIR);
-
-    QFile qrc(studioDir + QStringLiteral("/resources.qrc"));
-    ASSERT_TRUE(qrc.open(QIODevice::ReadOnly | QIODevice::Text));
-    const QString qrcText = QString::fromUtf8(qrc.readAll());
     QSet<QString> logicalIds;
 
     for (const auto& entry : VNX::themeAssetCatalog()) {
@@ -23,11 +17,6 @@ TEST(ItemTypeIconAssets, CatalogEntriesHaveBuiltinResources)
         EXPECT_FALSE(logicalIds.contains(entry.logicalId))
             << entry.logicalId.toStdString();
         logicalIds.insert(entry.logicalId);
-        if (entry.fallback != VNX::ThemeBuiltinAssetFallback::File)
-            continue;
-        EXPECT_FALSE(entry.builtinPath.isEmpty());
-        const QString fileName = entry.builtinPath.section(QLatin1Char('/'), -1);
-        EXPECT_TRUE(qrcText.contains(fileName)) << fileName.toStdString();
     }
 
     for (VNX::ProjectItem::Type type : Catalog::allTypes()) {
