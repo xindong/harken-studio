@@ -1,5 +1,8 @@
 #include "ActionStepUtils.h"
+#include "Components/VAction.h"
 #include "ItemTypeCatalog.h"
+
+#include <QStringList>
 
 #include <algorithm>
 #include <functional>
@@ -136,9 +139,48 @@ ActionTargetLookup makeProjectTargetLookup(const ProjectData& project)
 
 void ActionTargetLookup::add(const ProjectItem& item)
 {
+    if (const auto* previous = findByObjectID(item.objectID))
+        std::erase_if(byLeafName_[previous->name], [&](const auto& record) {
+            return record.objectID == item.objectID;
+        });
     const ActionTargetRecord record{item.objectID, item.type, item.name};
     byObjectID_.insert(record.objectID, record);
     byLeafName_[record.name].push_back(record);
+    if (item.type == ProjectItem::Type::Action) {
+        auto& steps = postActionSteps_[item.objectID];
+        steps.clear();
+        if (const auto* action = item.comp<VAction>())
+            for (const auto& step : action->steps)
+                if (step.type == VActionStep::Type::PostAction)
+                    steps.push_back(step);
+    }
+}
+
+void ActionTargetLookup::renameObject(uint32_t objectID, const QString& name)
+{
+    auto action = byObjectID_.find(objectID);
+    if (action == byObjectID_.end() || action->name == name) return;
+    const QString previousName = action->name;
+    const auto& previousTargets = findByLeafName(previousName);
+    const bool hasOtherAction = std::any_of(previousTargets.begin(), previousTargets.end(),
+        [&](const auto& target) {
+            return target.objectID != objectID && target.type == ProjectItem::Type::Action;
+        });
+    if (action->type == ProjectItem::Type::Action) {
+        for (auto steps = postActionSteps_.begin(); steps != postActionSteps_.end(); ++steps) {
+            if (steps.key() == objectID) continue;
+            for (auto& step : steps.value())
+                if ((step.targetObjectID == objectID
+                        || (step.targetObjectID == 0 && !hasOtherAction))
+                    && leafOf(step.targetName.trimmed()) == previousName)
+                    step.targetName = name;
+        }
+    }
+    std::erase_if(byLeafName_[previousName], [&](const auto& target) {
+        return target.objectID == objectID;
+    });
+    action->name = name;
+    byLeafName_[name].push_back(action.value());
 }
 
 const ActionTargetRecord* ActionTargetLookup::findByObjectID(uint32_t objectID) const
@@ -153,6 +195,13 @@ const std::vector<ActionTargetRecord>& ActionTargetLookup::findByLeafName(
     static const std::vector<ActionTargetRecord> empty;
     const auto it = byLeafName_.constFind(leafName);
     return it == byLeafName_.cend() ? empty : it.value();
+}
+
+const std::vector<VActionStep>& ActionTargetLookup::postActionSteps(uint32_t objectID) const
+{
+    static const std::vector<VActionStep> empty;
+    const auto it = postActionSteps_.constFind(objectID);
+    return it == postActionSteps_.cend() ? empty : it.value();
 }
 
 ActionStepTargetResolution resolveActionStepTarget(
@@ -208,6 +257,41 @@ ActionStepTargetResolution resolveActionStepTarget(
 
     res.state = ActionTargetState::Dangling;
     return res;
+}
+
+QString postActionCycleError(uint32_t currentActionObjectID,
+                              const std::vector<VActionStep>& replacementSteps,
+                              const ActionTargetLookup& lookup)
+{
+    QHash<uint32_t, int> states;
+    QStringList path;
+    QString error;
+    const auto visit = [&](uint32_t objectID, const auto& self) -> bool {
+        if (states.value(objectID) == 2) return true;
+        const auto* action = lookup.findByObjectID(objectID);
+        path.append(action ? action->name : QString::number(objectID));
+        if (states.value(objectID) == 1) {
+            error = QStringLiteral("PostAction dependency cycle: %1")
+                .arg(path.join(QStringLiteral(" -> ")));
+            return false;
+        }
+        states.insert(objectID, 1);
+        const auto& steps = objectID == currentActionObjectID
+            ? replacementSteps : lookup.postActionSteps(objectID);
+        for (const auto& step : steps) {
+            if (step.type != VActionStep::Type::PostAction) continue;
+            const auto target = resolveActionStepTarget(
+                step.type, step.targetObjectID, step.targetName, lookup);
+            if (target.state == ActionTargetState::Resolved
+                && !self(target.objectID, self))
+                return false;
+        }
+        states.insert(objectID, 2);
+        path.removeLast();
+        return true;
+    };
+    visit(currentActionObjectID, visit);
+    return error;
 }
 
 void applyActionStepTypeChange(VActionStep& step,

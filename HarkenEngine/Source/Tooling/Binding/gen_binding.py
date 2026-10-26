@@ -5,14 +5,14 @@ Reads the SAME single source of truth the remote wire layer is generated
 from — HarkenEngine/Source/Tooling/Remote/wire/harken_wire_table.json — and
 emits the C# P/Invoke projection plus its machine-verifiable ABI pins:
 
-  <repo>/HarkenSDK/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs
+  <repo>/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs
         blittable [StructLayout(Sequential)] mirrors of SDK structs,
         callback delegates, results, enums and constants.
-  <repo>/HarkenSDK/Unity/Harken/Runtime/Generated/HarkenNative.g.cs
+  <repo>/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenNative.g.cs
         internal [DllImport] declarations for the SDK projection,
         with the native library name baked per platform at compile time
         (HarkenCore on macOS/Android/desktop, __Internal on iOS).
-  <repo>/HarkenSDK/Unity/Harken/Runtime/Generated/HarkenAbi.g.cs
+  <repo>/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenAbi.g.cs
         the generated ABI-fidelity check: expected managed Marshal.SizeOf /
         Marshal.OffsetOf values (computed from the same MSVC-x64 layout model
         the wire layer uses) with a CheckLayout() that returns every mismatch.
@@ -56,7 +56,7 @@ WIRE_DIR = os.path.join(REPO_ROOT, "HarkenEngine", "Source", "Tooling", "Remote"
 TABLE_PATH = os.path.join(WIRE_DIR, "harken_wire_table.json")
 SDK_POLICY_PATH = os.path.join(SCRIPT_DIR, "sdk_api_surface.json")
 
-CS_GEN_DIR = os.path.join(REPO_ROOT, "HarkenSDK", "Unity", "Harken", "Runtime", "Generated")
+CS_GEN_DIR = os.path.join(REPO_ROOT, "HarkenIntegration", "Unity", "Harken", "Runtime", "Generated")
 CPP_GEN_DIR = os.path.join(SCRIPT_DIR, "generated")
 
 # Reuse the wire layer's MSVC-x64 layout model verbatim, so the C# ABI pins

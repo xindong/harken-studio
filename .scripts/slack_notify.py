@@ -24,7 +24,7 @@ SCOPE_PREFIXES = (
     ("HarkenStudio", "Studio"),
     ("HarkenHub", "Hub"),
     ("HarkenEngine", "Engine"),
-    ("HarkenSDK", "SDK"),
+    ("HarkenIntegration", "Integration"),
 )
 CJK_RE = re.compile(r"[一-鿿]")
 HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)

@@ -13,7 +13,7 @@ from script_loader import load_script_module
 SCRIPT = Path(__file__).resolve().parents[1] / "check_unity_sdk_contract.py"
 MODULE = load_script_module("check_unity_sdk_contract", SCRIPT)
 REPOSITORY = Path(__file__).resolve().parents[2]
-SDK_GATE = REPOSITORY / ".github/workflows/pr-gate-sdk.yml"
+SDK_GATE = REPOSITORY / ".github/workflows/pr-gate-integration.yml"
 
 
 def workflow_job(text: str, name: str) -> str:
@@ -27,12 +27,12 @@ def workflow_job(text: str, name: str) -> str:
 
 class UnitySdkContractTest(unittest.TestCase):
     def copy_sdk(self, directory: str) -> Path:
-        target = Path(directory) / "HarkenSDK"
-        shutil.copytree(REPOSITORY / "HarkenSDK", target)
+        target = Path(directory) / "HarkenIntegration"
+        shutil.copytree(REPOSITORY / "HarkenIntegration", target)
         return target / "Unity" / "Harken"
 
     def test_repository_source_contract_passes(self) -> None:
-        MODULE.verify(REPOSITORY / "HarkenSDK", False)
+        MODULE.verify(REPOSITORY / "HarkenIntegration", False)
 
     def test_unity_meta_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -188,7 +188,7 @@ class UnitySdkContractTest(unittest.TestCase):
 
     def test_self_hosted_job_rejects_external_pull_requests(self) -> None:
         job = workflow_job(
-            SDK_GATE.read_text(encoding="utf-8"), "sdk-windows"
+            SDK_GATE.read_text(encoding="utf-8"), "integration-windows"
         )
         self.assertIn("github.event_name != 'pull_request'", job)
         self.assertIn(

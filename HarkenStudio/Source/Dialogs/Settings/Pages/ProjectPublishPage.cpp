@@ -27,7 +27,7 @@ ProjectPublishPage::ProjectPublishPage(QWidget* parent)
     auto* body = makePageBody();
 
     auto* form = makeForm();
-    auto* dirLabel = new QLabel(tr("Export Directory:"));
+    auto* dirLabel = new QLabel(tr("Publish Directory:"));
 
     auto* rowWidget = new QWidget();
     auto* row = new QHBoxLayout(rowWidget);
@@ -184,8 +184,8 @@ bool ProjectPublishPage::validate()
     const auto project = projectLease_.lock();
     if (!project) return false;
     if (!PathUtils::isValidPackBuildOutputDir(packBuildOutputDirEdit_->text(), project->projectPath)) {
-        QMessageBox::warning(this, tr("Export Directory"),
-            tr("Choose a valid relative or absolute export directory. ") + PathUtils::packBuildOutputLocationError());
+        QMessageBox::warning(this, tr("Publish Directory"),
+            tr("Choose a valid relative or absolute publish directory. ") + PathUtils::packBuildOutputLocationError());
         return false;
     }
     if (!PathUtils::isValidWaveformBuildOutputDir(waveformOutputDirEdit_->text(), project->projectPath)) {
@@ -208,7 +208,7 @@ bool ProjectPublishPage::applyPackBuildOutputDir()
         ActionSource::GUI);
     if (!result.success)
     {
-        QMessageBox::warning(this, tr("Export Directory"), result.errorMessage);
+        QMessageBox::warning(this, tr("Publish Directory"), result.errorMessage);
         return false;
     }
     packBuildOutputDirEdit_->setText(pm.packBuildOutputDir());
@@ -294,7 +294,7 @@ void ProjectPublishPage::onPackBuildOutputDirBrowseClicked()
         : projectRoot;
 
     const QString dir = QFileDialog::getExistingDirectory(
-        this, tr("Select Export Directory"), startDir);
+        this, tr("Select Publish Directory"), startDir);
     if (dir.isEmpty())
         return;
 
@@ -302,8 +302,8 @@ void ProjectPublishPage::onPackBuildOutputDirBrowseClicked()
 
     if (!PathUtils::isValidPackBuildOutputDir(selectedPath, pm.currentProject()->projectPath))
     {
-        QMessageBox::warning(this, tr("Export Directory"),
-                             tr("Choose a valid relative or absolute export directory. ")
+        QMessageBox::warning(this, tr("Publish Directory"),
+                             tr("Choose a valid relative or absolute publish directory. ")
                                  + PathUtils::packBuildOutputLocationError());
         return;
     }

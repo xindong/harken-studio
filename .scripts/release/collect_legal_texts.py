@@ -117,7 +117,7 @@ def verify(product: str, directory: Path) -> None:
 
 
 def verify_sdk(directory: Path) -> None:
-    source = REPO_ROOT / "HarkenSDK" / "Unity" / "Harken"
+    source = REPO_ROOT / "HarkenIntegration" / "Unity" / "Harken"
     verify_files(tuple((source / name, name) for name in ("LICENSE.md", "NOTICE.md")),
                  directory / "Unity" / "Harken")
 
@@ -126,7 +126,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     target = parser.add_mutually_exclusive_group(required=True)
     target.add_argument("--product", choices=sorted(THIRD_PARTY_FILES))
-    target.add_argument("--sdk-root", help="Verify licenses in a staged Unity SDK bundle")
+    target.add_argument("--integration-root", "--sdk-root", dest="sdk_root",
+                        help="Verify licenses in a staged Unity Integration Package")
     parser.add_argument("--output")
     parser.add_argument("--qt-version", help="Version reported by the deployed Qt kit's qmake")
     parser.add_argument("--verify", action="store_true", help="Verify an existing Legal directory")
@@ -136,7 +137,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     if args.product and not args.verify and not args.qt_version:
         parser.error("assembling legal texts requires --qt-version")
     if args.sdk_root and (args.output or args.qt_version or args.verify):
-        parser.error("--sdk-root cannot be combined with desktop packaging options")
+        parser.error("--integration-root cannot be combined with desktop packaging options")
     return args
 
 

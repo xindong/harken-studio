@@ -117,7 +117,7 @@ class CollectLegalTextsTest(unittest.TestCase):
         destination = sdk / "Unity/Harken"
         destination.mkdir(parents=True)
         for name in ("LICENSE.md", "NOTICE.md"):
-            shutil.copyfile(REPO_ROOT / "HarkenSDK/Unity/Harken" / name, destination / name)
+            shutil.copyfile(REPO_ROOT / "HarkenIntegration/Unity/Harken" / name, destination / name)
         self.module.verify_sdk(sdk)
         for name in ("LICENSE.md", "NOTICE.md"):
             with self.subTest(name=name):

@@ -1319,9 +1319,9 @@ def parse_trace_contract(trace_header: str) -> dict[str, Any]:
 
 def generated_artifact_paths(repo_root: Path) -> list[Path]:
     relative = [
-        "HarkenSDK/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs",
-        "HarkenSDK/Unity/Harken/Runtime/Generated/HarkenNative.g.cs",
-        "HarkenSDK/Unity/Harken/Runtime/Generated/HarkenAbi.g.cs",
+        "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs",
+        "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenNative.g.cs",
+        "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenAbi.g.cs",
         "HarkenEngine/Source/Tooling/Binding/generated/"
         "harken_binding_abi_pin.g.h",
         "HarkenEngine/Tool/Remote/generated/harken_wire_ids.h",

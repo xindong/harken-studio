@@ -439,7 +439,8 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
                                      std::vector<PackBuildRecord>* outRecords)
 {
     if (!outputDir.isEmpty()
-        && PathUtils::isProjectObjectDirectory(outputDir, project.projectPath)) {
+        && PathUtils::isProtectedPackOutputPath(outputDir, project.projectPath)
+        && (options.selfCleaning || !PathUtils::isProjectRootDirectory(outputDir, project.projectPath))) {
         ExportResult failure;
         failure.error = PathUtils::packBuildOutputLocationError();
         return failure;
@@ -459,8 +460,7 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
                 return failure;
             }
             const QString root = PathUtils::packBuildOutputRoot(captured.projectPath, captured.packBuildOutputDir);
-            if (PathUtils::isProjectRootDirectory(root, captured.projectPath)
-                || PathUtils::isProjectObjectDirectory(root, captured.projectPath)) {
+            if (PathUtils::isProtectedPackOutputPath(root, captured.projectPath)) {
                 failure.error = PathUtils::packBuildOutputLocationError();
                 return failure;
             }
@@ -484,9 +484,11 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
                 return result;
             }
             const auto publication = FinalizePackExport(root, captured, {prepared.platform},
-                false, result.artifacts);
+                false, result.artifacts, prepared.cancelCheck);
             result.success = publication.success;
+            result.canceled = publication.canceled;
             result.error = publication.error;
+            result.warnings.append(publication.warnings);
             return result;
         }
         return ExportAllPacks(prepared.snapshot->project, outputDir, prepared, outRecords);
@@ -519,6 +521,7 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
             if (found == unitProgress.end()) return;
             if (found->second.stage == PackGenerationStage::Failed
                 || found->second.stage == PackGenerationStage::Canceled
+                || found->second.stage == PackGenerationStage::Skipped
                 || found->second.stage == PackGenerationStage::Complete)
                 return;
             found->second = progress;
@@ -530,6 +533,7 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
         for (auto& [key, progress] : unitProgress) {
             if (progress.stage == PackGenerationStage::Failed
                 || progress.stage == PackGenerationStage::Canceled
+                || progress.stage == PackGenerationStage::Skipped
                 || progress.stage == PackGenerationStage::Complete)
                 continue;
             progress.stage = result.success ? PackGenerationStage::Complete
@@ -572,7 +576,7 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
     }
     if (!options.updateSelectedOnly) {
         const ValidationResult readiness =
-            ValidatePackBuildReadiness(project, outputDir, &options.snapshot->media);
+            ValidatePackBuildReadiness(project, outputDir);
         if (readiness.errorCount > 0) {
             QStringList errors;
             for (const ValidationIssue& issue : readiness.issues)
@@ -668,19 +672,21 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
             : QStringLiteral("a:") + objectIdString(*empty);
         if (effectiveOpts.progressCallback)
             effectiveOpts.progressCallback({effectiveOpts.platform, unit.variant.language,
-                unitKey, 0, PackGenerationStage::Failed});
+                unitKey, 100, PackGenerationStage::Skipped});
         if (!outRecords) continue;
+        const QString warning = unit.grouped
+            ? QStringLiteral("Pack group has no Actions with steps; nothing to pack")
+            : QStringLiteral("Action has no steps; nothing to pack");
         outRecords->push_back({
             unit.name, unit.grouped ? 0 : actionsByStableId.at(*empty)->objectID,
-            unit.grouped ? PackBuildRecord::Source::Group : PackBuildRecord::Source::Action, false,
+            unit.grouped ? PackBuildRecord::Source::Group : PackBuildRecord::Source::Action, true,
             dir.filePath(PackBuildPlanning::packFileName(
                 unit.variant.language, unit.name, packExt)),
-            unit.grouped ? QStringLiteral("Pack group has no Actions with steps; nothing to pack")
-                         : QStringLiteral("Action has no steps; nothing to pack"), 0,
-            effectiveOpts.platform, {}, -1, unit.variant.language,
+            {}, 0,
+            effectiveOpts.platform, {warning}, -1, unit.variant.language,
             unit.platformDefinition.name, unit.platformDefinition.basePlatform,
             unit.platformDefinition.toJson(), false,
-            unitKey});
+            unitKey, true});
     }
     if (!emptyActionIds.empty())
         result.warnings.append(
@@ -708,7 +714,7 @@ ProjectPackExporter::ExportInitPack(const ProjectData& project,
                                      const QString& outputPath,
                                      const ExportOptions& options)
 {
-    if (PathUtils::isProjectObjectDirectory(outputPath, project.projectPath)) {
+    if (PathUtils::isProtectedPackOutputPath(outputPath, project.projectPath)) {
         ExportResult failure;
         failure.error = PathUtils::packBuildOutputLocationError();
         return failure;
@@ -762,7 +768,7 @@ ProjectPackExporter::ExportActionPack(const ProjectData& project,
                                       const std::set<uint32_t>* sharedMediaIds,
                                       const std::set<uint32_t>* sharedObjectIds)
 {
-    if (PathUtils::isProjectObjectDirectory(outputPath, project.projectPath)) {
+    if (PathUtils::isProtectedPackOutputPath(outputPath, project.projectPath)) {
         ExportResult failure;
         failure.error = PathUtils::packBuildOutputLocationError();
         return failure;
@@ -935,8 +941,10 @@ ProjectPackExporter::exportSingleActionPack(
                       sharedMediaIds))
     {
         ApplyMediaCollectionStats(result, mediaStats);
-        result.error = QStringLiteral("Action pack export failed for '%1': %2")
-                           .arg(action.name, result.error);
+        result.canceled = result.error == QStringLiteral("Export canceled");
+        if (!result.canceled)
+            result.error = QStringLiteral("Action pack export failed for '%1': %2")
+                               .arg(action.name, result.error);
         return result;
     }
     ApplyMediaCollectionStats(result, mediaStats);
@@ -970,7 +978,7 @@ ProjectPackExporter::ExportSharedPack(const ProjectData& project,
                                       const std::set<uint32_t>& sharedMedia,
                                       const std::set<uint32_t>& sharedObjects)
 {
-    if (PathUtils::isProjectObjectDirectory(outputPath, project.projectPath)) {
+    if (PathUtils::isProtectedPackOutputPath(outputPath, project.projectPath)) {
         ExportResult failure;
         failure.error = PathUtils::packBuildOutputLocationError();
         return failure;
@@ -1032,6 +1040,7 @@ ProjectPackExporter::ExportSharedPack(const ProjectData& project,
                       options, &mediaStats, &result.error))
     {
         ApplyMediaCollectionStats(result, mediaStats);
+        result.canceled = result.error == QStringLiteral("Export canceled");
         return result;
     }
     ApplyMediaCollectionStats(result, mediaStats);
@@ -1453,6 +1462,12 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
                                          const ActionClosurePlan* closure,
                                          const std::set<uint32_t>* excludedClosureMediaIds)
 {
+    const auto canceled = [&] {
+        if (!options.cancelCheck || !options.cancelCheck()) return false;
+        if (errorOut) *errorOut = QStringLiteral("Export canceled");
+        return true;
+    };
+    if (canceled()) return false;
     QString projectDir = QFileInfo(project.projectPath).absolutePath();
     QString AudioSourcesDir = PathUtils::getAudioSourcesDir(projectDir);
     const ProjectPlatformId platform = QUuid::fromString(options.platform);
@@ -1474,6 +1489,7 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
         auto inputs = closure->media;
         inputs.insert(inputs.end(), closure->controlMedia.begin(), closure->controlMedia.end());
         for (const ActionClosureMedia& media : inputs) {
+            if (canceled()) return false;
             if (processedSounds.count(media.soundStableId) != 0) continue;
             const auto matchesSound = [&](const auto& candidate) {
                 return candidate.soundStableId == media.soundStableId;
@@ -1512,6 +1528,7 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
             auto artifact = SoundSourceDerivative::materialize(
                 conversion->asset.absolutePath, authoredSource,
                 sound->scheduleOffsetSec, platform, derivativeDir, conversion->settings, &derivativeError);
+            if (canceled()) return false;
             if (!conversion->sourceMatches()) {
                 if (errorOut) *errorOut = QStringLiteral("Source file changed during Sound conversion");
                 return false;
@@ -1522,6 +1539,7 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
                 artifact = SoundSourceDerivative::materialize(
                     conversion->asset.absolutePath, authoredSource,
                     sound->scheduleOffsetSec, platform, derivativeDir, ConversionSettings{}, &derivativeError);
+                if (canceled()) return false;
                 fallback = artifact.has_value();
             }
             if (!artifact || !conversion->sourceMatches()) {
@@ -1591,6 +1609,7 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
 
     for (uint32_t sourceID : requiredMedia)
     {
+        if (canceled()) return false;
         if (processedMedia.count(sourceID)) continue;
         processedMedia.insert(sourceID);
         const auto sounds = stableSoundsForSource(sourceID);
@@ -1628,6 +1647,7 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
 
         if (assetInfo) {
             const ConversionResult conversion = converter.convert(sourceID, platform);
+            if (canceled()) return false;
             if (conversion.success) {
                 packInputPath = conversion.absolutePath;
                 loopInfo = conversion.cacheEntry.loopInfo;
@@ -1670,6 +1690,7 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
         }
 
         for (const auto& soundId : sounds) {
+            if (canceled()) return false;
             Bridge::PackMediaDesc desc;
             desc.sourceId = soundId;
             desc.authoringSourceId = sourceID;
@@ -1959,19 +1980,16 @@ ProjectPackExporter::ValidateBeforeBuild(const ProjectData& project)
 
 ProjectPackExporter::ValidationResult
 ProjectPackExporter::ValidatePackBuildReadiness(const ProjectData& project,
-                                                const QString& outputDir,
-                                                const MediaBuildSnapshot* media)
+                                                const QString& outputDir)
 {
-    if (PathUtils::isProjectObjectDirectory(outputDir, project.projectPath)) {
+    if (PathUtils::isProtectedPackOutputPath(outputDir, project.projectPath)
+        && !PathUtils::isProjectRootDirectory(outputDir, project.projectPath)) {
         ValidationResult result;
         result.issues.push_back({ValidationIssue::Error, PathUtils::packBuildOutputLocationError(), 0});
         result.errorCount = 1;
         result.valid = false;
         return result;
     }
-    const auto captured = media ? MediaBuildSnapshot{} : AssetRegistry::instance().buildSnapshot(
-        QFileInfo(project.projectPath).absolutePath(), project.platforms);
-    if (!media) media = &captured;
     ValidationResult result;
     QString referenceError;
     if (!validatePlaybackReferences(project, &referenceError)) {
@@ -2074,43 +2092,6 @@ ProjectPackExporter::ValidatePackBuildReadiness(const ProjectData& project,
                     evt->objectID});
                 ++result.warningCount;
             }
-        }
-    }
-
-    {
-        const QString projectDir = QFileInfo(project.projectPath).absolutePath();
-        const QString audioSourcesDir = PathUtils::getAudioSourcesDir(projectDir);
-        for (const auto* binding : project.allFileBindings()) {
-            if (!binding || !binding->rootItem) continue;
-            std::function<void(const ProjectItem*)> checkMedia =
-                [&](const ProjectItem* item) {
-                    if (!item) return;
-                    if (ItemTypeCatalog::isContentObject(item->type)) {
-                        if (item->type != ProjectItem::Type::Sound) {
-                            for (const auto& child : item->children)
-                                checkMedia(child.get());
-                            return;
-                        }
-                        const uint32_t sourceId = SoundSourceEditing::activeSourceId(
-                            *item, ProjectPlatformId{}, {});
-                        if (sourceId != 0) {
-                            const QString path = ResolveAudioFilePath(
-                                project, sourceId, audioSourcesDir, media);
-                            if (path.isEmpty() || !QFileInfo::exists(path)) {
-                                result.issues.push_back({ValidationIssue::Error,
-                                    QStringLiteral("Media file missing for Sound '%1' (sourceID=0x%2)")
-                                        .arg(item->name)
-                                        .arg(sourceId, 8, 16, QChar('0')),
-                                    item->objectID});
-                                ++result.errorCount;
-                                result.valid = false;
-                            }
-                        }
-                    }
-                    for (const auto& child : item->children)
-                        checkMedia(child.get());
-                };
-            checkMedia(binding->rootItem.get());
         }
     }
 

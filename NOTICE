@@ -8,7 +8,7 @@ in the root `USER_TERMS.md` and `USER_TERMS.zh-CN.md`; the Studio Open-Source
 Release Notice is maintained in the root `OPEN_SOURCE_RELEASE_NOTICE.txt` and
 `OPEN_SOURCE_RELEASE_NOTICE.zh-CN.txt`. Desktop releases include these documents
 under `Legal/`. The supplied documents use the Harken product names and
-September 30, 2026 dates. They do not replace this
+October 28, 2026 dates. They do not replace this
 NOTICE or restrict rights granted by applicable open-source licenses.
 
 # Third-Party Notices
@@ -16,7 +16,7 @@ NOTICE or restrict rights granted by applicable open-source licenses.
 Harken itself is released under the Apache License 2.0 (see the root `LICENSE`
 file). This file and the Qt component inventory referenced below list the
 third-party dependencies, per the repository
-dependency policy (permissive-only for the runtime/SDK closure; the Studio
+dependency policy (permissive-only for the runtime/integration closure; the Studio
 front end additionally admits weak-copyleft libraries under the conditions
 recorded in `.docs/quality/DEPENDENCY_POLICY.md`).
 
@@ -42,7 +42,7 @@ recorded in `.docs/quality/DEPENDENCY_POLICY.md`).
 | LMDB | 0.9.33 | OpenLDAP Public License 2.8 (permissive, non-copyleft) | Persistent search-index backend (optional, `HARKEN_DISABLE_LMDB` falls back to memory) | Vendored at `HarkenStudio/ThirdParty/lmdb` |
 | dr_wav (dr_libs) | 0.14.4 | Public domain / MIT-0 (dual, user's choice) | Editor-side WAV read/write in the asset pipeline, the VST3 offline processor, and the runtime bridge's private preview/pack-source decode, independent of the runtime decoder | Vendored at `HarkenStudio/ThirdParty/dr_wav` (single header; dual license text embedded at end of `dr_wav.h`) |
 
-## Harken Studio Hub only (`HarkenHub/` subtree, never in the runtime closure)
+## Harken Hub only (`HarkenHub/` subtree, never in the runtime closure)
 
 | Name | Version | License | Use | How obtained |
 |---|---|---|---|---|
@@ -86,8 +86,8 @@ complete corresponding source accessible to binary recipients.
   producing Studio ZIPs and Hub installers; a Qt version change requires
   reviewing and updating the Qt attribution files.
 
-- **The standalone Unity SDK** carries Apache-2.0 `LICENSE.md` and an SDK-specific
-  `NOTICE.md` inside `HarkenSDK/Unity/Harken`, including the chosen MIT-0 terms
+- **The standalone Unity integration** carries Apache-2.0 `LICENSE.md` and an integration-specific
+  `NOTICE.md` inside `HarkenIntegration/Unity/Harken`, including the chosen MIT-0 terms
   for miniaudio.
 
 - **miniaudio** is vendored, so its full license text travels with the source:
@@ -110,7 +110,7 @@ complete corresponding source accessible to binary recipients.
 
 Android Runtime builds link the Android NDK's libc++ and libc++abi statically.
 The release evidence records the actual NDK revision and preserves its NOTICE
-and NOTICE.toolchain in each SDK plugin's Legal directory. The NDK notices
+and NOTICE.toolchain in each integration plugin's Legal directory. The NDK notices
 contain the applicable LLVM, libc++, libc++abi and other toolchain terms;
 these materials must accompany redistribution of the Android Runtime.
 

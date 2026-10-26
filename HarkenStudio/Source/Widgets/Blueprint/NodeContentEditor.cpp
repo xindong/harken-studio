@@ -13,6 +13,8 @@
 #include "Widgets/Common/ValueSegmentedControl.h"
 
 #include <QEvent>
+#include <QDataStream>
+#include <QPainter>
 #include <QApplication>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -169,9 +171,9 @@ NodeContentEditor::NodeContentEditor(const NodeContentInfo& info, NodeContentFie
                 });
         } else {
             row->slider = new ParameterControlHost(row->property.label,
-                ParameterPresenterContext::InspectorFloat, this);
+                ParameterPresenterContext::InspectorFloat,
+                ParameterPresenterId::HorizontalSlider, this);
             row->slider->setObjectName(QStringLiteral("nodeSlider_") + row->property.field);
-            row->slider->setPresenterOverride(ParameterPresenterId::HorizontalSlider);
             row->slider->setFixedWidth(kSliderWidth);
             row->binding = row->slider->binding();
             row->binding->setRange(row->property.min.toDouble(), row->property.max.toDouble());
@@ -226,7 +228,9 @@ NodeContentEditor::NodeContentEditor(const NodeContentInfo& info, NodeContentFie
     grid->setColumnMinimumWidth(1, kSliderWidth);
     setValues(info);
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
-        this, &NodeContentEditor::updateMetrics);
+        this, &NodeContentEditor::refreshFonts);
+    connect(&FontManager::instance(), &FontManager::fontChanged,
+        this, &NodeContentEditor::refreshFonts);
     connect(qApp, &QApplication::focusChanged, this, [this](QWidget*, QWidget* focused) {
         if (focused && focused != this && !isAncestorOf(focused) && isEditing())
             finishEditing(true);
@@ -235,6 +239,58 @@ NodeContentEditor::NodeContentEditor(const NodeContentInfo& info, NodeContentFie
 }
 
 NodeContentEditor::~NodeContentEditor() = default;
+
+void NodeContentEditor::setLabelWidth(int width)
+{
+    labelColumnWidth_ = width;
+    refreshFonts();
+}
+
+NodeContentPresentation NodeContentEditor::presentation()
+{
+    ensurePolished();
+    layout()->activate();
+    NodeContentPresentation result;
+    result.size = size();
+    QPainter painter(&result.drawing);
+    render(&painter, QPoint(), QRegion(), QWidget::DrawChildren);
+    painter.end();
+    for (const auto& row : rows_) {
+        if (!fields_.testFlag(row->field)) continue;
+        QRect band = row->label->geometry().united(row->valueStack->geometry());
+        if (row->slider) band = band.united(row->slider->geometry());
+        result.fields.emplace_back(row->field, QRect(0, band.top(), width(), band.height()));
+    }
+    return result;
+}
+
+NodeContentPresentation NodeContentRenderer::presentation(const NodeContentInfo& info,
+    NodeContentFields fields, int labelWidth, bool routeGain)
+{
+    QByteArray key;
+    QDataStream stream(&key, QIODevice::WriteOnly);
+    stream << info.fields().toInt() << fields.toInt() << labelWidth << routeGain
+        << info.volume.value_or(0) << info.pitch.value_or(0) << info.outputVolume.value_or(0)
+        << info.offsetOfStart.value_or(0) << info.loopCount.value_or(0) << info.sendVolume.value_or(0);
+    if (const auto* cached = cache_.object(key)) return *cached;
+    auto& editor = editors_[{info.fields().toInt(), fields.toInt(), labelWidth, routeGain}];
+    if (!editor) {
+        editor = std::make_unique<NodeContentEditor>(info, fields, labelWidth, &host_);
+        editor->setRouteGainMode(routeGain);
+        editor->hide();
+    } else {
+        editor->setValues(info);
+    }
+    auto result = editor->presentation();
+    cache_.insert(key, new NodeContentPresentation(result));
+    return result;
+}
+
+void NodeContentRenderer::clear()
+{
+    cache_.clear();
+    editors_.clear();
+}
 
 int NodeContentEditor::labelWidth(NodeContentFields fields)
 {
@@ -460,6 +516,27 @@ void NodeContentEditor::updateMetrics()
         resize(contentSize);
         emit contentSizeChanged();
     }
+}
+
+void NodeContentEditor::refreshFonts()
+{
+    const auto styledFont = [](const QFont& font, const QString& role) {
+        QLabel label;
+        label.setProperty("nodeContentRole", role);
+        label.setFont(font);
+        label.ensurePolished();
+        return label.font();
+    };
+    const auto labelFont = styledFont(FontManager::instance().getFont(FontRole::Label, 9),
+        QStringLiteral("label"));
+    const auto valueFont = styledFont(FontManager::instance().getFont(FontRole::Label, 9, QFont::DemiBold),
+        QStringLiteral("value"));
+    for (const auto& row : rows_) {
+        row->label->setFont(labelFont);
+        row->value->setFont(valueFont);
+        if (row->editor) row->editor->setFont(valueFont);
+    }
+    updateMetrics();
 }
 
 bool NodeContentEditor::isEditing() const

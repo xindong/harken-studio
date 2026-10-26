@@ -1,7 +1,7 @@
 name: Studio Artifact
 
 # Builds the Harken Studio packages: Windows x64 and macOS (x64 + arm64).
-# Builds the SDK bundle first via sdk-artifact.yml, then embeds the Unity SDK
+# Builds the Integration bundle first via integration-artifact.yml, then embeds the Unity Integration
 # into every Studio package. Called by release-artifacts.yml.
 on:
   workflow_call:
@@ -57,19 +57,19 @@ jobs:
         if: always() && hashFiles('.temp/studio-schema-release/audit.md') != ''
         run: cat .temp/studio-schema-release/audit.md >> "$GITHUB_STEP_SUMMARY"
 
-  sdk:
-    name: harken-sdk-bundle
+  integration:
+    name: harken-integration-bundle
     permissions:
       contents: read
       actions: write
-    uses: ./.github/workflows/sdk-artifact.yml
+    uses: ./.github/workflows/integration-artifact.yml
     with:
-      artifact-name: harken-sdk-bundle
+      artifact-name: harken-integration-bundle
       build-channel: ${{ inputs.build-channel }}
 
   studio-windows:
     name: harkenstudio-windows-x64
-    needs: [schema-release, sdk]
+    needs: [schema-release, integration]
     runs-on: windows-2022
     timeout-minutes: 90
 
@@ -129,20 +129,20 @@ jobs:
             cmake --build build --config Release --target "$target" --parallel
           done
 
-      - name: Download SDK bundle
+      - name: Download Integration bundle
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: harken-sdk-bundle
-          path: .temp/sdk-bundle
+          name: harken-integration-bundle
+          path: .temp/integration-bundle
 
-      - name: Install complete SDK bundle
+      - name: Install complete Integration bundle
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf build/bin/Release/HarkenSDK
-          cp -R .temp/sdk-bundle/HarkenSDK build/bin/Release/HarkenSDK
+          rm -rf build/bin/Release/HarkenIntegration build/bin/Release/HarkenSDK
+          python .scripts/release/integration_layout.py --source .temp/integration-bundle/HarkenIntegration --destination build/bin/Release
           python .scripts/check_sdk_version.py
-          find build/bin/Release/HarkenSDK -type f -print
+          find build/bin/Release/HarkenIntegration -type f -print
 
       - name: Stage legal attribution texts
         shell: bash
@@ -158,18 +158,18 @@ jobs:
         run: |
           set -euo pipefail
           status=0
-          for required in HarkenStudio.exe packc.exe qt.conf HarkenSDK HarkenSDK/Unity/Harken Legal/NOTICE.txt; do
+          for required in HarkenStudio.exe packc.exe qt.conf HarkenIntegration HarkenIntegration/Unity/Harken Legal/NOTICE.txt; do
             if [ ! -e "build/bin/Release/$required" ]; then
               echo "::error::missing deployed content: build/bin/Release/$required"
               status=1
             fi
           done
           for runtime in \
-            HarkenSDK/Unity/Harken/Runtime/Plugins/x86_64/HarkenCore.dll \
-            HarkenSDK/Unity/Harken/Runtime/Plugins/x86_64/libHarkenCore.so \
-            HarkenSDK/Unity/Harken/Runtime/Plugins/macOS/libHarkenCore.dylib \
-            HarkenSDK/Unity/Harken/Runtime/Plugins/iOS/libHarkenCore.a \
-            HarkenSDK/Unity/Harken/Runtime/Plugins/Android/arm64-v8a/libHarkenCore.so; do
+            HarkenIntegration/Unity/Harken/Runtime/Plugins/x86_64/HarkenCore.dll \
+            HarkenIntegration/Unity/Harken/Runtime/Plugins/x86_64/libHarkenCore.so \
+            HarkenIntegration/Unity/Harken/Runtime/Plugins/macOS/libHarkenCore.dylib \
+            HarkenIntegration/Unity/Harken/Runtime/Plugins/iOS/libHarkenCore.a \
+            HarkenIntegration/Unity/Harken/Runtime/Plugins/Android/arm64-v8a/libHarkenCore.so; do
             if [ ! -s "build/bin/Release/$runtime" ]; then
               echo "::error::missing or empty Unity runtime: build/bin/Release/$runtime"
               status=1
@@ -213,7 +213,7 @@ jobs:
 
   studio-macos:
     name: harkenstudio-macos-${{ matrix.slug }}
-    needs: [schema-release, sdk]
+    needs: [schema-release, integration]
     strategy:
       fail-fast: false
       matrix:
@@ -372,20 +372,20 @@ jobs:
       - name: Build HarkenEditor
         run: cmake --build build --config Release --target harken_editor --parallel
 
-      - name: Download SDK bundle
+      - name: Download Integration bundle
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: harken-sdk-bundle
-          path: .temp/sdk-bundle
+          name: harken-integration-bundle
+          path: .temp/integration-bundle
 
-      - name: Install complete SDK bundle
+      - name: Install complete Integration bundle
         shell: bash
         run: |
           set -euo pipefail
           root="build/bin/Release/HarkenStudio.app/Contents/MacOS"
-          rm -rf "$root/HarkenSDK"
-          cp -R .temp/sdk-bundle/HarkenSDK "$root/HarkenSDK"
-          find "$root/HarkenSDK" -type f -print
+          rm -rf "$root/HarkenIntegration" "$root/HarkenSDK"
+          python3 .scripts/release/integration_layout.py --source .temp/integration-bundle/HarkenIntegration --destination "$root"
+          find "$root/HarkenIntegration" -type f -print
 
       - name: Stage legal attribution texts
         shell: bash
@@ -425,8 +425,8 @@ jobs:
           fi
           for required in \
             "$bundle/Contents/MacOS/packc" \
-            "$bundle/Contents/MacOS/HarkenSDK" \
-            "$bundle/Contents/MacOS/HarkenSDK/Unity/Harken" \
+            "$bundle/Contents/MacOS/HarkenIntegration" \
+            "$bundle/Contents/MacOS/HarkenIntegration/Unity/Harken" \
             "$bundle/Contents/Resources/HarkenStudio.icns" \
             "$bundle/Contents/Resources/Legal/NOTICE.txt" \
             "$bundle/Contents/Frameworks" \
@@ -437,7 +437,7 @@ jobs:
               status=1
             fi
           done
-          sdk_plugins="$bundle/Contents/MacOS/HarkenSDK/Unity/Harken/Runtime/Plugins"
+          sdk_plugins="$bundle/Contents/MacOS/HarkenIntegration/Unity/Harken/Runtime/Plugins"
           for runtime in \
             "$sdk_plugins/x86_64/HarkenCore.dll" \
             "$sdk_plugins/x86_64/libHarkenCore.so" \
@@ -469,7 +469,8 @@ jobs:
           python3 .scripts/release/collect_legal_texts.py --product studio --verify \
             --output build/bin/Release/HarkenStudio.app/Contents/Resources/Legal
           python3 .scripts/release/collect_legal_texts.py \
-            --sdk-root build/bin/Release/HarkenStudio.app/Contents/MacOS/HarkenSDK
+            --integration-root build/bin/Release/HarkenStudio.app/Contents/MacOS/HarkenIntegration
+          python3 .scripts/release/integration_layout.py --destination build/bin/Release/HarkenStudio.app/Contents/MacOS
           mkdir -p .temp/release
           ditto -c -k --keepParent build/bin/Release/HarkenStudio.app \
             ".temp/release/HarkenStudio-macos-${{ matrix.slug }}.zip"

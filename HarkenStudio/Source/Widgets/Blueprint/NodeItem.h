@@ -11,6 +11,7 @@
 
 #include "../Common/WaveformRenderer.h"
 #include "NodeContentInfo.h"
+#include "NodeContentEditor.h"
 #include "Core/AssetPipeline/WaveformCache.h"
 #include "Core/ProjectTypes.h"
 #include "Widgets/Shared/InlineRenameEdit.h"
@@ -169,6 +170,12 @@ public:
     const NodeContentInfo& contentInfo() const { return contentInfo_; }
     void setContentWidget(QWidget* widget);
     QWidget* contentWidget() const;
+    QGraphicsProxyWidget* contentProxy() const { return contentProxy_; }
+    void setContentFactory(std::function<QWidget*()> factory,
+                           std::function<NodeContentPresentation()> presentation);
+    QWidget* ensureContentWidget();
+    bool releaseContentWidget();
+    void refreshContentPresentation();
 
     void setContentFields(NodeContentFields fields);
     NodeContentFields contentFields() const { return contentFields_; }
@@ -238,6 +245,9 @@ private:
     NodeContentInfo contentInfo_;
     NodeContentFields contentFields_ = kAllNodeContentFields;
     QGraphicsProxyWidget* contentProxy_ = nullptr;
+    std::function<QWidget*()> contentFactory_;
+    std::function<NodeContentPresentation()> contentPresentationFactory_;
+    std::optional<NodeContentPresentation> contentPresentation_;
 
     std::vector<float> waveformPeaks_;
 

@@ -688,7 +688,7 @@ def verify_release_readers(current_binary: Path, baseline_readers: dict[str, Pat
                 "schemaSnapshotHash": old_report["schemaSnapshotHash"],
                 "checks": ["new-reads-old", "old-edits-new", "new-reopens-preserved-content"]})
     platform = "macOS" if sys.platform == "darwin" else "x86_64"
-    native_directory = current_binary.parent / "HarkenSDK/Unity/Harken/Runtime/Plugins" / platform
+    native_directory = current_binary.parent / "HarkenIntegration/Unity/Harken/Runtime/Plugins" / platform
     native_name = "HarkenCore.dll" if os.name == "nt" else "libHarkenCore.dylib" if sys.platform == "darwin" else "libHarkenCore.so"
     if not (native_directory / native_name).is_file():
         native_directory = current_binary.parent

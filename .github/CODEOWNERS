@@ -10,7 +10,7 @@
 /.scripts/ @liuxin2-sys @Probus-XD
 /HarkenEngine/ @zqm-web
 /HarkenHub/ @liuxin2-sys
-/HarkenSDK/ @zqm-web
+/HarkenIntegration/ @zqm-web
 /HarkenStudio/ @Probus-XD
 /HarkenSchema/ @Probus-XD @liuxin2-sys
 /README* @Probus-XD
@@ -18,4 +18,4 @@
 /NOTICE @liuxin2-sys
 /VERSION @liuxin2-sys
 /HarkenHub/VERSION @liuxin2-sys
-/HarkenSDK/Unity/Harken/package.json @liuxin2-sys
+/HarkenIntegration/Unity/Harken/package.json @liuxin2-sys

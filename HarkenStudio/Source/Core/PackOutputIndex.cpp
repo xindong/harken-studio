@@ -12,7 +12,8 @@ namespace VNX {
 namespace {
 
 bool validOutput(const QString& baseDir, const ProjectPlatform& platform, QString* error,
-                 const QVector<PackArtifactMetadata>& artifacts)
+                 const QVector<PackArtifactMetadata>& artifacts,
+                 const std::function<bool()>& cancelCheck)
 {
     const QDir dir(ProjectPackExporter::platformOutputDir(baseDir, platform));
     if (QFileInfo(dir.path()).isSymLink()
@@ -29,7 +30,7 @@ bool validOutput(const QString& baseDir, const ProjectPlatform& platform, QStrin
         return false;
     }
     return ReadPackPublication(dir.path(), {}, ProjectPlatformSemantics::idString(platform.id),
-        &packs, &managedFiles, error, true, expectedPaths);
+        &packs, &managedFiles, error, true, expectedPaths, false, cancelCheck);
 }
 
 bool preserveDirectorySpelling(const QString& baseDir, const ProjectPlatform& platform)
@@ -70,11 +71,16 @@ std::shared_ptr<QLockFile> ProjectPackExporter::LockPackOutputRoot(const QString
 
 bool ProjectPackExporter::ValidatePackOutputs(const QString& baseDir,
                                               const QVector<ProjectPlatform>& platforms, QString* error,
-                                              const QVector<PackArtifactMetadata>& artifacts)
+                                              const QVector<PackArtifactMetadata>& artifacts,
+                                              const std::function<bool()>& cancelCheck)
 {
     if (baseDir.isEmpty() || !ProjectPlatformSemantics::validatePlatforms(platforms, error)) return false;
     for (const auto& platform : platforms) {
-        if (!validOutput(baseDir, platform, error, artifacts) || !preserveDirectorySpelling(baseDir, platform)) {
+        if (cancelCheck && cancelCheck()) {
+            if (error) *error = QStringLiteral("Export canceled");
+            return false;
+        }
+        if (!validOutput(baseDir, platform, error, artifacts, cancelCheck) || !preserveDirectorySpelling(baseDir, platform)) {
             if (error && error->isEmpty())
                 *error = QStringLiteral("Pack output is incomplete or belongs to another platform: %1").arg(platform.name);
             return false;
@@ -87,7 +93,8 @@ bool ProjectPackExporter::FinalizePackOutputs(const QString& baseDir,
                                               const QVector<ProjectPlatform>& platforms,
                                               const QStringList& requestedIds,
                                               const QStringList& succeededIds, QString* error,
-                                              const QVector<PackArtifactMetadata>& artifacts)
+                                              const QVector<PackArtifactMetadata>& artifacts,
+                                              const std::function<bool()>& cancelCheck)
 {
     if (baseDir.isEmpty() || !ProjectPlatformSemantics::validatePlatforms(platforms, error)) return false;
     QVector<ProjectPlatform> completed;
@@ -100,7 +107,7 @@ bool ProjectPackExporter::FinalizePackOutputs(const QString& baseDir,
         completed.append(*platform);
     }
     if (completed.isEmpty()) return true;
-    return ValidatePackOutputs(baseDir, completed, error, artifacts);
+    return ValidatePackOutputs(baseDir, completed, error, artifacts, cancelCheck);
 }
 
 }

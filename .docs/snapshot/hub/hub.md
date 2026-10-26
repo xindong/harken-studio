@@ -19,8 +19,8 @@ HarkenHubUpdateBridge（特权更新桥）。
 | Hub 自更新 + 特权桥 | `Source/Update/HubSelfUpdate` + 更新桥（Windows 计划任务 / macOS LaunchDaemon），带健康检查与单测；安装包及其清单共用占用保护，覆盖下载、校验和安装交接，同步静默更新复用当前下载锁 | 可用 |
 | 已装版本管理与启动链 | `Source/Versions/`（扫描/完整性/自检）+ `Source/Launch/`（预检/工程打开流/启动监控） | 可用 |
 | 工程库与登记回流 | `Source/Projects/` ProjectStore（Qt Sql）+ ProjectProbe + IntakeConsumer（FS watcher 接收 Studio 侧登记） | 可用 |
-| 引擎集成 SDK 来源选择 | 安装/更换 SDK 弹窗的源目录控件可直接下拉选择 Hub 已安装 Studio 附带的 SDK，按目标引擎筛选，悬停提示 Studio/SDK 版本；保留手动选文件夹，每次打开刷新候选 | 可用 |
-| SDK 变更检查结果 | 默认显示版本变化及新增/更新/移除/保留数量，按动作分组列出文件，保留项折叠；完整日志独立页签，失败和待处理提醒优先展示，状态与建议分色强调 | 可用 |
+| 引擎集成包来源选择 | 安装/更换集成包 弹窗的源目录控件可直接下拉选择 Hub 已安装 Studio 附带的集成包，按目标引擎筛选，悬停提示 Studio/集成包版本；保留手动选文件夹，每次打开刷新候选 | 可用 |
+| 集成包变更检查结果 | 默认显示版本变化及新增/更新/移除/保留数量，按动作分组列出文件，保留项折叠；完整日志独立页签，失败和待处理提醒优先展示，状态与建议分色强调 | 可用 |
 | Unity 工程占用检查 | Hub 的安装、更新、卸载、迁移与恢复共用自身 `Source/Integrations/Unity/UnityProjectAccess` 检测；Windows 检查独占打开，POSIX 检查文件锁与记录锁。未被占用的残留 `Temp/UnityLockfile` 不阻止操作，检测不改写或删除锁文件；访问失败单独报告，真实占用仍拦截 | 可用 |
 | 合规与维护 | `Source/Legal/`（EULA + ConsentStore）+ `Source/Maintenance/`（缓存清理/日志导出/工程钉版本） | 可用 |
 | 平台加固 | `Source/Platform/` Win+mac 双实现：提权、ACL 加固、登录自启、进程扫描、单实例守卫 | 可用 |
@@ -31,3 +31,9 @@ HarkenHubUpdateBridge（特权更新桥）。
 
 1. 预期中而未达的两项即表末两行：Authenticode 信任策略、正式（HTTPS/公网）分发服务端。
 2. `HarkenHub/Docs/HarkenGuide.md` 是 Hub 目录下唯一文档，性质为三产品《入门指南》而非设计文档。
+
+## 集成包命名与目录兼容（2026-10-26）
+
+Hub 0.1.71 使用“集成 / Integration”和“集成包 / Integration Package”，Unity 专属操作使用 Unity Integration。历史发布说明保留当时名称。Studio 0.9.1 以 HarkenIntegration 为主分发目录，同时从同一来源生成 HarkenSDK/Unity/Harken 实体兼容副本，支持旧 Hub；打包前逐文件验证一致，避免两份内容漂移。新版 Hub 优先新目录，仅在新目录不存在时使用旧目录，既有来源记录继续可用。
+
+自动发现支持 HARKEN_UNITY_INTEGRATION_PATH，并保留 HARKEN_UNITY_SDK_PATH。Unity 工程内 Packages/com.harken.core、既有 Assets/HarkenSDK、自定义位置、备份目录及持久化字段保持兼容，源目录更名不触发工程搬迁。

@@ -123,7 +123,7 @@ bool checkIntegrationFilesWritable(const QStringList& paths, QString* error)
     }
     if (readOnlyFiles.isEmpty() && inaccessibleFiles.isEmpty()) return true;
     QStringList sections{QCoreApplication::translate("HarkenHub",
-        "Some files required for this SDK operation cannot be changed. No SDK files were changed.")};
+        "Some files required for this Integration Package operation cannot be changed. No Integration Package files were changed.")};
     if (!readOnlyFiles.isEmpty())
         sections.append(QCoreApplication::translate("HarkenHub", "Read-only files:\n%1")
             .arg(readOnlyFiles.join(QLatin1Char('\n'))));

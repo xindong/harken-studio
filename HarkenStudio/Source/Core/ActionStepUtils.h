@@ -79,12 +79,15 @@ class ActionTargetLookup
 {
 public:
     void add(const VNX::ProjectItem& item);
+    void renameObject(uint32_t objectID, const QString& name);
     const ActionTargetRecord* findByObjectID(uint32_t objectID) const;
     const std::vector<ActionTargetRecord>& findByLeafName(const QString& leafName) const;
+    const std::vector<VNX::VActionStep>& postActionSteps(uint32_t objectID) const;
 
 private:
     QHash<uint32_t, ActionTargetRecord> byObjectID_;
     QHash<QString, std::vector<ActionTargetRecord>> byLeafName_;
+    QHash<uint32_t, std::vector<VNX::VActionStep>> postActionSteps_;
 };
 
 ActionTargetLookup makeProjectTargetLookup(const VNX::ProjectData& project);
@@ -95,6 +98,11 @@ ActionStepTargetResolution resolveActionStepTarget(
     const QString& targetName,
     const ActionTargetLookup& lookup,
     uint32_t currentActionObjectID = 0);
+
+QString postActionCycleError(
+    uint32_t currentActionObjectID,
+    const std::vector<VNX::VActionStep>& replacementSteps,
+    const ActionTargetLookup& lookup);
 
 void applyActionStepTypeChange(
     VNX::VActionStep& step,

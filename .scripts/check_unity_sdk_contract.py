@@ -9,7 +9,7 @@ from check_sdk_version import version
 
 
 REPOSITORY = Path(__file__).resolve().parents[1]
-DEFAULT_SDK = REPOSITORY / "HarkenSDK" / "Unity" / "Harken"
+DEFAULT_SDK = REPOSITORY / "HarkenIntegration" / "Unity" / "Harken"
 FORBIDDEN_UNITY_ROOT_SUFFIXES = {".cpp", ".h", ".uplugin"}
 NATIVE_SUFFIXES = {".a", ".dll", ".dylib", ".lib", ".so"}
 NATIVE_PLUGIN_PATHS = {
@@ -180,7 +180,7 @@ def verify_layout(
 ) -> None:
     for forbidden in ("Unreal",):
         if (sdk / forbidden).exists():
-            errors.append(f"HarkenSDK must not contain {forbidden}")
+            errors.append(f"HarkenIntegration must not contain {forbidden}")
 
     native_files = set()
     for path in sdk.rglob("*"):
@@ -189,7 +189,7 @@ def verify_layout(
         relative = path.relative_to(sdk).as_posix()
         suffix = path.suffix.lower()
         if suffix in FORBIDDEN_UNITY_ROOT_SUFFIXES:
-            errors.append(f"Non-Unity source remains in Harken SDK: {relative}")
+            errors.append(f"Non-Unity source remains in Harken Integration Package: {relative}")
         if suffix == ".meta":
             normalized = relative.replace("\\", "/")
             forbidden_meta = {
@@ -210,7 +210,7 @@ def verify_layout(
                      or normalized.endswith((".cs.meta", ".asmdef.meta")))
             )
             if not allowed:
-                errors.append(f"Invalid Unity .meta file in SDK: {relative}")
+                errors.append(f"Invalid Unity .meta file in Integration Package: {relative}")
         elif suffix in {".cs", ".asmdef"}:
             if not path.with_name(path.name + ".meta").is_file():
                 errors.append(f"Unity source is missing metadata: {relative}.meta")
@@ -229,7 +229,7 @@ def verify_layout(
                 errors.append(f"Native plugin binary is empty: {relative}")
     elif native_files:
         errors.append(
-            "Repository SDK must not track native binaries: "
+            "Repository Integration Package must not track native binaries: "
             f"{sorted(native_files)}"
         )
 
@@ -286,7 +286,7 @@ def verify_sample_scripts(sdk: Path, errors: list[str]) -> None:
             matches = definitions.get(guid, [])
             if len(matches) != 1:
                 errors.append(
-                    f"Sample script GUID must resolve to exactly one SDK source: "
+                    f"Sample script GUID must resolve to exactly one Integration Package source: "
                     f"{asset.relative_to(sdk).as_posix()}: {guid} has {len(matches)} definitions"
                 )
 
@@ -320,7 +320,7 @@ def verify(sdk: Path, require_binaries: bool) -> None:
         sdk,
     )
     if not sdk.is_dir():
-        raise SystemExit(f"Unity SDK root does not exist: {sdk}")
+        raise SystemExit(f"Unity Integration Package root does not exist: {sdk}")
     verify_layout(sdk, require_binaries, errors)
     verify_manifests(sdk, errors)
     verify_sample_scripts(sdk, errors)
@@ -329,14 +329,14 @@ def verify(sdk: Path, require_binaries: bool) -> None:
         raise SystemExit("\n".join(errors))
     content = "source-only" if not require_binaries else "assembled"
     print(
-        f"Verified {content} Unity SDK layout, manifests, and native "
+        f"Verified {content} Unity Integration Package layout, manifests, and native "
         "binary provenance, including thin Voice forwarding."
     )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--sdk-root", type=Path, default=DEFAULT_SDK)
+    parser.add_argument("--integration-root", "--sdk-root", dest="sdk_root", type=Path, default=DEFAULT_SDK)
     parser.add_argument("--require-binaries", action="store_true")
     arguments = parser.parse_args()
     verify(arguments.sdk_root.resolve(), arguments.require_binaries)

@@ -523,7 +523,8 @@ void PublisherPanel::applyGenerationState(QTreeWidgetItem* item, const QString& 
         item->setText(kColResult, record->status.isEmpty()
             ? (record->success ? tr("Built") : tr("Failed")) : record->status);
         item->setData(kColResult, TableTextRole, static_cast<int>(record->success
-            ? TableTextState::Success : TableTextState::Error));
+            ? (record->warnings.isEmpty() ? TableTextState::Success : TableTextState::Warning)
+            : (record->canceled ? TableTextState::Muted : TableTextState::Error)));
         QStringList details;
         if (!record->errors.isEmpty()) details.append(record->errors);
         if (!record->warnings.isEmpty()) details.append(record->warnings);
@@ -551,6 +552,12 @@ void PublisherPanel::applyGenerationState(QTreeWidgetItem* item, const QString& 
             stage = tr("Canceled");
             state = TableRowProgressState::Canceled;
             break;
+        case PackGenerationStage::Skipped:
+            item->setText(kColResult, tr("Skipped"));
+            item->setData(kColResult, TableTextRole, static_cast<int>(
+                item->data(kColName, TableTextRole).toInt() == static_cast<int>(TableTextState::Disabled)
+                    ? TableTextState::Disabled : TableTextState::Warning));
+            return;
         }
         const int percent = state == TableRowProgressState::Complete
             ? 100 : std::clamp(progress->percent, 0, 100);

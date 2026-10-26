@@ -475,6 +475,10 @@ ActionResult handleStepsItemProperty(ProjectManager* projectManager, ProjectItem
             }
             authoredSteps->steps.push_back(step);
         }
+        const QString cycle = VNX::EditorUtils::postActionCycleError(
+            item->objectID, newSteps, lookup);
+        if (!cycle.isEmpty())
+            return {false, {}, "POST_ACTION_CYCLE", cycle};
     }
 
     const auto authoring = validateAuthoredReference(projectManager, &authoredAction);

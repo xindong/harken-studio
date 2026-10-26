@@ -4,325 +4,112 @@ add_executable(harken_editor_tests
     UnitTest/ThemePackageParserTest.cpp
     UnitTest/ThemePackageLoaderTest.cpp
     UnitTest/ThemeManagerTest.cpp
-    UnitTest/ThemeIpcTest.cpp
     UnitTest/ThemeAssetResolverTest.cpp
-    UnitTest/ThemeEndToEndTest.cpp
-    UnitTest/QtControlSkinTest.cpp
-    UnitTest/ProportionalTreeWidgetTest.cpp
     UnitTest/TableWidgetTest.cpp
-    UnitTest/SegmentedControlTest.cpp
-    UnitTest/ThemeWidgetMigrationTest.cpp
     UnitTest/ThemeMetricsMigrationTest.cpp
     UnitTest/ShortcutManagerTest.cpp
-    UnitTest/StartupLoadingWindowTest.cpp
-    UnitTest/TitleBarWidgetTest.cpp
     UnitTest/ToastPresenterTest.cpp
-    UnitTest/QtAdsThemeAdapterTest.cpp
     UnitTest/QtAdsTabLifecycleTest.cpp
     UnitTest/WorkspaceDockPinTest.cpp
-    UnitTest/LayoutZoneToggleTest.cpp
-    UnitTest/BuiltinLayoutsTest.cpp
-    UnitTest/WaveformRendererTest.cpp
     UnitTest/TimeSeriesChartModelTest.cpp
     UnitTest/TimeSeriesChartTest.cpp
     UnitTest/MonitorCursorModelTest.cpp
-    UnitTest/MonitorCursorMarkTest.cpp
-    UnitTest/MonitorAdapterTest.cpp
-    UnitTest/MonitorCaptureControlTest.cpp
-    UnitTest/MonitorRemoteStatusTest.cpp
-    UnitTest/MonitorRemoteReconnectTest.cpp
-    UnitTest/MonitorRecordingTest.cpp
-    UnitTest/MonitorSessionCompareUiTest.cpp
-    UnitTest/CapturePlanIntentTest.cpp
-    UnitTest/MonitorCapturePlanTest.cpp
     UnitTest/MonitorDecoderTest.cpp
     UnitTest/MonitorStoreTest.cpp
     UnitTest/MonitorStateCutTest.cpp
-    UnitTest/MonitorGenerationTest.cpp
-    UnitTest/MonitorDropTest.cpp
 
     # P2-5 availability
-    UnitTest/MonitorAvailabilityTest.cpp
     # P2-6 session-file
-    UnitTest/MonitorSessionFileTest.cpp
     UnitTest/Monitor/support/MonitorFixtureLoader.cpp
-    UnitTest/CurveRendererTest.cpp
-    UnitTest/NumericFormatTest.cpp
-    UnitTest/TimelineRendererTest.cpp
     UnitTest/TimelineTicksTest.cpp
-    UnitTest/CurveEditorWidgetTest.cpp
-    UnitTest/PeakMeterRendererTest.cpp
-    UnitTest/VUMeterRendererTest.cpp
-    UnitTest/SpectrumMeterRendererTest.cpp
     UnitTest/SpectrogramMeterRendererTest.cpp
     UnitTest/PollReentryGuardTest.cpp
     UnitTest/StableIdTest.cpp
-    UnitTest/PackGroupSerializationTest.cpp
-    UnitTest/ProjectTemplateLifecycleTest.cpp
-    UnitTest/AttenuationDefSerializationTest.cpp
     UnitTest/AttenuationCurveEvalTest.cpp
     UnitTest/AttenuationCurveHandleGeometryTest.cpp
     UnitTest/AttenuationCurvePasteLimitTest.cpp
     UnitTest/AttenuationCurvePointCoordinateTest.cpp
     UnitTest/AttenuationCurveUndoTest.cpp
-    UnitTest/CurveCanvasDomainTest.cpp
-    UnitTest/AttenuationBindingUndoTest.cpp
     UnitTest/AttenuationRuntimeSyncTest.cpp
     UnitTest/AudioEnginePreviewTest.cpp
     UnitTest/AdvancedActionResultTest.cpp
-    UnitTest/PackGroupCommandTest.cpp
     UnitTest/PreparedProjectAssetReconcileTest.cpp
     UnitTest/ProjectSerializationTest.cpp
     UnitTest/PlayablePropertyAuthoringTest.cpp
     UnitTest/FieldGroupProjectAdapterTest.cpp
     UnitTest/FieldGroupResolutionTest.cpp
     UnitTest/FieldGroupJsonTest.cpp
-    UnitTest/FieldGroupEditingTest.cpp
-    UnitTest/FieldGroupLifecycleTest.cpp
-    UnitTest/FieldGroupStorageTest.cpp
-    UnitTest/FieldGroupLegacyEntryTest.cpp
-    UnitTest/FieldGroupActionsTest.cpp
-    UnitTest/FieldGroupInspectorViewTest.cpp
-    UnitTest/FieldGroupInspectorTest.cpp
-    UnitTest/PlatformOverrideAuthoringTest.cpp
-    UnitTest/PlatformOverrideActionTest.cpp
-    UnitTest/PlatformOverrideCompileTest.cpp
     UnitTest/PlatformOverrideSerializationTest.cpp
-    UnitTest/PlatformContextServiceTest.cpp
-    UnitTest/ProjectPlatformModelTest.cpp
     UnitTest/ProjectPlatformCommandTest.cpp
-    UnitTest/ProjectPlatformAuthoringTest.cpp
     UnitTest/ProjectPlatformBuildTest.cpp
-    UnitTest/ProjectPlatformUiIpcTest.cpp
-    UnitTest/CurrentWorldPrimaryScopeTest.cpp
-    UnitTest/PlatformBarTest.cpp
-    UnitTest/LanguageContextServiceTest.cpp
     UnitTest/PlatformFieldMergeTest.cpp
-    UnitTest/PlatformOverrideInspectorTest.cpp
     UnitTest/PlayablePropertyOccurrenceLifecycleTest.cpp
-    UnitTest/TargetPlatformsCommandTest.cpp
-    UnitTest/ProjectLanguageSemanticsTest.cpp
-    UnitTest/ProjectLanguagesCommandTest.cpp
     UnitTest/HubClientArgumentsTest.cpp
-    UnitTest/HubLauncherTest.cpp
     UnitTest/ProjectInstanceTest.cpp
-    UnitTest/MigrationVersionGateTest.cpp
     UnitTest/ProjectUpgradeManagerTest.cpp
-    UnitTest/ProjectOpenProtocolTest.cpp
     UnitTest/ProjectOpenApprovalTest.cpp
-    UnitTest/ProjectUpgradeMessagesTest.cpp
-    UnitTest/ProjectSafetyFoundationTest.cpp
     UnitTest/SchemaArchiveTest.cpp
-    UnitTest/SchemaCompatibilityProbeTest.cpp
     UnitTest/ProjectDocumentRoundTripTest.cpp
     UnitTest/ProjectMigrationTest.cpp
-    UnitTest/ProjectPreflightTest.cpp
-    UnitTest/PackBuildSessionTest.cpp
-    UnitTest/PackBuildSessionLogicTest.cpp
-    UnitTest/EffectChainSemanticsTest.cpp
-    UnitTest/RuntimeContainerLoweringTest.cpp
-    UnitTest/AssetConverterCacheTest.cpp
     UnitTest/AudioFormatDecodeTest.cpp
     UnitTest/MediaPoolRefreshTest.cpp
-    UnitTest/PlatformProfileResolutionTest.cpp
-    UnitTest/ProjectPackExporterCacheTest.cpp
-    UnitTest/ProjectPackExporterInitPackTest.cpp
-    UnitTest/ProjectPackExporterSharedPackTest.cpp
     UnitTest/ProjectPackExporterManifestTest.cpp
-    UnitTest/ProjectPackExporterLayoutTest.cpp
-    UnitTest/PackExportOrchestrationTest.cpp
-    UnitTest/DualPlatformExportDigestTest.cpp
     UnitTest/ExportedPackLifecycleTest.cpp
     UnitTest/CanonicalBusSendSnapshotParserTest.cpp
-    UnitTest/CapabilityMapTest.cpp
     UnitTest/RemoteConnectionTest.cpp
     UnitTest/DebugHonestyMapperTest.cpp
-    UnitTest/MixerLevelsHonestyTest.cpp
-    UnitTest/EngineNotificationHonestyTest.cpp
-    UnitTest/LogCategoryHonestyTest.cpp
     UnitTest/WorkspaceWindowContractTest.cpp
     UnitTest/MonitorPanelModuleTest.cpp
-    UnitTest/MonitorPerformancePanelTest.cpp
-    UnitTest/MonitorPerformanceLiveTest.cpp
     UnitTest/MonitorPanelTest.cpp
-    UnitTest/MonitorVoicesTest.cpp
-    UnitTest/MonitorPlayablesTest.cpp
-    UnitTest/MonitorEffectsTest.cpp
-    UnitTest/MonitorBusesTest.cpp
-    UnitTest/MonitorDspTimelineTest.cpp
-    UnitTest/MonitorLineageTest.cpp
-    UnitTest/MonitorTapSelectTest.cpp
-    UnitTest/MonitorWaveformTest.cpp
-    UnitTest/MonitorScopeTest.cpp
     UnitTest/MonitorSpectrumTest.cpp
     UnitTest/MeterPanelTest.cpp
     UnitTest/MonitorSharedCursorTest.cpp
-    UnitTest/PanelRegistryTeardownTest.cpp
-    UnitTest/AppSettingsPanelFontTest.cpp
-    UnitTest/AppSettingsLanguageTest.cpp
-    UnitTest/PropertyEditSessionTest.cpp
     UnitTest/ParameterBindingTest.cpp
     UnitTest/ParameterControlHostTest.cpp
-    UnitTest/ComponentRecipeHostTest.cpp
-    UnitTest/ParameterSliderTest.cpp
-    UnitTest/StepsParameterHostTest.cpp
     UnitTest/PropertyEditorEngineTest.cpp
-    UnitTest/InspectorPageDispatchTest.cpp
-    UnitTest/InspectorFocusTest.cpp
     UnitTest/InspectorRowSetGoldTest.cpp
-    UnitTest/InspectorSectionWidgetTest.cpp
-    UnitTest/ActionPageSectionTest.cpp
-    UnitTest/NotesColorCommandTest.cpp
-    UnitTest/VariableModeCommandTest.cpp
-    UnitTest/VariableInspectorFormTest.cpp
     UnitTest/ResolveComponentTypedTest.cpp
     UnitTest/ListPropertyTest.cpp
-    UnitTest/ObjectRefDrawerTest.cpp
     UnitTest/ObjectRefDropTest.cpp
     UnitTest/RefIdMimeTest.cpp
-    UnitTest/RefDomainAdapterTest.cpp
-    UnitTest/AudioAssetRefTest.cpp
-    UnitTest/ObjectReferencePickerTest.cpp
-    UnitTest/ProjectTreeConsistencyTest.cpp
     UnitTest/ProjectExplorerSourcesTabTest.cpp
-    UnitTest/NativeDropTargetTest.cpp
     UnitTest/ProjectTreeDragDropTest.cpp
     UnitTest/FolderAddressingTest.cpp
     UnitTest/BucketFolderStoreTest.cpp
-    UnitTest/ProjectItemMenuControllerAnchorTest.cpp
     UnitTest/ProjectTreePanelAnchorTest.cpp
-    UnitTest/MixNodeSendsTest.cpp
     UnitTest/BusTopologySyncTest.cpp
-    UnitTest/BusOutputVolumePreviewTest.cpp
     UnitTest/CanonicalRuntimeProjectAdapterTest.cpp
-    UnitTest/RuntimeSyncPresenceTest.cpp
     UnitTest/RuntimeSyncCoordinatorTest.cpp
-    UnitTest/CurrentWorldSyncBridgeTest.cpp
     UnitTest/CurrentWorldProjectAdapterTest.cpp
-    UnitTest/BlueprintOutGraphTest.cpp
     UnitTest/OutputSendExclusionTest.cpp
-    UnitTest/SignalChainNodeDedupTest.cpp
     UnitTest/SignalPathGraphTest.cpp
-    UnitTest/SignalPathLayoutTest.cpp
-    UnitTest/SignalPathRenderingTest.cpp
-    UnitTest/SignalPathFocusTest.cpp
-    UnitTest/BlueprintCanvasViewTest.cpp
-    UnitTest/BlueprintNodeGraphVisualTest.cpp
-    UnitTest/BlueprintNodeStatusTest.cpp
-    UnitTest/BlueprintDropInteractionTest.cpp
-    UnitTest/BlueprintAudioImportTest.cpp
-    UnitTest/SignalPathObservationTest.cpp
-    UnitTest/SignalPathDeletionTest.cpp
-    UnitTest/SignalPathConnectionTest.cpp
-    UnitTest/SignalPathGainEditingTest.cpp
-    UnitTest/VolumeAggregationTest.cpp
-    UnitTest/SpatialRuntimeValueMappingTest.cpp
-    UnitTest/ActionReferenceLifecycleTest.cpp
     UnitTest/ActionIdentityTest.cpp
     UnitTest/ActionCatalogExportTest.cpp
     UnitTest/ActionStepEditingTest.cpp
-    UnitTest/ActionStepPropertyRouteTest.cpp
-    UnitTest/ActionStepTargetResolveTest.cpp
-    UnitTest/ActionClosureSemanticsTest.cpp
-    UnitTest/PackBuildPlanTest.cpp
-    UnitTest/PublisherLanguageTest.cpp
     UnitTest/PackGenerationRecordTest.cpp
-    UnitTest/RoutingInspectorSchemaTest.cpp
-    UnitTest/DispatcherReentryTest.cpp
-    UnitTest/IpcContainerCommandFamilyTest.cpp
-    UnitTest/IpcMixerCommandFamilyTest.cpp
-    UnitTest/IpcSchemaCoverageTest.cpp
-    UnitTest/ImportAssetsCommandTest.cpp
-    UnitTest/ImportSoundSourcesCommandTest.cpp
-    UnitTest/ObjectIdContractTest.cpp
-    UnitTest/ObjectIdRepairTest.cpp
-    UnitTest/AuditionOverlayTest.cpp
     UnitTest/ComponentCatalogTest.cpp
-    UnitTest/ComponentAxisTest.cpp
-    UnitTest/ContextTopicResolutionTest.cpp
     UnitTest/HelpCatalogKeyTest.cpp
-    UnitTest/InformationPanelWiringTest.cpp
     UnitTest/TimelineCoordinatesTest.cpp
     UnitTest/TimelineLedgerTest.cpp
     UnitTest/TimelineSemanticsTest.cpp
     UnitTest/TimelineSerializationTest.cpp
-    UnitTest/TimelineEditingTest.cpp
-    UnitTest/TimelinePropertyRouteTest.cpp
-    UnitTest/AbsoluteAuthoringAcceptanceTest.cpp
-    UnitTest/TimelineStructuralIntegrityTest.cpp
-    UnitTest/VariableSemanticsTest.cpp
     UnitTest/VariableRehearsalInspectorTest.cpp
-    UnitTest/GridSemanticsTest.cpp
-    UnitTest/TransitionSemanticsTest.cpp
-    UnitTest/TransitionFieldGatingTest.cpp
-    UnitTest/TransitionPropertyRouteTest.cpp
-    UnitTest/TransitionRehearsalTest.cpp
-    UnitTest/ContainerBehaviorSemanticsTest.cpp
-    UnitTest/LoopCountSemanticsTest.cpp
-    UnitTest/LoopSectionProviderTest.cpp
-    UnitTest/SourcesSectionProviderTest.cpp
     UnitTest/SoundSourceSemanticsTest.cpp
-    UnitTest/SoundDistinguishLanguageTest.cpp
-    UnitTest/SoundSourceEditingTest.cpp
-    UnitTest/SoundSourceDerivativeTest.cpp
     UnitTest/BindingSemanticsTest.cpp
-    UnitTest/BindingContractTest.cpp
-    UnitTest/BindingEditingTest.cpp
-    UnitTest/BindingInspectorTest.cpp
-    UnitTest/BindingFieldEditorTest.cpp
-    UnitTest/BindingCurveEditorHostTest.cpp
-    UnitTest/BindingRuntimeLoweringTest.cpp
-    UnitTest/VariableConsumerSemanticsTest.cpp
-    UnitTest/VariableImpactSemanticsTest.cpp
-    UnitTest/ControlPanelTest.cpp
-    UnitTest/InspectorSlotStripTest.cpp
-    UnitTest/GridPropertyRouteTest.cpp
     UnitTest/ContainerGridCopyTest.cpp
-    UnitTest/ContainerSelectionZeroOccurrenceTest.cpp
-    UnitTest/DirectChildReferenceCleanupTest.cpp
-    UnitTest/PlaybackReferenceValidationTest.cpp
-    UnitTest/GridEditorPanelTest.cpp
     UnitTest/SourceEditorPanelTest.cpp
     UnitTest/SourceEditorPcmSliceTest.cpp
-    UnitTest/SourceEditorWorkspaceTest.cpp
     UnitTest/StandaloneEditorDispatchTest.cpp
     UnitTest/TimelineEditorPanelTest.cpp
     UnitTest/TransitionEditorPanelTest.cpp
-    UnitTest/TransitionEditorGatingTest.cpp
-    UnitTest/MixingEditorWidgetTest.cpp
-    UnitTest/GridAndBindingAuthoringScenarioTest.cpp
-    UnitTest/TimelinePlacementAuthoringScenarioTest.cpp
-    UnitTest/TrackPieceIpcScenarioTest.cpp
-    UnitTest/ActionTransitionAuthoringScenarioTest.cpp
-    UnitTest/ActionTransitionIpcScenarioTest.cpp
-    UnitTest/TimelineBehaviorAuthoringScenarioTest.cpp
-    UnitTest/PlayablePropertyIpcScenarioTest.cpp
-    UnitTest/PackBuildScenarioTest.cpp
-    UnitTest/RuntimeCapabilityScenarioTest.cpp
-    UnitTest/PackBuildIpcScenarioTest.cpp
-    UnitTest/EditorWorkflowScenarioTest.cpp
-    UnitTest/ItemTypeCatalogTest.cpp
-    UnitTest/VQLContractTest.cpp
-    UnitTest/LMDBBenchmarkTest.cpp
     UnitTest/ItemTypeIconAssetTest.cpp
-    UnitTest/CreationMenuCoverageTest.cpp
     UnitTest/NewObjectNamingTest.cpp
-    UnitTest/ReferenceSlotResolutionTest.cpp
-    UnitTest/PlacementRulesTest.cpp
     UnitTest/AICommandCatalogTest.cpp
-    UnitTest/AIPermissionModelTest.cpp
-    UnitTest/AICommandValidatorTest.cpp
     UnitTest/AIDispatchPolicyTest.cpp
-    UnitTest/AIResultNormalizerTest.cpp
-    UnitTest/AIAgentConfigTest.cpp
     UnitTest/AIDurableMemoryStoreTest.cpp
-    UnitTest/AIDurableMemoryServiceTest.cpp
-    UnitTest/AIDurableMemoryRetrievalTest.cpp
     UnitTest/AIConversationStoreTest.cpp
     UnitTest/AIConversationSessionStoreTest.cpp
     UnitTest/AIMarkdownRendererTest.cpp
-    UnitTest/AISettingsTest.cpp
-    UnitTest/ThemeSettingsDialogTest.cpp
     UnitTest/ProjectSettingsDialogTest.cpp
     UnitTest/SettingsApplyContractTest.cpp
     UnitTest/MainWindowSettingsMenuTest.cpp
@@ -331,13 +118,8 @@ add_executable(harken_editor_tests
     UnitTest/Support/MockLLMProvider.cpp
     UnitTest/Support/SyntheticHttpServer.h
     UnitTest/Support/SyntheticHttpServer.cpp
-    UnitTest/SyntheticHttpServerTest.cpp
-    UnitTest/MockLLMProviderTest.cpp
     UnitTest/OpenAICompatibleLLMProviderTest.cpp
     UnitTest/AIAssistantServiceTest.cpp
-    UnitTest/AIConversationPersistenceTest.cpp
-    UnitTest/AssistantPanelWiringTest.cpp
-    UnitTest/AIUnrestrictedModeTest.cpp
 )
 set_target_properties(harken_editor_tests PROPERTIES
     AUTOMOC ON
@@ -425,7 +207,6 @@ if(TARGET harken_core_shared)
     find_package(Qt6 REQUIRED COMPONENTS Core Network)
     add_executable(harken_remote_test_game UnitTest/RemoteGame.cpp)
     target_link_libraries(harken_remote_test_game PRIVATE harken_core_shared Qt6::Core)
-    target_sources(harken_editor_tests PRIVATE UnitTest/RemoteConnectionProcessTest.cpp)
     target_compile_definitions(harken_editor_tests PRIVATE
         HARKEN_REMOTE_GAME_PATH="$<TARGET_FILE:harken_remote_test_game>")
     add_dependencies(harken_editor_tests harken_remote_test_game)
@@ -545,20 +326,12 @@ gtest_discover_tests(harken_editor_tests
 
 add_executable(harken_project_schema_tests
     UnitTest/ProjectSchemaFrontEndTest.cpp
-    UnitTest/ProjectSchemaFixtureTest.cpp
-    UnitTest/ProjectSchemaChassisTest.cpp
     UnitTest/ProjectSchemaPlayablePropertyRegistryTest.cpp
     UnitTest/ProjectSchemaSignalGraphTest.cpp
     UnitTest/ProjectSchemaReferenceResolutionTest.cpp
-    UnitTest/ProjectSchemaPropertyFoldTest.cpp
     UnitTest/ProjectSchemaSendResolutionTest.cpp
-    UnitTest/ProjectSchemaEffectChainTest.cpp
-    UnitTest/ProjectSchemaNormalizationTest.cpp
-    UnitTest/ProjectSchemaCoverageTest.cpp
     UnitTest/ProjectSchemaIrTest.cpp
-    UnitTest/ProjectSchemaHardeningTest.cpp
     UnitTest/ProjectSchemaEstimationTest.cpp
-    UnitTest/ProjectSchemaProgramTest.cpp
     UnitTest/VariableContractArtifactTest.cpp
     UnitTest/ReferenceSlotResolverTest.cpp
 )

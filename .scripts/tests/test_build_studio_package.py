@@ -68,10 +68,17 @@ class BuildStudioPackageTest(unittest.TestCase):
         names = self.module.collect_legal_texts.assemble("studio", legal_dir, "6.8.3")
         self.legal_paths = {(legal_dir / name).relative_to(self.input_dir).as_posix() for name in names}
         for name in ("LICENSE.md", "NOTICE.md"):
-            relative = Path("HarkenSDK/Unity/Harken") / name
+            relative = Path("HarkenIntegration/Unity/Harken") / name
             destination = binary_dir / relative
-            shutil.copyfile(REPO_ROOT / relative, destination)
+            shutil.copyfile(REPO_ROOT / "HarkenIntegration/Unity/Harken" / name, destination)
             self.legal_paths.add(destination.relative_to(self.input_dir).as_posix())
+
+    def publish_compatibility(self, binary_dir):
+        shutil.copytree(binary_dir / "HarkenIntegration/Unity/Harken",
+                        binary_dir / "HarkenSDK/Unity/Harken")
+        self.legal_paths.update((binary_dir / "HarkenSDK/Unity/Harken" / name)
+                               .relative_to(self.input_dir).as_posix()
+                               for name in ("LICENSE.md", "NOTICE.md"))
 
     def make_input(self, with_binary=True, sdk_version="0.2.0"):
         (self.input_dir / "data").mkdir(parents=True)
@@ -79,13 +86,14 @@ class BuildStudioPackageTest(unittest.TestCase):
             (self.input_dir / "HarkenStudio.exe").write_bytes(b"stub-binary")
         (self.input_dir / "data" / "asset.bin").write_bytes(b"payload" * 100)
         self.publish_schema(self.input_dir / "schema")
-        unity = self.input_dir / "HarkenSDK" / "Unity" / "Harken"
+        unity = self.input_dir / "HarkenIntegration" / "Unity" / "Harken"
         unity.mkdir(parents=True)
         (unity / "package.json").write_text(
             json.dumps({"name": "com.harken.core", "version": sdk_version}),
             encoding="utf-8",
         )
         self.publish_legal(self.input_dir, self.input_dir / "Legal")
+        self.publish_compatibility(self.input_dir)
 
     def run_build(self, extra_args=None):
         args = [
@@ -128,7 +136,7 @@ class BuildStudioPackageTest(unittest.TestCase):
             for path in (self.input_dir / "schema").rglob("*")
             if path.is_file()
         }
-        self.assertEqual(summary["fileCount"], 3 + len(schema_files) + len(self.legal_paths))
+        self.assertEqual(summary["fileCount"], 4 + len(schema_files) + len(self.legal_paths))
 
         with zipfile.ZipFile(package) as archive:
             names = set(archive.namelist())
@@ -156,14 +164,15 @@ class BuildStudioPackageTest(unittest.TestCase):
             self.assertEqual(set(by_path), schema_files | self.legal_paths | {
                     "HarkenStudio.exe",
                     "data/asset.bin",
+                    "HarkenIntegration/Unity/Harken/package.json",
                     "HarkenSDK/Unity/Harken/package.json",
                 })
             self.assertEqual(by_path["HarkenStudio.exe"]["size"], len(b"stub-binary"))
             self.assertEqual(manifest["components"], [{
-                "product": "HarkenSDK",
+                "product": "HarkenIntegration",
                 "version": "0.2.0",
                 "artifacts": {
-                    "unity": "HarkenSDK/Unity/Harken",
+                    "unity": "HarkenIntegration/Unity/Harken",
                 },
             }])
 
@@ -199,8 +208,8 @@ class BuildStudioPackageTest(unittest.TestCase):
         self.make_input()
         for relative in (
             "Legal/third-party/Qt6-THIRD-PARTY-NOTICES.txt",
-            "HarkenSDK/Unity/Harken/LICENSE.md",
-            "HarkenSDK/Unity/Harken/NOTICE.md",
+            "HarkenIntegration/Unity/Harken/LICENSE.md",
+            "HarkenIntegration/Unity/Harken/NOTICE.md",
         ):
             with self.subTest(path=relative):
                 path = self.input_dir / relative
@@ -213,7 +222,7 @@ class BuildStudioPackageTest(unittest.TestCase):
 
     def test_invalid_sdk_versions_are_rejected(self):
         self.make_input()
-        plugin = self.input_dir / "HarkenSDK/Unity" / "Harken" / "package.json"
+        plugin = self.input_dir / "HarkenIntegration/Unity" / "Harken" / "package.json"
         for identity in (
             {},
             {"name": "com.harken.core", "version": ""},
@@ -229,27 +238,63 @@ class BuildStudioPackageTest(unittest.TestCase):
 
     def test_missing_unity_sdk_is_rejected(self):
         self.make_input()
-        (self.input_dir / "HarkenSDK/Unity" / "Harken" / "package.json").unlink()
+        (self.input_dir / "HarkenIntegration/Unity" / "Harken" / "package.json").unlink()
         with self.assertRaises(SystemExit):
             self.run_build()
+
+    def test_conflicting_or_incomplete_compatibility_payload_is_rejected(self):
+        self.make_input()
+        legacy = self.input_dir / "HarkenSDK/Unity/Harken/package.json"
+        original = legacy.read_bytes()
+        for content in (None, b'{"name":"com.harken.core","version":"9.0.0"}'):
+            with self.subTest(content=content):
+                if content is None:
+                    legacy.unlink()
+                else:
+                    legacy.write_bytes(content)
+                with self.assertRaisesRegex(SystemExit, "compatibility copy differ"):
+                    self.run_build()
+                self.assertFalse(self.output_dir.exists())
+                legacy.write_bytes(original)
+
+    def test_staged_layout_preserves_source_and_rejects_overwrite(self):
+        source = self.root / "source"
+        package = source / "Unity/Harken"
+        package.mkdir(parents=True)
+        (package / "package.json").write_text(
+            json.dumps({"name": "com.harken.core", "version": "1.2.3"}), encoding="utf-8")
+        (package / "runtime.bin").write_bytes(bytes(range(256)))
+        (source / "BuildEvidence").mkdir()
+        (source / "BuildEvidence/runtime-build.json").write_text("{}", encoding="utf-8")
+        layout = self.module.integration_layout
+        before = layout.package_files(source)
+        layout.stage(source, self.input_dir)
+        self.assertEqual(layout.package_files(source), before)
+        self.assertEqual(layout.package_files(self.input_dir / "HarkenIntegration"), before)
+        self.assertEqual(layout.package_files(self.input_dir / "HarkenSDK/Unity/Harken"),
+                         layout.package_files(package))
+        with self.assertRaisesRegex(ValueError, "already exists"):
+            layout.stage(source, self.input_dir)
+        layout.verify(self.input_dir)
 
     def test_macos_sdk_component_paths_are_recorded(self):
         app = self.input_dir / "HarkenStudio.app" / "Contents" / "MacOS"
         app.mkdir(parents=True)
         (app / "HarkenStudio").write_bytes(b"stub-binary")
         self.publish_schema(app / "schema")
-        unity = app / "HarkenSDK" / "Unity" / "Harken"
+        unity = app / "HarkenIntegration" / "Unity" / "Harken"
         unity.mkdir(parents=True)
         (unity / "package.json").write_text(
-            json.dumps({"version": "0.2.0"}), encoding="utf-8")
+            json.dumps({"name": "com.harken.core", "version": "0.2.0"}), encoding="utf-8")
         self.publish_legal(app, app.parent / "Resources" / "Legal")
+        self.publish_compatibility(app)
         summary = self.run_build()
         with zipfile.ZipFile(summary["package"]) as archive:
             manifest = json.loads(archive.read("package-manifest.json"))
             artifacts = manifest["components"][0]["artifacts"]
             self.assertEqual(
                 artifacts["unity"],
-                "HarkenStudio.app/Contents/MacOS/HarkenSDK/Unity/Harken",
+                "HarkenStudio.app/Contents/MacOS/HarkenIntegration/Unity/Harken",
             )
 
     def test_missing_binary_is_rejected(self):

@@ -4,7 +4,7 @@
 
 We take security issues seriously.
 
-If you discover a potential security vulnerability in Harken (HarkenStudio / Harken Studio Hub / Unity SDK / engine runtime), please **report it privately**. Do not open a public Issue or disclose it through any public channel.
+If you discover a potential security vulnerability in Harken (HarkenStudio / Harken Hub / Unity Integration / engine runtime), please **report it privately**. Do not open a public Issue or disclose it through any public channel.
 
 ## How to Report
 

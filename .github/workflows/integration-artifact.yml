@@ -1,0 +1,149 @@
+name: Integration Artifact
+
+on:
+  workflow_call:
+    inputs:
+      artifact-name:
+        type: string
+        required: false
+        default: ''
+      build-channel:
+        type: string
+        required: false
+        default: dev
+
+concurrency:
+  group: integration-artifact-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  HARKEN_BUILD_CHANNEL: ${{ inputs.build-channel }}
+
+jobs:
+  runtime:
+    name: Build release Runtime libraries
+    uses: ./.github/workflows/core-artifact.yml
+    with:
+      build-channel: ${{ inputs.build-channel }}
+
+  assemble-bundle:
+    name: Assemble complete Integration + Runtime ZIP
+    needs: runtime
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify Integration version identity
+        run: python3 .scripts/check_sdk_version.py
+
+      - name: Download release Runtime libraries
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: transfer-runtime-*
+          path: .temp/runtime
+          merge-multiple: true
+
+      - name: Assemble and verify Integration + Runtime bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .temp/package/HarkenIntegration
+          tar -C HarkenIntegration -cf - API_SURFACE.md Unity Tooling \
+            | tar -C .temp/package/HarkenIntegration -xf -
+          runtime_root=".temp/runtime"
+          unity_plugins=".temp/package/HarkenIntegration/Unity/Harken/Runtime/Plugins"
+          install -Dm644 "$runtime_root/windows-x64/HarkenCore.dll" "$unity_plugins/x86_64/HarkenCore.dll"
+          install -Dm644 "$runtime_root/macos-universal/libHarkenCore.dylib" "$unity_plugins/macOS/libHarkenCore.dylib"
+          install -Dm644 "$runtime_root/ios-arm64/libHarkenCore.a" "$unity_plugins/iOS/libHarkenCore.a"
+          install -Dm644 "$runtime_root/linux-x64/libHarkenCore.so" "$unity_plugins/x86_64/libHarkenCore.so"
+          install -Dm644 "$runtime_root/android/arm64-v8a/libHarkenCore.so" "$unity_plugins/Android/arm64-v8a/libHarkenCore.so"
+
+          windows_runtime=".temp/package/HarkenIntegration/Unity/Harken/Runtime/Plugins/x86_64/HarkenCore.dll"
+          macos_runtime=".temp/package/HarkenIntegration/Unity/Harken/Runtime/Plugins/macOS/libHarkenCore.dylib"
+          ios_runtime=".temp/package/HarkenIntegration/Unity/Harken/Runtime/Plugins/iOS/libHarkenCore.a"
+          linux_runtime=".temp/package/HarkenIntegration/Unity/Harken/Runtime/Plugins/x86_64/libHarkenCore.so"
+          android_arm64_runtime=".temp/package/HarkenIntegration/Unity/Harken/Runtime/Plugins/Android/arm64-v8a/libHarkenCore.so"
+          for runtime in \
+            "$windows_runtime" \
+            "$macos_runtime" \
+            "$ios_runtime" \
+            "$linux_runtime" \
+            "$android_arm64_runtime"; do
+            if [ ! -s "$runtime" ]; then
+              echo "::error file=$runtime::required integration runtime is missing or empty"
+              exit 1
+            fi
+          done
+
+          python3 <<'PY'
+          import json
+          from pathlib import Path
+
+          sdk = Path('.temp/package/HarkenIntegration/Unity/Harken')
+          manifest = json.loads((sdk / 'harken-integration.json').read_text(encoding='utf-8'))
+          missing = []
+          for relative in manifest.get('required_files', []):
+              path = sdk / relative
+              if not path.exists() or (path.is_file() and path.stat().st_size == 0):
+                  missing.append(relative)
+          if missing:
+              raise SystemExit('Missing required Unity Integration content: ' + ', '.join(missing))
+          print(f"Verified {len(manifest.get('required_files', []))} shared Unity Integration files")
+          PY
+
+          python3 .scripts/check_unity_sdk_contract.py \
+            --integration-root .temp/package/HarkenIntegration/Unity/Harken \
+            --require-binaries
+
+          cat > .temp/package/README-FIRST.txt <<EOF
+          Harken Unity integration bundle
+          Commit: ${GITHUB_SHA}
+          Channel: ${HARKEN_BUILD_CHANNEL}
+          Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+          Extract the HarkenIntegration directory beside HarkenStudio.exe, replacing the
+          existing HarkenIntegration directory. On a local Windows build from this repository:
+          <your-checkout>\\build\\bin\\Release\\HarkenIntegration
+
+          The HarkenIntegration directory contains the shared Unity integration package plus
+          Windows x64, macOS universal (arm64 + x86_64), iOS device arm64,
+          Linux x64, and Android arm64-v8a runtimes.
+          EOF
+
+      - name: Record Integration dependencies and build evidence
+        run: >-
+          python3 .scripts/release/release_evidence.py
+          --integration-payload .temp/package --runtime-receipts .temp/runtime
+          --output-dir .temp/package
+
+      - name: Upload downloadable HarkenIntegration bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ inputs.artifact-name || format('HarkenIntegrationBundle-{0}', github.run_number) }}
+          path: .temp/package
+          if-no-files-found: error
+          retention-days: ${{ (inputs.build-channel == 'stable' || inputs.build-channel == 'beta') && 90 || 14 }}
+
+      - name: Remove intermediate transfer artifacts
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts" \
+            --jq '.artifacts[] | select(.name | startswith("transfer-runtime-")) | .id' \
+            | while read -r artifact_id; do
+                gh api --method DELETE "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}"
+              done

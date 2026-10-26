@@ -4,7 +4,7 @@
 
 我们严肃对待安全问题。
 
-如果你发现 Harken（HarkenStudio / Harken Studio Hub / Unity SDK / 引擎运行时）存在潜在安全漏洞，请**私下报告**，不要提交公开 Issue 或在公开渠道披露。
+如果你发现 Harken（HarkenStudio / Harken Hub / Unity 集成 / 引擎运行时）存在潜在安全漏洞，请**私下报告**，不要提交公开 Issue 或在公开渠道披露。
 
 ## 报告方式
 

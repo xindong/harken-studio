@@ -16,10 +16,10 @@ git clone https://github.com/xindong/harken-studio.git
 
 ### 四大件产品
 
-1. **Harken Studio Hub**——官方产品分发平台，提供 Harken Studio 的更新与下载；
+1. **Harken Hub**——官方产品分发平台，提供 Harken Studio 的更新与下载；
 2. **Harken Studio**——设计师编辑器，编排设计声音、规划发声逻辑；
 3. **Harken Engine**——核心声音引擎，客户端以及引擎集成的核心产物；
-4. **Harken SDK**——独立集成包，用于游戏引擎集成 Harken；
+4. **Harken Engine Unity Integration**——独立集成包，用于游戏引擎集成 Harken；
 
 ## 项目部署要求
 
@@ -167,7 +167,7 @@ harken/
 ├── HarkenEngine/                         # harken_core — 声音引擎运行核心
 ├── HarkenHub/                            # HarkenHub — 独立启动器程序
 ├── HarkenSchema/                         # Editor 与 Pack 各自独立的 JSON 合同
-├── HarkenSDK/                            # HarkenSDK — 共享引擎 SDK 总目录（Unity/Harken）
+├── HarkenIntegration/                    # HarkenIntegration — 共享引擎集成总目录（Unity/Harken）
 ├── HarkenStudio/                         # HarkenEditor — 前端编辑器
 ├── CLAUDE.md | AGENTS.md                 # AI 项目高层指令
 ├── CMake*                                # CMake 项目解决方案

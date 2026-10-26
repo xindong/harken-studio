@@ -5,6 +5,7 @@
 
 #include <QObject>
 #include <QFutureWatcher>
+#include <atomic>
 #include <memory>
 
 class QApplication;
@@ -40,6 +41,7 @@ private:
     void beginRuntimeSync();
     void finish();
     void cancelProjectOpen();
+    void finishCancellation();
     void fail(const QString& message, int exitCode = 3,
               const QString& errorCode = QStringLiteral("INTERNAL_FAILURE"),
               const QString& technicalDetails = {});
@@ -51,8 +53,12 @@ private:
     std::shared_ptr<ProjectInstance> projectInstance_;
     std::unique_ptr<HubClient> hubClient_;
     std::unique_ptr<MainWindow> mainWindow_;
+    std::unique_ptr<QObject> runtimeSyncContext_;
     QFutureWatcher<ProjectUpgradeAnalysis> analysisWatcher_;
     QFutureWatcher<std::shared_ptr<PreparedProject>> preparationWatcher_;
+    QFutureWatcher<void> cleanupWatcher_;
+    std::shared_ptr<std::atomic_bool> cancellationRequested_ =
+        std::make_shared<std::atomic_bool>(false);
     ProjectUpgradeAnalysis analysis_;
     std::shared_ptr<PreparedProject> prepared_;
     bool projectPrepared_ = false;
@@ -60,6 +66,7 @@ private:
     bool windowInitialized_ = false;
     bool presentationStarted_ = false;
     bool terminal_ = false;
+    bool cancelling_ = false;
 };
 
 }

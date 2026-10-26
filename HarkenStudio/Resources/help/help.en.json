@@ -270,7 +270,7 @@
       "body": "Set the export directories and choose which additional material to include."
     },
     "settings.publish.output": {
-      "title": "Export Directory",
+      "title": "Publish Directory",
       "body": "Choose the directory for exported packs. Paths are relative to the project when possible; otherwise an absolute path is kept, such as on a different Windows drive. Blank uses BuildPacks. The project root and object directories cannot be used."
     },
     "settings.publish.additional_material": {
@@ -279,7 +279,7 @@
     },
     "settings.publish.project_information": {
       "title": "Export Project Information",
-      "body": "Write Project.json in Export Directory, alongside the platform folders. It contains project information for SDK consumers and is optional for runtime pack loading."
+      "body": "Write Project.json in Publish Directory, alongside the platform folders. It contains project information for SDK consumers and is optional for runtime pack loading."
     },
     "settings.publish.pack_metadata": {
       "title": "Export Pack MetaData",

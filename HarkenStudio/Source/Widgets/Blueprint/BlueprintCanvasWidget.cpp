@@ -56,6 +56,8 @@
 #include <QJsonObject>
 #include <QMimeData>
 #include <QMouseEvent>
+#include <QHelpEvent>
+#include <QWheelEvent>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineF>
@@ -198,6 +200,24 @@ QString pathPositionKey(const QString& projectId, CanvasFlowDirection direction,
     stream << key.objectGuid;
     return QStringLiteral("Blueprint/RouteGainLayout/Nodes/")
         + QString::fromLatin1(QCryptographicHash::hash(identity, QCryptographicHash::Sha256).toHex());
+}
+
+QByteArray pathEdgeIdentity(const SignalPathGraph& graph, size_t index)
+{
+    const auto& edge = graph.edges[index];
+    QByteArray identity;
+    QDataStream stream(&identity, QIODevice::WriteOnly);
+    stream.setVersion(QDataStream::Qt_6_8);
+    stream << graph.nodes[edge.from.occurrenceIndex].key.objectGuid
+        << static_cast<quint64>(edge.from.portPairIndex)
+        << graph.nodes[edge.to.occurrenceIndex].key.objectGuid
+        << static_cast<quint64>(edge.to.portPairIndex) << static_cast<int>(edge.kind)
+        << edge.routingSource.has_value();
+    if (edge.routingSource) {
+        stream << edge.routingSource->objectGuid << edge.routingSource->scope.has_value();
+        if (edge.routingSource->scope) stream << fromFieldGroupGuid(*edge.routingSource->scope);
+    }
+    return identity;
 }
 
 bool passesViewportFilter(const SignalPathNode& node, bool soundsFiltered)
@@ -386,6 +406,7 @@ BlueprintCanvasWidget::BlueprintCanvasWidget(QWidget* parent)
 {
     scene_ = new QGraphicsScene(this);
     setScene(scene_);
+    initializeNodeEditors_();
     toast_ = new ToastPresenter(this);
 
     setRenderHint(QPainter::Antialiasing);
@@ -598,28 +619,66 @@ void BlueprintCanvasWidget::materializeFromSource_()
         // just edits the canvas initiated itself.
         chainSource_->refreshView();
     }
-    if (updatePathScene_()) return;
-    clearScene();
+    const bool reusePathScene = activeSource_ == pathSource_.get() && pathSceneState_
+        && pathSceneState_->projectId == pathProjectId_ && pathSource_->graph().ok();
+    QHash<QUuid, NodeItem*> previousNodes;
+    QHash<QByteArray, size_t> previousEdgeIndices;
+    std::vector<ConnectionPath*> previousEdges;
+    std::vector<NodeItem*> previousGains;
+    std::vector<ConnectionPath*> previousGainOutputs;
+    QSignalBlocker sceneBlocker(scene_);
+    if (reusePathScene) {
+        if (locationPing_) locationPing_->stop();
+        locationPingObjectID_ = 0;
+        const auto& graph = pathSceneState_->graph;
+        for (size_t index = 0; index < graph.nodes.size(); ++index) {
+            const auto& node = graph.nodes[index];
+            const auto kind = node.type == ProjectItemType::Bus ? NodeKind::Bus : NodeKind::ProjectItem;
+            previousNodes.insert(node.key.objectGuid, nodeMap_.at({kind, node.objectID, index}));
+        }
+        for (size_t index = 0; index < graph.edges.size(); ++index)
+            previousEdgeIndices.insert(pathEdgeIdentity(graph, index), index);
+        previousEdges = std::move(edges_);
+        previousGains = std::move(gainNodes_);
+        previousGainOutputs = std::move(gainOutputEdges_);
+        nodeMap_.clear();
+        waveformNodes_.clear();
+        pathPositionKeys_.clear();
+        gainPositionKeys_.clear();
+    } else {
+        clearScene();
+    }
 
     auto nodes = activeSource_->buildNodes();
     auto* project = ProjectManager::instance().currentProject();
     NodeContentFields shownFields;
     for (const auto& desc : nodes) shownFields |= desc.content.fields() & nodeContentFields_;
     const int labelWidth = NodeContentEditor::labelWidth(shownFields);
+    const bool labelWidthChanged = nodeContentLabelWidth_ != labelWidth;
+    nodeContentLabelWidth_ = labelWidth;
     int globalIndex = 0;
     for (auto const& d : nodes) {
-        auto* item = new NodeItem(d.title, nullptr);
+        NodeItem* item = nullptr;
+        if (reusePathScene && d.occurrenceIndex) {
+            const auto guid = pathSource_->graph().nodes[*d.occurrenceIndex].key.objectGuid;
+            auto* previous = previousNodes.value(guid);
+            if (previous && previous->objectID() == d.id && previous->itemType() == d.itemType
+                && previous->inputCount() == d.portPairCount && previous->outputCount() == d.portPairCount
+                && previous->contentInfo().fields() == d.content.fields())
+                item = previousNodes.take(guid);
+        }
+        const bool created = !item;
+        if (created) item = new NodeItem(d.title, nullptr);
+        else item->setTitle(d.title);
         item->setObjectID(d.id);
         item->setRole(translateRole(d.role));
         item->setCanvasFlowDirection(flowDir_);
         item->setContentFields(nodeContentFields_);
 
-        if (!d.subtitle.isEmpty()) {
-            item->setSubtitle(d.subtitle);
-        }
+        item->setSubtitle(d.subtitle);
 
         item->setItemType(d.itemType);
-        for (int pair = 0; pair < d.portPairCount; ++pair) {
+        for (int pair = 0; created && pair < d.portPairCount; ++pair) {
             item->addInputPin();
             item->addOutputPin();
             item->inputPin(pair)->setDomain(d.occurrenceIndex
@@ -627,9 +686,19 @@ void BlueprintCanvasWidget::materializeFromSource_()
             item->outputPin(pair)->setDomain(NodePin::Domain::Audio);
         }
 
-        item->setContentInfo(d.content);
-        if (d.occurrenceIndex && (d.content.fields() & nodeContentFields_))
-            installNodeEditor_(item, d, labelWidth);
+        if (item->contentInfo() != d.content) item->setContentInfo(d.content);
+        if (created && d.occurrenceIndex && d.content.fields())
+            installNodeEditor_(item, d);
+        else if (d.occurrenceIndex) {
+            if (labelWidthChanged) {
+                if (auto* editor = qobject_cast<NodeContentEditor*>(item->contentWidget()))
+                    editor->setLabelWidth(labelWidth);
+                item->refreshContentPresentation();
+            }
+            tagContentEditor_(qobject_cast<NodeContentEditor*>(item->contentWidget()),
+                ProjectManager::instance().findItemByGuid(
+                    pathSource_->graph().nodes[*d.occurrenceIndex].key.objectGuid));
+        }
 
         // A user-dragged card persists its scene position in canvasPos (an
         // editor-only project field, never read by the runtime); honour it as an
@@ -647,8 +716,10 @@ void BlueprintCanvasWidget::materializeFromSource_()
             (owner->canvasPos.x() != 0.0 || owner->canvasPos.y() != 0.0)) {
             pos = owner->canvasPos;
         }
-        scene_->addItem(item);
-        item->setPos(pos);
+        if (created) {
+            scene_->addItem(item);
+            item->setPos(pos);
+        }
         item->setOpacity(d.opacity);
 
         if (isRealNode) {
@@ -689,6 +760,8 @@ void BlueprintCanvasWidget::materializeFromSource_()
         item->setBlueprintWaveformMode(d.waveformMode);
         if (d.waveformMode)
             waveformNodes_[d.mediaPath].push_back({item, d.waveformRange});
+        else if (!created)
+            item->setWaveformPeakData({});
 
         if (d.overrideBadge >= 0) {
             item->setOverrideBadge(d.overrideBadge != 0);
@@ -714,18 +787,30 @@ void BlueprintCanvasWidget::materializeFromSource_()
         }
         for (size_t index = 0; index < edges.size(); ++index) {
             if (pathSource_->graph().edges[index].kind == SignalPathEdgeKind::Through) continue;
-            auto* gain = new NodeItem(QString());
-            gain->setRouteGainMode(true);
+            NodeItem* gain = nullptr;
+            const auto previous = previousEdgeIndices.constFind(pathEdgeIdentity(pathSource_->graph(), index));
+            if (previous != previousEdgeIndices.cend()) {
+                auto*& candidate = previousGains[*previous];
+                if (candidate && candidate->contentInfo().fields() == edges[index].gainContent.fields())
+                    gain = std::exchange(candidate, nullptr);
+            }
+            const bool created = !gain;
+            if (created) {
+                gain = new NodeItem(QString());
+                gain->setRouteGainMode(true);
+                gain->addInputPin();
+                gain->addOutputPin();
+                gain->setFlag(QGraphicsItem::ItemIsSelectable);
+                gain->setFlag(QGraphicsItem::ItemIsMovable);
+                scene_->addItem(gain);
+            }
             gain->setCanvasFlowDirection(flowDir_);
             gain->setContentFields(edges[index].gainContent.fields());
-            gain->setContentInfo(edges[index].gainContent);
-            gain->addInputPin();
-            gain->addOutputPin();
-            gain->setFlag(QGraphicsItem::ItemIsSelectable);
-            gain->setFlag(QGraphicsItem::ItemIsMovable);
-            scene_->addItem(gain);
+            if (gain->contentInfo() != edges[index].gainContent)
+                gain->setContentInfo(edges[index].gainContent);
             gainNodes_[index] = gain;
-            installGainEditor_(gain, index);
+            if (created) installGainEditor_(gain);
+            else tagContentEditor_(qobject_cast<NodeContentEditor*>(gain->contentWidget()), routeGainTopicItem_(index));
             const auto key = signalPathEdgeKey_(index);
             QByteArray identity;
             QDataStream stream(&identity, QIODevice::WriteOnly);
@@ -757,24 +842,52 @@ void BlueprintCanvasWidget::materializeFromSource_()
         if (!fromPin || !toPin) continue;
 
         auto* gain = signalPathGainNode(edgeIndex);
-        auto* path = new ConnectionPath(fromPin, gain ? gain->inputPin() : toPin);
+        ConnectionPath* path = nullptr;
+        ConnectionPath* downstream = nullptr;
+        if (reusePathScene) {
+            const auto previous = previousEdgeIndices.constFind(pathEdgeIdentity(pathSource_->graph(), edgeIndex));
+            if (previous != previousEdgeIndices.cend()) {
+                auto*& candidate = previousEdges[*previous];
+                if (candidate && candidate->startPin() == fromPin
+                    && candidate->endPin() == (gain ? gain->inputPin() : toPin))
+                    path = std::exchange(candidate, nullptr);
+                auto*& output = previousGainOutputs[*previous];
+                if (gain && output && output->startPin() == gain->outputPin() && output->endPin() == toPin)
+                    downstream = std::exchange(output, nullptr);
+            }
+        }
+        if (!path) {
+            path = new ConnectionPath(fromPin, gain ? gain->inputPin() : toPin);
+            scene_->addItem(path);
+        }
         path->setBlueprintEdgeKind(static_cast<BlueprintEdgeKind>(e.edgeKind));
         path->setBlueprintFlowDirection(flowDir_);
+        path->setParallelOffset(0.0);
 
-        if (!e.label.isEmpty()) {
-            path->setLabel(e.label);
-        }
+        path->setLabel(e.label);
 
-        scene_->addItem(path);
         edges_.push_back(path);
         if (gain) {
-            auto* downstream = new ConnectionPath(gain->outputPin(), toPin);
+            if (!downstream) {
+                downstream = new ConnectionPath(gain->outputPin(), toPin);
+                scene_->addItem(downstream);
+            }
             downstream->setBlueprintEdgeKind(static_cast<BlueprintEdgeKind>(e.edgeKind));
             downstream->setBlueprintFlowDirection(flowDir_);
-            scene_->addItem(downstream);
             gainOutputEdges_[edgeIndex] = downstream;
         }
     }
+    for (auto* edge : previousEdges) delete edge;
+    for (auto* edge : previousGainOutputs) delete edge;
+    const auto removeNode = [](NodeItem* node) {
+        if (!node) return;
+        node->finishTitleEditing(false);
+        if (auto* editor = qobject_cast<NodeContentEditor*>(node->contentWidget()))
+            editor->finishEditing(false);
+        delete node;
+    };
+    for (auto* gain : previousGains) removeNode(gain);
+    for (auto* node : previousNodes) removeNode(node);
     if (activeSource_ == pathSource_.get()) {
         std::map<std::pair<size_t, size_t>, std::vector<size_t>> parallel;
         const auto& graph = pathSource_->graph();
@@ -834,77 +947,21 @@ void BlueprintCanvasWidget::materializeFromSource_()
     refreshNodeWaveforms_();
     refreshPlaybackActivity_();
     refreshPathFocus_();
-    if (activeSource_ == pathSource_.get() && pathSource_->graph().ok())
-        pathSceneState_ = PathSceneState{pathProjectId_, pathSource_->graph(), flowDir_, nodeContentFields_};
+    if (activeSource_ == pathSource_.get() && pathSource_->graph().ok()) {
+        pathSceneState_ = PathSceneState{pathProjectId_, pathSource_->graph()};
+        QGraphicsProxyWidget* previous = nullptr;
+        const auto linkFocus = [&previous](NodeItem* node) {
+            auto* proxy = node ? node->contentProxy() : nullptr;
+            if (!proxy) return;
+            if (previous) QGraphicsWidget::setTabOrder(previous, proxy);
+            previous = proxy;
+        };
+        for (size_t index = 0; index < pathSource_->graph().nodes.size(); ++index)
+            linkFocus(signalPathNode(index));
+        for (auto* node : gainNodes_) linkFocus(node);
+    }
+    sceneBlocker.unblock();
     emit signalChainViewChanged();
-}
-
-bool BlueprintCanvasWidget::updatePathScene_()
-{
-    if (activeSource_ != pathSource_.get() || !pathSceneState_
-        || pathSceneState_->projectId != pathProjectId_
-        || pathSceneState_->flowDirection != flowDir_
-        || pathSceneState_->contentFields != nodeContentFields_
-        || nodeFieldEditing_() || !pathDragStartPositions_.empty() || dragSourcePin_ || externalDragActive_)
-        return false;
-    const auto& previous = pathSceneState_->graph;
-    const auto& graph = pathSource_->graph();
-    if (!graph.ok() || previous.platform != graph.platform
-        || previous.nodes.size() != graph.nodes.size() || previous.edges.size() != graph.edges.size())
-        return false;
-    const auto nodes = pathSource_->buildNodes();
-    const auto edges = pathSource_->buildEdges();
-    if (nodes.size() != nodeMap_.size() || edges.size() != edges_.size()) return false;
-    for (size_t index = 0; index < graph.nodes.size(); ++index) {
-        const auto& before = previous.nodes[index];
-        const auto& after = graph.nodes[index];
-        if (before.key != after.key || before.objectID != after.objectID || before.type != after.type
-            || before.portPairs.size() != after.portPairs.size()
-            || signalPathNode(index)->contentInfo().fields() != nodes[index].content.fields())
-            return false;
-    }
-    for (size_t index = 0; index < graph.edges.size(); ++index) {
-        const auto& before = previous.edges[index];
-        const auto& after = graph.edges[index];
-        if (before.from != after.from || before.to != after.to || before.kind != after.kind
-            || before.routingSource != after.routingSource)
-            return false;
-        const auto* gain = signalPathGainNode(index);
-        if (gain && gain->contentInfo().fields() != edges[index].gainContent.fields()) return false;
-    }
-
-    locationPing_->stop();
-    locationPingObjectID_ = 0;
-    waveformNodes_.clear();
-    for (size_t index = 0; index < nodes.size(); ++index) {
-        const auto& desc = nodes[index];
-        auto* node = signalPathNode(index);
-        node->setTitle(desc.title);
-        node->setSubtitle(desc.subtitle);
-        if (node->contentInfo() != desc.content) node->setContentInfo(desc.content);
-        tagContentEditor_(qobject_cast<NodeContentEditor*>(node->contentWidget()),
-            ProjectManager::instance().findItemByGuid(graph.nodes[index].key.objectGuid));
-        node->setBlueprintWaveformMode(desc.waveformMode);
-        if (desc.waveformMode)
-            waveformNodes_[desc.mediaPath].push_back({node, desc.waveformRange});
-        else
-            node->setWaveformPeakData({});
-    }
-    for (size_t index = 0; index < edges.size(); ++index) {
-        if (auto* gain = signalPathGainNode(index)) {
-            if (gain->contentInfo() != edges[index].gainContent) gain->setContentInfo(edges[index].gainContent);
-            tagContentEditor_(qobject_cast<NodeContentEditor*>(gain->contentWidget()), routeGainTopicItem_(index));
-        }
-    }
-    layoutPathNodes_();
-    applyTreeVisibility_();
-    if (selectedObjectGuids_) applyProjectItemSelection_();
-    refreshNodeTitles_();
-    refreshNodeWaveforms_();
-    refreshPlaybackActivity_();
-    refreshPathFocus_();
-    emit signalChainViewChanged();
-    return true;
 }
 
 ConnectionPath* BlueprintCanvasWidget::signalPathEdge(size_t edgeIndex) const
@@ -1844,6 +1901,10 @@ void BlueprintCanvasWidget::loadPersistedLayerVisibility_()
 void BlueprintCanvasWidget::setFlowDirection(CanvasFlowDirection dir)
 {
     if (dir == flowDir_) return;
+    if (activeSource_ == pathSource_.get()) {
+        cancelConnection_();
+        finishNodeEdits_(false);
+    }
     flowDir_ = dir;
 
     persistFlowDirection_();
@@ -1893,6 +1954,8 @@ void BlueprintCanvasWidget::setNodeContentFields(NodeContentFields fields)
 {
     fields &= kAllNodeContentFields;
     if (nodeContentFields_ == fields) return;
+    cancelConnection_();
+    finishNodeEdits_(false);
     nodeContentFields_ = fields;
     QSettings().setValue(QStringLiteral("Blueprint/NodeContentFields"), fields.toInt());
     materializeFromSource_();
@@ -2067,6 +2130,32 @@ bool BlueprintCanvasWidget::canCollapseChain(uint32_t objectId) const
 
 bool BlueprintCanvasWidget::viewportEvent(QEvent* event)
 {
+    switch (event->type()) {
+    case QEvent::StyleChange:
+    case QEvent::PaletteChange:
+    case QEvent::FontChange:
+    case QEvent::DevicePixelRatioChange:
+        scheduleContentPresentationRefresh_();
+        break;
+    case QEvent::MouseMove:
+    case QEvent::MouseButtonPress:
+    case QEvent::MouseButtonDblClick:
+        activateNodeEditorAt_(static_cast<QMouseEvent*>(event)->position().toPoint());
+        scheduleContentRetirement_();
+        break;
+    case QEvent::Wheel:
+        activateNodeEditorAt_(static_cast<QWheelEvent*>(event)->position().toPoint());
+        break;
+    case QEvent::ToolTip:
+        activateNodeEditorAt_(static_cast<QHelpEvent*>(event)->pos());
+        break;
+    case QEvent::MouseButtonRelease:
+    case QEvent::Leave:
+    case QEvent::Hide:
+        scheduleContentRetirement_();
+        break;
+    default: break;
+    }
     if (locationPing_ && event->type() == QEvent::Hide) {
         locationPing_->stop();
         locationPingObjectID_ = 0;
@@ -3093,6 +3182,7 @@ void BlueprintCanvasWidget::useSignalChainForBus(uint32_t busID)
 void BlueprintCanvasWidget::clear()
 {
     toast_->dismiss();
+    pathSceneState_.reset();
     pathRefreshPending_ = false;
     projectView_ = true;
     selectedPathKeys_.clear();

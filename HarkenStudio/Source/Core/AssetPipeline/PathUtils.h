@@ -79,6 +79,7 @@ public:
                                                const QString& projectFilePath = {});
     static bool isValidPackBuildOutputDir(const QString& path, const QString& projectFilePath = {},
                                           bool allowObjectBuckets = false);
+    static bool isProtectedPackOutputPath(const QString& path, const QString& projectFilePath);
     static bool isProjectRootDirectory(const QString& path, const QString& projectFilePath);
     static bool isProjectObjectDirectory(const QString& path, const QString& projectFilePath);
     static QString packBuildOutputLocationError();

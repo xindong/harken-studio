@@ -132,6 +132,7 @@ public:
     friend void registerProjectActions(ActionManager&, ProjectManager*, ProjectExplorer*, std::function<Hierarchy*()>);
 
     static void resyncItemToRuntime(ProjectItem* item);
+    static void resyncItemsToRuntime(std::span<ProjectItem* const> items);
     static void resyncSourceToRuntime(uint32_t sourceId);
     static void syncActionNameForPreview(ProjectItem* actionItem);
     static void syncProjectToRuntime(ProjectData* project);
@@ -190,8 +191,10 @@ public:
     static PreparedProject prepareProject(const QString& filePath,
                                           bool allowUpgrade = false,
                                           ProjectUpgradeProgressCallback upgradeProgress = {},
-                                          ProjectUpgradeApprovalCallback upgradeApproval = {});
-    static PreparedProject prepareProject(const ProjectConfig& config);
+                                          ProjectUpgradeApprovalCallback upgradeApproval = {},
+                                          std::function<bool()> cancelled = {});
+    static PreparedProject prepareProject(const ProjectConfig& config,
+                                          std::function<bool()> cancelled = {});
     bool commitPreparedProject(PreparedProject&& prepared);
     void publishProjectOpened();
     void startWatchingCurrentProject();
@@ -402,6 +405,7 @@ public:
     ProjectItem* findItemByGuid(const QUuid& guid) const;
 
     ProjectItem* findItemByObjectID(uint32_t objectID) const;
+    std::vector<ProjectItem*> findItemsByObjectID(std::span<const uint32_t> objectIDs) const;
 
     ProjectItem* findItemByRuntimeStableId(harkenstudio::ObjectId runtimeStableId) const;
 

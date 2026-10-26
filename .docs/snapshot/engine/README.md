@@ -65,7 +65,7 @@ Agent 提示词不在本目录。需要自动匹配日志时，用 gitignore 下
 |---|---|
 | `VnResult` 名字、分段注释 | `Runtime/api/include/harken/Harken.h` |
 | 生成用数值表 | `HarkenEngine/Source/Tooling/Remote/wire/harken_wire_table.json` |
-| C# 镜像 | `HarkenSDK/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs` |
+| C# 镜像 | `HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs` |
 | Preview 码 | `Preview/include/harken_preview/PreviewAbi.h` |
 | Preview 起播映射 | `Preview/src/PreviewAbi.cpp` `MapStart` / `MapControl` |
 | Studio 透传常量 | `Studio/RuntimeBridge/PlaybackBridge.h` |

@@ -25,11 +25,24 @@ ParameterControlHost::ParameterControlHost(
     ParameterPresenterContext context,
     QWidget* parent,
     ThemeManager* themeManager)
+    : ParameterControlHost(name, context, std::nullopt, parent, themeManager)
+{
+}
+
+ParameterControlHost::ParameterControlHost(
+    const QString& name,
+    ParameterPresenterContext context,
+    std::optional<ParameterPresenterId> presenterOverride,
+    QWidget* parent,
+    ThemeManager* themeManager)
     : QWidget(parent)
     , binding_(new ParameterBinding(this))
     , themeManager_(themeManager ? themeManager : &ThemeManager::instance())
     , context_(context)
+    , presenterOverride_(presenterOverride)
 {
+    if (presenterOverride_ && !parameterPresenterSupportsContext(*presenterOverride_, context_))
+        presenterOverride_ = defaultParameterPresenter(context_);
     auto* layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);

@@ -142,7 +142,7 @@ class BuildHubInstallerTest(unittest.TestCase):
         self.make_input()
         with mock.patch.dict(os.environ, {"HARKEN_AUTHENTICODE_THUMBPRINT": ""}):
             result = self.module.build_installer(self.args(), build_msi=self.fake_build)
-        self.assertEqual(Path(result["package"]).name, "HarkenStudioHubSetup-0.1.68-run12.abcd1234.msi")
+        self.assertEqual(Path(result["package"]).name, "HarkenHubSetup-0.1.68-run12.abcd1234.msi")
         self.assertEqual(Path(result["evidence"]).name, "hub-0.1.68-run12.abcd1234-evidence")
         self.assertEqual(result["fileCount"], 6 + len(self.legal_files))
         self.assertFalse(result["signed"])
@@ -198,7 +198,7 @@ class BuildHubInstallerTest(unittest.TestCase):
             self.assertEqual(components["HarkenProjectAssociation"][5], "reg9Iw6ZFMWLFHU5l3K2mYjrhyy3bc")
             actions = {row[0]: row for row in db.query("SELECT * FROM `CustomAction`")}
             self.assertEqual(actions["HarkenRegisterUpdateBridge"][1:4],
-                             ["3106", "INSTALLFOLDER", '"[INSTALLFOLDER]HarkenStudioHub.exe" --register-update-bridge'])
+                             ["3106", "INSTALLFOLDER", '"[INSTALLFOLDER]HarkenHub.exe" --register-update-bridge'])
             sequences = {row[0]: row for row in db.query("SELECT * FROM `InstallExecuteSequence`")}
             self.assertGreater(int(sequences["RemoveExistingProducts"][2]), int(sequences["InstallFinalize"][2]))
             self.assertEqual(sequences["HarkenUnregisterUpdateBridge"][1], 'REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE')
@@ -244,7 +244,7 @@ class BuildHubInstallerTest(unittest.TestCase):
                 f'ACTION=ADMIN TARGETDIR="{extracted}" REBOOT=ReallySuppress'), 0)
         finally:
             msi.MsiSetInternalUI(previous_ui, None)
-        installed = extracted / "PFiles64/HarkenStudioHub"
+        installed = extracted / "PFiles64/HarkenHub"
         expected = {p.relative_to(self.input_dir) for p in self.input_dir.rglob("*") if p.is_file()}
         actual = {p.relative_to(installed) for p in installed.rglob("*") if p.is_file()}
         self.assertEqual(expected, actual)

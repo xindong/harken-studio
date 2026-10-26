@@ -88,17 +88,17 @@ struct JsonRead
 
 constexpr StepSpec kStepSpecs[] = {
     {"unity_preflight", "Validate Unity project"},
-    {"sdk_preflight", "Validate Harken Unity SDK source"},
-    {"compare_sdk", "Compare installed Unity SDK"},
-    {"install_sdk", "Install or update Unity SDK"},
-    {"verify", "Verify installed SDK"},
+    {"sdk_preflight", "Validate Harken Unity Integration Package source"},
+    {"compare_sdk", "Compare installed Unity Integration Package"},
+    {"install_sdk", "Install or update Unity Integration Package"},
+    {"verify", "Verify installed Integration Package"},
     {"report", "Write integration report"},
 };
 
 constexpr StepSpec kRemovalStepSpecs[] = {
     {"unity_preflight", "Validate Unity project"},
-    {"inspect_installation", "Review installed Harken SDK"},
-    {"remove_integration", "Back up and remove Harken SDK"},
+    {"inspect_installation", "Review installed Harken Integration Package"},
+    {"remove_integration", "Back up and remove Harken Integration Package"},
     {"removal_report", "Write removal report"},
 };
 
@@ -445,9 +445,9 @@ QString missingRuntimeDetail(const QString& sdkRoot, const QString& platform,
     for (const QString& relative : alternatives)
         locations << QDir::toNativeSeparators(QDir(sdkRoot).filePath(relative));
     return QStringLiteral("Missing component: %1 game runtime\n"
-                          "Expected inside the selected SDK source: %2\n"
+                          "Expected inside the selected Integration Package source: %2\n"
                           "Purpose: %3\n"
-                          "What this means: This SDK source cannot safely prepare the Unity project for %1 builds until a verified runtime is restored.")
+                          "What this means: This Integration Package source cannot safely prepare the Unity project for %1 builds until a verified runtime is restored.")
         .arg(platform, locations.join(QStringLiteral(" or ")),
              runtimePurpose(platform));
 }
@@ -467,7 +467,7 @@ FileExplanation explainSdkFile(const QString& relative)
         return {
             QStringLiteral("unity_metadata"),
             QStringLiteral("Unity identity and import settings"),
-            QStringLiteral("These files let Unity keep stable asset references and remember how neighboring SDK files should be imported."),
+            QStringLiteral("These files let Unity keep stable asset references and remember how neighboring Integration Package files should be imported."),
             QStringLiteral("Keeping them unchanged preserves existing Unity references and platform import settings.")};
     }
     if (path == QStringLiteral("package.json")) {
@@ -475,14 +475,14 @@ FileExplanation explainSdkFile(const QString& relative)
             QStringLiteral("package_identity"),
             QStringLiteral("Package identity and compatibility"),
             QStringLiteral("Describes the Harken package name, version, Unity compatibility, and optional samples to Unity Package Manager."),
-            QStringLiteral("Unity will recognize and load the selected Harken SDK version with its current package settings.")};
+            QStringLiteral("Unity will recognize and load the selected Harken Integration Package version with its current package settings.")};
     }
     if (path == QLatin1String(kIntegrationManifest)) {
         return {
             QStringLiteral("integration_safety"),
             QStringLiteral("Integration safety rules"),
-            QStringLiteral("Defines which SDK files are mandatory and which Unity target runtimes should be available on each editor operating system."),
-            QStringLiteral("Future checks can detect an incomplete or damaged Harken SDK before changing project files.")};
+            QStringLiteral("Defines which Integration Package files are mandatory and which Unity target runtimes should be available on each editor operating system."),
+            QStringLiteral("Future checks can detect an incomplete or damaged Harken Integration Package before changing project files.")};
     }
     if (path == QStringLiteral("Runtime/Harken.Core.asmdef") ||
         path == QStringLiteral("Runtime/Unity/Harken.Unity.asmdef")) {
@@ -490,7 +490,7 @@ FileExplanation explainSdkFile(const QString& relative)
             QStringLiteral("managed_assembly"),
             QStringLiteral("Unity C# assembly settings"),
             QStringLiteral("Tells Unity how to compile the Harken C# runtime and host-adapter assemblies and which dependencies they need."),
-            QStringLiteral("Unity scripts can compile against the Harken API using the settings required by this SDK version.")};
+            QStringLiteral("Unity scripts can compile against the Harken API using the settings required by this Integration Package version.")};
     }
     if (path.startsWith(QStringLiteral("Runtime/Generated/"))) {
         return {
@@ -504,7 +504,7 @@ FileExplanation explainSdkFile(const QString& relative)
             QStringLiteral("managed_api"),
             QStringLiteral("C# gameplay API"),
             QStringLiteral("These files provide the C# API for engine lifecycle, actions, emitters, listeners, Packs, gameplay values, voices, and callbacks."),
-            QStringLiteral("Unity gameplay code will use the behavior and API contract supplied by this SDK version.")};
+            QStringLiteral("Unity gameplay code will use the behavior and API contract supplied by this Integration Package version.")};
     }
     if (path.startsWith(QStringLiteral("Runtime/Unity/"))) {
         return {
@@ -529,7 +529,7 @@ FileExplanation explainSdkFile(const QString& relative)
         return {
             QStringLiteral("samples"),
             QStringLiteral("Optional Unity examples"),
-            QStringLiteral("Provides an optional example showing how a Unity project can call the Harken SDK."),
+            QStringLiteral("Provides an optional example showing how a Unity project can call the Harken Integration Package."),
             QStringLiteral("The example becomes available for learning or import; it does not change game behavior unless the user imports it.")};
     }
     if (path.endsWith(QStringLiteral("README.md"), Qt::CaseInsensitive) ||
@@ -538,14 +538,14 @@ FileExplanation explainSdkFile(const QString& relative)
         return {
             QStringLiteral("documentation"),
             QStringLiteral("Documentation and release information"),
-            QStringLiteral("Provides documentation, release notes, or licensing information for this part of the Harken SDK."),
-            QStringLiteral("Users will see documentation that matches the installed SDK; runtime behavior is unchanged.")};
+            QStringLiteral("Provides documentation, release notes, or licensing information for this part of the Harken Integration Package."),
+            QStringLiteral("Users will see documentation that matches the installed Integration Package; runtime behavior is unchanged.")};
     }
     return {
         QStringLiteral("supporting_content"),
         QStringLiteral("Supporting package content"),
         QStringLiteral("Provides supporting content used by the embedded Harken Unity package."),
-        QStringLiteral("The installed package will contain the supporting data expected by this SDK version.")};
+        QStringLiteral("The installed package will contain the supporting data expected by this Integration Package version.")};
 }
 
 using FileChange = UnityIntegrationService::FileChange;
@@ -561,15 +561,15 @@ QString changeTitle(const QString& action)
 QString changeReason(const QString& action)
 {
     if (action == QStringLiteral("add")) {
-        return QStringLiteral("This content is missing from the Unity project and will be added from the verified SDK.");
+        return QStringLiteral("This content is missing from the Unity project and will be added from the verified Integration Package.");
     }
     if (action == QStringLiteral("replace")) {
-        return QStringLiteral("The installed content differs from the verified SDK source and will be updated to the selected version.");
+        return QStringLiteral("The installed content differs from the verified Integration Package source and will be updated to the selected version.");
     }
     if (action == QStringLiteral("remove")) {
-        return QStringLiteral("A previous Harken SDK installation managed this content, but the current SDK no longer uses it; removing it avoids obsolete code or runtime conflicts.");
+        return QStringLiteral("A previous Harken Integration Package installation managed this content, but the current Integration Package no longer uses it; removing it avoids obsolete code or runtime conflicts.");
     }
-    return QStringLiteral("This content exists only in the Unity project and is not managed by the selected SDK source, so it will remain unchanged.");
+    return QStringLiteral("This content exists only in the Unity project and is not managed by the selected Integration Package source, so it will remain unchanged.");
 }
 
 QStringList groupedLocations(const QStringList& relativePaths,
@@ -725,7 +725,7 @@ bool sdkSnapshot(const QString& root, QJsonObject* snapshot, QString* error)
         const QString path = entries.next();
         const QString relative = QDir(root).relativeFilePath(path);
         if (!isSafeRelativePath(relative)) {
-            *error = QStringLiteral("The SDK contains an unsafe path.");
+            *error = QStringLiteral("The Integration Package contains an unsafe path.");
             return false;
         }
         if (entries.fileInfo().isDir()) {
@@ -733,7 +733,7 @@ bool sdkSnapshot(const QString& root, QJsonObject* snapshot, QString* error)
         } else {
             const FileDigest digest = sha256File(path);
             if (digest.status != ReadStatus::Ok) {
-                *error = QStringLiteral("Cannot read SDK file: %1").arg(path);
+                *error = QStringLiteral("Cannot read Integration Package file: %1").arg(path);
                 return false;
             }
             hashes[relative] = QString::fromLatin1(digest.hash);
@@ -756,7 +756,7 @@ QByteArray sdkChangeFingerprint(const QString& project, const QString& source,
     for (auto file = sourceFiles.begin(); file != sourceFiles.end(); ++file)
         if (!ignoredRelativePath(file.key())) currentSource.insert(file.key(), file.value().toString().toLatin1());
     if (currentSource != checkedSource) {
-        *error = QStringLiteral("SDK files changed after the safety check. Run the check again before continuing.");
+        *error = QStringLiteral("Integration Package files changed after the safety check. Run the check again before continuing.");
         return {};
     }
     if (QFileInfo::exists(target) && !sdkSnapshot(target, targetSnapshot, error)) return {};
@@ -776,7 +776,7 @@ bool matchesMigrationSnapshot(const QString& root, const QJsonObject& expected, 
     QJsonObject actual;
     if (!sdkSnapshot(root, &actual, error)) return false;
     if (actual != expected) {
-        *error = QStringLiteral("SDK contents changed during migration. No existing files will be overwritten.");
+        *error = QStringLiteral("Integration Package contents changed during migration. No existing files will be overwritten.");
         return false;
     }
     return true;
@@ -804,7 +804,7 @@ bool validateMigration(const QString& project, const QString& from, const QStrin
     if (!UnityInstallation::validateTarget(project, from, error)
         || !UnityInstallation::validatePath(from + QStringLiteral(".meta"), error)) return false;
     if (UnityInstallation::containsPath(from, to) || UnityInstallation::containsPath(to, from)) {
-        *error = QStringLiteral("The current and new SDK locations must be separate directories without containment.");
+        *error = QStringLiteral("The current and new Integration Package locations must be separate directories without containment.");
         return false;
     }
     if (!emptyMigrationDestination(to, error)) return false;
@@ -814,19 +814,19 @@ bool validateMigration(const QString& project, const QString& from, const QStrin
         return false;
     }
     if (!discovery.sdkReferences.isEmpty()) {
-        *error = QStringLiteral("Resolve SDK package dependencies before migration to avoid loading another SDK or breaking a package reference.");
+        *error = QStringLiteral("Resolve Integration Package dependencies before migration to avoid loading another Integration Package or breaking a package reference.");
         return false;
     }
     for (const QString& reference : discovery.localPackagePaths) {
         if (UnityInstallation::containsPath(from, reference) || UnityInstallation::containsPath(reference, from)
             || UnityInstallation::containsPath(to, reference) || UnityInstallation::containsPath(reference, to)) {
-            *error = QStringLiteral("Resolve SDK package dependencies before migration to avoid loading another SDK or breaking a package reference.");
+            *error = QStringLiteral("Resolve Integration Package dependencies before migration to avoid loading another Integration Package or breaking a package reference.");
             return false;
         }
     }
     const OwnershipRecord ownership = previousManagedFiles(from);
     if (ownership.status != ReadStatus::Ok || ownership.managedFiles.isEmpty()) {
-        *error = QStringLiteral("A valid SDK ownership record is required for migration.");
+        *error = QStringLiteral("A valid Integration Package ownership record is required for migration.");
         return false;
     }
     const JsonRead manifest = readJsonObject(QDir(from).filePath(QLatin1String(kIntegrationManifest)));
@@ -835,19 +835,19 @@ bool validateMigration(const QString& project, const QString& from, const QStrin
         || manifest.object.value(QStringLiteral("schema_version")).toInt() != 3
         || manifest.object.value(QStringLiteral("package_name")).toString() != QLatin1String(kPackageName)
         || package.object.value(QStringLiteral("name")).toString() != QLatin1String(kPackageName)) {
-        *error = QStringLiteral("The installed SDK identity or integration manifest is invalid.");
+        *error = QStringLiteral("The installed Integration Package identity or integration manifest is invalid.");
         return false;
     }
     const QString relative = QDir(project).relativeFilePath(to);
     if (relative != UnityInstallation::defaultRelativePath() && relative != QStringLiteral("Assets/HarkenSDK")
         && !manifest.object.value(QStringLiteral("supports_custom_install_path")).toBool()) {
-        *error = QStringLiteral("This SDK version does not support a custom installation location.");
+        *error = QStringLiteral("This Integration Package version does not support a custom installation location.");
         return false;
     }
     const QJsonObject dependencies = package.object.value(QStringLiteral("dependencies")).toObject();
     for (auto it = dependencies.begin(); it != dependencies.end(); ++it) {
         if (it.value().toString().startsWith(QStringLiteral("file:"))) {
-            *error = QStringLiteral("The installed SDK has local package dependencies. Resolve them before migration.");
+            *error = QStringLiteral("The installed Integration Package has local package dependencies. Resolve them before migration.");
             return false;
         }
     }
@@ -892,7 +892,7 @@ bool recoverSdkMigration(const QString& project, const QJsonObject& record, bool
         || !resolveTarget(project, record.value(QStringLiteral("source")).toString(), &from, error)
         || !resolveTarget(project, record.value(QStringLiteral("target")).toString(), &to, error)
         || containsPath(from, to) || containsPath(to, from)) {
-        if (error->isEmpty()) *error = QStringLiteral("The SDK migration record is invalid. Restore the verified backup manually.");
+        if (error->isEmpty()) *error = QStringLiteral("The Integration Package migration record is invalid. Restore the verified backup manually.");
         return false;
     }
     if (!checkUnityProjectClosed(project, error)) return false;
@@ -905,7 +905,7 @@ bool recoverSdkMigration(const QString& project, const QJsonObject& record, bool
     const auto ownership = atSource ? sourceOwnership : previousManagedFiles(to);
     if (ownership.status != ReadStatus::Ok || ownership.managedFiles.isEmpty()
         || (QDir(other).exists() && !QDir(other).isEmpty(QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot))) {
-        *error = QStringLiteral("SDK migration recovery found conflicting or missing files. Preserve both locations and restore the verified backup manually.");
+        *error = QStringLiteral("Integration Package migration recovery found conflicting or missing files. Preserve both locations and restore the verified backup manually.");
         return false;
     }
     if (!matchesMigrationSnapshot(current, record.value(QStringLiteral("inventory")).toObject(), error)) return false;
@@ -917,7 +917,7 @@ bool recoverSdkMigration(const QString& project, const QJsonObject& record, bool
     if ((expectedMeta.isEmpty() && (metaAtSource || metaAtTarget))
         || (!expectedMeta.isEmpty() && (metaAtSource == metaAtTarget
             || !sha256File(metaAtSource ? fromMeta : toMeta).matches(expectedMeta)))) {
-        *error = QStringLiteral("SDK directory metadata changed. Recovery will not overwrite Unity GUIDs.");
+        *error = QStringLiteral("Integration Package directory metadata changed. Recovery will not overwrite Unity GUIDs.");
         return false;
     }
     if (!apply) return true;
@@ -926,17 +926,17 @@ bool recoverSdkMigration(const QString& project, const QJsonObject& record, bool
         || (metaAtTarget && !QFile::rename(toMeta, fromMeta))
         || (!atSource && !VNH::renameIntegrationDirectory(filesystem.filePath(to), filesystem.filePath(from)))
         || (record.value(QStringLiteral("target_existed")).toBool() && !QDir().mkpath(to))) {
-        *error = QStringLiteral("The SDK could not be restored to its previous location. Close programs using these files and retry recovery.");
+        *error = QStringLiteral("The Integration Package could not be restored to its previous location. Close programs using these files and retry recovery.");
         return false;
     }
     if (!matchesMigrationSnapshot(from, record.value(QStringLiteral("inventory")).toObject(), error)) return false;
     if ((!expectedMeta.isEmpty() && !sha256File(fromMeta).matches(expectedMeta))
         || (expectedMeta.isEmpty() && QFileInfo::exists(fromMeta)) || QFileInfo::exists(toMeta)) {
-        *error = QStringLiteral("SDK directory metadata changed. Recovery will not overwrite Unity GUIDs.");
+        *error = QStringLiteral("Integration Package directory metadata changed. Recovery will not overwrite Unity GUIDs.");
         return false;
     }
     if (!QFile::remove(migrationJournalPath(project))) {
-        *error = QStringLiteral("The SDK migration record could not be cleared. Retry recovery before continuing.");
+        *error = QStringLiteral("The Integration Package migration record could not be cleared. Retry recovery before continuing.");
         return false;
     }
     return true;
@@ -1015,7 +1015,7 @@ QString joinedCountSummary(int added, int changed, int removed,
                            int projectSpecific, int unityMetadata,
                            int optionalRuntimes)
 {
-    return QStringLiteral("%1 missing SDK file(s) will be added; %2 existing SDK file(s) "
+    return QStringLiteral("%1 missing Integration Package file(s) will be added; %2 existing Integration Package file(s) "
                           "need updating; %3 obsolete Harken-managed file(s) will be removed; "
                           "%4 project-specific file(s) will be kept unchanged; "
                           "%5 Unity-generated metadata file(s) and %6 optional target runtime "
@@ -1068,7 +1068,8 @@ QString UnityIntegrationService::locateSdkSource(const QString& preferredPath)
         QStringList packageCandidates;
         packageCandidates << root;
         const QString baseName = QFileInfo(root).fileName();
-        if (baseName.compare(QStringLiteral("HarkenSDK"), Qt::CaseInsensitive) == 0)
+        if (baseName.compare(QStringLiteral("HarkenIntegration"), Qt::CaseInsensitive) == 0
+            || baseName.compare(QStringLiteral("HarkenSDK"), Qt::CaseInsensitive) == 0)
             packageCandidates << QDir(root).filePath(QStringLiteral("Unity/Harken"));
         if (baseName.compare(QStringLiteral("Unity"), Qt::CaseInsensitive) == 0)
             packageCandidates << QDir(root).filePath(QStringLiteral("Harken"));
@@ -1085,13 +1086,14 @@ QString UnityIntegrationService::locateSdkSource(const QString& preferredPath)
     if (!preferredPath.trimmed().isEmpty()) {
         candidates << preferredPath;
     } else {
-        const QByteArray fromEnv = qgetenv("HARKEN_UNITY_SDK_PATH");
+        QByteArray fromEnv = qgetenv("HARKEN_UNITY_INTEGRATION_PATH");
+        if (fromEnv.isEmpty()) fromEnv = qgetenv("HARKEN_UNITY_SDK_PATH");
         if (!fromEnv.isEmpty()) candidates << QString::fromLocal8Bit(fromEnv);
 
         QDir cursor(QCoreApplication::applicationDirPath());
-        candidates << cursor.filePath(QStringLiteral("HarkenSDK/Unity/Harken"));
-        candidates << cursor.filePath(QStringLiteral("HarkenSDK"));
         for (int i = 0; i < 6; ++i) {
+            candidates << cursor.filePath(QStringLiteral("HarkenIntegration/Unity/Harken"));
+            candidates << cursor.filePath(QStringLiteral("HarkenIntegration"));
             candidates << cursor.filePath(QStringLiteral("HarkenSDK/Unity/Harken"));
             candidates << cursor.filePath(QStringLiteral("HarkenSDK"));
             if (!cursor.cdUp()) break;
@@ -1147,10 +1149,10 @@ UnityIntegrationService::Result UnityIntegrationService::migrateIntegration(cons
     };
     const auto fail = [&](const QString& cause) {
         result.steps.back().cause = cause;
-        finishStep(StepStatus::Failed, QStringLiteral("SDK migration could not be completed."));
+        finishStep(StepStatus::Failed, QStringLiteral("Integration Package migration could not be completed."));
         return result;
     };
-    beginStep("migration_review", "Review SDK migration");
+    beginStep("migration_review", "Review Integration Package migration");
     if (request.unityProjectPath.trimmed().isEmpty()
         || !QDir(project).exists(QStringLiteral("Assets"))
         || !QDir(project).exists(QStringLiteral("Packages"))
@@ -1166,7 +1168,7 @@ UnityIntegrationService::Result UnityIntegrationService::migrateIntegration(cons
     if (request.recoverMigration) {
         const JsonRead journal = readJsonObject(migrationJournalPath(project));
         if (journal.status != ReadStatus::Ok)
-            return fail(QStringLiteral("The SDK migration record is invalid. Restore the verified backup manually."));
+            return fail(QStringLiteral("The Integration Package migration record is invalid. Restore the verified backup manually."));
         record = journal.object;
         if (!recoverSdkMigration(project, record, false, &error)) return fail(error);
         result.sdkInstallPath = record.value(QStringLiteral("source")).toString();
@@ -1174,7 +1176,7 @@ UnityIntegrationService::Result UnityIntegrationService::migrateIntegration(cons
         result.migrationBackupPath = record.value(QStringLiteral("backup")).toString();
     } else {
         if (request.migrationTargetPath.trimmed().isEmpty())
-            return fail(QStringLiteral("Select a new SDK installation location."));
+            return fail(QStringLiteral("Select a new Integration Package installation location."));
         if (!resolveTarget(project, requestedInstallPath(request), &from, &error)
             || !resolveTarget(project, request.migrationTargetPath, &to, &error)
             || !validateMigration(project, from, to, &error)) return fail(error);
@@ -1189,7 +1191,7 @@ UnityIntegrationService::Result UnityIntegrationService::migrateIntegration(cons
         if (QFileInfo::exists(from + QStringLiteral(".meta"))) {
             const FileDigest digest = sha256File(from + QStringLiteral(".meta"));
             if (digest.status != ReadStatus::Ok)
-                return fail(QStringLiteral("The SDK directory metadata could not be read."));
+                return fail(QStringLiteral("The Integration Package directory metadata could not be read."));
             metaHash = digest.hash;
         }
         record = QJsonObject{
@@ -1211,7 +1213,7 @@ UnityIntegrationService::Result UnityIntegrationService::migrateIntegration(cons
     if (!request.confirmMigration) {
         result.requiresConfirmation = true;
         finishStep(StepStatus::Warning, request.recoverMigration
-            ? QStringLiteral("Recovery will restore the SDK to its previous location without changing project relationships.")
+            ? QStringLiteral("Recovery will restore the Integration Package to its previous location without changing project relationships.")
             : QStringLiteral("Migration will preserve all installed files, Unity GUIDs and project relationships."));
         return result;
     }
@@ -1219,15 +1221,15 @@ UnityIntegrationService::Result UnityIntegrationService::migrateIntegration(cons
         return fail(QStringLiteral("The migration plan changed after review. Review the migration again."));
     finishStep(StepStatus::Succeeded, QStringLiteral("The migration plan passed safety checks."));
     if (request.recoverMigration) {
-        beginStep("recover_migration", "Recover SDK migration");
+        beginStep("recover_migration", "Recover Integration Package migration");
         if (!recoverSdkMigration(project, record, true, &error)) return fail(error);
         result.migrationRecovered = true;
         result.success = true;
-        finishStep(StepStatus::Succeeded, QStringLiteral("The SDK was restored to its previous location. Project relationships were kept."));
+        finishStep(StepStatus::Succeeded, QStringLiteral("The Integration Package was restored to its previous location. Project relationships were kept."));
         return result;
     }
 
-    beginStep("migration_backup", "Back up installed SDK");
+    beginStep("migration_backup", "Back up installed Integration Package");
     const QString backup = QDir(result.migrationBackupPath).filePath(QStringLiteral("SDK"));
     const QJsonObject inventory = record.value(QStringLiteral("inventory")).toObject();
     const QByteArray metaHash = record.value(QStringLiteral("root_meta_sha256")).toString().toLatin1();
@@ -1235,60 +1237,60 @@ UnityIntegrationService::Result UnityIntegrationService::migrateIntegration(cons
     const QString toMeta = to + QStringLiteral(".meta");
     if (!validateMigration(project, from, to, &error)
         || !validateMigrationBackup(project, result.migrationBackupPath, &error)) return fail(error);
-    if (!QDir().mkpath(backup)) return fail(QStringLiteral("The SDK migration backup could not be created."));
+    if (!QDir().mkpath(backup)) return fail(QStringLiteral("The Integration Package migration backup could not be created."));
     for (const QJsonValue& directory : inventory.value(QStringLiteral("directories")).toArray()) {
         if (!QDir().mkpath(QDir(backup).filePath(directory.toString())))
-            return fail(QStringLiteral("The SDK migration backup could not be created."));
+            return fail(QStringLiteral("The Integration Package migration backup could not be created."));
     }
     if (!copyFiles(from, backup, inventory.value(QStringLiteral("files")).toObject().keys(), &error)
         || (!metaHash.isEmpty() && !copyFileAtomically(fromMeta, backup + QStringLiteral(".meta"), &error))
         || !matchesMigrationSnapshot(backup, inventory, &error)) return fail(error);
     if (!metaHash.isEmpty() && !sha256File(backup + QStringLiteral(".meta")).matches(metaHash))
-        return fail(QStringLiteral("SDK directory metadata backup verification failed."));
+        return fail(QStringLiteral("Integration Package directory metadata backup verification failed."));
     if (!VNH::writeIntegrationFile(QDir(result.migrationBackupPath).filePath(QStringLiteral("migration.json")), recordBytes, &error))
         return fail(error);
     result.steps.back().artifacts << result.migrationBackupPath;
-    finishStep(StepStatus::Succeeded, QStringLiteral("All installed SDK files and directory metadata were backed up and verified."));
+    finishStep(StepStatus::Succeeded, QStringLiteral("All installed Integration Package files and directory metadata were backed up and verified."));
 
-    beginStep("migrate_sdk", "Move installed SDK");
+    beginStep("migrate_sdk", "Move installed Integration Package");
     if (!validateMigration(project, from, to, &error)
         || !matchesMigrationSnapshot(from, inventory, &error)) return fail(error);
     if ((!metaHash.isEmpty() && !sha256File(fromMeta).matches(metaHash))
         || (metaHash.isEmpty() && QFileInfo::exists(fromMeta)))
-        return fail(QStringLiteral("SDK directory metadata changed. Migration was cancelled."));
+        return fail(QStringLiteral("Integration Package directory metadata changed. Migration was cancelled."));
     if (!QDir().mkpath(QFileInfo(to).absolutePath()))
-        return fail(QStringLiteral("The SDK migration destination could not be created."));
+        return fail(QStringLiteral("The Integration Package migration destination could not be created."));
     if (!VNH::writeIntegrationFile(migrationJournalPath(project), recordBytes, &error)) return fail(error);
     const auto rollback = [&](const QString& cause) {
         QString recoveryError;
         if (recoverSdkMigration(project, record, true, &recoveryError))
-            return fail(cause + QLatin1Char('\n') + QStringLiteral("The SDK was restored to its previous location. Project relationships were kept."));
-        result.steps.back().remediation = QStringLiteral("Use Recover to finish the interrupted migration before installing, updating or removing the SDK.");
+            return fail(cause + QLatin1Char('\n') + QStringLiteral("The Integration Package was restored to its previous location. Project relationships were kept."));
+        result.steps.back().remediation = QStringLiteral("Use Recover to finish the interrupted migration before installing, updating or removing the Integration Package.");
         result.steps.back().artifacts << result.migrationBackupPath;
         return fail(cause + QLatin1Char('\n') + recoveryError);
     };
     QDir filesystem;
     if ((QDir(to).exists() && !filesystem.rmdir(to)) || !VNH::renameIntegrationDirectory(filesystem.filePath(from), filesystem.filePath(to)))
-        return rollback(QStringLiteral("The SDK directory could not be moved."));
+        return rollback(QStringLiteral("The Integration Package directory could not be moved."));
     if (!metaHash.isEmpty() && !QFile::rename(fromMeta, toMeta))
-        return rollback(QStringLiteral("The SDK directory metadata could not be moved."));
-    finishStep(StepStatus::Succeeded, QStringLiteral("The existing SDK directory was moved without replacing its contents."));
-    beginStep("verify_migration", "Verify SDK migration");
+        return rollback(QStringLiteral("The Integration Package directory metadata could not be moved."));
+    finishStep(StepStatus::Succeeded, QStringLiteral("The existing Integration Package directory was moved without replacing its contents."));
+    beginStep("verify_migration", "Verify Integration Package migration");
     if (!matchesMigrationSnapshot(to, inventory, &error)) return rollback(error);
     if ((!metaHash.isEmpty() && !sha256File(toMeta).matches(metaHash))
         || (metaHash.isEmpty() && QFileInfo::exists(toMeta)) || QFileInfo::exists(fromMeta)
         || QFileInfo::exists(from))
-        return rollback(QStringLiteral("SDK directory metadata changed. Migration was cancelled."));
+        return rollback(QStringLiteral("Integration Package directory metadata changed. Migration was cancelled."));
     const auto discovery = discover(project);
     if (!discovery.errors.isEmpty() || discovery.installations.size() != 1
         || !samePath(discovery.installations.front().path, to) || !discovery.sdkReferences.isEmpty())
-        return rollback(QStringLiteral("The Unity project changed during migration. Review SDK paths and dependencies again."));
+        return rollback(QStringLiteral("The Unity project changed during migration. Review Integration Package paths and dependencies again."));
     if (!QFile::remove(migrationJournalPath(project)))
-        return rollback(QStringLiteral("The SDK migration record could not be cleared. Retry recovery before continuing."));
+        return rollback(QStringLiteral("The Integration Package migration record could not be cleared. Retry recovery before continuing."));
     result.sdkInstallPath = result.migrationTargetPath;
     result.integrationMigrated = true;
     result.success = true;
-    finishStep(StepStatus::Succeeded, QStringLiteral("SDK migration completed. All installed files, Unity GUIDs and project relationships were kept."));
+    finishStep(StepStatus::Succeeded, QStringLiteral("Integration Package migration completed. All installed files, Unity GUIDs and project relationships were kept."));
     return result;
 }
 
@@ -1372,9 +1374,9 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
         QString error;
         if (!prepareInstallation(request, result, &targetSdk, &operationLock, &error)) {
             step.status = StepStatus::Failed;
-            step.summary = QStringLiteral("The SDK installation location is not safe to use.");
+            step.summary = QStringLiteral("The Integration Package installation location is not safe to use.");
             step.cause = error;
-            step.remediation = QStringLiteral("Resolve the reported path or SDK conflict, then check again.");
+            step.remediation = QStringLiteral("Resolve the reported path or Integration Package conflict, then check again.");
             return;
         }
         unityValidated = true;
@@ -1384,7 +1386,7 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
 
     runStep([&](StepResult& step) {
         if (!QDir(targetSdk).exists()) {
-            step.summary = QStringLiteral("No embedded Harken SDK is installed in this Unity project.");
+            step.summary = QStringLiteral("No embedded Harken Integration Package is installed in this Unity project.");
             return;
         }
         result.integrationFound = true;
@@ -1409,7 +1411,7 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
                 QLatin1String(kPackageName) || ownership.managedFiles.isEmpty()) {
             step.status = StepStatus::Failed;
             step.summary = QStringLiteral("The installed package has no trustworthy Harken ownership record.");
-            step.cause = QStringLiteral("The Harken integration cannot distinguish managed SDK files from project-specific files inside %1.")
+            step.cause = QStringLiteral("The Harken integration cannot distinguish managed Integration Package files from project-specific files inside %1.")
                              .arg(targetSdk);
             step.remediation = QStringLiteral("Use Unity or source control to back up this folder, then remove it manually. One-click removal is intentionally blocked to avoid deleting user files.");
             return;
@@ -1422,7 +1424,7 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
         if (manifest.unreadable()) {
             step.status = StepStatus::Failed;
             step.summary = QStringLiteral("The installed integration manifest could not be read.");
-            step.cause = QStringLiteral("%1 exists but cannot be opened, so the runtime files declared by the Harken SDK cannot be enumerated.")
+            step.cause = QStringLiteral("%1 exists but cannot be opened, so the runtime files declared by the Harken Integration Package cannot be enumerated.")
                              .arg(manifestPath);
             step.remediation = QStringLiteral("Close Unity and any process holding this file, then run removal again. Nothing was removed.");
             return;
@@ -1435,7 +1437,7 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
                 const QString relative = alternative.toString();
                 if (!isSafeRelativePath(relative)) {
                     step.status = StepStatus::Failed;
-                    step.summary = QStringLiteral("The installed SDK manifest contains an unsafe runtime path.");
+                    step.summary = QStringLiteral("The installed Integration Package manifest contains an unsafe runtime path.");
                     step.cause = relative;
                     return;
                 }
@@ -1502,7 +1504,7 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
         if (!VNH::checkIntegrationFilesWritable(filesToChange, &accessError)
             || !VNH::checkIntegrationDirectoryChanges({targetSdk}, {targetSdk}, &accessError)) {
             step.status = StepStatus::Failed;
-            step.summary = QStringLiteral("SDK file write access check failed.");
+            step.summary = QStringLiteral("Integration Package file write access check failed.");
             step.cause = accessError;
             return;
         }
@@ -1511,12 +1513,12 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
         result.removalBackupPath = request.removalBackupPath.trimmed().isEmpty()
             ? defaultIntegrationBackupPath(result.unityProjectPath)
             : cleanAbsolutePath(request.removalBackupPath);
-        step.summary = QStringLiteral("Ready to remove %1 Harken SDK/runtime file(s) and preserve %2 project-specific file(s).")
+        step.summary = QStringLiteral("Ready to remove %1 Harken Integration Package/runtime file(s) and preserve %2 project-specific file(s).")
                            .arg(result.filesRemoved)
                            .arg(result.targetOnlyFilesPreserved);
         step.details << QStringLiteral("Installed package: %1").arg(targetSdk);
         if (!removalFiles.isEmpty()) {
-            step.details << QStringLiteral("Harken SDK and runtime files that will be removed:\n%1")
+            step.details << QStringLiteral("Harken Integration Package and runtime files that will be removed:\n%1")
                                 .arg(groupedLocations(
                                     removalFiles,
                                     result.sdkInstallPath)
@@ -1530,7 +1532,7 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
                                          .join(QLatin1Char('\n')));
         }
         step.details << QStringLiteral("Safety backup: %1\n"
-                                       "To integrate again later, select or drop this SDK source: %2")
+                                       "To integrate again later, select or drop this Integration Package source: %2")
                             .arg(QDir::toNativeSeparators(result.removalBackupPath),
                                  QDir::toNativeSeparators(
                                      QDir(result.removalBackupPath)
@@ -1575,7 +1577,7 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
             || UnityInstallation::containsPath(result.unityProjectPath, result.removalBackupPath)
             || UnityInstallation::containsPath(result.removalBackupPath, result.unityProjectPath)) {
             step.status = StepStatus::Failed;
-            step.summary = QStringLiteral("The SDK or backup location is not safe to use.");
+            step.summary = QStringLiteral("The Integration Package or backup location is not safe to use.");
             step.cause = safetyError.isEmpty()
                 ? QStringLiteral("Choose a backup directory outside the Unity project.") : safetyError;
             return;
@@ -1643,9 +1645,9 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
                 QLatin1String(kPackageName) || backupManifest.object.isEmpty()) {
             discardIncompleteBackup();
             step.status = StepStatus::Failed;
-            step.summary = QStringLiteral("The safety backup is not a reusable Harken SDK, so nothing was removed.");
+            step.summary = QStringLiteral("The safety backup is not a reusable Harken Integration Package, so nothing was removed.");
             step.cause = QStringLiteral("The backed-up package identity or integration manifest is missing.");
-            step.remediation = QStringLiteral("Run Check only and repair the installed SDK before trying to remove it.");
+            step.remediation = QStringLiteral("Run Check only and repair the installed Integration Package before trying to remove it.");
             return;
         }
 
@@ -1666,11 +1668,11 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
                            "Original Unity project: %2\n\n"
                            "To integrate Harken again:\n"
                            "1. Open the Harken Unity integration window.\n"
-                           "2. Select or drag this folder into SDK source:\n"
+                           "2. Select or drag this folder into Integration Package source:\n"
                            "   %3\n"
                            "3. Select the Unity project and click Check and integrate.\n\n"
                            "UnityProject contains an exact snapshot copied from the selected Unity project before removal.\n"
-                           "ReintegrationSDK was extracted from that snapshot for the SDK source field.\n"
+                           "ReintegrationSDK was extracted from that snapshot for the Integration Package source field.\n"
                            "No files were taken from the Harken Studio installation.\n"
                            "Files not owned by Harken were also kept unchanged in the Unity project.\n")
                 .arg(generatedAt, result.unityProjectPath, backupSdk)
@@ -1704,13 +1706,13 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
         if (!VNH::checkIntegrationFilesWritable(filesToChange, &backupError)
             || !VNH::checkIntegrationDirectoryChanges({targetSdk}, {targetSdk}, &backupError)) {
             step.status = StepStatus::Failed;
-            step.summary = QStringLiteral("SDK file write access check failed.");
+            step.summary = QStringLiteral("Integration Package file write access check failed.");
             step.cause = backupError;
             return;
         }
         if (!VNH::renameIntegrationDirectory(packages.filePath(targetName), packages.filePath(stageName))) {
             step.status = StepStatus::Failed;
-            step.summary = QStringLiteral("Could not detach the installed Harken SDK.");
+            step.summary = QStringLiteral("Could not detach the installed Harken Integration Package.");
             step.cause = targetSdk;
             step.remediation = QStringLiteral("Close Unity and any process using files under %1, then retry.")
                                    .arg(targetLabel);
@@ -1735,7 +1737,7 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
             step.remediation = QStringLiteral("After closing Unity, delete the hidden temporary folder listed below if it remains.");
             step.artifacts << stageRoot;
         } else {
-            step.summary = QStringLiteral("Backed up and removed the Harken SDK and native runtimes; preserved %1 project-specific file(s).")
+            step.summary = QStringLiteral("Backed up and removed the Harken Integration Package and native runtimes; preserved %1 project-specific file(s).")
                                .arg(result.targetOnlyFilesPreserved);
         }
         if (preservedFiles.isEmpty()) QFile::remove(targetSdk + QStringLiteral(".meta"));
@@ -1920,9 +1922,9 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
         QString error;
         if (!prepareInstallation(request, result, &targetSdk, &operationLock, &error)) {
             step.status = StepStatus::Failed;
-            step.summary = QStringLiteral("The SDK installation location is not safe to use.");
+            step.summary = QStringLiteral("The Integration Package installation location is not safe to use.");
             step.cause = error;
-            step.remediation = QStringLiteral("Resolve the reported path or SDK conflict, then check again.");
+            step.remediation = QStringLiteral("Resolve the reported path or Integration Package conflict, then check again.");
             return;
         }
         unityValidated = true;
@@ -1934,14 +1936,14 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
         result.sdkSourcePath = locateSdkSource(request.sdkSourcePath);
         if (result.sdkSourcePath.isEmpty()) {
             step.status = StepStatus::Failed;
-            step.summary = QStringLiteral("Harken Unity SDK could not be located.");
+            step.summary = QStringLiteral("Harken Unity Integration Package could not be located.");
             if (!request.sdkSourcePath.trimmed().isEmpty()) {
-                step.cause = QStringLiteral("The selected folder is not a valid com.harken.core SDK source: %1")
+                step.cause = QStringLiteral("The selected folder is not a valid com.harken.core Integration Package source: %1")
                                  .arg(cleanAbsolutePath(request.sdkSourcePath));
-                step.remediation = QStringLiteral("Choose HarkenSDK, HarkenSDK/Unity/Harken, or a complete external Unity package root, or clear the SDK source field to use automatic discovery.");
+                step.remediation = QStringLiteral("Choose HarkenIntegration, HarkenIntegration/Unity/Harken, or a complete external Unity package root, or clear the Integration Package source field to use automatic discovery.");
             } else {
-                step.cause = QStringLiteral("No valid com.harken.core package was found beside Harken Studio, in a repository parent, or at HARKEN_UNITY_SDK_PATH.");
-                step.remediation = QStringLiteral("Use the SDK source field to choose or drop HarkenSDK, Unity/Harken, or a complete external Unity package root.");
+                step.cause = QStringLiteral("No valid com.harken.core package was found beside Harken Studio, in a repository parent, or at HARKEN_UNITY_INTEGRATION_PATH (legacy: HARKEN_UNITY_SDK_PATH).");
+                step.remediation = QStringLiteral("Use the Integration Package source field to choose or drop HarkenIntegration, Unity/Harken, or a complete external Unity package root.");
             }
             return;
         }
@@ -1953,18 +1955,18 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             || UnityInstallation::containsPath(result.sdkSourcePath, targetSdk)
             || UnityInstallation::containsPath(targetSdk, result.sdkSourcePath)) {
             step.status = StepStatus::Failed;
-            step.summary = QStringLiteral("The SDK source and installation location are not safe to use.");
+            step.summary = QStringLiteral("The Integration Package source and installation location are not safe to use.");
             step.cause = safetyError.isEmpty()
-                ? QStringLiteral("SDK source and target must be separate directories without containment.") : safetyError;
+                ? QStringLiteral("Integration Package source and target must be separate directories without containment.") : safetyError;
             return;
         }
         const JsonRead manifestRead = readJsonObject(sourceManifestPath);
         if (manifestRead.unreadable()) {
             step.status = StepStatus::Failed;
-            step.summary = QStringLiteral("The selected SDK integration manifest could not be read.");
+            step.summary = QStringLiteral("The selected Integration Package installation manifest could not be read.");
             step.cause = QStringLiteral("%1 exists but cannot be opened.")
                              .arg(sourceManifestPath);
-            step.remediation = QStringLiteral("Close any process holding this file and check the SDK folder permissions, then run Check only again.");
+            step.remediation = QStringLiteral("Close any process holding this file and check the Integration Package folder permissions, then run Check only again.");
             return;
         }
         const QJsonObject manifest = manifestRead.object;
@@ -1972,18 +1974,18 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             && result.sdkInstallPath != QStringLiteral("Assets/HarkenSDK")
             && !manifest.value(QStringLiteral("supports_custom_install_path")).toBool()) {
             step.status = StepStatus::Failed;
-            step.summary = QStringLiteral("This SDK version does not support a custom installation location.");
-            step.remediation = QStringLiteral("Choose a newer SDK or install to Packages/com.harken.core or Assets/HarkenSDK.");
+            step.summary = QStringLiteral("This Integration Package version does not support a custom installation location.");
+            step.remediation = QStringLiteral("Choose a newer Integration Package or install to Packages/com.harken.core or Assets/HarkenSDK.");
             return;
         }
         if (manifest.value(QStringLiteral("schema_version")).toInt() != 3 ||
             manifest.value(QStringLiteral("package_name")).toString() !=
                 QLatin1String(kPackageName)) {
             step.status = StepStatus::Failed;
-            step.summary = QStringLiteral("The selected SDK integration manifest is missing or invalid.");
+            step.summary = QStringLiteral("The selected Integration Package installation manifest is missing or invalid.");
             step.cause = QStringLiteral("%1 does not declare the expected schema and package identity.")
                              .arg(QDir(result.sdkSourcePath).filePath(QLatin1String(kIntegrationManifest)));
-            step.remediation = QStringLiteral("Choose a complete HarkenSDK/Unity/Harken package, or repair the selected SDK source before integrating.");
+            step.remediation = QStringLiteral("Choose a complete HarkenIntegration/Unity/Harken package, or repair the selected Integration Package source before integrating.");
             return;
         }
 
@@ -1994,7 +1996,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             const QString relative = value.toString();
             if (!isSafeRelativePath(relative)) {
                 step.status = StepStatus::Failed;
-                step.summary = QStringLiteral("The SDK manifest contains an unsafe file path.");
+                step.summary = QStringLiteral("The Integration Package manifest contains an unsafe file path.");
                 step.cause = relative;
                 return;
             }
@@ -2036,7 +2038,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
                 const QString relative = alternative.toString();
                 if (!isSafeRelativePath(relative)) {
                     step.status = StepStatus::Failed;
-                    step.summary = QStringLiteral("The SDK manifest contains an unsafe runtime path.");
+                    step.summary = QStringLiteral("The Integration Package manifest contains an unsafe runtime path.");
                     step.cause = relative;
                     return;
                 }
@@ -2074,22 +2076,22 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
         }
 
         sourceFiles = relativeFiles(result.sdkSourcePath);
-        if (sourceFiles.isEmpty()) missing << QStringLiteral("SDK file inventory");
+        if (sourceFiles.isEmpty()) missing << QStringLiteral("Integration Package file inventory");
         if (!missing.isEmpty()) {
             step.status = StepStatus::Failed;
             if (!missingBlockingPlatforms.isEmpty()) {
-                step.summary = QStringLiteral("The selected SDK source is missing the verified game runtime for: %1. The Unity project was not changed.")
+                step.summary = QStringLiteral("The selected Integration Package source is missing the verified game runtime for: %1. The Unity project was not changed.")
                                    .arg(missingBlockingPlatforms.join(QStringLiteral(", ")));
-                step.cause = QStringLiteral("These runtime files must come from the selected SDK source, not from the Unity project. Integration stopped before copying anything because the Harken integration cannot verify an SDK assembled from incomplete source files.");
-                step.remediation = QStringLiteral("Choose or drop HarkenSDK, HarkenSDK/Unity/Harken, or a complete external Unity package. If this is the SDK bundled with Harken Studio, repair or reinstall the editor package first. Do not copy unknown runtime files from an existing Unity project.");
+                step.cause = QStringLiteral("These runtime files must come from the selected Integration Package source, not from the Unity project. Integration stopped before copying anything because the Harken integration cannot verify an Integration Package assembled from incomplete source files.");
+                step.remediation = QStringLiteral("Choose or drop HarkenIntegration, HarkenIntegration/Unity/Harken, or a complete external Unity package. If this is the Integration Package bundled with Harken Studio, repair or reinstall the editor package first. Do not copy unknown runtime files from an existing Unity project.");
                 step.details = missingBlockingRuntimeDetails;
                 if (missing.size() > missingBlockingPlatforms.size()) {
-                    step.details << QStringLiteral("Other missing Harken SDK content: %1")
+                    step.details << QStringLiteral("Other missing Harken Integration Package content: %1")
                                         .arg(missing.join(QStringLiteral("; ")));
                 }
             } else {
-                step.summary = QStringLiteral("The selected Unity SDK source is incomplete. The Unity project was not changed.");
-                step.cause = QStringLiteral("Required Harken SDK content is missing from the selected source: %1")
+                step.summary = QStringLiteral("The selected Unity Integration Package source is incomplete. The Unity project was not changed.");
+                step.cause = QStringLiteral("Required Harken Integration Package content is missing from the selected source: %1")
                                  .arg(missing.join(QStringLiteral("; ")));
                 step.remediation = QStringLiteral("Choose or drop a complete Unity/Harken package, then run Check only again. This problem cannot be repaired inside the Unity project.");
                 step.details = missing;
@@ -2102,9 +2104,9 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
                 QDir(result.sdkSourcePath).filePath(relative));
             if (digest.status != ReadStatus::Ok) {
                 step.status = StepStatus::Failed;
-                step.summary = QStringLiteral("A selected SDK source file could not be read.");
+                step.summary = QStringLiteral("A selected Integration Package source file could not be read.");
                 step.cause = QDir(result.sdkSourcePath).filePath(relative);
-                step.remediation = QStringLiteral("Check the selected SDK folder permissions and contents, then retry.");
+                step.remediation = QStringLiteral("Check the selected Integration Package folder permissions and contents, then retry.");
                 return;
             }
             sourceHashes.insert(relative, digest.hash);
@@ -2114,21 +2116,21 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
         }
         sourceVersion = packageVersion(result.sdkSourcePath);
         installedContentHashes = sourceHashes;
-        step.summary = QStringLiteral("Validated SDK %1: %2 file(s); the %3 runtime required for this editor is present.")
+        step.summary = QStringLiteral("Validated Integration Package %1: %2 file(s); the %3 runtime required for this editor is present.")
                            .arg(sourceVersion, QString::number(sourceFiles.size()),
                                 hostPlatform);
-        step.details << QStringLiteral("Native runtimes available in this SDK source: %1")
+        step.details << QStringLiteral("Native runtimes available in this Integration Package source: %1")
                             .arg(bundledPlatforms.join(QStringLiteral(", ")));
         if (!missingOptionalSourceFiles.isEmpty())
-            step.details << QStringLiteral("Missing documentation/sample files (does not block SDK updates):")
+            step.details << QStringLiteral("Missing documentation/sample files (does not block Integration Package updates):")
                          << missingOptionalSourceFiles.join(QLatin1Char('\n'));
         if (!missingExpectedPlatforms.isEmpty()) {
             step.status = StepStatus::Warning;
             step.summary += QStringLiteral(" Target runtimes not included: %1. Available platforms can still be integrated.")
                                 .arg(missingExpectedPlatforms.join(QStringLiteral(", ")));
-            step.cause = QStringLiteral("The %1 files in the selected SDK source are complete, but the listed target platforms have no verified runtime in this source. Each target is independent, so their absence does not prevent %1 integration.")
+            step.cause = QStringLiteral("The %1 files in the selected Integration Package source are complete, but the listed target platforms have no verified runtime in this source. Each target is independent, so their absence does not prevent %1 integration.")
                              .arg(hostPlatform);
-            step.remediation = QStringLiteral("You may continue integrating and use the available platforms. Before building for a missing target, select a complete SDK source that includes its verified runtime, then run Check only again. Do not copy unknown runtime files from another Unity project.");
+            step.remediation = QStringLiteral("You may continue integrating and use the available platforms. Before building for a missing target, select a complete Integration Package source that includes its verified runtime, then run Check only again. Do not copy unknown runtime files from another Unity project.");
             step.details << missingExpectedRuntimeDetails;
         }
         if (!optionalMissingPlatforms.isEmpty()) {
@@ -2156,12 +2158,12 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             if (step.status == StepStatus::Failed) return;
             if (result.planHash.isEmpty()) {
                 step.status = StepStatus::Failed;
-                step.summary = QStringLiteral("The SDK files could not be checked safely.");
+                step.summary = QStringLiteral("The Integration Package files could not be checked safely.");
                 step.cause = snapshotError;
             } else if (!request.approvedPlanHash.isEmpty() && request.approvedPlanHash != result.planHash) {
                 result.requiresConfirmation = true;
                 step.status = StepStatus::Failed;
-                step.summary = QStringLiteral("SDK files changed after the safety check. Run the check again before continuing.");
+                step.summary = QStringLiteral("Integration Package files changed after the safety check. Run the check again before continuing.");
             }
         });
         const bool targetExists = QDir(targetSdk).exists()
@@ -2172,7 +2174,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
         if (!targetExists) {
             if (!VNH::checkIntegrationDirectoryChanges({targetSdk}, {targetSdk}, &step.cause)) {
                 step.status = StepStatus::Failed;
-                step.summary = QStringLiteral("SDK file write access check failed.");
+                step.summary = QStringLiteral("Integration Package file write access check failed.");
                 return;
             }
             result.filesAdded = sourceFiles.size();
@@ -2182,7 +2184,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             step.details = describeFileChanges(
                 changes, result.sdkInstallPath);
             result.fileChanges = changes;
-            step.summary = QStringLiteral("No embedded Harken SDK is installed; %1 file(s) are ready to install.")
+            step.summary = QStringLiteral("No embedded Harken Integration Package is installed; %1 file(s) are ready to install.")
                                .arg(result.filesAdded);
             return;
         }
@@ -2190,7 +2192,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
         const OwnershipRecord previousManaged = previousManagedFiles(targetSdk);
         if (previousManaged.status != ReadStatus::Ok) {
             step.status = StepStatus::Failed;
-            step.summary = QStringLiteral("The installed SDK could not be compared because its ownership record is missing, invalid or unreadable.");
+            step.summary = QStringLiteral("The installed Integration Package could not be compared because its ownership record is missing, invalid or unreadable.");
             step.cause = QStringLiteral("%1 could not establish which files belong to Harken. Nothing was compared or changed.")
                              .arg(QDir(targetSdk).filePath(QLatin1String(kInstalledState)));
             step.remediation = QStringLiteral("Restore the ownership record from backup, or resolve file access errors, then check again.");
@@ -2278,9 +2280,9 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
         }
         if (!unreadableTargets.isEmpty()) {
             step.status = StepStatus::Failed;
-            step.summary = QStringLiteral("%1 installed SDK file(s) could not be read, so the comparison is incomplete.")
+            step.summary = QStringLiteral("%1 installed Integration Package file(s) could not be read, so the comparison is incomplete.")
                                .arg(unreadableTargets.size());
-            step.cause = QStringLiteral("These files exist inside %1 but cannot be opened, so the Harken integration cannot tell whether they still match the SDK source. Nothing was compared or changed.")
+            step.cause = QStringLiteral("These files exist inside %1 but cannot be opened, so the Harken integration cannot tell whether they still match the Integration Package source. Nothing was compared or changed.")
                              .arg(targetSdk);
             step.remediation = QStringLiteral("Close Unity and any process holding these files, then run Check only again.");
             step.details = unreadableTargets;
@@ -2341,17 +2343,17 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
         result.encodingFiles.sort();
         for (const QString& relative : result.encodingFiles) result.lineEndingFiles.removeAll(relative);
         if (!result.lineEndingFiles.isEmpty())
-            step.details << QStringLiteral("%1 SDK text file(s) differ only in LF/CRLF line endings; contents are unchanged.")
+            step.details << QStringLiteral("%1 Integration Package text file(s) differ only in LF/CRLF line endings; contents are unchanged.")
                                 .arg(result.lineEndingFiles.size())
                          << result.lineEndingFiles.join(QLatin1Char('\n'));
         if (!result.encodingFiles.isEmpty()) {
             step.status = StepStatus::Warning;
-            step.details << QStringLiteral("Review recommended: %1 SDK text file(s) use a different encoding; text contents match after normalizing encoding and line endings. SDK updates can continue.")
+            step.details << QStringLiteral("Review recommended: %1 Integration Package text file(s) use a different encoding; text contents match after normalizing encoding and line endings. Integration Package updates can continue.")
                                 .arg(result.encodingFiles.size())
                          << result.encodingFiles.join(QLatin1Char('\n'));
         }
         if (!result.missingOptionalFiles.isEmpty())
-            step.details << QStringLiteral("Missing documentation/sample files (does not block SDK updates):")
+            step.details << QStringLiteral("Missing documentation/sample files (does not block Integration Package updates):")
                          << result.missingOptionalFiles.join(QLatin1Char('\n'));
         result.targetOnlyFilesPreserved = preservedFiles.size();
         result.changesDetected = result.filesAdded > 0 ||
@@ -2365,19 +2367,19 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
         if (!managedDiffers) {
             result.targetAlreadyCurrent = true;
             if (preservedFiles.isEmpty()) {
-                step.summary = QStringLiteral("The installed SDK exactly matches selected SDK source %1.")
+                step.summary = QStringLiteral("The installed Integration Package exactly matches selected Integration Package source %1.")
                                    .arg(sourceVersion);
             } else if (projectSpecificFiles.isEmpty()) {
-                step.summary = QStringLiteral("All Harken-managed files match SDK %1; %2 Unity metadata file(s) and %3 optional target runtime file(s) are retained as expected.")
+                step.summary = QStringLiteral("All Harken-managed files match Integration Package %1; %2 Unity metadata file(s) and %3 optional target runtime file(s) are retained as expected.")
                                    .arg(sourceVersion).arg(unityMetadataFiles.size())
                                    .arg(optionalRuntimeFiles.size());
             } else {
                 step.status = StepStatus::Warning;
-                step.summary = QStringLiteral("All Harken-managed files match SDK %1; %2 project-specific file(s) need review, while %3 Unity metadata and %4 optional runtime file(s) are retained normally.")
+                step.summary = QStringLiteral("All Harken-managed files match Integration Package %1; %2 project-specific file(s) need review, while %3 Unity metadata and %4 optional runtime file(s) are retained normally.")
                                    .arg(sourceVersion).arg(projectSpecificFiles.size())
                                    .arg(unityMetadataFiles.size())
                                    .arg(optionalRuntimeFiles.size());
-                step.cause = QStringLiteral("The project-specific files are outside Harken SDK ownership, so the check cannot determine whether they are still needed.");
+                step.cause = QStringLiteral("The project-specific files are outside Harken Integration Package ownership, so the check cannot determine whether they are still needed.");
                 step.remediation = QStringLiteral("Review only the project-specific files listed below. Unity-generated metadata requires no action.");
             }
             return;
@@ -2392,7 +2394,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
         if (!VNH::checkIntegrationFilesWritable(filesToChange, &accessError)
             || !VNH::checkIntegrationDirectoryChanges({targetSdk}, {targetSdk}, &accessError)) {
             step.status = StepStatus::Failed;
-            step.summary = QStringLiteral("SDK file write access check failed.");
+            step.summary = QStringLiteral("Integration Package file write access check failed.");
             step.cause = accessError;
             return;
         }
@@ -2402,33 +2404,33 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             optionalRuntimeFiles.size());
         if (request.checkOnly) {
             step.status = StepStatus::Warning;
-            step.summary = QStringLiteral("Check found SDK differences: %1.").arg(counts);
+            step.summary = QStringLiteral("Check found Integration Package differences: %1.").arg(counts);
             step.cause = QStringLiteral("Check-only mode did not change %1.")
                              .arg(result.sdkInstallPath);
-            step.remediation = QStringLiteral("Review the file list before confirming the SDK change.");
+            step.remediation = QStringLiteral("Review the file list before confirming the Integration Package change.");
             return;
         }
         if (!request.confirmTargetChanges) {
             result.requiresConfirmation = true;
             step.status = StepStatus::Warning;
-            step.summary = QStringLiteral("The existing SDK differs from selected SDK source %1: %2.")
+            step.summary = QStringLiteral("The existing Integration Package differs from selected Integration Package source %1: %2.")
                                .arg(sourceVersion, counts);
             step.cause = QStringLiteral("Updating will replace Harken-managed files. Target-only files will be retained.");
-            step.remediation = QStringLiteral("Review this file list, then explicitly approve the update or cancel without changing the SDK.");
+            step.remediation = QStringLiteral("Review this file list, then explicitly approve the update or cancel without changing the Integration Package.");
             return;
         }
-        step.summary = QStringLiteral("Approved SDK update: %1.").arg(counts);
+        step.summary = QStringLiteral("Approved Integration Package update: %1.").arg(counts);
     });
 
     runStep([&](StepResult& step) {
         if (request.checkOnly) {
             step.status = StepStatus::Skipped;
-            step.summary = QStringLiteral("Check-only mode requested; no SDK files were changed.");
+            step.summary = QStringLiteral("Check-only mode requested; no Integration Package files were changed.");
             return;
         }
         if (result.requiresConfirmation) {
             step.status = StepStatus::Skipped;
-            step.summary = QStringLiteral("No SDK files were changed; explicit approval is required.");
+            step.summary = QStringLiteral("No Integration Package files were changed; explicit approval is required.");
             return;
         }
         if (result.targetAlreadyCurrent) {
@@ -2441,7 +2443,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
         if (!UnityInstallation::validateTarget(result.unityProjectPath, targetSdk, &safetyError)
             || !UnityInstallation::validateTree(result.sdkSourcePath, &safetyError)) {
             step.status = StepStatus::Failed;
-            step.summary = QStringLiteral("The SDK paths changed after checking. No files were installed.");
+            step.summary = QStringLiteral("The Integration Package paths changed after checking. No files were installed.");
             step.cause = safetyError;
             return;
         }
@@ -2453,7 +2455,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
         const QString stageRoot = packages.filePath(stageName);
         if (!QDir().mkpath(stageRoot)) {
             step.status = StepStatus::Failed;
-            step.summary = QStringLiteral("Could not create an SDK staging directory.");
+            step.summary = QStringLiteral("Could not create an Integration Package staging directory.");
             step.cause = stageRoot;
             step.remediation = QStringLiteral("Check installation directory permissions and free disk space.");
             return;
@@ -2468,7 +2470,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
                                  installedContentHashes, sourceTextHashes, &error)) {
             QDir(stageRoot).removeRecursively();
             step.status = StepStatus::Failed;
-            step.summary = QStringLiteral("Failed to stage the Unity SDK update.");
+            step.summary = QStringLiteral("Failed to stage the Unity Integration Package update.");
             step.cause = error;
             step.remediation = QStringLiteral("Check file locks, permissions, and disk space, then retry.");
             return;
@@ -2484,7 +2486,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
                 QDir(stageRoot).removeRecursively();
                 step.status = StepStatus::Failed;
                 step.summary = QStringLiteral("Could not preserve native plugin metadata for %1.").arg(it.key());
-                step.remediation = QStringLiteral("Check file locks and permissions, then retry. The existing SDK was not changed.");
+                step.remediation = QStringLiteral("Check file locks and permissions, then retry. The existing Integration Package was not changed.");
                 return;
             }
         }
@@ -2504,13 +2506,13 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
         if (!stagingMismatches.isEmpty() || !stagingUnreadable.isEmpty()) {
             QDir(stageRoot).removeRecursively();
             step.status = StepStatus::Failed;
-            step.summary = QStringLiteral("The staged Unity SDK failed checksum verification.");
+            step.summary = QStringLiteral("The staged Unity Integration Package failed checksum verification.");
             step.cause = stagingUnreadable.isEmpty()
                 ? QStringLiteral("Staging mismatches: %1")
                       .arg(stagingMismatches.join(QStringLiteral(", ")))
                 : QStringLiteral("Staged files that could not be read: %1")
                       .arg(stagingUnreadable.join(QStringLiteral(", ")));
-            step.remediation = QStringLiteral("Repair or reselect the SDK source, check the storage device, then retry. The existing Unity SDK was not changed.");
+            step.remediation = QStringLiteral("Repair or reselect the Integration Package source, check the storage device, then retry. The existing Unity Integration Package was not changed.");
             return;
         }
 
@@ -2521,7 +2523,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             QDir(stageRoot).removeRecursively();
             result.requiresConfirmation = true;
             step.status = StepStatus::Failed;
-            step.summary = QStringLiteral("SDK files changed after the safety check. Run the check again before continuing.");
+            step.summary = QStringLiteral("Integration Package files changed after the safety check. Run the check again before continuing.");
             step.cause = safetyError;
             return;
         }
@@ -2529,7 +2531,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
         if (!UnityInstallation::validateTarget(result.unityProjectPath, targetSdk, &safetyError)) {
             QDir(stageRoot).removeRecursively();
             step.status = StepStatus::Failed;
-            step.summary = QStringLiteral("The SDK installation changed while staging. No files were replaced.");
+            step.summary = QStringLiteral("The Integration Package installation changed while staging. No files were replaced.");
             step.cause = safetyError;
             return;
         }
@@ -2538,16 +2540,16 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             || !VNH::checkIntegrationDirectoryChanges({targetSdk}, {targetSdk, stageRoot}, &moveError)) {
             QDir(stageRoot).removeRecursively();
             step.status = StepStatus::Failed;
-            step.summary = QStringLiteral("SDK file write access check failed.");
+            step.summary = QStringLiteral("Integration Package file write access check failed.");
             step.cause = moveError;
             return;
         }
         if (hadTarget && !VNH::renameIntegrationDirectory(packages.filePath(targetName), packages.filePath(backupName), &moveError)) {
             QDir(stageRoot).removeRecursively();
             step.status = StepStatus::Failed;
-            step.summary = QStringLiteral("Could not back up the existing Unity SDK.");
+            step.summary = QStringLiteral("Could not back up the existing Unity Integration Package.");
             step.cause = moveError;
-            step.remediation = QStringLiteral("Check file write protection, directory permissions and processes holding files open at %1. If checkout or unlocking is required, do that first, then retry. The existing SDK was not changed.").arg(targetSdk);
+            step.remediation = QStringLiteral("Check file write protection, directory permissions and processes holding files open at %1. If checkout or unlocking is required, do that first, then retry. The existing Integration Package was not changed.").arg(targetSdk);
             return;
         }
         if (hadTarget) updateBackupRoot = packages.filePath(backupName);
@@ -2556,9 +2558,9 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             const bool restored = !hadTarget || VNH::renameIntegrationDirectory(packages.filePath(backupName), packages.filePath(targetName), &restoreError);
             QDir(stageRoot).removeRecursively();
             step.status = StepStatus::Failed;
-            step.summary = QStringLiteral("Could not activate the staged Unity SDK.");
+            step.summary = QStringLiteral("Could not activate the staged Unity Integration Package.");
             step.cause = restored ? QStringLiteral("The original installation state was restored.")
-                                  : QStringLiteral("The previous SDK could not be restored. Its backup is listed below.");
+                                  : QStringLiteral("The previous Integration Package could not be restored. Its backup is listed below.");
             step.cause += QLatin1Char('\n') + moveError;
             if (!restoreError.isEmpty()) step.cause += QLatin1Char('\n') + restoreError;
             if (hadTarget && !restored) step.artifacts << updateBackupRoot;
@@ -2570,7 +2572,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
 
         result.sdkFilesCopied = sourceFiles.size();
         result.targetInstalled = true;
-        step.summary = QStringLiteral("Installed SDK %1 from a verified staging directory; copied %2 managed file(s) and preserved %3 target-only file(s).")
+        step.summary = QStringLiteral("Installed Integration Package %1 from a verified staging directory; copied %2 managed file(s) and preserved %3 target-only file(s).")
                            .arg(sourceVersion).arg(result.sdkFilesCopied)
                            .arg(preservedFiles.size());
         step.artifacts << targetSdk;
@@ -2579,7 +2581,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
     runStep([&](StepResult& step) {
         if (result.requiresConfirmation) {
             step.status = StepStatus::Skipped;
-            step.summary = QStringLiteral("Verification will run after the SDK update is approved.");
+            step.summary = QStringLiteral("Verification will run after the Integration Package update is approved.");
             return;
         }
         const bool managedChangesDetected = result.filesAdded > 0 ||
@@ -2587,12 +2589,12 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
                                             result.staleFilesToRemove > 0;
         if (request.checkOnly && !result.targetInstalled) {
             step.status = StepStatus::Skipped;
-            step.summary = QStringLiteral("No installed Unity SDK exists to verify.");
+            step.summary = QStringLiteral("No installed Unity Integration Package exists to verify.");
             return;
         }
         if (request.checkOnly && managedChangesDetected) {
             step.status = StepStatus::Skipped;
-            step.summary = QStringLiteral("Installed SDK verification is represented by the differences reported above.");
+            step.summary = QStringLiteral("Installed Integration Package verification is represented by the differences reported above.");
             return;
         }
         QStringList mismatches;
@@ -2611,9 +2613,9 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             result.targetInstalled = QDir(targetSdk).exists();
             result.sdkFilesCopied = 0;
             if (restored) {
-                step.remediation = QStringLiteral("The original installation state was restored. Review the unverified files listed below and retry with a complete SDK source.");
+                step.remediation = QStringLiteral("The original installation state was restored. Review the unverified files listed below and retry with a complete Integration Package source.");
             } else {
-                step.remediation = QStringLiteral("Automatic recovery failed. Close the editor, preserve the listed folders, and restore the previous SDK from the backup before retrying.");
+                step.remediation = QStringLiteral("Automatic recovery failed. Close the editor, preserve the listed folders, and restore the previous Integration Package from the backup before retrying.");
                 if (!updateBackupRoot.isEmpty()) step.artifacts << updateBackupRoot;
             }
         };
@@ -2627,7 +2629,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
         }
         if (!unreadable.isEmpty()) {
             step.status = StepStatus::Failed;
-            step.summary = QStringLiteral("Installed SDK files could not be read, so their integrity is unverified.");
+            step.summary = QStringLiteral("Installed Integration Package files could not be read, so their integrity is unverified.");
             step.cause = QStringLiteral("Files that exist but cannot be opened: %1")
                              .arg(unreadable.join(QStringLiteral(", ")));
             step.remediation = QStringLiteral("Close Unity and any process holding these files, then run Check only again.");
@@ -2637,7 +2639,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
         }
         if (!mismatches.isEmpty()) {
             step.status = StepStatus::Failed;
-            step.summary = QStringLiteral("Installed SDK files do not match the verified source package.");
+            step.summary = QStringLiteral("Installed Integration Package files do not match the verified source package.");
             step.cause = QStringLiteral("Missing or checksum-mismatched files: %1")
                              .arg(mismatches.join(QStringLiteral(", ")));
             step.remediation = QStringLiteral("Close Unity and rerun integration to repair the embedded package.");
@@ -2646,12 +2648,12 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             return;
         }
         result.targetCurrent = true;
-        step.summary = QStringLiteral("Verified the content integrity of %1 Harken-managed SDK file(s).")
+        step.summary = QStringLiteral("Verified the content integrity of %1 Harken-managed Integration Package file(s).")
                            .arg(sourceFiles.size());
         step.artifacts << targetSdk;
         if (!updateBackupRoot.isEmpty() && !QDir(updateBackupRoot).removeRecursively()) {
             step.status = StepStatus::Warning;
-            step.details << QStringLiteral("The SDK passed verification, but its old backup could not be removed.");
+            step.details << QStringLiteral("The Integration Package passed verification, but its old backup could not be removed.");
             step.artifacts << updateBackupRoot;
         }
     });
@@ -2671,7 +2673,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
         result.jsonReportPath = QDir(reportDir).filePath(QStringLiteral("latest.json"));
         result.textReportPath = QDir(reportDir).filePath(QStringLiteral("latest.txt"));
         step.status = StepStatus::Succeeded;
-        step.summary = QStringLiteral("Wrote machine-readable and human-readable SDK integration reports.");
+        step.summary = QStringLiteral("Wrote machine-readable and human-readable Integration Package installation reports.");
         step.artifacts << result.jsonReportPath << result.textReportPath;
 
         QJsonObject root;
@@ -2706,8 +2708,8 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             return;
         }
 
-        QString reportText = QStringLiteral("Harken Unity SDK integration report\n\n");
-        reportText += QStringLiteral("Generated: %1\nSDK version: %2\nSDK source: %3\nUnity project: %4\nConfirmation required: %5\n\n")
+        QString reportText = QStringLiteral("Harken Unity Integration Package installation report\n\n");
+        reportText += QStringLiteral("Generated: %1\nIntegration Package version: %2\nIntegration Package source: %3\nUnity project: %4\nConfirmation required: %5\n\n")
                         .arg(root[QStringLiteral("generated_at_utc")].toString(),
                              sourceVersion, result.sdkSourcePath,
                              result.unityProjectPath,

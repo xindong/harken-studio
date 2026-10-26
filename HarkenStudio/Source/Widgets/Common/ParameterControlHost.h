@@ -24,6 +24,12 @@ public:
             ParameterPresenterContext::InspectorFloat,
         QWidget* parent = nullptr,
         ThemeManager* themeManager = nullptr);
+    ParameterControlHost(
+        const QString& name,
+        ParameterPresenterContext context,
+        std::optional<ParameterPresenterId> presenterOverride,
+        QWidget* parent = nullptr,
+        ThemeManager* themeManager = nullptr);
     ~ParameterControlHost() override;
 
     ParameterBinding* binding() const { return binding_; }

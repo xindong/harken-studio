@@ -4,6 +4,10 @@
 #include "Core/PropertyDescriptor.h"
 
 #include <QWidget>
+#include <QCache>
+#include <QPicture>
+#include <map>
+#include <tuple>
 #include <memory>
 #include <vector>
 
@@ -13,6 +17,12 @@ class ParameterBinding;
 struct ContextTopic;
 
 PropertyDescriptor nodeContentProperty(NodeContentField field);
+
+struct NodeContentPresentation {
+    QPicture drawing;
+    QSize size;
+    std::vector<std::pair<NodeContentField, QRect>> fields;
+};
 
 class NodeContentEditor : public QWidget
 {
@@ -40,6 +50,8 @@ public:
     ParameterBinding* binding(NodeContentField field) const;
     std::optional<NodeContentField> fieldAt(const QPoint& position) const;
     void setFieldTopic(NodeContentField field, const ContextTopic& topic);
+    NodeContentPresentation presentation();
+    void setLabelWidth(int width);
 
 signals:
     void editBegan(NodeContentField field);
@@ -58,11 +70,25 @@ private:
     void finishValueEdit(Row& row, bool committed);
     void refreshValue(Row& row);
     void updateMetrics();
+    void refreshFonts();
     std::vector<std::unique_ptr<Row>> rows_;
     NodeContentFields fields_;
     int labelColumnWidth_;
     int valueColumnWidth_ = kValueWidth;
     bool routeGainMode_ = false;
+};
+
+class NodeContentRenderer
+{
+public:
+    NodeContentPresentation presentation(const NodeContentInfo& info, NodeContentFields fields,
+                                         int labelWidth, bool routeGain);
+    void clear();
+
+private:
+    QWidget host_;
+    std::map<std::tuple<int, int, int, bool>, std::unique_ptr<NodeContentEditor>> editors_;
+    QCache<QByteArray, NodeContentPresentation> cache_{256};
 };
 
 }
