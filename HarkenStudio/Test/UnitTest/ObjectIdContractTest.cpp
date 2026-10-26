@@ -3,6 +3,8 @@
 #include <gtest/gtest.h>
 
 #include <memory>
+#include <span>
+#include <vector>
 
 // Free resolver functions defined in IPCHandlers_Project.cpp. These are the
 // exact functions the write commands use: delete_item / rename_item /
@@ -12,6 +14,8 @@
 namespace VNX {
 uint32_t itemShortID(const ProjectItem* item);
 ProjectItem* findItemByObjectIDInProject(ProjectData* project, uint32_t objectID);
+std::vector<ProjectItem*> findItemsByObjectIDInProject(
+    ProjectData* project, std::span<const uint32_t> objectIDs);
 ProjectItem* findItemByAuthoringHandleInProject(ProjectData* project, uint32_t authoringHandle);
 ProjectItem* resolveItemByPathOrObjectID(ProjectData* project, const QString& path,
                                          uint32_t objectID);
@@ -107,4 +111,44 @@ TEST(ObjectIdContract, UnknownIdentifierStillFailsCleanly)
     ASSERT_NE(bogus, itemShortID(f.sfx));
     ASSERT_NE(bogus, f.sfx->objectID);
     EXPECT_EQ(resolveItemByPathOrObjectID(&f.project, QString(), bogus), nullptr);
+}
+
+TEST(ObjectIdContract, BatchLookupPreservesIdentityPriorityAcrossProjectEdits)
+{
+    ContractFixture f;
+    const auto shortId = itemShortID(f.sfx);
+    auto handleMatch = std::make_shared<ProjectItem>();
+    handleMatch->name = QStringLiteral("HandleMatch");
+    handleMatch->objectID = shortId;
+    auto& children = f.project.actions.front().rootItem->children;
+    children.push_back(handleMatch);
+    auto twin = std::make_shared<ProjectItem>();
+    twin->name = f.sfx->name;
+    twin->objectID = 9;
+    const std::vector<uint32_t> ids{shortId, 8, 9, 0, 999999, shortId};
+    const auto resolve = [&]() {
+        auto items = findItemsByObjectIDInProject(&f.project, ids);
+        EXPECT_EQ(items.size(), ids.size());
+        for (size_t index = 0; index < items.size(); ++index)
+            EXPECT_EQ(items[index], findItemByObjectIDInProject(&f.project, ids[index]));
+        return items;
+    };
+
+    EXPECT_EQ(resolve(), (std::vector<ProjectItem*>{f.sfx, f.sfx, nullptr, nullptr, nullptr, f.sfx}));
+    children.push_back(twin);
+    EXPECT_EQ(resolve(), (std::vector<ProjectItem*>{nullptr, f.sfx, twin.get(), nullptr, nullptr, nullptr}));
+    twin->name = QStringLiteral("Renamed");
+    EXPECT_EQ(resolve(), (std::vector<ProjectItem*>{f.sfx, f.sfx, twin.get(), nullptr, nullptr, f.sfx}));
+    children.erase(children.begin());
+    EXPECT_EQ(resolve(), (std::vector<ProjectItem*>{handleMatch.get(), nullptr, twin.get(), nullptr,
+                                                   nullptr, handleMatch.get()}));
+}
+
+TEST(ObjectIdContract, BatchLookupPreservesEmptyAndMissingResults)
+{
+    ContractFixture f;
+    const std::vector<uint32_t> ids{0, f.sfx->objectID, itemShortID(f.sfx)};
+    EXPECT_TRUE(findItemsByObjectIDInProject(&f.project, {}).empty());
+    EXPECT_EQ(findItemsByObjectIDInProject(nullptr, ids),
+              std::vector<ProjectItem*>(ids.size(), nullptr));
 }

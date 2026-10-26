@@ -99,6 +99,8 @@
 namespace VNX {
 
 ProjectItem* findItemByObjectIDInProject(ProjectData* project, uint32_t objectID);
+std::vector<ProjectItem*> findItemsByObjectIDInProject(
+    ProjectData* project, std::span<const uint32_t> objectIDs);
 ProjectItem* findItemByGuidInProject(ProjectData* project, const QUuid& guid);
 void applyStepsList(uint32_t objectID, const std::vector<VActionStep>& target);
 
@@ -4763,6 +4765,12 @@ ProjectItem* ProjectManager::findItemByGuid(const QUuid& guid) const
 ProjectItem* ProjectManager::findItemByObjectID(uint32_t objectID) const
 {
     return findItemByObjectIDInProject(m_currentProject.get(), objectID);
+}
+
+std::vector<ProjectItem*> ProjectManager::findItemsByObjectID(
+    std::span<const uint32_t> objectIDs) const
+{
+    return findItemsByObjectIDInProject(m_currentProject.get(), objectIDs);
 }
 
 ProjectItem* ProjectManager::findItemByRuntimeStableId(harkenstudio::ObjectId runtimeStableId) const

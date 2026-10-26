@@ -611,6 +611,44 @@ ProjectItem* findItemByObjectIDInProject(ProjectData* project, uint32_t objectID
     return findItemByAuthoringHandleInProject(project, objectID);
 }
 
+std::vector<ProjectItem*> findItemsByObjectIDInProject(
+    ProjectData* project, std::span<const uint32_t> objectIDs)
+{
+    std::vector<ProjectItem*> result(objectIDs.size(), nullptr);
+    if (!project || objectIDs.empty()) return result;
+
+    struct Matches
+    {
+        ProjectItem* shortId = nullptr;
+        ProjectItem* authoringHandle = nullptr;
+        bool ambiguous = false;
+    };
+    QHash<uint32_t, Matches> matches;
+    for (const auto id : objectIDs)
+        if (id != 0) matches.insert(id, {});
+
+    const auto collect = [&](auto&& self, ProjectItem* item) -> void {
+        if (!item) return;
+        if (auto match = matches.find(itemShortID(item)); match != matches.end()) {
+            match->ambiguous = match->shortId != nullptr;
+            match->shortId = item;
+        }
+        if (auto match = matches.find(item->objectID); match != matches.end()) {
+            if (!match->authoringHandle) match->authoringHandle = item;
+        }
+        for (const auto& child : item->children) self(self, child.get());
+    };
+    for (const auto* binding : project->allFileBindings())
+        if (binding) collect(collect, binding->rootItem.get());
+
+    for (size_t index = 0; index < objectIDs.size(); ++index) {
+        const auto match = matches.constFind(objectIDs[index]);
+        if (match == matches.cend() || match->ambiguous) continue;
+        result[index] = match->shortId ? match->shortId : match->authoringHandle;
+    }
+    return result;
+}
+
 
 bool containsProjectItemPointer(const ProjectItem* root, const ProjectItem* target)
 {
