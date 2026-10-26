@@ -44672,51 +44672,51 @@ void ServicePendingImmediateEntries(
             }
         }
         if (oldGenerationLive) continue;
-        for (std::uint32_t occupiedCursor = 0;
-             const auto* occupiedService = engine.NextOccupiedPlayableService(&occupiedCursor);) {
-            const auto& member = *occupiedService;
-            if (member.phase != harken::EnginePlayableStartPhase::PendingImmediateEntry ||
-                member.pendingImmediateCohortRoot != root || !member.pendingImmediateRetry ||
-                !member.queueNaturalEnd || member.queueSignalOnlyNoOverlap ||
-                member.queueCurrentScheduleLeafCount != 1 ||
-                !harken::IsBoundKnownCompletionPredicate(member.queueCurrentCompletion)) continue;
-            const auto token = member.queueCurrentOccurrence;
-            if (token.slot >= engine.originalSingleOccurrenceBaselines.size()) continue;
-            const auto& original = engine.originalSingleOccurrenceBaselines[token.slot];
-            if (original.Valid() && !engine.timelineOccurrences.CanWithdrawOriginalSingleCompletionForRebind(
-                    original, token, member.queueCurrentCompletion.owner,
-                    engine.timelineOccurrences.CompletionProgressOf(token),
-                    member.queueCurrentCompletion.renderGeneration,
-                    engine.timelineOccurrences.ScheduleEpochOf(token))) oldGenerationLive = true;
-        }
-        // Actual foreign storage keeps this old episode intact. A later normal
-        // Update retries only after its genuine Return; no new command is issued.
-        if (oldGenerationLive) continue;
-        for (std::uint32_t occupiedCursor = 0;
-             auto* occupiedService = engine.NextOccupiedPlayableService(&occupiedCursor);) {
-            auto& member = *occupiedService;
-            if (member.phase != harken::EnginePlayableStartPhase::PendingImmediateEntry ||
-                member.pendingImmediateCohortRoot != root ||
-                !member.pendingImmediateRetry) continue;
-            const auto bases = StorageBasesForRow(engine, member);
-            for (std::uint32_t leaf = 0; leaf < leafCount(member); ++leaf) {
-                const auto arm = member.scheduleLeafCount > 1u
-                    ? engine.ReadPlayableMember(bases.member + leaf).arm
-                    : member.arm;
-                const auto render = member.scheduleLeafCount > 1u
-                    ? engine.ReadPlayableMember(bases.member + leaf).render
-                    : member.renderHandle;
-                if (member.queueNaturalEnd && !member.queueSignalOnlyNoOverlap &&
-                    member.queueCurrentScheduleLeafCount == 1 && member.frontierArmPin.Valid()) continue;
-                if (!DropTimelineArm(engine, arm,
-                                     std::max<std::uint64_t>(
-                                         1u, engine.mixer.BlocksRendered())))
-                    oldGenerationLive = true;
-                (void)engine.ClearTimelineVoiceInstallIdentity(render);
-            }
-        }
-        if (oldGenerationLive) continue;
         if (retryPending) {
+            for (std::uint32_t occupiedCursor = 0;
+                 const auto* occupiedService = engine.NextOccupiedPlayableService(&occupiedCursor);) {
+                const auto& member = *occupiedService;
+                if (member.phase != harken::EnginePlayableStartPhase::PendingImmediateEntry ||
+                    member.pendingImmediateCohortRoot != root || !member.pendingImmediateRetry ||
+                    !member.queueNaturalEnd || member.queueSignalOnlyNoOverlap ||
+                    member.queueCurrentScheduleLeafCount != 1 ||
+                    !harken::IsBoundKnownCompletionPredicate(member.queueCurrentCompletion)) continue;
+                const auto token = member.queueCurrentOccurrence;
+                if (token.slot >= engine.originalSingleOccurrenceBaselines.size()) continue;
+                const auto& original = engine.originalSingleOccurrenceBaselines[token.slot];
+                if (original.Valid() && !engine.timelineOccurrences.CanWithdrawOriginalSingleCompletionForRebind(
+                        original, token, member.queueCurrentCompletion.owner,
+                        engine.timelineOccurrences.CompletionProgressOf(token),
+                        member.queueCurrentCompletion.renderGeneration,
+                        engine.timelineOccurrences.ScheduleEpochOf(token))) oldGenerationLive = true;
+            }
+            // Actual foreign storage keeps this old episode intact. A later normal
+            // Update retries only after its genuine Return; no new command is issued.
+            if (oldGenerationLive) continue;
+            for (std::uint32_t occupiedCursor = 0;
+                 auto* occupiedService = engine.NextOccupiedPlayableService(&occupiedCursor);) {
+                auto& member = *occupiedService;
+                if (member.phase != harken::EnginePlayableStartPhase::PendingImmediateEntry ||
+                    member.pendingImmediateCohortRoot != root ||
+                    !member.pendingImmediateRetry) continue;
+                const auto bases = StorageBasesForRow(engine, member);
+                for (std::uint32_t leaf = 0; leaf < leafCount(member); ++leaf) {
+                    const auto arm = member.scheduleLeafCount > 1u
+                        ? engine.ReadPlayableMember(bases.member + leaf).arm
+                        : member.arm;
+                    const auto render = member.scheduleLeafCount > 1u
+                        ? engine.ReadPlayableMember(bases.member + leaf).render
+                        : member.renderHandle;
+                    if (member.queueNaturalEnd && !member.queueSignalOnlyNoOverlap &&
+                        member.queueCurrentScheduleLeafCount == 1 && member.frontierArmPin.Valid()) continue;
+                    if (!DropTimelineArm(engine, arm,
+                                         std::max<std::uint64_t>(
+                                             1u, engine.mixer.BlocksRendered())))
+                        oldGenerationLive = true;
+                    (void)engine.ClearTimelineVoiceInstallIdentity(render);
+                }
+            }
+            if (oldGenerationLive) continue;
             bool replaced = true;
             std::uint32_t replacementCount = 0;
             {
