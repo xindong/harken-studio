@@ -6552,8 +6552,9 @@ TEST(ActionFiringApi, FrontierAttemptSkipsRetainedOwnerAndReusesOnlyTransferredS
     EXPECT_EQ(harken::EngineFrontierAttemptPhase::CancelPending, retained.storage.phase);
     auto& firstSide = engine.actionPlayScratch[firstToken.slot].voiceStarts;
     ASSERT_EQ(1u, firstSide.size());
-    ASSERT_EQ(1u, firstSide.Captures().size());
-    auto oldCapture = firstSide.Captures()[0].voice.Share();
+    const auto* firstRow = engine.actionPlayScratch[firstToken.slot].row;
+    ASSERT_NE(nullptr, firstRow);
+    auto oldCapture = firstRow->capturedVoice.Share();
     ASSERT_TRUE(oldCapture.Valid());
     const auto* oldFacts = oldCapture.Input().facts;
     const auto* firstStarts = firstSide.data();
@@ -6566,6 +6567,7 @@ TEST(ActionFiringApi, FrontierAttemptSkipsRetainedOwnerAndReusesOnlyTransferredS
     ASSERT_TRUE(oldCapture.Valid());
     EXPECT_EQ(oldFacts, oldCapture.Input().facts);
     EXPECT_EQ(CanonicalActionWorld::kFirstSound, oldCapture.Facts().soundId);
+    EXPECT_TRUE(firstRow->capturedVoice.SharesStorage(oldCapture));
 
     harken::EngineActionPlayScratch::NativeVoiceSide endedSide;
     ASSERT_TRUE(endedSide.Construct(1, 1, []() noexcept { return true; }));
