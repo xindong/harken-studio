@@ -178,7 +178,7 @@ QVariant MonitorCatalogModel::data(const QModelIndex& index, int role) const
         const auto timestamp = event->timestampNs();
         const auto start = capture_->startedTimestampNs();
         const double elapsed = timestamp >= start ? static_cast<double>(timestamp - start) : -static_cast<double>(start - timestamp);
-        return QString::number(elapsed / 1e9, 'f', 6);
+        return QString::number(elapsed / 1e9, 'f', 3);
     }
     case Level: return levelText(*event);
     case Type: return typeText(*event);

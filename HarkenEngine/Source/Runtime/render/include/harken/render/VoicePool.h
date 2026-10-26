@@ -1089,6 +1089,7 @@ private:
     void ResetStreamParkCaptureBudget();
     void ReleaseSlot(Slot& slot);
     void PublishSourceTerminal(Slot& slot, std::uint64_t blockIndex) noexcept;
+    void PublishPlaybackEnd(Slot& slot, std::uint64_t blockIndex) noexcept;
     bool StageCompletionProgress(Slot& slot,
                                  std::uint64_t blockIndex,
                                  std::uint32_t sourceOutputFrames) noexcept;

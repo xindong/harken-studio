@@ -587,7 +587,7 @@ void NodeItem::refreshContentPresentation()
 void NodeItem::setWaveformPeaks(const std::vector<float>& peaks)
 {
     waveformPeaks_ = peaks;
-    waveformPeakData_ = WaveformPeakData{};
+    waveformPeakData_.reset();
     waveformRange_.reset();
     updateContentHeight();
     repositionAllPins_();
@@ -607,9 +607,10 @@ void NodeItem::setContentFields(NodeContentFields fields)
     update();
 }
 
-void NodeItem::setWaveformPeakData(const WaveformPeakData& data, std::optional<WaveformFrameRange> range)
+void NodeItem::setWaveformPeakData(std::shared_ptr<const WaveformPeakData> data, std::optional<WaveformFrameRange> range)
 {
-    waveformPeakData_ = data;
+    if (waveformPeakData_ == data && waveformRange_ == range && waveformPeaks_.empty()) return;
+    waveformPeakData_ = std::move(data);
     waveformRange_ = range;
     waveformPeaks_.clear();
     updateContentHeight();
@@ -640,7 +641,7 @@ void NodeItem::updateContentHeight()
     const bool vertical = flowDir_ == CanvasFlowDirection::TB || flowDir_ == CanvasFlowDirection::BT;
     width_ = vertical ? std::max(kDefaultWidth, 2 * kPinColumnPad + (count - 1) * kPortPairSpacing) : kDefaultWidth;
     height_ = heightForContent(contentInfo_, !subtitle_.isEmpty(),
-                               blueprintWaveformMode_ || waveformPeakData_.isValid() || !waveformPeaks_.empty(),
+                               blueprintWaveformMode_ || (waveformPeakData_ && waveformPeakData_->isValid()) || !waveformPeaks_.empty(),
                                blueprintWaveformMode_, count, contentFields_);
     if (contentWidget() || contentPresentation_) {
         const QSize size = contentWidget() ? contentWidget()->size() : contentPresentation_->size;
@@ -1011,7 +1012,7 @@ void NodeItem::paintContentBody(QPainter* painter, float bodyTop) const
     }
 
     if (contentFields_.testFlag(NodeContentField::Waveform)
-        && (blueprintWaveformMode_ || waveformPeakData_.isValid() || !waveformPeaks_.empty())) {
+        && (blueprintWaveformMode_ || (waveformPeakData_ && waveformPeakData_->isValid()) || !waveformPeaks_.empty())) {
         y += kWaveformGap;
         const float waveH = blueprintWaveformMode_ ? kBlueprintWaveformHeight : kWaveformHeight;
         QRectF waveRect(padLeft, y, width_ - padLeft - padRight, waveH);
@@ -1037,7 +1038,7 @@ void NodeItem::paintWaveform(QPainter* painter, const QRectF& rect) const
         return waveColor;
     };
 
-    if (waveformPeakData_.isValid()) {
+    if (waveformPeakData_ && waveformPeakData_->isValid()) {
         const QColor waveColor = pickColor();
         QRect intRect(static_cast<int>(rect.x()), static_cast<int>(rect.y()),
                       static_cast<int>(rect.width()), static_cast<int>(rect.height()));
@@ -1046,7 +1047,7 @@ void NodeItem::paintWaveform(QPainter* painter, const QRectF& rect) const
             options.startFrame = static_cast<double>(waveformRange_->startFrame);
             options.frameCount = static_cast<double>(waveformRange_->endFrame - waveformRange_->startFrame);
         }
-        WaveformRenderer::render(*painter, intRect, waveformPeakData_, theme->domains.waveform, options);
+        WaveformRenderer::render(*painter, intRect, *waveformPeakData_, theme->domains.waveform, options);
 
         float midY = rect.y() + rect.height() / 2.0f;
         painter->setPen(QPen(ngnWf.waveformCenter, 0.5f));

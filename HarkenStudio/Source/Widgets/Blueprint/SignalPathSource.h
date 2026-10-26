@@ -22,7 +22,10 @@ public:
     std::vector<BlueprintEdgeDesc> buildEdges() override { return edges_; }
     bool supportsEditing() const override { return true; }
 
-    void loadGraph(const ProjectData& project, SignalPathGraph graph);
+    void loadGraph(const ProjectData& project, SignalPathGraph graph,
+        std::shared_ptr<const FieldGroupEffectiveSnapshot> groups = {});
+    void refreshNodeContents(const ProjectData& project);
+    void setNodeContent(size_t index, const NodeContentInfo& content);
     void clear();
     const SignalPathGraph& graph() const { return graph_; }
 

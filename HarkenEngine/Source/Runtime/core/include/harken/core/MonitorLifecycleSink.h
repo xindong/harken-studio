@@ -36,7 +36,8 @@ enum class MonitorLifecyclePhase : std::uint8_t {
     PreparedCandidate = 22,
     PlayableStarted = 23,
     StepExecuted = 24,
-    ActionTerminal = 25
+    ActionTerminal = 25,
+    PlayableFinished = 26
 };
 
 // Called after the reported Runtime decision succeeds. No-op when Monitor is absent,
@@ -82,8 +83,8 @@ struct MonitorLifecycleFacts {
     std::uint64_t runtimeLineageFingerprint = 0;
     std::uint64_t arrangingInstance = 0;
     std::uint64_t logicCommitSequence = 0;
-    std::uint64_t startedAudioBlock = 0;
-    std::uint64_t startedFrame = 0;
+    std::uint64_t audioBlock = 0;
+    std::uint64_t executeFrame = 0;
     float volumeDb = 0.0f;
     bool volumeKnown = false;
     std::uint32_t notifyType = 0;

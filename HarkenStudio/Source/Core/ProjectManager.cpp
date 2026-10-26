@@ -1643,7 +1643,10 @@ ProjectManager::ProjectManager(QObject* parent)
     const auto refreshGroups = [this] {
         if (m_currentProject) refreshFieldGroupDerivedViews(*m_currentProject);
     };
-    connect(this, &ProjectManager::itemCreated, this, refreshGroups);
+    connect(this, &ProjectManager::itemCreated, this, [refreshGroups](ProjectItem* item) {
+        if (!PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item->type))
+            refreshGroups();
+    });
     connect(this, &ProjectManager::itemCreated, this, &ProjectManager::recordCreatedNameHistory);
     connect(this, &ProjectManager::itemMoved, this, refreshGroups);
     connect(this, &ProjectManager::itemDeleted, this, [this](ProjectItem* item) {

@@ -2638,6 +2638,18 @@ void VoicePool::PublishSourceTerminal(Slot& slot, std::uint64_t blockIndex) noex
     record->completedSequence.store(blockIndex + 1u, std::memory_order_release);
 }
 
+void VoicePool::PublishPlaybackEnd(Slot& slot, std::uint64_t blockIndex) noexcept {
+    const auto& render = slot.render;
+    if (!slot.monitorControl.Valid() || render.streamParkActive ||
+        render.stagedPlaybackEnd == SourceTerminalKind::None ||
+        blockIndex == UINT64_MAX || blockIndex > (UINT64_MAX - m_blockFrames) / m_blockFrames) return;
+    const bool timelineControl = render.stagedPlaybackEnd == SourceTerminalKind::Stop &&
+        render.monitorTimelineControlAdopted;
+    (void)slot.monitorControl.receipt->TryPublishEnd(slot.monitorControl, blockIndex + 1u,
+        blockIndex * m_blockFrames + render.stagedPlaybackEndOffset, render.stagedPlaybackEnd,
+        timelineControl ? render.monitorAdoptedControlCause : MonitorControlCause{}, timelineControl);
+}
+
 bool VoicePool::BindCompletionProgress(
     VnVoiceHandle handle, CompletionProgressRow* row,
     OccurrenceToken occurrence,
@@ -2978,7 +2990,10 @@ void VoicePool::ApplyStop(VnVoiceHandle handle, std::uint32_t fadeMs,
         slot->render.monitorControlAdopted = true;
         slot->render.stagedSourceTerminal = SourceTerminalKind::Stop;
         slot->render.stagedSourceTerminalOffset = 0;
+        slot->render.stagedPlaybackEnd = SourceTerminalKind::Stop;
+        slot->render.stagedPlaybackEndOffset = 0;
         PublishSourceTerminal(*slot, blockIndex);
+        PublishPlaybackEnd(*slot, blockIndex);
         // An immediate cut has no ramp, so it reports as a plain ended
         // voice; stopped-by-fade is reserved for a ramp reaching zero.
         NoteMonitorVoiceRetired(slot->render.dynamicSourceIdentity);
@@ -4524,6 +4539,7 @@ void VoicePool::HandleVoiceLifecycle(std::uint32_t slotIndex, Slot& slot,
         }
     }
     if (result.phase == SourcePhase::Done) {
+        PublishPlaybackEnd(slot, blockIndex);
         if (m_timelineArms != nullptr &&
             slot.render.timelineArmSlot != UINT32_MAX) {
             const TimelineArmTable::Row* row =

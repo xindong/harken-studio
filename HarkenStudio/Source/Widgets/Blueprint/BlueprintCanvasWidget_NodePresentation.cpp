@@ -14,9 +14,8 @@ namespace VNX {
 void BlueprintCanvasWidget::refreshNodeWaveforms_(uint32_t sourceID)
 {
     const auto refresh = [](const QString& path, const std::vector<WaveformNode>& nodes) {
-        WaveformPeakData peaks;
-        if (!path.isEmpty() && !WaveformCache::load(path, peaks))
-            peaks = {};
+        const auto peaks = path.isEmpty() ? std::shared_ptr<const WaveformPeakData>{}
+                                         : WaveformCache::loadShared(path);
         for (const auto& node : nodes)
             node.item->setWaveformPeakData(peaks, node.range);
     };

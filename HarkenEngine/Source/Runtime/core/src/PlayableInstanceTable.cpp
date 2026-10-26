@@ -913,6 +913,8 @@ PlayableInstanceHandle PlayableInstanceTable::Acquire(
         entry.monitorPreparedCandidateIdentity = {};
         entry.monitorPreparedCandidateObserved = false;
         entry.monitorStartedObserved = false;
+        entry.monitorFinishedObserved = false;
+        entry.monitorPlaybackEnd = {};
         entry.playbackRequest = parent != 0 ? FindAny(parent)->playbackRequest : request;
         entry.emitterOrigin = parent != 0 ? FindAny(parent)->emitterOrigin : emitterOrigin;
         entry.controlCause = {};
@@ -985,6 +987,8 @@ bool PlayableInstanceTable::PrepareAcquire(
         entry.monitorPreparedCandidateIdentity = {};
         entry.monitorPreparedCandidateObserved = false;
         entry.monitorStartedObserved = false;
+        entry.monitorFinishedObserved = false;
+        entry.monitorPlaybackEnd = {};
         entry.playbackRequest = parent != 0 ? FindAny(parent)->playbackRequest : request;
         entry.emitterOrigin = parent != 0 ? FindAny(parent)->emitterOrigin : emitterOrigin;
         entry.controlCause = {};
@@ -1371,9 +1375,59 @@ void PlayableInstanceTable::ObserveStarted(PlayableInstanceHandle handle,
     facts.terminalKind = 0;
     facts.terminalResult = 0;
     facts.terminalReason = 0;
-    facts.startedAudioBlock = audioBlock;
-    facts.startedFrame = frame;
+    facts.audioBlock = audioBlock;
+    facts.executeFrame = frame;
     ObserveMonitorLifecycle(MonitorLifecyclePhase::PlayableStarted, handle,
+        GenerationOf(handle), entry->contentIdentity.worldGeneration,
+        entry->contentIdentity.stableId, handle, facts.relatedAction, 0,
+        static_cast<std::uint8_t>(entry->kind), 0, facts);
+}
+
+bool PlayableInstanceTable::NeedsStartedObservation(PlayableInstanceHandle handle) const noexcept {
+    const auto* entry = Find(handle);
+    return entry != nullptr && entry->kind == PlayableKind::Sound && !entry->monitorStartedObserved;
+}
+
+void PlayableInstanceTable::RecordPlaybackEnd(PlayableInstanceHandle handle,
+    std::uint64_t audioBlock, std::uint64_t frame,
+    const PlayableTerminalOutcome& outcome, const MonitorControlCause& cause) noexcept {
+    auto* entry = FindMut(handle);
+    if (entry == nullptr || entry->kind != PlayableKind::Sound || audioBlock == 0 ||
+        entry->monitorFinishedObserved || entry->monitorPlaybackEnd.audioBlock != 0) return;
+    entry->monitorPlaybackEnd = {audioBlock, frame, outcome, cause};
+}
+
+PlayableInstanceHandle PlayableInstanceTable::CapturePlaybackEndAt(std::uint32_t slot,
+    std::uint64_t* audioBlock, std::uint64_t* frame) const noexcept {
+    if (slot >= m_entries.size() || audioBlock == nullptr || frame == nullptr) return 0;
+    const auto& entry = m_entries[slot];
+    const auto handle = MakeHandle(slot, entry.generation);
+    if (Find(handle) == nullptr || entry.monitorFinishedObserved || entry.monitorPlaybackEnd.audioBlock == 0)
+        return 0;
+    *audioBlock = entry.monitorPlaybackEnd.audioBlock;
+    *frame = entry.monitorPlaybackEnd.frame;
+    return handle;
+}
+
+void PlayableInstanceTable::ObserveFinished(PlayableInstanceHandle handle) noexcept {
+    auto* entry = FindMut(handle);
+    if (entry == nullptr || entry->kind != PlayableKind::Sound || entry->monitorFinishedObserved) return;
+    entry->monitorFinishedObserved = true;
+    MonitorLifecycleFacts facts{};
+    FillMonitorFacts(*entry, handle, facts);
+    facts.publishLegacy = false;
+    const auto& end = entry->monitorPlaybackEnd;
+    if (end.audioBlock != 0) {
+        facts.audioBlock = end.audioBlock;
+        facts.executeFrame = end.frame;
+        if (entry->terminalOutcome.kind < PlayableTerminalKind::ParentCancellation) {
+            facts.terminalKind = static_cast<std::uint8_t>(end.outcome.kind);
+            facts.terminalResult = end.outcome.resultCode;
+            facts.terminalReason = end.outcome.reasonCode;
+            facts.controlCause = end.cause;
+        }
+    }
+    ObserveMonitorLifecycle(MonitorLifecyclePhase::PlayableFinished, handle,
         GenerationOf(handle), entry->contentIdentity.worldGeneration,
         entry->contentIdentity.stableId, handle, facts.relatedAction, 0,
         static_cast<std::uint8_t>(entry->kind), 0, facts);
@@ -1761,6 +1815,7 @@ bool PlayableInstanceTable::AdvanceLifecycle(PlayableInstanceHandle handle,
         originalBaseline = ResolveOriginalLifetimeBaseline(*entry, handle, originalBaseline);
         if (!OriginalLifetimeRetirementReady(*entry, originalBaseline)) return false;
     }
+    if (to == PlayableLifecycle::Retired) ObserveFinished(handle);
     if (to == PlayableLifecycle::Retired && parent != 0 &&
         !UnlinkChild(handle, parent)) {
         return false;

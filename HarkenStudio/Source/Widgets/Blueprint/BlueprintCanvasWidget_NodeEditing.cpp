@@ -136,21 +136,19 @@ void BlueprintCanvasWidget::installNodeEditor_(NodeItem* node, const BlueprintNo
             if (nodeEditSession_ && nodeEditSession_->isActive())
                 nodeEditSession_->preview(value);
         };
-        const auto finish = [this](NodeContentField, bool committed) {
+        const auto finish = [this](NodeContentField field, bool committed) {
             if (auto session = std::move(nodeEditSession_)) {
                 if (committed) session->commit();
                 else session->cancel();
             }
-            pathRefreshPending_ = false;
-            schedulePathRefresh_();
+            queuePathRefresh_(field == NodeContentField::Volume);
         };
         connect(editor, &NodeContentEditor::editBegan, this, begin);
         connect(editor, &NodeContentEditor::editPreviewed, this, preview);
         connect(editor, &NodeContentEditor::editEnded, this, finish);
         connect(editor, &NodeContentEditor::editingClosed, this, [this]() {
             if (!pathRefreshPending_) return;
-            pathRefreshPending_ = false;
-            schedulePathRefresh_();
+            queuePathRefresh_(pathContentOnlyRefresh_);
         });
         connect(editor, &NodeContentEditor::valueCommitted, this,
             [begin, preview, finish](NodeContentField field, const QVariant& value) {
@@ -214,8 +212,7 @@ void BlueprintCanvasWidget::installGainEditor_(NodeItem* node)
             });
         connect(editor, &NodeContentEditor::editingClosed, this, [this]() {
             if (!pathRefreshPending_) return;
-            pathRefreshPending_ = false;
-            schedulePathRefresh_();
+            queuePathRefresh_(pathContentOnlyRefresh_);
         });
         trackNodeEditor_(node, editor);
         return editor;
@@ -253,6 +250,7 @@ void BlueprintCanvasWidget::refreshNodeContent_(ProjectItem* item, const QString
         else if (propertyName == QLatin1String("scheduleOffsetSec")) info.offsetOfStart = value.toDouble();
         else if (propertyName == QLatin1String("loopCount")) info.loopCount = value.toUInt();
         else return;
+        if (key.occurrenceIndex) pathSource_->setNodeContent(*key.occurrenceIndex, info);
         node->setContentInfo(info);
     }
 }
@@ -323,8 +321,7 @@ void BlueprintCanvasWidget::finishNodeEdits_(bool committed)
         else session->cancel();
     }
     if (pathRefreshPending_) {
-        pathRefreshPending_ = false;
-        schedulePathRefresh_();
+        queuePathRefresh_(pathContentOnlyRefresh_);
     }
     if (chainRefreshPending_) scheduleChainRefresh_();
 }

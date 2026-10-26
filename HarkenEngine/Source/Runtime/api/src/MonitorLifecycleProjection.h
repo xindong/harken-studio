@@ -11,6 +11,7 @@ constexpr unsigned LifecycleFactKind(MonitorLifecyclePhase phase) noexcept {
     case MonitorLifecyclePhase::PreparedCandidate: return VN_MONITOR_FACT_PLAYABLE_PREPARED;
     case MonitorLifecyclePhase::PlayableStart: return VN_MONITOR_FACT_PLAYABLE_ACTIVE;
     case MonitorLifecyclePhase::PlayableStarted: return VN_MONITOR_FACT_PLAYABLE_STARTED;
+    case MonitorLifecyclePhase::PlayableFinished: return VN_MONITOR_FACT_PLAYABLE_FINISHED;
     case MonitorLifecyclePhase::PlayableLogicalComplete: return VN_MONITOR_FACT_PLAYABLE_LOGICAL_COMPLETE;
     case MonitorLifecyclePhase::PlayableAudibleRetiring: return VN_MONITOR_FACT_PLAYABLE_AUDIBLE_RETIRING;
     case MonitorLifecyclePhase::PlayableRetired: return VN_MONITOR_FACT_PLAYABLE_RETIRED;
@@ -114,9 +115,9 @@ inline MonitorExecutionFact CaptureEntityFact(unsigned kind, unsigned subject,
     SetSourceField(fact, VN_MONITOR_FACT_FIELD_LOGIC_COMMIT, source.logicCommitSequence != 0);
     SetSourceField(fact, VN_MONITOR_FACT_FIELD_ARRANGING, source.arrangingInstance != 0);
     SetSourceField(fact, VN_MONITOR_FACT_FIELD_OWNER_EPOCH, source.ownerEpoch != 0);
-    if (source.startedAudioBlock != 0) {
-        body.position.audioBlock = source.startedAudioBlock;
-        body.position.frame = source.startedFrame;
+    if (source.audioBlock != 0) {
+        body.position.audioBlock = source.audioBlock;
+        body.position.frame = source.executeFrame;
         SetSourceField(fact, VN_MONITOR_FACT_FIELD_AUDIO_BLOCK);
         SetSourceField(fact, VN_MONITOR_FACT_FIELD_EXECUTE_FRAME);
     }

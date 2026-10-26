@@ -22,7 +22,44 @@
 
 namespace VNX {
 
-void SignalPathSource::loadGraph(const ProjectData& project, SignalPathGraph graph)
+namespace {
+
+NodeContentInfo nodeContent(ProjectItem& item, PlatformScope scope)
+{
+    NodeContentInfo content;
+    const auto locator = PlayablePropertyAuthoringV1::definitionLocator(item);
+    const auto property = [&](const char* name) -> std::optional<double> {
+        const auto* field = PlayablePropertyAuthoringV1::fieldByName(QLatin1String(name));
+        if (!locator || !field) return {};
+        const auto state = PlayablePropertyAuthoringV1::readProperty(item, *locator, field->id, scope);
+        return state ? std::optional<double>{state->value.toDouble()} : std::nullopt;
+    };
+    content.volume = property("volume");
+    content.pitch = property("pitch");
+    if (const auto loop = property("loopCount"))
+        content.loopCount = static_cast<uint32_t>(*loop);
+    if (const auto* sound = item.comp<VSound>())
+        content.offsetOfStart = sound->scheduleOffsetSec;
+    return content;
+}
+
+QHash<QUuid, ProjectItem*> projectObjects(const ProjectData& project)
+{
+    QHash<QUuid, ProjectItem*> objects;
+    const auto collect = [&](auto&& self, ProjectItem& item) -> void {
+        objects.insert(item.guid, &item);
+        for (const auto& child : item.children) self(self, *child);
+    };
+    for (const auto* binding : project.allFileBindings()) {
+        if (binding->rootItem) collect(collect, *binding->rootItem);
+    }
+    return objects;
+}
+
+}
+
+void SignalPathSource::loadGraph(const ProjectData& project, SignalPathGraph graph,
+    std::shared_ptr<const FieldGroupEffectiveSnapshot> groups)
 {
     graph_ = std::move(graph);
     nodes_.clear();
@@ -32,14 +69,7 @@ void SignalPathSource::loadGraph(const ProjectData& project, SignalPathGraph gra
         return;
     }
 
-    QHash<QUuid, ProjectItem*> objects;
-    const std::function<void(ProjectItem&)> collect = [&](ProjectItem& item) {
-        objects.insert(item.guid, &item);
-        for (const auto& child : item.children) collect(*child);
-    };
-    for (const auto* binding : project.allFileBindings()) {
-        if (binding->rootItem) collect(*binding->rootItem);
-    }
+    const auto objects = projectObjects(project);
 
     const auto platform = graph_.platform ? fromFieldGroupGuid(*graph_.platform)
         : PlatformContextService::instance().context().primary;
@@ -59,19 +89,7 @@ void SignalPathSource::loadGraph(const ProjectData& project, SignalPathGraph gra
         desc.draggable = true;
         desc.occurrenceIndex = index;
         desc.portPairCount = static_cast<int>(node.portPairs.size());
-        const auto locator = PlayablePropertyAuthoringV1::definitionLocator(*item);
-        const auto property = [&](const char* name) -> std::optional<double> {
-            const auto* field = PlayablePropertyAuthoringV1::fieldByName(QLatin1String(name));
-            if (!locator || !field) return {};
-            const auto state = PlayablePropertyAuthoringV1::readProperty(*item, *locator, field->id, scope);
-            return state ? std::optional<double>{state->value.toDouble()} : std::nullopt;
-        };
-        desc.content.volume = property("volume");
-        desc.content.pitch = property("pitch");
-        if (const auto loop = property("loopCount"))
-            desc.content.loopCount = static_cast<uint32_t>(*loop);
-        if (const auto* sound = item->comp<VSound>())
-            desc.content.offsetOfStart = sound->scheduleOffsetSec;
+        desc.content = nodeContent(*item, scope);
         if (node.type == ProjectItemType::Sound && !project.projectPath.isEmpty()) {
             const auto previewLanguage = SoundSourceEditing::previewLanguage(*item, language);
             auto path = SoundSourceEditing::activeRelativePath(*item, platform, previewLanguage);
@@ -92,7 +110,9 @@ void SignalPathSource::loadGraph(const ProjectData& project, SignalPathGraph gra
         nodes_.push_back(std::move(desc));
     }
 
-    const auto groups = buildFieldGroupEffectiveSnapshot(project, graph_.platform);
+    if (!groups)
+        groups = std::make_shared<FieldGroupEffectiveSnapshot>(
+            buildFieldGroupEffectiveSnapshot(project, graph_.platform));
     for (size_t edgeIndex = 0; edgeIndex < graph_.edges.size(); ++edgeIndex) {
         const auto& edge = graph_.edges[edgeIndex];
         const auto& from = nodes_[edge.from.occurrenceIndex];
@@ -112,16 +132,33 @@ void SignalPathSource::loadGraph(const ProjectData& project, SignalPathGraph gra
             break;
         case SignalPathEdgeKind::Output:
             desc.edgeKind = static_cast<uint8_t>(BlueprintEdgeKind::BusRoute);
-            desc.gainContent.outputVolume = signalPathGainValue(groups, graph_, edgeIndex);
+            desc.gainContent.outputVolume = signalPathGainValue(*groups, graph_, edgeIndex);
             break;
         case SignalPathEdgeKind::Send:
             desc.edgeKind = static_cast<uint8_t>(BlueprintEdgeKind::Send);
-            desc.gainContent.sendVolume = signalPathGainValue(groups, graph_, edgeIndex);
+            desc.gainContent.sendVolume = signalPathGainValue(*groups, graph_, edgeIndex);
             break;
         }
         edges_.push_back(std::move(desc));
     }
     emit sourceChanged();
+}
+
+void SignalPathSource::refreshNodeContents(const ProjectData& project)
+{
+    const auto objects = projectObjects(project);
+    const PlatformScope scope = graph_.platform
+        ? PlatformScope{fromFieldGroupGuid(*graph_.platform)} : std::nullopt;
+    for (size_t index = 0; index < nodes_.size(); ++index) {
+        auto* item = objects.value(graph_.nodes[index].key.objectGuid);
+        Q_ASSERT(item);
+        nodes_[index].content = nodeContent(*item, scope);
+    }
+}
+
+void SignalPathSource::setNodeContent(size_t index, const NodeContentInfo& content)
+{
+    nodes_[index].content = content;
 }
 
 void SignalPathSource::clear()

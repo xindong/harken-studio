@@ -1788,7 +1788,59 @@ struct MonitorVoiceControlTestAccess {
             MonitorVoiceControlReceipt::State(binding.ticket, MonitorVoiceControlReceipt::Phase::Complete),
             std::memory_order_release);
     }
+    static bool BeginEndWrite(const MonitorVoiceControlBinding& binding) {
+        auto expected = MonitorVoiceControlReceipt::State(binding.ticket, MonitorVoiceControlReceipt::Phase::Armed);
+        return binding.receipt->endControl_.compare_exchange_strong(expected,
+            MonitorVoiceControlReceipt::State(binding.ticket, MonitorVoiceControlReceipt::Phase::Writing),
+            std::memory_order_acq_rel, std::memory_order_acquire);
+    }
+    static void CompleteEndWrite(const MonitorVoiceControlBinding& binding, const MonitorControlCause& cause) {
+        binding.receipt->endPayload_ = {7, 39, SourceTerminalKind::Stop, cause, true};
+        binding.receipt->endBinding_ = binding;
+        binding.receipt->endControl_.store(
+            MonitorVoiceControlReceipt::State(binding.ticket, MonitorVoiceControlReceipt::Phase::Complete),
+            std::memory_order_release);
+    }
 };
+}
+
+TEST(MonitorVoiceControl, SourceAndPlaybackEndPublishIndependentlyOncePerActivation) {
+    for (const bool sourceFirst : {false, true}) {
+        harken::MonitorVoiceControlReceipt receipt;
+        const harken::MonitorVoiceControlBinding binding{&receipt, 1, MakeRenderHandle(0, 1), 0, 1};
+        ASSERT_TRUE(receipt.TryArm(binding.ticket));
+        harken::MonitorControlCause cause{};
+        cause.request.key = {3, 17};
+        harken::MonitorVoiceControlFact source{};
+        harken::MonitorVoicePlaybackEnd end{};
+        if (sourceFirst) {
+            ASSERT_TRUE(receipt.TryPublish(binding, harken::SourceTerminalKind::Natural, 20, {}, false));
+            EXPECT_FALSE(receipt.TryReadEnd(binding, &end));
+            ASSERT_TRUE(receipt.TryPublishEnd(binding, 2, 25, harken::SourceTerminalKind::Stop, cause, true));
+        } else {
+            ASSERT_TRUE(receipt.TryPublishEnd(binding, 2, 25, harken::SourceTerminalKind::Stop, cause, true));
+            EXPECT_FALSE(receipt.TryRead(binding, &source));
+            ASSERT_TRUE(receipt.TryPublish(binding, harken::SourceTerminalKind::Natural, 20, {}, false));
+        }
+        EXPECT_FALSE(receipt.TryPublish(binding, harken::SourceTerminalKind::Stop, 30, cause, true));
+        EXPECT_FALSE(receipt.TryPublishEnd(binding, 3, 40, harken::SourceTerminalKind::Natural, {}, false));
+        ASSERT_TRUE(receipt.TryRead(binding, &source));
+        ASSERT_TRUE(receipt.TryReadEnd(binding, &end));
+        EXPECT_EQ(harken::SourceTerminalKind::Natural, source.sourceKind);
+        EXPECT_EQ(20u, source.frame);
+        EXPECT_FALSE(source.cause.request.key.Valid());
+        EXPECT_EQ(harken::SourceTerminalKind::Stop, end.kind);
+        EXPECT_EQ(2u, end.audioBlock);
+        EXPECT_EQ(25u, end.frame);
+        EXPECT_EQ(cause.request.key, end.cause.request.key);
+        EXPECT_TRUE(end.timelineControl);
+        auto unrelated = binding;
+        unrelated.render = MakeRenderHandle(0, 2);
+        EXPECT_FALSE(receipt.TryReadEnd(unrelated, &end));
+        receipt.Invalidate(binding.ticket);
+        EXPECT_FALSE(receipt.TryRead(binding, &source));
+        EXPECT_FALSE(receipt.TryReadEnd(binding, &end));
+    }
 }
 
 TEST(MonitorVoiceControl, RebindingRejectsLateWritersInvalidationAndTicketReuse) {
@@ -1798,6 +1850,7 @@ TEST(MonitorVoiceControl, RebindingRejectsLateWritersInvalidationAndTicketReuse)
     const harken::MonitorVoiceControlBinding next{&receipt, 2, MakeRenderHandle(0, 2), 0, 1};
     ASSERT_TRUE(receipt.TryArm(next.ticket));
     EXPECT_FALSE(receipt.TryPublish(old, harken::SourceTerminalKind::Stop, 10, {}, true));
+    EXPECT_FALSE(receipt.TryPublishEnd(old, 1, 10, harken::SourceTerminalKind::Stop, {}, true));
     receipt.Invalidate(old.ticket);
     harken::MonitorControlCause cause{};
     cause.request.key = {3, 17};
@@ -1809,10 +1862,50 @@ TEST(MonitorVoiceControl, RebindingRejectsLateWritersInvalidationAndTicketReuse)
     EXPECT_EQ(cause.request.key, fact.cause.request.key);
     EXPECT_EQ(next.render, fact.render);
     EXPECT_EQ(23u, fact.frame);
+    ASSERT_TRUE(receipt.TryPublishEnd(next, 2, 23, harken::SourceTerminalKind::Stop, cause, true));
+    harken::MonitorVoicePlaybackEnd end{};
+    EXPECT_FALSE(receipt.TryReadEnd(old, &end));
+    ASSERT_TRUE(receipt.TryReadEnd(next, &end));
+    EXPECT_EQ(cause.request.key, end.cause.request.key);
+    EXPECT_EQ(2u, end.audioBlock);
+    EXPECT_EQ(23u, end.frame);
     EXPECT_FALSE(receipt.TryArm(next.ticket));
     EXPECT_FALSE(receipt.TryArm(0));
     EXPECT_TRUE(receipt.TryArm(harken::MonitorVoiceControlReceipt::kMaxTicket));
     EXPECT_FALSE(receipt.TryArm(harken::MonitorVoiceControlReceipt::kMaxTicket + 1u));
+}
+
+TEST(MonitorVoiceControl, PlaybackEndWriterSurvivesInvalidationAndRejectsRearmUntilComplete) {
+    harken::MonitorVoiceControlReceipt receipt;
+    const harken::MonitorVoiceControlBinding old{&receipt, 1, MakeRenderHandle(0, 1), 0, 1};
+    ASSERT_TRUE(receipt.TryArm(old.ticket));
+    ASSERT_TRUE(receipt.TryPublish(old, harken::SourceTerminalKind::Natural, 20, {}, false));
+    ASSERT_TRUE(harken::detail::MonitorVoiceControlTestAccess::BeginEndWrite(old));
+    receipt.Invalidate(old.ticket);
+    const harken::MonitorVoiceControlBinding rejected{&receipt, 2, MakeRenderHandle(0, 2), 0, 2};
+    EXPECT_FALSE(receipt.TryArm(rejected.ticket));
+    EXPECT_FALSE(receipt.TryPublish(rejected, harken::SourceTerminalKind::Natural, 30, {}, false));
+    EXPECT_FALSE(receipt.TryPublishEnd(rejected, 6, 35, harken::SourceTerminalKind::Natural, {}, false));
+    harken::MonitorVoicePlaybackEnd end{};
+    EXPECT_FALSE(receipt.TryReadEnd(old, &end));
+    harken::MonitorControlCause cause{};
+    cause.request.key = {5, 31};
+    harken::detail::MonitorVoiceControlTestAccess::CompleteEndWrite(old, cause);
+    ASSERT_TRUE(receipt.TryReadEnd(old, &end));
+    EXPECT_EQ(7u, end.audioBlock);
+    EXPECT_EQ(39u, end.frame);
+    EXPECT_EQ(cause.request.key, end.cause.request.key);
+    EXPECT_FALSE(receipt.TryReadEnd(rejected, &end));
+    const harken::MonitorVoiceControlBinding next{&receipt, 3, MakeRenderHandle(0, 3), 0, 3};
+    ASSERT_TRUE(receipt.TryArm(next.ticket));
+    EXPECT_FALSE(receipt.TryReadEnd(old, &end));
+    EXPECT_FALSE(receipt.TryPublishEnd(old, 8, 40, harken::SourceTerminalKind::Stop, cause, true));
+    ASSERT_TRUE(receipt.TryPublish(next, harken::SourceTerminalKind::Natural, 45, {}, false));
+    ASSERT_TRUE(receipt.TryPublishEnd(next, 8, 46, harken::SourceTerminalKind::Natural, {}, false));
+    ASSERT_TRUE(receipt.TryReadEnd(next, &end));
+    EXPECT_EQ(8u, end.audioBlock);
+    EXPECT_EQ(46u, end.frame);
+    EXPECT_FALSE(end.cause.request.key.Valid());
 }
 
 TEST(VoiceLedger, ObservationWritingCannotBlockParkEndOrReuseAndCannotCrossGenerations) {

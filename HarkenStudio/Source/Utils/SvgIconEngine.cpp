@@ -28,12 +28,16 @@ SvgIconEngine::SvgIconEngine(ThemeAssetResolver* resolver,
                              ThemeSnapshotPtr snapshot,
                              QString onLogicalId,
                              QString offLogicalId,
-                             QColor overrideColor)
+                             QColor overrideColor,
+                             std::shared_ptr<const ThemeImageResource> onResource,
+                             std::shared_ptr<const ThemeImageResource> offResource)
     : resolver_(resolver)
     , snapshot_(std::move(snapshot))
     , onLogicalId_(std::move(onLogicalId))
     , offLogicalId_(std::move(offLogicalId))
     , overrideColor_(std::move(overrideColor))
+    , onResource_(std::move(onResource))
+    , offResource_(std::move(offResource))
 {
     ensureCacheLimit();
 }
@@ -41,7 +45,7 @@ SvgIconEngine::SvgIconEngine(ThemeAssetResolver* resolver,
 QIconEngine* SvgIconEngine::clone() const
 {
     return new SvgIconEngine(resolver_, snapshot_, onLogicalId_, offLogicalId_,
-                             overrideColor_);
+                             overrideColor_, onResource_, offResource_);
 }
 
 QColor SvgIconEngine::resolveColor(QIcon::Mode mode) const

@@ -617,13 +617,14 @@ TEST(MonitorExecutionLifecycle, RetiredChildKeepsItsContentAndActualParentAcross
     }
     const auto rows = ReadIdentityEvents(session);
     for (unsigned i = 0; i != children.size(); ++i) {
-        std::array<unsigned, 3> phases{};
+        std::array<unsigned, 4> phases{};
         for (const auto& row : rows) {
             if (row.header.instanceHandle != children[i]) continue;
             if (row.fact.factKind == VN_MONITOR_FACT_PLAYABLE_PREPARED) ++phases[0];
             else if (row.fact.factKind == VN_MONITOR_FACT_PLAYABLE_ACTIVE) ++phases[1];
-            else if (row.fact.factKind == VN_MONITOR_FACT_PLAYABLE_RETIRED) {
-                ++phases[2];
+            else if (row.fact.factKind == VN_MONITOR_FACT_PLAYABLE_FINISHED ||
+                     row.fact.factKind == VN_MONITOR_FACT_PLAYABLE_RETIRED) {
+                ++phases[row.fact.factKind == VN_MONITOR_FACT_PLAYABLE_FINISHED ? 2 : 3];
                 EXPECT_TRUE(FactHas(row.fact, VN_MONITOR_FACT_FIELD_TERMINAL_KIND));
                 EXPECT_TRUE(FactHas(row.fact, VN_MONITOR_FACT_FIELD_RESULT));
                 EXPECT_TRUE(FactHas(row.fact, VN_MONITOR_FACT_FIELD_REASON));
@@ -632,7 +633,8 @@ TEST(MonitorExecutionLifecycle, RetiredChildKeepsItsContentAndActualParentAcross
                 EXPECT_EQ(outcomes[i].reasonCode, row.header.reason);
             }
             else ADD_FAILURE() << "Unexpected child fact " << row.fact.factKind;
-            if (row.fact.factKind != VN_MONITOR_FACT_PLAYABLE_RETIRED) {
+            if (row.fact.factKind != VN_MONITOR_FACT_PLAYABLE_FINISHED &&
+                row.fact.factKind != VN_MONITOR_FACT_PLAYABLE_RETIRED) {
                 EXPECT_FALSE(FactHas(row.fact, VN_MONITOR_FACT_FIELD_TERMINAL_KIND));
                 EXPECT_FALSE(FactHas(row.fact, VN_MONITOR_FACT_FIELD_RESULT));
             }
@@ -646,7 +648,7 @@ TEST(MonitorExecutionLifecycle, RetiredChildKeepsItsContentAndActualParentAcross
             EXPECT_EQ(request.key.sequence, row.fact.playbackRequest.sequence);
             EXPECT_NE(children[i], row.header.playableInstanceHandle);
         }
-        EXPECT_EQ((std::array<unsigned, 3>{1, 1, 1}), phases);
+        EXPECT_EQ((std::array<unsigned, 4>{1, 1, 1, 1}), phases);
     }
     EXPECT_EQ(static_cast<std::uint32_t>(children[0]), static_cast<std::uint32_t>(children[1]));
     EXPECT_NE(children[0], children[1]);
@@ -1037,6 +1039,104 @@ TEST(MonitorExecutionLifecycle, UncommittedVoiceReleaseDoesNotInventLiveOrEnd) {
     ledger.Release(slot);
     EXPECT_TRUE(ReadIdentityEvents(capture).empty());
     EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(capture));
+}
+
+TEST(MonitorExecutionLifecycle, PlaybackEndsDuringUpdateSurviveNotificationAndOrphanReclaim) {
+    for (const bool orphan : {false, true}) {
+        SCOPED_TRACE(orphan);
+        struct CallbackState {
+            Engine* engine = nullptr;
+            bool orphan = false;
+            bool armed = false;
+            bool pumped = false;
+            std::uint64_t firstFrame = UINT64_MAX;
+            std::uint64_t endFrame = 0;
+            void Pump(unsigned blocks) {
+                for (unsigned block = 0; block < blocks; ++block) {
+                    const auto startFrame = engine->mixer.BlocksRendered() * 64u;
+                    engine->nullBackend.Pump(1);
+                    const auto* output = engine->nullBackend.LastBlock();
+                    for (unsigned frame = 0; frame < 64; ++frame) {
+                        if (output[frame * 2u] <= 0.01f) continue;
+                        firstFrame = std::min(firstFrame, startFrame + frame);
+                        endFrame = startFrame + frame + 1u;
+                    }
+                }
+            }
+        } state{};
+        state.orphan = orphan;
+        auto config = harkentest::MakeNullConfig(4, 64, 48000);
+        config.notificationUserData = &state;
+        config.onNotification = [](const VnNotification*, void* context) {
+            auto& current = *static_cast<CallbackState*>(context);
+            if (!current.armed || current.pumped) return;
+            current.pumped = true;
+            current.Pump(128);
+            if (current.orphan) {
+                VnNotification discarded{};
+                while (current.engine->notifications.TryPop(discarded)) {}
+            }
+        };
+        harkentest::EngineSession engine(config);
+        ASSERT_EQ(VN_OK, engine.InitResult());
+        state.engine = engine.Engine();
+        const auto sound = harkentest::ObjectId(93011);
+        std::vector<float> samples(4096, 0.25f);
+        const auto pcm = harkentest::MonoDesc(samples, 48000);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(sound, &pcm));
+        PlayablePropertyProgramViewV1 property{};
+        property.contentPropertyKind = playableproperties::ContentPropertyKindV1::Sound;
+        property.stableId = sound;
+        property.contentRevision = state.engine->registry.Lookup(sound).contentRevision;
+        property.routeStableId = VN_BUS_MASTER;
+        property.compatibilityFingerprint = 1;
+        property.payload.presentMask = kResolvedSectionGroupPropertyMaskV1;
+        property.payload.values[3].bits = 1;
+        property.payload.values[6].objectId = VN_BUS_MASTER;
+        property.payload.values[11].bits = std::bit_cast<std::uint32_t>(1.0f);
+        property.payload.values[16].bits = std::bit_cast<std::uint32_t>(1.0f);
+        property.programSemanticFingerprint = ComputePlayablePropertyFingerprintV1(property);
+        ContainerWorldInstallViewV1 world{};
+        world.identity.projectId = harkentest::ObjectId(93012);
+        world.identity.capabilityMask = kWorldCapabilityPlayableProperties;
+        world.playableProperties = &property;
+        world.playablePropertyCount = 1;
+        world.identity.runtimeSemanticFingerprint = ComputeCurrentWorldFingerprintV4(world);
+        ASSERT_EQ(WorldInstallStatus::Ok, InstallContainerWorldV1(*state.engine, world).status);
+        const auto capture = OpenIdentityEvents();
+        const auto started = StartCurrentPlayableByIdentity(PlayableKindV1::Sound, sound, 0);
+        ASSERT_EQ(PlayableStartStatus::Accepted, started.status);
+        for (unsigned block = 0; block < 64 && state.firstFrame == UINT64_MAX; ++block) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            state.Pump(1);
+        }
+        ASSERT_NE(UINT64_MAX, state.firstFrame);
+        ASSERT_LT(state.endFrame - state.firstFrame, samples.size());
+        state.armed = true;
+        auto& notifications = orphan ? state.engine->logicNotifications : state.engine->notifications;
+        notifications.Push(VnNotification{});
+        ASSERT_EQ(VN_OK, Vn_Update());
+        ASSERT_TRUE(state.pumped);
+        ASSERT_NE(UINT64_MAX, state.firstFrame);
+        EXPECT_EQ(samples.size(), state.endFrame - state.firstFrame);
+        auto rows = ReadIdentityEvents(capture);
+        rows.erase(std::remove_if(rows.begin(), rows.end(), [&](const auto& row) {
+            return row.header.instanceHandle != started.instance ||
+                (row.fact.factKind != VN_MONITOR_FACT_PLAYABLE_STARTED &&
+                 row.fact.factKind != VN_MONITOR_FACT_PLAYABLE_FINISHED);
+        }), rows.end());
+        ASSERT_EQ(2u, rows.size());
+        EXPECT_EQ(VN_MONITOR_FACT_PLAYABLE_STARTED, rows[0].fact.factKind);
+        EXPECT_EQ(VN_MONITOR_FACT_PLAYABLE_FINISHED, rows[1].fact.factKind);
+        EXPECT_TRUE(FactHas(rows[1].fact, VN_MONITOR_FACT_FIELD_EXECUTE_FRAME));
+        EXPECT_TRUE(FactHas(rows[1].fact, VN_MONITOR_FACT_FIELD_AUDIO_BLOCK));
+        EXPECT_EQ(state.firstFrame, rows[0].header.executeFrame);
+        EXPECT_EQ(state.endFrame, rows[1].header.executeFrame);
+        EXPECT_EQ((state.endFrame - 1u) / 64u + 1u, rows[1].fact.audioBlock);
+        EXPECT_EQ(VN_MONITOR_TERMINAL_NATURAL_COMPLETION, rows[1].fact.terminalKind);
+        EXPECT_LE(rows[0].fact.timestampNs, rows[1].fact.timestampNs);
+        EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(capture));
+    }
 }
 
 TEST(MonitorExecutionLifecycle, TwoHostsPlayingSameRandomKeepDistinctRequestsRootsAndVoices) {

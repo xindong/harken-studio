@@ -115,7 +115,7 @@ private:
 
     void remoteStateChanged();
     void remoteCaptureChanged();
-    void begin(quint64 epoch, quint64 timestamp, quint64 identityUnavailable);
+    void begin(quint64 epoch, quint64 timestamp, quint64 identityUnavailable, bool supportsPlayableFinished);
     void consume(const QByteArray& bytes, quint32 count, quint64 epoch);
     void append(std::vector<CapturedEvent> records);
     void fail(const QString& reason);
@@ -137,6 +137,7 @@ private:
     MonitorSessionHandle localSession_ = 0;
     quint64 sessionEpoch_ = 0;
     quint64 startedNs_ = 0;
+    quint32 soundFinishKind_ = kMonitorFactPlayableRetired;
     quint64 sourceDropped_ = 0;
     quint64 deliveryDropped_ = 0;
     quint64 transportDropped_ = 0;

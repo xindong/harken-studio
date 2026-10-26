@@ -399,6 +399,8 @@ public:
     void RecordMonitorCancellation(VnVoiceHandle render, const MonitorControlCause& cause) noexcept;
     MonitorVoiceControlBinding ArmMonitorControl(std::uint32_t ledgerSlot,
         VnVoiceHandle render) noexcept;
+    std::uint64_t CaptureMonitorPlaybackEnd(std::uint32_t ledgerSlot,
+        MonitorVoicePlaybackEnd* out) const noexcept;
     std::uint64_t MonitorControlUnavailableCount() const noexcept { return m_monitorControlUnavailable; }
 
     bool BindCompletionMutation(

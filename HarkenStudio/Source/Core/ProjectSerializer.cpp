@@ -151,40 +151,52 @@ void stripPlayableDefinitionComponentAuthority(ProjectItem::Type type,
                                                 QJsonObject& components)
 {
     if (!PlayablePropertyAuthoringV1::isDefinitionType(type)) return;
-    for (const auto& field : VNX::PlayablePropertyAuthoringV1::fields()) {
-        if (PlayablePropertyAuthoringV1::isComponentStored(field.id)) continue;
-        const QLatin1String componentKey(field.component);
-        if (!components.value(componentKey).isObject()) continue;
-        QJsonObject component = components.value(componentKey).toObject();
-        component.remove(QLatin1String(field.storageField));
-        component.remove(QLatin1String(field.jsonKey));
-        if (component.isEmpty()) components.remove(componentKey);
-        else components[componentKey] = component;
-    }
-    if (!PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(type)) return;
-    for (const auto& field : harkenplayableproperties::studio::kJsonFieldsV1) {
-        if (!FieldGroupForProperty(
-                static_cast<harkenplayableproperties::PlayablePropertyIdV1>(field.id)))
-            continue;
-        const QLatin1String componentKey(field.component);
-        auto component = components.value(componentKey).toObject();
-        component.remove(QLatin1String(field.storageField));
-        component.remove(QLatin1String(field.jsonKey));
-        component.remove(QLatin1String(field.fieldName));
-        if (component.isEmpty()) components.remove(componentKey);
-        else components[componentKey] = component;
-    }
-    for (const auto& entry : {std::pair{"mixnode", "outputBusId"},
-                              std::pair{"mixnode", "outputBusRef"},
-                              std::pair{"audio", "outputBusOverride"},
-                              std::pair{"audio", "overrideBits"},
-                              std::pair{"spatial", "attenuation"},
-                              std::pair{"spatial", "attenuationGuid"}}) {
-        const QLatin1String componentKey(entry.first);
-        auto component = components.value(componentKey).toObject();
-        component.remove(QLatin1String(entry.second));
-        if (component.isEmpty()) components.remove(componentKey);
-        else components[componentKey] = component;
+    struct ComponentFields {
+        QStringList definition;
+        QStringList fieldGroup;
+    };
+    static const QHash<QString, ComponentFields> fieldsByComponent = [] {
+        QHash<QString, ComponentFields> result;
+        for (const auto& field : PlayablePropertyAuthoringV1::fields()) {
+            if (PlayablePropertyAuthoringV1::isComponentStored(field.id)) continue;
+            auto& fields = result[QLatin1String(field.component)].definition;
+            fields.append(QLatin1String(field.storageField));
+            fields.append(QLatin1String(field.jsonKey));
+        }
+        for (const auto& field : harkenplayableproperties::studio::kJsonFieldsV1) {
+            if (!FieldGroupForProperty(
+                    static_cast<harkenplayableproperties::PlayablePropertyIdV1>(field.id)))
+                continue;
+            auto& fields = result[QLatin1String(field.component)].fieldGroup;
+            fields.append(QLatin1String(field.storageField));
+            fields.append(QLatin1String(field.jsonKey));
+            fields.append(QLatin1String(field.fieldName));
+        }
+        for (const auto& entry : {std::pair{"mixnode", "outputBusId"},
+                                  std::pair{"mixnode", "outputBusRef"},
+                                  std::pair{"audio", "outputBusOverride"},
+                                  std::pair{"audio", "overrideBits"},
+                                  std::pair{"spatial", "attenuation"},
+                                  std::pair{"spatial", "attenuationGuid"}})
+            result[QLatin1String(entry.first)].fieldGroup.append(QLatin1String(entry.second));
+        for (auto& fields : result) {
+            fields.definition.removeDuplicates();
+            fields.fieldGroup.removeDuplicates();
+        }
+        return result;
+    }();
+    const bool grouped = PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(type);
+    for (auto fields = fieldsByComponent.cbegin(); fields != fieldsByComponent.cend(); ++fields) {
+        const bool stripGrouped = grouped && !fields->fieldGroup.isEmpty();
+        if (fields->definition.isEmpty() && !stripGrouped) continue;
+        auto value = components.find(fields.key());
+        if (value == components.end() || (!value->isObject() && !stripGrouped)) continue;
+        auto component = value->toObject();
+        for (const auto& field : fields->definition) component.remove(field);
+        if (stripGrouped)
+            for (const auto& field : fields->fieldGroup) component.remove(field);
+        if (component.isEmpty()) components.erase(value);
+        else value.value() = component;
     }
 }
 

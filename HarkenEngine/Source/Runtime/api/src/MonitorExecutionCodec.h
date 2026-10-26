@@ -114,7 +114,7 @@ inline bool ProjectFactFields(const MonitorExecutionFact& source, std::uint64_t 
     fact = {};
     const bool call = source.BodyKind() == MonitorFactBody::Call;
     if (source.engine == 0 || source.sourceSequence == 0 || producer == 0 || stream == 0 ||
-        source.kind == 0 || source.kind > VN_MONITOR_FACT_VARIABLE_RESULT ||
+        source.kind == 0 || source.kind > VN_MONITOR_FACT_PLAYABLE_FINISHED ||
         (source.flags & ~(kMonitorFactCallBody | kMonitorFactIdentityIncomplete | kMonitorFactControlIncomplete)) != 0 ||
         (source.validity & ~SourceAllowedFields(source.BodyKind())) != 0 ||
         (call && !IsCallFactKind(source.kind)) ||
@@ -273,7 +273,7 @@ inline bool ValidateFactFields(const VnMonitorRecordHeader& header, const VnMoni
     if (header.engineMonitorInstanceId == 0 ||
         header.producerId == 0 || header.sourceSequence == 0 || header.streamId == 0 ||
         header.reserved0 != 0 || header.telemetry.reserved0 != 0 ||
-        fact.structSize != kExecutionPayloadBytes || fact.factKind == 0 || fact.factKind > VN_MONITOR_FACT_VARIABLE_RESULT ||
+        fact.structSize != kExecutionPayloadBytes || fact.factKind == 0 || fact.factKind > VN_MONITOR_FACT_PLAYABLE_FINISHED ||
         fact.subjectNamespace > VN_MONITOR_SUBJECT_TRANSITION || fact.contentKind > VN_MONITOR_CONTENT_VARIABLE ||
         fact.reserved0 != 0 || fact.reserved1 != 0 || fact.control.reserved0 != 0 || fact.selection.reserved0 != 0 ||
         fact.target.reserved0 != 0 || (fact.factFlags & ~(VN_MONITOR_FACT_FLAG_IDENTITY_INCOMPLETE | VN_MONITOR_FACT_FLAG_CONTROL_INCOMPLETE)) != 0 ||
