@@ -2971,18 +2971,10 @@ struct EngineImmediateEntryStorageDemand {
     std::uint32_t plainSources = 0;
     std::uint32_t plainStops = 0;
     std::uint32_t privateVoices = 0;
+    bool queueCoordinators = false;
 };
 
-struct EngineImmediateEntryAttempt {
-    ImmediateLaneHandle lane{};
-    // Only the same native Reserve can fill this fixed baseline. It is not
-    // an audio admission gate and is consumed only by genuine final Retire.
-    OriginalImmediateLaneAttemptLifetimePin originalLaneLifetime;
-    ActionFiringHandle originalLaneFactoryRoot = 0;
-    std::uint64_t originalLaneFactoryAttemptGeneration = 0;
-    ImmediateLaneDemand originalLaneDemand{};
-    std::unique_ptr<OriginalInitialC0FactoryRecord> originalC0Factory;
-    ImmediateEntryAttemptGate gate{};
+struct EngineImmediateQueueCoordinators {
     PreparedDecisionReservation initialQueueCoordinatorReservation{};
     DecisionToken initialQueueCoordinator{};
     ArmGroupToken initialQueueCoordinatorArmGroup{};
@@ -2995,6 +2987,33 @@ struct EngineImmediateEntryAttempt {
     bool queueContinuationCoordinatorArmGroupPrepared = false;
     Plan03GroupSliceIdentity queueContinuationPrimaryGroup{};
     FrontierActivationDescriptor queueContinuationDescriptor{};
+};
+
+struct EngineImmediateEntryAttempt {
+    ImmediateLaneHandle lane{};
+    // Only the same native Reserve can fill this fixed baseline. It is not
+    // an audio admission gate and is consumed only by genuine final Retire.
+    OriginalImmediateLaneAttemptLifetimePin originalLaneLifetime;
+    ActionFiringHandle originalLaneFactoryRoot = 0;
+    std::uint64_t originalLaneFactoryAttemptGeneration = 0;
+    ImmediateLaneDemand originalLaneDemand{};
+    std::unique_ptr<OriginalInitialC0FactoryRecord> originalC0Factory;
+    ImmediateEntryAttemptGate gate{};
+
+    const EngineImmediateQueueCoordinators& QueueCoordinators() const noexcept {
+        static constexpr EngineImmediateQueueCoordinators empty{};
+        return queueCoordinators_ == nullptr ? empty : *queueCoordinators_;
+    }
+    EngineImmediateQueueCoordinators& PreparedQueueCoordinators() noexcept {
+        assert(queueCoordinators_ != nullptr);
+        return *queueCoordinators_;
+    }
+    void ClearQueuePrimaryGroups() noexcept {
+        if (queueCoordinators_ == nullptr) return;
+        queueCoordinators_->initialQueuePrimaryGroup = {};
+        queueCoordinators_->queueContinuationPrimaryGroup = {};
+    }
+    bool HasQueueCoordinators() const noexcept { return queueCoordinators_ != nullptr; }
     EnginePlayableServiceToken queueContinuationService{};
     QueueInstanceToken queueContinuationQueue{};
     ConditionalQueueVersionToken queueContinuationVersion{};
@@ -3073,6 +3092,11 @@ struct EngineImmediateEntryAttempt {
     std::vector<EnginePrivateInitialQueueVoice> privateVoices;
     std::uint32_t privateVoiceCount = 0;
     bool active = false;
+private:
+    friend struct Engine;
+    // Prepared before Lane reservation; retain both records at stable addresses
+    // through cancellation, receipt readers and reuse of this attempt.
+    std::unique_ptr<EngineImmediateQueueCoordinators> queueCoordinators_;
 };
 bool ResumePendingPlayableCancellation(Engine&, EnginePlayableServiceRow&) noexcept;
 
@@ -7480,6 +7504,10 @@ public:
         for (std::uint32_t source = 0; source < attempt.plainSourceCount; ++source)
             if (attempt.plainSources[source].bindingReader.Valid()) return false;
         try {
+            if (demand.queueCoordinators && !attempt.HasQueueCoordinators()) {
+                detail::LogicAllocCheckpoint(detail::LogicAllocSite::ImmediateEntryStorage);
+                attempt.queueCoordinators_ = std::make_unique<EngineImmediateQueueCoordinators>();
+            }
             const auto grow = [](auto& column, std::uint32_t count) {
                 if (column.size() >= count) return;
                 detail::CheckedGrow(column, count, detail::LogicAllocSite::ImmediateEntryStorage);
@@ -7509,7 +7537,8 @@ public:
             bytes += column(attempt.selectionProducers) + column(attempt.selectionCommitInputs) +
                 column(attempt.selectionPublicationCells) +
                 column(attempt.plainSources) + column(attempt.plainStops) + column(attempt.privateVoices) +
-                (attempt.originalC0Factory == nullptr ? 0u : sizeof(OriginalInitialC0FactoryRecord));
+                (attempt.originalC0Factory == nullptr ? 0u : sizeof(OriginalInitialC0FactoryRecord)) +
+                (attempt.HasQueueCoordinators() ? sizeof(EngineImmediateQueueCoordinators) : 0u);
         return bytes;
     }
 
@@ -9075,7 +9104,7 @@ public:
         // Only the factory-certified deterministic subtree domain is eligible.
         const bool queueDomain = group->queueNativeOriginCount != 0;
         if ((!queueDomain && ((!registered && (attempt.queueContinuationCount != 0 || attempt.queueFutureCount != 0)) ||
-            attempt.initialQueueCoordinator.Valid() || row.Invocation().variableControlOuterRootInstance != 0 ||
+            attempt.QueueCoordinators().initialQueueCoordinator.Valid() || row.Invocation().variableControlOuterRootInstance != 0 ||
             scratch.frontierQueueCount != 0 ||
             scratch.queueFutureAttemptCount != 0)) ||
             !MatchesPendingVariableGroupTopology(*group, row, settled) ||
@@ -10634,9 +10663,11 @@ public:
             return ReserveOriginalQueueLaneGroup(attempt.root, anchor, input, timelineArms, out);
         auto& receipt = attempt.soundQueueCohort;
         const auto index = continuation ? 1u : 0u;
-        auto& reservation = continuation ? attempt.queueContinuationCoordinatorReservation :
-            attempt.initialQueueCoordinatorReservation;
-        auto* expectedOutput = continuation ? &attempt.queueContinuationPrimaryGroup : &attempt.initialQueuePrimaryGroup;
+        const auto& coordinators = attempt.QueueCoordinators();
+        const auto& reservation = continuation ? coordinators.queueContinuationCoordinatorReservation :
+            coordinators.initialQueueCoordinatorReservation;
+        const auto* expectedOutput = continuation ? &coordinators.queueContinuationPrimaryGroup :
+            &coordinators.initialQueuePrimaryGroup;
         const auto& request = reservation.OriginalRequest();
         if (out != expectedOutput || receipt.primaries_[index] != nullptr ||
             attempt.gate.Observe(attempt.generation) != ImmediateEntryAttemptState::Preparing ||
@@ -10658,8 +10689,8 @@ public:
             attempt.gate.Observe(attempt.generation) != ImmediateEntryAttemptState::Preparing ||
             !queueScratch.prepared || queueScratch.row == nullptr || queueScratch.initialOriginalConditional == nullptr ||
             !MatchesInitialSoundQueueParticipant(attempt, *queueScratch.row, true) ||
-            !decisions.OwnsOpenPreparedReservation(attempt.initialQueueCoordinatorReservation) ||
-            !decisions.OwnsOpenPreparedReservation(attempt.queueContinuationCoordinatorReservation)) return false;
+            !decisions.OwnsOpenPreparedReservation(attempt.QueueCoordinators().initialQueueCoordinatorReservation) ||
+            !decisions.OwnsOpenPreparedReservation(attempt.QueueCoordinators().queueContinuationCoordinatorReservation)) return false;
         bool actualScratch = false;
         for (const auto& original : actionPlayScratch) actualScratch |= &original == &queueScratch;
         if (!actualScratch) return false;
@@ -10674,8 +10705,8 @@ public:
                 !timelinePool.IsOriginalQueueFutureGroupRegistrationFor(*original, identity, attempt.root)) return false;
         }
         const auto& row = *queueScratch.row;
-        if (!(originals[0]->Identity() == attempt.initialQueuePrimaryGroup) ||
-            !(originals[2]->Identity() == attempt.queueContinuationPrimaryGroup) ||
+        if (!(originals[0]->Identity() == attempt.QueueCoordinators().initialQueuePrimaryGroup) ||
+            !(originals[2]->Identity() == attempt.QueueCoordinators().queueContinuationPrimaryGroup) ||
             initialMember.Identity().decision.slot != row.initialQueueEntryDecision.slot ||
             initialMember.Identity().decision.generation != row.initialQueueEntryDecision.generation ||
             conditionalMember.Identity().decision.slot != row.QueueFiling().queueDecision.slot ||
@@ -10695,8 +10726,8 @@ public:
                 originalQueueLifetimeHolders[queue.slot], queueScratch.queueConditional,
                 &initial, &conditional, &world, &queueRoot) ||
             world != row.Invocation().worldGeneration || queueRoot != receipt.queue_.owner.child ||
-            attempt.initialQueueCoordinatorReservation.OriginalRequest().world != world ||
-            attempt.queueContinuationCoordinatorReservation.OriginalRequest().world != world) return false;
+            attempt.QueueCoordinators().initialQueueCoordinatorReservation.OriginalRequest().world != world ||
+            attempt.QueueCoordinators().queueContinuationCoordinatorReservation.OriginalRequest().world != world) return false;
         return timelinePool.DeclareInitialSoundQueueCompanion(originals, immediateActionLane,
             attempt.lane.slot, attempt.lane.generation, attempt.root, attempt.generation, world,
             receipt.sound_.owner, receipt.queue_.owner, initial, conditional);
@@ -11216,10 +11247,10 @@ public:
             !current.bundle.MatchesPrepared(links, decisionPreparation,
                 originalSingleOccurrenceCommitProofs[occurrence.slot], preparation->ledgerCommit_,
                 armPreparation, voicePreparation, voice.voicePreparation, batch)) return false;
-        if (!decisions.OwnsOpenPreparedReservation(attempt.initialQueueCoordinatorReservation) ||
-            !decisions.OwnsOpenPreparedReservation(attempt.queueContinuationCoordinatorReservation)) return false;
-        const auto& c0 = attempt.initialQueueCoordinatorReservation.OriginalRequest();
-        const auto& c1 = attempt.queueContinuationCoordinatorReservation.OriginalRequest();
+        if (!decisions.OwnsOpenPreparedReservation(attempt.QueueCoordinators().initialQueueCoordinatorReservation) ||
+            !decisions.OwnsOpenPreparedReservation(attempt.QueueCoordinators().queueContinuationCoordinatorReservation)) return false;
+        const auto& c0 = attempt.QueueCoordinators().initialQueueCoordinatorReservation.OriginalRequest();
+        const auto& c1 = attempt.QueueCoordinators().queueContinuationCoordinatorReservation.OriginalRequest();
         if (c0.world != row.Invocation().worldGeneration || c1.world != c0.world ||
             c0.transport != timelinePool.Epoch() || c1.transport != c0.transport ||
             c0.expectedContinuationGeneration != attempt.generation || c1.expectedContinuationGeneration != attempt.generation ||
@@ -11231,13 +11262,13 @@ public:
         }
         for (std::uint32_t role = 1; role < 4; ++role)
             if (!timelinePool.IsOriginalQueueFutureGroupFamily(*record.originals_[0], *record.originals_[role])) return false;
-        if (!(record.groups_[0] == attempt.initialQueuePrimaryGroup) ||
-            !(record.groups_[2] == attempt.queueContinuationPrimaryGroup) ||
+        if (!(record.groups_[0] == attempt.QueueCoordinators().initialQueuePrimaryGroup) ||
+            !(record.groups_[2] == attempt.QueueCoordinators().queueContinuationPrimaryGroup) ||
             record.reservedInputs_[0].memberCount != 0 || record.reservedInputs_[0].sourceControlCount != 0 ||
             record.reservedInputs_[1].memberCount != 0 || record.reservedInputs_[1].sourceControlCount != 0 ||
             record.reservedInputs_[2].memberCount != 0 || record.reservedInputs_[2].sourceControlCount != 0 ||
-            (record.groups_[0].decision.slot != attempt.initialQueueCoordinatorReservation.Token().slot || record.groups_[0].decision.generation != attempt.initialQueueCoordinatorReservation.Token().generation) ||
-            (record.groups_[2].decision.slot != attempt.queueContinuationCoordinatorReservation.Token().slot || record.groups_[2].decision.generation != attempt.queueContinuationCoordinatorReservation.Token().generation) ||
+            (record.groups_[0].decision.slot != attempt.QueueCoordinators().initialQueueCoordinatorReservation.Token().slot || record.groups_[0].decision.generation != attempt.QueueCoordinators().initialQueueCoordinatorReservation.Token().generation) ||
+            (record.groups_[2].decision.slot != attempt.QueueCoordinators().queueContinuationCoordinatorReservation.Token().slot || record.groups_[2].decision.generation != attempt.QueueCoordinators().queueContinuationCoordinatorReservation.Token().generation) ||
             (record.groups_[1].decision.slot != row.initialQueueEntryDecision.slot || record.groups_[1].decision.generation != row.initialQueueEntryDecision.generation) ||
             (record.groups_[3].decision.slot != current.originalCurrentSingleDecision.slot || record.groups_[3].decision.generation != current.originalCurrentSingleDecision.generation)) return false;
         const auto queue = row.queueInstance;
@@ -12182,14 +12213,14 @@ public:
                 attempt.root != scratch.initialOriginalGroupRoot ||
                 attempt.generation != scratch.initialOriginalGroupAttemptGeneration ||
                 attempt.queueContinuationService != row.identity ||
-                !attempt.queueContinuationPrimaryGroup.Exact() ||
-                attempt.queueContinuationPrimaryGroup.committedRow >= originalQueueGroupHolders.size())
+                !attempt.QueueCoordinators().queueContinuationPrimaryGroup.Exact() ||
+                attempt.QueueCoordinators().queueContinuationPrimaryGroup.committedRow >= originalQueueGroupHolders.size())
                 return false;
             const auto& primary = originalQueueGroupHolders[
-                attempt.queueContinuationPrimaryGroup.committedRow];
+                attempt.QueueCoordinators().queueContinuationPrimaryGroup.committedRow];
             OriginalImmediateLaneAttemptLifetimePin lane;
             if (!timelinePool.IsOriginalQueueFutureGroupRegistrationFor(primary,
-                    attempt.queueContinuationPrimaryGroup) ||
+                    attempt.QueueCoordinators().queueContinuationPrimaryGroup) ||
                 !BorrowOriginalImmediateEntryLane(attempt, &lane) ||
                 !timelinePool.BindImmediateLaneGroupOwner(primary.Identity(), immediateActionLane,
                     attempt.root, attempt.lane.slot, attempt.lane.generation) ||

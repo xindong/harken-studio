@@ -6390,7 +6390,7 @@ TEST(ActionFiringApi, PostResolvesOnlyCanonicalCurrentWorldActions) {
 }
 
 TEST(ActionFiringApi, InitialContainerCompanionBackingFailureDoesNotAcceptAndCanRecover) {
-    for (unsigned refusedStorage = 0; refusedStorage < 17u; ++refusedStorage) {
+    for (unsigned refusedStorage = 0; refusedStorage < 18u; ++refusedStorage) {
         SCOPED_TRACE(refusedStorage);
         harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -6401,7 +6401,7 @@ TEST(ActionFiringApi, InitialContainerCompanionBackingFailureDoesNotAcceptAndCan
         ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kSecondSound, &pcm));
         CanonicalActionWorld image(engine.registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision,
             engine.registry.Lookup(CanonicalActionWorld::kSecondSound).contentRevision);
-        if (refusedStorage == 3u || refusedStorage >= 15u) image.MakeImmediateVariableControlPlayAction();
+        if (refusedStorage == 3u || refusedStorage == 15u || refusedStorage == 16u) image.MakeImmediateVariableControlPlayAction();
         else image.MakeImmediateSequenceQueuePlayAction();
         ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
         auto desc = ValidPostDesc();
@@ -6422,13 +6422,13 @@ TEST(ActionFiringApi, InitialContainerCompanionBackingFailureDoesNotAcceptAndCan
         if (refusedStorage == 11) engine.initialQueueSuccessorCompositeProofsScratch.SetCommitPageLimitForTests(0);
         if (refusedStorage == 12) engine.actionQueueReplacementScratch.SetCommitPageLimitForTests(0);
         if (refusedStorage == 13) engine.originalPlayableServiceLifetimeHolders.SetCommitPageLimitForTests(0);
-        if (refusedStorage == 14) harken::detail::ArmLogicAllocFaultForTests(
-            1, harken::detail::LogicAllocSite::ImmediateEntryStorage);
+        if (refusedStorage == 14 || refusedStorage == 17) harken::detail::ArmLogicAllocFaultForTests(
+            refusedStorage == 14 ? 1 : 2, harken::detail::LogicAllocSite::ImmediateEntryStorage);
         if (refusedStorage == 15) engine.queueContinuationRecords.SetCommitPageLimitForTests(0);
         if (refusedStorage == 16) engine.queueFutureRecords.SetCommitPageLimitForTests(0);
         VnActionFiringHandle firing = 99;
         const auto refused = Vn_PostAction(&desc, &firing);
-        if (refusedStorage == 14) {
+        if (refusedStorage == 14 || refusedStorage == 17) {
             EXPECT_EQ(0u, harken::detail::g_logicAllocFault.remaining);
             harken::detail::DisarmLogicAllocFaultForTests();
         }
@@ -10466,13 +10466,13 @@ TEST(ActionFiringApi, PreparedQueuePublicationFailureReclaimsAfterFiringRelease)
             engine.initialQueuePartialPublishAbortContextForTest = &sawPrepared;
             engine.initialQueuePartialPublishAbortHookForTest = +[](
                 harken::Engine& actual, harken::EngineImmediateEntryAttempt& attempt, void* context) {
-                const auto* activation = actual.decisions.ResolveFrontierActivation(attempt.initialQueueCoordinator);
+                const auto* activation = actual.decisions.ResolveFrontierActivation(attempt.QueueCoordinators().initialQueueCoordinator);
                 harken::DecisionCommittedSnapshot decision{};
                 *static_cast<bool*>(context) = activation != nullptr &&
                     activation->State() == harken::FrontierReceiptState::Prepared &&
-                    actual.decisions.CaptureCommitted(attempt.initialQueueCoordinator, &decision) &&
+                    actual.decisions.CaptureCommitted(attempt.QueueCoordinators().initialQueueCoordinator, &decision) &&
                     decision.participantCount == 0 &&
-                    actual.timelinePool.PrivatePlan03GroupBindable(attempt.initialQueuePrimaryGroup);
+                    actual.timelinePool.PrivatePlan03GroupBindable(attempt.QueueCoordinators().initialQueuePrimaryGroup);
             };
         }
         engine.nullBackend.Pump(2);
@@ -35281,8 +35281,8 @@ TEST(ActionFiringApi, MissedInitialQueueWithoutSuccessorReclaimsAndAllowsNewPlay
             return value.active && value.root == firing && value.lane.Valid();
         });
     ASSERT_NE(engine.immediateEntryAttempts.end(), attempt);
-    ASSERT_TRUE(attempt->initialQueueCoordinator.Valid());
-    ASSERT_FALSE(attempt->queueContinuationCoordinator.Valid());
+    ASSERT_TRUE(attempt->QueueCoordinators().initialQueueCoordinator.Valid());
+    ASSERT_FALSE(attempt->QueueCoordinators().queueContinuationCoordinator.Valid());
     const auto lane = attempt->lane;
     while (engine.mixer.BlocksRendered() < attempt->entryQuantum)
         engine.nullBackend.Pump(1);
@@ -35298,11 +35298,11 @@ TEST(ActionFiringApi, MissedInitialQueueWithoutSuccessorReclaimsAndAllowsNewPlay
     ASSERT_TRUE(observed.complete);
     ASSERT_TRUE(observed.missed);
     const auto* activation = engine.decisions.ResolveFrontierActivation(
-        attempt->initialQueueCoordinator);
+        attempt->QueueCoordinators().initialQueueCoordinator);
     ASSERT_NE(nullptr, activation);
     harken::FrontierActivationReceipt receipt{};
     ASSERT_EQ(harken::FrontierReceiptRead::InFlight,
-        activation->Read(attempt->initialQueueDescriptor.entry,
+        activation->Read(attempt->QueueCoordinators().initialQueueDescriptor.entry,
             engine.mixer.BlocksRendered(), &receipt));
     VnActionFiringInfo info{sizeof(VnActionFiringInfo)};
     for (unsigned block = 0; block < 512; ++block) {
@@ -35669,8 +35669,8 @@ TEST(ActionFiringApi, DefaultQueueBeforeHeadForeignLaneLoanReleasesActualCoordin
             actual.handle = attempt.lane;
             actual.root = attempt.root;
             actual.generation = attempt.generation;
-            actual.coordinator = attempt.initialQueueCoordinator;
-            ASSERT_TRUE(attempt.initialQueueCoordinatorReservation.Valid());
+            actual.coordinator = attempt.QueueCoordinators().initialQueueCoordinator;
+            ASSERT_TRUE(attempt.QueueCoordinators().initialQueueCoordinatorReservation.Valid());
             ASSERT_TRUE(owner.BorrowOriginalImmediateEntryLane(attempt, &actual.foreign));
             ASSERT_TRUE(owner.immediateActionLane.IsOriginalAttemptLifetimePinFor(
                 actual.foreign, actual.handle, actual.root));
@@ -35715,11 +35715,11 @@ TEST(ActionFiringApi, DefaultQueueBeforeHeadForeignLaneLoanReleasesActualCoordin
         EXPECT_EQ(probe.generation, probe.attempt->originalLaneFactoryAttemptGeneration);
         EXPECT_TRUE(engine.immediateActionLane.ObserveOriginalUnpublishedStorageOnlyRetention(
             probe.attempt->originalLaneLifetime, probe.handle, probe.root, blocks));
-        EXPECT_FALSE(probe.attempt->initialQueueCoordinator.Valid());
-        EXPECT_FALSE(probe.attempt->initialQueueCoordinatorReservation.Valid());
-        EXPECT_FALSE(probe.attempt->initialQueueCoordinatorArmGroup.Valid());
-        EXPECT_FALSE(probe.attempt->initialQueuePrimaryGroup.Exact());
-        EXPECT_FALSE(probe.attempt->queueContinuationPrimaryGroup.Exact());
+        EXPECT_FALSE(probe.attempt->QueueCoordinators().initialQueueCoordinator.Valid());
+        EXPECT_FALSE(probe.attempt->QueueCoordinators().initialQueueCoordinatorReservation.Valid());
+        EXPECT_FALSE(probe.attempt->QueueCoordinators().initialQueueCoordinatorArmGroup.Valid());
+        EXPECT_FALSE(probe.attempt->QueueCoordinators().initialQueuePrimaryGroup.Exact());
+        EXPECT_FALSE(probe.attempt->QueueCoordinators().queueContinuationPrimaryGroup.Exact());
         EXPECT_EQ(0u, probe.attempt->queueContinuationCount);
         EXPECT_EQ(0u, probe.attempt->queueFutureCount);
         EXPECT_EQ(0u, engine.initialQueueEntryDecisionOwnerCount);
@@ -35812,8 +35812,8 @@ TEST(ActionFiringApi, DefaultQueueBeforeHeadForeignLaneLoanDoesNotMaskNativeSour
             actual.handle = attempt.lane;
             actual.root = attempt.root;
             actual.generation = attempt.generation;
-            actual.coordinator = attempt.initialQueueCoordinator;
-            ASSERT_TRUE(attempt.initialQueueCoordinatorReservation.Valid());
+            actual.coordinator = attempt.QueueCoordinators().initialQueueCoordinator;
+            ASSERT_TRUE(attempt.QueueCoordinators().initialQueueCoordinatorReservation.Valid());
             ASSERT_TRUE(owner.BorrowOriginalImmediateEntryLane(attempt, &actual.foreign));
             ASSERT_TRUE(owner.immediateActionLane.IsOriginalAttemptLifetimePinFor(
                 actual.foreign, actual.handle, actual.root));
@@ -35866,8 +35866,8 @@ TEST(ActionFiringApi, DefaultQueueBeforeHeadForeignLaneLoanDoesNotMaskNativeSour
     EXPECT_TRUE(probe.attempt->active);
     EXPECT_EQ(probe.generation, probe.attempt->generation);
     EXPECT_EQ(probe.root, probe.attempt->root);
-    EXPECT_FALSE(probe.attempt->initialQueueCoordinator.Valid());
-    EXPECT_FALSE(probe.attempt->initialQueueCoordinatorReservation.Valid());
+    EXPECT_FALSE(probe.attempt->QueueCoordinators().initialQueueCoordinator.Valid());
+    EXPECT_FALSE(probe.attempt->QueueCoordinators().initialQueueCoordinatorReservation.Valid());
     EXPECT_EQ(0u, engine.initialQueueEntryDecisionOwnerCount);
     const auto& retained = probe.ordinary->voiceStarts[0];
     EXPECT_EQ(harken::EngineFrontierAttemptPhase::CancelPending, probe.ordinary->storage.phase);
@@ -37858,7 +37858,7 @@ void CheckInitialQueueLanePrepareFaultLeavesIndependentActionLive(
                 EXPECT_NE(0u, queueRow->pendingCancellationIntent);
             }
             auto* coordinator = engine->decisions.ResolveFrontierActivation(
-                queueAttempt->initialQueueCoordinator);
+                queueAttempt->QueueCoordinators().initialQueueCoordinator);
             if (coordinator != nullptr)
                 faultCoordinatorState = static_cast<int>(coordinator->State());
             for (std::size_t index = 0; index < queueGroupCount; ++index) {
@@ -38019,7 +38019,7 @@ void CheckInitialQueueLanePrepareFaultLeavesIndependentActionLive(
     (void)engine->timelineArms.Observe(queueArm, &rootArmObservation);
     const auto finalAudioSequence = engine->mixer.BlocksRendered();
     auto* finalCoordinator = engine->decisions.ResolveFrontierActivation(
-        queueAttempt->initialQueueCoordinator);
+        queueAttempt->QueueCoordinators().initialQueueCoordinator);
     SCOPED_TRACE(::testing::Message()
         << "queue state=" << queueInfo.state
         << " live=" << queueInfo.livePlayableCount
@@ -38063,8 +38063,8 @@ void CheckInitialQueueLanePrepareFaultLeavesIndependentActionLive(
         << " private phase=" << static_cast<int>(queueAttempt->privateCleanupPhase)
         << " private voices=" << queueAttempt->privateVoiceCount
         << " gate state=" << static_cast<int>(queueAttempt->gate.Observe(queueAttemptGeneration))
-        << " coordinator slot=" << queueAttempt->initialQueueCoordinator.slot
-        << " coordinator generation=" << queueAttempt->initialQueueCoordinator.generation
+        << " coordinator slot=" << queueAttempt->QueueCoordinators().initialQueueCoordinator.slot
+        << " coordinator generation=" << queueAttempt->QueueCoordinators().initialQueueCoordinator.generation
         << " coordinator state=" << (finalCoordinator != nullptr
             ? static_cast<int>(finalCoordinator->State()) : -1)
         << " bound frontier groups=" << faultBoundFrontierGroups
@@ -38276,13 +38276,13 @@ TEST(ActionFiringApi, ImmediateSequenceQueuePlayCompletesAfterEveryChildRetires)
             });
         if (attempt != engine->immediateEntryAttempts.data() +
                 engine->immediateEntryAttempts.size() &&
-            attempt->queueContinuationCoordinator.Valid()) {
+            attempt->QueueCoordinators().queueContinuationCoordinator.Valid()) {
             const auto* activation = engine->decisions.ResolveFrontierActivation(
-                attempt->queueContinuationCoordinator);
+                attempt->QueueCoordinators().queueContinuationCoordinator);
             harken::FrontierActivationReceipt receipt{};
             continuationApplied = continuationApplied ||
                 (activation != nullptr &&
-                 activation->Read(attempt->queueContinuationDescriptor.entry,
+                 activation->Read(attempt->QueueCoordinators().queueContinuationDescriptor.entry,
                      engine->mixer.BlocksRendered(), &receipt) ==
                      harken::FrontierReceiptRead::Ready &&
                  receipt.outcome ==
@@ -38355,11 +38355,11 @@ TEST(ActionFiringApi, ImmediateSequenceQueuePlayCompletesAfterEveryChildRetires)
         << " C0 group=" <<
             (finalAttempt != engine->immediateEntryAttempts.data() +
                 engine->immediateEntryAttempts.size() &&
-             finalAttempt->initialQueuePrimaryGroup.Exact())
+             finalAttempt->QueueCoordinators().initialQueuePrimaryGroup.Exact())
         << " C1 group=" <<
             (finalAttempt != engine->immediateEntryAttempts.data() +
                 engine->immediateEntryAttempts.size() &&
-             finalAttempt->queueContinuationPrimaryGroup.Exact()));
+             finalAttempt->QueueCoordinators().queueContinuationPrimaryGroup.Exact()));
     EXPECT_TRUE(observedSecondChild);
     ASSERT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state);
     EXPECT_EQ(VN_ACTION_OUTCOME_SUCCEEDED, info.outcome);
@@ -38406,8 +38406,8 @@ TEST(ActionFiringApi, InitialQueueChildrenStartAfterOneNormalUpdate) {
         engine->immediateEntryAttempts.data() + engine->immediateEntryAttempts.size(),
         [firing](const auto& candidate) { return candidate.active && candidate.root == firing; });
     ASSERT_NE(engine->immediateEntryAttempts.data() + engine->immediateEntryAttempts.size(), before);
-    ASSERT_TRUE(before->initialQueuePrimaryGroup.Exact());
-    ASSERT_TRUE(before->initialQueueCoordinator.Valid());
+    ASSERT_TRUE(before->QueueCoordinators().initialQueuePrimaryGroup.Exact());
+    ASSERT_TRUE(before->QueueCoordinators().initialQueueCoordinator.Valid());
     const auto savedGroupCount = engine->timelinePool.CaptureImmediateLaneCohortGroups(
         firing, engine->initialQueueLaneGroupsScratch.data(),
         engine->initialQueueLaneGroupsScratch.size());
@@ -38417,7 +38417,7 @@ TEST(ActionFiringApi, InitialQueueChildrenStartAfterOneNormalUpdate) {
          ++groupIndex)
         savedGroups[groupIndex] = engine->initialQueueLaneGroupsScratch[groupIndex].identity;
     ASSERT_EQ(4u, savedGroupCount);
-    const auto futureGroup = savedGroups[0] == before->initialQueuePrimaryGroup
+    const auto futureGroup = savedGroups[0] == before->QueueCoordinators().initialQueuePrimaryGroup
         ? savedGroups[1] : savedGroups[0];
     ASSERT_TRUE(futureGroup.Exact());
     engine->nullBackend.Pump(1);
@@ -38479,24 +38479,24 @@ TEST(ActionFiringApi, InitialQueueChildrenStartAfterOneNormalUpdate) {
                     EXPECT_EQ(harken::FrontierOperationKind::Dependent,
                         event.event.frontier.kind);
                     EXPECT_EQ(20u, event.event.subeventPhase);
-                    EXPECT_EQ(attempt->queueContinuationDescriptor.entry,
+                    EXPECT_EQ(attempt->QueueCoordinators().queueContinuationDescriptor.entry,
                         event.event.frontier.entry);
-                    EXPECT_NE(attempt->queueContinuationPrimaryGroup,
+                    EXPECT_NE(attempt->QueueCoordinators().queueContinuationPrimaryGroup,
                         event.event.frontier.group);
                 } else {
                     ++controllers;
                     EXPECT_EQ(harken::FrontierOperationKind::Entry,
                         event.event.frontier.kind);
-                    EXPECT_EQ(attempt->queueContinuationPrimaryGroup,
+                    EXPECT_EQ(attempt->QueueCoordinators().queueContinuationPrimaryGroup,
                         event.event.frontier.group);
                 }
             }
             EXPECT_EQ(1u, controllers);
             EXPECT_EQ(1u, starts);
             EXPECT_TRUE(groups[0].identity ==
-                    attempt->queueContinuationPrimaryGroup ||
+                    attempt->QueueCoordinators().queueContinuationPrimaryGroup ||
                 groups[1].identity ==
-                    attempt->queueContinuationPrimaryGroup);
+                    attempt->QueueCoordinators().queueContinuationPrimaryGroup);
             EXPECT_TRUE(engine->immediateActionLane.ReleaseCapture(
                 attempt->lane.slot, bucket));
         }
@@ -38881,8 +38881,8 @@ TEST(ActionFiringApi, InitialQueueArenaRefusalLeavesNoPartialSoundAndRecovers) {
         });
     ASSERT_NE(engine->immediateEntryAttempts.data() +
                   engine->immediateEntryAttempts.size(), attempt);
-    ASSERT_TRUE(attempt->initialQueueCoordinator.Valid());
-    ASSERT_TRUE(attempt->queueContinuationCoordinator.Valid());
+    ASSERT_TRUE(attempt->QueueCoordinators().initialQueueCoordinator.Valid());
+    ASSERT_TRUE(attempt->QueueCoordinators().queueContinuationCoordinator.Valid());
     ASSERT_TRUE(attempt->lane.Valid());
     for (const auto& group : groups) ASSERT_TRUE(group.identity.Exact());
     const auto continuationQueue = attempt->queueContinuationQueue;
@@ -39135,14 +39135,14 @@ TEST(ActionFiringApi, InitialQueueContinuationArenaRefusalKeepsFirstSoundAndFail
         });
     ASSERT_NE(engine->immediateEntryAttempts.data() +
                   engine->immediateEntryAttempts.size(), attempt);
-    ASSERT_TRUE(attempt->initialQueueCoordinator.Valid());
-    ASSERT_TRUE(attempt->queueContinuationCoordinator.Valid());
+    ASSERT_TRUE(attempt->QueueCoordinators().initialQueueCoordinator.Valid());
+    ASSERT_TRUE(attempt->QueueCoordinators().queueContinuationCoordinator.Valid());
     const auto firstQuantum = attempt->entryQuantum;
     const auto continuationQueue = attempt->queueContinuationQueue;
-    const auto continuationCoordinator = attempt->queueContinuationCoordinator;
-    const auto continuationDescriptor = attempt->queueContinuationDescriptor;
-    const auto initialCoordinator = attempt->initialQueueCoordinator;
-    const auto initialDescriptor = attempt->initialQueueDescriptor;
+    const auto continuationCoordinator = attempt->QueueCoordinators().queueContinuationCoordinator;
+    const auto continuationDescriptor = attempt->QueueCoordinators().queueContinuationDescriptor;
+    const auto initialCoordinator = attempt->QueueCoordinators().initialQueueCoordinator;
+    const auto initialDescriptor = attempt->QueueCoordinators().initialQueueDescriptor;
     harken::QueueInstanceSnapshot queueBefore{};
     ASSERT_TRUE(engine->queueInstances.Capture(continuationQueue, &queueBefore));
     ASSERT_NE(0u, queueBefore.pendingVersion);
@@ -39333,8 +39333,8 @@ TEST(ActionFiringApi, InitialQueueCommittedC0BeforeHandoffPublishFailureReclaims
             });
         ASSERT_NE(engine->immediateEntryAttempts.data() +
                       engine->immediateEntryAttempts.size(), attempt);
-        const auto c0 = attempt->initialQueueCoordinator;
-        const auto c1 = attempt->queueContinuationCoordinator;
+        const auto c0 = attempt->QueueCoordinators().initialQueueCoordinator;
+        const auto c1 = attempt->QueueCoordinators().queueContinuationCoordinator;
         ASSERT_TRUE(c0.Valid());
         ASSERT_TRUE(c1.Valid());
         struct PostC0Proof {
@@ -39351,9 +39351,9 @@ TEST(ActionFiringApi, InitialQueueCommittedC0BeforeHandoffPublishFailureReclaims
             proof.called = true;
             harken::DecisionCommittedSnapshot committed{};
             proof.c0Committed = current.decisions.CaptureCommitted(
-                pending.initialQueueCoordinator, &committed);
+                pending.QueueCoordinators().initialQueueCoordinator, &committed);
             const auto* activation = current.decisions.ResolveFrontierActivation(
-                pending.initialQueueCoordinator);
+                pending.QueueCoordinators().initialQueueCoordinator);
             proof.c0Pending = activation != nullptr &&
                 activation->State() == harken::FrontierReceiptState::Pending;
             const auto service = std::find_if(current.playableServices.begin(),
@@ -39449,8 +39449,8 @@ TEST(ActionFiringApi, ImmediateLaneCapacityReasonDoesNotCarryIntoNextProtocolRef
                   engine->immediateEntryAttempts.size(), attempt);
     const auto firstQuantum = attempt->entryQuantum;
     const std::array<harken::DecisionToken, 2> pageDecisions = {
-        attempt->initialQueueCoordinator,
-        attempt->queueContinuationCoordinator};
+        attempt->QueueCoordinators().initialQueueCoordinator,
+        attempt->QueueCoordinators().queueContinuationCoordinator};
     harken::Plan03GroupSliceInput pageGroup{};
     pageGroup.executeFrame = (firstQuantum + 1u) * kBlockFrames;
     for (const auto decision : pageDecisions) {
@@ -39595,7 +39595,7 @@ TEST(ActionFiringApi, InitialQueueRejectsExtraGroupOutsideExactEntry) {
             ASSERT_NE(nullptr, view.frontier);
             if (view.frontier->role == harken::FrontierGroupRole::EntryMember &&
                 view.frontier->queueInitial.Valid() &&
-                view.frontier->entry == attempt->initialQueueDescriptor.entry) {
+                view.frontier->entry == attempt->QueueCoordinators().initialQueueDescriptor.entry) {
                 EXPECT_FALSE(member.Exact());
                 member = group.identity;
             }
@@ -39614,7 +39614,7 @@ TEST(ActionFiringApi, InitialQueueRejectsExtraGroupOutsideExactEntry) {
         else {
             harken::Plan03PageGroupView continuation{};
             ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
-                attempt->queueContinuationPrimaryGroup, &continuation));
+                attempt->QueueCoordinators().queueContinuationPrimaryGroup, &continuation));
             ASSERT_NE(nullptr, continuation.frontier);
             auto* coordinator = const_cast<harken::FrontierGroupBinding*>(
                 continuation.frontier);
@@ -39624,7 +39624,7 @@ TEST(ActionFiringApi, InitialQueueRejectsExtraGroupOutsideExactEntry) {
         while (engine->mixer.BlocksRendered() <= entryQuantum)
             engine->nullBackend.Pump(1);
         const auto* activation = engine->decisions.ResolveFrontierActivation(
-            attempt->initialQueueCoordinator);
+            attempt->QueueCoordinators().initialQueueCoordinator);
         ASSERT_NE(nullptr, activation);
         harken::FrontierActivationReceipt receipt{};
         ASSERT_EQ(harken::FrontierReceiptRead::Ready,
@@ -39690,17 +39690,17 @@ TEST(ActionFiringApi, InitialQueueContinuationRejectsMissingPriorReceiptOrIdenti
         if (corruptPrerequisite) {
             harken::Plan03PageGroupView primary{};
             ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
-                attempt->queueContinuationPrimaryGroup, &primary));
+                attempt->QueueCoordinators().queueContinuationPrimaryGroup, &primary));
             ASSERT_NE(nullptr, primary.frontier);
             auto* binding = const_cast<harken::FrontierGroupBinding*>(
                 primary.frontier);
             ++binding->prerequisite.attempt;
         } else {
             auto* activation = engine->decisions.ResolveFrontierActivation(
-                attempt->initialQueueCoordinator);
+                attempt->QueueCoordinators().initialQueueCoordinator);
             ASSERT_NE(nullptr, activation);
             EXPECT_EQ(harken::FrontierCancelDisposition::CancelledBeforeAudio,
-                activation->Cancel(attempt->initialQueueDescriptor.entry,
+                activation->Cancel(attempt->QueueCoordinators().initialQueueDescriptor.entry,
                     harken::AudioSliceInvalidateReason::Cancel));
         }
         bool secondAudible = false;
@@ -39740,19 +39740,19 @@ TEST(ActionFiringApi, InitialQueueContinuationRejectsMissingPriorReceiptOrIdenti
                 engine->immediateEntryAttempts.data() +
                     engine->immediateEntryAttempts.size()
             ? nullptr : engine->decisions.ResolveFrontierActivation(
-                finalAttempt->initialQueueCoordinator);
+                finalAttempt->QueueCoordinators().initialQueueCoordinator);
         const auto* c1 = finalAttempt ==
                 engine->immediateEntryAttempts.data() +
                     engine->immediateEntryAttempts.size()
             ? nullptr : engine->decisions.ResolveFrontierActivation(
-                finalAttempt->queueContinuationCoordinator);
+                finalAttempt->QueueCoordinators().queueContinuationCoordinator);
         harken::FrontierActivationReceipt c0Receipt{};
         harken::FrontierActivationReceipt c1Receipt{};
         const auto c0Read = c0 == nullptr ? harken::FrontierReceiptRead::Stale :
-            c0->Read(finalAttempt->initialQueueDescriptor.entry,
+            c0->Read(finalAttempt->QueueCoordinators().initialQueueDescriptor.entry,
                 engine->mixer.BlocksRendered(), &c0Receipt);
         const auto c1Read = c1 == nullptr ? harken::FrontierReceiptRead::Stale :
-            c1->Read(finalAttempt->queueContinuationDescriptor.entry,
+            c1->Read(finalAttempt->QueueCoordinators().queueContinuationDescriptor.entry,
                 engine->mixer.BlocksRendered(), &c1Receipt);
         const bool laneObserved = finalAttempt !=
                 engine->immediateEntryAttempts.data() +
@@ -40746,10 +40746,10 @@ std::string CaptureImmediateQueueContinuationState(harken::Engine& engine,
         if (!attempt.active || attempt.root != firing) continue;
         message << "\nattempt=" << index << ":" << attempt.generation
             << " producer=" << attempt.producerSlot << ":" << attempt.producerGeneration
-            << " coordinator=" << attempt.initialQueueCoordinator.slot << ":"
-            << attempt.initialQueueCoordinator.generation
-            << " c1Coordinator=" << attempt.queueContinuationCoordinator.slot << ":"
-            << attempt.queueContinuationCoordinator.generation
+            << " coordinator=" << attempt.QueueCoordinators().initialQueueCoordinator.slot << ":"
+            << attempt.QueueCoordinators().initialQueueCoordinator.generation
+            << " c1Coordinator=" << attempt.QueueCoordinators().queueContinuationCoordinator.slot << ":"
+            << attempt.QueueCoordinators().queueContinuationCoordinator.generation
             << " abort=" << attempt.producerAbortPending
             << " entry=" << attempt.entryQuantum << " last=" << attempt.lastQuantum;
         harken::ImmediateLaneObservation observation{};
@@ -40967,10 +40967,10 @@ void ExpectImmediateSequenceQueueCompositeChildCompletes(bool pieceChild) {
         originalAttempt - engine->immediateEntryAttempts.data());
     const auto savedAttemptGeneration = originalAttempt->generation;
     const auto savedLane = originalAttempt->lane;
-    const auto savedC0 = originalAttempt->initialQueueCoordinator;
-    const auto savedC1 = originalAttempt->queueContinuationCoordinator;
-    const auto savedC0Primary = originalAttempt->initialQueuePrimaryGroup;
-    const auto savedC1Primary = originalAttempt->queueContinuationPrimaryGroup;
+    const auto savedC0 = originalAttempt->QueueCoordinators().initialQueueCoordinator;
+    const auto savedC1 = originalAttempt->QueueCoordinators().queueContinuationCoordinator;
+    const auto savedC0Primary = originalAttempt->QueueCoordinators().initialQueuePrimaryGroup;
+    const auto savedC1Primary = originalAttempt->QueueCoordinators().queueContinuationPrimaryGroup;
     ASSERT_NE(0u, savedAttemptGeneration);
     ASSERT_TRUE(savedLane.Valid());
     ASSERT_TRUE(savedC0.Valid());
@@ -41015,12 +41015,12 @@ void ExpectImmediateSequenceQueueCompositeChildCompletes(bool pieceChild) {
             actual.root != firing || actual.initialService != savedService.token ||
             actual.initialInvocationGeneration != savedService.invocationGeneration ||
             actual.lane.slot != savedLane.slot || actual.lane.generation != savedLane.generation ||
-            actual.initialQueueCoordinator.slot != savedC0.slot ||
-            actual.initialQueueCoordinator.generation != savedC0.generation ||
-            actual.queueContinuationCoordinator.slot != savedC1.slot ||
-            actual.queueContinuationCoordinator.generation != savedC1.generation ||
-            !(actual.initialQueuePrimaryGroup == savedC0Primary) ||
-            !(actual.queueContinuationPrimaryGroup == savedC1Primary)) return nullptr;
+            actual.QueueCoordinators().initialQueueCoordinator.slot != savedC0.slot ||
+            actual.QueueCoordinators().initialQueueCoordinator.generation != savedC0.generation ||
+            actual.QueueCoordinators().queueContinuationCoordinator.slot != savedC1.slot ||
+            actual.QueueCoordinators().queueContinuationCoordinator.generation != savedC1.generation ||
+            !(actual.QueueCoordinators().initialQueuePrimaryGroup == savedC0Primary) ||
+            !(actual.QueueCoordinators().queueContinuationPrimaryGroup == savedC1Primary)) return nullptr;
         return &actual;
     };
     struct SavedSourceObservation {
@@ -41150,8 +41150,8 @@ void ExpectImmediateSequenceQueueCompositeChildCompletes(bool pieceChild) {
                 ASSERT_FALSE(lane.protocolRefused);
                 const auto* actual = resolveSavedService();
                 ASSERT_NE(nullptr, actual);
-                boundC0 = attempt->initialQueueDescriptor;
-                boundC1 = attempt->queueContinuationDescriptor;
+                boundC0 = attempt->QueueCoordinators().initialQueueDescriptor;
+                boundC1 = attempt->QueueCoordinators().queueContinuationDescriptor;
                 ASSERT_TRUE(boundC0.Valid());
                 ASSERT_TRUE(boundC1.Valid());
                 EXPECT_EQ(savedC0.slot, boundC0.entry.coordinator.slot);
@@ -41621,8 +41621,8 @@ TEST(ActionFiringApi,
     const auto savedAttemptSlot = static_cast<std::size_t>(attempt - engine->immediateEntryAttempts.data());
     const auto savedAttemptGeneration = attempt->generation;
     const auto savedLane = attempt->lane;
-    const auto savedC0Coordinator = attempt->initialQueueCoordinator;
-    const auto savedC1Coordinator = attempt->queueContinuationCoordinator;
+    const auto savedC0Coordinator = attempt->QueueCoordinators().initialQueueCoordinator;
+    const auto savedC1Coordinator = attempt->QueueCoordinators().queueContinuationCoordinator;
     ASSERT_TRUE(savedLane.Valid());
     ASSERT_TRUE(savedC0Coordinator.Valid());
     ASSERT_TRUE(savedC1Coordinator.Valid());
@@ -41654,8 +41654,8 @@ TEST(ActionFiringApi,
     ASSERT_FALSE(lane.missed);
     ASSERT_FALSE(lane.cancelled);
     ASSERT_FALSE(lane.protocolRefused);
-    const auto c0 = published->initialQueueDescriptor;
-    const auto c1 = published->queueContinuationDescriptor;
+    const auto c0 = published->QueueCoordinators().initialQueueDescriptor;
+    const auto c1 = published->QueueCoordinators().queueContinuationDescriptor;
     const auto entryQuantum = published->entryQuantum;
     const auto lastQuantum = published->lastQuantum;
     ASSERT_TRUE(c0.Valid());
@@ -41909,10 +41909,10 @@ std::string StaggeredCurrentActualCleanupDiagnostic(harken::Engine& engine, VnAc
         out << "\noriginalAttempt active=" << attempt.active
             << " privatePhase=" << static_cast<int>(attempt.privateCleanupPhase)
             << " continuationFailed=" << attempt.queueContinuationFailed
-            << " c0Descriptor=" << attempt.initialQueueDescriptor.Valid()
-            << " c1Descriptor=" << attempt.queueContinuationDescriptor.Valid();
-        const auto* c0 = engine.decisions.ResolveFrontierActivation(attempt.initialQueueCoordinator);
-        const auto* c1 = engine.decisions.ResolveFrontierActivation(attempt.queueContinuationCoordinator);
+            << " c0Descriptor=" << attempt.QueueCoordinators().initialQueueDescriptor.Valid()
+            << " c1Descriptor=" << attempt.QueueCoordinators().queueContinuationDescriptor.Valid();
+        const auto* c0 = engine.decisions.ResolveFrontierActivation(attempt.QueueCoordinators().initialQueueCoordinator);
+        const auto* c1 = engine.decisions.ResolveFrontierActivation(attempt.QueueCoordinators().queueContinuationCoordinator);
         out << " c0State=" << (c0 == nullptr ? -1 : static_cast<int>(c0->State()))
             << " c1State=" << (c1 == nullptr ? -1 : static_cast<int>(c1->State()));
     }
@@ -42227,8 +42227,8 @@ void CheckDirectStaggeredCurrentPublicationRefusal(std::uint32_t refusedPublicat
         }
         observation.lane = attempt.lane;
         observation.attemptGeneration = attempt.generation;
-        observation.c0 = attempt.initialQueueDescriptor;
-        observation.c1 = attempt.queueContinuationDescriptor;
+        observation.c0 = attempt.QueueCoordinators().initialQueueDescriptor;
+        observation.c1 = attempt.QueueCoordinators().queueContinuationDescriptor;
         ASSERT_TRUE(observation.c0.Valid());
         ASSERT_TRUE(observation.c1.Valid());
         EXPECT_EQ(2u, observation.c0.expectedEntryEventCount);
@@ -42955,10 +42955,10 @@ void CheckImmediateSameProgramQueue(bool restartCycle, bool requireTerminalC1 = 
         attempt - engine->immediateEntryAttempts.data());
     const auto savedAttemptGeneration = attempt->generation;
     const auto savedLane = attempt->lane;
-    const auto savedInitialCoordinator = attempt->initialQueueCoordinator;
-    const auto savedInitialPrimary = attempt->initialQueuePrimaryGroup;
-    const auto savedContinuationCoordinator = attempt->queueContinuationCoordinator;
-    const auto savedContinuationPrimary = attempt->queueContinuationPrimaryGroup;
+    const auto savedInitialCoordinator = attempt->QueueCoordinators().initialQueueCoordinator;
+    const auto savedInitialPrimary = attempt->QueueCoordinators().initialQueuePrimaryGroup;
+    const auto savedContinuationCoordinator = attempt->QueueCoordinators().queueContinuationCoordinator;
+    const auto savedContinuationPrimary = attempt->QueueCoordinators().queueContinuationPrimaryGroup;
     ASSERT_NE(0u, savedAttemptGeneration);
     ASSERT_TRUE(savedInitialCoordinator.Valid());
     ASSERT_TRUE(savedInitialPrimary.Exact());
@@ -42969,9 +42969,9 @@ void CheckImmediateSameProgramQueue(bool restartCycle, bool requireTerminalC1 = 
             current.root != firing || current.initialService != savedService.token ||
             current.initialInvocationGeneration != savedService.invocationGeneration ||
             current.lane.slot != savedLane.slot || current.lane.generation != savedLane.generation ||
-            current.initialQueueCoordinator.slot != savedInitialCoordinator.slot ||
-            current.initialQueueCoordinator.generation != savedInitialCoordinator.generation ||
-            !(current.initialQueuePrimaryGroup == savedInitialPrimary))
+            current.QueueCoordinators().initialQueueCoordinator.slot != savedInitialCoordinator.slot ||
+            current.QueueCoordinators().initialQueueCoordinator.generation != savedInitialCoordinator.generation ||
+            !(current.QueueCoordinators().initialQueuePrimaryGroup == savedInitialPrimary))
             return nullptr;
         return &current;
     };
@@ -43053,8 +43053,8 @@ void CheckImmediateSameProgramQueue(bool restartCycle, bool requireTerminalC1 = 
     EXPECT_TRUE(slice.frontier->operation.group == sliceIdentity);
     EXPECT_EQ(boundary, slice.frontier->operation.order.executeFrame);
 
-    const auto initial = attempt->initialQueueDescriptor;
-    const auto continuation = attempt->queueContinuationDescriptor;
+    const auto initial = attempt->QueueCoordinators().initialQueueDescriptor;
+    const auto continuation = attempt->QueueCoordinators().queueContinuationDescriptor;
     const auto entryQuantum = attempt->entryQuantum;
     ASSERT_TRUE(initial.Valid());
     EXPECT_EQ(savedInitialCoordinator.slot, initial.entry.coordinator.slot);
@@ -43866,10 +43866,10 @@ void ExpectImmediateActionQueueTransitionPrepared(
         std::ostringstream naturalEntryTrace;
         for (std::uint32_t index = 0; index < engine->immediateEntryAttempts.size(); ++index) {
             const auto& attempt = engine->immediateEntryAttempts[index];
-            if (attempt.root != firing || !attempt.queueContinuationCoordinator.Valid()) continue;
-            const auto* activation = engine->decisions.ResolveFrontierActivation(attempt.queueContinuationCoordinator);
+            if (attempt.root != firing || !attempt.QueueCoordinators().queueContinuationCoordinator.Valid()) continue;
+            const auto* activation = engine->decisions.ResolveFrontierActivation(attempt.QueueCoordinators().queueContinuationCoordinator);
             harken::FrontierActivationReceipt receipt{};
-            if (activation != nullptr && activation->Read(attempt.queueContinuationDescriptor.entry,
+            if (activation != nullptr && activation->Read(attempt.QueueCoordinators().queueContinuationDescriptor.entry,
                     engine->mixer.BlocksRendered(), &receipt) == harken::FrontierReceiptRead::Ready)
                 naturalEntryTrace << "\nC1 actual receipt outcome=" << static_cast<unsigned>(receipt.outcome)
                     << " reason=" << static_cast<unsigned>(receipt.reason)
@@ -65053,10 +65053,10 @@ TEST(ActionFiringApi, PreinitLaneBQueueAndTwoDirectSoundsSameQuantum) {
             attempt->entryEventCount, lane.committed);
         ASSERT_TRUE(lane.committed);
         if (index == 0u) {
-            queueCoordinators = {attempt->initialQueueCoordinator,
-                attempt->queueContinuationCoordinator};
-            queueEntries = {attempt->initialQueueDescriptor.entry,
-                attempt->queueContinuationDescriptor.entry};
+            queueCoordinators = {attempt->QueueCoordinators().initialQueueCoordinator,
+                attempt->QueueCoordinators().queueContinuationCoordinator};
+            queueEntries = {attempt->QueueCoordinators().initialQueueDescriptor.entry,
+                attempt->QueueCoordinators().queueContinuationDescriptor.entry};
         }
     }
     ASSERT_EQ(plannedQuanta[0], plannedQuanta[1]);
@@ -66213,11 +66213,11 @@ static void RunP100FullLoadFixture(P100FullLoadArenaTrial* arenaTrial) {
     ASSERT_NE(engine->immediateEntryAttempts.data() +
               engine->immediateEntryAttempts.size(), queueAttempt);
     const std::array<harken::DecisionToken, 2> queueCoordinators{
-        queueAttempt->initialQueueCoordinator,
-        queueAttempt->queueContinuationCoordinator};
+        queueAttempt->QueueCoordinators().initialQueueCoordinator,
+        queueAttempt->QueueCoordinators().queueContinuationCoordinator};
     const std::array<harken::FrontierEntryReceiptRef, 2> queueEntries{
-        queueAttempt->initialQueueDescriptor.entry,
-        queueAttempt->queueContinuationDescriptor.entry};
+        queueAttempt->QueueCoordinators().initialQueueDescriptor.entry,
+        queueAttempt->QueueCoordinators().queueContinuationDescriptor.entry};
     for (std::size_t index = 0; index < queueCoordinators.size(); ++index) {
         ASSERT_TRUE(queueCoordinators[index].Valid());
         ASSERT_TRUE(queueEntries[index].Valid());
@@ -68344,8 +68344,8 @@ static void CheckGenericInitialQueuePublishRefusalPreservesOriginalZeroWork(
             ASSERT_TRUE(attempt.lane.Valid());
             observed.originalLane = attempt.lane;
             observed.originalAttemptGeneration = attempt.generation;
-            observed.originalCoordinator = attempt.initialQueueCoordinator;
-            observed.originalDescriptor = attempt.initialQueueDescriptor;
+            observed.originalCoordinator = attempt.QueueCoordinators().initialQueueCoordinator;
+            observed.originalDescriptor = attempt.QueueCoordinators().initialQueueDescriptor;
             observed.originalGroupCount = actual.immediateActionLane.PrivatePinGroupCount(attempt.lane);
             ASSERT_GT(observed.originalGroupCount, 0u);
             ASSERT_LE(observed.originalGroupCount, observed.originalGroups.size());
@@ -68583,7 +68583,7 @@ static void CheckGenericInitialQueuePublishRefusalPreservesOriginalZeroWork(
                 << " cleanup=" << static_cast<unsigned>(actualAttempt.privateCleanupPhase)
                 << " c1Failed=" << actualAttempt.queueContinuationFailed;
             const auto* activation = engine.decisions.ResolveFrontierActivation(
-                actualAttempt.initialQueueCoordinator);
+                actualAttempt.QueueCoordinators().initialQueueCoordinator);
             if (activation != nullptr)
                 diagnostic << " activationState=" << static_cast<unsigned>(activation->State());
             harken::ImmediateLaneObservation lane{};
@@ -68775,8 +68775,8 @@ static void CheckNativeQueueOriginalHoldersAcrossTrueAckAndOldProgress(bool term
     const auto savedAttemptSlot = static_cast<std::size_t>(attempt - engine->immediateEntryAttempts.data());
     const auto savedAttemptGeneration = attempt->generation;
     const auto savedLane = attempt->lane;
-    const auto savedC0Coordinator = attempt->initialQueueCoordinator;
-    const auto savedC1Coordinator = attempt->queueContinuationCoordinator;
+    const auto savedC0Coordinator = attempt->QueueCoordinators().initialQueueCoordinator;
+    const auto savedC1Coordinator = attempt->QueueCoordinators().queueContinuationCoordinator;
     ASSERT_TRUE(savedLane.Valid());
     ASSERT_TRUE(savedC0Coordinator.Valid());
     ASSERT_TRUE(savedC1Coordinator.Valid());
@@ -68849,8 +68849,8 @@ static void CheckNativeQueueOriginalHoldersAcrossTrueAckAndOldProgress(bool term
     ASSERT_FALSE(lane.missed);
     ASSERT_FALSE(lane.cancelled);
     ASSERT_FALSE(lane.protocolRefused);
-    const auto c0 = published->initialQueueDescriptor;
-    const auto c1 = published->queueContinuationDescriptor;
+    const auto c0 = published->QueueCoordinators().initialQueueDescriptor;
+    const auto c1 = published->QueueCoordinators().queueContinuationDescriptor;
     const auto entryQuantum = published->entryQuantum;
     const auto lastQuantum = published->lastQuantum;
     ASSERT_TRUE(c0.Valid());
@@ -69127,10 +69127,10 @@ std::string NativeQueueOriginalLoanCleanupDiagnostic(harken::Engine& engine, VnA
         out << "\noriginalAttempt active=" << attempt.active
             << " privatePhase=" << static_cast<int>(attempt.privateCleanupPhase)
             << " continuationFailed=" << attempt.queueContinuationFailed
-            << " c0Descriptor=" << attempt.initialQueueDescriptor.Valid()
-            << " c1Descriptor=" << attempt.queueContinuationDescriptor.Valid();
-        const auto* c0 = engine.decisions.ResolveFrontierActivation(attempt.initialQueueCoordinator);
-        const auto* c1 = engine.decisions.ResolveFrontierActivation(attempt.queueContinuationCoordinator);
+            << " c0Descriptor=" << attempt.QueueCoordinators().initialQueueDescriptor.Valid()
+            << " c1Descriptor=" << attempt.QueueCoordinators().queueContinuationDescriptor.Valid();
+        const auto* c0 = engine.decisions.ResolveFrontierActivation(attempt.QueueCoordinators().initialQueueCoordinator);
+        const auto* c1 = engine.decisions.ResolveFrontierActivation(attempt.QueueCoordinators().queueContinuationCoordinator);
         out << " c0State=" << (c0 == nullptr ? -1 : static_cast<int>(c0->State()))
             << " c1State=" << (c1 == nullptr ? -1 : static_cast<int>(c1->State()));
     }
@@ -69286,8 +69286,8 @@ static void CheckNativeQueueOriginalLoansDuringRealPrivatePublicationRefusal(std
         }
         observation.lane = attempt.lane;
         observation.attemptGeneration = attempt.generation;
-        observation.c0 = attempt.initialQueueDescriptor;
-        observation.c1 = attempt.queueContinuationDescriptor;
+        observation.c0 = attempt.QueueCoordinators().initialQueueDescriptor;
+        observation.c1 = attempt.QueueCoordinators().queueContinuationDescriptor;
         ASSERT_TRUE(observation.c0.Valid());
         ASSERT_TRUE(observation.c1.Valid());
         EXPECT_EQ(2u, observation.c0.expectedEntryEventCount);
@@ -70232,7 +70232,7 @@ static void CheckOriginalSingleActualProducer(bool holdForeign, bool joinedTerm)
         engine.immediateEntryAttempts.data() + engine.immediateEntryAttempts.size(),
         [firing](const auto& original) { return original.active && original.root == firing; });
     ASSERT_NE(engine.immediateEntryAttempts.data() + engine.immediateEntryAttempts.size(), attempt);
-    const auto initial = attempt->initialQueueDescriptor;
+    const auto initial = attempt->QueueCoordinators().initialQueueDescriptor;
     const auto entryQuantum = attempt->entryQuantum;
     ASSERT_TRUE(initial.Valid());
     ASSERT_LE(engine.mixer.BlocksRendered(), entryQuantum);
@@ -70517,8 +70517,8 @@ struct InitialOriginalPublicProbe {
             const auto& attempt = engine.immediateEntryAttempts[i];
             if (!attempt.active || attempt.root != root ||
                 attempt.generation != attemptGeneration) continue;
-            const std::array tokens{attempt.initialQueueCoordinator,
-                attempt.queueContinuationCoordinator};
+            const std::array tokens{attempt.QueueCoordinators().initialQueueCoordinator,
+                attempt.QueueCoordinators().queueContinuationCoordinator};
             for (std::size_t index = 0; index < tokens.size(); ++index) {
                 const auto* activation = engine.decisions.ResolveFrontierActivation(tokens[index]);
                 out << "\npreUpdateNative block=" << engine.mixer.BlocksRendered()
@@ -70641,10 +70641,10 @@ std::string InitialOriginalMixedActualStateDiagnostic(harken::Engine& engine,
                 << " laneComplete=" << lane.complete << " laneMissed=" << lane.missed
                 << " laneCancelled=" << lane.cancelled << " laneRefused=" << lane.protocolRefused;
         harken::DecisionCommittedSnapshot decision{};
-        if (engine.decisions.CaptureCommitted(attempt.initialQueueCoordinator, &decision))
+        if (engine.decisions.CaptureCommitted(attempt.QueueCoordinators().initialQueueCoordinator, &decision))
             out << " c0Ticket=" << decision.ticket.sequence << " c0Continuation=" << decision.continuationGeneration
                 << " c0Participants=" << decision.participantCount << " c0Audio=" << static_cast<unsigned>(decision.audioState);
-        if (engine.decisions.CaptureCommitted(attempt.queueContinuationCoordinator, &decision))
+        if (engine.decisions.CaptureCommitted(attempt.QueueCoordinators().queueContinuationCoordinator, &decision))
             out << " c1Ticket=" << decision.ticket.sequence << " c1Continuation=" << decision.continuationGeneration
                 << " c1Participants=" << decision.participantCount << " c1Audio=" << static_cast<unsigned>(decision.audioState);
     }
@@ -70734,8 +70734,8 @@ void CheckInitialOriginalPublicMixedFactory(bool refusePost, bool ordinaryRefusa
             EXPECT_EQ(probe.attemptGeneration, attempt.generation);
             EXPECT_EQ(probe.issuerService, attempt.initialService);
             EXPECT_EQ(probe.issuerInvocationGeneration, attempt.initialInvocationGeneration);
-            EXPECT_TRUE(attempt.initialQueuePrimaryGroup.Exact());
-            EXPECT_TRUE(attempt.queueContinuationPrimaryGroup.Exact());
+            EXPECT_TRUE(attempt.QueueCoordinators().initialQueuePrimaryGroup.Exact());
+            EXPECT_TRUE(attempt.QueueCoordinators().queueContinuationPrimaryGroup.Exact());
         }
         EXPECT_TRUE(foundAttempt);
         if (ordinaryRefusal) {
@@ -70878,14 +70878,14 @@ struct InitialOriginalCoordinatorBusyProbe {
                 actual.generation != original.attemptGeneration ||
                 actual.initialService != original.issuerService ||
                 actual.initialInvocationGeneration != original.issuerInvocationGeneration) continue;
-            if (attempt != nullptr || !actual.initialQueueCoordinatorReservation.Valid() ||
-                !actual.initialQueuePrimaryGroup.Exact()) return;
+            if (attempt != nullptr || !actual.QueueCoordinators().initialQueueCoordinatorReservation.Valid() ||
+                !actual.QueueCoordinators().initialQueuePrimaryGroup.Exact()) return;
             attempt = &actual;
         }
         if (attempt == nullptr) return;
-        coordinator = attempt->initialQueueCoordinatorReservation.Token();
-        if (!coordinator.Valid() || attempt->initialQueuePrimaryGroup.decision.slot != coordinator.slot ||
-            attempt->initialQueuePrimaryGroup.decision.generation != coordinator.generation) return;
+        coordinator = attempt->QueueCoordinators().initialQueueCoordinatorReservation.Token();
+        if (!coordinator.Valid() || attempt->QueueCoordinators().initialQueuePrimaryGroup.decision.slot != coordinator.slot ||
+            attempt->QueueCoordinators().initialQueuePrimaryGroup.decision.generation != coordinator.generation) return;
         groupCount = engine.timelinePool.CaptureImmediateLaneCohortGroups(original.root,
             groups.data(), static_cast<std::uint32_t>(groups.size()));
         if (groupCount != 4u || !engine.decisions.AcquireFuturePin(coordinator, &coordinatorPin)) return;
@@ -70983,11 +70983,11 @@ TEST(ActionFiringApi, InitialOriginalMixedPublicAbortCoordinatorFuturePinKeepsDi
         EXPECT_EQ(probe.original.issuerService, probe.attempt->initialService);
         EXPECT_EQ(probe.original.issuerInvocationGeneration, probe.attempt->initialInvocationGeneration);
         EXPECT_FALSE(probe.attempt->lane.Valid());
-        EXPECT_FALSE(probe.attempt->initialQueuePrimaryGroup.Exact());
-        EXPECT_FALSE(probe.attempt->queueContinuationPrimaryGroup.Exact());
-        EXPECT_TRUE(probe.attempt->initialQueueCoordinatorReservation.Valid());
-        EXPECT_EQ(probe.coordinator.slot, probe.attempt->initialQueueCoordinatorReservation.Token().slot);
-        EXPECT_EQ(probe.coordinator.generation, probe.attempt->initialQueueCoordinatorReservation.Token().generation);
+        EXPECT_FALSE(probe.attempt->QueueCoordinators().initialQueuePrimaryGroup.Exact());
+        EXPECT_FALSE(probe.attempt->QueueCoordinators().queueContinuationPrimaryGroup.Exact());
+        EXPECT_TRUE(probe.attempt->QueueCoordinators().initialQueueCoordinatorReservation.Valid());
+        EXPECT_EQ(probe.coordinator.slot, probe.attempt->QueueCoordinators().initialQueueCoordinatorReservation.Token().slot);
+        EXPECT_EQ(probe.coordinator.generation, probe.attempt->QueueCoordinators().initialQueueCoordinatorReservation.Token().generation);
         EXPECT_TRUE(engine.decisions.IsOpen(probe.coordinator));
         EXPECT_TRUE(probe.coordinatorPin.Valid());
     };
@@ -71057,8 +71057,8 @@ void ExpectPublishedInitialCompanionObserverComparisons(
     const auto beforeAudio = engine.mixer.BlocksRendered();
     const auto beforeHead = engine.commands.PublishedHead();
     const auto beforeLogic = engine.logicCommits.Current();
-    const auto& c0 = attempt.initialQueueDescriptor;
-    const auto& c1 = attempt.queueContinuationDescriptor;
+    const auto& c0 = attempt.QueueCoordinators().initialQueueDescriptor;
+    const auto& c1 = attempt.QueueCoordinators().queueContinuationDescriptor;
     ASSERT_TRUE(c0.Valid());
     ASSERT_TRUE(c1.Valid());
     std::array<harken::Plan03ImmediateLaneGroupDescriptor, 8> nativeGroups{};
@@ -71229,7 +71229,7 @@ void CheckPublishedInitialQueueCancelClearsExactSuccessorInstallation(bool holdS
         if (actual == nullptr) continue;
         harken::ImmediateLaneObservation lane{};
         if (engine.immediateActionLane.Observe(actual->lane, &lane) && lane.committed &&
-            actual->initialQueueDescriptor.Valid() && actual->queueContinuationDescriptor.Valid()) break;
+            actual->QueueCoordinators().initialQueueDescriptor.Valid() && actual->QueueCoordinators().queueContinuationDescriptor.Valid()) break;
         ASSERT_LT(engine.mixer.BlocksRendered(), actual->entryQuantum);
     }
     ASSERT_NE(nullptr, actual);
@@ -71260,10 +71260,10 @@ void CheckPublishedInitialQueueCancelClearsExactSuccessorInstallation(bool holdS
         ASSERT_TRUE(native.frontier->operation.group == group.identity);
         ASSERT_NE(nullptr, native.lease);
         EXPECT_EQ(harken::AudioSliceState::Ready, native.lease->Capture().state);
-        const bool initial = native.frontier->entry == actual->initialQueueDescriptor.entry;
-        const bool continuation = native.frontier->entry == actual->queueContinuationDescriptor.entry;
+        const bool initial = native.frontier->entry == actual->QueueCoordinators().initialQueueDescriptor.entry;
+        const bool continuation = native.frontier->entry == actual->QueueCoordinators().queueContinuationDescriptor.entry;
         ASSERT_NE(initial, continuation);
-        const auto& descriptor = initial ? actual->initialQueueDescriptor : actual->queueContinuationDescriptor;
+        const auto& descriptor = initial ? actual->QueueCoordinators().initialQueueDescriptor : actual->QueueCoordinators().queueContinuationDescriptor;
         EXPECT_TRUE(native.frontier->primary == descriptor.primary);
         if (native.frontier->role == harken::FrontierGroupRole::Coordinator) {
             EXPECT_TRUE(group.identity == descriptor.primary);
@@ -71288,10 +71288,10 @@ void CheckPublishedInitialQueueCancelClearsExactSuccessorInstallation(bool holdS
     EXPECT_EQ(1u, initialMembers);
     EXPECT_EQ(1u, continuationMembers);
     EXPECT_TRUE(actualSuccessorMember);
-    const auto c0 = actual->initialQueueCoordinator;
-    const auto c1 = actual->queueContinuationCoordinator;
-    const auto c0Descriptor = actual->initialQueueDescriptor;
-    const auto c1Descriptor = actual->queueContinuationDescriptor;
+    const auto c0 = actual->QueueCoordinators().initialQueueCoordinator;
+    const auto c1 = actual->QueueCoordinators().queueContinuationCoordinator;
+    const auto c0Descriptor = actual->QueueCoordinators().initialQueueDescriptor;
+    const auto c1Descriptor = actual->QueueCoordinators().queueContinuationDescriptor;
     ASSERT_TRUE(c0Descriptor.Valid());
     ASSERT_TRUE(c1Descriptor.Valid());
     ASSERT_EQ(c0.slot, c0Descriptor.entry.coordinator.slot);
@@ -71640,7 +71640,7 @@ void CheckEnduringInitialC0ActualApi(bool holdThroughPhysicalEnd, bool joinedTer
     harken::FrontierEntryReceiptRef entry{};
     std::array<std::uint64_t, 4> frames{};
     ASSERT_TRUE(probe.original.CaptureInitialBinding(&entry, &frames));
-    EXPECT_TRUE(entry == probe.attempt->initialQueueDescriptor.entry);
+    EXPECT_TRUE(entry == probe.attempt->QueueCoordinators().initialQueueDescriptor.entry);
     EXPECT_EQ(probe.attempt->entryQuantum * config.blockFrames, frames[0]);
     EXPECT_EQ(row->startFrame, frames[2]);
     harken::TimelineArmObservation installed{};

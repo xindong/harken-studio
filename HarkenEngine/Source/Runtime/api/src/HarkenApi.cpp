@@ -35021,14 +35021,14 @@ harken::EngineImmediateEntryAttempt* AcquireImmediateEntryAttempt(
             attempt.queueContinuationCount != 0 ||
             attempt.queueFutureHead != UINT32_MAX ||
             attempt.queueFutureCount != 0 ||
-            attempt.initialQueueCoordinatorReservation.Valid() ||
-            attempt.initialQueueCoordinator.Valid() ||
-            attempt.initialQueueCoordinatorArmGroup.Valid() ||
-            attempt.initialQueuePrimaryGroup.Exact() ||
-            attempt.queueContinuationCoordinatorReservation.Valid() ||
-            attempt.queueContinuationCoordinator.Valid() ||
-            attempt.queueContinuationCoordinatorArmGroup.Valid() ||
-            attempt.queueContinuationPrimaryGroup.Exact()) continue;
+            attempt.QueueCoordinators().initialQueueCoordinatorReservation.Valid() ||
+            attempt.QueueCoordinators().initialQueueCoordinator.Valid() ||
+            attempt.QueueCoordinators().initialQueueCoordinatorArmGroup.Valid() ||
+            attempt.QueueCoordinators().initialQueuePrimaryGroup.Exact() ||
+            attempt.QueueCoordinators().queueContinuationCoordinatorReservation.Valid() ||
+            attempt.QueueCoordinators().queueContinuationCoordinator.Valid() ||
+            attempt.QueueCoordinators().queueContinuationCoordinatorArmGroup.Valid() ||
+            attempt.QueueCoordinators().queueContinuationPrimaryGroup.Exact()) continue;
         if (!engine.PrepareImmediateEntryStorage(attempt, storageDemand)) return nullptr;
         const auto generation = attempt.generation + 1u;
         if (!engine.ResetInitialSoundQueueCohort(attempt) ||
@@ -35444,66 +35444,70 @@ bool ReleaseQueueFutureRecords(
 bool ReleaseInitialQueueCoordinator(
     harken::Engine& engine,
     harken::EngineImmediateEntryAttempt& attempt) noexcept {
-    if (attempt.initialQueuePrimaryGroup.Exact() ||
-        attempt.queueContinuationPrimaryGroup.Exact()) return false;
+    if (attempt.QueueCoordinators().initialQueuePrimaryGroup.Exact() ||
+        attempt.QueueCoordinators().queueContinuationPrimaryGroup.Exact()) return false;
     if (!ReleaseQueueContinuationRecords(engine, attempt) ||
         !ReleaseQueueFutureRecords(engine, attempt)) return false;
-    if (attempt.queueContinuationCoordinatorArmGroupPrepared) {
-        if (!engine.armGroups.CancelPrepared(
-                attempt.queueContinuationCoordinatorArmGroup)) return false;
-        attempt.queueContinuationCoordinatorArmGroupPrepared = false;
-        attempt.queueContinuationCoordinatorArmGroup = {};
+    if (!attempt.HasQueueCoordinators()) {
+        attempt.queueContinuationService = {};
+        return true;
     }
-    if (attempt.queueContinuationCoordinatorReservation.Valid() &&
+    if (attempt.QueueCoordinators().queueContinuationCoordinatorArmGroupPrepared) {
+        if (!engine.armGroups.CancelPrepared(
+                attempt.QueueCoordinators().queueContinuationCoordinatorArmGroup)) return false;
+        attempt.PreparedQueueCoordinators().queueContinuationCoordinatorArmGroupPrepared = false;
+        attempt.PreparedQueueCoordinators().queueContinuationCoordinatorArmGroup = {};
+    }
+    if (attempt.QueueCoordinators().queueContinuationCoordinatorReservation.Valid() &&
         !engine.decisions.CancelPreparedReservation(
-            &attempt.queueContinuationCoordinatorReservation)) return false;
-    if (attempt.queueContinuationCoordinator.Valid()) {
+            &attempt.PreparedQueueCoordinators().queueContinuationCoordinatorReservation)) return false;
+    if (attempt.QueueCoordinators().queueContinuationCoordinator.Valid()) {
         harken::ArmGroupSnapshot group{};
-        if (attempt.queueContinuationCoordinatorArmGroup.Valid() &&
-            engine.armGroups.Capture(attempt.queueContinuationCoordinatorArmGroup,
+        if (attempt.QueueCoordinators().queueContinuationCoordinatorArmGroup.Valid() &&
+            engine.armGroups.Capture(attempt.QueueCoordinators().queueContinuationCoordinatorArmGroup,
                 &group) && group.state != harken::ArmGroupState::Retiring &&
             !engine.armGroups.BeginRetire(
-                attempt.queueContinuationCoordinatorArmGroup)) return false;
+                attempt.QueueCoordinators().queueContinuationCoordinatorArmGroup)) return false;
         if (!TransferDecisionRetirement(engine,
-                attempt.queueContinuationCoordinator,
-                engine.decisions.IsOpen(attempt.queueContinuationCoordinator),
-                attempt.queueContinuationCoordinatorArmGroup)) return false;
+                attempt.QueueCoordinators().queueContinuationCoordinator,
+                engine.decisions.IsOpen(attempt.QueueCoordinators().queueContinuationCoordinator),
+                attempt.QueueCoordinators().queueContinuationCoordinatorArmGroup)) return false;
     }
-    attempt.queueContinuationCoordinator = {};
-    attempt.queueContinuationCoordinatorArmGroup = {};
+    attempt.PreparedQueueCoordinators().queueContinuationCoordinator = {};
+    attempt.PreparedQueueCoordinators().queueContinuationCoordinatorArmGroup = {};
     attempt.queueContinuationService = {};
-    if (attempt.initialQueueCoordinatorArmGroupPrepared) {
+    if (attempt.QueueCoordinators().initialQueueCoordinatorArmGroupPrepared) {
         if (!engine.armGroups.CancelPrepared(
-                attempt.initialQueueCoordinatorArmGroup)) return false;
-        attempt.initialQueueCoordinatorArmGroup = {};
-        attempt.initialQueueCoordinatorArmGroupPrepared = false;
+                attempt.QueueCoordinators().initialQueueCoordinatorArmGroup)) return false;
+        attempt.PreparedQueueCoordinators().initialQueueCoordinatorArmGroup = {};
+        attempt.PreparedQueueCoordinators().initialQueueCoordinatorArmGroupPrepared = false;
     }
-    if (attempt.initialQueueCoordinatorReservation.Valid() &&
+    if (attempt.QueueCoordinators().initialQueueCoordinatorReservation.Valid() &&
         !engine.decisions.CancelPreparedReservation(
-            &attempt.initialQueueCoordinatorReservation)) return false;
-    if (attempt.initialQueueCoordinator.Valid()) {
-        const auto coordinator = attempt.initialQueueCoordinator;
+            &attempt.PreparedQueueCoordinators().initialQueueCoordinatorReservation)) return false;
+    if (attempt.QueueCoordinators().initialQueueCoordinator.Valid()) {
+        const auto coordinator = attempt.QueueCoordinators().initialQueueCoordinator;
         const auto service = std::find_if(engine.playableServices.begin(),
             engine.playableServices.end(), [&](const auto& row) {
                 return row.identity == attempt.initialService &&
                     row.PendingImmediateCohortRoot() == attempt.root &&
-                    attempt.initialQueueDescriptor.entry.Valid() &&
-                    row.frontierEntry == attempt.initialQueueDescriptor.entry;
+                    attempt.QueueCoordinators().initialQueueDescriptor.entry.Valid() &&
+                    row.frontierEntry == attempt.QueueCoordinators().initialQueueDescriptor.entry;
             });
         if (service != engine.playableServices.end()) return false;
         const auto cancelled = engine.decisions.IsOpen(coordinator);
         harken::ArmGroupSnapshot group{};
-        if (attempt.initialQueueCoordinatorArmGroup.Valid() &&
-            engine.armGroups.Capture(attempt.initialQueueCoordinatorArmGroup,
+        if (attempt.QueueCoordinators().initialQueueCoordinatorArmGroup.Valid() &&
+            engine.armGroups.Capture(attempt.QueueCoordinators().initialQueueCoordinatorArmGroup,
                 &group) && group.state != harken::ArmGroupState::Retiring &&
             !engine.armGroups.BeginRetire(
-                attempt.initialQueueCoordinatorArmGroup)) return false;
+                attempt.QueueCoordinators().initialQueueCoordinatorArmGroup)) return false;
         if (!TransferDecisionRetirement(engine,
                 coordinator, cancelled,
-                attempt.initialQueueCoordinatorArmGroup)) return false;
+                attempt.QueueCoordinators().initialQueueCoordinatorArmGroup)) return false;
     }
-    attempt.initialQueueCoordinator = {};
-    attempt.initialQueueCoordinatorArmGroup = {};
+    attempt.PreparedQueueCoordinators().initialQueueCoordinator = {};
+    attempt.PreparedQueueCoordinators().initialQueueCoordinatorArmGroup = {};
     return true;
 }
 
@@ -35514,17 +35518,17 @@ bool PrivateStoppedRootQueueCoordinatorReady(
     harken::ActionFiringSnapshot firing{};
     harken::Plan03ImmediateLaneGroupDescriptor group{};
     harken::Plan03PageGroupView primary{};
-    const auto coordinator = attempt.initialQueueCoordinator;
+    const auto coordinator = attempt.QueueCoordinators().initialQueueCoordinator;
     const bool cancelledLaneRetired = !attempt.lane.Valid() &&
         attempt.gate.Observe(attempt.generation) == harken::ImmediateEntryAttemptState::Aborted;
     if (!attempt.active || attempt.producerSlot != UINT32_MAX ||
-        attempt.initialQueueDescriptor.Valid() || !attempt.initialQueuePrimaryGroup.Exact() ||
-        attempt.queueContinuationCoordinator.Valid() || attempt.queueContinuationCount != 0 ||
+        attempt.QueueCoordinators().initialQueueDescriptor.Valid() || !attempt.QueueCoordinators().initialQueuePrimaryGroup.Exact() ||
+        attempt.QueueCoordinators().queueContinuationCoordinator.Valid() || attempt.queueContinuationCount != 0 ||
         attempt.queueFutureCount != 0 || attempt.queueContinuationHead != UINT32_MAX ||
-        attempt.queueFutureHead != UINT32_MAX || attempt.queueContinuationPrimaryGroup.Exact() ||
-        attempt.initialQueueCoordinatorReservation.Valid() || attempt.initialQueueCoordinatorArmGroupPrepared ||
-        attempt.queueContinuationCoordinatorReservation.Valid() || attempt.queueContinuationCoordinatorArmGroupPrepared ||
-        attempt.queueContinuationCoordinatorArmGroup.Valid() ||
+        attempt.queueFutureHead != UINT32_MAX || attempt.QueueCoordinators().queueContinuationPrimaryGroup.Exact() ||
+        attempt.QueueCoordinators().initialQueueCoordinatorReservation.Valid() || attempt.QueueCoordinators().initialQueueCoordinatorArmGroupPrepared ||
+        attempt.QueueCoordinators().queueContinuationCoordinatorReservation.Valid() || attempt.QueueCoordinators().queueContinuationCoordinatorArmGroupPrepared ||
+        attempt.QueueCoordinators().queueContinuationCoordinatorArmGroup.Valid() ||
         (!cancelledLaneRetired && (!engine.actionFirings.Capture(attempt.root, &firing) ||
         (firing.state != harken::ActionFiringState::Stopping &&
             !(firing.state == harken::ActionFiringState::TerminalRetained &&
@@ -35540,17 +35544,17 @@ bool PrivateStoppedRootQueueCoordinatorReady(
         decision.audioState != harken::AudioGroupState::Pending || decision.transitionGate.Valid() ||
         engine.decisions.ResolveFrontierActivation(coordinator) != nullptr ||
         engine.decisions.HasFrontierDecisionBinding(coordinator) ||
-        decision.pages.slot != attempt.initialQueuePrimaryGroup.committedRow ||
-        decision.pages.generation != attempt.initialQueuePrimaryGroup.rowClaimGeneration ||
-        decision.armGroup.slot != attempt.initialQueueCoordinatorArmGroup.slot ||
-        decision.armGroup.generation != attempt.initialQueueCoordinatorArmGroup.generation ||
-        !engine.armGroups.Capture(attempt.initialQueueCoordinatorArmGroup, &arms) ||
+        decision.pages.slot != attempt.QueueCoordinators().initialQueuePrimaryGroup.committedRow ||
+        decision.pages.generation != attempt.QueueCoordinators().initialQueuePrimaryGroup.rowClaimGeneration ||
+        decision.armGroup.slot != attempt.QueueCoordinators().initialQueueCoordinatorArmGroup.slot ||
+        decision.armGroup.generation != attempt.QueueCoordinators().initialQueueCoordinatorArmGroup.generation ||
+        !engine.armGroups.Capture(attempt.QueueCoordinators().initialQueueCoordinatorArmGroup, &arms) ||
         arms.parent.slot != coordinator.slot || arms.parent.generation != coordinator.generation ||
         arms.memberCount != 0 || arms.tombstonedCount != 0 ||
         (arms.state != harken::ArmGroupState::Ready && arms.state != harken::ArmGroupState::AwaitingAcks &&
             arms.state != harken::ArmGroupState::Retiring) ||
         engine.timelinePool.CaptureImmediateLaneCohortGroups(attempt.root, &group, 1) != 1 ||
-        !(group.identity == attempt.initialQueuePrimaryGroup) ||
+        !(group.identity == attempt.QueueCoordinators().initialQueuePrimaryGroup) ||
         !(cancelledLaneRetired
             ? engine.timelinePool.PrivateImmediateLaneGroupRetirementReady(group.identity, engine.mixer.BlocksRendered())
             : engine.timelinePool.PrivatePlan03GroupBindable(group.identity)) ||
@@ -35565,8 +35569,8 @@ bool PrivateStoppedRootQueueCoordinatorReady(
 bool FailedRootQueueCoordinatorOwned(
     harken::Engine& engine, const harken::EngineImmediateEntryAttempt& attempt,
     std::uint64_t observedAudioSequence) noexcept {
-    const auto coordinator = attempt.initialQueueCoordinator;
-    const auto& descriptor = attempt.initialQueueDescriptor;
+    const auto coordinator = attempt.QueueCoordinators().initialQueueCoordinator;
+    const auto& descriptor = attempt.QueueCoordinators().initialQueueDescriptor;
     harken::DecisionCommittedSnapshot decision{};
     harken::ArmGroupSnapshot arms{};
     harken::Plan03PageGroupView primary{};
@@ -35577,13 +35581,13 @@ bool FailedRootQueueCoordinatorOwned(
         descriptor.entry.owner.serviceSlot != attempt.initialService.slot ||
         descriptor.entry.owner.serviceGeneration != attempt.initialService.generation ||
         descriptor.expectedMemberCount != 0 || descriptor.expectedEntryEventCount != 1 ||
-        !(descriptor.primary == attempt.initialQueuePrimaryGroup) ||
-        attempt.queueContinuationCoordinator.Valid() || attempt.queueContinuationCount != 0 ||
+        !(descriptor.primary == attempt.QueueCoordinators().initialQueuePrimaryGroup) ||
+        attempt.QueueCoordinators().queueContinuationCoordinator.Valid() || attempt.queueContinuationCount != 0 ||
         attempt.queueFutureCount != 0 || attempt.queueContinuationHead != UINT32_MAX ||
-        attempt.queueFutureHead != UINT32_MAX || attempt.queueContinuationPrimaryGroup.Exact() ||
-        attempt.initialQueueCoordinatorReservation.Valid() || attempt.initialQueueCoordinatorArmGroupPrepared ||
-        attempt.queueContinuationCoordinatorReservation.Valid() || attempt.queueContinuationCoordinatorArmGroupPrepared ||
-        attempt.queueContinuationCoordinatorArmGroup.Valid() ||
+        attempt.queueFutureHead != UINT32_MAX || attempt.QueueCoordinators().queueContinuationPrimaryGroup.Exact() ||
+        attempt.QueueCoordinators().initialQueueCoordinatorReservation.Valid() || attempt.QueueCoordinators().initialQueueCoordinatorArmGroupPrepared ||
+        attempt.QueueCoordinators().queueContinuationCoordinatorReservation.Valid() || attempt.QueueCoordinators().queueContinuationCoordinatorArmGroupPrepared ||
+        attempt.QueueCoordinators().queueContinuationCoordinatorArmGroup.Valid() ||
         !engine.decisions.CaptureCommitted(coordinator, &decision) ||
         decision.ticket.sequence != descriptor.order.logicCommitSequence ||
         decision.world != descriptor.worldGeneration || decision.transport != engine.timelinePool.Epoch() ||
@@ -35593,11 +35597,11 @@ bool FailedRootQueueCoordinatorOwned(
         decision.transitionGate.Valid() ||
         decision.pages.slot != descriptor.primary.committedRow ||
         decision.pages.generation != descriptor.primary.rowClaimGeneration ||
-        decision.armGroup.slot != attempt.initialQueueCoordinatorArmGroup.slot ||
-        decision.armGroup.generation != attempt.initialQueueCoordinatorArmGroup.generation ||
+        decision.armGroup.slot != attempt.QueueCoordinators().initialQueueCoordinatorArmGroup.slot ||
+        decision.armGroup.generation != attempt.QueueCoordinators().initialQueueCoordinatorArmGroup.generation ||
         coordinator.slot >= engine.decisionRetirements.size() ||
         engine.decisionRetirements[coordinator.slot].decision.Valid() ||
-        !engine.armGroups.Capture(attempt.initialQueueCoordinatorArmGroup, &arms) ||
+        !engine.armGroups.Capture(attempt.QueueCoordinators().initialQueueCoordinatorArmGroup, &arms) ||
         arms.parent.slot != coordinator.slot || arms.parent.generation != coordinator.generation ||
         arms.memberCount != 0 || arms.tombstonedCount != 0 ||
         (arms.state != harken::ArmGroupState::Ready && arms.state != harken::ArmGroupState::AwaitingAcks &&
@@ -35664,7 +35668,7 @@ bool ReleaseInitialQueueFrontierBindings(
     const auto ready = [&](harken::DecisionToken coordinator,
                            const harken::FrontierActivationDescriptor& descriptor) {
         if (!coordinator.Valid()) return true;
-        if (SameCanonicalDecision(coordinator, attempt.initialQueueCoordinator) &&
+        if (SameCanonicalDecision(coordinator, attempt.QueueCoordinators().initialQueueCoordinator) &&
             !descriptor.Valid()) return PrivateStoppedRootQueueCoordinatorReady(engine, attempt);
         auto* activation = engine.decisions.ResolveFrontierActivation(coordinator);
         harken::FrontierActivationReceipt receipt{};
@@ -35681,37 +35685,37 @@ bool ReleaseInitialQueueFrontierBindings(
         }
         return read == harken::FrontierReceiptRead::Ready;
     };
-    if (!ready(attempt.initialQueueCoordinator, attempt.initialQueueDescriptor) ||
-        !ready(attempt.queueContinuationCoordinator,
-            attempt.queueContinuationDescriptor)) return false;
-    const bool released = (!attempt.initialQueueCoordinator.Valid() ||
+    if (!ready(attempt.QueueCoordinators().initialQueueCoordinator, attempt.QueueCoordinators().initialQueueDescriptor) ||
+        !ready(attempt.QueueCoordinators().queueContinuationCoordinator,
+            attempt.QueueCoordinators().queueContinuationDescriptor)) return false;
+    const bool released = (!attempt.QueueCoordinators().initialQueueCoordinator.Valid() ||
             ReleaseInitialFrontierBindings(engine,
-                attempt.initialQueueDescriptor.entry, observedAudioSequence)) &&
-        (!attempt.queueContinuationCoordinator.Valid() ||
+                attempt.QueueCoordinators().initialQueueDescriptor.entry, observedAudioSequence)) &&
+        (!attempt.QueueCoordinators().queueContinuationCoordinator.Valid() ||
             ReleaseInitialFrontierBindings(engine,
-                attempt.queueContinuationDescriptor.entry,
+                attempt.QueueCoordinators().queueContinuationDescriptor.entry,
                 observedAudioSequence));
     if (!released) return false;
-    if (attempt.queueContinuationCoordinator.Valid()) {
-        const auto coordinator = attempt.queueContinuationCoordinator;
+    if (attempt.QueueCoordinators().queueContinuationCoordinator.Valid()) {
+        const auto coordinator = attempt.QueueCoordinators().queueContinuationCoordinator;
         auto* activation = engine.decisions.ResolveFrontierActivation(
             coordinator);
         harken::FrontierActivationReceipt receipt{};
         if (activation == nullptr ||
-            activation->Read(attempt.queueContinuationDescriptor.entry,
+            activation->Read(attempt.QueueCoordinators().queueContinuationDescriptor.entry,
                 observedAudioSequence, &receipt) !=
                 harken::FrontierReceiptRead::Ready ||
             !engine.decisions.ReconcileFrontierActivation(coordinator,
-                attempt.queueContinuationDescriptor.entry,
+                attempt.QueueCoordinators().queueContinuationDescriptor.entry,
                 observedAudioSequence, &receipt)) return false;
-        const auto group = attempt.queueContinuationCoordinatorArmGroup;
+        const auto group = attempt.QueueCoordinators().queueContinuationCoordinatorArmGroup;
         harken::ArmGroupSnapshot groupSnapshot{};
         if (group.Valid() && engine.armGroups.Capture(group, &groupSnapshot) &&
             groupSnapshot.state != harken::ArmGroupState::Retiring &&
             !engine.armGroups.BeginRetire(group)) return false;
         if (!TransferDecisionRetirement(engine, coordinator, false, group))
             return false;
-        attempt.queueContinuationCoordinator = {};
+        attempt.PreparedQueueCoordinators().queueContinuationCoordinator = {};
     }
     return true;
 }
@@ -35719,6 +35723,7 @@ bool ReleaseInitialQueueFrontierBindings(
 bool ReleasePreHandoffCommittedInitialQueue(
     harken::Engine& engine, harken::EngineImmediateEntryAttempt& attempt,
     std::uint64_t observedAudioSequence) noexcept {
+    if (!attempt.HasQueueCoordinators()) return true;
     const auto settle = [&](harken::DecisionToken& coordinator,
                             harken::FrontierActivationDescriptor& descriptor,
                             harken::ArmGroupToken group,
@@ -35786,13 +35791,13 @@ bool ReleasePreHandoffCommittedInitialQueue(
         coordinator = {};
         return true;
     };
-    return settle(attempt.initialQueueCoordinator,
-               attempt.initialQueueDescriptor,
-               attempt.initialQueueCoordinatorArmGroup,
+    return settle(attempt.PreparedQueueCoordinators().initialQueueCoordinator,
+               attempt.PreparedQueueCoordinators().initialQueueDescriptor,
+               attempt.QueueCoordinators().initialQueueCoordinatorArmGroup,
                attempt.privateInitialActivationCancelled) &&
-        settle(attempt.queueContinuationCoordinator,
-               attempt.queueContinuationDescriptor,
-               attempt.queueContinuationCoordinatorArmGroup,
+        settle(attempt.PreparedQueueCoordinators().queueContinuationCoordinator,
+               attempt.PreparedQueueCoordinators().queueContinuationDescriptor,
+               attempt.QueueCoordinators().queueContinuationCoordinatorArmGroup,
                attempt.privateContinuationActivationCancelled);
 }
 
@@ -35801,8 +35806,8 @@ bool InitialQueueNativeManifestOwnerMatches(const harken::Engine& engine,
     const harken::FrontierGroupBinding& binding,
     const harken::FrontierActivationDescriptor& descriptor) noexcept {
     if (engine.HasInitialSoundQueueCohort(attempt)) {
-        const bool continuation = descriptor.entry == attempt.queueContinuationDescriptor.entry;
-        if (!(descriptor.entry == attempt.initialQueueDescriptor.entry) && !continuation) return false;
+        const bool continuation = descriptor.entry == attempt.QueueCoordinators().queueContinuationDescriptor.entry;
+        if (!(descriptor.entry == attempt.QueueCoordinators().initialQueueDescriptor.entry) && !continuation) return false;
         if (binding.role == harken::FrontierGroupRole::Coordinator)
             return binding.operation.owner == descriptor.entry.owner &&
                 engine.MatchesInitialSoundQueueFrontierOwner(attempt, binding.operation.owner, continuation);
@@ -35821,7 +35826,7 @@ bool ServicePrivateInitialQueuePinGroupCleanup(
     if (attempt.active && attempt.privateCleanupPhase == Phase::Finished)
         return true;
     if (!attempt.active || attempt.privateCleanupPhase == Phase::None ||
-        !attempt.initialQueueCoordinator.Valid() || !attempt.lane.Valid() ||
+        !attempt.QueueCoordinators().initialQueueCoordinator.Valid() || !attempt.lane.Valid() ||
         !engine.immediateActionLane.OwnsNeverCommitted(
             attempt.lane, attempt.root)) return false;
     const auto initial = std::find_if(engine.playableServices.begin(),
@@ -35837,11 +35842,11 @@ bool ServicePrivateInitialQueuePinGroupCleanup(
         return false;
     const auto descriptorFor = [&](const harken::FrontierEntryReceiptRef& entry)
         -> const harken::FrontierActivationDescriptor* {
-        if (entry == attempt.initialQueueDescriptor.entry)
-            return &attempt.initialQueueDescriptor;
-        if (attempt.queueContinuationCoordinator.Valid() &&
-            entry == attempt.queueContinuationDescriptor.entry)
-            return &attempt.queueContinuationDescriptor;
+        if (entry == attempt.QueueCoordinators().initialQueueDescriptor.entry)
+            return &attempt.QueueCoordinators().initialQueueDescriptor;
+        if (attempt.QueueCoordinators().queueContinuationCoordinator.Valid() &&
+            entry == attempt.QueueCoordinators().queueContinuationDescriptor.entry)
+            return &attempt.QueueCoordinators().queueContinuationDescriptor;
         return nullptr;
     };
     if (attempt.privateCleanupPhase == Phase::Prove) {
@@ -35886,16 +35891,16 @@ bool ServicePrivateInitialQueuePinGroupCleanup(
             if (captured == 0) return false;
             attempt.privateVoiceCount = captured;
         }
-        for (auto token : {attempt.initialQueueCoordinator,
-                           attempt.queueContinuationCoordinator}) {
+        for (auto token : {attempt.QueueCoordinators().initialQueueCoordinator,
+                           attempt.QueueCoordinators().queueContinuationCoordinator}) {
             if (!token.Valid()) continue;
             const auto* activation =
                 engine.decisions.ResolveFrontierActivation(token);
             const auto& descriptor = token.slot ==
-                    attempt.initialQueueCoordinator.slot &&
-                    token.generation == attempt.initialQueueCoordinator.generation
-                ? attempt.initialQueueDescriptor
-                : attempt.queueContinuationDescriptor;
+                    attempt.QueueCoordinators().initialQueueCoordinator.slot &&
+                    token.generation == attempt.QueueCoordinators().initialQueueCoordinator.generation
+                ? attempt.QueueCoordinators().initialQueueDescriptor
+                : attempt.QueueCoordinators().queueContinuationDescriptor;
             if (activation == nullptr ||
                 activation->State() != harken::FrontierReceiptState::Prepared ||
                 !(activation->Descriptor().entry == descriptor.entry) ||
@@ -35942,7 +35947,7 @@ bool ServicePrivateInitialQueuePinGroupCleanup(
                         engine.timelinePool, group.members[armIndex],
                         *group.frontier, *group.lease)) return false;
         }
-        if (coordinators != (attempt.queueContinuationCoordinator.Valid()
+        if (coordinators != (attempt.QueueCoordinators().queueContinuationCoordinator.Valid()
                 ? 2u : 1u) || members == 0) return false;
         if (!engine.immediateActionLane.Cancel(attempt.lane)) return false;
         attempt.privateCleanupPhase = Phase::Members;
@@ -36015,9 +36020,9 @@ bool ServicePrivateInitialQueuePinGroupCleanup(
             auto& owned = engine.initialFrontierArmPins[arm.slot];
             if (owned.pin.Valid()) {
                 const bool cohortEntry =
-                    owned.entry == attempt.initialQueueDescriptor.entry ||
-                    (attempt.queueContinuationCoordinator.Valid() &&
-                     owned.entry == attempt.queueContinuationDescriptor.entry);
+                    owned.entry == attempt.QueueCoordinators().initialQueueDescriptor.entry ||
+                    (attempt.QueueCoordinators().queueContinuationCoordinator.Valid() &&
+                     owned.entry == attempt.QueueCoordinators().queueContinuationDescriptor.entry);
                 if (voice.rootReaderReleased ||
                     owned.arm.slot != arm.slot ||
                     owned.arm.generation != arm.generation ||
@@ -36059,13 +36064,13 @@ bool ServicePrivateInitialQueuePinGroupCleanup(
     if (attempt.privateCleanupPhase == Phase::Bindings) {
         if (!attempt.privateInitialBindingsReleased) {
             if (!ReleaseInitialFrontierBindings(engine,
-                    attempt.initialQueueDescriptor.entry, 0)) return false;
+                    attempt.QueueCoordinators().initialQueueDescriptor.entry, 0)) return false;
             attempt.privateInitialBindingsReleased = true;
         }
-        if (attempt.queueContinuationCoordinator.Valid() &&
+        if (attempt.QueueCoordinators().queueContinuationCoordinator.Valid() &&
             !attempt.privateContinuationBindingsReleased) {
             if (!ReleaseInitialFrontierBindings(engine,
-                    attempt.queueContinuationDescriptor.entry, 0)) return false;
+                    attempt.QueueCoordinators().queueContinuationDescriptor.entry, 0)) return false;
             attempt.privateContinuationBindingsReleased = true;
         }
         attempt.privateCleanupPhase = Phase::Coordinators;
@@ -36073,15 +36078,15 @@ bool ServicePrivateInitialQueuePinGroupCleanup(
     if (attempt.privateCleanupPhase == Phase::Coordinators) {
         if (!attempt.privateInitialCoordinatorRolledBack) {
             if (!engine.decisions.RollbackPreparedFrontierDecision(
-                    attempt.initialQueueCoordinator,
-                    attempt.initialQueueCoordinator)) return false;
+                    attempt.QueueCoordinators().initialQueueCoordinator,
+                    attempt.QueueCoordinators().initialQueueCoordinator)) return false;
             attempt.privateInitialCoordinatorRolledBack = true;
         }
-        if (attempt.queueContinuationCoordinator.Valid() &&
+        if (attempt.QueueCoordinators().queueContinuationCoordinator.Valid() &&
             !attempt.privateContinuationCoordinatorRolledBack) {
             if (!engine.decisions.RollbackPreparedFrontierDecision(
-                    attempt.queueContinuationCoordinator,
-                    attempt.queueContinuationCoordinator)) return false;
+                    attempt.QueueCoordinators().queueContinuationCoordinator,
+                    attempt.QueueCoordinators().queueContinuationCoordinator)) return false;
             attempt.privateContinuationCoordinatorRolledBack = true;
         }
         attempt.privateCleanupPhase = Phase::StopQueued;
@@ -36171,13 +36176,13 @@ bool ServicePrivateInitialQueuePinGroupCleanup(
         }
         if (!attempt.privateInitialActivationCancelled) {
             if (!engine.decisions.CancelPreparedFrontierActivation(
-                    attempt.initialQueueCoordinator)) return false;
+                    attempt.QueueCoordinators().initialQueueCoordinator)) return false;
             attempt.privateInitialActivationCancelled = true;
         }
-        if (attempt.queueContinuationCoordinator.Valid() &&
+        if (attempt.QueueCoordinators().queueContinuationCoordinator.Valid() &&
             !attempt.privateContinuationActivationCancelled) {
             if (!engine.decisions.CancelPreparedFrontierActivation(
-                    attempt.queueContinuationCoordinator)) return false;
+                    attempt.QueueCoordinators().queueContinuationCoordinator)) return false;
             attempt.privateContinuationActivationCancelled = true;
         }
         if (!engine.RetireOriginalImmediateEntryLane(attempt, engine.mixer.BlocksRendered())) return false;
@@ -37438,7 +37443,7 @@ bool ServiceAbortingRegisteredPrivateVcRoot(harken::Engine& engine,
     const auto count = attempt.privateVcProducerCount;
     if (!attempt.active || !attempt.producerAbortPending || count == 0 ||
         count > engine.actionPlayScratch.size() || !attempt.privateVcProducerHead.Valid() ||
-        attempt.initialQueueCoordinator.Valid()) return false;
+        attempt.QueueCoordinators().initialQueueCoordinator.Valid()) return false;
     const auto close = [&]() noexcept {
         auto token = attempt.privateVcProducerHead;
         for (std::uint32_t entry = 0; entry < count; ++entry) {
@@ -37996,11 +38001,11 @@ bool HasPlainInitialQueueCurrentLane(
         attempt.entryEventCount == 1 && attempt.entryQuantum == attempt.lastQuantum &&
         attempt.producerSlot == UINT32_MAX && attempt.producerGeneration == 0 &&
         attempt.privateVcProducerCount == 0 && !attempt.privateVcProducerHead.Valid() &&
-        !attempt.initialQueueCoordinator.Valid() &&
-        !attempt.initialQueueDescriptor.Valid() &&
-        !attempt.initialQueuePrimaryGroup.Exact() &&
-        !attempt.initialQueueCoordinatorArmGroup.Valid() &&
-        !attempt.queueContinuationCoordinator.Valid() &&
+        !attempt.QueueCoordinators().initialQueueCoordinator.Valid() &&
+        !attempt.QueueCoordinators().initialQueueDescriptor.Valid() &&
+        !attempt.QueueCoordinators().initialQueuePrimaryGroup.Exact() &&
+        !attempt.QueueCoordinators().initialQueueCoordinatorArmGroup.Valid() &&
+        !attempt.QueueCoordinators().queueContinuationCoordinator.Valid() &&
         attempt.queueContinuationCount == 0 && attempt.queueFutureCount == 0 &&
         !root.frontierEntry.Valid() && !root.variableControlInstance.Valid() &&
         root.identity == attempt.initialService && root.InvocationValid() &&
@@ -38336,10 +38341,10 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
             bool ownedRootFailure = false;
             if (!privateCleanupFinished && attempt.queueContinuationFailed &&
                 attempt.producerSlot == UINT32_MAX &&
-                attempt.initialQueueCoordinator.Valid()) {
+                attempt.QueueCoordinators().initialQueueCoordinator.Valid()) {
                 harken::DecisionCommittedSnapshot decision{};
-                if (!engine.decisions.CaptureCommitted(attempt.initialQueueCoordinator, &decision)) continue;
-                if (decision.participantCount == 0 && attempt.initialQueueDescriptor.Valid()) {
+                if (!engine.decisions.CaptureCommitted(attempt.QueueCoordinators().initialQueueCoordinator, &decision)) continue;
+                if (decision.participantCount == 0 && attempt.QueueCoordinators().initialQueueDescriptor.Valid()) {
                     if (!FailedRootQueueCoordinatorOwned(engine, attempt,
                             observedAudioSequence)) continue;
                     ownedRootFailure = true;
@@ -38379,9 +38384,9 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                         queue.pendingVersion !=
                             attempt.queueContinuationVersion.version) continue;
                     if (queue.world !=
-                            attempt.queueContinuationDescriptor.worldGeneration ||
+                            attempt.QueueCoordinators().queueContinuationDescriptor.worldGeneration ||
                         queue.rootInstance !=
-                            attempt.queueContinuationDescriptor.entry.owner.child ||
+                            attempt.QueueCoordinators().queueContinuationDescriptor.entry.owner.child ||
                         !engine.queueInstances.ProvePendingConditionalIdentity(
                             attempt.queueContinuationQueue,
                             attempt.queueContinuationVersion,
@@ -38421,8 +38426,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                     engine, attempt, observedAudioSequence)) continue;
             if (!engine.CancelOriginalQueueLaneGroups(
                     attempt.root, observedAudioSequence)) continue;
-            attempt.initialQueuePrimaryGroup = {};
-            attempt.queueContinuationPrimaryGroup = {};
+            attempt.ClearQueuePrimaryGroups();
             if (!MarkQueueContinuationGroupsCancelled(engine, attempt) ||
                 !MarkQueueFutureGroupsCancelled(engine, attempt))
                 continue;
@@ -38435,7 +38439,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
             if (privateCleanupFinished) {
                 // Actual private rollback has returned every native reader.
                 // Route its retained Queue through the normal native failure path.
-                const auto& descriptor = attempt.initialQueueDescriptor;
+                const auto& descriptor = attempt.QueueCoordinators().initialQueueDescriptor;
                 auto* initial = engine.ResolvePlayableService(attempt.initialService,
                     descriptor.entry.owner.child, descriptor.entry.owner.childEpoch);
                 if (initial == nullptr || !initial->InvocationValid() ||
@@ -38453,7 +38457,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                     !attempt.privateInitialBindingsReleased ||
                     !attempt.privateInitialCoordinatorRolledBack ||
                     !attempt.privateInitialActivationCancelled ||
-                    (attempt.queueContinuationDescriptor.Valid() &&
+                    (attempt.QueueCoordinators().queueContinuationDescriptor.Valid() &&
                      (!attempt.privateContinuationBindingsReleased ||
                       !attempt.privateContinuationCoordinatorRolledBack ||
                       !attempt.privateContinuationActivationCancelled))) continue;
@@ -38556,15 +38560,15 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                 });
             const auto* initialActivation =
                 engine.decisions.ResolveFrontierActivation(
-                    attempt.initialQueueCoordinator);
+                    attempt.QueueCoordinators().initialQueueCoordinator);
             const bool preHandoffCommitted =
-                attempt.initialQueueCoordinator.Valid() &&
+                attempt.QueueCoordinators().initialQueueCoordinator.Valid() &&
                 initialService != engine.playableServices.end() &&
                 !initialService->frontierEntry.Valid() &&
                 initialActivation != nullptr &&
                 initialActivation->State() !=
                     harken::FrontierReceiptState::Prepared &&
-                !engine.decisions.IsOpen(attempt.initialQueueCoordinator);
+                !engine.decisions.IsOpen(attempt.QueueCoordinators().initialQueueCoordinator);
             if (preHandoffCommitted) {
                 attempt.queueContinuationFailed = true;
                 if (!ReleaseQueueContinuationReaderPins(
@@ -38584,10 +38588,10 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                      member.phase == harken::EnginePlayableStartPhase::PendingImmediateEntry &&
                      member.pendingImmediateEntry);
             if (hasPendingMember) continue;
-            if (attempt.producerSlot == UINT32_MAX && attempt.initialQueueCoordinator.Valid() &&
-                !attempt.initialQueueDescriptor.Valid()) {
+            if (attempt.producerSlot == UINT32_MAX && attempt.QueueCoordinators().initialQueueCoordinator.Valid() &&
+                !attempt.QueueCoordinators().initialQueueDescriptor.Valid()) {
                 harken::DecisionCommittedSnapshot decision{};
-                if (!engine.decisions.CaptureCommitted(attempt.initialQueueCoordinator, &decision) ||
+                if (!engine.decisions.CaptureCommitted(attempt.QueueCoordinators().initialQueueCoordinator, &decision) ||
                     (decision.participantCount == 0 &&
                         !PrivateStoppedRootQueueCoordinatorReady(engine, attempt))) continue;
                 if (decision.participantCount == 0) {
@@ -38614,8 +38618,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                     engine, attempt, observedAudioSequence) ||
                 !engine.CancelOriginalQueueLaneGroups(
                     attempt.root, observedAudioSequence)) continue;
-            attempt.initialQueuePrimaryGroup = {};
-            attempt.queueContinuationPrimaryGroup = {};
+            attempt.ClearQueuePrimaryGroups();
             if (!MarkQueueContinuationGroupsCancelled(engine, attempt) ||
                 !MarkQueueFutureGroupsCancelled(engine, attempt))
                 continue;
@@ -38645,7 +38648,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
         const bool laneInvalidated = observation.missed ||
             (observation.cancelled && !engine.HasSelectedOriginalQueueReplacement(attempt));
         const bool initialQueueContinuationFailed =
-            attempt.queueContinuationCoordinator.Valid() && laneInvalidated;
+            attempt.QueueCoordinators().queueContinuationCoordinator.Valid() && laneInvalidated;
         bool variableControlQueueFailed = false;
         if (attempt.queueContinuationCount != 0 && observation.complete) {
             auto recordIndex = attempt.queueContinuationHead;
@@ -38798,8 +38801,8 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
         attempt.queueContinuationFailed =
             attempt.queueContinuationFailed ||
             initialQueueContinuationFailed || variableControlQueueFailed;
-        if (laneInvalidated && (attempt.initialQueueCoordinator.Valid() ||
-            attempt.queueContinuationCoordinator.Valid())) {
+        if (laneInvalidated && (attempt.QueueCoordinators().initialQueueCoordinator.Valid() ||
+            attempt.QueueCoordinators().queueContinuationCoordinator.Valid())) {
             const auto cancelEntry = [&](harken::DecisionToken coordinator,
                     const harken::FrontierActivationDescriptor& descriptor) {
                 if (!coordinator.Valid() || !descriptor.Valid()) return true;
@@ -38819,10 +38822,10 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                         : harken::AudioSliceInvalidateReason::Cancel);
                 return result != harken::FrontierCancelDisposition::Stale;
             };
-            if (!cancelEntry(attempt.initialQueueCoordinator,
-                    attempt.initialQueueDescriptor) ||
-                !cancelEntry(attempt.queueContinuationCoordinator,
-                    attempt.queueContinuationDescriptor)) {
+            if (!cancelEntry(attempt.QueueCoordinators().initialQueueCoordinator,
+                    attempt.QueueCoordinators().initialQueueDescriptor) ||
+                !cancelEntry(attempt.QueueCoordinators().queueContinuationCoordinator,
+                    attempt.QueueCoordinators().queueContinuationDescriptor)) {
                 engine.runtimeRecreateRequired = true;
                 continue;
             }
@@ -39021,18 +39024,18 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
         if (!observation.complete) continue;
         bool initialQueueApplied = false;
         const bool initialQueue = attempt.producerSlot == UINT32_MAX &&
-            attempt.initialQueueCoordinator.Valid();
+            attempt.QueueCoordinators().initialQueueCoordinator.Valid();
         if (initialQueue) {
             const auto* activation = engine.decisions.ResolveFrontierActivation(
-                attempt.initialQueueCoordinator);
+                attempt.QueueCoordinators().initialQueueCoordinator);
             harken::FrontierActivationReceipt receipt{};
             if (activation == nullptr ||
                 !(activation->Descriptor().entry ==
-                  attempt.initialQueueDescriptor.entry)) {
+                  attempt.QueueCoordinators().initialQueueDescriptor.entry)) {
                 engine.runtimeRecreateRequired = true;
                 continue;
             }
-            const auto read = activation->Read(attempt.initialQueueDescriptor.entry,
+            const auto read = activation->Read(attempt.QueueCoordinators().initialQueueDescriptor.entry,
                 observedAudioSequence, &receipt);
             // Audio can finish after this service pass captured its completion fence.
             if (read == harken::FrontierReceiptRead::InFlight) continue;
@@ -39078,7 +39081,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                 member.immediateLane.generation == attempt.lane.generation)
                 member.immediateLane = {};
             if (attempt.originalLaneDemand.groups == 0 && attempt.originalLaneDemand.members == 0 &&
-                attempt.entryEventCount == 1 && !attempt.initialQueueCoordinator.Valid() &&
+                attempt.entryEventCount == 1 && !attempt.QueueCoordinators().initialQueueCoordinator.Valid() &&
                 member.PendingImmediateCohortRoot() == attempt.root &&
                 member.queueNaturalEnd && !member.queueSignalOnlyNoOverlap &&
                 member.QueuePayload().queueCurrentScheduleLeafCount == 1 && member.frontierArmPin.Valid() &&
@@ -40094,7 +40097,7 @@ bool PendingVariableGroupHasDeterministicTreeDomain(harken::Engine& engine,
         return engine.CanBeginPendingVariableQueueReprepare(
             const_cast<harken::EngineActionPlayScratch&>(producer), attempt, group, false);
     if (attempt.queueContinuationCount != 0 || attempt.queueFutureCount != 0 ||
-        attempt.initialQueueCoordinator.Valid() || row.Invocation().variableControlOuterRootInstance != 0 ||
+        attempt.QueueCoordinators().initialQueueCoordinator.Valid() || row.Invocation().variableControlOuterRootInstance != 0 ||
         producer.frontierQueueCount != 0 ||
         producer.queueFutureAttemptCount != 0 ||
         !engine.MatchesPendingVariableGroupTopology(group, row) ||
@@ -40627,7 +40630,7 @@ bool FileRegisteredPrivateVcRoot(harken::Engine& engine,
     harken::EngineImmediateEntryAttempt& attempt, std::uint64_t earliestFrame,
     std::uint64_t* outAnchor, bool* outWaiting, bool captureForStop = false) noexcept {
     if (outWaiting != nullptr) *outWaiting = false;
-    if (attempt.privateVcProducerCount == 0 || attempt.initialQueueCoordinator.Valid() ||
+    if (attempt.privateVcProducerCount == 0 || attempt.QueueCoordinators().initialQueueCoordinator.Valid() ||
         !MatchesPrivateImmediateVcProducerChain(engine, attempt, true)) return false;
     auto pendingToken = attempt.privateVcProducerHead;
     for (std::uint32_t index = 0; index < attempt.privateVcProducerCount; ++index) {
@@ -42909,7 +42912,7 @@ bool ProvePendingPrivateVcRootPublication(harken::Engine& engine,
     PendingPrivateVcRootPublicationProof& proof) noexcept {
     if (&proof.engine != &engine || proof.lane.Valid() || proof.arms.Valid() ||
         proof.gate.Valid() || proof.groups.Valid() || proof.activationCount != 0 ||
-        attempt.privateVcProducerCount == 0 || attempt.initialQueueCoordinator.Valid() ||
+        attempt.privateVcProducerCount == 0 || attempt.QueueCoordinators().initialQueueCoordinator.Valid() ||
         static_cast<std::size_t>(attempt.privateVcProducerCount) + attempt.queueFutureCount +
             attempt.queueContinuationCount > engine.initialRootActivationPublicationProofs.size() ||
         queueProgramCount > engine.initialQueueTimingProgramsScratch.size() ||
@@ -43148,7 +43151,7 @@ bool BindPendingPrivateVcRoot(harken::Engine& engine,
     auto& nativeOwners = engine.initialPendingVariableOwnerScratch;
     if (count == 0 ||
         count > nativeOwners.size() ||
-        attempt.initialQueueCoordinator.Valid() || engine.config.blockFrames == 0 ||
+        attempt.QueueCoordinators().initialQueueCoordinator.Valid() || engine.config.blockFrames == 0 ||
         !MatchesPrivateImmediateVcProducerChain(engine, attempt, true) ||
         !engine.actionPlayScratch.IsConstructed(attempt.privateVcProducerHead.slot) ||
         &engine.actionPlayScratch[attempt.privateVcProducerHead.slot] != &scratch || scratch.row != &row) return false;
@@ -44547,7 +44550,7 @@ void ServicePendingImmediateEntries(
         const auto root = row.PendingImmediateCohortRoot();
         if (auto* original = FindImmediateEntryAttempt(engine, root); original != nullptr) {
             if (original->privateVcProducerCount != 0 && row.identity != original->initialService) continue;
-            if (original->initialQueueCoordinator.Valid() &&
+            if (original->QueueCoordinators().initialQueueCoordinator.Valid() &&
                 original->producerSlot == UINT32_MAX && !original->plainSelected &&
                 !engine.HasInitialSoundQueueCohort(*original) &&
                 row.identity == original->initialService && row.queueMode &&
@@ -44562,7 +44565,7 @@ void ServicePendingImmediateEntries(
                 }
             }
             if ((engine.HasInitialSoundQueueCohort(*original) ||
-                 original->initialQueueCoordinator.Valid()) &&
+                 original->QueueCoordinators().initialQueueCoordinator.Valid()) &&
                 row.identity != original->initialService) continue;
             if (original->plainSelected) {
                 ServiceOriginalPlainEntry(engine, *original);
@@ -45274,7 +45277,7 @@ void ServicePendingImmediateEntries(
         std::size_t queueGroupCount = 0;
         std::size_t queueHolderCount = 0;
         const bool hasQueueTimingBank = attempt != nullptr &&
-            (attempt->initialQueueCoordinator.Valid() ||
+            (attempt->QueueCoordinators().initialQueueCoordinator.Valid() ||
              attempt->queueContinuationCount != 0 ||
              findOccupiedService(root,
                  [&](const auto& holder) {
@@ -45289,9 +45292,9 @@ void ServicePendingImmediateEntries(
                  &queueGroupCount, &queueHolderCount));
         harken::DecisionCommittedSnapshot initialCoordinator{};
         const bool independentCoordinator = attempt != nullptr &&
-            attempt->producerSlot == UINT32_MAX && attempt->initialQueueCoordinator.Valid();
+            attempt->producerSlot == UINT32_MAX && attempt->QueueCoordinators().initialQueueCoordinator.Valid();
         if (independentCoordinator && !engine.decisions.CaptureCommitted(
-                attempt->initialQueueCoordinator, &initialCoordinator)) continue;
+                attempt->QueueCoordinators().initialQueueCoordinator, &initialCoordinator)) continue;
         if (independentCoordinator) {
             harken::ArmGroupSnapshot arms{};
             auto& groups = engine.initialQueueLaneGroupsScratch;
@@ -45299,18 +45302,18 @@ void ServicePendingImmediateEntries(
                 attempt->root, groups.data(), groups.size());
             std::size_t primaryMatches = 0;
             for (std::size_t index = 0; index < std::min<std::size_t>(count, groups.size()); ++index)
-                primaryMatches += groups[index].identity == attempt->initialQueuePrimaryGroup;
+                primaryMatches += groups[index].identity == attempt->QueueCoordinators().initialQueuePrimaryGroup;
             if (initialCoordinator.continuationGeneration != attempt->generation ||
                 initialCoordinator.ticket.sequence != row.ticket ||
                 initialCoordinator.world != row.Invocation().worldGeneration ||
                 initialCoordinator.transport != engine.timelinePool.Epoch() ||
-                initialCoordinator.pages.slot != attempt->initialQueuePrimaryGroup.committedRow ||
-                initialCoordinator.pages.generation != attempt->initialQueuePrimaryGroup.rowClaimGeneration ||
-                initialCoordinator.armGroup.slot != attempt->initialQueueCoordinatorArmGroup.slot ||
-                initialCoordinator.armGroup.generation != attempt->initialQueueCoordinatorArmGroup.generation ||
-                !engine.armGroups.Capture(attempt->initialQueueCoordinatorArmGroup, &arms) ||
-                arms.parent.slot != attempt->initialQueueCoordinator.slot ||
-                arms.parent.generation != attempt->initialQueueCoordinator.generation ||
+                initialCoordinator.pages.slot != attempt->QueueCoordinators().initialQueuePrimaryGroup.committedRow ||
+                initialCoordinator.pages.generation != attempt->QueueCoordinators().initialQueuePrimaryGroup.rowClaimGeneration ||
+                initialCoordinator.armGroup.slot != attempt->QueueCoordinators().initialQueueCoordinatorArmGroup.slot ||
+                initialCoordinator.armGroup.generation != attempt->QueueCoordinators().initialQueueCoordinatorArmGroup.generation ||
+                !engine.armGroups.Capture(attempt->QueueCoordinators().initialQueueCoordinatorArmGroup, &arms) ||
+                arms.parent.slot != attempt->QueueCoordinators().initialQueueCoordinator.slot ||
+                arms.parent.generation != attempt->QueueCoordinators().initialQueueCoordinator.generation ||
                 count > groups.size() || primaryMatches != 1) continue;
         }
         const bool rootCurrentOnly = independentCoordinator && initialCoordinator.participantCount == 0;
@@ -45327,16 +45330,16 @@ void ServicePendingImmediateEntries(
                 initialCoordinator.transport == engine.timelinePool.Epoch() &&
                 initialCoordinator.continuationGeneration == attempt->generation &&
                 initialCoordinator.sliceCount == 1 && initialCoordinator.consumedSlices == 0 &&
-                initialCoordinator.pages.slot == attempt->initialQueuePrimaryGroup.committedRow &&
-                initialCoordinator.pages.generation == attempt->initialQueuePrimaryGroup.rowClaimGeneration &&
-                initialCoordinator.armGroup.slot == attempt->initialQueueCoordinatorArmGroup.slot &&
-                initialCoordinator.armGroup.generation == attempt->initialQueueCoordinatorArmGroup.generation &&
-                engine.armGroups.Capture(attempt->initialQueueCoordinatorArmGroup, &arms) &&
-                arms.parent.slot == attempt->initialQueueCoordinator.slot &&
-                arms.parent.generation == attempt->initialQueueCoordinator.generation &&
+                initialCoordinator.pages.slot == attempt->QueueCoordinators().initialQueuePrimaryGroup.committedRow &&
+                initialCoordinator.pages.generation == attempt->QueueCoordinators().initialQueuePrimaryGroup.rowClaimGeneration &&
+                initialCoordinator.armGroup.slot == attempt->QueueCoordinators().initialQueueCoordinatorArmGroup.slot &&
+                initialCoordinator.armGroup.generation == attempt->QueueCoordinators().initialQueueCoordinatorArmGroup.generation &&
+                engine.armGroups.Capture(attempt->QueueCoordinators().initialQueueCoordinatorArmGroup, &arms) &&
+                arms.parent.slot == attempt->QueueCoordinators().initialQueueCoordinator.slot &&
+                arms.parent.generation == attempt->QueueCoordinators().initialQueueCoordinator.generation &&
                 arms.memberCount == 0 && count == 1 &&
-                group.identity == attempt->initialQueuePrimaryGroup &&
-                !attempt->queueContinuationCoordinator.Valid() &&
+                group.identity == attempt->QueueCoordinators().initialQueuePrimaryGroup &&
+                !attempt->QueueCoordinators().queueContinuationCoordinator.Valid() &&
                 attempt->queueContinuationCount == 0 && attempt->queueFutureCount == 0 &&
                 ValidateInitialRootQueueCurrent(engine, row) &&
                 row.schedule.transactionId == row.ticket && row.schedule.events != nullptr &&
@@ -45367,7 +45370,7 @@ void ServicePendingImmediateEntries(
             queueManifestReady = queueManifestReady &&
                 queueMemberCount == expectedTimingMembers &&
                 queueHolderCount == expectedFutureHolders;
-            if (queueManifestReady && attempt->initialQueueCoordinator.Valid() &&
+            if (queueManifestReady && attempt->QueueCoordinators().initialQueueCoordinator.Valid() &&
                 attempt->producerSlot == UINT32_MAX) {
                 auto& captured = engine.initialQueueLaneGroupsScratch;
                 const auto capturedCount =
@@ -45376,22 +45379,22 @@ void ServicePendingImmediateEntries(
                 queueManifestReady =
                     capturedCount == queueGroupCount + 1u +
                         static_cast<std::size_t>(
-                            attempt->queueContinuationCoordinator.Valid()) &&
+                            attempt->QueueCoordinators().queueContinuationCoordinator.Valid()) &&
                     capturedCount <= captured.size() &&
-                    attempt->initialQueuePrimaryGroup.Exact();
+                    attempt->QueueCoordinators().initialQueuePrimaryGroup.Exact();
                 std::size_t primaryMatches = 0;
                 for (std::size_t index = 0;
                      queueManifestReady && index < capturedCount; ++index)
                     primaryMatches += captured[index].identity ==
-                        attempt->initialQueuePrimaryGroup;
+                        attempt->QueueCoordinators().initialQueuePrimaryGroup;
                 queueManifestReady = queueManifestReady &&
                     primaryMatches == 1;
-                if (attempt->queueContinuationCoordinator.Valid()) {
+                if (attempt->QueueCoordinators().queueContinuationCoordinator.Valid()) {
                     std::size_t continuationMatches = 0;
                     for (std::size_t index = 0;
                          queueManifestReady && index < capturedCount; ++index)
                         continuationMatches += captured[index].identity ==
-                            attempt->queueContinuationPrimaryGroup;
+                            attempt->QueueCoordinators().queueContinuationPrimaryGroup;
                     queueManifestReady = queueManifestReady &&
                         continuationMatches == 1;
                 }
@@ -45525,7 +45528,7 @@ void ServicePendingImmediateEntries(
             std::size_t matches = 0;
             for (std::size_t index = 0;
                  index < queueGroupCount + 1u +
-                     static_cast<std::size_t>(attempt->queueContinuationCoordinator.Valid());
+                     static_cast<std::size_t>(attempt->QueueCoordinators().queueContinuationCoordinator.Valid());
                  ++index) {
                 const auto& candidate = engine.initialQueueLaneGroupsScratch[index].identity;
                 if (candidate.decision.slot == decision.slot &&
@@ -45607,19 +45610,19 @@ void ServicePendingImmediateEntries(
         }
 
         if (!filingFailed && attempt != nullptr &&
-            attempt->initialQueueCoordinator.Valid()) {
-            auto& descriptor = attempt->initialQueueDescriptor;
+            attempt->QueueCoordinators().initialQueueCoordinator.Valid()) {
+            auto& descriptor = attempt->PreparedQueueCoordinators().initialQueueDescriptor;
             const auto* control = engine.decisions.PrepareFrontierControlProgram(
-                attempt->initialQueueCoordinator, attempt->generation);
+                attempt->QueueCoordinators().initialQueueCoordinator, attempt->generation);
             if (control == nullptr ||
                 eventCount >= engine.pendingImmediateLaneEventsScratch.size() ||
                 queueHolderCount > UINT32_MAX) {
                 filingFailed = true;
             } else {
                 descriptor = {};
-                descriptor.entry = {attempt->initialQueueCoordinator,
+                descriptor.entry = {attempt->QueueCoordinators().initialQueueCoordinator,
                     attempt->generation, ownerIdentity(row)};
-                descriptor.primary = attempt->initialQueuePrimaryGroup;
+                descriptor.primary = attempt->QueueCoordinators().initialQueuePrimaryGroup;
                 descriptor.worldGeneration = row.Invocation().worldGeneration;
                 descriptor.worldSemanticFingerprint =
                     row.root.expectedProgramSemanticFingerprint;
@@ -45695,7 +45698,7 @@ void ServicePendingImmediateEntries(
             }
         }
         if (!filingFailed && attempt != nullptr &&
-            attempt->queueContinuationCoordinator.Valid()) {
+            attempt->QueueCoordinators().queueContinuationCoordinator.Valid()) {
             auto* holder = serviceByToken(attempt->queueContinuationService);
             if (holder != nullptr && holder->PendingImmediateCohortRoot() != root)
                 holder = nullptr;
@@ -45706,9 +45709,9 @@ void ServicePendingImmediateEntries(
                     return candidate.service ==
                         attempt->queueContinuationService;
                 });
-            auto& descriptor = attempt->queueContinuationDescriptor;
+            auto& descriptor = attempt->PreparedQueueCoordinators().queueContinuationDescriptor;
             const auto* control = engine.decisions.PrepareFrontierControlProgram(
-                attempt->queueContinuationCoordinator,
+                attempt->QueueCoordinators().queueContinuationCoordinator,
                 attempt->generation);
             if (holder == nullptr ||
                 timing == engine.initialQueueTimingMembersScratch.begin() +
@@ -45720,9 +45723,9 @@ void ServicePendingImmediateEntries(
             } else {
                 descriptor = {};
                 descriptor.entry = {
-                    attempt->queueContinuationCoordinator,
+                    attempt->QueueCoordinators().queueContinuationCoordinator,
                     attempt->generation, ownerIdentity(*holder)};
-                descriptor.primary = attempt->queueContinuationPrimaryGroup;
+                descriptor.primary = attempt->QueueCoordinators().queueContinuationPrimaryGroup;
                 descriptor.worldGeneration =
                     holder->Invocation().worldGeneration;
                 descriptor.worldSemanticFingerprint =
@@ -45774,16 +45777,16 @@ void ServicePendingImmediateEntries(
             queueEventCount >
                 engine.pendingImmediateLaneEventsScratch.size() - eventCount)
             filingFailed = true;
-        if (!filingFailed && attempt->initialQueueCoordinator.Valid()) {
+        if (!filingFailed && attempt->QueueCoordinators().initialQueueCoordinator.Valid()) {
             for (std::size_t index = 0;
                  !filingFailed && index < queueGroupCount + 1u +
                     static_cast<std::size_t>(
-                        attempt->queueContinuationCoordinator.Valid());
+                        attempt->QueueCoordinators().queueContinuationCoordinator.Valid());
                  ++index) {
                 const auto identity = engine.
                     initialQueueLaneGroupsScratch[index].identity;
                 std::uint64_t relative = 0;
-                if (identity == attempt->queueContinuationPrimaryGroup) {
+                if (identity == attempt->QueueCoordinators().queueContinuationPrimaryGroup) {
                     const auto timing = std::find_if(
                         engine.initialQueueTimingMembersScratch.begin(),
                         engine.initialQueueTimingMembersScratch.begin() +
@@ -45800,7 +45803,7 @@ void ServicePendingImmediateEntries(
                         break;
                     }
                     relative = timing->newGroupFrames[1] - startFrame;
-                } else if (!(identity == attempt->initialQueuePrimaryGroup)) {
+                } else if (!(identity == attempt->QueueCoordinators().initialQueuePrimaryGroup)) {
                     bool matched = false;
                     for (std::size_t group = 0;
                          group < queueGroupCount; ++group) {
@@ -45956,15 +45959,15 @@ void ServicePendingImmediateEntries(
                     : harken::FrontierOperationKind::Entry;
                 event.frontier.entry =
                     holder->queueFirstContinuationLane
-                        ? attempt->queueContinuationDescriptor.entry
-                        : attempt->initialQueueDescriptor.entry;
+                        ? attempt->QueueCoordinators().queueContinuationDescriptor.entry
+                        : attempt->QueueCoordinators().initialQueueDescriptor.entry;
                 event.frontier.owner = ownerIdentity(*holder);
                 event.frontier.group = identity;
                 event.frontier.transport = engine.timelinePool.Epoch();
                 event.frontier.world =
                     holder->queueFirstContinuationLane
-                        ? attempt->queueContinuationDescriptor.worldGeneration
-                        : attempt->initialQueueDescriptor.worldGeneration;
+                        ? attempt->QueueCoordinators().queueContinuationDescriptor.worldGeneration
+                        : attempt->QueueCoordinators().initialQueueDescriptor.worldGeneration;
                 const bool naturalTarget = conditionalTransition && holder->QueuePayload().queueUnplacedGroupCount == 3u &&
                     group.sliceIndex == 1u;
                 std::uint32_t targetEvents = 0;
@@ -45974,7 +45977,7 @@ void ServicePendingImmediateEntries(
                             engine.initialQueueTimingEventsScratch[targetIndex].newExecuteFrame == group.executeFrame;
                 event.frontier.operationEventCount = conditionalTransition
                     ? naturalTarget ? targetEvents
-                                    : attempt->queueContinuationDescriptor.expectedEntryEventCount
+                                    : attempt->QueueCoordinators().queueContinuationDescriptor.expectedEntryEventCount
                     : 1u;
                 std::uint32_t transitionOrdinal = naturalTarget ? 0u : 1u;
                 if (conditionalTransition)
@@ -46020,8 +46023,8 @@ void ServicePendingImmediateEntries(
                 ++eventCount;
             }
         }
-        if (!filingFailed && attempt->queueContinuationCoordinator.Valid()) {
-            const auto& continuationOwner = attempt->queueContinuationDescriptor.entry.owner;
+        if (!filingFailed && attempt->QueueCoordinators().queueContinuationCoordinator.Valid()) {
+            const auto& continuationOwner = attempt->QueueCoordinators().queueContinuationDescriptor.entry.owner;
             auto* holder = engine.ResolvePlayableService(attempt->queueContinuationService,
                 continuationOwner.child, continuationOwner.childEpoch);
             if (holder != nullptr && holder->HasFeatureArrays() && holder->queueFirstContinuationLane &&
@@ -46194,13 +46197,13 @@ void ServicePendingImmediateEntries(
                         member.QueuePayload().queueInitialCurrentDelayedCount != 0u &&
                         leaf < member.QueuePayload().queueInitialCurrentMemberLeafCount &&
                         member.QueuePayload().queueInitialCurrentMemberIndices[leaf] != UINT16_MAX;
-                    if (attempt->initialQueueCoordinator.Valid() && !rootCurrentOnly &&
+                    if (attempt->QueueCoordinators().initialQueueCoordinator.Valid() && !rootCurrentOnly &&
                         !initialDelayed) {
                         harken::Plan03PageGroupView primary{};
                         const auto arm = program->armToken;
                         if (arm.slot >= engine.initialFrontierArmPins.size() ||
                             !engine.timelinePool.ResolvePlan03GroupSliceProducer(
-                                attempt->initialQueuePrimaryGroup, &primary) ||
+                                attempt->QueueCoordinators().initialQueuePrimaryGroup, &primary) ||
                             primary.frontier == nullptr || primary.lease == nullptr) {
                             filingFailed = true;
                             break;
@@ -46214,7 +46217,7 @@ void ServicePendingImmediateEntries(
                             break;
                         }
                         owned.arm = arm;
-                        owned.entry = attempt->initialQueueDescriptor.entry;
+                        owned.entry = attempt->QueueCoordinators().initialQueueDescriptor.entry;
                     }
                     program->entryAnchorFrame = memberBase;
                     if (rootCurrentOnly) {
@@ -46242,7 +46245,7 @@ void ServicePendingImmediateEntries(
             }
             return !filingFailed;
         };
-        if (!filingFailed && attempt->initialQueueCoordinator.Valid()) {
+        if (!filingFailed && attempt->QueueCoordinators().initialQueueCoordinator.Valid()) {
             if (startFrame != provisionalQueueAnchor)
                 filingFailed = !CollectInitialQueueTimingMembers(
                     engine, *attempt, startFrame, &queueMemberCount,
@@ -46337,11 +46340,11 @@ void ServicePendingImmediateEntries(
                 filingFailed = !engine.timelinePool.
                     RebaseImmediateLaneGroups(root, startFrame);
             if (!filingFailed &&
-                attempt->initialQueueCoordinator.Valid()) {
-                auto& descriptor = attempt->initialQueueDescriptor;
+                attempt->QueueCoordinators().initialQueueCoordinator.Valid()) {
+                auto& descriptor = attempt->PreparedQueueCoordinators().initialQueueDescriptor;
                 descriptor.order.executeFrame = startFrame;
                 filingFailed = !engine.decisions.PrepareFrontierActivation(
-                    attempt->initialQueueCoordinator, descriptor,
+                    attempt->QueueCoordinators().initialQueueCoordinator, descriptor,
                     engine.timelinePool);
                 harken::FrontierGroupBinding coordinator{};
                 coordinator.role = harken::FrontierGroupRole::Coordinator;
@@ -46360,8 +46363,8 @@ void ServicePendingImmediateEntries(
                         BindPlan03GroupFrontier(
                             descriptor.primary, coordinator);
                 if (!filingFailed &&
-                    attempt->queueContinuationCoordinator.Valid()) {
-                    auto& next = attempt->queueContinuationDescriptor;
+                    attempt->QueueCoordinators().queueContinuationCoordinator.Valid()) {
+                    auto& next = attempt->QueueCoordinators().queueContinuationDescriptor;
                     auto* holder = serviceByToken(attempt->queueContinuationService);
                     harken::Plan03GroupSliceIdentity prerequisiteMember{};
                     std::size_t prerequisiteCount = 0;
@@ -46369,7 +46372,7 @@ void ServicePendingImmediateEntries(
                         holder->PendingImmediateCohortRoot() == root) {
                         const auto capturedCount = queueGroupCount + 1u +
                             static_cast<std::size_t>(
-                                attempt->queueContinuationCoordinator.Valid());
+                                attempt->QueueCoordinators().queueContinuationCoordinator.Valid());
                         for (std::size_t index = 0;
                              index < capturedCount; ++index) {
                             const auto identity = engine.
@@ -46386,7 +46389,7 @@ void ServicePendingImmediateEntries(
                     filingFailed = prerequisiteCount != 1u ||
                         !prerequisiteMember.Exact() ||
                         !engine.decisions.PrepareFrontierActivation(
-                            attempt->queueContinuationCoordinator, next,
+                            attempt->QueueCoordinators().queueContinuationCoordinator, next,
                             engine.timelinePool);
                     harken::FrontierGroupBinding nextCoordinator{};
                     nextCoordinator.role =
@@ -46435,7 +46438,7 @@ void ServicePendingImmediateEntries(
                     for (std::size_t candidate = 0;
                          candidate < queueGroupCount + 1u +
                             static_cast<std::size_t>(
-                                attempt->queueContinuationCoordinator.Valid());
+                                attempt->QueueCoordinators().queueContinuationCoordinator.Valid());
                          ++candidate) {
                         const auto& group = engine.
                             initialQueueLaneGroupsScratch[candidate].identity;
@@ -46458,7 +46461,7 @@ void ServicePendingImmediateEntries(
                         staged.decision.generation ==
                             engine.InitialQueueFilingFuture(*holder).queueDecision.generation;
                     const auto& memberDescriptor = conditional
-                        ? attempt->queueContinuationDescriptor : descriptor;
+                        ? attempt->QueueCoordinators().queueContinuationDescriptor : descriptor;
                     const bool naturalConditional = conditional && holder->QueuePayload().queueUnplacedGroupCount == 3u &&
                         engine.InitialQueueFilingFuture(*holder).queueSourceSchedule.eventCount == 1u && engine.InitialQueueFilingFuture(*holder).queueSourceControlArmCount == 1u && engine.InitialQueueFilingFuture(*holder).queueTransition.Valid();
                     binding.role = naturalConditional && staged.sliceIndex == 1u
@@ -46688,7 +46691,7 @@ void ServicePendingImmediateEntries(
             }
             successorMirrorsApplied = true;
         }
-        if (!filingFailed && attempt->initialQueueCoordinator.Valid() &&
+        if (!filingFailed && attempt->QueueCoordinators().initialQueueCoordinator.Valid() &&
             !engine.immediateActionLane.PinGroups(attempt->lane,
                 engine.timelinePool, engine.decisions,
                 engine.config.maxPlan03GroupHeadersPerPage)) {
@@ -46738,7 +46741,7 @@ void ServicePendingImmediateEntries(
                     const auto* program = leafProgram(member, leaf);
                     const bool plainTerminal = eventCount == 1 &&
                         attempt->originalLaneDemand.groups == 0 && attempt->originalLaneDemand.members == 0 &&
-                        !attempt->initialQueueCoordinator.Valid() && member.HasFeatureArrays() && member.queueNaturalEnd &&
+                        !attempt->QueueCoordinators().initialQueueCoordinator.Valid() && member.HasFeatureArrays() && member.queueNaturalEnd &&
                         !member.queueSignalOnlyNoOverlap && member.QueuePayload().queueCurrentScheduleLeafCount == 1 &&
                         IsInitialQueueTimingOnlyCurrent(member);
                     if (program == nullptr ||
@@ -46755,21 +46758,21 @@ void ServicePendingImmediateEntries(
         }
         if (!filingFailed && (!attempt->gate.Finalize(attempt->generation) ||
                 !attempt->gate.Commit(attempt->generation) ||
-                (attempt->initialQueueCoordinator.Valid() &&
+                (attempt->QueueCoordinators().initialQueueCoordinator.Valid() &&
                  (!engine.timelinePool.PublishImmediateLaneGroups(root) ||
                   !engine.decisions.PublishFrontierActivation(
-                      attempt->initialQueueCoordinator)))))
+                      attempt->QueueCoordinators().initialQueueCoordinator)))))
             filingFailed = true;
-        if (!filingFailed && attempt->initialQueueCoordinator.Valid() &&
+        if (!filingFailed && attempt->QueueCoordinators().initialQueueCoordinator.Valid() &&
             engine.immediateQueuePostC0PublishHookForTest != nullptr)
             engine.immediateQueuePostC0PublishHookForTest(engine, *attempt,
                 engine.immediateQueuePostC0PublishContextForTest);
-        if (!filingFailed && attempt->queueContinuationCoordinator.Valid()) {
+        if (!filingFailed && attempt->QueueCoordinators().queueContinuationCoordinator.Valid()) {
             if (engine.forceImmediateQueuePostC0PublishFailureForTest == 1u) {
                 engine.forceImmediateQueuePostC0PublishFailureForTest = 0;
                 filingFailed = true;
             } else if (!engine.decisions.PublishFrontierActivation(
-                    attempt->queueContinuationCoordinator))
+                    attempt->QueueCoordinators().queueContinuationCoordinator))
                 filingFailed = true;
         }
         if (!filingFailed) {
@@ -46845,7 +46848,7 @@ void ServicePendingImmediateEntries(
                     engine.initialQueuePartialPublishAbortContextForTest);
             if (attempt != nullptr) {
                 const auto* activation = rootCurrentOnly
-                    ? engine.decisions.ResolveFrontierActivation(attempt->initialQueueCoordinator)
+                    ? engine.decisions.ResolveFrontierActivation(attempt->QueueCoordinators().initialQueueCoordinator)
                     : nullptr;
                 if (activation != nullptr &&
                     (activation->State() == harken::FrontierReceiptState::Prepared ||
@@ -46879,11 +46882,11 @@ void ServicePendingImmediateEntries(
                             !engine.timelinePool.ResolvePlan03GroupSliceProducer(identity,&native) ||
                             native.frontier == nullptr || native.lease == nullptr)
                             return false;
-                        const auto* descriptor = native.frontier->entry == attempt->initialQueueDescriptor.entry
-                            ? &attempt->initialQueueDescriptor
-                            : (attempt->queueContinuationCoordinator.Valid() &&
-                                native.frontier->entry == attempt->queueContinuationDescriptor.entry
-                                ? &attempt->queueContinuationDescriptor : nullptr);
+                        const auto* descriptor = native.frontier->entry == attempt->QueueCoordinators().initialQueueDescriptor.entry
+                            ? &attempt->QueueCoordinators().initialQueueDescriptor
+                            : (attempt->QueueCoordinators().queueContinuationCoordinator.Valid() &&
+                                native.frontier->entry == attempt->QueueCoordinators().queueContinuationDescriptor.entry
+                                ? &attempt->QueueCoordinators().queueContinuationDescriptor : nullptr);
                         if (descriptor == nullptr ||
                             !InitialQueueNativeManifestOwnerMatches(engine, *attempt, *native.frontier, *descriptor) ||
                             !(native.frontier->primary == descriptor->primary) ||
@@ -46896,7 +46899,7 @@ void ServicePendingImmediateEntries(
                         } else return false;
                     }
                     return members != 0 && coordinators ==
-                        (attempt->queueContinuationCoordinator.Valid() ? 2u : 1u) &&
+                        (attempt->QueueCoordinators().queueContinuationCoordinator.Valid() ? 2u : 1u) &&
                         engine.immediateActionLane.PrivateInstalledInitialStartsRollbackShape(
                             attempt->lane,root,engine.timelineArms,engine.timelinePool);
                 };
@@ -46904,16 +46907,16 @@ void ServicePendingImmediateEntries(
                     attempt->producerSlot == UINT32_MAX &&
                     attempt->privateVcProducerCount == 0 &&
                     attempt->queueContinuationCount == 0 && attempt->queueFutureCount == 0 &&
-                    attempt->initialQueueDescriptor.expectedMemberCount != 0 &&
+                    attempt->QueueCoordinators().initialQueueDescriptor.expectedMemberCount != 0 &&
                     ownPreparedManifest() &&
                     attempt->gate.Observe(attempt->generation) ==
                         harken::ImmediateEntryAttemptState::Preparing &&
                     engine.immediateActionLane.OwnsNeverCommitted(attempt->lane, root) &&
-                    preparedActivationMatches(attempt->initialQueueCoordinator,
-                        attempt->initialQueueDescriptor) &&
-                    (!attempt->queueContinuationCoordinator.Valid() ||
-                        preparedActivationMatches(attempt->queueContinuationCoordinator,
-                            attempt->queueContinuationDescriptor));
+                    preparedActivationMatches(attempt->QueueCoordinators().initialQueueCoordinator,
+                        attempt->QueueCoordinators().initialQueueDescriptor) &&
+                    (!attempt->QueueCoordinators().queueContinuationCoordinator.Valid() ||
+                        preparedActivationMatches(attempt->QueueCoordinators().queueContinuationCoordinator,
+                            attempt->QueueCoordinators().queueContinuationDescriptor));
                 if ((privatePinGroupsFailed || installedPreparedInitial) &&
                     engine.immediateActionLane.PrivatePinGroupCount(
                         attempt->lane) != 0) {
@@ -46968,10 +46971,10 @@ void ServicePendingImmediateEntries(
             attempt->entryQuantum = startFrame / blockFrames;
             attempt->lastQuantum = lastQuantum;
             attempt->entryEventCount = eventCount;
-            if (attempt->initialQueueCoordinator.Valid()) {
-                row.frontierEntry = attempt->initialQueueDescriptor.entry;
+            if (attempt->QueueCoordinators().initialQueueCoordinator.Valid()) {
+                row.frontierEntry = attempt->QueueCoordinators().initialQueueDescriptor.entry;
                 row.frontierCoordinatorGroup =
-                    attempt->initialQueueCoordinatorArmGroup;
+                    attempt->QueueCoordinators().initialQueueCoordinatorArmGroup;
             }
             if (rootCurrentOnly) PublishInitialQueuePrograms(row);
             for (std::size_t index = 0; index < queueMemberCount; ++index) {
@@ -54423,7 +54426,7 @@ bool Engine::CapturePendingVariableQueueNativeOrigins(EngineActionPlayScratch& s
                     attempt->queueContinuationQueue.generation != service.queueInstance.generation ||
                     !SameCanonicalDecision(attempt->queueContinuationMemberDecision, service.QueueFiling().queueDecision)) return false;
                 candidate.recordKind = Origin::RecordKind::Singleton;
-                primary = identity == attempt->queueContinuationPrimaryGroup;
+                primary = identity == attempt->QueueCoordinators().queueContinuationPrimaryGroup;
             }
             const bool current = service.queueFirstContinuationLane &&
                 SameCanonicalDecision(identity.decision, service.initialQueueEntryDecision);
@@ -60914,7 +60917,7 @@ bool Engine::CanBeginPendingVariableQueueReprepare(EngineActionPlayScratch& scra
     using Origin = OriginalPendingVariableQueueNativeOrigin;
     if (scratch.row == nullptr || group.queueNativeOriginCount == 0 ||
         group.nestedInitialSideCount > group.nestedInitialSides.size() ||
-        attempt.initialQueueCoordinator.Valid() || attempt.queueContinuationService.Valid() ||
+        attempt.QueueCoordinators().initialQueueCoordinator.Valid() || attempt.queueContinuationService.Valid() ||
         !MatchesPendingVariableGroupTopology(group, *scratch.row, settled) ||
         !MatchesPendingVariableGroupRetirementFutureCensus(group) ||
         !MatchesPendingVariableQueueNativeOrigins(group) || !MatchesPendingVariableQueueRecordChains(attempt) ||
@@ -72215,7 +72218,7 @@ static PlayableControlStatus BeginPlayableCancellation(
             bool participant = false;
             bool installationPending = false;
             bool queueFree = attempt->queueContinuationCount == 0 && attempt->queueFutureCount == 0 &&
-                !attempt->initialQueueCoordinator.Valid();
+                !attempt->QueueCoordinators().initialQueueCoordinator.Valid();
             auto token = attempt->privateVcProducerHead;
             for (std::uint32_t index = 0; index < attempt->privateVcProducerCount; ++index) {
                 auto* member = FindFrontierAttempt(engine, token);
@@ -79507,9 +79510,9 @@ bool InitialQueueOriginalScratchRetryRetained(harken::Engine& engine,
     // Authenticate that remaining owner; a completed prefix alone must never
     // mask an independent Source cancellation refusal.
     return engine.OriginalSingleDecisionPreparation(
-               attempt->initialQueueCoordinatorReservation) != nullptr ||
+               attempt->QueueCoordinators().initialQueueCoordinatorReservation) != nullptr ||
         engine.OriginalSingleDecisionPreparation(
-            attempt->queueContinuationCoordinatorReservation) != nullptr;
+            attempt->QueueCoordinators().queueContinuationCoordinatorReservation) != nullptr;
 }
 
 bool InitialQueueOriginalAttemptRetryRetained(ImmediateActionPlan& plan,
@@ -79554,8 +79557,7 @@ bool RetireInitialQueueOriginalGroupPrefix(harken::Engine& engine,
     if (!scratch.initialOriginalGroupsDisposed &&
         !engine.CancelOriginalQueueLaneGroups(root, engine.mixer.BlocksRendered())) return false;
     scratch.initialOriginalGroupsDisposed = true;
-    attempt->initialQueuePrimaryGroup = {};
-    attempt->queueContinuationPrimaryGroup = {};
+    attempt->ClearQueuePrimaryGroups();
     bool storageRetained = false;
     if (attempt->lane.Valid()) {
         if (!engine.immediateActionLane.Cancel(attempt->lane)) return false;
@@ -87269,6 +87271,11 @@ bool ComputeImmediateEntryStorageDemand(const ImmediateActionPlan& plan, std::ui
     auto& engine = *plan.engine;
     *out = {};
     out->selectionProducers = preparedCount;
+    out->queueCoordinators = std::any_of(engine.playableServices.begin(), engine.playableServices.end(),
+        [&](const auto& holder) {
+            return holder.queueTimingPending && holder.PendingImmediateCohortRoot() == plan.rootHandle &&
+                (!IsInitialQueueTimingOnlyCurrent(holder) || IsInitialRootQueueTimingOnlyCurrent(holder));
+        });
     if (!plan.originalPlainSoundRoute) {
         // Cleanup retains this entry's original current and prepared future sources.
         // Shared references cannot increase the physical voice bound.
@@ -87818,14 +87825,7 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
             plan->result = VN_BACKPRESSURE;
             return false;
         }
-        const bool hasInitialQueueHolder = std::any_of(
-            engine.playableServices.begin(),
-            engine.playableServices.end(), [&](const auto& holder) {
-                return holder.queueTimingPending &&
-                    holder.PendingImmediateCohortRoot() == plan->rootHandle &&
-                    (!IsInitialQueueTimingOnlyCurrent(holder) ||
-                     IsInitialRootQueueTimingOnlyCurrent(holder));
-            });
+        const bool hasInitialQueueHolder = entryStorageDemand.queueCoordinators;
         if (hasInitialQueueHolder) {
             const bool rootCurrentOnly = preparedCount == 1 && plan->playCount == 1 &&
                 IsInitialRootQueueTimingOnlyCurrent(*play->row) &&
@@ -87918,24 +87918,24 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
                 primary.executeFrame = plan->admittedImmediateFrame;
                 if (!engine.PrepareOriginalQueueDecisionReservation(
                         coordinator,
-                        &attempt.initialQueueCoordinatorReservation)) {
+                        &attempt.PreparedQueueCoordinators().initialQueueCoordinatorReservation)) {
                     ReleaseImmediateActionPlays(plan, count);
                     plan->result = VN_BACKPRESSURE;
                     return false;
                 }
                 primary.decision =
-                    attempt.initialQueueCoordinatorReservation.Token();
+                    attempt.QueueCoordinators().initialQueueCoordinatorReservation.Token();
                 if (!engine.armGroups.Prepare(
                         primary.decision, nullptr, 0,
-                        &attempt.initialQueueCoordinatorArmGroup)) {
+                        &attempt.PreparedQueueCoordinators().initialQueueCoordinatorArmGroup)) {
                     ReleaseImmediateActionPlays(plan, count);
                     plan->result = VN_BACKPRESSURE;
                     return false;
                 }
-                attempt.initialQueueCoordinatorArmGroupPrepared = true;
+                attempt.PreparedQueueCoordinators().initialQueueCoordinatorArmGroupPrepared = true;
                 if (!engine.ReserveInitialSoundQueueCompanionPrimary(attempt, false,
                         plan->admittedImmediateFrame, primary,
-                        &attempt.initialQueuePrimaryGroup)) {
+                        &attempt.PreparedQueueCoordinators().initialQueuePrimaryGroup)) {
                     ReleaseImmediateActionPlays(plan, count);
                     plan->result = VN_BACKPRESSURE;
                     return false;
@@ -87967,16 +87967,16 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
                 }
                 auto& coordinatorReservation = vcChild
                     ? record->coordinatorReservation
-                    : attempt.queueContinuationCoordinatorReservation;
+                    : attempt.PreparedQueueCoordinators().queueContinuationCoordinatorReservation;
                 auto& coordinatorArmGroup = vcChild
                     ? record->coordinatorArmGroup
-                    : attempt.queueContinuationCoordinatorArmGroup;
+                    : attempt.PreparedQueueCoordinators().queueContinuationCoordinatorArmGroup;
                 auto& coordinatorArmGroupPrepared = vcChild
                     ? record->coordinatorArmGroupPrepared
-                    : attempt.queueContinuationCoordinatorArmGroupPrepared;
+                    : attempt.PreparedQueueCoordinators().queueContinuationCoordinatorArmGroupPrepared;
                 auto& primaryGroup = vcChild
                     ? record->primaryGroup
-                    : attempt.queueContinuationPrimaryGroup;
+                    : attempt.PreparedQueueCoordinators().queueContinuationPrimaryGroup;
                 harken::DecisionReserveRequest request{};
                 request.world = holder.Invocation().worldGeneration;
                 request.transport = engine.timelinePool.Epoch();
@@ -88439,8 +88439,7 @@ void ReleaseImmediateActionPlays(void* opaque,
                     original->initialOriginalGroupsDisposed = true;
                 }
             }
-            attempt.initialQueuePrimaryGroup = {};
-            attempt.queueContinuationPrimaryGroup = {};
+            attempt.ClearQueuePrimaryGroups();
             groupsDisposed = MarkQueueContinuationGroupsCancelled(*plan->engine, attempt);
             groupsDisposed = MarkQueueFutureGroupsCancelled(*plan->engine, attempt) && groupsDisposed;
             if (!groupsDisposed) plan->engine->runtimeRecreateRequired = true;
@@ -90091,7 +90090,7 @@ engine.runtimeRecreateRequired = true;
         }
     }
     if (ok && plan->reservedCohortAttempt != nullptr &&
-        plan->reservedCohortAttempt->initialQueueCoordinatorReservation.Valid()) {
+        plan->reservedCohortAttempt->QueueCoordinators().initialQueueCoordinatorReservation.Valid()) {
         auto& attempt = *plan->reservedCohortAttempt;
         const auto* source = plan->playCount == 1 ? FindImmediateActionPlay(*plan, 0) : nullptr;
         const bool rootCurrentOnly = source != nullptr && source->row != nullptr &&
@@ -90102,16 +90101,16 @@ engine.runtimeRecreateRequired = true;
         if ((engine.initialQueueEntryDecisionOwnerCount == 0 && !rootCurrentOnly) ||
             engine.initialQueueEntryDecisionOwnerCount >
                 engine.initialQueueCoordinatorParticipantsScratch.size() ||
-            !attempt.initialQueuePrimaryGroup.Exact() ||
-            !attempt.initialQueueCoordinatorArmGroupPrepared ||
+            !attempt.QueueCoordinators().initialQueuePrimaryGroup.Exact() ||
+            !attempt.QueueCoordinators().initialQueueCoordinatorArmGroupPrepared ||
             !engine.decisions.CommitPreparedReservation(
-                &attempt.initialQueueCoordinatorReservation, sequence,
-                &attempt.initialQueueCoordinator) ||
+                &attempt.PreparedQueueCoordinators().initialQueueCoordinatorReservation, sequence,
+                &attempt.PreparedQueueCoordinators().initialQueueCoordinator) ||
             !engine.armGroups.CommitPrepared(
-                attempt.initialQueueCoordinatorArmGroup)) {
+                attempt.QueueCoordinators().initialQueueCoordinatorArmGroup)) {
             ok = false;
         } else {
-            attempt.initialQueueCoordinatorArmGroupPrepared = false;
+            attempt.PreparedQueueCoordinators().initialQueueCoordinatorArmGroupPrepared = false;
             for (std::uint32_t index = 0;
                  index < engine.initialQueueEntryDecisionOwnerCount;
                  ++index) {
@@ -90137,20 +90136,20 @@ engine.runtimeRecreateRequired = true;
                     engine.initialQueueEntryDecisionOwnerCount;
                 payload.pages = {
                     static_cast<std::uint32_t>(
-                        attempt.initialQueuePrimaryGroup.committedRow),
-                    attempt.initialQueuePrimaryGroup.rowClaimGeneration};
+                        attempt.QueueCoordinators().initialQueuePrimaryGroup.committedRow),
+                    attempt.QueueCoordinators().initialQueuePrimaryGroup.rowClaimGeneration};
                 payload.armGroup =
-                    attempt.initialQueueCoordinatorArmGroup;
+                    attempt.QueueCoordinators().initialQueueCoordinatorArmGroup;
                 ok = engine.decisions.PrepareFrontierControlProgram(
-                         attempt.initialQueueCoordinator,
+                         attempt.QueueCoordinators().initialQueueCoordinator,
                          attempt.generation) != nullptr &&
                     engine.decisions.Commit(
-                        attempt.initialQueueCoordinator, payload);
+                        attempt.QueueCoordinators().initialQueueCoordinator, payload);
             }
         }
     }
     if (ok && plan->reservedCohortAttempt != nullptr &&
-        plan->reservedCohortAttempt->queueContinuationCoordinatorReservation.Valid()) {
+        plan->reservedCohortAttempt->QueueCoordinators().queueContinuationCoordinatorReservation.Valid()) {
         auto& attempt = *plan->reservedCohortAttempt;
         const auto holder = std::find_if(engine.playableServices.begin(),
             engine.playableServices.end(), [&](const auto& candidate) {
@@ -90160,16 +90159,16 @@ engine.runtimeRecreateRequired = true;
         if (holder == engine.playableServices.end() ||
             !holder->queueFirstContinuationLane ||
             !holder->QueueFiling().queueDecision.Valid() ||
-            !attempt.queueContinuationPrimaryGroup.Exact() ||
-            !attempt.queueContinuationCoordinatorArmGroupPrepared ||
+            !attempt.QueueCoordinators().queueContinuationPrimaryGroup.Exact() ||
+            !attempt.QueueCoordinators().queueContinuationCoordinatorArmGroupPrepared ||
             !engine.decisions.CommitPreparedReservation(
-                &attempt.queueContinuationCoordinatorReservation, sequence,
-                &attempt.queueContinuationCoordinator) ||
+                &attempt.PreparedQueueCoordinators().queueContinuationCoordinatorReservation, sequence,
+                &attempt.PreparedQueueCoordinators().queueContinuationCoordinator) ||
             !engine.armGroups.CommitPrepared(
-                attempt.queueContinuationCoordinatorArmGroup)) {
+                attempt.QueueCoordinators().queueContinuationCoordinatorArmGroup)) {
             ok = false;
         } else {
-            attempt.queueContinuationCoordinatorArmGroupPrepared = false;
+            attempt.PreparedQueueCoordinators().queueContinuationCoordinatorArmGroupPrepared = false;
             harken::DecisionParticipantRef participant{};
             participant.kind = harken::DecisionParticipantKind::Subdecision;
             participant.slot = holder->QueueFiling().queueDecision.slot;
@@ -90179,14 +90178,14 @@ engine.runtimeRecreateRequired = true;
             payload.participantCount = 1;
             payload.pages = {
                 static_cast<std::uint32_t>(
-                    attempt.queueContinuationPrimaryGroup.committedRow),
-                attempt.queueContinuationPrimaryGroup.rowClaimGeneration};
-            payload.armGroup = attempt.queueContinuationCoordinatorArmGroup;
+                    attempt.QueueCoordinators().queueContinuationPrimaryGroup.committedRow),
+                attempt.QueueCoordinators().queueContinuationPrimaryGroup.rowClaimGeneration};
+            payload.armGroup = attempt.QueueCoordinators().queueContinuationCoordinatorArmGroup;
             ok = engine.decisions.PrepareFrontierControlProgram(
-                    attempt.queueContinuationCoordinator,
+                    attempt.QueueCoordinators().queueContinuationCoordinator,
                     attempt.generation) != nullptr &&
                 engine.decisions.Commit(
-                    attempt.queueContinuationCoordinator, payload);
+                    attempt.QueueCoordinators().queueContinuationCoordinator, payload);
         }
     }
     if (ok && plan->reservedCohortAttempt != nullptr) {
@@ -90513,8 +90512,7 @@ engine.runtimeRecreateRequired = true;
                         original->initialOriginalGroupsDisposed = true;
                     }
                 }
-                attempt.initialQueuePrimaryGroup = {};
-                attempt.queueContinuationPrimaryGroup = {};
+                attempt.ClearQueuePrimaryGroups();
                 groupsDisposed = MarkQueueContinuationGroupsCancelled(engine, attempt);
                 groupsDisposed = MarkQueueFutureGroupsCancelled(engine, attempt) && groupsDisposed;
                 if (!groupsDisposed) engine.runtimeRecreateRequired = true;

@@ -10728,8 +10728,8 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
         const auto attempt = std::find_if(attempts, end,
             [firing](const auto& candidate) { return candidate.active && candidate.root == firing; });
         ASSERT_NE(end, attempt);
-        EXPECT_EQ(entry.coordinator.slot, attempt->initialQueueCoordinator.slot);
-        EXPECT_EQ(entry.coordinator.generation, attempt->initialQueueCoordinator.generation);
+        EXPECT_EQ(entry.coordinator.slot, attempt->QueueCoordinators().initialQueueCoordinator.slot);
+        EXPECT_EQ(entry.coordinator.generation, attempt->QueueCoordinators().initialQueueCoordinator.generation);
         const auto quantum = row->startFrame / engine.config.blockFrames;
         while (engine.mixer.BlocksRendered() < quantum) engine.nullBackend.Pump(1);
         ASSERT_EQ(quantum, engine.mixer.BlocksRendered());
@@ -10822,8 +10822,8 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
                 attempts + session.Engine()->immediateEntryAttempts.size(),
                 [firing](const auto& attempt) { return attempt.active && attempt.root == firing; });
             ASSERT_NE(attempts + session.Engine()->immediateEntryAttempts.size(), held);
-            publication.coordinator = held->initialQueueCoordinator;
-            publication.primary = held->initialQueuePrimaryGroup;
+            publication.coordinator = held->QueueCoordinators().initialQueueCoordinator;
+            publication.primary = held->QueueCoordinators().initialQueuePrimaryGroup;
             publication.attempt = held;
             ASSERT_TRUE(session.Engine()->timelinePool.AcquirePlan03GroupReader(
                 publication.primary, &publication.reader));
@@ -10834,9 +10834,9 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
             auto& proof = *static_cast<PublicationProof*>(context);
             proof.called = true;
             harken::DecisionCommittedSnapshot decision{};
-            proof.committed = engine.decisions.CaptureCommitted(attempt.initialQueueCoordinator, &decision) &&
+            proof.committed = engine.decisions.CaptureCommitted(attempt.QueueCoordinators().initialQueueCoordinator, &decision) &&
                 decision.participantCount == 0 && decision.consumedSlices == 0;
-            const auto* activation = engine.decisions.ResolveFrontierActivation(attempt.initialQueueCoordinator);
+            const auto* activation = engine.decisions.ResolveFrontierActivation(attempt.QueueCoordinators().initialQueueCoordinator);
             proof.pending = activation != nullptr && activation->State() == harken::FrontierReceiptState::Pending;
             harken::ImmediateLaneObservation lane{};
             proof.laneUnpublished = engine.immediateActionLane.Observe(attempt.lane, &lane) && !lane.committed;
@@ -10846,13 +10846,13 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
             proof.sourcePublished = source != engine.playableServices.end() &&
                 engine.timelineArms.State(source->arm, &arm) && arm == harken::ArmState::Published;
             proof.privateRetirementRefused = !engine.timelinePool.PrivateImmediateLaneGroupRetirementReady(
-                attempt.initialQueuePrimaryGroup, engine.mixer.BlocksRendered());
+                attempt.QueueCoordinators().initialQueuePrimaryGroup, engine.mixer.BlocksRendered());
             if (proof.holdReader) {
                 proof.readerAcquired = proof.reader.Valid() &&
-                    proof.reader.Identity() == attempt.initialQueuePrimaryGroup &&
-                    proof.primary == attempt.initialQueuePrimaryGroup &&
-                    proof.coordinator.slot == attempt.initialQueueCoordinator.slot &&
-                    proof.coordinator.generation == attempt.initialQueueCoordinator.generation;
+                    proof.reader.Identity() == attempt.QueueCoordinators().initialQueuePrimaryGroup &&
+                    proof.primary == attempt.QueueCoordinators().initialQueuePrimaryGroup &&
+                    proof.coordinator.slot == attempt.QueueCoordinators().initialQueueCoordinator.slot &&
+                    proof.coordinator.generation == attempt.QueueCoordinators().initialQueueCoordinator.generation;
             }
         };
         session.Engine()->forceImmediateQueuePostC0PublishFailureForTest = 2;
@@ -10882,10 +10882,10 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
             session.Engine()->immediateEntryAttempts.data() + session.Engine()->immediateEntryAttempts.size(),
             [firing](const auto& attempt) { return attempt.active && attempt.root == firing; });
         ASSERT_NE(session.Engine()->immediateEntryAttempts.data() + session.Engine()->immediateEntryAttempts.size(), attempt);
-        ASSERT_TRUE(attempt->initialQueueCoordinator.Valid());
+        ASSERT_TRUE(attempt->QueueCoordinators().initialQueueCoordinator.Valid());
         for (unsigned identity = 0; identity < 8u; ++identity) {
             SCOPED_TRACE(identity);
-            if (identity == 0) row->QueuePayload().queueCurrentCompletion.owner.singleDecision = attempt->initialQueueCoordinator;
+            if (identity == 0) row->QueuePayload().queueCurrentCompletion.owner.singleDecision = attempt->QueueCoordinators().initialQueueCoordinator;
             if (identity == 1) ++event.armToken.generation;
             if (identity == 2) ++bank->schedules[0].entryAnchorFrame;
             if (identity == 3) ++row->QueuePayload().queueCurrentOccurrence.generation;
@@ -10918,8 +10918,8 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
         heldAttempt = std::find_if(attempts, end,
             [firing](const auto& candidate) { return candidate.active && candidate.root == firing; });
         ASSERT_NE(end, heldAttempt);
-        heldCoordinator = heldAttempt->initialQueueCoordinator;
-        heldPrimary = heldAttempt->initialQueuePrimaryGroup;
+        heldCoordinator = heldAttempt->QueueCoordinators().initialQueueCoordinator;
+        heldPrimary = heldAttempt->QueueCoordinators().initialQueuePrimaryGroup;
         ASSERT_TRUE(session.Engine()->timelinePool.AcquirePlan03GroupReader(heldPrimary, &heldPrivateReader));
     }
     if (stopPhase == 0u) ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
@@ -11029,7 +11029,7 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
     if (holdPublishedReaderThroughRelease) {
         ASSERT_TRUE(publication.readerAcquired);
         ASSERT_NE(nullptr, publication.attempt);
-        for (unsigned block = 0; block < 16u && publication.attempt->initialQueueCoordinator.Valid(); ++block) {
+        for (unsigned block = 0; block < 16u && publication.attempt->QueueCoordinators().initialQueueCoordinator.Valid(); ++block) {
             session.Engine()->nullBackend.Pump(1);
             ASSERT_EQ(VN_OK, Vn_Update());
             const auto* output = session.Engine()->nullBackend.LastBlock();
@@ -11039,7 +11039,7 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
         }
         EXPECT_TRUE(publication.attempt->active);
         EXPECT_FALSE(publication.attempt->lane.Valid());
-        EXPECT_FALSE(publication.attempt->initialQueueCoordinator.Valid());
+        EXPECT_FALSE(publication.attempt->QueueCoordinators().initialQueueCoordinator.Valid());
         ASSERT_LT(publication.coordinator.slot, session.Engine()->decisionRetirements.size());
         const auto retired = session.Engine()->decisionRetirements[publication.coordinator.slot].decision;
         EXPECT_EQ(publication.coordinator.slot, retired.slot);
@@ -11053,9 +11053,9 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
         EXPECT_TRUE(heldAttempt->active);
         EXPECT_FALSE(heldAttempt->lane.Valid());
         EXPECT_EQ(harken::ImmediateEntryAttemptState::Aborted, heldAttempt->gate.Observe(heldAttempt->generation));
-        EXPECT_EQ(heldPrimary, heldAttempt->initialQueuePrimaryGroup);
-        EXPECT_EQ(heldCoordinator.slot, heldAttempt->initialQueueCoordinator.slot);
-        EXPECT_EQ(heldCoordinator.generation, heldAttempt->initialQueueCoordinator.generation);
+        EXPECT_EQ(heldPrimary, heldAttempt->QueueCoordinators().initialQueuePrimaryGroup);
+        EXPECT_EQ(heldCoordinator.slot, heldAttempt->QueueCoordinators().initialQueueCoordinator.slot);
+        EXPECT_EQ(heldCoordinator.generation, heldAttempt->QueueCoordinators().initialQueueCoordinator.generation);
         EXPECT_TRUE(session.Engine()->decisions.Contains(heldCoordinator));
         EXPECT_EQ(nullptr, session.Engine()->decisions.ResolveFrontierActivation(heldCoordinator));
         EXPECT_NE(baseline, CaptureRootQueueOwners(*session.Engine()));
