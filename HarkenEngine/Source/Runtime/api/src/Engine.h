@@ -4122,31 +4122,57 @@ struct EngineActionPlayStorage {
         std::uint32_t index = UINT32_MAX;
         bool Empty() const noexcept { return attempt == nullptr && root == 0 && generation == 0 && index == UINT32_MAX; }
     } initialSelectionCensus;
+    std::uint32_t containerNodeCapacity = 0;
+    std::uint32_t containerMemberCapacity = 0;
+    std::uint32_t containerChildCapacity = 0;
+    bool containerStoragePrepared = false;
     explicit EngineActionPlayStorage(std::uint32_t nodeCapacity =
         kMaxKnownScheduleLeaves + 64u + kSelectionPathNodeCapacity + 1u,
         std::uint32_t memberCapacity = 0,
         std::uint32_t laneMetadataCapacity = kMaxKnownScheduleLeaves,
-        const EngineFrontierOwnerLedger::Limits* ownerLimits = nullptr)
-          : variableControlRollbackEdges(memberCapacity),
-            pendingInitialVcRetirement(memberCapacity), pendingInitialVcRows(memberCapacity),
-            retiredInitialVcArms(memberCapacity),
+        const EngineFrontierOwnerLedger::Limits* ownerLimits = nullptr,
+        bool needsContainerState = true)
+          : containerNodeCapacity(nodeCapacity), containerMemberCapacity(memberCapacity),
+            containerChildCapacity(ownerLimits != nullptr ? nodeCapacity : 0u),
             privateInitialVcLaneCapacity(laneMetadataCapacity),
             frontierServices(nodeCapacity), queueRoleCapacity(nodeCapacity),
-            queueFutureAttempts(nodeCapacity), queueFutureOwners(nodeCapacity),
-            frontierPolicies(nodeCapacity), initialControlSlices(2u * nodeCapacity),
-            initialFrontierSides(2u * nodeCapacity), initialFrontierParticipants(2u * nodeCapacity),
-            nestedContinuousDecisions(nodeCapacity), nestedContinuousDecisionOwners(nodeCapacity),
             playableTreeExecutor(std::in_place, nodeCapacity) {
-        if (ownerLimits != nullptr) {
-            variableControlChildren.resize(nodeCapacity);
-            variableControlChildKinds.resize(nodeCapacity);
-            variableControlLeafChildren.resize(nodeCapacity);
-            variableControlContainerRows.resize(nodeCapacity);
-            variableControlNestedParentIndices.resize(nodeCapacity);
-            variableControlNestedPathOrdinals.resize(nodeCapacity);
-            variableControlNestedModes.resize(nodeCapacity);
-            ownerLedger.Initialize(*ownerLimits);
-        }
+        if (ownerLimits != nullptr) ownerLedger.Initialize(*ownerLimits);
+        if (needsContainerState && !PrepareContainerStorage()) throw std::bad_alloc();
+    }
+    bool PrepareContainerStorage() noexcept {
+        if (containerStoragePrepared) return true;
+        if (memguard::IsAudioTagged()) return false;
+        try {
+            const auto grow = [](auto& column, std::uint32_t count) {
+                if (column.size() >= count) return;
+                detail::CheckedGrow(column, count, detail::LogicAllocSite::ActionPlayContainerStorage);
+                column.resize(count);
+            };
+            grow(variableControlRollbackEdges, containerMemberCapacity);
+            grow(pendingInitialVcRetirement, containerMemberCapacity);
+            grow(pendingInitialVcRows, containerMemberCapacity);
+            grow(retiredInitialVcArms, containerMemberCapacity);
+            grow(queueFutureAttempts, containerNodeCapacity);
+            grow(queueFutureOwners, containerNodeCapacity);
+            grow(frontierPolicies, containerNodeCapacity);
+            grow(initialControlSlices, 2u * containerNodeCapacity);
+            grow(initialFrontierSides, 2u * containerNodeCapacity);
+            grow(initialFrontierParticipants, 2u * containerNodeCapacity);
+            grow(nestedContinuousDecisions, containerNodeCapacity);
+            grow(nestedContinuousDecisionOwners, containerNodeCapacity);
+            grow(variableControlChildren, containerChildCapacity);
+            grow(variableControlChildKinds, containerChildCapacity);
+            grow(variableControlLeafChildren, containerChildCapacity);
+            grow(variableControlContainerRows, containerChildCapacity);
+            grow(variableControlNestedParentIndices, containerChildCapacity);
+            grow(variableControlNestedPathOrdinals, containerChildCapacity);
+            grow(variableControlNestedModes, containerChildCapacity);
+            // No container consumer borrows these columns before full preparation.
+            // Retain completed columns across refusal; ready backing never moves.
+            containerStoragePrepared = true;
+            return true;
+        } catch (...) { return false; }
     }
     enum class VariableControlRollbackStage : std::uint8_t {
         None,
@@ -7591,12 +7617,16 @@ public:
         return bytes;
     }
 
-    bool EnsureActionPlaySlot(std::uint32_t slot) noexcept {
-        if (actionPlayScratch.IsConstructed(slot)) return true;
-        if (slot >= actionPlayScratch.size() || actionPlayScratch.PreparedUseActive()) return false;
+    bool EnsureActionPlaySlot(std::uint32_t slot, bool needsContainerState = true) noexcept {
+        needsContainerState |= actionPlayScratch.HasPreparedBacking();
+        if (actionPlayScratch.IsConstructed(slot) &&
+            (!needsContainerState || actionPlayStorage[slot].containerStoragePrepared)) return true;
+        if (slot >= actionPlayScratch.size() || memguard::IsAudioTagged() ||
+            actionPlayScratch.PreparedUseActive()) return false;
         if (!actionPlayStorage.Emplace(slot, config.maxPlayableInstances, playableStorage.memberStride,
                 std::max(config.maxTransactionEvents, config.maxKnownScheduleLeaves * 4u),
-                &actionPlayOwnerLimits)) return false;
+                &actionPlayOwnerLimits, false)) return false;
+        if (needsContainerState && !actionPlayStorage[slot].PrepareContainerStorage()) return false;
         if (!pendingOrdinarySelections.Emplace(slot) || !preparedPendingVariableGroups.Emplace(slot)) return false;
         return actionPlayScratch.Emplace(slot, actionPlayStorage[slot]);
     }
@@ -7629,6 +7659,12 @@ public:
     }
     bool PrepareActionPlayBacking(std::uint32_t low, std::uint32_t high,
         StableSlotStorage<EngineActionPlayScratch>::Preparation* out) noexcept {
+        if (out == nullptr || out->Valid() || memguard::IsAudioTagged() ||
+            actionPlayScratch.PreparedUseActive()) return false;
+        // Generic allowances promise full storage, including existing Sound rows
+        // that can become reusable while the allowance remains outstanding.
+        for (auto& scratch : actionPlayScratch)
+            if (!scratch.storage.PrepareContainerStorage()) return false;
         return actionPlayScratch.PrepareBacking(low, high, ActionPlaySlotReusable,
             [this](std::uint32_t slot) noexcept { return EnsureActionPlaySlot(slot); }, out);
     }

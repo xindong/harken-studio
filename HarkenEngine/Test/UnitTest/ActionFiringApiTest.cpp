@@ -6512,7 +6512,7 @@ TEST(ActionFiringApi, FrontierAttemptSparseBackingKeepsHighSlotAndCompetingAllow
     EXPECT_EQ(0u, engine.ActionPlayCommittedBytes());
     const auto high = engine.actionPlayScratch.size() - 1u;
     ASSERT_GT(high, 4u);
-    ASSERT_TRUE(engine.EnsureActionPlaySlot(high));
+    ASSERT_TRUE(engine.EnsureActionPlaySlot(high, false));
     auto* original = &engine.actionPlayScratch[high];
     EXPECT_EQ(high, engine.actionPlayScratch.IndexOf(*original));
     EXPECT_EQ(1u, engine.actionPlayScratch.ConstructedCount());
@@ -6523,7 +6523,35 @@ TEST(ActionFiringApi, FrontierAttemptSparseBackingKeepsHighSlotAndCompetingAllow
     EXPECT_EQ(1u, engine.actionPlayStorage.ConstructedCount());
     engine.actionPlayStorage.SetCommitPageLimitForTests(SIZE_MAX);
     harken::StableSlotStorage<harken::EngineActionPlayScratch>::Preparation backing;
+    auto& minimal = original->storage;
+    EXPECT_FALSE(minimal.containerStoragePrepared);
+    EXPECT_TRUE(minimal.variableControlRollbackEdges.empty());
+    EXPECT_TRUE(minimal.initialFrontierSides.empty());
+    EXPECT_TRUE(minimal.variableControlNestedModes.empty());
+    // A full allowance must also cover an active Sound row's later reuse.
+    minimal.phase = harken::EngineFrontierAttemptPhase::Preparing;
+    harken::detail::ArmLogicAllocFaultForTests(8,
+        harken::detail::LogicAllocSite::ActionPlayContainerStorage);
+    const bool refused = !engine.PrepareActionPlayBacking(2, 1, &backing);
+    harken::detail::DisarmLogicAllocFaultForTests();
+    EXPECT_TRUE(refused);
+    EXPECT_FALSE(backing.Valid());
+    EXPECT_FALSE(minimal.containerStoragePrepared);
+    EXPECT_EQ(harken::EngineFrontierAttemptPhase::Preparing, minimal.phase);
+    EXPECT_EQ(0u, minimal.generation);
+    EXPECT_EQ(original, &engine.actionPlayScratch[high]);
+    EXPECT_FALSE(minimal.queueFutureOwners.empty());
+    EXPECT_TRUE(minimal.initialControlSlices.empty());
+    auto* preparedColumn = minimal.queueFutureOwners.data();
     ASSERT_TRUE(engine.PrepareActionPlayBacking(2, 1, &backing));
+    EXPECT_TRUE(minimal.containerStoragePrepared);
+    EXPECT_EQ(preparedColumn, minimal.queueFutureOwners.data());
+    EXPECT_EQ(engine.config.maxPlayableInstances, minimal.variableControlNestedModes.size());
+    EXPECT_EQ(2u * engine.config.maxPlayableInstances, minimal.initialFrontierSides.size());
+    EXPECT_EQ(harken::EngineFrontierAttemptPhase::Preparing, minimal.phase);
+    minimal.phase = harken::EngineFrontierAttemptPhase::Free;
+    ASSERT_TRUE(engine.EnsureActionPlaySlot(high / 2u, false));
+    EXPECT_TRUE(engine.actionPlayStorage[high / 2u].containerStoragePrepared);
     ASSERT_TRUE(engine.ProtectActionPlayBackingForAcquire(0));
     engine.actionPlayStorage[0].phase = harken::EngineFrontierAttemptPhase::Preparing;
     ASSERT_TRUE(engine.ProtectActionPlayBackingForAcquire(high));
@@ -6535,7 +6563,7 @@ TEST(ActionFiringApi, FrontierAttemptSparseBackingKeepsHighSlotAndCompetingAllow
     engine.actionPlayScratch.SetCommitPageLimitForTests(0);
     {
         const auto use = backing.Use();
-        EXPECT_FALSE(engine.EnsureActionPlaySlot(high / 2u));
+        EXPECT_FALSE(engine.EnsureActionPlaySlot(high / 2u + 1u));
         ASSERT_TRUE(engine.EnsureActionPlaySlot(1));
         ASSERT_TRUE(engine.EnsureActionPlaySlot(2));
         ASSERT_TRUE(engine.EnsureActionPlaySlot(high - 1u));
@@ -70476,6 +70504,17 @@ TEST(ActionFiringApi, OriginalSingleProducerDefaultPureSoundNeverIssuesQueueCurr
     auto service = std::find_if(engine.playableServices.begin(), engine.playableServices.end(),
         [firing](const auto& row) { return row.PendingImmediateCohortRoot() == firing; });
     ASSERT_NE(engine.playableServices.end(), service);
+    ASSERT_EQ(1u, engine.actionPlayScratch.ConstructedCount());
+    auto* originalScratch = &*engine.actionPlayScratch.begin();
+    auto& storage = originalScratch->storage;
+    const auto expectMinimal = [&] {
+        EXPECT_FALSE(storage.containerStoragePrepared);
+        EXPECT_TRUE(storage.variableControlRollbackEdges.empty());
+        EXPECT_TRUE(storage.initialControlSlices.empty());
+        EXPECT_TRUE(storage.queueFutureOwners.empty());
+        EXPECT_TRUE(storage.variableControlNestedModes.empty());
+    };
+    expectMinimal();
     const auto originalRender = service->renderHandle;
     const auto originalArm = service->arm;
     for (const auto& original : engine.originalQueueSourcePreparationHolders) {
@@ -70538,11 +70577,26 @@ TEST(ActionFiringApi, OriginalSingleProducerDefaultPureSoundNeverIssuesQueueCurr
     EXPECT_EQ(0u, timeline.extraCommands.size());
     EXPECT_EQ(0u, timeline.queueEvents.size());
     EXPECT_EQ(0u, engine.originalSingleCurrentHolders.CommittedBytes());
+    expectMinimal();
     EXPECT_EQ(0u, engine.initialFrontierArmPins.capacity());
     EXPECT_EQ(0u, engine.initialRootArmPublicationInputs.capacity());
     auto* firstStart = &timeline.starts[0];
     const auto retainedRender = firstStart->renderHandle;
     const auto resumedBlock = engine.mixer.BlocksRendered();
+    harken::StableSlotStorage<harken::EngineActionPlayScratch>::Preparation fullBacking;
+    harken::detail::ArmLogicAllocFaultForTests(8,
+        harken::detail::LogicAllocSite::ActionPlayContainerStorage);
+    const bool fullRefused = !engine.PrepareActionPlayBacking(1, 0, &fullBacking);
+    harken::detail::DisarmLogicAllocFaultForTests();
+    EXPECT_TRUE(fullRefused);
+    EXPECT_FALSE(fullBacking.Valid());
+    EXPECT_FALSE(storage.containerStoragePrepared);
+    ASSERT_TRUE(engine.PrepareActionPlayBacking(1, 0, &fullBacking));
+    EXPECT_TRUE(storage.containerStoragePrepared);
+    EXPECT_EQ(originalScratch, &*engine.actionPlayScratch.begin());
+    EXPECT_EQ(engine.config.maxPlayableInstances, storage.variableControlNestedModes.size());
+    EXPECT_EQ(retainedRender, firstStart->renderHandle);
+    fullBacking.Release();
     engine.initialFrontierEvents.SetCommitPageLimitForTests(SIZE_MAX);
     EXPECT_FALSE(engine.PreparePlayableStateStorage());
     EXPECT_EQ(firstStart, &timeline.starts[0]);

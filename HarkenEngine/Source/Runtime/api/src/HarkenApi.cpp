@@ -18728,7 +18728,7 @@ bool ResetImmediateActionPlayScratch(harken::Engine& engine,
 
 harken::EngineActionPlayScratch* AcquireFrontierAttempt(
     harken::Engine& engine, harken::EngineFrontierAttemptToken* token = nullptr,
-    bool preferHighSlots = false) noexcept {
+    bool preferHighSlots = false, bool needsContainerState = true) noexcept {
     if (token != nullptr) *token = {};
     for (std::uint32_t offset = 0; offset < engine.actionPlayScratch.size(); ++offset) {
         const auto index = preferHighSlots
@@ -18736,7 +18736,7 @@ harken::EngineActionPlayScratch* AcquireFrontierAttempt(
             : offset;
         if (!engine.actionPlayScratch.IsConstructed(index)) {
             if (engine.actionPlayScratch.PreparedUseActive()) continue;
-            if (!engine.EnsureActionPlaySlot(index)) return nullptr;
+            if (!engine.EnsureActionPlaySlot(index, needsContainerState)) return nullptr;
         }
         auto& scratch = engine.actionPlayScratch[index];
         auto& storage = scratch.storage;
@@ -18745,6 +18745,7 @@ harken::EngineActionPlayScratch* AcquireFrontierAttempt(
             storage.phase = harken::EngineFrontierAttemptPhase::Quarantined;
             continue;
         }
+        if (!engine.EnsureActionPlaySlot(index, needsContainerState)) return nullptr;
         if (!engine.ProtectActionPlayBackingForAcquire(index)) return nullptr;
         if (!ResetImmediateActionPlayScratch(engine, &scratch)) {
             storage.phase = harken::EngineFrontierAttemptPhase::CancelPending;
@@ -75801,6 +75802,19 @@ std::uint32_t CountActionOperations(const ImmediateActionPlan& plan,
     return count;
 }
 
+bool ImmediateActionNeedsContainerState(const ImmediateActionPlan& plan) noexcept {
+    if (plan.engine == nullptr || plan.materializingDeferred || plan.deferredParentFiring != 0 ||
+        plan.firingCount != 1 || plan.stepCount != 1) return true;
+    const auto& planned = plan.engine->actionStepPlanScratch[0];
+    // Only an independent immediate Sound has no container-owned future.
+    return !(planned.step != nullptr && planned.depth == 1 && planned.firingIndex == 0 &&
+        plan.engine->actionFiringPlanScratch[0].parentIndex == UINT32_MAX &&
+        !planned.deferred && planned.deferredFrame == 0 &&
+        !planned.cooldownSuppressed && !planned.quantizeSuppressed &&
+        planned.step->opcode == harken::ActionOpcodeV1::Play &&
+        planned.step->target.kind == harken::ActionTargetKindV1::Sound);
+}
+
 bool ReserveImmediateActionFirings(void* opaque,
                                    std::uint32_t count) noexcept {
     auto* plan = static_cast<ImmediateActionPlan*>(opaque);
@@ -75821,17 +75835,7 @@ bool ReserveImmediateActionFirings(void* opaque,
                 needsStopStorage = CountActionOperations(*plan, *planned.step,
                     harken::ActionOpcodeV1::Stop, planned.depth, 1) != 0;
         }
-        bool needsContainerState = true;
-        if (!plan->materializingDeferred && plan->firingCount == 1 && plan->stepCount == 1) {
-            const auto& planned = engine.actionStepPlanScratch[0];
-            // Only an independent immediate Sound has no container-owned future.
-            needsContainerState = !(planned.step != nullptr && planned.depth == 1 &&
-                planned.firingIndex == 0 && engine.actionFiringPlanScratch[0].parentIndex == UINT32_MAX &&
-                !planned.deferred && planned.deferredFrame == 0 &&
-                !planned.cooldownSuppressed && !planned.quantizeSuppressed &&
-                planned.step->opcode == harken::ActionOpcodeV1::Play &&
-                planned.step->target.kind == harken::ActionTargetKindV1::Sound);
-        }
+        const bool needsContainerState = ImmediateActionNeedsContainerState(*plan);
         // Deferred children and later successors reuse this backing without growth.
         if ((needsPlayableStorage && !engine.PreparePlayableStateStorage(needsContainerState)) ||
             (needsStopStorage && !engine.authoredStopResources.ConstructThrough(engine.authoredStopResources.Capacity()))) {
@@ -87615,7 +87619,8 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
         }
         harken::EngineFrontierAttemptToken attemptToken{};
         auto* attempt = preparedCount < engine.actionPlayAttemptTokens.size()
-            ? AcquireFrontierAttempt(engine, &attemptToken) : nullptr;
+            ? AcquireFrontierAttempt(engine, &attemptToken, false,
+                ImmediateActionNeedsContainerState(*plan)) : nullptr;
         if (attempt == nullptr) {
             (void)ReleaseImmediateActionStops(*plan);
             for (std::uint32_t prior = preparedCount;

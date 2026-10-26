@@ -40,6 +40,7 @@ enum class LogicAllocSite : unsigned int {
     PrivateVcLaneStorage,
     PlaybackPathStorage,
     VariableControlRetargetStorage,
+    ActionPlayContainerStorage,
 };
 
 struct LogicAllocFaultState {
