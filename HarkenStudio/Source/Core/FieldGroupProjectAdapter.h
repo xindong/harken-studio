@@ -9,6 +9,10 @@
 #include <map>
 #include <vector>
 
+namespace HarkenEditor::Bridge {
+struct CanonicalRuntimeProjectSourceIndexV1;
+}
+
 namespace VNX {
 
 struct ProjectItem;
@@ -31,6 +35,16 @@ FieldGroupProjectView buildFieldGroupProjectView(const ProjectData& project);
 
 FieldGroupProjectView buildFieldGroupProjectView(
     const ProjectData& project,
+    const std::function<const DefinitionFieldGroups*(
+        const ProjectItem&)>& groupsForDefinition);
+
+FieldGroupProjectView buildFieldGroupProjectView(
+    const ProjectData& project,
+    const HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1& source);
+
+FieldGroupProjectView buildFieldGroupProjectView(
+    const ProjectData& project,
+    const HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1& source,
     const std::function<const DefinitionFieldGroups*(
         const ProjectItem&)>& groupsForDefinition);
 

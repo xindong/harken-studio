@@ -168,7 +168,7 @@ EditingContext buildContext(ProjectData& project,
         }
     }
     if (!context.diagnostics.empty()) return context;
-    context.view = buildFieldGroupProjectView(project, [&](const ProjectItem& item) {
+    context.view = buildFieldGroupProjectView(project, *context.source, [&](const ProjectItem& item) {
         const auto replacement = authored.find(item.guid);
         return replacement == authored.end() ? &item.fieldGroups : replacement->second;
     });

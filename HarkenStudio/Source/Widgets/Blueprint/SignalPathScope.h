@@ -13,7 +13,8 @@ struct SignalPathScope
     bool operator==(const SignalPathScope&) const = default;
 };
 
-SignalPathGraph buildProjectSignalPathGraph(const ProjectData& project, FieldGroupScope platform = {});
+SignalPathGraph buildProjectSignalPathGraph(const ProjectData& project, FieldGroupScope platform = {},
+    std::shared_ptr<const FieldGroupEffectiveSnapshot> groups = {});
 
 SignalPathGraph buildSignalPathGraphForScope(
     const ProjectData& project, const SignalPathScope& scope,

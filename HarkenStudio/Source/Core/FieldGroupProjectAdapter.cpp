@@ -58,9 +58,7 @@ FieldGroupProjectView buildFieldGroupProjectView(const ProjectData& project)
     });
 }
 
-namespace {
-
-FieldGroupProjectView buildProjectView(
+FieldGroupProjectView buildFieldGroupProjectView(
     const ProjectData& project,
     const HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1& source,
     const std::function<const DefinitionFieldGroups*(
@@ -152,15 +150,22 @@ FieldGroupProjectView buildProjectView(
     return result;
 }
 
-}
-
 FieldGroupProjectView buildFieldGroupProjectView(
     const ProjectData& project,
     const std::function<const DefinitionFieldGroups*(
         const ProjectItem&)>& groupsForDefinition)
 {
     const auto source = HarkenEditor::Bridge::canonicalRuntimeProjectSourceIndex(project);
-    return buildProjectView(project, *source, groupsForDefinition);
+    return buildFieldGroupProjectView(project, *source, groupsForDefinition);
+}
+
+FieldGroupProjectView buildFieldGroupProjectView(
+    const ProjectData& project,
+    const HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1& source)
+{
+    return buildFieldGroupProjectView(project, source, [](const ProjectItem& item) {
+        return &item.fieldGroups;
+    });
 }
 
 FieldGroupEffectiveSnapshot buildFieldGroupEffectiveSnapshot(
@@ -180,7 +185,7 @@ FieldGroupEffectiveSnapshot buildFieldGroupEffectiveSnapshot(
     FieldGroupEffectiveSnapshot result;
     result.scope = scope;
     const auto source = canonicalRuntimeProjectSourceIndex(project);
-    const auto view = buildProjectView(project, *source, groupsForDefinition);
+    const auto view = buildFieldGroupProjectView(project, *source, groupsForDefinition);
     result.diagnostics = view.diagnostics;
     if (!view.ok()) return result;
     const auto fail = [&](const QString& message, AuthoringGuid definition = {},

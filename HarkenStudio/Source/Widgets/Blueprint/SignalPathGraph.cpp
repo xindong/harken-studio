@@ -22,8 +22,9 @@ void appendUnique(std::vector<size_t>& values, size_t value)
 class Builder
 {
 public:
-    Builder(const ProjectData& project, FieldGroupScope platform)
-        : groups_(std::make_shared<FieldGroupEffectiveSnapshot>(
+    Builder(const ProjectData& project, FieldGroupScope platform,
+            std::shared_ptr<const FieldGroupEffectiveSnapshot> groups)
+        : groups_(groups ? std::move(groups) : std::make_shared<FieldGroupEffectiveSnapshot>(
               buildFieldGroupEffectiveSnapshot(project, platform)))
     {
         graph_.platform = platform;
@@ -274,9 +275,10 @@ private:
 
 SignalPathGraph buildSignalPathGraph(
     const ProjectData& project, const std::vector<SignalPathIdentity>& sources,
-    FieldGroupScope platform, const std::vector<uint32_t>& busRoots)
+    FieldGroupScope platform, const std::vector<uint32_t>& busRoots,
+    std::shared_ptr<const FieldGroupEffectiveSnapshot> groups)
 {
-    return Builder(project, platform).build(sources, busRoots);
+    return Builder(project, platform, std::move(groups)).build(sources, busRoots);
 }
 
 }

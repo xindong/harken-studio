@@ -89,7 +89,8 @@ std::vector<Occurrences> ancestorOccurrences(const ProjectItem& item, const Occu
 
 }
 
-SignalPathGraph buildProjectSignalPathGraph(const ProjectData& project, FieldGroupScope platform)
+SignalPathGraph buildProjectSignalPathGraph(const ProjectData& project, FieldGroupScope platform,
+    std::shared_ptr<const FieldGroupEffectiveSnapshot> groups)
 {
     const PlatformScope scope = platform ? PlatformScope{fromFieldGroupGuid(*platform)} : std::nullopt;
     std::vector<SignalPathIdentity> sources;
@@ -104,7 +105,7 @@ SignalPathGraph buildProjectSignalPathGraph(const ProjectData& project, FieldGro
             busRoots.push_back(root->objectID);
         }
     }
-    return buildSignalPathGraph(project, sources, platform, busRoots);
+    return buildSignalPathGraph(project, sources, platform, busRoots, std::move(groups));
 }
 
 SignalPathGraph buildSignalPathGraphForScope(

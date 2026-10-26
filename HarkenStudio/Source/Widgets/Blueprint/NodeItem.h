@@ -6,6 +6,7 @@
 #include <QSizeF>
 #include <QString>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -184,7 +185,7 @@ public:
 
     void setWaveformPeaks(const std::vector<float>& peaks);
 
-    void setWaveformPeakData(const WaveformPeakData& data,
+    void setWaveformPeakData(std::shared_ptr<const WaveformPeakData> data,
                              std::optional<WaveformFrameRange> range = {});
 
     float contentHeight() const { return height_; }
@@ -251,7 +252,7 @@ private:
 
     std::vector<float> waveformPeaks_;
 
-    WaveformPeakData waveformPeakData_;
+    std::shared_ptr<const WaveformPeakData> waveformPeakData_;
     std::optional<WaveformFrameRange> waveformRange_;
 
     void updateContentHeight();

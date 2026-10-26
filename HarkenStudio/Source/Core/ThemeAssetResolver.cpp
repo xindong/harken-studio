@@ -555,7 +555,7 @@ ThemeIconResolution ThemeAssetResolver::resolveIcon(
     result.diagnostics = std::move(image.diagnostics);
     if (result.imageResource)
         result.icon = QIcon(new SvgIconEngine(
-            this, snapshot, logicalId, QString(), variant.tint));
+            this, snapshot, logicalId, QString(), variant.tint, result.imageResource));
     return result;
 }
 
@@ -583,7 +583,7 @@ ThemeIconResolution ThemeAssetResolver::resolveToggleIcon(
     result.diagnostics.append(off.diagnostics);
     if (on.resource && off.resource)
         result.icon = QIcon(new SvgIconEngine(
-            this, snapshot, onLogicalId, offLogicalId, variant.tint));
+            this, snapshot, onLogicalId, offLogicalId, variant.tint, on.resource, off.resource));
     return result;
 }
 
