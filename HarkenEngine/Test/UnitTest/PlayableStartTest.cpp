@@ -17498,11 +17498,10 @@ TEST(PlayableStart, QueueTrackChildUsesSameScheduleAndAdvancesToSound) {
         engine->registry.Lookup(kSecondSound).contentRevision);
     harken::PlayableStartRequest request{};
     request.root = image.Root();
+    const auto playableBaseline = engine->playableInstances.LiveCount();
     const harken::PlayableStartResult started =
         harken::StartPlayable(*engine, image.world, request);
     ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
-    const auto playableBaseline = engine->playableInstances.LiveCount();
-    ASSERT_GE(playableBaseline, 3u);
     const auto rootView = engine->playableInstances.Classify(started.instance);
     ASSERT_TRUE(rootView.live);
     EXPECT_EQ(harken::PlayableKind::Container, rootView.kind);
@@ -17551,7 +17550,7 @@ TEST(PlayableStart, QueueTrackChildUsesSameScheduleAndAdvancesToSound) {
     EXPECT_FALSE(engine->playableInstances.Classify(started.instance).live);
     EXPECT_FALSE(engine->playableInstances.Classify(trackInstance).live);
     EXPECT_FALSE(engine->playableInstances.Classify(soundInstance).live);
-    EXPECT_EQ(playableBaseline - 3u,
+    EXPECT_EQ(playableBaseline,
               engine->playableInstances.LiveCount());
 }
 
@@ -22239,14 +22238,17 @@ TEST(PlayableStart, SequenceQueueTailNeverBecomesCurrentAfterAdvance) {
         harken::QueueSpliceV1::Butt, true);
     harken::PlayableStartRequest request{};
     request.root = image.Root();
+    const auto capture = harkentest::monitor::OpenIdentityEvents();
+    std::vector<harkentest::monitor::IdentityRecord> records;
     const harken::PlayableStartResult started =
         harken::StartPlayable(*engine, image.world, request);
     ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
 
     const harken::EnginePlayableServiceRow* row = nullptr;
     bool successorCurrentWhileTailLive = false;
-    for (std::uint32_t block = 0; block < 24; ++block) {
+    for (std::uint32_t block = 0; block < 64; ++block) {
         ASSERT_EQ(VN_OK, Vn_Update());
+        harkentest::monitor::CollectIdentityEvents(capture, records);
         engine->nullBackend.Pump(1);
         const auto found = std::find_if(
             engine->playableServices.begin(), engine->playableServices.end(),
@@ -22269,6 +22271,41 @@ TEST(PlayableStart, SequenceQueueTailNeverBecomesCurrentAfterAdvance) {
             (row->leaf.stableId == kSecondSound && liveChildren >= 2u);
     }
     EXPECT_TRUE(successorCurrentWhileTailLive);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    harkentest::monitor::CollectIdentityEvents(capture, records);
+    records.erase(std::remove_if(records.begin(), records.end(),
+        [&](const auto& record) {
+            return record.fact.root != started.instance ||
+                record.fact.contentKind != VN_MONITOR_CONTENT_SOUND ||
+                (record.fact.factKind != VN_MONITOR_FACT_PLAYABLE_STARTED &&
+                 record.fact.factKind != VN_MONITOR_FACT_PLAYABLE_FINISHED);
+        }), records.end());
+    ASSERT_EQ(4u, records.size());
+    const auto findEvent = [&](VnObjectId object, std::uint32_t kind) {
+        return std::find_if(records.begin(), records.end(), [&](const auto& record) {
+            return record.header.stableId == object && record.fact.factKind == kind;
+        });
+    };
+    const auto firstStarted = findEvent(kSound, VN_MONITOR_FACT_PLAYABLE_STARTED);
+    const auto secondStarted = findEvent(kSecondSound, VN_MONITOR_FACT_PLAYABLE_STARTED);
+    const auto firstFinished = findEvent(kSound, VN_MONITOR_FACT_PLAYABLE_FINISHED);
+    const auto secondFinished = findEvent(kSecondSound, VN_MONITOR_FACT_PLAYABLE_FINISHED);
+    ASSERT_NE(records.end(), firstStarted);
+    ASSERT_NE(records.end(), secondStarted);
+    ASSERT_NE(records.end(), firstFinished);
+    ASSERT_NE(records.end(), secondFinished);
+    EXPECT_LT(firstStarted, secondStarted);
+    EXPECT_LT(secondStarted, firstFinished);
+    EXPECT_LT(secondStarted, secondFinished);
+    EXPECT_EQ(firstStarted->header.executeFrame + first.size(), secondStarted->header.executeFrame);
+    EXPECT_LT(secondStarted->header.executeFrame, firstFinished->header.executeFrame);
+    EXPECT_EQ(secondStarted->header.executeFrame + second.size(), secondFinished->header.executeFrame);
+    EXPECT_LE(secondStarted->fact.timestampNs, firstFinished->fact.timestampNs);
+    EXPECT_EQ(firstStarted->header.instanceHandle, firstFinished->header.instanceHandle);
+    EXPECT_EQ(secondStarted->header.instanceHandle, secondFinished->header.instanceHandle);
+    EXPECT_EQ(VN_MONITOR_TERMINAL_NATURAL_COMPLETION, firstFinished->fact.terminalKind);
+    EXPECT_EQ(VN_MONITOR_TERMINAL_NATURAL_COMPLETION, secondFinished->fact.terminalKind);
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(capture));
 }
 
 TEST(PlayableStart, SequenceQueueLoopReturnsToFirstSoundWithoutPoolGrowth) {
@@ -22327,6 +22364,80 @@ TEST(PlayableStart, SequenceQueueLoopReturnsToFirstSoundWithoutPoolGrowth) {
     EXPECT_LE(engine->armGroups.LiveCount(), groupBaseline + 2u);
     EXPECT_LE(engine->timelineOccurrences.OccupiedCount(),
               occurrenceBaseline + 3u);
+}
+
+TEST(PlayableStart, SequenceQueueLogicalChildrenRetireDuringRepeatedPlayback) {
+    for (const bool pieceChild : {false, true}) for (const auto cycles : {0u, 4u}) {
+        SCOPED_TRACE(pieceChild);
+        SCOPED_TRACE(cycles);
+        harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto* engine = session.Engine();
+        std::vector<float> first(512, 0.25f), second(512, -0.25f);
+        const auto firstPcm = harkentest::MonoDesc(first, 48000);
+        const auto secondPcm = harkentest::MonoDesc(second, 48000);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &firstPcm));
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSecondSound, &secondPcm));
+        SequenceQueueCompositePieceWorldImage image(engine->registry.Lookup(kSound).contentRevision,
+            engine->registry.Lookup(kSecondSound).contentRevision);
+        image.schedule.placements[0].authoredStart = INT64_C(10000000);
+        image.schedule.placements[1].authoredStart = INT64_C(20000000);
+        for (auto& placement : image.schedule.placements) placement.authoredDuration = 1;
+        image.schedule.track.scheduleSemanticFingerprint =
+            harken::ComputeTrackScheduleFingerprintV1(image.schedule.track);
+        image.trackRef.trackScheduleSemanticFingerprint = image.schedule.track.scheduleSemanticFingerprint;
+        image.piece.scheduleSemanticFingerprint = harken::ComputePieceScheduleFingerprintV1(image.piece);
+        image.children[0].playable = pieceChild ? image.piece.rootDefinition : image.schedule.track.rootDefinition;
+        image.children[0].timingHint = harken::MakeScheduleReferenceTimingHint(
+            image.children[0].playable.kind, image.children[0].playable.stableId,
+            pieceChild ? image.piece.scheduleSemanticFingerprint : image.schedule.track.scheduleSemanticFingerprint);
+        image.children[0].authoredStableOrder = 1;
+        image.children[1].authoredStableOrder = 0;
+        image.occurrences[0].childPlayable = image.children[0].playable;
+        image.occurrences[0].occurrenceSemanticFingerprint =
+            harken::ComputePlayableOccurrenceFingerprintV1(image.occurrences[0]);
+        image.container.queueCycle = harken::QueueCycleV1::Loop;
+        image.container.queueCycleCount = cycles;
+        const auto baseline = engine->playableInstances.LiveCount();
+        const auto capture = harkentest::monitor::OpenIdentityEvents();
+        std::vector<harkentest::monitor::IdentityRecord> records;
+        harken::PlayableStartRequest request{};
+        request.root = image.Root();
+        const auto started = harken::StartPlayable(*engine, image.world, request);
+        ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
+        unsigned audibleStarts = 0;
+        bool audible = false;
+        for (unsigned block = 0; block < (cycles == 0 ? 8000u : 256u); ++block) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            harkentest::monitor::CollectIdentityEvents(capture, records);
+            engine->nullBackend.Pump(1);
+            const bool nextAudible = harkentest::Peak(engine->nullBackend.LastBlock(), 128) > 0.01f;
+            audibleStarts += nextAudible && !audible;
+            audible = nextAudible;
+            ASSERT_LE(engine->playableInstances.LiveCount(), baseline + 8u);
+            ASSERT_FALSE(engine->runtimeRecreateRequired);
+        }
+        const auto retiredLogical = std::count_if(records.begin(), records.end(), [&](const auto& record) {
+            if (record.fact.factKind != VN_MONITOR_FACT_PLAYABLE_RETIRED ||
+                record.header.stableId != image.children[0].playable.stableId) return false;
+            EXPECT_EQ(VN_MONITOR_TERMINAL_NATURAL_COMPLETION, record.fact.terminalKind);
+            EXPECT_EQ(started.instance, record.fact.root);
+            return true;
+        });
+        if (cycles == 0) {
+            EXPECT_GT(audibleStarts, engine->playableInstances.Capacity());
+            EXPECT_GE(retiredLogical, audibleStarts - 1u);
+            ASSERT_TRUE(engine->playableInstances.Classify(started.instance).live);
+            ASSERT_TRUE(StopUntilStale(*engine, started.instance));
+        } else {
+            EXPECT_EQ(cycles, audibleStarts);
+            EXPECT_EQ(cycles, retiredLogical);
+            EXPECT_FALSE(engine->playableInstances.Classify(started.instance).live);
+        }
+        EXPECT_EQ(baseline, engine->playableInstances.LiveCount());
+        EXPECT_EQ(0u, engine->voices.ActiveCount());
+        EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(capture));
+    }
 }
 
 static void CheckQueueSuccessorPreservesEffectCut(bool actionEntry, bool signalOnly, bool outsideWindow) {

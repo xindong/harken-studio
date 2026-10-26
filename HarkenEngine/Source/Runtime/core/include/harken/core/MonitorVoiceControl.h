@@ -32,6 +32,14 @@ struct MonitorVoiceControlFact {
     bool timelineControl = false;
 };
 
+struct MonitorVoicePlaybackEnd {
+    std::uint64_t audioBlock = 0;
+    std::uint64_t frame = 0;
+    SourceTerminalKind kind = SourceTerminalKind::None;
+    MonitorControlCause cause{};
+    bool timelineControl = false;
+};
+
 namespace detail { struct MonitorVoiceControlTestAccess; }
 
 // A fixed ledger-capacity mailbox. Logic never writes the ordinary payload.
@@ -43,18 +51,27 @@ public:
 
     bool TryArm(std::uint64_t ticket) noexcept {
         if (ticket == 0 || ticket > kMaxTicket) return false;
-        auto previous = control_.load(std::memory_order_acquire);
-        if (ticket <= (previous >> 2) || PhaseOf(previous) == Phase::Writing) return false;
-        // Release also orders the prior logic read before the next writer.
-        return control_.compare_exchange_strong(previous, State(ticket, Phase::Armed),
-            std::memory_order_acq_rel, std::memory_order_acquire);
+        const auto arm = [ticket](std::atomic<std::uint64_t>& control) {
+            auto previous = control.load(std::memory_order_acquire);
+            if (ticket <= (previous >> 2) || PhaseOf(previous) == Phase::Writing) return false;
+            return control.compare_exchange_strong(previous, State(ticket, Phase::Armed),
+                std::memory_order_acq_rel, std::memory_order_acquire);
+        };
+        if (!arm(control_)) return false;
+        if (arm(endControl_)) return true;
+        Invalidate(ticket);
+        return false;
     }
 
     void Invalidate(std::uint64_t ticket) noexcept {
-        auto previous = control_.load(std::memory_order_acquire);
-        if (ticket == 0 || (previous >> 2) != ticket || PhaseOf(previous) == Phase::Writing) return;
-        (void)control_.compare_exchange_strong(previous, State(ticket, Phase::Idle),
-            std::memory_order_acq_rel, std::memory_order_acquire);
+        const auto invalidate = [ticket](std::atomic<std::uint64_t>& control) {
+            auto previous = control.load(std::memory_order_acquire);
+            if (ticket == 0 || (previous >> 2) != ticket || PhaseOf(previous) == Phase::Writing) return;
+            (void)control.compare_exchange_strong(previous, State(ticket, Phase::Idle),
+                std::memory_order_acq_rel, std::memory_order_acquire);
+        };
+        invalidate(control_);
+        invalidate(endControl_);
     }
 
     bool TryPublish(const MonitorVoiceControlBinding& binding,
@@ -81,6 +98,30 @@ public:
         return true;
     }
 
+    bool TryPublishEnd(const MonitorVoiceControlBinding& binding,
+        std::uint64_t audioBlock, std::uint64_t frame, SourceTerminalKind kind,
+        const MonitorControlCause& cause, bool timelineControl) noexcept {
+        if (binding.receipt != this || !binding.Valid() || audioBlock == 0 ||
+            kind == SourceTerminalKind::None || kind == SourceTerminalKind::Parked) return false;
+        auto expected = State(binding.ticket, Phase::Armed);
+        if (!endControl_.compare_exchange_strong(expected, State(binding.ticket, Phase::Writing),
+                std::memory_order_acq_rel, std::memory_order_acquire)) return false;
+        endPayload_ = {audioBlock, frame, kind, cause, timelineControl};
+        endBinding_ = binding;
+        endControl_.store(State(binding.ticket, Phase::Complete), std::memory_order_release);
+        return true;
+    }
+
+    bool TryReadEnd(const MonitorVoiceControlBinding& binding,
+        MonitorVoicePlaybackEnd* out) const noexcept {
+        if (out == nullptr || binding.receipt != this || !binding.Valid() ||
+            endControl_.load(std::memory_order_acquire) != State(binding.ticket, Phase::Complete)) return false;
+        if (endBinding_.ledgerSlot != binding.ledgerSlot ||
+            endBinding_.ledgerGeneration != binding.ledgerGeneration || endBinding_.render != binding.render) return false;
+        *out = endPayload_;
+        return true;
+    }
+
 private:
     friend struct detail::MonitorVoiceControlTestAccess;
     enum class Phase : std::uint64_t { Idle, Armed, Writing, Complete };
@@ -92,6 +133,9 @@ private:
     }
     std::atomic<std::uint64_t> control_{0};
     MonitorVoiceControlFact payload_{};
+    std::atomic<std::uint64_t> endControl_{0};
+    MonitorVoicePlaybackEnd endPayload_{};
+    MonitorVoiceControlBinding endBinding_{};
 };
 
 static_assert(std::atomic<std::uint64_t>::is_always_lock_free);

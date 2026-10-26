@@ -215,6 +215,7 @@ inline constexpr auto kMonitorFactResourceRetired = 39;
 inline constexpr auto kMonitorFactPlayableStarted = 40;
 inline constexpr auto kMonitorFactStepExecuted = 41;
 inline constexpr auto kMonitorFactVariableResult = 42;
+inline constexpr auto kMonitorFactPlayableFinished = 43;
 inline constexpr auto kMonitorFactFieldSubject = 0;
 inline constexpr auto kMonitorFactFieldProject = 1;
 inline constexpr auto kMonitorFactFieldContentObject = 2;

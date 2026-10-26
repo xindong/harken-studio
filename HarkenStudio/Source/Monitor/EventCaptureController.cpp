@@ -42,7 +42,9 @@ QString playableDescription(const CapturedEvent& event)
     const auto startKind = fact.contentKind == kMonitorContentSound
         ? kMonitorFactPlayableStarted : kMonitorFactPlayableActive;
     if (fact.factKind == startKind) return EventCaptureController::tr("Playing");
-    if (fact.factKind != kMonitorFactPlayableRetired) return {};
+    const auto finishKind = fact.contentKind == kMonitorContentSound
+        ? kMonitorFactPlayableFinished : kMonitorFactPlayableRetired;
+    if (fact.factKind != finishKind) return {};
     if (monitorFactHas(fact, kMonitorFactFieldTerminalKind)) {
         switch (fact.terminalKind) {
         case kMonitorTerminalRequestedStop: return EventCaptureController::tr("Stopped");

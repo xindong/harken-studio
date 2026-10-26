@@ -684,6 +684,7 @@ struct EngineQueueProgramBankBody : EngineQueueScheduleColumns {
     std::array<ArmGroupToken, 2> groups{};
     TransitionInstanceToken transition{};
     PlayableInstanceHandle supersededRoot = 0;
+    PlayableInstanceHandle logicalChild = 0;
     std::uint64_t supersededEpoch = 0;
     std::uint32_t programCount = 0;
     std::uint32_t eventCount = 0;
@@ -820,7 +821,7 @@ struct EngineQueueProgramBank : EngineQueueProgramBankBody {
         scheduleStorageLoan.Reset();
         programCount = 0; eventCount = 0; curveCount = 0; aggregateCount = 0;
         groups = {}; transition = {};
-        supersededRoot = 0; supersededEpoch = 0;
+        supersededRoot = 0; logicalChild = 0; supersededEpoch = 0;
         readFence.ResetAfterSafeRetirement();
         occupied = false; published = false; heldByOwner = false;
         return true;
@@ -886,6 +887,7 @@ struct VariableControlMemberCompletion {
     VnVoiceHandle sourceRender = 0;
     TimelineArmToken sourceStartArm{};
     std::uint64_t sourceStartedBlockSequence = 0;
+    std::uint64_t sourceArmTombstoneSequence = 0;
 };
 
 struct EnginePlayableServiceToken {
@@ -5979,6 +5981,8 @@ public:
                     projectGenerationInstallAckSideTable.size()),
                 &projectGenerationInstallAckRing, &originalSourceSubmissions),
            nullBackend(mixer, resolved) {
+        monitorPlaybackEvents.reserve(static_cast<std::size_t>(timelineArms.Capacity()) +
+            playableInstances.Capacity());
         voices.AttachTimelineVariableStartAuthority({&variables,
             [](void* context, VariableTimelineReadUseRef use, std::uint64_t nativeHandle) noexcept {
                 return static_cast<VariableServiceV1*>(context)->TimelineReadUseStartStatus(use, nativeHandle);
@@ -12217,6 +12221,13 @@ public:
 
     const EngineConfig config;
     MonitorRequestSource monitorRequests{AllocateMonitorEngineInstance()};
+    struct MonitorPlaybackEvent {
+        std::uint64_t instance = 0;
+        std::uint64_t audioBlock = 0;
+        std::uint64_t frame = 0;
+        bool finished = false;
+    };
+    std::vector<MonitorPlaybackEvent> monitorPlaybackEvents;
     const PlayableStorageLayout playableStorage;
     ResampleTables tables;
     MultirateResampleTables multirateTables;
@@ -13248,8 +13259,8 @@ public:
         const auto identity = PlayableMemberOnsetIdentity(static_cast<std::uint32_t>(slot));
         if (!identity.Valid()) return;
         const auto& member = ReadPlayableMember(slot).completion;
-        const bool pending = member.source.Valid() && !member.resourcesRetired &&
-            member.sourceStartedBlockSequence == 0;
+        const bool pending = (member.source.Valid() || member.resourcesRetired) &&
+            member.sourceArmTombstoneSequence == 0;
         const bool recorded = memberOnsets.SetMembership(identity, RuntimeActivitySet::Active,
             pending, [&](MemberOnsetIdentity current) noexcept {
                 return current == PlayableMemberOnsetIdentity(current.slot);

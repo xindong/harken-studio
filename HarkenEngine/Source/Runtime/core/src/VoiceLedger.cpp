@@ -578,6 +578,18 @@ MonitorVoiceControlBinding VoiceLedger::ArmMonitorControl(std::uint32_t ledgerSl
     return entry.monitorControl;
 }
 
+std::uint64_t VoiceLedger::CaptureMonitorPlaybackEnd(std::uint32_t ledgerSlot,
+    MonitorVoicePlaybackEnd* out) const noexcept {
+    if (ledgerSlot >= m_entries.ConstructedCount() || out == nullptr) return 0;
+    const auto& entry = m_entries[ledgerSlot];
+    const auto& binding = entry.monitorControl;
+    if (entry.state != EntryState::Live || entry.monitorContent.leaf == 0 ||
+        !binding.Valid() || binding.ledgerGeneration != entry.generation ||
+        binding.render != entry.renderHandle || !binding.receipt->TryReadEnd(binding, out)) return 0;
+    if (!out->timelineControl && out->kind == SourceTerminalKind::Stop) out->cause = entry.controlCause;
+    return entry.monitorContent.leaf;
+}
+
 void VoiceLedger::InvalidateMonitorControl(Entry& entry) noexcept {
     if (entry.monitorControl.Valid()) entry.monitorControl.receipt->Invalidate(entry.monitorControl.ticket);
     entry.monitorControl = {};

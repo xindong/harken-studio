@@ -617,6 +617,8 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
     ctx.logicalSourceOutputFramesThisBlock = 0;
     ctx.stagedSourceTerminal = SourceTerminalKind::None;
     ctx.stagedSourceTerminalOffset = 0;
+    ctx.stagedPlaybackEnd = SourceTerminalKind::None;
+    ctx.stagedPlaybackEndOffset = 0;
     ctx.monitorStoppedBeforeCascade = false;
 
     const VoiceEventSpan& timelineSpan = ctx.timelineEvents;
@@ -657,6 +659,8 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
         ctx.stagedSourceTerminal = SourceTerminalKind::Stop;
         ctx.stagedSourceTerminalOffset = static_cast<std::uint32_t>(
             ctx.authoredRootStopFrame > quantumStart ? ctx.authoredRootStopFrame - quantumStart : 0);
+        ctx.stagedPlaybackEnd = SourceTerminalKind::Stop;
+        ctx.stagedPlaybackEndOffset = ctx.stagedSourceTerminalOffset;
         ctx.phase = SourcePhase::Done;
         ctx.starvedThisBlock = false;
         ctx.lastResult = StageResult{0, SourcePhase::Done};
@@ -703,6 +707,7 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
     if (ctx.authoredRootStopApplied && pendingStopFrame < quantumStart &&
         quantumStart - pendingStopFrame >= ctx.timelineStopDeclickFrames) {
         ctx.monitorStoppedBeforeCascade = true;
+        ctx.stagedPlaybackEnd = SourceTerminalKind::Stop;
         ctx.phase = SourcePhase::Done;
         ctx.starvedThisBlock = false;
         ctx.lastResult = StageResult{0, SourcePhase::Done};
@@ -1397,6 +1402,12 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
     } else if (sourceResult != SourceTerminalKind::None) {
         ctx.stagedSourceTerminal = sourceResult;
         ctx.stagedSourceTerminalOffset = sourceBoundary;
+    }
+    if (phase == SourcePhase::Done) {
+        ctx.stagedPlaybackEnd = stopCutoff != UINT32_MAX
+            ? ctx.streamParkActive ? SourceTerminalKind::Parked : SourceTerminalKind::Stop
+            : sourceResult;
+        ctx.stagedPlaybackEndOffset = stopCutoff != UINT32_MAX ? stopCutoff : offset + produced;
     }
 
 #if HARKEN_STAGE_TAPS_ACTIVE

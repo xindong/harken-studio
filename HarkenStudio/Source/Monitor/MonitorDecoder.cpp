@@ -170,7 +170,7 @@ bool validateFactFields(const MonitorRecordHeader& header, const MonitorExecutio
     if (header.engineMonitorInstanceId == 0 ||
         header.producerId == 0 || header.sourceSequence == 0 || header.streamId == 0 ||
         header.reserved0 != 0 || header.telemetry.reserved0 != 0 ||
-        fact.structSize != 432u || fact.factKind == 0 || fact.factKind > kMonitorFactVariableResult ||
+        fact.structSize != 432u || fact.factKind == 0 || fact.factKind > kMonitorFactPlayableFinished ||
         fact.subjectNamespace > kMonitorSubjectTransition || fact.contentKind > kMonitorContentVariable ||
         fact.reserved0 != 0 || fact.reserved1 != 0 || fact.control.reserved0 != 0 || fact.selection.reserved0 != 0 ||
         fact.target.reserved0 != 0 || (fact.factFlags & ~(kMonitorFactFlagIdentityIncomplete | kMonitorFactFlagControlIncomplete)) != 0 ||
