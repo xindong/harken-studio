@@ -25,6 +25,7 @@
 #include <QApplication>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QLineEdit>
 #include <QLayout>
 #include <QMenu>
 #include <QMouseEvent>
@@ -141,19 +142,28 @@ VNX::SelectorWindow* openSelector(VNX::BindingFieldEditor* popup)
     return openSelector(popup->findChild<QToolButton*>(QStringLiteral("bindingAdd")));
 }
 
-bool createVariable(QToolButton* button, VNX::VariableKind kind)
+VNX::SelectorWindow* openVariableCreation(QToolButton* button, VNX::VariableKind kind)
 {
-    if (!button) return false;
+    if (!button) return nullptr;
     button->click();
     auto* menu = button->findChild<QMenu*>(QStringLiteral("bindingAddMenu"));
-    if (!menu) return false;
+    if (!menu) return nullptr;
     auto* submenu = menu->findChild<QMenu*>(QStringLiteral("bindingNewVariable"));
-    if (!submenu) return false;
+    if (!submenu) return nullptr;
     menu->hide();
     submenu->actions().at(kind == VNX::VariableKind::Step ? 1 : 0)->trigger();
     QApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QApplication::processEvents();
-    return true;
+    return activeSelector();
+}
+
+bool createVariable(QToolButton* button, VNX::VariableKind kind)
+{
+    auto* selector = openVariableCreation(button, kind);
+    if (!selector) return false;
+    selector->accept();
+    QApplication::processEvents();
+    return selector->isHidden();
 }
 
 bool chooseVariable(VNX::SelectorWindow* selector, uint32_t objectId)
@@ -370,8 +380,13 @@ TEST_F(BindingFieldEditorTest, ExplicitVariableSelectionCreatesFieldBindingWithU
     EXPECT_EQ(popup->findChildren<VNX::ObjectRefWidget*>(QStringLiteral("bindingVariableRef")).size(), 1);
 }
 
-TEST_F(BindingFieldEditorTest, NewVariableMenuOpensStepBindingForEditingWithoutConfirmation)
+TEST_F(BindingFieldEditorTest, ConfirmedCreationKeepsLocationNameAndBindingInOneUndoStep)
 {
+    auto& manager = VNX::ProjectManager::instance();
+    auto* folder = manager.createFolder(nullptr, QStringLiteral("Controls"), QStringLiteral("Variables"));
+    ASSERT_NE(folder, nullptr);
+    auto* stack = VNX::UndoRedoManager::instance().undoStack();
+    const int history = stack->count();
     VNX::InspectorPanel inspector;
     int editorRequests = 0;
     QObject::connect(&inspector, &VNX::InspectorPanel::externalEditorRequested, &inspector,
@@ -380,7 +395,24 @@ TEST_F(BindingFieldEditorTest, NewVariableMenuOpensStepBindingForEditingWithoutC
     auto* editor = prepareExternalEditor(inspector);
     auto* slot = inspector.findChild<QToolButton*>(QStringLiteral("bindingPoint_volume"));
     ASSERT_NE(slot, nullptr);
-    ASSERT_TRUE(createVariable(slot, VNX::VariableKind::Step));
+    auto* selector = openVariableCreation(slot, VNX::VariableKind::Step);
+    ASSERT_NE(selector, nullptr);
+    EXPECT_TRUE(VNX::VariableSemantics::fileBoundVariables(manager.currentProject()).empty());
+    EXPECT_TRUE(sound_->comp<VNX::VMixNode>()->bindings.isEmpty());
+    EXPECT_EQ(stack->count(), history);
+    auto* name = selector->findChild<QLineEdit*>(QStringLiteral("selectorCreationName"));
+    ASSERT_NE(name, nullptr);
+    EXPECT_FALSE(name->text().isEmpty());
+    EXPECT_EQ(name->selectedText(), name->text());
+    EXPECT_TRUE(name->hasFocus());
+    auto* tree = selector->findChild<QTreeWidget*>();
+    ASSERT_NE(tree, nullptr);
+    ASSERT_EQ(tree->topLevelItemCount(), 1);
+    ASSERT_EQ(tree->topLevelItem(0)->childCount(), 1);
+    tree->setCurrentItem(tree->topLevelItem(0)->child(0));
+    name->setText(QStringLiteral("CombatState"));
+    selector->accept();
+    QApplication::processEvents();
     EXPECT_EQ(activeSelector(), nullptr);
     const auto variables = VNX::VariableSemantics::fileBoundVariables(
         VNX::ProjectManager::instance().currentProject());
@@ -394,6 +426,90 @@ TEST_F(BindingFieldEditorTest, NewVariableMenuOpensStepBindingForEditingWithoutC
     EXPECT_EQ(slot->property("bindingState").toString(), QStringLiteral("own"));
     EXPECT_EQ(editorRequests, 1);
     expectSelectedBinding(editor, sound_, sound_->comp<VNX::VMixNode>()->bindings.entries().front());
+    const QUuid guid = variables.front()->guid;
+    const auto binding = sound_->comp<VNX::VMixNode>()->bindings.entries().front();
+    EXPECT_EQ(variables.front()->name, QStringLiteral("CombatState"));
+    EXPECT_EQ(manager.currentProject()->folderForItem(variables.front()), folder);
+    EXPECT_EQ(stack->count(), history + 1);
+    stack->undo();
+    EXPECT_EQ(manager.findItemByGuid(guid), nullptr);
+    EXPECT_TRUE(sound_->comp<VNX::VMixNode>()->bindings.isEmpty());
+    stack->redo();
+    const auto* restored = manager.findItemByGuid(guid);
+    ASSERT_NE(restored, nullptr);
+    EXPECT_EQ(restored->name, QStringLiteral("CombatState"));
+    EXPECT_EQ(manager.currentProject()->folderForItem(restored), folder);
+    EXPECT_EQ(sound_->comp<VNX::VMixNode>()->bindings.entries().front().guid, binding.guid);
+}
+
+TEST_F(BindingFieldEditorTest, CreationDraftRejectsConflictsAndLostLocationsWithoutMutatingProject)
+{
+    auto& manager = VNX::ProjectManager::instance();
+    auto* existing = variable(QStringLiteral("Variable"));
+    auto* folder = manager.createFolder(nullptr, QStringLiteral("Controls"), QStringLiteral("Variables"));
+    ASSERT_NE(folder, nullptr);
+    VNX::InspectorPanel inspector;
+    inspector.showItemInspector(sound_);
+    auto* slot = inspector.findChild<QToolButton*>(QStringLiteral("bindingPoint_volume"));
+    auto* selector = openVariableCreation(slot, VNX::VariableKind::Smooth);
+    ASSERT_NE(selector, nullptr);
+    auto* name = selector->findChild<QLineEdit*>(QStringLiteral("selectorCreationName"));
+    auto* tree = selector->findChild<QTreeWidget*>();
+    ASSERT_NE(name, nullptr);
+    ASSERT_NE(tree, nullptr);
+    const QString proposed = name->text();
+    EXPECT_NE(proposed, existing->name);
+    auto* stack = VNX::UndoRedoManager::instance().undoStack();
+    const int history = stack->count();
+    for (const auto& invalid : {QString{}, QStringLiteral("123 Bad"), existing->name}) {
+        name->setText(invalid);
+        selector->accept();
+        EXPECT_TRUE(selector->isVisible());
+        EXPECT_EQ(VNX::VariableSemantics::fileBoundVariables(manager.currentProject()).size(), 1u);
+        EXPECT_TRUE(sound_->comp<VNX::VMixNode>()->bindings.isEmpty());
+        EXPECT_EQ(stack->count(), history);
+    }
+    name->setText(proposed);
+    tree->setCurrentItem(tree->topLevelItem(0)->child(0));
+    ASSERT_TRUE(manager.renameFolder(folder, QStringLiteral("RenamedControls")));
+    QApplication::processEvents();
+    ASSERT_NE(tree->currentItem(), nullptr);
+    EXPECT_EQ(tree->currentItem()->text(0), QStringLiteral("RenamedControls"));
+    EXPECT_EQ(name->text(), proposed);
+    ASSERT_TRUE(manager.deleteEntries({}, {folder}));
+    selector->accept();
+    EXPECT_TRUE(selector->isVisible());
+    QApplication::processEvents();
+    EXPECT_EQ(tree->currentItem(), nullptr);
+    selector->accept();
+    EXPECT_TRUE(selector->isVisible());
+    EXPECT_EQ(VNX::VariableSemantics::fileBoundVariables(manager.currentProject()).size(), 1u);
+    QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QApplication::sendEvent(name, &escape);
+    EXPECT_TRUE(selector->isHidden());
+    EXPECT_TRUE(sound_->comp<VNX::VMixNode>()->bindings.isEmpty());
+    EXPECT_EQ(name->text(), proposed);
+}
+
+TEST_F(BindingFieldEditorTest, FailedBindingRollsBackCreationWithoutChangingUndoHistory)
+{
+    auto& manager = VNX::ProjectManager::instance();
+    VNX::InspectorPanel inspector;
+    inspector.showItemInspector(sound_);
+    auto* slot = inspector.findChild<QToolButton*>(QStringLiteral("bindingPoint_volume"));
+    auto* selector = openVariableCreation(slot, VNX::VariableKind::Smooth);
+    ASSERT_NE(selector, nullptr);
+    const int history = VNX::UndoRedoManager::instance().undoStack()->count();
+    QObject guard;
+    QObject::connect(&manager, &VNX::ProjectManager::itemCreated, &guard,
+        [slot](VNX::ProjectItem* item) {
+            if (item->type == VNX::ProjectItem::Type::Variable) slot->setEnabled(false);
+        });
+    selector->accept();
+    EXPECT_TRUE(selector->isVisible());
+    EXPECT_TRUE(VNX::VariableSemantics::fileBoundVariables(manager.currentProject()).empty());
+    EXPECT_TRUE(sound_->comp<VNX::VMixNode>()->bindings.isEmpty());
+    EXPECT_EQ(VNX::UndoRedoManager::instance().undoStack()->count(), history);
 }
 
 TEST_F(BindingFieldEditorTest, NewVariableMenuCreatesAndSelectsSmoothBindingsWithExistingVariables)

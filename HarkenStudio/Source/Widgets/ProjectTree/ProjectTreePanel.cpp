@@ -26,6 +26,7 @@
 #include <QApplication>
 #include <QDebug>
 #include <QProgressDialog>
+#include <QPersistentModelIndex>
 #include <QColorDialog>
 #include <QSet>
 #include <QSettings>
@@ -241,8 +242,10 @@ void ProjectTreePanel::setupContextMenu()
     ProjectItemMenuController::Callbacks cb;
     cb.getSelected     = [this]() { return selectedItem(); };
     cb.getSelection    = [this]() { return selectedItems(); };
-    cb.selectResult    = [this](ProjectItem* item) { selectProjectItem(item); };
-    cb.selectFolderResult = [this](PhysicalFolder* folder) { selectFolder(folder); };
+    cb.selectResult    = [this](ProjectItem* item) { selectCreatedItem(item); };
+    cb.selectFolderResult = [this](PhysicalFolder* folder) {
+        if (selectFolder(folder)) editCreatedRow(reverseFolderMap_.value(folder));
+    };
     cb.folderPath = [this](const QString& bucketFolderName) {
         return deriveFolderPathForBucket(bucketFolderName);
     };
@@ -566,7 +569,7 @@ void ProjectTreePanel::onNewParent(ProjectItem::Type containerType)
     QString typeName = ProjectItemMenuController::typeDisplayName(containerType);
     const QString name = QStringLiteral("New_%1").arg(QString(typeName).remove(' '));
     ProjectItem* container = pm.createParentContainer(sel, containerType, name);
-    if (container) selectResultItems({container});
+    if (container) selectCreatedItem(container);
 }
 
 void ProjectTreePanel::onNewAction(VActionStep::Type actionType)
@@ -580,7 +583,9 @@ void ProjectTreePanel::onNewAction(VActionStep::Type actionType)
     QList<ProjectItem*> results;
     for (ProjectItem* item : created)
         results.append(item);
-    if (!results.isEmpty())
+    if (results.size() == 1)
+        selectCreatedItem(results.front());
+    else if (!results.isEmpty())
         selectResultItems(results);
 }
 
@@ -1202,6 +1207,30 @@ void ProjectTreePanel::selectResultItems(const QList<ProjectItem*>& items)
     const QList<ProjectItem*> selected = selectedItems();
     emit itemSelected(selected.value(0));
     emit objectSelectionChanged(selected);
+}
+
+void ProjectTreePanel::selectCreatedItem(ProjectItem* item)
+{
+    if (selectProjectItem(item)) editCreatedRow(findTreeItem(item));
+}
+
+void ProjectTreePanel::editCreatedRow(QTreeWidgetItem* row)
+{
+    const QPersistentModelIndex index(treeWidget_->indexFromItem(row));
+    QTimer::singleShot(0, this, [this, index] {
+        if (!index.isValid() || treeWidget_->currentIndex() != index) return;
+        auto* row = treeWidget_->itemFromIndex(index);
+        prepareItemReveal(row);
+        for (auto* ancestor = row; ancestor; ancestor = ancestor->parent()) {
+            if (ancestor->isHidden()) {
+                searchBox_->clear();
+                break;
+            }
+        }
+        treeWidget_->scrollToItem(row);
+        treeWidget_->setFocus(Qt::OtherFocusReason);
+        treeWidget_->editItem(row, 0);
+    });
 }
 
 void ProjectTreePanel::setItemColorViaDialog(const QList<ProjectItem*>& items)

@@ -526,6 +526,48 @@ TEST_F(TimelineEditorPanelTest, PieceRowsTrackDirectChildrenAcrossCreateMoveRena
     EXPECT_EQ(panel.laneGuid(0), second->guid);
 }
 
+TEST_F(TimelineEditorPanelTest, TrackCreationEntriesRevealAndEditTheNewLane)
+{
+    VNX::TimelineEditorPanel panel;
+    panel.resize(900, 500);
+    panel.bindItem(piece_);
+    panel.show();
+    panel.activateWindow();
+    drainEvents();
+    for (const bool toolbar : {true, false}) {
+        if (toolbar) {
+            auto* add = panel.findChild<QToolButton*>(QStringLiteral("timelineAddTrackButton"));
+            ASSERT_NE(add, nullptr);
+            add->click();
+        } else {
+            auto* canvas = panel.findChild<VNX::TimelineCanvas*>();
+            ASSERT_NE(canvas, nullptr);
+            auto menu = std::unique_ptr<QMenu>(canvas->createLaneBlankMenu(-1, 0));
+            auto* add = menu->findChild<QAction*>(QStringLiteral("timelineAddTrack"));
+            ASSERT_NE(add, nullptr);
+            add->trigger();
+        }
+        drainEvents();
+        const int lane = panel.laneCount() - 1;
+        const QUuid guid = panel.laneGuid(lane);
+        const QString initialName = panel.laneName(lane);
+        auto* editor = panel.findChild<VNX::InlineRenameEdit*>();
+        ASSERT_NE(editor, nullptr);
+        EXPECT_TRUE(editor->hasFocus());
+        EXPECT_EQ(editor->selectedText(), initialName);
+        editor->setText(QStringLiteral("Discarded"));
+        ASSERT_TRUE(editor->finish(false));
+        EXPECT_EQ(panel.laneName(lane), initialName);
+        auto& undo = VNX::UndoRedoManager::instance();
+        ASSERT_TRUE(undo.undo());
+        EXPECT_EQ(VNX::ProjectManager::instance().findItemByGuid(guid), nullptr);
+        ASSERT_TRUE(undo.redo());
+        drainEvents();
+        EXPECT_EQ(panel.laneGuid(lane), guid);
+        EXPECT_EQ(panel.findChild<VNX::InlineRenameEdit*>(), nullptr);
+    }
+}
+
 TEST_F(TimelineEditorPanelTest, LaneMenuRenamesInPlaceAndKeepsInvalidInputEditable)
 {
     auto& manager = VNX::ProjectManager::instance();

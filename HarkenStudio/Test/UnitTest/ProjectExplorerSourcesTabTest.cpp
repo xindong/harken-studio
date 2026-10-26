@@ -1127,6 +1127,29 @@ TEST_F(ProjectExplorerSourcesTabTest, SectionsStackResizeAndCollapseIndependentl
     EXPECT_TRUE(content->contentsRect().contains(splitter->geometry()));
 }
 
+TEST_F(ProjectExplorerSourcesTabTest, CreationRevealsEditableNameThroughSearchAndCollapsedAssets)
+{
+    explorer_->resize(340, 800);
+    explorer_->show();
+    explorer_->activateWindow();
+    auto* search = explorer_->findChild<QLineEdit*>(QStringLiteral("projectSearchBox"));
+    ASSERT_NE(search, nullptr);
+    search->setText(QStringLiteral("UnrelatedSearch"));
+    explorer_->assetsSection()->setExpanded(false);
+    explorer_->addAction({}, QStringLiteral("NewAction"));
+    QApplication::processEvents();
+    EXPECT_TRUE(explorer_->assetsSection()->isExpanded());
+    EXPECT_TRUE(search->text().isEmpty());
+    auto* editor = explorer_->treeWidget()->findChild<InlineRenameEdit*>();
+    ASSERT_NE(editor, nullptr);
+    EXPECT_TRUE(editor->hasFocus());
+    EXPECT_EQ(editor->selectedText(), explorer_->selectedItem()->name);
+    const QUuid guid = explorer_->selectedItem()->guid;
+    editor->setText(QStringLiteral("Discarded"));
+    ASSERT_TRUE(editor->finish(false));
+    EXPECT_EQ(ProjectManager::instance().findItemByGuid(guid)->name, QStringLiteral("NewAction"));
+}
+
 TEST_F(ProjectExplorerSourcesTabTest, SourceHeaderCreatesRootFolderAndTreeMenuCreatesSubfolder)
 {
     ASSERT_TRUE(SourceFileSystem::createFolder({}, QStringLiteral("FX")));
@@ -1134,6 +1157,7 @@ TEST_F(ProjectExplorerSourcesTabTest, SourceHeaderCreatesRootFolderAndTreeMenuCr
     tree->setCurrentItem(findRow(tree, QStringLiteral("FX")));
     explorer_->resize(340, 800);
     explorer_->show();
+    explorer_->activateWindow();
     explorer_->sourcesSection()->setExpanded(false);
     QApplication::processEvents();
     EXPECT_EQ(explorer_->findChild<QToolButton*>(QStringLiteral("newSourceFolderButton")), nullptr);
@@ -1170,6 +1194,14 @@ TEST_F(ProjectExplorerSourcesTabTest, SourceHeaderCreatesRootFolderAndTreeMenuCr
         QApplication::sendEvent(target, &event);
         EXPECT_TRUE(menuOpened);
         EXPECT_FALSE(promptOpened);
+        explorer_->activateWindow();
+        QApplication::processEvents();
+        auto* editor = tree->findChild<InlineRenameEdit*>();
+        ASSERT_NE(editor, nullptr);
+        EXPECT_TRUE(editor->hasFocus());
+        EXPECT_EQ(editor->selectedText(), tree->currentItem()->text(0));
+        ASSERT_TRUE(editor->finish(false));
+        QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     };
 
     auto* toggle = explorer_->sourcesSection()->findChild<QToolButton*>(QStringLiteral("explorerSectionToggle"));

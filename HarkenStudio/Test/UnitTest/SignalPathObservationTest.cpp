@@ -1884,6 +1884,10 @@ TEST_F(SignalPathObservationTest, BlankMenuCreatesAllLayerAndBusTypesAtBucketRoo
         EXPECT_EQ(canvas.signalPathNode(indexOf(graph, s5))->pos(), originalPosition);
         EXPECT_EQ(count(graph, created), 1u);
         EXPECT_EQ(canvas.signalPathNode(indexOf(graph, created))->pos(), position);
+        auto* createdNode = canvas.signalPathNode(indexOf(graph, created));
+        ASSERT_TRUE(createdNode->isTitleEditing());
+        EXPECT_EQ(createdNode->titleEditor()->selectedText(), created->name);
+        createdNode->finishTitleEditing(false);
         if (type == T::Container) {
             const auto modes = std::vector{SelectionMode::Random, SelectionMode::Sequence, SelectionMode::Match, SelectionMode::Blend};
             const auto names = QStringList{"Random", "Sequence", "Match", "Blend"};
@@ -1899,6 +1903,7 @@ TEST_F(SignalPathObservationTest, BlankMenuCreatesAllLayerAndBusTypesAtBucketRoo
         ASSERT_NE(ProjectManager::instance().findItemByGuid(guid), nullptr);
         const auto& restored = canvas.activeSignalPathSource()->graph();
         EXPECT_EQ(canvas.signalPathNode(indexOf(restored, created))->pos(), position);
+        EXPECT_FALSE(canvas.signalPathNode(indexOf(restored, created))->isTitleEditing());
     }
 }
 
@@ -1991,6 +1996,9 @@ TEST_F(SignalPathObservationTest, NodeNewChildUsesHierarchyRulesAndCreatesUnderI
         [&](uint32_t id) { selected = id; });
     auto* stack = UndoRedoManager::instance().undoStack();
     for (const auto& [parent, labels] : rows) {
+        SCOPED_TRACE(parent->name.toStdString());
+        ASSERT_TRUE(canvas.focusItem(parent));
+        canvas.setChainVisible(parent->objectID, false);
         auto* node = canvas.signalPathNode(indexOf(canvas.activeSignalPathSource()->graph(), parent));
         canvas.centerOn(node);
         QMenu menu;
@@ -2004,7 +2012,6 @@ TEST_F(SignalPathObservationTest, NodeNewChildUsesHierarchyRulesAndCreatesUnderI
             labels.cbegin(), labels.cend())) << childLabels.join(", ").toStdString();
         if (labels.empty()) continue;
         const auto transform = canvas.transform();
-        const auto center = canvas.mapToScene(canvas.viewport()->rect().center());
         actionNamed(*childAction->menu(), labels.front())->trigger();
         drainEvents();
         auto* created = ProjectManager::instance().findItemByObjectID(selected);
@@ -2019,10 +2026,13 @@ TEST_F(SignalPathObservationTest, NodeNewChildUsesHierarchyRulesAndCreatesUnderI
             EXPECT_EQ(graph.nodes[route.computation[1].occurrenceIndex].key.objectGuid, parent->guid);
         }
         auto* childNode = canvas.signalPathNode(indexOf(graph, created));
+        EXPECT_TRUE(childNode->isVisible());
         EXPECT_TRUE(childNode->isSelected());
         expectDisjointNodes(canvas);
         EXPECT_EQ(canvas.transform(), transform);
-        EXPECT_EQ(canvas.mapToScene(canvas.viewport()->rect().center()), center);
+        EXPECT_TRUE(childNode->isTitleEditing());
+        EXPECT_TRUE(canvas.viewport()->rect().contains(
+            canvas.mapFromScene(childNode->titleEditor()->graphicsProxyWidget()->sceneBoundingRect()).boundingRect()));
         const auto position = childNode->pos();
         const auto guid = created->guid;
         stack->undo();

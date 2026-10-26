@@ -548,6 +548,12 @@ void SourcesTreeWidget::newFolder()
     if (SourceFileSystem::createFolder(parent, QStringLiteral("New Folder"), &error, &name)) {
         selectPath(parent.isEmpty() ? name : parent + QLatin1Char('/') + name);
         emit contentRevealRequested();
+        const QPersistentModelIndex index(currentIndex());
+        QTimer::singleShot(0, this, [this, index] {
+            if (!index.isValid() || currentIndex() != index) return;
+            setFocus(Qt::OtherFocusReason);
+            editItem(itemFromIndex(index), 0);
+        });
     }
     showError(error);
 }

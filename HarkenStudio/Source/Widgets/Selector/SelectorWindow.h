@@ -6,13 +6,17 @@
 #include "Widgets/Shared/RefDomain.h"
 
 #include <Qt>
+#include <QHash>
 #include <QPointer>
 #include <QStringList>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <vector>
 
 class QLineEdit;
+class QLabel;
+class QPushButton;
 class QTreeWidget;
 class QTreeWidgetItem;
 
@@ -21,6 +25,13 @@ namespace VNX {
 constexpr int kRoleObjectID   = Qt::UserRole;
 constexpr int kRoleSelectable = Qt::UserRole + 2;
 constexpr int kRoleSearchPath = Qt::UserRole + 3;
+
+struct SelectorCreationRequest
+{
+    ProjectItem::Type type = ProjectItem::Type::None;
+    QString suggestedName;
+    std::function<QString(const QString& folderPath, const QString& name)> onCreate;
+};
 
 struct SelectorRequest
 {
@@ -36,6 +47,7 @@ struct SelectorRequest
     std::function<Qt::CheckState(uint32_t)> checkState;
     std::function<bool(uint32_t)> canToggle;
     std::function<void(uint32_t, bool)> onToggled;
+    std::optional<SelectorCreationRequest> creation;
 };
 
 class SelectorWindow : public BaseDialog
@@ -59,6 +71,9 @@ private:
     void refreshSwitches();
     void applySearchFilter(const QString& text);
     void notifyItem(QTreeWidgetItem* item);
+    void rebuildLocations(bool preserveState);
+    QString creationError() const;
+    void refreshCreationValidation();
 
     SelectorRequest request_;
     QPointer<QWidget> anchor_;
@@ -67,6 +82,13 @@ private:
     uint32_t lastNotifiedID_ = 0;
     QLineEdit* searchBox_ = nullptr;
     QTreeWidget* tree_ = nullptr;
+    QWidget* creationForm_ = nullptr;
+    QLineEdit* nameEdit_ = nullptr;
+    QLabel* creationError_ = nullptr;
+    QPushButton* createButton_ = nullptr;
+    QHash<QTreeWidgetItem*, const PhysicalFolder*> locationFolders_;
+    QString creationProjectId_;
+    bool creating_ = false;
 
     static SelectorWindow* s_instance;
 };

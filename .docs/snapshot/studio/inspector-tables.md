@@ -4,6 +4,8 @@
 
 导入、缺失恢复与文件操作见[音频源业务结果表](audio-source-lifecycle.md)。
 
+绑定新变量交互核对：2026-10-23。Inspector 绑定按钮与 Binding 表格的 New Variable 复用 Selector 的创建模式：选择 Variables 根或已有子目录，底部 Name 预填避重名称并全选，Create 确认后才创建变量及绑定。点击目录只改变创建位置，不选择既有变量；双击目录不提交创建。Variable 名称仍在全工程内唯一，非法或冲突名称留在原输入框并显示错误，不在确认时静默改名。取消、关闭及 Inspector 改绑不产生新对象。确认时复验工程、目录和绑定目标；目录改名或移动保持原目录身份，目录删除后需重新选择位置，不回退到根目录。创建和绑定合并为一次撤销，绑定失败撤回新变量且不写入撤销历史。Select Variable 继续使用原对象选择语义。
+
 ## 范围与清单
 
 范围为 Sound、Container、Layer、Track、Piece、Bus、Action、Attenuation、Variable 九类对象的 Inspector 主面板。External Editor、Timeline、Grid 等独立编辑面不计入。

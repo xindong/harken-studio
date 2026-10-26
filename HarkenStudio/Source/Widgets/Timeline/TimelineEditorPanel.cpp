@@ -232,12 +232,7 @@ TimelineEditorPanel::TimelineEditorPanel(QWidget* parent,
     addTrackButton_->setAutoRaise(true);
     addTrackButton_->setProperty("flatIconButton", true);
     addTrackButton_->setCursor(Qt::PointingHandCursor);
-    connect(addTrackButton_, &QToolButton::clicked, this, [this] {
-        if (viewKind_ != ViewKind::Piece) return;
-        auto* track = ProjectManager::instance().createItem(
-            boundItem_, QStringLiteral("Track"), ProjectItem::Type::Track);
-        if (track) selectLane(track->guid, true);
-    });
+    connect(addTrackButton_, &QToolButton::clicked, this, &TimelineEditorPanel::addTrack);
 
     scrollArea_ = new QScrollArea(timelinePage_);
     scrollArea_->setObjectName(QStringLiteral("timelineViewport"));
@@ -1787,6 +1782,19 @@ bool TimelineEditorPanel::setMeter(int numerator, int denominator)
     spec.meterMap = {{0, numerator, denominator}};
     return commitTimelineAction(TimelineEditing::replacePieceTime(
         &ProjectManager::instance(), boundItem_, spec, this, tr("Change Piece meter")));
+}
+
+void TimelineEditorPanel::addTrack()
+{
+    if (viewKind_ != ViewKind::Piece) return;
+    auto* track = ProjectManager::instance().createItem(
+        boundItem_, QStringLiteral("Track"), ProjectItem::Type::Track);
+    if (!track) return;
+    selectLane(track->guid, true);
+    QTimer::singleShot(0, this, [this, guid = track->guid] {
+        if (selectedLaneGuid_ != guid) return;
+        headerColumn_->renameLane(guid);
+    });
 }
 
 bool TimelineEditorPanel::addMarker(MarkerKind kind, int64_t position, const QString& name)
