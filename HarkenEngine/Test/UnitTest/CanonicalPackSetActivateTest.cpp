@@ -186,14 +186,15 @@ VnResult Resolve(const char* name, VnActionResolved* result) {
     return Vn_ResolveActionByName(&desc, result);
 }
 
-std::vector<std::uint8_t> BuildPreview(bool random, bool multipleSteps = false) {
+std::vector<std::uint8_t> BuildPreview(bool random, bool multipleSteps = false,
+    VnAttenuationId attenuation = {}, const harken::WorldCapacitySummaryV1& capacity = {}) {
     using namespace harken;
     using namespace harkentest::packfoundation;
     const auto id = PackId("action_" + ObjectIdString(action));
     const auto bus = DefaultRuntimeBusFixtureV1();
     const auto soundId = harkentest::ObjectId(8200);
     const auto containerId = harkentest::ObjectId(8201);
-    std::vector<float> samples(480, 0.8f);
+    std::vector<float> samples(attenuation == VnObjectId{} ? 480 : 48000, 0.8f);
     const float* planes[] = {samples.data()};
     std::uint64_t mediaRevision = 0;
     EXPECT_TRUE(ComputeMediaPcmContentRevisionV1(48000, 1, samples.size(), planes, 1, &mediaRevision));
@@ -213,6 +214,11 @@ std::vector<std::uint8_t> BuildPreview(bool random, bool multipleSteps = false) 
         row.payload.values[6].objectId = VN_BUS_MASTER;
         row.payload.values[11].bits = std::bit_cast<std::uint32_t>(1.0f);
         row.payload.values[16].bits = std::bit_cast<std::uint32_t>(1.0f);
+        if (i == 0 && attenuation != VnObjectId{}) {
+            row.payload.presentMask |= (1ull << 10) | (1ull << 13);
+            row.payload.values[10].bits = 1;
+            row.payload.values[13].objectId = attenuation;
+        }
         row.programSemanticFingerprint = ComputePlayablePropertyFingerprintV1(row);
     }
     PlayableRefV1 sound{};
@@ -267,6 +273,7 @@ std::vector<std::uint8_t> BuildPreview(bool random, bool multipleSteps = false) 
     program.programSemanticFingerprint = ComputeActionProgramFingerprintV1(program);
     ContainerWorldInstallViewV1 world{};
     world.identity.projectId = project;
+    world.capacity = capacity;
     world.identity.capabilityMask = kWorldCapabilityActionDefinitions | kWorldCapabilityPlayableProperties |
         (random ? kWorldCapabilityRandomDraw : 0);
     world.actions = &program;
@@ -2903,3 +2910,141 @@ TEST(CanonicalPackSetActivate, KeepContentManifestUnloadsAfterInitReplace) {
 }
 
 } // namespace
+
+TEST(CanonicalPackSetActivate, LargeInitProjects257VariablesAndUses65thAttenuation) {
+    using namespace harken;
+    using namespace harkentest::packfoundation;
+    const auto initId = companionfixture::PackId("Init");
+    std::vector<VariableDefinitionV1> variables;
+    for (unsigned i = 0; i < 257; ++i)
+        variables.push_back(harkentest::MakeVariableDefinition(harkentest::ObjectId(10000+i), VariableKindV1::Smooth, 0, 8, 2));
+    ContainerWorldInstallViewV1 world{};
+    world.identity.projectId = companionfixture::project;
+    world.variables = variables.data();
+    world.variableCount = variables.size();
+    world.capacity.maxVariableDefinitions = variables.size();
+    world.identity.capabilityMask = kWorldCapabilityVariableDefinitions;
+    world.identity.runtimeSemanticFingerprint = ComputeCurrentWorldFingerprintV4(world);
+    std::vector<std::uint8_t> body;
+    ASSERT_TRUE(EncodeCurrentWorldShippingBody(world, body));
+    const auto bus = DefaultRuntimeBusFixtureV1();
+    PackCanonicalPartitionHeader header{};
+    header.headerBytes = kCanonicalDefinitionPartitionHeaderV2Bytes;
+    header.bodyVintage = kCanonicalDefinitionPartitionBodyVintage;
+    header.bodyBytes = body.size();
+    header.bodyChecksum = Fnv1a64(body.data(), body.size());
+    header.packStableId = initId;
+    header.partitionRevision = 1;
+    header.ownedDefinitionCount = variables.size();
+    ApplyCanonicalBusTriple(&header, bus.triple);
+    std::vector<std::uint8_t> partition(header.headerBytes + body.size());
+    SerializePackCanonicalPartitionHeaderV2(header, partition.data());
+    header.headerChecksum = Fnv1a64(partition.data(), 80);
+    SerializePackCanonicalPartitionHeaderV2(header, partition.data());
+    std::memcpy(partition.data() + header.headerBytes, body.data(), body.size());
+    ImageBuilder builder(kPackKindInit);
+    builder.AddEntry(kPackEntryKindPackRequirementBlock, initId,
+        RequirementPayload(initId, 1, 1, variables.size(), body.size(), bus.triple));
+    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, initId, std::move(partition));
+    builder.AddEntry(kPackEntryKindBusDefinitionSnapshot, 1, bus.snapshot);
+    auto desc = harkentest::MakeAttenuationDesc(1, 10);
+    desc.proximityFrequency = 250;
+    for (unsigned i = 0; i < 65; ++i) {
+        std::vector<std::uint8_t> payload(kPackV3AttenuationPayloadBytes);
+        SerializePackV3Attenuation(desc, payload.data());
+        builder.AddEntry(kPackEntryKindAttenuation, harkentest::ObjectId(1000+i), std::move(payload), kPackV2AuthoredToneSchemaVintage);
+    }
+    std::vector<std::uint8_t> overlay(16 + variables.size() * 36, 0);
+    StoreLE32(overlay.data(), variables.size());
+    for (std::size_t i = 0; i < variables.size(); ++i) {
+        auto* row = overlay.data() + 16 + i * 32;
+        const auto& variable = variables[i];
+        StoreObjectId(row, variable.variableId);
+        row[16] = 3;
+        std::uint64_t execution = 0;
+        ASSERT_TRUE(ComputeVariableExecutionFingerprintV1(variable.variableId, 1, 1, 3,
+            variable.rangeMin, variable.rangeMax, variable.defaultValue, nullptr, 0, &execution));
+        StoreLE64(row + 24, execution);
+    }
+    builder.AddEntry(kPackEntryKindVariablePolicyOverlay, 0, std::move(overlay));
+    companionfixture::Provider provider{builder.Build()};
+    VnCanonicalPackSetMemberV1 member{};
+    member.structSize = sizeof(member);
+    member.packStableId = initId;
+    member.packKind = VN_CANONICAL_PACK_SET_MEMBER_INIT;
+    member.flags = VN_CANONICAL_PACK_SET_MEMBER_PROVIDER;
+    member.providerUserData = &provider;
+    member.provide = companionfixture::Provider::Read;
+    member.release = companionfixture::Provider::Release;
+    const auto atten = harkentest::ObjectId(1064);
+    companionfixture::Provider content{companionfixture::BuildPreview(false, false, atten, world.capacity)};
+    auto contentMember = member;
+    contentMember.packStableId = companionfixture::PackId("action_" + ObjectIdString(companionfixture::action));
+    contentMember.packKind = VN_CANONICAL_PACK_SET_MEMBER_CONTENT;
+    contentMember.providerUserData = &content;
+    const std::array members{member, contentMember};
+    {
+        EngineSession session(CanonicalActivationConfig(2, 256, 48000));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        VnCanonicalPackSetMemberResultV1 rows[2]{};
+        for (auto& row : rows) row.structSize = sizeof(row);
+        VnCanonicalPackSetActivationReportV1 report{};
+        for (unsigned nth : {1u, 2u}) {
+            harken::detail::ArmLogicAllocFaultForTests(nth, harken::detail::LogicAllocSite::VariableValueStorage);
+            const auto result = harkentest::ActivateCanonicalMembersV1(members.data(), members.size(), rows, report);
+            harken::detail::DisarmLogicAllocFaultForTests();
+            EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, result);
+            EXPECT_EQ(0u, session.Engine()->variables.DefinitionCount());
+            EXPECT_EQ(0u, session.Engine()->spatial.ProfileCount());
+        }
+        ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(members.data(), members.size(), rows, report));
+        auto& e = *session.Engine();
+        EXPECT_EQ(257u, e.variables.DefinitionCount());
+        EXPECT_EQ(65u, e.packComposition.Published()->attenuationBindings.count);
+        ASSERT_EQ(VN_OK, Vn_SetValue(variables.back().variableId, 7));
+        harkentest::AdvanceVariableWrite(&e);
+        float value = 0;
+        ASSERT_TRUE(e.params.ScopedVariableValue(nullptr, 0, variables.back().variableId, &value));
+        EXPECT_FLOAT_EQ(7, value);
+        const auto generation = e.spatial.CurrentProfileGeneration(atten);
+        ASSERT_NE(0u, generation);
+        VnPostActionDesc post{};
+        post.structSize = sizeof(post);
+        post.actionId = companionfixture::action;
+        ASSERT_EQ(VN_OK, Vn_CreateEmitter(&post.emitter));
+        ASSERT_EQ(VN_OK, Vn_SetEmitterPosition(post.emitter, {0, 0, -5.5f}));
+        VnActionFiringHandle firing = 0;
+        const auto baselineBlock = e.mixer.BlocksRendered();
+        ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+        for (unsigned i = 0; i < 8; ++i) {
+            e.nullBackend.Pump(1);
+            ASSERT_EQ(VN_OK, Vn_Update());
+        }
+        ASSERT_GT(e.mixer.BlocksRendered(), baselineBlock);
+        ASSERT_EQ(1u, e.voices.ActiveCount());
+        unsigned observed = 0;
+        e.ledger.ForEachPlayableOwnedLive([&](VnVoiceHandle render, const VoiceLedger::PlayableParentRef&) {
+            Spatializer::SpatialVoiceState state{};
+            float distance = 0;
+            ASSERT_TRUE(e.spatial.CaptureVoice(render, &state, &distance));
+            EXPECT_EQ(atten, state.attenuationId);
+            EXPECT_EQ(generation, state.attenuationGeneration);
+            EXPECT_NEAR(-6.0206f, distance, 0.0001f);
+            ++observed;
+        });
+        EXPECT_EQ(1u, observed);
+    }
+    {
+        auto config = CanonicalActivationConfig(2, 256, 48000);
+        config.maxPackDecodeStagingBytes = provider.bytes.size() + sizeof(PackAttenuationBindingMapV1)*2;
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        VnCanonicalPackSetMemberResultV1 row{};
+        row.structSize = sizeof(row);
+        VnCanonicalPackSetActivationReportV1 report{};
+        EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, harkentest::ActivateCanonicalMembersV1(&member, 1, &row, report));
+        EXPECT_EQ(0u, session.Engine()->variables.DefinitionCount());
+        EXPECT_EQ(0u, session.Engine()->spatial.ProfileCount());
+        EXPECT_EQ(nullptr, session.Engine()->packComposition.Published());
+    }
+}

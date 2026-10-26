@@ -377,19 +377,20 @@ TEST(SpatialApi, RegisterRefusesMalformedOverrideCurves) {
     EXPECT_EQ(VN_OK, Vn_RegisterAttenuation(harkentest::ObjectId(2), &single));
 }
 
-TEST(SpatialApi, DuplicateIdAndFullTableRefuse) {
+TEST(SpatialApi, DefinitionGrowthAndDuplicateIdRefusal) {
     EngineSession session(MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const VnAttenuationDesc desc = MakeAttenuationDesc(1.0f, 10.0f);
 
-    for (std::uint32_t i = 0; i < harken::kMaxAttenuationProfiles; ++i) {
+    for (std::uint32_t i = 0; i < 65u; ++i) {
         ASSERT_EQ(VN_OK, Vn_RegisterAttenuation(harkentest::ObjectId(100 + i), &desc))
             << "profile " << i;
     }
     // A live id never silently replaces (PCM registration rule).
     EXPECT_EQ(VN_IN_USE, Vn_RegisterAttenuation(harkentest::ObjectId(100), &desc));
-    // The 65th distinct id exhausts the table.
-    EXPECT_EQ(VN_NO_ATTENUATION, Vn_RegisterAttenuation(harkentest::ObjectId(9999), &desc));
+    EXPECT_EQ(VN_OK, Vn_RegisterAttenuation(harkentest::ObjectId(9999), &desc));
+    EXPECT_NEAR(-6.0206f, session.Engine()->spatial.AttenuationVolumeDb(
+        session.Engine()->emitters, harkentest::ObjectId(164), 0, 0, -5.5f, 1), 0.0001f);
 }
 
 TEST(SpatialApi, BindRefusesUnknownIdsAndStaleHandles) {

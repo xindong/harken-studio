@@ -770,12 +770,13 @@ TEST(CapacityContract, PlayableStorageUsesSevenCheckedFamilies) {
     EXPECT_EQ(64u, layout.endpointStride);
     EXPECT_EQ(32u, layout.continuousStride);
 
-    EXPECT_EQ(40'960u, layout.memberCount);
-    EXPECT_EQ(32'768u, layout.pairedCount);
-    EXPECT_EQ(32'768u, layout.currentEventCount);
-    EXPECT_EQ(24'576u, layout.initialProgramCount);
-    EXPECT_EQ(16'384u, layout.endpointCount);
-    EXPECT_EQ(8'192u, layout.continuousCount);
+    EXPECT_EQ(resolved.voiceCapacity.Logical(), resolved.maxPlayableInstances);
+    EXPECT_EQ(81'920u, layout.memberCount);
+    EXPECT_EQ(65'536u, layout.pairedCount);
+    EXPECT_EQ(65'536u, layout.currentEventCount);
+    EXPECT_EQ(49'152u, layout.initialProgramCount);
+    EXPECT_EQ(32'768u, layout.endpointCount);
+    EXPECT_EQ(16'384u, layout.continuousCount);
 
     EXPECT_EQ(64u, layout.PackedDiscreteTransitionOffset(96u));
     EXPECT_EQ(127u, layout.PackedDiscreteTransitionOffset(159u));

@@ -10,6 +10,7 @@
 #include "Common/TestUtil.h"
 #include "harken/param/VariableService.h"
 #include "harken/core/LogicAllocCheckpoint.h"
+#include "PackVariablePublication.h"
 
 #include <gtest/gtest.h>
 
@@ -201,8 +202,6 @@ TEST_F(VariablePublication, InvalidInputsAndClosedAdmissionPreserveLiveState) {
     EXPECT_EQ(VN_INVALID_ARG, service.PreparePackDefinitions(nullptr, 1, Reason::InitPublication, 0, &token));
     EXPECT_EQ(VN_INVALID_ARG, Prepare(static_cast<Reason>(255), &token));
     EXPECT_EQ(VN_INVALID_ARG, Prepare(Reason::InitUnload, &token));
-    EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, service.PreparePackDefinitions(
-        definitions.data(), harken::kVariableDefinitionCapacity + 1, Reason::InitPublication, 0, &token));
     auto invalid = definitions;
     invalid[1].variableId = invalid[0].variableId;
     EXPECT_EQ(VN_BAD_PACK, service.PreparePackDefinitions(invalid.data(), 2, Reason::InitPublication, 0, &token));
@@ -932,3 +931,101 @@ TEST(VariableWorld, HistorySlotsRecycleAcrossTheFullCapacity) {
 }
 
 } // namespace
+
+
+TEST(VariableWorld, DefinitionGrowthPreparesBothValueTablesAndRetainsOldReadCut) {
+    EngineSession session(MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& e = *session.Engine();
+    std::vector<harken::VariableDefinitionV1> defs;
+    for (unsigned i = 0; i < 257; ++i)
+        defs.push_back(MakeVariableDefinition(harkentest::ObjectId(10000+i), harken::VariableKindV1::Smooth, 0, 8, 2));
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, InstallDefinitionsWorld(&e, defs.data(), 256).status);
+    harken::VariableReadCutRef old{};
+    ASSERT_TRUE(e.variables.CaptureReadCut(0, 256, 1, 0, &old));
+    const auto generation = e.variables.CurrentWorldGeneration();
+    for (unsigned nth : {1u, 2u}) {
+        harken::detail::ArmLogicAllocFaultForTests(nth, harken::detail::LogicAllocSite::VariableValueStorage);
+        const auto result = InstallDefinitionsWorld(&e, defs.data(), defs.size());
+        harken::detail::DisarmLogicAllocFaultForTests();
+        EXPECT_EQ(harken::WorldInstallStatus::Capacity, result.status);
+        EXPECT_EQ(256u, e.variables.DefinitionCount());
+        EXPECT_EQ(generation, e.variables.CurrentWorldGeneration());
+        ASSERT_TRUE(e.params.BeginVariableProjection());
+        e.params.ClearInstalledValues();
+        e.params.RestoreVariableProjection();
+    }
+    harken::PackComposition::PublishedView next;
+    next.owners.emplace_back();
+    next.owners.back().readiness = harken::PackOwnerReadiness::Active;
+    next.owners.back().view.variables = defs.data();
+    next.owners.back().view.variableCount = defs.size();
+    harken::VariableServiceV1::PreparedPackDefinitions prepared;
+    ASSERT_EQ(VN_OK, harken::PreparePackVariables(e, next, &prepared));
+    harken::CommitPackVariables(e, &prepared);
+    EXPECT_EQ(257u, e.variables.DefinitionCount());
+    ASSERT_EQ(VN_OK, Vn_SetValue(defs.back().variableId, 7));
+    harkentest::AdvanceVariableWrite(&e);
+    float value = 0;
+    ASSERT_TRUE(e.params.ScopedVariableValue(nullptr, 0, defs.back().variableId, &value));
+    EXPECT_FLOAT_EQ(7, value);
+    ASSERT_TRUE(e.variables.ReadCutValue(old, defs.front().variableId, &value));
+    EXPECT_FLOAT_EQ(2, value);
+    ASSERT_TRUE(e.variables.ReleaseReadCut(old));
+    harken::VariableReadCutRef current{};
+    ASSERT_TRUE(e.variables.CaptureReadCut(0, e.serviceFrameClock + 256, e.logicCommits.IssuedCount()+1, 0, &current));
+    ASSERT_TRUE(e.variables.ReadCutValue(current, defs.back().variableId, &value));
+    EXPECT_FLOAT_EQ(7, value);
+    ASSERT_TRUE(e.variables.ReleaseReadCut(current));
+}
+
+TEST(VariableWorld, FailedDirectViewPreparationPreservesPendingWritesAndCatalogTail) {
+    EngineSession session(MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& e = *session.Engine();
+    std::vector<harken::VariableDefinitionV1> defs;
+    for (unsigned i = 0; i < 257; ++i)
+        defs.push_back(MakeVariableDefinition(harkentest::ObjectId(10000+i), harken::VariableKindV1::Smooth, 0, 8, 2));
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, InstallDefinitionsWorld(&e, defs.data(), defs.size()).status);
+    const auto generation = e.variables.CurrentWorldGeneration();
+    const auto fingerprint = e.variables.ExecutionCatalogFingerprint();
+    ASSERT_EQ(VN_OK, Vn_SetValue(defs.front().variableId, 5));
+    defs.back().variableId = harkentest::ObjectId(20000);
+    harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::CurrentWorldViews);
+    const auto result = InstallDefinitionsWorld(&e, defs.data(), defs.size());
+    harken::detail::DisarmLogicAllocFaultForTests();
+    EXPECT_EQ(harken::WorldInstallStatus::Capacity, result.status);
+    EXPECT_EQ(generation, e.variables.CurrentWorldGeneration());
+    EXPECT_EQ(1u, e.variables.PendingCount());
+    EXPECT_EQ(fingerprint, e.variables.ExecutionCatalogFingerprint());
+    harkentest::AdvanceVariableWrite(&e);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, InstallDefinitionsWorld(&e, defs.data(), defs.size()).status);
+    EXPECT_NE(fingerprint, e.variables.ExecutionCatalogFingerprint());
+    float value = 0;
+    ASSERT_TRUE(e.params.ScopedVariableValue(nullptr, 0, defs.front().variableId, &value));
+    EXPECT_FLOAT_EQ(5, value);
+}
+
+TEST(VariableWorld, MoreDefinitionsThanRevisionCapacityKeepEveryCompletedCurrentValue) {
+    auto config = MakeNullConfig(2, 256, 48000);
+    config.maxEmitters = 1;
+    config.emitterVariableSlots = 1;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& e = *session.Engine();
+    const auto capacity = e.variables.RevisionCapacity();
+    std::vector<harken::VariableDefinitionV1> defs;
+    for (unsigned i = 0; i < capacity + 1; ++i)
+        defs.push_back(MakeVariableDefinition(harkentest::ObjectId(10000+i), harken::VariableKindV1::Smooth, 0, 8, 2));
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, InstallDefinitionsWorld(&e, defs.data(), defs.size()).status);
+    for (const auto& d : defs) {
+        ASSERT_EQ(VN_OK, Vn_SetValue(d.variableId, 7));
+        harkentest::AdvanceVariableWrite(&e);
+    }
+    EXPECT_EQ(capacity, e.variables.RevisionCapacity());
+    for (const auto& d : defs) {
+        float value = 0;
+        ASSERT_TRUE(e.variables.CurrentValue(d.variableId, &value));
+        EXPECT_FLOAT_EQ(7, value);
+    }
+}

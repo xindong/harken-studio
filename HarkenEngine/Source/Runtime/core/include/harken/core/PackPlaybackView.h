@@ -21,12 +21,11 @@ struct PackAttenuationBindingMapV1 {
         VnAttenuationId id{};
         std::uint64_t generation = 0;
     };
-    static constexpr std::uint32_t kCapacity = 64;
-    std::array<Binding, kCapacity> entries{};
+    std::vector<Binding> entries;
     std::uint32_t count = 0;
 
     bool Valid() const noexcept {
-        if (count > kCapacity) return false;
+        if (count > entries.size()) return false;
         for (std::uint32_t i = 0; i < count; ++i) {
             if (entries[i].id == VnObjectId{} || entries[i].generation == 0 ||
                 (i != 0 && entries[i - 1].id >= entries[i].id)) {
@@ -37,7 +36,7 @@ struct PackAttenuationBindingMapV1 {
     }
 
     std::uint64_t GenerationFor(VnAttenuationId id) const noexcept {
-        for (std::uint32_t i = 0; i < count && i < kCapacity; ++i) {
+        for (std::uint32_t i = 0; i < count && i < entries.size(); ++i) {
             if (entries[i].id == id) return entries[i].generation;
         }
         return 0;

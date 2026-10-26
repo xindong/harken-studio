@@ -57,7 +57,7 @@ using TransportEpoch = std::uint64_t;
 
 inline constexpr TransportEpoch kNoTransportEpoch = 0;
 inline constexpr std::uint64_t kVariableCapabilityMaskUnit1 = 0;
-inline constexpr std::uint32_t kVariableDefinitionCapacity = 256;
+inline constexpr std::uint32_t kVariableTransactionBaseline = 256;
 inline constexpr std::uint32_t kVariableHistoryCapacity = 4096;
 inline constexpr std::uint32_t kPendingVariableWriteCapacity = 256;
 inline constexpr std::uint32_t kVariableBatchWriteCapacity =

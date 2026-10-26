@@ -35,6 +35,8 @@ enum class LogicAllocSite : unsigned int {
     MonitorDerivedStorage,
     ImmediateEntryStorage,
     RetargetIncomingStorage,
+    VariableValueStorage,
+    CurrentWorldViews,
 };
 
 struct LogicAllocFaultState {

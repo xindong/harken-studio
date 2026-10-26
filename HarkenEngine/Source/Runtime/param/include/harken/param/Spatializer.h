@@ -35,8 +35,7 @@
 
 namespace harken {
 
-// Attenuation profile capacity is independent of its prepared storage.
-inline constexpr std::uint32_t kMaxAttenuationProfiles = 64;
+inline constexpr std::uint32_t kInitialAttenuationProfileSlots = 64;
 
 // The distinct targets one spatialized voice's evaluation can dirty in a
 // single tick: the engine-computed pan plus the five profile-driven
@@ -80,7 +79,7 @@ public:
     bool PrepareVoiceStorage(std::uint32_t count) noexcept {
         return m_mirrors.ConstructThrough(count);
     }
-    void AttachRetainedProfileStorage(void* context, bool (*prepare)(void*) noexcept) noexcept {
+    void AttachRetainedProfileStorage(void* context, bool (*prepare)(void*, std::size_t, std::size_t) noexcept) noexcept {
         m_retainedStorageContext = context;
         m_prepareRetainedStorage = prepare;
     }
@@ -131,15 +130,16 @@ public:
         PreparedProfileSet(PreparedProfileSet&& other) noexcept;
         PreparedProfileSet& operator=(PreparedProfileSet&& other) noexcept;
         bool IsPrepared() const noexcept { return m_owner != nullptr; }
+        std::uint32_t SlotCount() const noexcept { return m_profiles.size(); }
         VnAttenuationId IdAt(std::uint32_t slot) const noexcept;
         std::uint64_t GenerationAt(std::uint32_t slot) const noexcept;
 
     private:
         friend class Spatializer;
         Spatializer* m_owner = nullptr;
-        std::vector<AttenuationProfile> m_profiles;
-        std::array<std::uint64_t, kMaxAttenuationProfiles> m_generations{};
-        std::array<std::uint8_t, kMaxAttenuationProfiles> m_occupied{};
+        StableRowStorage<AttenuationProfile> m_profiles;
+        std::vector<std::uint64_t> m_generations;
+        std::vector<std::uint8_t> m_occupied;
         std::vector<PreparedProfileToken> m_retains;
         std::uint32_t m_count = 0;
     };
@@ -189,6 +189,7 @@ public:
     // VN_NO_ATTENUATION for a full table.
     VnResult RegisterProfile(VnAttenuationId id,
                              const VnAttenuationDesc* desc);
+    VnResult PrepareProfileSlots(std::uint32_t additional) noexcept;
     std::uint32_t FreeProfileSlotAtOrdinal(std::uint32_t ordinal) const noexcept;
 
     // Pure registration admission: the exact refusal RegisterProfile would
@@ -321,7 +322,7 @@ public:
                        float* appliedDistanceVolumeDb = nullptr) const;
 
     std::uint32_t ProfileCount() const { return m_profileCount; }
-    std::uint32_t ProfileCapacity() const { return kMaxAttenuationProfiles; }
+    std::uint32_t ProfileCapacity() const { return m_profiles.Capacity(); }
 
 private:
     struct VoiceMirror {
@@ -357,6 +358,7 @@ private:
         RetainSlotState state = RetainSlotState::Free;
     };
 
+    bool PrepareRetainSlots(std::size_t additional) noexcept;
     VnResult PrepareRetainProfile(VnAttenuationId id, PreparedProfileToken* out);
     void CancelPreparedRetain(PreparedProfileToken* token) noexcept;
     void CommitPreparedRetain(PreparedProfileToken* token) noexcept;
@@ -375,12 +377,12 @@ private:
 
     StableRowStorage<VoiceMirror> m_mirrors; // indexed by prepared voice slot
     mutable StableRowStorage<AttenuationProfile> m_profiles;
-    std::array<std::uint64_t, kMaxAttenuationProfiles> m_profileGenerations{};
-    std::array<std::uint8_t, kMaxAttenuationProfiles> m_profileOccupied{};
+    std::vector<std::uint64_t> m_profileGenerations;
+    std::vector<std::uint8_t> m_profileOccupied;
     std::uint32_t m_profileCount = 0;
     StableRowStorage<RetainSlot, std::size_t> m_retainRing;
     void* m_retainedStorageContext = nullptr;
-    bool (*m_prepareRetainedStorage)(void*) noexcept = nullptr;
+    bool (*m_prepareRetainedStorage)(void*, std::size_t, std::size_t) noexcept = nullptr;
     bool m_pendingProfileSet = false;
 };
 

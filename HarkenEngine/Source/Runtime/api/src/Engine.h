@@ -6402,8 +6402,8 @@ public:
                                 detail::LogicAllocSite::AudibilityParked);
             audibilityParkedHandles.reserve(resolved.voiceCapacity.Virtual());
         }
-        spatial.AttachRetainedProfileStorage(this, [](void* context) noexcept {
-            return static_cast<Engine*>(context)->PrepareRetainedProfileKeyStorage();
+        spatial.AttachRetainedProfileStorage(this, [](void* context, std::size_t live, std::size_t retained) noexcept {
+            return static_cast<Engine*>(context)->PrepareRetainedProfileKeyStorage(live, retained);
         });
         // Logic-side source of truth for bus->bus send-edge membership, one row
         // of busSendSlotsPerBus target dense indices per bus (kInvalidBusIndex =
@@ -13791,9 +13791,10 @@ public:
         voiceSendConfig;
     VoicePool::SlotStorageRegistration logicVoiceStorageRegistration;
 
-    bool PrepareRetainedProfileKeyStorage() noexcept {
-        const std::uint64_t count = kMaxAttenuationProfiles +
-            3ull * config.voiceCapacity.Logical() + spatial.RetainStorageCapacity();
+    bool PrepareRetainedProfileKeyStorage(std::size_t live, std::size_t retained) noexcept {
+        if (live > SIZE_MAX - retained ||
+            live + retained > SIZE_MAX - 3ull * config.voiceCapacity.Logical()) return false;
+        const std::uint64_t count = live + retained + 3ull * config.voiceCapacity.Logical();
         if (count > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) return false;
         try { retainedProfileKeyScratch.reserve(static_cast<std::size_t>(count)); }
         catch (...) { return false; }

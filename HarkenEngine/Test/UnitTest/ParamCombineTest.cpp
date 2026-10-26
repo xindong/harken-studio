@@ -7,6 +7,7 @@
 #include "Common/TestUtil.h"
 
 #include "harken/core/EngineConfig.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/param/BindingTable.h"
 #include "harken/param/EmitterTable.h"
 #include "harken/param/ParamSystem.h"
@@ -1059,21 +1060,33 @@ TEST(ParamCombine, DisabledLowShelfPresetLeavesProximityCornerOwnership) {
                                 kVoice1, harken::kTargetVoiceLowShelfFreqHz));
 }
 
-TEST(ParamCombine, WorldDefinitionCapacityRefusesWholeInstall) {
+TEST(ParamCombine, WorldDefinitionGrowthProjectsLastValue) {
     EngineSession session(MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     std::vector<harken::VariableDefinitionV1> definitions;
-    definitions.reserve(harken::kVariableDefinitionCapacity + 1u);
-    for (std::uint64_t i = 0; i <= harken::kVariableDefinitionCapacity; ++i) {
+    definitions.reserve(256u + 1u);
+    for (std::uint64_t i = 0; i <= 256u; ++i) {
         definitions.push_back(harkentest::MakeVariableDefinition(
             harkentest::ObjectId(1000 + i), harken::VariableKindV1::Smooth, 0.0f, 2.0f, 0.0f));
     }
-    EXPECT_EQ(harken::WorldInstallStatus::Capacity,
+    for (unsigned nth : {1u, 2u}) {
+        harken::detail::ArmLogicAllocFaultForTests(nth, harken::detail::LogicAllocSite::VariableValueStorage);
+        const auto result = harkentest::InstallDefinitionsWorld(
+            session.Engine(), definitions.data(), definitions.size());
+        harken::detail::DisarmLogicAllocFaultForTests();
+        EXPECT_EQ(harken::WorldInstallStatus::Capacity, result.status);
+        EXPECT_EQ(0u, session.Engine()->variables.DefinitionCount());
+    }
+    EXPECT_EQ(harken::WorldInstallStatus::Ok,
               harkentest::InstallDefinitionsWorld(
                   session.Engine(), definitions.data(),
                   static_cast<std::uint32_t>(definitions.size())).status);
-    EXPECT_EQ(0u, session.Engine()->variables.CurrentWorldGeneration());
-    EXPECT_EQ(VN_NO_VARIABLE, Vn_SetValue(harkentest::ObjectId(1000), 1.0f));
+    EXPECT_EQ(1u, session.Engine()->variables.CurrentWorldGeneration());
+    EXPECT_EQ(VN_OK, Vn_SetValue(definitions.back().variableId, 1.0f));
+    harkentest::AdvanceVariableWrite(session.Engine());
+    float value = 0;
+    ASSERT_TRUE(session.Engine()->params.ScopedVariableValue(nullptr, 0, definitions.back().variableId, &value));
+    EXPECT_FLOAT_EQ(1, value);
 }
 
 TEST(ParamCombine, ReduceWithSlotSubstitutesApiDirectWithoutWriting) {

@@ -85,6 +85,7 @@ inline harken::WorldInstallResult InstallDefinitionsWorld(
     harken::ContainerWorldInstallViewV1 world{};
     world.variables = definitions;
     world.variableCount = count;
+    world.capacity.maxVariableDefinitions = std::max(world.capacity.maxVariableDefinitions, count);
     world.identity.capabilityMask =
         count == 0 ? 0 : harken::kWorldCapabilityVariableDefinitions;
     world.identity.runtimeSemanticFingerprint =

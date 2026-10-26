@@ -70,8 +70,8 @@ bool RetainedKeyLess(const Spatializer::RetainedProfileKey& a,
 
 VnResult ValidateRetainedKeys(
     const std::vector<Spatializer::RetainedProfileKey>& keys,
-    std::size_t ringSize) noexcept {
-    if (keys.size() > ringSize && keys.size() - ringSize > kMaxAttenuationProfiles) {
+    std::size_t ringSize, std::size_t liveSize) noexcept {
+    if (keys.size() > ringSize && keys.size() - ringSize > liveSize) {
         return VN_PACK_RESIDENT_CAPACITY;
     }
     for (std::size_t i = 0; i < keys.size(); ++i) {
@@ -93,11 +93,11 @@ bool RetainsProfile(const std::vector<Spatializer::RetainedProfileKey>& keys,
 std::size_t RetainCapacity(const EngineConfig& config) {
     const std::size_t plans = config.topologyPlanPoolCapacity == 0
         ? 4 : config.topologyPlanPoolCapacity;
-    if (plans > std::numeric_limits<std::size_t>::max() / kMaxAttenuationProfiles) {
+    if (plans > std::numeric_limits<std::size_t>::max() / kInitialAttenuationProfileSlots) {
         throw std::length_error("attenuation retain capacity");
     }
     detail::LogicAllocCheckpoint(detail::LogicAllocSite::None);
-    return plans * kMaxAttenuationProfiles;
+    return plans * kInitialAttenuationProfileSlots;
 }
 
 std::uint32_t FloatBits(float value) {
@@ -357,8 +357,10 @@ Spatializer::Spatializer(const EngineConfig& config)
     : Spatializer(config, config.voiceCapacity.Render()) {}
 
 Spatializer::Spatializer(const EngineConfig& config, std::uint32_t initialVoiceRows) {
+    m_profileGenerations.resize(kInitialAttenuationProfileSlots);
+    m_profileOccupied.resize(kInitialAttenuationProfileSlots);
     if (!m_mirrors.Reserve(config.voiceCapacity.Render()) ||
-        !m_profiles.Reserve(kMaxAttenuationProfiles) ||
+        !m_profiles.Reserve(kInitialAttenuationProfileSlots) ||
         !m_retainRing.Reserve(RetainCapacity(config)) ||
         !PrepareVoiceStorage(initialVoiceRows)) throw std::bad_alloc{};
 }
@@ -417,6 +419,7 @@ double Spatializer::DistanceToReference(const EmitterTable& emitters,
 
 VnResult Spatializer::CanRegisterProfile(VnAttenuationId id,
                                          const VnAttenuationDesc* desc) const {
+    if (m_pendingProfileSet) return VN_IN_USE;
     AttenuationProfile built;
     const VnResult validated = BuildProfileFromDesc(id, desc, &built);
     if (validated != VN_OK) {
@@ -428,7 +431,7 @@ VnResult Spatializer::CanRegisterProfile(VnAttenuationId id,
         // content under a registered id.
         return VN_IN_USE;
     }
-    if (m_profileCount >= kMaxAttenuationProfiles) {
+    if (m_profileCount >= INT32_MAX) {
         return VN_NO_ATTENUATION;
     }
     return VN_OK;
@@ -440,7 +443,8 @@ VnResult Spatializer::RegisterProfile(VnAttenuationId id,
     if (admitted != VN_OK) {
         return admitted;
     }
-    if (!m_profiles.ConstructThrough(m_profiles.Capacity())) return VN_BACKPRESSURE;
+    const auto storage = PrepareProfileSlots(1);
+    if (storage != VN_OK) return storage;
     // Rebuild the evaluated form: the admission proved the same build
     // succeeds, so this cannot refuse. The build is pure, which keeps the
     // admission/commit split free of shared scratch state.
@@ -464,6 +468,7 @@ VnResult Spatializer::ReplaceProfile(VnAttenuationId id,
                                      const VnAttenuationDesc* desc) {
     // Full validation before the lookup so any refusal — including one for
     // an id that would have been found — leaves the old curves untouched.
+    if (m_pendingProfileSet) return VN_IN_USE;
     AttenuationProfile built;
     const VnResult validated = BuildProfileFromDesc(id, desc, &built);
     if (validated != VN_OK) {
@@ -484,6 +489,52 @@ VnResult Spatializer::ReplaceProfile(VnAttenuationId id,
     return VN_UNKNOWN_ID; // replace never implicitly registers
 }
 
+VnResult Spatializer::PrepareProfileSlots(std::uint32_t additional) noexcept {
+    if (memguard::IsAudioTagged() || m_pendingProfileSet) return VN_IN_USE;
+    if (additional > INT32_MAX - m_profileCount) return VN_NO_ATTENUATION;
+    const auto required = m_profileCount + additional;
+    if (required <= m_profiles.Capacity())
+        return m_profiles.ConstructThrough(m_profiles.Capacity()) ? VN_OK : VN_BACKPRESSURE;
+    try {
+        const auto capacity = static_cast<std::uint32_t>(std::max<std::uint64_t>(
+            required, std::min<std::uint64_t>(INT32_MAX, 2ull * m_profiles.Capacity())));
+        StableRowStorage<AttenuationProfile> candidate;
+        auto generations = m_profileGenerations;
+        auto occupied = m_profileOccupied;
+        generations.resize(capacity);
+        occupied.resize(capacity);
+        if (!candidate.Reserve(capacity) || !candidate.ConstructThrough(capacity)) return VN_BACKPRESSURE;
+        std::copy(m_profiles.begin(), m_profiles.end(), candidate.begin());
+        if (m_prepareRetainedStorage != nullptr &&
+            !m_prepareRetainedStorage(m_retainedStorageContext, capacity, m_retainRing.Capacity()))
+            return VN_BACKPRESSURE;
+        m_profiles.Swap(candidate);
+        m_profileGenerations.swap(generations);
+        m_profileOccupied.swap(occupied);
+        return VN_OK;
+    } catch (...) { return VN_BACKPRESSURE; }
+}
+
+bool Spatializer::PrepareRetainSlots(std::size_t additional) noexcept {
+    if (memguard::IsAudioTagged()) return false;
+    std::size_t free = 0;
+    for (const auto& row : m_retainRing)
+        free += row.state == RetainSlotState::Free && row.epoch != UINT32_MAX;
+    const auto extra = additional > free ? additional - free : 0;
+    if (extra > INT32_MAX - m_retainRing.size()) return false;
+    const auto required = m_retainRing.size() + extra;
+    if (required <= m_retainRing.Capacity())
+        return m_retainRing.ConstructThrough(required);
+    const auto capacity = std::max(required, std::min<std::size_t>(INT32_MAX, 2ull * m_retainRing.Capacity()));
+    StableRowStorage<RetainSlot, std::size_t> candidate;
+    if (!candidate.Reserve(capacity) || !candidate.ConstructThrough(required)) return false;
+    std::copy(m_retainRing.begin(), m_retainRing.end(), candidate.begin());
+    if (m_prepareRetainedStorage != nullptr &&
+        !m_prepareRetainedStorage(m_retainedStorageContext, m_profiles.Capacity(), capacity)) return false;
+    m_retainRing.Swap(candidate);
+    return true;
+}
+
 std::uint32_t Spatializer::FreeProfileSlotAtOrdinal(std::uint32_t ordinal) const noexcept {
     for (std::uint32_t slot = 0; slot < m_profileOccupied.size(); ++slot) {
         if (m_profileOccupied[slot] == 0) {
@@ -493,7 +544,7 @@ std::uint32_t Spatializer::FreeProfileSlotAtOrdinal(std::uint32_t ordinal) const
             --ordinal;
         }
     }
-    return kMaxAttenuationProfiles;
+    return UINT32_MAX;
 }
 
 VnResult Spatializer::PrepareRegisterProfile(
@@ -510,7 +561,7 @@ VnResult Spatializer::PrepareRegisterProfile(
     if (FindProfile(id) != nullptr) {
         return VN_IN_USE;
     }
-    if (slotIndex >= kMaxAttenuationProfiles || m_profileOccupied[slotIndex] != 0) {
+    if (slotIndex >= m_profiles.Capacity() || m_profileOccupied[slotIndex] != 0) {
         return VN_NO_ATTENUATION;
     }
     if (!m_profiles.ConstructThrough(m_profiles.Capacity())) return VN_BACKPRESSURE;
@@ -982,7 +1033,7 @@ VnResult Spatializer::PrepareRetainProfile(VnAttenuationId id,
         return VN_PACK_RESIDENT_CAPACITY;
     }
     if (m_prepareRetainedStorage != nullptr &&
-        !m_prepareRetainedStorage(m_retainedStorageContext)) return VN_BACKPRESSURE;
+        !m_prepareRetainedStorage(m_retainedStorageContext, m_profiles.Capacity(), m_retainRing.Capacity())) return VN_BACKPRESSURE;
     RetainSlot& slot = m_retainRing[free];
     slot.pod = *live;
     slot.id = id;
@@ -1080,9 +1131,9 @@ Spatializer::PreparedProfileSet& Spatializer::PreparedProfileSet::operator=(
             m_owner->CancelPreparedSet(this);
         }
         m_owner = std::exchange(other.m_owner, nullptr);
-        m_profiles = std::move(other.m_profiles);
-        m_generations = other.m_generations;
-        m_occupied = other.m_occupied;
+        m_profiles.Swap(other.m_profiles);
+        m_generations = std::move(other.m_generations);
+        m_occupied = std::move(other.m_occupied);
         m_retains = std::move(other.m_retains);
         m_count = other.m_count;
     }
@@ -1109,24 +1160,36 @@ VnResult Spatializer::PreparePackProfiles(const PackProfileInput* profiles,
     if (count != 0 && (profiles == nullptr || generation == 0)) {
         return VN_INVALID_ARG;
     }
-    const auto keysValid = ValidateRetainedKeys(retained, m_retainRing.Capacity());
+    const auto keysValid = ValidateRetainedKeys(retained, m_retainRing.Capacity(), m_profiles.Capacity());
     if (keysValid != VN_OK) {
         return keysValid;
     }
-    if (count > kMaxAttenuationProfiles) {
+    if (count > INT32_MAX)
         return VN_PACK_RESIDENT_CAPACITY;
-    }
     if (count != 0 && !m_profiles.ConstructThrough(m_profiles.Capacity())) return VN_BACKPRESSURE;
     try {
         PreparedProfileSet prepared;
         prepared.m_owner = this;
         m_pendingProfileSet = true;
         detail::LogicAllocCheckpoint(detail::LogicAllocSite::None);
-        prepared.m_profiles.assign(m_profiles.begin(), m_profiles.end());
+        std::size_t nativeCount = 0;
+        for (std::size_t i = 0; i < m_profiles.size(); ++i)
+            nativeCount += m_profileOccupied[i] != 0 && m_profileGenerations[i] == 0;
+        if (nativeCount > INT32_MAX - count) return VN_PACK_RESIDENT_CAPACITY;
+        const auto slots = static_cast<std::uint32_t>(std::max<std::size_t>(
+            m_profiles.Capacity(), nativeCount + count));
+        if (!prepared.m_profiles.Reserve(slots) ||
+            !prepared.m_profiles.ConstructThrough(slots)) return VN_BACKPRESSURE;
+        std::copy(m_profiles.begin(), m_profiles.end(), prepared.m_profiles.begin());
         prepared.m_generations = m_profileGenerations;
+        prepared.m_generations.resize(slots);
         prepared.m_occupied = m_profileOccupied;
+        prepared.m_occupied.resize(slots);
+        if (m_prepareRetainedStorage != nullptr &&
+            !m_prepareRetainedStorage(m_retainedStorageContext, slots, m_retainRing.Capacity()))
+            return VN_BACKPRESSURE;
         detail::LogicAllocCheckpoint(detail::LogicAllocSite::None);
-        prepared.m_retains.reserve(kMaxAttenuationProfiles);
+        prepared.m_retains.reserve(m_profileCount);
         for (std::uint32_t slot = 0; slot < m_profiles.size(); ++slot) {
             if (m_profileGenerations[slot] != 0) {
                 prepared.m_profiles[slot] = {};
@@ -1134,9 +1197,8 @@ VnResult Spatializer::PreparePackProfiles(const PackProfileInput* profiles,
                 prepared.m_occupied[slot] = 0;
             }
         }
-        std::array<AttenuationProfile, kMaxAttenuationProfiles> built{};
-        std::array<std::uint32_t, kMaxAttenuationProfiles> assigned{};
-        assigned.fill(UINT32_MAX);
+        std::vector<AttenuationProfile> built(count);
+        std::vector<std::uint32_t> assigned(count, UINT32_MAX);
         for (std::size_t i = 0; i < count; ++i) {
             if (profiles[i].id == VnObjectId{}) {
                 return VN_BAD_PACK;
@@ -1186,10 +1248,10 @@ VnResult Spatializer::PreparePackProfiles(const PackProfileInput* profiles,
             *slot = 1;
             prepared.m_generations[index] = generation;
         }
+        std::vector<VnAttenuationId> retainIds;
+        retainIds.reserve(m_profileCount);
+        for (const auto occupied : prepared.m_occupied) prepared.m_count += occupied != 0;
         for (std::uint32_t slot = 0; slot < m_profiles.size(); ++slot) {
-            if (prepared.m_occupied[slot] != 0) {
-                ++prepared.m_count;
-            }
             if (m_profileGenerations[slot] == 0 ||
                 (prepared.m_profiles[slot].id == m_profiles[slot].id &&
                  prepared.m_generations[slot] == m_profileGenerations[slot])) {
@@ -1202,13 +1264,16 @@ VnResult Spatializer::PreparePackProfiles(const PackProfileInput* profiles,
                     mirror.profileIndex == static_cast<std::int32_t>(slot) &&
                     mirror.profileGeneration == m_profileGenerations[slot]);
             }
-            if (needed) {
-                prepared.m_retains.emplace_back();
-                const auto result = PrepareRetainProfile(m_profiles[slot].id, &prepared.m_retains.back());
-                if (result != VN_OK) {
-                    return result;
-                }
-            }
+            if (needed) retainIds.push_back(m_profiles[slot].id);
+        }
+        if (!PrepareRetainSlots(retainIds.size())) return VN_BACKPRESSURE;
+        if (m_prepareRetainedStorage != nullptr &&
+            !m_prepareRetainedStorage(m_retainedStorageContext, slots, m_retainRing.Capacity()))
+            return VN_BACKPRESSURE;
+        for (const auto id : retainIds) {
+            prepared.m_retains.emplace_back();
+            const auto result = PrepareRetainProfile(id, &prepared.m_retains.back());
+            if (result != VN_OK) return result;
         }
         *out = std::move(prepared);
         return VN_OK;
@@ -1232,7 +1297,7 @@ void Spatializer::CancelPreparedSet(PreparedProfileSet* prepared) noexcept {
 
 void Spatializer::CommitPreparedSet(PreparedProfileSet* prepared) noexcept {
     const bool valid = prepared != nullptr && prepared->m_owner == this &&
-        prepared->m_profiles.size() == m_profiles.size();
+        prepared->m_profiles.size() >= m_profiles.size();
     assert(valid);
     if (!valid) {
         return;
@@ -1240,9 +1305,9 @@ void Spatializer::CommitPreparedSet(PreparedProfileSet* prepared) noexcept {
     for (auto& token : prepared->m_retains) {
         CommitPreparedRetain(&token);
     }
-    std::copy(prepared->m_profiles.begin(), prepared->m_profiles.end(), m_profiles.begin());
-    m_profileGenerations = prepared->m_generations;
-    m_profileOccupied = prepared->m_occupied;
+    m_profiles.Swap(prepared->m_profiles);
+    m_profileGenerations.swap(prepared->m_generations);
+    m_profileOccupied.swap(prepared->m_occupied);
     m_profileCount = prepared->m_count;
     m_pendingProfileSet = false;
     prepared->m_owner = nullptr;
@@ -1250,7 +1315,7 @@ void Spatializer::CommitPreparedSet(PreparedProfileSet* prepared) noexcept {
 
 VnResult Spatializer::CheckRetainedProfileKeys(
     const std::vector<RetainedProfileKey>& retained) const noexcept {
-    return ValidateRetainedKeys(retained, m_retainRing.Capacity());
+    return ValidateRetainedKeys(retained, m_retainRing.Capacity(), m_profiles.Capacity());
 }
 
 bool Spatializer::VisitPublishedRetainSlots(
@@ -1287,7 +1352,7 @@ VnResult Spatializer::SweepRetainedProfiles(
     if (m_pendingProfileSet) {
         return VN_IN_USE;
     }
-    const auto keysValid = ValidateRetainedKeys(retained, m_retainRing.Capacity());
+    const auto keysValid = ValidateRetainedKeys(retained, m_retainRing.Capacity(), m_profiles.Capacity());
     if (keysValid != VN_OK) {
         return keysValid;
     }

@@ -2980,3 +2980,35 @@ TEST(BusAdmissionStart, RecycledValidAckSurvivesFinalPreflightRefusalAndRetryPub
 }
 
 }  // namespace
+
+
+TEST(BusAdmissionStart, ProjectGenerationGrowthProjectsVariable257) {
+    AdmissionSession fixture;
+    auto& e = *fixture.session.Engine();
+    std::vector<harken::VariableDefinitionV1> definitions;
+    for (unsigned i = 0; i < 257; ++i)
+        definitions.push_back(harkentest::MakeVariableDefinition(harkentest::ObjectId(10000+i),
+            harken::VariableKindV1::Smooth, 0, 8, 2));
+    auto view = MakeInstallView(fixture.image);
+    view.compiledWorld.variables = definitions.data();
+    view.compiledWorld.variableCount = definitions.size();
+    view.compiledWorld.capacity.maxVariableDefinitions = definitions.size();
+    view.compiledWorld.identity.capabilityMask |= harken::kWorldCapabilityVariableDefinitions;
+    view.compiledWorld.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(view.compiledWorld);
+    harken::PreparedProjectGenerationV1 prepared;
+    for (unsigned nth : {1u, 2u}) {
+        harken::detail::ArmLogicAllocFaultForTests(nth, harken::detail::LogicAllocSite::VariableValueStorage);
+        const auto result = harken::PrepareProjectGenerationV1(e, view, prepared);
+        harken::detail::DisarmLogicAllocFaultForTests();
+        EXPECT_EQ(harken::ProjectGenerationPrepareStatusV1::Capacity, result.status);
+        EXPECT_FALSE(prepared.Valid());
+        EXPECT_EQ(0u, e.variables.DefinitionCount());
+    }
+    ASSERT_EQ(harken::ProjectGenerationPrepareStatusV1::Ok, harken::PrepareProjectGenerationV1(e, view, prepared).status);
+    ASSERT_EQ(harken::ProjectGenerationCommitStatusV1::Ok, harken::CommitPreparedProjectGenerationV1(e, prepared).status);
+    ASSERT_EQ(VN_OK, Vn_SetValue(definitions.back().variableId, 7));
+    harkentest::AdvanceVariableWrite(&e);
+    float value = 0;
+    ASSERT_TRUE(e.params.ScopedVariableValue(nullptr, 0, definitions.back().variableId, &value));
+    EXPECT_FLOAT_EQ(7, value);
+}

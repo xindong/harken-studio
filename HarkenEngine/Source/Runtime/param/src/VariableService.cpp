@@ -62,6 +62,10 @@ WorldInstallResult InstallContainerWorldV1(
         traceOwner == CurrentWorldTraceOwnerV1::Internal ? &engine : nullptr);
     harken::monitor::IdentityMutationScope identityMutation;
     try {
+        if (ValidateCurrentWorldV1(install) == WorldInstallStatus::Ok &&
+            !engine.params.PrepareVariableStorage(install.variableCount)) {
+            throw std::bad_alloc{};
+        }
         const bool hasCurrentConsumers =
             HasCurrentWorldPlayableConsumers(engine);
         WorldInstallResult result =
@@ -191,13 +195,13 @@ VariableServiceV1::VariableServiceV1(
                          : 0),
       commits_(commits),
       transport_(transport), slices_(slices), timeline_(timeline) {
-    definitions_.reserve(kVariableDefinitionCapacity);
+    definitions_.reserve(kVariableTransactionBaseline);
     emitterBanks_.resize(maxEmitters_);
     emitterBankVersionGenerations_.resize(maxEmitters_, 1);
     for (EmitterBank& bank : emitterBanks_) {
         bank.overrides.resize(overridesPerEmitter_);
     }
-    const auto cells = std::uint64_t{kVariableDefinitionCapacity} +
+    const auto cells = std::uint64_t{kVariableTransactionBaseline} +
         std::uint64_t{maxEmitters_} * overridesPerEmitter_;
     if (cells > UINT32_MAX) throw std::length_error("variable cell capacity overflow");
     queryHistoryCapacity_ = static_cast<std::uint32_t>(std::max<std::uint64_t>(kVariableHistoryCapacity, cells));
@@ -444,9 +448,7 @@ WorldInstallResult VariableServiceV1::InstallImpl(
         result.status = WorldInstallStatus::Capacity;
         return result;
     }
-    if (install.variableCount > kVariableDefinitionCapacity ||
-        install.variableCount > install.capacity.maxVariableDefinitions ||
-        install.capacity.maxVariableDefinitions > kVariableDefinitionCapacity) {
+    if (install.variableCount > install.capacity.maxVariableDefinitions) {
         result.status = WorldInstallStatus::Capacity;
         return result;
     }
@@ -485,10 +487,7 @@ WorldInstallResult VariableServiceV1::InstallImpl(
         if (!row.used) {
             continue;
         }
-        if (row.state == RowState::Pending && !row.slice.Valid()) {
-            FinalizeRow(row, VariableOutcomeKind::WorldReplacement, {}, 0);
-            continue;
-        }
+        if (row.state == RowState::Pending && !row.slice.Valid()) continue;
         if (row.state != RowState::Terminal) {
             outstanding = true;
         }
@@ -694,6 +693,32 @@ WorldInstallResult VariableServiceV1::InstallImpl(
         destination.Refresh();
     }
 
+    detail::LogicAllocCheckpoint(detail::LogicAllocSite::CurrentWorldViews);
+    std::vector<decltype(DefinitionRow{}.definition)> nextDefinitionViews;
+    nextDefinitionViews.reserve(next.size());
+    for (auto& row : next) nextDefinitionViews.push_back(row.definition);
+    std::vector<decltype(OwnedPropertyProgram{}.view)> nextPlayablePropertyViews;
+    nextPlayablePropertyViews.reserve(nextProperties.size());
+    for (auto& row : nextProperties) nextPlayablePropertyViews.push_back(row.view);
+    std::vector<decltype(OwnedOccurrenceProgram{}.view)> nextPlayableOccurrenceViews;
+    nextPlayableOccurrenceViews.reserve(nextOccurrences.size());
+    for (auto& row : nextOccurrences) nextPlayableOccurrenceViews.push_back(row.view);
+    std::vector<decltype(OwnedTrackScheduleProgram{}.view)> nextTrackScheduleViews;
+    nextTrackScheduleViews.reserve(nextTrackSchedules.size());
+    for (auto& row : nextTrackSchedules) nextTrackScheduleViews.push_back(row.view);
+    std::vector<decltype(OwnedPieceScheduleProgram{}.view)> nextPieceScheduleViews;
+    nextPieceScheduleViews.reserve(nextPieceSchedules.size());
+    for (auto& row : nextPieceSchedules) nextPieceScheduleViews.push_back(row.view);
+    std::vector<decltype(OwnedContainerProgram{}.view)> nextContainerProgramViews;
+    nextContainerProgramViews.reserve(nextContainers.size());
+    for (auto& row : nextContainers) nextContainerProgramViews.push_back(row.view);
+    std::vector<decltype(OwnedTransitionProgram{}.view)> nextTransitionProgramViews;
+    nextTransitionProgramViews.reserve(nextTransitions.size());
+    for (auto& row : nextTransitions) nextTransitionProgramViews.push_back(row.view);
+    std::vector<decltype(OwnedActionProgram{}.view)> nextActionProgramViews;
+    nextActionProgramViews.reserve(nextActions.size());
+    for (auto& row : nextActions) nextActionProgramViews.push_back(row.view);
+
     for (WriteRow& row : history_) {
         if (row.used && row.state != RowState::Terminal &&
             row.world == worldGeneration_) {
@@ -721,63 +746,24 @@ WorldInstallResult VariableServiceV1::InstallImpl(
         }
     }
 
-    definitions_ = std::move(next);
     sdkCatalogFingerprint_ = 0;
     labelCatalog_.clear();
-    definitionViews_.clear();
-    definitionViews_.reserve(definitions_.size());
-    for (const DefinitionRow& row : definitions_) {
-        definitionViews_.push_back(row.definition);
-    }
-    playableProperties_ = std::move(nextProperties);
-    playableOccurrences_ = std::move(nextOccurrences);
-    trackSchedules_ = std::move(nextTrackSchedules);
-    pieceSchedules_ = std::move(nextPieceSchedules);
-    containerPrograms_ = std::move(nextContainers);
-    transitionPrograms_ = std::move(nextTransitions);
-    actionPrograms_ = std::move(nextActions);
-    playablePropertyViews_.clear();
-    playablePropertyViews_.reserve(playableProperties_.size());
-    for (auto& row : playableProperties_) {
-        row.Refresh();
-        playablePropertyViews_.push_back(row.view);
-    }
-    playableOccurrenceViews_.clear();
-    playableOccurrenceViews_.reserve(playableOccurrences_.size());
-    for (auto& row : playableOccurrences_) {
-        row.Refresh();
-        playableOccurrenceViews_.push_back(row.view);
-    }
-    trackScheduleViews_.clear();
-    trackScheduleViews_.reserve(trackSchedules_.size());
-    for (auto& row : trackSchedules_) {
-        row.Refresh();
-        trackScheduleViews_.push_back(row.view);
-    }
-    pieceScheduleViews_.clear();
-    pieceScheduleViews_.reserve(pieceSchedules_.size());
-    for (auto& row : pieceSchedules_) {
-        row.Refresh();
-        pieceScheduleViews_.push_back(row.view);
-    }
-    containerProgramViews_.clear();
-    containerProgramViews_.reserve(containerPrograms_.size());
-    for (auto& row : containerPrograms_) {
-        row.Refresh();
-        containerProgramViews_.push_back(row.view);
-    }
-    transitionProgramViews_.clear();
-    transitionProgramViews_.reserve(transitionPrograms_.size());
-    for (auto& row : transitionPrograms_) {
-        row.Refresh();
-        transitionProgramViews_.push_back(row.view);
-    }
-    actionProgramViews_.clear();
-    actionProgramViews_.reserve(actionPrograms_.size());
-    for (auto& row : actionPrograms_) {
-        row.Refresh();
-        actionProgramViews_.push_back(row.view);
-    }
+    definitions_.swap(next);
+    definitionViews_.swap(nextDefinitionViews);
+    playableProperties_.swap(nextProperties);
+    playablePropertyViews_.swap(nextPlayablePropertyViews);
+    playableOccurrences_.swap(nextOccurrences);
+    playableOccurrenceViews_.swap(nextPlayableOccurrenceViews);
+    trackSchedules_.swap(nextTrackSchedules);
+    trackScheduleViews_.swap(nextTrackScheduleViews);
+    pieceSchedules_.swap(nextPieceSchedules);
+    pieceScheduleViews_.swap(nextPieceScheduleViews);
+    containerPrograms_.swap(nextContainers);
+    containerProgramViews_.swap(nextContainerProgramViews);
+    transitionPrograms_.swap(nextTransitions);
+    transitionProgramViews_.swap(nextTransitionProgramViews);
+    actionPrograms_.swap(nextActions);
+    actionProgramViews_.swap(nextActionProgramViews);
     identity_ = install.identity;
     sourceBodyVintage_ = install.sourceBodyVintage;
     capacity_ = install.capacity;
@@ -806,9 +792,7 @@ WorldInstallStatus VariableServiceV1::PrepareCurrentWorldImageV1(
     if (install.actionCount > maxActionDefinitions_) {
         return WorldInstallStatus::Capacity;
     }
-    if (install.variableCount > kVariableDefinitionCapacity ||
-        install.variableCount > install.capacity.maxVariableDefinitions ||
-        install.capacity.maxVariableDefinitions > kVariableDefinitionCapacity) {
+    if (install.variableCount > install.capacity.maxVariableDefinitions) {
         return WorldInstallStatus::Capacity;
     }
     if (install.variableCount != 0 && install.variables == nullptr) {
@@ -1111,7 +1095,6 @@ bool VariableServiceV1::PrepareWorldProjectionV1(
     out->Clear();
     if (!CanCommitPreparedCurrentWorldImageV1(image)) return false;
     const auto& definitions = image.idempotent_ ? definitions_ : image.definitions_;
-    if (definitions.size() > kMaxVariables) return false;
     detail::LogicAllocCheckpoint(detail::LogicAllocSite::ProjectGlobalProjection);
     out->globals_.reserve(definitions.size());
     for (const auto& definition : definitions) {
@@ -3936,9 +3919,7 @@ VnResult VariableServiceV1::PreparePackDefinitions(
         (reason == PackVariablePublicationReason::InitUnload && count != 0)) {
         return VN_INVALID_ARG;
     }
-    if (count > kVariableDefinitionCapacity) {
-        return VN_PACK_RESIDENT_CAPACITY;
-    }
+    if (count > kHardVariableDefinitionCapacity) return VN_PACK_RESIDENT_CAPACITY;
     for (std::uint32_t i = 0; i < count; ++i) {
         if (!ValidDefinition(definitions[i]) ||
             (i != 0 && definitions[i - 1].variableId >=
@@ -4711,8 +4692,7 @@ bool VariableServiceV1::CaptureReadCutImpl(
     const ActionOrderIdentity* privateIssue, bool pendingPlacement) noexcept {
     if (out == nullptr) return false;
     *out = {};
-    if (memguard::IsAudioTagged() || sequence == 0 ||
-        definitions_.size() > kVariableDefinitionCapacity) return false;
+    if (memguard::IsAudioTagged() || sequence == 0) return false;
     if (emitter != 0 && (static_cast<std::uint32_t>(emitter) >= emitterBanks_.size() ||
         static_cast<std::uint32_t>(emitter >> 32) == 0 ||
         emitterBanks_[static_cast<std::uint32_t>(emitter)].generation != static_cast<std::uint32_t>(emitter >> 32))) return false;
@@ -6951,20 +6931,13 @@ VnResult VariableServiceV1::QueryVariable(
 }
 
 std::uint64_t VariableServiceV1::ExecutionCatalogFingerprint() const noexcept {
-    VariableCatalogFingerprintRowV1 rows[kVariableDefinitionCapacity];
-    const std::uint32_t count = std::min(
-        static_cast<std::uint32_t>(definitions_.size()),
-        kVariableDefinitionCapacity);
-    for (std::uint32_t i = 0; i < count; ++i) {
-        rows[i].variableId = definitions_[i].definition.variableId;
-        rows[i].fingerprint = definitions_[i].executionFingerprint;
+    MediaContentRevisionHasherV1 hash(kVariableExecutionCatalogDomain,
+                                      sizeof(kVariableExecutionCatalogDomain));
+    for (const auto& row : definitions_) {
+        hash.AddObjectId(row.definition.variableId);
+        hash.AddU64(row.executionFingerprint);
     }
-    std::sort(rows, rows + count,
-              [](const VariableCatalogFingerprintRowV1& a,
-                 const VariableCatalogFingerprintRowV1& b) {
-                  return a.variableId < b.variableId;
-              });
-    return ComputeVariableExecutionCatalogFingerprintV1(rows, count);
+    return hash.Finish();
 }
 
 VnResult VariableServiceV1::ResolveLabel(

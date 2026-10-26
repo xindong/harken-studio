@@ -1248,9 +1248,9 @@ TEST(TraceReplayE2E,
     std::filesystem::remove(worldPath);
 
     std::vector<harken::VariableDefinitionV1> definitions;
-    definitions.reserve(harken::kVariableDefinitionCapacity + 1);
+    definitions.reserve(256u + 1);
     for (std::uint32_t i = 0;
-         i < harken::kVariableDefinitionCapacity + 1; ++i) {
+         i < 256u + 1; ++i) {
         definitions.push_back(harkentest::MakeVariableDefinition(
             harkentest::ObjectId(0x9808 + i), harken::VariableKindV1::Smooth,
             0.0f, 1.0f, 0.5f));
