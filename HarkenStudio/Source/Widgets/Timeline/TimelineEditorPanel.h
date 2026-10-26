@@ -150,6 +150,7 @@ public:
     void setLaneHeaderWidth(int width);
     void resetLaneHeaderWidth();
     void fitClips();
+    void addTrack();
 
     bool placeItem(ProjectItem* target, int laneIndex, int64_t start,
                    bool disableSnap = false);

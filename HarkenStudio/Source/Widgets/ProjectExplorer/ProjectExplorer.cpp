@@ -184,6 +184,12 @@ void ProjectExplorer::setupPanelChrome()
             sourcesTree, &SourcesTreeWidget::showRootContextMenu);
     connect(sourcesTree, &SourcesTreeWidget::contentRevealRequested, this, [this]() {
         sourcesSection_->setExpanded(true);
+        for (auto* row = sourcesTree_->currentItem(); row; row = row->parent()) {
+            if (row->isHidden()) {
+                searchBox_->clear();
+                break;
+            }
+        }
     });
 
     contentLayout->addWidget(sectionsSplitter_, 1);
@@ -245,7 +251,7 @@ void ProjectExplorer::addAction(const QString& packName, const QString& actionNa
     ProjectItem* created = ProjectManager::instance().createItem(
         nullptr, actionName, ProjectItem::Type::Action,
         deriveFolderPathForBucket(ItemTypeCatalog::kActionsFolderName));
-    if (created) selectProjectItem(created);
+    if (created) selectCreatedItem(created);
 }
 
 void ProjectExplorer::prepareItemReveal(QTreeWidgetItem*)

@@ -1022,6 +1022,10 @@ void BlueprintCanvasWidget::onItemCreated(ProjectItem* )
 
 void BlueprintCanvasWidget::onItemDeleted(ProjectItem* )
 {
+    for (const auto& [key, node] : nodeMap_) {
+        if (node->isTitleEditing() && !ProjectManager::instance().findItemByObjectID(key.id))
+            node->finishTitleEditing(false);
+    }
     if (activeSource_ == pathSource_.get()) { schedulePathRefresh_(); return; }
     scheduleChainRefresh_();
 }
@@ -1722,6 +1726,7 @@ void BlueprintCanvasWidget::populateCreationMenu_(QMenu& menu, const QPointF& po
 
 void BlueprintCanvasWidget::showCreatedItem_(ProjectItem* item, std::optional<QPointF> position)
 {
+    if (item->type == ProjectItemType::Sound) setSoundsFiltered(false);
     rebuildFromProject();
     const auto& nodes = pathSource_->graph().nodes;
     const auto found = std::find_if(nodes.begin(), nodes.end(),
@@ -1737,6 +1742,23 @@ void BlueprintCanvasWidget::showCreatedItem_(ProjectItem* item, std::optional<QP
         signalPathNode(index)->setSelected(true);
     }
     onSceneSelectionChanged();
+    QTimer::singleShot(0, this, [this, guid = item->guid] {
+        if (!projectView_ || activeSource_ != pathSource_.get()) return;
+        auto* created = ProjectManager::instance().findItemByGuid(guid);
+        if (!created) return;
+        const auto& nodes = pathSource_->graph().nodes;
+        for (size_t index = 0; index < nodes.size(); ++index) {
+            if (nodes[index].key.objectGuid != guid) continue;
+            auto* node = signalPathNode(index);
+            if (!node || !node->isSelected()) continue;
+            if (!node->isVisible()) revealChain_(*created, RevealScope::Node);
+            setFocus(Qt::OtherFocusReason);
+            node->beginTitleEditing();
+            const int margin = ThemeManager::instance().metrics().spacingSmall;
+            ensureVisible(node->titleEditor()->graphicsProxyWidget(), margin, margin);
+            return;
+        }
+    });
 }
 
 void BlueprintCanvasWidget::resetNodeLayout()

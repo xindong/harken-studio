@@ -107,6 +107,7 @@ protected:
     void pasteInto(ProjectItem* target);
     void setItemColorViaDialog(const QList<ProjectItem*>& items);
     void selectResultItems(const QList<ProjectItem*>& items);
+    void selectCreatedItem(ProjectItem* item);
     void prepareItemContextMenu(QTreeWidgetItem* item, ProjectItem* projItem);
     ProjectItem* menuAnchorItem() const;
     QList<ProjectItem*> menuAnchorItems() const;
@@ -181,6 +182,7 @@ private:
     void buildItemMenu();
     void applyMenuContext(const ProjectItemMenuController::MenuContext& context);
     void populateCreatedSubtree(ProjectItem* item, QTreeWidgetItem* row);
+    void editCreatedRow(QTreeWidgetItem* row);
 
     QList<ProjectItem*> resolveMenuItems(const QList<QUuid>& guids) const;
     QList<PhysicalFolder*> menuFolders() const;

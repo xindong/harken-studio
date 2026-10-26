@@ -1387,12 +1387,7 @@ QMenu* TimelineCanvas::createLaneBlankMenu(int laneIndex, int64_t position)
         menu->addSeparator();
         QAction* addTrack = menu->addAction(tr("Add Track"));
         addTrack->setObjectName(QStringLiteral("timelineAddTrack"));
-        connect(addTrack, &QAction::triggered, this, [this] {
-            ProjectManager::instance().createItem(
-                panel_->boundItem(),
-                QStringLiteral("Track"),
-                ProjectItem::Type::Track);
-        });
+        connect(addTrack, &QAction::triggered, panel_, &TimelineEditorPanel::addTrack);
     }
     return menu;
 }

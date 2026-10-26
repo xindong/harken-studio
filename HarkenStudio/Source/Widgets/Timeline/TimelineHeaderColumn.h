@@ -23,6 +23,7 @@ public:
     void rebuildRows();
     void refreshRows();
     QRect laneRect(int index) const;
+    void renameLane(const QUuid& guid);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -32,8 +33,6 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
-    void renameLane(const QUuid& guid);
-
     TimelineEditorPanel* panel_ = nullptr;
     TableWidget* table_ = nullptr;
     QVBoxLayout* laneLayout_ = nullptr;

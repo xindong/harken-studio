@@ -2,6 +2,10 @@
 #include "SelectorWindow.h"
 
 #include "RefDomainAdapter.h"
+#include "Core/ItemTypeCatalog.h"
+#include "Core/NameValidator.h"
+#include "Core/ProjectManager.h"
+#include "Core/QtControlSkin.h"
 #include "Core/ThemeManager.h"
 #include "Widgets/Common/SearchField.h"
 #include "Widgets/Common/SwitchIndicator.h"
@@ -13,11 +17,14 @@
 #include <QHeaderView>
 #include <QKeyEvent>
 #include <QLineEdit>
+#include <QLabel>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPushButton>
 #include <QScrollBar>
 #include <QSet>
 #include <QSignalBlocker>
+#include <QScopedValueRollback>
 #include <QStyle>
 #include <QStyleOptionViewItem>
 #include <QTimer>
@@ -185,7 +192,12 @@ SelectorWindow* SelectorWindow::open(const SelectorRequest& request, QWidget* an
     s_instance->show();
     s_instance->raise();
     s_instance->activateWindow();
-    s_instance->searchBox_->setFocus();
+    if (request.creation) {
+        s_instance->nameEdit_->setFocus();
+        s_instance->nameEdit_->selectAll();
+    } else {
+        s_instance->searchBox_->setFocus();
+    }
     return s_instance;
 }
 
@@ -253,16 +265,64 @@ SelectorWindow::SelectorWindow()
     tree_->setMouseTracking(true);
     layout->addWidget(tree_, 1);
 
+    creationForm_ = new QWidget(this);
+    auto* creationLayout = new QVBoxLayout(creationForm_);
+    creationLayout->setContentsMargins(0, 0, 0, 0);
+    auto* nameLabel = new QLabel(tr("Name"), creationForm_);
+    nameEdit_ = new QLineEdit(creationForm_);
+    nameEdit_->setObjectName(QStringLiteral("selectorCreationName"));
+    nameEdit_->setAccessibleName(nameLabel->text());
+    nameLabel->setBuddy(nameEdit_);
+    creationLayout->addWidget(nameLabel);
+    creationLayout->addWidget(nameEdit_);
+    creationError_ = new QLabel(creationForm_);
+    creationError_->setObjectName(QStringLiteral("selectorCreationError"));
+    creationError_->setTextFormat(Qt::PlainText);
+    creationError_->setWordWrap(true);
+    creationLayout->addWidget(creationError_);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, creationForm_);
+    createButton_ = buttons->button(QDialogButtonBox::Ok);
+    createButton_->setText(tr("Create"));
+    createButton_->setDefault(true);
+    creationLayout->addWidget(buttons);
+    layout->addWidget(creationForm_);
+    connect(buttons, &QDialogButtonBox::accepted, this, &SelectorWindow::accept);
+    connect(buttons, &QDialogButtonBox::rejected, this, &SelectorWindow::reject);
+    connect(nameEdit_, &QLineEdit::textChanged, this, &SelectorWindow::refreshCreationValidation);
+    connect(tree_, &QTreeWidget::currentItemChanged, this, &SelectorWindow::refreshCreationValidation);
+
+    auto& manager = ProjectManager::instance();
+    const auto refreshLocations = [this] {
+        if (request_.creation && isVisible()) refresh();
+    };
+    connect(&manager, &ProjectManager::folderCreated, this, refreshLocations);
+    connect(&manager, &ProjectManager::folderRenamed, this, refreshLocations);
+    connect(&manager, &ProjectManager::folderMoved, this, refreshLocations);
+    connect(&manager, &ProjectManager::folderDeleted, this, refreshLocations);
+    connect(&manager, &ProjectManager::itemCreated, this, &SelectorWindow::refreshCreationValidation);
+    connect(&manager, &ProjectManager::itemRenamed, this, &SelectorWindow::refreshCreationValidation);
+    connect(&manager, &ProjectManager::itemDeleted, this, &SelectorWindow::refreshCreationValidation,
+            Qt::QueuedConnection);
+    connect(&manager, &ProjectManager::projectClosed, this, [this] {
+        if (request_.creation) dismiss();
+    });
+
     connect(searchBox_, &QLineEdit::textChanged,
             this, &SelectorWindow::applySearchFilter);
-    const auto toggleBucket = [](QTreeWidgetItem* item, int) {
-        if (item && item->data(0, TreeRowStyle::kBucketRole).toBool())
+    const auto toggleBucket = [this](QTreeWidgetItem* item, int) {
+        if (!request_.creation && item && item->data(0, TreeRowStyle::kBucketRole).toBool())
             item->setExpanded(!item->isExpanded());
     };
     connect(tree_, &QTreeWidget::itemClicked, this, toggleBucket);
     connect(tree_, &QTreeWidget::itemDoubleClicked, this, toggleBucket);
     connect(tree_, &QTreeWidget::itemActivated, this,
             [this](QTreeWidgetItem* item, int) {
+                if (request_.creation) {
+                    if (item) item->setExpanded(!item->isExpanded());
+                    nameEdit_->setFocus();
+                    nameEdit_->selectAll();
+                    return;
+                }
                 if (!request_.onToggled && item && item->data(0, kRoleSelectable).toBool())
                     accept();
             });
@@ -287,6 +347,10 @@ SelectorWindow::SelectorWindow()
 void SelectorWindow::applyRequest(const SelectorRequest& request)
 {
     request_ = request;
+    const auto* project = ProjectManager::instance().currentProject();
+    creationProjectId_ = request.creation && project ? project->projectId : QString{};
+    creationForm_->setVisible(request.creation.has_value());
+    nameEdit_->setText(request.creation ? request.creation->suggestedName : QString{});
     lastNotifiedID_ = request.currentObjectID;
     setWindowTitle(request.title.isEmpty() ? tr("Select") : request.title);
     tree_->setColumnCount(request.onToggled ? 2 : 1);
@@ -302,6 +366,11 @@ void SelectorWindow::applyRequest(const SelectorRequest& request)
 
 void SelectorWindow::rebuildTree(bool preserveState)
 {
+    if (request_.creation) {
+        rebuildLocations(preserveState);
+        return;
+    }
+    locationFolders_.clear();
     QSet<uint32_t> collapsedObjects;
     QSet<QString> collapsedBuckets;
     uint32_t currentID = request_.currentObjectID;
@@ -343,6 +412,85 @@ void SelectorWindow::rebuildTree(bool preserveState)
         tree_->verticalScrollBar()->setValue(scrollPosition);
 }
 
+void SelectorWindow::rebuildLocations(bool preserveState)
+{
+    const bool hadLocation = locationFolders_.contains(tree_->currentItem());
+    const auto* selected = locationFolders_.value(tree_->currentItem());
+    QSet<const PhysicalFolder*> collapsed;
+    if (preserveState) {
+        for (auto it = locationFolders_.cbegin(); it != locationFolders_.cend(); ++it)
+            if (!it.key()->isExpanded()) collapsed.insert(it.value());
+    }
+    const QSignalBlocker blocker(tree_);
+    tree_->clear();
+    locationFolders_.clear();
+    const auto* project = ProjectManager::instance().currentProject();
+    const QString bucket = ItemTypeCatalog::folderNameOf(ItemTypeCatalog::bucketOf(request_.creation->type));
+    if (project && project->projectId == creationProjectId_
+        && ItemTypeCatalog::isFolderAddressable(request_.creation->type)
+        && ProjectManager::instance().canCreateItem(nullptr, request_.creation->type, bucket)) {
+        auto* root = TreeRowStyle::makeBucketRow(bucket);
+        root->setFlags(root->flags() | Qt::ItemIsSelectable);
+        root->setData(0, kRoleSelectable, true);
+        root->setData(0, kRoleSearchPath, bucket);
+        tree_->addTopLevelItem(root);
+        locationFolders_.insert(root, nullptr);
+        const auto addFolder = [&](auto&& self, const PhysicalFolder* folder, QTreeWidgetItem* parent) -> void {
+            auto* row = TreeRowStyle::makeFolderRow(folder->name);
+            row->setData(0, kRoleSelectable, true);
+            row->setData(0, kRoleSearchPath, bucket + QLatin1Char('/') + project->folderRelPath(folder));
+            parent->addChild(row);
+            locationFolders_.insert(row, folder);
+            for (const auto& child : folder->children) self(self, child.get(), row);
+        };
+        for (const auto* folder : project->folderRootsForBucket(bucket)) addFolder(addFolder, folder, root);
+        for (auto it = locationFolders_.cbegin(); it != locationFolders_.cend(); ++it) {
+            it.key()->setExpanded(!collapsed.contains(it.value()));
+            if ((!preserveState && !it.value()) || (preserveState && hadLocation && it.value() == selected))
+                tree_->setCurrentItem(it.key());
+        }
+    }
+    applySearchFilter(searchBox_->text());
+    refreshCreationValidation();
+}
+
+QString SelectorWindow::creationError() const
+{
+    const auto& creation = *request_.creation;
+    auto& manager = ProjectManager::instance();
+    const auto* project = manager.currentProject();
+    if (!project || project->projectId != creationProjectId_)
+        return tr("The project is no longer open.");
+    const auto* row = tree_->currentItem();
+    if (!row || !locationFolders_.contains(tree_->currentItem()))
+        return tr("Select a location for the new object.");
+    const auto* folder = locationFolders_.value(tree_->currentItem());
+    const QString bucket = ItemTypeCatalog::folderNameOf(ItemTypeCatalog::bucketOf(creation.type));
+    if (folder && project->folderBucket(folder) != bucket)
+        return tr("The selected location is no longer available.");
+    NameValidator::Result result;
+    const QString name = nameEdit_->text();
+    if (!NameValidator::validateItemName(name, creation.type, &result))
+        return NameValidator::resultMessage(result);
+    if (const auto* conflict = manager.findNameConflict(name, creation.type))
+        return ProjectManager::nameConflictMessage(name, creation.type, *conflict);
+    if (manager.suggestUniqueName(creation.type, name, nullptr, {}, nullptr, project->folderRelPath(folder))
+        != name.normalized(QString::NormalizationForm_C))
+        return tr("The name \"%1\" is already used at this location.").arg(name);
+    return {};
+}
+
+void SelectorWindow::refreshCreationValidation()
+{
+    if (!request_.creation || creating_) return;
+    const QString error = creationError();
+    creationError_->setText(error);
+    creationError_->setVisible(!error.isEmpty());
+    nameEdit_->setToolTip(error);
+    QtControlSkin::setSemanticProperty(nameEdit_, "inputInvalid", !error.isEmpty());
+    createButton_->setEnabled(error.isEmpty());
+}
+
 void SelectorWindow::refreshSwitches()
 {
     if (!request_.onToggled)
@@ -371,7 +519,7 @@ void SelectorWindow::applySearchFilter(const QString& text)
             childVisible = apply(item->child(i)) || childVisible;
 
         const bool selfMatch = needle.isEmpty()
-            || (!item->data(0, TreeRowStyle::kBucketRole).toBool()
+            || ((request_.creation || !item->data(0, TreeRowStyle::kBucketRole).toBool())
                 && (item->text(0).contains(needle, Qt::CaseInsensitive)
                     || item->data(0, kRoleSearchPath).toString().contains(needle, Qt::CaseInsensitive)));
         const bool visible = selfMatch || childVisible;
@@ -402,6 +550,23 @@ void SelectorWindow::accept()
 {
     if (!isVisible())
         return;
+    if (request_.creation) {
+        if (creating_) return;
+        refreshCreationValidation();
+        if (!creationError().isEmpty()) return;
+        const auto creation = *request_.creation;
+        const QString folderPath = ProjectManager::instance().currentProject()->folderRelPath(
+            locationFolders_.value(tree_->currentItem()));
+        const QScopedValueRollback<bool> guard(creating_, true);
+        const QString error = creation.onCreate(folderPath, nameEdit_->text());
+        if (!error.isEmpty()) {
+            creationError_->setText(error);
+            creationError_->show();
+            return;
+        }
+        BaseDialog::accept();
+        return;
+    }
     if (!request_.onToggled)
         notifyItem(tree_->currentItem());
     BaseDialog::accept();
@@ -409,7 +574,7 @@ void SelectorWindow::accept()
 
 bool SelectorWindow::event(QEvent* e)
 {
-    if (e->type() == QEvent::WindowDeactivate && isVisible())
+    if (e->type() == QEvent::WindowDeactivate && isVisible() && !creating_)
         close();
     return BaseDialog::event(e);
 }

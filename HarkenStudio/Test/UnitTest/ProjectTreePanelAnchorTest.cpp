@@ -110,6 +110,12 @@ public:
     }
 
     QMenu* menu() const { return contextMenu_; }
+
+    ProjectItem* createItem(ProjectItem::Type type)
+    {
+        menuController_->clearMenuContext();
+        return menuController_->createByType(type);
+    }
 };
 
 class ProjectTreePanelAnchorTest : public ::testing::Test
@@ -872,6 +878,39 @@ TEST_F(ProjectTreePanelAnchorTest, DeleteBatchIsSilentAndOneUndoStepPreservesUns
     EXPECT_EQ(pm.findItemByGuid(untouched->guid), untouched);
 }
 
+
+TEST_F(ProjectTreePanelAnchorTest, CreationOffersEditableNamesAcrossObjectTypesAndPreservesIdentity)
+{
+    panel_->resize(700, 500);
+    panel_->show();
+    panel_->activateWindow();
+    QApplication::processEvents();
+    auto& manager = ProjectManager::instance();
+    for (const auto& spec : ProjectItemMenuController::specs()) {
+        if (spec.comingSoon) continue;
+        SCOPED_TRACE(spec.defaultNameKey);
+        if (spec.type == ProjectItem::Type::Bus)
+            panel_->selectProjectItem(manager.getMasterBusItem());
+        else
+            panel_->selectProjectItem(contextLayer_);
+        auto* created = panel_->createItem(spec.type);
+        ASSERT_NE(created, nullptr);
+        const QUuid guid = created->guid;
+        const QString initialName = created->name;
+        QApplication::processEvents();
+        auto* editor = panel_->findChild<InlineRenameEdit*>();
+        ASSERT_NE(editor, nullptr);
+        EXPECT_TRUE(editor->hasFocus());
+        EXPECT_EQ(editor->selectedText(), initialName);
+        editor->setText(QStringLiteral("Authored_") + initialName);
+        ASSERT_TRUE(editor->finish(true));
+        EXPECT_EQ(manager.findItemByGuid(guid), created);
+        EXPECT_EQ(created->name, QStringLiteral("Authored_") + initialName);
+        UndoRedoManager::instance().undo();
+        EXPECT_EQ(created->name, initialName);
+        QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    }
+}
 
 TEST_F(ProjectTreePanelAnchorTest, InlineRenameDoesNotTouchADeletedTarget)
 {

@@ -6,6 +6,7 @@
 #include <QObject>
 
 class QMenu;
+class QUndoCommand;
 class QWidget;
 
 namespace VNX {
@@ -28,8 +29,8 @@ signals:
 
 private:
     void openVariableSelector();
-    void addBinding(uint32_t objectId);
-    void createVariable(VariableKind kind);
+    QString addBinding(uint32_t objectId, QUndoCommand* undoParent = nullptr);
+    void openVariableCreation(VariableKind kind);
 
     QWidget* anchor_ = nullptr;
     QMenu* menu_ = nullptr;
