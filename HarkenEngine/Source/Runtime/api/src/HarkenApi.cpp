@@ -10764,6 +10764,7 @@ bool PreparePlayableServiceRow(
                &engine.playableStarts[invocationOwner->slot] != invocationOwner) {
         return false;
     }
+    if (requireFeatureArrays && !engine.PrepareVariableControlRetargetStorage()) return false;
     if (requireFeatureArrays && !row.HasFeatureArrays() &&
         (engine.playableServices.PreparedUseActive() || !row.PrepareFeatureArrays())) return false;
     return engine.PrepareOriginalPlayableServiceStorage(
@@ -17864,7 +17865,7 @@ bool BindVariableControlRetargetFrontierLeaf(harken::Engine& engine,
     const MaterializedScheduleLeaf& source, const TimelineVoiceInstallResult& installed,
     const harken::ProgramView& schedule, std::size_t logicalSlot) noexcept {
     PreparedVariableControlLeafBinding binding{};
-    const auto& tree = engine.variableControlRetargetScratch;
+    const auto& tree = engine.VariableControlRetargetScratch();
     if (!ResolveVariableControlLeafBinding(engine, tree.storage.frontierPolicies, tree.frontierPolicyCount,
             source.frontierPolicyIndex, schedule.entryAnchorFrame, &binding)) return false;
     for (auto* branch = &control; branch->parentService.Valid();) {
@@ -31763,7 +31764,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteEntry(
     std::array<harken::CapturedTimelineVoiceInstall, harken::kMaxKnownScheduleLeaves> capturedTargets{};
     harken::DecisionToken decision{};
     harken::LogicCommitSequence ticket = 0;
-    auto& incomingTree = engine.variableControlRetargetScratch;
+    auto& incomingTree = engine.VariableControlRetargetScratch();
     incomingTree.Reset();
     VariableControlRetargetTreeResetGuard treeGuard{&incomingTree};
     VariableControlRetargetDecisionGuard decisionGuard{
@@ -32484,7 +32485,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
     std::array<harken::CapturedTimelineVoiceInstall, harken::kMaxKnownScheduleLeaves> capturedTargets{};
     harken::DecisionToken decision{};
     harken::LogicCommitSequence ticket = 0;
-    auto& incomingTree = engine.variableControlRetargetScratch;
+    auto& incomingTree = engine.VariableControlRetargetScratch();
     incomingTree.Reset();
     VariableControlRetargetTreeResetGuard treeGuard{&incomingTree};
     VariableControlRetargetDecisionGuard decisionGuard{

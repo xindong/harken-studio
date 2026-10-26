@@ -6425,7 +6425,6 @@ public:
                resolved.maxPlayableInstances),
            initialQueueCoordinatorParticipantsScratch(
                resolved.maxPlayableInstances),
-           variableControlRetargetScratch(resolved.maxPlayableInstances),
           actionStopScratch(resolved.maxPlayableInstances),
           actionPlayFrameScratch(resolved.commandQueueDepth),
           initialLaneDemandEventQuantaScratch(std::max(
@@ -12946,7 +12945,7 @@ public:
     std::vector<DecisionParticipantRef>
         initialQueueCoordinatorParticipantsScratch;
     std::uint32_t initialQueueEntryDecisionOwnerCount = 0;
-    VariableControlRetargetTreeScratch variableControlRetargetScratch;
+    std::unique_ptr<VariableControlRetargetTreeScratch> variableControlRetargetScratch;
     // Serial logic-side service preparation, separate from Action start scratch.
     bool servicePreparedScheduleLeavesInUse = false;
     std::vector<EngineActionStopScratch> actionStopScratch;
@@ -13517,7 +13516,22 @@ public:
         }
         return !playableServices.HasPreparedBacking() || PreparePlayableFeatureBacking();
     }
+    bool PrepareVariableControlRetargetStorage() noexcept {
+        if (variableControlRetargetScratch != nullptr) return true;
+        if (memguard::IsAudioTagged() || playableServices.PreparedUseActive()) return false;
+        try {
+            detail::LogicAllocCheckpoint(detail::LogicAllocSite::VariableControlRetargetStorage);
+            variableControlRetargetScratch =
+                std::make_unique<VariableControlRetargetTreeScratch>(config.maxPlayableInstances);
+        } catch (...) { return false; }
+        return true;
+    }
+    VariableControlRetargetTreeScratch& VariableControlRetargetScratch() noexcept {
+        assert(variableControlRetargetScratch != nullptr);
+        return *variableControlRetargetScratch;
+    }
     bool PreparePlayableFeatureBacking() noexcept {
+        if (!PrepareVariableControlRetargetStorage()) return false;
         for (auto& row : playableServices) {
             if (row.HasFeatureArrays()) continue;
             if (playableServices.PreparedUseActive() || !row.PrepareFeatureArrays()) return false;

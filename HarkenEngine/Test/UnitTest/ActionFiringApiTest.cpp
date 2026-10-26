@@ -4336,6 +4336,27 @@ void ExpectScheduleCapacityActionCompletes(
         const auto commandHead = engine->commands.PublishedHead();
         const auto sequence = engine->logicCommits.IssuedCount();
         const auto playableFree = engine->playableInstances.FreeCount();
+        ASSERT_EQ(nullptr, engine->variableControlRetargetScratch);
+        harken::detail::ArmLogicAllocFaultForTests(1,
+            harken::detail::LogicAllocSite::VariableControlRetargetStorage);
+        const auto refusedRetarget = Vn_PostAction(&desc, &firing);
+        const auto retargetRemaining = harken::detail::g_logicAllocFault.remaining;
+        harken::detail::DisarmLogicAllocFaultForTests();
+        EXPECT_EQ(0u, retargetRemaining);
+        EXPECT_EQ(VN_NO_VOICE, refusedRetarget);
+        EXPECT_EQ(nullptr, engine->variableControlRetargetScratch);
+        EXPECT_EQ(0u, firing);
+        EXPECT_EQ(0u, engine->actionFirings.LiveCount());
+        EXPECT_EQ(playableFree, engine->playableInstances.FreeCount());
+        EXPECT_EQ(playableBefore, engine->playableInstances.LiveCount());
+        EXPECT_EQ(voicesBefore, engine->voices.ActiveCount());
+        EXPECT_EQ(ledgerAvailableBefore, engine->ledger.AvailableEntryCount());
+        EXPECT_EQ(armsBefore, engine->timelineArms.LiveCount());
+        EXPECT_EQ(occurrencesBefore, engine->timelineOccurrences.OccupiedCount());
+        EXPECT_EQ(compositeBefore, engine->compositeCompletionOwners.OccupiedCount());
+        EXPECT_EQ(commandHead, engine->commands.PublishedHead());
+        EXPECT_EQ(sequence, engine->logicCommits.IssuedCount());
+        EXPECT_FALSE(engine->runtimeRecreateRequired);
         engine->originalSourceSubmissions.SetCommitPageLimitForTests(0);
         EXPECT_EQ(VN_NO_VOICE, Vn_PostAction(&desc, &firing));
         engine->originalSourceSubmissions.SetCommitPageLimitForTests(SIZE_MAX);

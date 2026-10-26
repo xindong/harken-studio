@@ -602,8 +602,26 @@ TEST(StableBackingPreparation, ServiceFeaturePromiseSurvivesResetAndFailedProtec
     EXPECT_EQ(0u, engine.initialQueueTimingProgramsScratch.ConstructedCount());
     EXPECT_EQ(0u, engine.initialQueueTimingEventsScratch.ConstructedCount());
     EXPECT_EQ(0u, engine.initialQueueTimingGroupsScratch.ConstructedCount());
+    EXPECT_EQ(nullptr, engine.variableControlRetargetScratch);
     harken::StableStoragePreparation backing;
+    harken::detail::ArmLogicAllocFaultForTests(1,
+        harken::detail::LogicAllocSite::VariableControlRetargetStorage);
+    const auto refused = engine.PreparePlayableServiceBacking(2, &backing);
+    const auto remaining = harken::detail::g_logicAllocFault.remaining;
+    harken::detail::DisarmLogicAllocFaultForTests();
+    EXPECT_FALSE(refused);
+    EXPECT_EQ(0u, remaining);
+    EXPECT_FALSE(backing.Valid());
+    EXPECT_EQ(nullptr, engine.variableControlRetargetScratch);
     ASSERT_TRUE(engine.PreparePlayableServiceBacking(2, &backing));
+    auto* retargetTree = engine.variableControlRetargetScratch.get();
+    ASSERT_NE(nullptr, retargetTree);
+    auto* policies = retargetTree->storage.frontierPolicies.data();
+    auto* containers = retargetTree->containerRows.data();
+    EXPECT_EQ(engine.config.maxPlayableInstances, retargetTree->storage.frontierPolicies.size());
+    EXPECT_EQ(engine.config.maxPlayableInstances, retargetTree->nestedInstances.size());
+    EXPECT_EQ(engine.config.maxPlayableInstances, retargetTree->containerRows.size());
+    EXPECT_EQ(harken::kSelectionPathNodeCapacity, retargetTree->selectionPlays.size());
     EXPECT_GT(engine.initialQueueTimingProgramsScratch.ConstructedCount(), 0u);
     EXPECT_GT(engine.initialQueueTimingEventsScratch.ConstructedCount(), 0u);
     EXPECT_GT(engine.initialQueueTimingGroupsScratch.ConstructedCount(), 0u);
@@ -799,6 +817,13 @@ TEST(StableBackingPreparation, ServiceFeaturePromiseSurvivesResetAndFailedProtec
     for (const auto& row : engine.playableServices) EXPECT_TRUE(row.HasFeatureArrays());
     {
         const auto use = backing.Use();
+        harken::detail::ArmLogicAllocFaultForTests(1,
+            harken::detail::LogicAllocSite::VariableControlRetargetStorage);
+        EXPECT_TRUE(engine.PreparePlayableFeatureBacking());
+        EXPECT_EQ(1u, harken::detail::g_logicAllocFault.remaining);
+        EXPECT_EQ(retargetTree, engine.variableControlRetargetScratch.get());
+        EXPECT_EQ(policies, retargetTree->storage.frontierPolicies.data());
+        EXPECT_EQ(containers, retargetTree->containerRows.data());
         harken::detail::ArmLogicAllocFaultForTests(1,
             harken::detail::LogicAllocSite::PlayableServiceFeatures);
         EXPECT_TRUE(engine.PreparePlayableFeatureBacking());
