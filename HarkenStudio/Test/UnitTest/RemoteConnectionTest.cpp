@@ -21,6 +21,7 @@
 
 #include <cstring>
 #include <functional>
+#include <vector>
 
 namespace {
 
@@ -208,6 +209,125 @@ TEST(EventCaptureController, RestartRejectsPreviousEpochRecords)
     peer.send(Wire::MakeFrame(Wire::Message::EventRecords, 0, eventRecords(epoch, 1, 1, 400)));
     ASSERT_TRUE(waitUntil([&] { return capture.rowCount() == 1; }));
     EXPECT_EQ(400u, capture.eventAt(0).detail.timestampNs);
+}
+
+TEST(EventCaptureController, RemoteSoundCompletionFollowsSessionCapabilities)
+{
+    ensureRemoteTestApp();
+    using namespace VNX::Monitor;
+    RemotePeer peer;
+    peer.identity.capabilities |= Wire::kCapabilityExecutionObservation;
+    RemoteConnection connection;
+    EventCaptureController capture(&connection);
+    quint64 epoch = 80;
+    bool supportsFinished = false;
+    peer.eventResponder = [&](const Wire::Frame& request) {
+        Wire::EventCaptureStatusV2 status;
+        status.base.sessionEpoch = epoch;
+        status.base.startedTimestampNs = 100;
+        status.acceptedExecutionFactVersion = 2;
+        status.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS | VN_MONITOR_PERM_OBSERVE_STATE | VN_MONITOR_PERM_SYMBOLS;
+        status.acceptedPermissionMask = status.requestedPermissionMask;
+        status.acceptedStreamKindMask = VN_MONITOR_STREAM_EVENT | VN_MONITOR_STREAM_STATE;
+        status.supportedFactKinds[0] = (UINT64_C(1) << VN_MONITOR_FACT_PLAYABLE_STARTED) |
+            (UINT64_C(1) << VN_MONITOR_FACT_PLAYABLE_ACTIVE) |
+            (UINT64_C(1) << VN_MONITOR_FACT_PLAYABLE_RETIRED);
+        if (supportsFinished) status.supportedFactKinds[0] |= UINT64_C(1) << VN_MONITOR_FACT_PLAYABLE_FINISHED;
+        if (request.type == Wire::Message::EventStartV2) {
+            Wire::EventCaptureRequestV2 decoded;
+            ASSERT_TRUE(Wire::DecodePayload(request, decoded));
+            EXPECT_EQ(2u, decoded.executionFactVersion);
+        } else {
+            ASSERT_EQ(Wire::Message::EventSeal, request.type);
+            status.base.state = VN_MONITOR_EVENT_SESSION_DRAINED;
+            status.base.stoppedTimestampNs = 1000;
+        }
+        peer.send(Wire::MakeFrame(Wire::Message::EventStatusV2, request.requestId, status));
+    };
+    connection.connectTarget(QStringLiteral("127.0.0.1"), peer.server.serverPort());
+    ASSERT_TRUE(waitUntil([&] { return connection.canCaptureEvents(); }));
+    for (const bool supported : {false, true, false}) {
+        SCOPED_TRACE(epoch);
+        supportsFinished = supported;
+        capture.start();
+        ASSERT_TRUE(waitUntil([&] { return capture.state() == EventCaptureState::Capturing; }));
+        ASSERT_EQ(0, capture.rowCount());
+        Wire::MonitorRecords records;
+        records.sessionEpoch = epoch;
+        quint64 sourceSequence = 0;
+        const auto append = [&](int kind, int content, int terminal, quint64 instance) {
+            harken::MonitorExecutionFact source{};
+            source.engine = peer.identity.instanceId;
+            source.sourceSequence = ++sourceSequence;
+            ++records.recordCount;
+            source.kind = kind;
+            source.subjectNamespace = VN_MONITOR_SUBJECT_PLAYABLE;
+            source.contentKind = content;
+            source.terminalKind = terminal;
+            source.timestamp = 100 + source.sourceSequence;
+            source.body.execution.identity.handle = instance;
+            source.body.execution.identity.object = harkentest::ObjectId(instance);
+            for (const auto field : {VN_MONITOR_FACT_FIELD_SUBJECT,
+                    VN_MONITOR_FACT_FIELD_CONTENT_OBJECT, VN_MONITOR_FACT_FIELD_TIMESTAMP})
+                EXPECT_TRUE(harken::monitor::SetSourceField(source, field));
+            if (terminal != 0)
+                EXPECT_TRUE(harken::monitor::SetSourceField(source, VN_MONITOR_FACT_FIELD_TERMINAL_KIND));
+            constexpr auto bytes = harken::monitor::kExecutionRecordBytes;
+            const auto offset = records.bytes.size();
+            records.bytes.resize(offset + bytes);
+            auto* packed = records.bytes.data() + offset;
+            ASSERT_EQ(bytes, harken::monitor::PackExecutionFact(packed, bytes, source, 1, 1));
+            harken::monitor::WriteU64(packed + 64, epoch);
+        };
+        quint64 instance = UINT64_C(1) << 32;
+        for (const int terminal : {VN_MONITOR_TERMINAL_NATURAL_COMPLETION,
+                VN_MONITOR_TERMINAL_REQUESTED_STOP, VN_MONITOR_TERMINAL_FAILURE}) {
+            ++instance;
+            append(VN_MONITOR_FACT_PLAYABLE_STARTED, VN_MONITOR_CONTENT_SOUND, 0, instance);
+            append(supportsFinished ? VN_MONITOR_FACT_PLAYABLE_FINISHED : VN_MONITOR_FACT_PLAYABLE_RETIRED,
+                VN_MONITOR_CONTENT_SOUND, terminal, instance);
+        }
+        append(VN_MONITOR_FACT_PLAYABLE_ACTIVE, VN_MONITOR_CONTENT_CONTAINER, 0, ++instance);
+        append(VN_MONITOR_FACT_PLAYABLE_RETIRED, VN_MONITOR_CONTENT_CONTAINER,
+            VN_MONITOR_TERMINAL_NATURAL_COMPLETION, instance);
+        peer.send(Wire::MakeFrame(Wire::Message::EventRecords, 0, records));
+        ASSERT_TRUE(waitUntil([&] { return capture.rowCount() == records.recordCount; }));
+        EXPECT_EQ(EventCaptureState::Capturing, capture.state());
+        const auto visibleEvents = [&] {
+            std::vector<CapturedEvent> events;
+            for (int row = 0; row < capture.rowCount(); ++row)
+                if (capture.eventAt(row).isDesignerEvent()) events.push_back(capture.eventAt(row));
+            return events;
+        };
+        const auto events = visibleEvents();
+        ASSERT_EQ(8u, events.size());
+        std::size_t first = 0;
+        for (const int terminal : {VN_MONITOR_TERMINAL_NATURAL_COMPLETION,
+                VN_MONITOR_TERMINAL_REQUESTED_STOP, VN_MONITOR_TERMINAL_FAILURE,
+                VN_MONITOR_TERMINAL_NATURAL_COMPLETION}) {
+            EXPECT_EQ(events[first].header.instanceHandle, events[first + 1].header.instanceHandle);
+            EXPECT_EQ(events[first].objectId(), events[first + 1].objectId());
+            EXPECT_FALSE(monitorFactHas(events[first].execution, kMonitorFactFieldTerminalKind));
+            EXPECT_TRUE(monitorFactHas(events[first + 1].execution, kMonitorFactFieldTerminalKind));
+            EXPECT_EQ(terminal, events[first + 1].execution.terminalKind);
+            first += 2;
+        }
+        if (supportsFinished) {
+            records.bytes.clear();
+            records.recordCount = 0;
+            instance = UINT64_C(1) << 32;
+            for (const int terminal : {VN_MONITOR_TERMINAL_NATURAL_COMPLETION,
+                    VN_MONITOR_TERMINAL_REQUESTED_STOP, VN_MONITOR_TERMINAL_FAILURE})
+                append(VN_MONITOR_FACT_PLAYABLE_RETIRED, VN_MONITOR_CONTENT_SOUND, terminal, ++instance);
+            peer.send(Wire::MakeFrame(Wire::Message::EventRecords, 0, records));
+            ASSERT_TRUE(waitUntil([&] { return capture.rowCount() == sourceSequence; }));
+            EXPECT_EQ(events.size(), visibleEvents().size());
+        }
+        capture.stop();
+        ASSERT_TRUE(waitUntil([&] { return capture.state() == EventCaptureState::Stopped; }));
+        EXPECT_EQ(RemoteConnectionState::Connected, connection.state());
+        ++epoch;
+    }
 }
 
 TEST(EventCaptureController, MalformedPayloadPreservesPublishedHistoryAndAccounting)

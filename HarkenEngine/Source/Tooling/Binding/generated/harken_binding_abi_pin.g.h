@@ -145,6 +145,7 @@ static_assert(static_cast<int>(VN_MONITOR_FACT_RESOURCE_RETIRED) == 39, "binding
 static_assert(static_cast<int>(VN_MONITOR_FACT_PLAYABLE_STARTED) == 40, "binding enum drift: VN_MONITOR_FACT_PLAYABLE_STARTED");
 static_assert(static_cast<int>(VN_MONITOR_FACT_STEP_EXECUTED) == 41, "binding enum drift: VN_MONITOR_FACT_STEP_EXECUTED");
 static_assert(static_cast<int>(VN_MONITOR_FACT_VARIABLE_RESULT) == 42, "binding enum drift: VN_MONITOR_FACT_VARIABLE_RESULT");
+static_assert(static_cast<int>(VN_MONITOR_FACT_PLAYABLE_FINISHED) == 43, "binding enum drift: VN_MONITOR_FACT_PLAYABLE_FINISHED");
 static_assert(static_cast<int>(VN_MONITOR_FACT_FIELD_SUBJECT) == 0, "binding enum drift: VN_MONITOR_FACT_FIELD_SUBJECT");
 static_assert(static_cast<int>(VN_MONITOR_FACT_FIELD_PROJECT) == 1, "binding enum drift: VN_MONITOR_FACT_FIELD_PROJECT");
 static_assert(static_cast<int>(VN_MONITOR_FACT_FIELD_CONTENT_OBJECT) == 2, "binding enum drift: VN_MONITOR_FACT_FIELD_CONTENT_OBJECT");

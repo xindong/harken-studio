@@ -380,6 +380,7 @@ public:
     std::uint32_t Capacity() const {
         return m_entries.Capacity();
     }
+    std::uint32_t ConstructedEntryCount() const noexcept { return m_entries.ConstructedCount(); }
 
     // Reserves a non-quarantined slot for a new instance and returns its
     // handle, or 0 when no reusable slot remains. parent is the arranging or
@@ -453,6 +454,13 @@ public:
                              MonitorLifecycleFacts* out) const noexcept;
     void ObserveStarted(PlayableInstanceHandle handle, std::uint64_t audioBlock,
                         std::uint64_t frame) noexcept;
+    bool NeedsStartedObservation(PlayableInstanceHandle handle) const noexcept;
+    void RecordPlaybackEnd(PlayableInstanceHandle handle, std::uint64_t audioBlock,
+        std::uint64_t frame, const PlayableTerminalOutcome& outcome,
+        const MonitorControlCause& cause) noexcept;
+    PlayableInstanceHandle CapturePlaybackEndAt(std::uint32_t slot,
+        std::uint64_t* audioBlock, std::uint64_t* frame) const noexcept;
+    void ObserveFinished(PlayableInstanceHandle handle) noexcept;
     bool CaptureRootMetadata(PlayableInstanceHandle handle,
                              PlayableRootMetadata* out) const noexcept;
 
@@ -585,6 +593,13 @@ private:
         MonitorContentIdentity monitorPreparedCandidateIdentity{};
         bool monitorPreparedCandidateObserved = false;
         bool monitorStartedObserved = false;
+        bool monitorFinishedObserved = false;
+        struct PlaybackEnd {
+            std::uint64_t audioBlock = 0;
+            std::uint64_t frame = 0;
+            PlayableTerminalOutcome outcome{};
+            MonitorControlCause cause{};
+        } monitorPlaybackEnd{};
         MonitorRequestContext playbackRequest{};
         MonitorEmitterOrigin emitterOrigin{};
         MonitorControlCause controlCause{};

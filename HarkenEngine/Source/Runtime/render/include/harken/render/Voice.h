@@ -194,11 +194,13 @@ struct VoiceRenderContext {
     SourceTerminalToken sourceTerminalToken{};
     std::uint32_t sourceTerminalStreamGeneration = 0;
     SourceTerminalKind stagedSourceTerminal = SourceTerminalKind::None;
+    SourceTerminalKind stagedPlaybackEnd = SourceTerminalKind::None;
     MonitorControlCause monitorAdoptedControlCause{};
     bool monitorControlAdopted = false;
     bool monitorTimelineControlAdopted = false;
     bool monitorStoppedBeforeCascade = false;
     std::uint32_t stagedSourceTerminalOffset = 0;
+    std::uint32_t stagedPlaybackEndOffset = 0;
     const BiquadTrigTable* biquadTrig = nullptr;
     std::uint32_t engineSampleRate = 0;
     // Stable public identity for effect-private Voice taps. A render slot can

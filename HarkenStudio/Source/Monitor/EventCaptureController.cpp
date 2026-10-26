@@ -25,7 +25,7 @@ std::size_t eventBytes(const CapturedEvent& event)
         event.objectName.size() + event.actionName.size() + event.gameObjectName.size() + event.playbackDescription.size()) * sizeof(QChar);
 }
 
-QString playableDescription(const CapturedEvent& event)
+QString playableDescription(const CapturedEvent& event, quint32 soundFinishKind)
 {
     const auto& fact = event.execution;
     if (fact.subjectNamespace != kMonitorSubjectPlayable ||
@@ -42,7 +42,9 @@ QString playableDescription(const CapturedEvent& event)
     const auto startKind = fact.contentKind == kMonitorContentSound
         ? kMonitorFactPlayableStarted : kMonitorFactPlayableActive;
     if (fact.factKind == startKind) return EventCaptureController::tr("Playing");
-    if (fact.factKind != kMonitorFactPlayableRetired) return {};
+    const auto finishKind = fact.contentKind == kMonitorContentSound
+        ? soundFinishKind : kMonitorFactPlayableRetired;
+    if (fact.factKind != finishKind) return {};
     if (monitorFactHas(fact, kMonitorFactFieldTerminalKind)) {
         switch (fact.terminalKind) {
         case kMonitorTerminalRequestedStop: return EventCaptureController::tr("Stopped");
@@ -280,14 +282,18 @@ void EventCaptureController::start()
         fail(tr("Could not start local capture (%1)").arg(queried));
         return;
     }
-    begin(status.monitorSessionEpoch, status.startedTimestampNs, status.identityUnavailableCount);
+    begin(status.monitorSessionEpoch, status.startedTimestampNs, status.identityUnavailableCount,
+          (status.supportedFactKinds[kMonitorFactPlayableFinished / 64] &
+           (UINT64_C(1) << (kMonitorFactPlayableFinished % 64))) != 0);
 }
 
-void EventCaptureController::begin(quint64 epoch, quint64 timestamp, quint64 identityUnavailable)
+void EventCaptureController::begin(quint64 epoch, quint64 timestamp, quint64 identityUnavailable,
+                                   bool supportsPlayableFinished)
 {
     clear();
     sessionEpoch_ = epoch;
     startedNs_ = timestamp;
+    soundFinishKind_ = supportsPlayableFinished ? kMonitorFactPlayableFinished : kMonitorFactPlayableRetired;
     targetText_ = pendingTargetText_;
     sourceSequences_.clear();
     hostNames_.clear();
@@ -398,7 +404,9 @@ void EventCaptureController::remoteCaptureChanged()
         return;
     }
     if (state_ == EventCaptureState::Starting && current.state == RemoteEventCaptureState::Capturing)
-        begin(current.sessionEpoch, current.startedTimestampNs, current.identityUnavailableCount);
+        begin(current.sessionEpoch, current.startedTimestampNs, current.identityUnavailableCount,
+              (current.supportedFactKinds[kMonitorFactPlayableFinished / 64] &
+               (UINT64_C(1) << (kMonitorFactPlayableFinished % 64))) != 0);
     if (!startedThisAttempt_ || current.sessionEpoch != sessionEpoch_) return;
     sourceDropped_ = current.sourceDroppedRecords;
     deliveryDropped_ = current.deliveryDroppedRecords;
@@ -505,7 +513,7 @@ void EventCaptureController::consume(const QByteArray& bytes, quint32 count, qui
                 return;
             }
             const auto& fact = event.execution;
-            event.playbackDescription = playableDescription(event);
+            event.playbackDescription = playableDescription(event, soundFinishKind_);
             if (monitorFactHas(fact, kMonitorFactFieldPlaybackRequest))
                 event.playbackRequestSequence = fact.playbackRequest.sequence;
             else if (monitorFactHas(fact, kMonitorFactFieldRequest))

@@ -684,6 +684,7 @@ struct EngineQueueProgramBankBody : EngineQueueScheduleColumns {
     std::array<ArmGroupToken, 2> groups{};
     TransitionInstanceToken transition{};
     PlayableInstanceHandle supersededRoot = 0;
+    PlayableInstanceHandle logicalChild = 0;
     std::uint64_t supersededEpoch = 0;
     std::uint32_t programCount = 0;
     std::uint32_t eventCount = 0;
@@ -820,7 +821,7 @@ struct EngineQueueProgramBank : EngineQueueProgramBankBody {
         scheduleStorageLoan.Reset();
         programCount = 0; eventCount = 0; curveCount = 0; aggregateCount = 0;
         groups = {}; transition = {};
-        supersededRoot = 0; supersededEpoch = 0;
+        supersededRoot = 0; logicalChild = 0; supersededEpoch = 0;
         readFence.ResetAfterSafeRetirement();
         occupied = false; published = false; heldByOwner = false;
         return true;
@@ -886,6 +887,7 @@ struct VariableControlMemberCompletion {
     VnVoiceHandle sourceRender = 0;
     TimelineArmToken sourceStartArm{};
     std::uint64_t sourceStartedBlockSequence = 0;
+    std::uint64_t sourceArmTombstoneSequence = 0;
 };
 
 struct EnginePlayableServiceToken {
@@ -1550,6 +1552,7 @@ struct EngineQueueFutureFilingLayout {
     std::uint32_t queueSuccessorScheduleBase = 0;
     std::uint32_t queueSuccessorScheduleLeafCount = 0;
     KnownCompletionPredicateV1 queueSuccessorCompletion{};
+    bool queueSuccessorSignalOnlyNoOverlap = false;
     CompositeCompletionOwnerToken queueSuccessorCompositeOwner{};
     bool queueSuccessorHasZeroWorkCompletion = false;
     std::uint64_t queueSuccessorZeroWorkCompletionFrame = 0;
@@ -5846,6 +5849,7 @@ public:
           influenceVisited(resolved.maxBuses, 0),
           influenceStack(resolved.maxBuses, 0),
           sourceTerminals(resolved.maxPlayableInstances),
+          sourcePlayableMembers(resolved.maxPlayableInstances),
           timelineOccurrences(resolved.maxDeferredIntents),
           voices(resolved, &tables, &multirateTables, &biquadTrig, effectBank,
                  dynamicRoutes, &timelineArms),
@@ -5979,6 +5983,8 @@ public:
                     projectGenerationInstallAckSideTable.size()),
                 &projectGenerationInstallAckRing, &originalSourceSubmissions),
            nullBackend(mixer, resolved) {
+        monitorPlaybackEvents.reserve(static_cast<std::size_t>(timelineArms.Capacity()) +
+            playableInstances.Capacity());
         voices.AttachTimelineVariableStartAuthority({&variables,
             [](void* context, VariableTimelineReadUseRef use, std::uint64_t nativeHandle) noexcept {
                 return static_cast<VariableServiceV1*>(context)->TimelineReadUseStartStatus(use, nativeHandle);
@@ -12217,6 +12223,13 @@ public:
 
     const EngineConfig config;
     MonitorRequestSource monitorRequests{AllocateMonitorEngineInstance()};
+    struct MonitorPlaybackEvent {
+        std::uint64_t instance = 0;
+        std::uint64_t audioBlock = 0;
+        std::uint64_t frame = 0;
+        bool finished = false;
+    };
+    std::vector<MonitorPlaybackEvent> monitorPlaybackEvents;
     const PlayableStorageLayout playableStorage;
     ResampleTables tables;
     MultirateResampleTables multirateTables;
@@ -12275,6 +12288,7 @@ public:
     std::vector<std::uint8_t> influenceVisited;
     std::vector<std::uint32_t> influenceStack;
     SourceTerminalRecords sourceTerminals;
+    std::vector<EnginePlayableMemberToken> sourcePlayableMembers;
     OccurrenceStatePool timelineOccurrences;
     VoicePool voices;
     StableRowStorage<EngineTimelineVoiceInstallIdentity> timelineVoiceInstallIdentities;
@@ -12590,6 +12604,44 @@ public:
         if (!token.Valid() || !playableMemberRecords.IsConstructed(token.slot)) return nullptr;
         auto& record = playableMemberRecords[token.slot];
         return record.occupied && record.generation == token.generation ? &record : nullptr;
+    }
+    EnginePlayableMemberRecord* FindSourcePlayableMember(SourceTerminalToken token,
+        const SourceTerminalRecord& source) noexcept {
+        if (!token.Valid() || token.slot >= sourcePlayableMembers.size()) return nullptr;
+        auto* record = FindPlayableMember(sourcePlayableMembers[token.slot]);
+        if (record == nullptr) return nullptr;
+        const auto& member = record->completion;
+        return member.source.slot == token.slot && member.source.generation == token.generation &&
+            member.leafInstance == source.leaf && member.leafEpoch == source.acceptedEpoch &&
+            record->render == source.render ? record : nullptr;
+    }
+    bool SetPlayableMemberSource(EnginePlayableMemberRecord& record, SourceTerminalToken source) noexcept {
+        const EnginePlayableMemberToken token{playableMemberRecords.IndexOf(record), record.generation};
+        if (FindPlayableMember(token) != &record ||
+            (source.Valid() && source.slot >= sourcePlayableMembers.size())) {
+            runtimeRecreateRequired = true;
+            return false;
+        }
+        if (source.Valid()) {
+            const auto* existing = FindPlayableMember(sourcePlayableMembers[source.slot]);
+            if (existing != nullptr && existing != &record &&
+                existing->completion.source.slot == source.slot &&
+                existing->completion.source.generation == source.generation) {
+                runtimeRecreateRequired = true;
+                return false;
+            }
+        }
+        const auto previous = record.completion.source;
+        if (previous.Valid() && previous.slot < sourcePlayableMembers.size() &&
+            sourcePlayableMembers[previous.slot] == token)
+            sourcePlayableMembers[previous.slot] = {};
+        record.completion.source = source;
+        if (source.Valid()) sourcePlayableMembers[source.slot] = token;
+        return true;
+    }
+    void SetPlayableMemberCompletion(EnginePlayableMemberRecord& record,
+        VariableControlMemberCompletion value) noexcept {
+        if (SetPlayableMemberSource(record, value.source)) record.completion = value;
     }
     EnginePlayableMemberRecord* FindPlayableMember(const EnginePlayableServiceRow& row,
         std::uint32_t offset) noexcept {
@@ -13248,8 +13300,8 @@ public:
         const auto identity = PlayableMemberOnsetIdentity(static_cast<std::uint32_t>(slot));
         if (!identity.Valid()) return;
         const auto& member = ReadPlayableMember(slot).completion;
-        const bool pending = member.source.Valid() && !member.resourcesRetired &&
-            member.sourceStartedBlockSequence == 0;
+        const bool pending = (member.source.Valid() || member.resourcesRetired) &&
+            member.sourceArmTombstoneSequence == 0;
         const bool recorded = memberOnsets.SetMembership(identity, RuntimeActivitySet::Active,
             pending, [&](MemberOnsetIdentity current) noexcept {
                 return current == PlayableMemberOnsetIdentity(current.slot);
@@ -13276,7 +13328,7 @@ public:
             if (value.leafInstance != 0) runtimeRecreateRequired = true;
             return;
         }
-        record->completion = value;
+        SetPlayableMemberCompletion(*record, value);
         record->monitorSelection = {};
         RefreshPlayableMemberOnset(slot);
     }
