@@ -216,6 +216,79 @@ TEST(EngineQueueScheduleStorage, ZeroShapeAndMovedLoansRespectGlobalCapacity) {
     for (const auto& column : columns) EXPECT_EQ(0u, column.StorageBytes());
 }
 
+TEST(StableBackingPreparation, PartialPagePrefixRetainsContentsAndResumesAtTheSameAddress) {
+    harken::detail::StablePageReservation storage;
+    const auto page = storage.SystemPageBytes();
+    ASSERT_GT(page, 0u);
+    ASSERT_TRUE(storage.Reserve(8u * page, alignof(std::uint64_t)));
+    auto* const address = static_cast<unsigned char*>(storage.Address());
+    ASSERT_TRUE(storage.CommitThrough(3u * page - 1u));
+    ASSERT_EQ(3u * page, storage.CommittedBytes());
+    std::memset(address, 0x5a, 3u * page);
+
+    storage.SetCommitPageLimitForTests(2);
+    EXPECT_FALSE(storage.CommitThrough(6u * page - 1u));
+    ASSERT_EQ(5u * page, storage.CommittedBytes());
+    EXPECT_EQ(address, storage.Address());
+    EXPECT_TRUE(std::all_of(address, address + 3u * page,
+        [](unsigned char value) { return value == 0x5a; }));
+    EXPECT_TRUE(std::all_of(address + 3u * page, address + 5u * page,
+        [](unsigned char value) { return value == 0; }));
+    EXPECT_TRUE(storage.CommitThrough(5u * page));
+    EXPECT_FALSE(storage.CommitThrough(6u * page));
+    EXPECT_FALSE(storage.CommitThrough(storage.ReservedBytes() + 1u));
+    EXPECT_EQ(5u * page, storage.CommittedBytes());
+
+    storage.SetCommitPageLimitForTests(1);
+    ASSERT_TRUE(storage.CommitThrough(6u * page));
+    EXPECT_EQ(6u * page, storage.CommittedBytes());
+    EXPECT_TRUE(std::all_of(address + 5u * page, address + 6u * page,
+        [](unsigned char value) { return value == 0; }));
+    {
+        harken::memguard::AudioThreadScope audio;
+        EXPECT_FALSE(storage.CommitThrough(7u * page));
+    }
+    EXPECT_EQ(6u * page, storage.CommittedBytes());
+}
+
+TEST(StableBackingPreparation, SparsePageRetryPreservesLiveRunsAcrossDirectoryWords) {
+    harken::detail::StablePageReservation storage;
+    const auto page = storage.SystemPageBytes();
+    ASSERT_GT(page, 0u);
+    ASSERT_TRUE(storage.Reserve(70u * page, alignof(std::uint64_t), true));
+    auto* const address = static_cast<unsigned char*>(storage.Address());
+    ASSERT_TRUE(storage.CommitRange(60u * page, 2u * page));
+    ASSERT_TRUE(storage.CommitRange(65u * page, 2u * page));
+    std::memset(address + 60u * page, 0x5a, 2u * page);
+    std::memset(address + 65u * page, 0xa5, 2u * page);
+    storage.SetCommitPageLimitForTests(4);
+    EXPECT_FALSE(storage.CommitRange(59u * page, 10u * page));
+    ASSERT_EQ(8u * page, storage.CommittedBytes());
+    EXPECT_EQ(address, storage.Address());
+    for (const auto index : {59u, 62u, 63u, 64u})
+        EXPECT_TRUE(std::all_of(address + index * page, address + (index + 1u) * page,
+            [](unsigned char value) { return value == 0; }));
+    EXPECT_TRUE(storage.CommitRange(59u * page, 8u * page));
+    EXPECT_FALSE(storage.CommitRange(67u * page, page));
+    EXPECT_EQ(8u * page, storage.CommittedBytes());
+
+    storage.SetCommitPageLimitForTests(SIZE_MAX);
+    ASSERT_TRUE(storage.CommitRange(59u * page, 10u * page));
+    EXPECT_EQ(10u * page, storage.CommittedBytes());
+    EXPECT_TRUE(std::all_of(address + 60u * page, address + 62u * page,
+        [](unsigned char value) { return value == 0x5a; }));
+    EXPECT_TRUE(std::all_of(address + 65u * page, address + 67u * page,
+        [](unsigned char value) { return value == 0xa5; }));
+    for (const auto index : {67u, 68u})
+        EXPECT_TRUE(std::all_of(address + index * page, address + (index + 1u) * page,
+            [](unsigned char value) { return value == 0; }));
+    storage.SetCommitPageLimitForTests(0);
+    EXPECT_TRUE(storage.CommitThrough(0));
+    EXPECT_TRUE(storage.CommitRange(59u * page + 1u, 10u * page - 2u));
+    EXPECT_FALSE(storage.CommitRange(storage.ReservedBytes(), 1));
+    EXPECT_EQ(10u * page, storage.CommittedBytes());
+}
+
 TEST(StableBackingPreparation, DependenciesPrecedePublicationAndPreparedUseCannotGrow) {
     harken::StableRowStorage<std::uint64_t, std::size_t> rows, dependencies;
     ASSERT_TRUE(rows.Reserve(8));

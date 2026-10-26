@@ -38,6 +38,7 @@ public:
     static void FailNextReservationForTests() noexcept;
 
 private:
+    std::size_t CommitPages(std::size_t offset, std::size_t count) noexcept;
     bool CommitPage(std::size_t offset) noexcept;
     void* address_ = nullptr;
     std::size_t reservedBytes_ = 0;
