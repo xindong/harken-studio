@@ -542,7 +542,8 @@ void MixPlainPcm(const float* src, float* dst, std::uint32_t frames,
 }
 
 void FoldPlainPcm(VoiceRenderContext& ctx, float* const* busPlanes,
-                  std::uint32_t mixChannels) {
+                  std::uint32_t mixChannels,
+                  output_gain_detail::MonoStereoMixKernel monoStereoMix) {
     const auto span = ctx.cascade.borrowed;
     float* const* bus = busPlanes + ctx.busIndex * mixChannels;
     if (ctx.pcm.channelCount == 1 && mixChannels == 2 &&
@@ -552,10 +553,10 @@ void FoldPlainPcm(VoiceRenderContext& ctx, float* const* busPlanes,
         const float rightScale = ctx.spatialMatrix.target.gain[0][1] * ctx.outputGain.target;
         float* left = bus[0] + ctx.cascade.offset;
         float* right = bus[1] + ctx.cascade.offset;
-        output_gain_detail::MixMonoToStereoScaled(ctx.resampler.ring[0] + span.ringOffset,
+        monoStereoMix(ctx.resampler.ring[0] + span.ringOffset,
             left, right, span.firstFrames, ctx.gain.target, leftScale, rightScale);
         if (span.frames > span.firstFrames) {
-            output_gain_detail::MixMonoToStereoScaled(ctx.resampler.ring[0],
+            monoStereoMix(ctx.resampler.ring[0],
                 left + span.firstFrames, right + span.firstFrames, span.frames - span.firstFrames,
                 ctx.gain.target, leftScale, rightScale);
         }
@@ -1409,7 +1410,8 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
 
 void FoldVoiceIntoBuses(VoiceRenderContext& ctx, float* const* busPlanes,
                         std::uint32_t blockFrames, std::uint32_t mixChannels,
-                        std::uint32_t mixLayout, std::uint64_t sourceFrameBegin) {
+                        std::uint32_t mixLayout, std::uint64_t sourceFrameBegin,
+                        output_gain_detail::MonoStereoMixKernel monoStereoMix) {
     const std::uint32_t channels = ctx.pcm.channelCount;
     const std::uint32_t offset = ctx.cascade.offset;
     const std::uint32_t produced = ctx.cascade.produced;
@@ -1435,7 +1437,7 @@ void FoldVoiceIntoBuses(VoiceRenderContext& ctx, float* const* busPlanes,
         }
     }
     if (ctx.cascade.borrowed.frames != 0) {
-        FoldPlainPcm(ctx, busPlanes, mixChannels);
+        FoldPlainPcm(ctx, busPlanes, mixChannels, monoStereoMix);
         return;
     }
     float** scratch = ctx.cascade.scratch;
@@ -1560,7 +1562,8 @@ StageResult RenderVoiceBlock(VoiceRenderContext& ctx, BlockArena& arena,
                              float* const* busPlanes, std::uint32_t blockFrames,
                              std::uint32_t mixChannels,
                              std::uint32_t mixLayout,
-                             std::uint64_t sourceFrameBegin) {
+                             std::uint64_t sourceFrameBegin,
+                             output_gain_detail::MonoStereoMixKernel monoStereoMix) {
     // Direct and serial callers use the same phases as the worker path.
     // A declined prepare (closed gate or arena shortfall) leaves lastResult
     // carrying {0, phase}, without advancing the spatial fold.
@@ -1569,7 +1572,7 @@ StageResult RenderVoiceBlock(VoiceRenderContext& ctx, BlockArena& arena,
     }
     RunVoiceCascade(ctx, blockFrames);
     FoldVoiceIntoBuses(ctx, busPlanes, blockFrames, mixChannels, mixLayout,
-                       sourceFrameBegin);
+                       sourceFrameBegin, monoStereoMix);
     return ctx.lastResult;
 }
 

@@ -267,6 +267,7 @@ VoicePool::VoicePool(const EngineConfig& config, const ResampleTables* tables,
       m_starvationCooldownBlocks(config.starvationCooldownBlocks),
       m_mixChannels(config.mixChannelCount),
       m_mixLayout(config.mixChannelLayout),
+      m_monoStereoMix(output_gain_detail::SelectMonoStereoMixKernel()),
       m_tables(tables),
       m_multirateTables(multirateTables),
       m_biquadTrig(biquadTrig),
@@ -4340,7 +4341,7 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
             // from the same base.
             const StageResult result = RenderVoiceBlock(
                 slot.render, arena, busPlanes, blockFrames, m_mixChannels,
-                m_mixLayout, sourceFrameBegin);
+                m_mixLayout, sourceFrameBegin, m_monoStereoMix);
             if (slot.firstOutputPhase == FirstOutputPhase::AwaitingFirstFold &&
                 slot.render.cascade.runnable && slot.render.cascade.produced > 0)
                 slot.firstOutputPhase = FirstOutputPhase::FirstFolded;
@@ -4451,7 +4452,7 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
         }
         if (slot.render.cascade.runnable) {
             FoldVoiceIntoBuses(slot.render, busPlanes, blockFrames,
-                               m_mixChannels, m_mixLayout, sourceFrameBegin);
+                               m_mixChannels, m_mixLayout, sourceFrameBegin, m_monoStereoMix);
             if (slot.firstOutputPhase == FirstOutputPhase::AwaitingFirstFold &&
                 slot.render.cascade.produced > 0) slot.firstOutputPhase = FirstOutputPhase::FirstFolded;
         }

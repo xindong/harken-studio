@@ -1174,6 +1174,7 @@ private:
     // default, at which the fold-in takes the frozen two-channel law.
     std::uint32_t m_mixChannels;
     std::uint32_t m_mixLayout;
+    const output_gain_detail::MonoStereoMixKernel m_monoStereoMix;
     const ResampleTables* m_tables;
     const MultirateResampleTables* m_multirateTables;
     const BiquadTrigTable* m_biquadTrig;

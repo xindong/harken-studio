@@ -684,7 +684,9 @@ StageResult RenderVoiceBlock(VoiceRenderContext& ctx, BlockArena& arena,
                              float* const* busPlanes, std::uint32_t blockFrames,
                              std::uint32_t mixChannels = kOutputChannels,
                              std::uint32_t mixLayout = VN_CHANNEL_LAYOUT_STEREO,
-                             std::uint64_t sourceFrameBegin = 0);
+                             std::uint64_t sourceFrameBegin = 0,
+                             output_gain_detail::MonoStereoMixKernel monoStereoMix =
+                                 &output_gain_detail::MixMonoToStereoScaled);
 
 // The three phases RenderVoiceBlock is composed of, exposed so the mixer can
 // run the cascade phase across a worker pool while keeping the fold serial.
@@ -728,7 +730,9 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames);
 void FoldVoiceIntoBuses(VoiceRenderContext& ctx, float* const* busPlanes,
                         std::uint32_t blockFrames, std::uint32_t mixChannels,
                         std::uint32_t mixLayout,
-                        std::uint64_t sourceFrameBegin = 0);
+                        std::uint64_t sourceFrameBegin = 0,
+                             output_gain_detail::MonoStereoMixKernel monoStereoMix =
+                                 &output_gain_detail::MixMonoToStereoScaled);
 
 } // namespace harken
 

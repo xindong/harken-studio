@@ -144,6 +144,12 @@ inline void MixMonoToStereoScaled(const float* src, float* left, float* right,
     }
 }
 
+using MonoStereoMixKernel = void (*)(const float*, float*, float*, std::uint32_t,
+                                    float, float, float) noexcept;
+
+// Select on the control thread before publishing a VoicePool to render readers.
+MonoStereoMixKernel SelectMonoStereoMixKernel() noexcept;
+
 inline std::uint32_t CappedInterp(std::uint64_t remainingFrames,
                                  std::uint32_t startFrame,
                                  std::uint32_t limit) noexcept {
