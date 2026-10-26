@@ -5,6 +5,7 @@
 #include <QHash>
 #include <QMargins>
 #include <QPointF>
+#include <QPointer>
 #include <QSet>
 #include <QString>
 #include <QStringList>
@@ -51,6 +52,7 @@ class  NodeItem;
 class  NodePin;
 class  ConnectionPath;
 class NodeContentEditor;
+class NodeContentRenderer;
 class PropertyEditSession;
 
 class BlueprintCanvasWidget : public BlueprintCanvasView, public IContextInfoSource
@@ -221,8 +223,6 @@ private:
     struct PathSceneState {
         QString projectId;
         SignalPathGraph graph;
-        CanvasFlowDirection flowDirection;
-        NodeContentFields contentFields;
     };
     std::optional<PathSceneState> pathSceneState_;
     bool projectView_ = true;
@@ -272,8 +272,19 @@ private:
     void refreshPathFocus_();
     void updateNodeGridSnap_();
     bool nodeFieldEditing_() const;
-    void installNodeEditor_(NodeItem* node, const BlueprintNodeDesc& desc, int labelWidth);
-    void installGainEditor_(NodeItem* node, size_t edgeIndex);
+    std::unique_ptr<NodeContentRenderer> contentRenderer_;
+    QHash<NodeItem*, QPointer<NodeContentEditor>> liveNodeEditors_;
+    int nodeContentLabelWidth_ = 0;
+    bool contentRetirementScheduled_ = false;
+    bool contentPresentationRefreshScheduled_ = false;
+    void initializeNodeEditors_();
+    void trackNodeEditor_(NodeItem* node, NodeContentEditor* editor);
+    void activateNodeEditorAt_(const QPoint& position);
+    void scheduleContentRetirement_();
+    void scheduleContentPresentationRefresh_();
+    void refreshContentPresentations_();
+    void installNodeEditor_(NodeItem* node, const BlueprintNodeDesc& desc);
+    void installGainEditor_(NodeItem* node);
     ContextTopic contentFieldTopic_(NodeContentField field, ProjectItem* item) const;
     void tagContentEditor_(NodeContentEditor* editor, ProjectItem* item);
     ProjectItem* routeGainTopicItem_(size_t edgeIndex) const;
@@ -285,7 +296,6 @@ private:
 
     void refreshTransitionWatch_();
     void materializeFromSource_();
-    bool updatePathScene_();
 
     void populateNodeContextMenu_(QMenu& menu, NodeItem* node);
     PathEdgeKey signalPathEdgeKey_(size_t index) const;

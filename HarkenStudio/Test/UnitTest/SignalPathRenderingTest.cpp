@@ -344,7 +344,7 @@ TEST_F(SignalPathConnectionInteractionTest, InheritedOutputVolumeHelpNamesTheOwn
     canvas.useSignalPaths(*manager.currentProject(), built);
     auto* gain = canvas.signalPathGainNode(index);
     ASSERT_NE(gain, nullptr);
-    auto* editor = qobject_cast<NodeContentEditor*>(gain->contentWidget());
+    auto* editor = qobject_cast<NodeContentEditor*>(gain->ensureContentWidget());
     ASSERT_NE(editor, nullptr);
     auto* slider = editor->findChild<ParameterControlHost*>(QStringLiteral("nodeSlider_outputBusVolume"));
     ASSERT_NE(slider, nullptr);
@@ -356,7 +356,7 @@ TEST_F(SignalPathConnectionInteractionTest, InheritedOutputVolumeHelpNamesTheOwn
     EXPECT_NE(topic->objectGuid, outer->guid);
 }
 
-TEST_F(SignalPathConnectionInteractionTest, MovingNodesKeepsEditorsAndConnectionsAliveAcrossUndoAndReset)
+TEST_F(SignalPathConnectionInteractionTest, MovingNodesKeepsSceneObjectsAliveAcrossUndoAndReset)
 {
     ConnectionMenuBlueprint canvas;
     showCanvas(canvas);
@@ -364,17 +364,17 @@ TEST_F(SignalPathConnectionInteractionTest, MovingNodesKeepsEditorsAndConnection
     auto* node = nodesFor(canvas, sound).front();
     const auto original = node->pos();
     const auto wires = connections(canvas);
-    std::vector<QPointer<QWidget>> editors;
+    std::vector<NodeItem*> nodes;
     for (auto* item : canvas.scene()->items()) {
-        if (auto* candidate = dynamic_cast<NodeItem*>(item); candidate && candidate->contentWidget())
-            editors.emplace_back(candidate->contentWidget());
+        if (auto* candidate = dynamic_cast<NodeItem*>(item)) nodes.push_back(candidate);
     }
     int rebuilds = 0;
     QObject::connect(&canvas, &BlueprintCanvasWidget::signalChainViewChanged,
         &canvas, [&] { ++rebuilds; });
     const auto expectRetained = [&] {
         EXPECT_EQ(rebuilds, 0);
-        for (const auto& editor : editors) EXPECT_FALSE(editor.isNull());
+        const auto currentItems = canvas.scene()->items();
+        for (auto* retained : nodes) EXPECT_TRUE(currentItems.contains(retained));
         const auto current = connections(canvas);
         for (auto* wire : wires) EXPECT_NE(std::find(current.begin(), current.end(), wire), current.end());
     };
@@ -466,7 +466,7 @@ TEST_F(SignalPathConnectionInteractionTest, RoutingAndPropertyEditsCoalesceRefre
     int rebuilds = 0;
     QObject::connect(&canvas, &BlueprintCanvasWidget::signalChainViewChanged,
         &canvas, [&] { ++rebuilds; });
-    auto* content = qobject_cast<NodeContentEditor*>(nodesFor(canvas, sound).front()->contentWidget());
+    auto* content = qobject_cast<NodeContentEditor*>(nodesFor(canvas, sound).front()->ensureContentWidget());
     ASSERT_NE(content, nullptr);
     auto* binding = content->binding(NodeContentField::Volume);
     ASSERT_NE(binding, nullptr);
@@ -629,7 +629,7 @@ TEST_F(SignalPathConnectionInteractionTest, NumericEditingConsumesDeleteWithoutD
     showCanvas(canvas);
     const auto sounds = nodesFor(canvas, sound);
     ASSERT_EQ(sounds.size(), 1);
-    auto* editor = qobject_cast<NodeContentEditor*>(sounds.front()->contentWidget());
+    auto* editor = qobject_cast<NodeContentEditor*>(sounds.front()->ensureContentWidget());
     ASSERT_NE(editor, nullptr);
     auto* label = editor->findChild<QLabel*>("nodeValue_pitch");
     auto* input = editor->findChild<QDoubleSpinBox*>("nodeEditor_pitch");
@@ -1010,13 +1010,21 @@ TEST_F(SignalPathRenderingTest, ConnectionSelectionFollowsItsConfigurationWhenGr
         return static_cast<size_t>(found - graph.edges.begin());
     };
     const auto before = selectedIndex();
-    canvas.signalPathEdge(before)->setSelected(true);
+    auto* selected = canvas.signalPathEdge(before);
+    auto* gain = canvas.signalPathGainNode(before);
+    auto* gainOutput = canvas.signalPathGainOutputEdge(before);
+    auto* unchanged = nodesFor(canvas, s4).front();
+    selected->setSelected(true);
     s1->fieldGroups.send.shared = {FieldGroupMode::Local,
         SendFieldGroup{{{toFieldGroupGuid(b3->guid), -3.0f}}}};
     c1->fieldGroups.send.shared.localHistory->sends.front().sendLevel = -12.0f;
     canvas.activeSignalPathSource()->loadGraph(project, build());
     const auto after = selectedIndex();
     EXPECT_NE(before, after);
+    EXPECT_EQ(canvas.signalPathEdge(after), selected);
+    EXPECT_EQ(canvas.signalPathGainNode(after), gain);
+    EXPECT_EQ(canvas.signalPathGainOutputEdge(after), gainOutput);
+    EXPECT_EQ(nodesFor(canvas, s4).front(), unchanged);
     EXPECT_TRUE(canvas.signalPathEdge(after)->isSelected());
     EXPECT_TRUE(canvas.signalPathGainNode(after)->isSelected());
     EXPECT_TRUE(canvas.signalPathGainOutputEdge(after)->isSelected());

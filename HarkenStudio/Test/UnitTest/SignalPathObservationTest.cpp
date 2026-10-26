@@ -31,6 +31,7 @@
 #include "Core/PropertyEditSession.h"
 #include "Core/QtControlSkin.h"
 #include "Core/FieldGroupProjectAdapter.h"
+#include "Core/FontManager.h"
 #include "Core/SelectionRouter.h"
 #include "Core/ThemeManager.h"
 #include "Core/UndoCommands.h"
@@ -43,16 +44,19 @@
 #include <QContextMenuEvent>
 #include <QDir>
 #include <QFileInfo>
+#include <QFontDatabase>
 #include <QGraphicsScene>
 #include <QGraphicsProxyWidget>
 #include <QGridLayout>
 #include <QHBoxLayout>
+#include <QImage>
 #include <QLabel>
 #include <QLineEdit>
 #include <QKeyEvent>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPointer>
 #include <QScopeGuard>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -334,14 +338,14 @@ protected:
     NodeContentEditor* editorFor(BlueprintCanvasWidget& canvas, ProjectItem* item)
     {
         auto* node = canvas.signalPathNode(indexOf(canvas.activeSignalPathSource()->graph(), item));
-        return qobject_cast<NodeContentEditor*>(node->contentWidget());
+        return qobject_cast<NodeContentEditor*>(node->ensureContentWidget());
     }
 
     NodeContentEditor* gainEditorFor(BlueprintCanvasWidget& canvas, SignalPathEdgeKind kind,
                                     ProjectItem* provider, ProjectItem* target)
     {
         const auto index = routingEdge(canvas.activeSignalPathSource()->graph(), kind, provider, target);
-        return qobject_cast<NodeContentEditor*>(canvas.signalPathGainNode(index)->contentWidget());
+        return qobject_cast<NodeContentEditor*>(canvas.signalPathGainNode(index)->ensureContentWidget());
     }
 
     double value(ProjectItem* item, const char* field, PlatformScope scope = HarkenTest::PlatformIds::Windows)
@@ -680,10 +684,16 @@ TEST_F(SignalPathObservationTest, NumericValueDoubleClickOpensEditorWithoutInspe
         [&](uint32_t id) { inspected = id; });
     const auto point = canvas.mapFromScene(editor->graphicsProxyWidget()->mapToScene(
         label->mapTo(editor, label->rect().center())));
+    ASSERT_TRUE(node->releaseContentWidget());
+    ASSERT_EQ(node->contentWidget(), nullptr);
     sendMouse(canvas, QEvent::MouseButtonPress, point, Qt::LeftButton, Qt::LeftButton);
     sendMouse(canvas, QEvent::MouseButtonRelease, point, Qt::LeftButton, Qt::NoButton);
     sendMouse(canvas, QEvent::MouseButtonDblClick, point, Qt::LeftButton, Qt::LeftButton);
     sendMouse(canvas, QEvent::MouseButtonRelease, point, Qt::LeftButton, Qt::NoButton);
+    editor = qobject_cast<NodeContentEditor*>(node->contentWidget());
+    ASSERT_NE(editor, nullptr);
+    input = editor->findChild<QDoubleSpinBox*>("nodeEditor_pitch");
+    ASSERT_NE(input, nullptr);
     EXPECT_TRUE(input->isVisible());
     EXPECT_EQ(inspected, 0u);
     EXPECT_EQ(node->pos(), position);
@@ -705,6 +715,247 @@ TEST_F(SignalPathObservationTest, NumericValueDoubleClickOpensEditorWithoutInspe
     drainEvents();
     EXPECT_DOUBLE_EQ(value(s1, "pitch"), 321.0);
     EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 1);
+}
+
+TEST_F(SignalPathObservationTest, InactiveContentPreservesRenderingGeometryAndLiveValues)
+{
+    const auto previousStyle = qApp->styleSheet();
+    auto& fonts = FontManager::instance();
+    const auto previousScale = fonts.scaleFactor();
+    const auto previousTheme = ThemeManager::instance().snapshot();
+    const auto restoreStyle = qScopeGuard([&] {
+        qApp->setStyleSheet(previousStyle);
+        fonts.applyTheme(previousTheme);
+        fonts.setScaleFactor(previousScale);
+    });
+    fonts.setScaleFactor(1.0f);
+    qApp->setStyleSheet(QtControlSkin::current().applicationStyleSheet());
+    BlueprintCanvasWidget canvas;
+    canvas.setNodeContentFields(kAllNodeContentFields);
+    const auto capture = [&](NodeItem* node) {
+        const QRectF source = node->sceneBoundingRect().adjusted(-2, -2, 2, 2);
+        QImage image(source.size().toSize() * 2, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::transparent);
+        QPainter painter(&image);
+        painter.setRenderHints(QPainter::Antialiasing | QPainter::TextAntialiasing);
+        canvas.scene()->render(&painter, QRectF(QPointF(), image.size()), source);
+        return image;
+    };
+    const auto verify = [&](NodeItem* node) {
+        if (node->contentWidget()) ASSERT_TRUE(node->releaseContentWidget());
+        ASSERT_EQ(node->contentWidget(), nullptr);
+        const auto bounds = node->boundingRect();
+        const auto input = node->inputPin()->scenePos();
+        const auto output = node->outputPin()->scenePos();
+        const auto proxySize = node->contentProxy()->size();
+        const auto inactive = capture(node);
+        auto* editor = node->ensureContentWidget();
+        ASSERT_NE(editor, nullptr);
+        EXPECT_EQ(proxySize, QSizeF(editor->size()));
+        EXPECT_EQ(node->boundingRect(), bounds);
+        EXPECT_EQ(node->inputPin()->scenePos(), input);
+        EXPECT_EQ(node->outputPin()->scenePos(), output);
+        EXPECT_EQ(capture(node), inactive);
+        ASSERT_TRUE(node->releaseContentWidget());
+        EXPECT_EQ(node->contentProxy()->size(), proxySize);
+        EXPECT_EQ(capture(node), inactive);
+    };
+    auto* sound = canvas.signalPathNode(indexOf(canvas.activeSignalPathSource()->graph(), s1));
+    auto* gain = canvas.signalPathGainNode(routingEdge(
+        canvas.activeSignalPathSource()->graph(), SignalPathEdgeKind::Send, c1, b2));
+    verify(sound);
+    verify(gain);
+    const auto before = capture(sound);
+    PropertyEditSession edit(s1, QStringLiteral("volume"), 0.0);
+    edit.preview(-12.5);
+    EXPECT_EQ(sound->contentWidget(), nullptr);
+    EXPECT_NE(capture(sound), before);
+    verify(sound);
+    edit.cancel();
+    EXPECT_EQ(capture(sound), before);
+    const auto compactWidth = sound->boundingRect().width();
+    PropertyEditSession longValue(s1, QStringLiteral("loopCount"), 1);
+    longValue.preview(1000000000);
+    EXPECT_EQ(sound->contentWidget(), nullptr);
+    EXPECT_GT(sound->boundingRect().width(), compactWidth);
+    verify(sound);
+    longValue.cancel();
+    canvas.setNodeContentFields(NodeContentField::Volume);
+    verify(sound);
+    canvas.setNodeContentFields(kAllNodeContentFields);
+    verify(sound);
+    fonts.setScaleFactor(1.75f);
+    drainEvents();
+    verify(sound);
+    verify(gain);
+    const auto originalTheme = capture(sound);
+    auto theme = std::make_shared<ThemeSnapshot>(*ThemeManager::instance().snapshot());
+    theme->domains.nodeGraphNode.contentLabel = QColor("#e64a89");
+    theme->domains.nodeGraphNode.contentValue = QColor("#39bc71");
+    const auto families = QFontDatabase::families();
+    const auto family = std::find_if(families.begin(), families.end(), [&](const QString& name) {
+        return name != fonts.getFont(FontRole::Label).family();
+    });
+    ASSERT_NE(family, families.end());
+    theme->ui.typography.label.family = *family;
+    auto* live = qobject_cast<NodeContentEditor*>(sound->ensureContentWidget());
+    ASSERT_NE(live, nullptr);
+    QPointer<NodeContentEditor> retained(live);
+    auto* binding = live->binding(NodeContentField::Volume);
+    ASSERT_NE(binding, nullptr);
+    binding->beginEdit();
+    qApp->setStyleSheet(QtControlSkin(theme).applicationStyleSheet());
+    fonts.applyTheme(theme);
+    emit ThemeManager::instance().themeChanged(theme);
+    drainEvents();
+    ASSERT_FALSE(retained.isNull());
+    ASSERT_EQ(sound->contentWidget(), retained.data());
+    EXPECT_TRUE(live->isEditing());
+    binding->cancelEdit();
+    const auto updatedLive = capture(sound);
+    ASSERT_TRUE(sound->releaseContentWidget());
+    EXPECT_EQ(sound->contentWidget(), nullptr);
+    EXPECT_EQ(capture(sound), updatedLive);
+    EXPECT_NE(capture(sound), originalTheme);
+    verify(sound);
+    verify(gain);
+}
+
+TEST_F(SignalPathObservationTest, NumericEditingSurvivesOffscreenPanZoomAndEditorRelease)
+{
+    BlueprintCanvasWidget canvas;
+    canvas.setNodeContentFields(kAllNodeContentFields);
+    canvas.resize(1000, 700);
+    canvas.show();
+    ASSERT_TRUE(canvas.focusItem(s1));
+    drainEvents();
+    auto* node = canvas.signalPathNode(indexOf(canvas.activeSignalPathSource()->graph(), s1));
+    auto* editor = editorFor(canvas, s1);
+    auto* label = editor->findChild<QLabel*>("nodeValue_scheduleOffsetSec");
+    ASSERT_NE(label, nullptr);
+    ASSERT_TRUE(editor->beginValueEditingAt(label->mapTo(editor, label->rect().center())));
+    auto* input = editor->findChild<QDoubleSpinBox*>("nodeEditor_scheduleOffsetSec");
+    ASSERT_NE(input, nullptr);
+    auto* text = input->findChild<QLineEdit*>();
+    ASSERT_NE(text, nullptr);
+    text->setText(QStringLiteral("00099.125"));
+    QPointer<NodeContentEditor> retained(editor);
+    canvas.centerOn(node->scenePos() + QPointF(50000, 50000));
+    canvas.setZoomFactor(BlueprintCanvasView::kMinZoom);
+    drainEvents();
+    EXPECT_FALSE(retained.isNull());
+    EXPECT_EQ(node->contentWidget(), editor);
+    EXPECT_TRUE(editor->isEditing());
+    EXPECT_FALSE(node->releaseContentWidget());
+    EXPECT_EQ(text->text(), QStringLiteral("00099.125"));
+    EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 0);
+    QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QApplication::sendEvent(input, &escape);
+    drainEvents();
+    EXPECT_DOUBLE_EQ(s1->comp<VSound>()->scheduleOffsetSec, 0.0);
+    EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 0);
+}
+
+TEST_F(SignalPathObservationTest, ViewConfigurationChangesCancelPendingEditsWithoutUndo)
+{
+    const auto flowKey = QStringLiteral("Blueprint/CanvasFlowDirection");
+    const auto previousFlow = QSettings().value(flowKey);
+    const auto restoreFlow = qScopeGuard([&] {
+        if (previousFlow.isValid()) QSettings().setValue(flowKey, previousFlow);
+        else QSettings().remove(flowKey);
+    });
+    PlatformContextService::instance().setAll(true);
+    for (const bool fields : {true, false}) {
+        for (const bool gain : {false, true}) {
+            SCOPED_TRACE(testing::Message() << "fields=" << fields << " gain=" << gain);
+            BlueprintCanvasWidget canvas;
+            canvas.setNodeContentFields(kAllNodeContentFields);
+            canvas.setFlowDirection(CanvasFlowDirection::LR);
+            auto* owner = gain ? c1 : s1;
+            const auto before = owner->fieldGroups;
+            const auto editorForCurrentNode = [&] {
+                return gain ? gainEditorFor(canvas, SignalPathEdgeKind::Send, c1, b2)
+                    : editorFor(canvas, s1);
+            };
+            auto* editor = editorForCurrentNode();
+            ASSERT_NE(editor, nullptr);
+            const auto field = gain ? NodeContentField::SendVolume : NodeContentField::Volume;
+            auto* binding = editor->binding(field);
+            ASSERT_NE(binding, nullptr);
+            const auto original = binding->value();
+            binding->beginEdit();
+            binding->previewEdit(-12.0);
+            ASSERT_TRUE(editor->isEditing());
+            EXPECT_NE(binding->value(), original);
+            if (fields) canvas.setNodeContentFields(NodeContentField::Volume);
+            else canvas.setFlowDirection(CanvasFlowDirection::TB);
+            drainEvents();
+            EXPECT_EQ(owner->fieldGroups, before);
+            EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 0);
+            auto* current = editorForCurrentNode();
+            ASSERT_NE(current, nullptr);
+            EXPECT_FALSE(current->isEditing());
+            EXPECT_NEAR(current->binding(field)->value(), original, 0.0001);
+        }
+    }
+}
+
+TEST_F(SignalPathObservationTest, TabTraversalActivatesInactiveNodesInBothDirections)
+{
+    BlueprintCanvasWidget canvas;
+    canvas.setNodeContentFields(NodeContentField::Volume);
+    canvas.resize(1000, 700);
+    canvas.show();
+    canvas.activateWindow();
+    drainEvents();
+    const auto& graph = canvas.activeSignalPathSource()->graph();
+    std::vector<NodeItem*> nodes;
+    for (size_t index = 0; index < graph.nodes.size(); ++index) {
+        auto* node = canvas.signalPathNode(index);
+        if (node->isVisible() && node->contentInfo().volume) nodes.push_back(node);
+    }
+    ASSERT_GE(nodes.size(), 2u);
+    auto* first = nodes[0];
+    auto* second = nodes[1];
+    auto* editor = qobject_cast<NodeContentEditor*>(first->ensureContentWidget());
+    ASSERT_NE(editor, nullptr);
+    auto* slider = editor->findChild<QSlider*>();
+    ASSERT_NE(slider, nullptr);
+    if (second->contentWidget()) ASSERT_TRUE(second->releaseContentWidget());
+    ASSERT_EQ(second->contentWidget(), nullptr);
+    slider->setFocus(Qt::TabFocusReason);
+    drainEvents();
+    ASSERT_TRUE(slider->hasFocus());
+    QKeyEvent tab(QEvent::KeyPress, Qt::Key_Tab, Qt::NoModifier);
+    QApplication::sendEvent(slider, &tab);
+    auto* next = qobject_cast<NodeContentEditor*>(second->contentWidget());
+    ASSERT_NE(next, nullptr);
+    QPointer<NodeContentEditor> nextEditor(next);
+    auto* nextSlider = next->findChild<QSlider*>();
+    ASSERT_NE(nextSlider, nullptr);
+    EXPECT_TRUE(nextSlider->hasFocus());
+    ASSERT_TRUE(first->releaseContentWidget());
+    ASSERT_EQ(first->contentWidget(), nullptr);
+    QKeyEvent backtab(QEvent::KeyPress, Qt::Key_Backtab, Qt::ShiftModifier);
+    QApplication::sendEvent(nextSlider, &backtab);
+    auto* previous = qobject_cast<NodeContentEditor*>(first->contentWidget());
+    ASSERT_NE(previous, nullptr);
+    EXPECT_TRUE(previous->findChild<QSlider*>()->hasFocus());
+    QPointer<NodeContentEditor> previousEditor(previous);
+    canvas.centerOn(first->scenePos() + QPointF(50000, 50000));
+    drainEvents();
+    EXPECT_TRUE(nextEditor.isNull());
+    EXPECT_EQ(second->contentWidget(), nullptr);
+    ASSERT_FALSE(previousEditor.isNull());
+    EXPECT_TRUE(previousEditor->findChild<QSlider*>()->hasFocus());
+    canvas.scene()->clearFocus();
+    canvas.clearFocus();
+    QEvent leave(QEvent::Leave);
+    QApplication::sendEvent(canvas.viewport(), &leave);
+    drainEvents();
+    EXPECT_TRUE(previousEditor.isNull());
+    EXPECT_EQ(first->contentWidget(), nullptr);
+    EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 0);
 }
 
 TEST_F(SignalPathObservationTest, GainSendVolumeEditsTheSelectedRouteAndTracksInspectorValues)
@@ -974,7 +1225,7 @@ TEST_F(SignalPathObservationTest, NonSliderNodeSurfacesDragWithoutEditingParamet
                 auto* other = dynamic_cast<NodeItem*>(item);
                 if (other && other != node) other->setPos(other->pos() + QPointF(5000, 5000));
             }
-            auto* editor = qobject_cast<NodeContentEditor*>(node->contentWidget());
+            auto* editor = qobject_cast<NodeContentEditor*>(node->ensureContentWidget());
             ASSERT_NE(editor, nullptr);
             auto* grid = qobject_cast<QGridLayout*>(editor->layout());
             ASSERT_NE(grid, nullptr);
@@ -1012,7 +1263,7 @@ TEST_F(SignalPathObservationTest, NonSliderNodeSurfacesDragWithoutEditingParamet
             drainEvents();
             EXPECT_EQ(nodeFor()->pos(), original + QPointF(64, 48));
             EXPECT_EQ(PlayablePropertyAuthoringV1::definitionToJson(*(object ? object : c1)), before);
-            auto* currentEditor = qobject_cast<NodeContentEditor*>(nodeFor()->contentWidget());
+            auto* currentEditor = qobject_cast<NodeContentEditor*>(nodeFor()->ensureContentWidget());
             EXPECT_FALSE(currentEditor->isEditing());
             EXPECT_DOUBLE_EQ(currentEditor->binding(field)->value(), originalValue);
             ASSERT_EQ(UndoRedoManager::instance().undoStack()->count(), 1);
@@ -1042,7 +1293,7 @@ TEST_F(SignalPathObservationTest, SliderSensitiveAreaAdjustsOrdinaryAndGainValue
                 : canvas.signalPathGainNode(routingEdge(graph, SignalPathEdgeKind::Send, c1, b2));
         };
         auto* node = nodeFor();
-        auto* editor = qobject_cast<NodeContentEditor*>(node->contentWidget());
+        auto* editor = qobject_cast<NodeContentEditor*>(node->ensureContentWidget());
         auto* host = editor->findChild<ParameterControlHost*>(object ? "nodeSlider_volume" : "nodeSlider_sendLevel");
         auto* slider = host->findChild<QSlider*>();
         ASSERT_NE(slider, nullptr);
@@ -1054,16 +1305,21 @@ TEST_F(SignalPathObservationTest, SliderSensitiveAreaAdjustsOrdinaryAndGainValue
             return canvas.mapFromScene(editor->graphicsProxyWidget()->mapToScene(
                 slider->mapTo(editor, QPoint(x, slider->height() / 2))));
         };
-        sendMouse(canvas, QEvent::MouseButtonPress, point(slider->width() / 2), Qt::LeftButton, Qt::LeftButton);
-        sendMouse(canvas, QEvent::MouseMove, point(slider->width() / 3), Qt::NoButton, Qt::LeftButton);
-        sendMouse(canvas, QEvent::MouseButtonRelease, point(slider->width() / 3), Qt::LeftButton, Qt::NoButton);
+        const auto start = point(slider->width() / 2);
+        const auto end = point(slider->width() / 3);
+        ASSERT_TRUE(node->releaseContentWidget());
+        ASSERT_EQ(node->contentWidget(), nullptr);
+        sendMouse(canvas, QEvent::MouseButtonPress, start, Qt::LeftButton, Qt::LeftButton);
+        ASSERT_NE(node->contentWidget(), nullptr);
+        sendMouse(canvas, QEvent::MouseMove, end, Qt::NoButton, Qt::LeftButton);
+        sendMouse(canvas, QEvent::MouseButtonRelease, end, Qt::LeftButton, Qt::NoButton);
         drainEvents();
         EXPECT_EQ(nodeFor()->pos(), original);
-        EXPECT_NE(qobject_cast<NodeContentEditor*>(nodeFor()->contentWidget())->binding(field)->value(), originalValue);
+        EXPECT_NE(qobject_cast<NodeContentEditor*>(nodeFor()->ensureContentWidget())->binding(field)->value(), originalValue);
         ASSERT_EQ(UndoRedoManager::instance().undoStack()->count(), 1);
         ASSERT_TRUE(UndoRedoManager::instance().undo());
         drainEvents();
-        EXPECT_DOUBLE_EQ(qobject_cast<NodeContentEditor*>(nodeFor()->contentWidget())->binding(field)->value(), originalValue);
+        EXPECT_DOUBLE_EQ(qobject_cast<NodeContentEditor*>(nodeFor()->ensureContentWidget())->binding(field)->value(), originalValue);
         UndoRedoManager::instance().clear();
     }
 }
@@ -1081,7 +1337,7 @@ TEST_F(SignalPathObservationTest, EditingNumericTextKeepsMouseSelectionAndDoesNo
         const auto& graph = canvas.activeSignalPathSource()->graph();
         auto* node = gain ? canvas.signalPathGainNode(routingEdge(graph, SignalPathEdgeKind::Send, c1, b2))
             : canvas.signalPathNode(indexOf(graph, s1));
-        auto* editor = qobject_cast<NodeContentEditor*>(node->contentWidget());
+        auto* editor = qobject_cast<NodeContentEditor*>(node->ensureContentWidget());
         auto* label = editor->findChild<QLabel*>(gain ? "nodeValue_sendLevel" : "nodeValue_volume");
         auto* input = editor->findChild<QDoubleSpinBox*>(gain ? "nodeEditor_sendLevel" : "nodeEditor_volume");
         ASSERT_NE(label, nullptr);
@@ -2487,7 +2743,7 @@ TEST_F(SignalPathObservationTest, PanOverridesFieldDraggingAndTitleOrValueEditin
         const auto& graph = canvas.activeSignalPathSource()->graph();
         auto* node = gain ? canvas.signalPathGainNode(routingEdge(graph, SignalPathEdgeKind::Send, c1, b2))
             : canvas.signalPathNode(indexOf(graph, s1));
-        auto* editor = qobject_cast<NodeContentEditor*>(node->contentWidget());
+        auto* editor = qobject_cast<NodeContentEditor*>(node->ensureContentWidget());
         auto* label = qobject_cast<QGridLayout*>(editor->layout())->itemAtPosition(0, 0)->widget();
         auto* value = editor->findChild<QLabel*>(gain ? "nodeValue_sendLevel" : "nodeValue_volume");
         auto* host = editor->findChild<ParameterControlHost*>(gain ? "nodeSlider_sendLevel" : "nodeSlider_volume");
@@ -2750,7 +3006,7 @@ TEST_F(SignalPathObservationTest, GainDragPersistsIndependentlyAndSupportsUndoAn
     for (size_t index = 0; index < canvas.activeSignalPathSource()->graph().nodes.size(); ++index)
         objectPositions.push_back(canvas.signalPathNode(index)->pos());
     canvas.centerOn(gain);
-    auto* editor = qobject_cast<NodeContentEditor*>(gain->contentWidget());
+    auto* editor = qobject_cast<NodeContentEditor*>(gain->ensureContentWidget());
     ASSERT_NE(editor, nullptr);
     auto* layout = qobject_cast<QGridLayout*>(editor->layout());
     ASSERT_NE(layout, nullptr);
@@ -3001,6 +3257,92 @@ TEST_F(SignalPathObservationTest, CreationRenameDeletionAndUndoRefreshTheProject
     EXPECT_EQ(canvas.activeSignalPathSource()->graph().paths.size(), 7u);
 }
 
+TEST_F(SignalPathObservationTest, UnrelatedStructureChangesPreserveFocusedContentAndSelection)
+{
+    BlueprintCanvasWidget canvas;
+    canvas.setNodeContentFields(kAllNodeContentFields);
+    canvas.resize(1000, 700);
+    canvas.show();
+    canvas.activateWindow();
+    ASSERT_TRUE(canvas.focusItem(s1));
+    drainEvents();
+    auto* node = canvas.signalPathNode(indexOf(canvas.activeSignalPathSource()->graph(), s1));
+    auto* editor = editorFor(canvas, s1);
+    auto* slider = editor->findChild<QSlider*>();
+    ASSERT_NE(slider, nullptr);
+    slider->setFocus(Qt::TabFocusReason);
+    drainEvents();
+    ASSERT_TRUE(slider->hasFocus());
+    QPointer<NodeContentEditor> retained(editor);
+    const auto transform = canvas.transform();
+    auto* through = canvas.signalPathEdge(hierarchyEdge(canvas.activeSignalPathSource()->graph(), s1, t1));
+    int selectionCleared = 0;
+    QObject::connect(&canvas, &BlueprintCanvasWidget::selectionCleared, &canvas,
+        [&] { ++selectionCleared; });
+    const auto expectRetained = [&] {
+        EXPECT_EQ(canvas.signalPathNode(indexOf(canvas.activeSignalPathSource()->graph(), s1)), node);
+        EXPECT_EQ(canvas.signalPathEdge(hierarchyEdge(canvas.activeSignalPathSource()->graph(), s1, t1)), through);
+        ASSERT_FALSE(retained.isNull());
+        EXPECT_EQ(node->contentWidget(), retained.data());
+        EXPECT_TRUE(slider->hasFocus());
+        EXPECT_TRUE(node->isSelected());
+        EXPECT_EQ(canvas.transform(), transform);
+        EXPECT_EQ(selectionCleared, 0);
+    };
+    auto* added = create("Unrelated", T::Layer);
+    ASSERT_NE(added, nullptr);
+    drainEvents();
+    expectRetained();
+    ASSERT_TRUE(UndoRedoManager::instance().undo());
+    drainEvents();
+    expectRetained();
+    ASSERT_TRUE(UndoRedoManager::instance().redo());
+    drainEvents();
+    expectRetained();
+}
+
+TEST_F(SignalPathObservationTest, RetainedGainEditorFollowsItsRouteAfterGraphIndicesChange)
+{
+    PlatformContextService::instance().setAll(true);
+    BlueprintCanvasWidget canvas;
+    canvas.resize(1000, 700);
+    canvas.show();
+    canvas.activateWindow();
+    drainEvents();
+    const auto before = routingEdge(canvas.activeSignalPathSource()->graph(), SignalPathEdgeKind::Send, c1, b2);
+    auto* gain = canvas.signalPathGainNode(before);
+    auto* editor = gainEditorFor(canvas, SignalPathEdgeKind::Send, c1, b2);
+    auto* slider = editor->findChild<QSlider*>();
+    ASSERT_NE(slider, nullptr);
+    canvas.centerOn(gain);
+    slider->setFocus(Qt::TabFocusReason);
+    drainEvents();
+    ASSERT_TRUE(slider->hasFocus());
+    QPointer<NodeContentEditor> retained(editor);
+    s1->fieldGroups.send.shared = {FieldGroupMode::Local,
+        SendFieldGroup{{{toFieldGroupGuid(b3->guid), -3.0f}}}};
+    emit ProjectManager::instance().itemPropertyChanged(s1, QStringLiteral("sends"));
+    drainEvents();
+    const auto after = routingEdge(canvas.activeSignalPathSource()->graph(), SignalPathEdgeKind::Send, c1, b2);
+    EXPECT_NE(after, before);
+    ASSERT_EQ(canvas.signalPathGainNode(after), gain);
+    ASSERT_FALSE(retained.isNull());
+    ASSERT_EQ(gain->contentWidget(), retained.data());
+    auto* binding = retained->binding(NodeContentField::SendVolume);
+    ASSERT_NE(binding, nullptr);
+    binding->beginEdit();
+    binding->previewEdit(-9.0);
+    binding->commitEdit();
+    drainEvents();
+    EXPECT_NEAR(c1->fieldGroups.send.shared.localHistory->sends.front().sendLevel, -9.0f, 0.0001);
+    EXPECT_NEAR(s1->fieldGroups.send.shared.localHistory->sends.front().sendLevel, -3.0f, 0.0001);
+    ASSERT_EQ(UndoRedoManager::instance().undoStack()->count(), 1);
+    ASSERT_TRUE(UndoRedoManager::instance().undo());
+    drainEvents();
+    EXPECT_NEAR(c1->fieldGroups.send.shared.localHistory->sends.front().sendLevel, -6.0f, 0.0001);
+    EXPECT_NEAR(s1->fieldGroups.send.shared.localHistory->sends.front().sendLevel, -3.0f, 0.0001);
+}
+
 TEST_F(SignalPathObservationTest, BusScopeIncludesOnlyPathsThatReachItAndTheirOtherOutputs)
 {
     const auto graph = build(b2);
@@ -3045,9 +3387,17 @@ TEST_F(SignalPathObservationTest, ClosingProjectCancelsPendingRefresh)
     BlueprintCanvasWidget canvas;
     canvas.focusItem(l3);
     canvas.focusItem(c1);
+    QPointer<NodeContentEditor> ordinary(editorFor(canvas, s1));
+    QPointer<NodeContentEditor> gain(gainEditorFor(canvas, SignalPathEdgeKind::Send, c1, b2));
+    ASSERT_FALSE(ordinary.isNull());
+    ASSERT_FALSE(gain.isNull());
     emit ProjectManager::instance().itemPropertyChanged(c1, QStringLiteral("volume"));
+    QEvent leave(QEvent::Leave);
+    QApplication::sendEvent(canvas.viewport(), &leave);
     ProjectManager::instance().closeProject();
     drainEvents();
+    EXPECT_TRUE(ordinary.isNull());
+    EXPECT_TRUE(gain.isNull());
     EXPECT_TRUE(canvas.scene()->items().empty());
 }
 
@@ -3387,7 +3737,7 @@ TEST_F(SignalPathObservationTest, BackgroundHeaderWhitespaceAndFieldLabelsKeepIn
         [&](uint32_t id) { inspected = id; });
     for (auto* object : {s1, c1, b1}) {
         auto* node = canvas.signalPathNode(indexOf(canvas.activeSignalPathSource()->graph(), object));
-        auto* editor = qobject_cast<NodeContentEditor*>(node->contentWidget());
+        auto* editor = qobject_cast<NodeContentEditor*>(node->ensureContentWidget());
         auto* label = qobject_cast<QGridLayout*>(editor->layout())->itemAtPosition(0, 0)->widget();
         canvas.centerOn(node);
         const auto body = node->shape().boundingRect();
