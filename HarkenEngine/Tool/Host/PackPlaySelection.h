@@ -162,9 +162,9 @@ inline void NoteQueueSuccessorLeaf(const harken::EnginePlayableServiceRow& row,
     copy->successorPresent = true;
     copy->successorOrdinal = row.QueueNextState().currentChildOrdinal;
     copy->successorOrdinalPresent = true;
-    const auto& successorSchedule = row.queueSuccessorProgramPlane == 0
+    const auto& successorSchedule = row.QueueFiling().queueSuccessorProgramPlane == 0
         ? row.schedule
-        : row.queueSuccessorSchedule;
+        : row.QueueFiling().queueSuccessorSchedule;
     if (successorSchedule.eventCount != 0) {
         copy->scheduledKnown = true;
         copy->scheduledFrame = successorSchedule.entryAnchorFrame;
@@ -430,7 +430,7 @@ inline bool CaptureFiringQueueEnd(
         seen.leafId = row.leaf.stableId;
         seen.startFrame = row.startFrame;
         seen.successorRender = row.queueSuccessorRenderHandle != 0;
-        seen.successorArm = row.queueSuccessorArm.Valid();
+        seen.successorArm = row.HasFeatureArrays() && row.QueueFiling().queueSuccessorArm.Valid();
         seen.signalOnly = row.queueSignalOnlyNoOverlap;
         seen.continuationPrepared = row.queueContinuationPrepared;
         seen.lifecycle = static_cast<unsigned>(row.controlLifecycle);

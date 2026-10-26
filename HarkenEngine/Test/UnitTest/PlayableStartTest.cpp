@@ -3964,7 +3964,7 @@ std::string WrapProbeDump(
         << " natural=" << row->queueNaturalEnd
         << " prepared=" << row->queueContinuationPrepared
         << " deferred=" << row->queueSignalOnlyNoOverlap
-        << " sameKey=" << row->queueSameProgramKey
+        << " sameKey=" << row->QueueFiling().queueSameProgramKey
         << " complete=" << row->queueCompletionFrame
         << " winEnd=" << engine.timelinePool.WindowEndFrame()
         << " completePastWin="
@@ -4258,7 +4258,7 @@ QueueOnsetPlayback PlayQueueUntilStale(
             const harken::EnginePlayableServiceRow* row =
                 FindPlayableRow(engine, instance);
             result.inCycleSameKey =
-                row != nullptr && row->queueSameProgramKey;
+                row != nullptr && row->QueueFiling().queueSameProgramKey;
         }
         if (program != nullptr && !result.wrapSameChild &&
             result.heard.size() + 1u == program->childCount) {
@@ -5892,7 +5892,7 @@ TEST(PlayableStart, SequenceQueueNestedQueueOnceCompletesOwningQueue) {
         << " terminal=" << finalRow.terminalObserved
         << " current=" << finalRow.queueCurrentOccurrence.generation
         << " retiring=" << finalRow.queueRetiringOccurrence.generation
-        << " decision=" << finalRow.queueDecision.Valid()
+        << " decision=" << finalRow.QueueFiling().queueDecision.Valid()
         << " arrival=" << finalRow.queueArrivalDecision.Valid()
         << " captured=" << capturedFinal << " pendingVersion=" << finalQueue.pendingVersion
         << " parentId=" << finalRow.queueParentContainerStableId
@@ -11884,7 +11884,7 @@ TEST(PlayableStart, SequenceQueueOnceButtActivatesSecondSoundAtCompletion) {
             finalRow->queueContinuationPrepared)
         << " committed="
         << (finalRow != engine->playableServices.end() &&
-            finalRow->queueDecisionCommitted)
+            finalRow->QueueFiling().queueDecisionCommitted)
         << " voices=" << engine->voices.ActiveCount()
         << " arms=" << engine->timelineArms.LiveCount();
     EXPECT_EQ(decisionBaseline, engine->decisions.LiveCount());
@@ -12006,7 +12006,7 @@ TEST(PlayableStart,
         << " lifecycle="
         << static_cast<int>(startedRow->controlLifecycle)
         << " prepared=" << startedRow->queueContinuationPrepared
-        << " committed=" << startedRow->queueDecisionCommitted
+        << " committed=" << startedRow->QueueFiling().queueDecisionCommitted
         << " failContainer=" << failContainer;
     EXPECT_TRUE(heardSecondAfterComplete)
         << " start=" << startedRow->startFrame
@@ -12041,7 +12041,7 @@ TEST(PlayableStart,
             finalRow->queueContinuationPrepared)
         << " committed="
         << (finalRow != engine->playableServices.end() &&
-            finalRow->queueDecisionCommitted)
+            finalRow->QueueFiling().queueDecisionCommitted)
         << " voices=" << engine->voices.ActiveCount()
         << " arms=" << engine->timelineArms.LiveCount();
     EXPECT_EQ(decisionBaseline, engine->decisions.LiveCount());
@@ -12226,9 +12226,9 @@ TEST(PlayableStart,
     ASSERT_TRUE(resumedRow->queueContinuationPrepared);
     ASSERT_FALSE(resumedRow->queueSignalOnlyNoOverlap);
     const harken::ProgramView& successorSchedule =
-        resumedRow->queueSuccessorProgramPlane == 0
+        resumedRow->QueueFiling().queueSuccessorProgramPlane == 0
             ? resumedRow->schedule
-            : resumedRow->queueSuccessorSchedule;
+            : resumedRow->QueueFiling().queueSuccessorSchedule;
     const std::uint64_t leadFrames =
         static_cast<std::uint64_t>(std::max<std::uint32_t>(
             1u, engine->timelinePool.PublishLeadQuanta())) *
@@ -12336,16 +12336,16 @@ TEST(PlayableStart,
         << " reason=" << static_cast<int>(row->controlReason)
         << " phase=" << static_cast<int>(row->phase)
         << " queues=" << engine->queueInstances.LiveCount();
-    ASSERT_TRUE(row->queueSuccessorHasZeroWorkCompletion);
+    ASSERT_TRUE(row->QueueFiling().queueSuccessorHasZeroWorkCompletion);
     const harken::ProgramView& successorSchedule =
-        row->queueSuccessorProgramPlane == 0
+        row->QueueFiling().queueSuccessorProgramPlane == 0
             ? row->schedule
-            : row->queueSuccessorSchedule;
+            : row->QueueFiling().queueSuccessorSchedule;
     ASSERT_GE(successorSchedule.entryAnchorFrame, physicalOffsetFrames);
     const std::uint64_t scheduleOrigin =
         successorSchedule.entryAnchorFrame - physicalOffsetFrames;
     EXPECT_EQ(scheduleOrigin + logicalOffsetFrames,
-              row->queueSuccessorZeroWorkCompletionFrame);
+              row->QueueFiling().queueSuccessorZeroWorkCompletionFrame);
 }
 
 TEST(PlayableStart,
@@ -12385,19 +12385,19 @@ TEST(PlayableStart,
         });
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_TRUE(row->queueContinuationPrepared)
-        << "transition=" << row->queueTransition.Valid()
+        << "transition=" << row->QueueFiling().queueTransition.Valid()
         << " sourceArm=" << row->queueSourceArm.Valid()
-        << " successorArm=" << row->queueSuccessorArm.Valid()
-        << " group=" << row->queueArmGroup.Valid()
+        << " successorArm=" << row->QueueFiling().queueSuccessorArm.Valid()
+        << " group=" << row->QueueFiling().queueArmGroup.Valid()
         << " successorRender=" << row->queueSuccessorRenderHandle
         << " completion=" << row->queueCompletionFrame
         << " cutoff=" << engine->timelinePool.PublishCutoffFrame()
         << " windowEnd=" << engine->timelinePool.WindowEndFrame()
         << " recreate=" << engine->runtimeRecreateRequired;
-    ASSERT_TRUE(row->queueTransition.Valid());
+    ASSERT_TRUE(row->QueueFiling().queueTransition.Valid());
     const harken::TransitionInstanceToken transitionToken =
-        row->queueTransition;
-    const harken::DecisionToken transitionDecision = row->queueDecision;
+        row->QueueFiling().queueTransition;
+    const harken::DecisionToken transitionDecision = row->QueueFiling().queueDecision;
     const std::uint64_t transitionFrame = row->queueCompletionFrame;
     const harken::QueueInstanceToken queueToken = row->queueInstance;
     const VnVoiceHandle sourceVoice = row->renderHandle;
@@ -12430,10 +12430,10 @@ TEST(PlayableStart,
 
     harken::ArmGroupSnapshot handoffGroup{};
     ASSERT_TRUE(engine->armGroups.Capture(
-        row->queueArmGroup, &handoffGroup));
+        row->QueueFiling().queueArmGroup, &handoffGroup));
     EXPECT_EQ(2u, handoffGroup.memberCount);
     const harken::TimelineProgramView& successor =
-        row->queueSuccessorProgramPlane == 0
+        row->QueueFiling().queueSuccessorProgramPlane == 0
             ? row->runtimeProgram
             : row->queueSuccessorRuntimeProgram;
     ASSERT_EQ(2u, successor.payloadCount);
@@ -12531,17 +12531,17 @@ TEST(PlayableStart,
         });
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_TRUE(row->queueContinuationPrepared);
-    ASSERT_TRUE(row->queueTransition.Valid());
+    ASSERT_TRUE(row->QueueFiling().queueTransition.Valid());
     const auto* initialInstall = engine->ResolvePlayableServiceVoice(*row);
     ASSERT_NE(nullptr, initialInstall);
     ASSERT_EQ(1u, initialInstall->Input().effects.size());
     EXPECT_FALSE(row->queueSourceArm.Valid());
     EXPECT_EQ(0u, row->queueSourceRuntimeProgram.payloadCount);
     harken::ArmGroupSnapshot group{};
-    ASSERT_TRUE(engine->armGroups.Capture(row->queueArmGroup, &group));
+    ASSERT_TRUE(engine->armGroups.Capture(row->QueueFiling().queueArmGroup, &group));
     EXPECT_EQ(1u, group.memberCount);
     const harken::TransitionInstanceToken transitionToken =
-        row->queueTransition;
+        row->QueueFiling().queueTransition;
     const std::uint64_t transitionFrame = row->queueCompletionFrame;
 
     while (engine->mixer.BlocksRendered() *
@@ -12602,7 +12602,7 @@ TEST(PlayableStart, SequenceQueueZeroDurationTargetFadeKeepsAuthoredMarker) {
     ASSERT_TRUE(row->queueContinuationPrepared);
 
     const harken::TimelineProgramView& successor =
-        row->queueSuccessorProgramPlane == 0
+        row->QueueFiling().queueSuccessorProgramPlane == 0
             ? row->runtimeProgram
             : row->queueSuccessorRuntimeProgram;
     ASSERT_EQ(2u, successor.payloadCount);
@@ -12851,9 +12851,9 @@ TEST(PlayableStart,
         });
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_TRUE(row->queueContinuationPrepared);
-    ASSERT_TRUE(row->queueTransition.Valid());
+    ASSERT_TRUE(row->QueueFiling().queueTransition.Valid());
     const harken::TransitionInstanceToken transitionToken =
-        row->queueTransition;
+        row->QueueFiling().queueTransition;
     const harken::QueueInstanceToken queueToken = row->queueInstance;
     const VnVoiceHandle sourceVoice = row->renderHandle;
     const VnVoiceHandle targetVoice =
@@ -12872,7 +12872,7 @@ TEST(PlayableStart,
               row->queueSourceRuntimeProgram.payloads[0].
                   envelopeEndFrame);
     EXPECT_EQ(naturalEndFrame,
-              row->queueSuccessorSchedule.entryAnchorFrame);
+              row->QueueFiling().queueSuccessorSchedule.entryAnchorFrame);
     harken::TransitionInstanceSnapshot transition{};
     ASSERT_TRUE(engine->transitionInstances.Capture(
         transitionToken, &transition));
@@ -12895,7 +12895,7 @@ TEST(PlayableStart,
               transition.state);
     harken::DecisionCommittedSnapshot decisionAtFade{};
     ASSERT_TRUE(engine->decisions.CaptureCommitted(
-        row->queueDecision, &decisionAtFade));
+        row->QueueFiling().queueDecision, &decisionAtFade));
     EXPECT_EQ(harken::AudioGroupState::AudioClaimed,
               decisionAtFade.audioState);
     harken::QueueInstanceSnapshot queue{};
@@ -12918,7 +12918,7 @@ TEST(PlayableStart,
     ASSERT_TRUE(engine->queueInstances.Capture(queueToken, &queue));
     harken::DecisionCommittedSnapshot decisionAfter{};
     ASSERT_TRUE(engine->decisions.CaptureCommitted(
-        row->queueDecision, &decisionAfter));
+        row->QueueFiling().queueDecision, &decisionAfter));
     harken::TimelineArmObservation sourceArmAfter{};
     ASSERT_TRUE(engine->timelineArms.Observe(
         sourceArmToken, &sourceArmAfter));
@@ -12981,16 +12981,16 @@ TEST(PlayableStart,
               row->queueCompletionFrame / engine->config.blockFrames);
     const std::uint64_t transitionQuantum =
         preludeFrame / engine->config.blockFrames;
-    const harken::DecisionToken decision = row->queueDecision;
+    const harken::DecisionToken decision = row->QueueFiling().queueDecision;
     for (std::uint32_t block = 0;
-         block < 8 && !row->queueDecisionCommitted; ++block) {
+         block < 8 && !row->QueueFiling().queueDecisionCommitted; ++block) {
         ASSERT_LT(engine->mixer.BlocksRendered(), transitionQuantum);
         ASSERT_EQ(VN_OK, Vn_Update());
-        if (!row->queueDecisionCommitted) {
+        if (!row->QueueFiling().queueDecisionCommitted) {
             engine->nullBackend.Pump(1);
         }
     }
-    ASSERT_TRUE(row->queueDecisionCommitted);
+    ASSERT_TRUE(row->QueueFiling().queueDecisionCommitted);
     ASSERT_LT(engine->mixer.BlocksRendered(), transitionQuantum);
     const auto completionFrame = row->queueCompletionFrame;
     for (std::uint16_t index = 0; index < 2; ++index) {
@@ -13126,11 +13126,11 @@ TEST(PlayableStart,
     ASSERT_NE(engine->playableServices.end(), row);
     EXPECT_EQ(completionFrame, row->queueCompletionFrame);
     EXPECT_FALSE(row->queueContinuationPrepared);
-    EXPECT_FALSE(row->queueConditional.Valid());
-    EXPECT_FALSE(row->queueTransition.Valid());
+    EXPECT_FALSE(row->QueueFiling().queueConditional.Valid());
+    EXPECT_FALSE(row->QueueFiling().queueTransition.Valid());
     harken::ArmGroupSnapshot abandonedGroup{};
-    EXPECT_FALSE(engine->armGroups.Capture(row->queueArmGroup, &abandonedGroup));
-    EXPECT_EQ(nullptr, engine->timelineArms.Resolve(row->queueSuccessorArm));
+    EXPECT_FALSE(engine->armGroups.Capture(row->QueueFiling().queueArmGroup, &abandonedGroup));
+    EXPECT_EQ(nullptr, engine->timelineArms.Resolve(row->QueueFiling().queueSuccessorArm));
     EXPECT_EQ(nullptr, engine->voices.Resolve(row->queueSuccessorRenderHandle));
     EXPECT_EQ(transitionBaseline,
               engine->transitionInstances.LiveCount());
@@ -13195,12 +13195,12 @@ TEST(PlayableStart,
 
     EXPECT_EQ(completionFrame, row->queueCompletionFrame);
     EXPECT_FALSE(row->queueContinuationPrepared);
-    EXPECT_FALSE(row->queueConditional.Valid());
-    EXPECT_FALSE(row->queueTransition.Valid());
+    EXPECT_FALSE(row->QueueFiling().queueConditional.Valid());
+    EXPECT_FALSE(row->QueueFiling().queueTransition.Valid());
     EXPECT_FALSE(row->queueSourceArm.Valid());
     harken::ArmGroupSnapshot abandonedGroup{};
-    EXPECT_FALSE(engine->armGroups.Capture(row->queueArmGroup, &abandonedGroup));
-    EXPECT_EQ(nullptr, engine->timelineArms.Resolve(row->queueSuccessorArm));
+    EXPECT_FALSE(engine->armGroups.Capture(row->QueueFiling().queueArmGroup, &abandonedGroup));
+    EXPECT_EQ(nullptr, engine->timelineArms.Resolve(row->QueueFiling().queueSuccessorArm));
     EXPECT_EQ(nullptr, engine->voices.Resolve(row->queueSuccessorRenderHandle));
     EXPECT_EQ(transitionsBefore,
               engine->transitionInstances.LiveCount());
@@ -13263,15 +13263,15 @@ TEST(PlayableStart,
         });
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_TRUE(row->queueContinuationPrepared);
-    ASSERT_TRUE(row->queueTransition.Valid());
+    ASSERT_TRUE(row->QueueFiling().queueTransition.Valid());
     EXPECT_FALSE(row->queueSourceArm.Valid());
     EXPECT_EQ(0u, row->queueSourceRuntimeProgram.payloadCount);
     harken::ArmGroupSnapshot group{};
-    ASSERT_TRUE(engine->armGroups.Capture(row->queueArmGroup, &group));
+    ASSERT_TRUE(engine->armGroups.Capture(row->QueueFiling().queueArmGroup, &group));
     EXPECT_EQ(1u, group.memberCount);
     const harken::TransitionInstanceToken transitionToken =
-        row->queueTransition;
-    const harken::DecisionToken decisionToken = row->queueDecision;
+        row->QueueFiling().queueTransition;
+    const harken::DecisionToken decisionToken = row->QueueFiling().queueDecision;
     const harken::QueueInstanceToken queueToken = row->queueInstance;
     const VnVoiceHandle sourceVoice = row->renderHandle;
     const VnVoiceHandle targetVoice = row->queueSuccessorRenderHandle;
@@ -13378,11 +13378,11 @@ TEST_P(NaturalEndQueueCancellationTest,
         });
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_TRUE(row->queueSourceArm.Valid());
-    ASSERT_TRUE(row->queueTransition.Valid());
+    ASSERT_TRUE(row->QueueFiling().queueTransition.Valid());
     const harken::TimelineArmToken sourceArm = row->queueSourceArm;
-    const harken::TimelineArmToken targetArm = row->queueSuccessorArm;
+    const harken::TimelineArmToken targetArm = row->QueueFiling().queueSuccessorArm;
     const harken::TransitionInstanceToken transition =
-        row->queueTransition;
+        row->QueueFiling().queueTransition;
 
     bool preludeApplied = false;
     const std::uint64_t preludeLimit =
@@ -13541,29 +13541,29 @@ TEST_P(ClaimedQueueSliceCancellationTest,
             return candidate.rootInstance == started.instance;
         });
     ASSERT_NE(engine->playableServices.end(), row);
-    ASSERT_TRUE(row->queueTransition.Valid());
+    ASSERT_TRUE(row->QueueFiling().queueTransition.Valid());
     ASSERT_TRUE(row->queueSourceArm.Valid());
-    ASSERT_TRUE(row->queueSuccessorArm.Valid());
+    ASSERT_TRUE(row->QueueFiling().queueSuccessorArm.Valid());
 
     harken::DecisionCommittedSnapshot pending{};
     bool committedPending = false;
     for (std::uint32_t block = 0; block < 16 && !committedPending; ++block) {
         ASSERT_EQ(VN_OK, Vn_Update());
-        committedPending = row->queueDecisionCommitted &&
+        committedPending = row->QueueFiling().queueDecisionCommitted &&
             engine->decisions.CaptureCommitted(
-                row->queueDecision, &pending) &&
+                row->QueueFiling().queueDecision, &pending) &&
             pending.audioState == harken::AudioGroupState::Pending;
         if (!committedPending) engine->nullBackend.Pump(1);
     }
     ASSERT_TRUE(committedPending);
     ASSERT_EQ(2u, pending.sliceCount);
-    const harken::DecisionToken decision = row->queueDecision;
+    const harken::DecisionToken decision = row->QueueFiling().queueDecision;
     const harken::ConditionalQueueVersionToken conditional =
-        row->queueConditional;
+        row->QueueFiling().queueConditional;
     const harken::TransitionInstanceToken transition =
-        row->queueTransition;
+        row->QueueFiling().queueTransition;
     const harken::TimelineArmToken sourceArm = row->queueSourceArm;
-    const harken::TimelineArmToken targetArm = row->queueSuccessorArm;
+    const harken::TimelineArmToken targetArm = row->QueueFiling().queueSuccessorArm;
     harken::TransitionInstanceSnapshot gate{};
     ASSERT_TRUE(engine->transitionInstances.Capture(transition, &gate));
     const std::uint64_t preludeQuantum =
@@ -13819,7 +13819,7 @@ TEST(PlayableStart,
     EXPECT_EQ(0u, row->queueSuccessorRuntimeProgram.payloadCount);
     harken::ArmGroupSnapshot preparedGroup{};
     ASSERT_TRUE(engine->armGroups.Capture(
-        row->queueArmGroup, &preparedGroup));
+        row->QueueFiling().queueArmGroup, &preparedGroup));
     EXPECT_EQ(harken::ArmGroupState::Ready, preparedGroup.state);
     EXPECT_EQ(0u, preparedGroup.memberCount);
     const VnVoiceHandle incumbent = row->renderHandle;
@@ -13903,9 +13903,9 @@ TEST(PlayableStart, StopReclaimsPreparedSameKeyQueueContinuation) {
             return row.rootInstance == started.instance;
         });
     ASSERT_NE(engine->playableServices.end(), active);
-    ASSERT_TRUE(active->queueSameProgramKey);
+    ASSERT_TRUE(active->QueueFiling().queueSameProgramKey);
     harken::ArmGroupSnapshot group{};
-    ASSERT_TRUE(engine->armGroups.Capture(active->queueArmGroup, &group));
+    ASSERT_TRUE(engine->armGroups.Capture(active->QueueFiling().queueArmGroup, &group));
     ASSERT_EQ(0u, group.memberCount);
 
     ASSERT_EQ(harken::PlayableControlStatus::Ok,
@@ -14784,7 +14784,7 @@ TEST(PlayableStart, RandomQueueOncePlaysOneDeterministicWeightedPermutation) {
                 activeRow->queueInstance, &state);
             logicalStates.push_back(
                 (stateOk ? state.cursor : 99u) * 100u +
-                (activeRow->queueDecision.Valid() ? 1u : 0u));
+                (activeRow->QueueFiling().queueDecision.Valid() ? 1u : 0u));
         }
         engine->nullBackend.Pump(1);
         const float* output = engine->nullBackend.LastBlock();
@@ -16287,9 +16287,9 @@ TEST(PlayableStart,
         });
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_TRUE(row->queueContinuationPrepared);
-    ASSERT_TRUE(row->queueSuccessorHasZeroWorkCompletion);
+    ASSERT_TRUE(row->QueueFiling().queueSuccessorHasZeroWorkCompletion);
     const std::uint64_t expectedBoundary =
-        row->queueSuccessorZeroWorkCompletionFrame;
+        row->QueueFiling().queueSuccessorZeroWorkCompletionFrame;
     EXPECT_EQ(row->queueCompletionFrame + 48000u, expectedBoundary);
 
     bool promoted = false;
@@ -16301,8 +16301,8 @@ TEST(PlayableStart,
     }
     ASSERT_TRUE(promoted);
     EXPECT_EQ(expectedBoundary, row->zeroWorkCompletionFrame);
-    EXPECT_FALSE(row->queueSuccessorHasZeroWorkCompletion);
-    EXPECT_EQ(0u, row->queueSuccessorZeroWorkCompletionFrame);
+    EXPECT_FALSE(row->QueueFiling().queueSuccessorHasZeroWorkCompletion);
+    EXPECT_EQ(0u, row->QueueFiling().queueSuccessorZeroWorkCompletionFrame);
     harken::PlayableControlState state{};
     while ((engine->mixer.BlocksRendered() + 1u) *
                engine->config.blockFrames < expectedBoundary) {
@@ -16438,10 +16438,10 @@ TEST(PlayableStart,
         });
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_TRUE(row->queueContinuationPrepared);
-    ASSERT_TRUE(row->queueSuccessorHasZeroWorkCompletion);
-    EXPECT_FALSE(row->queueSameProgramKey);
+    ASSERT_TRUE(row->QueueFiling().queueSuccessorHasZeroWorkCompletion);
+    EXPECT_FALSE(row->QueueFiling().queueSameProgramKey);
     const std::uint64_t provisionalBoundary =
-        row->queueSuccessorZeroWorkCompletionFrame;
+        row->QueueFiling().queueSuccessorZeroWorkCompletionFrame;
     EXPECT_EQ(row->queueCompletionFrame + 48000u, provisionalBoundary);
 
     std::uint64_t firstCurrentPcmFrame = UINT64_MAX;
@@ -16462,7 +16462,7 @@ TEST(PlayableStart,
     ASSERT_NE(UINT64_MAX, firstCurrentPcmFrame);
     const auto expectedBoundary = firstCurrentPcmFrame + first.size() + 48000u;
     EXPECT_EQ(expectedBoundary, row->zeroWorkCompletionFrame);
-    EXPECT_FALSE(row->queueSuccessorHasZeroWorkCompletion);
+    EXPECT_FALSE(row->QueueFiling().queueSuccessorHasZeroWorkCompletion);
 
     harken::PlayableControlState state{};
     while ((engine->mixer.BlocksRendered() + 1u) *
@@ -17620,7 +17620,7 @@ TEST(PlayableStart, QueueSingleLeafTrackSuccessorKeepsAuthoredClipDeadline) {
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_TRUE(row->queueContinuationPrepared);
     const auto* successorMember = engine->FindQueueProgramMember(
-        row->queueSuccessorProgramBank, row->queueSuccessorPrograms.first);
+        row->QueueFiling().queueSuccessorProgramBank, row->QueueFiling().queueSuccessorPrograms.first);
     ASSERT_NE(nullptr, successorMember);
     const auto& successorVoice = successorMember->voice;
     ASSERT_TRUE(successorVoice.Valid());
@@ -17727,15 +17727,15 @@ TEST(PlayableStart,
         });
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_TRUE(row->queueContinuationPrepared);
-    EXPECT_FALSE(row->queueSameProgramKey);
+    EXPECT_FALSE(row->QueueFiling().queueSameProgramKey);
     const auto* successorMember = engine->FindQueueProgramMember(
-        row->queueSuccessorProgramBank, row->queueSuccessorPrograms.first);
+        row->QueueFiling().queueSuccessorProgramBank, row->QueueFiling().queueSuccessorPrograms.first);
     ASSERT_NE(nullptr, successorMember);
     const auto& successorVoice = successorMember->voice;
     ASSERT_TRUE(successorVoice.Valid());
     EXPECT_EQ(480u, successorVoice.Facts().authoredDurationFrames);
     EXPECT_EQ(row->queueCompletionFrame + 240u,
-              row->queueSuccessorSchedule.entryAnchorFrame);
+              row->QueueFiling().queueSuccessorSchedule.entryAnchorFrame);
 
     std::vector<std::uint64_t> audibleRuns;
     std::uint64_t currentRun = 0;
@@ -17915,7 +17915,7 @@ TEST(PlayableStart,
             row->QueueDeferredSource().service.Valid())
         << " windowEnd=" << engine->timelinePool.WindowEndFrame()
         << " boundary=" << expectedBoundary;
-    EXPECT_EQ(expectedBoundary, row->queueTransitionEndFrame);
+    EXPECT_EQ(expectedBoundary, row->QueueFiling().queueTransitionEndFrame);
     harken::QueueInstanceSnapshot beforeBoundary{};
     ASSERT_TRUE(engine->queueInstances.Capture(
         queue, &beforeBoundary));
@@ -18204,13 +18204,13 @@ TEST(PlayableStart,
         });
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_TRUE(row->queueContinuationPrepared);
-    const std::uint8_t delayedPlane = row->queueSuccessorProgramPlane;
+    const std::uint8_t delayedPlane = row->QueueFiling().queueSuccessorProgramPlane;
     const harken::ProgramView& delayedSchedule = delayedPlane == 0
-        ? row->schedule : row->queueSuccessorSchedule;
+        ? row->schedule : row->QueueFiling().queueSuccessorSchedule;
     const std::uint64_t delayedStartFrame = delayedSchedule.entryAnchorFrame;
     const harken::TransitionInstanceToken delayedTransition =
-        row->queueTransition;
-    const harken::DecisionToken delayedDecision = row->queueDecision;
+        row->QueueFiling().queueTransition;
+    const harken::DecisionToken delayedDecision = row->QueueFiling().queueDecision;
     harken::TransitionInstanceSnapshot transition{};
     ASSERT_TRUE(engine->transitionInstances.Capture(
         delayedTransition, &transition));
@@ -18227,7 +18227,7 @@ TEST(PlayableStart,
          block < 32 &&
          !(row->queueCurrentProgramPlane == delayedPlane &&
            row->queueContinuationPrepared &&
-           row->queueSuccessorProgramPlane != delayedPlane);
+           row->QueueFiling().queueSuccessorProgramPlane != delayedPlane);
          ++block) {
         ASSERT_EQ(VN_OK, Vn_Update());
         engine->nullBackend.Pump(1);
@@ -18237,12 +18237,12 @@ TEST(PlayableStart,
         << " lifecycle="
         << static_cast<std::uint32_t>(row->controlLifecycle)
         << " reason=" << static_cast<std::uint32_t>(row->controlReason)
-        << " decision=" << row->queueDecision.slot << ":"
-        << row->queueDecision.generation
+        << " decision=" << row->QueueFiling().queueDecision.slot << ":"
+        << row->QueueFiling().queueDecision.generation
         << " completion=" << row->queueCompletionFrame
         << " blocks=" << engine->mixer.BlocksRendered();
     ASSERT_TRUE(row->queueContinuationPrepared);
-    ASSERT_NE(delayedPlane, row->queueSuccessorProgramPlane);
+    ASSERT_NE(delayedPlane, row->QueueFiling().queueSuccessorProgramPlane);
     ASSERT_LT(engine->mixer.BlocksRendered() * engine->config.blockFrames,
               delayedStartFrame);
     EXPECT_FLOAT_EQ(preparedMidpoint, delayedCurve->Eval(0.5f));
@@ -18392,11 +18392,11 @@ TEST(PlayableStart,
     ASSERT_NE(engine->playableServices.end(), row);
     EXPECT_EQ(completionFrame, row->queueCompletionFrame);
     EXPECT_FALSE(row->queueContinuationPrepared);
-    EXPECT_FALSE(row->queueConditional.Valid());
-    EXPECT_FALSE(row->queueTransition.Valid());
+    EXPECT_FALSE(row->QueueFiling().queueConditional.Valid());
+    EXPECT_FALSE(row->QueueFiling().queueTransition.Valid());
     harken::ArmGroupSnapshot abandonedGroup{};
-    EXPECT_FALSE(engine->armGroups.Capture(row->queueArmGroup, &abandonedGroup));
-    EXPECT_EQ(nullptr, engine->timelineArms.Resolve(row->queueSuccessorArm));
+    EXPECT_FALSE(engine->armGroups.Capture(row->QueueFiling().queueArmGroup, &abandonedGroup));
+    EXPECT_EQ(nullptr, engine->timelineArms.Resolve(row->QueueFiling().queueSuccessorArm));
     EXPECT_EQ(nullptr, engine->voices.Resolve(row->queueSuccessorRenderHandle));
     EXPECT_EQ(transitionBaseline,
               engine->transitionInstances.LiveCount());
@@ -18469,7 +18469,7 @@ TEST(PlayableStart, QueueStartsWithZeroWorkTrackAndAdvancesToSound) {
     EXPECT_EQ(row->startFrame, row->queueCompletionFrame);
     EXPECT_FALSE(row->arm.Valid());
     EXPECT_EQ(0u, row->renderHandle);
-    EXPECT_TRUE(row->queueDecision.Valid());
+    EXPECT_TRUE(row->QueueFiling().queueDecision.Valid());
     EXPECT_FALSE(row->queueDeferredNeedsFullPreparation);
     EXPECT_TRUE(row->queueContinuationPrepared);
     const auto logicalChild =
@@ -18551,12 +18551,12 @@ TEST(PlayableStart, QueuePromotesAuthoredZeroFrameTrackSuccessorLogically) {
         });
     ASSERT_NE(row, engine->playableServices.end());
     ASSERT_TRUE(row->queueContinuationPrepared);
-    EXPECT_EQ(0u, row->queueSuccessorScheduleLeafCount);
-    EXPECT_TRUE(row->queueSuccessorHasZeroWorkCompletion);
-    EXPECT_FALSE(row->queueSuccessorArm.Valid());
+    EXPECT_EQ(0u, row->QueueFiling().queueSuccessorScheduleLeafCount);
+    EXPECT_TRUE(row->QueueFiling().queueSuccessorHasZeroWorkCompletion);
+    EXPECT_FALSE(row->QueueFiling().queueSuccessorArm.Valid());
     EXPECT_EQ(0u, row->queueSuccessorRenderHandle);
     const std::uint64_t logicalBoundary =
-        row->queueSuccessorZeroWorkCompletionFrame;
+        row->QueueFiling().queueSuccessorZeroWorkCompletionFrame;
     EXPECT_EQ(row->queueCompletionFrame + 480u, logicalBoundary);
 
     bool heardCurrent = false;
@@ -18692,9 +18692,9 @@ TEST(PlayableStart,
         });
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_TRUE(row->queueContinuationPrepared);
-    EXPECT_EQ(0u, row->queueSuccessorScheduleLeafCount);
-    ASSERT_TRUE(row->queueSuccessorHasZeroWorkCompletion);
-    EXPECT_FALSE(row->queueSuccessorArm.Valid());
+    EXPECT_EQ(0u, row->QueueFiling().queueSuccessorScheduleLeafCount);
+    ASSERT_TRUE(row->QueueFiling().queueSuccessorHasZeroWorkCompletion);
+    EXPECT_FALSE(row->QueueFiling().queueSuccessorArm.Valid());
     EXPECT_EQ(0u, row->queueSuccessorRenderHandle);
     const auto beforeStart = engine->mixer.BlocksRendered();
     const auto initialDecision = row->initialQueueEntryDecision;
@@ -18719,7 +18719,7 @@ TEST(PlayableStart,
     ASSERT_TRUE(appliedInitial);
     ASSERT_FALSE(row->hasZeroWorkCompletion);
     const std::uint64_t logicalBoundary =
-        row->queueSuccessorZeroWorkCompletionFrame;
+        row->QueueFiling().queueSuccessorZeroWorkCompletionFrame;
     EXPECT_EQ(row->queueCompletionFrame + 960u, logicalBoundary);
 
     for (std::uint32_t block = 0;
@@ -18945,9 +18945,9 @@ TEST(PlayableStart, QueueZeroWorkTrackSuccessorFailsWithoutPartialStart) {
     EXPECT_EQ(harken::QueueFailureReason::TargetPreparationFailed,
               failed.failureReason);
     EXPECT_FALSE(row->queueContinuationPrepared);
-    EXPECT_FALSE(row->queueConditional.Valid());
-    EXPECT_FALSE(row->queueSuccessorOccurrence.generation != 0);
-    EXPECT_FALSE(row->queueSuccessorArm.Valid());
+    EXPECT_FALSE(row->QueueFiling().queueConditional.Valid());
+    EXPECT_FALSE(row->QueueFiling().queueSuccessorOccurrence.generation != 0);
+    EXPECT_FALSE(row->QueueFiling().queueSuccessorArm.Valid());
     EXPECT_EQ(0u, row->queueSuccessorRenderHandle);
 
     bool heardCurrent = false;
@@ -19642,19 +19642,19 @@ TEST(PlayableStart,
         });
     ASSERT_NE(engine->playableServices.end(), prepared);
     ASSERT_TRUE(prepared->queueContinuationPrepared);
-    ASSERT_EQ(2u, prepared->queueSuccessorScheduleLeafCount);
-    ASSERT_TRUE(prepared->queueTransition.Valid());
+    ASSERT_EQ(2u, prepared->QueueFiling().queueSuccessorScheduleLeafCount);
+    ASSERT_TRUE(prepared->QueueFiling().queueTransition.Valid());
     harken::TransitionInstanceSnapshot transition{};
     ASSERT_TRUE(engine->transitionInstances.Capture(
-        prepared->queueTransition, &transition));
+        prepared->QueueFiling().queueTransition, &transition));
     EXPECT_EQ(harken::TransitionAudibleGateState::Replaceable,
               transition.state);
     harken::ArmGroupSnapshot group{};
     ASSERT_TRUE(engine->armGroups.Capture(
-        prepared->queueArmGroup, &group));
+        prepared->QueueFiling().queueArmGroup, &group));
     EXPECT_EQ(2u, group.memberCount);
     const harken::TimelineProgramView& successor =
-        prepared->queueSuccessorProgramPlane == 0
+        prepared->QueueFiling().queueSuccessorProgramPlane == 0
             ? prepared->runtimeProgram
             : prepared->queueSuccessorRuntimeProgram;
     ASSERT_EQ(4u, successor.payloadCount);
@@ -19738,11 +19738,11 @@ TEST(PlayableStart,
         });
     ASSERT_NE(engine->playableServices.end(), prepared);
     ASSERT_TRUE(prepared->queueContinuationPrepared);
-    EXPECT_EQ(1u, prepared->queueSourceControlArmCount);
-    EXPECT_EQ(3u, prepared->queueTransitionGroupArmCount);
+    EXPECT_EQ(1u, prepared->QueueFiling().queueSourceControlArmCount);
+    EXPECT_EQ(3u, prepared->QueueFiling().queueTransitionGroupArmCount);
     harken::ArmGroupSnapshot group{};
     ASSERT_TRUE(engine->armGroups.Capture(
-        prepared->queueArmGroup, &group));
+        prepared->QueueFiling().queueArmGroup, &group));
     EXPECT_EQ(3u, group.memberCount);
     ASSERT_EQ(1u, prepared->queueSourceRuntimePrograms[0].payloadCount);
     EXPECT_EQ(harken::TimelineEventKind::Envelope,
@@ -19807,19 +19807,19 @@ TEST(PlayableStart,
         });
     ASSERT_NE(engine->playableServices.end(), prepared);
     ASSERT_TRUE(prepared->queueContinuationPrepared);
-    ASSERT_EQ(2u, prepared->queueSuccessorScheduleLeafCount);
-    ASSERT_TRUE(prepared->queueTransition.Valid());
+    ASSERT_EQ(2u, prepared->QueueFiling().queueSuccessorScheduleLeafCount);
+    ASSERT_TRUE(prepared->QueueFiling().queueTransition.Valid());
     harken::TransitionInstanceSnapshot transition{};
     ASSERT_TRUE(engine->transitionInstances.Capture(
-        prepared->queueTransition, &transition));
+        prepared->QueueFiling().queueTransition, &transition));
     EXPECT_EQ(harken::TransitionAudibleGateState::Replaceable,
               transition.state);
     harken::ArmGroupSnapshot group{};
     ASSERT_TRUE(engine->armGroups.Capture(
-        prepared->queueArmGroup, &group));
+        prepared->QueueFiling().queueArmGroup, &group));
     EXPECT_EQ(2u, group.memberCount);
     const harken::TimelineProgramView& successor =
-        prepared->queueSuccessorProgramPlane == 0
+        prepared->QueueFiling().queueSuccessorProgramPlane == 0
             ? prepared->runtimeProgram
             : prepared->queueSuccessorRuntimeProgram;
     ASSERT_EQ(4u, successor.payloadCount);
@@ -19891,10 +19891,10 @@ TEST(PlayableStart,
     ASSERT_NE(engine->playableServices.end(), prepared);
     ASSERT_TRUE(prepared->queueContinuationPrepared);
     ASSERT_EQ(2u, prepared->queueCurrentScheduleLeafCount);
-    ASSERT_TRUE(prepared->queueTransition.Valid());
+    ASSERT_TRUE(prepared->QueueFiling().queueTransition.Valid());
     harken::ArmGroupSnapshot group{};
     ASSERT_TRUE(engine->armGroups.Capture(
-        prepared->queueArmGroup, &group));
+        prepared->QueueFiling().queueArmGroup, &group));
     EXPECT_EQ(3u, group.memberCount);
     ASSERT_EQ(2u, prepared->queueSourceRuntimeProgram.payloadCount);
     for (std::uint32_t index = 0; index < 2; ++index) {
@@ -19911,7 +19911,7 @@ TEST(PlayableStart,
     ASSERT_NE(sources[0], sources[1]);
     for (std::uint32_t index = 0; index < sources.size(); ++index) {
         const harken::TimelineArmToken sourceControl =
-            prepared->queueTransitionGroupArms[index];
+            prepared->QueueFiling().queueTransitionGroupArms[index];
         EXPECT_EQ(static_cast<std::uint32_t>(sources[index]),
                   sourceControl.renderSlot);
         EXPECT_EQ(static_cast<std::uint32_t>(sources[index] >> 32),
@@ -19923,15 +19923,15 @@ TEST(PlayableStart,
     const VnVoiceHandle targetHandle =
         prepared->queueSuccessorRenderHandle;
     const harken::TimelineArmToken targetArm =
-        prepared->queueTransitionGroupArms[
-            prepared->queueSourceControlArmCount];
+        prepared->QueueFiling().queueTransitionGroupArms[
+            prepared->QueueFiling().queueSourceControlArmCount];
     std::uint32_t audiblePage = 0;
     ASSERT_TRUE(engine->timelinePool.PageForFrame(
         audibleFrame, &audiblePage));
     const harken::HorizonPageHeader* audibleHeader =
         engine->timelinePool.Page(audiblePage);
     ASSERT_NE(nullptr, audibleHeader);
-    const auto preludeIdentity = harkentest::QueueContinuationSlice(*engine, prepared->queueDecision, 0);
+    const auto preludeIdentity = harkentest::QueueContinuationSlice(*engine, prepared->QueueFiling().queueDecision, 0);
     harken::Plan03PageGroupView prelude{};
     ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
         preludeIdentity, &prelude));
@@ -19943,12 +19943,12 @@ TEST(PlayableStart,
     }
     harken::TransitionInstanceSnapshot transition{};
     ASSERT_TRUE(engine->transitionInstances.Capture(
-        prepared->queueTransition, &transition));
+        prepared->QueueFiling().queueTransition, &transition));
     EXPECT_EQ(harken::TransitionAudibleGateState::Locked,
               transition.state);
     harken::DecisionCommittedSnapshot decision{};
     ASSERT_TRUE(engine->decisions.CaptureCommitted(
-        prepared->queueDecision, &decision));
+        prepared->QueueFiling().queueDecision, &decision));
     EXPECT_EQ(harken::AudioGroupState::AudioClaimed,
               decision.audioState);
     ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
@@ -19966,7 +19966,7 @@ TEST(PlayableStart,
               audibleFrame / engine->config.blockFrames);
     harken::ArmGroupSnapshot observedGroup{};
     ASSERT_TRUE(engine->armGroups.Capture(
-        prepared->queueArmGroup, &observedGroup));
+        prepared->QueueFiling().queueArmGroup, &observedGroup));
     EXPECT_EQ(harken::ArmGroupState::Ready,
               observedGroup.state);
     for (std::uint32_t index = 0; index < sources.size(); ++index) {
@@ -19976,7 +19976,7 @@ TEST(PlayableStart,
         ASSERT_NE(nullptr, source);
         harken::TimelineArmObservation sourceControl{};
         ASSERT_TRUE(engine->timelineArms.Observe(
-            prepared->queueTransitionGroupArms[index], &sourceControl));
+            prepared->QueueFiling().queueTransitionGroupArms[index], &sourceControl));
         EXPECT_TRUE(source->timelineEnvelopes[1].active)
             << "source=" << index
             << " arm=" << static_cast<std::uint32_t>(sourceControl.state)
@@ -20057,9 +20057,9 @@ TEST(PlayableStart,
         });
     ASSERT_NE(engine->playableServices.end(), row);
     EXPECT_FALSE(row->queueContinuationPrepared);
-    EXPECT_FALSE(row->queueSuccessorArm.Valid());
-    EXPECT_FALSE(row->queueTransition.Valid());
-    EXPECT_FALSE(row->queueArmGroup.Valid());
+    EXPECT_FALSE(row->QueueFiling().queueSuccessorArm.Valid());
+    EXPECT_FALSE(row->QueueFiling().queueTransition.Valid());
+    EXPECT_FALSE(row->QueueFiling().queueArmGroup.Valid());
     EXPECT_EQ(2u, engine->timelinePool.LiveTransactionCount());
     EXPECT_EQ(2u, engine->timelinePool.TransactionHighWater());
 }
@@ -20095,10 +20095,10 @@ TEST(PlayableStart,
     ASSERT_NE(engine->playableServices.end(), prepared);
     ASSERT_TRUE(prepared->queueContinuationPrepared);
     ASSERT_EQ(2u, prepared->queueCurrentScheduleLeafCount);
-    ASSERT_TRUE(prepared->queueTransition.Valid());
+    ASSERT_TRUE(prepared->QueueFiling().queueTransition.Valid());
     harken::ArmGroupSnapshot group{};
     ASSERT_TRUE(engine->armGroups.Capture(
-        prepared->queueArmGroup, &group));
+        prepared->QueueFiling().queueArmGroup, &group));
     EXPECT_EQ(3u, group.memberCount);
     ASSERT_EQ(2u, prepared->queueSourceRuntimeProgram.payloadCount);
     for (std::uint32_t index = 0; index < 2; ++index) {
@@ -20118,8 +20118,8 @@ TEST(PlayableStart,
     const VnVoiceHandle targetHandle =
         prepared->queueSuccessorRenderHandle;
     const harken::TimelineArmToken targetArm =
-        prepared->queueTransitionGroupArms[
-            prepared->queueSourceControlArmCount];
+        prepared->QueueFiling().queueTransitionGroupArms[
+            prepared->QueueFiling().queueSourceControlArmCount];
 
     while (engine->mixer.BlocksRendered() *
                engine->config.blockFrames <= audibleFrame) {
@@ -21805,9 +21805,9 @@ TEST(PlayableStart, SequenceQueueArmGroupPreflightHasZeroSuccessorMutation) {
               engine->timelineOccurrences.OccupiedCount());
     EXPECT_EQ(armBaseline + 1u, engine->timelineArms.LiveCount());
     EXPECT_EQ(0u, failedRow->queueAbortedSuccessorOccurrence.generation);
-    EXPECT_FALSE(failedRow->queueSuccessorArm.Valid());
-    EXPECT_FALSE(failedRow->queueArmGroup.Valid());
-    EXPECT_EQ(0u, failedRow->queueSuccessorScheduleLeafCount);
+    EXPECT_FALSE(failedRow->QueueFiling().queueSuccessorArm.Valid());
+    EXPECT_FALSE(failedRow->QueueFiling().queueArmGroup.Valid());
+    EXPECT_EQ(0u, failedRow->QueueFiling().queueSuccessorScheduleLeafCount);
     for (std::uint32_t block = 0; block < 32; ++block) {
         ASSERT_EQ(VN_OK, Vn_Update());
         engine->nullBackend.Pump(1);
@@ -21883,10 +21883,10 @@ TEST(PlayableStart, SequenceQueueLaneGroupCapacityHasZeroSuccessorMutation) {
     EXPECT_EQ(harken::QueueFailureReason::TargetPreparationFailed,
               failed.failureReason);
     harken::ArmGroupSnapshot abandonedGroup{};
-    EXPECT_FALSE(engine->armGroups.Capture(failedRow->queueArmGroup, &abandonedGroup));
-    EXPECT_EQ(nullptr, engine->timelineArms.Resolve(failedRow->queueSuccessorArm));
+    EXPECT_FALSE(engine->armGroups.Capture(failedRow->QueueFiling().queueArmGroup, &abandonedGroup));
+    EXPECT_EQ(nullptr, engine->timelineArms.Resolve(failedRow->QueueFiling().queueSuccessorArm));
     EXPECT_EQ(nullptr, engine->voices.Resolve(failedRow->queueSuccessorRenderHandle));
-    EXPECT_EQ(0u, failedRow->queueSuccessorScheduleLeafCount);
+    EXPECT_EQ(0u, failedRow->QueueFiling().queueSuccessorScheduleLeafCount);
     EXPECT_EQ(groupBaseline, engine->armGroups.LiveCount());
     EXPECT_EQ(armBaseline + 1u, engine->timelineArms.LiveCount());
     bool heardCurrent = false;
@@ -26299,7 +26299,7 @@ void ExpectRandomQueueOnceTwoSounds(
                     engine, started.instance, image.container, heard);
                 const harken::EnginePlayableServiceRow* row =
                     FindPlayableRow(engine, started.instance);
-                inCycleSameKey = row != nullptr && row->queueSameProgramKey;
+                inCycleSameKey = row != nullptr && row->QueueFiling().queueSameProgramKey;
             }
             harken::PlayableControlState state{};
             const harken::PlayableControlStatus query =

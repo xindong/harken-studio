@@ -4919,13 +4919,13 @@ void ExpectScheduleCapacityQueueTransitionCompletes() {
               engine->ReadPlayableMember(
                   row->scheduleStorageBase).leaf.stableId);
     ASSERT_TRUE(row->queueContinuationPrepared);
-    ASSERT_EQ(0u, row->queueSuccessorScheduleLeafCount);
+    ASSERT_EQ(0u, row->QueueFiling().queueSuccessorScheduleLeafCount);
     ASSERT_TRUE(row->queueCurrentCompositeOwner.Valid());
-    ASSERT_EQ(0u, row->queueSourceControlArmCount);
-    ASSERT_EQ(1u, row->queueTransitionGroupArmCount);
-    ASSERT_TRUE(row->queueDecision.Valid());
-    ASSERT_TRUE(row->queueTransition.Valid());
-    ASSERT_TRUE(row->queueArmGroup.Valid());
+    ASSERT_EQ(0u, row->QueueFiling().queueSourceControlArmCount);
+    ASSERT_EQ(1u, row->QueueFiling().queueTransitionGroupArmCount);
+    ASSERT_TRUE(row->QueueFiling().queueDecision.Valid());
+    ASSERT_TRUE(row->QueueFiling().queueTransition.Valid());
+    ASSERT_TRUE(row->QueueFiling().queueArmGroup.Valid());
     ASSERT_LE(row->scheduleStorageBase + 64u,
               engine->playableStorage.memberCount);
     ASSERT_FALSE(row->queueArrivalDecision.Valid());
@@ -4939,10 +4939,10 @@ void ExpectScheduleCapacityQueueTransitionCompletes() {
     ASSERT_TRUE(engine->timelinePlanner.ReclaimConsumedQuantum());
     ASSERT_LE(engine->timelinePool.PublishCutoffFrame(),
               row->queueCompletionFrame);
-    const harken::DecisionToken initialDecision = row->queueDecision;
+    const harken::DecisionToken initialDecision = row->QueueFiling().queueDecision;
     const harken::TransitionInstanceToken initialTransition =
-        row->queueTransition;
-    const harken::ArmGroupToken initialArmGroup = row->queueArmGroup;
+        row->QueueFiling().queueTransition;
+    const harken::ArmGroupToken initialArmGroup = row->QueueFiling().queueArmGroup;
 
     harken::QueueInstanceSnapshot queueSnapshot{};
     ASSERT_TRUE(engine->queueInstances.Capture(row->queueInstance,
@@ -4980,23 +4980,23 @@ void ExpectScheduleCapacityQueueTransitionCompletes() {
                       row->scheduleStorageBase + index).postSourceTailFrames);
     }
     ASSERT_TRUE(row->queueContinuationPrepared);
-    ASSERT_EQ(64u, row->queueSuccessorScheduleLeafCount);
-    ASSERT_EQ(64u, row->queueSourceControlArmCount);
-    ASSERT_EQ(128u, row->queueTransitionGroupArmCount);
-    ASSERT_TRUE(row->queueDecision.Valid());
-    ASSERT_TRUE(row->queueTransition.Valid());
-    ASSERT_TRUE(row->queueArmGroup.Valid());
-    EXPECT_TRUE(row->queueDecision.slot != initialDecision.slot ||
-                row->queueDecision.generation != initialDecision.generation);
-    EXPECT_TRUE(row->queueTransition.slot != initialTransition.slot ||
-                row->queueTransition.generation !=
+    ASSERT_EQ(64u, row->QueueFiling().queueSuccessorScheduleLeafCount);
+    ASSERT_EQ(64u, row->QueueFiling().queueSourceControlArmCount);
+    ASSERT_EQ(128u, row->QueueFiling().queueTransitionGroupArmCount);
+    ASSERT_TRUE(row->QueueFiling().queueDecision.Valid());
+    ASSERT_TRUE(row->QueueFiling().queueTransition.Valid());
+    ASSERT_TRUE(row->QueueFiling().queueArmGroup.Valid());
+    EXPECT_TRUE(row->QueueFiling().queueDecision.slot != initialDecision.slot ||
+                row->QueueFiling().queueDecision.generation != initialDecision.generation);
+    EXPECT_TRUE(row->QueueFiling().queueTransition.slot != initialTransition.slot ||
+                row->QueueFiling().queueTransition.generation !=
                     initialTransition.generation);
-    EXPECT_TRUE(row->queueArmGroup.slot != initialArmGroup.slot ||
-                row->queueArmGroup.generation != initialArmGroup.generation);
-    const harken::DecisionToken replacementDecision = row->queueDecision;
+    EXPECT_TRUE(row->QueueFiling().queueArmGroup.slot != initialArmGroup.slot ||
+                row->QueueFiling().queueArmGroup.generation != initialArmGroup.generation);
+    const harken::DecisionToken replacementDecision = row->QueueFiling().queueDecision;
     const harken::TransitionInstanceToken replacementTransition =
-        row->queueTransition;
-    const harken::ArmGroupToken replacementArmGroup = row->queueArmGroup;
+        row->QueueFiling().queueTransition;
+    const harken::ArmGroupToken replacementArmGroup = row->QueueFiling().queueArmGroup;
 
     std::uint32_t firstPage = 0;
     std::uint32_t lastPage = 0;
@@ -5027,9 +5027,9 @@ void ExpectScheduleCapacityQueueTransitionCompletes() {
     EXPECT_EQ(128u, armGroup.memberCount);
     for (std::uint32_t index = 0; index < group.memberCount; ++index) {
         SCOPED_TRACE(index);
-        EXPECT_EQ(row->queueTransitionGroupArms[index].slot,
+        EXPECT_EQ(row->QueueFiling().queueTransitionGroupArms[index].slot,
                   group.members[index].slot);
-        EXPECT_EQ(row->queueTransitionGroupArms[index].generation,
+        EXPECT_EQ(row->QueueFiling().queueTransitionGroupArms[index].generation,
                   group.members[index].generation);
         harken::TimelineArmObservation observation{};
         ASSERT_TRUE(engine->timelineArms.Observe(
@@ -5055,22 +5055,22 @@ void ExpectScheduleCapacityQueueTransitionCompletes() {
     harken::DecisionCommittedSnapshot decision{};
     std::uint32_t decisionCommitIterations = 0;
     for (; decisionCommitIterations < 16 &&
-           !row->queueDecisionCommitted;
+           !row->QueueFiling().queueDecisionCommitted;
          ++decisionCommitIterations) {
         ASSERT_EQ(VN_OK, Vn_Update());
-        if (!row->queueDecisionCommitted) {
+        if (!row->QueueFiling().queueDecisionCommitted) {
             engine->nullBackend.Pump(1);
         }
     }
-    ASSERT_TRUE(row->queueDecisionCommitted);
-    EXPECT_EQ(replacementDecision.slot, row->queueDecision.slot);
-    EXPECT_EQ(replacementDecision.generation, row->queueDecision.generation);
-    EXPECT_EQ(replacementTransition.slot, row->queueTransition.slot);
+    ASSERT_TRUE(row->QueueFiling().queueDecisionCommitted);
+    EXPECT_EQ(replacementDecision.slot, row->QueueFiling().queueDecision.slot);
+    EXPECT_EQ(replacementDecision.generation, row->QueueFiling().queueDecision.generation);
+    EXPECT_EQ(replacementTransition.slot, row->QueueFiling().queueTransition.slot);
     EXPECT_EQ(replacementTransition.generation,
-              row->queueTransition.generation);
-    EXPECT_EQ(replacementArmGroup.slot, row->queueArmGroup.slot);
+              row->QueueFiling().queueTransition.generation);
+    EXPECT_EQ(replacementArmGroup.slot, row->QueueFiling().queueArmGroup.slot);
     EXPECT_EQ(replacementArmGroup.generation,
-              row->queueArmGroup.generation);
+              row->QueueFiling().queueArmGroup.generation);
     ASSERT_TRUE(engine->decisions.CaptureCommitted(
         replacementDecision, &decision));
     EXPECT_EQ(replacementTransition.slot, decision.transitionGate.slot);
@@ -8985,11 +8985,11 @@ static void CheckQueueResetAndScheduledStop(bool deferred, bool refuseCommand, b
     ASSERT_TRUE(row.queueContinuationPrepared);
     ASSERT_FALSE(row.queueArrivalDecision.Valid());
     const auto oldSuccessor = row.queueSuccessorRenderHandle;
-    const auto* oldProgram = row.queueSuccessorSchedule.runtimeProgram.program;
+    const auto* oldProgram = row.QueueFiling().queueSuccessorSchedule.runtimeProgram.program;
     ASSERT_NE(nullptr, oldProgram);
     const auto oldPayload = oldProgram->payloads[0];
     const auto oldRuntime = *oldProgram;
-    auto* const oldBank = row.queueSuccessorProgramBank;
+    auto* const oldBank = row.QueueFiling().queueSuccessorProgramBank;
     ASSERT_NE(nullptr, oldBank);
     ASSERT_TRUE(oldBank->occupied);
     if (row.pendingImmediateEntry) {
@@ -9022,7 +9022,7 @@ static void CheckQueueResetAndScheduledStop(bool deferred, bool refuseCommand, b
         harken::TimelineArmObservation currentArm{};
         harken::TimelineArmObservation futureArm{};
         ASSERT_TRUE(engine->timelineArms.Observe(row.arm, &currentArm));
-        ASSERT_TRUE(engine->timelineArms.Observe(row.queueSuccessorArm, &futureArm));
+        ASSERT_TRUE(engine->timelineArms.Observe(row.QueueFiling().queueSuccessorArm, &futureArm));
         EXPECT_EQ(harken::ArmState::PendingApply, currentArm.state);
         EXPECT_EQ(harken::ArmState::PendingApply, futureArm.state);
         EXPECT_EQ(0u, currentArm.armedCompletionSequence);
@@ -9033,7 +9033,7 @@ static void CheckQueueResetAndScheduledStop(bool deferred, bool refuseCommand, b
         ASSERT_TRUE(oldBank->published);
     }
     ASSERT_NE(0u, oldSuccessor);
-    const auto oldDecision = row.queueDecision;
+    const auto oldDecision = row.QueueFiling().queueDecision;
     const auto originalQueue = row.queueInstance;
     const auto root = row.rootInstance;
     const auto rootEpoch = engine->playableInstances.Classify(root).scheduleEpoch;
@@ -9044,7 +9044,7 @@ static void CheckQueueResetAndScheduledStop(bool deferred, bool refuseCommand, b
         << " preparedPagesValid=" << row.queuePreparedPages.Valid()
         << " queue=" << row.queueInstance.slot << ":" << row.queueInstance.generation
         << " currentArm=" << row.arm.slot << ":" << row.arm.generation
-        << " futureArm=" << row.queueSuccessorArm.slot << ":" << row.queueSuccessorArm.generation
+        << " futureArm=" << row.QueueFiling().queueSuccessorArm.slot << ":" << row.QueueFiling().queueSuccessorArm.generation
         << " currentRender=" << row.renderHandle
         << " futureRender=" << row.queueSuccessorRenderHandle);
     auto command = ValidPostDesc();
@@ -9103,7 +9103,7 @@ static void CheckQueueResetAndScheduledStop(bool deferred, bool refuseCommand, b
         EXPECT_EQ(beforeCaptureBytes, engine->CapturedVoiceStorageBytes());
         EXPECT_EQ(0u, firing);
         EXPECT_EQ(oldSuccessor, row.queueSuccessorRenderHandle);
-        EXPECT_EQ(oldDecision.generation, row.queueDecision.generation);
+        EXPECT_EQ(oldDecision.generation, row.QueueFiling().queueDecision.generation);
         EXPECT_EQ(rootEpoch, engine->playableInstances.Classify(root).scheduleEpoch);
         EXPECT_FALSE(engine->playableInstances.HasCancellationClaim(root));
         for (const auto& resource : engine->authoredStopResources) EXPECT_FALSE(resource.prepared || resource.committed);
@@ -9124,7 +9124,7 @@ static void CheckQueueResetAndScheduledStop(bool deferred, bool refuseCommand, b
                 ExpectActionPreparationOwnersUnchanged(*engine, before);
                 EXPECT_EQ(beforeCaptureBytes, engine->CapturedVoiceStorageBytes());
                 EXPECT_EQ(oldSuccessor, row.queueSuccessorRenderHandle);
-                EXPECT_EQ(oldDecision.generation, row.queueDecision.generation);
+                EXPECT_EQ(oldDecision.generation, row.QueueFiling().queueDecision.generation);
                 EXPECT_FALSE(engine->runtimeRecreateRequired);
             }
         }
@@ -9326,7 +9326,7 @@ static void CheckQueueResetAndScheduledStop(bool deferred, bool refuseCommand, b
     EXPECT_EQ(1u, stopResult.remainingPlayableCount);
     EXPECT_EQ(1u, stopResult.capturedPlayableCount);
     EXPECT_NE(oldSuccessor, row.queueSuccessorRenderHandle);
-    EXPECT_TRUE(oldDecision.slot != row.queueDecision.slot || oldDecision.generation != row.queueDecision.generation);
+    EXPECT_TRUE(oldDecision.slot != row.QueueFiling().queueDecision.slot || oldDecision.generation != row.QueueFiling().queueDecision.generation);
     const auto inheritedVoice = std::find_if(engine->authoredStopResources.begin(),
         engine->authoredStopResources.end(), [&](const auto& resource) {
             return resource.committed && resource.installation.renderHandle == row.queueSuccessorRenderHandle;
@@ -9334,8 +9334,8 @@ static void CheckQueueResetAndScheduledStop(bool deferred, bool refuseCommand, b
     ASSERT_NE(engine->authoredStopResources.end(), inheritedVoice);
     const auto inheritedDecision = std::find_if(engine->authoredStopResources.begin(),
         engine->authoredStopResources.end(), [&](const auto& resource) {
-            return resource.committed && resource.fence && resource.fence->decision.slot == row.queueDecision.slot &&
-                resource.fence->decision.generation == row.queueDecision.generation;
+            return resource.committed && resource.fence && resource.fence->decision.slot == row.QueueFiling().queueDecision.slot &&
+                resource.fence->decision.generation == row.QueueFiling().queueDecision.generation;
         });
     ASSERT_NE(engine->authoredStopResources.end(), inheritedDecision);
     EXPECT_FALSE(engine->runtimeRecreateRequired);
@@ -9535,7 +9535,7 @@ static void CheckQueueBankAcrossRealRowReuse(bool transportReset, bool continuou
                 << " window=" << engine->timelinePool.WindowStartFrame()
                 << " cutoff=" << engine->timelinePool.PublishCutoffFrame()
                 << " boundary=" << row.queueCompletionFrame
-                << " committed=" << row.queueDecisionCommitted
+                << " committed=" << row.QueueFiling().queueDecisionCommitted
                 << " arrival=" << row.queueArrivalDecision.Valid()
                 << " pendingReset=" << snapshot.resetPending
                 << " activation=" << static_cast<int>(snapshot.pendingActivation);
@@ -9549,7 +9549,7 @@ static void CheckQueueBankAcrossRealRowReuse(bool transportReset, bool continuou
             harken::DecisionCommittedSnapshot beforeCurrentDecision{};
             const bool currentWasCommitted = engine->decisions.CaptureCommitted(
                 currentOwner.singleDecision, &beforeCurrentDecision);
-            auto* const replacedBank = row.queueSuccessorProgramBank;
+            auto* const replacedBank = row.QueueFiling().queueSuccessorProgramBank;
             const auto replacedBody = replacedBank == nullptr ? nullptr :
                 std::make_unique<harken::EngineQueueProgramBankBody>(*replacedBank);
             VnActionFiringHandle resetFiring = 0;
@@ -9573,7 +9573,7 @@ static void CheckQueueBankAcrossRealRowReuse(bool transportReset, bool continuou
                 << " boundary=" << row.queueCompletionFrame
                 << " source=" << currentInstall->Facts().soundId
                 << " prepared=" << row.queueContinuationPrepared
-                << " sameKey=" << row.queueSameProgramKey;
+                << " sameKey=" << row.QueueFiling().queueSameProgramKey;
             EXPECT_EQ(root, row.rootInstance);
             EXPECT_EQ(source, row.renderHandle);
             if (originalCurrent) {
@@ -10013,9 +10013,9 @@ TEST(ActionFiringApi, MultiLeafQueueFutureStopDirectCancellationReclaimsPrepared
             << " successor=" << row.queueSuccessorDecision.Valid();
         const auto arrival = row.queueArrivalDecision;
         const auto successor = row.queueSuccessorDecision;
-        const auto preparedDecision = row.queueDecision;
+        const auto preparedDecision = row.QueueFiling().queueDecision;
         const auto originalArrivalGroup = row.queueArrivalArmGroup;
-        const auto preparedConditional = row.queueConditional;
+        const auto preparedConditional = row.QueueFiling().queueConditional;
         harken::DecisionCommittedSnapshot arrivalSnapshot{};
         ASSERT_TRUE(engine->decisions.CaptureCommitted(arrival, &arrivalSnapshot));
         ASSERT_EQ(harken::AudioGroupState::Admitted, arrivalSnapshot.audioState);
@@ -10171,11 +10171,11 @@ static void CheckSameKeyResetWithExistingFutureStop(bool stopBeforeBoundary, boo
     VnActionFiringHandle play = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&post, &play));
     auto& row = engine->playableServices[0];
-    ASSERT_TRUE(row.queueSameProgramKey);
+    ASSERT_TRUE(row.QueueFiling().queueSameProgramKey);
     ASSERT_TRUE(row.queueContinuationPrepared);
     const auto root = row.rootInstance;
-    const auto originalDecision = row.queueDecision;
-    const auto originalConditional = row.queueConditional;
+    const auto originalDecision = row.QueueFiling().queueDecision;
+    const auto originalConditional = row.QueueFiling().queueConditional;
     const auto originalVoice = row.renderHandle;
     const auto boundary = row.queueCompletionFrame;
     post.actionId = image.actions[8].actionStableId;
@@ -10215,9 +10215,9 @@ static void CheckSameKeyResetWithExistingFutureStop(bool stopBeforeBoundary, boo
         if (resetResult != VN_OK) {
             ExpectActionPreparationOwnersUnchanged(*engine, before);
             EXPECT_EQ(0u, resetFiring);
-            EXPECT_EQ(originalDecision.slot, row.queueDecision.slot);
-            EXPECT_EQ(originalDecision.generation, row.queueDecision.generation);
-            EXPECT_EQ(originalConditional.version, row.queueConditional.version);
+            EXPECT_EQ(originalDecision.slot, row.QueueFiling().queueDecision.slot);
+            EXPECT_EQ(originalDecision.generation, row.QueueFiling().queueDecision.generation);
+            EXPECT_EQ(originalConditional.version, row.QueueFiling().queueConditional.version);
             EXPECT_EQ(originalVoice, row.renderHandle);
             EXPECT_EQ(stopResourceCount, engine->authoredStopRoots[originalStopSlot].resourceCount);
             EXPECT_TRUE(engine->authoredStopRoots[originalStopSlot].operation->Active(originalStopIdentity));
@@ -10234,8 +10234,8 @@ static void CheckSameKeyResetWithExistingFutureStop(bool stopBeforeBoundary, boo
     } else {
         ASSERT_EQ(VN_OK, resetResult);
     }
-    const auto replacement = row.queueDecision;
-    ASSERT_TRUE(row.queueSameProgramKey);
+    const auto replacement = row.QueueFiling().queueDecision;
+    ASSERT_TRUE(row.QueueFiling().queueSameProgramKey);
     ASSERT_TRUE(replacement.slot != originalDecision.slot || replacement.generation != originalDecision.generation);
     harken::DecisionCommittedSnapshot snapshot{};
     ASSERT_TRUE(engine->decisions.CaptureCommitted(replacement, &snapshot));
@@ -11379,11 +11379,11 @@ TEST(ActionFiringApi, SameKeyProjectionStartsDifferentSoundAtOriginalOffsetWitho
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
     auto& row = engine->playableServices[0];
     const auto source = row.renderHandle;
-    const auto target = row.queueSuccessorArm;
+    const auto target = row.QueueFiling().queueSuccessorArm;
     const auto originalArm = row.arm;
-    ASSERT_EQ(3u, row.queueConditional.version);
+    ASSERT_EQ(3u, row.QueueFiling().queueConditional.version);
     ASSERT_EQ(2u, row.QueueNextState().cursor);
-    ASSERT_FALSE(row.queueSameProgramKey);
+    ASSERT_FALSE(row.QueueFiling().queueSameProgramKey);
     ASSERT_EQ(2u, engine->voices.ActiveCount());
     ASSERT_TRUE(target.Valid());
     ASSERT_EQ(0u, engine->timelineArms.Resolve(target)->startFrame);
@@ -13534,8 +13534,8 @@ void ExpectImmediateSequenceQueueCompositeChildAfterLateFirstUpdate(
     ASSERT_TRUE(row->queueMode);
     ASSERT_TRUE(row->queueContinuationPrepared);
     ASSERT_TRUE(row->queueInstance.Valid());
-    ASSERT_TRUE(row->queueDecision.Valid());
-    ASSERT_TRUE(row->queueConditional.Valid());
+    ASSERT_TRUE(row->QueueFiling().queueDecision.Valid());
+    ASSERT_TRUE(row->QueueFiling().queueConditional.Valid());
     ASSERT_EQ(harken::EnginePlayableStartPhase::PendingImmediateEntry, row->phase);
     ASSERT_EQ(2u, row->scheduleLeafCount);
     ASSERT_EQ(2u, row->queueCurrentScheduleLeafCount);
@@ -13643,7 +13643,7 @@ TEST(ActionFiringApi, ImmediateQueueOriginalClockBindsActualPlacementWithoutReis
     const auto source = row.renderHandle;
     const auto arm = row.arm;
     const auto occurrence = row.queueCurrentOccurrence;
-    const auto decision = row.queueDecision;
+    const auto decision = row.QueueFiling().queueDecision;
     const auto completionOwner = row.queueCurrentCompletion.owner;
     harken::QueueInstanceTable::OriginalConditionalLaneClock clock;
     ASSERT_TRUE(engine.BorrowOriginalQueueConditionalClock(row.queueInstance, &clock));
@@ -13673,8 +13673,8 @@ TEST(ActionFiringApi, ImmediateQueueOriginalClockBindsActualPlacementWithoutReis
     EXPECT_EQ(source, row.renderHandle);
     EXPECT_EQ(occurrence.slot, row.queueCurrentOccurrence.slot);
     EXPECT_EQ(occurrence.generation, row.queueCurrentOccurrence.generation);
-    EXPECT_EQ(decision.slot, row.queueDecision.slot);
-    EXPECT_EQ(decision.generation, row.queueDecision.generation);
+    EXPECT_EQ(decision.slot, row.QueueFiling().queueDecision.slot);
+    EXPECT_EQ(decision.generation, row.QueueFiling().queueDecision.generation);
     EXPECT_TRUE(harken::SameCompletionOwner(completionOwner, row.queueCurrentCompletion.owner));
     EXPECT_FALSE(engine.runtimeRecreateRequired);
     ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
@@ -13749,8 +13749,8 @@ static void CheckOriginalResetBodyUsesRealEngineOwners(bool afterBinding, bool m
         ASSERT_TRUE(afterBinding);
         ASSERT_TRUE(materializeSource);
         ASSERT_FALSE(row.pendingImmediateEntry);
-        ASSERT_NE(nullptr, row.queueSuccessorProgramBank);
-        ASSERT_TRUE(row.queueSuccessorProgramBank->published);
+        ASSERT_NE(nullptr, row.QueueFiling().queueSuccessorProgramBank);
+        ASSERT_TRUE(row.QueueFiling().queueSuccessorProgramBank->published);
     }
     const auto owners = CaptureActionPreparationOwners(engine);
     const auto head = engine.commands.PublishedHead();
@@ -13990,7 +13990,7 @@ TEST(ActionFiringApi, OriginalInitialFilingRetainsFactoryFutureAcrossSelectedAli
     VnActionFiringHandle firing = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
     auto& row = engine.playableServices[0];
-    const harken::EngineOwnedQueueFutureFiling selected(row);
+    const harken::EngineOwnedQueueFutureFiling selected(row.QueueFiling());
     const auto queue = row.queueInstance;
     const auto* original = engine.OriginalQueueInitialFilingFor(row);
     ASSERT_NE(nullptr, original);
@@ -14012,12 +14012,12 @@ TEST(ActionFiringApi, OriginalInitialFilingRetainsFactoryFutureAcrossSelectedAli
 
     // Corrupt only public scheduling aliases. No new native capability or
     // Reset acceptance is manufactured by this negative storage test.
-    row.queueDecision = {};
-    row.queueConditional = {};
-    row.queueSuccessorProgramBank = nullptr;
-    row.queueTransitionGroupArms.Clear();
-    row.queueTransitionGroupArmCount = 0;
-    row.queueSuccessorCompletion = {};
+    row.QueueFiling().queueDecision = {};
+    row.QueueFiling().queueConditional = {};
+    row.QueueFiling().queueSuccessorProgramBank = nullptr;
+    row.QueueFiling().queueTransitionGroupArms.Clear();
+    row.QueueFiling().queueTransitionGroupArmCount = 0;
+    row.QueueFiling().queueSuccessorCompletion = {};
     std::size_t members = 0, programs = 0, events = 0, leaves = 0, groups = 0, holders = 0;
     const bool collected = harken::test::CollectInitialQueueTimingMembersForTest(
         engine, firing, row.startFrame + 128u, &members, &programs,
@@ -14048,13 +14048,13 @@ TEST(ActionFiringApi, OriginalInitialFilingRetainsFactoryFutureAcrossSelectedAli
 #endif
     }
     engine.ReflectOriginalQueueFiling(row);
-    EXPECT_FALSE(row.queueDecision.Valid());
-    EXPECT_EQ(nullptr, row.queueSuccessorProgramBank);
+    EXPECT_FALSE(row.QueueFiling().queueDecision.Valid());
+    EXPECT_EQ(nullptr, row.QueueFiling().queueSuccessorProgramBank);
     EXPECT_TRUE(original->initialFutureBank.Valid());
-    static_cast<harken::EngineQueueFutureFilingLayout&>(row) = selected;
+    row.QueueFiling() = selected;
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_FALSE(engine.runtimeRecreateRequired);
-    EXPECT_TRUE(row.queueDecisionCommitted);
+    EXPECT_TRUE(row.QueueFiling().queueDecisionCommitted);
     ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
     for (unsigned block = 0; block < 64; ++block) {
         engine.nullBackend.Pump(1);
@@ -14726,12 +14726,12 @@ TEST(ActionFiringApi, PendingImmediateNestedQueueGatesSignalOnlyFrontier) {
     EXPECT_TRUE(wrapper.pendingImmediateEntry);
     EXPECT_FALSE(wrapper.queueTimingPending);
     EXPECT_FALSE(wrapper.queueUnplacedCredit.Valid());
-    EXPECT_FALSE(wrapper.queueDecision.Valid());
+    EXPECT_FALSE(wrapper.HasFeatureArrays() && wrapper.QueueFiling().queueDecision.Valid());
     EXPECT_EQ(0u, wrapper.queueCurrentOccurrence.generation);
     EXPECT_EQ(&wrapper, engine->ResolvePlayableService(current.parentService));
     EXPECT_TRUE(current.queueTimingPending);
     EXPECT_TRUE(current.queueUnplacedCredit.Valid());
-    EXPECT_TRUE(current.queueDecision.Valid());
+    EXPECT_TRUE(current.QueueFiling().queueDecision.Valid());
     EXPECT_EQ(firing, current.pendingImmediateCohortRoot);
     EXPECT_EQ(wrapper.queueInitialCohortEntryFrame, current.queueInitialCohortEntryFrame);
     EXPECT_GT(current.queueCompletionFrame, current.startFrame);
@@ -14748,12 +14748,12 @@ TEST(ActionFiringApi, PendingImmediateNestedQueueGatesSignalOnlyFrontier) {
     EXPECT_EQ(samples.size(), current.queueCurrentCompletion.totalLogicalOutputFrames);
     EXPECT_EQ(harken::CompletionOwnerKind::SingleQueue,
               current.queueCurrentCompletion.owner.kind);
-    EXPECT_EQ(current.queueDecision.slot, current.queueCurrentCompletion.owner.singleDecision.slot);
-    EXPECT_EQ(current.queueDecision.generation,
+    EXPECT_EQ(current.QueueFiling().queueDecision.slot, current.queueCurrentCompletion.owner.singleDecision.slot);
+    EXPECT_EQ(current.QueueFiling().queueDecision.generation,
               current.queueCurrentCompletion.owner.singleDecision.generation);
     EXPECT_TRUE(current.initialQueueEntryDecision.Valid());
-    EXPECT_FALSE(current.initialQueueEntryDecision.slot == current.queueDecision.slot &&
-                 current.initialQueueEntryDecision.generation == current.queueDecision.generation);
+    EXPECT_FALSE(current.initialQueueEntryDecision.slot == current.QueueFiling().queueDecision.slot &&
+                 current.initialQueueEntryDecision.generation == current.QueueFiling().queueDecision.generation);
     harken::QueueInstanceSnapshot innerQueue{};
     ASSERT_TRUE(engine->queueInstances.Capture(current.queueInstance, &innerQueue));
     EXPECT_EQ(current.Invocation().worldGeneration, innerQueue.world);
@@ -15087,7 +15087,7 @@ void ExpectTwoContinuousVariableControlQueuesReserveBothContinuations(
             EXPECT_EQ(6u, secondQueue.initialActivationSequence);
             if (cancelOneSuccessor)
                 EXPECT_TRUE(engine->decisions.TryInvalidatePending(
-                    queues[0]->queueDecision));
+                    queues[0]->QueueFiling().queueDecision));
         }
         if (update >= 5) {
             std::uint32_t recordIndex = attempted->queueContinuationHead;
@@ -15233,9 +15233,9 @@ TEST(ActionFiringApi, TwoContinuousVariableControlQueueBranchesShareInitialCohor
     EXPECT_EQ(2u, credits);
     for (const auto* queue : queues) {
         EXPECT_TRUE(queue->queueTimingPending);
-        EXPECT_TRUE(queue->queueDecision.Valid());
+        EXPECT_TRUE(queue->QueueFiling().queueDecision.Valid());
         EXPECT_TRUE(queue->initialQueueEntryDecision.Valid());
-        EXPECT_NE(queue->queueDecision.slot,
+        EXPECT_NE(queue->QueueFiling().queueDecision.slot,
                   queue->initialQueueEntryDecision.slot);
         EXPECT_NE(0u, queue->initialQueueEntryAttemptGeneration);
         EXPECT_TRUE(queue->queueUnplacedCredit.Valid());
@@ -20642,15 +20642,15 @@ void ExpectDeferredNestedQueueCompositeSuccessor(
             for (const auto& row : engine.playableServices) {
                 if (!row.queueMode || !row.partition.Valid() || !row.parentService.Valid() ||
                     row.queueCurrentScheduleLeafCount != 2u || !row.queueContinuationPrepared ||
-                    row.queueDeferredNeedsFullPreparation || row.queueSuccessorProgramBank == nullptr ||
-                    !row.queueSuccessorProgramBank->published || !row.queuePreparedPages.Valid()) continue;
-                ASSERT_EQ(2u, row.queueSourceControlArmCount) << "block=" << block
+                    row.queueDeferredNeedsFullPreparation || row.QueueFiling().queueSuccessorProgramBank == nullptr ||
+                    !row.QueueFiling().queueSuccessorProgramBank->published || !row.queuePreparedPages.Valid()) continue;
+                ASSERT_EQ(2u, row.QueueFiling().queueSourceControlArmCount) << "block=" << block
                     << " completion=" << row.queueCompletionFrame
-                    << " transition=" << row.queueTransition.Valid()
-                    << " sameProgram=" << row.queueSameProgramKey;
-                for (std::uint32_t index = 0; index < row.queueSourceControlArmCount; ++index) {
+                    << " transition=" << row.QueueFiling().queueTransition.Valid()
+                    << " sameProgram=" << row.QueueFiling().queueSameProgramKey;
+                for (std::uint32_t index = 0; index < row.QueueFiling().queueSourceControlArmCount; ++index) {
                     const auto& member = engine.ReadLogicalPlayableMember(row.queueCurrentScheduleBase + index);
-                    const auto control = row.queueTransitionGroupArms[index];
+                    const auto control = row.QueueFiling().queueTransitionGroupArms[index];
                     EXPECT_EQ(static_cast<std::uint32_t>(member.render), control.renderSlot);
                     EXPECT_EQ(static_cast<std::uint32_t>(member.render >> 32), control.renderGeneration);
                 }
@@ -20682,13 +20682,13 @@ void ExpectDeferredNestedQueueCompositeSuccessor(
                         EXPECT_EQ(priorRoot, row.variableControlNestedQueueSuccessorInstance);
                         EXPECT_EQ(priorFuture, row.queueSuccessorRenderHandle);
                     }
-                    oldProgram = row.queueSuccessorProgramBank;
+                    oldProgram = row.QueueFiling().queueSuccessorProgramBank;
                     ASSERT_NE(nullptr, oldProgram);
                     auto* holder = engine.OriginalQueueBankHolderFor(oldProgram);
                     ASSERT_NE(nullptr, holder);
                     ASSERT_TRUE(holder->baseline.Borrow(&oldProgramReader));
                     if (!logicalTrack) {
-                        oldMember = oldProgram->members[row.queueSuccessorPrograms.first];
+                        oldMember = oldProgram->members[row.QueueFiling().queueSuccessorPrograms.first];
                         oldLeaf = engine.FindPlayableMember(oldMember)->completion.leafInstance;
                     }
                 }
@@ -20715,7 +20715,7 @@ void ExpectDeferredNestedQueueCompositeSuccessor(
                 row.controlReason == harken::PlayableControlReason::StartRefused) {
                 observedRefusal = true;
                 EXPECT_EQ(0u, row.variableControlNestedQueueSuccessorInstance);
-                EXPECT_EQ(0u, row.queueSuccessorScheduleLeafCount);
+                EXPECT_EQ(0u, row.QueueFiling().queueSuccessorScheduleLeafCount);
             }
         }
         if (logicalTrack) {
@@ -21353,8 +21353,8 @@ static void CheckNestedQueueCancellationPostscanRace(
     ASSERT_TRUE(child->canonicalInitialQueueDecision.Valid());
     EXPECT_EQ(decision.slot, child->canonicalInitialQueueDecision.slot);
     EXPECT_EQ(decision.generation, child->canonicalInitialQueueDecision.generation);
-    EXPECT_EQ(decision.slot, child->queueDecision.slot);
-    EXPECT_EQ(decision.generation, child->queueDecision.generation);
+    EXPECT_EQ(decision.slot, child->QueueFiling().queueDecision.slot);
+    EXPECT_EQ(decision.generation, child->QueueFiling().queueDecision.generation);
     EXPECT_EQ(decision.slot, child->queueCurrentCompletion.owner.singleDecision.slot);
     EXPECT_EQ(decision.generation, child->queueCurrentCompletion.owner.singleDecision.generation);
     EXPECT_EQ(nullptr, child->privateInitialQueueCurrent);
@@ -21438,7 +21438,7 @@ static void CheckNestedQueueCancellationPostscanRace(
         ASSERT_TRUE(engine->decisions.CaptureCommitted(decision, &before));
         EXPECT_EQ(prelude.frontier->transition.Valid(), before.transitionGate.Valid());
         harken::TransitionInstanceSnapshot transition{};
-        ASSERT_TRUE(engine->transitionInstances.Capture(child->queueTransition, &transition));
+        ASSERT_TRUE(engine->transitionInstances.Capture(child->QueueFiling().queueTransition, &transition));
         engine->nullBackend.Pump(1);
         EXPECT_EQ(preludeQuantum + 1u, engine->mixer.BlocksRendered());
         EXPECT_EQ(harken::AudioSliceState::SliceApplied, prelude.lease->Capture().state);
@@ -21691,8 +21691,8 @@ static void CheckNestedQueueCancellationPostscanRace(
     harken::EngineTimelineVoiceInstallIdentity installation{};
     ASSERT_EQ(replayDecision.slot, replay->initialQueueEntryDecision.slot);
     ASSERT_EQ(replayDecision.generation, replay->initialQueueEntryDecision.generation);
-    ASSERT_EQ(replayDecision.slot, replay->queueDecision.slot);
-    ASSERT_EQ(replayDecision.generation, replay->queueDecision.generation);
+    ASSERT_EQ(replayDecision.slot, replay->QueueFiling().queueDecision.slot);
+    ASSERT_EQ(replayDecision.generation, replay->QueueFiling().queueDecision.generation);
     ASSERT_TRUE(engine->CaptureTimelineVoiceInstallIdentity(replay->renderHandle, &installation));
     ASSERT_EQ(arm.slot, installation.startArm.slot);
     ASSERT_EQ(arm.generation, installation.startArm.generation);
@@ -22731,7 +22731,7 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
     EXPECT_EQ(deferred, queueService->queueDeferredNeedsFullPreparation);
     if (deferred) {
         EXPECT_GE(queueService->queueCompletionFrame, engine->timelinePool.WindowEndFrame());
-        EXPECT_FALSE(queueService->queueSuccessorArm.Valid());
+        EXPECT_FALSE(queueService->QueueFiling().queueSuccessorArm.Valid());
     }
     const harken::EnginePlayableServiceReference queueReference{
         queueService->identity, queueService->ownerInstance,
@@ -23150,9 +23150,9 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
                     << " terminal=" << service.terminalObserved << " abort=" << service.queueAbortRequested
                     << " continuation=" << service.queueContinuationPrepared
                     << " arrival=" << service.queueArrivalDecision.generation
-                    << " decision=" << service.queueDecision.generation
-                    << " armGroup=" << service.queueArmGroup.generation
-                    << " successor=" << service.queueSuccessorArm.generation
+                    << " decision=" << service.QueueFiling().queueDecision.generation
+                    << " armGroup=" << service.QueueFiling().queueArmGroup.generation
+                    << " successor=" << service.QueueFiling().queueSuccessorArm.generation
                     << " abortedOcc=" << service.queueAbortedSuccessorOccurrence.generation
                     << " futureInstance=" << service.variableControlNestedQueueSuccessorInstance << '\n';
             }
@@ -23382,9 +23382,9 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
         ASSERT_EQ(VN_OK, Vn_Update());
         if (futureFrozenStartFrame == UINT64_MAX && !deferred &&
             row->phase == harken::EnginePlayableStartPhase::Filed &&
-            queueService->queueSuccessorProgramBank != nullptr &&
-            queueService->queueSuccessorArm.Valid()) {
-            const auto& bank = *queueService->queueSuccessorProgramBank;
+            queueService->QueueFiling().queueSuccessorProgramBank != nullptr &&
+            queueService->QueueFiling().queueSuccessorArm.Valid()) {
+            const auto& bank = *queueService->QueueFiling().queueSuccessorProgramBank;
             for (std::uint32_t programIndex = 0;
                  programIndex < bank.programCount; ++programIndex) {
                 const auto& program = bank.schedules[programIndex];
@@ -23392,9 +23392,9 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
                      eventIndex < program.eventCount; ++eventIndex) {
                     const auto& event = program.events[eventIndex];
                     if (event.armToken.slot !=
-                            queueService->queueSuccessorArm.slot ||
+                            queueService->QueueFiling().queueSuccessorArm.slot ||
                         event.armToken.generation !=
-                            queueService->queueSuccessorArm.generation ||
+                            queueService->QueueFiling().queueSuccessorArm.generation ||
                         program.runtimeProgram.program == nullptr ||
                         event.payload >= program.runtimeProgram.program->payloadCount ||
                         program.runtimeProgram.program->payloads[event.payload].kind !=
@@ -23405,14 +23405,14 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
             }
             ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*queueService, 0));
             futureMirroredStartFrame = engine->FindQueueSuccessorMember(*queueService, 0)->startFrame;
-            const auto& aggregate = queueService->queueSuccessorProgramPlane == 0
-                ? queueService->schedule : queueService->queueSuccessorSchedule;
+            const auto& aggregate = queueService->QueueFiling().queueSuccessorProgramPlane == 0
+                ? queueService->schedule : queueService->QueueFiling().queueSuccessorSchedule;
             ASSERT_NE(nullptr, aggregate.events);
             for (std::size_t event = 0; event < aggregate.eventCount; ++event)
                 if (aggregate.events[event].armToken.slot ==
-                        queueService->queueSuccessorArm.slot &&
+                        queueService->QueueFiling().queueSuccessorArm.slot &&
                     aggregate.events[event].armToken.generation ==
-                        queueService->queueSuccessorArm.generation &&
+                        queueService->QueueFiling().queueSuccessorArm.generation &&
                     aggregate.events[event].frameOffsetFromEntry >= 0)
                     futureAggregateStartFrame = aggregate.entryAnchorFrame +
                         static_cast<std::uint64_t>(
@@ -23437,9 +23437,9 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
                  events != nullptr && event < bucket->eventCount; ++event) {
                 const auto& due = events[event].event;
                 if (due.armToken.slot !=
-                        queueService->queueSuccessorArm.slot ||
+                        queueService->QueueFiling().queueSuccessorArm.slot ||
                     due.armToken.generation !=
-                        queueService->queueSuccessorArm.generation ||
+                        queueService->QueueFiling().queueSuccessorArm.generation ||
                     due.program.program == nullptr ||
                     due.payload >=
                         due.program.program->payloadCount ||
@@ -23650,16 +23650,16 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
     }
     (void)engine->queueInstances.Capture(queueService->queueInstance, &activationDebug);
     harken::ArmGroupSnapshot groupDebug{};
-    (void)engine->armGroups.Capture(queueService->queueArmGroup, &groupDebug);
+    (void)engine->armGroups.Capture(queueService->QueueFiling().queueArmGroup, &groupDebug);
     harken::TimelineArmObservation successorDebug{};
-    (void)engine->timelineArms.Observe(queueService->queueSuccessorArm, &successorDebug);
+    (void)engine->timelineArms.Observe(queueService->QueueFiling().queueSuccessorArm, &successorDebug);
     EXPECT_EQ(!refuseSuccessor, successorActivated)
         << "queueNaturalEnd=" << queueService->queueNaturalEnd
         << " signalOnly=" << queueService->queueSignalOnlyNoOverlap
         << " phase=" << static_cast<int>(queueService->phase)
         << " lifecycle=" << static_cast<int>(queueService->controlLifecycle)
         << " prepared=" << queueService->queueContinuationPrepared
-        << " decisionCommitted=" << queueService->queueDecisionCommitted
+        << " decisionCommitted=" << queueService->QueueFiling().queueDecisionCommitted
         << " conditional=" << activationDebug.pendingVersion
         << " activation=" << static_cast<int>(activationDebug.pendingActivation)
         << " group=" << static_cast<int>(groupDebug.state)
@@ -24345,21 +24345,21 @@ void ExpectImmediateShortQueueMirrorFaultRejected(std::uint32_t fault,
         });
     ASSERT_NE(engine->playableServices.end(), holder);
     ASSERT_TRUE(holder->queueFirstContinuationLane);
-    ASSERT_NE(nullptr, holder->queueSuccessorProgramBank);
-    ASSERT_TRUE(holder->queueSuccessorArm.Valid());
+    ASSERT_NE(nullptr, holder->QueueFiling().queueSuccessorProgramBank);
+    ASSERT_TRUE(holder->QueueFiling().queueSuccessorArm.Valid());
     const auto initialArmGroup = holder->queueInitialLaneArmGroup;
-    const auto successorArmGroup = holder->queueArmGroup;
+    const auto successorArmGroup = holder->QueueFiling().queueArmGroup;
     const auto initialDecision = holder->initialQueueEntryDecision;
-    const auto queueDecision = holder->queueDecision;
-    auto& aggregate = holder->queueSuccessorProgramPlane == 0
-        ? holder->schedule : holder->queueSuccessorSchedule;
+    const auto queueDecision = holder->QueueFiling().queueDecision;
+    auto& aggregate = holder->QueueFiling().queueSuccessorProgramPlane == 0
+        ? holder->schedule : holder->QueueFiling().queueSuccessorSchedule;
     const auto* successorMember = engine->FindQueueSuccessorMember(*holder, 0);
     ASSERT_NE(nullptr, successorMember);
-    const auto successorMemberToken = holder->queueSuccessorProgramBank->members[holder->queueSuccessorPrograms.first];
+    const auto successorMemberToken = holder->QueueFiling().queueSuccessorProgramBank->members[holder->QueueFiling().queueSuccessorPrograms.first];
     const auto oldPhysicalStart = successorMember->startFrame;
     const auto oldAggregateAnchor = aggregate.entryAnchorFrame;
     const auto oldInstallOnset = engine->timelineVoiceInstallIdentities[
-        holder->queueSuccessorArm.renderSlot].onsetFrame;
+        holder->QueueFiling().queueSuccessorArm.renderSlot].onsetFrame;
     struct PartialPublishClaimContext {
         struct ArmWitness {
             harken::TimelineArmToken arm{};
@@ -24530,13 +24530,13 @@ void ExpectImmediateShortQueueMirrorFaultRejected(std::uint32_t fault,
         aggregate.entryAnchorFrame -= kFrames;
         break;
     case 1:
-        ASSERT_GE(holder->queueSuccessorProgramBank->aggregateSchedules[0].
+        ASSERT_GE(holder->QueueFiling().queueSuccessorProgramBank->aggregateSchedules[0].
             entryAnchorFrame, kFrames);
-        holder->queueSuccessorProgramBank->aggregateSchedules[0].
+        holder->QueueFiling().queueSuccessorProgramBank->aggregateSchedules[0].
             entryAnchorFrame -= kFrames;
         break;
     case 2: {
-        const auto arm = holder->queueSuccessorArm;
+        const auto arm = holder->QueueFiling().queueSuccessorArm;
         ASSERT_TRUE(arm.Valid());
         auto& install = engine->timelineVoiceInstallIdentities[arm.renderSlot];
         ASSERT_GE(install.onsetFrame, kFrames);
@@ -24544,10 +24544,10 @@ void ExpectImmediateShortQueueMirrorFaultRejected(std::uint32_t fault,
         break;
     }
     case 3:
-        holder->queueSuccessorProgramPlane = holder->queueCurrentProgramPlane;
+        holder->QueueFiling().queueSuccessorProgramPlane = holder->queueCurrentProgramPlane;
         break;
     case 4: {
-        const auto programs = holder->queueSuccessorPrograms.Resolve(holder->queueSuccessorProgramBank);
+        const auto programs = holder->QueueFiling().queueSuccessorPrograms.Resolve(holder->QueueFiling().queueSuccessorProgramBank);
         ASSERT_EQ(1u, programs.size());
         ASSERT_NE(nullptr, programs[0].events);
         ASSERT_GT(programs[0].eventCount, 0u);
@@ -24575,7 +24575,7 @@ void ExpectImmediateShortQueueMirrorFaultRejected(std::uint32_t fault,
         ASSERT_NE(nullptr, member);
         const auto physical = member->startFrame;
         const auto onset = engine->timelineVoiceInstallIdentities[
-            holder->queueSuccessorArm.renderSlot].onsetFrame;
+            holder->QueueFiling().queueSuccessorArm.renderSlot].onsetFrame;
         if (fault == 5) {
             EXPECT_EQ(oldPhysicalStart, physical);
             EXPECT_EQ(oldAggregateAnchor, aggregate.entryAnchorFrame);
@@ -37574,7 +37574,7 @@ void CheckInitialQueueLanePrepareFaultLeavesIndependentActionLive(
     ASSERT_NE(engine->playableServices.end(), queueRow);
     ASSERT_TRUE(queueRow->queueUnplacedCredit.Valid());
     const auto queueArm = queueRow->arm;
-    const auto queueDecision = queueRow->queueDecision;
+    const auto queueDecision = queueRow->QueueFiling().queueDecision;
     const auto queueCredit = queueRow->queueUnplacedCredit;
     ASSERT_TRUE(queueDecision.Valid());
     const auto queueAttempt = std::find_if(
@@ -37895,7 +37895,7 @@ void CheckInitialQueueLanePrepareFaultLeavesIndependentActionLive(
         << " pending entry=" << queueRow->pendingImmediateEntry
         << " producer slot=" << queueAttempt->producerSlot
         << " queue cleanup=" << queueRow->queueCleanupStarted
-        << " queue decision committed=" << queueRow->queueDecisionCommitted
+        << " queue decision committed=" << queueRow->QueueFiling().queueDecisionCommitted
         << " queue natural end=" << queueRow->queueNaturalEnd
         << " queue deferred full=" << queueRow->queueDeferredNeedsFullPreparation
         << " queue final tomb=" << queueRow->queueFinalSourceTombstoned
@@ -38075,11 +38075,11 @@ TEST(ActionFiringApi, ImmediateSequenceQueuePlayCompletesAfterEveryChildRetires)
         });
     ASSERT_NE(engine->playableServices.end(), initialQueue);
     ASSERT_TRUE(initialQueue->initialQueueEntryDecision.Valid());
-    ASSERT_TRUE(initialQueue->queueDecision.Valid());
+    ASSERT_TRUE(initialQueue->QueueFiling().queueDecision.Valid());
     EXPECT_TRUE(initialQueue->initialQueueEntryDecision.slot !=
-                    initialQueue->queueDecision.slot ||
+                    initialQueue->QueueFiling().queueDecision.slot ||
                 initialQueue->initialQueueEntryDecision.generation !=
-                    initialQueue->queueDecision.generation);
+                    initialQueue->QueueFiling().queueDecision.generation);
 
     bool observedSecondChild = false;
     bool continuationApplied = false;
@@ -38288,9 +38288,9 @@ TEST(ActionFiringApi, InitialQueueChildrenStartAfterOneNormalUpdate) {
         testing::Test::RecordProperty("queue_groups",
             holder.queueUnplacedGroupCount);
         testing::Test::RecordProperty("queue_group_arms",
-            holder.queueTransitionGroupArmCount);
+            holder.QueueFiling().queueTransitionGroupArmCount);
         testing::Test::RecordProperty("queue_source_control_arms",
-            holder.queueSourceControlArmCount);
+            holder.QueueFiling().queueSourceControlArmCount);
     }
     const auto firstQuantum = attempt->entryQuantum;
     const auto rendered = engine->mixer.BlocksRendered();
@@ -39636,7 +39636,7 @@ TEST(ActionFiringApi, InitialQueueContinuationRejectsMissingPriorReceiptOrIdenti
                     engine->immediateEntryAttempts.size() &&
                 finalAttempt->queueContinuationVersion.Valid())
             << " decision=" << (finalRow != engine->playableServices.end() &&
-                finalRow->queueDecision.Valid())
+                finalRow->HasFeatureArrays() && finalRow->QueueFiling().queueDecision.Valid())
             << " abort=" << (finalRow != engine->playableServices.end() &&
                 finalRow->queueAbortRequested)
             << " runtime recreate=" << engine->runtimeRecreateRequired);
@@ -39756,7 +39756,7 @@ void ExpectImmediateQueueNestedContainerPlay(bool randomQueue) {
     if (randomQueue) {
         EXPECT_NE(expectedOrdinal, row->payload.target.occurrenceOrdinal);
     }
-    EXPECT_FALSE(row->queueDecision.Valid());
+    EXPECT_FALSE(row->QueueFiling().queueDecision.Valid());
     harken::QueueInstanceSnapshot initialQueue{};
     ASSERT_TRUE(engine->queueInstances.Capture(row->queueInstance, &initialQueue));
     EXPECT_EQ(1u, initialQueue.logicMirror.version);
@@ -40523,9 +40523,9 @@ TEST(ActionFiringApi,
     EXPECT_EQ(acceptedSequence, row->queueSuccessorTicket);
     EXPECT_EQ(acceptedSequence, row->event.logicCommitSequence);
     EXPECT_EQ(acceptedSequence, row->schedule.transactionId);
-    ASSERT_EQ(1u, row->queueSourceControlArmCount);
-    ASSERT_EQ(2u, row->queueSuccessorScheduleLeafCount);
-    const auto targetPrograms = row->queueSuccessorPrograms.Resolve(row->queueSuccessorProgramBank);
+    ASSERT_EQ(1u, row->QueueFiling().queueSourceControlArmCount);
+    ASSERT_EQ(2u, row->QueueFiling().queueSuccessorScheduleLeafCount);
+    const auto targetPrograms = row->QueueFiling().queueSuccessorPrograms.Resolve(row->QueueFiling().queueSuccessorProgramBank);
     ASSERT_EQ(2u, targetPrograms.size());
     for (const auto& program : targetPrograms) {
         ASSERT_EQ(2u, program.eventCount);
@@ -40534,14 +40534,14 @@ TEST(ActionFiringApi,
         for (std::size_t index = 0; index < program.eventCount; ++index)
             EXPECT_EQ(acceptedSequence, program.events[index].logicCommitSequence);
     }
-    ASSERT_EQ(1u, row->queueSourceSchedule.eventCount);
+    ASSERT_EQ(1u, row->QueueFiling().queueSourceSchedule.eventCount);
     for (std::uint32_t index = 0;
-         index < row->queueSourceSchedule.eventCount; ++index) {
+         index < row->QueueFiling().queueSourceSchedule.eventCount; ++index) {
         EXPECT_EQ(acceptedSequence,
                   row->queueSourceEvents[index].logicCommitSequence);
     }
     for (std::uint32_t index = 0;
-         index < row->queueSourceControlArmCount; ++index) {
+         index < row->QueueFiling().queueSourceControlArmCount; ++index) {
         EXPECT_EQ(acceptedSequence,
                   row->queueSourceSchedules[index].transactionId);
     }
@@ -40553,16 +40553,19 @@ std::string CaptureImmediateQueueContinuationState(harken::Engine& engine,
     message << "Observed after real service, block=" << engine.mixer.BlocksRendered();
     for (const auto& row : engine.playableServices) {
         if (!row.InvocationValid() || row.Invocation().actionFiring != firing) continue;
+        const auto currentDecision = row.HasFeatureArrays()
+            ? row.QueueFiling().queueDecision : harken::DecisionToken{};
         message << "\nrow=" << row.identity.slot << ":" << row.identity.generation
             << " phase=" << static_cast<unsigned>(row.phase)
             << " pending=" << row.pendingImmediateEntry
             << " timing=" << row.queueTimingPending << "/" << row.queueTimingFinalized
             << " c1=" << row.queueFirstContinuationLane
-            << " same=" << row.queueSameProgramKey
-            << " leaves=" << row.queueCurrentScheduleLeafCount << "/" << row.queueSuccessorScheduleLeafCount
+            << " same=" << (row.HasFeatureArrays() && row.QueueFiling().queueSameProgramKey)
+            << " leaves=" << row.queueCurrentScheduleLeafCount << "/"
+            << (row.HasFeatureArrays() ? row.QueueFiling().queueSuccessorScheduleLeafCount : 0u)
             << " unplaced=" << row.queueUnplacedGroupCount << "/" << row.queueUnplacedTransactionCount
             << " completion=" << row.queueCompletionFrame
-            << " currentDecision=" << row.queueDecision.slot << ":" << row.queueDecision.generation
+            << " currentDecision=" << currentDecision.slot << ":" << currentDecision.generation
             << " initialDecision=" << row.initialQueueEntryDecision.slot << ":"
             << row.initialQueueEntryDecision.generation
             << " completionOwner=" << static_cast<unsigned>(row.queueCurrentCompletion.owner.kind)
@@ -40762,9 +40765,9 @@ void ExpectImmediateSequenceQueueCompositeChildCompletes(bool pieceChild) {
         savedService.token.slot, savedService.token.generation};
     ASSERT_TRUE(savedOwner.Valid());
     const auto savedQueue = initialRow->queueInstance;
-    const auto savedConditional = initialRow->queueConditional;
+    const auto savedConditional = initialRow->QueueFiling().queueConditional;
     const auto savedCurrentOccurrence = initialRow->queueCurrentOccurrence;
-    const auto savedSuccessorOccurrence = initialRow->queueSuccessorOccurrence;
+    const auto savedSuccessorOccurrence = initialRow->QueueFiling().queueSuccessorOccurrence;
     const auto savedAggregate = initialRow->queueCurrentCompositeOwner;
     ASSERT_TRUE(savedQueue.Valid());
     ASSERT_TRUE(savedConditional.Valid());
@@ -40819,7 +40822,7 @@ void ExpectImmediateSequenceQueueCompositeChildCompletes(bool pieceChild) {
     ASSERT_TRUE(savedC0Primary.Exact());
     ASSERT_TRUE(savedC1Primary.Exact());
     const auto savedInitialMemberDecision = initialRow->initialQueueEntryDecision;
-    const auto savedConditionalMemberDecision = initialRow->queueDecision;
+    const auto savedConditionalMemberDecision = initialRow->QueueFiling().queueDecision;
     ASSERT_TRUE(savedInitialMemberDecision.Valid());
     ASSERT_TRUE(savedConditionalMemberDecision.Valid());
     std::array<harken::Plan03ImmediateLaneGroupDescriptor, 8> originalGroups{};
@@ -40936,7 +40939,7 @@ void ExpectImmediateSequenceQueueCompositeChildCompletes(bool pieceChild) {
         ASSERT_TRUE(harken::CaptureCompletionProgressExact(*progress, originalLeaves[index].occurrence,
             originalLeaves[index].renderGeneration, &originalProgress[index]));
     }
-    ASSERT_NO_FATAL_FAILURE(captureSource(initialRow->queueSuccessorArm,
+    ASSERT_NO_FATAL_FAILURE(captureSource(initialRow->QueueFiling().queueSuccessorArm,
         initialRow->queueSuccessorRenderHandle, &sources[2]));
     harken::FrontierActivationDescriptor boundC0{}, boundC1{};
     std::uint64_t entryQuantum = UINT64_MAX;
@@ -41397,12 +41400,12 @@ TEST(ActionFiringApi,
     const auto savedRoot = row->rootInstance;
     const auto savedComposite = row->queueCurrentCompositeOwner;
     const auto savedOccurrence = row->queueCurrentOccurrence;
-    const auto savedSuccessorOccurrence = row->queueSuccessorOccurrence;
-    const auto savedConditional = row->queueConditional;
+    const auto savedSuccessorOccurrence = row->QueueFiling().queueSuccessorOccurrence;
+    const auto savedConditional = row->QueueFiling().queueConditional;
     const auto savedInitialDecision = row->initialQueueEntryDecision;
-    const auto savedConditionalDecision = row->queueDecision;
+    const auto savedConditionalDecision = row->QueueFiling().queueDecision;
     const auto savedInitialArmGroup = row->queueInitialLaneArmGroup;
-    const auto savedSuccessorArm = row->queueSuccessorArm;
+    const auto savedSuccessorArm = row->QueueFiling().queueSuccessorArm;
     const auto savedSuccessorRender = row->queueSuccessorRenderHandle;
     const auto base = static_cast<std::size_t>(row->scheduleStorageBase);
     ASSERT_LT(base + 1u, engine->playableStorage.memberCount);
@@ -41760,8 +41763,8 @@ std::string StaggeredCurrentActualCleanupDiagnostic(harken::Engine& engine, VnAc
     for (const auto& row : engine.playableServices) {
         if (!row.InvocationValid() || row.Invocation().actionFiring != firing) continue;
         out << "\noriginalQueue prepared=" << row.queueContinuationPrepared
-            << " committed=" << row.queueDecisionCommitted
-            << " conditional=" << row.queueConditional.Valid()
+            << " committed=" << (row.HasFeatureArrays() && row.QueueFiling().queueDecisionCommitted)
+            << " conditional=" << (row.HasFeatureArrays() && row.QueueFiling().queueConditional.Valid())
             << " abort=" << row.queueAbortRequested
             << " natural=" << row.queueNaturalEnd
             << " initialAttempt=" << row.initialQueueEntryAttemptGeneration
@@ -41772,7 +41775,9 @@ std::string StaggeredCurrentActualCleanupDiagnostic(harken::Engine& engine, VnAc
             << " unplacedCredit=" << row.queueUnplacedCredit.Valid()
             << " rowArm=" << row.arm.slot << ":" << row.arm.generation
             << "/" << row.arm.renderSlot << ":" << row.arm.renderGeneration;
-        for (const auto group : {row.queueInitialLaneArmGroup, row.queueArmGroup, row.queueArrivalArmGroup}) {
+        for (const auto group : {row.queueInitialLaneArmGroup,
+                                row.HasFeatureArrays() ? row.QueueFiling().queueArmGroup : harken::ArmGroupToken{},
+                                row.queueArrivalArmGroup}) {
             harken::ArmGroupSnapshot actual{};
             out << "\noriginalArmGroup=" << group.slot << ":" << group.generation;
             const bool captured = engine.armGroups.Capture(group, &actual);
@@ -41994,7 +41999,7 @@ void CheckDirectStaggeredCurrentPublicationRefusal(std::uint32_t refusedPublicat
     ASSERT_TRUE(row->queueFirstContinuationLane);
     ASSERT_EQ(2u, row->queueCurrentScheduleLeafCount);
     ASSERT_EQ(1u, row->queueInitialCurrentDelayedCount);
-    ASSERT_TRUE(row->queueSuccessorArm.Valid());
+    ASSERT_TRUE(row->QueueFiling().queueSuccessorArm.Valid());
     ASSERT_NE(0u, row->queueSuccessorRenderHandle);
     const auto originalQueue = row->queueInstance;
     const auto originalComposite = row->queueCurrentCompositeOwner;
@@ -42327,8 +42332,8 @@ void ExpectImmediateSequenceQueueCompositeSuccessorCompletes(bool pieceChild,
         });
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_TRUE(row->queueContinuationPrepared);
-    ASSERT_EQ(2u, row->queueSuccessorScheduleLeafCount);
-    ASSERT_EQ(2u, row->queueTransitionGroupArmCount);
+    ASSERT_EQ(2u, row->QueueFiling().queueSuccessorScheduleLeafCount);
+    ASSERT_EQ(2u, row->QueueFiling().queueTransitionGroupArmCount);
     EXPECT_EQ(info.acceptedLogicSequence, row->ticket);
     EXPECT_EQ(info.acceptedLogicSequence, row->queueTicket);
     ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 0));
@@ -42339,7 +42344,7 @@ void ExpectImmediateSequenceQueueCompositeSuccessorCompletes(bool pieceChild,
     ASSERT_NE(0u, successorHandles[0]);
     ASSERT_NE(0u, successorHandles[1]);
     ASSERT_NE(successorHandles[0], successorHandles[1]);
-    const auto successorPrograms = row->queueSuccessorPrograms.Resolve(row->queueSuccessorProgramBank);
+    const auto successorPrograms = row->QueueFiling().queueSuccessorPrograms.Resolve(row->QueueFiling().queueSuccessorProgramBank);
     ASSERT_EQ(2u, successorPrograms.size());
     for (std::uint32_t index = 0; index < 2; ++index) {
         ASSERT_EQ(1u, successorPrograms[index].eventCount);
@@ -42426,7 +42431,7 @@ void ExpectImmediateSequenceQueueCompositeSuccessorCompletes(bool pieceChild,
     ASSERT_FALSE(retainSinglePredecessor) << "Mixed Queue did not promote after the retained single source"
         << " state=" << info.state << " outcome=" << info.outcome << " reason=" << info.terminalReason
         << " held=" << oldMember.Valid() << " current=" << row->queueCurrentScheduleLeafCount
-        << " successor=" << row->queueSuccessorScheduleLeafCount << " recreate=" << engine->runtimeRecreateRequired;
+        << " successor=" << row->QueueFiling().queueSuccessorScheduleLeafCount << " recreate=" << engine->runtimeRecreateRequired;
     EXPECT_TRUE(observedOnlyLongLeaf);
     if (laterLeafFrames != 0u) {
         ASSERT_NE(UINT64_MAX, firstPositiveFrame);
@@ -42701,20 +42706,20 @@ void CheckImmediateSameProgramQueue(bool restartCycle, bool requireTerminalC1 = 
         ASSERT_TRUE(actualC1Route)
             << CaptureImmediateQueueContinuationState(*engine, firing);
     }
-    const auto savedConditional = row->queueConditional;
+    const auto savedConditional = row->QueueFiling().queueConditional;
     const auto savedCurrentOccurrence = row->queueCurrentOccurrence;
-    const auto savedSuccessorOccurrence = row->queueSuccessorOccurrence;
+    const auto savedSuccessorOccurrence = row->QueueFiling().queueSuccessorOccurrence;
     const auto savedCurrentRender = row->renderHandle;
     ASSERT_TRUE(savedConditional.Valid());
     ASSERT_NE(0u, savedCurrentOccurrence.generation);
-    const auto savedSuccessorArm = row->queueSuccessorArm;
+    const auto savedSuccessorArm = row->QueueFiling().queueSuccessorArm;
     const auto savedSuccessorRender = row->queueSuccessorRenderHandle;
-    const auto* savedSuccessorBank = row->queueSuccessorProgramBank;
+    const auto* savedSuccessorBank = row->QueueFiling().queueSuccessorProgramBank;
     const auto savedSuccessorBankGeneration = savedSuccessorBank == nullptr
         ? 0u : savedSuccessorBank->Generation();
-    const auto savedSuccessorPlane = row->queueSuccessorProgramPlane;
+    const auto savedSuccessorPlane = row->QueueFiling().queueSuccessorProgramPlane;
     const auto* savedSuccessorMember = engine->FindQueueProgramMember(
-        savedSuccessorBank, row->queueSuccessorPrograms.first);
+        savedSuccessorBank, row->QueueFiling().queueSuccessorPrograms.first);
     const auto savedSuccessorSoundId = savedSuccessorMember == nullptr
         ? VnObjectId{} : savedSuccessorMember->voice.Facts().soundId;
     const auto sameArm = [](harken::TimelineArmToken a, harken::TimelineArmToken b) {
@@ -42758,16 +42763,16 @@ void CheckImmediateSameProgramQueue(bool restartCycle, bool requireTerminalC1 = 
     };
     ASSERT_EQ(&*row, resolveSavedService());
 
-    EXPECT_EQ(!restartCycle, row->queueSameProgramKey);
+    EXPECT_EQ(!restartCycle, row->QueueFiling().queueSameProgramKey);
     EXPECT_TRUE(row->queueContinuationPrepared);
-    EXPECT_TRUE(row->queueDecision.Valid());
+    EXPECT_TRUE(row->QueueFiling().queueDecision.Valid());
     EXPECT_EQ(restartCycle, row->queueSuccessorDecision.Valid());
-    EXPECT_TRUE(row->queueConditional.Valid());
-    EXPECT_TRUE(row->queueArmGroup.Valid());
-    EXPECT_EQ(restartCycle ? 1u : 0u, row->queueTransitionGroupArmCount);
+    EXPECT_TRUE(row->QueueFiling().queueConditional.Valid());
+    EXPECT_TRUE(row->QueueFiling().queueArmGroup.Valid());
+    EXPECT_EQ(restartCycle ? 1u : 0u, row->QueueFiling().queueTransitionGroupArmCount);
     EXPECT_EQ(restartCycle, row->queueSuccessorRenderHandle != 0);
-    EXPECT_EQ(restartCycle, row->queueSuccessorOccurrence.generation != 0);
-    EXPECT_EQ(0u, row->queueSuccessorScheduleLeafCount);
+    EXPECT_EQ(restartCycle, row->QueueFiling().queueSuccessorOccurrence.generation != 0);
+    EXPECT_EQ(0u, row->QueueFiling().queueSuccessorScheduleLeafCount);
     EXPECT_EQ(restartCycle ? 2u : 1u, engine->voices.ActiveCount());
     EXPECT_EQ(info.acceptedLogicSequence, row->ticket);
     EXPECT_EQ(info.acceptedLogicSequence, row->queueTicket);
@@ -42820,7 +42825,7 @@ void CheckImmediateSameProgramQueue(bool restartCycle, bool requireTerminalC1 = 
     harken::TimelineArmObservation beforeAck{};
     ASSERT_TRUE(engine->timelineArms.Observe(savedCurrentArm, &beforeAck));
     EXPECT_EQ(0u, beforeAck.startedBlockSequence);
-    const auto expectedDecision = actualC1Route ? row->queueDecision : row->initialQueueEntryDecision;
+    const auto expectedDecision = actualC1Route ? row->QueueFiling().queueDecision : row->initialQueueEntryDecision;
     ASSERT_TRUE(expectedDecision.Valid());
     std::array<harken::Plan03ImmediateLaneGroupDescriptor, 4> groups{};
     const auto privateCount = engine->timelinePool.CaptureImmediateLaneCohortGroups(
@@ -42914,9 +42919,9 @@ void CheckImmediateSameProgramQueue(bool restartCycle, bool requireTerminalC1 = 
         ASSERT_TRUE(restartCycle);
         ASSERT_NE(nullptr, savedSuccessorBank);
         ASSERT_EQ(savedSuccessorBank, promoted
-            ? observed.queueCurrentProgramBank : observed.queueSuccessorProgramBank);
+            ? observed.queueCurrentProgramBank : observed.QueueFiling().queueSuccessorProgramBank);
         ASSERT_EQ(savedSuccessorPlane, promoted
-            ? observed.queueCurrentProgramPlane : observed.queueSuccessorProgramPlane);
+            ? observed.queueCurrentProgramPlane : observed.QueueFiling().queueSuccessorProgramPlane);
         const auto& bank = *savedSuccessorBank;
         ASSERT_NE(0u, savedSuccessorBankGeneration);
         ASSERT_EQ(savedSuccessorBankGeneration, bank.Generation());
@@ -42931,7 +42936,7 @@ void CheckImmediateSameProgramQueue(bool restartCycle, bool requireTerminalC1 = 
         }
         ASSERT_NE(nullptr, frozen);
         const auto& aggregate = savedSuccessorPlane == 0
-            ? observed.schedule : observed.queueSuccessorSchedule;
+            ? observed.schedule : observed.QueueFiling().queueSuccessorSchedule;
         EXPECT_EQ(boundary, frozen->entryAnchorFrame);
         EXPECT_EQ(boundary, aggregate.entryAnchorFrame);
         const auto checkStart = [&](const harken::ProgramView& program) {
@@ -43021,7 +43026,7 @@ void CheckImmediateSameProgramQueue(bool restartCycle, bool requireTerminalC1 = 
     ASSERT_EQ(harken::FrontierReceiptRead::InFlight,
         initialActivation->Read(initial.entry, engine->mixer.BlocksRendered(), &beforeEntry));
 
-    const auto successorArm = current->queueSuccessorArm;
+    const auto successorArm = current->QueueFiling().queueSuccessorArm;
     EXPECT_EQ(actualC1Route, continuation.Valid());
     if (actualC1Route) {
         ASSERT_TRUE(continuation.Valid());
@@ -43059,7 +43064,7 @@ void CheckImmediateSameProgramQueue(bool restartCycle, bool requireTerminalC1 = 
         EXPECT_TRUE(harken::QueueSuccessorRestartsCycle(sameWithinCycle, following));
         EXPECT_NE(current->renderHandle, current->queueSuccessorRenderHandle);
         const auto* successorMember = engine->FindQueueProgramMember(
-            current->queueSuccessorProgramBank, current->queueSuccessorPrograms.first);
+            current->QueueFiling().queueSuccessorProgramBank, current->QueueFiling().queueSuccessorPrograms.first);
         ASSERT_NE(nullptr, successorMember);
         const auto& successorVoice = successorMember->voice;
         ASSERT_TRUE(successorVoice.Valid());
@@ -43072,13 +43077,13 @@ void CheckImmediateSameProgramQueue(bool restartCycle, bool requireTerminalC1 = 
         EXPECT_EQ(successorArm.generation, slice.members[0].generation);
         EXPECT_EQ(successorArm.renderSlot, slice.members[0].renderSlot);
         EXPECT_EQ(successorArm.renderGeneration, slice.members[0].renderGeneration);
-        EXPECT_EQ(boundary, current->queueSuccessorSchedule.entryAnchorFrame);
+        EXPECT_EQ(boundary, current->QueueFiling().queueSuccessorSchedule.entryAnchorFrame);
         EXPECT_TRUE(sameArm(savedSuccessorArm, successorArm));
         ASSERT_NO_FATAL_FAILURE(checkCycleGeometry(*current, false));
     } else {
-        EXPECT_TRUE(current->queueSameProgramKey);
+        EXPECT_TRUE(current->QueueFiling().queueSameProgramKey);
         EXPECT_EQ(0u, current->queueSuccessorRenderHandle);
-        EXPECT_EQ(0u, current->queueSuccessorOccurrence.generation);
+        EXPECT_EQ(0u, current->QueueFiling().queueSuccessorOccurrence.generation);
         EXPECT_FALSE(successorArm.Valid());
         EXPECT_EQ(savedCurrentRender, current->renderHandle);
         EXPECT_EQ(savedCurrentOccurrence.slot, current->queueCurrentOccurrence.slot);
@@ -43147,14 +43152,14 @@ void CheckImmediateSameProgramQueue(bool restartCycle, bool requireTerminalC1 = 
             EXPECT_EQ(0u, beforeBoundary.startedBlockSequence);
             EXPECT_EQ(harken::ArmState::Published, beforeBoundary.state);
         } else {
-            EXPECT_TRUE(current->queueSameProgramKey);
+            EXPECT_TRUE(current->QueueFiling().queueSameProgramKey);
             EXPECT_EQ(savedCurrentRender, current->renderHandle);
             EXPECT_EQ(savedCurrentOccurrence.slot, current->queueCurrentOccurrence.slot);
             EXPECT_EQ(savedCurrentOccurrence.generation, current->queueCurrentOccurrence.generation);
             EXPECT_EQ(0u, current->queueSuccessorRenderHandle);
-            EXPECT_EQ(0u, current->queueSuccessorOccurrence.generation);
-            EXPECT_FALSE(current->queueSuccessorArm.Valid());
-            EXPECT_EQ(0u, current->queueTransitionGroupArmCount);
+            EXPECT_EQ(0u, current->QueueFiling().queueSuccessorOccurrence.generation);
+            EXPECT_FALSE(current->QueueFiling().queueSuccessorArm.Valid());
+            EXPECT_EQ(0u, current->QueueFiling().queueTransitionGroupArmCount);
         }
         if (actualC1Route) {
             const auto* activation = engine->decisions.ResolveFrontierActivation(savedContinuationCoordinator);
@@ -43190,14 +43195,14 @@ void CheckImmediateSameProgramQueue(bool restartCycle, bool requireTerminalC1 = 
             EXPECT_EQ(boundaryQuantum + 1u, started.startedBlockSequence);
         } else {
             // SameKey C1 progresses the original Current without a new start.
-            EXPECT_TRUE(current->queueSameProgramKey);
+            EXPECT_TRUE(current->QueueFiling().queueSameProgramKey);
             EXPECT_EQ(savedCurrentRender, current->renderHandle);
             EXPECT_EQ(savedCurrentOccurrence.slot, current->queueCurrentOccurrence.slot);
             EXPECT_EQ(savedCurrentOccurrence.generation, current->queueCurrentOccurrence.generation);
             EXPECT_EQ(0u, current->queueSuccessorRenderHandle);
-            EXPECT_EQ(0u, current->queueSuccessorOccurrence.generation);
-            EXPECT_FALSE(current->queueSuccessorArm.Valid());
-            EXPECT_EQ(0u, current->queueTransitionGroupArmCount);
+            EXPECT_EQ(0u, current->QueueFiling().queueSuccessorOccurrence.generation);
+            EXPECT_FALSE(current->QueueFiling().queueSuccessorArm.Valid());
+            EXPECT_EQ(0u, current->QueueFiling().queueTransitionGroupArmCount);
             harken::TimelineArmObservation originalCurrent{};
             ASSERT_TRUE(engine->timelineArms.Observe(savedCurrentArm, &originalCurrent));
             EXPECT_EQ(entryQuantum + 1u, originalCurrent.startedBlockSequence);
@@ -43361,9 +43366,9 @@ void CheckSequenceQueueBeyondPublicationWindow(
             std::uint64_t blocks = replay == 0 && tick == lateTick ? lateBlocks : blocksPerUpdate;
             if (expectDeadline && replay == 0 && !missedHandoff) {
                 for (const auto& row : engine->playableServices) {
-                    if (!row.queueContinuationPrepared || row.queueDecisionCommitted ||
+                    if (!row.queueContinuationPrepared || row.QueueFiling().queueDecisionCommitted ||
                         row.Invocation().actionFiring != firing) continue;
-                    const auto* arm = engine->timelineArms.RowAt(row.queueSuccessorArm.slot);
+                    const auto* arm = engine->timelineArms.RowAt(row.QueueFiling().queueSuccessorArm.slot);
                     ASSERT_NE(nullptr, arm);
                     const auto start = arm->startFrame / 256u;
                     ASSERT_GE(start, engine->mixer.BlocksRendered());
@@ -43576,30 +43581,30 @@ void ExpectImmediateActionQueueTransitionPrepared(
             });
         ASSERT_NE(engine->playableServices.end(), row);
         ASSERT_TRUE(row->queueContinuationPrepared);
-        ASSERT_TRUE(row->queueTransition.Valid());
+        ASSERT_TRUE(row->QueueFiling().queueTransition.Valid());
         const std::uint32_t expectedSourceCount = naturalEnd
             ? (compositeSource ? 2u : 1u)
             : 0u;
         const std::uint32_t expectedTargetCount = compositeTarget ? 2u : 1u;
-        EXPECT_EQ(expectedSourceCount, row->queueSourceControlArmCount);
+        EXPECT_EQ(expectedSourceCount, row->QueueFiling().queueSourceControlArmCount);
         EXPECT_EQ(expectedSourceCount + expectedTargetCount,
-                  row->queueTransitionGroupArmCount);
+                  row->QueueFiling().queueTransitionGroupArmCount);
         EXPECT_EQ(compositeTarget ? expectedTargetCount : 0u,
-                  row->queueSuccessorScheduleLeafCount);
+                  row->QueueFiling().queueSuccessorScheduleLeafCount);
         EXPECT_EQ(info.acceptedLogicSequence, row->ticket);
         EXPECT_EQ(info.acceptedLogicSequence, row->queueTicket);
         harken::TransitionInstanceSnapshot transition{};
         ASSERT_TRUE(engine->transitionInstances.Capture(
-            row->queueTransition, &transition));
+            row->QueueFiling().queueTransition, &transition));
         EXPECT_EQ(harken::TransitionAudibleGateState::Replaceable,
                   transition.state);
         harken::DecisionCommittedSnapshot decision{};
-        EXPECT_TRUE(engine->decisions.IsOpen(row->queueDecision));
+        EXPECT_TRUE(engine->decisions.IsOpen(row->QueueFiling().queueDecision));
         EXPECT_FALSE(engine->decisions.CaptureCommitted(
-            row->queueDecision, &decision));
-        EXPECT_FALSE(row->queueDecisionCommitted);
+            row->QueueFiling().queueDecision, &decision));
+        EXPECT_FALSE(row->QueueFiling().queueDecisionCommitted);
 
-        const auto targetPrograms = row->queueSuccessorPrograms.Resolve(row->queueSuccessorProgramBank);
+        const auto targetPrograms = row->QueueFiling().queueSuccessorPrograms.Resolve(row->QueueFiling().queueSuccessorProgramBank);
         ASSERT_EQ(expectedTargetCount, targetPrograms.size());
         for (const auto& program : targetPrograms) {
             ASSERT_EQ(targetFade ? 2u : 1u, program.eventCount);
@@ -43610,9 +43615,9 @@ void ExpectImmediateActionQueueTransitionPrepared(
         }
         const std::uint32_t sourceEventsPerLeaf = naturalEnd ? 1u : 2u;
         EXPECT_EQ(sourceEventsPerLeaf * expectedSourceCount,
-                  row->queueSourceSchedule.eventCount);
+                  row->QueueFiling().queueSourceSchedule.eventCount);
         for (std::uint32_t index = 0;
-             index < row->queueSourceSchedule.eventCount; ++index) {
+             index < row->QueueFiling().queueSourceSchedule.eventCount; ++index) {
             EXPECT_EQ(info.acceptedLogicSequence,
                       row->queueSourceEvents[index].logicCommitSequence);
         }
@@ -43623,7 +43628,7 @@ void ExpectImmediateActionQueueTransitionPrepared(
         }
 
         const std::array<std::uint64_t, 2> sliceFrames = {
-            naturalEnd ? row->queueSourceSchedule.entryAnchorFrame
+            naturalEnd ? row->QueueFiling().queueSourceSchedule.entryAnchorFrame
                        : row->queueCompletionFrame,
             row->queueCompletionFrame};
         const std::uint32_t expectedSliceCount = naturalEnd ? 2u : 1u;
@@ -43643,8 +43648,8 @@ void ExpectImmediateActionQueueTransitionPrepared(
                     if (candidate.sliceIndex != sliceIndex ||
                         !engine->timelinePool.ResolvePlan03GroupSliceProducer(candidate, &actual)) continue;
                     const bool decisionMatches =
-                        (candidate.decision.slot == row->queueDecision.slot &&
-                         candidate.decision.generation == row->queueDecision.generation) ||
+                        (candidate.decision.slot == row->QueueFiling().queueDecision.slot &&
+                         candidate.decision.generation == row->QueueFiling().queueDecision.generation) ||
                         (candidate.decision.slot == row->initialQueueEntryDecision.slot &&
                          candidate.decision.generation == row->initialQueueEntryDecision.generation);
                     if (!decisionMatches || actual.sourceControlCount != expectedSourceCount ||
@@ -43660,7 +43665,7 @@ void ExpectImmediateActionQueueTransitionPrepared(
                 const auto* header = engine->timelinePool.Page(page);
                 ASSERT_NE(nullptr, header);
                 identity = {sliceFrames[sliceIndex] / engine->config.blockFrames,
-                    header->pageGeneration, row->queueDecision, sliceIndex};
+                    header->pageGeneration, row->QueueFiling().queueDecision, sliceIndex};
             }
             harken::Plan03PageGroupView slice{};
             ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
@@ -43687,7 +43692,7 @@ void ExpectImmediateActionQueueTransitionPrepared(
                 << " outcome=" << info.outcome << " reason=" << info.terminalReason;
             ASSERT_EQ(harken::EnginePlayableStartPhase::Filed, row->phase)
                 << actualServiceTrace.str();
-            ASSERT_TRUE(engine->transitionInstances.Capture(row->queueTransition, &transition));
+            ASSERT_TRUE(engine->transitionInstances.Capture(row->QueueFiling().queueTransition, &transition));
         }
         while (engine->mixer.BlocksRendered() *
                    engine->config.blockFrames <= transition.audibleFrame) {
@@ -43695,11 +43700,11 @@ void ExpectImmediateActionQueueTransitionPrepared(
             engine->nullBackend.Pump(1);
         }
         ASSERT_TRUE(engine->decisions.CaptureCommitted(
-            row->queueDecision, &decision));
-        EXPECT_TRUE(row->queueDecisionCommitted);
+            row->QueueFiling().queueDecision, &decision));
+        EXPECT_TRUE(row->QueueFiling().queueDecisionCommitted);
         EXPECT_EQ(naturalEnd ? 2u : 1u, decision.sliceCount);
-        EXPECT_EQ(row->queueTransition.slot, decision.transitionGate.slot);
-        EXPECT_EQ(row->queueTransition.generation,
+        EXPECT_EQ(row->QueueFiling().queueTransition.slot, decision.transitionGate.slot);
+        EXPECT_EQ(row->QueueFiling().queueTransition.generation,
                   decision.transitionGate.generation);
 
         std::ostringstream naturalEntryTrace;
@@ -43737,7 +43742,7 @@ void ExpectImmediateActionQueueTransitionPrepared(
         completedTrace << "\nactual voices=" << engine->voices.ActiveCount()
             << " blocks=" << engine->mixer.BlocksRendered();
         harken::DecisionCommittedSnapshot completedDecision{};
-        if (engine->decisions.CaptureCommitted(row->queueDecision, &completedDecision))
+        if (engine->decisions.CaptureCommitted(row->QueueFiling().queueDecision, &completedDecision))
             completedTrace << " slices=" << completedDecision.sliceCount
                 << " consumed=" << completedDecision.consumedSlices
                 << " lastAudio=" << completedDecision.lastAudioSequence;
@@ -49990,12 +49995,12 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
             EXPECT_NE(root->identity, service->identity);
             EXPECT_NE(root->partition.slot, service->partition.slot);
             EXPECT_EQ(&root->Invocation(), &service->Invocation());
-            ASSERT_TRUE(service->queueSuccessorArm.Valid());
+            ASSERT_TRUE(service->QueueFiling().queueSuccessorArm.Valid());
             ASSERT_TRUE(engine.playableInstances.Classify(service->variableControlNestedQueueSuccessorInstance).live);
             if (trackQueueSource && queueTransition == OrderedQueueTransition::NaturalFade) {
                 EXPECT_TRUE(service->queueFirstContinuationLane);
                 EXPECT_EQ(3u, service->queueUnplacedGroupCount);
-                EXPECT_EQ(1u, service->queueSourceControlArmCount);
+                EXPECT_EQ(1u, service->QueueFiling().queueSourceControlArmCount);
                 const auto& original = engine.acceptedPendingVariableGroups[root->identity.slot];
                 ASSERT_EQ(4u, original.queueNativeOriginCount);
                 unsigned nativeCount = 0;
@@ -50083,9 +50088,9 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
         const auto* service = engine.ResolvePlayableService(initialQueueService);
         property("service_live", service != nullptr);
         if (service != nullptr) {
-            property("decision_slot", service->queueDecision.slot);
-            property("decision_generation", service->queueDecision.generation);
-            property("group_slot", service->queueArmGroup.slot);
+            property("decision_slot", service->QueueFiling().queueDecision.slot);
+            property("decision_generation", service->QueueFiling().queueDecision.generation);
+            property("group_slot", service->QueueFiling().queueArmGroup.slot);
             property("initial_decision", service->initialQueueEntryDecision.slot);
             property("canonical_decision", service->canonicalInitialQueueDecision.slot);
             property("private_current", service->privateInitialQueueCurrent != nullptr);
@@ -50093,24 +50098,24 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
             property("queue_token_valid", service->queueInstance.Valid());
             harken::QueueInstanceSnapshot queueSnapshot{};
             property("queue_live", engine.queueInstances.Capture(service->queueInstance, &queueSnapshot));
-            property("source_controls", service->queueSourceControlArmCount);
-            property("transition_members", service->queueTransitionGroupArmCount);
-            const auto* bank = service->queueSuccessorProgramBank;
+            property("source_controls", service->QueueFiling().queueSourceControlArmCount);
+            property("transition_members", service->QueueFiling().queueTransitionGroupArmCount);
+            const auto* bank = service->QueueFiling().queueSuccessorProgramBank;
             property("bank_exists", bank != nullptr);
             if (bank != nullptr) {
                 property("bank_occupied", bank->occupied);
                 property("bank_transition", bank->transition.slot);
                 property("bank_original_group", std::any_of(bank->groups.begin(), bank->groups.end(),
-                    [&](const auto candidate) { return candidate.slot == service->queueArmGroup.slot &&
-                        candidate.generation == service->queueArmGroup.generation; }));
+                    [&](const auto candidate) { return candidate.slot == service->QueueFiling().queueArmGroup.slot &&
+                        candidate.generation == service->QueueFiling().queueArmGroup.generation; }));
             }
             property("canonical_request_matches", engine.decisions.MatchesOpenReservation(
                 service->canonicalInitialQueueDecision, service->CanonicalInitialQueueRequest()) ||
                 engine.decisions.MatchesCancelledReservation(
                     service->canonicalInitialQueueDecision, service->CanonicalInitialQueueRequest()));
-            property("transition_slot", service->queueTransition.slot);
+            property("transition_slot", service->QueueFiling().queueTransition.slot);
             harken::TransitionInstanceSnapshot transition{};
-            if (engine.transitionInstances.Capture(service->queueTransition, &transition)) {
+            if (engine.transitionInstances.Capture(service->QueueFiling().queueTransition, &transition)) {
                 property("transition_state", static_cast<unsigned>(transition.state));
                 property("transition_retired_sequence", transition.retiredAtAudioSequence);
             }
@@ -50155,8 +50160,8 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
         for (const auto& service : engine.playableServices) {
             if (!service.queueMode || !service.InvocationValid() || service.Invocation().actionFiring != firing) continue;
             initialQueueService = {service.identity, service.ownerInstance, service.ownerEpoch, service.invocationGeneration};
-            initialQueueGroups = {service.queueInitialLaneArmGroup, service.queueArmGroup, service.queueArrivalArmGroup};
-            std::copy_n(service.queueTransitionGroupArms.begin(), initialQueueMembers.size(), initialQueueMembers.begin());
+            initialQueueGroups = {service.queueInitialLaneArmGroup, service.QueueFiling().queueArmGroup, service.queueArrivalArmGroup};
+            std::copy_n(service.QueueFiling().queueTransitionGroupArms.begin(), initialQueueMembers.size(), initialQueueMembers.begin());
         }
         ASSERT_TRUE(initialQueueService.Valid());
         recordInitialQueueExit(cancel ? "before_stop" : "accepted");
@@ -50367,9 +50372,9 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
             ASSERT_LT(owned.queueIndex, child.storage.frontierQueues.size());
             const auto* service = actual.ResolvePlayableService(child.storage.frontierQueues[owned.queueIndex].service);
             ASSERT_NE(nullptr, service);
-            ASSERT_EQ(2u, service->queueTransitionGroupArmCount);
+            ASSERT_EQ(2u, service->QueueFiling().queueTransitionGroupArmCount);
             for (unsigned member = 0; member < 2u; ++member) {
-                const auto arm = service->queueTransitionGroupArms[member];
+                const auto arm = service->QueueFiling().queueTransitionGroupArms[member];
                 ASSERT_TRUE(arm.Valid());
                 ASSERT_LT(arm.slot, actual.initialFrontierArmPins.size());
                 const auto& pin = actual.initialFrontierArmPins[arm.slot];
@@ -51118,7 +51123,7 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
             property("private_current", service.privateInitialQueueCurrent != nullptr);
             property("initial_decision", service.initialQueueEntryDecision.slot);
             property("canonical_decision", service.canonicalInitialQueueDecision.slot);
-            property("decision", service.queueDecision.slot);
+            property("decision", service.QueueFiling().queueDecision.slot);
             property("arrival_decision", service.queueArrivalDecision.slot);
             harken::DecisionCommittedSnapshot decision{};
             property("initial_committed", engine.decisions.CaptureCommitted(service.initialQueueEntryDecision, &decision));
@@ -51127,7 +51132,7 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
             property("abort", service.queueAbortRequested);
             property("cleanup", service.queueCleanupStarted);
             harken::ArmGroupSnapshot group{};
-            if (engine.armGroups.Capture(service.queueArmGroup, &group)) {
+            if (engine.armGroups.Capture(service.QueueFiling().queueArmGroup, &group)) {
                 property("arm_group_state", static_cast<unsigned>(group.state));
                 property("arm_members", group.memberCount);
                 property("arm_tombstones", group.tombstonedCount);
@@ -51140,7 +51145,7 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
                 property("arrival_sequence", group.maxTombstoneSequence);
             }
             harken::TransitionInstanceSnapshot gate{};
-            if (engine.transitionInstances.Capture(service.queueTransition, &gate)) {
+            if (engine.transitionInstances.Capture(service.QueueFiling().queueTransition, &gate)) {
                 property("transition_state", static_cast<unsigned>(gate.state));
                 property("transition_retired_sequence", gate.retiredAtAudioSequence);
             }
@@ -51149,9 +51154,9 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
                 property("arrival_retired_sequence", gate.retiredAtAudioSequence);
             }
             property("current_bank", service.queueCurrentProgramBank != nullptr);
-            if (service.queueSuccessorProgramBank != nullptr) {
-                property("bank_occupied", service.queueSuccessorProgramBank->occupied);
-                property("bank_published", service.queueSuccessorProgramBank->published);
+            if (service.QueueFiling().queueSuccessorProgramBank != nullptr) {
+                property("bank_occupied", service.QueueFiling().queueSuccessorProgramBank->occupied);
+                property("bank_published", service.QueueFiling().queueSuccessorProgramBank->published);
             }
             if (service.initialQueueEntryDecision.slot < engine.decisionRetirements.size()) {
                 const auto& retirement = engine.decisionRetirements[service.initialQueueEntryDecision.slot];
@@ -52014,8 +52019,8 @@ static void CheckPendingOriginalQueueCompositionReselectsPcm(bool nestedControl,
             const bool natural = queue.containerStableId == image.properties[4].stableId;
             ASSERT_TRUE(natural || queue.containerStableId == image.properties[6].stableId);
             EXPECT_EQ(!natural, row.queueFirstContinuationLane);
-            EXPECT_EQ(natural, row.queueTransition.Valid());
-            EXPECT_EQ(natural ? 1u : 0u, row.queueSourceControlArmCount);
+            EXPECT_EQ(natural, row.QueueFiling().queueTransition.Valid());
+            EXPECT_EQ(natural ? 1u : 0u, row.QueueFiling().queueSourceControlArmCount);
             naturalQueueCount += natural;
             ordinaryQueueCount += !natural;
         } else {
@@ -58401,7 +58406,7 @@ TEST(ActionFiringApi,
     ASSERT_TRUE(row->queueContinuationPrepared);
     const VnVoiceHandle current = row->renderHandle;
     const VnVoiceHandle oldSuccessor = row->queueSuccessorRenderHandle;
-    const harken::DecisionToken oldDecision = row->queueDecision;
+    const harken::DecisionToken oldDecision = row->QueueFiling().queueDecision;
     ASSERT_NE(0u, current);
     ASSERT_NE(0u, oldSuccessor);
     ASSERT_NE(current, oldSuccessor);
@@ -58417,13 +58422,13 @@ TEST(ActionFiringApi,
     EXPECT_EQ(current, row->renderHandle);
     EXPECT_TRUE(engine->voices.Resolve(current) != nullptr);
     EXPECT_TRUE(row->queueContinuationPrepared);
-    EXPECT_TRUE(row->queueDecision.slot != oldDecision.slot ||
-                row->queueDecision.generation != oldDecision.generation);
+    EXPECT_TRUE(row->QueueFiling().queueDecision.slot != oldDecision.slot ||
+                row->QueueFiling().queueDecision.generation != oldDecision.generation);
     ExpectEffectiveQueueState(expectedReset, row->QueueNextState());
     EXPECT_EQ(originalBoundary, row->queueCompletionFrame);
     EXPECT_NE(current, row->queueSuccessorRenderHandle);
     const auto* successorMember = engine->FindQueueProgramMember(
-        row->queueSuccessorProgramBank, row->queueSuccessorPrograms.first);
+        row->QueueFiling().queueSuccessorProgramBank, row->QueueFiling().queueSuccessorPrograms.first);
     ASSERT_NE(nullptr, successorMember);
     const auto& successorVoice = successorMember->voice;
     ASSERT_TRUE(successorVoice.Valid());
@@ -58664,7 +58669,7 @@ TEST(ActionFiringApi,
               row->QueueSuccessorLeaf().stableId);
     const VnVoiceHandle current = row->renderHandle;
     const VnVoiceHandle oldSuccessor = row->queueSuccessorRenderHandle;
-    const harken::DecisionToken oldDecision = row->queueDecision;
+    const harken::DecisionToken oldDecision = row->QueueFiling().queueDecision;
     ASSERT_NE(0u, current);
     ASSERT_NE(0u, oldSuccessor);
 
@@ -58675,7 +58680,7 @@ TEST(ActionFiringApi,
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
     EXPECT_EQ(current, row->renderHandle);
     EXPECT_NE(nullptr, engine->voices.Resolve(current));
-    EXPECT_FALSE(row->queueSameProgramKey);
+    EXPECT_FALSE(row->QueueFiling().queueSameProgramKey);
     EXPECT_TRUE(row->queueContinuationPrepared);
     EXPECT_EQ(image.queueChildren[0].stableChildOrdinal,
               row->QueueNextState().currentChildOrdinal);
@@ -58761,8 +58766,8 @@ TEST(ActionFiringApi,
     ASSERT_TRUE(row->queueContinuationPrepared);
     ASSERT_EQ(CanonicalActionWorld::kSecondSound,
               row->queueCurrentCompletion.program.stableId);
-    ASSERT_EQ(2u, row->queueSuccessorScheduleLeafCount);
-    ASSERT_TRUE(row->queueSuccessorCompositeOwner.Valid());
+    ASSERT_EQ(2u, row->QueueFiling().queueSuccessorScheduleLeafCount);
+    ASSERT_TRUE(row->QueueFiling().queueSuccessorCompositeOwner.Valid());
     const VnVoiceHandle current = row->renderHandle;
     ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 0));
     ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 1));
@@ -58779,12 +58784,12 @@ TEST(ActionFiringApi,
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
     EXPECT_EQ(current, row->renderHandle);
     EXPECT_NE(nullptr, engine->voices.Resolve(current));
-    EXPECT_FALSE(row->queueSameProgramKey);
+    EXPECT_FALSE(row->QueueFiling().queueSameProgramKey);
     EXPECT_TRUE(row->queueContinuationPrepared);
     EXPECT_EQ(image.queueChildren[0].stableChildOrdinal,
               row->QueueNextState().currentChildOrdinal);
-    ASSERT_EQ(2u, row->queueSuccessorScheduleLeafCount);
-    EXPECT_TRUE(row->queueSuccessorCompositeOwner.Valid());
+    ASSERT_EQ(2u, row->QueueFiling().queueSuccessorScheduleLeafCount);
+    EXPECT_TRUE(row->QueueFiling().queueSuccessorCompositeOwner.Valid());
     ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 0));
     ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 1));
     const std::array<VnVoiceHandle, 2> newSuccessors = {
@@ -58795,9 +58800,9 @@ TEST(ActionFiringApi,
     EXPECT_NE(oldSuccessors[0], newSuccessors[0]);
     EXPECT_NE(oldSuccessors[1], newSuccessors[1]);
     const auto* firstSuccessor = engine->FindQueueProgramMember(
-        row->queueSuccessorProgramBank, row->queueSuccessorPrograms.first);
+        row->QueueFiling().queueSuccessorProgramBank, row->QueueFiling().queueSuccessorPrograms.first);
     const auto* secondSuccessor = engine->FindQueueProgramMember(
-        row->queueSuccessorProgramBank, row->queueSuccessorPrograms.first + 1u);
+        row->QueueFiling().queueSuccessorProgramBank, row->QueueFiling().queueSuccessorPrograms.first + 1u);
     ASSERT_NE(nullptr, firstSuccessor);
     ASSERT_NE(nullptr, secondSuccessor);
     EXPECT_EQ(CanonicalActionWorld::kFirstSound, firstSuccessor->leaf.stableId);
@@ -58884,8 +58889,8 @@ TEST(ActionFiringApi,
         });
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_TRUE(row->queueContinuationPrepared);
-    ASSERT_EQ(0u, row->queueSuccessorScheduleLeafCount);
-    ASSERT_TRUE(row->queueSuccessorHasZeroWorkCompletion);
+    ASSERT_EQ(0u, row->QueueFiling().queueSuccessorScheduleLeafCount);
+    ASSERT_TRUE(row->QueueFiling().queueSuccessorHasZeroWorkCompletion);
     const VnVoiceHandle oldSuccessor = row->queueSuccessorRenderHandle;
     ASSERT_NE(0u, oldSuccessor);
 
@@ -58895,11 +58900,11 @@ TEST(ActionFiringApi,
     VnActionFiringHandle firing = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
     EXPECT_TRUE(row->queueContinuationPrepared);
-    EXPECT_FALSE(row->queueSameProgramKey);
-    ASSERT_EQ(0u, row->queueSuccessorScheduleLeafCount);
-    ASSERT_TRUE(row->queueSuccessorHasZeroWorkCompletion);
+    EXPECT_FALSE(row->QueueFiling().queueSameProgramKey);
+    ASSERT_EQ(0u, row->QueueFiling().queueSuccessorScheduleLeafCount);
+    ASSERT_TRUE(row->QueueFiling().queueSuccessorHasZeroWorkCompletion);
     const std::uint64_t expectedBoundary =
-        row->queueSuccessorZeroWorkCompletionFrame;
+        row->QueueFiling().queueSuccessorZeroWorkCompletionFrame;
     EXPECT_EQ(row->queueCompletionFrame + 4800u, expectedBoundary);
     const VnVoiceHandle newSuccessor = row->queueSuccessorRenderHandle;
     EXPECT_NE(0u, newSuccessor);
@@ -58914,8 +58919,8 @@ TEST(ActionFiringApi,
     }
     ASSERT_TRUE(promoted);
     EXPECT_EQ(expectedBoundary, row->zeroWorkCompletionFrame);
-    EXPECT_FALSE(row->queueSuccessorHasZeroWorkCompletion);
-    EXPECT_EQ(0u, row->queueSuccessorZeroWorkCompletionFrame);
+    EXPECT_FALSE(row->QueueFiling().queueSuccessorHasZeroWorkCompletion);
+    EXPECT_EQ(0u, row->QueueFiling().queueSuccessorZeroWorkCompletionFrame);
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
 }
 
@@ -58998,9 +59003,9 @@ TEST(ActionFiringApi,
         });
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_TRUE(row->queueContinuationPrepared);
-    ASSERT_EQ(0u, row->queueSuccessorScheduleLeafCount);
-    ASSERT_TRUE(row->queueSuccessorHasZeroWorkCompletion);
-    ASSERT_FALSE(row->queueSuccessorArm.Valid());
+    ASSERT_EQ(0u, row->QueueFiling().queueSuccessorScheduleLeafCount);
+    ASSERT_TRUE(row->QueueFiling().queueSuccessorHasZeroWorkCompletion);
+    ASSERT_FALSE(row->QueueFiling().queueSuccessorArm.Valid());
     ASSERT_EQ(0u, row->queueSuccessorRenderHandle);
 
     VnPostActionDesc desc = ValidPostDesc();
@@ -59009,13 +59014,13 @@ TEST(ActionFiringApi,
     VnActionFiringHandle firing = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
     EXPECT_TRUE(row->queueContinuationPrepared);
-    EXPECT_FALSE(row->queueSameProgramKey);
-    ASSERT_EQ(0u, row->queueSuccessorScheduleLeafCount);
-    ASSERT_TRUE(row->queueSuccessorHasZeroWorkCompletion);
-    EXPECT_FALSE(row->queueSuccessorArm.Valid());
+    EXPECT_FALSE(row->QueueFiling().queueSameProgramKey);
+    ASSERT_EQ(0u, row->QueueFiling().queueSuccessorScheduleLeafCount);
+    ASSERT_TRUE(row->QueueFiling().queueSuccessorHasZeroWorkCompletion);
+    EXPECT_FALSE(row->QueueFiling().queueSuccessorArm.Valid());
     EXPECT_EQ(0u, row->queueSuccessorRenderHandle);
     const std::uint64_t expectedBoundary =
-        row->queueSuccessorZeroWorkCompletionFrame;
+        row->QueueFiling().queueSuccessorZeroWorkCompletionFrame;
     EXPECT_EQ(row->queueCompletionFrame + 960u, expectedBoundary);
 
     bool promoted = false;
@@ -59027,8 +59032,8 @@ TEST(ActionFiringApi,
     }
     ASSERT_TRUE(promoted);
     EXPECT_EQ(expectedBoundary, row->zeroWorkCompletionFrame);
-    EXPECT_FALSE(row->queueSuccessorHasZeroWorkCompletion);
-    EXPECT_EQ(0u, row->queueSuccessorZeroWorkCompletionFrame);
+    EXPECT_FALSE(row->QueueFiling().queueSuccessorHasZeroWorkCompletion);
+    EXPECT_EQ(0u, row->QueueFiling().queueSuccessorZeroWorkCompletionFrame);
     EXPECT_FALSE(engine->runtimeRecreateRequired);
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
 }
@@ -59104,7 +59109,7 @@ TEST(ActionFiringApi,
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_EQ(CanonicalActionWorld::kSecondSound,
               row->queueCurrentCompletion.program.stableId);
-    ASSERT_EQ(2u, row->queueSuccessorScheduleLeafCount);
+    ASSERT_EQ(2u, row->QueueFiling().queueSuccessorScheduleLeafCount);
     const VnVoiceHandle current = row->renderHandle;
     ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 0));
     ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 1));
@@ -59118,9 +59123,9 @@ TEST(ActionFiringApi,
     VnActionFiringHandle firing = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
     EXPECT_EQ(current, row->renderHandle);
-    EXPECT_FALSE(row->queueSameProgramKey);
-    ASSERT_EQ(2u, row->queueSuccessorScheduleLeafCount);
-    EXPECT_TRUE(row->queueSuccessorCompositeOwner.Valid());
+    EXPECT_FALSE(row->QueueFiling().queueSameProgramKey);
+    ASSERT_EQ(2u, row->QueueFiling().queueSuccessorScheduleLeafCount);
+    EXPECT_TRUE(row->QueueFiling().queueSuccessorCompositeOwner.Valid());
     ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 0));
     ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 1));
     EXPECT_NE(oldSuccessors[0],
@@ -59128,9 +59133,9 @@ TEST(ActionFiringApi,
     EXPECT_NE(oldSuccessors[1],
               engine->FindQueueSuccessorMember(*row, 1)->render);
     const auto* firstSuccessor = engine->FindQueueProgramMember(
-        row->queueSuccessorProgramBank, row->queueSuccessorPrograms.first);
+        row->QueueFiling().queueSuccessorProgramBank, row->QueueFiling().queueSuccessorPrograms.first);
     const auto* secondSuccessor = engine->FindQueueProgramMember(
-        row->queueSuccessorProgramBank, row->queueSuccessorPrograms.first + 1u);
+        row->QueueFiling().queueSuccessorProgramBank, row->QueueFiling().queueSuccessorPrograms.first + 1u);
     ASSERT_NE(nullptr, firstSuccessor);
     ASSERT_NE(nullptr, secondSuccessor);
     EXPECT_EQ(CanonicalActionWorld::kFirstSound, firstSuccessor->leaf.stableId);
@@ -59209,10 +59214,10 @@ TEST(ActionFiringApi,
             return candidate.rootInstance == started.instance;
         });
     ASSERT_NE(engine->playableServices.end(), row);
-    ASSERT_TRUE(row->queueTransition.Valid());
+    ASSERT_TRUE(row->QueueFiling().queueTransition.Valid());
     const VnVoiceHandle current = row->renderHandle;
     const harken::TransitionInstanceToken oldTransition =
-        row->queueTransition;
+        row->QueueFiling().queueTransition;
 
     VnPostActionDesc desc = ValidPostDesc();
     desc.actionId = harkentest::ObjectId(49);
@@ -59220,14 +59225,14 @@ TEST(ActionFiringApi,
     VnActionFiringHandle firing = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
     EXPECT_EQ(current, row->renderHandle);
-    ASSERT_TRUE(row->queueTransition.Valid());
-    EXPECT_TRUE(oldTransition.slot != row->queueTransition.slot ||
+    ASSERT_TRUE(row->QueueFiling().queueTransition.Valid());
+    EXPECT_TRUE(oldTransition.slot != row->QueueFiling().queueTransition.slot ||
                 oldTransition.generation !=
-                    row->queueTransition.generation);
-    EXPECT_EQ(2u, row->queueTransitionGroupArmCount);
-    ASSERT_EQ(2u, row->queueSuccessorScheduleLeafCount);
-    auto* const bank = row->queueSuccessorProgramBank;
-    const auto programs = row->queueSuccessorPrograms.Resolve(bank);
+                    row->QueueFiling().queueTransition.generation);
+    EXPECT_EQ(2u, row->QueueFiling().queueTransitionGroupArmCount);
+    ASSERT_EQ(2u, row->QueueFiling().queueSuccessorScheduleLeafCount);
+    auto* const bank = row->QueueFiling().queueSuccessorProgramBank;
+    const auto programs = row->QueueFiling().queueSuccessorPrograms.Resolve(bank);
     ASSERT_EQ(2u, programs.size());
     ASSERT_NE(nullptr, programs[0].runtimeProgram.program);
     ASSERT_EQ(2u, programs[0].runtimeProgram.program->payloadCount);
@@ -59254,9 +59259,9 @@ TEST(ActionFiringApi,
                   payloads[1].envelopeDirection);
         EXPECT_EQ(stableCurve,
                   payloads[1].envelopeCurve);
-        EXPECT_EQ(row->queueTransitionGroupArms[leafIndex].slot,
+        EXPECT_EQ(row->QueueFiling().queueTransitionGroupArms[leafIndex].slot,
                   program.events[0].armToken.slot);
-        EXPECT_EQ(row->queueTransitionGroupArms[leafIndex].slot,
+        EXPECT_EQ(row->QueueFiling().queueTransitionGroupArms[leafIndex].slot,
                   program.events[1].armToken.slot);
     }
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
@@ -59280,16 +59285,16 @@ void CheckQueueResetPreparationAcrossDue(bool attach) {
     auto* row = StartCanonicalQueueForActionReset(engine, image, emitter);
     ASSERT_NE(nullptr, row);
     const auto root = row->rootInstance;
-    for (unsigned block = 0; block < 8 && !row->queueDecisionCommitted; ++block) {
+    for (unsigned block = 0; block < 8 && !row->QueueFiling().queueDecisionCommitted; ++block) {
         engine.nullBackend.Pump(1);
         ASSERT_EQ(VN_OK, Vn_Update());
     }
-    ASSERT_TRUE(row->queueDecisionCommitted);
-    auto* const old = row->queueSuccessorProgramBank;
+    ASSERT_TRUE(row->QueueFiling().queueDecisionCommitted);
+    auto* const old = row->QueueFiling().queueSuccessorProgramBank;
     ASSERT_NE(nullptr, old);
     ASSERT_TRUE(old->continuationLane.Published());
-    const auto decision = row->queueDecision;
-    const auto version = row->queueConditional;
+    const auto decision = row->QueueFiling().queueDecision;
+    const auto version = row->QueueFiling().queueConditional;
     const auto due = row->queueCompletionFrame / engine.config.blockFrames;
     ASSERT_LT(engine.mixer.BlocksRendered(), due);
     harken::QueueInstanceTable::PreparedCatalogResetScope scope;
@@ -59402,13 +59407,13 @@ void CheckMixedQueueResetOldAudioWins(bool ordinaryFirst) {
     ASSERT_EQ(CanonicalActionWorld::kSecondSound, native->leaf.stableId);
     ASSERT_NE(nullptr, engine.OriginalQueueConditionalForService(*native));
     ASSERT_FALSE(native->queuePreparedPages.Valid());
-    ASSERT_NE(nullptr, ordinary->queueSuccessorProgramBank);
-    const auto& ordinaryLane = ordinary->queueSuccessorProgramBank->continuationLane;
+    ASSERT_NE(nullptr, ordinary->QueueFiling().queueSuccessorProgramBank);
+    const auto& ordinaryLane = ordinary->QueueFiling().queueSuccessorProgramBank->continuationLane;
     ASSERT_TRUE(ordinaryLane.Active());
     ASSERT_TRUE(ordinaryLane.Published());
     ASSERT_TRUE(ordinaryLane.Replaceable());
-    const auto ordinaryDecision = ordinary->queueDecision;
-    const auto nativeDecision = native->queueDecision;
+    const auto ordinaryDecision = ordinary->QueueFiling().queueDecision;
+    const auto nativeDecision = native->QueueFiling().queueDecision;
     const auto ordinaryDue = ordinary->queueCompletionFrame / engine.config.blockFrames;
     const auto nativeDue = native->queueCompletionFrame / engine.config.blockFrames;
     ASSERT_EQ(ordinaryFirst, ordinaryDue < nativeDue);
@@ -59548,18 +59553,18 @@ TEST(ActionFiringApi,
             return candidate.rootInstance == started.instance;
         });
     ASSERT_NE(engine->playableServices.end(), row);
-    ASSERT_TRUE(row->queueTransition.Valid());
-    ASSERT_EQ(1u, row->queueSourceControlArmCount);
-    ASSERT_EQ(2u, row->queueTransitionGroupArmCount);
+    ASSERT_TRUE(row->QueueFiling().queueTransition.Valid());
+    ASSERT_EQ(1u, row->QueueFiling().queueSourceControlArmCount);
+    ASSERT_EQ(2u, row->QueueFiling().queueTransitionGroupArmCount);
     const std::uint64_t sourceFrame =
-        row->queueSourceSchedule.entryAnchorFrame;
+        row->QueueFiling().queueSourceSchedule.entryAnchorFrame;
     const std::uint64_t targetFrame = row->queueCompletionFrame;
     ASSERT_LT(sourceFrame, targetFrame);
     const VnVoiceHandle current = row->renderHandle;
     const VnVoiceHandle oldSuccessor =
         row->queueSuccessorRenderHandle;
     const harken::TransitionInstanceToken oldTransition =
-        row->queueTransition;
+        row->QueueFiling().queueTransition;
 
     VnPostActionDesc desc = ValidPostDesc();
     desc.actionId = harkentest::ObjectId(49);
@@ -59569,14 +59574,14 @@ TEST(ActionFiringApi,
     EXPECT_EQ(current, row->renderHandle);
     EXPECT_NE(nullptr, engine->voices.Resolve(current));
     EXPECT_NE(oldSuccessor, row->queueSuccessorRenderHandle);
-    ASSERT_TRUE(row->queueTransition.Valid());
-    EXPECT_TRUE(oldTransition.slot != row->queueTransition.slot ||
+    ASSERT_TRUE(row->QueueFiling().queueTransition.Valid());
+    EXPECT_TRUE(oldTransition.slot != row->QueueFiling().queueTransition.slot ||
                 oldTransition.generation !=
-                    row->queueTransition.generation);
-    EXPECT_EQ(1u, row->queueSourceControlArmCount);
-    EXPECT_EQ(2u, row->queueTransitionGroupArmCount);
-    EXPECT_EQ(sourceFrame, row->queueSourceSchedule.entryAnchorFrame);
-    ASSERT_EQ(1u, row->queueSourceSchedule.eventCount);
+                    row->QueueFiling().queueTransition.generation);
+    EXPECT_EQ(1u, row->QueueFiling().queueSourceControlArmCount);
+    EXPECT_EQ(2u, row->QueueFiling().queueTransitionGroupArmCount);
+    EXPECT_EQ(sourceFrame, row->QueueFiling().queueSourceSchedule.entryAnchorFrame);
+    ASSERT_EQ(1u, row->QueueFiling().queueSourceSchedule.eventCount);
     EXPECT_EQ(harken::TimelineEventKind::Envelope,
               row->queueSourcePayloads[0].kind);
     EXPECT_EQ(harken::TimelineEnvelopeDirection::FadeOut,
@@ -59584,7 +59589,7 @@ TEST(ActionFiringApi,
     ASSERT_NE(nullptr, row->queueSourcePayloads[0].envelopeCurve);
     harken::CurveLUT expectedSourceCurve{};
     expectedSourceCurve.Bake(image.transitionCurves[0].curve);
-    const auto* bank = row->queueSuccessorProgramBank;
+    const auto* bank = row->QueueFiling().queueSuccessorProgramBank;
     ASSERT_NE(nullptr, bank);
     ASSERT_NE(bank->curves.begin() + bank->curveCount,
         std::find_if(bank->curves.begin(), bank->curves.begin() + bank->curveCount,
@@ -59600,7 +59605,7 @@ TEST(ActionFiringApi,
         const harken::HorizonPageHeader* header =
             engine->timelinePool.Page(page);
         ASSERT_NE(nullptr, header);
-        const auto slice = harkentest::QueueContinuationSlice(*engine, row->queueDecision, index);
+        const auto slice = harkentest::QueueContinuationSlice(*engine, row->QueueFiling().queueDecision, index);
         harken::Plan03PageGroupView group{};
         ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
             slice, &group));
@@ -59681,12 +59686,12 @@ TEST(ActionFiringApi,
             return candidate.rootInstance == started.instance;
         });
     ASSERT_NE(engine->playableServices.end(), row);
-    ASSERT_EQ(1u, row->queueSourceControlArmCount);
-    ASSERT_EQ(3u, row->queueTransitionGroupArmCount);
-    ASSERT_EQ(2u, row->queueSuccessorScheduleLeafCount);
+    ASSERT_EQ(1u, row->QueueFiling().queueSourceControlArmCount);
+    ASSERT_EQ(3u, row->QueueFiling().queueTransitionGroupArmCount);
+    ASSERT_EQ(2u, row->QueueFiling().queueSuccessorScheduleLeafCount);
     const VnVoiceHandle current = row->renderHandle;
     const std::uint64_t sourceFrame =
-        row->queueSourceSchedule.entryAnchorFrame;
+        row->QueueFiling().queueSourceSchedule.entryAnchorFrame;
     const std::uint64_t targetFrame = row->queueCompletionFrame;
     ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 0));
     ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 1));
@@ -59700,22 +59705,22 @@ TEST(ActionFiringApi,
     VnActionFiringHandle firing = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
     EXPECT_EQ(current, row->renderHandle);
-    EXPECT_EQ(1u, row->queueSourceControlArmCount);
-    EXPECT_EQ(3u, row->queueTransitionGroupArmCount);
-    ASSERT_EQ(2u, row->queueSuccessorScheduleLeafCount);
-    EXPECT_TRUE(row->queueSuccessorCompositeOwner.Valid());
+    EXPECT_EQ(1u, row->QueueFiling().queueSourceControlArmCount);
+    EXPECT_EQ(3u, row->QueueFiling().queueTransitionGroupArmCount);
+    ASSERT_EQ(2u, row->QueueFiling().queueSuccessorScheduleLeafCount);
+    EXPECT_TRUE(row->QueueFiling().queueSuccessorCompositeOwner.Valid());
     ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 0));
     ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 1));
     EXPECT_NE(oldSuccessors[0],
               engine->FindQueueSuccessorMember(*row, 0)->render);
     EXPECT_NE(oldSuccessors[1],
               engine->FindQueueSuccessorMember(*row, 1)->render);
-    EXPECT_EQ(sourceFrame, row->queueSourceSchedule.entryAnchorFrame);
-    ASSERT_EQ(1u, row->queueSourceSchedule.eventCount);
+    EXPECT_EQ(sourceFrame, row->QueueFiling().queueSourceSchedule.entryAnchorFrame);
+    ASSERT_EQ(1u, row->QueueFiling().queueSourceSchedule.eventCount);
     EXPECT_EQ(harken::TimelineEnvelopeDirection::FadeOut,
               row->queueSourcePayloads[0].envelopeDirection);
-    auto* const bank = row->queueSuccessorProgramBank;
-    const auto programs = row->queueSuccessorPrograms.Resolve(bank);
+    auto* const bank = row->QueueFiling().queueSuccessorProgramBank;
+    const auto programs = row->QueueFiling().queueSuccessorPrograms.Resolve(bank);
     ASSERT_EQ(2u, programs.size());
     const harken::CurveLUT* targetCurve = nullptr;
     harken::CurveLUT expectedTargetCurve{};
@@ -59741,7 +59746,7 @@ TEST(ActionFiringApi,
         const harken::HorizonPageHeader* header =
             engine->timelinePool.Page(page);
         ASSERT_NE(nullptr, header);
-        const auto slice = harkentest::QueueContinuationSlice(*engine, row->queueDecision, index);
+        const auto slice = harkentest::QueueContinuationSlice(*engine, row->QueueFiling().queueDecision, index);
         harken::Plan03PageGroupView group{};
         ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
             slice, &group));
@@ -59825,18 +59830,18 @@ TEST(ActionFiringApi,
             return candidate.rootInstance == started.instance;
         });
     ASSERT_NE(engine->playableServices.end(), row);
-    ASSERT_EQ(1u, row->queueSourceControlArmCount);
-    ASSERT_EQ(3u, row->queueTransitionGroupArmCount);
-    ASSERT_EQ(2u, row->queueSuccessorScheduleLeafCount);
+    ASSERT_EQ(1u, row->QueueFiling().queueSourceControlArmCount);
+    ASSERT_EQ(3u, row->QueueFiling().queueTransitionGroupArmCount);
+    ASSERT_EQ(2u, row->QueueFiling().queueSuccessorScheduleLeafCount);
     const VnVoiceHandle current = row->renderHandle;
-    const harken::DecisionToken decision = row->queueDecision;
+    const harken::DecisionToken decision = row->QueueFiling().queueDecision;
     const harken::ConditionalQueueVersionToken conditional =
-        row->queueConditional;
+        row->QueueFiling().queueConditional;
     const harken::TransitionInstanceToken transition =
-        row->queueTransition;
+        row->QueueFiling().queueTransition;
     const harken::CompositeCompletionOwnerToken composite =
-        row->queueSuccessorCompositeOwner;
-    const auto groupArms = row->queueTransitionGroupArms.Snapshot();
+        row->QueueFiling().queueSuccessorCompositeOwner;
+    const auto groupArms = row->QueueFiling().queueTransitionGroupArms.Snapshot();
     ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 0));
     ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 1));
     const std::array<VnVoiceHandle, 2> successors = {
@@ -59872,21 +59877,21 @@ TEST(ActionFiringApi,
     EXPECT_EQ(VN_VARIABLE_EMITTER_SLOT_EXHAUSTED, Vn_PostAction(&desc, &firing));
     EXPECT_EQ(0u, firing);
     EXPECT_EQ(current, row->renderHandle);
-    EXPECT_EQ(decision.slot, row->queueDecision.slot);
-    EXPECT_EQ(decision.generation, row->queueDecision.generation);
-    EXPECT_EQ(conditional.version, row->queueConditional.version);
-    EXPECT_EQ(transition.slot, row->queueTransition.slot);
-    EXPECT_EQ(transition.generation, row->queueTransition.generation);
-    EXPECT_EQ(composite.slot, row->queueSuccessorCompositeOwner.slot);
+    EXPECT_EQ(decision.slot, row->QueueFiling().queueDecision.slot);
+    EXPECT_EQ(decision.generation, row->QueueFiling().queueDecision.generation);
+    EXPECT_EQ(conditional.version, row->QueueFiling().queueConditional.version);
+    EXPECT_EQ(transition.slot, row->QueueFiling().queueTransition.slot);
+    EXPECT_EQ(transition.generation, row->QueueFiling().queueTransition.generation);
+    EXPECT_EQ(composite.slot, row->QueueFiling().queueSuccessorCompositeOwner.slot);
     EXPECT_EQ(composite.generation,
-              row->queueSuccessorCompositeOwner.generation);
-    EXPECT_EQ(1u, row->queueSourceControlArmCount);
-    EXPECT_EQ(3u, row->queueTransitionGroupArmCount);
+              row->QueueFiling().queueSuccessorCompositeOwner.generation);
+    EXPECT_EQ(1u, row->QueueFiling().queueSourceControlArmCount);
+    EXPECT_EQ(3u, row->QueueFiling().queueTransitionGroupArmCount);
     for (std::uint32_t index = 0; index < 3; ++index) {
         EXPECT_EQ(groupArms[index].slot,
-                  row->queueTransitionGroupArms[index].slot);
+                  row->QueueFiling().queueTransitionGroupArms[index].slot);
         EXPECT_EQ(groupArms[index].generation,
-                  row->queueTransitionGroupArms[index].generation);
+                  row->QueueFiling().queueTransitionGroupArms[index].generation);
     }
     ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 0));
     ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 1));
@@ -59995,9 +60000,9 @@ TEST(ActionFiringApi,
 
     const VnVoiceHandle current = row->renderHandle;
     const VnVoiceHandle successor = row->queueSuccessorRenderHandle;
-    const harken::DecisionToken decision = row->queueDecision;
+    const harken::DecisionToken decision = row->QueueFiling().queueDecision;
     const harken::ConditionalQueueVersionToken conditional =
-        row->queueConditional;
+        row->QueueFiling().queueConditional;
     const harken::EffectiveQueueState next = row->QueueNextState();
     const std::uint32_t activeVoicesBefore = engine->voices.ActiveCount();
     const std::uint32_t voiceHighWaterBefore =
@@ -60027,9 +60032,9 @@ TEST(ActionFiringApi,
     EXPECT_EQ(0u, firing);
     EXPECT_EQ(current, row->renderHandle);
     EXPECT_EQ(successor, row->queueSuccessorRenderHandle);
-    EXPECT_EQ(decision.slot, row->queueDecision.slot);
-    EXPECT_EQ(decision.generation, row->queueDecision.generation);
-    EXPECT_EQ(conditional.version, row->queueConditional.version);
+    EXPECT_EQ(decision.slot, row->QueueFiling().queueDecision.slot);
+    EXPECT_EQ(decision.generation, row->QueueFiling().queueDecision.generation);
+    EXPECT_EQ(conditional.version, row->QueueFiling().queueConditional.version);
     EXPECT_EQ(next.version, row->QueueNextState().version);
     EXPECT_EQ(next.currentChildOrdinal,
               row->QueueNextState().currentChildOrdinal);
@@ -60121,11 +60126,11 @@ TEST(ActionFiringApi,
         });
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_TRUE(row->queueContinuationPrepared);
-    ASSERT_TRUE(row->queueTransition.Valid());
+    ASSERT_TRUE(row->QueueFiling().queueTransition.Valid());
     const VnVoiceHandle current = row->renderHandle;
     const VnVoiceHandle oldSuccessor = row->queueSuccessorRenderHandle;
     const harken::TransitionInstanceToken oldTransition =
-        row->queueTransition;
+        row->QueueFiling().queueTransition;
 
     VnPostActionDesc desc = ValidPostDesc();
     desc.actionId = harkentest::ObjectId(49);
@@ -60133,16 +60138,16 @@ TEST(ActionFiringApi,
     VnActionFiringHandle firing = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
     EXPECT_EQ(current, row->renderHandle);
-    EXPECT_FALSE(row->queueSameProgramKey);
+    EXPECT_FALSE(row->QueueFiling().queueSameProgramKey);
     EXPECT_NE(oldSuccessor, row->queueSuccessorRenderHandle);
-    ASSERT_TRUE(row->queueTransition.Valid());
-    EXPECT_TRUE(row->queueTransition.slot != oldTransition.slot ||
-                row->queueTransition.generation !=
+    ASSERT_TRUE(row->QueueFiling().queueTransition.Valid());
+    EXPECT_TRUE(row->QueueFiling().queueTransition.slot != oldTransition.slot ||
+                row->QueueFiling().queueTransition.generation !=
                     oldTransition.generation);
-    EXPECT_EQ(0u, row->queueSourceControlArmCount);
-    EXPECT_EQ(1u, row->queueTransitionGroupArmCount);
+    EXPECT_EQ(0u, row->QueueFiling().queueSourceControlArmCount);
+    EXPECT_EQ(1u, row->QueueFiling().queueTransitionGroupArmCount);
     const harken::TimelineProgramView& successorRuntime =
-        row->queueSuccessorProgramPlane == 0
+        row->QueueFiling().queueSuccessorProgramPlane == 0
             ? row->runtimeProgram
             : row->queueSuccessorRuntimeProgram;
     ASSERT_EQ(2u, successorRuntime.payloadCount);
@@ -60157,7 +60162,7 @@ TEST(ActionFiringApi,
     EXPECT_NE(nullptr, successorRuntime.payloads[1].envelopeCurve);
     harken::TransitionInstanceSnapshot replacementTransition{};
     ASSERT_TRUE(engine->transitionInstances.Capture(
-        row->queueTransition, &replacementTransition));
+        row->QueueFiling().queueTransition, &replacementTransition));
     EXPECT_EQ(harken::TransitionAudibleGateState::Replaceable,
               replacementTransition.state);
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
@@ -60210,16 +60215,16 @@ TEST(ActionFiringApi,
         });
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_TRUE(row->queueContinuationPrepared);
-    ASSERT_TRUE(row->queueTransition.Valid());
-    ASSERT_EQ(0u, row->queueSourceControlArmCount);
-    ASSERT_EQ(1u, row->queueTransitionGroupArmCount);
+    ASSERT_TRUE(row->QueueFiling().queueTransition.Valid());
+    ASSERT_EQ(0u, row->QueueFiling().queueSourceControlArmCount);
+    ASSERT_EQ(1u, row->QueueFiling().queueTransitionGroupArmCount);
     const VnVoiceHandle current = row->renderHandle;
     const VnVoiceHandle oldSuccessor = row->queueSuccessorRenderHandle;
     const harken::TimelineArmToken oldSuccessorArm =
-        row->queueSuccessorArm;
-    const harken::DecisionToken oldDecision = row->queueDecision;
+        row->QueueFiling().queueSuccessorArm;
+    const harken::DecisionToken oldDecision = row->QueueFiling().queueDecision;
     const harken::TransitionInstanceToken oldTransition =
-        row->queueTransition;
+        row->QueueFiling().queueTransition;
     harken::TransitionInstanceSnapshot transitionBefore{};
     ASSERT_TRUE(engine->transitionInstances.Capture(
         oldTransition, &transitionBefore));
@@ -60237,14 +60242,14 @@ TEST(ActionFiringApi,
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
     EXPECT_EQ(current, row->renderHandle);
     EXPECT_NE(nullptr, engine->voices.Resolve(current));
-    EXPECT_FALSE(row->queueSameProgramKey);
-    EXPECT_TRUE(row->queueTransition.Valid());
+    EXPECT_FALSE(row->QueueFiling().queueSameProgramKey);
+    EXPECT_TRUE(row->QueueFiling().queueTransition.Valid());
     ExpectEffectiveQueueState(expectedReset, row->QueueNextState());
     EXPECT_EQ(originalBoundary, row->queueCompletionFrame);
     EXPECT_NE(current, row->queueSuccessorRenderHandle);
     EXPECT_NE(oldSuccessor, row->queueSuccessorRenderHandle);
     const auto* successorMember = engine->FindQueueProgramMember(
-        row->queueSuccessorProgramBank, row->queueSuccessorPrograms.first);
+        row->QueueFiling().queueSuccessorProgramBank, row->QueueFiling().queueSuccessorPrograms.first);
     ASSERT_NE(nullptr, successorMember);
     const auto& successorVoice = successorMember->voice;
     ASSERT_TRUE(successorVoice.Valid());
@@ -60265,14 +60270,14 @@ TEST(ActionFiringApi,
     harken::DecisionCommittedSnapshot oldSnapshot{};
     EXPECT_FALSE(engine->decisions.CaptureCommitted(
         oldDecision, &oldSnapshot));
-    const auto replacementSlice = harkentest::QueueContinuationSlice(*engine, row->queueDecision, 0);
+    const auto replacementSlice = harkentest::QueueContinuationSlice(*engine, row->QueueFiling().queueDecision, 0);
     harken::Plan03PageGroupView replacementGroup{};
     ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
         replacementSlice, &replacementGroup));
     EXPECT_EQ(0u, replacementGroup.sourceControlCount);
     ASSERT_EQ(1u, replacementGroup.memberCount);
-    EXPECT_EQ(row->queueSuccessorArm.slot, replacementGroup.members[0].slot);
-    EXPECT_EQ(row->queueSuccessorArm.generation, replacementGroup.members[0].generation);
+    EXPECT_EQ(row->QueueFiling().queueSuccessorArm.slot, replacementGroup.members[0].slot);
+    EXPECT_EQ(row->QueueFiling().queueSuccessorArm.generation, replacementGroup.members[0].generation);
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
 }
 
@@ -60328,14 +60333,14 @@ TEST(ActionFiringApi,
         });
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_TRUE(row->queueContinuationPrepared);
-    ASSERT_TRUE(row->queueTransition.Valid());
-    ASSERT_EQ(0u, row->queueSourceControlArmCount);
-    ASSERT_EQ(2u, row->queueTransitionGroupArmCount);
-    ASSERT_EQ(2u, row->queueSuccessorScheduleLeafCount);
+    ASSERT_TRUE(row->QueueFiling().queueTransition.Valid());
+    ASSERT_EQ(0u, row->QueueFiling().queueSourceControlArmCount);
+    ASSERT_EQ(2u, row->QueueFiling().queueTransitionGroupArmCount);
+    ASSERT_EQ(2u, row->QueueFiling().queueSuccessorScheduleLeafCount);
     const VnVoiceHandle current = row->renderHandle;
     const harken::TransitionInstanceToken oldTransition =
-        row->queueTransition;
-    const std::uint32_t oldScheduleBase = row->queueSuccessorScheduleBase;
+        row->QueueFiling().queueTransition;
+    const std::uint32_t oldScheduleBase = row->QueueFiling().queueSuccessorScheduleBase;
     ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 0));
     ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 1));
     const std::array<VnVoiceHandle, 2> oldTargets = {
@@ -60344,10 +60349,10 @@ TEST(ActionFiringApi,
     ASSERT_NE(0u, oldTargets[0]);
     ASSERT_NE(0u, oldTargets[1]);
     ASSERT_NE(oldTargets[0], oldTargets[1]);
-    auto* const oldBank = row->queueSuccessorProgramBank;
+    auto* const oldBank = row->QueueFiling().queueSuccessorProgramBank;
     ASSERT_NE(nullptr, oldBank);
     const auto oldBody = std::make_unique<harken::EngineQueueProgramBankBody>(*oldBank);
-    const auto oldArms = row->queueTransitionGroupArms.Snapshot();
+    const auto oldArms = row->QueueFiling().queueTransitionGroupArms.Snapshot();
     harken::EffectiveQueueState expectedReset{};
     ASSERT_NO_FATAL_FAILURE(CaptureCanonicalResetProjection(*engine, *row, image, &expectedReset));
     const auto originalBoundary = row->queueCompletionFrame;
@@ -60359,8 +60364,8 @@ TEST(ActionFiringApi,
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
     EXPECT_EQ(current, row->renderHandle);
     EXPECT_NE(nullptr, engine->voices.Resolve(current));
-    EXPECT_FALSE(row->queueSameProgramKey);
-    EXPECT_TRUE(row->queueTransition.Valid());
+    EXPECT_FALSE(row->QueueFiling().queueSameProgramKey);
+    EXPECT_TRUE(row->QueueFiling().queueTransition.Valid());
     ExpectEffectiveQueueState(expectedReset, row->QueueNextState());
     EXPECT_EQ(originalBoundary, row->queueCompletionFrame);
     EXPECT_EQ(oldTransition.slot, row->queueArrivalTransition.slot);
@@ -60380,15 +60385,15 @@ TEST(ActionFiringApi,
         ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, index));
         EXPECT_NE(oldTargets[index], engine->FindQueueSuccessorMember(*row, index)->render);
     }
-    const auto replacementSlice = harkentest::QueueContinuationSlice(*engine, row->queueDecision, 0);
+    const auto replacementSlice = harkentest::QueueContinuationSlice(*engine, row->QueueFiling().queueDecision, 0);
     harken::Plan03PageGroupView replacementGroup{};
     ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
         replacementSlice, &replacementGroup));
     EXPECT_EQ(0u, replacementGroup.sourceControlCount);
     ASSERT_EQ(2u, replacementGroup.memberCount);
     for (std::uint16_t index = 0; index < replacementGroup.memberCount; ++index) {
-        EXPECT_EQ(row->queueTransitionGroupArms[index].slot, replacementGroup.members[index].slot);
-        EXPECT_EQ(row->queueTransitionGroupArms[index].generation, replacementGroup.members[index].generation);
+        EXPECT_EQ(row->QueueFiling().queueTransitionGroupArms[index].slot, replacementGroup.members[index].slot);
+        EXPECT_EQ(row->QueueFiling().queueTransitionGroupArms[index].generation, replacementGroup.members[index].generation);
     }
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
 }
@@ -60441,17 +60446,17 @@ TEST(ActionFiringApi,
         });
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_TRUE(row->queueContinuationPrepared);
-    ASSERT_TRUE(row->queueTransition.Valid());
-    ASSERT_EQ(1u, row->queueSourceControlArmCount);
-    ASSERT_EQ(3u, row->queueTransitionGroupArmCount);
-    ASSERT_EQ(2u, row->queueSuccessorScheduleLeafCount);
+    ASSERT_TRUE(row->QueueFiling().queueTransition.Valid());
+    ASSERT_EQ(1u, row->QueueFiling().queueSourceControlArmCount);
+    ASSERT_EQ(3u, row->QueueFiling().queueTransitionGroupArmCount);
+    ASSERT_EQ(2u, row->QueueFiling().queueSuccessorScheduleLeafCount);
     const std::uint64_t firstSliceFrame =
-        row->queueSourceSchedule.entryAnchorFrame;
+        row->QueueFiling().queueSourceSchedule.entryAnchorFrame;
     const std::uint64_t secondSliceFrame = row->queueCompletionFrame;
     ASSERT_LT(firstSliceFrame, secondSliceFrame);
     harken::EffectiveQueueState expectedReset{};
     ASSERT_NO_FATAL_FAILURE(CaptureCanonicalResetProjection(*engine, *row, image, &expectedReset));
-    auto* const oldBank = row->queueSuccessorProgramBank;
+    auto* const oldBank = row->QueueFiling().queueSuccessorProgramBank;
     ASSERT_NE(nullptr, oldBank);
     ASSERT_EQ(3u, oldBank->programCount);
     ASSERT_EQ(2u, oldBank->curveCount);
@@ -60468,11 +60473,11 @@ TEST(ActionFiringApi,
     for (auto& event : recycledColumns.events) event.frameOffsetFromEntry = 1;
     recycledLoan.Reset();
     const VnVoiceHandle current = row->renderHandle;
-    const harken::DecisionToken oldDecision = row->queueDecision;
+    const harken::DecisionToken oldDecision = row->QueueFiling().queueDecision;
     const harken::TransitionInstanceToken oldTransition =
-        row->queueTransition;
+        row->QueueFiling().queueTransition;
     const std::uint32_t oldScheduleBase =
-        row->queueSuccessorScheduleBase;
+        row->QueueFiling().queueSuccessorScheduleBase;
 
     VnPostActionDesc desc = ValidPostDesc();
     desc.actionId = harkentest::ObjectId(49);
@@ -60481,11 +60486,11 @@ TEST(ActionFiringApi,
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
     EXPECT_EQ(current, row->renderHandle);
     EXPECT_NE(nullptr, engine->voices.Resolve(current));
-    EXPECT_FALSE(row->queueSameProgramKey);
-    EXPECT_TRUE(row->queueTransition.Valid());
+    EXPECT_FALSE(row->QueueFiling().queueSameProgramKey);
+    EXPECT_TRUE(row->QueueFiling().queueTransition.Valid());
     ExpectEffectiveQueueState(expectedReset, row->QueueNextState());
     EXPECT_EQ(secondSliceFrame, row->queueCompletionFrame);
-    EXPECT_EQ(firstSliceFrame, row->queueSourceSchedule.entryAnchorFrame);
+    EXPECT_EQ(firstSliceFrame, row->QueueFiling().queueSourceSchedule.entryAnchorFrame);
     EXPECT_EQ(oldTransition.slot, row->queueArrivalTransition.slot);
     EXPECT_EQ(oldTransition.generation,
               row->queueArrivalTransition.generation);
@@ -60493,15 +60498,15 @@ TEST(ActionFiringApi,
     EXPECT_EQ(3u, row->queueArrivalTransitionGroupArmCount);
     EXPECT_EQ(oldScheduleBase, row->queueArrivalScheduleBase);
     EXPECT_EQ(2u, row->queueArrivalScheduleLeafCount);
-    EXPECT_EQ(1u, row->queueSourceControlArmCount);
-    EXPECT_EQ(3u, row->queueTransitionGroupArmCount);
-    EXPECT_TRUE(engine->decisions.IsOpen(row->queueDecision));
+    EXPECT_EQ(1u, row->QueueFiling().queueSourceControlArmCount);
+    EXPECT_EQ(3u, row->QueueFiling().queueTransitionGroupArmCount);
+    EXPECT_TRUE(engine->decisions.IsOpen(row->QueueFiling().queueDecision));
     ASSERT_EQ(VN_OK, Vn_Update());
     engine->nullBackend.Pump(1);
     ASSERT_EQ(VN_OK, Vn_Update());
     harken::DecisionCommittedSnapshot replacementDecision{};
     ASSERT_TRUE(engine->decisions.CaptureCommitted(
-        row->queueDecision, &replacementDecision));
+        row->QueueFiling().queueDecision, &replacementDecision));
     EXPECT_EQ(2u, replacementDecision.sliceCount);
     const std::array<std::uint64_t, 2> sliceFrames = {
         firstSliceFrame, secondSliceFrame};
@@ -60515,15 +60520,15 @@ TEST(ActionFiringApi,
         const harken::HorizonPageHeader* header =
             engine->timelinePool.Page(page);
         ASSERT_NE(nullptr, header);
-        const auto replacementSlice = harkentest::QueueContinuationSlice(*engine, row->queueDecision, index);
+        const auto replacementSlice = harkentest::QueueContinuationSlice(*engine, row->QueueFiling().queueDecision, index);
         harken::Plan03PageGroupView replacementGroup{};
         ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
             replacementSlice, &replacementGroup));
         EXPECT_EQ(1u, replacementGroup.sourceControlCount);
         ASSERT_EQ(3u, replacementGroup.memberCount);
         for (std::uint16_t member = 0; member < replacementGroup.memberCount; ++member) {
-            EXPECT_EQ(row->queueTransitionGroupArms[member].slot, replacementGroup.members[member].slot);
-            EXPECT_EQ(row->queueTransitionGroupArms[member].generation, replacementGroup.members[member].generation);
+            EXPECT_EQ(row->QueueFiling().queueTransitionGroupArms[member].slot, replacementGroup.members[member].slot);
+            EXPECT_EQ(row->QueueFiling().queueTransitionGroupArms[member].generation, replacementGroup.members[member].generation);
         }
     }
     harken::DecisionCommittedSnapshot oldSnapshot{};
@@ -60630,18 +60635,18 @@ TEST(ActionFiringApi,
             return candidate.rootInstance == started.instance;
         });
     ASSERT_NE(engine->playableServices.end(), row);
-    ASSERT_EQ(1u, row->queueSourceControlArmCount);
-    ASSERT_EQ(3u, row->queueTransitionGroupArmCount);
-    ASSERT_EQ(2u, row->queueSuccessorScheduleLeafCount);
+    ASSERT_EQ(1u, row->QueueFiling().queueSourceControlArmCount);
+    ASSERT_EQ(3u, row->QueueFiling().queueTransitionGroupArmCount);
+    ASSERT_EQ(2u, row->QueueFiling().queueSuccessorScheduleLeafCount);
     const VnVoiceHandle current = row->renderHandle;
-    const harken::DecisionToken decision = row->queueDecision;
+    const harken::DecisionToken decision = row->QueueFiling().queueDecision;
     const harken::ConditionalQueueVersionToken conditional =
-        row->queueConditional;
+        row->QueueFiling().queueConditional;
     const harken::TransitionInstanceToken transition =
-        row->queueTransition;
-    const auto groupArms = row->queueTransitionGroupArms.Snapshot();
+        row->QueueFiling().queueTransition;
+    const auto groupArms = row->QueueFiling().queueTransitionGroupArms.Snapshot();
     const std::uint64_t firstSliceFrame =
-        row->queueSourceSchedule.entryAnchorFrame;
+        row->QueueFiling().queueSourceSchedule.entryAnchorFrame;
     const std::uint64_t secondSliceFrame = row->queueCompletionFrame;
     harken::QueueInstanceSnapshot queueBefore{};
     ASSERT_TRUE(engine->queueInstances.Capture(row->queueInstance,
@@ -60668,19 +60673,19 @@ TEST(ActionFiringApi,
     EXPECT_EQ(VN_VARIABLE_EMITTER_SLOT_EXHAUSTED, Vn_PostAction(&desc, &firing));
     EXPECT_EQ(0u, firing);
     EXPECT_EQ(current, row->renderHandle);
-    EXPECT_EQ(decision.slot, row->queueDecision.slot);
-    EXPECT_EQ(decision.generation, row->queueDecision.generation);
-    EXPECT_EQ(conditional.version, row->queueConditional.version);
-    EXPECT_EQ(transition.slot, row->queueTransition.slot);
-    EXPECT_EQ(transition.generation, row->queueTransition.generation);
-    EXPECT_EQ(1u, row->queueSourceControlArmCount);
-    EXPECT_EQ(3u, row->queueTransitionGroupArmCount);
-    EXPECT_EQ(2u, row->queueSuccessorScheduleLeafCount);
+    EXPECT_EQ(decision.slot, row->QueueFiling().queueDecision.slot);
+    EXPECT_EQ(decision.generation, row->QueueFiling().queueDecision.generation);
+    EXPECT_EQ(conditional.version, row->QueueFiling().queueConditional.version);
+    EXPECT_EQ(transition.slot, row->QueueFiling().queueTransition.slot);
+    EXPECT_EQ(transition.generation, row->QueueFiling().queueTransition.generation);
+    EXPECT_EQ(1u, row->QueueFiling().queueSourceControlArmCount);
+    EXPECT_EQ(3u, row->QueueFiling().queueTransitionGroupArmCount);
+    EXPECT_EQ(2u, row->QueueFiling().queueSuccessorScheduleLeafCount);
     for (std::uint32_t index = 0; index < 3; ++index) {
         EXPECT_EQ(groupArms[index].slot,
-                  row->queueTransitionGroupArms[index].slot);
+                  row->QueueFiling().queueTransitionGroupArms[index].slot);
         EXPECT_EQ(groupArms[index].generation,
-                  row->queueTransitionGroupArms[index].generation);
+                  row->QueueFiling().queueTransitionGroupArms[index].generation);
     }
     harken::QueueInstanceSnapshot queueAfter{};
     ASSERT_TRUE(engine->queueInstances.Capture(row->queueInstance,
@@ -60795,9 +60800,9 @@ TEST(ActionFiringApi,
 
     const VnVoiceHandle current = row->renderHandle;
     const VnVoiceHandle successor = row->queueSuccessorRenderHandle;
-    const harken::DecisionToken decision = row->queueDecision;
+    const harken::DecisionToken decision = row->QueueFiling().queueDecision;
     const harken::ConditionalQueueVersionToken conditional =
-        row->queueConditional;
+        row->QueueFiling().queueConditional;
     const harken::EffectiveQueueState next = row->QueueNextState();
     harken::QueueInstanceSnapshot queueBefore{};
     ASSERT_TRUE(engine->queueInstances.Capture(row->queueInstance,
@@ -60831,9 +60836,9 @@ TEST(ActionFiringApi,
     EXPECT_EQ(0u, firing);
     EXPECT_EQ(current, row->renderHandle);
     EXPECT_EQ(successor, row->queueSuccessorRenderHandle);
-    EXPECT_EQ(decision.slot, row->queueDecision.slot);
-    EXPECT_EQ(decision.generation, row->queueDecision.generation);
-    EXPECT_EQ(conditional.version, row->queueConditional.version);
+    EXPECT_EQ(decision.slot, row->QueueFiling().queueDecision.slot);
+    EXPECT_EQ(decision.generation, row->QueueFiling().queueDecision.generation);
+    EXPECT_EQ(conditional.version, row->QueueFiling().queueConditional.version);
     EXPECT_EQ(next.version, row->QueueNextState().version);
     EXPECT_EQ(next.currentChildOrdinal,
               row->QueueNextState().currentChildOrdinal);
@@ -60932,10 +60937,10 @@ TEST(ActionFiringApi,
             return candidate.rootInstance == started.instance;
         });
     ASSERT_NE(engine->playableServices.end(), row);
-    ASSERT_TRUE(row->queueSameProgramKey);
-    const harken::DecisionToken decision = row->queueDecision;
+    ASSERT_TRUE(row->QueueFiling().queueSameProgramKey);
+    const harken::DecisionToken decision = row->QueueFiling().queueDecision;
     const harken::ConditionalQueueVersionToken conditional =
-        row->queueConditional;
+        row->QueueFiling().queueConditional;
     const auto sliceIdentity = harkentest::QueueContinuationSlice(*engine, decision, 0);
     harken::Plan03PageGroupView slice{};
     ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
@@ -60957,9 +60962,9 @@ TEST(ActionFiringApi,
     VnActionFiringHandle firing = 99;
     EXPECT_EQ(VN_BACKPRESSURE, Vn_PostAction(&desc, &firing));
     EXPECT_EQ(0u, firing);
-    EXPECT_EQ(decision.slot, row->queueDecision.slot);
-    EXPECT_EQ(decision.generation, row->queueDecision.generation);
-    EXPECT_EQ(conditional.version, row->queueConditional.version);
+    EXPECT_EQ(decision.slot, row->QueueFiling().queueDecision.slot);
+    EXPECT_EQ(decision.generation, row->QueueFiling().queueDecision.generation);
+    EXPECT_EQ(conditional.version, row->QueueFiling().queueConditional.version);
     EXPECT_EQ(harken::AudioSliceState::SliceClaimed,
               slice.lease->Capture().state);
     harken::QueueInstanceSnapshot queueAfter{};
@@ -62227,13 +62232,13 @@ TEST(ActionFiringApi,
         StartCanonicalQueueForActionReset(*engine, image, emitter);
     ASSERT_NE(nullptr, row);
     ASSERT_TRUE(row->queueContinuationPrepared);
-    ASSERT_TRUE(row->queueTransition.Valid());
-    const harken::DecisionToken decisionBefore = row->queueDecision;
+    ASSERT_TRUE(row->QueueFiling().queueTransition.Valid());
+    const harken::DecisionToken decisionBefore = row->QueueFiling().queueDecision;
     const harken::ConditionalQueueVersionToken conditionalBefore =
-        row->queueConditional;
+        row->QueueFiling().queueConditional;
     const VnVoiceHandle successorBefore = row->queueSuccessorRenderHandle;
     const harken::TransitionInstanceToken transitionBefore =
-        row->queueTransition;
+        row->QueueFiling().queueTransition;
     harken::QueueInstanceSnapshot queueBefore{};
     ASSERT_TRUE(engine->queueInstances.Capture(row->queueInstance,
                                                &queueBefore));
@@ -62249,13 +62254,13 @@ TEST(ActionFiringApi,
     ExpectPublicActionPreparationRefusal(
         *engine, harkentest::ObjectId(49), emitter, VN_BACKPRESSURE, before);
 
-    EXPECT_EQ(decisionBefore.slot, row->queueDecision.slot);
-    EXPECT_EQ(decisionBefore.generation, row->queueDecision.generation);
-    EXPECT_EQ(conditionalBefore.version, row->queueConditional.version);
+    EXPECT_EQ(decisionBefore.slot, row->QueueFiling().queueDecision.slot);
+    EXPECT_EQ(decisionBefore.generation, row->QueueFiling().queueDecision.generation);
+    EXPECT_EQ(conditionalBefore.version, row->QueueFiling().queueConditional.version);
     EXPECT_EQ(successorBefore, row->queueSuccessorRenderHandle);
-    EXPECT_EQ(transitionBefore.slot, row->queueTransition.slot);
+    EXPECT_EQ(transitionBefore.slot, row->QueueFiling().queueTransition.slot);
     EXPECT_EQ(transitionBefore.generation,
-              row->queueTransition.generation);
+              row->QueueFiling().queueTransition.generation);
     harken::QueueInstanceSnapshot queueAfter{};
     ASSERT_TRUE(engine->queueInstances.Capture(row->queueInstance,
                                                &queueAfter));
@@ -62295,12 +62300,12 @@ TEST(ActionFiringApi,
         StartCanonicalQueueForActionReset(*engine, image, emitter);
     ASSERT_NE(nullptr, row);
     ASSERT_TRUE(row->queueContinuationPrepared);
-    ASSERT_TRUE(row->queueArmGroup.Valid());
-    const harken::DecisionToken decisionBefore = row->queueDecision;
+    ASSERT_TRUE(row->QueueFiling().queueArmGroup.Valid());
+    const harken::DecisionToken decisionBefore = row->QueueFiling().queueDecision;
     const harken::ConditionalQueueVersionToken conditionalBefore =
-        row->queueConditional;
+        row->QueueFiling().queueConditional;
     const VnVoiceHandle successorBefore = row->queueSuccessorRenderHandle;
-    const harken::ArmGroupToken armGroupBefore = row->queueArmGroup;
+    const harken::ArmGroupToken armGroupBefore = row->QueueFiling().queueArmGroup;
 
     std::vector<harken::ArmGroupToken> occupied(
         engine->armGroups.FreeCount());
@@ -62314,12 +62319,12 @@ TEST(ActionFiringApi,
     ExpectPublicActionPreparationRefusal(
         *engine, harkentest::ObjectId(49), emitter, VN_BACKPRESSURE, before);
 
-    EXPECT_EQ(decisionBefore.slot, row->queueDecision.slot);
-    EXPECT_EQ(decisionBefore.generation, row->queueDecision.generation);
-    EXPECT_EQ(conditionalBefore.version, row->queueConditional.version);
+    EXPECT_EQ(decisionBefore.slot, row->QueueFiling().queueDecision.slot);
+    EXPECT_EQ(decisionBefore.generation, row->QueueFiling().queueDecision.generation);
+    EXPECT_EQ(conditionalBefore.version, row->QueueFiling().queueConditional.version);
     EXPECT_EQ(successorBefore, row->queueSuccessorRenderHandle);
-    EXPECT_EQ(armGroupBefore.slot, row->queueArmGroup.slot);
-    EXPECT_EQ(armGroupBefore.generation, row->queueArmGroup.generation);
+    EXPECT_EQ(armGroupBefore.slot, row->QueueFiling().queueArmGroup.slot);
+    EXPECT_EQ(armGroupBefore.generation, row->QueueFiling().queueArmGroup.generation);
     for (const auto token : occupied) {
         EXPECT_TRUE(engine->armGroups.CancelBeforePublication(token));
     }
@@ -62447,9 +62452,9 @@ TEST(ActionFiringApi,
                                                &queueBefore));
     harken::ConditionalQueuePrepareRequest replacement{};
     replacement.expectedCurrentVersion = queueBefore.logicMirror.version;
-    replacement.rootDecision = row->queueDecision;
+    replacement.rootDecision = row->QueueFiling().queueDecision;
     replacement.expectedCurrentOccurrence = row->queueCurrentOccurrence;
-    replacement.successorOccurrence = row->queueSuccessorOccurrence;
+    replacement.successorOccurrence = row->QueueFiling().queueSuccessorOccurrence;
     replacement.completion = row->queueCurrentCompletion;
     harken::EffectiveQueueState resetCurrent{};
     ASSERT_TRUE(engine->queueInstances.ResolveResetSelection(row->queueInstance, &resetCurrent, &replacement.next));
@@ -62457,22 +62462,22 @@ TEST(ActionFiringApi,
     harken::PreparedQueueConditionalReplacementV1 occupied{};
     ASSERT_EQ(harken::QueueResetStatusV1::Ok,
               engine->queueInstances.PrepareConditionalReplacement(
-                  row->queueInstance, row->queueConditional,
-                  row->queueDecision, replacement, &occupied));
-    const harken::DecisionToken decisionBefore = row->queueDecision;
+                  row->queueInstance, row->QueueFiling().queueConditional,
+                  row->QueueFiling().queueDecision, replacement, &occupied));
+    const harken::DecisionToken decisionBefore = row->QueueFiling().queueDecision;
     const VnVoiceHandle successorBefore = row->queueSuccessorRenderHandle;
-    const harken::ArmGroupToken groupBefore = row->queueArmGroup;
+    const harken::ArmGroupToken groupBefore = row->QueueFiling().queueArmGroup;
     const auto before = CaptureActionPreparationOwners(*engine);
 
     ExpectPublicActionPreparationRefusal(
         *engine, harkentest::ObjectId(49), emitter, VN_BACKPRESSURE, before);
 
     EXPECT_TRUE(occupied.Valid());
-    EXPECT_EQ(decisionBefore.slot, row->queueDecision.slot);
-    EXPECT_EQ(decisionBefore.generation, row->queueDecision.generation);
+    EXPECT_EQ(decisionBefore.slot, row->QueueFiling().queueDecision.slot);
+    EXPECT_EQ(decisionBefore.generation, row->QueueFiling().queueDecision.generation);
     EXPECT_EQ(successorBefore, row->queueSuccessorRenderHandle);
-    EXPECT_EQ(groupBefore.slot, row->queueArmGroup.slot);
-    EXPECT_EQ(groupBefore.generation, row->queueArmGroup.generation);
+    EXPECT_EQ(groupBefore.slot, row->QueueFiling().queueArmGroup.slot);
+    EXPECT_EQ(groupBefore.generation, row->QueueFiling().queueArmGroup.generation);
     harken::QueueInstanceSnapshot queueAfter{};
     ASSERT_TRUE(engine->queueInstances.Capture(row->queueInstance,
                                                &queueAfter));
@@ -65018,7 +65023,7 @@ TEST(ActionFiringApi, PreinitLaneBQueueAndTwoDirectSoundsSameQuantum) {
             successorRender = row->queueSuccessorRenderHandle;
             ASSERT_NE(0u, successorRender);
             const auto* successorMember = engine->FindQueueProgramMember(
-                row->queueSuccessorProgramBank, row->queueSuccessorPrograms.first);
+                row->QueueFiling().queueSuccessorProgramBank, row->QueueFiling().queueSuccessorPrograms.first);
             ASSERT_NE(nullptr, successorMember);
             const auto& successorVoice = successorMember->voice;
             ASSERT_TRUE(successorVoice.Valid());
@@ -68053,16 +68058,16 @@ static void CheckGenericInitialQueuePublishRefusalPreservesOriginalZeroWork(
     ASSERT_TRUE(row->pendingImmediateEntry);
     ASSERT_TRUE(row->queueTimingPending);
     ASSERT_EQ(2u, row->queueCurrentScheduleLeafCount);
-    ASSERT_EQ(0u, row->queueSuccessorScheduleLeafCount);
-    ASSERT_TRUE(row->queueSuccessorHasZeroWorkCompletion);
-    ASSERT_FALSE(row->queueSuccessorArm.Valid());
+    ASSERT_EQ(0u, row->QueueFiling().queueSuccessorScheduleLeafCount);
+    ASSERT_TRUE(row->QueueFiling().queueSuccessorHasZeroWorkCompletion);
+    ASSERT_FALSE(row->QueueFiling().queueSuccessorArm.Valid());
     const auto originalQueue = row->queueInstance;
     const auto originalComposite = row->queueCurrentCompositeOwner;
     ASSERT_TRUE(originalComposite.Valid());
     const auto originalInitialDecision = row->initialQueueEntryDecision;
-    const auto originalQueueDecision = row->queueDecision;
+    const auto originalQueueDecision = row->QueueFiling().queueDecision;
     const auto originalInitialLaneGroup = row->queueInitialLaneArmGroup;
-    const auto originalQueueArmGroup = row->queueArmGroup;
+    const auto originalQueueArmGroup = row->QueueFiling().queueArmGroup;
     struct Observation {
         VnActionFiringHandle firing = 0;
         harken::EnginePlayableServiceToken service{};
@@ -68095,7 +68100,7 @@ static void CheckGenericInitialQueuePublishRefusalPreservesOriginalZeroWork(
     observation.ownerEpoch = row->ownerEpoch;
     observation.invocation = row->invocation;
     observation.invocationGeneration = row->invocationGeneration;
-    observation.oldZeroWork = row->queueSuccessorZeroWorkCompletionFrame;
+    observation.oldZeroWork = row->QueueFiling().queueSuccessorZeroWorkCompletionFrame;
     observation.refused = refusedPublication;
     observation.holdOriginalReader = holdOriginalReader;
     const auto base = row->scheduleStorageBase;
@@ -68143,8 +68148,8 @@ static void CheckGenericInitialQueuePublishRefusalPreservesOriginalZeroWork(
         EXPECT_EQ(&*member, actual.ResolvePlayableService(observed.service,
             observed.owner, observed.ownerEpoch));
         EXPECT_TRUE(actual.playablePartitions.Owns(member->partition, member->identity));
-        EXPECT_TRUE(member->queueSuccessorHasZeroWorkCompletion);
-        EXPECT_EQ(0u, member->queueSuccessorScheduleLeafCount);
+        EXPECT_TRUE(member->QueueFiling().queueSuccessorHasZeroWorkCompletion);
+        EXPECT_EQ(0u, member->QueueFiling().queueSuccessorScheduleLeafCount);
         const auto timing = std::find_if(actual.initialQueueTimingMembersScratch.begin(),
             actual.initialQueueTimingMembersScratch.end(),
             [&](const auto& candidate) { return candidate.service == observed.service; });
@@ -68152,7 +68157,7 @@ static void CheckGenericInitialQueuePublishRefusalPreservesOriginalZeroWork(
         EXPECT_TRUE(timing->successorHasZeroWorkCompletion);
         EXPECT_EQ(observed.oldZeroWork, timing->oldSuccessorZeroWorkCompletionFrame);
         observed.chosenZeroWork = timing->newSuccessorZeroWorkCompletionFrame;
-        observed.actualZeroWork = member->queueSuccessorZeroWorkCompletionFrame;
+        observed.actualZeroWork = member->QueueFiling().queueSuccessorZeroWorkCompletionFrame;
         EXPECT_GT(observed.chosenZeroWork, observed.oldZeroWork);
         for (std::size_t index = 0; index < observed.arms.size(); ++index) {
             harken::TimelineArmObservation arm{};
@@ -68382,7 +68387,7 @@ static void CheckGenericInitialQueuePublishRefusalPreservesOriginalZeroWork(
                 << " cleanup=" << actualRow->queueCleanupStarted
                 << " compositeMirrors=" << actualRow->queueCompositeMirrorsCleared
                 << " continuation=" << actualRow->queueContinuationPrepared
-                << " decisionCommitted=" << actualRow->queueDecisionCommitted
+                << " decisionCommitted=" << actualRow->QueueFiling().queueDecisionCommitted
                 << " initialAttempt=" << actualRow->initialQueueEntryAttemptGeneration
                 << " firstContinuation=" << actualRow->queueFirstContinuationLane
                 << " partitionRetiring=" << actualRow->partitionRetiring
@@ -68392,12 +68397,12 @@ static void CheckGenericInitialQueuePublishRefusalPreservesOriginalZeroWork(
                 << " frontierPin=" << actualRow->frontierLifetimePin.Valid()
                 << " privateInitial=" << (actualRow->privateInitialQueueCurrent != nullptr)
                 << " hasZeroWork=" << actualRow->hasZeroWorkCompletion
-                << " conditionalVersion=" << actualRow->queueConditional.version;
+                << " conditionalVersion=" << actualRow->QueueFiling().queueConditional.version;
             printDecision("rowInitialDecision", actualRow->initialQueueEntryDecision);
-            printDecision("rowQueueDecision", actualRow->queueDecision);
+            printDecision("rowQueueDecision", actualRow->QueueFiling().queueDecision);
             printDecision("rowArrivalDecision", actualRow->queueArrivalDecision);
             printGroup("rowInitialLaneGroup", actualRow->queueInitialLaneArmGroup);
-            printGroup("rowQueueArmGroup", actualRow->queueArmGroup);
+            printGroup("rowQueueArmGroup", actualRow->QueueFiling().queueArmGroup);
             printGroup("rowArrivalArmGroup", actualRow->queueArrivalArmGroup);
             const auto root = engine.playableInstances.Classify(actualRow->rootInstance);
             diagnostic << "\nplayableRoot live=" << root.live
@@ -68549,12 +68554,12 @@ static void CheckNativeQueueOriginalHoldersAcrossTrueAckAndOldProgress(bool term
     const auto savedRoot = row->rootInstance;
     const auto savedComposite = row->queueCurrentCompositeOwner;
     const auto savedOccurrence = row->queueCurrentOccurrence;
-    const auto savedSuccessorOccurrence = row->queueSuccessorOccurrence;
-    const auto savedConditional = row->queueConditional;
+    const auto savedSuccessorOccurrence = row->QueueFiling().queueSuccessorOccurrence;
+    const auto savedConditional = row->QueueFiling().queueConditional;
     const auto savedInitialDecision = row->initialQueueEntryDecision;
-    const auto savedConditionalDecision = row->queueDecision;
+    const auto savedConditionalDecision = row->QueueFiling().queueDecision;
     const auto savedInitialArmGroup = row->queueInitialLaneArmGroup;
-    const auto savedSuccessorArm = row->queueSuccessorArm;
+    const auto savedSuccessorArm = row->QueueFiling().queueSuccessorArm;
     const auto savedSuccessorRender = row->queueSuccessorRenderHandle;
     const auto base = static_cast<std::size_t>(row->scheduleStorageBase);
     ASSERT_LT(base + 1u, engine->playableStorage.memberCount);
@@ -68643,7 +68648,7 @@ static void CheckNativeQueueOriginalHoldersAcrossTrueAckAndOldProgress(bool term
     ASSERT_TRUE(engine->BorrowOriginalQueueSuccessorBank(savedService, &originalSuccessorBankLoan));
     ASSERT_TRUE(originalQueueLoan.Valid());
     auto* originalCurrentBank = row->queueCurrentProgramBank;
-    auto* originalSuccessorBank = row->queueSuccessorProgramBank;
+    auto* originalSuccessorBank = row->QueueFiling().queueSuccessorProgramBank;
     ASSERT_NE(nullptr, originalCurrentBank);
     ASSERT_NE(nullptr, originalSuccessorBank);
     const auto originalCurrentGeneration = originalCurrentBank->Generation();
@@ -68976,8 +68981,8 @@ std::string NativeQueueOriginalLoanCleanupDiagnostic(harken::Engine& engine, VnA
     for (const auto& row : engine.playableServices) {
         if (!row.InvocationValid() || row.Invocation().actionFiring != firing) continue;
         out << "\noriginalQueue prepared=" << row.queueContinuationPrepared
-            << " committed=" << row.queueDecisionCommitted
-            << " conditional=" << row.queueConditional.Valid()
+            << " committed=" << (row.HasFeatureArrays() && row.QueueFiling().queueDecisionCommitted)
+            << " conditional=" << (row.HasFeatureArrays() && row.QueueFiling().queueConditional.Valid())
             << " abort=" << row.queueAbortRequested
             << " natural=" << row.queueNaturalEnd;
     }
@@ -69029,7 +69034,7 @@ static void CheckNativeQueueOriginalLoansDuringRealPrivatePublicationRefusal(std
     ASSERT_TRUE(row->queueFirstContinuationLane);
     ASSERT_EQ(2u, row->queueCurrentScheduleLeafCount);
     ASSERT_EQ(1u, row->queueInitialCurrentDelayedCount);
-    ASSERT_TRUE(row->queueSuccessorArm.Valid());
+    ASSERT_TRUE(row->QueueFiling().queueSuccessorArm.Valid());
     ASSERT_NE(0u, row->queueSuccessorRenderHandle);
     const auto originalQueue = row->queueInstance;
     const auto originalComposite = row->queueCurrentCompositeOwner;
@@ -69070,8 +69075,8 @@ static void CheckNativeQueueOriginalLoansDuringRealPrivatePublicationRefusal(std
         const auto decision = group.identity.decision;
         const bool initial = decision.slot == row->initialQueueEntryDecision.slot &&
             decision.generation == row->initialQueueEntryDecision.generation;
-        const bool conditional = decision.slot == row->queueDecision.slot &&
-            decision.generation == row->queueDecision.generation;
+        const bool conditional = decision.slot == row->QueueFiling().queueDecision.slot &&
+            decision.generation == row->QueueFiling().queueDecision.generation;
         if (!initial && !conditional) continue;
         ASSERT_LT(nativeMemberCount, nativeMemberLoans.size());
         ASSERT_TRUE(engine.BorrowOriginalQueueFutureGroup(observed.service, group.identity,
@@ -69561,14 +69566,14 @@ static void CheckQueueSourceFactoryStaging(bool composite, bool joinedTerm, bool
                     value.queueCurrentCompositeOwner.generation == observation.compositeToken.generation;
             });
         ASSERT_NE(engine.playableServices.end(), row);
-        ASSERT_NE(0u, row->queueSuccessorOccurrence.generation);
+        ASSERT_NE(0u, row->QueueFiling().queueSuccessorOccurrence.generation);
         // The real prepare also reserves the next Sound occurrence separately.
         ASSERT_EQ(actual.leafCount + 2u, observation.occurrenceCount);
         std::uint32_t aggregates = 0, leaves = 0, successors = 0;
         for (std::uint32_t index = 0; index < observation.occurrenceCount; ++index) {
             const auto token = observation.occurrenceLoans[index].OriginalToken();
             if (token.slot == actual.composedOccurrence.slot && token.generation == actual.composedOccurrence.generation) ++aggregates;
-            if (token.slot == row->queueSuccessorOccurrence.slot && token.generation == row->queueSuccessorOccurrence.generation) {
+            if (token.slot == row->QueueFiling().queueSuccessorOccurrence.slot && token.generation == row->QueueFiling().queueSuccessorOccurrence.generation) {
                 ++successors;
                 EXPECT_EQ(CanonicalActionWorld::kSecondSound, observation.occurrenceKeys[index].clipId);
                 EXPECT_EQ(row->rootInstance, observation.occurrenceKeys[index].arrangingInstance);
@@ -69597,7 +69602,7 @@ static void CheckQueueSourceFactoryStaging(bool composite, bool joinedTerm, bool
             const auto token = observation.decisionTokens[index];
             EXPECT_TRUE(engine.decisions.MatchesOriginalDecisionFactory(
                 observation.decisionLoans[index], observation.decisionRequests[index]));
-            if (token.slot == row->queueDecision.slot && token.generation == row->queueDecision.generation) ++currentMatches;
+            if (token.slot == row->QueueFiling().queueDecision.slot && token.generation == row->QueueFiling().queueDecision.generation) ++currentMatches;
             if (row->queueSuccessorDecision.Valid() && token.slot == row->queueSuccessorDecision.slot &&
                 token.generation == row->queueSuccessorDecision.generation) ++successorMatches;
         }
@@ -71035,7 +71040,7 @@ void CheckPublishedInitialQueueCancelClearsExactSuccessorInstallation(bool holdS
     const auto queueOwner = source.original->row->ownerInstance;
     const auto queueEpoch = source.original->row->ownerEpoch;
     const auto queueInvocation = source.original->row->invocationGeneration;
-    const auto successorArm = source.original->row->queueSuccessorArm;
+    const auto successorArm = source.original->row->QueueFiling().queueSuccessorArm;
     const auto successorRender = source.original->row->queueSuccessorRenderHandle;
     ASSERT_TRUE(successorArm.Valid());
     ASSERT_NE(0u, successorRender);
@@ -71242,7 +71247,7 @@ void CheckPublishedInitialQueueCancelClearsExactSuccessorInstallation(bool holdS
             ASSERT_NE(nullptr, retained);
             EXPECT_EQ(queueInvocation, retained->invocationGeneration);
             EXPECT_EQ(successorRender, retained->queueSuccessorRenderHandle);
-            EXPECT_TRUE(harken::OriginalSourceSubmissionRegistry::SameToken(retained->queueSuccessorArm, successorArm));
+            EXPECT_TRUE(harken::OriginalSourceSubmissionRegistry::SameToken(retained->QueueFiling().queueSuccessorArm, successorArm));
             harken::QueueInstanceSnapshot queue{};
             ASSERT_TRUE(engine.queueInstances.Capture(source.queue, &queue));
             EXPECT_EQ(0u, queue.pendingVersion);
@@ -71461,7 +71466,7 @@ void CheckEnduringInitialC0ActualApi(bool holdThroughPhysicalEnd, bool joinedTer
     const auto arm = row->arm;
     const auto render = row->renderHandle;
     const auto occurrence = row->queueCurrentOccurrence;
-    const auto currentDecision = row->queueDecision;
+    const auto currentDecision = row->QueueFiling().queueDecision;
     const harken::EnginePlayableServiceReference service{
         row->identity, row->ownerInstance, row->ownerEpoch, row->invocationGeneration};
     ASSERT_TRUE(arm.Valid());

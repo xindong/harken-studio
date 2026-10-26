@@ -17581,15 +17581,15 @@ TEST(PackComposition,
         });
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_TRUE(row->queueContinuationPrepared);
-    EXPECT_FALSE(row->queueSameProgramKey);
+    EXPECT_FALSE(row->QueueFiling().queueSameProgramKey);
     const auto* successorMember = engine->FindQueueProgramMember(
-        row->queueSuccessorProgramBank, row->queueSuccessorPrograms.first);
+        row->QueueFiling().queueSuccessorProgramBank, row->QueueFiling().queueSuccessorPrograms.first);
     ASSERT_NE(nullptr, successorMember);
     const auto& successorVoice = successorMember->voice;
     ASSERT_TRUE(successorVoice.Valid());
     EXPECT_EQ(480u, successorVoice.Facts().authoredDurationFrames);
     EXPECT_EQ(row->queueCompletionFrame + 240u,
-              row->queueSuccessorSchedule.entryAnchorFrame);
+              row->QueueFiling().queueSuccessorSchedule.entryAnchorFrame);
 
     std::vector<std::uint64_t> audibleRuns;
     std::uint64_t currentRun = 0;
@@ -17677,29 +17677,29 @@ void RunPackQueueResetPreservesLogicalTrackCompletion(
         });
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_TRUE(row->queueContinuationPrepared);
-    ASSERT_EQ(0u, row->queueSuccessorScheduleLeafCount);
+    ASSERT_EQ(0u, row->QueueFiling().queueSuccessorScheduleLeafCount);
     if (logicalOnlyTrack) {
         ASSERT_EQ(0u, row->queueSuccessorRenderHandle);
-        ASSERT_FALSE(row->queueSuccessorArm.Valid());
+        ASSERT_FALSE(row->QueueFiling().queueSuccessorArm.Valid());
     } else {
         ASSERT_NE(0u, row->queueSuccessorRenderHandle);
     }
-    ASSERT_TRUE(row->queueSuccessorHasZeroWorkCompletion);
+    ASSERT_TRUE(row->QueueFiling().queueSuccessorHasZeroWorkCompletion);
     post.actionId = kResetActionId;
     VnActionFiringHandle resetFiring = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&post, &resetFiring));
     ASSERT_FALSE(engine->runtimeRecreateRequired) << "after reset post";
     EXPECT_TRUE(row->queueContinuationPrepared);
-    EXPECT_FALSE(row->queueSameProgramKey);
-    ASSERT_EQ(0u, row->queueSuccessorScheduleLeafCount);
+    EXPECT_FALSE(row->QueueFiling().queueSameProgramKey);
+    ASSERT_EQ(0u, row->QueueFiling().queueSuccessorScheduleLeafCount);
     if (logicalOnlyTrack) {
         ASSERT_EQ(0u, row->queueSuccessorRenderHandle);
-        ASSERT_FALSE(row->queueSuccessorArm.Valid());
+        ASSERT_FALSE(row->QueueFiling().queueSuccessorArm.Valid());
     } else {
         ASSERT_NE(0u, row->queueSuccessorRenderHandle);
     }
-    ASSERT_TRUE(row->queueSuccessorHasZeroWorkCompletion);
-    const std::uint64_t provisionalBoundary = row->queueSuccessorZeroWorkCompletionFrame;
+    ASSERT_TRUE(row->QueueFiling().queueSuccessorHasZeroWorkCompletion);
+    const std::uint64_t provisionalBoundary = row->QueueFiling().queueSuccessorZeroWorkCompletionFrame;
     const std::uint64_t authoredDuration = logicalOnlyTrack ? 960u : 4800u;
     EXPECT_EQ(row->queueCompletionFrame + authoredDuration, provisionalBoundary);
     // The first normal service publishes the actual receiving frame. Verify
@@ -17711,8 +17711,8 @@ void RunPackQueueResetPreservesLogicalTrackCompletion(
         ASSERT_EQ(VN_OK, Vn_Update());
     }
     ASSERT_FALSE(row->pendingImmediateEntry);
-    ASSERT_TRUE(row->queueSuccessorHasZeroWorkCompletion);
-    const std::uint64_t expectedBoundary = row->queueSuccessorZeroWorkCompletionFrame;
+    ASSERT_TRUE(row->QueueFiling().queueSuccessorHasZeroWorkCompletion);
+    const std::uint64_t expectedBoundary = row->QueueFiling().queueSuccessorZeroWorkCompletionFrame;
     EXPECT_EQ(row->queueCompletionFrame + authoredDuration, expectedBoundary);
     EXPECT_GE(expectedBoundary, provisionalBoundary);
 
@@ -17725,8 +17725,8 @@ void RunPackQueueResetPreservesLogicalTrackCompletion(
     }
     ASSERT_TRUE(promoted);
     EXPECT_EQ(expectedBoundary, row->zeroWorkCompletionFrame);
-    EXPECT_FALSE(row->queueSuccessorHasZeroWorkCompletion);
-    EXPECT_EQ(0u, row->queueSuccessorZeroWorkCompletionFrame);
+    EXPECT_FALSE(row->QueueFiling().queueSuccessorHasZeroWorkCompletion);
+    EXPECT_EQ(0u, row->QueueFiling().queueSuccessorZeroWorkCompletionFrame);
     const std::uint64_t currentFrame =
         engine->mixer.BlocksRendered() * engine->config.blockFrames;
     ASSERT_LT(currentFrame, expectedBoundary);

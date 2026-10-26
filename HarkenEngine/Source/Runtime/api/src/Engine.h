@@ -1723,6 +1723,7 @@ private:
 };
 
 struct EngineServiceFeatureArrays {
+    EngineQueueFutureFilingLayout queueFiling{};
     struct UnpublishedVariableGroupCancellation {
         EnginePlayableServiceToken service{};
         EnginePlayablePartitionToken partition{};
@@ -1788,7 +1789,7 @@ struct EngineServiceFeatureArrays {
     ProgramView variableControlDiscreteRetargetEnteringSchedule{};
 };
 
-struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
+struct EnginePlayableServiceRow {
     using UnpublishedVariableGroupCancellation =
         EngineServiceFeatureArrays::UnpublishedVariableGroupCancellation;
     // Keep common lifecycle observations together, ahead of container-specific state.
@@ -2103,7 +2104,7 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
         queueSourceRuntimePrograms = {};
         queueSourceSchedules = {};
         queueSourceRuntimeProgram = {};
-        queueSourceSchedule = {};
+        if (HasFeatureArrays()) QueueFiling().queueSourceSchedule = {};
     }
     TimelineProgramView queueSuccessorRuntimeProgram{};
     ArmGroupToken queueInitialLaneArmGroup{};
@@ -2184,6 +2185,14 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     }
 
     bool HasFeatureArrays() const noexcept { return featureArrays_ != nullptr; }
+    EngineQueueFutureFilingLayout& QueueFiling() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->queueFiling;
+    }
+    const EngineQueueFutureFilingLayout& QueueFiling() const noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->queueFiling;
+    }
     PlayableRefV1& VariableControlPropertyRoot() noexcept {
         assert(featureArrays_ != nullptr);
         return featureArrays_->variableControlPropertyRoot;
@@ -2437,10 +2446,10 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
         variableControlRetargetLogicalCompleted.Clear();
         queueInitialCurrentMemberIndices.Clear();
         queueInitialCurrentDelayedArms.Clear();
-        queueTransitionGroupArms.Clear();
         containerInstances.Clear();
         selectionPath.Clear();
         if (featureArrays_ != nullptr) {
+            featureArrays_->queueFiling = EngineQueueFutureFilingLayout{};
             featureArrays_->variableControlPropertyRoot = {};
             featureArrays_->initialLaneDiscreteGroup = {};
             featureArrays_->initialLaneContinuousGroup = {};
@@ -2489,7 +2498,7 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
         variableControlRetargetLogicalCompleted.Bind(featureArrays_->variableControlRetargetLogicalCompleted);
         queueInitialCurrentMemberIndices.Bind(featureArrays_->queueInitialCurrentMemberIndices);
         queueInitialCurrentDelayedArms.Bind(featureArrays_->queueInitialCurrentDelayedArms);
-        queueTransitionGroupArms.Bind(featureArrays_->queueTransitionGroupArms);
+        QueueFiling().queueTransitionGroupArms.Bind(featureArrays_->queueTransitionGroupArms);
         containerInstances.Bind(featureArrays_->containerInstances);
         selectionPath.Bind(featureArrays_->selectionPath);
     }
@@ -10611,14 +10620,14 @@ public:
             !(originals[2]->Identity() == attempt.queueContinuationPrimaryGroup) ||
             initialMember.Identity().decision.slot != row.initialQueueEntryDecision.slot ||
             initialMember.Identity().decision.generation != row.initialQueueEntryDecision.generation ||
-            conditionalMember.Identity().decision.slot != row.queueDecision.slot ||
-            conditionalMember.Identity().decision.generation != row.queueDecision.generation) return false;
+            conditionalMember.Identity().decision.slot != row.QueueFiling().queueDecision.slot ||
+            conditionalMember.Identity().decision.generation != row.QueueFiling().queueDecision.generation) return false;
         const auto queue = row.queueInstance;
         const auto version = queueScratch.initialOriginalConditionalVersion;
         if (!queue.Valid() || queue.slot >= queueInstances.Capacity() ||
             ResolveOriginalQueueConditionalBaseline(this, queueInstances, queue) != queueScratch.initialOriginalConditional ||
             !queueInstances.IsOriginalConditionalFutureReservationFor(*queueScratch.initialOriginalConditional,
-                originalQueueLifetimeHolders[queue.slot], queue, version, row.queueDecision, row.queueCurrentOccurrence))
+                originalQueueLifetimeHolders[queue.slot], queue, version, row.QueueFiling().queueDecision, row.queueCurrentOccurrence))
             return false;
         FrontierQueueInitialIdentity initial{};
         FrontierQueueConditionalIdentity conditional{};
@@ -12109,8 +12118,8 @@ public:
         auto& holder = originalQueueConditionalHolders[queue.slot];
         if (holder.current != nullptr || holder.initialGroup == nullptr ||
             holder.conditionalGroup == nullptr || !holder.clock.Valid()) return false;
-        if (row.identity == attempt.initialService && row.queueTransitionGroupArmCount <= 1u &&
-            row.queueSourceControlArmCount == 0u && !row.queueTransition.Valid()) {
+        if (row.identity == attempt.initialService && row.QueueFiling().queueTransitionGroupArmCount <= 1u &&
+            row.QueueFiling().queueSourceControlArmCount == 0u && !row.QueueFiling().queueTransition.Valid()) {
             if (!OwnsImmediateEntryAttemptStorage(attempt) || !attempt.active ||
                 attempt.root != scratch.initialOriginalGroupRoot ||
                 attempt.generation != scratch.initialOriginalGroupAttemptGeneration ||
@@ -12134,14 +12143,14 @@ public:
                 return false;
         }
         if (holder.projection.Valid()) {
-            auto* bank = OriginalQueueBankHolderFor(row.queueSuccessorProgramBank);
+            auto* bank = OriginalQueueBankHolderFor(row.QueueFiling().queueSuccessorProgramBank);
             if (holder.initialFutureCaptured || holder.initialFutureBank.Valid() ||
-                (row.queueSuccessorProgramBank != nullptr &&
+                (row.QueueFiling().queueSuccessorProgramBank != nullptr &&
                  (bank == nullptr || !bank->baseline.Borrow(&holder.initialFutureBank))))
                 return false;
             // This copy is issued beside the genuine Current, conditional and
             // group factories. Reset cannot reconstruct it from selected aliases.
-            holder.initialFuture = static_cast<const EngineQueueFutureFilingLayout&>(row);
+            holder.initialFuture = row.QueueFiling();
             holder.initialFuture.queueConditional = scratch.initialOriginalConditionalVersion;
             holder.initialFutureCaptured = true;
         }
@@ -12181,7 +12190,7 @@ public:
     const EngineQueueFutureFilingLayout& InitialQueueFilingFuture(
         const EnginePlayableServiceRow& row) const noexcept {
         const auto* holder = OriginalQueueInitialFilingFor(row);
-        return holder == nullptr ? static_cast<const EngineQueueFutureFilingLayout&>(row)
+        return holder == nullptr ? row.QueueFiling()
                                  : holder->initialFuture;
     }
     EngineQueueFutureFilingLayout& InitialQueueFilingFuture(EnginePlayableServiceRow& row) noexcept {
@@ -12209,10 +12218,10 @@ public:
         const auto* holder = OriginalQueueInitialFilingFor(row);
         if (holder == nullptr) return true;
         const auto& original = holder->initialFuture;
-        return row.queueDecision.slot == original.queueDecision.slot &&
-            row.queueDecision.generation == original.queueDecision.generation &&
-            row.queueConditional.version == original.queueConditional.version &&
-            row.queueSuccessorProgramBank == original.queueSuccessorProgramBank;
+        return row.QueueFiling().queueDecision.slot == original.queueDecision.slot &&
+            row.QueueFiling().queueDecision.generation == original.queueDecision.generation &&
+            row.QueueFiling().queueConditional.version == original.queueConditional.version &&
+            row.QueueFiling().queueSuccessorProgramBank == original.queueSuccessorProgramBank;
     }
 
     // Reflect original filing into the public alias only while it still selects
@@ -12221,11 +12230,11 @@ public:
         const auto* holder = OriginalQueueInitialFilingFor(row);
         if (holder == nullptr) return;
         const auto& original = holder->initialFuture;
-        if (row.queueDecision.slot == original.queueDecision.slot &&
-            row.queueDecision.generation == original.queueDecision.generation &&
-            row.queueConditional.version == original.queueConditional.version &&
-            row.queueSuccessorProgramBank == original.queueSuccessorProgramBank)
-            static_cast<EngineQueueFutureFilingLayout&>(row) = original;
+        if (row.QueueFiling().queueDecision.slot == original.queueDecision.slot &&
+            row.QueueFiling().queueDecision.generation == original.queueDecision.generation &&
+            row.QueueFiling().queueConditional.version == original.queueConditional.version &&
+            row.QueueFiling().queueSuccessorProgramBank == original.queueSuccessorProgramBank)
+            row.QueueFiling() = original;
     }
 
     bool OriginalQueueOwnsUnpublishedGroup(const EngineImmediateEntryAttempt& attempt,
@@ -12564,9 +12573,9 @@ public:
     bool BorrowOriginalQueueSuccessorBank(const EnginePlayableServiceReference& service,
         EngineQueueProgramBank::OriginalLifetimePin* out) noexcept {
         auto* row = ResolvePlayableService(service);
-        if (row == nullptr || !row->InvocationValid() ||
+        if (row == nullptr || !row->InvocationValid() || !row->HasFeatureArrays() ||
             !playablePartitions.Owns(row->partition, row->identity)) return false;
-        auto* original = OriginalQueueBankHolderFor(row->queueSuccessorProgramBank);
+        auto* original = OriginalQueueBankHolderFor(row->QueueFiling().queueSuccessorProgramBank);
         return original != nullptr && original->baseline.Borrow(out);
     }
 
@@ -12637,7 +12646,7 @@ public:
                 left.generation == right.generation;
         };
         if (!sameDecision(identity.decision, row->initialQueueEntryDecision) &&
-            !sameDecision(identity.decision, row->queueDecision) &&
+            (!row->HasFeatureArrays() || !sameDecision(identity.decision, row->QueueFiling().queueDecision)) &&
             !sameDecision(identity.decision, row->queueArrivalDecision)) return false;
         const auto& original = originalQueueGroupHolders[identity.committedRow];
         return timelinePool.IsOriginalQueueFutureGroupRegistrationFor(original, identity,
@@ -13153,6 +13162,10 @@ public:
         return offset < future.queueSuccessorPrograms.count
             ? FindQueueProgramMember(future.queueSuccessorProgramBank, future.queueSuccessorPrograms.first + offset)
             : nullptr;
+    }
+    EnginePlayableMemberRecord* FindQueueSuccessorMember(const EnginePlayableServiceRow& row,
+        std::uint32_t offset) noexcept {
+        return row.HasFeatureArrays() ? FindQueueSuccessorMember(row.QueueFiling(), offset) : nullptr;
     }
     bool RetainQueueProgramMember(EngineQueueProgramBank& bank, std::uint32_t index,
         EnginePlayableMemberToken token) noexcept {

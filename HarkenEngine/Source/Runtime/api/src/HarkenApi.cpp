@@ -2171,7 +2171,7 @@ bool CommitFrontierQueueCurrentOwner(void* opaque, std::uint64_t ticket) noexcep
     auto* row = engine.ResolvePlayableService(current.service);
     if (row == nullptr) return false;
     harken::EngineActionPlayScratch::PreparedDecisionOwnerContext decision{
-        &engine.decisions, &current.decision, &row->queueDecision, &row->ticket, current.decisionCommitted};
+        &engine.decisions, &current.decision, &row->QueueFiling().queueDecision, &row->ticket, current.decisionCommitted};
     if (current.originalSingleDecisionCommitProof.Valid()) {
         decision.ticketCommitProof = std::move(current.originalSingleDecisionCommitProof);
         decision.ticketCommitProofRequired = true;
@@ -2181,7 +2181,7 @@ bool CommitFrontierQueueCurrentOwner(void* opaque, std::uint64_t ticket) noexcep
     if (!decisionOk) return false;
     if (current.canonicalInitial) {
         if (row->privateInitialQueueCurrent != &current ||
-            !SameCanonicalDecision(row->queueDecision, current.canonicalDecision) ||
+            !SameCanonicalDecision(row->QueueFiling().queueDecision, current.canonicalDecision) ||
             !SameCanonicalDecision(row->initialQueueEntryDecision, current.canonicalDecision)) return false;
         current.canonicalTicket = ticket;
         current.canonicalRequest.ticket = {ticket};
@@ -2270,7 +2270,7 @@ bool CancelFrontierQueueCurrentOwner(void* opaque) noexcept {
     auto* row = engine.ResolvePlayableService(current.service);
     if (row == nullptr) return false;
     harken::EngineActionPlayScratch::PreparedDecisionOwnerContext decision{
-        &engine.decisions, &current.decision, &row->queueDecision, &row->ticket, current.decisionCommitted};
+        &engine.decisions, &current.decision, &row->QueueFiling().queueDecision, &row->ticket, current.decisionCommitted};
     const bool cancelled = CancelPreparedDecisionOwner(&decision);
     current.decisionCommitted = decision.committed;
     return cancelled;
@@ -2282,7 +2282,7 @@ bool CommitRetargetQueueCurrent(harken::EngineRetargetQueueOwnerContext& queue, 
     auto* row = engine.ResolvePlayableService(queue.service);
     if (row == nullptr) return false;
     harken::EngineActionPlayScratch::PreparedDecisionOwnerContext decision{
-        &engine.decisions, &current.decision, &row->queueDecision, &row->ticket, current.decisionCommitted};
+        &engine.decisions, &current.decision, &row->QueueFiling().queueDecision, &row->ticket, current.decisionCommitted};
     const bool committed = CommitPreparedDecisionOwner(&decision, ticket);
     current.decisionCommitted = decision.committed;
     if (!committed) return false;
@@ -2301,7 +2301,7 @@ bool CancelRetargetQueueCurrent(harken::EngineRetargetQueueOwnerContext& queue) 
     auto* row = engine.ResolvePlayableService(queue.service);
     if (row == nullptr) return false;
     harken::EngineActionPlayScratch::PreparedDecisionOwnerContext decision{
-        &engine.decisions, &current.decision, &row->queueDecision, &row->ticket, current.decisionCommitted};
+        &engine.decisions, &current.decision, &row->QueueFiling().queueDecision, &row->ticket, current.decisionCommitted};
     const bool cancelled = CancelPreparedDecisionOwner(&decision);
     current.decisionCommitted = decision.committed;
     return cancelled;
@@ -2362,7 +2362,7 @@ bool ValidatePreparedActionResourceOwner(void* opaque) noexcept {
     }
     for (std::uint32_t index = 0;
          index < scratch.queueSourceControlArmCount; ++index) {
-        if (!context->row->queueTransitionGroupArms[index].Valid()) {
+        if (!context->row->QueueFiling().queueTransitionGroupArms[index].Valid()) {
             return false;
         }
     }
@@ -2372,8 +2372,8 @@ bool ValidatePreparedActionResourceOwner(void* opaque) noexcept {
     }
     if (scratch.queueInitialLaneArmGroupPrepared &&
         !scratch.queueInitialLaneArmGroup.Valid()) return false;
-    if (scratch.queueConditional.Valid() == false &&
-        context->row->queueConditional.Valid()) {
+    if (scratch.queueConditional.Valid() == false && context->row->HasFeatureArrays() &&
+        context->row->QueueFiling().queueConditional.Valid()) {
         return false;
     }
     for (std::uint32_t index = 0;
@@ -2405,7 +2405,7 @@ bool CommitPreparedActionResourceOwner(
     for (std::uint32_t index = 0;
          index < scratch.queueSourceControlArmCount; ++index) {
         if (!engine.timelineArms.CommitPrepared(
-                row.queueTransitionGroupArms[index])) {
+                row.QueueFiling().queueTransitionGroupArms[index])) {
             return false;
         }
         context->sourceArmsCommitted = index + 1u;
@@ -2427,7 +2427,7 @@ bool CommitPreparedActionResourceOwner(
         if (context->preparedQueue == nullptr) {
             context->preparedQueue = &scratch.queueInstance;
             context->conditionalQueue = scratch.queueInstance.Token();
-            context->conditionalDecision = row.queueDecision;
+            context->conditionalDecision = row.QueueFiling().queueDecision;
         }
         if (!context->preparedQueue->Valid() ||
             !context->conditionalQueue.Valid() ||
@@ -2439,7 +2439,7 @@ bool CommitPreparedActionResourceOwner(
                 &scratch.queueConditional, &conditional)) {
             return false;
         }
-        row.queueConditional = conditional;
+        row.QueueFiling().queueConditional = conditional;
         context->conditionalVersion = conditional;
         context->conditionalCommitted = true;
     }
@@ -2595,7 +2595,7 @@ bool CancelPreparedActionResourceOwnerImpl(void* opaque, bool preserveCanonicalR
             : engine.queueInstances.RetireConditionalForAbort(context->conditionalQueue,
                 context->conditionalVersion, context->conditionalDecision);
         if (retired) {
-            row.queueConditional = {};
+            row.QueueFiling().queueConditional = {};
             context->conditionalCommitted = false;
         }
         resolved = retired && resolved;
@@ -2650,17 +2650,17 @@ bool CancelPreparedActionResourceOwnerImpl(void* opaque, bool preserveCanonicalR
     bool allArmsCancelled = true;
     for (std::uint32_t index = scratch.queueSourceControlArmCount;
          index-- > 0;) {
-        const auto token = row.queueTransitionGroupArms[index];
+        const auto token = row.QueueFiling().queueTransitionGroupArms[index];
         const bool cancelled = index < context->sourceArmsCommitted
             ? DropTimelineArm(engine, token, observed)
             : engine.timelineArms.CancelPrepared(token);
-        if (cancelled) row.queueTransitionGroupArms[index] = {};
+        if (cancelled) row.QueueFiling().queueTransitionGroupArms[index] = {};
         allArmsCancelled = cancelled && allArmsCancelled;
         resolved = cancelled && resolved;
     }
     if (allArmsCancelled) {
         scratch.queueSourceControlArmCount = 0;
-        row.queueSourceControlArmCount = 0;
+        if (row.HasFeatureArrays()) row.QueueFiling().queueSourceControlArmCount = 0;
         row.ClearQueueSourcePrograms();
         row.queueSourceArm = {};
         context->sourceArmsCommitted = 0;
@@ -8373,9 +8373,9 @@ void RecordDecisionMemberTombstone(
         record(row.initialQueueEntryDecision, row.queueInitialLaneArmGroup);
         // An initial Queue decision may still be Open when publication fails.
         // Its actual group can already be held in the current or arrival slot.
-        record(row.initialQueueEntryDecision, row.queueArmGroup);
+        if (row.HasFeatureArrays()) record(row.initialQueueEntryDecision, row.QueueFiling().queueArmGroup);
         record(row.initialQueueEntryDecision, row.queueArrivalArmGroup);
-        record(row.queueDecision, row.queueArmGroup);
+        if (row.HasFeatureArrays()) record(row.QueueFiling().queueDecision, row.QueueFiling().queueArmGroup);
         record(row.queueArrivalDecision, row.queueArrivalArmGroup);
         record(row.variableControlDiscreteDecision, row.variableControlDiscreteArmGroup);
         record(row.variableControlContinuousDecision, row.variableControlContinuousArmGroup);
@@ -8573,7 +8573,7 @@ QueueCancellationLeaseStatus DropLivePlan03GroupMemberArms(
                                      harken::DecisionToken token) {
         const harken::DecisionToken owned[] = {
             row.frontierEntry.coordinator,
-            row.queueDecision,
+            row.HasFeatureArrays() ? row.QueueFiling().queueDecision : harken::DecisionToken{},
             row.queueSuccessorDecision,
             row.queueArrivalDecision,
             row.initialQueueEntryDecision,
@@ -8719,17 +8719,17 @@ bool CanAbortQueueSourceArm(
     harken::Engine& engine,
     const harken::EnginePlayableServiceRow& row) noexcept {
     for (std::uint32_t index = 0;
-         index < row.queueSourceControlArmCount; ++index) {
+         index < row.QueueFiling().queueSourceControlArmCount; ++index) {
         harken::TimelineArmObservation arm{};
         if (!engine.timelineArms.Observe(
-                row.queueTransitionGroupArms[index], &arm) ||
+                row.QueueFiling().queueTransitionGroupArms[index], &arm) ||
             arm.state != harken::ArmState::AudioClaimed) {
             continue;
         }
         harken::TransitionInstanceSnapshot transition{};
-        if (!row.queueTransition.Valid() ||
+        if (!row.QueueFiling().queueTransition.Valid() ||
             !engine.transitionInstances.Capture(
-                row.queueTransition, &transition) ||
+                row.QueueFiling().queueTransition, &transition) ||
             transition.state !=
                 harken::TransitionAudibleGateState::Locked ||
             engine.mixer.BlocksRendered() <= transition.lockBlock) {
@@ -8745,15 +8745,15 @@ QueueCancellationLeaseStatus GuardQueueCancellationSlices(
     harken::AudioSliceInvalidateReason reason,
     bool apply) noexcept {
     if (!row.queueContinuationPrepared ||
-        !row.queueDecisionCommitted ||
-        !row.queueDecision.Valid()) {
+        !row.QueueFiling().queueDecisionCommitted ||
+        !row.QueueFiling().queueDecision.Valid()) {
         return QueueCancellationLeaseStatus::Clear;
     }
     if (engine.config.blockFrames == 0) {
         return QueueCancellationLeaseStatus::Failed;
     }
     harken::DecisionCommittedSnapshot decision{};
-    if (!engine.decisions.CaptureCommitted(row.queueDecision, &decision) ||
+    if (!engine.decisions.CaptureCommitted(row.QueueFiling().queueDecision, &decision) ||
         decision.sliceCount == 0 || decision.sliceCount > 2) {
         return QueueCancellationLeaseStatus::Failed;
     }
@@ -8765,8 +8765,8 @@ QueueCancellationLeaseStatus GuardQueueCancellationSlices(
     if (groupCount > groups.size()) return QueueCancellationLeaseStatus::Failed;
     for (std::size_t index = 0; index < groupCount; ++index) {
         const auto& group = groups[index];
-        if (group.identity.decision.slot != row.queueDecision.slot ||
-            group.identity.decision.generation != row.queueDecision.generation) continue;
+        if (group.identity.decision.slot != row.QueueFiling().queueDecision.slot ||
+            group.identity.decision.generation != row.QueueFiling().queueDecision.generation) continue;
         if (group.identity.sliceIndex >= decision.sliceCount) return QueueCancellationLeaseStatus::Failed;
         harken::AudioSliceLease* lease = group.lease;
         if (lease == nullptr) {
@@ -8807,14 +8807,14 @@ bool AbortQueueSourceArm(
     const harken::EnginePlayableServiceRow& row) noexcept {
     bool aborted = true;
     for (std::uint32_t index = 0;
-         index < row.queueSourceControlArmCount; ++index) {
+         index < row.QueueFiling().queueSourceControlArmCount; ++index) {
         const harken::TimelineArmToken token =
-            row.queueTransitionGroupArms[index];
+            row.QueueFiling().queueTransitionGroupArms[index];
         if (AbortTimelineArm(engine, token)) continue;
         harken::TimelineArmObservation arm{};
         if (!engine.timelineArms.Observe(token, &arm)) {
-            if (engine.armGroups.HasPublishedMemberTombstone(row.queueArmGroup,
-                    row.queueDecision, token, engine.mixer.BlocksRendered())) continue;
+            if (engine.armGroups.HasPublishedMemberTombstone(row.QueueFiling().queueArmGroup,
+                    row.QueueFiling().queueDecision, token, engine.mixer.BlocksRendered())) continue;
             aborted = false;
             continue;
         }
@@ -9625,7 +9625,8 @@ void ServiceQueueProgramBanks(harken::Engine& engine) noexcept {
     for (auto& bank : engine.queueProgramBanks) bank.heldByOwner = false;
     for (const auto& row : engine.playableServices) {
         if (row.queueCurrentProgramBank != nullptr) row.queueCurrentProgramBank->heldByOwner = true;
-        if (row.queueSuccessorProgramBank != nullptr) row.queueSuccessorProgramBank->heldByOwner = true;
+        if (row.HasFeatureArrays() && row.QueueFiling().queueSuccessorProgramBank != nullptr)
+            row.QueueFiling().queueSuccessorProgramBank->heldByOwner = true;
     }
     for (const auto& scratch : engine.actionQueueReplacementScratch) {
         if (scratch.programBank != nullptr) scratch.programBank->heldByOwner = true;
@@ -9780,10 +9781,10 @@ public:
         if (!ownsScratch_) return false;
         queueBank_ = ReserveQueueProgramBank(engine_, shape);
         if (queueBank_ != nullptr) {
-            if (!row.queueMode || !row.queueDecision.Valid()) return true;
+            if (!row.queueMode || !row.QueueFiling().queueDecision.Valid()) return true;
             if (row.queueInstance.slot >= engine_.originalQueueLifetimeHolders.size() ||
                 !queueBank_->continuationLane.Begin(engine_.queueInstances, row.queueInstance,
-                    engine_.originalQueueLifetimeHolders[row.queueInstance.slot], engine_.decisions, row.queueDecision,
+                    engine_.originalQueueLifetimeHolders[row.queueInstance.slot], engine_.decisions, row.QueueFiling().queueDecision,
                     engine_.immediateActionLane, engine_.timelinePool, shape.events)) return false;
             queueRow_ = &row;
             return true;
@@ -10041,7 +10042,7 @@ public:
         if (!CommitPreparedAuthoredStop(engine_, decisionStop_, sequence)) return false;
         if (queueRow_ != nullptr) {
             if (!queueBank_->continuationLane.Prepare(queueEvents_.data(), queueEventCount_,
-                    engine_.timelineArms, queueRow_->queueConditional)) return false;
+                    engine_.timelineArms, queueRow_->QueueFiling().queueConditional)) return false;
             const auto lane = queueBank_->continuationLane.Handle();
             queueRow_->queuePreparedPages = {lane.slot + 1u, lane.generation};
         }
@@ -10144,9 +10145,9 @@ public:
                 : engine_.armGroups.CancelPrepared(armGroup_);
             if (!cancelled) engine_.runtimeRecreateRequired = true;
             if (cancelled && queueRow_ != nullptr &&
-                queueRow_->queueArmGroup.slot == armGroup_.slot &&
-                queueRow_->queueArmGroup.generation == armGroup_.generation) {
-                queueRow_->queueArmGroup = {};
+                queueRow_->QueueFiling().queueArmGroup.slot == armGroup_.slot &&
+                queueRow_->QueueFiling().queueArmGroup.generation == armGroup_.generation) {
+                queueRow_->QueueFiling().queueArmGroup = {};
             }
             armGroup_ = {};
         }
@@ -10491,9 +10492,10 @@ void ServiceAuthoredStops(
                                 row.queueCurrentCompletion)) {
                             row.queueCurrentCompletion = {};
                         }
-                        if (ClearQueueCompletionOwner(engine, row.queueSuccessorRenderHandle,
-                                row.queueSuccessorCompletion)) {
-                            row.queueSuccessorCompletion = {};
+                        if (!row.HasFeatureArrays() ||
+                            ClearQueueCompletionOwner(engine, row.queueSuccessorRenderHandle,
+                                row.QueueFiling().queueSuccessorCompletion)) {
+                            if (row.HasFeatureArrays()) row.QueueFiling().queueSuccessorCompletion = {};
                             row.queueSuccessorOwner = {};
                         }
                         row.queueAbortRequested = true;
@@ -11697,7 +11699,8 @@ bool ObserveActiveArrivalsBeforeArmReclaim(harken::Engine& engine) noexcept {
         const auto& row = *service;
         const std::pair<harken::DecisionToken, harken::ArmGroupToken> groups[] = {
             {row.initialQueueEntryDecision, row.queueInitialLaneArmGroup},
-            {row.queueDecision, row.queueArmGroup},
+            {row.HasFeatureArrays() ? row.QueueFiling().queueDecision : harken::DecisionToken{},
+             row.HasFeatureArrays() ? row.QueueFiling().queueArmGroup : harken::ArmGroupToken{}},
             {row.queueArrivalDecision, row.queueArrivalArmGroup},
             {row.variableControlDiscreteDecision, row.variableControlDiscreteArmGroup},
             {row.variableControlContinuousDecision, row.variableControlContinuousArmGroup},
@@ -11721,8 +11724,9 @@ bool ObserveActiveArrivalsBeforeArmReclaim(harken::Engine& engine) noexcept {
             harken::ArmGroupSnapshot snapshot{};
             if (engine.armGroups.Capture(local.group, &snapshot)) {
                 observedGroups[observedGroupCount++] = group;
-                if (group.slot == row.queueArmGroup.slot &&
-                    group.generation == row.queueArmGroup.generation &&
+                if (row.HasFeatureArrays() &&
+                    group.slot == row.QueueFiling().queueArmGroup.slot &&
+                    group.generation == row.QueueFiling().queueArmGroup.generation &&
                     snapshot.parent.slot == row.initialQueueEntryDecision.slot &&
                     snapshot.parent.generation ==
                         row.initialQueueEntryDecision.generation)
@@ -12044,7 +12048,7 @@ bool ValidateFrontierQueueInitialDecision(void* opaque) noexcept {
         row->partition.slot == current.canonicalPartition.slot &&
         row->partition.generation == current.canonicalPartition.generation &&
         engine.playablePartitions.Owns(current.canonicalPartition, row->identity) &&
-        SameCanonicalDecision(row->queueDecision, current.canonicalDecision) &&
+        SameCanonicalDecision(row->QueueFiling().queueDecision, current.canonicalDecision) &&
         SameCanonicalDecision(row->initialQueueEntryDecision, current.canonicalDecision);
 }
 
@@ -12081,10 +12085,10 @@ bool ExitCanonicalQueueChildResources(harken::Engine& engine,
              current->canonicalResourceTransition.generation != scratch.queueTransition.generation)) return false;
         current->canonicalResourceTransition = scratch.queueTransition;
     }
-    if (row.queueSuccessorProgramBank != nullptr) {
+    if (row.QueueFiling().queueSuccessorProgramBank != nullptr) {
         if (current->canonicalResourceBank != nullptr &&
-            current->canonicalResourceBank != row.queueSuccessorProgramBank) return false;
-        current->canonicalResourceBank = row.queueSuccessorProgramBank;
+            current->canonicalResourceBank != row.QueueFiling().queueSuccessorProgramBank) return false;
+        current->canonicalResourceBank = row.QueueFiling().queueSuccessorProgramBank;
     }
     harken::DecisionCommittedSnapshot committed{};
     const bool actualCommitted = engine.decisions.CaptureCommitted(current->canonicalDecision, &committed);
@@ -12111,8 +12115,8 @@ bool ExitCanonicalQueueChildResources(harken::Engine& engine,
         // Invalid initial tokens mean no acquisition; disposed tokens require actual success flags.
         if (!current->canonicalResourceGroup.Valid()) current->canonicalGroupExited = true;
         if (!current->canonicalResourceTransition.Valid()) current->canonicalTransitionExited = true;
-        row.queueArmGroup = {};
-        row.queueTransition = {};
+        row.QueueFiling().queueArmGroup = {};
+        row.QueueFiling().queueTransition = {};
     }
     current->canonicalResourceExited = true;
     return true;
@@ -12136,7 +12140,7 @@ bool CancelFrontierQueueInitialDecision(void* opaque) noexcept {
             row->partition.generation == current.canonicalPartition.generation &&
             current.engine->playablePartitions.Owns(current.canonicalPartition, row->identity) &&
             row->privateInitialQueueCurrent == nullptr && !row->canonicalInitialQueueDecision.Valid() &&
-            !row->initialQueueEntryDecision.Valid() && !row->queueDecision.Valid();
+            !row->initialQueueEntryDecision.Valid() && !row->QueueFiling().queueDecision.Valid();
     }
     if (current.canonicalProgress == harken::EngineInitialQueueDecisionProgress::Disposed) return true;
     if (!ValidateFrontierQueueInitialDecision(opaque) || !current.sourceCompletionExited ||
@@ -12192,15 +12196,15 @@ bool CancelFrontierQueueInitialDecision(void* opaque) noexcept {
             if (CanonicalQueueBankHasReaders(engine, *bank)) return false;
             if (!CancelQueueProgramBank(engine, bank)) return false;
         }
-        row->queueSuccessorProgramBank = nullptr;
-        row->queueSuccessorPrograms = {};
+        row->QueueFiling().queueSuccessorProgramBank = nullptr;
+        row->QueueFiling().queueSuccessorPrograms = {};
     }
-    row->queueDecision = {};
+    row->QueueFiling().queueDecision = {};
     row->initialQueueEntryDecision = {};
     row->canonicalInitialQueueDecision = {};
     row->privateInitialQueueCurrent = nullptr;
-    row->queueArmGroup = {};
-    row->queueTransition = {};
+    row->QueueFiling().queueArmGroup = {};
+    row->QueueFiling().queueTransition = {};
     current.canonicalProgress = harken::EngineInitialQueueDecisionProgress::Disposed;
     return true;
 }
@@ -12284,11 +12288,11 @@ engine.runtimeRecreateRequired = true;
         }
         if (receipt.outcome == harken::FrontierReceiptOutcome::Applied) {
             // The receipt owner retains values even when the resource moved to a child service.
-            auto& selection = row.queueMonitorSelection;
+            auto& selection = row.QueueFiling().queueMonitorSelection;
             PublishMonitorSelection(engine, selection, selection.arm,
                 selection.observation.RenderActivation(), selection.observation.Cause());
         }
-        row.queueMonitorSelection = {};
+        row.QueueFiling().queueMonitorSelection = {};
         row.frontierAcceptedSignal = {};
         if (receipt.outcome == harken::FrontierReceiptOutcome::DefinitivelyNotApplied) {
             (void)AbortTimelineArm(engine, row.arm);
@@ -12450,7 +12454,7 @@ bool TransferActiveQueueArrival(
     }
     if (SameCanonicalDecision(row.canonicalInitialQueueDecision, decision)) {
         if (SameCanonicalDecision(row.initialQueueEntryDecision, decision)) row.initialQueueEntryDecision = {};
-        if (SameCanonicalDecision(row.queueDecision, decision)) row.queueDecision = {};
+        if (SameCanonicalDecision(row.QueueFiling().queueDecision, decision)) row.QueueFiling().queueDecision = {};
         row.canonicalInitialQueueDecision = {};
     }
     ClearQueueArrivalReferences(row);
@@ -12530,9 +12534,9 @@ bool TransferCanonicalQueueRetirement(harken::Engine& engine,
         !SameCanonicalDecision(row.canonicalInitialQueueDecision, decision) ||
         decision.slot >= engine.decisionRetirements.size()) return false;
     const bool arrival = SameCanonicalDecision(row.queueArrivalDecision, decision);
-    const auto transition = arrival ? row.queueArrivalTransition : row.queueTransition;
+    const auto transition = arrival ? row.queueArrivalTransition : row.QueueFiling().queueTransition;
     harken::EngineQueueProgramBank* bank = nullptr;
-    for (auto* candidate : {row.queueCurrentProgramBank, row.queueSuccessorProgramBank}) {
+    for (auto* candidate : {row.queueCurrentProgramBank, row.QueueFiling().queueSuccessorProgramBank}) {
         if (candidate == nullptr || !candidate->occupied ||
             candidate->transition.slot != transition.slot || candidate->transition.generation != transition.generation ||
             !std::any_of(candidate->groups.begin(), candidate->groups.end(), [&](auto owned) noexcept {
@@ -12547,20 +12551,20 @@ bool TransferCanonicalQueueRetirement(harken::Engine& engine,
         if (!row.queueInstance.Valid() || !engine.queueInstances.Capture(row.queueInstance, &queue) ||
             queue.rootInstance != row.ownerInstance || queue.world != row.CanonicalInitialQueueRequest().world) return false;
         if (arrival) {
-            if (SameCanonicalDecision(row.queueDecision, decision)) return false;
-            if (queue.pendingVersion == 0) return !row.queueConditional.Valid();
+            if (SameCanonicalDecision(row.QueueFiling().queueDecision, decision)) return false;
+            if (queue.pendingVersion == 0) return !row.QueueFiling().queueConditional.Valid();
             // Arrival retirement has no rights over the independent current.
-            return row.queueDecision.Valid() && row.queueConditional.Valid() &&
-                row.queueConditional.version == queue.pendingVersion &&
+            return row.QueueFiling().queueDecision.Valid() && row.QueueFiling().queueConditional.Valid() &&
+                row.QueueFiling().queueConditional.version == queue.pendingVersion &&
                 engine.queueInstances.ProvePendingConditionalIdentity(row.queueInstance,
-                    row.queueConditional, row.queueDecision);
+                    row.QueueFiling().queueConditional, row.QueueFiling().queueDecision);
         }
-        if (!SameCanonicalDecision(row.queueDecision, decision)) return false;
+        if (!SameCanonicalDecision(row.QueueFiling().queueDecision, decision)) return false;
         if (queue.pendingVersion != 0) {
-            if (!row.queueConditional.Valid() || row.queueConditional.version != queue.pendingVersion ||
-                !engine.queueInstances.RetireConditionalForAbort(row.queueInstance, row.queueConditional, decision)) return false;
+            if (!row.QueueFiling().queueConditional.Valid() || row.QueueFiling().queueConditional.version != queue.pendingVersion ||
+                !engine.queueInstances.RetireConditionalForAbort(row.queueInstance, row.QueueFiling().queueConditional, decision)) return false;
         }
-        row.queueConditional = {};
+        row.QueueFiling().queueConditional = {};
         return true;
     };
     const auto& existing = engine.decisionRetirements[decision.slot];
@@ -12595,11 +12599,11 @@ bool TransferCanonicalQueueRetirement(harken::Engine& engine,
             !engine.transitionInstances.Capture(transition, &gate) || bank == nullptr || !bank->occupied ||
             bank->transition.slot != transition.slot || bank->transition.generation != transition.generation)
             return false;
-        const auto memberCount = arrival ? row.queueArrivalTransitionGroupArmCount : row.queueTransitionGroupArmCount;
-        const auto sourceCount = arrival ? row.queueArrivalSourceControlArmCount : row.queueSourceControlArmCount;
+        const auto memberCount = arrival ? row.queueArrivalTransitionGroupArmCount : row.QueueFiling().queueTransitionGroupArmCount;
+        const auto sourceCount = arrival ? row.queueArrivalSourceControlArmCount : row.QueueFiling().queueSourceControlArmCount;
         const std::array<harken::TimelineArmToken, 2> members{
-            arrival ? row.queueArrivalSourceArm : row.queueTransitionGroupArms[0],
-            arrival ? row.queueArrivalArm : row.queueTransitionGroupArms[1]};
+            arrival ? row.queueArrivalSourceArm : row.QueueFiling().queueTransitionGroupArms[0],
+            arrival ? row.queueArrivalArm : row.QueueFiling().queueTransitionGroupArms[1]};
         if (memberCount != 2u || sourceCount != 1u || arms.memberCount != memberCount) return false;
         for (std::uint16_t index = 0; index < memberCount; ++index) {
             harken::ArmGroupMemberSnapshot member{};
@@ -12622,24 +12626,24 @@ bool TransferCanonicalQueueRetirement(harken::Engine& engine,
         if (!TransferDecisionRetirement(engine, decision, !actualCommitted, group, transition, bank, &request)) return false;
     }
     if (SameCanonicalDecision(row.initialQueueEntryDecision, decision)) row.initialQueueEntryDecision = {};
-    if (SameCanonicalDecision(row.queueDecision, decision)) row.queueDecision = {};
+    if (SameCanonicalDecision(row.QueueFiling().queueDecision, decision)) row.QueueFiling().queueDecision = {};
     if (arrival) {
         row.queueArrivalDecision = {};
         row.queueArrivalTransition = {};
         row.queueArrivalTransitionGroupArmCount = 0;
         row.queueArrivalSourceControlArmCount = 0;
     } else {
-        row.queueTransition = {};
+        row.QueueFiling().queueTransition = {};
     }
     if (row.queueCurrentProgramBank == bank) {
         row.queueCurrentProgramBank = nullptr;
         row.queueCurrentPrograms = {};
     }
-    if (row.queueSuccessorProgramBank == bank) {
-        row.queueSuccessorProgramBank = nullptr;
-        row.queueSuccessorPrograms = {};
+    if (row.QueueFiling().queueSuccessorProgramBank == bank) {
+        row.QueueFiling().queueSuccessorProgramBank = nullptr;
+        row.QueueFiling().queueSuccessorPrograms = {};
     }
-    for (auto* alias : {&row.queueInitialLaneArmGroup, &row.queueArmGroup, &row.queueArrivalArmGroup})
+    for (auto* alias : {&row.queueInitialLaneArmGroup, &row.QueueFiling().queueArmGroup, &row.queueArrivalArmGroup})
         if (alias->slot == group.slot && alias->generation == group.generation) *alias = {};
     row.canonicalInitialQueueDecision = {};
     return true;
@@ -13171,9 +13175,11 @@ PlayableStartResetResult ResetPlayableStartRow(
         return PlayableStartResetResult::Deferred;
     row.queueCurrentProgramBorrowed = false;
     row.queueCurrentPrograms = {};
-    if (!CancelQueueProgramBank(engine, row.queueSuccessorProgramBank))
-        return PlayableStartResetResult::Deferred;
-    row.queueSuccessorPrograms = {};
+    if (row.HasFeatureArrays()) {
+        if (!CancelQueueProgramBank(engine, row.QueueFiling().queueSuccessorProgramBank))
+            return PlayableStartResetResult::Deferred;
+        row.QueueFiling().queueSuccessorPrograms = {};
+    }
     if (row.Invocation().serviceCount == 1 &&
         !row.Invocation().originalPackLease.Valid() &&
         !engine.InvocationBorrowsOriginalDeferredPack(row.Invocation()) &&
@@ -13354,11 +13360,12 @@ bool ServiceRetainedImmediateRetryCleanup(harken::Engine& engine) noexcept {
 bool ClearQueueSuccessorInstallationAfterNativeEnd(
     harken::Engine& engine, const harken::EnginePlayableServiceRow& row,
     std::uint64_t observedAudioSequence) noexcept {
+    if (!row.HasFeatureArrays()) return !row.queueMode;
     const auto clear = [&](VnVoiceHandle render, harken::TimelineArmToken arm) noexcept {
         return ClearTimelineVoiceInstallationAfterNativeEnd(engine, render, arm, observedAudioSequence);
     };
-    if (!clear(row.queueSuccessorRenderHandle, row.queueSuccessorArm)) return false;
-    for (std::uint32_t index = 0; index < row.queueSuccessorScheduleLeafCount; ++index) {
+    if (!clear(row.queueSuccessorRenderHandle, row.QueueFiling().queueSuccessorArm)) return false;
+    for (std::uint32_t index = 0; index < row.QueueFiling().queueSuccessorScheduleLeafCount; ++index) {
         const auto* member = engine.FindQueueSuccessorMember(row, index);
         if (member == nullptr || !clear(member->render, member->arm)) return false;
     }
@@ -13413,15 +13420,16 @@ bool CaptureQueueStopRetirementIdentity(
                 initialGroup = committed.armGroup;
                 const bool fromLane = sameGroup(initialGroup,
                     row.queueInitialLaneArmGroup);
-                const bool fromQueue = sameGroup(initialGroup,
-                    row.queueArmGroup) || sameGroup(initialGroup, row.queueArrivalArmGroup);
+                const bool fromQueue = (row.HasFeatureArrays() && sameGroup(initialGroup,
+                    row.QueueFiling().queueArmGroup)) || sameGroup(initialGroup, row.queueArrivalArmGroup);
                 if (!initialGroup.Valid() || fromLane == fromQueue ||
                     (row.queueFirstContinuationLane != fromLane))
                     return false;
             } else if (engine.decisions.IsOpen(initialDecision) ||
                        engine.decisions.IsCancelled(initialDecision)) {
                 for (const auto candidate : {row.queueInitialLaneArmGroup,
-                                             row.queueArmGroup, row.queueArrivalArmGroup}) {
+                                             row.HasFeatureArrays() ? row.QueueFiling().queueArmGroup : harken::ArmGroupToken{},
+                                             row.queueArrivalArmGroup}) {
                     if (!candidate.Valid()) continue;
                     harken::ArmGroupSnapshot group{};
                     if (!engine.armGroups.Capture(candidate, &group))
@@ -13481,15 +13489,15 @@ bool ReleaseQueueStopNativeOccupancy(
             return true;
         };
     if (!clearSingleCompletion(row.renderHandle, row.queueCurrentCompletion) ||
-        !clearSingleCompletion(row.queueSuccessorRenderHandle,
-                               row.queueSuccessorCompletion)) return false;
-    if (row.queueInstance.Valid() && row.queueConditional.Valid()) {
+        (row.HasFeatureArrays() && !clearSingleCompletion(row.queueSuccessorRenderHandle,
+                               row.QueueFiling().queueSuccessorCompletion))) return false;
+    if (row.queueInstance.Valid() && row.HasFeatureArrays() && row.QueueFiling().queueConditional.Valid()) {
         harken::QueueInstanceSnapshot queue{};
         if (!engine.queueInstances.Capture(row.queueInstance, &queue)) return false;
         if (queue.pendingVersion != 0 &&
             !engine.queueInstances.RetireConditionalForAbort(
-                row.queueInstance, row.queueConditional, row.queueDecision)) return false;
-        row.queueConditional = {};
+                row.queueInstance, row.QueueFiling().queueConditional, row.QueueFiling().queueDecision)) return false;
+        row.QueueFiling().queueConditional = {};
     }
     if (row.parentService.Valid() && row.queueMode) {
         const auto base = StorageBasesForRow(engine, row).member;
@@ -13557,10 +13565,12 @@ bool ReleaseQueueStopPhysicalArms(
         }
     }
     dropArm(row.queueSourceArm);
-    dropArm(row.queueSuccessorArm);
-    for (std::uint32_t index = 0;
-         index < row.queueTransitionGroupArmCount; ++index) {
-        dropArm(row.queueTransitionGroupArms[index]);
+    if (row.HasFeatureArrays()) {
+        dropArm(row.QueueFiling().queueSuccessorArm);
+        for (std::uint32_t index = 0;
+             index < row.QueueFiling().queueTransitionGroupArmCount; ++index) {
+            dropArm(row.QueueFiling().queueTransitionGroupArms[index]);
+        }
     }
     if (DropLivePlan03GroupMemberArms(engine, observedAudioSequence, true, &row) !=
         QueueCancellationLeaseStatus::Clear) return false;
@@ -13612,8 +13622,9 @@ bool TransferQueueStopDecisions(
         };
     if (!canonicalInitial || !SameCanonicalDecision(row.queueArrivalDecision, initialDecision))
         retireTransition(row.queueArrivalTransition);
-    if (!canonicalInitial || !SameCanonicalDecision(row.queueDecision, initialDecision))
-        retireTransition(row.queueTransition);
+    if (row.HasFeatureArrays() &&
+        (!canonicalInitial || !SameCanonicalDecision(row.QueueFiling().queueDecision, initialDecision)))
+        retireTransition(row.QueueFiling().queueTransition);
 
     const auto reclaimGroup = [&](harken::ArmGroupToken& group) {
         if (!group.Valid()) {
@@ -13630,8 +13641,8 @@ bool TransferQueueStopDecisions(
             row.queueArrivalSourceControlArmCount = 0;
         }
     }
-    if (!sameGroup(row.queueArmGroup, initialGroup))
-        reclaimGroup(row.queueArmGroup);
+    if (row.HasFeatureArrays() && !sameGroup(row.QueueFiling().queueArmGroup, initialGroup))
+        reclaimGroup(row.QueueFiling().queueArmGroup);
 
     if (row.initialQueueEntryAttemptGeneration != 0 &&
         row.initialQueueEntryDecision.Valid() &&
@@ -13677,18 +13688,20 @@ bool TransferQueueStopDecisions(
             row.queueArrivalTransition)) return false;
     if (sameGroup(row.queueInitialLaneArmGroup, initialGroup))
         row.queueInitialLaneArmGroup = {};
-    if (sameGroup(row.queueArmGroup, initialGroup))
-        row.queueArmGroup = {};
-    if (row.queueDecision.Valid() && row.queueArmGroup.Valid()) {
-        harken::ArmGroupSnapshot group{};
-        if (!engine.armGroups.Capture(row.queueArmGroup, &group) ||
-            group.parent.slot != row.queueDecision.slot ||
-            group.parent.generation != row.queueDecision.generation)
-            return false;
+    if (row.HasFeatureArrays()) {
+        if (sameGroup(row.QueueFiling().queueArmGroup, initialGroup))
+            row.QueueFiling().queueArmGroup = {};
+        if (row.QueueFiling().queueDecision.Valid() && row.QueueFiling().queueArmGroup.Valid()) {
+            harken::ArmGroupSnapshot group{};
+            if (!engine.armGroups.Capture(row.QueueFiling().queueArmGroup, &group) ||
+                group.parent.slot != row.QueueFiling().queueDecision.slot ||
+                group.parent.generation != row.QueueFiling().queueDecision.generation)
+                return false;
+        }
+        if (!dropDecision(row.QueueFiling().queueDecision, !row.QueueFiling().queueDecisionCommitted,
+                          row.QueueFiling().queueArmGroup, row.QueueFiling().queueTransition)) return false;
     }
-    if (!dropDecision(row.queueDecision, !row.queueDecisionCommitted,
-                  row.queueArmGroup, row.queueTransition) ||
-        !dropDecision(row.queueSuccessorDecision, true)) return false;
+    if (!dropDecision(row.queueSuccessorDecision, true)) return false;
 
     return true;
 }
@@ -13705,10 +13718,10 @@ bool ReleaseQueueStopFactories(
         if (!engine.ReleaseOriginalQueue(row.queueParentInstance)) return false;
         row.queueParentInstance = {};
     }
-    row.queueConditional = {};
+    if (row.HasFeatureArrays()) row.QueueFiling().queueConditional = {};
     row.queuePreparedPages = {};
     row.queueContinuationPrepared = false;
-    row.queueDecisionCommitted = false;
+    if (row.HasFeatureArrays()) row.QueueFiling().queueDecisionCommitted = false;
 
     (void)TryReleaseOccurrenceAfterFence(
         engine, row.queueRetiringOccurrence, observedAudioSequence);
@@ -13716,8 +13729,10 @@ bool ReleaseQueueStopFactories(
         engine, row.queueAbortedSuccessorOccurrence, observedAudioSequence);
     (void)TryReleaseOccurrenceAfterFence(
         engine, row.queueCurrentOccurrence, observedAudioSequence);
-    (void)TryReleaseOccurrenceAfterFence(
-        engine, row.queueSuccessorOccurrence, observedAudioSequence);
+    if (row.HasFeatureArrays()) {
+        (void)TryReleaseOccurrenceAfterFence(
+            engine, row.QueueFiling().queueSuccessorOccurrence, observedAudioSequence);
+    }
 
     row.queueArrivalArm = {};
     row.queueArrivalSourceArm = {};
@@ -13730,12 +13745,14 @@ bool ReleaseQueueStopFactories(
     row.queueArrivalCleanupStarted = false;
     row.queueArrivalDecisionCancelled = false;
     row.queueSourceArm = {};
-    row.queueSuccessorArm = {};
-    row.queueTransition = {};
-    row.queueTransitionGroupArms.Clear();
-    row.queueSourceControlArmCount = 0;
+    if (row.HasFeatureArrays()) {
+        row.QueueFiling().queueSuccessorArm = {};
+        row.QueueFiling().queueTransition = {};
+        row.QueueFiling().queueTransitionGroupArms.Clear();
+        row.QueueFiling().queueSourceControlArmCount = 0;
+        row.QueueFiling().queueTransitionGroupArmCount = 0;
+    }
     row.ClearQueueSourcePrograms();
-    row.queueTransitionGroupArmCount = 0;
     row.queueSuccessorRenderHandle = 0;
     row.queueCleanupStarted = true;
     return true;
@@ -14401,8 +14418,10 @@ void ReleaseAdmissionOccupancyAndRetire(
     ReleaseVariableControlOccupancy(engine, row, observedAudioSequence);
     (void)TryReleaseOccurrenceAfterFence(
         engine, row.queueCurrentOccurrence, observedAudioSequence);
-    (void)TryReleaseOccurrenceAfterFence(
-        engine, row.queueSuccessorOccurrence, observedAudioSequence);
+    if (row.HasFeatureArrays()) {
+        (void)TryReleaseOccurrenceAfterFence(
+            engine, row.QueueFiling().queueSuccessorOccurrence, observedAudioSequence);
+    }
     (void)TryReleaseOccurrenceAfterFence(
         engine, row.queueRetiringOccurrence, observedAudioSequence);
     (void)TryReleaseOccurrenceAfterFence(
@@ -14412,7 +14431,7 @@ void ReleaseAdmissionOccupancyAndRetire(
         return;
     }
     if (row.queueCurrentOccurrence.generation != 0 ||
-        row.queueSuccessorOccurrence.generation != 0 ||
+        (row.HasFeatureArrays() && row.QueueFiling().queueSuccessorOccurrence.generation != 0) ||
         row.queueRetiringOccurrence.generation != 0 ||
         row.queueAbortedSuccessorOccurrence.generation != 0) {
         return;
@@ -14668,12 +14687,12 @@ void BeginQueueSuccessorAbort(
     harken::EnginePlayableServiceRow& row,
     const harken::MonitorControlCause* cause = nullptr,
     const harken::EngineQueueProgramBank* privateBank = nullptr) noexcept {
-    const auto* bank = privateBank != nullptr ? privateBank : row.queueSuccessorProgramBank;
-    const auto first = privateBank != nullptr ? 0u : row.queueSuccessorPrograms.first;
-    if (row.queueSuccessorCompositeOwner.Valid()) {
+    const auto* bank = privateBank != nullptr ? privateBank : row.QueueFiling().queueSuccessorProgramBank;
+    const auto first = privateBank != nullptr ? 0u : row.QueueFiling().queueSuccessorPrograms.first;
+    if (row.QueueFiling().queueSuccessorCompositeOwner.Valid()) {
         bool mirrorsCleared = true;
         for (std::uint32_t index = 0;
-             index < row.queueSuccessorScheduleLeafCount; ++index) {
+             index < row.QueueFiling().queueSuccessorScheduleLeafCount; ++index) {
             const auto* member = engine.FindQueueProgramMember(bank, first + index);
             if (member == nullptr) {
                 mirrorsCleared = false;
@@ -14692,11 +14711,11 @@ void BeginQueueSuccessorAbort(
         }
         if (!mirrorsCleared ||
             !engine.compositeCompletionOwners.RollbackBeforePublication(
-                row.queueSuccessorCompositeOwner,
+                row.QueueFiling().queueSuccessorCompositeOwner,
                 engine.timelineOccurrences)) {
 engine.runtimeRecreateRequired = true;
         }
-        row.queueSuccessorCompositeOwner = {};
+        row.QueueFiling().queueSuccessorCompositeOwner = {};
     }
     if (row.queueSuccessorOwner.kind !=
         harken::CompletionOwnerKind::None) {
@@ -14707,20 +14726,20 @@ engine.runtimeRecreateRequired = true;
             !renderOwner.live ||
             engine.ledger.ClearCompletionMutationExact(
                 renderOwner.ledgerSlot,
-                {row.queueSuccessorOccurrence, row.queueSuccessorOwner});
+                {row.QueueFiling().queueSuccessorOccurrence, row.queueSuccessorOwner});
         bool occurrenceCleared =
             engine.timelineOccurrences.ClearCompletionOwnerExact(
-                row.queueSuccessorOccurrence, row.queueSuccessorOwner);
+                row.QueueFiling().queueSuccessorOccurrence, row.queueSuccessorOwner);
         if (!occurrenceCleared) {
             harken::CompletionOwnerRef captured{};
             if (!engine.timelineOccurrences.CaptureCompletionOwner(
-                    row.queueSuccessorOccurrence, &captured)) {
+                    row.QueueFiling().queueSuccessorOccurrence, &captured)) {
                 occurrenceCleared = true;
             } else if (harken::SameCompletionOwner(
                            captured, row.queueSuccessorOwner)) {
                 occurrenceCleared =
                     engine.timelineOccurrences.RollbackCompletionOwnerPinExact(
-                        row.queueSuccessorOccurrence,
+                        row.QueueFiling().queueSuccessorOccurrence,
                         row.queueSuccessorOwner);
             }
         }
@@ -14728,11 +14747,11 @@ engine.runtimeRecreateRequired = true;
             engine.runtimeRecreateRequired = true;
         }
     }
-    row.queueSuccessorCompletion = {};
+    row.QueueFiling().queueSuccessorCompletion = {};
     row.queueSuccessorOwner = {};
-    if (row.queueSuccessorScheduleLeafCount > 1) {
+    if (row.QueueFiling().queueSuccessorScheduleLeafCount > 1) {
         for (std::uint32_t index = 0;
-             index < row.queueSuccessorScheduleLeafCount; ++index) {
+             index < row.QueueFiling().queueSuccessorScheduleLeafCount; ++index) {
             auto* member = engine.FindQueueProgramMember(bank, first + index);
             if (member == nullptr) {
                 engine.runtimeRecreateRequired = true;
@@ -14741,29 +14760,29 @@ engine.runtimeRecreateRequired = true;
             (void)AbortTimelineArm(engine, member->arm, cause);
             (void)TryReleaseOccurrenceAfterFence(engine, member->occurrence, 0);
         }
-    } else if (row.queueSuccessorArm.Valid()) {
-        (void)AbortTimelineArm(engine, row.queueSuccessorArm, row.queueSameProgramKey ? nullptr : cause);
+    } else if (row.QueueFiling().queueSuccessorArm.Valid()) {
+        (void)AbortTimelineArm(engine, row.QueueFiling().queueSuccessorArm, row.QueueFiling().queueSameProgramKey ? nullptr : cause);
     }
     if (row.queueSourceArm.Valid()) {
         if (!AbortQueueSourceArm(engine, row)) {
 engine.runtimeRecreateRequired = true;
         }
     }
-    if (row.queueTransition.Valid()) {
+    if (row.QueueFiling().queueTransition.Valid()) {
         harken::TransitionInstanceSnapshot transition{};
         if (engine.transitionInstances.Capture(
-                row.queueTransition, &transition) &&
+                row.QueueFiling().queueTransition, &transition) &&
             transition.state ==
                 harken::TransitionAudibleGateState::Replaceable) {
             (void)engine.transitionInstances.InvalidateReady(
-                row.queueTransition);
+                row.QueueFiling().queueTransition);
         }
     }
     row.queueSuccessorArmTombstoned = false;
-    row.queueSuccessorHasZeroWorkCompletion = false;
-    row.queueSuccessorZeroWorkCompletionFrame = 0;
-    if (row.queueArmGroup.Valid()) {
-        (void)engine.armGroups.BeginRetire(row.queueArmGroup);
+    row.QueueFiling().queueSuccessorHasZeroWorkCompletion = false;
+    row.QueueFiling().queueSuccessorZeroWorkCompletionFrame = 0;
+    if (row.QueueFiling().queueArmGroup.Valid()) {
+        (void)engine.armGroups.BeginRetire(row.QueueFiling().queueArmGroup);
     }
     if (row.queueSuccessorDecision.Valid()) {
         if (!TransferDecisionRetirement(engine, row.queueSuccessorDecision, true)) {
@@ -14773,10 +14792,10 @@ engine.runtimeRecreateRequired = true;
             row.queueSuccessorTicket = 0;
         }
     }
-    if (row.queueSuccessorOccurrence.generation != 0) {
+    if (row.QueueFiling().queueSuccessorOccurrence.generation != 0) {
         row.queueAbortedSuccessorOccurrence =
-            row.queueSuccessorOccurrence;
-        row.queueSuccessorOccurrence = {};
+            row.QueueFiling().queueSuccessorOccurrence;
+        row.QueueFiling().queueSuccessorOccurrence = {};
     }
 }
 
@@ -17365,7 +17384,7 @@ bool PrepareVariableControlRetargetSubtree(
                 request.expectedContinuationGeneration = service->ownerEpoch;
                 request.sliceCount = 1;
                 if (!engine.decisions.PrepareReservation(request, &current.decision)) return false;
-                service->queueDecision = current.decision.Token();
+                service->QueueFiling().queueDecision = current.decision.Token();
                 harken::OccurrenceKey key{};
                 key.arrangingInstance = service->ownerInstance;
                 key.clipId = node.authored.stableId;
@@ -18841,10 +18860,10 @@ bool CanTransferFrontierQueueResponsibilities(harken::Engine& engine,
             if (!successor.live || successor.parent != queue.ownerInstance ||
                 successor.scheduleEpoch != child->variableControlNestedQueueSuccessor.ScheduleEpoch()) return false;
         }
-        if (queue.queueConditional.Valid() && !queue.queueContinuationPrepared && queue.pendingFutureCount == UINT32_MAX)
+        if (queue.QueueFiling().queueConditional.Valid() && !queue.queueContinuationPrepared && queue.pendingFutureCount == UINT32_MAX)
             return false;
-        if (queue.queueSuccessorProgramBank != child->queueFutureProgramBank ||
-            (queue.queueSuccessorProgramBank != nullptr && !queue.queueSuccessorProgramBank->occupied)) return false;
+        if (queue.QueueFiling().queueSuccessorProgramBank != child->queueFutureProgramBank ||
+            (queue.QueueFiling().queueSuccessorProgramBank != nullptr && !queue.QueueFiling().queueSuccessorProgramBank->occupied)) return false;
     }
     for (std::uint32_t index = 0; index < scratch.frontierQueueCount; ++index) {
         const auto& current = scratch.storage.frontierQueues[index].current;
@@ -18852,9 +18871,9 @@ bool CanTransferFrontierQueueResponsibilities(harken::Engine& engine,
         const auto* queue = engine.ResolvePlayableService(current.service);
         if (queue == nullptr || queue->privateInitialQueueCurrent != &current ||
             current.canonicalProgress != harken::EngineInitialQueueDecisionProgress::PrivateOpen ||
-            !SameCanonicalDecision(queue->queueDecision, current.canonicalDecision) ||
+            !SameCanonicalDecision(queue->QueueFiling().queueDecision, current.canonicalDecision) ||
             !SameCanonicalDecision(queue->initialQueueEntryDecision, current.canonicalDecision) ||
-            queue->queueSuccessorProgramBank == nullptr || !queue->queueSuccessorProgramBank->occupied) return false;
+            queue->QueueFiling().queueSuccessorProgramBank == nullptr || !queue->QueueFiling().queueSuccessorProgramBank->occupied) return false;
     }
     return true;
 }
@@ -18893,15 +18912,15 @@ bool TransferFrontierQueueFutureResponsibilities(harken::Engine& engine,
             queue.variableControlNestedQueueSuccessorOrdinal =
                 child->variableControlNestedQueueSuccessorOrdinal;
         }
-        if (queue.queueConditional.Valid() && !queue.queueContinuationPrepared) {
+        if (queue.QueueFiling().queueConditional.Valid() && !queue.queueContinuationPrepared) {
             queue.queueContinuationPrepared = true;
             ++queue.pendingFutureCount;
         }
-        if (queue.queueSuccessorProgramBank != nullptr) {
-            queue.queueSuccessorProgramBank->groups[0] = queue.queueArmGroup;
-            queue.queueSuccessorProgramBank->transition = queue.queueTransition;
-            queue.queueSuccessorProgramBank->heldByOwner = true;
-            queue.queueSuccessorProgramBank->published = !queue.queueTimingPending;
+        if (queue.QueueFiling().queueSuccessorProgramBank != nullptr) {
+            queue.QueueFiling().queueSuccessorProgramBank->groups[0] = queue.QueueFiling().queueArmGroup;
+            queue.QueueFiling().queueSuccessorProgramBank->transition = queue.QueueFiling().queueTransition;
+            queue.QueueFiling().queueSuccessorProgramBank->heldByOwner = true;
+            queue.QueueFiling().queueSuccessorProgramBank->published = !queue.queueTimingPending;
         }
         harken::Engine::NativeBackingReturnPlan nativeTransfer;
         if (!engine.PrepareNativeBackingReturn(*child, &nativeTransfer)) return false;
@@ -19138,7 +19157,7 @@ bool CancelQueueFutureAttempt(
     scratch->pendingVariableReplacementTopology.ReturnOriginalLifetimes();
     if (!scratch->playableTreeExecutor.RollbackCommitted(engine.playableInstances) ||
         !ReleaseCancelledFrontierServices(engine, *scratch)) return false;
-    auto*& bank = scratch->row->queueSuccessorProgramBank;
+    auto*& bank = scratch->row->QueueFiling().queueSuccessorProgramBank;
     if (bank != scratch->queueFutureProgramBank || (bank != nullptr && bank->published)) return false;
     if (scratch->queueFutureCanonicalCurrent != nullptr) {
         auto& current = *scratch->queueFutureCanonicalCurrent;
@@ -19146,7 +19165,7 @@ bool CancelQueueFutureAttempt(
         // The parent owns the bank until source and Decision exit complete.
     } else {
         if (!CancelQueueProgramBank(engine, bank)) return false;
-        scratch->row->queueSuccessorPrograms = {};
+        scratch->row->QueueFiling().queueSuccessorPrograms = {};
     }
     scratch->queueFutureProgramBank = nullptr;
     return ResetImmediateActionPlayScratch(engine, scratch);
@@ -19216,12 +19235,12 @@ bool CommitQueueFutureAttemptOwner(
     if (child == nullptr || child->row == nullptr) return false;
     auto& engine = *context->engine;
     auto& row = *child->row;
-    auto& successor = row.queueSuccessorProgramPlane == 0 ? row.schedule : row.queueSuccessorSchedule;
-    if (!StampQueueSuccessorPrograms(row, child->queueSuccessorVoiceStartCount, ticket)) return false;
+    auto& successor = row.QueueFiling().queueSuccessorProgramPlane == 0 ? row.schedule : row.QueueFiling().queueSuccessorSchedule;
+    if (!StampQueueSuccessorPrograms(row.QueueFiling(), child->queueSuccessorVoiceStartCount, ticket)) return false;
     successor.transactionId = ticket;
-    row.queueSourceSchedule.transactionId = ticket;
+    row.QueueFiling().queueSourceSchedule.transactionId = ticket;
     if (child->queueFutureProgramBank != nullptr) {
-        if (row.queueSuccessorProgramBank != child->queueFutureProgramBank) return false;
+        if (row.QueueFiling().queueSuccessorProgramBank != child->queueFutureProgramBank) return false;
     }
     if (!child->playableTreeExecutor.Commit(
             context->engine->playableInstances, ticket) ||
@@ -20372,12 +20391,12 @@ bool RollbackCommittedVariableControlInitial(
     if (scratch->queueDecision.Valid()) {
         const bool cancelled = engine.decisions.CancelPreparedReservation(
             &scratch->queueDecision);
-        if (cancelled) queueRow.queueDecision = {};
+        if (cancelled) queueRow.QueueFiling().queueDecision = {};
         ok = cancelled && ok;
     }
-    if (!scratch->queueDecision.Valid() && queueRow.queueDecision.Valid()) {
+    if (!scratch->queueDecision.Valid() && queueRow.QueueFiling().queueDecision.Valid()) {
         ok = rollbackTransferredDecision(
-                 queueRow.queueDecision, queueRow.queueDecisionCommitted) &&
+                 queueRow.QueueFiling().queueDecision, queueRow.QueueFiling().queueDecisionCommitted) &&
              ok;
     }
     if (scratch->queueSuccessorDecision.Valid()) {
@@ -20612,11 +20631,11 @@ bool RollbackCommittedVariableControlInitial(
                  scratch->queueSuccessorCompositeOwnerPrepared) &&
              ok;
     } else if (scratch->queueSuccessorCompletionMutationCount != 0 &&
-               queueRow.queueSuccessorOccurrence.generation != 0 &&
+               queueRow.QueueFiling().queueSuccessorOccurrence.generation != 0 &&
                scratch->queueSuccessorVoiceStartCount != 0) {
         ok = clearLedgerMutation(
                  scratch->queueSuccessorVoiceStarts[0].ledgerSlot,
-                 queueRow.queueSuccessorOccurrence,
+                 queueRow.QueueFiling().queueSuccessorOccurrence,
                  scratch->queueSuccessorOwner) &&
              ok;
     }
@@ -20628,9 +20647,9 @@ bool RollbackCommittedVariableControlInitial(
         scratch->queueCompletionOwnerPinned = false;
     }
     if (scratch->queueSuccessorCompletionOwnerPinned &&
-        queueRow.queueSuccessorOccurrence.generation != 0) {
+        queueRow.QueueFiling().queueSuccessorOccurrence.generation != 0) {
         ok = engine.timelineOccurrences.RollbackCompletionOwnerPinExact(
-                 queueRow.queueSuccessorOccurrence, scratch->queueSuccessorOwner) &&
+                 queueRow.QueueFiling().queueSuccessorOccurrence, scratch->queueSuccessorOwner) &&
              ok;
         scratch->queueSuccessorCompletionOwnerPinned = false;
     }
@@ -20676,7 +20695,7 @@ bool RollbackCommittedVariableControlInitial(
                  scratch->queueSuccessorCompositeOwnerPrepared) &&
              ok;
         scratch->queueSuccessorCompositeOwnerPrepared = false;
-        queueRow.queueSuccessorCompositeOwner = {};
+        queueRow.QueueFiling().queueSuccessorCompositeOwner = {};
     }
 
     std::array<harken::OccurrenceToken,
@@ -20714,7 +20733,7 @@ bool RollbackCommittedVariableControlInitial(
         return released;
     };
     ok = releaseOccurrence(queueRow.queueCurrentOccurrence) && ok;
-    ok = releaseOccurrence(queueRow.queueSuccessorOccurrence) && ok;
+    ok = releaseOccurrence(queueRow.QueueFiling().queueSuccessorOccurrence) && ok;
     for (std::uint32_t index = scratch->queueCurrentLeafOccurrenceCount;
          index-- > 0;) {
         ok = releaseOccurrence(scratch->queueCurrentLeafOccurrences[index]) &&
@@ -20737,7 +20756,7 @@ bool RollbackCommittedVariableControlInitial(
             if (member != nullptr) ok = releaseOccurrence(member->occurrence) && ok;
         }
     }
-    for (std::uint32_t index = queueRow.queueSuccessorScheduleLeafCount; index-- > 0;) {
+    for (std::uint32_t index = queueRow.QueueFiling().queueSuccessorScheduleLeafCount; index-- > 0;) {
         auto* member = engine.FindQueueSuccessorMember(queueRow, index);
         if (member != nullptr) ok = releaseOccurrence(member->occurrence) && ok;
     }
@@ -22735,7 +22754,7 @@ bool CommitPreparedQueueResources(
         const bool committedOk = engine.decisions.CommitPreparedReservation(
             &scratch->queueDecision, sequence, &committed);
         if (committedOk) {
-            row.queueDecision = committed;
+            row.QueueFiling().queueDecision = committed;
             row.queueTicket = sequence;
         }
         ok = committedOk && ok;
@@ -22808,7 +22827,7 @@ bool CommitPreparedQueueResources(
         harken::ConditionalQueueVersionToken conditional{};
         const bool committed = engine.queueInstances.CommitPreparedConditional(
             &scratch->queueConditional, &conditional);
-        if (committed) row.queueConditional = conditional;
+        if (committed) row.QueueFiling().queueConditional = conditional;
         ok = committed && ok;
     }
     for (std::uint32_t index = 0; index < scratch->queueGroupSliceCount;
@@ -22837,14 +22856,14 @@ bool CommitPreparedQueueResources(
         if (committedOk) row.queueParentInstance = committed;
         ok = committedOk && ok;
     }
-    if (row.queueConditional.Valid()) {
+    if (row.QueueFiling().queueConditional.Valid()) {
         row.queueContinuationPrepared = true;
         ++row.pendingFutureCount;
     }
-    if (row.queueSuccessorProgramBank != nullptr) {
-        row.queueSuccessorProgramBank->groups[0] = row.queueArmGroup;
-        row.queueSuccessorProgramBank->transition = row.queueTransition;
-        row.queueSuccessorProgramBank->published = !row.queueTimingPending;
+    if (row.QueueFiling().queueSuccessorProgramBank != nullptr) {
+        row.QueueFiling().queueSuccessorProgramBank->groups[0] = row.QueueFiling().queueArmGroup;
+        row.QueueFiling().queueSuccessorProgramBank->transition = row.QueueFiling().queueTransition;
+        row.QueueFiling().queueSuccessorProgramBank->published = !row.queueTimingPending;
     }
     return ok;
 }
@@ -23053,7 +23072,7 @@ bool PrepareInitialVariableControlOwners(harken::Engine& engine,
             return false;
         }
         if (scratch->queueDecision.Valid() == false &&
-            queueRow.queueDecision.Valid()) {
+            queueRow.QueueFiling().queueDecision.Valid()) {
             return false;
         }
         if (!hasQueueFuture &&
@@ -23067,7 +23086,7 @@ bool PrepareInitialVariableControlOwners(harken::Engine& engine,
         }
         if (!hasQueueFuture &&
             scratch->queueConditional.Valid() == false &&
-            queueRow.queueConditional.Valid()) {
+            queueRow.QueueFiling().queueConditional.Valid()) {
             return false;
         }
         for (std::uint32_t index = 0; index < scratch->voiceStartCount;
@@ -23518,7 +23537,7 @@ bool PrepareQueueFutureFactoryOutputs(harken::Engine& engine,
             child->row->invocationGeneration != parent.row->invocationGeneration ||
             !engine.playableInstances.MatchesPreparedOriginalAncestry(links,
                 child->row->ownerInstance, parent.row->rootInstance)) return false;
-        if (child->row->queueSameProgramKey) {
+        if (child->row->QueueFiling().queueSameProgramKey) {
             if (child->variableControlNestedQueueSuccessor.Handle() != 0 ||
                 child->queueSuccessorVoiceStartCount != 0) return false;
             continue;
@@ -23851,13 +23870,13 @@ engine.runtimeRecreateRequired = true;
     }
     if (!scratch->queueInitialResourcesPrepared) {
         ok = CommitPreparedQueueResources(engine, scratch, queueRow, sequence) && ok;
-    } else if (queueRow.queueConditional.Valid()) {
+    } else if (queueRow.QueueFiling().queueConditional.Valid()) {
         queueRow.queueContinuationPrepared = true;
         ++queueRow.pendingFutureCount;
-        if (queueRow.queueSuccessorProgramBank != nullptr) {
-            queueRow.queueSuccessorProgramBank->groups[0] = queueRow.queueArmGroup;
-            queueRow.queueSuccessorProgramBank->transition = queueRow.queueTransition;
-            queueRow.queueSuccessorProgramBank->published = !queueRow.queueTimingPending;
+        if (queueRow.QueueFiling().queueSuccessorProgramBank != nullptr) {
+            queueRow.QueueFiling().queueSuccessorProgramBank->groups[0] = queueRow.QueueFiling().queueArmGroup;
+            queueRow.QueueFiling().queueSuccessorProgramBank->transition = queueRow.QueueFiling().queueTransition;
+            queueRow.QueueFiling().queueSuccessorProgramBank->published = !queueRow.queueTimingPending;
         }
     }
     if (!treeOwnsCommit) {
@@ -23890,7 +23909,7 @@ engine.runtimeRecreateRequired = true;
     post.transportEpoch = engine.timelinePool.Epoch();
     post.logicCommitSequence = sequence;
     if (ok && !scratch->queueInitialResourcesPrepared && queueRow.queueMode && scratch->queueHasContinuation &&
-        queueRow.queueDecision.Valid() && queueRow.queueCurrentOccurrence.generation != 0 &&
+        queueRow.QueueFiling().queueDecision.Valid() && queueRow.queueCurrentOccurrence.generation != 0 &&
         scratch->voiceStartCount != 0) {
         harken::PlayableProgramKey completionProgram{};
         completionProgram.kind = harken::PlayableKindV1::Sound;
@@ -23900,7 +23919,7 @@ engine.runtimeRecreateRequired = true;
             queueRow.leaf.expectedProgramSemanticFingerprint;
         const harken::CompletionOwnerRef owner =
             harken::CompletionOwnerRef::Single(
-                queueRow.queueDecision,
+                queueRow.QueueFiling().queueDecision,
                 scratch->voiceStarts[0].completionPredicate
                     .playbackFactsRevision);
         scratch->queueCurrentOwner = owner;
@@ -25373,7 +25392,7 @@ QueueContinuationPrepareStatus PrepareCompositeQueueContinuation(
     successorKey.clipId = selectedChild.playable.stableId;
     successorKey.occurrenceOrdinal = next.currentChildOrdinal;
     if (!engine.timelineOccurrences.Acquire(
-            successorKey, &row.queueSuccessorOccurrence)) {
+            successorKey, &row.QueueFiling().queueSuccessorOccurrence)) {
         if (row.queueSuccessorDecision.Valid()) {
             (void)engine.decisions.Cancel(row.queueSuccessorDecision);
             (void)engine.decisions.ReclaimCancelled(
@@ -25383,8 +25402,8 @@ QueueContinuationPrepareStatus PrepareCompositeQueueContinuation(
         }
         return QueueContinuationPrepareStatus::Failed;
     }
-    row.queueSuccessorScheduleBase = static_cast<std::uint32_t>(base);
-    row.queueSuccessorScheduleLeafCount = 0;
+    row.QueueFiling().queueSuccessorScheduleBase = static_cast<std::uint32_t>(base);
+    row.QueueFiling().queueSuccessorScheduleLeafCount = 0;
     auto& successorPayloadStorage = starts.QueueBank()->payloads;
     auto& successorEventStorage = starts.QueueBank()->events;
     auto& successorRuntimeStorage = starts.QueueBank()->runtimes;
@@ -25396,7 +25415,7 @@ QueueContinuationPrepareStatus PrepareCompositeQueueContinuation(
         BeginQueueSuccessorAbort(engine, row, nullptr, starts.QueueBank());
         for (auto& leaf : knownLeaves)
             (void)TryReleaseOccurrenceAfterFence(engine, leaf.occurrence, 0);
-        row.queueSuccessorScheduleLeafCount = 0;
+        row.QueueFiling().queueSuccessorScheduleLeafCount = 0;
     };
     for (std::uint32_t index = 0; index < materialized.leafCount; ++index) {
         const std::uint64_t startFrame =
@@ -25438,7 +25457,7 @@ QueueContinuationPrepareStatus PrepareCompositeQueueContinuation(
                 startFrame, row.parentService.Valid() ? row.ownerInstance : row.rootInstance,
                 row.rootInstance, progressOccurrence,
                 successorHasContinuation ? &programKey : nullptr,
-                harken::ParentAudioGroupRef{row.queueDecision},
+                harken::ParentAudioGroupRef{row.QueueFiling().queueDecision},
                 sourceControlCount + index, nullptr, starts.At(index), nullptr,
                 row.parentService.Valid() ? &preparedTree.Resource() : nullptr, &preparedTree.Resource(), row.queueTimingPending,
                 false, false, false, nullptr, {}, false, 0, &selectionCause);
@@ -25451,7 +25470,7 @@ QueueContinuationPrepareStatus PrepareCompositeQueueContinuation(
         }
         if (!preparedTree.BindMember(*starts.QueueBank(), index, installed, captured,
                 prepared[index].leaf, startFrame, successorHasContinuation
-                    ? knownLeaves[index].occurrence : row.queueSuccessorOccurrence)) {
+                    ? knownLeaves[index].occurrence : row.QueueFiling().queueSuccessorOccurrence)) {
             abortPrepared();
             return QueueContinuationPrepareStatus::Failed;
         }
@@ -25536,19 +25555,19 @@ QueueContinuationPrepareStatus PrepareCompositeQueueContinuation(
             known.absoluteLeafStartFrame = startFrame;
             known.predicate = installed.completionPredicate;
         }
-        row.queueSuccessorScheduleLeafCount = index + 1u;
+        row.QueueFiling().queueSuccessorScheduleLeafCount = index + 1u;
     }
     if (successorHasContinuation && materialized.leafCount != 0) {
         harken::CompositeCompletionOwnerToken composite{};
         if (engine.compositeCompletionOwners.Acquire(
-                row.queueSuccessorOccurrence, 1, knownLeaves.data(),
+                row.QueueFiling().queueSuccessorOccurrence, 1, knownLeaves.data(),
                 materialized.leafCount, engine.timelineOccurrences,
                 &composite) !=
             harken::CompositeCompletionAcquireStatus::Ok) {
             abortPrepared();
             return QueueContinuationPrepareStatus::Failed;
         }
-        row.queueSuccessorCompositeOwner = composite;
+        row.QueueFiling().queueSuccessorCompositeOwner = composite;
         for (std::uint32_t index = 0; index < materialized.leafCount;
              ++index) {
             harken::KnownScheduleLeafV1 bound{};
@@ -25568,33 +25587,33 @@ QueueContinuationPrepareStatus PrepareCompositeQueueContinuation(
     if (materialized.leafCount != 0) {
         const auto& member = *engine.FindQueueProgramMember(starts.QueueBank(), 0);
         row.QueueSuccessorLeaf() = member.leaf;
-        row.queueSuccessorArm = member.arm;
-        row.queueMonitorSelection = member.monitorSelection;
+        row.QueueFiling().queueSuccessorArm = member.arm;
+        row.QueueFiling().queueMonitorSelection = member.monitorSelection;
         row.queueSuccessorRenderHandle = member.render;
         row.queueSuccessorTailFrames = member.postSourceTailFrames;
     } else {
         row.QueueSuccessorLeaf() = {};
-        row.queueSuccessorArm = {};
+        row.QueueFiling().queueSuccessorArm = {};
         row.queueSuccessorRenderHandle = 0;
         row.queueSuccessorTailFrames = 0;
     }
     const auto rollbackUnpublishedTransition = [&]() {
         row.queueSourceArm = {};
-        row.queueSourceControlArmCount = 0;
+        row.QueueFiling().queueSourceControlArmCount = 0;
         row.ClearQueueSourcePrograms();
-        row.queueTransitionGroupArmCount = 0;
-        row.queueTransitionGroupArms.Clear();
-        if (row.queueTransition.Valid()) {
-            if (!engine.transitionInstances.CancelBeforePublication(row.queueTransition))
+        row.QueueFiling().queueTransitionGroupArmCount = 0;
+        row.QueueFiling().queueTransitionGroupArms.Clear();
+        if (row.QueueFiling().queueTransition.Valid()) {
+            if (!engine.transitionInstances.CancelBeforePublication(row.QueueFiling().queueTransition))
 engine.runtimeRecreateRequired = true;
-            row.queueTransition = {};
+            row.QueueFiling().queueTransition = {};
         }
     };
     row.queueSourceArm = {};
-    row.queueSourceControlArmCount = 0;
+    row.QueueFiling().queueSourceControlArmCount = 0;
     row.ClearQueueSourcePrograms();
-    row.queueTransitionGroupArms.Clear();
-    row.queueTransitionGroupArmCount = 0;
+    row.QueueFiling().queueTransitionGroupArms.Clear();
+    row.QueueFiling().queueTransitionGroupArmCount = 0;
     if (transitionRule != nullptr) {
         const std::uint64_t audibleFrame = sourceControlRequired
             ? sourcePhaseFrame : successorStartFrame;
@@ -25602,9 +25621,9 @@ engine.runtimeRecreateRequired = true;
                 {audibleFrame,
                  audibleFrame / engine.config.blockFrames,
                  engine.CaptureMonitorOwner(row.ownerInstance)},
-                &row.queueTransition) ||
+                &row.QueueFiling().queueTransition) ||
             !engine.decisions.AttachTransitionGateBeforeCommit(
-                row.queueDecision, row.queueTransition,
+                row.QueueFiling().queueDecision, row.QueueFiling().queueTransition,
                 (naturalEndPrelude || delayedTargetLock) ? 2u : 1u)) {
             rollbackUnpublishedTransition();
             abortPrepared();
@@ -25623,44 +25642,44 @@ engine.runtimeRecreateRequired = true;
                         static_cast<std::uint32_t>(handle >> 32),
                         sourcePhaseFrame, armDeadline,
                         row.rootInstance, sourceSet.targets[index],
-                        harken::ParentAudioGroupRef{row.queueDecision},
+                        harken::ParentAudioGroupRef{row.QueueFiling().queueDecision},
                         static_cast<std::uint16_t>(index),
-                        &row.queueTransitionGroupArms[index])) {
+                        &row.QueueFiling().queueTransitionGroupArms[index])) {
                     rollbackUnpublishedTransition();
                     abortPrepared();
                     return QueueContinuationPrepareStatus::Failed;
                 }
-                row.queueSourceControlArmCount = index + 1u;
+                row.QueueFiling().queueSourceControlArmCount = index + 1u;
             }
-            row.queueSourceArm = row.queueTransitionGroupArms[0];
+            row.queueSourceArm = row.QueueFiling().queueTransitionGroupArms[0];
         }
     }
     for (std::uint32_t index = 0;
          index < materialized.leafCount; ++index) {
-        row.queueTransitionGroupArms[sourceControlCount + index] =
+        row.QueueFiling().queueTransitionGroupArms[sourceControlCount + index] =
             engine.FindQueueProgramMember(starts.QueueBank(), index)->arm;
     }
-    row.queueTransitionGroupArmCount =
+    row.QueueFiling().queueTransitionGroupArmCount =
         sourceControlCount + materialized.leafCount;
     if (!starts.PrepareArmGroup(
-            row.queueDecision, row.queueTransitionGroupArms.data(),
+            row.QueueFiling().queueDecision, row.QueueFiling().queueTransitionGroupArms.data(),
             static_cast<std::uint16_t>(
-                row.queueTransitionGroupArmCount),
-            &row.queueArmGroup)) {
+                row.QueueFiling().queueTransitionGroupArmCount),
+            &row.QueueFiling().queueArmGroup)) {
         rollbackUnpublishedTransition();
         abortPrepared();
         return QueueContinuationPrepareStatus::Failed;
     }
     row.QueueNextState() = next;
-    row.queueSuccessorProgramPlane = successorProgramPlane;
+    row.QueueFiling().queueSuccessorProgramPlane = successorProgramPlane;
     harken::TimelineProgramView& successorRuntime =
-        row.queueSuccessorProgramPlane == 0
+        row.QueueFiling().queueSuccessorProgramPlane == 0
             ? row.runtimeProgram
             : row.queueSuccessorRuntimeProgram;
     harken::ProgramView& successorSchedule =
-        row.queueSuccessorProgramPlane == 0
+        row.QueueFiling().queueSuccessorProgramPlane == 0
             ? row.schedule
-            : row.queueSuccessorSchedule;
+            : row.QueueFiling().queueSuccessorSchedule;
     successorRuntime = {};
     successorRuntime.generation = row.rootInstance;
     successorRuntime.payloads =
@@ -25694,7 +25713,7 @@ engine.runtimeRecreateRequired = true;
              sourceIndex < sourceControlCount; ++sourceIndex) {
             const std::uint32_t sourceEventBase = sourceEventCount;
             const harken::TimelineArmToken arm =
-                row.queueTransitionGroupArms[sourceIndex];
+                row.QueueFiling().queueTransitionGroupArms[sourceIndex];
             const harken::TimelineSemanticTarget& target =
                 sourceSet.targets[sourceIndex];
             if (sourceFadeActive) {
@@ -25763,17 +25782,17 @@ engine.runtimeRecreateRequired = true;
         row.queueSourceRuntimeProgram.payloads =
             row.queueSourcePayloads.data();
         row.queueSourceRuntimeProgram.payloadCount = sourceEventCount;
-        row.queueSourceSchedule = {};
-        row.queueSourceSchedule.ownerInstance = row.rootInstance;
-        row.queueSourceSchedule.ownerInstanceScheduleEpoch =
+        row.QueueFiling().queueSourceSchedule = {};
+        row.QueueFiling().queueSourceSchedule.ownerInstance = row.rootInstance;
+        row.QueueFiling().queueSourceSchedule.ownerInstanceScheduleEpoch =
             instance.scheduleEpoch;
-        row.queueSourceSchedule.transactionId = row.queueTicket;
-        row.queueSourceSchedule.entryAnchorFrame = sourcePhaseFrame;
-        row.queueSourceSchedule.events = row.queueSourceEvents.data();
-        row.queueSourceSchedule.eventCount = sourceEventCount;
-        row.queueSourceSchedule.runtimeProgram = {
+        row.QueueFiling().queueSourceSchedule.transactionId = row.queueTicket;
+        row.QueueFiling().queueSourceSchedule.entryAnchorFrame = sourcePhaseFrame;
+        row.QueueFiling().queueSourceSchedule.events = row.queueSourceEvents.data();
+        row.QueueFiling().queueSourceSchedule.eventCount = sourceEventCount;
+        row.QueueFiling().queueSourceSchedule.runtimeProgram = {
             row.rootInstance, &row.queueSourceRuntimeProgram};
-        row.queueSourceSchedule.armToken = row.queueSourceArm;
+        row.QueueFiling().queueSourceSchedule.armToken = row.queueSourceArm;
     }
     for (std::uint32_t index = 0; index < materialized.leafCount; ++index) {
         if (!starts.PrepareQueueProgram(successorScheduleStorage[index])) {
@@ -25793,13 +25812,13 @@ engine.runtimeRecreateRequired = true;
          !FreezeQueueAggregate(*starts.QueueBank(), successorSchedule, 0,
                                materialized.leafCount)) ||
         (sourceControlCount != 0 && !FreezeQueueAggregate(*starts.QueueBank(),
-            row.queueSourceSchedule, materialized.leafCount, sourceControlCount)) ||
-        !BindQueueSuccessorPrograms(row, *starts.QueueBank(), 0, materialized.leafCount)) {
+            row.QueueFiling().queueSourceSchedule, materialized.leafCount, sourceControlCount)) ||
+        !BindQueueSuccessorPrograms(row.QueueFiling(), *starts.QueueBank(), 0, materialized.leafCount)) {
         rollbackUnpublishedTransition();
         abortPrepared();
         return QueueContinuationPrepareStatus::Failed;
     }
-    starts.QueueBank()->transition = row.queueTransition;
+    starts.QueueBank()->transition = row.QueueFiling().queueTransition;
     if (sourceControlCount != 0) {
         std::array<harken::CommandRecord,
                    harken::kMaxKnownScheduleLeaves> commands{};
@@ -25807,7 +25826,7 @@ engine.runtimeRecreateRequired = true;
              index < sourceControlCount; ++index) {
             harken::CommandRecord& command = commands[index];
             const harken::TimelineArmToken arm =
-                row.queueTransitionGroupArms[index];
+                row.QueueFiling().queueTransitionGroupArms[index];
             const VnVoiceHandle handle = sourceSet.renderHandles[index];
             command.opcode = harken::kOpcodePlay;
             command.payload.play.batch.batchVersion =
@@ -25837,9 +25856,9 @@ engine.runtimeRecreateRequired = true;
     harken::Plan03GroupSliceInput group{};
     group.executeFrame = naturalEndPrelude
         ? sourcePhaseFrame : completionFrame;
-    group.decision = row.queueDecision;
-    group.members = row.queueTransitionGroupArms.data();
-    group.memberCount = row.queueTransitionGroupArmCount;
+    group.decision = row.QueueFiling().queueDecision;
+    group.members = row.QueueFiling().queueTransitionGroupArms.data();
+    group.memberCount = row.QueueFiling().queueTransitionGroupArmCount;
     group.sourceControlCount =
         static_cast<std::uint16_t>(sourceControlCount);
     if (!starts.PrepareGroup(group)) {
@@ -25881,9 +25900,9 @@ engine.runtimeRecreateRequired = true;
         page + 1u, static_cast<std::uint32_t>(header->pageGeneration)};
     harken::ConditionalQueuePrepareRequest prepare{};
     prepare.expectedCurrentVersion = current.version;
-    prepare.rootDecision = row.queueDecision;
+    prepare.rootDecision = row.QueueFiling().queueDecision;
     prepare.expectedCurrentOccurrence = row.queueCurrentOccurrence;
-    prepare.successorOccurrence = row.queueSuccessorOccurrence;
+    prepare.successorOccurrence = row.QueueFiling().queueSuccessorOccurrence;
     if (sourceAlreadyRetired && pureLogical) {
         prepare.completionIsLogicalBoundary = true;
         prepare.logicalCompletionFrame = completionFrame;
@@ -25903,7 +25922,7 @@ engine.runtimeRecreateRequired = true;
         prepare.retiredSource = retiredSource;
     }
     if (!engine.queueInstances.PrepareConditional(
-            row.queueInstance, prepare, &row.queueConditional)) {
+            row.queueInstance, prepare, &row.QueueFiling().queueConditional)) {
         rollbackUnpublishedTransition();
         abortPrepared();
         return QueueContinuationPrepareStatus::Failed;
@@ -25915,13 +25934,13 @@ engine.runtimeRecreateRequired = true;
 engine.runtimeRecreateRequired = true;
         return QueueContinuationPrepareStatus::Failed;
     }
-    row.queueSuccessorProgramBank = starts.QueueBank();
-    row.queueSuccessorHasZeroWorkCompletion =
+    row.QueueFiling().queueSuccessorProgramBank = starts.QueueBank();
+    row.QueueFiling().queueSuccessorHasZeroWorkCompletion =
         materialized.hasZeroWorkCompletion;
-    row.queueSuccessorZeroWorkCompletionFrame =
+    row.QueueFiling().queueSuccessorZeroWorkCompletionFrame =
         successorZeroWorkCompletionFrame;
     row.queueContinuationPrepared = true;
-    row.queueTransitionEndFrame = transitionEndFrame;
+    row.QueueFiling().queueTransitionEndFrame = transitionEndFrame;
     ++row.pendingFutureCount;
     return QueueContinuationPrepareStatus::Prepared;
 }
@@ -25933,7 +25952,7 @@ bool PrepareSameKeyQueueContinuation(
     bool successorHasContinuation) noexcept {
     PreparedTimelineStarts starts(engine);
     if (!starts.ReserveQueuePrograms(row, {1u, 1u})) return false;
-    if (!starts.PrepareDecision(row.rootInstance, row.queueCompletionFrame, row.queueDecision))
+    if (!starts.PrepareDecision(row.rootInstance, row.queueCompletionFrame, row.QueueFiling().queueDecision))
         return false;
     if (row.queueCompletionFrame < engine.timelinePool.WindowStartFrame() ||
         row.queueCompletionFrame >= engine.timelinePool.WindowEndFrame() ||
@@ -25959,13 +25978,13 @@ bool PrepareSameKeyQueueContinuation(
     };
     harken::ArmGroupToken armGroup{};
     if (!starts.PrepareArmGroup(
-            row.queueDecision, nullptr, 0, &armGroup)) {
+            row.QueueFiling().queueDecision, nullptr, 0, &armGroup)) {
         cancelSuccessorDecision();
         return false;
     }
     harken::Plan03GroupSliceInput group{};
     group.executeFrame = row.queueCompletionFrame;
-    group.decision = row.queueDecision;
+    group.decision = row.QueueFiling().queueDecision;
     if (!starts.PrepareGroup(group)) {
         cancelSuccessorDecision();
         return false;
@@ -25983,7 +26002,7 @@ bool PrepareSameKeyQueueContinuation(
     }
     harken::ConditionalQueuePrepareRequest prepare{};
     prepare.expectedCurrentVersion = current.version;
-    prepare.rootDecision = row.queueDecision;
+    prepare.rootDecision = row.QueueFiling().queueDecision;
     prepare.expectedCurrentOccurrence = row.queueCurrentOccurrence;
     prepare.successorOccurrence = row.queueCurrentOccurrence;
     AttachQueueCurrentCompletion(
@@ -25996,7 +26015,7 @@ bool PrepareSameKeyQueueContinuation(
         return false;
     }
     if (!engine.queueInstances.PrepareConditional(
-            row.queueInstance, prepare, &row.queueConditional)) {
+            row.queueInstance, prepare, &row.QueueFiling().queueConditional)) {
         cancelSuccessorDecision();
         return false;
     }
@@ -26006,9 +26025,9 @@ engine.runtimeRecreateRequired = true;
         return false;
     }
     row.QueueNextState() = next;
-    row.queueArmGroup = armGroup;
-    row.queueSuccessorProgramBank = starts.QueueBank();
-    row.queueSameProgramKey = true;
+    row.QueueFiling().queueArmGroup = armGroup;
+    row.QueueFiling().queueSuccessorProgramBank = starts.QueueBank();
+    row.QueueFiling().queueSameProgramKey = true;
     row.queueContinuationPrepared = true;
     ++row.pendingFutureCount;
     return true;
@@ -26649,7 +26668,7 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
     successorKey.occurrenceOrdinal =
         selectedPath[selectedCount - 1u];
     if (!engine.timelineOccurrences.Acquire(
-            successorKey, &row.queueSuccessorOccurrence)) {
+            successorKey, &row.QueueFiling().queueSuccessorOccurrence)) {
         if (row.queueSuccessorDecision.Valid()) {
             (void)engine.decisions.Cancel(row.queueSuccessorDecision);
             (void)engine.decisions.ReclaimCancelled(
@@ -26667,7 +26686,7 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
     successorProgram.runtimeSemanticFingerprint =
         cut.leaf.expectedProgramSemanticFingerprint;
     const harken::OccurrenceToken* progressOccurrence =
-        successorHasContinuation ? &row.queueSuccessorOccurrence : nullptr;
+        successorHasContinuation ? &row.QueueFiling().queueSuccessorOccurrence : nullptr;
     const harken::PlayableProgramKey* completionProgram =
         successorHasContinuation ? &successorProgram : nullptr;
     const auto abortPrepared = [&]() {
@@ -26687,13 +26706,13 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
         InstallTimelineVoiceStart(
             engine, captured.Input(), successorVoiceInstance, successorStartFrame,
             queueOwnerInstance, row.rootInstance, progressOccurrence, completionProgram,
-            harken::ParentAudioGroupRef{row.queueDecision},
+            harken::ParentAudioGroupRef{row.QueueFiling().queueDecision},
             static_cast<std::uint16_t>(sourceControlCount), nullptr, starts.At(0), nullptr,
             row.parentService.Valid() ? &preparedTree.Resource() : nullptr, &preparedTree.Resource(),
             false, false, false, false, nullptr, {}, false, 0, &resetObservation.cause);
     if (installed.status != VN_OK) {
         (void)TryReleaseOccurrenceAfterFence(
-            engine, row.queueSuccessorOccurrence, 0);
+            engine, row.QueueFiling().queueSuccessorOccurrence, 0);
         if (row.queueSuccessorDecision.Valid()) {
             (void)engine.decisions.Cancel(row.queueSuccessorDecision);
             (void)engine.decisions.ReclaimCancelled(
@@ -26704,12 +26723,12 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
         return QueueContinuationPrepareStatus::Failed;
     }
     row.QueueSuccessorLeaf() = cut.leaf;
-    row.queueSuccessorArm = installed.armToken;
-    row.queueMonitorSelection = installed.monitorSelection;
+    row.QueueFiling().queueSuccessorArm = installed.armToken;
+    row.QueueFiling().queueMonitorSelection = installed.monitorSelection;
     row.queueSuccessorRenderHandle = installed.renderHandle;
     row.queueSuccessorTailFrames = installed.postSourceTailFrames;
     if (!preparedTree.BindMember(*starts.QueueBank(), 0, installed, captured, cut.leaf,
-            successorStartFrame, row.queueSuccessorOccurrence)) {
+            successorStartFrame, row.QueueFiling().queueSuccessorOccurrence)) {
         abortPrepared();
         return QueueContinuationPrepareStatus::Failed;
     }
@@ -26722,7 +26741,7 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
         if (installed.completionPredictability !=
                 harken::CompletionPredictability::KnownFinite ||
             !engine.timelineOccurrences.TryPinCompletionOwner(
-                row.queueSuccessorOccurrence, owner)) {
+                row.QueueFiling().queueSuccessorOccurrence, owner)) {
 engine.runtimeRecreateRequired = true;
             abortPrepared();
             return QueueContinuationPrepareStatus::Failed;
@@ -26733,32 +26752,32 @@ engine.runtimeRecreateRequired = true;
                 &bound) ||
             !engine.ledger.BindCompletionMutation(
                 starts.At(0)->ledgerSlot,
-                {row.queueSuccessorOccurrence, owner})) {
+                {row.QueueFiling().queueSuccessorOccurrence, owner})) {
 engine.runtimeRecreateRequired = true;
             abortPrepared();
             return QueueContinuationPrepareStatus::Failed;
         }
-        row.queueSuccessorCompletion = bound;
+        row.QueueFiling().queueSuccessorCompletion = bound;
     }
-    engine.FindQueueProgramMember(starts.QueueBank(), 0)->nativeCompletion = row.queueSuccessorCompletion;
+    engine.FindQueueProgramMember(starts.QueueBank(), 0)->nativeCompletion = row.QueueFiling().queueSuccessorCompletion;
     const auto rollbackUnpublishedTransition = [&]() {
         starts.Cancel();
         row.queueSourceArm = {};
-        row.queueSourceControlArmCount = 0;
+        row.QueueFiling().queueSourceControlArmCount = 0;
         row.ClearQueueSourcePrograms();
-        row.queueTransitionGroupArmCount = 0;
-        row.queueTransitionGroupArms.Clear();
-        if (row.queueTransition.Valid()) {
-            if (!engine.transitionInstances.CancelBeforePublication(row.queueTransition))
+        row.QueueFiling().queueTransitionGroupArmCount = 0;
+        row.QueueFiling().queueTransitionGroupArms.Clear();
+        if (row.QueueFiling().queueTransition.Valid()) {
+            if (!engine.transitionInstances.CancelBeforePublication(row.QueueFiling().queueTransition))
 engine.runtimeRecreateRequired = true;
-            row.queueTransition = {};
+            row.QueueFiling().queueTransition = {};
         }
     };
     row.queueSourceArm = {};
-    row.queueSourceControlArmCount = 0;
+    row.QueueFiling().queueSourceControlArmCount = 0;
     row.ClearQueueSourcePrograms();
-    row.queueTransitionGroupArmCount = 0;
-    row.queueTransitionGroupArms.Clear();
+    row.QueueFiling().queueTransitionGroupArmCount = 0;
+    row.QueueFiling().queueTransitionGroupArms.Clear();
     if (transitionRule != nullptr) {
         if (!engine.transitionInstances.Acquire(
                 {sourceControlRequired ? sourcePhaseFrame
@@ -26767,9 +26786,9 @@ engine.runtimeRecreateRequired = true;
                                         : successorStartFrame) /
                      engine.config.blockFrames,
                  engine.CaptureMonitorOwner(row.ownerInstance)},
-                &row.queueTransition) ||
+                &row.QueueFiling().queueTransition) ||
             !engine.decisions.AttachTransitionGateBeforeCommit(
-                row.queueDecision, row.queueTransition,
+                row.QueueFiling().queueDecision, row.QueueFiling().queueTransition,
                 (naturalEndPrelude || delayedTargetLock) ? 2u : 1u)) {
             rollbackUnpublishedTransition();
             abortPrepared();
@@ -26787,50 +26806,50 @@ engine.runtimeRecreateRequired = true;
                         static_cast<std::uint32_t>(handle >> 32),
                         sourcePhaseFrame, armDeadline,
                         row.rootInstance, sourceSet.targets[index],
-                        harken::ParentAudioGroupRef{row.queueDecision},
+                        harken::ParentAudioGroupRef{row.QueueFiling().queueDecision},
                         static_cast<std::uint16_t>(index),
-                        &row.queueTransitionGroupArms[index])) {
+                        &row.QueueFiling().queueTransitionGroupArms[index])) {
                     rollbackUnpublishedTransition();
                     abortPrepared();
                     return QueueContinuationPrepareStatus::Failed;
                 }
-                row.queueSourceControlArmCount = index + 1u;
+                row.QueueFiling().queueSourceControlArmCount = index + 1u;
             }
-            row.queueSourceArm = row.queueTransitionGroupArms[0];
+            row.queueSourceArm = row.QueueFiling().queueTransitionGroupArms[0];
         }
-        row.queueTransitionGroupArms[sourceControlCount] =
-            row.queueSuccessorArm;
-        row.queueTransitionGroupArmCount = sourceControlCount + 1u;
+        row.QueueFiling().queueTransitionGroupArms[sourceControlCount] =
+            row.QueueFiling().queueSuccessorArm;
+        row.QueueFiling().queueTransitionGroupArmCount = sourceControlCount + 1u;
         if (!starts.PrepareArmGroup(
-                row.queueDecision, row.queueTransitionGroupArms.data(),
+                row.QueueFiling().queueDecision, row.QueueFiling().queueTransitionGroupArms.data(),
                 static_cast<std::uint16_t>(
-                    row.queueTransitionGroupArmCount),
-                &row.queueArmGroup)) {
+                    row.QueueFiling().queueTransitionGroupArmCount),
+                &row.QueueFiling().queueArmGroup)) {
             rollbackUnpublishedTransition();
             abortPrepared();
             return QueueContinuationPrepareStatus::Failed;
         }
     } else {
-        row.queueTransitionGroupArms[0] = row.queueSuccessorArm;
-        row.queueTransitionGroupArmCount = 1;
+        row.QueueFiling().queueTransitionGroupArms[0] = row.QueueFiling().queueSuccessorArm;
+        row.QueueFiling().queueTransitionGroupArmCount = 1;
         if (!starts.PrepareArmGroup(
-                row.queueDecision, row.queueTransitionGroupArms.data(), 1,
-                &row.queueArmGroup)) {
+                row.QueueFiling().queueDecision, row.QueueFiling().queueTransitionGroupArms.data(), 1,
+                &row.QueueFiling().queueArmGroup)) {
             rollbackUnpublishedTransition();
             abortPrepared();
             return QueueContinuationPrepareStatus::Failed;
         }
     }
     row.QueueNextState() = next;
-    row.queueSuccessorProgramPlane = successorProgramPlane;
+    row.QueueFiling().queueSuccessorProgramPlane = successorProgramPlane;
     harken::TimelineProgramView& successorRuntime =
-        row.queueSuccessorProgramPlane == 0
+        row.QueueFiling().queueSuccessorProgramPlane == 0
             ? row.runtimeProgram
             : row.queueSuccessorRuntimeProgram;
     harken::ProgramView& successorSchedule =
-        row.queueSuccessorProgramPlane == 0
+        row.QueueFiling().queueSuccessorProgramPlane == 0
             ? row.schedule
-            : row.queueSuccessorSchedule;
+            : row.QueueFiling().queueSuccessorSchedule;
     const auto targetEventCount = 1u + static_cast<std::uint32_t>(targetFadeActive);
     auto successorPayloads = std::span{starts.QueueBank()->payloads}.first(targetEventCount);
     auto successorEvents = std::span{starts.QueueBank()->events}.first(targetEventCount);
@@ -26878,7 +26897,7 @@ engine.runtimeRecreateRequired = true;
     successorSchedule.eventCount = successorEventCount;
     successorSchedule.runtimeProgram = {
         row.rootInstance, &successorRuntime};
-    successorSchedule.armToken = row.queueSuccessorArm;
+    successorSchedule.armToken = row.QueueFiling().queueSuccessorArm;
     if (sourceControlRequired) {
         if (!PrepareQueueSourcePrograms(row, *starts.QueueBank(), 1, successorEventCount,
                 sourceControlCount,
@@ -26892,7 +26911,7 @@ engine.runtimeRecreateRequired = true;
              sourceIndex < sourceControlCount; ++sourceIndex) {
             const std::uint32_t sourceEventBase = sourceEventCount;
             const harken::TimelineArmToken arm =
-                row.queueTransitionGroupArms[sourceIndex];
+                row.QueueFiling().queueTransitionGroupArms[sourceIndex];
             const harken::TimelineSemanticTarget& target =
                 sourceSet.targets[sourceIndex];
             if (sourceFadeActive) {
@@ -26960,18 +26979,18 @@ engine.runtimeRecreateRequired = true;
         row.queueSourceRuntimeProgram.payloads =
             row.queueSourcePayloads.data();
         row.queueSourceRuntimeProgram.payloadCount = sourceEventCount;
-        row.queueSourceSchedule = {};
-        row.queueSourceSchedule.ownerInstance = row.rootInstance;
-        row.queueSourceSchedule.ownerInstanceScheduleEpoch =
+        row.QueueFiling().queueSourceSchedule = {};
+        row.QueueFiling().queueSourceSchedule.ownerInstance = row.rootInstance;
+        row.QueueFiling().queueSourceSchedule.ownerInstanceScheduleEpoch =
             instance.scheduleEpoch;
-        row.queueSourceSchedule.transactionId = row.queueTicket;
-        row.queueSourceSchedule.entryAnchorFrame =
+        row.QueueFiling().queueSourceSchedule.transactionId = row.queueTicket;
+        row.QueueFiling().queueSourceSchedule.entryAnchorFrame =
             sourcePhaseFrame;
-        row.queueSourceSchedule.events = row.queueSourceEvents.data();
-        row.queueSourceSchedule.eventCount = sourceEventCount;
-        row.queueSourceSchedule.runtimeProgram = {
+        row.QueueFiling().queueSourceSchedule.events = row.queueSourceEvents.data();
+        row.QueueFiling().queueSourceSchedule.eventCount = sourceEventCount;
+        row.QueueFiling().queueSourceSchedule.runtimeProgram = {
             row.rootInstance, &row.queueSourceRuntimeProgram};
-        row.queueSourceSchedule.armToken = row.queueSourceArm;
+        row.QueueFiling().queueSourceSchedule.armToken = row.queueSourceArm;
     }
     if (!starts.PrepareQueueProgram(successorSchedule)) {
         rollbackUnpublishedTransition();
@@ -26986,13 +27005,13 @@ engine.runtimeRecreateRequired = true;
         }
     }
     if ((sourceControlCount != 0 && !FreezeQueueAggregate(*starts.QueueBank(),
-            row.queueSourceSchedule, 1, sourceControlCount)) ||
-        !BindQueueSuccessorPrograms(row, *starts.QueueBank(), 0, 1)) {
+            row.QueueFiling().queueSourceSchedule, 1, sourceControlCount)) ||
+        !BindQueueSuccessorPrograms(row.QueueFiling(), *starts.QueueBank(), 0, 1)) {
         rollbackUnpublishedTransition();
         abortPrepared();
         return QueueContinuationPrepareStatus::Failed;
     }
-    starts.QueueBank()->transition = row.queueTransition;
+    starts.QueueBank()->transition = row.QueueFiling().queueTransition;
     if (sourceControlCount != 0) {
         std::array<harken::CommandRecord,
                    harken::kMaxKnownScheduleLeaves> commands{};
@@ -27000,7 +27019,7 @@ engine.runtimeRecreateRequired = true;
              index < sourceControlCount; ++index) {
             harken::CommandRecord& command = commands[index];
             const harken::TimelineArmToken arm =
-                row.queueTransitionGroupArms[index];
+                row.QueueFiling().queueTransitionGroupArms[index];
             const VnVoiceHandle handle = sourceSet.renderHandles[index];
             command.opcode = harken::kOpcodePlay;
             command.payload.play.batch.batchVersion =
@@ -27033,9 +27052,9 @@ engine.runtimeRecreateRequired = true;
     group.executeFrame = naturalEndPrelude
         ? sourcePhaseFrame
         : successorAnchorFrame;
-    group.decision = row.queueDecision;
-    group.members = row.queueTransitionGroupArms.data();
-    group.memberCount = row.queueTransitionGroupArmCount;
+    group.decision = row.QueueFiling().queueDecision;
+    group.members = row.QueueFiling().queueTransitionGroupArms.data();
+    group.memberCount = row.QueueFiling().queueTransitionGroupArmCount;
     group.sourceControlCount =
         static_cast<std::uint16_t>(sourceControlCount);
     if (!starts.PrepareGroup(group)) {
@@ -27077,9 +27096,9 @@ engine.runtimeRecreateRequired = true;
         page + 1u, static_cast<std::uint32_t>(header->pageGeneration)};
     harken::ConditionalQueuePrepareRequest prepare{};
     prepare.expectedCurrentVersion = current.version;
-    prepare.rootDecision = row.queueDecision;
+    prepare.rootDecision = row.QueueFiling().queueDecision;
     prepare.expectedCurrentOccurrence = row.queueCurrentOccurrence;
-    prepare.successorOccurrence = row.queueSuccessorOccurrence;
+    prepare.successorOccurrence = row.QueueFiling().queueSuccessorOccurrence;
     AttachQueueCurrentCompletion(
         row,
         row.queueCurrentCompletion,
@@ -27094,12 +27113,12 @@ engine.runtimeRecreateRequired = true;
         prepare.retiredSource = retiredSource;
     }
     if (!engine.queueInstances.PrepareConditional(
-            row.queueInstance, prepare, &row.queueConditional)) {
+            row.queueInstance, prepare, &row.QueueFiling().queueConditional)) {
         rollbackUnpublishedTransition();
         abortPrepared();
         return QueueContinuationPrepareStatus::Failed;
     }
-    row.queueTransitionEndFrame = sourceControlRequired
+    row.QueueFiling().queueTransitionEndFrame = sourceControlRequired
         ? transitionEndFrame
         : targetFadeEndFrame;
     if (!preparedTree.BindPrograms(*starts.QueueBank(), 1, successorStartFrame,
@@ -27109,10 +27128,10 @@ engine.runtimeRecreateRequired = true;
 engine.runtimeRecreateRequired = true;
         return QueueContinuationPrepareStatus::Failed;
     }
-    row.queueSuccessorProgramBank = starts.QueueBank();
-    row.queueSuccessorHasZeroWorkCompletion =
+    row.QueueFiling().queueSuccessorProgramBank = starts.QueueBank();
+    row.QueueFiling().queueSuccessorHasZeroWorkCompletion =
         materializedSchedule.hasZeroWorkCompletion;
-    row.queueSuccessorZeroWorkCompletionFrame =
+    row.QueueFiling().queueSuccessorZeroWorkCompletionFrame =
         successorZeroWorkCompletionFrame;
     row.queueContinuationPrepared = true;
     ++row.pendingFutureCount;
@@ -28067,7 +28086,7 @@ bool PrepareVariableControlChildFrontier(harken::Engine& engine, const WorldView
                 reserve.expectedContinuationGeneration = resource->ownerEpoch;
                 reserve.sliceCount = 1;
                 if (!engine.PrepareOriginalQueueDecisionReservation(reserve, &current.decision)) return false;
-                resource->queueDecision = current.decision.Token();
+                resource->QueueFiling().queueDecision = current.decision.Token();
                 harken::OccurrenceKey key{};
                 key.arrangingInstance = resource->ownerInstance;
                 key.clipId = path.terminal.stableId;
@@ -28494,10 +28513,10 @@ QueueContinuationPrepareStatus StartSignalOnlyNoOverlapSuccessor(
         !ClearQueueCompletionOwner(engine, row.renderHandle,
             row.queueCurrentCompletion))
         return QueueContinuationPrepareStatus::Failed;
-    if (row.queueDecision.Valid() && !row.queueDecisionCommitted) {
-        if (!engine.decisions.Cancel(row.queueDecision) ||
-            !TransferDecisionRetirement(engine, row.queueDecision, true)) return QueueContinuationPrepareStatus::Failed;
-        row.queueDecision = {};
+    if (row.QueueFiling().queueDecision.Valid() && !row.QueueFiling().queueDecisionCommitted) {
+        if (!engine.decisions.Cancel(row.QueueFiling().queueDecision) ||
+            !TransferDecisionRetirement(engine, row.QueueFiling().queueDecision, true)) return QueueContinuationPrepareStatus::Failed;
+        row.QueueFiling().queueDecision = {};
     }
     if (!engine.queueInstances.PublishPreparedSignalAdvance(&scratch.frontierSignal, &row.frontierAcceptedSignal) ||
         !engine.decisions.PublishFrontierActivation(scratch.frontierCoordinator)) {
@@ -28509,10 +28528,10 @@ engine.runtimeRecreateRequired = true;
     row.frontierArmPin = std::move(scratch.frontierArmPin);
     row.queueCurrentCompletion = {};
     row.QueueSuccessorLeaf() = cut.leaf;
-    row.queueSuccessorArm = installed.armToken;
-    row.queueMonitorSelection = installed.monitorSelection;
+    row.QueueFiling().queueSuccessorArm = installed.armToken;
+    row.QueueFiling().queueMonitorSelection = installed.monitorSelection;
     row.queueSuccessorRenderHandle = installed.renderHandle;
-    row.queueSuccessorOccurrence = successorOccurrence;
+    row.QueueFiling().queueSuccessorOccurrence = successorOccurrence;
 
     row.capturedVoice = std::move(captured);
     row.usesCapturedVoice = true;
@@ -28542,13 +28561,13 @@ engine.runtimeRecreateRequired = true;
     scratch.frontierProgramBank = nullptr;
     row.schedule.armToken = installed.armToken;
     row.ticket = ticket;
-    row.arm = row.queueSuccessorArm;
+    row.arm = row.QueueFiling().queueSuccessorArm;
     row.renderHandle = row.queueSuccessorRenderHandle;
     row.releaseObserver = installed.releaseObserver;
-    row.queueCurrentOccurrence = row.queueSuccessorOccurrence;
-    row.queueSuccessorArm = {};
+    row.queueCurrentOccurrence = row.QueueFiling().queueSuccessorOccurrence;
+    row.QueueFiling().queueSuccessorArm = {};
     row.queueSuccessorRenderHandle = 0;
-    row.queueSuccessorOccurrence = {};
+    row.QueueFiling().queueSuccessorOccurrence = {};
     row.queueNaturalEnd =
         afterNextStatus == harken::QueueSequenceStepStatus::NaturalEnd;
     row.queueSignalOnlyNoOverlap = !row.queueNaturalEnd;
@@ -28638,8 +28657,8 @@ QueueContinuationPrepareStatus PromoteNestedQueueParent(
             row.queueRandomSeedValid, row.queueResumePosition, row.queueNestedParentPending,
             row.queueNaturalEnd, row.queueFinalSourceTombstoned, row.queueSignalOnlyNoOverlap,
             row.queueDeferredNeedsFullPreparation, row.queueContinuationPrepared,
-            row.queueDecisionCommitted, row.queueCurrentCompletion, row.queueDecision,
-            row.queueConditional, row.queueParentContainerStableId,
+            row.QueueFiling().queueDecisionCommitted, row.queueCurrentCompletion, row.QueueFiling().queueDecision,
+            row.QueueFiling().queueConditional, row.queueParentContainerStableId,
             row.queueParentProgramSemanticFingerprint, row.QueueParentCheckpointKey(),
             row.QueueParentInitialState(), row.QueueParentResetInitialState(),
             row.QueueParentRandomSeed(), row.queueParentRandomSeedValid, row.queueParentResumePosition);
@@ -28660,10 +28679,10 @@ QueueContinuationPrepareStatus PromoteNestedQueueParent(
     row.queueSignalOnlyNoOverlap = false;
     row.queueDeferredNeedsFullPreparation = false;
     row.queueContinuationPrepared = false;
-    row.queueDecisionCommitted = false;
+    row.QueueFiling().queueDecisionCommitted = false;
     row.queueCurrentCompletion = {};
-    row.queueDecision = {};
-    row.queueConditional = {};
+    row.QueueFiling().queueDecision = {};
+    row.QueueFiling().queueConditional = {};
     row.queueParentContainerStableId = {};
     row.queueParentProgramSemanticFingerprint = 0;
     row.QueueParentCheckpointKey() = {};
@@ -30725,8 +30744,8 @@ bool ActivateVariableControlNestedQueueSuccessor(
         view.kind == harken::PlayableKind::Container;
     if (ownsQueue && scheduledSuccessor && !ActivateScheduledQueueContainers(engine, successor)) return false;
     if (ownsQueue && scheduledSuccessor &&
-        row.queueSuccessorScheduleLeafCount == 0 &&
-        row.queueSuccessorHasZeroWorkCompletion) {
+        row.QueueFiling().queueSuccessorScheduleLeafCount == 0 &&
+        row.QueueFiling().queueSuccessorHasZeroWorkCompletion) {
         harken::ContainerPlaybackRow playback{};
         if (!engine.containerPlayback.Capture(nested, &playback)) return false;
         if (playback.phase == harken::ContainerPlaybackPhase::WaitingForChild &&
@@ -30744,14 +30763,14 @@ bool ActivateVariableControlNestedQueueSuccessor(
         return true;
     }
     if (ownsQueue && scheduledSuccessor &&
-        row.queueSuccessorScheduleLeafCount != 0) {
+        row.QueueFiling().queueSuccessorScheduleLeafCount != 0) {
         harken::ContainerPlaybackRow playback{};
         if (!engine.containerPlayback.Capture(nested, &playback)) return false;
         if (playback.phase == harken::ContainerPlaybackPhase::WaitingForChild &&
             !engine.containerPlayback.BeginWaitingForNextFrontier(nested)) return false;
         if (!harken::PlayableTreeExecutor::ServiceActiveChild(
                 engine.playableInstances, engine.containerPlayback, nested, successor)) return false;
-        if (!PromoteNestedQueueMemberReferences(engine, row, row.queueSuccessorScheduleLeafCount)) return false;
+        if (!PromoteNestedQueueMemberReferences(engine, row, row.QueueFiling().queueSuccessorScheduleLeafCount)) return false;
         row.variableControlNestedQueueSuccessorInstance = 0;
         row.variableControlNestedQueueSuccessorEpoch = 0;
         row.variableControlNestedQueueSuccessorOrdinal = 0;
@@ -30761,7 +30780,7 @@ bool ActivateVariableControlNestedQueueSuccessor(
     const auto* source = engine.sourceTerminals.At(sourceSlot);
     if (source == nullptr || !source->occupied || source->leaf != successor ||
         source->acceptedEpoch != view.scheduleEpoch) return false;
-    const bool successorPending = row.queueSuccessorArm.Valid() &&
+    const bool successorPending = row.QueueFiling().queueSuccessorArm.Valid() &&
         source->render == row.queueSuccessorRenderHandle;
     if (!successorPending && source->render != row.renderHandle) return false;
     const PlayableStorageBases bases = StorageBasesForRow(engine, row);
@@ -30771,7 +30790,7 @@ bool ActivateVariableControlNestedQueueSuccessor(
         return false;
     if (memberSlot >= engine.playableStorage.memberCount) return false;
     const auto* successorMember = successorPending ? engine.FindQueueProgramMember(
-        row.queueSuccessorProgramBank, row.queueSuccessorPrograms.first) : nullptr;
+        row.QueueFiling().queueSuccessorProgramBank, row.QueueFiling().queueSuccessorPrograms.first) : nullptr;
     const auto* captured = successorPending
         ? successorMember != nullptr ? &successorMember->voice : nullptr
         : engine.ResolvePlayableServiceVoice(row);
@@ -30796,10 +30815,10 @@ bool ActivateVariableControlNestedQueueSuccessor(
         if (!existingMember) (void)engine.ReleasePlayableMember(row, 0);
         return false;
     }
-    engine.MutablePlayableMember(memberSlot).arm = successorPending ? row.queueSuccessorArm : row.arm;
+    engine.MutablePlayableMember(memberSlot).arm = successorPending ? row.QueueFiling().queueSuccessorArm : row.arm;
     engine.MutablePlayableMember(memberSlot).render = source->render;
     engine.MutablePlayableMember(memberSlot).startFrame = successorPending
-        ? row.queueSuccessorSchedule.entryAnchorFrame : row.startFrame;
+        ? row.QueueFiling().queueSuccessorSchedule.entryAnchorFrame : row.startFrame;
     engine.MutablePlayableMember(memberSlot).voice = captured->Share();
     engine.MutablePlayableMember(memberSlot).leaf = successorPending ? row.QueueSuccessorLeaf() : row.leaf;
     engine.MutablePlayableMember(memberSlot).release = source->release;
@@ -30997,80 +31016,80 @@ bool FailQueueForInvalidation(
     harken::PlayableControlReason controlReason) noexcept {
     harken::QueueFailureDisposition disposition =
         harken::QueueFailureDisposition::Stale;
-    if (row.queueContinuationPrepared && row.queueDecision.Valid() &&
-        row.queueConditional.Valid()) {
+    if (row.queueContinuationPrepared && row.QueueFiling().queueDecision.Valid() &&
+        row.QueueFiling().queueConditional.Valid()) {
         disposition = engine.queueInstances.FailContainer(
-            row.queueInstance, row.queueConditional,
+            row.queueInstance, row.QueueFiling().queueConditional,
             activation, failureReason, failureFrame);
         if (disposition == harken::QueueFailureDisposition::Stale ||
             disposition == harken::QueueFailureDisposition::DeferredByFrontier) {
             return false;
         }
-        const bool cancelled = !row.queueDecisionCommitted;
+        const bool cancelled = !row.QueueFiling().queueDecisionCommitted;
         const auto invalidation = cancelled
             ? harken::DecisionInvalidationDisposition::NotEligible
-            : engine.decisions.Invalidate(row.queueDecision);
+            : engine.decisions.Invalidate(row.QueueFiling().queueDecision);
         bool decisionStopped =
             cancelled
-                ? (engine.decisions.IsCancelled(row.queueDecision) ||
-                   engine.decisions.Cancel(row.queueDecision))
+                ? (engine.decisions.IsCancelled(row.QueueFiling().queueDecision) ||
+                   engine.decisions.Cancel(row.QueueFiling().queueDecision))
                 : invalidation == harken::DecisionInvalidationDisposition::NewlyInvalidated ||
                   invalidation == harken::DecisionInvalidationDisposition::AlreadyInvalidated;
         if (!decisionStopped && !cancelled &&
             invalidation == harken::DecisionInvalidationDisposition::NotEligible) {
             harken::DecisionCommittedSnapshot stopped{};
-            decisionStopped = engine.decisions.CaptureCommitted(row.queueDecision, &stopped) &&
+            decisionStopped = engine.decisions.CaptureCommitted(row.QueueFiling().queueDecision, &stopped) &&
                 (stopped.audioState == harken::AudioGroupState::DeadlineInvalidated ||
                  stopped.audioState == harken::AudioGroupState::PostStartDeadlineInvalidated ||
                  stopped.audioState == harken::AudioGroupState::Retired);
         }
         if (!decisionStopped ||
             !engine.queueInstances.RetireConditionalForAbort(
-                row.queueInstance, row.queueConditional,
-                row.queueDecision)) {
+                row.queueInstance, row.QueueFiling().queueConditional,
+                row.QueueFiling().queueDecision)) {
             return false;
         }
         const std::uint32_t arrivalCount =
-            row.queueSameProgramKey
+            row.QueueFiling().queueSameProgramKey
                 ? 0u
-                : row.queueSuccessorScheduleLeafCount > 1
-                ? row.queueSuccessorScheduleLeafCount
+                : row.QueueFiling().queueSuccessorScheduleLeafCount > 1
+                ? row.QueueFiling().queueSuccessorScheduleLeafCount
                 : 1u;
         const std::uint32_t arrivalBase =
-            row.queueSuccessorScheduleBase;
+            row.QueueFiling().queueSuccessorScheduleBase;
         const harken::TimelineArmToken arrivalArm =
-            row.queueSameProgramKey ? harken::TimelineArmToken{}
-                                    : row.queueSuccessorArm;
+            row.QueueFiling().queueSameProgramKey ? harken::TimelineArmToken{}
+                                    : row.QueueFiling().queueSuccessorArm;
         BeginQueueSuccessorAbort(engine, row);
-        row.queueArrivalDecision = row.queueDecision;
-        row.queueArrivalArmGroup = row.queueArmGroup;
+        row.queueArrivalDecision = row.QueueFiling().queueDecision;
+        row.queueArrivalArmGroup = row.QueueFiling().queueArmGroup;
         row.queueArrivalArm = arrivalArm;
         row.queueArrivalSourceArm = row.queueSourceArm;
         row.queueArrivalSourceControlArmCount =
-            row.queueSourceControlArmCount;
+            row.QueueFiling().queueSourceControlArmCount;
         row.queueArrivalTransitionGroupArmCount =
-            row.queueTransitionGroupArmCount;
-        row.queueArrivalTransition = row.queueTransition;
+            row.QueueFiling().queueTransitionGroupArmCount;
+        row.queueArrivalTransition = row.QueueFiling().queueTransition;
         row.queueArrivalScheduleBase = arrivalBase;
         row.queueArrivalScheduleLeafCount = arrivalCount;
         row.queueArrivalUsesSuccessorStorage = arrivalCount > 1;
         row.queueArrivalDecisionCancelled = cancelled;
-        row.queueDecision = {};
-        row.queueArmGroup = {};
+        row.QueueFiling().queueDecision = {};
+        row.QueueFiling().queueArmGroup = {};
         row.queueSourceArm = {};
-        row.queueSourceControlArmCount = 0;
+        row.QueueFiling().queueSourceControlArmCount = 0;
         row.ClearQueueSourcePrograms();
-        row.queueTransitionGroupArmCount = 0;
-        row.queueTransitionGroupArms.Clear();
-        row.queueTransition = {};
-        row.queueTransitionEndFrame = 0;
-        row.queueSameProgramKey = false;
+        row.QueueFiling().queueTransitionGroupArmCount = 0;
+        row.QueueFiling().queueTransitionGroupArms.Clear();
+        row.QueueFiling().queueTransition = {};
+        row.QueueFiling().queueTransitionEndFrame = 0;
+        row.QueueFiling().queueSameProgramKey = false;
         // The original successor pair remains until its strict native End.
         // Arrival retirement owns a separate alias and cannot erase this one.
-        row.queueConditional = {};
+        row.QueueFiling().queueConditional = {};
         row.queuePreparedPages = {};
         row.queueContinuationPrepared = false;
-        row.queueDecisionCommitted = false;
+        row.QueueFiling().queueDecisionCommitted = false;
     } else {
         disposition = engine.queueInstances.FailContainerBeforeConditional(
             row.queueInstance, failureReason, failureFrame);
@@ -31078,11 +31097,11 @@ bool FailQueueForInvalidation(
             disposition == harken::QueueFailureDisposition::DeferredByFrontier) {
             return false;
         }
-        if (row.queueDecision.Valid()) {
-            if (!TransferDecisionRetirement(engine, row.queueDecision, true)) {
+        if (row.QueueFiling().queueDecision.Valid()) {
+            if (!TransferDecisionRetirement(engine, row.QueueFiling().queueDecision, true)) {
                 return false;
             }
-            row.queueDecision = {};
+            row.QueueFiling().queueDecision = {};
         }
     }
     if (harken::IsBoundKnownCompletionPredicate(
@@ -33550,9 +33569,9 @@ bool CaptureCurrentContinuousMembers(harken::Engine& engine, harken::EnginePlaya
             if (!reference.service.Valid()) continue;
             if (!append(reference, branch->parentChildOrdinal, weight)) return false;
         }
-        if (!queue.queueSuccessorArm.Valid() && queue.queueSuccessorScheduleLeafCount == 0) continue;
+        if (!queue.QueueFiling().queueSuccessorArm.Valid() && queue.QueueFiling().queueSuccessorScheduleLeafCount == 0) continue;
         const auto futureBase = currentBase + currentCount;
-        const auto futureCount = std::max(1u, queue.queueSuccessorScheduleLeafCount);
+        const auto futureCount = std::max(1u, queue.QueueFiling().queueSuccessorScheduleLeafCount);
         if (futureBase + futureCount > engine.playableStorage.memberCount) return false;
         for (std::uint32_t index = 0; index < futureCount; ++index) {
             const auto& reference = engine.ReadPlayableMemberReference(futureBase + index);
@@ -34609,30 +34628,31 @@ harken::EngineImmediateEntryAttempt* FindImmediateEntryAttempt(
 
 bool IsInitialRootQueueTimingOnlyCurrent(
     const harken::EnginePlayableServiceRow& row) noexcept {
+    if (!row.queueMode) return false;
     const bool scalar = row.scheduleLeafCount == 0 && row.queueCurrentScheduleLeafCount == 0 &&
         !row.queueCurrentCompositeOwner.Valid() && row.activeLeafInstance != 0 &&
         harken::IsBoundKnownCompletionPredicate(row.queueCurrentCompletion) &&
         harken::SameCompletionOwner(row.queueCurrentCompletion.owner,
-            harken::CompletionOwnerRef::Single(row.queueDecision,
+            harken::CompletionOwnerRef::Single(row.QueueFiling().queueDecision,
                 row.queueCurrentCompletion.playbackFactsRevision));
     const bool mixed = row.scheduleLeafCount == 1 && row.queueCurrentScheduleLeafCount == 1 &&
         row.queueCurrentCompositeOwner.Valid() && row.hasZeroWorkCompletion &&
         row.zeroWorkCompletionFrame == row.queueCompletionFrame;
-    return row.queueMode && !row.parentService.Valid() &&
+    return !row.parentService.Valid() &&
         row.identity.Valid() && row.partition.Valid() && row.InvocationValid() &&
         row.pendingImmediateCohortRoot != 0 &&
         row.Invocation().actionFiring == row.pendingImmediateCohortRoot &&
         row.ownerInstance != 0 && row.ownerEpoch != 0 && row.queueInstance.Valid() &&
         row.queueTimingPending && row.queueDeferredNeedsFullPreparation &&
         row.queueSignalOnlyNoOverlap && !row.queueContinuationPrepared &&
-        row.queueDecision.Valid() && row.arm.Valid() && row.renderHandle != 0 &&
+        row.QueueFiling().queueDecision.Valid() && row.arm.Valid() && row.renderHandle != 0 &&
         row.queueCurrentOccurrence.generation != 0 && (scalar || mixed) &&
         row.queueCurrentProgramBank != nullptr && row.queueCurrentProgramBank->occupied &&
         row.queueCurrentProgramBank->programCount == 1 &&
         !row.queueUnplacedCredit.Valid() && row.queueUnplacedGroupCount == 0 &&
         row.queueUnplacedTransactionCount == 0 &&
-        row.queueSuccessorProgramBank == nullptr && !row.queueConditional.Valid() &&
-        !row.queueSuccessorArm.Valid() && row.variableControlNestedQueueSuccessorInstance == 0;
+        row.QueueFiling().queueSuccessorProgramBank == nullptr && !row.QueueFiling().queueConditional.Valid() &&
+        !row.QueueFiling().queueSuccessorArm.Valid() && row.variableControlNestedQueueSuccessorInstance == 0;
 }
 
 bool CaptureInitialRootQueueCurrentMutation(harken::Engine& engine,
@@ -34865,7 +34885,7 @@ bool IsInitialQueueTimingOnlyCurrent(
          (row.queueNaturalEnd && !row.queueSignalOnlyNoOverlap)) &&
         !row.queueContinuationPrepared &&
         row.queueCurrentScheduleLeafCount == 1 &&
-        row.queueDecision.Valid() &&
+        row.QueueFiling().queueDecision.Valid() &&
         row.queueCurrentOccurrence.generation != 0 &&
         harken::IsBoundKnownCompletionPredicate(row.queueCurrentCompletion) &&
         ((row.arm.Valid() && row.renderHandle != 0) ||
@@ -34874,9 +34894,9 @@ bool IsInitialQueueTimingOnlyCurrent(
         !row.queueUnplacedCredit.Valid() &&
         row.queueUnplacedGroupCount == 0 &&
         row.queueUnplacedTransactionCount == 0 &&
-        row.queueSuccessorProgramBank == nullptr &&
-        !row.queueConditional.Valid() &&
-        !row.queueSuccessorArm.Valid() &&
+        row.QueueFiling().queueSuccessorProgramBank == nullptr &&
+        !row.QueueFiling().queueConditional.Valid() &&
+        !row.QueueFiling().queueSuccessorArm.Valid() &&
         row.variableControlNestedQueueSuccessorInstance == 0;
 }
 
@@ -35029,7 +35049,7 @@ harken::EngineQueueContinuationRecord* AcquireQueueContinuationRecord(
     if (!attempt.active || attempt.root == 0 ||
         attempt.queueContinuationCount == UINT32_MAX ||
         !holder.identity.Valid() || !holder.queueInstance.Valid() ||
-        !holder.queueDecision.Valid() ||
+        !holder.QueueFiling().queueDecision.Valid() ||
         !holder.initialQueueEntryDecision.Valid() ||
         holder.pendingImmediateCohortRoot != attempt.root)
         return nullptr;
@@ -35049,7 +35069,7 @@ harken::EngineQueueContinuationRecord* AcquireQueueContinuationRecord(
         record.attemptGeneration = attempt.generation;
         record.service = holder.identity;
         record.queue = holder.queueInstance;
-        record.memberDecision = holder.queueDecision;
+        record.memberDecision = holder.QueueFiling().queueDecision;
         record.initialDecision = holder.initialQueueEntryDecision;
         record.ownerInstance = holder.ownerInstance;
         record.ownerEpoch = holder.ownerEpoch;
@@ -35895,12 +35915,12 @@ bool ServicePrivateInitialQueuePinGroupCleanup(
                     row.pendingImmediateCohortRoot != attempt.root ||
                     row.identity.slot != owner.serviceSlot ||
                     row.identity.generation != owner.serviceGeneration ||
-                    row.queueDecision.slot != identity.decision.slot ||
-                    row.queueDecision.generation !=
+                    row.QueueFiling().queueDecision.slot != identity.decision.slot ||
+                    row.QueueFiling().queueDecision.generation !=
                         identity.decision.generation) continue;
                 // The member decision is Open again; the prepared Queue
                 // resources remain owned by the row for normal cancellation.
-                row.queueDecisionCommitted = false;
+                row.QueueFiling().queueDecisionCommitted = false;
                 break;
             }
         }
@@ -36083,10 +36103,10 @@ bool ServicePrivateInitialQueuePinGroupCleanup(
                 queue->identity != attempt.queueContinuationService ||
                 queue->queueInstance.slot != attempt.queueContinuationQueue.slot ||
                 queue->queueInstance.generation != attempt.queueContinuationQueue.generation ||
-                queue->queueConditional.version != original->Version().version ||
+                queue->QueueFiling().queueConditional.version != original->Version().version ||
                 !engine.queueInstances.IsOriginalConditionalFutureReservationFor(
                     *original, engine.originalQueueLifetimeHolders[queue->queueInstance.slot],
-                    queue->queueInstance, queue->queueConditional, queue->queueDecision,
+                    queue->queueInstance, queue->QueueFiling().queueConditional, queue->QueueFiling().queueDecision,
                     queue->queueCurrentOccurrence) ||
                 completed > UINT64_MAX / engine.config.blockFrames ||
                 !FailQueueForInvalidation(engine, *queue,
@@ -36381,8 +36401,8 @@ bool ProveUnboundInitialVariableQueueRecord(
             !SameCanonicalDecision(record.initialDecision, record.memberDecision))) ||
         holder->queueInstance.slot != record.queue.slot ||
         holder->queueInstance.generation != record.queue.generation ||
-        holder->queueDecision.slot != record.memberDecision.slot ||
-        holder->queueDecision.generation != record.memberDecision.generation ||
+        holder->QueueFiling().queueDecision.slot != record.memberDecision.slot ||
+        holder->QueueFiling().queueDecision.generation != record.memberDecision.generation ||
         record.coordinatorArmGroupPrepared ||
         record.coordinatorReservation.Valid() ||
         !record.coordinatorArmGroup.Valid() ||
@@ -36591,7 +36611,7 @@ bool ProveUnboundInitialVariableControlAbort(
                         matches += harken::OriginalSourceSubmissionRegistry::SameToken(
                             census.members[sound], view.members[member]);
                 }
-                const auto expectedMatches = canonical && harken::Engine::SameOriginalSingleArm(view.members[member], holder->queueSuccessorArm) ? 2u : 1u;
+                const auto expectedMatches = canonical && harken::Engine::SameOriginalSingleArm(view.members[member], holder->QueueFiling().queueSuccessorArm) ? 2u : 1u;
                 if (matches != expectedMatches) return false;
                 const bool seen = std::any_of(retiredArms.begin(), retiredArms.begin() + retiredSounds,
                     [&](const auto& arm) { return harken::Engine::SameOriginalSingleArm(arm, view.members[member]); });
@@ -36601,7 +36621,7 @@ bool ProveUnboundInitialVariableControlAbort(
                 }
             } else if (retired != nullptr && member < view.sourceControlCount) {
                 harken::TimelineArmObservation control{};
-                if (!holder->queueTransition.Valid() || view.sourceControlCount != 1 ||
+                if (!holder->QueueFiling().queueTransition.Valid() || view.sourceControlCount != 1 ||
                     !harken::Engine::SameOriginalSingleArm(view.members[member], holder->queueSourceArm) ||
                     !engine.timelineArms.Observe(view.members[member], &control) || control.startedBlockSequence != 0 ||
                     (state != harken::ArmState::Armed && state != harken::ArmState::CancelRequested &&
@@ -37350,7 +37370,7 @@ bool ServiceRegisteredPrivateVcAbortQueueTails(harken::Engine& engine,
             captured.factoriesReturned = true;
         }
         if (!TryReleaseOccurrenceAfterFence(engine, queue->queueCurrentOccurrence, completed) ||
-            !TryReleaseOccurrenceAfterFence(engine, queue->queueSuccessorOccurrence, completed) ||
+            !TryReleaseOccurrenceAfterFence(engine, queue->QueueFiling().queueSuccessorOccurrence, completed) ||
             !TryReleaseOccurrenceAfterFence(engine, queue->queueRetiringOccurrence, completed) ||
             !TryReleaseOccurrenceAfterFence(engine, queue->queueAbortedSuccessorOccurrence, completed)) return false;
     }
@@ -38014,7 +38034,7 @@ bool ProvePlainInitialQueueCurrentStart(
         !engine.timelineOccurrences.CaptureCompletionOwner(current.queueCurrentOccurrence,
             &completionOwner) || !harken::SameCompletionOwner(completionOwner, completion.owner) ||
         !harken::SameCompletionOwner(completion.owner,
-            harken::CompletionOwnerRef::Single(current.queueDecision,
+            harken::CompletionOwnerRef::Single(current.QueueFiling().queueDecision,
                 completion.playbackFactsRevision)) ||
         completion.absoluteLogicalStartFrame != current.startFrame ||
         completion.absoluteLogicalCompleteFrame != current.queueCompletionFrame ||
@@ -38423,11 +38443,11 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                     if (!initial->queueNaturalEnd ||
                         actualQueue.failurePhase == harken::QueueFailurePhase::Healthy) continue;
                 } else {
-                    if (initial->queueConditional.Valid() &&
-                        (!initial->queueDecision.Valid() ||
+                    if (initial->QueueFiling().queueConditional.Valid() &&
+                        (!initial->QueueFiling().queueDecision.Valid() ||
                          !engine.queueInstances.ProvePendingConditionalIdentity(
-                            initial->queueInstance, initial->queueConditional,
-                            initial->queueDecision))) continue;
+                            initial->queueInstance, initial->QueueFiling().queueConditional,
+                            initial->QueueFiling().queueDecision))) continue;
                     if (observedAudioSequence > UINT64_MAX / engine.config.blockFrames ||
                         !FailQueueForInvalidation(engine, *initial,
                             observedAudioSequence * engine.config.blockFrames,
@@ -38789,12 +38809,12 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                         member.queueNaturalEnd = true;
                         member.pendingFutureCount = 0;
                         (void)AbortTimelineArm(engine,
-                            member.queueSuccessorArm);
+                            member.QueueFiling().queueSuccessorArm);
                         for (std::uint32_t arm = 0;
-                             arm < member.queueTransitionGroupArmCount;
+                             arm < member.QueueFiling().queueTransitionGroupArmCount;
                              ++arm)
                             (void)AbortTimelineArm(engine,
-                                member.queueTransitionGroupArms[arm]);
+                                member.QueueFiling().queueTransitionGroupArms[arm]);
                         const auto successor =
                             member.queueSuccessorRenderHandle;
                         if (successor != 0 &&
@@ -39029,8 +39049,8 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                     if (!member.queueTimingPending ||
                         member.pendingImmediateCohortRoot != attempt.root)
                         continue;
-                    if (member.queueSuccessorProgramBank != nullptr)
-                        member.queueSuccessorProgramBank->published = true;
+                    if (member.QueueFiling().queueSuccessorProgramBank != nullptr)
+                        member.QueueFiling().queueSuccessorProgramBank->published = true;
                     member.queueTimingFinalized = true;
                 }
             } else {
@@ -39062,8 +39082,8 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                     if (!member.queueTimingPending ||
                         member.pendingImmediateCohortRoot != attempt.root)
                         continue;
-                    if (member.queueSuccessorProgramBank != nullptr)
-                        member.queueSuccessorProgramBank->published = true;
+                    if (member.QueueFiling().queueSuccessorProgramBank != nullptr)
+                        member.QueueFiling().queueSuccessorProgramBank->published = true;
                     member.queueTimingFinalized = true;
                 }
             }
@@ -39163,7 +39183,7 @@ bool CaptureOriginalQueueTimingOrdinal(const harken::Engine& engine,
 
 bool CapturePendingVariableQueueTimingOrdinal(const harken::EnginePlayableServiceRow& holder,
     std::uint64_t due, std::uint32_t* ordinal) noexcept {
-    const auto* bank = holder.queueSuccessorProgramBank;
+    const auto* bank = holder.QueueFiling().queueSuccessorProgramBank;
     if (ordinal == nullptr || bank == nullptr || !bank->occupied || bank->published ||
         bank->programCount > bank->schedules.size() || bank->eventCount > bank->events.size()) return false;
     std::uint32_t eventBase = 0;
@@ -39420,12 +39440,12 @@ bool AppendPendingVariableControlLaneEvents(harken::Engine& engine,
                 !record.conditionalMember.Exact() ||
                 !record.prerequisiteMemberPin.Valid()) return false;
             const bool natural = timing->groupCount == 3u;
-            const bool transition = holder->queueTransition.Valid();
+            const bool transition = holder->QueueFiling().queueTransition.Valid();
             if (record.targetMember.Exact() != natural ||
-                (natural && (!transition || holder->queueSourceControlArmCount != 1u ||
-                    holder->queueTransitionGroupArmCount != 2u ||
+                (natural && (!transition || holder->QueueFiling().queueSourceControlArmCount != 1u ||
+                    holder->QueueFiling().queueTransitionGroupArmCount != 2u ||
                     timing->newGroupFrames[2] <= timing->newGroupFrames[1])) ||
-                (!natural && holder->queueSourceControlArmCount != 0u)) return false;
+                (!natural && holder->QueueFiling().queueSourceControlArmCount != 0u)) return false;
             accountedGroups += timing->groupCount;
             const auto* control =
                 engine.decisions.PrepareFrontierControlProgram(
@@ -39475,9 +39495,9 @@ bool AppendPendingVariableControlLaneEvents(harken::Engine& engine,
                         staged.programIndex >= queueProgramCount) return false;
                     ++capturedEvents;
                     const auto targetFrame = timing->newGroupFrames[natural ? 2u : 1u];
-                    const auto targetArm = holder->queueTransitionGroupArms[natural ? 1u : 0u];
+                    const auto targetArm = holder->QueueFiling().queueTransitionGroupArms[natural ? 1u : 0u];
                     if (natural && harken::Engine::SameOriginalSingleArm(staged.frozen->armToken,
-                            holder->queueTransitionGroupArms[0]) &&
+                            holder->QueueFiling().queueTransitionGroupArms[0]) &&
                         staged.payload->kind == harken::TimelineEventKind::Envelope &&
                         staged.payload->envelopeDirection == harken::TimelineEnvelopeDirection::FadeOut &&
                         staged.payload->reserved == harken::kTimelineEventTransientControlArm &&
@@ -39578,7 +39598,7 @@ bool AppendPendingVariableControlLaneEvents(harken::Engine& engine,
             if (program.frozen == nullptr ||
                 program.frozen->runtimeProgram.program == nullptr)
                 return false;
-            auto* bank = holder->queueSuccessorProgramBank;
+            auto* bank = holder->QueueFiling().queueSuccessorProgramBank;
             harken::TimelineEventPayload* ownedPayload = nullptr;
             if (bank != nullptr && bank->occupied && !bank->published) {
                 for (std::uint32_t payload = 0;
@@ -39686,8 +39706,8 @@ bool AppendPendingVariableControlLaneEvents(harken::Engine& engine,
             if (timing.groupCount == 0 &&
                 IsInitialQueueTimingOnlyCurrent(*holder)) continue;
             if (timing.groupCount != 2u ||
-                holder->queueTransitionGroupArmCount != 2u ||
-                holder->queueSourceControlArmCount != 1u ||
+                holder->QueueFiling().queueTransitionGroupArmCount != 2u ||
+                holder->QueueFiling().queueSourceControlArmCount != 1u ||
                 timing.newGroupFrames[0] < earliestFrame ||
                 timing.newGroupFrames[1] <= timing.newGroupFrames[0])
                 return false;
@@ -39778,23 +39798,23 @@ bool AppendPendingVariableControlLaneEvents(harken::Engine& engine,
                     return false;
                 const auto kind = staged.payload->kind;
                 if (staged.frozen->armToken.slot ==
-                        holder->queueTransitionGroupArms[0].slot &&
+                        holder->QueueFiling().queueTransitionGroupArms[0].slot &&
                     staged.frozen->armToken.generation ==
-                        holder->queueTransitionGroupArms[0].generation &&
+                        holder->QueueFiling().queueTransitionGroupArms[0].generation &&
                     kind == harken::TimelineEventKind::Envelope &&
                     staged.newExecuteFrame == timing.newGroupFrames[0] &&
                     source == nullptr) source = &staged;
                 else if (staged.frozen->armToken.slot ==
-                        holder->queueTransitionGroupArms[1].slot &&
+                        holder->QueueFiling().queueTransitionGroupArms[1].slot &&
                     staged.frozen->armToken.generation ==
-                        holder->queueTransitionGroupArms[1].generation &&
+                        holder->QueueFiling().queueTransitionGroupArms[1].generation &&
                     staged.newExecuteFrame == timing.newGroupFrames[1] &&
                     kind == harken::TimelineEventKind::Start &&
                     targetStart == nullptr) targetStart = &staged;
                 else if (staged.frozen->armToken.slot ==
-                        holder->queueTransitionGroupArms[1].slot &&
+                        holder->QueueFiling().queueTransitionGroupArms[1].slot &&
                     staged.frozen->armToken.generation ==
-                        holder->queueTransitionGroupArms[1].generation &&
+                        holder->QueueFiling().queueTransitionGroupArms[1].generation &&
                     staged.newExecuteFrame == timing.newGroupFrames[1] &&
                     kind == harken::TimelineEventKind::Envelope &&
                     targetEnvelope == nullptr) targetEnvelope = &staged;
@@ -39818,7 +39838,7 @@ bool AppendPendingVariableControlLaneEvents(harken::Engine& engine,
                     staged.relativeFrame == UINT64_MAX)
                     return false;
                 if (staged.payload->kind == harken::TimelineEventKind::Start) {
-                    auto* bank = holder->queueSuccessorProgramBank;
+                    auto* bank = holder->QueueFiling().queueSuccessorProgramBank;
                     harken::TimelineEventPayload* ownedPayload = nullptr;
                     if (bank != nullptr && bank->occupied && !bank->published)
                         for (std::uint32_t payload = 0; payload < bank->eventCount; ++payload)
@@ -41090,10 +41110,10 @@ bool PreparePendingVariableQueueRootTiming(harken::Engine& engine,
         if (timing.privateTimingTransition.Valid()) {
             const bool first = holder->queueFirstContinuationLane;
             const auto sliceCount = first ? timing.groupCount - 1u : timing.groupCount;
-            const auto memberDecision = first ? holder->queueDecision : holder->initialQueueEntryDecision;
+            const auto memberDecision = first ? holder->QueueFiling().queueDecision : holder->initialQueueEntryDecision;
             const auto phaseOffset = first ? 1u : 0u;
-            const auto controlCount = holder->queueSourceControlArmCount;
-            const auto memberCount = holder->queueTransitionGroupArmCount;
+            const auto controlCount = holder->QueueFiling().queueSourceControlArmCount;
+            const auto memberCount = holder->QueueFiling().queueTransitionGroupArmCount;
             harken::DecisionReserveRequest expected{};
             expected.ticket.sequence = first ? holder->queueTicket : holder->ticket;
             expected.world = holder->Invocation().worldGeneration;
@@ -41134,15 +41154,15 @@ bool PreparePendingVariableQueueRootTiming(harken::Engine& engine,
                     actual.memberCount != memberCount || actual.sourceControlCount != controlCount ||
                     actual.members == nullptr) return false;
                 for (std::uint16_t member = 0; member < actual.memberCount; ++member)
-                    if (!sameArm(actual.members[member], holder->queueTransitionGroupArms[member]))
+                    if (!sameArm(actual.members[member], holder->QueueFiling().queueTransitionGroupArms[member]))
                         return false;
                 ++sliceCounts[slice];
             }
             if (sliceCounts[0] != 1u || sliceCounts[1] != (sliceCount == 2u ? 1u : 0u)) return false;
         }
         if (timing.privateTimingTransition.Valid() &&
-            (holder->queueTransition.slot != timing.privateTimingTransition.slot ||
-             holder->queueTransition.generation != timing.privateTimingTransition.generation ||
+            (holder->QueueFiling().queueTransition.slot != timing.privateTimingTransition.slot ||
+             holder->QueueFiling().queueTransition.generation != timing.privateTimingTransition.generation ||
              holder->initialQueueEntryAttemptGeneration != attempt.generation ||
              !engine.transitionInstances.ProvePrivateTimingBeforePublication(
                  timing.privateTimingTransition, engine.immediateActionLane,
@@ -41167,7 +41187,7 @@ bool PreparePendingVariableQueueRootTiming(harken::Engine& engine,
             return false;
         if (timing.successorLeafCount != 0 &&
             !engine.compositeCompletionOwners.ProvePrivateUniformReanchorBeforePublication(
-                holder->queueSuccessorCompositeOwner,
+                holder->QueueFiling().queueSuccessorCompositeOwner,
                 timing.oldEntryFrame, timing.newEntryFrame,
                 engine.timelineOccurrences, &successor))
             return false;
@@ -41792,8 +41812,8 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
                     record.initialDecision.slot ||
                 holder->initialQueueEntryDecision.generation !=
                     record.initialDecision.generation ||
-                holder->queueDecision.slot != record.memberDecision.slot ||
-                holder->queueDecision.generation !=
+                holder->QueueFiling().queueDecision.slot != record.memberDecision.slot ||
+                holder->QueueFiling().queueDecision.generation !=
                     record.memberDecision.generation ||
                 holder->queueInstance.slot != record.queue.slot ||
                 holder->queueInstance.generation !=
@@ -41924,15 +41944,15 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
             conditional.queueConditional = {record.queue.slot,
                 record.queue.generation, queue.logicMirror.version,
                 queue.pendingVersion, holder->queueCurrentOccurrence,
-                holder->queueSuccessorOccurrence};
+                holder->QueueFiling().queueSuccessorOccurrence};
             const bool natural = timing->groupCount == 3u;
             if (record.targetMember.Exact() != natural) return false;
-            if (holder->queueTransition.Valid()) {
+            if (holder->QueueFiling().queueTransition.Valid()) {
                 harken::TransitionInstanceSnapshot gate{};
-                if (!engine.transitionInstances.Capture(holder->queueTransition, &gate) ||
+                if (!engine.transitionInstances.Capture(holder->QueueFiling().queueTransition, &gate) ||
                     gate.state != harken::TransitionAudibleGateState::Replaceable ||
                     gate.audibleFrame != next.order.executeFrame || gate.retiredAtAudioSequence != 0u) return false;
-                conditional.transition = {holder->queueTransition.slot, holder->queueTransition.generation, gate.audibleFrame};
+                conditional.transition = {holder->QueueFiling().queueTransition.slot, holder->QueueFiling().queueTransition.generation, gate.audibleFrame};
             } else if (natural) return false;
             record.version = {queue.pendingVersion};
             for (std::uint32_t slice = 0; slice < (natural ? 2u : 1u); ++slice) {
@@ -41951,9 +41971,9 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
                     native.frontier == nullptr || native.lease == nullptr ||
                     !engine.queueInstances.BindFrontierConditional(record.queue, *native.frontier, engine.timelinePool) ||
                     !engine.decisions.BindFrontierDecision(record.memberDecision, *native.frontier, engine.timelinePool)) return false;
-                if (holder->queueTransition.Valid()) {
-                    if (!engine.transitionInstances.BindFrontier(holder->queueTransition, *native.frontier, engine.timelinePool)) return false;
-                    record.sourceTransitionBinding = holder->queueTransition;
+                if (holder->QueueFiling().queueTransition.Valid()) {
+                    if (!engine.transitionInstances.BindFrontier(holder->QueueFiling().queueTransition, *native.frontier, engine.timelinePool)) return false;
+                    record.sourceTransitionBinding = holder->QueueFiling().queueTransition;
                 }
                 for (std::uint16_t member = 0; member < native.memberCount; ++member) {
                     if (natural && (slice == 0u ? member >= native.sourceControlCount : member < native.sourceControlCount)) continue;
@@ -41969,7 +41989,7 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
                         !engine.timelineArms.BindPendingImmediateStart(arm, program->newArmStartFrame, program->newArmDeadline) ||
                         !engine.timelineArms.Observe(arm, &observation) || observation.state != harken::ArmState::Armed ||
                         observation.armedCompletionSequence == 0 ||
-                        !engine.armGroups.Acknowledge(holder->queueArmGroup, arm, observation.armedCompletionSequence)) return false;
+                        !engine.armGroups.Acknowledge(holder->QueueFiling().queueArmGroup, arm, observation.armedCompletionSequence)) return false;
                     auto& owned = engine.initialFrontierArmPins[arm.slot];
                     if (owned.pin.Valid() || !engine.timelineArms.PinFrontierReader(arm, &owned.pin)) return false;
                     owned.arm = arm;
@@ -41979,7 +41999,7 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
             }
             harken::ArmGroupSnapshot conditionalArms{};
             if (!engine.armGroups.Capture(
-                    holder->queueArmGroup, &conditionalArms) ||
+                    holder->QueueFiling().queueArmGroup, &conditionalArms) ||
                 conditionalArms.state != harken::ArmGroupState::Ready)
                 return false;
             harken::DecisionCommitPayload conditionalCommit{};
@@ -41989,10 +42009,10 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
                 static_cast<std::uint32_t>(
                     record.conditionalMember.committedRow),
                 record.conditionalMember.rowClaimGeneration};
-            conditionalCommit.armGroup = holder->queueArmGroup;
+            conditionalCommit.armGroup = holder->QueueFiling().queueArmGroup;
             if (!engine.decisions.Commit(record.memberDecision,
                     conditionalCommit)) return false;
-            holder->queueDecisionCommitted = true;
+            holder->QueueFiling().queueDecisionCommitted = true;
             ++ownedIndex;
             recordIndex = record.next;
         }
@@ -42014,8 +42034,8 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
         if (timing.groupCount == 0 &&
             IsInitialQueueTimingOnlyCurrent(*holder)) continue;
         if (timing.groupCount != 2u ||
-            holder->queueTransitionGroupArmCount != 2u ||
-            holder->queueSourceControlArmCount != 1u) return false;
+            holder->QueueFiling().queueTransitionGroupArmCount != 2u ||
+            holder->QueueFiling().queueSourceControlArmCount != 1u) return false;
         harken::EngineQueueFutureRecord* future = nullptr;
         auto futureIndex = attempt.queueFutureHead;
         for (std::uint32_t candidate = 0;
@@ -42061,7 +42081,7 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
         harken::QueueInstanceSnapshot queue{};
         harken::TransitionInstanceSnapshot gate{};
         if (!engine.queueInstances.Capture(holder->queueInstance, &queue) ||
-            !engine.transitionInstances.Capture(holder->queueTransition,
+            !engine.transitionInstances.Capture(holder->QueueFiling().queueTransition,
                 &gate)) return false;
         std::uint32_t prerequisiteCount = 0;
         for (std::uint32_t sideIndex = 0;
@@ -42131,16 +42151,16 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
                 queue.programSemanticFingerprint};
             if (slice == 1u && holder->canonicalInitialQueueDecision.Valid()) {
                 if (!SameCanonicalDecision(holder->canonicalInitialQueueDecision, identities[slice].decision) ||
-                    !SameCanonicalDecision(holder->queueDecision, identities[slice].decision) ||
+                    !SameCanonicalDecision(holder->QueueFiling().queueDecision, identities[slice].decision) ||
                     !SameCanonicalDecision(holder->initialQueueEntryDecision, identities[slice].decision)) return false;
                 binding.canonicalInitialCompletion = true;
                 binding.queueInitialCompletion = {holder->queueInstance.slot,
                     holder->queueInstance.generation, queue.logicMirror.version, queue.pendingVersion,
-                    holder->queueCurrentOccurrence, holder->queueSuccessorOccurrence};
+                    holder->queueCurrentOccurrence, holder->QueueFiling().queueSuccessorOccurrence};
                 if (!binding.queueInitialCompletion.Valid()) return false;
             }
-            binding.transition = {holder->queueTransition.slot,
-                holder->queueTransition.generation, gate.audibleFrame};
+            binding.transition = {holder->QueueFiling().queueTransition.slot,
+                holder->QueueFiling().queueTransition.generation, gate.audibleFrame};
             harken::Plan03PageGroupView group{};
             if (!engine.timelinePool.BindPlan03GroupFrontier(
                     identities[slice], binding) ||
@@ -42154,11 +42174,11 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
                     holder->initialQueueEntryDecision,
                     *group.frontier, engine.timelinePool) ||
                 (slice == 0u &&
-                 !engine.transitionInstances.BindFrontier(holder->queueTransition,
+                 !engine.transitionInstances.BindFrontier(holder->QueueFiling().queueTransition,
                      *group.frontier, engine.timelinePool)))
                 return false;
-            if (slice == 0u) future->sourceTransitionBinding = holder->queueTransition;
-            const auto arm = holder->queueTransitionGroupArms[slice];
+            if (slice == 0u) future->sourceTransitionBinding = holder->QueueFiling().queueTransition;
+            const auto arm = holder->QueueFiling().queueTransitionGroupArms[slice];
             const auto program = std::find_if(
                 engine.initialQueueTimingProgramsScratch.begin(),
                 engine.initialQueueTimingProgramsScratch.begin() +
@@ -42183,7 +42203,7 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
             const bool acknowledged = observed &&
                 observation.state == harken::ArmState::Armed &&
                 observation.armedCompletionSequence != 0 &&
-                engine.armGroups.Acknowledge(holder->queueArmGroup,
+                engine.armGroups.Acknowledge(holder->QueueFiling().queueArmGroup,
                     arm, observation.armedCompletionSequence);
             if (!acknowledged) return false;
             auto& owned = engine.initialFrontierArmPins[arm.slot];
@@ -42197,7 +42217,7 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
                 return false;
         }
         harken::ArmGroupSnapshot armGroup{};
-        if (!engine.armGroups.Capture(holder->queueArmGroup,
+        if (!engine.armGroups.Capture(holder->QueueFiling().queueArmGroup,
                 &armGroup) ||
             armGroup.state != harken::ArmGroupState::Ready)
             return false;
@@ -42211,12 +42231,12 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
         commit.pages = {
             static_cast<std::uint32_t>(identities[0].committedRow),
             identities[0].rowClaimGeneration};
-        commit.armGroup = holder->queueArmGroup;
+        commit.armGroup = holder->QueueFiling().queueArmGroup;
         const bool canonical = SameCanonicalDecision(holder->canonicalInitialQueueDecision,
             holder->initialQueueEntryDecision);
         const auto& canonicalRequest = holder->CanonicalInitialQueueRequest();
         harken::TransitionInstanceSnapshot canonicalGate{};
-        if (canonical && (!SameCanonicalDecision(holder->queueDecision, holder->initialQueueEntryDecision) ||
+        if (canonical && (!SameCanonicalDecision(holder->QueueFiling().queueDecision, holder->initialQueueEntryDecision) ||
                 !SameCanonicalDecision(identities[0].decision, holder->initialQueueEntryDecision) ||
                 !SameCanonicalDecision(identities[1].decision, holder->initialQueueEntryDecision) ||
                 !holder->InvocationValid() || canonicalRequest.sliceCount != 2 ||
@@ -42224,14 +42244,14 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
                 canonicalRequest.transport != engine.timelinePool.Epoch() ||
                 canonicalRequest.expectedContinuationGeneration != holder->invocationGeneration ||
                 canonicalRequest.ticket.sequence != holder->ticket ||
-                canonicalRequest.transitionGate.slot != holder->queueTransition.slot ||
-                canonicalRequest.transitionGate.generation != holder->queueTransition.generation ||
-                !engine.transitionInstances.Capture(holder->queueTransition, &canonicalGate) ||
+                canonicalRequest.transitionGate.slot != holder->QueueFiling().queueTransition.slot ||
+                canonicalRequest.transitionGate.generation != holder->QueueFiling().queueTransition.generation ||
+                !engine.transitionInstances.Capture(holder->QueueFiling().queueTransition, &canonicalGate) ||
                 !engine.decisions.IsOpen(holder->initialQueueEntryDecision))) return false;
         if (!engine.decisions.Commit(
                 holder->initialQueueEntryDecision, commit))
             return false;
-        if (canonical) holder->queueDecisionCommitted = true;
+        if (canonical) holder->QueueFiling().queueDecisionCommitted = true;
     }
     harken::DecisionCommitPayload commit{};
     commit.participants = storage.initialFrontierParticipants.data();
@@ -42521,16 +42541,16 @@ bool TransferPendingVariableQueueRows(harken::Engine& engine,
             engine.playableServices[timing.service.slot].ownerInstance,
             engine.playableServices[timing.service.slot].ownerEpoch);
         if (holder == nullptr || holder->pendingImmediateCohortRoot != attempt.root ||
-            !holder->queueTimingPending || holder->queueSuccessorProgramBank != timing.successorBank) return false;
+            !holder->queueTimingPending || holder->QueueFiling().queueSuccessorProgramBank != timing.successorBank) return false;
         holder->startFrame = timing.newEntryFrame;
         holder->queueInitialCohortEntryFrame = anchor;
         holder->queueCompletionFrame = timing.newCompletionFrame;
         if (holder->hasZeroWorkCompletion) holder->zeroWorkCompletionFrame = timing.newZeroWorkCompletionFrame;
-        if (holder->queueTransitionEndFrame != 0) holder->queueTransitionEndFrame = timing.newTransitionEndFrame;
+        if (holder->QueueFiling().queueTransitionEndFrame != 0) holder->QueueFiling().queueTransitionEndFrame = timing.newTransitionEndFrame;
         for (std::uint32_t group = 0; group < timing.groupCount; ++group)
             holder->queueUnplacedGroupFrames[group] = timing.newGroupFrames[group];
         if (timing.currentCompletionBound) holder->queueCurrentCompletion = timing.currentCompletion;
-        if (timing.successorCompletionBound) holder->queueSuccessorCompletion = timing.successorCompletion;
+        if (timing.successorCompletionBound) holder->QueueFiling().queueSuccessorCompletion = timing.successorCompletion;
         if (holder->queueUnplacedCredit.Valid()) {
             if (!engine.timelinePool.CancelUnplacedBatchCredit(&holder->queueUnplacedCredit)) return false;
             holder->queueUnplacedDemandCredit = {};
@@ -42590,10 +42610,10 @@ bool PublishPendingVariableControlLane(harken::Engine& engine,
         const auto& timing = engine.initialQueueTimingMembersScratch[index];
         const auto* holder = findTimingHolder(timing.service);
         if (holder == nullptr ||
-            holder->queueSuccessorProgramBank != timing.successorBank ||
-            holder->queueSuccessorHasZeroWorkCompletion !=
+            holder->QueueFiling().queueSuccessorProgramBank != timing.successorBank ||
+            holder->QueueFiling().queueSuccessorHasZeroWorkCompletion !=
                 timing.successorHasZeroWorkCompletion ||
-            holder->queueSuccessorZeroWorkCompletionFrame !=
+            holder->QueueFiling().queueSuccessorZeroWorkCompletionFrame !=
                 timing.oldSuccessorZeroWorkCompletionFrame) return false;
     }
     if (!engine.CanTransferPendingVariableQueueNativeOrigins(scratch, attempt)) return false;
@@ -42602,7 +42622,7 @@ bool PublishPendingVariableControlLane(harken::Engine& engine,
     for (std::size_t index = 0; index < queueMemberCount; ++index) {
         const auto& timing = engine.initialQueueTimingMembersScratch[index];
         if (timing.successorHasZeroWorkCompletion)
-            findTimingHolder(timing.service)->queueSuccessorZeroWorkCompletionFrame =
+            findTimingHolder(timing.service)->QueueFiling().queueSuccessorZeroWorkCompletionFrame =
                 timing.newSuccessorZeroWorkCompletionFrame;
     }
     ApplyInitialQueueSuccessorStartMirrors(engine, attempt, queueProgramCount, false);
@@ -42617,7 +42637,7 @@ bool PublishPendingVariableControlLane(harken::Engine& engine,
                 const auto& timing =
                     engine.initialQueueTimingMembersScratch[index];
                 if (timing.successorHasZeroWorkCompletion)
-                    findTimingHolder(timing.service)->
+                    findTimingHolder(timing.service)->QueueFiling().
                         queueSuccessorZeroWorkCompletionFrame =
                             timing.oldSuccessorZeroWorkCompletionFrame;
             }
@@ -42673,7 +42693,7 @@ bool PublishPendingVariableControlLane(harken::Engine& engine,
                     candidate.pendingImmediateCohortRoot == attempt.root;
             });
         if (holder == engine.playableServices.end() ||
-            holder->queueSuccessorProgramBank != timing.successorBank) {
+            holder->QueueFiling().queueSuccessorProgramBank != timing.successorBank) {
             engine.runtimeRecreateRequired = true;
             queueRowsTransferred = false;
             continue;
@@ -42683,14 +42703,14 @@ bool PublishPendingVariableControlLane(harken::Engine& engine,
         holder->queueCompletionFrame = timing.newCompletionFrame;
         if (holder->hasZeroWorkCompletion)
             holder->zeroWorkCompletionFrame = timing.newZeroWorkCompletionFrame;
-        if (holder->queueTransitionEndFrame != 0)
-            holder->queueTransitionEndFrame = timing.newTransitionEndFrame;
+        if (holder->QueueFiling().queueTransitionEndFrame != 0)
+            holder->QueueFiling().queueTransitionEndFrame = timing.newTransitionEndFrame;
         for (std::uint32_t group = 0; group < timing.groupCount; ++group)
             holder->queueUnplacedGroupFrames[group] = timing.newGroupFrames[group];
         if (timing.currentCompletionBound)
             holder->queueCurrentCompletion = timing.currentCompletion;
         if (timing.successorCompletionBound)
-            holder->queueSuccessorCompletion = timing.successorCompletion;
+            holder->QueueFiling().queueSuccessorCompletion = timing.successorCompletion;
         if (holder->queueUnplacedCredit.Valid() &&
             engine.timelinePool.CancelUnplacedBatchCredit(
                 &holder->queueUnplacedCredit)) {
@@ -43126,14 +43146,14 @@ bool BindPendingPrivateVcRoot(harken::Engine& engine,
         auto& holder = engine.playableServices[timing.service.slot];
         if (holder.identity != timing.service || !holder.queueTimingPending ||
             holder.pendingImmediateCohortRoot != attempt.root ||
-            holder.queueSuccessorProgramBank != timing.successorBank ||
-            holder.queueSuccessorHasZeroWorkCompletion != timing.successorHasZeroWorkCompletion ||
-            holder.queueSuccessorZeroWorkCompletionFrame != timing.oldSuccessorZeroWorkCompletionFrame) return false;
+            holder.QueueFiling().queueSuccessorProgramBank != timing.successorBank ||
+            holder.QueueFiling().queueSuccessorHasZeroWorkCompletion != timing.successorHasZeroWorkCompletion ||
+            holder.QueueFiling().queueSuccessorZeroWorkCompletionFrame != timing.oldSuccessorZeroWorkCompletionFrame) return false;
     }
     for (std::size_t index = 0; index < queueMemberCount; ++index) {
         const auto& timing = engine.initialQueueTimingMembersScratch[index];
         if (timing.successorHasZeroWorkCompletion)
-            engine.playableServices[timing.service.slot].queueSuccessorZeroWorkCompletionFrame = timing.newSuccessorZeroWorkCompletionFrame;
+            engine.playableServices[timing.service.slot].QueueFiling().queueSuccessorZeroWorkCompletionFrame = timing.newSuccessorZeroWorkCompletionFrame;
     }
     ApplyInitialQueueSuccessorStartMirrors(engine, attempt, queueProgramCount, false);
     ApplyPendingPrivateVcRootPublication(attempt, publication);
@@ -43886,7 +43906,7 @@ bool PublishNativeQueueResetStops(harken::Engine& engine,
         if (control.nativeStopPublished) continue;
         if (!control.committed || control.retiring || control.operationSlot >= engine.authoredStopRoots.size() ||
             control.nativeStopSequence != holder.sequence ||
-            !harken::Engine::SameOriginalSingleArm(control.originalPlainSource, row.queueSuccessorArm)) return false;
+            !harken::Engine::SameOriginalSingleArm(control.originalPlainSource, row.QueueFiling().queueSuccessorArm)) return false;
         auto& root = engine.authoredStopRoots[control.operationSlot];
         if (!root.operation || !root.operation->Active(root.operation->Identity())) return false;
         const auto identity = root.operation->Identity();
@@ -43896,7 +43916,7 @@ bool PublishNativeQueueResetStops(harken::Engine& engine,
             !engine.timelineArms.Observe(control.arm, &ack) ||
             (ack.state != harken::ArmState::Armed && !control.originalPlainArmPublished) ||
             ack.armedCompletionSequence == 0 || ack.armedCompletionSequence > completed) return false;
-        const auto onset = row.queueSuccessorCompletion.absoluteLogicalStartFrame;
+        const auto onset = row.QueueFiling().queueSuccessorCompletion.absoluteLogicalStartFrame;
         if (!control.originalPlainBound) {
             const bool envelope = root.fadeStartFrame < identity.stopFrame && onset < identity.stopFrame;
             const auto count = envelope ? 2u : 1u;
@@ -49356,12 +49376,12 @@ engine.runtimeRecreateRequired = true;
                 continue;
             }
         }
-        if (!startedRootSound && row.queueCleanupStarted) {
-            if (row.queueDecision.Valid() &&
-                ReclaimCompletedQueueDecisionGroup(engine, row, row.queueArmGroup, observedAudioSequence) &&
-                TransferDecisionRetirement(engine, row.queueDecision, false, row.queueArmGroup)) {
-                row.queueDecision = {};
-                row.queueArmGroup = {};
+        if (!startedRootSound && row.queueCleanupStarted && row.HasFeatureArrays()) {
+            if (row.QueueFiling().queueDecision.Valid() &&
+                ReclaimCompletedQueueDecisionGroup(engine, row, row.QueueFiling().queueArmGroup, observedAudioSequence) &&
+                TransferDecisionRetirement(engine, row.QueueFiling().queueDecision, false, row.QueueFiling().queueArmGroup)) {
+                row.QueueFiling().queueDecision = {};
+                row.QueueFiling().queueArmGroup = {};
             }
         }
         if (!startedRootSound) {
@@ -49463,93 +49483,93 @@ engine.runtimeRecreateRequired = true;
         if (!startedRootSound &&
             ((row.queueAbortedSuccessorOccurrence.generation != 0 &&
               !row.queueArrivalDecision.Valid()) ||
-             (row.queueAbortRequested && row.queueArmGroup.Valid()))) {
+             (row.queueAbortRequested && row.HasFeatureArrays() && row.QueueFiling().queueArmGroup.Valid()))) {
             for (std::uint32_t index = 0;
-                 index < row.queueTransitionGroupArmCount; ++index) {
+                 index < (row.HasFeatureArrays() ? row.QueueFiling().queueTransitionGroupArmCount : 0u); ++index) {
                 const harken::TimelineArmToken token =
-                    row.queueTransitionGroupArms[index];
+                    row.QueueFiling().queueTransitionGroupArms[index];
                 harken::TimelineArmObservation arm{};
                 if (!engine.timelineArms.Observe(token, &arm) ||
                     arm.state != harken::ArmState::Tombstoned) {
                     continue;
                 }
-                if (token.slot == row.queueSuccessorArm.slot &&
-                    token.generation == row.queueSuccessorArm.generation) {
+                if (token.slot == row.QueueFiling().queueSuccessorArm.slot &&
+                    token.generation == row.QueueFiling().queueSuccessorArm.generation) {
                     row.queueSuccessorArmTombstoned = true;
                 }
-                if (row.queueArmGroup.Valid()) {
+                if (row.QueueFiling().queueArmGroup.Valid()) {
                     (void)engine.armGroups.Tombstone(
-                        row.queueArmGroup, token,
+                        row.QueueFiling().queueArmGroup, token,
                         std::max<std::uint64_t>(
                             1u, arm.tombstoneAudioSequence));
                 }
             }
             harken::ArmGroupSnapshot abortedGroup{};
-            const bool groupComplete = row.queueArmGroup.Valid() &&
+            const bool groupComplete = row.HasFeatureArrays() && row.QueueFiling().queueArmGroup.Valid() &&
                 engine.armGroups.Capture(
-                    row.queueArmGroup, &abortedGroup) &&
+                    row.QueueFiling().queueArmGroup, &abortedGroup) &&
                 abortedGroup.state == harken::ArmGroupState::Retiring &&
                 abortedGroup.tombstonedCount ==
                     abortedGroup.memberCount;
             const bool canonicalCurrent = row.canonicalInitialQueueDecision.Valid() &&
                 SameCanonicalDecision(abortedGroup.parent, row.canonicalInitialQueueDecision);
-            const bool conflictingCanonical = row.canonicalInitialQueueDecision.Valid() && !canonicalCurrent &&
-                (SameCanonicalDecision(row.queueDecision, row.canonicalInitialQueueDecision) ||
-                 (row.queueTransition.slot == row.CanonicalInitialQueueRequest().transitionGate.slot &&
-                  row.queueTransition.generation == row.CanonicalInitialQueueRequest().transitionGate.generation));
+            const bool conflictingCanonical = row.HasFeatureArrays() && row.canonicalInitialQueueDecision.Valid() && !canonicalCurrent &&
+                (SameCanonicalDecision(row.QueueFiling().queueDecision, row.canonicalInitialQueueDecision) ||
+                 (row.QueueFiling().queueTransition.slot == row.CanonicalInitialQueueRequest().transitionGate.slot &&
+                  row.QueueFiling().queueTransition.generation == row.CanonicalInitialQueueRequest().transitionGate.generation));
             bool transitionRetired = groupComplete && !conflictingCanonical;
             // Canonical retirement validates ownership and reuses an actual
             // Retired sequence in TransferCanonicalQueueRetirement below.
-            if (groupComplete && !canonicalCurrent && !conflictingCanonical && row.queueTransition.Valid()) {
+            if (groupComplete && !canonicalCurrent && !conflictingCanonical && row.QueueFiling().queueTransition.Valid()) {
                 harken::TransitionInstanceSnapshot transition{};
                 transitionRetired = engine.transitionInstances.Capture(
-                    row.queueTransition, &transition);
+                    row.QueueFiling().queueTransition, &transition);
                 if (transitionRetired &&
                     transition.state == harken::
                         TransitionAudibleGateState::Replaceable) {
                     transitionRetired =
                         engine.transitionInstances.InvalidateReady(
-                            row.queueTransition);
+                            row.QueueFiling().queueTransition);
                 }
                 transitionRetired = transitionRetired &&
                     engine.transitionInstances.BeginRetire(
-                        row.queueTransition,
+                        row.QueueFiling().queueTransition,
                         abortedGroup.maxTombstoneSequence);
             }
             bool transitionReclaimed = transitionRetired && !conflictingCanonical &&
-                (!canonicalCurrent || SameCanonicalDecision(row.queueDecision, row.canonicalInitialQueueDecision));
+                (!canonicalCurrent || SameCanonicalDecision(row.QueueFiling().queueDecision, row.canonicalInitialQueueDecision));
             // Canonical Group, Transition and Bank leave through their sole record.
-            if (transitionRetired && !canonicalCurrent && !conflictingCanonical && row.queueTransition.Valid()) {
+            if (transitionRetired && !canonicalCurrent && !conflictingCanonical && row.QueueFiling().queueTransition.Valid()) {
                 transitionReclaimed = engine.transitionInstances.Reclaim(
-                    row.queueTransition, observedAudioSequence);
+                    row.QueueFiling().queueTransition, observedAudioSequence);
                 if (!transitionReclaimed) {
                     harken::TransitionInstanceSnapshot transition{};
                     transitionReclaimed =
                         !engine.transitionInstances.Capture(
-                            row.queueTransition, &transition);
+                            row.QueueFiling().queueTransition, &transition);
                 }
             }
             if (groupComplete && transitionReclaimed &&
                 ReclaimCompletedQueueDecisionGroup(engine, row,
-                    row.queueArmGroup, observedAudioSequence)) {
-                row.queueArmGroup = {};
+                    row.QueueFiling().queueArmGroup, observedAudioSequence)) {
+                row.QueueFiling().queueArmGroup = {};
                 row.queueSourceArm = {};
-                row.queueSourceControlArmCount = 0;
+                row.QueueFiling().queueSourceControlArmCount = 0;
                 row.ClearQueueSourcePrograms();
-                row.queueTransitionGroupArmCount = 0;
-                row.queueTransitionGroupArms.Clear();
-                row.queueTransition = {};
-                row.queueTransitionEndFrame = 0;
-                if (row.queueDecision.Valid() &&
+                row.QueueFiling().queueTransitionGroupArmCount = 0;
+                row.QueueFiling().queueTransitionGroupArms.Clear();
+                row.QueueFiling().queueTransition = {};
+                row.QueueFiling().queueTransitionEndFrame = 0;
+                if (row.QueueFiling().queueDecision.Valid() &&
                     row.queueCurrentOccurrence.generation == 0 &&
                     !harken::IsBoundKnownCompletionPredicate(
                         row.queueCurrentCompletion)) {
-                    if (TransferDecisionRetirement(engine, row.queueDecision, !row.queueDecisionCommitted))
-                        row.queueDecision = {};
+                    if (TransferDecisionRetirement(engine, row.QueueFiling().queueDecision, !row.QueueFiling().queueDecisionCommitted))
+                        row.QueueFiling().queueDecision = {};
                 }
             }
             if (row.queueSuccessorArmTombstoned &&
-                !row.queueArmGroup.Valid()) {
+                (!row.HasFeatureArrays() || !row.QueueFiling().queueArmGroup.Valid())) {
                     if (engine.timelineOccurrences.StageOf(
                             row.queueAbortedSuccessorOccurrence) ==
                         harken::OccurrenceStage::Preparing) {
@@ -49575,12 +49595,12 @@ engine.runtimeRecreateRequired = true;
         }
         if (!startedRootSound && row.queueAbortedSuccessorOccurrence.generation != 0 &&
             !row.queueArrivalDecision.Valid() &&
-            !row.queueArmGroup.Valid() &&
+            (!row.HasFeatureArrays() || !row.QueueFiling().queueArmGroup.Valid()) &&
             ClearQueueSuccessorInstallationAfterNativeEnd(engine, row, observedAudioSequence) &&
             TryReleaseOccurrenceAfterFence(
                 engine, row.queueAbortedSuccessorOccurrence,
                 observedAudioSequence)) {
-            row.queueSuccessorArm = {};
+            if (row.HasFeatureArrays()) row.QueueFiling().queueSuccessorArm = {};
             row.queueSuccessorRenderHandle = 0;
             row.queueSuccessorArmTombstoned = false;
         }
@@ -49706,12 +49726,12 @@ engine.runtimeRecreateRequired = true;
             row.phase != harken::EnginePlayableStartPhase::Cancelling) {
             harken::DecisionCommittedSnapshot committedHandoff{};
             harken::QueueInstanceSnapshot pendingQueue{};
-            if (row.queueDecisionCommitted &&
-                engine.decisions.CaptureCommitted(row.queueDecision, &committedHandoff) &&
+            if (row.QueueFiling().queueDecisionCommitted &&
+                engine.decisions.CaptureCommitted(row.QueueFiling().queueDecision, &committedHandoff) &&
                 (committedHandoff.audioState == harken::AudioGroupState::DeadlineInvalidated ||
                  committedHandoff.audioState == harken::AudioGroupState::PostStartDeadlineInvalidated) &&
                 engine.queueInstances.Capture(row.queueInstance, &pendingQueue) &&
-                pendingQueue.pendingVersion == row.queueConditional.version &&
+                pendingQueue.pendingVersion == row.QueueFiling().queueConditional.version &&
                 pendingQueue.pendingActivation != harken::ConditionalQueueActivation::Activated) {
                 if (FailQueueForInvalidation(engine, row,
                         committedHandoff.lastAudioSequence * blockFrames,
@@ -49722,23 +49742,23 @@ engine.runtimeRecreateRequired = true;
                 continue;
             }
             requireRollingPublication(row.queueDeferredNeedsFullPreparation
-                ? row.queueTransitionEndFrame : row.queueCompletionFrame);
+                ? row.QueueFiling().queueTransitionEndFrame : row.queueCompletionFrame);
             harken::ArmGroupSnapshot pendingHandoff{};
-            const bool needsHandoffAck = row.queueDecisionCommitted &&
-                engine.armGroups.Capture(row.queueArmGroup, &pendingHandoff) &&
+            const bool needsHandoffAck = row.QueueFiling().queueDecisionCommitted &&
+                engine.armGroups.Capture(row.QueueFiling().queueArmGroup, &pendingHandoff) &&
                 pendingHandoff.state == harken::ArmGroupState::AwaitingAcks;
-            if (!row.queueDecisionCommitted || needsHandoffAck) {
+            if (!row.QueueFiling().queueDecisionCommitted || needsHandoffAck) {
                 std::array<harken::TimelineArmObservation,
                            2u * harken::kMaxKnownScheduleLeaves>
                     handoffArms{};
                 const std::uint32_t handoffCount =
-                    row.queueTransitionGroupArmCount;
+                    row.QueueFiling().queueTransitionGroupArmCount;
                 harken::ArmGroupSnapshot group{};
                 if (handoffCount > handoffArms.size() ||
-                    handoffCount > row.queueTransitionGroupArms.size() ||
-                    !engine.armGroups.Capture(row.queueArmGroup, &group) ||
-                    group.parent.slot != row.queueDecision.slot ||
-                    group.parent.generation != row.queueDecision.generation ||
+                    handoffCount > row.QueueFiling().queueTransitionGroupArms.size() ||
+                    !engine.armGroups.Capture(row.QueueFiling().queueArmGroup, &group) ||
+                    group.parent.slot != row.QueueFiling().queueDecision.slot ||
+                    group.parent.generation != row.QueueFiling().queueDecision.generation ||
                     group.memberCount != handoffCount) {
                     row.controlLifecycle = harken::PlayableControlLifecycle::FailingSourceActive;
                     row.controlReason = harken::PlayableControlReason::StartRefused;
@@ -49746,7 +49766,7 @@ engine.runtimeRecreateRequired = true;
                     continue;
                 }
                 const auto handoffArm = [&](std::uint32_t index) {
-                    return row.queueTransitionGroupArms[index];
+                    return row.QueueFiling().queueTransitionGroupArms[index];
                 };
                 bool allHandoffArmsObserved = true;
                 for (std::uint32_t index = 0;
@@ -49777,7 +49797,7 @@ engine.runtimeRecreateRequired = true;
                         !IsActionTimelineArmPublicationFresh(row.Invocation().actionFiring,
                             nativeArm->startFrame, blockFrames, observedAudioSequence);
                 }
-                if (!row.queueDecisionCommitted && publicationExpired) {
+                if (!row.QueueFiling().queueDecisionCommitted && publicationExpired) {
                     if (FailQueueForInvalidation(engine, row, firstHandoffFrame,
                             harken::QueueFailureReason::Deadline,
                             harken::ConditionalQueueActivation::InvalidatedDeadline,
@@ -49792,19 +49812,19 @@ engine.runtimeRecreateRequired = true;
                             harken::ArmState::Armed ||
                             handoffArms[index].armedCompletionSequence == 0 ||
                             handoffArms[index].armedCompletionSequence > observedAudioSequence ||
-                            handoffArms[index].parentGroup.decision.slot != row.queueDecision.slot ||
-                            handoffArms[index].parentGroup.decision.generation != row.queueDecision.generation ||
+                            handoffArms[index].parentGroup.decision.slot != row.QueueFiling().queueDecision.slot ||
+                            handoffArms[index].parentGroup.decision.generation != row.QueueFiling().queueDecision.generation ||
                             handoffArms[index].memberIndex != index) {
                             continue;
                         }
                         const harken::TimelineArmToken token =
                             handoffArm(index);
                         (void)engine.armGroups.Acknowledge(
-                            row.queueArmGroup, token,
+                            row.QueueFiling().queueArmGroup, token,
                             handoffArms[index].
                                 armedCompletionSequence);
                     }
-                    (void)engine.armGroups.Capture(row.queueArmGroup, &group);
+                    (void)engine.armGroups.Capture(row.QueueFiling().queueArmGroup, &group);
                 }
                 if (group.state == harken::ArmGroupState::Ready) {
                     bool allPublished = true;
@@ -49828,7 +49848,7 @@ engine.runtimeRecreateRequired = true;
                             harken::EnginePlayableStartPhase::Cancelling;
                         continue;
                     }
-                    if (!row.queueDecisionCommitted) {
+                    if (!row.QueueFiling().queueDecisionCommitted) {
                         harken::DecisionParticipantRef participant{};
                         participant.kind = harken::DecisionParticipantKind::QueueInstance;
                         participant.slot = row.queueInstance.slot;
@@ -49837,30 +49857,31 @@ engine.runtimeRecreateRequired = true;
                         payload.participants = &participant;
                         payload.participantCount = 1;
                         payload.pages = row.queuePreparedPages;
-                        payload.armGroup = row.queueArmGroup;
-                        if (!engine.decisions.Commit(row.queueDecision, payload)) {
+                        payload.armGroup = row.QueueFiling().queueArmGroup;
+                        if (!engine.decisions.Commit(row.QueueFiling().queueDecision, payload)) {
                             row.controlLifecycle = harken::PlayableControlLifecycle::FailingSourceActive;
                             row.controlReason = harken::PlayableControlReason::StartRefused;
                             row.phase = harken::EnginePlayableStartPhase::Cancelling;
                             continue;
                         }
-                        row.queueDecisionCommitted = true;
+                        row.QueueFiling().queueDecisionCommitted = true;
                         row.queueDeferredNeedsFullPreparation = false;
                     }
                 }
             }
         }
-        if (!startedRootSound && row.queueDecisionCommitted && row.queueSuccessorProgramBank != nullptr &&
-            row.queueSuccessorProgramBank->continuationLane.Active() &&
-            !row.queueSuccessorProgramBank->continuationLane.Published() && !row.queueAbortRequested &&
+        if (!startedRootSound && row.HasFeatureArrays() && row.QueueFiling().queueDecisionCommitted &&
+            row.QueueFiling().queueSuccessorProgramBank != nullptr &&
+            row.QueueFiling().queueSuccessorProgramBank->continuationLane.Active() &&
+            !row.QueueFiling().queueSuccessorProgramBank->continuationLane.Published() && !row.queueAbortRequested &&
             row.phase != harken::EnginePlayableStartPhase::Cancelling) {
-            if (!row.queueSuccessorProgramBank->continuationLane.Publish()) {
+            if (!row.QueueFiling().queueSuccessorProgramBank->continuationLane.Publish()) {
                 row.controlLifecycle = harken::PlayableControlLifecycle::FailingSourceActive;
                 row.controlReason = harken::PlayableControlReason::StartRefused;
                 row.phase = harken::EnginePlayableStartPhase::Cancelling;
             }
         }
-        if (!startedRootSound && row.queueDecisionCommitted &&
+        if (!startedRootSound && row.HasFeatureArrays() && row.QueueFiling().queueDecisionCommitted &&
             row.queueContinuationPrepared && !row.queueAbortRequested &&
             row.phase != harken::EnginePlayableStartPhase::Cancelling) {
             harken::QueueInstanceSnapshot queue{};
@@ -49869,16 +49890,16 @@ engine.runtimeRecreateRequired = true;
                     harken::ConditionalQueueActivation::Activated &&
                 !row.queueArrivalDecision.Valid() &&
                 row.queueRetiringOccurrence.generation == 0) {
-                const bool sameProgramKey = row.queueSameProgramKey;
+                const bool sameProgramKey = row.QueueFiling().queueSameProgramKey;
                 std::uint64_t logicalArrivalSequence = 0;
-                if (!sameProgramKey && row.queueSuccessorHasZeroWorkCompletion &&
-                    row.queueSuccessorScheduleLeafCount == 0 && !row.queueSuccessorArm.Valid()) {
+                if (!sameProgramKey && row.QueueFiling().queueSuccessorHasZeroWorkCompletion &&
+                    row.QueueFiling().queueSuccessorScheduleLeafCount == 0 && !row.QueueFiling().queueSuccessorArm.Valid()) {
                     harken::DecisionCommittedSnapshot arrived{};
-                    if (!engine.decisions.CaptureCommitted(row.queueDecision, &arrived) ||
+                    if (!engine.decisions.CaptureCommitted(row.QueueFiling().queueDecision, &arrived) ||
                         arrived.audioState != harken::AudioGroupState::Admitted ||
                         arrived.consumedSlices != arrived.sliceCount || arrived.lastAudioSequence == 0 ||
                         arrived.lastAudioSequence > observedAudioSequence ||
-                        !engine.decisions.HasExclusiveParticipant(row.queueDecision,
+                        !engine.decisions.HasExclusiveParticipant(row.QueueFiling().queueDecision,
                             {harken::DecisionParticipantKind::QueueInstance,
                                 row.queueInstance.slot, row.queueInstance.generation})) continue;
                     logicalArrivalSequence = arrived.lastAudioSequence;
@@ -49975,7 +49996,7 @@ engine.runtimeRecreateRequired = true;
                             row.queueCurrentOccurrence, owner);
                 }
                 const bool settled = ownerReleased && engine.queueInstances.SettleActivated(
-                    row.queueInstance, row.queueConditional);
+                    row.queueInstance, row.QueueFiling().queueConditional);
                 if (!settled) {
                     row.controlLifecycle = harken::PlayableControlLifecycle::
                         FailingSourceActive;
@@ -49995,10 +50016,10 @@ engine.runtimeRecreateRequired = true;
                     continue;
                 }
                 if (!sameProgramKey) {
-                    if (row.queueSuccessorScheduleLeafCount > 1) {
-                        for (std::uint32_t index = 0; index < row.queueSuccessorScheduleLeafCount; ++index) {
-                            auto* member = engine.FindQueueProgramMember(row.queueSuccessorProgramBank,
-                                row.queueSuccessorPrograms.first + index);
+                    if (row.QueueFiling().queueSuccessorScheduleLeafCount > 1) {
+                        for (std::uint32_t index = 0; index < row.QueueFiling().queueSuccessorScheduleLeafCount; ++index) {
+                            auto* member = engine.FindQueueProgramMember(row.QueueFiling().queueSuccessorProgramBank,
+                                row.QueueFiling().queueSuccessorPrograms.first + index);
                             if (member == nullptr) {
                                 engine.runtimeRecreateRequired = true;
                                 break;
@@ -50008,8 +50029,8 @@ engine.runtimeRecreateRequired = true;
                                 member->render, selection.observation.Cause());
                         }
                     } else {
-                        PublishMonitorSelection(engine, row.queueMonitorSelection, row.queueSuccessorArm,
-                            row.queueSuccessorRenderHandle, row.queueMonitorSelection.observation.Cause());
+                        PublishMonitorSelection(engine, row.QueueFiling().queueMonitorSelection, row.QueueFiling().queueSuccessorArm,
+                            row.queueSuccessorRenderHandle, row.QueueFiling().queueMonitorSelection.observation.Cause());
                     }
                 }
                 if (!sameProgramKey) {
@@ -50034,20 +50055,20 @@ engine.runtimeRecreateRequired = true;
                 }
                 row.queueCurrentOccurrence = sameProgramKey
                     ? row.queueCurrentOccurrence
-                    : row.queueSuccessorOccurrence;
-                row.queueSuccessorOccurrence = {};
+                    : row.QueueFiling().queueSuccessorOccurrence;
+                row.QueueFiling().queueSuccessorOccurrence = {};
                 const bool successorComposite =
                     !sameProgramKey &&
-                    row.queueSuccessorCompositeOwner.Valid();
+                    row.QueueFiling().queueSuccessorCompositeOwner.Valid();
                 row.queueCurrentCompletion = successorComposite
                     ? harken::KnownCompletionPredicateV1{}
                     : sameProgramKey
                           ? row.queueCurrentCompletion
-                          : row.queueSuccessorCompletion;
+                          : row.QueueFiling().queueSuccessorCompletion;
                 row.queueCurrentCompositeOwner = sameProgramKey
                     ? harken::CompositeCompletionOwnerToken{}
-                    : row.queueSuccessorCompositeOwner;
-                row.queueSuccessorCompositeOwner = {};
+                    : row.QueueFiling().queueSuccessorCompositeOwner;
+                row.QueueFiling().queueSuccessorCompositeOwner = {};
                 row.queueCompositeMirrorsCleared = false;
                 row.queueCurrentScheduleBase = 0;
                 row.queueCurrentScheduleLeafCount = 0;
@@ -50055,16 +50076,16 @@ engine.runtimeRecreateRequired = true;
                     row.scheduleStorageBase = 0;
                     row.scheduleLeafCount = 0;
                 }
-                row.queueSuccessorCompletion = {};
+                row.QueueFiling().queueSuccessorCompletion = {};
                 row.queueSuccessorOwner = {};
                 if (!sameProgramKey) {
                     row.terminalObserved = false;
                     row.queueCurrentProgramPlane =
-                        row.queueSuccessorProgramPlane;
+                        row.QueueFiling().queueSuccessorProgramPlane;
                 }
                 if (!sameProgramKey &&
-                    (row.queueSuccessorScheduleLeafCount > 1 ||
-                     (row.parentService.Valid() && row.queueSuccessorScheduleLeafCount != 0))) {
+                    (row.QueueFiling().queueSuccessorScheduleLeafCount > 1 ||
+                     (row.parentService.Valid() && row.QueueFiling().queueSuccessorScheduleLeafCount != 0))) {
                     const std::size_t currentMemberBase =
                         storageBases.member;
                     const std::size_t currentEndpointBase =
@@ -50072,14 +50093,14 @@ engine.runtimeRecreateRequired = true;
                     const std::size_t currentPairedBase =
                         storageBases.paired;
                     const std::size_t successorBase =
-                        row.queueSuccessorScheduleBase;
-                    const auto programs = row.queueSuccessorPrograms.Resolve(row.queueSuccessorProgramBank);
+                        row.QueueFiling().queueSuccessorScheduleBase;
+                    const auto programs = row.QueueFiling().queueSuccessorPrograms.Resolve(row.QueueFiling().queueSuccessorProgramBank);
                     const harken::ProgramView successorAggregateSchedule =
-                        row.queueSuccessorProgramPlane == 0
+                        row.QueueFiling().queueSuccessorProgramPlane == 0
                             ? row.schedule
-                            : row.queueSuccessorSchedule;
+                            : row.QueueFiling().queueSuccessorSchedule;
                     const auto* successorAggregate = successorAggregateSchedule.runtimeProgram.program;
-                    if (programs.size() != row.queueSuccessorScheduleLeafCount ||
+                    if (programs.size() != row.QueueFiling().queueSuccessorScheduleLeafCount ||
                         successorAggregate == nullptr || successorAggregateSchedule.events == nullptr ||
                         currentEndpointBase + programs.size() > engine.playableStorage.endpointCount ||
                         currentPairedBase + programs.size() > engine.playableStorage.pairedCount ||
@@ -50094,7 +50115,7 @@ engine.runtimeRecreateRequired = true;
                     }
                     std::uint32_t eventOffset = 0;
                     for (std::uint32_t index = 0;
-                         index < row.queueSuccessorScheduleLeafCount;
+                         index < row.QueueFiling().queueSuccessorScheduleLeafCount;
                          ++index) {
                         std::size_t currentMember = currentMemberBase + index;
                         if (row.parentService.Valid() &&
@@ -50102,17 +50123,17 @@ engine.runtimeRecreateRequired = true;
                             engine.runtimeRecreateRequired = true;
                             break;
                         }
-                        const auto programIndex = row.queueSuccessorPrograms.first + index;
+                        const auto programIndex = row.QueueFiling().queueSuccessorPrograms.first + index;
                         if (!row.parentService.Valid()) {
                             if (!engine.BindPlayableMember(row, index,
-                                    row.queueSuccessorProgramBank->members[programIndex])) {
+                                    row.QueueFiling().queueSuccessorProgramBank->members[programIndex])) {
                                 engine.runtimeRecreateRequired = true;
                                 break;
                             }
                             eventOffset += static_cast<std::uint32_t>(programs[index].eventCount);
                             continue;
                         }
-                        auto* retained = engine.FindQueueProgramMember(row.queueSuccessorProgramBank, programIndex);
+                        auto* retained = engine.FindQueueProgramMember(row.QueueFiling().queueSuccessorProgramBank, programIndex);
                         if (retained == nullptr || !retained->primaryOwned ||
                             engine.FindPlayableMember(currentMember) != retained) {
                             engine.runtimeRecreateRequired = true;
@@ -50133,15 +50154,15 @@ engine.runtimeRecreateRequired = true;
                     row.queueCurrentScheduleBase =
                         static_cast<std::uint32_t>(currentMemberBase);
                     row.queueCurrentScheduleLeafCount =
-                        row.queueSuccessorScheduleLeafCount;
+                        row.QueueFiling().queueSuccessorScheduleLeafCount;
                     row.scheduleStorageBase =
                         static_cast<std::uint32_t>(currentMemberBase);
                     row.scheduleLeafCount =
-                        row.queueSuccessorScheduleLeafCount;
+                        row.QueueFiling().queueSuccessorScheduleLeafCount;
                     row.queueArrivalScheduleBase =
                         static_cast<std::uint32_t>(currentMemberBase);
                     row.queueArrivalScheduleLeafCount =
-                        row.queueSuccessorScheduleLeafCount;
+                        row.QueueFiling().queueSuccessorScheduleLeafCount;
                     row.runtimeProgram = *successorAggregate;
                     row.schedule = successorAggregateSchedule;
                     row.schedule.armToken = {};
@@ -50164,23 +50185,23 @@ engine.runtimeRecreateRequired = true;
                     if (row.parentService.Valid())
                         row.activeLeafInstance = engine.ReadPlayableMemberReference(currentMemberBase).leaf;
                 } else if (!sameProgramKey &&
-                           row.queueSuccessorArm.Valid()) {
-                    const auto* successor = ResolveQueueSuccessorProgram(row, 0);
+                           row.QueueFiling().queueSuccessorArm.Valid()) {
+                    const auto* successor = ResolveQueueSuccessorProgram(row.QueueFiling(), 0);
                     if (successor == nullptr) {
                         engine.runtimeRecreateRequired = true;
                         continue;
                     }
-                    const auto memberIndex = row.queueSuccessorPrograms.first;
-                    auto* retained = engine.FindQueueProgramMember(row.queueSuccessorProgramBank, memberIndex);
+                    const auto memberIndex = row.QueueFiling().queueSuccessorPrograms.first;
+                    auto* retained = engine.FindQueueProgramMember(row.QueueFiling().queueSuccessorProgramBank, memberIndex);
                     if (retained == nullptr || (row.parentService.Valid()
                             ? !retained->primaryOwned || engine.FindLogicalPlayableMember(storageBases.member) != retained
-                            : !engine.BindPlayableMember(row, 0, row.queueSuccessorProgramBank->members[memberIndex]))) {
+                            : !engine.BindPlayableMember(row, 0, row.QueueFiling().queueSuccessorProgramBank->members[memberIndex]))) {
                         engine.runtimeRecreateRequired = true;
                         continue;
                     }
                     row.capturedVoice = {};
                     row.usesCapturedVoice = false;
-                    row.arm = row.queueSuccessorArm;
+                    row.arm = row.QueueFiling().queueSuccessorArm;
                     row.renderHandle = row.queueSuccessorRenderHandle;
                     row.leaf = row.QueueSuccessorLeaf();
                     row.schedule = *successor;
@@ -50195,12 +50216,12 @@ engine.runtimeRecreateRequired = true;
                     row.capturedVoice = {};
                     row.usesCapturedVoice = false;
                     row.leaf = {};
-                    row.startFrame = row.queueSuccessorZeroWorkCompletionFrame;
+                    row.startFrame = row.QueueFiling().queueSuccessorZeroWorkCompletionFrame;
                     row.activeLeafInstance = 0;
                 }
                 if (!sameProgramKey && !row.parentService.Valid()) {
-                    const auto retainedCount = row.queueSuccessorScheduleLeafCount > 1u
-                        ? row.queueSuccessorScheduleLeafCount : row.queueSuccessorArm.Valid() ? 1u : 0u;
+                    const auto retainedCount = row.QueueFiling().queueSuccessorScheduleLeafCount > 1u
+                        ? row.QueueFiling().queueSuccessorScheduleLeafCount : row.QueueFiling().queueSuccessorArm.Valid() ? 1u : 0u;
                     for (std::uint32_t index = retainedCount; index < row.members.size(); ++index) {
                         if (!engine.ReleasePlayableMember(row, index)) {
                             engine.runtimeRecreateRequired = true;
@@ -50209,18 +50230,18 @@ engine.runtimeRecreateRequired = true;
                     }
                 }
                 if (!sameProgramKey) {
-                    row.queueCurrentProgramBank = row.queueSuccessorProgramBank;
-                    row.queueCurrentPrograms = row.queueSuccessorPrograms;
-                    row.queueSuccessorProgramBank = nullptr;
-                    row.queueSuccessorPrograms = {};
+                    row.queueCurrentProgramBank = row.QueueFiling().queueSuccessorProgramBank;
+                    row.queueCurrentPrograms = row.QueueFiling().queueSuccessorPrograms;
+                    row.QueueFiling().queueSuccessorProgramBank = nullptr;
+                    row.QueueFiling().queueSuccessorPrograms = {};
                     row.queueCurrentTailFrames =
                         row.queueSuccessorTailFrames;
                 }
                 row.hasZeroWorkCompletion =
                     !sameProgramKey &&
-                    row.queueSuccessorHasZeroWorkCompletion;
+                    row.QueueFiling().queueSuccessorHasZeroWorkCompletion;
                 row.zeroWorkCompletionFrame = row.hasZeroWorkCompletion
-                    ? row.queueSuccessorZeroWorkCompletionFrame
+                    ? row.QueueFiling().queueSuccessorZeroWorkCompletionFrame
                     : 0;
                 if (logicalArrivalSequence != 0 &&
                     row.controlLifecycle == harken::PlayableControlLifecycle::Preparing) {
@@ -50229,8 +50250,8 @@ engine.runtimeRecreateRequired = true;
                     if (row.lastAppliedBlockSequence == 0)
                         row.lastAppliedBlockSequence = logicalArrivalSequence;
                 }
-                row.queueSuccessorHasZeroWorkCompletion = false;
-                row.queueSuccessorZeroWorkCompletionFrame = 0;
+                row.QueueFiling().queueSuccessorHasZeroWorkCompletion = false;
+                row.QueueFiling().queueSuccessorZeroWorkCompletionFrame = 0;
                 row.queueSuccessorTailFrames = 0;
                 if (successorComposite) {
                     harken::CompositeCompletionOwnerInfo info{};
@@ -50259,43 +50280,43 @@ engine.runtimeRecreateRequired = true;
                         row.queueCompletionFrame,
                         row.zeroWorkCompletionFrame);
                 }
-                row.queueArrivalDecision = row.queueDecision;
-                row.queueArrivalArmGroup = row.queueArmGroup;
+                row.queueArrivalDecision = row.QueueFiling().queueDecision;
+                row.queueArrivalArmGroup = row.QueueFiling().queueArmGroup;
                 row.queueArrivalArm = sameProgramKey
                     ? harken::TimelineArmToken{}
                     : row.arm;
                 row.queueArrivalSourceArm = row.queueSourceArm;
                 row.queueArrivalSourceControlArmCount =
-                    row.queueSourceControlArmCount;
+                    row.QueueFiling().queueSourceControlArmCount;
                 row.queueArrivalTransitionGroupArmCount =
-                    row.queueTransitionGroupArmCount;
-                row.queueArrivalTransition = row.queueTransition;
+                    row.QueueFiling().queueTransitionGroupArmCount;
+                row.queueArrivalTransition = row.QueueFiling().queueTransition;
                 row.queueArrivalScheduleLeafCount = sameProgramKey
                     ? 0u
-                    : row.queueSuccessorScheduleLeafCount > 1
-                          ? row.queueSuccessorScheduleLeafCount
-                          : row.queueSuccessorArm.Valid() ? 1u : 0u;
+                    : row.QueueFiling().queueSuccessorScheduleLeafCount > 1
+                          ? row.QueueFiling().queueSuccessorScheduleLeafCount
+                          : row.QueueFiling().queueSuccessorArm.Valid() ? 1u : 0u;
                 row.queueArrivalUsesSuccessorStorage = false;
-                row.queueDecision = row.queueSuccessorDecision;
+                row.QueueFiling().queueDecision = row.queueSuccessorDecision;
                 row.queueSuccessorDecision = {};
                 row.queueTicket = row.queueSuccessorTicket;
                 row.queueSuccessorTicket = 0;
-                row.queueConditional = {};
-                row.queueArmGroup = {};
+                row.QueueFiling().queueConditional = {};
+                row.QueueFiling().queueArmGroup = {};
                 row.queuePreparedPages = {};
                 row.queueSourceArm = {};
-                row.queueSourceControlArmCount = 0;
+                row.QueueFiling().queueSourceControlArmCount = 0;
                 row.ClearQueueSourcePrograms();
-                row.queueTransitionGroupArmCount = 0;
-                row.queueTransitionGroupArms.Clear();
-                row.queueTransition = {};
-                row.queueTransitionEndFrame = 0;
-                row.queueSameProgramKey = false;
-                row.queueSuccessorArm = {};
+                row.QueueFiling().queueTransitionGroupArmCount = 0;
+                row.QueueFiling().queueTransitionGroupArms.Clear();
+                row.QueueFiling().queueTransition = {};
+                row.QueueFiling().queueTransitionEndFrame = 0;
+                row.QueueFiling().queueSameProgramKey = false;
+                row.QueueFiling().queueSuccessorArm = {};
                 row.queueSuccessorRenderHandle = 0;
-                row.queueSuccessorScheduleBase = 0;
-                row.queueSuccessorScheduleLeafCount = 0;
-                row.queueDecisionCommitted = false;
+                row.QueueFiling().queueSuccessorScheduleBase = 0;
+                row.QueueFiling().queueSuccessorScheduleLeafCount = 0;
+                row.QueueFiling().queueDecisionCommitted = false;
                 row.queueContinuationPrepared = false;
                 row.pendingFutureCount = 0;
                 harken::ArmGroupSnapshot arrivalGroup{};
@@ -50311,7 +50332,7 @@ engine.runtimeRecreateRequired = true;
                         harken::EnginePlayableStartPhase::Cancelling;
                     continue;
                 }
-                if (row.queueDecision.Valid()) {
+                if (row.QueueFiling().queueDecision.Valid()) {
                     harken::PlayableWorldViewV1 queueWorld{};
                     const harken::ContainerProgramViewV3* queueProgram =
                         nullptr;
@@ -51042,7 +51063,7 @@ engine.runtimeRecreateRequired = true;
                 row.controlLifecycle ==
                     harken::PlayableControlLifecycle::Active &&
                 row.queueContinuationPrepared &&
-                row.queueDecisionCommitted) {
+                row.QueueFiling().queueDecisionCommitted) {
                 if (row.parentService.Valid() &&
                     !CompleteVariableControlNestedQueueChild(
                         engine, row,
@@ -51720,7 +51741,7 @@ engine.runtimeRecreateRequired = true;
                             harken::PlayableControlLifecycle::Active &&
                         !row.queueNaturalEnd &&
                         (row.queueContinuationPrepared ||
-                         row.queueDecision.Valid())) {
+                         row.QueueFiling().queueDecision.Valid())) {
                         row.pendingFutureCount = std::max<std::uint32_t>(
                             1u, row.pendingFutureCount);
                         continue;
@@ -52274,7 +52295,7 @@ engine.runtimeRecreateRequired = true;
                         (void)stageFinalQueueOccurrence();
                     } else if (row.queueMode &&
                                !row.queueNaturalEnd &&
-                               !row.queueDecisionCommitted &&
+                               !row.QueueFiling().queueDecisionCommitted &&
                                !row.queueCleanupStarted) {
                         const harken::CompletionOwnerRef owner =
                             row.queueCurrentCompletion.owner;
@@ -52335,10 +52356,10 @@ engine.runtimeRecreateRequired = true;
                                 }
                             }
                         }
-                        (void)engine.decisions.Cancel(row.queueDecision);
-                        if (!row.queueArmGroup.Valid()) {
-                            if (TransferDecisionRetirement(engine, row.queueDecision, true)) {
-                                row.queueDecision = {};
+                        (void)engine.decisions.Cancel(row.QueueFiling().queueDecision);
+                        if (!row.QueueFiling().queueArmGroup.Valid()) {
+                            if (TransferDecisionRetirement(engine, row.QueueFiling().queueDecision, true)) {
+                                row.QueueFiling().queueDecision = {};
                             } else {
 engine.runtimeRecreateRequired = true;
                             }
@@ -54078,7 +54099,7 @@ bool Engine::MatchesPendingVariableQueueRecordChains(const EngineImmediateEntryA
                 service.queueInstance.slot != record.queue.slot || service.queueInstance.generation != record.queue.generation ||
                 service.queueFirstContinuationLane != continuation ||
                 !SameCanonicalDecision(service.initialQueueEntryDecision, record.initialDecision) ||
-                !SameCanonicalDecision(continuation ? service.queueDecision : service.initialQueueEntryDecision,
+                !SameCanonicalDecision(continuation ? service.QueueFiling().queueDecision : service.initialQueueEntryDecision,
                     record.memberDecision)) return false;
             for (const auto& other : records)
                 if (&other != &record && other.occupied && other.root == attempt.root &&
@@ -54309,14 +54330,14 @@ bool Engine::CapturePendingVariableQueueNativeOrigins(EngineActionPlayScratch& s
                 if (candidate.recordKind != Origin::RecordKind::None ||
                     attempt->queueContinuationQueue.slot != service.queueInstance.slot ||
                     attempt->queueContinuationQueue.generation != service.queueInstance.generation ||
-                    !SameCanonicalDecision(attempt->queueContinuationMemberDecision, service.queueDecision)) return false;
+                    !SameCanonicalDecision(attempt->queueContinuationMemberDecision, service.QueueFiling().queueDecision)) return false;
                 candidate.recordKind = Origin::RecordKind::Singleton;
                 primary = identity == attempt->queueContinuationPrimaryGroup;
             }
             const bool current = service.queueFirstContinuationLane &&
                 SameCanonicalDecision(identity.decision, service.initialQueueEntryDecision);
             const bool successor = SameCanonicalDecision(identity.decision,
-                service.queueFirstContinuationLane ? service.queueDecision : service.initialQueueEntryDecision);
+                service.queueFirstContinuationLane ? service.QueueFiling().queueDecision : service.initialQueueEntryDecision);
             if (!primary && !current && !successor) continue;
             if (candidate.recordKind == Origin::RecordKind::None ||
                 ++matches != 1 || !playablePartitions.Owns(service.partition, service.identity) ||
@@ -54332,14 +54353,14 @@ bool Engine::CapturePendingVariableQueueNativeOrigins(EngineActionPlayScratch& s
                 native.sourceControlCount != candidate.scope.input.sourceControlCount ||
                 (native.memberCount != 0 && native.members == nullptr)) return false;
             candidate.role = primary ? Origin::Role::Primary : current ? Origin::Role::Current : Origin::Role::Successor;
-            const auto expectedCount = primary ? 0u : current ? service.queueInitialCurrentDelayedCount : service.queueTransitionGroupArmCount;
-            const auto expectedControls = primary || current ? 0u : service.queueSourceControlArmCount;
-            const auto* expected = current ? service.queueInitialCurrentDelayedArms.data() : service.queueTransitionGroupArms.data();
+            const auto expectedCount = primary ? 0u : current ? service.queueInitialCurrentDelayedCount : service.QueueFiling().queueTransitionGroupArmCount;
+            const auto expectedControls = primary || current ? 0u : service.QueueFiling().queueSourceControlArmCount;
+            const auto* expected = current ? service.queueInitialCurrentDelayedArms.data() : service.QueueFiling().queueTransitionGroupArms.data();
             const auto frameIndex = primary ? (service.queueFirstContinuationLane ? 1u : 0u)
                 : current ? 0u : identity.sliceIndex + (service.queueFirstContinuationLane ? 1u : 0u);
             if (service.queueUnplacedGroupCount == 0 ||
                 service.queueUnplacedGroupCount > service.queueUnplacedGroupFrames.size() ||
-                expectedCount > (current ? service.queueInitialCurrentDelayedArms.size() : service.queueTransitionGroupArms.size()) ||
+                expectedCount > (current ? service.queueInitialCurrentDelayedArms.size() : service.QueueFiling().queueTransitionGroupArms.size()) ||
                 frameIndex >= service.queueUnplacedGroupCount ||
                 candidate.scope.input.executeFrame != service.queueUnplacedGroupFrames[frameIndex] ||
                 native.memberCount != expectedCount || native.sourceControlCount != expectedControls ||
@@ -54579,7 +54600,7 @@ bool Engine::BindPendingVariableGroupQueueFutureSources(EngineActionPlayScratch&
                 group->root.OriginalHandle()) ||
             future->queueSuccessorVoiceStartCount > future->queueSuccessorVoiceStarts.size() ||
             future->queueSuccessorVoiceStartCount > future->queueSuccessorVoiceStarts.Owners().size()) return false;
-        if (future->row->queueSameProgramKey) {
+        if (future->row->QueueFiling().queueSameProgramKey) {
             if (future->queueSuccessorVoiceStartCount != 0) return false;
             continue;
         }
@@ -54595,27 +54616,27 @@ bool Engine::BindPendingVariableGroupQueueFutureSources(EngineActionPlayScratch&
             return false;
         const auto& tree = future->playableTreeExecutor;
         const auto& row = *future->row;
-        const auto controlCount = row.queueSourceControlArmCount;
-        const auto nativeCount = row.queueTransitionGroupArmCount;
-        if (!future->queueArmGroupPrepared || nativeCount > row.queueTransitionGroupArms.size() ||
+        const auto controlCount = row.QueueFiling().queueSourceControlArmCount;
+        const auto nativeCount = row.QueueFiling().queueTransitionGroupArmCount;
+        if (!future->queueArmGroupPrepared || nativeCount > row.QueueFiling().queueTransitionGroupArms.size() ||
             nativeCount > UINT16_MAX || controlCount > nativeCount ||
             nativeCount - controlCount != future->queueSuccessorVoiceStartCount ||
             controlCount != future->queueSourceControlArmCount || controlCount != future->queueSourceCommandCount ||
             controlCount > future->queueSourceCommands.size() || controlCount > row.queueSourceSchedules.size() ||
             controlCount > row.queueSourceRuntimePrograms.size() ||
-            future->queueArmGroup.slot != future->row->queueArmGroup.slot ||
-            future->queueArmGroup.generation != future->row->queueArmGroup.generation) return false;
+            future->queueArmGroup.slot != future->row->QueueFiling().queueArmGroup.slot ||
+            future->queueArmGroup.generation != future->row->QueueFiling().queueArmGroup.generation) return false;
         const auto nativeParent = future->row->queueFirstContinuationLane
             ? future->queueFutureCurrentDecision : future->row->initialQueueEntryDecision;
         if (!armGroups.MatchesPreparedMembers(future->queueArmGroup, nativeParent,
-                row.queueTransitionGroupArms.data(), static_cast<std::uint16_t>(nativeCount))) return false;
+                row.QueueFiling().queueTransitionGroupArms.data(), static_cast<std::uint16_t>(nativeCount))) return false;
         const auto* bank = future->queueFutureProgramBank;
-        if (controlCount != 0 && (bank == nullptr || bank != row.queueSuccessorProgramBank ||
+        if (controlCount != 0 && (bank == nullptr || bank != row.QueueFiling().queueSuccessorProgramBank ||
                 !bank->occupied || bank->published || bank->programCount != nativeCount ||
                 bank->programCount > bank->schedules.size() || bank->eventCount > bank->events.size()))
             return false;
         for (std::uint32_t index = 0; index < controlCount; ++index) {
-            const auto arm = row.queueTransitionGroupArms[index];
+            const auto arm = row.QueueFiling().queueTransitionGroupArms[index];
             const auto& command = future->queueSourceCommands[index];
             const auto& schedule = row.queueSourceSchedules[index];
             const auto programIndex = future->queueSuccessorVoiceStartCount + index;
@@ -54720,7 +54741,7 @@ bool Engine::BindPendingVariableGroupQueueFutureSources(EngineActionPlayScratch&
                 cursor = ancestor->Parent();
             }
             if (!resourceReached || !queueReached) return false;
-            if (!SameOriginalSingleArm(row.queueTransitionGroupArms[controlCount + index], start.arm) ||
+            if (!SameOriginalSingleArm(row.QueueFiling().queueTransitionGroupArms[controlCount + index], start.arm) ||
                 !SameCanonicalDecision(nativeParent, start.armPreparation.parentGroup.decision) ||
                 start.armPreparation.memberIndex != controlCount + index) return false;
             if (start.initialVariableReadUse.Valid() && !variables.MatchesPreparedTimelineReadUse(
@@ -54960,7 +54981,7 @@ bool Engine::CapturePendingVariableGroupFutureNodes(EngineActionPlayScratch& scr
                     node.kind == PlayableKind::Container;
             });
         if (queueNode == group.topology_.nodes.begin() + group.topology_.nodeCount) return false;
-        if (future->row->queueSameProgramKey) {
+        if (future->row->QueueFiling().queueSameProgramKey) {
             if (future->variableControlNestedQueueSuccessor.Handle() != 0 ||
                 future->queueSuccessorVoiceStartCount != 0) return false;
             continue;
@@ -55032,7 +55053,7 @@ bool Engine::CapturePendingVariableGroupFutureNodes(EngineActionPlayScratch& scr
     for (std::uint32_t index = 0; index < scratch.queueFutureAttemptCount; ++index) {
         const auto token = scratch.storage.queueFutureAttempts[index];
         const auto& future = *FindFrontierAttempt(*this, token);
-        if (future.row->queueSameProgramKey) continue;
+        if (future.row->QueueFiling().queueSameProgramKey) continue;
         const auto& tree = future.playableTreeExecutor;
         for (std::size_t node = 0; node < tree.PreparedInstanceCensusCount(); ++node) {
             const auto& original = *tree.PreparedInstanceCensusToken(node);
@@ -55428,7 +55449,7 @@ bool Engine::CapturePendingVariableReplacementFutureTopology(EngineActionPlayScr
         topology.futurePartition = future->continuationPartition;
         topology.futureQueue = future->row->queueInstance;
         topology.futureRoot = future->variableControlNestedQueueSuccessor.Handle();
-        if (future->row->queueSameProgramKey) {
+        if (future->row->QueueFiling().queueSameProgramKey) {
             if (topology.futureRoot != 0 || future->queueSuccessorVoiceStartCount != 0) return false;
             topology.sealed = true;
             continue;
@@ -55524,7 +55545,7 @@ bool Engine::MatchesPendingVariableReplacementFutureTopology(const EngineActionP
             saved.futurePartition.slot != future->row->partition.slot || saved.futurePartition.generation != future->row->partition.generation ||
             saved.futureQueue.slot != future->row->queueInstance.slot || saved.futureQueue.generation != future->row->queueInstance.generation ||
             saved.futureRoot != future->variableControlNestedQueueSuccessor.Handle()) return false;
-        if (future->row->queueSameProgramKey) {
+        if (future->row->QueueFiling().queueSameProgramKey) {
             if (saved.nodeCount != 0 || saved.futureRoot != 0 || future->queueSuccessorVoiceStartCount != 0) return false;
             continue;
         }
@@ -56917,11 +56938,11 @@ bool Engine::PreparePendingVariableReplacementQueueLaneGroups(EngineActionPlaySc
             holder->pendingImmediateCohortRoot != attempt.root || holder->queueTimingFinalized) return false;
         if (!holder->queueTimingPending || IsInitialQueueTimingOnlyCurrent(*holder)) continue;
         const bool continuation = holder->queueFirstContinuationLane;
-        const bool natural = holder->queueSourceControlArmCount == 1u;
+        const bool natural = holder->QueueFiling().queueSourceControlArmCount == 1u;
         const auto groupCount = continuation && natural ? 3u : 2u;
         if (holder->queueUnplacedGroupCount != groupCount ||
-            (natural ? !holder->queueTransition.Valid() || holder->queueTransitionGroupArmCount != 2u :
-                holder->queueSourceControlArmCount != 0u || !continuation) ||
+            (natural ? !holder->QueueFiling().queueTransition.Valid() || holder->QueueFiling().queueTransitionGroupArmCount != 2u :
+                holder->QueueFiling().queueSourceControlArmCount != 0u || !continuation) ||
             holder->queueInitialCohortEntryFrame != child.pendingVariableReplacementAnchorFrame ||
             holder->queueUnplacedGroupFrames[0] < child.pendingVariableReplacementAnchorFrame ||
             holder->queueUnplacedGroupFrames[1] <= holder->queueUnplacedGroupFrames[0]) return false;
@@ -56986,13 +57007,13 @@ bool Engine::PreparePendingVariableReplacementQueueLaneGroups(EngineActionPlaySc
             input = {};
             input.executeFrame = holder->queueUnplacedGroupFrames[slice];
             input.decision = initial ? holder->initialQueueEntryDecision
-                : continuation ? holder->queueDecision : holder->initialQueueEntryDecision;
+                : continuation ? holder->QueueFiling().queueDecision : holder->initialQueueEntryDecision;
             input.sliceIndex = static_cast<std::uint16_t>(initial ? 0u : continuation ? slice - 1u : slice);
-            input.members = initial ? holder->queueInitialCurrentDelayedArms.data() : holder->queueTransitionGroupArms.data();
-            const auto members = initial ? holder->queueInitialCurrentDelayedCount : holder->queueTransitionGroupArmCount;
-            if (members > UINT16_MAX || holder->queueSourceControlArmCount > UINT16_MAX) return false;
+            input.members = initial ? holder->queueInitialCurrentDelayedArms.data() : holder->QueueFiling().queueTransitionGroupArms.data();
+            const auto members = initial ? holder->queueInitialCurrentDelayedCount : holder->QueueFiling().queueTransitionGroupArmCount;
+            if (members > UINT16_MAX || holder->QueueFiling().queueSourceControlArmCount > UINT16_MAX) return false;
             input.memberCount = static_cast<std::uint16_t>(members);
-            input.sourceControlCount = initial ? 0u : static_cast<std::uint16_t>(holder->queueSourceControlArmCount);
+            input.sourceControlCount = initial ? 0u : static_cast<std::uint16_t>(holder->QueueFiling().queueSourceControlArmCount);
             input.immediateEntry = {&attempt.gate, attempt.generation};
             auto& native = child.pendingVariableReplacementGroups[offset + slice + 1u];
             if (!ReserveOriginalQueueLaneGroup(attempt.root, child.pendingVariableReplacementAnchorFrame,
@@ -57363,7 +57384,7 @@ bool Engine::PreparePendingVariableGroupLaneEvents(EngineActionPlayScratch& prod
         key.frontier.world = next.worldGeneration;
         key.frontier.entryEventOrdinal = 0;
         key.frontier.operationEventCount = next.expectedEntryEventCount;
-        auto* bank = holder->queueSuccessorProgramBank;
+        auto* bank = holder->QueueFiling().queueSuccessorProgramBank;
         if (bank == nullptr || !bank->occupied || bank->published || bank->programCount > bank->schedules.size()) return refuse();
         std::uint32_t starts = 0, targetEvents = 0, sourceEvents = 0;
         for (std::uint32_t programIndex = 0; programIndex < bank->programCount; ++programIndex) {
@@ -57377,11 +57398,11 @@ bool Engine::PreparePendingVariableGroupLaneEvents(EngineActionPlayScratch& prod
             const auto* payload = &program->payloads[frozen.payload];
             const bool startEvent = eventIndex == 0 && payload->kind == TimelineEventKind::Start;
             const bool fadeEvent = eventIndex == 1 && payload->kind == TimelineEventKind::Envelope &&
-                payload->envelopeDirection == TimelineEnvelopeDirection::FadeIn && holder->queueTransition.Valid();
+                payload->envelopeDirection == TimelineEnvelopeDirection::FadeIn && holder->QueueFiling().queueTransition.Valid();
             const bool sourceEvent = owned.natural &&
-                schedule.runtimeProgram.programGeneration == holder->queueSourceSchedule.runtimeProgram.programGeneration &&
-                schedule.runtimeProgram.program == holder->queueSourceSchedule.runtimeProgram.program &&
-                SameOriginalSingleArm(schedule.armToken, holder->queueTransitionGroupArms[0]) && schedule.eventCount == 1 &&
+                schedule.runtimeProgram.programGeneration == holder->QueueFiling().queueSourceSchedule.runtimeProgram.programGeneration &&
+                schedule.runtimeProgram.program == holder->QueueFiling().queueSourceSchedule.runtimeProgram.program &&
+                SameOriginalSingleArm(schedule.armToken, holder->QueueFiling().queueTransitionGroupArms[0]) && schedule.eventCount == 1 &&
                 eventIndex == 0 && payload->kind == TimelineEventKind::Envelope &&
                 payload->envelopeDirection == TimelineEnvelopeDirection::FadeOut &&
                 payload->reserved == kTimelineEventTransientControlArm;
@@ -57391,7 +57412,7 @@ bool Engine::PreparePendingVariableGroupLaneEvents(EngineActionPlayScratch& prod
                 if (&bank->payloads[payloadIndex] == payload) originalPayload = &bank->payloads[payloadIndex];
             if (originalPayload == nullptr || (!sourceEvent && originalPayload->reserved != 0 &&
                     originalPayload->reserved != kTimelineEventTransientStartArm)) return refuse();
-            if (!sourceEvent && holder->queueTransition.Valid() && owned.continuation) {
+            if (!sourceEvent && holder->QueueFiling().queueTransition.Valid() && owned.continuation) {
                 if (originalPayload->reserved != 0) return refuse();
             } else if (startEvent) originalPayload->reserved = kTimelineEventTransientStartArm;
             const auto offset = static_cast<std::uint64_t>(frozen.frameOffsetFromEntry);
@@ -57426,7 +57447,7 @@ bool Engine::PreparePendingVariableGroupLaneEvents(EngineActionPlayScratch& prod
             start.frontier.transport = timelinePool.Epoch();
             start.frontier.world = next.worldGeneration;
             start.frontier.entryEventOrdinal = sourceEvent ? 1u : owned.natural ? targetEvents :
-                holder->queueTransition.Valid() ? 1u + targetEvents : targetEvents;
+                holder->QueueFiling().queueTransition.Valid() ? 1u + targetEvents : targetEvents;
             start.frontier.operationEventCount = sourceEvent ? 2u :
                 owned.natural ? schedule.eventCount : 1u;
             sourceEvents += sourceEvent;
@@ -57435,8 +57456,8 @@ bool Engine::PreparePendingVariableGroupLaneEvents(EngineActionPlayScratch& prod
             }
         }
         if (sourceEvents != (owned.natural ? 1u : 0u) ||
-            starts + sourceEvents != holder->queueTransitionGroupArmCount || starts != 1) return refuse();
-        if (holder->queueTransition.Valid() && !owned.natural) {
+            starts + sourceEvents != holder->QueueFiling().queueTransitionGroupArmCount || starts != 1) return refuse();
+        if (holder->QueueFiling().queueTransition.Valid() && !owned.natural) {
             next.expectedEntryEventCount = 1u + targetEvents;
             for (std::uint32_t ordinal = firstEvent; ordinal < firstEvent + written; ++ordinal)
                 if (events[ordinal].event.frontier.entry == next.entry)
@@ -57541,8 +57562,8 @@ bool Engine::DeclarePendingVariableGroupLane(EngineActionPlayScratch& child,
             member.group = record.conditionalMember;
             member.arm = event.event.armToken;
             member.memberIndex = static_cast<std::uint16_t>(members++);
-            member.future = !holder->queueTransition.Valid();
-            if (holder->queueTransition.Valid()) {
+            member.future = !holder->QueueFiling().queueTransition.Valid();
+            if (holder->QueueFiling().queueTransition.Valid()) {
                 member.kind = ImmediateLaneMemberKind::CurrentEventSpan;
                 if (program->payloadCount == 0 || program->payloadCount > 2) return false;
                 member.eventSpanCount = static_cast<std::uint16_t>(program->payloadCount);
@@ -57554,7 +57575,7 @@ bool Engine::DeclarePendingVariableGroupLane(EngineActionPlayScratch& child,
             member.ownerEpoch = event.event.ownerInstanceScheduleEpoch;
             if (!immediateActionLane.DeclareMember(attempt.lane, member)) return false;
         }
-        if (members != holder->queueTransitionGroupArmCount) return false;
+        if (members != holder->QueueFiling().queueTransitionGroupArmCount) return false;
     }
     return true;
 }
@@ -58307,7 +58328,7 @@ bool Engine::PreparePendingVariableGroupInstallationPublication(EngineActionPlay
             if (arm.slot >= pendingVariableLeafSources.size() || arm.slot >= initialFrontierArmPins.size()) return false;
             auto& source = pendingVariableLeafSources[arm.slot];
             if (!originalSourceSubmissions.PrepareQueueBoundGroupPublication(source.source, source.body,
-                    preparedVoiceCommandBatchProof, armGroups, service->queueArmGroup, event.event.executeFrame,
+                    preparedVoiceCommandBatchProof, armGroups, service->QueueFiling().queueArmGroup, event.event.executeFrame,
                     *native.frontier, *native.lease, timelinePool, decisions, queueBinding, initialFrontierArmPins[arm.slot].pin,
                     originalQueueGroupHolders[native.identity.committedRow],
                     originalQueueGroupHolders[child->frontierDescriptor.primary.committedRow],
@@ -58453,7 +58474,7 @@ bool Engine::TransferPendingVariableGroupReplacementPublication(EngineActionPlay
         service->schedule.entryAnchorFrame = anchor;
         service->phase = EnginePlayableStartPhase::Filed;
         service->controlLifecycle = PlayableControlLifecycle::Preparing;
-        if (service->queueSuccessorProgramBank != nullptr) service->queueSuccessorProgramBank->published = true;
+        if (service->QueueFiling().queueSuccessorProgramBank != nullptr) service->QueueFiling().queueSuccessorProgramBank->published = true;
     }
     row.variableControlChildInstances.Clear();
     row.variableControlChildKinds.Clear();
@@ -59132,7 +59153,7 @@ bool Engine::MatchesPrivatePendingVariableQueueEntries(const EngineActionPlayScr
                     SameCanonicalDecision(arms.parent, decision) && arms.memberCount == native.memberCount &&
                     arms.ackedCount == 0 && arms.tombstonedCount == 0 && arms.maxTombstoneSequence == 0;
             };
-            if (!committed(record.memberDecision, prelude, holder->queueArmGroup, 2u,
+            if (!committed(record.memberDecision, prelude, holder->QueueFiling().queueArmGroup, 2u,
                     DecisionParticipantKind::QueueInstance, record.queue.slot, record.queue.generation) ||
                 !committed(record.coordinator, natives[0], record.coordinatorArmGroup, 1u,
                     DecisionParticipantKind::Subdecision, record.memberDecision.slot, record.memberDecision.generation) ||
@@ -59226,7 +59247,7 @@ bool Engine::MatchesPrivatePendingVariableQueueEntries(const EngineActionPlayScr
             record.coordinatorReservation.Valid() || record.coordinatorArmGroupPrepared || !record.prerequisiteMemberPin.Valid() ||
             !record.descriptor.Valid() || record.descriptor.initialVariables.Valid() ||
             record.descriptor.expectedMemberCount != 1 ||
-            (holder->queueTransition.Valid() ? record.descriptor.expectedEntryEventCount < 2 :
+            (holder->QueueFiling().queueTransition.Valid() ? record.descriptor.expectedEntryEventCount < 2 :
                 record.descriptor.expectedEntryEventCount != 1) ||
             record.descriptor.primary != record.primaryGroup || record.descriptor.entry.coordinator.slot != record.coordinator.slot ||
             record.descriptor.entry.coordinator.generation != record.coordinator.generation ||
@@ -59274,7 +59295,7 @@ bool Engine::MatchesPrivatePendingVariableQueueEntries(const EngineActionPlayScr
         DecisionParticipantRef participant{};
         if (!validateDecision(record.initialDecision, record.prerequisiteMember, holder->queueInitialLaneArmGroup,
                 DecisionParticipantKind::QueueInstance, record.queue.slot, record.queue.generation, 0) ||
-            !validateDecision(record.memberDecision, record.conditionalMember, holder->queueArmGroup,
+            !validateDecision(record.memberDecision, record.conditionalMember, holder->QueueFiling().queueArmGroup,
                 DecisionParticipantKind::QueueInstance, record.queue.slot, record.queue.generation, natives[2].memberCount) ||
             !validateDecision(record.coordinator, record.primaryGroup, record.coordinatorArmGroup,
                 DecisionParticipantKind::Subdecision, record.memberDecision.slot, record.memberDecision.generation, 0) ||
@@ -59307,7 +59328,7 @@ bool Engine::MatchesPrivatePendingVariableQueueEntries(const EngineActionPlayScr
                 const auto& payload = program->payloads[key.payload];
                 ++targetEvents;
                 if (payload.kind == TimelineEventKind::Envelope) {
-                    if (!holder->queueTransition.Valid() || payload.envelopeDirection != TimelineEnvelopeDirection::FadeIn ||
+                    if (!holder->QueueFiling().queueTransition.Valid() || payload.envelopeDirection != TimelineEnvelopeDirection::FadeIn ||
                         key.executeFrame != conditional.operation.order.executeFrame || payload.reserved != 0) return false;
                     continue;
                 }
@@ -59327,7 +59348,7 @@ bool Engine::MatchesPrivatePendingVariableQueueEntries(const EngineActionPlayScr
             }
         }
         if (initialEvents != 1 || nextEvents != 1 || starts != natives[2].memberCount) return false;
-        if (holder->queueTransition.Valid() && record.descriptor.expectedEntryEventCount != nextEvents + targetEvents) return false;
+        if (holder->QueueFiling().queueTransition.Valid() && record.descriptor.expectedEntryEventCount != nextEvents + targetEvents) return false;
         *eventCount += initialEvents + nextEvents + targetEvents;
         *memberCount += starts;
     }
@@ -59355,7 +59376,7 @@ bool Engine::CancelPrivatePendingVariableQueueEntries(EngineActionPlayScratch& c
             const auto sourceIndex = owned.continuation ? 2u : 1u;
             std::array<Plan03PageGroupView, 2> pair{};
             const bool needsPair = owned.decisionCommitted[1] ||
-                std::any_of(holder->queueTransitionGroupArms.begin(), holder->queueTransitionGroupArms.begin() + 2u,
+                std::any_of(holder->QueueFiling().queueTransitionGroupArms.begin(), holder->QueueFiling().queueTransitionGroupArms.begin() + 2u,
                     [&](TimelineArmToken arm) { return arm.Valid() && arm.slot < initialFrontierArmPins.size() &&
                         initialFrontierArmPins[arm.slot].pin.Valid(); });
             if (needsPair) {
@@ -59373,10 +59394,10 @@ bool Engine::CancelPrivatePendingVariableQueueEntries(EngineActionPlayScratch& c
                             *pair[1].frontier, timelinePool, transitionInstances, &binding, pair[0].frontier, &compositeCompletionOwners) ||
                         !decisions.RollbackPrivatePendingQueueFrontierDecision(*pair[1].frontier, timelinePool, binding)) return false;
                     owned.decisionCommitted[1] = false;
-                    holder->queueDecisionCommitted = false;
+                    holder->QueueFiling().queueDecisionCommitted = false;
                 }
                 for (std::uint32_t member = 0; member < 2u; ++member) {
-                    const auto arm = holder->queueTransitionGroupArms[member];
+                    const auto arm = holder->QueueFiling().queueTransitionGroupArms[member];
                     if (!arm.Valid() || arm.slot >= initialFrontierArmPins.size()) return false;
                     auto& pin = initialFrontierArmPins[arm.slot];
                     if (!pin.pin.Valid()) continue;
@@ -59464,7 +59485,7 @@ bool Engine::CancelPrivatePendingVariableQueueEntries(EngineActionPlayScratch& c
             if (!queueBinding.Valid() || !decisions.RollbackPrivatePendingQueueFrontierDecision(*conditional.frontier, timelinePool, queueBinding))
                 return false;
             owned.decisionCommitted[1] = false;
-            holder->queueDecisionCommitted = false;
+            holder->QueueFiling().queueDecisionCommitted = false;
         }
         if (owned.decisionCommitted[0]) {
             Plan03PageGroupView initial{};
@@ -59537,9 +59558,9 @@ bool Engine::BindPrivatePendingVariableQueueEntries(EngineActionPlayScratch& chi
             record.ownerEpoch != holder->ownerEpoch || !record.occupied || record.generation != owned.recordGeneration ||
             record.root != attempt.root || record.attemptGeneration != attempt.generation ||
             holder->queueFirstContinuationLane != owned.continuation ||
-            holder->queueSourceControlArmCount != (owned.natural ? 1u : 0u) ||
+            holder->QueueFiling().queueSourceControlArmCount != (owned.natural ? 1u : 0u) ||
             !SameCanonicalDecision(record.initialDecision, holder->initialQueueEntryDecision) ||
-            !SameCanonicalDecision(record.memberDecision, holder->queueDecision) ||
+            !SameCanonicalDecision(record.memberDecision, holder->QueueFiling().queueDecision) ||
             (owned.continuation && !record.prerequisiteMemberPin.Valid()) || !queueInstances.Capture(record.queue, &queue) ||
             !CapturePendingVariableReplacementQueueOwner(child, *holder, &owner)) return false;
         const auto findControl = [&](const Plan03GroupSliceIdentity& identity, ImmediateLaneEvent* out) noexcept {
@@ -59607,8 +59628,8 @@ bool Engine::BindPrivatePendingVariableQueueEntries(EngineActionPlayScratch& chi
             if (future != nullptr || entry->row != holder) return false;
             future = entry;
         }
-        if (future == nullptr || future->queueSuccessorVoiceStartCount + holder->queueSourceControlArmCount !=
-            holder->queueTransitionGroupArmCount) return false;
+        if (future == nullptr || future->queueSuccessorVoiceStartCount + holder->QueueFiling().queueSourceControlArmCount !=
+            holder->QueueFiling().queueTransitionGroupArmCount) return false;
         if (future->queueInitialLaneArmGroupPrepared) {
             if (!armGroups.CommitPrepared(future->queueInitialLaneArmGroup)) return false;
             future->queueInitialLaneArmGroupPrepared = false;
@@ -59675,7 +59696,7 @@ bool Engine::BindPrivatePendingVariableQueueEntries(EngineActionPlayScratch& chi
         if (owned.natural) {
             if (record.continuation != nullptr) record.continuation->version = {queue.pendingVersion};
             TransitionInstanceSnapshot transition{};
-            if (!transitionInstances.Capture(holder->queueTransition, &transition) ||
+            if (!transitionInstances.Capture(holder->QueueFiling().queueTransition, &transition) ||
                 transition.state != TransitionAudibleGateState::Replaceable || transition.retiredAtAudioSequence != 0 ||
                 transition.audibleFrame != record.descriptor.order.executeFrame) return false;
             std::array<Plan03PageGroupView, 2> pair{};
@@ -59695,9 +59716,9 @@ bool Engine::BindPrivatePendingVariableQueueEntries(EngineActionPlayScratch& chi
                 binding.operation.group = identities[slice];
                 binding.operation.transport = timelinePool.Epoch();
                 binding.operation.world = outer.worldGeneration;
-                binding.transition = {holder->queueTransition.slot, holder->queueTransition.generation, transition.audibleFrame};
+                binding.transition = {holder->QueueFiling().queueTransition.slot, holder->QueueFiling().queueTransition.generation, transition.audibleFrame};
                 const FrontierQueueConditionalIdentity conditional{record.queue.slot, record.queue.generation,
-                    queue.logicMirror.version, queue.pendingVersion, holder->queueCurrentOccurrence, holder->queueSuccessorOccurrence};
+                    queue.logicMirror.version, queue.pendingVersion, holder->queueCurrentOccurrence, holder->QueueFiling().queueSuccessorOccurrence};
                 if (owned.continuation) binding.queueConditional = conditional;
                 else {
                     binding.queueInitial = {record.queue.slot, record.queue.generation, queue.logicMirror.version,
@@ -59721,8 +59742,8 @@ bool Engine::BindPrivatePendingVariableQueueEntries(EngineActionPlayScratch& chi
                 owned.decisionBound[1] = true;
                 if (slice == 0u) {
                     if (record.sourceTransitionBinding.Valid() ||
-                        !transitionInstances.BindFrontier(holder->queueTransition, *pair[slice].frontier, timelinePool)) return false;
-                    record.sourceTransitionBinding = holder->queueTransition;
+                        !transitionInstances.BindFrontier(holder->QueueFiling().queueTransition, *pair[slice].frontier, timelinePool)) return false;
+                    record.sourceTransitionBinding = holder->QueueFiling().queueTransition;
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
                     if (detail::RefusePendingVariablePrepareForTest(*this, child,
                             detail::PendingVariablePrepareStageForTest::QueuePreludeBound, index)) return false;
@@ -59734,14 +59755,14 @@ bool Engine::BindPrivatePendingVariableQueueEntries(EngineActionPlayScratch& chi
             payload.participants = &participant;
             payload.participantCount = 1u;
             payload.pages = {static_cast<std::uint32_t>(record.conditionalMember.committedRow), record.conditionalMember.rowClaimGeneration};
-            payload.armGroup = holder->queueArmGroup;
+            payload.armGroup = holder->QueueFiling().queueArmGroup;
             if (!decisions.Commit(record.memberDecision, payload)) return false;
             owned.decisionCommitted[1] = true;
-            holder->queueDecisionCommitted = true;
+            holder->QueueFiling().queueDecisionCommitted = true;
             const auto* original = ResolveOriginalQueueConditionalBaseline(this, queueInstances, record.queue);
             if (original == nullptr) return false;
             for (std::uint32_t member = 0; member < 2u; ++member) {
-                const auto arm = holder->queueTransitionGroupArms[member];
+                const auto arm = holder->QueueFiling().queueTransitionGroupArms[member];
                 const auto slice = member == 0u ? 0u : 1u;
                 const auto& native = pair[slice];
                 PrivatePendingQueueFrontierBinding queueBinding;
@@ -59802,13 +59823,13 @@ bool Engine::BindPrivatePendingVariableQueueEntries(EngineActionPlayScratch& chi
         conditional.operation.transport = timelinePool.Epoch();
         conditional.operation.world = record.descriptor.worldGeneration;
         conditional.queueConditional = {record.queue.slot, record.queue.generation, queue.logicMirror.version,
-            queue.pendingVersion, holder->queueCurrentOccurrence, holder->queueSuccessorOccurrence};
-        if (holder->queueTransition.Valid()) {
+            queue.pendingVersion, holder->queueCurrentOccurrence, holder->QueueFiling().queueSuccessorOccurrence};
+        if (holder->QueueFiling().queueTransition.Valid()) {
             TransitionInstanceSnapshot transition{};
-            if (!transitionInstances.Capture(holder->queueTransition, &transition) ||
+            if (!transitionInstances.Capture(holder->QueueFiling().queueTransition, &transition) ||
                 transition.state != TransitionAudibleGateState::Replaceable || transition.retiredAtAudioSequence != 0 ||
                 transition.audibleFrame != record.descriptor.order.executeFrame) return false;
-            conditional.transition = {holder->queueTransition.slot, holder->queueTransition.generation, transition.audibleFrame};
+            conditional.transition = {holder->QueueFiling().queueTransition.slot, holder->QueueFiling().queueTransition.generation, transition.audibleFrame};
         }
         record.continuation->version = {queue.pendingVersion};
         if (!timelinePool.BindPlan03GroupFrontier(record.conditionalMember, conditional)) return false;
@@ -59817,10 +59838,10 @@ bool Engine::BindPrivatePendingVariableQueueEntries(EngineActionPlayScratch& chi
         if (!timelinePool.ResolvePlan03GroupSliceProducer(record.conditionalMember, &native) || native.frontier == nullptr ||
             native.lease == nullptr || native.memberCount != future->queueSuccessorVoiceStartCount || native.sourceControlCount != 0 ||
             !queueInstances.BindFrontierConditional(record.queue, *native.frontier, timelinePool)) return false;
-        if (holder->queueTransition.Valid()) {
+        if (holder->QueueFiling().queueTransition.Valid()) {
             if (record.sourceTransitionBinding.Valid() ||
-                !transitionInstances.BindFrontier(holder->queueTransition, *native.frontier, timelinePool)) return false;
-            record.sourceTransitionBinding = holder->queueTransition;
+                !transitionInstances.BindFrontier(holder->QueueFiling().queueTransition, *native.frontier, timelinePool)) return false;
+            record.sourceTransitionBinding = holder->QueueFiling().queueTransition;
         }
         if (!decisions.BindFrontierDecision(record.memberDecision, *native.frontier, timelinePool)) return false;
         owned.decisionBound[1] = true;
@@ -59829,10 +59850,10 @@ bool Engine::BindPrivatePendingVariableQueueEntries(EngineActionPlayScratch& chi
         payload.participants = &participant;
         payload.participantCount = 1;
         payload.pages = {static_cast<std::uint32_t>(record.conditionalMember.committedRow), record.conditionalMember.rowClaimGeneration};
-        payload.armGroup = holder->queueArmGroup;
+        payload.armGroup = holder->QueueFiling().queueArmGroup;
         if (!decisions.Commit(record.memberDecision, payload)) return false;
         owned.decisionCommitted[1] = true;
-        holder->queueDecisionCommitted = true;
+        holder->QueueFiling().queueDecisionCommitted = true;
         const auto* original = ResolveOriginalQueueConditionalBaseline(this, queueInstances, record.queue);
         PrivatePendingQueueFrontierBinding queueBinding;
         if (original == nullptr || !queueInstances.CapturePrivatePendingFrontierBinding(*original,
@@ -60852,7 +60873,7 @@ bool Engine::CanBeginPendingVariableQueueReprepare(EngineActionPlayScratch& scra
         if (queue == nullptr || record.generation != primary.recordGeneration || record.next != primary.recordNext ||
             record.service != primary.service.token || record.ownerInstance != primary.service.owner ||
             record.ownerEpoch != primary.service.epoch || !IsPlayableServiceDescendant(*this, *queue, *scratch.row) ||
-            !playablePartitions.Owns(queue->partition, queue->identity) || queue->queueSameProgramKey ||
+            !playablePartitions.Owns(queue->partition, queue->identity) || queue->QueueFiling().queueSameProgramKey ||
             queue->queueArrivalTransition.Valid() || queue->queueArrivalSourceControlArmCount != 0 ||
             queue->queueArrivalArm.Valid() || queue->queueArrivalArmGroup.Valid() || queue->queueArrivalDecision.Valid() ||
             queue->privateInitialQueueCurrent != nullptr || queue->queueFirstContinuationLane != continuation ||
@@ -60862,9 +60883,9 @@ bool Engine::CanBeginPendingVariableQueueReprepare(EngineActionPlayScratch& scra
                 !timelinePool.IsPlan03GroupReaderFor(record.prerequisiteMemberPin, record.prerequisiteMember))) ||
             queue->queueUnplacedGroupCount != (continuation ? (record.targetMember.Exact() ? 3u : 2u) : 2u) ||
             queue->queueInitialCurrentDelayedCount > queue->queueInitialCurrentDelayedArms.size() ||
-            queue->queueTransitionGroupArmCount > queue->queueTransitionGroupArms.size() ||
-            queue->queueSourceControlArmCount > queue->queueTransitionGroupArmCount ||
-            (queue->queueSourceControlArmCount != 0 && !queue->queueTransition.Valid())) return false;
+            queue->QueueFiling().queueTransitionGroupArmCount > queue->QueueFiling().queueTransitionGroupArms.size() ||
+            queue->QueueFiling().queueSourceControlArmCount > queue->QueueFiling().queueTransitionGroupArmCount ||
+            (queue->QueueFiling().queueSourceControlArmCount != 0 && !queue->QueueFiling().queueTransition.Valid())) return false;
         // Canonical parent bindings are acquired only by final entry preparation.
         if (!continuation && (record.future == nullptr || !record.targetMember.Exact() ||
             record.prerequisiteMember != Plan03GroupSliceIdentity{} || record.prerequisiteMemberPin.Valid() ||
@@ -60875,7 +60896,7 @@ bool Engine::CanBeginPendingVariableQueueReprepare(EngineActionPlayScratch& scra
         std::uint32_t futureSounds = 0;
         for (const auto& source : pendingVariableFutureSources)
             futureSounds += source.group == &group && ResolvePlayableService(source.service) == queue;
-        if (queue->queueTransitionGroupArmCount != futureSounds + queue->queueSourceControlArmCount) return false;
+        if (queue->QueueFiling().queueTransitionGroupArmCount != futureSounds + queue->QueueFiling().queueSourceControlArmCount) return false;
         std::array<std::uint32_t, 3> roles{};
         for (const auto& origin : pendingVariableQueueNativeOrigins) {
             if (origin.group != &group || origin.service.token != primary.service.token) continue;
@@ -60902,9 +60923,9 @@ bool Engine::CanBeginPendingVariableQueueReprepare(EngineActionPlayScratch& scra
                 (!isPrimary && !current && origin.identity != record.conditionalMember && origin.identity != record.targetMember)) return false;
             const auto frameIndex = isPrimary ? (continuation ? 1u : 0u)
                 : current ? 0u : origin.identity.sliceIndex + (continuation ? 1u : 0u);
-            const auto members = isPrimary ? 0u : current ? queue->queueInitialCurrentDelayedCount : queue->queueTransitionGroupArmCount;
-            const auto controls = isPrimary || current ? 0u : queue->queueSourceControlArmCount;
-            const auto* arms = current ? queue->queueInitialCurrentDelayedArms.data() : queue->queueTransitionGroupArms.data();
+            const auto members = isPrimary ? 0u : current ? queue->queueInitialCurrentDelayedCount : queue->QueueFiling().queueTransitionGroupArmCount;
+            const auto controls = isPrimary || current ? 0u : queue->QueueFiling().queueSourceControlArmCount;
+            const auto* arms = current ? queue->queueInitialCurrentDelayedArms.data() : queue->QueueFiling().queueTransitionGroupArms.data();
             if (frameIndex >= queue->queueUnplacedGroupCount ||
                 origin.scope.input.executeFrame != queue->queueUnplacedGroupFrames[frameIndex] ||
                 origin.scope.input.memberCount != members || origin.scope.input.sourceControlCount != controls ||
@@ -60916,8 +60937,8 @@ bool Engine::CanBeginPendingVariableQueueReprepare(EngineActionPlayScratch& scra
                     TimelineArmObservation control{};
                     ArmGroupMemberSnapshot actual{};
                     if (!timelineArms.Observe(arms[member], &control) || control.startedBlockSequence != 0 ||
-                        !SameCanonicalDecision(control.parentGroup.decision, queue->queueDecision) || control.memberIndex != member ||
-                        !armGroups.CaptureMember(queue->queueArmGroup, member, &actual) ||
+                        !SameCanonicalDecision(control.parentGroup.decision, queue->QueueFiling().queueDecision) || control.memberIndex != member ||
+                        !armGroups.CaptureMember(queue->QueueFiling().queueArmGroup, member, &actual) ||
                         !SameOriginalSingleArm(actual.token, arms[member]) ||
                         (control.state != ArmState::Armed && control.state != ArmState::CancelRequested &&
                          control.state != ArmState::Tombstoned)) return false;
@@ -61051,14 +61072,14 @@ bool Engine::BeginPendingVariableQueueReprepare(EngineActionPlayScratch& scratch
         if (ResolvePlayableService(source.service) != queue) continue;
         if (!timelineArms.Observe(source.arm, &arm) || arm.state != ArmState::Tombstoned ||
             arm.tombstoneAudioSequence == 0 || arm.startedBlockSequence != 0 ||
-            !SameCanonicalDecision(arm.parentGroup.decision, queue->queueDecision) ||
+            !SameCanonicalDecision(arm.parentGroup.decision, queue->QueueFiling().queueDecision) ||
             arm.memberIndex != source.memberIndex ||
-            !armGroups.Capture(queue->queueArmGroup, &arms) ||
-            !SameCanonicalDecision(arms.parent, queue->queueDecision) ||
-            (arms.state != ArmGroupState::Retiring && !armGroups.BeginRetire(queue->queueArmGroup)) ||
-            !armGroups.CaptureMember(queue->queueArmGroup, source.memberIndex, &member) ||
+            !armGroups.Capture(queue->QueueFiling().queueArmGroup, &arms) ||
+            !SameCanonicalDecision(arms.parent, queue->QueueFiling().queueDecision) ||
+            (arms.state != ArmGroupState::Retiring && !armGroups.BeginRetire(queue->QueueFiling().queueArmGroup)) ||
+            !armGroups.CaptureMember(queue->QueueFiling().queueArmGroup, source.memberIndex, &member) ||
             !SameOriginalSingleArm(member.token, source.arm) ||
-            (!member.tombstoned && !armGroups.Tombstone(queue->queueArmGroup, source.arm, arm.tombstoneAudioSequence)))
+            (!member.tombstoned && !armGroups.Tombstone(queue->QueueFiling().queueArmGroup, source.arm, arm.tombstoneAudioSequence)))
             return false;
     }
     if (issued.queueCount >= issued.queues.size()) return false;
@@ -61173,23 +61194,23 @@ bool Engine::ServicePendingVariableQueueReprepare(EngineActionPlayScratch& scrat
         if (origin.group == &group && !origin.disposed) return false;
     if (!captured.recordReturned) return false;
     if (!captured.controlReturned) {
-        for (std::uint32_t member = 0; member < queue->queueSourceControlArmCount; ++member) {
-            const auto arm = queue->queueTransitionGroupArms[member];
+        for (std::uint32_t member = 0; member < queue->QueueFiling().queueSourceControlArmCount; ++member) {
+            const auto arm = queue->QueueFiling().queueTransitionGroupArms[member];
             TimelineArmObservation observation{};
             ArmGroupMemberSnapshot native{};
             ArmGroupSnapshot arms{};
-            if (!armGroups.Capture(queue->queueArmGroup, &arms) || !SameCanonicalDecision(arms.parent, queue->queueDecision) ||
-                !armGroups.CaptureMember(queue->queueArmGroup, member, &native) || !SameOriginalSingleArm(native.token, arm)) return false;
+            if (!armGroups.Capture(queue->QueueFiling().queueArmGroup, &arms) || !SameCanonicalDecision(arms.parent, queue->QueueFiling().queueDecision) ||
+                !armGroups.CaptureMember(queue->QueueFiling().queueArmGroup, member, &native) || !SameOriginalSingleArm(native.token, arm)) return false;
             if (timelineArms.Observe(arm, &observation)) {
                 if (observation.startedBlockSequence != 0 ||
-                    !SameCanonicalDecision(observation.parentGroup.decision, queue->queueDecision) || observation.memberIndex != member ||
+                    !SameCanonicalDecision(observation.parentGroup.decision, queue->QueueFiling().queueDecision) || observation.memberIndex != member ||
                     (observation.state != ArmState::Armed && observation.state != ArmState::CancelRequested &&
                      observation.state != ArmState::Tombstoned) || !DropTimelineArm(*this, arm, completed)) return false;
                 if (timelineArms.Observe(arm, &observation) &&
                     (observation.state != ArmState::Tombstoned || observation.tombstoneAudioSequence == 0)) return false;
             } else if (!native.tombstoned) return false;
-            if (!armGroups.CaptureMember(queue->queueArmGroup, member, &native) || !native.tombstoned ||
-                !SameOriginalSingleArm(native.token, arm) || !armGroups.Capture(queue->queueArmGroup, &arms) ||
+            if (!armGroups.CaptureMember(queue->QueueFiling().queueArmGroup, member, &native) || !native.tombstoned ||
+                !SameOriginalSingleArm(native.token, arm) || !armGroups.Capture(queue->QueueFiling().queueArmGroup, &arms) ||
                 arms.state != ArmGroupState::Retiring || arms.maxTombstoneSequence == 0) return false;
         }
         captured.controlReturned = true;
@@ -61202,7 +61223,7 @@ bool Engine::ServicePendingVariableQueueReprepare(EngineActionPlayScratch& scrat
             return true;
         };
         if (!clearCompletion(queue->renderHandle, queue->queueCurrentCompletion) ||
-            !clearCompletion(queue->queueSuccessorRenderHandle, queue->queueSuccessorCompletion)) return false;
+            !clearCompletion(queue->queueSuccessorRenderHandle, queue->QueueFiling().queueSuccessorCompletion)) return false;
         for (const auto& source : pendingVariableFutureSources) {
             if (source.group != &group) continue;
             if (ResolvePlayableService(source.service) != queue) continue;
@@ -61212,12 +61233,12 @@ bool Engine::ServicePendingVariableQueueReprepare(EngineActionPlayScratch& scrat
                 !voices.ReleaseObserved(source.release)) return false;
         }
         if (!ClearQueueSuccessorInstallationAfterNativeEnd(*this, *queue, completed)) return false;
-        if (queue->queueConditional.Valid()) {
+        if (queue->QueueFiling().queueConditional.Valid()) {
             QueueInstanceSnapshot instance{};
             if (!queueInstances.Capture(queue->queueInstance, &instance) ||
                 (instance.pendingVersion != 0 && !queueInstances.RetireConditionalForAbort(
-                    queue->queueInstance, queue->queueConditional, queue->queueDecision))) return false;
-            queue->queueConditional = {};
+                    queue->queueInstance, queue->QueueFiling().queueConditional, queue->QueueFiling().queueDecision))) return false;
+            queue->QueueFiling().queueConditional = {};
         }
         captured.physicalReturned = true;
     }
@@ -61232,7 +61253,7 @@ bool Engine::ServicePendingVariableQueueReprepare(EngineActionPlayScratch& scrat
         captured.factoriesReturned = true;
     }
     if (!TryReleaseOccurrenceAfterFence(*this, queue->queueCurrentOccurrence, completed) ||
-        !TryReleaseOccurrenceAfterFence(*this, queue->queueSuccessorOccurrence, completed) ||
+        !TryReleaseOccurrenceAfterFence(*this, queue->QueueFiling().queueSuccessorOccurrence, completed) ||
         !TryReleaseOccurrenceAfterFence(*this, queue->queueRetiringOccurrence, completed) ||
         !TryReleaseOccurrenceAfterFence(*this, queue->queueAbortedSuccessorOccurrence, completed)) return false;
     }
@@ -71226,11 +71247,11 @@ engine.runtimeRecreateRequired = true;
                 result.status = PlayableStartStatus::Capacity;
                 return result;
             }
-            row.queueDecision = directQueueDecisionPrepared.Token();
+            row.QueueFiling().queueDecision = directQueueDecisionPrepared.Token();
             row.queueTicket = ticket;
             directQueueDecisionOwnerContext = {
                 &engine.decisions, &directQueueDecisionPrepared,
-                &row.queueDecision, &row.queueTicket};
+                &row.QueueFiling().queueDecision, &row.queueTicket};
             if (!RegisterFrontierPreparedOwner(directScratch,
                     &directQueueDecisionOwnerContext,
                     ValidatePreparedDecisionOwner,
@@ -71867,7 +71888,7 @@ engine.runtimeRecreateRequired = true;
     }
     if (knownFiniteQueueFirstChild) {
         const CompletionOwnerRef owner = CompletionOwnerRef::Single(
-            row.queueDecision,
+            row.QueueFiling().queueDecision,
             installed.completionPredicate.playbackFactsRevision);
         KnownCompletionPredicateV1 bound{};
         const VoiceLedger::RenderOwner renderOwner =
@@ -72409,16 +72430,16 @@ static PlayableControlStatus BeginPlayableCancellation(
                           binding,
                           {row->queueCurrentOccurrence,
                            row->queueCurrentCompletion.owner})) ||
-                     (IsBoundKnownCompletionPredicate(
-                          row->queueSuccessorCompletion) &&
+                     (row->HasFeatureArrays() && IsBoundKnownCompletionPredicate(
+                          row->QueueFiling().queueSuccessorCompletion) &&
                       SameCompletionMutationBinding(
                           binding,
-                          {row->queueSuccessorOccurrence,
-                            row->queueSuccessorCompletion.owner})) ||
+                          {row->QueueFiling().queueSuccessorOccurrence,
+                            row->QueueFiling().queueSuccessorCompletion.owner})) ||
                      bindingOwnedByComposite(
                          binding, row->queueCurrentCompositeOwner) ||
-                     bindingOwnedByComposite(
-                         binding, row->queueSuccessorCompositeOwner));
+                     (row->HasFeatureArrays() && bindingOwnedByComposite(
+                         binding, row->QueueFiling().queueSuccessorCompositeOwner)));
                 guardedChild =
                     guardedChild ||
                     (!ownedByQueue && !ownedByRetainedNativeFuture &&
@@ -72862,83 +72883,84 @@ engine.runtimeRecreateRequired = true;
                 row->queueCurrentCompletion)) {
             row->queueCurrentCompletion = {};
         }
-        if (ClearQueueCompletionOwner(engine, row->queueSuccessorRenderHandle,
-                row->queueSuccessorCompletion)) {
-            row->queueSuccessorCompletion = {};
+        if (!row->HasFeatureArrays() ||
+            ClearQueueCompletionOwner(engine, row->queueSuccessorRenderHandle,
+                row->QueueFiling().queueSuccessorCompletion)) {
+            if (row->HasFeatureArrays()) row->QueueFiling().queueSuccessorCompletion = {};
             row->queueSuccessorOwner = {};
         }
         if (row->queueContinuationPrepared &&
-            row->queueDecision.Valid() &&
-            row->queueConditional.Valid() &&
+            row->QueueFiling().queueDecision.Valid() &&
+            row->QueueFiling().queueConditional.Valid() &&
             !row->queueArrivalDecision.Valid()) {
-            const bool cancelled = !row->queueDecisionCommitted;
+            const bool cancelled = !row->QueueFiling().queueDecisionCommitted;
             const bool decisionStopped =
                 cancelled
-                    ? engine.decisions.Cancel(row->queueDecision)
-                    : engine.decisions.Invalidate(row->queueDecision) ==
+                    ? engine.decisions.Cancel(row->QueueFiling().queueDecision)
+                    : engine.decisions.Invalidate(row->QueueFiling().queueDecision) ==
                           DecisionInvalidationDisposition::NewlyInvalidated;
             if (decisionStopped) {
                 (void)engine.queueInstances.RetireConditionalForAbort(
-                    row->queueInstance, row->queueConditional,
-                    row->queueDecision);
+                    row->queueInstance, row->QueueFiling().queueConditional,
+                    row->QueueFiling().queueDecision);
             }
             const std::uint32_t arrivalCount =
-                row->queueSameProgramKey
+                row->QueueFiling().queueSameProgramKey
                     ? 0u
-                    : row->queueSuccessorScheduleLeafCount > 1
-                    ? row->queueSuccessorScheduleLeafCount
+                    : row->QueueFiling().queueSuccessorScheduleLeafCount > 1
+                    ? row->QueueFiling().queueSuccessorScheduleLeafCount
                     : 1u;
             const std::uint32_t arrivalBase =
-                row->queueSuccessorScheduleBase;
+                row->QueueFiling().queueSuccessorScheduleBase;
             const TimelineArmToken arrivalArm =
-                row->queueSameProgramKey ? TimelineArmToken{}
-                                         : row->queueSuccessorArm;
+                row->QueueFiling().queueSameProgramKey ? TimelineArmToken{}
+                                         : row->QueueFiling().queueSuccessorArm;
             BeginQueueSuccessorAbort(engine, *row);
-            row->queueArrivalDecision = row->queueDecision;
-            row->queueArrivalArmGroup = row->queueArmGroup;
+            row->queueArrivalDecision = row->QueueFiling().queueDecision;
+            row->queueArrivalArmGroup = row->QueueFiling().queueArmGroup;
             row->queueArrivalArm = arrivalArm;
             row->queueArrivalSourceArm = row->queueSourceArm;
             row->queueArrivalSourceControlArmCount =
-                row->queueSourceControlArmCount;
+                row->QueueFiling().queueSourceControlArmCount;
             row->queueArrivalTransitionGroupArmCount =
-                row->queueTransitionGroupArmCount;
-            row->queueArrivalTransition = row->queueTransition;
+                row->QueueFiling().queueTransitionGroupArmCount;
+            row->queueArrivalTransition = row->QueueFiling().queueTransition;
             row->queueArrivalScheduleBase = arrivalBase;
             row->queueArrivalScheduleLeafCount = arrivalCount;
             row->queueArrivalUsesSuccessorStorage = arrivalCount > 1;
             row->queueArrivalDecisionCancelled = cancelled;
-            row->queueDecision = {};
-            row->queueArmGroup = {};
+            row->QueueFiling().queueDecision = {};
+            row->QueueFiling().queueArmGroup = {};
             row->queueSourceArm = {};
-            row->queueSourceControlArmCount = 0;
+            row->QueueFiling().queueSourceControlArmCount = 0;
             row->ClearQueueSourcePrograms();
-            row->queueTransitionGroupArmCount = 0;
-            row->queueTransitionGroupArms.Clear();
-            row->queueTransition = {};
-            row->queueTransitionEndFrame = 0;
-            row->queueSameProgramKey = false;
+            row->QueueFiling().queueTransitionGroupArmCount = 0;
+            row->QueueFiling().queueTransitionGroupArms.Clear();
+            row->QueueFiling().queueTransition = {};
+            row->QueueFiling().queueTransitionEndFrame = 0;
+            row->QueueFiling().queueSameProgramKey = false;
             // Keep the actual cancelled successor's full Arm/render identity
             // across arrival cleanup until strict native End clears the install.
-            row->queueConditional = {};
+            row->QueueFiling().queueConditional = {};
             row->queuePreparedPages = {};
             row->queueContinuationPrepared = false;
-            row->queueDecisionCommitted = false;
-        } else if (row->queueContinuationPrepared && row->queueDecision.Valid() &&
-                   row->queueConditional.Valid() && row->queueArrivalDecision.Valid()) {
-            const auto invalidation = row->queueDecisionCommitted
-                ? engine.decisions.Invalidate(row->queueDecision)
+            row->QueueFiling().queueDecisionCommitted = false;
+        } else if (row->queueContinuationPrepared && row->QueueFiling().queueDecision.Valid() &&
+                   row->QueueFiling().queueConditional.Valid() && row->queueArrivalDecision.Valid()) {
+            const auto invalidation = row->QueueFiling().queueDecisionCommitted
+                ? engine.decisions.Invalidate(row->QueueFiling().queueDecision)
                 : DecisionInvalidationDisposition::NotEligible;
-            const bool stopped = !row->queueDecisionCommitted
-                ? engine.decisions.Cancel(row->queueDecision)
+            const bool stopped = !row->QueueFiling().queueDecisionCommitted
+                ? engine.decisions.Cancel(row->QueueFiling().queueDecision)
                 : invalidation == DecisionInvalidationDisposition::NewlyInvalidated ||
                   invalidation == DecisionInvalidationDisposition::AlreadyInvalidated;
             if (!stopped || !engine.queueInstances.RetireConditionalForAbort(
-                    row->queueInstance, row->queueConditional, row->queueDecision)) {
+                    row->queueInstance, row->QueueFiling().queueConditional, row->QueueFiling().queueDecision)) {
 engine.runtimeRecreateRequired = true;
                 return PlayableControlStatus::Backpressure;
             }
             BeginQueueSuccessorAbort(engine, *row);
-            row->queueConditional = {};
+            row->QueueFiling().queueConditional = {};
             row->queueContinuationPrepared = false;
         }
         if (row->queueSuccessorDecision.Valid()) {
@@ -76979,9 +77001,9 @@ bool ReleaseImmediateActionPlay(
                 scratch->queueConditional, &scratch->queueInstance,
                 scratch->initialOriginalConditional, scratch->initialOriginalConditionalQueue,
                 scratch->initialOriginalConditionalVersion,
-                scratch->row->queueDecision, scratch->queueCurrentOccurrence)) return false;
-        if (scratch->row->queueConditional.version == scratch->initialOriginalConditionalVersion.version)
-            scratch->row->queueConditional = {};
+                scratch->row->QueueFiling().queueDecision, scratch->queueCurrentOccurrence)) return false;
+        if (scratch->row->QueueFiling().queueConditional.version == scratch->initialOriginalConditionalVersion.version)
+            scratch->row->QueueFiling().queueConditional = {};
         if (scratch->actionResourceOwnerContext.conditionalVersion.version ==
                 scratch->initialOriginalConditionalVersion.version)
             scratch->actionResourceOwnerContext.conditionalCommitted = false;
@@ -77097,8 +77119,8 @@ bool ReleaseImmediateActionPlay(
                        &scratch->queueConditional) &&
                    released;
     }
-    if (scratch->row != nullptr &&
-        scratch->row->queueConditional.Valid()) {
+    if (scratch->row != nullptr && scratch->row->HasFeatureArrays() &&
+        scratch->row->QueueFiling().queueConditional.Valid()) {
         const harken::QueueInstanceToken queue =
             scratch->queueInstanceCommitted.Valid()
                 ? scratch->queueInstanceCommitted
@@ -77108,11 +77130,11 @@ bool ReleaseImmediateActionPlay(
             queue.Valid() && engine.queueInstances.Capture(queue, &snapshot);
         const bool retired =
             !queueLive ||
-            (scratch->row->queueDecision.Valid() &&
+            (scratch->row->QueueFiling().queueDecision.Valid() &&
              engine.queueInstances.RetireConditionalForAbort(
-                 queue, scratch->row->queueConditional,
-                 scratch->row->queueDecision));
-        if (retired) scratch->row->queueConditional = {};
+                 queue, scratch->row->QueueFiling().queueConditional,
+                 scratch->row->QueueFiling().queueDecision));
+        if (retired) scratch->row->QueueFiling().queueConditional = {};
         released = retired && released;
     }
     // A later action sub-commit may fail after voice ownership is committed;
@@ -77198,11 +77220,11 @@ bool ReleaseImmediateActionPlay(
         const std::uint64_t observed = engine.mixer.BlocksRendered();
         bool sourceArmsResolved = true;
         harken::TimelineArmToken firstRemaining{};
-        const std::uint32_t sourceArmCount = std::min(
+        const std::uint32_t sourceArmCount = row.HasFeatureArrays() ? std::min(
             scratch->queueSourceControlArmCount,
-            static_cast<std::uint32_t>(row.queueTransitionGroupArms.size()));
+            static_cast<std::uint32_t>(row.QueueFiling().queueTransitionGroupArms.size())) : 0u;
         for (std::uint32_t index = sourceArmCount; index-- > 0;) {
-            auto& token = row.queueTransitionGroupArms[index];
+            auto& token = row.QueueFiling().queueTransitionGroupArms[index];
             if (!token.Valid()) {
                 continue;
             }
@@ -77221,12 +77243,12 @@ bool ReleaseImmediateActionPlay(
         }
         if (sourceArmsResolved) {
             row.queueSourceArm = {};
-            row.queueSourceControlArmCount = 0;
+            if (row.HasFeatureArrays()) row.QueueFiling().queueSourceControlArmCount = 0;
             row.ClearQueueSourcePrograms();
             scratch->queueSourceControlArmCount = 0;
         } else {
             row.queueSourceArm = firstRemaining;
-            row.queueSourceControlArmCount = sourceArmCount;
+            row.QueueFiling().queueSourceControlArmCount = sourceArmCount;
             scratch->queueSourceControlArmCount = sourceArmCount;
             released = false;
         }
@@ -77234,12 +77256,12 @@ bool ReleaseImmediateActionPlay(
         // before its voice-start bookkeeping count is published.  Sweep any
         // remaining producer-only group arms so a partially built row cannot
         // retain a Prepared token outside the source-arm count.
-        const std::uint32_t groupArmCount = std::min(
-            row.queueTransitionGroupArmCount,
-            static_cast<std::uint32_t>(row.queueTransitionGroupArms.size()));
+        const std::uint32_t groupArmCount = row.HasFeatureArrays() ? std::min(
+            row.QueueFiling().queueTransitionGroupArmCount,
+            static_cast<std::uint32_t>(row.QueueFiling().queueTransitionGroupArms.size())) : 0u;
         for (std::uint32_t index = sourceArmCount; index < groupArmCount;
              ++index) {
-            auto& token = row.queueTransitionGroupArms[index];
+            auto& token = row.QueueFiling().queueTransitionGroupArms[index];
             if (!token.Valid()) continue;
             harken::ArmState state = harken::ArmState::Free;
             if (!engine.timelineArms.State(token, &state)) {
@@ -77455,11 +77477,11 @@ bool ReleaseImmediateActionPlay(
         const bool cancelled = engine.decisions.CancelPreparedReservation(
             &scratch->queueDecision);
         bool resolved = cancelled;
-        if (!resolved && scratch->row != nullptr &&
-            scratch->row->queueDecision.Valid()) {
-            const auto token = scratch->row->queueDecision;
-            resolved = TransferDecisionRetirement(engine, token, !scratch->row->queueDecisionCommitted);
-            if (resolved) scratch->row->queueDecision = {};
+        if (!resolved && scratch->row != nullptr && scratch->row->HasFeatureArrays() &&
+            scratch->row->QueueFiling().queueDecision.Valid()) {
+            const auto token = scratch->row->QueueFiling().queueDecision;
+            resolved = TransferDecisionRetirement(engine, token, !scratch->row->QueueFiling().queueDecisionCommitted);
+            if (resolved) scratch->row->QueueFiling().queueDecision = {};
         }
         released = resolved && released;
     }
@@ -77512,7 +77534,7 @@ bool ReleaseImmediateActionPlay(
         scratch->playableTreeExecutor.OwnerTokenCount() != 0) {
         if (!deferredOwner.active && scratch->row != nullptr &&
             scratch->row->phase == harken::EnginePlayableStartPhase::Free &&
-            !scratch->row->queueDecision.Valid() &&
+            (!scratch->row->HasFeatureArrays() || !scratch->row->QueueFiling().queueDecision.Valid()) &&
             (scratch->row->queueCurrentOccurrence.generation == 0 ||
              engine.timelineOccurrences.StageOf(
                  scratch->row->queueCurrentOccurrence) ==
@@ -79013,7 +79035,7 @@ bool PrepareImmediateActionQueueInstance(
     if (!engine.PrepareOriginalQueueDecisionReservation(decision, &scratch->queueDecision)) {
         return false;
     }
-    row.queueDecision = scratch->queueDecision.Token();
+    row.QueueFiling().queueDecision = scratch->queueDecision.Token();
     harken::OccurrenceKey occurrence{};
     occurrence.arrangingInstance = ownerInstance;
     occurrence.clipId = selectedPlayable.stableId;
@@ -79290,7 +79312,7 @@ bool PrepareQueueEntryDecisionCore(
                 current->canonicalProgress == harken::EngineInitialQueueDecisionProgress::Prepared &&
                 current->canonicalRequest.sliceCount == sliceCount &&
                 row.privateInitialQueueCurrent == current &&
-                SameCanonicalDecision(row.queueDecision, current->canonicalDecision) &&
+                SameCanonicalDecision(row.QueueFiling().queueDecision, current->canonicalDecision) &&
                 SameCanonicalDecision(row.initialQueueEntryDecision, current->canonicalDecision) &&
                 engine.decisions.MatchesOpenReservation(current->canonicalDecision,
                     current->canonicalRequest);
@@ -79481,7 +79503,7 @@ bool PrepareQueueConditionalWithOriginal(
         scratch.row == &row && !scratch.variableControl && !scratch.variableControlCommitted &&
         !scratch.queueFutureExecution && scratch.queueFutureCanonicalCurrent == nullptr &&
         !row.variableControlIndependentFrontier && row.queueTimingPending &&
-        !row.queueTransition.Valid() && row.queueFirstContinuationLane && row.queueUnplacedGroupCount == 2u &&
+        !row.QueueFiling().queueTransition.Valid() && row.queueFirstContinuationLane && row.queueUnplacedGroupCount == 2u &&
         !request.completionIsLogicalBoundary && !request.completionHasLogicalFloor &&
         request.completion.owner.kind == harken::CompletionOwnerKind::SingleQueue &&
         harken::IsBoundKnownCompletionPredicate(request.completion);
@@ -79544,10 +79566,10 @@ bool AbortInitialQueueConditionalOriginals(ImmediateActionPlan& plan,
         if (!plan.engine->AbortIssuedOriginalQueueConditional(scratch->queueConditional,
                 &scratch->queueInstance, scratch->initialOriginalConditional,
                 scratch->initialOriginalConditionalQueue,
-                scratch->initialOriginalConditionalVersion, row.queueDecision,
+                scratch->initialOriginalConditionalVersion, row.QueueFiling().queueDecision,
                 scratch->queueCurrentOccurrence)) return false;
-        if (row.queueConditional.version == scratch->initialOriginalConditionalVersion.version)
-            row.queueConditional = {};
+        if (row.QueueFiling().queueConditional.version == scratch->initialOriginalConditionalVersion.version)
+            row.QueueFiling().queueConditional = {};
         auto& resources = scratch->actionResourceOwnerContext;
         if (resources.conditionalVersion.version == scratch->initialOriginalConditionalVersion.version)
             resources.conditionalCommitted = false;
@@ -79767,16 +79789,16 @@ bool PrepareQueueTransitionContinuation(
             engine.playableStorage.endpointCount) {
         return false;
     }
-    row.queueSuccessorProgramBank = ReserveQueueProgramBank(engine,
+    row.QueueFiling().queueSuccessorProgramBank = ReserveQueueProgramBank(engine,
         {sourceControlCount + leafCount, targetEventCount +
             sourceControlCount * (static_cast<std::uint32_t>(sourceFadeActive) + !naturalEnd)});
-    if (row.queueSuccessorProgramBank == nullptr) {
+    if (row.QueueFiling().queueSuccessorProgramBank == nullptr) {
         entry.MarkProgramCapacityRefused();
         entry.Result() = VN_BACKPRESSURE;
         (void)entry.ReleasePrefix(scratch);
         return false;
     }
-    auto& bank = *row.queueSuccessorProgramBank;
+    auto& bank = *row.QueueFiling().queueSuccessorProgramBank;
     auto& successorPayloadStorage = bank.payloads;
     auto& successorEventStorage = bank.events;
     auto& successorRuntimeStorage = bank.runtimes;
@@ -79809,11 +79831,11 @@ bool PrepareQueueTransitionContinuation(
         return false;
     }
     scratch->queueSuccessorOccurrencePrepared = true;
-    row.queueSuccessorOccurrence = scratch->queueSuccessorOccurrence;
-    row.queueSuccessorProgramPlane = successorPlane;
-    row.queueSuccessorScheduleBase =
+    row.QueueFiling().queueSuccessorOccurrence = scratch->queueSuccessorOccurrence;
+    row.QueueFiling().queueSuccessorProgramPlane = successorPlane;
+    row.QueueFiling().queueSuccessorScheduleBase =
         static_cast<std::uint32_t>(successorBase);
-    row.queueSuccessorScheduleLeafCount = leafCount > 1 ||
+    row.QueueFiling().queueSuccessorScheduleLeafCount = leafCount > 1 ||
         (row.parentService.Valid() && selected.playable.kind != harken::PlayableKindV1::Sound) ? leafCount : 0;
 
     std::array<harken::KnownScheduleLeafV1,
@@ -80076,7 +80098,7 @@ bool PrepareQueueTransitionContinuation(
             return false;
         }
         scratch->queueSuccessorCompositeOwnerPrepared = true;
-        row.queueSuccessorCompositeOwner =
+        row.QueueFiling().queueSuccessorCompositeOwner =
             scratch->queueSuccessorCompositeOwner;
         for (std::uint32_t index = 0; index < leafCount; ++index) {
             harken::KnownScheduleLeafV1 bound{};
@@ -80129,15 +80151,15 @@ bool PrepareQueueTransitionContinuation(
         scratch->queueSuccessorCompletionMutationCount = 1;
         engine.FindQueueProgramMember(&bank, 0)->nativeCompletion = bound;
         row.queueSuccessorOwner = scratch->queueSuccessorOwner;
-        row.queueSuccessorCompletion = bound;
+        row.QueueFiling().queueSuccessorCompletion = bound;
     }
     if (leafCount == 1u)
-        engine.FindQueueProgramMember(&bank, 0)->nativeCompletion = row.queueSuccessorCompletion;
+        engine.FindQueueProgramMember(&bank, 0)->nativeCompletion = row.QueueFiling().queueSuccessorCompletion;
 
     const auto& firstMember = *engine.FindQueueProgramMember(&bank, 0);
     row.QueueSuccessorLeaf() = firstMember.leaf;
-    row.queueSuccessorArm = firstMember.arm;
-    row.queueMonitorSelection = firstMember.monitorSelection;
+    row.QueueFiling().queueSuccessorArm = firstMember.arm;
+    row.QueueFiling().queueMonitorSelection = firstMember.monitorSelection;
     row.queueSuccessorRenderHandle = firstMember.render;
     row.queueSuccessorTailFrames = firstMember.postSourceTailFrames;
 
@@ -80152,7 +80174,7 @@ bool PrepareQueueTransitionContinuation(
         return false;
     }
     scratch->queueTransitionPrepared = true;
-    row.queueTransition = scratch->queueTransition;
+    row.QueueFiling().queueTransition = scratch->queueTransition;
     const bool preparedTransitionOwner = !scratch->queueFutureExecution &&
         scratch->queueDecision.Valid() &&
         SameCanonicalDecision(transitionDecision, scratch->queueDecision.Token());
@@ -80172,7 +80194,7 @@ bool PrepareQueueTransitionContinuation(
         row.CanonicalInitialQueueRequest() = scratch->queueFutureCanonicalCurrent->canonicalRequest;
     }
 
-    row.queueTransitionGroupArms.Clear();
+    row.QueueFiling().queueTransitionGroupArms.Clear();
     for (std::uint32_t index = 0;
          index < sourceControlCount; ++index) {
         const VnVoiceHandle handle = sourceSet.renderHandles[index];
@@ -80188,20 +80210,20 @@ bool PrepareQueueTransitionContinuation(
                   renderSlot, renderGeneration, row.rootInstance,
                   sourceSet.targets[index], parentGroup,
                   static_cast<std::uint16_t>(index),
-                  &row.queueTransitionGroupArms[index])
+                  &row.QueueFiling().queueTransitionGroupArms[index])
             : engine.timelineArms.PrepareGrouped(
                   renderSlot, renderGeneration,
                   sourcePhaseFrame, armDeadline, row.rootInstance,
                   sourceSet.targets[index], parentGroup,
                   static_cast<std::uint16_t>(index),
-                  &row.queueTransitionGroupArms[index]);
+                  &row.QueueFiling().queueTransitionGroupArms[index]);
         if (!prepared) {
             (void)entry.ReleasePrefix(scratch);
             return false;
         }
         auto& preparation = scratch->queueSourceArmPreparations[index];
         preparation = {};
-        preparation.arm = row.queueTransitionGroupArms[index];
+        preparation.arm = row.QueueFiling().queueTransitionGroupArms[index];
         preparation.startFrame = row.queueTimingPending ? 0 : sourcePhaseFrame;
         preparation.armDeadline = row.queueTimingPending ? 0 : armDeadline;
         preparation.programGeneration = row.rootInstance;
@@ -80220,32 +80242,32 @@ bool PrepareQueueTransitionContinuation(
         command.payload.play.batch.batchCommandCount = 1;
         command.payload.play.batch.armToken =
             (static_cast<std::uint64_t>(
-                 row.queueTransitionGroupArms[index].generation) << 32) |
-            row.queueTransitionGroupArms[index].slot;
+                 row.QueueFiling().queueTransitionGroupArms[index].generation) << 32) |
+            row.QueueFiling().queueTransitionGroupArms[index].slot;
         command.payload.play.handle = handle;
         command.payload.play.sourceIdentity = handle;
         scratch->queueSourceCommandCount = index + 1u;
     }
-    row.queueSourceControlArmCount = sourceControlCount;
+    row.QueueFiling().queueSourceControlArmCount = sourceControlCount;
     row.queueSourceArm = sourceControlCount == 0
         ? harken::TimelineArmToken{}
-        : row.queueTransitionGroupArms[0];
+        : row.QueueFiling().queueTransitionGroupArms[0];
     for (std::uint32_t index = 0; index < leafCount; ++index) {
-        row.queueTransitionGroupArms[sourceControlCount + index] =
+        row.QueueFiling().queueTransitionGroupArms[sourceControlCount + index] =
             engine.FindQueueProgramMember(&bank, index)->arm;
     }
-    row.queueTransitionGroupArmCount = sourceControlCount + leafCount;
+    row.QueueFiling().queueTransitionGroupArmCount = sourceControlCount + leafCount;
     if (!engine.armGroups.Prepare(
             transitionDecision,
-            row.queueTransitionGroupArms.data(),
+            row.QueueFiling().queueTransitionGroupArms.data(),
             static_cast<std::uint16_t>(
-                row.queueTransitionGroupArmCount),
+                row.QueueFiling().queueTransitionGroupArmCount),
             &scratch->queueArmGroup)) {
         (void)entry.ReleasePrefix(scratch);
         return false;
     }
     scratch->queueArmGroupPrepared = true;
-    row.queueArmGroup = scratch->queueArmGroup;
+    row.QueueFiling().queueArmGroup = scratch->queueArmGroup;
     if (row.queueFirstContinuationLane) {
         if (!engine.armGroups.Prepare(row.initialQueueEntryDecision, nullptr, 0,
                 &scratch->queueInitialLaneArmGroup)) {
@@ -80259,7 +80281,7 @@ bool PrepareQueueTransitionContinuation(
     harken::TimelineProgramView& successorRuntime = successorPlane == 0
         ? row.runtimeProgram : row.queueSuccessorRuntimeProgram;
     harken::ProgramView& successorSchedule = successorPlane == 0
-        ? row.schedule : row.queueSuccessorSchedule;
+        ? row.schedule : row.QueueFiling().queueSuccessorSchedule;
     successorRuntime = {};
     successorRuntime.generation = successorInstance;
     successorRuntime.payloads =
@@ -80297,7 +80319,7 @@ bool PrepareQueueTransitionContinuation(
         const std::uint32_t requestIndex = leafCount + sourceIndex;
         const std::uint32_t sourceEventBase = sourceEventTotal;
         const harken::TimelineArmToken arm =
-            row.queueTransitionGroupArms[sourceIndex];
+            row.QueueFiling().queueTransitionGroupArms[sourceIndex];
         const harken::TimelineSemanticTarget& target =
             sourceSet.targets[sourceIndex];
         auto& inputSet = transactionEvents[requestIndex];
@@ -80405,17 +80427,17 @@ bool PrepareQueueTransitionContinuation(
     row.queueSourceRuntimeProgram.payloads =
         row.queueSourcePayloads.data();
     row.queueSourceRuntimeProgram.payloadCount = sourceEventTotal;
-    row.queueSourceSchedule = {};
-    row.queueSourceSchedule.ownerInstance = row.rootInstance;
-    row.queueSourceSchedule.ownerInstanceScheduleEpoch =
+    row.QueueFiling().queueSourceSchedule = {};
+    row.QueueFiling().queueSourceSchedule.ownerInstance = row.rootInstance;
+    row.QueueFiling().queueSourceSchedule.ownerInstanceScheduleEpoch =
         row.ownerEpoch;
-    row.queueSourceSchedule.transactionId = row.ticket;
-    row.queueSourceSchedule.entryAnchorFrame = sourcePhaseFrame;
-    row.queueSourceSchedule.events = row.queueSourceEvents.data();
-    row.queueSourceSchedule.eventCount = sourceEventTotal;
-    row.queueSourceSchedule.runtimeProgram = {
+    row.QueueFiling().queueSourceSchedule.transactionId = row.ticket;
+    row.QueueFiling().queueSourceSchedule.entryAnchorFrame = sourcePhaseFrame;
+    row.QueueFiling().queueSourceSchedule.events = row.queueSourceEvents.data();
+    row.QueueFiling().queueSourceSchedule.eventCount = sourceEventTotal;
+    row.QueueFiling().queueSourceSchedule.runtimeProgram = {
         row.rootInstance, &row.queueSourceRuntimeProgram};
-    row.queueSourceSchedule.armToken = row.queueSourceArm;
+    row.QueueFiling().queueSourceSchedule.armToken = row.queueSourceArm;
 
     for (std::uint32_t index = 0; index < leafCount + sourceControlCount; ++index) {
         auto& schedule = index < leafCount
@@ -80429,9 +80451,9 @@ bool PrepareQueueTransitionContinuation(
         transactions[index].program = frozen->runtimeProgram;
     }
     if (!FreezeQueueAggregate(bank, successorSchedule, 0, leafCount) ||
-        (sourceControlCount != 0 && !FreezeQueueAggregate(bank, row.queueSourceSchedule,
+        (sourceControlCount != 0 && !FreezeQueueAggregate(bank, row.QueueFiling().queueSourceSchedule,
             leafCount, sourceControlCount)) ||
-        !BindQueueSuccessorPrograms(row, bank, 0, leafCount) ||
+        !BindQueueSuccessorPrograms(row.QueueFiling(), bank, 0, leafCount) ||
         !BindScheduledQueueChildPrograms(engine, *scratch, bank, 0, leafCount, successorEntryFrame, false, 0)) {
         (void)entry.ReleasePrefix(scratch);
         return false;
@@ -80465,9 +80487,9 @@ bool PrepareQueueTransitionContinuation(
     group.executeFrame = naturalEndPrelude
         ? sourcePhaseFrame : row.queueCompletionFrame;
     group.decision = transitionDecision;
-    group.members = row.queueTransitionGroupArms.data();
+    group.members = row.QueueFiling().queueTransitionGroupArms.data();
     group.memberCount = static_cast<std::uint16_t>(
-        row.queueTransitionGroupArmCount);
+        row.QueueFiling().queueTransitionGroupArmCount);
     group.sourceControlCount =
         static_cast<std::uint16_t>(sourceControlCount);
     if (!row.queueTimingPending &&
@@ -80533,7 +80555,7 @@ bool PrepareQueueTransitionContinuation(
         row.queuePreparedPages = {
             page + 1u,
             static_cast<std::uint32_t>(header->pageGeneration)};
-    row.queueTransitionEndFrame = transitionEndFrame;
+    row.QueueFiling().queueTransitionEndFrame = transitionEndFrame;
     scratch->queueHasContinuation = false;
     return true;
 }
@@ -80660,8 +80682,8 @@ bool PrepareQueueSameKeyContinuation(
         row.queuePreparedPages = {
             page + 1u,
             static_cast<std::uint32_t>(header->pageGeneration)};
-    row.queueSameProgramKey = true;
-    row.queueArmGroup = scratch->queueArmGroup;
+    row.QueueFiling().queueSameProgramKey = true;
+    row.QueueFiling().queueArmGroup = scratch->queueArmGroup;
     scratch->queueHasContinuation = false;
     return true;
 }
@@ -80804,8 +80826,8 @@ bool ValidatePreparedQueueCurrentCompositeCore(
             !current.decision.Valid() || current.decisionCommitted ||
             current.decision.Token().slot != scratch.queueFutureCurrentDecision.slot ||
             current.decision.Token().generation != scratch.queueFutureCurrentDecision.generation ||
-            current.decision.Token().slot != row.queueDecision.slot ||
-            current.decision.Token().generation != row.queueDecision.generation ||
+            current.decision.Token().slot != row.QueueFiling().queueDecision.slot ||
+            current.decision.Token().generation != row.QueueFiling().queueDecision.generation ||
             !SameC1PreparedOccurrence(current.occurrence, row.queueCurrentOccurrence) ||
             !SameC1PreparedComposite(current.composite, row.queueCurrentCompositeOwner)) return false;
         issuer = parent;
@@ -81548,14 +81570,14 @@ bool PrepareQueueContinuation(
          (leafCount == 0u && materialized.hasZeroWorkCompletion)) && knownCurrent &&
         row.queueCompletionFrame > row.startFrame;
 
-    row.queueSuccessorProgramBank = ReserveQueueProgramBank(engine, {leafCount, leafCount});
-    if (row.queueSuccessorProgramBank == nullptr) {
+    row.QueueFiling().queueSuccessorProgramBank = ReserveQueueProgramBank(engine, {leafCount, leafCount});
+    if (row.QueueFiling().queueSuccessorProgramBank == nullptr) {
         entry.MarkProgramCapacityRefused();
         entry.Result() = VN_BACKPRESSURE;
         (void)entry.ReleasePrefix(scratch);
         return false;
     }
-    auto& bank = *row.queueSuccessorProgramBank;
+    auto& bank = *row.QueueFiling().queueSuccessorProgramBank;
     auto& successorPayloadStorage = bank.payloads;
     auto& successorEventStorage = bank.events;
     auto& successorRuntimeStorage = bank.runtimes;
@@ -81591,10 +81613,10 @@ bool PrepareQueueContinuation(
     }
     scratch->queueSuccessorOccurrencePrepared = true;
 
-    row.queueSuccessorProgramPlane = successorPlane;
-    row.queueSuccessorScheduleBase =
+    row.QueueFiling().queueSuccessorProgramPlane = successorPlane;
+    row.QueueFiling().queueSuccessorScheduleBase =
         static_cast<std::uint32_t>(successorBase);
-    row.queueSuccessorScheduleLeafCount = leafCount > 1 ||
+    row.QueueFiling().queueSuccessorScheduleLeafCount = leafCount > 1 ||
         (actualChild && selected->playable.kind != harken::PlayableKindV1::Sound) ? leafCount : 0;
     std::array<harken::KnownScheduleLeafV1,
                harken::kMaxKnownScheduleLeaves> knownLeaves{};
@@ -81821,7 +81843,7 @@ bool PrepareQueueContinuation(
             return false;
         }
         scratch->queueSuccessorCompositeOwnerPrepared = true;
-        row.queueSuccessorCompositeOwner =
+        row.QueueFiling().queueSuccessorCompositeOwner =
             scratch->queueSuccessorCompositeOwner;
         for (std::uint32_t index = 0; index < leafCount; ++index) {
             harken::KnownScheduleLeafV1 bound{};
@@ -81874,22 +81896,22 @@ bool PrepareQueueContinuation(
         scratch->queueSuccessorCompletionMutationCount = 1;
         engine.FindQueueProgramMember(&bank, 0)->nativeCompletion = bound;
         row.queueSuccessorOwner = scratch->queueSuccessorOwner;
-        row.queueSuccessorCompletion = bound;
+        row.QueueFiling().queueSuccessorCompletion = bound;
     }
 
     if (leafCount == 1u)
-        engine.FindQueueProgramMember(&bank, 0)->nativeCompletion = row.queueSuccessorCompletion;
-    row.queueSuccessorOccurrence = scratch->queueSuccessorOccurrence;
+        engine.FindQueueProgramMember(&bank, 0)->nativeCompletion = row.QueueFiling().queueSuccessorCompletion;
+    row.QueueFiling().queueSuccessorOccurrence = scratch->queueSuccessorOccurrence;
     if (leafCount != 0) {
         const auto& firstMember = *engine.FindQueueProgramMember(&bank, 0);
         row.QueueSuccessorLeaf() = firstMember.leaf;
-        row.queueSuccessorArm = firstMember.arm;
-        row.queueMonitorSelection = firstMember.monitorSelection;
+        row.QueueFiling().queueSuccessorArm = firstMember.arm;
+        row.QueueFiling().queueMonitorSelection = firstMember.monitorSelection;
         row.queueSuccessorRenderHandle = firstMember.render;
         row.queueSuccessorTailFrames = firstMember.postSourceTailFrames;
     } else {
         row.QueueSuccessorLeaf() = {};
-        row.queueSuccessorArm = {};
+        row.QueueFiling().queueSuccessorArm = {};
         row.queueSuccessorRenderHandle = 0;
         row.queueSuccessorTailFrames = 0;
     }
@@ -81900,7 +81922,7 @@ bool PrepareQueueContinuation(
     harken::ProgramView& successorSchedule =
         successorPlane == 0
             ? row.schedule
-            : row.queueSuccessorSchedule;
+            : row.QueueFiling().queueSuccessorSchedule;
     successorRuntime = {};
     successorRuntime.generation = successorInstance;
     successorRuntime.payloads =
@@ -81962,7 +81984,7 @@ bool PrepareQueueContinuation(
     }
     if ((leafCount != 0 &&
         !FreezeQueueAggregate(bank, successorSchedule, 0, leafCount)) ||
-        !BindQueueSuccessorPrograms(row, bank, 0, leafCount) ||
+        !BindQueueSuccessorPrograms(row.QueueFiling(), bank, 0, leafCount) ||
         !BindScheduledQueueChildPrograms(engine, *scratch, bank, 0, leafCount,
             successorEntryFrame, materialized.hasZeroWorkCompletion, successorZeroWorkCompletionFrame)) {
         (void)entry.ReleasePrefix(scratch);
@@ -82047,12 +82069,12 @@ bool PrepareQueueContinuation(
     }
     row.QueueNextState() = next;
     std::copy_n(groupMembers.begin(), leafCount,
-                row.queueTransitionGroupArms.begin());
-    row.queueTransitionGroupArmCount = leafCount;
-    row.queueArmGroup = scratch->queueArmGroup;
-    row.queueSuccessorHasZeroWorkCompletion =
+                row.QueueFiling().queueTransitionGroupArms.begin());
+    row.QueueFiling().queueTransitionGroupArmCount = leafCount;
+    row.QueueFiling().queueArmGroup = scratch->queueArmGroup;
+    row.QueueFiling().queueSuccessorHasZeroWorkCompletion =
         materialized.hasZeroWorkCompletion;
-    row.queueSuccessorZeroWorkCompletionFrame =
+    row.QueueFiling().queueSuccessorZeroWorkCompletionFrame =
         successorZeroWorkCompletionFrame;
     scratch->queueHasContinuation = false;
     return true;
@@ -82173,7 +82195,7 @@ bool LinkQueueFutureAttempt(
     child.row = &row;
     child.continuationService = PlayableServiceReference(row);
     child.continuationPartition = row.partition;
-    child.queueFutureProgramBank = row.queueSuccessorProgramBank;
+    child.queueFutureProgramBank = row.QueueFiling().queueSuccessorProgramBank;
 
     const std::uint32_t index = parent.queueFutureAttemptCount;
     auto& owner = parent.storage.queueFutureOwners[index];
@@ -82274,7 +82296,7 @@ bool PrepareCanonicalQueueCurrentDecision(harken::Engine& engine, VnActionFiring
         request.expectedContinuationGeneration != row.invocationGeneration || request.sliceCount != 2u ||
         engine.ResolvePlayableService(queueOwner.service) != &row || current.engine != &engine ||
         row.privateInitialQueueCurrent != nullptr || row.initialQueueEntryDecision.Valid() ||
-        row.canonicalInitialQueueDecision.Valid() || row.queueDecision.Valid() ||
+        row.canonicalInitialQueueDecision.Valid() || row.QueueFiling().queueDecision.Valid() ||
         current.initialDecisionRegistered || current.decision.Valid() || current.canonicalDecision.Valid()) return false;
     const auto parentSlot = engine.actionPlayScratch.IndexOf(parent);
     const auto queueIndex = parent.storage.frontierQueues.IndexOf(queueOwner);
@@ -82294,7 +82316,7 @@ bool PrepareCanonicalQueueCurrentDecision(harken::Engine& engine, VnActionFiring
     }
     current.canonicalInitial = true;
     current.canonicalDecision = current.decision.Token();
-    row.queueDecision = current.canonicalDecision;
+    row.QueueFiling().queueDecision = current.canonicalDecision;
     row.privateInitialQueueCurrent = &current;
     row.canonicalInitialQueueDecision = current.canonicalDecision;
     row.CanonicalInitialQueueRequest() = request;
@@ -82398,19 +82420,19 @@ bool PrepareQueueCurrentCore(harken::Engine& engine,
                     current.owner.kind != harken::CompletionOwnerKind::None ||
                     current.compositePrepared || current.composite.Valid() ||
                     current.leafCount != 0 || current.mutationCount != 0 ||
-                    row->queueDecision.Valid() || row->initialQueueEntryDecision.Valid() ||
+                    row->QueueFiling().queueDecision.Valid() || row->initialQueueEntryDecision.Valid() ||
                     row->canonicalInitialQueueDecision.Valid() ||
                     row->privateInitialQueueCurrent != nullptr ||
                     row->queueCurrentOccurrence.generation != 0 ||
                     row->queueCurrentCompositeOwner.Valid() ||
                     harken::IsBoundKnownCompletionPredicate(row->queueCurrentCompletion) ||
                     row->queueCurrentScheduleLeafCount != 0 ||
-                    row->queueSuccessorDecision.Valid() || row->queueSuccessorProgramBank != nullptr ||
-                    row->queueSuccessorOccurrence.generation != 0 ||
-                    row->queueSuccessorCompositeOwner.Valid() ||
-                    harken::IsBoundKnownCompletionPredicate(row->queueSuccessorCompletion) ||
-                    row->queueContinuationPrepared || row->queueConditional.Valid() ||
-                    row->queueFirstContinuationLane || row->queueArmGroup.Valid()) return false;
+                    row->queueSuccessorDecision.Valid() || row->QueueFiling().queueSuccessorProgramBank != nullptr ||
+                    row->QueueFiling().queueSuccessorOccurrence.generation != 0 ||
+                    row->QueueFiling().queueSuccessorCompositeOwner.Valid() ||
+                    harken::IsBoundKnownCompletionPredicate(row->QueueFiling().queueSuccessorCompletion) ||
+                    row->queueContinuationPrepared || row->QueueFiling().queueConditional.Valid() ||
+                    row->queueFirstContinuationLane || row->QueueFiling().queueArmGroup.Valid()) return false;
                 if (replacement && !engine.MatchesPendingVariableReplacementQueueIssuer(parent, queueOwner,
                         entryRoot, parent.pendingVariableReplacementEntryGeneration)) return false;
                 if (zeroWorkCurrent) {
@@ -82505,7 +82527,7 @@ bool PrepareQueueCurrentCore(harken::Engine& engine,
         request.sliceCount = canonical ? 2u : 1u;
         if (!canonical) {
             if (!engine.PrepareOriginalQueueDecisionReservation(request, &current.decision)) return false;
-            row->queueDecision = current.decision.Token();
+            row->QueueFiling().queueDecision = current.decision.Token();
             return true;
         }
         return entryRoot != 0 && prepareCanonicalDecision(*row, request);
@@ -82795,7 +82817,7 @@ bool PrepareQueueFuturesCore(QueuePreparationEntry& entry,
         child->packPlaybackView = parent.packPlaybackView;
         const bool prepared = PrepareQueueContinuation(entry, child,
             *context.program, context.initial, context.next, queue);
-        child->queueFutureProgramBank = queue->queueSuccessorProgramBank;
+        child->queueFutureProgramBank = queue->QueueFiling().queueSuccessorProgramBank;
         const bool registered = RegisterPreparedQueueFutureOwners(engine, *child,
             &context.prepared, child->queueFutureCurrentDecision);
         if (!prepared || !registered) return false;
@@ -86212,7 +86234,8 @@ bool AuthoredStopOwnsCompletionBinding(
             harken::SameCompletionOwner(owner, completion.owner);
     };
     if (row.queueMode && (matches(row.renderHandle, row.queueCurrentOccurrence, row.queueCurrentCompletion) ||
-        matches(row.queueSuccessorRenderHandle, row.queueSuccessorOccurrence, row.queueSuccessorCompletion))) {
+        (row.HasFeatureArrays() && matches(row.queueSuccessorRenderHandle,
+            row.QueueFiling().queueSuccessorOccurrence, row.QueueFiling().queueSuccessorCompletion)))) {
         return true;
     }
     if (row.queueMode && harken::SameCompletionMutationBinding(
@@ -86239,7 +86262,8 @@ bool AuthoredStopOwnsCompletionBinding(
         return false;
     };
     if (matchesProgram(row.queueCurrentProgramBank, row.queueCurrentPrograms) ||
-        matchesProgram(row.queueSuccessorProgramBank, row.queueSuccessorPrograms)) return true;
+        (row.HasFeatureArrays() && matchesProgram(row.QueueFiling().queueSuccessorProgramBank,
+                                                 row.QueueFiling().queueSuccessorPrograms))) return true;
     harken::EngineTimelineVoiceInstallIdentity installed{};
     if (!engine.CaptureTimelineVoiceInstallIdentity(render, &installed) ||
         installed.renderHandle != render || installed.rootInstance != row.rootInstance ||
@@ -86358,7 +86382,8 @@ bool PrepareScheduledActionStop(
     const auto captureDecision = [&](harken::DecisionToken decision) {
         return PrepareAuthoredStopDecision(engine, scratch.authoredStop, decision);
     };
-    if (!captureDecision(row.queueDecision) || !captureDecision(row.queueArrivalDecision) ||
+    if ((row.HasFeatureArrays() && !captureDecision(row.QueueFiling().queueDecision)) ||
+        !captureDecision(row.queueArrivalDecision) ||
         !captureDecision(row.queueSuccessorDecision) ||
         !captureDecision(row.variableControlDiscreteDecision) ||
         !captureDecision(row.variableControlContinuousDecision) ||
@@ -86798,8 +86823,8 @@ bool ValidatePreparedTerminalQueueCurrent(
     const auto& current = queue->current;
     if (current.engine != &engine || engine.ResolvePlayableService(current.service) != &row ||
         !current.decision.Valid() || current.decisionCommitted || current.canonicalInitial ||
-        current.decision.Token().slot != row.queueDecision.slot ||
-        current.decision.Token().generation != row.queueDecision.generation ||
+        current.decision.Token().slot != row.QueueFiling().queueDecision.slot ||
+        current.decision.Token().generation != row.QueueFiling().queueDecision.generation ||
         !current.occurrencePrepared || current.occurrence.slot != row.queueCurrentOccurrence.slot ||
         current.occurrence.generation != row.queueCurrentOccurrence.generation ||
         current.leafCount != 1 || current.mutationCount != 1 || !current.ownerPinned ||
@@ -86997,7 +87022,7 @@ bool ComputeInitialActionLaneDemand(
                 holder.queueUnplacedTransactionCount ||
             holder.queueUnplacedGroupCount >
                 holder.queueUnplacedGroupFrames.size()) return false;
-        const auto* bank = holder.queueSuccessorProgramBank;
+        const auto* bank = holder.QueueFiling().queueSuccessorProgramBank;
         if (holder.queueUnplacedTransactionCount != 0 &&
             (bank == nullptr || bank->published ||
              bank->programCount != holder.queueUnplacedTransactionCount))
@@ -87031,7 +87056,7 @@ bool ComputeInitialActionLaneDemand(
              group < holder.queueUnplacedGroupCount; ++group) {
             const auto frame = holder.queueUnplacedGroupFrames[group];
             const auto actualMembers = holder.queueFirstContinuationLane && group == 0u
-                ? holder.queueInitialCurrentDelayedCount : holder.queueTransitionGroupArmCount;
+                ? holder.queueInitialCurrentDelayedCount : holder.QueueFiling().queueTransitionGroupArmCount;
             if (frame < plan.admittedImmediateFrame ||
                 !addGroup(frame - plan.admittedImmediateFrame) ||
                 actualMembers > eventQuanta.size() - memberCount) return false;
@@ -87748,8 +87773,8 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
                     (holder.queueUnplacedGroupCount > 2 &&
                      !(holder.queueUnplacedGroupCount == 3u &&
                        holder.queueFirstContinuationLane &&
-                       holder.queueTransition.Valid() && holder.queueSourceSchedule.eventCount == 1u &&
-                       holder.queueSourceControlArmCount == 1u &&
+                       holder.QueueFiling().queueTransition.Valid() && holder.QueueFiling().queueSourceSchedule.eventCount == 1u &&
+                       holder.QueueFiling().queueSourceControlArmCount == 1u &&
                        holder.queueUnplacedGroupFrames[1] > holder.startFrame &&
                        holder.queueUnplacedGroupFrames[1] < holder.queueCompletionFrame))) {
                     ReleaseImmediateActionPlays(plan, count);
@@ -87827,10 +87852,10 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
                     play->row->variableControlIndependentFrontier;
                 if ((!vcChild &&
                         attempt.queueContinuationService.Valid()) ||
-                    !holder.queueDecision.Valid() ||
+                    !holder.QueueFiling().queueDecision.Valid() ||
                     (holder.queueUnplacedGroupCount != 2u &&
-                     !(holder.queueUnplacedGroupCount == 3u && holder.queueTransition.Valid() &&
-                       holder.queueSourceSchedule.eventCount == 1u && holder.queueSourceControlArmCount == 1u))) {
+                     !(holder.queueUnplacedGroupCount == 3u && holder.QueueFiling().queueTransition.Valid() &&
+                       holder.QueueFiling().queueSourceSchedule.eventCount == 1u && holder.QueueFiling().queueSourceControlArmCount == 1u))) {
                     ReleaseImmediateActionPlays(plan, count);
                     plan->result = VN_BACKPRESSURE;
                     return false;
@@ -87893,7 +87918,7 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
                     attempt.queueContinuationService = holder.identity;
                     attempt.queueContinuationQueue = holder.queueInstance;
                     attempt.queueContinuationMemberDecision =
-                        holder.queueDecision;
+                        holder.QueueFiling().queueDecision;
                 }
             }
             if (play->row->variableControlIndependentFrontier) {
@@ -87953,7 +87978,7 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
                     holder.pendingImmediateCohortRoot != plan->rootHandle)
                     continue;
                 if (IsInitialQueueTimingOnlyCurrent(holder)) continue;
-                if (holder.queueTransitionGroupArmCount > UINT16_MAX) {
+                if (holder.QueueFiling().queueTransitionGroupArmCount > UINT16_MAX) {
                     ReleaseImmediateActionPlays(plan, count);
                     plan->result = VN_BACKPRESSURE;
                     return false;
@@ -87982,7 +88007,7 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
                     const bool initial = holder.queueFirstContinuationLane &&
                         slice == 0u;
                     group.decision = holder.queueFirstContinuationLane &&
-                        !initial ? holder.queueDecision :
+                        !initial ? holder.QueueFiling().queueDecision :
                         holder.initialQueueEntryDecision;
                     group.sliceIndex = holder.queueFirstContinuationLane
                         ? static_cast<std::uint16_t>(initial ? 0u : slice - 1u)
@@ -87990,14 +88015,14 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
                     group.members = initial
                         ? (holder.queueInitialCurrentDelayedCount == 0u ? nullptr
                             : holder.queueInitialCurrentDelayedArms.data())
-                        : (holder.queueTransitionGroupArmCount == 0u ? nullptr
-                            : holder.queueTransitionGroupArms.data());
+                        : (holder.QueueFiling().queueTransitionGroupArmCount == 0u ? nullptr
+                            : holder.QueueFiling().queueTransitionGroupArms.data());
                     group.memberCount = initial ? holder.queueInitialCurrentDelayedCount :
                         static_cast<std::uint16_t>(
-                            holder.queueTransitionGroupArmCount);
+                            holder.QueueFiling().queueTransitionGroupArmCount);
                     group.sourceControlCount = initial ? 0u :
                         static_cast<std::uint16_t>(
-                            holder.queueSourceControlArmCount);
+                            holder.QueueFiling().queueSourceControlArmCount);
                     harken::Plan03GroupSliceIdentity identity{};
                     const bool originalC0Member = engine.OriginalInitialC0FactoryRequested(attempt) &&
                         originalScratch != nullptr;
@@ -88189,7 +88214,7 @@ bool CommitQueueEntryDecisionOwner(harken::Engine& engine,
             current->canonicalProgress == harken::EngineInitialQueueDecisionProgress::PrivateOpen &&
             current->decisionCommitted && !current->decision.Valid() &&
             current->canonicalTicket == sequence && holder->queueTicket == sequence &&
-            SameCanonicalDecision(holder->queueDecision, current->canonicalDecision) &&
+            SameCanonicalDecision(holder->QueueFiling().queueDecision, current->canonicalDecision) &&
             holder->privateInitialQueueCurrent == current &&
             engine.decisions.MatchesOpenReservation(current->canonicalDecision,
                 current->canonicalRequest);
@@ -89114,7 +89139,7 @@ bool PrepareOriginalSingleNonVariableOwners(harken::Engine& engine,
     if (scratch.queueDecision.Valid()) {
         scratch.queueDecisionOwnerContext = {
             &engine.decisions, &scratch.queueDecision,
-            &row.queueDecision, &row.queueTicket, false};
+            &row.QueueFiling().queueDecision, &row.queueTicket, false};
         ok = RegisterFrontierPreparedOwner(scratch,
                  &scratch.queueDecisionOwnerContext,
                  ValidatePreparedDecisionOwner,
@@ -89224,14 +89249,14 @@ bool PrepareOriginalSingleNonVariableOwners(harken::Engine& engine,
                  CancelPreparedTimelineVoiceOwner) &&
              ok;
     }
-    if (row.queueConditional.Valid() ||
+    if ((row.HasFeatureArrays() && row.QueueFiling().queueConditional.Valid()) ||
         scratch.queueConditional.Valid()) {
         harken::ProgramView& successorSchedule =
-            row.queueSuccessorProgramPlane == 0
-                ? row.schedule : row.queueSuccessorSchedule;
-        ok = StampQueueSuccessorPrograms(row, scratch.queueSuccessorVoiceStartCount, sequence) && ok;
+            row.QueueFiling().queueSuccessorProgramPlane == 0
+                ? row.schedule : row.QueueFiling().queueSuccessorSchedule;
+        ok = StampQueueSuccessorPrograms(row.QueueFiling(), scratch.queueSuccessorVoiceStartCount, sequence) && ok;
         successorSchedule.transactionId = sequence;
-        row.queueSourceSchedule.transactionId = sequence;
+        row.QueueFiling().queueSourceSchedule.transactionId = sequence;
     }
     // Commit the conditional reservation before publishing its queue root;
     // QueueInstanceTable rejects root commit while the conditional is reserved.
@@ -89831,7 +89856,7 @@ engine.runtimeRecreateRequired = true;
             }
         }
         if (ok) {
-          if (row.queueConditional.Valid()) {
+          if (row.HasFeatureArrays() && row.QueueFiling().queueConditional.Valid()) {
             row.queueContinuationPrepared = true;
             ++row.pendingFutureCount;
             scratch.queueSuccessorCompletionOwnerPinned = false;
@@ -89934,10 +89959,10 @@ engine.runtimeRecreateRequired = true;
           }
           ok = postedAll && ok;
           if (!IsInitialRootQueueTimingOnlyCurrent(row)) PublishInitialQueuePrograms(row);
-          if (row.queueSuccessorProgramBank != nullptr) {
-              row.queueSuccessorProgramBank->groups[0] = row.queueArmGroup;
-              row.queueSuccessorProgramBank->transition = row.queueTransition;
-              row.queueSuccessorProgramBank->published = !row.queueTimingPending;
+          if (row.HasFeatureArrays() && row.QueueFiling().queueSuccessorProgramBank != nullptr) {
+              row.QueueFiling().queueSuccessorProgramBank->groups[0] = row.QueueFiling().queueArmGroup;
+              row.QueueFiling().queueSuccessorProgramBank->transition = row.QueueFiling().queueTransition;
+              row.QueueFiling().queueSuccessorProgramBank->published = !row.queueTimingPending;
           }
           scratch.prepared = false;
         }
@@ -90037,7 +90062,7 @@ engine.runtimeRecreateRequired = true;
             });
         if (holder == engine.playableServices.end() ||
             !holder->queueFirstContinuationLane ||
-            !holder->queueDecision.Valid() ||
+            !holder->QueueFiling().queueDecision.Valid() ||
             !attempt.queueContinuationPrimaryGroup.Exact() ||
             !attempt.queueContinuationCoordinatorArmGroupPrepared ||
             !engine.decisions.CommitPreparedReservation(
@@ -90050,8 +90075,8 @@ engine.runtimeRecreateRequired = true;
             attempt.queueContinuationCoordinatorArmGroupPrepared = false;
             harken::DecisionParticipantRef participant{};
             participant.kind = harken::DecisionParticipantKind::Subdecision;
-            participant.slot = holder->queueDecision.slot;
-            participant.generation = holder->queueDecision.generation;
+            participant.slot = holder->QueueFiling().queueDecision.slot;
+            participant.generation = holder->QueueFiling().queueDecision.generation;
             harken::DecisionCommitPayload payload{};
             payload.participants = &participant;
             payload.participantCount = 1;
@@ -90090,8 +90115,8 @@ engine.runtimeRecreateRequired = true;
                 record.attemptGeneration != attempt.generation ||
                 holder == engine.playableServices.end() ||
                 !holder->queueFirstContinuationLane ||
-                holder->queueDecision.slot != record.memberDecision.slot ||
-                holder->queueDecision.generation !=
+                holder->QueueFiling().queueDecision.slot != record.memberDecision.slot ||
+                holder->QueueFiling().queueDecision.generation !=
                     record.memberDecision.generation ||
                 !record.primaryGroup.Exact() ||
                 !record.prerequisiteMember.Exact() ||
@@ -90988,9 +91013,9 @@ bool PrepareNestedQueueReplacementTree(harken::Engine& engine,
     if (oldRoot != 0) {
         const auto old = engine.playableInstances.Classify(oldRoot);
         if (!old.live || old.scheduleEpoch != row.variableControlNestedQueueSuccessorEpoch ||
-            row.queueSuccessorProgramBank == nullptr || row.queueSuccessorProgramBank->supersededRoot != 0)
+            row.QueueFiling().queueSuccessorProgramBank == nullptr || row.QueueFiling().queueSuccessorProgramBank->supersededRoot != 0)
             return false;
-    } else if (!row.queueSameProgramKey) return false;
+    } else if (!row.QueueFiling().queueSameProgramKey) return false;
     if (resolution.sameProgramKey) return true;
     const auto count = resolution.materialized.leafCount;
     const auto base = engine.playableStorage.MemberBase(row.partition.slot) +
@@ -91054,12 +91079,12 @@ bool ReplaceNestedQueueSuccessorIdentity(harken::Engine& engine,
         std::max(1u, row.scheduleLeafCount);
     const auto oldRoot = row.variableControlNestedQueueSuccessorInstance;
     if (oldRoot != 0) {
-        auto* old = row.queueSuccessorProgramBank;
+        auto* old = row.QueueFiling().queueSuccessorProgramBank;
         if (old == nullptr || old->supersededRoot != 0) return false;
         old->supersededRoot = oldRoot;
         old->supersededEpoch = row.variableControlNestedQueueSuccessorEpoch;
-        for (std::uint32_t index = 0; index < row.queueSuccessorPrograms.count; ++index) {
-            auto* member = engine.FindQueueProgramMember(old, row.queueSuccessorPrograms.first + index);
+        for (std::uint32_t index = 0; index < row.QueueFiling().queueSuccessorPrograms.count; ++index) {
+            auto* member = engine.FindQueueProgramMember(old, row.QueueFiling().queueSuccessorPrograms.first + index);
             if (member == nullptr || !member->primaryOwned ||
                 engine.FindLogicalPlayableMember(base + index) != member) return false;
             member->retirePrimary = true;
@@ -91089,8 +91114,8 @@ bool ReplaceNestedQueueSuccessorIdentity(harken::Engine& engine,
         row.variableControlNestedQueueSuccessorEpoch = tree.PreparedInstanceEpoch(0);
         row.variableControlNestedQueueSuccessorOrdinal = scratch.next.currentChildOrdinal;
     } else if (scratch.sameProgramKey) {
-        row.queueSuccessorProgramBank = nullptr;
-        row.queueSuccessorPrograms = {};
+        row.QueueFiling().queueSuccessorProgramBank = nullptr;
+        row.QueueFiling().queueSuccessorPrograms = {};
     }
     return true;
 }
@@ -91298,17 +91323,17 @@ bool PrepareImmediateActionQueueReplacement(
     const harken::MonitorControlCause& cause = {}) noexcept {
     harken::Engine& engine = *plan.engine;
     if (!row.queueContinuationPrepared ||
-        !row.queueDecision.Valid() || !row.queueConditional.Valid() ||
+        !row.QueueFiling().queueDecision.Valid() || !row.QueueFiling().queueConditional.Valid() ||
         row.queueArrivalDecision.Valid() ||
-        row.queueSourceControlArmCount >
-            row.queueTransitionGroupArmCount ||
+        row.QueueFiling().queueSourceControlArmCount >
+            row.QueueFiling().queueTransitionGroupArmCount ||
         engine.config.blockFrames == 0) {
         return false;
     }
-    if (row.queueTransition.Valid()) {
+    if (row.QueueFiling().queueTransition.Valid()) {
         harken::TransitionInstanceSnapshot transition{};
         if (!engine.transitionInstances.Capture(
-                row.queueTransition, &transition) ||
+                row.QueueFiling().queueTransition, &transition) ||
             transition.state !=
                 harken::TransitionAudibleGateState::Replaceable) {
             return false;
@@ -91319,9 +91344,9 @@ bool PrepareImmediateActionQueueReplacement(
     if (!ResolveImmediateActionQueueReset(engine, row, &resolution, projection)) {
         return false;
     }
-    auto* continuation = row.queueSuccessorProgramBank != nullptr &&
-        row.queueSuccessorProgramBank->continuationLane.Active()
-        ? &row.queueSuccessorProgramBank->continuationLane : nullptr;
+    auto* continuation = row.QueueFiling().queueSuccessorProgramBank != nullptr &&
+        row.QueueFiling().queueSuccessorProgramBank->continuationLane.Active()
+        ? &row.QueueFiling().queueSuccessorProgramBank->continuationLane : nullptr;
     if (continuation != nullptr && !continuation->Replaceable()) return false;
     // Bank admission is common to native and Page futures. In particular a
     // deferred Reset must settle real exhaustion instead of retrying forever
@@ -91352,10 +91377,10 @@ bool PrepareImmediateActionQueueReplacement(
     std::array<std::uint64_t, 2> sliceFrames{
         row.queueCompletionFrame, 0};
     std::uint16_t sliceCount = 1;
-    if (!native && row.queueTransition.Valid()) {
-        if (row.queueSourceControlArmCount != 0) {
+    if (!native && row.QueueFiling().queueTransition.Valid()) {
+        if (row.QueueFiling().queueSourceControlArmCount != 0) {
             const std::uint64_t sourceFrame =
-                row.queueSourceSchedule.entryAnchorFrame;
+                row.QueueFiling().queueSourceSchedule.entryAnchorFrame;
             if (sourceFrame > row.queueCompletionFrame) {
                 return false;
             }
@@ -91366,17 +91391,17 @@ bool PrepareImmediateActionQueueReplacement(
             }
         } else {
             std::uint64_t targetStartFrame = row.queueCompletionFrame;
-            if (row.queueSuccessorScheduleLeafCount > 1) {
+            if (row.QueueFiling().queueSuccessorScheduleLeafCount > 1) {
                 targetStartFrame = UINT64_MAX;
-                for (std::uint32_t index = 0; index < row.queueSuccessorScheduleLeafCount; ++index) {
+                for (std::uint32_t index = 0; index < row.QueueFiling().queueSuccessorScheduleLeafCount; ++index) {
                     const auto* member = engine.FindQueueSuccessorMember(row, index);
                     if (member == nullptr) return false;
                     targetStartFrame = std::min(targetStartFrame, member->startFrame);
                 }
-            } else if (row.queueSuccessorArm.Valid()) {
-                targetStartFrame = row.queueSuccessorProgramPlane == 0
+            } else if (row.QueueFiling().queueSuccessorArm.Valid()) {
+                targetStartFrame = row.QueueFiling().queueSuccessorProgramPlane == 0
                     ? row.schedule.entryAnchorFrame
-                    : row.queueSuccessorSchedule.entryAnchorFrame;
+                    : row.QueueFiling().queueSuccessorSchedule.entryAnchorFrame;
             }
             if (targetStartFrame < row.queueCompletionFrame) {
                 return false;
@@ -91389,12 +91414,12 @@ bool PrepareImmediateActionQueueReplacement(
     }
     harken::DecisionCommittedSnapshot oldDecision{};
     const bool oldCommitted = engine.decisions.CaptureCommitted(
-        row.queueDecision, &oldDecision);
+        row.QueueFiling().queueDecision, &oldDecision);
     if (!native && ((oldCommitted &&
          (oldDecision.audioState != harken::AudioGroupState::Pending ||
           oldDecision.sliceCount != sliceCount ||
           oldDecision.consumedSlices != 0)) ||
-        (!oldCommitted && !engine.decisions.IsOpen(row.queueDecision)))) {
+        (!oldCommitted && !engine.decisions.IsOpen(row.QueueFiling().queueDecision)))) {
         return false;
     }
     std::array<harken::Plan03GroupSliceIdentity, 2> oldSlices{};
@@ -91414,7 +91439,7 @@ bool PrepareImmediateActionQueueReplacement(
         }
         oldSlices[sliceIndex] = {
             sliceFrames[sliceIndex] / engine.config.blockFrames,
-            header->pageGeneration, row.queueDecision, sliceIndex};
+            header->pageGeneration, row.QueueFiling().queueDecision, sliceIndex};
         }
         harken::Plan03PageGroupView oldGroup{};
         if (!engine.timelinePool.ResolvePlan03GroupSliceProducer(
@@ -91423,16 +91448,16 @@ bool PrepareImmediateActionQueueReplacement(
             oldGroup.lease->Capture().state !=
                 harken::AudioSliceState::Ready ||
             oldGroup.sourceControlCount !=
-                row.queueSourceControlArmCount ||
+                row.QueueFiling().queueSourceControlArmCount ||
             oldGroup.memberCount !=
-                row.queueTransitionGroupArmCount ||
+                row.QueueFiling().queueTransitionGroupArmCount ||
             (oldGroup.memberCount != 0 && oldGroup.members == nullptr)) {
             return false;
         }
         for (std::uint32_t memberIndex = 0;
              memberIndex < oldGroup.memberCount; ++memberIndex) {
             const harken::TimelineArmToken expected =
-                row.queueTransitionGroupArms[memberIndex];
+                row.QueueFiling().queueTransitionGroupArms[memberIndex];
             const harken::TimelineArmToken captured =
                 oldGroup.members[memberIndex];
             harken::TimelineArmObservation observation{};
@@ -92218,11 +92243,11 @@ bool PrepareImmediateActionQueueReplacement(
     const auto replacementStatus = scratch.retainsOriginalCurrent
         ? (originalCurrent != nullptr && originalDecision != nullptr
             ? engine.queueInstances.PrepareConditionalReplacementRetainingOriginalCurrent(
-                row.queueInstance, row.queueConditional, row.queueDecision, replacement,
+                row.queueInstance, row.QueueFiling().queueConditional, row.QueueFiling().queueDecision, replacement,
                 engine.timelineOccurrences, *originalCurrent, engine.decisions, *originalDecision,
                 &scratch.conditional, continuation) : harken::QueueResetStatusV1::InvalidInput)
-        : engine.queueInstances.PrepareConditionalReplacement(row.queueInstance, row.queueConditional,
-            row.queueDecision, replacement, &scratch.conditional, continuation);
+        : engine.queueInstances.PrepareConditionalReplacement(row.queueInstance, row.QueueFiling().queueConditional,
+            row.QueueFiling().queueDecision, replacement, &scratch.conditional, continuation);
     if (replacementStatus != harken::QueueResetStatusV1::Ok) {
         (void)ReleaseImmediateActionQueueReplacement(engine, scratch);
         return false;
@@ -92576,68 +92601,68 @@ bool CommitNativeImmediateActionQueueReplacement(harken::Engine& engine,
                 &holder->sourceEffectCommits)) return false;
     } else if (!CommitPreparedAuthoredStop(engine, scratch.inheritedStop, sequence)) return false;
     if (!ReplaceNestedQueueSuccessorIdentity(engine, scratch)) return false;
-    row.queueDecision = scratch.nativeMemberDecision;
+    row.QueueFiling().queueDecision = scratch.nativeMemberDecision;
     row.queueSuccessorDecision = scratch.nativeSourceDecision;
     row.queueTicket = sequence;
     row.queueSuccessorTicket = scratch.nativeSourceDecision.Valid() ? sequence : 0;
     row.QueueNextState() = scratch.next;
-    row.queueConditional = selected.version;
-    row.queueArmGroup = scratch.armGroup;
+    row.QueueFiling().queueConditional = selected.version;
+    row.QueueFiling().queueArmGroup = scratch.armGroup;
     row.queueSourceArm = {};
-    row.queueSourceControlArmCount = 0;
+    row.QueueFiling().queueSourceControlArmCount = 0;
     row.ClearQueueSourcePrograms();
-    row.queueTransitionGroupArms.Clear();
-    row.queueTransitionGroupArmCount = 0;
-    row.queueTransition = {};
-    row.queueTransitionEndFrame = 0;
-    row.queueSuccessorCompletion = {};
+    row.QueueFiling().queueTransitionGroupArms.Clear();
+    row.QueueFiling().queueTransitionGroupArmCount = 0;
+    row.QueueFiling().queueTransition = {};
+    row.QueueFiling().queueTransitionEndFrame = 0;
+    row.QueueFiling().queueSuccessorCompletion = {};
     row.queueSuccessorOwner = {};
-    row.queueSuccessorCompositeOwner = {};
-    row.queueSuccessorOccurrence = {};
+    row.QueueFiling().queueSuccessorCompositeOwner = {};
+    row.QueueFiling().queueSuccessorOccurrence = {};
     row.QueueSuccessorLeaf() = {};
-    row.queueSuccessorArm = {};
-    row.queueSuccessorScheduleBase = row.queueSuccessorScheduleLeafCount = 0;
+    row.QueueFiling().queueSuccessorArm = {};
+    row.QueueFiling().queueSuccessorScheduleBase = row.QueueFiling().queueSuccessorScheduleLeafCount = 0;
     row.queueSuccessorTailFrames = 0;
-    row.queueSuccessorHasZeroWorkCompletion = false;
-    row.queueSuccessorZeroWorkCompletionFrame = 0;
-    row.queueSuccessorProgramBank = nullptr;
-    row.queueSuccessorPrograms = {};
-    row.queueSameProgramKey = scratch.sameProgramKey;
-    row.queueDecisionCommitted = true;
+    row.QueueFiling().queueSuccessorHasZeroWorkCompletion = false;
+    row.QueueFiling().queueSuccessorZeroWorkCompletionFrame = 0;
+    row.QueueFiling().queueSuccessorProgramBank = nullptr;
+    row.QueueFiling().queueSuccessorPrograms = {};
+    row.QueueFiling().queueSameProgramKey = scratch.sameProgramKey;
+    row.QueueFiling().queueDecisionCommitted = true;
     row.queueContinuationPrepared = true;
     row.pendingFutureCount = 1;
     if (!scratch.sameProgramKey) {
         const auto& start = scratch.successorStarts[0];
         auto& bank = *scratch.programBank;
-        row.queueSuccessorProgramPlane = scratch.successorProgramPlane;
-        row.queueSuccessorOccurrence = scratch.successorOccurrence;
-        row.queueSuccessorCompletion = scratch.successorCompletion;
+        row.QueueFiling().queueSuccessorProgramPlane = scratch.successorProgramPlane;
+        row.QueueFiling().queueSuccessorOccurrence = scratch.successorOccurrence;
+        row.QueueFiling().queueSuccessorCompletion = scratch.successorCompletion;
         row.queueSuccessorOwner = scratch.successorOwner;
         auto* member = engine.FindQueueProgramMember(&bank, 0);
         if (member == nullptr || !member->voice.Valid()) return false;
         member->nativeCompletion = scratch.successorCompletion;
         row.QueueSuccessorLeaf() = scratch.successorLeaves[0];
-        row.queueSuccessorArm = start.arm;
-        row.queueMonitorSelection = start.monitorSelection;
+        row.QueueFiling().queueSuccessorArm = start.arm;
+        row.QueueFiling().queueMonitorSelection = start.monitorSelection;
         row.queueSuccessorRenderHandle = start.renderHandle;
         row.queueSuccessorTailFrames = start.postSourceTailFrames;
-        row.queueTransitionGroupArms[0] = start.arm;
-        row.queueTransitionGroupArmCount = 1;
-        auto& schedule = scratch.successorProgramPlane == 0 ? row.schedule : row.queueSuccessorSchedule;
+        row.QueueFiling().queueTransitionGroupArms[0] = start.arm;
+        row.QueueFiling().queueTransitionGroupArmCount = 1;
+        auto& schedule = scratch.successorProgramPlane == 0 ? row.schedule : row.QueueFiling().queueSuccessorSchedule;
         schedule = bank.schedules[0];
         bank.groups[0] = scratch.armGroup;
         bank.published = true;
-        row.queueSuccessorProgramBank = &bank;
-        row.queueSuccessorPrograms = {0, 1};
+        row.QueueFiling().queueSuccessorProgramBank = &bank;
+        row.QueueFiling().queueSuccessorPrograms = {0, 1};
         if (scratch.successorTree != nullptr &&
             engine.playableInstances.Classify(row.variableControlNestedQueueSuccessorInstance).kind != harken::PlayableKind::Sound)
-            row.queueSuccessorScheduleLeafCount = 1;
+            row.QueueFiling().queueSuccessorScheduleLeafCount = 1;
         scratch.programBank = nullptr;
     }
     if (scratch.successorDecision.Valid() && !engine.decisions.CancelPreparedReservation(&scratch.successorDecision))
         return false;
     if (!scratch.sameProgramKey)
-        PublishMonitorSelection(engine, row.queueMonitorSelection, row.queueSuccessorArm,
+        PublishMonitorSelection(engine, row.QueueFiling().queueMonitorSelection, row.QueueFiling().queueSuccessorArm,
             row.queueSuccessorRenderHandle, scratch.resetCause);
     if (scratch.successorTree != nullptr) {
         auto& tree = *scratch.successorTree;
@@ -92678,23 +92703,23 @@ void CommitImmediateActionQueueReplacements(
             continue;
         }
         harken::EnginePlayableServiceRow& row = *scratch.row;
-        const harken::DecisionToken oldDecision = row.queueDecision;
-        const harken::ArmGroupToken oldArmGroup = row.queueArmGroup;
+        const harken::DecisionToken oldDecision = row.QueueFiling().queueDecision;
+        const harken::ArmGroupToken oldArmGroup = row.QueueFiling().queueArmGroup;
         const harken::TimelineArmToken oldSuccessorArm =
-            row.queueSuccessorArm;
+            row.QueueFiling().queueSuccessorArm;
         const std::uint32_t oldSourceControlCount =
-            row.queueSourceControlArmCount;
+            row.QueueFiling().queueSourceControlArmCount;
         const std::uint32_t oldGroupArmCount =
-            row.queueTransitionGroupArmCount;
+            row.QueueFiling().queueTransitionGroupArmCount;
         const harken::TimelineArmToken oldSourceArm =
             row.queueSourceArm;
         const harken::TransitionInstanceToken oldTransition =
-            row.queueTransition;
+            row.QueueFiling().queueTransition;
         const std::uint32_t oldScheduleBase =
-            row.queueSuccessorScheduleBase;
+            row.QueueFiling().queueSuccessorScheduleBase;
         const std::uint32_t oldScheduleLeafCount =
-            row.queueSuccessorScheduleLeafCount;
-        const bool oldSameProgramKey = row.queueSameProgramKey;
+            row.QueueFiling().queueSuccessorScheduleLeafCount;
+        const bool oldSameProgramKey = row.QueueFiling().queueSameProgramKey;
         const bool sameProgramKey = scratch.sameProgramKey;
         const bool continuation = scratch.oldContinuation != nullptr;
         auto* const replacementBank = scratch.programBank;
@@ -92776,38 +92801,38 @@ void CommitImmediateActionQueueReplacements(
         row.queueArrivalCurrentRelease = holdsCurrentDecision ? scratch.retainedCurrentRelease
             : harken::VoiceReleaseObserver{};
 
-        row.queueDecision = replacementDecision;
+        row.QueueFiling().queueDecision = replacementDecision;
         row.queueSuccessorDecision = replacementSuccessorDecision;
         row.queueTicket = sequence;
         row.queueSuccessorTicket =
             scratch.successorHasContinuation ? sequence : 0;
         row.queueCurrentCompletion = scratch.replacementCompletion;
         row.QueueNextState() = scratch.next;
-        row.queueConditional.version = scratch.next.version;
-        row.queueArmGroup = scratch.armGroup;
+        row.QueueFiling().queueConditional.version = scratch.next.version;
+        row.QueueFiling().queueArmGroup = scratch.armGroup;
         row.queueSourceArm = {};
-        row.queueSourceControlArmCount = 0;
+        row.QueueFiling().queueSourceControlArmCount = 0;
         row.ClearQueueSourcePrograms();
-        row.queueTransitionGroupArms.Clear();
-        row.queueTransitionGroupArmCount = 0;
-        row.queueTransition = {};
-        row.queueTransitionEndFrame = 0;
+        row.QueueFiling().queueTransitionGroupArms.Clear();
+        row.QueueFiling().queueTransitionGroupArmCount = 0;
+        row.QueueFiling().queueTransition = {};
+        row.QueueFiling().queueTransitionEndFrame = 0;
         row.queueSuccessorDecision = replacementSuccessorDecision;
-        row.queueSuccessorCompletion = {};
+        row.QueueFiling().queueSuccessorCompletion = {};
         row.queueSuccessorOwner = {};
-        row.queueSuccessorCompositeOwner = {};
-        row.queueSuccessorOccurrence = {};
+        row.QueueFiling().queueSuccessorCompositeOwner = {};
+        row.QueueFiling().queueSuccessorOccurrence = {};
         row.QueueSuccessorLeaf() = {};
-        row.queueSuccessorArm = {};
-        row.queueSuccessorScheduleBase = 0;
-        row.queueSuccessorScheduleLeafCount = 0;
+        row.QueueFiling().queueSuccessorArm = {};
+        row.QueueFiling().queueSuccessorScheduleBase = 0;
+        row.QueueFiling().queueSuccessorScheduleLeafCount = 0;
         row.queueSuccessorTailFrames = 0;
-        row.queueSuccessorHasZeroWorkCompletion =
+        row.QueueFiling().queueSuccessorHasZeroWorkCompletion =
             scratch.successorHasZeroWorkCompletion;
-        row.queueSuccessorZeroWorkCompletionFrame =
+        row.QueueFiling().queueSuccessorZeroWorkCompletionFrame =
             scratch.successorZeroWorkCompletionFrame;
-        row.queueSameProgramKey = sameProgramKey;
-        row.queueDecisionCommitted = sameProgramKey;
+        row.QueueFiling().queueSameProgramKey = sameProgramKey;
+        row.QueueFiling().queueDecisionCommitted = sameProgramKey;
         row.queueContinuationPrepared = true;
         row.pendingFutureCount = 1;
 
@@ -92873,7 +92898,7 @@ void CommitImmediateActionQueueReplacements(
                      ok;
             }
 
-            row.queueSuccessorProgramPlane =
+            row.QueueFiling().queueSuccessorProgramPlane =
                 scratch.successorProgramPlane;
             auto& bank = *scratch.programBank;
             ok = StampQueueProgramBank(bank, sequence) && ok;
@@ -92898,41 +92923,41 @@ void CommitImmediateActionQueueReplacements(
                         engine.FindQueueProgramMember(&bank, scratch.sourceControlCount + leafIndex)->
                             monitorSelection = scratch.successorStarts[leafIndex].monitorSelection;
                     }
-                    row.queueSuccessorScheduleBase =
+                    row.QueueFiling().queueSuccessorScheduleBase =
                         static_cast<std::uint32_t>(endpointBase);
-                    row.queueSuccessorScheduleLeafCount =
+                    row.QueueFiling().queueSuccessorScheduleLeafCount =
                         scratch.successorLeafCount;
-                    row.queueSuccessorCompositeOwner =
+                    row.QueueFiling().queueSuccessorCompositeOwner =
                         scratch.successorCompositeOwner;
                     scratch.successorCompositeOwner = {};
                 }
             }
             if (scratch.successorLeafCount != 0 && !targetPrograms.empty()) {
                 harken::TimelineProgramView& successorRuntime =
-                    row.queueSuccessorProgramPlane == 0
+                    row.QueueFiling().queueSuccessorProgramPlane == 0
                         ? row.runtimeProgram
                         : row.queueSuccessorRuntimeProgram;
                 harken::ProgramView& successorSchedule =
-                    row.queueSuccessorProgramPlane == 0
+                    row.QueueFiling().queueSuccessorProgramPlane == 0
                         ? row.schedule
-                        : row.queueSuccessorSchedule;
+                        : row.QueueFiling().queueSuccessorSchedule;
                 successorSchedule = scratch.successorLeafCount == 1
                     ? targetPrograms[0] : bank.aggregateSchedules[0];
                 successorRuntime = *successorSchedule.runtimeProgram.program;
             }
 
-            row.queueSuccessorOccurrence = scratch.successorOccurrence;
+            row.QueueFiling().queueSuccessorOccurrence = scratch.successorOccurrence;
             if (scratch.successorLeafCount != 0) {
                 row.QueueSuccessorLeaf() = scratch.successorLeaves[0];
-                row.queueSuccessorArm = scratch.successorStarts[0].arm;
-                row.queueMonitorSelection = scratch.successorStarts[0].monitorSelection;
+                row.QueueFiling().queueSuccessorArm = scratch.successorStarts[0].arm;
+                row.QueueFiling().queueMonitorSelection = scratch.successorStarts[0].monitorSelection;
                 row.queueSuccessorRenderHandle =
                     scratch.successorStarts[0].renderHandle;
                 row.queueSuccessorTailFrames =
                     scratch.successorStarts[0].postSourceTailFrames;
             }
             if (scratch.successorLeafCount == 1) {
-                row.queueSuccessorCompletion =
+                row.QueueFiling().queueSuccessorCompletion =
                     scratch.successorCompletion;
                 row.queueSuccessorOwner = scratch.successorOwner;
                 if (auto* member = engine.FindQueueProgramMember(&bank, scratch.sourceControlCount))
@@ -92943,11 +92968,11 @@ void CommitImmediateActionQueueReplacements(
                         scratch.sourceControlCount, scratch.sourceEventCount)) {
                     for (std::uint32_t sourceIndex = 0;
                          sourceIndex < scratch.sourceControlCount; ++sourceIndex) {
-                        row.queueTransitionGroupArms[sourceIndex] = scratch.sourceArms[sourceIndex];
+                        row.QueueFiling().queueTransitionGroupArms[sourceIndex] = scratch.sourceArms[sourceIndex];
                     }
                     const auto aggregateIndex = scratch.successorLeafCount != 0 ? 1u : 0u;
-                    row.queueSourceSchedule = bank.aggregateSchedules[aggregateIndex];
-                    row.queueSourceRuntimeProgram = *row.queueSourceSchedule.runtimeProgram.program;
+                    row.QueueFiling().queueSourceSchedule = bank.aggregateSchedules[aggregateIndex];
+                    row.queueSourceRuntimeProgram = *row.QueueFiling().queueSourceSchedule.runtimeProgram.program;
                     row.queueSourceArm = scratch.sourceArms[0];
                 } else {
                     ok = false;
@@ -92955,31 +92980,31 @@ void CommitImmediateActionQueueReplacements(
             }
             for (std::uint32_t leafIndex = 0;
                  leafIndex < scratch.successorLeafCount; ++leafIndex) {
-                row.queueTransitionGroupArms[
+                row.QueueFiling().queueTransitionGroupArms[
                     scratch.sourceControlCount + leafIndex] =
                     scratch.successorStarts[leafIndex].arm;
             }
-            row.queueSourceControlArmCount =
+            row.QueueFiling().queueSourceControlArmCount =
                 scratch.sourceControlCount;
-            row.queueTransitionGroupArmCount =
+            row.QueueFiling().queueTransitionGroupArmCount =
                 scratch.sourceControlCount +
                 scratch.successorLeafCount;
-            row.queueTransition = scratch.transition;
-            row.queueTransitionEndFrame = scratch.transition.Valid()
+            row.QueueFiling().queueTransition = scratch.transition;
+            row.QueueFiling().queueTransitionEndFrame = scratch.transition.Valid()
                 ? scratch.transitionEndFrame
                 : 0;
             scratch.transition = {};
 
-            bank.groups[0] = row.queueArmGroup;
-            bank.transition = row.queueTransition;
+            bank.groups[0] = row.QueueFiling().queueArmGroup;
+            bank.transition = row.QueueFiling().queueTransition;
             if (!continuation && scratch.sourceControlCount + scratch.successorLeafCount != 0) {
                 ok = engine.timelinePool.CommitPreparedTransactionBatch(
                          &scratch.transactions, sequence) &&
                      ok;
             }
             bank.published = true;
-            row.queueSuccessorProgramBank = &bank;
-            row.queueSuccessorPrograms = {scratch.sourceControlCount, scratch.successorLeafCount};
+            row.QueueFiling().queueSuccessorProgramBank = &bank;
+            row.QueueFiling().queueSuccessorPrograms = {scratch.sourceControlCount, scratch.successorLeafCount};
             scratch.programBank = nullptr;
         }
 
@@ -92988,9 +93013,9 @@ void CommitImmediateActionQueueReplacements(
             else {
                 const auto lane = replacementBank->continuationLane.Handle();
                 row.queuePreparedPages = {lane.slot + 1u, lane.generation};
-                replacementBank->groups[0] = row.queueArmGroup;
+                replacementBank->groups[0] = row.QueueFiling().queueArmGroup;
                 replacementBank->published = true;
-                row.queueSuccessorProgramBank = replacementBank;
+                row.QueueFiling().queueSuccessorProgramBank = replacementBank;
                 scratch.programBank = nullptr;
             }
         }
@@ -93004,7 +93029,7 @@ void CommitImmediateActionQueueReplacements(
         payload.participants = &participant;
         payload.participantCount = 1;
         payload.pages = row.queuePreparedPages;
-        payload.armGroup = row.queueArmGroup;
+        payload.armGroup = row.QueueFiling().queueArmGroup;
         if (sameProgramKey) {
             ok = CommitPreparedAuthoredStop(engine, scratch.inheritedStop, sequence) && ok;
             ok = engine.decisions.Commit(replacementDecision, payload) && ok;
@@ -93082,9 +93107,9 @@ bool ServiceReplacedOriginalQueueSource(harken::Engine& engine,
 bool BindNativeQueueReplacementSource(harken::Engine& engine,
     harken::Engine::OriginalQueueReplacementHolder& holder,
     harken::EnginePlayableServiceRow& row) noexcept {
-    if (row.queueSameProgramKey) return true;
-    auto* bank = row.queueSuccessorProgramBank;
-    const auto arm = row.queueSuccessorArm;
+    if (row.QueueFiling().queueSameProgramKey) return true;
+    auto* bank = row.QueueFiling().queueSuccessorProgramBank;
+    const auto arm = row.QueueFiling().queueSuccessorArm;
     harken::QueueInstanceTable::OriginalConditionalInitialClockBinding clock{};
     harken::TimelineArmObservation observed{};
     if (!holder.clock.CaptureInitialBinding(&clock) || bank == nullptr || !holder.bankRetention.Valid() ||
@@ -93119,17 +93144,17 @@ bool BindNativeQueueReplacementSource(harken::Engine& engine,
     if (core->memberIndex != 0 || !harken::Engine::SameOriginalSingleArm(schedule.armToken, arm)) return false;
     if (holder.sourceClockBound) return installation.onsetFrame == start;
     if (installation.onsetFrame != schedule.entryAnchorFrame ||
-        row.queueSuccessorCompletion.absoluteLogicalStartFrame != installation.onsetFrame) return false;
+        row.QueueFiling().queueSuccessorCompletion.absoluteLogicalStartFrame != installation.onsetFrame) return false;
     harken::KnownCompletionPredicateV1 completion{};
-    if (!harken::ReanchorKnownCompletionBeforePublication(row.queueSuccessorCompletion, start, &completion) ||
+    if (!harken::ReanchorKnownCompletionBeforePublication(row.QueueFiling().queueSuccessorCompletion, start, &completion) ||
         !engine.timelineArms.BindPendingImmediateStart(arm, start, start) ||
-        !engine.armGroups.Acknowledge(row.queueArmGroup, arm, observed.armedCompletionSequence)) return false;
+        !engine.armGroups.Acknowledge(row.QueueFiling().queueArmGroup, arm, observed.armedCompletionSequence)) return false;
     bank->schedules[0].entryAnchorFrame = start;
     bank->aggregateSchedules[0].entryAnchorFrame = start;
-    auto& mirror = row.queueSuccessorProgramPlane == 0 ? row.schedule : row.queueSuccessorSchedule;
+    auto& mirror = row.QueueFiling().queueSuccessorProgramPlane == 0 ? row.schedule : row.QueueFiling().queueSuccessorSchedule;
     mirror.entryAnchorFrame = start;
     engine.timelineVoiceInstallIdentities[arm.renderSlot].onsetFrame = start;
-    row.queueSuccessorCompletion = completion;
+    row.QueueFiling().queueSuccessorCompletion = completion;
     if (auto* member = engine.FindQueueProgramMember(bank, 0)) {
         member->startFrame = start;
         member->nativeCompletion = completion;
@@ -93171,10 +93196,10 @@ void ServiceNativeQueueReplacements(harken::Engine& engine, std::uint64_t comple
         if (holder.phase == Phase::Selected && row->phase == harken::EnginePlayableStartPhase::Cancelling) {
             harken::QueueInstanceSnapshot actual{};
             if (engine.queueInstances.Capture(holder.queue, &actual) && actual.pendingVersion != 0 &&
-                row->queueConditional.version == actual.pendingVersion &&
-                SameCanonicalDecision(row->queueDecision, holder.decisions[1]))
+                row->QueueFiling().queueConditional.version == actual.pendingVersion &&
+                SameCanonicalDecision(row->QueueFiling().queueDecision, holder.decisions[1]))
                 (void)engine.queueInstances.RetireConditionalForAbort(holder.queue,
-                    row->queueConditional, holder.decisions[1]);
+                    row->QueueFiling().queueConditional, holder.decisions[1]);
         }
         if (holder.phase == Phase::Retiring ||
             (holder.clock.CaptureState(&nativeState) &&
@@ -93203,12 +93228,12 @@ void ServiceNativeQueueReplacements(harken::Engine& engine, std::uint64_t comple
                 holder.calendarPinned = true;
             }
             if (!PublishNativeQueueResetStops(engine, holder, *row, completed)) continue;
-            if (!row->queueSameProgramKey && !holder.sourceArmPublished) {
+            if (!row->QueueFiling().queueSameProgramKey && !holder.sourceArmPublished) {
                 harken::Plan03PageGroupView member{};
                 if (!engine.timelinePool.ResolvePlan03GroupSliceProducer(holder.groups[1], &member) ||
                     member.frontier == nullptr || member.lease == nullptr ||
-                    !engine.timelineArms.BindFrontierAdmission(row->queueSuccessorArm, *member.frontier, *member.lease) ||
-                    !engine.timelineArms.Publish(row->queueSuccessorArm)) continue;
+                    !engine.timelineArms.BindFrontierAdmission(row->QueueFiling().queueSuccessorArm, *member.frontier, *member.lease) ||
+                    !engine.timelineArms.Publish(row->QueueFiling().queueSuccessorArm)) continue;
                 holder.sourceArmPublished = true;
             }
             if (!holder.calendar.PublishSelected()) continue;
