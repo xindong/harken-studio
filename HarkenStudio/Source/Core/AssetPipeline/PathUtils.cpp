@@ -8,6 +8,41 @@
 
 namespace VNX {
 
+namespace {
+
+QString resolvedPath(const QString& path)
+{
+    const QString absolute = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+    QFileInfo ancestor(absolute);
+    while (!ancestor.exists()) {
+        const QString parent = ancestor.absolutePath();
+        if (parent == ancestor.absoluteFilePath()) return absolute;
+        ancestor.setFile(parent);
+    }
+    const QString canonical = ancestor.canonicalFilePath();
+    return canonical.isEmpty() ? absolute : QDir::cleanPath(QDir(canonical).filePath(
+        QDir(ancestor.absoluteFilePath()).relativeFilePath(absolute)));
+}
+
+bool directoryContainsPath(const QString& directory, const QString& path)
+{
+#if defined(Q_OS_WIN)
+    constexpr auto sensitivity = Qt::CaseInsensitive;
+#else
+    constexpr auto sensitivity = Qt::CaseSensitive;
+#endif
+    const auto contains = [](const QString& root, const QString& candidate) {
+        return candidate.compare(root, sensitivity) == 0
+            || candidate.startsWith(root.endsWith(QLatin1Char('/'))
+                ? root : root + QLatin1Char('/'), sensitivity);
+    };
+    return contains(QDir::cleanPath(QFileInfo(directory).absoluteFilePath()),
+                    QDir::cleanPath(QFileInfo(path).absoluteFilePath()))
+        || contains(resolvedPath(directory), resolvedPath(path));
+}
+
+}
+
 QString PathUtils::buildPacksDirName()
 {
     return QStringLiteral("BuildPacks");
@@ -44,51 +79,39 @@ bool PathUtils::isValidPackBuildOutputDir(const QString& path, const QString& pr
 #endif
     return (normalized.isEmpty()
         || (normalized != QStringLiteral(".") && !hasUnsafeCharacters(directory)))
-        && !isProjectRootDirectory(packBuildOutputRoot(projectFilePath, normalized), projectFilePath)
-        && (allowObjectBuckets
-            || !isProjectObjectDirectory(packBuildOutputRoot(projectFilePath, normalized), projectFilePath));
+        && !(allowObjectBuckets
+            ? isProjectRootDirectory(packBuildOutputRoot(projectFilePath, normalized), projectFilePath)
+            : isProtectedPackOutputPath(packBuildOutputRoot(projectFilePath, normalized), projectFilePath));
+}
+
+bool PathUtils::isProtectedPackOutputPath(const QString& path, const QString& projectFilePath)
+{
+    if (projectFilePath.isEmpty()) return false;
+    const QDir project(QFileInfo(projectFilePath).absolutePath());
+    if (directoryContainsPath(path, project.absolutePath())) return true;
+    for (const auto* name : {AUDIO_SOURCES_DIR, "Actions", "Layers", "Busses", "Variables", "Attenuations"}) {
+        const QString bucket = project.filePath(QLatin1String(name));
+        if (directoryContainsPath(bucket, path) || directoryContainsPath(path, bucket))
+            return true;
+    }
+    return false;
 }
 
 bool PathUtils::isProjectObjectDirectory(const QString& path, const QString& projectFilePath)
 {
     if (projectFilePath.isEmpty()) return false;
-#if defined(Q_OS_WIN)
-    constexpr auto sensitivity = Qt::CaseInsensitive;
-#else
-    constexpr auto sensitivity = Qt::CaseSensitive;
-#endif
-    const auto resolved = [](const QString& path) {
-        const QString absolute = QFileInfo(path).absoluteFilePath();
-        QFileInfo ancestor(absolute);
-        while (!ancestor.exists()) {
-            const QString parent = ancestor.absolutePath();
-            if (parent == ancestor.absoluteFilePath()) return absolute;
-            ancestor.setFile(parent);
-        }
-        const QString canonical = ancestor.canonicalFilePath();
-        return canonical.isEmpty() ? absolute : QDir::cleanPath(QDir(canonical).filePath(
-            QDir(ancestor.absoluteFilePath()).relativeFilePath(absolute)));
-    };
-    const QString absolute = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
-    const QString canonical = resolved(absolute);
     const QDir project(QFileInfo(projectFilePath).absolutePath());
     for (const auto* name : {"Actions", "Layers", "Busses", "Variables", "Attenuations"}) {
-        const QString bucket = project.filePath(QLatin1String(name));
-        const QString canonicalBucket = resolved(bucket);
-        if (absolute.compare(bucket, sensitivity) == 0
-            || absolute.startsWith(bucket + QLatin1Char('/'), sensitivity)
-            || canonical.compare(canonicalBucket, sensitivity) == 0
-            || canonical.startsWith(canonicalBucket + QLatin1Char('/'), sensitivity))
-            return true;
+        if (directoryContainsPath(project.filePath(QLatin1String(name)), path)) return true;
     }
     return false;
 }
 
 QString PathUtils::packBuildOutputLocationError()
 {
-    return QObject::tr("Pack output cannot use the project root or object bucket directories "
-        "(Actions, Layers, Busses, Variables, Attenuations). "
-        "Choose a directory outside these buckets, such as BuildPacks.");
+    return QObject::tr("Build output cannot use the project root, its parent directories, AudioSources, "
+        "or object bucket directories (Actions, Layers, Busses, Variables, Attenuations). "
+        "Choose a separate output directory, such as BuildPacks.");
 }
 
 bool PathUtils::isProjectRootDirectory(const QString& path, const QString& projectFilePath)

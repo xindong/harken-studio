@@ -43,6 +43,7 @@ struct SelectorRequest
     QUuid directChildParentGuid;
     uint32_t currentObjectID = 0;
     std::function<bool(uint32_t)> isSelectable;
+    std::function<QString(uint32_t)> selectionError;
     std::function<void(uint32_t)> onSelected;
     std::function<Qt::CheckState(uint32_t)> checkState;
     std::function<bool(uint32_t)> canToggle;

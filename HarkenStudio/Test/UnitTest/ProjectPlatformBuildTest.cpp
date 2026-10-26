@@ -1243,7 +1243,7 @@ TEST_F(ProjectPlatformBuild, IpcBuildPublishesSnapshotRecordsAfterPlatformChange
     for (const auto& record : records) {
         EXPECT_TRUE(record.success) << record.errors.toStdString();
         EXPECT_EQ(record.platformName, QStringLiteral("Android_Low"));
-        EXPECT_EQ(record.status, QStringLiteral("Built"));
+        EXPECT_TRUE(record.status.startsWith(QStringLiteral("Built")));
         EXPECT_TRUE(record.outputPath.contains("Android_Low"));
         if (record.objectID == action->objectID)
             EXPECT_EQ(mediaEntries(record.outputPath).front().sampleRate, 22050u);
@@ -1512,7 +1512,10 @@ TEST_F(ProjectPlatformBuild, IpcBuildRejectsPublicationAfterItsPlatformIsDeleted
     EXPECT_TRUE(validPublication(QDir(root).filePath("Android_Low"), low));
     const auto& records = PackGenerationRecordStore::instance().records();
     ASSERT_FALSE(records.empty());
-    for (const auto& record : records) EXPECT_EQ(record.status, QStringLiteral("Built"));
+    for (const auto& record : records) {
+        EXPECT_TRUE(record.success);
+        EXPECT_TRUE(record.status.startsWith(QStringLiteral("Built")));
+    }
     PackGenerationRecordStore::instance().clear();
 }
 

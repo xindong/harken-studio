@@ -3,6 +3,7 @@
 #include "FieldGroupProjectAdapter.h"
 
 #include "TemplateApplyService.h"
+#include "ActionStepUtils.h"
 #include "AuthoringPolicy.h"
 #include "AttenuationStore.h"
 #include "BusPlacementRules.h"
@@ -482,6 +483,17 @@ bool TemplateApplyService::seedTemplateInto(
             [&](const QUuid& guid) { return authoredByGuid.value(guid, nullptr); },
             [&](uint32_t objectID) { return authoredByObject.value(objectID, nullptr); });
         if (!authoring) return setErr(authoring.message);
+    }
+
+    EditorUtils::ActionTargetLookup actionLookup;
+    for (const auto* item : authoredByGuid)
+        actionLookup.add(*item);
+    for (const auto* item : authoredByGuid) {
+        const auto* action = item->comp<VAction>();
+        if (!action) continue;
+        const QString cycleError = EditorUtils::postActionCycleError(
+            item->objectID, action->steps, actionLookup);
+        if (!cycleError.isEmpty()) return setErr(cycleError);
     }
 
     if (project.busses.empty() || !project.busses[0].rootItem)

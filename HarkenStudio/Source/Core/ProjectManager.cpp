@@ -3980,6 +3980,38 @@ bool ProjectManager::prepareItemRename(ProjectItem* item, const QString& request
     if (const ProjectItem* conflict = findNameConflict(newName, item->type, item)) {
         return fail(nameConflictMessage(newName, item->type, *conflict));
     }
+    if (item->type == ProjectItem::Type::Action) {
+        const auto lookup = EditorUtils::makeProjectTargetLookup(*m_currentProject);
+        auto renamedLookup = lookup;
+        renamedLookup.renameObject(item->objectID, newName);
+        std::vector<const ProjectItem*> pending;
+        for (const auto* binding : m_currentProject->allFileBindings())
+            if (binding && binding->rootItem)
+                pending.push_back(binding->rootItem.get());
+        while (!pending.empty()) {
+            const ProjectItem* current = pending.back();
+            pending.pop_back();
+            const auto& before = lookup.postActionSteps(current->objectID);
+            const auto& after = renamedLookup.postActionSteps(current->objectID);
+            for (size_t index = 0; index < after.size(); ++index) {
+                const auto previousTarget = EditorUtils::resolveActionStepTarget(
+                    before[index].type, before[index].targetObjectID,
+                    before[index].targetName, lookup);
+                const auto target = EditorUtils::resolveActionStepTarget(
+                    after[index].type, after[index].targetObjectID,
+                    after[index].targetName, renamedLookup);
+                if (target.state != EditorUtils::ActionTargetState::Resolved
+                    || (previousTarget.state == EditorUtils::ActionTargetState::Resolved
+                        && previousTarget.objectID == target.objectID))
+                    continue;
+                const QString cycleError = EditorUtils::postActionCycleError(
+                    current->objectID, {after[index]}, renamedLookup);
+                if (!cycleError.isEmpty()) return fail(cycleError);
+            }
+            for (const auto& child : current->children)
+                if (child) pending.push_back(child.get());
+        }
+    }
     return true;
 }
 
@@ -4501,6 +4533,16 @@ ProjectItem* ProjectManager::createActionTargeting(ProjectItem* target,
         return nullptr;
     }
 
+    if (target->type == ProjectItem::Type::Action) {
+        const auto lookup = EditorUtils::makeProjectTargetLookup(*m_currentProject);
+        const QString cycleError = EditorUtils::postActionCycleError(
+            target->objectID, lookup.postActionSteps(target->objectID), lookup);
+        if (!cycleError.isEmpty()) {
+            emit errorOccurred(cycleError);
+            return nullptr;
+        }
+    }
+
     if (!VNX::EditorUtils::canActionStepReferenceObject(
             actionType, target->type, target->objectID)) {
         VActionStep::Type defaultType = VActionStep::Type::Play;
@@ -4553,6 +4595,12 @@ bool ProjectManager::canCreateActionsTargeting(const QList<ProjectItem*>& target
         }
         if (!validateNewAuthoring(*this, *target, nullptr))
             return false;
+        if (target->type == ProjectItem::Type::Action) {
+            const auto lookup = EditorUtils::makeProjectTargetLookup(*m_currentProject);
+            if (!EditorUtils::postActionCycleError(
+                    target->objectID, lookup.postActionSteps(target->objectID), lookup).isEmpty())
+                return false;
+        }
     }
     return true;
 }

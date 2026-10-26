@@ -145,6 +145,103 @@ TEST_F(ActionReferenceLifecycleTest, DeleteClearsActionTargetAndTimingAndUndoRes
     EXPECT_EQ(restored.delay, 27.0f);
 }
 
+TEST_F(ActionReferenceLifecycleTest, RenameCannotActivateLatentPostActionCycle)
+{
+    auto& manager = ProjectManager::instance();
+    ProjectItem* nested = manager.createItem(nullptr, QStringLiteral("Nested"),
+                                            ProjectItem::Type::Action);
+    ASSERT_NE(nested, nullptr);
+    VActionStep pending;
+    pending.type = VActionStep::Type::PostAction;
+    pending.targetName = QStringLiteral("Pending");
+    pending.delay = 500.0f;
+    action_->comp<VAction>()->steps = {pending};
+    VActionStep back = pending;
+    back.targetObjectID = action_->objectID;
+    back.targetName = action_->name;
+    nested->comp<VAction>()->steps = {back};
+    UndoRedoManager::instance().clear();
+    nested->clearDirty();
+    action_->clearDirty();
+
+    QString error;
+    EXPECT_FALSE(manager.validateItemRename(nested, QStringLiteral("Pending"), &error));
+    EXPECT_TRUE(error.contains(QStringLiteral("cycle"), Qt::CaseInsensitive));
+    EXPECT_FALSE(manager.renameItem(nested, QStringLiteral("Pending"), &error));
+    EXPECT_EQ(nested->name, QStringLiteral("Nested"));
+    EXPECT_FALSE(nested->dirtyBit);
+    EXPECT_FALSE(action_->dirtyBit);
+    EXPECT_FALSE(UndoRedoManager::instance().undoStack()->canUndo());
+    EXPECT_EQ(action_->comp<VAction>()->steps.front().targetObjectID, 0u);
+    EXPECT_EQ(action_->comp<VAction>()->steps.front().targetName, QStringLiteral("Pending"));
+
+    nested->comp<VAction>()->steps.clear();
+    EXPECT_TRUE(manager.renameItem(nested, QStringLiteral("Pending"), &error))
+        << error.toStdString();
+}
+
+TEST_F(ActionReferenceLifecycleTest, ExistingPostActionCycleDoesNotBlockUnchangedRename)
+{
+    auto& manager = ProjectManager::instance();
+    ProjectItem* nested = manager.createItem(nullptr, QStringLiteral("Nested"),
+                                            ProjectItem::Type::Action);
+    ASSERT_NE(nested, nullptr);
+    VActionStep forward;
+    forward.type = VActionStep::Type::PostAction;
+    forward.targetObjectID = nested->objectID;
+    forward.targetName = nested->name;
+    action_->comp<VAction>()->steps = {forward};
+    VActionStep back = forward;
+    back.targetObjectID = action_->objectID;
+    back.targetName = action_->name;
+    nested->comp<VAction>()->steps = {back};
+
+    QString error;
+    EXPECT_TRUE(manager.renameItem(nested, QStringLiteral("Renamed"), &error))
+        << error.toStdString();
+    EXPECT_EQ(action_->comp<VAction>()->steps.front().targetName, QStringLiteral("Renamed"));
+}
+
+TEST_F(ActionReferenceLifecycleTest, NewActionTargetingRejectsExistingPostActionCycleWithoutMutation)
+{
+    auto& manager = ProjectManager::instance();
+    ProjectItem* nested = manager.createItem(nullptr, QStringLiteral("Nested"),
+                                            ProjectItem::Type::Action);
+    ProjectItem* valid = manager.createItem(nullptr, QStringLiteral("Valid"),
+                                           ProjectItem::Type::Action);
+    ASSERT_NE(nested, nullptr);
+    ASSERT_NE(valid, nullptr);
+    VActionStep forward;
+    forward.type = VActionStep::Type::PostAction;
+    forward.targetObjectID = nested->objectID;
+    forward.targetName = nested->name;
+    forward.delay = 500.0f;
+    action_->comp<VAction>()->steps = {forward};
+    VActionStep back = forward;
+    back.targetObjectID = action_->objectID;
+    back.targetName = action_->name;
+    nested->comp<VAction>()->steps = {back};
+    UndoRedoManager::instance().clear();
+    const auto* project = manager.currentProject();
+    const auto actionCount = project->actions.size();
+    const auto nextObjectId = project->nextObjectID;
+
+    EXPECT_FALSE(manager.canCreateActionsTargeting({action_}, VActionStep::Type::PostAction));
+    EXPECT_FALSE(manager.canCreateActionsTargeting({valid, action_}, VActionStep::Type::PostAction));
+    EXPECT_EQ(manager.createActionTargeting(action_, VActionStep::Type::PostAction,
+                                            QStringLiteral("Trigger")), nullptr);
+    EXPECT_TRUE(manager.createActionsTargeting({valid, action_},
+                                               VActionStep::Type::PostAction).empty());
+    EXPECT_EQ(project->actions.size(), actionCount);
+    EXPECT_EQ(project->nextObjectID, nextObjectId);
+    EXPECT_FALSE(UndoRedoManager::instance().undoStack()->canUndo());
+
+    nested->comp<VAction>()->steps.clear();
+    EXPECT_TRUE(manager.canCreateActionsTargeting({action_}, VActionStep::Type::PostAction));
+    EXPECT_NE(manager.createActionTargeting(action_, VActionStep::Type::PostAction,
+                                            QStringLiteral("Trigger")), nullptr);
+}
+
 
 
 TEST_F(ActionReferenceLifecycleTest, FolderReferenceRollbackPreservesUnrelatedMemoryChanges)

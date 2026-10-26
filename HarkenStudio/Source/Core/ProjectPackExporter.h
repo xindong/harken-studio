@@ -129,6 +129,7 @@ public:
         QJsonObject platformDefinition;
         bool     skipped = false;
         QString  unitKey;
+        bool     omitted = false;
     };
 
     ExportResult ExportAllPacks(const ProjectData& project,
@@ -159,7 +160,8 @@ public:
     static bool ValidatePackOutputs(const QString& baseDir,
                                     const QVector<ProjectPlatform>& platforms,
                                     QString* errorOut = nullptr,
-                                    const QVector<PackArtifactMetadata>& artifacts = {});
+                                    const QVector<PackArtifactMetadata>& artifacts = {},
+                                    const std::function<bool()>& cancelCheck = {});
 
     static bool ValidatePackBuildPlatforms(const QVector<ProjectPlatform>& captured,
                                            const QVector<ProjectPlatform>& current,
@@ -170,14 +172,16 @@ public:
                                            const ProjectData& project,
                                            const QStringList& selectedPlatformIds,
                                            bool selfCleaning,
-                                           const QVector<PackArtifactMetadata>& artifacts = {});
+                                           const QVector<PackArtifactMetadata>& artifacts = {},
+                                           const std::function<bool()>& cancelCheck = {});
 
     static bool FinalizePackOutputs(const QString& baseDir,
                                  const QVector<ProjectPlatform>& platforms,
                                  const QStringList& requestedIds,
                                  const QStringList& succeededIds,
                                  QString* errorOut = nullptr,
-                                 const QVector<PackArtifactMetadata>& artifacts = {});
+                                 const QVector<PackArtifactMetadata>& artifacts = {},
+                                 const std::function<bool()>& cancelCheck = {});
 
     static std::shared_ptr<QLockFile> LockPackOutputRoot(const QString& baseDir,
                                                        QString* errorOut = nullptr);
@@ -210,8 +214,7 @@ public:
     ValidationResult ValidateBeforeBuild(const ProjectData& project);
 
     static ValidationResult ValidatePackBuildReadiness(const ProjectData& project,
-                                                       const QString& outputDir,
-                                                       const MediaBuildSnapshot* media = nullptr);
+                                                       const QString& outputDir);
 
     static bool ValidatePackBuildWriteAccess(const ProjectData& project,
                                              const QString& baseDir,

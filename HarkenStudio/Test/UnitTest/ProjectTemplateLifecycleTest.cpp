@@ -213,6 +213,52 @@ TEST(ProjectTemplateLifecycleTest, DuplicateDisplayNamesSurviveTemplateInstantia
     EXPECT_TRUE(serializer.prepareReferenceWrite(target)) << serializer.lastError().toStdString();
 }
 
+TEST(ProjectTemplateLifecycleTest, PostActionCyclesRejectBeforeAnyTemplateSectionIsApplied)
+{
+    ProjectData source = makeProjectWithMaster();
+    auto first = makeItem(source, QStringLiteral("First"), ProjectItem::Type::Action);
+    auto second = makeItem(source, QStringLiteral("Second"), ProjectItem::Type::Action);
+    source.actions.push_back(binding(first, QStringLiteral("Actions")));
+    source.actions.push_back(binding(second, QStringLiteral("Actions")));
+    VActionStep firstStep;
+    firstStep.type = VActionStep::Type::PostAction;
+    firstStep.targetObjectID = second->objectID;
+    firstStep.targetName = second->name;
+    firstStep.delay = 500.0f;
+    first->comp<VAction>()->steps = {firstStep};
+    VActionStep secondStep = firstStep;
+    secondStep.targetObjectID = first->objectID;
+    secondStep.targetName = first->name;
+    second->comp<VAction>()->steps = {secondStep};
+
+    ProjectSerializer serializer;
+    ASSERT_TRUE(serializer.prepareReferenceWrite(source));
+    QJsonObject json = minimalTemplate();
+    json[QStringLiteral("bus")] = QJsonObject{
+        {QStringLiteral("name"), QStringLiteral("Master Bus")},
+        {QStringLiteral("children"), QJsonArray{QJsonObject{
+            {QStringLiteral("name"), QStringLiteral("Pending Bus")}}}}};
+    json[QStringLiteral("actions")] = QJsonArray{
+        serializer.projectItemToJson(*first), serializer.projectItemToJson(*second)};
+    ProjectData target = makeProjectWithMaster();
+    const auto nextObjectId = target.nextObjectID;
+    QString error;
+    EXPECT_FALSE(TemplateApplyService::seedTemplateInto(target, json, &error));
+    EXPECT_TRUE(error.contains(QStringLiteral("cycle"), Qt::CaseInsensitive));
+    EXPECT_TRUE(target.actions.empty());
+    EXPECT_TRUE(target.busses.front().rootItem->children.empty());
+    EXPECT_TRUE(target.actionPublishedNameHistory.empty());
+    EXPECT_EQ(target.nextObjectID, nextObjectId);
+
+    second->comp<VAction>()->steps.clear();
+    json[QStringLiteral("actions")] = QJsonArray{
+        serializer.projectItemToJson(*first), serializer.projectItemToJson(*second)};
+    ASSERT_TRUE(TemplateApplyService::seedTemplateInto(target, json, &error))
+        << error.toStdString();
+    EXPECT_EQ(target.actions.size(), 2u);
+    EXPECT_EQ(target.busses.front().rootItem->children.size(), 1u);
+}
+
 TEST(ProjectTemplateLifecycleTest, ParseApplyRemintsIdentityAndReferences)
 {
     ProjectData source = makeProjectWithMaster();

@@ -14,6 +14,7 @@ QJsonObject PackGenerationRecord::toJson() const
             {QStringLiteral("base_platform"), ProjectPlatformSemantics::basePlatformName(basePlatform)},
             {QStringLiteral("language"), language},
             {QStringLiteral("success"), success},
+            {QStringLiteral("canceled"), canceled},
             {QStringLiteral("status"), status},
             {QStringLiteral("outputPath"), outputPath},
             {QStringLiteral("warnings"), warnings},
@@ -127,6 +128,7 @@ void PackGenerationRecordStore::updateProgress(quint64 runId, const PackGenerati
         if (existing->runId == runId) {
             if (next.stage == PackGenerationStage::Queued
                 || existing->progress.stage == PackGenerationStage::Complete
+                || existing->progress.stage == PackGenerationStage::Skipped
                 || existing->progress.stage == PackGenerationStage::Failed
                 || existing->progress.stage == PackGenerationStage::Canceled)
                 return;
@@ -151,6 +153,7 @@ void PackGenerationRecordStore::finishProgress(quint64 runId, bool canceled)
     for (auto& entry : progress_) {
         if (entry.runId != runId
             || entry.progress.stage == PackGenerationStage::Complete
+            || entry.progress.stage == PackGenerationStage::Skipped
             || entry.progress.stage == PackGenerationStage::Failed
             || entry.progress.stage == PackGenerationStage::Canceled)
             continue;

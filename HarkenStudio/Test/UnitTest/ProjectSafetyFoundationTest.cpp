@@ -14,6 +14,8 @@
 #include <QJsonObject>
 #include <QTemporaryDir>
 
+#include <filesystem>
+
 namespace {
 
 void writeFile(const QString& path, const QByteArray& content)
@@ -119,6 +121,14 @@ TEST(ProjectSafetyFoundation, PackOutputRejectsProjectRootAliases)
         EXPECT_TRUE(VNX::PathUtils::isProjectRootDirectory(
             VNX::PathUtils::packBuildOutputRoot(project, path), project));
     }
+    for (const auto& path : {QStringLiteral(".."), QStringLiteral("../../"),
+                            QDir(directory.path()).absoluteFilePath(QStringLiteral("..")),
+                            QDir(directory.path()).rootPath()}) {
+        EXPECT_FALSE(VNX::PathUtils::isValidPackBuildOutputDir(path, project)) << path.toStdString();
+        EXPECT_FALSE(VNX::PathUtils::isValidWaveformBuildOutputDir(path, project)) << path.toStdString();
+        EXPECT_TRUE(VNX::PathUtils::isProtectedPackOutputPath(
+            VNX::PathUtils::packBuildOutputRoot(project, path), project));
+    }
     EXPECT_TRUE(VNX::PathUtils::isValidPackBuildOutputDir({}, project));
     EXPECT_TRUE(VNX::PathUtils::isValidPackBuildOutputDir(QStringLiteral("Packs"), project));
     EXPECT_TRUE(VNX::PathUtils::isValidPackBuildOutputDir(QStringLiteral("../Delivery"), project));
@@ -127,12 +137,12 @@ TEST(ProjectSafetyFoundation, PackOutputRejectsProjectRootAliases)
     EXPECT_FALSE(policy.includeInContentFingerprint(QStringLiteral("Packs/Retired/Init.pack")));
 }
 
-TEST(ProjectSafetyFoundation, PackOutputRejectsObjectBucketsAndTheirDescendants)
+TEST(ProjectSafetyFoundation, PackOutputRejectsProjectDataDirectoriesAndTheirDescendants)
 {
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
     const QString project = directory.filePath(QStringLiteral("Demo.hsp"));
-    for (const auto* name : {"Actions", "Layers", "Busses", "Variables", "Attenuations"}) {
+    for (const auto* name : {"AudioSources", "Actions", "Layers", "Busses", "Variables", "Attenuations"}) {
         const QString bucket = QLatin1String(name);
         for (const auto& path : {bucket, bucket + QStringLiteral("/BuildPacks"),
                                 QStringLiteral("Exports/../") + bucket + QStringLiteral("/Generated"),
@@ -141,7 +151,7 @@ TEST(ProjectSafetyFoundation, PackOutputRejectsObjectBucketsAndTheirDescendants)
                                 directory.filePath(bucket + QStringLiteral("/BuildPacks"))}) {
             EXPECT_FALSE(VNX::PathUtils::isValidPackBuildOutputDir(path, project)) << path.toStdString();
             EXPECT_FALSE(VNX::PathUtils::isValidWaveformBuildOutputDir(path, project)) << path.toStdString();
-            EXPECT_TRUE(VNX::PathUtils::isProjectObjectDirectory(
+            EXPECT_TRUE(VNX::PathUtils::isProtectedPackOutputPath(
                 VNX::PathUtils::packBuildOutputRoot(project, path), project));
         }
         EXPECT_TRUE(VNX::PathUtils::isValidPackBuildOutputDir(bucket + QStringLiteral("Exports"), project));
@@ -153,6 +163,43 @@ TEST(ProjectSafetyFoundation, PackOutputRejectsObjectBucketsAndTheirDescendants)
     EXPECT_TRUE(VNX::PathUtils::isValidPackBuildOutputDir(QStringLiteral("BuildPacks"), project));
     EXPECT_TRUE(VNX::PathUtils::isValidPackBuildOutputDir(QStringLiteral("../Layers/BuildPacks"), project));
     EXPECT_TRUE(VNX::PathUtils::isValidPackBuildOutputDir(QStringLiteral("Layers/../BuildPacks"), project));
+}
+
+TEST(ProjectSafetyFoundation, PackOutputProtectsCanonicalProjectDataPaths)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString projectRoot = directory.filePath(QStringLiteral("Project"));
+    const QString sourceRoot = directory.filePath(QStringLiteral("Media/Audio"));
+    const QString alias = directory.filePath(QStringLiteral("ProjectAlias"));
+    ASSERT_TRUE(QDir().mkpath(projectRoot));
+    ASSERT_TRUE(QDir().mkpath(sourceRoot));
+    const QString audioSources = QDir(projectRoot).filePath(QStringLiteral("AudioSources"));
+    const QString project = QDir(projectRoot).filePath(QStringLiteral("Demo.hsp"));
+    std::error_code linkError;
+    std::filesystem::create_directory_symlink(
+        std::filesystem::path(projectRoot.toStdString()),
+        std::filesystem::path(alias.toStdString()), linkError);
+    if (linkError)
+        GTEST_SKIP() << "Symbolic links are unavailable in this environment.";
+    std::filesystem::create_directory_symlink(
+        std::filesystem::path(sourceRoot.toStdString()),
+        std::filesystem::path(audioSources.toStdString()), linkError);
+    ASSERT_FALSE(linkError) << linkError.message();
+
+    for (const auto& path : {alias, QDir(alias).filePath(QStringLiteral("AudioSources/New/Packs")),
+                            sourceRoot, QDir(sourceRoot).filePath(QStringLiteral("New/Packs")),
+                            QFileInfo(sourceRoot).absolutePath()}) {
+        EXPECT_FALSE(VNX::PathUtils::isValidPackBuildOutputDir(path, project)) << path.toStdString();
+        EXPECT_FALSE(VNX::PathUtils::isValidWaveformBuildOutputDir(path, project)) << path.toStdString();
+    }
+    const QString aliasProject = QDir(alias).filePath(QStringLiteral("Demo.hsp"));
+    EXPECT_FALSE(VNX::PathUtils::isValidPackBuildOutputDir(projectRoot, aliasProject));
+    EXPECT_FALSE(VNX::PathUtils::isValidPackBuildOutputDir(directory.path(), aliasProject));
+    EXPECT_TRUE(VNX::PathUtils::isValidPackBuildOutputDir(
+        QDir(alias).filePath(QStringLiteral("BuildPacks")), project));
+    EXPECT_TRUE(VNX::PathUtils::isValidPackBuildOutputDir(
+        directory.filePath(QStringLiteral("Delivery")), project));
 }
 
 TEST(ProjectSafetyFoundation, BuildOutputNormalizationPreservesDestination)

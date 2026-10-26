@@ -431,6 +431,77 @@ TEST_F(PackBuildIpcScenarioTest, OmittedOutputPathUsesTheProjectBuildDirectory)
     }
 }
 
+TEST_F(PackBuildIpcScenarioTest, WarningOnlyRowsAgreeWithSuccessfulPublicationAndSessionRecords)
+{
+    create(QStringLiteral("EmptyAction"), QStringLiteral("Action"));
+    const QJsonObject action = create(QStringLiteral("PlayableAction"), QStringLiteral("Action"));
+    const QString wavPath = temp_.filePath(QStringLiteral("tone.wav"));
+    ASSERT_NO_FATAL_FAILURE(writeTestWav(wavPath));
+    const QJsonObject imported = call(QStringLiteral("import_audio"),
+        {{QStringLiteral("path"), wavPath}});
+    ASSERT_EQ(imported.value(QStringLiteral("status")).toString(), QStringLiteral("ok"));
+    const QJsonObject source = imported.value(QStringLiteral("result")).toObject();
+    const QJsonArray steps{QJsonObject{
+        {QStringLiteral("type"), QStringLiteral("Play")},
+        {QStringLiteral("targetObjectID"), source.value(QStringLiteral("target_parent_authoring_handle"))},
+        {QStringLiteral("targetName"), source.value(QStringLiteral("target_parent_name"))}}};
+    ASSERT_EQ(call(QStringLiteral("set_item_property"),
+        {{QStringLiteral("path"), action.value(QStringLiteral("path"))},
+         {QStringLiteral("property"), QStringLiteral("steps")},
+         {QStringLiteral("value"), steps}}).value(QStringLiteral("status")).toString(),
+        QStringLiteral("ok"));
+
+    const QString output = temp_.filePath(QStringLiteral("Generated"));
+    ASSERT_EQ(call(QStringLiteral("export_pack"),
+        {{QStringLiteral("output_path"), output},
+         {QStringLiteral("platform_id"), platformId()}}).value(QStringLiteral("status")).toString(),
+        QStringLiteral("ok"));
+    QJsonObject status;
+    ASSERT_TRUE(TestSupport::spinUntil([&] {
+        status = call(QStringLiteral("get_pack_build_status"))
+            .value(QStringLiteral("result")).toObject();
+        return !status.value(QStringLiteral("in_progress")).toBool(true);
+    }, 10000));
+    const QJsonObject completion = status.value(QStringLiteral("result")).toObject();
+    ASSERT_EQ(completion.value(QStringLiteral("status")).toString(), QStringLiteral("ok"));
+    const QJsonObject result = completion.value(QStringLiteral("result")).toObject();
+    EXPECT_TRUE(result.value(QStringLiteral("success")).toBool());
+    EXPECT_FALSE(result.value(QStringLiteral("warnings")).toArray().isEmpty());
+
+    const QDir platformDir(QDir(output).filePath(QStringLiteral("Windows")));
+    QJsonArray packs;
+    QStringList publications;
+    QString error;
+    ASSERT_TRUE(ReadPackPublication(platformDir.path(), {}, platformId(),
+        &packs, &publications, &error)) << error.toStdString();
+    QSet<QString> names;
+    for (const auto& value : packs)
+        names.insert(value.toObject().value(QStringLiteral("name")).toString());
+    EXPECT_EQ(names, (QSet<QString>{QStringLiteral("Init"), QStringLiteral("PlayableAction")}));
+
+    const QJsonArray records = call(QStringLiteral("get_last_pack_build_records"))
+        .value(QStringLiteral("result")).toObject().value(QStringLiteral("records")).toArray();
+    const auto sessionRecords = PackGenerationRecordStore::instance().records();
+    ASSERT_EQ(records.size(), 3);
+    ASSERT_EQ(records.size(), sessionRecords.size());
+    for (const auto& value : records) {
+        const QJsonObject record = value.toObject();
+        EXPECT_TRUE(record.value(QStringLiteral("success")).toBool());
+        EXPECT_TRUE(record.value(QStringLiteral("errors")).toString().isEmpty());
+        EXPECT_TRUE(std::any_of(sessionRecords.begin(), sessionRecords.end(), [&](const auto& session) {
+            return session.toJson() == record;
+        }));
+        if (record.value(QStringLiteral("packName")).toString() == QStringLiteral("EmptyAction")) {
+            EXPECT_FALSE(record.value(QStringLiteral("warnings")).toString().isEmpty());
+            EXPECT_EQ(record.value(QStringLiteral("status")).toString(), QStringLiteral("Skipped"));
+            EXPECT_FALSE(QFileInfo::exists(record.value(QStringLiteral("outputPath")).toString()));
+        } else {
+            EXPECT_TRUE(names.contains(record.value(QStringLiteral("packName")).toString()));
+            EXPECT_TRUE(QFileInfo::exists(record.value(QStringLiteral("outputPath")).toString()));
+        }
+    }
+}
+
 TEST_F(PackBuildIpcScenarioTest, CanceledBuildRetainsCompletedRecordsWithoutOverwritingItsSuccessor)
 {
     create(QStringLiteral("CanceledAction"), QStringLiteral("Action"));
@@ -483,7 +554,8 @@ TEST_F(PackBuildIpcScenarioTest, CanceledBuildRetainsCompletedRecordsWithoutOver
     const QVector<PackGenerationRecord> records =
         PackGenerationRecordStore::instance().records();
     EXPECT_TRUE(std::any_of(records.begin(), records.end(), [](const auto& record) {
-        return record.packName == QStringLiteral("SuccessorAction") && !record.success;
+        return record.packName == QStringLiteral("SuccessorAction") && record.success
+            && !record.warnings.isEmpty() && record.errors.isEmpty();
     }));
     const auto retained = std::find_if(records.begin(), records.end(), [](const auto& record) {
         return record.packName == QStringLiteral("CanceledAction");
