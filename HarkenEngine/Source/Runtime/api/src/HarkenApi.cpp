@@ -7380,6 +7380,8 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         result.status = status;
         return result;
     };
+    if (!engine.playbackPaths[renderSlot].PreparePath(input.pathRows.size()))
+        return rollback(VN_BACKPRESSURE);
     VnEmitterHandle emitter = 0;
     for (const auto& start : engine.playableServices) {
         if (parentInstance != 0 && start.ownerInstance == parentInstance && start.InvocationValid()) {
@@ -7881,9 +7883,7 @@ engine.runtimeRecreateRequired = true;
     observedPath.voiceInstance = render;
     observedPath.soundId = install.soundId;
     observedPath.outputBusId = install.outputBusId;
-    observedPath.path = {};
-    observedPath.path.rowCount = static_cast<std::uint32_t>(input.pathRows.size());
-    std::copy(input.pathRows.begin(), input.pathRows.end(), observedPath.path.rows);
+    observedPath.AssignPath(input.pathRows);
     observedPath.sendCount = static_cast<std::uint32_t>(input.sends.size());
     std::copy(input.sends.begin(), input.sends.end(), observedPath.sends);
     result.status = VN_OK;
@@ -73717,12 +73717,14 @@ bool ObserveCurrentPlaybackPaths(
     const Engine* engine = detail::ActiveEngine();
     if (engine == nullptr || visitor == nullptr) return false;
     for (const auto& path : engine->playbackPaths) {
-        if (path.path.rowCount == 0) continue;
+        if (path.pathRowCount == 0) continue;
         const auto state = engine->voices.RenderedState(path.voiceInstance);
         if (state != VN_VOICE_STATE_ACTIVE && state != VN_VOICE_STATE_DRAINING) continue;
         const auto owner = engine->ledger.OwnerForRender(path.voiceInstance);
-        if (owner.live && owner.visibility == VoiceLedger::PublicVisibility::PlayableOwnedInternal)
-            visitor(path, context);
+        if (owner.live && owner.visibility == VoiceLedger::PublicVisibility::PlayableOwnedInternal) {
+            const auto observation = path.Capture();
+            visitor(observation, context);
+        }
     }
     return true;
 }

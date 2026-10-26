@@ -516,6 +516,53 @@ struct VoicePlayFacts {
     std::uint32_t recipeBindingCount = 0;
 };
 
+// Logic-owned observation data. Extended paths retain their backing across slot reuse.
+struct EnginePlaybackPathStorage {
+    std::uint64_t voiceInstance = 0;
+    VnObjectId soundId{};
+    VnObjectId outputBusId{};
+    std::uint32_t pathRowCount = 0;
+    PlaybackPathRow firstPathRow{};
+    std::unique_ptr<PlaybackPathRow[]> additionalPathRows;
+    std::uint32_t sendCount = 0;
+    TimelineVoiceSendInstall sends[kTimelineMaxVoiceSends]{};
+
+    bool PreparePath(std::size_t count) noexcept {
+        if (memguard::IsAudioTagged() || count > kPlaybackPathRowCapacity) return false;
+        if (count <= 1 || additionalPathRows != nullptr) return true;
+        try {
+            detail::LogicAllocCheckpoint(detail::LogicAllocSite::PlaybackPathStorage);
+            additionalPathRows = std::make_unique<PlaybackPathRow[]>(kPlaybackPathRowCapacity - 1u);
+        } catch (...) {
+            return false;
+        }
+        return true;
+    }
+
+    void AssignPath(std::span<const PlaybackPathRow> rows) noexcept {
+        assert(rows.size() <= kPlaybackPathRowCapacity &&
+               (rows.size() <= 1 || additionalPathRows != nullptr));
+        pathRowCount = static_cast<std::uint32_t>(rows.size());
+        firstPathRow = rows.empty() ? PlaybackPathRow{} : rows.front();
+        if (rows.size() > 1)
+            std::copy(rows.begin() + 1, rows.end(), additionalPathRows.get());
+    }
+
+    PlaybackPathObservation Capture() const noexcept {
+        PlaybackPathObservation observation{};
+        observation.voiceInstance = voiceInstance;
+        observation.soundId = soundId;
+        observation.outputBusId = outputBusId;
+        observation.path.rowCount = pathRowCount;
+        if (pathRowCount != 0) observation.path.rows[0] = firstPathRow;
+        if (pathRowCount > 1)
+            std::copy_n(additionalPathRows.get(), pathRowCount - 1u, observation.path.rows + 1);
+        observation.sendCount = sendCount;
+        std::copy_n(sends, sendCount, observation.sends);
+        return observation;
+    }
+};
+
 // A parked voice's full replay + timeline state, indexed by ledger slot (like
 // pendingStarts). Holds the play facts, the captured spatial + parameter state
 // re-applied on return, and the frozen non-spatial audibility contribution.
@@ -14297,7 +14344,7 @@ public:
     // Per-render-slot Play facts retained for audibility parking (see
     // VoicePlayFacts), written at play. Logic thread only.
     StableRowStorage<VoicePlayFacts> voicePlayFacts;
-    StableRowStorage<PlaybackPathObservation> playbackPaths;
+    StableRowStorage<EnginePlaybackPathStorage> playbackPaths;
 
     // Audibility-parking state (all logic thread only). Each per-ledger-slot
     // record owns its replay state and virtual clock, so voices parked in

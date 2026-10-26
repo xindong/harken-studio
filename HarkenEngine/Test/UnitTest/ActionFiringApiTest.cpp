@@ -6390,7 +6390,7 @@ TEST(ActionFiringApi, PostResolvesOnlyCanonicalCurrentWorldActions) {
 }
 
 TEST(ActionFiringApi, InitialContainerCompanionBackingFailureDoesNotAcceptAndCanRecover) {
-    for (unsigned refusedStorage = 0; refusedStorage < 21u; ++refusedStorage) {
+    for (unsigned refusedStorage = 0; refusedStorage < 23u; ++refusedStorage) {
         SCOPED_TRACE(refusedStorage);
         harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -6401,7 +6401,8 @@ TEST(ActionFiringApi, InitialContainerCompanionBackingFailureDoesNotAcceptAndCan
         ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kSecondSound, &pcm));
         CanonicalActionWorld image(engine.registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision,
             engine.registry.Lookup(CanonicalActionWorld::kSecondSound).contentRevision);
-        if (refusedStorage >= 18u) image.MakeImmediateMixedVariableControlPlayAction();
+        if ((refusedStorage >= 18u && refusedStorage <= 20u) || refusedStorage == 22u)
+            image.MakeImmediateMixedVariableControlPlayAction();
         else if (refusedStorage == 3u || refusedStorage == 15u || refusedStorage == 16u)
             image.MakeImmediateVariableControlPlayAction();
         else image.MakeImmediateSequenceQueuePlayAction();
@@ -6428,8 +6429,10 @@ TEST(ActionFiringApi, InitialContainerCompanionBackingFailureDoesNotAcceptAndCan
             refusedStorage == 14 ? 1 : 2, harken::detail::LogicAllocSite::ImmediateEntryStorage);
         if (refusedStorage == 15) engine.queueContinuationRecords.SetCommitPageLimitForTests(0);
         if (refusedStorage == 16) engine.queueFutureRecords.SetCommitPageLimitForTests(0);
-        if (refusedStorage >= 18) harken::detail::ArmLogicAllocFaultForTests(
+        if (refusedStorage >= 18 && refusedStorage <= 20) harken::detail::ArmLogicAllocFaultForTests(
             refusedStorage - 17u, harken::detail::LogicAllocSite::PrivateVcLaneStorage);
+        if (refusedStorage >= 21) harken::detail::ArmLogicAllocFaultForTests(
+            1, harken::detail::LogicAllocSite::PlaybackPathStorage);
         VnActionFiringHandle firing = 99;
         const auto refused = Vn_PostAction(&desc, &firing);
         if (refusedStorage == 14 || refusedStorage >= 17) {
@@ -6452,7 +6455,8 @@ TEST(ActionFiringApi, InitialContainerCompanionBackingFailureDoesNotAcceptAndCan
         engine.initialQueueSuccessorCompositeProofsScratch.SetCommitPageLimitForTests(SIZE_MAX);
         engine.actionQueueReplacementScratch.SetCommitPageLimitForTests(SIZE_MAX);
         engine.originalPlayableServiceLifetimeHolders.SetCommitPageLimitForTests(SIZE_MAX);
-        ASSERT_EQ(refusedStorage <= 3u || refusedStorage >= 14u ? VN_BACKPRESSURE : VN_NO_VOICE, refused);
+        ASSERT_EQ((refusedStorage <= 3u || refusedStorage >= 14u) && refusedStorage != 22u
+                ? VN_BACKPRESSURE : VN_NO_VOICE, refused);
         EXPECT_EQ(0u, firing);
         EXPECT_EQ(baseline, CaptureActionReclaimableOwners(engine));
         ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));

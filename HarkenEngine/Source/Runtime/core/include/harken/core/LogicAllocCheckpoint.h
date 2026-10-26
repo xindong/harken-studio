@@ -38,6 +38,7 @@ enum class LogicAllocSite : unsigned int {
     PlayableServiceFeatures,
     SourceCommandBacking,
     PrivateVcLaneStorage,
+    PlaybackPathStorage,
 };
 
 struct LogicAllocFaultState {
