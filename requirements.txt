@@ -12,4 +12,4 @@ aqtinstall==3.3.0
 
 # Ed25519 signing for release manifests
 # (.scripts/release/sign_release_manifest.py).
-cryptography==49.0.0
+cryptography==50.0.0
