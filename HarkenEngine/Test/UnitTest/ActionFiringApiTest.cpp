@@ -4386,6 +4386,9 @@ void ExpectScheduleCapacityActionCompletes(
         }
         ASSERT_TRUE(engine->queueScheduleStorage.CollectUnused());
         const auto scheduleBytes = engine->queueScheduleStorage.StorageBytes();
+        ASSERT_GT(leafCount, 1u);
+        ASSERT_TRUE(engine->ordinarySingleVoiceBacking.Empty());
+        ASSERT_TRUE(engine->ordinarySingleVoiceBacking.Construct(1, 0, []() noexcept { return true; }));
         for (std::int32_t countdown = 0; firing == 0; ++countdown) {
             SCOPED_TRACE(::testing::Message() << "schedule allocation refusal " << countdown);
             engine->nativeBackingAllocationFailureCountdownForTest = countdown;
@@ -4419,6 +4422,7 @@ void ExpectScheduleCapacityActionCompletes(
             EXPECT_EQ(0u, NativePreparationBackingBytes(*engine));
             EXPECT_FALSE(engine->runtimeRecreateRequired);
         }
+        EXPECT_TRUE(engine->ordinarySingleVoiceBacking.Empty());
     }
     if (!refuseAllocationFirst) ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
     ASSERT_NE(0u, firing);
@@ -6546,11 +6550,42 @@ TEST(ActionFiringApi, FrontierAttemptSkipsRetainedOwnerAndReusesOnlyTransferredS
     EXPECT_EQ(7u, retained.storage.generation);
     EXPECT_EQ(original, retained.playableTreeExecutor.PreparedInstanceHandle(0));
     EXPECT_EQ(harken::EngineFrontierAttemptPhase::CancelPending, retained.storage.phase);
+    auto& firstSide = engine.actionPlayScratch[firstToken.slot].voiceStarts;
+    ASSERT_EQ(1u, firstSide.size());
+    ASSERT_EQ(1u, firstSide.Captures().size());
+    auto oldCapture = firstSide.Captures()[0].voice.Share();
+    ASSERT_TRUE(oldCapture.Valid());
+    const auto* oldFacts = oldCapture.Input().facts;
+    const auto* firstStarts = firstSide.data();
     VnActionFiringHandle second = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &second));
     const auto secondToken = engine.actionPlayAttemptTokens[0];
     EXPECT_EQ(firstToken.slot, secondToken.slot);
     EXPECT_EQ(firstToken.generation + 1u, secondToken.generation);
+    EXPECT_EQ(firstStarts, engine.actionPlayScratch[secondToken.slot].voiceStarts.data());
+    ASSERT_TRUE(oldCapture.Valid());
+    EXPECT_EQ(oldFacts, oldCapture.Input().facts);
+    EXPECT_EQ(CanonicalActionWorld::kFirstSound, oldCapture.Facts().soundId);
+
+    harken::EngineActionPlayScratch::NativeVoiceSide endedSide;
+    ASSERT_TRUE(endedSide.Construct(1, 1, []() noexcept { return true; }));
+    ASSERT_TRUE(endedSide.ConstructCaptures([]() noexcept { return true; }));
+    auto& capture = endedSide.Captures()[0];
+    capture.voice = oldCapture.Share();
+    harken::CapturedTimelineVoiceInstall liveReader;
+    capture.Stage(liveReader);
+    {
+        harken::CapturedTimelineVoiceInstall endedReader;
+        capture.Stage(endedReader);
+    }
+    endedSide.ResetOrdinaryAfterSafeReset();
+    EXPECT_EQ(0u, endedSide.Shape());
+    EXPECT_FALSE(capture.voice.HasStorage());
+    EXPECT_EQ(nullptr, capture.stagedReaders[0]);
+    EXPECT_EQ(nullptr, capture.stagedReaders[1]);
+    ASSERT_TRUE(liveReader.Valid());
+    EXPECT_EQ(oldFacts, liveReader.Input().facts);
+    EXPECT_TRUE(liveReader.SharesStorage(oldCapture));
     EXPECT_FALSE(engine.runtimeRecreateRequired);
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_EQ(harken::EngineFrontierAttemptPhase::Free, retained.storage.phase);
@@ -45586,6 +45621,9 @@ static void CheckPendingVariableNativeShapeRetries(harken::Engine& engine,
     ASSERT_EQ(0u, queueSlot.capacity);
     ASSERT_TRUE(queueSlot.directory.Empty());
     ASSERT_EQ(harken::Engine::QueueRoleReservationSlot::State::Available, queueSlot.state);
+    if (engine.ordinarySingleVoiceBacking.Empty()) {
+        ASSERT_TRUE(engine.ordinarySingleVoiceBacking.Construct(1, 0, []() noexcept { return true; }));
+    }
     struct Probe {
         harken::Engine* engine;
         harken::EngineActionPlayScratch* producer;
@@ -45601,13 +45639,15 @@ static void CheckPendingVariableNativeShapeRetries(harken::Engine& engine,
         std::size_t bytes;
         harken::EnginePreparedTimelineVoiceStart* starts;
         VnVariableId variable;
+        harken::EnginePreparedTimelineVoiceStart* ordinaryStarts;
         unsigned seen = 0;
         harken::EngineActionPlayScratch* child = nullptr;
         std::uint64_t finalAnchor = 0;
         harken::EngineMemberProgramToken previousProgram{};
     } probe{&engine, &producer, &attempt, &group, &*slot, &queueSlot, engine.NativeBackingTokenFor(producer),
         group.cut, producer.row->identity, attempt.generation, engine.nativeBackingAllocationCountForTest,
-        NativePreparationBackingBytes(engine), slot->side.data(), image.variables[3].variableId};
+        NativePreparationBackingBytes(engine), slot->side.data(), image.variables[3].variableId,
+        engine.ordinarySingleVoiceBacking.data()};
     struct RestoreHooks {
         harken::Engine& engine;
         std::int32_t countdown;
@@ -45683,6 +45723,16 @@ static void CheckPendingVariableNativeShapeRetries(harken::Engine& engine,
             EXPECT_EQ(3u, child.voiceStarts.size());
             EXPECT_TRUE(child.currentNativeBorrowed);
             EXPECT_EQ(probe.starts, child.voiceStarts.data());
+            EXPECT_EQ(probe.ordinaryStarts, actual.ordinarySingleVoiceBacking.data());
+            if (shape == 1) {
+                auto native = std::move(child.voiceStarts);
+                child.currentNativeBorrowed = false;
+                const bool incorrectlyPrepared = actual.PrepareNativeVoiceSide(child, false, shape);
+                child.voiceStarts = std::move(native);
+                child.currentNativeBorrowed = true;
+                EXPECT_FALSE(incorrectlyPrepared);
+                EXPECT_EQ(probe.ordinaryStarts, actual.ordinarySingleVoiceBacking.data());
+            }
             EXPECT_EQ(actual.NativeBackingTokenFor(child).slot, probe.slot->borrower.slot);
             EXPECT_EQ(actual.NativeBackingTokenFor(child).generation, probe.slot->borrower.generation);
             EXPECT_TRUE(child.queueRolesBorrowed);

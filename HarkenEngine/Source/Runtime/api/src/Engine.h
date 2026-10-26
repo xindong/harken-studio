@@ -5959,6 +5959,7 @@ struct Engine {
     OriginalPendingVariableGroupHolder* NativeBackingOwnerFor(
         OriginalPendingVariableGroupHolder& group, std::uint32_t* ordinal) noexcept;
     bool PrepareNativeVoiceSide(EngineActionPlayScratch& scratch, bool successor, std::uint32_t shape) noexcept;
+    void RecycleOrdinaryVoiceBackingAfterSafeReset(EngineActionPlayScratch& scratch) noexcept;
     bool AdoptPendingVariableQueueRoles(EngineActionPlayScratch& scratch) noexcept;
     bool PrepareNativeBackingReturn(const EngineActionPlayScratch& scratch, NativeBackingReturnPlan* plan) noexcept;
     void CommitNativeBackingReturn(EngineActionPlayScratch& scratch, const NativeBackingReturnPlan& plan) noexcept;
@@ -12768,6 +12769,8 @@ public:
     EngineFrontierOwnerLedger::Limits actionPlayOwnerLimits{};
     StableSlotStorage<EngineActionPlayStorage> actionPlayStorage;
     StableSlotStorage<EngineActionPlayScratch> actionPlayScratch;
+    // One default-state allocation only; never a native reservation or owner.
+    EngineActionPlayScratch::NativeVoiceSide ordinarySingleVoiceBacking;
     std::vector<EngineFrontierAttemptToken> actionPlayAttemptTokens;
     std::vector<OriginalPendingVariableGroupHolder*> initialPendingVariableOwnerScratch;
     std::vector<EngineInitialQueueEntryDecisionOwner>

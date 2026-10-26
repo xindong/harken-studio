@@ -201,7 +201,7 @@ std::size_t Engine::ActionPlayDynamicBytes() const noexcept {
     const auto column = []<class T>(const std::vector<T>& values) noexcept {
         return values.capacity() * sizeof(T);
     };
-    std::size_t bytes = 0;
+    std::size_t bytes = ordinarySingleVoiceBacking.RequestedBytes();
     for (const auto& storage : actionPlayStorage) {
         bytes += column(storage.variableControlRollbackEdges) + column(storage.pendingInitialVcRetirement) +
             column(storage.pendingInitialVcRows) + column(storage.retiredInitialVcArms) +
@@ -18642,6 +18642,7 @@ void CommitImmediateActionPlayScratchReset(harken::Engine& engine,
     }
     engine.CommitNativeBackingReturn(*scratch, plan);
     storage.frontierQueues.ReleaseAfterSafeReset();
+    engine.RecycleOrdinaryVoiceBackingAfterSafeReset(*scratch);
     std::destroy_at(scratch);
     std::construct_at(scratch, storage);
     storage.phase = harken::EngineFrontierAttemptPhase::Free;
@@ -52751,7 +52752,26 @@ bool Engine::PrepareNativeVoiceSide(EngineActionPlayScratch& scratch,
     // Replacement children must use their pre-retirement episode even after partial cleanup.
     if (scratch.pendingVariableReplacementService.Valid() ||
         (successor && scratch.queueFutureParent.Valid() && parent == nullptr)) return false;
+    if (shape == 1 && !ordinarySingleVoiceBacking.Empty()) {
+        assert(ordinarySingleVoiceBacking.size() == 1 && ordinarySingleVoiceBacking.Shape() == 0);
+        side = std::move(ordinarySingleVoiceBacking);
+        const bool activated = side.Activate(shape);
+        assert(activated);
+        return activated;
+    }
+    if (shape > 1) ordinarySingleVoiceBacking = {};
     return side.Construct(shape, shape, [&]() noexcept { return AllowNativeBackingAllocation(); });
+}
+
+void Engine::RecycleOrdinaryVoiceBackingAfterSafeReset(EngineActionPlayScratch& scratch) noexcept {
+    const auto recycle = [&](auto& side, bool borrowed) noexcept {
+        assert(!borrowed);
+        if (borrowed || !ordinarySingleVoiceBacking.Empty() || side.size() != 1) return;
+        side.ResetOrdinaryAfterSafeReset();
+        ordinarySingleVoiceBacking = std::move(side);
+    };
+    recycle(scratch.voiceStarts, scratch.currentNativeBorrowed);
+    recycle(scratch.queueSuccessorVoiceStarts, scratch.successorNativeBorrowed);
 }
 
 bool Engine::AdoptPendingVariableQueueRoles(EngineActionPlayScratch& scratch) noexcept {
