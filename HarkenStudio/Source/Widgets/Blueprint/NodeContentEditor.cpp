@@ -169,9 +169,9 @@ NodeContentEditor::NodeContentEditor(const NodeContentInfo& info, NodeContentFie
                 });
         } else {
             row->slider = new ParameterControlHost(row->property.label,
-                ParameterPresenterContext::InspectorFloat, this);
+                ParameterPresenterContext::InspectorFloat,
+                ParameterPresenterId::HorizontalSlider, this);
             row->slider->setObjectName(QStringLiteral("nodeSlider_") + row->property.field);
-            row->slider->setPresenterOverride(ParameterPresenterId::HorizontalSlider);
             row->slider->setFixedWidth(kSliderWidth);
             row->binding = row->slider->binding();
             row->binding->setRange(row->property.min.toDouble(), row->property.max.toDouble());

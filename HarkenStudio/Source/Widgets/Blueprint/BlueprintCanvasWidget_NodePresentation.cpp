@@ -37,9 +37,15 @@ void BlueprintCanvasWidget::refreshNodeTitles_()
     const auto platform = PlatformContextService::instance().context().primary;
     const auto& contextLanguage = LanguageContextService::instance().language();
     const auto& colors = ThemeManager::instance().colors();
+    std::vector<uint32_t> objectIDs;
+    objectIDs.reserve(nodeMap_.size());
+    for (const auto& [key, node] : nodeMap_)
+        if (key.kind != NodeKind::Bus) objectIDs.push_back(key.id);
+    const auto items = manager.findItemsByObjectID(objectIDs);
+    size_t itemIndex = 0;
     for (const auto& [key, node] : nodeMap_) {
         const auto* item = key.kind == NodeKind::Bus ? manager.findBusItem(key.id)
-            : manager.findItemByObjectID(key.id);
+            : items[itemIndex++];
         if (!item) continue;
         node->setTitle(item->name);
         node->setTitleDirty(item->isDirtyObject());

@@ -402,6 +402,7 @@ public:
     ProjectItem* findItemByGuid(const QUuid& guid) const;
 
     ProjectItem* findItemByObjectID(uint32_t objectID) const;
+    std::vector<ProjectItem*> findItemsByObjectID(std::span<const uint32_t> objectIDs) const;
 
     ProjectItem* findItemByRuntimeStableId(harkenstudio::ObjectId runtimeStableId) const;
 

@@ -255,8 +255,9 @@ TEST(ParameterControlHost, StandaloneNumericTipsFollowFormattedAndSilentlyRefres
 TEST(ParameterControlHost, IndependentValueEditorSharesTheFieldWithoutDependingOnSliderLayout)
 {
     ensureApp();
-    auto host = std::make_unique<VNX::ParameterControlHost>(QStringLiteral("Mode"));
-    host->setPresenterOverride(VNX::ParameterPresenterId::HorizontalSlider);
+    auto host = std::make_unique<VNX::ParameterControlHost>(
+        QStringLiteral("Mode"), VNX::ParameterPresenterContext::InspectorFloat,
+        VNX::ParameterPresenterId::HorizontalSlider);
     auto* binding = host->binding();
     binding->setRange(2, 5);
     binding->setQuantum(1);
@@ -376,6 +377,11 @@ TEST(ParameterControlHost, PresenterReplacementPreservesActiveSession)
 TEST(ParameterControlHost, UnsupportedOverrideFallsBackDeterministically)
 {
     ensureApp();
+    VNX::ParameterControlHost configured(
+        QStringLiteral("Volume"),
+        VNX::ParameterPresenterContext::EffectParameter,
+        VNX::ParameterPresenterId::VerticalFader);
+    EXPECT_EQ(configured.presenterId(), VNX::ParameterPresenterId::RotaryKnob);
     VNX::ParameterControlHost host(
         QStringLiteral("Volume"),
         VNX::ParameterPresenterContext::EffectParameter);
@@ -398,6 +404,13 @@ TEST(ParameterControlHost, ThemeSwitchAndReloadRebuildPresentersAndKeepSession)
     VNX::ParameterControlHost host(
         QStringLiteral("Volume"),
         VNX::ParameterPresenterContext::InspectorFloat, nullptr, &manager);
+    VNX::ParameterControlHost configured(
+        QStringLiteral("Volume"), VNX::ParameterPresenterContext::InspectorFloat,
+        VNX::ParameterPresenterId::HorizontalSlider, nullptr, &manager);
+    configured.binding()->setRange(0.0, 100.0);
+    configured.binding()->setValue(20.0);
+    configured.binding()->beginEdit();
+    configured.binding()->previewEdit(45.0);
     auto* binding = host.binding();
     binding->setRange(0.0, 100.0);
     binding->setValue(20.0);
@@ -428,6 +441,15 @@ TEST(ParameterControlHost, ThemeSwitchAndReloadRebuildPresentersAndKeepSession)
     EXPECT_TRUE(binding->isEditing());
     EXPECT_DOUBLE_EQ(binding->editStartValue(), 20.0);
     EXPECT_DOUBLE_EQ(binding->value(), 45.0);
+    EXPECT_EQ(configured.presenterId(), VNX::ParameterPresenterId::HorizontalSlider);
+    EXPECT_TRUE(configured.binding()->isEditing());
+    EXPECT_DOUBLE_EQ(configured.binding()->editStartValue(), 20.0);
+    EXPECT_DOUBLE_EQ(configured.binding()->value(), 45.0);
+    configured.setPresenterOverride(std::nullopt);
+    EXPECT_EQ(configured.presenterId(), VNX::ParameterPresenterId::RotaryKnob);
+    EXPECT_TRUE(configured.binding()->isEditing());
+    configured.binding()->cancelEdit();
+    EXPECT_DOUBLE_EQ(configured.binding()->value(), 20.0);
 
     binding->commitEdit();
     EXPECT_FALSE(binding->isEditing());
