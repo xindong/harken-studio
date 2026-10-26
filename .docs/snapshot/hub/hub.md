@@ -40,7 +40,7 @@ Hub 0.1.71 使用“集成 / Integration”和“集成包 / Integration Package
 
 ## Windows 任务栏图标（2026-10-27）
 
-运行窗口的任务栏分组通过窗口属性 `System.AppUserModel.RelaunchIconResource` 指定主题图标；窗口、进程、安装快捷方式和工程关联统一使用 `HarkenSound.HarkenHub` 标识。仅更新 `WM_GETICON` / `WM_SETICON` 不足以覆盖 Explorer 的任务栏分组图标，悬停预览正确也不能视为任务栏本体验证通过。
+运行窗口的任务栏分组通过窗口属性 `System.AppUserModel.RelaunchIconResource` 指定主题图标；窗口、进程和运行时识别到的 Hub 快捷方式统一使用 `HarkenSound.HarkenHub` 标识。仅更新 `WM_GETICON` / `WM_SETICON` 不足以覆盖 Explorer 的任务栏分组图标，悬停预览正确也不能视为任务栏本体验证通过。
 
 主题图标从原始 ICO 的全部尺寸生成，逐像素保留透明度，只转换黑白前景色，按内容哈希原子写入用户数据目录 `shell-icons`。已有固定快捷方式在原路径更新应用标识和 Hub 管理的图标引用，保留启动参数、自定义图标及其他安装目录的快捷方式；普通桌面、开始菜单图标保留原引用。深色 Hub 原生标题栏继续使用白色小图标，托盘和运行中的任务栏按 Windows 系统主题切换。Hub 完全退出后的固定图标不提供实时主题跟随。
 

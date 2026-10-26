@@ -28,7 +28,6 @@ SCHEMA = {
     "Media": ("DiskId SHORT NOT NULL, LastSequence LONG NOT NULL, DiskPrompt CHAR(64), Cabinet CHAR(255), VolumeLabel CHAR(32), Source CHAR(72)", "DiskId"),
     "Registry": ("Registry CHAR(72) NOT NULL, Root SHORT NOT NULL, Key CHAR(255) NOT NULL, Name CHAR(255), Value CHAR(0), Component_ CHAR(72) NOT NULL", "Registry"),
     "Shortcut": ("Shortcut CHAR(72) NOT NULL, Directory_ CHAR(72) NOT NULL, Name CHAR(128) NOT NULL, Component_ CHAR(72) NOT NULL, Target CHAR(72) NOT NULL, Arguments CHAR(255), Description CHAR(255), Hotkey SHORT, Icon_ CHAR(72), IconIndex SHORT, ShowCmd SHORT, WkDir CHAR(72)", "Shortcut"),
-    "MsiShortcutProperty": ("MsiShortcutProperty CHAR(72) NOT NULL, Shortcut_ CHAR(72) NOT NULL, PropertyKey CHAR(255) NOT NULL, PropVariantValue CHAR(255) NOT NULL", "MsiShortcutProperty"),
     "Upgrade": ("UpgradeCode CHAR(38) NOT NULL, VersionMin CHAR(20), VersionMax CHAR(20), Language CHAR(255), Attributes LONG NOT NULL, Remove CHAR(255), ActionProperty CHAR(72) NOT NULL", "UpgradeCode, VersionMin, VersionMax, Language, Attributes"),
     "AppSearch": ("Property CHAR(72) NOT NULL, Signature_ CHAR(72) NOT NULL", "Property, Signature_"),
     "RegLocator": ("Signature_ CHAR(72) NOT NULL, Root SHORT NOT NULL, Key CHAR(255) NOT NULL, Name CHAR(255), Type SHORT", "Signature_"),
@@ -203,7 +202,6 @@ def package_tables(files, input_dir, version, license_rtf):
         (".hsp", None, "HarkenSound.HarkenProject"),
         (".hsp", "Content Type", "application/x-harken-project"),
         ("HarkenSound.HarkenProject", None, "Harken Project"),
-        ("HarkenSound.HarkenProject", "AppUserModelID", "HarkenSound.HarkenHub"),
     ]:
         tables["Registry"].append((stable_id("Association", key + str(name)), 0, key, name, value, "HarkenProjectAssociation"))
     for identifier, directory, component in [
@@ -212,8 +210,6 @@ def package_tables(files, input_dir, version, license_rtf):
     ]:
         tables["Shortcut"].append((identifier, directory, "Hub|Harken Hub", component,
                                    "[INSTALLFOLDER]HarkenHub.exe", None, None, None, None, None, None, "INSTALLFOLDER"))
-        tables["MsiShortcutProperty"].append((identifier + "AppId", identifier,
-                                             "System.AppUserModel.ID", "HarkenSound.HarkenHub"))
     tables["Feature"] = [("Hub", None, "Harken Hub", None, 2, 1, None, 0)]
     tables["FeatureComponents"] = [("Hub", row[0]) for row in tables["Component"]]
     tables["Upgrade"] = [(UPGRADE_CODE, None, version, "1033", 513, None, "HARKEN_UPGRADE_DETECTED"),
