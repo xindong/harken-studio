@@ -38,3 +38,11 @@ Variable 局部值属于 Emitter，影响其不同 Action、多次播放和不�
 1. 客人姿态一条宜以代码为准回写预期：实际纪律是"负责激活、绝不反激活"，而非"绝不激活"。
 2. 当前 `harken-integration.json` 与 `Runtime/Plugins/README.md` 均限定 Android 为 arm64-v8a，并列出 Linux x86_64 槽；此前记录的平台清单差异已不存在。
 3. 依赖方向已验证成立：引擎运行时源码不引用 HarkenIntegration，仅工具链生成器向其写入产物。
+
+## 分发名称与版本（2026-10-26）
+
+GitHub 集成包工作流为 `.github/workflows/integration-artifact.yml`，质量门禁为 `pr-gate-integration.yml`；内部传递制品使用 `harken-integration-bundle`，独立下载名称为 `HarkenIntegrationBundle`。外层 Studio 与 Hub 的发布制品名、产品身份和更新通道不变，独立发布器无需增加集成包发布品类。
+
+Studio Windows 与 macOS 包均使用 HarkenIntegration 主目录，并通过 `.scripts/release/integration_layout.py` 从同一来源生成 HarkenSDK/Unity/Harken 旧 Hub 兼容副本，拒绝链接、缺失或内容不一致。包内 Unity 标识、程序集、GUID 和工程安装路径不随外层命名变化。冻结包内文档中的旧工作流名称属于历史说明，以此处现行入口为准。
+
+Unity 集成包升至 0.3.6：对照已发布 HarkenStudio-0.9.0 所带 0.3.5，主干已更新 Unity 测试、集成清单及原生运行库；此次版本递增用于标识这些实际内容变化，并非由目录更名引起。Hub 与 Studio 待发布版本分别为 0.1.71、0.9.1。

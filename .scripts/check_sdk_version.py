@@ -21,7 +21,7 @@ def version(package: Path | None = None) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.parse_args()
-    print(f"Verified Harken Unity SDK {version()}.")
+    print(f"Verified Harken Unity Integration Package {version()}.")
     return 0
 
 

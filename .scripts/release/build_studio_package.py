@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import check_sdk_version
 import schema_archive
 import studio_schema_release_audit
-from release import collect_legal_texts, release_evidence
+from release import collect_legal_texts, integration_layout, release_evidence
 
 STUDIO_BINARIES = ("HarkenStudio.exe", "HarkenStudio.app/Contents/MacOS/HarkenStudio")
 PACKAGE_MANIFEST_NAME = "package-manifest.json"
@@ -164,24 +164,24 @@ def collect_payload(input_dir: Path) -> list[Path]:
 def sdk_components(input_dir: Path) -> list[dict]:
     layouts = [
         (
-            input_dir / "HarkenSDK" / "Unity" / "Harken" / "package.json",
-            "HarkenSDK/Unity/Harken",
+            input_dir / "HarkenIntegration" / "Unity" / "Harken" / "package.json",
+            "HarkenIntegration/Unity/Harken",
         ),
         (
-            input_dir / "HarkenStudio.app" / "Contents" / "MacOS" / "HarkenSDK" / "Unity" / "Harken" / "package.json",
-            "HarkenStudio.app/Contents/MacOS/HarkenSDK/Unity/Harken",
+            input_dir / "HarkenStudio.app" / "Contents" / "MacOS" / "HarkenIntegration" / "Unity" / "Harken" / "package.json",
+            "HarkenStudio.app/Contents/MacOS/HarkenIntegration/Unity/Harken",
         ),
     ]
     matches = [layout for layout in layouts if layout[0].exists()]
     if len(matches) != 1:
-        raise SystemExit("error: expected one complete Unity SDK layout")
+        raise SystemExit("error: expected one complete Unity Integration Package layout")
     unity_path, unity_root = matches[0]
     try:
         version = check_sdk_version.version(unity_path)
     except (OSError, ValueError) as error:
-        raise SystemExit(f"error: invalid Unity SDK identity: {error}") from error
+        raise SystemExit(f"error: invalid Unity Integration Package identity: {error}") from error
     return [{
-        "product": "HarkenSDK",
+        "product": "HarkenIntegration",
         "version": version,
         "artifacts": {"unity": unity_root},
     }]
@@ -195,7 +195,11 @@ def build_package(args: argparse.Namespace) -> dict:
     binary = studio_binary(input_dir)
     legal_dir = input_dir / "Legal" if binary.suffix == ".exe" else binary.parent.parent / "Resources" / "Legal"
     collect_legal_texts.verify("studio", legal_dir)
-    collect_legal_texts.verify_sdk(binary.parent / "HarkenSDK")
+    collect_legal_texts.verify_sdk(binary.parent / "HarkenIntegration")
+    try:
+        integration_layout.verify(binary.parent)
+    except (ValueError, OSError) as error:
+        raise SystemExit(f"error: invalid integration deployment: {error}") from error
     deployed_schema = verify_schema_directory(binary.parent / "schema")
     self_test = run_studio_self_test(binary)
     verify_studio_self_test(self_test, deployed_schema)

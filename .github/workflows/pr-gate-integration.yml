@@ -1,4 +1,4 @@
-name: PR Gate SDK
+name: PR Gate Integration
 
 # Not a required status check (path-filtered workflows must not be).
 
@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: pr-gate-sdk-${{ github.ref }}
+  group: pr-gate-integration-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -24,11 +24,11 @@ env:
   HARKEN_BUILD_CHANNEL: dev
 
 jobs:
-  sdk-windows:
+  integration-windows:
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
-    name: sdk-windows
+    name: integration-windows
     runs-on: [self-hosted, windows, harken-win]
     timeout-minutes: 45
     defaults:
@@ -46,7 +46,7 @@ jobs:
           fetch-depth: 0
           clean: false
 
-      - name: Check SDK source contracts before compilation
+      - name: Check Integration source contracts before compilation
         run: |
           python .scripts/check_sdk_version.py
           python .scripts/check_unity_sdk_contract.py
@@ -93,8 +93,8 @@ jobs:
           dotnet run --project HarkenIntegration/Test/ContractTest --configuration Release --
           --require-native --pack-root .temp/f3-catalog-resident-window
 
-  sdk-macos:
-    name: sdk-macos-${{ matrix.slug }}
+  integration-macos:
+    name: integration-macos-${{ matrix.slug }}
     strategy:
       fail-fast: false
       matrix:
@@ -117,13 +117,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Check SDK version identity
+      - name: Check Integration version identity
         run: python3 .scripts/check_sdk_version.py
 
-      - name: Check Unity SDK source contract
+      - name: Check Unity Integration source contract
         run: python3 .scripts/check_unity_sdk_contract.py
 
-      - name: Test Unity SDK source contract
+      - name: Test Unity Integration source contract
         run: python3 .scripts/tests/test_check_unity_sdk_contract.py -v
 
       - name: Check generated binding drift

@@ -122,7 +122,7 @@ private slots:
         if (damage.isEmpty()) QVERIFY(QFile::remove(installed + '/' + file));
         else write(installed + '/' + file, damage);
         const auto observation = VNH::EngineTargetProbe::observe(target);
-        QCOMPARE(observation.status, "SDK metadata needs repair");
+        QCOMPARE(observation.status, "Integration Package metadata needs repair");
         QVERIFY(observation.canChangeSdk);
         QVERIFY(!observation.canMoveSdk);
         QVERIFY(!observation.canRemoveSdk);
@@ -216,13 +216,13 @@ private slots:
         write(QDir(target.canonicalRoot).filePath("Assets/OtherSDK/package.json"),
               R"({"name":"com.harken.core","version":"1.0.0"})");
         auto observation = VNH::EngineTargetProbe::observe(target);
-        QCOMPARE(observation.status, "Multiple SDK installations");
+        QCOMPARE(observation.status, "Multiple Integration Package installations");
         QVERIFY(!observation.canChangeSdk && !observation.canMoveSdk && !observation.canRemoveSdk);
         write(VNX::UnityInstallation::migrationJournalPath(target.canonicalRoot), "{}");
         observation = VNH::EngineTargetProbe::observe(target);
         QCOMPARE(observation.status, "Migration unfinished");
         QVERIFY(!observation.canChangeSdk && observation.canMoveSdk && !observation.canRemoveSdk);
-        QVERIFY(observation.remediation.contains("Recover SDK Migration"));
+        QVERIFY(observation.remediation.contains("Recover Integration Package Migration"));
     }
 
     void damagedUnrealDescriptorAllowsRepairAndRemoval()
@@ -247,7 +247,7 @@ private slots:
         const QString plugin = target.canonicalRoot + "/Plugins/Harken/Harken.uplugin";
         write(plugin, "invalid");
         const auto observation = VNH::EngineTargetProbe::observe(target);
-        QCOMPARE(observation.status, "SDK metadata needs repair");
+        QCOMPARE(observation.status, "Integration Package metadata needs repair");
         QVERIFY(observation.canChangeSdk && observation.canRemoveSdk && !observation.canMoveSdk);
         plan = Executor::planUnreal(target, source, Operation::Repair);
         QVERIFY2(plan.valid, qPrintable(plan.error));
@@ -302,7 +302,7 @@ private slots:
         QVERIFY(integrations.list().empty());
         const auto* association = page.findChild<QLabel*>("projectAssociationHint");
         QVERIFY(association);
-        const char* associationText = "Linking adds this project pair to Engine Integrations and establishes a one-to-one relationship in this Hub. Unlink the pair before linking either project to another. SDK checks and management do not require linking.";
+        const char* associationText = "Linking adds this project pair to Engine Integrations and establishes a one-to-one relationship in this Hub. Unlink the pair before linking either project to another. Integration Package checks and management do not require linking.";
         QCOMPARE(association->text(), QCoreApplication::translate("HarkenHub", associationText));
         if (chinese) QVERIFY(association->text() != QString::fromLatin1(associationText));
         QVERIFY(!page.findChild<QPushButton*>("changeSdk")->isEnabled());

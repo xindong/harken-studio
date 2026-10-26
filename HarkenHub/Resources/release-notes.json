@@ -7,6 +7,34 @@
   },
   "releases": [
     {
+      "version": "0.1.71",
+      "date": "2026-10-26",
+      "pullRequests": [
+        133
+      ],
+      "contributors": [
+        "liuxin2-sys"
+      ],
+      "changes": [
+        {
+          "category": "improved",
+          "text": "Hub uses the Harken Hub name throughout installation, updates, and Studio integration, and includes the updated legal terms."
+        },
+        {
+          "category": "improved",
+          "text": "Running Hub taskbar and tray icons follow the Windows theme. The dark Hub window keeps its white icon, and the installed-app list shows the correct Hub icon."
+        },
+        {
+          "category": "improved",
+          "text": "Engine Integrations uses Integration and Integration Package terminology throughout its controls, checks, and operation reports."
+        },
+        {
+          "category": "improved",
+          "text": "Unity Integration Packages bundled with both new and older Studio versions remain discoverable without changing existing project installations or saved source paths."
+        }
+      ]
+    },
+    {
       "version": "0.1.70",
       "date": "2026-10-25",
       "pullRequests": [121],

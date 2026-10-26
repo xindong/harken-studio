@@ -421,7 +421,7 @@ def verify_payload_binaries(payload: Path, model: dict, qt_root: Path | None,
             records.append({**record, "origin": "CMake target artifact"})
             continue
         if digest in sdk_hashes:
-            records.append({**record, "origin": "SDK Runtime build receipt"})
+            records.append({**record, "origin": "Integration Package Runtime build receipt"})
             continue
         if record["path"] in deployed and deployed[record["path"]]["sha256"] == digest:
             records.append({**record, "origin": "CMake target via macdeployqt",
@@ -446,19 +446,19 @@ def read_runtime_receipts(root: Path, commit: str, channel: str = "stable") -> l
     for path in sorted(root.rglob("runtime-build.json")):
         receipt = read_json(path)
         if receipt["identity"]["gitCommit"] != commit or receipt["identity"]["channel"] != channel:
-            raise ValueError("SDK Runtime source identity differs from the package source")
+            raise ValueError("Integration Package Runtime source identity differs from the package source")
         sdk = next((parent.parent for parent in path.parents
-                    if parent.name == "BuildEvidence" and parent.parent.name == "HarkenSDK"), None)
+                    if parent.name == "BuildEvidence" and parent.parent.name in {"HarkenIntegration", "HarkenSDK"}), None)
         directory = sdk / "Unity/Harken/Legal" if sdk else path.parent
         for notice in receipt.get("notices", []):
             source = directory / notice["path"]
             if (not source.resolve().is_relative_to(directory.resolve()) or not source.is_file()
                     or sha256(source) != notice["sha256"]):
-                prefix = "SDK plugin Runtime" if sdk else "Runtime"
+                prefix = "Integration Package plugin Runtime" if sdk else "Runtime"
                 raise ValueError(f"{prefix} license evidence is missing or changed")
         receipts.append(receipt)
     if not receipts:
-        raise ValueError("SDK Runtime build receipts are missing")
+        raise ValueError("Integration Package Runtime build receipts are missing")
     return receipts
 
 
@@ -631,11 +631,11 @@ def record_runtime(build_dir: Path, output: Path, configuration: str) -> None:
 def prepare_sdk(payload: Path, receipts_root: Path, output: Path, channel: str = "dev") -> Path:
     commit = git(REPO_ROOT, "rev-parse", "HEAD")
     receipts = read_runtime_receipts(receipts_root, commit, channel)
-    sdk = payload / "HarkenSDK"
+    sdk = payload / "HarkenIntegration"
     collect_legal_texts.verify_sdk(sdk)
     version = check_sdk_version.version(sdk / "Unity/Harken/package.json")
     if version != check_sdk_version.version(REPO_ROOT / "HarkenIntegration/Unity/Harken/package.json"):
-        raise ValueError("SDK version differs from the source checkout")
+        raise ValueError("Integration Package version differs from the source checkout")
     for path in receipts_root.rglob("runtime-build.json"):
         destination = sdk / "BuildEvidence" / path.relative_to(receipts_root)
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -645,7 +645,7 @@ def prepare_sdk(payload: Path, receipts_root: Path, output: Path, channel: str =
             target = sdk / "Unity/Harken/Legal" / notice["path"]
             if target.exists():
                 if sha256(target) != notice["sha256"]:
-                    raise ValueError("SDK Runtime builds used incompatible toolchain notices")
+                    raise ValueError("Integration Package Runtime builds used incompatible toolchain notices")
             else:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(source, target)
@@ -663,7 +663,7 @@ def prepare_sdk(payload: Path, receipts_root: Path, output: Path, channel: str =
     checksums = payload / "SHA256SUMS.txt"
     records = inventory(payload, checksums)
     checksums.write_text("".join(f"{record['sha256']}  {record['path']}\n" for record in records
-                        if "sha256" in record and record["path"].startswith("HarkenSDK/Unity/Harken/Runtime/Plugins/")
+                        if "sha256" in record and record["path"].startswith("HarkenIntegration/Unity/Harken/Runtime/Plugins/")
                         and Path(record["path"]).name != "README.md"), encoding="utf-8", newline="\n")
     records.append(file_record(checksums, payload))
     records.sort(key=lambda record: record["path"])
@@ -678,7 +678,7 @@ def main(argv: list[str]) -> int:
                         default=os.environ.get("HARKEN_BUILD_CHANNEL", "dev"))
     target = parser.add_mutually_exclusive_group(required=True)
     target.add_argument("--runtime-receipt")
-    target.add_argument("--sdk-payload")
+    target.add_argument("--integration-payload", "--sdk-payload", dest="sdk_payload")
     parser.add_argument("--runtime-receipts")
     parser.add_argument("--output-dir")
     args = parser.parse_args(argv)
@@ -686,7 +686,7 @@ def main(argv: list[str]) -> int:
         record_runtime(Path(args.build_dir).resolve(), Path(args.runtime_receipt).resolve(), args.configuration)
     else:
         if not args.runtime_receipts or not args.output_dir:
-            parser.error("--sdk-payload requires --runtime-receipts and --output-dir")
+            parser.error("--integration-payload requires --runtime-receipts and --output-dir")
         payload = Path(args.sdk_payload).resolve()
         with package_output(Path(args.output_dir).resolve()) as staging:
             evidence = prepare_sdk(payload, Path(args.runtime_receipts).resolve(), staging, args.channel)

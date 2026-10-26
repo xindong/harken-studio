@@ -446,7 +446,7 @@ class ReleaseEvidenceTest(unittest.TestCase):
         self.inputs.append({"id": "apple-libcompression", "notice": "Apple libcompression",
                             "scope": "system-library-not-redistributed", "url": "https://example.invalid/compression",
                             "evidence": []})
-        self.write_notice(extra="| Apple libcompression | macOS SDK | Apple system library | Compression | System |\n")
+        self.write_notice(extra="| Apple libcompression | macOS Integration Package | Apple system library | Compression | System |\n")
         self.model["paths"].add(self.dependency / "mz_strm_libcomp.c")
         entries, _ = evidence.resolve_components(self.model, "hub")
         system = next(entry for entry in entries if entry["id"] == "apple-libcompression")
@@ -707,7 +707,7 @@ class ReleaseEvidenceTest(unittest.TestCase):
             self.assertEqual(item["sha256"], evidence.sha256(output.parent / item["path"]))
 
     def test_sdk_payload_version_must_match_the_source_checkout(self):
-        for root, version in ((self.repo / "HarkenIntegration", "2.3.4"), (self.payload / "HarkenSDK", "2.3.5")):
+        for root, version in ((self.repo / "HarkenIntegration", "2.3.4"), (self.payload / "HarkenIntegration", "2.3.5")):
             plugin = root / "Unity/Harken"
             plugin.mkdir(parents=True)
             (plugin / "LICENSE.md").write_text("license\n", encoding="utf-8")
@@ -717,12 +717,12 @@ class ReleaseEvidenceTest(unittest.TestCase):
             "identity": self.identity,
             "sourceState": {"configuredDirty": False, "checkoutDirty": False}})
         with mock.patch.object(evidence.collect_legal_texts, "REPO_ROOT", self.repo):
-            with self.assertRaisesRegex(ValueError, "SDK version differs from the source checkout"):
+            with self.assertRaisesRegex(ValueError, "Integration Package version differs from the source checkout"):
                 evidence.prepare_sdk(self.payload, self.root / "runtime", self.output)
 
     def test_sdk_retains_dirty_runtime_receipts_and_notices(self):
         sdk_source = self.repo / "HarkenIntegration"
-        sdk = self.payload / "HarkenSDK"
+        sdk = self.payload / "HarkenIntegration"
         for root in (sdk_source, sdk):
             root.mkdir(parents=True)
             plugin = root / "Unity/Harken"
@@ -763,7 +763,7 @@ class ReleaseEvidenceTest(unittest.TestCase):
         sums = dict(line.split("  ", 1)[::-1] for line in (self.payload / "SHA256SUMS.txt").read_text().splitlines())
         for binary in binaries:
             self.assertEqual(sums[binary.relative_to(self.payload).as_posix()], evidence.sha256(binary))
-        self.assertNotIn("HarkenSDK/Unity/Harken/package.json", sums)
+        self.assertNotIn("HarkenIntegration/Unity/Harken/package.json", sums)
         evidence.finalize(directory, [], self.payload)
         package_receipt = evidence.read_json(directory / "receipt.json")
         self.assertEqual(package_receipt["identity"]["gitCommit"], commit)

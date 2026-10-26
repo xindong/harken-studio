@@ -54,7 +54,7 @@ bool validateUnrealRuntime(const QString& root, QString* error)
         if (!QFileInfo(file).isFile() || !file.open(QIODevice::ReadOnly)
             || file.size() <= 0 || file.read(1).size() != 1) {
             *error = hubTranslate(QStringLiteral(
-                "The Unreal SDK is missing a readable, nonempty file required on this platform: %1. Select a complete SDK source."))
+                "The Unreal Integration Package is missing a readable, nonempty file required on this platform: %1. Select a complete Integration Package source."))
                 .arg(relative);
             return false;
         }
@@ -244,7 +244,7 @@ QJsonObject inventory(const QString& root, QString* error)
         else {
             const QString hash = hashFile(path);
             if (hash.isEmpty()) {
-                *error = hubTranslate(QStringLiteral("Cannot read SDK file for migration: %1")).arg(path);
+                *error = hubTranslate(QStringLiteral("Cannot read Integration Package file for migration: %1")).arg(path);
                 return {};
             }
             fileHashes.insert(relative, hash);
@@ -367,12 +367,12 @@ bool ProjectIntegrationExecutor::checkUnrealClosed(const EngineTargetRecord& tar
         }
         if (matches) {
             if (isOpen) *isOpen = true;
-            *error = hubTranslate(QStringLiteral("This Unreal project is open. Close it before changing the SDK, then run the safety check again."));
+            *error = hubTranslate(QStringLiteral("This Unreal project is open. Close it before changing the Integration Package, then run the safety check again."));
             return false;
         }
     }
     if (unresolvedProject) {
-        *error = hubTranslate(QStringLiteral("An Unreal Editor uses a relative project path with the same project name as this target. Reopen it with an absolute .uproject path so Hub can identify the project before changing SDK files."));
+        *error = hubTranslate(QStringLiteral("An Unreal Editor uses a relative project path with the same project name as this target. Reopen it with an absolute .uproject path so Hub can identify the project before changing Integration Package files."));
         return false;
     }
     return true;
@@ -381,7 +381,7 @@ bool ProjectIntegrationExecutor::checkUnrealClosed(const EngineTargetRecord& tar
 QString ProjectIntegrationExecutor::locateUnrealSource(const QString& path)
 {
     if (path.trimmed().isEmpty()) return {};
-    for (const auto* relative : {".", "Harken", "Unreal/Harken", "HarkenSDK/Unreal/Harken"}) {
+    for (const auto* relative : {".", "Harken", "Unreal/Harken", "HarkenIntegration/Unreal/Harken", "HarkenSDK/Unreal/Harken"}) {
         const QString candidate = QDir(path).absoluteFilePath(QLatin1String(relative));
         if (QFileInfo::exists(QDir(candidate).filePath(QStringLiteral("Harken.uplugin"))))
             return QDir::cleanPath(candidate);
@@ -408,7 +408,7 @@ bool ProjectIntegrationExecutor::resolveUnrealLocation(const EngineTargetRecord&
          !VNX::UnityInstallation::samePath(parent, target.canonicalRoot);
          parent = QFileInfo(parent).absolutePath()) {
         if (!QDir(parent).entryList({QStringLiteral("*.uplugin")}, QDir::Files | QDir::Hidden).isEmpty()) {
-            *error = hubTranslate(QStringLiteral("The SDK cannot be placed inside another Unreal plugin. Choose a separate directory under Plugins."));
+            *error = hubTranslate(QStringLiteral("The Integration Package cannot be placed inside another Unreal plugin. Choose a separate directory under Plugins."));
             return false;
         }
         if (VNX::UnityInstallation::samePath(parent, plugins)) break;
@@ -496,14 +496,14 @@ SdkMigrationPlan ProjectIntegrationExecutor::planUnrealMigration(const EngineTar
             || QUuid(plan.transactionId).toString(QUuid::WithoutBraces) != plan.transactionId
             || journal.value(QStringLiteral("project")).toString() != target.descriptorPath
             || !validInventory(plan.inventory)) {
-            plan.error = hubTranslate(QStringLiteral("The Unreal migration record is invalid. Preserve both SDK locations and the backup; restore the record from its migration backup before retrying."));
+            plan.error = hubTranslate(QStringLiteral("The Unreal migration record is invalid. Preserve both Integration Package locations and the backup; restore the record from its migration backup before retrying."));
             return plan;
         }
         if (!resolveUnrealLocation(target, journal.value(QStringLiteral("source")).toString(), &plan.sourceRoot, &plan.error)
             || !resolveUnrealLocation(target, journal.value(QStringLiteral("destination")).toString(), &plan.targetRoot, &plan.error)) return plan;
     } else {
         if (hasPendingUnrealMigration(target)) {
-            plan.error = hubTranslate(QStringLiteral("The SDK migration is unfinished. Choose \"Recover...\" before continuing."));
+            plan.error = hubTranslate(QStringLiteral("The Integration Package migration is unfinished. Choose \"Recover...\" before continuing."));
             return plan;
         }
         const auto installed = inspectUnreal(target);
@@ -514,14 +514,14 @@ SdkMigrationPlan ProjectIntegrationExecutor::planUnrealMigration(const EngineTar
         bool pluginOk = false;
         readObject(QDir(plan.sourceRoot).filePath(QStringLiteral("Harken.uplugin")), &pluginOk);
         if (!pluginOk || !validInventory(plan.inventory)) {
-            if (plan.error.isEmpty()) plan.error = hubTranslate(QStringLiteral("Repair the installed Unreal SDK with Change SDK before moving it."));
+            if (plan.error.isEmpty()) plan.error = hubTranslate(QStringLiteral("Repair the installed Unreal Integration Package with Change Integration Package before moving it."));
             return plan;
         }
         plan.transactionId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     }
     if (VNX::UnityInstallation::containsPath(plan.sourceRoot, plan.targetRoot)
         || VNX::UnityInstallation::containsPath(plan.targetRoot, plan.sourceRoot)) {
-        plan.error = hubTranslate(QStringLiteral("The current and new SDK locations must be separate directories."));
+        plan.error = hubTranslate(QStringLiteral("The current and new Integration Package locations must be separate directories."));
         return plan;
     }
     plan.backupRoot = migrationBackup(target, plan.transactionId);
@@ -537,7 +537,7 @@ SdkMigrationPlan ProjectIntegrationExecutor::planUnrealMigration(const EngineTar
             return plan;
         }
         if (inventory(plan.backupRoot, &plan.error) != plan.inventory) {
-            plan.error = hubTranslate(QStringLiteral("The migration backup is missing or changed. Restore the original backup before recovering; no SDK files were changed."));
+            plan.error = hubTranslate(QStringLiteral("The migration backup is missing or changed. Restore the original backup before recovering; no Integration Package files were changed."));
             return plan;
         }
         const bool sourceEmpty = emptyLocation(plan.sourceRoot);
@@ -545,7 +545,7 @@ SdkMigrationPlan ProjectIntegrationExecutor::planUnrealMigration(const EngineTar
         if ((!sourceEmpty && inventory(plan.sourceRoot, &plan.error) != plan.inventory)
             || (!targetEmpty && inventory(plan.targetRoot, &plan.error) != plan.inventory)
             || (!sourceEmpty && !targetEmpty)) {
-            plan.error = hubTranslate(QStringLiteral("SDK files changed after migration was interrupted, or both locations are occupied. Preserve those files and restore one location to the migration backup's contents before recovering."));
+            plan.error = hubTranslate(QStringLiteral("Integration Package files changed after migration was interrupted, or both locations are occupied. Preserve those files and restore one location to the migration backup's contents before recovering."));
             return plan;
         }
         journal.insert(QStringLiteral("source_empty"), sourceEmpty);
@@ -569,7 +569,7 @@ IntegrationOperationResult ProjectIntegrationExecutor::executeUnrealMigration(
     }
     QLockFile lock(QDir(target.canonicalRoot).filePath(QStringLiteral(".harken-sdk-operation.lock")));
     if (!lock.tryLock()) {
-        result.error = hubTranslate(QStringLiteral("Another SDK operation is running for this project."));
+        result.error = hubTranslate(QStringLiteral("Another Integration Package operation is running for this project."));
         return result;
     }
     const auto revalidate = [&]() {
@@ -581,7 +581,7 @@ IntegrationOperationResult ProjectIntegrationExecutor::executeUnrealMigration(
             || QUuid(plan.transactionId).toString(QUuid::WithoutBraces) != plan.transactionId
             || plan.backupRoot != migrationBackup(target, plan.transactionId)
             || (plan.recovering && current.transactionId != plan.transactionId)) {
-            result.error = hubTranslate(QStringLiteral("SDK files changed after the safety check. Run the check again before continuing."));
+            result.error = hubTranslate(QStringLiteral("Integration Package files changed after the safety check. Run the check again before continuing."));
             return false;
         }
         return true;
@@ -614,7 +614,7 @@ IntegrationOperationResult ProjectIntegrationExecutor::executeUnrealMigration(
     if (!checkUnrealClosed(target, &result.error)) return result;
     if (plan.recovering && !emptyLocation(output)) {
         if (inventory(output, &result.error) != plan.inventory || !emptyLocation(input)) {
-            result.error = hubTranslate(QStringLiteral("SDK files changed after the safety check. Run the check again before continuing."));
+            result.error = hubTranslate(QStringLiteral("Integration Package files changed after the safety check. Run the check again before continuing."));
             return result;
         }
     } else {
@@ -631,7 +631,7 @@ IntegrationOperationResult ProjectIntegrationExecutor::executeUnrealMigration(
             ? copyInventory(plan.backupRoot, output, plan.inventory, &result.error)
             : inventory(input, &result.error) == plan.inventory && renameIntegrationDirectory(input, output);
         if (!restored) {
-            if (result.error.isEmpty()) result.error = hubTranslate(QStringLiteral("The SDK migration is unfinished. Choose \"Recover...\" before continuing."));
+            if (result.error.isEmpty()) result.error = hubTranslate(QStringLiteral("The Integration Package migration is unfinished. Choose \"Recover...\" before continuing."));
             return result;
         }
     }
@@ -639,7 +639,7 @@ IntegrationOperationResult ProjectIntegrationExecutor::executeUnrealMigration(
     if (inventory(output, &result.error) != plan.inventory
         || !locateUnrealInstallation(target, &installed, &result.error)
         || !VNX::UnityInstallation::samePath(installed, output) || !QFile::remove(journalPath)) {
-        if (result.error.isEmpty()) result.error = hubTranslate(QStringLiteral("The SDK migration is unfinished. Choose \"Recover...\" before continuing."));
+        if (result.error.isEmpty()) result.error = hubTranslate(QStringLiteral("The Integration Package migration is unfinished. Choose \"Recover...\" before continuing."));
         return result;
     }
     result.installedPath = QDir(target.canonicalRoot).relativeFilePath(output);
@@ -658,7 +658,7 @@ IntegrationPlan ProjectIntegrationExecutor::inspectUnreal(const EngineTargetReco
         return result;
     }
     if (hasPendingUnrealMigration(target)) {
-        result.error = hubTranslate(QStringLiteral("The SDK migration is unfinished. Choose \"Recover...\" before continuing."));
+        result.error = hubTranslate(QStringLiteral("The Integration Package migration is unfinished. Choose \"Recover...\" before continuing."));
         return result;
     }
     if (!locateUnrealInstallation(target, &result.targetRoot, &result.error)) return result;
@@ -706,7 +706,7 @@ IntegrationPlan ProjectIntegrationExecutor::planUnreal(
     if (!checkUnrealClosed(target, &plan.error)) return plan;
     plan.sourceRoot = operation == IntegrationOperation::Remove ? QString() : locateUnrealSource(sourceRoot);
     if (hasPendingUnrealMigration(target)) {
-        plan.error = hubTranslate(QStringLiteral("The SDK migration is unfinished. Choose \"Recover...\" before continuing."));
+        plan.error = hubTranslate(QStringLiteral("The Integration Package migration is unfinished. Choose \"Recover...\" before continuing."));
         return plan;
     }
     if (!locateUnrealInstallation(target, &plan.targetRoot, &plan.error)) return plan;
@@ -714,12 +714,12 @@ IntegrationPlan ProjectIntegrationExecutor::planUnreal(
             target.sdkInstallPath.isEmpty() ? QStringLiteral("Plugins/Harken") : target.sdkInstallPath,
             &plan.targetRoot, &plan.error)) return plan;
     if (operation != IntegrationOperation::Remove && plan.sourceRoot.isEmpty()) {
-        plan.error = hubTranslate(QStringLiteral("The Unreal SDK source is incomplete"));
+        plan.error = hubTranslate(QStringLiteral("The Unreal Integration Package source is incomplete"));
         return plan;
     }
     if (!safeTree(plan.targetRoot)
         || (operation != IntegrationOperation::Remove && !safeTree(plan.sourceRoot))) {
-        plan.error = hubTranslate(QStringLiteral("SDK paths must not contain symbolic links."));
+        plan.error = hubTranslate(QStringLiteral("Integration Package paths must not contain symbolic links."));
         return plan;
     }
     if (operation != IntegrationOperation::Remove) {
@@ -728,19 +728,19 @@ IntegrationPlan ProjectIntegrationExecutor::planUnreal(
         if (source.compare(installed, Qt::CaseInsensitive) == 0
             || source.startsWith(installed + QLatin1Char('/'), Qt::CaseInsensitive)
             || installed.startsWith(source + QLatin1Char('/'), Qt::CaseInsensitive)) {
-            plan.error = hubTranslate(QStringLiteral("SDK source and installation directories must be separate."));
+            plan.error = hubTranslate(QStringLiteral("Integration Package source and installation directories must be separate."));
             return plan;
         }
         bool pluginOk = false;
         const QJsonObject plugin = readObject(QDir(plan.sourceRoot).filePath(
             QStringLiteral("Harken.uplugin")), &pluginOk);
         if (!pluginOk) {
-            plan.error = hubTranslate(QStringLiteral("The Unreal SDK source is incomplete"));
+            plan.error = hubTranslate(QStringLiteral("The Unreal Integration Package source is incomplete"));
             return plan;
         }
         plan.version = plugin.value(QStringLiteral("VersionName")).toString();
         if (plan.version.isEmpty()) {
-            plan.error = hubTranslate(QStringLiteral("The Unreal SDK version is unavailable"));
+            plan.error = hubTranslate(QStringLiteral("The Unreal Integration Package version is unavailable"));
             return plan;
         }
         if (!validateUnrealRuntime(plan.sourceRoot, &plan.error)) return plan;
@@ -785,7 +785,7 @@ IntegrationPlan ProjectIntegrationExecutor::planUnreal(
     for (const QString& relative : files(plan.targetRoot)) {
         if (relative == QLatin1String(kUnrealReceiptFileName) || priorHashes.contains(relative)) continue;
         if (std::find(sourceFiles.begin(), sourceFiles.end(), relative) != sourceFiles.end()) {
-            plan.error = hubTranslate(QStringLiteral("The SDK source would overwrite a project-specific file: %1")).arg(relative);
+            plan.error = hubTranslate(QStringLiteral("The Integration Package source would overwrite a project-specific file: %1")).arg(relative);
             return plan;
         }
         plan.preservedTargetFiles.append(relative);
@@ -799,7 +799,7 @@ IntegrationPlan ProjectIntegrationExecutor::planUnreal(
             const QString source = QDir(plan.sourceRoot).filePath(relative);
             const QString installed = QDir(plan.targetRoot).filePath(relative);
             if (hashFile(source).isEmpty()) {
-                plan.error = hubTranslate(QStringLiteral("The Unreal SDK source is incomplete"));
+                plan.error = hubTranslate(QStringLiteral("The Unreal Integration Package source is incomplete"));
                 return plan;
             }
             if (!QFileInfo::exists(installed)) {
@@ -860,7 +860,7 @@ IntegrationOperationResult ProjectIntegrationExecutor::executeUnreal(
     }
     QLockFile lock(QDir(target.canonicalRoot).filePath(QStringLiteral(".harken-sdk-operation.lock")));
     if (!lock.tryLock()) {
-        result.error = hubTranslate(QStringLiteral("Another SDK operation is running for this project."));
+        result.error = hubTranslate(QStringLiteral("Another Integration Package operation is running for this project."));
         return result;
     }
     const auto revalidate = [&]() {
@@ -873,7 +873,7 @@ IntegrationOperationResult ProjectIntegrationExecutor::executeUnreal(
             || current.targetRoot != plan.targetRoot
             || current.preservedTargetFiles != plan.preservedTargetFiles) {
             result.reviewRequired = true;
-            result.error = hubTranslate(QStringLiteral("SDK files changed after the safety check. Run the check again before continuing."));
+            result.error = hubTranslate(QStringLiteral("Integration Package files changed after the safety check. Run the check again before continuing."));
             return false;
         }
         return true;
@@ -934,7 +934,7 @@ IntegrationOperationResult ProjectIntegrationExecutor::executeUnreal(
             staging.setAutoRemove(true);
             if (!result.backupPath.isEmpty() && renameIntegrationDirectory(result.backupPath, plan.targetRoot))
                 result.backupPath.clear();
-            result.error = hubTranslate(QStringLiteral("Installed SDK verification failed. Review the backup and restore the project before retrying."));
+            result.error = hubTranslate(QStringLiteral("Installed Integration Package verification failed. Review the backup and restore the project before retrying."));
             return result;
         }
     }

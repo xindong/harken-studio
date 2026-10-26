@@ -39,7 +39,7 @@ struct DiscoveryBudget
     bool stop(const QString& path)
     {
         if (error.isEmpty())
-            error = QStringLiteral("SDK discovery exceeded its safety limits at %1. Check local package references and reduce the scanned content.").arg(path);
+            error = QStringLiteral("Integration Package discovery exceeded its safety limits at %1. Check local package references and reduce the scanned content.").arg(path);
         return false;
     }
 
@@ -389,7 +389,7 @@ Discovery discover(const QString& projectRoot)
         if (embeddedPackages.contains(reference.first)) continue;
         if (reference.second.isEmpty()) {
             add(QDir(projectRoot).filePath(QStringLiteral("Packages/") + reference.first));
-            result.errors << QStringLiteral("An SDK is referenced by Unity Package Manager: %1. Resolve this dependency before using Hub installation.").arg(reference.first);
+            result.errors << QStringLiteral("An Integration Package is referenced by Unity Package Manager: %1. Resolve this dependency before using Hub installation.").arg(reference.first);
         } else if (containsPath(reference.second, projectRoot)) {
             result.errors << QStringLiteral("A local package path includes the Unity project: %1. Reference a package directory instead.").arg(reference.second);
         } else {
@@ -407,7 +407,7 @@ Discovery discover(const QString& projectRoot)
         QString error;
         if (!readObject(path, &package, &error, budget)) result.errors << error;
         else if (package.value(QStringLiteral("name")).toString().trimmed().isEmpty())
-            result.errors << QStringLiteral("Cannot determine the SDK package identity: %1").arg(path);
+            result.errors << QStringLiteral("Cannot determine the Integration Package identity: %1").arg(path);
     }
     for (const QString& footprint : footprints) {
         if (!budget.consume(footprint)) break;
@@ -415,7 +415,7 @@ Discovery discover(const QString& projectRoot)
                          [&](const Installation& item) {
                              return !budget.consume(footprint) || containsPath(item.path, footprint);
                          }))
-            result.errors << QStringLiteral("SDK files without an identifiable installation root: %1").arg(footprint);
+            result.errors << QStringLiteral("Integration Package files without an identifiable installation root: %1").arg(footprint);
     }
     for (Installation& item : result.installations) {
         if (!budget.consume(item.path)) break;
@@ -441,7 +441,7 @@ bool validateTarget(const QString& projectRoot, const QString& target,
                     QString* error, bool removing)
 {
     if (hasPendingMigration(projectRoot)) {
-        *error = QStringLiteral("An unfinished SDK migration must be recovered before continuing.");
+        *error = QStringLiteral("An unfinished Integration Package migration must be recovered before continuing.");
         return false;
     }
     const Discovery discovery = discover(projectRoot);
@@ -450,21 +450,21 @@ bool validateTarget(const QString& projectRoot, const QString& target,
         return false;
     }
     if (removing && !discovery.sdkReferences.isEmpty()) {
-        *error = QStringLiteral("Resolve SDK package dependencies before removal; Unity could load the referenced SDK after the embedded copy is removed:\n%1")
+        *error = QStringLiteral("Resolve Integration Package dependencies before removal; Unity could load the referenced Integration Package after the embedded copy is removed:\n%1")
                      .arg(discovery.sdkReferences.join(QLatin1Char('\n')));
         return false;
     }
     if (discovery.installations.size() > 1) {
         QStringList paths;
         for (const Installation& item : discovery.installations) paths << item.path;
-        *error = QStringLiteral("Multiple SDK installations were found. Resolve these conflicts before continuing:\n%1")
+        *error = QStringLiteral("Multiple Integration Package installations were found. Resolve these conflicts before continuing:\n%1")
                      .arg(paths.join(QLatin1Char('\n')));
         return false;
     }
     if (!discovery.installations.isEmpty()) {
         const Installation& item = discovery.installations.front();
         if (!samePath(item.path, target)) {
-            *error = QStringLiteral("An SDK is already installed at %1. Use that location or remove it before installing elsewhere.").arg(item.path);
+            *error = QStringLiteral("An Integration Package is already installed at %1. Use that location or remove it before installing elsewhere.").arg(item.path);
             return false;
         }
     } else if (QDir(target).exists()

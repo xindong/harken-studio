@@ -341,7 +341,7 @@ TEST_F(UnitySdkMigrationTest, VerificationRejectsIncompleteAndEscapingOwnershipR
     writeFile(statePath, QJsonDocument(invalid).toJson());
     auto result = VNH::HubUnityIntegrationService::run(verify);
     EXPECT_FALSE(result.success);
-    EXPECT_EQ(result.steps[1].summary, "The installed SDK has incomplete or invalid verification data.");
+    EXPECT_EQ(result.steps[1].summary, "The installed Integration Package has incomplete or invalid verification data.");
     invalid = originalState;
     auto hashes = invalid["sha256"].toObject();
     hashes["package.json"] = QString(64, QLatin1Char('z'));
@@ -363,7 +363,7 @@ TEST_F(UnitySdkMigrationTest, VerificationDiagnosesMissingUnmanagedAndDuplicateI
     auto result = VNH::HubUnityIntegrationService::run(verify);
     EXPECT_FALSE(result.success);
     EXPECT_FALSE(result.targetInstalled);
-    EXPECT_EQ(result.steps[1].summary, "No Harken Unity SDK is installed in this project.");
+    EXPECT_EQ(result.steps[1].summary, "No Harken Unity Integration Package is installed in this project.");
     const QString unmanaged = QDir(verify.unityProjectPath).filePath("Packages/com.harken.core/package.json");
     writeFile(unmanaged, R"({"name":"com.harken.core","version":"0.1.0"})");
     result = VNH::HubUnityIntegrationService::run(verify);
@@ -377,7 +377,7 @@ TEST_F(UnitySdkMigrationTest, VerificationDiagnosesMissingUnmanagedAndDuplicateI
     writeFile(QDir(project).filePath("Assets/OtherSDK/package.json"), readFile(unmanaged));
     result = VNH::HubUnityIntegrationService::run(verify);
     EXPECT_FALSE(result.success);
-    EXPECT_EQ(result.steps[1].summary, "Multiple SDK installations were found:");
+    EXPECT_EQ(result.steps[1].summary, "Multiple Integration Package installations were found:");
     EXPECT_EQ(result.steps[1].artifacts.size(), 2);
 }
 
@@ -584,7 +584,7 @@ TEST_F(UnitySdkMigrationTest, RecoversInterruptedMigrationAtEachRenameBoundaryAn
 TEST_F(UnitySdkMigrationTest, RecoversIntoRecreatedEmptySourceButPreservesFilesAndMetadataConflicts)
 {
     writeFile(original + ".meta", "guid: sdk-root");
-    writeFile(QDir(original).filePath("UserChange.txt"), "keep modified SDK");
+    writeFile(QDir(original).filePath("UserChange.txt"), "keep modified Integration Package");
     approve();
     ASSERT_TRUE(service.run(request).success);
     writeFile(VNX::UnityInstallation::migrationJournalPath(project),
@@ -615,7 +615,7 @@ TEST_F(UnitySdkMigrationTest, RecoversIntoRecreatedEmptySourceButPreservesFilesA
     ASSERT_TRUE(QFile::remove(conflict));
     const auto recovered = service.run(request);
     ASSERT_TRUE(recovered.success) << recovered.steps.back().cause.toStdString();
-    EXPECT_EQ(readFile(QDir(original).filePath("UserChange.txt")), "keep modified SDK");
+    EXPECT_EQ(readFile(QDir(original).filePath("UserChange.txt")), "keep modified Integration Package");
     EXPECT_EQ(readFile(original + ".meta"), "guid: sdk-root");
     EXPECT_FALSE(QDir(destination).exists());
     EXPECT_FALSE(VNX::UnityInstallation::hasPendingMigration(project));
@@ -784,7 +784,7 @@ TEST(UnityIntegrationService, DiscoversMovedSdkAndBlocksSecondOrNestedInstallati
     makeCompleteSdk(QDir(moved).filePath(QStringLiteral("Copy")));
     const auto result = service.run(request);
     EXPECT_FALSE(result.success);
-    EXPECT_TRUE(result.steps.front().cause.contains(QStringLiteral("Multiple SDK")));
+    EXPECT_TRUE(result.steps.front().cause.contains(QStringLiteral("Multiple Integration Package")));
 }
 
 TEST(UnityIntegrationService, BlocksSdkPackageReferencesAndPartialCopiesButIgnoresCaches)
@@ -833,7 +833,7 @@ TEST(UnityIntegrationService, LargeProjectsStillDiscoverConflictsAndAllowKnownTa
     EXPECT_TRUE(VNX::UnityInstallation::validateTarget(project, installed, &error)) << error.toStdString();
     makeCompleteSdk(QDir(assets).filePath("AnotherSDK"));
     EXPECT_FALSE(VNX::UnityInstallation::validateTarget(project, installed, &error));
-    EXPECT_TRUE(error.contains("Multiple SDK installations")) << error.toStdString();
+    EXPECT_TRUE(error.contains("Multiple Integration Package installations")) << error.toStdString();
     const QString external = dir.filePath("External");
     ASSERT_TRUE(QDir().rename(assets, external));
     writeFile(external + "/package.json", R"({"name":"com.example.external"})");
@@ -986,7 +986,7 @@ TEST(UnityIntegrationService, UnrelatedBrokenIdentitiesDoNotBlockButSdkRemnantsA
     const auto installed = service.run(request);
     ASSERT_TRUE(installed.success) << installed.steps.front().cause.toStdString();
     const QString remnant = QDir(project).filePath("Assets/Partial/Harken.Core.asmdef");
-    writeFile(remnant, "broken SDK assembly");
+    writeFile(remnant, "broken Integration Package assembly");
     EXPECT_FALSE(VNX::UnityInstallation::discover(project).errors.isEmpty());
     ASSERT_TRUE(QFile::remove(remnant));
     writeFile(manifest, "broken UPM manifest");
@@ -1048,7 +1048,7 @@ TEST(UnityIntegrationService, CanRepairManagedSdkWithDamagedPackageIdentity)
     request.sdkSourcePath = source;
     ASSERT_TRUE(service.run(request).success);
     const QString manifest = QDir(project).filePath("Packages/com.harken.core/package.json");
-    writeFile(manifest, "broken SDK package");
+    writeFile(manifest, "broken Integration Package");
     const auto discovery = VNX::UnityInstallation::discover(project);
     ASSERT_EQ(discovery.installations.size(), 1);
     EXPECT_TRUE(discovery.installations.front().managed);
@@ -1334,7 +1334,7 @@ TEST(UnityIntegrationService, RemovalDoesNotReactivateAnOverriddenPackageDepende
     const auto result = service.run(request);
     EXPECT_FALSE(result.success);
     EXPECT_FALSE(result.integrationRemoved);
-    EXPECT_TRUE(result.steps.front().cause.contains(QStringLiteral("package dependencies")));
+    EXPECT_TRUE(result.steps.front().cause.contains(QStringLiteral("Package dependencies")));
     EXPECT_TRUE(QFileInfo::exists(QDir(project).filePath(QStringLiteral("Packages/com.harken.core/package.json"))));
 }
 
@@ -1411,12 +1411,13 @@ TEST(UnityIntegrationService, ResolvesSdkTotalDirectoryToUnityPackageRoot)
 {
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
-    const QString totalRoot = QDir(dir.path()).filePath(QStringLiteral("HarkenSDK"));
-    const QString packageRoot = QDir(totalRoot).filePath(QStringLiteral("Unity/Harken"));
-    makeCompleteSdk(packageRoot);
-
-    EXPECT_EQ(VNX::UnityIntegrationService::locateSdkSource(totalRoot),
-              QDir(packageRoot).absolutePath());
+    for (const auto* name : {"HarkenIntegration", "HarkenSDK"}) {
+        const QString totalRoot = QDir(dir.path()).filePath(QLatin1String(name));
+        const QString packageRoot = QDir(totalRoot).filePath(QStringLiteral("Unity/Harken"));
+        makeCompleteSdk(packageRoot);
+        EXPECT_EQ(VNX::UnityIntegrationService::locateSdkSource(totalRoot),
+                  QDir(packageRoot).absolutePath());
+    }
 }
 
 TEST(UnityIntegrationService, ResolvesUnityClassificationDirectoryToPackageRoot)
@@ -1634,7 +1635,7 @@ TEST(UnityIntegrationService, WarnsButDoesNotBlockMissingAndroidRuntime)
               VNX::UnityIntegrationService::StepStatus::Warning);
     EXPECT_TRUE(result.steps[1].summary.contains(QStringLiteral("Android")));
     EXPECT_TRUE(result.steps[1].summary.contains(QStringLiteral("can still be integrated")));
-    EXPECT_TRUE(result.steps[1].cause.contains(QStringLiteral("selected SDK source")));
+    EXPECT_TRUE(result.steps[1].cause.contains(QStringLiteral("selected Integration Package source")));
     EXPECT_TRUE(result.steps[1].remediation.contains(QStringLiteral("continue")));
     EXPECT_TRUE(result.steps[1].details.join(QLatin1Char('\n'))
                     .contains(QStringLiteral("Android APK or AAB")));
@@ -2093,13 +2094,13 @@ TEST(UnityIntegrationService, BackupFailurePreservesSdkAndReportsSystemDiagnosti
     const QByteArray original = readFile(installed + "/Runtime/Harken.Core.asmdef");
     QFile held(installed + "/Runtime/Generated/HarkenAbi.g.cs");
     ASSERT_TRUE(held.open(QIODevice::ReadOnly));
-    writeFile(source + "/Runtime/Harken.Core.asmdef", "updated SDK");
+    writeFile(source + "/Runtime/Harken.Core.asmdef", "updated Integration Package");
     request.confirmTargetChanges = true;
     const auto result = VNH::HubUnityIntegrationService::run(request);
     EXPECT_FALSE(result.success);
     bool backupFailed = false;
     for (const auto& step : result.steps) {
-        if (step.summary != "Could not back up the existing Unity SDK.") continue;
+        if (step.summary != "Could not back up the existing Unity Integration Package.") continue;
         backupFailed = true;
         EXPECT_TRUE(step.cause.contains(installed));
         EXPECT_TRUE(step.cause.contains(".backup-"));
@@ -2111,7 +2112,7 @@ TEST(UnityIntegrationService, BackupFailurePreservesSdkAndReportsSystemDiagnosti
     EXPECT_EQ(readFile(installed + "/Runtime/Harken.Core.asmdef"), original);
     held.close();
     EXPECT_TRUE(VNH::HubUnityIntegrationService::run(request).success);
-    EXPECT_EQ(readFile(installed + "/Runtime/Harken.Core.asmdef"), "updated SDK");
+    EXPECT_EQ(readFile(installed + "/Runtime/Harken.Core.asmdef"), "updated Integration Package");
 }
 #endif
 
