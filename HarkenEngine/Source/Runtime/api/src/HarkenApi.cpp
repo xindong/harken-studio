@@ -91347,6 +91347,12 @@ bool ResolveImmediateActionQueueReset(
     return true;
 }
 
+// Keep replacement-only workspace off the common reservation callback's stack.
+#if defined(_MSC_VER)
+__declspec(noinline)
+#elif defined(__GNUC__) || defined(__clang__)
+__attribute__((noinline))
+#endif
 bool PrepareImmediateActionQueueReplacement(
     ImmediateActionPlan& plan, harken::EnginePlayableServiceRow& row,
     harken::EngineActionQueueReplacementScratch& scratch,
