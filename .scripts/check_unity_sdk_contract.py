@@ -9,7 +9,7 @@ from check_sdk_version import version
 
 
 REPOSITORY = Path(__file__).resolve().parents[1]
-DEFAULT_SDK = REPOSITORY / "HarkenSDK" / "Unity" / "Harken"
+DEFAULT_SDK = REPOSITORY / "HarkenIntegration" / "Unity" / "Harken"
 FORBIDDEN_UNITY_ROOT_SUFFIXES = {".cpp", ".h", ".uplugin"}
 NATIVE_SUFFIXES = {".a", ".dll", ".dylib", ".lib", ".so"}
 NATIVE_PLUGIN_PATHS = {
@@ -180,7 +180,7 @@ def verify_layout(
 ) -> None:
     for forbidden in ("Unreal",):
         if (sdk / forbidden).exists():
-            errors.append(f"HarkenSDK must not contain {forbidden}")
+            errors.append(f"HarkenIntegration must not contain {forbidden}")
 
     native_files = set()
     for path in sdk.rglob("*"):

@@ -70,7 +70,7 @@ class BuildStudioPackageTest(unittest.TestCase):
         for name in ("LICENSE.md", "NOTICE.md"):
             relative = Path("HarkenSDK/Unity/Harken") / name
             destination = binary_dir / relative
-            shutil.copyfile(REPO_ROOT / relative, destination)
+            shutil.copyfile(REPO_ROOT / "HarkenIntegration/Unity/Harken" / name, destination)
             self.legal_paths.add(destination.relative_to(self.input_dir).as_posix())
 
     def make_input(self, with_binary=True, sdk_version="0.2.0"):

@@ -19,7 +19,7 @@ git clone https://github.com/xindong/harken-studio.git
 1. **Harken Hub** — the official distribution platform, providing Harken Studio updates and downloads;
 2. **Harken Studio** — the designer-facing editor for arranging sounds and authoring playback logic;
 3. **Harken Engine** — the core sound engine, the primary deliverable for client and engine integration;
-4. **Harken SDK** — the standalone integration package for embedding Harken into game engines;
+4. **Harken Engine Unity Integration** — the standalone integration package for embedding Harken into game engines;
 
 ## Prerequisites
 
@@ -167,7 +167,7 @@ harken/
 ├── HarkenEngine/                         # harken_core — the sound engine runtime core
 ├── HarkenHub/                            # HarkenHub — the standalone launcher
 ├── HarkenSchema/                         # Independent Editor and Pack JSON contracts
-├── HarkenSDK/                            # HarkenSDK — shared engine SDK root (Unity/Harken)
+├── HarkenIntegration/                    # HarkenIntegration — shared engine integration root (Unity/Harken)
 ├── HarkenStudio/                         # HarkenEditor — the front-end editor
 ├── CLAUDE.md | AGENTS.md                 # High-level AI project instructions
 ├── CMake*                                # CMake project solution

@@ -165,7 +165,7 @@ The source check complements compilation. Run
 `.scripts/check_unity_sdk_boundary.py` separately to stage the
 SDK, compile a separate library and non-friend consumer, check every generated
 symbol and test inaccessible APIs independently. Its `--sdk-root` option accepts
-an assembled SDK package; see `HarkenSDK/Test/ExternalConsumer/README.md` for
+an assembled SDK package; see `HarkenIntegration/Test/ExternalConsumer/README.md` for
 native-host and Unity validation. The managed generation policy tests and
 external-consumer checks are standalone validations, not workflow steps.
 These checks do not replace the

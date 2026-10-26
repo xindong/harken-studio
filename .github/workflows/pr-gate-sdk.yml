@@ -5,7 +5,7 @@ name: PR Gate SDK
 on:
   pull_request:
     paths:
-      - 'HarkenSDK/**'
+      - 'HarkenIntegration/**'
       - 'HarkenEngine/**'
       - 'cmake/**'
       - 'CMakeLists.txt'
@@ -90,7 +90,7 @@ jobs:
         env:
           HARKEN_NATIVE_DIR: ${{ github.workspace }}/build-sdk-runtime-clang/bin/Release
         run: >-
-          dotnet run --project HarkenSDK/Test/ContractTest --configuration Release --
+          dotnet run --project HarkenIntegration/Test/ContractTest --configuration Release --
           --require-native --pack-root .temp/f3-catalog-resident-window
 
   sdk-macos:
@@ -161,5 +161,5 @@ jobs:
         env:
           HARKEN_NATIVE_DIR: ${{ github.workspace }}/build-sdk-runtime-clang/bin/Release
         run: >-
-          dotnet run --project HarkenSDK/Test/ContractTest --configuration Release --
+          dotnet run --project HarkenIntegration/Test/ContractTest --configuration Release --
           --require-native --pack-root .temp/f3-catalog-resident-window

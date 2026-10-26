@@ -80,7 +80,7 @@ namespace Harken.Test
                     continue;
                 }
                 Console.Error.WriteLine("Unknown argument: " + arg);
-                Console.Error.WriteLine("Usage: dotnet run --project HarkenSDK/Test/ContractTest -- [--require-native] [--current-world path] [--pack-root path] [--companion-root path]");
+                Console.Error.WriteLine("Usage: dotnet run --project HarkenIntegration/Test/ContractTest -- [--require-native] [--current-world path] [--pack-root path] [--companion-root path]");
                 return 2;
             }
 

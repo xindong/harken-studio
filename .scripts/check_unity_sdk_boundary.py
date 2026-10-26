@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-FIXTURE = ROOT / "HarkenSDK/Test/ExternalConsumer"
+FIXTURE = ROOT / "HarkenIntegration/Test/ExternalConsumer"
 
 # Each probe compiles separately, so one inaccessible name cannot mask another.
 NEGATIVE = {
@@ -50,7 +50,7 @@ def verify(sdk, work, native_dir=None, publication=None):
     shutil.copytree(sdk, staged)
     shutil.copytree(FIXTURE, work / "fixture", ignore=shutil.ignore_patterns("bin", "obj"))
     fixture = work / "fixture"
-    shutil.copy2(ROOT / "HarkenSDK/Test/ContractTest/RemoteCommunicationContract.cs", fixture)
+    shutil.copy2(ROOT / "HarkenIntegration/Test/ContractTest/RemoteCommunicationContract.cs", fixture)
     # The consumer references only the compiled DLL, never SDK source items.
     run(["dotnet", "build", str(fixture / "Harken.Core.csproj"), "-c", "Release",
          f"-p:HarkenSdkRoot={staged}", "--artifacts-path", str(work / "artifacts"),
@@ -90,7 +90,7 @@ def verify(sdk, work, native_dir=None, publication=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--sdk-root", type=Path, default=ROOT / "HarkenSDK/Unity/Harken")
+    parser.add_argument("--sdk-root", type=Path, default=ROOT / "HarkenIntegration/Unity/Harken")
     parser.add_argument("--work-dir", type=Path)
     parser.add_argument("--native-dir", type=Path)
     parser.add_argument("--publication", type=Path)

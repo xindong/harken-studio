@@ -634,7 +634,7 @@ def prepare_sdk(payload: Path, receipts_root: Path, output: Path, channel: str =
     sdk = payload / "HarkenSDK"
     collect_legal_texts.verify_sdk(sdk)
     version = check_sdk_version.version(sdk / "Unity/Harken/package.json")
-    if version != check_sdk_version.version(REPO_ROOT / "HarkenSDK/Unity/Harken/package.json"):
+    if version != check_sdk_version.version(REPO_ROOT / "HarkenIntegration/Unity/Harken/package.json"):
         raise ValueError("SDK version differs from the source checkout")
     for path in receipts_root.rglob("runtime-build.json"):
         destination = sdk / "BuildEvidence" / path.relative_to(receipts_root)

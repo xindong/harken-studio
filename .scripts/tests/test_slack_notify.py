@@ -30,7 +30,7 @@ PR_BODY = """# PR 描述 / Description
 - [x] `HarkenStudio/*`
 - [ ] `HarkenEngine/*`
 - [x] `HarkenHub/*`
-- [ ] `HarkenSDK/*`
+- [ ] `HarkenIntegration/*`
 """
 
 

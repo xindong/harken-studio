@@ -7,7 +7,7 @@
 ; Why a manifest for a static library. Nothing links this file: harken_preview is
 ; a static library, so no linker needs an export list. What needs one is the
 ; review. The gameplay export allowlist (HarkenEngine/Source/Runtime/api/abi/
-; HarkenCore.def) and the C# binding under HarkenSDK/Unity/Harken/Runtime/Generated/ are both
+; HarkenCore.def) and the C# binding under HarkenIntegration/Unity/Harken/Runtime/Generated/ are both
 ; emitted from the engine's own public declarations, and those generators never
 ; read the preview header -- so the isolation holds structurally, with no filter
 ; to configure and none to forget. That is a good property and a silent one: it

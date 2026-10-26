@@ -1047,7 +1047,7 @@ QString UnityIntegrationService::locateSdkSource(const QString& preferredPath)
         QStringList packageCandidates;
         packageCandidates << root;
         const QString baseName = QFileInfo(root).fileName();
-        if (baseName.compare(QStringLiteral("HarkenSDK"), Qt::CaseInsensitive) == 0)
+        if (baseName.compare(QStringLiteral("HarkenIntegration"), Qt::CaseInsensitive) == 0)
             packageCandidates << QDir(root).filePath(QStringLiteral("Unity/Harken"));
         if (baseName.compare(QStringLiteral("Unity"), Qt::CaseInsensitive) == 0)
             packageCandidates << QDir(root).filePath(QStringLiteral("Harken"));
@@ -1071,6 +1071,8 @@ QString UnityIntegrationService::locateSdkSource(const QString& preferredPath)
         candidates << cursor.filePath(QStringLiteral("HarkenSDK/Unity/Harken"));
         candidates << cursor.filePath(QStringLiteral("HarkenSDK"));
         for (int i = 0; i < 6; ++i) {
+            candidates << cursor.filePath(QStringLiteral("HarkenIntegration/Unity/Harken"));
+            candidates << cursor.filePath(QStringLiteral("HarkenIntegration"));
             candidates << cursor.filePath(QStringLiteral("HarkenSDK/Unity/Harken"));
             candidates << cursor.filePath(QStringLiteral("HarkenSDK"));
             if (!cursor.cdUp()) break;
@@ -1883,10 +1885,10 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             if (!request.sdkSourcePath.trimmed().isEmpty()) {
                 step.cause = QStringLiteral("The selected folder is not a valid com.harken.core SDK source: %1")
                                  .arg(cleanAbsolutePath(request.sdkSourcePath));
-                step.remediation = QStringLiteral("Choose HarkenSDK, HarkenSDK/Unity/Harken, or a complete external Unity package root, or clear the SDK source field to use automatic discovery.");
+                step.remediation = QStringLiteral("Choose HarkenIntegration, HarkenIntegration/Unity/Harken, or a complete external Unity package root, or clear the SDK source field to use automatic discovery.");
             } else {
                 step.cause = QStringLiteral("No valid com.harken.core package was found beside Harken Studio, in a repository parent, or at HARKEN_UNITY_SDK_PATH.");
-                step.remediation = QStringLiteral("Use the SDK source field to choose or drop HarkenSDK, Unity/Harken, or a complete external Unity package root.");
+                step.remediation = QStringLiteral("Use the SDK source field to choose or drop HarkenIntegration, Unity/Harken, or a complete external Unity package root.");
             }
             return;
         }
@@ -1928,7 +1930,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             step.summary = QStringLiteral("The selected SDK integration manifest is missing or invalid.");
             step.cause = QStringLiteral("%1 does not declare the expected schema and package identity.")
                              .arg(QDir(result.sdkSourcePath).filePath(QLatin1String(kIntegrationManifest)));
-            step.remediation = QStringLiteral("Choose a complete HarkenSDK/Unity/Harken package, or repair the selected SDK source before integrating.");
+            step.remediation = QStringLiteral("Choose a complete HarkenIntegration/Unity/Harken package, or repair the selected SDK source before integrating.");
             return;
         }
 
@@ -2022,7 +2024,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
                 step.summary = QStringLiteral("The selected SDK source is missing the verified game runtime for: %1. The Unity project was not changed.")
                                    .arg(missingBlockingPlatforms.join(QStringLiteral(", ")));
                 step.cause = QStringLiteral("These runtime files must come from the selected SDK source, not from the Unity project. Integration stopped before copying anything because the Harken integration cannot verify an SDK assembled from incomplete source files.");
-                step.remediation = QStringLiteral("Choose or drop HarkenSDK, HarkenSDK/Unity/Harken, or a complete external Unity package. If this is the SDK bundled with Harken Studio, repair or reinstall the editor package first. Do not copy unknown runtime files from an existing Unity project.");
+                step.remediation = QStringLiteral("Choose or drop HarkenIntegration, HarkenIntegration/Unity/Harken, or a complete external Unity package. If this is the SDK bundled with Harken Studio, repair or reinstall the editor package first. Do not copy unknown runtime files from an existing Unity project.");
                 step.details = missingBlockingRuntimeDetails;
                 if (missing.size() > missingBlockingPlatforms.size()) {
                     step.details << QStringLiteral("Other missing Harken SDK content: %1")

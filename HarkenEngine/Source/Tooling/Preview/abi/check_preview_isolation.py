@@ -14,7 +14,7 @@ Two independent claims, both read from the tree rather than trusted:
        HarkenEngine/Source/Runtime/api/include/harken/Harken.h   public C API header
        HarkenEngine/Source/Tooling/Remote/wire/harken_wire_table.json  binding table
        HarkenEngine/Source/Runtime/api/abi/HarkenCore.def       export allowlist
-       HarkenSDK/Unity/Harken/Runtime/Generated/*.g.cs                      C# binding
+       HarkenIntegration/Unity/Harken/Runtime/Generated/*.g.cs                      C# binding
 
      The two generators today derive their output from the header and the table
      alone and never read the preview header, so the isolation is structural. This
@@ -64,11 +64,11 @@ GAMEPLAY_FILES = [
                  "wire", "harken_wire_table.json"),
     os.path.join(REPO_ROOT, "HarkenEngine", "Source", "Runtime", "api", "abi",
                  "HarkenCore.def"),
-    os.path.join(REPO_ROOT, "HarkenSDK", "Unity", "Harken", "Runtime", "Generated",
+    os.path.join(REPO_ROOT, "HarkenIntegration", "Unity", "Harken", "Runtime", "Generated",
                  "HarkenNative.g.cs"),
-    os.path.join(REPO_ROOT, "HarkenSDK", "Unity", "Harken", "Runtime", "Generated",
+    os.path.join(REPO_ROOT, "HarkenIntegration", "Unity", "Harken", "Runtime", "Generated",
                  "HarkenTypes.g.cs"),
-    os.path.join(REPO_ROOT, "HarkenSDK", "Unity", "Harken", "Runtime", "Generated",
+    os.path.join(REPO_ROOT, "HarkenIntegration", "Unity", "Harken", "Runtime", "Generated",
                  "HarkenAbi.g.cs"),
 ]
 

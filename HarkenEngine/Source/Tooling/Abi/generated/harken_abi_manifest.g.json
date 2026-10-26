@@ -23515,15 +23515,15 @@
       "sha256": "5982fe39c88536b30957cd745282771c7614ffc71cfca47b6109736605120eef",
       "size": 250253
     },
-    "HarkenSDK/Unity/Harken/Runtime/Generated/HarkenAbi.g.cs": {
+    "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenAbi.g.cs": {
       "sha256": "ce8ddcaf8e06dba4afb49d9acda5176018ee6f0e5837dc841e38213359718631",
       "size": 105266
     },
-    "HarkenSDK/Unity/Harken/Runtime/Generated/HarkenNative.g.cs": {
+    "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenNative.g.cs": {
       "sha256": "269ebc95db665dc1ccd52bf19500cac5f8d9cc1602738e9fee2f696f536d845d",
       "size": 28789
     },
-    "HarkenSDK/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs": {
+    "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs": {
       "sha256": "c9e3fe841173ce03da1b747866d51b7a3ebc473667c833230fc96cc465f32266",
       "size": 51811
     }
@@ -23549,12 +23549,12 @@
       "size": 19575
     },
     "HarkenEngine/Source/Tooling/Abi/gen_abi_manifest.py": {
-      "sha256": "77061bd403dba3f2fb2cc875c0cf84b156d54de96895a7669c1b50e696bb9ed4",
-      "size": 56110
+      "sha256": "6b232dd009d7bbbacf38c502d82f016b4f11a8dcc69e257f01bac2a87a05d8cc",
+      "size": 56134
     },
     "HarkenEngine/Source/Tooling/Binding/gen_binding.py": {
-      "sha256": "91a11de8e0a67fbc93542447a0050d15b44ba32a6f45e247e67e0161cfc0f2c3",
-      "size": 35276
+      "sha256": "2515378c328446758fa54617419d39a08ef6dae7379dd2884f4f458fa3b0ee74",
+      "size": 35308
     },
     "HarkenEngine/Source/Tooling/Remote/wire/gen_wire.py": {
       "sha256": "f156dad54894eaa0977a721f237d333593e121f98a1d2053d5e245b5e7f104f8",

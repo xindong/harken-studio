@@ -4,7 +4,7 @@ Run from the repository root with Python 3.12 and .NET 9:
 
 ```text
 python .scripts/check_unity_sdk_boundary.py
-python .scripts/check_unity_sdk_boundary.py --native-dir <production-runtime-directory> --publication HarkenSDK/Test/UnityFixture/Data/U4Original
+python .scripts/check_unity_sdk_boundary.py --native-dir <production-runtime-directory> --publication HarkenIntegration/Test/UnityFixture/Data/U4Original
 ```
 
 The runner stages the selected SDK, builds `Harken.Core.dll`, and compiles an

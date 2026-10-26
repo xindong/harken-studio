@@ -4,7 +4,7 @@
     Standalone runner for the C# binding's ABI, coordinate, and zero-GC gates.
     No NuGet dependencies,
     so it builds offline from the .NET SDK alone. Run it with:
-    dotnet run (project HarkenSDK/Test/ContractTest) — see this folder's README.
+    dotnet run (project HarkenIntegration/Test/ContractTest) — see this folder's README.
 
     LangVersion is pinned to 9.0 (the Unity 2022.3 LTS C# level) so a
     successful build here also proves the generated + SDK sources are
@@ -29,9 +29,9 @@
   <ItemGroup>
     <!-- The binding under test: the exact generated + hand-written SDK sources
          the UPM package ships. -->
-    <Compile Include="..\..\..\HarkenSDK\Unity\Harken\Runtime\Generated\**\*.cs" />
-    <Compile Include="..\..\..\HarkenSDK\Unity\Harken\Runtime\Sdk\**\*.cs" />
-    <Compile Include="..\..\..\HarkenSDK\Unity\Harken\Runtime\Unity\UnityCoordinates.cs" />
+    <Compile Include="..\..\..\HarkenIntegration\Unity\Harken\Runtime\Generated\**\*.cs" />
+    <Compile Include="..\..\..\HarkenIntegration\Unity\Harken\Runtime\Sdk\**\*.cs" />
+    <Compile Include="..\..\..\HarkenIntegration\Unity\Harken\Runtime\Unity\UnityCoordinates.cs" />
     <!-- The harness itself. -->
     <Compile Include="Program.cs" />
     <Compile Include="VariableSdkContract.cs" />

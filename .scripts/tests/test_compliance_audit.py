@@ -96,7 +96,7 @@ class CompliancePullRequestGovernanceTest(unittest.TestCase):
         markers = (
             "HarkenHub",
             "HarkenStudio",
-            "HarkenSDK",
+            "HarkenIntegration",
         )
         contract_items = [
             aliases
