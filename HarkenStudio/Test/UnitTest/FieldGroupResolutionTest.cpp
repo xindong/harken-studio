@@ -670,37 +670,67 @@ TEST(FieldGroupResolution, ActiveReferencesRequireTheCorrectTargetKinds)
         FieldGroupReferenceTarget{G(101), FieldGroupReferenceKind::Bus},
         FieldGroupReferenceTarget{G(102), FieldGroupReferenceKind::Attenuation},
         FieldGroupReferenceTarget{G(103), FieldGroupReferenceKind::Other}};
+    const FieldGroupReferenceCatalog catalog(targets);
     EXPECT_TRUE(ValidateActiveFieldGroup(Group::MainOutput,
         MainOutputFieldGroup{G(101), 0.0f}, targets).empty());
-    EXPECT_TRUE(HasCode(ValidateActiveFieldGroup(Group::MainOutput,
-        MainOutputFieldGroup{G(102), 0.0f}, targets), Code::WrongReferenceKind));
-    EXPECT_TRUE(HasCode(ValidateActiveFieldGroup(Group::Send,
-        SendFieldGroup{{{G(103), 0.0f}}}, targets), Code::WrongReferenceKind));
-    EXPECT_TRUE(HasCode(ValidateActiveFieldGroup(Group::MainOutput,
-        MainOutputFieldGroup{G(999), 0.0f}, targets), Code::MissingReference));
+    EXPECT_TRUE(catalog.Validate(Group::MainOutput,
+        MainOutputFieldGroup{G(101), 0.0f}).empty());
+    EXPECT_TRUE(HasCode(catalog.Validate(Group::MainOutput,
+        MainOutputFieldGroup{G(102), 0.0f}), Code::WrongReferenceKind));
+    EXPECT_TRUE(HasCode(catalog.Validate(Group::Send,
+        SendFieldGroup{{{G(103), 0.0f}}}), Code::WrongReferenceKind));
+    EXPECT_TRUE(HasCode(catalog.Validate(Group::MainOutput,
+        MainOutputFieldGroup{G(999), 0.0f}), Code::MissingReference));
     auto spatial = SpatialRatingFieldGroup{};
     EXPECT_TRUE(ValidateActiveFieldGroup(Group::SpatialRating, spatial, {}).empty());
     spatial.spatialAttenuationRef = G(102);
-    EXPECT_TRUE(ValidateActiveFieldGroup(Group::SpatialRating, spatial, targets).empty());
+    EXPECT_TRUE(catalog.Validate(Group::SpatialRating, spatial).empty());
     spatial.spatialAttenuationRef = G(101);
-    EXPECT_TRUE(HasCode(ValidateActiveFieldGroup(Group::SpatialRating, spatial, targets),
+    EXPECT_TRUE(HasCode(catalog.Validate(Group::SpatialRating, spatial),
                         Code::WrongReferenceKind));
     EXPECT_TRUE(ValidateActiveFieldGroup(Group::Send, SendFieldGroup{}, {}).empty());
 }
 
 TEST(FieldGroupResolution, InvalidReferenceCatalogsCannotProduceAValidActiveGroup)
 {
-    const auto payload = MainOutputFieldGroup{G(101), 0.0f};
-    const std::array duplicate{
+    const std::array targets{
         FieldGroupReferenceTarget{G(101), FieldGroupReferenceKind::Bus},
-        FieldGroupReferenceTarget{G(101), FieldGroupReferenceKind::Bus}};
-    EXPECT_TRUE(HasCode(ValidateActiveFieldGroup(Group::MainOutput, payload, duplicate),
-                        Code::InvalidReferenceCatalog));
-    const std::array invalid{
+        FieldGroupReferenceTarget{G(101), FieldGroupReferenceKind::Bus},
         FieldGroupReferenceTarget{{}, FieldGroupReferenceKind::Bus},
-        FieldGroupReferenceTarget{G(101), static_cast<FieldGroupReferenceKind>(255)}};
-    EXPECT_TRUE(HasCode(ValidateActiveFieldGroup(Group::MainOutput, payload, invalid),
-                        Code::InvalidReferenceCatalog));
+        FieldGroupReferenceTarget{G(102), static_cast<FieldGroupReferenceKind>(255)},
+        FieldGroupReferenceTarget{G(101), FieldGroupReferenceKind::Attenuation}};
+    const FieldGroupReferenceCatalog catalog(targets);
+    const std::array<FieldGroupPayload, 3> payloads{
+        MainOutputFieldGroup{G(101), 0.0f}, SendFieldGroup{}, SpatialRatingFieldGroup{}};
+    const std::array invalidGuids{G(101), AuthoringGuid{}, G(102), G(101)};
+    for (std::size_t i = 0; i < kGroups.size(); ++i) {
+        const auto diagnostics = catalog.Validate(kGroups[i], payloads[i]);
+        ASSERT_EQ(diagnostics.size(), invalidGuids.size());
+        for (std::size_t j = 0; j < diagnostics.size(); ++j) {
+            const auto& diagnostic = diagnostics[j];
+            EXPECT_EQ(diagnostic.code, Code::InvalidReferenceCatalog);
+            EXPECT_EQ(diagnostic.definition, AuthoringGuid{});
+            EXPECT_EQ(diagnostic.group, kGroups[i]);
+            EXPECT_FALSE(diagnostic.scope);
+            EXPECT_TRUE(diagnostic.field.empty());
+            EXPECT_FALSE(diagnostic.row);
+            EXPECT_EQ(diagnostic.relatedGuid, invalidGuids[j]);
+        }
+    }
+    const auto diagnostics = catalog.Validate(Group::Send,
+        SendFieldGroup{{{{}, 25.0f}}});
+    ASSERT_EQ(diagnostics.size(), 2u);
+    EXPECT_EQ(diagnostics[0].code, Code::EmptyRequiredReference);
+    EXPECT_EQ(diagnostics[0].field, "targetBusID");
+    EXPECT_EQ(diagnostics[1].code, Code::InvalidValue);
+    EXPECT_EQ(diagnostics[1].field, "sendLevel");
+    for (const auto& diagnostic : diagnostics) {
+        EXPECT_EQ(diagnostic.definition, AuthoringGuid{});
+        EXPECT_EQ(diagnostic.group, Group::Send);
+        EXPECT_FALSE(diagnostic.scope);
+        EXPECT_EQ(diagnostic.row, 0u);
+        EXPECT_EQ(diagnostic.relatedGuid, AuthoringGuid{});
+    }
 }
 
 TEST(FieldGroupResolution, FieldOwnershipContainsOnlyTheThreeApprovedGroups)

@@ -6416,14 +6416,45 @@ uint32_t ProjectManager::resolveEffectiveOutputBusId(const ProjectItem* item)
     return ReferenceSlotResolution::resolveEffectiveOutputBusId(item);
 }
 
+namespace {
+
+FieldGroupEffectiveSnapshot currentFieldGroupSnapshot(const ProjectData* project)
+{
+    if (!project) return {};
+    return buildFieldGroupEffectiveSnapshot(
+        *project,
+        toFieldGroupScope(currentWorldPlatformScope(PlatformContextService::instance().context())));
+}
+
+uint32_t outputBusIdFromSnapshot(
+    const ProjectItem* item, const FieldGroupEffectiveSnapshot& snapshot)
+{
+    if (!item || !snapshot.ok()) return 0;
+    const auto guid = toFieldGroupGuid(item->guid);
+    const auto owner = snapshot.objects.find(guid);
+    const auto effective = snapshot.definitions.find(guid);
+    if (owner == snapshot.objects.end() || owner->second != item
+        || effective == snapshot.definitions.end())
+        return 0;
+    return snapshot.objects.at(effective->second.mainOutput.mainOutputBusRef)->objectID;
+}
+
+}
+
 float ProjectManager::aggregatePitchForItem(const ProjectItem* item) const
+{
+    return aggregatePitchForItem(item, findBusItem(resolveEffectiveOutputBusId(item)));
+}
+
+float ProjectManager::aggregatePitchForItem(
+    const ProjectItem* item, const ProjectItem* outputBus) const
 {
     float accum = 0.0f;
     for (const ProjectItem* p = item; p; p = p->parent) {
         if (const auto* m = p->comp<VMixNode>())
             accum += m->pitch;
     }
-    const ProjectItem* bus = findBusItem(resolveEffectiveOutputBusId(item));
+    const ProjectItem* bus = outputBus;
     while (bus && bus->comp<VBus>()) {
         if (const auto* m = bus->comp<VMixNode>())
             accum += m->pitch;
@@ -6436,6 +6467,26 @@ void ProjectManager::pushItemPitchLive(ProjectItem* item)
 {
     if (!item || item->type != ProjectItem::Type::Sound) return;
     AudioEngine::instance().setVoicePitchByName(item->name, aggregatePitchForItem(item));
+}
+
+void ProjectManager::pushItemPitchLive(
+    ProjectItem* item, const FieldGroupEffectiveSnapshot& snapshot)
+{
+    if (!item || item->type != ProjectItem::Type::Sound) return;
+    AudioEngine::instance().setVoicePitchByName(
+        item->name, aggregatePitchForItem(item, findBusItem(outputBusIdFromSnapshot(item, snapshot))));
+}
+
+void ProjectManager::propagateItemPitchLive(ProjectItem* item)
+{
+    if (!item) return;
+    const auto snapshot = currentFieldGroupSnapshot(m_currentProject.get());
+    const auto visit = [&](ProjectItem* node, const auto& self) -> void {
+        pushItemPitchLive(node, snapshot);
+        for (const auto& child : node->children)
+            self(child.get(), self);
+    };
+    visit(item, visit);
 }
 
 float ProjectManager::aggregateVolumeDbForItem(const ProjectItem* item) const
@@ -6459,9 +6510,12 @@ float ProjectManager::effectiveOutputVolumeDbForItem(const ProjectItem* item) co
     }
     if (!m_currentProject)
         return 0.0f;
-    const auto snapshot = buildFieldGroupEffectiveSnapshot(
-        *m_currentProject,
-        toFieldGroupScope(currentWorldPlatformScope(PlatformContextService::instance().context())));
+    return effectiveOutputVolumeDbForItem(item, currentFieldGroupSnapshot(m_currentProject.get()));
+}
+
+float ProjectManager::effectiveOutputVolumeDbForItem(
+    const ProjectItem* item, const FieldGroupEffectiveSnapshot& snapshot) const
+{
     const auto guid = toFieldGroupGuid(item->guid);
     const auto owner = snapshot.objects.find(guid);
     const auto effective = snapshot.definitions.find(guid);
@@ -6482,27 +6536,43 @@ void ProjectManager::pushItemVolumeLive(ProjectItem* item)
     if (!item) return;
     if (item->type != ProjectItem::Type::Sound &&
         item->type != ProjectItem::Type::Layer) return;
+    pushItemVolumeLive(item, currentFieldGroupSnapshot(m_currentProject.get()));
+}
+
+void ProjectManager::pushItemVolumeLive(
+    ProjectItem* item, const FieldGroupEffectiveSnapshot& snapshot)
+{
+    if (!item || (item->type != ProjectItem::Type::Sound
+        && item->type != ProjectItem::Type::Layer)) return;
     AudioEngine::instance().setVoiceVolumeByName(item->name, aggregateVolumeDbForItem(item));
     AudioEngine::instance().setVoiceOutputVolumeByName(
-        item->name, effectiveOutputVolumeDbForItem(item));
+        item->name, effectiveOutputVolumeDbForItem(item, snapshot));
 }
 
 void ProjectManager::propagateItemVolumeLive(ProjectItem* item)
 {
     if (!item || item->type == ProjectItem::Type::Bus) return;
-    pushItemVolumeLive(item);
-    for (auto& child : item->children)
-        propagateItemVolumeLive(child.get());
+    const auto snapshot = currentFieldGroupSnapshot(m_currentProject.get());
+    const auto visit = [&](ProjectItem* node, const auto& self) -> void {
+        if (!node || node->type == ProjectItem::Type::Bus) return;
+        pushItemVolumeLive(node, snapshot);
+        for (const auto& child : node->children)
+            self(child.get(), self);
+    };
+    visit(item, visit);
 }
 
 std::vector<Send> ProjectManager::aggregateVoiceSendsForItem(const ProjectItem* item) const
 {
-    std::vector<Send> out;
     if (!item || !m_currentProject)
-        return out;
-    const auto snapshot = buildFieldGroupEffectiveSnapshot(
-        *m_currentProject,
-        toFieldGroupScope(currentWorldPlatformScope(PlatformContextService::instance().context())));
+        return {};
+    return aggregateVoiceSendsForItem(item, currentFieldGroupSnapshot(m_currentProject.get()));
+}
+
+std::vector<Send> ProjectManager::aggregateVoiceSendsForItem(
+    const ProjectItem* item, const FieldGroupEffectiveSnapshot& snapshot) const
+{
+    std::vector<Send> out;
     const auto guid = toFieldGroupGuid(item->guid);
     const auto owner = snapshot.objects.find(guid);
     const auto effective = snapshot.definitions.find(guid);
@@ -6519,8 +6589,15 @@ std::vector<Send> ProjectManager::aggregateVoiceSendsForItem(const ProjectItem* 
 void ProjectManager::pushItemSendsLive(ProjectItem* item)
 {
     if (!item || item->type != ProjectItem::Type::Sound) return;
+    pushItemSendsLive(item, currentFieldGroupSnapshot(m_currentProject.get()));
+}
+
+void ProjectManager::pushItemSendsLive(
+    ProjectItem* item, const FieldGroupEffectiveSnapshot& snapshot)
+{
+    if (!item || item->type != ProjectItem::Type::Sound) return;
     std::vector<std::pair<harkenstudio::ObjectId, float>> runtimeSends;
-    for (const Send& s : aggregateVoiceSendsForItem(item)) {
+    for (const Send& s : aggregateVoiceSendsForItem(item, snapshot)) {
         if (!findVBus(s.targetBusID)) continue;
         runtimeSends.emplace_back(busRuntimeHandleForId(s.targetBusID),
                                   VMixNode::linearToDb(s.sendLevel));
@@ -6531,12 +6608,17 @@ void ProjectManager::pushItemSendsLive(ProjectItem* item)
 void ProjectManager::propagateItemSendsLive(ProjectItem* item)
 {
     if (!item || item->type == ProjectItem::Type::Bus) return;
-    if (item->type == ProjectItem::Type::Sound) {
-        pushItemSendsLive(item);
-        return;
-    }
-    for (auto& child : item->children)
-        propagateItemSendsLive(child.get());
+    const auto snapshot = currentFieldGroupSnapshot(m_currentProject.get());
+    const auto visit = [&](ProjectItem* node, const auto& self) -> void {
+        if (!node || node->type == ProjectItem::Type::Bus) return;
+        if (node->type == ProjectItem::Type::Sound) {
+            pushItemSendsLive(node, snapshot);
+            return;
+        }
+        for (const auto& child : node->children)
+            self(child.get(), self);
+    };
+    visit(item, visit);
 }
 
 float ProjectManager::runtimeSpatMixForValue(float spatializationMix)
@@ -6568,9 +6650,13 @@ float ProjectManager::runtimeDistanceScaleForValue(float distanceScaling)
 void ProjectManager::pushItemDistanceScaleLive(ProjectItem* item)
 {
     if (!item || item->type != ProjectItem::Type::Sound || !m_currentProject) return;
-    const auto snapshot = buildFieldGroupEffectiveSnapshot(
-        *m_currentProject,
-        toFieldGroupScope(currentWorldPlatformScope(PlatformContextService::instance().context())));
+    pushItemDistanceScaleLive(item, currentFieldGroupSnapshot(m_currentProject.get()));
+}
+
+void ProjectManager::pushItemDistanceScaleLive(
+    ProjectItem* item, const FieldGroupEffectiveSnapshot& snapshot)
+{
+    if (!item || item->type != ProjectItem::Type::Sound) return;
     const auto effective = snapshot.definitions.find(toFieldGroupGuid(item->guid));
     if (!snapshot.ok() || effective == snapshot.definitions.end())
         return;
@@ -6582,10 +6668,15 @@ void ProjectManager::pushItemDistanceScaleLive(ProjectItem* item)
 
 void ProjectManager::propagateItemDistanceScaleLive(ProjectItem* item)
 {
-    if (!item || item->type == ProjectItem::Type::Bus) return;
-    pushItemDistanceScaleLive(item);
-    for (auto& child : item->children)
-        propagateItemDistanceScaleLive(child.get());
+    if (!item || item->type == ProjectItem::Type::Bus || !m_currentProject) return;
+    const auto snapshot = currentFieldGroupSnapshot(m_currentProject.get());
+    const auto visit = [&](ProjectItem* node, const auto& self) -> void {
+        if (!node || node->type == ProjectItem::Type::Bus) return;
+        pushItemDistanceScaleLive(node, snapshot);
+        for (const auto& child : node->children)
+            self(child.get(), self);
+    };
+    visit(item, visit);
 }
 
 void ProjectManager::pushAudioPropertyLive(ProjectItem* item, const QString& propertyName)
@@ -7106,13 +7197,15 @@ void ProjectManager::propagateBusPitchLive(ProjectItem* busItem)
 {
     if (!busItem || !m_currentProject) return;
     const uint32_t changedBusID = busItem->objectID;
+    const auto snapshot = currentFieldGroupSnapshot(m_currentProject.get());
     std::function<void(ProjectItem*)> visit = [&](ProjectItem* item) {
         if (!item) return;
         if (item->type == ProjectItem::Type::Sound) {
-            const ProjectItem* routed = findBusItem(resolveEffectiveOutputBusId(item));
+            const ProjectItem* routed = findBusItem(outputBusIdFromSnapshot(item, snapshot));
             if (routed && (routed == busItem ||
                            isDescendantOfBus(routed->objectID, changedBusID)))
-                pushItemPitchLive(item);
+                AudioEngine::instance().setVoicePitchByName(
+                    item->name, aggregatePitchForItem(item, routed));
         }
         for (auto& child : item->children)
             visit(child.get());

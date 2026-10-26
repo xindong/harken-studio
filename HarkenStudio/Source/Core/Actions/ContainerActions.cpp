@@ -475,12 +475,7 @@ void registerContainerActions(ActionManager& mgr,
 
             {
                 if (propertyName == "pitch") {
-                    std::function<void(ProjectItem*)> pushRecursive = [&](ProjectItem* item) {
-                        projectManager->pushItemPitchLive(item);
-                        for (auto& ch : item->children)
-                            pushRecursive(ch.get());
-                    };
-                    pushRecursive(container);
+                    projectManager->propagateItemPitchLive(container);
                 } else if (propertyName == "volume") {
                     projectManager->propagateItemVolumeLive(container);
                 }
