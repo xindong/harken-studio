@@ -53,6 +53,21 @@ jobs:
           cache: true
           cache-key-prefix: qt-${{ env.QT_VERSION }}-windows
 
+      - name: Preserve Qt setup log and verify clean checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f aqtinstall.log ]; then
+            mkdir -p .temp/qt-install
+            mv aqtinstall.log .temp/qt-install/
+          fi
+          status=$(git status --porcelain)
+          if [ -n "$status" ]; then
+            printf '%s\n' "$status"
+            echo "::error::Hub release build requires a clean checkout"
+            exit 1
+          fi
+
       - name: Export VENUS_QT_DIR
         shell: bash
         run: echo "VENUS_QT_DIR=$QT_ROOT_DIR" >> $GITHUB_ENV
@@ -129,6 +144,21 @@ jobs:
           arch: clang_64
           cache: true
           cache-key-prefix: qt-${{ env.QT_VERSION }}-mac
+
+      - name: Preserve Qt setup log and verify clean checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f aqtinstall.log ]; then
+            mkdir -p .temp/qt-install
+            mv aqtinstall.log .temp/qt-install/
+          fi
+          status=$(git status --porcelain)
+          if [ -n "$status" ]; then
+            printf '%s\n' "$status"
+            echo "::error::Hub release build requires a clean checkout"
+            exit 1
+          fi
 
       - name: Patch macOS Qt AGL linkage
         shell: bash
