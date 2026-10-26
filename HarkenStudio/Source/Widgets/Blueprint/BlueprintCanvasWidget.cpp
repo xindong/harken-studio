@@ -1733,13 +1733,16 @@ void BlueprintCanvasWidget::showCreatedItem_(ProjectItem* item, std::optional<QP
         [&](const auto& node) { return node.key.objectGuid == item->guid; });
     if (found == nodes.end()) return;
     const auto index = static_cast<size_t>(found - nodes.begin());
+    auto* node = signalPathNode(index);
+    if (node && !node->isVisible()) revealChain_(*item, RevealScope::Node);
+    if (!node || !node->isVisible()) return;
     selectedPathKeys_ = {found->key};
     selectedPathEdgeKeys_.clear();
     if (position) applyPathPositions_({{pathPositionKeys_[index], *position}});
     {
         const QSignalBlocker blocker(scene_);
         scene_->clearSelection();
-        signalPathNode(index)->setSelected(true);
+        node->setSelected(true);
     }
     onSceneSelectionChanged();
     QTimer::singleShot(0, this, [this, guid = item->guid] {
@@ -1751,7 +1754,6 @@ void BlueprintCanvasWidget::showCreatedItem_(ProjectItem* item, std::optional<QP
             if (nodes[index].key.objectGuid != guid) continue;
             auto* node = signalPathNode(index);
             if (!node || !node->isSelected()) continue;
-            if (!node->isVisible()) revealChain_(*created, RevealScope::Node);
             setFocus(Qt::OtherFocusReason);
             node->beginTitleEditing();
             const int margin = ThemeManager::instance().metrics().spacingSmall;

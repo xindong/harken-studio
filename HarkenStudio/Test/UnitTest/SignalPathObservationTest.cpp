@@ -1996,6 +1996,9 @@ TEST_F(SignalPathObservationTest, NodeNewChildUsesHierarchyRulesAndCreatesUnderI
         [&](uint32_t id) { selected = id; });
     auto* stack = UndoRedoManager::instance().undoStack();
     for (const auto& [parent, labels] : rows) {
+        SCOPED_TRACE(parent->name.toStdString());
+        ASSERT_TRUE(canvas.focusItem(parent));
+        canvas.setChainVisible(parent->objectID, false);
         auto* node = canvas.signalPathNode(indexOf(canvas.activeSignalPathSource()->graph(), parent));
         canvas.centerOn(node);
         QMenu menu;
@@ -2023,6 +2026,7 @@ TEST_F(SignalPathObservationTest, NodeNewChildUsesHierarchyRulesAndCreatesUnderI
             EXPECT_EQ(graph.nodes[route.computation[1].occurrenceIndex].key.objectGuid, parent->guid);
         }
         auto* childNode = canvas.signalPathNode(indexOf(graph, created));
+        EXPECT_TRUE(childNode->isVisible());
         EXPECT_TRUE(childNode->isSelected());
         expectDisjointNodes(canvas);
         EXPECT_EQ(canvas.transform(), transform);
