@@ -603,7 +603,18 @@ TEST(StableBackingPreparation, ServiceFeaturePromiseSurvivesResetAndFailedProtec
     EXPECT_EQ(0u, engine.initialQueueTimingEventsScratch.ConstructedCount());
     EXPECT_EQ(0u, engine.initialQueueTimingGroupsScratch.ConstructedCount());
     EXPECT_EQ(nullptr, engine.variableControlRetargetScratch);
+    auto& timeline = engine.timelineStartScratch;
+    EXPECT_EQ(0u, timeline.starts.size());
+    EXPECT_EQ(0u, timeline.transactions.size());
+    EXPECT_EQ(0u, timeline.extraCommands.size());
+    EXPECT_EQ(0u, timeline.queueEvents.size());
     harken::StableStoragePreparation backing;
+    timeline.queueEvents.SetCommitPageLimitForTests(0);
+    EXPECT_FALSE(engine.PreparePlayableServiceBacking(2, &backing));
+    EXPECT_FALSE(backing.Valid());
+    EXPECT_EQ(0u, timeline.queueEvents.size());
+    EXPECT_FALSE(engine.runtimeRecreateRequired);
+    timeline.queueEvents.SetCommitPageLimitForTests(SIZE_MAX);
     harken::detail::ArmLogicAllocFaultForTests(1,
         harken::detail::LogicAllocSite::VariableControlRetargetStorage);
     const auto refused = engine.PreparePlayableServiceBacking(2, &backing);
@@ -614,6 +625,14 @@ TEST(StableBackingPreparation, ServiceFeaturePromiseSurvivesResetAndFailedProtec
     EXPECT_FALSE(backing.Valid());
     EXPECT_EQ(nullptr, engine.variableControlRetargetScratch);
     ASSERT_TRUE(engine.PreparePlayableServiceBacking(2, &backing));
+    EXPECT_EQ(harken::kMaxKnownScheduleLeaves, timeline.starts.size());
+    EXPECT_EQ(2u * harken::kMaxKnownScheduleLeaves + 2u, timeline.transactions.size());
+    EXPECT_EQ(harken::kMaxKnownScheduleLeaves, timeline.extraCommands.size());
+    EXPECT_EQ(harken::EngineQueueProgramBank::kEventCapacity, timeline.queueEvents.size());
+    auto* starts = timeline.starts.data();
+    auto* transactions = timeline.transactions.data();
+    auto* extraCommands = timeline.extraCommands.data();
+    auto* queueEvents = timeline.queueEvents.data();
     auto* retargetTree = engine.variableControlRetargetScratch.get();
     ASSERT_NE(nullptr, retargetTree);
     auto* policies = retargetTree->storage.frontierPolicies.data();
@@ -817,6 +836,15 @@ TEST(StableBackingPreparation, ServiceFeaturePromiseSurvivesResetAndFailedProtec
     for (const auto& row : engine.playableServices) EXPECT_TRUE(row.HasFeatureArrays());
     {
         const auto use = backing.Use();
+        timeline.starts.SetCommitPageLimitForTests(0);
+        timeline.transactions.SetCommitPageLimitForTests(0);
+        timeline.extraCommands.SetCommitPageLimitForTests(0);
+        timeline.queueEvents.SetCommitPageLimitForTests(0);
+        EXPECT_TRUE(engine.PrepareTimelineStartStorage());
+        EXPECT_EQ(starts, timeline.starts.data());
+        EXPECT_EQ(transactions, timeline.transactions.data());
+        EXPECT_EQ(extraCommands, timeline.extraCommands.data());
+        EXPECT_EQ(queueEvents, timeline.queueEvents.data());
         harken::detail::ArmLogicAllocFaultForTests(1,
             harken::detail::LogicAllocSite::VariableControlRetargetStorage);
         EXPECT_TRUE(engine.PreparePlayableFeatureBacking());
@@ -1377,7 +1405,10 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     testing::Test::RecordProperty("invocation_pending_stop_capacity_bytes",
         std::to_string(engine->playableStarts.size() * sizeof(harken::PlayableRetirementObserver)));
     testing::Test::RecordProperty("timeline_start_scratch_bytes", std::to_string(sizeof(harken::EngineTimelineStartScratch)));
-    testing::Test::RecordProperty("timeline_start_transaction_count", std::to_string(engine->timelineStartScratch.transactions.size()));
+    testing::Test::RecordProperty("timeline_start_transaction_count", std::to_string(engine->timelineStartScratch.transactions.Capacity()));
+    testing::Test::RecordProperty("timeline_start_constructed_bytes", std::to_string(
+        engine->timelineStartScratch.starts.RequestedBytes() + engine->timelineStartScratch.transactions.RequestedBytes() +
+        engine->timelineStartScratch.extraCommands.RequestedBytes() + engine->timelineStartScratch.queueEvents.RequestedBytes()));
     testing::Test::RecordProperty("timeline_start_two_coordinators_bytes", std::to_string(2u * sizeof(harken::PreparedTransactionBatch)));
     testing::Test::RecordProperty("frontier_completion_proof_row_bytes", std::to_string(sizeof(harken::TimelineArmTable::BoundAudioProof)));
     testing::Test::RecordProperty("frontier_completion_proof_capacity_bytes",

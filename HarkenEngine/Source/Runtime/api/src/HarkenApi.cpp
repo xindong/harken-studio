@@ -359,6 +359,8 @@ std::size_t Engine::PreparationStorageBytes() const noexcept {
         ImmediateEntryAttemptStorageBytes() + PendingSelectionStorageBytes() + CapturedVoiceStorageBytes() +
         queueProgramBanks.RequestedBytes() + queueProgramBanks.DirectoryBytes() +
         queueScheduleStorage.StorageBytes() + bindingBytes +
+        timelineStartScratch.starts.RequestedBytes() + timelineStartScratch.transactions.RequestedBytes() +
+        timelineStartScratch.extraCommands.RequestedBytes() + timelineStartScratch.queueEvents.RequestedBytes() +
         originalSourceSubmissions.StorageBytes() + originalSinglePreparationHolders.RequestedBytes() +
         originalSinglePreparationHolders.DirectoryBytes() + originalQueueSourcePreparationHolders.RequestedBytes() +
         originalQueueSourcePreparationHolders.DirectoryBytes();
@@ -10330,7 +10332,7 @@ private:
 
     harken::Engine& engine_;
     harken::EnginePlayableServiceRow* queueRow_ = nullptr;
-    std::array<harken::ImmediateLaneEvent, harken::EngineQueueProgramBank::kEventCapacity>& queueEvents_;
+    decltype(harken::EngineTimelineStartScratch::queueEvents)& queueEvents_;
     std::uint32_t queueEventCount_ = 0;
     harken::PlayableTreeExecutor* preparedTree_ = nullptr;
     harken::EngineActionPlayScratch* preparedTreeOwners_ = nullptr;
@@ -10764,7 +10766,8 @@ bool PreparePlayableServiceRow(
                &engine.playableStarts[invocationOwner->slot] != invocationOwner) {
         return false;
     }
-    if (requireFeatureArrays && !engine.PrepareVariableControlRetargetStorage()) return false;
+    if (requireFeatureArrays &&
+        (!engine.PrepareTimelineStartStorage() || !engine.PrepareVariableControlRetargetStorage())) return false;
     if (requireFeatureArrays && !row.HasFeatureArrays() &&
         (engine.playableServices.PreparedUseActive() || !row.PrepareFeatureArrays())) return false;
     return engine.PrepareOriginalPlayableServiceStorage(
@@ -92411,7 +92414,7 @@ bool PrepareImmediateActionQueueReplacement(
         std::uint32_t count = 0;
         bool valid = !engine.timelineStartScratch.occupied;
         for (std::uint32_t index = 0; valid && index < bank.programCount; ++index)
-            valid = AppendQueueLaneProgram(bank.schedules[index], events, count);
+            valid = AppendQueueLaneProgram(bank.schedules[index], {events.data(), events.size()}, count);
         if (!valid || !bank.continuationLane.PrepareReplacement(events.data(), count,
                 engine.timelineArms, scratch.conditional)) {
             (void)ReleaseImmediateActionQueueReplacement(engine, scratch);

@@ -3617,11 +3617,11 @@ struct EngineImmediateRetryCleanup {
 };
 
 struct EngineTimelineStartScratch {
-    std::array<EnginePreparedTimelineVoiceStart, kMaxKnownScheduleLeaves> starts{};
+    StableRowStorage<EnginePreparedTimelineVoiceStart> starts;
     // Both complete leaf sides plus one coordinator program per frontier slice.
-    std::array<PreparedTransactionBatch, 2u * kMaxKnownScheduleLeaves + 2u> transactions{};
-    std::array<CommandRecord, kMaxKnownScheduleLeaves> extraCommands{};
-    std::array<ImmediateLaneEvent, EngineQueueProgramBank::kEventCapacity> queueEvents{};
+    StableRowStorage<PreparedTransactionBatch> transactions;
+    StableRowStorage<CommandRecord> extraCommands;
+    StableRowStorage<ImmediateLaneEvent> queueEvents;
     bool occupied = false;
     EngineImmediateRetryCleanup retryCleanup{};
 };
@@ -6570,6 +6570,10 @@ public:
             !pendingVariableLeafSources.Reserve(timelineArms.Capacity()) ||
             !pendingVariableFutureSources.Reserve(timelineArms.Capacity()) ||
             !playableServices.Reserve(resolved.maxPlayableInstances) ||
+            !timelineStartScratch.starts.Reserve(kMaxKnownScheduleLeaves) ||
+            !timelineStartScratch.transactions.Reserve(2u * kMaxKnownScheduleLeaves + 2u) ||
+            !timelineStartScratch.extraCommands.Reserve(kMaxKnownScheduleLeaves) ||
+            !timelineStartScratch.queueEvents.Reserve(EngineQueueProgramBank::kEventCapacity) ||
             !acceptedPendingVariableGroups.Reserve(resolved.maxPlayableInstances)) throw std::bad_alloc{};
         const auto playSlotCapacity = ActionPreparationSlotCapacity(resolved);
         const auto queueBankCapacity = QueueProgramBankCapacity(resolved);
@@ -13530,8 +13534,21 @@ public:
         assert(variableControlRetargetScratch != nullptr);
         return *variableControlRetargetScratch;
     }
+    bool PrepareTimelineStartStorage(bool complete = true) noexcept {
+        auto& scratch = timelineStartScratch;
+        const auto starts = complete ? scratch.starts.Capacity() : 1u;
+        if (scratch.starts.size() >= starts && (!complete ||
+            (scratch.transactions.size() == scratch.transactions.Capacity() &&
+             scratch.extraCommands.size() == scratch.extraCommands.Capacity() &&
+             scratch.queueEvents.size() == scratch.queueEvents.Capacity()))) return true;
+        if (memguard::IsAudioTagged() || playableServices.PreparedUseActive()) return false;
+        return scratch.starts.ConstructThrough(starts) && (!complete ||
+            (scratch.transactions.ConstructThrough(scratch.transactions.Capacity()) &&
+             scratch.extraCommands.ConstructThrough(scratch.extraCommands.Capacity()) &&
+             scratch.queueEvents.ConstructThrough(scratch.queueEvents.Capacity())));
+    }
     bool PreparePlayableFeatureBacking() noexcept {
-        if (!PrepareVariableControlRetargetStorage()) return false;
+        if (!PrepareTimelineStartStorage() || !PrepareVariableControlRetargetStorage()) return false;
         for (auto& row : playableServices) {
             if (row.HasFeatureArrays()) continue;
             if (playableServices.PreparedUseActive() || !row.PrepareFeatureArrays()) return false;
@@ -13564,7 +13581,7 @@ public:
         return true;
     }
     bool PreparePlayableStateStorage(bool needsContainerState = true) noexcept {
-        return PrepareOriginalPlayableStorage() &&
+        return PrepareTimelineStartStorage(needsContainerState) && PrepareOriginalPlayableStorage() &&
             (!needsContainerState ||
                 (initialFrontierEvents.ConstructThrough(initialFrontierEvents.Capacity()) &&
                  initialFrontierRequests.ConstructThrough(initialFrontierRequests.Capacity()) &&

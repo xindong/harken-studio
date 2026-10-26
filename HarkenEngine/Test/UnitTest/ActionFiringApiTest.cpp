@@ -70457,8 +70457,26 @@ TEST(ActionFiringApi, OriginalSingleProducerDefaultPureSoundNeverIssuesQueueCurr
     engine.pendingVariableLeafSources.SetCommitPageLimitForTests(0);
     engine.pendingVariableFutureSources.SetCommitPageLimitForTests(0);
     engine.pendingVariableFutureNodes.SetCommitPageLimitForTests(0);
+    auto& timeline = engine.timelineStartScratch;
+    EXPECT_EQ(0u, timeline.starts.size());
+    timeline.starts.SetCommitPageLimitForTests(0);
+    timeline.transactions.SetCommitPageLimitForTests(0);
+    timeline.extraCommands.SetCommitPageLimitForTests(0);
+    timeline.queueEvents.SetCommitPageLimitForTests(0);
+    const auto commandHead = engine.commands.PublishedHead();
     VnActionFiringHandle firing = 0;
+    EXPECT_EQ(VN_BACKPRESSURE, Vn_PostAction(&desc, &firing));
+    EXPECT_EQ(0u, firing);
+    EXPECT_EQ(commandHead, engine.commands.PublishedHead());
+    EXPECT_FALSE(engine.runtimeRecreateRequired);
+    timeline.starts.SetCommitPageLimitForTests(SIZE_MAX);
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    ASSERT_EQ(1u, timeline.starts.size());
+    auto service = std::find_if(engine.playableServices.begin(), engine.playableServices.end(),
+        [firing](const auto& row) { return row.PendingImmediateCohortRoot() == firing; });
+    ASSERT_NE(engine.playableServices.end(), service);
+    const auto originalRender = service->renderHandle;
+    const auto originalArm = service->arm;
     for (const auto& original : engine.originalQueueSourcePreparationHolders) {
         EXPECT_FALSE(original.OriginalSource().Valid());
         EXPECT_FALSE(original.OriginalBody().Valid());
@@ -70487,20 +70505,62 @@ TEST(ActionFiringApi, OriginalSingleProducerDefaultPureSoundNeverIssuesQueueCurr
         ASSERT_EQ(previous + 1u, engine.mixer.BlocksRendered());
         ASSERT_EQ(VN_OK, Vn_Update());
     }
+    const auto lane = attempt->lane;
+    const auto scratch = engine.voices.ScratchBytesBeforeTimeline(64u);
+    ASSERT_GT(scratch, 0u);
+    engine.mixer.ArenaForTests().SetCapacityForTests(
+        static_cast<std::uint32_t>(2u * 64u * sizeof(float) + scratch - 1u));
     engine.nullBackend.Pump(1);
+    engine.mixer.ArenaForTests().RestoreCapacityForTests();
     ASSERT_EQ(entryQuantum + 1u, engine.mixer.BlocksRendered());
-    EXPECT_GT(harkentest::Peak(engine.nullBackend.LastBlock(), 128u), 0.001f);
+    EXPECT_EQ(0.0f, harkentest::Peak(engine.nullBackend.LastBlock(), 128u));
+    engine.nullBackend.Pump(1);
+    harken::ImmediateLaneObservation missed{};
+    ASSERT_TRUE(engine.immediateActionLane.Observe(lane, &missed));
+    EXPECT_TRUE(missed.missed);
+    EXPECT_TRUE(missed.arenaCapacityMissed);
+    EXPECT_FALSE(missed.applied);
+    bool heard = false;
+    for (unsigned block = 0; block < 48u && !heard; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        const auto previous = engine.mixer.BlocksRendered();
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(previous + 1u, engine.mixer.BlocksRendered());
+        heard = harkentest::Peak(engine.nullBackend.LastBlock(), 128u) > 0.001f;
+    }
+    ASSERT_TRUE(heard);
+    EXPECT_NE(originalRender, service->renderHandle);
+    EXPECT_TRUE(originalArm.slot != service->arm.slot || originalArm.generation != service->arm.generation);
+    EXPECT_FALSE(engine.runtimeRecreateRequired);
+    EXPECT_EQ(1u, timeline.starts.size());
+    EXPECT_EQ(0u, timeline.transactions.size());
+    EXPECT_EQ(0u, timeline.extraCommands.size());
+    EXPECT_EQ(0u, timeline.queueEvents.size());
+    auto* firstStart = &timeline.starts[0];
+    const auto retainedRender = firstStart->renderHandle;
+    const auto resumedBlock = engine.mixer.BlocksRendered();
     engine.initialFrontierEvents.SetCommitPageLimitForTests(SIZE_MAX);
     EXPECT_FALSE(engine.PreparePlayableStateStorage());
+    EXPECT_EQ(firstStart, &timeline.starts[0]);
+    EXPECT_EQ(retainedRender, firstStart->renderHandle);
     EXPECT_FALSE(engine.runtimeRecreateRequired);
     engine.initialFrontierRequests.SetCommitPageLimitForTests(SIZE_MAX);
     engine.pendingVariableLeafSources.SetCommitPageLimitForTests(SIZE_MAX);
     engine.pendingVariableFutureSources.SetCommitPageLimitForTests(SIZE_MAX);
     engine.pendingVariableFutureNodes.SetCommitPageLimitForTests(SIZE_MAX);
+    timeline.transactions.SetCommitPageLimitForTests(SIZE_MAX);
+    timeline.extraCommands.SetCommitPageLimitForTests(SIZE_MAX);
+    timeline.queueEvents.SetCommitPageLimitForTests(SIZE_MAX);
     ASSERT_TRUE(engine.PreparePlayableStateStorage());
+    EXPECT_EQ(firstStart, &timeline.starts[0]);
+    EXPECT_EQ(retainedRender, firstStart->renderHandle);
+    EXPECT_EQ(harken::kMaxKnownScheduleLeaves, timeline.starts.size());
+    EXPECT_EQ(2u * harken::kMaxKnownScheduleLeaves + 2u, timeline.transactions.size());
+    EXPECT_EQ(harken::kMaxKnownScheduleLeaves, timeline.extraCommands.size());
+    EXPECT_EQ(harken::EngineQueueProgramBank::kEventCapacity, timeline.queueEvents.size());
     ASSERT_EQ(VN_OK, Vn_Update());
     engine.nullBackend.Pump(1);
-    ASSERT_EQ(entryQuantum + 2u, engine.mixer.BlocksRendered());
+    ASSERT_EQ(resumedBlock + 1u, engine.mixer.BlocksRendered());
     EXPECT_GT(harkentest::Peak(engine.nullBackend.LastBlock(), 128u), 0.001f);
     ASSERT_EQ(VN_OK, Vn_Term());
 }
