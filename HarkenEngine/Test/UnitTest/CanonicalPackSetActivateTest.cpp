@@ -3034,17 +3034,43 @@ TEST(CanonicalPackSetActivate, LargeInitProjects257VariablesAndUses65thAttenuati
         });
         EXPECT_EQ(1u, observed);
     }
-    {
-        auto config = CanonicalActivationConfig(2, 256, 48000);
-        config.maxPackDecodeStagingBytes = provider.bytes.size() + sizeof(PackAttenuationBindingMapV1)*2;
-        EngineSession session(config);
-        ASSERT_EQ(VN_OK, session.InitResult());
-        VnCanonicalPackSetMemberResultV1 row{};
-        row.structSize = sizeof(row);
-        VnCanonicalPackSetActivationReportV1 report{};
-        EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, harkentest::ActivateCanonicalMembersV1(&member, 1, &row, report));
-        EXPECT_EQ(0u, session.Engine()->variables.DefinitionCount());
-        EXPECT_EQ(0u, session.Engine()->spatial.ProfileCount());
-        EXPECT_EQ(nullptr, session.Engine()->packComposition.Published());
+    std::vector<std::string> symbols;
+    symbols.reserve(variables.size());
+    for (std::size_t i = 0; i < variables.size(); ++i) symbols.push_back("Variable_" + std::to_string(i));
+    std::vector<VnPackVariableNameV1> variableNames;
+    for (std::size_t i = 0; i < variables.size(); ++i)
+        variableNames.push_back({variables[i].variableId, symbols[i].c_str()});
+    VnPackNamesV1 names{sizeof(VnPackNamesV1), 0, companionfixture::project, {}, "", "",
+        static_cast<std::uint32_t>(variableNames.size()), 0, variableNames.data(), nullptr};
+    std::uint64_t nameBudget = UINT64_MAX;
+    PackCompanionNames capturedNames;
+    ASSERT_EQ(VN_OK, CapturePackCompanionNames(names, nameBudget, &capturedNames));
+    const auto nameBytes = UINT64_MAX - nameBudget;
+    const auto mapRows = 65ull * sizeof(PackAttenuationBindingMapV1::Binding);
+    for (const bool companion : {false, true}) {
+        for (const auto allowance : {2ull * mapRows, 4ull * mapRows - 1u, 4ull * mapRows}) {
+            SCOPED_TRACE(testing::Message() << "companion=" << companion << " rows=" << allowance);
+            auto config = CanonicalActivationConfig(2, 256, 48000);
+            config.maxPackDecodeStagingBytes = provider.bytes.size() + sizeof(PackAttenuationBindingMapV1)*4 +
+                allowance + (companion ? nameBytes : 0);
+            EngineSession session(config);
+            ASSERT_EQ(VN_OK, session.InitResult());
+            VnCanonicalPackSetMemberResultV1 row{};
+            row.structSize = sizeof(row);
+            VnCanonicalPackSetActivationReportV1 report{};
+            VnResult result;
+            if (companion) {
+                std::vector<VnCanonicalPackSetMemberV2> named{
+                    companionfixture::Member(initId, true, &provider, &names)};
+                result = companionfixture::Activate(named, report);
+            } else {
+                result = harkentest::ActivateCanonicalMembersV1(&member, 1, &row, report);
+            }
+            const bool fits = allowance == 4ull * mapRows;
+            EXPECT_EQ(fits ? VN_OK : VN_PACK_RESIDENT_CAPACITY, result);
+            EXPECT_EQ(fits ? 257u : 0u, session.Engine()->variables.DefinitionCount());
+            EXPECT_EQ(fits ? 65u : 0u, session.Engine()->spatial.ProfileCount());
+            if (!fits) EXPECT_EQ(nullptr, session.Engine()->packComposition.Published());
+        }
     }
 }

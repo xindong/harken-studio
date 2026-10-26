@@ -112135,6 +112135,9 @@ VnResult ValidateCanonicalPackSetVoiceRecipes(
     return VN_OK;
 }
 
+// Candidate, effective composition, published view and playback store coexist.
+constexpr std::uint64_t kCanonicalAttenuationMapPeakCopies = 4;
+
 struct CanonicalBindingPlanV1 {
     std::vector<BindingTable::PreparedAttachmentToken> attachmentRemovals;
     std::vector<PackBindingAttachmentEntry> attachmentRemovalEntries;
@@ -113987,7 +113990,7 @@ VnResult PrepareCanonicalSetActivation(Engine& engine,
     out->engine = &engine;
     if (capturedMembers != nullptr) out->members = std::move(*capturedMembers);
     else out->members.resize(desc.memberCount);
-    std::uint64_t stagedBytes = sizeof(PackAttenuationBindingMapV1) * 2;
+    std::uint64_t stagedBytes = sizeof(PackAttenuationBindingMapV1) * kCanonicalAttenuationMapPeakCopies;
     std::vector<PackTable::CanonicalSetMember> inputs;
     inputs.reserve(desc.memberCount);
     for (std::uint32_t i = 0; i < desc.memberCount; ++i) {
@@ -114034,9 +114037,9 @@ VnResult PrepareCanonicalSetActivation(Engine& engine,
             captured.keptOwner != nullptr});
     }
     const auto mapCount = out->members.front().image.attenuations.size();
-    if (mapCount > (UINT64_MAX - stagedBytes) / (2ull * sizeof(PackAttenuationBindingMapV1::Binding)))
+    if (mapCount > (UINT64_MAX - stagedBytes) / (kCanonicalAttenuationMapPeakCopies * sizeof(PackAttenuationBindingMapV1::Binding)))
         return VN_PACK_RESIDENT_CAPACITY;
-    stagedBytes += mapCount * 2ull * sizeof(PackAttenuationBindingMapV1::Binding);
+    stagedBytes += mapCount * kCanonicalAttenuationMapPeakCopies * sizeof(PackAttenuationBindingMapV1::Binding);
     if (stagedBytes > engine.config.maxPackDecodeStagingBytes) return VN_PACK_RESIDENT_CAPACITY;
     const auto closure = ValidateCanonicalSetClosure(out->members);
     if (closure != VN_OK) { return closure; }
@@ -114409,7 +114412,7 @@ VnResult ActivateCanonicalPackSetImpl(
                 std::vector<AcquiredCanonicalSetMember> captured;
                 if (companion) {
                     captured.resize(desc.memberCount);
-                    std::uint64_t staged = capturedNameBytes + sizeof(PackAttenuationBindingMapV1) * 2;
+                    std::uint64_t staged = capturedNameBytes + sizeof(PackAttenuationBindingMapV1) * kCanonicalAttenuationMapPeakCopies;
                     for (std::uint32_t i = 0; i < desc.memberCount; ++i) {
                         const auto operation = (*operations)[i];
                         const auto digest = (*names)[i] != nullptr ? (*names)[i]->digest : 0;
@@ -114431,9 +114434,9 @@ VnResult ActivateCanonicalPackSetImpl(
                     }
                     const auto mapCount = (*operations)[0] == VN_PACK_MEMBER_KEEP && previous != nullptr
                         ? previous->catalog.attenuations.size() : captured.front().image.attenuations.size();
-                    if (mapCount > (UINT64_MAX - staged) / (2ull * sizeof(PackAttenuationBindingMapV1::Binding)))
+                    if (mapCount > (UINT64_MAX - staged) / (kCanonicalAttenuationMapPeakCopies * sizeof(PackAttenuationBindingMapV1::Binding)))
                         return VN_PACK_RESIDENT_CAPACITY;
-                    staged += mapCount * 2ull * sizeof(PackAttenuationBindingMapV1::Binding);
+                    staged += mapCount * kCanonicalAttenuationMapPeakCopies * sizeof(PackAttenuationBindingMapV1::Binding);
                     if (staged > engine.config.maxPackDecodeStagingBytes) return VN_PACK_RESIDENT_CAPACITY;
                 }
                 if (previous != nullptr && previous->ledger.setRevision == desc.setRevision &&
