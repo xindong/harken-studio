@@ -1,8 +1,15 @@
 #include "UI/HubIcons.h"
 
+#include <QApplication>
+#include <QImageReader>
 #include <QPainter>
 #include <QPixmap>
 #include <QSvgRenderer>
+
+#ifdef Q_OS_WIN
+#include "Platform/Windows/SystemTheme.h"
+#include "Platform/Windows/TaskbarIcon.h"
+#endif
 
 namespace VNH::HubIcons {
 
@@ -52,6 +59,53 @@ QIcon iconWithAllStates(const QPixmap& pixmap)
     return icon;
 }
 
+}
+
+QIcon applicationIcon(const QColor& color)
+{
+    QImageReader reader(QStringLiteral(":/Resources/icons/HubIcon.ico"));
+    QIcon icon;
+    for (int frame = 0; frame < reader.imageCount(); ++frame) {
+        if (!reader.jumpToImage(frame))
+            continue;
+        QImage image = reader.read().convertToFormat(QImage::Format_ARGB32_Premultiplied);
+        if (image.isNull())
+            continue;
+        QPainter painter(&image);
+        painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+        painter.fillRect(image.rect(), color);
+        painter.end();
+        icon.addPixmap(QPixmap::fromImage(image));
+    }
+    return icon;
+}
+
+ApplicationIcon::ApplicationIcon(QObject* parent)
+    : QObject(parent)
+{
+    QApplication::setWindowIcon(applicationIcon(Qt::white));
+#ifdef Q_OS_WIN
+    taskbar_ = new TaskbarIcon(this);
+    auto* theme = new SystemTheme(this);
+    connect(theme, &SystemTheme::iconColorChanged, this, &ApplicationIcon::applyColor);
+    applyColor(theme->iconColor());
+#else
+    applyColor(Qt::white);
+#endif
+}
+
+QIcon ApplicationIcon::systemIcon() const
+{
+    return systemIcon_;
+}
+
+void ApplicationIcon::applyColor(const QColor& color)
+{
+    systemIcon_ = applicationIcon(color);
+#ifdef Q_OS_WIN
+    taskbar_->setIcon(systemIcon_);
+#endif
+    emit changed(systemIcon_);
 }
 
 QIcon settingsIcon(qreal devicePixelRatio)

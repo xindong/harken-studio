@@ -37,7 +37,11 @@ bool unregisterBackgroundOnLogin()
 bool isBackgroundOnLoginRegistered()
 {
     QSettings run(kRunKey, QSettings::NativeFormat);
-    return run.contains(kValueName);
+    const QString command =
+        QStringLiteral("\"%1\" --background")
+            .arg(QDir::toNativeSeparators(
+                QCoreApplication::applicationFilePath()));
+    return run.value(kValueName).toString().compare(command, Qt::CaseInsensitive) == 0;
 }
 
 }

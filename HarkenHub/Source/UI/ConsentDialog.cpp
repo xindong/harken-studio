@@ -56,7 +56,7 @@ QString ConsentDialog::studioDocumentId()
 
 QString ConsentDialog::documentVersion()
 {
-    return QStringLiteral("2026-09-30-r2");
+    return QStringLiteral("2026-10-28");
 }
 
 ConsentDialog::ConsentDialog(const QString& documentId,
@@ -64,7 +64,7 @@ ConsentDialog::ConsentDialog(const QString& documentId,
                              QWidget* parent)
     : QDialog(parent)
 {
-    setWindowTitle(tr("Harken Studio Hub"));
+    setWindowTitle(tr("Harken Hub"));
     setModal(true);
     setMinimumSize(640, 400);
     resize(QSize(1040, 640).boundedTo(
@@ -131,7 +131,7 @@ bool ConsentDialog::requestConsent(QWidget* parent, const QString& documentId)
     const QString documentText = documentTexts.join(QStringLiteral("\n\n"));
     if (documentText.isEmpty()) {
         QMessageBox::warning(
-            parent, tr("Harken Studio Hub"),
+            parent, tr("Harken Hub"),
             tr("The license agreement and privacy policy could not be loaded."));
         return false;
     }
@@ -150,7 +150,7 @@ bool ConsentDialog::requestConsent(QWidget* parent, const QString& documentId)
                                      QCoreApplication::applicationVersion(),
                                      QDateTime::currentDateTimeUtc())) {
         QMessageBox::warning(
-            parent, tr("Harken Studio Hub"),
+            parent, tr("Harken Hub"),
             tr("Your consent could not be saved to %1. Please check that the "
                "folder is writable and try again.")
                 .arg(ConsentStore::filePath()));
@@ -164,7 +164,7 @@ void ConsentDialog::showDocuments(QWidget* parent)
     const QStringList documentTexts = consentDocuments();
     if (documentTexts.join(QStringLiteral("\n\n")).isEmpty()) {
         QMessageBox::warning(
-            parent, tr("Harken Studio Hub"),
+            parent, tr("Harken Hub"),
             tr("The license agreement and privacy policy could not be loaded."));
         return;
     }

@@ -118,8 +118,8 @@
     </message>
     <message>
         <location filename="../Source/UI/LogConsoleDialog.cpp" line="135"/>
-        <source>Harken Studio Hub %1</source>
-        <translation>Harken Studio Hub 构建：%1</translation>
+        <source>Harken Hub %1</source>
+        <translation>Harken Hub 构建：%1</translation>
     </message>
     <message>
         <location filename="../Source/UI/LogConsoleDialog.cpp" line="143"/>
@@ -425,8 +425,8 @@
     <message>
         <location filename="../Source/UI/ConsentDialog.cpp" line="56"/>
         <location filename="../Source/UI/ConsentDialog.cpp" line="111"/>
-        <source>Harken Studio Hub</source>
-        <translation>Harken Studio Hub</translation>
+        <source>Harken Hub</source>
+        <translation>Harken Hub</translation>
     </message>
     <message>
         <location filename="../Source/UI/ConsentDialog.cpp" line="65"/>
@@ -470,8 +470,8 @@
         <location filename="../Source/UI/HubWindow.cpp" line="617"/>
         <location filename="../Source/UI/HubWindow.cpp" line="656"/>
         <location filename="../Source/UI/HubWindow.cpp" line="681"/>
-        <source>Harken Studio Hub</source>
-        <translation>Harken Studio Hub</translation>
+        <source>Harken Hub</source>
+        <translation>Harken Hub</translation>
     </message>
     <message>
         <source>License Agreement &amp;&amp; Privacy Policy</source>
@@ -509,8 +509,8 @@
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="167"/>
-        <source>The language change will take effect after restarting Harken Studio Hub.</source>
-        <translation>语言更改将在重启 Harken Studio Hub 后生效。</translation>
+        <source>The language change will take effect after restarting Harken Hub.</source>
+        <translation>语言更改将在重启 Harken Hub 后生效。</translation>
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="196"/>
@@ -529,8 +529,8 @@
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="544"/>
-        <source>The current Harken Studio Hub is up to date, and the latest HarkenStudio is already in the Versions list.</source>
-        <translation>当前 Harken Studio Hub 已是最新版本，最新的 HarkenStudio 已在版本列表中。</translation>
+        <source>The current Harken Hub is up to date, and the latest HarkenStudio is already in the Versions list.</source>
+        <translation>当前 Harken Hub 已是最新版本，最新的 HarkenStudio 已在版本列表中。</translation>
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="175"/>
@@ -565,13 +565,15 @@
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="240"/>
-        <source>A Harken Studio Hub update is ready. Click to close the hub, install it, and restart.</source>
-        <translation>Harken Studio Hub 更新已就绪。点击以关闭 Hub、安装更新并重启。</translation>
+        <source>A Harken Hub update is ready. Click to close the hub, install it, and restart.</source>
+        <translation>Harken Hub 更新已就绪。点击以关闭 Hub、安装更新并重启。</translation>
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="252"/>
-        <source>Hub</source>
-        <translation>Hub</translation>
+        <source>Harken
+Hub</source>
+        <translation>Harken
+Hub</translation>
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="261"/>
@@ -596,7 +598,7 @@
         <translation type="vanished">服务器返回了无效的 Hub 更新清单。</translation>
     </message>
     <message>
-        <source>The current Harken Studio Hub version is up to date.</source>
+        <source>The current Harken Hub version is up to date.</source>
         <translation type="vanished">当前Hub版本已是最新</translation>
     </message>
     <message>
@@ -619,8 +621,8 @@
 %1</translation>
     </message>
     <message>
-        <source>The current Harken Studio Hub and HarkenStudio versions are up to date.</source>
-        <translation type="vanished">当前 Harken Studio Hub 和 HarkenStudio 版本均为最新。</translation>
+        <source>The current Harken Hub and HarkenStudio versions are up to date.</source>
+        <translation type="vanished">当前 Harken Hub 和 HarkenStudio 版本均为最新。</translation>
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="592"/>
@@ -634,16 +636,16 @@
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="657"/>
-        <source>Harken Studio Hub will close now, update in the background, and restart automatically. This usually takes a few seconds.
+        <source>Harken Hub will close now, update in the background, and restart automatically. This usually takes a few seconds.
 
-If Harken Studio Hub does not come back within 2 minutes, close any remaining Harken Studio Hub processes and start it manually.
+If Harken Hub does not come back within 2 minutes, close any remaining Harken Hub processes and start it manually.
 
 Development builds can be unstable - if the wait drags on, download the latest installer from the Harken website and install it over the current version.
 
 Continue?</source>
-        <translation>Harken Studio Hub 将立即关闭、在后台更新并自动重启。此过程通常只需几秒。
+        <translation>Harken Hub 将立即关闭、在后台更新并自动重启。此过程通常只需几秒。
 
-如果 Harken Studio Hub 在 2 分钟内没有重新启动，请关闭所有残留的 Harken Studio Hub 进程，然后手动启动。
+如果 Harken Hub 在 2 分钟内没有重新启动，请关闭所有残留的 Harken Hub 进程，然后手动启动。
 
 开发版本可能不稳定。如果等待时间过长，请从 Harken 网站下载最新安装程序并覆盖当前版本。
 
@@ -687,8 +689,8 @@ Continue?</source>
     <name>VNH::LogConsoleDialog</name>
     <message>
         <location filename="../Source/UI/LogConsoleDialog.cpp" line="211"/>
-        <source>Harken Studio Hub Activity Log (%1)</source>
-        <translation>Harken Studio Hub 活动日志（%1）</translation>
+        <source>Harken Hub Activity Log (%1)</source>
+        <translation>Harken Hub 活动日志（%1）</translation>
     </message>
     <message>
         <location filename="../Source/UI/LogConsoleDialog.cpp" line="229"/>
@@ -763,40 +765,40 @@ Continue?</source>
     </message>
     <message>
         <location filename="../Source/Update/UpdateNotifier.cpp" line="60"/>
-        <source>HarkenStudio %1 has been downloaded and verified. Open Harken Studio Hub to install it.</source>
-        <translation>HarkenStudio %1 已下载并验证。打开 Harken Studio Hub 即可安装。</translation>
+        <source>HarkenStudio %1 has been downloaded and verified. Open Harken Hub to install it.</source>
+        <translation>HarkenStudio %1 已下载并验证。打开 Harken Hub 即可安装。</translation>
     </message>
     <message>
         <location filename="../Source/Update/UpdateNotifier.cpp" line="68"/>
-        <source>Harken Studio Hub update ready</source>
-        <translation>Harken Studio Hub 更新已就绪</translation>
+        <source>Harken Hub update ready</source>
+        <translation>Harken Hub 更新已就绪</translation>
     </message>
     <message>
         <location filename="../Source/Update/UpdateNotifier.cpp" line="70"/>
-        <source>Harken Studio Hub %1 is ready to install. Open Harken Studio Hub to approve the update.</source>
-        <translation>Harken Studio Hub %1 已可安装。打开 Harken Studio Hub 以确认更新。</translation>
+        <source>Harken Hub %1 is ready to install. Open Harken Hub to approve the update.</source>
+        <translation>Harken Hub %1 已可安装。打开 Harken Hub 以确认更新。</translation>
     </message>
     <message>
         <location filename="../Source/Update/UpdateNotifier.cpp" line="83"/>
-        <source>Harken Studio Hub updated</source>
-        <translation>Harken Studio Hub 已更新</translation>
+        <source>Harken Hub updated</source>
+        <translation>Harken Hub 已更新</translation>
     </message>
     <message>
         <location filename="../Source/Update/UpdateNotifier.cpp" line="85"/>
-        <source>Harken Studio Hub has been updated to %1.</source>
-        <translation>Harken Studio Hub 已更新至 %1。</translation>
+        <source>Harken Hub has been updated to %1.</source>
+        <translation>Harken Hub 已更新至 %1。</translation>
     </message>
     <message>
         <location filename="../Source/Update/UpdateNotifier.cpp" line="115"/>
         <location filename="../Source/Update/UpdateNotifier.cpp" line="173"/>
-        <source>Harken Studio Hub</source>
-        <translation>Harken Studio Hub</translation>
+        <source>Harken Hub</source>
+        <translation>Harken Hub</translation>
     </message>
     <message>
         <location filename="../Source/Update/UpdateNotifier.cpp" line="132"/>
         <location filename="../Source/Update/UpdateNotifier.cpp" line="175"/>
-        <source>Open Harken Studio Hub</source>
-        <translation>打开 Harken Studio Hub</translation>
+        <source>Open Harken Hub</source>
+        <translation>打开 Harken Hub</translation>
     </message>
     <message>
         <location filename="../Source/Update/UpdateNotifier.cpp" line="135"/>
@@ -1597,8 +1599,8 @@ Error code: %1</source>
     </message>
     <message>
         <location filename="../Source/UI/ProjectsPage.cpp" line="788"/>
-        <source>The project location could not be saved. It will not be restored after restarting Harken Studio Hub.</source>
-        <translation>无法保存工程位置。重启 Harken Studio Hub 后不会恢复此位置。</translation>
+        <source>The project location could not be saved. It will not be restored after restarting Harken Hub.</source>
+        <translation>无法保存工程位置。重启 Harken Hub 后不会恢复此位置。</translation>
     </message>
     <message>
         <location filename="../Source/UI/ProjectsPage.cpp" line="799"/>
@@ -1936,13 +1938,13 @@ Channel: %2</source>
     </message>
     <message>
         <location filename="../Source/UI/VersionsPage.cpp" line="648"/>
-        <source>Harken Studio Hub %1 is ready to install.</source>
-        <translation>Harken Studio Hub %1 已可安装。</translation>
+        <source>Harken Hub %1 is ready to install.</source>
+        <translation>Harken Hub %1 已可安装。</translation>
     </message>
     <message>
         <location filename="../Source/UI/VersionsPage.cpp" line="657"/>
-        <source>Harken Studio Hub %1 update is installing. The hub closes and restarts automatically.</source>
-        <translation>正在安装 Harken Studio Hub %1 更新。Hub 将自动关闭并重启。</translation>
+        <source>Harken Hub %1 update is installing. The hub closes and restarts automatically.</source>
+        <translation>正在安装 Harken Hub %1 更新。Hub 将自动关闭并重启。</translation>
     </message>
     <message>
         <location filename="../Source/UI/VersionsPage.cpp" line="676"/>
@@ -1961,13 +1963,13 @@ Channel: %2</source>
     </message>
     <message>
         <location filename="../Source/UI/VersionsPage.cpp" line="720"/>
-        <source>Downloading Harken Studio Hub %1 - %2 of %3</source>
-        <translation>正在下载 Harken Studio Hub %1 — %2 / %3</translation>
+        <source>Downloading Harken Hub %1 - %2 of %3</source>
+        <translation>正在下载 Harken Hub %1 — %2 / %3</translation>
     </message>
     <message>
         <location filename="../Source/UI/VersionsPage.cpp" line="724"/>
-        <source>Downloading Harken Studio Hub %1...</source>
-        <translation>正在下载 Harken Studio Hub %1…</translation>
+        <source>Downloading Harken Hub %1...</source>
+        <translation>正在下载 Harken Hub %1…</translation>
     </message>
     <message>
         <location filename="../Source/UI/VersionsPage.cpp" line="770"/>
@@ -1989,15 +1991,15 @@ Channel: %2</source>
         <location filename="../Source/UI/VersionsPage.cpp" line="1250"/>
         <location filename="../Source/UI/VersionsPage.cpp" line="1276"/>
         <location filename="../Source/UI/VersionsPage.cpp" line="1332"/>
-        <source>Harken Studio Hub</source>
-        <translation>Harken Studio Hub</translation>
+        <source>Harken Hub</source>
+        <translation>Harken Hub</translation>
     </message>
     <message>
         <location filename="../Source/UI/VersionsPage.cpp" line="771"/>
-        <source>Harken Studio Hub will close to install the update. Open HarkenStudio sessions are not affected.
+        <source>Harken Hub will close to install the update. Open HarkenStudio sessions are not affected.
 
 Continue?</source>
-        <translation>Harken Studio Hub 将关闭以安装更新。已打开的 HarkenStudio 会话不受影响。
+        <translation>Harken Hub 将关闭以安装更新。已打开的 HarkenStudio 会话不受影响。
 
 是否继续？</translation>
     </message>
@@ -2051,10 +2053,10 @@ Continue?</source>
 %1</translation>
     </message>
     <message>
-        <source>Remove this local build from Harken Studio Hub?
+        <source>Remove this local build from Harken Hub?
 
 The build files will not be deleted. Projects linked to it cannot open until the same build is added again.</source>
-        <translation type="vanished">是否从 Harken Studio Hub 中移除此本地构建？
+        <translation type="vanished">是否从 Harken Hub 中移除此本地构建？
 
 构建文件不会被删除。重新添加同一构建之前，与其关联的工程将无法打开。</translation>
     </message>
@@ -2126,10 +2128,10 @@ The build files will not be deleted. Projects linked to it cannot open until the
     </message>
     <message>
         <location filename="../Source/UI/VersionsPage.cpp" line="892"/>
-        <source>Remove this standalone build from Harken Studio Hub?
+        <source>Remove this standalone build from Harken Hub?
 
 The build files will not be deleted. Projects linked to it cannot open until the same build is added again.</source>
-        <translation>是否从 Harken Studio Hub 中移除此独立版本？
+        <translation>是否从 Harken Hub 中移除此独立版本？
 
 版本文件不会被删除。关联到此版本的工程将无法打开，直到再次添加同一个版本。</translation>
     </message>
@@ -4620,8 +4622,8 @@ To integrate again later, select or drop this SDK source: %2</source>
         <translation>HarkenStudio 在完成打开工程前已退出</translation>
     </message>
     <message>
-        <source>HarkenStudio did not connect to Harken Studio Hub within 15 seconds</source>
-        <translation>HarkenStudio 未能在 15 秒内连接到 Harken Studio Hub</translation>
+        <source>HarkenStudio did not connect to Harken Hub within 15 seconds</source>
+        <translation>HarkenStudio 未能在 15 秒内连接到 Harken Hub</translation>
     </message>
     <message>
         <source>HarkenStudio did not finish opening the project within 2 minutes</source>
@@ -4696,8 +4698,8 @@ The previous version association was kept. You can retry, select another version
         <translation>此工程需要更新后才能打开。</translation>
     </message>
     <message>
-        <source>Return to Harken Studio Hub and choose a newer Studio version to open it once. No project was changed.</source>
-        <translation>请返回 Harken Studio Hub，选择较新的 Studio 版本并使用“一次打开”。工程未发生更改。</translation>
+        <source>Return to Harken Hub and choose a newer Studio version to open it once. No project was changed.</source>
+        <translation>请返回 Harken Hub，选择较新的 Studio 版本并使用“一次打开”。工程未发生更改。</translation>
     </message>
     <message>
         <source>The project changed while Harken Studio was preparing the update.</source>
@@ -4864,8 +4866,8 @@ The previous version association was kept. You can retry, select another version
         <translation>HarkenStudio 回报的构建 ID 为 %1，但应为 %2</translation>
     </message>
     <message>
-        <source>This HarkenStudio version cannot create projects from Harken Studio Hub. Update HarkenStudio and try again.</source>
-        <translation>此 HarkenStudio 版本无法从 Harken Studio Hub 创建工程。请更新 HarkenStudio 后重试。</translation>
+        <source>This HarkenStudio version cannot create projects from Harken Hub. Update HarkenStudio and try again.</source>
+        <translation>此 HarkenStudio 版本无法从 Harken Hub 创建工程。请更新 HarkenStudio 后重试。</translation>
     </message>
     <message>
         <source>HarkenStudio reported an unexpected launch operation</source>

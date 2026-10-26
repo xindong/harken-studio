@@ -860,7 +860,7 @@ void ProjectsPage::persistProjectLocation(const QString& path)
         QMessageBox::warning(
             this, QCoreApplication::translate("HarkenHub", "New Project"),
             QCoreApplication::translate("HarkenHub", "The project location could not be saved. It will "
-                           "not be restored after restarting Harken Studio Hub."));
+                           "not be restored after restarting Harken Hub."));
     }
 }
 
@@ -1271,7 +1271,7 @@ void ProjectsPage::showRowMenu(int row, const QPoint& globalPos)
         }
         refresh();
         if (!failures.isEmpty())
-            QMessageBox::warning(this, QCoreApplication::translate("HarkenHub", "Harken Studio Hub"),
+            QMessageBox::warning(this, QCoreApplication::translate("HarkenHub", "Harken Hub"),
                 QCoreApplication::translate("HarkenHub", "These projects could not be removed from the list:\n%1")
                     .arg(failures.join(QLatin1Char('\n'))));
     };

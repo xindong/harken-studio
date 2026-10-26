@@ -1,8 +1,8 @@
 # Harken Studio Installation and Use License Agreement
 
-Effective Date: September 30, 2026
+Effective Date: October 28, 2026
 
-Welcome to Harken Studio. This Agreement sets out the basic rights and obligations between you and XD Network Inc. (also referred to as “XD,” “we,” or “us”) when you download, install, access, copy, use, modify, distribute, or participate in the Harken Studio project (collectively, the “Product”).
+Welcome to Harken Studio！This Agreement sets out the basic rights and obligations between you and XD Network Inc. (also referred to as “XD,” “we,” or “us”) when you download, install, access, copy, use, modify, distribute, or participate in the Harken Studio project (collectively, the “Product”).
 
 Please note in particular:
 
@@ -18,15 +18,17 @@ If you do not agree to terms of this Agreement that fall outside the scope of ri
 
 1. Definitions
 
-1.1 “Harken Studio” means the game-audio tools and related products and services provided by XD, including Harken Studio Hub, the Harken Studio editor, the SDK, Runtime, sample code, documentation, installers, update packages, and related release materials. The specific components, functions, and supported scope are subject to the actual released version and official descriptions.
+1.1 “Harken Studio” means the game-audio tools and related products and services provided by XD, including the Harken Studio application, Harken Engine, Harken Engine Unity Integration, sample code, documentation, installers, update packages, and related release materials. The specific components, functions, and supported scope are subject to the actual released version and official descriptions.
 
-1.2 “Official Programs” means executable programs, installers, update packages, or related binary files relating to the Product that are provided by XD or a party authorized by XD.
+1.2 “Harken Hub” means the official distribution and update tool provided by XD. It is currently used primarily to obtain, install, and update Harken Studio; it may later be used to distribute other Harken products, subject to the actual released version and official descriptions.
 
-1.3 “Official Services” means the official website, download pages or channels, automatic updates, feedback, community maintenance, security reporting, documentation hosting, and other services relating to the Product that are provided by XD or a party authorized by XD.
+1.3 “Official Programs” means executable programs, installers, update packages, or related binary files relating to the Product that are provided by XD or a party authorized by XD.
 
-1.4 “User Content” means content that you create, import, enter, edit, save, or process when using the Product, including, without limitation, audio files, project files, project structures, asset names, file paths, prompts, AI conversations, feedback, Issues, Pull Requests, Discussions, and commit records.
+1.4 “Official Services” means the official website, download pages or channels, automatic updates, feedback, community maintenance, security reporting, documentation hosting, and other services relating to the Product that are provided by XD or a party authorized by XD.
 
-1.5 “Third-Party Services” means code-hosting, model, cloud, download, feedback, software-runtime, or other external services provided by third parties (if any).
+1.5 “User Content” means content that you create, import, enter, edit, save, or process when using the Product, including, without limitation, audio files, project files, project structures, asset names, file paths, prompts, AI conversations, feedback, Issues, Pull Requests, Discussions, and commit records.
+
+1.6 “Third-Party Services” means code-hosting, model, cloud, download, feedback, software-runtime, or other external services provided by third parties (if any).
 
 2. Scope of this Agreement
 
@@ -132,17 +134,17 @@ This Section applies if you bring your own API Key.
 
 7.5 If you modify the source code and distribute your own version, you shall identify the modifications in a reasonable manner and shall not mislead users into believing that the version is released, reviewed, warranted, or supported by XD.
 
-8. Harken Studio SDK / Runtime
+8. Harken Engine / Harken Engine Unity Integration
 
-8.1 This Section applies to your downloading, copying, modification, integration, building, testing, use, or distribution of the Harken Studio SDK / Runtime.
+8.1 This Section applies to your downloading, copying, modification, integration, building, testing, use, or distribution of the Harken Engine / Harken Engine Unity Integration.
 
-8.2 If the Harken Studio SDK / Runtime is released under the Apache License 2.0 or another open-source license, you may use, copy, modify, and distribute the SDK / Runtime within the scope permitted by that license, including integrating it into games, applications, or internal tools.
+8.2 If the Harken Engine / Harken Engine Unity Integration is released under the Apache License 2.0 or another open-source license, you may use, copy, modify, and distribute the Harken Engine / Harken Engine Unity Integration within the scope permitted by that license, including integrating it into games, applications, or internal tools.
 
-8.3 To current knowledge, the Harken Studio SDK / Runtime does not include online activation, license checking, log upload, analytics tracking, or player-data collection capabilities. As the developer of the game or application, you shall ensure that your integrated product complies with laws and regulations, platform rules, privacy policies, user-notice requirements, and material-licensing requirements.
+8.3 To current knowledge, the Harken Engine / Harken Engine Unity Integration does not include online activation, license checking, log upload, analytics tracking, or player-data collection capabilities. As the developer of the game or application, you shall ensure that your integrated product complies with laws and regulations, platform rules, privacy policies, user-notice requirements, and material-licensing requirements.
 
-8.4 When you distribute the SDK / Runtime with an integrated product, you shall retain applicable copyright notices, open-source license texts, NOTICE files, third-party component licenses, and necessary attribution information.
+8.4 When you distribute the Harken Engine / Harken Engine Unity Integration with an integrated product, you shall retain applicable copyright notices, open-source license texts, NOTICE files, third-party component licenses, and necessary attribution information.
 
-8.5 The interfaces, file formats, binary formats, platform support, performance, and compatibility of the SDK / Runtime may change. You shall test for yourself its stability, performance, and compatibility on the target platform, engine version, hardware, and game scenario.
+8.5 The interfaces, file formats, binary formats, platform support, performance, and compatibility of the Harken Engine / Harken Engine Unity Integration may change. You shall test for yourself its stability, performance, and compatibility on the target platform, engine version, hardware, and game scenario.
 
 9. Download, Installation, and Automatic Updates
 
@@ -158,7 +160,7 @@ This Section applies if you bring your own API Key.
 
 10.3 Security vulnerabilities, secret leaks, exploitable defects, or issues involving non-public information should be submitted through the private security-reporting channel designated by us, and should not be disclosed publicly.
 
-10.4 We may, to the extent necessary, view, retain, process, and respond to content you submit in order to maintain the project, handle issues, fix defects, respond to security incidents, conduct code review, and administer the project.
+10.4 We may, to the extent necessary, view, retain, process, and respond to content you submit to maintain the project, handle issues, fix defects, respond to security incidents, conduct code review, and administer the project.
 
 11. Determination and Handling of Breach
 
@@ -174,7 +176,7 @@ You understand and agree that we have the right, based on relevant data recorded
 
 11.2 The Product does not have an account system. Your projects, audio, AI conversations, configurations, and API Keys that you store yourself are generally stored only on your device. We generally cannot access, delete, or restrict your local files.
 
-With respect to official channels under our control, including the official website, official release materials, official documentation, official source-code repositories, official SDK / Runtime release materials, and official community portals, if you are in breach, or after we receive a valid notice from a rights holder, we may take reasonable measures, including:
+With respect to official channels under our control, including the official website, official release materials, official documentation, official source-code repositories, official Harken Engine / Harken Engine Unity Integration release materials, and official community portals, if you are in breach, or after we receive a valid notice from a rights holder, we may take reasonable measures, including:
 
 (1) deleting, taking down, disconnecting links to, or stopping distribution of the relevant official content;
 
@@ -184,7 +186,7 @@ With respect to official channels under our control, including the official webs
 
 (4) where suspected illegal or criminal conduct is involved, retaining relevant records in accordance with law and reporting to, and cooperating with investigations by, competent authorities.
 
-Content you send to a third-party model service that you configure yourself, and the output of that service, as well as your use after integrating the SDK / Runtime into a game or application, are your own responsibility.
+Content you send to a third-party model service that you configure yourself, and the output of that service, as well as your use after integrating the Harken Engine / Harken Engine Unity Integration into a game or application, are your own responsibility.
 
 Any asset loss, impairment of rights, or data loss caused by the foregoing measures shall also be borne by you.
 
@@ -274,23 +276,25 @@ If you have any questions about this Agreement, use of the Product, open-source 
 
 # Harken Studio Privacy Policy
 
-Effective Date: September 30, 2026
+Effective Date: October 28, 2026
 
 Introduction
 
 XD Network Inc. (hereinafter referred to as “we,” “us,” or “XD”), as the operator of Harken Studio, recognizes the importance of your personal information. This Privacy Policy explains how we collect, use, store, share, protect, and delete your personal information when you use the Products, and how you may exercise your rights in relation to such information.
 
-Before using the Product, please read and fully understand this Privacy Policy. Your use of the Product or related services, or your clicking “Agree,” constitutes application of this Policy. If you do not agree to any provision of this Policy, or cannot accurately understand any provision, please stop using the Product.
+Before using the Product, please read and fully understand this Privacy Policy. If you click “Agree” to this Policy or use the Product and/or related services, this Policy applies, and we will collect, use, store, and protect your relevant information in accordance with this Policy. If you do not agree to any provision of this Policy, or cannot accurately understand any provision, please do not proceed.
 
 I. How We Collect and Use Personal Information
 
 We process personal information as necessary to provide Product functions, ensure security, handle your requests, and comply with legal obligations. Unless otherwise required by law or unless we have obtained your separate consent, we will not use your personal information for purposes unrelated to those described above.
 
-1. Harken Studio, Official Downloads, Installation, and Automatic Updates
+1. Harken Hub, Official Downloads, Installation, and Automatic Updates
 
-When you use update-checking, automatic-update, or official-download functions, Harken Studio will, based on your device’s operating-system type and CPU architecture, first access the publicly available update manifest or release address on GitHub to obtain the installation or update package applicable to your device. If the GitHub connection is unavailable or does not function properly, Harken Studio may switch to a backup download address, such as OSS. The comparison between the software version stored locally on your device and the version specified in the update manifest, the determination of update applicability, and integrity verification are all performed locally on your device.
+When you use update-checking, automatic-update, or official-download functions through Harken Hub, Harken Hub will, based on your device’s operating-system type and CPU architecture, first access the publicly available update manifest or release address on GitHub to obtain the installation or update package applicable to your device. If the GitHub connection is unavailable or does not function properly, Harken Hub may switch to a backup download address, such as OSS. Version comparison, update applicability, and integrity verification are performed locally on your device.
 
 To establish network connections, provide downloads, protect network security, and troubleshoot infrastructure issues, GitHub, the official website, object-storage services, CDNs, or their service providers may, in accordance with their technical implementations, process necessary network-access logs. We will not use such logs to identify specific users, create user profiles, or conduct personalized marketing.
+
+Harken Hub is an official distribution and update tool; it is not Harken Studio itself. This Policy describes processing that occurs when you use Harken Hub to obtain, install, or update Harken Studio. If Harken Hub is later used to distribute other products, processing relating to those products will be governed by the privacy policy then applicable to those products.
 
 2. Harken Studio Local Functions
 
@@ -302,9 +306,9 @@ When you Bring Your Own API Key and configure a third-party model service, Harke
 
 You are responsible for obtaining, managing, and maintaining your API Key. How a third-party model service provider processes, stores, uses for training, protects, or deletes the data you submit is governed by that provider’s own terms of service and privacy policy. Please carefully assess the relevant provider before configuring the service and confirm that you have the right to transmit the relevant information. XD will not use your conversation content, knowledge-based data, or file content to train models.
 
-4. Harken Studio SDK / Runtime
+4. Harken Engine or Harken Engine Unity Integration
 
-If you integrate the Harken Studio SDK / Runtime into your own game or application, you are the personal-information processor, or the party otherwise responsible for providing the required notices, with respect to the relevant integrated product. You are responsible for ensuring that the processing of personal information by that integrated product complies with applicable laws and for providing necessary disclosures to its end users.
+If you integrate Harken Engine or Harken Engine Unity Integration into your own game or application, you are the personal-information processor, or the party otherwise responsible for providing the required notices, with respect to the relevant integrated product. You are responsible for ensuring that the processing of personal information by that integrated product complies with applicable laws and for providing necessary disclosures to its end users.
 
 5.  Feedback, Customer Service, Security Reports, and Community Collaboration
 
@@ -342,7 +346,7 @@ IV. Data Storage and Processing Locations
 
 Harken Studio is designed primarily for local processing. Projects, audio, caches, AI conversations, local logs, Crash Dumps, configurations, and API Keys that you create, open, edit, import, preview, transcode, export, or store on your device are generally stored on your device.
 
-When you use third-party services such as GitHub, OSS, CDNs, code-hosting services, or official download and update services, the relevant providers may process necessary network-access information and content that you voluntarily submit in the locations where they operate or in other locations, in accordance with their own terms of service and privacy policies.
+When you use GitHub, OSS, CDNs, code-hosting services, or official download and update services through Harken Hub, the relevant providers may process necessary network-access information and content that you voluntarily submit in the locations where they operate or in other locations, in accordance with their own terms of service and privacy policies.
 
 When you configure a third-party model service or other external service yourself, prompts, conversation content, project context, and other information you send to that service will be processed by the service provider you select in accordance with its own terms of service and privacy policy. XD does not control the storage locations, processing methods, or retention periods of such third-party services.
 

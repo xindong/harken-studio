@@ -959,8 +959,8 @@ TEST(StudioProjectOpen, FileMenusUseHubPanels)
         QAction* action = window.findChild<QAction*>(name);
         ASSERT_NE(action, nullptr);
         action->trigger();
-        EXPECT_EQ(response.failureTitle, QStringLiteral("Harken Studio Hub"));
-        EXPECT_EQ(response.failureText, QStringLiteral("Harken Studio Hub did not start."));
+        EXPECT_EQ(response.failureTitle, QStringLiteral("Harken Hub"));
+        EXPECT_EQ(response.failureText, QStringLiteral("Harken Hub did not start."));
     }
     EXPECT_EQ(response.filePickers, 0);
     EXPECT_EQ(response.confirmations, 0);

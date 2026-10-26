@@ -18,7 +18,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR commandLine, int showCommand)
     if (separator == std::wstring::npos)
         return ERROR_BAD_PATHNAME;
     executable.resize(separator + 1);
-    executable += L"HarkenStudioHub.exe";
+    executable += L"HarkenHub.exe";
 
     std::wstring arguments = L"\"" + executable + L"\"";
     if (commandLine && *commandLine) {

@@ -39,6 +39,7 @@
 #include "Transactions/UninstallExecutor.h"
 #include "UI/ConsentDialog.h"
 #include "UI/HubWindow.h"
+#include "UI/HubIcons.h"
 #include "Update/BridgeDispatcher.h"
 #include "Update/HubSelfUpdate.h"
 #include "Update/SelfUpdateHealthCheck.h"
@@ -100,7 +101,6 @@ QMainWindow { background-color: #06080D; }
 }
   #pageTitle { font-size: 16px; font-weight: 600; color: #00F0FF; background: transparent; }
   #pageSubtitle { color: #888888; background: transparent; }
-  #sidebarLogo { background: transparent; }
   #sidebarProduct { color: #00F0FF; background: transparent; font-size: 24px; font-weight: 700; }
 #sidebarNote { color: #6B7488; background: transparent; font-size: 11px; }
 #sidebarLinks { background: transparent; font-size: 11px; }
@@ -611,6 +611,13 @@ int main(int argc, char* argv[])
                        .arg(report.deferred);
             return report.failed > 0 ? 2 : 0;
         }
+#ifdef Q_OS_WIN
+        if (qstrcmp(argv[i], "--migrate-shell-shortcuts") == 0) {
+            QCoreApplication app(argc, argv);
+            VNH::migrateShellShortcuts();
+            return 0;
+        }
+#endif
         if (qstrcmp(argv[i], "--register-update-bridge") == 0) {
             QCoreApplication app(argc, argv);
             QString bridgeExePath = QCoreApplication::applicationFilePath();
@@ -694,6 +701,7 @@ int main(int argc, char* argv[])
         }
         if (qstrcmp(argv[i], "--background") == 0) {
             QApplication app(argc, argv);
+            VNH::HubIcons::ApplicationIcon iconTheme;
             VNH::HubLocalization::install(&app);
             app.setQuitOnLastWindowClosed(false);
 
@@ -705,6 +713,10 @@ int main(int argc, char* argv[])
             }
 #ifdef Q_OS_WIN
             QTimer::singleShot(0, &app, [] {
+                QSettings settings;
+                if (settings.value(QStringLiteral("registerBackgroundOnLogin"), true).toBool() &&
+                    !VNH::isBackgroundOnLoginRegistered())
+                    VNH::registerBackgroundOnLogin();
                 QThreadPool::globalInstance()->start(&VNH::refreshShellIconsIfChanged);
             });
 #endif
@@ -781,6 +793,9 @@ int main(int argc, char* argv[])
             VNH::UpdateCoordinator coordinator;
             VNH::HubSelfUpdate selfUpdate;
             VNH::UpdateNotifier notifier;
+            notifier.setTrayIcon(iconTheme.systemIcon());
+            QObject::connect(&iconTheme, &VNH::HubIcons::ApplicationIcon::changed,
+                             &notifier, &VNH::UpdateNotifier::setTrayIcon);
             notifier.attach(&coordinator);
             notifier.attach(&selfUpdate);
 
@@ -915,7 +930,7 @@ int main(int argc, char* argv[])
     }
 
     QApplication app(argc, argv);
-    app.setWindowIcon(QIcon(QStringLiteral(":/Resources/icons/HubIcon.ico")));
+    VNH::HubIcons::ApplicationIcon iconTheme;
     VNH::HubLocalization::install(&app);
     app.styleHints()->setColorScheme(Qt::ColorScheme::Dark);
     if (QStyle* fusion = QStyleFactory::create(QStringLiteral("Fusion")))
@@ -925,7 +940,7 @@ int main(int argc, char* argv[])
         QString::fromUtf8(Harken::BuildInfo::HubVersion.data(),
                           static_cast<int>(Harken::BuildInfo::HubVersion.size())));
 
-    qInfo().noquote() << "Harken Studio Hub"
+    qInfo().noquote() << "Harken Hub"
                       << QString::fromUtf8(Harken::BuildInfo::Label.data(),
                                            static_cast<int>(Harken::BuildInfo::Label.size()));
 
@@ -940,8 +955,8 @@ int main(int argc, char* argv[])
             return 0;
         if (!guard.retryPrimary()) {
             QMessageBox::critical(
-                nullptr, hubTr("Harken Studio Hub"),
-                hubTr("Another Harken Studio Hub instance is running but not "
+                nullptr, hubTr("Harken Hub"),
+                hubTr("Another Harken Hub instance is running but not "
                       "responding. Please close it and try again."));
             return 1;
         }
@@ -986,7 +1001,7 @@ int main(int argc, char* argv[])
         }
     }
 
-    app.setApplicationDisplayName(QStringLiteral("Harken Studio Hub"));
+    app.setApplicationDisplayName(QStringLiteral("Harken Hub"));
     app.setStyleSheet(QString::fromLatin1(kStyleSheet));
 
     QTimer::singleShot(0, &app, [&app]() {

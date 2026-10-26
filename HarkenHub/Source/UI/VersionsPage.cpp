@@ -731,7 +731,7 @@ void VersionsPage::updateHubUpdateBanner()
     if (record.found &&
         record.state == QStringLiteral("AwaitingUserApproval")) {
         hubUpdateLabel_->setText(
-            QCoreApplication::translate("HarkenHub", "Harken Studio Hub %1 is ready to install.")
+            QCoreApplication::translate("HarkenHub", "Harken Hub %1 is ready to install.")
                 .arg(record.version));
         hubUpdateButton_->setEnabled(true);
         hubUpdateBanner_->show();
@@ -740,7 +740,7 @@ void VersionsPage::updateHubUpdateBanner()
     if (record.found &&
         record.state == QStringLiteral("AwaitingElevation")) {
         hubUpdateLabel_->setText(
-            QCoreApplication::translate("HarkenHub", "Harken Studio Hub %1 update is installing. The "
+            QCoreApplication::translate("HarkenHub", "Harken Hub %1 update is installing. The "
                            "hub closes and restarts automatically.")
                 .arg(record.version));
         hubUpdateButton_->setEnabled(false);
@@ -803,11 +803,11 @@ void VersionsPage::updateAutoProgress()
         if (hub.packageSize > 0 && hub.downloadedBytes >= 0) {
             percent = static_cast<int>(hub.downloadedBytes * 100 /
                                        hub.packageSize);
-            text = QCoreApplication::translate("HarkenHub", "Downloading Harken Studio Hub %1 - %2 of %3")
+            text = QCoreApplication::translate("HarkenHub", "Downloading Harken Hub %1 - %2 of %3")
                        .arg(hub.version, humanSize(hub.downloadedBytes),
                             humanSize(hub.packageSize));
         } else {
-            text = QCoreApplication::translate("HarkenHub", "Downloading Harken Studio Hub %1...")
+            text = QCoreApplication::translate("HarkenHub", "Downloading Harken Hub %1...")
                        .arg(hub.version);
         }
     }
@@ -853,8 +853,8 @@ void VersionsPage::beginStudioUpdateInstall()
 void VersionsPage::beginHubUpdate()
 {
     QMessageBox confirm(
-        QMessageBox::Question, QCoreApplication::translate("HarkenHub", "Harken Studio Hub"),
-        QCoreApplication::translate("HarkenHub", "Harken Studio Hub will close to install the update. "
+        QMessageBox::Question, QCoreApplication::translate("HarkenHub", "Harken Hub"),
+        QCoreApplication::translate("HarkenHub", "Harken Hub will close to install the update. "
                        "Open HarkenStudio sessions are not affected.\n\n"
                        "Continue?"),
         QMessageBox::Cancel, this);
@@ -868,7 +868,7 @@ void VersionsPage::beginHubUpdate()
     QString error;
     if (!selfUpdate.approve(&error, QDateTime::currentDateTimeUtc()))
         QMessageBox::warning(
-            this, QCoreApplication::translate("HarkenHub", "Harken Studio Hub"),
+            this, QCoreApplication::translate("HarkenHub", "Harken Hub"),
             QCoreApplication::translate(
                 "HarkenHub", "The Hub update could not be started.\n\n%1")
                 .arg(error));
@@ -915,7 +915,7 @@ void VersionsPage::beginAddVersion()
 
     QString platformError;
     if (!PackageVerifier::checkHostPlatform(packagePath, &platformError)) {
-        QMessageBox::warning(this, QCoreApplication::translate("HarkenHub", "Harken Studio Hub"), platformError);
+        QMessageBox::warning(this, QCoreApplication::translate("HarkenHub", "Harken Hub"), platformError);
         return;
     }
 
@@ -965,7 +965,7 @@ void VersionsPage::beginAddLocalBuild()
                     ok ? QCoreApplication::translate("HarkenHub", "Standalone build added") : QString());
                 if (!ok) {
                     QMessageBox::warning(
-                        self, QCoreApplication::translate("HarkenHub", "Harken Studio Hub"),
+                        self, QCoreApplication::translate("HarkenHub", "Harken Hub"),
                         QCoreApplication::translate("HarkenHub", "The standalone build could not be added.\n\n%1")
                             .arg(error));
                     return;
@@ -980,9 +980,9 @@ void VersionsPage::beginAddLocalBuild()
 void VersionsPage::removeLocalBuild(const InstalledVersion& version)
 {
     QMessageBox confirm(
-        QMessageBox::Warning, QCoreApplication::translate("HarkenHub", "Harken Studio Hub"),
+        QMessageBox::Warning, QCoreApplication::translate("HarkenHub", "Harken Hub"),
         QCoreApplication::translate("HarkenHub",
-            "Remove this standalone build from Harken Studio Hub?\n\nThe build files will "
+            "Remove this standalone build from Harken Hub?\n\nThe build files will "
             "not be deleted. Projects linked to it cannot open until the "
             "same build is added again."),
         QMessageBox::Cancel, this);
@@ -995,7 +995,7 @@ void VersionsPage::removeLocalBuild(const InstalledVersion& version)
     QString error;
     if (!LocalBuildRegistry::remove(version.executablePath, &error)) {
         QMessageBox::warning(
-            this, QCoreApplication::translate("HarkenHub", "Harken Studio Hub"),
+            this, QCoreApplication::translate("HarkenHub", "Harken Hub"),
             QCoreApplication::translate(
                 "HarkenHub", "The standalone build could not be removed.\n\n%1")
                 .arg(error));
@@ -1078,7 +1078,7 @@ void VersionsPage::fetchManifestForPackage(const QString& packagePath)
                                   QStringLiteral("package-manifest.json"),
                                   &metadataBytes, &readError)) {
         QMessageBox::warning(
-            this, QCoreApplication::translate("HarkenHub", "Harken Studio Hub"),
+            this, QCoreApplication::translate("HarkenHub", "Harken Hub"),
             QCoreApplication::translate("HarkenHub", "No release manifest found next to this package, "
                            "and the package metadata cannot be read.\n%1")
                 .arg(readError));
@@ -1089,7 +1089,7 @@ void VersionsPage::fetchManifestForPackage(const QString& packagePath)
                                 .toString();
     if (!isSafeFileToken(buildId)) {
         QMessageBox::warning(
-            this, QCoreApplication::translate("HarkenHub", "Harken Studio Hub"),
+            this, QCoreApplication::translate("HarkenHub", "Harken Hub"),
             QCoreApplication::translate("HarkenHub", "No release manifest found next to this package, "
                            "and the package metadata has no usable build "
                            "id."));
@@ -1113,7 +1113,7 @@ void VersionsPage::fetchManifestForPackage(const QString& packagePath)
         pendingManifestBuildId_.clear();
         finishElevatedFlow(QString());
         QMessageBox::warning(
-            this, QCoreApplication::translate("HarkenHub", "Harken Studio Hub"),
+            this, QCoreApplication::translate("HarkenHub", "Harken Hub"),
             QCoreApplication::translate("HarkenHub", "No release manifest found next to this package, "
                            "and the update server is not configured."));
     }
@@ -1132,7 +1132,7 @@ void VersionsPage::onCatalogFinished(const ServerVersionList& result)
     if (!result.ok) {
         finishElevatedFlow(QString());
         QMessageBox::warning(
-            this, QCoreApplication::translate("HarkenHub", "Harken Studio Hub"),
+            this, QCoreApplication::translate("HarkenHub", "Harken Hub"),
             QCoreApplication::translate("HarkenHub", "No release manifest found next to this package, "
                            "and the server lookup failed.\n%1")
                 .arg(result.error));
@@ -1145,7 +1145,7 @@ void VersionsPage::onCatalogFinished(const ServerVersionList& result)
     if (envelope.isEmpty()) {
         finishElevatedFlow(QString());
         QMessageBox::warning(
-            this, QCoreApplication::translate("HarkenHub", "Harken Studio Hub"),
+            this, QCoreApplication::translate("HarkenHub", "Harken Hub"),
             QCoreApplication::translate("HarkenHub", "The server has no release manifest for this "
                            "package (build %1).")
                 .arg(buildId));
@@ -1168,7 +1168,7 @@ void VersionsPage::onCatalogFinished(const ServerVersionList& result)
         !envelopeFile.commit()) {
         finishElevatedFlow(QString());
         QMessageBox::warning(
-            this, QCoreApplication::translate("HarkenHub", "Harken Studio Hub"),
+            this, QCoreApplication::translate("HarkenHub", "Harken Hub"),
             QCoreApplication::translate("HarkenHub", "The release manifest could not be stored."));
         return;
     }
@@ -1269,7 +1269,7 @@ void VersionsPage::onPrepared(const InstallPreparation& preparation)
 {
     if (!preparation.ok) {
         QMessageBox::warning(
-            this, QCoreApplication::translate("HarkenHub", "Harken Studio Hub"),
+            this, QCoreApplication::translate("HarkenHub", "Harken Hub"),
             QCoreApplication::translate(
                 "HarkenHub", "The operation could not be prepared.\n\n%1")
                 .arg(preparation.error));
@@ -1294,7 +1294,7 @@ void VersionsPage::onPrepared(const InstallPreparation& preparation)
                                    QDateTime::currentDateTimeUtc());
         if (!launch.canceled)
             QMessageBox::warning(
-                this, QCoreApplication::translate("HarkenHub", "Harken Studio Hub"),
+                this, QCoreApplication::translate("HarkenHub", "Harken Hub"),
                 QCoreApplication::translate(
                     "HarkenHub", "The operation could not be started.\n\n%1")
                     .arg(launch.error));
@@ -1318,7 +1318,7 @@ void VersionsPage::beginUninstall(const InstalledVersion& version)
     if (!version.installPath.isEmpty() &&
         !runningExecutablesUnder(version.installPath).isEmpty()) {
         QMessageBox::information(
-            this, QCoreApplication::translate("HarkenHub", "Harken Studio Hub"),
+            this, QCoreApplication::translate("HarkenHub", "Harken Hub"),
             QCoreApplication::translate("HarkenHub", "HarkenStudio is still running from this version. "
                            "Close it and try again."));
         return;
@@ -1344,7 +1344,7 @@ void VersionsPage::beginUninstall(const InstalledVersion& version)
                              .join(QStringLiteral("\n- ")));
 
     QMessageBox confirm(QMessageBox::Warning,
-                        QCoreApplication::translate("HarkenHub", "Harken Studio Hub"), text,
+                        QCoreApplication::translate("HarkenHub", "Harken Hub"), text,
                         QMessageBox::Cancel, this);
     QPushButton* proceed = confirm.addButton(
         QCoreApplication::translate("HarkenHub", "Uninstall"), QMessageBox::DestructiveRole);
@@ -1354,7 +1354,7 @@ void VersionsPage::beginUninstall(const InstalledVersion& version)
 
     if (!linkedNames.isEmpty()) {
         QMessageBox second(QMessageBox::Warning,
-                           QCoreApplication::translate("HarkenHub", "Harken Studio Hub"),
+                           QCoreApplication::translate("HarkenHub", "Harken Hub"),
                            QCoreApplication::translate("HarkenHub",
                                "Linked projects will lose their selected "
                                "version. You can also cancel and pick "
@@ -1377,7 +1377,7 @@ void VersionsPage::beginUninstall(const InstalledVersion& version)
     if (!launch.ok) {
         if (!launch.canceled)
             QMessageBox::warning(
-                this, QCoreApplication::translate("HarkenHub", "Harken Studio Hub"),
+                this, QCoreApplication::translate("HarkenHub", "Harken Hub"),
                 QCoreApplication::translate(
                     "HarkenHub", "The operation could not be started.\n\n%1")
                     .arg(launch.error));
@@ -1404,7 +1404,7 @@ void VersionsPage::beginRepair(const QString& buildId)
     if (!launch.ok) {
         if (!launch.canceled)
             QMessageBox::warning(
-                this, QCoreApplication::translate("HarkenHub", "Harken Studio Hub"),
+                this, QCoreApplication::translate("HarkenHub", "Harken Hub"),
                 QCoreApplication::translate(
                     "HarkenHub", "The operation could not be started.\n\n%1")
                     .arg(launch.error));
@@ -1465,7 +1465,7 @@ void VersionsPage::onElevatedPoll()
             failure = QCoreApplication::translate("HarkenHub",
                 "The operation stopped without reporting a reason (exit code %1).\nDiagnostic log: %2")
                     .arg(exitCode).arg(TransactionJournal::filePath());
-        QMessageBox::warning(this, QCoreApplication::translate("HarkenHub", "Harken Studio Hub"), failure);
+        QMessageBox::warning(this, QCoreApplication::translate("HarkenHub", "Harken Hub"), failure);
     }
     activeTransactionId_.clear();
     refresh();

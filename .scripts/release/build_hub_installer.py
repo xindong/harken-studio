@@ -16,8 +16,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from release import collect_legal_texts, hub_msi, product_legal, release_evidence
 
-HUB_BINARY = "HarkenStudioHub.exe"
-LEGACY_HUB_BINARY = "HarkenHub.exe"
+HUB_BINARY = "HarkenHub.exe"
+LEGACY_HUB_BINARY = "HarkenStudioHub.exe"
 BRIDGE_BINARY = "Updater/HarkenHubUpdateBridge.exe"
 FOREIGN_BINARIES = (
     "HarkenStudio.exe",
@@ -161,7 +161,7 @@ def build_installer(
             eula_rtf = packaging_inputs / "license.rtf"
             eula_rtf.write_bytes(product_legal.render_rtf(product_legal.installer_text()).encode("ascii"))
         product_version = msi_version(args.version)
-        msi_path = staging / f"HarkenStudioHubSetup-{args.version}-{args.build_id}.msi"
+        msi_path = staging / f"HarkenHubSetup-{args.version}-{args.build_id}.msi"
         build_msi(files, input_dir, product_version, eula_rtf, msi_path, packaging_inputs)
         if not msi_path.is_file():
             raise SystemExit(f"error: Windows Installer build produced no MSI at {msi_path}")
@@ -169,6 +169,7 @@ def build_installer(
             "hub_msi.py": script_dir / "hub_msi.py",
             "windows_installer.py": script_dir / "windows_installer.py",
             "msi-tables.json": packaging_inputs / "msi-tables.json",
+            "HubIcon.ico": script_dir.parents[1] / "HarkenHub/Resources/icons/HubIcon.ico",
             "license.rtf": eula_rtf})
 
         signed = False
@@ -198,7 +199,7 @@ def build_installer(
 
         if stub_exe is not None:
             exe_path = (
-                staging / f"HarkenStudioHubSetup-{args.version}-{args.build_id}.exe"
+                staging / f"HarkenHubSetup-{args.version}-{args.build_id}.exe"
             )
             embed(stub_exe, msi_path, exe_path)
             if not exe_path.is_file():
@@ -227,7 +228,7 @@ def build_installer(
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build the Harken Studio Hub MSI and setup EXE with Windows Installer.")
+    parser = argparse.ArgumentParser(description="Build the Harken Hub MSI and setup EXE with Windows Installer.")
     parser.add_argument("--input-dir", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--version", required=True)

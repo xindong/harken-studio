@@ -528,7 +528,6 @@ bool confirmIntegrationAction(
 {
     QDialog confirmation(parent);
     confirmation.setWindowTitle(title);
-    confirmation.setWindowIcon(parent->windowIcon());
     confirmation.setWindowFlag(Qt::WindowMaximizeButtonHint, true);
     confirmation.setSizeGripEnabled(true);
     confirmation.setMinimumSize(640, 420);
@@ -832,7 +831,6 @@ EngineIntegrationsPage::EngineIntegrationsPage(
 
     sdkSelectionDialog_ = new QDialog(this);
     sdkSelectionDialog_->setObjectName(QStringLiteral("sdkSelectionDialog"));
-    sdkSelectionDialog_->setWindowIcon(windowIcon());
     sdkSelectionDialog_->setWindowFlag(Qt::WindowMaximizeButtonHint, true);
     sdkSelectionDialog_->setSizeGripEnabled(true);
     sdkSelectionDialog_->setMinimumSize(640, 360);
