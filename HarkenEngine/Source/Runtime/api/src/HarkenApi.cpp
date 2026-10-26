@@ -10767,7 +10767,8 @@ bool PreparePlayableServiceRow(
         return false;
     }
     if (requireFeatureArrays &&
-        (!engine.PrepareTimelineStartStorage() || !engine.PrepareVariableControlRetargetStorage())) return false;
+        (!engine.PrepareOriginalSingleCurrentStorage() || !engine.PreparePlayablePublicationStorage() ||
+         !engine.PrepareTimelineStartStorage() || !engine.PrepareVariableControlRetargetStorage())) return false;
     if (requireFeatureArrays && !row.HasFeatureArrays() &&
         (engine.playableServices.PreparedUseActive() || !row.PrepareFeatureArrays())) return false;
     return engine.PrepareOriginalPlayableServiceStorage(
@@ -89552,7 +89553,8 @@ bool PrepareOriginalSingleCurrentProducers(ImmediateActionPlan& plan,
         if (links == nullptr || (scratch->voiceStartCount != 0 && !engine.preparedVoiceCommandBatchProof.Valid()))
             return false;
         if (!PrepareQueueFutureFactoryOutputs(engine, *scratch, *links)) return false;
-        if (!engine.IssueOriginalPlayableTreeLifetimes(scratch->playableTreeExecutor)) return false;
+        if (!engine.IssueOriginalPlayableTreeLifetimes(scratch->playableTreeExecutor,
+                scratch->row->HasFeatureArrays())) return false;
         if (scratch->queueInstance.Valid() && !engine.JoinOriginalQueueFactoryLifetime(scratch->queueInstance, *links))
             return false;
         if (scratch->queueParentInstance.Valid() &&

@@ -70463,6 +70463,7 @@ TEST(ActionFiringApi, OriginalSingleProducerDefaultPureSoundNeverIssuesQueueCurr
     timeline.transactions.SetCommitPageLimitForTests(0);
     timeline.extraCommands.SetCommitPageLimitForTests(0);
     timeline.queueEvents.SetCommitPageLimitForTests(0);
+    engine.originalSingleCurrentHolders.SetCommitPageLimitForTests(0);
     const auto commandHead = engine.commands.PublishedHead();
     VnActionFiringHandle firing = 0;
     EXPECT_EQ(VN_BACKPRESSURE, Vn_PostAction(&desc, &firing));
@@ -70536,6 +70537,9 @@ TEST(ActionFiringApi, OriginalSingleProducerDefaultPureSoundNeverIssuesQueueCurr
     EXPECT_EQ(0u, timeline.transactions.size());
     EXPECT_EQ(0u, timeline.extraCommands.size());
     EXPECT_EQ(0u, timeline.queueEvents.size());
+    EXPECT_EQ(0u, engine.originalSingleCurrentHolders.CommittedBytes());
+    EXPECT_EQ(0u, engine.initialFrontierArmPins.capacity());
+    EXPECT_EQ(0u, engine.initialRootArmPublicationInputs.capacity());
     auto* firstStart = &timeline.starts[0];
     const auto retainedRender = firstStart->renderHandle;
     const auto resumedBlock = engine.mixer.BlocksRendered();
@@ -70551,7 +70555,11 @@ TEST(ActionFiringApi, OriginalSingleProducerDefaultPureSoundNeverIssuesQueueCurr
     timeline.transactions.SetCommitPageLimitForTests(SIZE_MAX);
     timeline.extraCommands.SetCommitPageLimitForTests(SIZE_MAX);
     timeline.queueEvents.SetCommitPageLimitForTests(SIZE_MAX);
+    engine.originalSingleCurrentHolders.SetCommitPageLimitForTests(SIZE_MAX);
     ASSERT_TRUE(engine.PreparePlayableStateStorage());
+    EXPECT_EQ(engine.originalSingleCurrentHolders.Capacity(), engine.originalSingleCurrentHolders.size());
+    EXPECT_EQ(engine.timelineArms.Capacity(), engine.initialFrontierArmPins.size());
+    EXPECT_EQ(engine.timelineArms.Capacity(), engine.initialRootArmPublicationInputs.size());
     EXPECT_EQ(firstStart, &timeline.starts[0]);
     EXPECT_EQ(retainedRender, firstStart->renderHandle);
     EXPECT_EQ(harken::kMaxKnownScheduleLeaves, timeline.starts.size());

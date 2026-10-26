@@ -609,6 +609,14 @@ TEST(StableBackingPreparation, ServiceFeaturePromiseSurvivesResetAndFailedProtec
     EXPECT_EQ(0u, timeline.extraCommands.size());
     EXPECT_EQ(0u, timeline.queueEvents.size());
     harken::StableStoragePreparation backing;
+    engine.originalSingleCurrentHolders.SetCommitPageLimitForTests(0);
+    EXPECT_FALSE(engine.PreparePlayableServiceBacking(2, &backing));
+    EXPECT_FALSE(backing.Valid());
+    EXPECT_EQ(0u, engine.originalSingleCurrentHolders.CommittedBytes());
+    EXPECT_EQ(0u, engine.initialFrontierArmPins.capacity());
+    EXPECT_EQ(0u, engine.initialRootArmPublicationInputs.capacity());
+    EXPECT_FALSE(engine.runtimeRecreateRequired);
+    engine.originalSingleCurrentHolders.SetCommitPageLimitForTests(SIZE_MAX);
     timeline.queueEvents.SetCommitPageLimitForTests(0);
     EXPECT_FALSE(engine.PreparePlayableServiceBacking(2, &backing));
     EXPECT_FALSE(backing.Valid());
@@ -633,6 +641,12 @@ TEST(StableBackingPreparation, ServiceFeaturePromiseSurvivesResetAndFailedProtec
     auto* transactions = timeline.transactions.data();
     auto* extraCommands = timeline.extraCommands.data();
     auto* queueEvents = timeline.queueEvents.data();
+    EXPECT_EQ(engine.originalSingleCurrentHolders.Capacity(), engine.originalSingleCurrentHolders.size());
+    EXPECT_EQ(engine.timelineArms.Capacity(), engine.initialFrontierArmPins.size());
+    EXPECT_EQ(engine.timelineArms.Capacity(), engine.initialRootArmPublicationInputs.size());
+    auto* currentHolders = engine.originalSingleCurrentHolders.data();
+    auto* frontierPins = engine.initialFrontierArmPins.data();
+    auto* publicationInputs = engine.initialRootArmPublicationInputs.data();
     auto* retargetTree = engine.variableControlRetargetScratch.get();
     ASSERT_NE(nullptr, retargetTree);
     auto* policies = retargetTree->storage.frontierPolicies.data();
@@ -836,6 +850,12 @@ TEST(StableBackingPreparation, ServiceFeaturePromiseSurvivesResetAndFailedProtec
     for (const auto& row : engine.playableServices) EXPECT_TRUE(row.HasFeatureArrays());
     {
         const auto use = backing.Use();
+        engine.originalSingleCurrentHolders.SetCommitPageLimitForTests(0);
+        EXPECT_TRUE(engine.PrepareOriginalSingleCurrentStorage());
+        EXPECT_TRUE(engine.PreparePlayablePublicationStorage());
+        EXPECT_EQ(currentHolders, engine.originalSingleCurrentHolders.data());
+        EXPECT_EQ(frontierPins, engine.initialFrontierArmPins.data());
+        EXPECT_EQ(publicationInputs, engine.initialRootArmPublicationInputs.data());
         timeline.starts.SetCommitPageLimitForTests(0);
         timeline.transactions.SetCommitPageLimitForTests(0);
         timeline.extraCommands.SetCommitPageLimitForTests(0);

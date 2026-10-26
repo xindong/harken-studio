@@ -11033,14 +11033,16 @@ public:
         }
     }
     bool IssueOriginalPlayableLifetimes(
-        const PlayableInstanceTable::PreparedParentLinksProof& original) noexcept {
-        return PrepareOriginalPlayableStorage() &&
+        const PlayableInstanceTable::PreparedParentLinksProof& original,
+        bool needsCurrentHolders = true) noexcept {
+        return PrepareOriginalPlayableStorage(needsCurrentHolders) &&
             playableInstances.IssueOriginalPreparedLifetimeBaselines(original,
                 {originalPlayableLifetimeHolders.data(), originalPlayableLifetimeHolders.size()});
     }
-    bool IssueOriginalPlayableTreeLifetimes(PlayableTreeExecutor& tree) noexcept {
+    bool IssueOriginalPlayableTreeLifetimes(PlayableTreeExecutor& tree,
+        bool needsCurrentHolders = true) noexcept {
         const auto* original = tree.OriginalPreparedParentLinks(playableInstances);
-        if (original == nullptr || !IssueOriginalPlayableLifetimes(*original)) return false;
+        if (original == nullptr || !IssueOriginalPlayableLifetimes(*original, needsCurrentHolders)) return false;
         if (originalPlayableTreePreparationHookForTest != nullptr)
             originalPlayableTreePreparationHookForTest(*this, tree, originalPlayableTreePreparationContextForTest);
         return true;
@@ -13547,28 +13549,37 @@ public:
              scratch.extraCommands.ConstructThrough(scratch.extraCommands.Capacity()) &&
              scratch.queueEvents.ConstructThrough(scratch.queueEvents.Capacity())));
     }
+    bool PrepareOriginalSingleCurrentStorage() noexcept {
+        if (originalSingleCurrentHolders.size() == originalSingleCurrentHolders.Capacity()) return true;
+        if (memguard::IsAudioTagged() || playableServices.PreparedUseActive()) return false;
+        return originalSingleCurrentHolders.ConstructThrough(originalSingleCurrentHolders.Capacity());
+    }
     bool PreparePlayableFeatureBacking() noexcept {
-        if (!PrepareTimelineStartStorage() || !PrepareVariableControlRetargetStorage()) return false;
+        if (!PrepareOriginalSingleCurrentStorage() || !PreparePlayablePublicationStorage() ||
+            !PrepareTimelineStartStorage() || !PrepareVariableControlRetargetStorage()) return false;
         for (auto& row : playableServices) {
             if (row.HasFeatureArrays()) continue;
             if (playableServices.PreparedUseActive() || !row.PrepareFeatureArrays()) return false;
         }
         return true;
     }
-    bool PrepareOriginalPlayableStorage() noexcept {
+    bool PrepareOriginalPlayableStorage(bool needsCurrentHolders = true) noexcept {
         return playableInstances.PrepareStorage() &&
             originalPlayableLifetimeHolders.ConstructThrough(originalPlayableLifetimeHolders.Capacity()) &&
-            originalSingleCurrentHolders.ConstructThrough(originalSingleCurrentHolders.Capacity());
+            (!needsCurrentHolders || PrepareOriginalSingleCurrentStorage());
     }
-    bool PreparePlayablePublicationStorage() noexcept {
+    bool PreparePlayablePublicationStorage(bool needsContainerState = true) noexcept {
         const auto arms = timelineArms.Capacity();
         const auto events = immediateActionLane.EventsPerAttempt();
-        if (initialFrontierArmPins.size() == arms && initialRootArmPublicationInputs.size() == arms &&
+        if ((!needsContainerState ||
+             (initialFrontierArmPins.size() == arms && initialRootArmPublicationInputs.size() == arms)) &&
             pendingImmediateLaneEventsScratch.size() == events) return true;
-        if (memguard::IsAudioTagged()) return false;
+        if (memguard::IsAudioTagged() || playableServices.PreparedUseActive()) return false;
         try {
-            initialFrontierArmPins.resize(arms);
-            initialRootArmPublicationInputs.resize(arms);
+            if (needsContainerState) {
+                initialFrontierArmPins.resize(arms);
+                initialRootArmPublicationInputs.resize(arms);
+            }
             pendingImmediateLaneEventsScratch.resize(events);
         } catch (...) { return false; }
         return true;
@@ -13581,7 +13592,8 @@ public:
         return true;
     }
     bool PreparePlayableStateStorage(bool needsContainerState = true) noexcept {
-        return PrepareTimelineStartStorage(needsContainerState) && PrepareOriginalPlayableStorage() &&
+        return PrepareTimelineStartStorage(needsContainerState) &&
+            PrepareOriginalPlayableStorage(needsContainerState) &&
             (!needsContainerState ||
                 (initialFrontierEvents.ConstructThrough(initialFrontierEvents.Capacity()) &&
                  initialFrontierRequests.ConstructThrough(initialFrontierRequests.Capacity()) &&
@@ -13589,7 +13601,7 @@ public:
                  pendingVariableFutureSources.ConstructThrough(pendingVariableFutureSources.Capacity()) &&
                  pendingVariableFutureNodes.ConstructThrough(pendingVariableFutureNodes.Capacity()))) &&
             spatial.PrepareVoiceStorage(config.voiceCapacity.Render()) &&
-            PreparePlayablePublicationStorage();
+            PreparePlayablePublicationStorage(needsContainerState);
     }
     bool PreparePlayableServiceDependencies(std::uint32_t required,
                                             bool requireQueueTiming = true) noexcept {
