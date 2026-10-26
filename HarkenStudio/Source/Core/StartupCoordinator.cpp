@@ -30,16 +30,24 @@ StartupCoordinator::StartupCoordinator(
       hubArguments_(std::move(hubArguments)),
       projectFile_(std::move(projectFile))
 {
+    connect(&loading_, &StartupLoadingWindow::cancelRequested,
+            this, &StartupCoordinator::cancelProjectOpen);
     connect(&analysisWatcher_,
             &QFutureWatcher<ProjectUpgradeAnalysis>::finished,
             this, &StartupCoordinator::finishProjectAnalysis);
     connect(&preparationWatcher_,
             &QFutureWatcher<std::shared_ptr<PreparedProject>>::finished,
             this, [this]() {
+        if (terminal_) {
+            finishCancellation();
+            return;
+        }
         prepared_ = preparationWatcher_.result();
         projectPrepared_ = true;
         tryCommit();
     });
+    connect(&cleanupWatcher_, &QFutureWatcher<void>::finished,
+            this, &StartupCoordinator::finishCancellation);
 }
 
 StartupCoordinator::~StartupCoordinator()
@@ -48,15 +56,21 @@ StartupCoordinator::~StartupCoordinator()
         analysisWatcher_.waitForFinished();
     if (preparationWatcher_.isRunning())
         preparationWatcher_.waitForFinished();
+    if (cleanupWatcher_.isRunning())
+        cleanupWatcher_.waitForFinished();
 }
 
 void StartupCoordinator::start()
 {
+    if (terminal_)
+        return;
     loading_.setPhase(StartupPhase::PreparingApplication);
     if (hubArguments_.present) {
         hubClient_ = std::make_unique<HubClient>(hubArguments_);
         connect(hubClient_.get(), &HubClient::helloCompleted,
                 this, [this](bool connected) {
+            if (terminal_)
+                return;
             if (connected)
                 hubClient_->reportStage(QStringLiteral("processStarted"));
             startAfterHubConnection();
@@ -69,6 +83,8 @@ void StartupCoordinator::start()
 
 void StartupCoordinator::startAfterHubConnection()
 {
+    if (terminal_)
+        return;
     ProjectInstance::setActivationWindow(&loading_);
     const QString instancePath = hubArguments_.createProject
         ? QDir(QDir(hubArguments_.projectLocation.trimmed())
@@ -89,19 +105,21 @@ void StartupCoordinator::startAfterHubConnection()
         if (hubClient_) {
             connect(hubClient_.get(), &HubClient::forwardedCompleted,
                     this, [this](bool acknowledged) {
+                if (terminal_)
+                    return;
                 if (!acknowledged) {
                     fail(tr("The project window was activated, but Harken Studio Hub did not confirm the request."),
                          3, QStringLiteral("PROJECT_FORWARD_UNCONFIRMED"));
                     return;
                 }
                 terminal_ = true;
-                loading_.close();
+                loading_.dismiss();
                 application_.exit(0);
             });
             hubClient_->reportForwarded();
         } else {
             terminal_ = true;
-            loading_.close();
+            loading_.dismiss();
             application_.exit(0);
         }
         return;
@@ -135,17 +153,21 @@ void StartupCoordinator::startProjectPreparation()
             config.templateData = projectTemplate->toJson();
         }
         preparationWatcher_.setFuture(QtConcurrent::run(
-            [config]() {
+            [config, cancelled = cancellationRequested_]() {
                 return std::make_shared<PreparedProject>(
-                    ProjectManager::prepareProject(config));
+                    ProjectManager::prepareProject(config, [cancelled]() {
+                        return cancelled->load(std::memory_order_relaxed);
+                    }));
             }));
         return;
     }
 
     if (projectFile_.isEmpty()) {
-        preparationWatcher_.setFuture(QtConcurrent::run([]() {
+        preparationWatcher_.setFuture(QtConcurrent::run([cancelled = cancellationRequested_]() {
             return std::make_shared<PreparedProject>(
-                ProjectManager::prepareProject(QString()));
+                ProjectManager::prepareProject(QString(), false, {}, {}, [cancelled]() {
+                    return cancelled->load(std::memory_order_relaxed);
+                }));
         }));
         return;
     }
@@ -165,8 +187,10 @@ void StartupCoordinator::startProjectPreparation()
 
 void StartupCoordinator::finishProjectAnalysis()
 {
-    if (terminal_)
+    if (terminal_) {
+        finishCancellation();
         return;
+    }
     analysis_ = analysisWatcher_.result();
     if (!analysis_.ok) {
         fail(ProjectUpgradeMessages::userMessage(analysis_.issue, analysis_.detail),
@@ -180,6 +204,8 @@ void StartupCoordinator::finishProjectAnalysis()
             hubArguments_.projectOpenRequestId, hubArguments_.projectOpenApproval,
             hubArguments_.expectedBuildId};
     const ProjectOpenDecision decision = confirmProjectOpen(analysis_, &loading_, suppliedApproval);
+    if (terminal_)
+        return;
     if (decision.cancelled) {
         cancelProjectOpen();
         return;
@@ -199,10 +225,12 @@ void StartupCoordinator::startExistingProjectPreparation()
     const ProjectUpgradeApprovalCallback approval = upgradeApproval_;
     const ProjectUpgradeProgressCallback progress = upgradeProgressCallback();
     preparationWatcher_.setFuture(QtConcurrent::run(
-        [projectFile, approval, progress]() {
+        [projectFile, approval, progress, cancelled = cancellationRequested_]() {
             return std::make_shared<PreparedProject>(
                 ProjectManager::prepareProject(projectFile, static_cast<bool>(approval),
-                                               progress, approval));
+                                               progress, approval, [cancelled]() {
+                    return cancelled->load(std::memory_order_relaxed);
+                }));
         }));
 }
 
@@ -225,6 +253,8 @@ ProjectUpgradeProgressCallback StartupCoordinator::upgradeProgressCallback()
 void StartupCoordinator::showUpgradeProgress(
     const ProjectUpgradeProgress& progress)
 {
+    if (terminal_)
+        return;
     const int upgradePercent = ProjectUpgradeMessages::progressPercent(progress);
     const int startupPercent = 48 + (upgradePercent * 16) / 100;
     loading_.setProgress(startupPercent,
@@ -239,8 +269,13 @@ void StartupCoordinator::startMainWindowInitialization()
     mainWindow_->initializeDeferred(
         [this](StartupPhase phase) { loading_.setPhase(phase); },
         [this]() {
+            if (terminal_)
+                return;
             windowInitialized_ = true;
             tryCommit();
+        },
+        [cancelled = cancellationRequested_]() {
+            return cancelled->load(std::memory_order_relaxed);
         });
 }
 
@@ -285,10 +320,15 @@ void StartupCoordinator::tryCommit()
 
 void StartupCoordinator::beginRuntimeSync()
 {
+    if (terminal_)
+        return;
     loading_.setPhase(StartupPhase::PreparingRuntime);
     ProjectManager& manager = ProjectManager::instance();
+    runtimeSyncContext_ = std::make_unique<QObject>();
     ProjectManager::syncProjectToRuntimeAsync(
-        manager.currentProject(), this, [this]() {
+        manager.currentProject(), runtimeSyncContext_.get(), [this]() {
+            if (terminal_)
+                return;
             ProjectManager::instance().startWatchingCurrentProject();
             ProjectManager::instance().publishProjectOpened();
             finish();
@@ -312,7 +352,7 @@ void StartupCoordinator::finish()
         terminal_ = true;
         ProjectInstance::setActivationWindow(mainWindow_.get());
         loading_.setPhase(StartupPhase::Ready);
-        loading_.close();
+        loading_.dismiss();
         if (hubClient_) {
             hubClient_->reportStage(hubArguments_.createProject
                                         ? QStringLiteral("projectCreated")
@@ -326,12 +366,39 @@ void StartupCoordinator::finish()
 
 void StartupCoordinator::cancelProjectOpen()
 {
+    if (terminal_)
+        return;
     terminal_ = true;
-    loading_.close();
+    cancelling_ = true;
+    cancellationRequested_->store(true, std::memory_order_relaxed);
+    loading_.showCancelling();
+    runtimeSyncContext_.reset();
+    if (mainWindow_)
+        mainWindow_->hide();
     if (hubClient_)
         hubClient_->reportFailed(QStringLiteral("PROJECT_OPEN_CANCELLED"),
                                  tr("Project opening was cancelled."));
-    QTimer::singleShot(0, &application_, [this]() { application_.exit(0); });
+    finishCancellation();
+}
+
+void StartupCoordinator::finishCancellation()
+{
+    if (!cancelling_ || analysisWatcher_.isRunning()
+        || preparationWatcher_.isRunning() || cleanupWatcher_.isRunning())
+        return;
+    if (!prepared_ && preparationWatcher_.future().resultCount() > 0)
+        prepared_ = preparationWatcher_.result();
+    if (prepared_ && prepared_->upgradePending) {
+        cleanupWatcher_.setFuture(QtConcurrent::run([prepared = prepared_]() {
+            prepared->rollbackUpgrade();
+        }));
+        return;
+    }
+    cancelling_ = false;
+    QTimer::singleShot(0, this, [this]() {
+        loading_.dismiss();
+        application_.exit(0);
+    });
 }
 
 void StartupCoordinator::fail(const QString& message, int exitCode,
@@ -349,7 +416,7 @@ void StartupCoordinator::fail(const QString& message, int exitCode,
                 ? ProjectUpgradeMessages::userMessage(ProjectIssue::ProjectUpgradeFilesNotWritable)
                 : userMessage, technicalDetails);
     if (hubConnected) {
-        loading_.close();
+        loading_.dismiss();
     } else {
         loading_.showFailure(userMessage);
         QMessageBox box(QMessageBox::Critical, tr("Harken Studio"),

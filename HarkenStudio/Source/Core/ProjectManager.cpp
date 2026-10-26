@@ -2523,8 +2523,11 @@ void ProjectManager::finishRuntimePreparationIfReady()
         finished();
 }
 
-PreparedProject ProjectManager::prepareProject(const ProjectConfig& config)
+PreparedProject ProjectManager::prepareProject(const ProjectConfig& config,
+                                               std::function<bool()> cancelled)
 {
+    if (cancelled && cancelled())
+        return {};
     PreparedProject failed;
     if (!ProjectPlatformSemantics::validatePlatforms(config.platforms, &failed.error))
         return failed;
@@ -2536,6 +2539,8 @@ PreparedProject ProjectManager::prepareProject(const ProjectConfig& config)
         failed.error = QStringLiteral("A folder with this project name already exists");
         return failed;
     }
+    if (cancelled && cancelled())
+        return {};
     if (!root.mkpath(QStringLiteral("."))) {
         failed.error = QStringLiteral("Failed to create project directory structure");
         return failed;
@@ -2591,14 +2596,17 @@ PreparedProject ProjectManager::prepareProject(const ProjectConfig& config)
 
                                   serializer);
     }
-    return prepareProject(project.projectPath);
+    return prepareProject(project.projectPath, false, {}, {}, std::move(cancelled));
 }
 
 PreparedProject ProjectManager::prepareProject(const QString& filePath,
                                                bool allowUpgrade,
                                                ProjectUpgradeProgressCallback upgradeProgress,
-                                               ProjectUpgradeApprovalCallback upgradeApproval)
+                                               ProjectUpgradeApprovalCallback upgradeApproval,
+                                               std::function<bool()> cancelled)
 {
+    if (cancelled && cancelled())
+        return {};
     PreparedProject prepared;
     prepared.project = std::make_unique<ProjectData>();
     ProjectSerializer serializer;
@@ -2611,12 +2619,16 @@ PreparedProject ProjectManager::prepareProject(const QString& filePath,
     }
     prepared.upgrade = serializer.upgradeResult();
     prepared.upgradePending = prepared.upgrade.ok && prepared.upgrade.changed;
+    if (cancelled && cancelled())
+        return {};
 
     const QString projectRoot = QFileInfo(prepared.project->projectPath).absolutePath();
     const bool registryLoaded =
         AssetRegistry::loadSnapshotFromFile(projectRoot, prepared.assets);
     prepared.rebuildAssetRegistry = AssetRegistry::reconcileSnapshot(
         projectRoot, prepared.project->sourceAssets, prepared.assets) || !registryLoaded;
+    if (cancelled && cancelled())
+        return {};
 
     prepared.index = std::make_unique<ProjectIndex>();
     prepared.index->loadFromCache(projectRoot);
@@ -2625,6 +2637,8 @@ PreparedProject ProjectManager::prepareProject(const QString& filePath,
         qWarning() << "[ProjectManager] ProjectIndex scan returned non-Ok:"
                    << static_cast<int>(scanResult);
     }
+    if (cancelled && cancelled())
+        return {};
 
     QString busError;
     if (!loadBussesPacksImpl(projectRoot, *prepared.project, serializer, &busError)) {
@@ -2634,6 +2648,8 @@ PreparedProject ProjectManager::prepareProject(const QString& filePath,
         prepared.project.reset();
         return prepared;
     }
+    if (cancelled && cancelled())
+        return {};
     QString actionError;
     if (!loadActions(projectRoot, *prepared.project, serializer, &actionError)) {
         prepared.error = actionError.isEmpty()
@@ -2643,6 +2659,8 @@ PreparedProject ProjectManager::prepareProject(const QString& filePath,
         return prepared;
     }
     for (const auto& spec : s3Specs()) {
+        if (cancelled && cancelled())
+            return {};
         QString hierarchyError;
         if (!loadS3Hierarchy(projectRoot, spec, *prepared.project, serializer,
                              &hierarchyError)) {
@@ -2653,10 +2671,14 @@ PreparedProject ProjectManager::prepareProject(const QString& filePath,
             return prepared;
         }
     }
+    if (cancelled && cancelled())
+        return {};
 
     QString audioError;
     loadLayersPacksImpl(projectRoot, *prepared.project, serializer,
                         &audioError, &prepared.audioLoadFailures);
+    if (cancelled && cancelled())
+        return {};
     prepared.diagnostics.append(serializer.warnings());
     if (!serializer.lastError().isEmpty() || !audioError.isEmpty()) {
         prepared.error = !serializer.lastError().isEmpty()
@@ -2689,6 +2711,8 @@ PreparedProject ProjectManager::prepareProject(const QString& filePath,
         prepared.project.reset();
         return prepared;
     }
+    if (cancelled && cancelled())
+        return {};
     prepared.folderSaveState = FolderSaveState::capture(*prepared.project, &prepared.error);
     if (!prepared.folderSaveState) {
         prepared.project.reset();
@@ -2739,6 +2763,8 @@ PreparedProject ProjectManager::prepareProject(const QString& filePath,
         }
     }
 
+    if (cancelled && cancelled())
+        return {};
     prepared.integrityScanner = std::make_unique<IntegrityScanner>();
     IntegrityScanner::Report cached;
     const bool hasCached = prepared.integrityScanner->loadFromCache(projectRoot, cached);
@@ -2751,6 +2777,8 @@ PreparedProject ProjectManager::prepareProject(const QString& filePath,
             prepared.integrityScanner->scan(*prepared.project, prepared.assets);
         prepared.integrityReport.indexHash = indexHash;
     }
+    if (cancelled && cancelled())
+        return {};
 
     return prepared;
 }

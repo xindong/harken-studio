@@ -199,6 +199,7 @@ void StartupRenderer::start()
 {
     if (thread_)
         return;
+    initialFramePresented_.store(false, std::memory_order_release);
     running_.store(true, std::memory_order_release);
     thread_ = QThread::create([this]() { renderLoop(); });
     thread_->start();
