@@ -22054,7 +22054,7 @@ TEST(PlayableStart, SequenceQueueSignalOnlyNoOverlapStartsAfterRealCompletion) {
               engine->timelineOccurrences.OccupiedCount());
 }
 
-static void CheckSignalQueueReceiptStop(bool applyBeforeStop) {
+static void CheckSignalQueueReceiptStop(bool applyBeforeStop, bool nestedSuccessor = false) {
     harkentest::EngineSession session(harkentest::MakeNullConfig(2, 64, 48000));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto* engine = session.Engine();
@@ -22067,6 +22067,50 @@ static void CheckSignalQueueReceiptStop(bool applyBeforeStop) {
         engine->registry.Lookup(kSecondSound).contentRevision, harken::QueueCycleV1::Loop, true,
         harken::AuthoredCompletionClassV1::SignalOnly,
         harken::SignalOnlyPolicyV1::StartNextAtEarliestSafeNoOverlap);
+    std::array<harken::PlayablePropertyProgramViewV1, 4> properties{};
+    std::array<harken::PlayableOccurrencePropertyViewV1, 3> occurrences{};
+    std::array<harken::ContainerProgramViewV3, 2> containers{};
+    harken::ContainerChildProgramViewV2 nestedChild{};
+    if (nestedSuccessor) {
+        std::copy(image.properties.begin(), image.properties.end(), properties.begin());
+        properties[3] = properties[2];
+        properties[3].stableId = harkentest::ObjectId(2002);
+        properties[3].authoredStableOrder = 3;
+        properties[3].programSemanticFingerprint =
+            harken::ComputePlayablePropertyFingerprintV1(properties[3]);
+        nestedChild = image.children[1];
+        nestedChild.stableChildOrdinal = 1;
+        nestedChild.authoredStableOrder = 0;
+        auto nested = image.Root();
+        nested.stableId = properties[3].stableId;
+        nested.expectedProgramSemanticFingerprint = properties[3].programSemanticFingerprint;
+        image.children[1].playable = nested;
+        image.children[1].timingHint = {};
+        containers = {image.container, image.container};
+        containers[1].containerStableId = nested.stableId;
+        containers[1].programSemanticFingerprint = nested.expectedProgramSemanticFingerprint;
+        containers[1].mode = harken::ContainerModeV1::Sequence;
+        containers[1].childCount = 1;
+        containers[1].children = &nestedChild;
+        containers[1].queueCycle = harken::QueueCycleV1::Once;
+        containers[1].resumePosition = 0;
+        occurrences = {image.occurrences[0], image.occurrences[1], image.occurrences[1]};
+        occurrences[1].childPlayable = nested;
+        occurrences[1].occurrenceSemanticFingerprint =
+            harken::ComputePlayableOccurrenceFingerprintV1(occurrences[1]);
+        occurrences[2].parentStableId = nested.stableId;
+        occurrences[2].parentProgramSemanticFingerprint = nested.expectedProgramSemanticFingerprint;
+        occurrences[2].stableOccurrenceOrdinal = nestedChild.stableChildOrdinal;
+        occurrences[2].occurrenceSemanticFingerprint =
+            harken::ComputePlayableOccurrenceFingerprintV1(occurrences[2]);
+        image.world.properties = properties.data();
+        image.world.propertyCount = properties.size();
+        image.world.occurrences = occurrences.data();
+        image.world.occurrenceCount = occurrences.size();
+        image.world.containers = containers.data();
+        image.world.containerCount = containers.size();
+        image.world.identity.capabilityMask |= harken::kWorldCapabilitySequence;
+    }
     harken::PlayableStartRequest request{};
     request.root = image.Root();
     ASSERT_EQ(VN_OK, Vn_CreateEmitter(&request.emitter));
@@ -22090,9 +22134,12 @@ static void CheckSignalQueueReceiptStop(bool applyBeforeStop) {
         if (!row->frontierAcceptedSignal.Valid()) engine->nullBackend.Pump(1);
     }
     ASSERT_TRUE(row->frontierAcceptedSignal.Valid());
-    EXPECT_EQ(1, countSelections());
+    if (!nestedSuccessor) EXPECT_EQ(1, countSelections());
     const auto entry = row->frontierEntry;
-    const auto arm = row->arm;
+    const auto* resource = nestedSuccessor
+        ? engine->ResolvePlayableService(row->frontierChildService) : &*row;
+    ASSERT_NE(nullptr, resource);
+    const auto arm = resource->arm;
     const auto onset = row->startFrame;
     harken::EffectiveQueueState pending{};
     ASSERT_TRUE(engine->queueInstances.ResolveEffective(queue, &pending));
@@ -22139,7 +22186,7 @@ static void CheckSignalQueueReceiptStop(bool applyBeforeStop) {
     EXPECT_EQ(0u, engine->armGroups.LiveCount());
     EXPECT_FALSE(engine->runtimeRecreateRequired);
     harkentest::monitor::CollectIdentityEvents(capture, records);
-    EXPECT_EQ(applyBeforeStop ? 2 : 1, countSelections());
+    if (!nestedSuccessor) EXPECT_EQ(applyBeforeStop ? 2 : 1, countSelections());
     unsigned successors = 0;
     for (const auto& record : records) {
         if (record.fact.factKind != VN_MONITOR_FACT_SELECTION_COMMITTED ||
@@ -22150,6 +22197,36 @@ static void CheckSignalQueueReceiptStop(bool applyBeforeStop) {
     }
     EXPECT_EQ(applyBeforeStop ? 1u : 0u, successors);
     EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(capture));
+
+    const auto replayed = harken::StartPlayable(*engine, image.world, request);
+    ASSERT_EQ(harken::PlayableStartStatus::Accepted, replayed.status);
+    float firstReplaySample = 0.0f;
+    for (std::uint32_t block = 0; block < 64 && firstReplaySample == 0.0f; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine->nullBackend.Pump(1);
+        const auto* output = engine->nullBackend.LastBlock();
+        for (std::uint32_t sample = 0; sample < 2u * engine->config.blockFrames; ++sample) {
+            if (std::abs(output[sample]) <= 0.01f) continue;
+            firstReplaySample = output[sample];
+            break;
+        }
+    }
+    EXPECT_NE(0.0f, firstReplaySample);
+    if (applyBeforeStop) EXPECT_LT(firstReplaySample, 0.0f);
+    else EXPECT_GT(firstReplaySample, 0.0f);
+    ASSERT_EQ(harken::PlayableControlStatus::Ok, harken::StopPlayable(*engine, replayed.instance, 0));
+    for (std::uint32_t block = 0; block < 48; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine->nullBackend.Pump(1);
+    }
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(0u, engine->playableInstances.LiveCount());
+    EXPECT_EQ(0u, engine->queueInstances.LiveCount());
+    EXPECT_EQ(0u, engine->timelineOccurrences.OccupiedCount());
+    EXPECT_EQ(0u, engine->timelineArms.LiveCount());
+    EXPECT_EQ(0u, engine->decisions.LiveCount());
+    EXPECT_EQ(0u, engine->armGroups.LiveCount());
+    EXPECT_FALSE(engine->runtimeRecreateRequired);
 }
 
 TEST(PlayableStart, SignalQueueAcceptedChildDoesNotAdvanceBeforeAudioAndStopReturnsSelection) {
@@ -22158,6 +22235,14 @@ TEST(PlayableStart, SignalQueueAcceptedChildDoesNotAdvanceBeforeAudioAndStopRetu
 
 TEST(PlayableStart, SignalQueueAppliedChildSettlesBeforeStopWithoutInterveningUpdate) {
     CheckSignalQueueReceiptStop(true);
+}
+
+TEST(PlayableStart, SignalQueueAcceptedContainerStopResumesPreviousChild) {
+    CheckSignalQueueReceiptStop(false, true);
+}
+
+TEST(PlayableStart, SignalQueueAppliedContainerStopResumesItsSound) {
+    CheckSignalQueueReceiptStop(true, true);
 }
 
 TEST(PlayableStart, SequenceQueueMarkerAlignedRequiresKnownCompletion) {

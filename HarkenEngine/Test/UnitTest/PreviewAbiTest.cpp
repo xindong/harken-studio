@@ -1426,6 +1426,106 @@ TEST(PreviewAbi, QueueSoundsKeepIndependentLifecyclesAndTheOriginalRequest) {
     }
 }
 
+TEST(PreviewAbi, MixedSampleRateQueuesCompleteAndLeavePlaybackAvailable) {
+    for (const auto frames : {64u, 32768u}) {
+        for (const auto blocksPerUpdate : {1u, 8u}) {
+            SCOPED_TRACE(frames);
+            SCOPED_TRACE(blocksPerUpdate);
+            harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
+            ASSERT_EQ(VN_OK, session.InitResult());
+            auto* engine = session.Engine();
+            std::vector<float> first(frames, 0.25f), second(frames * 4u, -0.25f);
+            const auto firstPcm = harkentest::MonoDesc(first, 48000);
+            const auto secondPcm = harkentest::MonoDesc(second, 44100);
+            ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &firstPcm));
+            ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSecondSound, &secondPcm));
+            PreviewQueueWorldImage image(engine->registry.Lookup(kSound).contentRevision,
+                engine->registry.Lookup(kSecondSound).contentRevision);
+            ASSERT_EQ(harken::WorldInstallStatus::Ok,
+                harken::InstallContainerWorldV1(*engine, image.image.world).status);
+            const auto capture = harkentest::monitor::OpenIdentityEvents();
+            std::vector<harkentest::monitor::IdentityRecord> records;
+            const auto desc = Desc(VN_PREVIEW_PLAYABLE_KIND_CONTAINER, kContainer);
+            VnPreviewPlayableHandle handle = 0;
+            ASSERT_EQ(VN_PREVIEW_OK, VnPreview_PlayPlayable(&desc, &handle));
+            ASSERT_EQ(VN_OK, Vn_Update());
+            for (std::uint32_t block = 0; block < frames * 8u / 64u + 256u; block += blocksPerUpdate) {
+                engine->nullBackend.Pump(blocksPerUpdate);
+                ASSERT_EQ(VN_OK, Vn_Update());
+                harkentest::monitor::CollectIdentityEvents(capture, records);
+            }
+            std::vector<std::uint64_t> started, finished;
+            std::uint64_t previousFinish = 0, request = 0, emitter = 0;
+            std::uint32_t rootCompletions = 0;
+            for (const auto& record : records) {
+                const auto& fact = record.fact;
+                if (fact.contentKind == VN_MONITOR_CONTENT_CONTAINER &&
+                    fact.factKind == VN_MONITOR_FACT_PLAYABLE_RETIRED) {
+                    EXPECT_EQ(VN_MONITOR_TERMINAL_NATURAL_COMPLETION, fact.terminalKind);
+                    ++rootCompletions;
+                }
+                if (fact.contentKind != VN_MONITOR_CONTENT_SOUND ||
+                    (fact.factKind != VN_MONITOR_FACT_PLAYABLE_STARTED &&
+                     fact.factKind != VN_MONITOR_FACT_PLAYABLE_FINISHED)) continue;
+                EXPECT_EQ(handle & ~(UINT64_C(1) << 63), fact.root);
+                if (request == 0) request = fact.playbackRequest.sequence;
+                if (emitter == 0) emitter = fact.originEmitter;
+                EXPECT_NE(0u, request);
+                EXPECT_NE(0u, emitter);
+                EXPECT_EQ(request, fact.playbackRequest.sequence);
+                EXPECT_EQ(emitter, fact.originEmitter);
+                if (fact.factKind == VN_MONITOR_FACT_PLAYABLE_STARTED) {
+                    ASSERT_LT(started.size(), image.children.size());
+                    EXPECT_EQ(started.size(), finished.size());
+                    EXPECT_EQ(image.children[started.size()].playable.stableId, record.header.stableId);
+                    EXPECT_GE(record.header.executeFrame, previousFinish);
+                    EXPECT_EQ(started.end(), std::find(started.begin(), started.end(), record.header.instanceHandle));
+                    started.push_back(record.header.instanceHandle);
+                } else {
+                    ASSERT_LT(finished.size(), started.size());
+                    EXPECT_EQ(started[finished.size()], record.header.instanceHandle);
+                    EXPECT_EQ(VN_MONITOR_TERMINAL_NATURAL_COMPLETION, fact.terminalKind);
+                    previousFinish = record.header.executeFrame;
+                    finished.push_back(record.header.instanceHandle);
+                }
+            }
+            EXPECT_EQ(image.children.size(), started.size());
+            EXPECT_EQ(started, finished);
+            EXPECT_EQ(1u, rootCompletions);
+            EXPECT_EQ(0u, engine->playableInstances.LiveCount());
+            EXPECT_EQ(0u, engine->sourceTerminals.OccupiedCount());
+            EXPECT_EQ(0u, engine->timelineArms.LiveCount());
+            EXPECT_EQ(0u, engine->voices.ActiveCount());
+            EXPECT_FALSE(engine->runtimeRecreateRequired);
+            records.clear();
+            const auto soundDesc = Desc(VN_PREVIEW_PLAYABLE_KIND_SOUND, kSound);
+            VnPreviewPlayableHandle soundHandle = 0;
+            ASSERT_EQ(VN_PREVIEW_OK, VnPreview_PlayPlayable(&soundDesc, &soundHandle));
+            ASSERT_EQ(VN_OK, Vn_Update());
+            float peak = 0.0f;
+            for (std::uint32_t block = 0; block < frames * 2u / 64u + 128u; ++block) {
+                engine->nullBackend.Pump(1);
+                for (std::uint32_t sample = 0; sample < 128; ++sample)
+                    peak = std::max(peak, std::abs(engine->nullBackend.LastBlock()[sample]));
+                ASSERT_EQ(VN_OK, Vn_Update());
+                harkentest::monitor::CollectIdentityEvents(capture, records);
+            }
+            EXPECT_GT(peak, 0.1f);
+            EXPECT_EQ(1, std::count_if(records.begin(), records.end(), [&](const auto& record) {
+                return record.header.instanceHandle == (soundHandle & ~(UINT64_C(1) << 63)) &&
+                    record.fact.factKind == VN_MONITOR_FACT_PLAYABLE_FINISHED &&
+                    record.fact.terminalKind == VN_MONITOR_TERMINAL_NATURAL_COMPLETION;
+            }));
+            EXPECT_EQ(0u, engine->playableInstances.LiveCount());
+            EXPECT_EQ(0u, engine->sourceTerminals.OccupiedCount());
+            EXPECT_EQ(0u, engine->timelineArms.LiveCount());
+            EXPECT_EQ(0u, engine->voices.ActiveCount());
+            EXPECT_FALSE(engine->runtimeRecreateRequired);
+            EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(capture));
+        }
+    }
+}
+
 TEST(PreviewAbi, KnownQueueTransitionsSurviveUpdateCadenceChanges) {
     for (const auto resumeBlock : {0u, 24u, 40u}) {
         SCOPED_TRACE(resumeBlock);

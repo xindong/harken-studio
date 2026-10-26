@@ -10498,6 +10498,7 @@ void ServiceAuthoredStops(
                         if (ClearQueueCompletionOwner(engine, row.queueSuccessorRenderHandle,
                                 row.queueSuccessorCompletion)) {
                             row.queueSuccessorCompletion = {};
+                            row.queueSuccessorSignalOnlyNoOverlap = false;
                             row.queueSuccessorOwner = {};
                         }
                         row.queueAbortRequested = true;
@@ -14792,6 +14793,7 @@ engine.runtimeRecreateRequired = true;
         }
     }
     row.queueSuccessorCompletion = {};
+    row.queueSuccessorSignalOnlyNoOverlap = false;
     row.queueSuccessorOwner = {};
     if (row.queueSuccessorScheduleLeafCount > 1) {
         for (std::uint32_t index = 0;
@@ -26792,7 +26794,21 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
         abortPrepared();
         return QueueContinuationPrepareStatus::Failed;
     }
-    if (successorHasContinuation) {
+    row.queueSuccessorSignalOnlyNoOverlap = successorHasContinuation &&
+        installed.completionPredictability == harken::CompletionPredictability::SignalOnly;
+    if (row.queueSuccessorSignalOnlyNoOverlap) {
+        if (program.queueSplice != harken::QueueSpliceV1::Butt) {
+            abortPrepared();
+            return QueueContinuationPrepareStatus::Failed;
+        }
+        if (!engine.decisions.Cancel(row.queueSuccessorDecision) ||
+            !engine.decisions.ReclaimCancelled(row.queueSuccessorDecision)) {
+            abortPrepared();
+            return QueueContinuationPrepareStatus::Failed;
+        }
+        row.queueSuccessorDecision = {};
+        row.queueSuccessorTicket = 0;
+    } else if (successorHasContinuation) {
         const harken::CompletionOwnerRef owner =
             harken::CompletionOwnerRef::Single(
                 row.queueSuccessorDecision,
@@ -28290,7 +28306,7 @@ QueueContinuationPrepareStatus StartSignalOnlyNoOverlapSuccessor(
         return QueueContinuationPrepareStatus::Failed;
     }
     const bool resumeKnown = harken::IsBoundKnownCompletionPredicate(row.queueCurrentCompletion);
-    const bool prepareKnownCurrent = resumeKnown && childKind == harken::PlayableKindV1::Sound &&
+    const bool probeKnownCurrent = resumeKnown && childKind == harken::PlayableKindV1::Sound &&
         afterNextStatus == harken::QueueSequenceStepStatus::Successor;
     const harken::TransitionRuleViewV1* transitionRule = nullptr;
     if (resumeKnown && !packQueue && program.transitionProgramIndex != UINT32_MAX) {
@@ -28456,19 +28472,7 @@ QueueContinuationPrepareStatus StartSignalOnlyNoOverlapSuccessor(
             ValidatePreparedOccurrenceOwner, CommitPreparedOccurrenceOwner,
             CancelPreparedOccurrenceOwner)) return QueueContinuationPrepareStatus::Failed;
     harken::PlayableProgramKey completionProgram{};
-    if (prepareKnownCurrent) {
-        harken::DecisionReserveRequest reserve{};
-        reserve.world = row.Invocation().worldGeneration;
-        reserve.transport = engine.timelinePool.Epoch();
-        reserve.expectedContinuationGeneration = queueOwnerEpoch;
-        reserve.sliceCount = 1;
-        if (!engine.PrepareOriginalQueueDecisionReservation(reserve, &scratch.queueDecision))
-            return QueueContinuationPrepareStatus::Failed;
-        scratch.queueDecisionOwnerContext = {&engine.decisions, &scratch.queueDecision,
-            &scratch.queueFutureCurrentDecision, nullptr};
-        if (!RegisterFrontierPreparedOwner(scratch, &scratch.queueDecisionOwnerContext,
-                ValidatePreparedDecisionOwner, CommitPreparedDecisionOwner, CancelPreparedDecisionOwner))
-            return QueueContinuationPrepareStatus::Failed;
+    if (probeKnownCurrent) {
         completionProgram = {harken::PlayableKindV1::Sound, cut.leaf.stableId,
             packQueue ? row.Invocation().packLease.compositeGeneration : world.generation,
             cut.leaf.expectedProgramSemanticFingerprint};
@@ -28483,23 +28487,37 @@ QueueContinuationPrepareStatus StartSignalOnlyNoOverlapSuccessor(
         InstallTimelineVoiceStart(
             engine, captured.Input(), successorVoiceInstance, startFrame,
             queueOwnerInstance, row.rootInstance,
-            prepareKnownCurrent ? &successorOccurrence : nullptr,
-            prepareKnownCurrent ? &completionProgram : nullptr,
+            probeKnownCurrent ? &successorOccurrence : nullptr,
+            probeKnownCurrent ? &completionProgram : nullptr,
             {}, UINT16_MAX, nullptr, &preparedVoice, nullptr,
             childService != nullptr ? childService : &row,
             childService != nullptr ? childService : &row,
             false, false, false, false, nullptr, {}, false, 0, &resetObservation.cause,
-            resumeKnown ? TimelineVoiceInstallPublication::OnInstallation
-                        : TimelineVoiceInstallPublication::Default);
+            TimelineVoiceInstallPublication::OnInstallation);
     if (installed.status != VN_OK) {
         return QueueContinuationPrepareStatus::Failed;
     }
+    const bool prepareKnownCurrent = probeKnownCurrent &&
+        installed.completionPredictability == harken::CompletionPredictability::KnownFinite;
     if (!RegisterFrontierPreparedOwner(scratch, &scratch.voiceStarts.Owners()[0],
             ValidatePreparedTimelineVoiceOwner, CommitPreparedTimelineVoiceOwner,
             CancelPreparedTimelineVoiceOwner)) return QueueContinuationPrepareStatus::Failed;
+    if (probeKnownCurrent && !prepareKnownCurrent &&
+        program.queueSplice != harken::QueueSpliceV1::Butt)
+        return QueueContinuationPrepareStatus::Failed;
     harken::KnownCompletionPredicateV1 completion{};
     if (prepareKnownCurrent) {
-        if (installed.completionPredictability != harken::CompletionPredictability::KnownFinite)
+        harken::DecisionReserveRequest reserve{};
+        reserve.world = row.Invocation().worldGeneration;
+        reserve.transport = engine.timelinePool.Epoch();
+        reserve.expectedContinuationGeneration = queueOwnerEpoch;
+        reserve.sliceCount = 1;
+        if (!engine.PrepareOriginalQueueDecisionReservation(reserve, &scratch.queueDecision))
+            return QueueContinuationPrepareStatus::Failed;
+        scratch.queueDecisionOwnerContext = {&engine.decisions, &scratch.queueDecision,
+            &scratch.queueFutureCurrentDecision, nullptr};
+        if (!RegisterFrontierPreparedOwner(scratch, &scratch.queueDecisionOwnerContext,
+                ValidatePreparedDecisionOwner, CommitPreparedDecisionOwner, CancelPreparedDecisionOwner))
             return QueueContinuationPrepareStatus::Failed;
         scratch.queueCurrentOwner = harken::CompletionOwnerRef::Single(
             scratch.queueDecision.Token(), installed.completionPredicate.playbackFactsRevision);
@@ -28761,6 +28779,8 @@ engine.runtimeRecreateRequired = true;
 engine.runtimeRecreateRequired = true;
         return QueueContinuationPrepareStatus::Failed;
     }
+    row.phase = harken::EnginePlayableStartPhase::Filed;
+    resource.phase = harken::EnginePlayableStartPhase::Filed;
     return QueueContinuationPrepareStatus::Prepared;
 }
 
@@ -47750,11 +47770,19 @@ engine.runtimeRecreateRequired = true;
                     1u, observation.tombstoneAudioSequence));
             return true;
         };
-        const auto stageFinalQueueOccurrence = [&engine, &row]() {
+        const auto stageFinalQueueOccurrence = [&engine, &row, observedAudioSequence]() {
             if (!row.queueMode || !row.queueNaturalEnd ||
-                row.queueFinalSourceTombstoned ||
-                row.queueRetiringOccurrence.generation != 0) {
+                row.queueFinalSourceTombstoned) {
                 return false;
+            }
+            if (!ReconcileQueueFrontier(engine, row, observedAudioSequence, row.queueAbortRequested)) return false;
+            if (row.queueRetiringOccurrence.generation != 0) {
+                if ((row.queueRetiringOwner.kind != harken::CompletionOwnerKind::None &&
+                     !engine.timelineOccurrences.CompletionOwnerReleaseFencePassed(
+                         row.queueRetiringOccurrence, observedAudioSequence)) ||
+                    !TryReleaseOccurrenceAfterFence(engine, row.queueRetiringOccurrence, observedAudioSequence))
+                    return false;
+                row.queueRetiringOwner = {};
             }
             if (row.queueCurrentOccurrence.generation != 0) {
                 harken::CompletionOwnerRef owner{};
@@ -48235,6 +48263,8 @@ engine.runtimeRecreateRequired = true;
                 child->controlReason == harken::PlayableControlReason::Natural;
             if (child != nullptr && child->partitionRetiring &&
                 row.controlLifecycle == harken::PlayableControlLifecycle::Cancelling) {
+                if (row.queueMode && row.queueNaturalEnd && !row.queueFinalSourceTombstoned &&
+                    !stageFinalQueueOccurrence()) continue;
                 row.frontierChildService = {};
                 ReleaseAdmissionOccupancyAndRetire(engine, row, observedAudioSequence);
                 continue;
@@ -48263,6 +48293,8 @@ engine.runtimeRecreateRequired = true;
                     row.controlLifecycle = harken::PlayableControlLifecycle::FailingSourceActive;
                 }
                 row.phase = harken::EnginePlayableStartPhase::Cancelling;
+                if (row.queueMode && row.queueNaturalEnd && !row.queueFinalSourceTombstoned &&
+                    !stageFinalQueueOccurrence()) continue;
                 row.frontierChildService = {};
                 ReleaseAdmissionOccupancyAndRetire(engine, row, observedAudioSequence);
                 continue;
@@ -48278,6 +48310,7 @@ engine.runtimeRecreateRequired = true;
             }
             if (!TryReleaseOccurrenceAfterFence(engine, row.queueCurrentOccurrence, observedAudioSequence)) continue;
             if (row.queueNaturalEnd) {
+                if (!row.queueFinalSourceTombstoned && !stageFinalQueueOccurrence()) continue;
                 if (!PublishNaturalPlayableCompletion(engine, row.ownerInstance, playback.lastConsumedOutcomeOrdinal) ||
                     !engine.containerPlayback.MarkLogicalComplete(row.ownerInstance) ||
                     (engine.playableInstances.Classify(row.ownerInstance).parent != 0 &&
@@ -48293,7 +48326,6 @@ engine.runtimeRecreateRequired = true;
                 row.phase = harken::EnginePlayableStartPhase::Started;
                 row.controlLifecycle = harken::PlayableControlLifecycle::LogicalComplete;
                 row.controlReason = harken::PlayableControlReason::Natural;
-                row.queueFinalSourceTombstoned = true;
                 row.pendingFutureCount = 0;
                 if (!deferRetirementForTest) {
                     ReleaseAdmissionOccupancyAndRetire(
@@ -50304,7 +50336,9 @@ engine.runtimeRecreateRequired = true;
                     row.scheduleStorageBase = 0;
                     row.scheduleLeafCount = 0;
                 }
+                const bool successorSignalOnlyNoOverlap = row.queueSuccessorSignalOnlyNoOverlap;
                 row.queueSuccessorCompletion = {};
+                row.queueSuccessorSignalOnlyNoOverlap = false;
                 row.queueSuccessorOwner = {};
                 if (!sameProgramKey) {
                     row.terminalObserved = false;
@@ -50558,7 +50592,11 @@ engine.runtimeRecreateRequired = true;
                         harken::EnginePlayableStartPhase::Cancelling;
                     continue;
                 }
-                if (row.queueDecision.Valid()) {
+                if (successorSignalOnlyNoOverlap) {
+                    row.queueCompletionFrame = 0;
+                    row.queueSignalOnlyNoOverlap = true;
+                    row.queueDeferredNeedsFullPreparation = false;
+                } else if (row.queueDecision.Valid()) {
                     harken::PlayableWorldViewV1 queueWorld{};
                     const harken::ContainerProgramViewV3* queueProgram =
                         nullptr;
@@ -52511,7 +52549,7 @@ engine.runtimeRecreateRequired = true;
                             }
                             if (resumed) {
                                 if (!signalPath) row.queueSignalOnlyNoOverlap = false;
-                                if (signalPath && resumeKnownSound) requirePublication(row.startFrame);
+                                if (signalPath) requirePublication(row.startFrame);
                                 continue;
                             }
                         }
@@ -73093,6 +73131,7 @@ engine.runtimeRecreateRequired = true;
         if (ClearQueueCompletionOwner(engine, row->queueSuccessorRenderHandle,
                 row->queueSuccessorCompletion)) {
             row->queueSuccessorCompletion = {};
+            row->queueSuccessorSignalOnlyNoOverlap = false;
             row->queueSuccessorOwner = {};
         }
         if (row->queueContinuationPrepared &&
@@ -92853,6 +92892,7 @@ bool CommitNativeImmediateActionQueueReplacement(harken::Engine& engine,
     row.queueTransition = {};
     row.queueTransitionEndFrame = 0;
     row.queueSuccessorCompletion = {};
+    row.queueSuccessorSignalOnlyNoOverlap = false;
     row.queueSuccessorOwner = {};
     row.queueSuccessorCompositeOwner = {};
     row.queueSuccessorOccurrence = {};
@@ -93056,6 +93096,7 @@ void CommitImmediateActionQueueReplacements(
         row.queueTransitionEndFrame = 0;
         row.queueSuccessorDecision = replacementSuccessorDecision;
         row.queueSuccessorCompletion = {};
+        row.queueSuccessorSignalOnlyNoOverlap = false;
         row.queueSuccessorOwner = {};
         row.queueSuccessorCompositeOwner = {};
         row.queueSuccessorOccurrence = {};

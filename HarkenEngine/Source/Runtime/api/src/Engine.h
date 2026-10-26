@@ -1552,6 +1552,7 @@ struct EngineQueueFutureFilingLayout {
     std::uint32_t queueSuccessorScheduleBase = 0;
     std::uint32_t queueSuccessorScheduleLeafCount = 0;
     KnownCompletionPredicateV1 queueSuccessorCompletion{};
+    bool queueSuccessorSignalOnlyNoOverlap = false;
     CompositeCompletionOwnerToken queueSuccessorCompositeOwner{};
     bool queueSuccessorHasZeroWorkCompletion = false;
     std::uint64_t queueSuccessorZeroWorkCompletionFrame = 0;
