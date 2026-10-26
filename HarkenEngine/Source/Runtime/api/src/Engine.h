@@ -1745,6 +1745,114 @@ struct EngineQueueRuntimeViews {
     CapturedTimelineVoiceInstall canonicalInitialQueueTargetVoice{};
 };
 
+struct EngineVariableServicePayload {
+    struct VariableControlRetargetMember {
+        EnginePlayableMemberReference reference{};
+        WeightSegmentV1 pendingWeight{};
+        TimelineArmToken arm{};
+    };
+    BankVersionToken variableControlDiscreteMissedBank{};
+    PlayableInstanceHandle variableControlDiscreteMissedSource = 0;
+    std::uint32_t variableControlDiscreteMissedOrdinal = 0;
+    DecisionToken variableControlDiscreteRetargetDecision{};
+    TransitionInstanceToken variableControlDiscreteRetargetTransition{};
+    LogicCommitSequence variableControlDiscreteRetargetTicket = 0;
+    BankVersionToken variableControlDiscreteRetargetBank{};
+    TimelineArmToken variableControlDiscreteRetargetArm{};
+    TimelineArmToken variableControlDiscreteRetargetEnteringArm{};
+    std::uint32_t variableControlDiscreteRetargetGroupMemberCount = 0;
+    std::uint32_t variableControlDiscreteRetargetSourceMemberCount = 0;
+    std::uint32_t variableControlDiscreteRetargetTargetMemberCount = 0;
+    std::uint32_t variableControlDiscreteRetargetDesiredChildOrdinal = 0;
+    PlayableInstanceHandle variableControlDiscreteRetargetIncomingChild = 0;
+    std::uint64_t variableControlDiscreteRetargetIncomingChildEpoch = 0;
+    std::uint32_t variableControlDiscreteRetargetIncomingLeafCount = 0;
+    std::uint32_t variableControlDiscreteRetargetIncomingNestedCount = 0;
+    std::uint32_t variableControlDiscreteRetargetIncomingNestedVariableControlCount = 0;
+    std::uint32_t variableControlDiscreteRetargetIncomingContainerCount = 0;
+    PlayableInstanceHandle variableControlDiscreteRetargetIncomingQueueSuccessorInstance = 0;
+    std::uint64_t variableControlDiscreteRetargetIncomingQueueSuccessorEpoch = 0;
+    std::uint32_t variableControlDiscreteRetargetIncomingQueueSuccessorOrdinal = 0;
+    PlayableInstanceHandle variableControlDiscreteRetargetIncomingQueueOwnerInstance = 0;
+    std::uint64_t variableControlDiscreteRetargetIncomingQueueOwnerEpoch = 0;
+    std::uint32_t variableControlDiscreteRetargetIncomingQueueOwnerIndex = UINT32_MAX;
+    std::uint32_t variableControlDiscreteRetargetIncomingSelectionCount = 0;
+    ArmGroupToken variableControlDiscreteRetargetArmGroup{};
+    PreparedGroupToken variableControlDiscreteRetargetPages{};
+    std::uint64_t variableControlDiscreteRetargetFrame = 0;
+    std::uint64_t variableControlDiscreteRetargetEndFrame = 0;
+    std::uint64_t variableControlDiscreteRetargetZeroWorkCompletionFrame = 0;
+    std::uint64_t variableControlDiscretePendingDesiredOrdinal = 0;
+    std::uint64_t variableControlDiscretePendingDesiredFrame = 0;
+    BankVersionToken variableControlDiscreteDeferredSupersedeBank{};
+    std::uint64_t variableControlNextEvaluationFrame = 0;
+    DecisionToken variableControlRetargetDecision{};
+    LogicCommitSequence variableControlRetargetTicket = 0;
+    BankVersionToken variableControlRetargetBank{};
+    ArmGroupToken variableControlRetargetArmGroup{};
+    PreparedGroupToken variableControlRetargetPages{};
+    std::uint64_t variableControlRetargetFrame = 0;
+    std::uint64_t variableControlRetargetEnvelopeEndFrame = 0;
+    std::uint64_t variableControlRetargetZeroWorkCompletionFrame = 0;
+    EngineServiceArrayView<std::uint32_t, 64> variableControlRetargetLogicalOrdinals{};
+    EngineServiceArrayView<std::uint64_t, 64> variableControlRetargetLogicalCompletionFrames{};
+    EngineServiceArrayView<bool, 64> variableControlRetargetLogicalCompleted{};
+    std::uint32_t variableControlRetargetLogicalCount = 0;
+    std::vector<VariableControlRetargetMember> variableControlRetargetMembers;
+    EngineVariableMemberWeights variableControlMemberWeights;
+    BankVersionToken variableControlDeferredSupersedeBank{};
+};
+
+struct EngineQueueServicePayload {
+    VnObjectId queueContainerStableId{};
+    std::uint64_t queueProgramSemanticFingerprint = 0;
+    VnObjectId queueParentContainerStableId{};
+    std::uint64_t queueParentProgramSemanticFingerprint = 0;
+    std::uint64_t initialQueueEntryAttemptGeneration = 0;
+    OccurrenceToken queueCurrentOccurrence{};
+    KnownCompletionPredicateV1 queueCurrentCompletion{};
+    CompositeCompletionOwnerToken queueCurrentCompositeOwner{};
+    std::uint8_t queueCurrentProgramPlane = 0;
+    EngineQueueProgramBank* queueCurrentProgramBank = nullptr;
+    EngineQueueProgramRange queueCurrentPrograms{};
+    std::uint32_t queueCurrentScheduleBase = 0;
+    std::uint32_t queueCurrentScheduleLeafCount = 0;
+    EngineServiceArrayView<std::uint16_t, kMaxKnownScheduleLeaves> queueInitialCurrentMemberIndices{};
+    EngineServiceArrayView<TimelineArmToken, kMaxKnownScheduleLeaves> queueInitialCurrentDelayedArms{};
+    std::uint32_t queueInitialCurrentMemberLeafCount = 0;
+    std::uint16_t queueInitialCurrentDelayedCount = 0;
+    CompletionOwnerRef queueSuccessorOwner{};
+    OccurrenceToken queueRetiringOccurrence{};
+    OccurrenceToken queueAbortedSuccessorOccurrence{};
+    CompletionOwnerRef queueRetiringOwner{};
+    TimelineArmToken queueSourceArm{};
+    ArmGroupToken queueInitialLaneArmGroup{};
+    TimelineArmToken queueArrivalArm{};
+    TimelineArmToken queueArrivalSourceArm{};
+    std::uint32_t queueArrivalSourceControlArmCount = 0;
+    std::uint32_t queueArrivalTransitionGroupArmCount = 0;
+    TransitionInstanceToken queueArrivalTransition{};
+    ArmGroupToken queueArrivalArmGroup{};
+    std::uint32_t queueArrivalScheduleBase = 0;
+    std::uint32_t queueArrivalScheduleLeafCount = 0;
+    PreparedGroupToken queuePreparedPages{};
+    UnplacedBatchCredit queueUnplacedCredit{};
+    UnplacedBatchCredit queueUnplacedDemandCredit{};
+    UnplacedBatchCreditRequest queueUnplacedDemand{};
+    std::array<std::uint64_t, 3> queueUnplacedGroupFrames{};
+    std::uint32_t queueUnplacedGroupCount = 0;
+    std::uint32_t queueUnplacedTransactionCount = 0;
+    EngineFrontierQueueCurrentOwnerContext* privateInitialQueueCurrent = nullptr;
+    DecisionToken canonicalInitialQueueDecision{};
+    VnVoiceHandle queueSuccessorRenderHandle = 0;
+    LogicCommitSequence queueTicket = 0;
+    LogicCommitSequence queueSuccessorTicket = 0;
+    std::uint64_t queueCompletionFrame = 0;
+    std::uint32_t queueCurrentTailFrames = 0;
+    std::uint32_t queueSuccessorTailFrames = 0;
+    VoiceReleaseObserver queueArrivalCurrentRelease{};
+};
+
 struct EngineServiceFeatureArrays {
     EngineQueueRuntimeViews queueRuntimeViews;
     EngineDiscreteRetargetStorage discreteRetarget;
@@ -1812,6 +1920,8 @@ struct EngineServiceFeatureArrays {
     TimelineProgramView variableControlDiscreteRetargetEnteringRuntimeProgram{};
     ProgramView variableControlDiscreteRetargetSchedule{};
     ProgramView variableControlDiscreteRetargetEnteringSchedule{};
+    EngineVariableServicePayload variablePayload{};
+    EngineQueueServicePayload queuePayload{};
 };
 
 struct EnginePlayableServiceRow {
@@ -1989,37 +2099,6 @@ public:
     EngineServiceArrayView<bool, 64> variableControlContinuousLogicalCompleted{};
     std::uint32_t variableControlContinuousLogicalCount = 0;
     std::uint32_t variableControlChildWeightCount = 0;
-    BankVersionToken variableControlDiscreteMissedBank{};
-    PlayableInstanceHandle variableControlDiscreteMissedSource = 0;
-    std::uint32_t variableControlDiscreteMissedOrdinal = 0;
-    DecisionToken variableControlDiscreteRetargetDecision{};
-    TransitionInstanceToken variableControlDiscreteRetargetTransition{};
-    LogicCommitSequence variableControlDiscreteRetargetTicket = 0;
-    BankVersionToken variableControlDiscreteRetargetBank{};
-    TimelineArmToken variableControlDiscreteRetargetArm{};
-    TimelineArmToken variableControlDiscreteRetargetEnteringArm{};
-    std::uint32_t variableControlDiscreteRetargetGroupMemberCount = 0;
-    std::uint32_t variableControlDiscreteRetargetSourceMemberCount = 0;
-    std::uint32_t variableControlDiscreteRetargetTargetMemberCount = 0;
-    std::uint32_t variableControlDiscreteRetargetDesiredChildOrdinal = 0;
-    PlayableInstanceHandle variableControlDiscreteRetargetIncomingChild = 0;
-    std::uint64_t variableControlDiscreteRetargetIncomingChildEpoch = 0;
-    std::uint32_t variableControlDiscreteRetargetIncomingLeafCount = 0;
-    std::uint32_t variableControlDiscreteRetargetIncomingNestedCount = 0;
-    std::uint32_t variableControlDiscreteRetargetIncomingNestedVariableControlCount = 0;
-    std::uint32_t variableControlDiscreteRetargetIncomingContainerCount = 0;
-    PlayableInstanceHandle variableControlDiscreteRetargetIncomingQueueSuccessorInstance = 0;
-    std::uint64_t variableControlDiscreteRetargetIncomingQueueSuccessorEpoch = 0;
-    std::uint32_t variableControlDiscreteRetargetIncomingQueueSuccessorOrdinal = 0;
-    PlayableInstanceHandle variableControlDiscreteRetargetIncomingQueueOwnerInstance = 0;
-    std::uint64_t variableControlDiscreteRetargetIncomingQueueOwnerEpoch = 0;
-    std::uint32_t variableControlDiscreteRetargetIncomingQueueOwnerIndex = UINT32_MAX;
-    std::uint32_t variableControlDiscreteRetargetIncomingSelectionCount = 0;
-    ArmGroupToken variableControlDiscreteRetargetArmGroup{};
-    PreparedGroupToken variableControlDiscreteRetargetPages{};
-    std::uint64_t variableControlDiscreteRetargetFrame = 0;
-    std::uint64_t variableControlDiscreteRetargetEndFrame = 0;
-    std::uint64_t variableControlDiscreteRetargetZeroWorkCompletionFrame = 0;
     bool variableControlDiscreteRetargetHasZeroWorkCompletion = false;
     bool variableControlDiscreteRetargetPrepared = false;
     bool variableControlDiscreteRetargetDecisionCommitted = false;
@@ -2029,33 +2108,11 @@ public:
     bool variableControlDiscreteRetargetEntering = false;
     bool variableControlDiscreteRetargetReplacement = false;
     bool variableControlDiscreteRetargetSuperseded = false;
-    std::uint64_t variableControlDiscretePendingDesiredOrdinal = 0;
-    std::uint64_t variableControlDiscretePendingDesiredFrame = 0;
-    BankVersionToken variableControlDiscreteDeferredSupersedeBank{};
     bool variableControlDiscreteDeferredSupersede = false;
     bool variableControlDiscreteSilent = false;
-    std::uint64_t variableControlNextEvaluationFrame = 0;
-    DecisionToken variableControlRetargetDecision{};
-    LogicCommitSequence variableControlRetargetTicket = 0;
-    BankVersionToken variableControlRetargetBank{};
-    ArmGroupToken variableControlRetargetArmGroup{};
-    PreparedGroupToken variableControlRetargetPages{};
-    std::uint64_t variableControlRetargetFrame = 0;
-    std::uint64_t variableControlRetargetEnvelopeEndFrame = 0;
-    std::uint64_t variableControlRetargetZeroWorkCompletionFrame = 0;
     bool variableControlRetargetHasZeroWorkCompletion = false;
-    EngineServiceArrayView<std::uint32_t, 64> variableControlRetargetLogicalOrdinals{};
-    EngineServiceArrayView<std::uint64_t, 64> variableControlRetargetLogicalCompletionFrames{};
-    EngineServiceArrayView<bool, 64> variableControlRetargetLogicalCompleted{};
-    std::uint32_t variableControlRetargetLogicalCount = 0;
-    struct VariableControlRetargetMember {
-        EnginePlayableMemberReference reference{};
-        WeightSegmentV1 pendingWeight{};
-        TimelineArmToken arm{};
-    };
-    std::vector<VariableControlRetargetMember> variableControlRetargetMembers;
+    using VariableControlRetargetMember = EngineVariableServicePayload::VariableControlRetargetMember;
     // Delayed members can have a different envelope onset from their controlling child.
-    EngineVariableMemberWeights variableControlMemberWeights;
     bool variableControlRetargetPrepared = false;
     bool variableControlRetargetDecisionCommitted = false;
     bool variableControlRetargetApplied = false;
@@ -2064,7 +2121,6 @@ public:
     bool variableControlRetargetMembershipFinalized = false;
     bool variableControlMembershipExitObserved = false;
     bool variableControlRetargetSuperseded = false;
-    BankVersionToken variableControlDeferredSupersedeBank{};
     bool variableControlDeferredSupersede = false;
     Plan03GroupSliceIdentity variableControlDeferredCancellationSlice{};
     std::uint32_t variableControlDeferredCancellationReasonBit = 0;
@@ -2075,39 +2131,17 @@ public:
     bool pendingRegisteredStopCapture = false;
     bool queueWorldUsesCurrentAuthority = false;
     bool queueResumePosition = false;
-    VnObjectId queueContainerStableId{};
-    std::uint64_t queueProgramSemanticFingerprint = 0;
     QueueInstanceToken queueInstance{};
     QueueInstanceToken queueParentInstance{};
-    VnObjectId queueParentContainerStableId{};
-    std::uint64_t queueParentProgramSemanticFingerprint = 0;
     bool queueParentRandomSeedValid = false;
     bool queueParentResumePosition = false;
     bool queueNestedParentPending = false;
     bool queueRandomSeedValid = false;
     DecisionToken initialQueueEntryDecision{};
-    std::uint64_t initialQueueEntryAttemptGeneration = 0;
     DecisionToken queueSuccessorDecision{};
     DecisionToken queueArrivalDecision{};
-    OccurrenceToken queueCurrentOccurrence{};
-    KnownCompletionPredicateV1 queueCurrentCompletion{};
-    CompositeCompletionOwnerToken queueCurrentCompositeOwner{};
     bool queueCompositeMirrorsCleared = false;
-    std::uint8_t queueCurrentProgramPlane = 0;
-    EngineQueueProgramBank* queueCurrentProgramBank = nullptr;
     bool queueCurrentProgramBorrowed = false;
-    EngineQueueProgramRange queueCurrentPrograms{};
-    std::uint32_t queueCurrentScheduleBase = 0;
-    std::uint32_t queueCurrentScheduleLeafCount = 0;
-    EngineServiceArrayView<std::uint16_t, kMaxKnownScheduleLeaves> queueInitialCurrentMemberIndices{};
-    EngineServiceArrayView<TimelineArmToken, kMaxKnownScheduleLeaves> queueInitialCurrentDelayedArms{};
-    std::uint32_t queueInitialCurrentMemberLeafCount = 0;
-    std::uint16_t queueInitialCurrentDelayedCount = 0;
-    CompletionOwnerRef queueSuccessorOwner{};
-    OccurrenceToken queueRetiringOccurrence{};
-    OccurrenceToken queueAbortedSuccessorOccurrence{};
-    CompletionOwnerRef queueRetiringOwner{};
-    TimelineArmToken queueSourceArm{};
 
     void ClearQueueSourcePrograms() noexcept {
         if (!HasFeatureArrays()) return;
@@ -2119,38 +2153,13 @@ public:
         views.queueSourceRuntimeProgram = {};
         QueueFiling().queueSourceSchedule = {};
     }
-    ArmGroupToken queueInitialLaneArmGroup{};
-    TimelineArmToken queueArrivalArm{};
-    TimelineArmToken queueArrivalSourceArm{};
-    std::uint32_t queueArrivalSourceControlArmCount = 0;
-    std::uint32_t queueArrivalTransitionGroupArmCount = 0;
-    TransitionInstanceToken queueArrivalTransition{};
-    ArmGroupToken queueArrivalArmGroup{};
-    std::uint32_t queueArrivalScheduleBase = 0;
-    std::uint32_t queueArrivalScheduleLeafCount = 0;
     bool queueArrivalUsesSuccessorStorage = false;
-    PreparedGroupToken queuePreparedPages{};
-    UnplacedBatchCredit queueUnplacedCredit{};
-    UnplacedBatchCredit queueUnplacedDemandCredit{};
-    UnplacedBatchCreditRequest queueUnplacedDemand{};
-    std::array<std::uint64_t, 3> queueUnplacedGroupFrames{};
-    std::uint32_t queueUnplacedGroupCount = 0;
-    std::uint32_t queueUnplacedTransactionCount = 0;
-    EngineFrontierQueueCurrentOwnerContext* privateInitialQueueCurrent = nullptr;
-    DecisionToken canonicalInitialQueueDecision{};
     bool queueTimingFinalized = false;
     bool queueFirstContinuationLane = false;
     std::uint64_t queueInitialCohortEntryFrame = 0;
-    VnVoiceHandle queueSuccessorRenderHandle = 0;
-    LogicCommitSequence queueTicket = 0;
-    LogicCommitSequence queueSuccessorTicket = 0;
-    std::uint64_t queueCompletionFrame = 0;
-    std::uint32_t queueCurrentTailFrames = 0;
-    std::uint32_t queueSuccessorTailFrames = 0;
     bool queueContinuationPrepared = false;
     bool queueArrivalCleanupStarted = false;
     bool queueArrivalDecisionCancelled = false;
-    VoiceReleaseObserver queueArrivalCurrentRelease{};
     bool queueSuccessorArmTombstoned = false;
     bool queueNaturalEnd = false;
     bool queueSignalOnlyNoOverlap = false;
@@ -2194,6 +2203,22 @@ public:
         return *invocation;
     }
 
+    EngineVariableServicePayload& VariablePayload() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->variablePayload;
+    }
+    const EngineVariableServicePayload& VariablePayload() const noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->variablePayload;
+    }
+    EngineQueueServicePayload& QueuePayload() noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->queuePayload;
+    }
+    const EngineQueueServicePayload& QueuePayload() const noexcept {
+        assert(featureArrays_ != nullptr);
+        return featureArrays_->queuePayload;
+    }
     bool HasFeatureArrays() const noexcept { return featureArrays_ != nullptr; }
     EngineQueueRuntimeViews& QueueRuntimeViews() noexcept {
         assert(featureArrays_ != nullptr);
@@ -2467,11 +2492,6 @@ public:
         variableControlContinuousLogicalOrdinals.Clear();
         variableControlContinuousLogicalCompletionFrames.Clear();
         variableControlContinuousLogicalCompleted.Clear();
-        variableControlRetargetLogicalOrdinals.Clear();
-        variableControlRetargetLogicalCompletionFrames.Clear();
-        variableControlRetargetLogicalCompleted.Clear();
-        queueInitialCurrentMemberIndices.Clear();
-        queueInitialCurrentDelayedArms.Clear();
         containerInstances.Clear();
         selectionPath.Clear();
         if (featureArrays_ != nullptr) {
@@ -2505,6 +2525,8 @@ public:
             featureArrays_->variableControlDiscreteRetargetEnteringRuntimeProgram = {};
             featureArrays_->variableControlDiscreteRetargetSchedule = {};
             featureArrays_->variableControlDiscreteRetargetEnteringSchedule = {};
+            featureArrays_->variablePayload = {};
+            featureArrays_->queuePayload = {};
         }
     }
     void BindFeatureArrays() noexcept {
@@ -2519,11 +2541,11 @@ public:
         variableControlContinuousLogicalOrdinals.Bind(featureArrays_->variableControlContinuousLogicalOrdinals);
         variableControlContinuousLogicalCompletionFrames.Bind(featureArrays_->variableControlContinuousLogicalCompletionFrames);
         variableControlContinuousLogicalCompleted.Bind(featureArrays_->variableControlContinuousLogicalCompleted);
-        variableControlRetargetLogicalOrdinals.Bind(featureArrays_->variableControlRetargetLogicalOrdinals);
-        variableControlRetargetLogicalCompletionFrames.Bind(featureArrays_->variableControlRetargetLogicalCompletionFrames);
-        variableControlRetargetLogicalCompleted.Bind(featureArrays_->variableControlRetargetLogicalCompleted);
-        queueInitialCurrentMemberIndices.Bind(featureArrays_->queueInitialCurrentMemberIndices);
-        queueInitialCurrentDelayedArms.Bind(featureArrays_->queueInitialCurrentDelayedArms);
+        VariablePayload().variableControlRetargetLogicalOrdinals.Bind(featureArrays_->variableControlRetargetLogicalOrdinals);
+        VariablePayload().variableControlRetargetLogicalCompletionFrames.Bind(featureArrays_->variableControlRetargetLogicalCompletionFrames);
+        VariablePayload().variableControlRetargetLogicalCompleted.Bind(featureArrays_->variableControlRetargetLogicalCompleted);
+        QueuePayload().queueInitialCurrentMemberIndices.Bind(featureArrays_->queueInitialCurrentMemberIndices);
+        QueuePayload().queueInitialCurrentDelayedArms.Bind(featureArrays_->queueInitialCurrentDelayedArms);
         QueueFiling().queueTransitionGroupArms.Bind(featureArrays_->queueTransitionGroupArms);
         containerInstances.Bind(featureArrays_->containerInstances);
         selectionPath.Bind(featureArrays_->selectionPath);
@@ -5893,7 +5915,8 @@ struct Engine {
     template <typename Values>
     bool PrepareVariableControlWeightColumn(EnginePlayableServiceRow& row, std::uint32_t count,
         std::shared_ptr<Values> EngineVariableMemberWeights::*column) noexcept {
-        auto& storage = row.variableControlMemberWeights.*column;
+        if (count == 0 && !row.HasFeatureArrays()) return true;
+        auto& storage = row.VariablePayload().variableControlMemberWeights.*column;
         if (count <= (storage ? storage->size() : 0)) return true;
         if (memguard::IsAudioTagged()) return false;
         if (nativeRuntimeBackingInUse != nullptr) {
@@ -10558,7 +10581,7 @@ public:
             sound.variableControl || queue.variableControl || sound.packLeaseOwned || queue.packLeaseOwned ||
             sound.voiceStartCount != 1 || queue.voiceStartCount != 1 || queue.queueSuccessorVoiceStartCount != 1 ||
             sound.row->queueMode || !queue.row->queueMode || !queue.row->queueFirstContinuationLane ||
-            !queue.row->queueTimingPending || queue.row->queueUnplacedGroupCount != 2 ||
+            !queue.row->queueTimingPending || queue.row->QueuePayload().queueUnplacedGroupCount != 2 ||
             !queue.initialOriginalConditionalVersion.Valid() || queue.initialOriginalConditional == nullptr ||
             sound.row->root.kind != PlayableKindV1::Sound || queue.row->root.kind != PlayableKindV1::Container ||
             attempt.initialService != sound.row->identity ||
@@ -10662,7 +10685,7 @@ public:
         if (!queue.Valid() || queue.slot >= queueInstances.Capacity() ||
             ResolveOriginalQueueConditionalBaseline(this, queueInstances, queue) != queueScratch.initialOriginalConditional ||
             !queueInstances.IsOriginalConditionalFutureReservationFor(*queueScratch.initialOriginalConditional,
-                originalQueueLifetimeHolders[queue.slot], queue, version, row.QueueFiling().queueDecision, row.queueCurrentOccurrence))
+                originalQueueLifetimeHolders[queue.slot], queue, version, row.QueueFiling().queueDecision, row.QueuePayload().queueCurrentOccurrence))
             return false;
         FrontierQueueInitialIdentity initial{};
         FrontierQueueConditionalIdentity conditional{};
@@ -11115,9 +11138,9 @@ public:
         if (!scratch.prepared || scratch.row == nullptr || scratch.voiceStartCount != 1 ||
             !HasOriginalSingleLedgerCommit(scratch.voiceStarts[0])) return false;
         const auto& row = *scratch.row;
-        if (row.queueCurrentScheduleLeafCount == 1) return true;
+        if (row.QueuePayload().queueCurrentScheduleLeafCount == 1) return true;
         const auto& voice = scratch.voiceStarts[0];
-        if (row.queueCurrentScheduleLeafCount != 0 || row.scheduleLeafCount != 0 ||
+        if (row.QueuePayload().queueCurrentScheduleLeafCount != 0 || row.scheduleLeafCount != 0 ||
             row.zeroWorkMarker || row.hasZeroWorkCompletion || !voice.prepared || !voice.arm.Valid() ||
             voice.renderHandle == 0 || row.renderHandle != voice.renderHandle ||
             !SameOriginalSingleArm(row.arm, voice.arm) ||
@@ -11125,9 +11148,9 @@ public:
             !row.schedule.occurrence.present ||
             row.schedule.occurrence.token.slot != voice.progressOccurrence.slot ||
             row.schedule.occurrence.token.generation != voice.progressOccurrence.generation ||
-            row.queueCurrentProgramBank == nullptr || row.queueCurrentProgramBank->programCount != 1)
+            row.QueuePayload().queueCurrentProgramBank == nullptr || row.QueuePayload().queueCurrentProgramBank->programCount != 1)
             return false;
-        const auto& frozen = row.queueCurrentProgramBank->schedules[0];
+        const auto& frozen = row.QueuePayload().queueCurrentProgramBank->schedules[0];
         return SameOriginalSingleArm(frozen.armToken, voice.arm) &&
             frozen.eventCount == 1 && frozen.events != nullptr &&
             SameOriginalSingleArm(frozen.events[0].armToken, voice.arm);
@@ -11174,14 +11197,14 @@ public:
             row.PendingImmediateCohortRoot() != attempt.root || row.ownerInstance != scratch.instance.Handle() ||
             row.ownerEpoch != scratch.instance.ScheduleEpoch() || row.rootInstance != scratch.instance.Handle() ||
             ResolvePlayableService(row.identity, row.ownerInstance, row.ownerEpoch) != &row ||
-            !playablePartitions.Owns(row.partition, row.identity) || row.queueUnplacedGroupCount != 2 ||
-            !MatchesOriginalInitialSingleQueueCurrentGeometry(scratch) || row.queueInitialCurrentDelayedCount != 0 ||
-            row.queueCurrentProgramBank == nullptr || row.queueCurrentProgramBank->programCount != 1 ||
+            !playablePartitions.Owns(row.partition, row.identity) || row.QueuePayload().queueUnplacedGroupCount != 2 ||
+            !MatchesOriginalInitialSingleQueueCurrentGeometry(scratch) || row.QueuePayload().queueInitialCurrentDelayedCount != 0 ||
+            row.QueuePayload().queueCurrentProgramBank == nullptr || row.QueuePayload().queueCurrentProgramBank->programCount != 1 ||
             row.queueInstance.slot >= queueInstances.Capacity() ||
             current.originalRoot != scratch.instance.Handle() ||
             !SameCompletionOwner(current.originalCurrentCompletionOwner, voice.ledgerPreparation.completionMutation.owner) ||
-            current.originalCurrentOccurrence.slot != row.queueCurrentOccurrence.slot ||
-            current.originalCurrentOccurrence.generation != row.queueCurrentOccurrence.generation ||
+            current.originalCurrentOccurrence.slot != row.QueuePayload().queueCurrentOccurrence.slot ||
+            current.originalCurrentOccurrence.generation != row.QueuePayload().queueCurrentOccurrence.generation ||
             !timelinePool.Epoch()) return false;
         const bool mixed = HasInitialSoundQueueCohort(attempt);
         if (mixed ? !MatchesInitialSoundQueueParticipant(attempt, row, true) :
@@ -11236,7 +11259,7 @@ public:
             !SameCompletionOwner(owner, current.originalCurrentCompletionOwner) ||
             predicate.renderGeneration != voice.arm.renderGeneration ||
             !SameCompletionOwner(predicate.owner, owner)) return false;
-        auto& bank = *row.queueCurrentProgramBank;
+        auto& bank = *row.QueuePayload().queueCurrentProgramBank;
         auto* bankOriginal = OriginalQueueBankHolderFor(&bank);
         const auto& program = bank.schedules[0];
         if (bankOriginal == nullptr || !bankOriginal->baseline.Valid() ||
@@ -12599,9 +12622,9 @@ public:
     bool BorrowOriginalQueueCurrentBank(const EnginePlayableServiceReference& service,
         EngineQueueProgramBank::OriginalLifetimePin* out) noexcept {
         auto* row = ResolvePlayableService(service);
-        if (row == nullptr || !row->InvocationValid() ||
+        if (row == nullptr || !row->InvocationValid() || !row->HasFeatureArrays() ||
             !playablePartitions.Owns(row->partition, row->identity)) return false;
-        auto* original = OriginalQueueBankHolderFor(row->queueCurrentProgramBank);
+        auto* original = OriginalQueueBankHolderFor(row->QueuePayload().queueCurrentProgramBank);
         return original != nullptr && original->baseline.Borrow(out);
     }
 
@@ -13448,7 +13471,7 @@ public:
             programs * EngineQueueProgramBankBody::kEventsPerProgram);
         const auto groups = std::min<std::uint64_t>(initialQueueTimingGroupsScratch.Capacity(),
             static_cast<std::uint64_t>(required) *
-                std::tuple_size_v<decltype(EnginePlayableServiceRow::queueUnplacedGroupFrames)>);
+                std::tuple_size_v<decltype(EngineQueueServicePayload::queueUnplacedGroupFrames)>);
         return initialQueueTimingProgramsScratch.ConstructThrough(static_cast<std::uint32_t>(programs)) &&
             initialQueueTimingEventsScratch.ConstructThrough(static_cast<std::uint32_t>(events)) &&
             initialQueueTimingGroupsScratch.ConstructThrough(static_cast<std::uint32_t>(groups));
@@ -13746,9 +13769,9 @@ public:
         }
         if (row.usesCapturedVoice)
             return index == 0 && row.capturedVoice.Valid() ? &row.capturedVoice : nullptr;
-        if (index < row.queueCurrentPrograms.count) {
+        if (row.HasFeatureArrays() && index < row.QueuePayload().queueCurrentPrograms.count) {
             const auto* member = const_cast<Engine*>(this)->FindQueueProgramMember(
-                row.queueCurrentProgramBank, row.queueCurrentPrograms.first + index);
+                row.QueuePayload().queueCurrentProgramBank, row.QueuePayload().queueCurrentPrograms.first + index);
             if (member != nullptr && member->voice.Valid() &&
                 (row.scheduleLeafCount > 1 || SameOriginalSingleArm(member->arm, row.arm)))
                 return &member->voice;

@@ -429,7 +429,7 @@ inline bool CaptureFiringQueueEnd(
         seen.leafPresent = !harken::IsNull(row.leaf.stableId);
         seen.leafId = row.leaf.stableId;
         seen.startFrame = row.startFrame;
-        seen.successorRender = row.queueSuccessorRenderHandle != 0;
+        seen.successorRender = row.HasFeatureArrays() && row.QueuePayload().queueSuccessorRenderHandle != 0;
         seen.successorArm = row.HasFeatureArrays() && row.QueueFiling().queueSuccessorArm.Valid();
         seen.signalOnly = row.queueSignalOnlyNoOverlap;
         seen.continuationPrepared = row.queueContinuationPrepared;

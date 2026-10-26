@@ -803,18 +803,19 @@ int RunPreviewPlay(int argc, char** argv) {
                             engine->ReadPlayableMember(memberSlot).voice.Facts().target.occurrenceOrdinal;
                     }
                 }
-                if (row.variableControlDiscreteRetargetFrame != 0) {
+                if (!row.HasFeatureArrays()) continue;
+                if (row.VariablePayload().variableControlDiscreteRetargetFrame != 0) {
                     lastTransitionFrame =
-                        row.variableControlDiscreteRetargetFrame;
+                        row.VariablePayload().variableControlDiscreteRetargetFrame;
                 }
-                if (!row.variableControlDiscreteRetargetTransition.Valid()) {
+                if (!row.VariablePayload().variableControlDiscreteRetargetTransition.Valid()) {
                     continue;
                 }
                 sawTransitionToken = true;
                 harken::TransitionInstanceSnapshot transition{};
                 sawTransitionLocked = sawTransitionLocked ||
                     (engine->transitionInstances.Capture(
-                         row.variableControlDiscreteRetargetTransition,
+                         row.VariablePayload().variableControlDiscreteRetargetTransition,
                          &transition) &&
                      transition.state ==
                          harken::TransitionAudibleGateState::Locked);

@@ -680,7 +680,27 @@ TEST(StableBackingPreparation, ServiceFeaturePromiseSurvivesResetAndFailedProtec
     sourceRuntime->payloads = &sourcePayload;
     sourceRuntime->payloadCount = 1;
     *successorRuntime = *sourceRuntime;
+    auto* variablePayload = &first.VariablePayload();
+    auto* queuePayload = &first.QueuePayload();
+    auto* logicalOrdinals = variablePayload->variableControlRetargetLogicalOrdinals.data();
+    auto* currentArms = queuePayload->queueInitialCurrentDelayedArms.data();
+    ASSERT_NE(nullptr, logicalOrdinals);
+    ASSERT_NE(nullptr, currentArms);
+    variablePayload->variableControlRetargetDecision = {3, 5};
+    variablePayload->variableControlRetargetLogicalOrdinals[variablePayload->variableControlRetargetLogicalOrdinals.size() - 1] = 19;
+    variablePayload->variableControlRetargetMembers.resize(1);
+    queuePayload->queueCurrentOccurrence = {7, 11};
+    queuePayload->queueInitialCurrentDelayedArms[queuePayload->queueInitialCurrentDelayedArms.size() - 1] = {1, 2, 3, 4};
     first.Reset();
+    EXPECT_EQ(variablePayload, &first.VariablePayload());
+    EXPECT_EQ(queuePayload, &first.QueuePayload());
+    EXPECT_EQ(logicalOrdinals, variablePayload->variableControlRetargetLogicalOrdinals.data());
+    EXPECT_EQ(currentArms, queuePayload->queueInitialCurrentDelayedArms.data());
+    EXPECT_FALSE(variablePayload->variableControlRetargetDecision.Valid());
+    EXPECT_EQ(0u, variablePayload->variableControlRetargetLogicalOrdinals[variablePayload->variableControlRetargetLogicalOrdinals.size() - 1]);
+    EXPECT_EQ(0u, variablePayload->variableControlRetargetMembers.capacity());
+    EXPECT_EQ(0u, queuePayload->queueCurrentOccurrence.generation);
+    EXPECT_FALSE(queuePayload->queueInitialCurrentDelayedArms[queuePayload->queueInitialCurrentDelayedArms.size() - 1].Valid());
     EXPECT_EQ(queueViews, &first.QueueRuntimeViews());
     EXPECT_EQ(sourceRuntime, &queueViews->queueSourceRuntimeProgram);
     EXPECT_EQ(successorRuntime, &queueViews->queueSuccessorRuntimeProgram);
@@ -771,6 +791,8 @@ TEST(StableBackingPreparation, ServiceFeaturePromiseSurvivesResetAndFailedProtec
     EXPECT_EQ(nullptr, engine.PrepareFreePlayableService(false));
     ASSERT_GT(engine.playableServices.size(), prefix);
     EXPECT_TRUE(backing.Valid());
+    EXPECT_EQ(variablePayload, &first.VariablePayload());
+    EXPECT_EQ(queuePayload, &first.QueuePayload());
     harken::detail::DisarmLogicAllocFaultForTests();
     auto* recovered = engine.PrepareFreePlayableService(false);
     ASSERT_NE(nullptr, recovered);
@@ -781,6 +803,8 @@ TEST(StableBackingPreparation, ServiceFeaturePromiseSurvivesResetAndFailedProtec
             harken::detail::LogicAllocSite::PlayableServiceFeatures);
         EXPECT_TRUE(engine.PreparePlayableFeatureBacking());
         EXPECT_EQ(recovered, engine.PrepareFreePlayableService(false));
+        EXPECT_EQ(variablePayload, &first.VariablePayload());
+        EXPECT_EQ(queuePayload, &first.QueuePayload());
         EXPECT_EQ(1u, harken::detail::g_logicAllocFault.remaining);
     }
     for (auto& row : engine.playableServices) row.actionPrepared = false;

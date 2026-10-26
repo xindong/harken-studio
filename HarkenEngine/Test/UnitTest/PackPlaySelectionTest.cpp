@@ -408,7 +408,6 @@ int QueueEndProbeSelfTest() {
     service.invocation = &start;
     service.invocationGeneration = 1;
     service.startFrame = 4096;
-    service.queueSuccessorRenderHandle = 0;
     service.queueSignalOnlyNoOverlap = false;
     service.queueContinuationPrepared = false;
     service.queueNaturalEnd = false;
@@ -427,7 +426,7 @@ int QueueEndProbeSelfTest() {
         return 28;
     }
     if (!service.PrepareFeatureArrays()) return 1;
-    service.queueSuccessorRenderHandle = 9;
+    service.QueuePayload().queueSuccessorRenderHandle = 9;
     service.QueueFiling().queueSuccessorArm.slot = 1;
     service.QueueFiling().queueSuccessorArm.generation = 1;
     service.QueueFiling().queueSuccessorArm.renderSlot = 2;
@@ -454,7 +453,7 @@ int QueueEndProbeSelfTest() {
     }
     service.startFrame = 33792;
     // Promote copies successor handles onto arm/renderHandle, then clears them.
-    service.queueSuccessorRenderHandle = 0;
+    service.QueuePayload().queueSuccessorRenderHandle = 0;
     service.QueueFiling().queueSuccessorArm = {};
     harkenhost::FiringQueueEndCopy promoted{};
     if (!harkenhost::CaptureFiringQueueEnd(&start, 1, &service, 1, kFiring, &promoted) ||

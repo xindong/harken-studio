@@ -464,16 +464,17 @@ TEST(TraceReplayE2E,
                 }
                 sawTransitionPrepared = sawTransitionPrepared ||
                     row.variableControlDiscreteRetargetPrepared;
-                lastTransitionFrame =
-                    row.variableControlDiscreteRetargetFrame;
-                if (!row.variableControlDiscreteRetargetTransition.Valid()) {
+                lastTransitionFrame = row.HasFeatureArrays()
+                    ? row.VariablePayload().variableControlDiscreteRetargetFrame : 0;
+                if (!row.HasFeatureArrays()) continue;
+                if (!row.VariablePayload().variableControlDiscreteRetargetTransition.Valid()) {
                     continue;
                 }
                 sawTransitionToken = true;
                 harken::TransitionInstanceSnapshot transitionState{};
                 sawTransitionLocked = sawTransitionLocked ||
                     (engine->transitionInstances.Capture(
-                         row.variableControlDiscreteRetargetTransition,
+                         row.VariablePayload().variableControlDiscreteRetargetTransition,
                          &transitionState) &&
                      transitionState.state ==
                          harken::TransitionAudibleGateState::Locked);
