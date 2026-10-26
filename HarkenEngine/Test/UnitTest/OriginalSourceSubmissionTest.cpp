@@ -5773,7 +5773,58 @@ void CheckRegisteredDeferredRecovery(int mode) {
     VnVoiceHandle replacement = 0;
     ASSERT_EQ(VN_OK, PrepareAtOriginalBodySlot(engine, episode.body, &replacement));
     EXPECT_NE(episode.body.source, replacement);
-    ASSERT_TRUE(engine.voices.CancelPreparedVoice(replacement));
+    if (mode != 2) {
+        ASSERT_TRUE(engine.voices.CancelPreparedVoice(replacement));
+        return;
+    }
+
+    ASSERT_EQ(slot, static_cast<std::uint32_t>(replacement));
+    ASSERT_NE(static_cast<std::uint32_t>(episode.body.source >> 32),
+        static_cast<std::uint32_t>(replacement >> 32));
+    harken::VoiceReleaseObserver replacementRelease{};
+    ASSERT_TRUE(engine.voices.CaptureReleaseObserver(replacement, &replacementRelease));
+    ASSERT_TRUE(engine.voices.CommitPreparedVoice(replacement));
+    engine.voices.ApplyPlay(replacement, replacement, 0, engine.mixer.BlocksRendered());
+    // The released claim gate and its existing RAII remain alive through Term.
+    // Check fresh output, not only the existence of a newly prepared handle.
+    const auto pumpReplacement = [&] {
+        const auto before = engine.mixer.BlocksRendered();
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(before + 1u, engine.mixer.BlocksRendered());
+        ASSERT_NE(nullptr, engine.voices.Resolve(replacement));
+        EXPECT_FALSE(engine.voices.ReleaseObserved(replacementRelease));
+        ASSERT_EQ(2u, engine.nullBackend.Channels());
+        const float* output = engine.nullBackend.LastBlock();
+        ASSERT_NE(nullptr, output);
+        for (std::uint32_t frame = kFrames / 2u; frame < kFrames; ++frame) {
+            EXPECT_NEAR(0.25f, output[2u * frame], 1.0e-5f);
+            EXPECT_NEAR(0.25f, output[2u * frame + 1u], 1.0e-5f);
+        }
+    };
+    ASSERT_NO_FATAL_FAILURE(pumpReplacement());
+    const auto sourceBeforeStaleStop =
+        engine.voices.Resolve(replacement)->resampler.SourceFrame();
+    const auto commandsBeforeStaleStop = engine.commands.ConsumedCount();
+    harken::CommandRecord staleStop{};
+    staleStop.opcode = harken::kOpcodeStop;
+    staleStop.payload.stop.handle = episode.body.source;
+    ASSERT_TRUE(engine.commands.TryPush(staleStop));
+    ASSERT_NO_FATAL_FAILURE(pumpReplacement());
+    EXPECT_EQ(commandsBeforeStaleStop + 1u, engine.commands.ConsumedCount());
+    EXPECT_GT(engine.voices.Resolve(replacement)->resampler.SourceFrame(),
+        sourceBeforeStaleStop);
+    EXPECT_TRUE(engine.voices.ReleaseObserved(episode.body.release));
+    ASSERT_NO_FATAL_FAILURE(pumpReplacement());
+
+    engine.voices.ApplyStop(replacement, 0, 0, engine.notifications,
+        engine.mixer.BlocksRendered());
+    const auto beforeStop = engine.mixer.BlocksRendered();
+    engine.nullBackend.Pump(1);
+    EXPECT_EQ(beforeStop + 1u, engine.mixer.BlocksRendered());
+    EXPECT_TRUE(engine.voices.ReleaseObserved(replacementRelease));
+    EXPECT_EQ(nullptr, engine.voices.Resolve(replacement));
+    EXPECT_EQ(0.0f, CurrentPeak(engine));
+    EXPECT_EQ(0u, engine.mixer.Arena().QuarantinedHighBytes());
 }
 
 struct JoinRegisteredSourceTermination {

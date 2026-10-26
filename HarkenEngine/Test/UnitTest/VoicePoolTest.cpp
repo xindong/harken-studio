@@ -1781,6 +1781,142 @@ TEST(VoicePool, WiderLowSlotPreservesLiveHighSlotsWithBlendAndSends) {
     EXPECT_EQ(captures[0].right, captures[1].right);
 }
 
+TEST(VoicePool, ReusedWidthKeepsDirectAudioAtExactArenaBoundaries) {
+    std::vector<float> referenceMono, referenceWide;
+    for (const auto workers : {0u, 2u}) for (const bool reuse : {false, true}) {
+        SCOPED_TRACE(workers);
+        SCOPED_TRACE(reuse);
+        auto config = VoicePoolConfig(2, kBlockFrames, kSampleRate);
+        config.fxSlotsPerVoice = 1;
+        config.voiceSendSlots = 1;
+        config.renderWorkerCount = workers;
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        const auto sentinelPcm = harkentest::MakeDC(8192, 0.03125f);
+        const auto monoPcm = harkentest::MakeDC(8192, 0.0625f);
+        std::vector<float> widePcm(8192 * harken::kMaxChannels);
+        for (std::size_t i = 0; i < widePcm.size(); ++i)
+            widePcm[i] = 0.002f * static_cast<float>(1 + i % harken::kMaxChannels);
+        const auto sentinelDesc = MonoDesc(sentinelPcm, kSampleRate);
+        const auto monoDesc = MonoDesc(monoPcm, kSampleRate);
+        const auto wideDesc = harkentest::InterleavedDesc(widePcm, harken::kMaxChannels, kSampleRate);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &sentinelDesc));
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(2), &monoDesc));
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(3), &wideDesc));
+        const auto sendBus = harkentest::ObjectId(7);
+        ASSERT_EQ(VN_OK, Vn_CreateBus(sendBus, VN_BUS_MASTER));
+        ASSERT_EQ(VN_OK, Vn_Update());
+        const auto pump = [&] {
+            const auto before = engine.mixer.BlocksRendered();
+            engine.nullBackend.Pump(1);
+            ASSERT_EQ(before + 1u, engine.mixer.BlocksRendered());
+        };
+        const auto capture = [&] {
+            return std::vector<float>(engine.nullBackend.LastBlock(),
+                engine.nullBackend.LastBlock() + 2 * kBlockFrames);
+        };
+        const auto play = [&](unsigned id, unsigned slot, VnVoiceHandle* out) {
+            const auto pcm = engine.registry.Lookup(harkentest::ObjectId(id));
+            ASSERT_EQ(VN_OK, engine.voices.Play(pcm, 0, 1, 0, false, 0, 0, 0,
+                harken::ResolvePanGains(engine.config.mixChannelLayout, 0), 0, pcm.frames, 1,
+                harken::ResampleProfile::LegacyCompatibility, out, 1, slot));
+            engine.voices.ApplyPlay(*out, *out, 0, engine.mixer.BlocksRendered());
+        };
+        const auto stop = [&](VnVoiceHandle handle) {
+            engine.voices.ApplyStop(handle, 0, 0, engine.notifications, engine.mixer.BlocksRendered());
+            ASSERT_NO_FATAL_FAILURE(pump());
+            ASSERT_NO_FATAL_FAILURE(pump());
+            ASSERT_EQ(nullptr, engine.voices.Resolve(handle));
+        };
+        VnVoiceHandle sentinel = 0, probe = 0, oldWide = 0;
+        ASSERT_NO_FATAL_FAILURE(play(1, 0, &sentinel));
+        ASSERT_NO_FATAL_FAILURE(pump());
+        const auto sentinelOnly = capture();
+        ASSERT_GT(harkentest::Peak(sentinelOnly.data(), sentinelOnly.size()), 0.01f);
+        for (const auto sample : sentinelOnly) ASSERT_NEAR(0.03125f, sample, 0.000001f);
+        if (reuse) {
+            ASSERT_NO_FATAL_FAILURE(play(3, 1, &oldWide));
+            ASSERT_NO_FATAL_FAILURE(pump());
+            ASSERT_NO_FATAL_FAILURE(pump());
+            ASSERT_NO_FATAL_FAILURE(stop(oldWide));
+        }
+        ASSERT_NO_FATAL_FAILURE(play(2, 1, &probe));
+        if (reuse) EXPECT_NE(oldWide, probe);
+        ASSERT_NO_FATAL_FAILURE(pump());
+        ASSERT_NO_FATAL_FAILURE(pump());
+        const auto direct = capture();
+        // Centered mono contributes unity to both stereo channels.
+        for (const auto sample : direct) ASSERT_NEAR(0.09375f, sample, 0.000001f);
+        if (referenceMono.empty()) referenceMono = direct;
+        EXPECT_EQ(referenceMono, direct);
+        auto* context = engine.voices.Resolve(probe);
+        ASSERT_NE(nullptr, context);
+        context->fxSlots[0].process = IdentityTailProcess;
+        engine.voices.ApplySetVoiceSend(probe, 0, engine.buses.FindIndex(sendBus), 0.0f, 1);
+        ASSERT_EQ(1u, context->voiceSendActiveCount);
+        ASSERT_EQ(2u, engine.buses.AudioBusCount());
+        ASSERT_EQ(0u, engine.mixer.Arena().QuarantinedHighBytes());
+        constexpr auto plane = kBlockFrames * sizeof(float);
+        const std::array<unsigned, 3> capacities{7 * plane - sizeof(float),
+            8 * plane - sizeof(float), 8 * plane};
+        for (unsigned boundary = 0; boundary < capacities.size(); ++boundary) {
+            SCOPED_TRACE(boundary);
+            context->fxBypassMix[0] = 0.5f;
+            const auto frame = context->resampler.SourceFrame();
+            const auto fraction = context->resampler.SourceFraction();
+            const auto sentinelFrame = engine.voices.Resolve(sentinel)->resampler.SourceFrame();
+            const auto overflows = engine.mixer.Arena().OverflowCount();
+            engine.mixer.ArenaForTests().SetCapacityForTests(capacities[boundary]);
+            const auto block = engine.mixer.BlocksRendered();
+            engine.nullBackend.Pump(1);
+            engine.mixer.ArenaForTests().RestoreCapacityForTests();
+            ASSERT_EQ(block + 1u, engine.mixer.BlocksRendered());
+            EXPECT_EQ(overflows + (boundary < 2 ? 1u : 0u), engine.mixer.Arena().OverflowCount());
+            EXPECT_EQ(frame + (boundary == 0 ? 0 : kBlockFrames), context->resampler.SourceFrame());
+            EXPECT_EQ(fraction, context->resampler.SourceFraction());
+            EXPECT_EQ(sentinelFrame + kBlockFrames, engine.voices.Resolve(sentinel)->resampler.SourceFrame());
+            const auto output = capture();
+            for (std::size_t i = 0; i < output.size(); ++i) {
+                const auto expected = boundary == 0 ? sentinelOnly[i]
+                    : boundary == 1 ? direct[i] : 2.0f * direct[i] - sentinelOnly[i];
+                ASSERT_NEAR(expected, output[i], 0.000001f) << i;
+            }
+            // Recover from the exact consumed position, with the direct and send paths audible.
+            for (unsigned recovery = 0; recovery < 2; ++recovery) {
+                const auto beforeFrame = context->resampler.SourceFrame();
+                ASSERT_NO_FATAL_FAILURE(pump());
+                EXPECT_EQ(beforeFrame + kBlockFrames, context->resampler.SourceFrame());
+                EXPECT_EQ(overflows + (boundary < 2 ? 1u : 0u), engine.mixer.Arena().OverflowCount());
+                const auto recovered = capture();
+                for (std::size_t i = 0; i < recovered.size(); ++i)
+                    ASSERT_NEAR(2.0f * direct[i] - sentinelOnly[i], recovered[i], 0.000001f) << i;
+            }
+        }
+        ASSERT_NO_FATAL_FAILURE(stop(probe));
+        VnVoiceHandle returnedWide = 0;
+        ASSERT_NO_FATAL_FAILURE(play(3, 1, &returnedWide));
+        EXPECT_NE(probe, returnedWide);
+        ASSERT_NO_FATAL_FAILURE(pump());
+        ASSERT_NO_FATAL_FAILURE(pump());
+        const auto wide = capture();
+        // A multichannel bed maps its front channels by role into this stereo mix.
+        for (std::size_t i = 0; i < wide.size(); ++i)
+            ASSERT_NEAR(0.03125f + 0.002f * static_cast<float>(1 + i % 2), wide[i], 0.000001f);
+        if (referenceWide.empty()) referenceWide = wide;
+        EXPECT_EQ(referenceWide, wide);
+        VnSnapshot snapshot{};
+        snapshot.structSize = sizeof(snapshot);
+        ASSERT_EQ(VN_OK, Vn_CaptureSnapshot(&snapshot));
+        EXPECT_EQ(engine.mixer.BlocksRendered() - 1u, snapshot.blockIndex);
+        EXPECT_EQ(workers, snapshot.renderWorkerCount);
+        EXPECT_EQ(0u, engine.mixer.CommandProtocolViolationCount());
+        ASSERT_NO_FATAL_FAILURE(stop(returnedWide));
+        ASSERT_NO_FATAL_FAILURE(stop(sentinel));
+        EXPECT_EQ(0.0f, harkentest::Peak(engine.nullBackend.LastBlock(), 2 * kBlockFrames));
+    }
+}
+
 TEST(VoicePool, ProfessionalWorkingSetSurvivesPreflightSeekAndSlotReuse) {
     EngineSession session(VoicePoolConfig(1, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());

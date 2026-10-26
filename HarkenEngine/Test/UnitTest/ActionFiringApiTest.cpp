@@ -22212,11 +22212,17 @@ TEST(ActionFiringApi, ImmediateValidationRefusalWaitsForPublishedBlock) {
 
 enum class IndependentSoundPrime { None, Live, Drained };
 
+struct WarmContainerFailure {
+    std::size_t allocation = 0;
+    unsigned timelineColumn = 0;
+};
+
 static void CheckVariableControlRetargetFromSoundCompletesNestedQueueTree(
     bool continuous, bool nestedControl = false, bool emptyControl = false, bool shortSource = false,
     bool reactivateEmpty = false, bool reselectNonempty = false, bool weightCascade = false,
     bool repeatedSound = false, bool bothSides = false, std::uint32_t refusal = 0,
-    IndependentSoundPrime prime = IndependentSoundPrime::None, std::uint32_t workers = 0) {
+    IndependentSoundPrime prime = IndependentSoundPrime::None, std::uint32_t workers = 0,
+    WarmContainerFailure warmFailure = {}) {
     auto config = harkentest::MakeNullConfig(8, 64, 48000);
     config.renderWorkerCount = workers;
     harkentest::EngineSession session(config);
@@ -22445,6 +22451,107 @@ static void CheckVariableControlRetargetFromSoundCompletesNestedQueueTree(
     post.actionId = image.actions[9].actionStableId;
     post.emitter = emitter;
     VnActionFiringHandle firing = 0;
+    const auto timelineState = [&](unsigned column) {
+        const auto state = [](const auto& rows) {
+            return std::array<std::size_t, 3>{rows.size(), rows.Capacity(), rows.CommittedBytes()};
+        };
+        switch (column) {
+        case 1: return state(engine->timelineStartScratch.starts);
+        case 2: return state(engine->timelineStartScratch.transactions);
+        case 3: return state(engine->timelineStartScratch.extraCommands);
+        case 4: return state(engine->timelineStartScratch.queueEvents);
+        default: return std::array<std::size_t, 3>{};
+        }
+    };
+    const auto beforeTimeline = timelineState(warmFailure.timelineColumn);
+    if (warmFailure.allocation != 0 || warmFailure.timelineColumn != 0) {
+        ASSERT_EQ(IndependentSoundPrime::Live, prime);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        ASSERT_NE(nullptr, primingScratch);
+        auto& storage = primingScratch->storage;
+        ASSERT_EQ(harken::EngineFrontierAttemptPhase::Free, storage.phase);
+        ASSERT_FALSE(storage.containerStoragePrepared);
+        const auto generation = storage.generation;
+        const auto owners = CaptureActionReclaimableOwners(*engine);
+        const auto commandHead = engine->commands.PublishedHead();
+        const auto commits = engine->logicCommits.IssuedCount();
+        const auto* voice = engine->voices.Resolve(primingRender);
+        ASSERT_NE(nullptr, voice);
+        const auto frame = voice->resampler.SourceFrame();
+        const auto activation = voice->sourceActivationStartFrame;
+        harken::EngineTimelineVoiceInstallIdentity identity{};
+        ASSERT_TRUE(engine->CaptureTimelineVoiceInstallIdentity(primingRender, &identity));
+        harken::TimelineArmObservation arm{};
+        ASSERT_TRUE(engine->timelineArms.Observe(identity.startArm, &arm));
+        ASSERT_NE(0u, arm.startedBlockSequence);
+        ASSERT_FALSE(engine->playableServices.PreparedUseActive());
+        const auto expectUnpreparedPages = [](const auto& column) {
+            ASSERT_LT(column.size(), column.Capacity());
+            ASSERT_GT(column.Capacity() * sizeof(*column.data()), column.CommittedBytes());
+            ASSERT_FALSE(column.PreparedUseActive());
+        };
+        switch (warmFailure.timelineColumn) {
+        case 1: ASSERT_NO_FATAL_FAILURE(expectUnpreparedPages(engine->timelineStartScratch.starts)); break;
+        case 2: ASSERT_NO_FATAL_FAILURE(expectUnpreparedPages(engine->timelineStartScratch.transactions)); break;
+        case 3: ASSERT_NO_FATAL_FAILURE(expectUnpreparedPages(engine->timelineStartScratch.extraCommands)); break;
+        case 4: ASSERT_NO_FATAL_FAILURE(expectUnpreparedPages(engine->timelineStartScratch.queueEvents)); break;
+        default: break;
+        }
+        const auto limitTimeline = [&](std::size_t pages) {
+            switch (warmFailure.timelineColumn) {
+            case 1: engine->timelineStartScratch.starts.SetCommitPageLimitForTests(pages); break;
+            case 2: engine->timelineStartScratch.transactions.SetCommitPageLimitForTests(pages); break;
+            case 3: engine->timelineStartScratch.extraCommands.SetCommitPageLimitForTests(pages); break;
+            case 4: engine->timelineStartScratch.queueEvents.SetCommitPageLimitForTests(pages); break;
+            default: break;
+            }
+        };
+        limitTimeline(0);
+        harken::detail::ArmLogicAllocFaultForTests(warmFailure.allocation,
+            harken::detail::LogicAllocSite::ActionPlayContainerStorage);
+        VnActionFiringHandle rejected = UINT64_MAX;
+        const auto result = Vn_PostAction(&post, &rejected);
+        const auto remaining = harken::detail::g_logicAllocFault.remaining;
+        harken::detail::DisarmLogicAllocFaultForTests();
+        // Restore even on an assertion failure; partial successful backing may remain cached.
+        limitTimeline(SIZE_MAX);
+        ASSERT_EQ(VN_BACKPRESSURE, result);
+        EXPECT_EQ(beforeTimeline, timelineState(warmFailure.timelineColumn));
+        for (unsigned column = 1; column < warmFailure.timelineColumn; ++column) {
+            const auto prepared = timelineState(column);
+            EXPECT_EQ(prepared[1], prepared[0]);
+        }
+        EXPECT_EQ(0u, rejected);
+        EXPECT_EQ(0u, remaining);
+        EXPECT_EQ(owners, CaptureActionReclaimableOwners(*engine));
+        EXPECT_EQ(commandHead, engine->commands.PublishedHead());
+        EXPECT_EQ(commits, engine->logicCommits.IssuedCount());
+        EXPECT_FALSE(engine->runtimeRecreateRequired);
+        if (warmFailure.allocation != 0) {
+            EXPECT_EQ(primingScratch, &*engine->actionPlayScratch.begin());
+            EXPECT_EQ(generation, storage.generation);
+            EXPECT_EQ(harken::EngineFrontierAttemptPhase::Free, storage.phase);
+            EXPECT_FALSE(storage.containerStoragePrepared);
+        }
+        const auto block = engine->mixer.BlocksRendered();
+        engine->nullBackend.Pump(1);
+        ASSERT_EQ(block + 1u, engine->mixer.BlocksRendered());
+        voice = engine->voices.Resolve(primingRender);
+        ASSERT_NE(nullptr, voice);
+        EXPECT_EQ(activation, voice->sourceActivationStartFrame);
+        EXPECT_GT(voice->resampler.SourceFrame(), frame);
+        harken::EngineTimelineVoiceInstallIdentity current{};
+        ASSERT_TRUE(engine->CaptureTimelineVoiceInstallIdentity(primingRender, &current));
+        EXPECT_EQ(identity.startArm.slot, current.startArm.slot);
+        EXPECT_EQ(identity.startArm.generation, current.startArm.generation);
+        harken::TimelineArmObservation currentArm{};
+        ASSERT_TRUE(engine->timelineArms.Observe(current.startArm, &currentArm));
+        EXPECT_EQ(arm.startedBlockSequence, currentArm.startedBlockSequence);
+        const auto* output = engine->nullBackend.LastBlock();
+        ASSERT_NE(nullptr, output);
+        for (unsigned sample = 0; sample < 128u; ++sample)
+            EXPECT_NEAR(0.25f, output[sample], 0.000001f);
+    }
     if (prime == IndependentSoundPrime::Live) {
         const auto* beforeVoice = engine->voices.Resolve(primingRender);
         ASSERT_NE(nullptr, beforeVoice);
@@ -22486,6 +22593,11 @@ static void CheckVariableControlRetargetFromSoundCompletesNestedQueueTree(
         ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
     }
     if (primingScratch != nullptr) EXPECT_TRUE(primingScratch->storage.containerStoragePrepared);
+    if (warmFailure.timelineColumn != 0) {
+        const auto prepared = timelineState(warmFailure.timelineColumn);
+        EXPECT_EQ(prepared[1], prepared[0]);
+        EXPECT_GT(prepared[2], beforeTimeline[2]);
+    }
     std::vector<VnVoiceHandle> renders;
     std::vector<VnObjectId> starts;
     const auto observeStarts = [&] {
@@ -22866,6 +22978,24 @@ TEST(ActionFiringApi, DrainedIndependentSoundStorageSupportsNestedContainerUseAn
         ASSERT_NO_FATAL_FAILURE(CheckVariableControlRetargetFromSoundCompletesNestedQueueTree(
             false, false, false, false, false, false, false, false, false, 0,
             IndependentSoundPrime::Drained, workers));
+    }
+}
+
+TEST(ActionFiringApi, LiveSoundSurvivesEachContainerColumnFailureAndRetry) {
+    for (std::size_t allocation = 1; allocation <= 19; ++allocation) {
+        SCOPED_TRACE(allocation);
+        ASSERT_NO_FATAL_FAILURE(CheckVariableControlRetargetFromSoundCompletesNestedQueueTree(
+            false, false, false, false, false, false, false, false, false, 0,
+            IndependentSoundPrime::Live, 2, {allocation, 0}));
+    }
+}
+
+TEST(ActionFiringApi, LiveSoundSurvivesEachTimelinePreparationFailureAndRetry) {
+    for (unsigned column = 1; column <= 4; ++column) {
+        SCOPED_TRACE(column);
+        ASSERT_NO_FATAL_FAILURE(CheckVariableControlRetargetFromSoundCompletesNestedQueueTree(
+            false, false, false, false, false, false, false, false, false, 0,
+            IndependentSoundPrime::Live, 2, {0, column}));
     }
 }
 
