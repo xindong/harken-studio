@@ -37,11 +37,3 @@ HarkenHubUpdateBridge（特权更新桥）。
 Hub 0.1.71 使用“集成 / Integration”和“集成包 / Integration Package”，Unity 专属操作使用 Unity Integration。历史发布说明保留当时名称。Studio 0.9.1 以 HarkenIntegration 为主分发目录，同时从同一来源生成 HarkenSDK/Unity/Harken 实体兼容副本，支持旧 Hub；打包前逐文件验证一致，避免两份内容漂移。新版 Hub 优先新目录，仅在新目录不存在时使用旧目录，既有来源记录继续可用。
 
 自动发现支持 HARKEN_UNITY_INTEGRATION_PATH，并保留 HARKEN_UNITY_SDK_PATH。Unity 工程内 Packages/com.harken.core、既有 Assets/HarkenSDK、自定义位置、备份目录及持久化字段保持兼容，源目录更名不触发工程搬迁。
-
-## Windows 任务栏图标（2026-10-27）
-
-运行窗口的任务栏分组通过窗口属性 `System.AppUserModel.RelaunchIconResource` 指定主题图标；窗口、进程和运行时识别到的 Hub 快捷方式统一使用 `HarkenSound.HarkenHub` 标识。仅更新 `WM_GETICON` / `WM_SETICON` 不足以覆盖 Explorer 的任务栏分组图标，悬停预览正确也不能视为任务栏本体验证通过。
-
-主题图标从原始 ICO 的全部尺寸生成，逐像素保留透明度，只转换黑白前景色，按内容哈希原子写入用户数据目录 `shell-icons`。已有固定快捷方式在原路径更新应用标识和 Hub 管理的图标引用，保留启动参数、自定义图标及其他安装目录的快捷方式；普通桌面、开始菜单图标保留原引用。深色 Hub 原生标题栏继续使用白色小图标，托盘和运行中的任务栏按 Windows 系统主题切换。Hub 完全退出后的固定图标不提供实时主题跟随。
-
-本次按用户决定保留版本号 0.1.71，随后统一升版；修复并入主分支不代表自动发布新的安装包。
