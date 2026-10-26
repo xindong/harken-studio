@@ -72307,18 +72307,20 @@ static PlayableControlStatus BeginPlayableCancellation(
     bool guardedChild = false;
     bool invalidOwnedSource = false;
     const auto serviceForOwnedRender = [&](VnVoiceHandle render, PlayableInstanceHandle root) {
-        for (std::uint32_t slot = 0; slot < engine.sourceTerminals.Capacity(); ++slot) {
-            const auto* source = engine.sourceTerminals.At(slot);
-            if (!source->occupied || source->render != render) continue;
-            const auto* resourceOwner = engine.ResolveSourceResourceOwner(source->resourceOwner);
-            if (resourceOwner == nullptr) {
-                for (const auto& candidate : engine.playableServices) {
-                    if (candidate.phase != EnginePlayableStartPhase::Free && candidate.rootInstance == root &&
-                        IsPlayableServiceDescendant(engine, candidate, *row)) invalidOwnedSource = true;
+        if (engine.sourceTerminals.OccupiedCount() != 0) {
+            for (std::uint32_t slot = 0; slot < engine.sourceTerminals.Capacity(); ++slot) {
+                const auto* source = engine.sourceTerminals.At(slot);
+                if (!source->occupied || source->render != render) continue;
+                const auto* resourceOwner = engine.ResolveSourceResourceOwner(source->resourceOwner);
+                if (resourceOwner == nullptr) {
+                    for (const auto& candidate : engine.playableServices) {
+                        if (candidate.phase != EnginePlayableStartPhase::Free && candidate.rootInstance == root &&
+                            IsPlayableServiceDescendant(engine, candidate, *row)) invalidOwnedSource = true;
+                    }
                 }
+                return resourceOwner != nullptr && IsPlayableServiceDescendant(engine, *resourceOwner, *row)
+                    ? resourceOwner : static_cast<const EnginePlayableServiceRow*>(nullptr);
             }
-            return resourceOwner != nullptr && IsPlayableServiceDescendant(engine, *resourceOwner, *row)
-                ? resourceOwner : static_cast<const EnginePlayableServiceRow*>(nullptr);
         }
         for (const auto& candidate : engine.playableServices) {
             if (candidate.phase != EnginePlayableStartPhase::Free &&
@@ -72328,6 +72330,31 @@ static PlayableControlStatus BeginPlayableCancellation(
             }
         }
         return static_cast<const EnginePlayableServiceRow*>(nullptr);
+    };
+    const auto forEachOwnedRender = [&](const auto& visit) {
+        // Each pass has stable service ancestry and source occupancy. Cancellation
+        // between passes can change both, so this proof is local to one visit.
+        const EnginePlayableServiceRow* onlyDescendant = nullptr;
+        bool useSingleDescendant = engine.sourceTerminals.OccupiedCount() == 0;
+        if (useSingleDescendant) {
+            for (const auto& candidate : engine.playableServices) {
+                if (candidate.phase == EnginePlayableStartPhase::Free ||
+                    !IsPlayableServiceDescendant(engine, candidate, *row)) continue;
+                if (onlyDescendant != nullptr) {
+                    useSingleDescendant = false;
+                    break;
+                }
+                onlyDescendant = &candidate;
+            }
+        }
+        engine.ledger.ForEachPlayableOwnedLive(
+            [&](VnVoiceHandle render, const VoiceLedger::PlayableParentRef& parent) {
+                const auto* service = useSingleDescendant
+                    ? (onlyDescendant != nullptr && onlyDescendant->rootInstance == parent.internalToken
+                        ? onlyDescendant : nullptr)
+                    : serviceForOwnedRender(render, parent.internalToken);
+                visit(render, service);
+            });
     };
     const auto bindingOwnedByComposite = [&engine](
         const CompletionMutationBinding& binding,
@@ -72341,10 +72368,8 @@ static PlayableControlStatus BeginPlayableCancellation(
         }
         return false;
     };
-    engine.ledger.ForEachPlayableOwnedLive(
-        [&](VnVoiceHandle render,
-            const VoiceLedger::PlayableParentRef& parent) {
-            const auto* row = serviceForOwnedRender(render, parent.internalToken);
+    forEachOwnedRender(
+        [&](VnVoiceHandle render, const EnginePlayableServiceRow* row) {
             if (row != nullptr &&
                 engine.voices.IsAlive(render)) {
                 const auto storageBases = StorageBasesForRow(engine, *row);
@@ -72615,8 +72640,7 @@ engine.runtimeRecreateRequired = true;
         row->pendingControlCause = cause;
         row->pendingCancellationIntent = static_cast<std::uint8_t>(intent) + 1u;
         row->pendingCancellationFadeMs = fadeMs;
-        engine.ledger.ForEachPlayableOwnedLive([&](VnVoiceHandle render, const VoiceLedger::PlayableParentRef& parent) {
-            const auto* actual = serviceForOwnedRender(render, parent.internalToken);
+        forEachOwnedRender([&](VnVoiceHandle render, const EnginePlayableServiceRow* actual) {
             const auto* voice = engine.voices.Resolve(render);
             if (actual == nullptr || voice == nullptr || voice->timelineGated || engine.ledger.IsTerminating(render)) return;
             CommandRecord stop{};
@@ -73006,10 +73030,8 @@ engine.runtimeRecreateRequired = true;
     DropLivePlan03GroupMemberArms(engine, engine.mixer.BlocksRendered(), true,
                                   row, false, sliceReason);
     {
-        engine.ledger.ForEachPlayableOwnedLive(
-            [&](VnVoiceHandle render,
-                const VoiceLedger::PlayableParentRef& parent) {
-                const auto* renderService = serviceForOwnedRender(render, parent.internalToken);
+        forEachOwnedRender(
+            [&](VnVoiceHandle render, const EnginePlayableServiceRow* renderService) {
                 if (renderService == nullptr ||
                     !engine.voices.IsAlive(render)) {
                     return;

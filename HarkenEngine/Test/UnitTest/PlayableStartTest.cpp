@@ -23508,6 +23508,88 @@ TEST(PlayableStart, StopActiveChildPublishesOneFadeAndRetiresTheRoot) {
     EXPECT_EQ(0u, engine->playablePartitions.OccupiedCount());
 }
 
+TEST(PlayableStart, StopIndependentSoundsKeepsOtherRootAliveInEitherRowOrder) {
+    for (std::uint32_t first = 0; first < 2; ++first) {
+        SCOPED_TRACE(first);
+        VnConfig config = harkentest::MakeNullConfig(2, 64, 48000);
+        harkentest::EngineSession session(config);
+        ASSERT_EQ(session.InitResult(), VN_OK);
+        auto* engine = session.Engine();
+        ASSERT_NE(nullptr, engine);
+
+        std::vector<float> samples(16384, 0.25f);
+        const auto pcm = harkentest::MonoDesc(samples, 48000);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &pcm));
+        const auto media = engine->registry.Lookup(kSound);
+        ASSERT_TRUE(media.Valid());
+        PlayableWorldImage image(media.contentRevision, harken::ContainerModeV1::Random);
+        ASSERT_EQ(harken::WorldInstallStatus::Ok,
+            harken::InstallContainerWorldV1(*engine, image.world).status);
+        harken::PlayableStartRequest request{};
+        request.root = image.SoundRoot();
+        std::array<harken::PlayableStartResult, 2> started{};
+        for (auto& result : started) {
+            result = harken::StartPlayable(*engine, request);
+            ASSERT_EQ(harken::PlayableStartStatus::Accepted, result.status);
+        }
+        ASSERT_NE(started[0].instance, started[1].instance);
+
+        bool bothActive = false;
+        for (std::uint32_t block = 0; block < 16 && !bothActive; ++block) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            engine->nullBackend.Pump(1);
+            ASSERT_EQ(VN_OK, Vn_Update());
+            bothActive = true;
+            for (const auto& result : started) {
+                harken::PlayableControlState state{};
+                ASSERT_EQ(harken::PlayableControlStatus::Ok,
+                    harken::QueryPlayable(*engine, result.instance, &state));
+                bothActive &= state.lifecycle == harken::PlayableControlLifecycle::Active;
+            }
+        }
+        ASSERT_TRUE(bothActive);
+        ASSERT_EQ(0u, engine->sourceTerminals.OccupiedCount());
+        std::array<VnVoiceHandle, 2> renders{};
+        for (const auto& row : engine->playableServices) {
+            for (std::size_t index = 0; index < started.size(); ++index) {
+                if (row.phase != harken::EnginePlayableStartPhase::Free &&
+                    row.rootInstance == started[index].instance) renders[index] = row.renderHandle;
+            }
+        }
+        for (const auto render : renders) ASSERT_TRUE(engine->voices.IsAlive(render));
+        const auto sibling = 1u - first;
+        const auto commandHead = engine->commands.PublishedHead();
+        ASSERT_EQ(harken::PlayableControlStatus::Ok,
+            harken::StopPlayable(*engine, started[first].instance, 19));
+        EXPECT_EQ(commandHead + 1u, engine->commands.PublishedHead());
+        EXPECT_TRUE(engine->ledger.IsTerminating(renders[first]));
+        EXPECT_FALSE(engine->ledger.IsTerminating(renders[sibling]));
+        ASSERT_EQ(harken::PlayableControlStatus::Ok,
+            harken::StopPlayable(*engine, started[first].instance, 99));
+        EXPECT_EQ(commandHead + 1u, engine->commands.PublishedHead());
+        for (std::uint32_t block = 0; block < 32; ++block) {
+            engine->nullBackend.Pump(1);
+            ASSERT_EQ(VN_OK, Vn_Update());
+        }
+        EXPECT_FALSE(engine->voices.IsAlive(renders[first]));
+        EXPECT_TRUE(engine->voices.IsAlive(renders[sibling]));
+        EXPECT_FALSE(engine->ledger.IsTerminating(renders[sibling]));
+        harken::PlayableControlState state{};
+        ASSERT_EQ(harken::PlayableControlStatus::Ok,
+            harken::QueryPlayable(*engine, started[sibling].instance, &state));
+        EXPECT_EQ(harken::PlayableControlLifecycle::Active, state.lifecycle);
+        ASSERT_EQ(harken::PlayableControlStatus::Ok,
+            harken::StopPlayable(*engine, started[sibling].instance, 19));
+        for (std::uint32_t block = 0; block < 64 && engine->playablePartitions.OccupiedCount() != 0; ++block) {
+            engine->nullBackend.Pump(1);
+            ASSERT_EQ(VN_OK, Vn_Update());
+        }
+        for (const auto render : renders) EXPECT_FALSE(engine->voices.IsAlive(render));
+        EXPECT_EQ(0u, engine->playablePartitions.OccupiedCount());
+        EXPECT_FALSE(engine->runtimeRecreateRequired);
+    }
+}
+
 TEST(PlayableStart, StopAudibleVariableControlPublishesFadeAndReleasesBeforeNaturalEnd) {
     harkentest::EngineSession session(harkentest::MakeNullConfig(4, 64, 48000));
     ASSERT_EQ(VN_OK, session.InitResult());
