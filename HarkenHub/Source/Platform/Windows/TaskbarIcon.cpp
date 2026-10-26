@@ -2,18 +2,13 @@
 #include "Platform/PlatformPaths.h"
 #include "Platform/Windows/ShellIcons.h"
 
-#include <QBuffer>
-#include <QCryptographicHash>
-#include <QDataStream>
 #include <QDebug>
 #include <QDir>
 #include <QEvent>
-#include <QFile>
 #include <QGuiApplication>
 #include <QImage>
 #include <QPlatformSurfaceEvent>
 #include <QPointer>
-#include <QSaveFile>
 #include <QScopeGuard>
 #include <QTimer>
 #include <QWindow>
@@ -27,57 +22,24 @@ namespace VNH {
 
 namespace {
 
-QString saveShellIcon(const QIcon& icon)
-{
-    const auto sizes = icon.availableSizes();
-    if (sizes.isEmpty())
-        return {};
-    QByteArray data;
-    QDataStream directory(&data, QIODevice::WriteOnly);
-    directory.setByteOrder(QDataStream::LittleEndian);
-    directory << quint16(0) << quint16(1) << quint16(sizes.size());
-    QByteArray images;
-    const quint32 headerSize = 6 + 16 * sizes.size();
-    for (const QSize& size : sizes) {
-        QByteArray png;
-        QBuffer buffer(&png);
-        if (!buffer.open(QIODevice::WriteOnly) ||
-            !icon.pixmap(size, 1.0).save(&buffer, "PNG"))
-            return {};
-        directory << quint8(size.width() == 256 ? 0 : size.width())
-                  << quint8(size.height() == 256 ? 0 : size.height())
-                  << quint8(0) << quint8(0) << quint16(1) << quint16(32)
-                  << quint32(png.size()) << quint32(headerSize + images.size());
-        images += png;
-    }
-    data += images;
-    const QString root = userDataDir() + QStringLiteral("/shell-icons");
-    const QString path = root + QLatin1Char('/') + QString::fromLatin1(
-        QCryptographicHash::hash(data, QCryptographicHash::Sha256).toHex()) + QStringLiteral(".ico");
-    QFile existing(path);
-    if (existing.open(QIODevice::ReadOnly) && existing.readAll() == data)
-        return path;
-    existing.close();
-    if (!QDir().mkpath(root))
-        return {};
-    QSaveFile file(path);
-    if (!file.open(QIODevice::WriteOnly) || file.write(data) != data.size() || !file.commit())
-        return {};
-    return path;
-}
-
-void setShellProperties(HWND window, const QString& iconPath)
+bool setShellProperties(HWND window, const QString& iconPath)
 {
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     if (FAILED(initialized) && initialized != RPC_E_CHANGED_MODE)
-        return;
+        return false;
     const auto uninitialize = qScopeGuard([initialized] {
         if (SUCCEEDED(initialized))
             CoUninitialize();
     });
     Microsoft::WRL::ComPtr<IPropertyStore> properties;
     if (FAILED(SHGetPropertyStoreForWindow(window, IID_PPV_ARGS(properties.GetAddressOf()))))
-        return;
+        return false;
+    const QString resource = QDir::toNativeSeparators(iconPath) + QStringLiteral(",0");
+    PROPVARIANT previous{};
+    const HRESULT read = properties->GetValue(PKEY_AppUserModel_RelaunchIconResource, &previous);
+    const bool changed = !iconPath.isEmpty() && (FAILED(read) || previous.vt != VT_LPWSTR ||
+                         QString::fromWCharArray(previous.pwszVal) != resource);
+    PropVariantClear(&previous);
     const auto set = [&](REFPROPERTYKEY key, const QString& value) {
         PROPVARIANT variant{};
         HRESULT result = S_OK;
@@ -92,8 +54,9 @@ void setShellProperties(HWND window, const QString& iconPath)
     set(PKEY_AppUserModel_RelaunchCommand,
         QLatin1Char('"') + QDir::toNativeSeparators(QCoreApplication::applicationFilePath()) + QLatin1Char('"'));
     set(PKEY_AppUserModel_RelaunchDisplayNameResource, QStringLiteral("Harken Hub"));
-    set(PKEY_AppUserModel_RelaunchIconResource, QDir::toNativeSeparators(iconPath) + QStringLiteral(",0"));
+    set(PKEY_AppUserModel_RelaunchIconResource, resource);
     set(PKEY_AppUserModel_ID, QString::fromWCharArray(hubAppUserModelId));
+    return changed;
 }
 
 }
@@ -104,6 +67,9 @@ TaskbarIcon::TaskbarIcon(QObject* parent)
     const HRESULT result = SetCurrentProcessExplicitAppUserModelID(hubAppUserModelId);
     if (FAILED(result))
         qWarning() << "Cannot set the Hub taskbar identity:" << result;
+    shortcutRetry_.setSingleShot(true);
+    shortcutRetry_.setInterval(250);
+    connect(&shortcutRetry_, &QTimer::timeout, this, &TaskbarIcon::updateShortcuts);
     qGuiApp->installEventFilter(this);
     qGuiApp->installNativeEventFilter(this);
 }
@@ -123,16 +89,65 @@ TaskbarIcon::~TaskbarIcon()
 void TaskbarIcon::setIcon(const QIcon& icon)
 {
     icon_ = icon;
-    iconPath_ = saveShellIcon(icon);
+    iconPath_ = saveShellIcon(icon, userDataDir() + QStringLiteral("/shell-icons"));
     if (iconPath_.isEmpty())
         qWarning() << "Cannot persist the Hub taskbar icon";
-    migrateShellShortcuts(iconPath_);
+    shortcutRetry_.stop();
     const auto previous = std::move(handles_);
     handles_.clear();
     for (QWindow* window : QGuiApplication::allWindows())
         apply(window);
     for (HICON handle : previous)
         DestroyIcon(handle);
+    if (!iconPath_.isEmpty())
+        updateShortcuts();
+}
+
+void TaskbarIcon::updateShortcuts()
+{
+    const auto result = migrateShellShortcuts(iconPath_);
+    if (result == ShortcutMigrationResult::Busy) {
+        shortcutRetry_.start();
+        return;
+    }
+    if (result == ShortcutMigrationResult::Failed)
+        qWarning() << "Cannot migrate the Hub shell shortcuts";
+    refreshTaskbar();
+}
+
+void TaskbarIcon::refreshTaskbar()
+{
+    QList<HWND> windows;
+    for (QWindow* window : QGuiApplication::allWindows()) {
+        if (!window->isTopLevel() || !window->isVisible() || !window->handle())
+            continue;
+        const HWND native = reinterpret_cast<HWND>(window->winId());
+        const LONG_PTR style = GetWindowLongPtrW(native, GWL_EXSTYLE);
+        if (IsWindowVisible(native) && !(style & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE)) &&
+            (!GetWindow(native, GW_OWNER) || (style & WS_EX_APPWINDOW)))
+            windows.append(native);
+    }
+    if (windows.isEmpty())
+        return;
+    const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    if (FAILED(initialized) && initialized != RPC_E_CHANGED_MODE)
+        return;
+    const auto uninitialize = qScopeGuard([initialized] {
+        if (SUCCEEDED(initialized))
+            CoUninitialize();
+    });
+    Microsoft::WRL::ComPtr<ITaskbarList> taskbar;
+    if (FAILED(CoCreateInstance(CLSID_TaskbarList, nullptr, CLSCTX_INPROC_SERVER,
+                                IID_PPV_ARGS(taskbar.GetAddressOf()))) || FAILED(taskbar->HrInit()))
+        return;
+    for (const HWND window : windows) {
+        if (FAILED(taskbar->DeleteTab(window)))
+            qWarning() << "Cannot detach the Hub taskbar button for icon refresh";
+    }
+    for (const HWND window : windows) {
+        if (FAILED(taskbar->AddTab(window)))
+            qWarning() << "Cannot restore the Hub taskbar button after icon refresh";
+    }
 }
 
 bool TaskbarIcon::eventFilter(QObject* watched, QEvent* event)
@@ -150,8 +165,8 @@ bool TaskbarIcon::eventFilter(QObject* watched, QEvent* event)
                     static_cast<QPlatformSurfaceEvent*>(event)->surfaceEventType() ==
                         QPlatformSurfaceEvent::SurfaceCreated))) {
         QTimer::singleShot(0, this, [this, guard = QPointer<QWindow>(window)] {
-            if (guard)
-                apply(guard);
+            if (guard && apply(guard))
+                refreshTaskbar();
         });
     }
     return QObject::eventFilter(watched, event);
@@ -186,17 +201,17 @@ HICON TaskbarIcon::iconHandle(int size)
     return handle;
 }
 
-void TaskbarIcon::apply(QWindow* window)
+bool TaskbarIcon::apply(QWindow* window)
 {
     if (!window->isTopLevel() || !window->handle() || icon_.isNull())
-        return;
+        return false;
     const HWND nativeWindow = reinterpret_cast<HWND>(window->winId());
-    if (!iconPath_.isEmpty())
-        setShellProperties(nativeWindow, iconPath_);
+    const bool changed = !iconPath_.isEmpty() && setShellProperties(nativeWindow, iconPath_);
     const int size = GetSystemMetricsForDpi(SM_CXICON, GetDpiForWindow(nativeWindow));
     const HICON handle = iconHandle(size);
     if (handle)
         SendMessageW(nativeWindow, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(handle));
+    return changed;
 }
 
 }
