@@ -212,6 +212,7 @@ FieldGroupEffectiveSnapshot buildFieldGroupEffectiveSnapshot(
     const FieldGroupResolver resolver(view.definitions, toFieldGroupGuid(master->guid));
     append(resolver.diagnostics(), {});
     if (!result.ok()) return result;
+    const FieldGroupReferenceCatalog references(view.referenceTargets);
     for (const auto& definition : view.definitions) {
         const auto output = resolver.Resolve(definition.guid, scope, FieldGroupId::MainOutput);
         const auto send = resolver.Resolve(definition.guid, scope, FieldGroupId::Send);
@@ -219,8 +220,8 @@ FieldGroupEffectiveSnapshot buildFieldGroupEffectiveSnapshot(
         for (const auto* resolved : {&output, &send, &spatial}) {
             append(resolved->diagnostics, definition.guid);
             if (resolved->value)
-                append(ValidateActiveFieldGroup(resolved->value->group,
-                    resolved->value->payload, view.referenceTargets), definition.guid);
+                append(references.Validate(resolved->value->group,
+                    resolved->value->payload), definition.guid);
         }
         if (!output.ok() || !send.ok() || !spatial.ok()) continue;
         EffectiveDefinitionFieldGroups groups{

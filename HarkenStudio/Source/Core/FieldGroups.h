@@ -246,6 +246,18 @@ struct FieldGroupReferenceTarget {
     FieldGroupReferenceKind kind = FieldGroupReferenceKind::Other;
 };
 
+class FieldGroupReferenceCatalog {
+public:
+    explicit FieldGroupReferenceCatalog(std::span<const FieldGroupReferenceTarget> targets);
+
+    std::vector<FieldGroupDiagnostic> Validate(
+        FieldGroupId group, const FieldGroupPayload& payload) const;
+
+private:
+    std::map<harkenprojectschema::AuthoringGuid, FieldGroupReferenceKind> targets_;
+    std::vector<harkenprojectschema::AuthoringGuid> invalidTargets_;
+};
+
 bool IsFieldGroupScopeValid(FieldGroupScope scope) noexcept;
 DefinitionFieldGroups MakeRootFieldGroups(
     harkenprojectschema::AuthoringGuid masterBusGuid);

@@ -330,7 +330,7 @@ static void syncGeneralAudioProperties(ProjectItem* item, harkenstudio::ObjectId
     auto& engine = AudioEngine::instance();
     const auto& groups = snapshot.definitions.at(toFieldGroupGuid(item->guid));
     if (item->comp<VMixNode>())
-        manager.pushItemPitchLive(item);
+        manager.pushItemPitchLive(item, snapshot);
     Bridge::setObjectOutputBus(objectId,
         manager.busRuntimeHandleForId(
             snapshot.objects.at(groups.mainOutput.mainOutputBusRef)->objectID));

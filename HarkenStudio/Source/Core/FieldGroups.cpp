@@ -303,25 +303,37 @@ std::vector<FieldGroupDiagnostic> ValidateActiveFieldGroup(
     FieldGroupId group, const FieldGroupPayload& payload,
     std::span<const FieldGroupReferenceTarget> targets)
 {
-    auto diagnostics = ValidateFieldGroupPayload(group, payload);
-    if (!diagnostics.empty()) return diagnostics;
-    std::map<AuthoringGuid, FieldGroupReferenceKind> catalog;
+    return FieldGroupReferenceCatalog(targets).Validate(group, payload);
+}
+
+FieldGroupReferenceCatalog::FieldGroupReferenceCatalog(
+    std::span<const FieldGroupReferenceTarget> targets)
+{
     for (const auto& target : targets) {
         const bool validKind = target.kind == FieldGroupReferenceKind::Bus ||
                                target.kind == FieldGroupReferenceKind::Attenuation ||
                                target.kind == FieldGroupReferenceKind::Other;
         if (harkenstudio::IsNull(target.guid) || !validKind ||
-            !catalog.emplace(target.guid, target.kind).second)
-            AddDiagnostic(diagnostics, DiagnosticCode::InvalidReferenceCatalog,
-                          group, {}, {}, target.guid);
+            !targets_.emplace(target.guid, target.kind).second)
+            invalidTargets_.push_back(target.guid);
     }
+}
+
+std::vector<FieldGroupDiagnostic> FieldGroupReferenceCatalog::Validate(
+    FieldGroupId group, const FieldGroupPayload& payload) const
+{
+    auto diagnostics = ValidateFieldGroupPayload(group, payload);
+    if (!diagnostics.empty()) return diagnostics;
+    for (const auto guid : invalidTargets_)
+        AddDiagnostic(diagnostics, DiagnosticCode::InvalidReferenceCatalog,
+                      group, {}, {}, guid);
     if (!diagnostics.empty()) return diagnostics;
     const auto validateReference = [&](AuthoringGuid guid,
                                        FieldGroupReferenceKind expectedKind,
                                        std::string_view field,
                                        std::optional<std::size_t> row = {}) {
-        const auto target = catalog.find(guid);
-        if (target == catalog.end()) {
+        const auto target = targets_.find(guid);
+        if (target == targets_.end()) {
             AddDiagnostic(diagnostics, DiagnosticCode::MissingReference,
                           group, field, row, guid);
         } else if (target->second != expectedKind) {

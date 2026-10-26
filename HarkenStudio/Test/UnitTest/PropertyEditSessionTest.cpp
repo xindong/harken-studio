@@ -1,6 +1,8 @@
 #include "UnitTest/StudioObjectIdTestSupport.h"
+#include "Support/ProjectPlatformTestUtils.h"
 #include "Core/Components/VSelection.h"
 #include "ProjectManager.h"
+#include "PlatformContextService.h"
 #include "PropertyEditSession.h"
 #include "ProjectTypes.h"
 #include "UndoCommands.h"
@@ -536,6 +538,71 @@ TEST_F(OutputBusPropertyTest, MainOutputGroupFollowsTheEngineeringParent)
     parentGroups.mainOutput.shared.mode = VNX::FieldGroupMode::Inherit;
     ASSERT_TRUE(pm.restoreFieldGroupsInternal(parent, parentGroups));
     EXPECT_EQ(pm.resolveEffectiveOutputBusId(sound), parentBus->objectID);
+}
+
+TEST_F(OutputBusPropertyTest, PitchIncludesContentAndSelectedBusAncestorsAfterPlatformChangesAndEdits)
+{
+    auto& pm = VNX::ProjectManager::instance();
+    pm.setProjectPlatformsInternal(HarkenTest::platforms({"Windows", "Android"}));
+    auto* layer = pm.createItem(nullptr, QStringLiteral("Layer"), VNX::ProjectItem::Type::Layer);
+    ASSERT_NE(layer, nullptr);
+    auto* container = pm.createItem(layer, QStringLiteral("Container"), VNX::ProjectItem::Type::Container);
+    ASSERT_NE(container, nullptr);
+    auto* sound = pm.createItem(container, QStringLiteral("Sound"), VNX::ProjectItem::Type::Sound);
+    ASSERT_NE(sound, nullptr);
+    auto* masterBus = pm.getMasterBusItem();
+    ASSERT_NE(masterBus, nullptr);
+    auto* parentBus = pm.createItem(masterBus, QStringLiteral("ParentBus"), VNX::ProjectItem::Type::Bus);
+    ASSERT_NE(parentBus, nullptr);
+    auto* windowsBus = pm.createItem(parentBus, QStringLiteral("WindowsBus"), VNX::ProjectItem::Type::Bus);
+    auto* androidBus = pm.createItem(parentBus, QStringLiteral("AndroidBus"), VNX::ProjectItem::Type::Bus);
+    ASSERT_NE(windowsBus, nullptr);
+    ASSERT_NE(androidBus, nullptr);
+
+    ASSERT_TRUE(pm.applyItemPropertyLive(layer, QStringLiteral("pitch"), 300.0f));
+    ASSERT_TRUE(pm.applyItemPropertyLive(container, QStringLiteral("pitch"), -50.0f));
+    ASSERT_TRUE(pm.applyItemPropertyLive(sound, QStringLiteral("pitch"), 150.0f));
+    ASSERT_TRUE(pm.applyBusPropertyLive(masterBus, QStringLiteral("pitch"), 25.0f));
+    ASSERT_TRUE(pm.applyBusPropertyLive(parentBus, QStringLiteral("pitch"), 100.0f));
+    ASSERT_TRUE(pm.applyBusPropertyLive(windowsBus, QStringLiteral("pitch"), 200.0f));
+    ASSERT_TRUE(pm.applyBusPropertyLive(androidBus, QStringLiteral("pitch"), -400.0f));
+
+    auto groups = layer->fieldGroups;
+    groups.mainOutput.shared = {VNX::FieldGroupMode::Local,
+        VNX::MainOutputFieldGroup{VNX::toFieldGroupGuid(windowsBus->guid), 0.0f}};
+    groups.mainOutput.platforms[VNX::toFieldGroupGuid(HarkenTest::PlatformIds::Android)] = {
+        VNX::FieldGroupMode::Local,
+        VNX::MainOutputFieldGroup{VNX::toFieldGroupGuid(androidBus->guid), 0.0f}};
+    ASSERT_TRUE(pm.restoreFieldGroupsInternal(layer, groups));
+
+    auto& context = VNX::PlatformContextService::instance();
+    context.setSelected({HarkenTest::PlatformIds::Windows}, HarkenTest::PlatformIds::Windows, false);
+    EXPECT_EQ(pm.resolveEffectiveOutputBusId(sound), windowsBus->objectID);
+    EXPECT_FLOAT_EQ(pm.aggregatePitchForItem(sound), 725.0f);
+
+    context.setSelected({HarkenTest::PlatformIds::Android}, HarkenTest::PlatformIds::Android, false);
+    EXPECT_EQ(pm.resolveEffectiveOutputBusId(sound), androidBus->objectID);
+    EXPECT_FLOAT_EQ(pm.aggregatePitchForItem(sound), 125.0f);
+
+    context.setSelected({HarkenTest::PlatformIds::Windows}, HarkenTest::PlatformIds::Windows, false);
+    EXPECT_FLOAT_EQ(pm.aggregatePitchForItem(sound), 725.0f);
+    ASSERT_TRUE(pm.applyBusPropertyLive(parentBus, QStringLiteral("pitch"), 250.0f));
+    EXPECT_FLOAT_EQ(pm.aggregatePitchForItem(sound), 875.0f);
+
+    context.setSelected({HarkenTest::PlatformIds::Android}, HarkenTest::PlatformIds::Android, false);
+    EXPECT_FLOAT_EQ(pm.aggregatePitchForItem(sound), 275.0f);
+    ASSERT_TRUE(pm.applyItemPropertyLive(layer, QStringLiteral("pitch"), 100.0f));
+    EXPECT_FLOAT_EQ(pm.aggregatePitchForItem(sound), 75.0f);
+
+    groups.mainOutput.platforms[VNX::toFieldGroupGuid(HarkenTest::PlatformIds::Android)] = {
+        VNX::FieldGroupMode::Local,
+        VNX::MainOutputFieldGroup{VNX::toFieldGroupGuid(windowsBus->guid), 0.0f}};
+    ASSERT_TRUE(pm.restoreFieldGroupsInternal(layer, groups));
+    EXPECT_EQ(pm.resolveEffectiveOutputBusId(sound), windowsBus->objectID);
+    EXPECT_FLOAT_EQ(pm.aggregatePitchForItem(sound), 675.0f);
+
+    context.setSelected({HarkenTest::PlatformIds::Windows}, HarkenTest::PlatformIds::Windows, false);
+    EXPECT_FLOAT_EQ(pm.aggregatePitchForItem(sound), 675.0f);
 }
 
 TEST_F(OutputBusPropertyTest, MainOutputGroupCommitWritesAndMarksDirty)

@@ -63,6 +63,7 @@ class IPCServer;
 class PropertyEditSession;
 struct ActionResult;
 struct FieldGroupDefinitionSnapshot;
+struct FieldGroupEffectiveSnapshot;
 
 struct PreparedProject
 {
@@ -298,6 +299,8 @@ public:
     static uint32_t resolveEffectiveOutputBusId(const ProjectItem* item);
     float aggregatePitchForItem(const ProjectItem* item) const;
     void pushItemPitchLive(ProjectItem* item);
+    void pushItemPitchLive(ProjectItem* item, const FieldGroupEffectiveSnapshot& snapshot);
+    void propagateItemPitchLive(ProjectItem* item);
     float aggregateVolumeDbForItem(const ProjectItem* item) const;
     float effectiveOutputVolumeDbForItem(const ProjectItem* item) const;
     float effectiveBusVolumeDb(const ProjectItem* busItem) const;
@@ -442,6 +445,14 @@ public:
 
 
 private:
+    float aggregatePitchForItem(const ProjectItem* item, const ProjectItem* outputBus) const;
+    float effectiveOutputVolumeDbForItem(const ProjectItem* item,
+                                         const FieldGroupEffectiveSnapshot& snapshot) const;
+    void pushItemVolumeLive(ProjectItem* item, const FieldGroupEffectiveSnapshot& snapshot);
+    std::vector<Send> aggregateVoiceSendsForItem(
+        const ProjectItem* item, const FieldGroupEffectiveSnapshot& snapshot) const;
+    void pushItemSendsLive(ProjectItem* item, const FieldGroupEffectiveSnapshot& snapshot);
+    void pushItemDistanceScaleLive(ProjectItem* item, const FieldGroupEffectiveSnapshot& snapshot);
     QList<PhysicalFolder*> normalizeFolderEntries(const QList<PhysicalFolder*>& folders) const;
     bool prepareItemRename(ProjectItem* item, const QString& requestedName, RenamePolicy policy,
                             QString& newName, QString* error) const;
