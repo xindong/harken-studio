@@ -98,10 +98,14 @@ def installer_ui(tables, license_rtf):
         ("LicenseDialog", "Next", "Enable", 'LICENSEACCEPTED="1"'),
         ("LicenseDialog", "Next", "Disable", 'NOT LICENSEACCEPTED="1"'),
     ]
-    dialog("FolderDialog", "Install Harken Hub", "Path", "Next", "Cancel")
+    dialog("FolderDialog", "Install Harken Hub", "Next", "Next", "Cancel")
     control("FolderDialog", "Description", "Text", (18, 55, 384, 42),
-            "Choose the installation folder. Setup will replace an older installation and keep your projects and settings.")
+            "Choose the folder for a new installation. Upgrades keep the existing folder, projects, and settings.")
     control("FolderDialog", "Path", "PathEdit", (18, 112, 384, 20), prop="INSTALLFOLDER", next="Back")
+    tables["ControlCondition"] += [
+        ("FolderDialog", "Path", "Enable", "NOT HARKENPREVIOUSINSTALLDIR"),
+        ("FolderDialog", "Path", "Disable", "HARKENPREVIOUSINSTALLDIR"),
+    ]
     control("FolderDialog", "Back", "PushButton", (170, 285, 72, 20), "Back", next="Next")
     event("FolderDialog", "Back", "NewDialog", "LicenseDialog")
     control("FolderDialog", "Next", "PushButton", (250, 285, 72, 20), "Install", next="Cancel")
@@ -141,7 +145,7 @@ def package_tables(files, input_dir, version, license_rtf):
         ("ProductCode", "{" + str(uuid.uuid4()).upper() + "}"), ("ProductLanguage", "1033"),
         ("ProductVersion", version), ("UpgradeCode", UPGRADE_CODE), ("ARPNOMODIFY", "1"),
         ("ARPPRODUCTICON", "HubIcon.ico"),
-        ("SecureCustomProperties", "HARKENBRIDGE;HARKENSELFUPDATE;INSTALLFOLDER;HARKEN_UPGRADE_DETECTED;HARKEN_DOWNGRADE_DETECTED"),
+        ("SecureCustomProperties", "HARKENBRIDGE;HARKENSELFUPDATE;INSTALLFOLDER;HARKENPREVIOUSINSTALLDIR;HARKEN_UPGRADE_DETECTED;HARKEN_DOWNGRADE_DETECTED"),
     ]
     tables["Icon"] = [("HubIcon.ico", Path(__file__).resolve().parents[2] / "HarkenHub/Resources/icons/HubIcon.ico")]
     tables["Directory"] = [
@@ -214,9 +218,10 @@ def package_tables(files, input_dir, version, license_rtf):
         ("NOT HARKEN_DOWNGRADE_DETECTED", "A newer version of Harken Hub is already installed."),
         ("VersionNT64", "Harken Hub requires 64-bit Windows."),
     ]
-    tables["AppSearch"] = [("INSTALLFOLDER", "PreviousInstallFolder")]
+    tables["AppSearch"] = [("HARKENPREVIOUSINSTALLDIR", "PreviousInstallFolder")]
     tables["RegLocator"] = [("PreviousInstallFolder", 2, registry_key, "InstallDir", 18)]
     tables["CustomAction"] = [
+        ("HarkenPreserveInstallFolder", 51, "INSTALLFOLDER", "[HARKENPREVIOUSINSTALLDIR]"),
         ("HarkenHealthHandshake", 1058, "INSTALLFOLDER", '"[INSTALLFOLDER]HarkenHub.exe" --await-health-handshake'),
         ("HarkenRestartHub", 1762, "INSTALLFOLDER", '"[INSTALLFOLDER]HarkenHub.exe"'),
         ("HarkenRegisterUpdateBridge", 3106, "INSTALLFOLDER", '"[INSTALLFOLDER]HarkenHub.exe" --register-update-bridge'),
@@ -224,6 +229,7 @@ def package_tables(files, input_dir, version, license_rtf):
         ("HarkenUnregisterUpdateBridge", 3170, "INSTALLFOLDER", '"[INSTALLFOLDER]HarkenHub.exe" --unregister-update-bridge'),
     ]
     prepare = [("FindRelatedProducts", None, 25), ("AppSearch", None, 50),
+               ("HarkenPreserveInstallFolder", "HARKENPREVIOUSINSTALLDIR", 51),
                ("LaunchConditions", None, 100), ("ValidateProductID", None, 700),
                ("CostInitialize", None, 800), ("FileCost", None, 900),
                ("CostFinalize", None, 1000), ("MigrateFeatureStates", None, 1200)]
