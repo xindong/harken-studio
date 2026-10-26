@@ -76,18 +76,25 @@ void BlueprintCanvasWidget::activateNodeEditorAt_(const QPoint& position)
 
 void BlueprintCanvasWidget::scheduleContentRetirement_()
 {
-    if (contentRetirementScheduled_) return;
+    if (contentRetirementScheduled_ || liveNodeEditors_.isEmpty()) return;
     contentRetirementScheduled_ = true;
     QTimer::singleShot(0, this, [this] {
         contentRetirementScheduled_ = false;
         auto* hovered = viewport()->underMouse() ? itemAt(viewport()->mapFromGlobal(QCursor::pos())) : nullptr;
-        const auto retire = [hovered](NodeItem* node) {
-            if (node && node != hovered && (!hovered || !node->isAncestorOf(hovered)))
+        const auto editors = liveNodeEditors_;
+        for (auto it = editors.cbegin(); it != editors.cend(); ++it) {
+            if (!it.value()) continue;
+            auto* node = it.key();
+            if (node != hovered && (!hovered || !node->isAncestorOf(hovered)))
                 node->releaseContentWidget();
-        };
-        for (const auto& [key, node] : nodeMap_) retire(node);
-        for (auto* node : gainNodes_) retire(node);
+        }
     });
+}
+
+void BlueprintCanvasWidget::trackNodeEditor_(NodeItem* node, NodeContentEditor* editor)
+{
+    liveNodeEditors_.insert(node, editor);
+    connect(editor, &QObject::destroyed, this, [this, node] { liveNodeEditors_.remove(node); });
 }
 
 void BlueprintCanvasWidget::installNodeEditor_(NodeItem* node, const BlueprintNodeDesc& desc)
@@ -151,6 +158,7 @@ void BlueprintCanvasWidget::installNodeEditor_(NodeItem* node, const BlueprintNo
                 preview(field, value);
                 finish(field, true);
             });
+        trackNodeEditor_(node, editor);
         return editor;
     }, [this, node]() {
         return contentRenderer_->presentation(node->contentInfo(), node->contentFields(),
@@ -209,6 +217,7 @@ void BlueprintCanvasWidget::installGainEditor_(NodeItem* node)
             pathRefreshPending_ = false;
             schedulePathRefresh_();
         });
+        trackNodeEditor_(node, editor);
         return editor;
     }, [this, node]() {
         return contentRenderer_->presentation(node->contentInfo(), node->contentFields(),

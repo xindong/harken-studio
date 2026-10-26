@@ -930,6 +930,7 @@ TEST_F(SignalPathObservationTest, TabTraversalActivatesInactiveNodesInBothDirect
     QApplication::sendEvent(slider, &tab);
     auto* next = qobject_cast<NodeContentEditor*>(second->contentWidget());
     ASSERT_NE(next, nullptr);
+    QPointer<NodeContentEditor> nextEditor(next);
     auto* nextSlider = next->findChild<QSlider*>();
     ASSERT_NE(nextSlider, nullptr);
     EXPECT_TRUE(nextSlider->hasFocus());
@@ -940,6 +941,20 @@ TEST_F(SignalPathObservationTest, TabTraversalActivatesInactiveNodesInBothDirect
     auto* previous = qobject_cast<NodeContentEditor*>(first->contentWidget());
     ASSERT_NE(previous, nullptr);
     EXPECT_TRUE(previous->findChild<QSlider*>()->hasFocus());
+    QPointer<NodeContentEditor> previousEditor(previous);
+    canvas.centerOn(first->scenePos() + QPointF(50000, 50000));
+    drainEvents();
+    EXPECT_TRUE(nextEditor.isNull());
+    EXPECT_EQ(second->contentWidget(), nullptr);
+    ASSERT_FALSE(previousEditor.isNull());
+    EXPECT_TRUE(previousEditor->findChild<QSlider*>()->hasFocus());
+    canvas.scene()->clearFocus();
+    canvas.clearFocus();
+    QEvent leave(QEvent::Leave);
+    QApplication::sendEvent(canvas.viewport(), &leave);
+    drainEvents();
+    EXPECT_TRUE(previousEditor.isNull());
+    EXPECT_EQ(first->contentWidget(), nullptr);
     EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 0);
 }
 
@@ -3372,9 +3387,17 @@ TEST_F(SignalPathObservationTest, ClosingProjectCancelsPendingRefresh)
     BlueprintCanvasWidget canvas;
     canvas.focusItem(l3);
     canvas.focusItem(c1);
+    QPointer<NodeContentEditor> ordinary(editorFor(canvas, s1));
+    QPointer<NodeContentEditor> gain(gainEditorFor(canvas, SignalPathEdgeKind::Send, c1, b2));
+    ASSERT_FALSE(ordinary.isNull());
+    ASSERT_FALSE(gain.isNull());
     emit ProjectManager::instance().itemPropertyChanged(c1, QStringLiteral("volume"));
+    QEvent leave(QEvent::Leave);
+    QApplication::sendEvent(canvas.viewport(), &leave);
     ProjectManager::instance().closeProject();
     drainEvents();
+    EXPECT_TRUE(ordinary.isNull());
+    EXPECT_TRUE(gain.isNull());
     EXPECT_TRUE(canvas.scene()->items().empty());
 }
 
