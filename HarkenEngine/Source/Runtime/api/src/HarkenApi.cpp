@@ -47133,6 +47133,17 @@ bool ServiceStartedRootSound(harken::Engine& engine,
     return true;
 }
 
+bool ServiceStartedRootSoundWithoutPendingWork(harken::Engine& engine,
+    harken::EnginePlayableServiceRow& row) noexcept {
+    return !row.privateImmediateEntry.Valid() &&
+        row.privateVariableControlRollbackGeneration == 0 &&
+        row.publishedDeferredStoppingGeneration == 0 &&
+        row.privateOrdinaryDeferredRollbackGeneration == 0 &&
+        row.pendingCancellationIntent == 0 && !row.variableControlDeferredCancellation &&
+        !row.partitionRetiring && !row.zeroWorkMarker && !row.queueTimingPending &&
+        !row.frontierEntry.Valid() && ServiceStartedRootSound(engine, row);
+}
+
 void ServicePlayableStarts(harken::Engine& engine,
                            std::uint64_t observedAudioSequence,
                            std::uint64_t* blockingFrame,
@@ -47146,13 +47157,7 @@ void ServicePlayableStarts(harken::Engine& engine,
         if (row.phase == harken::EnginePlayableStartPhase::Free) continue;
         // Stable roots have no pending work in the generic reconciliation prefix.
         if (engine.activeImmediateEntryAttemptCount == 0 &&
-            !row.privateImmediateEntry.Valid() &&
-            row.privateVariableControlRollbackGeneration == 0 &&
-            row.publishedDeferredStoppingGeneration == 0 &&
-            row.privateOrdinaryDeferredRollbackGeneration == 0 &&
-            row.pendingCancellationIntent == 0 && !row.variableControlDeferredCancellation &&
-            !row.partitionRetiring && !row.zeroWorkMarker && !row.queueTimingPending &&
-            !row.frontierEntry.Valid() && ServiceStartedRootSound(engine, row)) continue;
+            ServiceStartedRootSoundWithoutPendingWork(engine, row)) continue;
         if (row.privateImmediateEntry.Valid() && !row.privateImmediateEntry.commonPinsRetired) {
             (void)ServicePrivateImmediateEntryVoiceStops(engine, row);
             continue;
@@ -47175,6 +47180,10 @@ void ServicePlayableStarts(harken::Engine& engine,
                 harken::InitialQueuePrivateCleanupPhase::None &&
             privateAttempt->privateCleanupPhase !=
                 harken::InitialQueuePrivateCleanupPhase::Finished) continue;
+        // Unrelated pending roots do not require this source's generic reconciliation.
+        if (engine.activeImmediateEntryAttemptCount != 0 &&
+            privateAttempt == nullptr && retirementAttempt == nullptr &&
+            ServiceStartedRootSoundWithoutPendingWork(engine, row)) continue;
         if (row.phase == harken::EnginePlayableStartPhase::PendingImmediateEntry &&
             !(row.pendingCancellationIntent != 0 && privateAttempt != nullptr &&
               privateAttempt->plainSelected)) continue;

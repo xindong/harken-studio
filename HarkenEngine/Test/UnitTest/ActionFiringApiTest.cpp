@@ -6628,6 +6628,41 @@ TEST(ActionFiringApi, CohortTraversalKeepsLiveSlotOrderAcrossRebindingAndReuse) 
     EXPECT_EQ(nullptr, engine.NextOccupiedPlayableCohortService(firings[1], &reused));
     engine.SetPlayableServiceCohortRoot(*replacement, replay);
     EXPECT_TRUE(members(firings[0]).empty());
+    ASSERT_GT(engine.activeImmediateEntryAttemptCount, 0u);
+    ASSERT_TRUE(replacement->pendingImmediateEntry);
+    std::array<harken::EnginePlayableServiceToken, 4> stableServices{};
+    std::array<harken::TimelineArmToken, 4> stableArms{};
+    std::array<std::uint64_t, 4> stableStarts{};
+    for (std::size_t index = 1; index < rows.size(); ++index) {
+        const auto& original = *rows[index];
+        ASSERT_EQ(harken::EnginePlayableStartPhase::Started, original.phase);
+        ASSERT_FALSE(original.privateImmediateEntry.Valid());
+        ASSERT_TRUE(original.InvocationValid());
+        EXPECT_FALSE(std::any_of(engine.immediateEntryAttempts.begin(), engine.immediateEntryAttempts.end(),
+            [&](const auto& attempt) {
+                return attempt.active && (attempt.root == original.PendingImmediateCohortRoot() ||
+                    attempt.root == original.Invocation().actionFiring);
+            }));
+        stableServices[index - 1u] = original.identity;
+        stableArms[index - 1u] = original.arm;
+        stableStarts[index - 1u] = original.lastAppliedBlockSequence;
+    }
+    ASSERT_EQ(VN_OK, Vn_Update());
+    for (std::size_t index = 1; index < rows.size(); ++index) {
+        const auto& original = *rows[index];
+        EXPECT_EQ(stableServices[index - 1u], original.identity);
+        EXPECT_EQ(stableArms[index - 1u].slot, original.arm.slot);
+        EXPECT_EQ(stableArms[index - 1u].generation, original.arm.generation);
+        EXPECT_EQ(stableArms[index - 1u].renderSlot, original.arm.renderSlot);
+        EXPECT_EQ(stableArms[index - 1u].renderGeneration, original.arm.renderGeneration);
+        EXPECT_EQ(stableStarts[index - 1u], original.lastAppliedBlockSequence);
+        EXPECT_EQ(harken::EnginePlayableStartPhase::Started, original.phase);
+    }
+    for (std::uint32_t block = 0; block < 8; ++block) {
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    EXPECT_EQ(harken::EnginePlayableStartPhase::Started, replacement->phase);
     for (std::size_t index = 1; index < firings.size(); ++index)
         ASSERT_EQ(VN_OK, Vn_StopActionFiring(firings[index], 0));
     ASSERT_EQ(VN_OK, Vn_StopActionFiring(replay, 0));
