@@ -264,6 +264,10 @@ TEST(NullBackendLifecycle, ArgumentAndStateErrors) {
     EXPECT_EQ(VN_INVALID_CONFIG, Vn_Init(&badMode));
 
     const VnConfig good = MakeNullConfig();
+    harken::detail::StablePageReservation::FailNextReservationForTests();
+    EXPECT_EQ(VN_INVALID_CONFIG, Vn_Init(&good));
+    EXPECT_EQ(nullptr, harken::detail::ActiveEngine());
+    EXPECT_EQ(VN_NOT_INITIALIZED, Vn_Term());
     ASSERT_EQ(VN_OK, Vn_Init(&good));
     EXPECT_EQ(VN_ALREADY_INITIALIZED, Vn_Init(&good));
     EXPECT_EQ(VN_OK, Vn_Term());

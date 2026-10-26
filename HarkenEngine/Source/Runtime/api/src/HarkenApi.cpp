@@ -5349,6 +5349,18 @@ bool CanonicalSetMutationBlocked() noexcept {
 }
 
 namespace {
+struct EnginePageOwner {
+    StablePageReservation pages;
+    Engine* instance = nullptr;
+
+    ~EnginePageOwner() {
+        if (instance != nullptr) std::destroy_at(instance);
+    }
+};
+
+// Public detachment leaves this owner alive until the existing teardown epilogue.
+EnginePageOwner* g_engineOwner = nullptr;
+
 // Survives Term/Init so checked tokens cannot revive after reloading the same Packs.
 std::uint64_t g_lastPackGeneration = 0;
 #if !defined(HARKEN_RT_QUALIFICATION)
@@ -5482,7 +5494,9 @@ void TeardownEngine(Engine* engine) {
     }
     g_lastPackGeneration = std::max(g_lastPackGeneration,
         engine->packComposition.CompositeGeneration());
-    delete engine;
+    assert(g_engineOwner != nullptr && g_engineOwner->instance == engine);
+    delete g_engineOwner;
+    g_engineOwner = nullptr;
     g_engine = nullptr;
     g_termPending = false;
     memguard::Uninstall();
@@ -40310,6 +40324,12 @@ PendingVariableGroupSelectionResult ServicePendingVariableGroupSelectionReplacem
     return Result::Published;
 }
 
+// Keep the full reselection workspace off ordinary entry-service stack frames.
+#if defined(_MSC_VER)
+__declspec(noinline)
+#elif defined(__GNUC__) || defined(__clang__)
+__attribute__((noinline))
+#endif
 PendingVariableGroupSelectionResult ServiceRegisteredPendingVariableGroupSelectionReplacement(
     harken::Engine& engine, harken::EngineImmediateEntryAttempt& attempt) noexcept {
     using Result = PendingVariableGroupSelectionResult;
@@ -93911,7 +93931,8 @@ VnResult Vn_Init(const VnConfig* config) {
         return VN_IN_USE;
     }
     harken::memguard::Install();
-    std::unique_ptr<harken::Engine> engine;
+    std::unique_ptr<harken::detail::EnginePageOwner> engineOwner;
+    harken::Engine* engine = nullptr;
     try {
         // Construction preallocates every pool (voices, buses, effect instance
         // pools, queues) up front. A resolved config that passes the capacity
@@ -93930,9 +93951,16 @@ VnResult Vn_Init(const VnConfig* config) {
             originalCapacity.originalConditionalRows != 0)
             originalConditionalRows = originalCapacity.originalConditionalRows;
 #endif
-        engine.reset(new harken::Engine(resolved, harken::detail::g_lastPackGeneration,
-            originalConditionalRows));
+        engineOwner = std::make_unique<harken::detail::EnginePageOwner>();
+        if (!engineOwner->pages.Reserve(sizeof(harken::Engine), alignof(harken::Engine)) ||
+            !engineOwner->pages.CommitThrough(sizeof(harken::Engine))) {
+            throw std::bad_alloc();
+        }
+        engine = std::construct_at(static_cast<harken::Engine*>(engineOwner->pages.Address()),
+            resolved, harken::detail::g_lastPackGeneration, originalConditionalRows);
+        engineOwner->instance = engine;
     } catch (...) {
+        engineOwner.reset();
         harken::memguard::Uninstall();
         return VN_INVALID_CONFIG;
     }
@@ -93965,22 +93993,23 @@ VnResult Vn_Init(const VnConfig* config) {
             device = VN_DEVICE_ERROR;
         }
         if (device != VN_OK) {
-            engine.reset();
+            engineOwner.reset();
             harken::memguard::Uninstall();
             return VN_DEVICE_ERROR;
         }
     }
     // Publish only after the complete device/worker transaction and callback
     // render admission commit succeed.
-    harken::Engine* published = engine.get();
+    harken::Engine* published = engine;
     const VnResult monitorInit = harken::monitor::OnEngineInit(published);
     if (monitorInit != VN_OK) {
         harken::monitor::OnEngineTeardown(published);
-        engine.reset();
+        engineOwner.reset();
         harken::memguard::Uninstall();
         return monitorInit;
     }
-    harken::detail::g_engine = engine.release();
+    harken::detail::g_engineOwner = engineOwner.release();
+    harken::detail::g_engine = engine;
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
