@@ -294,6 +294,8 @@ Publisher 的 Init 与 Action 行通过公共 `TableRowProgressRole` / `TableRow
 
 Publisher 不再提供行右键 Export Settings 弹窗；打包输出目录统一在 Project Settings > Build 设置。媒体转换失败固定尝试默认处理参数或原始文件回退，成功后继续并记录首次失败原因；源文件缺失、变更或回退失败仍报错。旧工程的 `conversionFailurePolicy` 字段允许加载，但不再参与导出，保存时不再写入。
 
+无步骤的独立 Action 或全空包组显示 `Skipped` 并附带警告，不显示失败或已构建；GUI 与 IPC 的批次结果均允许其他包继续发布。波形附属导出失败同样为警告，对应主包继续发布并省略不完整的波形索引。带警告的成功行使用公共 Warning 文本状态，详情保留在 Result 悬浮提示和日志中。取消行显示 Canceled，日志不再将其计为失败或已导出。最终校验与 Self-cleaning 在后台执行，取消检查延伸至事务提交前的准备过程。
+
 控件行通过 `registerRow(row, cells, details)` 将同属 `rowsWidget()` 的主行和展开容器登记为一条逻辑行，`details` 可省略。字段先放入 `createCell` 创建的共享单元格，再登记单元格；不把裸字段控件作为补边距的容器。展开容器提供自己的内容布局；公共表格负责同步选中状态、行号列宽度、内容缩进及主行与详情之间的分隔线，删除主行时一并清理详情。业务用 `rowForWidget(widget)` 将展开区及其子控件的交互归属到主行，不再复制详情的行号或选中状态。
 
 ## 后续治理边界

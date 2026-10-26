@@ -180,6 +180,12 @@ void ObjectRefWidget::setEditGuard(std::function<bool()> guard)
     editGuard_ = std::move(guard);
 }
 
+void ObjectRefWidget::setSelectionError(std::function<QString(uint32_t)> error)
+{
+    cancelPendingSelection();
+    selectionError_ = std::move(error);
+}
+
 void ObjectRefWidget::cancelPendingSelection()
 {
     ++selectionGeneration_;
@@ -426,6 +432,7 @@ void ObjectRefWidget::openSelector(QWidget* anchor)
     req.directChildParentGuid = directChildParentGuid_;
     req.currentObjectID = inherited_ ? 0 : objectID_;
     req.isSelectable = isSelectable_;
+    req.selectionError = selectionError_;
     QPointer<ObjectRefWidget> self(this);
     req.onSelected = [self, generation = selectionGeneration_](uint32_t id) {
         if (self && self->selectionGeneration_ == generation)
@@ -450,7 +457,8 @@ bool ObjectRefWidget::canAcceptObject(uint32_t objectID) const
     const IRefDomainAdapter& adapter = refDomainAdapter(domain_);
     return adapter.exists(objectID)
         && adapter.matchesFilter(objectID, {filterType_, filterTypes_, directChildParentGuid_})
-        && (!isSelectable_ || isSelectable_(objectID));
+        && (!isSelectable_ || isSelectable_(objectID))
+        && (!selectionError_ || selectionError_(objectID).isEmpty());
 }
 
 bool ObjectRefWidget::canAcceptMime(const QMimeData* mime) const

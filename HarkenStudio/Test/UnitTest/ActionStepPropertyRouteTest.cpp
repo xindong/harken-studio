@@ -179,6 +179,59 @@ TEST_F(ActionStepPropertyRouteTest, RejectsUnknownAndWrongTargetWithoutMutation)
     EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), undoCount);
 }
 
+TEST_F(ActionStepPropertyRouteTest, GuiAndIpcRejectPostActionCyclesWithoutMutation)
+{
+    auto& manager = ProjectManager::instance();
+    ProjectItem* nested = manager.createItem(nullptr, QStringLiteral("NestedAction"),
+        ProjectItem::Type::Action);
+    ASSERT_NE(nested, nullptr);
+    nested->comp<VAction>()->steps = ActionStepEditing::stepsFromJson(
+        QJsonArray{stepJson(QStringLiteral("PostAction"), action_)});
+    nested->markDirty();
+    ASSERT_TRUE(manager.saveProject());
+    UndoRedoManager::instance().clear();
+    const QJsonArray replacement{stepJson(QStringLiteral("PostAction"), nested)};
+
+    const auto gui = setSteps(replacement);
+    EXPECT_FALSE(gui.success);
+    EXPECT_EQ(gui.errorCode, QStringLiteral("POST_ACTION_CYCLE"));
+    EXPECT_TRUE(gui.errorMessage.contains(QStringLiteral("Action -> NestedAction -> Action")));
+    const auto ipc = ipcSetSteps(replacement);
+    EXPECT_EQ(ipc.value(QStringLiteral("status")).toString(), QStringLiteral("error"));
+    EXPECT_EQ(ipc.value(QStringLiteral("code")).toString(), QStringLiteral("POST_ACTION_CYCLE"));
+    EXPECT_TRUE(action_->comp<VAction>()->steps.empty());
+    EXPECT_FALSE(action_->isDirtyObject());
+    EXPECT_FALSE(nested->isDirtyObject());
+    EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 0);
+}
+
+TEST_F(ActionStepPropertyRouteTest, ReplacementCanRepairAnExistingPostActionCycle)
+{
+    auto& manager = ProjectManager::instance();
+    ProjectItem* nested = manager.createItem(nullptr, QStringLiteral("NestedAction"),
+        ProjectItem::Type::Action);
+    ASSERT_NE(nested, nullptr);
+    action_->comp<VAction>()->steps = ActionStepEditing::stepsFromJson(
+        QJsonArray{stepJson(QStringLiteral("PostAction"), nested)});
+    nested->comp<VAction>()->steps = ActionStepEditing::stepsFromJson(
+        QJsonArray{stepJson(QStringLiteral("PostAction"), action_)});
+    action_->markDirty();
+    nested->markDirty();
+    ASSERT_TRUE(manager.saveProject());
+    UndoRedoManager::instance().clear();
+
+    const auto oldSteps = ActionStepEditing::stepsToJson(action_->comp<VAction>()->steps);
+    const auto repaired = setSteps(QJsonArray{});
+    ASSERT_TRUE(repaired.success) << repaired.errorMessage.toStdString();
+    EXPECT_TRUE(action_->comp<VAction>()->steps.empty());
+    EXPECT_EQ(nested->comp<VAction>()->steps.size(), 1u);
+    EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 1);
+    UndoRedoManager::instance().undoStack()->undo();
+    EXPECT_EQ(ActionStepEditing::stepsToJson(action_->comp<VAction>()->steps), oldSteps);
+    UndoRedoManager::instance().undoStack()->redo();
+    EXPECT_TRUE(action_->comp<VAction>()->steps.empty());
+}
+
 TEST_F(ActionStepPropertyRouteTest, CanonicalizesNamesAndSetValueRange)
 {
     QJsonObject setValue = stepJson(QStringLiteral("SetVariable"), variable_);

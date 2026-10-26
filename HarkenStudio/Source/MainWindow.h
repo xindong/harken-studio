@@ -353,7 +353,8 @@ private:
                                     const QString& statusOverride = QString(),
                                     const QString& language = QString(),
                                     const QJsonObject* platformDefinition = nullptr,
-                                    const QString& unitKey = QString());
+                                    const QString& unitKey = QString(),
+                                    bool canceled = false);
 
 protected:
     void closeEvent(QCloseEvent* event) override;

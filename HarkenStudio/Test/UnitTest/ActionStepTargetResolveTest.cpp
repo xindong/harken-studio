@@ -1,4 +1,5 @@
 #include "ActionStepUtils.h"
+#include "Components/VAction.h"
 #include "ItemTypeCatalog.h"
 #include "ProjectTypes.h"
 
@@ -109,6 +110,62 @@ TEST(ActionStepTargetMatrix, PostActionRejectsSelf)
         VActionStep::Type::PostAction, PT::Action, 9, 10));
     EXPECT_FALSE(EU::canActionStepReferenceObject(
         VActionStep::Type::PostAction, PT::Action, 10, 10));
+}
+
+TEST(ActionStepTargetResolve, PostActionGraphRejectsCyclesAndAllowsSharedDependencies)
+{
+    Fixture f;
+    auto* a = f.add(ProjectItem::Type::Action, QStringLiteral("A"), 10);
+    auto* b = f.add(ProjectItem::Type::Action, QStringLiteral("B"), 20);
+    auto* c = f.add(ProjectItem::Type::Action, QStringLiteral("C"), 30);
+    auto* d = f.add(ProjectItem::Type::Action, QStringLiteral("D"), 40);
+    const auto post = [](const ProjectItem* target) {
+        VActionStep step;
+        step.type = VActionStep::Type::PostAction;
+        step.targetObjectID = target->objectID;
+        step.targetName = target->name;
+        return step;
+    };
+    const std::vector<VActionStep> replacement{post(b), post(c)};
+    b->compOrCreate<VNX::VAction>()->steps = {post(d)};
+    c->compOrCreate<VNX::VAction>()->steps = {post(d)};
+    EXPECT_TRUE(EU::postActionCycleError(a->objectID, replacement, f.lookup()).isEmpty());
+
+    d->compOrCreate<VNX::VAction>()->steps = {post(a)};
+    EXPECT_EQ(EU::postActionCycleError(a->objectID, replacement, f.lookup()),
+        QStringLiteral("PostAction dependency cycle: A -> B -> D -> A"));
+    b->comp<VNX::VAction>()->steps = {post(a)};
+    EXPECT_EQ(EU::postActionCycleError(a->objectID, replacement, f.lookup()),
+        QStringLiteral("PostAction dependency cycle: A -> B -> A"));
+    EXPECT_EQ(EU::postActionCycleError(a->objectID, {post(a)}, f.lookup()),
+        QStringLiteral("PostAction dependency cycle: A -> A"));
+    EXPECT_TRUE(EU::postActionCycleError(a->objectID, {}, f.lookup()).isEmpty());
+}
+
+TEST(ActionStepTargetResolve, PostActionGraphOwnsDependenciesAndUsesCanonicalTargetResolution)
+{
+    Fixture f;
+    auto* a = f.add(ProjectItem::Type::Action, QStringLiteral("A"), 10);
+    auto* b = f.add(ProjectItem::Type::Action, QStringLiteral("B"), 20);
+    VActionStep toA;
+    toA.type = VActionStep::Type::PostAction;
+    toA.targetName = QStringLiteral("Actions/A");
+    toA.delay = 1000;
+    VActionStep toB;
+    toB.type = VActionStep::Type::PostAction;
+    toB.targetObjectID = b->objectID;
+    toB.targetName = QStringLiteral("StaleName");
+    a->compOrCreate<VNX::VAction>()->steps = {toB};
+    b->compOrCreate<VNX::VAction>()->steps = {toA};
+    const auto lookup = f.lookup();
+    EXPECT_FALSE(EU::postActionCycleError(a->objectID, {toB}, lookup).isEmpty());
+    EXPECT_TRUE(EU::postActionCycleError(a->objectID, {}, lookup).isEmpty());
+
+    b->comp<VNX::VAction>()->steps.front().targetObjectID = 999;
+    EXPECT_TRUE(EU::postActionCycleError(a->objectID, {toB}, f.lookup()).isEmpty());
+    f.items.clear();
+    EXPECT_EQ(EU::postActionCycleError(10, {toB}, lookup),
+        QStringLiteral("PostAction dependency cycle: A -> B -> A"));
 }
 
 TEST(ActionStepTargetResolve, TypeChangeClearsResolvedNameOnlyIncompatibleTarget)

@@ -44,6 +44,7 @@ public:
     void setCompact(bool compact);
     void setCompactPickable(bool v);
     void setIsSelectable(std::function<bool(uint32_t)> pred);
+    void setSelectionError(std::function<QString(uint32_t)> error);
     void setEditGuard(std::function<bool()> guard);
     void cancelPendingSelection();
     void openSelector(QWidget* anchor = nullptr);
@@ -113,6 +114,7 @@ private:
     bool clearSupport_ = false;
     QString inheritedTooltip_;
     std::function<bool(uint32_t)> isSelectable_;
+    std::function<QString(uint32_t)> selectionError_;
     std::function<bool()> editGuard_;
     uint64_t selectionGeneration_ = 0;
     QList<QMetaObject::Connection> changedConns_;

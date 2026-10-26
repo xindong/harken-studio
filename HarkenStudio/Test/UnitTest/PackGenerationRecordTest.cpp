@@ -137,6 +137,30 @@ TEST(PackGenerationRecord, ProgressTracksPlatformLanguageIdentityAndPreservesFai
     store.clear();
 }
 
+TEST(PackGenerationRecord, TerminalProgressSurvivesLateUpdatesAndRunCompletion)
+{
+    auto& store = VNX::PackGenerationRecordStore::instance();
+    for (const auto stage : {VNX::PackGenerationStage::Complete, VNX::PackGenerationStage::Failed,
+                            VNX::PackGenerationStage::Canceled, VNX::PackGenerationStage::Skipped}) {
+        store.clear();
+        const auto run = store.beginProgress(std::make_shared<std::atomic_bool>(false));
+        const VNX::PackGenerationProgress progress{
+            QStringLiteral("platform"), QStringLiteral("English"), QStringLiteral("a:123"), 42, stage};
+        store.updateProgress(run, progress);
+        auto late = progress;
+        late.percent = 90;
+        late.stage = VNX::PackGenerationStage::Publishing;
+        store.updateProgress(run, late);
+        store.finishProgress(run, true);
+
+        const auto* terminal = store.findProgress(progress.platform, progress.language, progress.unitKey);
+        ASSERT_NE(terminal, nullptr);
+        EXPECT_EQ(terminal->stage, stage);
+        EXPECT_EQ(terminal->percent, progress.percent);
+    }
+    store.clear();
+}
+
 TEST(PackGenerationRecord, RebuildingResetsOnlyItsIdentityAndRejectsPreviousRunEvents)
 {
     auto& store = VNX::PackGenerationRecordStore::instance();

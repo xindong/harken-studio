@@ -665,7 +665,7 @@ TEST(EditorPackExportOrchestration, InspectorStepsPersistWithoutLegacyPackCargo)
     VNX::AssetRegistry::instance().clear();
 }
 
-TEST(EditorPackExportOrchestration, ActionFailurePreservesPublishedPackSet)
+TEST(EditorPackExportOrchestration, MissingMediaOnlyBlocksSelectedDependenciesAndPreservesPublishedSet)
 {
     qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
 
@@ -677,17 +677,39 @@ TEST(EditorPackExportOrchestration, ActionFailurePreservesPublishedPackSet)
 
     const QString relativePath = QStringLiteral("missing.wav");
     const uint32_t sourceId = registerToneAsset(dir.path(), relativePath, 1.0f);
+    const QString unrelatedPath = QStringLiteral("unrelated.wav");
+    const uint32_t unrelatedSourceId = registerToneAsset(dir.path(), unrelatedPath, 0.5f);
 
     auto project = HarkenTest::projectWithPlatforms({"Windows", "Android", "Linux"});
     ASSERT_NO_FATAL_FAILURE(buildProject(
         project, dir.path(),
-        {{QStringLiteral("SoundA"), kSoundAObjectId, sourceId}},
-        {{QStringLiteral("ActionOne"), kActionOneObjectId, {kSoundAObjectId}}}));
+        {{QStringLiteral("SoundA"), kSoundAObjectId, sourceId},
+         {QStringLiteral("SoundB"), kSoundBObjectId, unrelatedSourceId}},
+        {{QStringLiteral("ActionOne"), kActionOneObjectId, {kSoundAObjectId}},
+         {QStringLiteral("ActionTwo"), kActionTwoObjectId, {kSoundBObjectId}}}));
 
     VNX::ProjectPackExporter exporter;
     const auto initial = exporter.ExportAllPacks(
         project, dir.path(), {.platform = HarkenTest::platformIdString("Windows")});
     ASSERT_TRUE(initial.success) << initial.error.toStdString();
+    ASSERT_TRUE(QFile::remove(QDir(VNX::PathUtils::getAudioSourcesDir(dir.path()))
+        .filePath(unrelatedPath)));
+    VNX::ProjectPackExporter::ExportOptions selectedOptions;
+    selectedOptions.platform = HarkenTest::platformIdString("Windows");
+    selectedOptions.onlyUnits.insert(QStringLiteral("ActionOne"));
+    const auto selected = exporter.ExportAllPacks(project, dir.path(), selectedOptions);
+    ASSERT_TRUE(selected.success) << selected.error.toStdString();
+    auto& sourceSet = project.layers.front().rootItem->children.front()
+        ->comp<VNX::VSound>()->sources.plain;
+    const QUuid selectedEntry = sourceSet.entries.front().entryId;
+    VNX::SoundSourceDef unavailableBase;
+    unavailableBase.entryId = QUuid::createUuid();
+    unavailableBase.sourceId = unrelatedSourceId;
+    sourceSet.entries.push_back(unavailableBase);
+    sourceSet.active = unavailableBase.entryId;
+    sourceSet.platforms[selectedOptions.platform].active = selectedEntry;
+    const auto overridden = exporter.ExportAllPacks(project, dir.path(), selectedOptions);
+    ASSERT_TRUE(overridden.success) << overridden.error.toStdString();
     const auto manifest = readPublication(dir.path());
     const QString contentPath = QDir(dir.path()).filePath(QStringLiteral("ActionOne.bytes"));
     PackImage initialImage;
@@ -697,7 +719,7 @@ TEST(EditorPackExportOrchestration, ActionFailurePreservesPublishedPackSet)
     ASSERT_TRUE(QFile::remove(sourcePath));
 
     const auto result = exporter.ExportAllPacks(
-        project, dir.path(), {.platform = HarkenTest::platformIdString("Windows")});
+        project, dir.path(), selectedOptions);
     EXPECT_FALSE(result.success);
     EXPECT_FALSE(result.error.isEmpty());
     EXPECT_EQ(readPublication(dir.path()), manifest);
@@ -708,7 +730,7 @@ TEST(EditorPackExportOrchestration, ActionFailurePreservesPublishedPackSet)
     VNX::AssetRegistry::instance().clear();
 }
 
-TEST(EditorPackExportOrchestration, EmptyActionRecordsFailureRowAndBatchContinues)
+TEST(EditorPackExportOrchestration, EmptyActionReportsWarningWithoutBlockingPublishedPacks)
 {
     qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
 
@@ -731,6 +753,8 @@ TEST(EditorPackExportOrchestration, EmptyActionRecordsFailureRowAndBatchContinue
     VNX::ProjectPackExporter exporter;
     VNX::ProjectPackExporter::ExportOptions opts;
     opts.platform = HarkenTest::platformIdString("Windows");
+    std::vector<VNX::PackGenerationProgress> progress;
+    opts.progressCallback = [&](const auto& value) { progress.push_back(value); };
 
     std::vector<VNX::ProjectPackExporter::PackBuildRecord> records;
     auto result = exporter.ExportAllPacks(project, dir.path(), opts, &records);
@@ -748,13 +772,20 @@ TEST(EditorPackExportOrchestration, EmptyActionRecordsFailureRowAndBatchContinue
     ASSERT_NE(hollowRecord, nullptr);
     EXPECT_EQ(hollowRecord->source,
               VNX::ProjectPackExporter::PackBuildRecord::Source::Action);
-    EXPECT_FALSE(hollowRecord->success);
-    EXPECT_TRUE(hollowRecord->error.contains(QStringLiteral("no steps")))
-        << hollowRecord->error.toStdString();
+    EXPECT_TRUE(hollowRecord->success);
+    EXPECT_TRUE(hollowRecord->omitted);
+    EXPECT_TRUE(hollowRecord->error.isEmpty());
+    EXPECT_TRUE(hollowRecord->warnings.join(QStringLiteral("\n")).contains(QStringLiteral("no steps")));
     EXPECT_EQ(hollowRecord->objectID, kActionOneObjectId);
     EXPECT_EQ(hollowRecord->fileSize, 0);
     ASSERT_NE(builtRecord, nullptr);
     EXPECT_TRUE(builtRecord->success);
+    EXPECT_FALSE(builtRecord->omitted);
+    const auto hollowProgress = std::find_if(progress.rbegin(), progress.rend(), [&](const auto& value) {
+        return value.unitKey == hollowRecord->unitKey;
+    });
+    ASSERT_NE(hollowProgress, progress.rend());
+    EXPECT_EQ(hollowProgress->stage, VNX::PackGenerationStage::Skipped);
 
     EXPECT_FALSE(QFileInfo::exists(
         variantPackPath(project, dir.path(), harkentest::StudioObjectId(kActionOneObjectId + kStableIdBias))));

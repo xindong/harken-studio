@@ -345,7 +345,7 @@ TEST(PackGroupReadiness, DisjointMembersHaveNoDuplicateError)
     }
 }
 
-TEST(PackGroupReadiness, InactiveCandidatesDoNotBlockUnrelatedBuilds)
+TEST(PackGroupReadiness, UnselectedSourcesDoNotBlockReadiness)
 {
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
@@ -376,10 +376,13 @@ TEST(PackGroupReadiness, InactiveCandidatesDoNotBlockUnrelatedBuilds)
     binding.rootItem->children.push_back(sound);
     project.layers.push_back(std::move(binding));
 
-    const auto result = VNX::ProjectPackExporter::ValidatePackBuildReadiness(
-        project, dir.path());
-    EXPECT_TRUE(result.valid);
-    EXPECT_EQ(result.errorCount, 0);
+    for (const auto& active : {QUuid{}, first.entryId, second.entryId}) {
+        ledger->sources.plain.active = active;
+        const auto result = VNX::ProjectPackExporter::ValidatePackBuildReadiness(
+            project, dir.path());
+        EXPECT_TRUE(result.valid);
+        EXPECT_EQ(result.errorCount, 0);
+    }
 }
 
 TEST(PackGroupReadiness, PassCountShipsThroughCurrentWorldForContentObjects)

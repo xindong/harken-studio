@@ -4309,7 +4309,7 @@ void MainWindow::recordPackGenerationResult(const QString& packName, uint32_t ob
                                             const QString& statusOverride,
                                             const QString& language,
                                             const QJsonObject* platformDefinition,
-                                            const QString& unitKey)
+                                            const QString& unitKey, bool canceled)
 {
     PackGenerationRecord row;
     row.packName   = packName;
@@ -4318,6 +4318,7 @@ void MainWindow::recordPackGenerationResult(const QString& packName, uint32_t ob
     row.platform   = platform;
     row.language   = language;
     row.success    = success;
+    row.canceled   = canceled;
     row.status     = !statusOverride.isEmpty() ? statusOverride
                                                : (success ? tr("Built") : tr("Failed"));
     row.outputPath = outputPath;
@@ -4340,7 +4341,9 @@ void MainWindow::recordPackGenerationResult(const QString& packName, uint32_t ob
     if (row.elapsedMs >= 0) details << tr("%1 ms").arg(row.elapsedMs);
     const QString suffix = details.isEmpty() ? QString()
         : QStringLiteral(" (%1)").arg(details.join(QStringLiteral(", ")));
-    if (!row.success) {
+    if (row.canceled) {
+        LogPanel::logInfo(LogCategory::Pack, tr("Export canceled: %1%2").arg(row.packName, suffix));
+    } else if (!row.success) {
         LogPanel::logError(LogCategory::Pack,
             tr("Export failed: %1%2 - %3").arg(row.packName, suffix,
                 row.errors.isEmpty() ? tr("(no detail)") : row.errors));
@@ -4397,8 +4400,7 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
     }
     const QString baseDir = PathUtils::packBuildOutputRoot(
         pmProject->projectPath, pmProject->packBuildOutputDir);
-    if (PathUtils::isProjectRootDirectory(baseDir, pmProject->projectPath)
-        || PathUtils::isProjectObjectDirectory(baseDir, pmProject->projectPath)) {
+    if (PathUtils::isProtectedPackOutputPath(baseDir, pmProject->projectPath)) {
         LogPanel::logError(LogCategory::Pack, PathUtils::packBuildOutputLocationError());
         return;
     }
@@ -4411,7 +4413,7 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
     }
     {
         const auto readiness =
-            ProjectPackExporter::ValidatePackBuildReadiness(*pmProject, baseDir, &snapshot->media);
+            ProjectPackExporter::ValidatePackBuildReadiness(*pmProject, baseDir);
         for (const auto& issue : readiness.issues) {
             if (issue.severity == ProjectPackExporter::ValidationIssue::Info)
                 continue;
@@ -4450,13 +4452,21 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
     const auto cancel = std::make_shared<std::atomic_bool>(false);
     const quint64 runId = progressStore.beginProgress(cancel);
     if (runId == 0) return;
+    const auto platformChanged = std::make_shared<std::atomic_bool>(false);
+    const auto platformObserver = std::shared_ptr<QObject>(new QObject,
+        [](QObject* observer) { observer->deleteLater(); });
+    connect(&ProjectManager::instance(), &ProjectManager::targetPlatformsChanged, platformObserver.get(),
+        [platformChanged, snapshot, projectLease, genPlatforms] {
+            platformChanged->store(!ProjectPackExporter::ValidatePackBuildPlatforms(
+                snapshot->project.platforms, projectLease->platforms, genPlatforms), std::memory_order_relaxed);
+        });
     const QPointer<MainWindow> window(this);
     auto* store = &progressStore;
     ProjectPackExporter::beginBackgroundExport();
     auto* thread = QThread::create(
         [window, store, projectLease, snapshot, genPlatforms, packPaths,
          exportSelection, baseDir, forceReexport, selfCleaning, cancel, runId,
-         platformActivity, outputLock]() {
+         platformActivity, outputLock, platformChanged, platformObserver]() {
         struct ExportGate {
             ~ExportGate() { ProjectPackExporter::endBackgroundExport(); }
         } gate;
@@ -4464,6 +4474,8 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
         int failedCount = 0;
         int builtCount = 0;
         int skippedCount = 0;
+        int omittedCount = 0;
+        int warningCount = 0;
         int removedCount = 0;
         QStringList succeededPlatforms;
         QVector<PackArtifactMetadata> publishedArtifacts;
@@ -4523,14 +4535,18 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
                 removedCount += result.removedPackCount;
             }
             for (const auto& rec : records) {
-                if (rec.success && rec.skipped)
+                if (rec.omitted)
+                    ++omittedCount;
+                else if (rec.success && rec.skipped)
                     ++skippedCount;
                 else if (rec.success)
                     ++builtCount;
-                else
+                else if (!result.canceled)
                     ++failedCount;
             }
-            if (records.empty() && !result.canceled && !result.success)
+            warningCount += result.warnings.size();
+            if (!result.canceled && !result.success
+                && std::none_of(records.begin(), records.end(), [](const auto& record) { return !record.success; }))
                 ++failedCount;
             QMetaObject::invokeMethod(store,
                 [window, store, projectLease, runId, platform, platformDir, definition, result, records,
@@ -4545,72 +4561,108 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
                     window->recordPackGenerationResult(rec.packName, rec.objectID, rec.success,
                         rec.outputPath, rec.error, rec.fileSize, rec.elapsedMs, rec.platform,
                         packBuildSourceLabel(rec.source), rec.warnings.join(QStringLiteral("\n")),
-                        rec.success && rec.skipped ? tr("Up to date") : QString(),
-                        rec.language, &rec.platformDefinition, rec.unitKey);
+                        rec.omitted ? tr("Skipped") : result.canceled && !rec.success ? tr("Canceled")
+                            : rec.success && !rec.warnings.isEmpty()
+                                ? (rec.skipped ? tr("Up to date with warnings") : tr("Built with warnings"))
+                            : rec.success && rec.skipped ? tr("Up to date") : QString(),
+                        rec.language, &rec.platformDefinition, rec.unitKey, result.canceled && !rec.success);
                 }
-                if (records.empty() && !result.canceled) {
+                if (records.empty() || (!result.success
+                    && std::none_of(records.begin(), records.end(), [](const auto& record) { return !record.success; }))) {
                     const auto platformJson = definition.toJson();
                     window->recordPackGenerationResult(tr("All Packs"), 0, result.success,
                         result.outputPath, result.error, result.fileSize, -1, platform,
-                        {}, {}, {}, {}, &platformJson);
+                        {}, result.warnings.join(QStringLiteral("\n")),
+                        result.canceled ? tr("Canceled") : QString(), {}, &platformJson, {}, result.canceled);
                 }
                 if (!result.canceled && !result.success)
                     LogPanel::logError(LogCategory::Pack,
                         result.error.isEmpty() ? tr("Pack export failed") : result.error);
                 for (const QString& warning : result.warnings)
                     LogPanel::logWarning(LogCategory::Pack, warning);
-                LogPanel::logInfo(LogCategory::Pack,
-                    tr("%1: exported %2 pack(s) to %3").arg(definition.name)
-                        .arg(static_cast<int>(records.size()))
-                        .arg(QDir::toNativeSeparators(platformDir)));
+                if (result.success)
+                    LogPanel::logInfo(LogCategory::Pack,
+                        tr("%1: exported %2 pack(s) to %3").arg(definition.name)
+                            .arg(result.builtPackCount + result.skippedPackCount)
+                            .arg(QDir::toNativeSeparators(platformDir)));
             }, Qt::QueuedConnection);
             canceled = result.canceled || cancel->load(std::memory_order_relaxed);
             if (canceled) break;
         }
+        canceled = canceled || cancel->load(std::memory_order_relaxed);
+        QString publicationError;
+        QStringList publicationWarnings;
+        bool cleanedOutput = false;
+        const auto publicationCanceled = [cancel, platformChanged] {
+            return cancel->load(std::memory_order_relaxed) || platformChanged->load(std::memory_order_relaxed);
+        };
+        if (!canceled) {
+            if (succeededPlatforms.size() == genPlatforms.size()) {
+                const bool cleanOutput = selfCleaning && packPaths.isEmpty();
+                const auto publication = ProjectPackExporter::FinalizePackExport(
+                    baseDir, snapshot->project, genPlatforms, cleanOutput, publishedArtifacts, publicationCanceled);
+                publicationWarnings = publication.warnings;
+                warningCount += publicationWarnings.size();
+                canceled = publication.canceled && cancel->load(std::memory_order_relaxed);
+                if (publication.success) {
+                    removedCount += publication.removedPackCount;
+                    cleanedOutput = cleanOutput;
+                } else if (!canceled) {
+                    ++failedCount;
+                    publicationError = publication.canceled
+                        ? tr("Pack platforms changed during the build; output finalization stopped") : publication.error;
+                }
+            } else if (!ProjectPackExporter::FinalizePackOutputs(baseDir, snapshot->project.platforms,
+                           genPlatforms, succeededPlatforms, &publicationError, publishedArtifacts, publicationCanceled)) {
+                canceled = cancel->load(std::memory_order_relaxed);
+                if (canceled) publicationError.clear();
+                else {
+                    ++failedCount;
+                    if (platformChanged->load(std::memory_order_relaxed))
+                        publicationError = tr("Pack platforms changed during the build; output finalization stopped");
+                }
+            }
+        }
         QMetaObject::invokeMethod(store,
-            [window, store, projectLease, snapshot, runId, cancel, canceled, failedCount, builtCount,
-             skippedCount, removedCount, baseDir, packPaths, selfCleaning,
-             genPlatforms, succeededPlatforms, publishedArtifacts, platformActivity, outputLock]() mutable {
+            [window, store, projectLease, snapshot, runId, canceled, failedCount, builtCount,
+             skippedCount, omittedCount, warningCount, removedCount, baseDir, cleanedOutput,
+             genPlatforms, succeededPlatforms, publicationError, publicationWarnings,
+             platformActivity, outputLock, platformObserver]() mutable {
             if (!store->isCurrentRun(runId)) return;
             if (ProjectManager::instance().currentProject() != projectLease.get()) {
                 store->finishProgress(runId, true);
                 return;
             }
-            canceled = canceled || cancel->load(std::memory_order_relaxed);
-            QString publicationError;
+            QString platformError;
             if (!ProjectPackExporter::ValidatePackBuildPlatforms(snapshot->project.platforms,
-                    projectLease->platforms, succeededPlatforms, &publicationError)) {
-                ++failedCount;
-            } else if (!canceled && succeededPlatforms.size() == genPlatforms.size()) {
-                const bool cleanOutput = selfCleaning && packPaths.isEmpty();
-                const auto publication = ProjectPackExporter::FinalizePackExport(
-                    baseDir, snapshot->project, genPlatforms, cleanOutput, publishedArtifacts);
-                if (publication.success) {
-                    removedCount += publication.removedPackCount;
-                    if (cleanOutput)
-                        PackArtifactCache::instance().removeUnselectedPlatforms(baseDir, genPlatforms);
-                } else {
-                    ++failedCount;
-                    publicationError = publication.error;
-                }
-            } else if (!ProjectPackExporter::FinalizePackOutputs(baseDir, projectLease->platforms,
-                           genPlatforms, succeededPlatforms, &publicationError, publishedArtifacts)) {
-                ++failedCount;
+                    projectLease->platforms, succeededPlatforms, &platformError)) {
+                if (publicationError.isEmpty()) ++failedCount;
+                publicationError = platformError;
             }
+            if (cleanedOutput)
+                PackArtifactCache::instance().removeUnselectedPlatforms(baseDir, genPlatforms);
             store->finishProgress(runId, canceled);
             if (!window) return;
+            for (const QString& warning : publicationWarnings)
+                LogPanel::logWarning(LogCategory::Pack, warning);
             if (!publicationError.isEmpty())
                 LogPanel::logError(LogCategory::Pack, publicationError);
             if (canceled) {
                 LogPanel::logWarning(LogCategory::Pack, tr("Pack export canceled"));
             } else if (failedCount > 0) {
                 LogPanel::logError(LogCategory::Pack,
-                    tr("Export finished — %1 pack(s) failed").arg(failedCount));
+                    tr("Export finished — %1 error(s)").arg(failedCount));
             } else {
                 QString message = tr("Export finished — %1 built, %2 up to date")
                     .arg(builtCount).arg(skippedCount);
+                if (omittedCount > 0) message += tr(", %1 skipped").arg(omittedCount);
                 if (removedCount > 0) message += tr(", %1 removed").arg(removedCount);
-                LogPanel::logInfo(LogCategory::Pack, message);
+                if (warningCount > 0) {
+                    message += tr(", %1 warning(s)").arg(warningCount);
+                    LogPanel::logWarning(LogCategory::Pack, message);
+                } else {
+                    LogPanel::logInfo(LogCategory::Pack, message);
+                }
             }
         }, Qt::QueuedConnection);
     });

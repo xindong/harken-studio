@@ -125,7 +125,9 @@ public:
                 }, [](uint32_t objectID) {
                     return ProjectManager::instance().findItemByObjectID(objectID);
                 });
-            const bool selectable = matchesFilter && authoring
+            const QString selectionError = matchesFilter && authoring && request.selectionError
+                ? request.selectionError(item->objectID) : QString();
+            const bool selectable = matchesFilter && authoring && selectionError.isEmpty()
                 && (!request.isSelectable || request.isSelectable(item->objectID));
 
             auto* row = new QTreeWidgetItem;
@@ -133,6 +135,8 @@ public:
             row->setToolTip(0, tooltip(item->objectID));
             if (!authoring)
                 row->setToolTip(0, row->toolTip(0) + QLatin1Char('\n') + authoring.message);
+            if (!selectionError.isEmpty())
+                row->setToolTip(0, row->toolTip(0) + QLatin1Char('\n') + selectionError);
             row->setIcon(0, iconForItem(*item));
             row->setData(0, kRoleObjectID, item->objectID);
             row->setData(0, kRoleSelectable, selectable);
@@ -282,9 +286,14 @@ public:
             if (!asset || !isAvailable(asset->sourceID))
                 continue;
             const uint32_t id = asset->sourceID;
-            const bool selectable = !request.isSelectable || request.isSelectable(id);
+            const QString selectionError = request.selectionError
+                ? request.selectionError(id) : QString();
+            const bool selectable = selectionError.isEmpty()
+                && (!request.isSelectable || request.isSelectable(id));
             auto* row = new QTreeWidgetItem;
             row->setText(0, assetDisplayName(*asset));
+            if (!selectionError.isEmpty())
+                row->setToolTip(0, selectionError);
             row->setIcon(0, icon(id, QColor()));
             row->setData(0, kRoleObjectID, id);
             row->setData(0, kRoleSelectable, selectable);

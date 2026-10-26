@@ -19,7 +19,8 @@ enum class PackGenerationStage {
     Publishing,
     Complete,
     Failed,
-    Canceled
+    Canceled,
+    Skipped
 };
 
 struct PackGenerationProgress
@@ -49,6 +50,7 @@ struct PackGenerationRecord
     BasePlatform basePlatform = BasePlatform::Windows;
     QJsonObject platformDefinition;
     QString unitKey;
+    bool canceled = false;
 
     QJsonObject toJson() const;
     QString resolvedUnitKey() const;

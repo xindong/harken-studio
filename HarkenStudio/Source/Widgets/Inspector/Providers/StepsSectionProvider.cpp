@@ -24,6 +24,7 @@
 #include "Widgets/Common/ParameterControlHost.h"
 #include "Widgets/Inspector/InspectorPanel.h"
 #include "Widgets/Selector/ObjectRefWidget.h"
+#include "Widgets/Selector/SelectorWindow.h"
 #include "Widgets/Shared/InspectorFormRow.h"
 
 #include <QAbstractSpinBox>
@@ -135,6 +136,12 @@ public:
         qApp->installEventFilter(this);
         QObject::connect(&ProjectManager::instance(), &ProjectManager::itemPropertyChanged, this,
             [this](ProjectItem* item, const QString& property, const QObject*) {
+                if (item && item->comp<VAction>()
+                    && (property == QLatin1String("steps") || property == QLatin1String("pasteProperties"))) {
+                    for (auto* row : rowWidgets_)
+                        for (auto* reference : row->findChildren<ObjectRefWidget*>())
+                            SelectorWindow::refresh(reference);
+                }
                 if (!item || !item->comp<VVariable>()
                     || (property != QLatin1String("labels") && property != QLatin1String("kind")
                         && property != QLatin1String("range") && property != QLatin1String("rangeMin")
@@ -326,9 +333,10 @@ private:
         }
     }
 
-    void configureTargetChip(ObjectRefWidget* orw, const VActionStep& step,
+    void configureTargetChip(ObjectRefWidget* orw, int index,
                              const EditorUtils::ActionTargetLookup& lookup)
     {
+        const VActionStep& step = steps_[index];
         const VActionStep::Type stepType = step.type;
         const uint32_t currentActionObjectID = boundItem_ ? boundItem_->objectID : 0;
         const std::vector<ProjectItem::Type> types =
@@ -336,12 +344,28 @@ private:
         orw->setFilterTypes(types);
         if (!types.empty())
             orw->setFilterType(types.front());
-        orw->setIsSelectable([stepType, currentActionObjectID](uint32_t id) {
+        orw->setEditGuard([this, currentActionObjectID, generation = rowsGeneration_]() {
+            return generation == rowsGeneration_ && boundItem_
+                && boundItem_->objectID == currentActionObjectID;
+        });
+        orw->setIsSelectable([stepType](uint32_t id) {
             ProjectItem* it = findItemByObjectID(id);
             if (!it || !ItemTypeCatalog::isUserFacingType(it->type)) return false;
             return EditorUtils::canActionStepReferenceObject(
-                stepType, it->type, it->objectID, currentActionObjectID);
+                stepType, it->type, it->objectID);
         });
+        if (stepType == VActionStep::Type::PostAction) {
+            orw->setSelectionError([this, index, currentActionObjectID](uint32_t id) {
+                auto candidate = steps_;
+                if (index < 0 || index >= static_cast<int>(candidate.size()))
+                    return QObject::tr("The action step is no longer available.");
+                candidate[index].targetObjectID = id;
+                const ProjectItem* target = findItemByObjectID(id);
+                candidate[index].targetName = target ? target->name : QString();
+                return EditorUtils::postActionCycleError(
+                    currentActionObjectID, candidate, targetLookup());
+            });
+        }
         const auto res = resolveStep(step, lookup);
         orw->setCurrentObjectID(
             res.state == EditorUtils::ActionTargetState::Resolved ? res.objectID
@@ -562,7 +586,7 @@ private:
         orw->setObjectName(QStringLiteral("stepTargetChip_%1").arg(index));
         orw->setCompact(true);
         orw->setCompactPickable(true);
-        configureTargetChip(orw, steps_[index], lookup);
+        configureTargetChip(orw, index, lookup);
         targetCell->addWidget(orw);
 
         h->addWidget(targetCell);
@@ -710,9 +734,12 @@ private:
 
     void rebuildRows()
     {
+        ++rowsGeneration_;
         auto* rl = static_cast<QVBoxLayout*>(rows_->layout());
         while (QLayoutItem* it = rl->takeAt(0)) {
             if (QWidget* w = it->widget()) {
+                for (auto* reference : w->findChildren<ObjectRefWidget*>())
+                    reference->cancelPendingSelection();
                 w->hide();
                 w->deleteLater();
             }
@@ -746,6 +773,7 @@ private:
     std::vector<VActionStep> steps_;
     ProjectItem* boundItem_ = nullptr;
     bool selfWriting_ = false;
+    uint64_t rowsGeneration_ = 0;
     bool searchConnected_ = false;
     QString searchText_;
 };

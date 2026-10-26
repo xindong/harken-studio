@@ -14,6 +14,8 @@
 #include "Widgets/Common/ParameterControlHost.h"
 #include "Widgets/Inspector/Providers/StepsSectionProvider.h"
 #include "Widgets/Selector/ObjectRefWidget.h"
+#include "Widgets/Selector/SelectorWindow.h"
+#include "Widgets/Shared/ProjectItemMime.h"
 
 #include <gtest/gtest.h>
 
@@ -22,12 +24,16 @@
 #include <QEvent>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QDropEvent>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMimeData>
 #include <QPlainTextEdit>
 #include <QVBoxLayout>
 #include <QTemporaryDir>
 #include <QToolButton>
+#include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
 
 #include <memory>
 
@@ -42,6 +48,47 @@ void ensureApp()
     static char arg0[] = "harken_editor_tests";
     static char* argv[] = {arg0, nullptr};
     static QApplication app(argc, argv);
+}
+
+VNX::VActionStep postActionStep(const ProjectItem* target = nullptr)
+{
+    VNX::VActionStep step;
+    step.type = VNX::VActionStep::Type::PostAction;
+    if (target) {
+        step.targetObjectID = target->objectID;
+        step.targetName = target->name;
+    }
+    return step;
+}
+
+bool dropTarget(VNX::ObjectRefWidget& widget, uint32_t objectID)
+{
+    QMimeData mime;
+    VNX::ProjectItemMime::writeObjectIDs(&mime, {objectID});
+    QDropEvent event(QPointF(5, 5), Qt::CopyAction, &mime,
+                     Qt::LeftButton, Qt::NoModifier);
+    static_cast<QObject&>(widget).event(&event);
+    return event.isAccepted();
+}
+
+VNX::SelectorWindow* visibleSelector()
+{
+    for (QWidget* widget : QApplication::topLevelWidgets()) {
+        auto* selector = qobject_cast<VNX::SelectorWindow*>(widget);
+        if (selector && selector->isVisible())
+            return selector;
+    }
+    return nullptr;
+}
+
+QTreeWidgetItem* selectorRow(VNX::SelectorWindow* selector, uint32_t objectID)
+{
+    auto* tree = selector ? selector->findChild<QTreeWidget*>() : nullptr;
+    if (!tree) return nullptr;
+    for (QTreeWidgetItemIterator row(tree); *row; ++row)
+        if ((*row)->data(0, VNX::kRoleObjectID).toUInt() == objectID)
+            return *row;
+    return nullptr;
 }
 } // namespace
 
@@ -65,6 +112,7 @@ protected:
 
     void TearDown() override
     {
+        VNX::SelectorWindow::dismiss();
         auto& pm = VNX::ProjectManager::instance();
         if (pm.isProjectOpen())
             pm.closeProject();
@@ -191,6 +239,129 @@ TEST_F(StepsChipTargetDomainTest, ChipsGateTargetsByVerbAcrossNineTypes)
 
     EXPECT_FALSE(postChip->canAcceptObject(f.action->objectID))
         << "Post Action chip must reject the edited action itself";
+}
+
+TEST_F(StepsChipTargetDomainTest, PostActionRejectsCyclesInPickerAndDropWithoutClearingTarget)
+{
+    auto& pm = VNX::ProjectManager::instance();
+    auto* action = pm.createItem(nullptr, QStringLiteral("Cycle_A"), ProjectItem::Type::Action);
+    auto* reciprocal = pm.createItem(nullptr, QStringLiteral("Cycle_B"), ProjectItem::Type::Action);
+    auto* indirect = pm.createItem(nullptr, QStringLiteral("Cycle_C"), ProjectItem::Type::Action);
+    auto* safe = pm.createItem(nullptr, QStringLiteral("Cycle_Safe"), ProjectItem::Type::Action);
+    ASSERT_NE(action, nullptr);
+    ASSERT_NE(reciprocal, nullptr);
+    ASSERT_NE(indirect, nullptr);
+    ASSERT_NE(safe, nullptr);
+    action->comp<VNX::VAction>()->steps = {postActionStep(safe)};
+    reciprocal->comp<VNX::VAction>()->steps = {postActionStep(action)};
+    indirect->comp<VNX::VAction>()->steps = {postActionStep(reciprocal)};
+
+    VNX::StepsSectionProvider provider;
+    std::unique_ptr<QWidget> widget(provider.build(nullptr));
+    provider.bind(widget.get(), action);
+    auto* chip = widget->findChild<VNX::ObjectRefWidget*>(QStringLiteral("stepTargetChip_0"));
+    ASSERT_NE(chip, nullptr);
+
+    for (auto* target : {action, reciprocal, indirect}) {
+        EXPECT_FALSE(chip->canAcceptObject(target->objectID));
+        EXPECT_FALSE(dropTarget(*chip, target->objectID));
+        EXPECT_EQ(chip->currentObjectID(), safe->objectID);
+        ASSERT_EQ(action->comp<VNX::VAction>()->steps.size(), 1u);
+        EXPECT_EQ(action->comp<VNX::VAction>()->steps[0].targetObjectID, safe->objectID);
+    }
+
+    chip->openSelector();
+    auto* selector = visibleSelector();
+    ASSERT_NE(selector, nullptr);
+    for (auto* target : {action, reciprocal, indirect}) {
+        auto* row = selectorRow(selector, target->objectID);
+        ASSERT_NE(row, nullptr);
+        EXPECT_FALSE(row->data(0, VNX::kRoleSelectable).toBool());
+        EXPECT_TRUE(row->toolTip(0).contains(QStringLiteral("PostAction dependency cycle")));
+        EXPECT_TRUE(row->toolTip(0).contains(action->name));
+    }
+    auto* safeRow = selectorRow(selector, safe->objectID);
+    ASSERT_NE(safeRow, nullptr);
+    EXPECT_TRUE(safeRow->data(0, VNX::kRoleSelectable).toBool());
+}
+
+TEST_F(StepsChipTargetDomainTest, PostActionPickerRechecksChangedGraphAndRefreshesAvailability)
+{
+    auto& pm = VNX::ProjectManager::instance();
+    auto* action = pm.createItem(nullptr, QStringLiteral("Live_A"), ProjectItem::Type::Action);
+    auto* target = pm.createItem(nullptr, QStringLiteral("Live_B"), ProjectItem::Type::Action);
+    auto* safe = pm.createItem(nullptr, QStringLiteral("Live_Safe"), ProjectItem::Type::Action);
+    ASSERT_NE(action, nullptr);
+    ASSERT_NE(target, nullptr);
+    ASSERT_NE(safe, nullptr);
+    action->comp<VNX::VAction>()->steps = {postActionStep(safe)};
+
+    VNX::StepsSectionProvider provider;
+    std::unique_ptr<QWidget> widget(provider.build(nullptr));
+    provider.bind(widget.get(), action);
+    auto* chip = widget->findChild<VNX::ObjectRefWidget*>(QStringLiteral("stepTargetChip_0"));
+    ASSERT_NE(chip, nullptr);
+    chip->openSelector();
+    auto* selector = visibleSelector();
+    ASSERT_NE(selector, nullptr);
+    auto* row = selectorRow(selector, target->objectID);
+    ASSERT_NE(row, nullptr);
+    ASSERT_TRUE(row->data(0, VNX::kRoleSelectable).toBool());
+    row->treeWidget()->setCurrentItem(row);
+    target->comp<VNX::VAction>()->steps = {postActionStep(action)};
+    selector->accept();
+    EXPECT_EQ(chip->currentObjectID(), safe->objectID);
+    EXPECT_EQ(action->comp<VNX::VAction>()->steps[0].targetObjectID, safe->objectID);
+
+    chip->openSelector();
+    selector = visibleSelector();
+    ASSERT_NE(selector, nullptr);
+    row = selectorRow(selector, target->objectID);
+    ASSERT_NE(row, nullptr);
+    EXPECT_FALSE(row->data(0, VNX::kRoleSelectable).toBool());
+    target->comp<VNX::VAction>()->steps = {postActionStep(safe)};
+    emit pm.itemPropertyChanged(target, QStringLiteral("steps"), nullptr);
+    QCoreApplication::processEvents();
+    row = selectorRow(selector, target->objectID);
+    ASSERT_NE(row, nullptr);
+    EXPECT_TRUE(row->data(0, VNX::kRoleSelectable).toBool());
+    row->treeWidget()->setCurrentItem(row);
+    selector->accept();
+    EXPECT_EQ(chip->currentObjectID(), target->objectID);
+    EXPECT_EQ(action->comp<VNX::VAction>()->steps[0].targetObjectID, target->objectID);
+}
+
+TEST_F(StepsChipTargetDomainTest, RebindingActionInvalidatesPendingPostActionSelection)
+{
+    auto& pm = VNX::ProjectManager::instance();
+    auto* first = pm.createItem(nullptr, QStringLiteral("Rebind_A"), ProjectItem::Type::Action);
+    auto* second = pm.createItem(nullptr, QStringLiteral("Rebind_B"), ProjectItem::Type::Action);
+    auto* target = pm.createItem(nullptr, QStringLiteral("Rebind_Target"), ProjectItem::Type::Action);
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(second, nullptr);
+    ASSERT_NE(target, nullptr);
+    first->comp<VNX::VAction>()->steps = {postActionStep()};
+    second->comp<VNX::VAction>()->steps = {postActionStep()};
+
+    VNX::StepsSectionProvider provider;
+    std::unique_ptr<QWidget> widget(provider.build(nullptr));
+    provider.bind(widget.get(), first);
+    auto* oldChip = widget->findChild<VNX::ObjectRefWidget*>(QStringLiteral("stepTargetChip_0"));
+    ASSERT_NE(oldChip, nullptr);
+    oldChip->openSelector();
+    auto* selector = visibleSelector();
+    ASSERT_NE(selector, nullptr);
+    auto* row = selectorRow(selector, target->objectID);
+    ASSERT_NE(row, nullptr);
+    row->treeWidget()->setCurrentItem(row);
+
+    provider.bind(widget.get(), second);
+    EXPECT_FALSE(selector->isVisible());
+    EXPECT_FALSE(oldChip->canAcceptObject(target->objectID));
+    EXPECT_FALSE(dropTarget(*oldChip, target->objectID));
+    selector->accept();
+    EXPECT_EQ(first->comp<VNX::VAction>()->steps[0].targetObjectID, 0u);
+    EXPECT_EQ(second->comp<VNX::VAction>()->steps[0].targetObjectID, 0u);
 }
 
 TEST_F(StepsChipTargetDomainTest, TypeMenuIsCatalogDriven)

@@ -46,6 +46,7 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QLockFile>
 #include <QScopeGuard>
 #include <QJsonObject>
 #include <QSet>
@@ -1299,13 +1300,15 @@ TEST(EditorProjectPackExporterManifest, OptionalCompanionDataFollowsPublicationL
     project.buildExportPackMetadata = false;
     writeFileBytes(blocked, "file");
     options.waveformOutputDir = blocked;
-    QMap<QString, QByteArray> beforeFailure;
-    for (const auto& file : publicationFiles(output))
-        beforeFailure.insert(file, readFileBytes(QDir(output).filePath(file)));
-    const auto failed = exporter.ExportAllPacks(project, output, options);
-    EXPECT_FALSE(failed.success);
-    for (auto file = beforeFailure.cbegin(); file != beforeFailure.cend(); ++file)
-        EXPECT_EQ(readFileBytes(QDir(output).filePath(file.key())), file.value());
+    const auto warned = exporter.ExportAllPacks(project, output, options);
+    EXPECT_TRUE(warned.success) << warned.error.toStdString();
+    EXPECT_FALSE(warned.warnings.isEmpty());
+    for (auto binary = binaries.cbegin(); binary != binaries.cend(); ++binary)
+        EXPECT_EQ(readFileBytes(QDir(output).filePath(binary.key() + QStringLiteral(".bytes"))), binary.value());
+    const auto parentWithoutWaveforms = QJsonDocument::fromJson(readFileBytes(
+        QDir(output).filePath(QStringLiteral("Parent.json")))).object();
+    EXPECT_FALSE(parentWithoutWaveforms.contains(QStringLiteral("waveforms")));
+    EXPECT_FALSE(parentWithoutWaveforms.contains(QStringLiteral("metadata")));
     EXPECT_EQ(readFileBytes(QDir(output).filePath(QStringLiteral("Child.json"))), childJson);
     ASSERT_TRUE(QFile::remove(waveformPath));
     EXPECT_FALSE(readPublication(output).isEmpty());
@@ -4817,6 +4820,283 @@ TEST(EditorProjectPackExporterManifest, CleanupMustAllowRetainedReadOnlyWaveform
     EXPECT_FALSE(QFileInfo::exists(QDir(context.root).filePath(".harken-pack-publishing")));
 }
 
+TEST(EditorProjectPackExporterManifest, OptionalWaveformFailuresKeepPackPublicationValid)
+{
+    for (const bool conflictingFile : {false, true}) {
+        PackWriteAccessProject context;
+        ASSERT_NO_FATAL_FAILURE(context.setup(true));
+        const auto first = context.exporter.ExportAllPacks(context.project, {}, context.options);
+        ASSERT_TRUE(first.success) << first.error.toStdString();
+        const QDir waveforms(context.project.buildWaveformOutputDir);
+        const auto names = waveforms.entryList({"*.vkd"}, QDir::Files);
+        ASSERT_FALSE(names.isEmpty());
+        const QString blocked = conflictingFile ? waveforms.filePath(names.front())
+            : context.directory.filePath(QStringLiteral("blocked-waveforms"));
+        writeFileBytes(blocked, "occupied");
+        if (!conflictingFile) context.options.waveformOutputDir = blocked;
+        QString error;
+        EXPECT_TRUE(VNX::ProjectPackExporter::ValidatePackBuildWriteAccess(
+            context.project, context.root, {context.platform}, context.options, &error))
+            << error.toStdString();
+        std::vector<VNX::ProjectPackExporter::PackBuildRecord> records;
+        context.project.actions.front().rootItem->children.front()->comp<VNX::VAction>()->steps.front().delay = 0.2f;
+        const auto result = context.exporter.ExportAllPacks(context.project, {}, context.options, &records);
+        ASSERT_TRUE(result.success) << result.error.toStdString();
+        EXPECT_FALSE(result.canceled);
+        EXPECT_FALSE(result.warnings.isEmpty());
+        EXPECT_EQ(readFileBytes(blocked), QByteArray("occupied"));
+        ASSERT_FALSE(records.empty());
+        EXPECT_TRUE(std::all_of(records.begin(), records.end(), [](const auto& record) { return record.success; }));
+        EXPECT_TRUE(std::any_of(records.begin(), records.end(), [](const auto& record) { return !record.warnings.isEmpty(); }));
+        const auto publication = readPublication(context.live.path());
+        ASSERT_EQ(publication.size(), 2);
+        const auto action = findByName(publication, QStringLiteral("One"));
+        EXPECT_FALSE(action.value(QStringLiteral("companion")).toObject().contains(QStringLiteral("waveforms")));
+        const auto finalized = VNX::ProjectPackExporter::FinalizePackExport(
+            context.root, context.project, {context.platform}, false, result.artifacts);
+        EXPECT_TRUE(finalized.success) << finalized.error.toStdString();
+        std::map<QString, QFileDevice::Permissions> permissions;
+        const auto restore = qScopeGuard([&] {
+            for (const auto& [path, value] : permissions) QFile::setPermissions(path, value);
+        });
+        for (const auto& name : publicationFiles(context.live.path())) {
+            if (!name.endsWith(QStringLiteral(".json"))) continue;
+            const QString path = context.live.filePath(name);
+            permissions.emplace(path, QFile::permissions(path));
+            ASSERT_TRUE(QFile::setPermissions(path, withoutWritePermissions(permissions.at(path))));
+        }
+        EXPECT_TRUE(VNX::ProjectPackExporter::ValidatePackBuildWriteAccess(
+            context.project, context.root, {context.platform}, context.options, &error)) << error.toStdString();
+        const auto unchanged = context.exporter.ExportAllPacks(context.project, {}, context.options);
+        EXPECT_TRUE(unchanged.success) << unchanged.error.toStdString();
+        EXPECT_FALSE(unchanged.warnings.isEmpty());
+    }
+}
+
+TEST(EditorProjectPackExporterManifest, ProtectedLegacyWaveformLocationsCannotWriteOrCleanProjectData)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    const QString projectRoot = directory.filePath(QStringLiteral("Project"));
+    ASSERT_TRUE(QDir().mkpath(projectRoot));
+    auto& registry = VNX::AssetRegistry::instance();
+    registry.clear();
+    const auto clearRegistry = qScopeGuard([&] { registry.clear(); });
+    registry.setProjectRoot(projectRoot);
+    const auto tone = registerToneAsset(projectRoot, QStringLiteral("tone.wav"), 0.2f);
+    VNX::ProjectData project;
+    ASSERT_NO_FATAL_FAILURE(buildProject(project, projectRoot, tone, tone,
+        {{QStringLiteral("One"), 21, kSharedSoundObjectId}}));
+    const QString sourcePath = QDir(projectRoot).filePath(QStringLiteral("AudioSources/tone.wav"));
+    const QByteArray sourceBytes = readFileBytes(sourcePath);
+    const QString outputRoot = directory.filePath(QStringLiteral("Published"));
+    const QString platform = HarkenTest::platformIdString("Windows");
+    const QDir live(QDir(outputRoot).filePath(QStringLiteral("Windows")));
+    project.packBuildOutputDir = outputRoot;
+    VNX::ProjectPackExporter exporter;
+    VNX::ProjectPackExporter::ExportOptions options;
+    options.platform = platform;
+    options.forceReexport = true;
+    options.selfCleaning = true;
+    for (const QString& destination : {QStringLiteral("AudioSources/Waveforms"), QStringLiteral("..")}) {
+        project.buildWaveformOutputDir = destination;
+        const QDir protectedDirectory(VNX::PathUtils::waveformBuildOutputRoot(project.projectPath, destination));
+        ASSERT_TRUE(QDir().mkpath(protectedDirectory.path()));
+        const QString sentinel = protectedDirectory.filePath(QString(64, QLatin1Char('f')) + QStringLiteral(".vkd"));
+        writeFileBytes(sentinel, "preserved project data");
+        const auto before = protectedDirectory.entryList({QStringLiteral("*.vkd")}, QDir::Files);
+        for (const bool enabled : {false, true}) {
+            project.buildExportWaveforms = enabled;
+            const auto result = exporter.ExportAllPacks(project, {}, options);
+            ASSERT_TRUE(result.success) << result.error.toStdString();
+            if (enabled) EXPECT_FALSE(result.warnings.isEmpty());
+            const auto publication = readPublication(live.path());
+            ASSERT_EQ(publication.size(), 2);
+            for (const auto& value : publication)
+                EXPECT_FALSE(value.toObject().value(QStringLiteral("companion")).toObject()
+                    .contains(QStringLiteral("waveforms")));
+            const auto finalized = VNX::ProjectPackExporter::FinalizePackExport(
+                outputRoot, project, {platform}, true, result.artifacts);
+            EXPECT_TRUE(finalized.success) << finalized.error.toStdString();
+            EXPECT_EQ(readFileBytes(sourcePath), sourceBytes);
+            EXPECT_EQ(readFileBytes(sentinel), QByteArray("preserved project data"));
+            EXPECT_EQ(protectedDirectory.entryList({QStringLiteral("*.vkd")}, QDir::Files), before);
+            EXPECT_FALSE(QFileInfo::exists(protectedDirectory.filePath(QStringLiteral(".harken-pack-waveforms.lock"))));
+        }
+    }
+}
+
+TEST(EditorProjectPackExporterManifest, ConcurrentWaveformPublicationRemainsOptional)
+{
+    for (const int location : {0, 1, 2}) {
+        PackWriteAccessProject context;
+        ASSERT_NO_FATAL_FAILURE(context.setup(true));
+        context.project.buildWaveformOutputDir = location == 0
+            ? context.directory.filePath(QStringLiteral("external-waveforms"))
+            : location == 1 ? context.live.filePath(QStringLiteral("Waveforms"))
+                            : QDir(context.root).filePath(QStringLiteral("Waveforms"));
+        const QDir waveforms(context.project.buildWaveformOutputDir);
+        ASSERT_TRUE(QDir().mkpath(waveforms.path()));
+        const QString otherWaveform = waveforms.filePath(QString(64, QLatin1Char('f')) + QStringLiteral(".vkd"));
+        writeFileBytes(otherWaveform, "other build waveform");
+        const QString lockPath = waveforms.filePath(QStringLiteral(".harken-pack-waveforms.lock"));
+        QLockFile competingBuild(lockPath);
+        competingBuild.setStaleLockTime(0);
+        ASSERT_TRUE(competingBuild.tryLock());
+        context.options.selfCleaning = true;
+        QString error;
+        EXPECT_TRUE(VNX::ProjectPackExporter::ValidatePackBuildWriteAccess(
+            context.project, context.root, {context.platform}, context.options, &error)) << error.toStdString();
+        const auto result = context.exporter.ExportAllPacks(context.project, {}, context.options);
+        ASSERT_TRUE(result.success) << result.error.toStdString();
+        EXPECT_FALSE(result.warnings.isEmpty());
+        EXPECT_EQ(waveforms.entryList({QStringLiteral("*.vkd")}, QDir::Files).size(), 1);
+        EXPECT_EQ(readFileBytes(otherWaveform), QByteArray("other build waveform"));
+        for (const auto& value : readPublication(context.live.path()))
+            EXPECT_FALSE(value.toObject().value(QStringLiteral("companion")).toObject()
+                .contains(QStringLiteral("waveforms")));
+        const auto finalized = VNX::ProjectPackExporter::FinalizePackExport(
+            context.root, context.project, {context.platform}, true, result.artifacts);
+        EXPECT_TRUE(finalized.success) << finalized.error.toStdString();
+        if (location != 0) EXPECT_FALSE(finalized.warnings.isEmpty());
+        EXPECT_EQ(readFileBytes(otherWaveform), QByteArray("other build waveform"));
+        EXPECT_TRUE(QFileInfo::exists(lockPath));
+        context.project.buildExportWaveforms = false;
+        const auto disabled = context.exporter.ExportAllPacks(context.project, {}, context.options);
+        ASSERT_TRUE(disabled.success) << disabled.error.toStdString();
+        const auto cleaned = VNX::ProjectPackExporter::FinalizePackExport(
+            context.root, context.project, {context.platform}, true, disabled.artifacts);
+        EXPECT_TRUE(cleaned.success) << cleaned.error.toStdString();
+        if (location != 0) EXPECT_FALSE(cleaned.warnings.isEmpty());
+        EXPECT_EQ(readFileBytes(otherWaveform), QByteArray("other build waveform"));
+        competingBuild.unlock();
+        context.project.buildExportWaveforms = true;
+        const auto retry = context.exporter.ExportAllPacks(context.project, {}, context.options);
+        ASSERT_TRUE(retry.success) << retry.error.toStdString();
+        const auto companion = findByName(readPublication(context.live.path()), QStringLiteral("One"))
+            .value(QStringLiteral("companion")).toObject();
+        ASSERT_FALSE(companion.value(QStringLiteral("waveforms")).toArray().isEmpty());
+        for (const auto& value : companion.value(QStringLiteral("waveforms")).toArray())
+            EXPECT_TRUE(QFileInfo::exists(context.live.absoluteFilePath(
+                value.toObject().value(QStringLiteral("file")).toString())));
+        EXPECT_FALSE(QFileInfo::exists(lockPath));
+        const auto cleanup = VNX::ProjectPackExporter::FinalizePackExport(
+            context.root, context.project, {context.platform}, true, retry.artifacts);
+        EXPECT_TRUE(cleanup.success) << cleanup.error.toStdString();
+        EXPECT_EQ(QFileInfo::exists(otherWaveform), location == 0);
+    }
+}
+
+TEST(EditorProjectPackExporterManifest, InterruptedPublicationRemovesOnlyNewWaveforms)
+{
+    for (const bool external : {false, true}) {
+        for (const bool cancel : {false, true}) {
+            PackWriteAccessProject context;
+            ASSERT_NO_FATAL_FAILURE(context.setup(true));
+            context.project.buildWaveformOutputDir = external
+                ? context.directory.filePath(QStringLiteral("external-waveforms"))
+                : context.live.filePath(QStringLiteral("Waveforms"));
+            const auto first = context.exporter.ExportAllPacks(context.project, {}, context.options);
+            ASSERT_TRUE(first.success) << first.error.toStdString();
+            const QDir waveforms(context.project.buildWaveformOutputDir);
+            const auto names = waveforms.entryList({"*.vkd"}, QDir::Files);
+            ASSERT_FALSE(names.isEmpty());
+            QMap<QString, QByteArray> before;
+            for (const auto& name : publicationFiles(context.live.path()))
+                before.insert(context.live.filePath(name), readFileBytes(context.live.filePath(name)));
+            for (const auto& name : names)
+                before.insert(waveforms.filePath(name), readFileBytes(waveforms.filePath(name)));
+            const auto replacement = registerToneAsset(context.directory.path(), QStringLiteral("replacement.wav"), 0.7f);
+            VNX::AudioSourceData source;
+            source.sourceID = replacement;
+            source.relativePath = QStringLiteral("replacement.wav");
+            context.project.audioSources.push_back(source);
+            HarkenTest::setSharedSoundSource(*context.project.layers.front().rootItem->children.front(), replacement);
+            const QString companion = context.live.filePath(QStringLiteral("One.json"));
+            const auto permissions = QFile::permissions(companion);
+            const auto restore = qScopeGuard([&] { QFile::setPermissions(companion, permissions); });
+            bool interrupted = false;
+            context.options.cancelCheck = [&] {
+                if (waveforms.entryList({"*.vkd"}, QDir::Files).size() > names.size()) {
+                    interrupted = true;
+                    if (!cancel) QFile::setPermissions(companion, withoutWritePermissions(permissions));
+                }
+                return cancel && interrupted;
+            };
+            const auto result = context.exporter.ExportAllPacks(context.project, {}, context.options);
+            EXPECT_TRUE(interrupted);
+            EXPECT_FALSE(result.success);
+            EXPECT_EQ(result.canceled, cancel) << result.error.toStdString();
+            EXPECT_EQ(waveforms.entryList({"*.vkd"}, QDir::Files), names);
+            for (auto file = before.cbegin(); file != before.cend(); ++file)
+                EXPECT_EQ(readFileBytes(file.key()), file.value()) << file.key().toStdString();
+            EXPECT_FALSE(QFileInfo::exists(context.live.filePath(QStringLiteral(".harken-pack-publishing"))));
+        }
+    }
+}
+
+TEST(EditorProjectPackExporterManifest, CancellationStopsAtBuildStageBoundaries)
+{
+    for (const auto stage : {VNX::PackGenerationStage::Compiling,
+                            VNX::PackGenerationStage::Writing,
+                            VNX::PackGenerationStage::Publishing}) {
+        PackWriteAccessProject context;
+        ASSERT_NO_FATAL_FAILURE(context.setup());
+        const auto first = context.exporter.ExportAllPacks(context.project, {}, context.options);
+        ASSERT_TRUE(first.success) << first.error.toStdString();
+        QMap<QString, QByteArray> before;
+        for (const auto& name : publicationFiles(context.live.path()))
+            before.insert(name, readFileBytes(context.live.filePath(name)));
+        bool canceled = false;
+        int writeCount = 0;
+        context.options.progressCallback = [&](const VNX::PackGenerationProgress& progress) {
+            if (progress.stage == VNX::PackGenerationStage::Writing) ++writeCount;
+            if (progress.stage == stage) canceled = true;
+        };
+        context.options.cancelCheck = [&] { return canceled; };
+        const auto result = context.exporter.ExportAllPacks(context.project, {}, context.options);
+        EXPECT_FALSE(result.success);
+        EXPECT_TRUE(result.canceled);
+        EXPECT_EQ(result.error, QStringLiteral("Export canceled"));
+        if (stage == VNX::PackGenerationStage::Compiling) EXPECT_EQ(writeCount, 0);
+        if (stage == VNX::PackGenerationStage::Writing) EXPECT_EQ(writeCount, 1);
+        for (auto file = before.cbegin(); file != before.cend(); ++file)
+            EXPECT_EQ(readFileBytes(context.live.filePath(file.key())), file.value());
+    }
+}
+
+TEST(EditorProjectPackExporterManifest, CanceledFinalizationKeepsPublishedFiles)
+{
+    PackWriteAccessProject context;
+    ASSERT_NO_FATAL_FAILURE(context.setup());
+    context.project.buildExportProjectData = true;
+    const auto first = context.exporter.ExportAllPacks(context.project, {}, context.options);
+    ASSERT_TRUE(first.success) << first.error.toStdString();
+    const auto finalized = VNX::ProjectPackExporter::FinalizePackExport(
+        context.root, context.project, {context.platform}, false, first.artifacts);
+    ASSERT_TRUE(finalized.success) << finalized.error.toStdString();
+    const QDir root(context.root);
+    const QString orphan = root.filePath(QStringLiteral("obsolete.bin"));
+    writeFileBytes(orphan, "keep until committed");
+    const auto metadata = readFileBytes(root.filePath(QStringLiteral("Project.json")));
+    context.project.name += QStringLiteral(" changed");
+    const auto cancelCheck = [&] {
+        return !root.entryList({QStringLiteral(".harken-pack-next-*")},
+            QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden).isEmpty();
+    };
+    const auto canceled = VNX::ProjectPackExporter::FinalizePackExport(
+        context.root, context.project, {context.platform}, true, first.artifacts, cancelCheck);
+    EXPECT_FALSE(canceled.success);
+    EXPECT_TRUE(canceled.canceled);
+    EXPECT_EQ(canceled.error, QStringLiteral("Export canceled"));
+    EXPECT_EQ(readFileBytes(orphan), QByteArray("keep until committed"));
+    EXPECT_EQ(readFileBytes(root.filePath(QStringLiteral("Project.json"))), metadata);
+    EXPECT_FALSE(QFileInfo::exists(root.filePath(QStringLiteral(".harken-pack-publishing"))));
+    EXPECT_TRUE(root.entryList({QStringLiteral(".harken-pack-next-*")},
+        QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden).isEmpty());
+}
+
 TEST(EditorProjectPackExporterManifest, RecoveryPrecedesPreflightForRootAndPartialExports)
 {
     for (const bool directPartial : {false, true}) {
@@ -4852,6 +5132,34 @@ TEST(EditorProjectPackExporterManifest, RecoveryPrecedesPreflightForRootAndParti
 }
 
 #ifdef Q_OS_WIN
+TEST(EditorProjectPackExporterManifest, UnreadableOptionalWaveformDoesNotBlockPackExport)
+{
+    PackWriteAccessProject context;
+    ASSERT_NO_FATAL_FAILURE(context.setup(true));
+    context.project.buildWaveformOutputDir = context.live.filePath(QStringLiteral("Waveforms"));
+    const auto first = context.exporter.ExportAllPacks(context.project, {}, context.options);
+    ASSERT_TRUE(first.success) << first.error.toStdString();
+    const QDir waveforms(context.project.buildWaveformOutputDir);
+    const auto names = waveforms.entryList({QStringLiteral("*.vkd")}, QDir::Files);
+    ASSERT_FALSE(names.isEmpty());
+    const QString path = waveforms.filePath(names.front());
+    const HANDLE handle = CreateFileW(reinterpret_cast<LPCWSTR>(path.utf16()), GENERIC_READ,
+        FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    ASSERT_NE(handle, INVALID_HANDLE_VALUE);
+    const auto close = qScopeGuard([&] { CloseHandle(handle); });
+    QString error;
+    EXPECT_TRUE(VNX::ProjectPackExporter::ValidatePackBuildWriteAccess(
+        context.project, context.root, {context.platform}, context.options, &error)) << error.toStdString();
+    const auto result = context.exporter.ExportAllPacks(context.project, {}, context.options);
+    ASSERT_TRUE(result.success) << result.error.toStdString();
+    EXPECT_FALSE(result.warnings.isEmpty());
+    EXPECT_FALSE(findByName(readPublication(context.live.path()), QStringLiteral("One"))
+        .value(QStringLiteral("companion")).toObject().contains(QStringLiteral("waveforms")));
+    const auto finalized = VNX::ProjectPackExporter::FinalizePackExport(
+        context.root, context.project, {context.platform}, false, result.artifacts);
+    EXPECT_TRUE(finalized.success) << finalized.error.toStdString();
+}
+
 TEST(EditorProjectPackExporterManifest, FileDenyingReplacementMustFailBeforeBuilding)
 {
     PackWriteAccessProject context;
