@@ -2972,7 +2972,7 @@ bool MatchesPrivateImmediateEntryReceiver(harken::Engine& engine,
         receiver.partition.generation == row.partition.generation &&
         receiver.invocationGeneration == row.invocationGeneration &&
         row.Invocation().actionFiring == receiver.root &&
-        row.pendingImmediateCohortRoot == receiver.root &&
+        row.PendingImmediateCohortRoot() == receiver.root &&
         receiver.entry.owner.child == row.ownerInstance &&
         receiver.entry.owner.childEpoch == row.ownerEpoch &&
         receiver.entry.owner.invocation == row.rootInstance &&
@@ -8988,7 +8988,7 @@ bool CaptureOriginalPlainStopSource(harken::Engine& engine,
     resource.originalPlainOwnerEpoch = row->ownerEpoch;
     resource.originalPlainSource = start.arm;
     resource.originalPlainSubmission = submission;
-    resource.originalPlainCohort = row->pendingImmediateCohortRoot;
+    resource.originalPlainCohort = row->PendingImmediateCohortRoot();
     resource.originalPlainSelected = true;
     return true;
 }
@@ -10912,8 +10912,8 @@ bool PrepareFrontierQueueMode(harken::Engine& engine, harken::EngineActionPlaySc
         service.queueTimingPending = true;
         service.queueInitialCohortEntryFrame =
             initialService->queueInitialCohortEntryFrame;
-        service.pendingImmediateCohortRoot =
-            initialService->Invocation().actionFiring;
+        engine.SetPlayableServiceCohortRoot(service,
+            initialService->Invocation().actionFiring);
     }
     if (!RegisterFrontierPreparedOwner(scratch, &context, ValidateFrontierQueueOwner,
             CommitFrontierQueueOwner, CancelFrontierQueueOwner)) {
@@ -10976,7 +10976,7 @@ void TransferFrontierLeafResource(harken::Engine& engine,
     child.pendingImmediateEntry = parent.pendingImmediateEntry;
     SetPendingImmediateEntryWork(engine, child, child.pendingImmediateEntry);
     if (child.pendingImmediateEntry) {
-        child.pendingImmediateCohortRoot = parent.pendingImmediateCohortRoot;
+        engine.SetPlayableServiceCohortRoot(child, parent.PendingImmediateCohortRoot());
         child.queueInitialCohortEntryFrame = parent.queueInitialCohortEntryFrame;
     }
     child.phase = child.pendingImmediateEntry
@@ -11000,7 +11000,7 @@ harken::EnginePlayableServiceRow* ResolvePlainInitialForwardedResource(
             wrapper->scheduleLeafCount > 1 || wrapper->arm.Valid() || wrapper->renderHandle != 0 ||
             wrapper->activeLeafInstance != 0 ||
             (requirePending && (!wrapper->pendingImmediateEntry ||
-                wrapper->pendingImmediateCohortRoot != root.pendingImmediateCohortRoot ||
+                wrapper->PendingImmediateCohortRoot() != root.PendingImmediateCohortRoot() ||
                 wrapper->queueInitialCohortEntryFrame != root.queueInitialCohortEntryFrame)))
             return nullptr;
         for (std::uint32_t index = 0; index < engine.sourceTerminals.Capacity(); ++index) {
@@ -11019,7 +11019,7 @@ harken::EnginePlayableServiceRow* ResolvePlainInitialForwardedResource(
             childOwner.parent != wrapper->ownerInstance ||
             !engine.playablePartitions.Owns(child->partition, child->identity) ||
             (requirePending && (!child->pendingImmediateEntry ||
-                child->pendingImmediateCohortRoot != root.pendingImmediateCohortRoot ||
+                child->PendingImmediateCohortRoot() != root.PendingImmediateCohortRoot() ||
                 child->queueInitialCohortEntryFrame != root.queueInitialCohortEntryFrame))) return nullptr;
         if (child->arm.Valid() && child->renderHandle != 0) {
             const harken::SourceTerminalRecord* found = nullptr;
@@ -11111,7 +11111,7 @@ bool ForwardPlainInitialQueuePending(
     for (std::size_t depth = 0; child != nullptr && depth < engine.playableServices.size(); ++depth) {
         child->pendingImmediateEntry = true;
         SetPendingImmediateEntryWork(engine, *child, true);
-        child->pendingImmediateCohortRoot = parent.pendingImmediateCohortRoot;
+        engine.SetPlayableServiceCohortRoot(*child, parent.PendingImmediateCohortRoot());
         child->queueInitialCohortEntryFrame = parent.queueInitialCohortEntryFrame;
         child->ticket = parent.ticket;
         child->phase = harken::EnginePlayableStartPhase::PendingImmediateEntry;
@@ -13303,7 +13303,7 @@ PlayableStartResetResult ResetPlayableStartRow(
 bool HasRetainedImmediateRetryCleanup(const harken::Engine& engine,
     const harken::EnginePlayableServiceRow& row) noexcept {
     const auto& held = engine.timelineStartScratch.retryCleanup;
-    return held.active && row.InvocationValid() && held.cohort == row.pendingImmediateCohortRoot &&
+    return held.active && row.InvocationValid() && held.cohort == row.PendingImmediateCohortRoot() &&
         held.service.invocationGeneration == row.invocationGeneration;
 }
 
@@ -13477,7 +13477,7 @@ bool ReleaseQueueStopNativeOccupancy(
     harken::EnginePlayableServiceRow& row,
     std::uint64_t observedAudioSequence) noexcept {
     const auto* privateAttempt = FindImmediateEntryAttempt(
-        engine, row.pendingImmediateCohortRoot);
+        engine, row.PendingImmediateCohortRoot());
     if (privateAttempt != nullptr &&
         privateAttempt->privateCleanupPhase !=
             harken::InitialQueuePrivateCleanupPhase::None &&
@@ -34654,8 +34654,8 @@ bool IsInitialRootQueueTimingOnlyCurrent(
         row.zeroWorkCompletionFrame == row.queueCompletionFrame;
     return !row.parentService.Valid() &&
         row.identity.Valid() && row.partition.Valid() && row.InvocationValid() &&
-        row.pendingImmediateCohortRoot != 0 &&
-        row.Invocation().actionFiring == row.pendingImmediateCohortRoot &&
+        row.PendingImmediateCohortRoot() != 0 &&
+        row.Invocation().actionFiring == row.PendingImmediateCohortRoot() &&
         row.ownerInstance != 0 && row.ownerEpoch != 0 && row.queueInstance.Valid() &&
         row.queueTimingPending && row.queueDeferredNeedsFullPreparation &&
         row.queueSignalOnlyNoOverlap && !row.queueContinuationPrepared &&
@@ -34891,8 +34891,8 @@ bool IsInitialQueueTimingOnlyCurrent(
     if (IsInitialRootQueueTimingOnlyCurrent(row)) return true;
     return row.queueMode && row.parentService.Valid() &&
         row.identity.Valid() && row.partition.Valid() &&
-        row.InvocationValid() && row.pendingImmediateCohortRoot != 0 &&
-        row.Invocation().actionFiring == row.pendingImmediateCohortRoot &&
+        row.InvocationValid() && row.PendingImmediateCohortRoot() != 0 &&
+        row.Invocation().actionFiring == row.PendingImmediateCohortRoot() &&
         row.ownerInstance != 0 && row.ownerEpoch != 0 &&
         row.queueInstance.Valid() && row.queueTimingPending &&
         ((row.queueDeferredNeedsFullPreparation && row.queueSignalOnlyNoOverlap) ||
@@ -35065,7 +35065,7 @@ harken::EngineQueueContinuationRecord* AcquireQueueContinuationRecord(
         !holder.identity.Valid() || !holder.queueInstance.Valid() ||
         !holder.QueueFiling().queueDecision.Valid() ||
         !holder.initialQueueEntryDecision.Valid() ||
-        holder.pendingImmediateCohortRoot != attempt.root)
+        holder.PendingImmediateCohortRoot() != attempt.root)
         return nullptr;
     for (std::uint32_t index = 0;
          index < engine.queueContinuationRecords.size(); ++index) {
@@ -35103,7 +35103,7 @@ harken::EngineQueueFutureRecord* AcquireQueueFutureRecord(
         !holder.identity.Valid() || !holder.queueInstance.Valid() ||
         !holder.initialQueueEntryDecision.Valid() ||
         holder.queueFirstContinuationLane ||
-        holder.pendingImmediateCohortRoot != attempt.root)
+        holder.PendingImmediateCohortRoot() != attempt.root)
         return nullptr;
     for (std::uint32_t index = 0; index < engine.queueFutureRecords.size();
          ++index) {
@@ -35446,7 +35446,7 @@ bool ReleaseInitialQueueCoordinator(
         const auto service = std::find_if(engine.playableServices.begin(),
             engine.playableServices.end(), [&](const auto& row) {
                 return row.identity == attempt.initialService &&
-                    row.pendingImmediateCohortRoot == attempt.root &&
+                    row.PendingImmediateCohortRoot() == attempt.root &&
                     attempt.initialQueueDescriptor.entry.Valid() &&
                     row.frontierEntry == attempt.initialQueueDescriptor.entry;
             });
@@ -35788,7 +35788,7 @@ bool ServicePrivateInitialQueuePinGroupCleanup(
         engine.playableServices.end(), [&](const auto& row) {
             return row.identity == attempt.initialService &&
                 row.invocationGeneration == attempt.initialInvocationGeneration &&
-                row.pendingImmediateCohortRoot == attempt.root;
+                row.PendingImmediateCohortRoot() == attempt.root;
         });
     if (initial == engine.playableServices.end()) return false;
     const auto count = engine.immediateActionLane.PrivatePinGroupCount(
@@ -35814,7 +35814,7 @@ bool ServicePrivateInitialQueuePinGroupCleanup(
                 const harken::EnginePlayableServiceRow* service = nullptr;
                 for (const auto& row : engine.playableServices) {
                     if (row.phase == harken::EnginePlayableStartPhase::Free ||
-                        row.pendingImmediateCohortRoot != attempt.root ||
+                        row.PendingImmediateCohortRoot() != attempt.root ||
                         (row.invocationGeneration != attempt.initialInvocationGeneration &&
                          !engine.MatchesInitialSoundQueueParticipant(attempt, row)) ||
                         row.Invocation().actionFiring != attempt.root ||
@@ -35926,7 +35926,7 @@ bool ServicePrivateInitialQueuePinGroupCleanup(
             const auto& owner = group.frontier->operation.owner;
             for (auto& row : engine.playableServices) {
                 if (row.phase == harken::EnginePlayableStartPhase::Free ||
-                    row.pendingImmediateCohortRoot != attempt.root ||
+                    row.PendingImmediateCohortRoot() != attempt.root ||
                     row.identity.slot != owner.serviceSlot ||
                     row.identity.generation != owner.serviceGeneration ||
                     row.QueueFiling().queueDecision.slot != identity.decision.slot ||
@@ -36113,7 +36113,7 @@ bool ServicePrivateInitialQueuePinGroupCleanup(
                 ? engine.ResolveInitialSoundQueueParticipant(attempt) : &*initial;
             const auto completed = engine.mixer.BlocksRendered();
             if (queue == nullptr || !queue->InvocationValid() ||
-                queue->pendingImmediateCohortRoot != attempt.root ||
+                queue->PendingImmediateCohortRoot() != attempt.root ||
                 queue->identity != attempt.queueContinuationService ||
                 queue->queueInstance.slot != attempt.queueContinuationQueue.slot ||
                 queue->queueInstance.generation != attempt.queueContinuationQueue.generation ||
@@ -36158,7 +36158,7 @@ bool CaptureFullyPrivateAbortVoices(harken::Engine& engine,
         const auto* service = engine.ResolveSourceResourceOwner(
             source->resourceOwner);
         if (service == nullptr ||
-            service->pendingImmediateCohortRoot != attempt.root ||
+            service->PendingImmediateCohortRoot() != attempt.root ||
             service->invocationGeneration != attempt.initialInvocationGeneration ||
             service->rootInstance != source->controller ||
             service->ownerInstance != source->resourceOwner.instance ||
@@ -36405,7 +36405,7 @@ bool ProveUnboundInitialVariableQueueRecord(
         (owner.parent != 0 && !parent.live) || !expectedOwner.Valid() ||
         !(record.descriptor.entry.owner == expectedOwner) || !holder->InvocationValid() ||
         !IsPlayableServiceDescendant(engine, *holder, *producer.row) ||
-        holder->pendingImmediateCohortRoot != attempt.root ||
+        holder->PendingImmediateCohortRoot() != attempt.root ||
         holder->invocation != producer.row->invocation ||
         holder->invocationGeneration != producer.row->invocationGeneration ||
         holder->Invocation().actionFiring != attempt.root ||
@@ -36653,7 +36653,7 @@ void MarkAbortingVariableControlMembers(harken::Engine& engine,
     harken::EngineImmediateEntryAttempt& attempt,
     bool preserveCancellation = false) noexcept {
     for (auto& member : engine.playableServices) {
-        if (member.pendingImmediateCohortRoot != attempt.root ||
+        if (member.PendingImmediateCohortRoot() != attempt.root ||
             !member.pendingImmediateEntry ||
             (member.phase != harken::EnginePlayableStartPhase::PendingImmediateEntry &&
              member.phase != harken::EnginePlayableStartPhase::Cancelling))
@@ -36975,7 +36975,7 @@ bool CaptureRegisteredPrivateVcAbortVoices(harken::Engine& engine,
             const auto* service = engine.ResolveSourceResourceOwner(source->resourceOwner);
             const auto owner = engine.ledger.OwnerForRender(render);
             if (service == nullptr || (originalOwner != nullptr && service != originalOwner) || !service->InvocationValid() ||
-                service->pendingImmediateCohortRoot != attempt.root ||
+                service->PendingImmediateCohortRoot() != attempt.root ||
                 service->Invocation().actionFiring != attempt.root ||
                 service->invocationGeneration != held.rootProducerInvocationGeneration ||
                 service->rootInstance != source->controller ||
@@ -37701,7 +37701,7 @@ bool ServiceAbortingVariableControlProducer(harken::Engine& engine,
                                               harken::PlayableInstanceHandle owner,
                                               std::uint64_t epoch) {
                 auto* holder = engine.ResolvePlayableService(serviceToken, owner, epoch);
-                if (holder == nullptr || holder->pendingImmediateCohortRoot != root)
+                if (holder == nullptr || holder->PendingImmediateCohortRoot() != root)
                     return false;
                 if (!holder->frontierLifetimePin.Valid())
                     return !holder->frontierLifetimeEntry.Valid();
@@ -37966,7 +37966,7 @@ bool HasPlainInitialQueueCurrentLane(
         root.identity == attempt.initialService && root.InvocationValid() &&
         root.invocationGeneration == attempt.initialInvocationGeneration &&
         root.Invocation().actionFiring == attempt.root &&
-        root.pendingImmediateCohortRoot == attempt.root &&
+        root.PendingImmediateCohortRoot() == attempt.root &&
         root.immediateLane.slot == attempt.lane.slot &&
         root.immediateLane.generation == attempt.lane.generation;
 }
@@ -38105,7 +38105,7 @@ bool HasFixedImmediateSoundCohort(const harken::Engine& engine,
     return root != 0 && std::any_of(engine.playableServices.begin(),
         engine.playableServices.end(), [&](const auto& member) {
             return member.phase != harken::EnginePlayableStartPhase::Free &&
-                member.InvocationValid() && member.pendingImmediateCohortRoot == root &&
+                member.InvocationValid() && member.PendingImmediateCohortRoot() == root &&
                 member.pendingImmediateTimeDomain ==
                     harken::ImmediateLaneTimeDomain::FixedAbsoluteFrame;
         });
@@ -38280,7 +38280,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                 auto root = std::find_if(engine.playableServices.begin(),
                     engine.playableServices.end(), [&](const auto& member) {
                         return member.identity == attempt.initialService &&
-                            member.pendingImmediateCohortRoot == attempt.root;
+                            member.PendingImmediateCohortRoot() == attempt.root;
                     });
                 if (root != engine.playableServices.end() &&
                     root->frontierEntry.Valid() &&
@@ -38291,7 +38291,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                 engine.playableServices.begin(), engine.playableServices.end(),
                 [&](const auto& row) {
                     return row.identity == attempt.initialService &&
-                        row.pendingImmediateCohortRoot == attempt.root;
+                        row.PendingImmediateCohortRoot() == attempt.root;
                 });
             bool ownedRootFailure = false;
             if (!privateCleanupFinished && attempt.queueContinuationFailed &&
@@ -38401,7 +38401,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                 if (initial == nullptr || !initial->InvocationValid() ||
                     initial->invocationGeneration != attempt.initialInvocationGeneration ||
                     initial->Invocation().actionFiring != attempt.root ||
-                    initial->pendingImmediateCohortRoot != attempt.root ||
+                    initial->PendingImmediateCohortRoot() != attempt.root ||
                     !descriptor.Valid() || descriptor.entry.attempt != attempt.generation ||
                     descriptor.entry.owner.serviceSlot != initial->identity.slot ||
                     descriptor.entry.owner.serviceGeneration != initial->identity.generation ||
@@ -38499,7 +38499,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
             if (attempt.privateVcProducerCount != 0) {
                 bool pending = false;
                 for (const auto& member : engine.playableServices)
-                    pending |= member.pendingImmediateCohortRoot == attempt.root &&
+                    pending |= member.PendingImmediateCohortRoot() == attempt.root &&
                         member.phase == harken::EnginePlayableStartPhase::PendingImmediateEntry &&
                         member.pendingImmediateEntry;
                 if (!pending) {
@@ -38512,7 +38512,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                 engine.playableServices.begin(), engine.playableServices.end(),
                 [&](const auto& row) {
                     return row.identity == attempt.initialService &&
-                        row.pendingImmediateCohortRoot == attempt.root;
+                        row.PendingImmediateCohortRoot() == attempt.root;
                 });
             const auto* initialActivation =
                 engine.decisions.ResolveFrontierActivation(
@@ -38540,7 +38540,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
             bool hasPendingMember = false;
             for (const auto& member : engine.playableServices)
                 hasPendingMember = hasPendingMember ||
-                    (member.pendingImmediateCohortRoot == attempt.root &&
+                    (member.PendingImmediateCohortRoot() == attempt.root &&
                      member.phase == harken::EnginePlayableStartPhase::PendingImmediateEntry &&
                      member.pendingImmediateEntry);
             if (hasPendingMember) continue;
@@ -38636,7 +38636,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                 return row.identity == attempt.initialService && row.InvocationValid() &&
                     row.invocationGeneration == attempt.initialInvocationGeneration &&
                     row.Invocation().actionFiring == attempt.root &&
-                    row.pendingImmediateCohortRoot == attempt.root;
+                    row.PendingImmediateCohortRoot() == attempt.root;
             });
         const bool explicitStop = observation.cancelled && !observation.missed &&
             stopOwner != engine.playableServices.end() &&
@@ -38694,7 +38694,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                     SameCanonicalDecision(entry.coordinator, record.coordinator) &&
                     entry.owner.child == record.ownerInstance && entry.owner.childEpoch == record.ownerEpoch &&
                     entry.owner.serviceSlot == record.service.slot && entry.owner.serviceGeneration == record.service.generation &&
-                    service != nullptr && service->pendingImmediateCohortRoot == attempt.root &&
+                    service != nullptr && service->PendingImmediateCohortRoot() == attempt.root &&
                     service->Invocation().actionFiring == attempt.root &&
                     expectedOwner.Valid() && entry.owner == expectedOwner &&
                     service->Invocation().worldGeneration == record.descriptor.worldGeneration &&
@@ -38790,7 +38790,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
         if (observation.missed || initialQueueContinuationFailed ||
             variableControlQueueFailed) {
             for (auto& member : engine.playableServices) {
-                if (member.pendingImmediateCohortRoot != attempt.root ||
+                if (member.PendingImmediateCohortRoot() != attempt.root ||
                     member.phase == harken::EnginePlayableStartPhase::Free ||
                     member.phase == harken::EnginePlayableStartPhase::Cancelling) continue;
                 if (PrivateImmediateEntryStopPending(member)) continue;
@@ -38881,14 +38881,14 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
             const bool hasTimingOnlyCurrent = std::any_of(
                 engine.playableServices.begin(), engine.playableServices.end(),
                 [&](const auto& member) {
-                    return member.pendingImmediateCohortRoot == attempt.root &&
+                    return member.PendingImmediateCohortRoot() == attempt.root &&
                         IsInitialQueueTimingOnlyCurrent(member);
                 });
             if (hasTimingOnlyCurrent) {
                 auto root = std::find_if(engine.playableServices.begin(),
                     engine.playableServices.end(), [&](const auto& member) {
                         return member.identity == attempt.initialService &&
-                            member.pendingImmediateCohortRoot == attempt.root &&
+                            member.PendingImmediateCohortRoot() == attempt.root &&
                             member.InvocationValid() &&
                             member.invocationGeneration ==
                                 attempt.initialInvocationGeneration &&
@@ -38906,7 +38906,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                     bool started = false;
                     std::uint32_t currents = 0;
                     for (const auto& current : engine.playableServices) {
-                        if (current.pendingImmediateCohortRoot != attempt.root ||
+                        if (current.PendingImmediateCohortRoot() != attempt.root ||
                             !IsInitialQueueTimingOnlyCurrent(current)) continue;
                         ++currents;
                         exact = ProvePlainInitialQueueCurrentStart(engine, attempt,
@@ -38948,7 +38948,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                     engine.runtimeRecreateRequired = true;
                 if (read != harken::FrontierReceiptRead::InFlight) {
                     for (auto& member : engine.playableServices) {
-                        if (member.pendingImmediateCohortRoot != attempt.root ||
+                        if (member.PendingImmediateCohortRoot() != attempt.root ||
                             !IsInitialQueueTimingOnlyCurrent(member)) continue;
                         const bool stopIntent =
                             root == engine.playableServices.end() ||
@@ -39011,7 +39011,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                 [&](const auto& candidate) {
                     return candidate.identity == attempt.initialService && candidate.InvocationValid() &&
                         candidate.invocationGeneration == attempt.initialInvocationGeneration &&
-                        candidate.pendingImmediateCohortRoot == attempt.root;
+                        candidate.PendingImmediateCohortRoot() == attempt.root;
                 });
             if (plainRoot != engine.playableServices.end() && HasPlainInitialQueueCurrentLane(attempt, *plainRoot)) {
                 auto* resource = ResolvePlainInitialForwardedResource(engine, *plainRoot, true, true);
@@ -39039,7 +39039,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                 member.immediateLane = {};
             if (attempt.originalLaneDemand.groups == 0 && attempt.originalLaneDemand.members == 0 &&
                 attempt.entryEventCount == 1 && !attempt.initialQueueCoordinator.Valid() &&
-                member.pendingImmediateCohortRoot == attempt.root &&
+                member.PendingImmediateCohortRoot() == attempt.root &&
                 member.queueNaturalEnd && !member.queueSignalOnlyNoOverlap &&
                 member.queueCurrentScheduleLeafCount == 1 && member.frontierArmPin.Valid() &&
                 !member.pendingImmediateRetry &&
@@ -39051,7 +39051,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
             auto root = std::find_if(engine.playableServices.begin(),
                 engine.playableServices.end(), [&](const auto& member) {
                     return member.identity == attempt.initialService &&
-                        member.pendingImmediateCohortRoot == attempt.root;
+                        member.PendingImmediateCohortRoot() == attempt.root;
                 });
             if (root == engine.playableServices.end()) {
                 engine.runtimeRecreateRequired = true;
@@ -39061,7 +39061,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                 root->queueTimingFinalized = true;
                 for (auto& member : engine.playableServices) {
                     if (!member.queueTimingPending ||
-                        member.pendingImmediateCohortRoot != attempt.root)
+                        member.PendingImmediateCohortRoot() != attempt.root)
                         continue;
                     if (member.QueueFiling().queueSuccessorProgramBank != nullptr)
                         member.QueueFiling().queueSuccessorProgramBank->published = true;
@@ -39070,7 +39070,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
             } else {
                 for (auto& member : engine.playableServices) {
                     if (!member.queueTimingPending ||
-                        member.pendingImmediateCohortRoot != attempt.root)
+                        member.PendingImmediateCohortRoot() != attempt.root)
                         continue;
                     member.phase = harken::EnginePlayableStartPhase::Cancelling;
                     member.controlLifecycle =
@@ -39084,7 +39084,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
             auto root = std::find_if(engine.playableServices.begin(),
                 engine.playableServices.end(), [&](const auto& member) {
                     return member.identity == attempt.initialService &&
-                        member.pendingImmediateCohortRoot == attempt.root;
+                        member.PendingImmediateCohortRoot() == attempt.root;
                 });
             if (root == engine.playableServices.end()) {
                 engine.runtimeRecreateRequired = true;
@@ -39094,7 +39094,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                 root->queueTimingFinalized = true;
                 for (auto& member : engine.playableServices) {
                     if (!member.queueTimingPending ||
-                        member.pendingImmediateCohortRoot != attempt.root)
+                        member.PendingImmediateCohortRoot() != attempt.root)
                         continue;
                     if (member.QueueFiling().queueSuccessorProgramBank != nullptr)
                         member.QueueFiling().queueSuccessorProgramBank->published = true;
@@ -39710,7 +39710,7 @@ bool AppendPendingVariableControlLaneEvents(harken::Engine& engine,
                 [&](const auto& candidate) {
                     return candidate.identity == timing.service &&
                         candidate.queueTimingPending &&
-                        candidate.pendingImmediateCohortRoot == attempt.root;
+                        candidate.PendingImmediateCohortRoot() == attempt.root;
                 });
             const auto* holder = found == engine.playableServices.end() ?
                 nullptr : &*found;
@@ -40061,7 +40061,7 @@ bool PendingVariableGroupHasDeterministicTreeDomain(harken::Engine& engine,
         group.leafCount != row.scheduleLeafCount || group.leafCount != producer.voiceStartCount)
         return false;
     for (const auto& member : engine.playableServices) {
-        if (&member != &row && member.pendingImmediateCohortRoot == attempt.root &&
+        if (&member != &row && member.PendingImmediateCohortRoot() == attempt.root &&
             member.phase != harken::EnginePlayableStartPhase::Free) {
             bool registered = false;
             auto token = attempt.privateVcProducerHead;
@@ -40705,7 +40705,7 @@ bool StageInitialQueueSuccessorStartMirrors(harken::Engine& engine,
             engine.playableServices.end(), [&](auto& candidate) {
                 return candidate.identity == token &&
                     candidate.queueTimingPending &&
-                    candidate.pendingImmediateCohortRoot == attempt.root;
+                    candidate.PendingImmediateCohortRoot() == attempt.root;
             });
         return holder == engine.playableServices.end() ? nullptr : &*holder;
     };
@@ -40752,7 +40752,7 @@ bool StageInitialQueueSuccessorStartMirrors(harken::Engine& engine,
             const auto& owner = producer == nullptr ? row : *producer->row;
             if (holder == nullptr || !holder->InvocationValid() ||
                 (vcOrigin && attempt.privateVcProducerCount != 0 && producer == nullptr) ||
-                holder->pendingImmediateCohortRoot != attempt.root ||
+                holder->PendingImmediateCohortRoot() != attempt.root ||
                 ((holder->invocation != owner.invocation ||
                   holder->invocationGeneration != owner.invocationGeneration) &&
                  !(!vcOrigin && engine.HasInitialSoundQueueCohort(attempt) &&
@@ -41030,7 +41030,7 @@ void ApplyInitialQueueSuccessorStartMirrors(harken::Engine& engine,
             engine.playableServices.end(), [&](auto& candidate) {
                 return candidate.identity == token &&
                     candidate.queueTimingPending &&
-                    candidate.pendingImmediateCohortRoot == attempt.root;
+                    candidate.PendingImmediateCohortRoot() == attempt.root;
             });
         return holder == engine.playableServices.end() ? nullptr : &*holder;
     };
@@ -41116,7 +41116,7 @@ bool PreparePendingVariableQueueRootTiming(harken::Engine& engine,
             engine.playableServices.end(), [&](const auto& candidate) {
                 return candidate.identity == timing.service &&
                     candidate.queueTimingPending &&
-                    candidate.pendingImmediateCohortRoot == attempt.root;
+                    candidate.PendingImmediateCohortRoot() == attempt.root;
             });
         if (holder == engine.playableServices.end()) return false;
         const auto* producer = attempt.privateVcProducerCount == 0 ? nullptr
@@ -41278,7 +41278,7 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
         auto holder = std::find_if(engine.playableServices.begin(),
             engine.playableServices.end(), [&](auto& candidate) {
                 return candidate.identity == token && candidate.queueTimingPending &&
-                    candidate.pendingImmediateCohortRoot == attempt.root;
+                    candidate.PendingImmediateCohortRoot() == attempt.root;
             });
         return holder == engine.playableServices.end() ? nullptr : &*holder;
     };
@@ -42044,7 +42044,7 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
             engine.playableServices.end(), [&](const auto& candidate) {
                 return candidate.identity == timing.service &&
                     candidate.queueTimingPending &&
-                    candidate.pendingImmediateCohortRoot == attempt.root;
+                    candidate.PendingImmediateCohortRoot() == attempt.root;
             });
         if (holder == engine.playableServices.end()) return false;
         bool owned = false;
@@ -42560,7 +42560,7 @@ bool TransferPendingVariableQueueRows(harken::Engine& engine,
         auto* holder = engine.ResolvePlayableService(timing.service,
             engine.playableServices[timing.service.slot].ownerInstance,
             engine.playableServices[timing.service.slot].ownerEpoch);
-        if (holder == nullptr || holder->pendingImmediateCohortRoot != attempt.root ||
+        if (holder == nullptr || holder->PendingImmediateCohortRoot() != attempt.root ||
             !holder->queueTimingPending || holder->QueueFiling().queueSuccessorProgramBank != timing.successorBank) return false;
         holder->startFrame = timing.newEntryFrame;
         holder->queueInitialCohortEntryFrame = anchor;
@@ -42604,7 +42604,7 @@ bool PublishPendingVariableControlLane(harken::Engine& engine,
             engine.playableServices.end(), [&](auto& candidate) {
                 return candidate.identity == token &&
                     candidate.queueTimingPending &&
-                    candidate.pendingImmediateCohortRoot == attempt.root;
+                    candidate.PendingImmediateCohortRoot() == attempt.root;
             });
         return holder == engine.playableServices.end() ? nullptr : &*holder;
     };
@@ -42710,7 +42710,7 @@ bool PublishPendingVariableControlLane(harken::Engine& engine,
             engine.playableServices.end(), [&](const auto& candidate) {
                 return candidate.identity == timing.service &&
                     candidate.queueTimingPending &&
-                    candidate.pendingImmediateCohortRoot == attempt.root;
+                    candidate.PendingImmediateCohortRoot() == attempt.root;
             });
         if (holder == engine.playableServices.end() ||
             holder->QueueFiling().queueSuccessorProgramBank != timing.successorBank) {
@@ -42819,7 +42819,7 @@ const harken::TimelineArmTable::PreparedCommitInput* FindCommittedPrivateVcArmPr
             const auto& queueOwner = producer.storage.frontierQueues[context];
             queueMatches += queueOwner.committed && engine.ResolvePlayableService(queueOwner.service) == future->row;
         }
-        if (queueMatches != 1 || future->row->pendingImmediateCohortRoot != attempt.root) return nullptr;
+        if (queueMatches != 1 || future->row->PendingImmediateCohortRoot() != attempt.root) return nullptr;
         const auto* before = result;
         for (std::uint32_t voice = 0; voice < future->queueSuccessorVoiceStartCount; ++voice)
             if (!takeVoice(future->queueSuccessorVoiceStarts[voice],
@@ -43165,7 +43165,7 @@ bool BindPendingPrivateVcRoot(harken::Engine& engine,
         if (timing.service.slot >= engine.playableServices.size()) return false;
         auto& holder = engine.playableServices[timing.service.slot];
         if (holder.identity != timing.service || !holder.queueTimingPending ||
-            holder.pendingImmediateCohortRoot != attempt.root ||
+            holder.PendingImmediateCohortRoot() != attempt.root ||
             holder.QueueFiling().queueSuccessorProgramBank != timing.successorBank ||
             holder.QueueFiling().queueSuccessorHasZeroWorkCompletion != timing.successorHasZeroWorkCompletion ||
             holder.QueueFiling().queueSuccessorZeroWorkCompletionFrame != timing.oldSuccessorZeroWorkCompletionFrame) return false;
@@ -43287,7 +43287,7 @@ bool ReanchorInitialQueueFrame(std::uint64_t oldFrame,
 harken::EnginePlayableServiceRow* ResolveInitialQueueTimingEntry(
     harken::Engine& engine, harken::EnginePlayableServiceRow& member,
     const harken::EngineImmediateEntryAttempt* attempt) noexcept {
-    const auto firing = member.pendingImmediateCohortRoot;
+    const auto firing = member.PendingImmediateCohortRoot();
     if (firing == 0 || !member.InvocationValid() ||
         member.Invocation().actionFiring != firing) return nullptr;
     auto* current = &member;
@@ -43295,7 +43295,7 @@ harken::EnginePlayableServiceRow* ResolveInitialQueueTimingEntry(
     for (std::size_t depth = 0; depth < engine.playableServices.size(); ++depth) {
         if (!current->InvocationValid() || current->invocation != member.invocation ||
             current->invocationGeneration != member.invocationGeneration) return nullptr;
-        if (attempt != nullptr && current->pendingImmediateCohortRoot == firing &&
+        if (attempt != nullptr && current->PendingImmediateCohortRoot() == firing &&
             ((current->identity == attempt->initialService &&
               current->invocationGeneration == attempt->initialInvocationGeneration) ||
              engine.MatchesInitialSoundQueueParticipant(*attempt, *current, true) ||
@@ -43313,7 +43313,7 @@ harken::EnginePlayableServiceRow* ResolveInitialQueueTimingEntry(
             // The lane owner can be inside a forwarding Container. Still prove
             // every parent edge through the actual outer invocation root.
             if (attempt == nullptr) entry = current;
-            return entry != nullptr && entry->pendingImmediateCohortRoot == firing
+            return entry != nullptr && entry->PendingImmediateCohortRoot() == firing
                 ? entry : nullptr;
         }
         current = engine.ResolvePlayableService(current->parentService);
@@ -43377,7 +43377,7 @@ bool MatchesPrivateCommittedInitialQueueTimingMember(harken::Engine& engine,
         if (!member.queueTimingPending ||
             (member.phase == harken::EnginePlayableStartPhase::Free &&
              !MatchesPrivateCommittedInitialQueueTimingMember(engine, member, attempt)) ||
-            member.pendingImmediateCohortRoot != firing ||
+            member.PendingImmediateCohortRoot() != firing ||
             !member.InvocationValid()) continue;
         auto* root = ResolveInitialQueueTimingEntry(engine, member, &attempt);
         if (root == nullptr) continue;
@@ -43698,9 +43698,9 @@ void DischargeInitialQueueTimingGates(harken::Engine& engine) noexcept {
     for (auto& member : engine.playableServices) {
         if (!member.queueTimingPending ||
             member.phase == harken::EnginePlayableStartPhase::Free ||
-            member.pendingImmediateCohortRoot == 0) continue;
+            member.PendingImmediateCohortRoot() == 0) continue;
         const auto* privateAttempt = FindImmediateEntryAttempt(
-            engine, member.pendingImmediateCohortRoot);
+            engine, member.PendingImmediateCohortRoot());
         auto* root = ResolveInitialQueueTimingEntry(engine, member, privateAttempt);
         const bool exactPath = root != nullptr;
         if (exactPath) {
@@ -44456,10 +44456,10 @@ void ServicePendingImmediateEntries(
         auto& service = engine.playableServices[token.slot];
         return service.identity == token ? &service : nullptr;
     };
-    const auto findOccupiedService = [&](const auto& matches)
+    const auto findOccupiedService = [&](harken::ActionFiringHandle root, const auto& matches)
         -> harken::EnginePlayableServiceRow* {
-        for (std::uint32_t cursor = 0;
-             auto* service = engine.NextOccupiedPlayableService(&cursor);)
+        for (harken::Engine::PlayableCohortCursor cursor{};
+             auto* service = engine.NextOccupiedPlayableCohortService(root, &cursor);)
             if (matches(*service)) return service;
         return nullptr;
     };
@@ -44501,7 +44501,7 @@ void ServicePendingImmediateEntries(
             continue;
         }
         if (row.phase != harken::EnginePlayableStartPhase::PendingImmediateEntry) continue;
-        const auto root = row.pendingImmediateCohortRoot;
+        const auto root = row.PendingImmediateCohortRoot();
         if (auto* original = FindImmediateEntryAttempt(engine, root); original != nullptr) {
             if (original->privateVcProducerCount != 0 && row.identity != original->initialService) continue;
             if (original->initialQueueCoordinator.Valid() &&
@@ -44526,11 +44526,11 @@ void ServicePendingImmediateEntries(
                 continue;
             }
             bool stopCaptureWaiting = false;
-            for (std::uint32_t occupiedCursor = 0;
-                 auto* occupiedService = engine.NextOccupiedPlayableService(&occupiedCursor);) {
+            for (harken::Engine::PlayableCohortCursor occupiedCursor{};
+                 auto* occupiedService = engine.NextOccupiedPlayableCohortService(root, &occupiedCursor);) {
                 auto& member = *occupiedService;
                 if (member.phase == harken::EnginePlayableStartPhase::Free ||
-                    member.pendingImmediateCohortRoot != root || !member.pendingRegisteredStopCapture) continue;
+                    member.PendingImmediateCohortRoot() != root || !member.pendingRegisteredStopCapture) continue;
                 const auto status = harken::ServiceRegisteredStopCapture(engine, member.rootInstance, member.pendingCancellationFadeMs, member.pendingControlCause);
                 stopCaptureWaiting |= status != harken::PlayableControlStatus::Ok || member.pendingRegisteredStopCapture;
             }
@@ -44549,12 +44549,12 @@ void ServicePendingImmediateEntries(
             }
         }
         bool cancellationPending = false;
-        for (std::uint32_t occupiedCursor = 0;
-             auto* occupiedService = engine.NextOccupiedPlayableService(&occupiedCursor);) {
+        for (harken::Engine::PlayableCohortCursor occupiedCursor{};
+             auto* occupiedService = engine.NextOccupiedPlayableCohortService(root, &occupiedCursor);) {
             auto& member = *occupiedService;
             if (member.phase != harken::EnginePlayableStartPhase::PendingImmediateEntry ||
                 !member.pendingImmediateEntry ||
-                member.pendingImmediateCohortRoot != root) continue;
+                member.PendingImmediateCohortRoot() != root) continue;
             if (PrivateImmediateEntryStopPending(member)) continue;
             if (!CompleteDeferredPlayableCancellation(
                     engine, member, engine.mixer.BlocksRendered()) ||
@@ -44606,16 +44606,16 @@ void ServicePendingImmediateEntries(
             }
         }
         if (HasFixedImmediateSoundCohort(engine, root) &&
-            findOccupiedService(
+            findOccupiedService(root,
                 [&](const auto& member) {
-                    return member.pendingImmediateCohortRoot == root && member.pendingImmediateRetry;
+                    return member.PendingImmediateCohortRoot() == root && member.pendingImmediateRetry;
                 }) != nullptr) {
             // A fixed-containing bank cannot replace its original installed sources.
-            for (std::uint32_t occupiedCursor = 0;
-                 auto* occupiedService = engine.NextOccupiedPlayableService(&occupiedCursor);) {
+            for (harken::Engine::PlayableCohortCursor occupiedCursor{};
+                 auto* occupiedService = engine.NextOccupiedPlayableCohortService(root, &occupiedCursor);) {
                 auto& member = *occupiedService;
                 if (member.phase != harken::EnginePlayableStartPhase::PendingImmediateEntry ||
-                    member.pendingImmediateCohortRoot != root) continue;
+                    member.PendingImmediateCohortRoot() != root) continue;
                 (void)AbortTimelineArm(engine, member.arm);
                 member.pendingImmediateRetry = false;
                 member.pendingImmediateEntry = false;
@@ -44662,11 +44662,11 @@ void ServicePendingImmediateEntries(
         }
         bool retryPending = false;
         bool oldGenerationLive = false;
-        for (std::uint32_t occupiedCursor = 0;
-             auto* occupiedService = engine.NextOccupiedPlayableService(&occupiedCursor);) {
+        for (harken::Engine::PlayableCohortCursor occupiedCursor{};
+             auto* occupiedService = engine.NextOccupiedPlayableCohortService(root, &occupiedCursor);) {
             auto& member = *occupiedService;
             if (member.phase != harken::EnginePlayableStartPhase::PendingImmediateEntry ||
-                member.pendingImmediateCohortRoot != root ||
+                member.PendingImmediateCohortRoot() != root ||
                 !member.pendingImmediateRetry) continue;
             retryPending = true;
             const auto bases = StorageBasesForRow(engine, member);
@@ -44713,11 +44713,11 @@ void ServicePendingImmediateEntries(
         }
         if (oldGenerationLive) continue;
         if (retryPending) {
-            for (std::uint32_t occupiedCursor = 0;
-                 const auto* occupiedService = engine.NextOccupiedPlayableService(&occupiedCursor);) {
+            for (harken::Engine::PlayableCohortCursor occupiedCursor{};
+                 const auto* occupiedService = engine.NextOccupiedPlayableCohortService(root, &occupiedCursor);) {
                 const auto& member = *occupiedService;
                 if (member.phase != harken::EnginePlayableStartPhase::PendingImmediateEntry ||
-                    member.pendingImmediateCohortRoot != root || !member.pendingImmediateRetry ||
+                    member.PendingImmediateCohortRoot() != root || !member.pendingImmediateRetry ||
                     !member.queueNaturalEnd || member.queueSignalOnlyNoOverlap ||
                     member.queueCurrentScheduleLeafCount != 1 ||
                     !harken::IsBoundKnownCompletionPredicate(member.queueCurrentCompletion)) continue;
@@ -44733,11 +44733,11 @@ void ServicePendingImmediateEntries(
             // Actual foreign storage keeps this old episode intact. A later normal
             // Update retries only after its genuine Return; no new command is issued.
             if (oldGenerationLive) continue;
-            for (std::uint32_t occupiedCursor = 0;
-                 auto* occupiedService = engine.NextOccupiedPlayableService(&occupiedCursor);) {
+            for (harken::Engine::PlayableCohortCursor occupiedCursor{};
+                 auto* occupiedService = engine.NextOccupiedPlayableCohortService(root, &occupiedCursor);) {
                 auto& member = *occupiedService;
                 if (member.phase != harken::EnginePlayableStartPhase::PendingImmediateEntry ||
-                    member.pendingImmediateCohortRoot != root ||
+                    member.PendingImmediateCohortRoot() != root ||
                     !member.pendingImmediateRetry) continue;
                 const auto bases = StorageBasesForRow(engine, member);
                 for (std::uint32_t leaf = 0; leaf < leafCount(member); ++leaf) {
@@ -44768,9 +44768,9 @@ void ServicePendingImmediateEntries(
                         : nullptr;
                 };
                 std::uint32_t singleCount = 0;
-                for (std::uint32_t cursor = 0; const auto* service = engine.NextOccupiedPlayableService(&cursor);)
+                for (harken::Engine::PlayableCohortCursor cursor{}; const auto* service = engine.NextOccupiedPlayableCohortService(root, &cursor);)
                     if (service->phase == harken::EnginePlayableStartPhase::PendingImmediateEntry &&
-                        service->pendingImmediateCohortRoot == root && service->pendingImmediateRetry &&
+                        service->PendingImmediateCohortRoot() == root && service->pendingImmediateRetry &&
                         storedSingle(*service) != nullptr) ++singleCount;
                 if (singleCount != 0) replaced = starts.ReserveQueuePrograms(row, {singleCount, singleCount});
                 struct RetryCompletionWithdrawal {
@@ -44785,12 +44785,12 @@ void ServicePendingImmediateEntries(
                 };
                 std::array<RetryCompletionWithdrawal, harken::kMaxKnownScheduleLeaves> withdrawals{};
                 std::size_t withdrawalCount = 0;
-                for (std::uint32_t occupiedCursor = 0;
-                     auto* occupiedService = engine.NextOccupiedPlayableService(&occupiedCursor);) {
+                for (harken::Engine::PlayableCohortCursor occupiedCursor{};
+                     auto* occupiedService = engine.NextOccupiedPlayableCohortService(root, &occupiedCursor);) {
                     if (!replaced) break;
                     auto& member = *occupiedService;
                     if (member.phase != harken::EnginePlayableStartPhase::PendingImmediateEntry ||
-                        member.pendingImmediateCohortRoot != root ||
+                        member.PendingImmediateCohortRoot() != root ||
                         !member.pendingImmediateRetry) continue;
                     const auto bases = StorageBasesForRow(engine, member);
                     for (std::uint32_t leaf = 0;
@@ -44829,11 +44829,11 @@ void ServicePendingImmediateEntries(
                         const auto& retired = member.plainInitialRetryRetirement;
                         std::uint32_t cohortLeaves = 0;
                         if (terminalCurrent) {
-                            for (std::uint32_t candidateCursor = 0;
-                                 const auto* service = engine.NextOccupiedPlayableService(&candidateCursor);) {
+                            for (harken::Engine::PlayableCohortCursor candidateCursor{};
+                                 const auto* service = engine.NextOccupiedPlayableCohortService(root, &candidateCursor);) {
                                 const auto& candidate = *service;
                                 if (candidate.phase == harken::EnginePlayableStartPhase::PendingImmediateEntry &&
-                                    candidate.pendingImmediateCohortRoot == root && candidate.pendingImmediateRetry)
+                                    candidate.PendingImmediateCohortRoot() == root && candidate.pendingImmediateRetry)
                                     cohortLeaves += leafCount(candidate);
                             }
                         }
@@ -45021,11 +45021,11 @@ void ServicePendingImmediateEntries(
                 if (replaced) {
                     std::uint32_t index = 0;
                     std::uint32_t singleProgramIndex = 0;
-                    for (std::uint32_t occupiedCursor = 0;
-                         auto* occupiedService = engine.NextOccupiedPlayableService(&occupiedCursor);) {
+                    for (harken::Engine::PlayableCohortCursor occupiedCursor{};
+                         auto* occupiedService = engine.NextOccupiedPlayableCohortService(root, &occupiedCursor);) {
                         auto& member = *occupiedService;
                         if (member.phase != harken::EnginePlayableStartPhase::PendingImmediateEntry ||
-                            member.pendingImmediateCohortRoot != root ||
+                            member.PendingImmediateCohortRoot() != root ||
                             !member.pendingImmediateRetry) continue;
                         const auto bases = StorageBasesForRow(engine, member);
                         for (std::uint32_t leaf = 0;
@@ -45092,11 +45092,11 @@ void ServicePendingImmediateEntries(
                 }
             }
             if (!replaced) {
-                for (std::uint32_t occupiedCursor = 0;
-                     auto* occupiedService = engine.NextOccupiedPlayableService(&occupiedCursor);) {
+                for (harken::Engine::PlayableCohortCursor occupiedCursor{};
+                     auto* occupiedService = engine.NextOccupiedPlayableCohortService(root, &occupiedCursor);) {
                     auto& member = *occupiedService;
                     if (member.phase != harken::EnginePlayableStartPhase::PendingImmediateEntry ||
-                        member.pendingImmediateCohortRoot != root) continue;
+                        member.PendingImmediateCohortRoot() != root) continue;
                     member.pendingImmediateEntry = false;
                     member.pendingImmediateRetry = false;
                     member.phase = harken::EnginePlayableStartPhase::Cancelling;
@@ -45113,12 +45113,12 @@ void ServicePendingImmediateEntries(
         }
         bool awaitingApply = false;
         bool invalidArm = false;
-        for (std::uint32_t occupiedCursor = 0;
-             auto* occupiedService = engine.NextOccupiedPlayableService(&occupiedCursor);) {
+        for (harken::Engine::PlayableCohortCursor occupiedCursor{};
+             auto* occupiedService = engine.NextOccupiedPlayableCohortService(root, &occupiedCursor);) {
             auto& member = *occupiedService;
             if (member.phase != harken::EnginePlayableStartPhase::PendingImmediateEntry ||
                 !member.pendingImmediateEntry ||
-                member.pendingImmediateCohortRoot != root) continue;
+                member.PendingImmediateCohortRoot() != root) continue;
             for (std::uint32_t leaf = 0; leaf < leafCount(member); ++leaf) {
                 const auto* program = leafProgram(member, leaf);
                 harken::TimelineArmObservation arm{};
@@ -45134,11 +45134,11 @@ void ServicePendingImmediateEntries(
         }
         if (awaitingApply) {  continue; }
         if (invalidArm) {
-            for (std::uint32_t occupiedCursor = 0;
-                 auto* occupiedService = engine.NextOccupiedPlayableService(&occupiedCursor);) {
+            for (harken::Engine::PlayableCohortCursor occupiedCursor{};
+                 auto* occupiedService = engine.NextOccupiedPlayableCohortService(root, &occupiedCursor);) {
                 auto& member = *occupiedService;
                 if (member.phase != harken::EnginePlayableStartPhase::PendingImmediateEntry ||
-                    member.pendingImmediateCohortRoot != root) continue;
+                    member.PendingImmediateCohortRoot() != root) continue;
                 member.pendingImmediateEntry = false;
                 member.phase = harken::EnginePlayableStartPhase::Cancelling;
                 member.controlLifecycle =
@@ -45158,11 +45158,11 @@ void ServicePendingImmediateEntries(
         bool invalidTiming = false;
         std::uint64_t lastResolvedDue = startFrame;
         const auto validateCohortTiming = [&](std::uint64_t anchor) {
-            for (std::uint32_t occupiedCursor = 0;
-                 auto* occupiedService = engine.NextOccupiedPlayableService(&occupiedCursor);) {
+            for (harken::Engine::PlayableCohortCursor occupiedCursor{};
+                 auto* occupiedService = engine.NextOccupiedPlayableCohortService(root, &occupiedCursor);) {
                 auto& member = *occupiedService;
                 if (member.phase != harken::EnginePlayableStartPhase::PendingImmediateEntry ||
-                    member.pendingImmediateCohortRoot != root) continue;
+                    member.PendingImmediateCohortRoot() != root) continue;
                 const auto bases = StorageBasesForRow(engine, member);
                 for (std::uint32_t leaf = 0; leaf < leafCount(member); ++leaf) {
                     const auto* program = leafProgram(member, leaf);
@@ -45230,10 +45230,10 @@ void ServicePendingImmediateEntries(
         const bool hasQueueTimingBank = attempt != nullptr &&
             (attempt->initialQueueCoordinator.Valid() ||
              attempt->queueContinuationCount != 0 ||
-             findOccupiedService(
+             findOccupiedService(root,
                  [&](const auto& holder) {
                      return holder.queueTimingPending &&
-                         holder.pendingImmediateCohortRoot == root;
+                         holder.PendingImmediateCohortRoot() == root;
                  }) != nullptr);
         bool queueManifestReady = attempt != nullptr &&
             (!hasQueueTimingBank ||
@@ -45303,11 +45303,11 @@ void ServicePendingImmediateEntries(
         if (queueManifestReady && hasQueueTimingBank) {
             std::size_t expectedTimingMembers = 0;
             std::size_t expectedFutureHolders = 0;
-            for (std::uint32_t occupiedCursor = 0;
-                 const auto* occupiedService = engine.NextOccupiedPlayableService(&occupiedCursor);) {
+            for (harken::Engine::PlayableCohortCursor occupiedCursor{};
+                 const auto* occupiedService = engine.NextOccupiedPlayableCohortService(root, &occupiedCursor);) {
                 const auto& holder = *occupiedService;
                 if (!holder.queueTimingPending ||
-                    holder.pendingImmediateCohortRoot != root) continue;
+                    holder.PendingImmediateCohortRoot() != root) continue;
                 ++expectedTimingMembers;
                 expectedFutureHolders +=
                     !IsInitialQueueTimingOnlyCurrent(holder);
@@ -45421,12 +45421,12 @@ void ServicePendingImmediateEntries(
         }
         harken::ReserveRefusal refusal = harken::ReserveRefusal::None;
         filingFailed = filingFailed || !queueManifestReady;
-        for (std::uint32_t occupiedCursor = 0;
-             auto* occupiedService = engine.NextOccupiedPlayableService(&occupiedCursor);) {
+        for (harken::Engine::PlayableCohortCursor occupiedCursor{};
+             auto* occupiedService = engine.NextOccupiedPlayableCohortService(root, &occupiedCursor);) {
             auto& member = *occupiedService;
             if (filingFailed) break;
             if (member.phase != harken::EnginePlayableStartPhase::PendingImmediateEntry ||
-                member.pendingImmediateCohortRoot != root) continue;
+                member.PendingImmediateCohortRoot() != root) continue;
             if (member.ticket != row.ticket) { filingFailed = true; break; }
             for (std::uint32_t leaf = 0; leaf < leafCount(member); ++leaf) {
                 const auto* program = leafProgram(member, leaf);
@@ -45504,11 +45504,11 @@ void ServicePendingImmediateEntries(
         const auto originalDelayedCurrent = [&](const harken::ImmediateLaneEvent& lane) {
             OriginalDelayedCurrent result{};
             std::uint32_t matches = 0;
-            for (std::uint32_t occupiedCursor = 0;
-                 auto* occupiedService = engine.NextOccupiedPlayableService(&occupiedCursor);) {
+            for (harken::Engine::PlayableCohortCursor occupiedCursor{};
+                 auto* occupiedService = engine.NextOccupiedPlayableCohortService(root, &occupiedCursor);) {
                 auto& holder = *occupiedService;
                 if (holder.phase != harken::EnginePlayableStartPhase::PendingImmediateEntry ||
-                    holder.pendingImmediateCohortRoot != root ||
+                    holder.PendingImmediateCohortRoot() != root ||
                     holder.queueInitialCurrentDelayedCount == 0u) continue;
                 const auto bases = StorageBasesForRow(engine, holder);
                 if (holder.queueInitialCurrentMemberLeafCount != leafCount(holder) ||
@@ -45651,7 +45651,7 @@ void ServicePendingImmediateEntries(
         if (!filingFailed && attempt != nullptr &&
             attempt->queueContinuationCoordinator.Valid()) {
             auto* holder = serviceByToken(attempt->queueContinuationService);
-            if (holder != nullptr && holder->pendingImmediateCohortRoot != root)
+            if (holder != nullptr && holder->PendingImmediateCohortRoot() != root)
                 holder = nullptr;
             const auto timing = std::find_if(
                 engine.initialQueueTimingMembersScratch.begin(),
@@ -45814,7 +45814,7 @@ void ServicePendingImmediateEntries(
                     staged.programIndex];
                 auto* holder = serviceByToken(staged.holder);
                 if (holder != nullptr &&
-                    (!holder->queueTimingPending || holder->pendingImmediateCohortRoot != root))
+                    (!holder->queueTimingPending || holder->PendingImmediateCohortRoot() != root))
                     holder = nullptr;
                 if (holder == nullptr ||
                     staged.frozen == nullptr ||
@@ -46111,12 +46111,12 @@ void ServicePendingImmediateEntries(
         const auto bindOriginalCurrentStarts = [&]() {
             if (originalCurrentBound) return !filingFailed;
             originalCurrentBound = true;
-            for (std::uint32_t occupiedCursor = 0;
-                 auto* occupiedService = engine.NextOccupiedPlayableService(&occupiedCursor);) {
+            for (harken::Engine::PlayableCohortCursor occupiedCursor{};
+                 auto* occupiedService = engine.NextOccupiedPlayableCohortService(root, &occupiedCursor);) {
                 auto& member = *occupiedService;
                 if (filingFailed) break;
                 if (member.phase != harken::EnginePlayableStartPhase::PendingImmediateEntry ||
-                    member.pendingImmediateCohortRoot != root) continue;
+                    member.PendingImmediateCohortRoot() != root) continue;
                 const auto bases = StorageBasesForRow(engine, member);
                 for (std::uint32_t leaf = 0; leaf < leafCount(member); ++leaf) {
                     auto* program = leafProgram(member, leaf);
@@ -46202,7 +46202,7 @@ void ServicePendingImmediateEntries(
                 const auto& timing = engine.initialQueueTimingMembersScratch[index];
                 auto* holder = serviceByToken(timing.service);
                 if (holder == nullptr || !holder->queueTimingPending ||
-                    holder->pendingImmediateCohortRoot != root) {
+                    holder->PendingImmediateCohortRoot() != root) {
                     filingFailed = true;
                     break;
                 }
@@ -46315,7 +46315,7 @@ void ServicePendingImmediateEntries(
                     harken::Plan03GroupSliceIdentity prerequisiteMember{};
                     std::size_t prerequisiteCount = 0;
                     if (holder != nullptr && holder->queueFirstContinuationLane &&
-                        holder->pendingImmediateCohortRoot == root) {
+                        holder->PendingImmediateCohortRoot() == root) {
                         const auto capturedCount = queueGroupCount + 1u +
                             static_cast<std::size_t>(
                                 attempt->queueContinuationCoordinator.Valid());
@@ -46362,7 +46362,7 @@ void ServicePendingImmediateEntries(
                      !filingFailed && index < queueGroupCount; ++index) {
                     const auto& staged = engine.
                         initialQueueTimingGroupsScratch[index];
-                    auto* holder = findOccupiedService(
+                    auto* holder = findOccupiedService(root,
                         [&](const auto& candidate) {
                             return ((candidate.initialQueueEntryDecision.slot ==
                                         staged.decision.slot &&
@@ -46374,7 +46374,7 @@ void ServicePendingImmediateEntries(
                                     engine.InitialQueueFilingFuture(candidate).queueDecision.generation ==
                                         staged.decision.generation)) &&
                                 candidate.queueTimingPending &&
-                                candidate.pendingImmediateCohortRoot == root;
+                                candidate.PendingImmediateCohortRoot() == root;
                         });
                     if (holder == nullptr) {
                         filingFailed = true;
@@ -46630,7 +46630,7 @@ void ServicePendingImmediateEntries(
             for (std::size_t index = 0; index < queueMemberCount; ++index) {
                 const auto& timing = engine.initialQueueTimingMembersScratch[index];
                 auto* holder = serviceByToken(timing.service);
-                if (holder != nullptr && holder->pendingImmediateCohortRoot == root &&
+                if (holder != nullptr && holder->PendingImmediateCohortRoot() == root &&
                     timing.successorHasZeroWorkCompletion)
                     engine.InitialQueueFilingFuture(*holder).queueSuccessorZeroWorkCompletionFrame =
                         timing.newSuccessorZeroWorkCompletionFrame;
@@ -46647,12 +46647,12 @@ void ServicePendingImmediateEntries(
         if (!filingFailed && !engine.immediateActionLane.PinArms(attempt->lane,
                 engine.timelineArms)) filingFailed = true;
         // PinArms supplies the genuine leaf Arm generation used by private placement validation.
-        for (std::uint32_t occupiedCursor = 0;
-             auto* occupiedService = engine.NextOccupiedPlayableService(&occupiedCursor);) {
+        for (harken::Engine::PlayableCohortCursor occupiedCursor{};
+             auto* occupiedService = engine.NextOccupiedPlayableCohortService(root, &occupiedCursor);) {
             auto& member = *occupiedService;
             if (filingFailed) break;
             if (member.phase != harken::EnginePlayableStartPhase::PendingImmediateEntry ||
-                member.pendingImmediateCohortRoot != root) continue;
+                member.PendingImmediateCohortRoot() != root) continue;
             for (std::uint32_t leaf = 0; leaf < leafCount(member); ++leaf) {
                 const auto* program = leafProgram(member, leaf);
                 if (program == nullptr || !FinalizePendingTimelineVariableInitializer(engine,
@@ -46678,11 +46678,11 @@ void ServicePendingImmediateEntries(
                 } else successorMirrorsExposed = true;
         }
         if (!filingFailed) {
-            for (std::uint32_t occupiedCursor = 0;
-                 auto* occupiedService = engine.NextOccupiedPlayableService(&occupiedCursor);) {
+            for (harken::Engine::PlayableCohortCursor occupiedCursor{};
+                 auto* occupiedService = engine.NextOccupiedPlayableCohortService(root, &occupiedCursor);) {
                 auto& member = *occupiedService;
                 if (member.phase != harken::EnginePlayableStartPhase::PendingImmediateEntry ||
-                    member.pendingImmediateCohortRoot != root) continue;
+                    member.PendingImmediateCohortRoot() != root) continue;
                 for (std::uint32_t leaf = 0; leaf < leafCount(member); ++leaf) {
                     const auto* program = leafProgram(member, leaf);
                     const bool plainTerminal = eventCount == 1 &&
@@ -46734,11 +46734,11 @@ void ServicePendingImmediateEntries(
         }
         if (!filingFailed && ordinarySelection) PublishMonitorPendingCensusSelections(engine, *attempt);
         if (!filingFailed && !ordinarySelection) {
-            for (std::uint32_t occupiedCursor = 0;
-                 auto* occupiedService = engine.NextOccupiedPlayableService(&occupiedCursor);) {
+            for (harken::Engine::PlayableCohortCursor occupiedCursor{};
+                 auto* occupiedService = engine.NextOccupiedPlayableCohortService(root, &occupiedCursor);) {
                 auto& member = *occupiedService;
                 if (member.phase != harken::EnginePlayableStartPhase::PendingImmediateEntry ||
-                    !member.pendingImmediateEntry || member.pendingImmediateCohortRoot != root ||
+                    !member.pendingImmediateEntry || member.PendingImmediateCohortRoot() != root ||
                     member.ticket != row.ticket || !member.InvocationValid() ||
                     !engine.playablePartitions.Owns(member.partition, member.identity) ||
                     member.variableControlIndependentFrontier) continue;
@@ -46781,7 +46781,7 @@ void ServicePendingImmediateEntries(
                 for (std::size_t index = 0; index < queueMemberCount; ++index) {
                     const auto& timing = engine.initialQueueTimingMembersScratch[index];
                     auto* holder = serviceByToken(timing.service);
-                    if (holder != nullptr && holder->pendingImmediateCohortRoot == root &&
+                    if (holder != nullptr && holder->PendingImmediateCohortRoot() == root &&
                         timing.successorHasZeroWorkCompletion)
                         engine.InitialQueueFilingFuture(*holder).queueSuccessorZeroWorkCompletionFrame =
                             timing.oldSuccessorZeroWorkCompletionFrame;
@@ -46880,10 +46880,10 @@ void ServicePendingImmediateEntries(
                 }
                 // Keep the cohort owner until its pinned lane groups retire.
             }
-            for (std::uint32_t occupiedCursor = 0;
-                 auto* occupiedService = engine.NextOccupiedPlayableService(&occupiedCursor);) {
+            for (harken::Engine::PlayableCohortCursor occupiedCursor{};
+                 auto* occupiedService = engine.NextOccupiedPlayableCohortService(root, &occupiedCursor);) {
                 auto& member = *occupiedService;
-                if (member.pendingImmediateCohortRoot != root ||
+                if (member.PendingImmediateCohortRoot() != root ||
                     (member.phase != harken::EnginePlayableStartPhase::PendingImmediateEntry &&
                      member.phase != harken::EnginePlayableStartPhase::AwaitingArmAck)) continue;
                 for (std::uint32_t leaf = 0; leaf < leafCount(member); ++leaf) {
@@ -46927,7 +46927,7 @@ void ServicePendingImmediateEntries(
                     engine.initialQueueTimingMembersScratch[index];
                 auto* holder = serviceByToken(timing.service);
                 if (holder == nullptr || !holder->queueTimingPending ||
-                    holder->pendingImmediateCohortRoot != root ||
+                    holder->PendingImmediateCohortRoot() != root ||
                     engine.InitialQueueFilingFuture(*holder).queueSuccessorProgramBank != timing.successorBank) {
                     engine.runtimeRecreateRequired = true;
                     continue;
@@ -46965,11 +46965,11 @@ void ServicePendingImmediateEntries(
                     engine.runtimeRecreateRequired = true;
                 }
             }
-            for (std::uint32_t occupiedCursor = 0;
-                 auto* occupiedService = engine.NextOccupiedPlayableService(&occupiedCursor);) {
+            for (harken::Engine::PlayableCohortCursor occupiedCursor{};
+                 auto* occupiedService = engine.NextOccupiedPlayableCohortService(root, &occupiedCursor);) {
                 auto& member = *occupiedService;
                 if (member.phase != harken::EnginePlayableStartPhase::PendingImmediateEntry ||
-                    member.pendingImmediateCohortRoot != root) continue;
+                    member.PendingImmediateCohortRoot() != root) continue;
                 engine.ReflectOriginalQueueFiling(member);
                 member.immediateLane = attempt->lane;
                 member.queueInitialCohortEntryFrame = startFrame;
@@ -47164,7 +47164,7 @@ void ServicePlayableStarts(harken::Engine& engine,
         if (row.publishedDeferredStoppingGeneration != 0) continue;
         if (row.privateOrdinaryDeferredRollbackGeneration != 0) continue;
         const auto* privateAttempt = FindImmediateEntryAttempt(
-            engine, row.pendingImmediateCohortRoot);
+            engine, row.PendingImmediateCohortRoot());
         // The original replacement owner retains these controllers until their old Sources and fences return.
         const auto* retirementAttempt = privateAttempt != nullptr ? privateAttempt : row.InvocationValid()
             ? FindImmediateEntryAttempt(engine, row.Invocation().actionFiring) : nullptr;
@@ -47181,7 +47181,7 @@ void ServicePlayableStarts(harken::Engine& engine,
         if (row.pendingImmediateEntry &&
             row.phase == harken::EnginePlayableStartPhase::Cancelling) {
             const auto* attempt = FindImmediateEntryAttempt(
-                engine, row.pendingImmediateCohortRoot);
+                engine, row.PendingImmediateCohortRoot());
             if (attempt != nullptr && attempt->producerSlot != UINT32_MAX)
                 continue;
         }
@@ -47249,7 +47249,7 @@ void ServicePlayableStarts(harken::Engine& engine,
                     row.immediateLane.Valid() && privateAttempt != nullptr && row.InvocationValid() &&
                     privateAttempt->initialService == row.identity &&
                     privateAttempt->initialInvocationGeneration == row.invocationGeneration &&
-                    privateAttempt->root == row.pendingImmediateCohortRoot &&
+                    privateAttempt->root == row.PendingImmediateCohortRoot() &&
                     row.Invocation().actionFiring == privateAttempt->root &&
                     privateAttempt->lane.slot == row.immediateLane.slot &&
                     privateAttempt->lane.generation == row.immediateLane.generation &&
@@ -50952,8 +50952,8 @@ engine.runtimeRecreateRequired = true;
                     row.phase == harken::EnginePlayableStartPhase::Cancelling &&
                     row.initialQueueEntryAttemptGeneration != 0 &&
                     row.initialQueueEntryDecision.Valid() &&
-                    row.pendingImmediateCohortRoot != 0 && row.InvocationValid() &&
-                    row.Invocation().actionFiring == row.pendingImmediateCohortRoot &&
+                    row.PendingImmediateCohortRoot() != 0 && row.InvocationValid() &&
+                    row.Invocation().actionFiring == row.PendingImmediateCohortRoot() &&
                     engine.playablePartitions.Owns(row.partition, row.identity) &&
                     observation.startedBlockSequence == 0 &&
                     observation.state != harken::ArmState::Tombstoned) {
@@ -53622,7 +53622,7 @@ Engine::PendingOrdinarySelectionResult Engine::ServicePendingOrdinarySelections(
     if (!MatchesPendingSelectionCensus(attempt) || anchor == UINT64_MAX) return Result::Refused;
     const auto reject = [&](VnResult status) noexcept {
         for (auto& member : playableServices) {
-            if (member.pendingImmediateCohortRoot != attempt.root ||
+            if (member.PendingImmediateCohortRoot() != attempt.root ||
                 member.phase != EnginePlayableStartPhase::PendingImmediateEntry) continue;
             if (member.arm.Valid()) (void)AbortTimelineArm(*this, member.arm);
             member.pendingImmediateEntry = false;
@@ -54312,7 +54312,7 @@ bool Engine::CapturePendingVariableQueueNativeOrigins(EngineActionPlayScratch& s
         std::uint32_t matches = 0;
         for (const auto& service : playableServices) {
             if (!service.identity.Valid() || !service.InvocationValid() || !service.queueInstance.Valid() ||
-                service.pendingImmediateCohortRoot != attempt->root ||
+                service.PendingImmediateCohortRoot() != attempt->root ||
                 !ownsService(service) || IsInitialQueueTimingOnlyCurrent(service)) continue;
             Origin candidate{};
             candidate.service = {service.identity, service.ownerInstance, service.ownerEpoch, service.invocationGeneration};
@@ -54419,7 +54419,7 @@ bool Engine::CapturePendingVariableQueueNativeOrigins(EngineActionPlayScratch& s
     // Every owned Queue must have its primary and every issued native slice.
     for (const auto& service : playableServices) {
         if (!service.identity.Valid() || !service.InvocationValid() || !service.queueInstance.Valid() ||
-            service.pendingImmediateCohortRoot != attempt->root || !ownsService(service)) continue;
+            service.PendingImmediateCohortRoot() != attempt->root || !ownsService(service)) continue;
         if (IsInitialQueueTimingOnlyCurrent(service)) continue;
         std::uint32_t nativeCount = 0;
         for (std::size_t index = 0; index < count; ++index) {
@@ -56569,7 +56569,7 @@ bool Engine::MatchesPendingVariableReplacementQueueIssuer(EngineActionPlayScratc
         original != nullptr && service->InvocationValid() && original->InvocationValid() &&
         service->invocation == original->invocation &&
         service->invocationGeneration == original->invocationGeneration &&
-        service->Invocation().actionFiring == root && service->pendingImmediateCohortRoot == root &&
+        service->Invocation().actionFiring == root && service->PendingImmediateCohortRoot() == root &&
         service->queueInitialCohortEntryFrame == child.pendingVariableReplacementAnchorFrame &&
         playablePartitions.Owns(service->partition, service->identity) && queueToken.Valid() &&
         queueToken.slot == service->queueInstance.slot && queueToken.generation == service->queueInstance.generation;
@@ -56955,7 +56955,7 @@ bool Engine::PreparePendingVariableReplacementQueueLaneGroups(EngineActionPlaySc
         if (!MatchesPendingVariableReplacementQueueIssuer(child, queue, attempt.root, attempt.generation)) return false;
         auto* holder = ResolvePlayableService(queue.service);
         if (holder == nullptr || &holder->Invocation() != &producer.row->Invocation() ||
-            holder->pendingImmediateCohortRoot != attempt.root || holder->queueTimingFinalized) return false;
+            holder->PendingImmediateCohortRoot() != attempt.root || holder->queueTimingFinalized) return false;
         if (!holder->queueTimingPending || IsInitialQueueTimingOnlyCurrent(*holder)) continue;
         const bool continuation = holder->queueFirstContinuationLane;
         const bool natural = holder->QueueFiling().queueSourceControlArmCount == 1u;
@@ -60476,7 +60476,7 @@ bool Engine::MatchesRegisteredPendingVariableCohortReprepare(const EngineActionP
             !MatchesOriginalPlayableServiceLifetime(group.service) || service.token != row.identity ||
             service.owner != row.ownerInstance || service.epoch != row.ownerEpoch ||
             service.invocationGeneration != row.invocationGeneration || !row.InvocationValid() ||
-            row.Invocation().actionFiring != attempt.root || row.pendingImmediateCohortRoot != attempt.root ||
+            row.Invocation().actionFiring != attempt.root || row.PendingImmediateCohortRoot() != attempt.root ||
             !playableInstances.IsOriginalLifetimePinFor(group.root, row.rootInstance) ||
             !playableInstances.IsOriginalLifetimeCurrent(group.root)) return false;
         const auto* successor = next.Valid() ? FindFrontierAttempt(*this, next) : nullptr;
@@ -60527,7 +60527,7 @@ bool Engine::BeginRegisteredPendingVariableCohortReprepare(EngineImmediateEntryA
     }
     if (token.Valid()) return false;
     for (const auto& row : playableServices) {
-        if (row.phase == EnginePlayableStartPhase::Free || row.pendingImmediateCohortRoot != attempt.root) continue;
+        if (row.phase == EnginePlayableStartPhase::Free || row.PendingImmediateCohortRoot() != attempt.root) continue;
         std::uint32_t matches = 0;
         token = attempt.privateVcProducerHead;
         for (std::uint32_t index = 0; index < attempt.privateVcProducerCount; ++index) {
@@ -72094,7 +72094,7 @@ static PlayableControlStatus BeginPlayableCancellation(
     }
     if (row->pendingCancellationIntent != 0) return acceptCancellation();
     if (transportReset && !preflightOnly && !preparedCommit) {
-        auto* attempt = FindImmediateEntryAttempt(engine, row->pendingImmediateCohortRoot);
+        auto* attempt = FindImmediateEntryAttempt(engine, row->PendingImmediateCohortRoot());
         if (attempt != nullptr && attempt->privateVcProducerCount != 0 &&
             !engine.RegisteredPendingVariableCohortRepreparePending(*attempt) &&
             (engine.immediateActionLane.OwnsPrivate(attempt->lane, attempt->root) ||
@@ -72103,7 +72103,7 @@ static PlayableControlStatus BeginPlayableCancellation(
                 return PlayableControlStatus::Backpressure;
             for (const auto& member : engine.playableServices) {
                 if (member.phase == EnginePlayableStartPhase::Free ||
-                    member.pendingImmediateCohortRoot != attempt->root) continue;
+                    member.PendingImmediateCohortRoot() != attempt->root) continue;
                 if (!member.InvocationValid() || member.Invocation().actionFiring != attempt->root ||
                     engine.ResolvePlayableService(EnginePlayableServiceReference{member.identity,
                         member.ownerInstance, member.ownerEpoch, member.invocationGeneration}) != &member)
@@ -72116,7 +72116,7 @@ static PlayableControlStatus BeginPlayableCancellation(
             // Preserve the originals until the registered abort has captured and returned every owner.
             for (auto& member : engine.playableServices) {
                 if (member.phase == EnginePlayableStartPhase::Free ||
-                    member.pendingImmediateCohortRoot != attempt->root) continue;
+                    member.PendingImmediateCohortRoot() != attempt->root) continue;
                 if (member.pendingCancellationIntent == 0 && !member.pendingRegisteredStopCapture)
                     member.pendingControlCause = cause;
                 member.pendingCancellationIntent = static_cast<std::uint8_t>(intent) + 1u;
@@ -72134,7 +72134,7 @@ static PlayableControlStatus BeginPlayableCancellation(
         }
     }
     if (intent == PlayableCancellationIntent::Stop) {
-        auto* attempt = FindImmediateEntryAttempt(engine, row->pendingImmediateCohortRoot);
+        auto* attempt = FindImmediateEntryAttempt(engine, row->PendingImmediateCohortRoot());
         if (attempt != nullptr && !preflightOnly && !preparedCommit &&
             !engine.RegisteredPendingVariableCohortRepreparePending(*attempt) &&
             attempt->privateVcProducerCount != 0 &&
@@ -72192,7 +72192,7 @@ static PlayableControlStatus BeginPlayableCancellation(
                         for (auto& member : engine.playableServices) {
                             if (!stopped) break;
                             if (member.phase == EnginePlayableStartPhase::Free ||
-                                member.pendingImmediateCohortRoot != attempt->root || !member.pendingRegisteredStopCapture) continue;
+                                member.PendingImmediateCohortRoot() != attempt->root || !member.pendingRegisteredStopCapture) continue;
                             auto& receiver = member.privateImmediateEntry;
                             stopped = MatchesPrivateImmediateEntryReceiver(engine, member) &&
                                 engine.immediateActionLane.RequestPrivateEntryStop(receiver.lane, receiver.root,
@@ -72211,7 +72211,7 @@ static PlayableControlStatus BeginPlayableCancellation(
                         // Bind releases the producer chain; row identities remain owned by the same cohort.
                         for (auto& member : engine.playableServices) {
                             if (member.phase == EnginePlayableStartPhase::Free ||
-                                member.pendingImmediateCohortRoot != attempt->root || !member.pendingRegisteredStopCapture) continue;
+                                member.PendingImmediateCohortRoot() != attempt->root || !member.pendingRegisteredStopCapture) continue;
                             member.pendingCancellationIntent = static_cast<std::uint8_t>(intent) + 1u;
                             member.pendingRegisteredStopCapture = false;
                             RecordServiceControlCause(engine, member, member.pendingControlCause);
@@ -72298,7 +72298,7 @@ static PlayableControlStatus BeginPlayableCancellation(
 #endif
             return acceptCancellation();
         }
-        auto* original = FindImmediateEntryAttempt(engine, row->pendingImmediateCohortRoot);
+        auto* original = FindImmediateEntryAttempt(engine, row->PendingImmediateCohortRoot());
         if (original != nullptr && original->privateVcProducerCount != 0 &&
             (engine.immediateActionLane.OwnsPrivate(original->lane, original->root) ||
              engine.immediateActionLane.OwnsNeverCommitted(original->lane, original->root)) &&
@@ -72316,7 +72316,7 @@ static PlayableControlStatus BeginPlayableCancellation(
         return acceptCancellation();
     }
     const auto* privateAttempt = FindImmediateEntryAttempt(
-        engine, row->pendingImmediateCohortRoot);
+        engine, row->PendingImmediateCohortRoot());
     if (privateAttempt != nullptr &&
         privateAttempt->privateCleanupPhase !=
             InitialQueuePrivateCleanupPhase::None &&
@@ -73100,7 +73100,7 @@ engine.runtimeRecreateRequired = true;
 
 bool ResumePendingPlayableCancellation(Engine& engine, EnginePlayableServiceRow& row) noexcept {
     if (row.pendingCancellationIntent == 0) return true;
-    const auto* attempt = FindImmediateEntryAttempt(engine, row.pendingImmediateCohortRoot);
+    const auto* attempt = FindImmediateEntryAttempt(engine, row.PendingImmediateCohortRoot());
     if (attempt != nullptr && engine.RegisteredPendingVariableCohortRepreparePending(*attempt)) return false;
     const auto* producer = attempt == nullptr ? nullptr : FindFrontierAttempt(engine,
         {attempt->producerSlot, attempt->producerGeneration});
@@ -78702,7 +78702,7 @@ bool PrepareImmediateActionSingleLeafPlay(
             : harken::ImmediateLaneTimeDomain::FixedAbsoluteFrame;
         row->pendingImmediateFixedEntryFrame = planned.deferredFrame;
         row->queueInitialCohortEntryFrame = startFrame;
-        row->pendingImmediateCohortRoot = row->Invocation().actionFiring;
+        engine.SetPlayableServiceCohortRoot(*row, row->Invocation().actionFiring);
     }
     harken::EnginePlayableServiceRow* frontierChild = nullptr;
     if (instanceKind == harken::PlayableKind::Container && selectionCount > 1u) {
@@ -79105,7 +79105,7 @@ bool PrepareImmediateActionQueueRoot(
     harken::Engine& engine = *plan.engine;
     harken::EnginePlayableServiceRow& row = *scratch->row;
     if (row.pendingImmediateEntry)
-        row.pendingImmediateCohortRoot = plan.rootHandle;
+        engine.SetPlayableServiceCohortRoot(row, plan.rootHandle);
     // A terminal direct child has no successor timing cohort. A retained
     // frontier child still owns its independently prepared timing resources.
     row.queueTimingPending = row.pendingImmediateEntry &&
@@ -80792,7 +80792,7 @@ bool ValidatePreparedQueueCurrentCompositeCore(
     if (outSameOnset == nullptr ||
         !row.queueTimingPending || !row.queueCurrentCompositeOwner.Valid() ||
         !row.InvocationValid() || row.Invocation().actionFiring != root ||
-        row.pendingImmediateCohortRoot != root ||
+        row.PendingImmediateCohortRoot() != root ||
         row.queueInitialCohortEntryFrame != entryFrame) return false;
     if (engine.ResolvePlayableService(row.identity, row.ownerInstance, row.ownerEpoch) != &row ||
         !engine.playablePartitions.Owns(row.partition, row.identity) ||
@@ -81435,13 +81435,13 @@ bool PrepareQueueContinuation(
     const bool actualChild = actualQueue != nullptr;
     if (actualChild) {
         const bool sameInitialCohort = row.queueTimingPending &&
-            row.pendingImmediateCohortRoot != 0 &&
-            row.pendingImmediateCohortRoot == entry.RootHandle() &&
+            row.PendingImmediateCohortRoot() != 0 &&
+            row.PendingImmediateCohortRoot() == entry.RootHandle() &&
             row.queueInitialCohortEntryFrame == entry.EntryFrame() &&
             row.InvocationValid() && scratch->row->InvocationValid() &&
             row.invocation == scratch->row->invocation &&
             row.invocationGeneration == scratch->row->invocationGeneration &&
-            row.Invocation().actionFiring == row.pendingImmediateCohortRoot;
+            row.Invocation().actionFiring == row.PendingImmediateCohortRoot();
         row.queueTimingPending = sameInitialCohort ||
             scratch->row->pendingImmediateEntry;
         if (row.queueTimingPending && !sameInitialCohort)
@@ -82249,7 +82249,7 @@ bool SelectCanonicalInitialQueueProfile(harken::Engine& engine, VnActionFiringHa
     if (!row.queueTimingPending || parent.packLeaseOwned || parent.packLeaseBorrowed ||
         queueOwner.program == nullptr || !queueOwner.hasSuccessor || !row.InvocationValid() ||
         row.Invocation().actionFiring != root ||
-        row.pendingImmediateCohortRoot != root ||
+        row.PendingImmediateCohortRoot() != root ||
         predicate.absoluteLogicalCompleteFrame >= engine.timelinePool.WindowEndFrame()) return true;
     const auto& program = *queueOwner.program;
     const auto* source = FindQueueChild(program, queueOwner.initial.currentChildOrdinal);
@@ -82428,7 +82428,7 @@ bool PrepareQueueCurrentCore(harken::Engine& engine,
                     initial->invocation != row->invocation ||
                     initial->invocationGeneration != row->invocationGeneration ||
                     row->Invocation().actionFiring != entryRoot ||
-                    row->pendingImmediateCohortRoot != entryRoot ||
+                    row->PendingImmediateCohortRoot() != entryRoot ||
                     row->queueInitialCohortEntryFrame != anchor ||
                     queueOwner.engine != &engine || !queueOwner.prepared.Valid() ||
                     queueOwner.prepared.Token().slot != row->queueInstance.slot ||
@@ -82484,7 +82484,7 @@ bool PrepareQueueCurrentCore(harken::Engine& engine,
                         child->invocationGeneration != row->invocationGeneration ||
                         child->Invocation().actionFiring != entryRoot ||
                         (child->queueTimingPending &&
-                         (child->pendingImmediateCohortRoot != entryRoot ||
+                         (child->PendingImmediateCohortRoot() != entryRoot ||
                           child->queueInitialCohortEntryFrame != row->queueInitialCohortEntryFrame))) return false;
                     std::uint32_t depth = 0;
                     while (depth < row->containerInstanceCount && row->containerInstances[depth] != row->ownerInstance) ++depth;
@@ -83212,8 +83212,8 @@ bool PrepareImmediateActionCompositeQueueChildPlay(
     row->queueCurrentScheduleLeafCount = materialized.leafCount;
     row->pendingImmediateEntry = pendingImmediateEntry;
     SetPendingImmediateEntryWork(engine, *row, pendingImmediateEntry);
-    row->pendingImmediateCohortRoot = pendingImmediateEntry
-        ? plan.rootHandle : 0;
+    engine.SetPlayableServiceCohortRoot(*row, pendingImmediateEntry
+        ? plan.rootHandle : 0);
     row->queueTimingPending = pendingImmediateEntry && initialQueue;
     if (row->queueTimingPending)
         row->queueInitialCohortEntryFrame = plan.admittedImmediateFrame;
@@ -83845,7 +83845,7 @@ bool PromoteInitialVariableControlQueuesToLane(
             return false;
         queue->queueTimingPending = true;
         queue->queueInitialCohortEntryFrame = plan.admittedImmediateFrame;
-        queue->pendingImmediateCohortRoot = firing;
+        plan.engine->SetPlayableServiceCohortRoot(*queue, firing);
     }
     return true;
 }
@@ -86817,7 +86817,7 @@ bool ValidatePreparedTerminalQueueCurrent(
     auto& engine = *plan.engine;
     if (!row.actionPrepared || !row.queueNaturalEnd || row.queueSignalOnlyNoOverlap ||
         !IsInitialQueueTimingOnlyCurrent(row) ||
-        row.pendingImmediateCohortRoot != plan.rootHandle ||
+        row.PendingImmediateCohortRoot() != plan.rootHandle ||
         row.queueInitialCohortEntryFrame != plan.admittedImmediateFrame ||
         !engine.playablePartitions.Owns(row.partition, row.identity)) return false;
     const harken::EngineActionPlayScratch* source = nullptr;
@@ -87003,7 +87003,7 @@ bool ComputeInitialActionLaneDemand(
     bool hasInitialQueueHolder = false;
     for (const auto& holder : engine.playableServices) {
         if (!holder.queueTimingPending ||
-            holder.pendingImmediateCohortRoot != plan.rootHandle) continue;
+            holder.PendingImmediateCohortRoot() != plan.rootHandle) continue;
         if (IsInitialRootQueueTimingOnlyCurrent(holder)) {
             const auto* source = preparedCount == 1 ? FindImmediateActionPlay(plan, 0) : nullptr;
             harken::CompletionMutationBinding mutation{}, expectedMutation{};
@@ -87252,7 +87252,7 @@ bool CaptureOriginalPlainActionManifest(ImmediateActionPlan& plan,
         const auto* submission = engine.originalSourceSubmissions.Find(start.arm);
         if (!row.actionPrepared || !row.pendingImmediateEntry || row.queueMode || row.parentService.Valid() ||
             row.variableControlIndependentFrontier || !row.InvocationValid() || !row.identity.Valid() ||
-            !row.partition.Valid() || row.pendingImmediateCohortRoot != plan.rootHandle ||
+            !row.partition.Valid() || row.PendingImmediateCohortRoot() != plan.rootHandle ||
             row.Invocation().actionFiring != plan.rootHandle || !start.prepared || !start.voiceOwnershipHeld ||
             !start.armOwnershipHeld || !start.ledgerOwnershipHeld || submission == nullptr ||
             !engine.originalSourceSubmissions.HasOriginalVoice(start.arm) ||
@@ -87361,7 +87361,7 @@ bool OriginalInitialSingleQueueOriginRouteEligible(ImmediateActionPlan& plan,
     const auto& row = *actual->row;
     const auto& voice = actual->voiceStarts[0];
     return row.actionPrepared && row.InvocationValid() && row.Invocation().actionFiring == plan.rootHandle &&
-        row.pendingImmediateEntry && row.pendingImmediateCohortRoot == plan.rootHandle &&
+        row.pendingImmediateEntry && row.PendingImmediateCohortRoot() == plan.rootHandle &&
         row.queueFirstContinuationLane && row.queueTimingPending && row.queueUnplacedGroupCount == 2 &&
         plan.engine->MatchesOriginalInitialSingleQueueCurrentGeometry(*actual) &&
         row.queueInitialCurrentDelayedCount == 0 &&
@@ -87745,7 +87745,7 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
             engine.playableServices.begin(),
             engine.playableServices.end(), [&](const auto& holder) {
                 return holder.queueTimingPending &&
-                    holder.pendingImmediateCohortRoot == plan->rootHandle &&
+                    holder.PendingImmediateCohortRoot() == plan->rootHandle &&
                     (!IsInitialQueueTimingOnlyCurrent(holder) ||
                      IsInitialRootQueueTimingOnlyCurrent(holder));
             });
@@ -87762,7 +87762,7 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
             std::uint32_t matchedHolders = 0;
             for (const auto& holder : engine.playableServices) {
                 if (!holder.queueTimingPending ||
-                    holder.pendingImmediateCohortRoot != plan->rootHandle)
+                    holder.PendingImmediateCohortRoot() != plan->rootHandle)
                     continue;
                 if (IsInitialQueueTimingOnlyCurrent(holder)) continue;
                 std::uint32_t vcProducers = 0;
@@ -87866,7 +87866,7 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
             }
             for (const auto& holder : engine.playableServices) {
                 if (!holder.queueFirstContinuationLane ||
-                    holder.pendingImmediateCohortRoot != plan->rootHandle)
+                    holder.PendingImmediateCohortRoot() != plan->rootHandle)
                     continue;
                 const bool vcChild =
                     play->row->variableControlIndependentFrontier;
@@ -87945,7 +87945,7 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
                 for (const auto& holder : engine.playableServices) {
                     if (!holder.queueTimingPending ||
                         holder.queueFirstContinuationLane ||
-                        holder.pendingImmediateCohortRoot != plan->rootHandle)
+                        holder.PendingImmediateCohortRoot() != plan->rootHandle)
                         continue;
                     if (IsInitialQueueTimingOnlyCurrent(holder)) continue;
                     if (holder.queueUnplacedGroupCount != 2u ||
@@ -87995,7 +87995,7 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
             }
             for (const auto& holder : engine.playableServices) {
                 if (!holder.queueTimingPending ||
-                    holder.pendingImmediateCohortRoot != plan->rootHandle)
+                    holder.PendingImmediateCohortRoot() != plan->rootHandle)
                     continue;
                 if (IsInitialQueueTimingOnlyCurrent(holder)) continue;
                 if (holder.QueueFiling().queueTransitionGroupArmCount > UINT16_MAX) {
@@ -88218,7 +88218,7 @@ bool ValidateQueueEntryDecisionOwner(harken::Engine& engine,
     return holder != nullptr && ownerToken.Valid() &&
         !owner.transferred && SameCanonicalDecision(holder->initialQueueEntryDecision, ownerToken) &&
         holder->invocationGeneration == owner.invocationGeneration &&
-        holder->pendingImmediateCohortRoot == root && holder->queueTimingPending;
+        holder->PendingImmediateCohortRoot() == root && holder->queueTimingPending;
 }
 
 bool CommitQueueEntryDecisionOwner(harken::Engine& engine,
@@ -89837,7 +89837,7 @@ engine.runtimeRecreateRequired = true;
                 engine.privateInitialVcLaneTransferHookForTest(engine, scratch, committed ? 78u : 79u,
                     engine.privateInitialVcLaneTransferContextForTest);
             if (committed && row.pendingImmediateEntry) {
-                row.pendingImmediateCohortRoot = plan->rootHandle;
+                engine.SetPlayableServiceCohortRoot(row, plan->rootHandle);
                 row.phase = harken::EnginePlayableStartPhase::PendingImmediateEntry;
             }
             ok = committed && ok;
@@ -89884,7 +89884,7 @@ engine.runtimeRecreateRequired = true;
           }
           row.ticket = sequence;
           if (row.pendingImmediateEntry) {
-              row.pendingImmediateCohortRoot = plan->rootHandle;
+              engine.SetPlayableServiceCohortRoot(row, plan->rootHandle);
           }
           row.event.logicCommitSequence = sequence;
           row.schedule.transactionId = sequence;
@@ -90078,7 +90078,7 @@ engine.runtimeRecreateRequired = true;
         const auto holder = std::find_if(engine.playableServices.begin(),
             engine.playableServices.end(), [&](const auto& candidate) {
                 return candidate.identity == attempt.queueContinuationService &&
-                    candidate.pendingImmediateCohortRoot == plan->rootHandle;
+                    candidate.PendingImmediateCohortRoot() == plan->rootHandle;
             });
         if (holder == engine.playableServices.end() ||
             !holder->queueFirstContinuationLane ||
@@ -90128,7 +90128,7 @@ engine.runtimeRecreateRequired = true;
                     return candidate.identity == record.service &&
                         candidate.ownerInstance == record.ownerInstance &&
                         candidate.ownerEpoch == record.ownerEpoch &&
-                        candidate.pendingImmediateCohortRoot ==
+                        candidate.PendingImmediateCohortRoot() ==
                             plan->rootHandle;
                 });
             if (!record.occupied || record.root != plan->rootHandle ||
@@ -90187,7 +90187,7 @@ engine.runtimeRecreateRequired = true;
                     return candidate.identity == record.service &&
                         candidate.ownerInstance == record.ownerInstance &&
                         candidate.ownerEpoch == record.ownerEpoch &&
-                        candidate.pendingImmediateCohortRoot ==
+                        candidate.PendingImmediateCohortRoot() ==
                             plan->rootHandle;
                 });
             if (!record.occupied || record.root != plan->rootHandle ||
@@ -90235,7 +90235,7 @@ engine.runtimeRecreateRequired = true;
         plan->reservedCohortAttempt->root == plan->rootHandle) {
         for (auto& member : engine.playableServices) {
             if (!member.queueTimingPending ||
-                member.pendingImmediateCohortRoot != plan->rootHandle ||
+                member.PendingImmediateCohortRoot() != plan->rootHandle ||
                 !member.InvocationValid() ||
                 (member.invocationGeneration !=
                      plan->reservedCohortAttempt->initialInvocationGeneration &&

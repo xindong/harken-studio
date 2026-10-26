@@ -1885,7 +1885,16 @@ struct EnginePlayableServiceRow {
         }
     } privateImmediateEntry{};
     bool pendingImmediateRetryStopIssued = false;
-    ActionFiringHandle pendingImmediateCohortRoot = 0;
+private:
+    friend struct Engine;
+    bool cohortLinked_ = false;
+    ActionFiringHandle pendingImmediateCohortRoot_ = 0;
+    std::uint32_t cohortPrevious_ = UINT32_MAX;
+    std::uint32_t cohortNext_ = UINT32_MAX;
+public:
+    ActionFiringHandle PendingImmediateCohortRoot() const noexcept {
+        return pendingImmediateCohortRoot_;
+    }
     std::uint64_t zeroWorkCompletionFrame = 0;
     EngineServiceArrayView<SelectionDeltaRefV1, kSelectionPathNodeCapacity> selectionDeltas{};
     EngineServiceArrayView<std::uint32_t, kSelectionPathNodeCapacity> selectedChildOrdinals{};
@@ -2506,6 +2515,7 @@ struct EnginePlayableServiceRow {
     void Reset() noexcept {
         const auto serviceIdentity = identity;
         const bool exhausted = quarantined;
+        assert(!cohortLinked_);
         assert(memberRelationHead == UINT32_MAX && memberRelationCount == 0);
         assert(std::none_of(memberPrograms.begin(), memberPrograms.end(),
             [](const auto& token) noexcept { return token.Valid(); }));
@@ -8459,7 +8469,7 @@ public:
                     !playablePartitions.Owns(original.partition, owner->identity) ||
                     owner->queueInstance.slot != original.queue.slot || owner->queueInstance.generation != original.queue.generation ||
                     owner->invocation != scratch.row->invocation || owner->invocationGeneration != scratch.row->invocationGeneration ||
-                    owner->pendingImmediateCohortRoot != attempt.root || baseline == nullptr ||
+                    owner->PendingImmediateCohortRoot() != attempt.root || baseline == nullptr ||
                     !playableInstances.IsOriginalLifetimeCurrent(*baseline) || baseline->OriginalParent() != original.parent ||
                     baseline->OriginalScheduleEpoch() != original.epoch || !leaf.live || leaf.kind != PlayableKind::Sound ||
                     leaf.parent != original.parent || leaf.scheduleEpoch != original.epoch ||
@@ -8962,7 +8972,7 @@ public:
         if (!MatchesOriginalPlayableServiceStorage(row) || !row.InvocationValid() ||
             (attempt.privateVcProducerCount == 0 &&
                 (row.identity != attempt.initialService || row.invocationGeneration != attempt.initialInvocationGeneration)) ||
-            row.Invocation().actionFiring != attempt.root || row.pendingImmediateCohortRoot != attempt.root ||
+            row.Invocation().actionFiring != attempt.root || row.PendingImmediateCohortRoot() != attempt.root ||
             (row.phase != EnginePlayableStartPhase::PendingImmediateEntry &&
              !(retirementAbort && row.phase == EnginePlayableStartPhase::Cancelling)) ||
             (!row.pendingImmediateEntry && !retirementAbort) ||
@@ -9030,7 +9040,7 @@ public:
             decisions.ResolveFrontierActivation(scratch.frontierCoordinator) != nullptr ||
             decisions.HasFrontierDecisionBinding(scratch.frontierCoordinator)) return false;
         for (const auto& candidate : playableServices) {
-            if (&candidate == &row || candidate.pendingImmediateCohortRoot != attempt.root ||
+            if (&candidate == &row || candidate.PendingImmediateCohortRoot() != attempt.root ||
                 candidate.phase == EnginePlayableStartPhase::Free) continue;
             bool participant = false;
             if (registered) {
@@ -10472,7 +10482,7 @@ public:
     bool MatchesInitialSoundQueueParticipant(const EngineImmediateEntryAttempt& attempt,
         const EnginePlayableServiceRow& row, bool queueOnly = false) const noexcept {
         if (!HasInitialSoundQueueCohort(attempt) || !row.InvocationValid() ||
-            row.pendingImmediateCohortRoot != attempt.root ||
+            row.PendingImmediateCohortRoot() != attempt.root ||
             row.Invocation().actionFiring != attempt.root) return false;
         const auto matches = [&](const InitialSoundQueueCohortReceipt::Participant& original) noexcept {
             return row.identity == original.service &&
@@ -10539,7 +10549,7 @@ public:
         const auto preparedRowMatches = [&](const EngineActionPlayScratch& actual) noexcept {
             const auto& row = *actual.row;
             return row.actionPrepared && row.pendingImmediateEntry && row.InvocationValid() &&
-                row.Invocation().actionFiring == attempt.root && row.pendingImmediateCohortRoot == attempt.root &&
+                row.Invocation().actionFiring == attempt.root && row.PendingImmediateCohortRoot() == attempt.root &&
                 row.ownerInstance == actual.instance.Handle() && row.ownerEpoch == actual.instance.ScheduleEpoch() &&
                 row.rootInstance == actual.instance.Handle() && playablePartitions.Owns(row.partition, row.identity) &&
                 ResolvePlayableService(row.identity, row.ownerInstance, row.ownerEpoch) == &row;
@@ -11136,7 +11146,7 @@ public:
         const auto& row = *scratch.row;
         if (!row.queueFirstContinuationLane || !row.queueTimingPending || !row.pendingImmediateEntry ||
             !row.actionPrepared || !row.InvocationValid() || row.Invocation().actionFiring != attempt.root ||
-            row.pendingImmediateCohortRoot != attempt.root || row.ownerInstance != scratch.instance.Handle() ||
+            row.PendingImmediateCohortRoot() != attempt.root || row.ownerInstance != scratch.instance.Handle() ||
             row.ownerEpoch != scratch.instance.ScheduleEpoch() || row.rootInstance != scratch.instance.Handle() ||
             ResolvePlayableService(row.identity, row.ownerInstance, row.ownerEpoch) != &row ||
             !playablePartitions.Owns(row.partition, row.identity) || row.queueUnplacedGroupCount != 2 ||
@@ -12250,7 +12260,7 @@ public:
         const auto* row = ResolvePlayableService(holder->service);
         return row != nullptr && row->InvocationValid() &&
             row->invocationGeneration == holder->invocationGeneration &&
-            row->pendingImmediateCohortRoot == attempt.root && row->queueTimingPending;
+            row->PendingImmediateCohortRoot() == attempt.root && row->queueTimingPending;
     }
 
     bool BindOriginalQueueClocksFromActualPlacement(EngineImmediateEntryAttempt& attempt,
@@ -12263,7 +12273,7 @@ public:
             const auto* row = ResolvePlayableService(holder.service);
             if (row == nullptr || !row->InvocationValid() ||
                 row->invocationGeneration != holder.invocationGeneration ||
-                row->pendingImmediateCohortRoot != attempt.root || !row->queueTimingPending) return true;
+                row->PendingImmediateCohortRoot() != attempt.root || !row->queueTimingPending) return true;
             if (holder.initialGroup == nullptr || holder.conditionalGroup == nullptr ||
                 holder.current->state != OriginalSingleCurrentHolder::State::Prepared ||
                 !holder.current->bundle.Valid()) return false;
@@ -13459,20 +13469,117 @@ public:
             ? PlayableServiceWorkIdentity{row.identity.generation, slot, 0}
             : PlayableServiceWorkIdentity{};
     }
-    void SetPlayableServiceOccupied(const EnginePlayableServiceRow& row, bool occupied) noexcept {
+    void SetPlayableServiceOccupied(EnginePlayableServiceRow& row, bool occupied) noexcept {
+        assert(row.identity.slot < playableServices.size() &&
+            &playableServices[row.identity.slot] == &row);
         const auto identity = CapturePlayableServiceWorkIdentity(row.identity.slot);
         const bool recorded = playableServiceWork.SetMembership(identity, RuntimeActivitySet::Active,
             occupied, [&](PlayableServiceWorkIdentity current) noexcept {
                 return current == CapturePlayableServiceWorkIdentity(current.slot);
             });
         assert(recorded);
-        if (!recorded) runtimeRecreateRequired = true;
+        if (!recorded) {
+            runtimeRecreateRequired = true;
+            return;
+        }
+        if (occupied) LinkPlayableServiceCohort(row);
+        else UnlinkPlayableServiceCohort(row);
     }
     EnginePlayableServiceRow* NextOccupiedPlayableService(std::uint32_t* cursor) noexcept {
         const auto identity = playableServiceWork.Next(RuntimeActivitySet::Active, cursor,
             [&](std::uint32_t slot) noexcept { return CapturePlayableServiceWorkIdentity(slot); });
         return identity.Valid() ? &playableServices[identity.slot] : nullptr;
     }
+    void SetPlayableServiceCohortRoot(EnginePlayableServiceRow& row,
+        ActionFiringHandle root) noexcept {
+        assert(row.identity.slot < playableServices.size() &&
+            &playableServices[row.identity.slot] == &row);
+        if (row.pendingImmediateCohortRoot_ == root) return;
+        const bool occupied = row.cohortLinked_;
+        UnlinkPlayableServiceCohort(row);
+        row.pendingImmediateCohortRoot_ = root;
+        if (occupied) LinkPlayableServiceCohort(row);
+    }
+    struct PlayableCohortCursor {
+        std::uint32_t nextSlot = 0;
+        EnginePlayableServiceToken previous{};
+    };
+    EnginePlayableServiceRow* NextOccupiedPlayableCohortService(
+        ActionFiringHandle root, PlayableCohortCursor* cursor) noexcept {
+        // Exhaustion is sticky, even if a callback later inserts another row.
+        if (cursor == nullptr || cursor->nextSlot >= playableServices.Capacity()) return nullptr;
+        auto slot = playableCohortBuckets_[PlayableCohortBucket(root)].head;
+        if (cursor->previous.Valid() && cursor->previous.slot < playableServices.size()) {
+            const auto& previous = playableServices[cursor->previous.slot];
+            if (previous.identity == cursor->previous && previous.cohortLinked_ &&
+                previous.partition.Valid() && previous.pendingImmediateCohortRoot_ == root)
+                slot = previous.cohortNext_;
+        }
+        // Follow current links, never a successor saved before native service callbacks.
+        while (slot != UINT32_MAX) {
+            auto& row = playableServices[slot];
+            if (slot >= cursor->nextSlot && row.cohortLinked_ &&
+                row.pendingImmediateCohortRoot_ == root &&
+                CapturePlayableServiceWorkIdentity(slot).Valid()) {
+                cursor->nextSlot = slot + 1u;
+                cursor->previous = row.identity;
+                return &row;
+            }
+            slot = row.cohortNext_;
+        }
+        cursor->nextSlot = playableServices.Capacity();
+        return nullptr;
+    }
+private:
+    static constexpr std::size_t kPlayableCohortBucketCount = 256u;
+    static std::size_t PlayableCohortBucket(ActionFiringHandle root) noexcept {
+        return static_cast<std::uint32_t>(root) & (kPlayableCohortBucketCount - 1u);
+    }
+    struct PlayableCohortBucketLinks {
+        std::uint32_t head = UINT32_MAX;
+        std::uint32_t tail = UINT32_MAX;
+    };
+    std::array<PlayableCohortBucketLinks, kPlayableCohortBucketCount> playableCohortBuckets_{};
+    void LinkPlayableServiceCohort(EnginePlayableServiceRow& row) noexcept {
+        if (row.cohortLinked_) return;
+        const auto slot = row.identity.slot;
+        auto& bucket = playableCohortBuckets_[PlayableCohortBucket(row.pendingImmediateCohortRoot_)];
+        // New higher slots, including ordinary root-zero services, append without a scan.
+        if (bucket.tail != UINT32_MAX && bucket.tail < slot) {
+            row.cohortPrevious_ = bucket.tail;
+            row.cohortNext_ = UINT32_MAX;
+            playableServices[bucket.tail].cohortNext_ = slot;
+            bucket.tail = slot;
+            row.cohortLinked_ = true;
+            return;
+        }
+        auto* next = &bucket.head;
+        auto previous = UINT32_MAX;
+        while (*next != UINT32_MAX && *next < slot) {
+            previous = *next;
+            next = &playableServices[previous].cohortNext_;
+        }
+        row.cohortPrevious_ = previous;
+        row.cohortNext_ = *next;
+        if (*next != UINT32_MAX) playableServices[*next].cohortPrevious_ = slot;
+        else bucket.tail = slot;
+        *next = slot;
+        row.cohortLinked_ = true;
+    }
+    void UnlinkPlayableServiceCohort(EnginePlayableServiceRow& row) noexcept {
+        if (!row.cohortLinked_) return;
+        auto& bucket = playableCohortBuckets_[PlayableCohortBucket(row.pendingImmediateCohortRoot_)];
+        if (row.cohortPrevious_ == UINT32_MAX)
+            bucket.head = row.cohortNext_;
+        else playableServices[row.cohortPrevious_].cohortNext_ = row.cohortNext_;
+        if (row.cohortNext_ != UINT32_MAX)
+            playableServices[row.cohortNext_].cohortPrevious_ = row.cohortPrevious_;
+        else bucket.tail = row.cohortPrevious_;
+        row.cohortPrevious_ = UINT32_MAX;
+        row.cohortNext_ = UINT32_MAX;
+        row.cohortLinked_ = false;
+    }
+public:
     // Production Current borrowing remains closed while this seed is collecting.
     StableRowStorage<OriginalPlayableServiceLifetimeHolder> originalPlayableServiceLifetimeHolders;
     StableRowStorage<OriginalPendingVariableQueueNativeOrigin> pendingVariableQueueNativeOrigins;
@@ -13530,8 +13637,8 @@ public:
     bool CapturePendingQueueSourceIdentity(const EnginePlayableServiceRow& member,
         const SourceTerminalRecord& source, EngineTimelineVoiceInstallIdentity* out) noexcept {
         if (out == nullptr || !member.queueTimingPending || !member.InvocationValid() ||
-            member.pendingImmediateCohortRoot == 0 ||
-            member.pendingImmediateCohortRoot != member.Invocation().actionFiring ||
+            member.PendingImmediateCohortRoot() == 0 ||
+            member.PendingImmediateCohortRoot() != member.Invocation().actionFiring ||
             !source.occupied || source.controller != member.rootInstance ||
             sourceTerminals.At(playableInstances.SourceRetirementSlot(source.leaf)) != &source ||
             ResolveSourceResourceOwner(source.resourceOwner) != &member ||

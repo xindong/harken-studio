@@ -6522,6 +6522,124 @@ TEST(ActionFiringApi, FrontierAttemptSparseBackingKeepsHighSlotAndCompetingAllow
     engine.actionPlayStorage[high].phase = harken::EngineFrontierAttemptPhase::Free;
 }
 
+TEST(ActionFiringApi, CohortTraversalKeepsLiveSlotOrderAcrossRebindingAndReuse) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig(8, 256, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    std::vector<float> samples(65536, 0.25f);
+    const auto pcm = harkentest::MonoDesc(samples, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &pcm));
+    CanonicalActionWorld image(engine.registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision);
+    image.MakeImmediateSoundPlayAction();
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
+    auto post = ValidPostDesc();
+    post.actionId = image.actions[9].actionStableId;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&post.emitter));
+    const auto serviceFor = [&](VnActionFiringHandle firing) -> harken::EnginePlayableServiceRow* {
+        for (std::uint32_t cursor = 0; auto* row = engine.NextOccupiedPlayableService(&cursor);)
+            if (row->InvocationValid() && row->Invocation().actionFiring == firing) return row;
+        return nullptr;
+    };
+    const auto members = [&](VnActionFiringHandle root) {
+        std::vector<harken::EnginePlayableServiceToken> result;
+        for (harken::Engine::PlayableCohortCursor cursor{};
+             auto* row = engine.NextOccupiedPlayableCohortService(root, &cursor);)
+            result.push_back(row->identity);
+        return result;
+    };
+    std::array<VnActionFiringHandle, 5> firings{};
+    std::array<harken::EnginePlayableServiceRow*, 5> rows{};
+    for (std::size_t index = 0; index < 4; ++index) {
+        ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firings[index]));
+        rows[index] = serviceFor(firings[index]);
+        ASSERT_NE(nullptr, rows[index]);
+        ASSERT_EQ(firings[index], rows[index]->PendingImmediateCohortRoot());
+        if (index != 0) ASSERT_LT(rows[index - 1u]->identity.slot, rows[index]->identity.slot);
+    }
+    const auto root = firings[0];
+    const auto otherGeneration = root ^ (std::uint64_t{1} << 32u);
+    const auto otherSlot = root + 256u;
+    engine.SetPlayableServiceCohortRoot(*rows[0], 0);
+    engine.SetPlayableServiceCohortRoot(*rows[1], root);
+    engine.SetPlayableServiceCohortRoot(*rows[2], otherGeneration);
+    engine.SetPlayableServiceCohortRoot(*rows[3], otherSlot);
+    using Tokens = std::vector<harken::EnginePlayableServiceToken>;
+    EXPECT_EQ(Tokens{rows[0]->identity}, members(0));
+    EXPECT_EQ(Tokens{rows[1]->identity}, members(root));
+    EXPECT_EQ(Tokens{rows[2]->identity}, members(otherGeneration));
+    EXPECT_EQ(Tokens{rows[3]->identity}, members(otherSlot));
+
+    engine.SetPlayableServiceCohortRoot(*rows[0], root);
+    engine.SetPlayableServiceCohortRoot(*rows[1], otherGeneration);
+    engine.SetPlayableServiceCohortRoot(*rows[2], root);
+    engine.SetPlayableServiceCohortRoot(*rows[3], root);
+    harken::Engine::PlayableCohortCursor live{};
+    ASSERT_EQ(rows[0], engine.NextOccupiedPlayableCohortService(root, &live));
+    // A newly associated row between the previous row and its old successor is visible.
+    engine.SetPlayableServiceCohortRoot(*rows[1], root);
+    ASSERT_EQ(rows[1], engine.NextOccupiedPlayableCohortService(root, &live));
+    engine.SetPlayableServiceCohortRoot(*rows[1], otherGeneration);
+    engine.SetPlayableServiceCohortRoot(*rows[2], otherGeneration);
+    ASSERT_EQ(rows[3], engine.NextOccupiedPlayableCohortService(root, &live));
+    engine.SetPlayableServiceCohortRoot(*rows[0], otherGeneration);
+    engine.SetPlayableServiceCohortRoot(*rows[0], root);
+    engine.SetPlayableServiceCohortRoot(*rows[2], root);
+    EXPECT_EQ(nullptr, engine.NextOccupiedPlayableCohortService(root, &live));
+
+    // Restore actual roots before any admission or Runtime progression.
+    for (std::size_t index = 0; index < 4; ++index)
+        engine.SetPlayableServiceCohortRoot(*rows[index], firings[index]);
+    ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firings[4]));
+    rows[4] = serviceFor(firings[4]);
+    ASSERT_NE(nullptr, rows[4]);
+    ASSERT_LT(rows[3]->identity.slot, rows[4]->identity.slot);
+    engine.SetPlayableServiceCohortRoot(*rows[3], root);
+    engine.SetPlayableServiceCohortRoot(*rows[4], root);
+    EXPECT_EQ(nullptr, engine.NextOccupiedPlayableCohortService(root, &live));
+    EXPECT_EQ((Tokens{rows[0]->identity, rows[3]->identity, rows[4]->identity}), members(root));
+    for (std::size_t index = 0; index < rows.size(); ++index)
+        engine.SetPlayableServiceCohortRoot(*rows[index], firings[index]);
+    for (std::uint32_t block = 0; block < 8; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine.nullBackend.Pump(1);
+    }
+
+    const auto retired = rows[0]->identity;
+    engine.SetPlayableServiceCohortRoot(*rows[0], firings[1]);
+    harken::Engine::PlayableCohortCursor reused{};
+    ASSERT_EQ(rows[0], engine.NextOccupiedPlayableCohortService(firings[1], &reused));
+    engine.SetPlayableServiceCohortRoot(*rows[0], firings[0]);
+    ASSERT_EQ(VN_OK, Vn_StopActionFiring(firings[0], 0));
+    for (std::uint32_t block = 0; block < 64 && !engine.PlayableServiceReusable(*rows[0]); ++block) {
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    ASSERT_TRUE(engine.PlayableServiceReusable(*rows[0]));
+    EXPECT_TRUE(members(firings[0]).empty());
+    ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firings[0]));
+    VnActionFiringHandle replay = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&post, &replay));
+    auto* replacement = serviceFor(replay);
+    ASSERT_EQ(rows[0], replacement);
+    EXPECT_EQ(retired.slot, replacement->identity.slot);
+    EXPECT_NE(retired.generation, replacement->identity.generation);
+    engine.SetPlayableServiceCohortRoot(*replacement, firings[1]);
+    EXPECT_EQ(rows[1], engine.NextOccupiedPlayableCohortService(firings[1], &reused));
+    EXPECT_EQ(nullptr, engine.NextOccupiedPlayableCohortService(firings[1], &reused));
+    engine.SetPlayableServiceCohortRoot(*replacement, replay);
+    EXPECT_TRUE(members(firings[0]).empty());
+    for (std::size_t index = 1; index < firings.size(); ++index)
+        ASSERT_EQ(VN_OK, Vn_StopActionFiring(firings[index], 0));
+    ASSERT_EQ(VN_OK, Vn_StopActionFiring(replay, 0));
+    for (std::uint32_t block = 0; block < 64 && engine.playableInstances.LiveCount() != 0; ++block) {
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    EXPECT_EQ(0u, engine.playableInstances.LiveCount());
+    EXPECT_EQ(0u, engine.voices.ActiveCount());
+    EXPECT_FALSE(engine.runtimeRecreateRequired);
+}
+
 TEST(ActionFiringApi, FrontierAttemptSkipsRetainedOwnerAndReusesOnlyTransferredSlot) {
     harkentest::EngineSession session(harkentest::MakeNullConfig(4, 64, 48000));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -8999,7 +9117,7 @@ static void CheckQueueResetAndScheduledStop(bool deferred, bool refuseCommand, b
         EXPECT_FALSE(oldBank->published);
         ASSERT_TRUE(row.InvocationValid());
         ASSERT_TRUE(engine->playablePartitions.Owns(row.partition, row.identity));
-        ASSERT_EQ(playFiring, row.pendingImmediateCohortRoot);
+        ASSERT_EQ(playFiring, row.PendingImmediateCohortRoot());
         const auto* pending = std::find_if(engine->immediateEntryAttempts.data(),
             engine->immediateEntryAttempts.data() + engine->immediateEntryAttempts.size(),
             [&](const auto& candidate) {
@@ -10842,7 +10960,7 @@ static void CheckTerminalNestedQueueOriginalStart(unsigned scenario, bool holdFo
         ASSERT_EQ(parent->ownerInstance, owner.parent);
         ASSERT_EQ(root.invocation, current->invocation);
         ASSERT_EQ(root.invocationGeneration, current->invocationGeneration);
-        ASSERT_EQ(root.pendingImmediateCohortRoot, current->pendingImmediateCohortRoot);
+        ASSERT_EQ(root.PendingImmediateCohortRoot(), current->PendingImmediateCohortRoot());
         ASSERT_EQ(root.queueInitialCohortEntryFrame, current->queueInitialCohortEntryFrame);
         ++wrappers;
     }
@@ -13124,7 +13242,7 @@ TEST(ActionFiringApi, NestedImmediateCohortKeepsOriginalArmsAfterLateNormalUpdat
     std::uint32_t count = 0;
     for (auto& row : engine->playableServices) {
         if (!row.pendingImmediateEntry ||
-            row.pendingImmediateCohortRoot != firing) continue;
+            row.PendingImmediateCohortRoot() != firing) continue;
         ASSERT_LT(count, members.size());
         members[count] = &row;
         oldArms[count] = row.arm;
@@ -14544,7 +14662,7 @@ TEST(ActionFiringApi, PendingNestedQueueCancelRequiresExactSourceIdentity) {
             source->render, &install));
         ASSERT_TRUE(install.startArm.Valid());
         const auto originalRender = source->render;
-        const auto originalCohort = member->pendingImmediateCohortRoot;
+        const auto originalCohort = member->PendingImmediateCohortRoot();
         const auto originalOwner = source->resourceOwner;
         const auto originalEpoch = source->acceptedEpoch;
         const auto originalRelease = source->release;
@@ -14555,7 +14673,7 @@ TEST(ActionFiringApi, PendingNestedQueueCancelRequiresExactSourceIdentity) {
             source->render = 0;
             break;
         case Mismatch::Cohort:
-            ++member->pendingImmediateCohortRoot;
+            engine->SetPlayableServiceCohortRoot(*member, originalCohort + 1u);
             break;
         case Mismatch::Owner:
             ++source->resourceOwner.serviceGeneration;
@@ -14571,7 +14689,7 @@ TEST(ActionFiringApi, PendingNestedQueueCancelRequiresExactSourceIdentity) {
         EXPECT_TRUE(source->occupied);
         EXPECT_FALSE(source->retryAfterMissedEntry);
         source->render = originalRender;
-        member->pendingImmediateCohortRoot = originalCohort;
+        engine->SetPlayableServiceCohortRoot(*member, originalCohort);
         source->resourceOwner = originalOwner;
         source->acceptedEpoch = originalEpoch;
         source->release = originalRelease;
@@ -14732,7 +14850,7 @@ TEST(ActionFiringApi, PendingImmediateNestedQueueGatesSignalOnlyFrontier) {
     EXPECT_TRUE(current.queueTimingPending);
     EXPECT_TRUE(current.queueUnplacedCredit.Valid());
     EXPECT_TRUE(current.QueueFiling().queueDecision.Valid());
-    EXPECT_EQ(firing, current.pendingImmediateCohortRoot);
+    EXPECT_EQ(firing, current.PendingImmediateCohortRoot());
     EXPECT_EQ(wrapper.queueInitialCohortEntryFrame, current.queueInitialCohortEntryFrame);
     EXPECT_GT(current.queueCompletionFrame, current.startFrame);
     // The opaque outer Queue delegates completion; the finite inner Current owns
@@ -15033,7 +15151,7 @@ void ExpectTwoContinuousVariableControlQueuesReserveBothContinuations(
     std::array<const harken::EnginePlayableServiceRow*, 2> queues{};
     std::uint32_t count = 0;
     for (const auto& row : engine->playableServices) {
-        if (row.pendingImmediateCohortRoot != firing || !row.queueMode) continue;
+        if (row.PendingImmediateCohortRoot() != firing || !row.queueMode) continue;
         if (count < queues.size()) queues[count] = &row;
         ++count;
     }
@@ -15245,7 +15363,7 @@ TEST(ActionFiringApi, TwoContinuousVariableControlQueueBranchesShareInitialCohor
         EXPECT_EQ(2u, queue->queueUnplacedDemand.groupHeaders);
         EXPECT_EQ(queue->queueInitialCohortEntryFrame, queue->queueUnplacedGroupFrames[0]);
         EXPECT_EQ(queue->queueCompletionFrame, queue->queueUnplacedGroupFrames[1]);
-        EXPECT_EQ(firing, queue->pendingImmediateCohortRoot);
+        EXPECT_EQ(firing, queue->PendingImmediateCohortRoot());
         EXPECT_EQ(root->invocation, queue->invocation);
         EXPECT_EQ(root->invocationGeneration, queue->invocationGeneration);
         EXPECT_EQ(root->queueInitialCohortEntryFrame,
@@ -30118,7 +30236,7 @@ static void CheckEarlierSetValueTwoMixedVcPlaysFirstUpdate(bool late,
                         candidate.rootInstance == play.producedPlayableInstance;
                 });
             ASSERT_NE(engine.playableServices.end(), row);
-            ASSERT_EQ(firing, row->pendingImmediateCohortRoot);
+            ASSERT_EQ(firing, row->PendingImmediateCohortRoot());
         }
         std::array<OriginalSourceRetirementProof, 4> originalSources{};
         ASSERT_EQ(originalSources.size(), originalArms.size());
@@ -38281,7 +38399,7 @@ TEST(ActionFiringApi, InitialQueueChildrenStartAfterOneNormalUpdate) {
                                                   &initialLane));
     EXPECT_TRUE(initialLane.committed);
     for (const auto& holder : engine->playableServices) {
-        if (holder.pendingImmediateCohortRoot != firing ||
+        if (holder.PendingImmediateCohortRoot() != firing ||
             !holder.queueTimingPending) continue;
         testing::Test::RecordProperty("queue_transactions",
             holder.queueUnplacedTransactionCount);
@@ -39203,7 +39321,7 @@ TEST(ActionFiringApi, InitialQueueCommittedC0BeforeHandoffPublishFailureReclaims
             const auto service = std::find_if(current.playableServices.begin(),
                 current.playableServices.end(), [&](const auto& row) {
                     return row.identity == pending.initialService &&
-                        row.pendingImmediateCohortRoot == pending.root;
+                        row.PendingImmediateCohortRoot() == pending.root;
                 });
             proof.serviceEntryEmpty =
                 service != current.playableServices.end() &&
@@ -39571,7 +39689,7 @@ TEST(ActionFiringApi, InitialQueueContinuationRejectsMissingPriorReceiptOrIdenti
             engine->playableServices.begin(),
             engine->playableServices.end(),
             [firing](const auto& candidate) {
-                return candidate.pendingImmediateCohortRoot == firing &&
+                return candidate.PendingImmediateCohortRoot() == firing &&
                     candidate.queueMode;
             });
         harken::ImmediateLaneObservation finalLane{};
@@ -40432,7 +40550,7 @@ TEST(ActionFiringApi, DynamicQueueCycleKeepsOrdinaryPagePreparation) {
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_FALSE(row->queueTimingPending);
     ASSERT_FALSE(row->queueUnplacedCredit.Valid());
-    ASSERT_EQ(0u, row->pendingImmediateCohortRoot);
+    ASSERT_EQ(0u, row->PendingImmediateCohortRoot());
     ASSERT_TRUE(row->queuePreparedPages.Valid());
     bool observedLaterCycle = false;
     for (std::uint32_t block = 0; block < 128; ++block) {
@@ -40446,7 +40564,7 @@ TEST(ActionFiringApi, DynamicQueueCycleKeepsOrdinaryPagePreparation) {
         observedLaterCycle = true;
         EXPECT_FALSE(row->queueTimingPending);
         EXPECT_FALSE(row->queueUnplacedCredit.Valid());
-        EXPECT_EQ(0u, row->pendingImmediateCohortRoot);
+        EXPECT_EQ(0u, row->PendingImmediateCohortRoot());
         EXPECT_TRUE(row->queuePreparedPages.Valid());
         break;
     }
@@ -49096,7 +49214,7 @@ static void CheckPendingVariableControlMultiPlaySequencePcm(PendingMultiPlaySequ
             }
             auto* end = actual.immediateEntryAttempts.data() + actual.immediateEntryAttempts.size();
             auto* attempt = std::find_if(actual.immediateEntryAttempts.data(), end, [&](const auto& candidate) {
-                return candidate.active && candidate.root == firstChild.row->pendingImmediateCohortRoot &&
+                return candidate.active && candidate.root == firstChild.row->PendingImmediateCohortRoot() &&
                     candidate.generation == firstChild.pendingVariableReplacementEntryGeneration;
             });
             ASSERT_NE(end, attempt);
@@ -52476,7 +52594,7 @@ static void CheckPendingVariableSelectedContainerAtPlacement(bool sequence, bool
             ASSERT_NE(nullptr, child.row);
             auto* end = actual.immediateEntryAttempts.data() + actual.immediateEntryAttempts.size();
             auto* attempt = std::find_if(actual.immediateEntryAttempts.data(), end, [&](const auto& candidate) {
-                return candidate.active && candidate.root == child.row->pendingImmediateCohortRoot &&
+                return candidate.active && candidate.root == child.row->PendingImmediateCohortRoot() &&
                     candidate.generation == child.pendingVariableReplacementEntryGeneration;
             });
             ASSERT_NE(end, attempt);
@@ -54552,7 +54670,7 @@ static void CheckRegisteredInitialQueueCohort(bool nestedControl, bool reselect 
                 trace << " queue=" << service.identity.slot << ':' << service.identity.generation
                     << " parent=" << service.parentService.token.slot << ':' << service.parentService.token.generation
                     << " phase=" << static_cast<unsigned>(service.phase)
-                    << " root=" << service.pendingImmediateCohortRoot
+                    << " root=" << service.PendingImmediateCohortRoot()
                     << " invocation=" << service.invocationGeneration << ':' << service.InvocationValid()
                     << " counts=" << service.queueUnplacedGroupCount << ':' << service.queueUnplacedTransactionCount
                     << " continuation=" << service.queueFirstContinuationLane;
@@ -68138,7 +68256,7 @@ static void CheckGenericInitialQueuePublishRefusalPreservesOriginalZeroWork(
         const auto member = std::find_if(actual.playableServices.begin(), actual.playableServices.end(),
             [&](const auto& candidate) { return candidate.identity == observed.service; });
         ASSERT_NE(actual.playableServices.end(), member);
-        EXPECT_EQ(observed.firing, member->pendingImmediateCohortRoot);
+        EXPECT_EQ(observed.firing, member->PendingImmediateCohortRoot());
         EXPECT_EQ(observed.partition.slot, member->partition.slot);
         EXPECT_EQ(observed.partition.generation, member->partition.generation);
         EXPECT_EQ(observed.owner, member->ownerInstance);
@@ -68377,7 +68495,7 @@ static void CheckGenericInitialQueuePublishRefusalPreservesOriginalZeroWork(
             diagnostic << " service=" << actualRow->identity.slot << ":" << actualRow->identity.generation
                 << " invocation=" << actualRow->invocationGeneration
                 << " originalInvocation=" << observation.invocationGeneration
-                << " root=" << actualRow->pendingImmediateCohortRoot
+                << " root=" << actualRow->PendingImmediateCohortRoot()
                 << " lifecycle=" << static_cast<unsigned>(actualRow->controlLifecycle)
                 << " reason=" << static_cast<unsigned>(actualRow->controlReason)
                 << " abort=" << actualRow->queueAbortRequested
@@ -69592,7 +69710,7 @@ static void CheckQueueSourceFactoryStaging(bool composite, bool joinedTerm, bool
         ASSERT_GE(observation.decisionCount, 2u);
         const auto row = std::find_if(engine.playableServices.begin(), engine.playableServices.end(),
             [&](const harken::EnginePlayableServiceRow& value) {
-                return value.queueMode && value.pendingImmediateCohortRoot != 0 &&
+                return value.queueMode && value.PendingImmediateCohortRoot() != 0 &&
                     (!composite || (value.queueCurrentCompositeOwner.slot == observation.compositeToken.slot &&
                         value.queueCurrentCompositeOwner.generation == observation.compositeToken.generation));
             });
@@ -70466,7 +70584,7 @@ std::string InitialOriginalMixedActualStateDiagnostic(harken::Engine& engine,
             << " root=" << row.rootInstance << " phase=" << static_cast<unsigned>(row.phase)
             << " control=" << static_cast<unsigned>(row.controlLifecycle)
             << " reason=" << static_cast<unsigned>(row.controlReason)
-            << " pending=" << row.pendingImmediateEntry << " cohort=" << row.pendingImmediateCohortRoot
+            << " pending=" << row.pendingImmediateEntry << " cohort=" << row.PendingImmediateCohortRoot()
             << " start=" << row.startFrame << " ticket=" << row.ticket
             << " terminal=" << row.terminalObserved << " frontier=" << row.frontierEntry.Valid()
             << " applied=" << row.lastAppliedBlockSequence;
