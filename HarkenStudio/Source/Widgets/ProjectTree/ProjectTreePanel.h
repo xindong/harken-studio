@@ -8,6 +8,8 @@
 #include <memory>
 #include <vector>
 #include <QMap>
+#include <QHash>
+#include <QPoint>
 #include <QSet>
 #include <QUuid>
 
@@ -57,7 +59,6 @@ public:
 
     void rebuildBusTree();
 
-    void selectBusInTree(uint32_t busID);
     bool selectProjectItem(ProjectItem* item);
     void setSelectedProjectItems(const QList<ProjectItem*>& items);
     bool pingProjectItem(ProjectItem* item);
@@ -85,8 +86,6 @@ public slots:
 
 signals:
     void itemSelected(ProjectItem* item);
-    void objectSelectionChanged(const QList<ProjectItem*>& items);
-    void auditionTargetRequested(ProjectItem* item);
     void itemDoubleClicked(ProjectItem* item);
     void actionSelected(const QString& actionName);
     void audioFileSelected(const QString& filePath);
@@ -176,6 +175,23 @@ private slots:
     void onNewParent(ProjectItem::Type containerType);
 
 private:
+    struct ViewState {
+        QList<ProjectItem*> items;
+        QList<PhysicalFolder*> folders;
+        ProjectItem* currentItem = nullptr;
+        PhysicalFolder* currentFolder = nullptr;
+        QString currentBucket;
+        QStringList selectedBuckets;
+        QMap<PhysicalFolder*, bool> folderExpansion;
+        QMap<QString, bool> bucketExpansion;
+        QPoint scrollPosition;
+    };
+
+    ViewState captureViewState();
+    void restoreViewState(const ViewState& state);
+    void refreshVisibility();
+    void setSelectedEntries(const QList<ProjectItem*>& items,
+                            const QList<PhysicalFolder*>& folders, bool reveal);
     void setupUI();
     void setupTree();
     void setupContextMenu();
@@ -212,6 +228,7 @@ private:
     QString folderExpansionSettingsKey_;
     QSet<QString> collapsedFolderPaths_;
     QMap<const PhysicalFolder*, QString> folderRowPaths_;
+    QHash<QUuid, bool> itemExpansion_;
 
     PanelId settingsPanelId_;
 };

@@ -4,22 +4,33 @@
 #include "Core/LayoutController.h"
 #include "Core/SelectionRouter.h"
 #include "Core/UndoCommands.h"
+#include "Components/VTrack.h"
 #include "MainWindow.h"
 #include "Monitor/EventCaptureController.h"
 #include "ProjectManager.h"
 #include "ProjectTypes.h"
+#include "Widgets/Blueprint/BlueprintCanvasWidget.h"
 #include "Widgets/GridEditor/GridEditorPanel.h"
 #include "Widgets/GridEditor/DiscreteGridWidget.h"
 #include "Widgets/GridEditor/SelectionListWidget.h"
 #include "Widgets/ControlPanel/ControlPanel.h"
+#include "Widgets/Hierarchy/Hierarchy.h"
+#include "Widgets/Inspector/InspectorPanel.h"
+#include "Widgets/ProjectExplorer/ProjectExplorer.h"
+#include "Widgets/Timeline/TimelineCanvas.h"
+#include "Widgets/Timeline/TimelineEditorPanel.h"
 #include "Support/AITestSupport.h"
 
 #include <gtest/gtest.h>
 
+#include <DockWidget.h>
+
 #include <QApplication>
 #include <QEventLoop>
+#include <QGraphicsScene>
 #include <QAbstractSocket>
 #include <QJsonDocument>
+#include <QKeyEvent>
 #include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QTableWidget>
@@ -170,6 +181,509 @@ TEST_F(EditorDockLayoutTest, AuditionTargetInvalidatesWithDeletedSubtreesAndProj
     drainEvents();
     EXPECT_EQ(window_->auditionTarget(), nullptr);
     EXPECT_EQ(window_->findChild<ControlPanel*>()->boundItem(), nullptr);
+}
+
+TEST_F(EditorDockLayoutTest, NavigationViewsKeepLocalSelectionsAcrossActiveObjectChanges)
+{
+    auto& manager = VNX::ProjectManager::instance();
+    auto* first = window_->createHierarchyPanel();
+    auto* second = window_->createHierarchyPanel();
+    auto* explorer = window_->findChild<VNX::ProjectExplorer*>();
+    auto* inspector = window_->createInspectorPanel();
+    auto* blueprint = window_->findChild<VNX::BlueprintCanvasWidget*>();
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(second, nullptr);
+    ASSERT_NE(explorer, nullptr);
+    ASSERT_NE(inspector, nullptr);
+    ASSERT_NE(blueprint, nullptr);
+    blueprint->setFixedSize(640, 480);
+    window_->setLastFocusedInspectorPanelId(inspector->panelId());
+    auto* firstItem = manager.createItem(nullptr, QStringLiteral("FirstSelection"), VNX::ProjectItem::Type::Sound);
+    auto* secondItem = manager.createItem(nullptr, QStringLiteral("SecondSelection"), VNX::ProjectItem::Type::Sound);
+    auto* explorerItem = manager.createItem(nullptr, QStringLiteral("ExplorerSelection"), VNX::ProjectItem::Type::Sound);
+    auto* bus = manager.createItem(manager.getMasterBusItem(), QStringLiteral("NavigationBus"), VNX::ProjectItem::Type::Bus);
+    ASSERT_NE(firstItem, nullptr);
+    ASSERT_NE(secondItem, nullptr);
+    ASSERT_NE(explorerItem, nullptr);
+    ASSERT_NE(bus, nullptr);
+    blueprint->setSoundsFiltered(false);
+    blueprint->rebuildFromProject();
+    blueprint->setBusVisible(bus->objectID, true);
+    drainEvents();
+
+    ASSERT_TRUE(second->selectProjectItem(secondItem));
+    ASSERT_TRUE(explorer->selectProjectItem(explorerItem));
+    blueprint->setZoomFactor(0.75);
+    blueprint->centerOn(QPointF(1200, 800));
+    drainEvents();
+    const QTransform initialViewport = blueprint->viewportTransform();
+    ASSERT_TRUE(first->selectProjectItem(firstItem));
+    drainEvents();
+    EXPECT_EQ(first->selectedItems(), QList<VNX::ProjectItem*>{firstItem});
+    EXPECT_EQ(second->selectedItems(), QList<VNX::ProjectItem*>{secondItem});
+    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{explorerItem});
+    EXPECT_EQ(blueprint->selectedProjectItems(), QList<VNX::ProjectItem*>{explorerItem});
+    EXPECT_EQ(blueprint->viewportTransform(), initialViewport);
+    EXPECT_EQ(inspector->currentContextItem(), firstItem);
+    EXPECT_EQ(window_->auditionTarget(), firstItem);
+
+    ASSERT_TRUE(first->selectProjectItem(bus));
+    drainEvents();
+    EXPECT_EQ(first->selectedItems(), QList<VNX::ProjectItem*>{bus});
+    EXPECT_EQ(second->selectedItems(), QList<VNX::ProjectItem*>{secondItem});
+    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{explorerItem});
+    EXPECT_EQ(blueprint->selectedProjectItems(), QList<VNX::ProjectItem*>{explorerItem});
+    EXPECT_EQ(blueprint->viewportTransform(), initialViewport);
+    EXPECT_EQ(inspector->currentContextItem(), bus);
+    EXPECT_EQ(window_->auditionTarget(), bus);
+    ASSERT_TRUE(first->selectProjectItem(firstItem));
+
+    ASSERT_TRUE(explorer->selectProjectItem(secondItem));
+    drainEvents();
+    EXPECT_EQ(first->selectedItems(), QList<VNX::ProjectItem*>{firstItem});
+    EXPECT_EQ(second->selectedItems(), QList<VNX::ProjectItem*>{secondItem});
+    EXPECT_EQ(blueprint->selectedProjectItems(), QList<VNX::ProjectItem*>{secondItem});
+    EXPECT_EQ(blueprint->viewportTransform(), initialViewport);
+    EXPECT_EQ(inspector->currentContextItem(), secondItem);
+    EXPECT_EQ(window_->auditionTarget(), secondItem);
+
+    ASSERT_TRUE(blueprint->focusItem(explorerItem));
+    ASSERT_FALSE(blueprint->scene()->selectedItems().isEmpty());
+    auto* selectedNode = blueprint->scene()->selectedItems().front();
+    const QTransform selectedViewport = blueprint->viewportTransform();
+    blueprint->scene()->clearSelection();
+    selectedNode->setSelected(true);
+    drainEvents();
+    EXPECT_EQ(first->selectedItems(), QList<VNX::ProjectItem*>{firstItem});
+    EXPECT_EQ(second->selectedItems(), QList<VNX::ProjectItem*>{secondItem});
+    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{explorerItem});
+    EXPECT_EQ(blueprint->scene()->selectedItems(), QList<QGraphicsItem*>{selectedNode});
+    EXPECT_EQ(blueprint->viewportTransform(), selectedViewport);
+    EXPECT_EQ(inspector->currentContextItem(), explorerItem);
+    EXPECT_EQ(window_->auditionTarget(), explorerItem);
+
+    for (auto* panel : window_->allInspectorPanels())
+        window_->closeInspectorPanel(panel->panelId());
+    drainEvents();
+    ASSERT_EQ(window_->activeInspectorPanel(), nullptr);
+    ASSERT_EQ(window_->inspectorShowingItem(firstItem, true), nullptr);
+    auto* tree = first->treeWidget();
+    window_->dockOfPanel(first)->setAsCurrentTab();
+    tree->scrollToItem(tree->currentItem());
+    drainEvents();
+    blueprint->setZoomFactor(0.75);
+    blueprint->centerOn(QPointF(1200, 800));
+    const QTransform hierarchyViewport = blueprint->viewportTransform();
+    const QPoint position = tree->visualItemRect(tree->currentItem()).center();
+    ASSERT_TRUE(tree->viewport()->rect().contains(position));
+    clickWidget(tree->viewport(), position);
+    QMouseEvent doubleClick(QEvent::MouseButtonDblClick, position,
+                            tree->viewport()->mapToGlobal(position),
+                            Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(tree->viewport(), &doubleClick);
+    QMouseEvent release(QEvent::MouseButtonRelease, position,
+                        tree->viewport()->mapToGlobal(position),
+                        Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(tree->viewport(), &release);
+    drainEvents();
+    ASSERT_NE(window_->inspectorShowingItem(firstItem), nullptr);
+    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{explorerItem});
+    EXPECT_EQ(second->selectedItems(), QList<VNX::ProjectItem*>{secondItem});
+    EXPECT_EQ(blueprint->selectedProjectItems(), QList<VNX::ProjectItem*>{explorerItem});
+    EXPECT_EQ(blueprint->viewportTransform(), hierarchyViewport);
+    EXPECT_EQ(window_->auditionTarget(), firstItem);
+
+    const auto inspectorsBefore = window_->allInspectorPanels();
+    first->openInNewWindowRequested(firstItem);
+    drainEvents();
+    EXPECT_GT(window_->allInspectorPanels().size(), inspectorsBefore.size());
+    ASSERT_NE(window_->activeInspectorPanel(), nullptr);
+    EXPECT_EQ(window_->activeInspectorPanel()->currentContextItem(), firstItem);
+    EXPECT_EQ(first->selectedItems(), QList<VNX::ProjectItem*>{firstItem});
+    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{explorerItem});
+    EXPECT_EQ(second->selectedItems(), QList<VNX::ProjectItem*>{secondItem});
+    EXPECT_EQ(blueprint->selectedProjectItems(), QList<VNX::ProjectItem*>{explorerItem});
+    EXPECT_EQ(blueprint->viewportTransform(), hierarchyViewport);
+    EXPECT_EQ(window_->auditionTarget(), firstItem);
+
+    auto* explorerTree = explorer->treeWidget();
+    window_->dockOfPanel(explorer)->setAsCurrentTab();
+    explorerTree->scrollToItem(explorerTree->currentItem());
+    drainEvents();
+    const QPoint explorerPosition = explorerTree->visualItemRect(explorerTree->currentItem()).center();
+    ASSERT_TRUE(explorerTree->viewport()->rect().contains(explorerPosition));
+    clickWidget(explorerTree->viewport(), explorerPosition);
+    QMouseEvent explorerDoubleClick(QEvent::MouseButtonDblClick, explorerPosition,
+                                    explorerTree->viewport()->mapToGlobal(explorerPosition),
+                                    Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(explorerTree->viewport(), &explorerDoubleClick);
+    QMouseEvent explorerRelease(QEvent::MouseButtonRelease, explorerPosition,
+                                explorerTree->viewport()->mapToGlobal(explorerPosition),
+                                Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(explorerTree->viewport(), &explorerRelease);
+    drainEvents();
+    EXPECT_EQ(first->selectedItems(), QList<VNX::ProjectItem*>{firstItem});
+    EXPECT_EQ(second->selectedItems(), QList<VNX::ProjectItem*>{secondItem});
+    EXPECT_EQ(blueprint->selectedProjectItems(), QList<VNX::ProjectItem*>{explorerItem});
+    EXPECT_DOUBLE_EQ(blueprint->transform().m11(), 1.0);
+    EXPECT_NE(blueprint->viewportTransform(), hierarchyViewport);
+
+    auto* router = window_->findChild<VNX::SelectionRouter*>();
+    ASSERT_NE(router, nullptr);
+    QObject activationObserver;
+    int activationCount = 0;
+    QObject::connect(router, &VNX::SelectionRouter::selectionChanged, &activationObserver,
+                     [&](VNX::ProjectItem*) { ++activationCount; });
+    for (auto* target : {explorerItem, bus}) {
+        ASSERT_TRUE(explorer->selectProjectItem(target));
+        window_->dockOfPanel(blueprint)->setAsCurrentTab();
+        ASSERT_TRUE(blueprint->focusItem(target));
+        ASSERT_TRUE(first->selectProjectItem(firstItem));
+        drainEvents();
+        ASSERT_EQ(router->activeItem(), firstItem);
+        auto* currentInspector = window_->activeInspectorPanel();
+        ASSERT_NE(currentInspector, nullptr);
+        ASSERT_EQ(currentInspector->currentContextItem(), firstItem);
+        ASSERT_EQ(blueprint->scene()->selectedItems().size(), 1);
+        auto* node = dynamic_cast<VNX::NodeItem*>(blueprint->scene()->selectedItems().front());
+        ASSERT_NE(node, nullptr);
+        ASSERT_EQ(node->objectID(), target->objectID);
+        const QPoint nodePosition = blueprint->mapFromScene(node->mapToScene(node->titleRect().center()));
+        ASSERT_TRUE(blueprint->viewport()->rect().contains(nodePosition));
+        ASSERT_EQ(blueprint->itemAt(nodePosition), node);
+        activationCount = 0;
+
+        clickWidget(blueprint->viewport(), nodePosition);
+
+        EXPECT_EQ(activationCount, 1);
+        EXPECT_EQ(router->activeItem(), target);
+        EXPECT_EQ(currentInspector->currentContextItem(), target);
+        EXPECT_EQ(window_->auditionTarget(), target);
+        EXPECT_EQ(first->selectedItems(), QList<VNX::ProjectItem*>{firstItem});
+        EXPECT_EQ(second->selectedItems(), QList<VNX::ProjectItem*>{secondItem});
+        EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{target});
+        EXPECT_EQ(blueprint->selectedProjectItems(), QList<VNX::ProjectItem*>{target});
+    }
+}
+
+TEST_F(EditorDockLayoutTest, BackgroundProjectChangesPreserveActiveContextUntilItsObjectIsDeleted)
+{
+    auto& manager = VNX::ProjectManager::instance();
+    auto* first = window_->createHierarchyPanel();
+    auto* second = window_->createHierarchyPanel();
+    auto* explorer = window_->findChild<VNX::ProjectExplorer*>();
+    auto* inspector = window_->createInspectorPanel();
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(second, nullptr);
+    ASSERT_NE(explorer, nullptr);
+    ASSERT_NE(inspector, nullptr);
+    window_->setLastFocusedInspectorPanelId(inspector->panelId());
+    auto* parent = manager.createItem(nullptr, QStringLiteral("InactiveBranch"), VNX::ProjectItem::Type::Container);
+    ASSERT_NE(parent, nullptr);
+    auto* inactive = manager.createItem(parent, QStringLiteral("InactiveSelection"), VNX::ProjectItem::Type::Sound);
+    auto* active = manager.createItem(nullptr, QStringLiteral("ActiveSelection"), VNX::ProjectItem::Type::Sound);
+    auto* parked = manager.createItem(nullptr, QStringLiteral("ParkedExplorerSelection"), VNX::ProjectItem::Type::Sound);
+    ASSERT_NE(inactive, nullptr);
+    ASSERT_NE(active, nullptr);
+    ASSERT_NE(parked, nullptr);
+    ASSERT_TRUE(explorer->selectProjectItem(parked));
+    ASSERT_TRUE(first->selectProjectItem(inactive));
+    ASSERT_TRUE(second->selectProjectItem(active));
+
+    ASSERT_NE(manager.createItem(nullptr, QStringLiteral("BackgroundCreation"), VNX::ProjectItem::Type::Sound), nullptr);
+    drainEvents();
+    EXPECT_EQ(first->selectedItems(), QList<VNX::ProjectItem*>{inactive});
+    EXPECT_EQ(second->selectedItems(), QList<VNX::ProjectItem*>{active});
+    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{parked});
+    EXPECT_EQ(inspector->currentContextItem(), active);
+    EXPECT_EQ(window_->auditionTarget(), active);
+
+    ASSERT_TRUE(manager.deleteItem(parent));
+    drainEvents();
+    EXPECT_TRUE(first->selectedItems().isEmpty());
+    EXPECT_EQ(second->selectedItems(), QList<VNX::ProjectItem*>{active});
+    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{parked});
+    EXPECT_EQ(inspector->currentContextItem(), active);
+    EXPECT_EQ(window_->auditionTarget(), active);
+
+    ASSERT_TRUE(manager.deleteItem(active));
+    drainEvents();
+    EXPECT_TRUE(second->selectedItems().isEmpty());
+    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{parked});
+    EXPECT_EQ(inspector->currentContextItem(), nullptr);
+    EXPECT_EQ(window_->auditionTarget(), nullptr);
+    EXPECT_EQ(window_->findChild<ControlPanel*>()->boundItem(), nullptr);
+}
+
+TEST_F(EditorDockLayoutTest, ActiveObjectChangesFollowExplicitNavigationInput)
+{
+    auto& manager = VNX::ProjectManager::instance();
+    auto* hierarchy = window_->createHierarchyPanel();
+    auto* otherHierarchy = window_->createHierarchyPanel();
+    auto* explorer = window_->findChild<VNX::ProjectExplorer*>();
+    auto* blueprint = window_->findChild<VNX::BlueprintCanvasWidget*>();
+    auto* inspector = window_->createInspectorPanel();
+    ASSERT_NE(hierarchy, nullptr);
+    ASSERT_NE(otherHierarchy, nullptr);
+    ASSERT_NE(explorer, nullptr);
+    ASSERT_NE(blueprint, nullptr);
+    ASSERT_NE(inspector, nullptr);
+    blueprint->setFixedSize(640, 480);
+    window_->setLastFocusedInspectorPanelId(inspector->panelId());
+    auto* parent = manager.createItem(nullptr, QStringLiteral("InputBranch"), VNX::ProjectItem::Type::Container);
+    ASSERT_NE(parent, nullptr);
+    auto* first = manager.createItem(parent, QStringLiteral("FirstInput"), VNX::ProjectItem::Type::Sound);
+    auto* second = manager.createItem(parent, QStringLiteral("SecondInput"), VNX::ProjectItem::Type::Sound);
+    auto* parked = manager.createItem(nullptr, QStringLiteral("ParkedInput"), VNX::ProjectItem::Type::Sound);
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(second, nullptr);
+    ASSERT_NE(parked, nullptr);
+    blueprint->setSoundsFiltered(false);
+    blueprint->rebuildFromProject();
+    drainEvents();
+    auto* tree = hierarchy->treeWidget();
+    ASSERT_TRUE(hierarchy->selectProjectItem(first));
+    auto* firstRow = tree->currentItem();
+    ASSERT_TRUE(hierarchy->selectProjectItem(second));
+    ASSERT_TRUE(explorer->selectProjectItem(parked));
+    window_->dockOfPanel(hierarchy)->setAsCurrentTab();
+    drainEvents();
+    tree->scrollToItem(firstRow);
+    tree->setFocus(Qt::OtherFocusReason);
+    drainEvents();
+    const QPoint firstPosition = tree->visualItemRect(firstRow).center();
+    ASSERT_TRUE(tree->viewport()->rect().contains(firstPosition));
+    blueprint->setZoomFactor(0.75);
+    blueprint->centerOn(QPointF(1200, 800));
+    const QTransform blueprintViewport = blueprint->viewportTransform();
+
+    clickWidget(tree->viewport(), firstPosition);
+    EXPECT_EQ(inspector->currentContextItem(), first);
+    EXPECT_EQ(window_->auditionTarget(), first);
+    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{parked});
+    EXPECT_EQ(blueprint->selectedProjectItems(), QList<VNX::ProjectItem*>{parked});
+    EXPECT_EQ(blueprint->viewportTransform(), blueprintViewport);
+
+    QKeyEvent downPress(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+    QApplication::sendEvent(tree, &downPress);
+    QKeyEvent downRelease(QEvent::KeyRelease, Qt::Key_Down, Qt::NoModifier);
+    QApplication::sendEvent(tree, &downRelease);
+    drainEvents();
+    ASSERT_EQ(hierarchy->selectedItem(), second);
+    EXPECT_EQ(inspector->currentContextItem(), second);
+    EXPECT_EQ(window_->auditionTarget(), second);
+    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{parked});
+    EXPECT_EQ(blueprint->selectedProjectItems(), QList<VNX::ProjectItem*>{parked});
+    EXPECT_EQ(blueprint->viewportTransform(), blueprintViewport);
+
+    const QPoint rightPosition = tree->visualItemRect(firstRow).center();
+    QMouseEvent rightPress(QEvent::MouseButtonPress, rightPosition,
+                           tree->viewport()->mapToGlobal(rightPosition),
+                           Qt::RightButton, Qt::RightButton, Qt::NoModifier);
+    QApplication::sendEvent(tree->viewport(), &rightPress);
+    QMouseEvent rightRelease(QEvent::MouseButtonRelease, rightPosition,
+                             tree->viewport()->mapToGlobal(rightPosition),
+                             Qt::RightButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(tree->viewport(), &rightRelease);
+    drainEvents();
+    ASSERT_EQ(hierarchy->selectedItem(), first);
+    EXPECT_EQ(inspector->currentContextItem(), second);
+    EXPECT_EQ(window_->auditionTarget(), second);
+    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{parked});
+    EXPECT_EQ(blueprint->selectedProjectItems(), QList<VNX::ProjectItem*>{parked});
+    EXPECT_EQ(blueprint->viewportTransform(), blueprintViewport);
+
+    clickWidget(tree->viewport(), tree->visualItemRect(firstRow).center());
+    EXPECT_EQ(inspector->currentContextItem(), first);
+    EXPECT_EQ(window_->auditionTarget(), first);
+    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{parked});
+    EXPECT_EQ(blueprint->selectedProjectItems(), QList<VNX::ProjectItem*>{parked});
+    EXPECT_EQ(blueprint->viewportTransform(), blueprintViewport);
+
+    ASSERT_TRUE(otherHierarchy->selectProjectItem(second));
+    ASSERT_EQ(hierarchy->selectedItem(), first);
+    clickWidget(tree->viewport(), tree->visualItemRect(firstRow).center());
+    EXPECT_EQ(inspector->currentContextItem(), first);
+    EXPECT_EQ(window_->auditionTarget(), first);
+    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{parked});
+    EXPECT_EQ(blueprint->selectedProjectItems(), QList<VNX::ProjectItem*>{parked});
+    EXPECT_EQ(blueprint->viewportTransform(), blueprintViewport);
+
+    QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QApplication::sendEvent(tree, &escape);
+    drainEvents();
+    EXPECT_TRUE(hierarchy->selectedItems().isEmpty());
+    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{parked});
+    EXPECT_EQ(otherHierarchy->selectedItems(), QList<VNX::ProjectItem*>{second});
+    EXPECT_EQ(blueprint->selectedProjectItems(), QList<VNX::ProjectItem*>{parked});
+    EXPECT_EQ(blueprint->viewportTransform(), blueprintViewport);
+    EXPECT_EQ(inspector->currentContextItem(), nullptr);
+    EXPECT_EQ(window_->auditionTarget(), nullptr);
+}
+
+TEST_F(EditorDockLayoutTest, DeletedActiveObjectDoesNotClearIndependentEditorAndAuditionContexts)
+{
+    auto& manager = VNX::ProjectManager::instance();
+    auto* active = manager.createItem(nullptr, QStringLiteral("ActiveObject"), VNX::ProjectItem::Type::Sound);
+    auto* inspected = manager.createItem(nullptr, QStringLiteral("IndependentInspector"), VNX::ProjectItem::Type::Sound);
+    auto* container = manager.createItem(nullptr, QStringLiteral("IndependentAudition"), VNX::ProjectItem::Type::Container);
+    ASSERT_NE(active, nullptr);
+    ASSERT_NE(inspected, nullptr);
+    ASSERT_NE(container, nullptr);
+    auto* auditioned = manager.createItem(container, QStringLiteral("AuditionChild"), VNX::ProjectItem::Type::Sound);
+    ASSERT_NE(auditioned, nullptr);
+    auto* router = window_->findChild<VNX::SelectionRouter*>();
+    ASSERT_NE(router, nullptr);
+    router->selectItem(active, false);
+    window_->openItemInNewInspector(inspected, VNX::MainWindow::PreferredOpenArea::CentralTab, false);
+    auto* inspector = window_->inspectorShowingItem(inspected);
+    ASSERT_NE(inspector, nullptr);
+    auto* editor = qobject_cast<VNX::GridEditorPanel*>(
+        window_->openStandaloneEditor(QStringLiteral("GridEditor"), container));
+    ASSERT_NE(editor, nullptr);
+    drainEvents();
+    selectChildRow(editor, 0);
+    ASSERT_EQ(router->activeItem(), active);
+    ASSERT_EQ(inspector->currentContextItem(), inspected);
+    ASSERT_EQ(window_->auditionTarget(), auditioned);
+
+    ASSERT_TRUE(manager.deleteItem(active));
+    drainEvents();
+    EXPECT_EQ(router->activeItem(), nullptr);
+    EXPECT_EQ(inspector->currentContextItem(), inspected);
+    EXPECT_EQ(editor->boundItem(), container);
+    EXPECT_EQ(window_->auditionTarget(), auditioned);
+    EXPECT_EQ(window_->findChild<ControlPanel*>()->boundItem(), auditioned);
+}
+
+TEST_F(EditorDockLayoutTest, UndoRedoRestoresObjectsWithoutRestoringActiveContexts)
+{
+    auto& manager = VNX::ProjectManager::instance();
+    auto* inspected = manager.createItem(nullptr, QStringLiteral("IndependentInspector"), VNX::ProjectItem::Type::Sound);
+    ASSERT_NE(inspected, nullptr);
+    window_->openItemInNewInspector(inspected, VNX::MainWindow::PreferredOpenArea::CentralTab, false);
+    auto* inspector = window_->inspectorShowingItem(inspected);
+    ASSERT_NE(inspector, nullptr);
+    inspector->setPinned(true);
+    auto* router = window_->findChild<VNX::SelectionRouter*>();
+    ASSERT_NE(router, nullptr);
+    auto& undo = VNX::UndoRedoManager::instance();
+    undo.clear();
+    const auto created = VNX::ActionManager::instance().execute(
+        QStringLiteral("create_attenuation"),
+        QJsonObject{{QStringLiteral("name"), QStringLiteral("ActiveAttenuation")}});
+    ASSERT_TRUE(created.success) << created.errorMessage.toStdString();
+    const QUuid guid(created.data.value(QStringLiteral("guid")).toString());
+    ASSERT_FALSE(guid.isNull());
+    auto* active = manager.findItemByGuid(guid);
+    ASSERT_NE(active, nullptr);
+    router->selectItem(active, false);
+    drainEvents();
+    ASSERT_EQ(router->activeItem(), active);
+    ASSERT_EQ(window_->auditionTarget(), active);
+    ASSERT_EQ(inspector->currentContextItem(), inspected);
+
+    ASSERT_TRUE(undo.undo());
+    EXPECT_EQ(manager.findItemByGuid(guid), nullptr);
+    EXPECT_EQ(router->activeItem(), nullptr);
+    EXPECT_EQ(window_->auditionTarget(), nullptr);
+    EXPECT_EQ(inspector->currentContextItem(), inspected);
+
+    ASSERT_TRUE(undo.redo());
+    ASSERT_NE(manager.findItemByGuid(guid), nullptr);
+    EXPECT_EQ(router->activeItem(), nullptr);
+    EXPECT_EQ(window_->auditionTarget(), nullptr);
+    EXPECT_EQ(inspector->currentContextItem(), inspected);
+    drainEvents();
+    EXPECT_EQ(router->activeItem(), nullptr);
+    EXPECT_EQ(window_->auditionTarget(), nullptr);
+
+    inspector->setPinned(false);
+    drainEvents();
+    EXPECT_EQ(router->activeItem(), nullptr);
+    EXPECT_EQ(window_->auditionTarget(), nullptr);
+    EXPECT_EQ(inspector->currentContextItem(), inspected);
+    EXPECT_EQ(window_->findChild<ControlPanel*>()->boundItem(), nullptr);
+}
+
+TEST_F(EditorDockLayoutTest, LocalTimelineSelectionPreservesNavigationUntilExplicitInspection)
+{
+    auto& manager = VNX::ProjectManager::instance();
+    auto* piece = manager.createItem(nullptr, QStringLiteral("ClipPiece"), VNX::ProjectItem::Type::Piece);
+    ASSERT_NE(piece, nullptr);
+    auto* track = manager.createItem(piece, QStringLiteral("ClipTrack"), VNX::ProjectItem::Type::Track);
+    ASSERT_NE(track, nullptr);
+    auto* sound = manager.createItem(track, QStringLiteral("ClipTarget"), VNX::ProjectItem::Type::Sound);
+    auto* active = manager.createItem(nullptr, QStringLiteral("ActiveOutsideTimeline"), VNX::ProjectItem::Type::Sound);
+    auto* parked = manager.createItem(nullptr, QStringLiteral("ParkedOutsideTimeline"), VNX::ProjectItem::Type::Sound);
+    ASSERT_NE(sound, nullptr);
+    ASSERT_NE(active, nullptr);
+    ASSERT_NE(parked, nullptr);
+    track->comp<VNX::VTrack>()->clips = {};
+    auto* hierarchy = window_->createHierarchyPanel();
+    auto* explorer = window_->findChild<VNX::ProjectExplorer*>();
+    auto* inspector = window_->createInspectorPanel();
+    auto* router = window_->findChild<VNX::SelectionRouter*>();
+    ASSERT_NE(hierarchy, nullptr);
+    ASSERT_NE(explorer, nullptr);
+    ASSERT_NE(inspector, nullptr);
+    ASSERT_NE(router, nullptr);
+    window_->setLastFocusedInspectorPanelId(inspector->panelId());
+    auto* timeline = qobject_cast<VNX::TimelineEditorPanel*>(
+        window_->openStandaloneEditor(QStringLiteral("TimelineEditor"), track));
+    ASSERT_NE(timeline, nullptr);
+    ASSERT_TRUE(timeline->placeItem(sound, 0, 0, true));
+    ASSERT_EQ(timeline->clipCount(0), 1);
+    const QUuid clip = timeline->clipGuid(0, 0);
+    ASSERT_TRUE(timeline->selectLane(track->guid));
+    timeline->setEditCursorVisible(false);
+    timeline->fitClips();
+    ASSERT_TRUE(explorer->selectProjectItem(parked));
+    ASSERT_TRUE(hierarchy->selectProjectItem(active));
+    window_->dockOfPanel(timeline)->setAsCurrentTab();
+    drainEvents();
+    auto* canvas = timeline->findChild<VNX::TimelineCanvas*>(QStringLiteral("timelineLaneViewport"));
+    ASSERT_NE(canvas, nullptr);
+    canvas->repaint();
+    ASSERT_EQ(canvas->lastRenderData().clipItems.size(), 1);
+    const QRect visibleClip = canvas->lastRenderData().clipItems.front().rect.intersected(canvas->rect());
+    ASSERT_GT(visibleClip.width(), 10);
+    ASSERT_GT(visibleClip.height(), 0);
+    ASSERT_TRUE(timeline->selectedClipGuids().isEmpty());
+
+    clickWidget(canvas, visibleClip.center());
+    EXPECT_EQ(timeline->selectedClipGuids(), QSet<QUuid>{clip});
+    EXPECT_EQ(router->activeItem(), active);
+    EXPECT_EQ(inspector->currentContextItem(), active);
+    EXPECT_EQ(window_->auditionTarget(), active);
+    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{parked});
+    EXPECT_EQ(hierarchy->selectedItems(), QList<VNX::ProjectItem*>{active});
+
+    ASSERT_TRUE(timeline->inspectClip(0, clip));
+    drainEvents();
+    EXPECT_EQ(router->activeItem(), sound);
+    EXPECT_EQ(inspector->currentContextItem(), sound);
+    EXPECT_EQ(window_->auditionTarget(), sound);
+    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{sound});
+    EXPECT_EQ(hierarchy->selectedItems(), QList<VNX::ProjectItem*>{active});
+    ASSERT_NE(inspector->placementContext(), nullptr);
+    ASSERT_FALSE(inspector->placementContext()->empty());
+    EXPECT_EQ(inspector->placementContext()->occurrences().front().clipGuid, clip);
+
+    ASSERT_TRUE(hierarchy->selectProjectItem(active));
+    QMouseEvent doubleClick(QEvent::MouseButtonDblClick, visibleClip.center(),
+                            canvas->mapToGlobal(visibleClip.center()),
+                            Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(canvas, &doubleClick);
+    drainEvents();
+    EXPECT_EQ(router->activeItem(), sound);
+    EXPECT_EQ(inspector->currentContextItem(), sound);
+    EXPECT_EQ(window_->auditionTarget(), sound);
+    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{sound});
+    EXPECT_EQ(hierarchy->selectedItems(), QList<VNX::ProjectItem*>{active});
+    ASSERT_NE(inspector->placementContext(), nullptr);
+    ASSERT_FALSE(inspector->placementContext()->empty());
+    EXPECT_EQ(inspector->placementContext()->occurrences().front().clipGuid, clip);
 }
 
 TEST_F(EditorDockLayoutTest, EventIdentityIndexSurvivesObjectEdits)

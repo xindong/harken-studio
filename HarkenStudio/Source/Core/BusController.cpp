@@ -8,7 +8,6 @@
 #include "Components/VMixNode.h"
 
 #include "../Widgets/Blueprint/BlueprintCanvasWidget.h"
-#include "../Widgets/ProjectExplorer/ProjectExplorer.h"
 #include "../Widgets/Inspector/InspectorPanel.h"
 
 #include <DockWidget.h>
@@ -27,7 +26,6 @@ BusController::BusController(MainWindow* host)
 void BusController::setViews(const Views& v)
 {
     blueprintCanvas_     = v.blueprintCanvas;
-    projectExplorer_     = v.projectExplorer;
     blueprintDock_ = v.blueprintDock;
 }
 
@@ -112,7 +110,6 @@ void BusController::selectBus(uint32_t busID)
 
     if (auto* ip = host_->activeInspectorPanel())
         ip->showBusInspector(busID);
-    if (projectExplorer_) projectExplorer_->selectBusInTree(busID);
 
     selectionSyncGuard_ = false;
 }

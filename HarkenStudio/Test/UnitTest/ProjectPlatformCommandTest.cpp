@@ -34,7 +34,7 @@ protected:
         config.platforms = {{QUuid::createUuid(), QStringLiteral("Windows"), BasePlatform::Windows}};
         ASSERT_TRUE(manager().createProject(config));
         ActionManager::instance().clearAllForTesting();
-        registerProjectActions(ActionManager::instance(), &manager(), nullptr, {});
+        registerProjectActions(ActionManager::instance(), &manager(), nullptr);
         undo().clear();
     }
 

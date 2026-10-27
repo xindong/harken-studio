@@ -4,6 +4,8 @@
 
 Edit 菜单补充核对：2026-10-22，当前工作区。
 
+对象树与 Timeline 选择联动补充核对：2026-10-27，当前工作区。
+
 本篇记录当前快捷键的注册、绑定、设置与验证边界，供后续修改时持续核对。以当前源码为准，行为变化时直接更新对应表项。对象树菜单与快捷键的选区规则见[对象右键菜单快照](object-context-menus.md)。
 
 路径缩写：`Source/` = `HarkenStudio/Source/`，`EditorTest/` = `HarkenStudio/Test/UnitTest/`。
@@ -98,14 +100,14 @@ Edit 菜单补充核对：2026-10-22，当前工作区。
 | 场景 | 当前行为与边界 |
 |---|---|
 | Play/Stop，焦点位于 Source Editor 或其 dock 内 | 优先调用该编辑器的 `handlePlayStopShortcut()`，切换该文件的原始试听；处理失败也在此分支结束。Source Editor 未另外注册快捷键 |
-| Play/Stop，焦点位于其他位置 | 存在非 RawFile 试听时调用 `onStopPressed()` 停止对象试听；否则尝试播放 Project Explorer 的当前所选对象。模拟模式、无选择或对象不可播放时由 handler 拒绝 |
+| Play/Stop，焦点位于其他位置 | 存在非 RawFile 试听时调用 `onStopPressed()` 停止对象试听；否则播放当前试听目标。目标由主动对象选择或 Selection Editor 的 Child 行选择指定，不从任意树的保留高亮推断；仅切换焦点不改目标。模拟模式、无目标或对象不可播放时由 handler 拒绝 |
 | AuditionBar 的鼠标按钮 | Play 点击调用 `onPlayRequested()`，Stop 点击调用 `onStopPressed()`；快捷键的焦点路由和播放／停止切换在 `onPlayPressed()` 中。Play 的 tooltip 展示的是 Play/Stop 快捷键 |
-| Reset Container | 使用 `auditionResetItem_`，由选择路由及 Blueprint 选择更新。当前要求目标为 Container、有 `VSelection`、模式属于 Random / Sequence、`runtimeStableId != 0`；Single 按 Memory Scope 清选择记忆，Queue 清当前发声体的队列记忆；handler 再检查 Reset 按钮是否可用。默认无键，分配键位后才有键盘入口 |
-| Project Tree | Project Explorer 和 Hierarchy 继承同一 `ProjectTreePanel`，共用五个绑定。粘贴到分类根时走 `pasteClipboardAtBucketRoot()`，其他目标走 `pasteInto()`。树未绑定管理器的 Select All |
+| Reset Container | 使用当前试听目标。要求目标为 Container、有 `VSelection`、模式属于 Random / Sequence、具有有效运行时 ID；Single 按 Memory Scope 清选择记忆，Queue 清当前发声体的队列记忆；handler 再检查 Reset 按钮是否可用。Control 固定不改变 Reset 的目标。默认无键，分配键位后才有键盘入口 |
+| Project Tree | Project Explorer 和 Hierarchy 继承同一 `ProjectTreePanel`，共用五个绑定，命令使用获得焦点面板的本地选区。键盘选择对象与单击一样驱动当前编辑、试听上下文；只有 Explorer 选择更新 Blueprint 高亮，Hierarchy 的选择、清选和双击不改变画布。右键菜单只建立命令目标。两类树互不改变对方选区，各 Hierarchy 实例也保持独立；Blueprint 和其他编辑视图的对象选择可让 Explorer 跟随，不改变 Hierarchy。其他视图的显式对象导航经 Explorer 更新 Blueprint，Blueprint 自身选择不被反向覆盖。不合并跨面板选区。粘贴到分类根时走 `pasteClipboardAtBucketRoot()`，其他目标走 `pasteInto()`。树未绑定管理器的 Select All |
 | Curve | 操作曲线点而非工程对象；Delete/Cut 的可编辑点限制、粘贴载荷与点数限制由曲线函数处理。Select All 的管理器消费者仅在 CurveCanvas |
 | Edit 菜单 | 顺序为 Undo / Redo、分隔线、Cut / Copy / Paste / Duplicate / Delete、分隔线、Select All。操作作用于打开菜单前的焦点控件，菜单取得焦点不会改变目标；无对应动作时置灰，已有业务动作的选择与剪贴板限制仍由其 handler 校验 |
 | Edit 菜单中的文本与原生列表 | `QLineEdit`、`QTextEdit`、`QPlainTextEdit` 优先编辑文字，不向外层对象传播；按选区、只读状态和剪贴板内容启用，密码输入框不允许复制或剪切。原生多选列表支持 Select All。Qt 控件的内建键盘映射仍由 Qt 处理，不随管理器重绑；对应可用菜单项显示原生标准键，已绑定的业务控件显示配置键 |
-| Timeline | ruler 与 canvas 共用 `edit.delete`，按焦点删除 marker 或所选 clips；canvas 支持删除多选 clips，不只单个 clip |
+| Timeline | ruler 与 canvas 共用 `edit.delete`，按焦点删除 marker 或本地所选 clips；canvas 支持删除多选 clips，不只单个 clip。普通点击 Clip 不切换全局对象或试听目标；Track 选择、显式 Inspect／Reveal 和 Clip 双击保留原有交互 |
 | 菜单与 tooltip | MainWindow 的 Save、Preferences、Undo、Redo 直接展示 QAction 当前键；Edit 新增的六个入口和 Project Tree 菜单用 `label + '\t' + NativeText` 展示键位，菜单动作自身不注册快捷键；Curve 上下文菜单调用点编辑函数，但不持有快捷键或键位提示 |
 
 提示刷新见 [ShortcutManager.cpp](../../../../HarkenStudio/Source/Core/ShortcutManager.cpp) 的 `createMenuAction()`、[ProjectItemMenuController.cpp](../../../../HarkenStudio/Source/Widgets/Shared/ProjectItemMenuController.cpp) 的 `refreshShortcutHints()` 与 [AuditionBar.cpp](../../../../HarkenStudio/Source/Widgets/AuditionBar/AuditionBar.cpp) 的 `refreshPlayShortcut()` / `refreshResetShortcut()`；均监听 `shortcutChanged` 和 `shortcutsReset`。Source Editor 切换见 [SourceEditorWidget.cpp](../../../../HarkenStudio/Source/Widgets/SourceEditor/SourceEditorWidget.cpp)；[AuditionManager.cpp](../../../../HarkenStudio/Source/Core/AuditionManager.cpp) 的 `stopAll()` 跳过 RawFile 试听。

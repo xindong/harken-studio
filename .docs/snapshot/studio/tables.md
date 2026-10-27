@@ -137,9 +137,11 @@ Sources 仅在同语言组内移动；Binding 仅编辑本地贡献；Clips 移�
 
 Random、Sequence、Match 的 Selection Editor 行选择可将该行引用的 Child 设为试听目标；编辑器与 Inspector 继续显示当前 Container，不经过全局对象导航。选中只设置目标，播放按钮和播放快捷键使用该目标；Child 本身为 Container 时正常播放该对象自身。用户成功替换已选行的 Child 引用后，试听目标同步为新对象；替换失败、编辑其他行或后台刷新不改变当前试听目标。工具栏只保留播放控制，不显示目标对象；Control 未固定时同步显示该目标的试听参数，固定时保留原绑定，Reset 跟随试听目标。
 
-表内空白、Esc、Match 中 Ctrl 点击已选行或改选 Variable 列等解除行选择的操作，将试听目标恢复为当前编辑器显示的 Container；钻入嵌套对象后恢复的是当前层级，不是最外层绑定对象。点击工具栏、Control 或切换焦点遵循公有表格规则，保留行选择和 Child 试听目标。Hierarchy 中重复点击已选对象也可重新指定目标。绑定、重建、属性刷新和布局恢复不自行取得试听目标；显式进入或返回嵌套 Container 时载入当前显示对象。目标对象或其所属子树删除、工程关闭时清除目标。试听不改变公有选择与拖动规则，选中高亮仍仅出现在 `#` 或承载 handle 的单元格。
+表内空白、Esc、Match 中 Ctrl 点击已选行或改选 Variable 列等解除行选择的操作，将试听目标恢复为当前编辑器显示的 Container；钻入嵌套对象后恢复的是当前层级，不是最外层绑定对象。点击工具栏、Control 或切换焦点遵循公有表格规则，保留行选择和 Child 试听目标。Hierarchy、Explorer 的对象单击、重复点击和键盘选择通过主动对象选择重新指定编辑与试听目标；右键菜单和被动选择不接管目标。绑定、重建、属性刷新和布局恢复不自行取得试听目标；显式进入或返回嵌套 Container 时载入当前显示对象。目标对象或其所属子树删除、工程关闭时清除目标。试听不改变公有选择与拖动规则，选中高亮仍仅出现在 `#` 或承载 handle 的单元格。
 
-子对象试听复核覆盖三种模式的行选择与清选、嵌套编辑层级、编辑面板保持、Control 固定与解除固定、Hierarchy 键盘选择及重复点击、Blueprint 重选、后台刷新、无关目录删除和目标失效。树的实际选中变化独立发布试听请求，被动同步不改变目标。本轮 89 项相关回归全部通过，Release 编辑器与测试目标、RelWithDebInfo 编辑器构建成功，局部 QSS 所有权检查通过。
+子对象试听复核覆盖三种模式的行选择与清选、嵌套编辑层级、编辑面板保持、Control 固定与解除固定、Hierarchy 键盘选择及重复点击、Blueprint 重选、后台刷新、无关目录删除和目标失效。此前 89 项相关回归全部通过，Release 编辑器与测试目标、RelWithDebInfo 编辑器构建成功，局部 QSS 所有权检查通过。
+
+导航联动核对：2026-10-27。Hierarchy 与 Explorer 互不改动对方的本地选区和浏览位置；两类树的主动选择继续驱动 Inspector、编辑器和试听。Blueprint 的外部选区仅接收 Explorer，Explorer 双击保留画布聚焦；Hierarchy 的选择、清选、双击和打开新窗口不改变画布，双击仍打开编辑器。Blueprint 及其他编辑视图的对象选择由 Explorer 跟随，不改变 Hierarchy；其他视图的显式对象导航经 Explorer 更新 Blueprint，Blueprint 自身选择不被反向覆盖。显式工程 Locate 仅定位 Explorer，Open in Blueprint 仍可主动定位画布。Timeline 普通点击 Clip 只改变时间线本地选区，不切换 Inspector、对象编辑器或试听目标；Track 选择、显式 Inspect／Reveal 和 Clip 双击仍沿用原有对象交互。Pin 和编辑器接收者规则保持原有语义。对象树的主动选择、清选及后台更新边界见[对象右键菜单快照](object-context-menus.md)。
 
 Match Selection Editor 使用公共 `MatrixTableWidget`，定位与 Config Table 一致。它在 `TableWidget` 基础上提供双维度配置表：托管 QTableWidget、列表头控件和业务列移动请求。真实序号列 `#` 保持主题紧凑宽度，Child、Waveform 与所有条件列通过公共 `TableColumnLayout` 按比例分配剩余宽度，填满可用空间，禁止横向滚动；列边界拖动按相邻列补偿，窗口恢复宽度后保留比例。表体撑满编辑器，行高由主题固定，仅行内容超出时纵向滚动。变量列复用 Display Table 的 `ReorderHeaderView` 动画：拖动表头随指针浮动，相邻表头让位，松手后归位；引用控件随表头移动。完成时先恢复原生视图顺序，再由业务提交变量及整列条件的移动，调整匹配优先级，形成一步可撤销操作；Esc 或刷新表格取消未完成的拖动。序号列、Child 与 Waveform 列固定在左侧，不参与换位。该组件不包含 Variable、Selection 或匹配规则。
 

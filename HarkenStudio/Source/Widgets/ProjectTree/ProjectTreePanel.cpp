@@ -31,6 +31,7 @@
 #include <QSet>
 #include <QSettings>
 #include <QSignalBlocker>
+#include <QScrollBar>
 #include <QTimer>
 #include <QUuid>
 #include <algorithm>
@@ -107,14 +108,14 @@ void ProjectTreePanel::initPanel()
     connect(&ProjectManager::instance(), &ProjectManager::folderRenamed, this,
             [this](PhysicalFolder*, const QString&) {
                 updateFolderExpansionPaths();
-                applyVisibility();
+                refreshVisibility();
             });
     const auto scheduleVisibilityRefresh = [this]() {
         if (visibilityRefreshPending_) return;
         visibilityRefreshPending_ = true;
         QTimer::singleShot(0, this, [this]() {
             visibilityRefreshPending_ = false;
-            applyVisibility();
+            refreshVisibility();
         });
     };
     connect(&ProjectManager::instance(), &ProjectManager::itemCreated, this, scheduleVisibilityRefresh);
@@ -227,12 +228,6 @@ void ProjectTreePanel::setupTree()
     connect(treeWidget_, &QTreeWidget::itemExpanded, this, &ProjectTreePanel::onItemExpanded);
     connect(treeWidget_, &QTreeWidget::itemCollapsed, this, &ProjectTreePanel::onItemCollapsed);
     connect(treeWidget_, &QTreeWidget::customContextMenuRequested, this, &ProjectTreePanel::onContextMenu);
-    connect(treeWidget_, &QTreeWidget::itemSelectionChanged, this, &ProjectTreePanel::onSelectionChanged);
-    connect(treeWidget_, &QTreeWidget::itemSelectionChanged, this, [this] {
-        const auto items = selectedItems();
-        auto* current = selectedItem();
-        emit auditionTargetRequested(items.contains(current) ? current : items.value(0));
-    });
 }
 
 void ProjectTreePanel::setupContextMenu()
@@ -534,16 +529,16 @@ void ProjectTreePanel::buildItemMenu()
 
 void ProjectTreePanel::prepareItemContextMenu(QTreeWidgetItem* row, ProjectItem* item)
 {
+    const QSignalBlocker blocker(treeWidget_);
     PhysicalFolder* folder = folderMap_.value(row, nullptr);
     if (item || folder) {
         if (!row->isSelected()) {
-            const QSignalBlocker blocker(treeWidget_);
             treeWidget_->clearSelection();
             row->setSelected(true);
         }
         treeWidget_->setCurrentItem(row, 0, QItemSelectionModel::NoUpdate);
     } else {
-        selectNone();
+        treeWidget_->clearSelection();
         treeWidget_->setCurrentItem(row, 0, QItemSelectionModel::NoUpdate);
     }
     contextItem_ = item;
@@ -617,6 +612,7 @@ void ProjectTreePanel::populateCreatedSubtree(ProjectItem* item, QTreeWidgetItem
                 QTreeWidgetItem* childTree = createTreeItem(child.get());
                 nodeTree->addChild(childTree);
                 addToItemMap(childTree, child.get());
+                childTree->setExpanded(itemExpansion_.value(child->guid, child->expanded));
                 buildChildren(child.get(), childTree);
             }
         };
@@ -919,24 +915,23 @@ QTreeWidgetItem* ProjectTreePanel::treeItemForFolder(PhysicalFolder* folder) con
 
 void ProjectTreePanel::onFolderCreated(PhysicalFolder* folder)
 {
+    const auto state = captureViewState();
+    const QSignalBlocker blocker(treeWidget_);
     const auto add = [this](auto&& self, PhysicalFolder* node) -> void {
         ensureFolderRow(node);
         for (const auto& child : node->children) self(self, child.get());
     };
     add(add, folder);
     applyVisibility();
-    if (auto* row = reverseFolderMap_.value(folder)) {
-        if (row->parent()) row->parent()->setExpanded(true);
-        row->setExpanded(true);
-        treeWidget_->setCurrentItem(row);
-    }
+    restoreViewState(state);
 }
 
 void ProjectTreePanel::onFolderDeleted(PhysicalFolder* folder)
 {
+    const auto state = captureViewState();
+    const QSignalBlocker blocker(treeWidget_);
     if (menuController_) menuController_->clearMenuContext();
     if (QTreeWidgetItem* row = reverseFolderMap_.value(folder)) {
-        const QSignalBlocker blocker(treeWidget_);
         const auto unmap = [this](auto&& self, QTreeWidgetItem* node) -> void {
             for (int i = 0; i < node->childCount(); ++i) self(self, node->child(i));
             removeFromItemMap(node);
@@ -949,7 +944,7 @@ void ProjectTreePanel::onFolderDeleted(PhysicalFolder* folder)
         delete row;
     }
     applyVisibility();
-    onSelectionChanged();
+    restoreViewState(state);
 }
 
 void ProjectTreePanel::onProjectOpened(ProjectData* project)
@@ -967,14 +962,12 @@ void ProjectTreePanel::onProjectClosed()
     clear();
     folderExpansionSettingsKey_.clear();
     collapsedFolderPaths_.clear();
+    itemExpansion_.clear();
 }
 
 void ProjectTreePanel::rebuildTree()
 {
-    const auto selection = selectedItems();
-    const auto folderSelection = selectedFolders();
-    auto* current = selectedItem();
-    auto* currentFolder = selectedFolder();
+    const auto state = captureViewState();
     const QSignalBlocker blocker(treeWidget_);
     clear();
 
@@ -999,7 +992,7 @@ void ProjectTreePanel::rebuildTree()
             QTreeWidgetItem* childTreeItem = createTreeItem(child.get());
             treeItem->addChild(childTreeItem);
             addToItemMap(childTreeItem, child.get());
-            childTreeItem->setExpanded(child->expanded);
+            childTreeItem->setExpanded(itemExpansion_.value(child->guid, child->expanded));
 
             addChildren(child.get(), childTreeItem);
         }
@@ -1033,28 +1026,21 @@ void ProjectTreePanel::rebuildTree()
         QTreeWidgetItem* rootTreeItem = createTreeItem(const_cast<ProjectItem*>(root));
         slotParent->addChild(rootTreeItem);
         addToItemMap(rootTreeItem, const_cast<ProjectItem*>(root));
-        rootTreeItem->setExpanded(true);
+        rootTreeItem->setExpanded(itemExpansion_.value(root->guid, true));
 
         addChildren(const_cast<ProjectItem*>(root), rootTreeItem);
     }
 
     rebuildBusTree();
     applyVisibility();
-    setSelectedEntries(selection, folderSelection);
-    if (auto* row = reverseItemMap_.value(current, nullptr))
-        treeWidget_->setCurrentItem(row, 0, QItemSelectionModel::NoUpdate);
-    else if (auto* row = reverseFolderMap_.value(currentFolder, nullptr))
-        treeWidget_->setCurrentItem(row, 0, QItemSelectionModel::NoUpdate);
+    restoreViewState(state);
 }
 
 void ProjectTreePanel::rebuildBusTree()
 {
     bussesFolder_ = categoryFolders_.value(ItemTypeCatalog::kBussesFolderName, nullptr);
     if (!bussesFolder_) return;
-    const auto selection = selectedItems();
-    const auto folderSelection = selectedFolders();
-    auto* current = selectedItem();
-    auto* currentFolder = selectedFolder();
+    const auto state = captureViewState();
     const QSignalBlocker blocker(treeWidget_);
 
     if (busTreeRootItem_) {
@@ -1093,7 +1079,7 @@ void ProjectTreePanel::rebuildBusTree()
         QTreeWidgetItem* row = createTreeItem(item);
         parentRow->addChild(row);
         addToItemMap(row, item);
-        row->setExpanded(true);
+        row->setExpanded(itemExpansion_.value(item->guid, true));
 
         for (const auto& child : item->children)
             if (child) addBus(child.get(), row);
@@ -1105,24 +1091,7 @@ void ProjectTreePanel::rebuildBusTree()
 
     bussesFolder_->setHidden(false);
     applyVisibility();
-    setSelectedEntries(selection, folderSelection);
-    if (auto* row = reverseItemMap_.value(current, nullptr))
-        treeWidget_->setCurrentItem(row, 0, QItemSelectionModel::NoUpdate);
-    else if (auto* row = reverseFolderMap_.value(currentFolder, nullptr))
-        treeWidget_->setCurrentItem(row, 0, QItemSelectionModel::NoUpdate);
-}
-
-void ProjectTreePanel::selectBusInTree(uint32_t busID)
-{
-    ProjectItem* busItem = ProjectManager::instance().findBusItem(busID);
-    QTreeWidgetItem* row = busItem ? reverseItemMap_.value(busItem, nullptr) : nullptr;
-    if (row) {
-        treeWidget_->blockSignals(true);
-        treeWidget_->setCurrentItem(row, 0, row->isSelected()
-            ? QItemSelectionModel::NoUpdate : QItemSelectionModel::ClearAndSelect);
-        treeWidget_->scrollToItem(row);
-        treeWidget_->blockSignals(false);
-    }
+    restoreViewState(state);
 }
 
 bool ProjectTreePanel::selectProjectItem(ProjectItem* item)
@@ -1136,15 +1105,8 @@ bool ProjectTreePanel::selectProjectItem(ProjectItem* item)
         return false;
     }
 
-    treeWidget_->blockSignals(true);
-    treeWidget_->clearSelection();
-    treeWidget_->setCurrentItem(treeItem);
-    treeItem->setSelected(true);
-    treeWidget_->scrollToItem(treeItem);
-    treeWidget_->blockSignals(false);
-
+    setSelectedEntries({item}, {});
     onItemClicked(treeItem, 0);
-    onSelectionChanged();
     return true;
 }
 
@@ -1169,7 +1131,72 @@ void ProjectTreePanel::setSelectedProjectItems(const QList<ProjectItem*>& items)
     setSelectedEntries(items, {});
 }
 
+ProjectTreePanel::ViewState ProjectTreePanel::captureViewState()
+{
+    ViewState state;
+    state.items = selectedItems();
+    state.folders = selectedFolders();
+    state.currentItem = selectedItem();
+    state.currentFolder = selectedFolder();
+    state.currentBucket = categoryFolders_.key(treeWidget_->currentItem());
+    for (auto it = itemMap_.cbegin(); it != itemMap_.cend(); ++it)
+        itemExpansion_.insert(it.value()->guid, it.key()->isExpanded());
+    for (auto it = folderMap_.cbegin(); it != folderMap_.cend(); ++it) {
+        state.folderExpansion.insert(it.value(), it.key()->isExpanded());
+        const QString path = folderRowPaths_.value(it.value());
+        if (it.key()->isExpanded()) collapsedFolderPaths_.remove(path);
+        else collapsedFolderPaths_.insert(path);
+    }
+    for (auto it = categoryFolders_.cbegin(); it != categoryFolders_.cend(); ++it) {
+        state.bucketExpansion.insert(it.key(), it.value()->isExpanded());
+        if (it.value()->isSelected()) state.selectedBuckets.append(it.key());
+    }
+    state.scrollPosition = QPoint(treeWidget_->horizontalScrollBar()->value(),
+                                  treeWidget_->verticalScrollBar()->value());
+    return state;
+}
+
+void ProjectTreePanel::restoreViewState(const ViewState& state)
+{
+    const QSignalBlocker blocker(treeWidget_);
+    for (auto it = itemMap_.cbegin(); it != itemMap_.cend(); ++it) {
+        const auto expanded = itemExpansion_.constFind(it.value()->guid);
+        if (expanded != itemExpansion_.cend()) it.key()->setExpanded(expanded.value());
+    }
+    for (auto it = state.folderExpansion.cbegin(); it != state.folderExpansion.cend(); ++it) {
+        if (auto* row = reverseFolderMap_.value(it.key())) row->setExpanded(it.value());
+    }
+    for (auto it = state.bucketExpansion.cbegin(); it != state.bucketExpansion.cend(); ++it) {
+        if (auto* row = categoryFolders_.value(it.key())) row->setExpanded(it.value());
+    }
+    setSelectedEntries(state.items, state.folders, false);
+    for (const QString& bucket : state.selectedBuckets) {
+        if (auto* row = categoryFolders_.value(bucket)) row->setSelected(true);
+    }
+    auto* current = reverseItemMap_.value(state.currentItem);
+    if (!current) current = reverseFolderMap_.value(state.currentFolder);
+    if (!current) current = categoryFolders_.value(state.currentBucket);
+    treeWidget_->setCurrentItem(current, 0, QItemSelectionModel::NoUpdate);
+    treeWidget_->doItemsLayout();
+    treeWidget_->horizontalScrollBar()->setValue(state.scrollPosition.x());
+    treeWidget_->verticalScrollBar()->setValue(state.scrollPosition.y());
+}
+
+void ProjectTreePanel::refreshVisibility()
+{
+    const auto state = captureViewState();
+    const QSignalBlocker blocker(treeWidget_);
+    applyVisibility();
+    restoreViewState(state);
+}
+
 void ProjectTreePanel::setSelectedEntries(const QList<ProjectItem*>& items, const QList<PhysicalFolder*>& folders)
+{
+    setSelectedEntries(items, folders, true);
+}
+
+void ProjectTreePanel::setSelectedEntries(const QList<ProjectItem*>& items,
+                                         const QList<PhysicalFolder*>& folders, bool reveal)
 {
     const QSignalBlocker blocker(treeWidget_);
     const QList<ProjectItem*> ordered = itemsInTreeOrder(items);
@@ -1184,10 +1211,12 @@ void ProjectTreePanel::setSelectedEntries(const QList<ProjectItem*>& items, cons
                                 QItemSelectionModel::NoUpdate);
     for (auto* row : rows) {
         row->setSelected(true);
-        for (auto* parent = row->parent(); parent; parent = parent->parent())
-            parent->setExpanded(true);
+        if (reveal) {
+            for (auto* parent = row->parent(); parent; parent = parent->parent())
+                parent->setExpanded(true);
+        }
     }
-    if (!rows.isEmpty()) treeWidget_->scrollToItem(rows.front());
+    if (reveal && !rows.isEmpty()) treeWidget_->scrollToItem(rows.front());
 }
 
 void ProjectTreePanel::selectResultItems(const QList<ProjectItem*>& items)
@@ -1199,14 +1228,10 @@ void ProjectTreePanel::selectResultItems(const QList<ProjectItem*>& items)
     }
     if (live.isEmpty()) {
         selectNone();
-        emit itemSelected(nullptr);
-        emit objectSelectionChanged({});
         return;
     }
     setSelectedProjectItems(live);
-    const QList<ProjectItem*> selected = selectedItems();
-    emit itemSelected(selected.value(0));
-    emit objectSelectionChanged(selected);
+    onSelectionChanged();
 }
 
 void ProjectTreePanel::selectCreatedItem(ProjectItem* item)
@@ -1272,6 +1297,8 @@ void ProjectTreePanel::onItemCreated(ProjectItem* item)
         return;
     }
 
+    const QSignalBlocker blocker(treeWidget_);
+
     QTreeWidgetItem* parentTreeItem = nullptr;
     if (!item->parent)
     {
@@ -1306,9 +1333,7 @@ void ProjectTreePanel::onItemCreated(ProjectItem* item)
 
     populateCreatedSubtree(item, newItem);
 
-    parentTreeItem->setExpanded(true);
-    newItem->setExpanded(true);
-    treeWidget_->setCurrentItem(newItem);
+    newItem->setExpanded(itemExpansion_.value(item->guid, true));
 }
 
 void ProjectTreePanel::onItemRenamed(ProjectItem* item, const QString& oldName)
@@ -1325,7 +1350,7 @@ void ProjectTreePanel::onItemRenamed(ProjectItem* item, const QString& oldName)
     {
         updateTreeItem(treeItem, item);
     }
-    applyVisibility();
+    refreshVisibility();
 }
 
 void ProjectTreePanel::onItemPropertyChanged(ProjectItem* item, const QString& propertyName)
@@ -1334,10 +1359,7 @@ void ProjectTreePanel::onItemPropertyChanged(ProjectItem* item, const QString& p
     if (treeItem)
     {
         if (propertyName == QLatin1String("childOrder")) {
-            const auto selection = selectedItems();
-            const auto folderSelection = selectedFolders();
-            auto* currentFolder = selectedFolder();
-            auto* current = selectedItem();
+            const auto state = captureViewState();
             const QSignalBlocker blocker(treeWidget_);
             for (int targetIndex = 0;
                  targetIndex < static_cast<int>(item->children.size());
@@ -1350,11 +1372,7 @@ void ProjectTreePanel::onItemPropertyChanged(ProjectItem* item, const QString& p
                 treeItem->takeChild(currentIndex);
                 treeItem->insertChild(targetIndex, childTree);
             }
-            setSelectedEntries(selection, folderSelection);
-            if (auto* row = reverseItemMap_.value(current, nullptr))
-                treeWidget_->setCurrentItem(row, 0, QItemSelectionModel::NoUpdate);
-            else if (auto* row = reverseFolderMap_.value(currentFolder, nullptr))
-                treeWidget_->setCurrentItem(row, 0, QItemSelectionModel::NoUpdate);
+            restoreViewState(state);
         }
         updateTreeItem(treeItem, item);
     }
@@ -1382,16 +1400,7 @@ void ProjectTreePanel::onItemDeleted(ProjectItem* item)
         }
     }
 
-    const auto previousSelection = selectedItems();
-    const auto folderSelection = selectedFolders();
-    auto* currentFolder = selectedFolder();
-    auto* current = selectedItem();
-    auto selection = previousSelection;
-    selection.removeIf([item](const ProjectItem* selected) {
-        for (auto* ancestor = selected; ancestor; ancestor = ancestor->parent)
-            if (ancestor == item) return true;
-        return false;
-    });
+    const auto state = captureViewState();
     {
         const QSignalBlocker blocker(treeWidget_);
         if (item && item->type == ProjectItem::Type::Bus) {
@@ -1406,20 +1415,7 @@ void ProjectTreePanel::onItemDeleted(ProjectItem* item)
             removeRecursive(treeItem);
             delete treeItem;
         }
-        setSelectedEntries(selection, folderSelection);
-        if (auto* row = reverseItemMap_.value(current, nullptr))
-            treeWidget_->setCurrentItem(row, 0, QItemSelectionModel::NoUpdate);
-        else if (auto* row = reverseFolderMap_.value(currentFolder, nullptr))
-            treeWidget_->setCurrentItem(row, 0, QItemSelectionModel::NoUpdate);
-    }
-    if (current != selectedItem()) {
-        emit itemSelected(selection.value(0));
-    } else if (selection != previousSelection) {
-        if (selection.isEmpty()) {
-            emit itemSelected(nullptr);
-        } else {
-            emit objectSelectionChanged(selection);
-        }
+        restoreViewState(state);
     }
 }
 
@@ -1443,10 +1439,7 @@ void ProjectTreePanel::onItemMoved(ProjectItem* item, ProjectItem* oldParent, Pr
 
     if (treeItem && newParentTreeItem)
     {
-        const auto selection = selectedItems();
-        const auto folderSelection = selectedFolders();
-        auto* currentFolder = selectedFolder();
-        auto* current = selectedItem();
+        const auto state = captureViewState();
         const QSignalBlocker blocker(treeWidget_);
         QTreeWidgetItem* oldParentTreeItem = treeItem->parent();
         if (oldParentTreeItem)
@@ -1478,13 +1471,7 @@ void ProjectTreePanel::onItemMoved(ProjectItem* item, ProjectItem* oldParent, Pr
         } else {
             newParentTreeItem->addChild(treeItem);
         }
-        newParentTreeItem->setExpanded(true);
-
-        setSelectedEntries(selection, folderSelection);
-        if (auto* row = reverseItemMap_.value(current, nullptr))
-            treeWidget_->setCurrentItem(row, 0, QItemSelectionModel::NoUpdate);
-        else if (auto* row = reverseFolderMap_.value(currentFolder, nullptr))
-            treeWidget_->setCurrentItem(row, 0, QItemSelectionModel::NoUpdate);
+        restoreViewState(state);
     }
 }
 
@@ -1641,7 +1628,6 @@ bool ProjectTreePanel::selectFolder(PhysicalFolder* folder)
     if (!row) return false;
     setSelectedEntries({}, {folder});
     onItemClicked(row, 0);
-    onSelectionChanged();
     return true;
 }
 
@@ -1653,6 +1639,7 @@ void ProjectTreePanel::selectAll()
 void ProjectTreePanel::selectNone()
 {
     treeWidget_->clearSelection();
+    onSelectionChanged();
 }
 
 void ProjectTreePanel::batchDelete()
@@ -1754,13 +1741,16 @@ void ProjectTreePanel::onItemClicked(QTreeWidgetItem* item, int column)
     if (item && item->data(0, kBucketRole).toBool())
     {
         item->setExpanded(!item->isExpanded());
+        emit itemSelected(nullptr);
         return;
     }
 
     if (ProjectItem* projItem = itemMap_.value(item, nullptr))
     {
         const auto items = selectedItems();
-        emit itemSelected(items.contains(projItem) ? projItem : items.value(0));
+        projItem = items.contains(projItem) ? projItem : items.value(0);
+        emit itemSelected(projItem);
+        if (!projItem) return;
 
         switch (projItem->type)
         {
@@ -1806,6 +1796,7 @@ void ProjectTreePanel::onItemExpanded(QTreeWidgetItem* item)
     if (ProjectItem* projItem = itemMap_.value(item, nullptr))
     {
         projItem->expanded = true;
+        itemExpansion_.insert(projItem->guid, true);
     }
 }
 
@@ -1815,6 +1806,7 @@ void ProjectTreePanel::onItemCollapsed(QTreeWidgetItem* item)
     if (ProjectItem* projItem = itemMap_.value(item, nullptr))
     {
         projItem->expanded = false;
+        itemExpansion_.insert(projItem->guid, false);
     }
 }
 
@@ -1881,6 +1873,7 @@ void ProjectTreePanel::importFilesToTarget(const QStringList& files, ProjectItem
         return;
     }
 
+    QList<QUuid> importedItems;
     auto dispatchImport = [&](int& successCount, int& failCount) {
         if (targetSound) {
             auto* command = ImportSoundSourcesCommand::pushImport(
@@ -1891,11 +1884,13 @@ void ProjectTreePanel::importFilesToTarget(const QStringList& files, ProjectItem
             auto* command = ImportAssetsCommand::pushImportAtRoot(files);
             successCount = command->successCount();
             failCount = command->failCount();
+            importedItems = command->importedItemGuids();
         } else {
             auto* command = ImportAssetsCommand::pushImport(
                 files, targetBinding, importParent);
             successCount = command->successCount();
             failCount = command->failCount();
+            importedItems = command->importedItemGuids();
         }
     };
 
@@ -1928,13 +1923,13 @@ void ProjectTreePanel::importFilesToTarget(const QStringList& files, ProjectItem
                 .arg(failCount));
     }
 
-    if (importParent)
-    {
-        QTreeWidgetItem* parentTreeItem = findTreeItem(importParent);
-        if (parentTreeItem)
-        {
-            parentTreeItem->setExpanded(true);
+    if (!importedItems.isEmpty()) {
+        QList<ProjectItem*> results;
+        for (const QUuid& guid : importedItems) {
+            if (auto* item = ProjectManager::instance().findItemByGuid(guid))
+                results.append(item);
         }
+        selectResultItems(results);
     }
 }
 
@@ -2059,9 +2054,14 @@ void ProjectTreePanel::onSelectionChanged()
 {
     if (!treeWidget_)
         return;
-    if (selectedItems().isEmpty())
+    auto* row = treeWidget_->currentItem();
+    if (folderMap_.contains(row) || (row && row->data(0, kBucketRole).toBool())) {
         emit itemSelected(nullptr);
-    emit objectSelectionChanged(selectedItems());
+        return;
+    }
+    const auto items = selectedItems();
+    auto* current = selectedItem();
+    emit itemSelected(items.contains(current) ? current : items.value(0));
 }
 
 void ProjectTreePanel::onSelectAll()

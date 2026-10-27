@@ -16,9 +16,11 @@
 #include <QDragLeaveEvent>
 #include <QMimeData>
 #include <QMouseEvent>
+#include <QKeyEvent>
 #include <QContextMenuEvent>
 #include <QPainter>
 #include <QScrollBar>
+#include <QSignalBlocker>
 #include <QFileInfo>
 #include <QUrl>
 
@@ -59,6 +61,9 @@ ProjectTreeWidget::ProjectTreeWidget(QWidget* parent)
                 scrollBar->setEnabled(minimum < maximum);
             });
     scrollBar->setEnabled(scrollBar->minimum() < scrollBar->maximum());
+    connect(this, &QTreeWidget::itemClicked, this, [this] { mouseReleaseHandled_ = true; });
+    connect(this, &QTreeWidget::itemExpanded, this, [this] { mouseReleaseHandled_ = true; });
+    connect(this, &QTreeWidget::itemCollapsed, this, [this] { mouseReleaseHandled_ = true; });
 }
 
 bool ProjectTreeWidget::event(QEvent* event)
@@ -72,6 +77,69 @@ bool ProjectTreeWidget::event(QEvent* event)
         return true;
     }
     return QTreeWidget::event(event);
+}
+
+void ProjectTreeWidget::keyPressEvent(QKeyEvent* event)
+{
+    if (event->matches(QKeySequence::SelectAll)) {
+        selectAll();
+        event->accept();
+        return;
+    }
+    const auto selection = selectedItems();
+    auto* current = currentItem();
+    if (event->key() == Qt::Key_Escape && state() != QAbstractItemView::EditingState) {
+        clearSelection();
+        event->accept();
+        if (panel_) panel_->onSelectionChanged();
+        return;
+    }
+    TreeExpansionWidget::keyPressEvent(event);
+    if (panel_ && (selection != selectedItems() || current != currentItem()))
+        panel_->onSelectionChanged();
+}
+
+void ProjectTreeWidget::selectAll()
+{
+    TreeExpansionWidget::selectAll();
+    if (panel_) panel_->onSelectionChanged();
+}
+
+void ProjectTreeWidget::mousePressEvent(QMouseEvent* event)
+{
+    mousePressSelection_ = selectedItems();
+    mousePressCurrent_ = currentItem();
+    TreeExpansionWidget::mousePressEvent(event);
+    if (panel_ && event->button() == Qt::LeftButton && !itemAt(event->position().toPoint())
+        && selectedItems().isEmpty()) {
+        panel_->onSelectionChanged();
+        mousePressSelection_ = selectedItems();
+        mousePressCurrent_ = currentItem();
+    }
+}
+
+void ProjectTreeWidget::mouseReleaseEvent(QMouseEvent* event)
+{
+    if (event->button() != Qt::LeftButton) {
+        const QSignalBlocker blocker(this);
+        TreeExpansionWidget::mouseReleaseEvent(event);
+        return;
+    }
+    mouseReleaseHandled_ = false;
+    TreeExpansionWidget::mouseReleaseEvent(event);
+    if (panel_ && !mouseReleaseHandled_
+        && (mousePressSelection_ != selectedItems() || mousePressCurrent_ != currentItem()))
+        panel_->onSelectionChanged();
+}
+
+void ProjectTreeWidget::mouseDoubleClickEvent(QMouseEvent* event)
+{
+    if (event->button() != Qt::LeftButton) {
+        const QSignalBlocker blocker(this);
+        TreeExpansionWidget::mouseDoubleClickEvent(event);
+        return;
+    }
+    TreeExpansionWidget::mouseDoubleClickEvent(event);
 }
 
 QMimeData* ProjectTreeWidget::mimeData(const QList<QTreeWidgetItem*>& items) const
@@ -100,6 +168,8 @@ void ProjectTreeWidget::startDrag(Qt::DropActions)
     drag.setMimeData(mimeData(items));
     drag.setPixmap(items.first()->icon(0).pixmap(iconSize()));
     drag.exec(Qt::CopyAction | Qt::MoveAction, Qt::MoveAction);
+    mousePressSelection_ = selectedItems();
+    mousePressCurrent_ = currentItem();
 }
 
 QList<ProjectItem*> ProjectTreeWidget::draggedItems() const
@@ -644,6 +714,8 @@ void ProjectTreeWidget::dropEvent(QDropEvent* event)
             [&](const ProjectItem* item) { return ProjectTreePanel::canAddressItemAt(item, folderTarget); })) {
         if (ProjectManager::instance().moveEntriesToFolder(acceptable, acceptableFolders,
                 folderTarget.bucketFolderName, folderTarget.relPath)) {
+            panel_->setSelectedEntries(acceptable, acceptableFolders);
+            panel_->onSelectionChanged();
             event->setDropAction(Qt::MoveAction);
             event->accept();
         } else {
@@ -653,6 +725,7 @@ void ProjectTreeWidget::dropEvent(QDropEvent* event)
     }
 
     if (ProjectManager::instance().moveItems(acceptable, targetProjItem)) {
+        panel_->selectResultItems(acceptable);
         event->setDropAction(Qt::MoveAction);
         event->accept();
     } else {
