@@ -1,0 +1,73 @@
+name: Hub Installer Lifecycle Validation
+
+on:
+  push:
+    branches: ['codex/hub-installer-validation']
+
+permissions:
+  contents: read
+
+env:
+  HARKEN_BUILD_CHANNEL: dev
+
+jobs:
+  lifecycle:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+        with:
+          arch: x64
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730
+        with:
+          version: '6.8.3'
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          cache: true
+      - name: Prepare build
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force .temp/lifecycle | Out-Null
+          if (Test-Path aqtinstall.log) { Move-Item aqtinstall.log .temp/lifecycle/aqtinstall.log }
+          "VENUS_QT_DIR=$env:QT_ROOT_DIR" >> $env:GITHUB_ENV
+      - name: Configure
+        run: cmake --fresh --preset windows-release -DHARKEN_BUILD_HUB=ON -DHARKEN_BUILD_HUB_UNIT_TESTS=ON
+      - name: Build
+        run: cmake --build build --config Release --target harken_hub harken_hub_setup harken_hub_update_bridge --parallel 3
+      - name: Package
+        shell: pwsh
+        run: |
+          python .scripts/release/collect_legal_texts.py --product hub --qt-version 6.8.3 --output build/bin/Release/Legal
+          python .scripts/release/build_hub_installer.py --input-dir build/bin/Release --output-dir .temp/lifecycle/package --version 0.1.73 --build-id qa --build-dir build --stub-exe build/setup/Release/HarkenHubSetup.exe
+      - name: Download released baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download HarkenHubSetup-0.1.72 --pattern HarkenHubSetup-0.1.72.exe --dir .temp/lifecycle/baseline
+      - name: Validate real installer lifecycle
+        run: python .scripts/tests/validate_hub_installer_lifecycle.py --package-dir .temp/lifecycle/package --payload build/bin/Release --stub build/setup/Release/HarkenHubSetup.exe --baseline .temp/lifecycle/baseline/HarkenHubSetup-0.1.72.exe --output .temp/lifecycle/results
+      - name: Validate update and failure handling
+        if: always()
+        run: |
+          cmake --build build --config Release --target harken_hub_tests --parallel 3
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/bin/Release/harken_hub_tests.exe --gtest_filter=SetupPayloadTest.*:HubSelfUpdateTest.*:SelfUpdateHealthCheckTest.*:UserSessionReadyTest.*:UpdateBridgeConsumerTest.*:UpdateBridgeDeploymentTest.*:UpdateRecoveryTest.*:ConsentStoreTest.*:ConsentDialogTest.*:HubLocalizationTest.* --gtest_output=xml:.temp/lifecycle/update-tests.xml
+      - name: Retain validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: hub-installer-lifecycle-${{ matrix.os }}
+          path: |
+            .temp/lifecycle/results
+            .temp/lifecycle/update-tests.xml
+          retention-days: 14
