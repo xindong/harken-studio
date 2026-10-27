@@ -159,7 +159,9 @@
 </context>
 <context>
     <name>HubReleaseNotes</name>
-    <message><source>Hub is now open source. Welcome to the first release!</source><translation>Hub 开源首发版本，欢迎体验。</translation></message>
+    <message><source>The first open-source release of Harken Hub is here. Try it out and share your feedback.</source><translation>Harken Hub 首个开源版本现已推出，欢迎体验并分享测试反馈。</translation></message>
+    <message><source>Download and install Harken Studio through Hub to explore and test its audio authoring features.</source><translation>在 Hub 中下载和安装 Harken Studio，体验并测试音频创作功能。</translation></message>
+    <message><source>Install and manage the Unity Integration Package through Hub to try and test Harken integration in your Unity projects.</source><translation>通过 Hub 安装和管理 Unity 集成包，在 Unity 项目中体验并测试 Harken 集成。</translation></message>
 </context>
 <context>
     <name>VNH::ConsentDialog</name>
