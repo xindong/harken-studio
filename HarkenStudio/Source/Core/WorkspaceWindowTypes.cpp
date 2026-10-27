@@ -61,7 +61,7 @@ QVector<WorkspaceWindowDescriptor> defaultWorkspaceWindowDescriptors()
             QStringLiteral("Assistant"),
             QStringLiteral("AssistantDock"),
             WindowKind::Singleton,
-            {DefaultDockArea::Right, QString(), true},
+            {DefaultDockArea::Floating, QString(), false},
             MaterializationPolicy::Eager,
             ClosePolicy::Hide,
             AvailabilityPolicy::Always

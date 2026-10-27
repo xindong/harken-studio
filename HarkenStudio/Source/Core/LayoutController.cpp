@@ -184,7 +184,7 @@ void LayoutController::setDocks(const Docks& d)
     dockManager_          = d.dockManager;
     blueprintDock_        = d.blueprintDock;
     projectExplorerDock_  = d.projectExplorerDock;
-    assistantDock_        = d.assistantDock;
+    meterDock_            = d.meterDock;
     controlDock_          = d.controlDock;
 }
 
@@ -373,7 +373,7 @@ QList<LayoutController::ZoneSpec> LayoutController::defaultZoneSpecs() const
 {
     return {
         { blueprintDock_,         ads::TopDockWidgetArea,    true  },
-        { assistantDock_,         ads::RightDockWidgetArea,  true  },
+        { meterDock_,             ads::RightDockWidgetArea,  true  },
         { projectExplorerDock_,   ads::LeftDockWidgetArea,   true  },
         { controlDock_,           ads::BottomDockWidgetArea, false },
     };
@@ -392,6 +392,9 @@ void LayoutController::applyDefaultLayout()
 {
     if (singletonStateRestorer_)
         singletonStateRestorer_({});
+    ensureDocksForSpecs({{QStringLiteral("Meter"), 1, false, {}, {}}});
+    if (ads::CDockWidget* assistantDock = dockForWindow(QStringLiteral("Assistant")))
+        assistantDock->toggleView(false);
     collapsedZones_.clear();
     seedZoneHomeAreas();
 
@@ -420,7 +423,7 @@ void LayoutController::applyDefaultLayout()
 bool LayoutController::isFixedSubtree(QWidget* w) const
 {
     static const QSet<QString> kPeripheral = {
-        QStringLiteral("AssistantDock"),
+        QStringLiteral("MeterDock_1"),
         QStringLiteral("ExplorerDock"),
         QStringLiteral("InformationDock"),
         QStringLiteral("ControlDock"),
@@ -483,7 +486,7 @@ ads::CDockWidget* LayoutController::createEditorDock(WorkspaceDockCreateSpec spe
     }
 
     QWidget* left = zoneSubtree(projectExplorerDock_);
-    QWidget* right = zoneSubtree(assistantDock_);
+    QWidget* right = zoneSubtree(meterDock_);
     QWidget* bottom = zoneSubtree(controlDock_);
     const QList<QPair<QWidget*, ads::DockWidgetArea>> boundaries{
         {left, ads::LeftDockWidgetArea},
@@ -585,7 +588,7 @@ void LayoutController::relayoutDockSplitters(bool seedSizes)
 
 void LayoutController::reanchorFloatingZoneDock(ads::CDockWidget* dock)
 {
-    if (!dockManager_ || !dock || !dock->isInFloatingContainer())
+    if (!dockManager_ || !dock || (dock->dockAreaWidget() && !dock->isInFloatingContainer()))
         return;
     const auto it = zoneHomeArea_.constFind(dock->objectName());
     if (it == zoneHomeArea_.constEnd())

@@ -704,7 +704,7 @@ void MainWindow::initializeStructure(
             };
             syncZoneBtn("leftSidebarToggleBtn", projectExplorerDock_);
             syncZoneBtn("bottomPanelToggleBtn", controlDock_);
-            syncZoneBtn("rightSidebarToggleBtn", assistantDock_);
+            syncZoneBtn("rightSidebarToggleBtn", meterDock_);
         }, Qt::QueuedConnection);
     });
     connect(layoutController_, &LayoutController::statusMessage, this, [this](const QString& text) {
@@ -729,7 +729,7 @@ void MainWindow::initializeStructure(
         d.dockManager          = dockManager_;
         d.blueprintDock        = blueprintDock_;
         d.projectExplorerDock  = projectExplorerDock_;
-        d.assistantDock        = assistantDock_;
+        d.meterDock            = meterDock_;
         d.controlDock          = controlDock_;
         layoutController_->setDocks(d);
         layoutController_->setWindowDockResolver([this](const QString& typeId) -> ads::CDockWidget* {
@@ -1406,7 +1406,7 @@ void MainWindow::setupTitleBarToggles()
         QString::fromLatin1(ThemeAssetIds::SidebarRightOn),
         QString::fromLatin1(ThemeAssetIds::SidebarRightOff),
         "rightSidebarToggleBtn",
-        tr("Toggle Right Sidebar (Assistant)"), &assistantDock_);
+        tr("Toggle Right Sidebar (Meter)"), &meterDock_);
 
     QTimer::singleShot(0, this, [this, leftToggle, bottomToggle, rightToggle]() {
         auto syncBtn = [](QToolButton* btn, ads::CDockWidget* rep) {
@@ -1422,7 +1422,7 @@ void MainWindow::setupTitleBarToggles()
         };
         syncBtn(leftToggle, projectExplorerDock_);
         syncBtn(bottomToggle, controlDock_);
-        syncBtn(rightToggle, assistantDock_);
+        syncBtn(rightToggle, meterDock_);
     });
 #endif
 }
@@ -2217,7 +2217,11 @@ void MainWindow::createPrimaryWorkspaceDocks()
     assistantDock_->setMinimumSizeHintMode(ads::CDockWidget::MinimumSizeHintFromContent);
     assistantPanel_ = new AssistantPanel();
     assistantDock_->setWidget(assistantPanel_);
-    dockManager_->addDockWidget(ads::RightDockWidgetArea, assistantDock_);
+    dockManager_->addDockWidgetFloating(assistantDock_, false);
+    assistantDock_->toggleView(false);
+
+    meterDock_ = dockOfPanel(createMeterPanelWithId(1, true));
+    dockManager_->addDockWidget(ads::RightDockWidgetArea, meterDock_);
 
     projectExplorerDock_ = new ads::CDockWidget(tr("Explorer"));
     projectExplorerDock_->setObjectName("ExplorerDock");
@@ -2340,7 +2344,7 @@ void MainWindow::configureWorkspaceDockPolicies()
     ads::CDockWidget* informationDock = workspaceWindowManager_
         ? workspaceWindowManager_->singletonDock(QStringLiteral("Information"))
         : nullptr;
-    for (ads::CDockWidget* dock : {assistantDock_, projectExplorerDock_, controlDock_,
+    for (ads::CDockWidget* dock : {meterDock_, projectExplorerDock_, controlDock_,
                                    informationDock})
         if (dock)
             layoutController_->setPlacementHint(dock->objectName(),
@@ -2691,7 +2695,7 @@ MeterPanel* MainWindow::createMeterPanelWithId(int id, bool deferShow)
     auto* panel = new MeterPanel(this);
     const QString dockName = QStringLiteral("%1_%2").arg(info->dockObjectPrefix).arg(id);
     auto* dock = WorkspaceDockFactory::createDock(dockManager_, {
-        info->label, dockName, panel, true, !deferShow, true
+        info->label, dockName, panel, id != 1, !deferShow, true
     });
     layoutController_->setPlacementHint(dockName, PreferredOpenArea::RestoreSaved);
     panelRegistry_->registerPanel(QStringLiteral("Meter"), id, panel);
