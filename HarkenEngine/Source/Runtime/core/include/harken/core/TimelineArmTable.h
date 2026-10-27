@@ -28,6 +28,7 @@ class MixerLoop;
 class PrivateSelectedQueueFutureSpanPool;
 class PrivatePendingQueueFrontierBinding;
 class OriginalQueueFutureGroupRegistration;
+class QueueContinuationLane;
 struct ImmediateLaneEvent;
 struct Plan03PageGroupView;
 
@@ -66,6 +67,7 @@ struct TimelineArmObservation {
     ArmState state = ArmState::Free;
     std::uint64_t armedCompletionSequence = 0;
     std::uint64_t startedBlockSequence = 0;
+    std::uint64_t actualStartFrame = UINT64_MAX;
     std::uint64_t logicalCompletionSequence = 0;
     std::uint64_t tombstoneAudioSequence = 0;
     ParentAudioGroupRef parentGroup{};
@@ -191,6 +193,7 @@ public:
         std::atomic<std::uint64_t> armedCompletionSequence{0};
         std::uint64_t sourcePublicationSequence = 0;
         std::atomic<std::uint64_t> startedBlockSequence{0};
+        std::atomic<std::uint64_t> actualStartFrame{UINT64_MAX};
         std::atomic<std::uint64_t> logicalCompletionSequence{0};
         TimelineArmReaderPin pendingControlSourceReader{};
         TimelineArmToken originalPlainControl{};
@@ -366,7 +369,7 @@ public:
             owner_ = nullptr; row_ = nullptr; token_ = {}; submission_ = nullptr;
             incarnation_ = episode_ = frame_ = deadline_ = program_ = 0; target_ = {};
             groups_ = nullptr; group_ = {}; parent_ = {}; member_ = UINT16_MAX;
-            binding_ = nullptr; lease_ = nullptr;
+            binding_ = nullptr; lease_ = nullptr; continuation_ = false;
         }
         TimelineArmTable* owner_ = nullptr;
         Row* row_ = nullptr;
@@ -384,6 +387,7 @@ public:
         std::uint16_t member_ = UINT16_MAX;
         const FrontierGroupBinding* binding_ = nullptr;
         AudioSliceLease* lease_ = nullptr;
+        bool continuation_ = false;
     };
 
     // The table and its private owner must outlive this exclusive mutation right.
@@ -591,7 +595,7 @@ public:
     };
     TimelineArmOperationDisposition ProvePlainAudioApply(TimelineArmToken token,
         bool starts, bool transient, std::uint64_t audioSequence, PlainAudioProof* out) noexcept;
-    void ApplyPlainAudio(PlainAudioProof& proof) noexcept;
+    void ApplyPlainAudio(PlainAudioProof& proof, std::uint64_t actualStartFrame = UINT64_MAX) noexcept;
     bool MatchesVariableInitializerStart(const PlainAudioProof& proof, TimelineArmToken token,
         std::uint64_t onsetFrame) const noexcept;
 
@@ -918,7 +922,7 @@ public:
     bool MatchesHeldLaneStart(const LaneAudioProof& proof, TimelineArmToken token,
         std::uint64_t executeFrame, std::uint64_t audioSequence,
         ProgramGeneration programGeneration, const TimelineSemanticTarget& target) const noexcept;
-    static void ApplyLaneStart(LaneAudioProof& proof) noexcept;
+    static void ApplyLaneStart(LaneAudioProof& proof, std::uint64_t actualStartFrame = UINT64_MAX) noexcept;
     void ApplyClaimedAudioSlice(TimelineArmToken token) noexcept;
     bool RequestCancelAppliedAudioSlice(
         TimelineArmToken token) noexcept;
@@ -927,7 +931,7 @@ public:
         std::uint64_t audioSequence) noexcept;
     bool Start(TimelineArmToken token) noexcept;
     bool Start(TimelineArmToken token,
-               std::uint64_t blockSequence) noexcept;
+               std::uint64_t blockSequence, std::uint64_t actualStartFrame = UINT64_MAX) noexcept;
     bool PinFrontierReader(TimelineArmToken token, TimelineArmReaderPin* out) noexcept;
     bool BindFrontierAdmission(TimelineArmToken token, const FrontierGroupBinding& binding,
                               AudioSliceLease& lease) noexcept;
@@ -999,7 +1003,8 @@ public:
         std::uint64_t audioSequence, std::uint16_t memberIndex,
         ProgramGeneration programGeneration, const TimelineSemanticTarget& target,
         BoundAudioProof* out) noexcept;
-    static void ApplyBoundFrontierArm(BoundAudioProof& proof, bool completesControl = false) noexcept;
+    static void ApplyBoundFrontierArm(BoundAudioProof& proof, bool completesControl = false,
+        std::uint64_t actualStartFrame = UINT64_MAX) noexcept;
     TimelineArmOperationDisposition BeginFrontierOperation(TimelineArmToken token,
         const FrontierDueOperationRef& operation, TimelineArmOperationKind kind,
         std::uint64_t audioSequence, AudioOperationClaim* out,
@@ -1084,6 +1089,9 @@ private:
         const PublicationAfterInstallation& publication) noexcept;
     static bool ConsumePublicationAfterInstallation(SourceCommandRowProof& proof,
         PublicationAfterInstallation& publication) noexcept;
+    bool IssueContinuationPublicationAfterInstallation(const OriginalArmRowOwner& original,
+        const void* submission, ArmGroupTable& groups, ArmGroupToken group,
+        const QueueContinuationLane& continuation, GroupedPublicationAfterInstallation* out) noexcept;
     bool IssueGroupedPublicationAfterInstallation(const OriginalArmRowOwner& original,
         const void* submission, ArmGroupTable& groups, ArmGroupToken group,
         const FrontierGroupBinding& binding, AudioSliceLease& lease,

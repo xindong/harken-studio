@@ -7730,16 +7730,18 @@ std::vector<std::uint8_t> BuildImmediateSequenceQueuePlayPack(
     std::vector<float> secondPlanar, std::uint8_t cycleCount = 1,
     MemoryScopeV1 memoryScope = MemoryScopeV1::Emitter,
     std::int64_t delayNanoseconds = 0,
-    VnBusId route = VN_BUS_MASTER) {
+    VnBusId route = VN_BUS_MASTER,
+    std::uint32_t firstRate = 48000,
+    std::uint32_t secondRate = 48000) {
     const float* firstChannels[1] = {firstPlanar.data()};
     const float* secondChannels[1] = {secondPlanar.data()};
     std::uint64_t firstRevision = 0;
     std::uint64_t secondRevision = 0;
     EXPECT_TRUE(ComputeMediaPcmContentRevisionV1(
-        48000, 1, static_cast<std::uint64_t>(firstPlanar.size()), firstChannels,
+        firstRate, 1, static_cast<std::uint64_t>(firstPlanar.size()), firstChannels,
         1, &firstRevision));
     EXPECT_TRUE(ComputeMediaPcmContentRevisionV1(
-        48000, 1, static_cast<std::uint64_t>(secondPlanar.size()),
+        secondRate, 1, static_cast<std::uint64_t>(secondPlanar.size()),
         secondChannels, 1, &secondRevision));
     ImageBuilder builder(kPackKindCanonicalContent);
     builder.AddEntry(kPackEntryKindPackRequirementBlock, packStableId,
@@ -7751,8 +7753,8 @@ std::vector<std::uint8_t> BuildImmediateSequenceQueuePlayPack(
                          firstSoundId, secondSoundId, firstRevision,
                          secondRevision, cycleCount, memoryScope,
                          delayNanoseconds, route));
-    builder.AddMedia(firstSoundId, std::move(firstPlanar));
-    builder.AddMedia(secondSoundId, std::move(secondPlanar));
+    builder.AddMedia(firstSoundId, std::move(firstPlanar), 1, firstRate);
+    builder.AddMedia(secondSoundId, std::move(secondPlanar), 1, secondRate);
     return builder.Build();
 }
 
@@ -21070,15 +21072,20 @@ void ExpectQueueSequenceBranchesAcrossEntry(ContainerMatrixEntry entry, std::uin
                                              bool laterWrapper = false,
                                              std::uint32_t stopAfterOnsets = 0,
                                              std::uint32_t stopFadeMs = 0,
-                                             bool replayAtFiringTerminal = false) {
+                                             bool replayAtFiringTerminal = false,
+                                             bool mixedSourceRates = false) {
     const bool requestedRetarget = laterControl && laterProbe == LaterControlProbe::Retarget;
     const bool requestedRefusal = laterControl && (laterProbe == LaterControlProbe::CommandRefusal ||
         laterProbe == LaterControlProbe::PublicationRefusal);
     const std::vector<float> samples(naturalEndNested ? 4096u : exitNestedDiscrete || requestedRetarget ? 2048u : 256u, 0.25f);
     const float* channels[] = {samples.data()};
-    std::uint64_t revision = 0;
-    ASSERT_TRUE(ComputeMediaPcmContentRevisionV1(48000, 1, samples.size(), channels, 1, &revision));
-    QueueSequenceBranchesWorldImage image({revision, revision, revision, revision}, cycles, outerMode, innerMode);
+    std::array<std::uint32_t, 4> sourceRates{48000, 48000, 48000, 48000};
+    if (mixedSourceRates) sourceRates = {44100, 48000, 44100, 48000};
+    std::array<std::uint64_t, 4> revisions{};
+    for (std::size_t index = 0; index < revisions.size(); ++index)
+        ASSERT_TRUE(ComputeMediaPcmContentRevisionV1(sourceRates[index], 1, samples.size(),
+            channels, 1, &revisions[index]));
+    QueueSequenceBranchesWorldImage image(revisions, cycles, outerMode, innerMode);
     if (sharedQueueProgram) {
         auto& parent = image.properties[5];
         parent.payload = FrontierCanonicalPayload();
@@ -21307,7 +21314,8 @@ void ExpectQueueSequenceBranchesAcrossEntry(ContainerMatrixEntry entry, std::uin
         builder.AddEntry(kPackEntryKindPackRequirementBlock, packId, RequirementPayload(packId, 1, 1));
         builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, packId,
             WrapWorldPartition(packId, 1, image.world, image.world.playablePropertyCount + 1u + image.world.variableCount));
-        for (std::uint32_t index = 0; index < 4; ++index) builder.AddMedia(harkentest::ObjectId(2300u + index), samples);
+        for (std::uint32_t index = 0; index < 4; ++index)
+            builder.AddMedia(harkentest::ObjectId(2300u + index), samples, 1, sourceRates[index]);
         const auto bytes = builder.Build();
         const auto locator = "u6-queue-sequences-" + std::to_string(cycles) + ".pack";
         const auto init = BuildSingleIdentityInit(Fnv1a64(bytes.data(), bytes.size()),
@@ -21330,9 +21338,10 @@ void ExpectQueueSequenceBranchesAcrossEntry(ContainerMatrixEntry entry, std::uin
                               members, 2, rows, activated));
         ASSERT_NE(0u, rows[1].handle);
     } else {
-        const auto pcm = harkentest::MonoDesc(samples, 48000);
-        for (std::uint32_t index = 0; index < 4; ++index)
+        for (std::uint32_t index = 0; index < 4; ++index) {
+            const auto pcm = harkentest::MonoDesc(samples, sourceRates[index]);
             ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(2300u + index), &pcm));
+        }
         ASSERT_EQ(WorldInstallStatus::Ok, InstallContainerWorldV1(engine, image.world).status);
     }
     VnEmitterHandle emitter = 0;
@@ -22153,6 +22162,22 @@ TEST(PackComposition, SequenceQueueBranchesCompleteAcrossEntries) {
         for (const auto cycles : {1u, 2u})
             ExpectQueueSequenceBranchesAcrossEntry(entry, cycles, false, false,
                 ContainerModeV1::Sequence, ContainerModeV1::SequenceQueue);
+    }
+}
+
+TEST(PackComposition, ResampledNestedQueueBranchesCompleteAcrossEntries) {
+    for (const auto entry : {ContainerMatrixEntry::Direct,
+                            ContainerMatrixEntry::CurrentWorldAction,
+                            ContainerMatrixEntry::PackAction}) {
+        for (const auto inner : {ContainerModeV1::Sequence, ContainerModeV1::SequenceQueue}) {
+            SCOPED_TRACE(static_cast<int>(entry));
+            SCOPED_TRACE(static_cast<int>(inner));
+            ExpectQueueSequenceBranchesAcrossEntry(entry, 2, false, false,
+                ContainerModeV1::SequenceQueue, inner, 0, false,
+                ContainerModeV1::SequenceQueue, false, false, false, false, false,
+                false, false, nullptr, DirectQueueRefusal::None, false,
+                LaterControlProbe::Playback, false, 0, 0, false, true);
+        }
     }
 }
 
@@ -24085,6 +24110,120 @@ TEST(PackComposition, ThreeEntryNestedQueueNormalizedTraceMatches) {
     ASSERT_EQ(direct.typedError, currentWorldAction.typedError);
     ASSERT_EQ(direct.typedError,
               static_cast<std::uint32_t>(pack.typedError));
+}
+
+TEST(PackComposition, ActionQueuesPreserveSoundCapabilitiesAcrossProgramSources) {
+    for (bool pack : {false, true}) {
+        for (const auto settings : {std::array{44100u, 48000u, 2u},
+                                   std::array{48000u, 44100u, 2u},
+                                   std::array{44100u, 44100u, 2u},
+                                   std::array{44100u, 48000u, 8u}}) {
+            for (const auto blocksPerUpdate : {1u, 8u}) {
+                [&] {
+                SCOPED_TRACE(pack);
+                SCOPED_TRACE(settings[0]);
+                SCOPED_TRACE(settings[1]);
+                SCOPED_TRACE(settings[2]);
+                SCOPED_TRACE(blocksPerUpdate);
+                EngineSession session(MakeNullConfig(8, 64, 48000));
+                ASSERT_EQ(VN_OK, session.InitResult());
+                auto* engine = session.Engine();
+                const auto actionId = harkentest::ObjectId(2002);
+                const auto firstSoundId = harkentest::ObjectId(4511);
+                const auto secondSoundId = harkentest::ObjectId(4512);
+                const std::vector<float> first(256, 0.25f), second(1024, -0.25f);
+                const auto bytes = BuildImmediateSequenceQueuePlayPack(
+                    22, 1, 7, actionId, harkentest::ObjectId(4510), firstSoundId,
+                    secondSoundId, first, second, static_cast<std::uint8_t>(settings[2]),
+                    MemoryScopeV1::Emitter, 0, VN_BUS_MASTER, settings[0], settings[1]);
+                PackCanonicalImage canonical;
+                CurrentWorldBodyImage body;
+                ASSERT_EQ(VN_OK, ParsePackCanonicalImage(bytes.data(), bytes.size(), &canonical));
+                ASSERT_TRUE(body.Decode(canonical.partitionBody.data(), canonical.partitionBody.size(),
+                    canonical.partitionHeader.bodyVintage, CurrentWorldDecodeMode::StrictArtifact));
+                ASSERT_NE(nullptr, body.ProductionView());
+                if (pack) {
+                    const auto init = BuildSingleIdentityInit(Fnv1a64(bytes.data(), bytes.size()), actionId);
+                    const std::array paths{
+                        WriteTemp("queue-sound-capabilities-init.pack", init),
+                        WriteTemp("queue-sound-capabilities-content.pack", bytes)};
+                    VnCanonicalPackSetMemberV1 members[2]{};
+                    VnCanonicalPackSetMemberResultV1 rows[2]{};
+                    for (std::size_t index = 0; index < paths.size(); ++index) {
+                        members[index].structSize = sizeof(members[index]);
+                        members[index].packStableId = index == 0 ? 11 : 22;
+                        members[index].packKind = index == 0 ? VN_CANONICAL_PACK_SET_MEMBER_INIT
+                                                            : VN_CANONICAL_PACK_SET_MEMBER_CONTENT;
+                        members[index].utf8Path = paths[index].c_str();
+                        rows[index].structSize = sizeof(rows[index]);
+                    }
+                    VnCanonicalPackSetActivationReportV1 report{};
+                    ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(members, 2, rows, report));
+                } else {
+                    const auto firstPcm = harkentest::MonoDesc(first, settings[0]);
+                    const auto secondPcm = harkentest::MonoDesc(second, settings[1]);
+                    ASSERT_EQ(VN_OK, Vn_RegisterPCM(firstSoundId, &firstPcm));
+                    ASSERT_EQ(VN_OK, Vn_RegisterPCM(secondSoundId, &secondPcm));
+                    ASSERT_EQ(WorldInstallStatus::Ok,
+                        InstallContainerWorldV1(*engine, *body.ProductionView()).status);
+                }
+                VnPostActionDesc post{};
+                post.structSize = sizeof(post);
+                post.actionId = actionId;
+                ASSERT_EQ(VN_OK, Vn_CreateEmitter(&post.emitter));
+                for (unsigned repeat = 0; repeat < 2; ++repeat) {
+                    SCOPED_TRACE(repeat);
+                    VnActionFiringHandle firing = 0;
+                    ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+                    std::vector<unsigned> heard;
+                    std::vector<std::array<std::uint64_t, 2>> spans;
+                    unsigned previous = 0;
+                    for (unsigned block = 0; block < 256; block += blocksPerUpdate) {
+                        for (unsigned offset = 0; offset < blocksPerUpdate; ++offset) {
+                            const auto baseFrame = engine->mixer.BlocksRendered() * 64u;
+                            engine->nullBackend.Pump(1);
+                            const auto* output = engine->nullBackend.LastBlock();
+                            for (unsigned frame = 0; frame < 64; ++frame) {
+                                const auto sound = output[frame * 2u] > 0.01f ? 1u :
+                                    output[frame * 2u] < -0.01f ? 2u : 0u;
+                                if (sound != 0) {
+                                    if (sound != previous) {
+                                        heard.push_back(sound);
+                                        spans.push_back({baseFrame + frame, baseFrame + frame + 1u});
+                                    } else spans.back()[1] = baseFrame + frame + 1u;
+                                }
+                                previous = sound;
+                            }
+                        }
+                        ASSERT_EQ(VN_OK, Vn_Update());
+                    }
+                    EXPECT_EQ(settings[2] * 2u, heard.size());
+                    for (std::size_t index = 1; index < spans.size(); ++index)
+                        EXPECT_EQ(spans[index - 1u][1], spans[index][0]);
+                    for (std::size_t index = 0; index < heard.size(); ++index)
+                        EXPECT_EQ(index % 2u + 1u, heard[index]);
+                    VnActionFiringInfo info{};
+                    info.structSize = sizeof(info);
+                    ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
+                    EXPECT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state);
+                    EXPECT_EQ(VN_ACTION_OUTCOME_SUCCEEDED, info.outcome);
+                    EXPECT_EQ(VN_ACTION_TERMINAL_NATURAL, info.terminalReason);
+                    EXPECT_EQ(0u, info.livePlayableCount);
+                    EXPECT_EQ(0u, engine->playableInstances.LiveCount());
+                    EXPECT_EQ(0u, engine->voices.ActiveCount());
+                    EXPECT_EQ(0u, engine->queueInstances.LiveCount());
+                    EXPECT_EQ(0u, engine->timelineOccurrences.OccupiedCount());
+                    EXPECT_EQ(0u, engine->timelineArms.LiveCount());
+                    EXPECT_EQ(0u, engine->sourceTerminals.OccupiedCount());
+                    EXPECT_EQ(0u, engine->decisions.LiveCount());
+                    EXPECT_FALSE(engine->runtimeRecreateRequired);
+                    ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+                }
+                EXPECT_EQ(VN_OK, Vn_DestroyEmitter(post.emitter));
+                }();
+            }
+        }
+    }
 }
 
 TEST(PackComposition, ThreeEntryRootSequenceQueueSuccessorMatches) {

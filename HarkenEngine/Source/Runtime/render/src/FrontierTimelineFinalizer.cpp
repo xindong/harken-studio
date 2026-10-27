@@ -329,6 +329,109 @@ struct FrontierTimelineFinalizer::Impl {
     QueueFrontierSourceWaitContext SourceWaitContext() const noexcept {
         return {immediateLane, immediateLaneBucket, decisions, immediateLaneSlot};
     }
+    const Group* SameBucketInitialFor(const FrontierGroupBinding& binding) const noexcept {
+        if (!laneOnly || immediateLaneBucket == nullptr || frames == 0 ||
+            !binding.Valid() || binding.transition.Valid() || binding.variableSide.Valid()) return nullptr;
+        const auto primary = binding.role == FrontierGroupRole::Coordinator
+            ? FindGroup(binding.operation.group) : FindGroup(binding.primary);
+        if (primary == UINT32_MAX) return nullptr;
+        const auto& control = *groups[primary].view.frontier;
+        const auto sourceIndex = FindGroup(control.prerequisiteMember);
+        if (control.role != FrontierGroupRole::Coordinator || !control.prerequisite.Valid() ||
+            control.prerequisite == control.entry || sourceIndex == UINT32_MAX) return nullptr;
+        const auto& source = groups[sourceIndex];
+        const auto& initial = *source.view.frontier;
+        const auto initialPrimary = FindGroup(initial.primary);
+        if (initial.role != FrontierGroupRole::EntryMember || !initial.queueInitial.Valid() ||
+            initial.queueConditional.Valid() || initial.transition.Valid() || initial.variableSide.Valid() ||
+            !initial.queueDescendant.Empty() || !control.queueDescendant.Empty() ||
+            source.view.memberCount != 0u || source.view.sourceControlCount != 0u ||
+            initialPrimary == UINT32_MAX ||
+            groups[initialPrimary].view.frontier->role != FrontierGroupRole::Coordinator ||
+            groups[initialPrimary].view.frontier->prerequisite.Valid() ||
+            groups[initialPrimary].view.frontier->entry != initial.entry ||
+            groups[initialPrimary].view.lease != source.view.lease ||
+            initial.entry != control.prerequisite || initial.operation.owner != control.operation.owner ||
+            initial.operation.world != control.operation.world || initial.operation.transport != control.operation.transport ||
+            !(initial.operation.order < control.operation.order) ||
+            initial.operation.order.executeFrame / frames != DueQuantum() ||
+            control.operation.order.executeFrame / frames != DueQuantum()) return nullptr;
+        const Group* target = nullptr;
+        for (std::uint32_t index = 0; index < groupCount; ++index) {
+            const auto& candidate = groups[index];
+            const auto& member = *candidate.view.frontier;
+            if (member.role != FrontierGroupRole::EntryMember || member.entry != control.entry) continue;
+            if (target != nullptr || !member.queueConditional.Valid() || member.queueInitial.Valid() ||
+                member.variableSide.Valid() || member.transition.Valid() || !member.queueDescendant.Empty() ||
+                member.primary != control.operation.group ||
+                candidate.view.lease != groups[primary].view.lease || candidate.view.memberCount != 1u ||
+                candidate.view.sourceControlCount != 0u || candidate.view.members == nullptr ||
+                member.operation.owner != initial.operation.owner || member.operation.world != initial.operation.world ||
+                member.operation.transport != initial.operation.transport ||
+                member.operation.order.executeFrame != control.operation.order.executeFrame ||
+                member.queueConditional.slot != initial.queueInitial.slot ||
+                member.queueConditional.generation != initial.queueInitial.generation ||
+                member.queueConditional.currentVersion != initial.queueInitial.version) return nullptr;
+            target = &candidate;
+        }
+        if (target == nullptr) return nullptr;
+        const auto* captured = immediateLane->Events(immediateLaneSlot, immediateLaneBucket);
+        if (captured == nullptr) return nullptr;
+        std::uint32_t sourceStarts = 0, targetStarts = 0;
+        for (std::uint32_t index = 0; index < immediateLaneBucket->eventCount; ++index) {
+            const auto& original = captured[index];
+            const auto& event = original.event;
+            const auto* program = event.program.program;
+            const auto* payload = program != nullptr && program->payloads != nullptr &&
+                event.payload < program->payloadCount ? &program->payloads[event.payload] : nullptr;
+            if (payload == nullptr || payload->kind != TimelineEventKind::Start) continue;
+            const bool sourceEntry = event.frontier.entry == initial.entry;
+            const bool targetEntry = event.frontier.entry == control.entry;
+            if (!sourceEntry && !targetEntry) continue;
+            if (!immediateLane->IsEventAdmitted(immediateLaneSlot, immediateLaneBucket,
+                    immediateLaneBucket->firstEvent + index) || !event.armToken.Valid() ||
+                program->role != TimelineProgramRole::Voice ||
+                program->generation != event.program.programGeneration) return nullptr;
+            if (sourceEntry) {
+                if (original.futureGroupedStart || event.frontier.group != initial.primary ||
+                    event.executeFrame != initial.operation.order.executeFrame) return nullptr;
+                ++sourceStarts;
+            } else {
+                if (!original.futureGroupedStart || event.frontier.group != target->view.identity ||
+                    event.executeFrame != control.operation.order.executeFrame ||
+                    !SameArm(event.armToken, target->view.members[0])) return nullptr;
+                ++targetStarts;
+            }
+        }
+        return sourceStarts == 1u && targetStarts == 1u ? &source : nullptr;
+    }
+
+    bool SameBucketSourceProved(const Group& source, const FrontierGroupBinding& target) const noexcept {
+        const auto& initial = *source.view.frontier;
+        const auto primary = FindGroup(initial.primary);
+        if (primary == UINT32_MAX || !source.queueProof.Valid() ||
+            !groups[primary].audioWriter || groups[primary].failure != FrontierReceiptReason::None ||
+            occurrences == nullptr || !target.queueConditional.Valid()) return false;
+        std::uint32_t starts = 0;
+        for (std::uint32_t index = 0; index < eventCount; ++index) {
+            const auto& event = events[index];
+            if (event.source.frontier.entry != initial.entry || event.voice.kind != TimelineEventKind::Start)
+                continue;
+            const auto arm = event.source.armToken;
+            const auto* voice = voices.Resolve(static_cast<std::uint64_t>(arm.renderSlot) |
+                (static_cast<std::uint64_t>(arm.renderGeneration) << 32));
+            const auto current = target.queueConditional.current;
+            if (event.source.frontier.group != initial.primary || event.group != primary ||
+                !event.appendProof.Valid() || !event.armProof.Valid() ||
+                event.source.executeFrame != initial.operation.order.executeFrame ||
+                voice == nullptr || voice->completionOccurrence.slot != current.slot ||
+                voice->completionOccurrence.generation != current.generation ||
+                voice->completionRenderGeneration != arm.renderGeneration || voice->completionProgress == nullptr ||
+                voice->completionProgress != occurrences->CompletionProgressOf(current)) return false;
+            ++starts;
+        }
+        return starts == 1u;
+    }
     bool SourceWaitApplies(const FrontierGroupBinding& binding) const noexcept {
         if (!laneSourceResumed || immediateLane == nullptr || pool == nullptr) return false;
         if (immediateLane->CapturedEntrySourceWait(immediateLaneSlot, immediateLaneBucket, binding.entry))
@@ -1234,7 +1337,8 @@ struct FrontierTimelineFinalizer::Impl {
             auto& event = self.events[i];
             if (event.stop != nullptr || event.group != group.index) continue;
             self.voices.ApplyTimelineVariableInitializer(event.initializerProof);
-            if (event.armProof.Valid()) self.arms.ApplyBoundFrontierArm(event.armProof, event.completesControl);
+            if (event.armProof.Valid()) self.arms.ApplyBoundFrontierArm(event.armProof, event.completesControl,
+                self.quantum * self.frames + event.voice.offset);
             if (event.reserved) {
                 AuthoredStopOperationIdentity stop{};
                 const auto cutoff = self.CutoffFor(event, &stop);
@@ -1405,7 +1509,8 @@ struct FrontierTimelineFinalizer::Impl {
                 for (std::uint32_t index = 0; index < eventCount; ++index) {
                     auto& event = events[index];
                     if (event.group != groupIndex || (phase == 0u) != (event.voice.kind == TimelineEventKind::Start)) continue;
-                    if (event.armProof.Valid()) arms.ApplyBoundFrontierArm(event.armProof, event.completesControl);
+                    if (event.armProof.Valid()) arms.ApplyBoundFrontierArm(event.armProof, event.completesControl,
+                        quantum * frames + event.voice.offset);
                     voices.ApplyProvenLaneTimelineReservation(event.appendProof);
                     FinishVariableSourceRead(event);
                 }
@@ -1883,12 +1988,19 @@ struct FrontierTimelineFinalizer::Impl {
         }
         if (queue) return queues->ProveFrontierInitial(binding, *member.view.lease, quantum + 1u, &member.queueProof);
         const auto sourceWait = SourceWaitContext();
+        const auto* stagedInitial = SameBucketInitialFor(binding);
+        if (stagedInitial != nullptr && !SameBucketSourceProved(*stagedInitial, binding)) return false;
         QueueConditionalProof proof{};
         if (quantum > UINT64_MAX / frames || quantum * frames > UINT64_MAX - frames ||
             !queues->ProveFrontierConditional(binding, *member.view.lease, *occurrences, composites,
                 quantum * frames, quantum * frames + frames, quantum, &member.conditionalProof, member.queueSlice,
-                SourceWaitApplies(binding) ? &sourceWait : nullptr, &proof) ||
-            !CompletionMatchesPreflight(member, proof)) return false;
+                SourceWaitApplies(binding) ? &sourceWait : nullptr, &proof,
+                stagedInitial == nullptr ? nullptr : &stagedInitial->queueProof)) return false;
+        if (stagedInitial != nullptr) {
+            if (proof.completion.activationOffset != binding.operation.order.executeFrame % frames ||
+                (proof.completionMode != QueueConditionalCompletionMode::InQuantum &&
+                 proof.completionMode != QueueConditionalCompletionMode::SourceWait)) return false;
+        } else if (!CompletionMatchesPreflight(member, proof)) return false;
         if (member.queueSlice != QueueInstanceTable::FrontierConditionalSlice::Activation) return true;
         if (proof.completionMode != QueueConditionalCompletionMode::RetiredSource) return true;
         if (member.view.memberCount == 0 ||
@@ -2286,7 +2398,8 @@ struct FrontierTimelineFinalizer::Impl {
                             !(declared.operation.owner == source.operation.owner) ||
                             !(declared.primary == declaredGroup.identity) ||
                             !(declared.operation.group == declaredGroup.identity) ||
-                            (declaredGroup.dueQuantum <= DueQuantum() && !withdrawnSameBucket) ||
+                            (declaredGroup.dueQuantum <= DueQuantum() && !withdrawnSameBucket &&
+                             SameBucketInitialFor(declared) != queueSource) ||
                             declaredGroup.dueQuantum !=
                                 declared.operation.order.executeFrame / frames ||
                             !(descriptor.order < declared.operation.order))
@@ -2730,7 +2843,8 @@ struct FrontierTimelineFinalizer::Impl {
                     group.view.identity.sliceIndex == 1)
                     for (std::uint16_t member = 0; member < group.view.sourceControlCount; ++member)
                         completes = completes || SameArm(event.source.armToken, group.view.members[member]);
-                self.arms.ApplyBoundFrontierArm(event.armProof, completes);
+                self.arms.ApplyBoundFrontierArm(event.armProof, completes,
+                    self.quantum * self.frames + event.voice.offset);
             }
             if (event.reserved) {
                 AuthoredStopOperationIdentity stop{};
@@ -3017,8 +3131,8 @@ bool FrontierTimelineFinalizer::Attach(DecisionTable& decisions,
         !events.Reserve(static_cast<std::uint32_t>(eventCapacity)) ||
         !events.ConstructThrough(preparedEvents) ||
         !stagedLaneStarts.Reserve(laneOnly ? static_cast<std::uint32_t>(eventCapacity) : 0u) ||
-        !order.Reserve(laneOnly ? 0u : static_cast<std::uint32_t>(eventCapacity + groupCapacity)) ||
-        !order.ConstructThrough(laneOnly ? 0u : preparedEvents + static_cast<std::uint32_t>(groupCapacity)))
+        !order.Reserve(static_cast<std::uint32_t>((laneOnly ? 0u : eventCapacity) + groupCapacity)) ||
+        !order.ConstructThrough((laneOnly ? 0u : preparedEvents) + static_cast<std::uint32_t>(groupCapacity)))
         return false;
     auto groups = std::make_unique<Impl::Group[]>(groupCapacity);
     auto laneClaims = laneOnly ? std::make_unique<ImmediateLaneFrontierClaim[]>(groupCapacity) : nullptr;
@@ -3146,7 +3260,8 @@ VariableReadCutStatus FrontierTimelineFinalizer::VariableSourcesStatus(
         const auto& binding = *current.view.frontier;
         if (self.SourceWaitApplies(binding) &&
             (binding.role == FrontierGroupRole::Future || binding.role == FrontierGroupRole::EntryMember) &&
-            (binding.queueConditional.Valid() || binding.canonicalInitialCompletion)) {
+            (binding.queueConditional.Valid() || binding.canonicalInitialCompletion) &&
+            self.SameBucketInitialFor(binding) == nullptr) {
             if (self.queues == nullptr || self.occurrences == nullptr || self.frames == 0 ||
                 self.quantum >= UINT64_MAX / self.frames) return VariableReadCutStatus::Failed;
             const auto& group = self.groups[index].view;
@@ -3590,6 +3705,16 @@ bool FrontierTimelineFinalizer::FinishLaneContinuationBucket(
         if (ordinaryEvents != 0u || ordinaryMembers != 0u || ordinaryCollected != 0u) return false;
         return FinishLaneBucketImpl(claimBucket, claimContext, lane, bucket, laneSlot, laneGeneration, true);
     }
+    if (ordinaryGroups == 4u && self.groupCount == 4u) {
+        for (std::uint32_t index = 0; index < self.groupCount; ++index) {
+            const auto& control = *self.groups[index].view.frontier;
+            if (control.role != FrontierGroupRole::Coordinator || self.SameBucketInitialFor(control) == nullptr)
+                continue;
+            // Both entries and their original Starts remain inside one captured
+            // bucket. The common path proves every member before its one claim.
+            return FinishLaneBucketImpl(claimBucket, claimContext, lane, bucket, laneSlot, laneGeneration, true);
+        }
+    }
     if (ordinaryGroups == 2 && bucket != nullptr && ordinaryEvents == 2 &&
         ordinaryMembers == 0 && self.pool != nullptr &&
         self.decisions != nullptr && self.queues != nullptr && self.frames != 0) {
@@ -3653,7 +3778,7 @@ bool FrontierTimelineFinalizer::FinishLaneContinuationBucket(
                     &prior) != FrontierReceiptRead::Ready ||
                 prior.outcome != FrontierReceiptOutcome::Applied ||
                 prior.audioSequence == 0 ||
-                prior.audioSequence >= self.quantum + 1u ||
+                prior.audioSequence > self.quantum + 1u ||
                 !(prior.order < control.operation.order)) return false;
             QueueInstanceSnapshot queue{};
             if (!self.queues->Capture({source.queueInitial.slot,
@@ -3722,7 +3847,7 @@ bool FrontierTimelineFinalizer::FinishLaneContinuationBucket(
                 prerequisite == nullptr ||
                 prerequisite->Read(control.prerequisite, self.quantum + 1u, &prior) != FrontierReceiptRead::Ready ||
                 prior.outcome != FrontierReceiptOutcome::Applied || prior.audioSequence == 0u ||
-                prior.audioSequence >= self.quantum + 1u || !(prior.order < control.operation.order) ||
+                prior.audioSequence > self.quantum + 1u || !(prior.order < control.operation.order) ||
                 !self.pool->ResolvePlan03GroupSliceRt(control.prerequisiteMember, &initial) ||
                 initial.frontier == nullptr || initial.lease == nullptr ||
                 initial.lease->Capture().state != AudioSliceState::SliceApplied ||
@@ -3745,7 +3870,9 @@ bool FrontierTimelineFinalizer::FinishLaneContinuationBucket(
         self.queues == nullptr || self.frames == 0 || lane == nullptr || bucket == nullptr)
         return false;
 
-    // Only natively proved older Starts are outside this Frontier cohort.
+    // A finalized prerequisite may have applied earlier in this quantum. Its
+    // exact receipt and strict event order still precede this independent cohort.
+    // Only natively proved Starts are outside this Frontier cohort.
     const bool zeroStartQueuePair = ordinaryGroups == 2u &&
         ordinaryCollected == 1u && ordinaryEvents == 1u &&
         ordinaryMembers == 0u;
@@ -4010,7 +4137,7 @@ bool FrontierTimelineFinalizer::FinishLaneContinuationBucket(
             prerequisite->Read(control.prerequisite, self.quantum + 1u,
                 &prior) != FrontierReceiptRead::Ready ||
             prior.outcome != FrontierReceiptOutcome::Applied ||
-            prior.audioSequence == 0 || prior.audioSequence >= self.quantum + 1u ||
+            prior.audioSequence == 0 || prior.audioSequence > self.quantum + 1u ||
             !(prior.order < control.operation.order)) return false;
         QueueInstanceSnapshot queue{};
         const auto& identity = conditional.queueConditional;
@@ -4069,9 +4196,7 @@ bool FrontierTimelineFinalizer::FinishLaneBucketImpl(
         const auto& binding = *group.view.frontier;
         valid = binding.operation.group.backing == Plan03GroupBacking::ImmediateLane && valid;
         if (binding.role == FrontierGroupRole::Coordinator) {
-            ++coordinatorCount;
-            self.ProveEntry(i);
-            valid = group.failure == FrontierReceiptReason::None && valid;
+            self.order[coordinatorCount++] = {binding.operation.order, i, true};
         } else if (binding.role != FrontierGroupRole::EntryMember &&
             !(binding.role == FrontierGroupRole::Future &&
               binding.queueInitial.Valid() && !binding.queueConditional.Valid() &&
@@ -4081,6 +4206,13 @@ bool FrontierTimelineFinalizer::FinishLaneBucketImpl(
               !self.HasConditionalNaturalSpans(group.view, *lane, laneSlot, laneGeneration)) {
             valid = false;
         }
+    }
+    std::sort(self.order.data(), self.order.data() + coordinatorCount,
+        [](const Impl::OrderRef& a, const Impl::OrderRef& b) { return a.order < b.order; });
+    for (std::uint32_t index = 0; index < coordinatorCount; ++index) {
+        const auto group = self.order[index].index;
+        self.ProveEntry(group);
+        valid = self.groups[group].failure == FrontierReceiptReason::None && valid;
     }
     for (std::uint32_t i = 0; valid && i < self.groupCount; ++i)
         valid = self.pool->ProveImmediateLaneGroupBeforeClaim(
@@ -4300,11 +4432,8 @@ bool FrontierTimelineFinalizer::FinishLaneBucketImpl(
 #endif
     }
     if (valid) {
-        for (std::uint32_t i = 0; i < self.groupCount; ++i) {
-            auto& group = self.groups[i];
-            if (group.view.frontier->role == FrontierGroupRole::Coordinator)
-                Impl::ApplyEntry(&group);
-        }
+        for (std::uint32_t index = 0; index < coordinatorCount; ++index)
+            Impl::ApplyEntry(&self.groups[self.order[index].index]);
         for (std::uint32_t i = 0; i < self.groupCount; ++i)
             if (self.groups[i].view.frontier->role == FrontierGroupRole::Future)
                 self.ApplyLaneIndependentGroup(self.groups[i]);

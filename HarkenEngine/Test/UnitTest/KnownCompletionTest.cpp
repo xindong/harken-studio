@@ -103,6 +103,31 @@ TEST(KnownCompletion, AuthoredDurationUsesEarlierNaturalOrTimelineEnd) {
     EXPECT_EQ(170u, predicate.absoluteLogicalCompleteFrame);
 }
 
+TEST(KnownCompletion, ResampledDurationUsesRenderBoundaryAndOutputDeadline) {
+    auto facts = KnownFacts();
+    facts.sourceRate = 44100;
+    facts.mixRate = 48000;
+    facts.pcmFrameCount = 441;
+    facts.sourceStartFrame = 147;
+    facts.loopCount = 1;
+    harken::KnownCompletionPredicateV1 predicate{};
+    ASSERT_EQ(harken::CompletionPredictability::KnownFinite,
+        harken::MaterializeKnownCompletion(facts, &predicate));
+    EXPECT_EQ(321u, predicate.totalLogicalOutputFrames);
+    facts.authoredDurationFrames = 300;
+    ASSERT_EQ(harken::CompletionPredictability::KnownFinite,
+        harken::MaterializeKnownCompletion(facts, &predicate));
+    EXPECT_EQ(300u, predicate.totalLogicalOutputFrames);
+    EXPECT_EQ(facts.absoluteLogicalStartFrame + 300u, predicate.absoluteLogicalCompleteFrame);
+    facts.pcmFrameCount = 1ull << 63;
+    facts.sourceStartFrame = 0;
+    facts.sourceRate = 24000;
+    facts.authoredDurationFrames = 1;
+    ASSERT_EQ(harken::CompletionPredictability::KnownFinite,
+        harken::MaterializeKnownCompletion(facts, &predicate));
+    EXPECT_EQ(1u, predicate.totalLogicalOutputFrames);
+}
+
 TEST(KnownCompletion, BindsCandidateOnlyToExactOwnerWithoutMutationOnFailure) {
     harken::KnownCompletionPredicateV1 candidate{};
     const harken::KnownCompletionFactsV1 facts = KnownFacts();
@@ -151,10 +176,10 @@ TEST(KnownCompletion, ClassifiesSupportedFallbacksAndMalformedFactsExactly) {
     EXPECT_EQ(harken::CompletionPredictability::SignalOnly, classify(facts));
     facts = KnownFacts();
     facts.sourceRate = 44100;
-    EXPECT_EQ(harken::CompletionPredictability::SignalOnly, classify(facts));
+    EXPECT_EQ(harken::CompletionPredictability::KnownFinite, classify(facts));
     facts = KnownFacts();
     facts.pitchRatio = 0.5f;
-    EXPECT_EQ(harken::CompletionPredictability::SignalOnly, classify(facts));
+    EXPECT_EQ(harken::CompletionPredictability::KnownFinite, classify(facts));
     facts = KnownFacts();
     facts.pitchFixed = false;
     EXPECT_EQ(harken::CompletionPredictability::SignalOnly, classify(facts));

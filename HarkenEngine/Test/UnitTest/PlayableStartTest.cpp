@@ -22426,7 +22426,9 @@ TEST(PlayableStart, SequenceQueueLoopReturnsToFirstSoundWithoutPoolGrowth) {
     bool heardFirst = false;
     bool heardSecond = false;
     bool heardFirstAgain = false;
-    for (std::uint32_t block = 0; block < 48; ++block) {
+    std::array<std::uint32_t, 3> warmPeaks{};
+    std::uint64_t audibleFrames = 0;
+    for (std::uint32_t block = 0; block < 1024; ++block) {
         ASSERT_EQ(VN_OK, Vn_Update());
         engine->nullBackend.Pump(1);
         const float* output = engine->nullBackend.LastBlock();
@@ -22439,16 +22441,36 @@ TEST(PlayableStart, SequenceQueueLoopReturnsToFirstSoundWithoutPoolGrowth) {
                 heardSecond = true;
             }
         }
-        if (heardFirstAgain) break;
+        for (std::uint32_t frame = 0; frame < engine->config.blockFrames; ++frame) {
+            const auto sample = output[2u * frame];
+            if (audibleFrames == 0 && std::abs(sample) < 1e-7f) continue;
+            const auto expected = ((audibleFrames / first.size()) % 2u) == 0 ? 1.0f : -1.0f;
+            ASSERT_GT(sample * expected, 0.01f) << "audible frame " << audibleFrames;
+            ++audibleFrames;
+        }
+        const std::array<std::uint32_t, 3> live{engine->decisions.LiveCount(),
+            engine->armGroups.LiveCount(), engine->timelineOccurrences.OccupiedCount()};
+        for (std::size_t resource = 0; resource < live.size(); ++resource) {
+            if (block < 128) warmPeaks[resource] = std::max(warmPeaks[resource], live[resource]);
+            else ASSERT_LE(live[resource], warmPeaks[resource]) << "resource " << resource << " block " << block;
+        }
+        ASSERT_FALSE(engine->runtimeRecreateRequired);
     }
     EXPECT_TRUE(heardFirst);
     EXPECT_TRUE(heardSecond);
     EXPECT_TRUE(heardFirstAgain);
     EXPECT_EQ(queueBaseline + 1u, engine->queueInstances.LiveCount());
-    EXPECT_LE(engine->decisions.LiveCount(), decisionBaseline + 2u);
-    EXPECT_LE(engine->armGroups.LiveCount(), groupBaseline + 2u);
-    EXPECT_LE(engine->timelineOccurrences.OccupiedCount(),
-              occurrenceBaseline + 3u);
+    EXPECT_GT(audibleFrames / (first.size() + second.size()), 32u);
+    ASSERT_EQ(harken::PlayableControlStatus::Ok, harken::StopPlayable(*engine, started.instance, 0));
+    for (std::uint32_t block = 0; block < 128; ++block) {
+        engine->nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    EXPECT_EQ(queueBaseline, engine->queueInstances.LiveCount());
+    EXPECT_EQ(decisionBaseline, engine->decisions.LiveCount());
+    EXPECT_EQ(groupBaseline, engine->armGroups.LiveCount());
+    EXPECT_EQ(occurrenceBaseline, engine->timelineOccurrences.OccupiedCount());
+    EXPECT_EQ(0u, engine->voices.ActiveCount());
 }
 
 TEST(PlayableStart, SequenceQueueLogicalChildrenRetireDuringRepeatedPlayback) {

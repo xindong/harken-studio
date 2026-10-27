@@ -1,6 +1,7 @@
 #include "harken/render/ImmediateLaneTimelineFinalizer.h"
 #include "harken/core/BlockArena.h"
 #include "harken/core/ImmediateActionLane.h"
+#include "harken/core/QueueContinuationLane.h"
 #include "harken/render/FrontierTimelineFinalizer.h"
 #include "harken/render/VoicePool.h"
 
@@ -16,6 +17,7 @@ struct ImmediateLaneTimelineFinalizer::Impl {
         VoiceTimelineReservationProof voiceProof{};
         TimelineArmTable::LaneAudioProof armProof{};
         VariableTimelineInitializerProof initializer{};
+        std::uint64_t actualStartFrame = UINT64_MAX;
     };
     struct Receipt {
         std::uint32_t slot = UINT32_MAX;
@@ -25,6 +27,7 @@ struct ImmediateLaneTimelineFinalizer::Impl {
         bool applied = false;
         bool cancelledOnly = false;
         bool sourceWaiting = false;
+        bool queueDeferred = false;
         std::uint32_t waitingEntryCount = 0;
     };
     struct ControlScratch {
@@ -238,7 +241,13 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
         auto& receipt = state.receipts[receiptIndex];
         const auto slot = receipt.slot;
         const auto* bucket = receipt.bucket;
-        if (state.lane->CapturedQueueContinuation(slot, bucket) != nullptr) {
+        if (const auto* continuation = state.lane->CapturedQueueContinuation(slot, bucket)) {
+            std::uint64_t delay = 0;
+            if (continuation->TimingForQuantum(quantumStart, quantumStart + state.blockFrames, &delay) ==
+                    QueueConditionalProofStatus::Waiting) {
+                receipt.queueDeferred = true;
+                continue;
+            }
             receipt.applied = state.applyQueue != nullptr &&
                 state.applyQueue(state.queueContext, *state.lane, slot, bucket, quantum, &receipt.claimed);
             if (!receipt.applied && !receipt.claimed)
@@ -557,6 +566,7 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
                 if (!valid) break;
             }
             auto& scratch = state.events[staged];
+            scratch.actualStartFrame = quantumStart + outputOffset;
             scratch.initializer.Reset();
             scratch.reservation = {};
             if (plainControl && !control && !events[i].futureGroupedStart) {
@@ -722,7 +732,7 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
                     if (cancelled) VoicePool::RejectProvenTimelineReservation(event.voiceProof);
                     else VoicePool::ApplyProvenLaneTimelineReservation(event.voiceProof);
                 }
-                if (event.armProof.Valid()) TimelineArmTable::ApplyLaneStart(event.armProof);
+                if (event.armProof.Valid()) TimelineArmTable::ApplyLaneStart(event.armProof, event.actualStartFrame);
             }
             for (std::uint32_t i = 0; i < controlCount; ++i) state.controls[i].proof.Release();
             for (std::uint32_t i = 0; i < fenceCount; ++i) {
@@ -745,6 +755,32 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
         }
         receipt.claimed = claimed;
         receipt.applied = valid;
+    }
+    // Slot reuse does not preserve causal order. Retry only deferred Queue
+    // nodes after other captured buckets have published their actual Starts.
+    for (std::uint32_t pass = 0; pass < state.receiptCount; ++pass) {
+        bool progressed = false;
+        for (std::uint32_t index = 0; index < state.receiptCount; ++index) {
+            auto& receipt = state.receipts[index];
+            if (!receipt.queueDeferred) continue;
+            const auto* continuation = state.lane->CapturedQueueContinuation(receipt.slot, receipt.bucket);
+            std::uint64_t delay = 0;
+            if (continuation != nullptr && continuation->TimingForQuantum(
+                    quantumStart, quantumStart + state.blockFrames, &delay) == QueueConditionalProofStatus::Waiting)
+                continue;
+            receipt.queueDeferred = false;
+            receipt.applied = state.applyQueue != nullptr && state.applyQueue(state.queueContext,
+                *state.lane, receipt.slot, receipt.bucket, quantum, &receipt.claimed);
+            if (!receipt.applied && !receipt.claimed)
+                (void)state.lane->RejectCapturedBucket(
+                    {receipt.slot, receipt.bucket->attemptGeneration}, receipt.bucket);
+            progressed = true;
+        }
+        if (!progressed) break;
+    }
+    for (std::uint32_t index = 0; index < state.receiptCount; ++index) {
+        auto& receipt = state.receipts[index];
+        if (receipt.queueDeferred) receipt.sourceWaiting = true;
     }
 }
 

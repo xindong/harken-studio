@@ -33,6 +33,8 @@ class CompositeCompletionOwnerPool;
 class ScheduledTransactionPool;
 class PrivateSelectedQueueFutureSpanPool;
 class ImmediateActionLane;
+class OriginalSourceSubmissionRegistry;
+class PreparedQueueProjection;
 struct ImmediateLaneBucket;
 struct Engine;
 
@@ -145,6 +147,26 @@ struct EffectiveQueueState {
     std::uint32_t randomInitialRecentCount = 0;
     std::array<std::uint32_t, kMaxQueueAvoidHistoryHard>
         randomInitialRecent{};
+};
+
+// Borrowed from the semantic resolver for one serialized preparation scope.
+// Plain queue states cannot manufacture a resolved Reset projection.
+class ResolvedQueueResetProjection {
+public:
+    ResolvedQueueResetProjection(const ResolvedQueueResetProjection&) = delete;
+    ResolvedQueueResetProjection& operator=(const ResolvedQueueResetProjection&) = delete;
+private:
+    friend class PreparedQueueProjection;
+    friend class PrivateSelectedQueueFutureSpanPool;
+    ResolvedQueueResetProjection() = default;
+    QueueInstanceToken queue_{};
+    WorldGeneration world_ = 0;
+    PlayableInstanceHandle root_ = 0;
+    std::uint64_t fingerprint_ = 0;
+    EffectiveQueueState current_{};
+    KnownCompletionPredicateV1 completion_{};
+    const EffectiveQueueState* states_ = nullptr;
+    std::uint32_t count_ = 0;
 };
 
 inline bool QueueSuccessorRestartsCycle(
@@ -819,6 +841,11 @@ public:
         const OriginalLifetimePin& parentOriginal, QueueInstanceToken queue,
         ConditionalQueueVersionToken version, DecisionToken decision,
         OccurrenceToken current) const noexcept;
+    bool IsSelectedOriginalConditionalFutureReservationFor(
+        const OriginalConditionalFutureReservation& original,
+        const OriginalLifetimePin& parentOriginal, QueueInstanceToken queue,
+        ConditionalQueueVersionToken version, DecisionToken decision,
+        OccurrenceToken current) const noexcept;
     // This observes the actual current association. It is not a publication,
     // completion or audio-claim proof, and is logic-producer only.
     bool IsCurrentOriginalConditionalFutureReservation(
@@ -956,7 +983,8 @@ public:
         std::uint64_t quantumStartFrame, std::uint64_t quantumEndFrame, std::uint64_t completedAudioSequence,
         FrontierConditionalProof* out, FrontierConditionalSlice slice = FrontierConditionalSlice::Activation,
         const QueueFrontierSourceWaitContext* sourceWait = nullptr,
-        QueueConditionalProof* outCompletion = nullptr) noexcept;
+        QueueConditionalProof* outCompletion = nullptr,
+        const FrontierInitialProof* stagedInitial = nullptr) noexcept;
     void ApplyFrontierConditional(const FrontierConditionalProof& proof) noexcept;
     QueueConditionalProofStatus PreflightFrontierSourceWait(
         const FrontierGroupBinding& binding, AudioSliceLease& lease,
@@ -1046,6 +1074,47 @@ public:
         PreparedQueueConditionalV1* out,
         const OriginalLifetimePin& parentOriginal,
         OriginalConditionalFutureReservation* outOriginal) noexcept;
+    class ContinuationSourceBinding {
+    public:
+        ContinuationSourceBinding() noexcept = default;
+        ContinuationSourceBinding(const ContinuationSourceBinding&) = delete;
+        ContinuationSourceBinding& operator=(const ContinuationSourceBinding&) = delete;
+        bool Valid() const noexcept { return validate_ != nullptr && validate_(*this); }
+    private:
+        friend class QueueInstanceTable;
+        friend class OriginalSourceSubmissionRegistry;
+        const void* issuer_ = nullptr;
+        const void* source_ = nullptr;
+        const TimelineArmTable* arms_ = nullptr;
+        const OccurrenceStatePool* occurrences_ = nullptr;
+        TimelineArmToken arm_{};
+        OccurrenceToken occurrence_{};
+        bool (*validate_)(const ContinuationSourceBinding&) noexcept = nullptr;
+    };
+    // A following node retains its actual predecessor and source-arm identity.
+    bool PrepareFollowingConditional(
+        QueueInstanceToken token, const ConditionalQueuePrepareRequest& request,
+        const OriginalConditionalFutureReservation& predecessor,
+        const ContinuationSourceBinding& source,
+        PreparedQueueConditionalV1* out, const OriginalLifetimePin& parentOriginal,
+        OriginalConditionalFutureReservation* outOriginal) noexcept;
+    bool ResolveConditionalVersion(QueueInstanceToken token, DecisionToken decision,
+        ConditionalQueueVersionToken* out) const noexcept;
+    // Attach before callbacks start. Audio acknowledges only after its final Queue read.
+    void EnableConditionalReadReclamation() noexcept { conditionalReadReclamationEnabled_ = true; }
+    void CompleteAudioConditionalReads() noexcept;
+    void CollectRetiredConditionalReads() noexcept;
+#if !defined(HARKEN_RT_QUALIFICATION)
+    using ConditionalHeadReadHookForTest = void (*)(void*) noexcept;
+    void SetConditionalHeadReadHookForTest(ConditionalHeadReadHookForTest hook, void* context) noexcept {
+        conditionalHeadReadHookForTest_ = hook;
+        conditionalHeadReadContextForTest_ = context;
+    }
+#endif
+    QueueConditionalProofStatus CaptureConditionalSourceDelay(QueueInstanceToken token,
+        ConditionalQueueVersionToken version, std::uint64_t* delay) const noexcept;
+    bool ConditionalSourceReady(QueueInstanceToken token,
+        ConditionalQueueVersionToken version) const noexcept;
     bool CommitPreparedConditional(
         PreparedQueueConditionalV1* prepared,
         ConditionalQueueVersionToken* outVersion) noexcept;
@@ -1095,7 +1164,8 @@ public:
         DecisionToken expectedDecision,
         OccurrenceToken expectedCurrentOccurrence) noexcept;
     bool SettleActivated(QueueInstanceToken token,
-                         ConditionalQueueVersionToken version) noexcept;
+                         ConditionalQueueVersionToken version,
+                         std::uint64_t completedAudioSequence = 0) noexcept;
     bool AdvanceAfterSignalCompletion(
         QueueInstanceToken token,
         std::uint64_t expectedCurrentVersion,
@@ -1111,6 +1181,8 @@ public:
                                      AcceptedQueueSignalAdvanceV1* out) noexcept;
     bool SettleSignalAdvance(const AcceptedQueueSignalAdvanceV1& accepted,
                              QueueSignalOutcomeV1 outcome) noexcept;
+    bool RollbackUnpublishedConditional(const OriginalConditionalFutureReservation& original,
+        const QueueContinuationLane& lane) noexcept;
     bool RetireConditionalForAbort(
         QueueInstanceToken token,
         ConditionalQueueVersionToken version,
@@ -1182,7 +1254,8 @@ private:
     bool ProveSourceWaitAuthority(const FrontierGroupBinding& binding, AudioSliceLease& lease,
         const ScheduledTransactionPool& pool, const QueueFrontierSourceWaitContext& context,
         std::uint64_t quantumStartFrame, std::uint64_t quantumEndFrame,
-        std::uint64_t completedAudioSequence, SourceWaitAuthority* out) const noexcept;
+        std::uint64_t completedAudioSequence, SourceWaitAuthority* out,
+        const FrontierInitialProof* stagedInitial = nullptr) const noexcept;
     QueueConditionalProofStatus ProveConditionalCompletion(
         QueueInstanceToken token, ConditionalQueueVersionToken version,
         const OccurrenceStatePool& occurrences, const CompositeCompletionOwnerPool& composites,
@@ -1228,15 +1301,51 @@ private:
     enum class SignalReservation : std::uint8_t { None, Prepared, ReadyToPublish };
     enum class NextStateOwner : std::uint8_t { None, RealConditional, AcceptedSignal };
 
+    // Published facts remain at stable addresses until the owning future fence retires.
+    struct ConditionalState {
+        std::atomic<ConditionalState*> following{nullptr};
+        const TimelineArmTable* sourceArms = nullptr;
+        const OccurrenceStatePool* sourceOccurrences = nullptr;
+        const std::atomic<bool>* predecessorReceipt = nullptr;
+        DecisionToken predecessorDecision{};
+        TimelineArmToken sourceArm{};
+        std::uint32_t originalConditionalRow = UINT32_MAX;
+        std::uint64_t originalConditionalMarker = 0;
+        std::uint64_t pendingResetIntent = 0;
+        std::atomic<bool> pendingConsumesReset{false};
+        DecisionToken pendingDecision{};
+        OccurrenceToken pendingExpectedCurrent{};
+        OccurrenceToken pendingSuccessor{};
+        KnownCompletionPredicateV1 pendingCompletion{};
+        CompletionOwnerRef pendingCompletionOwner{};
+        bool pendingCompletionIsLogicalBoundary = false;
+        bool pendingCompletionHasLogicalFloor = false;
+        std::uint64_t pendingLogicalCompletionFrame = 0;
+        RetiredQueueSourceProof pendingRetiredSource{};
+        EffectiveQueueState pendingNext{};
+        std::uint32_t pendingStepCount = 0;
+        std::atomic<ConditionalQueueActivation> pendingActivation{
+            ConditionalQueueActivation::Waiting};
+        std::atomic<std::uint64_t> pendingVersion{0};
+    };
+
     struct Row {
+        ConditionalState initialConditional{};
+        std::atomic<ConditionalState*> conditionalHead{&initialConditional};
+
+        ConditionalState& Pending() noexcept {
+            return *conditionalHead.load(std::memory_order_acquire);
+        }
+        const ConditionalState& Pending() const noexcept {
+            return *conditionalHead.load(std::memory_order_acquire);
+        }
         std::atomic<SlotState> slotState{SlotState::Free};
         std::uint32_t generation = 1;
         std::uint64_t catalogResetScopeMarker = 0;
         std::uint32_t catalogResetScopeGeneration = 0;
         std::uint64_t originalLifetimeMarker = 0;
         std::uint32_t originalLifetimePinCount = 0;
-        std::uint32_t originalConditionalRow = UINT32_MAX;
-        std::uint64_t originalConditionalMarker = 0;
+
         VnObjectId projectId{};
         WorldGeneration world = 0;
         PlayableInstanceHandle rootInstance = 0;
@@ -1263,7 +1372,7 @@ private:
         QueueExecutionOrderV1 resetOrder{};
         MonitorQueueResetObservation monitorReset{};
         MonitorLifecycleFacts monitorIdentity{};
-        std::uint64_t pendingResetIntent = 0;
+
         SignalReservation signalReservation = SignalReservation::None;
         NextStateOwner nextStateOwner = NextStateOwner::None;
         std::uint64_t signalAttemptCounter = 0;
@@ -1271,7 +1380,7 @@ private:
         std::atomic<bool> conditionalReserved{false};
         std::atomic<bool> conditionalReplacementReserved{false};
         const QueueContinuationLane* stagedReplacementOwner = nullptr;
-        std::atomic<bool> pendingConsumesReset{false};
+
         std::atomic<std::uint64_t> mirrorSequence{0};
         std::atomic<std::uint64_t> mirrorVersion{0};
         std::atomic<std::uint32_t> mirrorCursor{0};
@@ -1282,20 +1391,7 @@ private:
         std::array<std::atomic<std::uint32_t>,
                    kMaxQueueAvoidHistoryHard>
             mirrorRandomInitialRecent{};
-        DecisionToken pendingDecision{};
-        OccurrenceToken pendingExpectedCurrent{};
-        OccurrenceToken pendingSuccessor{};
-        KnownCompletionPredicateV1 pendingCompletion{};
-        CompletionOwnerRef pendingCompletionOwner{};
-        bool pendingCompletionIsLogicalBoundary = false;
-        bool pendingCompletionHasLogicalFloor = false;
-        std::uint64_t pendingLogicalCompletionFrame = 0;
-        RetiredQueueSourceProof pendingRetiredSource{};
-        EffectiveQueueState pendingNext{};
-        std::uint32_t pendingStepCount = 0;
-        std::atomic<ConditionalQueueActivation> pendingActivation{
-            ConditionalQueueActivation::Waiting};
-        std::atomic<std::uint64_t> pendingVersion{0};
+
         std::atomic<QueueFailurePhase> failurePhase{
             QueueFailurePhase::Healthy};
         QueueFailureReason failureReason =
@@ -1312,7 +1408,13 @@ private:
         std::uint32_t generation = 1;
         std::uint64_t marker = 0;
         std::uint32_t loans = 0;
+        std::uint64_t readRetirementEpoch = 0;
+        OriginalConditionalRow* nextReadRetirement = nullptr;
         OriginalLifetimePin parent;
+        OriginalConditionalFutureReservation predecessor;
+        ConditionalState followingBody{};
+        ConditionalState* body = nullptr;
+        std::atomic<bool> activated{false};
         // A private selected-future issuer; Old progress never consults this.
         const PrivateSelectedQueueFutureSpanPool* selectedFutureOwner = nullptr;
         std::uint64_t selectedFutureMarker = 0;
@@ -1354,7 +1456,18 @@ private:
     bool PrepareConditionalInternal(QueueInstanceToken token,
         const ConditionalQueuePrepareRequest& request, PreparedQueueConditionalV1* out,
         const OriginalLifetimePin* parentOriginal,
-        OriginalConditionalFutureReservation* outOriginal) noexcept;
+        OriginalConditionalFutureReservation* outOriginal,
+        const OriginalConditionalFutureReservation* predecessor = nullptr,
+        const ContinuationSourceBinding* source = nullptr) noexcept;
+    static bool ValidateProjection(const ConditionalQueuePrepareRequest& request,
+        const EffectiveQueueState& current, std::uint32_t childCount,
+        EffectiveQueueState* first, std::uint32_t* count) noexcept;
+    ConditionalState* FindConditional(Row& row, ConditionalQueueVersionToken version) noexcept;
+    const ConditionalState* FindConditional(const Row& row, ConditionalQueueVersionToken version) const noexcept;
+    const ConditionalState* ReadConditionalHead(const Row& row) const noexcept;
+    void RetireDetachedConditional(Row& row, ConditionalState& state) noexcept;
+    void EndConditionalChain(Row& row) noexcept;
+    bool FollowingSourceAdmitted(const ConditionalState& state) const noexcept;
     // Only the actual Engine issuer can enter this producer-private finalizer.
     // General PrepareConditional and the no-frontier-reader timing API retain
     // their existing contracts. This creates no publication or cutover grant.
@@ -1368,6 +1481,8 @@ private:
         std::uint64_t installedAckSequence) noexcept;
     bool IsSelectedOriginalConditionalCurrent(
         const OriginalConditionalFutureReservation& original) const noexcept;
+    bool IsAcceptedSelectedConditionalHead(const Row& row,
+        const OriginalConditionalRow& original) const noexcept;
     bool BindRetainedOriginalFrontierConditional(
         const OriginalConditionalFutureReservation& original,
         const OriginalLifetimePin& parent, const FrontierGroupBinding& binding,
@@ -1400,6 +1515,7 @@ private:
     bool IsOriginalConditionalClockEmpty(const OriginalConditionalLaneClock& clock) const noexcept;
     bool IsEndedOriginalConditional(const OriginalConditionalFutureReservation& cap) const noexcept;
     void EndOriginalConditionalFuture(Row& row) noexcept;
+    void EndOriginalConditionalFuture(Row& row, ConditionalState& state) noexcept;
     void EndOriginalConditionalsForQuiescentOwnerTeardown() noexcept;
     void EndOriginalConditionalAssociationsAfterQuiescence() noexcept;
     void ReclaimOriginalConditionalIfUnowned(OriginalConditionalRow& original) noexcept;
@@ -1454,6 +1570,14 @@ private:
     bool (*prepareRowStorage_)(void*, std::uint32_t) noexcept = nullptr;
     std::uint32_t originalConditionalCapacity_ = 0;
     std::uint64_t nextOriginalConditionalFactoryMarker_ = 0;
+    bool conditionalReadReclamationEnabled_ = false;
+    std::atomic<std::uint64_t> conditionalReadRetirementRequest_{0};
+    std::atomic<std::uint64_t> conditionalReadRetirementAck_{0};
+    OriginalConditionalRow* retiredConditionalReads_ = nullptr;
+#if !defined(HARKEN_RT_QUALIFICATION)
+    ConditionalHeadReadHookForTest conditionalHeadReadHookForTest_ = nullptr;
+    void* conditionalHeadReadContextForTest_ = nullptr;
+#endif
     void* originalConditionalOwnerContext_ = nullptr;
     OriginalConditionalBaselineResolver originalConditionalBaselineResolver_ = nullptr;
     OriginalConditionalAssociationEnding originalConditionalAssociationEnding_ = nullptr;

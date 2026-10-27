@@ -133,7 +133,7 @@ TEST(CompletionProgressRender,
     harken::Engine* engine = session.Engine();
     ASSERT_NE(nullptr, engine);
 
-    const std::vector<float> pcm(4096, 0.25f);
+    const std::vector<float> pcm(384, 0.25f);
     const VnPCMDesc pcmDesc = harkentest::MonoDesc(pcm, 48000);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &pcmDesc));
 
@@ -160,6 +160,7 @@ TEST(CompletionProgressRender,
     harken::TimelineOccurrenceInstallView occurrence{};
     occurrence.schedule = &schedule;
     occurrence.voice.soundId = harkentest::ObjectId(1);
+    occurrence.voice.loopCount = 3;
     occurrence.voice.outputBusId = VN_BUS_MASTER;
     occurrence.voice.target = target;
     const harken::TimelineProgramInstallView install{&program, &occurrence, 1};
@@ -197,27 +198,14 @@ TEST(CompletionProgressRender,
     EXPECT_DOUBLE_EQ(render->resampler.SourceFraction(),
                      snapshot.resamplerSourceFraction);
 
-    harken::ResamplerAdvanceState phase{};
-    phase.sourceIntegerFrame = snapshot.resamplerSourceFrame;
-    phase.sourceFraction = snapshot.resamplerSourceFraction;
-    phase.currentRatio = snapshot.currentRatio;
-    phase.targetRatio = snapshot.targetRatio;
-    phase.rampStep = snapshot.rampStep;
-    phase.rampRemaining = snapshot.rampRemaining;
-    phase.loopStartFrame = snapshot.loopStartFrame;
-    phase.loopEndFrame = snapshot.loopEndFrame;
-    phase.pcmFrameCount = render->pcm.frames;
-    phase.sourceStartFrame = snapshot.loopStartFrame;
-    phase.completedLoopPasses = snapshot.completedLoopPasses;
-    phase.loopsRemaining = snapshot.loopsRemaining;
-    phase.loopInfinite = snapshot.loopInfinite != 0;
-    phase.hasExitMarker = snapshot.hasExitMarker != 0;
-    phase.logicalOutputFramesProduced = snapshot.logicalOutputFramesProduced;
-    std::uint64_t loopFromPhase = 0;
-    std::uint64_t exitFromPhase = 0;
-    ASSERT_TRUE(harken::ComputeNextResamplerBoundaries(
-        phase, &loopFromPhase, &exitFromPhase));
-    EXPECT_EQ(loopFromPhase, snapshot.nextLoopEndOutputFrame);
+    EXPECT_EQ(render->resampler.phaseHigh, snapshot.resamplerPhaseHigh);
+    EXPECT_EQ(render->resampler.phaseLow, snapshot.resamplerPhaseLow);
+    EXPECT_EQ(256u, snapshot.logicalOutputFramesProduced);
+    EXPECT_GT(snapshot.completedLoopPasses, 0u);
+    EXPECT_LT(snapshot.loopsRemaining, 3u);
+    // Prefetch has wrapped; the first pass has not finished playing.
+    EXPECT_EQ(384u, snapshot.nextLoopEndOutputFrame);
+
 }
 
 } // namespace

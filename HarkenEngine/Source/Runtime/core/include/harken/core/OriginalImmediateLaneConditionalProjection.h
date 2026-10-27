@@ -114,6 +114,10 @@ public:
         const PrivateSelectedQueueFutureSpanPool::Owner& selected) noexcept;
     bool AttachContinuation(QueueContinuationLane& original, QueueContinuationLane& replacement,
         PreparedQueueConditionalReplacementV1& conditional) noexcept;
+    bool AttachContinuationWithdrawal(QueueContinuationLane& original,
+        QueueContinuationLane& head) noexcept;
+    bool AttachContinuationWithdrawal(QueueContinuationLane& original,
+        const OriginalImmediateLaneConditionalProjection& head) noexcept;
     bool CommitContinuation(PreparedQueueConditionalReplacementV1& conditional,
         LogicCommitSequence sequence) noexcept;
     bool TryAccept(const ActionCommitBundle& reservedAction) noexcept;
@@ -133,6 +137,15 @@ private:
     friend class ImmediateActionLane;
     friend class QueueContinuationLane;
     bool PrepareContinuationScope(QueueInstanceTable& queues) noexcept;
+    bool IsContinuationSuffix(const QueueContinuationLane& original,
+        const QueueContinuationLane& head) const noexcept;
+    bool IsContinuationSuffix(const QueueContinuationLane& original,
+        const OriginalImmediateLaneConditionalProjection& head) const noexcept;
+    bool HasEntireSuffix(QueueInstanceToken queue, ConditionalQueueVersionToken head) const noexcept;
+    bool AttachContinuationMember(QueueContinuationLane& original,
+        QueueContinuationLane* replacement, PreparedQueueConditionalReplacementV1* conditional,
+        QueueContinuationLane* withdrawalHead,
+        const OriginalImmediateLaneConditionalProjection* nativeWithdrawalHead = nullptr) noexcept;
     bool PrepareScope(QueueInstanceTable& queues,
         QueueInstanceTable::PreparedCatalogResetScope* scope) noexcept;
     LogicCommitSequence Sequence() const noexcept {
@@ -141,6 +154,8 @@ private:
     struct Member {
         QueueContinuationLane* continuation = nullptr;
         QueueContinuationLane* replacementContinuation = nullptr;
+        QueueContinuationLane* withdrawalHead = nullptr;
+        const OriginalImmediateLaneConditionalProjection* nativeWithdrawalHead = nullptr;
         PreparedQueueConditionalReplacementV1* stagedConditional = nullptr;
         OriginalImmediateLaneAttemptLifetimePin continuationPin;
         OriginalImmediateLaneConditionalProjection original;

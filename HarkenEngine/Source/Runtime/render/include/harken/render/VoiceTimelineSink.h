@@ -98,6 +98,7 @@ public:
     void DiscardIndependentWork() noexcept override {
         immediate_.Discard(arenaCapacityRefused_);
         arenaCapacityRefused_ = false;
+        if (queues_ != nullptr) queues_->CompleteAudioConditionalReads();
     }
 
     void SetArenaAdmission(std::uint32_t availableBytes,
@@ -132,6 +133,7 @@ public:
             return false;
         }
         queues_ = &queues;
+        queues.EnableConditionalReadReclamation();
         frontier_.AttachQueues(queues);
         laneFrontier_.AttachQueues(queues);
         armGroups_ = &armGroups;
@@ -527,17 +529,18 @@ public:
             return false;
         }
         QueueInstanceSnapshot queueSnapshot{};
+        ConditionalQueueVersionToken conditional{};
         if (queues_ == nullptr ||
             (!delayedTargetLockSlice &&
              (occurrences_ == nullptr ||
               !queues_->Capture(queue, &queueSnapshot) ||
-              queueSnapshot.pendingVersion == 0))) {
+              !queues_->ResolveConditionalVersion(queue, group.identity.decision, &conditional)))) {
             return false;
         }
         QueueSliceContext context{};
         context.sink = this;
         context.queue = queue;
-        context.version = {queueSnapshot.pendingVersion};
+        context.version = conditional;
         context.quantumIndex = quantumIndex;
         context.decision = group.identity.decision;
         context.transition = decision.transitionGate;
@@ -585,6 +588,9 @@ public:
         if (claimed == nullptr || owner == nullptr || !owner->Uses(pool_, queues_, decisions_) ||
             blockFrames_ == 0 || quantum >= UINT64_MAX / blockFrames_) return false;
         const auto start = quantum * blockFrames_;
+        std::uint64_t delay = 0;
+        if (owner->TimingForQuantum(start, start + blockFrames_, &delay) !=
+            QueueConditionalProofStatus::ReadyToActivate) return false;
         const auto* events = lane.Events(slot, bucket);
         const auto* groups = lane.Groups(slot, bucket);
         const ImmediateLaneHandle handle{slot, bucket->attemptGeneration};
@@ -607,7 +613,8 @@ public:
             ArmState state{};
             const auto decision = owner->Decision();
             if (!event.frozenTxnValid || event.frontier.Present() || events[index].futureGroupedStart ||
-                event.executeFrame < start || event.executeFrame - start >= blockFrames_ ||
+                event.executeFrame > UINT64_MAX - delay || event.executeFrame + delay < start ||
+                event.executeFrame + delay - start >= blockFrames_ ||
                 program == nullptr || program->role != TimelineProgramRole::Voice || program->payloads == nullptr ||
                 program->generation != event.program.programGeneration || event.payload >= program->payloadCount ||
                 lane.CapturedArmReader(handle, bucket, bucket->firstEvent + index) == nullptr ||
@@ -632,6 +639,7 @@ public:
             if (payload.kind == TimelineEventKind::Start &&
                 voices_.TimelineStartSourcesStatus(arms_, event.armToken) != VariableReadCutStatus::Applied) return false;
         }
+        if (!owner->BeforeAudioWrite()) return false;
         *claimed = lane.ClaimRetainingCaptureOnRefusal(handle, bucket);
         if (!*claimed) return false;
         for (std::uint32_t index = 0; index < bucket->groupCount; ++index) {
@@ -663,14 +671,15 @@ public:
                 if (count == due.size()) return false;
                 const auto* program = input.program.program;
                 const auto* payload = &program->payloads[input.payload];
-                due[count++] = {static_cast<std::uint32_t>(input.executeFrame - start), payload,
+                due[count++] = {static_cast<std::uint32_t>(input.executeFrame + delay - start), payload,
                     input.authoredFadeOutCandidate,
-                    {input.executeFrame, input.logicCommitSequence, input.executionOrdinal, input.eventIndex,
+                    {input.executeFrame + delay, input.logicCommitSequence, input.executionOrdinal, input.eventIndex,
                         input.transactionOrdinal, input.subeventPhase, input.rowSequence}};
                 if (program->readFence != nullptr) program->readFence->RecordRead(quantum);
             }
             if (!ApplyTransaction(event.armToken.renderSlot, event.armToken.renderGeneration,
                     quantum, due.data(), count, event.armToken)) return false;
+            FinishPendingVariableStarts(quantum, event.armToken.renderSlot);
         }
         return true;
     }
@@ -790,7 +799,7 @@ public:
                 const std::uint64_t blockSequence =
                     quantumIndex == UINT64_MAX ? UINT64_MAX
                                                : quantumIndex + 1u;
-                if (!arms_.Start(armToken, blockSequence)) {
+                if (!arms_.Start(armToken, blockSequence, quantumIndex * blockFrames_ + events[i].effectiveOffset)) {
                     return false;
                 }
                 voices_.FinishTimelineVariableSourceRead(renderSlot, renderGeneration);
@@ -895,6 +904,7 @@ public:
         authoredStopFenceCount_ = 0;
         voices_.FinalizeTimelineQuantum(quantumIndex);
         immediate_.Finish();
+        if (queues_ != nullptr) queues_->CompleteAudioConditionalReads();
     }
 
 private:
@@ -976,9 +986,12 @@ private:
         }
     }
 
-    void FinishPendingVariableStarts(std::uint64_t quantumIndex) noexcept {
+    void FinishPendingVariableStarts(std::uint64_t quantumIndex, std::uint32_t onlySlot = UINT32_MAX) noexcept {
         const auto sequence = quantumIndex == UINT64_MAX ? UINT64_MAX : quantumIndex + 1u;
-        for (auto& pending : pendingVariableStarts_) {
+        const auto begin = onlySlot == UINT32_MAX ? 0u : onlySlot;
+        const auto end = onlySlot == UINT32_MAX ? pendingVariableStarts_.size() : std::min<std::size_t>(onlySlot + 1u, pendingVariableStarts_.size());
+        for (std::size_t slot = begin; slot < end; ++slot) {
+            auto& pending = pendingVariableStarts_[slot];
             if (pending.count == 0) continue;
             const auto arm = pending.arm;
             if (!voices_.TimelineBindingValid(arm.renderSlot, arm.renderGeneration)) {
@@ -1068,7 +1081,7 @@ private:
             voices_.FinishTimelineVariableSourceRead(arm.renderSlot, arm.renderGeneration);
             for (std::uint32_t i = 0; i < pending.transactionCount; ++i) {
                 const auto& transaction = pending.transactions[i];
-                arms_.ApplyPlainAudio(proofs[i]);
+                arms_.ApplyPlainAudio(proofs[i], std::max(startFrame, quantumIndex * blockFrames_));
                 RecordPlainResult(transaction.arm, kTimelineDispositionApplied);
             }
             pending = {};

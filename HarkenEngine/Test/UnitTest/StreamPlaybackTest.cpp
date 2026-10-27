@@ -2040,6 +2040,8 @@ TEST(StreamPlayback, StreamConsumedOffsetAboveDoublePrecisionStaysExact) {
     render->resampler.readIndex =
         harken::kResampleHistoryPad + kExactOffset;
     render->resampler.readFraction = 0.75;
+    render->resampler.phaseHigh = UINT64_C(0xc000000000000000);
+    render->resampler.phaseLow = 0;
 
     VnVoiceHandle claimant = 0;
     ASSERT_EQ(VN_OK, PlayDefault(harkentest::ObjectId(9726), &claimant));

@@ -8873,7 +8873,8 @@ static void ExpectFrozenQueueBank(const harken::EngineQueueProgramBank& bank,
 
 static void CheckQueueResetAndScheduledStop(bool deferred, bool refuseCommand, bool inspectOldProgram = false,
     std::uint32_t availableBanks = UINT32_MAX, bool inspectRetirement = false, bool inspectOwners = false,
-    bool refuseSourceSeal = false, bool refuseCalendarPlacement = false, bool refuseVoiceCapture = false) {
+    bool refuseSourceSeal = false, bool refuseCalendarPlacement = false, bool refuseVoiceCapture = false,
+    bool cancelPreparedCalendar = false) {
     (void)Vn_Term();
     harkentest::EngineSession session(harkentest::MakeNullConfig(8, 256, 48000));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -8933,6 +8934,8 @@ static void CheckQueueResetAndScheduledStop(bool deferred, bool refuseCommand, b
     checkpoint.effective.selectionOrdinal = 3;
     checkpoint.replayCurrent = true;
     ASSERT_TRUE(engine->queueCheckpoints.Store(checkpointKey, checkpoint));
+    const auto ownersBeforePlay = CaptureActionReclaimableOwners(*engine);
+    const auto banksBeforePlay = CaptureActionPreparationOwners(*engine).occupiedQueueProgramBanks;
     auto play = ValidPostDesc();
     play.actionId = image.actions[9].actionStableId;
     play.emitter = emitter;
@@ -9094,7 +9097,110 @@ static void CheckQueueResetAndScheduledStop(bool deferred, bool refuseCommand, b
         releaseHeldBanks();
         return;
     }
+    if (cancelPreparedCalendar) {
+        engine->nullBackend.Pump(1);
+        for (const auto arm : {row.arm, row.queueSuccessorArm}) {
+            harken::TimelineArmObservation ack{};
+            ASSERT_TRUE(engine->timelineArms.Observe(arm, &ack));
+            ASSERT_EQ(harken::ArmState::Armed, ack.state);
+            ASSERT_NE(0u, ack.armedCompletionSequence);
+        }
+    }
     ASSERT_EQ(VN_OK, Vn_PostAction(&command, &firing));
+    if (cancelPreparedCalendar) {
+        auto& selected = engine->originalQueueReplacementHolders[originalQueue.slot];
+        const auto coordinator = selected.decisions[0];
+        const auto groups = selected.groups;
+        const auto calendar = selected.calendar.HandleObservation();
+        const auto replacement = row.queueSuccessorRenderHandle;
+        harken::VoiceReleaseObserver release{};
+        ASSERT_TRUE(engine->voices.CaptureReleaseObserver(replacement, &release));
+        harken::TimelineArmObservation source{};
+        ASSERT_TRUE(engine->timelineArms.Observe(row.queueSuccessorArm, &source));
+        ASSERT_EQ(harken::ArmState::PendingApply, source.state);
+        ASSERT_EQ(0u, source.armedCompletionSequence);
+        const auto serviceFence = engine->mixer.BlocksRendered();
+        bool hookRan = false;
+        engine->immediateQueuePostC0PublishContextForTest = &hookRan;
+        engine->immediateQueuePostC0PublishHookForTest = +[](
+            harken::Engine& actual, harken::EngineImmediateEntryAttempt&, void* context) {
+            actual.immediateQueuePostC0PublishHookForTest = nullptr;
+            actual.immediateQueuePostC0PublishContextForTest = nullptr;
+            actual.nullBackend.Pump(1);
+            *static_cast<bool*>(context) = true;
+        };
+        const auto updated = Vn_Update();
+        engine->immediateQueuePostC0PublishHookForTest = nullptr;
+        engine->immediateQueuePostC0PublishContextForTest = nullptr;
+        ASSERT_EQ(VN_OK, updated);
+        ASSERT_TRUE(hookRan);
+        ASSERT_EQ(serviceFence + 1, engine->mixer.BlocksRendered());
+        ASSERT_EQ(harken::Engine::OriginalQueueReplacementHolder::Phase::Selected, selected.phase);
+        ASSERT_TRUE(selected.sourceClockBound && selected.clockBound && selected.calendarPinned && selected.conditionalBound);
+        ASSERT_EQ(2u, selected.frontierBoundCount);
+        const auto* activation = engine->decisions.ResolveFrontierActivation(coordinator);
+        ASSERT_NE(nullptr, activation);
+        ASSERT_EQ(harken::FrontierReceiptState::Prepared, activation->State());
+        harken::FrontierActivationSidecarSnapshot pins{};
+        ASSERT_TRUE(engine->decisions.CaptureFrontierActivationSidecar(coordinator, selected.entry,
+            engine->mixer.BlocksRendered(), &pins));
+        ASSERT_TRUE(pins.pagePinHeld && pins.observerPinHeld);
+        ASSERT_EQ(harken::FrontierReceiptRead::InFlight, pins.receiptRead);
+        const auto stop = std::find_if(engine->authoredStopResources.begin(), engine->authoredStopResources.end(),
+            [&](const auto& control) {
+                return control.nativeStopLaneOwner.Valid() &&
+                    control.nativeQueueReplacement.slot == originalQueue.slot &&
+                    control.nativeQueueReplacement.generation == originalQueue.generation &&
+                    control.nativeReplacementDomain == selected.domain.RootObservation() &&
+                    control.nativeStopSequence == selected.sequence;
+            });
+        ASSERT_NE(engine->authoredStopResources.end(), stop);
+        ASSERT_FALSE(stop->nativeStopPublished);
+        ASSERT_EQ(harken::CommandQueue::OriginalRangeState::Completed, stop->originalControlHeader.State());
+        ASSERT_EQ(harken::CommandQueue::OriginalControlDisposition::Settled, stop->originalControlHeader.ControlDisposition());
+        ASSERT_TRUE(engine->timelineArms.Observe(stop->arm, &source));
+        ASSERT_EQ(serviceFence + 1, source.armedCompletionSequence);
+        harken::ImmediateLaneObservation lane{};
+        ASSERT_TRUE(engine->immediateActionLane.Observe(calendar, &lane));
+        ASSERT_FALSE(lane.committed);
+        ASSERT_EQ(VN_OK, Vn_StopActionFiring(playFiring, 0));
+        ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
+        EXPECT_FALSE(engine->immediateActionLane.Observe(calendar, &lane) && lane.committed);
+        VnActionFiringInfo playInfo{}, resetInfo{};
+        playInfo.structSize = resetInfo.structSize = sizeof(playInfo);
+        for (unsigned block = 0; block < 128; ++block) {
+            engine->nullBackend.Pump(1);
+            ASSERT_EQ(VN_OK, Vn_Update());
+            ASSERT_EQ(VN_OK, Vn_QueryActionFiring(playFiring, &playInfo));
+            ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &resetInfo));
+            if (playInfo.state == VN_ACTION_FIRING_TERMINAL_RETAINED &&
+                resetInfo.state == VN_ACTION_FIRING_TERMINAL_RETAINED) break;
+        }
+        ASSERT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, playInfo.state);
+        ASSERT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, resetInfo.state);
+        ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(playFiring));
+        ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+        for (unsigned block = 0; block < 128 && (CaptureActionReclaimableOwners(*engine) != ownersBeforePlay ||
+                CaptureActionPreparationOwners(*engine).occupiedQueueProgramBanks != banksBeforePlay); ++block) {
+            engine->nullBackend.Pump(1);
+            ASSERT_EQ(VN_OK, Vn_Update());
+        }
+        EXPECT_EQ(harken::Engine::OriginalQueueReplacementHolder::Phase::Empty, selected.phase);
+        EXPECT_EQ(0u, engine->originalQueueReplacementCount);
+        EXPECT_FALSE(engine->decisions.Contains(coordinator));
+        EXPECT_FALSE(engine->immediateActionLane.Observe(calendar, &lane));
+        for (const auto identity : groups) {
+            harken::Plan03PageGroupView group{};
+            EXPECT_FALSE(engine->timelinePool.ResolvePlan03GroupSliceProducer(identity, &group));
+        }
+        EXPECT_TRUE(engine->voices.ReleaseObserved(release));
+        EXPECT_EQ(nullptr, engine->voices.Resolve(replacement));
+        EXPECT_EQ(ownersBeforePlay, CaptureActionReclaimableOwners(*engine));
+        EXPECT_EQ(banksBeforePlay, CaptureActionPreparationOwners(*engine).occupiedQueueProgramBanks);
+        EXPECT_FALSE(engine->runtimeRecreateRequired);
+        EXPECT_EQ(0u, engine->mixer.CommandProtocolViolationCount());
+        return;
+    }
     if (refuseCalendarPlacement) {
         struct CalendarPressure {
             harken::Engine& engine;
@@ -9262,7 +9368,9 @@ static void CheckQueueResetAndScheduledStop(bool deferred, bool refuseCommand, b
             releaseHeldBanks();
             return;
         }
-        ASSERT_NE(0u, parent.childFiring);
+        ASSERT_NE(0u, parent.childFiring) << "state=" << parent.state << " result=" << parent.result
+            << " blocks=" << engine->mixer.BlocksRendered() << " successor=" << row.queueSuccessorRenderHandle
+            << " oldSuccessor=" << oldSuccessor << " deferred=" << engine->actionDeferredRecords.LiveCount();
         stopFiring = parent.childFiring;
     }
     VnActionStepResult stopResult{};
@@ -9318,6 +9426,10 @@ TEST(ActionFiringApi, QueueResetAndScheduledStopCapturePrivateReplacementInOneAc
 
 TEST(ActionFiringApi, QueueResetCalendarPlacementRetriesAfterRealLaneCapacityReturns) {
     CheckQueueResetAndScheduledStop(false, false, false, UINT32_MAX, false, false, false, true);
+}
+
+TEST(ActionFiringApi, QueueResetCancellationReleasesPreparedCalendarPins) {
+    CheckQueueResetAndScheduledStop(false, false, false, UINT32_MAX, false, false, false, false, false, true);
 }
 
 TEST(ActionFiringApi, CatalogQueueScopePreservesActualPendingInitialPlaybackAndRetirement) {
@@ -11706,6 +11818,55 @@ TEST(ActionFiringApi, CurrentLoopEndStopUsesTheFirstPassEnd) {
     }
     EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(stopFiring));
     EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(playFiring));
+}
+
+TEST(ActionFiringApi, PendingResampledQueueStopKeepsFrozenSourceRate) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig(4, 256, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    const std::vector<float> samples(32768, 0.25f);
+    const auto pcm = harkentest::MonoDesc(samples, 16000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &pcm));
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kSecondSound, &pcm));
+    CanonicalActionWorld image(
+        engine->registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision,
+        engine->registry.Lookup(CanonicalActionWorld::kSecondSound).contentRevision);
+    image.MakeImmediateSequenceQueuePlayAction();
+    image.MakeQuantizedSoundStopAction(harken::ActionQuantizeTimingV1::CurrentLoopEnd,
+        harken::ActionIfSilentV1::Immediate, 0, harken::ActionTargetKindV1::Sound,
+        10, 14, harkentest::ObjectId(51));
+    image.steps[14].target = image.steps[11].target;
+    image.actions[10].programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(image.actions[10]);
+    image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(image.world);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        harken::InstallContainerWorldV1(*engine, image.world).status);
+    auto play = ValidPostDesc();
+    play.actionId = image.actions[9].actionStableId;
+    VnActionFiringHandle firing = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&play, &firing));
+    const auto& row = engine->playableServices[0];
+    ASSERT_NE(0u, row.queueCurrentOccurrence.generation);
+    const auto* progress = engine->timelineOccurrences.CompletionProgressOf(row.queueCurrentOccurrence);
+    ASSERT_NE(nullptr, progress);
+    harken::CompletionProgressSnapshot initial{};
+    ASSERT_TRUE(harken::CaptureCompletionProgress(*progress, &initial));
+    ASSERT_EQ(0u, initial.resamplerSourceFrame);
+    auto stop = ValidPostDesc();
+    stop.actionId = image.actions[10].actionStableId;
+    VnActionFiringHandle stopping = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&stop, &stopping));
+    ASSERT_EQ(1u, engine->actionDeferredRecords.LiveCount());
+    harken::ActionDeferredRecordToken token{};
+    harken::ActionDeferredRecord record{};
+    harken::ActionDeferredRecordState state{};
+    ASSERT_TRUE(engine->actionDeferredRecords.CaptureAt(0, &token, &record, &state));
+    for (unsigned block = 0; record.waitingForImmediateEntry && block < 8; ++block) {
+        engine->nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        ASSERT_TRUE(engine->actionDeferredRecords.CaptureAt(0, &token, &record, &state));
+    }
+    EXPECT_FALSE(record.waitingForImmediateEntry);
+    EXPECT_EQ(row.startFrame + 98305u, record.intendedBoundaryFrame);
 }
 
 TEST(ActionFiringApi, ExitMarkerStopDropsWhenNoMarkerExists) {
@@ -38333,16 +38494,17 @@ TEST(ActionFiringApi, InitialQueueChildrenStartAfterOneNormalUpdate) {
 }
 
 static void CheckInitialQueueSourceWaitPcm(bool compositeCurrent, unsigned currentDelay = 0,
-    bool shortCurrent = false, bool publishedWait = false, bool retainSuccessor = false) {
+    bool shortCurrent = false, bool publishedWait = false, bool retainSuccessor = false, bool chain = false,
+    bool sourceWait = true, bool refuseFollowing = false) {
     constexpr std::uint32_t block = 64;
     constexpr std::uint32_t rate = 48000;
     harkentest::EngineSession session(harkentest::MakeNullConfig(8, block, rate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
     const unsigned currentDurationBlocks = currentDelay >= block ? 4u : 3u;
-    const std::vector<float> first(shortCurrent ? block + (retainSuccessor ? 3u : 0u)
+    const std::vector<float> first(chain ? 16u : shortCurrent ? block + (retainSuccessor ? 3u : 0u)
                                                : currentDurationBlocks * block, 0.25f);
-    const std::vector<float> second(shortCurrent ? 1u : 2u * block, -0.125f);
+    const std::vector<float> second(chain ? 23u : shortCurrent ? 1u : 2u * block, -0.125f);
     const auto firstPcm = harkentest::MonoDesc(first, rate);
     const auto secondPcm = harkentest::MonoDesc(second, rate);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &firstPcm));
@@ -38350,6 +38512,11 @@ static void CheckInitialQueueSourceWaitPcm(bool compositeCurrent, unsigned curre
     CanonicalActionWorld image(engine.registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision,
         engine.registry.Lookup(CanonicalActionWorld::kSecondSound).contentRevision);
     image.MakeImmediateSequenceQueuePlayAction();
+    if (chain) {
+        image.containers[2].queueCycle = harken::QueueCycleV1::Loop;
+        image.containers[2].queueCycleCount = 2;
+        image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(image.world);
+    }
     if (compositeCurrent) {
         image.MakeFirstQueueChildCompositeTrack();
         image.trackPlacements[1].authoredStart =
@@ -38384,17 +38551,59 @@ static void CheckInitialQueueSourceWaitPcm(bool compositeCurrent, unsigned curre
     engine.nullBackend.Pump(2);
     ASSERT_EQ(VN_OK, Vn_SetBusVolume(VN_BUS_MASTER, 1, 0));
     ASSERT_EQ(VN_OK, Vn_SetValue(binding.variableId, 0));
+    const auto baseline = CaptureActionReclaimableOwners(engine);
+    const auto bankBaseline = CaptureActionPreparationOwners(engine).occupiedQueueProgramBanks;
+    struct FollowingRefusal {
+        unsigned count = 0;
+        bool prefixPublished = false;
+    } refusal;
+    if (refuseFollowing) {
+        engine.timelineVoicePreparedContextForTest = &refusal;
+        engine.timelineVoicePreparedHookForTest = [](harken::Engine& actual,
+            const harken::EnginePreparedTimelineVoiceStart&, void* context) noexcept {
+            auto& probe = *static_cast<FollowingRefusal*>(context);
+            for (const auto& row : actual.playableServices) {
+                if (row.queuePreparingFollowing == nullptr) continue;
+                if (++probe.count == 2u) {
+                    const auto& predecessor = *row.queuePreparingFollowing;
+                    harken::DecisionCommittedSnapshot decision{};
+                    probe.prefixPublished = predecessor.published && predecessor.chain.recorded &&
+                        actual.decisions.CaptureCommitted(predecessor.chain.decision, &decision);
+                    actual.forceTimelineVoiceCommitRollbackForTest = true;
+                }
+                break;
+            }
+        };
+    }
     auto post = ValidPostDesc();
     post.actionId = image.actions[9].actionStableId;
     ASSERT_EQ(VN_OK, Vn_CreateEmitter(&post.emitter));
     VnActionFiringHandle firing = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+    struct VariableApplication {
+        harken::Engine& engine;
+        VnVariableId variable;
+        harken::LogicCommitSequence sequence;
+        std::uint64_t blockEndFrame = UINT64_MAX;
+        ~VariableApplication() {
+            engine.variableOutcomeSink = nullptr;
+            engine.variableOutcomeSinkContext = nullptr;
+        }
+    } variableApplication{engine, binding.variableId, engine.logicCommits.Current() + 1u};
+    engine.variableOutcomeSinkContext = &variableApplication;
+    engine.variableOutcomeSink = [](void* context, const harken::VariableOutcomeRecord& record) noexcept {
+        auto& observed = *static_cast<VariableApplication*>(context);
+        if (record.outcome == harken::VariableOutcomeKind::Applied && record.variableId == observed.variable &&
+            record.acceptedTicket.sequence == observed.sequence)
+            observed.blockEndFrame = record.actualFrame;
+    };
     ASSERT_EQ(VN_OK, Vn_SetValue(binding.variableId, 1));
+    ASSERT_EQ(variableApplication.sequence, engine.logicCommits.Current());
     ASSERT_EQ(VN_OK, Vn_Update());
     if (publishedWait) engine.mixer.SetCurrentSliceScratchLimitForTest(0u);
     else engine.mixer.SetMaxCommandsPerQuantumForTest(0);
     bool publishedDuringWait = false;
-    for (unsigned waiting = 0; waiting < 10; ++waiting) {
+    for (unsigned waiting = 0; waiting < (sourceWait ? 10u : 0u); ++waiting) {
         engine.nullBackend.Pump(1);
         ASSERT_EQ(VN_OK, Vn_Update());
         VnActionStepResult play{};
@@ -38513,7 +38722,36 @@ static void CheckInitialQueueSourceWaitPcm(bool compositeCurrent, unsigned curre
         ASSERT_EQ(VN_OK, play.result) << "recovery block " << step << recoveryTrace.str();
         if (play.state == VN_ACTION_STEP_SUCCEEDED) break;
     }
-    if (retainSuccessor) {
+    if (chain) {
+        ASSERT_NE(UINT64_MAX, variableApplication.blockEndFrame);
+        ASSERT_GE(variableApplication.blockEndFrame, block);
+        ASSERT_EQ(0u, variableApplication.blockEndFrame % block);
+        // The outcome reports the one-based applied block's end. MixerLoop applies
+        // its targets before rendering that block, subject to the initial read cut.
+        const auto variableAppliedFrame = variableApplication.blockEndFrame - block;
+        const auto firstOutput = std::find_if(recoveredPcm.begin(), recoveredPcm.end(),
+            [](float sample) { return std::abs(sample) > 1e-7f; });
+        ASSERT_NE(recoveredPcm.end(), firstOutput) << recoveryTrace.str();
+        const auto onset = static_cast<std::size_t>(firstOutput - recoveredPcm.begin());
+        const auto length = first.size() + second.size();
+        recoveryTrace << " variableAppliedFrame=" << variableAppliedFrame
+            << " onsetFrame=" << recoveryStartFrame + onset;
+        ::testing::Test::RecordProperty("variable_applied_frame", std::to_string(variableAppliedFrame));
+        ASSERT_GE(recoveredPcm.size(), onset + 2u * length) << recoveryTrace.str();
+        for (std::size_t frame = 0; frame < recoveredPcm.size(); ++frame) {
+            float expected = 0;
+            if (frame >= onset && frame - onset < 2u * length) {
+                const auto offset = frame - onset;
+                expected = offset % length < first.size() ? 0.25f : -0.125f;
+                const auto absoluteFrame = recoveryStartFrame + frame;
+                const bool initialReadCut = offset < first.size() && absoluteFrame / block ==
+                    (recoveryStartFrame + onset) / block;
+                if (!initialReadCut && absoluteFrame >= variableAppliedFrame) expected *= gainB;
+            }
+            EXPECT_NEAR(expected * masterGain, recoveredPcm[frame], 1e-6f)
+                << "chain frame " << frame << recoveryTrace.str();
+        }
+    } else if (retainSuccessor) {
         ASSERT_EQ(5u, successorHolds);
         ASSERT_NE(UINT64_MAX, successorRecoveryFrame);
         const auto firstOutput = std::find_if(recoveredPcm.begin(), recoveredPcm.end(),
@@ -38597,6 +38835,23 @@ static void CheckInitialQueueSourceWaitPcm(bool compositeCurrent, unsigned curre
     EXPECT_EQ(VN_ACTION_STEP_SUCCEEDED, play.state);
     EXPECT_EQ(0u, engine.voices.ActiveCount());
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+    if (chain) {
+        for (unsigned step = 0; step < 128 && (CaptureActionReclaimableOwners(engine) != baseline ||
+                CaptureActionPreparationOwners(engine).occupiedQueueProgramBanks != bankBaseline); ++step) {
+            engine.nullBackend.Pump(1);
+            ASSERT_EQ(VN_OK, Vn_Update());
+        }
+        EXPECT_EQ(baseline, CaptureActionReclaimableOwners(engine));
+        EXPECT_EQ(bankBaseline, CaptureActionPreparationOwners(engine).occupiedQueueProgramBanks);
+    }
+    if (refuseFollowing) {
+        EXPECT_GE(refusal.count, 2u);
+        EXPECT_TRUE(refusal.prefixPublished);
+        EXPECT_FALSE(engine.forceTimelineVoiceCommitRollbackForTest);
+        EXPECT_FALSE(engine.runtimeRecreateRequired);
+        engine.timelineVoicePreparedHookForTest = nullptr;
+        engine.timelineVoicePreparedContextForTest = nullptr;
+    }
 }
 
 TEST(ActionFiringApi, InitialQueueWaitsForVariableSourceAndKeepsActualPcmOrder) {
@@ -38637,6 +38892,193 @@ TEST(ActionFiringApi, InitialCompositeQueuePublishedSourceWaitShortCurrentShares
 
 TEST(ActionFiringApi, InitialCompositeQueueRetainedSuccessorStartsAtRecoveryBoundaryAfterCurrentCompletes) {
     CheckInitialQueueSourceWaitPcm(true, 17u, true, true, true);
+}
+
+TEST(ActionFiringApi, ShortQueueChainInheritsActualSourceWaitClock) {
+    CheckInitialQueueSourceWaitPcm(false, 0u, false, false, false, true, false);
+    for (const bool published : {false, true}) {
+        SCOPED_TRACE(published);
+        CheckInitialQueueSourceWaitPcm(false, 0u, false, published, false, true);
+    }
+}
+
+TEST(ActionFiringApi, ShortQueueChainOptionalCommitRefusalPreservesPublishedPrefix) {
+    CheckInitialQueueSourceWaitPcm(false, 0u, false, false, false, true, true, true);
+}
+
+static void CheckShortQueueChainControl(bool reset, bool audioAhead) {
+    constexpr std::uint32_t block = 64;
+    harkentest::EngineSession session(harkentest::MakeNullConfig(8, block, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const std::vector<float> first(16, 0.25f), second(23, -0.125f);
+    const auto firstPcm = harkentest::MonoDesc(first, 48000);
+    const auto secondPcm = harkentest::MonoDesc(second, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &firstPcm));
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kSecondSound, &secondPcm));
+    CanonicalActionWorld image(engine.registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision,
+        engine.registry.Lookup(CanonicalActionWorld::kSecondSound).contentRevision);
+    image.MakeImmediateSequenceQueuePlayAction();
+    image.containers[2].queueCycle = harken::QueueCycleV1::Loop;
+    image.containers[2].queueCycleCount = 3;
+    image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(image.world);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(VN_BUS_MASTER, 0, 0));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    engine.nullBackend.Pump(2);
+    auto post = ValidPostDesc();
+    post.actionId = image.actions[9].actionStableId;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&post.emitter));
+    const auto baseline = CaptureActionReclaimableOwners(engine);
+    const auto bankBaseline = CaptureActionPreparationOwners(engine).occupiedQueueProgramBanks;
+    VnActionFiringHandle firing = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+    harken::EnginePlayableServiceRow* row = nullptr;
+    std::vector<harken::TimelineArmToken> oldStarts;
+    for (unsigned attempt = 0; attempt < 16; ++attempt) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        for (auto& candidate : engine.playableServices) {
+            if (candidate.InvocationValid() && candidate.Invocation().actionFiring == firing && candidate.queueMode) {
+                row = &candidate;
+                break;
+            }
+        }
+        if (row != nullptr && row->queueSuccessorProgramBank != nullptr) {
+            oldStarts.clear();
+            for (auto* bank = row->queueSuccessorProgramBank; bank != nullptr; bank = bank->chain.following)
+                oldStarts.push_back(bank->chain.arm);
+            if (oldStarts.size() >= 3u) break;
+        }
+        engine.nullBackend.Pump(1);
+        EXPECT_NEAR(0, harkentest::Peak(engine.nullBackend.LastBlock(), 2 * block), 1e-7f);
+    }
+    ASSERT_NE(nullptr, row);
+    ASSERT_GE(oldStarts.size(), 3u);
+    ASSERT_TRUE(row->queueTimingPending);
+    const auto root = row->rootInstance;
+    if (audioAhead) {
+        bool started = false;
+        for (unsigned attempt = 0; attempt < 16 && !started; ++attempt) {
+            engine.nullBackend.Pump(1);
+            const auto* pcm = engine.nullBackend.LastBlock();
+            unsigned onset = 0;
+            while (onset < block && std::abs(pcm[2 * onset]) <= 1e-7f) ++onset;
+            started = onset != block;
+            if (started) {
+                ASSERT_LE(onset + 2u * first.size() + second.size(), block);
+                for (unsigned frame = onset; frame < block; ++frame)
+                    EXPECT_NEAR((frame - onset) % 39u < 16u ? 0.25f : -0.125f, pcm[2 * frame], 1e-6f);
+            } else ASSERT_EQ(VN_OK, Vn_Update());
+        }
+        ASSERT_TRUE(started);
+        unsigned startedFollowing = 0;
+        for (const auto arm : oldStarts) {
+            harken::TimelineArmObservation observed{};
+            if (engine.timelineArms.Observe(arm, &observed) && observed.startedBlockSequence != 0) ++startedFollowing;
+        }
+        ASSERT_GE(startedFollowing, 2u);
+    }
+    const auto controlSequence = engine.mixer.BlocksRendered();
+    VnActionFiringHandle resetFiring = 0;
+    if (reset) {
+        auto resetPost = post;
+        resetPost.actionId = harkentest::ObjectId(49);
+        ASSERT_EQ(VN_OK, Vn_PostAction(&resetPost, &resetFiring));
+        EXPECT_EQ(root, row->rootInstance);
+    } else ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
+    VnActionStepResult play{};
+    play.structSize = sizeof(play);
+    VnActionFiringInfo firingInfo{};
+    firingInfo.structSize = sizeof(firingInfo);
+    bool boundReplacementChain = false;
+    for (unsigned step = 0; step < 128; ++step) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        if (reset && !audioAhead && row->queueSuccessorProgramBank != nullptr) {
+            const auto& selected = engine.originalQueueReplacementHolders[row->queueInstance.slot];
+            if (step == 0) {
+                ASSERT_EQ(harken::EnginePlayableStartPhase::Filed, row->phase);
+                ASSERT_EQ(harken::Engine::OriginalQueueReplacementHolder::Phase::Selected, selected.phase);
+                ASSERT_FALSE(selected.sourceClockBound);
+                harken::TimelineArmObservation pending{};
+                ASSERT_TRUE(engine.timelineArms.Observe(row->queueSuccessorArm, &pending));
+                ASSERT_EQ(harken::ArmState::PendingApply, pending.state);
+                EXPECT_EQ(nullptr, row->queueSuccessorProgramBank->chain.following);
+            }
+            if (selected.sourceClockBound && row->queueSuccessorProgramBank->chain.following != nullptr) {
+                boundReplacementChain = true;
+                const auto* bank = row->queueSuccessorProgramBank;
+                for (; bank->chain.following != nullptr; bank = bank->chain.following) {
+                    const auto& next = bank->chain.following->chain;
+                    if (harken::IsBoundKnownCompletionPredicate(next.completion))
+                        EXPECT_EQ(bank->chain.completion.absoluteLogicalCompleteFrame,
+                            next.completion.absoluteLogicalStartFrame);
+                }
+            }
+        }
+        engine.nullBackend.Pump(1);
+        for (const auto arm : oldStarts) {
+            harken::TimelineArmObservation observed{};
+            if (engine.timelineArms.Observe(arm, &observed))
+                EXPECT_LE(observed.startedBlockSequence, controlSequence);
+        }
+        ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &play));
+        ASSERT_EQ(VN_OK, play.result);
+        ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &firingInfo));
+        if (firingInfo.state == VN_ACTION_FIRING_TERMINAL_RETAINED) break;
+    }
+    if (reset && !audioAhead) EXPECT_TRUE(boundReplacementChain);
+    EXPECT_EQ(reset ? VN_ACTION_STEP_SUCCEEDED : VN_ACTION_STEP_CANCELLED, play.state);
+    EXPECT_FALSE(engine.runtimeRecreateRequired);
+    ASSERT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, firingInfo.state);
+    ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+    if (resetFiring != 0) ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(resetFiring));
+    for (unsigned step = 0; step < 128 && (CaptureActionReclaimableOwners(engine) != baseline ||
+            CaptureActionPreparationOwners(engine).occupiedQueueProgramBanks != bankBaseline); ++step) {
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    ASSERT_EQ(baseline, CaptureActionReclaimableOwners(engine));
+    ASSERT_EQ(bankBaseline, CaptureActionPreparationOwners(engine).occupiedQueueProgramBanks);
+
+    ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+    std::vector<float> replay;
+    for (unsigned step = 0; step < 128; ++step) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine.nullBackend.Pump(1);
+        for (unsigned frame = 0; frame < block; ++frame) replay.push_back(engine.nullBackend.LastBlock()[2 * frame]);
+        ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &play));
+        ASSERT_EQ(VN_OK, play.result);
+        ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &firingInfo));
+        if (firingInfo.state == VN_ACTION_FIRING_TERMINAL_RETAINED) break;
+    }
+    EXPECT_EQ(VN_ACTION_STEP_SUCCEEDED, play.state);
+    ASSERT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, firingInfo.state);
+    const auto firstOutput = std::find_if(replay.begin(), replay.end(), [](float sample) { return std::abs(sample) > 1e-7f; });
+    ASSERT_NE(replay.end(), firstOutput);
+    const auto onset = static_cast<std::size_t>(firstOutput - replay.begin());
+    ASSERT_GE(replay.size(), onset + 117u);
+    for (std::size_t frame = 0; frame < replay.size(); ++frame) {
+        const auto expected = frame < onset || frame - onset >= 117u ? 0.0f
+            : (frame - onset) % 39u < 16u ? 0.25f : -0.125f;
+        EXPECT_NEAR(expected, replay[frame], 1e-6f) << "replay frame " << frame;
+    }
+    ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+    for (unsigned step = 0; step < 128 && (CaptureActionReclaimableOwners(engine) != baseline ||
+            CaptureActionPreparationOwners(engine).occupiedQueueProgramBanks != bankBaseline); ++step) {
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    EXPECT_EQ(baseline, CaptureActionReclaimableOwners(engine));
+    EXPECT_EQ(bankBaseline, CaptureActionPreparationOwners(engine).occupiedQueueProgramBanks);
+}
+
+TEST(ActionFiringApi, ShortQueueChainStopAndResetRetirePublishedSuffixAndReplay) {
+    for (const bool reset : {false, true}) {
+        for (const bool audioAhead : {false, true}) {
+            SCOPED_TRACE(::testing::Message() << "reset=" << reset << " audioAhead=" << audioAhead);
+            CheckShortQueueChainControl(reset, audioAhead);
+        }
+    }
 }
 
 TEST(ActionFiringApi, InitialQueueArenaRefusalLeavesNoPartialSoundAndRecovers) {
@@ -43220,8 +43662,9 @@ void CheckImmediateSameProgramQueue(bool restartCycle, bool requireTerminalC1 = 
     ASSERT_FALSE(lane.protocolRefused);
     current = resolveSavedService();
     ASSERT_NE(nullptr, current);
-    EXPECT_FALSE(current->queueTimingFinalized);
-    EXPECT_TRUE(current->queueTimingPending);
+    // A completed recorded restart can settle logically while Lane readers remain held.
+    EXPECT_EQ(restartCycle, current->queueTimingFinalized);
+    EXPECT_EQ(!restartCycle, current->queueTimingPending);
 
     // One strictly later callback returns the genuine last-quantum readers.
     engine->nullBackend.Pump(1);
@@ -43320,13 +43763,14 @@ void CheckSequenceQueueBeyondPublicationWindow(
             std::uint64_t blocks = replay == 0 && tick == lateTick ? lateBlocks : blocksPerUpdate;
             if (expectDeadline && replay == 0 && !missedHandoff) {
                 for (const auto& row : engine->playableServices) {
-                    if (!row.queueContinuationPrepared || row.queueDecisionCommitted ||
+                    if (!row.queueContinuationPrepared ||
                         row.Invocation().actionFiring != firing) continue;
                     const auto* arm = engine->timelineArms.RowAt(row.queueSuccessorArm.slot);
                     ASSERT_NE(nullptr, arm);
                     const auto start = arm->startFrame / 256u;
                     ASSERT_GE(start, engine->mixer.BlocksRendered());
-                    // Withhold Update until the acknowledged handoff can no longer be published on time.
+                    // Withhold the successor Source installation past its actual Start deadline.
+                    engine->mixer.SetMaxCommandsPerQuantumForTest(0);
                     blocks = start - engine->mixer.BlocksRendered() + 2u;
                     missedHandoff = true;
                     break;
@@ -43345,6 +43789,7 @@ void CheckSequenceQueueBeyondPublicationWindow(
                     }
                 }
             }
+            engine->mixer.SetMaxCommandsPerQuantumForTest(engine->config.maxControlCommandsPerQuantum);
         }
         EXPECT_TRUE(heardFirst);
         ASSERT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state);
@@ -58373,8 +58818,9 @@ TEST(ActionFiringApi,
     ASSERT_TRUE(successorVoice.Valid());
     EXPECT_EQ(CanonicalActionWorld::kSecondSound, successorVoice.Facts().soundId);
     harken::DecisionCommittedSnapshot oldSnapshot{};
-    EXPECT_FALSE(engine->decisions.CaptureCommitted(
-        oldDecision, &oldSnapshot));
+    if (engine->decisions.CaptureCommitted(oldDecision, &oldSnapshot))
+        EXPECT_EQ(harken::AudioGroupState::Invalidated, oldSnapshot.audioState);
+    EXPECT_FALSE(engine->decisions.IsOpen(oldDecision));
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
 }
 
@@ -58628,8 +59074,9 @@ TEST(ActionFiringApi,
     EXPECT_NE(0u, row->queueSuccessorRenderHandle);
     EXPECT_NE(oldSuccessor, row->queueSuccessorRenderHandle);
     harken::DecisionCommittedSnapshot oldSnapshot{};
-    EXPECT_FALSE(engine->decisions.CaptureCommitted(
-        oldDecision, &oldSnapshot));
+    if (engine->decisions.CaptureCommitted(oldDecision, &oldSnapshot))
+        EXPECT_EQ(harken::AudioGroupState::Invalidated, oldSnapshot.audioState);
+    EXPECT_FALSE(engine->decisions.IsOpen(oldDecision));
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
 }
 
@@ -60746,7 +61193,9 @@ TEST(ActionFiringApi,
     harken::QueueInstanceSnapshot queueBefore{};
     ASSERT_TRUE(engine->queueInstances.Capture(row->queueInstance,
                                                &queueBefore));
-    ASSERT_TRUE(engine->decisions.IsOpen(decision));
+    harken::DecisionCommittedSnapshot decisionBefore{};
+    ASSERT_TRUE(engine->decisions.CaptureCommitted(decision, &decisionBefore));
+    ASSERT_EQ(harken::AudioGroupState::Pending, decisionBefore.audioState);
     harken::CompletionOwnerRef occurrenceOwnerBefore{};
     ASSERT_TRUE(engine->timelineOccurrences.CaptureCompletionOwner(
         row->queueCurrentOccurrence, &occurrenceOwnerBefore));
@@ -60794,7 +61243,10 @@ TEST(ActionFiringApi,
     EXPECT_EQ(queueBefore.pendingVersion, queueAfter.pendingVersion);
     EXPECT_EQ(queueBefore.pendingActivation, queueAfter.pendingActivation);
     EXPECT_EQ(queueBefore.resetPending, queueAfter.resetPending);
-    EXPECT_TRUE(engine->decisions.IsOpen(decision));
+    harken::DecisionCommittedSnapshot decisionAfter{};
+    ASSERT_TRUE(engine->decisions.CaptureCommitted(decision, &decisionAfter));
+    EXPECT_EQ(decisionBefore.audioState, decisionAfter.audioState);
+    EXPECT_EQ(decisionBefore.consumedSlices, decisionAfter.consumedSlices);
     harken::CompletionOwnerRef occurrenceOwnerAfter{};
     ASSERT_TRUE(engine->timelineOccurrences.CaptureCompletionOwner(
         row->queueCurrentOccurrence, &occurrenceOwnerAfter));
