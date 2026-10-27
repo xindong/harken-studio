@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from release import build_hub_installer, hub_msi
-from release.windows_installer import Database
+from release.windows_installer import Database, file_metadata
 
 parser = argparse.ArgumentParser()
 for name in ('package-dir', 'payload', 'stub', 'baseline', 'output'):
@@ -87,20 +87,31 @@ def install_dir():
         return Path(winreg.QueryValueEx(key, 'InstallDir')[0])
 
 
-def verify(language, version='0.1.73'):
+def verify(language, version='0.1.73', retained=None):
     registered = products()
     assert len(registered) == 1, registered
     assert info(registered[0], 'Language') == language
     assert info(registered[0], 'VersionString') == version
     destination = install_dir()
+    preserved = []
     for source in build_hub_installer.collect_payload(args.payload.resolve()):
-        target = destination / source.relative_to(args.payload.resolve())
+        relative = source.relative_to(args.payload.resolve())
+        target = destination / relative
         assert target.is_file(), str(target)
-        assert hashlib.sha256(target.read_bytes()).digest() == hashlib.sha256(source.read_bytes()).digest(), str(target)
+        actual = hashlib.sha256(target.read_bytes()).hexdigest()
+        if actual != hashlib.sha256(source.read_bytes()).hexdigest():
+            previous = (retained or {}).get(relative.as_posix())
+            assert previous and source.suffix.lower() == '.dll', str(target)
+            target_version = file_metadata(target)[0]
+            source_version = file_metadata(source)[0]
+            assert target_version and source_version, str(target)
+            assert actual == previous['sha256'] and target_version == previous['version'], str(target)
+            assert tuple(map(int, target_version.split('.'))) >= tuple(map(int, source_version.split('.'))), str(target)
+            preserved.append({'file': relative.as_posix(), 'version': target_version, 'sha256': actual})
     bridge = subprocess.check_output(['pwsh', '-NoProfile', '-Command', "(Get-ScheduledTask -TaskName HarkenSoundHubUpdateBridge).Actions.Execute"], text=True).strip()
     assert Path(bridge).is_file(), bridge
     assert Path(bridge).name == 'HarkenHubUpdateBridge.exe'
-    mark('verify-installed-' + language, product=registered[0], directory=str(destination), bridge=bridge)
+    mark('verify-installed-' + language, product=registered[0], directory=str(destination), bridge=bridge, retainedDependencies=preserved)
     return registered[0]
 
 
@@ -175,27 +186,32 @@ try:
     mark('uninstall-preserves-user-data')
     install('install-released-baseline', args.baseline.resolve(), properties=[f'INSTALLFOLDER={custom}'])
     assert len(products()) == 1 and info(products()[0], 'VersionString') == '0.1.72'
-    install('upgrade-release-using-bridge-arguments', setup, 'zh', ['HARKENSELFUPDATE=1', 'HARKENBRIDGE=1', f'INSTALLFOLDER={custom}-ignored'])
-    current = verify('2052')
-    assert install_dir() == custom
-    assert all(path.read_text(encoding='utf-8') == 'must survive installation maintenance' for path in sentinels)
-    startup('startup-after-release-upgrade')
+    baseline_product = products()[0]
+    baseline_files = {
+        path.relative_to(custom).as_posix(): {'sha256': hashlib.sha256(path.read_bytes()).hexdigest(), 'version': file_metadata(path)[0]}
+        for path in custom.rglob('*') if path.is_file()
+    }
     failed_msi = args.output / 'rollback.msi'
     shutil.copyfile(english, failed_msi)
     with Database(failed_msi, 1) as db:
-        db.execute("UPDATE `Property` SET `Value`=? WHERE `Property`='ProductCode'", ('{' + str(uuid.uuid4()).upper() + '}',))
-        db.execute("UPDATE `Property` SET `Value`='0.1.74' WHERE `Property`='ProductVersion'")
-        db.execute("UPDATE `Upgrade` SET `VersionMax`='0.1.74' WHERE `ActionProperty`='HARKEN_UPGRADE_DETECTED'")
-        db.execute("UPDATE `Upgrade` SET `VersionMin`='0.1.74' WHERE `ActionProperty`='HARKEN_DOWNGRADE_DETECTED'")
-        db.insert('CustomAction', [('QaForcedFailure', 19, None, 'Intentional rollback validation')])
+        db.insert('CustomAction', [('QaForcedFailure', 3106, 'INSTALLFOLDER', '"[SystemFolder]cmd.exe" /d /c exit 1')])
         db.insert('InstallExecuteSequence', [('QaForcedFailure', '1', 6596)])
         db.summary({9: '{' + str(uuid.uuid4()).upper() + '}'})
         db.commit()
     failed_setup = args.output / 'rollback.exe'
     build_hub_installer.embed_payload(args.stub.resolve(), failed_msi, failed_msi, failed_setup)
     install('rollback-failed-upgrade', failed_setup.resolve(), 'en', ['HARKENSELFUPDATE=1', 'HARKENBRIDGE=1'], (1603,))
-    assert verify('2052') == current
+    assert products() == [baseline_product]
+    assert info(baseline_product, 'VersionString') == '0.1.72'
+    for relative, previous in baseline_files.items():
+        assert hashlib.sha256((custom / relative).read_bytes()).hexdigest() == previous['sha256'], relative
+    mark('rollback-restores-released-files', filesVerified=len(baseline_files), product=baseline_product)
     startup('startup-after-rollback')
+    install('upgrade-release-using-bridge-arguments', setup, 'zh', ['HARKENSELFUPDATE=1', 'HARKENBRIDGE=1', f'INSTALLFOLDER={custom}-ignored'])
+    current = verify('2052', retained=baseline_files)
+    assert install_dir() == custom
+    assert all(path.read_text(encoding='utf-8') == 'must survive installation maintenance' for path in sentinels)
+    startup('startup-after-release-upgrade')
     uninstall('uninstall-upgraded-version')
     install('fresh-chinese', setup, 'zh', [f'INSTALLFOLDER={custom}'])
     verify('2052')
