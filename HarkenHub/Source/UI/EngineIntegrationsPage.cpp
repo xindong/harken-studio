@@ -109,8 +109,8 @@ protected:
     void initStyleOption(QStyleOptionViewItem* option, const QModelIndex& index) const override
     {
         QStyledItemDelegate::initStyleOption(option, index);
-        option->text = index.data(kSdkVersionRole).toString()
-            + QStringLiteral(" | ") + option->text;
+        option->text = QCoreApplication::translate("HarkenHub", "Integration Package %1 | %2")
+            .arg(index.data(kSdkVersionRole).toString(), option->text);
         option->textElideMode = Qt::ElideRight;
     }
 };
@@ -279,6 +279,32 @@ int compareSdkVersions(const QString& left, const QString& right)
     if (leftVersion.isNull() || rightVersion.isNull()
         || leftSuffix != left.size() || rightSuffix != right.size()) return 0;
     return QVersionNumber::compare(leftVersion, rightVersion);
+}
+
+int compareSourceVersions(const QString& left, const QString& right)
+{
+    const int comparison = QVersionNumber::compare(
+        QVersionNumber::fromString(left), QVersionNumber::fromString(right));
+    if (comparison != 0) return comparison;
+    const QString leftPrerelease = left.section(QLatin1Char('+'), 0, 0).section(QLatin1Char('-'), 1);
+    const QString rightPrerelease = right.section(QLatin1Char('+'), 0, 0).section(QLatin1Char('-'), 1);
+    if (leftPrerelease.isEmpty() || rightPrerelease.isEmpty())
+        return int(leftPrerelease.isEmpty()) - int(rightPrerelease.isEmpty());
+    const auto leftParts = leftPrerelease.split(QLatin1Char('.'));
+    const auto rightParts = rightPrerelease.split(QLatin1Char('.'));
+    static const QRegularExpression numericIdentifier(QStringLiteral("^[0-9]+$"));
+    for (qsizetype index = 0; index < std::min(leftParts.size(), rightParts.size()); ++index) {
+        const QString& leftPart = leftParts[index];
+        const QString& rightPart = rightParts[index];
+        if (leftPart == rightPart) continue;
+        const bool leftNumeric = numericIdentifier.match(leftPart).hasMatch();
+        const bool rightNumeric = numericIdentifier.match(rightPart).hasMatch();
+        if (leftNumeric != rightNumeric) return leftNumeric ? -1 : 1;
+        if (leftNumeric && leftPart.size() != rightPart.size())
+            return leftPart.size() > rightPart.size() ? 1 : -1;
+        return QString::compare(leftPart, rightPart, Qt::CaseSensitive);
+    }
+    return int(leftParts.size() > rightParts.size()) - int(leftParts.size() < rightParts.size());
 }
 
 QString targetInputPath(const EngineTargetRecord& target)
@@ -2170,7 +2196,12 @@ void EngineIntegrationsPage::refreshLocalSdkSources()
     const QSignalBlocker comboBlocker(sdkSourceCombo_);
     const QSignalBlocker editBlocker(sdkPathEdit_);
     sdkSourceCombo_->clear();
-    const auto sources = localSdkSources(target->engineKind, availableStudioVersions());
+    auto sources = localSdkSources(target->engineKind, availableStudioVersions());
+    std::stable_sort(sources.begin(), sources.end(), [](const auto& left, const auto& right) {
+        const int comparison = compareSourceVersions(left.version, right.version);
+        if (comparison != 0) return comparison > 0;
+        return compareSourceVersions(left.studioVersion, right.studioVersion) > 0;
+    });
     for (const auto& source : sources) {
         sdkSourceCombo_->addItem(source.path, source.path);
         sdkSourceCombo_->setItemData(sdkSourceCombo_->count() - 1, source.version, kSdkVersionRole);
