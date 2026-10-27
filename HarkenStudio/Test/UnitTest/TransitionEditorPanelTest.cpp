@@ -79,7 +79,7 @@ protected:
         if (manager.isProjectOpen())
             manager.closeProject();
         VNX::ActionManager::instance().clearAllForTesting();
-        VNX::registerProjectActions(VNX::ActionManager::instance(), &manager, nullptr, {});
+        VNX::registerProjectActions(VNX::ActionManager::instance(), &manager, nullptr);
 
         ASSERT_TRUE(tempDir_.isValid());
         VNX::ProjectConfig config;

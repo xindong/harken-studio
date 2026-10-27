@@ -122,7 +122,6 @@ private:
 class AudioEngine;
 class ProjectManager;
 class MainWindow;
-class Hierarchy;
 class ProjectExplorer;
 class BlueprintCanvasWidget;
 class IPCServer;
@@ -142,8 +141,7 @@ void registerMixerActions(ActionManager& mgr,
 void registerFieldGroupActions(ActionManager& mgr, ProjectManager* projectManager);
 void registerProjectActions(ActionManager& mgr,
                            ProjectManager* projectManager,
-                           ProjectExplorer* projectExplorer,
-                           std::function<Hierarchy*()> hierarchyResolver);
+                           ProjectExplorer* projectExplorer);
 void registerProjectPlatformActions(ActionManager& mgr, ProjectManager* projectManager);
 void registerContainerActions(ActionManager& mgr,
                               ProjectManager* projectManager);

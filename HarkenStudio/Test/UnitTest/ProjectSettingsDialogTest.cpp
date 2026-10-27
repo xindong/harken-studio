@@ -72,7 +72,7 @@ protected:
         TestSupport::ensureApp();
         ActionManager::instance().clearAllForTesting();
         registerProjectActions(ActionManager::instance(),
-                               &ProjectManager::instance(), nullptr, {});
+                               &ProjectManager::instance(), nullptr);
 
         ASSERT_TRUE(tempDir_.isValid());
         ProjectConfig config;

@@ -21,7 +21,6 @@ public:
     struct Views
     {
         BlueprintCanvasWidget* blueprintCanvas = nullptr;
-        ProjectExplorer* projectExplorer = nullptr;
         ads::CDockWidget* blueprintDock = nullptr;
     };
     void setViews(const Views& v);
@@ -40,7 +39,6 @@ private:
     MainWindow* host_ = nullptr;
 
     BlueprintCanvasWidget* blueprintCanvas_ = nullptr;
-    ProjectExplorer* projectExplorer_ = nullptr;
     ads::CDockWidget* blueprintDock_ = nullptr;
 
     static constexpr uint32_t kInvalidBusSelection = std::numeric_limits<uint32_t>::max();

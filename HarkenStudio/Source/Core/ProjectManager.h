@@ -54,7 +54,6 @@ class MainWindow;
 class InspectorPanel;
 class InspectorPanelPrivate;
 class ProjectExplorer;
-class Hierarchy;
 class CreateProjectItemCommand;
 class DeleteProjectItemCommand;
 class MoveItemCommand;
@@ -129,7 +128,7 @@ public:
                                                 const QString&, const QJsonObject&,
                                                 const QObject*);
     friend void registerContainerActions(ActionManager&, ProjectManager*);
-    friend void registerProjectActions(ActionManager&, ProjectManager*, ProjectExplorer*, std::function<Hierarchy*()>);
+    friend void registerProjectActions(ActionManager&, ProjectManager*, ProjectExplorer*);
 
     static void resyncItemToRuntime(ProjectItem* item);
     static void resyncItemsToRuntime(std::span<ProjectItem* const> items);
