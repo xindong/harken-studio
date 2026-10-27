@@ -56,6 +56,7 @@
 #include <QVBoxLayout>
 #include <QVersionNumber>
 
+#include <algorithm>
 #include <unordered_map>
 
 namespace VNH {
@@ -1309,8 +1310,14 @@ void ProjectsPage::showRowMenu(int row, const QPoint& globalPos)
     selectVersion->setAttribute(Qt::WA_TranslucentBackground);
     selectVersion->setToolTipsVisible(true);
     applyMenuPalette(selectVersion);
-    const std::vector<InstalledVersion> versions =
+    std::vector<InstalledVersion> versions =
         versionsProvider_ ? versionsProvider_() : std::vector<InstalledVersion>{};
+    std::stable_sort(versions.begin(), versions.end(), [](const auto& left, const auto& right) {
+        const int comparison = QVersionNumber::compare(
+            QVersionNumber::fromString(left.semanticVersion),
+            QVersionNumber::fromString(right.semanticVersion));
+        return comparison != 0 ? comparison > 0 : left.releaseSequence > right.releaseSequence;
+    });
     const auto* versionItem = table_->item(row, kColumnVersion);
     const QString selectedBuildId =
         versionItem ? versionItem->data(kBuildIdRole).toString() : QString();
@@ -1321,7 +1328,6 @@ void ProjectsPage::showRowMenu(int row, const QPoint& globalPos)
         for (const auto& version : versions) {
             QString label =
                 QCoreApplication::translate("HarkenHub", "HarkenStudio %1").arg(version.semanticVersion);
-            label += QStringLiteral(" [%1]").arg(version.buildId);
             if (version.isLocalBuild())
                 label += QCoreApplication::translate("HarkenHub", " (Standalone)");
             const bool selected = !selectedBuildId.isEmpty() &&
