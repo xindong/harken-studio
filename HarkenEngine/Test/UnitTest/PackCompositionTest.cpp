@@ -3563,7 +3563,8 @@ TEST(PackComposition, AttenuationBindingMapValidatesBoundedSortedIdentity) {
         EXPECT_EQ(harkentest::ObjectId(0u), entry.id);
         EXPECT_EQ(0u, entry.generation);
     }
-    map.count = map.kCapacity;
+    map.count = 65;
+    map.entries.resize(map.count);
     for (std::uint32_t i = 0; i < map.count; ++i) map.entries[i] = {harkentest::ObjectId(i + 1u), i + 100u};
     map.entries.back() = {harkentest::ObjectId(UINT64_MAX), UINT64_MAX};
     ASSERT_TRUE(map.Valid());
@@ -3576,7 +3577,7 @@ TEST(PackComposition, AttenuationBindingMapValidatesBoundedSortedIdentity) {
     EXPECT_FALSE(invalid.Valid());
     EXPECT_EQ(0u, invalid.GenerationFor(harkentest::ObjectId(1000)));
     invalid = map;
-    invalid.count = 65;
+    invalid.count = 66;
     EXPECT_FALSE(invalid.Valid());
     invalid = map;
     invalid.entries[0].id = harkentest::ObjectId(0);
@@ -3610,6 +3611,7 @@ protected:
     static PackAttenuationBindingMapV1 Map(std::uint64_t generation) {
         PackAttenuationBindingMapV1 map;
         map.count = 1;
+        map.entries.resize(1);
         map.entries[0] = {harkentest::ObjectId(7), generation};
         return map;
     }

@@ -911,6 +911,8 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
         return VN_INVALID_CONFIG;
     }
 
+    resolved.maxPlayableInstances = std::max(
+        resolved.maxPlayableInstances, resolved.voiceCapacity.Logical());
     *out = resolved;
     return VN_OK;
 }

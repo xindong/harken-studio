@@ -366,7 +366,7 @@ static_assert(std::is_trivially_copyable_v<ProjectGenerationInstallAckV1>,
 // Sanity ceiling on renderWorkerCount (delegated, per the spec's recommended
 // 64): above it Vn_Init refuses VN_INVALID_CONFIG.
 inline constexpr std::uint32_t kMaxRenderWorkerCount = 64;
-inline constexpr std::uint32_t kMaxPlayableInstances = 16384;
+inline constexpr std::uint32_t kMaxPlayableInstances = 2u * (1u << 14);
 inline constexpr std::uint32_t kMaxKnownScheduleLeaves = 64;
 inline constexpr std::uint32_t kMaxCompositeCompletionOwners = 16384;
 inline constexpr std::uint32_t kMaxContainerInstances = 16384;

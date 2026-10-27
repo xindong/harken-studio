@@ -4068,13 +4068,12 @@ TEST(PackLogicAggregateCapacity, BindingAttachmentSumRefusesWholeLoad) {
     EXPECT_EQ(0u, engine->packs.LoadedCount());
 }
 
-TEST(PackLogicAggregateCapacity, AttenuationSumRefusesWholeLoad) {
+TEST(PackLogicAggregateCapacity, AttenuationSumPreparesWholeLoadBeyond64) {
     EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
-    // The profile table is a fixed 64: register 63 through the API so
-    // exactly one slot stays free; the pack carries two.
+    // Native registrations coexist with a revision-wide batch crossing 64.
     const VnAttenuationDesc profile =
         harkentest::MakeAttenuationDesc(1.0f, 100.0f);
     for (std::uint32_t i = 0; i < 63; ++i) {
@@ -4097,10 +4096,13 @@ TEST(PackLogicAggregateCapacity, AttenuationSumRefusesWholeLoad) {
                     "airAbsorptionFarHz": 1000000000.0 } ])")));
 
     VnPackHandle pack = 0;
-    EXPECT_EQ(VN_NO_ATTENUATION, LoadPack(packPath, &pack));
+    EXPECT_EQ(VN_OK, LoadPack(packPath, &pack));
 
-    EXPECT_EQ(63u, engine->spatial.ProfileCount());
-    EXPECT_EQ(0u, engine->packs.LoadedCount());
+    EXPECT_EQ(65u, engine->spatial.ProfileCount());
+    EXPECT_EQ(1u, engine->packs.LoadedCount());
+    EXPECT_NE(nullptr, engine->spatial.FindProfile(harkentest::ObjectId(9001)));
+    EXPECT_NE(nullptr, engine->spatial.FindProfile(harkentest::ObjectId(9101)));
+    EXPECT_NE(nullptr, engine->spatial.FindProfile(harkentest::ObjectId(9102)));
 }
 
 

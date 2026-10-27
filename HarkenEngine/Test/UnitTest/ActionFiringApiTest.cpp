@@ -72586,3 +72586,68 @@ TEST(ActionFiringApi, MixedSoundQueueStopBeforeBucketClaimReclaimsAbortedSlice) 
     EXPECT_FALSE(engine.runtimeRecreateRequired);
     ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
 }
+
+
+TEST(ActionFiringApi, SingleSoundReachesConfiguredRenderCapacity) {
+    constexpr std::uint32_t voices = 512, frames = 256, rate = 48000;
+    const std::vector<float> source(rate * 60, 0.001f);
+    auto config = harkentest::MakeNullConfig(voices, frames, rate);
+    config.maxParkedVoices = voices;
+    config.arenaBytes = 16u << 20;
+    config.commandQueueDepth = config.notificationQueueDepth = 2048;
+    config.maxActionFirings = 1024;
+    harkentest::EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto pcm = harkentest::MonoDesc(source, rate, VN_PCM_POLICY_REFERENCE);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &pcm));
+    const auto view = engine.registry.Lookup(CanonicalActionWorld::kFirstSound);
+    ASSERT_NE(nullptr, view.useCount);
+    CanonicalActionWorld image(view.contentRevision, view.contentRevision);
+    image.MakeImmediateSoundPlayAction();
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
+    auto desc = ValidPostDesc();
+    desc.actionId = image.actions[9].actionStableId;
+    std::vector<VnActionFiringHandle> firings;
+    firings.reserve(voices);
+    const auto hits = harken::memguard::HitCount();
+    for (std::uint32_t i = 0; i < voices; ++i) {
+        VnActionFiringHandle firing = 0;
+        ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing))
+            << "index=" << i << " instances=" << engine.playableInstances.LiveCount()
+            << " voices=" << engine.voices.ActiveCount() << " firings=" << engine.actionFirings.LiveCount()
+            << " pcm=" << view.useCount->load();
+        for (unsigned block = 0; block < 8; ++block) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            engine.nullBackend.Pump(1);
+        }
+        ASSERT_EQ(i + 1, engine.voices.ActiveCount()) << "index=" << i;
+        ASSERT_EQ(i + 1, engine.playableInstances.LiveCount());
+        ASSERT_EQ(i + 1, view.useCount->load());
+        firings.push_back(firing);
+    }
+    VnActionFiringHandle refused = 0;
+    EXPECT_EQ(VN_NO_VOICE, Vn_PostAction(&desc, &refused));
+    EXPECT_EQ(voices, engine.playableInstances.LiveCount());
+    EXPECT_EQ(voices, engine.voices.ActiveCount());
+    EXPECT_EQ(voices, engine.actionFirings.LiveCount());
+    EXPECT_EQ(voices, view.useCount->load());
+    for (auto firing : firings) ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
+    for (unsigned block = 0; block < 32 && engine.playableInstances.LiveCount() != 0; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine.nullBackend.Pump(1);
+    }
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(0u, engine.playableInstances.LiveCount());
+    EXPECT_EQ(0u, view.useCount->load());
+    for (auto firing : firings) ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+    VnActionFiringHandle reused = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &reused));
+    for (unsigned block = 0; block < 8 && engine.voices.ActiveCount() == 0; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine.nullBackend.Pump(1);
+    }
+    EXPECT_EQ(1u, engine.voices.ActiveCount());
+    EXPECT_EQ(1u, engine.playableInstances.LiveCount());
+    EXPECT_EQ(hits, harken::memguard::HitCount());
+}

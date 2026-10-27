@@ -1489,6 +1489,9 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
         }
         imageStatus = engine.variables.PrepareCurrentWorldImageV1(
             view.compiledWorld, image);
+        if (imageStatus == WorldInstallStatus::Ok &&
+            !engine.params.PrepareVariableStorage(view.compiledWorld.variableCount))
+            imageStatus = WorldInstallStatus::Capacity;
         if (imageStatus == WorldInstallStatus::Ok && volumeOnly) {
             bindingSourceStamp = PreviewBusBindingSourceStamp(engine);
             sourceMixDb.resize(slotPlan.busCount);

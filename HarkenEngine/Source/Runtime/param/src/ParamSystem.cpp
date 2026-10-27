@@ -1,4 +1,5 @@
 #include "harken/param/ParamSystem.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 
 #include "harken/param/BindingTable.h"
 #include "harken/param/EmitterTable.h"
@@ -849,7 +850,7 @@ VnResult ParamSystem::SetValue(VnVariableId id, float value) {
     }
     Variable* variable = FindVariable(id);
     if (variable == nullptr) {
-        if (m_variableCount >= kMaxVariables) {
+        if (m_variableCount >= m_variables.size()) {
             return VN_NO_VARIABLE;
         }
         variable = &m_variables[m_variableCount++];
@@ -871,13 +872,31 @@ VnResult ParamSystem::SetValue(VnVariableId id, float value) {
     return VN_OK;
 }
 
+bool ParamSystem::PrepareVariableStorage(std::uint32_t requiredCount) noexcept {
+    if (m_projectionActive || memguard::IsAudioTagged()) return false;
+    if (requiredCount <= m_variables.size()) return true;
+    try {
+        detail::LogicAllocCheckpoint(detail::LogicAllocSite::VariableValueStorage);
+        auto variables = m_variables;
+        variables.resize(requiredCount);
+        detail::LogicAllocCheckpoint(detail::LogicAllocSite::VariableValueStorage);
+        auto projection = m_projectionVariables;
+        projection.resize(requiredCount);
+        m_variables.swap(variables);
+        m_projectionVariables.swap(projection);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
 VnResult ParamSystem::SetInstalledValue(VnVariableId id, float value) noexcept {
     if (!std::isfinite(value)) {
         return VN_INVALID_ARG;
     }
     Variable* variable = FindVariable(id);
     if (variable == nullptr) {
-        if (m_variableCount >= kMaxVariables) {
+        if (m_variableCount >= m_variables.size()) {
             return VN_NO_VARIABLE;
         }
         variable = &m_variables[m_variableCount++];
@@ -917,7 +936,7 @@ VnResult ParamSystem::PrepareVariable(
         out->m_prepared = true;
         return VN_OK;
     }
-    if (slotIndex < m_variableCount || slotIndex >= kMaxVariables) {
+    if (slotIndex < m_variableCount || slotIndex >= m_variables.size()) {
         return VN_NO_VARIABLE;
     }
     out->m_id = id;

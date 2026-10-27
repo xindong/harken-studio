@@ -7065,7 +7065,7 @@ TEST(VariableCurrentSlice, ReadCutsCaptureAllVariablesAndPinOnlyReadBatchSources
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
-    std::array<harken::VariableDefinitionV1, harken::kVariableDefinitionCapacity> definitions{};
+    std::array<harken::VariableDefinitionV1, 257> definitions{};
     for (std::uint32_t index = 0; index < definitions.size(); ++index) {
         definitions[index] = MakeVariableDefinition(harkentest::OffsetObjectId(kVariable, index),
             harken::VariableKindV1::Smooth, 0, 300, static_cast<float>(index));

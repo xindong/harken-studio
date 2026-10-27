@@ -237,6 +237,7 @@ public:
     // evaluation remains the change-detection authority and is the only
     // consumer of the mark.
     VnResult SetValue(VnVariableId id, float value);
+    bool PrepareVariableStorage(std::uint32_t requiredCount) noexcept;
     VnResult SetInstalledValue(VnVariableId id, float value) noexcept;
     void ClearInstalledValues() noexcept;
     VnResult PrepareVariable(VnVariableId id, float value,
@@ -1202,7 +1203,7 @@ private:
     StableRowStorage<VoiceState> m_voiceStates; // indexed by voice slot
     StableRowStorage<RetiringTarget> m_retiringTargets;
     std::uint32_t m_sampleRate = 0;
-    std::vector<Variable> m_variables;     // fixed capacity, m_variableCount live
+    std::vector<Variable> m_variables;     // prepared capacity, m_variableCount live
     // Fixed capacity (maxVoices x voiceBindingInstanceSlots — the
     // section-16 instance pool), m_bindingCount live entries in stable
     // order. Raw bindings and definition-backed instances share it; a

@@ -201,10 +201,9 @@ TEST(CanonicalAttenuationGeneration, ConfiguredCapacityHasNo256HardCap) {
                                     generation, Generations(generation - 1)));
         }
         EXPECT_EQ(capacity, spatial.RetainedProfileCount());
-        EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY,
-                  Install(spatial, Profile(1000), capacity + 2, Generations(capacity + 1)));
-        EXPECT_NE(nullptr, spatial.FindProfile(harkentest::ObjectId(17), capacity + 1));
-        EXPECT_EQ(nullptr, spatial.FindProfile(harkentest::ObjectId(17), capacity + 2));
+        ASSERT_EQ(VN_OK, Install(spatial, Profile(1000), capacity + 2, Generations(capacity + 1)));
+        EXPECT_EQ(capacity + 1, spatial.RetainedProfileCount());
+        EXPECT_NE(nullptr, spatial.FindProfile(harkentest::ObjectId(17), capacity + 2));
         ASSERT_EQ(VN_OK, spatial.SweepRetainedProfiles());
         EXPECT_EQ(0u, spatial.RetainedProfileCount());
         EXPECT_EQ(VN_OK, Install(spatial, Profile(1000), capacity + 2));
@@ -221,9 +220,10 @@ TEST(CanonicalAttenuationGeneration, ExhaustedEpochDoesNotWrapOrReuse) {
     ASSERT_EQ(VN_OK, Install(spatial, Profile(), 1));
     ASSERT_EQ(VN_OK, Install(spatial, Profile(20), 2, Generations(1)));
     ASSERT_EQ(VN_OK, spatial.SweepRetainedProfiles());
-    EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, Install(spatial, Profile(30), 3, Generations(2)));
+    ASSERT_EQ(VN_OK, Install(spatial, Profile(30), 3, Generations(2)));
+    EXPECT_EQ(nullptr, spatial.FindProfile(harkentest::ObjectId(17), 1));
     EXPECT_NE(nullptr, spatial.FindProfile(harkentest::ObjectId(17), 2));
-    EXPECT_EQ(nullptr, spatial.FindProfile(harkentest::ObjectId(17), 3));
+    EXPECT_NE(nullptr, spatial.FindProfile(harkentest::ObjectId(17), 3));
 }
 
 TEST(CanonicalAttenuationGeneration, LiveHolesPreserveDirectProfilesAndOldParkBinding) {
@@ -232,12 +232,12 @@ TEST(CanonicalAttenuationGeneration, LiveHolesPreserveDirectProfilesAndOldParkBi
     ASSERT_EQ(VN_OK, spatial.RegisterProfile(harkentest::ObjectId(0), &desc));
     ASSERT_EQ(VN_OK, Install(spatial, desc, 1));
     ASSERT_EQ(VN_OK, spatial.RegisterProfile(harkentest::ObjectId(19), &desc));
-    const auto* direct = spatial.FindProfile(harkentest::ObjectId(19));
+    ASSERT_NE(nullptr, spatial.FindProfile(harkentest::ObjectId(19)));
     Prepared removed;
     ASSERT_EQ(VN_OK, spatial.PreparePackProfiles(nullptr, 0, 0, &removed, Generations(1)));
     spatial.CommitPreparedSet(&removed);
     EXPECT_EQ(2u, spatial.ProfileCount());
-    EXPECT_EQ(direct, spatial.FindProfile(harkentest::ObjectId(19)));
+    EXPECT_NE(nullptr, spatial.FindProfile(harkentest::ObjectId(19)));
     EXPECT_NE(nullptr, spatial.FindProfile(harkentest::ObjectId(0)));
     EXPECT_EQ(nullptr, spatial.FindProfile(harkentest::ObjectId(17)));
     EXPECT_NE(nullptr, spatial.FindProfile(harkentest::ObjectId(17), 1));
@@ -371,7 +371,8 @@ TEST(CanonicalAttenuationGeneration, EarlyAndPartialFailuresReleasePendingAndRet
     spatial.CommitPreparedSet(&initial);
     desc.maxDistance = 20;
     Prepared refused;
-    EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY,
+    harken::detail::StablePageReservation::FailNextReservationForTests();
+    EXPECT_EQ(VN_BACKPRESSURE,
               spatial.PreparePackProfiles(inputs, 2, 2, &refused, {{harkentest::ObjectId(17), 1}, {harkentest::ObjectId(18), 1}}));
     EXPECT_FALSE(refused.IsPrepared());
     EXPECT_EQ(0u, spatial.RetainedProfileCount());
@@ -516,7 +517,7 @@ TEST(CanonicalAttenuationGeneration, FreeSlotOrdinalsPrepareDistinctTokensAcross
     EXPECT_EQ(1u, spatial.FreeProfileSlotAtOrdinal(0));
     EXPECT_EQ(3u, spatial.FreeProfileSlotAtOrdinal(1));
     EXPECT_EQ(4u, spatial.FreeProfileSlotAtOrdinal(2));
-    EXPECT_EQ(harken::kMaxAttenuationProfiles, spatial.FreeProfileSlotAtOrdinal(UINT32_MAX));
+    EXPECT_EQ(UINT32_MAX, spatial.FreeProfileSlotAtOrdinal(UINT32_MAX));
     harken::Spatializer::PreparedProfileToken first, second;
     ASSERT_EQ(VN_OK, spatial.PrepareRegisterProfile(harkentest::ObjectId(8000), &desc,
         spatial.FreeProfileSlotAtOrdinal(0), &first));
@@ -543,12 +544,12 @@ TEST(CanonicalAttenuationGeneration, FreeSlotOrdinalsPrepareDistinctTokensAcross
 TEST(CanonicalAttenuationGeneration, ExhaustedOrdinalCancelsEarlierPreparedTokenAndCanRetry) {
     harken::Spatializer spatial(harken::EngineConfig{});
     auto desc = Profile();
-    for (std::uint64_t idValue = 1; idValue < harken::kMaxAttenuationProfiles; ++idValue) {
+    for (std::uint64_t idValue = 1; idValue < harken::kInitialAttenuationProfileSlots; ++idValue) {
         const auto id = harkentest::ObjectId(idValue);
         ASSERT_EQ(VN_OK, spatial.RegisterProfile(id, &desc));
     }
     EXPECT_EQ(63u, spatial.FreeProfileSlotAtOrdinal(0));
-    EXPECT_EQ(harken::kMaxAttenuationProfiles, spatial.FreeProfileSlotAtOrdinal(1));
+    EXPECT_EQ(UINT32_MAX, spatial.FreeProfileSlotAtOrdinal(1));
     harken::Spatializer::PreparedProfileToken first, refused;
     ASSERT_EQ(VN_OK, spatial.PrepareRegisterProfile(harkentest::ObjectId(8000), &desc,
         spatial.FreeProfileSlotAtOrdinal(0), &first));
@@ -566,8 +567,36 @@ TEST(CanonicalAttenuationGeneration, ExhaustedOrdinalCancelsEarlierPreparedToken
         spatial.FreeProfileSlotAtOrdinal(0), &first));
     spatial.CommitPreparedProfile(&first);
     EXPECT_EQ(64u, spatial.ProfileCount());
-    EXPECT_EQ(harken::kMaxAttenuationProfiles, spatial.FreeProfileSlotAtOrdinal(0));
-    EXPECT_EQ(harken::kMaxAttenuationProfiles, spatial.FreeProfileSlotAtOrdinal(UINT32_MAX));
+    EXPECT_EQ(UINT32_MAX, spatial.FreeProfileSlotAtOrdinal(0));
+    EXPECT_EQ(UINT32_MAX, spatial.FreeProfileSlotAtOrdinal(UINT32_MAX));
 }
 
+}
+
+
+TEST(CanonicalAttenuationGeneration, GrowingSetsPreserveOld65ProfilesAndCommitWithoutAllocation) {
+    harken::Spatializer spatial(harken::EngineConfig{});
+    auto desc = Profile();
+    std::vector<harken::Spatializer::PackProfileInput> inputs;
+    std::vector<Key> retained;
+    for (unsigned i = 0; i < 65; ++i) inputs.push_back({harkentest::ObjectId(1000+i), &desc});
+    for (unsigned generation = 1; generation <= 6; ++generation) {
+        desc.maxDistance = 10.0f * generation;
+        Prepared prepared;
+        ASSERT_EQ(VN_OK, spatial.PreparePackProfiles(inputs.data(), inputs.size(), generation, &prepared, retained));
+        {
+            AllocationProbeScope probe;
+            spatial.CommitPreparedSet(&prepared);
+            EXPECT_EQ(0u, allocation_probe::count);
+        }
+        for (unsigned i = 0; i < 65; ++i) retained.push_back({harkentest::ObjectId(1000+i), generation});
+        std::sort(retained.begin(), retained.end(), [](const auto& a, const auto& b) {
+            return a.id < b.id || (a.id == b.id && a.generation < b.generation);
+        });
+        ASSERT_NE(nullptr, spatial.FindProfile(inputs.back().id, 1));
+        EXPECT_FLOAT_EQ(10, spatial.FindProfile(inputs.back().id, 1)->maxDistance);
+    }
+    EXPECT_EQ(325u, spatial.RetainedProfileCount());
+    EXPECT_EQ(VN_OK, spatial.SweepRetainedProfiles());
+    EXPECT_EQ(0u, spatial.RetainedProfileCount());
 }

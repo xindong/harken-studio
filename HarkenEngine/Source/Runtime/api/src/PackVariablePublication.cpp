@@ -89,6 +89,8 @@ VnResult PreparePackVariables(
         !overlays.empty() && (foundAnyOverlay || initDeclaredWithoutOverlay)
             ? overlays.data()
             : nullptr;
+    if (!engine.params.PrepareVariableStorage(static_cast<std::uint32_t>(merged.size())))
+        return VN_PACK_RESIDENT_CAPACITY;
     return engine.variables.PreparePackDefinitions(
         merged.empty() ? nullptr : merged.data(),
         static_cast<std::uint32_t>(merged.size()), overlayPtr, reason,
