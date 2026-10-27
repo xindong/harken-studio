@@ -3,7 +3,6 @@
 #include <QAbstractTextDocumentLayout>
 #include <QDialog>
 #include <QEvent>
-#include <QGuiApplication>
 #include <QScreen>
 #include <QTextDocument>
 #include <QWindow>
@@ -22,12 +21,6 @@ public:
     {
         dialog_->installEventFilter(this);
         dialog_->resize(preferred_);
-        for (auto* screen : QGuiApplication::screens()) {
-            connect(screen, &QScreen::availableGeometryChanged, this, [this, screen]() {
-                if (dialog_->isVisible() && dialog_->screen() == screen)
-                    constrain(false);
-            });
-        }
     }
 
 protected:
@@ -36,9 +29,13 @@ protected:
         if (object == dialog_ && event->type() == QEvent::Show) {
             if (!connected_) {
                 connect(dialog_->windowHandle(), &QWindow::screenChanged, this,
-                        [this]() { constrain(false); });
+                        [this](QScreen* screen) {
+                            watchScreen(screen);
+                            constrain(false);
+                        });
                 connected_ = true;
             }
+            watchScreen(dialog_->screen());
             constrain(firstShow_);
             firstShow_ = false;
         }
@@ -46,6 +43,13 @@ protected:
     }
 
 private:
+    void watchScreen(QScreen* screen)
+    {
+        disconnect(screenGeometryConnection_);
+        screenGeometryConnection_ = connect(screen, &QScreen::availableGeometryChanged,
+                                             this, [this]() { constrain(false); });
+    }
+
     void constrain(bool initial)
     {
         const QSize available = dialog_->screen()->availableGeometry().size();
@@ -59,6 +63,7 @@ private:
     QDialog* dialog_;
     QSize preferred_;
     QSize minimum_;
+    QMetaObject::Connection screenGeometryConnection_;
     bool firstShow_ = true;
     bool connected_ = false;
 };
