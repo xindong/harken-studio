@@ -26,7 +26,7 @@
         },
         {
           "category": "improved",
-          "text": "The Integration Package source selector shows the package version before its path, keeping the version visible when long paths are shortened."
+          "text": "The Integration Package source selector labels the package version before its path and lists newer versions first, keeping the version visible when long paths are shortened."
         }
       ]
     },

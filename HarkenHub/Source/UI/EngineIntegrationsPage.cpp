@@ -109,8 +109,8 @@ protected:
     void initStyleOption(QStyleOptionViewItem* option, const QModelIndex& index) const override
     {
         QStyledItemDelegate::initStyleOption(option, index);
-        option->text = index.data(kSdkVersionRole).toString()
-            + QStringLiteral(" | ") + option->text;
+        option->text = QCoreApplication::translate("HarkenHub", "Integration Package %1 | %2")
+            .arg(index.data(kSdkVersionRole).toString(), option->text);
         option->textElideMode = Qt::ElideRight;
     }
 };
@@ -2170,7 +2170,14 @@ void EngineIntegrationsPage::refreshLocalSdkSources()
     const QSignalBlocker comboBlocker(sdkSourceCombo_);
     const QSignalBlocker editBlocker(sdkPathEdit_);
     sdkSourceCombo_->clear();
-    const auto sources = localSdkSources(target->engineKind, availableStudioVersions());
+    auto sources = localSdkSources(target->engineKind, availableStudioVersions());
+    std::stable_sort(sources.begin(), sources.end(), [](const auto& left, const auto& right) {
+        const int comparison = QVersionNumber::compare(
+            QVersionNumber::fromString(left.version), QVersionNumber::fromString(right.version));
+        if (comparison != 0) return comparison > 0;
+        return QVersionNumber::compare(QVersionNumber::fromString(left.studioVersion),
+                                       QVersionNumber::fromString(right.studioVersion)) > 0;
+    });
     for (const auto& source : sources) {
         sdkSourceCombo_->addItem(source.path, source.path);
         sdkSourceCombo_->setItemData(sdkSourceCombo_->count() - 1, source.version, kSdkVersionRole);
