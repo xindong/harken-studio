@@ -480,7 +480,8 @@ RuntimeCapabilityEntry evaluate(const ProjectItem& item,
     const auto compiled = harkencurrentworldcompiler::CompileCurrentWorldV1(
         *frontEnd.project, request->variables, materializations,
         request->containers, {}, request->transitions, request->actions,
-        &request->busResult->idSet);
+        &request->busResult->idSet,
+        harkencurrentworldcompiler::CompileCapacityModeV1::AuthoredContent);
     if (!compiled.ok())
         return refuse(compiled.status == harkencurrentworldcompiler::CompileStatusV1::Capacity
                           || compiled.status == harkencurrentworldcompiler::CompileStatusV1::TransitionCapabilityUnavailable

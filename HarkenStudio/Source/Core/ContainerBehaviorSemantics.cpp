@@ -85,7 +85,7 @@ int maxAvoidRepeatFor(const VSelection& selection,
             [&](uint32_t ordinal) { return effectiveChildWeight(selection, ordinal, scope) > 0; }))
         : static_cast<int>(occurrenceOrdinals.size());
     constexpr int limit = static_cast<int>(
-        harkenstudiobuild::WorldCapacitySummaryV1{}.maxAvoidLastN);
+        harkenstudiobuild::kHardSelectionAvoidCapacity);
     return std::clamp(eligibleCount - 1, 0, limit);
 }
 

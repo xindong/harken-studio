@@ -434,6 +434,7 @@ VnConfig makeConfig(const EngineSessionConfig& config)
     c.sampleRate = positiveOrDefault(config.sampleRate, 48000);
     c.blockFrames = positiveOrDefault(config.bufferSize, 256);
     c.maxVoices = positiveOrDefault(config.maxVoices, 64);
+    c.maxActions = 65536;
     c.voiceSendSlots = 8;
     c.deviceMode = config.deviceMode == EngineDeviceMode::Null
         ? VN_DEVICE_NULL

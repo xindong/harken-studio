@@ -10,6 +10,7 @@
 
 #include <unordered_map>
 #include <map>
+#include <set>
 #include <vector>
 
 namespace HarkenEditor::Bridge {
@@ -55,6 +56,8 @@ public:
     std::vector<harkenstudiobuild::VariableDefinitionV1> variables;
     std::vector<harkencurrentworldcompiler::DefinitionMaterializationV1>
         materializations;
+    std::map<harkenstudio::ObjectId, std::uint32_t> propertyAuthoredOrders;
+    std::set<std::uint32_t> reservedPropertyAuthoredOrders;
     std::vector<harkencurrentworldcompiler::ContainerAuthoringV1> containers;
     std::vector<harkencurrentworldcompiler::TransitionProgramAuthoringV1>
         transitions;

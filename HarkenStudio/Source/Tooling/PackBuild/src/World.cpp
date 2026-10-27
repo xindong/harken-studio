@@ -1661,6 +1661,63 @@ bool TryBuildCurrentWorldV3Prefix(const ContainerWorldInstallViewV1 &world,
     return TryBuildCurrentWorldV3PrefixImpl(world, zeroRuntimeSemanticFingerprint, out);
 }
 
+bool GrowAuthoredWorldCapacityV1(const ContainerWorldInstallViewV1& world,
+                               WorldCapacitySummaryV1* capacity) noexcept {
+    CurrentWorldV3PrefixValues counts{};
+    if (capacity == nullptr || !TryBuildCurrentWorldV3Prefix(world, true, &counts)
+        || world.actionCount > kHardActionDefinitionCapacity
+        || (world.actionCount != 0 && world.actions == nullptr))
+        return false;
+    auto required = *capacity;
+    required.maxVariableDefinitions = std::max(required.maxVariableDefinitions, world.variableCount);
+    required.maxContainerPrograms = std::max(required.maxContainerPrograms, world.containerCount);
+    required.maxPlayablePropertyPrograms = std::max(
+        required.maxPlayablePropertyPrograms, world.playablePropertyCount);
+    required.maxPlayableOccurrencePropertyRows = std::max(
+        required.maxPlayableOccurrencePropertyRows, world.playableOccurrenceCount);
+    required.maxPlayablePropertySendsTotal = std::max(
+        required.maxPlayablePropertySendsTotal, counts.playablePropertySendCount);
+    required.maxPlayablePropertyLayerAncestorRefsTotal = std::max(
+        required.maxPlayablePropertyLayerAncestorRefsTotal,
+        counts.playablePropertyLayerAncestorRefCount);
+    required.maxPlayablePropertyEffectNodesTotal = std::max(
+        required.maxPlayablePropertyEffectNodesTotal, counts.playablePropertyEffectNodeCount);
+    required.maxPlayablePropertyEffectParamsTotal = std::max(
+        required.maxPlayablePropertyEffectParamsTotal, counts.playablePropertyEffectParamCount);
+    required.maxPlayablePropertyEffectEdgesTotal = std::max(
+        required.maxPlayablePropertyEffectEdgesTotal, counts.playablePropertyEffectEdgeCount);
+    required.maxTrackSchedulePrograms = std::max(
+        required.maxTrackSchedulePrograms, world.trackScheduleCount);
+    required.maxPieceSchedulePrograms = std::max(
+        required.maxPieceSchedulePrograms, world.pieceScheduleCount);
+    required.maxScheduleTrackRefsTotal = std::max(
+        required.maxScheduleTrackRefsTotal, counts.scheduleTrackRefCount);
+    required.maxSchedulePlacementsTotal = std::max(
+        required.maxSchedulePlacementsTotal, counts.schedulePlacementCount);
+    required.maxScheduleMarkersTotal = std::max(
+        required.maxScheduleMarkersTotal, counts.scheduleMarkerCount);
+    required.maxActionDefinitions = std::max(required.maxActionDefinitions, world.actionCount);
+    std::uint64_t steps = 0;
+    for (std::uint32_t i = 0; i < world.actionCount; ++i) {
+        steps += world.actions[i].stepCount;
+        if (steps > kHardActionStepCapacity)
+            return false;
+    }
+    required.maxActionStepsTotal = std::max(
+        required.maxActionStepsTotal, static_cast<std::uint32_t>(steps));
+    for (std::uint32_t i = 0; i < world.containerCount; ++i) {
+        const auto& container = world.containers[i];
+        if (container.childCount > kHardContainerChildCapacity
+            || container.avoidLastN > kHardSelectionAvoidCapacity)
+            return false;
+        required.maxChildrenPerContainer = std::max(
+            required.maxChildrenPerContainer, container.childCount);
+        required.maxAvoidLastN = std::max(required.maxAvoidLastN, container.avoidLastN);
+    }
+    *capacity = required;
+    return true;
+}
+
 std::uint64_t ComputeActionProgramFingerprintV1(const ActionProgramViewV1 &program) noexcept {
     Fnv64 hash("HARKEN-ACTION-PROGRAM-V1");
     if (!PointerMatches(program.stepCount, program.steps))
@@ -1799,7 +1856,8 @@ WorldInstallStatus ValidateCurrentWorldImpl(const ContainerWorldInstallViewV1 &w
         world.capacity.maxScheduleMarkersPerPiece > 65536 ||
         world.capacity.maxScheduleMarkersTotal > kHardScheduleMarkerCapacity ||
         world.capacity.maxTrackPieceScheduleDepth > 64 || world.capacity.maxContainerDepth > 64 ||
-        world.capacity.maxChildrenPerContainer > 1024 || world.capacity.maxAvoidLastN > 64 ||
+        world.capacity.maxChildrenPerContainer > kHardContainerChildCapacity ||
+        world.capacity.maxAvoidLastN > kHardSelectionAvoidCapacity ||
         world.capacity.maxDiscreteAxes > 32 || world.capacity.maxDiscreteRows > 65536 ||
         world.capacity.maxDiscreteTrieNodes > 1048576 || world.capacity.maxContinuousAxes > 32 ||
         world.capacity.maxContinuousRows > 65536 ||
