@@ -2,6 +2,7 @@
 #define HARKEN_CORE_RESAMPLER_ADVANCE_H
 
 #include <cstdint>
+#include "harken/core/SourcePhase.h"
 
 namespace harken {
 
@@ -13,7 +14,7 @@ enum class ResamplerBoundaryKind : std::uint8_t {
 
 struct ResamplerAdvanceState {
     std::uint64_t sourceIntegerFrame = 0;
-    double sourceFraction = 0.0;
+    ExactSourcePhase sourcePhase{};
     double currentRatio = 1.0;
     double targetRatio = 1.0;
     double rampStep = 0.0;
@@ -35,6 +36,22 @@ struct ResamplerBoundaryResult {
     bool available = false;
     std::uint64_t outputFrame = 0;
 };
+
+// Convert the unfolded consumption distance to the original file and loop
+// coordinates. Feeding the FIFO does not advance this position.
+void MapLoopedSourceFrame(std::uint64_t baseFrame,
+                          std::uint32_t baseLoopsRemaining,
+                          std::uint64_t advance,
+                          std::uint64_t frameCount,
+                          std::uint64_t loopStart,
+                          std::uint64_t loopEnd,
+                          std::uint64_t* outFrame,
+                          std::uint32_t* outLoopsRemaining) noexcept;
+
+void SetResamplerConsumedPosition(ResamplerAdvanceState* state,
+                                  std::uint64_t baseFrame,
+                                  std::uint32_t baseLoopsRemaining,
+                                  std::uint64_t consumedSourceFrames) noexcept;
 
 bool ResolveResamplerBoundary(ResamplerAdvanceState state,
                               ResamplerBoundaryKind kind,

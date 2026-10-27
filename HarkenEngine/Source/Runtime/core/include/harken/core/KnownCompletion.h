@@ -69,6 +69,11 @@ struct KnownCompletionQuantumProof {
     std::uint32_t activationOffset = 0;
 };
 
+// Classifies immutable playback facts before completion owners are reserved.
+// The duration is in output frames; no occurrence identity is needed yet.
+CompletionPredictability ResolveKnownCompletionDuration(
+    const KnownCompletionFactsV1& facts, std::uint64_t* out) noexcept;
+
 CompletionPredictability MaterializeKnownCompletion(
     const KnownCompletionFactsV1& facts,
     KnownCompletionPredicateV1* out) noexcept;

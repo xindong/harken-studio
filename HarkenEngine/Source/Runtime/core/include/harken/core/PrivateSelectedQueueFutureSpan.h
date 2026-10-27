@@ -293,12 +293,13 @@ public:
         const OriginalQueueFutureGroupRegistration& newPrimary,
         const OriginalQueueFutureGroupRegistration& newMember,
         Owner* out, const PrivateSelectedQueueFutureDomain* domain = nullptr,
-        const SourceCompletionFactory* sourceCompletion = nullptr) noexcept {
+        const SourceCompletionFactory* sourceCompletion = nullptr,
+        const ResolvedQueueResetProjection* projection = nullptr) noexcept {
         return PrepareBody(queues, matched, parent, oldFuture, oldClock, sequence,
             currentDecisionOriginal, currentOriginal, decisions, newDecision,
             newDecisionOriginal, ticket, newCoordinator, coordinatorOriginal,
             coordinatorTicket, occurrences, newSuccessorOriginal, &successor,
-            groups, newPrimary, newMember, out, domain, sourceCompletion);
+            groups, newPrimary, newMember, out, domain, sourceCompletion, projection);
     }
 
     // An installation-free future keeps the genuine committed Current. It
@@ -320,12 +321,13 @@ public:
         OccurrenceStatePool& occurrences, ScheduledTransactionPool& groups,
         const OriginalQueueFutureGroupRegistration& newPrimary,
         const OriginalQueueFutureGroupRegistration& newMember,
-        Owner* out, const PrivateSelectedQueueFutureDomain* domain = nullptr) noexcept {
+        Owner* out, const PrivateSelectedQueueFutureDomain* domain = nullptr,
+        const ResolvedQueueResetProjection* projection = nullptr) noexcept {
         return PrepareBody(queues, matched, parent, oldFuture, oldClock, sequence,
             currentDecisionOriginal, currentOriginal, decisions, newDecision,
             newDecisionOriginal, ticket, newCoordinator, coordinatorOriginal,
             coordinatorTicket, occurrences, currentOriginal, nullptr, groups,
-            newPrimary, newMember, out, domain, nullptr);
+            newPrimary, newMember, out, domain, nullptr, projection);
     }
 
 private:
@@ -350,7 +352,8 @@ private:
         const OriginalQueueFutureGroupRegistration& newPrimary,
         const OriginalQueueFutureGroupRegistration& newMember,
         Owner* out, const PrivateSelectedQueueFutureDomain* domain,
-        const SourceCompletionFactory* sourceCompletion) noexcept {
+        const SourceCompletionFactory* sourceCompletion,
+        const ResolvedQueueResetProjection* projection) noexcept {
         if (out == nullptr || out->pool_ != nullptr || !sequence.Valid() ||
             nextMarker_ == UINT64_MAX || !queues.MatchesCatalogResetScope(matched) ||
             !queues.MatchesOriginalConditionalFutureReservation(oldFuture) ||
@@ -408,16 +411,16 @@ private:
              slotState != QueueInstanceTable::SlotState::Live) ||
             live.catalogResetScopeMarker != matched.marker_ ||
             live.catalogResetScopeGeneration != old.queue.generation ||
-            live.originalConditionalRow != oldFuture.row_ ||
-            live.originalConditionalMarker != oldFuture.marker_ || live.generation != old.queue.generation ||
+            live.Pending().originalConditionalRow != oldFuture.row_ ||
+            live.Pending().originalConditionalMarker != oldFuture.marker_ || live.generation != old.queue.generation ||
             live.failurePhase.load(std::memory_order_acquire) != QueueFailurePhase::Healthy ||
-            live.pendingActivation.load(std::memory_order_acquire) != ConditionalQueueActivation::Waiting ||
+            live.Pending().pendingActivation.load(std::memory_order_acquire) != ConditionalQueueActivation::Waiting ||
             live.world != old.world || live.rootInstance != old.rootInstance ||
             live.programSemanticFingerprint != old.programSemanticFingerprint ||
-            !SameDecision(live.pendingDecision, old.decision) ||
-            !SameOccurrence(live.pendingExpectedCurrent, old.current) ||
-            !SameOccurrence(live.pendingSuccessor, old.successor) ||
-            !SameCompletionOwner(live.pendingCompletionOwner, old.completionOwner) ||
+            !SameDecision(live.Pending().pendingDecision, old.decision) ||
+            !SameOccurrence(live.Pending().pendingExpectedCurrent, old.current) ||
+            !SameOccurrence(live.Pending().pendingSuccessor, old.successor) ||
+            !SameCompletionOwner(live.Pending().pendingCompletionOwner, old.completionOwner) ||
             !SameDecision(newPrimary.Identity().decision, newCoordinator.Token()) ||
             !SameDecision(newMember.Identity().decision, newDecision.Token()) ||
             newPrimary.Identity().sliceIndex != 0 || newMember.Identity().sliceIndex != 0 ||
@@ -437,11 +440,33 @@ private:
             return false;
         if (old.state == QueueInstanceTable::OriginalConditionalState::Prepared) {
             if (!live.conditionalReserved.load(std::memory_order_acquire) ||
-                live.pendingVersion.load(std::memory_order_acquire) != 0) return false;
+                live.Pending().pendingVersion.load(std::memory_order_acquire) != 0) return false;
         } else if (!queues.IsCurrentOriginalConditionalFutureReservation(oldFuture)) return false;
         EffectiveQueueState actual{}, projected{};
         if (!QueueInstanceTable::LoadMirror(live, &actual) || !SameState(actual, old.currentState) ||
             !QueueInstanceTable::ProjectReset(live, actual, &projected)) return false;
+        auto final = projected;
+        std::uint32_t stepCount = 1;
+        if (projection != nullptr) {
+            const auto& proof = *projection;
+            if (proof.states_ == nullptr || proof.count_ == 0 ||
+                proof.queue_.slot != old.queue.slot || proof.queue_.generation != old.queue.generation ||
+                proof.world_ != old.world || proof.root_ != old.rootInstance ||
+                proof.fingerprint_ != old.programSemanticFingerprint || !SameState(proof.current_, actual) ||
+                !SameOccurrence(proof.completion_.occurrence, old.current) ||
+                !SameCompletionOwner(proof.completion_.owner, old.completionOwner) ||
+                !SamePlayableProgramKey(proof.completion_.program, old.completion.program) ||
+                proof.completion_.renderGeneration != old.completion.renderGeneration) return false;
+            ConditionalQueuePrepareRequest request{};
+            request.expectedCurrentVersion = actual.version;
+            request.next = proof.states_[proof.count_ - 1u];
+            request.projectedStates = proof.states_;
+            request.projectedStateCount = proof.count_;
+            EffectiveQueueState first{};
+            if (!QueueInstanceTable::ValidateProjection(request, actual, live.childCount, &first, &stepCount) ||
+                !SameState(first, projected)) return false;
+            final = request.next;
+        }
         if (domain != nullptr &&
             (domain->owner_ != &groups || !domain->OwnsOriginal(newPrimary) ||
              !domain->OwnsOriginal(newMember))) return false;
@@ -528,10 +553,11 @@ private:
         row.sourceCompletion = std::move(provisional.sourceCompletion);
         row.newGroups = std::move(provisional.newGroups);
         row.backing = {old.world, old.rootInstance, old.programSemanticFingerprint,
-            old.queue, old.version, {projected.version}, old.decision, newDecision.Token(),
+            old.queue, old.version, {final.version}, old.decision, newDecision.Token(),
             newCoordinator.Token(), old.current, value.newSuccessor, old.completion, old.completionOwner,
-            old.currentState, live.resetInitial, projected, old.logicalFloor,
+            old.currentState, live.resetInitial, final, old.logicalFloor,
             value.newGroups, value.relativeFrames, sequence.Sequence()};
+        row.stepCount = stepCount;
         row.occurrences = &occurrences;
         row.decisions = &decisions;
         row.arms = groups.plan03ArmTable_;
@@ -867,29 +893,39 @@ private:
         const auto& body = selected.backing;
         // The batch holds the exact old and new records. Its shared winner has
         // excluded every Old C1 writer; New groups remain genuinely private.
+        auto* suffix = live.Pending().following.exchange(nullptr, std::memory_order_acq_rel);
+        while (suffix != nullptr) {
+            auto* next = suffix->following.exchange(nullptr, std::memory_order_acq_rel);
+            suffix->pendingVersion.store(0, std::memory_order_release);
+            if (suffix->originalConditionalRow != UINT32_MAX) {
+                queues.originalConditionalRows_[suffix->originalConditionalRow].predecessor.Release();
+                queues.EndOriginalConditionalFuture(live, *suffix);
+            }
+            suffix = next;
+        }
         old.selectedFutureConsumed = true;
         old.selectedDecision = body.decision;
         old.selectedSuccessor = body.successor;
         old.selectedVersion = body.version;
-        live.pendingDecision = body.decision;
-        live.pendingExpectedCurrent = body.current;
-        live.pendingSuccessor = body.successor;
-        live.pendingCompletion = body.completion;
-        live.pendingCompletionOwner = body.completionOwner;
-        live.pendingCompletionIsLogicalBoundary = false;
-        live.pendingCompletionHasLogicalFloor = body.logicalFloor;
-        live.pendingLogicalCompletionFrame = body.logicalFloor ? selected.completionFloor : 0;
-        live.pendingRetiredSource = {};
-        live.pendingNext = body.next;
-        live.pendingStepCount = 1;
+        live.Pending().pendingDecision = body.decision;
+        live.Pending().pendingExpectedCurrent = body.current;
+        live.Pending().pendingSuccessor = body.successor;
+        live.Pending().pendingCompletion = body.completion;
+        live.Pending().pendingCompletionOwner = body.completionOwner;
+        live.Pending().pendingCompletionIsLogicalBoundary = false;
+        live.Pending().pendingCompletionHasLogicalFloor = body.logicalFloor;
+        live.Pending().pendingLogicalCompletionFrame = body.logicalFloor ? selected.completionFloor : 0;
+        live.Pending().pendingRetiredSource = {};
+        live.Pending().pendingNext = body.next;
+        live.Pending().pendingStepCount = selected.stepCount;
         live.resetNextVersion = body.next.version;
         live.resetOrder = order;
         live.resetExecuteFrame = order.executeFrame;
         live.resetIntentGeneration = ++live.resetIntentCounter;
-        live.pendingResetIntent = live.resetIntentGeneration;
+        live.Pending().pendingResetIntent = live.resetIntentGeneration;
         live.resetPending.store(order.executeFrame <= queues.logicNow_, std::memory_order_release);
-        live.pendingConsumesReset.store(true, std::memory_order_release);
-        live.pendingVersion.store(body.version.version, std::memory_order_release);
+        live.Pending().pendingConsumesReset.store(true, std::memory_order_release);
+        live.Pending().pendingVersion.store(body.version.version, std::memory_order_release);
     }
     bool IsFrozenReplacementOf(const Retention& retained,
         const QueueInstanceTable::OriginalConditionalFutureReservation& original,
@@ -907,6 +943,7 @@ private:
         std::uint64_t marker = 0;
         Observation value{};
         ConditionalBacking backing{};
+        std::uint32_t stepCount = 0;
         OccurrenceStatePool* occurrences = nullptr;
         DecisionTable* decisions = nullptr;
         const TimelineArmTable* arms = nullptr;
@@ -940,8 +977,8 @@ private:
         row.completionFloor = clock.conditionalGroupFrame;
         if (old.selectedFutureConsumed) {
             auto& selected = queues.rows_[old.queue.slot];
-            selected.pendingCompletion = rebound;
-            selected.pendingLogicalCompletionFrame = row.backing.logicalFloor ? row.completionFloor : 0;
+            selected.Pending().pendingCompletion = rebound;
+            selected.Pending().pendingLogicalCompletionFrame = row.backing.logicalFloor ? row.completionFloor : 0;
         }
         row.bound.store(true, std::memory_order_release);
         return true;

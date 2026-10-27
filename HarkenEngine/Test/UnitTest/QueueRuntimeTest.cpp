@@ -35,7 +35,7 @@ struct QueueInstanceTableTestAccess {
     // Observation and negative prerequisites only. No helper constructs a cap.
     static std::uint32_t OriginalConditionalIndex(
         const QueueInstanceTable& table, QueueInstanceToken token) {
-        return table.rows_[token.slot].originalConditionalRow;
+        return table.rows_[token.slot].Pending().originalConditionalRow;
     }
     static std::vector<std::uint64_t> OriginalConditionalRecord(
         const QueueInstanceTable& table, std::uint32_t index) {
@@ -92,7 +92,7 @@ struct QueueInstanceTableTestAccess {
     static std::pair<KnownCompletionPredicateV1, std::uint64_t>
     PendingTiming(const QueueInstanceTable& table, QueueInstanceToken token) {
         const auto& row = table.rows_[token.slot];
-        return {row.pendingCompletion, row.pendingLogicalCompletionFrame};
+        return {row.Pending().pendingCompletion, row.Pending().pendingLogicalCompletionFrame};
     }
     static void SetSignalLimits(QueueInstanceTable& table, QueueInstanceToken token,
                                 std::uint64_t mirrorSequence, std::uint64_t attempt) {
@@ -120,32 +120,32 @@ struct QueueInstanceTableTestAccess {
         auto values = MirrorAndReset(table, token);
         const auto& row = table.rows_[token.slot];
         values.insert(values.end(), {static_cast<std::uint64_t>(row.slotState.load()), row.generation,
-            row.pendingVersion.load(), row.pendingNext.version, row.pendingDecision.slot,
-            row.pendingDecision.generation, static_cast<std::uint64_t>(row.pendingActivation.load()),
+            row.Pending().pendingVersion.load(), row.Pending().pendingNext.version, row.Pending().pendingDecision.slot,
+            row.Pending().pendingDecision.generation, static_cast<std::uint64_t>(row.Pending().pendingActivation.load()),
             row.conditionalReserved.load(), row.conditionalReplacementReserved.load(),
-            row.pendingConsumesReset.load(), static_cast<std::uint64_t>(row.failurePhase.load()),
+            row.Pending().pendingConsumesReset.load(), static_cast<std::uint64_t>(row.failurePhase.load()),
             static_cast<std::uint64_t>(row.failureReason), row.failureFrame});
         return values;
     }
     static bool PendingCompletionIdentityEmpty(
         const QueueInstanceTable& table, QueueInstanceToken token) {
         const auto& row = table.rows_[token.slot];
-        return !row.pendingCompletionIsLogicalBoundary &&
-            !row.pendingCompletionHasLogicalFloor &&
-            row.pendingLogicalCompletionFrame == 0 &&
-            !row.pendingRetiredSource.sourceArm.Valid() &&
-            row.pendingRetiredSource.sourceRenderHandle == 0 &&
-            row.pendingRetiredSource.logicalCompletionSequence == 0 &&
-            row.pendingRetiredSource.tombstoneAudioSequence == 0;
+        return !row.Pending().pendingCompletionIsLogicalBoundary &&
+            !row.Pending().pendingCompletionHasLogicalFloor &&
+            row.Pending().pendingLogicalCompletionFrame == 0 &&
+            !row.Pending().pendingRetiredSource.sourceArm.Valid() &&
+            row.Pending().pendingRetiredSource.sourceRenderHandle == 0 &&
+            row.Pending().pendingRetiredSource.logicalCompletionSequence == 0 &&
+            row.Pending().pendingRetiredSource.tombstoneAudioSequence == 0;
     }
     static void SetRejectionState(QueueInstanceTable& table, QueueInstanceToken token, unsigned index, bool enabled) {
         auto& row = table.rows_[token.slot];
         switch (index) {
-            case 0: row.pendingActivation.store(enabled ? ConditionalQueueActivation::Activated : ConditionalQueueActivation::Waiting); break;
-            case 1: row.pendingActivation.store(enabled ? ConditionalQueueActivation::InvalidatedIdentity : ConditionalQueueActivation::Waiting); break;
+            case 0: row.Pending().pendingActivation.store(enabled ? ConditionalQueueActivation::Activated : ConditionalQueueActivation::Waiting); break;
+            case 1: row.Pending().pendingActivation.store(enabled ? ConditionalQueueActivation::InvalidatedIdentity : ConditionalQueueActivation::Waiting); break;
             case 2: row.conditionalReserved.store(enabled); break;
             case 3: row.conditionalReplacementReserved.store(enabled); break;
-            case 4: row.pendingNext.version = enabled ? 99 : row.pendingVersion.load(); break;
+            case 4: row.Pending().pendingNext.version = enabled ? 99 : row.Pending().pendingVersion.load(); break;
             case 5: row.slotState.store(enabled ? QueueInstanceTable::SlotState::Live : QueueInstanceTable::SlotState::Initializing); break;
         }
     }
@@ -232,6 +232,135 @@ harken::QueueInstanceCreateRequest OriginalQueueCreateRequest() {
     request.initial.version = 1;
     request.initial.currentChildOrdinal = 3;
     return request;
+}
+
+TEST(QueueRuntime, FollowingConditionalRequiresActualPredecessorSourceAndSettlesInOrder) {
+    harken::QueueInstanceTable queues(1, 2);
+    harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    auto& arms = engine.timelineArms;
+    std::vector<float> pcm(300, 0.25f);
+    const auto pcmDesc = harkentest::MonoDesc(pcm, 48000);
+    const auto sound = harkentest::ObjectId(47);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(sound, &pcmDesc));
+    harken::QueueInstanceTable::OriginalLifetimePin parent;
+    harken::QueueInstanceToken queue{};
+    ASSERT_TRUE(queues.Acquire(OriginalQueueCreateRequest(), &queue, &parent));
+    auto first = LogicalBoundaryRequest();
+    ASSERT_TRUE(engine.timelineOccurrences.Acquire({11, sound, 0, 5}, &first.successorOccurrence));
+    harken::QueueInstanceTable::OriginalConditionalFutureReservation firstOriginal;
+    harken::PreparedQueueConditionalV1 firstPrepared;
+    harken::ConditionalQueueVersionToken firstVersion{};
+    ASSERT_TRUE(queues.PrepareConditional(queue, first, &firstPrepared, parent, &firstOriginal));
+    ASSERT_TRUE(queues.CommitPreparedConditional(&firstPrepared, &firstVersion));
+
+    const auto media = engine.registry.Lookup(sound);
+    VnVoiceHandle render = 0;
+    ASSERT_EQ(VN_OK, engine.voices.Play(media, 0.0f, 1.0, 0, false, 0, 0, 0,
+        {}, 0, 300, 1, harken::ResampleProfile::LegacyCompatibility, &render,
+        1, UINT32_MAX, 0, true));
+    const auto renderGeneration = static_cast<std::uint32_t>(render >> 32);
+    ASSERT_TRUE(engine.timelineOccurrences.BindCompletionProgress(first.successorOccurrence,
+        renderGeneration, 1, 0));
+    auto* progress = engine.timelineOccurrences.CompletionProgressOf(first.successorOccurrence);
+    ASSERT_TRUE(engine.voices.BindCompletionProgress(render, progress, first.successorOccurrence, 1));
+    harken::VoicePool::PreparedCommitInput physical{};
+    physical.renderHandle = render;
+    ASSERT_TRUE(engine.voices.CaptureReleaseObserver(render, &physical.originalRelease));
+    physical.completionProgress = progress;
+    physical.completionOccurrence = first.successorOccurrence;
+    physical.completionRenderGeneration = renderGeneration;
+    physical.playbackFactsRevision = 1;
+    ASSERT_TRUE(engine.voices.CapturePreparedRoutingV1(render, &physical.routing));
+    harken::VoicePool::PreparedCommitProof voiceProof;
+    ASSERT_TRUE(engine.voices.ProvePreparedCommit(physical, &voiceProof));
+    harken::TimelineArmTable::PreparedCommitInput logical{};
+    logical.startFrame = logical.armDeadline = 300;
+    logical.programGeneration = 11;
+    logical.target.programSemanticFingerprint = 17;
+    logical.target.subjectId = sound;
+    logical.parentGroup = {first.rootDecision};
+    logical.memberIndex = 0;
+    harken::TimelineArmToken sourceArm{};
+    ASSERT_TRUE(arms.PrepareGrouped(static_cast<std::uint32_t>(render), renderGeneration,
+        300, 300, 11, logical.target, logical.parentGroup, 0, &sourceArm));
+    logical.arm = sourceArm;
+    harken::TimelineArmTable::PreparedCommitProof armProof;
+    ASSERT_TRUE(arms.ProvePreparedCommit(logical, &armProof));
+    harken::CommandRecord command{};
+    command.opcode = harken::kOpcodePlay;
+    command.payload.play.handle = command.payload.play.sourceIdentity = render;
+    command.payload.play.batch.batchVersion = harken::kPlayLedBatchVersion;
+    command.payload.play.batch.batchKind = harken::PlayLedBatchKind::TimelineArm;
+    command.payload.play.batch.batchCommandCount = 1;
+    command.payload.play.batch.armToken =
+        (static_cast<std::uint64_t>(sourceArm.generation) << 32) | sourceArm.slot;
+    ASSERT_TRUE(engine.originalSourceSubmissions.CapturePreparedSource(command, armProof, voiceProof, {}));
+    harken::CommandQueue::BatchReservation reservation{};
+    ASSERT_TRUE(engine.commands.ReserveBatch(1, &reservation));
+    harken::CommandQueue::PreparedBatchProof batch;
+    ASSERT_TRUE(engine.commands.ProvePreparedBatch(&reservation, &command, 1, &batch));
+    ASSERT_TRUE(engine.originalSourceSubmissions.BindPreparedChild(batch, 0, 1));
+    harken::VoicePool::ConsumePreparedCommit(std::move(voiceProof));
+    harken::TimelineArmTable::ConsumePreparedCommit(std::move(armProof));
+    engine.originalSourceSubmissions.PublishPreparedChild(command);
+    (void)engine.commands.ConsumePreparedBatch(std::move(batch));
+    harken::QueueInstanceTable::ContinuationSourceBinding sourceBinding;
+    ASSERT_TRUE(engine.originalSourceSubmissions.ProveQueueContinuationSource(sourceArm,
+        engine.timelineOccurrences, first.successorOccurrence, &sourceBinding));
+    for (const auto renderSlot : {sourceArm.renderSlot, sourceArm.renderSlot + 1u}) {
+        harken::TimelineArmToken wrong{};
+        ASSERT_TRUE(arms.ReserveGrouped(renderSlot, renderGeneration, 300, 300, 11,
+            logical.target, logical.parentGroup, 1, &wrong));
+        harken::QueueInstanceTable::ContinuationSourceBinding wrongBinding;
+        EXPECT_FALSE(engine.originalSourceSubmissions.ProveQueueContinuationSource(wrong,
+            engine.timelineOccurrences, first.successorOccurrence, &wrongBinding));
+        EXPECT_FALSE(wrongBinding.Valid());
+    }
+    auto second = LogicalBoundaryRequest(0);
+    second.expectedCurrentVersion = 2;
+    second.rootDecision = {20, 23};
+    second.expectedCurrentOccurrence = first.successorOccurrence;
+    second.successorOccurrence = {39, 41};
+    second.completionIsLogicalBoundary = false;
+    second.completion = BoundPredicate(second.rootDecision, second.expectedCurrentOccurrence, renderGeneration);
+    second.completionOwner = second.completion.owner;
+    second.next.version = 3;
+    second.next.currentChildOrdinal = 3;
+    harken::QueueInstanceTable::OriginalConditionalFutureReservation secondOriginal;
+    harken::PreparedQueueConditionalV1 secondPrepared;
+    harken::ConditionalQueueVersionToken secondVersion{};
+    ASSERT_TRUE(queues.PrepareFollowingConditional(queue, second, firstOriginal, sourceBinding, &secondPrepared, parent, &secondOriginal));
+    ASSERT_TRUE(queues.CommitPreparedConditional(&secondPrepared, &secondVersion));
+    EXPECT_FALSE(queues.ActivateConditional(queue, secondVersion, second.rootDecision,
+        second.expectedCurrentOccurrence));
+    ASSERT_TRUE(queues.ActivateConditional(queue, firstVersion, first.rootDecision,
+        first.expectedCurrentOccurrence));
+    EXPECT_FALSE(queues.ActivateConditional(queue, secondVersion, second.rootDecision,
+        second.expectedCurrentOccurrence));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    engine.nullBackend.Pump(2);
+    ASSERT_TRUE(arms.Publish(sourceArm));
+    arms.ApplyClaimedAudioSlice(sourceArm);
+    ASSERT_TRUE(arms.Start(sourceArm, 2));
+    ASSERT_TRUE(queues.ActivateConditional(queue, secondVersion, second.rootDecision,
+        second.expectedCurrentOccurrence));
+    harken::EffectiveQueueState effective{};
+    ASSERT_TRUE(queues.ResolveEffective(queue, &effective));
+    EXPECT_EQ(3u, effective.version);
+    EXPECT_FALSE(queues.SettleActivated(queue, secondVersion));
+    ASSERT_TRUE(queues.SettleActivated(queue, firstVersion));
+    EXPECT_FALSE(queues.SettleActivated(queue, secondVersion, 1));
+    ASSERT_TRUE(queues.SettleActivated(queue, secondVersion, 2));
+    harken::QueueInstanceSnapshot snapshot{};
+    ASSERT_TRUE(queues.Capture(queue, &snapshot));
+    EXPECT_EQ(3u, snapshot.logicMirror.version);
+    EXPECT_EQ(0u, snapshot.pendingVersion);
+    secondOriginal.Release();
+    firstOriginal.Release();
+    parent.Release();
+    EXPECT_TRUE(queues.Release(queue));
 }
 
 TEST(QueueRuntime, UnusedTablesReserveIdentitySpaceWithoutConstructingRows) {

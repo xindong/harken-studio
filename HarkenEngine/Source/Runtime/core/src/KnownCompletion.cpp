@@ -1,4 +1,5 @@
 #include "harken/core/KnownCompletion.h"
+#include "harken/core/SourcePhase.h"
 
 #include <algorithm>
 #include <cmath>
@@ -31,18 +32,15 @@ bool Multiply(std::uint64_t a, std::uint64_t b,
 
 } // namespace
 
-CompletionPredictability MaterializeKnownCompletion(
+CompletionPredictability ResolveKnownCompletionDuration(
     const KnownCompletionFactsV1& facts,
-    KnownCompletionPredicateV1* out) noexcept {
-    if (out == nullptr || facts.occurrence.generation == 0 ||
-        facts.renderGeneration == 0 || facts.sourceRate == 0 ||
+    std::uint64_t* out) noexcept {
+    if (out == nullptr || facts.sourceRate == 0 ||
         facts.mixRate == 0 || !std::isfinite(facts.pitchRatio) ||
-        facts.pitchRatio <= 0.0f || facts.playbackFactsRevision == 0 ||
-        !ValidPlayableProgramKey(facts.program)) {
+        facts.pitchRatio <= 0.0f) {
         return CompletionPredictability::Invalid;
     }
-    if (!facts.residentExactMedia || facts.sourceRate != facts.mixRate ||
-        facts.pitchRatio != 1.0f || !facts.pitchFixed ||
+    if (!facts.residentExactMedia || !facts.pitchFixed ||
         !facts.serialRender || facts.endMutationPossible ||
         facts.loopCount == 0) {
         return CompletionPredictability::SignalOnly;
@@ -75,12 +73,39 @@ CompletionPredictability MaterializeKnownCompletion(
             return CompletionPredictability::Invalid;
         }
     }
+    const double ratio = static_cast<double>(facts.pitchRatio) *
+        (static_cast<double>(facts.sourceRate) / facts.mixRate);
+    SourcePhaseStep step{};
+    if (!DecodeSourcePhaseStep(ratio, &step)) {
+        return CompletionPredictability::Invalid;
+    }
+    if (facts.authoredDurationFrames != UINT64_MAX &&
+        JumpSourcePhase(step, {}, facts.authoredDurationFrames) < total) {
+        total = facts.authoredDurationFrames;
+    } else if (!FixedSourceOutputFrames(total, ratio, &total)) {
+        return CompletionPredictability::Invalid;
+    }
     if (facts.authoredDurationFrames != UINT64_MAX) {
         total = std::min(total, facts.authoredDurationFrames);
     }
     if (total == 0) {
         return CompletionPredictability::Invalid;
     }
+    *out = total;
+    return CompletionPredictability::KnownFinite;
+}
+
+CompletionPredictability MaterializeKnownCompletion(
+    const KnownCompletionFactsV1& facts,
+    KnownCompletionPredicateV1* out) noexcept {
+    if (out == nullptr || facts.occurrence.generation == 0 ||
+        facts.renderGeneration == 0 || facts.playbackFactsRevision == 0 ||
+        !ValidPlayableProgramKey(facts.program)) {
+        return CompletionPredictability::Invalid;
+    }
+    std::uint64_t total = 0;
+    const auto predictability = ResolveKnownCompletionDuration(facts, &total);
+    if (predictability != CompletionPredictability::KnownFinite) return predictability;
     std::uint64_t complete = 0;
     if (!Add(facts.absoluteLogicalStartFrame, total, &complete)) {
         return CompletionPredictability::Invalid;

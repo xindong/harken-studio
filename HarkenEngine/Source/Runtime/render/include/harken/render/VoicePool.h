@@ -49,6 +49,7 @@
 namespace harken {
 
 class DecisionTable;
+class OccurrenceStatePool;
 class OriginalSourceSubmissionRegistry;
 namespace detail { struct VoicePoolReleaseTestAccess; }
 
@@ -752,6 +753,8 @@ public:
         VoicePool* pool_ = nullptr;
         Slot* slot_ = nullptr;
     };
+    bool CapturePreparedCompletionProgress(const PreparedCommitProof& proof,
+        const CompletionProgressRow** progress, OccurrenceToken* occurrence) const noexcept;
     bool ProvePreparedCommit(const PreparedCommitInput& expected,
                              PreparedCommitProof* out) noexcept;
     static void ConsumePreparedCommit(PreparedCommitProof&& proof) noexcept;
