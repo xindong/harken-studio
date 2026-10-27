@@ -98,6 +98,7 @@ public:
     void DiscardIndependentWork() noexcept override {
         immediate_.Discard(arenaCapacityRefused_);
         arenaCapacityRefused_ = false;
+        if (queues_ != nullptr) queues_->CompleteAudioConditionalReads();
     }
 
     void SetArenaAdmission(std::uint32_t availableBytes,
@@ -132,6 +133,7 @@ public:
             return false;
         }
         queues_ = &queues;
+        queues.EnableConditionalReadReclamation();
         frontier_.AttachQueues(queues);
         laneFrontier_.AttachQueues(queues);
         armGroups_ = &armGroups;
@@ -902,6 +904,7 @@ public:
         authoredStopFenceCount_ = 0;
         voices_.FinalizeTimelineQuantum(quantumIndex);
         immediate_.Finish();
+        if (queues_ != nullptr) queues_->CompleteAudioConditionalReads();
     }
 
 private:

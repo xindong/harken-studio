@@ -2793,9 +2793,6 @@ struct GenuineInitialSingleClockHarness {
         clock.Release();
         original.Release();
         parent.Release();
-        ASSERT_TRUE(engine.CancelOriginalQueueLaneGroups(cohort, engine.mixer.BlocksRendered()));
-        for (std::uint32_t index = 0; index < groups.size(); ++index)
-            EXPECT_FALSE(Original(index).Valid());
         episode.bundle.Release();
         episode.originalLedger.Release();
         episode.originalBody.Release();
@@ -2805,6 +2802,10 @@ struct GenuineInitialSingleClockHarness {
         const auto before = engine.mixer.BlocksRendered();
         engine.nullBackend.Pump(1);
         ASSERT_EQ(before + 1u, engine.mixer.BlocksRendered());
+        engine.queueInstances.CollectRetiredConditionalReads();
+        ASSERT_TRUE(engine.CancelOriginalQueueLaneGroups(cohort, engine.mixer.BlocksRendered()));
+        for (std::uint32_t index = 0; index < groups.size(); ++index)
+            EXPECT_FALSE(Original(index).Valid());
         ASSERT_GT(engine.mixer.BlocksRendered(), terminalSequence);
         ASSERT_TRUE(engine.timelineOccurrences.ReleaseAfterFence(episode.occurrence,
             engine.mixer.BlocksRendered(), &episode.originalOccurrence));
@@ -4958,6 +4959,11 @@ struct EngineOriginalConditionalHolderHarness {
 
     void Cleanup() {
         ASSERT_TRUE(OwnReturned());
+        if (!initializing) {
+            // A real empty callback acknowledges the ended live Queue body.
+            engine.nullBackend.Pump(1);
+            engine.queueInstances.CollectRetiredConditionalReads();
+        }
         ASSERT_TRUE(engine.CancelOriginalQueueLaneGroups(cohort, 0));
         for (const auto& group : groups)
             if (group.Exact()) EXPECT_FALSE(engine.originalQueueGroupHolders[group.committedRow].Valid());
@@ -4977,7 +4983,7 @@ struct EngineOriginalConditionalHolderHarness {
         EXPECT_EQ(0u, engine.queueInstances.LiveCount());
         EXPECT_EQ(0u, engine.timelineOccurrences.OccupiedCount());
         EXPECT_EQ(0u, engine.decisions.LiveCount());
-        EXPECT_EQ(0u, engine.mixer.BlocksRendered());
+        EXPECT_EQ(initializing ? 0u : 1u, engine.mixer.BlocksRendered());
     }
 };
 
@@ -6984,7 +6990,7 @@ TEST(OriginalSourceSubmission, ReplacementBatchOneActualOldWriteRefusesTheEntire
 
 void CheckBoundC1RequestPreservesActualCurrent(std::uint32_t frames, bool prepareUnbound = false,
     bool beforePlacement = false) {
-    auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
+    auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 1);
     GenuineBoundC1ProjectionHarness state(*owned);
     ASSERT_NO_FATAL_FAILURE(state.Prepare(frames, true, prepareUnbound, beforePlacement));
     ASSERT_NO_FATAL_FAILURE(state.actual.PublishOriginalForAudio());
@@ -7022,6 +7028,45 @@ void CheckBoundC1RequestPreservesActualCurrent(std::uint32_t frames, bool prepar
     EXPECT_EQ(harken::FrontierReceiptOutcome::Applied, current.outcome);
     EXPECT_TRUE(owned->decisions.Contains(state.actual.old.decisions[3]));
     EXPECT_FALSE(owned->decisions.IsCancelled(state.actual.old.decisions[3]));
+    state.projection.Return();
+    state.actual.old.clock.Release();
+    state.actual.old.original.Release();
+    owned->nullBackend.Pump(1);
+    auto& queues = owned->queueInstances;
+    queues.CollectRetiredConditionalReads();
+    // Reuse the only Original slot while the cancelled Queue remains live.
+    harken::QueueInstanceCreateRequest create{};
+    create.world = state.actual.old.episode.decisionRequest.world;
+    create.rootInstance = state.actual.old.episode.parent;
+    create.containerStableId = harkentest::ObjectId(13);
+    create.programSemanticFingerprint = state.actual.old.fingerprint;
+    create.childCount = 2;
+    create.initial = before.logicMirror;
+    harken::QueueInstanceToken otherQueue{};
+    harken::QueueInstanceTable::OriginalLifetimePin otherParent;
+    ASSERT_TRUE(queues.Acquire(create, &otherQueue, &otherParent));
+    harken::ConditionalQueuePrepareRequest request{};
+    request.expectedCurrentVersion = create.initial.version;
+    request.rootDecision = state.actual.old.decisions[3];
+    request.expectedCurrentOccurrence = state.actual.old.episode.occurrence;
+    request.successorOccurrence = state.actual.old.episode.occurrence;
+    request.completionIsLogicalBoundary = true;
+    request.next = create.initial;
+    ++request.next.version;
+    harken::PreparedQueueConditionalV1 prepared;
+    harken::QueueInstanceTable::OriginalConditionalFutureReservation otherOriginal;
+    harken::ConditionalQueueVersionToken otherVersion{};
+    ASSERT_TRUE(queues.PrepareConditional(otherQueue, request, &prepared, otherParent, &otherOriginal));
+    ASSERT_TRUE(queues.CommitPreparedConditional(&prepared, &otherVersion));
+    ASSERT_TRUE(queues.Capture(state.actual.old.queue, &after));
+    EXPECT_EQ(0u, after.pendingVersion);
+    EXPECT_EQ(before.logicMirror.version, after.logicMirror.version);
+    ASSERT_TRUE(queues.RetireConditionalForAbort(otherQueue, otherVersion, request.rootDecision));
+    otherOriginal.Release();
+    otherParent.Release();
+    owned->nullBackend.Pump(1);
+    queues.CollectRetiredConditionalReads();
+    ASSERT_TRUE(queues.Release(otherQueue));
     ASSERT_NO_FATAL_FAILURE(state.Cleanup(false));
 }
 

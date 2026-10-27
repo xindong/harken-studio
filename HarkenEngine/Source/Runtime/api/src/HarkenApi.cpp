@@ -9660,6 +9660,7 @@ bool TryReleaseOccurrenceAfterFence(harken::Engine& engine, harken::OccurrenceTo
     std::uint64_t observedAudioSequence) noexcept;
 
 void ServiceQueueProgramBanks(harken::Engine& engine) noexcept {
+    engine.queueInstances.CollectRetiredConditionalReads();
     engine.originalSourceSubmissions.CollectContinuationPublications();
     if (engine.queueProgramBanks.ConstructedCount() == 0) {
         (void)engine.queueScheduleStorage.CollectUnused();

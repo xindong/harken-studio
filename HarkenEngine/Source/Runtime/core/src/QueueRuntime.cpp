@@ -1519,10 +1519,20 @@ bool QueueInstanceTable::CaptureRowSnapshot(
     return true;
 }
 
+const QueueInstanceTable::ConditionalState* QueueInstanceTable::ReadConditionalHead(
+    const Row& row) const noexcept {
+    const auto* head = &row.Pending();
+#if !defined(HARKEN_RT_QUALIFICATION)
+    if (conditionalHeadReadHookForTest_ != nullptr)
+        conditionalHeadReadHookForTest_(conditionalHeadReadContextForTest_);
+#endif
+    return head;
+}
+
 const QueueInstanceTable::ConditionalState* QueueInstanceTable::FindConditional(
-    const Row& row, ConditionalQueueVersionToken version) noexcept {
+    const Row& row, ConditionalQueueVersionToken version) const noexcept {
     if (!version.Valid()) return nullptr;
-    for (auto* state = &row.Pending(); state != nullptr;
+    for (auto* state = ReadConditionalHead(row); state != nullptr;
          state = state->following.load(std::memory_order_acquire)) {
         if (state->pendingVersion.load(std::memory_order_acquire) == version.version) return state;
     }
@@ -1538,7 +1548,7 @@ bool QueueInstanceTable::ResolveConditionalVersion(QueueInstanceToken token, Dec
     ConditionalQueueVersionToken* out) const noexcept {
     const auto* row = Resolve(token);
     if (row == nullptr || out == nullptr || !decision.Valid()) return false;
-    for (auto* state = &row->Pending(); state != nullptr;
+    for (auto* state = ReadConditionalHead(*row); state != nullptr;
          state = state->following.load(std::memory_order_acquire)) {
         const auto version = state->pendingVersion.load(std::memory_order_acquire);
         if (version != 0 && SameDecision(state->pendingDecision, decision)) {
@@ -1549,16 +1559,77 @@ bool QueueInstanceTable::ResolveConditionalVersion(QueueInstanceToken token, Dec
     return false;
 }
 
+void QueueInstanceTable::CompleteAudioConditionalReads() noexcept {
+    // Acquiring the request also acquires the preceding head publication. A later
+    // callback cannot enter through a detached head after publishing this ACK.
+    conditionalReadRetirementAck_.store(
+        conditionalReadRetirementRequest_.load(std::memory_order_acquire),
+        std::memory_order_release);
+}
+
+void QueueInstanceTable::CollectRetiredConditionalReads() noexcept {
+    const auto acknowledged = conditionalReadRetirementAck_.load(std::memory_order_acquire);
+    auto** link = &retiredConditionalReads_;
+    while (*link != nullptr) {
+        auto& original = **link;
+        if (conditionalReadReclamationEnabled_ &&
+            (original.readRetirementEpoch == UINT64_MAX || original.readRetirementEpoch > acknowledged)) {
+            link = &original.nextReadRetirement;
+            continue;
+        }
+        *link = original.nextReadRetirement;
+        original.nextReadRetirement = nullptr;
+        original.readRetirementEpoch = 0;
+        auto* body = original.body;
+        assert(body != nullptr && original.state == OriginalConditionalState::Retired);
+        body->following.store(nullptr, std::memory_order_relaxed);
+        body->pendingVersion.store(0, std::memory_order_relaxed);
+        body->originalConditionalRow = UINT32_MAX;
+        body->originalConditionalMarker = 0;
+        original.predecessor.Release();
+        ReclaimOriginalConditionalIfUnowned(original);
+    }
+}
+
+void QueueInstanceTable::RetireDetachedConditional(Row& row, ConditionalState& state) noexcept {
+    if (state.originalConditionalRow != UINT32_MAX) {
+        auto& original = originalConditionalRows_[state.originalConditionalRow];
+        // A first unbound clock whose two native groups are still private has
+        // never exposed this Queue to audio. Preserve immediate failed-Post
+        // rollback without treating a merely Waiting live successor as private.
+        const bool unpublishedInitial = original.clockState == OriginalConditionalClockState::Unbound &&
+            original.clockPool != nullptr && original.clockGroups[0].Valid() && original.clockGroups[1].Valid() &&
+            !original.predecessor.Valid() && state.following.load(std::memory_order_acquire) == nullptr &&
+            state.pendingActivation.load(std::memory_order_acquire) == ConditionalQueueActivation::Waiting &&
+            row.frontierInitial == nullptr && row.initialActivationSequence.load(std::memory_order_acquire) == 0 &&
+            original.clockPool->PrivatePlan03GroupBindable(original.clockGroups[0].Identity()) &&
+            original.clockPool->PrivatePlan03GroupBindable(original.clockGroups[1].Identity());
+        if (conditionalReadReclamationEnabled_ && !unpublishedInitial &&
+            row.slotState.load(std::memory_order_acquire) == SlotState::Live) {
+            assert(original.readRetirementEpoch == 0);
+            const auto previous = conditionalReadRetirementRequest_.load(std::memory_order_relaxed);
+            // Exhaustion quarantines retired storage instead of wrapping to an old ACK.
+            const auto epoch = previous == UINT64_MAX ? UINT64_MAX : previous + 1u;
+            original.readRetirementEpoch = epoch;
+            original.nextReadRetirement = retiredConditionalReads_;
+            retiredConditionalReads_ = &original;
+            conditionalReadRetirementRequest_.store(epoch, std::memory_order_release);
+            EndOriginalConditionalFuture(row, state);
+            return;
+        }
+        original.predecessor.Release();
+    }
+    state.following.store(nullptr, std::memory_order_release);
+    state.pendingVersion.store(0, std::memory_order_release);
+    EndOriginalConditionalFuture(row, state);
+}
+
 void QueueInstanceTable::EndConditionalChain(Row& row) noexcept {
     auto* state = &row.Pending();
     row.conditionalHead.store(&row.initialConditional, std::memory_order_release);
     while (state != nullptr) {
-        auto* next = state->following.exchange(nullptr, std::memory_order_acq_rel);
-        state->pendingVersion.store(0, std::memory_order_release);
-        if (state->originalConditionalRow != UINT32_MAX) {
-            originalConditionalRows_[state->originalConditionalRow].predecessor.Release();
-            EndOriginalConditionalFuture(row, *state);
-        }
+        auto* next = state->following.load(std::memory_order_acquire);
+        RetireDetachedConditional(row, *state);
         state = next;
     }
     row.initialConditional.pendingVersion.store(0, std::memory_order_release);
@@ -1629,11 +1700,12 @@ bool QueueInstanceTable::ResolveEffective(
         EffectiveQueueState state{};
         if (!LoadMirror(*row, &state)) continue;
         auto effective = state;
-        for (auto* pending = &row->Pending(); pending != nullptr;
+        for (auto* pending = ReadConditionalHead(*row); pending != nullptr;
              pending = pending->following.load(std::memory_order_acquire)) {
-            if (pending->pendingVersion.load(std::memory_order_acquire) <= effective.version ||
-                pending->pendingActivation.load(std::memory_order_acquire) != ConditionalQueueActivation::Activated)
-                break;
+            const auto version = pending->pendingVersion.load(std::memory_order_acquire);
+            if (version == 0) break;
+            if (version <= effective.version) continue;
+            if (pending->pendingActivation.load(std::memory_order_acquire) != ConditionalQueueActivation::Activated) break;
             effective = pending->pendingNext;
         }
         if (effective.version > state.version) {
@@ -2425,8 +2497,10 @@ void QueueInstanceTable::EndOriginalConditionalFuture(Row& row, ConditionalState
     if (original.clockState == OriginalConditionalClockState::Unbound ||
         original.clockState == OriginalConditionalClockState::Bound)
         original.clockState = OriginalConditionalClockState::Retired;
-    state.originalConditionalRow = UINT32_MAX;
-    state.originalConditionalMarker = 0;
+    if (original.readRetirementEpoch == 0) {
+        state.originalConditionalRow = UINT32_MAX;
+        state.originalConditionalMarker = 0;
+    }
     if (originalConditionalBaselineResolver_ != nullptr) {
         auto* baseline = originalConditionalBaselineResolver_(
             originalConditionalOwnerContext_, *this, original.queue);
@@ -2448,6 +2522,8 @@ void QueueInstanceTable::EndOriginalConditionalFuture(Row& row, ConditionalState
 void QueueInstanceTable::EndOriginalConditionalAssociationsAfterQuiescence() noexcept {
     // Only owning Engine teardown enters after actual callback quiescence. This
     // returns genuine retained native associations, never foreign loan counts.
+    conditionalReadReclamationEnabled_ = false;
+    CollectRetiredConditionalReads();
     for (auto& row : rows_) {
         auto* state = &row.Pending();
         row.conditionalHead.store(&row.initialConditional, std::memory_order_release);
@@ -2475,7 +2551,8 @@ void QueueInstanceTable::EndOriginalConditionalsForQuiescentOwnerTeardown() noex
 
 void QueueInstanceTable::ReclaimOriginalConditionalIfUnowned(
     OriginalConditionalRow& original) noexcept {
-    if (original.state != OriginalConditionalState::Retired || original.loans != 0) return;
+    if (original.state != OriginalConditionalState::Retired || original.loans != 0 ||
+        original.readRetirementEpoch != 0) return;
     for (auto& group : original.clockGroups) group.Release();
     original.clockPool = nullptr;
     original.clockRelativeFrames = {};
@@ -2545,6 +2622,7 @@ bool QueueInstanceTable::PrepareConditionalInternal(
     OriginalConditionalFutureReservation* outOriginal,
     const OriginalConditionalFutureReservation* predecessor,
     const ContinuationSourceBinding* source) noexcept {
+    CollectRetiredConditionalReads();
     const auto* sourceArms = source == nullptr ? nullptr : source->arms_;
     const auto sourceArm = source == nullptr ? TimelineArmToken{} : source->arm_;
     OriginalConditionalFutureReservation predecessorLoan;
@@ -2699,7 +2777,7 @@ bool QueueInstanceTable::PrepareConditionalInternal(
             std::memory_order_acquire)) {
         return false;
     }
-    auto& state = prior == nullptr ? row.Pending() : originalConditionalRows_[originalIndex].followingBody;
+    auto& state = outOriginal == nullptr ? row.Pending() : originalConditionalRows_[originalIndex].followingBody;
     state.following.store(nullptr, std::memory_order_relaxed);
     state.pendingVersion.store(0, std::memory_order_relaxed);
     state.sourceArms = sourceArms;
@@ -2770,6 +2848,10 @@ bool QueueInstanceTable::PrepareConditionalInternal(
         outOriginal->queue_ = token;
         outOriginal->version_ = original.version;
     }
+    // Each owned root uses the same stable storage as a following node. The
+    // empty row body can then be republished without overwriting an old reader.
+    if (prior == nullptr && outOriginal != nullptr)
+        row.conditionalHead.store(&state, std::memory_order_release);
     out->owner_ = this;
     out->queue_ = token;
     out->version_.version = request.next.version;
@@ -2964,23 +3046,29 @@ bool QueueInstanceTable::CancelPreparedConditional(
         return false;
     }
     const bool isHead = &state == &row.Pending();
-    if (state.originalConditionalRow != UINT32_MAX)
-        originalConditionalRows_[state.originalConditionalRow].predecessor.Release();
-    EndOriginalConditionalFuture(row, state);
-    state.pendingDecision = {};
-    state.pendingExpectedCurrent = {};
-    state.pendingSuccessor = {};
-    state.pendingCompletion = {};
-    state.pendingCompletionOwner = {};
-    state.pendingCompletionIsLogicalBoundary = false;
-    state.pendingCompletionHasLogicalFloor = false;
-    state.pendingLogicalCompletionFrame = 0;
-    state.pendingRetiredSource = {};
-    state.pendingNext = {};
+    const bool ownedHead = isHead && state.originalConditionalRow != UINT32_MAX;
+    if (ownedHead) {
+        row.conditionalHead.store(&row.initialConditional, std::memory_order_release);
+        RetireDetachedConditional(row, state);
+    } else {
+        if (state.originalConditionalRow != UINT32_MAX)
+            originalConditionalRows_[state.originalConditionalRow].predecessor.Release();
+        EndOriginalConditionalFuture(row, state);
+        state.pendingDecision = {};
+        state.pendingExpectedCurrent = {};
+        state.pendingSuccessor = {};
+        state.pendingCompletion = {};
+        state.pendingCompletionOwner = {};
+        state.pendingCompletionIsLogicalBoundary = false;
+        state.pendingCompletionHasLogicalFloor = false;
+        state.pendingLogicalCompletionFrame = 0;
+        state.pendingRetiredSource = {};
+        state.pendingNext = {};
+        state.pendingActivation.store(ConditionalQueueActivation::Waiting,
+                                    std::memory_order_relaxed);
+        state.pendingConsumesReset.store(false, std::memory_order_relaxed);
+    }
     if (isHead) row.nextStateOwner = NextStateOwner::None;
-    state.pendingActivation.store(ConditionalQueueActivation::Waiting,
-                                std::memory_order_relaxed);
-    state.pendingConsumesReset.store(false, std::memory_order_relaxed);
     row.conditionalReserved.store(false, std::memory_order_release);
     prepared->owner_ = nullptr;
     prepared->queue_ = {};
@@ -3305,11 +3393,6 @@ bool QueueInstanceTable::SettleActivated(
         row->Pending().pendingNext.version, facts);
     auto& settled = row->Pending();
     auto* following = settled.following.load(std::memory_order_acquire);
-    settled.pendingResetIntent = 0;
-    if (settled.originalConditionalRow != UINT32_MAX)
-        originalConditionalRows_[settled.originalConditionalRow].predecessor.Release();
-    settled.pendingVersion.store(0, std::memory_order_release);
-    settled.following.store(nullptr, std::memory_order_release);
     if (following == nullptr) {
         row->nextStateOwner = NextStateOwner::None;
         row->initialConditional.pendingVersion.store(0, std::memory_order_relaxed);
@@ -3317,7 +3400,7 @@ bool QueueInstanceTable::SettleActivated(
     }
     row->conditionalHead.store(following != nullptr ? following : &row->initialConditional,
         std::memory_order_release);
-    EndOriginalConditionalFuture(*row, settled);
+    RetireDetachedConditional(*row, settled);
     if (following == nullptr) {
         auto& empty = row->initialConditional;
         empty.sourceArms = nullptr;
@@ -3581,9 +3664,7 @@ bool QueueInstanceTable::RollbackUnpublishedConditional(
         row->conditionalHead.store(&row->initialConditional, std::memory_order_release);
         row->nextStateOwner = NextStateOwner::None;
     }
-    state->pendingVersion.store(0, std::memory_order_release);
-    original.predecessor.Release();
-    EndOriginalConditionalFuture(*row, *state);
+    RetireDetachedConditional(*row, *state);
     return true;
 }
 

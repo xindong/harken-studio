@@ -895,12 +895,8 @@ private:
         // excluded every Old C1 writer; New groups remain genuinely private.
         auto* suffix = live.Pending().following.exchange(nullptr, std::memory_order_acq_rel);
         while (suffix != nullptr) {
-            auto* next = suffix->following.exchange(nullptr, std::memory_order_acq_rel);
-            suffix->pendingVersion.store(0, std::memory_order_release);
-            if (suffix->originalConditionalRow != UINT32_MAX) {
-                queues.originalConditionalRows_[suffix->originalConditionalRow].predecessor.Release();
-                queues.EndOriginalConditionalFuture(live, *suffix);
-            }
+            auto* next = suffix->following.load(std::memory_order_acquire);
+            queues.RetireDetachedConditional(live, *suffix);
             suffix = next;
         }
         old.selectedFutureConsumed = true;

@@ -6539,15 +6539,18 @@ bool OriginalImmediateLaneConditionalProjection::TryRetireNativeConditional(
         row->nextStateOwner != QueueInstanceTable::NextStateOwner::RealConditional ||
         row->Pending().pendingActivation.load(std::memory_order_acquire) != ConditionalQueueActivation::Waiting ||
         row->Pending().pendingConsumesReset.load(std::memory_order_acquire) ||
+        row->Pending().following.load(std::memory_order_acquire) != nullptr ||
         row->conditionalReserved.load(std::memory_order_acquire)) return false;
     bool expected = false;
     if (!row->conditionalReplacementReserved.compare_exchange_strong(expected, true,
             std::memory_order_acq_rel, std::memory_order_acquire)) return false;
-    // The exact C1 lease is already LogicFinal/Cancelled and all captured readers
-    // are strictly behind the supplied real watermark. No old frontier is invalidated.
-    queues.EndOriginalConditionalFuture(*row);
+    // The exact C1 lease is already LogicFinal/Cancelled. Other Queue traversals
+    // may still hold this head, so detach it before requesting read retirement.
+    auto& retired = row->Pending();
+    row->conditionalHead.store(&row->initialConditional, std::memory_order_release);
     row->Pending().pendingVersion.store(0, std::memory_order_release);
     row->nextStateOwner = QueueInstanceTable::NextStateOwner::None;
+    queues.RetireDetachedConditional(*row, retired);
     row->Pending().pendingCompletionIsLogicalBoundary = false;
     row->Pending().pendingCompletionHasLogicalFloor = false;
     row->Pending().pendingLogicalCompletionFrame = 0;

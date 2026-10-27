@@ -13,7 +13,9 @@
 #include "Engine.h"
 
 #include <gtest/gtest.h>
+#include <chrono>
 #include <memory>
+#include <thread>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -234,7 +236,7 @@ harken::QueueInstanceCreateRequest OriginalQueueCreateRequest() {
     return request;
 }
 
-TEST(QueueRuntime, FollowingConditionalRequiresActualPredecessorSourceAndSettlesInOrder) {
+void CheckFollowingConditionalSettlement(unsigned pausedReader = 0) {
     harken::QueueInstanceTable queues(1, 2);
     harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -350,7 +352,63 @@ TEST(QueueRuntime, FollowingConditionalRequiresActualPredecessorSourceAndSettles
     ASSERT_TRUE(queues.ResolveEffective(queue, &effective));
     EXPECT_EQ(3u, effective.version);
     EXPECT_FALSE(queues.SettleActivated(queue, secondVersion));
-    ASSERT_TRUE(queues.SettleActivated(queue, firstVersion));
+#if !defined(HARKEN_RT_QUALIFICATION)
+    if (pausedReader != 0) {
+        queues.EnableConditionalReadReclamation();
+        struct PausedRead {
+            std::atomic<bool> captured{false};
+            std::atomic<bool> resume{false};
+            std::atomic<bool> timedOut{false};
+            bool found = false;
+            harken::ConditionalQueueVersionToken version{};
+            harken::EffectiveQueueState effective{};
+        } read;
+        queues.SetConditionalHeadReadHookForTest([](void* context) noexcept {
+            auto& paused = *static_cast<PausedRead*>(context);
+            paused.captured.store(true, std::memory_order_release);
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+            while (!paused.resume.load(std::memory_order_acquire)) {
+                if (std::chrono::steady_clock::now() >= deadline) {
+                    paused.timedOut.store(true, std::memory_order_release);
+                    return;
+                }
+                std::this_thread::yield();
+            }
+        }, &read);
+        std::thread reader([&] {
+            if (pausedReader == 1)
+                read.found = queues.ProvePendingConditionalIdentity(queue, secondVersion, second.rootDecision);
+            else if (pausedReader == 2)
+                read.found = queues.ResolveConditionalVersion(queue, second.rootDecision, &read.version);
+            else
+                read.found = queues.ResolveEffective(queue, &read.effective);
+        });
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!read.captured.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::yield();
+        const bool captured = read.captured.load(std::memory_order_acquire);
+        EXPECT_TRUE(captured);
+        if (captured) {
+            EXPECT_TRUE(queues.SettleActivated(queue, firstVersion));
+            firstOriginal.Release();
+            // An attempted collection before the paused callback exits cannot break its traversal.
+            queues.CollectRetiredConditionalReads();
+        }
+        read.resume.store(true, std::memory_order_release);
+        reader.join();
+        queues.SetConditionalHeadReadHookForTest(nullptr, nullptr);
+        ASSERT_TRUE(captured);
+        EXPECT_FALSE(read.timedOut.load(std::memory_order_acquire));
+        EXPECT_TRUE(read.found);
+        if (pausedReader == 2) EXPECT_EQ(secondVersion.version, read.version.version);
+        if (pausedReader == 3) EXPECT_EQ(3u, read.effective.version);
+        queues.CompleteAudioConditionalReads();
+        queues.CollectRetiredConditionalReads();
+    } else
+#endif
+    {
+        ASSERT_TRUE(queues.SettleActivated(queue, firstVersion));
+    }
     EXPECT_FALSE(queues.SettleActivated(queue, secondVersion, 1));
     ASSERT_TRUE(queues.SettleActivated(queue, secondVersion, 2));
     harken::QueueInstanceSnapshot snapshot{};
@@ -360,8 +418,55 @@ TEST(QueueRuntime, FollowingConditionalRequiresActualPredecessorSourceAndSettles
     secondOriginal.Release();
     firstOriginal.Release();
     parent.Release();
+    if (pausedReader != 0) {
+        // The last body remains pinned after logical completion until a later audio ACK.
+        queues.CollectRetiredConditionalReads();
+        EXPECT_FALSE(queues.Release(queue));
+        queues.CompleteAudioConditionalReads();
+        queues.CollectRetiredConditionalReads();
+    }
     EXPECT_TRUE(queues.Release(queue));
 }
+
+TEST(QueueRuntime, FollowingConditionalRequiresActualPredecessorSourceAndSettlesInOrder) {
+    CheckFollowingConditionalSettlement();
+}
+
+#if !defined(HARKEN_RT_QUALIFICATION)
+TEST(QueueRuntime, FollowingIdentitySurvivesConcurrentHeadSettlement) {
+    CheckFollowingConditionalSettlement(1);
+}
+TEST(QueueRuntime, FollowingDecisionLookupSurvivesConcurrentHeadSettlement) {
+    CheckFollowingConditionalSettlement(2);
+}
+TEST(QueueRuntime, EffectiveFollowingStateSurvivesConcurrentHeadSettlement) {
+    CheckFollowingConditionalSettlement(3);
+}
+
+TEST(QueueRuntime, PreparedRootStorageWaitsForAudioReadsBeforeReuse) {
+    harken::QueueInstanceTable queues(1, 1);
+    queues.EnableConditionalReadReclamation();
+    harken::QueueInstanceToken queue{};
+    harken::QueueInstanceTable::OriginalLifetimePin parent;
+    ASSERT_TRUE(queues.Acquire(OriginalQueueCreateRequest(), &queue, &parent));
+    const auto request = LogicalBoundaryRequest();
+    harken::QueueInstanceTable::OriginalConditionalFutureReservation original;
+    harken::PreparedQueueConditionalV1 prepared;
+    ASSERT_TRUE(queues.PrepareConditional(queue, request, &prepared, parent, &original));
+    ASSERT_TRUE(queues.CancelPreparedConditional(&prepared));
+    original.Release();
+    queues.CollectRetiredConditionalReads();
+    EXPECT_FALSE(queues.PrepareConditional(queue, request, &prepared, parent, &original));
+    queues.CompleteAudioConditionalReads();
+    ASSERT_TRUE(queues.PrepareConditional(queue, request, &prepared, parent, &original));
+    ASSERT_TRUE(queues.CancelPreparedConditional(&prepared));
+    original.Release();
+    queues.CompleteAudioConditionalReads();
+    queues.CollectRetiredConditionalReads();
+    parent.Release();
+    EXPECT_TRUE(queues.Release(queue));
+}
+#endif
 
 TEST(QueueRuntime, UnusedTablesReserveIdentitySpaceWithoutConstructingRows) {
     harken::QueueInstanceTable queues(harken::kMaxQueueInstancesHard,

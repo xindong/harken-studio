@@ -1100,6 +1100,17 @@ public:
         OriginalConditionalFutureReservation* outOriginal) noexcept;
     bool ResolveConditionalVersion(QueueInstanceToken token, DecisionToken decision,
         ConditionalQueueVersionToken* out) const noexcept;
+    // Attach before callbacks start. Audio acknowledges only after its final Queue read.
+    void EnableConditionalReadReclamation() noexcept { conditionalReadReclamationEnabled_ = true; }
+    void CompleteAudioConditionalReads() noexcept;
+    void CollectRetiredConditionalReads() noexcept;
+#if !defined(HARKEN_RT_QUALIFICATION)
+    using ConditionalHeadReadHookForTest = void (*)(void*) noexcept;
+    void SetConditionalHeadReadHookForTest(ConditionalHeadReadHookForTest hook, void* context) noexcept {
+        conditionalHeadReadHookForTest_ = hook;
+        conditionalHeadReadContextForTest_ = context;
+    }
+#endif
     QueueConditionalProofStatus CaptureConditionalSourceDelay(QueueInstanceToken token,
         ConditionalQueueVersionToken version, std::uint64_t* delay) const noexcept;
     bool ConditionalSourceReady(QueueInstanceToken token,
@@ -1397,6 +1408,8 @@ private:
         std::uint32_t generation = 1;
         std::uint64_t marker = 0;
         std::uint32_t loans = 0;
+        std::uint64_t readRetirementEpoch = 0;
+        OriginalConditionalRow* nextReadRetirement = nullptr;
         OriginalLifetimePin parent;
         OriginalConditionalFutureReservation predecessor;
         ConditionalState followingBody{};
@@ -1449,8 +1462,10 @@ private:
     static bool ValidateProjection(const ConditionalQueuePrepareRequest& request,
         const EffectiveQueueState& current, std::uint32_t childCount,
         EffectiveQueueState* first, std::uint32_t* count) noexcept;
-    static ConditionalState* FindConditional(Row& row, ConditionalQueueVersionToken version) noexcept;
-    static const ConditionalState* FindConditional(const Row& row, ConditionalQueueVersionToken version) noexcept;
+    ConditionalState* FindConditional(Row& row, ConditionalQueueVersionToken version) noexcept;
+    const ConditionalState* FindConditional(const Row& row, ConditionalQueueVersionToken version) const noexcept;
+    const ConditionalState* ReadConditionalHead(const Row& row) const noexcept;
+    void RetireDetachedConditional(Row& row, ConditionalState& state) noexcept;
     void EndConditionalChain(Row& row) noexcept;
     bool FollowingSourceAdmitted(const ConditionalState& state) const noexcept;
     // Only the actual Engine issuer can enter this producer-private finalizer.
@@ -1555,6 +1570,14 @@ private:
     bool (*prepareRowStorage_)(void*, std::uint32_t) noexcept = nullptr;
     std::uint32_t originalConditionalCapacity_ = 0;
     std::uint64_t nextOriginalConditionalFactoryMarker_ = 0;
+    bool conditionalReadReclamationEnabled_ = false;
+    std::atomic<std::uint64_t> conditionalReadRetirementRequest_{0};
+    std::atomic<std::uint64_t> conditionalReadRetirementAck_{0};
+    OriginalConditionalRow* retiredConditionalReads_ = nullptr;
+#if !defined(HARKEN_RT_QUALIFICATION)
+    ConditionalHeadReadHookForTest conditionalHeadReadHookForTest_ = nullptr;
+    void* conditionalHeadReadContextForTest_ = nullptr;
+#endif
     void* originalConditionalOwnerContext_ = nullptr;
     OriginalConditionalBaselineResolver originalConditionalBaselineResolver_ = nullptr;
     OriginalConditionalAssociationEnding originalConditionalAssociationEnding_ = nullptr;
