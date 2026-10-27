@@ -134,9 +134,13 @@ public:
     static void resyncItemToRuntime(ProjectItem* item);
     static void resyncItemsToRuntime(std::span<ProjectItem* const> items);
     static void resyncSourceToRuntime(uint32_t sourceId);
+    static void resyncRefreshedSourceToRuntime(uint32_t sourceId);
     static void syncActionNameForPreview(ProjectItem* actionItem);
     static void syncProjectToRuntime(ProjectData* project);
     static bool prepareRuntimeSounds(const ProjectData& project,
+        HarkenEditor::Bridge::CurrentWorldSoundPreparation& preparation,
+        QString* error = nullptr);
+    static bool prepareRuntimeSounds(const FieldGroupEffectiveSnapshot& snapshot,
         HarkenEditor::Bridge::CurrentWorldSoundPreparation& preparation,
         QString* error = nullptr);
     static void syncProjectToRuntimeAsync(ProjectData* project,
@@ -192,7 +196,8 @@ public:
                                           bool allowUpgrade = false,
                                           ProjectUpgradeProgressCallback upgradeProgress = {},
                                           ProjectUpgradeApprovalCallback upgradeApproval = {},
-                                          std::function<bool()> cancelled = {});
+                                          std::function<bool()> cancelled = {},
+                                          ProjectContractReadContext* context = nullptr);
     static PreparedProject prepareProject(const ProjectConfig& config,
                                           std::function<bool()> cancelled = {});
     bool commitPreparedProject(PreparedProject&& prepared);

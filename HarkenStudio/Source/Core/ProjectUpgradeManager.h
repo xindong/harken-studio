@@ -124,11 +124,13 @@ public:
 
     ProjectUpgradeAnalysis analyze(
         const QString& projectFilePath,
-        ProjectUpgradeProgressCallback progress = {}) const;
+        ProjectUpgradeProgressCallback progress = {},
+        ProjectContractReadContext* context = nullptr) const;
 
     ProjectUpgradeAnalysis analyzeForProjectOpen(
         const QString& projectFilePath,
-        ProjectUpgradeProgressCallback progress = {}) const;
+        ProjectUpgradeProgressCallback progress = {},
+        ProjectContractReadContext* context = nullptr) const;
 
     static ProjectUpgradeStorageRequirements storageRequirements(
         qint64 stagingBytes,

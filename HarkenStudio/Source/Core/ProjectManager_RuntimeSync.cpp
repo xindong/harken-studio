@@ -409,6 +409,52 @@ void ProjectManager::unregisterItemFromRuntime(ProjectItem* item)
     }
 }
 
+void ProjectManager::resyncRefreshedSourceToRuntime(uint32_t sourceId)
+{
+    auto& manager = instance();
+    const auto* coordinator = manager.m_currentProject && !manager.m_closing
+        ? &AudioEngine::instance().runtimeSyncCoordinator() : nullptr;
+    if (coordinator && coordinator->barrier(coordinator->currentAuthoringRevision()).state
+        == RuntimeSyncCoordinator::RevisionBarrierState::Ready) {
+        const auto platform = PlatformContextService::instance().context().primary;
+        const auto language = LanguageContextService::instance().language();
+        bool referenced = false;
+        bool current = true;
+        for (auto* item : ProjectPlatformSemantics::referenceOwners(*manager.m_currentProject)) {
+            const auto* sound = item->comp<VSound>();
+            if (!sound) continue;
+            bool usesSource = false;
+            for (const auto* set : SoundSourceSemantics::sourceSets(sound->sources)) {
+                usesSource |= std::any_of(set->entries.begin(), set->entries.end(),
+                    [sourceId](const auto& source) { return source.sourceId == sourceId; });
+            }
+            if (!usesSource) continue;
+            referenced = true;
+            const auto* source = SoundSourceEditing::activeSource(
+                *item, platform, SoundSourceEditing::previewLanguage(*item, language));
+            const auto* asset = AssetRegistry::instance().getAsset(sourceId);
+            const auto cached = manager.m_runtimeSoundPreparation.constFind(item->runtimeId());
+            if (!source || source->sourceId != sourceId || !asset || asset->contentHash.isEmpty()
+                || cached == manager.m_runtimeSoundPreparation.cend()) {
+                current = false;
+                break;
+            }
+            const QFileInfo file(asset->absolutePath);
+            const RuntimeSoundPreparationKey key{
+                asset->absolutePath, asset->contentHash, file.size(),
+                file.lastModified().toMSecsSinceEpoch(), *source, sound->scheduleOffsetSec};
+            if (!file.isFile() || cached->key != key || cached->revision == 0
+                || Bridge::registeredSoundRevision(item->runtimeId()) != cached->revision
+                || !Bridge::runtimeObjectExists(item->runtimeId())) {
+                current = false;
+                break;
+            }
+        }
+        if (referenced && current) return;
+    }
+    resyncSourceToRuntime(sourceId);
+}
+
 void ProjectManager::resyncSourceToRuntime(uint32_t sourceId)
 {
     auto& manager = instance();
@@ -525,6 +571,12 @@ bool ProjectManager::prepareRuntimeSounds(const ProjectData& project,
 {
     const auto snapshot = buildFieldGroupEffectiveSnapshot(
         project, toFieldGroupScope(currentWorldPlatformScope(PlatformContextService::instance().context())));
+    return prepareRuntimeSounds(snapshot, preparation, error);
+}
+
+bool ProjectManager::prepareRuntimeSounds(const FieldGroupEffectiveSnapshot& snapshot,
+    Bridge::CurrentWorldSoundPreparation& preparation, QString* error)
+{
     if (!snapshot.ok()) {
         if (error && !snapshot.diagnostics.empty())
             *error = snapshot.diagnostics.front().message;

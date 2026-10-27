@@ -2606,7 +2606,8 @@ PreparedProject ProjectManager::prepareProject(const QString& filePath,
                                                bool allowUpgrade,
                                                ProjectUpgradeProgressCallback upgradeProgress,
                                                ProjectUpgradeApprovalCallback upgradeApproval,
-                                               std::function<bool()> cancelled)
+                                               std::function<bool()> cancelled,
+                                               ProjectContractReadContext* context)
 {
     if (cancelled && cancelled())
         return {};
@@ -2615,7 +2616,7 @@ PreparedProject ProjectManager::prepareProject(const QString& filePath,
     ProjectSerializer serializer;
     if (!serializer.loadProject(filePath, *prepared.project, allowUpgrade,
                                 std::move(upgradeProgress),
-                                std::move(upgradeApproval))) {
+                                std::move(upgradeApproval), context)) {
         prepared.error = serializer.lastError();
         prepared.project.reset();
         return prepared;

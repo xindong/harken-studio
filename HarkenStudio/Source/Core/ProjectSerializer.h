@@ -44,7 +44,8 @@ public:
     bool loadProject(const QString& filePath, ProjectData& project,
                      bool allowUpgrade = false,
                      ProjectUpgradeProgressCallback upgradeProgress = {},
-                     ProjectUpgradeApprovalCallback upgradeApproval = {});
+                     ProjectUpgradeApprovalCallback upgradeApproval = {},
+                     ProjectContractReadContext* context = nullptr);
 
     const ProjectUpgradeResult& upgradeResult() const { return upgradeResult_; }
 
@@ -86,6 +87,14 @@ signals:
     void warningOccurred(const QString& warning);
 
 private:
+    struct CachedFieldGroups
+    {
+        DefinitionFieldGroups input;
+        QJsonObject json;
+    };
+
+    bool writeFieldGroups(const ProjectItem& item, QJsonObject& json) const;
+
     struct ReferenceTarget
     {
         uint32_t objectId = 0;
@@ -130,6 +139,8 @@ private:
     bool encodeActionReferences(QJsonArray* actions) const;
     bool decodeActionReferences(QJsonArray* actions) const;
 
+    mutable std::optional<CachedFieldGroups> cachedFieldGroups_;
+    mutable QJsonObject validatedOccurrenceProperties_;
     mutable QString lastError_;
     mutable QStringList warnings_;
     std::unique_ptr<QSaveFile> pendingProjectSave_;

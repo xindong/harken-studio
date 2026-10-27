@@ -73,4 +73,13 @@ FieldGroupEffectiveSnapshot buildFieldGroupEffectiveSnapshot(
     const ProjectData& project, FieldGroupScope scope,
     const std::function<const DefinitionFieldGroups*(const ProjectItem&)>& groupsForDefinition);
 
+FieldGroupEffectiveSnapshot buildFieldGroupEffectiveSnapshot(
+    const ProjectData& project, FieldGroupScope scope,
+    const HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1& source);
+
+FieldGroupEffectiveSnapshot buildFieldGroupEffectiveSnapshot(
+    const ProjectData& project, FieldGroupScope scope,
+    const HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1& source,
+    const std::function<const DefinitionFieldGroups*(const ProjectItem&)>& groupsForDefinition);
+
 }

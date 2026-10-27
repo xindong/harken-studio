@@ -6,6 +6,7 @@
 #include "PlatformContextService.h"
 #include "ProjectManager.h"
 #include "CurrentWorldProjectAdapter.h"
+#include "CanonicalRuntimeProjectAdapterPrivate.h"
 #include "RuntimeSyncCoordinator.h"
 #include "HarkenMath.h"
 #include "RuntimeBridge/CurrentWorldSyncBridge.h"
@@ -98,8 +99,13 @@ AudioEngine::AudioEngine(QObject* parent)
             }
             bindCurrentWorldPlatformContext();
             QString error;
+            const auto scope = currentWorldPlatformScope(
+                PlatformContextService::instance().context());
+            const auto sourceIndex = Bridge::canonicalRuntimeProjectSourceIndex(*project);
+            const auto fieldGroups = buildFieldGroupEffectiveSnapshot(
+                *project, toFieldGroupScope(scope), *sourceIndex);
             auto sounds = std::make_shared<Bridge::CurrentWorldSoundPreparation>();
-            if (!ProjectManager::prepareRuntimeSounds(*project, *sounds, &error)) {
+            if (!ProjectManager::prepareRuntimeSounds(fieldGroups, *sounds, &error)) {
                 qWarning().noquote()
                     << "[CurrentWorldSync] Sound preparation rejected:" << error;
                 Bridge::CurrentWorldSyncResult result;
@@ -110,10 +116,10 @@ AudioEngine::AudioEngine(QObject* parent)
             CurrentWorldBuildOptions options;
             options.isolateUnavailable = true;
             options.soundContentRevisions = &sounds->contentRevisions;
+            options.sourceIndex = sourceIndex;
+            options.fieldGroups = &fieldGroups;
             auto request = buildCurrentWorldSyncRequest(
-                *project,
-                currentWorldPlatformScope(
-                    PlatformContextService::instance().context()),
+                *project, scope,
                 &error, nullptr, &options, token.authoringRevision);
             if (!request) {
                 qWarning().noquote()
@@ -194,7 +200,7 @@ void AudioEngine::bindCurrentWorldPlatformContext()
         return;
     currentWorldPlatformBound_ = true;
     connect(&MediaPool::instance(), &MediaPool::mediaHotSwapped, this,
-            &ProjectManager::resyncSourceToRuntime, Qt::QueuedConnection);
+            &ProjectManager::resyncRefreshedSourceToRuntime, Qt::QueuedConnection);
     lastCurrentWorldPrimary_ =
         PlatformContextService::instance().context().primary;
     connect(&PlatformContextService::instance(),

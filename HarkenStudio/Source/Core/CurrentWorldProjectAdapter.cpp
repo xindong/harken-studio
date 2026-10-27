@@ -1495,9 +1495,12 @@ buildCurrentWorldSyncRequest(ProjectData& project, PlatformScope scope,
         setError(error, QStringLiteral("Project sample rate is invalid"));
         return {};
     }
+    const auto sourceIndex = options && options->sourceIndex
+        ? options->sourceIndex
+        : HarkenEditor::Bridge::canonicalRuntimeProjectSourceIndex(project);
     auto canonical =
         HarkenEditor::Bridge::canonicalRuntimeProjectContext(
-            project, projectGeneration, std::nullopt, scope);
+            project, projectGeneration, std::nullopt, scope, sourceIndex);
     if (!canonical.ok()) {
         if (!canonical.compileTargetProfile)
             setStatus(status, CurrentWorldBuildStatus::CapabilityUnavailable);
@@ -1535,7 +1538,11 @@ buildCurrentWorldSyncRequest(ProjectData& project, PlatformScope scope,
     request->compileTargetProfile = canonical.compileTargetProfile;
     request->project.compileTargetProfile = request->compileTargetProfile;
     request->busResult = canonical.busResult;
-    const auto groups = buildFieldGroupEffectiveSnapshot(project, toFieldGroupScope(scope));
+    std::optional<FieldGroupEffectiveSnapshot> ownedGroups;
+    const auto& groups = options && options->fieldGroups
+        ? *options->fieldGroups
+        : ownedGroups.emplace(buildFieldGroupEffectiveSnapshot(
+            project, toFieldGroupScope(scope), *sourceIndex));
     if (!groups.ok()) {
         setError(error, groups.diagnostics.front().message);
         return {};

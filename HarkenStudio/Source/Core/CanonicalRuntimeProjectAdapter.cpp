@@ -944,8 +944,18 @@ CanonicalRuntimeProjectContextV1 canonicalRuntimeProjectContext(
     std::optional<harkenstudio::ObjectId> previewTrackStableId,
     PlatformScope busPlatformScope)
 {
+    return canonicalRuntimeProjectContext(project, projectGeneration,
+        previewTrackStableId, busPlatformScope, canonicalRuntimeProjectSourceIndex(project));
+}
+
+CanonicalRuntimeProjectContextV1 canonicalRuntimeProjectContext(
+    VNX::ProjectData& project,
+    uint64_t projectGeneration,
+    std::optional<harkenstudio::ObjectId> previewTrackStableId,
+    PlatformScope busPlatformScope,
+    std::shared_ptr<const CanonicalRuntimeProjectSourceIndexV1> sourceIndex)
+{
     CanonicalRuntimeProjectContextV1 context;
-    auto sourceIndex = canonicalRuntimeProjectSourceIndex(project);
     context.sourceIndex = sourceIndex;
     context.diagnostics = sourceIndex->structureDiagnostics;
     for (const QUuid& guid : sourceIndex->duplicateGuids) {

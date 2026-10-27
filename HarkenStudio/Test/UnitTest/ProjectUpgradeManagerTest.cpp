@@ -6,6 +6,7 @@
 
 #include <gtest/gtest.h>
 
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -82,6 +83,70 @@ QString createBaselineProject(const QTemporaryDir& directory)
               }));
     EXPECT_TRUE(HarkenTest::writeRootBusForProject(projectPath));
     return projectPath;
+}
+
+TEST(ProjectUpgradeManager, RepeatedAnalysisObservesExternalDocumentChanges)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString projectPath = createBaselineProject(directory);
+    const QString layerPath = directory.filePath(QStringLiteral("Layers/Main.vp"));
+    VNX::ProjectUpgradeManager manager;
+    VNX::ProjectContractReadContext context;
+    const auto compare = [&]() {
+        const auto repeated = manager.analyze(projectPath, {}, &context);
+        const auto fresh = manager.analyze(projectPath);
+        EXPECT_EQ(repeated.ok, fresh.ok);
+        EXPECT_EQ(repeated.issue, fresh.issue);
+        EXPECT_EQ(repeated.detail, fresh.detail);
+        EXPECT_EQ(repeated.blockingErrors, fresh.blockingErrors);
+        EXPECT_EQ(repeated.warnings, fresh.warnings);
+        EXPECT_EQ(repeated.sourceFingerprint, fresh.sourceFingerprint);
+        EXPECT_EQ(repeated.sourceTreeFingerprint, fresh.sourceTreeFingerprint);
+        return repeated.ok;
+    };
+    ASSERT_TRUE(compare());
+
+    QFile layer(layerPath);
+    ASSERT_TRUE(layer.open(QIODevice::ReadOnly));
+    const QByteArray original = layer.readAll();
+    layer.close();
+    const QDateTime modified = QFileInfo(layerPath).lastModified();
+    QByteArray invalid = original;
+    ASSERT_TRUE(invalid.contains("\"Main\""));
+    invalid.replace("\"Main\"", "false ");
+    ASSERT_EQ(invalid.size(), original.size());
+    ASSERT_TRUE(layer.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    ASSERT_EQ(layer.write(invalid), invalid.size());
+    ASSERT_TRUE(layer.flush());
+    ASSERT_TRUE(layer.setFileTime(modified, QFileDevice::FileModificationTime));
+    layer.close();
+    EXPECT_EQ(QFileInfo(layerPath).lastModified(), modified);
+    EXPECT_FALSE(compare());
+
+    ASSERT_TRUE(layer.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    ASSERT_EQ(layer.write(original), original.size());
+    ASSERT_TRUE(layer.flush());
+    ASSERT_TRUE(layer.setFileTime(modified, QFileDevice::FileModificationTime));
+    layer.close();
+    EXPECT_EQ(QFileInfo(layerPath).lastModified(), modified);
+    EXPECT_TRUE(compare());
+
+    const QString duplicatePath = directory.filePath(QStringLiteral("Layers/Copy.vp"));
+    ASSERT_TRUE(QFile::copy(layerPath, duplicatePath));
+    EXPECT_FALSE(compare());
+    ASSERT_TRUE(QFile::remove(duplicatePath));
+    EXPECT_TRUE(compare());
+
+    QJsonObject root = readJson(projectPath);
+    const QJsonObject originalRoot = root;
+    QJsonObject header = root.value(QStringLiteral("harkenDocument")).toObject();
+    header.insert(QStringLiteral("schemaVersion"), 0);
+    root.insert(QStringLiteral("harkenDocument"), header);
+    writeJson(projectPath, root);
+    EXPECT_FALSE(compare());
+    writeJson(projectPath, originalRoot);
+    EXPECT_TRUE(compare());
 }
 
 TEST(ProjectUpgradeManager, ChangedProjectIsNotOverwrittenByStaleAnalysis)

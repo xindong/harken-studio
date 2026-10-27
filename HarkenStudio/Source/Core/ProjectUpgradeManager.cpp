@@ -336,8 +336,11 @@ ProjectUpgradeStorageRequirements ProjectUpgradeManager::storageRequirements(
 
 ProjectUpgradeAnalysis ProjectUpgradeManager::analyze(
     const QString& inputProjectFilePath,
-    ProjectUpgradeProgressCallback progress) const
+    ProjectUpgradeProgressCallback progress,
+    ProjectContractReadContext* context) const
 {
+    ProjectContractReadContext localContext;
+    if (!context) context = &localContext;
     ProjectUpgradeAnalysis analysis;
     analysis.projectFilePath = QDir::cleanPath(
         QFileInfo(inputProjectFilePath).absoluteFilePath());
@@ -375,7 +378,7 @@ ProjectUpgradeAnalysis ProjectUpgradeManager::analyze(
         analysis.blockingErrors.append(analysis.detail);
         return analysis;
     }
-    analysis.probe = ProjectContractRegistry::instance().probe(analysis.projectFilePath);
+    analysis.probe = ProjectContractRegistry::instance().probe(analysis.projectFilePath, context);
     analysis.sourceSchema = analysis.probe.schemaVersion;
     analysis.warnings = analysis.probe.warnings;
     analysis.blockingErrors = analysis.probe.blockingErrors;
@@ -479,7 +482,7 @@ ProjectUpgradeAnalysis ProjectUpgradeManager::analyze(
         analysis.blockingErrors = treeValidatorForTesting_
             ? treeValidatorForTesting_(analysis.projectDirectory, root, true)
             : ProjectContractRegistry::instance().validateTree(
-                analysis.projectDirectory, root, true);
+                analysis.projectDirectory, root, true, {}, context);
     }
     analysis.ok = analysis.blockingErrors.isEmpty();
     if (!analysis.ok) {
@@ -491,10 +494,11 @@ ProjectUpgradeAnalysis ProjectUpgradeManager::analyze(
 
 ProjectUpgradeAnalysis ProjectUpgradeManager::analyzeForProjectOpen(
     const QString& projectFilePath,
-    ProjectUpgradeProgressCallback progress) const
+    ProjectUpgradeProgressCallback progress,
+    ProjectContractReadContext* context) const
 {
     if (!ProjectTransaction::recoveryRequired(projectFilePath))
-        return analyze(projectFilePath, std::move(progress));
+        return analyze(projectFilePath, std::move(progress), context);
 
     ProjectUpgradeAnalysis analysis;
     analysis.projectFilePath = QDir::cleanPath(

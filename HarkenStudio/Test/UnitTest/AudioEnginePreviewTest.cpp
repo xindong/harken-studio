@@ -5,6 +5,7 @@
 #include "ActionManager.h"
 #include "AssetPipeline/AssetRegistry.h"
 #include "AssetPipeline/AssetImporter.h"
+#include "AssetPipeline/MediaPool.h"
 #include "CurrentWorldProjectAdapter.h"
 #include "Components/VAction.h"
 #include "IPC/IPCServer.h"
@@ -14,6 +15,8 @@
 #include "AuditionManager.h"
 #include "RuntimeBridge/CurrentWorldSyncBridgeInternal.h"
 #include "RuntimeBridge/ProjectSyncBridge.h"
+#include "RuntimeBridge/PackagingBridge.h"
+#include "RuntimeBridge/PreviewBridge.h"
 #include "RuntimeBridge/RuntimeLink.h"
 #include "harken/Harken.h"
 #include <harken_bus_compiler/BusCompiler.h>
@@ -22,14 +25,17 @@
 
 #include <QApplication>
 #include <QByteArray>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QEventLoop>
 #include <QJsonObject>
 #include <QScopedValueRollback>
+#include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QThread>
+#include <QThreadPool>
 
 #include <algorithm>
 #include <array>
@@ -680,6 +686,127 @@ TEST_F(AudioPlaybackRegression, CompilerRefusalPreservesPreparedSoundState)
     EXPECT_EQ(runtime->variables.CurrentWorldGeneration(), generation);
     EXPECT_EQ(runtime->registry.Lookup(harkentest::ToRuntime(sounds[0]->runtimeId())).contentRevision, revision);
     EXPECT_TRUE(Bridge::runtimeObjectExists(sounds[1]->runtimeId()));
+    expectGoodAction();
+}
+
+TEST_F(AudioPlaybackRegression, SourceRefreshPreservesPlaybackAcrossFileAndRegistrationChanges)
+{
+    namespace Bridge = HarkenEditor::Bridge;
+    auto& media = VNX::MediaPool::instance();
+    auto& registry = VNX::AssetRegistry::instance();
+    const auto waitForMedia = qScopeGuard([] { QThreadPool::globalInstance()->waitForDone(); });
+    constexpr uint32_t sourceId = 930001;
+    const auto soundId = sounds[0]->runtimeId();
+    auto* runtime = harken::detail::ActiveEngine();
+    const auto originalRevision = runtime->registry.Lookup(harkentest::ToRuntime(soundId)).contentRevision;
+    ASSERT_NE(originalRevision, 0u);
+
+    ASSERT_TRUE(media.refreshSourceFile(sourceId, paths[0]));
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_EQ(runtime->registry.Lookup(harkentest::ToRuntime(soundId)).contentRevision, originalRevision);
+    expectGoodAction();
+
+    QThreadPool::globalInstance()->waitForDone();
+    const auto modified = QFileInfo(paths[0]).lastModified();
+    writeWavF32(paths[0], std::vector<float>(65536, 0.5f));
+    QFile replacement(paths[0]);
+    ASSERT_TRUE(replacement.open(QIODevice::ReadWrite));
+    ASSERT_TRUE(replacement.setFileTime(modified, QFileDevice::FileModificationTime));
+    replacement.close();
+    ASSERT_TRUE(media.refreshSourceFile(sourceId, paths[0]));
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    const auto replacedRevision = runtime->registry.Lookup(harkentest::ToRuntime(soundId)).contentRevision;
+    EXPECT_NE(replacedRevision, originalRevision);
+    EXPECT_NE(replacedRevision, 0u);
+
+    QThreadPool::globalInstance()->waitForDone();
+    const QString relocated = QFileInfo(paths[0]).dir().filePath(QStringLiteral("Relocated.wav"));
+    ASSERT_TRUE(QFile::rename(paths[0], relocated));
+    registry.relocateSourcePaths(QFileInfo(paths[0]).fileName(), QFileInfo(relocated).fileName());
+    paths[0] = relocated;
+    ASSERT_TRUE(media.refreshSourceFile(sourceId, paths[0]));
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_EQ(Bridge::mediaRegistryFindPath(sourceId), paths[0]);
+    EXPECT_EQ(runtime->registry.Lookup(harkentest::ToRuntime(soundId)).contentRevision, replacedRevision);
+    expectGoodAction();
+
+    QThreadPool::globalInstance()->waitForDone();
+    ASSERT_TRUE(QFile::remove(paths[0]));
+    VNX::ProjectManager::resyncSourceToRuntime(sourceId);
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_FALSE(Bridge::runtimeObjectExists(soundId));
+    EXPECT_TRUE(Bridge::runtimeObjectExists(sounds[1]->runtimeId()));
+
+    writeWavF32(paths[0], std::vector<float>(65536, 0.5f));
+    ASSERT_TRUE(media.refreshSourceFile(sourceId, paths[0]));
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_TRUE(Bridge::runtimeObjectExists(soundId));
+    EXPECT_EQ(runtime->registry.Lookup(harkentest::ToRuntime(soundId)).contentRevision, replacedRevision);
+    expectGoodAction();
+
+    Bridge::removeRuntimeObject(soundId);
+    ASSERT_FALSE(Bridge::runtimeObjectExists(soundId));
+    ASSERT_TRUE(media.refreshSourceFile(sourceId, paths[0]));
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_TRUE(Bridge::runtimeObjectExists(soundId));
+    expectGoodAction();
+
+    engine.clearRuntimeObjects();
+    VNX::ProjectManager::syncActionNameForPreview(action);
+    Bridge::mediaRegistryUnregister(sourceId);
+    ASSERT_EQ(Bridge::registeredSoundRevision(soundId), 0u);
+    ASSERT_TRUE(media.refreshSourceFile(sourceId, paths[0]));
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_EQ(Bridge::mediaRegistryFindPath(sourceId), paths[0]);
+    EXPECT_EQ(Bridge::registeredSoundRevision(soundId), replacedRevision);
+    expectGoodAction();
+}
+
+TEST_F(AudioPlaybackRegression, UnchangedSourceRefreshRetriesFailedWorld)
+{
+    const auto waitForMedia = qScopeGuard([] { QThreadPool::globalInstance()->waitForDone(); });
+    ASSERT_TRUE(VNX::MediaPool::instance().refreshSourceFile(930001, paths[0]));
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    QThreadPool::globalInstance()->waitForDone();
+    const auto stepType = action->comp<VNX::VAction>()->steps.front().type;
+    action->comp<VNX::VAction>()->steps.front().type = static_cast<VNX::VActionStep::Type>(255);
+    auto& coordinator = engine.runtimeSyncCoordinator();
+    coordinator.markCurrentWorldMutation();
+    coordinator.flushPendingMutationNow();
+    ASSERT_EQ(coordinator.barrier(coordinator.currentAuthoringRevision()).state,
+              VNX::RuntimeSyncCoordinator::RevisionBarrierState::Failed);
+
+    action->comp<VNX::VAction>()->steps.front().type = stepType;
+    ASSERT_TRUE(VNX::MediaPool::instance().refreshSourceFile(930001, paths[0]));
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    expectGoodAction();
+}
+
+TEST_F(AudioPlaybackRegression, AssetNotificationsReloadSourceContentWithoutRefreshedFingerprint)
+{
+    auto& registry = VNX::AssetRegistry::instance();
+    constexpr uint32_t sourceId = 930001;
+    const auto soundId = sounds[0]->runtimeId();
+    auto* runtime = harken::detail::ActiveEngine();
+    const auto originalRevision = runtime->registry.Lookup(harkentest::ToRuntime(soundId)).contentRevision;
+    const auto originalHash = registry.getAsset(sourceId)->contentHash;
+    const QFileInfo originalFile(paths[0]);
+    const auto modified = originalFile.lastModified();
+    const auto fileSize = originalFile.size();
+    writeWavF32(paths[0], std::vector<float>(65536, 0.5f));
+    QFile replacement(paths[0]);
+    ASSERT_TRUE(replacement.open(QIODevice::ReadWrite));
+    ASSERT_TRUE(replacement.setFileTime(modified, QFileDevice::FileModificationTime));
+    replacement.close();
+    ASSERT_EQ(QFileInfo(paths[0]).size(), fileSize);
+    ASSERT_EQ(QFileInfo(paths[0]).lastModified(), modified);
+    ASSERT_EQ(registry.getAsset(sourceId)->contentHash, originalHash);
+    ASSERT_NE(VNX::AssetImporter::computeContentHash(paths[0]), originalHash);
+
+    emit registry.assetModified(sourceId);
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_NE(runtime->registry.Lookup(harkentest::ToRuntime(soundId)).contentRevision, originalRevision);
+    EXPECT_TRUE(HarkenEditor::Bridge::runtimeObjectExists(soundId));
     expectGoodAction();
 }
 

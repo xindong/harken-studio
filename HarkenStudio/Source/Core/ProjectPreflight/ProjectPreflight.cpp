@@ -47,8 +47,11 @@ QString ProjectPreflight::schemaMismatchError(int projectSchema,
 }
 
 PreflightReport ProjectPreflight::run(const QString& projectPath,
-                                      int targetSchema)
+                                      int targetSchema,
+                                      ProjectContractReadContext* context)
 {
+    ProjectContractReadContext localContext;
+    if (!context) context = &localContext;
     PreflightReport report;
     report.targetSchema = targetSchema > 0
                               ? targetSchema
@@ -83,7 +86,7 @@ PreflightReport ProjectPreflight::run(const QString& projectPath,
     report.currentSchema = MigrationManager::instance().detectVersion(root);
 
     const ProjectContractProbe probe =
-        ProjectContractRegistry::instance().probe(projectPath);
+        ProjectContractRegistry::instance().probe(projectPath, context);
     if (!probe.blockingErrors.isEmpty()) {
         report.blockingErrors.append(probe.blockingErrors);
         return report;
@@ -106,7 +109,7 @@ PreflightReport ProjectPreflight::run(const QString& projectPath,
 
     const QStringList governanceErrors =
         ProjectContractRegistry::instance().validateTree(
-            info.absolutePath(), root, true);
+            info.absolutePath(), root, true, {}, context);
     if (!governanceErrors.isEmpty()) {
         report.blockingErrors.append(governanceErrors);
         return report;

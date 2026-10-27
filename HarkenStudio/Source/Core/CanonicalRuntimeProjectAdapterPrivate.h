@@ -90,6 +90,13 @@ CanonicalRuntimeProjectContextV1 canonicalRuntimeProjectContext(
     std::optional<harkenstudio::ObjectId> previewTrackStableId,
     VNX::PlatformScope busPlatformScope);
 
+CanonicalRuntimeProjectContextV1 canonicalRuntimeProjectContext(
+    VNX::ProjectData& project,
+    uint64_t projectGeneration,
+    std::optional<harkenstudio::ObjectId> previewTrackStableId,
+    VNX::PlatformScope busPlatformScope,
+    std::shared_ptr<const CanonicalRuntimeProjectSourceIndexV1> sourceIndex);
+
 const harkenprojectschema::PieceProgram* compiledPieceProgram(
     const CompiledProjectSnapshot& snapshot);
 std::vector<harkenstudio::ObjectId> compiledPieceIds(
