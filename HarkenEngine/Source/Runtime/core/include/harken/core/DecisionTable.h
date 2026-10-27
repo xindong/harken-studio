@@ -139,6 +139,7 @@ enum class DecisionRetirementDisposition : std::uint8_t {
 
 class DecisionTable;
 class ScheduledTransactionPool;
+class Plan03GroupReaderPin;
 namespace detail { struct DecisionOriginalLifetimeTestAccess; struct QueueDecisionIssuerLimitTestAccess; }
 
 // A structural loan issued only by the actual Decision row factory.
@@ -377,6 +378,9 @@ public:
     }
     bool MatchesOpenReservation(DecisionToken token,
                                 const DecisionReserveRequest& request) const noexcept;
+    // Read-only identity revalidation through an existing authentic loan.
+    bool MatchesPinnedOpenReservation(DecisionToken token,
+        const DecisionReserveRequest& request, const DecisionFuturePin& pin) const noexcept;
     bool MatchesCancelledReservation(DecisionToken token,
                                     const DecisionReserveRequest& request) const noexcept;
     bool IsCancelled(DecisionToken token) const noexcept;
@@ -420,6 +424,15 @@ public:
     bool AcquireFuturePin(DecisionToken token, DecisionFuturePin* out) noexcept;
     // Producer-only retention transfer; never restores the Decision's execution state.
     bool CloneFuturePin(const DecisionFuturePin& source, DecisionFuturePin* out) noexcept;
+    bool CaptureAppliedSignalDependency(const DecisionFuturePin& original,
+        const Plan03GroupReaderPin& primary, const Plan03GroupReaderPin& member,
+        const ScheduledTransactionPool& pool, std::uint64_t completedAudioSequence,
+        FrontierAppliedSignalDependency* out) const noexcept;
+    bool IsAppliedSignalDependencyFor(const FrontierAppliedSignalDependency& original,
+        const FrontierEntryReceiptRef& entry, const Plan03GroupSliceIdentity& primary,
+        const Plan03GroupSliceIdentity& member, std::uint64_t completedAudioSequence) const noexcept;
+    bool ProveAppliedSignalPrerequisite(const FrontierAppliedSignalDependency& original,
+        const FrontierGroupBinding& child, std::uint64_t completedAudioSequence) const noexcept;
     DecisionDeadlineDisposition InvalidateForDeadline(
         DecisionToken token) noexcept;
     DecisionInvalidationDisposition Invalidate(

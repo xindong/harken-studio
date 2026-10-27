@@ -1952,6 +1952,8 @@ public:
         Plan03PageGroupView* out) const noexcept;
     bool AcquirePlan03GroupReader(const Plan03GroupSliceIdentity& identity,
                                  Plan03GroupReaderPin* out) noexcept;
+    bool ClonePlan03GroupReader(const Plan03GroupReaderPin& source,
+                               Plan03GroupReaderPin* out) noexcept;
     bool IsPlan03GroupReaderFor(const Plan03GroupReaderPin& pin,
         const Plan03GroupSliceIdentity& identity) const noexcept {
         return pin.owner_ == this && pin.identity_ == identity;

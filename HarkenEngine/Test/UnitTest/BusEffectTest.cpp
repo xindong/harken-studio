@@ -492,6 +492,14 @@ TEST(BusEffect, NoEffectsNoFaderIsBitIdenticalPassthrough) {
         ASSERT_FLOAT_EQ(0.5f, out.left[i]) << "sample " << i;
         ASSERT_FLOAT_EQ(0.5f, out.right[i]) << "sample " << i;
     }
+    const auto busIndex = session.Engine()->buses.FindIndex(kBusA);
+    const auto* bus = session.Engine()->buses.BusState(busIndex);
+    ASSERT_NE(nullptr, bus);
+    EXPECT_FLOAT_EQ(0.5f, bus->preFaderPeak);
+    EXPECT_FLOAT_EQ(0.5f, bus->postFaderPeak);
+    EXPECT_FLOAT_EQ(0.5f, bus->outputPeak);
+    EXPECT_FLOAT_EQ(0.5f, bus->outputChannelPeaks[0]);
+    EXPECT_FLOAT_EQ(0.5f, bus->outputChannelPeaks[1]);
 }
 
 // The full pooled effect lifecycle on a bus through the PUBLIC API only (the

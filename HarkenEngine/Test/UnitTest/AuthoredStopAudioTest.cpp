@@ -124,16 +124,14 @@ struct StopAudioHarness {
 };
 
 harken::VoiceTimelineEvent StopAt(std::uint16_t offset, bool root = true) {
-    harken::VoiceTimelineEvent event{};
-    event.kind = harken::TimelineEventKind::Stop;
+    harken::VoiceTimelineEvent event{harken::TimelineEventKind::Stop};
     event.offset = offset;
     event.authoredRootStop = root;
     return event;
 }
 
 harken::VoiceTimelineEvent StartAt(std::uint16_t offset) {
-    harken::VoiceTimelineEvent event{};
-    event.kind = harken::TimelineEventKind::Start;
+    harken::VoiceTimelineEvent event{harken::TimelineEventKind::Start};
     event.offset = offset;
     return event;
 }
@@ -201,7 +199,9 @@ struct FrontierAudioHarness {
                  bool secondCoordinatorWithEvent = false,
                  bool plainBeforeFrontier = false,
                  std::uint64_t memberStartFrame = 8u,
-                 std::uint64_t secondCoordinatorFrame = 8u) {
+                 std::uint64_t secondCoordinatorFrame = 8u,
+                 bool queueSignal = false,
+                 harken::Plan03GroupReaderPin* retainedCoordinatorReader = nullptr) {
         laneBackedEntry = laneEntry;
         const bool delayedLaneMember = laneEntry && variable && !future && memberStartFrame > 8u;
         const std::uint64_t memberFrame = future ? 16 : 8;
@@ -247,6 +247,8 @@ struct FrontierAudioHarness {
             ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
                 pool.ReservePlan03GroupSlice(groupInput, arms));
         ASSERT_EQ(1u, pool.CaptureLivePlan03Groups(&group, 1));
+        if (retainedCoordinatorReader != nullptr)
+            ASSERT_TRUE(pool.AcquirePlan03GroupReader(group.identity, retainedCoordinatorReader));
         if (laneBackedEntry) {
             ASSERT_TRUE(pool.BindImmediateLaneGroupOwner(
                 lanePrimary, lane, 17, laneHandle.slot, laneHandle.generation));
@@ -299,12 +301,12 @@ struct FrontierAudioHarness {
                 request.transitionGate = transition;
             }
             ASSERT_TRUE(decisions.Reserve(request, &memberDecision));
-            if (queueInitial || conditional) {
+            if (queueInitial || conditional || queueSignal) {
                 harken::QueueInstanceCreateRequest create{};
                 create.world = create.rootInstance = create.initial.version = 1;
                 create.containerStableId = harkentest::ObjectId(9);
                 create.programSemanticFingerprint = 7;
-                create.childCount = conditional ? 2 : 1;
+                create.childCount = conditional || queueSignal ? 2 : 1;
                 ASSERT_TRUE(queues.Acquire(create, &queue));
                 if (conditional) {
                     const auto pcm = harkentest::MonoDesc(sourceSamples, kRate);
@@ -415,14 +417,25 @@ struct FrontierAudioHarness {
             memberBinding.operation.programGeneration = 1;
             if (transition.Valid())
                 memberBinding.transition = {transition.slot, transition.generation, transitionFrame};
-            if (conditional) memberBinding.queueConditional = {queue.slot, queue.generation, 1, conditionalVersion.version,
+            if (queueSignal) {
+                ASSERT_TRUE(queues.ResolveEffective(queue, &signalCurrent));
+                signalNext = signalCurrent;
+                ++signalNext.version;
+                signalNext.cursor = signalNext.currentChildOrdinal = 1;
+                const auto& order = memberBinding.operation.order;
+                ASSERT_EQ(harken::QueueSignalStatusV1::Ok, queues.PrepareSignalAdvance(queue,
+                    signalCurrent, signalNext, {order.executeFrame, order.logicCommitSequence, order.executionOrdinal},
+                    0, &preparedSignal));
+                ASSERT_TRUE(queues.CaptureFrontierSignal(preparedSignal, &memberBinding.queueSignal));
+            } else if (conditional) memberBinding.queueConditional = {queue.slot, queue.generation, 1, conditionalVersion.version,
                 currentOccurrence, successorOccurrence};
             else if (queueInitial) memberBinding.queueInitial = {queue.slot, queue.generation, 1, 7};
             else memberBinding.variableSide = {instance.slot, instance.generation, static_cast<std::uint8_t>(side),
                     2, bank.slot, bank.generation};
             ASSERT_TRUE(pool.BindPlan03GroupFrontier(member.identity, memberBinding));
             ASSERT_TRUE(pool.ResolvePlan03GroupSliceProducer(member.identity, &member));
-            if (conditional) ASSERT_TRUE(queues.BindFrontierConditional(queue, *member.frontier, pool));
+            if (queueSignal) ASSERT_TRUE(queues.BindFrontierSignal(preparedSignal, *member.frontier, pool));
+            else if (conditional) ASSERT_TRUE(queues.BindFrontierConditional(queue, *member.frontier, pool));
             else if (queueInitial) ASSERT_TRUE(queues.BindFrontierInitial(queue, *member.frontier, pool));
             else ASSERT_TRUE(variables.BindFrontierSide(instance, *member.frontier, pool));
             ASSERT_TRUE(decisions.BindFrontierDecision(memberDecision, *member.frontier, pool));
@@ -543,7 +556,7 @@ struct FrontierAudioHarness {
                     File(6, voiceProgram, arm, &fade, 1);
                 }
             }
-            const harken::DecisionParticipantRef participant = queueInitial || conditional ?
+            const harken::DecisionParticipantRef participant = queueInitial || conditional || queueSignal ?
                 harken::DecisionParticipantRef{harken::DecisionParticipantKind::QueueInstance, queue.slot, queue.generation} :
                 harken::DecisionParticipantRef{harken::DecisionParticipantKind::Variable, instance.slot, instance.generation};
             harken::DecisionCommitPayload memberCommit{};
@@ -583,6 +596,10 @@ struct FrontierAudioHarness {
             commit.participantCount = 1;
         }
         ASSERT_TRUE(decisions.Commit(decision, commit));
+        if (queueSignal) {
+            ASSERT_TRUE(queues.CommitPreparedSignalAdvance(&preparedSignal));
+            ASSERT_TRUE(queues.PublishPreparedSignalAdvance(&preparedSignal, &acceptedSignal));
+        }
         ASSERT_TRUE(decisions.PublishFrontierActivation(decision));
         if (secondCoordinatorMissing || secondCoordinatorWithEvent) {
             request.ticket.sequence = 3;
@@ -813,6 +830,9 @@ struct FrontierAudioHarness {
     harken::VariableControlInstanceTable variables{1};
     harken::QueueInstanceTable queues{1};
     harken::QueueInstanceToken queue{};
+    harken::PreparedQueueSignalAdvanceV1 preparedSignal;
+    harken::AcceptedQueueSignalAdvanceV1 acceptedSignal;
+    harken::EffectiveQueueState signalCurrent{}, signalNext{};
     harken::OccurrenceStatePool occurrences{2};
     harken::OccurrenceToken currentOccurrence{}, successorOccurrence{};
     harken::ConditionalQueueVersionToken conditionalVersion{};
@@ -926,9 +946,12 @@ TEST(AuthoredStopAudio, DeferredWorkerRetainsFrozenFrontierUntilCompletion) {
     for (std::uint32_t index = 0; index < gate.before.eventCount; ++index) {
         const auto& before = gate.before.events[index];
         const auto& after = gate.span->events[index];
-        EXPECT_EQ(before.kind, after.kind);
+        EXPECT_EQ(before.Kind(), after.Kind());
         EXPECT_EQ(before.offset, after.offset);
-        EXPECT_EQ(before.authoredStopOperation, after.authoredStopOperation);
+        if (before.Kind() == harken::TimelineEventKind::Stop &&
+            after.Kind() == harken::TimelineEventKind::Stop) {
+            EXPECT_EQ(before.Stop().authoredStopOperation, after.Stop().authoredStopOperation);
+        }
         EXPECT_EQ(before.frontierProof.state, after.frontierProof.state);
         EXPECT_EQ(before.order, after.order);
         EXPECT_EQ(before.frontierProof.Eligible(gate.before.quantumIndex, gate.before.renderGeneration),
@@ -1447,8 +1470,7 @@ TEST(AuthoredStopAudio, LaneStagedStartRequiresExactOriginalAndHeldNativeProofs)
     harken::VoiceTimelineReservation reservation;
     ASSERT_TRUE(h.audio.engine->voices.ReserveLaneTimelineEvents(original.armToken.renderSlot,
         original.armToken.renderGeneration, 0u, 1u, &reservation));
-    harken::VoiceTimelineEvent event{};
-    event.kind = harken::TimelineEventKind::Start;
+    harken::VoiceTimelineEvent event{harken::TimelineEventKind::Start};
     event.offset = 16u;
     event.order = {original.executeFrame, original.logicCommitSequence, original.executionOrdinal,
         original.eventIndex, original.transactionOrdinal, original.subeventPhase, original.rowSequence};
@@ -1871,6 +1893,85 @@ TEST(AuthoredStopAudio, FrontierQueueInitialSharesEntryWithoutInventingCondition
     }
 }
 
+TEST(AuthoredStopAudio, FrontierQueueSignalSettlesActualApplyAndRetainsBindingUntilReadFence) {
+    for (const auto stopFrame : {8u, 32u}) {
+        FrontierAudioHarness h(2);
+        harken::Plan03GroupReaderPin coordinatorReader;
+        harken::Plan03GroupReaderPin clonedReader;
+        h.Prepare(stopFrame, false, false, true, harken::VariableControlSide::Discrete,
+            false, false, false, false, UINT64_MAX, false, false, false, false, false, 8u, 8u,
+            true, &coordinatorReader);
+        ASSERT_FALSE(::testing::Test::HasFatalFailure());
+        EXPECT_FALSE(h.queues.SettleSignalAdvance(h.acceptedSignal, harken::QueueSignalOutcomeV1::Applied));
+        harken::EffectiveQueueState before{};
+        ASSERT_TRUE(h.queues.ResolveEffective(h.queue, &before));
+        EXPECT_EQ(h.signalCurrent.version, before.version);
+        h.executor.ExecuteQuantum(0);
+        const bool applied = stopFrame > 8u;
+        const auto receipt = h.Receipt();
+        ASSERT_EQ(applied ? harken::FrontierReceiptOutcome::Applied :
+            harken::FrontierReceiptOutcome::DefinitivelyNotApplied, receipt.outcome);
+        harken::Plan03ExactGroupSnapshot beforeClone{}, afterClone{};
+        ASSERT_TRUE(h.pool.CaptureExactPlan03Group(h.group.identity, &beforeClone));
+        EXPECT_GT(beforeClone.lastAudioSequence, 0u);
+        harken::Plan03GroupReaderPin freshReader;
+        EXPECT_FALSE(h.pool.AcquirePlan03GroupReader(h.group.identity, &freshReader));
+        ASSERT_TRUE(h.pool.ClonePlan03GroupReader(coordinatorReader, &clonedReader));
+        ASSERT_TRUE(h.pool.CaptureExactPlan03Group(h.group.identity, &afterClone));
+        EXPECT_EQ(beforeClone.readerPins + 1u, afterClone.readerPins);
+        EXPECT_EQ(beforeClone.lastAudioSequence, afterClone.lastAudioSequence);
+        EXPECT_FALSE(coordinatorReader.Release(beforeClone.lastAudioSequence));
+        EXPECT_FALSE(clonedReader.Release(beforeClone.lastAudioSequence));
+        if (applied) EXPECT_FALSE(h.queues.SettleSignalAdvance(h.acceptedSignal,
+            harken::QueueSignalOutcomeV1::DefinitivelyNotApplied));
+        ASSERT_TRUE(h.queues.SettleSignalAdvance(h.acceptedSignal, applied ?
+            harken::QueueSignalOutcomeV1::Applied : harken::QueueSignalOutcomeV1::DefinitivelyNotApplied));
+        harken::EffectiveQueueState current{};
+        ASSERT_TRUE(h.queues.ResolveEffective(h.queue, &current));
+        EXPECT_EQ(applied ? h.signalNext.version : h.signalCurrent.version, current.version);
+        EXPECT_EQ(applied ? h.signalNext.currentChildOrdinal : h.signalCurrent.currentChildOrdinal,
+            current.currentChildOrdinal);
+        auto next = current;
+        ++next.version;
+        next.cursor = next.currentChildOrdinal = 0;
+        harken::PreparedQueueSignalAdvanceV1 another;
+        EXPECT_EQ(harken::QueueSignalStatusV1::Backpressure,
+            h.queues.PrepareSignalAdvance(h.queue, current, next, {64, 3, 0}, 0, &another));
+        EXPECT_FALSE(h.queues.Release(h.queue));
+        EXPECT_FALSE(h.queues.ReleaseFrontierSignal(*h.member.frontier, 1));
+        h.audio.Render();
+        for (std::uint32_t frame = 0; frame < 32; ++frame)
+            EXPECT_NEAR(applied && frame >= 8 ? 0.25f : 0.0f, h.audio.Sample(frame), 1e-6f);
+        if (applied) EXPECT_FALSE(h.armPin.Release(1));
+        ASSERT_TRUE(h.armPin.Release(2));
+        EXPECT_FALSE(h.queues.ReleaseFrontierSignal(*h.member.frontier, 1));
+        EXPECT_FALSE(h.pool.FrontierMemberBindingDetached(h.member.identity, h.descriptor.entry, 2));
+        ASSERT_TRUE(h.queues.ReleaseFrontierSignal(*h.member.frontier, 2));
+        EXPECT_FALSE(h.pool.FrontierMemberBindingDetached(h.member.identity, h.descriptor.entry, 1));
+        EXPECT_TRUE(h.pool.FrontierMemberBindingDetached(h.member.identity, h.descriptor.entry, 2));
+        auto wrongEntry = h.descriptor.entry;
+        ++wrongEntry.attempt;
+        EXPECT_FALSE(h.pool.FrontierMemberBindingDetached(h.member.identity, wrongEntry, 2));
+        auto wrongGroup = h.member.identity;
+        ++wrongGroup.pageGeneration;
+        EXPECT_FALSE(h.pool.FrontierMemberBindingDetached(wrongGroup, h.descriptor.entry, 2));
+        ASSERT_EQ(harken::QueueSignalStatusV1::Ok,
+            h.queues.PrepareSignalAdvance(h.queue, current, next, {64, 3, 0}, 0, &another));
+        ASSERT_TRUE(h.queues.CancelPreparedSignalAdvance(&another));
+        ASSERT_TRUE(h.pool.DetachPlan03GroupFrontier(h.group.identity, 2));
+        ASSERT_TRUE(h.decisions.ReleaseFrontierDecisionBinding(h.memberDecision));
+        EXPECT_FALSE(h.decisions.FrontierActivationBindingsDetached(h.descriptor.entry, h.pool, 2));
+        EXPECT_TRUE(h.pool.FrontierMemberBindingDetached(h.member.identity, h.descriptor.entry, 2));
+        ASSERT_TRUE(coordinatorReader.Release(2));
+        EXPECT_FALSE(h.decisions.FrontierActivationBindingsDetached(h.descriptor.entry, h.pool, 2));
+        ASSERT_TRUE(clonedReader.Release(2));
+        EXPECT_TRUE(h.decisions.FrontierActivationBindingsDetached(h.descriptor.entry, h.pool, 2));
+        harken::FrontierActivationReceipt retired{};
+        ASSERT_TRUE(h.decisions.ReconcileFrontierActivation(h.decision, h.descriptor.entry, 2, &retired));
+        EXPECT_TRUE(h.queues.Release(h.queue));
+    }
+}
+
 TEST(AuthoredStopAudio, FrontierQueueInitialClaimDefersFailureAndMirrorMutation) {
     FrontierAudioHarness h(0);
     h.Prepare(32, true, false, true, harken::VariableControlSide::Discrete, false, true);
@@ -2098,8 +2199,8 @@ TEST(AuthoredStopAudio, FrontierReservationMustBeCompleteAndExactBeforeNonFailin
         ASSERT_TRUE(voices.ReserveTimelineEvents(slot, generation, h.quantum, 2, &reservation));
         harken::VoiceTimelineReservationProof proof{};
         EXPECT_FALSE(voices.ProveTimelineReservation(reservation, &proof));
-        auto cursor = StartAt(8);
-        cursor.kind = harken::TimelineEventKind::SetStartCursor;
+        harken::VoiceTimelineEvent cursor{harken::TimelineEventKind::SetStartCursor};
+        cursor.offset = 8;
         cursor.value = 128;
         cursor = WithFrontierGuard(cursor, render, h.quantum, harken::FrontierEventState::Pending);
         EXPECT_FALSE(voices.StageReservedTimelineEvent(reservation, 0, cursor, {}, TestFrontierOperation(cursor)));
@@ -2345,8 +2446,8 @@ TEST(AuthoredStopAudio, RejectedAndUnfinalizedFrontierEventsHaveNoCascadeEffects
             StopAudioHarness h(workers);
             const auto render = h.Play();
             h.Begin();
-            auto cursor = StartAt(8);
-            cursor.kind = harken::TimelineEventKind::SetStartCursor;
+            harken::VoiceTimelineEvent cursor{harken::TimelineEventKind::SetStartCursor};
+            cursor.offset = 8;
             cursor.value = 1024;
             h.Append(render, WithFrontierGuard(cursor, render, h.quantum, state));
             h.Append(render, WithFrontierGuard(StartAt(8), render, h.quantum, state));
@@ -2377,25 +2478,26 @@ TEST(AuthoredStopAudio, FrozenFrontierProofKeepsExactQuantumGenerationAndStopFac
         auto start = WithFrontierGuard(StartAt(8), render, h.quantum, harken::FrontierEventState::Applied);
         start.frontierProof.cutoffFrame = 32;
         AppendProvenFrontier(h, render, start);
-        auto late = WithFrontierGuard(StartAt(32), render, h.quantum, harken::FrontierEventState::Applied);
-        late.kind = harken::TimelineEventKind::SetStartCursor;
+        harken::VoiceTimelineEvent late{harken::TimelineEventKind::SetStartCursor};
+        late.offset = 32;
+        late = WithFrontierGuard(late, render, h.quantum, harken::FrontierEventState::Applied);
         late.value = 1024;
         late.frontierProof.cutoffFrame = 32;
         AppendProvenFrontier(h, render, late);
         auto stop = StopAt(32);
-        stop.authoredStopOperation = {2, 3, 1, 1, 4, 0, 32};
+        stop.Stop().authoredStopOperation = {2, 3, 1, 1, 4, 0, 32};
         h.Append(render, stop);
         const auto* context = h.engine->voices.Resolve(render);
         ASSERT_NE(nullptr, context);
         const auto cutoff = harken::SelectAuthoredRootStop(context->timelineEvents, kBlock, UINT64_MAX);
-        EXPECT_EQ(stop.authoredStopOperation, cutoff.operation);
+        EXPECT_EQ(stop.Stop().authoredStopOperation, cutoff.operation);
         h.Render();
         context = h.engine->voices.Resolve(render);
         ASSERT_NE(nullptr, context);
         EXPECT_LT(context->srcCursor, 1024.0);
         for (std::uint32_t i = 0; i < 8; ++i) EXPECT_EQ(0.0f, h.Sample(i));
         for (std::uint32_t i = 8; i < 32; ++i) EXPECT_NEAR(0.25f, h.Sample(i), 1e-6f);
-        EXPECT_EQ(stop.authoredStopOperation, context->authoredRootStopControl.authoredStopOperation);
+        EXPECT_EQ(stop.Stop().authoredStopOperation, context->authoredRootStopControl.Stop().authoredStopOperation);
     }
 }
 
@@ -2812,7 +2914,7 @@ TEST(AuthoredStopAudio, GatedRootStopReleasesWithoutStartingInSerialAndWorker) {
             const auto observer = h.lastObserver;
             h.Begin();
             auto stop = StopAt(17);
-            stop.controlCause.request.key = {5, 17};
+            stop.Stop().controlCause.request.key = {5, 17};
             h.Append(render, stop);
             if (laterStart) h.Append(render, StartAt(static_cast<std::uint16_t>(laterStart)));
             h.Render();
@@ -2821,7 +2923,7 @@ TEST(AuthoredStopAudio, GatedRootStopReleasesWithoutStartingInSerialAndWorker) {
             harken::MonitorVoiceControlFact control{};
             ASSERT_TRUE(h.controls[0].TryRead(h.controlBindings[0], &control));
             EXPECT_TRUE(control.timelineControl);
-            EXPECT_EQ(stop.controlCause.request.key, control.cause.request.key);
+            EXPECT_EQ(stop.Stop().controlCause.request.key, control.cause.request.key);
             EXPECT_EQ(harken::SourceTerminalKind::Stop, control.sourceKind);
             for (std::uint32_t i = 0; i < kBlock; ++i) EXPECT_EQ(0.0f, h.Sample(i));
             h.Begin();
@@ -2931,19 +3033,19 @@ std::vector<float> RenderDominanceStream(std::uint32_t workers, int adversarialO
         if (h.engine->voices.Resolve(render) != nullptr) {
             if (block == 0 && adversarialOrder != 2) h.Append(render, StopAt(17));
             if (adversarialOrder != 0) {
-                auto envelope = StartAt(17);
-                envelope.kind = harken::TimelineEventKind::Envelope;
+                harken::VoiceTimelineEvent envelope{harken::TimelineEventKind::Envelope};
+                envelope.offset = 17;
                 envelope.envelopeDirection = harken::TimelineEnvelopeDirection::FadeIn;
                 envelope.frame = 0;
                 envelope.endFrame = 256;
                 h.Append(render, envelope);
-                auto weight = StartAt(17);
-                weight.kind = harken::TimelineEventKind::VariableWeight;
-                weight.variableWeight = {0, 256, 0.0f, 0.0f, 1, {1, 1}, {1, 1}};
+                harken::VoiceTimelineEvent weight{harken::TimelineEventKind::VariableWeight};
+                weight.offset = 17;
+                weight.Weight().variableWeight = {0, 256, 0.0f, 0.0f, 1, {1, 1}, {1, 1}};
                 h.Append(render, weight);
                 h.Append(render, StartAt(17));
-                auto cursor = StartAt(17);
-                cursor.kind = harken::TimelineEventKind::SetStartCursor;
+                harken::VoiceTimelineEvent cursor{harken::TimelineEventKind::SetStartCursor};
+                cursor.offset = 17;
                 cursor.value = 1024;
                 h.Append(render, cursor);
                 h.Append(render, StopAt(17, false));
@@ -3185,8 +3287,8 @@ TEST(AuthoredStopAudio, ResetTimelineStopCapturesOnlyItsActualSourceWinner) {
                 h.Begin();
                 if (block < 2 && h.engine->voices.Resolve(render) != nullptr) {
                     auto stop = StopAt(block == 0 ? 17 : 0, false);
-                    stop.controlCause = cause;
-                    if (block != 0) stop.controlCause.request.key.sequence = 99;
+                    stop.Stop().controlCause = cause;
+                    if (block != 0) stop.Stop().controlCause.request.key.sequence = 99;
                     h.Append(render, stop);
                 }
                 h.Render();
@@ -3217,8 +3319,8 @@ TEST(AuthoredStopAudio, FirstAppliedControlSurvivesTimelineAndApiStopMixing) {
                 const auto render = h.Play(false);
                 const auto observer = h.lastObserver;
                 auto stop = StopAt(17, false);
-                stop.controlCause.request.key = {11, 17};
-                stop.controlCause.actionFiring = 23;
+                stop.Stop().controlCause.request.key = {11, 17};
+                stop.Stop().controlCause.actionFiring = 23;
                 h.Begin();
                 if (timelineFirst) h.Append(render, stop);
                 else h.engine->voices.ApplyStop(render, immediate ? 0 : 5, 0,
@@ -3238,7 +3340,7 @@ TEST(AuthoredStopAudio, FirstAppliedControlSurvivesTimelineAndApiStopMixing) {
                 ASSERT_TRUE(h.controls[0].TryRead(h.controlBindings[0], &observed));
                 EXPECT_EQ(harken::SourceTerminalKind::Stop, observed.sourceKind);
                 EXPECT_EQ(timelineFirst, observed.timelineControl);
-                EXPECT_EQ(timelineFirst ? stop.controlCause.request.key : harken::MonitorRequestKey{},
+                EXPECT_EQ(timelineFirst ? stop.Stop().controlCause.request.key : harken::MonitorRequestKey{},
                     observed.cause.request.key);
             }
         }
@@ -3256,14 +3358,14 @@ TEST(AuthoredStopAudio, RootStopDominatesLaterControlsAcrossQuanta) {
             h.Begin();
             if (block == 0) {
                 auto stop = StopAt(17);
-                stop.controlCause.request.key = {7, 31};
-                stop.controlCause.actionFiring = 43;
+                stop.Stop().controlCause.request.key = {7, 31};
+                stop.Stop().controlCause.actionFiring = 43;
                 h.Append(render, stop);
             }
             if (h.engine->voices.Resolve(render) != nullptr) {
-                auto weight = StartAt(31);
-                weight.kind = harken::TimelineEventKind::VariableWeight;
-                weight.variableWeight = {31, 35, 0.0f, 0.0f, 1, {1, 1}, {1, 1}};
+                harken::VoiceTimelineEvent weight{harken::TimelineEventKind::VariableWeight};
+                weight.offset = 31;
+                weight.Weight().variableWeight = {31, 35, 0.0f, 0.0f, 1, {1, 1}, {1, 1}};
                 h.Append(render, weight);
                 h.Append(render, StopAt(40, false));
                 h.Append(render, StartAt(50));
@@ -4242,7 +4344,7 @@ TEST(AuthoredStopAudio, TypedLaneStopRefusalReturnsEveryProofWithoutChangingEarl
         ASSERT_NE(nullptr, context);
         bool foundStart = false;
         for (const auto& event : context->timelineEvents.events) {
-            if (event.kind == harken::TimelineEventKind::Start &&
+            if (event.Kind() == harken::TimelineEventKind::Start &&
                 event.frontierProof.state == harken::FrontierEventState::LaneApplied) {
                 foundStart = true;
                 EXPECT_EQ(UINT64_MAX, event.frontierProof.cutoffFrame);
@@ -4303,7 +4405,7 @@ TEST(AuthoredStopAudio, FinalizedCurrentSpanMergesOnlyTrueEligibleCutoffAcrossPa
                 EXPECT_TRUE(voices.ReserveLaneTimelineEvents(slot, generation, 0, 1, &lane));
                 auto event = StopAt(32);
                 event.order.executeFrame = 32;
-                event.authoredStopOperation = identity;
+                event.Stop().authoredStopOperation = identity;
                 event.frontierProof.state = harken::FrontierEventState::Pending;
                 event.frontierProof.quantum = 0;
                 event.frontierProof.renderGeneration = generation;
@@ -4322,7 +4424,7 @@ TEST(AuthoredStopAudio, FinalizedCurrentSpanMergesOnlyTrueEligibleCutoffAcrossPa
             ASSERT_NE(nullptr, context);
             for (std::uint32_t index = 0; index < context->timelineEvents.eventCount; ++index) {
                 const auto& event = context->timelineEvents.events[index];
-                if (event.kind != harken::TimelineEventKind::Start) continue;
+                if (event.Kind() != harken::TimelineEventKind::Start) continue;
                 EXPECT_EQ(rejectStop ? UINT64_MAX : 32u, event.frontierProof.cutoffFrame);
                 EXPECT_EQ(rejectStop ? harken::AuthoredStopOperationIdentity{} : identity,
                     event.frontierProof.cutoffOperation);
@@ -5056,7 +5158,7 @@ TEST(AuthoredStopAudio, TypedLaneOriginalControlAndNoneFenceProofsSurviveActualC
         auto event = StopAt(32);
         event.order = {input.executeFrame, input.logicCommitSequence, input.executionOrdinal,
             input.eventIndex, input.transactionOrdinal, input.subeventPhase, input.rowSequence};
-        event.authoredStopOperation = h.record.operation.Identity();
+        event.Stop().authoredStopOperation = h.record.operation.Identity();
         event.frontierProof.state = harken::FrontierEventState::Pending;
         event.frontierProof.quantum = 0;
         event.frontierProof.renderGeneration = static_cast<std::uint32_t>(h.render >> 32);

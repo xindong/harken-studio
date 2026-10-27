@@ -15,7 +15,10 @@
 #include "harken/core/PcmView.h"
 #include "harken/dsp/InterpKernels.h"
 
+#include <cassert>
+#include <cstddef>
 #include <cstdint>
+#include <new>
 #include <type_traits>
 
 namespace harken {
@@ -281,15 +284,26 @@ static_assert(std::is_trivially_copyable_v<ResamplerParkState>,
 static_assert(sizeof(ResamplerParkState) <= 32u * 1024u,
               "resampler park state exceeds the 32 KiB ceiling");
 
-// Per-voice state borrows prepared ring and optional profile storage from its
-// caller. All methods are audio-thread safe after reset.
 struct ResamplerUnitySpan {
     std::uint32_t ringOffset = 0;
     std::uint32_t firstFrames = 0;
     std::uint32_t frames = 0;
 };
 
-struct Resampler {
+struct ResamplerHighRatioChannelState {
+    ResampleFilterSectionState filter[kResampleHighRatioFilterSections] = {};
+    double previous = 0.0;
+    double current = 0.0;
+};
+static_assert(std::is_trivially_copyable_v<ResamplerHighRatioChannelState>);
+
+struct ResamplerHighRatioColumns {
+    ResamplerHighRatioChannelState* channels[kMaxChannels] = {};
+};
+
+// Borrows stable, prepared channel rows, ring and optional profile storage.
+// The columns table and its addresses must outlive every bound view.
+struct ResamplerView {
     float* ring[kMaxChannels] = {};  // kResampleFifoFrames floats each
     const ResampleTables* tables = nullptr;
     std::uint32_t channelCount = 0;
@@ -307,19 +321,42 @@ struct Resampler {
     std::uint64_t inputEndIndex = 0; // absolute end of real input, valid
                                      // only when inputEnded
     bool inputEnded = false;
-    ResampleFilterSectionState
-        highRatioFilter[kMaxChannels][kResampleHighRatioFilterSections] = {};
-    double highRatioPrevious[kMaxChannels] = {};
-    double highRatioCurrent[kMaxChannels] = {};
     std::uint64_t highRatioFilterIndex = 0; // next raw input frame to filter
     bool highRatioFilterActive = false;
     ResampleProfile resampleProfile =
         ResampleProfile::LegacyCompatibility;
     MultirateResamplerCandidate* professional = nullptr;
 
+    // Bind only before a new generation is reset/restored. A later Reset keeps
+    // this binding, including historical columns outside the current source.
+    void BindHighRatioColumns(const ResamplerHighRatioColumns& columns,
+                              std::uint32_t row,
+                              std::uint32_t preparedChannels) noexcept {
+        assert(preparedChannels <= kMaxChannels);
+        highRatioColumns_ = &columns;
+        highRatioRow_ = row;
+        highRatioPreparedChannels_ = preparedChannels;
+    }
+    ResamplerHighRatioChannelState& HighRatioChannel(std::uint32_t ch) noexcept {
+        assert(ch < highRatioPreparedChannels_ && highRatioColumns_ != nullptr &&
+               highRatioColumns_->channels[ch] != nullptr);
+        return *std::launder(reinterpret_cast<ResamplerHighRatioChannelState*>(
+            reinterpret_cast<std::byte*>(highRatioColumns_->channels[ch]) +
+            static_cast<std::size_t>(highRatioRow_) * sizeof(ResamplerHighRatioChannelState)));
+    }
+    const ResamplerHighRatioChannelState& HighRatioChannel(std::uint32_t ch) const noexcept {
+        assert(ch < highRatioPreparedChannels_ && highRatioColumns_ != nullptr &&
+               highRatioColumns_->channels[ch] != nullptr);
+        return *std::launder(reinterpret_cast<const ResamplerHighRatioChannelState*>(
+            reinterpret_cast<const std::byte*>(highRatioColumns_->channels[ch]) +
+            static_cast<std::size_t>(highRatioRow_) * sizeof(ResamplerHighRatioChannelState)));
+    }
+    // The caller supplies a validated complete park state.
+    static std::uint32_t RequiredHighRatioChannels(const ResamplerParkState& state) noexcept;
+
     // Prepares for a new voice: zeroes the ring, writes the history pad,
     // and positions the read head on the first real input frame. Runs on
-    // the logic thread (voice start).
+    // the logic thread at voice start or on audio for a prepared seek.
     void Reset(float* const* ringStorage, std::uint32_t channels,
                ResampleQuality q, double inRatio, const ResampleTables* t);
 
@@ -422,6 +459,28 @@ struct Resampler {
         const ResampleTables* legacyTables,
         const MultirateResampleTables* multirateTables,
         MultirateResamplerCandidate* workspace = nullptr);
+
+private:
+    bool HasHighRatioBacking(std::uint32_t channels) const noexcept;
+    const ResamplerHighRatioColumns* highRatioColumns_ = nullptr;
+    std::uint32_t highRatioRow_ = 0;
+    std::uint32_t highRatioPreparedChannels_ = 0;
+};
+
+// Standalone callers retain complete value-owned filter history. Copies keep
+// the existing borrowed ring/profile pointers but rebind their own history.
+struct Resampler : ResamplerView {
+    Resampler() noexcept;
+    Resampler(const Resampler& other) noexcept;
+    Resampler& operator=(const Resampler& other) noexcept;
+    Resampler(Resampler&& other) noexcept;
+    Resampler& operator=(Resampler&& other) noexcept;
+
+private:
+    using ResamplerView::BindHighRatioColumns;
+    void BindOwnedHighRatioColumns() noexcept;
+    ResamplerHighRatioChannelState highRatioOwned_[kMaxChannels] = {};
+    ResamplerHighRatioColumns highRatioOwnedColumns_{};
 };
 
 static_assert(sizeof(Resampler) <= 32u * 1024u,

@@ -349,9 +349,10 @@ struct FrontierTrace {
                 };
                 // Retarget tables include entering Start arms as well as dedicated controls.
                 for (const auto& service : engine.playableServices) {
-                    for (std::size_t index = 0; index < service.variableControlDiscreteRetargetEvents.size(); ++index)
-                        classify(service.variableControlDiscreteRetargetEvents[index].armToken,
-                            service.variableControlDiscreteRetargetPayloads[index]);
+                    if (!service.HasFeatureArrays()) continue;
+                    for (std::size_t index = 0; index < service.DiscreteRetargetStorage().events.size(); ++index)
+                        classify(service.DiscreteRetargetStorage().events[index].armToken,
+                            service.DiscreteRetargetStorage().payloads[index]);
                 }
                 for (const auto& program : engine.variableControlRetargetPrograms)
                     classify(program.event.armToken, program.payload);
@@ -366,7 +367,9 @@ struct FrontierTrace {
             auto found = std::find_if(heard.begin(), heard.end(), [&](const auto& item) {
                 return item.token.slot == slot && item.token.generation == arm->generation;
             });
-            if (found == heard.end()) {
+            // A queue successor may be audible before its logic-side ownership is adopted.
+            // Retry only unresolved identities while the exact arm generation still exists.
+            if (found == heard.end() || (found->leaf == 0 && !found->release.Valid())) {
                 harken::PlayableInstanceHandle leafHandle = 0;
                 for (std::size_t logical = 0; leafHandle == 0 && logical < engine.playableStorage.memberCount; ++logical) {
                     std::size_t physical = 0;
@@ -385,6 +388,12 @@ struct FrontierTrace {
                 harken::ContainerPlaybackRow playback{};
                 const bool bound = leaf.live && leaf.kind == harken::PlayableKind::Sound && parent.live;
                 (void)engine.containerPlayback.Capture(leaf.parent, &playback);
+                auto parentStableId = playback.containerStableId;
+                if (bound && (parent.kind == harken::PlayableKind::Track || parent.kind == harken::PlayableKind::Piece)) {
+                    harken::MonitorContentIdentity identity{};
+                    if (engine.playableInstances.CaptureContentIdentity(leaf.parent, &identity))
+                        parentStableId = identity.stableId;
+                }
                 harken::PlayableInstanceHandle root = 0;
                 std::uint32_t containerDepth = 0;
                 auto ancestor = leaf.parent;
@@ -395,14 +404,20 @@ struct FrontierTrace {
                     ancestor = node.parent;
                     if (node.kind == harken::PlayableKind::Container) ++containerDepth;
                 }
-                heard.push_back({{slot, arm->generation, arm->renderSlot, arm->renderGeneration},
-                    arm->target.subjectId, arm->startedBlockSequence.load(), 0,
-                    bound ? leafHandle : 0, bound ? leaf.parent : 0,
-                    arm->startFrame / engine.config.blockFrames + 1u,
-                    bound ? leaf.scheduleEpoch : 0, bound ? parent.scheduleEpoch : 0,
-                    bound ? parent.parent : 0, bound ? playback.containerStableId : VnObjectId{},
-                    ancestor == 0 ? root : 0, containerDepth});
-                found = std::prev(heard.end());
+                if (found == heard.end()) {
+                    heard.push_back({{slot, arm->generation, arm->renderSlot, arm->renderGeneration},
+                        arm->target.subjectId, arm->startedBlockSequence.load(), 0});
+                    found = std::prev(heard.end());
+                }
+                found->leaf = bound ? leafHandle : 0;
+                found->parent = bound ? leaf.parent : 0;
+                found->expectedStart = arm->startFrame / engine.config.blockFrames + 1u;
+                found->leafEpoch = bound ? leaf.scheduleEpoch : 0;
+                found->parentEpoch = bound ? parent.scheduleEpoch : 0;
+                found->parentParent = bound ? parent.parent : 0;
+                found->parentStableId = bound ? parentStableId : VnObjectId{};
+                found->root = ancestor == 0 ? root : 0;
+                found->containerDepth = containerDepth;
                 const auto render = (static_cast<std::uint64_t>(found->token.renderGeneration) << 32) |
                     found->token.renderSlot;
                 const auto sourceSlot = engine.playableInstances.SourceRetirementSlot(found->leaf);

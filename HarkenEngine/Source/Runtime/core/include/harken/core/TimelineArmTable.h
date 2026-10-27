@@ -677,7 +677,7 @@ public:
         std::uint64_t onsetFrame) const noexcept;
     bool MatchesVariableInitializerStart(const AudioOperationClaim& proof, TimelineArmToken token,
         std::uint64_t onsetFrame) const noexcept;
-    bool ProveInitialVariableDeferredStart(TimelineArmToken token, const FrontierGroupBinding& binding,
+    bool ProveInitialAdmissionDeferredStart(TimelineArmToken token, const FrontierGroupBinding& binding,
         AudioSliceLease& lease, const ScheduledTransactionPool& pool,
         std::uint64_t audioSequence, BoundAudioProof* out) noexcept;
 
@@ -757,7 +757,7 @@ public:
     std::size_t ScopeCommittedBytes() const noexcept { return groupMemberScopes_.CommittedBytes(); }
     std::size_t ScopeReservedBytes() const noexcept { return groupMemberScopes_.ReservedBytes(); }
     bool AttachRowStoragePreparation(void* context,
-        bool (*prepare)(void*, std::uint32_t) noexcept) noexcept;
+        bool (*prepare)(void*, std::uint32_t, bool) noexcept) noexcept;
     bool PrepareBacking(std::uint32_t count, StableStoragePreparation* out) noexcept;
     bool SetFreeGenerationForTests(std::uint32_t slot, std::uint32_t generation) noexcept;
     void SetRowCommitPageLimitForTests(std::size_t pages) noexcept {
@@ -1225,10 +1225,10 @@ private:
     mutable std::uint64_t nextGroupMemberSerial_ = 0;
 
     mutable StableRowStorage<Row> rows_;
-    bool PrepareRowDependencies(std::uint32_t count) noexcept;
+    bool PrepareRowDependencies(std::uint32_t count, bool fullSourceCommandBacking) noexcept;
     bool ConstructRowsThrough(std::uint32_t count) noexcept;
     void* rowStorageContext_ = nullptr;
-    bool (*prepareRowStorage_)(void*, std::uint32_t) noexcept = nullptr;
+    bool (*prepareRowStorage_)(void*, std::uint32_t, bool) noexcept = nullptr;
     std::uint64_t acceptedSourceTail_ = 0;
     std::uint32_t capacity_ = 0;
     std::uint64_t incarnation_ = 0;

@@ -10287,11 +10287,11 @@ TEST(PackComposition,
         ASSERT_EQ(before + 1u, engine->mixer.BlocksRendered());
     }
     ASSERT_TRUE(row->variableControlDiscreteRetargetPrepared);
-    EXPECT_EQ(0u, row->variableControlDiscreteRetargetTargetMemberCount);
+    EXPECT_EQ(0u, row->VariablePayload().variableControlDiscreteRetargetTargetMemberCount);
     EXPECT_TRUE(row->variableControlDiscreteRetargetHasZeroWorkCompletion);
     const std::uint64_t logicalBoundary =
-        row->variableControlDiscreteRetargetZeroWorkCompletionFrame;
-    EXPECT_EQ(row->variableControlDiscreteRetargetFrame + 4800u,
+        row->VariablePayload().variableControlDiscreteRetargetZeroWorkCompletionFrame;
+    EXPECT_EQ(row->VariablePayload().variableControlDiscreteRetargetFrame + 4800u,
               logicalBoundary);
     for (std::uint32_t block = 0;
          block < 64 && row->variableControlDiscreteRetargetPrepared; ++block) {
@@ -10319,7 +10319,7 @@ TEST(PackComposition,
         ASSERT_EQ(before + 1u, engine->mixer.BlocksRendered());
     }
     ASSERT_TRUE(row->variableControlDiscreteRetargetPrepared);
-    EXPECT_EQ(1u, row->variableControlDiscreteRetargetTargetMemberCount);
+    EXPECT_EQ(1u, row->VariablePayload().variableControlDiscreteRetargetTargetMemberCount);
     for (std::uint32_t block = 0;
          block < 64 && row->variableControlDiscreteRetargetPrepared; ++block) {
         const auto before = engine->mixer.BlocksRendered();
@@ -10859,7 +10859,7 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
             return candidate.rootInstance == play.producedPlayableInstance;
         });
     ASSERT_NE(session.Engine()->playableServices.end(), row);
-    ASSERT_GT(row->queueCompletionFrame,
+    ASSERT_GT(row->QueuePayload().queueCompletionFrame,
               session.Engine()->timelinePool.WindowEndFrame());
     EXPECT_TRUE(row->queueSignalOnlyNoOverlap);
     EXPECT_TRUE(row->queueDeferredNeedsFullPreparation);
@@ -10886,8 +10886,8 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
         const auto attempt = std::find_if(attempts, end,
             [firing](const auto& candidate) { return candidate.active && candidate.root == firing; });
         ASSERT_NE(end, attempt);
-        EXPECT_EQ(entry.coordinator.slot, attempt->initialQueueCoordinator.slot);
-        EXPECT_EQ(entry.coordinator.generation, attempt->initialQueueCoordinator.generation);
+        EXPECT_EQ(entry.coordinator.slot, attempt->QueueCoordinators().initialQueueCoordinator.slot);
+        EXPECT_EQ(entry.coordinator.generation, attempt->QueueCoordinators().initialQueueCoordinator.generation);
         const auto quantum = row->startFrame / engine.config.blockFrames;
         while (engine.mixer.BlocksRendered() < quantum) engine.nullBackend.Pump(1);
         ASSERT_EQ(quantum, engine.mixer.BlocksRendered());
@@ -10980,8 +10980,8 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
                 attempts + session.Engine()->immediateEntryAttempts.size(),
                 [firing](const auto& attempt) { return attempt.active && attempt.root == firing; });
             ASSERT_NE(attempts + session.Engine()->immediateEntryAttempts.size(), held);
-            publication.coordinator = held->initialQueueCoordinator;
-            publication.primary = held->initialQueuePrimaryGroup;
+            publication.coordinator = held->QueueCoordinators().initialQueueCoordinator;
+            publication.primary = held->QueueCoordinators().initialQueuePrimaryGroup;
             publication.attempt = held;
             ASSERT_TRUE(session.Engine()->timelinePool.AcquirePlan03GroupReader(
                 publication.primary, &publication.reader));
@@ -10992,9 +10992,9 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
             auto& proof = *static_cast<PublicationProof*>(context);
             proof.called = true;
             harken::DecisionCommittedSnapshot decision{};
-            proof.committed = engine.decisions.CaptureCommitted(attempt.initialQueueCoordinator, &decision) &&
+            proof.committed = engine.decisions.CaptureCommitted(attempt.QueueCoordinators().initialQueueCoordinator, &decision) &&
                 decision.participantCount == 0 && decision.consumedSlices == 0;
-            const auto* activation = engine.decisions.ResolveFrontierActivation(attempt.initialQueueCoordinator);
+            const auto* activation = engine.decisions.ResolveFrontierActivation(attempt.QueueCoordinators().initialQueueCoordinator);
             proof.pending = activation != nullptr && activation->State() == harken::FrontierReceiptState::Pending;
             harken::ImmediateLaneObservation lane{};
             proof.laneUnpublished = engine.immediateActionLane.Observe(attempt.lane, &lane) && !lane.committed;
@@ -11004,13 +11004,13 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
             proof.sourcePublished = source != engine.playableServices.end() &&
                 engine.timelineArms.State(source->arm, &arm) && arm == harken::ArmState::Published;
             proof.privateRetirementRefused = !engine.timelinePool.PrivateImmediateLaneGroupRetirementReady(
-                attempt.initialQueuePrimaryGroup, engine.mixer.BlocksRendered());
+                attempt.QueueCoordinators().initialQueuePrimaryGroup, engine.mixer.BlocksRendered());
             if (proof.holdReader) {
                 proof.readerAcquired = proof.reader.Valid() &&
-                    proof.reader.Identity() == attempt.initialQueuePrimaryGroup &&
-                    proof.primary == attempt.initialQueuePrimaryGroup &&
-                    proof.coordinator.slot == attempt.initialQueueCoordinator.slot &&
-                    proof.coordinator.generation == attempt.initialQueueCoordinator.generation;
+                    proof.reader.Identity() == attempt.QueueCoordinators().initialQueuePrimaryGroup &&
+                    proof.primary == attempt.QueueCoordinators().initialQueuePrimaryGroup &&
+                    proof.coordinator.slot == attempt.QueueCoordinators().initialQueueCoordinator.slot &&
+                    proof.coordinator.generation == attempt.QueueCoordinators().initialQueueCoordinator.generation;
             }
         };
         session.Engine()->forceImmediateQueuePostC0PublishFailureForTest = 2;
@@ -11022,11 +11022,11 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
         session.Engine()->nullBackend.Pump(1);
         const auto held = CaptureRootQueueOwners(*session.Engine());
         const auto phase = row->phase;
-        const auto owner = row->queueCurrentCompletion.owner;
-        const auto occurrence = row->queueCurrentOccurrence;
+        const auto owner = row->QueuePayload().queueCurrentCompletion.owner;
+        const auto occurrence = row->QueuePayload().queueCurrentOccurrence;
         const auto partition = row->partition;
-        auto* bank = row->queueCurrentProgramBank;
-        const auto programs = row->queueCurrentPrograms.Resolve(bank);
+        auto* bank = row->QueuePayload().queueCurrentProgramBank;
+        const auto programs = row->QueuePayload().queueCurrentPrograms.Resolve(bank);
         ASSERT_EQ(1u, programs.size());
         ASSERT_EQ(1u, programs[0].eventCount);
         ASSERT_NE(nullptr, programs[0].events);
@@ -11040,13 +11040,13 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
             session.Engine()->immediateEntryAttempts.data() + session.Engine()->immediateEntryAttempts.size(),
             [firing](const auto& attempt) { return attempt.active && attempt.root == firing; });
         ASSERT_NE(session.Engine()->immediateEntryAttempts.data() + session.Engine()->immediateEntryAttempts.size(), attempt);
-        ASSERT_TRUE(attempt->initialQueueCoordinator.Valid());
+        ASSERT_TRUE(attempt->QueueCoordinators().initialQueueCoordinator.Valid());
         for (unsigned identity = 0; identity < 8u; ++identity) {
             SCOPED_TRACE(identity);
-            if (identity == 0) row->queueCurrentCompletion.owner.singleDecision = attempt->initialQueueCoordinator;
+            if (identity == 0) row->QueuePayload().queueCurrentCompletion.owner.singleDecision = attempt->QueueCoordinators().initialQueueCoordinator;
             if (identity == 1) ++event.armToken.generation;
             if (identity == 2) ++bank->schedules[0].entryAnchorFrame;
-            if (identity == 3) ++row->queueCurrentOccurrence.generation;
+            if (identity == 3) ++row->QueuePayload().queueCurrentOccurrence.generation;
             if (identity == 4) ++row->partition.generation;
             if (identity == 5) ++row->ticket;
             if (identity == 6) ++row->schedule.transactionId;
@@ -11056,10 +11056,10 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
             EXPECT_TRUE(row->pendingImmediateEntry);
             EXPECT_FALSE(row->pendingImmediateRetry);
             EXPECT_EQ(held, CaptureRootQueueOwners(*session.Engine()));
-            row->queueCurrentCompletion.owner = owner;
+            row->QueuePayload().queueCurrentCompletion.owner = owner;
             event.armToken = eventArm;
             bank->schedules[0].entryAnchorFrame = bankAnchor;
-            row->queueCurrentOccurrence = occurrence;
+            row->QueuePayload().queueCurrentOccurrence = occurrence;
             row->partition = partition;
             row->ticket = ticket;
             row->schedule.transactionId = transaction;
@@ -11076,16 +11076,16 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
         heldAttempt = std::find_if(attempts, end,
             [firing](const auto& candidate) { return candidate.active && candidate.root == firing; });
         ASSERT_NE(end, heldAttempt);
-        heldCoordinator = heldAttempt->initialQueueCoordinator;
-        heldPrimary = heldAttempt->initialQueuePrimaryGroup;
+        heldCoordinator = heldAttempt->QueueCoordinators().initialQueueCoordinator;
+        heldPrimary = heldAttempt->QueueCoordinators().initialQueuePrimaryGroup;
         ASSERT_TRUE(session.Engine()->timelinePool.AcquirePlan03GroupReader(heldPrimary, &heldPrivateReader));
     }
     if (stopPhase == 0u) ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
     if (lateFirstUpdate) {
         const auto provisional = row->startFrame;
         const auto arm = row->arm;
-        const auto occurrence = row->queueCurrentOccurrence;
-        const auto owner = row->queueCurrentCompletion.owner;
+        const auto occurrence = row->QueuePayload().queueCurrentOccurrence;
+        const auto owner = row->QueuePayload().queueCurrentCompletion.owner;
         const auto* progress = session.Engine()->timelineOccurrences.CompletionProgressOf(occurrence);
         ASSERT_NE(nullptr, progress);
         harken::CompletionProgressSnapshot before{};
@@ -11104,10 +11104,10 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
         EXPECT_EQ(arm.generation, row->arm.generation);
         EXPECT_EQ(arm.renderGeneration, row->arm.renderGeneration);
         EXPECT_EQ(row->startFrame, row->schedule.entryAnchorFrame);
-        ASSERT_NE(nullptr, row->queueCurrentProgramBank);
-        EXPECT_EQ(row->startFrame, row->queueCurrentProgramBank->schedules[0].entryAnchorFrame);
-        EXPECT_EQ(row->startFrame, row->queueCurrentCompletion.absoluteLogicalStartFrame);
-        EXPECT_TRUE(harken::SameCompletionOwner(owner, row->queueCurrentCompletion.owner));
+        ASSERT_NE(nullptr, row->QueuePayload().queueCurrentProgramBank);
+        EXPECT_EQ(row->startFrame, row->QueuePayload().queueCurrentProgramBank->schedules[0].entryAnchorFrame);
+        EXPECT_EQ(row->startFrame, row->QueuePayload().queueCurrentCompletion.absoluteLogicalStartFrame);
+        EXPECT_TRUE(harken::SameCompletionOwner(owner, row->QueuePayload().queueCurrentCompletion.owner));
         EXPECT_EQ(progress, session.Engine()->timelineOccurrences.CompletionProgressOf(occurrence));
         harken::CompletionProgressSnapshot after{};
         ASSERT_TRUE(harken::CaptureCompletionProgress(*progress, &after));
@@ -11138,7 +11138,7 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
             [](float sample) { return sample > 0.001f; });
         ASSERT_TRUE(heardFirst);
         if (stopPhase == 2u) {
-            while (session.Engine()->mixer.BlocksRendered() <= row->queueCompletionFrame / 256u)
+            while (session.Engine()->mixer.BlocksRendered() <= row->QueuePayload().queueCompletionFrame / 256u)
                 session.Engine()->nullBackend.Pump(1);
             harken::TimelineArmObservation completed{};
             ASSERT_TRUE(session.Engine()->timelineArms.Observe(row->arm, &completed));
@@ -11187,7 +11187,7 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
     if (holdPublishedReaderThroughRelease) {
         ASSERT_TRUE(publication.readerAcquired);
         ASSERT_NE(nullptr, publication.attempt);
-        for (unsigned block = 0; block < 16u && publication.attempt->initialQueueCoordinator.Valid(); ++block) {
+        for (unsigned block = 0; block < 16u && publication.attempt->QueueCoordinators().initialQueueCoordinator.Valid(); ++block) {
             session.Engine()->nullBackend.Pump(1);
             ASSERT_EQ(VN_OK, Vn_Update());
             const auto* output = session.Engine()->nullBackend.LastBlock();
@@ -11197,7 +11197,7 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
         }
         EXPECT_TRUE(publication.attempt->active);
         EXPECT_FALSE(publication.attempt->lane.Valid());
-        EXPECT_FALSE(publication.attempt->initialQueueCoordinator.Valid());
+        EXPECT_FALSE(publication.attempt->QueueCoordinators().initialQueueCoordinator.Valid());
         ASSERT_LT(publication.coordinator.slot, session.Engine()->decisionRetirements.size());
         const auto retired = session.Engine()->decisionRetirements[publication.coordinator.slot].decision;
         EXPECT_EQ(publication.coordinator.slot, retired.slot);
@@ -11211,9 +11211,9 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
         EXPECT_TRUE(heldAttempt->active);
         EXPECT_FALSE(heldAttempt->lane.Valid());
         EXPECT_EQ(harken::ImmediateEntryAttemptState::Aborted, heldAttempt->gate.Observe(heldAttempt->generation));
-        EXPECT_EQ(heldPrimary, heldAttempt->initialQueuePrimaryGroup);
-        EXPECT_EQ(heldCoordinator.slot, heldAttempt->initialQueueCoordinator.slot);
-        EXPECT_EQ(heldCoordinator.generation, heldAttempt->initialQueueCoordinator.generation);
+        EXPECT_EQ(heldPrimary, heldAttempt->QueueCoordinators().initialQueuePrimaryGroup);
+        EXPECT_EQ(heldCoordinator.slot, heldAttempt->QueueCoordinators().initialQueueCoordinator.slot);
+        EXPECT_EQ(heldCoordinator.generation, heldAttempt->QueueCoordinators().initialQueueCoordinator.generation);
         EXPECT_TRUE(session.Engine()->decisions.Contains(heldCoordinator));
         EXPECT_EQ(nullptr, session.Engine()->decisions.ResolveFrontierActivation(heldCoordinator));
         EXPECT_NE(baseline, CaptureRootQueueOwners(*session.Engine()));
@@ -12870,7 +12870,7 @@ void DiagnoseDeferredPackVariableControlHandoffPartial(
               << '/' << parent->variableControlDiscreteDecision.generation
               << " group=" << parent->variableControlDiscreteArmGroup.slot
               << '/' << parent->variableControlDiscreteArmGroup.generation
-              << " pageGeneration=" << parent->initialLaneDiscreteGroup.pageGeneration
+              << " pageGeneration=" << parent->InitialLaneDiscreteGroup().pageGeneration
               << " memberCount=" << parent->variableControlInitialDiscreteMemberCount
               << " invocation=" << parent->invocationGeneration
               << " attempt=" << scratch.storage.generation
@@ -17654,8 +17654,8 @@ TEST(PackComposition,
                                                            &queue));
     EXPECT_EQ(UINT32_MAX, queue.emitterSlot);
     EXPECT_EQ(0u, queue.emitterGeneration);
-    EXPECT_EQ(UINT32_MAX, queueService->queueCheckpointKey.emitterSlot);
-    EXPECT_EQ(0u, queueService->queueCheckpointKey.emitterGeneration);
+    EXPECT_EQ(UINT32_MAX, queueService->QueueCheckpointKey().emitterSlot);
+    EXPECT_EQ(0u, queueService->QueueCheckpointKey().emitterGeneration);
     EXPECT_EQ(outerPlayback.activeChild, queue.rootInstance);
     EXPECT_EQ(nestedPlayback.activeChild,
               session.Engine()->playableInstances.Classify(queue.rootInstance)
@@ -17739,15 +17739,15 @@ TEST(PackComposition,
         });
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_TRUE(row->queueContinuationPrepared);
-    EXPECT_FALSE(row->queueSameProgramKey);
+    EXPECT_FALSE(row->QueueFiling().queueSameProgramKey);
     const auto* successorMember = engine->FindQueueProgramMember(
-        row->queueSuccessorProgramBank, row->queueSuccessorPrograms.first);
+        row->QueueFiling().queueSuccessorProgramBank, row->QueueFiling().queueSuccessorPrograms.first);
     ASSERT_NE(nullptr, successorMember);
     const auto& successorVoice = successorMember->voice;
     ASSERT_TRUE(successorVoice.Valid());
     EXPECT_EQ(480u, successorVoice.Facts().authoredDurationFrames);
-    EXPECT_EQ(row->queueCompletionFrame + 240u,
-              row->queueSuccessorSchedule.entryAnchorFrame);
+    EXPECT_EQ(row->QueuePayload().queueCompletionFrame + 240u,
+              row->QueueFiling().queueSuccessorSchedule.entryAnchorFrame);
 
     std::vector<std::uint64_t> audibleRuns;
     std::uint64_t currentRun = 0;
@@ -17835,31 +17835,31 @@ void RunPackQueueResetPreservesLogicalTrackCompletion(
         });
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_TRUE(row->queueContinuationPrepared);
-    ASSERT_EQ(0u, row->queueSuccessorScheduleLeafCount);
+    ASSERT_EQ(0u, row->QueueFiling().queueSuccessorScheduleLeafCount);
     if (logicalOnlyTrack) {
-        ASSERT_EQ(0u, row->queueSuccessorRenderHandle);
-        ASSERT_FALSE(row->queueSuccessorArm.Valid());
+        ASSERT_EQ(0u, row->QueuePayload().queueSuccessorRenderHandle);
+        ASSERT_FALSE(row->QueueFiling().queueSuccessorArm.Valid());
     } else {
-        ASSERT_NE(0u, row->queueSuccessorRenderHandle);
+        ASSERT_NE(0u, row->QueuePayload().queueSuccessorRenderHandle);
     }
-    ASSERT_TRUE(row->queueSuccessorHasZeroWorkCompletion);
+    ASSERT_TRUE(row->QueueFiling().queueSuccessorHasZeroWorkCompletion);
     post.actionId = kResetActionId;
     VnActionFiringHandle resetFiring = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&post, &resetFiring));
     ASSERT_FALSE(engine->runtimeRecreateRequired) << "after reset post";
     EXPECT_TRUE(row->queueContinuationPrepared);
-    EXPECT_FALSE(row->queueSameProgramKey);
-    ASSERT_EQ(0u, row->queueSuccessorScheduleLeafCount);
+    EXPECT_FALSE(row->QueueFiling().queueSameProgramKey);
+    ASSERT_EQ(0u, row->QueueFiling().queueSuccessorScheduleLeafCount);
     if (logicalOnlyTrack) {
-        ASSERT_EQ(0u, row->queueSuccessorRenderHandle);
-        ASSERT_FALSE(row->queueSuccessorArm.Valid());
+        ASSERT_EQ(0u, row->QueuePayload().queueSuccessorRenderHandle);
+        ASSERT_FALSE(row->QueueFiling().queueSuccessorArm.Valid());
     } else {
-        ASSERT_NE(0u, row->queueSuccessorRenderHandle);
+        ASSERT_NE(0u, row->QueuePayload().queueSuccessorRenderHandle);
     }
-    ASSERT_TRUE(row->queueSuccessorHasZeroWorkCompletion);
-    const std::uint64_t provisionalBoundary = row->queueSuccessorZeroWorkCompletionFrame;
+    ASSERT_TRUE(row->QueueFiling().queueSuccessorHasZeroWorkCompletion);
+    const std::uint64_t provisionalBoundary = row->QueueFiling().queueSuccessorZeroWorkCompletionFrame;
     const std::uint64_t authoredDuration = logicalOnlyTrack ? 960u : 4800u;
-    EXPECT_EQ(row->queueCompletionFrame + authoredDuration, provisionalBoundary);
+    EXPECT_EQ(row->QueuePayload().queueCompletionFrame + authoredDuration, provisionalBoundary);
     // The first normal service publishes the actual receiving frame. Verify
     // the same authored duration against that frame before promotion.
     for (std::uint32_t block = 0; block < 16u &&
@@ -17869,9 +17869,9 @@ void RunPackQueueResetPreservesLogicalTrackCompletion(
         ASSERT_EQ(VN_OK, Vn_Update());
     }
     ASSERT_FALSE(row->pendingImmediateEntry);
-    ASSERT_TRUE(row->queueSuccessorHasZeroWorkCompletion);
-    const std::uint64_t expectedBoundary = row->queueSuccessorZeroWorkCompletionFrame;
-    EXPECT_EQ(row->queueCompletionFrame + authoredDuration, expectedBoundary);
+    ASSERT_TRUE(row->QueueFiling().queueSuccessorHasZeroWorkCompletion);
+    const std::uint64_t expectedBoundary = row->QueueFiling().queueSuccessorZeroWorkCompletionFrame;
+    EXPECT_EQ(row->QueuePayload().queueCompletionFrame + authoredDuration, expectedBoundary);
     EXPECT_GE(expectedBoundary, provisionalBoundary);
 
     bool promoted = false;
@@ -17883,8 +17883,8 @@ void RunPackQueueResetPreservesLogicalTrackCompletion(
     }
     ASSERT_TRUE(promoted);
     EXPECT_EQ(expectedBoundary, row->zeroWorkCompletionFrame);
-    EXPECT_FALSE(row->queueSuccessorHasZeroWorkCompletion);
-    EXPECT_EQ(0u, row->queueSuccessorZeroWorkCompletionFrame);
+    EXPECT_FALSE(row->QueueFiling().queueSuccessorHasZeroWorkCompletion);
+    EXPECT_EQ(0u, row->QueueFiling().queueSuccessorZeroWorkCompletionFrame);
     const std::uint64_t currentFrame =
         engine->mixer.BlocksRendered() * engine->config.blockFrames;
     ASSERT_LT(currentFrame, expectedBoundary);
@@ -17906,7 +17906,7 @@ void RunPackQueueResetPreservesLogicalTrackCompletion(
     ASSERT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state);
     EXPECT_EQ(VN_ACTION_OUTCOME_CANCELLED, info.outcome);
     EXPECT_EQ(VN_ACTION_TERMINAL_STOP_REQUESTED, info.terminalReason);
-    EXPECT_EQ(0u, row->queueAbortedSuccessorOccurrence.generation);
+    EXPECT_EQ(0u, row->QueuePayload().queueAbortedSuccessorOccurrence.generation);
     ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(playFiring));
     ASSERT_EQ(VN_OK, Vn_DestroyEmitter(post.emitter));
 }
@@ -20680,10 +20680,10 @@ void ExpectShortVariableControlTargetPromotion(ContainerMatrixEntry entry, bool 
                 leaf = source->leaf;
                 leafEpoch = source->acceptedEpoch;
                 DecisionCommittedSnapshot decision{};
-                if (engine.decisions.CaptureCommitted(row->variableControlDiscreteRetargetDecision, &decision) &&
+                if (engine.decisions.CaptureCommitted(row->VariablePayload().variableControlDiscreteRetargetDecision, &decision) &&
                     decision.audioState == AudioGroupState::Admitted) {
                     admitted = true;
-                    decisionToken = row->variableControlDiscreteRetargetDecision;
+                    decisionToken = row->VariablePayload().variableControlDiscreteRetargetDecision;
                 }
                 SourceTerminalPayload result{};
                 if (engine.sourceTerminals.Capture(sourceToken, engine.mixer.BlocksRendered(), &result)) {
@@ -20700,7 +20700,7 @@ void ExpectShortVariableControlTargetPromotion(ContainerMatrixEntry entry, bool 
         SCOPED_TRACE(::testing::Message() << "prepared=" << row->variableControlDiscreteRetargetPrepared
             << " applied=" << row->variableControlDiscreteRetargetApplied
             << " exited=" << row->variableControlDiscreteRetargetSourceExited
-            << " targets=" << row->variableControlDiscreteRetargetTargetMemberCount
+            << " targets=" << row->VariablePayload().variableControlDiscreteRetargetTargetMemberCount
             << " lifecycle=" << static_cast<unsigned>(row->controlLifecycle)
             << " runtime=" << engine.runtimeRecreateRequired << " natural=" << natural
             << " start=" << startSequence << " source=" << sourceSequence
@@ -20819,8 +20819,8 @@ TEST(PackComposition, VariableControlPartialCompletionKeepsSurvivorsWithoutResta
         << " committed=" << row->variableControlRetargetDecisionCommitted
         << " applied=" << row->variableControlRetargetApplied
         << " final=" << row->variableControlRetargetMembershipFinalized
-        << " frame=" << row->variableControlRetargetFrame
-        << " end=" << row->variableControlRetargetEnvelopeEndFrame
+        << " frame=" << row->VariablePayload().variableControlRetargetFrame
+        << " end=" << row->VariablePayload().variableControlRetargetEnvelopeEndFrame
         << " now=" << engine.mixer.BlocksRendered() * 64u
         << " runtime=" << engine.runtimeRecreateRequired;
     std::size_t retainedSlot = 0;
@@ -21851,10 +21851,10 @@ void ExpectQueueSequenceBranchesAcrossEntry(ContainerMatrixEntry entry, std::uin
             for (const auto& service : engine.playableServices) {
                 if (!service.InvocationValid() || service.ownerInstance == root ||
                     !service.variableControlDiscreteRetargetPrepared ||
-                    !service.variableControlDiscreteRetargetDecision.Valid()) continue;
+                    !service.VariablePayload().variableControlDiscreteRetargetDecision.Valid()) continue;
                 ASSERT_TRUE(service.frontierLifetimeEntry.Valid());
                 DecisionCommittedSnapshot decision{};
-                if (!engine.decisions.CaptureCommitted(service.variableControlDiscreteRetargetDecision, &decision)) continue;
+                if (!engine.decisions.CaptureCommitted(service.VariablePayload().variableControlDiscreteRetargetDecision, &decision)) continue;
                 VariableControlInstanceSnapshot side{};
                 ASSERT_TRUE(engine.variableControlInstances.Capture(service.variableControlInstance, &side));
                 if (decision.audioState == AudioGroupState::AudioClaimed) {
@@ -21866,9 +21866,9 @@ void ExpectQueueSequenceBranchesAcrossEntry(ContainerMatrixEntry entry, std::uin
                 if (decision.audioState == AudioGroupState::Admitted) {
                     naturalCompletion = true;
                     EXPECT_EQ(VariableControlSideState::Committed, side.discrete.state);
-                    for (std::uint32_t source = 0; source < service.variableControlDiscreteRetargetSourceMemberCount; ++source) {
+                    for (std::uint32_t source = 0; source < service.VariablePayload().variableControlDiscreteRetargetSourceMemberCount; ++source) {
                         ArmState state{};
-                        ASSERT_TRUE(engine.timelineArms.State(service.variableControlDiscreteRetargetGroupArms[source], &state));
+                        ASSERT_TRUE(engine.timelineArms.State(service.DiscreteRetargetStorage().groupArms[source], &state));
                         EXPECT_EQ(ArmState::Tombstoned, state);
                     }
                 }
@@ -22759,7 +22759,7 @@ void ExpectMultiLeafContainerLoopCompletesAndReclaims(
             harkentest::ExpectTimelineInstallIdentity(*engine, run.renderHandles[i],
                 identityOwner, currentInstall->Facts().target,
                 run.startFrames[i], run.arms[i]);
-            const auto programs = resource->queueCurrentPrograms.Resolve(resource->queueCurrentProgramBank);
+            const auto programs = resource->QueuePayload().queueCurrentPrograms.Resolve(resource->QueuePayload().queueCurrentProgramBank);
             const ProgramView* schedule = &resource->schedule;
             if (currentMultiLeaf) {
                 ASSERT_LT(i, programs.size());
@@ -23676,7 +23676,7 @@ void RunContainerMatrixEntry(ContainerModeV1 mode, ContainerMatrixChild childKin
             ASSERT_NE(nullptr, record);
             observedSchedule = &record->schedule;
         } else {
-            const auto programs = row->queueCurrentPrograms.Resolve(row->queueCurrentProgramBank);
+            const auto programs = row->QueuePayload().queueCurrentPrograms.Resolve(row->QueuePayload().queueCurrentProgramBank);
             ASSERT_FALSE(programs.empty());
             observedSchedule = &programs[0];
         }
@@ -23843,6 +23843,2239 @@ TEST_P(ChildFrontierMatrix, CompletePlayback) {
     EXPECT_EQ(direct.kinds, packAction.kinds);
 }
 INSTANTIATE_TEST_SUITE_P(AllContainerChildEntries, ChildFrontierMatrix, ::testing::Range(0u, 20u));
+
+TEST(PackComposition,
+     NestedContainerPieceTrackRendersAuthoredOverlapAndRetiresAcrossActions) {
+    constexpr std::uint32_t kBlockFrames = 64;
+    constexpr std::uint64_t kActionDelayFrames = 480;
+    constexpr std::array<std::uint64_t, 2> kStartOffsets{48, 144};
+    constexpr std::array<std::uint64_t, 2> kEndOffsets{240, 384};
+    constexpr std::array<float, 2> kLevels{0.125f, 0.25f};
+    for (const auto entry : {ContainerMatrixEntry::CurrentWorldAction,
+                             ContainerMatrixEntry::PackAction}) {
+        SCOPED_TRACE(static_cast<unsigned>(entry));
+        const std::vector<float> firstSamples(2048, kLevels[0]);
+        const std::vector<float> secondSamples(2048, kLevels[1]);
+        const float* firstChannels[] = {firstSamples.data()};
+        const float* secondChannels[] = {secondSamples.data()};
+        std::uint64_t firstRevision = 0;
+        std::uint64_t secondRevision = 0;
+        ASSERT_TRUE(ComputeMediaPcmContentRevisionV1(
+            48000, 1, firstSamples.size(), firstChannels, 1, &firstRevision));
+        ASSERT_TRUE(ComputeMediaPcmContentRevisionV1(
+            48000, 1, secondSamples.size(), secondChannels, 1, &secondRevision));
+
+        // Sequence -> Random -> Piece -> Track -> two overlapping Sounds.
+        ContainerMatrixWorld image(ContainerModeV1::Sequence,
+            ContainerMatrixChild::Piece, firstRevision, secondRevision,
+            true, 1, 1);
+        image.placements[0].authoredStart = INT64_C(1000000);
+        image.placements[0].authoredDuration = INT64_C(4000000);
+        image.placements[1].authoredStart = INT64_C(3000000);
+        image.placements[1].authoredDuration = INT64_C(5000000);
+        image.track.scheduleSemanticFingerprint =
+            ComputeTrackScheduleFingerprintV1(image.track);
+        image.trackRef.trackScheduleSemanticFingerprint =
+            image.track.scheduleSemanticFingerprint;
+        image.piece.scheduleSemanticFingerprint =
+            ComputePieceScheduleFingerprintV1(image.piece);
+        // A fixed authored delay avoids deriving an oracle from leaf arm times.
+        SetAbsoluteTime(&image.step.delay, INT64_C(10000000));
+        image.action.directFeatureMask = 1u;
+        image.action.transitiveFeatureMask = 1u;
+        image.action.programSemanticFingerprint =
+            ComputeActionProgramFingerprintV1(image.action);
+        image.world.identity.runtimeSemanticFingerprint =
+            ComputeCurrentWorldFingerprintV4(image.world);
+
+        EngineSession session(MakeNullConfig(16, kBlockFrames, 48000));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto* engine = session.Engine();
+        ASSERT_NE(nullptr, engine);
+        VnPackHandle pack = 0;
+        if (entry == ContainerMatrixEntry::PackAction) {
+            constexpr std::uint64_t kPackStableId = 22;
+            ImageBuilder builder(kPackKindCanonicalContent);
+            builder.AddEntry(kPackEntryKindPackRequirementBlock, kPackStableId,
+                             RequirementPayload(kPackStableId, 1, 1));
+            builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition,
+                kPackStableId, WrapWorldPartition(kPackStableId, 1, image.world,
+                    image.world.playablePropertyCount + image.world.actionCount));
+            builder.AddMedia(ContainerMatrixWorld::kFirstSound, firstSamples);
+            builder.AddMedia(ContainerMatrixWorld::kSecondSound, secondSamples);
+            const auto bytes = builder.Build();
+            const std::string locator = "nested-authored-pcm-content.pack";
+            const auto init = BuildSingleIdentityInit(
+                Fnv1a64(bytes.data(), bytes.size()), ContainerMatrixWorld::kAction,
+                locator.c_str(), ContainerMatrixWorld::kRoot);
+            const auto initPath = WriteTemp("nested-authored-pcm-init.pack", init);
+            const auto packPath = WriteTemp(locator, bytes);
+            VnCanonicalPackSetMemberV1 members[2]{};
+            VnCanonicalPackSetMemberResultV1 rows[2]{};
+            const char* paths[] = {initPath.c_str(), packPath.c_str()};
+            for (std::size_t index = 0; index < 2; ++index) {
+                members[index].structSize = sizeof(members[index]);
+                members[index].packStableId = index == 0 ? 11 : kPackStableId;
+                members[index].packKind = index == 0
+                    ? VN_CANONICAL_PACK_SET_MEMBER_INIT
+                    : VN_CANONICAL_PACK_SET_MEMBER_CONTENT;
+                members[index].utf8Path = paths[index];
+                rows[index].structSize = sizeof(rows[index]);
+            }
+            VnCanonicalPackSetActivationReportV1 activated{};
+            ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(
+                members, 2, rows, activated));
+            pack = rows[1].handle;
+            ASSERT_NE(0u, pack);
+        } else {
+            const auto firstPcm = harkentest::MonoDesc(firstSamples, 48000);
+            const auto secondPcm = harkentest::MonoDesc(secondSamples, 48000);
+            ASSERT_EQ(VN_OK, Vn_RegisterPCM(ContainerMatrixWorld::kFirstSound,
+                                          &firstPcm));
+            ASSERT_EQ(VN_OK, Vn_RegisterPCM(ContainerMatrixWorld::kSecondSound,
+                                          &secondPcm));
+            ASSERT_EQ(WorldInstallStatus::Ok,
+                      InstallContainerWorldV1(*engine, image.world).status);
+        }
+
+        VnEmitterHandle emitter = 0;
+        ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+        const auto ledgerBaseline = engine->ledger.AvailableEntryCount();
+        const auto transactionBaseline = engine->timelinePool.LiveTransactionCount();
+        const auto captureStart = engine->mixer.BlocksRendered() * kBlockFrames;
+        const auto expectedRootAnchor =
+            ImmediateQuantizeBaseFrame(*engine) + kActionDelayFrames;
+        VnPostActionDesc post{};
+        post.structSize = sizeof(post);
+        post.actionId = ContainerMatrixWorld::kAction;
+        post.emitter = emitter;
+        VnActionFiringHandle firing = 0;
+        ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+        VnActionStepResult step{};
+        step.structSize = sizeof(step);
+        ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &step));
+        ASSERT_EQ(VN_ACTION_STEP_ACTIVE, step.state);
+        const auto produced = step.producedPlayableInstance;
+        ASSERT_NE(0u, produced);
+        ASSERT_TRUE(engine->playableInstances.Classify(produced).live);
+
+        FrontierTrace lifecycle;
+        std::vector<float> captured;
+        const auto channels = engine->nullBackend.Channels();
+        ASSERT_EQ(2u, channels);
+        VnActionFiringInfo info{};
+        info.structSize = sizeof(info);
+        for (std::uint32_t block = 0; block < 128; ++block) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            const auto beforePump = engine->mixer.BlocksRendered();
+            engine->nullBackend.Pump(1);
+            ASSERT_EQ(beforePump + 1u, engine->mixer.BlocksRendered());
+            const auto* output = engine->nullBackend.LastBlock();
+            ASSERT_NE(nullptr, output);
+            captured.insert(captured.end(), output,
+                            output + kBlockFrames * channels);
+            lifecycle.Capture(*engine);
+            ASSERT_EQ(VN_OK, Vn_Update());
+            ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
+            const bool outputComplete = engine->mixer.BlocksRendered() * kBlockFrames >=
+                expectedRootAnchor + kEndOffsets[1] + 2u * kBlockFrames;
+            const bool retired = info.state == VN_ACTION_FIRING_TERMINAL_RETAINED &&
+                engine->playableInstances.LiveCount() == 0 &&
+                engine->playablePartitions.OccupiedCount() == 0 &&
+                engine->timelineArms.LiveCount() == 0 &&
+                engine->timelineOccurrences.OccupiedCount() == 0 &&
+                engine->compositeCompletionOwners.OccupiedCount() == 0 &&
+                engine->timelinePool.LiveTransactionCount() == transactionBaseline &&
+                engine->voices.ActiveCount() == 0;
+            if (outputComplete && retired) break;
+        }
+
+        const auto capturedFrames = captured.size() / channels;
+        ASSERT_GT(captureStart + capturedFrames,
+                  expectedRootAnchor + kEndOffsets[1] + kBlockFrames);
+        for (std::size_t frame = 0; frame < capturedFrames; ++frame) {
+            const auto absoluteFrame = captureStart + frame;
+            float expected = 0.0f;
+            for (std::size_t leaf = 0; leaf < kStartOffsets.size(); ++leaf) {
+                if (absoluteFrame >= expectedRootAnchor + kStartOffsets[leaf] &&
+                    absoluteFrame < expectedRootAnchor + kEndOffsets[leaf]) {
+                    expected += kLevels[leaf];
+                }
+            }
+            for (std::uint32_t channel = 0; channel < channels; ++channel) {
+                ASSERT_NEAR(expected, captured[frame * channels + channel], 1e-6f)
+                    << "absolute frame=" << absoluteFrame << " channel=" << channel
+                    << " root anchor=" << expectedRootAnchor;
+            }
+        }
+
+        ASSERT_EQ(2u, lifecycle.heard.size());
+        const std::array<VnObjectId, 2> expectedSubjects{
+            ContainerMatrixWorld::kFirstSound, ContainerMatrixWorld::kSecondSound};
+        for (std::size_t index = 0; index < expectedSubjects.size(); ++index) {
+            const auto heard = std::find_if(lifecycle.heard.begin(), lifecycle.heard.end(),
+                [&](const auto& item) { return item.subject == expectedSubjects[index]; });
+            ASSERT_NE(lifecycle.heard.end(), heard);
+            EXPECT_EQ(produced, heard->root);
+            EXPECT_NE(0u, heard->leaf);
+            EXPECT_NE(0u, heard->leafEpoch);
+            EXPECT_EQ((expectedRootAnchor + kStartOffsets[index]) / kBlockFrames + 1u,
+                      heard->start);
+            heard->ExpectNaturalSourceReleased();
+        }
+        EXPECT_NE(lifecycle.heard[0].leaf, lifecycle.heard[1].leaf);
+        EXPECT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state);
+        EXPECT_EQ(VN_ACTION_OUTCOME_SUCCEEDED, info.outcome);
+        EXPECT_EQ(VN_ACTION_TERMINAL_NATURAL, info.terminalReason);
+        EXPECT_FALSE(engine->playableInstances.Classify(produced).live);
+        EXPECT_EQ(0u, engine->playableInstances.LiveCount());
+        EXPECT_EQ(0u, engine->containerPlayback.LiveCount());
+        EXPECT_EQ(0u, engine->queueInstances.LiveCount());
+        EXPECT_EQ(0u, engine->variableControlInstances.LiveCount());
+        EXPECT_EQ(0u, engine->playablePartitions.OccupiedCount());
+        EXPECT_EQ(0u, engine->timelineArms.LiveCount());
+        EXPECT_EQ(0u, engine->timelineOccurrences.OccupiedCount());
+        EXPECT_EQ(0u, engine->compositeCompletionOwners.OccupiedCount());
+        EXPECT_EQ(0u, engine->decisions.LiveCount());
+        EXPECT_EQ(0u, engine->armGroups.LiveCount());
+        EXPECT_EQ(0u, engine->voices.ActiveCount());
+        EXPECT_EQ(ledgerBaseline, engine->ledger.AvailableEntryCount());
+        EXPECT_EQ(transactionBaseline, engine->timelinePool.LiveTransactionCount());
+        EXPECT_FALSE(engine->runtimeRecreateRequired);
+        ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+        if (pack != 0)
+            ASSERT_EQ(VN_OK, Vn_UnloadPackEx(pack, VN_PACK_UNLOAD_REFUSE_IF_USED));
+        ASSERT_EQ(VN_OK, Vn_DestroyEmitter(emitter));
+    }
+}
+
+TEST(PackComposition, QueuePieceOverlappingSameSoundWaitsForLastClipAcrossActions) {
+    constexpr std::uint32_t kBlockFrames = 64;
+    constexpr std::uint64_t kActionDelayFrames = 480;
+    constexpr std::array<std::uint64_t, 3> kStarts{0, 48, 144};
+    constexpr std::array<std::uint64_t, 3> kEnds{96, 144, 240};
+    constexpr std::array<float, 3> kLevels{0.125f, 0.125f, -0.25f};
+    const auto runCase = [&](ContainerMatrixEntry entry) {
+        SCOPED_TRACE(static_cast<unsigned>(entry));
+        const std::vector<float> firstSamples(1024, kLevels[0]);
+        const std::vector<float> secondSamples(96, kLevels[2]);
+        const float* firstChannels[] = {firstSamples.data()};
+        const float* secondChannels[] = {secondSamples.data()};
+        std::uint64_t firstRevision = 0;
+        std::uint64_t secondRevision = 0;
+        ASSERT_TRUE(ComputeMediaPcmContentRevisionV1(
+            48000, 1, firstSamples.size(), firstChannels, 1, &firstRevision));
+        ASSERT_TRUE(ComputeMediaPcmContentRevisionV1(
+            48000, 1, secondSamples.size(), secondChannels, 1, &secondRevision));
+
+        // Queue -> Piece -> Track -> overlapping occurrences of one Sound.
+        ContainerMatrixWorld image(ContainerModeV1::SequenceQueue,
+            ContainerMatrixChild::Piece, firstRevision, secondRevision, true);
+        image.placements[0].authoredStart = 0;
+        image.placements[0].authoredDuration = INT64_C(2000000);
+        image.placements[1].authoredStart = INT64_C(1000000);
+        image.placements[1].authoredDuration = INT64_C(2000000);
+        image.placements[1].content = image.placements[0].content;
+        for (std::uint32_t index = 0; index < image.occurrenceCount; ++index) {
+            auto& occurrence = image.occurrences[index];
+            if (occurrence.parentStableId == ContainerMatrixWorld::kTrack &&
+                occurrence.stableOccurrenceOrdinal == image.placements[1].stableOccurrenceOrdinal) {
+                occurrence.childPlayable = image.placements[1].content;
+                occurrence.occurrenceSemanticFingerprint =
+                    ComputePlayableOccurrenceFingerprintV1(occurrence);
+            }
+        }
+        image.track.scheduleSemanticFingerprint = ComputeTrackScheduleFingerprintV1(image.track);
+        image.trackRef.trackScheduleSemanticFingerprint = image.track.scheduleSemanticFingerprint;
+        image.piece.scheduleSemanticFingerprint = ComputePieceScheduleFingerprintV1(image.piece);
+        image.children[0].timingHint = MakeScheduleReferenceTimingHint(
+            PlayableKindV1::Piece, ContainerMatrixWorld::kPiece,
+            image.piece.scheduleSemanticFingerprint);
+
+        // The next queue child must start after both clipped occurrences finish.
+        auto& sentinel = image.children[1];
+        sentinel = {};
+        sentinel.stableChildOrdinal = 8;
+        sentinel.authoredStableOrder = 2;
+        sentinel.playable = PlayableRefFromProperty(image.properties[1]);
+        ASSERT_EQ(ContainerMatrixWorld::kSecondSound, sentinel.playable.stableId);
+        sentinel.queueStopPolicy = QueueStopPolicyV1::AdvanceQueue;
+        sentinel.timingHint.kind = ChildTimingHintKindV2::InlineSound;
+        sentinel.timingHint.payload.inlineSound.startOffset =
+            {AuthoredTimeDomainV1::SourceFrames, 0, 1};
+        sentinel.timingHint.payload.inlineSound.duration =
+            {AuthoredTimeDomainV1::NaturalMediaEnd, 0, 1};
+        auto& sentinelOccurrence = image.occurrences[image.occurrenceCount++];
+        sentinelOccurrence = image.occurrences[0];
+        sentinelOccurrence.stableOccurrenceOrdinal = sentinel.stableChildOrdinal;
+        sentinelOccurrence.childPlayable = sentinel.playable;
+        sentinelOccurrence.occurrenceSemanticFingerprint =
+            ComputePlayableOccurrenceFingerprintV1(sentinelOccurrence);
+        std::rotate(image.occurrences.begin() + 1,
+                    image.occurrences.begin() + image.occurrenceCount - 1,
+                    image.occurrences.begin() + image.occurrenceCount);
+        image.containers[0].childCount = 2;
+        image.world.playableOccurrenceCount = image.occurrenceCount;
+        // Use authored timing instead of the pending immediate entry estimate.
+        SetAbsoluteTime(&image.step.delay, INT64_C(10000000));
+        image.action.directFeatureMask = 1u;
+        image.action.transitiveFeatureMask = 1u;
+        image.action.programSemanticFingerprint = ComputeActionProgramFingerprintV1(image.action);
+        image.world.identity.runtimeSemanticFingerprint = ComputeCurrentWorldFingerprintV4(image.world);
+
+        EngineSession session(MakeNullConfig(8, kBlockFrames, 48000));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto* engine = session.Engine();
+        ASSERT_NE(nullptr, engine);
+        VnPackHandle pack = 0;
+        if (entry == ContainerMatrixEntry::PackAction) {
+            constexpr std::uint64_t kPackStableId = 22;
+            ImageBuilder builder(kPackKindCanonicalContent);
+            builder.AddEntry(kPackEntryKindPackRequirementBlock, kPackStableId,
+                             RequirementPayload(kPackStableId, 1, 1));
+            builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition,
+                kPackStableId, WrapWorldPartition(kPackStableId, 1, image.world,
+                    image.world.playablePropertyCount + image.world.actionCount));
+            builder.AddMedia(ContainerMatrixWorld::kFirstSound, firstSamples);
+            builder.AddMedia(ContainerMatrixWorld::kSecondSound, secondSamples);
+            const auto bytes = builder.Build();
+            const std::string locator = "queue-piece-overlap-content.pack";
+            const auto init = BuildSingleIdentityInit(
+                Fnv1a64(bytes.data(), bytes.size()), ContainerMatrixWorld::kAction,
+                locator.c_str(), ContainerMatrixWorld::kRoot);
+            const auto initPath = WriteTemp("queue-piece-overlap-init.pack", init);
+            const auto packPath = WriteTemp(locator, bytes);
+            VnCanonicalPackSetMemberV1 members[2]{};
+            VnCanonicalPackSetMemberResultV1 rows[2]{};
+            const char* paths[] = {initPath.c_str(), packPath.c_str()};
+            for (std::size_t index = 0; index < 2; ++index) {
+                members[index].structSize = sizeof(members[index]);
+                members[index].packStableId = index == 0 ? 11 : kPackStableId;
+                members[index].packKind = index == 0
+                    ? VN_CANONICAL_PACK_SET_MEMBER_INIT
+                    : VN_CANONICAL_PACK_SET_MEMBER_CONTENT;
+                members[index].utf8Path = paths[index];
+                rows[index].structSize = sizeof(rows[index]);
+            }
+            VnCanonicalPackSetActivationReportV1 activated{};
+            ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(members, 2, rows, activated));
+            pack = rows[1].handle;
+            ASSERT_NE(0u, pack);
+        } else {
+            const auto firstPcm = harkentest::MonoDesc(firstSamples, 48000);
+            const auto secondPcm = harkentest::MonoDesc(secondSamples, 48000);
+            ASSERT_EQ(VN_OK, Vn_RegisterPCM(ContainerMatrixWorld::kFirstSound, &firstPcm));
+            ASSERT_EQ(VN_OK, Vn_RegisterPCM(ContainerMatrixWorld::kSecondSound, &secondPcm));
+            ASSERT_EQ(WorldInstallStatus::Ok, InstallContainerWorldV1(*engine, image.world).status);
+        }
+        VnEmitterHandle emitter = 0;
+        ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+        const auto ledgerBaseline = engine->ledger.AvailableEntryCount();
+        const auto transactionBaseline = engine->timelinePool.LiveTransactionCount();
+        const auto captureStart = engine->mixer.BlocksRendered() * kBlockFrames;
+        const auto rootAnchor = ImmediateQuantizeBaseFrame(*engine) + kActionDelayFrames;
+        VnPostActionDesc post{};
+        post.structSize = sizeof(post);
+        post.actionId = ContainerMatrixWorld::kAction;
+        post.emitter = emitter;
+        VnActionFiringHandle firing = 0;
+        ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+        VnActionStepResult step{};
+        step.structSize = sizeof(step);
+        ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &step));
+        ASSERT_EQ(VN_ACTION_STEP_ACTIVE, step.state);
+        const auto produced = step.producedPlayableInstance;
+        ASSERT_NE(0u, produced);
+        ASSERT_TRUE(engine->playableInstances.Classify(produced).live);
+        ASSERT_GE(rootAnchor, captureStart);
+        FrontierTrace lifecycle;
+        std::vector<float> captured;
+        const auto channels = engine->nullBackend.Channels();
+        ASSERT_EQ(2u, channels);
+        VnActionFiringInfo info{};
+        info.structSize = sizeof(info);
+        for (std::uint32_t block = 0; block < 128; ++block) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            const auto beforePump = engine->mixer.BlocksRendered();
+            engine->nullBackend.Pump(1);
+            ASSERT_EQ(beforePump + 1u, engine->mixer.BlocksRendered());
+            const auto* output = engine->nullBackend.LastBlock();
+            ASSERT_NE(nullptr, output);
+            captured.insert(captured.end(), output, output + kBlockFrames * channels);
+            lifecycle.Capture(*engine);
+            ASSERT_EQ(VN_OK, Vn_Update());
+            lifecycle.Capture(*engine);
+            ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
+            if (engine->mixer.BlocksRendered() * kBlockFrames >= rootAnchor + kEnds[2] + 2u * kBlockFrames &&
+                info.state == VN_ACTION_FIRING_TERMINAL_RETAINED &&
+                engine->playableInstances.LiveCount() == 0 &&
+                engine->timelineArms.LiveCount() == 0 && engine->voices.ActiveCount() == 0 &&
+                engine->timelinePool.LiveTransactionCount() == transactionBaseline) break;
+        }
+        const auto capturedFrames = captured.size() / channels;
+        ASSERT_GT(captureStart + capturedFrames, rootAnchor + kEnds[2] + kBlockFrames);
+        std::string pcmWindows = "root anchor=" + std::to_string(rootAnchor);
+        float lastLevel = 0.0f;
+        for (std::size_t frame = 0; frame < capturedFrames; ++frame) {
+            const float level = captured[frame * channels];
+            if (level != lastLevel) {
+                pcmWindows += " [" + std::to_string(captureStart + frame) + ":" +
+                    std::to_string(level) + "]";
+                lastLevel = level;
+            }
+        }
+        SCOPED_TRACE(pcmWindows);
+        for (std::size_t frame = 0; frame < capturedFrames; ++frame) {
+            const auto absoluteFrame = captureStart + frame;
+            float expected = 0.0f;
+            for (std::size_t leaf = 0; leaf < kStarts.size(); ++leaf)
+                if (absoluteFrame >= rootAnchor + kStarts[leaf] && absoluteFrame < rootAnchor + kEnds[leaf])
+                    expected += kLevels[leaf];
+            for (std::uint32_t channel = 0; channel < channels; ++channel)
+                ASSERT_NEAR(expected, captured[frame * channels + channel], 1e-6f)
+                    << "absolute frame=" << absoluteFrame << " channel=" << channel;
+        }
+        ASSERT_EQ(3u, lifecycle.heard.size());
+        std::vector<std::uint64_t> sameSoundStarts;
+        std::vector<std::uint64_t> sameSoundEnds;
+        std::vector<PlayableInstanceHandle> sameSoundInstances;
+        std::size_t sentinelCount = 0;
+        for (const auto& heard : lifecycle.heard) {
+            EXPECT_EQ(produced, heard.root);
+            heard.ExpectNaturalSourceReleased();
+            if (heard.subject == ContainerMatrixWorld::kFirstSound) {
+                EXPECT_NE(0u, heard.leaf);
+                sameSoundStarts.push_back(heard.start);
+                sameSoundEnds.push_back(heard.complete);
+                sameSoundInstances.push_back(heard.leaf);
+                if (heard.source.Valid())
+                    EXPECT_TRUE(heard.terminal.frame == rootAnchor + kEnds[0] ||
+                                heard.terminal.frame == rootAnchor + kEnds[1]);
+            } else {
+                EXPECT_EQ(ContainerMatrixWorld::kSecondSound, heard.subject);
+                ++sentinelCount;
+                EXPECT_EQ((rootAnchor + kStarts[2]) / kBlockFrames + 1u, heard.start);
+                if (heard.source.Valid()) EXPECT_EQ(rootAnchor + kEnds[2], heard.terminal.frame);
+            }
+        }
+        ASSERT_EQ(2u, sameSoundInstances.size());
+        EXPECT_NE(sameSoundInstances[0], sameSoundInstances[1]);
+        EXPECT_EQ(1u, sentinelCount);
+        std::sort(sameSoundStarts.begin(), sameSoundStarts.end());
+        std::sort(sameSoundEnds.begin(), sameSoundEnds.end());
+        const std::vector<std::uint64_t> expectedStarts{
+            (rootAnchor + kStarts[0]) / kBlockFrames + 1u,
+            (rootAnchor + kStarts[1]) / kBlockFrames + 1u};
+        const std::vector<std::uint64_t> expectedEnds{
+            (rootAnchor + kEnds[0] + kBlockFrames - 1u) / kBlockFrames,
+            (rootAnchor + kEnds[1] + kBlockFrames - 1u) / kBlockFrames};
+        EXPECT_EQ(expectedStarts, sameSoundStarts);
+        EXPECT_EQ(expectedEnds, sameSoundEnds);
+        EXPECT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state);
+        EXPECT_EQ(VN_ACTION_OUTCOME_SUCCEEDED, info.outcome);
+        EXPECT_EQ(VN_ACTION_TERMINAL_NATURAL, info.terminalReason);
+        EXPECT_EQ(0u, engine->playableInstances.LiveCount());
+        EXPECT_EQ(0u, engine->containerPlayback.LiveCount());
+        EXPECT_EQ(0u, engine->queueInstances.LiveCount());
+        EXPECT_EQ(0u, engine->playablePartitions.OccupiedCount());
+        EXPECT_EQ(0u, engine->timelineArms.LiveCount());
+        EXPECT_EQ(0u, engine->timelineOccurrences.OccupiedCount());
+        EXPECT_EQ(0u, engine->compositeCompletionOwners.OccupiedCount());
+        EXPECT_EQ(0u, engine->decisions.LiveCount());
+        EXPECT_EQ(0u, engine->armGroups.LiveCount());
+        EXPECT_EQ(0u, engine->voices.ActiveCount());
+        EXPECT_EQ(ledgerBaseline, engine->ledger.AvailableEntryCount());
+        EXPECT_EQ(transactionBaseline, engine->timelinePool.LiveTransactionCount());
+        EXPECT_FALSE(engine->runtimeRecreateRequired);
+        ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+        if (pack != 0) ASSERT_EQ(VN_OK, Vn_UnloadPackEx(pack, VN_PACK_UNLOAD_REFUSE_IF_USED));
+        ASSERT_EQ(VN_OK, Vn_DestroyEmitter(emitter));
+    };
+    for (const auto entry : {ContainerMatrixEntry::CurrentWorldAction, ContainerMatrixEntry::PackAction})
+        runCase(entry);
+}
+
+enum class FiniteContainerClipCase : std::uint8_t {
+    OrdinaryLoop,
+    QueueLoop,
+    ActiveRetarget,
+    SilentRetarget,
+    DelayedAtStart,
+};
+
+enum class DelayedEntryProbe { None, WindowWrite, StopBeforeEntry, PrivateRefusal };
+
+struct FiniteContainerClipWorld {
+    ContainerMatrixWorld base;
+    std::array<ScheduleClipPlacementV1, 3> placements{};
+    std::array<DiscreteGridCellV1, 2> cells{};
+    std::array<DiscreteGridRowViewV1, 2> rows{};
+
+    FiniteContainerClipWorld(FiniteContainerClipCase testCase,
+                            std::uint64_t firstRevision,
+                            std::uint64_t secondRevision, bool unalignedEntry = false)
+        : base(testCase == FiniteContainerClipCase::OrdinaryLoop
+                   ? ContainerModeV1::Sequence
+                   : testCase == FiniteContainerClipCase::QueueLoop
+                       ? ContainerModeV1::SequenceQueue
+                       : ContainerModeV1::VariableControl,
+               ContainerMatrixChild::Piece, firstRevision, secondRevision, true) {
+        const bool variable = testCase == FiniteContainerClipCase::ActiveRetarget ||
+            testCase == FiniteContainerClipCase::SilentRetarget ||
+            testCase == FiniteContainerClipCase::DelayedAtStart;
+        auto& containerProperty = base.properties[2];
+        if (testCase == FiniteContainerClipCase::OrdinaryLoop)
+            SetContainerPropertyLoopCount(&containerProperty, 0);
+        const auto container = PlayableRefFromProperty(containerProperty);
+        const auto first = PlayableRefFromProperty(base.properties[0]);
+        const auto second = PlayableRefFromProperty(base.properties[1]);
+        auto& program = base.containers[0];
+        program.programSemanticFingerprint = container.expectedProgramSemanticFingerprint;
+        program.children = base.children.data();
+        program.childCount = variable ? 2u : 1u;
+        for (std::uint32_t index = 0; index < program.childCount; ++index) {
+            auto& child = base.children[index];
+            child = {};
+            child.stableChildOrdinal = 7u + index;
+            child.authoredStableOrder = index;
+            child.playable = index == 0 ? first : second;
+            child.queueStopPolicy = testCase == FiniteContainerClipCase::QueueLoop
+                ? QueueStopPolicyV1::AdvanceQueue : QueueStopPolicyV1::AbortOwningQueue;
+        }
+        if (testCase == FiniteContainerClipCase::QueueLoop) {
+            program.queueCycle = QueueCycleV1::Loop;
+            base.completionLeaves[0] = {};
+            base.completionLeaves[0].stableLeafOrdinal = 1;
+            base.completionLeaves[0].content = first;
+            base.completionLeaves[0].startOffset = {AuthoredTimeDomainV1::SourceFrames, 0, 1};
+            base.completionLeaves[0].duration = {AuthoredTimeDomainV1::NaturalMediaEnd, 0, 1};
+            base.children[0].timingHint.kind = ChildTimingHintKindV2::InlineSound;
+            harkentest::CopyLeafTimingToHint(base.children[0], base.completionLeaves[0]);
+        }
+        if (variable) {
+            base.variable = harkentest::MakeVariableDefinition(ContainerMatrixWorld::kVariable,
+                VariableKindV1::Step, 0.0f, 2.0f, 0.0f);
+            for (std::uint32_t index = 0; index < rows.size(); ++index) {
+                cells[index] = {DiscreteCellKindV1::Exact, static_cast<std::int32_t>(index)};
+                rows[index].stableRowOrdinal = index + 1u;
+                rows[index].authoredStableOrder = index;
+                rows[index].childStableOrdinal = base.children[index].stableChildOrdinal;
+                rows[index].cellCount = 1;
+                rows[index].cells = &cells[index];
+            }
+            program.discreteRows = rows.data();
+            program.discreteRowCount = static_cast<std::uint32_t>(rows.size());
+            program.discreteTiming = testCase == FiniteContainerClipCase::DelayedAtStart ? 0u : 1u;
+            program.evaluationPeriodFrames = testCase == FiniteContainerClipCase::DelayedAtStart ? 0u : 64u;
+            program.envelopeFrames = 0;
+        }
+        // The same Sound is a descendant of the bounded Container and two
+        // independent Track clips with their own fixed authored boundaries.
+        placements[0] = base.placements[0];
+        placements[0].content = container;
+        placements[0].authoredDuration = 50000000;
+        if (testCase == FiniteContainerClipCase::DelayedAtStart)
+            placements[0].authoredStart = unalignedEntry ? 20500000 : 20000000;
+        for (std::uint32_t index = 1; index < placements.size(); ++index) {
+            auto& placement = placements[index];
+            placement = base.placements[0];
+            placement.stablePlacementOrdinal = index;
+            placement.stableOccurrenceOrdinal = 11u + index;
+            placement.clipId = harkentest::ObjectId(index + 1u);
+            placement.clipGuidHigh = index + 1u;
+            placement.content = first;
+            placement.authoredStart = index == 1 ? 46000000 : 50000000;
+            placement.authoredDuration = 8000000;
+        }
+        base.track.placements = placements.data();
+        base.track.placementCount = static_cast<std::uint32_t>(placements.size());
+        base.track.scheduleSemanticFingerprint = ComputeTrackScheduleFingerprintV1(base.track);
+        base.trackRef.trackScheduleSemanticFingerprint = base.track.scheduleSemanticFingerprint;
+        base.piece.scheduleSemanticFingerprint = ComputePieceScheduleFingerprintV1(base.piece);
+        base.occurrenceCount = 0;
+        const auto addOccurrence = [&](const PlayableRefV1& parent,
+                                       std::uint32_t ordinal,
+                                       const PlayableRefV1& child) {
+            auto& occurrence = base.occurrences[base.occurrenceCount++];
+            occurrence = {};
+            occurrence.parentKind = parent.kind == PlayableKindV1::Container
+                ? playableproperties::ContentPropertyKindV1::Container
+                : playableproperties::ContentPropertyKindV1::Track;
+            occurrence.parentStableId = parent.stableId;
+            occurrence.parentProgramSemanticFingerprint = parent.expectedProgramSemanticFingerprint;
+            occurrence.stableOccurrenceOrdinal = ordinal;
+            occurrence.childPlayable = child;
+            occurrence.payload = EmptyOccurrencePayload();
+            occurrence.occurrenceSemanticFingerprint = ComputePlayableOccurrenceFingerprintV1(occurrence);
+        };
+        for (std::uint32_t index = 0; index < program.childCount; ++index)
+            addOccurrence(container, base.children[index].stableChildOrdinal,
+                          base.children[index].playable);
+        for (const auto& placement : placements)
+            addOccurrence(base.track.rootDefinition, placement.stableOccurrenceOrdinal,
+                          placement.content);
+        base.world.playableOccurrenceCount = base.occurrenceCount;
+        base.step.target.kind = ActionTargetKindV1::Piece;
+        base.step.target.stableId = base.piece.rootDefinition.stableId;
+        base.step.target.expectedProgramSemanticFingerprint =
+            base.piece.rootDefinition.expectedProgramSemanticFingerprint;
+        SetAbsoluteTime(&base.step.delay, 10000000);
+        base.action.directFeatureMask = base.action.transitiveFeatureMask = 1;
+        base.action.programSemanticFingerprint = ComputeActionProgramFingerprintV1(base.action);
+        base.world.identity.runtimeSemanticFingerprint = ComputeCurrentWorldFingerprintV4(base.world);
+    }
+};
+
+void ExpectFiniteContainerClipIsolation(ContainerMatrixEntry entry,
+                                       FiniteContainerClipCase testCase,
+                                       DelayedEntryProbe probe = DelayedEntryProbe::None) {
+    SCOPED_TRACE(::testing::Message() << "entry=" << static_cast<unsigned>(entry)
+        << " case=" << static_cast<unsigned>(testCase) << " probe=" << static_cast<unsigned>(probe));
+    constexpr std::uint64_t kBlock = 64;
+    const bool delayedAtStart = testCase == FiniteContainerClipCase::DelayedAtStart;
+    const bool windowWrite = probe == DelayedEntryProbe::WindowWrite;
+    const bool cancelledEntry = probe == DelayedEntryProbe::StopBeforeEntry ||
+        probe == DelayedEntryProbe::PrivateRefusal;
+    const std::uint64_t clipStart = delayedAtStart ? (windowWrite ? 984u : 960u) : 0u;
+    const std::uint64_t clipEnd = clipStart + 2400u;
+    constexpr std::uint64_t kAdjacentStart = 2400;
+    constexpr std::uint64_t kSiblingStart = 2208;
+    constexpr std::uint64_t kSiblingEnd = 2592;
+    constexpr std::uint64_t kAdjacentEnd = 2784;
+    const bool variable = testCase == FiniteContainerClipCase::ActiveRetarget ||
+        testCase == FiniteContainerClipCase::SilentRetarget || delayedAtStart;
+    const std::vector<float> firstSamples(variable ? 4096u : 384u, 0.125f);
+    const std::vector<float> secondSamples(4096, -0.25f);
+    EngineSession session(MakeNullConfig(16, kBlock, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    ASSERT_NE(nullptr, engine);
+    const auto firstPcm = harkentest::MonoDesc(firstSamples, 48000);
+    const auto secondPcm = harkentest::MonoDesc(secondSamples, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(ContainerMatrixWorld::kFirstSound, &firstPcm));
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(ContainerMatrixWorld::kSecondSound, &secondPcm));
+    FiniteContainerClipWorld fixture(testCase,
+        engine->registry.Lookup(ContainerMatrixWorld::kFirstSound).contentRevision,
+        engine->registry.Lookup(ContainerMatrixWorld::kSecondSound).contentRevision, windowWrite);
+    auto& image = fixture.base;
+    ASSERT_EQ(WorldInstallStatus::Ok, InstallContainerWorldV1(*engine, image.world).status);
+    VnEmitterHandle emitter = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+    const auto ledgerBaseline = engine->ledger.AvailableEntryCount();
+    const auto transactionBaseline = engine->timelinePool.LiveTransactionCount();
+    const auto captureStart = engine->mixer.BlocksRendered() * kBlock;
+    std::uint64_t rootAnchor = ImmediateQuantizeBaseFrame(*engine) + 480u;
+    PlayableInstanceHandle produced = 0;
+    VnActionFiringHandle firing = 0;
+    if (entry == ContainerMatrixEntry::Direct) {
+        PlayableStartRequest request{};
+        request.root = image.track.rootDefinition;
+        request.emitter = emitter;
+        const auto started = StartPlayable(*engine, request);
+        ASSERT_EQ(PlayableStartStatus::Accepted, started.status);
+        produced = started.instance;
+        const auto root = std::find_if(engine->playableServices.begin(), engine->playableServices.end(),
+            [produced](const auto& candidate) {
+                return candidate.InvocationValid() && candidate.rootInstance == produced;
+            });
+        ASSERT_NE(engine->playableServices.end(), root);
+        // Direct has accepted its root anchor. All expected boundaries below
+        // come from authored Track times, never individual leaf arm times.
+        rootAnchor = root->startFrame;
+    } else {
+        ASSERT_EQ(ContainerMatrixEntry::CurrentWorldAction, entry);
+        VnPostActionDesc post{};
+        post.structSize = sizeof(post);
+        post.actionId = ContainerMatrixWorld::kAction;
+        post.emitter = emitter;
+        ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+        VnActionStepResult step{};
+        step.structSize = sizeof(step);
+        ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &step));
+        ASSERT_EQ(VN_ACTION_STEP_ACTIVE, step.state);
+        produced = step.producedPlayableInstance;
+    }
+    ASSERT_NE(0u, produced);
+    ASSERT_TRUE(engine->playableInstances.Classify(produced).live);
+    ASSERT_GE(rootAnchor, captureStart);
+    const auto channels = engine->nullBackend.Channels();
+    ASSERT_EQ(2u, channels);
+    std::vector<float> captured;
+    captured.reserve(128u * kBlock * channels);
+    bool firstChange = false, lateChange = false, postDeadlineChange = false;
+    bool preEntryValueConfirmed = false, laterValueConfirmed = false;
+    bool boundaryIssued = false;
+    std::uint64_t boundaryCallFrame = 0, boundaryCutoff = 0, boundaryEntryTicket = 0;
+    const auto entryFrame = rootAnchor + clipStart;
+    const auto entryQuantum = entryFrame - entryFrame % kBlock;
+    const auto lead = std::max<std::uint64_t>(2u, engine->timelinePool.PublishLeadQuanta());
+    const auto windowWriteFrame = entryQuantum - (lead - 1u) * kBlock;
+    VnVariableTicketV1 boundaryTicket{};
+    harkentest::VariableOutcomeCapture boundaryOutcomes(*engine);
+
+    const auto expectAppliedValue = [&](float expected, bool requireSettled = true) {
+        VnVariableQueryDescV1 query{};
+        query.structSize = sizeof(query);
+        query.variableId = ContainerMatrixWorld::kVariable;
+        query.emitter = emitter;
+        VnVariableQueryResultV1 value{};
+        value.structSize = sizeof(value);
+        ASSERT_EQ(VN_OK, Vn_QueryVariable(&query, &value));
+        ASSERT_FLOAT_EQ(expected, value.currentValue);
+        if (requireSettled) ASSERT_EQ(0u, value.pendingCount);
+    };
+    for (std::uint32_t block = 0; block < 128; ++block) {
+        const auto frame = engine->mixer.BlocksRendered() * kBlock;
+        if (variable && !firstChange && frame >= rootAnchor + 256u) {
+            ASSERT_EQ(VN_OK, Vn_SetValue(ContainerMatrixWorld::kVariable, 1.0f));
+            firstChange = true;
+        }
+        if (!boundaryIssued && probe != DelayedEntryProbe::None &&
+            frame >= (windowWrite ? windowWriteFrame : rootAnchor + 512u)) {
+            ASSERT_LT(frame, entryFrame);
+            boundaryCallFrame = frame;
+            boundaryCutoff = engine->timelinePool.PublishCutoffFrame();
+            if (windowWrite) {
+                for (const auto& service : engine->playableServices) {
+                    if (!service.InvocationValid() || service.startFrame != entryFrame ||
+                        !service.variableControlInstance.Valid() || !service.frontierEntry.Valid()) continue;
+                    const auto* activation = engine->decisions.ResolveFrontierActivation(service.frontierEntry.coordinator);
+                    ASSERT_NE(nullptr, activation);
+                    ASSERT_EQ(service.frontierEntry, activation->Descriptor().entry);
+                    boundaryEntryTicket = activation->Descriptor().order.logicCommitSequence;
+                }
+                VnVariableWriteV1 write{};
+                write.variableId = ContainerMatrixWorld::kVariable;
+                write.value = 0.0f;
+                VnVariableBatchDescV1 batch{};
+                batch.structSize = sizeof(batch);
+                batch.writeCount = 1;
+                batch.writes = &write;
+                ASSERT_EQ(VN_OK, Vn_SetValues(&batch, &boundaryTicket));
+                ASSERT_NE(0u, boundaryTicket.sequence);
+                ASSERT_NE(0u, boundaryEntryTicket);
+                ASSERT_GT(boundaryTicket.sequence, boundaryEntryTicket);
+            } else {
+                ASSERT_EQ(0u, engine->variableControlInstances.LiveCount());
+                if (probe == DelayedEntryProbe::StopBeforeEntry) {
+                    if (entry == ContainerMatrixEntry::Direct)
+                        ASSERT_EQ(PlayableControlStatus::Ok, StopPlayable(*engine, produced, 0));
+                    else ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
+                } else engine->forceActionTimelineVoiceOwnerCommitFailureForTest = true;
+            }
+            boundaryIssued = true;
+        }
+        const auto lateAt = delayedAtStart ? 1600u :
+            testCase == FiniteContainerClipCase::SilentRetarget ? 1152u : clipEnd - 96u;
+        if (variable && !lateChange && frame >= rootAnchor + lateAt) {
+            ASSERT_EQ(VN_OK, Vn_SetValue(ContainerMatrixWorld::kVariable,
+                testCase == FiniteContainerClipCase::SilentRetarget ? 2.0f : windowWrite ? 1.0f : 0.0f));
+            lateChange = true;
+        }
+        if (variable && !postDeadlineChange && frame >= rootAnchor + clipEnd + 256u) {
+            ASSERT_EQ(VN_OK, Vn_SetValue(ContainerMatrixWorld::kVariable, 0.0f));
+            postDeadlineChange = true;
+        }
+        ASSERT_EQ(VN_OK, Vn_Update());
+        if (delayedAtStart && !preEntryValueConfirmed && frame + kBlock >= rootAnchor + clipStart) {
+            ASSERT_LT(frame, rootAnchor + clipStart);
+            ASSERT_TRUE(firstChange);
+            ASSERT_NO_FATAL_FAILURE(expectAppliedValue(1.0f, !windowWrite));
+            preEntryValueConfirmed = true;
+        }
+        if (delayedAtStart && !laterValueConfirmed && frame >= rootAnchor + 1984u) {
+            ASSERT_LT(frame, rootAnchor + clipEnd);
+            ASSERT_TRUE(lateChange);
+            ASSERT_NO_FATAL_FAILURE(expectAppliedValue(windowWrite ? 1.0f : 0.0f));
+            laterValueConfirmed = true;
+        }
+        const auto before = engine->mixer.BlocksRendered();
+        engine->nullBackend.Pump(1);
+        ASSERT_EQ(before + 1u, engine->mixer.BlocksRendered());
+        const auto* output = engine->nullBackend.LastBlock();
+        ASSERT_NE(nullptr, output);
+        captured.insert(captured.end(), output, output + kBlock * channels);
+    }
+    ASSERT_EQ(VN_OK, Vn_Update());
+    ASSERT_GT(captureStart + captured.size() / channels,
+        rootAnchor + std::max(clipEnd, kAdjacentEnd) + kBlock);
+    if (probe != DelayedEntryProbe::None) ASSERT_TRUE(boundaryIssued);
+    if (probe == DelayedEntryProbe::PrivateRefusal)
+        EXPECT_FALSE(engine->forceActionTimelineVoiceOwnerCommitFailureForTest);
+    if (windowWrite) {
+        VnVariableTicketQueryDescV1 query{};
+        query.structSize = sizeof(query);
+        query.ticket = boundaryTicket;
+        VnVariableTicketQueryResultV1 result{};
+        result.structSize = sizeof(result);
+        ASSERT_EQ(VN_OK, Vn_QueryVariableTicket(&query, &result));
+        ASSERT_EQ(VN_VARIABLE_TICKET_FOUND, result.status);
+        ASSERT_EQ(VN_VARIABLE_OUTCOME_APPLIED, result.outcome);
+        bool found = false;
+        VariableOutcomeRecord outcome{};
+        while (boundaryOutcomes.Pop(&outcome)) {
+            if (outcome.acceptedTicket.sequence != boundaryTicket.sequence) continue;
+            ASSERT_FALSE(found);
+            found = true;
+            ASSERT_EQ(boundaryTicket.worldGeneration, outcome.world);
+            ASSERT_EQ(boundaryTicket.transportGeneration, outcome.transport);
+            ASSERT_EQ(VariableOutcomeKind::Applied, outcome.outcome);
+            ASSERT_GE(outcome.actualFrame, boundaryCallFrame);
+            ASSERT_GT(outcome.actualFrame, entryFrame)
+                << "call=" << boundaryCallFrame << " cutoff=" << boundaryCutoff
+                << " earlier entry ticket=" << boundaryEntryTicket;
+            ::testing::Test::RecordProperty("window_write_applied_frame", std::to_string(outcome.actualFrame));
+        }
+        ASSERT_TRUE(found);
+        ASSERT_FALSE(boundaryOutcomes.Overflowed());
+        ::testing::Test::RecordProperty("window_write_call_frame", std::to_string(boundaryCallFrame));
+        ::testing::Test::RecordProperty("window_write_cutoff", std::to_string(boundaryCutoff));
+        ::testing::Test::RecordProperty("entry_ticket_before_window_write", std::to_string(boundaryEntryTicket));
+        ::testing::Test::RecordProperty("window_write_ticket", std::to_string(boundaryTicket.sequence));
+        ::testing::Test::RecordProperty("own_entry_frame", std::to_string(entryFrame));
+    }
+    bool ordinaryRestartHeard = false;
+    std::uint64_t replacementRun = 0;
+    std::uint64_t longestReplacementRun = 0;
+    for (std::size_t index = 0; index < captured.size() / channels; ++index) {
+        const auto frame = captureStart + index;
+        float expected = 0.0f;
+        if (!cancelledEntry && frame >= rootAnchor + kSiblingStart && frame < rootAnchor + kSiblingEnd)
+            expected += 0.125f;
+        if (!cancelledEntry && frame >= rootAnchor + kAdjacentStart && frame < rootAnchor + kAdjacentEnd)
+            expected += 0.125f;
+        bool exact = true;
+        if (!cancelledEntry && frame >= rootAnchor + clipStart && frame < rootAnchor + clipEnd) {
+            const auto relative = frame - rootAnchor;
+            if (delayedAtStart) {
+                // Only the value effective at entry chooses this child. A write
+                // accepted earlier but applied later must not reselect At Start.
+                expected -= 0.25f;
+            } else if (testCase == FiniteContainerClipCase::QueueLoop) {
+                expected += 0.125f;
+            } else if (testCase == FiniteContainerClipCase::OrdinaryLoop) {
+                if (relative < 384u) expected += 0.125f;
+                else {
+                    exact = false;
+                    if (relative < kSiblingStart && captured[index * channels] > 0.01f)
+                        ordinaryRestartHeard = true;
+                }
+            } else if (relative < 256u) {
+                expected += 0.125f;
+            } else if (testCase == FiniteContainerClipCase::SilentRetarget && relative >= clipEnd - 96u) {
+                // There is no matching row for value 2. The still-live silent
+                // controller must end at the authored clip boundary as well.
+            } else {
+                exact = false;
+            }
+        }
+        // Accepted writes and discrete retargets are asynchronous. Require a
+        // complete fresh block from the selected branch inside this finite clip,
+        // independently of the controller's internal transition frame.
+        bool replacementOnly = variable && frame >= rootAnchor + (delayedAtStart ? clipStart : 256u) &&
+            frame < rootAnchor + kSiblingStart;
+        for (std::uint32_t channel = 0; channel < channels; ++channel) {
+            const auto actual = captured[index * channels + channel];
+            ASSERT_TRUE(std::isfinite(actual));
+            replacementOnly = replacementOnly && std::abs(actual + 0.25f) <= 1e-6f;
+            if (exact) ASSERT_NEAR(expected, actual, 1e-6f)
+                << "absolute frame=" << frame << " channel=" << channel;
+        }
+        replacementRun = replacementOnly ? replacementRun + 1u : 0u;
+        longestReplacementRun = std::max(longestReplacementRun, replacementRun);
+    }
+    if (testCase == FiniteContainerClipCase::OrdinaryLoop) EXPECT_TRUE(ordinaryRestartHeard);
+    if (delayedAtStart) EXPECT_TRUE(preEntryValueConfirmed && laterValueConfirmed);
+    if (variable) {
+        EXPECT_TRUE(firstChange && lateChange && postDeadlineChange);
+        if (!cancelledEntry) EXPECT_GE(longestReplacementRun, kBlock);
+    }
+    EXPECT_FALSE(engine->playableInstances.Classify(produced).live);
+    EXPECT_EQ(0u, engine->playableInstances.LiveCount());
+    EXPECT_EQ(0u, engine->containerPlayback.LiveCount());
+    EXPECT_EQ(0u, engine->queueInstances.LiveCount());
+    EXPECT_EQ(0u, engine->variableControlInstances.LiveCount());
+    EXPECT_EQ(0u, engine->playablePartitions.OccupiedCount());
+    EXPECT_EQ(0u, engine->timelineArms.LiveCount());
+    EXPECT_EQ(0u, engine->timelineOccurrences.OccupiedCount());
+    EXPECT_EQ(0u, engine->compositeCompletionOwners.OccupiedCount());
+    EXPECT_EQ(0u, engine->decisions.LiveCount());
+    EXPECT_EQ(0u, engine->armGroups.LiveCount());
+    EXPECT_EQ(0u, engine->voices.ActiveCount());
+    EXPECT_EQ(ledgerBaseline, engine->ledger.AvailableEntryCount());
+    EXPECT_EQ(transactionBaseline, engine->timelinePool.LiveTransactionCount());
+    EXPECT_FALSE(engine->runtimeRecreateRequired);
+    if (probe != DelayedEntryProbe::None) {
+        for (const auto& storage : engine->actionPlayStorage) EXPECT_TRUE(storage.ownerLedger.Empty());
+        for (const auto& scratch : engine->actionPlayScratch) {
+            EXPECT_EQ(nullptr, scratch.pendingScheduleChild);
+            EXPECT_EQ(0u, scratch.pendingScheduleOccurrence.generation);
+        }
+    }
+    if (firing != 0) {
+        VnActionFiringInfo info{};
+        info.structSize = sizeof(info);
+        ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
+        EXPECT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state);
+        if (probe == DelayedEntryProbe::StopBeforeEntry) {
+            EXPECT_EQ(VN_ACTION_OUTCOME_CANCELLED, info.outcome);
+            EXPECT_EQ(VN_ACTION_TERMINAL_STOP_REQUESTED, info.terminalReason);
+        } else if (probe == DelayedEntryProbe::PrivateRefusal) {
+            EXPECT_NE(VN_ACTION_OUTCOME_PENDING, info.outcome);
+            EXPECT_NE(VN_ACTION_OUTCOME_SUCCEEDED, info.outcome);
+            EXPECT_NE(VN_ACTION_TERMINAL_NATURAL, info.terminalReason);
+        } else {
+            EXPECT_EQ(VN_ACTION_OUTCOME_SUCCEEDED, info.outcome);
+            EXPECT_EQ(VN_ACTION_TERMINAL_NATURAL, info.terminalReason);
+        }
+        ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+    }
+    ASSERT_EQ(VN_OK, Vn_DestroyEmitter(emitter));
+}
+
+TEST(PackComposition, FiniteLoopingContainerClipsPreserveSharedSoundSiblingsAcrossEntries) {
+    for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
+        for (const auto testCase : {FiniteContainerClipCase::OrdinaryLoop, FiniteContainerClipCase::QueueLoop})
+            ExpectFiniteContainerClipIsolation(entry, testCase);
+}
+
+TEST(PackComposition, FiniteVariableContainerClipsEndDuringRetargetAndSilenceAcrossEntries) {
+    for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
+        for (const auto testCase : {FiniteContainerClipCase::ActiveRetarget, FiniteContainerClipCase::SilentRetarget})
+            ExpectFiniteContainerClipIsolation(entry, testCase);
+}
+
+
+TEST(PackComposition, DelayedVariableContainerSamplesAtOwnEntryAcrossEntries) {
+    for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
+        ExpectFiniteContainerClipIsolation(entry, FiniteContainerClipCase::DelayedAtStart);
+}
+
+TEST(PackComposition, DelayedVariableContainerKeepsAtStartChoiceWhenAcceptedWriteAppliesAfterEntry) {
+    for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
+        ExpectFiniteContainerClipIsolation(entry, FiniteContainerClipCase::DelayedAtStart,
+            DelayedEntryProbe::WindowWrite);
+}
+
+TEST(PackComposition, DelayedVariableContainerStopBeforeEntryReleasesPendingChildren) {
+    for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
+        ExpectFiniteContainerClipIsolation(entry, FiniteContainerClipCase::DelayedAtStart,
+            DelayedEntryProbe::StopBeforeEntry);
+}
+
+TEST(PackComposition, DelayedVariableContainerPrivateRefusalReleasesPendingChildren) {
+    for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
+        ExpectFiniteContainerClipIsolation(entry, FiniteContainerClipCase::DelayedAtStart,
+            DelayedEntryProbe::PrivateRefusal);
+}
+
+enum class NestedVariableScheduleScenario { Stop, Natural, Retarget, RefusedRetarget, ImmediateTransition, NaturalEndTransition };
+
+void ExpectVariableControlNestedScheduleLifecycle(ContainerMatrixEntry entry,
+    ContainerMatrixChild kind, NestedVariableScheduleScenario scenario) {
+    SCOPED_TRACE(::testing::Message() << "entry=" << static_cast<unsigned>(entry)
+        << " kind=" << static_cast<unsigned>(kind) << " scenario=" << static_cast<unsigned>(scenario));
+    const bool natural = scenario == NestedVariableScheduleScenario::Natural;
+    const bool retarget = scenario >= NestedVariableScheduleScenario::Retarget;
+    const bool refused = scenario == NestedVariableScheduleScenario::RefusedRetarget;
+    const bool transition = scenario >= NestedVariableScheduleScenario::ImmediateTransition;
+    const bool naturalEnd = scenario == NestedVariableScheduleScenario::NaturalEndTransition;
+    EngineSession session(MakeNullConfig(16, 64, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const std::vector<float> samples(natural ? 960u : naturalEnd ? 4096u : 65536u, 0.125f);
+    const auto pcm = harkentest::MonoDesc(samples, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(ContainerMatrixWorld::kFirstSound, &pcm));
+    const auto revision = engine.registry.Lookup(ContainerMatrixWorld::kFirstSound).contentRevision;
+    ContainerMatrixWorld image(ContainerModeV1::VariableControl, kind, revision, revision,
+        false, 1, 1);
+    // Reuse the legal fixture's nodes, placing the Random below the Track clip.
+    const auto selectedSchedule = image.children[2].playable;
+    const auto nested = image.children[0].playable;
+    const auto sound = image.placements[0].content;
+    image.children[0].playable = selectedSchedule;
+    image.children[2].playable = sound;
+    image.placements[0].content = nested;
+    image.placements[0].authoredDuration = natural ? INT64_C(20000000) : INT64_C(1000000000);
+    image.track.scheduleSemanticFingerprint = ComputeTrackScheduleFingerprintV1(image.track);
+    if (kind == ContainerMatrixChild::Piece) {
+        image.trackRef.trackScheduleSemanticFingerprint = image.track.scheduleSemanticFingerprint;
+        image.piece.scheduleSemanticFingerprint = ComputePieceScheduleFingerprintV1(image.piece);
+    }
+    for (auto& occurrence : std::span(image.occurrences.data(), image.occurrenceCount)) {
+        if (occurrence.parentStableId == ContainerMatrixWorld::kRoot)
+            occurrence.childPlayable = selectedSchedule;
+        else if (occurrence.parentStableId == ContainerMatrixWorld::kNested)
+            occurrence.childPlayable = sound;
+        else if (occurrence.parentStableId == ContainerMatrixWorld::kTrack)
+            occurrence.childPlayable = nested;
+        occurrence.occurrenceSemanticFingerprint = ComputePlayableOccurrenceFingerprintV1(occurrence);
+    }
+    std::array<DiscreteGridCellV1, 2> cells{image.cell, DiscreteGridCellV1{DiscreteCellKindV1::Exact, 1}};
+    std::array<DiscreteGridRowViewV1, 2> rows{image.row, image.row};
+    const std::vector<float> secondSamples(retarget ? (naturalEnd ? 4096u : 65536u) : 0u, -0.25f);
+    if (retarget) {
+        const auto secondPcm = harkentest::MonoDesc(secondSamples, 48000);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(ContainerMatrixWorld::kSecondSound, &secondPcm));
+        ASSERT_LT(image.propertyCount, image.properties.size());
+        const auto propertyIndex = image.propertyCount++;
+        auto& property = image.properties[propertyIndex];
+        property = MakeSoundProperty(ContainerMatrixWorld::kSecondSound);
+        property.authoredStableOrder = propertyIndex;
+        property.contentRevision = engine.registry.Lookup(ContainerMatrixWorld::kSecondSound).contentRevision;
+        property.programSemanticFingerprint = ComputePlayablePropertyFingerprintV1(property);
+        image.children[1] = image.children[0];
+        image.children[1].stableChildOrdinal = 8;
+        image.children[1].authoredStableOrder = 2;
+        image.children[1].playable = PlayableRefFromProperty(property);
+        image.containers[0].childCount = 2;
+        rows[0].cells = &cells[0];
+        rows[1].stableRowOrdinal = 2;
+        rows[1].authoredStableOrder = 1;
+        rows[1].childStableOrdinal = 8;
+        rows[1].cells = &cells[1];
+        image.containers[0].discreteRows = rows.data();
+        image.containers[0].discreteRowCount = static_cast<std::uint32_t>(rows.size());
+        ASSERT_LT(image.occurrenceCount, image.occurrences.size());
+        auto& occurrence = image.occurrences[image.occurrenceCount++];
+        occurrence = image.occurrences[0];
+        occurrence.stableOccurrenceOrdinal = 8;
+        occurrence.childPlayable = image.children[1].playable;
+        occurrence.occurrenceSemanticFingerprint = ComputePlayableOccurrenceFingerprintV1(occurrence);
+        std::sort(image.properties.begin(), image.properties.begin() + image.propertyCount,
+            [](const auto& left, const auto& right) {
+                return left.contentPropertyKind != right.contentPropertyKind
+                    ? left.contentPropertyKind < right.contentPropertyKind : left.stableId < right.stableId;
+            });
+        std::sort(image.occurrences.begin(), image.occurrences.begin() + image.occurrenceCount,
+            [](const auto& left, const auto& right) {
+                return std::tuple(left.parentKind, left.parentStableId, left.stableOccurrenceOrdinal) <
+                    std::tuple(right.parentKind, right.parentStableId, right.stableOccurrenceOrdinal);
+            });
+        image.world.playablePropertyCount = image.propertyCount;
+        image.world.playableOccurrenceCount = image.occurrenceCount;
+    }
+    image.containers[0].discreteTiming = 1;
+    image.containers[0].evaluationPeriodFrames = 64;
+    std::array<CurveV1, 2> transitionCurves{};
+    TransitionRuleViewV1 transitionRule{};
+    TransitionProgramViewV1 transitionProgram{};
+    if (transition) {
+        for (std::uint32_t index = 0; index < transitionCurves.size(); ++index) {
+            auto& curve = transitionCurves[index];
+            curve.curveLocalId = index + 1;
+            curve.curve.pointCount = 2;
+            curve.curve.points[0] = {0.0f, 0.0f};
+            curve.curve.points[1] = {1.0f, 1.0f};
+            curve.curve.handles[0] = {1.0f / 3.0f, 1.0f / 3.0f, 2.0f / 3.0f, 2.0f / 3.0f};
+        }
+        image.containers[0].curves = transitionCurves.data();
+        image.containers[0].curveCount = static_cast<std::uint32_t>(transitionCurves.size());
+        image.containers[0].transitionProgramIndex = 0;
+        transitionRule.stableRuleOrdinal = 1;
+        transitionRule.sourceAny = transitionRule.targetAny = 1;
+        transitionRule.sourceExit = naturalEnd ? TransitionSourceExitV1::NaturalEnd : TransitionSourceExitV1::Immediate;
+        transitionRule.sourceFade.active = transitionRule.targetFade.active = 1;
+        transitionRule.sourceFade.durationFrames = 128;
+        transitionRule.targetFade.durationFrames = 192;
+        transitionRule.sourceFade.curveLocalId = transitionCurves[0].curveLocalId;
+        transitionRule.targetFade.curveLocalId = transitionCurves[1].curveLocalId;
+        transitionProgram.ownerContainerStableId = image.containers[0].containerStableId;
+        transitionProgram.rules = &transitionRule;
+        transitionProgram.ruleCount = 1;
+        transitionProgram.defaultRuleIndex = 0;
+        image.world.transitions = &transitionProgram;
+        image.world.transitionCount = 1;
+        image.world.identity.capabilityMask = detail::ComputeCurrentWorldLocalCapabilityMaskV1(image.world);
+    }
+    image.world.identity.runtimeSemanticFingerprint = ComputeCurrentWorldFingerprintV4(image.world);
+    ASSERT_EQ(WorldInstallStatus::Ok, InstallContainerWorldV1(engine, image.world).status);
+    VnEmitterHandle emitter = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+    PlayableInstanceHandle produced = 0;
+    VnActionFiringHandle firing = 0;
+    if (entry == ContainerMatrixEntry::Direct) {
+        PlayableStartRequest request{};
+        request.root = image.rootRef;
+        request.emitter = emitter;
+        const auto started = StartPlayable(engine, request);
+        ASSERT_EQ(PlayableStartStatus::Accepted, started.status);
+        produced = started.instance;
+    } else {
+        ASSERT_EQ(ContainerMatrixEntry::CurrentWorldAction, entry);
+        VnPostActionDesc post{};
+        post.structSize = sizeof(post);
+        post.actionId = ContainerMatrixWorld::kAction;
+        post.emitter = emitter;
+        ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+        VnActionStepResult step{};
+        step.structSize = sizeof(step);
+        ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &step));
+        ASSERT_EQ(VN_ACTION_STEP_ACTIVE, step.state);
+        produced = step.producedPlayableInstance;
+    }
+    ASSERT_NE(0u, produced);
+    const auto waitForOutput = [&](float expected) {
+        unsigned consecutive = 0;
+        for (unsigned block = 0; block < 64; ++block) {
+            const auto update = Vn_Update();
+            if (update != VN_OK || engine.runtimeRecreateRequired) return false;
+            const auto before = engine.mixer.BlocksRendered();
+            engine.nullBackend.Pump(1);
+            if (engine.mixer.BlocksRendered() != before + 1u) return false;
+            const auto* output = engine.nullBackend.LastBlock();
+            if (output == nullptr) return false;
+            const bool matches = std::all_of(output, output + 128u,
+                [expected](float sample) { return std::abs(sample - expected) < 1e-6f; });
+            consecutive = matches ? consecutive + 1u : 0u;
+            if (consecutive == 8u) return true;
+        }
+        return false;
+    };
+    const auto checkTransition = [&](float sourceAmplitude, float targetAmplitude) {
+        const auto row = std::find_if(engine.playableServices.begin(), engine.playableServices.end(),
+            [&](const auto& service) { return service.ownerInstance == produced && service.variableControlInstance.Valid(); });
+        ASSERT_NE(engine.playableServices.end(), row);
+        for (unsigned block = 0; block < 64 && !row->variableControlDiscreteRetargetPrepared; ++block) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            if (!row->variableControlDiscreteRetargetPrepared) engine.nullBackend.Pump(1);
+        }
+        ASSERT_TRUE(row->variableControlDiscreteRetargetPrepared);
+        const auto* incomingRecord = engine.ResolveMemberProgram(engine.ReadPlayableMemberReference(
+            row->scheduleStorageBase + row->variableControlDiscreteTransitionOffset));
+        const auto& incoming = incomingRecord != nullptr ? incomingRecord->runtime
+            : row->VariableControlDiscreteRetargetEnteringRuntimeProgram();
+        const auto& outgoing = row->VariableControlDiscreteRetargetRuntimeProgram();
+        ASSERT_EQ(2u, incoming.payloadCount);
+        ASSERT_GE(outgoing.payloadCount, 1u);
+        const auto& fadeIn = incoming.payloads[1];
+        const auto& fadeOut = outgoing.payloads[0];
+        ASSERT_EQ(TimelineEventKind::Envelope, fadeIn.kind);
+        ASSERT_EQ(TimelineEventKind::Envelope, fadeOut.kind);
+        EXPECT_EQ(192u, fadeIn.envelopeEndFrame - fadeIn.envelopeStartFrame);
+        EXPECT_EQ(128u, fadeOut.envelopeEndFrame - fadeOut.envelopeStartFrame);
+        EXPECT_EQ(naturalEnd ? fadeOut.envelopeEndFrame : fadeOut.envelopeStartFrame, fadeIn.envelopeStartFrame);
+        const auto midpoint = fadeIn.envelopeStartFrame + 96u;
+        bool checked = false;
+        for (unsigned block = 0; block < 80 && !checked; ++block) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            const auto before = engine.mixer.BlocksRendered();
+            engine.nullBackend.Pump(1);
+            ASSERT_EQ(before + 1u, engine.mixer.BlocksRendered());
+            if (before * 64u <= midpoint && midpoint < (before + 1u) * 64u) {
+                // Both endpoint samples belong to the authored fade duration.
+                const auto expected = targetAmplitude * (96.0f / 191.0f) +
+                    (naturalEnd ? 0.0f : sourceAmplitude * (1.0f - 96.0f / 127.0f));
+                EXPECT_NEAR(expected, engine.nullBackend.LastBlock()[2u * (midpoint - before * 64u)], 2e-4f);
+                checked = true;
+            }
+        }
+        EXPECT_TRUE(checked);
+        EXPECT_FALSE(engine.runtimeRecreateRequired);
+    };
+    ASSERT_TRUE(waitForOutput(0.125f));
+    ASSERT_TRUE(engine.playableInstances.Classify(produced).live);
+    if (retarget) {
+        ASSERT_EQ(VN_OK, Vn_SetValue(ContainerMatrixWorld::kVariable, 1.0f));
+        if (transition) ASSERT_NO_FATAL_FAILURE(checkTransition(0.125f, -0.25f));
+        ASSERT_TRUE(waitForOutput(-0.25f));
+        ASSERT_TRUE(engine.playableInstances.Classify(produced).live);
+        if (refused) {
+            // Let the old native branch retire before measuring rejection ownership.
+            for (unsigned block = 0; block < 24; ++block) {
+                ASSERT_EQ(VN_OK, Vn_Update());
+                engine.nullBackend.Pump(1);
+            }
+        }
+        ASSERT_EQ(VN_OK, Vn_SetValue(ContainerMatrixWorld::kVariable, 0.0f));
+        if (refused) {
+            const auto owners = [&]() {
+                return std::tuple(engine.playableInstances.LiveCount(), engine.sourceTerminals.OccupiedCount(),
+                    engine.playablePartitions.OccupiedCount(), engine.voices.ActiveCount(),
+                    engine.containerPlayback.LiveCount(), engine.timelineArms.LiveCount());
+            };
+            const auto before = owners();
+            unsigned rejections = 0;
+            for (unsigned block = 0; block < 32 && rejections < 3; ++block) {
+                engine.forceActionFinalOwnerCommitFailureForTest = true;
+                engine.actionFinalOwnerCommitFailureSkipForTest = 0;
+                const auto head = engine.commands.PublishedHead();
+                ASSERT_EQ(VN_OK, Vn_Update());
+                if (!engine.forceActionFinalOwnerCommitFailureForTest) {
+                    ++rejections;
+                    EXPECT_EQ(head, engine.commands.PublishedHead());
+                    EXPECT_EQ(before, owners());
+                }
+                const auto rendered = engine.mixer.BlocksRendered();
+                engine.nullBackend.Pump(1);
+                ASSERT_EQ(rendered + 1u, engine.mixer.BlocksRendered());
+                const auto* output = engine.nullBackend.LastBlock();
+                ASSERT_NE(nullptr, output);
+                EXPECT_TRUE(std::all_of(output, output + 128u, [](float sample) { return std::abs(sample + 0.25f) < 1e-6f; }));
+                ASSERT_FALSE(engine.runtimeRecreateRequired);
+            }
+            EXPECT_EQ(3u, rejections);
+            engine.forceActionFinalOwnerCommitFailureForTest = false;
+        }
+        if (transition) ASSERT_NO_FATAL_FAILURE(checkTransition(-0.25f, 0.125f));
+        ASSERT_TRUE(waitForOutput(0.125f));
+        ASSERT_TRUE(engine.playableInstances.Classify(produced).live);
+    }
+    if (!natural) {
+        if (firing != 0) ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
+        else ASSERT_EQ(PlayableControlStatus::Ok, StopPlayable(engine, produced, 0));
+    }
+    for (unsigned block = 0; block < 128; ++block) {
+        const auto update = Vn_Update();
+        ASSERT_EQ(VN_OK, update);
+        const auto before = engine.mixer.BlocksRendered();
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(before + 1u, engine.mixer.BlocksRendered());
+    }
+    ASSERT_TRUE(waitForOutput(0.0f));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_FALSE(engine.playableInstances.Classify(produced).live);
+    EXPECT_EQ(0u, engine.sourceTerminals.OccupiedCount());
+    EXPECT_EQ(0u, engine.playableInstances.LiveCount());
+    EXPECT_EQ(0u, engine.containerPlayback.LiveCount());
+    EXPECT_EQ(0u, engine.variableControlInstances.LiveCount());
+    EXPECT_EQ(0u, engine.playablePartitions.OccupiedCount());
+    EXPECT_EQ(0u, engine.timelineArms.LiveCount());
+    EXPECT_EQ(0u, engine.voices.ActiveCount());
+    EXPECT_FALSE(engine.runtimeRecreateRequired);
+    if (firing != 0) {
+        if (natural) {
+            VnActionFiringInfo info{};
+            info.structSize = sizeof(info);
+            ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
+            EXPECT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state);
+            EXPECT_EQ(VN_ACTION_OUTCOME_SUCCEEDED, info.outcome);
+            EXPECT_EQ(VN_ACTION_TERMINAL_NATURAL, info.terminalReason);
+        }
+        ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+    }
+    ASSERT_EQ(VN_OK, Vn_DestroyEmitter(emitter));
+}
+
+TEST(PackComposition, VariableControlNestedScheduleBranchProducesPcmAndStopsAcrossEntries) {
+    for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
+        for (const auto kind : {ContainerMatrixChild::Track, ContainerMatrixChild::Piece})
+            ExpectVariableControlNestedScheduleLifecycle(entry, kind, NestedVariableScheduleScenario::Stop);
+}
+
+TEST(PackComposition, VariableControlNestedScheduleNaturallyCompletesAcrossEntries) {
+    for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
+        for (const auto kind : {ContainerMatrixChild::Track, ContainerMatrixChild::Piece})
+            ExpectVariableControlNestedScheduleLifecycle(entry, kind, NestedVariableScheduleScenario::Natural);
+}
+
+TEST(PackComposition, VariableControlNestedScheduleRetargetsBetweenMatchesAcrossEntries) {
+    for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
+        for (const auto kind : {ContainerMatrixChild::Track, ContainerMatrixChild::Piece})
+            ExpectVariableControlNestedScheduleLifecycle(entry, kind, NestedVariableScheduleScenario::Retarget);
+}
+
+TEST(PackComposition, VariableControlNativeRetargetPrivateRefusalKeepsOldPcmAndRetriesAcrossEntries) {
+    for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
+        for (const auto kind : {ContainerMatrixChild::Track, ContainerMatrixChild::Piece})
+            ExpectVariableControlNestedScheduleLifecycle(entry, kind, NestedVariableScheduleScenario::RefusedRetarget);
+}
+
+TEST(PackComposition, VariableControlNativeRetargetImmediateTransitionKeepsAuthoredFadesAcrossEntries) {
+    for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
+        for (const auto kind : {ContainerMatrixChild::Track, ContainerMatrixChild::Piece})
+            ExpectVariableControlNestedScheduleLifecycle(entry, kind, NestedVariableScheduleScenario::ImmediateTransition);
+}
+
+TEST(PackComposition, VariableControlNativeRetargetNaturalEndKeepsAuthoredBoundaryAndFadesAcrossEntries) {
+    for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
+        for (const auto kind : {ContainerMatrixChild::Track, ContainerMatrixChild::Piece})
+            ExpectVariableControlNestedScheduleLifecycle(entry, kind, NestedVariableScheduleScenario::NaturalEndTransition);
+}
+
+enum class QueueMixedSuccessorBoundary { None, NestedQueue, NestedControl, OutsideWindow, TargetFade, ZeroWork, TargetFadeShortClips, TargetFadeComposite, TargetFadeCompositeSingle };
+enum class QueueNativeEntryNegative { None, QueueFailureBeforeClaim, VariableSourceWaitStop };
+
+static void CheckQueueReentersContainerClips(ContainerMatrixEntry entry,
+    ContainerMatrixChild childKind, bool refuseSuccessor = false, bool twoDelayedClips = false,
+    bool ordinaryFirst = false, QueueMixedSuccessorBoundary boundary = QueueMixedSuccessorBoundary::None,
+    bool delayedNativeChild = false, QueueNativeEntryNegative negative = QueueNativeEntryNegative::None,
+    bool delayedOrdinaryPrefix = false) {
+    const bool nativeNegative = negative != QueueNativeEntryNegative::None;
+    const bool queueFailure = negative == QueueNativeEntryNegative::QueueFailureBeforeClaim;
+    const bool sourceWaitStop = negative == QueueNativeEntryNegative::VariableSourceWaitStop;
+    ASSERT_FALSE(nativeNegative && delayedNativeChild);
+    ASSERT_FALSE(queueFailure && boundary != QueueMixedSuccessorBoundary::NestedQueue);
+    ASSERT_FALSE(sourceWaitStop && boundary != QueueMixedSuccessorBoundary::NestedControl);
+    ASSERT_FALSE(delayedOrdinaryPrefix &&
+        (!delayedNativeChild || boundary != QueueMixedSuccessorBoundary::NestedQueue));
+    const bool boundaryProbe = boundary != QueueMixedSuccessorBoundary::None;
+    const bool nativeBoundary = boundary == QueueMixedSuccessorBoundary::NestedQueue ||
+        boundary == QueueMixedSuccessorBoundary::NestedControl;
+    ASSERT_FALSE(delayedNativeChild && !nativeBoundary);
+    const bool outsideWindow = boundary == QueueMixedSuccessorBoundary::OutsideWindow;
+    const bool singleCompositeFade = boundary == QueueMixedSuccessorBoundary::TargetFadeCompositeSingle;
+    const bool compositeFadeClips = boundary == QueueMixedSuccessorBoundary::TargetFadeComposite || singleCompositeFade;
+    const bool shortFadeClips = boundary == QueueMixedSuccessorBoundary::TargetFadeShortClips || compositeFadeClips;
+    const bool targetFade = boundary == QueueMixedSuccessorBoundary::TargetFade || shortFadeClips;
+    const bool zeroWork = boundary == QueueMixedSuccessorBoundary::ZeroWork;
+    ASSERT_FALSE(boundaryProbe && (!ordinaryFirst || refuseSuccessor || twoDelayedClips));
+    SCOPED_TRACE(::testing::Message() << "entry=" << static_cast<unsigned>(entry)
+        << " child=" << static_cast<unsigned>(childKind)
+        << " refusal=" << refuseSuccessor << " twoDelayed=" << twoDelayedClips
+        << " ordinaryFirst=" << ordinaryFirst << " boundary=" << static_cast<unsigned>(boundary)
+        << " negative=" << static_cast<unsigned>(negative));
+    constexpr std::uint64_t kBlock = 64;
+    constexpr std::uint64_t kClipFrames = 192;
+    EngineSession session(MakeNullConfig(8, kBlock, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    const auto initialWindowEnd = engine->timelinePool.WindowEndFrame();
+    const auto nativeDelayFrames = delayedNativeChild
+        ? ((initialWindowEnd / kClipFrames) + 2u) * kClipFrames : 0u;
+    const std::uint64_t firstFrames = outsideWindow ? initialWindowEnd + 2u * kBlock : kClipFrames;
+    const std::vector<float> samples(ordinaryFirst ? firstFrames : 512u, 0.125f);
+    const auto pcm = harkentest::MonoDesc(samples, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(ContainerMatrixWorld::kFirstSound, &pcm));
+    const auto revision = engine->registry.Lookup(ContainerMatrixWorld::kFirstSound).contentRevision;
+    ContainerMatrixWorld image(ContainerModeV1::SequenceQueue, childKind,
+        revision, revision, false, 1, 1);
+    const auto sound = image.placements[0].content;
+    const auto nested = image.children[0].playable;
+    const auto aggregate = childKind == ContainerMatrixChild::Piece
+        ? image.piece.rootDefinition : image.track.rootDefinition;
+    constexpr auto kStaticFadeTrack = harkentest::ObjectId(72009);
+    std::array<ScheduleClipPlacementV1, 2> staticFadePlacements{};
+    std::array<TrackScheduleProgramViewV1, 2> staticFadeTracks{};
+    std::array<PlayableOccurrencePropertyViewV1, 6> staticFadeOccurrences{};
+    PlayableRefV1 staticFadeTrack{};
+    constexpr auto kOrdinaryPrefix = harkentest::ObjectId(72010);
+    std::array<ContainerProgramViewV3, 3> prefixedContainers{};
+    ContainerChildProgramViewV2 prefixChild{};
+    PlayableRefV1 prefix{};
+    if (delayedOrdinaryPrefix) {
+        ASSERT_LT(image.propertyCount, image.properties.size());
+        const auto propertyIndex = image.propertyCount++;
+        auto& property = image.properties[propertyIndex];
+        property = MakeContainerProperty(kOrdinaryPrefix, propertyIndex);
+        property.compatibilityFingerprint = 2;
+        SetContainerPropertyLoopCount(&property, 1);
+        property.programSemanticFingerprint = ComputePlayablePropertyFingerprintV1(property);
+        prefix = PlayableRefFromProperty(property);
+        prefixChild.stableChildOrdinal = 10;
+        prefixChild.playable = nested;
+        prefixChild.frequencyWeight = 1;
+        prefixChild.queueStopPolicy = QueueStopPolicyV1::AbortOwningQueue;
+        auto& program = prefixedContainers[2];
+        program = MakeContainerProgram(kOrdinaryPrefix, prefix.expectedProgramSemanticFingerprint, 3);
+        program.mode = ContainerModeV1::Random;
+        program.randomDiscipline = RandomDisciplineV1::Draw;
+        program.memoryScope = MemoryScopeV1::Emitter;
+        program.childCount = 1;
+        program.children = &prefixChild;
+        image.world.playablePropertyCount = image.propertyCount;
+        std::sort(image.properties.begin(), image.properties.begin() + image.propertyCount,
+            [](const auto& left, const auto& right) {
+                return left.contentPropertyKind != right.contentPropertyKind
+                    ? left.contentPropertyKind < right.contentPropertyKind : left.stableId < right.stableId;
+            });
+    }
+    image.placements[0].content = delayedOrdinaryPrefix ? prefix : nested;
+    image.placements[0].authoredStart = nativeDelayFrames * 1000000000u / 48000u;
+    image.placements[0].authoredDuration = zeroWork ? 10417 : compositeFadeClips ? (singleCompositeFade ? 500000 : 1000000) : 4000000;
+    if (twoDelayedClips) {
+        image.placements[0].authoredStart = 1000000;
+        image.placements[1] = image.placements[0];
+        image.placements[1].stablePlacementOrdinal = 1;
+        image.placements[1].stableOccurrenceOrdinal = 12;
+        image.placements[1].clipId = harkentest::ObjectId(2);
+        image.placements[1].clipGuidHigh = 2;
+        image.placements[1].authoredStart = 7000000;
+        image.track.placementCount = 2;
+    }
+    if (shortFadeClips && !compositeFadeClips) {
+        image.placements[0].authoredDuration = 500000;
+        image.placements[1] = image.placements[0];
+        image.placements[1].content = sound;
+        image.placements[1].stablePlacementOrdinal = 1;
+        image.placements[1].stableOccurrenceOrdinal = 12;
+        image.placements[1].clipId = harkentest::ObjectId(2);
+        image.placements[1].clipGuidHigh = 2;
+        image.placements[1].authoredStart = 500000;
+        image.track.placementCount = 2;
+    }
+    image.track.scheduleSemanticFingerprint = ComputeTrackScheduleFingerprintV1(image.track);
+    image.trackRef.trackScheduleSemanticFingerprint = image.track.scheduleSemanticFingerprint;
+    if (childKind == ContainerMatrixChild::Piece)
+        image.piece.scheduleSemanticFingerprint = ComputePieceScheduleFingerprintV1(image.piece);
+    image.children[0].playable = aggregate;
+    image.children[0].timingHint = MakeScheduleReferenceTimingHint(
+        aggregate.kind, aggregate.stableId, childKind == ContainerMatrixChild::Piece
+            ? image.piece.scheduleSemanticFingerprint : image.track.scheduleSemanticFingerprint);
+    image.children[1] = image.children[0];
+    image.children[1].stableChildOrdinal = 8;
+    image.children[1].authoredStableOrder = 2;
+    if (ordinaryFirst) {
+        image.children[0].playable = sound;
+        image.children[0].timingHint = {};
+        image.children[0].timingHint.kind = ChildTimingHintKindV2::InlineSound;
+        auto& timing = image.completionLeaves[0];
+        timing = {};
+        timing.stableLeafOrdinal = 1;
+        timing.content = sound;
+        timing.startOffset = {AuthoredTimeDomainV1::SourceFrames, 0, 1};
+        timing.duration = {AuthoredTimeDomainV1::NaturalMediaEnd, 0, 1};
+        harkentest::CopyLeafTimingToHint(image.children[0], timing);
+    }
+    image.children[2].playable = sound;
+    image.containers[0].childCount = 2;
+    if (compositeFadeClips) {
+        const auto original = std::find_if(image.properties.begin(), image.properties.begin() + image.propertyCount,
+            [&](const auto& value) { return value.stableId == image.track.rootDefinition.stableId; });
+        ASSERT_NE(image.properties.begin() + image.propertyCount, original);
+        ASSERT_LT(image.propertyCount, image.properties.size());
+        const auto propertyIndex = image.propertyCount++;
+        auto& property = image.properties[propertyIndex];
+        property = *original;
+        property.stableId = kStaticFadeTrack;
+        property.authoredStableOrder = propertyIndex;
+        property.programSemanticFingerprint = ComputePlayablePropertyFingerprintV1(property);
+        staticFadeTrack = PlayableRefFromProperty(property);
+        for (std::uint32_t index = 0; index < staticFadePlacements.size(); ++index) {
+            auto& placement = staticFadePlacements[index];
+            placement = image.placements[0];
+            placement.content = sound;
+            placement.stablePlacementOrdinal = index;
+            placement.stableOccurrenceOrdinal = 21u + index;
+            placement.clipId = harkentest::ObjectId(3u + index);
+            placement.clipGuidHigh = 3u + index;
+            placement.authoredStart = index * 500000;
+            placement.authoredDuration = 500000;
+        }
+        staticFadeTracks[0] = image.track;
+        staticFadeTracks[1].rootDefinition = staticFadeTrack;
+        staticFadeTracks[1].placements = staticFadePlacements.data();
+        staticFadeTracks[1].placementCount = singleCompositeFade ? 1u : static_cast<std::uint32_t>(staticFadePlacements.size());
+        staticFadeTracks[1].scheduleSemanticFingerprint = ComputeTrackScheduleFingerprintV1(staticFadeTracks[1]);
+        image.children[2].playable = staticFadeTrack;
+        image.children[2].timingHint = {};
+        image.world.trackSchedules = staticFadeTracks.data();
+        image.world.trackScheduleCount = static_cast<std::uint32_t>(staticFadeTracks.size());
+        image.world.playablePropertyCount = image.propertyCount;
+        std::sort(image.properties.begin(), image.properties.begin() + image.propertyCount,
+            [](const auto& left, const auto& right) {
+                return left.contentPropertyKind != right.contentPropertyKind
+                    ? left.contentPropertyKind < right.contentPropertyKind : left.stableId < right.stableId;
+            });
+    }
+    if (boundary == QueueMixedSuccessorBoundary::NestedQueue) {
+        image.containers[1].mode = ContainerModeV1::SequenceQueue;
+        image.containers[1].randomDiscipline = {};
+        image.containers[1].queueCycle = QueueCycleV1::Once;
+        image.containers[1].queueSplice = QueueSpliceV1::Butt;
+        image.children[2].frequencyWeight = 0;
+        image.children[2].queueStopPolicy = QueueStopPolicyV1::AdvanceQueue;
+        AuthoredCompletionLeafV1 leaf{};
+        leaf.stableLeafOrdinal = 9;
+        leaf.content = sound;
+        leaf.startOffset = {AuthoredTimeDomainV1::SourceFrames, 0, 1};
+        leaf.duration = {AuthoredTimeDomainV1::NaturalMediaEnd, 0, 1};
+        harkentest::CopyLeafTimingToHint(image.children[2], leaf);
+    } else if (boundary == QueueMixedSuccessorBoundary::NestedControl) {
+        auto& control = image.containers[1];
+        control.mode = ContainerModeV1::VariableControl;
+        control.randomDiscipline = {};
+        control.discreteTiming = 1;
+        control.evaluationPeriodFrames = kBlock;
+        control.discreteAxisCount = control.discreteRowCount = 1;
+        control.discreteAxes = &image.axis;
+        image.row.childStableOrdinal = 9;
+        control.discreteRows = &image.row;
+        if (sourceWaitStop) image.cell = {DiscreteCellKindV1::Exact, 1};
+        image.children[2].frequencyWeight = 0;
+        image.world.variables = &image.variable;
+        image.world.variableCount = 1;
+    }
+    CurveV1 fadeCurve{};
+    std::array<TransitionRuleViewV1, 2> fadeRules{};
+    TransitionProgramViewV1 fadeProgram{};
+    if (targetFade) {
+        fadeCurve.curveLocalId = 1;
+        fadeCurve.curve.pointCount = 2;
+        fadeCurve.curve.points[0] = {0.0f, 0.0f};
+        fadeCurve.curve.points[1] = {1.0f, 1.0f};
+        fadeCurve.curve.handles[0] = {1.0f / 3.0f, 1.0f / 3.0f, 2.0f / 3.0f, 2.0f / 3.0f};
+        image.containers[0].curves = &fadeCurve;
+        image.containers[0].curveCount = 1;
+        image.containers[0].transitionProgramIndex = 0;
+        fadeRules[0].sourceAny = fadeRules[0].targetAny = 1;
+        fadeRules[1].stableRuleOrdinal = 1;
+        fadeRules[1].authoredStableOrder = 1;
+        fadeRules[1].source = sound;
+        fadeRules[1].target = aggregate;
+        fadeRules[1].sourceExit = TransitionSourceExitV1::NaturalEnd;
+        fadeRules[1].targetFade.active = 1;
+        fadeRules[1].targetFade.durationFrames = kBlock;
+        fadeRules[1].targetFade.curveLocalId = 1;
+        fadeProgram.ownerContainerStableId = image.containers[0].containerStableId;
+        fadeProgram.ruleCount = static_cast<std::uint32_t>(fadeRules.size());
+        fadeProgram.rules = fadeRules.data();
+        fadeProgram.defaultRuleIndex = 0;
+        image.world.transitions = &fadeProgram;
+        image.world.transitionCount = 1;
+    }
+    if (delayedOrdinaryPrefix) {
+        std::copy(image.containers.begin(), image.containers.end(), prefixedContainers.begin());
+        image.world.containers = prefixedContainers.data();
+        image.world.containerCount = static_cast<std::uint32_t>(prefixedContainers.size());
+    }
+    image.occurrenceCount = 0;
+    auto* const occurrenceData = compositeFadeClips ? staticFadeOccurrences.data() : image.occurrences.data();
+    image.world.playableOccurrences = occurrenceData;
+    const auto addOccurrence = [&](const PlayableRefV1& parent,
+                                   std::uint32_t ordinal,
+                                   const PlayableRefV1& child) {
+        auto& occurrence = occurrenceData[image.occurrenceCount++];
+        occurrence = {};
+        occurrence.parentKind = parent.kind == PlayableKindV1::Container
+            ? playableproperties::ContentPropertyKindV1::Container
+            : playableproperties::ContentPropertyKindV1::Track;
+        occurrence.parentStableId = parent.stableId;
+        occurrence.parentProgramSemanticFingerprint = parent.expectedProgramSemanticFingerprint;
+        occurrence.stableOccurrenceOrdinal = ordinal;
+        occurrence.childPlayable = child;
+        occurrence.payload = EmptyOccurrencePayload();
+        occurrence.payload.presentMask = 0;
+        occurrence.payload.values[6].objectId = {};
+        occurrence.occurrenceSemanticFingerprint = ComputePlayableOccurrenceFingerprintV1(occurrence);
+    };
+    addOccurrence(image.rootRef, 7, image.children[0].playable);
+    addOccurrence(image.rootRef, 8, aggregate);
+    addOccurrence(nested, 9, image.children[2].playable);
+    if (delayedOrdinaryPrefix) addOccurrence(prefix, 10, nested);
+    addOccurrence(image.track.rootDefinition, 11, image.placements[0].content);
+    if (twoDelayedClips || (shortFadeClips && !compositeFadeClips))
+        addOccurrence(image.track.rootDefinition, 12, shortFadeClips ? sound : nested);
+    if (compositeFadeClips) {
+        addOccurrence(staticFadeTrack, 21, sound);
+        if (!singleCompositeFade) addOccurrence(staticFadeTrack, 22, sound);
+    }
+    image.world.playableOccurrenceCount = image.occurrenceCount;
+    if (boundaryProbe) image.world.identity.capabilityMask = detail::ComputeCurrentWorldLocalCapabilityMaskV1(image.world);
+    image.world.identity.runtimeSemanticFingerprint = ComputeCurrentWorldFingerprintV4(image.world);
+    ASSERT_EQ(WorldInstallStatus::Ok, InstallContainerWorldV1(*engine, image.world).status);
+    VnEmitterHandle emitter = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+    const auto ledgerBaseline = engine->ledger.AvailableEntryCount();
+    const auto transactionBaseline = engine->timelinePool.LiveTransactionCount();
+    PlayableInstanceHandle produced = 0;
+    VnActionFiringHandle firing = 0;
+    if (entry == ContainerMatrixEntry::Direct) {
+        PlayableStartRequest request{};
+        request.root = image.rootRef;
+        request.emitter = emitter;
+        request.callerSeed = ordinaryFirst ? 0x4b173u : 0u;
+        const auto started = StartPlayable(*engine, request);
+        ASSERT_EQ(PlayableStartStatus::Accepted, started.status);
+        produced = started.instance;
+    } else {
+        VnPostActionDesc post{};
+        post.structSize = sizeof(post);
+        post.actionId = ContainerMatrixWorld::kAction;
+        post.emitter = emitter;
+        post.callerSeed = ordinaryFirst ? 0x4b173u : 0u;
+        ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+        VnActionStepResult step{};
+        step.structSize = sizeof(step);
+        ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &step));
+        ASSERT_EQ(VN_ACTION_STEP_ACTIVE, step.state);
+        produced = step.producedPlayableInstance;
+    }
+    ASSERT_NE(0u, produced);
+    struct ZeroRetirementProbe {
+        PlayableInstanceHandle root = 0;
+        PlayableTerminalKind terminal = PlayableTerminalKind::None;
+        PlayableControlReason reason = PlayableControlReason::None;
+        std::uint32_t count = 0;
+    } zeroRetirement{produced};
+    struct ResetZeroRetirementHook {
+        Engine& engine;
+        ~ResetZeroRetirementHook() {
+            engine.playableRetirementHookForTest = nullptr;
+            engine.playableRetirementContextForTest = nullptr;
+        }
+    } resetZeroRetirementHook{*engine};
+    ASSERT_EQ(nullptr, engine->playableRetirementHookForTest);
+    ASSERT_EQ(nullptr, engine->playableRetirementContextForTest);
+    if (zeroWork || nativeNegative) {
+        engine->playableRetirementContextForTest = &zeroRetirement;
+        engine->playableRetirementHookForTest = [](const EnginePlayableServiceRow& service,
+            PlayableInstanceHandle retired, PlayableTerminalKind terminal, void* context) {
+            auto& proof = *static_cast<ZeroRetirementProbe*>(context);
+            if (retired != proof.root) return;
+            EXPECT_EQ(proof.root, service.ownerInstance);
+            proof.terminal = terminal;
+            proof.reason = service.controlReason;
+            ++proof.count;
+        };
+    }
+    struct SuccessorRefusalProbe {
+        bool invoked = false;
+        bool checked = false;
+        std::uint64_t commandHead = 0;
+        std::uint64_t rollbackAttempts = 0;
+        QueueInstanceToken queue{};
+        QueueInstanceSnapshot before{};
+        EnginePlayableServiceReference parent{};
+        EngineScheduleAggregateChild* previous = nullptr;
+    } refusal;
+    static thread_local SuccessorRefusalProbe* activeRefusal = nullptr;
+    ASSERT_EQ(nullptr, activeRefusal);
+    struct ResetRefusalHook {
+        Engine& engine;
+        SuccessorRefusalProbe*& active;
+        ~ResetRefusalHook() {
+            engine.queueContinuationFinalOnsetHookForTest = nullptr;
+            engine.forceActionPlayPostTransferCommitFailureForTest = false;
+            active = nullptr;
+        }
+    } resetRefusalHook{*engine, activeRefusal};
+    if (refuseSuccessor) {
+        activeRefusal = &refusal;
+        engine->queueContinuationFinalOnsetHookForTest = [](Engine& current, PlayableInstanceHandle root) noexcept {
+            current.queueContinuationFinalOnsetHookForTest = nullptr;
+            ASSERT_NE(nullptr, activeRefusal);
+            auto& probe = *activeRefusal;
+            EnginePlayableServiceRow* parent = nullptr;
+            for (std::uint32_t cursor = 0; auto* row = current.NextOccupiedPlayableService(&cursor);)
+                if (row->ownerInstance == root && row->queueMode) parent = row;
+            ASSERT_NE(nullptr, parent);
+            ASSERT_NE(nullptr, parent->scheduleTerminalChild);
+            ASSERT_TRUE(parent->scheduleTerminalChild->lifecycleOwned);
+            ASSERT_TRUE(parent->scheduleTerminalChild->logicalComplete);
+            ASSERT_TRUE(parent->scheduleTerminalChild->resourcesReleased);
+            probe.queue = parent->queueInstance;
+            ASSERT_TRUE(current.queueInstances.Capture(probe.queue, &probe.before));
+            EXPECT_EQ(7u, probe.before.logicMirror.currentChildOrdinal);
+            probe.parent = {parent->identity, parent->ownerInstance, parent->ownerEpoch,
+                parent->invocationGeneration};
+            probe.previous = parent->scheduleTerminalChild.get();
+            probe.commandHead = current.commands.PublishedHead();
+            probe.rollbackAttempts = current.actionTimelineVoiceOwnerRollbackAttemptsForTest;
+            probe.invoked = true;
+            // This hook is armed after the second entry has prepared its native forest.
+            // The existing fault fires after a real child commits, before publication.
+            current.forceActionPlayPostTransferCommitFailureForTest = true;
+        };
+    }
+    const auto observeRefusal = [&]() {
+        if (!refusal.invoked) return;
+        if (!refusal.checked) {
+            EXPECT_FALSE(engine->forceActionPlayPostTransferCommitFailureForTest);
+            EXPECT_EQ(refusal.commandHead, engine->commands.PublishedHead());
+            EXPECT_GT(engine->actionTimelineVoiceOwnerRollbackAttemptsForTest, refusal.rollbackAttempts);
+            refusal.checked = true;
+        }
+        auto* parent = engine->ResolvePlayableService(refusal.parent);
+        if (parent == nullptr) return;
+        ASSERT_EQ(refusal.previous, parent->scheduleTerminalChild.get());
+        ASSERT_NE(nullptr, parent->scheduleTerminalChild);
+        EXPECT_TRUE(parent->scheduleTerminalChild->logicalComplete);
+        EXPECT_TRUE(parent->scheduleTerminalChild->resourcesReleased);
+        EXPECT_FALSE(parent->frontierAcceptedSignal.Valid());
+        QueueInstanceSnapshot actual{};
+        if (parent->queueInstance.Valid()) {
+            EXPECT_EQ(refusal.queue.slot, parent->queueInstance.slot);
+            EXPECT_EQ(refusal.queue.generation, parent->queueInstance.generation);
+            ASSERT_TRUE(engine->queueInstances.Capture(refusal.queue, &actual));
+            EXPECT_EQ(refusal.before.logicMirror.version, actual.logicMirror.version);
+            EXPECT_EQ(refusal.before.logicMirror.currentChildOrdinal, actual.logicMirror.currentChildOrdinal);
+        } else {
+            // Native Queue ownership can retire before the same service's fence.
+            EXPECT_FALSE(engine->queueInstances.Capture(refusal.queue, &actual));
+            EXPECT_TRUE(parent->queueCleanupStarted);
+            EXPECT_EQ(EnginePlayableStartPhase::Cancelling, parent->phase);
+            EXPECT_EQ(PlayableControlReason::StartRefused, parent->controlReason);
+            EXPECT_EQ(PlayableControlLifecycle::FailingSourceActive, parent->controlLifecycle);
+            EXPECT_FALSE(parent->queueContinuationPrepared);
+            EXPECT_FALSE(parent->frontierChildService.Valid());
+        }
+    };
+    struct NativeEntryNegativeProbe {
+        bool captured = false, writeIssued = false, waitingObserved = false, stopIssued = false, receiptsObserved = false;
+        LogicCommitSequence sourceSequence = 0;
+        VariableSliceRef source{};
+        FrontierEntryReceiptRef parentEntry{}, childEntry{};
+        QueueInstanceToken parentQueue{}, childQueue{};
+        QueueInstanceSnapshot parentBefore{};
+        DecisionFuturePin parentReceiptPin{}, childReceiptPin{};
+        QueueInstanceTable::OriginalLifetimePin parentQueuePin{};
+        std::uint64_t audioBaseline = 0, stopAudioBaseline = 0;
+    } nativeNegativeProbe;
+    struct ResetNativeCommandBudget {
+        Engine& engine;
+        ~ResetNativeCommandBudget() {
+            engine.mixer.SetMaxCommandsPerQuantumForTest(engine.config.maxControlCommandsPerQuantum);
+        }
+    } resetNativeCommandBudget{*engine};
+    std::vector<std::pair<PlayableInstanceHandle, std::uint64_t>> aggregateAnchors;
+    std::uint64_t firstSourceAnchor = UINT64_MAX;
+    std::uint32_t skippedLateUpdates = 0;
+    bool observedNestedOwner = false;
+    bool observedAppliedParentWithPendingChild = false;
+    bool observedDelayedChildDependency = false;
+    bool observedFrozenOrdinaryWithNative = false;
+    EnginePlayableServiceReference frozenOrdinary{};
+    LogicCommitSequence frozenOrdinaryTicket = 0;
+    SelectionSeedProbeCopyV1 frozenOrdinarySeed{};
+    std::uint64_t frozenOrdinaryStart = 0;
+    FrontierEntryReceiptRef appliedParentEntry{};
+    Plan03GroupSliceIdentity appliedParentPrimary{}, appliedParentMember{};
+    const auto captureAggregateAnchors = [&]() {
+        if (!twoDelayedClips && !boundaryProbe) return;
+        for (std::uint32_t cursor = 0; auto* row = engine->NextOccupiedPlayableService(&cursor);) {
+            if (row->ownerInstance == produced && row->queueMode) {
+                const auto* arm = engine->timelineArms.Resolve(row->arm);
+                if (firstSourceAnchor == UINT64_MAX && arm != nullptr && arm->startBound &&
+                    (arm->state.load(std::memory_order_acquire) == ArmState::Published ||
+                     arm->state.load(std::memory_order_acquire) == ArmState::Started))
+                    firstSourceAnchor = arm->startFrame;
+            }
+            if (delayedOrdinaryPrefix && row->root.stableId == kOrdinaryPrefix &&
+                engine->playablePartitions.Published(row->partition, row->identity)) {
+                ASSERT_NE(nullptr, row->scheduleTerminalChild);
+                ASSERT_EQ(1u, row->selectionCount);
+                EXPECT_EQ(kOrdinaryPrefix, row->selectionPath[0].objectId);
+                EXPECT_EQ(10u, row->selectionPath[0].childOrdinal);
+                EXPECT_EQ(10u, row->selectedChildOrdinals[0]);
+                ASSERT_TRUE(row->selectionSeedProbe.captured);
+                if (!frozenOrdinary.Valid()) {
+                    ASSERT_TRUE(row->scheduleTerminalChild->pendingEntry);
+                    EXPECT_FALSE(row->scheduleTerminalChild->service.Valid());
+                    EXPECT_GT(row->startFrame, engine->timelinePool.WindowEndFrame());
+                    frozenOrdinary = {row->identity, row->ownerInstance, row->ownerEpoch, row->invocationGeneration};
+                    frozenOrdinaryTicket = row->ticket;
+                    frozenOrdinarySeed = row->selectionSeedProbe;
+                    frozenOrdinaryStart = row->startFrame;
+                }
+                EXPECT_EQ(row, engine->ResolvePlayableService(frozenOrdinary));
+                EXPECT_EQ(frozenOrdinaryTicket, row->ticket);
+                EXPECT_EQ(frozenOrdinaryStart, row->startFrame);
+                EXPECT_EQ(frozenOrdinarySeed.derivedCallerSeed, row->selectionSeedProbe.derivedCallerSeed);
+                EXPECT_EQ(frozenOrdinarySeed.acceptedPostOrdinal, row->selectionSeedProbe.acceptedPostOrdinal);
+                EXPECT_EQ(frozenOrdinarySeed.selectionOrdinal, row->selectionSeedProbe.selectionOrdinal);
+                EXPECT_EQ(frozenOrdinarySeed.resetEpoch, row->selectionSeedProbe.resetEpoch);
+                if (row->scheduleTerminalChild->pendingEntry && row->nativeEntryDependency != nullptr) {
+                    const auto& dependency = *row->nativeEntryDependency;
+                    const auto* activation = engine->decisions.ResolveFrontierActivation(dependency.entry.coordinator);
+                    ASSERT_NE(nullptr, activation);
+                    FrontierActivationReceipt receipt{};
+                    if (activation->Read(dependency.entry, engine->mixer.BlocksRendered(), &receipt) ==
+                        FrontierReceiptRead::Ready && receipt.outcome == FrontierReceiptOutcome::Applied) {
+                        EXPECT_LT(engine->mixer.BlocksRendered() * kBlock, row->startFrame);
+                        observedAppliedParentWithPendingChild = true;
+                        appliedParentEntry = dependency.entry;
+                        appliedParentPrimary = dependency.primary;
+                        appliedParentMember = dependency.member;
+                    }
+                }
+            }
+            if (row->root.stableId == ContainerMatrixWorld::kNested &&
+                engine->playablePartitions.Published(row->partition, row->identity)) {
+                if (nativeNegative && !nativeNegativeProbe.captured) {
+                    // Service ownership can publish before its actual audio page.
+                    if (engine->timelinePool.PublishCutoffFrame() <= row->startFrame) continue;
+                    auto& probe = nativeNegativeProbe;
+                    ASSERT_NE(nullptr, row->nativeEntryDependency);
+                    const auto& dependency = *row->nativeEntryDependency;
+                    probe.parentEntry = dependency.entry;
+                    probe.childEntry = row->frontierEntry;
+                    ASSERT_TRUE(probe.parentEntry.Valid());
+                    ASSERT_TRUE(probe.childEntry.Valid());
+                    const auto* parent = engine->ResolvePlayableService(dependency.parentService);
+                    const auto* actualParent = engine->ResolvePlayableService(row->parentService);
+                    ASSERT_NE(nullptr, parent);
+                    ASSERT_NE(nullptr, actualParent);
+                    ASSERT_EQ(produced, parent->ownerInstance);
+                    ASSERT_EQ(probe.parentEntry.owner.child, actualParent->ownerInstance);
+                    ASSERT_EQ(probe.childEntry.owner.child, row->ownerInstance);
+                    probe.parentQueue = parent->queueInstance;
+                    ASSERT_TRUE(engine->queueInstances.Capture(probe.parentQueue, &probe.parentBefore));
+                    ASSERT_EQ(7u, probe.parentBefore.logicMirror.currentChildOrdinal);
+                    const auto* parentActivation = engine->decisions.ResolveFrontierActivation(probe.parentEntry.coordinator);
+                    const auto* childActivation = engine->decisions.ResolveFrontierActivation(probe.childEntry.coordinator);
+                    ASSERT_NE(nullptr, parentActivation);
+                    ASSERT_NE(nullptr, childActivation);
+                    ASSERT_EQ(probe.parentEntry, parentActivation->Descriptor().entry);
+                    ASSERT_EQ(probe.childEntry, childActivation->Descriptor().entry);
+                    ASSERT_EQ(Plan03GroupBacking::Page, parentActivation->Descriptor().primary.backing);
+                    ASSERT_EQ(Plan03GroupBacking::Page, childActivation->Descriptor().primary.backing);
+                    ASSERT_EQ(row->startFrame, parentActivation->Descriptor().order.executeFrame);
+                    ASSERT_EQ(row->startFrame, childActivation->Descriptor().order.executeFrame);
+                    ASSERT_GT(engine->timelinePool.PublishCutoffFrame(), row->startFrame);
+                    Plan03PageGroupView childPrimary{};
+                    ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
+                        childActivation->Descriptor().primary, &childPrimary));
+                    ASSERT_NE(nullptr, childPrimary.frontier);
+                    ASSERT_EQ(FrontierGroupRole::Coordinator, childPrimary.frontier->role);
+                    ASSERT_EQ(probe.parentEntry, childPrimary.frontier->prerequisite);
+                    ASSERT_EQ(dependency.member, childPrimary.frontier->prerequisiteMember);
+                    probe.audioBaseline = engine->mixer.BlocksRendered();
+                    FrontierActivationReceipt before{};
+                    ASSERT_EQ(FrontierReceiptState::Pending, parentActivation->State());
+                    ASSERT_EQ(FrontierReceiptState::Pending, childActivation->State());
+                    ASSERT_EQ(FrontierReceiptRead::InFlight, parentActivation->Read(probe.parentEntry, probe.audioBaseline, &before));
+                    ASSERT_EQ(FrontierReceiptRead::InFlight, childActivation->Read(probe.childEntry, probe.audioBaseline, &before));
+                    if (sourceWaitStop) {
+                        ASSERT_TRUE(probe.writeIssued);
+                        probe.source = engine->variables.SliceForTicketForTests(probe.sourceSequence);
+                        ASSERT_TRUE(probe.source.Valid());
+                        ASSERT_EQ(VariableSliceState::PageCommitted, engine->variableSlices.State(probe.source));
+                        ASSERT_GT(engine->variableSlices.SourceObserverCount(probe.source), 0u);
+                        ASSERT_TRUE(childActivation->Descriptor().initialVariables.Valid());
+                        ASSERT_EQ(VariableReadCutStatus::Waiting,
+                            engine->variables.FrontierEntrySourcesStatus(childActivation->Descriptor()));
+                        ASSERT_TRUE(engine->decisions.AcquireFuturePin(probe.parentEntry.coordinator, &probe.parentReceiptPin));
+                        ASSERT_TRUE(engine->decisions.AcquireFuturePin(probe.childEntry.coordinator, &probe.childReceiptPin));
+                        ASSERT_TRUE(engine->BorrowOriginalQueueLifetime(dependency.parentService, &probe.parentQueuePin));
+                        ASSERT_TRUE(engine->queueInstances.IsOriginalLifetimePinFor(probe.parentQueuePin, probe.parentQueue));
+                    } else {
+                        probe.childQueue = row->queueInstance;
+                        QueueInstanceSnapshot childBefore{};
+                        ASSERT_TRUE(engine->queueInstances.Capture(probe.childQueue, &childBefore));
+                        ASSERT_EQ(0u, childBefore.initialActivationSequence);
+                        ASSERT_EQ(QueueFailureDisposition::NewlyFailed,
+                            engine->queueInstances.FailContainerBeforeConditional(probe.childQueue,
+                                QueueFailureReason::TargetPreparationFailed, probe.audioBaseline * kBlock));
+                    }
+                    probe.captured = true;
+                }
+                if (delayedNativeChild && row->nativeEntryDependency != nullptr) {
+                    const auto& dependency = *row->nativeEntryDependency;
+                    EXPECT_TRUE(appliedParentEntry.Valid());
+                    EXPECT_EQ(appliedParentEntry, dependency.entry);
+                    EXPECT_EQ(appliedParentPrimary, dependency.primary);
+                    EXPECT_EQ(appliedParentMember, dependency.member);
+                    EXPECT_TRUE(dependency.coordinatorPin.Valid());
+                    ASSERT_NE(nullptr, dependency.appliedSignal);
+                    EXPECT_TRUE(engine->decisions.IsAppliedSignalDependencyFor(*dependency.appliedSignal,
+                        dependency.entry, dependency.primary, dependency.member, engine->mixer.BlocksRendered()));
+                    EXPECT_FALSE(dependency.primaryPin.Valid());
+                    EXPECT_FALSE(dependency.memberPin.Valid());
+                    const auto* actualParent = engine->ResolvePlayableService(row->parentService);
+                    ASSERT_NE(nullptr, actualParent);
+                    if (delayedOrdinaryPrefix) {
+                        EXPECT_EQ(actualParent, engine->ResolvePlayableService(frozenOrdinary));
+                        const auto* actualAggregate = engine->ResolvePlayableService(actualParent->parentService);
+                        ASSERT_NE(nullptr, actualAggregate);
+                        ASSERT_NE(nullptr, actualAggregate->scheduleAggregate);
+                        EXPECT_EQ(actualAggregate->startFrame + nativeDelayFrames, row->startFrame);
+                        EXPECT_EQ(frozenOrdinaryStart, row->startFrame);
+                        EXPECT_EQ(frozenOrdinaryTicket, actualParent->ticket);
+                        EXPECT_EQ(frozenOrdinarySeed.acceptedPostOrdinal, actualParent->selectionSeedProbe.acceptedPostOrdinal);
+                        ASSERT_NE(nullptr, actualParent->scheduleTerminalChild);
+                        EXPECT_FALSE(actualParent->scheduleTerminalChild->pendingEntry);
+                        EXPECT_TRUE(actualParent->scheduleTerminalChild->lifecycleOwned);
+                        EXPECT_EQ(row, engine->ResolvePlayableService(actualParent->scheduleTerminalChild->service));
+                        observedFrozenOrdinaryWithNative = true;
+                    } else {
+                        EXPECT_EQ(actualParent->startFrame + nativeDelayFrames, row->startFrame);
+                    }
+                    observedDelayedChildDependency = true;
+                }
+                QueueInstanceSnapshot queue{};
+                VariableControlInstanceSnapshot control{};
+                if (boundary == QueueMixedSuccessorBoundary::NestedQueue &&
+                    engine->queueInstances.Capture(row->queueInstance, &queue) && queue.rootInstance == row->ownerInstance)
+                    observedNestedOwner = true;
+                if (boundary == QueueMixedSuccessorBoundary::NestedControl &&
+                    engine->variableControlInstances.Capture(row->variableControlInstance, &control) &&
+                    control.rootInstance == row->ownerInstance) observedNestedOwner = true;
+            }
+        }
+        for (std::uint32_t cursor = 0; auto* row = engine->NextOccupiedPlayableService(&cursor);) {
+            if (row->scheduleAggregate == nullptr || row->root.kind != aggregate.kind ||
+                row->root.stableId != aggregate.stableId ||
+                !engine->playablePartitions.Published(row->partition, row->identity)) continue;
+            const auto* parent = engine->ResolvePlayableService(row->parentService);
+            if (parent == nullptr || !parent->queueMode || parent->ownerInstance != produced) continue;
+            if (delayedNativeChild && row->nativeEntryDependency != nullptr &&
+                std::any_of(row->scheduleAggregate->children.begin(), row->scheduleAggregate->children.end(),
+                    [&](const auto& child) { return child.pendingEntry && child.content.stableId == nested.stableId; })) {
+                const auto& dependency = *row->nativeEntryDependency;
+                const auto* activation = engine->decisions.ResolveFrontierActivation(dependency.entry.coordinator);
+                ASSERT_NE(nullptr, activation);
+                FrontierActivationReceipt receipt{};
+                if (activation->Read(dependency.entry, engine->mixer.BlocksRendered(), &receipt) ==
+                    FrontierReceiptRead::Ready && receipt.outcome == FrontierReceiptOutcome::Applied) {
+                    EXPECT_LT(engine->mixer.BlocksRendered() * kBlock, row->startFrame + nativeDelayFrames);
+                    observedAppliedParentWithPendingChild = true;
+                    appliedParentEntry = dependency.entry;
+                    appliedParentPrimary = dependency.primary;
+                    appliedParentMember = dependency.member;
+                }
+            }
+            if (std::none_of(aggregateAnchors.begin(), aggregateAnchors.end(),
+                    [&](const auto& item) { return item.first == row->ownerInstance; }))
+                aggregateAnchors.emplace_back(row->ownerInstance, row->startFrame);
+        }
+    };
+    const auto observeNativeAfterPump = [&]() {
+        auto& probe = nativeNegativeProbe;
+        if (!probe.captured || probe.receiptsObserved) return;
+        const auto completed = engine->mixer.BlocksRendered();
+        auto* parent = engine->decisions.ResolveFrontierActivation(probe.parentEntry.coordinator);
+        auto* child = engine->decisions.ResolveFrontierActivation(probe.childEntry.coordinator);
+        ASSERT_NE(nullptr, parent);
+        ASSERT_NE(nullptr, child);
+        FrontierActivationReceipt parentReceipt{}, childReceipt{};
+        if (sourceWaitStop && !probe.stopIssued) {
+            ASSERT_EQ(VariableSliceState::PageCommitted, engine->variableSlices.State(probe.source));
+            ASSERT_GT(engine->variableSlices.SourceObserverCount(probe.source), 0u);
+            ASSERT_EQ(VariableReadCutStatus::Waiting,
+                engine->variables.FrontierEntrySourcesStatus(child->Descriptor()));
+            const auto parentWait = parent->SourceWaitSequence(probe.parentEntry, completed);
+            const auto childWait = child->SourceWaitSequence(probe.childEntry, completed);
+            if (parentWait == 0 && childWait == 0) return;
+            ASSERT_GT(parentWait, probe.audioBaseline);
+            ASSERT_GT(childWait, probe.audioBaseline);
+            ASSERT_EQ(parentWait, childWait);
+            ASSERT_EQ(FrontierReceiptState::Pending, parent->State());
+            ASSERT_EQ(FrontierReceiptState::Pending, child->State());
+            ASSERT_EQ(FrontierReceiptRead::InFlight, parent->Read(probe.parentEntry, completed, &parentReceipt));
+            ASSERT_EQ(FrontierReceiptRead::InFlight, child->Read(probe.childEntry, completed, &childReceipt));
+            probe.waitingObserved = true;
+            probe.stopAudioBaseline = completed;
+            if (firing == 0) ASSERT_EQ(PlayableControlStatus::Ok, StopPlayable(*engine, produced, 0));
+            else ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
+            probe.stopIssued = true;
+            ASSERT_EQ(completed, engine->mixer.BlocksRendered());
+            engine->mixer.SetMaxCommandsPerQuantumForTest(engine->config.maxControlCommandsPerQuantum);
+        }
+        const auto parentRead = parent->Read(probe.parentEntry, completed, &parentReceipt);
+        const auto childRead = child->Read(probe.childEntry, completed, &childReceipt);
+        ASSERT_NE(FrontierReceiptRead::Stale, parentRead);
+        ASSERT_NE(FrontierReceiptRead::Stale, childRead);
+        if (parentRead == FrontierReceiptRead::InFlight || childRead == FrontierReceiptRead::InFlight)
+            return;
+        ASSERT_EQ(FrontierReceiptRead::Ready, parentRead);
+        ASSERT_EQ(FrontierReceiptRead::Ready, childRead);
+        for (const auto* receipt : {&parentReceipt, &childReceipt}) {
+            EXPECT_EQ(FrontierReceiptOutcome::DefinitivelyNotApplied, receipt->outcome);
+            if (sourceWaitStop && receipt->origin == FrontierReceiptOrigin::LogicBeforeAudio) {
+                EXPECT_EQ(FrontierReceiptReason::Cancelled, receipt->reason);
+                EXPECT_EQ(0u, receipt->audioSequence);
+            } else {
+                EXPECT_EQ(FrontierReceiptOrigin::Audio, receipt->origin);
+                EXPECT_GT(receipt->audioSequence, sourceWaitStop ? probe.stopAudioBaseline : probe.audioBaseline);
+                EXPECT_LE(receipt->audioSequence, completed);
+                EXPECT_NE(FrontierReceiptReason::None, receipt->reason);
+            }
+        }
+        EXPECT_EQ(probe.parentEntry, parentReceipt.entry);
+        EXPECT_EQ(probe.childEntry, childReceipt.entry);
+        QueueInstanceSnapshot parentAfter{};
+        ASSERT_TRUE(engine->queueInstances.Capture(probe.parentQueue, &parentAfter));
+        EXPECT_EQ(probe.parentBefore.logicMirror.version, parentAfter.logicMirror.version);
+        EXPECT_EQ(probe.parentBefore.logicMirror.currentChildOrdinal, parentAfter.logicMirror.currentChildOrdinal);
+        if (queueFailure) {
+            QueueInstanceSnapshot childAfter{};
+            ASSERT_TRUE(engine->queueInstances.Capture(probe.childQueue, &childAfter));
+            EXPECT_EQ(0u, childAfter.initialActivationSequence);
+            EXPECT_EQ(QueueFailurePhase::FailingSourceActive, childAfter.failurePhase);
+        }
+        if (sourceWaitStop) {
+            ASSERT_TRUE(probe.parentReceiptPin.Release());
+            ASSERT_TRUE(probe.childReceiptPin.Release());
+            probe.parentQueuePin.Release();
+            ASSERT_FALSE(probe.parentQueuePin.Valid());
+        }
+        probe.receiptsObserved = true;
+    };
+    FrontierTrace lifecycle;
+    std::uint64_t audibleFrames = 0;
+    const auto pcmOrigin = engine->mixer.BlocksRendered() * kBlock;
+    std::vector<float> capturedMono;
+    const auto blockCount = 128u + nativeDelayFrames / kBlock + (outsideWindow ? firstFrames / kBlock + 1u : 0u);
+    if (twoDelayedClips || boundaryProbe) capturedMono.reserve(blockCount * kBlock);
+    const auto holdUpdate = [&]() {
+        const auto frame = engine->mixer.BlocksRendered() * kBlock;
+        return (nativeNegativeProbe.captured && !nativeNegativeProbe.receiptsObserved &&
+                !(sourceWaitStop && nativeNegativeProbe.stopIssued)) ||
+            (outsideWindow && firstSourceAnchor != UINT64_MAX && frame >= firstSourceAnchor + firstFrames &&
+             frame < firstSourceAnchor + firstFrames + 3u * kBlock);
+    };
+    const auto channels = engine->nullBackend.Channels();
+    ASSERT_EQ(2u, channels);
+    for (std::uint64_t block = 0; block < blockCount; ++block) {
+        if (holdUpdate()) ++skippedLateUpdates;
+        else ASSERT_EQ(VN_OK, Vn_Update());
+        observeRefusal();
+        captureAggregateAnchors();
+        lifecycle.Capture(*engine);
+        const auto renderedBefore = engine->mixer.BlocksRendered();
+        if (sourceWaitStop && nativeNegativeProbe.writeIssued && !nativeNegativeProbe.stopIssued)
+            engine->mixer.SetMaxCommandsPerQuantumForTest(0);
+        engine->nullBackend.Pump(1);
+        if (sourceWaitStop)
+            engine->mixer.SetMaxCommandsPerQuantumForTest(engine->config.maxControlCommandsPerQuantum);
+        ASSERT_EQ(renderedBefore + 1u, engine->mixer.BlocksRendered());
+        const auto* output = engine->nullBackend.LastBlock();
+        for (std::uint32_t frame = 0; frame < kBlock; ++frame) {
+            const bool audible = std::abs(output[frame * channels]) > 1e-6f;
+            audibleFrames += audible;
+            if (twoDelayedClips || boundaryProbe) capturedMono.push_back(output[frame * channels]);
+            for (std::uint32_t channel = 0; channel < channels; ++channel) {
+                EXPECT_NEAR(output[frame * channels], output[frame * channels + channel], 1e-6f);
+                if (!targetFade) EXPECT_NEAR(audible ? 0.125f : 0.0f, output[frame * channels + channel], 1e-6f);
+            }
+        }
+        lifecycle.Capture(*engine);
+        if (sourceWaitStop && !nativeNegativeProbe.writeIssued && !lifecycle.heard.empty()) {
+            ASSERT_EQ(1u, lifecycle.heard.size());
+            ASSERT_GT(lifecycle.heard[0].start, 0u);
+            ASSERT_EQ(ContainerMatrixWorld::kRoot, lifecycle.heard[0].parentStableId);
+            ASSERT_NE(UINT64_MAX, firstSourceAnchor);
+            ASSERT_LT(engine->mixer.BlocksRendered() * kBlock, firstSourceAnchor + firstFrames);
+            ASSERT_FALSE(nativeNegativeProbe.captured);
+            for (std::uint32_t cursor = 0; auto* row = engine->NextOccupiedPlayableService(&cursor);)
+                ASSERT_NE(ContainerMatrixWorld::kNested, row->root.stableId);
+            ASSERT_EQ(VN_OK, Vn_SetBusVolume(VN_BUS_MASTER, 0, 0));
+            ASSERT_EQ(VN_OK, Vn_SetValue(ContainerMatrixWorld::kVariable, 1.0f));
+            nativeNegativeProbe.sourceSequence = engine->logicCommits.IssuedCount();
+            nativeNegativeProbe.writeIssued = true;
+        }
+        observeNativeAfterPump();
+        ASSERT_FALSE(::testing::Test::HasFatalFailure());
+        if (!holdUpdate()) ASSERT_EQ(VN_OK, Vn_Update());
+        lifecycle.Capture(*engine);
+    }
+    observeRefusal();
+    const std::size_t expectedLeaves = refuseSuccessor || zeroWork || nativeNegative ? 1u : twoDelayedClips ? 4u
+        : singleCompositeFade ? 2u : shortFadeClips ? 3u : 2u;
+    const auto successorFrames = singleCompositeFade ? 24u : shortFadeClips ? 48u : kClipFrames;
+    const auto expectedFrames = boundaryProbe ? firstFrames + (zeroWork || nativeNegative ? 0u : successorFrames) - (targetFade ? 1u : 0u)
+        : expectedLeaves * kClipFrames;
+    EXPECT_EQ(expectedFrames, audibleFrames);
+    EXPECT_EQ(expectedLeaves, lifecycle.heard.size());
+    for (std::size_t index = 0; index < lifecycle.heard.size(); ++index) {
+        for (std::size_t prior = 0; prior < index; ++prior) {
+            EXPECT_NE(lifecycle.heard[prior].leaf, lifecycle.heard[index].leaf);
+            if (compositeFadeClips && prior > 0)
+                EXPECT_EQ(lifecycle.heard[prior].parent, lifecycle.heard[index].parent);
+            else
+                EXPECT_NE(lifecycle.heard[prior].parent, lifecycle.heard[index].parent);
+        }
+    }
+    if (refuseSuccessor) {
+        EXPECT_TRUE(refusal.invoked);
+        EXPECT_TRUE(refusal.checked);
+        EXPECT_EQ(nullptr, engine->queueContinuationFinalOnsetHookForTest);
+    }
+    if (boundaryProbe) {
+        ASSERT_NE(UINT64_MAX, firstSourceAnchor);
+        if (zeroWork) {
+            EXPECT_EQ(1u, zeroRetirement.count);
+            EXPECT_EQ(PlayableTerminalKind::NaturalCompletion, zeroRetirement.terminal);
+            EXPECT_TRUE(zeroRetirement.reason == PlayableControlReason::None ||
+                zeroRetirement.reason == PlayableControlReason::Natural);
+        } else {
+            ASSERT_EQ(1u, aggregateAnchors.size());
+            EXPECT_NE(produced, aggregateAnchors[0].first);
+        }
+        if (outsideWindow) {
+            EXPECT_GE(skippedLateUpdates, 3u);
+            EXPECT_GE(aggregateAnchors[0].second, initialWindowEnd);
+            EXPECT_GE(aggregateAnchors[0].second, firstSourceAnchor + firstFrames + 3u * kBlock);
+        }
+        if (boundary == QueueMixedSuccessorBoundary::NestedQueue || boundary == QueueMixedSuccessorBoundary::NestedControl)
+            EXPECT_TRUE(observedNestedOwner);
+        for (std::size_t sample = 0; sample < capturedMono.size(); ++sample) {
+            const auto frame = pcmOrigin + sample;
+            float expected = frame >= firstSourceAnchor && frame - firstSourceAnchor < firstFrames ? 0.125f : 0.0f;
+            const auto successor = zeroWork ? UINT64_MAX : aggregateAnchors[0].second + nativeDelayFrames;
+            if (!zeroWork && !nativeNegative && frame >= successor && frame - successor < successorFrames) {
+                const auto elapsed = frame - successor;
+                const auto gain = targetFade ? std::min(1.0f, static_cast<float>(elapsed) / 63.0f) : 1.0f;
+                expected += 0.125f * gain;
+            }
+            EXPECT_NEAR(expected, capturedMono[sample], targetFade ? 2e-4f : 1e-6f) << "frame=" << frame;
+        }
+    }
+    if (delayedNativeChild) {
+        EXPECT_TRUE(observedAppliedParentWithPendingChild);
+        EXPECT_TRUE(observedDelayedChildDependency);
+    }
+    if (nativeNegative) {
+        EXPECT_TRUE(nativeNegativeProbe.captured);
+        EXPECT_TRUE(nativeNegativeProbe.receiptsObserved);
+        EXPECT_EQ(1u, zeroRetirement.count);
+        EXPECT_EQ(sourceWaitStop ? PlayableTerminalKind::RequestedStop : PlayableTerminalKind::Failure,
+            zeroRetirement.terminal);
+        EXPECT_EQ(sourceWaitStop ? PlayableControlReason::StopRequested : PlayableControlReason::StartRefused,
+            zeroRetirement.reason);
+        if (sourceWaitStop) {
+            EXPECT_TRUE(nativeNegativeProbe.writeIssued);
+            EXPECT_TRUE(nativeNegativeProbe.waitingObserved);
+            EXPECT_TRUE(nativeNegativeProbe.stopIssued);
+            EXPECT_EQ(0u, engine->variableSlices.SourceObserverCount(nativeNegativeProbe.source));
+        }
+        for (const auto& storage : engine->actionPlayStorage) EXPECT_TRUE(storage.ownerLedger.Empty());
+    }
+    if (delayedOrdinaryPrefix) {
+        EXPECT_TRUE(frozenOrdinary.Valid());
+        EXPECT_TRUE(observedFrozenOrdinaryWithNative);
+    }
+    if (twoDelayedClips) {
+        ASSERT_EQ(2u, aggregateAnchors.size());
+        EXPECT_NE(aggregateAnchors[0].first, aggregateAnchors[1].first);
+        constexpr std::array<std::uint64_t, 2> offsets{48u, 336u};
+        for (std::size_t sample = 0; sample < capturedMono.size(); ++sample) {
+            const auto frame = pcmOrigin + sample;
+            float expected = 0.0f;
+            for (const auto& aggregateEntry : aggregateAnchors)
+                for (const auto offset : offsets)
+                    if (frame >= aggregateEntry.second + offset &&
+                        frame - aggregateEntry.second - offset < kClipFrames) expected += 0.125f;
+            EXPECT_NEAR(expected, capturedMono[sample], 1e-6f) << "frame=" << frame;
+        }
+    }
+    for (std::size_t index = 0; index < lifecycle.heard.size(); ++index) {
+        const auto& heard = lifecycle.heard[index];
+        EXPECT_EQ(produced, heard.root);
+        EXPECT_EQ(ContainerMatrixWorld::kFirstSound, heard.subject);
+        EXPECT_EQ(ordinaryFirst && index == 0 ? ContainerMatrixWorld::kRoot
+            : compositeFadeClips ? kStaticFadeTrack
+            : shortFadeClips && index == 2 ? image.track.rootDefinition.stableId : ContainerMatrixWorld::kNested,
+            heard.parentStableId);
+        heard.ExpectNaturalSourceReleased();
+    }
+    EXPECT_FALSE(engine->playableInstances.Classify(produced).live);
+    EXPECT_EQ(0u, engine->playableInstances.LiveCount());
+    EXPECT_EQ(0u, engine->containerPlayback.LiveCount());
+    EXPECT_EQ(0u, engine->queueInstances.LiveCount());
+    EXPECT_EQ(0u, engine->variableControlInstances.LiveCount());
+    EXPECT_EQ(0u, engine->playablePartitions.OccupiedCount());
+    EXPECT_EQ(0u, engine->timelineArms.LiveCount());
+    EXPECT_EQ(0u, engine->timelineOccurrences.OccupiedCount());
+    EXPECT_EQ(0u, engine->compositeCompletionOwners.OccupiedCount());
+    EXPECT_EQ(0u, engine->decisions.LiveCount());
+    EXPECT_EQ(0u, engine->armGroups.LiveCount());
+    EXPECT_EQ(0u, engine->voices.ActiveCount());
+    EXPECT_EQ(ledgerBaseline, engine->ledger.AvailableEntryCount());
+    EXPECT_EQ(transactionBaseline, engine->timelinePool.LiveTransactionCount());
+    EXPECT_FALSE(engine->runtimeRecreateRequired);
+    if (firing != 0) {
+        VnActionFiringInfo info{};
+        info.structSize = sizeof(info);
+        ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
+        EXPECT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state);
+        EXPECT_EQ(sourceWaitStop ? VN_ACTION_OUTCOME_CANCELLED
+            : refuseSuccessor || queueFailure ? VN_ACTION_OUTCOME_FAILED : VN_ACTION_OUTCOME_SUCCEEDED, info.outcome);
+        EXPECT_EQ(sourceWaitStop ? VN_ACTION_TERMINAL_STOP_REQUESTED
+            : refuseSuccessor || queueFailure ? VN_ACTION_TERMINAL_RUNTIME_ERROR : VN_ACTION_TERMINAL_NATURAL,
+            info.terminalReason);
+        ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+    }
+    ASSERT_EQ(VN_OK, Vn_DestroyEmitter(emitter));
+}
+
+TEST(PackComposition, QueueMixedSuccessorContainsNestedQueue) {
+    for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
+        CheckQueueReentersContainerClips(entry, ContainerMatrixChild::Track, false, false, true,
+            QueueMixedSuccessorBoundary::NestedQueue);
+}
+
+TEST(PackComposition, QueueMixedSuccessorContainsNestedVariableControl) {
+    for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
+        CheckQueueReentersContainerClips(entry, ContainerMatrixChild::Track, false, false, true,
+            QueueMixedSuccessorBoundary::NestedControl);
+}
+
+TEST(PackComposition, QueueMixedSuccessorNativeQueueFailureRejectsWholeEntry) {
+    for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
+        CheckQueueReentersContainerClips(entry, ContainerMatrixChild::Track, false, false, true,
+            QueueMixedSuccessorBoundary::NestedQueue, false, QueueNativeEntryNegative::QueueFailureBeforeClaim);
+}
+
+TEST(PackComposition, QueueMixedSuccessorNativeVariableSourceWaitStopsWholeEntry) {
+    for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
+        CheckQueueReentersContainerClips(entry, ContainerMatrixChild::Track, false, false, true,
+            QueueMixedSuccessorBoundary::NestedControl, false, QueueNativeEntryNegative::VariableSourceWaitStop);
+}
+
+TEST(PackComposition, QueueMixedSuccessorDelayedNativeQueueUsesAppliedParentAndOwnEntry) {
+    for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
+        CheckQueueReentersContainerClips(entry, ContainerMatrixChild::Track, false, false, true,
+            QueueMixedSuccessorBoundary::NestedQueue, true);
+}
+
+TEST(PackComposition, QueueMixedSuccessorDelayedQueuePreservesFrozenRandomPrefix) {
+    CheckQueueReentersContainerClips(ContainerMatrixEntry::CurrentWorldAction, ContainerMatrixChild::Track,
+        false, false, true, QueueMixedSuccessorBoundary::NestedQueue, true, QueueNativeEntryNegative::None, true);
+}
+
+TEST(PackComposition, QueueMixedSuccessorDelayedNativeVariableControlUsesAppliedParentAndOwnEntry) {
+    for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
+        CheckQueueReentersContainerClips(entry, ContainerMatrixChild::Track, false, false, true,
+            QueueMixedSuccessorBoundary::NestedControl, true);
+}
+
+TEST(PackComposition, QueueMixedSuccessorOutsideWindowSurvivesLateUpdate) {
+    for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
+        CheckQueueReentersContainerClips(entry, ContainerMatrixChild::Track, false, false, true,
+            QueueMixedSuccessorBoundary::OutsideWindow);
+}
+
+TEST(PackComposition, QueueMixedSuccessorUsesAuthoredTargetFade) {
+    for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
+        CheckQueueReentersContainerClips(entry, ContainerMatrixChild::Track, false, false, true,
+            QueueMixedSuccessorBoundary::TargetFade);
+}
+
+TEST(PackComposition, QueueMixedSuccessorStaticCompositeSourcesShareTargetFadeAnchor) {
+    for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
+        for (const auto boundary : {QueueMixedSuccessorBoundary::TargetFadeCompositeSingle,
+                                   QueueMixedSuccessorBoundary::TargetFadeComposite})
+            CheckQueueReentersContainerClips(entry, ContainerMatrixChild::Track, false, false, true, boundary);
+}
+
+TEST(PackComposition, QueueMixedSuccessorDelayedSourcesShareTargetFadeAnchor) {
+    for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
+        CheckQueueReentersContainerClips(entry, ContainerMatrixChild::Track, false, false, true,
+            QueueMixedSuccessorBoundary::TargetFadeShortClips);
+}
+
+TEST(PackComposition, QueueSubFrameContainerSuccessorNaturallyCompletes) {
+    for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
+        CheckQueueReentersContainerClips(entry, ContainerMatrixChild::Track, false, false, true,
+            QueueMixedSuccessorBoundary::ZeroWork);
+}
+
+TEST(PackComposition, QueueReentersTrackAndPieceWithContainerClipsAcrossEntries) {
+    for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
+        for (const auto kind : {ContainerMatrixChild::Track, ContainerMatrixChild::Piece})
+            CheckQueueReentersContainerClips(entry, kind);
+}
+
+TEST(PackComposition, QueueContainerClipSuccessorPrivateFailureReclaimsWithoutAdvancing) {
+    for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
+        for (const auto kind : {ContainerMatrixChild::Track, ContainerMatrixChild::Piece})
+            CheckQueueReentersContainerClips(entry, kind, true);
+}
+
+TEST(PackComposition, QueueReentersTrackAndPieceWithTwoDelayedContainerClips) {
+    for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
+        for (const auto kind : {ContainerMatrixChild::Track, ContainerMatrixChild::Piece})
+            CheckQueueReentersContainerClips(entry, kind, false, true);
+}
+
+
+TEST(PackComposition, QueueAdvancesFromSoundToTrackAndPieceContainerClips) {
+    for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
+        for (const auto kind : {ContainerMatrixChild::Track, ContainerMatrixChild::Piece})
+            CheckQueueReentersContainerClips(entry, kind, false, false, true);
+}
 
 TEST(PackComposition, CompositeCompletionShapeRejectsMalformedScheduleKey) {
     const std::vector<float> samples(2048, 0.25f);
@@ -24127,18 +26360,18 @@ SharedQueueTrace RunRootQueuePackTrace(
         !row->queueContinuationPrepared) return trace;
     if (randomQueue) {
         EXPECT_EQ(expectedSeed.worldSemanticFingerprint,
-                  row->queueRandomSeed.worldSemanticFingerprint);
-        EXPECT_EQ(expectedSeed.callerSeed, row->queueRandomSeed.callerSeed);
+                  row->QueueRandomSeed().worldSemanticFingerprint);
+        EXPECT_EQ(expectedSeed.callerSeed, row->QueueRandomSeed().callerSeed);
         EXPECT_EQ(expectedSeed.acceptedPostOrdinal,
-                  row->queueRandomSeed.acceptedPostOrdinal);
-        EXPECT_EQ(expectedSeed.emitterSlot, row->queueRandomSeed.emitterSlot);
+                  row->QueueRandomSeed().acceptedPostOrdinal);
+        EXPECT_EQ(expectedSeed.emitterSlot, row->QueueRandomSeed().emitterSlot);
         EXPECT_EQ(expectedSeed.emitterGeneration,
-                  row->queueRandomSeed.emitterGeneration);
-        EXPECT_EQ(expectedSeed.resetEpoch, row->queueRandomSeed.resetEpoch);
+                  row->QueueRandomSeed().emitterGeneration);
+        EXPECT_EQ(expectedSeed.resetEpoch, row->QueueRandomSeed().resetEpoch);
     }
     if (outRandomSeed != nullptr) {
         if (!row->queueRandomSeedValid) return trace;
-        const auto& context = row->queueRandomSeed;
+        const auto& context = row->QueueRandomSeed();
         SelectionSeedInputV1 seed{};
         seed.worldSemanticFingerprint = context.worldSemanticFingerprint;
         seed.programStableId = row->root.stableId;
@@ -24150,8 +26383,8 @@ SharedQueueTrace RunRootQueuePackTrace(
         seed.rootStableId = context.rootStableId;
         seed.callerSeed = context.callerSeed;
         seed.acceptedPostOrdinal = context.acceptedPostOrdinal;
-        seed.queueCycleOrdinal = row->queueNextState.cycleOrdinal;
-        seed.selectionOrdinal = row->queueNextState.selectionOrdinal;
+        seed.queueCycleOrdinal = row->QueueNextState().cycleOrdinal;
+        seed.selectionOrdinal = row->QueueNextState().selectionOrdinal;
         seed.discipline = SelectionDisciplineV1::Rotation;
         if (!ComputeSelectionSeedV1(seed, outRandomSeed)) return trace;
     }
@@ -24169,12 +26402,12 @@ SharedQueueTrace RunRootQueuePackTrace(
         rootPlayback.activeChildEpoch == childView.scheduleEpoch;
     trace.parentEpoch = childView.scheduleEpoch;
     const auto current = row->selectedChildOrdinals[0];
-    const auto successor = row->queueNextState.currentChildOrdinal;
+    const auto successor = row->QueueNextState().currentChildOrdinal;
     if (current == successor ||
         !((current == 7u && successor == 8u) ||
           (current == 8u && successor == 7u))) return trace;
     const auto expectedSound = harkentest::ObjectId(successor == 8u ? 4512u : 4511u);
-    if (row->queueSuccessorLeaf.stableId != expectedSound) return trace;
+    if (row->QueueSuccessorLeaf().stableId != expectedSound) return trace;
     trace.selectedOrdinals = {current, successor};
     if (randomQueue) {
         EXPECT_EQ(expectedPermutation, trace.selectedOrdinals);

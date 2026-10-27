@@ -47,12 +47,14 @@ PCMView MakeMonoView(const std::vector<float>& samples) {
 // Drives one voice context block-by-block the way the mixer loop does,
 // with a fresh planar master accumulator per block.
 struct CascadeHarness {
+    std::array<VoiceRenderContext::OwnedVariableWeight, harken::kSelectionPathNodeCapacity> weights{};
     explicit CascadeHarness(const std::vector<float>& input,
                             double ratio = 1.0,
                             ResampleQuality quality = ResampleQuality::Hermite,
                             const std::vector<float>* right = nullptr)
         : ring(harken::kResampleFifoFrames * (right != nullptr ? 2u : 1u), 0.0f) {
         ctx.biquadTrig = &trig;
+        ctx.variableWeightControls = weights;
         ctx.pcm = MakeMonoView(input);
         if (right != nullptr) {
             ctx.pcm.channels[1] = right->data();
@@ -66,6 +68,7 @@ struct CascadeHarness {
         ctx.gain.Set(1.0f, 0);
         float* rings[2] = {ring.data(), right != nullptr
             ? ring.data() + harken::kResampleFifoFrames : nullptr};
+        ctx.resampler = resamplerBacking;
         ctx.resampler.Reset(rings, ctx.pcm.channelCount, quality, ratio,
                             Tables());
     }
@@ -82,6 +85,7 @@ struct CascadeHarness {
     }
 
     harken::BiquadTrigTable trig;
+    harken::Resampler resamplerBacking;
     VoiceRenderContext ctx;
     std::vector<float> ring;
     BlockArena arena{65536};
@@ -201,7 +205,7 @@ TEST(CascadeProtocol, PendingImmediateDurationStartsAtAdmittedAudioFrame) {
     harness.ctx.timelineEvents.quantumIndex = 4;
     harness.ctx.timelineEvents.eventCount = 1;
     auto& start = harness.ctx.timelineEvents.events[0];
-    start.kind = harken::TimelineEventKind::Start;
+    start = harken::VoiceTimelineEvent{harken::TimelineEventKind::Start};
     start.offset = 9;
     start.frame = 4u * kBlock + start.offset;
     const StageResult started = harness.RenderBlock();
@@ -506,7 +510,7 @@ TEST(CascadeProtocol, FutureTimelineEnvelopeDoesNotAffectEarlierSamples) {
         harness.ctx.timelineEvents.eventCount = 1;
         harken::VoiceTimelineEvent& event =
             harness.ctx.timelineEvents.events[0];
-        event.kind = harken::TimelineEventKind::Envelope;
+        event = harken::VoiceTimelineEvent{harken::TimelineEventKind::Envelope};
         event.offset = eventOffset;
         event.frame = eventOffset;
         event.endFrame = eventOffset + 3;
@@ -530,15 +534,15 @@ TEST(CascadeProtocol,
     harness.ctx.timelineEvents.eventCount = 1;
     harken::VoiceTimelineEvent& event =
         harness.ctx.timelineEvents.events[0];
-    event.kind = harken::TimelineEventKind::VariableWeight;
+    event = harken::VoiceTimelineEvent{harken::TimelineEventKind::VariableWeight};
     event.offset = 4;
-    event.variableWeight.startFrame = 4;
-    event.variableWeight.endFrame = 8;
-    event.variableWeight.startWeight = 0.0f;
-    event.variableWeight.endWeight = 1.0f;
-    event.variableWeight.segmentGeneration = 1;
-    event.variableWeight.decision = {3, 5};
-    event.variableWeight.bank = {7, 11};
+    event.Weight().variableWeight.startFrame = 4;
+    event.Weight().variableWeight.endFrame = 8;
+    event.Weight().variableWeight.startWeight = 0.0f;
+    event.Weight().variableWeight.endWeight = 1.0f;
+    event.Weight().variableWeight.segmentGeneration = 1;
+    event.Weight().variableWeight.decision = {3, 5};
+    event.Weight().variableWeight.bank = {7, 11};
 
     harness.RenderBlock();
     for (std::uint32_t frame = 0; frame < 4; ++frame) {
@@ -573,7 +577,7 @@ TEST(CascadeProtocol, PendingStartRebasesOnlyOriginalWeightGenerations) {
     ctx.timelineEvents.quantumIndex = 1;
     ctx.timelineEvents.eventCount = 1;
     auto& start = ctx.timelineEvents.events[0];
-    start.kind = harken::TimelineEventKind::Start;
+    start = harken::VoiceTimelineEvent{harken::TimelineEventKind::Start};
     start.offset = 9;
     start.frame = kBlock + 9;
     EXPECT_EQ(kBlock - 9u, harness.RenderBlock().framesProduced);
@@ -594,7 +598,7 @@ TEST(CascadeProtocol, FutureTimelineStopDoesNotAffectEarlierSamples) {
         harness.ctx.timelineEvents.eventCount = 1;
         harken::VoiceTimelineEvent& event =
             harness.ctx.timelineEvents.events[0];
-        event.kind = harken::TimelineEventKind::Stop;
+        event = harken::VoiceTimelineEvent{harken::TimelineEventKind::Stop};
         event.offset = eventOffset;
 
         harness.RenderBlock();

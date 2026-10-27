@@ -941,6 +941,7 @@ VnResult MeterProbeSystem::Uninstall(Engine& engine,
 }
 
 void MeterProbeSystem::Evaluate(Engine& engine) {
+    if (!engine.meterDetectors.HasInstallationHistory()) return;
     for (std::uint32_t slot = 0; slot < engine.meterDetectors.Capacity();
          ++slot) {
         MeterSystem::Probe* probe = engine.meterDetectors.RowAt(slot);
@@ -1134,6 +1135,7 @@ void MeterProbeSystem::Evaluate(Engine& engine) {
 }
 
 void MeterProbeSystem::EndService(Engine& engine) {
+    if (!engine.meterDetectors.HasInstallationHistory()) return;
     const std::uint64_t blocksRendered = engine.mixer.BlocksRendered();
     for (std::uint32_t slot = 0; slot < engine.meterDetectors.Capacity();
          ++slot) {

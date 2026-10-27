@@ -82,7 +82,7 @@ void ScatterVoiceSends(VoiceRenderContext& ctx, float* const* busPlanes,
 // it is a feed property, not a special case. MarkInputEnd fires only when the
 // final traversal reaches the true file end.
 bool FeedResampler(VoiceRenderContext& ctx) {
-    Resampler& rs = ctx.resampler;
+    ResamplerView& rs = ctx.resampler;
     if (ctx.srcCursor < ctx.pcm.frames) {
         // A wrap is due at the region end while more traversals remain; the
         // final traversal instead reads on through the outro to the file
@@ -94,8 +94,8 @@ bool FeedResampler(VoiceRenderContext& ctx) {
             wrapAtLimit ? ctx.loopEndFrame : ctx.pcm.frames;
         const std::uint64_t remaining = limit - ctx.srcCursor;
         const std::uint32_t chunk = static_cast<std::uint32_t>(
-            std::min<std::uint64_t>(
-                {kResampleChunkFrames, remaining, rs.FreeFrames()}));
+            std::min<std::uint64_t>(kResampleChunkFrames,
+                std::min<std::uint64_t>(remaining, rs.FreeFrames())));
         if (chunk == 0) {
             return false;
         }
@@ -147,7 +147,7 @@ bool FeedResampler(VoiceRenderContext& ctx) {
 // (natural end of file and mid-stream integrity abort look identical)
 // converts a drained ring into MarkInputEnd and the normal look-ahead flush.
 bool FeedResamplerFromStream(VoiceRenderContext& ctx) {
-    Resampler& rs = ctx.resampler;
+    ResamplerView& rs = ctx.resampler;
     StreamRing& ring = *ctx.streamRing;
     // Sample end-of-data BEFORE reading the write index. The producer
     // release-publishes the terminal winner after the final PublishWrite, so
@@ -160,8 +160,8 @@ bool FeedResamplerFromStream(VoiceRenderContext& ctx) {
     const float* planes[kMaxChannels] = {};
     const std::uint32_t span = ring.ContiguousRead(planes);
     if (span > 0) {
-        const std::uint32_t chunk = std::min<std::uint32_t>(
-            {kResampleChunkFrames, span, rs.FreeFrames()});
+        const std::uint32_t chunk = std::min(kResampleChunkFrames,
+            std::min(span, rs.FreeFrames()));
         if (chunk == 0) {
             return false; // resampler FIFO full; output emission is due
         }
@@ -347,23 +347,23 @@ TailFrameAggregate AggregateTailFrames(const VoiceRenderContext& ctx) {
 void ApplyTimelineControlEvent(VoiceRenderContext& ctx,
                                const VoiceTimelineEvent& event,
                                std::uint32_t blockFrames) noexcept {
-    if (event.kind == TimelineEventKind::VariableWeight) {
-        if (event.variableWeightOwner.Valid()) {
-            (void)ctx.ApplyVariableWeightControl(event.variableWeightOwner, event.variableWeight);
+    if (event.Kind() == TimelineEventKind::VariableWeight) {
+        if (event.Weight().variableWeightOwner.Valid()) {
+            (void)ctx.ApplyVariableWeightControl(event.Weight().variableWeightOwner, event.Weight().variableWeight);
             return;
         }
         if (ctx.variableWeightControlCount != 0) return;
         float validated = 0.0f;
         if ((!ctx.variableWeightActive ||
-             event.variableWeight.segmentGeneration >
+             event.Weight().variableWeight.segmentGeneration >
                  ctx.variableWeightSegment.segmentGeneration) &&
-            ResolveWeightSegment(event.variableWeight,
-                                 event.variableWeight.startFrame,
+            ResolveWeightSegment(event.Weight().variableWeight,
+                                 event.Weight().variableWeight.startFrame,
                                  &validated)) {
-            ctx.variableWeightSegment = event.variableWeight;
+            ctx.variableWeightSegment = event.Weight().variableWeight;
             ctx.variableWeightActive = true;
         }
-    } else if (event.kind == TimelineEventKind::Envelope) {
+    } else if (event.Kind() == TimelineEventKind::Envelope) {
         const std::uint32_t envelopeIndex =
             event.envelopeDirection == TimelineEnvelopeDirection::FadeOut ? 1u
                                                                           : 0u;
@@ -381,7 +381,7 @@ void ApplyTimelineControlEvent(VoiceRenderContext& ctx,
             ctx.timelineFadeOutCoveredSample =
                 event.endFrame == event.frame;
         }
-    } else if (event.kind == TimelineEventKind::Stop) {
+    } else if (event.Kind() == TimelineEventKind::Stop) {
         if (event.authoredRootStop) {
             ctx.authoredRootStopApplied = true;
             // The root deadline cannot restart an earlier timeline declick.
@@ -391,7 +391,7 @@ void ApplyTimelineControlEvent(VoiceRenderContext& ctx,
         if (!ctx.monitorControlAdopted) {
             ctx.monitorControlAdopted = true;
             ctx.monitorTimelineControlAdopted = true;
-            ctx.monitorAdoptedControlCause = event.controlCause;
+            ctx.monitorAdoptedControlCause = event.Stop().controlCause;
         }
         ctx.timelineStopPending = true;
         ctx.timelineStopOffset = event.offset;
@@ -482,9 +482,12 @@ void CopyPlainPcm(const VoiceRenderContext& ctx, float* const* planes,
 }
 
 bool RunPlainPcm(VoiceRenderContext& ctx, std::uint32_t frames) {
-    for (std::uint32_t fed = 0; fed < ctx.cascade.plainPcmFeedFrames;
-         fed += kResampleChunkFrames) {
-        if (!FeedResampler(ctx)) return false;
+    const auto feedFrames = ctx.cascade.plainPcmFeedFrames;
+    if (feedFrames != 0) {
+        // Preparation proved that every complete chunk fits before the next
+        // source boundary. One push preserves the same ring contents and cursors.
+        ctx.resampler.PushPCM(ctx.pcm, ctx.srcCursor, feedFrames);
+        ctx.srcCursor += feedFrames;
     }
     if (!ctx.resampler.BorrowLinearUnity(frames, ctx.cascade.borrowed)) return false;
     ctx.monitorPreChainFrames = 0;
@@ -539,28 +542,45 @@ void MixPlainPcm(const float* src, float* dst, std::uint32_t frames,
 }
 
 void FoldPlainPcm(VoiceRenderContext& ctx, float* const* busPlanes,
-                  std::uint32_t mixChannels) {
+                  std::uint32_t mixChannels,
+                  output_gain_detail::MonoStereoMixKernel monoStereoMix) {
     const auto span = ctx.cascade.borrowed;
     float* const* bus = busPlanes + ctx.busIndex * mixChannels;
-    for (std::uint32_t ch = 0; ch < mixChannels; ++ch) {
-        const auto mix = [&](std::uint32_t source, float matrixGain) {
-            if (source >= ctx.pcm.channelCount) return;
-            const float scale = matrixGain * ctx.outputGain.target;
-            float* dst = bus[ch] + ctx.cascade.offset;
-            MixPlainPcm(ctx.resampler.ring[source] + span.ringOffset, dst,
-                         span.firstFrames, ctx.gain.target, scale);
-            MixPlainPcm(ctx.resampler.ring[source], dst + span.firstFrames,
-                         span.frames - span.firstFrames, ctx.gain.target, scale);
-        };
-        const float a = ctx.spatialMatrix.target.gain[0][ch];
-        const float b = ctx.spatialMatrix.target.gain[1][ch];
-        if (b == 0.0f) {
-            if (a != 0.0f) mix(0, a);
-        } else if (a == 0.0f) {
-            mix(1, b);
-        } else {
-            mix(0, a);
-            mix(1, b);
+    if (ctx.pcm.channelCount == 1 && mixChannels == 2 &&
+        ctx.spatialMatrix.target.gain[0][0] != 0.0f &&
+        ctx.spatialMatrix.target.gain[0][1] != 0.0f) {
+        const float leftScale = ctx.spatialMatrix.target.gain[0][0] * ctx.outputGain.target;
+        const float rightScale = ctx.spatialMatrix.target.gain[0][1] * ctx.outputGain.target;
+        float* left = bus[0] + ctx.cascade.offset;
+        float* right = bus[1] + ctx.cascade.offset;
+        monoStereoMix(ctx.resampler.ring[0] + span.ringOffset,
+            left, right, span.firstFrames, ctx.gain.target, leftScale, rightScale);
+        if (span.frames > span.firstFrames) {
+            monoStereoMix(ctx.resampler.ring[0],
+                left + span.firstFrames, right + span.firstFrames, span.frames - span.firstFrames,
+                ctx.gain.target, leftScale, rightScale);
+        }
+    } else {
+        for (std::uint32_t ch = 0; ch < mixChannels; ++ch) {
+            const auto mix = [&](std::uint32_t source, float matrixGain) {
+                if (source >= ctx.pcm.channelCount) return;
+                const float scale = matrixGain * ctx.outputGain.target;
+                float* dst = bus[ch] + ctx.cascade.offset;
+                MixPlainPcm(ctx.resampler.ring[source] + span.ringOffset, dst,
+                             span.firstFrames, ctx.gain.target, scale);
+                MixPlainPcm(ctx.resampler.ring[source], dst + span.firstFrames,
+                             span.frames - span.firstFrames, ctx.gain.target, scale);
+            };
+            const float a = ctx.spatialMatrix.target.gain[0][ch];
+            const float b = ctx.spatialMatrix.target.gain[1][ch];
+            if (b == 0.0f) {
+                if (a != 0.0f) mix(0, a);
+            } else if (a == 0.0f) {
+                mix(1, b);
+            } else {
+                mix(0, a);
+                mix(1, b);
+            }
         }
     }
     ctx.spatialMatrixHasRendered = true;
@@ -597,14 +617,10 @@ void ApplyPendingTailRearm(VoiceRenderContext& ctx,
 std::uint64_t VoiceCascadeScratchBytes(
     const VoiceRenderContext& ctx, std::uint32_t blockFrames,
     std::uint32_t mixChannels) noexcept {
-    std::uint32_t planes = ctx.pcm.channelCount;
     const bool needsBlendScratch = NeedsBlendScratch(ctx);
-    if (needsBlendScratch) {
-        planes += ctx.pcm.channelCount;
-    }
-    if (ctx.voiceSendActiveCount > 0) {
-        planes += mixChannels;
-    }
+    const std::uint32_t planes = ctx.pcm.channelCount + std::max(
+        needsBlendScratch ? ctx.pcm.channelCount : 0u,
+        ctx.voiceSendActiveCount > 0 ? mixChannels : 0u);
     return static_cast<std::uint64_t>(planes) * blockFrames * sizeof(float);
 }
 
@@ -625,7 +641,7 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
 
     const auto rootCutoff = SelectAuthoredRootStop(
         timelineSpan, blockFrames, ctx.authoredRootStopFrame,
-        ctx.authoredRootStopControl.authoredStopOperation);
+        ctx.authoredRootStopControl.Stop().authoredStopOperation);
     ctx.authoredRootStopFrame = rootCutoff.frame;
     ctx.authoredRootStopEvent = rootCutoff.eventIndex;
     if (rootCutoff.eventIndex != UINT32_MAX) {
@@ -636,7 +652,7 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
         if (!TimelineEventGuardEligible(timelineSpan, i)) continue;
         const auto& event = timelineSpan.events[i];
         if (event.offset >= blockFrames) continue;
-        if (event.kind == TimelineEventKind::Start) {
+        if (event.Kind() == TimelineEventKind::Start) {
             earliestStart = std::min<std::uint32_t>(earliestStart, event.offset);
         }
     }
@@ -654,7 +670,7 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
         if (!ctx.monitorControlAdopted) {
             ctx.monitorControlAdopted = true;
             ctx.monitorTimelineControlAdopted = true;
-            ctx.monitorAdoptedControlCause = ctx.authoredRootStopControl.controlCause;
+            ctx.monitorAdoptedControlCause = ctx.authoredRootStopControl.Stop().controlCause;
         }
         ctx.stagedSourceTerminal = SourceTerminalKind::Stop;
         ctx.stagedSourceTerminalOffset = static_cast<std::uint32_t>(
@@ -717,13 +733,13 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
     for (std::uint32_t i = 0; i < timelineSpan.eventCount; ++i) {
         const VoiceTimelineEvent& event = timelineSpan.events[i];
         if (!TimelineEventPrecedesRootStop(ctx, i, blockFrames)) continue;
-        if (event.kind == TimelineEventKind::SetStartCursor) {
+        if (event.Kind() == TimelineEventKind::SetStartCursor) {
             if (ctx.timelineGated) {
                 ctx.srcCursor = event.value;
             }
             continue;
         }
-        if (event.kind == TimelineEventKind::Start) {
+        if (event.Kind() == TimelineEventKind::Start) {
             if (ctx.timelineGated) {
                 offset = std::min<std::uint32_t>(event.offset, blockFrames);
                 if (ctx.pendingImmediateWeightRebase) {
@@ -772,9 +788,9 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
             }
             continue;
         }
-        if ((event.kind == TimelineEventKind::Envelope ||
-             event.kind == TimelineEventKind::VariableWeight ||
-             event.kind == TimelineEventKind::Stop) &&
+        if ((event.Kind() == TimelineEventKind::Envelope ||
+             event.Kind() == TimelineEventKind::VariableWeight ||
+             event.Kind() == TimelineEventKind::Stop) &&
             event.offset == offset) {
             ApplyTimelineControlEvent(ctx, event, blockFrames);
         }
@@ -840,32 +856,12 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
             }
         }
     }
-    // Send-scatter tap: reserved here, right after this voice's blend planes and
-    // before the next voice's scratch, so the per-voice arena order is
-    // scratch -> dry -> tap — the allocation sequence that makes any tight-arena
-    // degradation independent of the worker count.
-    //
-    // The reservation is gated on the voice having active sends, NOT on how many
-    // frames the block will produce. That is deliberate, and it is the one point
-    // where the reservation is coarser than the pre-split serial pass, which
-    // reserved the tap in the fold under `produced > 0`. `produced` is a fact of
-    // the cascade, which runs AFTER this reservation and is fanned across worker
-    // threads, so a "reserve only when produced > 0" rule would make the arena
-    // allocation sequence depend on the interleaving of cascade completions —
-    // exactly what no parallel schedule can reproduce and what the determinism
-    // invariant forbids. Reserving unconditionally, in fixed slot order, is what
-    // keeps serial and parallel byte-identical (and their overflow / high-water
-    // counts equal) right up to the arena boundary. The price is that a voice
-    // with sends that produces zero frames this block (a source-exhausted tail,
-    // or a still-active stream whose ring ran dry — the base-spec "produced 0
-    // while Active" state) reserves a tap it will not fill. That reservation is
-    // output-invisible (a zero-produced block folds nothing) but it does consume
-    // arena, so at the exhaustion boundary the serial default path can now drop a
-    // later voice the pre-split M4 path would have kept. This is a knowingly
-    // accepted, recorded deviation from "serial rendering is bit-identical to
-    // M4" — narrow to the arena-exhaustion corner, taken because worker-count
-    // independence and the produced-conditioned M4 reservation order cannot both
-    // hold under a single bump arena.
+    // This voice's blend planes are dead when Fold starts, after Run completes.
+    // Fold fills every produced tap sample before scattering, so these planes
+    // can also hold its send image. Only extra mix channels need new planes.
+    // Reserve in fixed slot/channel order before any worker runs, including
+    // active sends that will produce zero frames. Reservation and tight-arena
+    // degradation therefore remain independent of worker completion order.
     //
     // A tap shortfall does NOT decline the voice: it only drops this block's
     // sends (the pre-split fold's "partial reserve consumed, sends dropped"
@@ -875,7 +871,8 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
     if (ctx.voiceSendActiveCount > 0) {
         tapReady = true;
         for (std::uint32_t ch = 0; ch < mixChannels; ++ch) {
-            tap[ch] = arena.AllocFloatsHigh(blockFrames);
+            tap[ch] = needsBlendScratch && ch < channels
+                ? dry[ch] : arena.AllocFloatsHigh(blockFrames);
             if (tap[ch] == nullptr) {
                 tapReady = false;
                 break;
@@ -884,14 +881,13 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
     }
     ctx.firstBlock = false;
 
-    // Hand the reserved scratch to the cascade and fold phases. Every channel
-    // slot is copied (null beyond the source's channel count), so the phases
-    // read a stable base regardless of which thread runs the cascade.
-    for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
-        ctx.cascade.scratch[ch] = scratch[ch];
-        ctx.cascade.dry[ch] = dry[ch];
-        ctx.cascade.tap[ch] = tap[ch];
-    }
+    // Scratch always includes nulls beyond the source channels. Optional planes
+    // are read only when this block needs blending or has a complete send tap;
+    // otherwise their old non-owning pointers remain unread. Re-enabling either
+    // path republishes its full array before any worker or fold can consume it.
+    std::copy_n(scratch, kMaxChannels, ctx.cascade.scratch);
+    if (needsBlendScratch) std::copy_n(dry, kMaxChannels, ctx.cascade.dry);
+    if (tapReady) std::copy_n(tap, kMaxChannels, ctx.cascade.tap);
     ctx.cascade.needBlend = needsBlendScratch;
     ctx.cascade.tapReady = tapReady;
     ctx.cascade.offset = offset;
@@ -1159,8 +1155,8 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
          eventIndex < timelineSpan.eventCount; ++eventIndex) {
         const VoiceTimelineEvent& event = timelineSpan.events[eventIndex];
         if (!TimelineEventPrecedesRootStop(ctx, eventIndex, blockFrames)) continue;
-        if (event.kind == TimelineEventKind::VariableWeight &&
-            !event.variableWeightOwner.Valid() &&
+        if (event.Kind() == TimelineEventKind::VariableWeight &&
+            !event.Weight().variableWeightOwner.Valid() &&
             event.offset > offset && event.offset < offset + produced) {
             priorWeight = ctx.variableWeightSegment;
             priorWeightActive = ctx.variableWeightActive;
@@ -1218,7 +1214,7 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
         for (std::uint32_t index = 0; index < produced; ++index) {
             for (std::uint32_t eventIndex = 0; eventIndex < timelineSpan.eventCount; ++eventIndex) {
                 const auto& event = timelineSpan.events[eventIndex];
-                if (event.kind == TimelineEventKind::VariableWeight && event.variableWeightOwner.Valid() &&
+                if (event.Kind() == TimelineEventKind::VariableWeight && event.Weight().variableWeightOwner.Valid() &&
                     event.offset == offset + index && event.offset > offset &&
                     TimelineEventPrecedesRootStop(ctx, eventIndex, blockFrames))
                     ApplyTimelineControlEvent(ctx, event, blockFrames);
@@ -1245,8 +1241,8 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
         const VoiceTimelineEvent& event = timelineSpan.events[eventIndex];
         if (!TimelineEventPrecedesRootStop(ctx, eventIndex, blockFrames)) continue;
         if (event.offset > offset && event.offset < offset + produced &&
-            (event.kind == TimelineEventKind::Envelope ||
-             event.kind == TimelineEventKind::Stop)) {
+            (event.Kind() == TimelineEventKind::Envelope ||
+             event.Kind() == TimelineEventKind::Stop)) {
             ApplyTimelineControlEvent(ctx, event, blockFrames);
         }
     }
@@ -1425,7 +1421,8 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
 
 void FoldVoiceIntoBuses(VoiceRenderContext& ctx, float* const* busPlanes,
                         std::uint32_t blockFrames, std::uint32_t mixChannels,
-                        std::uint32_t mixLayout, std::uint64_t sourceFrameBegin) {
+                        std::uint32_t mixLayout, std::uint64_t sourceFrameBegin,
+                        output_gain_detail::MonoStereoMixKernel monoStereoMix) {
     const std::uint32_t channels = ctx.pcm.channelCount;
     const std::uint32_t offset = ctx.cascade.offset;
     const std::uint32_t produced = ctx.cascade.produced;
@@ -1451,7 +1448,7 @@ void FoldVoiceIntoBuses(VoiceRenderContext& ctx, float* const* busPlanes,
         }
     }
     if (ctx.cascade.borrowed.frames != 0) {
-        FoldPlainPcm(ctx, busPlanes, mixChannels);
+        FoldPlainPcm(ctx, busPlanes, mixChannels, monoStereoMix);
         return;
     }
     float** scratch = ctx.cascade.scratch;
@@ -1576,7 +1573,8 @@ StageResult RenderVoiceBlock(VoiceRenderContext& ctx, BlockArena& arena,
                              float* const* busPlanes, std::uint32_t blockFrames,
                              std::uint32_t mixChannels,
                              std::uint32_t mixLayout,
-                             std::uint64_t sourceFrameBegin) {
+                             std::uint64_t sourceFrameBegin,
+                             output_gain_detail::MonoStereoMixKernel monoStereoMix) {
     // Direct and serial callers use the same phases as the worker path.
     // A declined prepare (closed gate or arena shortfall) leaves lastResult
     // carrying {0, phase}, without advancing the spatial fold.
@@ -1585,7 +1583,7 @@ StageResult RenderVoiceBlock(VoiceRenderContext& ctx, BlockArena& arena,
     }
     RunVoiceCascade(ctx, blockFrames);
     FoldVoiceIntoBuses(ctx, busPlanes, blockFrames, mixChannels, mixLayout,
-                       sourceFrameBegin);
+                       sourceFrameBegin, monoStereoMix);
     return ctx.lastResult;
 }
 

@@ -116,8 +116,10 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
       m_arenaLowBytes(static_cast<std::uint64_t>(config.maxBuses) *
                       config.mixChannelCount * config.blockFrames * sizeof(float)),
       m_arenaBytesPerSlot(std::min<std::uint64_t>(config.arenaBytes,
-          static_cast<std::uint64_t>(2u * kMaxChannels + config.mixChannelCount) *
+          static_cast<std::uint64_t>(kMaxChannels +
+              std::max<std::uint32_t>(kMaxChannels, config.mixChannelCount)) *
           config.blockFrames * sizeof(float) * (config.renderWorkerCount == 0 ? 1u : 2u))),
+      m_arenaBatchAllowance(config.renderWorkerCount == 0 ? 1u : 2u),
       m_busPlanes(static_cast<std::size_t>(config.maxBuses) *
                       config.mixChannelCount,
                   nullptr),
@@ -132,7 +134,7 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
     m_currentSliceScratchLimitForTest = m_currentSliceScratch.Capacity();
     if (!m_voices.AttachSlotStoragePreparation(m_arenaStorageRegistration, this,
         [](void* context, std::uint32_t count) noexcept {
-            return static_cast<MixerLoop*>(context)->PrepareVoiceBacking(count);
+            return static_cast<MixerLoop*>(context)->PreparePreparedChannelBacking(count);
         })) throw std::bad_alloc{};
     InitializeVariableSliceConsumptionStorage();
     m_voices.AttachFirstOutputCommandConsumer(this,
@@ -188,6 +190,17 @@ bool MixerLoop::PrepareVoiceBacking(std::uint32_t count) noexcept {
     if (count > m_voices.Capacity()) return false;
     // A timed-out worker batch keeps its span; subsequent blocks use the second allowance.
     const auto highBytes = count == 0 ? 0u : m_arenaBytesPerSlot * count + alignof(float) - 1u;
+    return m_arena.PrepareBacking(m_arenaLowBytes, highBytes);
+}
+
+bool MixerLoop::PreparePreparedChannelBacking(std::uint32_t count) noexcept {
+    if (count > m_voices.Capacity()) return false;
+    // Source columns precede this callback and never shrink. Include high slots
+    // when a low slot widens, with the complete future blend/send allowance.
+    const auto slots = std::max(count, m_voices.ConstructedSlotCount());
+    const auto planes = m_voices.PreparedCascadeChannelRows(m_mixChannels, slots);
+    const auto highBytes = slots == 0 ? 0u : planes * m_voices.BlockFrames() *
+        sizeof(float) * m_arenaBatchAllowance + alignof(float) - 1u;
     return m_arena.PrepareBacking(m_arenaLowBytes, highBytes);
 }
 
@@ -735,7 +748,7 @@ bool MixerLoop::DrainOriginalSource(std::uint64_t blockIndex, std::uint64_t& owe
             CommandRecord wire{};
             if (initial != nullptr) wire = initial->facts[i];
             else if (!m_commands.PeekAt(i, wire)) intact = false;
-            if (std::memcmp(&wire, &row->body_[i], sizeof(wire)) != 0) intact = false;
+            if (std::memcmp(&wire, &row->BodyAt(i), sizeof(wire)) != 0) intact = false;
         }
         row->disposition_ = intact ? Registry::Disposition::Apply : Registry::Disposition::Invalid;
         if (intact && !m_voices.OriginalVoiceReleased(row->voice_)) {
@@ -796,7 +809,7 @@ bool MixerLoop::DrainOriginalSource(std::uint64_t blockIndex, std::uint64_t& owe
             disposed != VoicePool::OriginalVoiceDisposal::AlreadyReleased) return defer();
     }
     while (row->progress_ < row->count_) {
-        const auto& command = row->body_[row->progress_];
+        const auto& command = row->BodyAt(row->progress_);
         const bool applying = row->disposition_ == Registry::Disposition::Apply;
         // Every supported metadata payload begins with its full voice handle.
         const auto target = command.flags == kCommandFlagPreparedCompressor

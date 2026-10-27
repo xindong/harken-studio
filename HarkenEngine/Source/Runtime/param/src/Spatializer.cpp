@@ -637,6 +637,7 @@ void Spatializer::OnVoiceStarted(VnVoiceHandle handle, bool spatialized,
     mirror.handle = handle;
     mirror.emitterHandle = emitterHandle;
     mirror.spatialized = spatialized;
+    if (NeedsEvaluation(mirror)) ++m_evaluationVoiceCount;
     // The play-descriptor position seeds the mirror; an attached voice's pose
     // is overwritten from its emitter on the first Evaluate.
     mirror.posX = x;
@@ -748,6 +749,7 @@ VnResult Spatializer::BindVoice(VnVoiceHandle handle,
 }
 
 void Spatializer::Evaluate(ParamSystem& params, const EmitterTable& emitters) {
+    if (m_evaluationVoiceCount == 0) return;
     for (VoiceMirror& mirror : m_mirrors) {
         if (mirror.handle != 0) {
             (void)EvaluateVoice(mirror.handle, params, emitters);
@@ -773,6 +775,10 @@ VnResult Spatializer::EvaluateVoice(VnVoiceHandle handle, ParamSystem& params,
         if (emitters.Pose(mirror.emitterHandle, &source)) {
             RestoreVoiceSource(handle, source);
         } else {
+            if (!mirror.spatialized) {
+                assert(m_evaluationVoiceCount != 0);
+                --m_evaluationVoiceCount;
+            }
             mirror.emitterHandle = 0; // detached; last pose stays frozen
         }
     }
@@ -1094,6 +1100,10 @@ void Spatializer::NoteVoiceEnded(VnVoiceHandle handle) noexcept {
         return;
     }
     ReleaseRetainedMirror(*mirror);
+    if (NeedsEvaluation(*mirror)) {
+        assert(m_evaluationVoiceCount != 0);
+        --m_evaluationVoiceCount;
+    }
     *mirror = VoiceMirror{};
 }
 

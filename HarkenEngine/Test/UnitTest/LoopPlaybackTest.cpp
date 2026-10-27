@@ -65,6 +65,7 @@ struct LoopHarness {
         ctx.loopPassesRemaining = loopCount;
         ctx.gain.Set(1.0f, 0);
         float* rings[1] = {ring.data()};
+        ctx.resampler = resamplerBacking;
         ctx.resampler.Reset(rings, 1, ResampleQuality::Hermite, 1.0,
                             Tables());
     }
@@ -98,6 +99,7 @@ struct LoopHarness {
     }
 
     harken::BiquadTrigTable trig;
+    harken::Resampler resamplerBacking;
     VoiceRenderContext ctx;
     std::vector<float> ring;
     BlockArena arena{65536};

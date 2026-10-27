@@ -130,6 +130,7 @@ bool ImmediateLaneTimelineFinalizer::Capture(std::uint64_t quantum) noexcept {
     state.admission.Invalidate();
     state.prepared = true;
     state.capturedQuantum = quantum;
+    if (!state.lane->HasOutstandingAttempts()) return false;
     for (std::uint32_t slot = 0; slot < state.lane->AttemptCapacity(); ++slot) {
         const auto* bucket = state.lane->CaptureDue(slot, quantum);
         if (bucket != nullptr)
@@ -553,7 +554,7 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
                          ++stopIndex) {
                         const auto& stop =
                             voice->timelineEvents.events[stopIndex];
-                        if (stop.kind == TimelineEventKind::Stop &&
+                        if (stop.Kind() == TimelineEventKind::Stop &&
                             stop.authoredRootStop &&
                             stop.frontierProof.Eligible(
                                 quantum, event.armToken.renderGeneration) &&
@@ -590,8 +591,7 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
                 event.armToken.renderGeneration, quantum, 1, &scratch.reservation);
             if (!valid) break;
             ++staged;
-            VoiceTimelineEvent voice{};
-            voice.kind = payload->kind;
+            VoiceTimelineEvent voice{payload->kind};
             if (control) {
                 voice.envelopeDirection = payload->envelopeDirection;
                 voice.frame = payload->envelopeStartFrame;
@@ -599,8 +599,10 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
                 voice.envelopeCurve = payload->envelopeCurve;
                 voice.authoredFadeOutCandidate = payload->authoredFadeOutCandidate;
                 voice.authoredRootStop = (payload->reserved & kTimelineEventAuthoredRootStop) != 0;
-                voice.authoredStopOperation = payload->authoredStopOperation;
-                voice.controlCause = payload->controlCause;
+                if (payload->kind == TimelineEventKind::Stop) {
+                    voice.Stop().authoredStopOperation = payload->authoredStopOperation;
+                    voice.Stop().controlCause = payload->controlCause;
+                }
             }
             voice.offset = outputOffset;
             voice.order = {event.executeFrame, event.logicCommitSequence,

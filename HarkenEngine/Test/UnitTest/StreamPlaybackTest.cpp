@@ -1890,15 +1890,18 @@ TEST(StreamPlayback,
 
     constexpr std::uint64_t kFirstSequence = 91;
     constexpr std::uint64_t kSecondSequence = 92;
+    EXPECT_FALSE(engine->voices.HasPendingStreamParkMailboxes());
     ASSERT_TRUE(engine->voices.ReserveStreamPark(
         firstLive.renderHandle, first, kFirstSequence,
         harken::ResampleProfile::Professional44148));
+    EXPECT_TRUE(engine->voices.HasPendingStreamParkMailboxes());
     ASSERT_EQ(harken::StreamParkCancelResult::Cancelled,
               engine->voices.CancelStreamPark(
                   firstLive.renderHandle, first, kFirstSequence));
     EXPECT_FALSE(engine->voices.ReserveStreamPark(
         secondLive.renderHandle, second, kSecondSequence,
         harken::ResampleProfile::Professional44148));
+    EXPECT_TRUE(engine->voices.HasPendingStreamParkMailboxes());
 
     engine->voices.ApplyStop(
         firstLive.renderHandle, 0, kBlockFrames,
@@ -1906,6 +1909,7 @@ TEST(StreamPlayback,
         first, kFirstSequence);
     engine->nullBackend.Pump(1);
     EXPECT_EQ(0u, engine->voices.StreamParkCaptureBytesPeak());
+    EXPECT_TRUE(engine->voices.HasPendingStreamParkMailboxes());
     EXPECT_FALSE(engine->voices.ReserveStreamPark(
         secondLive.renderHandle, second, kSecondSequence,
         harken::ResampleProfile::Professional44148));
@@ -1917,11 +1921,13 @@ TEST(StreamPlayback,
         &outcome, &cancelled));
     EXPECT_TRUE(cancelled);
     EXPECT_FALSE(outcome.token.IsValid());
+    EXPECT_FALSE(engine->voices.HasPendingStreamParkMailboxes());
     ASSERT_TRUE(engine->voices.ReserveStreamPark(
         secondLive.renderHandle, second, kSecondSequence,
         harken::ResampleProfile::Professional44148));
     engine->voices.AbortStreamParkReservation(
         secondLive.renderHandle, second, kSecondSequence);
+    EXPECT_FALSE(engine->voices.HasPendingStreamParkMailboxes());
 }
 
 TEST(StreamPlayback, PreparingVictimAcknowledgesActivationOrigin) {

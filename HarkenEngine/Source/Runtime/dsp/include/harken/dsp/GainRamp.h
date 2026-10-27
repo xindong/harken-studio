@@ -11,6 +11,7 @@
 #ifndef HARKEN_DSP_GAIN_RAMP_H
 #define HARKEN_DSP_GAIN_RAMP_H
 
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -90,6 +91,64 @@ inline void MixScaled(const float* src, float* dst, std::uint32_t frames,
         dst[i] += src[i] * gain;
     }
 }
+
+// Reuse the rounded mono voice sample without combining either output scale.
+template<bool ApplyVoiceGain, bool EqualOutputScale>
+inline void MixMonoToStereoScaledImpl(const float* src, float* left, float* right,
+    std::uint32_t frames, float voiceGain, float leftScale, float rightScale) noexcept {
+    std::uint32_t i = 0;
+#if defined(HARKEN_OUTPUT_GAIN_SSE2)
+    const __m128 voice = _mm_set1_ps(voiceGain);
+    const __m128 leftGain = _mm_set1_ps(leftScale);
+    const __m128 rightGain = _mm_set1_ps(rightScale);
+    const auto vectorFrames = frames & ~std::uint32_t{3};
+    for (; i < vectorFrames; i += 4) {
+        __m128 value = _mm_loadu_ps(src + i);
+        if constexpr (ApplyVoiceGain) value = _mm_mul_ps(value, voice);
+        const __m128 leftContribution = _mm_mul_ps(value, leftGain);
+        _mm_storeu_ps(left + i, _mm_add_ps(_mm_loadu_ps(left + i),
+            leftContribution));
+        const __m128 rightContribution = EqualOutputScale
+            ? leftContribution : _mm_mul_ps(value, rightGain);
+        _mm_storeu_ps(right + i, _mm_add_ps(_mm_loadu_ps(right + i),
+            rightContribution));
+    }
+#endif
+#if defined(HARKEN_OUTPUT_GAIN_SSE2)
+    // Complete vectors leave at most three ordered scalar contributions.
+    for (std::uint32_t tail = 0; tail < 3 && i < frames; ++tail, ++i) {
+#else
+    for (; i < frames; ++i) {
+#endif
+        float value = src[i];
+        if constexpr (ApplyVoiceGain) value *= voiceGain;
+        const float leftContribution = value * leftScale;
+        left[i] += leftContribution;
+        const float rightContribution = EqualOutputScale ? leftContribution : value * rightScale;
+        right[i] += rightContribution;
+    }
+}
+
+inline void MixMonoToStereoScaled(const float* src, float* left, float* right,
+    std::uint32_t frames, float voiceGain, float leftScale, float rightScale) noexcept {
+    if (std::bit_cast<std::uint32_t>(leftScale) == std::bit_cast<std::uint32_t>(rightScale)) {
+        if (voiceGain == 1.0f)
+            MixMonoToStereoScaledImpl<false, true>(src, left, right, frames, voiceGain, leftScale, rightScale);
+        else
+            MixMonoToStereoScaledImpl<true, true>(src, left, right, frames, voiceGain, leftScale, rightScale);
+    } else {
+        if (voiceGain == 1.0f)
+            MixMonoToStereoScaledImpl<false, false>(src, left, right, frames, voiceGain, leftScale, rightScale);
+        else
+            MixMonoToStereoScaledImpl<true, false>(src, left, right, frames, voiceGain, leftScale, rightScale);
+    }
+}
+
+using MonoStereoMixKernel = void (*)(const float*, float*, float*, std::uint32_t,
+                                    float, float, float) noexcept;
+
+// Select on the control thread before publishing a VoicePool to render readers.
+MonoStereoMixKernel SelectMonoStereoMixKernel() noexcept;
 
 inline std::uint32_t CappedInterp(std::uint64_t remainingFrames,
                                  std::uint32_t startFrame,

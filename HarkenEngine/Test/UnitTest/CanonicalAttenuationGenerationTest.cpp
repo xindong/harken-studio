@@ -600,3 +600,143 @@ TEST(CanonicalAttenuationGeneration, GrowingSetsPreserveOld65ProfilesAndCommitWi
     EXPECT_EQ(VN_OK, spatial.SweepRetainedProfiles());
     EXPECT_EQ(0u, spatial.RetainedProfileCount());
 }
+
+TEST(CanonicalAttenuationGeneration, GrowthWithLiveMirrorsRefusesCancelsRetriesAndReclaims) {
+    harken::EngineConfig config{};
+    ASSERT_TRUE(harken::VoiceCapacityModel::TryCreate(4, 4, &config.voiceCapacity));
+    harken::Spatializer spatial(config);
+    harken::ParamSystem params(config);
+    const harken::EmitterTable emitters(config);
+    auto oldDesc = Profile(10.0f);
+    oldDesc.highpassCurve.enabled = 1;
+    oldDesc.highpassCurve.pointCount = 1;
+    oldDesc.highpassCurve.points[0] = {0, 100};
+    auto nextDesc = oldDesc;
+    nextDesc.maxDistance = 19.0f;
+    nextDesc.highpassCurve.points[0].y = 500;
+    std::vector<harken::Spatializer::PackProfileInput> inputs;
+    for (unsigned i = 0; i < 64; ++i)
+        inputs.push_back({harkentest::ObjectId(1000 + i), &oldDesc});
+    const auto boundId = inputs.back().id;
+    const auto addedId = harkentest::ObjectId(1064);
+    Prepared initial;
+    ASSERT_EQ(VN_OK, spatial.PreparePackProfiles(inputs.data(), inputs.size(), 1, &initial));
+    spatial.CommitPreparedSet(&initial);
+    ASSERT_EQ(64u, spatial.ProfileCount());
+    ASSERT_EQ(64u, spatial.ProfileCapacity());
+
+    const VnVoiceHandle first = UINT64_C(1) << 32;
+    const VnVoiceHandle second = first + 1, delayed = first + 2, added = first + 3;
+    const auto start = [&](VnVoiceHandle voice) {
+        params.OnVoiceStarted(voice, 0.0f, 1.0);
+        spatial.OnVoiceStarted(voice, true, 5.5f, 0.0f, 0.0f);
+    };
+    const auto end = [&](VnVoiceHandle voice) {
+        spatial.NoteVoiceEnded(voice);
+        params.RetireVoiceTargets(voice);
+    };
+    const auto expectContribution = [&](VnVoiceHandle voice, float db, float highpass) {
+        // Force the batch Evaluate path to replace previous contributions.
+        params.SetAttenuationSlot(voice, harken::kTargetVoiceVolume, -90.0f);
+        params.SetAttenuationSlot(voice, harken::kTargetVoiceHighpassCutoff, 17.0f);
+        spatial.Evaluate(params, emitters);
+        EXPECT_NEAR(db, params.ResolvedValue(voice, harken::kTargetVoiceVolume), 0.0001f);
+        EXPECT_FLOAT_EQ(highpass, params.ResolvedValue(voice, harken::kTargetVoiceHighpassCutoff));
+    };
+    // Linear rolloff at 5.5 m gives amplitudes 0.5 and 0.75 respectively.
+    constexpr float oldDb = -6.0205999f, nextDb = -2.4987747f;
+    start(first);
+    start(second);
+    ASSERT_EQ(VN_OK, spatial.BindVoice(first, boundId, 1));
+    ASSERT_EQ(VN_OK, spatial.BindVoice(second, boundId, 1));
+    expectContribution(first, oldDb, 100.0f);
+    expectContribution(second, oldDb, 100.0f);
+    harken::Spatializer::SpatialVoiceState captured{};
+    ASSERT_TRUE(spatial.CaptureVoice(second, &captured));
+    ASSERT_EQ(boundId, captured.attenuationId);
+    ASSERT_EQ(1u, captured.attenuationGeneration);
+
+    inputs.back() = {boundId, &nextDesc};
+    inputs.push_back({addedId, &nextDesc});
+    const auto expectUnpublished = [&]() {
+        EXPECT_EQ(64u, spatial.ProfileCount());
+        EXPECT_EQ(64u, spatial.ProfileCapacity());
+        EXPECT_EQ(1u, spatial.CurrentProfileGeneration(boundId));
+        EXPECT_EQ(nullptr, spatial.FindProfile(boundId, 2));
+        EXPECT_EQ(nullptr, spatial.FindProfile(addedId));
+        EXPECT_EQ(0u, spatial.RetainedProfileCount());
+        expectContribution(first, oldDb, 100.0f);
+        expectContribution(second, oldDb, 100.0f);
+    };
+    for (std::size_t nth : {1u, 2u}) {
+        SCOPED_TRACE(nth);
+        Prepared refused;
+        VnResult result;
+        {
+            AllocationFaultScope fault(nth);
+            result = spatial.PreparePackProfiles(inputs.data(), inputs.size(), 2, &refused);
+            EXPECT_EQ(0u, harken::detail::g_logicAllocFault.remaining);
+        }
+        ASSERT_EQ(VN_BACKPRESSURE, result);
+        EXPECT_FALSE(refused.IsPrepared());
+        expectUnpublished();
+    }
+    Prepared cancelled;
+    ASSERT_EQ(VN_OK, spatial.PreparePackProfiles(inputs.data(), inputs.size(), 2, &cancelled));
+    ASSERT_TRUE(cancelled.IsPrepared());
+    ASSERT_EQ(65u, cancelled.SlotCount());
+    spatial.CancelPreparedSet(&cancelled);
+    EXPECT_FALSE(cancelled.IsPrepared());
+    expectUnpublished();
+
+    Prepared committed;
+    ASSERT_EQ(VN_OK, spatial.PreparePackProfiles(inputs.data(), inputs.size(), 2, &committed));
+    std::size_t commitAllocations = 0;
+    {
+        AllocationProbeScope probe;
+        spatial.CommitPreparedSet(&committed);
+        commitAllocations = allocation_probe::count;
+    }
+    EXPECT_EQ(0u, commitAllocations);
+    EXPECT_FALSE(committed.IsPrepared());
+    EXPECT_EQ(65u, spatial.ProfileCount());
+    EXPECT_EQ(65u, spatial.ProfileCapacity());
+    EXPECT_EQ(1u, spatial.RetainedProfileCount());
+    EXPECT_EQ(2u, spatial.CurrentProfileGeneration(boundId));
+    expectContribution(first, oldDb, 100.0f);
+    expectContribution(second, oldDb, 100.0f);
+    start(added);
+    ASSERT_EQ(VN_OK, spatial.BindVoice(added, addedId, 2));
+    expectContribution(added, nextDb, 500.0f);
+
+    end(second);
+    start(delayed);
+    ASSERT_EQ(VN_OK, spatial.BindVoice(delayed, captured.attenuationId, captured.attenuationGeneration));
+    ASSERT_EQ(VN_OK, spatial.BindVoice(first, boundId, 2));
+    ASSERT_EQ(VN_OK, spatial.SweepRetainedProfiles());
+    EXPECT_EQ(1u, spatial.RetainedProfileCount());
+    expectContribution(delayed, oldDb, 100.0f);
+    expectContribution(first, nextDb, 500.0f);
+    end(delayed);
+    ASSERT_EQ(VN_OK, spatial.SweepRetainedProfiles());
+    EXPECT_EQ(0u, spatial.RetainedProfileCount());
+    EXPECT_EQ(nullptr, spatial.FindProfile(boundId, 1));
+    EXPECT_EQ(VN_UNKNOWN_ID, spatial.BindVoice(first, boundId, 1));
+    expectContribution(first, nextDb, 500.0f);
+    end(first);
+    end(added);
+
+    // Return from zero spatial demand using a new generation in the same slot.
+    const VnVoiceHandle reused = (UINT64_C(2) << 32) | 1u;
+    start(reused);
+    ASSERT_EQ(VN_OK, spatial.BindVoice(reused, addedId, 2));
+    spatial.NoteVoiceEnded(second);
+    harken::Spatializer::SpatialVoiceState current{};
+    EXPECT_FALSE(spatial.CaptureVoice(second, &current));
+    ASSERT_TRUE(spatial.CaptureVoice(reused, &current));
+    EXPECT_EQ(2u, current.attenuationGeneration);
+    expectContribution(reused, nextDb, 500.0f);
+    end(reused);
+    ASSERT_EQ(VN_OK, spatial.SweepRetainedProfiles());
+    EXPECT_EQ(0u, spatial.RetainedProfileCount());
+}

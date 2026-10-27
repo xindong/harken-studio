@@ -9038,21 +9038,29 @@ bool ScheduledTransactionPool::FrontierMemberBindingDetached(const Plan03GroupSl
     const FrontierEntryReceiptRef& entry, std::uint64_t completedAudioSequence) const noexcept {
     Plan03PageGroupView group{};
     if (!identity.Exact() || !entry.Valid() ||
-        identity.backing != Plan03GroupBacking::ImmediateLane ||
         !ResolvePlan03GroupSliceProducer(identity, &group) || group.identity != identity ||
         group.frontier == nullptr || !group.frontier->Valid() || group.frontier->entry != entry ||
         group.frontier->operation.group != identity || group.lease == nullptr ||
         (group.frontier->role != FrontierGroupRole::EntryMember &&
          group.frontier->role != FrontierGroupRole::Future)) return false;
-    const auto& row = immediateLaneGroups_[identity.committedRow];
     const auto state = group.lease->Capture().state;
-    const auto last = row.readers.lastAudioSequence.load(std::memory_order_acquire);
     // Other readers retain their own loans; only this exact frontier loan has ended.
-    return row.state.load(std::memory_order_acquire) == LaneGroupState::Published &&
-        !row.frontierPinsOwned && row.frontierDependents == 0 &&
-        row.publicationProof == nullptr && row.transferProof == nullptr && row.clockProof == nullptr &&
-        (state == AudioSliceState::SliceApplied || state == AudioSliceState::SliceInvalidated) &&
-        (last == 0 || completedAudioSequence > last);
+    const auto detached = [&](const auto& row, const auto& readers) noexcept {
+        const auto last = readers.lastAudioSequence.load(std::memory_order_acquire);
+        return !row.frontierPinsOwned && row.frontierDependents == 0 &&
+            (state == AudioSliceState::SliceApplied || state == AudioSliceState::SliceInvalidated) &&
+            (last == 0 || completedAudioSequence > last);
+    };
+    if (identity.backing == Plan03GroupBacking::ImmediateLane) {
+        const auto& row = immediateLaneGroups_[identity.committedRow];
+        return row.state.load(std::memory_order_acquire) == LaneGroupState::Published &&
+            row.publicationProof == nullptr && row.transferProof == nullptr && row.clockProof == nullptr &&
+            detached(row, row.readers);
+    }
+    const auto& row = PageGroupData(identity.committedRow).value;
+    return row.transferOriginal == nullptr && row.transferProof == nullptr && row.frontierBindings == nullptr &&
+        row.privateUnboundArmRetirement == nullptr && row.jointCancellation == nullptr &&
+        row.cancellationOriginal == nullptr && detached(row, PageGroupData(identity.committedRow).readers);
 }
 
 bool ScheduledTransactionPool::FrontierCoordinatorDetached(const Plan03GroupSliceIdentity& identity,
@@ -9158,6 +9166,7 @@ bool ScheduledTransactionPool::DetachPlan03GroupFrontier(const Plan03GroupSliceI
         primaryReaders.pins.store(primaryPins - 1u, std::memory_order_release);
     }
     row.frontierPinsOwned = false;
+    row.frontier.appliedPrerequisite = nullptr;
     readers.pins.store(pins - 1u, std::memory_order_release);
     if (privateUnread) row.frontier = {};
     return true;
@@ -9298,6 +9307,25 @@ bool ScheduledTransactionPool::AcquirePlan03GroupReader(
     readers.pins.store(count + 1u, std::memory_order_release);
     out->owner_ = this;
     out->identity_ = identity;
+    return true;
+}
+
+bool ScheduledTransactionPool::ClonePlan03GroupReader(
+    const Plan03GroupReaderPin& source, Plan03GroupReaderPin* out) noexcept {
+    if (source.owner_ != this || out == nullptr || out->Valid() ||
+        !source.identity_.Exact() || source.identity_.backing != Plan03GroupBacking::Page) return false;
+    Plan03PageGroupView group{};
+    if (!ResolvePlan03GroupSliceProducer(source.identity_, &group)) return false;
+    auto& row = PageGroupData(source.identity_.committedRow);
+    if (row.value.cancellationOriginal != nullptr) return false;
+    auto& readers = row.readers;
+    const auto count = readers.pins.load(std::memory_order_acquire);
+    if (count == 0 || count == UINT32_MAX) return false;
+    // The original loan prevents row reuse. Preserve its shared audio fence;
+    // this is not a fresh acquisition and never resets lastAudioSequence.
+    readers.pins.store(count + 1u, std::memory_order_release);
+    out->owner_ = this;
+    out->identity_ = source.identity_;
     return true;
 }
 
@@ -10458,10 +10486,12 @@ std::uint32_t ScheduledTransactionPool::Advance() {
         return 0;
     }
     std::uint64_t heldIngress = 0;
-    for (const auto& claim : preparedTransactionClaims_) {
-        if (claim.transferProof == nullptr) continue;
-        assert(claim.used && !claim.committed && claim.preparedIngressQuantum == baseQuantumIndex_);
-        heldIngress += claim.transactionCount;
+    if (preparedTransactionClaimCount_ != 0) {
+        for (const auto& claim : preparedTransactionClaims_) {
+            if (claim.transferProof == nullptr) continue;
+            assert(claim.used && !claim.committed && claim.preparedIngressQuantum == baseQuantumIndex_);
+            heldIngress += claim.transactionCount;
+        }
     }
     assert(heldIngress <= preparedIngressThisQuantum_);
     if (WindowEndFrame() > UINT64_MAX - quantumFrames_) {
@@ -10627,8 +10657,10 @@ std::uint32_t ScheduledTransactionPool::Advance() {
     baseQuantumIndex_ += 1;
     ingressThisQuantum_ = 0; // ingress is bounded per quantum
     preparedIngressThisQuantum_ = static_cast<std::uint32_t>(heldIngress);
-    for (auto& claim : preparedTransactionClaims_)
-        if (claim.transferProof != nullptr) claim.preparedIngressQuantum = baseQuantumIndex_;
+    if (preparedTransactionClaimCount_ != 0) {
+        for (auto& claim : preparedTransactionClaims_)
+            if (claim.transferProof != nullptr) claim.preparedIngressQuantum = baseQuantumIndex_;
+    }
     unplacedIngressThisQuantum_ = 0;
     return dropped;
 }

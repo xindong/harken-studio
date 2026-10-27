@@ -453,8 +453,13 @@ TimelineExecutionResult TimelineExecutor::ExecuteQuantum(
                     payload->kind == TimelineEventKind::Start || controller ? 20u :
                     payload->kind == TimelineEventKind::Envelope ||
                     payload->kind == TimelineEventKind::VariableWeight ? 30u : 50u;
+                // Native parent controls precede their child entries. The finalizer
+                // still verifies the exact frozen descriptor and dependency order.
+                const bool phaseValid = controller
+                    ? event.subeventPhase == 10u || event.subeventPhase == 15u || event.subeventPhase == 20u
+                    : event.subeventPhase == expectedPhase;
                 bool valid = event.frontier.Valid() && payload != nullptr && frameValid &&
-                    event.subeventPhase == expectedPhase && event.transactionId == first.transactionId &&
+                    phaseValid && event.transactionId == first.transactionId &&
                     event.program.program == program &&
                     (controller ? eventProgram->role == TimelineProgramRole::ControllerActivation &&
                         !event.armToken.Valid() && (event.frontier.kind == FrontierOperationKind::Entry ||

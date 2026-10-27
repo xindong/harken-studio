@@ -50,6 +50,7 @@ struct ConsumedCurrentSlice;
 class OriginalSourceSubmissionRegistry;
 class ImmediateActionLane;
 class PrivatePlainLayoutCommitProof;
+class PrivateReservedPlainLayoutCommitProof;
 class PrivateImmediateLanePlacementProof;
 class PrivateImmediateLaneGroupsPublicationProof;
 
@@ -608,6 +609,9 @@ public:
         const ImmediateActionLane& lane, const PrivatePlainLayoutCommitProof& placement,
         VariableReadCutRef* cut) noexcept;
     bool BeginPendingTimelineReadUsePlacement(VariableTimelineReadUseRef use,
+        const ImmediateActionLane& lane, const PrivateReservedPlainLayoutCommitProof& placement,
+        VariableReadCutRef* cut) noexcept;
+    bool BeginPendingTimelineReadUsePlacement(VariableTimelineReadUseRef use,
         const ImmediateActionLane& lane, const PrivateImmediateLanePlacementProof& placement,
         VariableReadCutRef* cut) noexcept;
     bool BeginPendingVariableGroupPlacement(Engine& engine, EngineActionPlayScratch& producer,
@@ -670,6 +674,8 @@ public:
         void* context, void (*apply)(void*, const CommandRecord&) noexcept) noexcept;
     bool PendingTimelineReadUseFrozen(VariableTimelineReadUseRef use) const noexcept;
     bool PendingTimelineReadUseStaged(VariableTimelineReadUseRef use) const noexcept;
+    bool CanCommitTimelineReadUse(VariableTimelineReadUseRef use, VariableReadCutRef cut,
+        VnVoiceHandle nativeHandle, const TimelineArmTable& arms, TimelineArmToken arm) const noexcept;
     bool CommitTimelineReadUse(VariableTimelineReadUseRef use) noexcept;
     bool CancelPreparedTimelineReadUse(VariableTimelineReadUseRef use) noexcept;
     bool CanTransferReadCutToTimelineUses(VariableReadCutRef cut) const noexcept;

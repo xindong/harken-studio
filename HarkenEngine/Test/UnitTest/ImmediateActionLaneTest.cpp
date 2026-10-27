@@ -64,6 +64,7 @@ TEST(ImmediateActionLane, FutureBucketsAreDueWithoutAnotherLogicService) {
 TEST(ImmediateActionLane, SparsePayloadFailureRetainsNoIdentityAndOnlyActualHighSlotRows) {
     harken::ImmediateActionLane lane;
     ASSERT_TRUE(lane.Reset({8, 128, 8, 64}));
+    EXPECT_FALSE(lane.HasOutstandingAttempts());
     EXPECT_EQ(0u, lane.EventStorageBytes());
     EXPECT_EQ(0u, lane.MemberStorageBytes());
     EXPECT_EQ(0u, lane.PayloadCommittedBytes());
@@ -82,6 +83,7 @@ TEST(ImmediateActionLane, SparsePayloadFailureRetainsNoIdentityAndOnlyActualHigh
     lane.SetStateCommitPageLimitForTests(0);
     EXPECT_FALSE(lane.Reserve(1, {0, 1, 0, 1}, &refused));
     EXPECT_FALSE(refused.Valid());
+    EXPECT_FALSE(lane.HasOutstandingAttempts());
     lane.SetStateCommitPageLimitForTests(SIZE_MAX);
     std::array<harken::ImmediateLaneHandle, 7> empty;
     for (auto& handle : empty) ASSERT_TRUE(lane.Reserve(1, {0, 1, 0, 1}, &handle));
@@ -123,6 +125,91 @@ TEST(ImmediateActionLane, SparsePayloadFailureRetainsNoIdentityAndOnlyActualHigh
     EXPECT_TRUE(lane.Retire(high));
     for (const auto handle : empty) EXPECT_TRUE(lane.Retire(handle));
     ASSERT_TRUE(lane.Reset({1, 1, 1, 64}));
+    EXPECT_EQ(0u, lane.MetadataStorageBytes());
+    EXPECT_EQ(0u, lane.MetadataCommittedBytes());
+}
+
+TEST(ImmediateActionLane, SingleEventCellsPreserveConcurrentCaptureAcrossRefusalAndReuse) {
+    harken::ImmediateActionLane lane;
+    ASSERT_TRUE(lane.Reset({2, 128, 8, 64}));
+    EXPECT_FALSE(lane.HasOutstandingAttempts());
+    const harken::TimelineProgramView program{};
+    const auto firstEvent = Event(0, &program, 42);
+    harken::ImmediateLaneHandle first;
+    ASSERT_TRUE(lane.Reserve(1, {1, 0, 0, 1}, &first));
+    EXPECT_TRUE(lane.HasOutstandingAttempts());
+    ASSERT_TRUE(lane.Prepare(first, &firstEvent, 1));
+    std::uint64_t anchor = 0;
+    ASSERT_TRUE(lane.TryPlace(first, 64, 0, &anchor));
+    ASSERT_TRUE(lane.Publish(first));
+    const auto* firstBucket = lane.CaptureDue(first.slot, 1);
+    ASSERT_NE(nullptr, firstBucket);
+    const auto firstScratch = lane.CapturedSourceWaitScratch(first.slot, firstBucket);
+    ASSERT_EQ(1u, firstScratch.size());
+    firstScratch[0].attempt = 77;
+    const auto* firstPayload = lane.Events(first.slot, firstBucket);
+
+    harken::ImmediateLaneHandle second;
+    lane.SetPayloadCommitPageLimitsForTests(0, SIZE_MAX);
+    EXPECT_FALSE(lane.Reserve(2, {1, 0, 0, 1}, &second));
+    EXPECT_FALSE(second.Valid());
+    lane.SetPayloadCommitPageLimitsForTests(SIZE_MAX, SIZE_MAX);
+    lane.SetStateCommitPageLimitForTests(0);
+    EXPECT_FALSE(lane.Reserve(2, {1, 0, 0, 1}, &second));
+    EXPECT_FALSE(second.Valid());
+    lane.SetStateCommitPageLimitForTests(SIZE_MAX);
+    lane.SetMetadataCommitPageLimitsForTests(SIZE_MAX, 0);
+    EXPECT_FALSE(lane.Reserve(2, {1, 0, 0, 1}, &second));
+    EXPECT_FALSE(second.Valid());
+    lane.SetMetadataCommitPageLimitsForTests(SIZE_MAX, SIZE_MAX);
+    ASSERT_TRUE(lane.Reserve(2, {1, 0, 0, 1}, &second));
+    EXPECT_NE(first.slot, second.slot);
+    EXPECT_EQ(1u, second.generation);
+    const auto secondEvent = Event(0, &program, 43);
+    ASSERT_TRUE(lane.Prepare(second, &secondEvent, 1));
+    ASSERT_TRUE(lane.TryPlace(second, 64, 0, &anchor));
+    ASSERT_TRUE(lane.Publish(second));
+    const auto* secondBucket = lane.CaptureDue(second.slot, 1);
+    ASSERT_NE(nullptr, secondBucket);
+    const auto secondScratch = lane.CapturedSourceWaitScratch(second.slot, secondBucket);
+    ASSERT_EQ(1u, secondScratch.size());
+    EXPECT_NE(firstBucket, secondBucket);
+    EXPECT_NE(firstScratch.data(), secondScratch.data());
+    secondScratch[0].attempt = 88;
+    EXPECT_EQ(43u, lane.Events(second.slot, secondBucket)[0].event.executionOrdinal);
+    ASSERT_TRUE(lane.Claim(second, secondBucket));
+    ASSERT_TRUE(lane.Finish(second.slot, secondBucket, true));
+    ASSERT_TRUE(lane.Retire(second));
+    EXPECT_TRUE(lane.HasOutstandingAttempts());
+
+    const auto retired = second;
+    second = {};
+    ASSERT_TRUE(lane.Reserve(3, {1, 0, 0, 1}, &second));
+    EXPECT_EQ(retired.slot, second.slot);
+    EXPECT_NE(retired.generation, second.generation);
+    const auto reusedEvent = Event(0, &program, 44);
+    ASSERT_TRUE(lane.Prepare(second, &reusedEvent, 1));
+    ASSERT_TRUE(lane.TryPlace(second, 128, 0, &anchor));
+    ASSERT_TRUE(lane.Publish(second));
+    secondBucket = lane.CaptureDue(second.slot, 2);
+    ASSERT_NE(nullptr, secondBucket);
+    EXPECT_EQ(44u, lane.Events(second.slot, secondBucket)[0].event.executionOrdinal);
+    EXPECT_EQ(firstScratch.data(), lane.CapturedSourceWaitScratch(first.slot, firstBucket).data());
+    EXPECT_EQ(77u, firstScratch[0].attempt);
+    EXPECT_EQ(firstPayload, lane.Events(first.slot, firstBucket));
+    EXPECT_EQ(42u, lane.Events(first.slot, firstBucket)[0].event.executionOrdinal);
+    EXPECT_FALSE(lane.Retire(first));
+    EXPECT_TRUE(lane.HasOutstandingAttempts());
+    ASSERT_TRUE(lane.Claim(second, secondBucket));
+    ASSERT_TRUE(lane.Finish(second.slot, secondBucket, true));
+    ASSERT_TRUE(lane.Retire(second));
+    ASSERT_TRUE(lane.Claim(first, firstBucket));
+    ASSERT_TRUE(lane.Finish(first.slot, firstBucket, true));
+    EXPECT_TRUE(lane.HasOutstandingAttempts());
+    ASSERT_TRUE(lane.Retire(first));
+    EXPECT_FALSE(lane.HasOutstandingAttempts());
+    ASSERT_TRUE(lane.Reset({1, 1, 1, 64}));
+    EXPECT_FALSE(lane.HasOutstandingAttempts());
     EXPECT_EQ(0u, lane.MetadataStorageBytes());
     EXPECT_EQ(0u, lane.MetadataCommittedBytes());
 }
@@ -178,6 +265,7 @@ TEST(ImmediateActionLane, PreparedPayloadBackingProtectsFutureAcquireAndActiveCo
     ASSERT_TRUE(lane.Reset({1, 128, 8, 64}));
     harken::OriginalImmediateLaneAttemptLifetimePin original;
     ordinary = {};
+    lane.SetPayloadCommitPageLimitsForTests(1, SIZE_MAX);
     ASSERT_TRUE(lane.Reserve(3, {1, 0, 0, 1}, &ordinary, &original));
     ASSERT_TRUE(lane.Prepare(ordinary, &event, 1));
     ASSERT_TRUE(lane.TryPlace(ordinary, 64, 0, &anchor));
@@ -186,14 +274,23 @@ TEST(ImmediateActionLane, PreparedPayloadBackingProtectsFutureAcquireAndActiveCo
     ASSERT_NE(nullptr, bucket);
     const auto scratch = lane.CapturedSourceWaitScratch(ordinary.slot, bucket);
     ASSERT_EQ(1u, scratch.size());
+    const auto* payload = lane.Events(ordinary.slot, bucket);
+    const auto smallPayloadBytes = lane.PayloadCommittedBytes();
+    EXPECT_FALSE(lane.PrepareAttemptBacking(&backing));
+    EXPECT_FALSE(backing.Valid());
+    EXPECT_EQ(smallPayloadBytes, lane.PayloadCommittedBytes());
+    EXPECT_EQ(payload, lane.Events(ordinary.slot, bucket));
+    lane.SetPayloadCommitPageLimitsForTests(SIZE_MAX, SIZE_MAX);
     lane.SetStateCommitPageLimitForTests(0);
     EXPECT_FALSE(lane.PrepareAttemptBacking(&backing));
     EXPECT_FALSE(backing.Valid());
     EXPECT_EQ(scratch.data(), lane.CapturedSourceWaitScratch(ordinary.slot, bucket).data());
+    EXPECT_EQ(payload, lane.Events(ordinary.slot, bucket));
     lane.SetStateCommitPageLimitForTests(SIZE_MAX);
     ASSERT_TRUE(lane.PrepareAttemptBacking(&backing));
     ASSERT_TRUE(lane.PrepareAttemptBacking(&secondBacking));
     EXPECT_EQ(scratch.data(), lane.CapturedSourceWaitScratch(ordinary.slot, bucket).data());
+    EXPECT_EQ(payload, lane.Events(ordinary.slot, bucket));
     EXPECT_EQ(42u, lane.Events(ordinary.slot, bucket)[0].event.executionOrdinal);
     EXPECT_FALSE(lane.Retire(ordinary));
     ASSERT_TRUE(lane.Claim(ordinary, bucket));
@@ -280,6 +377,7 @@ TEST(ImmediateActionLane, SourceWaitSuspensionReturnsCaptureAndResumesExactBucke
     std::uint64_t quantum = 0;
     EXPECT_FALSE(lane.CapturedSourceWaitQuantum(handle.slot, original, &quantum));
     ASSERT_TRUE(lane.SuspendCaptureForSourceWait(handle.slot, original));
+    EXPECT_TRUE(lane.HasOutstandingAttempts());
     EXPECT_FALSE(lane.CapturedSourceWaitQuantum(handle.slot, original, &quantum));
     harken::ImmediateLaneObservation observation{};
     ASSERT_TRUE(lane.Observe(handle, &observation));
@@ -304,6 +402,7 @@ TEST(ImmediateActionLane, SourceWaitSuspensionReturnsCaptureAndResumesExactBucke
     EXPECT_TRUE(observation.applied);
     EXPECT_FALSE(observation.missed);
     EXPECT_TRUE(lane.Retire(handle, 8));
+    EXPECT_FALSE(lane.HasOutstandingAttempts());
 }
 
 TEST(ImmediateActionLane, SuspendedSourceWaitAllowsCancellationAndRejectsReusedGeneration) {
@@ -813,12 +912,15 @@ TEST(ImmediateActionLane, ReservedAttemptRetirementRetriesAfterAudioReaderGate) 
     lane.SetCaptureGateHookForTest(nullptr, nullptr);
     EXPECT_FALSE(probe.cancelSucceeded);
     EXPECT_FALSE(probe.retiredWhilePinned);
+    EXPECT_TRUE(lane.HasOutstandingAttempts());
     ASSERT_TRUE(lane.OwnsPrivate(handle, 17));
     ASSERT_TRUE(lane.Cancel(handle));
     harken::ImmediateLaneObservation observation{};
     ASSERT_TRUE(lane.Observe(handle, &observation));
     EXPECT_TRUE(observation.complete);
+    EXPECT_TRUE(lane.HasOutstandingAttempts());
     ASSERT_TRUE(lane.Retire(handle));
+    EXPECT_FALSE(lane.HasOutstandingAttempts());
     harken::ImmediateLaneHandle reused{};
     ASSERT_TRUE(lane.Reserve(18, 1, &reused));
     EXPECT_EQ(handle.slot, reused.slot);
@@ -2026,15 +2128,16 @@ TEST(ImmediateActionLane, PristineReservedPlainWholeBankConsumesActualSixBucketP
     const harken::ImmediateLaneDemand demand{8, 0, 0, 8};
     harken::ImmediateLaneHandle handle{};
     ASSERT_TRUE(lane.Reserve(1, demand, &handle));
-    harken::PrivatePlainLayoutEdit edit;
-    EXPECT_FALSE(lane.AcquirePrivatePlainLayoutEdit(handle, 1, demand, &edit));
+    harken::PrivateReservedPlainLayoutEdit edit;
+    harken::PrivatePlainLayoutEdit generic;
+    EXPECT_FALSE(lane.AcquirePrivatePlainLayoutEdit(handle, 1, demand, &generic));
     ASSERT_TRUE(lane.AcquirePrivateReservedPlainLayoutEdit(handle, 1, demand, &edit));
     ASSERT_TRUE(edit.StageCandidate(events.data(), static_cast<std::uint32_t>(events.size()), 64, 64));
     EXPECT_FALSE(lane.Prepare(handle, events.data(), 6));
     EXPECT_FALSE(lane.Publish(handle));
     EXPECT_FALSE(lane.Cancel(handle));
     EXPECT_FALSE(lane.Retire(handle));
-    harken::PrivatePlainLayoutCommitProof ready;
+    harken::PrivateReservedPlainLayoutCommitProof ready;
     ASSERT_TRUE(edit.SealCandidate(&ready));
     EXPECT_FALSE(lane.Publish(handle));
     ready.Consume();
@@ -2066,10 +2169,10 @@ TEST(ImmediateActionLane, PristineReservedPlainLastBucketCollisionRefusesWholeCa
     std::uint64_t anchor = 0;
     ASSERT_TRUE(lane.TryPlace(peer, 64, 0, &anchor));
     ASSERT_TRUE(lane.Publish(peer));
-    harken::PrivatePlainLayoutEdit edit;
+    harken::PrivateReservedPlainLayoutEdit edit;
     ASSERT_TRUE(lane.AcquirePrivateReservedPlainLayoutEdit(handle, 1, demand, &edit));
     EXPECT_FALSE(edit.StageCandidate(events.data(), 6, 64, 64));
-    harken::PrivatePlainLayoutCommitProof ready;
+    harken::PrivateReservedPlainLayoutCommitProof ready;
     EXPECT_FALSE(edit.SealCandidate(&ready));
     ASSERT_TRUE(lane.Cancel(peer));
     ASSERT_TRUE(lane.Retire(peer));
@@ -2092,7 +2195,7 @@ TEST(ImmediateActionLane, PristineReservedPlainRepeatedLargeSmallShapesKeepOnlyA
     ASSERT_TRUE(lane.Prepare(last, &events.back(), 1));
     ASSERT_TRUE(lane.Reserve(3, 1, &first));
     ASSERT_TRUE(lane.Prepare(first, &events.front(), 1));
-    harken::PrivatePlainLayoutEdit edit;
+    harken::PrivateReservedPlainLayoutEdit edit;
     ASSERT_TRUE(lane.AcquirePrivateReservedPlainLayoutEdit(handle, 1, demand, &edit));
     ASSERT_TRUE(edit.StageCandidate(events.data(), 6, 64, 64));
     std::uint64_t anchor = 0;
@@ -2100,7 +2203,7 @@ TEST(ImmediateActionLane, PristineReservedPlainRepeatedLargeSmallShapesKeepOnlyA
     ASSERT_TRUE(edit.StageCandidate(events.data(), 2, 64, 64));
     ASSERT_TRUE(lane.TryPlace(last, 64, 0, &anchor));
     EXPECT_FALSE(edit.StageCandidate(events.data(), 6, 64, 64));
-    harken::PrivatePlainLayoutCommitProof ready;
+    harken::PrivateReservedPlainLayoutCommitProof ready;
     EXPECT_FALSE(edit.SealCandidate(&ready));
     ASSERT_TRUE(lane.TryPlace(first, 64, 0, &anchor));
     ASSERT_TRUE(lane.Cancel(first));
@@ -2167,7 +2270,7 @@ TEST(ImmediateActionLane, PristineReservedPlainIssuesFromActualLocalReservationA
     const harken::ImmediateLaneDemand demand{8, 0, 0, 8};
     harken::ImmediateLaneHandle local{}, equal{};
     ASSERT_TRUE(lane.Reserve(1, demand, &local));
-    harken::PrivatePlainLayoutEdit edit;
+    harken::PrivateReservedPlainLayoutEdit edit;
     EXPECT_FALSE(other.AcquirePrivateReservedPlainLayoutEdit(local, 1, demand, &edit));
     EXPECT_FALSE(lane.AcquirePrivateReservedPlainLayoutEdit(local, 2, demand, &edit));
     EXPECT_FALSE(lane.AcquirePrivateReservedPlainLayoutEdit({local.slot, local.generation + 1}, 1, demand, &edit));
@@ -2182,7 +2285,7 @@ TEST(ImmediateActionLane, PristineReservedPlainIssuesFromActualLocalReservationA
     ASSERT_TRUE(edit.StageCandidate(events.data(), 6, 64, 64));
     EXPECT_FALSE(other.Prepare(equal, events.data(), 6));
     ASSERT_TRUE(lane.Prepare(local, events.data(), 6));
-    harken::PrivatePlainLayoutEdit refused;
+    harken::PrivateReservedPlainLayoutEdit refused;
     EXPECT_FALSE(lane.AcquirePrivateReservedPlainLayoutEdit(local, 1, demand, &refused));
     edit.Abort();
     ASSERT_TRUE(other.Prepare(equal, events.data(), 6));
@@ -2196,14 +2299,14 @@ TEST(ImmediateActionLane, PristineReservedPlainMoveAssignmentAndOwnerFirstDestru
     const harken::TimelineProgramView program{};
     const auto events = PlainBank(&program);
     const harken::ImmediateLaneDemand demand{8, 0, 0, 8};
-    harken::PrivatePlainLayoutCommitProof survivor;
+    harken::PrivateReservedPlainLayoutCommitProof survivor;
     {
         harken::ImmediateActionLane lane;
         ASSERT_TRUE(lane.Reset({2, 8, 2, 64}));
         harken::ImmediateLaneHandle first{}, second{};
         ASSERT_TRUE(lane.Reserve(1, demand, &first));
         ASSERT_TRUE(lane.Reserve(2, demand, &second));
-        harken::PrivatePlainLayoutEdit a, b;
+        harken::PrivateReservedPlainLayoutEdit a, b;
         ASSERT_TRUE(lane.AcquirePrivateReservedPlainLayoutEdit(first, 1, demand, &a));
         ASSERT_TRUE(lane.AcquirePrivateReservedPlainLayoutEdit(second, 2, demand, &b));
         ASSERT_TRUE(a.StageCandidate(events.data(), 6, 64, 64));
@@ -2211,6 +2314,12 @@ TEST(ImmediateActionLane, PristineReservedPlainMoveAssignmentAndOwnerFirstDestru
         b = std::move(a);
         EXPECT_FALSE(a.Valid());
         ASSERT_TRUE(lane.Prepare(second, events.data(), 6));
+        ASSERT_TRUE(lane.Cancel(second));
+        ASSERT_TRUE(lane.Retire(second));
+        second = {};
+        ASSERT_TRUE(lane.Reserve(3, demand, &second));
+        ASSERT_TRUE(lane.AcquirePrivateReservedPlainLayoutEdit(second, 3, demand, &a));
+        a.Abort();
         EXPECT_FALSE(lane.Reset({}));
         EXPECT_EQ(nullptr, lane.CaptureDue(first.slot, 1));
         ASSERT_TRUE(b.SealCandidate(&survivor));

@@ -33,6 +33,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <process.h>
@@ -113,13 +114,21 @@ struct BusyPeakChainLoad {
 // single output bit. The scene deliberately mixes spatialized and 2D voices, an
 // effect chain, and a voice send so the parallel cascade + serial fold cover the
 // pan law, the effect blend, the N-channel fold, and the send scatter.
+struct RenderSceneFormat {
+    std::uint32_t blockFrames = kBlock;
+    std::uint32_t mixRate = kRate;
+    std::uint32_t sourceRate = kRate;
+    std::uint32_t bedChannels = 1;
+};
+
 void RenderScene(std::uint32_t workerCount, std::uint32_t mixLayout,
                  std::uint32_t deviceLayout, std::uint32_t blocks,
                  CaptureMulti& out, std::uint32_t arenaBytes = 1u << 20,
                  std::uint64_t* outOverflow = nullptr,
-                 bool* outParallelUnavailable = nullptr) {
-    VnConfig config =
-        MakeNullConfigLayout(16, kBlock, kRate, mixLayout, deviceLayout);
+                 bool* outParallelUnavailable = nullptr,
+                 RenderSceneFormat format = {}) {
+    VnConfig config = MakeNullConfigLayout(16, format.blockFrames,
+        format.mixRate, mixLayout, deviceLayout);
     config.fxSlotsPerVoice = 2;
     config.voiceSendSlots = 2;
     config.renderWorkerCount = workerCount;
@@ -139,9 +148,16 @@ void RenderScene(std::uint32_t workerCount, std::uint32_t mixLayout,
     const double freqs[8] = {110.0, 165.0, 220.0, 330.0,
                              440.0, 550.0, 660.0, 880.0};
     for (std::uint32_t i = 0; i < 8; ++i) {
-        const std::vector<float> sine =
-            harkentest::MakeSine(kRate, freqs[i], kRate, 0.25f);
-        const VnPCMDesc desc = MonoDesc(sine, kRate);
+        const std::uint32_t channels = (i & 1u) == 0 ? 1u : format.bedChannels;
+        std::vector<float> sine(format.sourceRate * channels);
+        for (std::uint32_t ch = 0; ch < channels; ++ch) {
+            const auto channel = harkentest::MakeSine(format.sourceRate,
+                freqs[i] + 37.0 * ch, format.sourceRate, 0.25f / channels);
+            for (std::uint32_t frame = 0; frame < format.sourceRate; ++frame)
+                sine[frame * channels + ch] = channel[frame];
+        }
+        const VnPCMDesc desc =
+            harkentest::InterleavedDesc(sine, channels, format.sourceRate);
         ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1 + i), &desc));
     }
 
@@ -184,16 +200,20 @@ void RenderScene(std::uint32_t workerCount, std::uint32_t mixLayout,
     ASSERT_EQ(VN_OK, Vn_SetVoiceEffect(handles[1], 0, VN_EFFECT_THREE_BAND_TONE,
                                        AsBase(&tone)));
 
-    // Two voices send to the aux bus, exercising the fold's send scatter.
-    ASSERT_EQ(VN_OK, Vn_SetVoiceSend(handles[2], 0, kSendBus, -3.0f));
+    // Voice 1 blends its insert before the same voice's send image is folded.
+    ASSERT_EQ(VN_OK, Vn_SetVoiceEffectBypass(handles[1], 0, 1));
+    ASSERT_EQ(VN_OK, Vn_SetVoiceSend(handles[1], 0, kSendBus, -3.0f));
     ASSERT_EQ(VN_OK, Vn_SetVoiceSend(handles[5], 0, kSendBus, -6.0f));
 
     ASSERT_EQ(VN_OK, Vn_Update());
+    const auto before = engine->mixer.BlocksRendered();
     PumpAndCaptureMulti(engine, blocks, out);
+    EXPECT_EQ(before + blocks, engine->mixer.BlocksRendered());
     EXPECT_EQ(0u, harken::memguard::HitCount())
         << "the allocation guard fired during the render";
     if (outOverflow != nullptr || outParallelUnavailable != nullptr) {
         const VnSnapshot snap = CaptureFull();
+        ASSERT_EQ(before + blocks - 1u, snap.blockIndex);
         if (outOverflow != nullptr) {
             // Cumulative arena-overflow count for the whole run — the degradation
             // fingerprint the tight-arena gate compares across worker counts.
@@ -279,10 +299,62 @@ TEST(RenderWorkerDeterminism, FiveOneToStereoDownmixByteIdentical) {
     RunDeterminismCase(VN_CHANNEL_LAYOUT_5_1, VN_CHANNEL_LAYOUT_STEREO);
 }
 
+struct RenderGeometryCase {
+    const char* name;
+    RenderSceneFormat format;
+    std::uint32_t mixLayout;
+    std::uint32_t deviceLayout;
+    std::uint32_t workers;
+};
+
+class RenderWorkerGeometry : public testing::TestWithParam<RenderGeometryCase> {};
+
+TEST_P(RenderWorkerGeometry, PreservesEveryOutputSample) {
+    const auto& test = GetParam();
+    constexpr std::uint32_t blocks = 48;
+    CaptureMulti serial, parallel;
+    std::uint64_t serialOverflow = 0, parallelOverflow = 0;
+    bool unavailable = false;
+    ASSERT_NO_FATAL_FAILURE(RenderScene(0, test.mixLayout, test.deviceLayout,
+        blocks, serial, 1u << 20, &serialOverflow, nullptr, test.format));
+    ASSERT_NO_FATAL_FAILURE(RenderScene(test.workers, test.mixLayout, test.deviceLayout,
+        blocks, parallel, 1u << 20, &parallelOverflow, &unavailable, test.format));
+    ASSERT_FALSE(unavailable) << "the requested worker configuration was not exercised";
+    EXPECT_EQ(0u, serialOverflow);
+    EXPECT_EQ(0u, parallelOverflow);
+    const auto expectedChannels = test.deviceLayout == VN_CHANNEL_LAYOUT_5_1 ? 6u : 2u;
+    for (const auto* capture : {&serial, &parallel}) {
+        ASSERT_EQ(expectedChannels, capture->channelCount);
+        ASSERT_EQ(expectedChannels, capture->channels.size());
+        ASSERT_NO_FATAL_FAILURE(ExpectNonSilent(*capture));
+        for (const auto& channel : capture->channels) {
+            ASSERT_EQ(blocks * test.format.blockFrames, channel.size());
+            EXPECT_TRUE(std::all_of(channel.begin(), channel.end(),
+                [](float sample) { return std::isfinite(sample); }));
+        }
+    }
+    ExpectBitIdentical(serial, parallel, test.workers);
+}
+
+INSTANTIATE_TEST_SUITE_P(Formats, RenderWorkerGeometry, testing::Values(
+    RenderGeometryCase{"Native44100Short", {64, 44100, 44100, 2},
+        VN_CHANNEL_LAYOUT_STEREO, VN_CHANNEL_LAYOUT_STEREO, 1},
+    RenderGeometryCase{"Native48000Unaligned", {257, 48000, 48000, 2},
+        VN_CHANNEL_LAYOUT_STEREO, VN_CHANNEL_LAYOUT_STEREO, 2},
+    RenderGeometryCase{"Upsample96000Long", {1024, 96000, 44100, 2},
+        VN_CHANNEL_LAYOUT_STEREO, VN_CHANNEL_LAYOUT_STEREO, 4},
+    RenderGeometryCase{"SixChannelBed", {256, 48000, 48000, 6},
+        VN_CHANNEL_LAYOUT_5_1, VN_CHANNEL_LAYOUT_5_1, 2},
+    RenderGeometryCase{"EightChannelBedDownmix", {480, 44100, 48000, 8},
+        VN_CHANNEL_LAYOUT_7_1, VN_CHANNEL_LAYOUT_STEREO, 4},
+    RenderGeometryCase{"Downsample96000Short", {64, 48000, 96000, 2},
+        VN_CHANNEL_LAYOUT_STEREO, VN_CHANNEL_LAYOUT_STEREO, 1}),
+    [](const testing::TestParamInfo<RenderGeometryCase>& info) { return info.param.name; });
+
 TEST(RenderWorkerDeterminism, TightArenaDegradesIdenticallyAcrossWorkerCounts) {
     // Determinism at the arena boundary. Every per-voice arena reservation —
-    // source scratch, blend planes, AND the send-scatter tap — is made in the
-    // serial slot-order pre-pass (scratch -> dry -> tap for one voice, then the
+    // source scratch and the blend/send planes — is made in the serial
+    // slot-order pre-pass (scratch -> blend/tap for one voice, then the
     // next voice); the cascade and fold phases touch the arena zero times. So
     // the allocation SEQUENCE, and therefore exactly which voices degrade to
     // silence when the arena runs short, is fixed by slot order and independent
