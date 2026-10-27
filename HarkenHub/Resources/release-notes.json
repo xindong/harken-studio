@@ -7,13 +7,35 @@
   },
   "releases": [
     {
+      "version": "0.1.72",
+      "date": "2026-10-27",
+      "pullRequests": [141, 143],
+      "contributors": ["liuxin2-sys"],
+      "changes": [
+        {
+          "category": "improved",
+          "text": "Running Hub taskbar icons now refresh correctly when switching between light and dark Windows themes."
+        },
+        {
+          "category": "improved",
+          "text": "Quick Integration Package and project version menus show concise version labels. Project version choices are ordered from newest to oldest."
+        },
+        {
+          "category": "improved",
+          "text": "Integration Package status checks, changes, moves, and uninstalls are available on one row."
+        },
+        {
+          "category": "improved",
+          "text": "The Integration Package source selector shows the package version before its path, keeping the version visible when long paths are shortened."
+        }
+      ]
+    },
+    {
       "version": "0.1.71",
       "date": "2026-10-26",
       "pullRequests": [
         133,
-        136,
-        141,
-        143
+        136
       ],
       "contributors": [
         "liuxin2-sys"
