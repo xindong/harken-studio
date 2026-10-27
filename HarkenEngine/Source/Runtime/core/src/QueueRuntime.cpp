@@ -629,12 +629,17 @@ bool QueueInstanceTable::LoadMirror(
 }
 
 bool QueueInstanceTable::MayMutateFrontier(const Row& row) noexcept {
+    if (row.signalFrontier != nullptr && (row.signalFrontierPool == nullptr ||
+        !row.signalFrontierPool->InvalidateFrontierOwnerOperations(
+            row.signalFrontier->operation.owner, row.signalFrontier->operation.group.decision,
+            AudioSliceInvalidateReason::Cancel))) return false;
     return row.frontierPool == nullptr || row.frontierPool->InvalidateFrontierOwnerOperations(
         row.frontierOwner, {}, AudioSliceInvalidateReason::Cancel);
 }
 
 bool QueueInstanceTable::HasFrontierReaders(const Row& row) noexcept {
-    return row.frontierPool != nullptr && row.frontierPool->HasFrontierOwnerOperations(row.frontierOwner);
+    return row.signalFrontier != nullptr ||
+        (row.frontierPool != nullptr && row.frontierPool->HasFrontierOwnerOperations(row.frontierOwner));
 }
 
 bool QueueInstanceTable::BindFrontierInitial(QueueInstanceToken token,
@@ -691,6 +696,100 @@ void QueueInstanceTable::ApplyFrontierInitial(const FrontierInitialProof& proof)
     assert(state == AudioSliceState::SliceClaimed || state == AudioSliceState::SliceClaimedWithInvalidation);
     (void)state;
     static_cast<Row*>(proof.row_)->initialActivationSequence.store(proof.audioSequence_, std::memory_order_release);
+}
+
+bool QueueInstanceTable::CaptureFrontierSignal(const PreparedQueueSignalAdvanceV1& prepared,
+    FrontierQueueSignalIdentity* out) const noexcept {
+    if (out == nullptr || out->Valid() || !ValidatePreparedSignalAdvance(prepared)) return false;
+    const auto* row = Resolve(prepared.identity_.queue);
+    if (row == nullptr) return false;
+    *out = {prepared.identity_.queue.slot, prepared.identity_.queue.generation,
+        prepared.identity_.attempt, prepared.current_.version, prepared.next_.version,
+        prepared.identity_.mirrorSequence, prepared.identity_.resetIntent,
+        row->programSemanticFingerprint};
+    return out->Valid();
+}
+
+bool QueueInstanceTable::BindFrontierSignal(const PreparedQueueSignalAdvanceV1& prepared,
+    const FrontierGroupBinding& binding, ScheduledTransactionPool& pool) noexcept {
+    FrontierQueueSignalIdentity original{};
+    Plan03PageGroupView group{};
+    if (!binding.Valid() || !binding.queueSignal.Valid() ||
+        !CaptureFrontierSignal(prepared, &original) || !(binding.queueSignal == original) ||
+        !pool.PrivatePlan03GroupBindable(binding.operation.group) ||
+        !pool.ResolvePlan03GroupSliceProducer(binding.operation.group, &group) ||
+        group.frontier != &binding || group.lease == nullptr || group.sourceControlCount != 0 ||
+        group.lease->Capture().state != AudioSliceState::Ready ||
+        binding.operation.order.executeFrame != prepared.identity_.order.executeFrame ||
+        binding.operation.order.logicCommitSequence != prepared.identity_.order.sequence ||
+        binding.operation.order.executionOrdinal != prepared.identity_.order.executionOrdinal) return false;
+    auto* row = Resolve(prepared.identity_.queue);
+    if (row == nullptr || row->signalFrontier != nullptr || row->signalFrontierPool != nullptr ||
+        row->signalPublishedAttempt.load(std::memory_order_acquire) != 0 ||
+        row->signalActivationSequence.load(std::memory_order_acquire) != 0 ||
+        row->world != binding.operation.world || row->rootInstance != binding.operation.owner.child)
+        return false;
+    // Both fields remain immutable until the original native group detaches.
+    row->signalFrontierPool = &pool;
+    row->signalFrontier = &binding;
+    return true;
+}
+
+bool QueueInstanceTable::ProveFrontierSignal(const FrontierGroupBinding& binding,
+    AudioSliceLease& lease, std::uint64_t audioSequence, FrontierSignalProof* out) noexcept {
+    if (out == nullptr || out->Valid() || audioSequence == 0 ||
+        !binding.Valid() || !binding.queueSignal.Valid()) return false;
+    const auto& identity = binding.queueSignal;
+    auto* row = Resolve({identity.slot, identity.generation});
+    // Acquire the immutable binding without reading any logic-thread signal state.
+    if (row == nullptr || row->signalPublishedAttempt.load(std::memory_order_acquire) != identity.attempt)
+        return false;
+    Plan03PageGroupView group{};
+    if (row->signalFrontier != &binding || row->signalFrontierPool == nullptr ||
+        row->world != binding.operation.world || row->rootInstance != binding.operation.owner.child ||
+        row->programSemanticFingerprint != identity.programSemanticFingerprint ||
+        row->mirrorVersion.load(std::memory_order_acquire) != identity.currentVersion ||
+        row->mirrorSequence.load(std::memory_order_acquire) != identity.mirrorSequence ||
+        row->signalActivationSequence.load(std::memory_order_acquire) != 0 ||
+        row->failurePhase.load(std::memory_order_acquire) != QueueFailurePhase::Healthy ||
+        !row->signalFrontierPool->ResolvePlan03GroupSliceRt(binding.operation.group, &group) ||
+        group.frontier != &binding || group.lease != &lease || group.sourceControlCount != 0 ||
+        lease.Capture().state != AudioSliceState::Ready ||
+        !row->signalFrontierPool->NotePlan03GroupReadRt(group.identity, audioSequence)) return false;
+    out->row_ = row;
+    out->lease_ = &lease;
+    out->audioSequence_ = audioSequence;
+    return true;
+}
+
+void QueueInstanceTable::ApplyFrontierSignal(const FrontierSignalProof& proof) noexcept {
+    assert(proof.Valid() && proof.lease_ != nullptr);
+    const auto state = proof.lease_->Capture().state;
+    assert(state == AudioSliceState::SliceClaimed || state == AudioSliceState::SliceClaimedWithInvalidation);
+    (void)state;
+    static_cast<Row*>(proof.row_)->signalActivationSequence.store(proof.audioSequence_, std::memory_order_release);
+}
+
+bool QueueInstanceTable::ReleaseFrontierSignal(const FrontierGroupBinding& binding,
+    std::uint64_t completedAudioSequence) noexcept {
+    if (!binding.Valid() || !binding.queueSignal.Valid()) return false;
+    const auto identity = binding.queueSignal;
+    auto* row = Resolve({identity.slot, identity.generation});
+    if (row == nullptr || row->signalFrontier != &binding || row->signalFrontierPool == nullptr ||
+        row->nextStateOwner == NextStateOwner::AcceptedSignal) return false;
+    const auto published = row->signalPublishedAttempt.load(std::memory_order_acquire);
+    if (published != 0 && published != identity.attempt) return false;
+    if (published == 0 && (row->signalReservation == SignalReservation::None ||
+        row->signalIdentity.attempt != identity.attempt)) return false;
+    // Detachment rechecks the actual lease, dependents, pins, and strict read fence.
+    // A private unread detach may erase binding, so do not inspect it afterwards.
+    if (!row->signalFrontierPool->DetachPlan03GroupFrontier(
+            binding.operation.group, completedAudioSequence)) return false;
+    row->signalPublishedAttempt.store(0, std::memory_order_release);
+    row->signalFrontier = nullptr;
+    row->signalFrontierPool = nullptr;
+    row->signalActivationSequence.store(0, std::memory_order_release);
+    return true;
 }
 
 void QueueInstanceTable::FrontierInitialCompletionProof::Release() noexcept {
@@ -1293,6 +1392,10 @@ bool QueueInstanceTable::AcquireInternal(
         row.nextStateOwner = NextStateOwner::None;
         row.signalAttemptCounter = 0;
         row.signalIdentity = {};
+        row.signalFrontierPool = nullptr;
+        row.signalFrontier = nullptr;
+        row.signalPublishedAttempt.store(0, std::memory_order_relaxed);
+        row.signalActivationSequence.store(0, std::memory_order_relaxed);
         row.conditionalReserved.store(false, std::memory_order_relaxed);
         row.conditionalReplacementReserved.store(
             false, std::memory_order_relaxed);
@@ -3135,7 +3238,8 @@ QueueSignalStatusV1 QueueInstanceTable::PrepareSignalAdvance(
         return QueueSignalStatusV1::InvalidInput;
     Row* row = Resolve(token);
     if (row == nullptr) return QueueSignalStatusV1::Stale;
-    if (SignalOwnsNext(*row) || row->nextStateOwner != NextStateOwner::None ||
+    if (SignalOwnsNext(*row) || row->signalFrontier != nullptr ||
+        row->nextStateOwner != NextStateOwner::None ||
         row->pendingVersion.load(std::memory_order_acquire) != 0 ||
         row->conditionalReserved.load(std::memory_order_acquire) ||
         row->conditionalReplacementReserved.load(std::memory_order_acquire) ||
@@ -3205,7 +3309,7 @@ bool QueueInstanceTable::CancelPreparedSignalAdvance(
     Row* row = Resolve(prepared->identity_.queue);
     if (row == nullptr || row->signalReservation == SignalReservation::None ||
         row->signalIdentity.attempt != prepared->identity_.attempt ||
-        row->nextStateOwner != NextStateOwner::None) return false;
+        row->nextStateOwner != NextStateOwner::None || row->signalFrontier != nullptr) return false;
     row->signalReservation = SignalReservation::None;
     row->signalIdentity = {};
     prepared->owner_ = nullptr;
@@ -3222,6 +3326,8 @@ bool QueueInstanceTable::PublishPreparedSignalAdvance(
     row->nextStateOwner = NextStateOwner::AcceptedSignal;
     row->signalReservation = SignalReservation::None;
     *out = prepared->identity_;
+    if (row->signalFrontier != nullptr)
+        row->signalPublishedAttempt.store(prepared->identity_.attempt, std::memory_order_release);
     prepared->owner_ = nullptr;
     return true;
 }
@@ -3241,6 +3347,12 @@ bool QueueInstanceTable::SettleSignalAdvance(
         (accepted.resetIntent != 0 && row->resetIntentGeneration != accepted.resetIntent))
         return false;
     if (outcome == QueueSignalOutcomeV1::InFlight) return true;
+    if (row->signalFrontier != nullptr) {
+        const auto applied = row->signalActivationSequence.load(std::memory_order_acquire);
+        if (row->signalPublishedAttempt.load(std::memory_order_acquire) != accepted.attempt ||
+            row->signalFrontier->queueSignal.attempt != accepted.attempt ||
+            (outcome == QueueSignalOutcomeV1::Applied ? applied == 0 : applied != 0)) return false;
+    }
     if (outcome == QueueSignalOutcomeV1::Applied) {
         EffectiveQueueState monitorPrevious{};
         (void)LoadMirror(*row, &monitorPrevious);

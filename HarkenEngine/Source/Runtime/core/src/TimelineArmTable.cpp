@@ -3094,12 +3094,13 @@ bool TimelineArmTable::ProveBoundFrontierArm(TimelineArmToken token,
     return true;
 }
 
-bool TimelineArmTable::ProveInitialVariableDeferredStart(TimelineArmToken token,
+bool TimelineArmTable::ProveInitialAdmissionDeferredStart(TimelineArmToken token,
     const FrontierGroupBinding& binding, AudioSliceLease& lease, const ScheduledTransactionPool& pool,
     std::uint64_t audioSequence, BoundAudioProof* out) noexcept {
     Plan03PageGroupView group{};
     if (!binding.Valid() || binding.role != FrontierGroupRole::EntryMember ||
-        binding.operation.kind != FrontierOperationKind::Entry || !binding.variableSide.Valid() ||
+        binding.operation.kind != FrontierOperationKind::Entry ||
+        (static_cast<unsigned>(binding.variableSide.Valid()) + static_cast<unsigned>(binding.queueSignal.Valid()) != 1u) ||
         binding.transition.Valid() || binding.queueInitial.Valid() || binding.queueConditional.Valid() ||
         !pool.ResolvePlan03GroupSliceRt(binding.operation.group, &group) ||
         group.frontier != &binding || group.lease != &lease || group.members == nullptr ||
@@ -3366,14 +3367,16 @@ TimelineArmOperationDisposition TimelineArmTable::BeginFrontierOperation(
     if (row.parentGroup.Valid()) {
         const auto* admission = row.frontierAdmission;
         Plan03PageGroupView prior{};
-        const bool initialVariableStart = admission != nullptr &&
-            admission->role == FrontierGroupRole::EntryMember && admission->variableSide.Valid() &&
+        const bool initialAdmissionStart = admission != nullptr &&
+            admission->role == FrontierGroupRole::EntryMember &&
+            (static_cast<unsigned>(admission->variableSide.Valid()) +
+                static_cast<unsigned>(admission->queueSignal.Valid()) == 1u) &&
             admission->operation.kind == FrontierOperationKind::Entry &&
             !admission->transition.Valid() && !admission->queueInitial.Valid() &&
             !admission->queueConditional.Valid() && kind == TimelineArmOperationKind::Start;
         if (binding == nullptr || pool == nullptr ||
             binding->kind != FrontierOperationKind::Dependent || admission == nullptr ||
-            (admission->role != FrontierGroupRole::Future && !initialVariableStart) ||
+            (admission->role != FrontierGroupRole::Future && !initialAdmissionStart) ||
             !(admission->entry == binding->entry) ||
             !(admission->operation.owner == operation.owner) ||
             admission->operation.world != operation.world || admission->operation.transport != operation.transport ||
@@ -3388,7 +3391,7 @@ TimelineArmOperationDisposition TimelineArmTable::BeginFrontierOperation(
             !pool->ResolvePlan03GroupSliceRt(admission->operation.group, &prior) ||
             prior.frontier != admission || prior.lease != row.frontierAdmissionLease || prior.lease == nullptr ||
             prior.lease->Capture().state != AudioSliceState::SliceApplied ||
-            (initialVariableStart && (prior.members == nullptr || row.memberIndex < prior.sourceControlCount ||
+            (initialAdmissionStart && (prior.members == nullptr || row.memberIndex < prior.sourceControlCount ||
                 row.memberIndex >= prior.memberCount || !SameArm(prior.members[row.memberIndex], token))) ||
             !pool->NotePlan03GroupReadRt(admission->operation.group, audioSequence))
             return reject(TimelineArmOperationDisposition::Stale);

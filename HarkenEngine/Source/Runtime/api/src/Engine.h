@@ -707,7 +707,18 @@ struct EngineOrdinaryRetiringLeaf {
     bool exitSeen = false;
 };
 
+struct EngineQueueProgramBank;
+
 struct EngineOrdinaryRetiringSource {
+    struct QueueCurrent {
+        EngineQueueProgramBank* bank = nullptr;
+        DecisionToken decision{};
+        KnownCompletionPredicateV1 completion{};
+        VnVoiceHandle render = 0;
+        OccurrenceToken retiringOccurrence{};
+        CompletionOwnerRef retiringOwner{};
+    };
+    std::unique_ptr<QueueCurrent> queueCurrent;
     PlayableInstanceHandle root = 0;
     PlayableInstanceHandle subtree = 0;
     std::uint32_t firstLeafResource = UINT32_MAX;
@@ -1573,6 +1584,9 @@ struct EnginePlayableStartRow {
     std::uint64_t preparingStorageGeneration = 0;
     PlayableInstanceHandle variableControlOuterRootInstance = 0;
     std::uint64_t variableControlOuterRootEpoch = 0;
+    PlayableInstanceHandle schedulePublicRoot = 0;
+    std::uint64_t schedulePublicRootEpoch = 0;
+    std::uint64_t scheduleCallerSeed = 0;
 };
 
 struct EnginePlainInitialRetryRetirement {
@@ -1975,6 +1989,75 @@ struct EngineServiceFeatureArrays {
     EngineQueueServicePayload queuePayload{};
 };
 
+struct EngineNaturalClipDeadline {
+    OccurrenceToken occurrence{};
+    std::uint64_t occurrenceEpoch = 0;
+    std::uint64_t arrangingEpoch = 0;
+    std::uint64_t frame = UINT64_MAX;
+    bool Empty() const noexcept {
+        return occurrence.slot == 0 && occurrence.generation == 0 &&
+            occurrenceEpoch == 0 && arrangingEpoch == 0 && frame == UINT64_MAX;
+    }
+};
+
+enum class NaturalClipStartStatus : std::uint8_t { Unbounded, WithinClip, Ended, Invalid };
+
+struct EngineScheduleChildPropertyContext {
+    PlayableRefV1 propertyRoot{};
+    std::vector<std::uint32_t> ordinals;
+    std::vector<VnObjectId> trackIds;
+    std::vector<SelectionPathNodeV1> typedPrefix;
+};
+
+struct EngineScheduleAggregateChild {
+    PlayableRefV1 content{};
+    std::uint64_t startOffsetFrames = 0;
+    std::uint64_t endOffsetFrames = UINT64_MAX;
+    std::uint32_t stableLeafOrdinal = 0;
+    EnginePlayableServiceReference service{};
+    EngineScheduleChildPropertyContext properties;
+    EngineNaturalClipDeadline naturalClipDeadline{};
+    PlayableTerminalOutcome outcome{};
+    PlayableControlReason reason = PlayableControlReason::None;
+    bool logicalComplete = false;
+    bool resourcesReleased = false;
+    bool lifecycleOwned = false;
+    bool pendingEntry = false;
+};
+
+struct EngineScheduleAggregateState {
+    // Prepared to the real clip count; membership is immutable after publication.
+    std::vector<EngineScheduleAggregateChild> children;
+    std::uint64_t zeroWorkCompletionOffsetFrames = 0;
+    bool hasZeroWorkCompletion = false;
+    std::uint64_t completionOrdinal = 0;
+    PlayableControlReason failureReason = PlayableControlReason::None;
+    bool committed = false;
+    bool parentNotified = false;
+    bool cancellationRequested = false;
+
+    bool ChildrenReleased() const noexcept {
+        return std::all_of(children.begin(), children.end(),
+            [](const auto& child) noexcept {
+                return child.resourcesReleased && child.naturalClipDeadline.Empty();
+            });
+    }
+};
+
+struct EngineNativeEntryDependency {
+    EnginePlayableServiceReference parentService{};
+    EnginePlayablePartitionToken parentPartition{};
+    std::uint64_t invocationGeneration = 0;
+    FrontierEntryReceiptRef entry{};
+    Plan03GroupSliceIdentity primary{};
+    Plan03GroupSliceIdentity member{};
+    DecisionFuturePin coordinatorPin{};
+    Plan03GroupReaderPin primaryPin{};
+    Plan03GroupReaderPin memberPin{};
+    std::unique_ptr<FrontierAppliedSignalDependency> appliedSignal;
+    bool entryBound = false;
+};
+
 struct EnginePlayableServiceRow {
     using UnpublishedVariableGroupCancellation =
         EngineServiceFeatureArrays::UnpublishedVariableGroupCancellation;
@@ -1993,6 +2076,9 @@ struct EnginePlayableServiceRow {
     std::uint32_t scheduleLeafCount = 0;
     std::vector<EngineMemberProgramToken> memberPrograms;
     std::vector<EnginePlayableMemberToken> members;
+    std::unique_ptr<EngineScheduleAggregateState> scheduleAggregate;
+    std::unique_ptr<EngineScheduleAggregateChild> scheduleTerminalChild;
+    std::unique_ptr<std::vector<EngineScheduleAggregateChild>> scheduleVariableChildren;
     std::uint32_t memberRelationHead = UINT32_MAX;
     std::uint32_t memberRelationCount = 0;
     std::uint32_t childLiveCount = 0;
@@ -2005,6 +2091,8 @@ struct EnginePlayableServiceRow {
     bool partitionRetiring = false;
     bool pendingImmediateEntry = false;
     bool pendingImmediateRetry = false;
+    bool pendingDirectStartBinding = false;
+    std::uint64_t pendingDirectEntryFrame = 0;
     bool zeroWorkMarker = false;
     bool hasZeroWorkCompletion = false;
     bool variableControlDeferredCancellation = false;
@@ -2016,6 +2104,7 @@ struct EnginePlayableServiceRow {
     FrontierEntryReceiptRef frontierEntry{};
     FrontierEntryReceiptRef frontierLifetimeEntry{};
     DecisionFuturePin frontierLifetimePin{};
+    std::unique_ptr<EngineNativeEntryDependency> nativeEntryDependency;
     EnginePlayableServiceReference frontierChildService{};
     ArmGroupToken frontierCoordinatorGroup{};
     AcceptedQueueSignalAdvanceV1 frontierAcceptedSignal{};
@@ -4079,6 +4168,28 @@ private:
     ActionObjectRefV1 target_{};
 };
 
+struct EngineScheduleChildAttemptOwnerContext {
+    Engine* engine = nullptr;
+    EngineFrontierAttemptToken parent{};
+    EngineFrontierAttemptToken child{};
+    // The original private group must retire before any nested child Source.
+    EngineFrontierAttemptToken queueSignalAdmissionOwner{};
+    EnginePlayableServiceReference parentService{};
+    EngineScheduleAggregateChild* record = nullptr;
+    OccurrenceToken occurrence{};
+    bool occurrencePrepared = false;
+    bool committed = false;
+    bool rootLinkDeferred = false;
+    const PlayableInstanceTable::PreparedParentLinksProof* originalParentLinks = nullptr;
+};
+
+struct EngineScheduleAttemptChildren {
+    // The exact initial clip count is reserved before the first child is prepared.
+    std::vector<EngineScheduleChildAttemptOwnerContext> owners;
+    std::uint32_t count = 0;
+    std::uint32_t selectionEventNext = 0;
+};
+
 struct EngineActionPlayStorage {
     struct InitialSelectionContext {
         SelectionPendingBatchIdentityV1 identity{};
@@ -4166,6 +4277,7 @@ struct EngineActionPlayStorage {
             grow(nestedContinuousDecisions, containerNodeCapacity);
             grow(nestedContinuousDecisionOwners, containerNodeCapacity);
             grow(variableControlChildren, containerChildCapacity);
+            grow(variableControlScheduleOwned, containerChildCapacity);
             grow(variableControlChildKinds, containerChildCapacity);
             grow(variableControlLeafChildren, containerChildCapacity);
             grow(variableControlContainerRows, containerChildCapacity);
@@ -4251,6 +4363,10 @@ struct EngineActionPlayStorage {
         bool publishedLedgerTransferred = false;
         bool stoppingBlockerHeld = false;
     } deferredContainerOwner{};
+    // Authored metadata only until moved into the real aggregate service.
+    std::unique_ptr<EngineScheduleAggregateState> scheduleAggregatePlan;
+    std::unique_ptr<EngineScheduleAttemptChildren> scheduleChildren;
+    PreparedPlayableInstance* schedulePreparedRoot = nullptr;
     OriginalPreparingInvocationStorage originalInvocationStorage;
     OriginalPendingVariableProducerRetention originalPendingVariableProducer;
     OriginalWorldNoPackPreparation originalWorldNoPackPreparation;
@@ -4306,6 +4422,7 @@ struct EngineActionPlayStorage {
     std::vector<PreparedDecisionReservation> nestedContinuousDecisions;
     std::vector<EnginePreparedDecisionOwnerContext> nestedContinuousDecisionOwners;
     std::vector<PreparedPlayableInstance> variableControlChildren;
+    std::vector<std::uint8_t> variableControlScheduleOwned;
     std::vector<PlayableKind> variableControlChildKinds;
     std::vector<PreparedPlayableInstance> variableControlLeafChildren;
     std::vector<PreparedContainerPlaybackRow> variableControlContainerRows;
@@ -4632,6 +4749,16 @@ struct EngineActionPlayScratch {
     } pendingVariableReplacementEntry{};
     bool directExecution = false;
     bool continuationExecution = false;
+    bool initialForestPublication = false;
+    bool initialForestCancellationSealed = false;
+    bool nativeEntryDomain = false;
+    bool nativeEntryCoordinatorReserved = false;
+    std::uint32_t initialFrontierParticipantCount = 0;
+    EngineFrontierAttemptToken queueSignalEntryOwner{};
+    EngineFrontierAttemptToken initialNativeForestOwner{};
+    EnginePlayableServiceReference nativeEntrySeedService{};
+    bool nativeEntryForestRoot = false;
+    EngineFrontierAttemptToken initialReadCutOwner{};
     bool queueFutureExecution = false;
     PreparedQueueInstanceV1* queueFuturePreparedQueue = nullptr;
     EngineQueueProgramBank* queueFutureProgramBank = nullptr;
@@ -4647,6 +4774,11 @@ struct EngineActionPlayScratch {
     TimelineExecutionOrder continuationOrder{};
     std::uint64_t continuationTransportEpoch = 0;
     ContainerPlaybackRow continuationParentSnapshot{};
+    EngineFrontierAttemptToken continuationScheduleAttempt{};
+    std::unique_ptr<EngineScheduleAggregateChild> continuationScheduleChild;
+    EngineScheduleAggregateChild* pendingScheduleChild = nullptr;
+    OccurrenceToken pendingScheduleOccurrence{};
+    bool pendingScheduleOccurrencePrepared = false;
     PlayableInstanceHandle continuationChildRoot = 0;
     bool continuationParentLinked = false;
     DecisionToken frontierCoordinator{};
@@ -4656,6 +4788,51 @@ struct EngineActionPlayScratch {
     CommittedPlan03GroupSlice frontierPrimary{};
     FrontierActivationDescriptor frontierDescriptor{};
     PreparedQueueSignalAdvanceV1 frontierSignal{};
+    struct InitialQueueSignalAdmission {
+        explicit InitialQueueSignalAdmission(std::size_t capacity)
+            : members(capacity), cancellationArms(capacity), voices(capacity),
+              owners(capacity), sources(capacity) {}
+        EnginePlayableServiceReference service{};
+        DecisionToken decision{};
+        ArmGroupToken armGroup{};
+        PreparedPlan03GroupSlice prepared{};
+        CommittedPlan03GroupSlice committed{};
+        Plan03GroupSliceIdentity group{};
+        bool decisionCommitted = false;
+        bool decisionCancelled = false;
+        bool signalBound = false;
+        std::uint32_t memberCount = 0;
+        std::vector<TimelineArmToken> members;
+        std::array<UnpublishedGroupCancellationHold, 1> cancellationGroups;
+        std::vector<UnpublishedArmCancellationHold> cancellationArms;
+        std::vector<EnginePreparedTimelineVoiceStart*> voices;
+        std::vector<PreparedTimelineVoiceOwnerContext*> owners;
+        std::vector<const TimelineArmTable::OriginalUnpublishedSourceDisposition*> sources;
+    };
+    std::unique_ptr<InitialQueueSignalAdmission> initialQueueSignalAdmission;
+    struct InitialQueueEntryAdmission {
+        explicit InitialQueueEntryAdmission(std::size_t capacity)
+            : members(capacity), cancellationArms(capacity), voices(capacity),
+              owners(capacity), sources(capacity) {}
+        EnginePlayableServiceReference service{};
+        std::uint64_t entryFrame = 0;
+        DecisionToken decision{};
+        ArmGroupToken armGroup{};
+        PreparedPlan03GroupSlice prepared{};
+        CommittedPlan03GroupSlice committed{};
+        Plan03GroupSliceIdentity group{};
+        bool decisionCommitted = false;
+        bool decisionCancelled = false;
+        bool initialBound = false;
+        std::uint32_t memberCount = 0;
+        std::vector<TimelineArmToken> members;
+        std::array<UnpublishedGroupCancellationHold, 1> cancellationGroups;
+        std::vector<UnpublishedArmCancellationHold> cancellationArms;
+        std::vector<EnginePreparedTimelineVoiceStart*> voices;
+        std::vector<PreparedTimelineVoiceOwnerContext*> owners;
+        std::vector<const TimelineArmTable::OriginalUnpublishedSourceDisposition*> sources;
+    };
+    std::vector<std::unique_ptr<InitialQueueEntryAdmission>> initialQueueEntryAdmissions;
     TimelineArmReaderPin frontierArmPin{};
     EngineQueueProgramBank* frontierProgramBank = nullptr;
     using PreparedDecisionOwnerContext = EnginePreparedDecisionOwnerContext;
@@ -4840,6 +5017,7 @@ struct EngineActionPlayScratch {
         variableControlNestedPrefixPath{};
     std::uint32_t variableControlNestedPrefixCount = 0;
     PlayableInstanceHandle variableControlParentInstance = 0;
+    bool variableControlExternalRootOwned = false;
     std::uint64_t variableControlParentEpoch = 0;
     bool variableControlNested = false;
     // The outer path reservations are owned by playableTreeExecutor once
@@ -4908,6 +5086,7 @@ struct EngineActionPlayScratch {
     std::array<bool, kMaxKnownScheduleLeaves>
         queueSuccessorLeafOccurrencesPrepared{};
     PreparedOccurrenceOwnerContext queueCurrentOccurrenceOwnerContext{};
+    PreparedOccurrenceOwnerContext pendingScheduleOccurrenceOwnerContext{};
     std::array<PreparedOccurrenceOwnerContext, kMaxKnownScheduleLeaves>
         queueCurrentLeafOccurrenceOwnerContexts{};
     PreparedOccurrenceOwnerContext queueSuccessorOccurrenceOwnerContext{};
@@ -7454,6 +7633,11 @@ public:
             return VN_RUNTIME_RECREATE_REQUIRED;
         }
         return RetagOriginalPackIdentityLease(original.original_, PackLeaseSlice::Playable);
+    }
+
+    bool SameOriginalPackLease(const PackPartitionLease& left,
+        const PackPartitionLease& right) const noexcept {
+        return packComposition.SameFullOriginalLease(left, right);
     }
 
     bool OriginalPackIdentityLeaseMatches(const OriginalPackIdentityLease& original,

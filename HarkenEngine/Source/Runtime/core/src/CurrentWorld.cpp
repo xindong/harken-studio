@@ -1197,7 +1197,8 @@ bool AccumulateBoundedTransitionEndpointLeaves(
     const WorldView& world,
     const PlayableRefV1& endpoint,
     std::uint32_t depth,
-    std::uint32_t* leafCount) noexcept {
+    std::uint32_t* leafCount,
+    bool allowNativeSelection = false) noexcept {
     if (leafCount == nullptr ||
         world.capacity.maxKnownScheduleLeaves == 0 ||
         *leafCount > world.capacity.maxKnownScheduleLeaves || depth == 0 ||
@@ -1211,7 +1212,40 @@ bool AccumulateBoundedTransitionEndpointLeaves(
         ++*leafCount;
         return true;
     }
-    if (endpoint.kind == PlayableKindV1::Container) return false;
+    if (endpoint.kind == PlayableKindV1::Container) {
+        if (!allowNativeSelection || world.containerCount == 0) return false;
+        const auto* container = std::lower_bound(
+            world.containers, world.containers + world.containerCount,
+            endpoint.stableId, [](const auto& row, VnObjectId stableId) {
+                return row.containerStableId < stableId;
+            });
+        if (container == world.containers + world.containerCount ||
+            container->containerStableId != endpoint.stableId ||
+            container->programSemanticFingerprint != endpoint.expectedProgramSemanticFingerprint ||
+            (container->mode != ContainerModeV1::Random &&
+             container->mode != ContainerModeV1::Sequence) ||
+            container->childCount == 0 || container->children == nullptr ||
+            container->childCount > world.capacity.maxChildrenPerContainer) return false;
+        using PropertyId = playableproperties::PlayablePropertyIdV1;
+        constexpr auto loopSlot = static_cast<std::size_t>(PropertyId::LoopCount) - 1u;
+        const auto* property = FindProperty(
+            world, playableproperties::ContentPropertyKindV1::Container, endpoint.stableId);
+        if (property != nullptr &&
+            (property->payload.presentMask & (UINT64_C(1) << loopSlot)) != 0 &&
+            property->payload.values[loopSlot].bits != 1u) return false;
+        // A single selection contributes one branch. Validate every possible
+        // branch and reserve the maximum; later selections need new members.
+        auto maximum = *leafCount;
+        for (std::uint32_t index = 0; index < container->childCount; ++index) {
+            auto branchCount = *leafCount;
+            if (!AccumulateBoundedTransitionEndpointLeaves(
+                    world, container->children[index].playable, depth + 1u,
+                    &branchCount, allowNativeSelection)) return false;
+            maximum = std::max(maximum, branchCount);
+        }
+        *leafCount = maximum;
+        return true;
+    }
     if (endpoint.kind == PlayableKindV1::Track) {
         const auto* schedule = std::lower_bound(
             world.trackSchedules,
@@ -1229,7 +1263,7 @@ bool AccumulateBoundedTransitionEndpointLeaves(
              ++index) {
             if (!AccumulateBoundedTransitionEndpointLeaves(
                     world, schedule->placements[index].content, depth + 1u,
-                    leafCount)) {
+                    leafCount, allowNativeSelection)) {
                 return false;
             }
         }
@@ -1251,7 +1285,7 @@ bool AccumulateBoundedTransitionEndpointLeaves(
     for (std::uint32_t index = 0; index < schedule->trackRefCount; ++index) {
         if (!AccumulateBoundedTransitionEndpointLeaves(
                 world, schedule->trackRefs[index].trackDefinition,
-                depth + 1u, leafCount)) {
+                depth + 1u, leafCount, allowNativeSelection)) {
             return false;
         }
     }
@@ -1262,12 +1296,37 @@ bool AccumulateBoundedTransitionEndpointLeaves(
 template <class WorldView>
 bool TransitionEndpointHasBoundedResolvedVoices(
     const WorldView& world,
-    const PlayableRefV1& endpoint) noexcept {
+    const PlayableRefV1& endpoint,
+    bool allowNativeSelection = false) noexcept {
     std::uint32_t leafCount = 0;
     return AccumulateBoundedTransitionEndpointLeaves(
-               world, endpoint, 1, &leafCount) &&
+               world, endpoint, 1, &leafCount, allowNativeSelection) &&
            leafCount != 0 &&
            leafCount <= world.capacity.maxKnownScheduleLeaves;
+}
+
+template <class WorldView, class ContainerView, class ChildView>
+bool QueueTransitionEndpointSupported(const WorldView& world,
+    const ContainerView& container, const ChildView& child) noexcept {
+    if (TransitionEndpointHasBoundedResolvedVoices(world, child.playable)) return true;
+    if constexpr (!std::is_same_v<WorldView, ContainerWorldInstallViewV1>) {
+        return false;
+    } else {
+        if ((container.mode != ContainerModeV1::SequenceQueue && container.mode != ContainerModeV1::RandomQueue) ||
+            container.queueSplice != QueueSpliceV1::Butt ||
+            (child.playable.kind != PlayableKindV1::Track && child.playable.kind != PlayableKindV1::Piece) ||
+            container.transitionProgramIndex >= world.transitionCount ||
+            !TransitionEndpointHasBoundedResolvedVoices(world, child.playable, true)) return false;
+        const auto& transition = world.transitions[container.transitionProgramIndex];
+        for (std::uint32_t index = 0; index < transition.ruleCount; ++index) {
+            const auto& rule = transition.rules[index];
+            // Native schedule signals carry the target envelope after source completion.
+            if (rule.sourceFade.active != 0 &&
+                (rule.sourceAny != 0 || rule.targetAny != 0 ||
+                 SameRef(rule.source, child.playable) || SameRef(rule.target, child.playable))) return false;
+        }
+        return true;
+    }
 }
 
 template <class WorldView, class ContainerView, class ChildView>
@@ -1275,8 +1334,18 @@ bool VariableControlTransitionEndpointSupported(
     const WorldView& world,
     const ContainerView& container,
     const ChildView& child) noexcept {
+    bool nativeSchedule = false;
+    if constexpr (std::is_same_v<WorldView, ContainerWorldInstallViewV1>) {
+        if (child.playable.kind == PlayableKindV1::Track ||
+            child.playable.kind == PlayableKindV1::Piece) {
+            for (std::uint32_t index = 0; index < container.discreteRowCount; ++index) {
+                nativeSchedule = nativeSchedule ||
+                    container.discreteRows[index].childStableOrdinal == child.stableChildOrdinal;
+            }
+        }
+    }
     if (!TransitionEndpointHasBoundedResolvedVoices(
-            world, child.playable)) {
+            world, child.playable, nativeSchedule)) {
         return false;
     }
     for (std::uint32_t index = 0;
@@ -3551,8 +3620,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
                         (row.mode == ContainerModeV1::VariableControl
                              ? !VariableControlTransitionEndpointSupported(
                                    world, row, child)
-                             : !TransitionEndpointHasBoundedResolvedVoices(
-                                   world, child.playable));
+                             : !QueueTransitionEndpointSupported(world, row, child));
                 }
             }
         }

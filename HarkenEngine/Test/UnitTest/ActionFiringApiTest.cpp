@@ -4,6 +4,7 @@
 #include "UnitTest/PlayableStorageTestSupport.h"
 #include "UnitTest/OriginalServiceStorageTestAccess.h"
 #include "Common/StreamBuilder.h"
+#include "UnitTest/CanonicalPackSetActivate.h"
 #include "PlayableInstanceTableTestAccess.h"
 #include "SharedQueueTrace.h"
 #include "SharedFrontierTrace.h"
@@ -45413,7 +45414,7 @@ static void CheckOrderedSelectedLeafFirstPcm(bool nested, bool sameAction,
                                            bool variableControl = false, bool fixedStart = false,
                                            std::uint32_t compositeOffset = 0, bool stopWaiting = false,
                                            bool allDelayed = false, bool probeForeignStart = false,
-                                           bool stallSource = false) {
+                                           bool stallSource = false, bool nativeComposite = false) {
     constexpr std::uint32_t block = 64;
     constexpr std::uint32_t rate = 48000;
     harkentest::EngineSession session(harkentest::MakeNullConfig(allDelayed ? 8 : compositeOffset != 0 ? 6 : 4, block, rate));
@@ -45443,6 +45444,68 @@ static void CheckOrderedSelectedLeafFirstPcm(bool nested, bool sameAction,
                 harken::ComputePlayableOccurrenceFingerprintV1(image.occurrences[5]);
         }
         image.track.scheduleSemanticFingerprint = harken::ComputeTrackScheduleFingerprintV1(image.track);
+        image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(image.world);
+    }
+    std::array<harken::TrackScheduleProgramViewV1, 2> nativeTracks{};
+    std::array<harken::PlayableOccurrencePropertyViewV1, 9> nativeOccurrences{};
+    harken::ScheduleClipPlacementV1 nativePlacement{};
+    harken::ContainerChildProgramViewV2 nativeRandomChild{};
+    if (nativeComposite) {
+        ASSERT_TRUE(variableControl && compositeOffset != 0 && !allDelayed);
+        // VC -> outer Track -> Random -> bound static Track -> two Sounds.
+        auto& property = image.properties[7];
+        property = image.properties[6];
+        property.stableId = harkentest::ObjectId(76);
+        property.authoredStableOrder = 7;
+        property.compatibilityFingerprint = 7;
+        property.programSemanticFingerprint = harken::ComputePlayablePropertyFingerprintV1(property);
+        nativeTracks[0] = image.track;
+        nativeTracks[1] = image.track;
+        auto& outer = nativeTracks[1];
+        outer.rootDefinition.stableId = property.stableId;
+        outer.rootDefinition.expectedProgramSemanticFingerprint = property.programSemanticFingerprint;
+        outer.rootDefinition.compatibilityFingerprint = property.compatibilityFingerprint;
+        nativeRandomChild = image.child;
+        nativeRandomChild.playable = image.track.rootDefinition;
+        nativeRandomChild.timingHint = {};
+        image.containers[0].children = &nativeRandomChild;
+        nativePlacement = image.trackPlacements[0];
+        nativePlacement.stableOccurrenceOrdinal = 22;
+        nativePlacement.clipId = harkentest::ObjectId(5003);
+        nativePlacement.clipGuidHigh = 6003;
+        nativePlacement.clipGuidLow = 7003;
+        nativePlacement.authoredDuration = INT64_C(1000000000);
+        nativePlacement.content.kind = harken::PlayableKindV1::Container;
+        nativePlacement.content.stableId = image.properties[2].stableId;
+        nativePlacement.content.expectedProgramSemanticFingerprint = image.properties[2].programSemanticFingerprint;
+        nativePlacement.content.contentRevision = image.properties[2].contentRevision;
+        nativePlacement.content.routeStableId = image.properties[2].routeStableId;
+        nativePlacement.content.compatibilityFingerprint = image.properties[2].compatibilityFingerprint;
+        outer.placements = &nativePlacement;
+        outer.placementCount = 1;
+        outer.scheduleSemanticFingerprint = harken::ComputeTrackScheduleFingerprintV1(outer);
+        image.variableControlChildren[0].playable = outer.rootDefinition;
+        std::copy(std::begin(image.occurrences), std::end(image.occurrences), nativeOccurrences.begin());
+        nativeOccurrences[0].childPlayable = nativeRandomChild.playable;
+        nativeOccurrences[4].childPlayable = outer.rootDefinition;
+        nativeOccurrences[8] = image.occurrences[6];
+        nativeOccurrences[8].parentStableId = property.stableId;
+        nativeOccurrences[8].parentProgramSemanticFingerprint = property.programSemanticFingerprint;
+        nativeOccurrences[8].stableOccurrenceOrdinal = nativePlacement.stableOccurrenceOrdinal;
+        nativeOccurrences[8].childPlayable = nativePlacement.content;
+        for (auto& occurrence : nativeOccurrences)
+            occurrence.occurrenceSemanticFingerprint = harken::ComputePlayableOccurrenceFingerprintV1(occurrence);
+        std::sort(nativeOccurrences.begin(), nativeOccurrences.end(), [](const auto& left, const auto& right) {
+            if (left.parentKind != right.parentKind) return left.parentKind < right.parentKind;
+            if (left.parentStableId != right.parentStableId) return left.parentStableId < right.parentStableId;
+            return left.stableOccurrenceOrdinal < right.stableOccurrenceOrdinal;
+        });
+        image.world.trackSchedules = nativeTracks.data();
+        image.world.trackScheduleCount = static_cast<std::uint32_t>(nativeTracks.size());
+        image.world.playablePropertyCount = 8;
+        image.world.playableOccurrences = nativeOccurrences.data();
+        image.world.playableOccurrenceCount = static_cast<std::uint32_t>(nativeOccurrences.size());
+        image.world.identity.capabilityMask = harken::detail::ComputeCurrentWorldLocalCapabilityMaskV1(image.world);
         image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(image.world);
     }
     if (fixedStart) {
@@ -45646,8 +45709,10 @@ static void CheckOrderedSelectedLeafFirstPcm(bool nested, bool sameAction,
                     EXPECT_EQ(harken::ArmState::Published, arm->state.load());
                     EXPECT_EQ(0u, arm->startedBlockSequence.load());
                     EXPECT_FALSE(arm->frontierOperation.Valid());
-                    EXPECT_TRUE(engine.initialFrontierArmPins[token.slot].pin.Valid());
-                    EXPECT_TRUE(roots[playIndex]->frontierEntry.Valid());
+                    if (!nativeComposite) {
+                        EXPECT_TRUE(engine.initialFrontierArmPins[token.slot].pin.Valid());
+                        EXPECT_TRUE(roots[playIndex]->frontierEntry.Valid());
+                    }
                     if (probeForeignStart && !checkedWaiting) {
                         ASSERT_NE(nullptr, arm->frontierAdmission);
                         const auto& admission = *arm->frontierAdmission;
@@ -45874,6 +45939,378 @@ static void CheckOrderedSelectedLeafFirstPcm(bool nested, bool sameAction,
     }
 }
 
+void CheckNestedPieceEmitterBatchesAndSiblingPlayback(bool packEntry) {
+    constexpr std::uint32_t block = 64;
+    constexpr std::uint32_t rate = 48000;
+    constexpr float firstAmplitude = 0.125f;
+    constexpr float secondAmplitude = 0.03125f;
+    constexpr float pieceAmplitude = firstAmplitude + secondAmplitude;
+    harkentest::EngineSession session(harkentest::MakeNullConfig(12, block, rate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const std::vector<float> first(65536, firstAmplitude), second(65536, secondAmplitude);
+    const auto firstPcm = harkentest::MonoDesc(first, rate);
+    const auto secondPcm = harkentest::MonoDesc(second, rate);
+    const float* firstChannels[] = {first.data()};
+    const float* secondChannels[] = {second.data()};
+    std::uint64_t firstRevision = 0, secondRevision = 0;
+    ASSERT_TRUE(harken::ComputeMediaPcmContentRevisionV1(
+        rate, 1, first.size(), firstChannels, 1, &firstRevision));
+    ASSERT_TRUE(harken::ComputeMediaPcmContentRevisionV1(
+        rate, 1, second.size(), secondChannels, 1, &secondRevision));
+    if (!packEntry) {
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &firstPcm));
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kSecondSound, &secondPcm));
+    }
+    CanonicalActionWorld image(firstRevision, secondRevision);
+    image.MakeImmediateVariableControlPlayAction();
+    image.MakeFirstVariableControlChildCompositePiece();
+    image.containers[3].discreteTiming = 1;
+    image.containers[3].evaluationPeriodFrames = block;
+    image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(image.world);
+    const auto selector = image.variables[3].variableId;
+    const auto gain = image.variables[0].variableId;
+    const auto untouched = image.variables[1].variableId;
+
+    VnBindingDesc binding{};
+    binding.structSize = sizeof(binding);
+    binding.variableId = gain;
+    binding.targetScopeKind = VN_TARGET_SCOPE_VOICE;
+    binding.targetId = harken::kTargetVoiceVolume;
+    binding.curve.structSize = sizeof(binding.curve);
+    binding.curve.pointCount = 2;
+    binding.curve.points[0] = {0, 0};
+    binding.curve.points[1] = {1, -12};
+    binding.curve.handles[0] = harkentest::EndpointHandles(binding.curve.points[0], binding.curve.points[1]);
+    const auto bindingId = harkentest::ObjectId(9062);
+    VnPackHandle pack = 0;
+    if (packEntry) {
+        using namespace harken;
+        using namespace harkentest::packfoundation;
+        // Export only the Action used here; the fixture has unrelated cross-kind ID aliases.
+        auto packWorld = image.world;
+        // Every partition in one set declares the same authored capacity contract.
+        packWorld.capacity = WorldCapacitySummaryV1{};
+        packWorld.actions = &image.actions[9];
+        packWorld.actionCount = 1;
+        packWorld.identity.capabilityMask = detail::ComputeCurrentWorldLocalCapabilityMaskV1(packWorld);
+        packWorld.identity.runtimeSemanticFingerprint = ComputeCurrentWorldFingerprintV4(packWorld);
+        const auto definitionCount = packWorld.variableCount +
+            packWorld.playablePropertyCount + packWorld.actionCount;
+        std::vector<std::uint8_t> body;
+        ASSERT_TRUE(EncodeCurrentWorldShippingBody(packWorld, body));
+        PackCanonicalPartitionHeader header{};
+        header.headerBytes = kCanonicalDefinitionPartitionHeaderV2Bytes;
+        header.bodyVintage = kCanonicalDefinitionPartitionBodyVintage;
+        header.bodyBytes = body.size();
+        header.bodyChecksum = Fnv1a64(body.data(), body.size());
+        header.packStableId = kResidentPackStableId;
+        header.partitionRevision = 1;
+        header.ownedDefinitionCount = definitionCount;
+        ApplyCanonicalBusTriple(&header, DefaultFixtureBusTriple());
+        std::vector<std::uint8_t> partition(header.headerBytes + body.size(), 0);
+        SerializePackCanonicalPartitionHeaderV2(header, partition.data());
+        header.headerChecksum = Fnv1a64(partition.data(), 80);
+        SerializePackCanonicalPartitionHeaderV2(header, partition.data());
+        std::memcpy(partition.data() + header.headerBytes, body.data(), body.size());
+        ImageBuilder content(kPackKindCanonicalContent);
+        content.AddEntry(kPackEntryKindPackRequirementBlock, kResidentPackStableId,
+            RequirementPayload(kResidentPackStableId, 1, 1, definitionCount, body.size()));
+        content.AddEntry(kPackEntryKindCanonicalDefinitionPartition, kResidentPackStableId,
+            std::move(partition));
+        content.AddEntry(kPackEntryKindPackDependencyEdge, VnObjectId{},
+            DependencyPayload(kInitPackStableId, 1, DefaultFixtureBusTriple()),
+            kPackCanonicalRequirementVintage);
+        std::vector<std::uint8_t> bindingBytes(kPackV2BindingDefinitionPayloadBytes);
+        SerializePackV2BindingDefinition(bindingId, binding, bindingBytes.data());
+        content.AddEntry(kPackEntryKindBindingDefinition, bindingId, std::move(bindingBytes),
+            kPackV2SchemaVintage);
+        std::uint64_t relationOrdinal = 0;
+        for (const auto sound : {CanonicalActionWorld::kFirstSound, CanonicalActionWorld::kSecondSound}) {
+            PackBindingAttachmentEntry attachment{};
+            attachment.bindingId = bindingId;
+            attachment.scopeKind = VN_TARGET_SCOPE_VOICE;
+            attachment.objectId = sound;
+            std::vector<std::uint8_t> attachmentBytes(kPackV2BindingAttachmentPayloadBytes);
+            SerializePackV2BindingAttachment(attachment, attachmentBytes.data());
+            const auto entry = content.AddEntry(kPackEntryKindBindingAttachment, VnObjectId{},
+                std::move(attachmentBytes), kPackV2SchemaVintage);
+            content.SetRelationOrdinal(entry, relationOrdinal++);
+        }
+        content.AddMedia(CanonicalActionWorld::kFirstSound, first);
+        content.AddMedia(CanonicalActionWorld::kSecondSound, second);
+        const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) /
+            "nested-piece-emitter-batches";
+        ASSERT_TRUE(harkentest::WriteBytes(directory / "Init.pack",
+            harkentest::BuildMasterOnlyInitBytes()));
+        ASSERT_TRUE(harkentest::WriteBytes(directory / "Content.pack", content.Build()));
+        const std::string initPath = (directory / "Init.pack").string();
+        const std::string contentPath = (directory / "Content.pack").string();
+        VnCanonicalPackSetMemberV1 members[2]{};
+        VnCanonicalPackSetMemberResultV1 rows[2]{};
+        const char* paths[] = {initPath.c_str(), contentPath.c_str()};
+        for (std::size_t index = 0; index < 2; ++index) {
+            members[index].structSize = sizeof(members[index]);
+            members[index].packStableId = index == 0 ? kInitPackStableId : kResidentPackStableId;
+            members[index].packKind = index == 0 ? VN_CANONICAL_PACK_SET_MEMBER_INIT
+                                               : VN_CANONICAL_PACK_SET_MEMBER_CONTENT;
+            members[index].utf8Path = paths[index];
+            rows[index].structSize = sizeof(rows[index]);
+        }
+        VnCanonicalPackSetActivationReportV1 activation{};
+        ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(members, 2, rows, activation));
+        pack = rows[1].handle;
+        ASSERT_NE(0u, pack);
+    } else {
+        ASSERT_EQ(harken::WorldInstallStatus::Ok,
+            harken::InstallContainerWorldV1(engine, image.world).status);
+    }
+    if (!packEntry) {
+        ASSERT_EQ(VN_OK, Vn_RegisterBinding(bindingId, &binding));
+        VnBindingAttachDesc attach{};
+        attach.structSize = sizeof(attach);
+        attach.scopeKind = VN_TARGET_SCOPE_VOICE;
+        for (const auto sound : {CanonicalActionWorld::kFirstSound, CanonicalActionWorld::kSecondSound}) {
+            attach.objectId = sound;
+            ASSERT_EQ(VN_OK, Vn_AttachBinding(bindingId, &attach));
+        }
+    }
+    ASSERT_EQ(VN_OK, Vn_Update());
+    engine.nullBackend.Pump(2);
+    const auto baseline = CaptureActionReclaimableOwners(engine);
+    std::array<VnEmitterHandle, 2> emitters{};
+    for (auto& emitter : emitters) ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+
+    const auto writePair = [&](VnEmitterHandle emitter, float step, float smooth,
+                               VnVariableTicketV1* ticket) -> VnResult {
+        const VnVariableWriteV1 writes[] = {{selector, step, 0}, {gain, smooth, 0}};
+        VnVariableBatchDescV1 batch{};
+        batch.structSize = sizeof(batch);
+        batch.writeCount = 2;
+        batch.writes = writes;
+        return emitter == 0 ? Vn_SetValues(&batch, ticket) : Vn_SetEmitterValues(emitter, &batch, ticket);
+    };
+    const auto expectValue = [&](VnEmitterHandle emitter, VnVariableId variable, float expected, bool local) {
+        VnVariableQueryDescV1 query{};
+        query.structSize = sizeof(query);
+        query.variableId = variable;
+        query.emitter = emitter;
+        VnVariableQueryResultV1 value{};
+        value.structSize = sizeof(value);
+        ASSERT_EQ(VN_OK, Vn_QueryVariable(&query, &value));
+        EXPECT_FLOAT_EQ(expected, value.currentValue);
+        EXPECT_EQ(local ? 1u : 0u, value.hasEmitterOverride);
+        EXPECT_EQ(local ? 1u : 0u, value.scope);
+    };
+    const auto expectApplied = [&](const VnVariableTicketV1& ticket) {
+        VnVariableTicketQueryDescV1 query{};
+        query.structSize = sizeof(query);
+        query.ticket = ticket;
+        VnVariableTicketQueryResultV1 result{};
+        result.structSize = sizeof(result);
+        ASSERT_EQ(VN_OK, Vn_QueryVariableTicket(&query, &result));
+        EXPECT_EQ(VN_VARIABLE_TICKET_FOUND, result.status);
+        EXPECT_EQ(VN_VARIABLE_OUTCOME_APPLIED, result.outcome);
+    };
+    const auto settleAndCheckPcm = [&](float expected) {
+        for (std::uint32_t frameBlock = 0; frameBlock < 36; ++frameBlock) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            const auto before = engine.mixer.BlocksRendered();
+            engine.nullBackend.Pump(1);
+            ASSERT_EQ(before + 1u, engine.mixer.BlocksRendered());
+            const auto* output = engine.nullBackend.LastBlock();
+            ASSERT_NE(nullptr, output);
+            for (std::uint32_t sample = 0; sample < block * engine.nullBackend.Channels(); ++sample) {
+                ASSERT_TRUE(std::isfinite(output[sample]));
+                if (frameBlock >= 32) ASSERT_NEAR(expected, output[sample], 2e-6f);
+            }
+            ASSERT_FALSE(engine.runtimeRecreateRequired);
+        }
+        ASSERT_EQ(VN_OK, Vn_Update());
+    };
+    const auto expectBranch = [&](VnActionFiringHandle firing, VnEmitterHandle emitter, bool piece,
+                                  std::vector<VnVoiceHandle>* renders) {
+        VnActionStepResult play{};
+        play.structSize = sizeof(play);
+        ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &play));
+        ASSERT_EQ(VN_ACTION_STEP_ACTIVE, play.state);
+        const auto row = std::find_if(engine.playableServices.begin(), engine.playableServices.end(),
+            [&](const auto& candidate) { return candidate.rootInstance == play.producedPlayableInstance; });
+        ASSERT_NE(engine.playableServices.end(), row);
+        ASSERT_TRUE(row->InvocationValid());
+        EXPECT_EQ(emitter, row->Invocation().invocationEmitter);
+        ASSERT_EQ(piece ? 2u : 1u, row->variableControlDiscreteMemberCount);
+        ASSERT_EQ(1u, row->variableControlChildCount);
+        const auto selected = row->variableControlChildInstances[0];
+        const auto selectedView = engine.playableInstances.Classify(selected);
+        ASSERT_TRUE(selectedView.live);
+        EXPECT_EQ(piece ? harken::PlayableKind::Piece : harken::PlayableKind::Sound, selectedView.kind);
+        harken::MonitorContentIdentity selectedContent{};
+        ASSERT_TRUE(engine.playableInstances.CaptureContentIdentity(selected, &selectedContent));
+        EXPECT_EQ(piece ? image.piece.rootDefinition.stableId : CanonicalActionWorld::kSecondSound,
+            selectedContent.stableId);
+        std::vector<VnSoundId> actual;
+        if (renders != nullptr) renders->clear();
+        for (std::uint32_t index = 0; index < row->variableControlDiscreteMemberCount; ++index) {
+            std::size_t slot = 0;
+            ASSERT_TRUE(engine.ResolvePlayableMemberSlot(row->scheduleStorageBase + index, &slot));
+            const auto& member = engine.ReadPlayableMember(slot);
+            actual.push_back(member.leaf.stableId);
+            // Retarget Start arms are transient; prove the current render still advances.
+            const auto* beforeVoice = engine.voices.Resolve(member.render);
+            ASSERT_NE(nullptr, beforeVoice);
+            const auto sourceFrame = beforeVoice->resampler.SourceFrame();
+            const auto beforeBlock = engine.mixer.BlocksRendered();
+            engine.nullBackend.Pump(1);
+            ASSERT_EQ(beforeBlock + 1u, engine.mixer.BlocksRendered());
+            const auto* afterVoice = engine.voices.Resolve(member.render);
+            ASSERT_NE(nullptr, afterVoice);
+            EXPECT_GT(afterVoice->resampler.SourceFrame(), sourceFrame);
+            if (renders != nullptr) renders->push_back(member.render);
+        }
+        std::sort(actual.begin(), actual.end());
+        auto expected = piece ? std::vector<VnSoundId>{CanonicalActionWorld::kFirstSound,
+            CanonicalActionWorld::kSecondSound} : std::vector<VnSoundId>{CanonicalActionWorld::kSecondSound};
+        std::sort(expected.begin(), expected.end());
+        EXPECT_EQ(expected, actual);
+    };
+
+    ASSERT_EQ(VN_OK, Vn_SetEmitterValue(emitters[0], untouched, 0.25f));
+    ASSERT_EQ(VN_OK, Vn_SetEmitterValue(emitters[1], untouched, 0.75f));
+    std::array<VnVariableTicketV1, 2> localTickets{};
+    ASSERT_EQ(VN_OK, writePair(emitters[0], 3, 0, &localTickets[0]));
+    ASSERT_EQ(VN_OK, writePair(emitters[1], 1, 1, &localTickets[1]));
+    std::array<VnActionFiringHandle, 2> firings{};
+    auto post = ValidPostDesc();
+    post.actionId = image.actions[9].actionStableId;
+    for (std::size_t index = 0; index < emitters.size(); ++index) {
+        post.emitter = emitters[index];
+        ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firings[index]));
+    }
+    const float gain12 = std::pow(10.0f, -12.0f / 20.0f);
+    const float gainMid = 0.5f * (1.0f + gain12);
+    ASSERT_NO_FATAL_FAILURE(settleAndCheckPcm(pieceAmplitude + secondAmplitude * gain12));
+    for (const auto& ticket : localTickets) ASSERT_NO_FATAL_FAILURE(expectApplied(ticket));
+    ASSERT_NO_FATAL_FAILURE(expectBranch(firings[0], emitters[0], true, nullptr));
+    ASSERT_NO_FATAL_FAILURE(expectBranch(firings[1], emitters[1], false, nullptr));
+
+    // A rejected global batch must not clear either emitter's existing overrides.
+    VnVariableTicketV1 refused{};
+    EXPECT_EQ(VN_INVALID_ARG, writePair(0, 1, 2, &refused));
+    EXPECT_EQ(0u, refused.sequence);
+    ASSERT_NO_FATAL_FAILURE(settleAndCheckPcm(pieceAmplitude + secondAmplitude * gain12));
+    for (std::size_t index = 0; index < emitters.size(); ++index) {
+        ASSERT_NO_FATAL_FAILURE(expectValue(emitters[index], selector, index == 0 ? 3.0f : 1.0f, true));
+        ASSERT_NO_FATAL_FAILURE(expectValue(emitters[index], gain, static_cast<float>(index), true));
+    }
+    ASSERT_NO_FATAL_FAILURE(expectValue(0, selector, 3, false));
+    ASSERT_NO_FATAL_FAILURE(expectValue(0, gain, 0, false));
+
+    // Both values equal the current global values, but both local overrides must still disappear.
+    VnVariableTicketV1 global{};
+    ASSERT_EQ(VN_OK, writePair(0, 3, 0, &global));
+    ASSERT_NO_FATAL_FAILURE(settleAndCheckPcm(2.0f * pieceAmplitude));
+    ASSERT_NO_FATAL_FAILURE(expectApplied(global));
+    for (std::size_t index = 0; index < emitters.size(); ++index) {
+        ASSERT_NO_FATAL_FAILURE(expectValue(emitters[index], selector, 3, false));
+        ASSERT_NO_FATAL_FAILURE(expectValue(emitters[index], gain, 0, false));
+        ASSERT_NO_FATAL_FAILURE(expectValue(emitters[index], untouched, index == 0 ? 0.25f : 0.75f, true));
+        ASSERT_NO_FATAL_FAILURE(expectBranch(firings[index], emitters[index], true, nullptr));
+    }
+
+    const auto refuseUnloadAndCheckPcm = [&](float expected) {
+        if (!packEntry) return;
+        struct ActiveRender {
+            VnVoiceHandle handle = 0;
+            std::uint64_t sourceFrame = 0;
+        };
+        std::vector<ActiveRender> before;
+        engine.ledger.ForEachPlayableOwnedLive(
+            [&](VnVoiceHandle render, const harken::VoiceLedger::PlayableParentRef&) {
+                const auto* voice = engine.voices.Resolve(render);
+                ASSERT_NE(nullptr, voice);
+                before.push_back({render, voice->resampler.SourceFrame()});
+            });
+        ASSERT_FALSE(before.empty());
+        ASSERT_EQ(VN_IN_USE, Vn_UnloadPackEx(pack, VN_PACK_UNLOAD_REFUSE_IF_USED));
+        // Check every new sample immediately: a refusal must not cause a temporary dropout.
+        for (std::uint32_t frameBlock = 0; frameBlock < 4; ++frameBlock) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            const auto rendered = engine.mixer.BlocksRendered();
+            engine.nullBackend.Pump(1);
+            ASSERT_EQ(rendered + 1u, engine.mixer.BlocksRendered());
+            const auto* output = engine.nullBackend.LastBlock();
+            ASSERT_NE(nullptr, output);
+            for (std::uint32_t sample = 0; sample < block * engine.nullBackend.Channels(); ++sample) {
+                ASSERT_TRUE(std::isfinite(output[sample]));
+                EXPECT_NEAR(expected, output[sample], 2e-6f);
+            }
+            EXPECT_EQ(before.size(), engine.voices.ActiveCount());
+            ASSERT_FALSE(engine.runtimeRecreateRequired);
+        }
+        for (const auto& original : before) {
+            const auto* voice = engine.voices.Resolve(original.handle);
+            ASSERT_NE(nullptr, voice);
+            EXPECT_GT(voice->resampler.SourceFrame(), original.sourceFrame);
+        }
+    };
+    ASSERT_NO_FATAL_FAILURE(refuseUnloadAndCheckPcm(2.0f * pieceAmplitude));
+    std::vector<VnVoiceHandle> siblingBefore, siblingAfter;
+    ASSERT_NO_FATAL_FAILURE(expectBranch(firings[1], emitters[1], true, &siblingBefore));
+    VnVariableTicketV1 isolated{};
+    ASSERT_EQ(VN_OK, writePair(emitters[0], 1, 0.5f, &isolated));
+    const float isolatedPcm = pieceAmplitude + secondAmplitude * gainMid;
+    ASSERT_NO_FATAL_FAILURE(settleAndCheckPcm(isolatedPcm));
+    ASSERT_NO_FATAL_FAILURE(expectApplied(isolated));
+    ASSERT_NO_FATAL_FAILURE(expectBranch(firings[0], emitters[0], false, nullptr));
+    ASSERT_NO_FATAL_FAILURE(expectBranch(firings[1], emitters[1], true, &siblingAfter));
+    EXPECT_EQ(siblingBefore, siblingAfter);
+    ASSERT_NO_FATAL_FAILURE(expectValue(emitters[1], selector, 3, false));
+    ASSERT_NO_FATAL_FAILURE(expectValue(emitters[1], gain, 0, false));
+
+    const auto oldFiring = firings[0];
+    ASSERT_EQ(VN_OK, Vn_StopActionFiring(oldFiring, 0));
+    ASSERT_NO_FATAL_FAILURE(settleAndCheckPcm(pieceAmplitude));
+    ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(oldFiring));
+    ASSERT_NO_FATAL_FAILURE(refuseUnloadAndCheckPcm(pieceAmplitude));
+    post.emitter = emitters[0];
+    ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firings[0]));
+    EXPECT_NE(oldFiring, firings[0]);
+    ASSERT_NO_FATAL_FAILURE(settleAndCheckPcm(isolatedPcm));
+    ASSERT_NO_FATAL_FAILURE(expectBranch(firings[0], emitters[0], false, nullptr));
+    ASSERT_NO_FATAL_FAILURE(expectBranch(firings[1], emitters[1], true, &siblingAfter));
+    EXPECT_EQ(siblingBefore, siblingAfter);
+    ASSERT_NO_FATAL_FAILURE(expectValue(emitters[0], gain, 0.5f, true));
+
+    for (const auto firing : firings) ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
+    ASSERT_NO_FATAL_FAILURE(settleAndCheckPcm(0));
+    for (const auto firing : firings) ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+    for (const auto emitter : emitters) ASSERT_EQ(VN_OK, Vn_DestroyEmitter(emitter));
+    for (std::uint32_t retry = 0; retry < 64 && CaptureActionReclaimableOwners(engine) != baseline; ++retry) {
+        const auto before = engine.mixer.BlocksRendered();
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(before + 1u, engine.mixer.BlocksRendered());
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    EXPECT_EQ(baseline, CaptureActionReclaimableOwners(engine));
+    if (packEntry) {
+        ASSERT_EQ(VN_OK, Vn_UnloadPackEx(pack, VN_PACK_UNLOAD_REFUSE_IF_USED));
+        ASSERT_NO_FATAL_FAILURE(settleAndCheckPcm(0));
+        EXPECT_FALSE(engine.registry.Lookup(CanonicalActionWorld::kFirstSound).Valid());
+        EXPECT_FALSE(engine.registry.Lookup(CanonicalActionWorld::kSecondSound).Valid());
+        EXPECT_EQ(0u, engine.packs.RetiringCount());
+        EXPECT_EQ(baseline, CaptureActionReclaimableOwners(engine));
+    }
+}
+
+TEST(ActionFiringApi, NestedPieceEmitterBatchesClearOnlyWrittenOverridesAndKeepSiblingPlayback) {
+    CheckNestedPieceEmitterBatchesAndSiblingPlayback(false);
+}
+
+TEST(ActionFiringApi, NestedPieceEmitterBatchesKeepPackPinnedUntilBothEmittersStop) {
+    CheckNestedPieceEmitterBatchesAndSiblingPlayback(true);
+}
+
 TEST(ActionFiringApi, OrderedSequenceSelectedLeafKeepsOwnFirstPcm) {
     CheckOrderedSelectedLeafFirstPcm(false, false);
 }
@@ -45916,6 +46353,10 @@ TEST(ActionFiringApi, OrderedFixedVariableControlTrackKeepsFirstPcmAcrossUpdateA
 
 TEST(ActionFiringApi, SameActionFixedVariableControlTrackKeepsFirstPcmAcrossUpdateAtSampleSixtyFive) {
     CheckOrderedSelectedLeafFirstPcm(false, true, true, true, 65);
+}
+
+TEST(ActionFiringApi, SameActionVariableControlNativeBoundCompositeKeepsEachEntryFirstPcm) {
+    CheckOrderedSelectedLeafFirstPcm(false, true, true, true, 65, false, false, false, false, true);
 }
 
 TEST(ActionFiringApi, OrderedFixedVariableControlAllDelayedLeavesKeepFirstPcmAcrossUpdate) {

@@ -199,7 +199,9 @@ struct FrontierAudioHarness {
                  bool secondCoordinatorWithEvent = false,
                  bool plainBeforeFrontier = false,
                  std::uint64_t memberStartFrame = 8u,
-                 std::uint64_t secondCoordinatorFrame = 8u) {
+                 std::uint64_t secondCoordinatorFrame = 8u,
+                 bool queueSignal = false,
+                 harken::Plan03GroupReaderPin* retainedCoordinatorReader = nullptr) {
         laneBackedEntry = laneEntry;
         const bool delayedLaneMember = laneEntry && variable && !future && memberStartFrame > 8u;
         const std::uint64_t memberFrame = future ? 16 : 8;
@@ -245,6 +247,8 @@ struct FrontierAudioHarness {
             ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
                 pool.ReservePlan03GroupSlice(groupInput, arms));
         ASSERT_EQ(1u, pool.CaptureLivePlan03Groups(&group, 1));
+        if (retainedCoordinatorReader != nullptr)
+            ASSERT_TRUE(pool.AcquirePlan03GroupReader(group.identity, retainedCoordinatorReader));
         if (laneBackedEntry) {
             ASSERT_TRUE(pool.BindImmediateLaneGroupOwner(
                 lanePrimary, lane, 17, laneHandle.slot, laneHandle.generation));
@@ -297,12 +301,12 @@ struct FrontierAudioHarness {
                 request.transitionGate = transition;
             }
             ASSERT_TRUE(decisions.Reserve(request, &memberDecision));
-            if (queueInitial || conditional) {
+            if (queueInitial || conditional || queueSignal) {
                 harken::QueueInstanceCreateRequest create{};
                 create.world = create.rootInstance = create.initial.version = 1;
                 create.containerStableId = harkentest::ObjectId(9);
                 create.programSemanticFingerprint = 7;
-                create.childCount = conditional ? 2 : 1;
+                create.childCount = conditional || queueSignal ? 2 : 1;
                 ASSERT_TRUE(queues.Acquire(create, &queue));
                 if (conditional) {
                     const auto pcm = harkentest::MonoDesc(sourceSamples, kRate);
@@ -413,14 +417,25 @@ struct FrontierAudioHarness {
             memberBinding.operation.programGeneration = 1;
             if (transition.Valid())
                 memberBinding.transition = {transition.slot, transition.generation, transitionFrame};
-            if (conditional) memberBinding.queueConditional = {queue.slot, queue.generation, 1, conditionalVersion.version,
+            if (queueSignal) {
+                ASSERT_TRUE(queues.ResolveEffective(queue, &signalCurrent));
+                signalNext = signalCurrent;
+                ++signalNext.version;
+                signalNext.cursor = signalNext.currentChildOrdinal = 1;
+                const auto& order = memberBinding.operation.order;
+                ASSERT_EQ(harken::QueueSignalStatusV1::Ok, queues.PrepareSignalAdvance(queue,
+                    signalCurrent, signalNext, {order.executeFrame, order.logicCommitSequence, order.executionOrdinal},
+                    0, &preparedSignal));
+                ASSERT_TRUE(queues.CaptureFrontierSignal(preparedSignal, &memberBinding.queueSignal));
+            } else if (conditional) memberBinding.queueConditional = {queue.slot, queue.generation, 1, conditionalVersion.version,
                 currentOccurrence, successorOccurrence};
             else if (queueInitial) memberBinding.queueInitial = {queue.slot, queue.generation, 1, 7};
             else memberBinding.variableSide = {instance.slot, instance.generation, static_cast<std::uint8_t>(side),
                     2, bank.slot, bank.generation};
             ASSERT_TRUE(pool.BindPlan03GroupFrontier(member.identity, memberBinding));
             ASSERT_TRUE(pool.ResolvePlan03GroupSliceProducer(member.identity, &member));
-            if (conditional) ASSERT_TRUE(queues.BindFrontierConditional(queue, *member.frontier, pool));
+            if (queueSignal) ASSERT_TRUE(queues.BindFrontierSignal(preparedSignal, *member.frontier, pool));
+            else if (conditional) ASSERT_TRUE(queues.BindFrontierConditional(queue, *member.frontier, pool));
             else if (queueInitial) ASSERT_TRUE(queues.BindFrontierInitial(queue, *member.frontier, pool));
             else ASSERT_TRUE(variables.BindFrontierSide(instance, *member.frontier, pool));
             ASSERT_TRUE(decisions.BindFrontierDecision(memberDecision, *member.frontier, pool));
@@ -541,7 +556,7 @@ struct FrontierAudioHarness {
                     File(6, voiceProgram, arm, &fade, 1);
                 }
             }
-            const harken::DecisionParticipantRef participant = queueInitial || conditional ?
+            const harken::DecisionParticipantRef participant = queueInitial || conditional || queueSignal ?
                 harken::DecisionParticipantRef{harken::DecisionParticipantKind::QueueInstance, queue.slot, queue.generation} :
                 harken::DecisionParticipantRef{harken::DecisionParticipantKind::Variable, instance.slot, instance.generation};
             harken::DecisionCommitPayload memberCommit{};
@@ -581,6 +596,10 @@ struct FrontierAudioHarness {
             commit.participantCount = 1;
         }
         ASSERT_TRUE(decisions.Commit(decision, commit));
+        if (queueSignal) {
+            ASSERT_TRUE(queues.CommitPreparedSignalAdvance(&preparedSignal));
+            ASSERT_TRUE(queues.PublishPreparedSignalAdvance(&preparedSignal, &acceptedSignal));
+        }
         ASSERT_TRUE(decisions.PublishFrontierActivation(decision));
         if (secondCoordinatorMissing || secondCoordinatorWithEvent) {
             request.ticket.sequence = 3;
@@ -811,6 +830,9 @@ struct FrontierAudioHarness {
     harken::VariableControlInstanceTable variables{1};
     harken::QueueInstanceTable queues{1};
     harken::QueueInstanceToken queue{};
+    harken::PreparedQueueSignalAdvanceV1 preparedSignal;
+    harken::AcceptedQueueSignalAdvanceV1 acceptedSignal;
+    harken::EffectiveQueueState signalCurrent{}, signalNext{};
     harken::OccurrenceStatePool occurrences{2};
     harken::OccurrenceToken currentOccurrence{}, successorOccurrence{};
     harken::ConditionalQueueVersionToken conditionalVersion{};
@@ -1868,6 +1890,85 @@ TEST(AuthoredStopAudio, FrontierQueueInitialSharesEntryWithoutInventingCondition
                 EXPECT_TRUE(h.queues.Release(h.queue));
             }
         }
+    }
+}
+
+TEST(AuthoredStopAudio, FrontierQueueSignalSettlesActualApplyAndRetainsBindingUntilReadFence) {
+    for (const auto stopFrame : {8u, 32u}) {
+        FrontierAudioHarness h(2);
+        harken::Plan03GroupReaderPin coordinatorReader;
+        harken::Plan03GroupReaderPin clonedReader;
+        h.Prepare(stopFrame, false, false, true, harken::VariableControlSide::Discrete,
+            false, false, false, false, UINT64_MAX, false, false, false, false, false, 8u, 8u,
+            true, &coordinatorReader);
+        ASSERT_FALSE(::testing::Test::HasFatalFailure());
+        EXPECT_FALSE(h.queues.SettleSignalAdvance(h.acceptedSignal, harken::QueueSignalOutcomeV1::Applied));
+        harken::EffectiveQueueState before{};
+        ASSERT_TRUE(h.queues.ResolveEffective(h.queue, &before));
+        EXPECT_EQ(h.signalCurrent.version, before.version);
+        h.executor.ExecuteQuantum(0);
+        const bool applied = stopFrame > 8u;
+        const auto receipt = h.Receipt();
+        ASSERT_EQ(applied ? harken::FrontierReceiptOutcome::Applied :
+            harken::FrontierReceiptOutcome::DefinitivelyNotApplied, receipt.outcome);
+        harken::Plan03ExactGroupSnapshot beforeClone{}, afterClone{};
+        ASSERT_TRUE(h.pool.CaptureExactPlan03Group(h.group.identity, &beforeClone));
+        EXPECT_GT(beforeClone.lastAudioSequence, 0u);
+        harken::Plan03GroupReaderPin freshReader;
+        EXPECT_FALSE(h.pool.AcquirePlan03GroupReader(h.group.identity, &freshReader));
+        ASSERT_TRUE(h.pool.ClonePlan03GroupReader(coordinatorReader, &clonedReader));
+        ASSERT_TRUE(h.pool.CaptureExactPlan03Group(h.group.identity, &afterClone));
+        EXPECT_EQ(beforeClone.readerPins + 1u, afterClone.readerPins);
+        EXPECT_EQ(beforeClone.lastAudioSequence, afterClone.lastAudioSequence);
+        EXPECT_FALSE(coordinatorReader.Release(beforeClone.lastAudioSequence));
+        EXPECT_FALSE(clonedReader.Release(beforeClone.lastAudioSequence));
+        if (applied) EXPECT_FALSE(h.queues.SettleSignalAdvance(h.acceptedSignal,
+            harken::QueueSignalOutcomeV1::DefinitivelyNotApplied));
+        ASSERT_TRUE(h.queues.SettleSignalAdvance(h.acceptedSignal, applied ?
+            harken::QueueSignalOutcomeV1::Applied : harken::QueueSignalOutcomeV1::DefinitivelyNotApplied));
+        harken::EffectiveQueueState current{};
+        ASSERT_TRUE(h.queues.ResolveEffective(h.queue, &current));
+        EXPECT_EQ(applied ? h.signalNext.version : h.signalCurrent.version, current.version);
+        EXPECT_EQ(applied ? h.signalNext.currentChildOrdinal : h.signalCurrent.currentChildOrdinal,
+            current.currentChildOrdinal);
+        auto next = current;
+        ++next.version;
+        next.cursor = next.currentChildOrdinal = 0;
+        harken::PreparedQueueSignalAdvanceV1 another;
+        EXPECT_EQ(harken::QueueSignalStatusV1::Backpressure,
+            h.queues.PrepareSignalAdvance(h.queue, current, next, {64, 3, 0}, 0, &another));
+        EXPECT_FALSE(h.queues.Release(h.queue));
+        EXPECT_FALSE(h.queues.ReleaseFrontierSignal(*h.member.frontier, 1));
+        h.audio.Render();
+        for (std::uint32_t frame = 0; frame < 32; ++frame)
+            EXPECT_NEAR(applied && frame >= 8 ? 0.25f : 0.0f, h.audio.Sample(frame), 1e-6f);
+        if (applied) EXPECT_FALSE(h.armPin.Release(1));
+        ASSERT_TRUE(h.armPin.Release(2));
+        EXPECT_FALSE(h.queues.ReleaseFrontierSignal(*h.member.frontier, 1));
+        EXPECT_FALSE(h.pool.FrontierMemberBindingDetached(h.member.identity, h.descriptor.entry, 2));
+        ASSERT_TRUE(h.queues.ReleaseFrontierSignal(*h.member.frontier, 2));
+        EXPECT_FALSE(h.pool.FrontierMemberBindingDetached(h.member.identity, h.descriptor.entry, 1));
+        EXPECT_TRUE(h.pool.FrontierMemberBindingDetached(h.member.identity, h.descriptor.entry, 2));
+        auto wrongEntry = h.descriptor.entry;
+        ++wrongEntry.attempt;
+        EXPECT_FALSE(h.pool.FrontierMemberBindingDetached(h.member.identity, wrongEntry, 2));
+        auto wrongGroup = h.member.identity;
+        ++wrongGroup.pageGeneration;
+        EXPECT_FALSE(h.pool.FrontierMemberBindingDetached(wrongGroup, h.descriptor.entry, 2));
+        ASSERT_EQ(harken::QueueSignalStatusV1::Ok,
+            h.queues.PrepareSignalAdvance(h.queue, current, next, {64, 3, 0}, 0, &another));
+        ASSERT_TRUE(h.queues.CancelPreparedSignalAdvance(&another));
+        ASSERT_TRUE(h.pool.DetachPlan03GroupFrontier(h.group.identity, 2));
+        ASSERT_TRUE(h.decisions.ReleaseFrontierDecisionBinding(h.memberDecision));
+        EXPECT_FALSE(h.decisions.FrontierActivationBindingsDetached(h.descriptor.entry, h.pool, 2));
+        EXPECT_TRUE(h.pool.FrontierMemberBindingDetached(h.member.identity, h.descriptor.entry, 2));
+        ASSERT_TRUE(coordinatorReader.Release(2));
+        EXPECT_FALSE(h.decisions.FrontierActivationBindingsDetached(h.descriptor.entry, h.pool, 2));
+        ASSERT_TRUE(clonedReader.Release(2));
+        EXPECT_TRUE(h.decisions.FrontierActivationBindingsDetached(h.descriptor.entry, h.pool, 2));
+        harken::FrontierActivationReceipt retired{};
+        ASSERT_TRUE(h.decisions.ReconcileFrontierActivation(h.decision, h.descriptor.entry, 2, &retired));
+        EXPECT_TRUE(h.queues.Release(h.queue));
     }
 }
 

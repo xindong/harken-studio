@@ -62,6 +62,7 @@ struct FrontierTimelineFinalizer::Impl {
         FrontierDecisionApplyProof decisionProof;
         VariableControlInstanceTable::FrontierSideProof sideProof;
         QueueInstanceTable::FrontierInitialProof queueProof;
+        QueueInstanceTable::FrontierSignalProof signalProof;
         QueueInstanceTable::FrontierInitialCompletionProof queueCompletionProof;
         QueueInstanceTable::FrontierConditionalProof conditionalProof;
         TransitionInstancePool::FrontierProof transitionProof;
@@ -83,6 +84,8 @@ struct FrontierTimelineFinalizer::Impl {
         std::uint32_t completionProofCount = 0;
         bool resumed = false;
         bool savedPending = false;
+        std::uint32_t pageEntryRoot = UINT32_MAX;
+        bool pageEntryFinished = false;
         bool completionPreflightReady = false;
         QueueConditionalCompletionMode completionPreflightMode = QueueConditionalCompletionMode::InQuantum;
         std::uint32_t completionPreflightOffset = 0;
@@ -593,6 +596,205 @@ struct FrontierTimelineFinalizer::Impl {
             else ++i;
     }
 
+    bool SameFrameEntryChild(const FrontierGroupBinding& child,
+        const FrontierGroupBinding& parent) const noexcept {
+        if (child.role != FrontierGroupRole::Coordinator ||
+            child.operation.order.executeFrame != parent.operation.order.executeFrame) return false;
+        if (child.prerequisite == parent.entry) return true;
+        // A later native forest inherits an earlier signal receipt. Its real
+        // root explicitly declares every coordinator in this same-frame batch.
+        if (!parent.prerequisite.Valid() || !(child.prerequisite == parent.prerequisite) ||
+            !(child.prerequisiteMember == parent.prerequisiteMember) || decisions == nullptr) return false;
+        DecisionCommittedSnapshot coordinator{};
+        if (!decisions->CaptureCommitted(parent.entry.coordinator, &coordinator)) return false;
+        std::uint32_t matches = 0;
+        for (std::uint32_t index = 0; index < coordinator.participantCount; ++index) {
+            DecisionParticipantRef participant{};
+            if (!decisions->CaptureCommittedParticipant(parent.entry.coordinator, index, &participant)) return false;
+            if (participant.kind == DecisionParticipantKind::Subdecision &&
+                participant.slot == child.entry.coordinator.slot &&
+                participant.generation == child.entry.coordinator.generation) ++matches;
+        }
+        return matches == 1u;
+    }
+
+    VariableReadCutStatus PageEntryPrerequisiteStatus(std::uint32_t index,
+        bool allowPrivateForest) const noexcept {
+        const auto& child = groups[index];
+        const auto& binding = *child.view.frontier;
+        if (!binding.prerequisite.Valid())
+            return binding.prerequisiteMember.Valid() ? VariableReadCutStatus::Failed : VariableReadCutStatus::Applied;
+        if (laneMode || binding.role != FrontierGroupRole::Coordinator ||
+            child.view.identity.backing != Plan03GroupBacking::Page ||
+            !binding.prerequisiteMember.Exact() ||
+            binding.prerequisiteMember.backing != Plan03GroupBacking::Page || pool == nullptr)
+            return VariableReadCutStatus::Failed;
+        if (binding.appliedPrerequisite != nullptr)
+            return decisions != nullptr && decisions->ProveAppliedSignalPrerequisite(
+                *binding.appliedPrerequisite, binding, quantum + 1u)
+                ? VariableReadCutStatus::Applied : VariableReadCutStatus::Failed;
+        const auto* activation = decisions->ResolveFrontierActivation(binding.prerequisite.coordinator);
+        Plan03PageGroupView primary{}, signal{};
+        if (activation == nullptr || !(activation->Descriptor().entry == binding.prerequisite) ||
+            !pool->ResolvePlan03GroupSliceRt(activation->Descriptor().primary, &primary) ||
+            !pool->ResolvePlan03GroupSliceRt(binding.prerequisiteMember, &signal) ||
+            !pool->NotePlan03GroupReadRt(primary.identity, quantum + 1u) ||
+            !pool->NotePlan03GroupReadRt(signal.identity, quantum + 1u) ||
+            primary.frontier == nullptr || signal.frontier == nullptr ||
+            primary.lease == nullptr || signal.lease != primary.lease ||
+            primary.frontier->role != FrontierGroupRole::Coordinator ||
+            !(primary.frontier->entry == binding.prerequisite) ||
+            !(primary.frontier->primary == primary.identity) ||
+            !(primary.frontier->operation.group == primary.identity) ||
+            signal.frontier->role != FrontierGroupRole::EntryMember ||
+            !signal.frontier->queueSignal.Valid() ||
+            !(signal.frontier->entry == binding.prerequisite) ||
+            !(signal.frontier->primary == primary.identity) ||
+            !(signal.frontier->operation.group == signal.identity) ||
+            signal.frontier->operation.kind != FrontierOperationKind::Entry ||
+            primary.frontier->operation.world != binding.operation.world ||
+            signal.frontier->operation.world != binding.operation.world ||
+            primary.frontier->operation.transport != binding.operation.transport ||
+            signal.frontier->operation.transport != binding.operation.transport ||
+            binding.operation.owner.invocation != binding.prerequisite.owner.invocation ||
+            binding.operation.owner.invocationEpoch != binding.prerequisite.owner.invocationEpoch ||
+            !(activation->Descriptor().order < binding.operation.order) ||
+            !(signal.frontier->operation.order < binding.operation.order))
+            return VariableReadCutStatus::Failed;
+        const auto parentIndex = FindEntry(binding.prerequisite);
+        if (allowPrivateForest && child.pageEntryRoot != UINT32_MAX && parentIndex != UINT32_MAX &&
+            groups[parentIndex].pageEntryRoot == child.pageEntryRoot &&
+            SameFrameEntryChild(binding, *groups[parentIndex].view.frontier))
+            return VariableReadCutStatus::Applied;
+        FrontierActivationReceipt receipt{};
+        const auto read = activation->Read(binding.prerequisite, quantum + 1u, &receipt);
+        if (read == FrontierReceiptRead::InFlight) return VariableReadCutStatus::Waiting;
+        return read == FrontierReceiptRead::Ready && receipt.outcome == FrontierReceiptOutcome::Applied &&
+            receipt.order == activation->Descriptor().order && receipt.order < binding.operation.order
+            ? VariableReadCutStatus::Applied : VariableReadCutStatus::Failed;
+    }
+
+    bool EntryForestContainsGroup(std::uint32_t root, std::uint32_t index) const noexcept {
+        const auto& binding = *groups[index].view.frontier;
+        const auto coordinator = binding.role == FrontierGroupRole::Coordinator ? index
+            : binding.role == FrontierGroupRole::EntryMember ? FindEntry(binding.entry) : UINT32_MAX;
+        return coordinator != UINT32_MAX && groups[coordinator].pageEntryRoot == root;
+    }
+
+    bool CollectPageEntryForest(std::uint32_t root) noexcept {
+        if (laneMode || groups[root].view.frontier->role != FrontierGroupRole::Coordinator) return false;
+        groups[root].pageEntryRoot = root;
+        bool added = true;
+        while (added) {
+            added = false;
+            for (std::uint32_t child = 0; child < groupCount; ++child) {
+                auto& candidate = groups[child];
+                if (candidate.pageEntryRoot == root ||
+                    candidate.view.frontier->role != FrontierGroupRole::Coordinator) continue;
+                for (std::uint32_t parent = 0; parent < groupCount; ++parent) {
+                    if (groups[parent].pageEntryRoot != root ||
+                        !SameFrameEntryChild(*candidate.view.frontier, *groups[parent].view.frontier)) continue;
+                    if (candidate.pageEntryRoot != UINT32_MAX || candidate.pageEntryFinished ||
+                        !(groups[parent].view.frontier->operation.order < candidate.view.frontier->operation.order))
+                        return false;
+                    candidate.pageEntryRoot = root;
+                    added = true;
+                    break;
+                }
+            }
+        }
+        return true;
+    }
+
+    void FinishPageEntryForest(std::uint32_t root) noexcept {
+        const bool collected = CollectPageEntryForest(root);
+        bool valid = collected, waiting = false, canWait = collected;
+        for (std::uint32_t index = 0; index < groupCount; ++index) {
+            if (groups[index].pageEntryRoot != root) continue;
+            const auto variables = GroupVariableStatus(index);
+            const auto parent = PageEntryPrerequisiteStatus(index, true);
+            valid = variables != VariableReadCutStatus::Failed && parent != VariableReadCutStatus::Failed && valid;
+            waiting = waiting || variables == VariableReadCutStatus::Waiting || parent == VariableReadCutStatus::Waiting;
+            canWait = CanWaitGroup(index) && canWait;
+        }
+        if (valid && waiting && canWait && SavePending(root)) return;
+        valid = valid && !waiting;
+        for (std::uint32_t index = 0; index < groupCount; ++index) {
+            if (groups[index].pageEntryRoot != root) continue;
+            ProveEntry(index);
+            valid = groups[index].failure == FrontierReceiptReason::None && groups[index].audioWriter && valid;
+        }
+        for (std::uint32_t index = 0; valid && index < groupCount; ++index)
+            if (groups[index].pageEntryRoot == root && !ValidateEntry(&groups[index])) valid = false;
+        if (valid) {
+            for (std::uint32_t index = 0; index < groupCount; ++index) {
+                if (groups[index].pageEntryRoot != root) continue;
+                if (!groups[index].view.lease->TryClaim()) { valid = false; break; }
+            }
+        }
+#if !defined(HARKEN_RT_QUALIFICATION)
+        if (valid)
+            for (std::uint32_t index = 0; index < groupCount; ++index)
+                if (groups[index].pageEntryRoot == root) AfterSliceClaim(&groups[index]);
+#endif
+        if (valid) {
+            for (;;) {
+                std::uint32_t next = UINT32_MAX;
+                for (std::uint32_t index = 0; index < groupCount; ++index)
+                    if (groups[index].pageEntryRoot == root && !groups[index].applied &&
+                        (next == UINT32_MAX || groups[index].view.frontier->operation.order <
+                            groups[next].view.frontier->operation.order)) next = index;
+                if (next == UINT32_MAX) break;
+                ApplyEntry(&groups[next]);
+            }
+            for (std::uint32_t index = 0; index < groupCount; ++index) {
+                if (groups[index].pageEntryRoot != root) continue;
+                const bool marked = groups[index].view.lease->MarkApplied();
+                assert(marked);
+                (void)marked;
+            }
+        } else {
+            for (std::uint32_t index = 0; index < groupCount; ++index) {
+                auto& group = groups[index];
+                if (group.pageEntryRoot != root) continue;
+                const auto state = group.view.lease->Capture().state;
+                if (state == AudioSliceState::SliceClaimed || state == AudioSliceState::SliceClaimedWithInvalidation)
+                    (void)group.view.lease->AbortClaimedBeforeApply(AudioSliceInvalidateReason::Cancel);
+                else (void)group.view.lease->Invalidate(AudioSliceInvalidateReason::Cancel);
+            }
+        }
+        for (std::uint32_t index = 0; index < groupCount; ++index) {
+            auto& group = groups[index];
+            if (!EntryForestContainsGroup(root, index)) continue;
+            if (group.view.frontier->role == FrontierGroupRole::Coordinator) {
+                group.pageEntryFinished = true;
+                if (group.audioWriter) {
+                    const auto reason = valid ? FrontierReceiptReason::None :
+                        group.failure == FrontierReceiptReason::None ? FrontierReceiptReason::Dependency : group.failure;
+                    const bool finished = group.activation->FinishAudio(group.view.frontier->entry,
+                        valid ? FrontierReceiptOutcome::Applied : FrontierReceiptOutcome::DefinitivelyNotApplied,
+                        reason, quantum + 1u, UINT32_MAX, group.cutoff);
+                    assert(finished);
+                    (void)finished;
+                }
+            } else {
+                group.sideProof.Release();
+                group.conditionalProof.Release();
+                group.transitionProof.Release();
+                group.queueCompletionProof.Release();
+            }
+        }
+        for (std::uint32_t index = 0; index < eventCount; ++index) {
+            auto& event = events[index];
+            if (event.stop != nullptr || event.group == UINT32_MAX || !EntryForestContainsGroup(root, event.group)) continue;
+            if (valid) ReleaseProofs(event);
+            else Reject(event, groups[event.group].failure == FrontierReceiptReason::AuthoredStop
+                ? kTimelineDispositionStopDominated : kTimelineDispositionArmFailed);
+        }
+        for (std::uint32_t index = 0; index < completionCount; ++index) completionProofs[index].Release();
+        completionCount = deferredStartCount = 0;
+    }
+
     bool CompletePendingCohort(std::uint32_t groupIndex) noexcept {
         const auto& primary = groups[groupIndex].view;
         const auto& binding = *primary.frontier;
@@ -624,11 +826,15 @@ struct FrontierTimelineFinalizer::Impl {
         for (std::uint32_t i = 0; i < groupCount; ++i) {
             const auto& member = groups[i].view;
             const auto& initial = *member.frontier;
-            if (initial.role != FrontierGroupRole::EntryMember || !(initial.entry == binding.entry)) continue;
+            const bool childEntry = SameFrameEntryChild(initial, binding);
+            if (!childEntry && (initial.role != FrontierGroupRole::EntryMember || !(initial.entry == binding.entry))) continue;
             ++memberCount;
             DecisionCommittedSnapshot decision{};
-            if (!(initial.operation.group == member.identity) || !(initial.primary == primary.identity) ||
-                member.lease != primary.lease || initial.operation.kind != FrontierOperationKind::Entry ||
+            if (!(initial.operation.group == member.identity) ||
+                (childEntry ? !(initial.primary == member.identity) ||
+                    PageEntryPrerequisiteStatus(i, true) != VariableReadCutStatus::Applied
+                    : !(initial.primary == primary.identity) || member.lease != primary.lease) ||
+                initial.operation.kind != FrontierOperationKind::Entry ||
                 initial.operation.order.executeFrame != descriptor.order.executeFrame ||
                 initial.operation.transport != binding.operation.transport || initial.operation.world != binding.operation.world ||
                 !decisions->CaptureCommitted(member.identity.decision, &decision) ||
@@ -646,7 +852,8 @@ struct FrontierTimelineFinalizer::Impl {
             for (std::uint32_t i = 0; i < groupCount; ++i) {
                 const auto& member = groups[i].view;
                 const auto& initial = *member.frontier;
-                matches += initial.role == FrontierGroupRole::EntryMember && initial.entry == binding.entry &&
+                matches += ((initial.role == FrontierGroupRole::EntryMember && initial.entry == binding.entry) ||
+                    SameFrameEntryChild(initial, binding)) &&
                     participants[p].slot == member.identity.decision.slot &&
                     participants[p].generation == member.identity.decision.generation;
             }
@@ -707,15 +914,22 @@ struct FrontierTimelineFinalizer::Impl {
         if (laneMode || nextPendingWork == UINT64_MAX) return false;
         const bool cohort = groupIndex != UINT32_MAX &&
             groups[groupIndex].view.frontier->role == FrontierGroupRole::Coordinator;
-        if (cohort && !CompletePendingCohort(groupIndex)) return false;
+        const bool forest = cohort && groups[groupIndex].pageEntryRoot == groupIndex;
+        if (forest) {
+            for (std::uint32_t index = 0; index < groupCount; ++index)
+                if (groups[index].pageEntryRoot == groupIndex && !CompletePendingCohort(index)) return false;
+        } else if (cohort && !CompletePendingCohort(groupIndex)) return false;
         const auto includesGroup = [&](std::uint32_t i) noexcept {
+            if (forest) return EntryForestContainsGroup(groupIndex, i);
             return i == groupIndex || (cohort &&
                 groups[i].view.frontier->role == FrontierGroupRole::EntryMember &&
                 groups[i].view.frontier->entry == groups[groupIndex].view.frontier->entry);
         };
         const auto includesEvent = [&](const Event& event) noexcept {
-            return event.stop == nullptr && (groupIndex != UINT32_MAX
-                ? event.group == groupIndex : event.group == UINT32_MAX && event.representative == representative);
+            return event.stop == nullptr && (forest
+                ? event.group != UINT32_MAX && EntryForestContainsGroup(groupIndex, event.group)
+                : groupIndex != UINT32_MAX ? event.group == groupIndex
+                : event.group == UINT32_MAX && event.representative == representative);
         };
         std::uint32_t eventTotal = 0, groupTotal = 0;
         for (std::uint32_t i = 0; i < eventCount; ++i) eventTotal += includesEvent(events[i]);
@@ -736,10 +950,14 @@ struct FrontierTimelineFinalizer::Impl {
         }
         for (std::uint32_t i = 0; i < groupCount; ++i)
             if (includesGroup(i)) groups[i].savedPending = true;
-        if (cohort && !groups[groupIndex].resumed) {
-            const auto& binding = *groups[groupIndex].view.frontier;
-            auto* activation = decisions->ResolveFrontierActivation(binding.entry.coordinator);
-            if (activation != nullptr) activation->PublishSourceWait(binding.entry, quantum + 1u);
+        if (cohort) {
+            for (std::uint32_t index = 0; index < groupCount; ++index) {
+                const auto& current = groups[index];
+                if ((forest ? current.pageEntryRoot != groupIndex : index != groupIndex) || current.resumed) continue;
+                const auto& binding = *current.view.frontier;
+                auto* activation = decisions->ResolveFrontierActivation(binding.entry.coordinator);
+                if (activation != nullptr) activation->PublishSourceWait(binding.entry, quantum + 1u);
+            }
         }
         return true;
     }
@@ -1038,8 +1256,39 @@ struct FrontierTimelineFinalizer::Impl {
         for (std::uint32_t i = 0; i < groupCount; ++i) {
             const auto& member = groups[i].view;
             const auto& initial = *member.frontier;
-            if (initial.role != FrontierGroupRole::EntryMember || !(initial.entry == binding.entry)) continue;
+            const bool childEntry = SameFrameEntryChild(initial, binding);
+            if (!childEntry && (initial.role != FrontierGroupRole::EntryMember || !(initial.entry == binding.entry))) continue;
             ++memberCount;
+            DecisionCommittedSnapshot coordinator{};
+            if (!decisions->CaptureCommitted(binding.entry.coordinator, &coordinator))
+                return VariableReadCutStatus::Failed;
+            std::uint32_t matches = 0;
+            for (std::uint32_t participant = 0; participant < coordinator.participantCount; ++participant) {
+                DecisionParticipantRef declared{};
+                if (!decisions->CaptureCommittedParticipant(binding.entry.coordinator, participant, &declared))
+                    return VariableReadCutStatus::Failed;
+                matches += declared.kind == DecisionParticipantKind::Subdecision &&
+                    declared.slot == member.identity.decision.slot && declared.generation == member.identity.decision.generation;
+            }
+            if (matches != 1) return VariableReadCutStatus::Failed;
+            if (childEntry) {
+                const auto* childActivation = decisions->ResolveFrontierActivation(initial.entry.coordinator);
+                const bool ownStaging = primary.pageEntryRoot != UINT32_MAX &&
+                    groups[i].pageEntryRoot == primary.pageEntryRoot && groups[i].audioWriter &&
+                    groups[i].activation == childActivation && !groups[i].applied &&
+                    childActivation != nullptr && childActivation->State() == FrontierReceiptState::AudioStaging;
+                if (childActivation == nullptr ||
+                    (childActivation->State() != FrontierReceiptState::Pending && !ownStaging) ||
+                    !(childActivation->Descriptor().entry == initial.entry) ||
+                    !(childActivation->Descriptor().primary == member.identity) ||
+                    childActivation->Descriptor().order != initial.operation.order ||
+                    member.memberCount != 0 || member.sourceControlCount != 0 || member.lease == nullptr ||
+                    member.lease->Capture().state != AudioSliceState::Ready ||
+                    initial.operation.transport != binding.operation.transport ||
+                    initial.operation.world != binding.operation.world ||
+                    !(binding.operation.order < initial.operation.order)) return VariableReadCutStatus::Failed;
+                continue;
+            }
             DecisionCommittedSnapshot decision{};
             ArmGroupSnapshot group{};
             if (armGroups == nullptr || !(initial.primary == primary.view.identity) ||
@@ -1262,6 +1511,7 @@ struct FrontierTimelineFinalizer::Impl {
             else if (member.view.frontier->canonicalInitialCompletion)
                 queues->ApplyFrontierInitialCompletion(member.queueCompletionProof);
         }
+        else if (member.view.frontier->queueSignal.Valid()) queues->ApplyFrontierSignal(member.signalProof);
         else queues->ApplyFrontierConditional(member.conditionalProof);
     }
 
@@ -1619,19 +1869,21 @@ struct FrontierTimelineFinalizer::Impl {
         member.firstCompletionProof = completionCount;
         const bool variable = binding.variableSide.Valid();
         const bool queue = binding.queueInitial.Valid();
+        const bool signal = binding.queueSignal.Valid();
         const bool conditional = binding.queueConditional.Valid();
         const bool naturalConditional = laneMode && immediateLane != nullptr && conditional &&
             HasConditionalNaturalSpans(member.view, *immediateLane, immediateLaneSlot, immediateLaneGeneration);
         member.conditionalQueueCompletion = naturalConditional && binding.role == FrontierGroupRole::Future &&
             member.view.identity.sliceIndex == 1u;
-        if (static_cast<unsigned>(variable) + static_cast<unsigned>(queue) + static_cast<unsigned>(conditional) != 1 ||
-            (variable && variableControls == nullptr) || ((queue || conditional) && queues == nullptr) ||
+        if (static_cast<unsigned>(variable) + static_cast<unsigned>(queue) +
+            static_cast<unsigned>(signal) + static_cast<unsigned>(conditional) != 1 ||
+            (variable && variableControls == nullptr) || ((queue || signal || conditional) && queues == nullptr) ||
             (conditional && occurrences == nullptr)) return false;
         const DecisionParticipantRef participant = variable ?
             DecisionParticipantRef{DecisionParticipantKind::Variable, binding.variableSide.slot, binding.variableSide.generation} :
             DecisionParticipantRef{DecisionParticipantKind::QueueInstance,
-                conditional ? binding.queueConditional.slot : binding.queueInitial.slot,
-                conditional ? binding.queueConditional.generation : binding.queueInitial.generation};
+                conditional ? binding.queueConditional.slot : signal ? binding.queueSignal.slot : binding.queueInitial.slot,
+                conditional ? binding.queueConditional.generation : signal ? binding.queueSignal.generation : binding.queueInitial.generation};
         DecisionCommittedSnapshot decision{};
         ArmGroupSnapshot armGroup{};
         if (armGroups == nullptr ||
@@ -1768,10 +2020,10 @@ struct FrontierTimelineFinalizer::Impl {
                 (member.queueSlice != QueueInstanceTable::FrontierConditionalSlice::Prelude ||
                     index < member.view.sourceControlCount);
             if (required && !found) {
-                if (!laneMode && variable && primary != nullptr &&
+                if (!laneMode && (variable || signal) && primary != nullptr &&
                     binding.role == FrontierGroupRole::EntryMember &&
                     index >= member.view.sourceControlCount && completionCount < completionCapacity &&
-                    arms.ProveInitialVariableDeferredStart(token, binding, *member.view.lease, *pool,
+                    arms.ProveInitialAdmissionDeferredStart(token, binding, *member.view.lease, *pool,
                         quantum + 1u, &completionProofs[completionCount])) {
                     ++completionCount;
                     continue;
@@ -1885,6 +2137,7 @@ struct FrontierTimelineFinalizer::Impl {
             }
         }
         if (queue) return queues->ProveFrontierInitial(binding, *member.view.lease, quantum + 1u, &member.queueProof);
+        if (signal) return queues->ProveFrontierSignal(binding, *member.view.lease, quantum + 1u, &member.signalProof);
         const auto sourceWait = SourceWaitContext();
         QueueConditionalProof proof{};
         if (quantum > UINT64_MAX / frames || quantum * frames > UINT64_MAX - frames ||
@@ -2140,6 +2393,8 @@ struct FrontierTimelineFinalizer::Impl {
                     participantCapacity, &participantCount) || participantCount != descriptor.expectedMemberCount)
                 group.failure = FrontierReceiptReason::MissingMember;
             std::uint32_t memberCount = 0;
+            if (!laneMode && PageEntryPrerequisiteStatus(index, true) != VariableReadCutStatus::Applied)
+                group.failure = FrontierReceiptReason::Dependency;
             if (laneMode) {
                 const ImmediateLaneHandle laneHandle{immediateLaneSlot, immediateLaneGeneration};
                 std::uint32_t queueSourceCount = 0;
@@ -2592,8 +2847,9 @@ struct FrontierTimelineFinalizer::Impl {
             } else {
                 for (std::uint32_t memberIndex = 0; memberIndex < groupCount; ++memberIndex) {
                     auto& member = groups[memberIndex];
-                    if (member.view.frontier->role != FrontierGroupRole::EntryMember ||
-                        !(member.view.frontier->entry == binding.entry)) continue;
+                    const bool childEntry = SameFrameEntryChild(*member.view.frontier, binding);
+                    if (!childEntry && (member.view.frontier->role != FrontierGroupRole::EntryMember ||
+                        !(member.view.frontier->entry == binding.entry))) continue;
                     ++memberCount;
                     std::uint32_t matches = 0;
                     for (std::uint32_t participant = 0; participant < participantCount; ++participant) {
@@ -2602,7 +2858,10 @@ struct FrontierTimelineFinalizer::Impl {
                             declared.slot == member.view.identity.decision.slot &&
                             declared.generation == member.view.identity.decision.generation) ++matches;
                     }
-                    if (matches != 1 || !ProveModeMember(member, &group)) {
+                    if (matches != 1 || (childEntry
+                            ? group.pageEntryRoot == UINT32_MAX || member.pageEntryRoot != group.pageEntryRoot ||
+                              PageEntryPrerequisiteStatus(memberIndex, true) != VariableReadCutStatus::Applied
+                            : !ProveModeMember(member, &group))) {
                         group.failure = FrontierReceiptReason::Predicate;
                     }
                 }
@@ -2676,6 +2935,14 @@ struct FrontierTimelineFinalizer::Impl {
     }
 
     void FinishEntry(std::uint32_t index) noexcept {
+        if (groups[index].pageEntryFinished || groups[index].savedPending) return;
+        if (!laneMode) {
+            const auto& binding = *groups[index].view.frontier;
+            bool forest = binding.prerequisite.Valid() || binding.prerequisiteMember.Valid();
+            for (std::uint32_t child = 0; !forest && child < groupCount; ++child)
+                forest = SameFrameEntryChild(*groups[child].view.frontier, binding);
+            if (forest) { FinishPageEntryForest(index); return; }
+        }
         if (GroupVariableStatus(index) == VariableReadCutStatus::Waiting &&
             CanWaitGroup(index) && SavePending(index)) return;
         ProveEntry(index);
@@ -3287,7 +3554,8 @@ bool FrontierTimelineFinalizer::PendingBindingValid(const ConsumedEvent& event,
     const auto* activation = self.decisions->ResolveFrontierActivation(binding.entry.coordinator);
     DecisionCommittedSnapshot decision{};
     ArmGroupMemberSnapshot actual{};
-    if (binding.role != FrontierGroupRole::EntryMember || !binding.variableSide.Valid() ||
+    if (binding.role != FrontierGroupRole::EntryMember ||
+        (static_cast<unsigned>(binding.variableSide.Valid()) + static_cast<unsigned>(binding.queueSignal.Valid()) != 1u) ||
         binding.queueInitial.Valid() || binding.queueConditional.Valid() || binding.transition.Valid() ||
         binding.operation.kind != FrontierOperationKind::Entry ||
         !(binding.entry == event.frontier.entry) || !(binding.operation.owner == event.frontier.owner) ||

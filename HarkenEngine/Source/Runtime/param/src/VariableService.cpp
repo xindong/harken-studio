@@ -6100,6 +6100,24 @@ bool VariableServiceV1::ProveTimelineReadUseInitializer(VariableTimelineReadUseR
         proof, use->lifetime.Token(), use->onsetFrame) && CaptureTimelineInitializerProof(ref, nativeHandle, out);
 }
 
+bool VariableServiceV1::CanCommitTimelineReadUse(VariableTimelineReadUseRef ref,
+    VariableReadCutRef expectedCut, VnVoiceHandle nativeHandle,
+    const TimelineArmTable& arms, TimelineArmToken arm) const noexcept {
+    const auto* use = ResolveTimelineReadUse(ref);
+    const auto* cut = ResolveReadCut(expectedCut);
+    if (use == nullptr || cut == nullptr ||
+        use->state.load(std::memory_order_acquire) != TimelineReadUseState::Prepared ||
+        use->cut != expectedCut || use->nativeHandle != nativeHandle ||
+        nativeHandle != ((static_cast<std::uint64_t>(arm.renderGeneration) << 32) | arm.renderSlot) ||
+        use->lifetime.Owner() != &arms ||
+        !OriginalSourceSubmissionRegistry::SameToken(use->lifetime.Token(), arm) ||
+        cut->state.load(std::memory_order_acquire) != ReadCutState::Published ||
+        cut->timelineOwnershipTransferred || cut->preparationFailed.load(std::memory_order_acquire))
+        return false;
+    const auto initializer = use->initializer.load(std::memory_order_acquire);
+    return initializer == TimelineInitializerState::None || initializer == TimelineInitializerState::Frozen;
+}
+
 bool VariableServiceV1::CommitTimelineReadUse(VariableTimelineReadUseRef ref) noexcept {
     auto* use = ResolveTimelineReadUse(ref);
     if (use == nullptr || use->state.load(std::memory_order_acquire) != TimelineReadUseState::Prepared)

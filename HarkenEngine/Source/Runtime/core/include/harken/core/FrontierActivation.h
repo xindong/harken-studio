@@ -13,6 +13,7 @@
 namespace harken {
 
 class FrontierTimelineFinalizer;
+class DecisionTable;
 
 struct FrontierOwnerIdentity {
     std::uint64_t child = 0;
@@ -231,6 +232,40 @@ struct FrontierQueueInitialIdentity {
     bool operator==(const FrontierQueueInitialIdentity&) const = default;
 };
 
+struct FrontierQueueSignalIdentity {
+    std::uint32_t slot = UINT32_MAX;
+    std::uint32_t generation = 0;
+    std::uint64_t attempt = 0;
+    std::uint64_t currentVersion = 0;
+    std::uint64_t nextVersion = 0;
+    std::uint64_t mirrorSequence = 0;
+    std::uint64_t resetIntent = 0;
+    std::uint64_t programSemanticFingerprint = 0;
+    bool Valid() const noexcept {
+        return slot != UINT32_MAX && generation != 0 && attempt != 0 &&
+            currentVersion != 0 && currentVersion != UINT64_MAX &&
+            nextVersion == currentVersion + 1u && (mirrorSequence & 1u) == 0 &&
+            programSemanticFingerprint != 0;
+    }
+    bool operator==(const FrontierQueueSignalIdentity&) const = default;
+};
+
+// Issued only from an actual applied signal binding while both original pages are pinned.
+// The holder separately retains the original coordinator Decision lifetime.
+class FrontierAppliedSignalDependency {
+public:
+    bool Valid() const noexcept { return owner_ != nullptr; }
+
+private:
+    friend class DecisionTable;
+    const DecisionTable* owner_ = nullptr;
+    FrontierEntryReceiptRef entry_{};
+    Plan03GroupSliceIdentity primary_{};
+    Plan03GroupSliceIdentity member_{};
+    TimelineExecutionOrder memberOrder_{};
+    std::uint64_t audioSequence_ = 0;
+};
+
 struct FrontierQueueConditionalIdentity {
     std::uint32_t slot = UINT32_MAX;
     std::uint32_t generation = 0;
@@ -256,11 +291,13 @@ struct FrontierGroupBinding {
     FrontierEntryReceiptRef entry{};
     FrontierEntryReceiptRef prerequisite{};
     Plan03GroupSliceIdentity prerequisiteMember{};
+    const FrontierAppliedSignalDependency* appliedPrerequisite = nullptr;
     FrontierDueOperationRef operation{};
     Plan03GroupSliceIdentity primary{};
     FrontierVariableSideIdentity variableSide{};
     FrontierQueueDescendantIdentity queueDescendant{};
     FrontierQueueInitialIdentity queueInitial{};
+    FrontierQueueSignalIdentity queueSignal{};
     FrontierQueueConditionalIdentity queueConditional{};
     FrontierQueueConditionalIdentity queueInitialCompletion{};
     bool canonicalInitialCompletion = false;
@@ -271,6 +308,12 @@ struct FrontierGroupBinding {
         if (role == FrontierGroupRole::Legacy || !entry.Valid() || !operation.Valid() ||
             !operation.group.Exact()) return false;
         if (initialVariables.Valid() && role != FrontierGroupRole::Coordinator) return false;
+        if (appliedPrerequisite != nullptr &&
+            (role != FrontierGroupRole::Coordinator ||
+             !prerequisite.Valid() || !prerequisiteMember.Exact())) return false;
+        if (queueSignal.Valid() && (role != FrontierGroupRole::EntryMember ||
+            operation.kind != FrontierOperationKind::Entry || variableSide.Valid() ||
+            queueInitial.Valid() || queueConditional.Valid() || canonicalInitialCompletion)) return false;
         if (canonicalInitialCompletion) {
             if (role != FrontierGroupRole::Future || !queueInitial.Valid() ||
                 queueConditional.Valid() || variableSide.Valid() ||

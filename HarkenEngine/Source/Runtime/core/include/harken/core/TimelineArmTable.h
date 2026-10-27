@@ -673,7 +673,7 @@ public:
         std::uint64_t onsetFrame) const noexcept;
     bool MatchesVariableInitializerStart(const AudioOperationClaim& proof, TimelineArmToken token,
         std::uint64_t onsetFrame) const noexcept;
-    bool ProveInitialVariableDeferredStart(TimelineArmToken token, const FrontierGroupBinding& binding,
+    bool ProveInitialAdmissionDeferredStart(TimelineArmToken token, const FrontierGroupBinding& binding,
         AudioSliceLease& lease, const ScheduledTransactionPool& pool,
         std::uint64_t audioSequence, BoundAudioProof* out) noexcept;
 

@@ -902,6 +902,26 @@ public:
         std::uint64_t audioSequence, FrontierInitialProof* out) noexcept;
     void ApplyFrontierInitial(const FrontierInitialProof& proof) noexcept;
 
+    class FrontierSignalProof {
+    public:
+        bool Valid() const noexcept { return row_ != nullptr; }
+    private:
+        friend class QueueInstanceTable;
+        void* row_ = nullptr;
+        AudioSliceLease* lease_ = nullptr;
+        std::uint64_t audioSequence_ = 0;
+    };
+
+    bool CaptureFrontierSignal(const PreparedQueueSignalAdvanceV1& prepared,
+        FrontierQueueSignalIdentity* out) const noexcept;
+    bool BindFrontierSignal(const PreparedQueueSignalAdvanceV1& prepared,
+        const FrontierGroupBinding& binding, ScheduledTransactionPool& pool) noexcept;
+    bool ProveFrontierSignal(const FrontierGroupBinding& binding, AudioSliceLease& lease,
+        std::uint64_t audioSequence, FrontierSignalProof* out) noexcept;
+    void ApplyFrontierSignal(const FrontierSignalProof& proof) noexcept;
+    bool ReleaseFrontierSignal(const FrontierGroupBinding& binding,
+        std::uint64_t completedAudioSequence) noexcept;
+
     class FrontierInitialCompletionProof {
     public:
         FrontierInitialCompletionProof() = default;
@@ -1268,6 +1288,10 @@ private:
         NextStateOwner nextStateOwner = NextStateOwner::None;
         std::uint64_t signalAttemptCounter = 0;
         AcceptedQueueSignalAdvanceV1 signalIdentity{};
+        ScheduledTransactionPool* signalFrontierPool = nullptr;
+        const FrontierGroupBinding* signalFrontier = nullptr;
+        std::atomic<std::uint64_t> signalPublishedAttempt{0};
+        std::atomic<std::uint64_t> signalActivationSequence{0};
         std::atomic<bool> conditionalReserved{false};
         std::atomic<bool> conditionalReplacementReserved{false};
         const QueueContinuationLane* stagedReplacementOwner = nullptr;

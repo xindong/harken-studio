@@ -386,6 +386,29 @@ TEST(CanonicalPackSetActivate, CompanionInitOwnsVariableAndLabelNames) {
     resolved.structSize = sizeof(resolved);
     ASSERT_EQ(VN_OK, Vn_ResolveVariableByName(&lookup, &resolved));
     EXPECT_EQ(variableId, resolved.variableId);
+    VnEmitterHandle localEmitter = 0;
+    VnEmitterHandle siblingEmitter = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&localEmitter));
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&siblingEmitter));
+    const auto expectNamedValue = [&](VnEmitterHandle emitter, float expected, bool local) {
+        VnVariableQueryDescV1 namedQuery{};
+        namedQuery.structSize = sizeof(namedQuery);
+        namedQuery.variableId = variableId;
+        namedQuery.emitter = emitter;
+        VnVariableQueryResultV1 namedValue{};
+        namedValue.structSize = sizeof(namedValue);
+        ASSERT_EQ(VN_OK, Vn_QueryVariable(&namedQuery, &namedValue));
+        EXPECT_FLOAT_EQ(expected, namedValue.currentValue);
+        EXPECT_EQ(local ? 1u : 0u, namedValue.scope);
+        EXPECT_EQ(local ? 1u : 0u, namedValue.hasEmitterOverride);
+    };
+    ASSERT_EQ(VN_OK, Vn_SetValueByName("State", 3));
+    ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(session.Engine()));
+    ASSERT_EQ(VN_OK, Vn_SetEmitterValueByName(localEmitter, "State", 5));
+    ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(session.Engine()));
+    ASSERT_NO_FATAL_FAILURE(expectNamedValue(0, 3, false));
+    ASSERT_NO_FATAL_FAILURE(expectNamedValue(localEmitter, 5, true));
+    ASSERT_NO_FATAL_FAILURE(expectNamedValue(siblingEmitter, 3, false));
     ASSERT_EQ(VN_OK, Vn_SetValueByLabelName(variableId, "Eight", 0));
     const auto generation = session.Engine()->variables.CurrentWorldGeneration();
     members[0].operation = VN_PACK_MEMBER_NAME_ONLY;
@@ -402,6 +425,12 @@ TEST(CanonicalPackSetActivate, CompanionInitOwnsVariableAndLabelNames) {
     ASSERT_EQ(VN_OK, Vn_QueryVariable(&query, &value));
     EXPECT_FLOAT_EQ(8.0f, value.currentValue);
     EXPECT_EQ(VN_NO_VARIABLE, Vn_ResolveVariableByName(&lookup, &resolved));
+    EXPECT_EQ(VN_NO_VARIABLE, Vn_SetValueByName("State", 2));
+    EXPECT_EQ(VN_NO_VARIABLE, Vn_SetEmitterValueByName(localEmitter, "State", 4));
+    ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(session.Engine()));
+    ASSERT_NO_FATAL_FAILURE(expectNamedValue(0, 8, false));
+    ASSERT_NO_FATAL_FAILURE(expectNamedValue(localEmitter, 8, false));
+    ASSERT_NO_FATAL_FAILURE(expectNamedValue(siblingEmitter, 8, false));
     lookup.utf8Name = "Mode";
     EXPECT_EQ(VN_OK, Vn_ResolveVariableByName(&lookup, &resolved));
     EXPECT_EQ(VN_UNKNOWN_ID, Vn_SetValueByLabelName(variableId, "Eight", 0));
@@ -410,6 +439,14 @@ TEST(CanonicalPackSetActivate, CompanionInitOwnsVariableAndLabelNames) {
     names.labelCount = 0;
     EXPECT_EQ(VN_BAD_PACK, Activate(members, report, 2));
     EXPECT_EQ(VN_OK, Vn_ResolveVariableByName(&lookup, &resolved));
+    ASSERT_EQ(VN_OK, Vn_SetValueByName("Mode", 2));
+    ASSERT_EQ(VN_OK, Vn_SetEmitterValueByName(localEmitter, "Mode", 4));
+    ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(session.Engine()));
+    ASSERT_NO_FATAL_FAILURE(expectNamedValue(0, 2, false));
+    ASSERT_NO_FATAL_FAILURE(expectNamedValue(localEmitter, 4, true));
+    ASSERT_NO_FATAL_FAILURE(expectNamedValue(siblingEmitter, 2, false));
+    ASSERT_EQ(VN_OK, Vn_DestroyEmitter(localEmitter));
+    ASSERT_EQ(VN_OK, Vn_DestroyEmitter(siblingEmitter));
 }
 
 TEST(CanonicalPackSetActivate, CompanionInspectionDiscoversProjectWithoutWeakeningActivation) {

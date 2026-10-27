@@ -674,6 +674,8 @@ public:
         void* context, void (*apply)(void*, const CommandRecord&) noexcept) noexcept;
     bool PendingTimelineReadUseFrozen(VariableTimelineReadUseRef use) const noexcept;
     bool PendingTimelineReadUseStaged(VariableTimelineReadUseRef use) const noexcept;
+    bool CanCommitTimelineReadUse(VariableTimelineReadUseRef use, VariableReadCutRef cut,
+        VnVoiceHandle nativeHandle, const TimelineArmTable& arms, TimelineArmToken arm) const noexcept;
     bool CommitTimelineReadUse(VariableTimelineReadUseRef use) noexcept;
     bool CancelPreparedTimelineReadUse(VariableTimelineReadUseRef use) noexcept;
     bool CanTransferReadCutToTimelineUses(VariableReadCutRef cut) const noexcept;
