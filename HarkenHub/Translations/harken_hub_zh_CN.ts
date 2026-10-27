@@ -159,6 +159,8 @@
 </context>
 <context>
     <name>HubReleaseNotes</name>
+    <message><source>The Windows installer displays the license agreement and privacy policy side by side. Its interface and documents use Simplified Chinese for Chinese Windows display languages, and English for other languages.</source><translation>Windows 安装器中的许可协议与隐私政策改为左右分栏显示。Windows 显示语言为中文时，界面与文档统一使用简体中文；其他语言统一使用英文。</translation></message>
+    <message><source>Integration Package selection dialogs and quick change menus identify Unity or UE packages based on the game project's engine.</source><translation>集成包选择窗口和快捷更换菜单根据游戏工程的引擎类型，明确显示 Unity 集成包或 UE 集成包。</translation></message>
     <message><source>Running Hub taskbar icons now refresh correctly when switching between light and dark Windows themes.</source><translation>修复运行中的 Hub 任务栏图标在 Windows 浅色、深色主题切换后未正确刷新的问题。</translation></message>
     <message><source>Quick Integration Package and project version menus show concise version labels. Project version choices are ordered from newest to oldest.</source><translation>精简快捷集成包和工程版本菜单中的版本名称，工程版本选项按从新到旧排列。</translation></message>
     <message><source>Integration Package status checks, changes, moves, and uninstalls are available on one row.</source><translation>集成包状态检查按钮与更换、移动、卸载按钮恢复为同一行。</translation></message>
@@ -818,6 +820,29 @@ Continue?</source>
 </context>
 <context>
     <name>HarkenHub</name>
+    <message><source>Unity Integration Package</source><translation>Unity 集成包</translation></message>
+    <message><source>UE Integration Package</source><translation>UE 集成包</translation></message>
+    <message><source>Integration Package</source><translation>集成包</translation></message>
+    <message><source>%1 %2 | %3</source><translation>%1 %2 | %3</translation></message>
+    <message><source>%1 %2 | Studio %3</source><translation>%1 %2 | Studio %3</translation></message>
+    <message><source>Manage %1 and Project Links</source><translation>管理 %1 与工程关联</translation></message>
+    <message><source>Quick Change %1</source><translation>快捷更换 %1</translation></message>
+    <message><source>Installed %1: %2</source><translation>当前已安装 %1：%2</translation></message>
+    <message><source>Change %1</source><translation>更换 %1</translation></message>
+    <message><source>Install %1</source><translation>安装 %1</translation></message>
+    <message><source>Change %1...</source><translation>更换 %1...</translation></message>
+    <message><source>Install %1...</source><translation>安装 %1...</translation></message>
+    <message><source>Choose %1 Folder</source><translation>选择 %1 文件夹</translation></message>
+    <message><source>Choose %1 Folder...</source><translation>选择 %1 文件夹...</translation></message>
+    <message><source>Select %1 Installation Directory</source><translation>选择 %1 安装目录</translation></message>
+    <message><source>%1 Source Directory</source><translation>%1 源目录</translation></message>
+    <message><source>%1 Install Location</source><translation>%1 安装位置</translation></message>
+    <message><source>Applying %1...</source><translation>正在更换 %1…</translation></message>
+    <message><source>Checking %1...</source><translation>正在检查 %1…</translation></message>
+    <message><source>Confirm %1 Change</source><translation>确认更换 %1</translation></message>
+    <message><source>Confirm %1 Installation</source><translation>确认安装 %1</translation></message>
+    <message><source>Check %1 Changes</source><translation>检查 %1 变更</translation></message>
+    <message><source>%1 version: %2 → %3</source><translation>%1 版本：%2 → %3</translation></message>
     <message><source>Harken Unity Integration Package could not be located.</source><translation>未找到 Harken Unity 集成包。</translation></message>
     <message><source>The selected folder is not a valid com.harken.core Integration Package source: %1</source><translation>所选文件夹不是有效的 com.harken.core 集成包来源：%1</translation></message>
     <message><source>Choose HarkenIntegration, HarkenIntegration/Unity/Harken, or a complete external Unity package root, or clear the Integration Package source field to use automatic discovery.</source><translation>请选择 HarkenIntegration、HarkenIntegration/Unity/Harken 或完整的外部 Unity 包根目录，也可清空集成包来源以启用自动查找。</translation></message>

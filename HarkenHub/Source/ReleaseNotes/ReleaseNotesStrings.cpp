@@ -1,6 +1,8 @@
 #include <QtTranslation>
 
 static const char* const kReleaseNotesStrings[] = {
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "The Windows installer displays the license agreement and privacy policy side by side. Its interface and documents use Simplified Chinese for Chinese Windows display languages, and English for other languages."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Integration Package selection dialogs and quick change menus identify Unity or UE packages based on the game project's engine."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Running Hub taskbar icons now refresh correctly when switching between light and dark Windows themes."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Quick Integration Package and project version menus show concise version labels. Project version choices are ordered from newest to oldest."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Integration Package status checks, changes, moves, and uninstalls are available on one row."),

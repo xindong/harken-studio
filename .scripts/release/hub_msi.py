@@ -67,15 +67,15 @@ def msi_name(name: str, identity: str) -> str:
     return uuid.uuid5(COMPONENT_NAMESPACE, identity).hex[:8] + "|" + name
 
 
-def installer_ui(tables, license_rtf):
+def installer_ui(tables, license_rtf, privacy_rtf):
     tables["Property"] += [("DefaultUIFont", "HubNormal")]
     tables["TextStyle"] = [("HubNormal", "Segoe UI", 9, 0, 0), ("HubTitle", "Segoe UI", 12, 0, 1)]
     tables["CheckBox"] = [("LICENSEACCEPTED", "1")]
 
-    def dialog(name, title, first, default, cancel, modal=True):
-        tables["Dialog"].append((name, 50, 50, 420, 320, 3 if modal else 1,
+    def dialog(name, title, first, default, cancel, modal=True, width=420, height=320):
+        tables["Dialog"].append((name, 50, 50, width, height, 3 if modal else 1,
                                  "[ProductName] Setup", first, default, cancel))
-        control(name, "Title", "Text", (18, 14, 384, 25), "{\\HubTitle}" + title, attributes=3)
+        control(name, "Title", "Text", (18, 14, width - 36, 25), "{\\HubTitle}" + title, attributes=3)
 
     def control(dialog, name, kind, bounds, text=None, prop=None, next=None, attributes=3):
         tables["Control"].append((dialog, name, kind, *bounds, attributes, prop, text, next, None))
@@ -83,16 +83,22 @@ def installer_ui(tables, license_rtf):
     def event(dialog, button, event, value, condition="1", order=1):
         tables["ControlEvent"].append((dialog, button, event, value, condition, order))
 
-    def cancel(dialog, next):
-        control(dialog, "Cancel", "PushButton", (330, 285, 72, 20), "Cancel", next=next)
+    def cancel(dialog, next, x=330, y=285):
+        control(dialog, "Cancel", "PushButton", (x, y, 72, 20), "Cancel", next=next)
         event(dialog, "Cancel", "EndDialog", "Exit")
 
-    dialog("LicenseDialog", "License Agreement and Privacy Policy", "Accept", "Next", "Cancel")
-    control("LicenseDialog", "Terms", "ScrollableText", (18, 48, 384, 196), license_rtf, attributes=7)
-    control("LicenseDialog", "Accept", "CheckBox", (18, 254, 384, 20),
+    dialog("LicenseDialog", "License Agreement and Privacy Policy", "Accept", "Next", "Cancel",
+           width=660, height=440)
+    control("LicenseDialog", "AgreementTitle", "Text", (18, 48, 304, 16), "License Agreement")
+    control("LicenseDialog", "PrivacyTitle", "Text", (338, 48, 304, 16), "Privacy Policy")
+    control("LicenseDialog", "Agreement", "ScrollableText", (18, 68, 304, 296),
+            license_rtf, next="Privacy", attributes=7)
+    control("LicenseDialog", "Privacy", "ScrollableText", (338, 68, 304, 296),
+            privacy_rtf, next="Accept", attributes=7)
+    control("LicenseDialog", "Accept", "CheckBox", (18, 374, 624, 20),
             "I accept the license agreement and privacy policy.", "LICENSEACCEPTED", "Next")
-    control("LicenseDialog", "Next", "PushButton", (250, 285, 72, 20), "Next", next="Cancel")
-    cancel("LicenseDialog", "Accept")
+    control("LicenseDialog", "Next", "PushButton", (490, 405, 72, 20), "Next", next="Cancel")
+    cancel("LicenseDialog", "Agreement", x=570, y=405)
     event("LicenseDialog", "Next", "NewDialog", "FolderDialog", 'LICENSEACCEPTED="1"')
     tables["ControlCondition"] += [
         ("LicenseDialog", "Next", "Enable", 'LICENSEACCEPTED="1"'),
@@ -138,7 +144,7 @@ def installer_ui(tables, license_rtf):
         event(name, "Close", "EndDialog", "Return")
 
 
-def package_tables(files, input_dir, version, license_rtf):
+def package_tables(files, input_dir, version, license_rtf, privacy_rtf):
     tables = {name: [] for name in SCHEMA}
     tables["Property"] = [
         ("ALLUSERS", "1"), ("Manufacturer", "XD"), ("ProductName", "Harken Hub"),
@@ -212,8 +218,8 @@ def package_tables(files, input_dir, version, license_rtf):
                                    "[INSTALLFOLDER]HarkenHub.exe", None, None, None, None, None, None, "INSTALLFOLDER"))
     tables["Feature"] = [("Hub", None, "Harken Hub", None, 2, 1, None, 0)]
     tables["FeatureComponents"] = [("Hub", row[0]) for row in tables["Component"]]
-    tables["Upgrade"] = [(UPGRADE_CODE, None, version, "1033", 513, None, "HARKEN_UPGRADE_DETECTED"),
-                          (UPGRADE_CODE, version, None, "1033", 2, None, "HARKEN_DOWNGRADE_DETECTED")]
+    tables["Upgrade"] = [(UPGRADE_CODE, None, version, None, 513, None, "HARKEN_UPGRADE_DETECTED"),
+                          (UPGRADE_CODE, version, None, None, 2, None, "HARKEN_DOWNGRADE_DETECTED")]
     tables["LaunchCondition"] = [
         ("NOT HARKEN_DOWNGRADE_DETECTED", "A newer version of Harken Hub is already installed."),
         ("VersionNT64", "Harken Hub requires 64-bit Windows."),
@@ -261,12 +267,13 @@ def package_tables(files, input_dir, version, license_rtf):
         ("InstallAdminPackage", None, 3900), ("InstallFiles", None, 4000), ("InstallFinalize", None, 6600),
     ]
     tables["Media"] = [(1, len(files), None, "#hub.cab", None, None)]
-    installer_ui(tables, license_rtf)
+    installer_ui(tables, license_rtf, privacy_rtf)
     return tables, cabinet_files
 
 
-def build(files, input_dir, version, license_rtf, msi_path, evidence_dir, run=subprocess.run):
-    tables, cabinet_files = package_tables(files, input_dir, version, license_rtf.read_text(encoding="ascii"))
+def build(files, input_dir, version, legal_inputs, msi_path, localized_path, evidence_dir, run=subprocess.run):
+    tables, cabinet_files = package_tables(files, input_dir, version,
+                                           *(path.read_text(encoding="ascii") for path in legal_inputs["en"]))
     evidence_dir.mkdir(parents=True, exist_ok=True)
     for name, source in tables["Icon"]:
         shutil.copyfile(source, evidence_dir / name)
@@ -289,6 +296,9 @@ def build(files, input_dir, version, license_rtf, msi_path, evidence_dir, run=su
         if result.returncode:
             raise RuntimeError(f"makecab failed: {result.stdout}\n{result.stderr}")
         with Database(msi_path) as database:
+            codepage = work / "codepage.idt"
+            codepage.write_bytes(b"\r\n\r\n936\t_ForceCodepage\r\n")
+            database.import_table(codepage)
             for name, (columns, keys) in SCHEMA.items():
                 definitions = ", ".join("`" + column.strip().replace(" ", "` ", 1) for column in columns.split(","))
                 primary = ", ".join("`" + key.strip() + "`" for key in keys.split(","))
@@ -299,3 +309,27 @@ def build(files, input_dir, version, license_rtf, msi_path, evidence_dir, run=su
                               7: "x64;1033", 9: "{" + str(uuid.uuid4()).upper() + "}",
                               14: 500, 15: 2, 18: "Harken Windows Installer Builder", 19: 2})
             database.commit()
+        shutil.copyfile(msi_path, localized_path)
+        translations_path = Path(__file__).with_name("hub_msi_zh_CN.json")
+        translations = json.loads(translations_path.read_text(encoding="utf-8"))
+        shutil.copyfile(translations_path, evidence_dir / translations_path.name)
+        with Database(localized_path, 1) as localized:
+            localized.summary({7: "x64;2052", 9: "{" + str(uuid.uuid4()).upper() + "}"})
+            localized.execute("UPDATE `Property` SET `Value`=? WHERE `Property`='ProductCode'",
+                              ("{" + str(uuid.uuid4()).upper() + "}",))
+            localized.execute("UPDATE `Property` SET `Value`=? WHERE `Property`='ProductLanguage'", ("2052",))
+            for name, title in localized.query("SELECT `Dialog`, `Title` FROM `Dialog`"):
+                localized.execute("UPDATE `Dialog` SET `Title`=? WHERE `Dialog`=?", (translations[title], name))
+            for dialog, control, kind, text in localized.query("SELECT `Dialog_`, `Control`, `Type`, `Text` FROM `Control`"):
+                if not text or kind == "ScrollableText":
+                    continue
+                prefix = "{\\HubTitle}" if text.startswith("{\\HubTitle}") else ""
+                localized.execute("UPDATE `Control` SET `Text`=? WHERE `Dialog_`=? AND `Control`=?",
+                                  (prefix + translations[text[len(prefix):]], dialog, control))
+            for control, document in zip(("Agreement", "Privacy"), legal_inputs["zh-CN"]):
+                localized.execute("UPDATE `Control` SET `Text`=? WHERE `Dialog_`='LicenseDialog' AND `Control`=?",
+                                  (document.read_text(encoding="ascii"), control))
+            for condition, description in localized.query("SELECT `Condition`, `Description` FROM `LaunchCondition`"):
+                localized.execute("UPDATE `LaunchCondition` SET `Description`=? WHERE `Condition`=?",
+                                  (translations[description], condition))
+            localized.commit()

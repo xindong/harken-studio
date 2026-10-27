@@ -26,6 +26,7 @@ FOREIGN_BINARIES = (
     "HarkenStudioHubSetup.exe",
 )
 PAYLOAD_RESOURCE_NAME = "HARKENHUBMSI"
+CHINESE_PAYLOAD_RESOURCE_NAME = "HARKENHUBMSI_ZHCN"
 RT_RCDATA = 10
 MSI_VERSION_PATTERN = re.compile(r"^\d+\.\d+\.\d+")
 
@@ -69,9 +70,8 @@ def collect_payload(input_dir: Path) -> list[Path]:
     return files
 
 
-def embed_payload(stub_exe: Path, msi_path: Path, exe_path: Path) -> None:
+def embed_payload(stub_exe: Path, msi_path: Path, localized_msi_path: Path, exe_path: Path) -> None:
     shutil.copyfile(stub_exe, exe_path)
-    payload = msi_path.read_bytes()
 
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.BeginUpdateResourceW.argtypes = [wintypes.LPCWSTR, wintypes.BOOL]
@@ -94,22 +94,25 @@ def embed_payload(stub_exe: Path, msi_path: Path, exe_path: Path) -> None:
             f"error: BeginUpdateResource failed for {exe_path} "
             f"(winerror {ctypes.get_last_error()})"
         )
-    buffer = ctypes.create_string_buffer(payload, len(payload))
-    updated = kernel32.UpdateResourceW(
-        handle,
-        ctypes.c_void_p(RT_RCDATA),
-        PAYLOAD_RESOURCE_NAME,
-        0,
-        ctypes.cast(buffer, wintypes.LPVOID),
-        len(payload),
-    )
-    if not updated:
-        error = ctypes.get_last_error()
-        kernel32.EndUpdateResourceW(handle, True)
-        raise SystemExit(
-            f"error: UpdateResource failed for {exe_path} "
-            f"(winerror {error})"
+    for name, package in ((PAYLOAD_RESOURCE_NAME, msi_path),
+                          (CHINESE_PAYLOAD_RESOURCE_NAME, localized_msi_path)):
+        payload = package.read_bytes()
+        buffer = ctypes.create_string_buffer(payload, len(payload))
+        updated = kernel32.UpdateResourceW(
+            handle,
+            ctypes.c_void_p(RT_RCDATA),
+            name,
+            0,
+            ctypes.cast(buffer, wintypes.LPVOID),
+            len(payload),
         )
+        if not updated:
+            error = ctypes.get_last_error()
+            kernel32.EndUpdateResourceW(handle, True)
+            raise SystemExit(
+                f"error: UpdateResource failed for {exe_path} "
+                f"(winerror {error})"
+            )
     if not kernel32.EndUpdateResourceW(handle, False):
         raise SystemExit(
             f"error: EndUpdateResource failed for {exe_path} "
@@ -137,9 +140,14 @@ def build_installer(
         raise SystemExit(f"error: input directory not found: {input_dir}")
 
     script_dir = Path(__file__).resolve().parent
-    eula_rtf = Path(args.eula_rtf).resolve() if args.eula_rtf else None
-    if eula_rtf is not None and not eula_rtf.is_file():
-        raise SystemExit(f"error: missing authoring input: {eula_rtf}")
+    legal_overrides = {
+        "en": (args.eula_rtf, args.privacy_rtf),
+        "zh-CN": (args.eula_rtf_zh_cn, args.privacy_rtf_zh_cn),
+    }
+    for documents in legal_overrides.values():
+        for document in documents:
+            if document and not Path(document).is_file():
+                raise SystemExit(f"error: missing authoring input: {document}")
 
     stub_exe = None
     if args.stub_exe:
@@ -157,29 +165,42 @@ def build_installer(
             setup_stub=stub_exe)
         packaging_inputs = evidence / "packaging-inputs"
         packaging_inputs.mkdir(parents=True, exist_ok=True)
-        if eula_rtf is None:
-            eula_rtf = packaging_inputs / "license.rtf"
-            eula_rtf.write_bytes(product_legal.render_rtf(product_legal.installer_text()).encode("ascii"))
+        legal_inputs = {}
+        for language, overrides in legal_overrides.items():
+            documents = product_legal.read_documents(product_legal.REPO_ROOT / product_legal.TERMS_FILES[language])
+            suffix = "" if language == "en" else ".zh-CN"
+            legal_inputs[language] = []
+            for name, text, custom in zip(("license", "privacy"), documents, overrides):
+                document = packaging_inputs / f"{name}{suffix}.rtf"
+                if custom:
+                    shutil.copyfile(Path(custom).resolve(), document)
+                else:
+                    document.write_bytes(product_legal.render_rtf(text).encode("ascii"))
+                legal_inputs[language].append(document)
         product_version = msi_version(args.version)
         msi_path = staging / f"HarkenHubSetup-{args.version}-{args.build_id}.msi"
-        build_msi(files, input_dir, product_version, eula_rtf, msi_path, packaging_inputs)
-        if not msi_path.is_file():
-            raise SystemExit(f"error: Windows Installer build produced no MSI at {msi_path}")
+        localized_msi_path = msi_path.with_suffix(".zh-CN.msi")
+        packages = (msi_path, localized_msi_path)
+        build_msi(files, input_dir, product_version, legal_inputs, msi_path, localized_msi_path, packaging_inputs)
+        for package in packages:
+            if not package.is_file():
+                raise SystemExit(f"error: Windows Installer build produced no MSI at {package}")
         release_evidence.retain_packaging_inputs(evidence, {
             "hub_msi.py": script_dir / "hub_msi.py",
+            "hub_msi_zh_CN.json": script_dir / "hub_msi_zh_CN.json",
             "windows_installer.py": script_dir / "windows_installer.py",
             "msi-tables.json": packaging_inputs / "msi-tables.json",
             "HubIcon.ico": script_dir.parents[1] / "HarkenHub/Resources/icons/HubIcon.ico",
-            "license.rtf": eula_rtf})
+            **{path.name: path for documents in legal_inputs.values() for path in documents}})
 
         signed = False
-        signing = sign_command(msi_path)
-        if signing is not None:
-            sign_result = run(signing)
-            if sign_result.returncode != 0:
-                raise SystemExit(
-                    f"error: signtool failed with exit code {sign_result.returncode}"
-                )
+        if sign_command(msi_path) is not None:
+            for package in packages:
+                sign_result = run(sign_command(package))
+                if sign_result.returncode != 0:
+                    raise SystemExit(
+                        f"error: signtool failed with exit code {sign_result.returncode}"
+                    )
             signed = True
         else:
             print(
@@ -189,6 +210,7 @@ def build_installer(
 
         summary = {
             "package": str(output_dir / msi_path.name),
+            "chinesePackage": str(output_dir / localized_msi_path.name),
             "evidence": str(output_dir / evidence.name),
             "fileCount": len(files),
             "version": args.version,
@@ -201,7 +223,7 @@ def build_installer(
             exe_path = (
                 staging / f"HarkenHubSetup-{args.version}-{args.build_id}.exe"
             )
-            embed(stub_exe, msi_path, exe_path)
+            embed(stub_exe, msi_path, localized_msi_path, exe_path)
             if not exe_path.is_file():
                 raise SystemExit(
                     f"error: payload embedding produced no EXE at {exe_path}"
@@ -216,14 +238,15 @@ def build_installer(
                     )
             summary["setupExe"] = str(output_dir / exe_path.name)
 
-        artifacts = [msi_path]
+        artifacts = list(packages)
         if stub_exe is not None:
             artifacts.append(exe_path)
         records = release_evidence.finalize(evidence, artifacts, input_dir,
-                                            intermediate_artifacts=(msi_path,) if stub_exe is not None else ())
+                                            intermediate_artifacts=packages if stub_exe is not None else ())
         summary.update(sha256=records[0]["sha256"], size=records[0]["size"])
+        summary.update(chinesePackageSha256=records[1]["sha256"], chinesePackageSize=records[1]["size"])
         if stub_exe is not None:
-            summary.update(setupExeSha256=records[1]["sha256"], setupExeSize=records[1]["size"])
+            summary.update(setupExeSha256=records[-1]["sha256"], setupExeSize=records[-1]["size"])
     return summary
 
 
@@ -234,7 +257,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--version", required=True)
     parser.add_argument("--build-id", required=True)
     parser.add_argument("--build-dir", default="build")
-    parser.add_argument("--eula-rtf", default=None)
+    parser.add_argument("--eula-rtf", default=None, help="Override the English license agreement with an RTF file.")
+    parser.add_argument("--privacy-rtf", default=None, help="Override the English privacy policy with an RTF file.")
+    parser.add_argument("--eula-rtf-zh-cn", default=None, help="Override the Chinese license agreement with an RTF file.")
+    parser.add_argument("--privacy-rtf-zh-cn", default=None, help="Override the Chinese privacy policy with an RTF file.")
     parser.add_argument("--stub-exe", default=None)
     return parser.parse_args(argv)
 
