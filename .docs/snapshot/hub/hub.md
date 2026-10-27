@@ -13,7 +13,7 @@ HarkenHubUpdateBridge（特权更新桥）。
 | 主窗口双页 UI | `Source/UI/HubWindow`：VersionsPage（版本管理）+ ProjectsPage（工程管理），无边框标题栏 | 可用 |
 | 匿名资源访问 | 版本发现、下载与自更新均匿名，不实现登录、设备授权或身份 token 存储 | 可用 |
 | 版本目录与更新检查 | `Source/Update/` ServerVersionCatalog / UpdateChecker / Coordinator / Queue / StateStore 全链路；关闭对应产品自动更新后停止后台检查、重试和下载，手动检查不重开自动任务；未安装 Studio 时，启动页面立即请求 Studio 自动检查，仍受 Studio 开关控制且不触发 Hub 检查；共享状态文件以跨进程锁串行提交，条件更新与清除拒绝过时快照 | 可用 |
-| Windows 安装包 | 原生 Windows Installer API 与 CAB 工具生成中英文 MSI，EXE 引导器在提权前按启动用户的 Windows 显示语言选定内嵌安装包：简繁中文统一显示简体中文，其余显示英文，跨账号提权保留该选择；界面和法务正文同语种，许可协议与隐私政策左右分栏、独立滚动，勾选接受两份文档后继续；两种 MSI 的语言元数据各自一致，共用产品、组件与升级身份，PackageCode 独立 | 可用 |
+| Windows 安装包 | 原生 Windows Installer API 与 CAB 工具生成中英文 MSI，EXE 引导器在提权前按启动用户的 Windows 显示语言选定内嵌安装包：简繁中文统一显示简体中文，其余显示英文，跨账号提权保留该选择；界面和法务正文同语种，许可协议与隐私政策左右分栏、独立滚动，勾选接受两份文档后继续；两种 MSI 的语言元数据各自一致，共用组件与 UpgradeCode，ProductCode 和 PackageCode 独立，切换语言沿用升级流程 | 可用 |
 | 下载与包校验 | `Source/Download/`（重试退避、文件占用保护）+ `Source/Packaging/`（zip 读取校验）+ `Source/Security/` ed25519 清单签名与信任锚；Studio 手动与后台缓存隔离，占用保护延续到校验和安装交接复制完成 | 可用 |
 | 事务化安装/修复/卸载 | `Source/Transactions/` 三类 Executor + Journal / Reclaimer / HandoffArea；安装索引共用有界原子写入重试，Windows 短暂占用后恢复，持续失败保留旧索引并沿用事务回滚；新安装目录使用版本、渠道和平台架构，重名时追加短序号；构建身份保存在元数据中，既有安装路径保持兼容 | 可用 |
 | Hub 自更新 + 特权桥 | `Source/Update/HubSelfUpdate` + 更新桥（Windows 计划任务 / macOS LaunchDaemon），带健康检查与单测；安装包及其清单共用占用保护，覆盖下载、校验和安装交接，同步静默更新复用当前下载锁 | 可用 |

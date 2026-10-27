@@ -315,6 +315,8 @@ def build(files, input_dir, version, legal_inputs, msi_path, localized_path, evi
         shutil.copyfile(translations_path, evidence_dir / translations_path.name)
         with Database(localized_path, 1) as localized:
             localized.summary({7: "x64;2052", 9: "{" + str(uuid.uuid4()).upper() + "}"})
+            localized.execute("UPDATE `Property` SET `Value`=? WHERE `Property`='ProductCode'",
+                              ("{" + str(uuid.uuid4()).upper() + "}",))
             localized.execute("UPDATE `Property` SET `Value`=? WHERE `Property`='ProductLanguage'", ("2052",))
             for name, title in localized.query("SELECT `Dialog`, `Title` FROM `Dialog`"):
                 localized.execute("UPDATE `Dialog` SET `Title`=? WHERE `Dialog`=?", (translations[title], name))

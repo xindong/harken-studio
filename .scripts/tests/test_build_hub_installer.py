@@ -242,6 +242,7 @@ class BuildHubInstallerTest(unittest.TestCase):
                 self.assertNotEqual(localized.summary_value(9), db.summary_value(9))
                 self.assertEqual(localized_properties.pop("ProductLanguage"), "2052")
                 self.assertEqual(properties.pop("ProductLanguage"), "1033")
+                self.assertNotEqual(localized_properties.pop("ProductCode"), properties.pop("ProductCode"))
                 self.assertEqual(localized_properties, properties)
                 for table in self.module.hub_msi.SCHEMA:
                     if table in {"Property", "Dialog", "Control", "LaunchCondition", "Icon"}:
