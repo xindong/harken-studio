@@ -233,3 +233,66 @@ TEST(RuntimeSyncCoordinatorTest, CoalescedMutationsRetainAllPropertiesAndFullInv
     coordinator.flushPendingMutationNow();
     EXPECT_TRUE(mutations.back().full);
 }
+
+TEST(RuntimeSyncCoordinatorTest, RepeatedFlushDoesNotCreateWorkOrLoseEditsDuringSubmission)
+{
+    auto application = ensureApplication();
+    namespace Bridge = HarkenEditor::Bridge;
+    using Coordinator = VNX::RuntimeSyncCoordinator;
+    std::vector<Bridge::CurrentWorldSyncToken> tokens;
+    Coordinator coordinator([&](Bridge::CurrentWorldSyncToken token) {
+        tokens.push_back(token);
+        Bridge::CurrentWorldSyncResult result;
+        result.token = token;
+        result.status = Bridge::CurrentWorldSyncStatus::Pending;
+        return result;
+    });
+    coordinator.beginProjectSession();
+    coordinator.runtimeStarted();
+    const auto first = coordinator.markCurrentWorldMutation();
+    coordinator.flushPendingMutationNow();
+    ASSERT_EQ(tokens.size(), 1u);
+    for (int attempt = 0; attempt < 3; ++attempt)
+        coordinator.flushPendingMutationNow();
+    EXPECT_EQ(coordinator.currentAuthoringRevision(), first.revision);
+
+    Bridge::CurrentWorldSyncResult completion;
+    completion.token = tokens.front();
+    completion.status = Bridge::CurrentWorldSyncStatus::Ok;
+    completion.worldGeneration = 1;
+    coordinator.acceptCurrentWorldSyncResult(completion);
+    QCoreApplication::processEvents(QEventLoop::AllEvents);
+    EXPECT_EQ(coordinator.barrier(first.revision).state,
+              Coordinator::RevisionBarrierState::Ready);
+    EXPECT_FALSE(coordinator.hasOutstandingSubmission());
+    ASSERT_EQ(tokens.size(), 1u);
+
+    coordinator.markCurrentWorldMutation();
+    coordinator.flushPendingMutationNow();
+    ASSERT_EQ(tokens.size(), 2u);
+    const auto latest = coordinator.markCurrentWorldMutation();
+    for (int attempt = 0; attempt < 3; ++attempt)
+        coordinator.flushPendingMutationNow();
+    QCoreApplication::processEvents(QEventLoop::AllEvents);
+    ASSERT_EQ(tokens.size(), 2u);
+    completion.token = tokens.back();
+    completion.worldGeneration = 2;
+    coordinator.acceptCurrentWorldSyncResult(completion);
+    EXPECT_EQ(coordinator.barrier(latest.revision).state,
+              Coordinator::RevisionBarrierState::Pending);
+    QCoreApplication::processEvents(QEventLoop::AllEvents);
+    ASSERT_EQ(tokens.size(), 3u);
+    EXPECT_EQ(tokens.back().authoringRevision, latest.revision);
+    EXPECT_TRUE(coordinator.hasOutstandingSubmission());
+    completion.token = tokens.back();
+    completion.worldGeneration = 3;
+    coordinator.acceptCurrentWorldSyncResult(completion);
+    QCoreApplication::processEvents(QEventLoop::AllEvents);
+    coordinator.flushPendingMutationNow();
+    EXPECT_EQ(tokens.size(), 3u);
+    EXPECT_FALSE(coordinator.hasOutstandingSubmission());
+    const auto barrier = coordinator.barrier(latest.revision);
+    EXPECT_EQ(barrier.state, Coordinator::RevisionBarrierState::Ready);
+    EXPECT_EQ(barrier.installedRevision, latest.revision);
+    EXPECT_EQ(barrier.worldGeneration, 3u);
+}

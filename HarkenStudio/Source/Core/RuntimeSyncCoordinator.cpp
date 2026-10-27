@@ -184,10 +184,8 @@ bool RuntimeSyncCoordinator::hasOutstandingSubmission() const noexcept
 
 void RuntimeSyncCoordinator::flushPendingMutationNow()
 {
-    if (hasOutstandingSubmission()) {
-        m_flushRequested = true;
+    if (hasOutstandingSubmission())
         return;
-    }
     if (!m_coalescingTimer.isActive() && !m_flushRequested)
         return;
     m_coalescingTimer.stop();
