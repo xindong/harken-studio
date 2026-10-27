@@ -14,6 +14,7 @@
 
 namespace HarkenEditor::Bridge {
 struct CanonicalRuntimeProjectSourceIndexV1;
+struct CurrentWorldScalarUpdate;
 }
 
 namespace VNX {
@@ -60,5 +61,8 @@ bool isCurrentWorldPlayable(ProjectData& project, const ProjectItem& item);
 bool affectsCurrentWorld(ProjectItemType itemType,
                          CurrentWorldMutationKind mutationKind,
                          QStringView propertyName = {});
+bool readCurrentWorldScalarUpdate(
+    ProjectItem& item, PlatformScope scope, std::uint8_t propertyId,
+    HarkenEditor::Bridge::CurrentWorldScalarUpdate* output);
 
 } // namespace VNX

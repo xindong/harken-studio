@@ -148,6 +148,7 @@ std::shared_ptr<CanonicalRuntimeProjectSourceIndexV1> buildSourceIndex(
     const ProjectData& project)
 {
     auto index = std::make_shared<CanonicalRuntimeProjectSourceIndexV1>();
+    std::optional<QDir> projectDirectory;
     const auto canonicalBindingPath = [&](const ProjectItem* item) {
         QString path = QDir::fromNativeSeparators(project.objectFilePath(item));
         if (path.isEmpty()) {
@@ -155,10 +156,12 @@ std::shared_ptr<CanonicalRuntimeProjectSourceIndexV1> buildSourceIndex(
                 item->guid.toString(QUuid::WithoutBraces));
         }
         if (QDir::isAbsolutePath(path) && !project.projectPath.isEmpty()) {
-            const QFileInfo projectInfo(project.projectPath);
-            const QString projectDirectory = projectInfo.isDir()
-                ? projectInfo.absoluteFilePath() : projectInfo.absolutePath();
-            path = QDir(projectDirectory).relativeFilePath(path);
+            if (!projectDirectory) {
+                const QFileInfo projectInfo(project.projectPath);
+                projectDirectory.emplace(projectInfo.isDir()
+                    ? projectInfo.absoluteFilePath() : projectInfo.absolutePath());
+            }
+            path = projectDirectory->relativeFilePath(path);
         }
         return QDir::cleanPath(path);
     };

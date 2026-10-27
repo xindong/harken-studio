@@ -1658,6 +1658,29 @@ bool isCurrentWorldPlayable(ProjectData& project, const ProjectItem& item)
     return included.find(const_cast<ProjectItem*>(&item)) != included.end();
 }
 
+bool readCurrentWorldScalarUpdate(
+    ProjectItem& item, PlatformScope scope, std::uint8_t propertyId,
+    HarkenEditor::Bridge::CurrentWorldScalarUpdate* output)
+{
+    using Property = harkenplayableproperties::PlayablePropertyIdV1;
+    const auto property = static_cast<Property>(propertyId);
+    if (!output || item.type == ProjectItem::Type::Bus
+        || (property != Property::Volume && property != Property::Pitch
+            && property != Property::MakeUpGain)
+        || !PlayablePropertyAuthoringV1::isSlotApplicable(item.type, propertyId))
+        return false;
+    const auto locator = PlayablePropertyAuthoringV1::definitionLocator(item);
+    const auto state = locator
+        ? PlayablePropertyAuthoringV1::readProperty(item, *locator, propertyId, scope)
+        : std::nullopt;
+    if (!state || harkenstudio::IsNull(item.runtimeId()))
+        return false;
+    *output = {authoringGuid(item.guid), item.runtimeId(), propertyId,
+               state->present,
+               state->present ? static_cast<float>(state->value.toDouble()) : 0.0f};
+    return true;
+}
+
 bool affectsCurrentWorld(ProjectItemType itemType,
                          CurrentWorldMutationKind mutationKind,
                          QStringView propertyName)

@@ -2,7 +2,6 @@
 #include "SignalPathGainEditing.h"
 
 #include "Core/PlatformContextService.h"
-#include "Core/Components/VSound.h"
 #include "Core/PropertyEditSession.h"
 #include "Core/ProjectManager.h"
 #include "Core/FieldGroupProjectAdapter.h"
@@ -136,15 +135,13 @@ void BlueprintCanvasWidget::installNodeEditor_(NodeItem* node, const BlueprintNo
             if (nodeEditSession_ && nodeEditSession_->isActive())
                 nodeEditSession_->preview(value);
         };
-        const auto finish = [this](NodeContentField field, bool committed) {
+        const auto finish = [this, definition](NodeContentField field, bool committed) {
             if (auto session = std::move(nodeEditSession_)) {
                 if (committed) session->commit();
                 else session->cancel();
             }
-            queuePathRefresh_(field == NodeContentField::Volume
-                || field == NodeContentField::Pitch
-                || field == NodeContentField::Loop
-                || field == NodeContentField::OffsetOfStart);
+            queuePathContentRefresh_(ProjectManager::instance().findItemByGuid(definition),
+                nodeContentProperty(field).field);
         };
         connect(editor, &NodeContentEditor::editBegan, this, begin);
         connect(editor, &NodeContentEditor::editPreviewed, this, preview);
@@ -232,30 +229,9 @@ void BlueprintCanvasWidget::refreshNodeContent_(ProjectItem* item, const QString
         refreshGainContent_(item);
         return;
     }
-    const auto& graph = pathSource_->graph();
-    const PlatformScope scope = graph.platform
-        ? PlatformScope{fromFieldGroupGuid(*graph.platform)} : std::nullopt;
-    const auto locator = PlayablePropertyAuthoringV1::definitionLocator(*item);
-    const auto* property = PlayablePropertyAuthoringV1::fieldByName(propertyName);
-    QVariant value;
-    if (locator && property) {
-        const auto state = PlayablePropertyAuthoringV1::readProperty(*item, *locator, property->id, scope);
-        if (state) value = state->value.toVariant();
-    } else if (propertyName == QLatin1String("scheduleOffsetSec")) {
-        if (const auto* sound = item->comp<VSound>()) value = sound->scheduleOffsetSec;
-    }
-    if (!value.isValid()) return;
-    for (const auto& [key, node] : nodeMap_) {
-        if (key.id != item->objectID) continue;
-        auto info = node->contentInfo();
-        if (propertyName == QLatin1String("volume")) info.volume = value.toFloat();
-        else if (propertyName == QLatin1String("pitch")) info.pitch = value.toFloat();
-        else if (propertyName == QLatin1String("scheduleOffsetSec")) info.offsetOfStart = value.toDouble();
-        else if (propertyName == QLatin1String("loopCount")) info.loopCount = value.toUInt();
-        else return;
-        if (key.occurrenceIndex) pathSource_->setNodeContent(*key.occurrenceIndex, info);
-        node->setContentInfo(info);
-    }
+    for (const size_t index : pathSource_->refreshNodeContents(*item, propertyName))
+        if (auto* node = signalPathNode(index))
+            node->setContentInfo(pathSource_->nodeContentInfo(index));
 }
 
 void BlueprintCanvasWidget::refreshOutputVolumePreview_(ProjectItem* item, const DefinitionFieldGroups& groups)

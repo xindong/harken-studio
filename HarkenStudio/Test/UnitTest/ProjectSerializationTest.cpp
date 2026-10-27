@@ -472,6 +472,97 @@ TEST(ProjectSerialization, FailedContentCapturePreservesTheLastSuccessfulSavePoi
     EXPECT_TRUE(saved.refresh(project).isEmpty());
 }
 
+TEST(ProjectSerialization, ScopedSavedContentMatchesFullComparisonAcrossAuthoringChanges)
+{
+    ProjectData project = HarkenTest::projectWithPlatforms();
+    const auto layer = addSaveStateRoot(project, QStringLiteral("Layer"), ProjectItem::Type::Layer, 1);
+    const auto sound = addChild(*layer, "Tone", ProjectItem::Type::Sound);
+    sound->objectID = 2;
+    sound->parentRef.kind = VNX::ParentRef::Kind::Item;
+    const auto other = addSaveStateRoot(project, QStringLiteral("Other"), ProjectItem::Type::Sound, 3);
+    const QList<ProjectItem*> items{layer.get(), sound.get(), other.get()};
+    VNX::ProjectItemSaveState scoped;
+    VNX::ProjectItemSaveState full;
+    ASSERT_TRUE(scoped.markSaved(project));
+    ASSERT_TRUE(full.markSaved(project));
+    const QSet<QUuid> writes{sound->guid};
+    const auto compare = [&](bool exact = true) {
+        QList<bool> before;
+        for (auto* item : items) before.append(item->dirtyBit);
+        const auto scopedChanged = scoped.refresh(project, exact ? &writes : nullptr);
+        QList<bool> actual;
+        for (auto* item : items) actual.append(item->dirtyBit);
+        for (qsizetype i = 0; i < items.size(); ++i) items[i]->dirtyBit = before[i];
+        EXPECT_EQ(scopedChanged, full.refresh(project));
+        for (qsizetype i = 0; i < items.size(); ++i) EXPECT_EQ(actual[i], items[i]->dirtyBit);
+    };
+    using Authoring = VNX::PlayablePropertyAuthoringV1;
+    const auto locator = Authoring::definitionLocator(*sound);
+    ASSERT_TRUE(locator);
+    for (const auto* name : {"volume", "pitch", "loopCount"}) {
+        const auto* field = Authoring::fieldByName(QLatin1String(name));
+        ASSERT_NE(field, nullptr);
+        for (const auto& scope : {VNX::PlatformScope{}, VNX::PlatformScope{HarkenTest::PlatformIds::Windows}}) {
+            const auto original = scope
+                ? Authoring::readPlatformOverlay(*sound, *locator, field->id, *scope)
+                : Authoring::readProperty(*sound, *locator, field->id, scope);
+            ASSERT_TRUE(original);
+            ASSERT_TRUE(Authoring::setOverride(*sound, *locator, field->id, QJsonValue(2), scope));
+            sound->markDirty();
+            compare();
+            EXPECT_TRUE(sound->dirtyBit);
+            ASSERT_TRUE(Authoring::restoreProperty(*sound, *locator, field->id, *original, scope));
+            sound->markDirty();
+            compare();
+            EXPECT_FALSE(sound->dirtyBit);
+        }
+    }
+    other->notes = QStringLiteral("Pending write outside the current command");
+    other->markDirty();
+    compare();
+    EXPECT_TRUE(other->dirtyBit);
+    other->notes.clear();
+    compare();
+    EXPECT_FALSE(other->dirtyBit);
+    other->notes = QStringLiteral("Temporary authoring preview");
+    scoped.recordPreview(other->guid);
+    compare();
+    EXPECT_TRUE(other->dirtyBit);
+    other->notes.clear();
+    scoped.recordPreview(other->guid);
+    compare();
+    EXPECT_FALSE(other->dirtyBit);
+    sound->notes = QStringLiteral("Previously dirty owner");
+    sound->markDirty();
+    compare();
+    const auto* volume = Authoring::fieldByName(QStringLiteral("volume"));
+    const auto original = Authoring::readProperty(*sound, *locator, volume->id, std::nullopt);
+    ASSERT_TRUE(original);
+    ASSERT_TRUE(Authoring::setOverride(*sound, *locator, volume->id, QJsonValue(-3), std::nullopt));
+    compare();
+    ASSERT_TRUE(Authoring::restoreProperty(*sound, *locator, volume->id, *original, std::nullopt));
+    compare();
+    EXPECT_TRUE(sound->dirtyBit);
+    sound->notes.clear();
+    compare();
+    EXPECT_FALSE(sound->dirtyBit);
+    other->name = QStringLiteral("Renamed");
+    scoped.invalidate();
+    compare();
+    other->name = QStringLiteral("Other");
+    compare(false);
+    layer->canvasPos = QPointF(10, 20);
+    compare(false);
+    layer->canvasPos = {};
+    compare();
+    const auto otherGuid = other->guid;
+    other->guid = sound->guid;
+    layer->canvasPos = QPointF(20, 30);
+    compare(false);
+    other->guid = otherGuid;
+    compare();
+}
+
 
 TEST(ProjectSerialization, ReusedSerializerObservesAuthoringChangesAndOwnsReturnedDocuments)
 {

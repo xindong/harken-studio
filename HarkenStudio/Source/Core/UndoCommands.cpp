@@ -18,11 +18,19 @@
 #include <cstring>
 
 #include <QDebug>
+#include <QScopedValueRollback>
 #include <QUuid>
 
 namespace VNX {
 
 namespace {
+std::optional<QSet<QUuid>> authoringWriteSet(const QUndoCommand* command)
+{
+    const auto* action = dynamic_cast<const RuntimeActionCommand*>(command);
+    const auto* writes = action ? action->authoringWriteSet() : nullptr;
+    return writes ? std::optional<QSet<QUuid>>(*writes) : std::nullopt;
+}
+
 bool canReplayCommand(const QUndoCommand* command)
 {
     if (!command) return false;
@@ -145,6 +153,9 @@ bool UndoRedoManager::replay(bool redo)
 {
     auto* command = const_cast<QUndoCommand*>(
         undoStack_.command(undoStack_.index() - (redo ? 0 : 1)));
+    const auto writes = authoringWriteSet(command);
+    const QScopedValueRollback<const QSet<QUuid>*> scope(
+        authoringWriteSet_, writes ? &*writes : nullptr);
     if (auto* transaction = dynamic_cast<TransactionalUndoCommand*>(command)) {
         if (!transaction->tryReplay(redo)) {
             if (transaction->isObsolete()) {
@@ -167,6 +178,9 @@ void UndoRedoManager::refreshReplayAvailability()
 
 void UndoRedoManager::push(QUndoCommand* command)
 {
+    const auto writes = authoringWriteSet(command);
+    const QScopedValueRollback<const QSet<QUuid>*> scope(
+        authoringWriteSet_, writes ? &*writes : nullptr);
     if (auto* transaction = dynamic_cast<TransactionalUndoCommand*>(command);
         transaction && !transaction->tryReplay(true)) {
         delete command;
@@ -177,16 +191,19 @@ void UndoRedoManager::push(QUndoCommand* command)
 
 void UndoRedoManager::beginMacro(const QString& text)
 {
+    const QScopedValueRollback<const QSet<QUuid>*> scope(authoringWriteSet_, nullptr);
     undoStack_.beginMacro(text);
 }
 
 void UndoRedoManager::endMacro()
 {
+    const QScopedValueRollback<const QSet<QUuid>*> scope(authoringWriteSet_, nullptr);
     undoStack_.endMacro();
 }
 
 void UndoRedoManager::clear()
 {
+    const QScopedValueRollback<const QSet<QUuid>*> scope(authoringWriteSet_, nullptr);
     undoStack_.clear();
 }
 

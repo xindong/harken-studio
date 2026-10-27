@@ -4,6 +4,9 @@
 #include "SignalPathGraph.h"
 #include "NodeItem.h"
 
+#include <QHash>
+#include <span>
+
 namespace VNX {
 
 struct SignalPathLayout
@@ -24,8 +27,8 @@ public:
 
     void loadGraph(const ProjectData& project, SignalPathGraph graph,
         std::shared_ptr<const FieldGroupEffectiveSnapshot> groups = {});
-    void refreshNodeContents(const ProjectData& project);
-    void setNodeContent(size_t index, const NodeContentInfo& content);
+    std::span<const size_t> refreshNodeContents(ProjectItem& item, const QString& propertyName);
+    const NodeContentInfo& nodeContentInfo(size_t index) const { return nodes_[index].content; }
     void clear();
     const SignalPathGraph& graph() const { return graph_; }
 
@@ -39,6 +42,7 @@ private:
     SignalPathGraph graph_;
     std::vector<BlueprintNodeDesc> nodes_;
     std::vector<BlueprintEdgeDesc> edges_;
+    QHash<uint32_t, std::vector<size_t>> nodeOccurrences_;
 };
 
 }

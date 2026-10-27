@@ -41,6 +41,18 @@ struct LivePropertyPreview {
         float volumeDb = 0;
         float pitchCents = 0;
         LivePropertyValues fields;
+
+        void refreshMix(ProjectItem& item, const PlayablePropertyLocatorV1& locator,
+                        PlatformScope scope)
+        {
+            const auto value = [&](LiveProperty property) {
+                const auto state = PlayablePropertyAuthoringV1::readProperty(
+                    item, locator, static_cast<uint8_t>(property), scope);
+                return state && state->present ? static_cast<float>(state->value.toDouble()) : 0.0f;
+            };
+            volumeDb = value(LiveProperty::Volume) + value(LiveProperty::MakeUpGain);
+            pitchCents = value(LiveProperty::Pitch);
+        }
     };
     QHash<QUuid, DefinitionFieldGroups> groups;
     QHash<harkenstudio::ObjectId, Definition> definitions;
@@ -55,8 +67,24 @@ void AudioEngine::bindProjectPropertyPreview(ProjectManager& project)
     if (livePropertyPreview_) return;
     livePropertyPreview_ = std::make_shared<LivePropertyPreview>();
     const auto invalidate = [this] { livePropertyPreview_->dirty = true; };
-    connect(&project, &ProjectManager::itemPropertyPreviewed, this, invalidate);
-    connect(&project, &ProjectManager::itemPropertyChanged, this, invalidate);
+    const auto updateProperty = [this](ProjectItem* item, const QString& property) {
+        if (property == QLatin1String("dirty")) return;
+        auto& preview = *livePropertyPreview_;
+        if (preview.dirty) return;
+        if (item && (property == QLatin1String("volume")
+            || property == QLatin1String("pitch") || property == QLatin1String("makeUpGain"))) {
+            const auto definition = preview.definitions.find(item->runtimeId());
+            const auto locator = PlayablePropertyAuthoringV1::definitionLocator(*item);
+            if (definition != preview.definitions.end() && locator) {
+                definition->refreshMix(*item, *locator,
+                    currentWorldPlatformScope(PlatformContextService::instance().context()));
+                return;
+            }
+        }
+        preview.dirty = true;
+    };
+    connect(&project, &ProjectManager::itemPropertyPreviewed, this, updateProperty);
+    connect(&project, &ProjectManager::itemPropertyChanged, this, updateProperty);
     connect(&project, &ProjectManager::itemCreated, this, invalidate);
     connect(&project, &ProjectManager::itemMoved, this, invalidate);
     connect(&project, &ProjectManager::itemDeleted, this, invalidate);
@@ -139,14 +167,8 @@ void AudioEngine::applyLivePropertyPreview()
             auto* item = ProjectManager::instance().findItemByGuid(fromFieldGroupGuid(guid));
             const auto locator = item ? PlayablePropertyAuthoringV1::definitionLocator(*item) : std::nullopt;
             if (!locator) continue;
-            const auto value = [&](LiveProperty property) {
-                const auto state = PlayablePropertyAuthoringV1::readProperty(
-                    *item, *locator, static_cast<uint8_t>(property), scope);
-                return state && state->present ? static_cast<float>(state->value.toDouble()) : 0.0f;
-            };
             auto& definition = preview.definitions[item->runtimeId()];
-            definition.volumeDb = value(LiveProperty::Volume) + value(LiveProperty::MakeUpGain);
-            definition.pitchCents = value(LiveProperty::Pitch);
+            definition.refreshMix(*item, *locator, scope);
             definition.fields = {
                 {{static_cast<uint8_t>(LiveProperty::OutputBusVolume), {}}, groups.mainOutput.outputBusVolume},
                 {{static_cast<uint8_t>(LiveProperty::SpatialPanning), {}}, groups.spatialRating.spatialPanning},

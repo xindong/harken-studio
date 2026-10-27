@@ -11,6 +11,8 @@
 #include "IPC/IPCServer.h"
 #include "ProjectManager.h"
 #include "ProjectTypes.h"
+#include "PropertyEditSession.h"
+#include "UndoCommands.h"
 #include "RuntimeSyncCoordinator.h"
 #include "AuditionManager.h"
 #include "RuntimeBridge/CurrentWorldSyncBridgeInternal.h"
@@ -30,6 +32,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QEventLoop>
+#include <QElapsedTimer>
 #include <QJsonObject>
 #include <QScopedValueRollback>
 #include <QScopeGuard>
@@ -111,7 +114,9 @@ makeValidCurrentWorldRequest()
 bool serviceUntilCurrentWorldReady(VNX::AudioEngine& engine)
 {
     auto* runtime = harken::detail::ActiveEngine();
-    for (int attempt = 0; attempt < 128; ++attempt) {
+    QElapsedTimer timeout;
+    timeout.start();
+    while (timeout.elapsed() < 5000) {
         QMetaObject::invokeMethod(
             &engine, "onRuntimeServiceTimer", Qt::DirectConnection);
         if (runtime != nullptr) {
@@ -139,6 +144,7 @@ bool serviceUntilCurrentWorldReady(VNX::AudioEngine& engine)
                           << " failure=" << static_cast<int>(barrier.failure);
             return false;
         }
+        QThread::msleep(1);
     }
     const auto& coordinator = engine.runtimeSyncCoordinator();
     const auto barrier = coordinator.barrier(coordinator.currentAuthoringRevision());
@@ -550,7 +556,9 @@ protected:
 
     bool serviceUntilCurrentWorldReady(VNX::AudioEngine& target)
     {
-        for (int attempt = 0; attempt < 2048; ++attempt) {
+        QElapsedTimer timeout;
+        timeout.start();
+        while (timeout.elapsed() < 5000) {
             QMetaObject::invokeMethod(&target, "onRuntimeServiceTimer", Qt::DirectConnection);
             QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
             target.runtimeSyncCoordinator().flushPendingMutationNow();
@@ -564,6 +572,7 @@ protected:
                 return false;
             }
             harken::detail::ActiveEngine()->nullBackend.Pump(1);
+            QThread::msleep(1);
         }
         return false;
     }
@@ -637,7 +646,130 @@ protected:
         ASSERT_NE(result.playbackHandle, 0u);
         EXPECT_GT(pumpUntilPreviewAudible(64), 0.05f);
     }
+
+    float settledPeak()
+    {
+        auto* runtime = harken::detail::ActiveEngine();
+        for (int block = 0; block < 32; ++block) {
+            QMetaObject::invokeMethod(&engine, "onRuntimeServiceTimer", Qt::DirectConnection);
+            runtime->nullBackend.Pump(1);
+        }
+        const float* output = runtime->nullBackend.LastBlock();
+        const auto size = runtime->nullBackend.BlockFrames() * runtime->nullBackend.Channels();
+        float peak = 0.0f;
+        for (std::uint32_t index = 0; index < size; ++index)
+            peak = std::max(peak, std::abs(output[index]));
+        return peak;
+    }
 };
+
+TEST_F(AudioPlaybackRegression, ConcurrentPreviewCancelAndUndoRemainConsistentForCurrentAndFuturePlayback)
+{
+    VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
+    auto* undo = VNX::UndoRedoManager::instance().undoStack();
+    undo->clear();
+    const auto started = engine.playByNameDetailed(QStringLiteral("Play_Good"));
+    ASSERT_EQ(started.engineResult, HarkenEditor::Bridge::kEngineOk);
+    const float baseline = settledPeak();
+    ASSERT_GT(baseline, 0.05f);
+    VNX::PropertyEditSession parentPreview(layer, QStringLiteral("volume"), 0.0);
+    parentPreview.preview(-6.0);
+    VNX::PropertyEditSession soundEdit(sounds[0], QStringLiteral("volume"), 0.0);
+    soundEdit.preview(-6.0);
+    EXPECT_NEAR(settledPeak(), baseline * std::pow(10.0f, -12.0f / 20.0f), 0.002f);
+    soundEdit.commit();
+    engine.runtimeSyncCoordinator().flushPendingMutationNow();
+    parentPreview.cancel();
+    EXPECT_NEAR(settledPeak(), baseline * std::pow(10.0f, -6.0f / 20.0f), 0.002f);
+
+    VNX::PropertyEditSession pitchEdit(sounds[0], QStringLiteral("pitch"), 0.0);
+    pitchEdit.preview(100.0);
+    pitchEdit.commit();
+    EXPECT_NEAR(settledPeak(), baseline * std::pow(10.0f, -6.0f / 20.0f), 0.002f);
+    engine.stopAll(0);
+    settledPeak();
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult,
+              HarkenEditor::Bridge::kEngineOk);
+    const auto scalarPeak = settledPeak();
+    EXPECT_NEAR(scalarPeak, baseline * std::pow(10.0f, -6.0f / 20.0f), 0.002f);
+    auto& coordinator = engine.runtimeSyncCoordinator();
+    coordinator.markCurrentWorldMutation();
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_NEAR(settledPeak(), scalarPeak, 0.002f);
+
+    ASSERT_TRUE(undo->canUndo());
+    undo->undo();
+    EXPECT_NEAR(settledPeak(), scalarPeak, 0.002f);
+    ASSERT_TRUE(undo->canUndo());
+    undo->undo();
+    EXPECT_NEAR(settledPeak(), baseline, 0.002f);
+    engine.stopAll(0);
+    settledPeak();
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult,
+              HarkenEditor::Bridge::kEngineOk);
+    EXPECT_NEAR(settledPeak(), baseline, 0.002f);
+}
+
+TEST_F(AudioPlaybackRegression, ScalarEditCannotPublishCachedWorldAfterInvalidStructuralEdit)
+{
+    auto& coordinator = engine.runtimeSyncCoordinator();
+    const auto generation = harken::detail::ActiveEngine()->variables.CurrentWorldGeneration();
+    action->comp<VNX::VAction>()->steps.front().type =
+        static_cast<VNX::VActionStep::Type>(255);
+    coordinator.markCurrentWorldMutation();
+    coordinator.flushPendingMutationNow();
+    ASSERT_EQ(coordinator.barrier(coordinator.currentAuthoringRevision()).state,
+              VNX::RuntimeSyncCoordinator::RevisionBarrierState::Failed);
+    const auto locator = VNX::PlayablePropertyAuthoringV1::definitionLocator(*sounds[0]);
+    ASSERT_TRUE(locator);
+    ASSERT_TRUE(VNX::PlayablePropertyAuthoringV1::setOverride(
+        *sounds[0], *locator, 1, -6.0, std::nullopt));
+    coordinator.markCurrentWorldPropertyMutation(sounds[0]->runtimeId(), 1);
+    coordinator.flushPendingMutationNow();
+    EXPECT_EQ(coordinator.barrier(coordinator.currentAuthoringRevision()).state,
+              VNX::RuntimeSyncCoordinator::RevisionBarrierState::Failed);
+    EXPECT_EQ(harken::detail::ActiveEngine()->variables.CurrentWorldGeneration(), generation);
+}
+
+TEST_F(AudioPlaybackRegression, ScalarPublicationRechecksSourceFilesAndLostRuntimeRegistration)
+{
+    namespace Bridge = HarkenEditor::Bridge;
+    auto& coordinator = engine.runtimeSyncCoordinator();
+    ASSERT_TRUE(QFile::remove(paths[1]));
+    coordinator.markCurrentWorldPropertyMutation(sounds[0]->runtimeId(), 1);
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_FALSE(Bridge::runtimeObjectExists(sounds[1]->runtimeId()));
+    writeWavF32(paths[1], std::vector<float>(65536, 0.25f));
+    coordinator.markCurrentWorldPropertyMutation(sounds[0]->runtimeId(), 1);
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_TRUE(Bridge::runtimeObjectExists(sounds[1]->runtimeId()));
+    coordinator.markCurrentWorldMutation();
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    const auto revision = Bridge::registeredSoundRevision(sounds[0]->runtimeId());
+    ASSERT_NE(revision, 0u);
+    Bridge::removeRuntimeObject(sounds[0]->runtimeId());
+    coordinator.markCurrentWorldPropertyMutation(sounds[0]->runtimeId(), 1);
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_EQ(Bridge::registeredSoundRevision(sounds[0]->runtimeId()), revision);
+    expectGoodAction();
+}
+
+TEST_F(AudioPlaybackRegression, RuntimeRestartCannotAdoptAnOlderCompilation)
+{
+    auto& coordinator = engine.runtimeSyncCoordinator();
+    coordinator.markCurrentWorldPropertyMutation(sounds[0]->runtimeId(), 1);
+    coordinator.flushPendingMutationNow();
+    const auto previous = coordinator.barrier(coordinator.currentAuthoringRevision()).runtimeEpoch;
+    engine.stopOutput();
+    ASSERT_TRUE(engine.startOutput());
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    const auto barrier = coordinator.barrier(coordinator.currentAuthoringRevision());
+    EXPECT_GT(barrier.runtimeEpoch, previous);
+    EXPECT_EQ(coordinator.installedWorld()->runtimeEpoch, barrier.runtimeEpoch);
+    expectGoodAction();
+}
 
 TEST_F(AudioPlaybackRegression, InvalidAuthoringPreservesInstalledSoundState)
 {

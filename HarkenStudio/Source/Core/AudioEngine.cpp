@@ -1,6 +1,7 @@
 
 #include "AudioEngine.h"
 #include "AssetPipeline/MediaPool.h"
+#include "AssetPipeline/AssetRegistry.h"
 #include "BindingRuntimeLowering.h"
 #include "LanguageContextService.h"
 #include "PlatformContextService.h"
@@ -19,6 +20,9 @@
 
 #include <cstring>
 #include <utility>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
 #include <QDateTime>
 #include <QDebug>
 #include <QCoreApplication>
@@ -29,11 +33,146 @@ namespace VNX {
 
 namespace Bridge = HarkenEditor::Bridge;
 
+struct CurrentWorldCompilation {
+    struct Job {
+        Bridge::CurrentWorldSyncToken token;
+        Bridge::CurrentWorldSyncRequestPtr request;
+        std::vector<Bridge::CurrentWorldScalarUpdate> updates;
+    };
+    struct Result {
+        Bridge::CurrentWorldSyncToken token;
+        Bridge::CurrentWorldSyncRequestPtr request;
+        Bridge::CurrentWorldCompileResult compiled;
+    };
+
+    CurrentWorldCompilation() : worker([this] { run(); }) {}
+    ~CurrentWorldCompilation() {
+        {
+            std::lock_guard lock(mutex);
+            stopping = true;
+            pending.reset();
+        }
+        ready.notify_one();
+        worker.join();
+    }
+
+    void submit(Job job) {
+        {
+            std::lock_guard lock(mutex);
+            pending = std::move(job);
+        }
+        ready.notify_one();
+    }
+
+    void invalidate() {
+        {
+            std::lock_guard lock(mutex);
+            pending.reset();
+            completed.reset();
+            published.reset();
+            resetRequested = true;
+        }
+        ready.notify_one();
+    }
+
+    void acknowledgePublication(Bridge::CurrentWorldSyncToken token) {
+        {
+            std::lock_guard lock(mutex);
+            published = token;
+        }
+        ready.notify_one();
+    }
+
+    std::optional<Result> takeResult() {
+        std::lock_guard lock(mutex);
+        auto result = std::move(completed);
+        completed.reset();
+        return result;
+    }
+
+    void run() {
+        Bridge::CurrentWorldRequestCache cache;
+        for (;;) {
+            Job job;
+            {
+                std::unique_lock lock(mutex);
+                ready.wait(lock, [this] {
+                    return stopping || resetRequested || published.has_value()
+                        || pending.has_value();
+                });
+                if (stopping) return;
+                if (resetRequested) {
+                    resetRequested = false;
+                    lock.unlock();
+                    cache = {};
+                    continue;
+                }
+                if (published) {
+                    const auto token = *published;
+                    published.reset();
+                    lock.unlock();
+                    try {
+                        cache.acknowledgePublication(token);
+                    } catch (...) {
+                    }
+                    continue;
+                }
+                job = std::move(*pending);
+                pending.reset();
+            }
+            Result result;
+            result.token = job.token;
+            try {
+                result.request = cache.update(std::move(job.request), job.updates, job.token);
+                if (result.request)
+                    result.compiled = Bridge::compileCurrentWorldRequest(*result.request, true);
+            } catch (...) {
+                result.compiled.status = Bridge::CurrentWorldSyncStatus::CompileFailed;
+            }
+            {
+                std::lock_guard lock(mutex);
+                if (stopping) return;
+                if (!resetRequested)
+                    completed = std::move(result);
+            }
+        }
+    }
+
+    std::mutex mutex;
+    std::condition_variable ready;
+    std::optional<Job> pending;
+    std::optional<Result> completed;
+    std::optional<Bridge::CurrentWorldSyncToken> published;
+    bool stopping = false;
+    bool resetRequested = false;
+    std::thread worker;
+};
+
 static_assert(static_cast<uint8_t>(AudioEngine::ExecErrorDomain::Unclassified)
                   == Bridge::kExecErrorDomainUnclassified,
               "EngineNotification::domain Unclassified must match AudioEngine");
 
 namespace {
+
+bool preparedSoundsAreCurrent(const Bridge::CurrentWorldSyncRequestPtr& request)
+{
+    if (!request || !request->soundPreparation) return true;
+    const auto& preparation = *request->soundPreparation;
+    for (const auto& source : preparation.sources) {
+        const auto* asset = AssetRegistry::instance().getAsset(source.sourceId);
+        if ((asset != nullptr) != source.assetAvailable
+            || (asset && (asset->absolutePath != source.path
+                || asset->contentHash != source.contentHash)))
+            return false;
+    }
+    for (const auto& sound : preparation.sounds) {
+        const auto revision = preparation.contentRevisions.find(sound.binding.soundId);
+        if (sound.samples.empty() && revision != preparation.contentRevisions.end()
+            && Bridge::registeredSoundRevision(sound.binding.soundId) != revision->second)
+            return false;
+    }
+    return true;
+}
 
 int runtimeServiceIntervalMs(const Bridge::EngineSession& session)
 {
@@ -85,22 +224,66 @@ AudioEngine::AudioEngine(QObject* parent)
     : QObject(parent)
 {
     instance_ = this;
+    currentWorldCompilation_ = std::make_unique<CurrentWorldCompilation>();
     runtimeSyncCoordinator_ = std::make_unique<RuntimeSyncCoordinator>(
         [this](Bridge::CurrentWorldSyncToken token) {
-            while (const auto completion = Bridge::takeCurrentWorldSyncCompletion())
+            while (const auto completion = Bridge::takeCurrentWorldSyncCompletion()) {
+                if (completion->ok())
+                    currentWorldCompilation_->acknowledgePublication(completion->token);
                 runtimeSyncCoordinator_->acceptCurrentWorldSyncResult(*completion);
+            }
             if (const auto superseded = Bridge::discardPendingCurrentWorld(
                     Bridge::PendingCurrentWorldDisposition::Superseded)) {
                 runtimeSyncCoordinator_->acceptCurrentWorldSyncResult(*superseded);
             }
             auto* project = ProjectManager::instance().currentProject();
             if (project == nullptr) {
+                currentWorldCompilation_->invalidate();
+                currentWorldPreviewMutations_.clear();
+                currentWorldRequestSession_ = 0;
+                currentWorldRequestEpoch_ = 0;
                 return Bridge::clearCurrentWorld(token);
             }
             bindCurrentWorldPlatformContext();
             QString error;
             const auto scope = currentWorldPlatformScope(
                 PlatformContextService::instance().context());
+            const auto& mutations = runtimeSyncCoordinator_->submittedMutations();
+            CurrentWorldCompilation::Job job;
+            job.token = token;
+            bool incremental = !mutations.full
+                && currentWorldRequestSession_ == token.projectSessionId
+                && currentWorldRequestEpoch_ == token.runtimeEpoch;
+            if (incremental) {
+                auto properties = std::move(currentWorldPreviewMutations_);
+                currentWorldPreviewMutations_.clear();
+                for (const auto& mutation : mutations.properties) {
+                    const auto key = std::make_pair(mutation.stableId, mutation.propertyId);
+                    if (std::find(properties.begin(), properties.end(), key) == properties.end())
+                        properties.push_back(key);
+                }
+                for (const auto& [stableId, propertyId] : properties) {
+                    auto* item = ProjectManager::instance().findItemByRuntimeStableId(stableId);
+                    Bridge::CurrentWorldScalarUpdate update;
+                    if (!item || !readCurrentWorldScalarUpdate(
+                            *item, scope, propertyId, &update)) {
+                        incremental = false;
+                        job.updates.clear();
+                        break;
+                    }
+                    job.updates.push_back(update);
+                }
+            }
+            if (incremental) {
+                currentWorldCompilation_->submit(std::move(job));
+                Bridge::CurrentWorldSyncResult result;
+                result.token = token;
+                result.status = Bridge::CurrentWorldSyncStatus::Pending;
+                return result;
+            }
+            currentWorldRequestSession_ = 0;
+            currentWorldRequestEpoch_ = 0;
+            currentWorldPreviewMutations_.clear();
             const auto sourceIndex = Bridge::canonicalRuntimeProjectSourceIndex(*project);
             const auto fieldGroups = buildFieldGroupEffectiveSnapshot(
                 *project, toFieldGroupScope(scope), *sourceIndex);
@@ -130,15 +313,13 @@ AudioEngine::AudioEngine(QObject* parent)
                 return result;
             }
             request->soundPreparation = std::move(sounds);
-            std::uint64_t liveRevision = 0;
-            if (Bridge::queryRuntimeLiveOwnerRevision(token.projectSessionId,
-                                                      &liveRevision))
-                request->ownerBaseRevision = liveRevision;
-            else
-                request->ownerBaseRevision = 0;
-            const auto result = Bridge::syncCurrentWorld(std::move(request), token);
-            if (result.ok())
-                syncRuntimeBindings();
+            job.request = std::move(request);
+            currentWorldRequestSession_ = token.projectSessionId;
+            currentWorldRequestEpoch_ = token.runtimeEpoch;
+            currentWorldCompilation_->submit(std::move(job));
+            Bridge::CurrentWorldSyncResult result;
+            result.token = token;
+            result.status = Bridge::CurrentWorldSyncStatus::Pending;
             return result;
         });
 
@@ -177,6 +358,7 @@ void AudioEngine::bindVariableRehearsal(VariableRehearsal& rehearsal)
 AudioEngine::~AudioEngine()
 {
     shutdown();
+    currentWorldCompilation_.reset();
 
     if (instance_ == this)
     {
@@ -199,6 +381,28 @@ void AudioEngine::bindCurrentWorldPlatformContext()
     if (currentWorldPlatformBound_)
         return;
     currentWorldPlatformBound_ = true;
+    const auto trackProperty = [this](ProjectItem* item, const QString& property) {
+        if (property == QLatin1String("dirty")) return;
+        const auto* field = PlayablePropertyAuthoringV1::fieldByName(property);
+        using Property = harkenplayableproperties::PlayablePropertyIdV1;
+        if (item && item->type != ProjectItem::Type::Bus && field
+            && (field->id == static_cast<std::uint8_t>(Property::Volume)
+                || field->id == static_cast<std::uint8_t>(Property::Pitch)
+                || field->id == static_cast<std::uint8_t>(Property::MakeUpGain))) {
+            const auto key = std::make_pair(item->runtimeId(), field->id);
+            if (std::find(currentWorldPreviewMutations_.begin(),
+                          currentWorldPreviewMutations_.end(), key)
+                == currentWorldPreviewMutations_.end())
+                currentWorldPreviewMutations_.push_back(key);
+            return;
+        }
+        currentWorldRequestSession_ = 0;
+        currentWorldRequestEpoch_ = 0;
+    };
+    connect(&ProjectManager::instance(), &ProjectManager::itemPropertyPreviewed,
+            this, trackProperty);
+    connect(&ProjectManager::instance(), &ProjectManager::itemPropertyChanged,
+            this, trackProperty);
     connect(&MediaPool::instance(), &MediaPool::mediaHotSwapped, this,
             &ProjectManager::resyncRefreshedSourceToRuntime, Qt::QueuedConnection);
     lastCurrentWorldPrimary_ =
@@ -425,6 +629,10 @@ void AudioEngine::stopRuntimeSynchronization()
     if (cancelled)
         runtimeSyncCoordinator_->acceptCurrentWorldSyncResult(*cancelled);
     runtimeSyncCoordinator_->runtimeStopping();
+    currentWorldCompilation_->invalidate();
+    currentWorldRequestSession_ = 0;
+    currentWorldRequestEpoch_ = 0;
+    currentWorldPreviewMutations_.clear();
     overlayMutePendingIds_.clear();
     overlaySoloPendingIds_.clear();
     overlayOutputVolumePendingValues_.clear();
@@ -893,8 +1101,33 @@ void AudioEngine::syncRuntimeBindings()
 void AudioEngine::onRuntimeServiceTimer()
 {
     if (session_) {
+        if (auto compiled = currentWorldCompilation_->takeResult()) {
+            Bridge::CurrentWorldSyncResult result;
+            result.token = compiled->token;
+            if (!runtimeSyncCoordinator_->isCurrentSubmission(compiled->token)) {
+                result.status = Bridge::CurrentWorldSyncStatus::Superseded;
+            } else if (compiled->compiled.requiresFullRefresh
+                || !preparedSoundsAreCurrent(compiled->request)) {
+                currentWorldRequestSession_ = 0;
+                currentWorldRequestEpoch_ = 0;
+                runtimeSyncCoordinator_->markCurrentWorldMutation();
+                result.status = Bridge::CurrentWorldSyncStatus::Superseded;
+            } else {
+                if (!compiled->compiled.ok()) {
+                    currentWorldRequestSession_ = 0;
+                    currentWorldRequestEpoch_ = 0;
+                }
+                result = Bridge::installCompiledCurrentWorld(
+                    std::move(compiled->request), std::move(compiled->compiled), compiled->token);
+            }
+            if (result.ok())
+                currentWorldCompilation_->acknowledgePublication(result.token);
+            runtimeSyncCoordinator_->acceptCurrentWorldSyncResult(result);
+        }
         session_->update();
         while (const auto completion = Bridge::takeCurrentWorldSyncCompletion()) {
+            if (completion->ok())
+                currentWorldCompilation_->acknowledgePublication(completion->token);
             runtimeSyncCoordinator_->acceptCurrentWorldSyncResult(*completion);
             if (completion->ok()) {
                 invalidatePreviewVariableAcceptance();

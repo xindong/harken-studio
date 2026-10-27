@@ -64,6 +64,7 @@ void SignalPathSource::loadGraph(const ProjectData& project, SignalPathGraph gra
     graph_ = std::move(graph);
     nodes_.clear();
     edges_.clear();
+    nodeOccurrences_.clear();
     if (!graph_.ok()) {
         emit sourceChanged();
         return;
@@ -107,6 +108,7 @@ void SignalPathSource::loadGraph(const ProjectData& project, SignalPathGraph gra
                 desc.waveformMode = true;
             }
         }
+        nodeOccurrences_[node.objectID].push_back(index);
         nodes_.push_back(std::move(desc));
     }
 
@@ -144,21 +146,31 @@ void SignalPathSource::loadGraph(const ProjectData& project, SignalPathGraph gra
     emit sourceChanged();
 }
 
-void SignalPathSource::refreshNodeContents(const ProjectData& project)
+std::span<const size_t> SignalPathSource::refreshNodeContents(ProjectItem& item, const QString& propertyName)
 {
-    const auto objects = projectObjects(project);
+    const auto occurrences = nodeOccurrences_.constFind(item.objectID);
+    if (occurrences == nodeOccurrences_.cend()) return {};
     const PlatformScope scope = graph_.platform
         ? PlatformScope{fromFieldGroupGuid(*graph_.platform)} : std::nullopt;
-    for (size_t index = 0; index < nodes_.size(); ++index) {
-        auto* item = objects.value(graph_.nodes[index].key.objectGuid);
-        Q_ASSERT(item);
-        nodes_[index].content = nodeContent(*item, scope);
+    const auto locator = PlayablePropertyAuthoringV1::definitionLocator(item);
+    const auto* property = PlayablePropertyAuthoringV1::fieldByName(propertyName);
+    QVariant value;
+    if (locator && property) {
+        const auto state = PlayablePropertyAuthoringV1::readProperty(item, *locator, property->id, scope);
+        if (state) value = state->value.toVariant();
+    } else if (propertyName == QLatin1String("scheduleOffsetSec")) {
+        if (const auto* sound = item.comp<VSound>()) value = sound->scheduleOffsetSec;
     }
-}
-
-void SignalPathSource::setNodeContent(size_t index, const NodeContentInfo& content)
-{
-    nodes_[index].content = content;
+    if (!value.isValid()) return {};
+    for (const size_t index : *occurrences) {
+        auto& info = nodes_[index].content;
+        if (propertyName == QLatin1String("volume")) info.volume = value.toFloat();
+        else if (propertyName == QLatin1String("pitch")) info.pitch = value.toFloat();
+        else if (propertyName == QLatin1String("scheduleOffsetSec")) info.offsetOfStart = value.toDouble();
+        else if (propertyName == QLatin1String("loopCount")) info.loopCount = value.toUInt();
+        else return {};
+    }
+    return *occurrences;
 }
 
 void SignalPathSource::clear()
@@ -166,6 +178,7 @@ void SignalPathSource::clear()
     graph_ = {};
     nodes_.clear();
     edges_.clear();
+    nodeOccurrences_.clear();
     emit sourceChanged();
 }
 

@@ -1,5 +1,6 @@
 #include "UnitTest/StudioObjectIdTestSupport.h"
 #include "Widgets/Blueprint/SignalPathGraph.h"
+#include "Widgets/Blueprint/SignalPathSource.h"
 
 #include "Core/FieldGroupProjectAdapter.h"
 #include "Support/ProjectPlatformTestUtils.h"
@@ -118,6 +119,59 @@ TEST_F(SignalPathGraphTest, IdentitySurvivesInputOrderAndDuplicateRequests)
         });
         ASSERT_NE(found, rebuilt.paths.end());
         EXPECT_EQ(found->routing, path.routing);
+    }
+}
+
+TEST_F(SignalPathGraphTest, IncrementalContentsMatchReloadAcrossScopesAndGraphReplacement)
+{
+    const std::array<PlatformScope, 3> scopes{
+        std::nullopt, HarkenTest::PlatformIds::Windows, HarkenTest::PlatformIds::Android};
+    const auto locator = PlayablePropertyAuthoringV1::definitionLocator(*s1);
+    ASSERT_TRUE(locator);
+    for (const auto& viewScope : scopes) {
+        const auto fieldScope = toFieldGroupScope(viewScope);
+        SignalPathSource incremental;
+        incremental.loadGraph(project, build(fieldScope));
+        const auto expectReloadEquivalent = [&](const std::vector<SignalPathIdentity>& sources) {
+            SignalPathSource reloaded;
+            reloaded.loadGraph(project, buildSignalPathGraph(project, sources, fieldScope));
+            const auto actual = incremental.buildNodes();
+            const auto expected = reloaded.buildNodes();
+            ASSERT_EQ(actual.size(), expected.size());
+            for (size_t index = 0; index < expected.size(); ++index) {
+                EXPECT_EQ(actual[index].id, expected[index].id);
+                EXPECT_EQ(actual[index].content, expected[index].content);
+            }
+            const auto actualEdges = incremental.buildEdges();
+            const auto expectedEdges = reloaded.buildEdges();
+            ASSERT_EQ(actualEdges.size(), expectedEdges.size());
+            for (size_t index = 0; index < expectedEdges.size(); ++index)
+                EXPECT_EQ(actualEdges[index].gainContent, expectedEdges[index].gainContent);
+        };
+        for (const auto& editScope : scopes) {
+            for (const auto& [name, value] : std::array<std::pair<const char*, double>, 3>{
+                     std::pair{"volume", -12.0}, {"pitch", 700.0}, {"loopCount", 4.0}}) {
+                const auto fieldName = QString::fromLatin1(name);
+                const auto* field = PlayablePropertyAuthoringV1::fieldByName(fieldName);
+                ASSERT_NE(field, nullptr);
+                ASSERT_TRUE(PlayablePropertyAuthoringV1::setOverride(
+                    *s1, *locator, field->id, value, editScope));
+                incremental.refreshNodeContents(*s1, fieldName);
+                expectReloadEquivalent(inputs());
+                ASSERT_TRUE(PlayablePropertyAuthoringV1::clearOverride(
+                    *s1, *locator, field->id, editScope));
+                incremental.refreshNodeContents(*s1, fieldName);
+                expectReloadEquivalent(inputs());
+            }
+        }
+        s1->comp<VSound>()->scheduleOffsetSec = 1.25;
+        incremental.refreshNodeContents(*s1, QStringLiteral("scheduleOffsetSec"));
+        expectReloadEquivalent(inputs());
+        const std::vector<SignalPathIdentity> replacement{{s2->guid, {}}};
+        incremental.clear();
+        incremental.loadGraph(project, buildSignalPathGraph(project, replacement, fieldScope));
+        incremental.refreshNodeContents(*s1, QStringLiteral("volume"));
+        expectReloadEquivalent(replacement);
     }
 }
 

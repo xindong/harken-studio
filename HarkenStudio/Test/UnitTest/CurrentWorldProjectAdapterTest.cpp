@@ -204,6 +204,146 @@ TEST(CurrentWorldProjectAdapter, BusIdentityIndexIgnoresHandleValueAndSiblingOrd
     verify(kDistinctHandle, kDistinctId);
 }
 
+TEST(CurrentWorldProjectAdapter, ScalarUpdatesMatchFullCompilationAcrossPlatformsAndRestoration)
+{
+    namespace Bridge = HarkenEditor::Bridge;
+    using Authoring = PlayablePropertyAuthoringV1;
+    using Property = harkenplayableproperties::PlayablePropertyIdV1;
+    std::shared_ptr<ProjectItem> container;
+    std::shared_ptr<ProjectItem> sound;
+    auto project = makeRandomProject(&container, &sound);
+    const PlatformScope scope = HarkenTest::PlatformIds::Windows;
+    const auto soundLocator = Authoring::definitionLocator(*sound);
+    const auto parentLocator = Authoring::definitionLocator(*container);
+    ASSERT_TRUE(soundLocator);
+    ASSERT_TRUE(parentLocator);
+    const auto volume = static_cast<std::uint8_t>(Property::Volume);
+    const auto pitch = static_cast<std::uint8_t>(Property::Pitch);
+    const auto gain = static_cast<std::uint8_t>(Property::MakeUpGain);
+    const auto original = Authoring::readProperty(*sound, *soundLocator, volume, std::nullopt);
+    ASSERT_TRUE(original);
+    std::unordered_map<harkenstudio::ObjectId, std::uint64_t> revisions;
+    for (const auto& child : container->children)
+        revisions.emplace(child->runtimeId(), 100 + child->objectID);
+    CurrentWorldBuildOptions options;
+    options.soundContentRevisions = &revisions;
+    Bridge::CurrentWorldSyncToken token{17, 1, 3, 1};
+    QString error;
+    auto baseline = buildCurrentWorldSyncRequest(project, scope, &error, nullptr, &options, 1);
+    ASSERT_NE(baseline, nullptr) << error.toStdString();
+    auto preparation = std::make_shared<Bridge::CurrentWorldSoundPreparation>();
+    preparation->contentRevisions = revisions;
+    Bridge::CurrentWorldSoundPreparation::Sound preparedSound;
+    preparedSound.binding.soundId = sound->runtimeId();
+    preparedSound.binding.sourceId = sound->sourceID;
+    preparedSound.sourcePath = QStringLiteral("prepared.wav");
+    preparedSound.samples = {0.125f, 0.25f};
+    preparedSound.channels = 1;
+    preparedSound.sampleRate = 48000;
+    preparation->sounds.push_back(preparedSound);
+    baseline->soundPreparation = preparation;
+    Bridge::CurrentWorldRequestCache cache;
+    auto cached = cache.update(baseline, {}, token);
+    ASSERT_NE(cached, nullptr);
+    auto first = Bridge::compileCurrentWorldRequest(*cached, true);
+    ASSERT_TRUE(first.ok()) << static_cast<int>(first.status);
+    const auto originalBody = first.body;
+    auto wrongReceipt = token;
+    ++wrongReceipt.runtimeEpoch;
+    cache.acknowledgePublication(wrongReceipt);
+    cached = cache.update({}, {}, token);
+    EXPECT_EQ(cached->soundPreparation, preparation);
+    cache.acknowledgePublication(token);
+    cached = cache.update({}, {}, token);
+    ASSERT_NE(cached, nullptr);
+    const auto retainedPreparation = cached->soundPreparation;
+    ASSERT_NE(retainedPreparation, nullptr);
+    EXPECT_NE(retainedPreparation, preparation);
+    ASSERT_EQ(retainedPreparation->sounds.size(), 1u);
+    EXPECT_TRUE(retainedPreparation->sounds.front().samples.empty());
+    EXPECT_EQ(retainedPreparation->sounds.front().binding.soundId, sound->runtimeId());
+    EXPECT_EQ(retainedPreparation->sounds.front().binding.sourceId, sound->sourceID);
+    EXPECT_EQ(retainedPreparation->sounds.front().sourcePath, preparedSound.sourcePath);
+    EXPECT_EQ(retainedPreparation->sounds.front().channels, preparedSound.channels);
+    EXPECT_EQ(retainedPreparation->sounds.front().sampleRate, preparedSound.sampleRate);
+    EXPECT_EQ(retainedPreparation->contentRevisions, revisions);
+    EXPECT_EQ(baseline->soundPreparation->sounds.front().samples, preparedSound.samples);
+
+    const auto verify = [&](std::vector<std::pair<ProjectItem*, std::uint8_t>> fields) {
+        std::vector<Bridge::CurrentWorldScalarUpdate> updates;
+        for (const auto& [item, property] : fields) {
+            Bridge::CurrentWorldScalarUpdate update;
+            ASSERT_TRUE(readCurrentWorldScalarUpdate(*item, scope, property, &update));
+            updates.push_back(update);
+        }
+        ++token.authoringRevision;
+        ++token.submissionSerial;
+        cached = cache.update({}, updates, token);
+        ASSERT_NE(cached, nullptr);
+        auto fresh = buildCurrentWorldSyncRequest(project, scope, &error, nullptr,
+                                                  &options, token.authoringRevision);
+        ASSERT_NE(fresh, nullptr) << error.toStdString();
+        auto actual = Bridge::compileCurrentWorldRequest(*cached, true);
+        auto expected = Bridge::compileCurrentWorldRequest(*fresh, true);
+        ASSERT_TRUE(actual.ok()) << static_cast<int>(actual.status);
+        ASSERT_TRUE(expected.ok()) << static_cast<int>(expected.status);
+        EXPECT_EQ(actual.body, expected.body);
+        EXPECT_EQ(actual.projection.fingerprint, expected.projection.fingerprint);
+        EXPECT_EQ(actual.projection.projectGeneration, token.authoringRevision);
+        EXPECT_EQ(cached->busResult->deterministicBytes, fresh->busResult->deterministicBytes);
+        EXPECT_EQ(cached->soundPreparation, retainedPreparation);
+    };
+
+    ASSERT_TRUE(Authoring::setOverride(*sound, *soundLocator, volume, -6.0, std::nullopt));
+    ASSERT_TRUE(Authoring::setOverride(*container, *parentLocator, gain, -3.0, std::nullopt));
+    ASSERT_TRUE(Authoring::setOverride(*container, *parentLocator, pitch, 200.0, scope));
+    verify({{sound.get(), volume}, {container.get(), gain}, {container.get(), pitch}});
+    ASSERT_TRUE(Authoring::setOverride(*sound, *soundLocator, volume, -12.0,
+                                     HarkenTest::PlatformIds::Android));
+    verify({{sound.get(), volume}});
+    ASSERT_TRUE(Authoring::setOverride(*sound, *soundLocator, volume, -18.0, scope));
+    verify({{sound.get(), volume}});
+    ASSERT_TRUE(Authoring::clearOverride(*sound, *soundLocator, volume, scope));
+    verify({{sound.get(), volume}});
+    ASSERT_TRUE(Authoring::restoreProperty(*sound, *soundLocator, volume, *original, std::nullopt));
+    ASSERT_TRUE(Authoring::clearOverride(*container, *parentLocator, gain, std::nullopt));
+    ASSERT_TRUE(Authoring::clearOverride(*container, *parentLocator, pitch, scope));
+    verify({{sound.get(), volume}, {container.get(), gain}, {container.get(), pitch}});
+    const auto restored = Bridge::compileCurrentWorldRequest(*cached, true);
+    EXPECT_EQ(restored.body, originalBody);
+    EXPECT_EQ(baseline->busResult->projectGeneration, 1u);
+    EXPECT_EQ(Bridge::compileCurrentWorldRequest(*baseline, true).body, originalBody);
+    const auto replacement = cache.update(baseline, {}, token);
+    ASSERT_NE(replacement, nullptr);
+    auto oldReceipt = token;
+    --oldReceipt.submissionSerial;
+    cache.acknowledgePublication(oldReceipt);
+    const auto afterOldReceipt = cache.update({}, {}, token);
+    ASSERT_NE(afterOldReceipt, nullptr);
+    EXPECT_EQ(afterOldReceipt->soundPreparation, preparation);
+    EXPECT_EQ(afterOldReceipt->soundPreparation->sounds.front().samples, preparedSound.samples);
+}
+
+TEST(CurrentWorldProjectAdapter, CachedInputsRejectForeignIdentityAndRequireReplacementAfterRestart)
+{
+    namespace Bridge = HarkenEditor::Bridge;
+    std::shared_ptr<ProjectItem> container;
+    std::shared_ptr<ProjectItem> sound;
+    auto project = makeRandomProject(&container, &sound);
+    auto request = buildCurrentWorldSyncRequest(project, std::nullopt);
+    ASSERT_NE(request, nullptr);
+    Bridge::CurrentWorldRequestCache cache;
+    const Bridge::CurrentWorldSyncToken initial{1, 1, 1, 1};
+    ASSERT_NE(cache.update(request, {}, initial), nullptr);
+    Bridge::CurrentWorldScalarUpdate update;
+    ASSERT_TRUE(readCurrentWorldScalarUpdate(*sound, std::nullopt, 1, &update));
+    update.guid = {987, 654};
+    EXPECT_EQ(cache.update({}, {update}, {1, 2, 1, 2}), nullptr);
+    EXPECT_EQ(cache.update({}, {}, {2, 2, 1, 2}), nullptr);
+    EXPECT_EQ(cache.update({}, {}, {1, 2, 2, 2}), nullptr);
+    EXPECT_NE(cache.update(request, {}, {2, 2, 2, 2}), nullptr);
+}
+
 TEST(CurrentWorldArtifactWriter,
      WriteAndCommitFailuresPreserveExistingTargetWithoutDirectFallback)
 {

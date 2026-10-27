@@ -131,6 +131,7 @@ public:
     friend void registerProjectActions(ActionManager&, ProjectManager*, ProjectExplorer*);
 
     static void resyncItemToRuntime(ProjectItem* item);
+    static void syncPlayablePropertyToRuntime(ProjectItem* item, uint8_t propertyId);
     static void resyncItemsToRuntime(std::span<ProjectItem* const> items);
     static void resyncSourceToRuntime(uint32_t sourceId);
     static void resyncRefreshedSourceToRuntime(uint32_t sourceId);

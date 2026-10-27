@@ -236,6 +236,8 @@ private:
     bool pathRefreshPending_ = false;
     bool pathContentOnlyRefresh_ = false;
     bool pathRefreshScheduled_ = false;
+    QSet<size_t> pathContentRefreshNodes_;
+    std::vector<QSizeF> pathNodeLayoutSizes_;
     bool chainRefreshPending_ = false;
     bool chainRefreshScheduled_ = false;
     std::unique_ptr<PropertyEditSession> nodeEditSession_;
@@ -259,6 +261,7 @@ private:
     void commitPathPositions_(const PathPositions& positions, const QString& description);
     void scheduleChainRefresh_();
     void schedulePathRefresh_();
+    void queuePathContentRefresh_(ProjectItem* item, const QString& propertyName);
     void queuePathRefresh_(bool contentOnly);
     void refreshPathContents_();
     void refreshProjectPaths_();
