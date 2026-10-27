@@ -15500,6 +15500,123 @@ TEST(PlayableStart, TrackContainerClipAndPieceWrapperProducePcmAndNaturallyRecla
         EXPECT_EQ(0.0f, harkentest::Peak(engine->nullBackend.LastBlock(), 128u));
     }
 }
+TEST(PlayableStart, TrackAndPieceQueueContinueAllLongOccurrencesAndReclaim) {
+    for (int scenario = 0; scenario < 6; ++scenario) {
+        const int hierarchy = scenario % 3;
+        const bool fade = scenario >= 3;
+        SCOPED_TRACE(scenario);
+        harkentest::EngineSession session(harkentest::MakeNullConfig(8, 256, 48000));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto* engine = session.Engine();
+        std::vector<float> first(55984, 0.25f), second(55213, -0.25f);
+        const auto a = harkentest::MonoDesc(first, 48000);
+        const auto b = harkentest::MonoDesc(second, 48000);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &a));
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSecondSound, &b));
+        SequenceQueueWorldImage queue(engine->registry.Lookup(kSound).contentRevision,
+                                     engine->registry.Lookup(kSecondSound).contentRevision);
+        if (fade) {
+            queue.EnableImmediateTransition(24000, 24000);
+            queue.transitionRules[1].sourceFade = queue.transitionRules[0].sourceFade;
+            queue.transitionRules[1].targetFade = queue.transitionRules[0].targetFade;
+            queue.transition.rules = &queue.transitionRules[1];
+            queue.transition.ruleCount = 1;
+            queue.transition.defaultRuleIndex = 0;
+        }
+        std::array<harken::ContainerChildProgramViewV2, 5> queueChildren{};
+        std::array<harken::PlayableOccurrencePropertyViewV1, 5> queueOccurrences{};
+        for (unsigned i = 0; i < 5; ++i) {
+            queueChildren[i] = queue.children[i % 2];
+            queueChildren[i].stableChildOrdinal = 3 + i;
+            queueChildren[i].authoredStableOrder = i;
+            queueOccurrences[i] = queue.occurrences[i % 2];
+            queueOccurrences[i].stableOccurrenceOrdinal = 3 + i;
+            queueOccurrences[i].occurrenceSemanticFingerprint = harken::ComputePlayableOccurrenceFingerprintV1(queueOccurrences[i]);
+        }
+        queue.container.children = queueChildren.data();
+        queue.container.childCount = queueChildren.size();
+        DirectTrackWorldImage track(engine->registry.Lookup(kSound).contentRevision);
+        track.properties[1].authoredStableOrder = 3;
+        track.properties[1].programSemanticFingerprint = harken::ComputePlayablePropertyFingerprintV1(track.properties[1]);
+        track.track.rootDefinition.expectedProgramSemanticFingerprint = track.properties[1].programSemanticFingerprint;
+        track.occurrence.parentProgramSemanticFingerprint = track.properties[1].programSemanticFingerprint;
+        track.placement.content = queue.Root();
+        track.placement.authoredDuration = INT64_C(10000000000);
+        track.placement.stableOccurrenceOrdinal = 10;
+        track.track.scheduleSemanticFingerprint = harken::ComputeTrackScheduleFingerprintV1(track.track);
+        track.occurrence.childPlayable = queue.Root();
+        track.occurrence.stableOccurrenceOrdinal = 10;
+        track.occurrence.occurrenceSemanticFingerprint = harken::ComputePlayableOccurrenceFingerprintV1(track.occurrence);
+        std::array<harken::PlayablePropertyProgramViewV1, 5> properties{
+            queue.properties[0], queue.properties[1], queue.properties[2], track.properties[1], {}};
+        std::array<harken::PlayableOccurrencePropertyViewV1, 6> occurrences{
+            queueOccurrences[0], queueOccurrences[1], queueOccurrences[2], queueOccurrences[3], queueOccurrences[4], track.occurrence};
+        harken::PieceScheduleProgramViewV1 piece{};
+        harken::ScheduleTrackRefV1 trackRef{};
+        properties[4] = properties[3];
+        properties[4].contentPropertyKind = harken::playableproperties::ContentPropertyKindV1::Piece;
+        properties[4].stableId = harkentest::ObjectId(8001);
+        properties[4].authoredStableOrder = 4;
+        properties[4].programSemanticFingerprint = harken::ComputePlayablePropertyFingerprintV1(properties[4]);
+        piece.rootDefinition = track.Root();
+        piece.rootDefinition.kind = harken::PlayableKindV1::Piece;
+        piece.rootDefinition.stableId = properties[4].stableId;
+        piece.rootDefinition.expectedProgramSemanticFingerprint = properties[4].programSemanticFingerprint;
+        trackRef.trackDefinition = track.Root();
+        trackRef.trackScheduleSemanticFingerprint = track.track.scheduleSemanticFingerprint;
+        piece.trackRefCount = 1;
+        piece.trackRefs = &trackRef;
+        piece.scheduleSemanticFingerprint = harken::ComputePieceScheduleFingerprintV1(piece);
+        std::sort(properties.begin(), properties.end(), [](const auto& a, const auto& b) {
+            return a.contentPropertyKind != b.contentPropertyKind ? a.contentPropertyKind < b.contentPropertyKind : a.stableId < b.stableId;
+        });
+        std::sort(occurrences.begin(), occurrences.end(), [](const auto& a, const auto& b) {
+            return a.parentKind != b.parentKind ? a.parentKind < b.parentKind : a.parentStableId != b.parentStableId
+                ? a.parentStableId < b.parentStableId : a.stableOccurrenceOrdinal < b.stableOccurrenceOrdinal;
+        });
+        auto install = queue.InstallView();
+        install.playableProperties = properties.data();
+        install.playablePropertyCount = properties.size();
+        install.playableOccurrences = occurrences.data();
+        install.playableOccurrenceCount = occurrences.size();
+        install.trackSchedules = &track.track;
+        install.trackScheduleCount = 1;
+        install.pieceSchedules = &piece;
+        install.pieceScheduleCount = 1;
+        install.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(install);
+        ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(*engine, install).status);
+        harken::PlayableStartRequest request{};
+        request.root = hierarchy == 0 ? queue.Root() : hierarchy == 1 ? track.Root() : piece.rootDefinition;
+        const auto started = harken::StartPlayable(*engine, request);
+        ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
+        // Each occurrence outlives the initial preparation window. More than two
+        // occurrences forces another deferred validation after the first handoff.
+        ASSERT_GT(first.size(), engine->timelinePool.WindowEndFrame());
+        ASSERT_GT(second.size(), engine->timelinePool.WindowEndFrame());
+        std::uint32_t positiveSamples = 0;
+        std::uint32_t negativeSamples = 0;
+        for (std::uint32_t block = 0; block < 1300; ++block) {
+            if (block % 4u == 0) ASSERT_EQ(VN_OK, Vn_Update());
+            engine->nullBackend.Pump(1);
+            const float* output = engine->nullBackend.LastBlock();
+            for (std::uint32_t sample = 0; sample < 2u * engine->config.blockFrames; ++sample) {
+                positiveSamples += output[sample] > 0.0f;
+                negativeSamples += output[sample] < 0.0f;
+            }
+        }
+        // A/B/A/B/A must finish every Source, not just briefly start B. A fade
+        // begins at zero on the first frame of each successor in both channels.
+        const auto fadeZeroSamples = fade ? 4u : 0u;
+        EXPECT_EQ(first.size() * 6u - fadeZeroSamples, positiveSamples);
+        EXPECT_EQ(second.size() * 4u - fadeZeroSamples, negativeSamples);
+        EXPECT_EQ(0u, engine->playableInstances.LiveCount());
+        EXPECT_EQ(0u, engine->queueInstances.LiveCount());
+        EXPECT_EQ(0u, engine->timelineArms.LiveCount());
+        EXPECT_EQ(0u, engine->voices.ActiveCount());
+        EXPECT_FALSE(engine->runtimeRecreateRequired);
+    }
+}
+
 TEST(PlayableStart, AuthoredClipDurationFloorsStartAndEndSeparately) {
     VnConfig config = harkentest::MakeNullConfig(2, 64, 48000);
     harkentest::EngineSession session(config);

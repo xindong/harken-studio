@@ -29403,6 +29403,14 @@ private:
     decltype(harken::EnginePlayableServiceRow::queueSuccessorArmTombstoned) queueSuccessorArmTombstoned_{};
 };
 
+bool HasAuthoredQueueRoot(const harken::EnginePlayableServiceRow& row,
+    const harken::ContainerProgramViewV3& program) noexcept {
+    return row.root.kind == harken::PlayableKindV1::Container &&
+        row.root.stableId == program.containerStableId &&
+        row.root.expectedProgramSemanticFingerprint == program.programSemanticFingerprint &&
+        row.ownerInstance == row.rootInstance;
+}
+
 QueueContinuationPrepareStatus PrepareQueueContinuationReady(
     harken::Engine& engine, const harken::PlayableWorldViewV1& world,
     const harken::ContainerProgramViewV3& program,
@@ -29499,11 +29507,7 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
     std::array<VnObjectId, harken::kSelectionPathNodeCapacity>
         selectedTrackIds{};
     std::uint32_t selectedCount = 1;
-    const bool authoredQueueRoot = row.root.kind == harken::PlayableKindV1::Container &&
-        row.root.stableId == program.containerStableId &&
-        row.root.expectedProgramSemanticFingerprint == program.programSemanticFingerprint &&
-        row.ownerInstance == row.rootInstance;
-    if (authoredQueueRoot) {
+    if (HasAuthoredQueueRoot(row, program)) {
         selectedPath[0] = next.currentChildOrdinal;
     } else if (row.queueParentInstance.Valid()) {
         if (row.selectionCount < 2 ||
@@ -30538,9 +30542,9 @@ QueueContinuationPrepareStatus ValidateQueueSuccessorTarget(
         return QueueContinuationPrepareStatus::Failed;
     }
     std::array<std::uint32_t, harken::kSelectionPathNodeCapacity> selected{};
-    const bool nested = row.queueParentInstance.Valid() ||
+    const bool nested = !HasAuthoredQueueRoot(row, program) && (row.queueParentInstance.Valid() ||
         (row.parentService.Valid() && row.queueMode) ||
-        (row.variableControlInstance.Valid() && row.variableControlNestedContainerCount != 0);
+        (row.variableControlInstance.Valid() && row.variableControlNestedContainerCount != 0));
     const std::uint32_t selectedCount = nested ? row.selectionCount : 1u;
     if (selectedCount == 0 || selectedCount > selected.size() ||
         (nested && selectedCount < 2)) return QueueContinuationPrepareStatus::Failed;
@@ -32259,11 +32263,7 @@ QueueContinuationPrepareStatus StartSignalOnlyNoOverlapSuccessor(
     std::array<std::uint32_t, harken::kSelectionPathNodeCapacity>
         selectedPath{};
     std::uint32_t selectedCount = 1;
-    const bool authoredQueueRoot = row.root.kind == harken::PlayableKindV1::Container &&
-        row.root.stableId == program.containerStableId &&
-        row.root.expectedProgramSemanticFingerprint == program.programSemanticFingerprint &&
-        row.ownerInstance == row.rootInstance;
-    if (authoredQueueRoot) {
+    if (HasAuthoredQueueRoot(row, program)) {
         selectedPath[0] = next.currentChildOrdinal;
     } else if (row.queueParentInstance.Valid()) {
         if (row.selectionCount < 2 ||
