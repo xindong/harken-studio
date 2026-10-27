@@ -564,20 +564,11 @@ CurrentWorldCompileResult compileCurrentWorldRequest(
         }
     }
 
-    harkenstudiobuild::WorldCapacitySummaryV1 capacity;
-    capacity.maxContainerPrograms = 1024;
-    if (frontEnd.project->objects.size()
-        > harkenstudiobuild::kHardPlayablePropertyProgramCapacity) {
-        result.status = CurrentWorldSyncStatus::CompileFailed;
-        return result;
-    }
-    capacity.maxPlayablePropertyPrograms = std::max(
-        capacity.maxPlayablePropertyPrograms,
-        static_cast<std::uint32_t>(frontEnd.project->objects.size()));
     auto compiled = harkencurrentworldcompiler::CompileCurrentWorldV1(
         *frontEnd.project, request.variables, request.materializations,
-        request.containers, capacity,
-        request.transitions, request.actions, &request.busResult->idSet);
+        request.containers, {}, request.transitions, request.actions,
+        &request.busResult->idSet,
+        harkencurrentworldcompiler::CompileCapacityModeV1::AuthoredContent);
     if (!compiled.ok() || !compiled.world) {
         result.status = CurrentWorldSyncStatus::CompileFailed;
         result.relatedStableId = compiled.relatedStableId;

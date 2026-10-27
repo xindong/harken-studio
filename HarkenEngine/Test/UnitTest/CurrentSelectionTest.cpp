@@ -4009,4 +4009,67 @@ TEST(CurrentSelectionMemory, PreparedShapesPreserveOtherHoldsAndOrdinaryAdmissio
     EXPECT_EQ(emptyBytes, table.StorageBytes());
 }
 
+TEST(CurrentSelectionMemory, ContentSizedBackingPreservesSelectionAndCancellationAcrossDisciplines) {
+    using Status = harken::SelectionMemoryStatusV1;
+    using Table = harken::SelectionMemoryTableV1;
+    for (const auto count : {65u, 257u}) {
+        for (unsigned mode = 0; mode < 3; ++mode) {
+            SCOPED_TRACE(count);
+            SCOPED_TRACE(mode);
+            MemoryProgram fixture;
+            std::vector<harken::ContainerChildProgramViewV2> children(count);
+            for (std::uint32_t i = 0; i < count; ++i) {
+                children[i].stableChildOrdinal = 7 + 2 * i;
+                children[i].authoredStableOrder = count - i;
+                children[i].frequencyWeight = mode == 0 ? 1 + i % 5 : 0;
+                children[i].orderWeight = mode == 1 ? 1 + i % 5 : 0;
+            }
+            fixture.program.children = children.data();
+            fixture.program.childCount = count;
+            fixture.program.mode = mode == 2 ? harken::ContainerModeV1::Sequence : harken::ContainerModeV1::Random;
+            fixture.program.randomDiscipline = mode == 1 ? harken::RandomDisciplineV1::Rotation : harken::RandomDisciplineV1::Draw;
+            fixture.program.avoidLastN = mode == 2 ? 0 : harken::kHardSelectionAvoidCapacity;
+            auto config = MemoryConfig();
+            config.maxChildren = harken::kHardContainerChildCapacity;
+            config.maxAvoidLastN = harken::kHardSelectionAvoidCapacity;
+            Table table, reference;
+            ASSERT_TRUE(table.Reset(config));
+            ASSERT_TRUE(reference.Reset(MemoryConfig()));
+            EXPECT_EQ(reference.StorageBytes(), table.StorageBytes());
+            ASSERT_TRUE(reference.Reset(config));
+            Table::BackingPreparation backing;
+            ASSERT_TRUE(table.PrepareBacking({1, 2, 1,
+                {fixture.program.avoidLastN, mode == 1 ? count : 0u, 0, count}}, &backing));
+            const auto preparedBytes = table.StorageBytes();
+            std::vector<std::uint32_t> history;
+            history.reserve(count);
+            const auto iterations = mode == 2 ? 4u : count;
+            for (std::uint32_t i = 0; i < iterations; ++i) {
+                const auto request = MemoryRequest(fixture, i + 1u);
+                const auto expected = reference.AppendPlay(request);
+                ASSERT_EQ(Status::Ok, expected.status);
+                auto use = backing.Use();
+                const auto cancelled = table.AppendPlay(request);
+                ASSERT_EQ(Status::Ok, cancelled.status);
+                ASSERT_EQ(Status::Ok, table.CancelDelta(cancelled.delta));
+                const auto actual = table.AppendPlay(request);
+                ASSERT_EQ(Status::Ok, actual.status);
+                const auto ordinal = table.Delta(actual.delta).selectedChildOrdinal;
+                EXPECT_EQ(reference.Delta(expected.delta).selectedChildOrdinal, ordinal);
+                if (mode == 2) EXPECT_EQ(children[count - i - 1].stableChildOrdinal, ordinal);
+                else {
+                    const auto recent = std::min<std::size_t>(history.size(), fixture.program.avoidLastN);
+                    EXPECT_EQ(history.end(), std::find(history.end() - recent, history.end(), ordinal));
+                    history.push_back(ordinal);
+                }
+                ASSERT_EQ(Status::Ok, table.CommitHead(actual.delta));
+                ASSERT_EQ(Status::Ok, reference.CommitHead(expected.delta));
+                EXPECT_EQ(preparedBytes, table.StorageBytes());
+            }
+            EXPECT_EQ(iterations, table.Snapshot(MemoryKey()).selectionOrdinal);
+            EXPECT_EQ(0u, table.PendingCount());
+        }
+    }
+}
+
 }

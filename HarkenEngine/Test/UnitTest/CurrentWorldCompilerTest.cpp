@@ -2712,6 +2712,86 @@ TEST(CurrentWorldCompiler, CapacityPlusOneRefusesWithoutOutput) {
     EXPECT_EQ(nullptr, result.world);
 }
 
+TEST(CurrentWorldCompiler, AuthoredContentGrowsCumulativeBudgetsAndPreservesExplicitLimits) {
+    harkenprojectschema::CanonicalProject project;
+    std::vector<harkencurrentworldcompiler::DefinitionMaterializationV1> materializations;
+    std::vector<harkencurrentworldcompiler::ContainerAuthoringV1> containers;
+    for (std::uint32_t i = 1; i <= 1025; ++i) {
+        project.objects.push_back(Sound(i));
+        materializations.push_back({harkenplayableproperties::ContentPropertyKindV1::Sound,
+                                    harkentest::StudioObjectId(i), i + 1000, {}, 0});
+        if (i <= 65) {
+            const auto containerId = i + 10000;
+            project.objects.push_back(Container(containerId, i));
+            project.roots.push_back(harkentest::StudioObjectId(containerId));
+            materializations.push_back({harkenplayableproperties::ContentPropertyKindV1::Container,
+                                        harkentest::StudioObjectId(containerId), containerId, {}, 0});
+            auto authored = Authored(harkenstudiobuild::ContainerModeV1::Random,
+                                     harkenstudiobuild::RandomDisciplineV1::Draw);
+            authored.containerStableId = harkentest::StudioObjectId(containerId);
+            authored.authoredStableOrder = i - 1;
+            containers.push_back(std::move(authored));
+        } else {
+            project.roots.push_back(harkentest::StudioObjectId(i));
+        }
+    }
+    std::sort(project.objects.begin(), project.objects.end(),
+              [](const auto& left, const auto& right) {
+                  return left.chassis().id < right.chassis().id;
+              });
+    std::vector<harkenstudiobuild::VariableDefinitionV1> variables;
+    for (std::uint32_t i = 0; i < 257; ++i)
+        variables.push_back({harkentest::StudioObjectId(i + 20000),
+            harkenstudiobuild::VariableKindV1::Smooth, 0.0f, 1.0f, 0.0f});
+    std::vector<harkencurrentworldcompiler::ActionProgramAuthoringV1> actions;
+    for (std::uint32_t i = 0; i < 129; ++i) {
+        harkencurrentworldcompiler::ActionProgramAuthoringV1 action;
+        action.actionStableId = harkentest::StudioObjectId(i + 30000);
+        for (std::uint32_t j = 0; j < 32; ++j) {
+            harkencurrentworldcompiler::ActionStepAuthoringV1 step;
+            step.authoredEventIndex = j;
+            step.target.stableId = harkentest::StudioObjectId(1);
+            action.steps.push_back(step);
+        }
+        actions.push_back(std::move(action));
+    }
+    const auto bounded = harkencurrentworldcompiler::CompileCurrentWorldV1(
+        project, variables, materializations, containers, {}, {}, actions);
+    EXPECT_EQ(harkencurrentworldcompiler::CompileStatusV1::Capacity, bounded.status);
+    ASSERT_EQ(nullptr, bounded.world);
+    const auto authored = harkencurrentworldcompiler::CompileCurrentWorldV1(
+        project, variables, materializations, containers, {}, {}, actions, nullptr,
+        harkencurrentworldcompiler::CompileCapacityModeV1::AuthoredContent);
+    ASSERT_TRUE(authored.ok()) << static_cast<std::uint32_t>(authored.status);
+    const auto& world = authored.world->View();
+    EXPECT_EQ(129u, world.actionCount);
+    EXPECT_EQ(257u, world.variableCount);
+    EXPECT_EQ(65u, world.containerCount);
+    EXPECT_EQ(1090u, world.playablePropertyCount);
+    EXPECT_EQ(harken::WorldInstallStatus::Ok, harkentest::ValidateCompilerWorld(world));
+    std::vector<std::uint8_t> bytes;
+    ASSERT_TRUE(harkenstudiobuild::EncodeCurrentWorldShippingBody(world, bytes));
+    harken::CurrentWorldBodyImage decoded;
+    ASSERT_TRUE(decoded.Decode(bytes.data(), bytes.size(),
+                              harken::kCurrentWorldShippingBodyVintage,
+                              harken::CurrentWorldDecodeMode::StrictArtifact));
+    const auto* restored = decoded.ProductionView();
+    ASSERT_NE(nullptr, restored);
+    EXPECT_EQ(world.identity.runtimeSemanticFingerprint,
+              restored->identity.runtimeSemanticFingerprint);
+    EXPECT_EQ(world.actionCount, restored->actionCount);
+    EXPECT_EQ(world.variableCount, restored->variableCount);
+    actions.front().steps.resize(harkenstudiobuild::kMaxActionSteps + 1,
+                                actions.front().steps.front());
+    for (std::uint32_t i = 0; i < actions.front().steps.size(); ++i)
+        actions.front().steps[i].authoredEventIndex = i;
+    const auto invalid = harkencurrentworldcompiler::CompileCurrentWorldV1(
+        project, variables, materializations, containers, {}, {}, actions, nullptr,
+        harkencurrentworldcompiler::CompileCapacityModeV1::AuthoredContent);
+    EXPECT_EQ(harkencurrentworldcompiler::CompileStatusV1::InvalidActionAuthoring, invalid.status);
+    EXPECT_EQ(nullptr, invalid.world);
+}
+
 TEST(CurrentWorldCompiler, PropertyCapacityZeroHundredAndPlusOne) {
     harkenstudiobuild::WorldCapacitySummaryV1 zeroCapacity{};
     zeroCapacity.maxPlayablePropertyPrograms = 0;
@@ -2750,7 +2830,9 @@ TEST(CurrentWorldCompiler, PropertyCapacityZeroHundredAndPlusOne) {
 
 TEST(CurrentWorldCompiler, RandomDrawUsesOnlyPositiveWeightsForAvoid) {
     const auto compile = [](const std::vector<std::uint32_t>& weights,
-                            std::uint32_t avoidLastN) {
+                            std::uint32_t avoidLastN,
+                            harkencurrentworldcompiler::CompileCapacityModeV1 mode =
+                                harkencurrentworldcompiler::CompileCapacityModeV1::ExplicitBudget) {
         harkenprojectschema::CanonicalProject project{};
         harkenprojectschema::ContentObject container{};
         container.kind = harkenprojectschema::ContentKind::Container;
@@ -2785,7 +2867,7 @@ TEST(CurrentWorldCompiler, RandomDrawUsesOnlyPositiveWeightsForAvoid) {
         project.objects.insert(project.objects.begin(), std::move(container));
         project.roots.push_back(harkentest::StudioObjectId(1));
         return harkencurrentworldcompiler::CompileCurrentWorldV1(
-            project, {}, materializations, {authored});
+            project, {}, materializations, {authored}, {}, {}, {}, nullptr, mode);
     };
 
     const auto mixed = compile({2, 0, 3}, 1);
@@ -2801,6 +2883,16 @@ TEST(CurrentWorldCompiler, RandomDrawUsesOnlyPositiveWeightsForAvoid) {
               compile({2, 0, 3}, 2).status);
     EXPECT_EQ(harkencurrentworldcompiler::CompileStatusV1::InvalidCanonicalWorld,
               compile({0, 0}, 0).status);
+    const std::vector<std::uint32_t> candidates(65, 1);
+    const auto bounded = compile(candidates, 9);
+    EXPECT_EQ(harkencurrentworldcompiler::CompileStatusV1::Capacity, bounded.status);
+    const auto authored = compile(candidates, 9,
+        harkencurrentworldcompiler::CompileCapacityModeV1::AuthoredContent);
+    ASSERT_TRUE(authored.ok()) << static_cast<std::uint32_t>(authored.status);
+    EXPECT_EQ(65u, authored.world->View().containers[0].childCount);
+    EXPECT_EQ(9u, authored.world->View().containers[0].avoidLastN);
+    EXPECT_EQ(harken::WorldInstallStatus::Ok,
+              harkentest::ValidateCompilerWorld(authored.world->View()));
 }
 
 TEST(CurrentWorldCompiler, CanonicalizesNegativeZeroAtCompilerBoundaries) {

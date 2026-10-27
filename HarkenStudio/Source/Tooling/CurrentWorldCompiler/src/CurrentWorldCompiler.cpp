@@ -281,11 +281,21 @@ CompileResultV1 CompileCurrentWorldV1(
     const std::vector<harkenstudiobuild::VariableDefinitionV1>& variables,
     const std::vector<DefinitionMaterializationV1>& materializations,
     const std::vector<ContainerAuthoringV1>& authoredContainers,
-    const harkenstudiobuild::WorldCapacitySummaryV1& capacity,
+    const harkenstudiobuild::WorldCapacitySummaryV1& requestedCapacity,
     const std::vector<TransitionProgramAuthoringV1>& authoredTransitions,
     const std::vector<ActionProgramAuthoringV1>& authoredActions,
-    const harkenbuscompiler::CompiledBusIdSetV1* busIds) {
+    const harkenbuscompiler::CompiledBusIdSetV1* busIds,
+    CompileCapacityModeV1 capacityMode) {
     CompileResultV1 result{};
+    auto capacity = requestedCapacity;
+    if (capacityMode == CompileCapacityModeV1::AuthoredContent
+        && (project.objects.size() > harkenstudiobuild::kHardPlayablePropertyProgramCapacity
+            || variables.size() > harkenstudiobuild::kHardVariableDefinitionCapacity
+            || authoredContainers.size() > harkenstudiobuild::kHardContainerProgramCapacity
+            || authoredActions.size() > harkenstudiobuild::kHardActionDefinitionCapacity)) {
+        result.status = CompileStatusV1::Capacity;
+        return result;
+    }
     if (busIds != nullptr
         && (busIds->ids.empty()
             || harkenstudio::IsNull(busIds->ids.front())
@@ -1550,6 +1560,14 @@ CompileResultV1 CompileCurrentWorldV1(
               [](const auto& a, const auto& b) {
                   return a.view.actionStableId < b.view.actionStableId;
               });
+    if (capacityMode == CompileCapacityModeV1::AuthoredContent) {
+        world->Refresh();
+        if (!harkenstudiobuild::GrowAuthoredWorldCapacityV1(world->view_, &capacity)) {
+            result.status = CompileStatusV1::Capacity;
+            return result;
+        }
+        world->view_.capacity = capacity;
+    }
     if (world->actions_.size() > capacity.maxActionDefinitions) {
         result.status = CompileStatusV1::Capacity;
         return result;

@@ -6283,6 +6283,8 @@ public:
             resolved.maxTransitionInstances};
         actionPlayOwnerLimits = frontierOwnerLimits;
         SelectionMemoryConfigV1 selectionConfig{};
+        selectionConfig.maxChildren = kHardContainerChildCapacity;
+        selectionConfig.maxAvoidLastN = kHardSelectionAvoidCapacity;
         selectionConfig.maxEmitters = resolved.maxEmitters + 1u;
         selectionConfig.maxGlobalRows = resolved.maxSelectionRowsGlobal;
         selectionConfig.maxEmitterRowsPerEmitter =
@@ -9340,6 +9342,27 @@ public:
         // Return only this Engine's held preparation loans. Original resource
         // owners retain their backing until rollback or receiver destruction.
         for (auto& scratch : actionDeferredScratch) scratch.pairCommitProof.Release();
+    }
+
+    bool PrepareQueueSelectionStorage(const ContainerWorldInstallViewV1& world) noexcept {
+        if (memguard::IsAudioTagged() || queueProjectionInUse) return false;
+        std::uint32_t required = 0;
+        for (std::uint32_t index = 0; index < world.containerCount; ++index) {
+            const auto& program = world.containers[index];
+            if (program.mode == ContainerModeV1::SequenceQueue ||
+                program.mode == ContainerModeV1::RandomQueue)
+                required = std::max(required, program.childCount);
+        }
+        if (required > kHardContainerChildCapacity) return false;
+        try {
+            if (queueSelectionChildScratch.size() < required) queueSelectionChildScratch.resize(required);
+            if (queueRemainingScratch.size() < required) queueRemainingScratch.resize(required);
+            if (queuePermutationScratch.size() < required) queuePermutationScratch.resize(required);
+            if (queueProjectionScratch.size() <= required) queueProjectionScratch.resize(required + 1u);
+            return true;
+        } catch (...) {
+            return false;
+        }
     }
 
     ~Engine() {

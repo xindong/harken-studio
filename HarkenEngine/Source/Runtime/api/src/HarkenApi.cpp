@@ -16844,7 +16844,7 @@ bool SetNestedVariableControlPropertyPath(harken::EnginePlayableServiceRow& serv
     while (policyIndex != UINT32_MAX) {
         if (policyIndex >= policyCount || policyCount > policies.size() || count == reverse.size()) return false;
         const auto& node = policies[policyIndex];
-        if (node.occurrenceOrdinal == 0 || (node.parentIndex != UINT32_MAX && node.parentIndex >= policyIndex)) return false;
+        if (node.parentIndex != UINT32_MAX && node.parentIndex >= policyIndex) return false;
         reverse[count++] = policyIndex;
         policyIndex = node.parentIndex;
     }
@@ -16870,7 +16870,7 @@ bool SetNestedVariableControlPropertyPath(harken::EnginePlayableServiceRow& serv
         const auto ordinal = index < count
             ? policies[reverse[count - index - 1u]].occurrenceOrdinal : ancestor.selectedOrdinal;
         if (ancestor.authored.kind != harken::PlayableKindV1::Container || ancestor.instance == 0 ||
-            ancestor.instanceEpoch == 0 || ordinal == 0) return false;
+            ancestor.instanceEpoch == 0) return false;
         service.selectionPath[prefix + index] = MakeContainerSelectionPathNode(ancestor.authored.stableId, ordinal);
         service.selectedChildOrdinals[prefix + index] = ordinal;
         service.containerInstances[prefix + index] = ancestor.instance;
@@ -47255,7 +47255,7 @@ bool InitialVariableCohortMayPublishPending(harken::Engine& engine,
     return true;
 }
 
-bool PendingVariableGroupOwnsNestedRetirement(harken::Engine& engine,
+bool PendingVariableGroupOwnsNestedService(harken::Engine& engine,
     harken::EnginePlayableServiceRow& row, const harken::EngineImmediateEntryAttempt& attempt) noexcept {
     const bool registered = attempt.privateVcProducerCount != 0;
     auto token = registered ? attempt.privateVcProducerHead
@@ -47265,8 +47265,7 @@ bool PendingVariableGroupOwnsNestedRetirement(harken::Engine& engine,
         auto* producer = FindFrontierAttempt(engine, token);
         if (producer == nullptr) return false;
         auto* group = engine.OriginalPendingVariableGroupForProducer(*producer, attempt);
-        if (group != nullptr && group->leafRetirement !=
-                harken::Engine::OriginalPendingVariableGroupHolder::LeafRetirement::None) {
+        if (group != nullptr) {
             for (std::uint32_t side = 0; side < group->nestedInitialSideCount; ++side) {
                 const auto& original = group->nestedInitialSides[side];
                 if (original.service.token == row.identity && original.service.owner == row.ownerInstance &&
@@ -47368,11 +47367,10 @@ void ServicePlayableStarts(harken::Engine& engine,
         if (row.privateOrdinaryDeferredRollbackGeneration != 0) continue;
         const auto* privateAttempt = FindImmediateEntryAttempt(
             engine, row.pendingImmediateCohortRoot);
-        // The original replacement owner retains these controllers until their old Sources and fences return.
-        const auto* retirementAttempt = privateAttempt != nullptr ? privateAttempt : row.InvocationValid()
+        const auto* variableGroupAttempt = privateAttempt != nullptr ? privateAttempt : row.InvocationValid()
             ? FindImmediateEntryAttempt(engine, row.Invocation().actionFiring) : nullptr;
-        if (retirementAttempt != nullptr &&
-            PendingVariableGroupOwnsNestedRetirement(engine, row, *retirementAttempt)) continue;
+        if (variableGroupAttempt != nullptr &&
+            PendingVariableGroupOwnsNestedService(engine, row, *variableGroupAttempt)) continue;
         if (privateAttempt != nullptr &&
             privateAttempt->privateCleanupPhase !=
                 harken::InitialQueuePrivateCleanupPhase::None &&
@@ -111666,6 +111664,9 @@ VnResult PrepareCanonicalOwners(
         const auto* next = prepared.composition.Published();
         if (next == nullptr) {
             return VN_OK;
+        }
+        for (const auto& owner : next->owners) {
+            if (!engine.PrepareQueueSelectionStorage(owner.view)) return VN_BACKPRESSURE;
         }
         const std::uint64_t indexBytes = next->index.size() * sizeof(PackComposition::IdentityIndexEntry);
         if (indexBytes > engine.config.maxCompositeIndexBytes) {

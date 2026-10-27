@@ -1150,32 +1150,36 @@ std::vector<std::uint8_t> ContentContainerWithChildPartitionPayload(
     return WrapWorldPartition(packStableId, revision, world, 1);
 }
 
-std::vector<std::uint8_t> ProviderContainerWithTwoSoundsPartitionPayload(
+std::vector<std::uint8_t> ProviderContainerWithSoundsPartitionPayload(
     std::uint64_t packStableId, std::uint64_t revision,
-    VnObjectId containerId, VnObjectId soundAId, VnObjectId soundBId) {
+    VnObjectId containerId, VnObjectId firstSoundId, std::uint32_t childCount,
+    ContainerModeV1 mode, std::uint32_t discreteCount,
+    std::uint32_t continuousCount, bool duplicateContinuousRow,
+    bool sharedChild, const WorldCapacitySummaryV1& capacity) {
     const PlayablePropertyProgramViewV1 containerProperty =
         MakeContainerProperty(containerId, 1);
-    const PlayablePropertyProgramViewV1 soundA = MakeSoundProperty(soundAId, 2);
-    const PlayablePropertyProgramViewV1 soundB = MakeSoundProperty(soundBId, 3);
-    const PlayableRefV1 soundARef = PlayableRefFromProperty(soundA);
-    const PlayableRefV1 soundBRef = PlayableRefFromProperty(soundB);
-    ContainerChildProgramViewV2 children[2]{};
-    children[0].playable = soundARef;
-    children[0].stableChildOrdinal = 0;
-    children[0].frequencyWeight = 1;
-    children[1].playable = soundBRef;
-    children[1].stableChildOrdinal = 1;
-    children[1].authoredStableOrder = 1;
-    children[1].frequencyWeight = 1;
-    ContainerProgramViewV3 container = MakeContainerProgram(
-        containerId, containerProperty.programSemanticFingerprint);
-    container.childCount = 2;
-    container.children = children;
-    PlayableOccurrencePropertyViewV1 occurrences[2]{};
-    for (std::uint32_t i = 0; i < 2; ++i) {
+    const auto sharedProperty = MakeContainerProperty(
+        harkentest::OffsetObjectId(containerId, 2000), childCount + 2);
+    std::vector<PlayablePropertyProgramViewV1> properties(childCount + 1 + sharedChild);
+    std::vector<ContainerChildProgramViewV2> children(childCount);
+    std::vector<PlayableOccurrencePropertyViewV1> occurrences(childCount + sharedChild);
+    std::vector<DiscreteGridCellV1> cells(childCount);
+    std::vector<DiscreteGridRowViewV1> rows(childCount);
+    std::vector<ContinuousGridRowViewV1> continuousRows(continuousCount + duplicateContinuousRow);
+    const VariableDefinitionV1 variable = harkentest::MakeVariableDefinition(
+        harkentest::OffsetObjectId(containerId, 1000), VariableKindV1::Step,
+        0.0f, static_cast<float>(childCount), 0.0f);
+    const GridAxisV1 axis{0, 0, variable.variableId};
+    for (std::uint32_t i = 0; i < childCount; ++i) {
+        properties[i] = MakeSoundProperty(harkentest::OffsetObjectId(firstSoundId, i), i + 2);
+        children[i].playable = PlayableRefFromProperty(sharedChild ? sharedProperty : properties[i]);
+        children[i].stableChildOrdinal = i;
+        children[i].authoredStableOrder = i;
+        children[i].frequencyWeight = mode == ContainerModeV1::Random ? 1 : 0;
+        children[i].orderWeight = mode == ContainerModeV1::RandomQueue ? 1 : 0;
         occurrences[i].parentKind =
             playableproperties::ContentPropertyKindV1::Container;
-        occurrences[i].parentStableId = harkentest::ObjectId(containerId);
+        occurrences[i].parentStableId = containerId;
         occurrences[i].parentProgramSemanticFingerprint =
             containerProperty.programSemanticFingerprint;
         occurrences[i].stableOccurrenceOrdinal = i;
@@ -1183,18 +1187,67 @@ std::vector<std::uint8_t> ProviderContainerWithTwoSoundsPartitionPayload(
         occurrences[i].payload = EmptyOccurrencePayload();
         occurrences[i].occurrenceSemanticFingerprint =
             ComputePlayableOccurrenceFingerprintV1(occurrences[i]);
+        cells[i] = {DiscreteCellKindV1::Exact, static_cast<std::int32_t>(i)};
+        rows[i] = {i, i, i, 1, &cells[i]};
     }
-    PlayablePropertyProgramViewV1 properties[3] = {soundA, soundB,
-                                                   containerProperty};
+    for (std::uint32_t i = 0; i < continuousRows.size(); ++i) {
+        continuousRows[i].stableRowOrdinal = i;
+        continuousRows[i].authoredStableOrder = i;
+        continuousRows[i].childStableOrdinal = i % continuousCount;
+    }
+    properties[childCount] = containerProperty;
+    ContainerProgramViewV3 container = MakeContainerProgram(
+        containerId, containerProperty.programSemanticFingerprint, 1);
+    container.mode = mode;
+    container.randomDiscipline = mode == ContainerModeV1::RandomQueue
+        ? RandomDisciplineV1::Rotation : RandomDisciplineV1::Draw;
+    container.childCount = childCount;
+    container.children = children.data();
+    if (mode == ContainerModeV1::VariableControl) {
+        if (continuousCount != 0) {
+            container.continuousRowCount = static_cast<std::uint32_t>(continuousRows.size());
+            container.continuousRows = continuousRows.data();
+            container.maxActiveRows = continuousCount;
+            container.maxLiveRows = continuousCount;
+        }
+        if (discreteCount != 0) {
+            container.discreteAxisCount = 1;
+            container.discreteAxes = &axis;
+            container.discreteRowCount = discreteCount;
+            container.discreteRows = rows.data();
+        }
+    }
+    ContainerChildProgramViewV2 sharedSound{};
+    std::array<ContainerProgramViewV3, 2> containers{container, {}};
+    if (sharedChild) {
+        properties.back() = sharedProperty;
+        sharedSound.playable = PlayableRefFromProperty(properties[0]);
+        sharedSound.frequencyWeight = 1;
+        containers[1] = MakeContainerProgram(sharedProperty.stableId,
+            sharedProperty.programSemanticFingerprint, 2);
+        containers[1].childCount = 1;
+        containers[1].children = &sharedSound;
+        auto& occurrence = occurrences.back();
+        occurrence = occurrences[0];
+        occurrence.parentStableId = sharedProperty.stableId;
+        occurrence.parentProgramSemanticFingerprint = sharedProperty.programSemanticFingerprint;
+        occurrence.childPlayable = sharedSound.playable;
+        occurrence.occurrenceSemanticFingerprint = ComputePlayableOccurrenceFingerprintV1(occurrence);
+    }
     ContainerWorldInstallViewV1 world{};
-    world.playableProperties = properties;
-    world.playablePropertyCount = 3;
-    world.playableOccurrences = occurrences;
-    world.playableOccurrenceCount = 2;
-    world.containers = &container;
-    world.containerCount = 1;
-    FinishPlayableWorld(&world, kWorldCapabilityRandomDraw);
-    return WrapWorldPartition(packStableId, revision, world, 3);
+    world.variables = &variable;
+    world.variableCount = 1;
+    world.playableProperties = properties.data();
+    world.playablePropertyCount = static_cast<std::uint32_t>(properties.size());
+    world.playableOccurrences = occurrences.data();
+    world.playableOccurrenceCount = static_cast<std::uint32_t>(occurrences.size());
+    world.containers = containers.data();
+    world.containerCount = 1 + sharedChild;
+    FinishPlayableWorld(&world);
+    world.capacity = capacity;
+    world.identity.capabilityMask = detail::ComputeCurrentWorldLocalCapabilityMaskV1(world);
+    world.identity.runtimeSemanticFingerprint = ComputeCurrentWorldFingerprintV4(world);
+    return WrapWorldPartition(packStableId, revision, world, childCount + 2 + sharedChild);
 }
 
 std::vector<std::uint8_t> TrackOnlyPartitionPayload(
@@ -1391,7 +1444,7 @@ std::uint32_t AggregateRowCount(
 std::vector<std::uint8_t> CapacityLimitedContainerChildPartitionPayload(
     std::uint64_t packStableId, std::uint64_t revision,
     VnObjectId containerId, const PlayableRefV1& childPlayable,
-    std::uint32_t maxKnownScheduleLeaves) {
+    const WorldCapacitySummaryV1& capacity) {
     const PlayablePropertyProgramViewV1 property =
         MakeContainerProperty(containerId);
     ContainerChildProgramViewV2 child{};
@@ -1421,7 +1474,7 @@ std::vector<std::uint8_t> CapacityLimitedContainerChildPartitionPayload(
     world.containers = &container;
     world.containerCount = 1;
     FinishPlayableWorld(&world, kWorldCapabilityRandomDraw);
-    world.capacity.maxKnownScheduleLeaves = maxKnownScheduleLeaves;
+    world.capacity = capacity;
     world.identity.runtimeSemanticFingerprint =
         ComputeCurrentWorldFingerprintV4(world);
     return WrapWorldPartition(packStableId, revision, world, 1);
@@ -6866,17 +6919,17 @@ TEST(PackComposition,
     trackProperty.contentPropertyKind =
         playableproperties::ContentPropertyKindV1::Track;
     trackProperty.stableId = harkentest::ObjectId(kTrackId);
+    trackProperty.authoredStableOrder = 3;
     trackProperty.contentRevision = 1;
     trackProperty.routeStableId = VN_BUS_MASTER;
     trackProperty.compatibilityFingerprint = 1;
     trackProperty.payload = DelayedPlayPayload();
     trackProperty.programSemanticFingerprint =
         ComputePlayablePropertyFingerprintV1(trackProperty);
-    const PlayablePropertyProgramViewV1 soundA = MakeSoundProperty(kSoundAId);
-    const PlayablePropertyProgramViewV1 soundB = MakeSoundProperty(kSoundBId);
+    const PlayablePropertyProgramViewV1 soundA = MakeSoundProperty(kSoundAId, 1);
+    const PlayablePropertyProgramViewV1 soundB = MakeSoundProperty(kSoundBId, 2);
     const PlayableRefV1 trackRef = PlayableRefFromProperty(trackProperty);
     const PlayableRefV1 soundARef = PlayableRefFromProperty(soundA);
-    const PlayableRefV1 soundBRef = PlayableRefFromProperty(soundB);
 
     ScheduleClipPlacementV1 placements[2]{};
     placements[0].stablePlacementOrdinal = 0;
@@ -6886,9 +6939,10 @@ TEST(PackComposition,
     placements[0].clipGuidHigh = 1;
     placements[1].stablePlacementOrdinal = 1;
     placements[1].stableOccurrenceOrdinal = 1;
-    placements[1].content = soundBRef;
+    placements[1].content = soundARef;
     placements[1].clipId = harkentest::ObjectId(8304001);
     placements[1].clipGuidHigh = 1;
+    placements[1].clipGuidLow = 1;
     TrackScheduleProgramViewV1 schedule{};
     schedule.rootDefinition = trackRef;
     schedule.placementCount = 2;
@@ -6900,8 +6954,6 @@ TEST(PackComposition,
     child.playable = trackRef;
     child.stableChildOrdinal = 0;
     child.frequencyWeight = 1;
-    child.timingHint = MakeScheduleReferenceTimingHint(
-        PlayableKindV1::Track, kTrackId, schedule.scheduleSemanticFingerprint);
     ContainerProgramViewV3 containerProgram = MakeContainerProgram(
         kContainerId, containerProperty.programSemanticFingerprint);
     containerProgram.childCount = 1;
@@ -6929,48 +6981,101 @@ TEST(PackComposition,
         ComputePlayableOccurrenceFingerprintV1(occurrences[1]);
     occurrences[2] = occurrences[1];
     occurrences[2].stableOccurrenceOrdinal = 1;
-    occurrences[2].childPlayable = soundBRef;
+    occurrences[2].childPlayable = soundARef;
     occurrences[2].occurrenceSemanticFingerprint =
         ComputePlayableOccurrenceFingerprintV1(occurrences[2]);
 
-    PlayablePropertyProgramViewV1 properties[4] = {
-        soundA, soundB, containerProperty, trackProperty};
+    auto secondTrackProperty = trackProperty;
+    secondTrackProperty.stableId = harkentest::ObjectId(8306);
+    secondTrackProperty.authoredStableOrder = 4;
+    secondTrackProperty.programSemanticFingerprint = ComputePlayablePropertyFingerprintV1(secondTrackProperty);
+    std::array<ScheduleClipPlacementV1, 2> secondPlacements{placements[0], placements[1]};
+    for (std::uint32_t i = 0; i < secondPlacements.size(); ++i) {
+        secondPlacements[i].clipId = harkentest::ObjectId(8306001 + i);
+        secondPlacements[i].clipGuidHigh = 2;
+    }
+    std::array<TrackScheduleProgramViewV1, 2> schedules{schedule, schedule};
+    schedules[1].placements = secondPlacements.data();
+    schedules[1].rootDefinition = PlayableRefFromProperty(secondTrackProperty);
+    schedules[1].scheduleSemanticFingerprint = ComputeTrackScheduleFingerprintV1(schedules[1]);
+    std::array<PlayableOccurrencePropertyViewV1, 5> allOccurrences{
+        occurrences[0], occurrences[1], occurrences[2], occurrences[1], occurrences[2]};
+    for (std::uint32_t i = 3; i < allOccurrences.size(); ++i) {
+        allOccurrences[i].parentStableId = secondTrackProperty.stableId;
+        allOccurrences[i].parentProgramSemanticFingerprint = secondTrackProperty.programSemanticFingerprint;
+        allOccurrences[i].occurrenceSemanticFingerprint = ComputePlayableOccurrenceFingerprintV1(allOccurrences[i]);
+    }
+    auto pieceProperty = trackProperty;
+    pieceProperty.contentPropertyKind = playableproperties::ContentPropertyKindV1::Piece;
+    pieceProperty.stableId = harkentest::ObjectId(8305);
+    pieceProperty.authoredStableOrder = 5;
+    pieceProperty.programSemanticFingerprint = ComputePlayablePropertyFingerprintV1(pieceProperty);
+    std::array<ScheduleTrackRefV1, 2> trackScheduleRefs{};
+    for (std::uint32_t i = 0; i < trackScheduleRefs.size(); ++i) {
+        trackScheduleRefs[i].trackDefinition = schedules[i].rootDefinition;
+        trackScheduleRefs[i].trackScheduleSemanticFingerprint = schedules[i].scheduleSemanticFingerprint;
+        trackScheduleRefs[i].stableTrackOrdinal = i;
+    }
+    PieceScheduleProgramViewV1 piece{};
+    piece.rootDefinition = PlayableRefFromProperty(pieceProperty);
+    piece.trackRefCount = static_cast<std::uint32_t>(trackScheduleRefs.size());
+    piece.trackRefs = trackScheduleRefs.data();
+    piece.scheduleSemanticFingerprint = ComputePieceScheduleFingerprintV1(piece);
+    PlayablePropertyProgramViewV1 properties[6] = {
+        soundA, soundB, containerProperty, trackProperty, secondTrackProperty, pieceProperty};
     ContainerWorldInstallViewV1 world{};
     world.playableProperties = properties;
-    world.playablePropertyCount = 4;
-    world.playableOccurrences = occurrences;
-    world.playableOccurrenceCount = 3;
-    world.trackSchedules = &schedule;
-    world.trackScheduleCount = 1;
+    world.playablePropertyCount = 6;
+    world.playableOccurrences = allOccurrences.data();
+    world.playableOccurrenceCount = static_cast<std::uint32_t>(allOccurrences.size());
+    world.trackSchedules = schedules.data();
+    world.trackScheduleCount = static_cast<std::uint32_t>(schedules.size());
+    world.pieceSchedules = &piece;
+    world.pieceScheduleCount = 1;
     world.containers = &containerProgram;
     world.containerCount = 1;
     FinishPlayableWorld(&world, kWorldCapabilityRandomDraw);
-    world.capacity.maxKnownScheduleLeaves = 1;
-    world.identity.runtimeSemanticFingerprint =
-        ComputeCurrentWorldFingerprintV4(world);
-
-    std::vector<std::uint8_t> encodedBody;
-    ASSERT_TRUE(EncodeCurrentWorldShippingBody(world, encodedBody));
-    auto body = std::make_shared<CurrentWorldBodyImage>();
-    ASSERT_EQ(CurrentWorldBodyDecodeResult::Ok,
-              body->DecodeWithResult(
-                  encodedBody.data(), encodedBody.size(),
-                  kCanonicalDefinitionPartitionBodyVintage,
-                  CurrentWorldDecodeMode::StrictArtifact));
-    PackComposition::CandidateOwner owner;
-    owner.packStableId = kPackStableId;
-    owner.handle = kPackHandle;
-    owner.contentRevision = 1;
-    owner.partitionRevision = 7;
-    owner.resourceRevision = 1;
-    owner.hasPartition = true;
-    owner.body = std::move(body);
-    owner.view = *owner.body->ProductionView();
-    PackComposition composition(1);
-    std::vector<PackComposition::CandidateOwner> owners;
-    owners.push_back(std::move(owner));
-    EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY,
-              composition.Commit(std::move(owners), nullptr, 0, 8, 0));
+    for (const bool throughPiece : {false, true}) {
+        SCOPED_TRACE(throughPiece);
+        const std::uint32_t required = throughPiece ? 4 : 2;
+        child.playable = throughPiece ? piece.rootDefinition : trackRef;
+        allOccurrences[0].childPlayable = child.playable;
+        allOccurrences[0].occurrenceSemanticFingerprint = ComputePlayableOccurrenceFingerprintV1(allOccurrences[0]);
+        PackComposition composition(1);
+        const PackComposition::PublishedView* before = nullptr;
+        std::uint64_t generation = 0;
+        for (const std::uint32_t limit : {required, required - 1}) {
+            world.capacity.maxKnownScheduleLeaves = limit;
+            world.identity.runtimeSemanticFingerprint = ComputeCurrentWorldFingerprintV4(world);
+            std::vector<std::uint8_t> encodedBody;
+            ASSERT_TRUE(EncodeCurrentWorldShippingBody(world, encodedBody));
+            auto body = std::make_shared<CurrentWorldBodyImage>();
+            ASSERT_EQ(CurrentWorldBodyDecodeResult::Ok,
+                      body->DecodeWithResult(encodedBody.data(), encodedBody.size(),
+                          kCanonicalDefinitionPartitionBodyVintage, CurrentWorldDecodeMode::StrictArtifact));
+            PackComposition::CandidateOwner owner;
+            owner.packStableId = kPackStableId;
+            owner.handle = kPackHandle;
+            owner.contentRevision = 1;
+            owner.partitionRevision = 7;
+            owner.resourceRevision = 1;
+            owner.hasPartition = true;
+            owner.body = std::move(body);
+            owner.view = *owner.body->ProductionView();
+            std::vector<PackComposition::CandidateOwner> owners;
+            owners.push_back(std::move(owner));
+            ASSERT_EQ(limit == required ? VN_OK : VN_PACK_RESIDENT_CAPACITY,
+                      composition.Commit(std::move(owners), nullptr, 0, 8, 0));
+            if (limit == required) {
+                before = composition.Published();
+                ASSERT_NE(nullptr, before);
+                generation = composition.CompositeGeneration();
+            } else {
+                EXPECT_EQ(before, composition.Published());
+                EXPECT_EQ(generation, composition.CompositeGeneration());
+            }
+        }
+    }
 }
 
 TEST(PackComposition,
@@ -7120,7 +7225,6 @@ TEST(PackComposition,
     constexpr VnObjectId kContentContainerId = harkentest::ObjectId(8401);
     constexpr VnObjectId kProviderContainerId = harkentest::ObjectId(8402);
     constexpr VnObjectId kSoundAId = harkentest::ObjectId(8403);
-    constexpr VnObjectId kSoundBId = harkentest::ObjectId(8404);
     constexpr VnPackHandle kContentHandle =
         static_cast<VnPackHandle>(1) << 32;
     constexpr VnPackHandle kProviderHandle =
@@ -7130,39 +7234,81 @@ TEST(PackComposition,
         MakeContainerProperty(kProviderContainerId, 1);
     const PlayableRefV1 providerContainerRef =
         PlayableRefFromProperty(providerContainer);
+    WorldCapacitySummaryV1 capacity;
+    capacity.maxChildrenPerContainer = 65;
+    capacity.maxKnownScheduleLeaves = 1;
     const std::vector<std::uint8_t> contentBytes =
         BuildCanonicalPartitionPack(
             kContentPack, 1, 7,
             CapacityLimitedContainerChildPartitionPayload(
-                kContentPack, 7, kContentContainerId, providerContainerRef, 1),
+                kContentPack, 7, kContentContainerId, providerContainerRef, capacity),
             kProviderPack);
-    const std::vector<std::uint8_t> providerBytes =
-        BuildCanonicalPartitionPack(
-            kProviderPack, 1, 9,
-            ProviderContainerWithTwoSoundsPartitionPayload(
-                kProviderPack, 9, kProviderContainerId, kSoundAId, kSoundBId));
     PackCanonicalImage contentImage;
-    PackCanonicalImage providerImage;
     ASSERT_EQ(VN_OK, ParsePackCanonicalImage(contentBytes.data(),
                                              contentBytes.size(),
                                              &contentImage));
-    ASSERT_EQ(VN_OK, ParsePackCanonicalImage(providerBytes.data(),
-                                             providerBytes.size(),
-                                             &providerImage));
-    PackComposition composition(2, 0, 2);
-    PackComposition::CandidateOwner contentOwner;
-    PackComposition::CandidateOwner providerOwner;
-    ASSERT_EQ(VN_OK, composition.PrepareCandidate(contentImage, kContentHandle,
-                                                   &contentOwner));
-    ASSERT_EQ(VN_OK, composition.PrepareCandidate(providerImage,
-                                                   kProviderHandle,
-                                                   &providerOwner));
-    std::vector<PackComposition::CandidateOwner> owners;
-    owners.push_back(std::move(contentOwner));
-    owners.push_back(std::move(providerOwner));
-    EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY,
-              composition.Commit(std::move(owners), nullptr, 0, 8, 0));
-    EXPECT_EQ(nullptr, composition.Published());
+    struct Case {
+        ContainerModeV1 mode;
+        std::uint32_t children;
+        std::uint32_t discrete = 0;
+        std::uint32_t continuous = 0;
+        bool duplicateContinuousRow = false;
+        bool sharedChild = false;
+        VnResult result = VN_OK;
+    };
+    for (const auto test : {
+             Case{ContainerModeV1::Random, 2},
+             Case{ContainerModeV1::Random, 65},
+             Case{ContainerModeV1::Random, 65, 0, 0, false, true},
+             Case{ContainerModeV1::Sequence, 65},
+             Case{ContainerModeV1::RandomQueue, 65},
+             Case{ContainerModeV1::SequenceQueue, 65},
+             Case{ContainerModeV1::VariableControl, 65, 65},
+             Case{ContainerModeV1::VariableControl, 2, 0, 2, false, false, VN_PACK_RESIDENT_CAPACITY},
+             Case{ContainerModeV1::VariableControl, 1, 0, 1, true},
+             Case{ContainerModeV1::VariableControl, 1, 1, 1, false, false, VN_PACK_RESIDENT_CAPACITY}}) {
+        SCOPED_TRACE(::testing::Message() << static_cast<int>(test.mode)
+                     << "/children=" << test.children
+                     << "/discrete=" << test.discrete
+                     << "/continuous=" << test.continuous
+                     << "/duplicate=" << test.duplicateContinuousRow
+                     << "/shared=" << test.sharedChild);
+        const auto providerBytes = BuildCanonicalPartitionPack(
+            kProviderPack, 1, 9, ProviderContainerWithSoundsPartitionPayload(
+                kProviderPack, 9, kProviderContainerId, kSoundAId,
+                test.children, test.mode, test.discrete, test.continuous,
+                test.duplicateContinuousRow, test.sharedChild, capacity));
+        PackCanonicalImage providerImage;
+        ASSERT_EQ(VN_OK, ParsePackCanonicalImage(providerBytes.data(),
+                                                 providerBytes.size(),
+                                                 &providerImage));
+        PackComposition composition(2, 0, 2);
+        ASSERT_EQ(VN_OK, CommitParsedPack(&composition, providerBytes,
+                                           kProviderHandle, 8));
+        const auto before = composition.Published();
+        ASSERT_NE(nullptr, before);
+        const auto generation = composition.CompositeGeneration();
+        PackComposition::CandidateOwner contentOwner;
+        PackComposition::CandidateOwner providerOwner;
+        ASSERT_EQ(VN_OK, composition.PrepareCandidate(contentImage, kContentHandle,
+                                                       &contentOwner));
+        ASSERT_EQ(VN_OK, composition.PrepareCandidate(providerImage,
+                                                       kProviderHandle,
+                                                       &providerOwner));
+        std::vector<PackComposition::CandidateOwner> owners;
+        owners.push_back(std::move(contentOwner));
+        owners.push_back(std::move(providerOwner));
+        EXPECT_EQ(test.result,
+                  composition.Commit(std::move(owners), nullptr, 0, 8, 0));
+        if (test.result != VN_OK) {
+            EXPECT_EQ(before, composition.Published());
+            EXPECT_EQ(generation, composition.CompositeGeneration());
+        } else {
+            ASSERT_NE(nullptr, composition.Published());
+            EXPECT_EQ(2u, composition.Published()->owners.size());
+            EXPECT_GT(composition.CompositeGeneration(), generation);
+        }
+    }
 }
 
 TEST(PackComposition, PieceTrackReferenceMustStayInDeclaredClosure) {
@@ -8310,7 +8456,7 @@ std::vector<std::uint8_t> ImmediateVariableControlNestedLoopPlayPayload(
     VnObjectId variableControlId, VnObjectId initialNestedId,
     VnObjectId retargetNestedId, VnObjectId firstSoundId,
     VnObjectId secondSoundId, std::uint64_t firstRevision,
-    std::uint64_t secondRevision) {
+    std::uint64_t secondRevision, std::uint32_t ordinal) {
     PlayablePropertyProgramViewV1 firstSound = MakeSoundProperty(firstSoundId);
     firstSound.authoredStableOrder = 0;
     firstSound.contentRevision = firstRevision;
@@ -8344,20 +8490,20 @@ std::vector<std::uint8_t> ImmediateVariableControlNestedLoopPlayPayload(
 
     ContainerChildProgramViewV2 outerChild{};
     outerChild.playable = variableControlRef;
-    outerChild.stableChildOrdinal = 7;
+    outerChild.stableChildOrdinal = ordinal;
     outerChild.frequencyWeight = 1;
     ContainerChildProgramViewV2 variableChildren[2]{};
     variableChildren[0].playable = initialNestedRef;
-    variableChildren[0].stableChildOrdinal = 7;
+    variableChildren[0].stableChildOrdinal = ordinal;
     variableChildren[1].playable = retargetNestedRef;
-    variableChildren[1].stableChildOrdinal = 8;
+    variableChildren[1].stableChildOrdinal = ordinal + 1;
     variableChildren[1].authoredStableOrder = 1;
     ContainerChildProgramViewV2 initialChild{};
     initialChild.playable = firstRef;
-    initialChild.stableChildOrdinal = 7;
+    initialChild.stableChildOrdinal = ordinal;
     ContainerChildProgramViewV2 retargetChild{};
     retargetChild.playable = secondRef;
-    retargetChild.stableChildOrdinal = 7;
+    retargetChild.stableChildOrdinal = ordinal;
 
     const VariableDefinitionV1 variable = harkentest::MakeVariableDefinition(
         harkentest::ObjectId(41), VariableKindV1::Step, 0.0f, 8.0f, 3.0f);
@@ -8428,19 +8574,19 @@ std::vector<std::uint8_t> ImmediateVariableControlNestedLoopPlayPayload(
             ComputePlayableOccurrenceFingerprintV1(*occurrence);
     };
     setOccurrence(&occurrences[0], outerId,
-                  outerProperty.programSemanticFingerprint, 7,
+                  outerProperty.programSemanticFingerprint, ordinal,
                   variableControlRef);
     setOccurrence(&occurrences[1], variableControlId,
-                  variableControlProperty.programSemanticFingerprint, 7,
+                  variableControlProperty.programSemanticFingerprint, ordinal,
                   initialNestedRef);
     setOccurrence(&occurrences[2], variableControlId,
-                  variableControlProperty.programSemanticFingerprint, 8,
+                  variableControlProperty.programSemanticFingerprint, ordinal + 1,
                   retargetNestedRef);
     setOccurrence(&occurrences[3], initialNestedId,
-                  initialNestedProperty.programSemanticFingerprint, 7,
+                  initialNestedProperty.programSemanticFingerprint, ordinal,
                   firstRef);
     setOccurrence(&occurrences[4], retargetNestedId,
-                  retargetNestedProperty.programSemanticFingerprint, 7,
+                  retargetNestedProperty.programSemanticFingerprint, ordinal,
                   secondRef);
 
     PlayablePropertyProgramViewV1 properties[6] = {
@@ -8495,7 +8641,8 @@ std::vector<std::uint8_t> BuildVariableControlNestedLoopPlayPack(
     VnObjectId outerId, VnObjectId variableControlId,
     VnObjectId initialNestedId, VnObjectId retargetNestedId,
     VnObjectId firstSoundId, VnObjectId secondSoundId,
-    std::vector<float> firstPlanar, std::vector<float> secondPlanar) {
+    std::vector<float> firstPlanar, std::vector<float> secondPlanar,
+    std::uint32_t ordinal) {
     const float* firstChannels[1] = {firstPlanar.data()};
     const float* secondChannels[1] = {secondPlanar.data()};
     std::uint64_t firstRevision = 0;
@@ -8513,7 +8660,7 @@ std::vector<std::uint8_t> BuildVariableControlNestedLoopPlayPack(
         ImmediateVariableControlNestedLoopPlayPayload(
             packStableId, partitionRevision, actionId, outerId,
             variableControlId, initialNestedId, retargetNestedId,
-            firstSoundId, secondSoundId, firstRevision, secondRevision));
+            firstSoundId, secondSoundId, firstRevision, secondRevision, ordinal));
     builder.AddMedia(firstSoundId, std::move(firstPlanar));
     builder.AddMedia(secondSoundId, std::move(secondPlanar));
     return builder.Build();
@@ -9752,8 +9899,9 @@ TEST(PackComposition,
     ASSERT_EQ(VN_OK, Vn_DestroyEmitter(post.emitter));
 }
 
-TEST(PackComposition,
-     PackVariableControlAuthoredLoopsCoverInitialRetargetAndOuterTree) {
+static void ExpectPackVariableControlAuthoredLoopsCoverInitialRetargetAndOuterTree(
+    std::uint32_t ordinal) {
+    SCOPED_TRACE(ordinal);
     constexpr VnObjectId kOuterId = harkentest::ObjectId(4510);
     constexpr VnObjectId kVariableControlId = harkentest::ObjectId(4513);
     constexpr VnObjectId kInitialNestedId = harkentest::ObjectId(4514);
@@ -9764,7 +9912,7 @@ TEST(PackComposition,
     const auto packBytes = BuildVariableControlNestedLoopPlayPack(
         22, 1, 7, kActionId, kOuterId, kVariableControlId,
         kInitialNestedId, kRetargetNestedId, kFirstSoundId, kSecondSoundId,
-        harkentest::MakeDC(4096, 0.25f), harkentest::MakeDC(4096, -0.25f));
+        harkentest::MakeDC(4096, 0.25f), harkentest::MakeDC(4096, -0.25f), ordinal);
     const auto initBytes = BuildSingleIdentityInit(
         Fnv1a64(packBytes.data(), packBytes.size()), kActionId);
     const std::string initPath =
@@ -9908,6 +10056,12 @@ TEST(PackComposition,
     EXPECT_EQ(VN_OK,
               Vn_UnloadPackEx(pack, VN_PACK_UNLOAD_REFUSE_IF_USED));
     ASSERT_EQ(VN_OK, Vn_DestroyEmitter(post.emitter));
+}
+
+TEST(PackComposition,
+     PackVariableControlAuthoredLoopsCoverInitialRetargetAndOuterTree) {
+    for (const auto ordinal : {0u, 7u})
+        ExpectPackVariableControlAuthoredLoopsCoverInitialRetargetAndOuterTree(ordinal);
 }
 
 TEST(PackComposition, PackActionVariableControlDiscreteRenders) {

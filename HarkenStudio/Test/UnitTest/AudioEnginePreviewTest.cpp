@@ -771,6 +771,44 @@ TEST_F(AudioPlaybackRegression, RuntimeRestartCannotAdoptAnOlderCompilation)
     expectGoodAction();
 }
 
+TEST_F(AudioPlaybackRegression, ActionCatalogGrowthPreservesPlaybackAndSession)
+{
+    namespace Bridge = HarkenEditor::Bridge;
+    auto& coordinator = engine.runtimeSyncCoordinator();
+    const auto epoch = coordinator.barrier(coordinator.currentAuthoringRevision()).runtimeEpoch;
+    for (int index = 1; index < 256; ++index) {
+        ASSERT_NE(projects.createActionTargeting(
+            sounds[0], VNX::VActionStep::Type::Play,
+            QStringLiteral("CatalogAction%1").arg(index)), nullptr);
+    }
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    const auto started = engine.playByNameDetailed(QStringLiteral("CatalogAction255"));
+    ASSERT_EQ(started.engineResult, Bridge::kEngineOk);
+    const auto generation = harken::detail::ActiveEngine()->variables.CurrentWorldGeneration();
+    ASSERT_GT(settledPeak(), 0.05f);
+    ASSERT_NE(projects.createActionTargeting(
+        sounds[0], VNX::VActionStep::Type::Play,
+        QStringLiteral("CatalogAction256")), nullptr);
+    coordinator.flushPendingMutationNow();
+    ASSERT_GT(settledPeak(), 0.05f);
+    EXPECT_TRUE(Bridge::Detail::runtimeOwnsPlayback(started.playbackHandle));
+    EXPECT_EQ(harken::detail::ActiveEngine()->variables.CurrentWorldGeneration(), generation);
+    engine.stopPlayback(started.playbackHandle);
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_EQ(coordinator.barrier(coordinator.currentAuthoringRevision()).runtimeEpoch, epoch);
+    const auto grown = engine.playByNameDetailed(QStringLiteral("CatalogAction256"));
+    ASSERT_EQ(grown.engineResult, Bridge::kEngineOk);
+    ASSERT_GT(settledPeak(), 0.05f);
+    engine.stopPlayback(grown.playbackHandle);
+    settledPeak();
+    engine.stopOutput();
+    ASSERT_TRUE(engine.startOutput());
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_EQ(engine.playByNameDetailed(QStringLiteral("CatalogAction256")).engineResult,
+              Bridge::kEngineOk);
+    EXPECT_GT(settledPeak(), 0.05f);
+}
+
 TEST_F(AudioPlaybackRegression, InvalidAuthoringPreservesInstalledSoundState)
 {
     auto* runtime = harken::detail::ActiveEngine();

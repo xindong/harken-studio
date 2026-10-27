@@ -11,6 +11,7 @@
 #include "PlayablePropertyAuthoringV1.h"
 #include "ProjectTypes.h"
 #include "FieldGroupProjectAdapter.h"
+#include "ContainerBehaviorSemantics.h"
 #include "Components/VAction.h"
 #include "Components/VSelection.h"
 #include "Components/VVariable.h"
@@ -202,6 +203,34 @@ TEST(CurrentWorldProjectAdapter, BusIdentityIndexIgnoresHandleValueAndSiblingOrd
     std::swap(master->children[0], master->children[1]);
     verify(kMatchingHandle, kMatchingId);
     verify(kDistinctHandle, kDistinctId);
+}
+
+TEST(CurrentWorldProjectAdapter, SelectionHistoryAndOccurrencesSurviveAuthoringBeyondDefaultCapacity)
+{
+    std::shared_ptr<ProjectItem> container;
+    std::shared_ptr<ProjectItem> sound;
+    auto project = makeRandomProject(&container, &sound);
+    auto* selection = container->comp<VSelection>();
+    selection->selections.shared.find(0)->weight = 1;
+    for (unsigned index = 2; index < 65; ++index)
+        ASSERT_TRUE(PlayablePropertyAuthoringV1::addContainerChildOccurrence(*container, sound->guid));
+    selection->behavior.avoidRepeat = 64;
+    const auto json = ContainerBehaviorSemantics::toJson(selection->behavior);
+    const auto restored = ContainerBehaviorSemantics::fromJson(json);
+    ASSERT_TRUE(restored);
+    selection->behavior = *restored;
+    EXPECT_EQ(64, ContainerBehaviorSemantics::effectiveAvoidRepeat(*selection, std::nullopt));
+    std::unordered_map<harkenstudio::ObjectId, std::uint64_t> revisions;
+    for (const auto& child : container->children) revisions.emplace(child->runtimeId(), 100 + child->objectID);
+    CurrentWorldBuildOptions options;
+    options.soundContentRevisions = &revisions;
+    QString error;
+    const auto request = buildCurrentWorldSyncRequest(project, std::nullopt, &error, nullptr, &options, 1);
+    ASSERT_NE(nullptr, request) << error.toStdString();
+    ASSERT_EQ(1u, request->containers.size());
+    EXPECT_EQ(65u, request->containers[0].children.size());
+    EXPECT_EQ(64u, request->containers[0].avoidLastN);
+    EXPECT_TRUE(HarkenEditor::Bridge::compileCurrentWorldRequest(*request, true).ok());
 }
 
 TEST(CurrentWorldProjectAdapter, ScalarUpdatesMatchFullCompilationAcrossPlatformsAndRestoration)

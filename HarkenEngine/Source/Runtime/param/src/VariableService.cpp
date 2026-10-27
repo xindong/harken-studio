@@ -63,7 +63,8 @@ WorldInstallResult InstallContainerWorldV1(
     harken::monitor::IdentityMutationScope identityMutation;
     try {
         if (ValidateCurrentWorldV1(install) == WorldInstallStatus::Ok &&
-            !engine.params.PrepareVariableStorage(install.variableCount)) {
+            (!engine.params.PrepareVariableStorage(install.variableCount) ||
+             !engine.PrepareQueueSelectionStorage(install))) {
             throw std::bad_alloc{};
         }
         const bool hasCurrentConsumers =

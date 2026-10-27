@@ -15,6 +15,7 @@
 #include <cstring>
 #include <functional>
 #include <limits>
+#include <map>
 #include <new>
 #include <set>
 #include <stdexcept>
@@ -507,6 +508,9 @@ struct TraversalPathNode {
     VnObjectId stableId;
 };
 
+using BoundedLeafCounts = std::map<
+    std::tuple<VnObjectId, std::uint32_t, std::uint32_t>, std::uint32_t>;
+
 const PackComposition::PublishedOwner* ResolvePlayableOwner(
     const PackComposition::PublishedView& published,
     const std::vector<std::uint8_t>& member,
@@ -541,7 +545,7 @@ const PackComposition::PublishedOwner* ResolvePlayableOwner(
     return &owner;
 }
 
-BoundedTraversalStatus AccumulateBoundedLeaves(
+BoundedTraversalStatus CountBoundedLeaves(
     const PackComposition::PublishedView& published,
     const std::vector<std::uint8_t>& member, const PlayableRefV1& endpoint,
     std::uint32_t containerDepth, std::uint32_t scheduleDepth,
@@ -549,17 +553,18 @@ BoundedTraversalStatus AccumulateBoundedLeaves(
     std::uint32_t maxKnownScheduleLeaves,
     std::uint32_t maxContainerDepth,
     std::uint32_t maxTrackPieceScheduleDepth,
-    const TraversalPathNode* path) noexcept {
+    const TraversalPathNode* path, BoundedLeafCounts& leafCounts) {
     if (leafCount == nullptr) {
         return BoundedTraversalStatus::Invalid;
     }
+    *leafCount = 0;
     for (const auto* ancestor = path; ancestor != nullptr;
          ancestor = ancestor->parent) {
         if (ancestor->stableId == endpoint.stableId) {
             return BoundedTraversalStatus::Invalid;
         }
     }
-    if (maxKnownScheduleLeaves == 0 || *leafCount > maxKnownScheduleLeaves) {
+    if (maxKnownScheduleLeaves == 0) {
         return BoundedTraversalStatus::Exceeded;
     }
     if (endpoint.kind == PlayableKindV1::Container &&
@@ -579,13 +584,19 @@ BoundedTraversalStatus AccumulateBoundedLeaves(
     if (owner == nullptr) {
         return BoundedTraversalStatus::Invalid;
     }
+    const auto cacheKey = std::make_tuple(endpoint.stableId, containerDepth, scheduleDepth);
+    if (const auto cached = leafCounts.find(cacheKey); cached != leafCounts.end()) {
+        *leafCount = cached->second;
+        return BoundedTraversalStatus::Valid;
+    }
+    const auto finish = [&]() {
+        leafCounts.emplace(cacheKey, *leafCount);
+        return BoundedTraversalStatus::Valid;
+    };
     const ContainerWorldInstallViewV1& view = owner->view;
     if (endpoint.kind == PlayableKindV1::Sound) {
-        if (*leafCount == maxKnownScheduleLeaves) {
-            return BoundedTraversalStatus::Exceeded;
-        }
-        ++*leafCount;
-        return BoundedTraversalStatus::Valid;
+        *leafCount = 1;
+        return finish();
     }
     if (endpoint.kind == PlayableKindV1::Container) {
         const ContainerProgramViewV3* container =
@@ -593,9 +604,14 @@ BoundedTraversalStatus AccumulateBoundedLeaves(
         if (container == nullptr ||
             container->programSemanticFingerprint !=
                 endpoint.expectedProgramSemanticFingerprint ||
-            !PointerCountOk(container->childCount, container->children)) {
+            !PointerCountOk(container->childCount, container->children) ||
+            !PointerCountOk(container->discreteRowCount, container->discreteRows) ||
+            !PointerCountOk(container->continuousRowCount, container->continuousRows) ||
+            static_cast<std::uint32_t>(container->mode) >
+                static_cast<std::uint32_t>(ContainerModeV1::VariableControl)) {
             return BoundedTraversalStatus::Invalid;
         }
+        std::map<std::uint32_t, std::uint32_t> candidateLeaves;
         for (std::uint32_t i = 0; i < container->childCount; ++i) {
             const PlayableRefV1& childRef = container->children[i].playable;
             const std::uint32_t childContainerDepth =
@@ -609,17 +625,39 @@ BoundedTraversalStatus AccumulateBoundedLeaves(
                     ? (scheduleDepth == UINT32_MAX ? UINT32_MAX
                                                    : scheduleDepth + 1u)
                     : scheduleDepth;
-            const BoundedTraversalStatus child = AccumulateBoundedLeaves(
+            std::uint32_t childLeaves = 0;
+            const BoundedTraversalStatus child = CountBoundedLeaves(
                 published, member, childRef, childContainerDepth,
-                childScheduleDepth, leafCount,
+                childScheduleDepth, &childLeaves,
                 maxKnownScheduleLeaves, maxContainerDepth,
-                maxTrackPieceScheduleDepth, &currentPath);
+                maxTrackPieceScheduleDepth, &currentPath, leafCounts);
             if (child != BoundedTraversalStatus::Valid) {
                 return child;
             }
+            if (container->mode == ContainerModeV1::VariableControl)
+                candidateLeaves.emplace(container->children[i].stableChildOrdinal, childLeaves);
+            else
+                *leafCount = std::max(*leafCount, childLeaves);
+        }
+        if (container->mode == ContainerModeV1::VariableControl) {
+            for (std::uint32_t i = 0; i < container->discreteRowCount; ++i) {
+                const auto found = candidateLeaves.find(container->discreteRows[i].childStableOrdinal);
+                if (found == candidateLeaves.end()) return BoundedTraversalStatus::Invalid;
+                *leafCount = std::max(*leafCount, found->second);
+            }
+            std::set<std::uint32_t> continuousChildren;
+            for (std::uint32_t i = 0; i < container->continuousRowCount; ++i) {
+                const auto ordinal = container->continuousRows[i].childStableOrdinal;
+                const auto found = candidateLeaves.find(ordinal);
+                if (found == candidateLeaves.end()) return BoundedTraversalStatus::Invalid;
+                if (!continuousChildren.insert(ordinal).second) continue;
+                if (found->second > maxKnownScheduleLeaves - *leafCount)
+                    return BoundedTraversalStatus::Exceeded;
+                *leafCount += found->second;
+            }
         }
         // Empty subgraphs are bounded zero work, matching runtime ZeroWork.
-        return BoundedTraversalStatus::Valid;
+        return finish();
     }
     if (endpoint.kind == PlayableKindV1::Track) {
         const TrackScheduleProgramViewV1* schedule =
@@ -642,17 +680,21 @@ BoundedTraversalStatus AccumulateBoundedLeaves(
                     ? (scheduleDepth == UINT32_MAX ? UINT32_MAX
                                                    : scheduleDepth + 1u)
                     : scheduleDepth;
-            const BoundedTraversalStatus child = AccumulateBoundedLeaves(
+            std::uint32_t childLeaves = 0;
+            const BoundedTraversalStatus child = CountBoundedLeaves(
                 published, member, childRef, childContainerDepth,
-                childScheduleDepth, leafCount,
+                childScheduleDepth, &childLeaves,
                 maxKnownScheduleLeaves, maxContainerDepth,
-                maxTrackPieceScheduleDepth, &currentPath);
+                maxTrackPieceScheduleDepth, &currentPath, leafCounts);
             if (child != BoundedTraversalStatus::Valid) {
                 return child;
             }
+            if (childLeaves > maxKnownScheduleLeaves - *leafCount)
+                return BoundedTraversalStatus::Exceeded;
+            *leafCount += childLeaves;
         }
         // Empty subgraphs are bounded zero work, matching runtime ZeroWork.
-        return BoundedTraversalStatus::Valid;
+        return finish();
     }
     const PieceScheduleProgramViewV1* schedule =
         FindPieceSchedule(view, endpoint.stableId);
@@ -673,24 +715,28 @@ BoundedTraversalStatus AccumulateBoundedLeaves(
                 ? (scheduleDepth == UINT32_MAX ? UINT32_MAX
                                                : scheduleDepth + 1u)
                 : scheduleDepth;
-        const BoundedTraversalStatus child = AccumulateBoundedLeaves(
+        std::uint32_t childLeaves = 0;
+        const BoundedTraversalStatus child = CountBoundedLeaves(
             published, member, childRef, childContainerDepth,
-            childScheduleDepth, leafCount,
+            childScheduleDepth, &childLeaves,
             maxKnownScheduleLeaves, maxContainerDepth,
-            maxTrackPieceScheduleDepth, &currentPath);
+            maxTrackPieceScheduleDepth, &currentPath, leafCounts);
         if (child != BoundedTraversalStatus::Valid) {
             return child;
         }
+        if (childLeaves > maxKnownScheduleLeaves - *leafCount)
+            return BoundedTraversalStatus::Exceeded;
+        *leafCount += childLeaves;
     }
     // Empty subgraphs are bounded zero work, matching runtime ZeroWork.
-    return BoundedTraversalStatus::Valid;
+    return finish();
 }
 
 BoundedTraversalStatus EndpointHasBoundedVoices(
     const PackComposition::PublishedView& published,
     const std::vector<std::uint8_t>& member,
     const ContainerWorldInstallViewV1& rootView,
-    const PlayableRefV1& endpoint) noexcept {
+    const PlayableRefV1& endpoint, BoundedLeafCounts& leafCounts) {
     std::uint32_t leafCount = 0;
     const std::uint32_t containerDepth =
         endpoint.kind == PlayableKindV1::Container ? 1u : 0u;
@@ -699,11 +745,11 @@ BoundedTraversalStatus EndpointHasBoundedVoices(
          endpoint.kind == PlayableKindV1::Piece)
             ? 1u
             : 0u;
-    return AccumulateBoundedLeaves(
+    return CountBoundedLeaves(
         published, member, endpoint, containerDepth, scheduleDepth, &leafCount,
         rootView.capacity.maxKnownScheduleLeaves,
         rootView.capacity.maxContainerDepth,
-        rootView.capacity.maxTrackPieceScheduleDepth, nullptr);
+        rootView.capacity.maxTrackPieceScheduleDepth, nullptr, leafCounts);
 }
 
 VnResult ValidateNonAnyEndpoint(
@@ -948,7 +994,8 @@ VnResult BuildDeclaredClosure(
 VnResult ValidateContainerChildCapacity(
     const PackComposition::PublishedView& published,
     const ContainerWorldInstallViewV1& view,
-    const std::vector<std::uint8_t>& member) noexcept {
+    const std::vector<std::uint8_t>& member) {
+    BoundedLeafCounts leafCounts;
     for (std::uint32_t i = 0; i < view.containerCount; ++i) {
         const ContainerProgramViewV3& container = view.containers[i];
         if (!PointerCountOk(container.childCount, container.children)) {
@@ -957,7 +1004,7 @@ VnResult ValidateContainerChildCapacity(
         for (std::uint32_t c = 0; c < container.childCount; ++c) {
             const ContainerChildProgramViewV2& child = container.children[c];
             const BoundedTraversalStatus bounded = EndpointHasBoundedVoices(
-                published, member, view, child.playable);
+                published, member, view, child.playable, leafCounts);
             if (bounded == BoundedTraversalStatus::Invalid) {
                 return VN_BAD_PACK;
             }

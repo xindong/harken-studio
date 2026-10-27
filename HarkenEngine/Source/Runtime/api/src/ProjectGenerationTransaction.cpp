@@ -1490,7 +1490,8 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
         imageStatus = engine.variables.PrepareCurrentWorldImageV1(
             view.compiledWorld, image);
         if (imageStatus == WorldInstallStatus::Ok &&
-            !engine.params.PrepareVariableStorage(view.compiledWorld.variableCount))
+            (!engine.params.PrepareVariableStorage(view.compiledWorld.variableCount) ||
+             !engine.PrepareQueueSelectionStorage(view.compiledWorld)))
             imageStatus = WorldInstallStatus::Capacity;
         if (imageStatus == WorldInstallStatus::Ok && volumeOnly) {
             bindingSourceStamp = PreviewBusBindingSourceStamp(engine);

@@ -149,6 +149,11 @@ enum class CompileStatusV1 : std::uint32_t {
 class OwningCurrentWorldV1;
 struct CompileResultV1;
 
+enum class CompileCapacityModeV1 {
+    ExplicitBudget,
+    AuthoredContent,
+};
+
 class OwningCurrentWorldV1 {
 public:
     OwningCurrentWorldV1() = default;
@@ -170,7 +175,8 @@ private:
         const harkenstudiobuild::WorldCapacitySummaryV1&,
         const std::vector<TransitionProgramAuthoringV1>&,
         const std::vector<ActionProgramAuthoringV1>&,
-        const harkenbuscompiler::CompiledBusIdSetV1*);
+        const harkenbuscompiler::CompiledBusIdSetV1*,
+        CompileCapacityModeV1);
 
     struct OwnedPayload {
         harkenstudiobuild::PlayablePropertyPayloadViewV1 view{};
@@ -270,7 +276,8 @@ CompileResultV1 CompileCurrentWorldV1(
     const harkenstudiobuild::WorldCapacitySummaryV1& capacity = {},
     const std::vector<TransitionProgramAuthoringV1>& transitions = {},
     const std::vector<ActionProgramAuthoringV1>& actions = {},
-    const harkenbuscompiler::CompiledBusIdSetV1* busIds = nullptr);
+    const harkenbuscompiler::CompiledBusIdSetV1* busIds = nullptr,
+    CompileCapacityModeV1 capacityMode = CompileCapacityModeV1::ExplicitBudget);
 
 } // namespace harkencurrentworldcompiler
 
