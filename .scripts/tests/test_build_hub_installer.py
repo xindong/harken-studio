@@ -3,6 +3,7 @@ import hashlib
 import importlib.util
 import os
 import subprocess
+import struct
 import tempfile
 import unittest
 from pathlib import Path
@@ -154,6 +155,24 @@ class BuildHubInstallerTest(unittest.TestCase):
         self.assertTrue((Path(result["evidence"]) / "packaging-inputs/privacy.rtf").is_file())
         self.assertTrue((Path(result["evidence"]) / "packaging-inputs/license.zh-CN.rtf").is_file())
         self.assertTrue((Path(result["evidence"]) / "packaging-inputs/privacy.zh-CN.rtf").is_file())
+
+    def test_embedded_packages_preserve_bytes_and_share_common_content(self):
+        common = bytes(range(256)) * 128
+        payloads = (common + b"English signed package", common + b"Chinese signed package\0")
+        paths = (self.root / "en.msi", self.root / "zh.msi")
+        for path, payload in zip(paths, payloads):
+            path.write_bytes(payload)
+        resources = self.module.payload_resources(paths)
+        blocks = resources[self.module.SHARED_PAYLOAD_RESOURCE_NAME]
+        for name, payload in zip((self.module.PAYLOAD_RESOURCE_NAME, self.module.CHINESE_PAYLOAD_RESOURCE_NAME), payloads):
+            manifest = resources[name]
+            magic, size, digest = struct.unpack_from("<8sI32s", manifest)
+            self.assertEqual(magic, b"HKMSI001")
+            restored = b"".join(blocks[index * 4096:(index + 1) * 4096]
+                                for index, in struct.iter_unpack("<I", manifest[44:]))[:size]
+            self.assertEqual(restored, payload)
+            self.assertEqual(hashlib.sha256(restored).digest(), digest)
+        self.assertLess(sum(map(len, resources.values())), sum(map(len, payloads)) * 0.75)
 
     def test_failed_build_or_signing_does_not_publish_partial_outputs(self):
         self.make_input()
