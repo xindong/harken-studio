@@ -42,7 +42,7 @@ public:
         ads::CDockManager* dockManager = nullptr;
         ads::CDockWidget* blueprintDock = nullptr;
         ads::CDockWidget* projectExplorerDock = nullptr;
-        ads::CDockWidget* meterDock = nullptr;
+        ads::CDockWidget* assistantDock = nullptr;
         ads::CDockWidget* controlDock = nullptr;
     };
     void setDocks(const Docks& d);
@@ -150,7 +150,7 @@ private:
 
     ads::CDockWidget* blueprintDock_ = nullptr;
     ads::CDockWidget* projectExplorerDock_ = nullptr;
-    ads::CDockWidget* meterDock_ = nullptr;
+    ads::CDockWidget* assistantDock_ = nullptr;
     ads::CDockWidget* controlDock_ = nullptr;
     WindowDockResolver windowDockResolver_;
 

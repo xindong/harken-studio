@@ -184,7 +184,7 @@ void LayoutController::setDocks(const Docks& d)
     dockManager_          = d.dockManager;
     blueprintDock_        = d.blueprintDock;
     projectExplorerDock_  = d.projectExplorerDock;
-    meterDock_            = d.meterDock;
+    assistantDock_        = d.assistantDock;
     controlDock_          = d.controlDock;
 }
 
@@ -268,7 +268,7 @@ bool LayoutController::isDockLocked(ads::CDockWidget* dock) const
 
 void LayoutController::revealDock(ads::CDockWidget* dock)
 {
-    if (!dock)
+    if (!dock || isDockLocked(dock))
         return;
     const bool wasClosed = dock->isClosed();
     switch (openPlacementFor(dock->objectName())) {
@@ -349,6 +349,7 @@ void LayoutController::restoreDockState(const QByteArray& state)
         ensureDocksForSpecs({{QStringLiteral("Meter"), 1, true, {}, {}}});
     collapsedZones_.clear();
     dockManager_->restoreState(migrateDockNames(xml));
+    enforceDisabledDocks();
     if (visibleSingletonMaterializer_)
         visibleSingletonMaterializer_();
     emit dockStateRestored();
@@ -373,7 +374,7 @@ QList<LayoutController::ZoneSpec> LayoutController::defaultZoneSpecs() const
 {
     return {
         { blueprintDock_,         ads::TopDockWidgetArea,    true  },
-        { meterDock_,             ads::RightDockWidgetArea,  true  },
+        { assistantDock_,         ads::RightDockWidgetArea,  !isDockLocked(assistantDock_) },
         { projectExplorerDock_,   ads::LeftDockWidgetArea,   true  },
         { controlDock_,           ads::BottomDockWidgetArea, false },
     };
@@ -392,9 +393,6 @@ void LayoutController::applyDefaultLayout()
 {
     if (singletonStateRestorer_)
         singletonStateRestorer_({});
-    ensureDocksForSpecs({{QStringLiteral("Meter"), 1, false, {}, {}}});
-    if (ads::CDockWidget* assistantDock = dockForWindow(QStringLiteral("Assistant")))
-        assistantDock->toggleView(false);
     collapsedZones_.clear();
     seedZoneHomeAreas();
 
@@ -423,7 +421,7 @@ void LayoutController::applyDefaultLayout()
 bool LayoutController::isFixedSubtree(QWidget* w) const
 {
     static const QSet<QString> kPeripheral = {
-        QStringLiteral("MeterDock_1"),
+        QStringLiteral("AssistantDock"),
         QStringLiteral("ExplorerDock"),
         QStringLiteral("InformationDock"),
         QStringLiteral("ControlDock"),
@@ -486,7 +484,7 @@ ads::CDockWidget* LayoutController::createEditorDock(WorkspaceDockCreateSpec spe
     }
 
     QWidget* left = zoneSubtree(projectExplorerDock_);
-    QWidget* right = zoneSubtree(meterDock_);
+    QWidget* right = zoneSubtree(assistantDock_);
     QWidget* bottom = zoneSubtree(controlDock_);
     const QList<QPair<QWidget*, ads::DockWidgetArea>> boundaries{
         {left, ads::LeftDockWidgetArea},
@@ -588,7 +586,7 @@ void LayoutController::relayoutDockSplitters(bool seedSizes)
 
 void LayoutController::reanchorFloatingZoneDock(ads::CDockWidget* dock)
 {
-    if (!dockManager_ || !dock || (dock->dockAreaWidget() && !dock->isInFloatingContainer()))
+    if (!dockManager_ || !dock || isDockLocked(dock) || !dock->isInFloatingContainer())
         return;
     const auto it = zoneHomeArea_.constFind(dock->objectName());
     if (it == zoneHomeArea_.constEnd())
@@ -754,7 +752,7 @@ void LayoutController::collapsedZonesFromJson(const QJsonArray& zones)
 
 void LayoutController::setZoneCollapsed(ads::CDockWidget* representative, bool collapsed)
 {
-    if (!representative)
+    if (!representative || (!collapsed && isDockLocked(representative)))
         return;
     const QString key = representative->objectName();
 
@@ -764,7 +762,7 @@ void LayoutController::setZoneCollapsed(ads::CDockWidget* representative, bool c
             const ZoneCollapse state = *it;
             collapsedZones_.erase(it);
             for (const QPointer<ads::CDockWidget>& dock : state.hidden)
-                if (dock)
+                if (dock && !isDockLocked(dock))
                     dock->toggleView(true);
             QTimer::singleShot(0, this, [this, state]() { applyZoneSizes(state); });
             return;
@@ -776,7 +774,8 @@ void LayoutController::setZoneCollapsed(ads::CDockWidget* representative, bool c
         }
         for (ads::CDockAreaWidget* area : zoneAreas(node))
             for (ads::CDockWidget* dock : area->dockWidgets())
-                dock->toggleView(true);
+                if (!isDockLocked(dock))
+                    dock->toggleView(true);
         relayoutDockSplitters(true);
         return;
     }
@@ -830,6 +829,8 @@ ads::CDockAreaWidget* LayoutController::placeDock(ads::CDockWidget* dock, ads::D
 
 void LayoutController::enforceDisabledDocks()
 {
+    if (isDockLocked(assistantDock_))
+        assistantDock_->toggleView(false);
     hideMonitorDocks();
 }
 

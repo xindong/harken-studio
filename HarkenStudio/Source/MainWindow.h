@@ -387,7 +387,6 @@ private:
 
     ads::CDockWidget* projectExplorerDock_ = nullptr;
     ads::CDockWidget* assistantDock_ = nullptr;
-    ads::CDockWidget* meterDock_ = nullptr;
 
     QPointer<PanelInstanceRegistry> panelRegistry_;
     std::unique_ptr<EditorShellRegistry> editorShellRegistry_;
