@@ -2,6 +2,7 @@ import ctypes
 import hashlib
 import importlib.util
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -106,11 +107,14 @@ class BuildHubInstallerTest(unittest.TestCase):
             "--version", "0.1.68", "--build-id", "run12.abcd1234", *extra,
         ])
 
-    def fake_build(self, files, input_dir, version, eula, output, evidence):
-        self.assertEqual(eula.read_text(encoding="ascii"),
-                         self.module.product_legal.render_rtf(self.module.product_legal.installer_text()))
+    def fake_build(self, files, input_dir, version, legal_inputs, output, evidence):
+        for language, documents in legal_inputs.items():
+            texts = self.module.product_legal.read_documents(REPO_ROOT / self.module.product_legal.TERMS_FILES[language])
+            self.assertEqual([document.read_text(encoding="ascii") for document in documents],
+                             [self.module.product_legal.render_rtf(text) for text in texts])
         output.write_bytes(b"MSI")
         (evidence / "msi-tables.json").write_text("{}")
+        (evidence / "zh-CN.mst").write_bytes(b"MST")
 
     def test_signing_precedes_embedding_and_final_hashes(self):
         self.make_input()
@@ -147,6 +151,9 @@ class BuildHubInstallerTest(unittest.TestCase):
         self.assertEqual(result["fileCount"], 6 + len(self.legal_files))
         self.assertFalse(result["signed"])
         self.assertTrue((Path(result["evidence"]) / "packaging-inputs/license.rtf").is_file())
+        self.assertTrue((Path(result["evidence"]) / "packaging-inputs/privacy.rtf").is_file())
+        self.assertTrue((Path(result["evidence"]) / "packaging-inputs/license.zh-CN.rtf").is_file())
+        self.assertTrue((Path(result["evidence"]) / "packaging-inputs/privacy.zh-CN.rtf").is_file())
 
     def test_failed_build_or_signing_does_not_publish_partial_outputs(self):
         self.make_input()
@@ -174,7 +181,7 @@ class BuildHubInstallerTest(unittest.TestCase):
 
     def test_missing_inputs_are_rejected_before_packaging(self):
         self.make_input()
-        for flag in ("--stub-exe", "--eula-rtf"):
+        for flag in ("--stub-exe", "--eula-rtf", "--privacy-rtf", "--eula-rtf-zh-cn", "--privacy-rtf-zh-cn"):
             with self.subTest(flag=flag), self.assertRaises(SystemExit):
                 self.module.build_installer(self.args(flag, str(self.root / "missing")))
 
@@ -206,8 +213,10 @@ class BuildHubInstallerTest(unittest.TestCase):
             source = ACL_HEADER_PATH.read_text(encoding="utf-8")
             for name in ("HandoffDir", "PinsDir", "UpdaterDir"):
                 self.assertIn(acls[name], source)
-            terms = db.query("SELECT `Text` FROM `Control` WHERE `Dialog_`='LicenseDialog' AND `Control`='Terms'")
-            self.assertEqual(terms[0][0], self.module.product_legal.render_rtf(self.module.product_legal.installer_text()))
+            terms = db.query("SELECT `Text` FROM `Control` WHERE `Dialog_`='LicenseDialog' AND `Type`='ScrollableText' ORDER BY `X`")
+            expected_documents = self.module.product_legal.read_documents(REPO_ROOT / "USER_TERMS.md")
+            self.assertEqual([row[0] for row in terms], [
+                self.module.product_legal.render_rtf(text) for text in expected_documents])
             for dialog, first in db.query("SELECT `Dialog`, `Control_First` FROM `Dialog`"):
                 with self.subTest(dialog=dialog):
                     controls = dict(db.query(
@@ -224,7 +233,27 @@ class BuildHubInstallerTest(unittest.TestCase):
                         current = controls[current]
                     self.assertEqual(current, first)
                     self.assertEqual(visited, linked)
-        extracted = self.root / "extracted"
+            localized_package = self.root / "localized.msi"
+            shutil.copyfile(package, localized_package)
+            with Database(localized_package, 1) as localized:
+                localized.apply_transform(Path(result["evidence"]) / "packaging-inputs/zh-CN.mst")
+                localized_properties = dict(localized.query("SELECT `Property`, `Value` FROM `Property`"))
+                self.assertEqual(localized_properties.pop("ProductLanguage"), "2052")
+                self.assertEqual(properties.pop("ProductLanguage"), "1033")
+                self.assertEqual(localized_properties, properties)
+                for table in self.module.hub_msi.SCHEMA:
+                    if table in {"Property", "Dialog", "Control", "LaunchCondition", "Icon"}:
+                        continue
+                    with self.subTest(table=table):
+                        self.assertEqual(localized.query(f"SELECT * FROM `{table}`"),
+                                         db.query(f"SELECT * FROM `{table}`"))
+                terms = localized.query("SELECT `Text` FROM `Control` WHERE `Dialog_`='LicenseDialog' AND `Type`='ScrollableText' ORDER BY `X`")
+                self.assertEqual([row[0] for row in terms], [self.module.product_legal.render_rtf(text)
+                    for text in self.module.product_legal.read_documents(REPO_ROOT / "USER_TERMS.zh-CN.md")])
+                self.assertEqual(localized.query("SELECT `Text` FROM `Control` WHERE `Dialog_`='LicenseDialog' AND `Control`='Next'"), [["下一步"]])
+                localized.commit()
+            self.assertEqual(db.query("SELECT `Name` FROM `_Storages`"), [["zh-CN"]])
+            self.assertTrue(all(not row[0] for row in db.query("SELECT `Language` FROM `Upgrade`")))
         msi = ctypes.WinDLL("msi.dll")
         msi.MsiSetInternalUI.argtypes = [ctypes.c_uint, ctypes.c_void_p]
         msi.MsiSetInternalUI.restype = ctypes.c_uint
@@ -240,16 +269,20 @@ class BuildHubInstallerTest(unittest.TestCase):
                 self.assertEqual(msi.MsiDoActionW(session, "AppSearch"), 0)
             finally:
                 msi.MsiCloseHandle(session)
-            self.assertEqual(msi.MsiInstallProductW(str(package),
-                f'ACTION=ADMIN TARGETDIR="{extracted}" REBOOT=ReallySuppress'), 0)
+            for language, transforms in (("1033", ""), ("2052", " TRANSFORMS=:zh-CN")):
+                with self.subTest(language=language):
+                    extracted = self.root / f"extracted-{language}"
+                    self.assertEqual(msi.MsiInstallProductW(str(package),
+                        f'ACTION=ADMIN TARGETDIR="{extracted}" REBOOT=ReallySuppress{transforms}'), 0)
+                    installed = extracted / "PFiles64/HarkenHub"
+                    expected = {p.relative_to(self.input_dir) for p in self.input_dir.rglob("*") if p.is_file()}
+                    actual = {p.relative_to(installed) for p in installed.rglob("*") if p.is_file()}
+                    self.assertEqual(expected, actual)
+                    for relative in expected:
+                        self.assertEqual((self.input_dir / relative).read_bytes(),
+                                         (installed / relative).read_bytes(), str(relative))
         finally:
             msi.MsiSetInternalUI(previous_ui, None)
-        installed = extracted / "PFiles64/HarkenHub"
-        expected = {p.relative_to(self.input_dir) for p in self.input_dir.rglob("*") if p.is_file()}
-        actual = {p.relative_to(installed) for p in installed.rglob("*") if p.is_file()}
-        self.assertEqual(expected, actual)
-        for relative in expected:
-            self.assertEqual((self.input_dir / relative).read_bytes(), (installed / relative).read_bytes(), str(relative))
 
 
 if __name__ == "__main__":

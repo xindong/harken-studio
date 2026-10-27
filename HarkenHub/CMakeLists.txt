@@ -324,7 +324,7 @@ endif()
 
 if(WIN32)
     add_executable(harken_hub_setup WIN32
-        Source/Setup/SetupStubMain.cpp "HarkenHub.rc")
+        Source/Setup/SetupStubMain.cpp "HarkenHub.rc" Translations/harken_hub_setup.rc)
     set_target_properties(harken_hub_setup PROPERTIES
         OUTPUT_NAME "HarkenHubSetup"
         AUTOMOC OFF

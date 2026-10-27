@@ -137,9 +137,14 @@ def build_installer(
         raise SystemExit(f"error: input directory not found: {input_dir}")
 
     script_dir = Path(__file__).resolve().parent
-    eula_rtf = Path(args.eula_rtf).resolve() if args.eula_rtf else None
-    if eula_rtf is not None and not eula_rtf.is_file():
-        raise SystemExit(f"error: missing authoring input: {eula_rtf}")
+    legal_overrides = {
+        "en": (args.eula_rtf, args.privacy_rtf),
+        "zh-CN": (args.eula_rtf_zh_cn, args.privacy_rtf_zh_cn),
+    }
+    for documents in legal_overrides.values():
+        for document in documents:
+            if document and not Path(document).is_file():
+                raise SystemExit(f"error: missing authoring input: {document}")
 
     stub_exe = None
     if args.stub_exe:
@@ -157,20 +162,31 @@ def build_installer(
             setup_stub=stub_exe)
         packaging_inputs = evidence / "packaging-inputs"
         packaging_inputs.mkdir(parents=True, exist_ok=True)
-        if eula_rtf is None:
-            eula_rtf = packaging_inputs / "license.rtf"
-            eula_rtf.write_bytes(product_legal.render_rtf(product_legal.installer_text()).encode("ascii"))
+        legal_inputs = {}
+        for language, overrides in legal_overrides.items():
+            documents = product_legal.read_documents(product_legal.REPO_ROOT / product_legal.TERMS_FILES[language])
+            suffix = "" if language == "en" else ".zh-CN"
+            legal_inputs[language] = []
+            for name, text, custom in zip(("license", "privacy"), documents, overrides):
+                document = packaging_inputs / f"{name}{suffix}.rtf"
+                if custom:
+                    shutil.copyfile(Path(custom).resolve(), document)
+                else:
+                    document.write_bytes(product_legal.render_rtf(text).encode("ascii"))
+                legal_inputs[language].append(document)
         product_version = msi_version(args.version)
         msi_path = staging / f"HarkenHubSetup-{args.version}-{args.build_id}.msi"
-        build_msi(files, input_dir, product_version, eula_rtf, msi_path, packaging_inputs)
+        build_msi(files, input_dir, product_version, legal_inputs, msi_path, packaging_inputs)
         if not msi_path.is_file():
             raise SystemExit(f"error: Windows Installer build produced no MSI at {msi_path}")
         release_evidence.retain_packaging_inputs(evidence, {
             "hub_msi.py": script_dir / "hub_msi.py",
+            "hub_msi_zh_CN.json": script_dir / "hub_msi_zh_CN.json",
             "windows_installer.py": script_dir / "windows_installer.py",
             "msi-tables.json": packaging_inputs / "msi-tables.json",
+            "zh-CN.mst": packaging_inputs / "zh-CN.mst",
             "HubIcon.ico": script_dir.parents[1] / "HarkenHub/Resources/icons/HubIcon.ico",
-            "license.rtf": eula_rtf})
+            **{path.name: path for documents in legal_inputs.values() for path in documents}})
 
         signed = False
         signing = sign_command(msi_path)
@@ -234,7 +250,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--version", required=True)
     parser.add_argument("--build-id", required=True)
     parser.add_argument("--build-dir", default="build")
-    parser.add_argument("--eula-rtf", default=None)
+    parser.add_argument("--eula-rtf", default=None, help="Override the English license agreement with an RTF file.")
+    parser.add_argument("--privacy-rtf", default=None, help="Override the English privacy policy with an RTF file.")
+    parser.add_argument("--eula-rtf-zh-cn", default=None, help="Override the Chinese license agreement with an RTF file.")
+    parser.add_argument("--privacy-rtf-zh-cn", default=None, help="Override the Chinese privacy policy with an RTF file.")
     parser.add_argument("--stub-exe", default=None)
     return parser.parse_args(argv)
 

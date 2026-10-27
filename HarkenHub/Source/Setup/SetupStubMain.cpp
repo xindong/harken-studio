@@ -9,10 +9,11 @@
 #include <cwctype>
 #include <string>
 
+#include "SetupStrings.h"
+
 namespace {
 
 constexpr wchar_t kPayloadResource[] = L"HARKENHUBMSI";
-constexpr wchar_t kDialogTitle[] = L"Harken Hub Setup";
 constexpr wchar_t kStagingSddl[] = L"D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)";
 
 bool isQuietCommandLine(PCWSTR commandLine)
@@ -37,14 +38,23 @@ bool isQuietCommandLine(PCWSTR commandLine)
     return false;
 }
 
-int fail(const wchar_t* message, bool quiet)
+std::wstring setupText(UINT id)
+{
+    wchar_t* text = nullptr;
+    const int length = LoadStringW(GetModuleHandleW(nullptr), id,
+                                  reinterpret_cast<wchar_t*>(&text), 0);
+    return std::wstring(text, length);
+}
+
+int fail(UINT message, bool quiet)
 {
     if (!quiet)
-        MessageBoxW(nullptr, message, kDialogTitle, MB_OK | MB_ICONERROR);
+        MessageBoxW(nullptr, setupText(message).c_str(),
+                    setupText(HARKEN_SETUP_TITLE).c_str(), MB_OK | MB_ICONERROR);
     return ERROR_INSTALL_FAILURE;
 }
 
-int failStaging(const wchar_t* message, bool quiet, HANDLE stagingGuard,
+int failStaging(UINT message, bool quiet, HANDLE stagingGuard,
                 const std::wstring& msiPath, const std::wstring& stagingDir)
 {
     if (stagingGuard != INVALID_HANDLE_VALUE)
@@ -118,26 +128,29 @@ void launchInstalledHub()
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int)
 {
     const bool quiet = isQuietCommandLine(commandLine);
+    const bool chinese = PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_CHINESE;
+    SetThreadUILanguage(chinese ? MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED)
+                                : MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US));
 
     HRSRC located = FindResourceW(instance, kPayloadResource, RT_RCDATA);
     if (!located)
-        return fail(L"The installer payload is missing from this program.",
+        return fail(HARKEN_SETUP_MISSING_PAYLOAD,
                     quiet);
     HGLOBAL loaded = LoadResource(instance, located);
     const DWORD payloadSize = SizeofResource(instance, located);
     const void* payload = loaded ? LockResource(loaded) : nullptr;
     if (!payload || payloadSize == 0)
-        return fail(L"The installer payload could not be read.", quiet);
+        return fail(HARKEN_SETUP_UNREADABLE_PAYLOAD, quiet);
 
     wchar_t tempDir[MAX_PATH + 1];
     const DWORD tempLen = GetTempPathW(MAX_PATH + 1, tempDir);
     if (tempLen == 0 || tempLen > MAX_PATH)
-        return fail(L"The temporary directory is unavailable.", quiet);
+        return fail(HARKEN_SETUP_TEMP_UNAVAILABLE, quiet);
 
     PSECURITY_DESCRIPTOR descriptor = nullptr;
     if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
             kStagingSddl, SDDL_REVISION_1, &descriptor, nullptr))
-        return fail(L"The installer staging area could not be secured.",
+        return fail(HARKEN_SETUP_STAGING_SECURITY_FAILED,
                     quiet);
     SECURITY_ATTRIBUTES security{};
     security.nLength = sizeof(security);
@@ -153,7 +166,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int)
     }
     LocalFree(descriptor);
     if (!created)
-        return fail(L"The installer staging area could not be created.",
+        return fail(HARKEN_SETUP_STAGING_CREATE_FAILED,
                     quiet);
 
     HANDLE stagingGuard =
@@ -161,33 +174,35 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int)
                     nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS,
                     nullptr);
     if (stagingGuard == INVALID_HANDLE_VALUE)
-        return failStaging(L"The installer staging area could not be locked.",
+        return failStaging(HARKEN_SETUP_STAGING_LOCK_FAILED,
                            quiet, stagingGuard, std::wstring(), stagingDir);
 
     const std::wstring msiPath = stagingDir + L"\\HarkenHub.msi";
     HANDLE file = CreateFileW(msiPath.c_str(), GENERIC_WRITE, 0, nullptr,
                               CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE)
-        return failStaging(L"The installer payload could not be staged.",
+        return failStaging(HARKEN_SETUP_PAYLOAD_WRITE_FAILED,
                            quiet, stagingGuard, std::wstring(), stagingDir);
 
     DWORD written = 0;
     const BOOL wrote = WriteFile(file, payload, payloadSize, &written, nullptr);
     CloseHandle(file);
     if (!wrote || written != payloadSize)
-        return failStaging(L"The installer payload could not be staged.",
+        return failStaging(HARKEN_SETUP_PAYLOAD_WRITE_FAILED,
                            quiet, stagingGuard, msiPath, stagingDir);
 
     wchar_t systemDir[MAX_PATH + 1];
     const UINT systemLen = GetSystemDirectoryW(systemDir, MAX_PATH + 1);
     if (systemLen == 0 || systemLen > MAX_PATH)
-        return failStaging(L"The Windows system directory is unavailable.",
+        return failStaging(HARKEN_SETUP_SYSTEM_UNAVAILABLE,
                            quiet, stagingGuard, msiPath, stagingDir);
     const std::wstring msiexecPath =
         std::wstring(systemDir) + L"\\msiexec.exe";
 
     std::wstring arguments =
         L"\"" + msiexecPath + L"\" /i \"" + msiPath + L"\"";
+    if (chinese)
+        arguments += L" TRANSFORMS=:zh-CN";
     if (commandLine && *commandLine) {
         arguments += L" ";
         arguments += commandLine;
@@ -201,7 +216,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int)
                        nullptr, FALSE, 0, nullptr, nullptr, &startup,
                        &process);
     if (!launched)
-        return failStaging(L"Windows Installer could not be started.",
+        return failStaging(HARKEN_SETUP_LAUNCH_FAILED,
                            quiet, stagingGuard, msiPath, stagingDir);
     WaitForSingleObject(process.hProcess, INFINITE);
     DWORD exitCode = ERROR_INSTALL_FAILURE;

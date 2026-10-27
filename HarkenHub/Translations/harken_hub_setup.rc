@@ -1,0 +1,34 @@
+#pragma code_page(65001)
+
+#include <windows.h>
+#include "../Source/Setup/SetupStrings.h"
+
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+STRINGTABLE
+BEGIN
+    HARKEN_SETUP_TITLE "Harken Hub Setup"
+    HARKEN_SETUP_MISSING_PAYLOAD "The installer payload is missing from this program."
+    HARKEN_SETUP_UNREADABLE_PAYLOAD "The installer payload could not be read."
+    HARKEN_SETUP_TEMP_UNAVAILABLE "The temporary directory is unavailable."
+    HARKEN_SETUP_STAGING_SECURITY_FAILED "The installer staging area could not be secured."
+    HARKEN_SETUP_STAGING_CREATE_FAILED "The installer staging area could not be created."
+    HARKEN_SETUP_STAGING_LOCK_FAILED "The installer staging area could not be locked."
+    HARKEN_SETUP_PAYLOAD_WRITE_FAILED "The installer payload could not be staged."
+    HARKEN_SETUP_SYSTEM_UNAVAILABLE "The Windows system directory is unavailable."
+    HARKEN_SETUP_LAUNCH_FAILED "Windows Installer could not be started."
+END
+
+LANGUAGE LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED
+STRINGTABLE
+BEGIN
+    HARKEN_SETUP_TITLE "Harken Hub 安装"
+    HARKEN_SETUP_MISSING_PAYLOAD "此程序中缺少安装文件。"
+    HARKEN_SETUP_UNREADABLE_PAYLOAD "无法读取安装文件。"
+    HARKEN_SETUP_TEMP_UNAVAILABLE "临时目录不可用。"
+    HARKEN_SETUP_STAGING_SECURITY_FAILED "无法设置安装暂存目录的安全权限。"
+    HARKEN_SETUP_STAGING_CREATE_FAILED "无法创建安装暂存目录。"
+    HARKEN_SETUP_STAGING_LOCK_FAILED "无法锁定安装暂存目录。"
+    HARKEN_SETUP_PAYLOAD_WRITE_FAILED "无法写入安装文件。"
+    HARKEN_SETUP_SYSTEM_UNAVAILABLE "Windows 系统目录不可用。"
+    HARKEN_SETUP_LAUNCH_FAILED "无法启动 Windows Installer。"
+END

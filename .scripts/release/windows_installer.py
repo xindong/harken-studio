@@ -24,6 +24,10 @@ def api():
         "MsiRecordSetStreamW": [uint, uint, text],
         "MsiRecordGetStringW": [uint, uint, text, pointer],
         "MsiDatabaseCommit": [uint],
+        "MsiDatabaseImportW": [uint, text, text],
+        "MsiDatabaseGenerateTransformW": [uint, uint, text, ctypes.c_int, ctypes.c_int],
+        "MsiCreateTransformSummaryInfoW": [uint, uint, text, ctypes.c_int, ctypes.c_int],
+        "MsiDatabaseApplyTransformW": [uint, text, ctypes.c_int],
         "MsiCloseHandle": [uint],
         "MsiGetSummaryInformationW": [uint, text, uint, pointer],
         "MsiSummaryInfoSetPropertyW": [uint, uint, uint, ctypes.c_int, ctypes.c_void_p, text],
@@ -140,6 +144,16 @@ class Database:
 
     def commit(self):
         checked(api().MsiDatabaseCommit(self.value))
+
+    def import_table(self, path: Path):
+        checked(api().MsiDatabaseImportW(self.value, str(path.resolve().parent), path.name))
+
+    def generate_transform(self, reference, path: Path):
+        checked(api().MsiDatabaseGenerateTransformW(self.value, reference.value, str(path.resolve()), 0, 0))
+        checked(api().MsiCreateTransformSummaryInfoW(self.value, reference.value, str(path.resolve()), 0, 0x923))
+
+    def apply_transform(self, path: Path):
+        checked(api().MsiDatabaseApplyTransformW(self.value, str(path.resolve()), 0))
 
 
 def file_metadata(path: Path):
