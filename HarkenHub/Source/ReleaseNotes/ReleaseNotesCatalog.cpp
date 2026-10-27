@@ -67,12 +67,14 @@ QList<ReleaseNotesEntry> ReleaseNotesCatalog::fromJson(
         entry.version = object.value(QStringLiteral("version")).toString().trimmed();
         entry.date = QDate::fromString(
             object.value(QStringLiteral("date")).toString(), Qt::ISODate);
+        entry.introduction = object.value(QStringLiteral("introduction")).toString().trimmed();
         const QJsonArray changes = object.value(QStringLiteral("changes")).toArray();
         const QJsonArray pullRequests =
             object.value(QStringLiteral("pullRequests")).toArray();
         const QJsonArray contributors =
             object.value(QStringLiteral("contributors")).toArray();
         if (entry.version.isEmpty() || !entry.date.isValid() ||
+            (object.contains(QStringLiteral("introduction")) && entry.introduction.isEmpty()) ||
             changes.isEmpty() || contributors.isEmpty()) {
             setError(error, QStringLiteral("A release notes entry is incomplete."));
             return {};

@@ -186,58 +186,6 @@ StereoBalance DeriveStereoBalance(float pan) {
     return StereoBalance{std::min(1.0f, 1.0f - p), std::min(1.0f, 1.0f + p)};
 }
 
-void MapStreamAdvance(std::uint64_t baseFrame,
-                      std::uint32_t baseLoopsRemaining,
-                      std::uint64_t advance,
-                      std::uint64_t frameCount,
-                      std::uint64_t loopStart,
-                      std::uint64_t loopEnd,
-                      std::uint64_t* outFrame,
-                      std::uint32_t* outLoopsRemaining) {
-    std::uint64_t frame = baseFrame;
-    std::uint32_t remaining = baseLoopsRemaining;
-
-    if (remaining == 1 || loopEnd <= loopStart) {
-        const std::uint64_t room = frame < frameCount ? frameCount - frame : 0;
-        frame += std::min(advance, room);
-    } else if (remaining == 0) {
-        const std::uint64_t first =
-            frame < loopEnd ? loopEnd - frame : 0;
-        if (advance < first) {
-            frame += advance;
-        } else {
-            const std::uint64_t span = loopEnd - loopStart;
-            frame = loopStart + ((advance - first) % span);
-        }
-    } else {
-        const std::uint64_t first =
-            frame < loopEnd ? loopEnd - frame : 0;
-        if (advance < first) {
-            frame += advance;
-        } else {
-            std::uint64_t left = advance - first;
-            --remaining;
-            frame = loopStart;
-            const std::uint64_t span = loopEnd - loopStart;
-            if (remaining > 1 && left >= span) {
-                const std::uint64_t crossed =
-                    std::min<std::uint64_t>(remaining - 1,
-                                            left / span);
-                remaining -= static_cast<std::uint32_t>(crossed);
-                left -= crossed * span;
-            }
-            if (remaining > 1) {
-                frame = loopStart + left;
-            } else {
-                const std::uint64_t room =
-                    loopStart < frameCount ? frameCount - loopStart : 0;
-                frame = loopStart + std::min(left, room);
-            }
-        }
-    }
-    *outFrame = frame;
-    *outLoopsRemaining = remaining;
-}
 
 float DbToLinear(float db) {
     return std::pow(10.0f, db / 20.0f);
@@ -2729,6 +2677,15 @@ void VoicePool::PublishPlaybackEnd(Slot& slot, std::uint64_t blockIndex) noexcep
         timelineControl ? render.monitorAdoptedControlCause : MonitorControlCause{}, timelineControl);
 }
 
+bool VoicePool::CapturePreparedCompletionProgress(const PreparedCommitProof& proof,
+    const CompletionProgressRow** progress, OccurrenceToken* occurrence) const noexcept {
+    if (!proof.Valid() || proof.pool_ != this || progress == nullptr || occurrence == nullptr ||
+        proof.slot_->state.load(std::memory_order_acquire) != SlotState::PreparedCommitHeld) return false;
+    *progress = proof.slot_->render.completionProgress;
+    *occurrence = proof.slot_->render.completionOccurrence;
+    return true;
+}
+
 bool VoicePool::BindCompletionProgress(
     VnVoiceHandle handle, CompletionProgressRow* row,
     OccurrenceToken occurrence,
@@ -2889,7 +2846,7 @@ VnResult VoicePool::CanApplySeek(
                 : 0;
         std::uint64_t current = 0;
         std::uint32_t audibleLoopsRemaining = 0;
-        MapStreamAdvance(
+        MapLoopedSourceFrame(
             render.sourceActivationStartFrame,
             render.sourceActivationLoopsRemaining, audibleAdvance,
             render.pcm.frames, render.loopStartFrame, render.loopEndFrame,
@@ -3423,6 +3380,8 @@ bool VoicePool::StageCompletionProgress(
     update.sourceOutputFramesThisBlock = sourceOutputFrames;
     update.resamplerSourceFrame = render.resampler.SourceFrame();
     update.resamplerSourceFraction = render.resampler.SourceFraction();
+    update.resamplerPhaseHigh = render.resampler.phaseHigh;
+    update.resamplerPhaseLow = render.resampler.phaseLow;
     update.currentRatio = render.resampler.CurrentRatio();
     update.targetRatio = render.resampler.TargetRatio();
     update.rampStep = render.resampler.RampStep();
@@ -3438,8 +3397,7 @@ bool VoicePool::StageCompletionProgress(
     update.playbackFactsRevision = render.playbackFactsRevision;
     update.completedThroughBlockSequence = blockIndex + 1u;
     ResamplerAdvanceState advance{};
-    advance.sourceIntegerFrame = render.resampler.SourceFrame();
-    advance.sourceFraction = update.resamplerSourceFraction;
+    advance.sourcePhase = {update.resamplerPhaseHigh, update.resamplerPhaseLow};
     advance.currentRatio = update.currentRatio;
     advance.targetRatio = update.targetRatio;
     advance.rampStep = update.rampStep;
@@ -3448,8 +3406,9 @@ bool VoicePool::StageCompletionProgress(
     advance.loopEndFrame = render.loopEndFrame;
     advance.pcmFrameCount = render.pcm.frames;
     advance.sourceStartFrame = render.loopStartFrame;
-    advance.completedLoopPasses = render.completedLoopPasses;
-    advance.loopsRemaining = render.loopPassesRemaining;
+    SetResamplerConsumedPosition(&advance, render.sourceActivationStartFrame,
+        render.sourceActivationLoopsRemaining, update.resamplerSourceFrame > kResampleHistoryPad
+            ? update.resamplerSourceFrame - kResampleHistoryPad : 0);
     advance.loopInfinite = render.loopInfinite;
     advance.hasExitMarker = render.hasExitMarker;
     advance.exitMarkerSourceFrame = render.exitMarkerSourceFrame;
@@ -4715,7 +4674,7 @@ void VoicePool::FinishStreamPark(std::uint32_t slotIndex, Slot* slot,
                         ? slot->render.resampler.SourceFrame() -
                               kResampleHistoryPad
                         : 0;
-                MapStreamAdvance(
+                MapLoopedSourceFrame(
                     token.activationFrame,
                     token.activationLoopsRemaining,
                     audibleAdvance,
@@ -4727,7 +4686,7 @@ void VoicePool::FinishStreamPark(std::uint32_t slotIndex, Slot* slot,
                 const std::uint64_t feedAdvance =
                     slot->render.streamRing->readIndex.load(
                         std::memory_order_relaxed);
-                MapStreamAdvance(
+                MapLoopedSourceFrame(
                     slot->render.streamFeedActivationStartFrame,
                     slot->render.streamFeedActivationLoopsRemaining,
                     feedAdvance,
@@ -4762,7 +4721,7 @@ void VoicePool::FinishStreamPark(std::uint32_t slotIndex, Slot* slot,
                         ? slot->render.resampler.SourceFrame() -
                               kResampleHistoryPad
                         : 0;
-                MapStreamAdvance(
+                MapLoopedSourceFrame(
                     slot->render.streamActivationStartFrame,
                     slot->render.streamActivationLoopsRemaining,
                     advance, slot->render.streamFrameCount,

@@ -1,4 +1,5 @@
 #include "UI/ReleaseNotesDialog.h"
+#include "UI/DialogLayout.h"
 
 #include "ReleaseNotes/ReleaseNotesCatalog.h"
 
@@ -32,6 +33,16 @@ QWidget* createChanges(const ReleaseNotesEntry& entry, QWidget* parent)
     auto* layout = new QVBoxLayout(container);
     layout->setContentsMargins(16, 4, 12, 12);
     layout->setSpacing(7);
+    if (!entry.introduction.isEmpty()) {
+        auto* introduction = new QLabel(
+            ReleaseNotesCatalog::localizedChange(entry.introduction), container);
+        introduction->setObjectName(QStringLiteral("releaseNotesIntroduction"));
+        introduction->setTextFormat(Qt::PlainText);
+        introduction->setWordWrap(true);
+        introduction->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        layout->addWidget(introduction);
+        layout->addSpacing(8);
+    }
     for (const QString& category : {QStringLiteral("added"),
                                     QStringLiteral("improved"),
                                     QStringLiteral("removed")}) {
@@ -77,8 +88,6 @@ ReleaseNotesDialog::ReleaseNotesDialog(QWidget* parent)
                        .arg(QCoreApplication::applicationVersion()));
     setModal(false);
     setAttribute(Qt::WA_DeleteOnClose, false);
-    resize(720, 640);
-    setMinimumSize(520, 420);
 
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(16, 16, 16, 14);
@@ -102,6 +111,7 @@ ReleaseNotesDialog::ReleaseNotesDialog(QWidget* parent)
         errorLabel->setWordWrap(true);
         contentLayout->addWidget(errorLabel);
     } else {
+
         const ReleaseNotesEntry& current = entries.first();
         auto* currentVersion = new QLabel(
             tr("%1 (Current Latest Version)").arg(current.version), content);
@@ -109,10 +119,12 @@ ReleaseNotesDialog::ReleaseNotesDialog(QWidget* parent)
         contentLayout->addWidget(currentVersion);
         contentLayout->addWidget(createChanges(current, content));
 
-        auto* separator = new QFrame(content);
-        separator->setObjectName(QStringLiteral("releaseNotesSeparator"));
-        separator->setFrameShape(QFrame::HLine);
-        contentLayout->addWidget(separator);
+        if (entries.size() > 1) {
+            auto* separator = new QFrame(content);
+            separator->setObjectName(QStringLiteral("releaseNotesSeparator"));
+            separator->setFrameShape(QFrame::HLine);
+            contentLayout->addWidget(separator);
+        }
 
         for (qsizetype i = 1; i < entries.size(); ++i) {
             const ReleaseNotesEntry& entry = entries.at(i);
@@ -148,6 +160,7 @@ ReleaseNotesDialog::ReleaseNotesDialog(QWidget* parent)
     buttonRow->addStretch();
     buttonRow->addWidget(closeButton);
     root->addLayout(buttonRow);
+    configureDialog(this, QSize(720, entries.size() > 1 ? 560 : 420), QSize(480, 300));
 }
 
 bool ReleaseNotesDialog::hasLoadedCatalog() const

@@ -176,12 +176,13 @@ void StartupCoordinator::startProjectPreparation()
     const bool upgradeApprovedByHub =
         hubArguments_.launchIntent == QStringLiteral("UpgradeApprovedByHub");
     const ProjectUpgradeProgressCallback progress = upgradeProgressCallback();
+    projectReadContext_ = std::make_shared<ProjectContractReadContext>();
     analysisWatcher_.setFuture(QtConcurrent::run(
-        [projectFile, upgradeApprovedByHub, progress]() {
+        [projectFile, upgradeApprovedByHub, progress, context = projectReadContext_]() {
             ProjectUpgradeManager manager;
             return upgradeApprovedByHub
-                ? manager.analyzeForProjectOpen(projectFile, progress)
-                : manager.analyze(projectFile, progress);
+                ? manager.analyzeForProjectOpen(projectFile, progress, context.get())
+                : manager.analyze(projectFile, progress, context.get());
         }));
 }
 
@@ -225,12 +226,13 @@ void StartupCoordinator::startExistingProjectPreparation()
     const ProjectUpgradeApprovalCallback approval = upgradeApproval_;
     const ProjectUpgradeProgressCallback progress = upgradeProgressCallback();
     preparationWatcher_.setFuture(QtConcurrent::run(
-        [projectFile, approval, progress, cancelled = cancellationRequested_]() {
+        [projectFile, approval, progress, cancelled = cancellationRequested_,
+         context = std::move(projectReadContext_)]() {
             return std::make_shared<PreparedProject>(
                 ProjectManager::prepareProject(projectFile, static_cast<bool>(approval),
                                                progress, approval, [cancelled]() {
                     return cancelled->load(std::memory_order_relaxed);
-                }));
+                }, context.get()));
         }));
 }
 

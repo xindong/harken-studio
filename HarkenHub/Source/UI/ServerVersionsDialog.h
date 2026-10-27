@@ -15,6 +15,8 @@ class QTableWidget;
 
 namespace VNH {
 
+class DialogTextView;
+
 class ServerVersionsDialog : public QDialog
 {
     Q_OBJECT
@@ -52,7 +54,7 @@ private:
     std::shared_ptr<DownloadLease> downloadLease_;
     std::vector<DisplayRow> rows_;
     QTableWidget* table_ = nullptr;
-    QLabel* statusLabel_ = nullptr;
+    DialogTextView* statusLabel_ = nullptr;
     QProgressBar* progressBar_ = nullptr;
     QString packagePath_;
     QString manifestPath_;

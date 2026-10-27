@@ -7,7 +7,7 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QMessageBox>
+#include "UI/MessageDialog.h"
 #include <QProgressDialog>
 #include <QTemporaryDir>
 #include <QThread>
@@ -44,7 +44,7 @@ protected:
         projectPath = dir.filePath("Demo/Demo.hsp");
         QObject::connect(&dialogs, &QTimer::timeout, [this]() {
             for (auto* widget : QApplication::topLevelWidgets()) {
-                if (auto* box = qobject_cast<QMessageBox*>(widget)) {
+                if (auto* box = qobject_cast<VNH::MessageDialog*>(widget)) {
                     messages << box->text();
                     box->accept();
                 }

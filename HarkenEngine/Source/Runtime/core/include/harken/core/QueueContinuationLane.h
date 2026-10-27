@@ -10,6 +10,7 @@ namespace harken {
 // The initial Action and selected-replacement domains retain their own rules.
 class QueueContinuationLane {
     friend class OriginalConditionalReplacementBatch;
+    friend class QueueInstanceTable;
 public:
     QueueContinuationLane() = default;
     QueueContinuationLane(const QueueContinuationLane&) = delete;
@@ -47,6 +48,23 @@ public:
     bool Published() const noexcept { return published_; }
     ImmediateLaneHandle Handle() const noexcept { return handle_; }
     DecisionToken Decision() const noexcept { return decision_; }
+    bool SourceReady() const noexcept {
+        return !Active() || queues_->ConditionalSourceReady(queue_, conditional_);
+    }
+    QueueConditionalProofStatus TimingForQuantum(std::uint64_t start, std::uint64_t end,
+        std::uint64_t* delay) const noexcept {
+        if (!Active()) return QueueConditionalProofStatus::FailedIdentity;
+        const auto status = queues_->CaptureConditionalSourceDelay(queue_, conditional_, delay);
+        if (status != QueueConditionalProofStatus::ReadyToActivate || *delay == 0) return status;
+        const auto* attempt = lane_->Resolve(handle_);
+        if (attempt == nullptr || attempt->eventCount != 1 || groupCount_ != 1)
+            return QueueConditionalProofStatus::FailedIdentity;
+        const auto frame = lane_->EventBase(handle_.slot)[0].event.executeFrame;
+        if (frame > UINT64_MAX - *delay) return QueueConditionalProofStatus::FailedIdentity;
+        if (frame + *delay >= end) return QueueConditionalProofStatus::Waiting;
+        return frame + *delay < start ? QueueConditionalProofStatus::MissedDeadline
+                                     : QueueConditionalProofStatus::ReadyToActivate;
+    }
     Plan03GroupSliceIdentity GroupIdentity(std::uint32_t slice) const noexcept {
         for (std::uint32_t i = 0; i < groupCount_; ++i)
             if (groups_[i].sliceIndex == slice) return groups_[i];
@@ -129,6 +147,34 @@ private:
     }
 
 public:
+    bool BorrowPublicationLifetime(OriginalImmediateLaneAttemptLifetimePin* out) const noexcept {
+        return Active() && prepared_ && !published_ && originalLane_.Borrow(out);
+    }
+
+    bool ProveInstallationPublication(TimelineArmToken arm, std::uint64_t frame,
+        AudioSliceLease** out) const noexcept {
+        if (out == nullptr || *out != nullptr || !Active() || !prepared_ || published_ ||
+            groupCount_ != 1 || !queues_->ProvePendingConditionalIdentity(queue_, conditional_, decision_))
+            return false;
+        Plan03PageGroupView group{};
+        const auto* attempt = lane_->Resolve(handle_);
+        if (attempt == nullptr || attempt->eventCount != 1 ||
+            !pool_->ResolvePlan03GroupSliceProducer(groups_[0], &group) || !Owns(group) ||
+            group.memberCount != 1 || group.sourceControlCount != 0 || group.lease == nullptr ||
+            group.lease->Capture().state != AudioSliceState::Ready) return false;
+        const auto actual = group.members[0];
+        if (actual.slot != arm.slot || actual.generation != arm.generation ||
+            actual.renderSlot != arm.renderSlot || actual.renderGeneration != arm.renderGeneration) return false;
+        const auto& event = lane_->EventBase(handle_.slot)[0].event;
+        const auto* program = event.program.program;
+        if (event.executeFrame != frame || event.armToken.slot != arm.slot ||
+            event.armToken.generation != arm.generation || program == nullptr ||
+            program->generation != event.program.programGeneration || event.payload >= program->payloadCount ||
+            program->payloads[event.payload].kind != TimelineEventKind::Start) return false;
+        *out = group.lease;
+        return true;
+    }
+
     bool Publish() noexcept {
         DecisionCommittedSnapshot decision{};
         if (!Active() || !prepared_ || published_ ||
@@ -200,6 +246,7 @@ public:
     // The caller holds the actual Lane capture gate. A rejected Reset leaves
     // Old executable; the batch's single selector arbitrates every old write.
     bool BeginAudio() const noexcept;
+    bool BeforeAudioWrite() const noexcept;
     void EndAudio() const noexcept;
 
     void Collect(std::uint64_t completed) noexcept {

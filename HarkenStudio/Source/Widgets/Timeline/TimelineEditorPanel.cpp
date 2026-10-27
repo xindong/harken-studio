@@ -2191,14 +2191,6 @@ void TimelineEditorPanel::publishClipSelection()
     selectedLaneGuid_ = laneGuid(headerSelectedLane());
     refreshLaneSelectionChrome();
     refreshStatusBar();
-    if (!canvas_)
-        return;
-    const QSet<QUuid> selected = canvas_->selectedClipGuids();
-    if (selected.size() != 1)
-        return;
-    const QUuid guid = *selected.constBegin();
-    const int lane = findLaneOfClip(guid);
-    inspectClip(lane, guid);
 }
 
 void TimelineEditorPanel::bindDrillItem(ProjectItem* item)

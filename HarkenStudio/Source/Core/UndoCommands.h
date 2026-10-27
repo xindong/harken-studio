@@ -9,8 +9,10 @@
 #include <QString>
 #include <QPointF>
 #include <QVector3D>
+#include <QSet>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "ProjectTypes.h"
@@ -60,6 +62,7 @@ public:
     bool redo();
     bool isClean() const { return undoStack_.isClean(); }
     void setClean() { undoStack_.setClean(); }
+    const QSet<QUuid>* currentAuthoringWriteSet() const { return authoringWriteSet_; }
 
 signals:
     void canUndoChanged(bool canUndo);
@@ -76,6 +79,7 @@ private:
     void refreshReplayAvailability();
     
     QUndoStack undoStack_;
+    const QSet<QUuid>* authoringWriteSet_ = nullptr;
 };
 
 class PropertyChangeCommand : public QUndoCommand
@@ -574,14 +578,20 @@ public:
                          std::function<void()> redoFn,
                          int mergeId = 0,
                          QUndoCommand* parent = nullptr,
-                         std::function<bool()> canReplay = {})
+                         std::function<bool()> canReplay = {},
+                         std::optional<QSet<QUuid>> authoringWriteSet = std::nullopt)
         : QUndoCommand(text, parent)
         , undoFn_(std::move(undoFn))
         , redoFn_(std::move(redoFn))
         , mergeId_(mergeId)
-        , canReplay_(std::move(canReplay)) {}
+        , canReplay_(std::move(canReplay))
+        , authoringWriteSet_(std::move(authoringWriteSet)) {}
 
     bool canReplay() const { return !canReplay_ || canReplay_(); }
+    const QSet<QUuid>* authoringWriteSet() const {
+        return mergeId_ == 0 && childCount() == 0 && authoringWriteSet_
+            ? &*authoringWriteSet_ : nullptr;
+    }
 
     void undo() override { undoFn_(); }
     void redo() override {
@@ -603,6 +613,7 @@ private:
     int mergeId_ = 0;
     bool firstRedo_ = true;
     std::function<bool()> canReplay_;
+    std::optional<QSet<QUuid>> authoringWriteSet_;
 };
 
 }

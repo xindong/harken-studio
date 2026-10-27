@@ -6,6 +6,8 @@
 #include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/StableSlotStorage.h"
 #include "harken/core/TimelineProgram.h"
+#include "harken/core/QueueRuntime.h"
+#include "harken/core/QueueContinuationLane.h"
 #include "harken/render/VoicePool.h"
 
 #include <array>
@@ -45,6 +47,8 @@ public:
     private:
         std::atomic<Phase> phase_{Phase::Free};
         TimelineArmToken token_{};
+        const CompletionProgressRow* completionProgress_ = nullptr;
+        OccurrenceToken completionOccurrence_{};
         std::atomic<std::uint64_t> originalLifetime_{0};
         std::uint64_t originalMarker_ = 0;
         VnVoiceHandle originalSourceIdentity_ = 0;
@@ -83,6 +87,7 @@ public:
         TimelineArmTable::SourceCommandRowProof rowProof_;
         TimelineArmTable::PublicationAfterInstallation installPublication_;
         TimelineArmTable::GroupedPublicationAfterInstallation groupInstallPublication_;
+        OriginalImmediateLaneAttemptLifetimePin continuationPublicationLifetime_;
         VoicePool::SourceCommandInstallProof installProof_;
         std::uint64_t completion_ = 0;
         std::uint32_t progress_ = 0;
@@ -200,13 +205,16 @@ private:
                 if (!SameEffect(row.incoming_[i], incoming[i])) return false;
             return arms_.BindOriginalSourceSubmission(armProof, row.arm_, &row);
         }
-        if (phase != Phase::Free && phase != Phase::Disposed) return false;
+        if ((phase != Phase::Free && phase != Phase::Disposed) ||
+            row.continuationPublicationLifetime_.Valid()) return false;
         if (nativeSourceEpisodeExhausted_ || nextNativeSourceEpisode_ == 0) return false;
         const auto lifetime = row.originalLifetime_.load(std::memory_order_acquire);
         if ((lifetime & kPinMask) != 0 ||
             (phase == Phase::Disposed && (lifetime & kOwnersReleased) == 0)) return false;
         if (!EnsureCommandBacking(row)) return false;
         if (!row.range_.ResetAfterDisposition()) return false;
+        if (!voices_.CapturePreparedCompletionProgress(voiceProof, &row.completionProgress_,
+                &row.completionOccurrence_)) return false;
         row.token_ = token;
         row.originalLifetime_.store(0, std::memory_order_relaxed);
         row.originalMarker_ = 0;
@@ -803,6 +811,74 @@ public:
     const Record* Find(TimelineArmToken token) const noexcept {
         return rows_.IsConstructed(token.slot) && SameToken(rows_[token.slot].token_, token)
             ? &rows_[token.slot] : nullptr;
+    }
+
+    bool PrepareContinuationPublication(TimelineArmToken arm,
+        const CommandQueue::PreparedBatchProof& batch, ArmGroupTable& groups,
+        ArmGroupToken group, const QueueContinuationLane& continuation) noexcept {
+        auto* row = Find(arm);
+        if (row == nullptr || row->State() != Phase::QueuePrepared || row->wasPublished_ ||
+            !row->arm_.Valid() || !row->voice_.Valid() || row->installPublication_.Valid() ||
+            row->continuationPublicationLifetime_.Valid() ||
+            !commands_.PreparedBatchContains(batch, row->range_) ||
+            !arms_.IssueContinuationPublicationAfterInstallation(row->arm_, row, groups, group,
+                continuation, &row->groupInstallPublication_)) return false;
+        if (continuation.BorrowPublicationLifetime(&row->continuationPublicationLifetime_)) return true;
+        row->groupInstallPublication_.Reset();
+        return false;
+    }
+
+    void CancelUnpublishedContinuationPublication(TimelineArmToken arm) noexcept {
+        auto* row = Find(arm);
+        if (row == nullptr || row->wasPublished_ || row->State() != Phase::QueuePrepared) return;
+        row->groupInstallPublication_.Reset();
+        row->continuationPublicationLifetime_.Return();
+    }
+
+    void CollectContinuationPublications() noexcept {
+        for (auto& row : rows_) {
+            if (row.State() == Phase::Disposed &&
+                (row.originalLifetime_.load(std::memory_order_acquire) & kDispositionComplete) != 0)
+                row.continuationPublicationLifetime_.Return();
+        }
+    }
+
+    void ReturnContinuationPublicationsAfterQuiescence() noexcept {
+        for (auto& row : rows_) {
+            row.groupInstallPublication_.Reset();
+            row.continuationPublicationLifetime_.Return();
+        }
+    }
+
+    // The joint prepared Arm/Voice record identifies the actual Source Start,
+    // including before command installation or the first audible sample.
+    bool ProveQueueContinuationSource(TimelineArmToken source,
+        const OccurrenceStatePool& occurrences, OccurrenceToken occurrence,
+        QueueInstanceTable::ContinuationSourceBinding* out) const noexcept {
+        const auto* record = Find(source);
+        if (out == nullptr || out->validate_ != nullptr || record == nullptr ||
+            record->State() == Phase::Free || record->State() == Phase::EngineDestroyed ||
+            record->completionProgress_ == nullptr ||
+            record->completionProgress_ != occurrences.CompletionProgressOf(occurrence) ||
+            record->completionOccurrence_.slot != occurrence.slot ||
+            record->completionOccurrence_.generation != occurrence.generation) return false;
+        out->issuer_ = this;
+        out->source_ = record;
+        out->arms_ = &arms_;
+        out->occurrences_ = &occurrences;
+        out->arm_ = source;
+        out->occurrence_ = occurrence;
+        out->validate_ = [](const QueueInstanceTable::ContinuationSourceBinding& proof) noexcept {
+            const auto& issuer = *static_cast<const OriginalSourceSubmissionRegistry*>(proof.issuer_);
+            const auto* actual = issuer.Find(proof.arm_);
+            return actual != nullptr && actual == proof.source_ && proof.arms_ == &issuer.arms_ &&
+                actual->State() != Phase::Free && actual->State() != Phase::EngineDestroyed &&
+                actual->completionProgress_ != nullptr &&
+                actual->completionProgress_ == proof.occurrences_->CompletionProgressOf(proof.occurrence_) &&
+                actual->completionOccurrence_.slot == proof.occurrence_.slot &&
+                actual->completionOccurrence_.generation == proof.occurrence_.generation;
+        };
+        return true;
     }
 
     // Called only after callback admission is revoked and all workers joined.

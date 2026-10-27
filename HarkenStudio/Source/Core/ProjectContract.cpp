@@ -126,7 +126,11 @@ QString packDomain(const QJsonObject& object)
     return {};
 }
 
-bool readJsonObject(const QString& path, QJsonObject* object, QString* error)
+}
+
+bool ProjectContractRegistry::readJsonObject(
+    const QString& path, QJsonObject* object, QString* error,
+    ProjectContractReadContext* context)
 {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) {
@@ -134,9 +138,17 @@ bool readJsonObject(const QString& path, QJsonObject* object, QString* error)
             *error = QStringLiteral("Cannot read %1").arg(path);
         return false;
     }
+    const QByteArray bytes = file.readAll();
+    if (context) {
+        const auto previous = context->parsed_.constFind(path);
+        if (previous != context->parsed_.cend() && previous->bytes == bytes) {
+            if (object)
+                *object = previous->object;
+            return true;
+        }
+    }
     QJsonParseError parseError;
-    const QJsonDocument document =
-        QJsonDocument::fromJson(file.readAll(), &parseError);
+    const QJsonDocument document = QJsonDocument::fromJson(bytes, &parseError);
     if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
         if (error)
             *error = QStringLiteral("Invalid JSON in %1: %2")
@@ -145,10 +157,29 @@ bool readJsonObject(const QString& path, QJsonObject* object, QString* error)
     }
     if (object)
         *object = document.object();
+    if (context)
+        context->parsed_.insert(path, {bytes, document.object()});
     return true;
 }
 
-
+QStringList ProjectContractRegistry::validateDocument(
+    int schemaVersion, const QString& documentType,
+    const QJsonObject& document, const QString& relativePath,
+    ProjectContractReadContext* context)
+{
+    if (context) {
+        const auto previous = context->validated_.constFind(relativePath);
+        if (previous != context->validated_.cend()
+            && previous->schemaVersion == schemaVersion
+            && previous->documentType == documentType
+            && previous->object == document)
+            return previous->errors;
+    }
+    QStringList errors = ProjectSchemaValidator::validateProjectDocument(
+        schemaVersion, documentType, document, relativePath);
+    if (context)
+        context->validated_.insert(relativePath, {schemaVersion, documentType, document, errors});
+    return errors;
 }
 
 ProjectContractRegistry& ProjectContractRegistry::instance()
@@ -158,12 +189,12 @@ ProjectContractRegistry& ProjectContractRegistry::instance()
 }
 
 ProjectContractProbe ProjectContractRegistry::probe(
-    const QString& projectFilePath) const
+    const QString& projectFilePath, ProjectContractReadContext* context) const
 {
     ProjectContractProbe result;
     QJsonObject rootDocument;
     QString readError;
-    if (!readJsonObject(projectFilePath, &rootDocument, &readError)) {
+    if (!readJsonObject(projectFilePath, &rootDocument, &readError, context)) {
         result.blockingErrors.append(readError);
         return result;
     }
@@ -219,7 +250,7 @@ ProjectContractProbe ProjectContractRegistry::probe(
             QJsonObject pack;
             ProjectDocumentData parsed;
             QString detail;
-            if (!readJsonObject(path, &pack, &detail)
+            if (!readJsonObject(path, &pack, &detail, context)
                 || !ProjectDocument::parse(pack, documentTypeForFolder(folder), &parsed, &detail)) {
                 result.issue = ProjectIssue::ProjectFileDamaged;
                 result.detail = QStringLiteral("%1: %2").arg(directory.relativeFilePath(path), detail);
@@ -235,7 +266,8 @@ ProjectContractProbe ProjectContractRegistry::probe(
 QStringList ProjectContractRegistry::validateTree(
     const QString& projectDirectory, const QJsonObject& projectRootDocument,
     bool requireCurrentSchema,
-    const QHash<QString, QJsonObject>& overrides) const
+    const QHash<QString, QJsonObject>& overrides,
+    ProjectContractReadContext* context) const
 {
     QStringList errors;
     const QDir directory(projectDirectory);
@@ -253,9 +285,9 @@ QStringList ProjectContractRegistry::validateTree(
     }
     const int schemaVersion = rootDocument.schemaVersion;
     const QJsonObject projectRoot = rootDocument.content;
-    errors.append(ProjectSchemaValidator::validateProjectDocument(
+    errors.append(validateDocument(
         schemaVersion, QStringLiteral("project.root"), projectRootDocument,
-        rootRelativePath));
+        rootRelativePath, context));
 
     struct NodeRecord {
         QString domain;
@@ -363,13 +395,13 @@ QStringList ProjectContractRegistry::validateTree(
             if (overrides.contains(path)) {
                 packDocument = overrides.value(path);
             } else if (!readJsonObject(fileInfo.absoluteFilePath(), &packDocument,
-                                       &readError)) {
+                                       &readError, context)) {
                 errors.append(readError);
                 continue;
             }
             const QString documentType = documentTypeForFolder(folder);
-            errors.append(ProjectSchemaValidator::validateProjectDocument(
-                schemaVersion, documentType, packDocument, path));
+            errors.append(validateDocument(
+                schemaVersion, documentType, packDocument, path, context));
             ProjectDocumentData document;
             QString documentError;
             if (!ProjectDocument::parse(packDocument, documentType,

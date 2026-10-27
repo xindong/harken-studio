@@ -731,6 +731,34 @@ struct EngineOrdinaryRetiringSource {
     bool resourcesReleased = false;
 };
 
+struct EngineQueueProgramBank;
+
+// A finite Sound continuation retains its own filing facts while audio may
+// advance beyond the serialized service mirror.
+struct EngineQueueChainFuture {
+    QueueInstanceTable::OriginalConditionalFutureReservation original;
+    TimelineArmReaderPin sourceReader;
+    EngineQueueProgramBank* following = nullptr;
+    DecisionToken decision{}, successorDecision{};
+    ConditionalQueueVersionToken conditional{};
+    OccurrenceToken occurrence{};
+    OccurrenceToken retiringPredecessor{};
+    KnownCompletionPredicateV1 completion{};
+    CompletionOwnerRef owner{};
+    CompletionOwnerRef retiringPredecessorOwner{};
+    TimelineArmToken arm{};
+    ArmGroupToken group{};
+    PreparedGroupToken pages{};
+    EffectiveQueueState next{};
+    PlayableRefV1 leaf{};
+    VnVoiceHandle render = 0;
+    LogicCommitSequence ticket = 0, successorTicket = 0;
+    std::uint64_t transitionEnd = 0;
+    std::uint32_t tail = 0;
+    bool recorded = false, decisionCommitted = false, retirementTransferred = false;
+    bool privateCleanupPending = false;
+};
+
 struct EngineQueueProgramBankBody : EngineQueueScheduleColumns {
     static constexpr std::size_t kProgramCapacity = 2u * kMaxKnownScheduleLeaves;
     static constexpr std::size_t kEventsPerProgram = 2u;
@@ -757,6 +785,7 @@ struct EngineQueueProgramBankBody : EngineQueueScheduleColumns {
 // Bank storage stays at its original fixed Engine address for every loan.
 struct EngineQueueProgramBank : EngineQueueProgramBankBody {
     QueueContinuationLane continuationLane;
+    EngineQueueChainFuture chain;
     EngineQueueScheduleStorage::Loan scheduleStorageLoan;
     TimelineProgramReadFence readFence;
     class OriginalReservation {
@@ -863,7 +892,8 @@ struct EngineQueueProgramBank : EngineQueueProgramBankBody {
     }
     bool TryResetOriginalStorage(OriginalReservation& reservation,
         OriginalLifetimePin& baseline) noexcept {
-        if (HasOriginalOwnersOtherThan(reservation, baseline)) return false;
+        if (HasOriginalOwnersOtherThan(reservation, baseline) ||
+            chain.retiringPredecessor.generation != 0) return false;
         // The serialized producer has already passed the actual reader/fence guards.
         baseline.Release();
         reservation.Release();
@@ -874,7 +904,10 @@ struct EngineQueueProgramBank : EngineQueueProgramBankBody {
 
     // Callers still own the actual program/observer/read-fence qualification.
     bool TryResetStorage() noexcept {
-        if (HasOriginalLifetimeOwners() || continuationLane.Active()) return false;
+        if (HasOriginalLifetimeOwners() || continuationLane.Active() || chain.original.Valid() ||
+            chain.following != nullptr || chain.sourceReader.Valid() ||
+            chain.retiringPredecessor.generation != 0) return false;
+        chain = {};
         for (const auto token : members) if (token.Valid()) return false;
         scheduleStorageLoan.Reset();
         programCount = 0; eventCount = 0; curveCount = 0; aggregateCount = 0;
@@ -1869,6 +1902,9 @@ struct EngineVariableServicePayload {
 };
 
 struct EngineQueueServicePayload {
+    EngineQueueProgramBank* queuePreparingFollowing = nullptr;
+    EngineQueueProgramBank* queueRetiringChain = nullptr;
+    OccurrenceToken queueLookaheadRollbackOccurrence{};
     VnObjectId queueContainerStableId{};
     std::uint64_t queueProgramSemanticFingerprint = 0;
     VnObjectId queueParentContainerStableId{};
@@ -6935,7 +6971,7 @@ public:
             originalQueueReplacementSpans =
                 std::make_unique<PrivateSelectedQueueFutureSpanPool>(queueInstances.Capacity());
             originalQueueReplacementBatch =
-                std::make_unique<OriginalConditionalReplacementBatch>(queueInstances.Capacity());
+                std::make_unique<OriginalConditionalReplacementBatch>(queueInstances.originalConditionalCapacity_);
             const bool registered = queueInstances.RegisterOriginalConditionalOwner(this,
                 &ResolveOriginalQueueConditionalBaseline, &EndOriginalQueueConditionalAssociation);
             assert(registered);
@@ -7025,6 +7061,8 @@ public:
             resolved.maxTransitionInstances};
         actionPlayOwnerLimits = frontierOwnerLimits;
         SelectionMemoryConfigV1 selectionConfig{};
+        selectionConfig.maxChildren = kHardContainerChildCapacity;
+        selectionConfig.maxAvoidLastN = kHardSelectionAvoidCapacity;
         selectionConfig.maxEmitters = resolved.maxEmitters + 1u;
         selectionConfig.maxGlobalRows = resolved.maxSelectionRowsGlobal;
         selectionConfig.maxEmitterRowsPerEmitter =
@@ -10129,6 +10167,27 @@ public:
         for (auto& scratch : actionDeferredScratch) scratch.pairCommitProof.Release();
     }
 
+    bool PrepareQueueSelectionStorage(const ContainerWorldInstallViewV1& world) noexcept {
+        if (memguard::IsAudioTagged() || queueProjectionInUse) return false;
+        std::uint32_t required = 0;
+        for (std::uint32_t index = 0; index < world.containerCount; ++index) {
+            const auto& program = world.containers[index];
+            if (program.mode == ContainerModeV1::SequenceQueue ||
+                program.mode == ContainerModeV1::RandomQueue)
+                required = std::max(required, program.childCount);
+        }
+        if (required > kHardContainerChildCapacity) return false;
+        try {
+            if (queueSelectionChildScratch.size() < required) queueSelectionChildScratch.resize(required);
+            if (queueRemainingScratch.size() < required) queueRemainingScratch.resize(required);
+            if (queuePermutationScratch.size() < required) queuePermutationScratch.resize(required);
+            if (queueProjectionScratch.size() <= required) queueProjectionScratch.resize(required + 1u);
+            return true;
+        } catch (...) {
+            return false;
+        }
+    }
+
     ~Engine() {
         timelineGroupCapturePreparation.Detach();
         timelinePool.DetachImmediateLaneRowStoragePreparation();
@@ -10201,8 +10260,16 @@ public:
             resource.nativeControlCommit.Release();
             resource.nativeStopLaneOwner.Return();
         }
+        originalSourceSubmissions.ReturnContinuationPublicationsAfterQuiescence();
         queueInstances.EndOriginalConditionalAssociationsAfterQuiescence();
-        for (auto& bank : queueProgramBanks) bank.continuationLane.ReturnAfterQuiescence();
+        for (auto& bank : queueProgramBanks) {
+            bank.continuationLane.ReturnAfterQuiescence();
+            bank.chain.original.Release();
+            const bool sourceReturned = bank.chain.sourceReader.Release(UINT64_MAX);
+            assert(sourceReturned);
+            (void)sourceReturned;
+            bank.chain.following = nullptr;
+        }
         if (originalQueueReplacementHolders.data() != nullptr)
             for (std::uint32_t i = 0; i < originalQueueReplacementHolders.size(); ++i) {
                 auto& holder = originalQueueReplacementHolders[i];
@@ -11817,7 +11884,8 @@ public:
     }
 
     bool ResetOriginalQueueBank(EngineQueueProgramBank& bank) noexcept {
-        if (bank.supersededRoot != 0 && playableInstances.Classify(bank.supersededRoot).live)
+        if (bank.chain.retiringPredecessor.generation != 0 ||
+            (bank.supersededRoot != 0 && playableInstances.Classify(bank.supersededRoot).live))
             return false;
         auto* original = OriginalQueueBankHolderFor(&bank);
         if (original == nullptr || bank.HasOriginalOwnersOtherThan(original->reservation, original->baseline))
@@ -11830,7 +11898,10 @@ public:
         if (alias == nullptr) return true;
         if (OriginalQueueBankHolderFor(alias) == nullptr) return false;
         // A published bank retains its baseline until the real bank service fence.
-        if (!alias->published && !ResetOriginalQueueBank(*alias)) return false;
+        if (!alias->published) {
+            if (alias->chain.sourceReader.Valid()) alias->chain.privateCleanupPending = true;
+            else if (!ResetOriginalQueueBank(*alias)) return false;
+        }
         alias = nullptr;
         return true;
     }
@@ -11953,7 +12024,8 @@ public:
 
     bool FreezeOriginalQueueReplacement(EngineActionQueueReplacementScratch& scratch,
         const QueueInstanceTable::PreparedCatalogResetScope& matched,
-        const PreparedQueueReplacementOrder& order) noexcept {
+        const PreparedQueueReplacementOrder& order,
+        const ResolvedQueueResetProjection* projection = nullptr) noexcept {
         auto* held = OriginalQueueReplacementFor(scratch);
         if (held == nullptr || held->phase != OriginalQueueReplacementHolder::Phase::Preparing ||
             !held->domain.Valid() || !order.Valid() || held->sequence != order.Sequence() ||
@@ -12016,7 +12088,7 @@ public:
                 parent, original->baseline, holder.clock, order, *currentDecision, *currentOccurrence,
                 decisions, scratch.decision, *member, holder.memberTicket, holder.coordinator, *coordinator,
                 holder.coordinatorTicket, timelineOccurrences, timelinePool, primaryGroup, memberGroup,
-                &holder.selected, &holder.domain);
+                &holder.selected, &holder.domain, projection);
         } else {
             const PrivateSelectedQueueFutureSpanPool::SourceCompletionFactory source{
                 scratch.successorDecision, *sourceDecision, holder.sourceTicket};
@@ -12024,7 +12096,7 @@ public:
                 original->baseline, holder.clock, order, *currentDecision, *currentOccurrence, decisions,
                 scratch.decision, *member, holder.memberTicket, holder.coordinator, *coordinator,
                 holder.coordinatorTicket, timelineOccurrences, *successor, *successorProof, timelinePool,
-                primaryGroup, memberGroup, &holder.selected, &holder.domain, &source);
+                primaryGroup, memberGroup, &holder.selected, &holder.domain, &source, projection);
         }
         if (!prepared || !originalQueueReplacementSpans->FreezeUnbound(holder.selected) ||
             !holder.selected.BorrowNativeConditional(&holder.conditionalReader)) return false;
@@ -12268,6 +12340,11 @@ public:
             const bool returned = holder.phase == OriginalQueueReplacementHolder::Phase::Selected
                 ? holder.calendar.Abort(completed) : holder.calendar.RetireSelected(completed);
             if (!returned) return false;
+            if (holder.phase == OriginalQueueReplacementHolder::Phase::Selected) {
+                const auto* activation = decisions.ResolveFrontierActivation(holder.decisions[0]);
+                if (activation != nullptr && activation->State() == FrontierReceiptState::Prepared &&
+                    !decisions.CancelPreparedFrontierActivation(holder.decisions[0])) return false;
+            }
             holder.phase = OriginalQueueReplacementHolder::Phase::Retiring;
         }
         while (holder.frontierBoundCount != 0) {
@@ -12447,6 +12524,10 @@ public:
         holder.current = nullptr;
         holder.service = {};
         holder.invocationGeneration = 0;
+    }
+
+    bool QueueConditionalEnded(const QueueInstanceTable::OriginalConditionalFutureReservation& original) const noexcept {
+        return queueInstances.IsEndedOriginalConditional(original);
     }
 
     bool PrepareOriginalQueueConditional(QueueInstanceToken queue,

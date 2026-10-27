@@ -147,14 +147,13 @@ bool actionPublishedNameHistoryRowFromJson(const QJsonObject& obj,
     return true;
 }
 
-void stripPlayableDefinitionComponentAuthority(ProjectItem::Type type,
-                                                QJsonObject& components)
+struct ComponentFields {
+    QStringList definition;
+    QStringList fieldGroup;
+};
+
+const QHash<QString, ComponentFields>& componentAuthorityFields()
 {
-    if (!PlayablePropertyAuthoringV1::isDefinitionType(type)) return;
-    struct ComponentFields {
-        QStringList definition;
-        QStringList fieldGroup;
-    };
     static const QHash<QString, ComponentFields> fieldsByComponent = [] {
         QHash<QString, ComponentFields> result;
         for (const auto& field : PlayablePropertyAuthoringV1::fields()) {
@@ -185,6 +184,38 @@ void stripPlayableDefinitionComponentAuthority(ProjectItem::Type type,
         }
         return result;
     }();
+    return fieldsByComponent;
+}
+
+const QHash<QString, QSet<QString>>& excludedComponentFields(ProjectItem::Type type)
+{
+    static const QHash<QString, QSet<QString>> empty;
+    if (!PlayablePropertyAuthoringV1::isDefinitionType(type)) return empty;
+    static const auto definitionFields = [] {
+        const auto& fieldsByComponent = componentAuthorityFields();
+        QHash<QString, QSet<QString>> result;
+        for (auto fields = fieldsByComponent.cbegin(); fields != fieldsByComponent.cend(); ++fields)
+            if (!fields->definition.isEmpty())
+                result.insert(fields.key(), QSet<QString>(fields->definition.cbegin(), fields->definition.cend()));
+        return result;
+    }();
+    static const auto groupedFields = [] {
+        const auto& fieldsByComponent = componentAuthorityFields();
+        auto result = definitionFields;
+        for (auto fields = fieldsByComponent.cbegin(); fields != fieldsByComponent.cend(); ++fields)
+            if (!fields->fieldGroup.isEmpty())
+                result[fields.key()].unite(QSet<QString>(fields->fieldGroup.cbegin(), fields->fieldGroup.cend()));
+        return result;
+    }();
+    return PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(type)
+        ? groupedFields : definitionFields;
+}
+
+void stripPlayableDefinitionComponentAuthority(ProjectItem::Type type,
+                                                QJsonObject& components)
+{
+    if (!PlayablePropertyAuthoringV1::isDefinitionType(type)) return;
+    const auto& fieldsByComponent = componentAuthorityFields();
     const bool grouped = PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(type);
     for (auto fields = fieldsByComponent.cbegin(); fields != fieldsByComponent.cend(); ++fields) {
         const bool stripGrouped = grouped && !fields->fieldGroup.isEmpty();
@@ -200,23 +231,6 @@ void stripPlayableDefinitionComponentAuthority(ProjectItem::Type type,
     }
 }
 
-bool writeFieldGroups(const ProjectItem& item, QJsonObject& json, QString& error)
-{
-    if (!PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item.type)) {
-        if (item.fieldGroups == DefinitionFieldGroups{}) return true;
-        error = QStringLiteral("This object type cannot author fieldGroups");
-        return false;
-    }
-    std::string text;
-    std::string detail;
-    if (!WriteFieldGroupsJson(item.fieldGroups, text, detail)) {
-        error = QString::fromStdString(detail);
-        return false;
-    }
-    json[QStringLiteral("fieldGroups")] =
-        QJsonDocument::fromJson(QByteArray::fromStdString(text)).object();
-    return true;
-}
 
 bool readFieldGroups(const QJsonObject& json, ProjectItem& item, QString& error)
 {
@@ -247,6 +261,29 @@ bool hasPlayableDefinitionComponentAuthority(ProjectItem::Type type,
     return false;
 }
 
+}
+
+bool ProjectSerializer::writeFieldGroups(const ProjectItem& item, QJsonObject& json) const
+{
+    if (!PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item.type)) {
+        if (item.fieldGroups == DefinitionFieldGroups{}) return true;
+        lastError_ = QStringLiteral("This object type cannot author fieldGroups");
+        return false;
+    }
+    if (cachedFieldGroups_ && cachedFieldGroups_->input == item.fieldGroups) {
+        json[QStringLiteral("fieldGroups")] = cachedFieldGroups_->json;
+        return true;
+    }
+    std::string text;
+    std::string detail;
+    if (!WriteFieldGroupsJson(item.fieldGroups, text, detail)) {
+        lastError_ = QString::fromStdString(detail);
+        return false;
+    }
+    auto object = QJsonDocument::fromJson(QByteArray::fromStdString(text)).object();
+    cachedFieldGroups_ = CachedFieldGroups{item.fieldGroups, object};
+    json[QStringLiteral("fieldGroups")] = std::move(object);
+    return true;
 }
 
 ProjectSerializer::ProjectSerializer(QObject* parent)
@@ -918,13 +955,14 @@ bool ProjectSerializer::encodePlayableReferences(QJsonObject* properties,
         lastError_ = QStringLiteral("Playable property authoring is invalid");
         return false;
     }
-    if (!allowFieldGroupFields) {
+    if (!allowFieldGroupFields && validatedOccurrenceProperties_ != *properties) {
         std::string detail;
         if (!ValidateOccurrenceFieldGroupExclusionJson(
                 QJsonDocument(*properties).toJson(QJsonDocument::Compact).toStdString(), detail)) {
             lastError_ = QString::fromStdString(detail);
             return false;
         }
+        validatedOccurrenceProperties_ = *properties;
     }
     if (!rewritePlayableReferenceFields(properties, true)) return false;
     const QLatin1String overlaysKey(
@@ -1327,8 +1365,11 @@ void ProjectSerializer::cancelProjectSave()
 bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destinationProject,
                                     bool allowUpgrade,
                                     ProjectUpgradeProgressCallback upgradeProgress,
-                                    ProjectUpgradeApprovalCallback upgradeApproval)
+                                    ProjectUpgradeApprovalCallback upgradeApproval,
+                                    ProjectContractReadContext* context)
 {
+    ProjectContractReadContext localContext;
+    if (!context) context = &localContext;
     ProjectData project = destinationProject;
     warnings_.clear();
     lastError_.clear();
@@ -1341,7 +1382,7 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
         emit errorOccurred(ProjectUpgradeMessages::userMessage(lastError_, true));
         return false;
     }
-    const auto modelProbe = ProjectContractRegistry::instance().probe(location.projectFilePath);
+    const auto modelProbe = ProjectContractRegistry::instance().probe(location.projectFilePath, context);
     if (!modelProbe.ok) {
         lastError_ = modelProbe.blockingErrors.isEmpty()
             ? modelProbe.detail : modelProbe.blockingErrors.first();
@@ -1371,8 +1412,8 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
 
     ProjectUpgradeManager upgradeManager;
     ProjectUpgradeAnalysis analysis = boundUpgradeOpen
-        ? upgradeManager.analyzeForProjectOpen(filePath, upgradeProgress)
-        : upgradeManager.analyze(filePath, upgradeProgress);
+        ? upgradeManager.analyzeForProjectOpen(filePath, upgradeProgress, context)
+        : upgradeManager.analyze(filePath, upgradeProgress, context);
     if (!analysis.ok) {
         lastError_ = analysis.blockingErrors.isEmpty()
                          ? QStringLiteral("Project governance analysis failed")
@@ -1386,7 +1427,7 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
     if (analysis.upgradeRequired) {
         if (!allowUpgrade) {
             const PreflightReport preflight = ProjectPreflight::run(
-                resolvedProjectFilePath, analysis.targetSchema);
+                resolvedProjectFilePath, analysis.targetSchema, context);
             if (!preflight.blockingErrors.isEmpty()) {
                 lastError_ = preflight.blockingErrors.first();
                 emit errorOccurred(ProjectUpgradeMessages::userMessage(lastError_, true));
@@ -1429,7 +1470,7 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
         warnings_.append(upgrade.warnings);
     }
 
-    const PreflightReport preflight = ProjectPreflight::run(resolvedProjectFilePath, 0);
+    const PreflightReport preflight = ProjectPreflight::run(resolvedProjectFilePath, 0, context);
     if (!preflight.blockingErrors.isEmpty()) {
         lastError_ = preflight.blockingErrors.first();
         emit errorOccurred(ProjectUpgradeMessages::userMessage(lastError_, true));
@@ -1599,7 +1640,7 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
 QJsonObject ProjectSerializer::projectItemToJson(const ProjectItem& item, bool includeChildren) const
 {
     QJsonObject json;
-    if (!writeFieldGroups(item, json, lastError_)) return {};
+    if (!writeFieldGroups(item, json)) return {};
     if (!item.extensions.isEmpty())
         json[QStringLiteral("extensions")] = item.extensions;
     json["name"] = item.name;
@@ -1634,12 +1675,13 @@ QJsonObject ProjectSerializer::projectItemToJson(const ProjectItem& item, bool i
     }
 
     QJsonObject compsObj;
+    const auto& excluded = excludedComponentFields(item.type);
     item.components.forEach([&](const IComponent& c) {
-        QJsonObject cj = c.toJson();
-        if (!cj.isEmpty())
-            compsObj[componentTypeName(c.getType())] = cj;
+        const auto name = componentTypeName(c.getType());
+        const auto fields = excluded.constFind(name);
+        QJsonObject cj = fields == excluded.cend() ? c.toJson() : c.toJsonExcluding(*fields);
+        if (!cj.isEmpty()) compsObj[name] = std::move(cj);
     });
-    stripPlayableDefinitionComponentAuthority(item.type, compsObj);
     if (!encodeComponentReferences(&compsObj)) return {};
     if (!compsObj.isEmpty())
         json["components"] = compsObj;
@@ -1805,7 +1847,7 @@ bool ProjectSerializer::audioPackItemFromJson(
 QJsonObject ProjectSerializer::audioBranchToJson(const ProjectItem& node) const
 {
     QJsonObject json;
-    if (!writeFieldGroups(node, json, lastError_)) return {};
+    if (!writeFieldGroups(node, json)) return {};
     if (!node.extensions.isEmpty())
         json[QStringLiteral("extensions")] = node.extensions;
     json["name"]       = node.name;
@@ -2006,7 +2048,7 @@ QJsonObject ProjectSerializer::actionPackToJson(const ProjectItem& event) const
     }
 
     QJsonObject obj;
-    if (!writeFieldGroups(event, obj, lastError_)) return {};
+    if (!writeFieldGroups(event, obj)) return {};
     if (!event.extensions.isEmpty())
         obj[QStringLiteral("extensions")] = event.extensions;
     obj[QStringLiteral("guid")]     = event.guid.toString(QUuid::WithoutBraces);
@@ -2171,7 +2213,7 @@ QJsonObject ProjectSerializer::attenuationPackToJson(const ProjectItem& item) co
     }
 
     QJsonObject obj;
-    if (!writeFieldGroups(item, obj, lastError_)) return {};
+    if (!writeFieldGroups(item, obj)) return {};
     writeS3RootIdentity(obj, item);
     obj[QStringLiteral("parentRef")] = persistentParentReference(item);
     if (obj.value(QStringLiteral("parentRef")).toObject().isEmpty()) return {};
@@ -2236,7 +2278,7 @@ QJsonObject ProjectSerializer::variablePackToJson(const ProjectItem& item) const
     }
 
     QJsonObject obj;
-    if (!writeFieldGroups(item, obj, lastError_)) return {};
+    if (!writeFieldGroups(item, obj)) return {};
     writeS3RootIdentity(obj, item);
     obj[QStringLiteral("parentRef")] = persistentParentReference(item);
     if (obj.value(QStringLiteral("parentRef")).toObject().isEmpty()) return {};
@@ -2313,7 +2355,7 @@ QJsonObject ProjectSerializer::busPackToJson(
     }
 
     QJsonObject root;
-    if (!writeFieldGroups(busItem, root, lastError_)) return {};
+    if (!writeFieldGroups(busItem, root)) return {};
     if (!busItem.extensions.isEmpty())
         root[QStringLiteral("extensions")] = busItem.extensions;
     root[QStringLiteral("type")]       = QStringLiteral("Bus");

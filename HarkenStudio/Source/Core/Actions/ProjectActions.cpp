@@ -38,7 +38,6 @@
 #include "../Timeline/TimelineEditing.h"
 #include "../AudioEngine.h"
 #include "../../Widgets/ProjectExplorer/ProjectExplorer.h"
-#include "../../Widgets/Hierarchy/Hierarchy.h"
 #include "ActionSelectors.h"
 
 #include <QDir>
@@ -642,7 +641,8 @@ ActionResult handlePlayableItemProperty(ProjectManager* projectManager,
     if (!changed)
         return result;
 
-    auto publish = [fieldName = QString::fromLatin1(field->fieldName), originator](
+    auto publish = [fieldName = QString::fromLatin1(field->fieldName),
+                    propertyId = field->id, originator](
                        ProjectItem* target) {
         target->markDirty();
         if (target->type == ProjectItem::Type::Bus) {
@@ -653,7 +653,7 @@ ActionResult handlePlayableItemProperty(ProjectManager* projectManager,
                 pm.pushBusPropertyLive(target, fieldName);
             emit pm.busChanged(target->objectID, fieldName, originator);
         } else {
-            ProjectManager::resyncItemToRuntime(target);
+            ProjectManager::syncPlayablePropertyToRuntime(target, propertyId);
             emit ProjectManager::instance().itemPropertyChanged(
                 target, fieldName, originator);
         }
@@ -686,13 +686,18 @@ ActionResult handlePlayableItemProperty(ProjectManager* projectManager,
                 pm.pushBusPropertyLive(owner, fieldName);
             emit pm.busChanged(owner->objectID, fieldName);
         } else {
-            ProjectManager::resyncItemToRuntime(owner);
+            ProjectManager::syncPlayablePropertyToRuntime(owner, propertyId);
             if (restoredField)
                 emit ProjectManager::instance().itemPropertyChanged(owner, fieldName);
         }
     };
     result.undoFn = [restoreAll, snapshots]() { restoreAll(snapshots, true); };
     result.redoFn = [restoreAll, snapshots]() { restoreAll(snapshots, false); };
+    using Property = harkenplayableproperties::PlayablePropertyIdV1;
+    if (field->id == static_cast<uint8_t>(Property::Volume)
+        || field->id == static_cast<uint8_t>(Property::Pitch)
+        || field->id == static_cast<uint8_t>(Property::LoopCount))
+        result.authoringWriteSet = QSet<QUuid>{item->guid};
     result.undoText = operation == QLatin1String("set_override")
         ? QObject::tr("Set Property Override")
         : QObject::tr("Clear Property Override");
@@ -1823,8 +1828,7 @@ const ItemPropertyRoute kItemPropertyRoutes[] = {
 
 void registerProjectActions(ActionManager& mgr,
                            ProjectManager* projectManager,
-                           ProjectExplorer* projectExplorer,
-                           std::function<Hierarchy*()> hierarchyResolver)
+                           ProjectExplorer* projectExplorer)
 {
     registerProjectPlatformActions(mgr, projectManager);
     registerFieldGroupActions(mgr, projectManager);
@@ -2000,7 +2004,7 @@ void registerProjectActions(ActionManager& mgr,
             def.paramSchema.insert("new_name", "string");
         if (command == QLatin1String("move_folder"))
             def.paramSchema.insert("new_parent", "string");
-        def.handler = [projectManager, projectExplorer, hierarchyResolver, command](
+        def.handler = [projectManager, projectExplorer, command](
                          const QJsonObject& args) -> ActionResult {
             ProjectData* project = projectManager ? projectManager->currentProject() : nullptr;
             if (!project)
@@ -2099,11 +2103,9 @@ void registerProjectActions(ActionManager& mgr,
                     return {false, {}, "MOVE_FAILED", "Failed to move directory"};
                 return {true, describe(folder)};
             }
-            Hierarchy* hierarchy = hierarchyResolver ? hierarchyResolver() : nullptr;
             const bool explorerSelected = projectExplorer && projectExplorer->selectFolder(folder);
-            const bool hierarchySelected = hierarchy && hierarchy->selectFolder(folder);
-            if (!explorerSelected && !hierarchySelected)
-                return {false, {}, "FOLDER_NOT_VISIBLE", "The directory is not visible in a project view"};
+            if (!explorerSelected)
+                return {false, {}, "FOLDER_NOT_VISIBLE", "The directory is not visible in Explorer"};
             QJsonObject selected = describe(folder);
             selected.insert("selected", true);
             return {true, selected};
@@ -2337,14 +2339,13 @@ void registerProjectActions(ActionManager& mgr,
         mgr.registerAction(def);
     }
 
-    auto selectHandler = [projectManager, projectExplorer, hierarchyResolver](const QJsonObject& args) -> ActionResult {
+    auto selectHandler = [projectManager, projectExplorer](const QJsonObject& args) -> ActionResult {
         if (!projectManager)
             return {false, {}, "PROJECT_MANAGER_NOT_AVAILABLE", "ProjectManager is not available"};
         if (!projectManager->isProjectOpen())
             return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
-        Hierarchy* hierarchy = hierarchyResolver ? hierarchyResolver() : nullptr;
-        if (!projectExplorer && !hierarchy)
-            return {false, {}, "PROJECT_EXPLORER_NOT_AVAILABLE", "No project view is available"};
+        if (!projectExplorer)
+            return {false, {}, "PROJECT_EXPLORER_NOT_AVAILABLE", "Explorer is not available"};
 
         QString path = args["path"].toString().trimmed();
         if (path.isEmpty())
@@ -2359,15 +2360,12 @@ void registerProjectActions(ActionManager& mgr,
             return {false, {}, "ITEM_NOT_FOUND",
                     QString("Item '%1' not found").arg(path)};
 
-        if (projectExplorer) Q_ASSERT(QThread::currentThread() == projectExplorer->thread());
-        else                 Q_ASSERT(QThread::currentThread() == hierarchy->thread());
+        Q_ASSERT(QThread::currentThread() == projectExplorer->thread());
 
-        bool peOk = projectExplorer && projectExplorer->selectProjectItem(item);
-        bool hOk  = hierarchy && hierarchy->selectProjectItem(item);
-        if (!peOk && !hOk)
+        if (!projectExplorer->selectProjectItem(item))
         {
             return {false, {}, "ITEM_NOT_VISIBLE",
-                    QString("Item '%1' exists but is not visible in any project view").arg(path)};
+                    QString("Item '%1' exists but is not visible in Explorer").arg(path)};
         }
 
         ActionResult r;

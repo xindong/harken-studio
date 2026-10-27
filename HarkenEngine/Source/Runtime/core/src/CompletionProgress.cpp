@@ -42,6 +42,8 @@ ProgressWords Pack(const CompletionProgressSnapshot& snapshot) noexcept {
         snapshot.loopEndFrame,
         snapshot.nextLoopEndOutputFrame,
         snapshot.nextExitMarkerOutputFrame,
+        snapshot.resamplerPhaseHigh,
+        snapshot.resamplerPhaseLow,
     };
 }
 
@@ -72,6 +74,8 @@ CompletionProgressSnapshot Unpack(const ProgressWords& words) noexcept {
     snapshot.loopEndFrame = words[15];
     snapshot.nextLoopEndOutputFrame = words[16];
     snapshot.nextExitMarkerOutputFrame = words[17];
+    snapshot.resamplerPhaseHigh = words[18];
+    snapshot.resamplerPhaseLow = words[19];
     return snapshot;
 }
 
@@ -142,6 +146,8 @@ CompletionProgressPublishStatus PublishCompletionProgressBlock(
     }
     next.resamplerSourceFrame = update.resamplerSourceFrame;
     next.resamplerSourceFraction = update.resamplerSourceFraction;
+    next.resamplerPhaseHigh = update.resamplerPhaseHigh;
+    next.resamplerPhaseLow = update.resamplerPhaseLow;
     next.currentRatio = update.currentRatio;
     next.targetRatio = update.targetRatio;
     next.rampStep = update.rampStep;

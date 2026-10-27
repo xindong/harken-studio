@@ -221,7 +221,8 @@ public:
     QList<GridEditorPanel*> allGridEditorPanels() const;
     QList<TimelineEditorPanel*> allTimelineEditorPanels() const;
 
-    void openItemInNewInspector(ProjectItem* item, PreferredOpenArea placement, bool syncSelection = true);
+    void openItemInNewInspector(ProjectItem* item, PreferredOpenArea placement,
+                                bool syncSelection = true, const QObject* source = nullptr);
     InspectorPanel* inspectorShowingItem(ProjectItem* item, bool includeClosed = false) const;
     void openOrFocusInspectorForItem(ProjectItem* item, const PlacementContext* placement = nullptr);
 
@@ -395,7 +396,6 @@ private:
     std::unique_ptr<WorkspaceWindowManager> workspaceWindowManager_;
 
     QHash<QString, StandaloneEditorTypeInfo> standaloneEditorTypes_;
-    ProjectItem* standaloneEditorSelection_ = nullptr;
 
     InspectorPanel* createInspectorPanelWithId(int id, PreferredOpenArea placement, bool deferShow);
     Hierarchy* createHierarchyPanelWithId(int id, bool deferShow, bool deleteOnClose = true);

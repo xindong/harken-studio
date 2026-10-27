@@ -5,6 +5,7 @@
 #include "harken/core/ImmediateActionLane.h"
 #include "harken/core/AuthoredStopFence.h"
 #include "harken/core/QueueRuntime.h"
+#include "harken/core/QueueContinuationLane.h"
 
 #include <algorithm>
 #include <cassert>
@@ -936,6 +937,7 @@ bool TimelineArmTable::ReserveInternal(
         row.armedCompletionSequence.store(0, std::memory_order_relaxed);
         row.sourcePublicationSequence = 0;
         row.startedBlockSequence.store(0, std::memory_order_relaxed);
+        row.actualStartFrame.store(UINT64_MAX, std::memory_order_relaxed);
         row.logicalCompletionSequence.store(0, std::memory_order_relaxed);
         row.frontierReaderPins.store(0, std::memory_order_relaxed);
         row.frontierLastReadSequence.store(0, std::memory_order_relaxed);
@@ -1581,6 +1583,42 @@ bool TimelineArmTable::ConsumePublicationAfterInstallation(
     return true;
 }
 
+bool TimelineArmTable::IssueContinuationPublicationAfterInstallation(const OriginalArmRowOwner& original,
+    const void* submission, ArmGroupTable& groups, ArmGroupToken group,
+    const QueueContinuationLane& continuation, GroupedPublicationAfterInstallation* out) noexcept {
+    if (out == nullptr || out->Valid() || original.owner_ != this || !original.Valid() ||
+        submission == nullptr || !group.Valid()) return false;
+    auto* row = original.row_;
+    ArmMutationAccess access(row);
+    ArmGroupSnapshot snapshot{};
+    ArmGroupMemberSnapshot member{};
+    AudioSliceLease* lease = nullptr;
+    if (!access || !IdentityMatches(*row, original.token_) ||
+        row->state.load(std::memory_order_acquire) != ArmState::PendingApply ||
+        row->pendingImmediateStart || !row->startBound || !row->parentGroup.Valid() ||
+        row->originalSourceSubmission != submission || row->originalSourceEpisode == 0 ||
+        !row->originalLifetimePinned.load(std::memory_order_acquire) ||
+        row->nativePrivateWithdrawn.load(std::memory_order_acquire) ||
+        row->authoredControl.operation != nullptr || row->frontierAdmission != nullptr ||
+        row->frontierAdmissionLease != nullptr ||
+        row->armedCompletionSequence.load(std::memory_order_acquire) != 0 ||
+        row->startedBlockSequence.load(std::memory_order_acquire) != 0 ||
+        !continuation.ProveInstallationPublication(original.token_, row->startFrame, &lease) ||
+        !groups.Capture(group, &snapshot) || snapshot.state != ArmGroupState::AwaitingAcks ||
+        snapshot.parent.slot != row->parentGroup.decision.slot ||
+        snapshot.parent.generation != row->parentGroup.decision.generation ||
+        snapshot.ackedCount != 0 || snapshot.tombstonedCount != 0 ||
+        !groups.CaptureMember(group, row->memberIndex, &member) || member.acked || member.tombstoned ||
+        !SameArm(member.token, original.token_)) return false;
+    out->owner_ = this; out->row_ = row; out->token_ = original.token_;
+    out->submission_ = submission; out->incarnation_ = incarnation_; out->episode_ = row->originalSourceEpisode;
+    out->frame_ = row->startFrame; out->deadline_ = row->armDeadline;
+    out->program_ = row->programGeneration; out->target_ = row->target;
+    out->groups_ = &groups; out->group_ = group; out->parent_ = row->parentGroup.decision;
+    out->member_ = row->memberIndex; out->lease_ = lease; out->continuation_ = true;
+    return true;
+}
+
 bool TimelineArmTable::IssueGroupedPublicationAfterInstallation(const OriginalArmRowOwner& original,
     const void* submission, ArmGroupTable& groups, ArmGroupToken group,
     const FrontierGroupBinding& binding, AudioSliceLease& lease,
@@ -1658,7 +1696,8 @@ bool TimelineArmTable::MatchesGroupedPublicationAfterInstallation(const SourceCo
         !SameArm(proof.token_, publication.token_)) return false;
     const auto& row = *proof.row_;
     const auto state = row.state.load(std::memory_order_acquire);
-    return IdentityMatches(row, publication.token_) && row.pendingImmediateStart && row.startBound &&
+    return IdentityMatches(row, publication.token_) &&
+        row.pendingImmediateStart == !publication.continuation_ && row.startBound &&
         row.parentGroup.decision.slot == publication.parent_.slot &&
         row.parentGroup.decision.generation == publication.parent_.generation && row.memberIndex == publication.member_ &&
         row.startFrame == publication.frame_ && row.armDeadline == publication.deadline_ &&
@@ -1666,8 +1705,10 @@ bool TimelineArmTable::MatchesGroupedPublicationAfterInstallation(const SourceCo
         row.originalSourceSubmission == publication.submission_ && row.originalSourceEpisode == publication.episode_ &&
         row.originalLifetimePinned.load(std::memory_order_acquire) &&
         !row.nativePrivateWithdrawn.load(std::memory_order_acquire) &&
-        row.frontierAdmission == publication.binding_ && row.frontierAdmissionLease == publication.lease_ &&
-        publication.groups_ != nullptr && publication.binding_ != nullptr && publication.lease_ != nullptr &&
+        row.frontierAdmission == publication.binding_ &&
+        row.frontierAdmissionLease == (publication.continuation_ ? nullptr : publication.lease_) &&
+        publication.groups_ != nullptr && (publication.continuation_ || publication.binding_ != nullptr) &&
+        publication.lease_ != nullptr &&
         ((state == ArmState::PendingApply && proof.completion_ == 0) ||
          (state == ArmState::Armed && proof.completion_ != 0));
 }
@@ -2386,7 +2427,7 @@ bool TimelineArmTable::ReleasePendingControlSourceReader(Row& control,
     return valid;
 }
 
-void TimelineArmTable::ApplyLaneStart(LaneAudioProof& proof) noexcept {
+void TimelineArmTable::ApplyLaneStart(LaneAudioProof& proof, std::uint64_t actualStartFrame) noexcept {
     assert(proof.Valid());
     if (LaneStartCancelled(proof)) {
         proof.row_->frontierLastReadSequence.store(proof.audioSequence_, std::memory_order_release);
@@ -2395,6 +2436,8 @@ void TimelineArmTable::ApplyLaneStart(LaneAudioProof& proof) noexcept {
         proof.Release();
         return;
     }
+    proof.row_->actualStartFrame.store(actualStartFrame == UINT64_MAX ? proof.row_->startFrame : actualStartFrame,
+        std::memory_order_relaxed);
     proof.row_->startedBlockSequence.store(proof.audioSequence_,
                                            std::memory_order_relaxed);
     proof.row_->frontierLastReadSequence.store(proof.audioSequence_,
@@ -2551,9 +2594,11 @@ TimelineArmOperationDisposition TimelineArmTable::ProvePlainAudioApply(TimelineA
     return TimelineArmOperationDisposition::Claimed;
 }
 
-void TimelineArmTable::ApplyPlainAudio(PlainAudioProof& proof) noexcept {
+void TimelineArmTable::ApplyPlainAudio(PlainAudioProof& proof, std::uint64_t actualStartFrame) noexcept {
     assert(proof.Valid());
     if (proof.starts_ || proof.transient_) {
+        proof.row_->actualStartFrame.store(actualStartFrame == UINT64_MAX ? proof.row_->startFrame : actualStartFrame,
+            std::memory_order_relaxed);
         proof.row_->startedBlockSequence.store(proof.sequence_, std::memory_order_relaxed);
         if (proof.transient_) {
             proof.row_->logicalCompletionSequence.store(proof.sequence_, std::memory_order_relaxed);
@@ -2618,7 +2663,7 @@ bool TimelineArmTable::Start(TimelineArmToken token) noexcept {
 }
 
 bool TimelineArmTable::Start(TimelineArmToken token,
-                             std::uint64_t blockSequence) noexcept {
+                             std::uint64_t blockSequence, std::uint64_t actualStartFrame) noexcept {
     Row* row = Resolve(token);
     ArmMutationAccess access(row);
     if (!access || row->nativePrivateWithdrawn.load(std::memory_order_acquire) ||
@@ -2628,6 +2673,8 @@ bool TimelineArmTable::Start(TimelineArmToken token,
     }
     const auto state = row->state.load(std::memory_order_acquire);
     if (state != ArmState::Published && state != ArmState::AudioClaimed) return false;
+    row->actualStartFrame.store(actualStartFrame == UINT64_MAX ? row->startFrame : actualStartFrame,
+        std::memory_order_relaxed);
     row->startedBlockSequence.store(blockSequence,
                                     std::memory_order_relaxed);
     if (Transition(row, ArmState::Published, ArmState::Started) ||
@@ -2635,6 +2682,7 @@ bool TimelineArmTable::Start(TimelineArmToken token,
         return true;
     }
     row->startedBlockSequence.store(0, std::memory_order_relaxed);
+    row->actualStartFrame.store(UINT64_MAX, std::memory_order_relaxed);
     return false;
 }
 
@@ -3191,15 +3239,19 @@ bool TimelineArmTable::ProveDeferredFrontierStart(TimelineArmToken token, const 
     return false;
 }
 
-void TimelineArmTable::ApplyBoundFrontierArm(BoundAudioProof& proof, bool completesControl) noexcept {
+void TimelineArmTable::ApplyBoundFrontierArm(BoundAudioProof& proof, bool completesControl,
+    std::uint64_t actualStartFrame) noexcept {
     assert(proof.Valid() && !proof.admissionOnly_ && proof.lease_ != nullptr && proof.binding_ != nullptr);
     const auto state = proof.lease_->Capture().state;
     assert(state == AudioSliceState::SliceClaimed || state == AudioSliceState::SliceClaimedWithInvalidation);
     (void)state;
     proof.row_->frontierOperation = proof.binding_->operation;
     proof.row_->frontierLastReadSequence.store(proof.sequence_, std::memory_order_release);
-    if (proof.starts_)
+    if (proof.starts_) {
+        proof.row_->actualStartFrame.store(actualStartFrame == UINT64_MAX ? proof.row_->startFrame : actualStartFrame,
+            std::memory_order_relaxed);
         proof.row_->startedBlockSequence.store(proof.sequence_, std::memory_order_relaxed);
+    }
     if (completesControl) {
         proof.row_->logicalCompletionSequence.store(proof.sequence_, std::memory_order_relaxed);
         proof.row_->tombstoneAudioSequence.store(proof.sequence_, std::memory_order_relaxed);
@@ -3617,6 +3669,7 @@ bool TimelineArmTable::Observe(
         row.armedCompletionSequence.load(std::memory_order_acquire);
     observation.startedBlockSequence =
         row.startedBlockSequence.load(std::memory_order_acquire);
+    observation.actualStartFrame = row.actualStartFrame.load(std::memory_order_acquire);
     observation.logicalCompletionSequence =
         row.logicalCompletionSequence.load(std::memory_order_acquire);
     observation.tombstoneAudioSequence =
@@ -3798,6 +3851,7 @@ bool TimelineArmTable::Reclaim(
         row->tombstoneAudioSequence.store(0, std::memory_order_relaxed);
         row->armedCompletionSequence.store(0, std::memory_order_relaxed);
         row->startedBlockSequence.store(0, std::memory_order_relaxed);
+    row->actualStartFrame.store(UINT64_MAX, std::memory_order_relaxed);
         row->logicalCompletionSequence.store(0,
                                              std::memory_order_relaxed);
     }

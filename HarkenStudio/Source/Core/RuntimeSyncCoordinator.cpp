@@ -1,5 +1,7 @@
 #include "RuntimeSyncCoordinator.h"
+#include <harken_playable_properties.g.h>
 
+#include <algorithm>
 #include <limits>
 #include <utility>
 
@@ -48,6 +50,51 @@ RuntimeSyncCoordinator::currentAuthoringRevision() const noexcept
 RuntimeSyncCoordinator::AllocationResult
 RuntimeSyncCoordinator::markCurrentWorldMutation()
 {
+    m_pendingMutations.full = true;
+    m_pendingMutations.properties.clear();
+    return allocateMutation();
+}
+
+RuntimeSyncCoordinator::AllocationResult
+RuntimeSyncCoordinator::markCurrentWorldPropertyMutation(
+    harkenstudio::ObjectId stableId, std::uint8_t propertyId)
+{
+    using Property = harkenplayableproperties::PlayablePropertyIdV1;
+    const auto property = static_cast<Property>(propertyId);
+    if (harkenstudio::IsNull(stableId)
+        || (property != Property::Volume && property != Property::Pitch
+            && property != Property::MakeUpGain))
+        return markCurrentWorldMutation();
+    if (!m_pendingMutations.full
+        && std::none_of(m_pendingMutations.properties.begin(),
+                        m_pendingMutations.properties.end(),
+                        [&](const auto& row) {
+                            return row.stableId == stableId
+                                && row.propertyId == propertyId;
+                        })) {
+        m_pendingMutations.properties.push_back({stableId, propertyId});
+    }
+    return allocateMutation();
+}
+
+const RuntimeSyncCoordinator::MutationSet&
+RuntimeSyncCoordinator::submittedMutations() const noexcept
+{
+    return m_submittedMutations;
+}
+
+bool RuntimeSyncCoordinator::isCurrentSubmission(
+    HarkenEditor::Bridge::CurrentWorldSyncToken token) const noexcept
+{
+    return m_runtimeActive && m_outstandingToken && token == *m_outstandingToken
+        && token.projectSessionId == m_projectSessionId
+        && token.runtimeEpoch == m_runtimeEpoch
+        && token.authoringRevision == m_latestAuthoringRevision;
+}
+
+RuntimeSyncCoordinator::AllocationResult
+RuntimeSyncCoordinator::allocateMutation()
+{
     if (m_latestAuthoringRevision == std::numeric_limits<AuthoringRevision>::max())
     {
         failIdentityExhausted();
@@ -80,6 +127,8 @@ RuntimeSyncCoordinator::beginProjectSession()
     m_coalescingTimer.stop();
     m_outstandingToken.reset();
     m_installedIdentity.reset();
+    m_pendingMutations = {true, {}};
+    m_submittedMutations = {};
     m_flushRequested = false;
     m_barrierState = m_runtimeActive
         ? RevisionBarrierState::Pending
@@ -103,6 +152,8 @@ RuntimeSyncCoordinator::AllocationState RuntimeSyncCoordinator::runtimeStarted()
     m_flushRequested = false;
     m_outstandingToken.reset();
     m_installedIdentity.reset();
+    m_pendingMutations = {true, {}};
+    m_submittedMutations = {};
     m_barrierState = RevisionBarrierState::Pending;
     m_failure = HarkenEditor::Bridge::CurrentWorldSyncStatus::Ok;
     emit barrierChanged();
@@ -133,10 +184,8 @@ bool RuntimeSyncCoordinator::hasOutstandingSubmission() const noexcept
 
 void RuntimeSyncCoordinator::flushPendingMutationNow()
 {
-    if (hasOutstandingSubmission()) {
-        m_flushRequested = true;
+    if (hasOutstandingSubmission())
         return;
-    }
     if (!m_coalescingTimer.isActive() && !m_flushRequested)
         return;
     m_coalescingTimer.stop();
@@ -172,6 +221,8 @@ void RuntimeSyncCoordinator::flushCurrentWorldMutation()
     token.authoringRevision = m_latestAuthoringRevision;
     token.runtimeEpoch = m_runtimeEpoch;
     token.submissionSerial = ++m_submissionSerial;
+    m_submittedMutations = std::move(m_pendingMutations);
+    m_pendingMutations = {};
     m_outstandingToken = token;
     m_barrierState = RevisionBarrierState::Pending;
     acceptCurrentWorldSyncResult(m_submit(token));
@@ -199,6 +250,16 @@ void RuntimeSyncCoordinator::acceptCurrentWorldSyncResult(
     if (result.pending())
         return;
     m_outstandingToken.reset();
+    if (result.token.authoringRevision != m_latestAuthoringRevision
+        && m_flushRequested) {
+        m_barrierState = RevisionBarrierState::Pending;
+        m_failure = HarkenEditor::Bridge::CurrentWorldSyncStatus::Ok;
+        if (m_runtimeActive && m_submissionBatchDepth == 0
+            && !m_coalescingTimer.isActive()) {
+            m_coalescingTimer.start();
+        }
+        return;
+    }
     if (result.ok()) {
         m_installedIdentity = InstalledWorldIdentity{
             result.token.projectSessionId,

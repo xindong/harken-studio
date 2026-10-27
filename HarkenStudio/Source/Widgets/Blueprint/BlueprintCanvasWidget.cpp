@@ -595,6 +595,8 @@ void BlueprintCanvasWidget::clearScene()
     // one by one, and removeItem emits selectionChanged synchronously when a selected
     // node is removed — that would re-enter onSceneSelectionChanged mid-teardown.
     nodeMap_.clear();
+    pathContentRefreshNodes_.clear();
+    pathNodeLayoutSizes_.clear();
     waveformNodes_.clear();
     inputVisibility_.clear();
     edges_.clear();
@@ -921,7 +923,7 @@ void BlueprintCanvasWidget::materializeFromSource_()
                     (static_cast<qreal>(lane) - (static_cast<qreal>(group.size()) - 1.0) / 2.0) * spacing);
         }
     }
-    applyTreeVisibility_();
+    applyTreeVisibility_(false);
     if (selectedObjectGuids_) {
         applyProjectItemSelection_();
     } else if (activeSource_ == pathSource_.get()
@@ -952,7 +954,6 @@ void BlueprintCanvasWidget::materializeFromSource_()
         }
         selectedPathKeys_ = std::move(restored);
         selectedPathEdgeKeys_ = std::move(restoredEdges);
-        if (selectedPathKeys_.empty() && selectedPathEdgeKeys_.empty()) emit selectionCleared();
     }
     refreshNodeTitles_();
     refreshNodeWaveforms_();
@@ -971,6 +972,7 @@ void BlueprintCanvasWidget::materializeFromSource_()
             linkFocus(signalPathNode(index));
         for (auto* node : gainNodes_) linkFocus(node);
     }
+    pathContentRefreshNodes_.clear();
     sceneBlocker.unblock();
     emit signalChainViewChanged();
 }
@@ -1114,13 +1116,18 @@ void BlueprintCanvasWidget::onItemRenamed(ProjectItem* ,
     scheduleChainRefresh_();
 }
 
-void BlueprintCanvasWidget::onItemPropertyChanged(ProjectItem* ,
+void BlueprintCanvasWidget::onItemPropertyChanged(ProjectItem* item,
                                                   const QString& propertyName)
 {
     refreshNodeTitles_();
     if (activeSource_ == pathSource_.get()) {
         if (propertyName == QLatin1String("dirty")) return;
-        queuePathRefresh_(propertyName == QLatin1String("volume"));
+        const bool contentOnly = propertyName == QLatin1String("volume")
+            || propertyName == QLatin1String("pitch")
+            || propertyName == QLatin1String("loopCount")
+            || propertyName == QLatin1String("scheduleOffsetSec");
+        if (contentOnly) queuePathContentRefresh_(item, propertyName);
+        else schedulePathRefresh_();
         return;
     }
     static const QSet<QString> structuralProps = {
@@ -1481,6 +1488,7 @@ void BlueprintCanvasWidget::clearExternalDrop_()
 
 void BlueprintCanvasWidget::onSceneSelectionChanged()
 {
+    selectionClickObjectID_ = 0;
     if (activeSource_ == pathSource_.get()) {
         const QSignalBlocker blocker(scene_);
         for (size_t index = 0; index < edges_.size(); ++index) {
@@ -2185,7 +2193,7 @@ bool BlueprintCanvasWidget::viewportEvent(QEvent* event)
 
 void BlueprintCanvasWidget::mousePressEvent(QMouseEvent* event)
 {
-    auditionClickObjectID_ = 0;
+    selectionClickObjectID_ = 0;
     if (dragSourcePin_) {
         if (event->button() == Qt::RightButton) cancelConnection_();
         event->accept();
@@ -2238,12 +2246,14 @@ void BlueprintCanvasWidget::mousePressEvent(QMouseEvent* event)
     }
     if (event->button() == Qt::LeftButton && event->modifiers() == Qt::NoModifier) {
         auto* node = dynamic_cast<NodeItem*>(itemAt(event->pos()));
-        auto* item = node && node->isSelected() && !node->routeGainMode()
-            ? ProjectManager::instance().findItemByObjectID(node->objectID()) : nullptr;
-        if (item && ItemTypeCatalog::isTriggerable(item->type)
-            && ItemTypeCatalog::isUserFacingType(item->type)) {
-            auditionClickObjectID_ = node->objectID();
-            auditionClickStart_ = event->pos();
+        if (node && node->isSelected() && !node->routeGainMode()) {
+            auto& manager = ProjectManager::instance();
+            auto* item = manager.findItemByObjectID(node->objectID());
+            if (!item) item = manager.findBusItem(node->objectID());
+            if (item && ItemTypeCatalog::isUserFacingType(item->type)) {
+                selectionClickObjectID_ = node->objectID();
+                selectionClickStart_ = event->pos();
+            }
         }
     }
     BlueprintCanvasView::mousePressEvent(event);
@@ -2259,9 +2269,9 @@ void BlueprintCanvasWidget::mousePressEvent(QMouseEvent* event)
 
 void BlueprintCanvasWidget::mouseMoveEvent(QMouseEvent* event)
 {
-    if (auditionClickObjectID_
-        && (event->pos() - auditionClickStart_).manhattanLength() >= QApplication::startDragDistance())
-        auditionClickObjectID_ = 0;
+    if (selectionClickObjectID_
+        && (event->pos() - selectionClickStart_).manhattanLength() >= QApplication::startDragDistance())
+        selectionClickObjectID_ = 0;
     if (dragSourcePin_ != nullptr) {
         if (!tempPath_) {
             if ((event->pos() - connectStartPosition_).manhattanLength() < QApplication::startDragDistance()) {
@@ -2286,8 +2296,6 @@ void BlueprintCanvasWidget::mouseMoveEvent(QMouseEvent* event)
 
 void BlueprintCanvasWidget::mouseReleaseEvent(QMouseEvent* event)
 {
-    const uint32_t auditionObjectID = auditionClickObjectID_;
-    auditionClickObjectID_ = 0;
     if (dragSourcePin_ && !tempPath_ && event->button() == Qt::LeftButton
         && (event->pos() - connectStartPosition_).manhattanLength() >= QApplication::startDragDistance())
         beginConnectionDrag_(event->pos());
@@ -2359,11 +2367,13 @@ void BlueprintCanvasWidget::mouseReleaseEvent(QMouseEvent* event)
         return;
     }
     BlueprintCanvasView::mouseReleaseEvent(event);
-    if (auditionObjectID && event->button() == Qt::LeftButton
-        && (event->pos() - auditionClickStart_).manhattanLength() < QApplication::startDragDistance()) {
+    const uint32_t selectedObjectID = selectionClickObjectID_;
+    selectionClickObjectID_ = 0;
+    if (selectedObjectID && event->button() == Qt::LeftButton
+        && (event->pos() - selectionClickStart_).manhattanLength() < QApplication::startDragDistance()) {
         auto* node = dynamic_cast<NodeItem*>(itemAt(event->pos()));
-        if (node && node->isSelected() && node->objectID() == auditionObjectID)
-            emit auditionTargetRequested(auditionObjectID);
+        if (node && node->isSelected() && node->objectID() == selectedObjectID)
+            emit nodeSelected(selectedObjectID);
     }
     if (event->button() == Qt::LeftButton && !pathDragStartPositions_.empty()) {
         NodePin* pin = nullptr;
@@ -2464,6 +2474,7 @@ void BlueprintCanvasWidget::layoutPathNodes_()
         signalPathNode(index)->setPos(layout.nodePositions[index]);
     for (size_t index = 0; index < layout.gainPositions.size(); ++index)
         if (layout.gainPositions[index]) gainNodes_[index]->setPos(*layout.gainPositions[index]);
+    pathNodeLayoutSizes_ = std::move(sizes);
 }
 
 void BlueprintCanvasWidget::applyPathPositions_(const PathPositions& positions)
@@ -3197,6 +3208,7 @@ void BlueprintCanvasWidget::clear()
     pathSceneState_.reset();
     pathRefreshPending_ = false;
     pathContentOnlyRefresh_ = false;
+    pathContentRefreshNodes_.clear();
     projectView_ = true;
     selectedPathKeys_.clear();
     selectedPathEdgeKeys_.clear();
@@ -3273,6 +3285,14 @@ void BlueprintCanvasWidget::schedulePathRefresh_()
     queuePathRefresh_(false);
 }
 
+void BlueprintCanvasWidget::queuePathContentRefresh_(ProjectItem* item, const QString& propertyName)
+{
+    if (!item || activeSource_ != pathSource_.get() || !projectView_) return;
+    for (const size_t index : pathSource_->refreshNodeContents(*item, propertyName))
+        pathContentRefreshNodes_.insert(index);
+    queuePathRefresh_(true);
+}
+
 void BlueprintCanvasWidget::queuePathRefresh_(bool contentOnly)
 {
     if (activeSource_ != pathSource_.get() || !projectView_) return;
@@ -3299,11 +3319,15 @@ void BlueprintCanvasWidget::refreshPathContents_()
     }
     pathRefreshPending_ = false;
     pathContentOnlyRefresh_ = false;
-    pathSource_->refreshNodeContents(*project);
-    const auto nodes = pathSource_->buildNodes();
-    for (size_t index = 0; index < nodes.size(); ++index)
-        signalPathNode(index)->setContentInfo(nodes[index].content);
-    layoutPathNodes_();
+    bool layoutChanged = false;
+    const auto nodes = std::exchange(pathContentRefreshNodes_, {});
+    for (const size_t index : nodes) {
+        auto* node = signalPathNode(index);
+        node->setContentInfo(pathSource_->nodeContentInfo(index));
+        layoutChanged = layoutChanged
+            || node->shape().boundingRect().size() != pathNodeLayoutSizes_[index];
+    }
+    if (layoutChanged) layoutPathNodes_();
     refreshNodeTitles_();
     refreshPlaybackActivity_();
     refreshPathFocus_();
@@ -3315,6 +3339,7 @@ void BlueprintCanvasWidget::refreshProjectPaths_()
     if (activeSource_ != pathSource_.get() || !projectView_) return;
     pathRefreshPending_ = false;
     pathContentOnlyRefresh_ = false;
+    pathContentRefreshNodes_.clear();
     const auto* project = ProjectManager::instance().currentProject();
     if (!project) { clear(); return; }
     pathProjectId_ = project->projectId;
@@ -3325,7 +3350,7 @@ void BlueprintCanvasWidget::refreshProjectPaths_()
     pathSource_->loadGraph(*project, buildProjectSignalPathGraph(*project, platform, groups), groups);
 }
 
-void BlueprintCanvasWidget::applyTreeVisibility_()
+void BlueprintCanvasWidget::applyTreeVisibility_(bool publishSelection)
 {
     const auto* source = activeSignalPathSource();
     const auto* project = ProjectManager::instance().currentProject();
@@ -3392,7 +3417,7 @@ void BlueprintCanvasWidget::applyTreeVisibility_()
             setVisible(signalPathGainOutputEdge(index), visible);
         }
     }
-    if (selectionChanged) onSceneSelectionChanged();
+    if (selectionChanged && publishSelection) onSceneSelectionChanged();
     refreshChainPins_();
     if (hierarchyChanged) emit hierarchyCollapseChanged();
     if (busesChanged) emit busCollapseChanged();

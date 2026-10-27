@@ -32,6 +32,8 @@ class QTreeWidget;
 
 namespace VNH {
 
+class DialogTextView;
+
 enum class EngineKind;
 struct EngineTargetRecord;
 struct InstalledVersion;
@@ -146,6 +148,7 @@ private:
                                      std::optional<IntegrationOperation> operation = std::nullopt);
     void scanStopped();
     void showSdkResolution();
+    QString selectedIntegrationPackageName() const;
     void updatePrimaryAction();
     void refreshEngineRunningHint();
     void updateSdkSelectionContext();
@@ -213,9 +216,11 @@ private:
     QLineEdit* harkenProjectEdit_ = nullptr;
     QLineEdit* engineProjectEdit_ = nullptr;
     QComboBox* sdkSourceCombo_ = nullptr;
+    QLabel* sdkSourceLabel_ = nullptr;
     QLineEdit* sdkPathEdit_ = nullptr;
     QPushButton* sdkSourceBrowseButton_ = nullptr;
     QLineEdit* sdkInstallPathEdit_ = nullptr;
+    QLabel* sdkInstallLabel_ = nullptr;
     QPushButton* sdkInstallBrowseButton_ = nullptr;
     QPushButton* backButton_ = nullptr;
     QPushButton* harkenBrowseButton_ = nullptr;
@@ -223,15 +228,15 @@ private:
     QPushButton* checkButton_ = nullptr;
     QPushButton* sdkCheckButton_ = nullptr;
     QDialog* sdkSelectionDialog_ = nullptr;
-    QLabel* sdkSelectionContext_ = nullptr;
-    QLabel* sdkSelectionSummary_ = nullptr;
-    QLabel* sdkSafetyHint_ = nullptr;
+    DialogTextView* sdkSelectionContext_ = nullptr;
+    DialogTextView* sdkSelectionSummary_ = nullptr;
+    DialogTextView* sdkSafetyHint_ = nullptr;
     QTimer* engineStatusTimer_ = nullptr;
     QPlainTextEdit* sdkSelectionPaths_ = nullptr;
     IntegrationTaskProgress* sdkProgress_ = nullptr;
     QPushButton* sdkReportButton_ = nullptr;
     QTabWidget* sdkResultsTabs_ = nullptr;
-    QLabel* sdkDiffSummary_ = nullptr;
+    DialogTextView* sdkDiffSummary_ = nullptr;
     QTreeWidget* sdkDiffTree_ = nullptr;
     QTextBrowser* sdkSelectionDetails_ = nullptr;
     QPushButton* integrateButton_ = nullptr;

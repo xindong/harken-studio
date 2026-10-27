@@ -233,7 +233,7 @@ struct ResampleFilterSectionState {
 };
 
 struct ResamplerParkState {
-    static constexpr std::uint32_t kFormatVersion = 4;
+    static constexpr std::uint32_t kFormatVersion = 5;
 
     std::uint32_t formatVersion = kFormatVersion;
     std::uint32_t usedBytes = 0;
@@ -261,6 +261,8 @@ struct ResamplerParkState {
     bool topologyTransitionsEnabled = true;
     std::uint64_t legacyReadIndex = 0;
     double legacyReadFraction = 0.0;
+    std::uint64_t legacyPhaseHigh = 0;
+    std::uint64_t legacyPhaseLow = 0;
     std::uint64_t legacyWriteIndex = 0;
     std::uint64_t legacyInputEndIndex = 0;
     bool legacyInputEnded = false;
@@ -312,6 +314,8 @@ struct ResamplerView {
     std::uint32_t rampRemaining = 0;
     std::uint64_t readIndex = 0; // exact integer interpolation center
     double readFraction = 0.0;   // bounded fractional phase in [0, 1)
+    std::uint64_t phaseHigh = 0;
+    std::uint64_t phaseLow = 0;
     double readPos = 0.0;        // derived diagnostic mirror
     std::uint64_t writeIndex = 0;  // absolute input frames written
     std::uint64_t inputEndIndex = 0; // absolute end of real input, valid

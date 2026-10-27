@@ -15,6 +15,8 @@ struct CompletionProgressSnapshot {
     std::uint64_t logicalOutputFramesProduced = 0;
     std::uint64_t resamplerSourceFrame = 0;
     double resamplerSourceFraction = 0.0;
+    std::uint64_t resamplerPhaseHigh = 0;
+    std::uint64_t resamplerPhaseLow = 0;
     double currentRatio = 1.0;
     double targetRatio = 1.0;
     double rampStep = 0.0;
@@ -71,6 +73,8 @@ struct CompletionProgressBlockUpdate {
     std::uint32_t sourceOutputFramesThisBlock = 0;
     std::uint64_t resamplerSourceFrame = 0;
     double resamplerSourceFraction = 0.0;
+    std::uint64_t resamplerPhaseHigh = 0;
+    std::uint64_t resamplerPhaseLow = 0;
     double currentRatio = 1.0;
     double targetRatio = 1.0;
     double rampStep = 0.0;

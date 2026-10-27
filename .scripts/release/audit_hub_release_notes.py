@@ -56,6 +56,10 @@ def validate(catalog):
     for entry in releases:
         if not entry.get("date"):
             fail(f"release {entry.get('version')} has no date")
+        if "introduction" in entry and (
+            not isinstance(entry["introduction"], str) or not entry["introduction"].strip()
+        ):
+            fail(f"release {entry.get('version')} has an invalid introduction")
         changes = entry.get("changes")
         if not isinstance(changes, list) or not changes:
             fail(f"release {entry.get('version')} has no user-facing changes")

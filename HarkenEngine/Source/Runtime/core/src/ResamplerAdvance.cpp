@@ -1,48 +1,21 @@
 #include "harken/core/ResamplerAdvance.h"
 
+#include <algorithm>
 #include <cmath>
-#include <limits>
 
 namespace harken {
 namespace {
 
-constexpr double kExactIntegerLimit = 9007199254740992.0; // 2^53
-
-bool FinitePositive(double value) noexcept {
-    return std::isfinite(value) && value > 0.0;
-}
-
-bool FiniteFraction(double value) noexcept {
-    return std::isfinite(value) && value >= 0.0 && value < 1.0;
-}
-
-bool AddU64(std::uint64_t left, std::uint64_t right,
-            std::uint64_t* out) noexcept {
-    if (out == nullptr || left > UINT64_MAX - right) {
-        return false;
-    }
-    *out = left + right;
+bool AddU64(std::uint64_t a, std::uint64_t b, std::uint64_t* out) noexcept {
+    if (a > UINT64_MAX - b) return false;
+    *out = a + b;
     return true;
 }
 
-bool ValidRegion(const ResamplerAdvanceState& state) noexcept {
-    if (state.pcmFrameCount == 0 ||
-        state.sourceStartFrame > state.pcmFrameCount ||
-        state.sourceIntegerFrame > state.pcmFrameCount ||
-        !FiniteFraction(state.sourceFraction) ||
-        !FinitePositive(state.currentRatio) ||
-        !FinitePositive(state.targetRatio) ||
-        !std::isfinite(state.rampStep)) {
-        return false;
-    }
-    if (state.loopEndFrame < state.loopStartFrame ||
-        state.loopEndFrame > state.pcmFrameCount) {
-        return false;
-    }
-    if (state.hasExitMarker &&
-        state.exitMarkerSourceFrame >= state.pcmFrameCount) {
-        return false;
-    }
+bool AddPasses(std::uint64_t first, std::uint64_t passes, std::uint64_t length,
+               std::uint64_t* out) noexcept {
+    if (passes != 0 && length > (UINT64_MAX - first) / passes) return false;
+    *out = first + passes * length;
     return true;
 }
 
@@ -51,526 +24,230 @@ bool CanWrap(const ResamplerAdvanceState& state) noexcept {
            (state.loopInfinite || state.loopsRemaining > 1u);
 }
 
-std::uint64_t LoopLength(const ResamplerAdvanceState& state) noexcept {
-    return state.loopEndFrame - state.loopStartFrame;
+bool NaturalDistance(const ResamplerAdvanceState& state, std::uint64_t* out) noexcept {
+    if (state.loopInfinite) return false;
+    const auto passes = CanWrap(state) ? state.loopsRemaining - 1u : 0u;
+    return AddPasses(state.pcmFrameCount - state.sourceIntegerFrame,
+        passes, state.loopEndFrame - state.loopStartFrame, out);
 }
 
-bool LastPass(const ResamplerAdvanceState& state) noexcept {
-    return !state.loopInfinite && state.loopsRemaining <= 1u;
-}
+struct BoundaryShape {
+    std::uint64_t first = 0;
+    std::uint64_t period = 0;
+    std::uint64_t maxExtra = 0;
+    bool naturalFallback = false;
+    bool available = false;
+};
 
-double SourcePosition(const ResamplerAdvanceState& state) noexcept {
-    return static_cast<double>(state.sourceIntegerFrame) +
-           state.sourceFraction;
-}
-
-bool CeilOutputFrames(double sourceRemaining, double ratio,
-                      std::uint64_t* out) noexcept {
-    if (out == nullptr || !FinitePositive(ratio) ||
-        !std::isfinite(sourceRemaining)) {
-        return false;
-    }
-    if (sourceRemaining <= 0.0) {
-        *out = 0;
+bool DescribeBoundary(const ResamplerAdvanceState& state, ResamplerBoundaryKind kind,
+                      BoundaryShape* out) noexcept {
+    *out = {};
+    if (kind == ResamplerBoundaryKind::NaturalEnd ||
+        (kind == ResamplerBoundaryKind::CurrentLoopEnd && !CanWrap(state))) {
+        if (state.loopInfinite) return true;
+        if (!NaturalDistance(state, &out->first)) return false;
+        out->available = out->first != 0;
         return true;
     }
-    const double raw = std::ceil(sourceRemaining / ratio);
-    if (!std::isfinite(raw) || raw < 0.0 || raw >= kExactIntegerLimit) {
-        return false;
+    if (kind == ResamplerBoundaryKind::CurrentLoopEnd) {
+        if (state.sourceIntegerFrame >= state.loopEndFrame) return true;
+        out->first = state.loopEndFrame - state.sourceIntegerFrame;
+        out->period = state.loopEndFrame - state.loopStartFrame;
+        out->maxExtra = state.loopInfinite ? UINT64_MAX : state.loopsRemaining - 2u;
+        out->naturalFallback = !state.loopInfinite;
+        out->available = true;
+        return true;
     }
-    auto frames = static_cast<std::uint64_t>(raw);
-    while (frames < UINT64_MAX &&
-           static_cast<double>(frames) * ratio < sourceRemaining) {
-        ++frames;
+    if (kind != ResamplerBoundaryKind::ExitMarker || !state.hasExitMarker) return true;
+    const auto marker = state.exitMarkerSourceFrame;
+    if (marker < state.loopStartFrame) {
+        if (state.completedLoopPasses != 0 || state.sourceIntegerFrame >= marker) return true;
+        out->first = marker - state.sourceIntegerFrame;
+    } else if (marker >= state.loopEndFrame) {
+        if (state.loopInfinite) return true;
+        std::uint64_t remaining = 0;
+        if (!NaturalDistance(state, &remaining)) return false;
+        const auto afterMarker = state.pcmFrameCount - marker;
+        if (remaining <= afterMarker) return true;
+        out->first = remaining - afterMarker;
+    } else {
+        out->period = CanWrap(state) ? state.loopEndFrame - state.loopStartFrame : 0;
+        out->maxExtra = state.loopInfinite ? UINT64_MAX : state.loopsRemaining > 0
+            ? state.loopsRemaining - 1u : 0;
+        if (state.sourceIntegerFrame < marker) {
+            out->first = marker - state.sourceIntegerFrame;
+        } else {
+            if (!CanWrap(state) || state.sourceIntegerFrame >= state.loopEndFrame) return true;
+            if (!AddU64(state.loopEndFrame - state.sourceIntegerFrame,
+                    marker - state.loopStartFrame, &out->first)) return false;
+            if (!state.loopInfinite) --out->maxExtra;
+        }
     }
-    while (frames > 0u &&
-           static_cast<double>(frames - 1u) * ratio >= sourceRemaining) {
-        --frames;
-    }
-    *out = frames;
+    out->available = out->first != 0;
     return true;
 }
 
-bool AdvanceOneOutput(ResamplerAdvanceState* state) noexcept {
-    if (state == nullptr) {
-        return false;
-    }
-    double frameRatio = state->currentRatio;
+bool AdvanceOneOutput(ResamplerAdvanceState* state, std::uint64_t* whole) noexcept {
     if (state->rampRemaining != 0) {
-        frameRatio += state->rampStep;
-        if (state->rampRemaining == 1u) {
-            frameRatio = state->targetRatio;
-        }
-        if (!FinitePositive(frameRatio)) {
-            return false;
-        }
-        state->currentRatio = frameRatio;
-        --state->rampRemaining;
+        state->currentRatio += state->rampStep;
+        if (--state->rampRemaining == 0) state->currentRatio = state->targetRatio;
     }
-    const double advanced = state->sourceFraction + frameRatio;
-    if (!std::isfinite(advanced) || advanced < 0.0) {
-        return false;
-    }
-    const double whole = std::floor(advanced);
-    if (whole >= kExactIntegerLimit) {
-        return false;
-    }
-    const auto wholeFrames = static_cast<std::uint64_t>(whole);
-    if (!AddU64(state->sourceIntegerFrame, wholeFrames,
-                &state->sourceIntegerFrame)) {
-        return false;
-    }
-    state->sourceFraction = advanced - whole;
-    if (CanWrap(*state)) {
-        const std::uint64_t length = LoopLength(*state);
-        while (state->sourceIntegerFrame >= state->loopEndFrame) {
-            state->sourceIntegerFrame =
-                state->sourceIntegerFrame - state->loopEndFrame +
-                state->loopStartFrame;
-            if (state->completedLoopPasses < UINT32_MAX) {
-                ++state->completedLoopPasses;
-            }
-            if (!state->loopInfinite) {
-                --state->loopsRemaining;
-            }
-            if (!CanWrap(*state)) {
-                break;
-            }
-            if (length == 0) {
-                return false;
-            }
-        }
-    }
+    SourcePhaseStep step{};
+    if (!DecodeSourcePhaseStep(state->currentRatio, &step)) return false;
+    *whole = StepSourcePhase(step, &state->sourcePhase);
+    const auto completed = state->completedLoopPasses;
+    SetResamplerConsumedPosition(state, state->sourceIntegerFrame,
+        state->loopInfinite ? 0u : state->loopsRemaining, *whole);
+    state->completedLoopPasses = static_cast<std::uint32_t>(std::min<std::uint64_t>(
+        UINT32_MAX, static_cast<std::uint64_t>(completed) + state->completedLoopPasses));
     return true;
-}
-
-bool AbsoluteNow(const ResamplerAdvanceState& state,
-                 std::uint64_t outputOffset, std::uint64_t* out) noexcept {
-    std::uint64_t produced = 0;
-    return AddU64(state.absoluteStartFrame,
-                  state.logicalOutputFramesProduced, &produced) &&
-           AddU64(produced, outputOffset, out);
-}
-
-bool NaturalEndSourceRemaining(const ResamplerAdvanceState& state,
-                               double* out) noexcept {
-    if (out == nullptr || state.loopInfinite) {
-        return false;
-    }
-    const double position = SourcePosition(state);
-    if (LastPass(state)) {
-        const double remaining =
-            static_cast<double>(state.pcmFrameCount) - position;
-        if (!std::isfinite(remaining)) {
-            return false;
-        }
-        *out = remaining;
-        return true;
-    }
-    if (state.loopEndFrame <= state.loopStartFrame) {
-        const double remaining =
-            static_cast<double>(state.pcmFrameCount) - position;
-        if (!std::isfinite(remaining)) {
-            return false;
-        }
-        *out = remaining;
-        return true;
-    }
-    const double toWrap =
-        static_cast<double>(state.loopEndFrame) - position;
-    const std::uint32_t extraPasses =
-        state.loopsRemaining > 1u ? state.loopsRemaining - 2u : 0u;
-    const double middle =
-        static_cast<double>(extraPasses) *
-        static_cast<double>(LoopLength(state));
-    const double last =
-        static_cast<double>(state.pcmFrameCount) -
-        static_cast<double>(state.loopStartFrame);
-    const double remaining = toWrap + middle + last;
-    if (!std::isfinite(toWrap) || !std::isfinite(middle) ||
-        !std::isfinite(last) || !std::isfinite(remaining)) {
-        return false;
-    }
-    *out = remaining;
-    return true;
-}
-
-bool MarkerInLoopRegion(const ResamplerAdvanceState& state) noexcept {
-    return state.hasExitMarker &&
-           state.exitMarkerSourceFrame >= state.loopStartFrame &&
-           state.exitMarkerSourceFrame < state.loopEndFrame;
-}
-
-bool MarkerInIntro(const ResamplerAdvanceState& state) noexcept {
-    return state.hasExitMarker &&
-           state.exitMarkerSourceFrame < state.loopStartFrame;
-}
-
-bool MarkerInOutro(const ResamplerAdvanceState& state) noexcept {
-    return state.hasExitMarker &&
-           state.exitMarkerSourceFrame >= state.loopEndFrame;
 }
 
 } // namespace
+
+void MapLoopedSourceFrame(std::uint64_t baseFrame,
+                      std::uint32_t baseLoopsRemaining,
+                      std::uint64_t advance,
+                      std::uint64_t frameCount,
+                      std::uint64_t loopStart,
+                      std::uint64_t loopEnd,
+                      std::uint64_t* outFrame,
+                      std::uint32_t* outLoopsRemaining) noexcept {
+    std::uint64_t frame = baseFrame;
+    std::uint32_t remaining = baseLoopsRemaining;
+
+    if (remaining == 1 || loopEnd <= loopStart) {
+        const std::uint64_t room = frame < frameCount ? frameCount - frame : 0;
+        frame += std::min(advance, room);
+    } else if (remaining == 0) {
+        const std::uint64_t first =
+            frame < loopEnd ? loopEnd - frame : 0;
+        if (advance < first) {
+            frame += advance;
+        } else {
+            const std::uint64_t span = loopEnd - loopStart;
+            frame = loopStart + ((advance - first) % span);
+        }
+    } else {
+        const std::uint64_t first =
+            frame < loopEnd ? loopEnd - frame : 0;
+        if (advance < first) {
+            frame += advance;
+        } else {
+            std::uint64_t left = advance - first;
+            --remaining;
+            frame = loopStart;
+            const std::uint64_t span = loopEnd - loopStart;
+            if (remaining > 1 && left >= span) {
+                const std::uint64_t crossed =
+                    std::min<std::uint64_t>(remaining - 1,
+                                            left / span);
+                remaining -= static_cast<std::uint32_t>(crossed);
+                left -= crossed * span;
+            }
+            if (remaining > 1) {
+                frame = loopStart + left;
+            } else {
+                const std::uint64_t room =
+                    loopStart < frameCount ? frameCount - loopStart : 0;
+                frame = loopStart + std::min(left, room);
+            }
+        }
+    }
+    *outFrame = frame;
+    *outLoopsRemaining = remaining;
+}
+
+void SetResamplerConsumedPosition(ResamplerAdvanceState* state,
+                                  std::uint64_t baseFrame,
+                                  std::uint32_t baseLoopsRemaining,
+                                  std::uint64_t consumedSourceFrames) noexcept {
+    if (state == nullptr) return;
+    MapLoopedSourceFrame(baseFrame, baseLoopsRemaining, consumedSourceFrames,
+        state->pcmFrameCount, state->loopStartFrame, state->loopEndFrame,
+        &state->sourceIntegerFrame, &state->loopsRemaining);
+    std::uint64_t passes = baseLoopsRemaining != 0
+        ? baseLoopsRemaining - state->loopsRemaining : 0;
+    if (baseLoopsRemaining == 0 && state->loopEndFrame > state->loopStartFrame) {
+        const auto first = baseFrame < state->loopEndFrame ? state->loopEndFrame - baseFrame : 0;
+        if (consumedSourceFrames >= first) {
+            const auto extra = (consumedSourceFrames - first) /
+                (state->loopEndFrame - state->loopStartFrame);
+            passes = extra == UINT64_MAX ? UINT64_MAX : extra + 1u;
+        }
+    }
+    state->completedLoopPasses = static_cast<std::uint32_t>(std::min<std::uint64_t>(UINT32_MAX, passes));
+}
 
 bool ResolveResamplerBoundary(ResamplerAdvanceState state,
                               ResamplerBoundaryKind kind,
                               std::uint64_t delayedFrame,
                               ResamplerBoundaryResult* out) noexcept {
-    if (out == nullptr) {
-        return false;
-    }
+    if (out == nullptr) return false;
     *out = {};
-    if (!ValidRegion(state)) {
-        return true;
-    }
-    if (kind == ResamplerBoundaryKind::ExitMarker && !state.hasExitMarker) {
-        return true;
-    }
-    if (kind == ResamplerBoundaryKind::NaturalEnd && state.loopInfinite) {
-        return true;
-    }
-
-    std::uint64_t outputOffset = 0;
-    auto crossed = [&](std::uint32_t wrapsBefore, std::uint64_t integerBefore,
-                       bool lastBefore) -> bool {
-        if (kind == ResamplerBoundaryKind::NaturalEnd) {
-            return !state.loopInfinite &&
-                   state.sourceIntegerFrame >= state.pcmFrameCount;
-        }
-        if (kind == ResamplerBoundaryKind::CurrentLoopEnd) {
-            if (state.completedLoopPasses > wrapsBefore) {
-                return true;
-            }
-            return lastBefore &&
-                   state.sourceIntegerFrame >= state.pcmFrameCount;
-        }
-        if (kind != ResamplerBoundaryKind::ExitMarker || !state.hasExitMarker) {
-            return false;
-        }
-        if (integerBefore < state.exitMarkerSourceFrame &&
-            state.sourceIntegerFrame >= state.exitMarkerSourceFrame) {
-            return true;
-        }
-        if (state.completedLoopPasses > wrapsBefore && MarkerInLoopRegion(state) &&
-            state.sourceIntegerFrame >= state.exitMarkerSourceFrame) {
-            return true;
-        }
-        return false;
-    };
-
-    while (state.rampRemaining != 0) {
-        const std::uint32_t wrapsBefore = state.completedLoopPasses;
-        const std::uint64_t integerBefore = state.sourceIntegerFrame;
-        const bool lastBefore = LastPass(state);
-        if (!AdvanceOneOutput(&state)) {
-            return false;
-        }
-        if (!AddU64(outputOffset, 1u, &outputOffset)) {
-            return false;
-        }
-        if (crossed(wrapsBefore, integerBefore, lastBefore)) {
-            std::uint64_t absolute = 0;
-            if (!AbsoluteNow(state, outputOffset, &absolute)) {
-                return false;
-            }
-            if (absolute > delayedFrame) {
-                out->available = true;
-                out->outputFrame = absolute;
-                return true;
-            }
-            if (kind == ResamplerBoundaryKind::NaturalEnd) {
-                return true;
-            }
-        }
-        if (!state.loopInfinite &&
-            state.sourceIntegerFrame >= state.pcmFrameCount) {
-            return true;
-        }
-    }
-
-    const double ratio = state.currentRatio;
-    const double position = SourcePosition(state);
+    SourcePhaseStep step{};
+    if (state.pcmFrameCount == 0 || state.sourceIntegerFrame > state.pcmFrameCount ||
+        state.sourceStartFrame > state.pcmFrameCount ||
+        state.loopStartFrame > state.loopEndFrame || state.loopEndFrame > state.pcmFrameCount ||
+        (state.hasExitMarker && state.exitMarkerSourceFrame >= state.pcmFrameCount) ||
+        !DecodeSourcePhaseStep(state.currentRatio, &step) ||
+        !DecodeSourcePhaseStep(state.targetRatio, &step) || !std::isfinite(state.rampStep)) return true;
     std::uint64_t produced = 0;
-    if (!AddU64(state.absoluteStartFrame, state.logicalOutputFramesProduced,
-                &produced) ||
-        !AddU64(produced, outputOffset, &produced)) {
-        return false;
-    }
-    const std::uint64_t needN =
-        delayedFrame < produced ? 0 : delayedFrame - produced + 1u;
+    if (!AddU64(state.absoluteStartFrame, state.logicalOutputFramesProduced, &produced)) return false;
 
-    if (kind == ResamplerBoundaryKind::NaturalEnd) {
-        double remaining = 0.0;
-        if (!NaturalEndSourceRemaining(state, &remaining)) {
-            return true;
-        }
-        std::uint64_t frames = 0;
-        if (!CeilOutputFrames(remaining, ratio, &frames)) {
-            return false;
-        }
-        std::uint64_t absolute = 0;
-        if (!AddU64(produced, frames, &absolute)) {
-            return false;
-        }
-        if (absolute > delayedFrame && frames != 0) {
+    // Only an in-flight ramp needs per-frame work, using the DSP's exact Step.
+    while (state.rampRemaining != 0) {
+        BoundaryShape boundary{};
+        if (!DescribeBoundary(state, kind, &boundary)) return false;
+        if (!boundary.available) return true;
+        std::uint64_t whole = 0;
+        if (!AdvanceOneOutput(&state, &whole) || !AddU64(produced, 1, &produced)) return false;
+        if (whole >= boundary.first && produced > delayedFrame) {
             out->available = true;
-            out->outputFrame = absolute;
+            out->outputFrame = produced;
+            return true;
         }
-        return true;
     }
+    BoundaryShape boundary{};
+    if (!DescribeBoundary(state, kind, &boundary)) return false;
+    if (!boundary.available || !DecodeSourcePhaseStep(state.currentRatio, &step)) return true;
 
-    if (kind == ResamplerBoundaryKind::CurrentLoopEnd) {
-        if (LastPass(state) || state.loopEndFrame <= state.loopStartFrame) {
-            double remaining =
-                static_cast<double>(state.pcmFrameCount) - position;
-            std::uint64_t frames = 0;
-            if (!std::isfinite(remaining) ||
-                !CeilOutputFrames(remaining, ratio, &frames)) {
-                return false;
-            }
-            std::uint64_t absolute = 0;
-            if (!AddU64(produced, frames, &absolute)) {
-                return false;
-            }
-            if (absolute > delayedFrame && frames != 0) {
-                out->available = true;
-                out->outputFrame = absolute;
-            }
-            return true;
-        }
-
-        const double first =
-            static_cast<double>(state.loopEndFrame) - position;
-        const double length = static_cast<double>(LoopLength(state));
-        if (!std::isfinite(first) || !std::isfinite(length) || length <= 0.0) {
-            return false;
-        }
-        std::uint64_t firstFrames = 0;
-        if (!CeilOutputFrames(first, ratio, &firstFrames)) {
-            return false;
-        }
-        if (firstFrames >= needN) {
-            std::uint64_t absolute = 0;
-            if (!AddU64(produced, firstFrames, &absolute)) {
-                return false;
-            }
-            out->available = true;
-            out->outputFrame = absolute;
-            return true;
-        }
-
-        const double needSource =
-            static_cast<double>(needN) * ratio - first;
-        double extraPasses = 0.0;
-        if (needSource > 0.0) {
-            extraPasses = std::ceil(needSource / length);
-        }
-        if (!std::isfinite(extraPasses) || extraPasses < 0.0 ||
-            extraPasses >= kExactIntegerLimit) {
-            return false;
-        }
-        auto extra = static_cast<std::uint64_t>(extraPasses);
-        if (!state.loopInfinite) {
-            const std::uint32_t maxExtra =
-                state.loopsRemaining > 1u ? state.loopsRemaining - 1u : 0u;
-            if (extra >= maxExtra) {
-                const double last =
-                    static_cast<double>(state.pcmFrameCount) -
-                    static_cast<double>(state.loopStartFrame);
-                const double fromNow =
-                    first +
-                    static_cast<double>(maxExtra > 0u ? maxExtra - 1u : 0u) *
-                        length +
-                    last;
-                std::uint64_t frames = 0;
-                if (!std::isfinite(fromNow) ||
-                    !CeilOutputFrames(fromNow, ratio, &frames)) {
-                    return false;
-                }
-                std::uint64_t absolute = 0;
-                if (!AddU64(produced, frames, &absolute)) {
-                    return false;
-                }
-                if (absolute > delayedFrame && frames != 0) {
-                    out->available = true;
-                    out->outputFrame = absolute;
-                }
-                return true;
-            }
-        }
-        const double source = first + static_cast<double>(extra) * length;
-        std::uint64_t frames = 0;
-        if (!CeilOutputFrames(source, ratio, &frames)) {
-            return false;
-        }
-        while (frames < needN) {
-            if (extra == UINT64_MAX) {
-                return false;
-            }
-            ++extra;
-            if (!CeilOutputFrames(
-                    first + static_cast<double>(extra) * length, ratio,
-                    &frames)) {
-                return false;
-            }
-        }
-        std::uint64_t absolute = 0;
-        if (!AddU64(produced, frames, &absolute)) {
-            return false;
-        }
-        out->available = true;
-        out->outputFrame = absolute;
-        return true;
+    // A boundary at integer source distance D occurs after output n exactly
+    // when Jump(n - 1) < D <= Jump(n). Select the first boundary after delay.
+    const auto before = delayedFrame >= produced ? delayedFrame - produced : 0;
+    const auto consumed = JumpSourcePhase(step, state.sourcePhase, before);
+    std::uint64_t distance = boundary.first;
+    if (consumed >= distance) {
+        if (boundary.period == 0) return true;
+        const auto quotient = (consumed - distance) / boundary.period;
+        if (quotient == UINT64_MAX) return true;
+        const auto extra = quotient + 1u;
+        if (extra > boundary.maxExtra) {
+            if (!boundary.naturalFallback) return true;
+            if (!NaturalDistance(state, &distance)) return false;
+            if (distance <= consumed) return true;
+        } else if (!AddPasses(distance, extra, boundary.period, &distance)) return false;
     }
-
-    if (!state.hasExitMarker) {
-        return true;
-    }
-    const double marker = static_cast<double>(state.exitMarkerSourceFrame);
-    if (MarkerInIntro(state)) {
-        if (state.completedLoopPasses != 0 || position >= marker) {
-            return true;
-        }
-        std::uint64_t frames = 0;
-        if (!CeilOutputFrames(marker - position, ratio, &frames)) {
-            return false;
-        }
-        std::uint64_t absolute = 0;
-        if (!AddU64(produced, frames, &absolute)) {
-            return false;
-        }
-        if (absolute > delayedFrame && frames != 0) {
-            out->available = true;
-            out->outputFrame = absolute;
-        }
-        return true;
-    }
-    if (MarkerInOutro(state)) {
-        if (state.loopInfinite) {
-            return true;
-        }
-        double remaining = 0.0;
-        if (!NaturalEndSourceRemaining(state, &remaining)) {
-            return true;
-        }
-        const double toMarker =
-            static_cast<double>(state.pcmFrameCount) - marker;
-        const double source = remaining - toMarker;
-        if (source <= 0.0) {
-            return true;
-        }
-        std::uint64_t frames = 0;
-        if (!CeilOutputFrames(source, ratio, &frames)) {
-            return false;
-        }
-        std::uint64_t absolute = 0;
-        if (!AddU64(produced, frames, &absolute)) {
-            return false;
-        }
-        if (absolute > delayedFrame && frames != 0) {
-            out->available = true;
-            out->outputFrame = absolute;
-        }
-        return true;
-    }
-    if (!MarkerInLoopRegion(state)) {
-        return true;
-    }
-
-    double first = marker - position;
-    if (first <= 0.0) {
-        if (LastPass(state) || !CanWrap(state)) {
-            return true;
-        }
-        first = static_cast<double>(state.loopEndFrame) - position +
-                (marker - static_cast<double>(state.loopStartFrame));
-    }
-    const double length = static_cast<double>(LoopLength(state));
-    if (!std::isfinite(first) || !std::isfinite(length) || length <= 0.0) {
-        return false;
-    }
-    std::uint64_t firstFrames = 0;
-    if (!CeilOutputFrames(first, ratio, &firstFrames)) {
-        return false;
-    }
-    if (firstFrames >= needN) {
-        std::uint64_t absolute = 0;
-        if (!AddU64(produced, firstFrames, &absolute)) {
-            return false;
-        }
-        out->available = true;
-        out->outputFrame = absolute;
-        return true;
-    }
-    if (LastPass(state) || !CanWrap(state)) {
-        return true;
-    }
-    const double needSource = static_cast<double>(needN) * ratio - first;
-    double extraPasses = 0.0;
-    if (needSource > 0.0) {
-        extraPasses = std::ceil(needSource / length);
-    }
-    if (!std::isfinite(extraPasses) || extraPasses < 0.0 ||
-        extraPasses >= kExactIntegerLimit) {
-        return false;
-    }
-    auto extra = static_cast<std::uint64_t>(extraPasses);
-    if (!state.loopInfinite) {
-        const std::uint32_t maxExtra =
-            state.loopsRemaining > 1u ? state.loopsRemaining - 1u : 0u;
-        if (extra > maxExtra) {
-            return true;
-        }
-    }
-    const double source = first + static_cast<double>(extra) * length;
     std::uint64_t frames = 0;
-    if (!CeilOutputFrames(source, ratio, &frames)) {
-        return false;
-    }
-    std::uint64_t absolute = 0;
-    if (!AddU64(produced, frames, &absolute)) {
-        return false;
-    }
-    if (absolute > delayedFrame && frames != 0) {
-        out->available = true;
-        out->outputFrame = absolute;
-    }
+    if (!FixedSourceOutputFrames(distance, state.currentRatio, &frames, state.sourcePhase) ||
+        !AddU64(produced, frames, &out->outputFrame)) return false;
+    out->available = frames != 0 && out->outputFrame > delayedFrame;
     return true;
 }
 
 bool ComputeNextResamplerBoundaries(const ResamplerAdvanceState& state,
                                     std::uint64_t* nextLoopEnd,
                                     std::uint64_t* nextExitMarker) noexcept {
-    if (nextLoopEnd == nullptr || nextExitMarker == nullptr) {
-        return false;
-    }
-    *nextLoopEnd = UINT64_MAX;
-    *nextExitMarker = UINT64_MAX;
+    if (nextLoopEnd == nullptr || nextExitMarker == nullptr) return false;
+    *nextLoopEnd = *nextExitMarker = UINT64_MAX;
     std::uint64_t delayed = 0;
-    if (!AddU64(state.absoluteStartFrame, state.logicalOutputFramesProduced,
-                &delayed)) {
-        return false;
-    }
-    if (delayed > 0) {
-        --delayed;
-    }
-    ResamplerBoundaryResult loop{};
-    if (!ResolveResamplerBoundary(state, ResamplerBoundaryKind::CurrentLoopEnd,
-                                  delayed, &loop)) {
-        return false;
-    }
-    if (loop.available) {
-        *nextLoopEnd = loop.outputFrame;
-    }
-    ResamplerBoundaryResult marker{};
-    if (!ResolveResamplerBoundary(state, ResamplerBoundaryKind::ExitMarker,
-                                  delayed, &marker)) {
-        return false;
-    }
-    if (marker.available) {
-        *nextExitMarker = marker.outputFrame;
-    }
+    if (!AddU64(state.absoluteStartFrame, state.logicalOutputFramesProduced, &delayed)) return false;
+    if (delayed != 0) --delayed;
+    ResamplerBoundaryResult loop{}, marker{};
+    if (!ResolveResamplerBoundary(state, ResamplerBoundaryKind::CurrentLoopEnd, delayed, &loop) ||
+        !ResolveResamplerBoundary(state, ResamplerBoundaryKind::ExitMarker, delayed, &marker)) return false;
+    if (loop.available) *nextLoopEnd = loop.outputFrame;
+    if (marker.available) *nextExitMarker = marker.outputFrame;
     return true;
 }
 

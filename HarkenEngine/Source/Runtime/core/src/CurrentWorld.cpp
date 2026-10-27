@@ -2917,8 +2917,8 @@ WorldInstallStatus ValidateCurrentWorldImpl(
         world.capacity.maxScheduleMarkersTotal > kHardScheduleMarkerCapacity ||
         world.capacity.maxTrackPieceScheduleDepth > 64 ||
         world.capacity.maxContainerDepth > 64 ||
-        world.capacity.maxChildrenPerContainer > 1024 ||
-        world.capacity.maxAvoidLastN > 64 ||
+        world.capacity.maxChildrenPerContainer > kHardContainerChildCapacity ||
+        world.capacity.maxAvoidLastN > kHardSelectionAvoidCapacity ||
         world.capacity.maxDiscreteAxes > 32 ||
         world.capacity.maxDiscreteRows > 65536 ||
         world.capacity.maxDiscreteTrieNodes > 1048576 ||

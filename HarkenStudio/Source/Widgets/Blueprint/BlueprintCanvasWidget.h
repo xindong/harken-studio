@@ -140,7 +140,6 @@ public:
     void zoomToFit();
 
 signals:
-    void auditionTargetRequested(uint32_t objectID);
     void nodeSelected(uint32_t anchorId);
     void nodeDoubleClicked(uint32_t anchorId);
     void selectionCleared();
@@ -237,6 +236,8 @@ private:
     bool pathRefreshPending_ = false;
     bool pathContentOnlyRefresh_ = false;
     bool pathRefreshScheduled_ = false;
+    QSet<size_t> pathContentRefreshNodes_;
+    std::vector<QSizeF> pathNodeLayoutSizes_;
     bool chainRefreshPending_ = false;
     bool chainRefreshScheduled_ = false;
     std::unique_ptr<PropertyEditSession> nodeEditSession_;
@@ -260,10 +261,11 @@ private:
     void commitPathPositions_(const PathPositions& positions, const QString& description);
     void scheduleChainRefresh_();
     void schedulePathRefresh_();
+    void queuePathContentRefresh_(ProjectItem* item, const QString& propertyName);
     void queuePathRefresh_(bool contentOnly);
     void refreshPathContents_();
     void refreshProjectPaths_();
-    void applyTreeVisibility_();
+    void applyTreeVisibility_(bool publishSelection = true);
     enum class RevealScope { Node, Inputs, Upstream };
     void revealChain_(const ProjectItem& item, RevealScope scope);
     void refreshChainPins_();
@@ -336,8 +338,8 @@ private:
     QString connectHintText_;
     NodeItem* nodeDragOrigin_ = nullptr;
     QPoint nodeDragStart_;
-    uint32_t auditionClickObjectID_ = 0;
-    QPoint auditionClickStart_;
+    uint32_t selectionClickObjectID_ = 0;
+    QPoint selectionClickStart_;
     std::vector<SignalPathEndpoint> nodeDragSources_;
 
     bool evaluateConnect_(NodePin* source, NodePin* target, QString& reason, bool addSend = false) const;

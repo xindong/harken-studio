@@ -1426,21 +1426,64 @@ TEST(PreviewAbi, QueueSoundsKeepIndependentLifecyclesAndTheOriginalRequest) {
     }
 }
 
-TEST(PreviewAbi, MixedSampleRateQueuesCompleteAndLeavePlaybackAvailable) {
-    for (const auto frames : {64u, 32768u}) {
-        for (const auto blocksPerUpdate : {1u, 8u}) {
+TEST(PreviewAbi, QueuePlaybackPreservesSoundCapabilitiesAndReleasesResources) {
+    struct PlaybackCase {
+        std::uint32_t firstRate;
+        std::uint32_t secondRate;
+        float firstCents;
+        float secondCents;
+        std::uint32_t childCount;
+    };
+    for (const auto playback : {
+             PlaybackCase{48000, 44100, 0.0f, 0.0f, 3},
+             PlaybackCase{44100, 48000, 0.0f, 0.0f, 3},
+             PlaybackCase{44100, 44100, 0.0f, 0.0f, 3},
+             PlaybackCase{48000, 48000, 1200.0f, -1200.0f, 3},
+             PlaybackCase{44100, 48000, -1200.0f, 1200.0f, 3},
+             PlaybackCase{44100, 48000, 0.0f, 0.0f, 1},
+             PlaybackCase{48000, 48000, 1200.0f, 0.0f, 1},
+             PlaybackCase{44100, 48000, -1200.0f, 0.0f, 1}}) {
+        SCOPED_TRACE(playback.firstRate);
+        SCOPED_TRACE(playback.secondRate);
+        SCOPED_TRACE(playback.firstCents);
+        SCOPED_TRACE(playback.secondCents);
+        SCOPED_TRACE(playback.childCount);
+        for (const auto settings : {std::array{64u, 1u}, std::array{64u, 8u},
+                                   std::array{32768u, 1u}, std::array{32768u, 8u}}) {
+            const auto frames = settings[0];
+            const auto blocksPerUpdate = settings[1];
             SCOPED_TRACE(frames);
             SCOPED_TRACE(blocksPerUpdate);
             harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
             ASSERT_EQ(VN_OK, session.InitResult());
             auto* engine = session.Engine();
             std::vector<float> first(frames, 0.25f), second(frames * 4u, -0.25f);
-            const auto firstPcm = harkentest::MonoDesc(first, 48000);
-            const auto secondPcm = harkentest::MonoDesc(second, 44100);
+            const auto firstPcm = harkentest::MonoDesc(first, playback.firstRate);
+            const auto secondPcm = harkentest::MonoDesc(second, playback.secondRate);
             ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &firstPcm));
             ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSecondSound, &secondPcm));
             PreviewQueueWorldImage image(engine->registry.Lookup(kSound).contentRevision,
                 engine->registry.Lookup(kSecondSound).contentRevision);
+            const std::array cents{playback.firstCents, playback.secondCents};
+            for (std::uint32_t index = 0; index < cents.size(); ++index) {
+                auto& property = image.properties[index];
+                property.payload.presentMask |= UINT64_C(1) << 1;
+                property.payload.values[1].bits = std::bit_cast<std::uint32_t>(cents[index]);
+                property.programSemanticFingerprint = harken::ComputePlayablePropertyFingerprintV1(property);
+            }
+            for (std::uint32_t index = 0; index < image.children.size(); ++index) {
+                auto& child = image.children[index];
+                child.playable.expectedProgramSemanticFingerprint =
+                    image.properties[index % 2u].programSemanticFingerprint;
+                auto& occurrence = image.occurrences[index];
+                occurrence.childPlayable = child.playable;
+                occurrence.occurrenceSemanticFingerprint =
+                    harken::ComputePlayableOccurrenceFingerprintV1(occurrence);
+            }
+            image.image.container.childCount = playback.childCount;
+            image.image.world.playableOccurrenceCount = playback.childCount;
+            image.image.world.identity.runtimeSemanticFingerprint =
+                harken::ComputeCurrentWorldFingerprintV4(image.image.world);
             ASSERT_EQ(harken::WorldInstallStatus::Ok,
                 harken::InstallContainerWorldV1(*engine, image.image.world).status);
             const auto capture = harkentest::monitor::OpenIdentityEvents();
@@ -1449,12 +1492,35 @@ TEST(PreviewAbi, MixedSampleRateQueuesCompleteAndLeavePlaybackAvailable) {
             VnPreviewPlayableHandle handle = 0;
             ASSERT_EQ(VN_PREVIEW_OK, VnPreview_PlayPlayable(&desc, &handle));
             ASSERT_EQ(VN_OK, Vn_Update());
-            for (std::uint32_t block = 0; block < frames * 8u / 64u + 256u; block += blocksPerUpdate) {
-                engine->nullBackend.Pump(blocksPerUpdate);
+            std::vector<std::array<std::uint64_t, 3>> audibleSpans;
+            std::uint64_t queuedFirstFrames = 0;
+            unsigned previousSound = 0;
+            for (std::uint32_t block = 0; block < frames * 16u / 64u + 256u; block += blocksPerUpdate) {
+                for (std::uint32_t offset = 0; offset < blocksPerUpdate; ++offset) {
+                    const auto blockFrame = engine->mixer.BlocksRendered() * 64u;
+                    engine->nullBackend.Pump(1);
+                    const auto* output = engine->nullBackend.LastBlock();
+                    for (std::uint32_t frame = 0; frame < 64u; ++frame) {
+                        const auto sound = output[frame * 2u] > 0.01f ? 1u :
+                            output[frame * 2u] < -0.01f ? 2u : 0u;
+                        queuedFirstFrames += sound == 1u;
+                        if (sound != 0) {
+                            if (sound != previousSound) {
+                                audibleSpans.push_back({sound, blockFrame + frame, blockFrame + frame + 1u});
+                            } else {
+                                audibleSpans.back()[2] = blockFrame + frame + 1u;
+                            }
+                        }
+                        previousSound = sound;
+                    }
+                }
                 ASSERT_EQ(VN_OK, Vn_Update());
                 harkentest::monitor::CollectIdentityEvents(capture, records);
             }
-            std::vector<std::uint64_t> started, finished;
+            ASSERT_EQ(playback.childCount, audibleSpans.size());
+            for (std::size_t index = 1; index < audibleSpans.size(); ++index)
+                EXPECT_EQ(audibleSpans[index - 1u][2], audibleSpans[index][1]);
+            std::vector<std::uint64_t> started, finished, retired;
             std::uint64_t previousFinish = 0, request = 0, emitter = 0;
             std::uint32_t rootCompletions = 0;
             for (const auto& record : records) {
@@ -1466,7 +1532,8 @@ TEST(PreviewAbi, MixedSampleRateQueuesCompleteAndLeavePlaybackAvailable) {
                 }
                 if (fact.contentKind != VN_MONITOR_CONTENT_SOUND ||
                     (fact.factKind != VN_MONITOR_FACT_PLAYABLE_STARTED &&
-                     fact.factKind != VN_MONITOR_FACT_PLAYABLE_FINISHED)) continue;
+                     fact.factKind != VN_MONITOR_FACT_PLAYABLE_FINISHED &&
+                     fact.factKind != VN_MONITOR_FACT_PLAYABLE_RETIRED)) continue;
                 EXPECT_EQ(handle & ~(UINT64_C(1) << 63), fact.root);
                 if (request == 0) request = fact.playbackRequest.sequence;
                 if (emitter == 0) emitter = fact.originEmitter;
@@ -1474,28 +1541,41 @@ TEST(PreviewAbi, MixedSampleRateQueuesCompleteAndLeavePlaybackAvailable) {
                 EXPECT_NE(0u, emitter);
                 EXPECT_EQ(request, fact.playbackRequest.sequence);
                 EXPECT_EQ(emitter, fact.originEmitter);
-                if (fact.factKind == VN_MONITOR_FACT_PLAYABLE_STARTED) {
-                    ASSERT_LT(started.size(), image.children.size());
+                if (fact.factKind == VN_MONITOR_FACT_PLAYABLE_RETIRED) {
+                    EXPECT_NE(finished.end(), std::find(finished.begin(), finished.end(), record.header.instanceHandle));
+                    EXPECT_EQ(retired.end(), std::find(retired.begin(), retired.end(), record.header.instanceHandle));
+                    EXPECT_EQ(VN_MONITOR_TERMINAL_NATURAL_COMPLETION, fact.terminalKind);
+                    retired.push_back(record.header.instanceHandle);
+                } else if (fact.factKind == VN_MONITOR_FACT_PLAYABLE_STARTED) {
+                    ASSERT_LT(started.size(), playback.childCount);
                     EXPECT_EQ(started.size(), finished.size());
                     EXPECT_EQ(image.children[started.size()].playable.stableId, record.header.stableId);
-                    EXPECT_GE(record.header.executeFrame, previousFinish);
+                    EXPECT_EQ(started.size() % 2u + 1u, audibleSpans[started.size()][0]);
+                    EXPECT_LE(record.header.executeFrame, audibleSpans[started.size()][1]);
+                    if (previousFinish != 0) EXPECT_EQ(record.header.executeFrame, previousFinish);
                     EXPECT_EQ(started.end(), std::find(started.begin(), started.end(), record.header.instanceHandle));
                     started.push_back(record.header.instanceHandle);
                 } else {
                     ASSERT_LT(finished.size(), started.size());
                     EXPECT_EQ(started[finished.size()], record.header.instanceHandle);
                     EXPECT_EQ(VN_MONITOR_TERMINAL_NATURAL_COMPLETION, fact.terminalKind);
+                    EXPECT_GE(record.header.executeFrame, audibleSpans[finished.size()][2]);
                     previousFinish = record.header.executeFrame;
                     finished.push_back(record.header.instanceHandle);
                 }
             }
-            EXPECT_EQ(image.children.size(), started.size());
+            EXPECT_EQ(playback.childCount, started.size());
             EXPECT_EQ(started, finished);
+            EXPECT_EQ(started, retired);
             EXPECT_EQ(1u, rootCompletions);
             EXPECT_EQ(0u, engine->playableInstances.LiveCount());
             EXPECT_EQ(0u, engine->sourceTerminals.OccupiedCount());
             EXPECT_EQ(0u, engine->timelineArms.LiveCount());
             EXPECT_EQ(0u, engine->voices.ActiveCount());
+            EXPECT_EQ(0u, engine->queueInstances.LiveCount());
+            EXPECT_EQ(0u, engine->timelineOccurrences.OccupiedCount());
+            EXPECT_EQ(0u, engine->decisions.LiveCount());
+            EXPECT_EQ(0u, engine->armGroups.LiveCount());
             EXPECT_FALSE(engine->runtimeRecreateRequired);
             records.clear();
             const auto soundDesc = Desc(VN_PREVIEW_PLAYABLE_KIND_SOUND, kSound);
@@ -1503,14 +1583,18 @@ TEST(PreviewAbi, MixedSampleRateQueuesCompleteAndLeavePlaybackAvailable) {
             ASSERT_EQ(VN_PREVIEW_OK, VnPreview_PlayPlayable(&soundDesc, &soundHandle));
             ASSERT_EQ(VN_OK, Vn_Update());
             float peak = 0.0f;
-            for (std::uint32_t block = 0; block < frames * 2u / 64u + 128u; ++block) {
+            std::uint64_t directFirstFrames = 0;
+            for (std::uint32_t block = 0; block < frames * 4u / 64u + 128u; ++block) {
                 engine->nullBackend.Pump(1);
                 for (std::uint32_t sample = 0; sample < 128; ++sample)
                     peak = std::max(peak, std::abs(engine->nullBackend.LastBlock()[sample]));
+                for (std::uint32_t frame = 0; frame < 64u; ++frame)
+                    directFirstFrames += engine->nullBackend.LastBlock()[frame * 2u] > 0.01f;
                 ASSERT_EQ(VN_OK, Vn_Update());
                 harkentest::monitor::CollectIdentityEvents(capture, records);
             }
             EXPECT_GT(peak, 0.1f);
+            EXPECT_EQ(directFirstFrames * ((playback.childCount + 1u) / 2u), queuedFirstFrames);
             EXPECT_EQ(1, std::count_if(records.begin(), records.end(), [&](const auto& record) {
                 return record.header.instanceHandle == (soundHandle & ~(UINT64_C(1) << 63)) &&
                     record.fact.factKind == VN_MONITOR_FACT_PLAYABLE_FINISHED &&
@@ -1520,6 +1604,10 @@ TEST(PreviewAbi, MixedSampleRateQueuesCompleteAndLeavePlaybackAvailable) {
             EXPECT_EQ(0u, engine->sourceTerminals.OccupiedCount());
             EXPECT_EQ(0u, engine->timelineArms.LiveCount());
             EXPECT_EQ(0u, engine->voices.ActiveCount());
+            EXPECT_EQ(0u, engine->queueInstances.LiveCount());
+            EXPECT_EQ(0u, engine->timelineOccurrences.OccupiedCount());
+            EXPECT_EQ(0u, engine->decisions.LiveCount());
+            EXPECT_EQ(0u, engine->armGroups.LiveCount());
             EXPECT_FALSE(engine->runtimeRecreateRequired);
             EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(capture));
         }
@@ -1657,6 +1745,102 @@ TEST(PreviewAbi, KnownQueueTransitionsSurviveUpdateCadenceChanges) {
         EXPECT_EQ(0u, engine->voices.ActiveCount());
         EXPECT_FALSE(engine->runtimeRecreateRequired);
         EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(capture));
+    }
+}
+
+TEST(PreviewAbi, ResampledQueueCompletionPreservesSupportedTransitions) {
+    for (const auto childCount : {2u, 3u}) {
+        for (const auto firstFrames : {64u, 4096u}) {
+            SCOPED_TRACE(childCount);
+            SCOPED_TRACE(firstFrames);
+            harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
+            ASSERT_EQ(VN_OK, session.InitResult());
+            auto* engine = session.Engine();
+            std::vector<float> first(firstFrames, 0.25f), second(2048, -0.25f);
+            const auto firstPcm = harkentest::MonoDesc(first, 48000);
+            const auto secondPcm = harkentest::MonoDesc(second, 44100);
+            ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &firstPcm));
+            ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSecondSound, &secondPcm));
+            PreviewQueueWorldImage image(engine->registry.Lookup(kSound).contentRevision,
+                engine->registry.Lookup(kSecondSound).contentRevision);
+            harken::CurveV1 curve{};
+            curve.curveLocalId = 1;
+            curve.curve.pointCount = 2;
+            curve.curve.points[0] = {0.0f, 0.0f};
+            curve.curve.points[1] = {1.0f, 1.0f};
+            curve.curve.handles[0] = {1.0f / 3.0f, 1.0f / 3.0f, 2.0f / 3.0f, 2.0f / 3.0f};
+            harken::TransitionRuleViewV1 rule{};
+            rule.sourceAny = rule.targetAny = 1;
+            rule.stableRuleOrdinal = 1;
+            rule.targetFade = {1, {}, 32, 1};
+            harken::TransitionProgramViewV1 transition{};
+            transition.ownerContainerStableId = kContainer;
+            transition.ruleCount = 1;
+            transition.rules = &rule;
+            transition.defaultRuleIndex = 0;
+            image.image.container.childCount = childCount;
+            image.image.container.transitionProgramIndex = 0;
+            image.image.container.curveCount = 1;
+            image.image.container.curves = &curve;
+            auto& world = image.image.world;
+            world.playableOccurrenceCount = childCount;
+            world.transitions = &transition;
+            world.transitionCount = 1;
+            world.identity.capabilityMask |= harken::kWorldCapabilityTransition;
+            world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(world);
+            ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(*engine, world).status);
+            const auto capture = harkentest::monitor::OpenIdentityEvents();
+            std::vector<harkentest::monitor::IdentityRecord> records;
+            std::vector<float> audio;
+            const auto desc = Desc(VN_PREVIEW_PLAYABLE_KIND_CONTAINER, kContainer);
+            VnPreviewPlayableHandle handle = 0;
+            ASSERT_EQ(VN_PREVIEW_OK, VnPreview_PlayPlayable(&desc, &handle));
+            ASSERT_EQ(VN_OK, Vn_Update());
+            for (std::uint32_t block = 0; block < 256; ++block) {
+                engine->nullBackend.Pump(1);
+                for (std::uint32_t frame = 0; frame < 64; ++frame)
+                    audio.push_back(engine->nullBackend.LastBlock()[frame * 2u]);
+                if ((block + 1u) % 8u == 0) {
+                    ASSERT_EQ(VN_OK, Vn_Update());
+                    harkentest::monitor::CollectIdentityEvents(capture, records);
+                }
+            }
+            EXPECT_EQ(childCount, std::count_if(records.begin(), records.end(), [](const auto& record) {
+                return record.fact.contentKind == VN_MONITOR_CONTENT_SOUND &&
+                    record.fact.factKind == VN_MONITOR_FACT_PLAYABLE_STARTED;
+            }));
+            EXPECT_EQ(1, std::count_if(records.begin(), records.end(), [&](const auto& record) {
+                return record.header.instanceHandle == (handle & ~(UINT64_C(1) << 63)) &&
+                    record.fact.factKind == VN_MONITOR_FACT_PLAYABLE_RETIRED &&
+                    record.fact.terminalKind == VN_MONITOR_TERMINAL_NATURAL_COMPLETION;
+            }));
+            {
+                const auto started = std::find_if(records.begin(), records.end(), [](const auto& record) {
+                    return record.header.stableId == kSecondSound &&
+                        record.fact.factKind == VN_MONITOR_FACT_PLAYABLE_STARTED;
+                });
+                ASSERT_NE(records.end(), started);
+                const auto start = started->header.executeFrame;
+                ASSERT_LT(start + 40u, audio.size());
+                EXPECT_NEAR(0.0f, audio[start], 0.01f);
+                EXPECT_NEAR(-0.125f, audio[start + 16u], 0.01f);
+                EXPECT_NEAR(-0.25f, audio[start + 40u], 0.01f);
+            }
+            EXPECT_EQ(0u, engine->playableInstances.LiveCount());
+            EXPECT_EQ(0u, engine->sourceTerminals.OccupiedCount());
+            EXPECT_EQ(0u, engine->timelineArms.LiveCount());
+            EXPECT_EQ(0u, engine->voices.ActiveCount());
+            EXPECT_EQ(0u, engine->queueInstances.LiveCount());
+            EXPECT_EQ(0u, engine->timelineOccurrences.OccupiedCount());
+            EXPECT_EQ(0u, engine->decisions.LiveCount());
+            EXPECT_EQ(0u, engine->armGroups.LiveCount());
+            EXPECT_FALSE(engine->runtimeRecreateRequired);
+            EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(capture));
+            const auto soundDesc = Desc(VN_PREVIEW_PLAYABLE_KIND_SOUND, kSecondSound);
+            VnPreviewPlayableHandle soundHandle = 0;
+            ASSERT_EQ(VN_PREVIEW_OK, VnPreview_PlayPlayable(&soundDesc, &soundHandle));
+            EXPECT_TRUE(PumpUntilNonSilent(*engine));
+        }
     }
 }
 

@@ -1,4 +1,5 @@
 #include "UI/ProjectsPage.h"
+#include "UI/MessageDialog.h"
 
 #include "UI/NoHoverItemDelegate.h"
 #include "UI/BoundedHeaderView.h"
@@ -31,7 +32,6 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
-#include <QMessageBox>
 #include <QPainter>
 #include <QPalette>
 #include <QPixmap>
@@ -796,7 +796,7 @@ void ProjectsPage::validateSelectedTemplate()
         path, path.startsWith(ProjectTemplateCatalog::userTemplateDir()),
         &validation);
     if (!entry) {
-        QMessageBox::warning(
+        MessageDialog::warning(
             this, QCoreApplication::translate("HarkenHub", "Invalid Template"),
             QCoreApplication::translate(
                 "HarkenHub",
@@ -829,7 +829,7 @@ void ProjectsPage::onAddTemplateClicked()
     const auto imported =
         ProjectTemplateCatalog::importFromFile(source, &validation);
     if (!imported) {
-        QMessageBox::warning(
+        MessageDialog::warning(
             this,
             QCoreApplication::translate("HarkenHub", "Template Not Added"),
             QCoreApplication::translate(
@@ -858,7 +858,7 @@ void ProjectsPage::persistProjectLocation(const QString& path)
     if (value.isEmpty() || value == HubSettings::projectLocation())
         return;
     if (!HubSettings::setProjectLocation(value)) {
-        QMessageBox::warning(
+        MessageDialog::warning(
             this, QCoreApplication::translate("HarkenHub", "New Project"),
             QCoreApplication::translate("HarkenHub", "The project location could not be saved. It will "
                            "not be restored after restarting Harken Hub."));
@@ -869,7 +869,7 @@ void ProjectsPage::onNewProjectClicked()
 {
     loadProjectVersions(pendingCreateBuildId_);
     if (createTarget_.installPath.isEmpty()) {
-        QMessageBox::warning(
+        MessageDialog::warning(
             this, QCoreApplication::translate("HarkenHub", "New Project"),
             QCoreApplication::translate("HarkenHub", "Install or repair HarkenStudio before creating a "
                            "project."));
@@ -902,20 +902,20 @@ void ProjectsPage::onCreateProjectClicked()
     const QString location = QDir::cleanPath(
         projectLocationEdit_->text().trimmed());
     if (!isValidProjectName(name)) {
-        QMessageBox::warning(
+        MessageDialog::warning(
             this, QCoreApplication::translate("HarkenHub", "New Project"),
             QCoreApplication::translate("HarkenHub", "Choose a project name that can be used as a "
                            "folder name."));
         return;
     }
     if (!QDir(location).exists()) {
-        QMessageBox::warning(this, QCoreApplication::translate("HarkenHub", "New Project"),
+        MessageDialog::warning(this, QCoreApplication::translate("HarkenHub", "New Project"),
                              QCoreApplication::translate("HarkenHub", "The selected location does not "
                                             "exist."));
         return;
     }
     if (QFileInfo::exists(QDir(location).filePath(name))) {
-        QMessageBox::warning(
+        MessageDialog::warning(
             this, QCoreApplication::translate("HarkenHub", "New Project"),
             QCoreApplication::translate("HarkenHub", "A folder with this project name already exists."));
         return;
@@ -933,7 +933,7 @@ void ProjectsPage::onCreateProjectClicked()
                 templatePath.startsWith(
                     ProjectTemplateCatalog::userTemplateDir()),
                 &validation)) {
-            QMessageBox::warning(
+            MessageDialog::warning(
                 this,
                 QCoreApplication::translate("HarkenHub", "Invalid Template"),
                 QCoreApplication::translate(
@@ -960,7 +960,7 @@ void ProjectsPage::onCreateProjectClicked()
     if (createTarget_.isLocalBuild())
         versionName += QCoreApplication::translate("HarkenHub", " (Standalone)");
     const QString templateName = projectTemplateCombo_->currentText();
-    QMessageBox confirm(
+    MessageDialog confirm(
         QMessageBox::Question, QCoreApplication::translate("HarkenHub", "Confirm New Project"),
         QCoreApplication::translate("HarkenHub", "Confirm the HarkenStudio version and template before "
                        "creating the project."),
@@ -1191,7 +1191,7 @@ void ProjectsPage::addProjectFromPath(const QString& path)
 {
     const ProjectProbeResult probe = ProjectProbe::probe(path);
     if (!probe.ok) {
-        QMessageBox::warning(
+        MessageDialog::warning(
             this, QCoreApplication::translate("HarkenHub", "Add Project"),
             QCoreApplication::translate(
                 "HarkenHub", "The project could not be added.\n\n%1")
@@ -1199,7 +1199,7 @@ void ProjectsPage::addProjectFromPath(const QString& path)
         return;
     }
     if (store_->contains(probe.canonicalPath)) {
-        QMessageBox::information(this, QCoreApplication::translate("HarkenHub", "Add Project"),
+        MessageDialog::information(this, QCoreApplication::translate("HarkenHub", "Add Project"),
                                  QCoreApplication::translate("HarkenHub", "This project is already in the list."));
         return;
     }
@@ -1210,7 +1210,7 @@ void ProjectsPage::addProjectFromPath(const QString& path)
     record.displayName = probe.displayName;
     record.detectedSchema = probe.schemaVersion;
     if (!store_->addProject(record)) {
-        QMessageBox::warning(
+        MessageDialog::warning(
             this, QCoreApplication::translate("HarkenHub", "Add Project"),
             QCoreApplication::translate(
                 "HarkenHub", "The project could not be added.\n\n%1")
@@ -1272,7 +1272,7 @@ void ProjectsPage::showRowMenu(int row, const QPoint& globalPos)
         }
         refresh();
         if (!failures.isEmpty())
-            QMessageBox::warning(this, QCoreApplication::translate("HarkenHub", "Harken Hub"),
+            MessageDialog::warning(this, QCoreApplication::translate("HarkenHub", "Harken Hub"),
                 QCoreApplication::translate("HarkenHub", "These projects could not be removed from the list:\n%1")
                     .arg(failures.join(QLatin1Char('\n'))));
     };

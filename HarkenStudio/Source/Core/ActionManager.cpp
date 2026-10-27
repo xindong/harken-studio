@@ -70,7 +70,8 @@ ActionResult ActionManager::execute(const QString& actionId,
             std::move(result.redoFn),
             result.mergeId,
             undoParent,
-            std::move(result.canReplay));
+            std::move(result.canReplay),
+            std::move(result.authoringWriteSet));
         if (!undoParent)
             UndoRedoManager::instance().push(command);
     }

@@ -338,7 +338,7 @@ void MainWindow::initializeStructure(
                 locateProjectItem(id);
                 break;
             case RefDomain::AudioAsset:
-                if (projectExplorer_ && projectExplorerDock_ && !projectExplorerDock_->isClosed()
+                if (projectExplorer_ && projectExplorerDock_
                     && AssetRegistry::instance().contains(id)) {
                     revealDock(projectExplorerDock_);
                     projectExplorer_->pingSource(id);
@@ -720,10 +720,12 @@ void MainWindow::initializeStructure(
     });
     connect(selectionRouter_, &SelectionRouter::selectionChanged, this,
             [this](ProjectItem* item) {
-        standaloneEditorSelection_ = item;
+        if (!item || item->type != ProjectItem::Type::Bus)
+            busController_->clearSelection();
         pushSelectionToStandaloneEditors(item, StandaloneEditorPushReason::SelectionChanged);
-        setAuditionTarget(item);
     });
+    connect(selectionRouter_, &SelectionRouter::auditionTargetRequested,
+            this, &MainWindow::setAuditionTarget);
     {
         LayoutController::Docks d;
         d.dockManager          = dockManager_;
@@ -746,7 +748,6 @@ void MainWindow::initializeStructure(
     {
         BusController::Views v;
         v.blueprintCanvas    = blueprintCanvas_;
-        v.projectExplorer    = projectExplorer_;
         v.blueprintDock      = blueprintDock_;
         busController_->setViews(v);
     }
@@ -996,13 +997,12 @@ void MainWindow::setupAudioEngine()
         if (aiService_)
             aiService_->setConversationScope(
                 aiConversationScope(nullptr));
-        standaloneEditorSelection_ = nullptr;
         setAuditionTarget(nullptr);
     });
     connect(&ProjectManager::instance(), &ProjectManager::itemDeleted,
-            this, [this](ProjectItem* item) {
-        if (item == standaloneEditorSelection_)
-            standaloneEditorSelection_ = nullptr;
+            this, [this](ProjectItem*) {
+        if (!currentStandaloneEditorSelection())
+            busController_->clearSelection();
         if (!auditionTargetGuid_.isNull() && !auditionTarget())
             setAuditionTarget(nullptr);
     });
@@ -1033,13 +1033,7 @@ void MainWindow::setupAudioEngine()
 
         registerProjectActions(ActionManager::instance(),
                               &ProjectManager::instance(),
-                              projectExplorer_,
-                              [this]() -> Hierarchy* {
-                                  if (Hierarchy* h = findHierarchyPanel(lastFocusedHierarchyPanelId()))
-                                      return h;
-                                  const auto panels = allHierarchyPanels();
-                                  return panels.isEmpty() ? nullptr : panels.first();
-                              });
+                              projectExplorer_);
 
         registerBindingActions(ActionManager::instance());
 
@@ -1407,6 +1401,9 @@ void MainWindow::setupTitleBarToggles()
         QString::fromLatin1(ThemeAssetIds::SidebarRightOff),
         "rightSidebarToggleBtn",
         tr("Toggle Right Sidebar (Assistant)"), &assistantDock_);
+    const bool assistantAvailable = workspaceWindowManager_->isSingletonAvailable(QStringLiteral("Assistant"));
+    rightToggle->setVisible(assistantAvailable);
+    rightToggle->setEnabled(assistantAvailable);
 
     QTimer::singleShot(0, this, [this, leftToggle, bottomToggle, rightToggle]() {
         auto syncBtn = [](QToolButton* btn, ads::CDockWidget* rep) {
@@ -2261,10 +2258,6 @@ void MainWindow::connectWorkspaceWindowSignals()
                 selectionRouter_, &SelectionRouter::onBlueprintSelectionCleared);
         connect(blueprintCanvas_, &BlueprintCanvasWidget::nodeDoubleClicked,
                 selectionRouter_, &SelectionRouter::onBlueprintNodeDoubleClicked);
-        connect(blueprintCanvas_, &BlueprintCanvasWidget::auditionTargetRequested,
-                this, [this](uint32_t objectID) {
-            setAuditionTarget(ProjectManager::instance().findItemByObjectID(objectID));
-        });
     }
 
     auditionManager_ = new HarkenEditor::AuditionManager(&AudioEngine::instance(), this);
@@ -2328,6 +2321,12 @@ void MainWindow::connectWorkspaceWindowSignals()
 
 void MainWindow::configureWorkspaceDockPolicies()
 {
+    const bool assistantAvailable = workspaceWindowManager_->isSingletonAvailable(QStringLiteral("Assistant"));
+    assistantDock_->toggleViewAction()->setEnabled(assistantAvailable);
+    assistantDock_->toggleViewAction()->setVisible(assistantAvailable);
+    if (!assistantAvailable)
+        assistantDock_->toggleView(false);
+
     if (assistantPanel_)
         assistantPanel_->setAcceptDrops(true);
     for (auto* p : allInspectorPanels())
@@ -2971,7 +2970,8 @@ InspectorPanel* MainWindow::createInspectorPanelWithId(int id, PreferredOpenArea
     return panel;
 }
 
-void MainWindow::openItemInNewInspector(ProjectItem* item, PreferredOpenArea placement, bool syncSelection)
+void MainWindow::openItemInNewInspector(ProjectItem* item, PreferredOpenArea placement,
+                                       bool syncSelection, const QObject* source)
 {
     if (!item) return;
 
@@ -2980,7 +2980,7 @@ void MainWindow::openItemInNewInspector(ProjectItem* item, PreferredOpenArea pla
 
     setLastFocusedInspectorPanelId(panel->panelId());
     if (syncSelection)
-        selectionRouter_->routeSelection(item, false);
+        selectionRouter_->routeSelection(item, false, source);
     else
         panel->showItemInspector(item);
 }
@@ -3020,8 +3020,8 @@ void MainWindow::openOrFocusInspectorForItem(ProjectItem* item, const PlacementC
     if (!panel) return;
 
     setLastFocusedInspectorPanelId(panel->panelId());
-    if (placement) selectionRouter_->selectItem(item, true, *placement);
-    else selectionRouter_->routeSelection(item, true);
+    if (placement) panel->showItemInspector(item, *placement);
+    else panel->showItemInspector(item);
 }
 
 void MainWindow::wireInspectorDockCloseHandler(ads::CDockWidget* dock)
@@ -3097,18 +3097,10 @@ void MainWindow::locateProjectItem(uint32_t objectID)
 {
     auto* item = ProjectManager::instance().findItemByObjectID(objectID);
     if (!item) return;
-    if (projectExplorer_ && projectExplorerDock_ && !projectExplorerDock_->isClosed()) {
+    if (projectExplorer_ && projectExplorerDock_) {
         revealDock(projectExplorerDock_);
         projectExplorer_->pingProjectItem(item);
     }
-    for (auto* hierarchy : allHierarchyPanels()) {
-        if (auto* dock = dockOfPanel(hierarchy); dock && !dock->isClosed()) {
-            revealDock(dock);
-            hierarchy->pingProjectItem(item);
-        }
-    }
-    if (blueprintCanvas_ && blueprintDock_ && !blueprintDock_->isClosed())
-        blueprintCanvas_->pingProjectItem(item);
 }
 
 void MainWindow::openEditorForSlot(const QString& slot, ProjectItem* item,
@@ -3371,7 +3363,7 @@ void MainWindow::wireStandaloneEditorPin(QWidget* editor)
 
 ProjectItem* MainWindow::currentStandaloneEditorSelection() const
 {
-    return standaloneEditorSelection_;
+    return selectionRouter_->activeItem();
 }
 
 void MainWindow::collapseUnrelatedStandaloneEditor(const QString& type, QWidget* editor,
@@ -3579,10 +3571,6 @@ Hierarchy* MainWindow::createHierarchyPanelWithId(int id, bool deferShow, bool d
             this, &MainWindow::setLastFocusedHierarchyPanelId);
     connect(panel, &Hierarchy::itemSelected,
             selectionRouter_, &SelectionRouter::onProjectItemSelected);
-    connect(panel, &Hierarchy::objectSelectionChanged,
-            selectionRouter_, &SelectionRouter::onProjectItemsSelectionChanged);
-    connect(panel, &Hierarchy::auditionTargetRequested,
-            this, &MainWindow::setAuditionTarget);
     connect(panel, &Hierarchy::itemDoubleClicked,
             selectionRouter_, &SelectionRouter::onProjectItemDoubleClicked);
     connect(panel, &Hierarchy::audioFileSelected,
@@ -3592,8 +3580,8 @@ Hierarchy* MainWindow::createHierarchyPanelWithId(int id, bool deferShow, bool d
     connect(panel, &Hierarchy::openInNewTabRequested, this, [this](ProjectItem* item) {
         openItemInNewInspector(item, PreferredOpenArea::CentralTab, false);
     });
-    connect(panel, &Hierarchy::openInNewWindowRequested, this, [this](ProjectItem* item) {
-        openItemInNewInspector(item, PreferredOpenArea::Float);
+    connect(panel, &Hierarchy::openInNewWindowRequested, this, [this, panel](ProjectItem* item) {
+        openItemInNewInspector(item, PreferredOpenArea::Float, true, panel);
     });
     connect(panel, &Hierarchy::openContainingFolderRequested, this, [this](ProjectItem* item) {
         selectionRouter_->revealItemSourceInExplorer(item);
@@ -3658,10 +3646,6 @@ void MainWindow::connectSignals()
 {
     connect(projectExplorer_, &ProjectExplorer::itemSelected,
             selectionRouter_, &SelectionRouter::onProjectItemSelected);
-    connect(projectExplorer_, &ProjectExplorer::objectSelectionChanged,
-            selectionRouter_, &SelectionRouter::onProjectItemsSelectionChanged);
-    connect(projectExplorer_, &ProjectExplorer::auditionTargetRequested,
-            this, &MainWindow::setAuditionTarget);
     connect(projectExplorer_, &ProjectExplorer::itemDoubleClicked,
             selectionRouter_, &SelectionRouter::onProjectItemDoubleClicked);
     connect(projectExplorer_, &ProjectExplorer::audioFileSelected,
@@ -3674,7 +3658,7 @@ void MainWindow::connectSignals()
     });
     connect(projectExplorer_, &ProjectExplorer::openInNewWindowRequested,
             this, [this](ProjectItem* item) {
-        openItemInNewInspector(item, PreferredOpenArea::Float);
+        openItemInNewInspector(item, PreferredOpenArea::Float, true, projectExplorer_);
     });
     connect(projectExplorer_, &ProjectExplorer::openContainingFolderRequested,
             this, [this](ProjectItem* item) {

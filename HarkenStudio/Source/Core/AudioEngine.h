@@ -32,6 +32,7 @@ class RuntimeSyncCoordinator;
 class VariableRehearsal;
 class ProjectManager;
 struct LivePropertyPreview;
+struct CurrentWorldCompilation;
 
 class AudioEngine : public QObject
 {
@@ -379,6 +380,10 @@ private:
     std::shared_ptr<LivePropertyPreview> livePropertyPreview_;
     std::vector<HarkenEditor::Bridge::PlaybackPathObservation> playbackPaths_;
     std::unique_ptr<RuntimeSyncCoordinator> runtimeSyncCoordinator_;
+    std::unique_ptr<CurrentWorldCompilation> currentWorldCompilation_;
+    std::uint64_t currentWorldRequestSession_ = 0;
+    std::uint64_t currentWorldRequestEpoch_ = 0;
+    std::vector<std::pair<harkenstudio::ObjectId, std::uint8_t>> currentWorldPreviewMutations_;
     ProjectPlatformId lastCurrentWorldPrimary_;
     bool currentWorldPlatformBound_ = false;
     VariableRehearsal* variableRehearsal_ = nullptr;

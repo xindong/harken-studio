@@ -61,6 +61,7 @@
 #include <QSaveFile>
 #include <QScopeGuard>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QUuid>
 
 #include <cmath>
@@ -2242,8 +2243,28 @@ TEST_F(AuthoredPackLifecycle, SavedWindowsProjectPreviewAndPackRenderSameBusSend
                 coordinator.flushPendingMutationNow();
                 ASSERT_TRUE(QMetaObject::invokeMethod(&editor, "onRuntimeServiceTimer", Qt::DirectConnection));
             }, firstRendered));
-            ASSERT_EQ(VN_OK, Vn_Update());
-            ASSERT_TRUE(QMetaObject::invokeMethod(&editor, "onRuntimeServiceTimer", Qt::DirectConnection));
+            QElapsedTimer publicationTimeout;
+            publicationTimeout.start();
+            bool publicationReady = false;
+            while (publicationTimeout.elapsed() < 5000) {
+                ASSERT_TRUE(QMetaObject::invokeMethod(&editor, "onRuntimeServiceTimer", Qt::DirectConnection));
+                ASSERT_EQ(VN_OK, Vn_Update());
+                previewRuntime->nullBackend.Pump(1);
+                ASSERT_EQ(VN_OK, Vn_Update());
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 1);
+                const auto barrier = coordinator.barrier(coordinator.currentAuthoringRevision());
+                ASSERT_TRUE(barrier.state == VNX::RuntimeSyncCoordinator::RevisionBarrierState::Pending
+                    || barrier.state == VNX::RuntimeSyncCoordinator::RevisionBarrierState::Ready)
+                    << "state=" << static_cast<int>(barrier.state)
+                    << " failure=" << static_cast<int>(barrier.failure);
+                publicationReady = barrier.state == VNX::RuntimeSyncCoordinator::RevisionBarrierState::Ready
+                    && !coordinator.hasOutstandingSubmission();
+                if (publicationReady) break;
+                QThread::msleep(1);
+            }
+            ASSERT_TRUE(publicationReady)
+                << "revision=" << coordinator.currentAuthoringRevision()
+                << " outstanding=" << coordinator.hasOutstandingSubmission();
             EXPECT_EQ(HarkenEditor::Bridge::BusTopologyState::Ready, editor.busTopologyState());
             EXPECT_TRUE(editor.getRuntimeBusIds().contains(loadedSource->runtimeId()));
             EXPECT_FLOAT_EQ(-12.0f, previewRuntime->busSendLevelDb[previewSendFlat]);
@@ -2358,6 +2379,7 @@ TEST_F(AuthoredPackLifecycle, SavedWindowsProjectPreviewAndPackRenderSameBusSend
             harken::PreparedProjectGenerationV1 blocked;
             ASSERT_EQ(harken::ProjectGenerationPrepareStatusV1::Ok,
                 harken::PrepareProjectGenerationV1(*previewRuntime, candidate, blocked).status);
+            previewRuntime->topologyPlans.DrainRetire();
             std::vector<std::uint32_t> leases;
             while (previewRuntime->topologyPlans.InUse() < previewRuntime->topologyPlans.Capacity())
                 leases.push_back(previewRuntime->topologyPlans.Acquire());

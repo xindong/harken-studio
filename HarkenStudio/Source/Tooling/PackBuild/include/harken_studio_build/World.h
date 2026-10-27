@@ -61,6 +61,8 @@ inline constexpr std::uint32_t kSchedulePlacementCapacity = 4096;
 inline constexpr std::uint32_t kScheduleMarkerCapacity = 4096;
 inline constexpr std::uint32_t kHardVariableDefinitionCapacity = 65536;
 inline constexpr std::uint32_t kHardContainerProgramCapacity = 65536;
+inline constexpr std::uint32_t kHardContainerChildCapacity = 1024;
+inline constexpr std::uint32_t kHardSelectionAvoidCapacity = 64;
 inline constexpr std::uint32_t kHardPlayablePropertyProgramCapacity = 1048576;
 inline constexpr std::uint32_t kHardPlayableOccurrencePropertyCapacity = 1048576;
 inline constexpr std::uint32_t kHardPlayablePropertyChildRowCapacity = 1048576;
@@ -723,6 +725,10 @@ struct ContainerWorldInstallViewV1 {
     WorldCapacitySummaryV1 capacity{};
     std::uint32_t sourceBodyVintage = kCurrentWorldShippingBodyVintage;
 };
+
+bool GrowAuthoredWorldCapacityV1(
+    const ContainerWorldInstallViewV1& world,
+    WorldCapacitySummaryV1* capacity) noexcept;
 
 bool ValidateCurrentWorldSectionGroupsV1(
     const ContainerWorldInstallViewV1& world) noexcept;

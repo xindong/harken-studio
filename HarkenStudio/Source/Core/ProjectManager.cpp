@@ -1653,9 +1653,20 @@ ProjectManager::ProjectManager(QObject* parent)
         recordDeletedNameHistory(item);
     });
     initializeRuntimeSync();
+    connect(this, &ProjectManager::itemPropertyPreviewed, this, [this](ProjectItem* item) {
+        if (m_itemSaveState && item) m_itemSaveState->recordPreview(item->guid);
+    });
+    const auto invalidateSaveState = [this] {
+        if (m_itemSaveState) m_itemSaveState->invalidate();
+    };
+    connect(this, &ProjectManager::itemCreated, this, invalidateSaveState);
+    connect(this, &ProjectManager::itemRenamed, this, invalidateSaveState);
+    connect(this, &ProjectManager::itemDeleted, this, invalidateSaveState);
+    connect(this, &ProjectManager::itemMoved, this, invalidateSaveState);
     connect(&UndoRedoManager::instance(), &UndoRedoManager::indexChanged, this, [this] {
         if (!m_currentProject || !m_itemSaveState) return;
-        for (auto* item : m_itemSaveState->refresh(*m_currentProject))
+        const auto* writes = UndoRedoManager::instance().currentAuthoringWriteSet();
+        for (auto* item : m_itemSaveState->refresh(*m_currentProject, writes))
             emit itemPropertyChanged(item, QStringLiteral("dirty"));
     });
 }
@@ -2606,7 +2617,8 @@ PreparedProject ProjectManager::prepareProject(const QString& filePath,
                                                bool allowUpgrade,
                                                ProjectUpgradeProgressCallback upgradeProgress,
                                                ProjectUpgradeApprovalCallback upgradeApproval,
-                                               std::function<bool()> cancelled)
+                                               std::function<bool()> cancelled,
+                                               ProjectContractReadContext* context)
 {
     if (cancelled && cancelled())
         return {};
@@ -2615,7 +2627,7 @@ PreparedProject ProjectManager::prepareProject(const QString& filePath,
     ProjectSerializer serializer;
     if (!serializer.loadProject(filePath, *prepared.project, allowUpgrade,
                                 std::move(upgradeProgress),
-                                std::move(upgradeApproval))) {
+                                std::move(upgradeApproval), context)) {
         prepared.error = serializer.lastError();
         prepared.project.reset();
         return prepared;

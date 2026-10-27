@@ -1,4 +1,5 @@
 #include "harken/dsp/Resampler.h"
+#include "harken/core/SourcePhase.h"
 
 #include <algorithm>
 #include <cassert>
@@ -2051,6 +2052,8 @@ void ResamplerView::Reset(float* const* ringStorage, std::uint32_t channels,
     writeIndex = kResampleHistoryPad;
     readIndex = kResampleHistoryPad;
     readFraction = 0.0;
+    phaseHigh = 0;
+    phaseLow = 0;
     readPos = static_cast<double>(kResampleHistoryPad);
     inputEndIndex = 0;
     inputEnded = false;
@@ -2206,7 +2209,7 @@ bool ResamplerView::BorrowLinearUnity(std::uint32_t frames,
     if (frames == 0 ||
         resampleProfile != ResampleProfile::LegacyCompatibility ||
         quality != ResampleQuality::Linear || ratio != 1.0 ||
-        targetRatio != 1.0 || rampRemaining != 0 || readFraction != 0.0 ||
+        targetRatio != 1.0 || rampRemaining != 0 || phaseHigh != 0 || phaseLow != 0 ||
         inputEnded || highRatioFilterActive || readIndex >= writeIndex ||
         writeIndex - readIndex > kResampleFifoFrames ||
         frames >= writeIndex - readIndex || frames > UINT64_MAX - readIndex) {
@@ -2228,7 +2231,7 @@ std::uint32_t ResamplerView::Produce(float* const* dst, std::uint32_t dstOffset,
 
     if (resampleProfile == ResampleProfile::LegacyCompatibility &&
         quality == ResampleQuality::Linear && ratio == 1.0 &&
-        targetRatio == 1.0 && rampRemaining == 0 && readFraction == 0.0 &&
+        targetRatio == 1.0 && rampRemaining == 0 && phaseHigh == 0 && phaseLow == 0 &&
         readIndex < writeIndex &&
         writeIndex - readIndex <= kResampleFifoFrames &&
         maxFrames <= UINT64_MAX - readIndex &&
@@ -2278,6 +2281,9 @@ std::uint32_t ResamplerView::Produce(float* const* dst, std::uint32_t dstOffset,
         downsampling && !highRatio ? geometry.need : AheadFrames(quality);
 
     std::uint32_t produced = 0;
+    ExactSourcePhase exactPhase{phaseHigh, phaseLow};
+    SourcePhaseStep phaseStep{};
+    bool exactStep = DecodeSourcePhaseStep(ratio, &phaseStep);
     while (produced < maxFrames) {
         if (inputEnded && readIndex >= inputEndIndex) {
             break; // every real input frame consumed
@@ -2312,6 +2318,7 @@ std::uint32_t ResamplerView::Produce(float* const* dst, std::uint32_t dstOffset,
         if (rampRemaining != 0) {
             ratio = frameRatio;
             --rampRemaining;
+            exactStep = DecodeSourcePhaseStep(ratio, &phaseStep);
         }
         const float frac = static_cast<float>(readFraction);
 
@@ -2375,19 +2382,33 @@ std::uint32_t ResamplerView::Produce(float* const* dst, std::uint32_t dstOffset,
             dst[ch][dstOffset + produced] = value;
         }
 
-        const double advanced = readFraction + ratio;
-        const std::uint64_t whole =
-            static_cast<std::uint64_t>(advanced);
+        std::uint64_t whole = 0;
+        if (exactStep) {
+            whole = StepSourcePhase(phaseStep, &exactPhase);
+            readFraction = SourcePhaseFraction(exactPhase);
+        } else {
+            // Retain the standalone DSP's extreme-rate behavior outside the
+            // finite, representable playback timing domain.
+            const double advanced = readFraction + ratio;
+            whole = static_cast<std::uint64_t>(advanced);
+            readFraction = advanced - static_cast<double>(whole);
+            SourcePhaseStep imported{};
+            exactPhase = {};
+            if (readFraction != 0.0 && DecodeSourcePhaseStep(readFraction, &imported))
+                exactPhase = imported.fraction;
+        }
         if (readIndex > UINT64_MAX - whole) {
             readIndex = UINT64_MAX;
             readFraction = 0.0;
+            exactPhase = {};
         } else {
             readIndex += whole;
-            readFraction = advanced - static_cast<double>(whole);
         }
         readPos = static_cast<double>(readIndex) + readFraction;
         ++produced;
     }
+    phaseHigh = exactPhase.high;
+    phaseLow = exactPhase.low;
     return produced;
 }
 
@@ -2665,6 +2686,8 @@ bool ResamplerView::CaptureParkState(ResamplerParkState* out) const {
     out->rampRemaining = rampRemaining;
     out->legacyReadIndex = readIndex;
     out->legacyReadFraction = readFraction;
+    out->legacyPhaseHigh = phaseHigh;
+    out->legacyPhaseLow = phaseLow;
     out->legacyWriteIndex = writeIndex;
     out->legacyInputEndIndex = inputEndIndex;
     out->legacyInputEnded = inputEnded;
@@ -2713,6 +2736,8 @@ bool ResamplerView::ValidateParkState(const ResamplerParkState& state) {
         state.targetRatio <= 0.0 ||
         state.legacyReadFraction < 0.0 ||
         state.legacyReadFraction >= 1.0 ||
+        state.legacyReadFraction != SourcePhaseFraction(
+            {state.legacyPhaseHigh, state.legacyPhaseLow}) ||
         state.rawFrameCount > kResampleFifoFrames ||
         state.rawStartIndex > state.legacyWriteIndex ||
         state.legacyWriteIndex - state.rawStartIndex !=
@@ -2785,6 +2810,8 @@ bool ResamplerView::RestoreParkState(
     rampRemaining = state.rampRemaining;
     readIndex = state.legacyReadIndex;
     readFraction = state.legacyReadFraction;
+    phaseHigh = state.legacyPhaseHigh;
+    phaseLow = state.legacyPhaseLow;
     readPos = static_cast<double>(readIndex) + readFraction;
     writeIndex = state.legacyWriteIndex;
     inputEndIndex = state.legacyInputEndIndex;

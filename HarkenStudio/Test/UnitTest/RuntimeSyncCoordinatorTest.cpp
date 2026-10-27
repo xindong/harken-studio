@@ -1,4 +1,5 @@
 #include "RuntimeSyncCoordinator.h"
+#include <harken_playable_properties.g.h>
 
 #include <gtest/gtest.h>
 
@@ -132,4 +133,166 @@ TEST(RuntimeSyncCoordinatorTest, RemainingIdentityCountersNeverWrapToZero)
     EXPECT_EQ(0, submissions);
     EXPECT_EQ(HarkenEditor::Bridge::CurrentWorldSyncStatus::IdentityExhausted,
               submissionCoordinator.barrier(1).failure);
+}
+
+TEST(RuntimeSyncCoordinatorTest, NewerEditsKeepPlaybackBarrierPendingUntilLatestWorldIsReady)
+{
+    auto application = ensureApplication();
+    namespace Bridge = HarkenEditor::Bridge;
+    using Coordinator = VNX::RuntimeSyncCoordinator;
+    std::vector<Bridge::CurrentWorldSyncToken> tokens;
+    Coordinator coordinator([&](Bridge::CurrentWorldSyncToken token) {
+        tokens.push_back(token);
+        Bridge::CurrentWorldSyncResult result;
+        result.token = token;
+        result.status = Bridge::CurrentWorldSyncStatus::Pending;
+        return result;
+    });
+    coordinator.beginProjectSession();
+    coordinator.runtimeStarted();
+    coordinator.markCurrentWorldMutation();
+    coordinator.flushPendingMutationNow();
+    ASSERT_EQ(tokens.size(), 1u);
+    EXPECT_TRUE(coordinator.isCurrentSubmission(tokens.front()));
+    coordinator.markCurrentWorldPropertyMutation({0, 1}, 1);
+    EXPECT_FALSE(coordinator.isCurrentSubmission(tokens.front()));
+    std::vector<Coordinator::RevisionBarrierState> observed;
+    QObject::connect(&coordinator, &Coordinator::barrierChanged, [&] {
+        observed.push_back(coordinator.barrier(coordinator.currentAuthoringRevision()).state);
+    });
+    Bridge::CurrentWorldSyncResult stale;
+    stale.token = tokens.front();
+    stale.status = Bridge::CurrentWorldSyncStatus::Superseded;
+    coordinator.acceptCurrentWorldSyncResult(stale);
+    EXPECT_EQ(coordinator.barrier(coordinator.currentAuthoringRevision()).state,
+              Coordinator::RevisionBarrierState::Pending);
+    EXPECT_TRUE(observed.empty());
+    coordinator.flushPendingMutationNow();
+    ASSERT_EQ(tokens.size(), 2u);
+    EXPECT_TRUE(coordinator.isCurrentSubmission(tokens.back()));
+    stale.status = Bridge::CurrentWorldSyncStatus::Ok;
+    stale.worldGeneration = 51;
+    coordinator.acceptCurrentWorldSyncResult(stale);
+    EXPECT_FALSE(coordinator.hasInstalledWorld());
+    Bridge::CurrentWorldSyncResult latest;
+    latest.token = tokens.back();
+    latest.status = Bridge::CurrentWorldSyncStatus::Ok;
+    latest.worldGeneration = 52;
+    coordinator.acceptCurrentWorldSyncResult(latest);
+    const auto barrier = coordinator.barrier(coordinator.currentAuthoringRevision());
+    EXPECT_EQ(barrier.state, Coordinator::RevisionBarrierState::Ready);
+    EXPECT_EQ(barrier.worldGeneration, 52u);
+    EXPECT_EQ(barrier.installedRevision, coordinator.currentAuthoringRevision());
+}
+
+TEST(RuntimeSyncCoordinatorTest, CoalescedMutationsRetainAllPropertiesAndFullInvalidation)
+{
+    auto application = ensureApplication();
+    namespace Bridge = HarkenEditor::Bridge;
+    using Coordinator = VNX::RuntimeSyncCoordinator;
+    std::vector<Coordinator::MutationSet> mutations;
+    Coordinator* current = nullptr;
+    Coordinator coordinator([&](Bridge::CurrentWorldSyncToken token) {
+        mutations.push_back(current->submittedMutations());
+        Bridge::CurrentWorldSyncResult result;
+        result.token = token;
+        result.status = Bridge::CurrentWorldSyncStatus::Ok;
+        result.worldGeneration = token.submissionSerial;
+        return result;
+    });
+    current = &coordinator;
+    coordinator.beginProjectSession();
+    coordinator.runtimeStarted();
+    coordinator.markCurrentWorldMutation();
+    coordinator.flushPendingMutationNow();
+    ASSERT_EQ(mutations.size(), 1u);
+    EXPECT_TRUE(mutations.back().full);
+
+    coordinator.beginSubmissionBatch();
+    coordinator.markCurrentWorldPropertyMutation({0, 1}, 1);
+    coordinator.markCurrentWorldPropertyMutation({0, 1}, 1);
+    coordinator.markCurrentWorldPropertyMutation({0, 1}, 2);
+    coordinator.markCurrentWorldPropertyMutation({0, 2}, 1);
+    coordinator.endSubmissionBatch();
+    coordinator.flushPendingMutationNow();
+    ASSERT_EQ(mutations.size(), 2u);
+    EXPECT_FALSE(mutations.back().full);
+    EXPECT_EQ(mutations.back().properties.size(), 3u);
+
+    coordinator.beginSubmissionBatch();
+    coordinator.markCurrentWorldPropertyMutation({0, 1}, 1);
+    coordinator.markCurrentWorldMutation();
+    coordinator.markCurrentWorldPropertyMutation({0, 2}, 2);
+    coordinator.endSubmissionBatch();
+    coordinator.flushPendingMutationNow();
+    ASSERT_EQ(mutations.size(), 3u);
+    EXPECT_TRUE(mutations.back().full);
+    EXPECT_TRUE(mutations.back().properties.empty());
+
+    coordinator.markCurrentWorldPropertyMutation({0, 1}, 255);
+    coordinator.flushPendingMutationNow();
+    EXPECT_TRUE(mutations.back().full);
+}
+
+TEST(RuntimeSyncCoordinatorTest, RepeatedFlushDoesNotCreateWorkOrLoseEditsDuringSubmission)
+{
+    auto application = ensureApplication();
+    namespace Bridge = HarkenEditor::Bridge;
+    using Coordinator = VNX::RuntimeSyncCoordinator;
+    std::vector<Bridge::CurrentWorldSyncToken> tokens;
+    Coordinator coordinator([&](Bridge::CurrentWorldSyncToken token) {
+        tokens.push_back(token);
+        Bridge::CurrentWorldSyncResult result;
+        result.token = token;
+        result.status = Bridge::CurrentWorldSyncStatus::Pending;
+        return result;
+    });
+    coordinator.beginProjectSession();
+    coordinator.runtimeStarted();
+    const auto first = coordinator.markCurrentWorldMutation();
+    coordinator.flushPendingMutationNow();
+    ASSERT_EQ(tokens.size(), 1u);
+    for (int attempt = 0; attempt < 3; ++attempt)
+        coordinator.flushPendingMutationNow();
+    EXPECT_EQ(coordinator.currentAuthoringRevision(), first.revision);
+
+    Bridge::CurrentWorldSyncResult completion;
+    completion.token = tokens.front();
+    completion.status = Bridge::CurrentWorldSyncStatus::Ok;
+    completion.worldGeneration = 1;
+    coordinator.acceptCurrentWorldSyncResult(completion);
+    QCoreApplication::processEvents(QEventLoop::AllEvents);
+    EXPECT_EQ(coordinator.barrier(first.revision).state,
+              Coordinator::RevisionBarrierState::Ready);
+    EXPECT_FALSE(coordinator.hasOutstandingSubmission());
+    ASSERT_EQ(tokens.size(), 1u);
+
+    coordinator.markCurrentWorldMutation();
+    coordinator.flushPendingMutationNow();
+    ASSERT_EQ(tokens.size(), 2u);
+    const auto latest = coordinator.markCurrentWorldMutation();
+    for (int attempt = 0; attempt < 3; ++attempt)
+        coordinator.flushPendingMutationNow();
+    QCoreApplication::processEvents(QEventLoop::AllEvents);
+    ASSERT_EQ(tokens.size(), 2u);
+    completion.token = tokens.back();
+    completion.worldGeneration = 2;
+    coordinator.acceptCurrentWorldSyncResult(completion);
+    EXPECT_EQ(coordinator.barrier(latest.revision).state,
+              Coordinator::RevisionBarrierState::Pending);
+    QCoreApplication::processEvents(QEventLoop::AllEvents);
+    ASSERT_EQ(tokens.size(), 3u);
+    EXPECT_EQ(tokens.back().authoringRevision, latest.revision);
+    EXPECT_TRUE(coordinator.hasOutstandingSubmission());
+    completion.token = tokens.back();
+    completion.worldGeneration = 3;
+    coordinator.acceptCurrentWorldSyncResult(completion);
+    QCoreApplication::processEvents(QEventLoop::AllEvents);
+    coordinator.flushPendingMutationNow();
+    EXPECT_EQ(tokens.size(), 3u);
+    EXPECT_FALSE(coordinator.hasOutstandingSubmission());
+    const auto barrier = coordinator.barrier(latest.revision);
+    EXPECT_EQ(barrier.state, Coordinator::RevisionBarrierState::Ready);
+    EXPECT_EQ(barrier.installedRevision, latest.revision);
+    EXPECT_EQ(barrier.worldGeneration, 3u);
 }

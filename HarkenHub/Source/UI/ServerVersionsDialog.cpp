@@ -1,4 +1,5 @@
 #include "UI/ServerVersionsDialog.h"
+#include "UI/DialogLayout.h"
 
 #include "Localization/HubLocalization.h"
 #include "Platform/PlatformPaths.h"
@@ -66,8 +67,7 @@ ServerVersionsDialog::ServerVersionsDialog(
 {
     setWindowTitle(QCoreApplication::translate("HarkenHub", "Get from Server"));
     setModal(true);
-    resize(720, 460);
-    setMinimumSize(600, 360);
+    configureDialog(this, QSize(720, 460), QSize(480, 300));
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(20, 18, 20, 18);
@@ -108,9 +108,9 @@ ServerVersionsDialog::ServerVersionsDialog(
     table_->setShowGrid(false);
     layout->addWidget(table_, 1);
 
-    statusLabel_ = new QLabel(
-        QCoreApplication::translate("HarkenHub", "Loading versions from the server..."), this);
-    statusLabel_->setWordWrap(true);
+    statusLabel_ = new DialogTextView(this);
+    statusLabel_->setText(
+        QCoreApplication::translate("HarkenHub", "Loading versions from the server..."));
     layout->addWidget(statusLabel_);
 
     progressBar_ = new QProgressBar(this);

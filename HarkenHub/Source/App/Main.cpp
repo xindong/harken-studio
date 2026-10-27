@@ -6,7 +6,6 @@
 #include <QFont>
 #include <QFontDatabase>
 #include <QIcon>
-#include <QMessageBox>
 #include <QStyleFactory>
 #include <QStyleHints>
 
@@ -37,6 +36,7 @@
 #include "Transactions/TransactionDiagnostics.h"
 #include "Transactions/TransactionReclaimer.h"
 #include "Transactions/UninstallExecutor.h"
+#include "UI/MessageDialog.h"
 #include "UI/ConsentDialog.h"
 #include "UI/HubWindow.h"
 #include "UI/HubIcons.h"
@@ -954,7 +954,7 @@ int main(int argc, char* argv[])
         if (guard.notifyPrimary(app.arguments()))
             return 0;
         if (!guard.retryPrimary()) {
-            QMessageBox::critical(
+            VNH::MessageDialog::critical(
                 nullptr, hubTr("Harken Hub"),
                 hubTr("Another Harken Hub instance is running but not "
                       "responding. Please close it and try again."));

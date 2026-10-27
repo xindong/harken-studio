@@ -7,8 +7,11 @@
 #include <QString>
 #include <QMap>
 #include <QStringList>
+#include <QSet>
+#include <QUuid>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <QThread>
 #include <QCoreApplication>
 #include <QDateTime>
@@ -29,6 +32,7 @@ struct ActionResult {
     QString undoText;
     int mergeId = 0;
     std::function<bool()> canReplay;
+    std::optional<QSet<QUuid>> authoringWriteSet;
 };
 
 struct ActionDef {
@@ -122,7 +126,6 @@ private:
 class AudioEngine;
 class ProjectManager;
 class MainWindow;
-class Hierarchy;
 class ProjectExplorer;
 class BlueprintCanvasWidget;
 class IPCServer;
@@ -142,8 +145,7 @@ void registerMixerActions(ActionManager& mgr,
 void registerFieldGroupActions(ActionManager& mgr, ProjectManager* projectManager);
 void registerProjectActions(ActionManager& mgr,
                            ProjectManager* projectManager,
-                           ProjectExplorer* projectExplorer,
-                           std::function<Hierarchy*()> hierarchyResolver);
+                           ProjectExplorer* projectExplorer);
 void registerProjectPlatformActions(ActionManager& mgr, ProjectManager* projectManager);
 void registerContainerActions(ActionManager& mgr,
                               ProjectManager* projectManager);

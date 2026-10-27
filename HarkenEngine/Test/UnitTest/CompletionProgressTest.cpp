@@ -64,6 +64,8 @@ TEST(CompletionProgress, PacksResamplerPhaseRatioLoopAndNextBoundaries) {
     initial.renderGeneration = 11;
     initial.resamplerSourceFrame = 40;
     initial.resamplerSourceFraction = 0.25;
+    initial.resamplerPhaseHigh = UINT64_C(0x4000000000000000);
+    initial.resamplerPhaseLow = 17;
     initial.currentRatio = 1.5;
     initial.targetRatio = 2.0;
     initial.rampStep = 0.125;
@@ -83,6 +85,8 @@ TEST(CompletionProgress, PacksResamplerPhaseRatioLoopAndNextBoundaries) {
     ASSERT_TRUE(harken::CaptureCompletionProgress(row, &captured));
     EXPECT_EQ(40u, captured.resamplerSourceFrame);
     EXPECT_DOUBLE_EQ(0.25, captured.resamplerSourceFraction);
+    EXPECT_EQ(initial.resamplerPhaseHigh, captured.resamplerPhaseHigh);
+    EXPECT_EQ(initial.resamplerPhaseLow, captured.resamplerPhaseLow);
     EXPECT_DOUBLE_EQ(1.5, captured.currentRatio);
     EXPECT_DOUBLE_EQ(2.0, captured.targetRatio);
     EXPECT_DOUBLE_EQ(0.125, captured.rampStep);

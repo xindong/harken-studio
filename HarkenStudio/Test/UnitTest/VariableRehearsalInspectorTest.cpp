@@ -59,7 +59,7 @@ protected:
             projectManager.closeProject();
         VNX::ActionManager::instance().clearAllForTesting();
         VNX::registerProjectActions(VNX::ActionManager::instance(), &projectManager,
-                                    nullptr, {});
+                                    nullptr);
         ASSERT_TRUE(tempDir_.isValid());
         VNX::ProjectConfig config;
         config.name = QStringLiteral("VariableRehearsalProject");

@@ -11,6 +11,7 @@
 #include "Components/VAudio.h"
 #include "Components/VBus.h"
 #include "Components/VMixNode.h"
+#include "Components/VPiece.h"
 #include "Components/VSelection.h"
 #include "Components/VTrack.h"
 #include "Components/VVariable.h"
@@ -4475,6 +4476,508 @@ TEST(EditorProjectPackExporterManifest, PartialPublicationActivatesSelectedUpdat
         ASSERT_EQ(session.InitResult(), VN_OK);
         ASSERT_NO_FATAL_FAILURE(activateExportedNames(outputDir, {QStringLiteral("One"), QStringLiteral("Two")}));
     }));
+}
+
+TEST(EditorProjectPackExporterManifest, CapacityGrowthPreservesUnselectedPublishedContent)
+{
+    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    auto& registry = VNX::AssetRegistry::instance();
+    registry.clear();
+    registry.setProjectRoot(dir.path());
+    const auto shared = registerToneAsset(dir.path(), QStringLiteral("shared.wav"), 0.2f);
+    const auto privateSource = registerToneAsset(dir.path(), QStringLiteral("private.wav"), 0.4f);
+    std::vector<ActionSpec> specs;
+    for (std::uint32_t i = 0; i < 64; ++i)
+        specs.push_back({QStringLiteral("Action%1").arg(i), 21 + i,
+                        i == 0 ? kSoloSoundObjectId : kSharedSoundObjectId});
+    auto project = HarkenTest::projectWithPlatforms({"Windows"});
+    ASSERT_NO_FATAL_FAILURE(buildProject(project, dir.path(), shared, privateSource, specs));
+    VNX::ProjectPackExporter exporter;
+    VNX::ProjectPackExporter::ExportOptions options;
+    options.platform = HarkenTest::platformIdString("Windows");
+    const QDir output(QDir(dir.path()).filePath(QStringLiteral("exports")));
+    auto initial = exporter.ExportAllPacks(project, output.path(), options);
+    ASSERT_TRUE(initial.success) << initial.error.toStdString();
+    QByteArray oldBytes;
+    harken::PackCanonicalImage oldImage;
+    harken::CurrentWorldBodyImage oldBody;
+    const auto retainedPath = output.filePath(QStringLiteral("Action0.bytes"));
+    ASSERT_NO_FATAL_FAILURE(readCanonicalWorld(retainedPath, oldBytes, oldImage, oldBody));
+    ASSERT_EQ(1u, oldImage.media.size());
+    const auto oldCompanion = readFileBytes(output.filePath(QStringLiteral("Action0.json")));
+    auto& actions = project.actions.front().rootItem->children;
+    actions.front()->comp<VNX::VAction>()->steps.front().type = VNX::VActionStep::Type::Stop;
+    const auto* privateAsset = registry.getAsset(privateSource);
+    ASSERT_NE(nullptr, privateAsset);
+    ASSERT_TRUE(QFile::remove(privateAsset->absolutePath));
+    auto added = makeItem(QStringLiteral("Action64"), VNX::ProjectItem::Type::Action, 85);
+    auto play = actions.back()->comp<VNX::VAction>()->steps.front();
+    added->comp<VNX::VAction>()->steps.push_back(play);
+    addChild(project.actions.front().rootItem, added);
+    options.updateSelectedOnly = true;
+    options.onlyActionStableIds = {added->runtimeId()};
+    std::map<QString, QByteArray> before;
+    for (const auto& path : publicationFiles(output.path()))
+        before.emplace(path, readFileBytes(output.filePath(path)));
+    const auto permissions = QFile::permissions(retainedPath);
+    const auto restore = qScopeGuard([&] { QFile::setPermissions(retainedPath, permissions); });
+    ASSERT_TRUE(QFile::setPermissions(retainedPath, permissions & ~(
+        QFileDevice::WriteOwner | QFileDevice::WriteUser |
+        QFileDevice::WriteGroup | QFileDevice::WriteOther)));
+    const auto blocked = exporter.ExportAllPacks(project, output.path(), options);
+    EXPECT_FALSE(blocked.success);
+    for (const auto& [path, bytes] : before)
+        EXPECT_EQ(bytes, readFileBytes(output.filePath(path))) << path.toStdString();
+    EXPECT_FALSE(QFileInfo::exists(output.filePath(QStringLiteral("Action64.bytes"))));
+    ASSERT_TRUE(QFile::setPermissions(retainedPath, permissions));
+    const auto grown = exporter.ExportAllPacks(project, output.path(), options);
+    ASSERT_TRUE(grown.success) << grown.error.toStdString();
+    EXPECT_EQ(oldCompanion, readFileBytes(output.filePath(QStringLiteral("Action0.json"))));
+    QByteArray newBytes;
+    harken::PackCanonicalImage newImage;
+    harken::CurrentWorldBodyImage newBody;
+    ASSERT_NO_FATAL_FAILURE(readCanonicalWorld(retainedPath, newBytes, newImage, newBody));
+    ASSERT_EQ(1u, newImage.media.size());
+    EXPECT_EQ(oldImage.requirement.ownedResourceCount, newImage.requirement.ownedResourceCount);
+    EXPECT_EQ(oldImage.requirement.ownedDefinitionCount, newImage.requirement.ownedDefinitionCount);
+    EXPECT_EQ(oldBody.ProductionView()->actions[0].programSemanticFingerprint,
+              newBody.ProductionView()->actions[0].programSemanticFingerprint);
+    const auto& oldMedia = oldImage.media[0];
+    const auto& newMedia = newImage.media[0];
+    EXPECT_EQ(oldBytes.mid(static_cast<qsizetype>(oldMedia.blobOffset), static_cast<qsizetype>(oldMedia.blobBytes)),
+              newBytes.mid(static_cast<qsizetype>(newMedia.blobOffset), static_cast<qsizetype>(newMedia.blobBytes)));
+    harken::WorldCapacitySummaryV1 common = newBody.ProductionView()->capacity;
+    EXPECT_GE(common.maxActionDefinitions, 65u);
+    QStringList names;
+    std::map<QString, QByteArray> stable;
+    for (const auto& value : readPublication(output.path())) {
+        const auto row = value.toObject();
+        const auto path = row.value(QStringLiteral("path")).toString();
+        QByteArray bytes;
+        harken::PackCanonicalImage image;
+        harken::CurrentWorldBodyImage body;
+        ASSERT_NO_FATAL_FAILURE(readCanonicalWorld(output.filePath(path), bytes, image, body));
+        EXPECT_EQ(0, std::memcmp(&common, &body.ProductionView()->capacity, sizeof(common)));
+        stable.emplace(path, bytes);
+        const auto name = row.value(QStringLiteral("name")).toString();
+        if (name != QStringLiteral("Init")) names.append(name);
+    }
+    {
+        harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        ASSERT_NO_FATAL_FAILURE(activateExportedNames(output.path(), names));
+    }
+    const auto unchanged = exporter.ExportAllPacks(project, output.path(), options);
+    ASSERT_TRUE(unchanged.success) << unchanged.error.toStdString();
+    for (const auto& [path, bytes] : stable)
+        EXPECT_EQ(bytes, readFileBytes(output.filePath(path))) << path.toStdString();
+    registry.clear();
+}
+
+TEST(EditorProjectPackExporterManifest, PartialPublicationCombinesScheduleAndEffectCapacity)
+{
+    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    auto& registry = VNX::AssetRegistry::instance();
+    registry.clear();
+    const auto cleanup = qScopeGuard([&] { registry.clear(); });
+    registry.setProjectRoot(dir.path());
+    const auto shared = registerToneAsset(dir.path(), QStringLiteral("shared.wav"), 0.2f);
+    const auto privateSource = registerToneAsset(dir.path(), QStringLiteral("private.wav"), 0.4f);
+    auto project = HarkenTest::projectWithPlatforms({"Windows"});
+    ASSERT_NO_FATAL_FAILURE(buildProject(project, dir.path(), shared, privateSource,
+        {{QStringLiteral("Retained"), 21, 1000}}));
+    auto retained = makeItem(QStringLiteral("Alternatives"), VNX::ProjectItem::Type::Container, 1000);
+    addChild(project.layers.front().rootItem, retained);
+    std::uint32_t nextObjectId = 2000;
+    const auto appendPiece = [&](const std::shared_ptr<VNX::ProjectItem>& parent, std::uint32_t source) {
+        auto piece = makeItem(QStringLiteral("Piece%1").arg(nextObjectId),
+            VNX::ProjectItem::Type::Piece, nextObjectId++);
+        addChild(parent, piece);
+        for (unsigned i = 0; i < 4; ++i) {
+            piece->comp<VNX::VPiece>()->markers.items.push_back({QUuid::createUuid(),
+                VNX::MarkerKind::Custom, QStringLiteral("Marker%1").arg(i), 100 + i * 100});
+            auto track = makeItem(QStringLiteral("Track%1").arg(nextObjectId),
+                VNX::ProjectItem::Type::Track, nextObjectId++);
+            addChild(piece, track);
+            auto sound = makeItem(QStringLiteral("Sound%1").arg(nextObjectId),
+                VNX::ProjectItem::Type::Sound, nextObjectId++);
+            HarkenTest::setSharedSoundSource(*sound, source);
+            addChild(track, sound);
+            VNX::Clip clip;
+            clip.clipGuid = QUuid::createUuid();
+            clip.targetGuid = sound->guid;
+            clip.duration = 1000000;
+            auto* timeline = track->comp<VNX::VTrack>();
+            EXPECT_TRUE(timeline->clips.mintOccurrenceOrdinal(&clip));
+            timeline->clips.items.push_back(clip);
+            std::vector<VNX::EffectEntry> effects(3);
+            for (auto& effect : effects) {
+                effect.guid = QUuid::createUuid();
+                effect.type = VNX::EffectType::Compressor;
+                effect.parameters = VNX::EffectChainSemantics::defaultParameters(effect.type);
+            }
+            EXPECT_TRUE(track->comp<VNX::VMixNode>()->effects.replace(std::move(effects)));
+        }
+        return piece;
+    };
+    for (std::uint32_t i = 0; i < harken::kPieceScheduleProgramCapacity; ++i) {
+        const auto piece = appendPiece(retained, privateSource);
+        ASSERT_TRUE(VNX::PlayablePropertyAuthoringV1::addContainerChildOccurrence(*retained, piece->guid));
+    }
+    project.nextObjectID = nextObjectId;
+    VNX::ProjectPackExporter exporter;
+    VNX::ProjectPackExporter::ExportOptions options;
+    options.platform = HarkenTest::platformIdString("Windows");
+    const QDir output(QDir(dir.path()).filePath(QStringLiteral("exports")));
+    const auto initial = exporter.ExportAllPacks(project, output.path(), options);
+    ASSERT_TRUE(initial.success) << initial.error.toStdString();
+    QByteArray oldBytes;
+    harken::PackCanonicalImage oldImage;
+    harken::CurrentWorldBodyImage oldBody;
+    ASSERT_NO_FATAL_FAILURE(readCanonicalWorld(output.filePath(QStringLiteral("Retained.bytes")),
+        oldBytes, oldImage, oldBody));
+    const auto oldCompanion = readFileBytes(output.filePath(QStringLiteral("Retained.json")));
+    const auto& oldWorld = *oldBody.ProductionView();
+    QByteArray oldInitBytes;
+    harken::PackCanonicalImage oldInitImage;
+    harken::CurrentWorldBodyImage oldInitBody;
+    ASSERT_NO_FATAL_FAILURE(readCanonicalWorld(output.filePath(QStringLiteral("Init.bytes")),
+        oldInitBytes, oldInitImage, oldInitBody));
+    ASSERT_EQ(harken::kPieceScheduleProgramCapacity, oldWorld.pieceScheduleCount);
+    const auto counts = [](const harken::ContainerWorldInstallViewV1& world) {
+        std::array<std::uint64_t, 8> totals{world.trackScheduleCount, world.pieceScheduleCount};
+        for (std::uint32_t i = 0; i < world.trackScheduleCount; ++i)
+            totals[3] += world.trackSchedules[i].placementCount;
+        for (std::uint32_t i = 0; i < world.pieceScheduleCount; ++i) {
+            totals[2] += world.pieceSchedules[i].trackRefCount;
+            totals[4] += world.pieceSchedules[i].markerCount;
+        }
+        const auto effects = [&](const harken::PlayablePropertyPayloadViewV1& payload) {
+            totals[5] += payload.effectNodeCount;
+            totals[7] += payload.effectEdgeCount;
+            for (std::uint32_t i = 0; i < payload.effectNodeCount; ++i)
+                totals[6] += payload.effectNodes[i].paramCount;
+        };
+        for (std::uint32_t i = 0; i < world.playablePropertyCount; ++i) {
+            const auto& property = world.playableProperties[i];
+            effects(property.payload);
+            for (std::uint32_t j = 0; j < property.structuralAncestorCount; ++j)
+                effects(property.structuralAncestors[j].payload);
+        }
+        for (std::uint32_t i = 0; i < world.playableOccurrenceCount; ++i)
+            effects(world.playableOccurrences[i].payload);
+        return totals;
+    };
+    const auto capacities = [](const harken::WorldCapacitySummaryV1& capacity) {
+        return std::array<std::uint64_t, 8>{capacity.maxTrackSchedulePrograms,
+            capacity.maxPieceSchedulePrograms, capacity.maxScheduleTrackRefsTotal,
+            capacity.maxSchedulePlacementsTotal, capacity.maxScheduleMarkersTotal,
+            capacity.maxPlayablePropertyEffectNodesTotal,
+            capacity.maxPlayablePropertyEffectParamsTotal,
+            capacity.maxPlayablePropertyEffectEdgesTotal};
+    };
+    const auto oldCounts = counts(oldWorld);
+    auto& actions = project.actions.front().rootItem->children;
+    actions.front()->comp<VNX::VAction>()->steps.front().type = VNX::VActionStep::Type::Stop;
+    retained->children.front()->comp<VNX::VPiece>()->markers.items.front().position = 50;
+    auto* draftTrack = retained->children.front()->children.front().get();
+    draftTrack->comp<VNX::VTrack>()->clips.items.front().duration = 2000000;
+    ASSERT_TRUE(draftTrack->comp<VNX::VMixNode>()->effects.replace({}));
+    const auto* privateAsset = registry.getAsset(privateSource);
+    ASSERT_NE(nullptr, privateAsset);
+    ASSERT_TRUE(QFile::remove(privateAsset->absolutePath));
+    auto addedContainer = makeItem(QStringLiteral("AddedAlternatives"),
+        VNX::ProjectItem::Type::Container, nextObjectId++);
+    addChild(project.layers.front().rootItem, addedContainer);
+    const auto addedPiece = appendPiece(addedContainer, shared);
+    ASSERT_TRUE(VNX::PlayablePropertyAuthoringV1::addContainerChildOccurrence(*addedContainer, addedPiece->guid));
+    auto added = makeItem(QStringLiteral("Added"), VNX::ProjectItem::Type::Action, nextObjectId++);
+    VNX::VActionStep play;
+    play.type = VNX::VActionStep::Type::Play;
+    play.targetObjectID = addedContainer->objectID;
+    added->comp<VNX::VAction>()->steps.push_back(play);
+    addChild(project.actions.front().rootItem, added);
+    project.nextObjectID = nextObjectId;
+    options.updateSelectedOnly = true;
+    options.onlyActionStableIds = {added->runtimeId()};
+    const auto partial = exporter.ExportAllPacks(project, output.path(), options);
+    ASSERT_TRUE(partial.success) << partial.error.toStdString();
+    EXPECT_EQ(oldCompanion, readFileBytes(output.filePath(QStringLiteral("Retained.json"))));
+    QByteArray retainedBytes, addedBytes;
+    harken::PackCanonicalImage retainedImage, addedImage;
+    harken::CurrentWorldBodyImage retainedBody, addedBody;
+    ASSERT_NO_FATAL_FAILURE(readCanonicalWorld(output.filePath(QStringLiteral("Retained.bytes")),
+        retainedBytes, retainedImage, retainedBody));
+    ASSERT_NO_FATAL_FAILURE(readCanonicalWorld(output.filePath(QStringLiteral("Added.bytes")),
+        addedBytes, addedImage, addedBody));
+    const auto& retainedWorld = *retainedBody.ProductionView();
+    EXPECT_EQ(oldCounts, counts(retainedWorld));
+    ASSERT_EQ(oldWorld.playablePropertyCount, retainedWorld.playablePropertyCount);
+    ASSERT_EQ(oldWorld.trackScheduleCount, retainedWorld.trackScheduleCount);
+    ASSERT_EQ(oldWorld.pieceScheduleCount, retainedWorld.pieceScheduleCount);
+    ASSERT_EQ(oldWorld.containerCount, retainedWorld.containerCount);
+    ASSERT_EQ(1u, addedBody.ProductionView()->containerCount);
+    for (std::uint32_t i = 0; i < oldWorld.playablePropertyCount; ++i) {
+        EXPECT_EQ(oldWorld.playableProperties[i].authoredStableOrder,
+                  retainedWorld.playableProperties[i].authoredStableOrder);
+        EXPECT_EQ(oldWorld.playableProperties[i].programSemanticFingerprint,
+                  retainedWorld.playableProperties[i].programSemanticFingerprint);
+    }
+    for (std::uint32_t i = 0; i < oldWorld.containerCount; ++i) {
+        EXPECT_EQ(oldWorld.containers[i].authoredStableOrder,
+                  retainedWorld.containers[i].authoredStableOrder);
+        EXPECT_EQ(oldWorld.containers[i].programSemanticFingerprint,
+                  retainedWorld.containers[i].programSemanticFingerprint);
+    }
+    for (std::uint32_t i = 0; i < oldWorld.trackScheduleCount; ++i)
+        EXPECT_EQ(oldWorld.trackSchedules[i].scheduleSemanticFingerprint,
+                  retainedWorld.trackSchedules[i].scheduleSemanticFingerprint);
+    for (std::uint32_t i = 0; i < oldWorld.pieceScheduleCount; ++i)
+        EXPECT_EQ(oldWorld.pieceSchedules[i].scheduleSemanticFingerprint,
+                  retainedWorld.pieceSchedules[i].scheduleSemanticFingerprint);
+    EXPECT_EQ(oldWorld.actions[0].programSemanticFingerprint,
+              retainedWorld.actions[0].programSemanticFingerprint);
+    const auto addedCounts = counts(*addedBody.ProductionView());
+    const auto defaults = capacities(harken::WorldCapacitySummaryV1{});
+    const auto grown = capacities(retainedWorld.capacity);
+    for (std::size_t i = 0; i < grown.size(); ++i) {
+        EXPECT_GT(oldCounts[i] + addedCounts[i], defaults[i]) << i;
+        EXPECT_GE(grown[i], oldCounts[i] + addedCounts[i]) << i;
+    }
+    auto expected = oldWorld.capacity;
+    expected.maxTrackSchedulePrograms = retainedWorld.capacity.maxTrackSchedulePrograms;
+    expected.maxPieceSchedulePrograms = retainedWorld.capacity.maxPieceSchedulePrograms;
+    expected.maxScheduleTrackRefsTotal = retainedWorld.capacity.maxScheduleTrackRefsTotal;
+    expected.maxSchedulePlacementsTotal = retainedWorld.capacity.maxSchedulePlacementsTotal;
+    expected.maxScheduleMarkersTotal = retainedWorld.capacity.maxScheduleMarkersTotal;
+    expected.maxPlayablePropertyEffectNodesTotal = retainedWorld.capacity.maxPlayablePropertyEffectNodesTotal;
+    expected.maxPlayablePropertyEffectParamsTotal = retainedWorld.capacity.maxPlayablePropertyEffectParamsTotal;
+    expected.maxPlayablePropertyEffectEdgesTotal = retainedWorld.capacity.maxPlayablePropertyEffectEdgesTotal;
+    expected.maxPlayablePropertyPrograms = retainedWorld.capacity.maxPlayablePropertyPrograms;
+    expected.maxPlayableOccurrencePropertyRows = retainedWorld.capacity.maxPlayableOccurrencePropertyRows;
+    expected.maxPlayablePropertyLayerAncestorRefsTotal = retainedWorld.capacity.maxPlayablePropertyLayerAncestorRefsTotal;
+    EXPECT_EQ(0, std::memcmp(&expected, &retainedWorld.capacity, sizeof(expected)));
+    for (const auto& name : {QStringLiteral("Init"), QStringLiteral("Added")}) {
+        QByteArray bytes;
+        harken::PackCanonicalImage image;
+        harken::CurrentWorldBodyImage body;
+        ASSERT_NO_FATAL_FAILURE(readCanonicalWorld(output.filePath(name + QStringLiteral(".bytes")),
+            bytes, image, body));
+        EXPECT_EQ(0, std::memcmp(&retainedWorld.capacity, &body.ProductionView()->capacity,
+            sizeof(retainedWorld.capacity)));
+        if (name == QStringLiteral("Init")) {
+            const auto& oldInit = *oldInitBody.ProductionView();
+            const auto& newInit = *body.ProductionView();
+            ASSERT_NE(0u, oldInit.playablePropertyCount);
+            ASSERT_EQ(oldInit.playablePropertyCount, newInit.playablePropertyCount);
+            for (std::uint32_t i = 0; i < oldInit.playablePropertyCount; ++i) {
+                EXPECT_EQ(oldInit.playableProperties[i].stableId, newInit.playableProperties[i].stableId);
+                EXPECT_EQ(oldInit.playableProperties[i].authoredStableOrder,
+                          newInit.playableProperties[i].authoredStableOrder);
+                EXPECT_EQ(oldInit.playableProperties[i].programSemanticFingerprint,
+                          newInit.playableProperties[i].programSemanticFingerprint);
+            }
+        }
+    }
+    harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    ASSERT_NO_FATAL_FAILURE(activateExportedNames(output.path(),
+        {QStringLiteral("Retained"), QStringLiteral("Added")}));
+}
+
+TEST(EditorProjectPackExporterManifest, LanguageVariantsShareCapacityWithoutAddingAlternativeDefinitions)
+{
+    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    auto& registry = VNX::AssetRegistry::instance();
+    registry.clear();
+    registry.setProjectRoot(dir.path());
+    const auto tone = registerToneAsset(dir.path(), QStringLiteral("tone.wav"), 0.2f);
+    std::vector<ActionSpec> specs;
+    for (std::uint32_t i = 0; i < 65; ++i)
+        specs.push_back({QStringLiteral("Localized%1").arg(i), 21 + i, kSoloSoundObjectId});
+    auto project = HarkenTest::projectWithPlatforms({"Windows"});
+    ASSERT_NO_FATAL_FAILURE(buildProject(project, dir.path(), tone, tone, specs));
+    ASSERT_NO_FATAL_FAILURE(localizeSoloSound(project, tone));
+    VNX::ProjectPackExporter exporter;
+    VNX::ProjectPackExporter::ExportOptions options;
+    options.platform = HarkenTest::platformIdString("Windows");
+    options.selection.actionTargeting = {{project.actions.front().rootItem->children.back()->runtimeId(),
+                                         false, {}, QStringLiteral("ja")}};
+    const QDir output(QDir(dir.path()).filePath(QStringLiteral("exports")));
+    const auto exported = exporter.ExportAllPacks(project, output.path(), options);
+    ASSERT_TRUE(exported.success) << exported.error.toStdString();
+    harken::WorldCapacitySummaryV1 common;
+    bool initialized = false;
+    for (const auto& value : readPublication(output.path())) {
+        const auto row = value.toObject();
+        QByteArray bytes;
+        harken::PackCanonicalImage image;
+        harken::CurrentWorldBodyImage body;
+        ASSERT_NO_FATAL_FAILURE(readCanonicalWorld(output.filePath(
+            row.value(QStringLiteral("path")).toString()), bytes, image, body));
+        const auto& capacity = body.ProductionView()->capacity;
+        if (!initialized) {
+            common = capacity;
+            initialized = true;
+        }
+        EXPECT_EQ(0, std::memcmp(&common, &capacity, sizeof(common)));
+        EXPECT_GE(capacity.maxActionDefinitions, 65u);
+        EXPECT_LT(capacity.maxActionDefinitions, 129u);
+    }
+    for (const auto& language : project.projectLanguages) {
+        QStringList names;
+        for (const auto& value : readPublication(output.path(), language)) {
+            const auto name = value.toObject().value(QStringLiteral("name")).toString();
+            if (name != QStringLiteral("Init")) names.append(name);
+        }
+        EXPECT_EQ(language == QStringLiteral("English") ? 65 : 64, names.size());
+        harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        ASSERT_NO_FATAL_FAILURE(activateExportedNames(output.path(), names, language));
+    }
+    registry.clear();
+}
+
+TEST(EditorProjectPackExporterManifest, PartialPublicationPreservesOrdersAcrossLanguageAlternatives)
+{
+    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    for (bool conflictingEmbeddedOrder : {false, true}) {
+        SCOPED_TRACE(conflictingEmbeddedOrder);
+        QTemporaryDir dir;
+        ASSERT_TRUE(dir.isValid());
+        auto& registry = VNX::AssetRegistry::instance();
+        registry.clear();
+        const auto cleanup = qScopeGuard([&] { registry.clear(); });
+        registry.setProjectRoot(dir.path());
+        const auto tone = registerToneAsset(dir.path(), QStringLiteral("tone.wav"), 0.2f);
+        auto project = HarkenTest::projectWithPlatforms({"Windows"});
+        ASSERT_NO_FATAL_FAILURE(buildProject(project, dir.path(), tone, tone,
+            {{QStringLiteral("EnglishVoice"), 21, kSharedSoundObjectId},
+             {QStringLiteral("JapaneseVoice"), 22, kSoloSoundObjectId}}));
+        ASSERT_NO_FATAL_FAILURE(localizeSoloSound(project, tone));
+        const auto layer = project.layers.front().rootItem;
+        const auto localizedSources = layer->children.at(1)->comp<VNX::VSound>()->sources;
+        layer->children.front()->comp<VNX::VSound>()->distinguishLanguage = true;
+        layer->children.front()->comp<VNX::VSound>()->sources = localizedSources;
+        auto embedded = makeItem(QStringLiteral("Embedded"), VNX::ProjectItem::Type::Sound, 5);
+        HarkenTest::setSharedSoundSource(*embedded, tone);
+        addChild(layer, embedded);
+        VNX::VActionStep embeddedPlay;
+        embeddedPlay.type = VNX::VActionStep::Type::Play;
+        embeddedPlay.targetObjectID = embedded->objectID;
+        for (auto& action : project.actions.front().rootItem->children)
+            action->comp<VNX::VAction>()->steps.push_back(embeddedPlay);
+        if (conflictingEmbeddedOrder) {
+            auto extra = makeItem(QStringLiteral("JapaneseExtra"), VNX::ProjectItem::Type::Sound, 3);
+            HarkenTest::setSharedSoundSource(*extra, tone);
+            addChild(layer, extra);
+            auto play = embeddedPlay;
+            play.targetObjectID = extra->objectID;
+            project.actions.front().rootItem->children[1]->comp<VNX::VAction>()->steps.push_back(play);
+        }
+        VNX::ProjectPackExporter exporter;
+        VNX::ProjectPackExporter::ExportOptions options;
+        options.platform = HarkenTest::platformIdString("Windows");
+        options.selection.actionTargeting = {
+            {project.actions.front().rootItem->children[0]->runtimeId(), false, {}, QStringLiteral("ja")},
+            {project.actions.front().rootItem->children[1]->runtimeId(), false, {}, QStringLiteral("English")}};
+        const QDir output(QDir(dir.path()).filePath(QStringLiteral("exports")));
+        const auto initial = exporter.ExportAllPacks(project, output.path(), options);
+        ASSERT_TRUE(initial.success) << initial.error.toStdString();
+        std::map<QString, QByteArray> companions;
+        std::map<QString, std::map<VnObjectId, std::pair<std::uint32_t, std::uint64_t>>> retainedProperties;
+        std::vector<std::uint32_t> embeddedOrders;
+        for (const auto& value : readPublication(output.path())) {
+            const auto pack = value.toObject();
+            if (pack.value(QStringLiteral("name")).toString() == QStringLiteral("Init")) continue;
+            const auto path = pack.value(QStringLiteral("path")).toString();
+            companions.emplace(path.chopped(6) + QStringLiteral(".json"),
+                readFileBytes(output.filePath(path.chopped(6) + QStringLiteral(".json"))));
+            QByteArray bytes;
+            harken::PackCanonicalImage image;
+            harken::CurrentWorldBodyImage body;
+            ASSERT_NO_FATAL_FAILURE(readCanonicalWorld(output.filePath(path), bytes, image, body));
+            const auto& world = *body.ProductionView();
+            auto& properties = retainedProperties[path];
+            for (std::uint32_t i = 0; i < world.playablePropertyCount; ++i) {
+                const auto& property = world.playableProperties[i];
+                properties.emplace(property.stableId,
+                    std::pair(property.authoredStableOrder, property.programSemanticFingerprint));
+                if (property.stableId == embedded->runtimeId()) embeddedOrders.push_back(property.authoredStableOrder);
+            }
+        }
+        ASSERT_EQ(2u, companions.size());
+        ASSERT_EQ(2u, embeddedOrders.size());
+        EXPECT_EQ(conflictingEmbeddedOrder, embeddedOrders[0] != embeddedOrders[1]);
+        for (bool localized : {false, true}) {
+            const auto name = localized ? QStringLiteral("AddedVoice") : QStringLiteral("Neutral");
+            const std::uint32_t objectId = localized ? 60 : 40;
+            auto container = makeItem(name + QStringLiteral("Container"), VNX::ProjectItem::Type::Container, objectId);
+            auto sound = makeItem(name + QStringLiteral("Sound"), VNX::ProjectItem::Type::Sound, objectId + 1);
+            HarkenTest::setSharedSoundSource(*sound, tone);
+            if (localized) {
+                sound->comp<VNX::VSound>()->distinguishLanguage = true;
+                sound->comp<VNX::VSound>()->sources = localizedSources;
+            }
+            addChild(container, sound);
+            addChild(layer, container);
+            ASSERT_TRUE(VNX::PlayablePropertyAuthoringV1::addContainerChildOccurrence(*container, sound->guid));
+            auto action = makeItem(name, VNX::ProjectItem::Type::Action, objectId + 2);
+            VNX::VActionStep play;
+            play.type = VNX::VActionStep::Type::Play;
+            play.targetObjectID = objectId;
+            action->comp<VNX::VAction>()->steps.push_back(play);
+            if (!localized) action->comp<VNX::VAction>()->steps.push_back(embeddedPlay);
+            addChild(project.actions.front().rootItem, action);
+            options.updateSelectedOnly = true;
+            options.onlyActionStableIds = {action->runtimeId()};
+            std::map<QString, QByteArray> before;
+            if (conflictingEmbeddedOrder)
+                for (const auto& path : publicationFiles(output.path()))
+                    before.emplace(path, readFileBytes(output.filePath(path)));
+            const auto partial = exporter.ExportAllPacks(project, output.path(), options);
+            if (conflictingEmbeddedOrder) {
+                EXPECT_FALSE(partial.success);
+                EXPECT_EQ(before.size(), publicationFiles(output.path()).size());
+                for (const auto& [path, bytes] : before)
+                    EXPECT_EQ(bytes, readFileBytes(output.filePath(path))) << path.toStdString();
+                EXPECT_FALSE(QFileInfo::exists(output.filePath(QStringLiteral("Neutral.bytes"))));
+                break;
+            }
+            ASSERT_TRUE(partial.success) << partial.error.toStdString();
+            for (const auto& [path, bytes] : companions)
+                EXPECT_EQ(bytes, readFileBytes(output.filePath(path))) << path.toStdString();
+            for (const auto& [path, properties] : retainedProperties) {
+                QByteArray bytes;
+                harken::PackCanonicalImage image;
+                harken::CurrentWorldBodyImage body;
+                ASSERT_NO_FATAL_FAILURE(readCanonicalWorld(output.filePath(path), bytes, image, body));
+                const auto& world = *body.ProductionView();
+                ASSERT_EQ(properties.size(), world.playablePropertyCount);
+                for (std::uint32_t i = 0; i < world.playablePropertyCount; ++i) {
+                    const auto& property = world.playableProperties[i];
+                    const auto found = properties.find(property.stableId);
+                    ASSERT_NE(properties.end(), found);
+                    EXPECT_EQ(found->second.first, property.authoredStableOrder);
+                    EXPECT_EQ(found->second.second, property.programSemanticFingerprint);
+                }
+            }
+            for (const auto& language : project.projectLanguages) {
+                QStringList names{language == QStringLiteral("English")
+                    ? QStringLiteral("EnglishVoice") : QStringLiteral("JapaneseVoice"), QStringLiteral("Neutral")};
+                if (localized) names.append(QStringLiteral("AddedVoice"));
+                harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
+                ASSERT_EQ(VN_OK, session.InitResult());
+                ASSERT_NO_FATAL_FAILURE(activateExportedNames(output.path(), names, language));
+            }
+        }
+    }
 }
 
 TEST(EditorProjectPackExporterManifest, PartialPublicationRefreshesEmbeddedClosureAndKeepsOtherPairs)

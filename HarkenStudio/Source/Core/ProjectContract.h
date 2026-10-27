@@ -3,6 +3,7 @@
 #include "ProjectIssue.h"
 #include "ProjectFormatVersion.h"
 
+#include <QByteArray>
 #include <QHash>
 #include <QJsonObject>
 #include <QString>
@@ -21,19 +22,47 @@ struct ProjectContractProbe
     QStringList warnings;
 };
 
+class ProjectContractReadContext
+{
+private:
+    friend class ProjectContractRegistry;
+    struct ParsedDocument
+    {
+        QByteArray bytes;
+        QJsonObject object;
+    };
+    struct ValidatedDocument
+    {
+        int schemaVersion = 0;
+        QString documentType;
+        QJsonObject object;
+        QStringList errors;
+    };
+    QHash<QString, ParsedDocument> parsed_;
+    QHash<QString, ValidatedDocument> validated_;
+};
+
 class ProjectContractRegistry
 {
 public:
     static ProjectContractRegistry& instance();
 
-    ProjectContractProbe probe(const QString& projectFilePath) const;
+    ProjectContractProbe probe(const QString& projectFilePath,
+                               ProjectContractReadContext* context = nullptr) const;
     QStringList validateTree(const QString& projectDirectory,
                              const QJsonObject& projectRoot,
                              bool requireCurrentSchema,
-                             const QHash<QString, QJsonObject>& overrides = {}) const;
+                             const QHash<QString, QJsonObject>& overrides = {},
+                             ProjectContractReadContext* context = nullptr) const;
 
 private:
     ProjectContractRegistry() = default;
+    static bool readJsonObject(const QString& path, QJsonObject* object, QString* error,
+                               ProjectContractReadContext* context);
+    static QStringList validateDocument(int schemaVersion, const QString& documentType,
+                                        const QJsonObject& document,
+                                        const QString& relativePath,
+                                        ProjectContractReadContext* context);
 };
 
 }

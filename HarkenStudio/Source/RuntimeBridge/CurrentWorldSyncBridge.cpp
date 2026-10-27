@@ -15,8 +15,11 @@
 
 #include <algorithm>
 #include <deque>
+#include <cmath>
 #include <optional>
 #include <vector>
+#include <QFileInfo>
+#include <QDateTime>
 
 namespace HarkenEditor::Bridge {
 namespace {
@@ -295,7 +298,9 @@ CurrentWorldSyncResult installCompiledWorld(
     CurrentWorldSyncRequestPtr request,
     CurrentWorldSyncToken token,
     std::uint64_t ownerId,
-    bool emptyWorldClose = false)
+    bool emptyWorldClose = false,
+    CurrentWorldCompileResult* compiled = nullptr,
+    std::optional<std::uint64_t> ownerBaseRevision = std::nullopt)
 {
     CurrentWorldSyncResult result;
     result.token = token;
@@ -309,12 +314,18 @@ CurrentWorldSyncResult installCompiledWorld(
     hold.emptyWorldClose = emptyWorldClose;
     hold.world = std::move(world);
     hold.busResult = request->busResult;
-    hold.soundPreparation = std::move(request->soundPreparation);
-    hold.projection = harkenbuscompiler::BuildPublishedBusProjectionV1(
-        *request->busResult,
-        harkenbuscompiler::BusPublicationCapabilityVintageV1::
-            TopologyVolumeAndSendNeutralOtherProperties);
-    if (!harkenstudiobuild::EncodeCurrentWorldShippingBody(hold.world->View(), hold.body)) {
+    hold.soundPreparation = request->soundPreparation;
+    if (compiled && !compiled->body.empty()) {
+        hold.projection = std::move(compiled->projection);
+        hold.body = std::move(compiled->body);
+    } else {
+        hold.projection = harkenbuscompiler::BuildPublishedBusProjectionV1(
+            *request->busResult,
+            harkenbuscompiler::BusPublicationCapabilityVintageV1::
+                TopologyVolumeAndSendNeutralOtherProperties);
+    }
+    if (hold.body.empty()
+        && !harkenstudiobuild::EncodeCurrentWorldShippingBody(hold.world->View(), hold.body)) {
         result.status = CurrentWorldSyncStatus::CompileFailed;
         return result;
     }
@@ -346,7 +357,7 @@ CurrentWorldSyncResult installCompiledWorld(
                   *request->compileTargetProfile)
             : 0;
     hold.view.ownerId = ownerId;
-    hold.view.ownerBaseRevision = request->ownerBaseRevision;
+    hold.view.ownerBaseRevision = ownerBaseRevision.value_or(request->ownerBaseRevision);
     hold.view.ownerRevision = token.authoringRevision;
     hold.volumeView.base = hold.view;
     hold.volumeView.base.structSize = sizeof(hold.volumeView);
@@ -386,8 +397,81 @@ CurrentWorldSyncResult installCompiledWorld(
 
 } // namespace
 
+CurrentWorldSyncRequestPtr CurrentWorldRequestCache::update(
+    CurrentWorldSyncRequestPtr replacement,
+    const std::vector<CurrentWorldScalarUpdate>& updates,
+    CurrentWorldSyncToken token)
+{
+    if (replacement) {
+        request_ = std::move(replacement);
+        nodes_.clear();
+        for (std::size_t index = 0; index < request_->project.nodes.size(); ++index)
+            nodes_.emplace(request_->project.nodes[index].guid, index);
+    } else if (!request_ || token.projectSessionId != token_.projectSessionId
+               || token.runtimeEpoch != token_.runtimeEpoch) {
+        return {};
+    }
+    auto candidate = std::make_shared<CurrentWorldSyncRequest>(*request_);
+    if (candidate->busResult
+        && candidate->busResult->projectGeneration != token.authoringRevision) {
+        auto buses = std::make_shared<harkenbuscompiler::CompiledBusResultV1>(
+            *candidate->busResult);
+        buses->projectGeneration = token.authoringRevision;
+        buses->deterministicBytes = harkenbuscompiler::SerializeCompiledBusResultV1(*buses);
+        candidate->busResult = std::move(buses);
+    }
+    using Property = harkenplayableproperties::PlayablePropertyIdV1;
+    for (const auto& update : updates) {
+        const auto* claim = candidate->identityIndex
+            ? candidate->identityIndex->find(update.stableId) : nullptr;
+        if (!claim || claim->authoringGuid != update.guid
+            || !std::isfinite(update.value))
+            return {};
+        const auto property = static_cast<Property>(update.propertyId);
+        if (property != Property::Volume && property != Property::Pitch
+            && property != Property::MakeUpGain)
+            return {};
+        const auto found = nodes_.find(update.guid);
+        if (found == nodes_.end())
+            continue;
+        auto& node = candidate->project.nodes[found->second];
+        if (update.present) node.presence.Set(property);
+        else node.presence.Clear(property);
+        switch (property) {
+        case Property::Volume: node.volume = update.value; break;
+        case Property::Pitch: node.pitch = update.value; break;
+        case Property::MakeUpGain: node.makeUpGain = update.value; break;
+        default: return {};
+        }
+    }
+    request_ = candidate;
+    token_ = token;
+    return candidate;
+}
+
+void CurrentWorldRequestCache::acknowledgePublication(CurrentWorldSyncToken token)
+{
+    if (!request_ || !(token == token_) || !request_->soundPreparation)
+        return;
+    const auto& current = *request_->soundPreparation;
+    if (std::none_of(current.sounds.begin(), current.sounds.end(),
+                     [](const auto& sound) { return !sound.samples.empty(); }))
+        return;
+    auto preparation = std::make_shared<CurrentWorldSoundPreparation>();
+    preparation->sources = current.sources;
+    preparation->contentRevisions = current.contentRevisions;
+    preparation->sounds.reserve(current.sounds.size());
+    for (const auto& sound : current.sounds) {
+        preparation->sounds.push_back({sound.binding, sound.sourcePath, {},
+            sound.channels, sound.sampleRate, sound.loopStartFrame, sound.loopEndFrame});
+    }
+    auto request = std::make_shared<CurrentWorldSyncRequest>(*request_);
+    request->soundPreparation = std::move(preparation);
+    request_ = std::move(request);
+}
+
 CurrentWorldCompileResult compileCurrentWorldRequest(
-    CurrentWorldSyncRequest& request)
+    CurrentWorldSyncRequest& request, bool prepareForInstall)
 {
     CurrentWorldCompileResult result;
     result.identityIndex = request.identityIndex;
@@ -403,6 +487,16 @@ CurrentWorldCompileResult compileCurrentWorldRequest(
         || request.busResult->compileTargetProfile.get()
             != result.compileTargetProfile.get())
         return result;
+    if (prepareForInstall && request.soundPreparation) {
+        for (const auto& source : request.soundPreparation->sources) {
+            const QFileInfo file(source.path);
+            if (file.isFile() != source.fileExists || file.size() != source.size
+                || file.lastModified().toMSecsSinceEpoch() != source.lastModifiedMs) {
+                result.requiresFullRefresh = true;
+                return result;
+            }
+        }
+    }
     const auto frontEnd = harkenprojectschema::CompileFrontEnd(request.project);
     if (!frontEnd.ok() || !frontEnd.project)
         return result;
@@ -420,6 +514,11 @@ CurrentWorldCompileResult compileCurrentWorldRequest(
             }
             row.contentRevision = suppliedRevision->second;
             continue;
+        }
+        if (prepareForInstall) {
+            result.status = CurrentWorldSyncStatus::MediaUnavailable;
+            result.relatedStableId = row.stableId;
+            return result;
         }
         const auto source = std::find_if(
             request.soundSources.begin(), request.soundSources.end(),
@@ -465,20 +564,12 @@ CurrentWorldCompileResult compileCurrentWorldRequest(
         }
     }
 
-    harkenstudiobuild::WorldCapacitySummaryV1 capacity;
-    capacity.maxContainerPrograms = 1024;
-    if (frontEnd.project->objects.size()
-        > harkenstudiobuild::kHardPlayablePropertyProgramCapacity) {
-        result.status = CurrentWorldSyncStatus::CompileFailed;
-        return result;
-    }
-    capacity.maxPlayablePropertyPrograms = std::max(
-        capacity.maxPlayablePropertyPrograms,
-        static_cast<std::uint32_t>(frontEnd.project->objects.size()));
     auto compiled = harkencurrentworldcompiler::CompileCurrentWorldV1(
         *frontEnd.project, request.variables, request.materializations,
-        request.containers, capacity,
-        request.transitions, request.actions, &request.busResult->idSet);
+        request.containers, {}, request.transitions, request.actions,
+        &request.busResult->idSet,
+        harkencurrentworldcompiler::CompileCapacityModeV1::AuthoredContent,
+        request.propertyAuthoredOrders, request.reservedPropertyAuthoredOrders);
     if (!compiled.ok() || !compiled.world) {
         result.status = CurrentWorldSyncStatus::CompileFailed;
         result.relatedStableId = compiled.relatedStableId;
@@ -486,7 +577,45 @@ CurrentWorldCompileResult compileCurrentWorldRequest(
     }
     result.status = CurrentWorldSyncStatus::Ok;
     result.world = std::move(compiled.world);
+    if (prepareForInstall) {
+        result.projection = harkenbuscompiler::BuildPublishedBusProjectionV1(
+            *request.busResult,
+            harkenbuscompiler::BusPublicationCapabilityVintageV1::
+                TopologyVolumeAndSendNeutralOtherProperties);
+        if (!harkenstudiobuild::EncodeCurrentWorldShippingBody(result.world->View(), result.body)) {
+            result.status = CurrentWorldSyncStatus::CompileFailed;
+            result.world.reset();
+        }
+    }
     return result;
+}
+
+CurrentWorldSyncResult installCompiledCurrentWorld(
+    CurrentWorldSyncRequestPtr request, CurrentWorldCompileResult compiled,
+    CurrentWorldSyncToken token)
+{
+    CurrentWorldSyncResult result;
+    result.token = token;
+    if (!request || !compiled.ok()) {
+        result.status = compiled.status;
+        result.relatedStableId = compiled.relatedStableId;
+        return result;
+    }
+    if (!Detail::runtimeIsActive()) {
+        result.status = CurrentWorldSyncStatus::RuntimeUnavailable;
+        return result;
+    }
+    if (generationHold) {
+        if (generationHold->token == token) {
+            result.status = CurrentWorldSyncStatus::Pending;
+            return result;
+        }
+        discardPendingCurrentWorld(PendingCurrentWorldDisposition::Superseded);
+    }
+    const auto live = Detail::runtimeLiveOwnerRevision(token.projectSessionId);
+    return installCompiledWorld(std::move(compiled.world), std::move(request),
+        token, token.projectSessionId, false, &compiled,
+        live.found ? live.currentRevision : 0);
 }
 
 CurrentWorldSyncResult syncCurrentWorld(CurrentWorldSyncRequestPtr request,
@@ -527,7 +656,7 @@ CurrentWorldSyncResult syncCurrentWorld(CurrentWorldSyncRequestPtr request,
     }
 
     return installCompiledWorld(std::move(compiled.world), std::move(request),
-                                token, token.projectSessionId);
+                                token, token.projectSessionId, false, &compiled);
 }
 
 CurrentWorldSyncResult clearCurrentWorld(CurrentWorldSyncToken token)

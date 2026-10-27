@@ -64,7 +64,7 @@ QVector<WorkspaceWindowDescriptor> defaultWorkspaceWindowDescriptors()
             {DefaultDockArea::Right, QString(), true},
             MaterializationPolicy::Eager,
             ClosePolicy::Hide,
-            AvailabilityPolicy::Always
+            AvailabilityPolicy::FeatureDisabled
         },
         {
             QStringLiteral("Explorer"),
