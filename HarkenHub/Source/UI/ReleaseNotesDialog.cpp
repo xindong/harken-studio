@@ -1,4 +1,5 @@
 #include "UI/ReleaseNotesDialog.h"
+#include "UI/DialogLayout.h"
 
 #include "ReleaseNotes/ReleaseNotesCatalog.h"
 
@@ -87,8 +88,6 @@ ReleaseNotesDialog::ReleaseNotesDialog(QWidget* parent)
                        .arg(QCoreApplication::applicationVersion()));
     setModal(false);
     setAttribute(Qt::WA_DeleteOnClose, false);
-    resize(720, 640);
-    setMinimumSize(520, 420);
 
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(16, 16, 16, 14);
@@ -112,8 +111,7 @@ ReleaseNotesDialog::ReleaseNotesDialog(QWidget* parent)
         errorLabel->setWordWrap(true);
         contentLayout->addWidget(errorLabel);
     } else {
-        if (entries.size() == 1)
-            resize(720, 420);
+
         const ReleaseNotesEntry& current = entries.first();
         auto* currentVersion = new QLabel(
             tr("%1 (Current Latest Version)").arg(current.version), content);
@@ -162,6 +160,7 @@ ReleaseNotesDialog::ReleaseNotesDialog(QWidget* parent)
     buttonRow->addStretch();
     buttonRow->addWidget(closeButton);
     root->addLayout(buttonRow);
+    configureDialog(this, QSize(720, entries.size() > 1 ? 560 : 420), QSize(480, 300));
 }
 
 bool ReleaseNotesDialog::hasLoadedCatalog() const

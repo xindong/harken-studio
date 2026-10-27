@@ -1,4 +1,6 @@
 #include "UI/ConsentDialog.h"
+#include "UI/DialogLayout.h"
+#include "UI/MessageDialog.h"
 
 #include "Legal/ConsentStore.h"
 #include "Localization/HubLocalization.h"
@@ -9,10 +11,8 @@
 #include <QFile>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
-#include <QScreen>
 #include <QVBoxLayout>
 
 namespace VNH {
@@ -66,9 +66,7 @@ ConsentDialog::ConsentDialog(const QString& documentId,
 {
     setWindowTitle(tr("Harken Hub"));
     setModal(true);
-    setMinimumSize(640, 400);
-    resize(QSize(1040, 640).boundedTo(
-        screen()->availableGeometry().size() - QSize(40, 80)));
+    configureDialog(this, QSize(960, 600), QSize(480, 320));
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(20, 18, 20, 18);
@@ -130,7 +128,7 @@ bool ConsentDialog::requestConsent(QWidget* parent, const QString& documentId)
     const QStringList documentTexts = consentDocuments();
     const QString documentText = documentTexts.join(QStringLiteral("\n\n"));
     if (documentText.isEmpty()) {
-        QMessageBox::warning(
+        MessageDialog::warning(
             parent, tr("Harken Hub"),
             tr("The license agreement and privacy policy could not be loaded."));
         return false;
@@ -149,7 +147,7 @@ bool ConsentDialog::requestConsent(QWidget* parent, const QString& documentId)
                                      documentSha256,
                                      QCoreApplication::applicationVersion(),
                                      QDateTime::currentDateTimeUtc())) {
-        QMessageBox::warning(
+        MessageDialog::warning(
             parent, tr("Harken Hub"),
             tr("Your consent could not be saved to %1. Please check that the "
                "folder is writable and try again.")
@@ -163,7 +161,7 @@ void ConsentDialog::showDocuments(QWidget* parent)
 {
     const QStringList documentTexts = consentDocuments();
     if (documentTexts.join(QStringLiteral("\n\n")).isEmpty()) {
-        QMessageBox::warning(
+        MessageDialog::warning(
             parent, tr("Harken Hub"),
             tr("The license agreement and privacy policy could not be loaded."));
         return;

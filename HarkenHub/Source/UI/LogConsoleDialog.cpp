@@ -1,4 +1,5 @@
 #include "UI/LogConsoleDialog.h"
+#include "UI/DialogLayout.h"
 
 #include "App/FileLog.h"
 #include "Transactions/TransactionDiagnostics.h"
@@ -230,7 +231,7 @@ LogConsoleDialog::LogConsoleDialog(QWidget* parent)
     setWindowTitle(tr("Harken Hub Activity Log (%1)")
                        .arg(QCoreApplication::applicationVersion()));
     setModal(false);
-    resize(860, 420);
+    configureDialog(this, QSize(860, 420), QSize(480, 280));
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(12, 12, 12, 12);

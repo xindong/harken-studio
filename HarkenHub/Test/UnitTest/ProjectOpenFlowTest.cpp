@@ -14,7 +14,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QMessageBox>
+#include "UI/MessageDialog.h"
 #include <QProgressDialog>
 #include <QTemporaryDir>
 #include <QThread>
@@ -63,7 +63,7 @@ protected:
         parent.show();
         QObject::connect(&dialogs, &QTimer::timeout, &parent, [this]() {
             for (QWidget* widget : QApplication::topLevelWidgets()) {
-                auto* box = qobject_cast<QMessageBox*>(widget);
+                auto* box = qobject_cast<VNH::MessageDialog*>(widget);
                 if (!box || !box->isVisible())
                     continue;
                 const auto buttons = box->buttons();

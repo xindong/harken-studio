@@ -1,4 +1,5 @@
 #include "UI/HubWindow.h"
+#include "UI/MessageDialog.h"
 
 #include "App/SingleInstanceGuard.h"
 #include "Launch/ProjectOpenFlow.h"
@@ -40,7 +41,6 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QMenu>
-#include <QMessageBox>
 #include <QCloseEvent>
 #include <QMoveEvent>
 #include <QProcess>
@@ -147,7 +147,7 @@ HubWindow::HubWindow(ProjectStore* store, QWidget* parent)
                         candidate->setChecked(
                             candidate->data().toString() == previous);
                     }
-                    QMessageBox::warning(
+                    MessageDialog::warning(
                         this, tr("Harken Hub"),
                         tr("The language setting could not be saved."));
                     return;
@@ -155,7 +155,7 @@ HubWindow::HubWindow(ProjectStore* store, QWidget* parent)
                 SingleInstanceGuard::sendTo(
                     SingleInstanceGuard::backgroundServerName(),
                     {QStringLiteral("--settings-changed")});
-                QMessageBox::information(
+                MessageDialog::information(
                     this, tr("Harken Hub"),
                     tr("The language change will take effect after restarting "
                        "Harken Hub."));
@@ -541,14 +541,14 @@ void HubWindow::finishManualUpdateCheck()
         return;
     checkUpdatesAction_->setEnabled(true);
     if (!manualUpdateCheckErrors_.isEmpty()) {
-        QMessageBox::warning(
+        MessageDialog::warning(
             this, tr("Harken Hub"),
             tr("The update check could not be completed.\n\n%1")
                 .arg(manualUpdateCheckErrors_.join(QLatin1Char('\n'))));
         return;
     }
     if (!manualHubUpdateAvailable_ && !manualStudioUpdateAvailable_) {
-        QMessageBox::information(
+        MessageDialog::information(
             this, tr("Harken Hub"),
             tr("The current Harken Hub is up to date, and the latest "
                "HarkenStudio is already in the Versions list."));
@@ -617,7 +617,7 @@ void HubWindow::applyAutoDownloadStudioPreference(bool enabled)
         const bool stored = HubSettings::autoDownloadStudio();
         autoDownloadYesAction_->setChecked(stored);
         autoDownloadNoAction_->setChecked(!stored);
-        QMessageBox::warning(
+        MessageDialog::warning(
             this, tr("Harken Hub"),
             tr("The automatic download setting could not be saved."));
         return;
@@ -641,7 +641,7 @@ void HubWindow::applyAutoSilentlyUpdateHubPreference(bool enabled)
         const bool stored = HubSettings::autoSilentlyUpdateHub();
         autoHubUpdateYesAction_->setChecked(stored);
         autoHubUpdateNoAction_->setChecked(!stored);
-        QMessageBox::warning(
+        MessageDialog::warning(
             this, tr("Harken Hub"),
             tr("The automatic Hub update setting could not be saved."));
         return;
@@ -680,7 +680,7 @@ void HubWindow::refreshHubUpdateButton()
 
 void HubWindow::beginHubUpdateLanding()
 {
-    QMessageBox confirm(
+    MessageDialog confirm(
         QMessageBox::Question, tr("Harken Hub"),
         tr(
             "Harken Hub will close now, update in the background, and "
@@ -705,7 +705,7 @@ void HubWindow::beginHubUpdateLanding()
         QString error;
         if (!selfUpdate.approveViaBridge(QStringLiteral("gui"), &error,
                                          QDateTime::currentDateTimeUtc())) {
-            QMessageBox::warning(
+            MessageDialog::warning(
                 this, tr("Harken Hub"),
                 tr("The Hub update could not be started.\n\n%1").arg(error));
             return;
@@ -713,7 +713,7 @@ void HubWindow::beginHubUpdateLanding()
     } else if (UpdateQueue::hasPendingHubUpdate()) {
         QString dispatchError;
         if (!BridgeDispatcher::dispatch(&dispatchError)) {
-            QMessageBox::warning(
+            MessageDialog::warning(
                 this, tr("Harken Hub"),
                 tr("The Hub update could not be started.\n\n%1").arg(dispatchError));
             return;
@@ -912,7 +912,7 @@ void HubWindow::openProjectFromPath(const QString& path)
     QString error;
     if (!ProjectOpenFlow::ensureRegistered(store_, path, &canonicalPath,
                                            &error)) {
-        QMessageBox::warning(
+        MessageDialog::warning(
             this, tr("Open Project"),
             tr("The project could not be opened.\n\n%1").arg(error));
         return;
