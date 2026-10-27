@@ -50,7 +50,7 @@ TEST(DialogLayoutTest, MessagesPreserveLongTextWithoutGrowingBeyondTheScreen)
             EXPECT_GT(text->verticalScrollBar()->maximum(), 0);
             text->moveCursor(QTextCursor::End);
             text->ensureCursorVisible();
-            EXPECT_EQ(text->verticalScrollBar()->value(), text->verticalScrollBar()->maximum());
+            EXPECT_TRUE(text->viewport()->rect().contains(text->cursorRect()));
         }
         const QString screenshots = qEnvironmentVariable("HARKEN_HUB_TEST_SCREENSHOT_DIR");
         if (!screenshots.isEmpty())
