@@ -11,11 +11,8 @@
       "date": "2026-10-27",
       "pullRequests": [149],
       "contributors": ["liuxin2-sys"],
+      "introduction": "The first open-source release of Harken Hub is here. Try it out and share your feedback.",
       "changes": [
-        {
-          "category": "added",
-          "text": "The first open-source release of Harken Hub is here. Try it out and share your feedback."
-        },
         {
           "category": "added",
           "text": "Download and install Harken Studio through Hub to explore and test its audio authoring features."

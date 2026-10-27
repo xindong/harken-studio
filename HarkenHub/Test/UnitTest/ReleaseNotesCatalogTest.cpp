@@ -24,6 +24,10 @@ TEST(ReleaseNotesCatalogTest, EveryPublishedChangeHasAChineseTranslation)
     ASSERT_TRUE(error.isEmpty()) << error.toStdString();
     ASSERT_FALSE(entries.isEmpty());
     for (const auto& entry : entries) {
+        if (!entry.introduction.isEmpty()) {
+            EXPECT_NE(ReleaseNotesCatalog::localizedChange(entry.introduction), entry.introduction)
+                << entry.version.toStdString() << ": " << entry.introduction.toStdString();
+        }
         for (const auto& change : entry.changes) {
             EXPECT_NE(ReleaseNotesCatalog::localizedChange(change.text), change.text)
                 << entry.version.toStdString() << ": " << change.text.toStdString();

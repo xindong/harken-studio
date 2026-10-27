@@ -17,6 +17,7 @@ struct ReleaseNotesEntry
 {
     QString version;
     QDate date;
+    QString introduction;
     QList<int> pullRequests;
     QStringList contributors;
     QList<ReleaseNotesChange> changes;
