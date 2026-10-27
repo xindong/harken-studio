@@ -568,7 +568,8 @@ CurrentWorldCompileResult compileCurrentWorldRequest(
         *frontEnd.project, request.variables, request.materializations,
         request.containers, {}, request.transitions, request.actions,
         &request.busResult->idSet,
-        harkencurrentworldcompiler::CompileCapacityModeV1::AuthoredContent);
+        harkencurrentworldcompiler::CompileCapacityModeV1::AuthoredContent,
+        request.propertyAuthoredOrders, request.reservedPropertyAuthoredOrders);
     if (!compiled.ok() || !compiled.world) {
         result.status = CurrentWorldSyncStatus::CompileFailed;
         result.relatedStableId = compiled.relatedStableId;

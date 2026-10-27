@@ -285,8 +285,20 @@ CompileResultV1 CompileCurrentWorldV1(
     const std::vector<TransitionProgramAuthoringV1>& authoredTransitions,
     const std::vector<ActionProgramAuthoringV1>& authoredActions,
     const harkenbuscompiler::CompiledBusIdSetV1* busIds,
-    CompileCapacityModeV1 capacityMode) {
+    CompileCapacityModeV1 capacityMode,
+    const std::map<harkenstudio::ObjectId, std::uint32_t>& propertyAuthoredOrders,
+    const std::set<std::uint32_t>& reservedPropertyAuthoredOrders) {
     CompileResultV1 result{};
+    std::set<std::uint32_t> occupiedPropertyOrders;
+    for (const auto& [id, order] : propertyAuthoredOrders) {
+        if (id == harkenstudio::ObjectId{} || !occupiedPropertyOrders.insert(order).second) {
+            result.status = CompileStatusV1::InvalidProject;
+            result.relatedStableId = id;
+            return result;
+        }
+    }
+    occupiedPropertyOrders.insert(reservedPropertyAuthoredOrders.begin(),
+                                  reservedPropertyAuthoredOrders.end());
     auto capacity = requestedCapacity;
     if (capacityMode == CompileCapacityModeV1::AuthoredContent
         && (project.objects.size() > harkenstudiobuild::kHardPlayablePropertyProgramCapacity
@@ -559,9 +571,28 @@ CompileResultV1 CompileCurrentWorldV1(
         result.status = CompileStatusV1::Capacity;
         return result;
     }
+    std::uint64_t nextPropertyOrder = 0;
     for (std::size_t i = 0; i < world->properties_.size(); ++i) {
-        world->properties_[i].view.authoredStableOrder =
-            static_cast<std::uint32_t>(i);
+        auto& row = world->properties_[i].view;
+        if (propertyAuthoredOrders.empty() && reservedPropertyAuthoredOrders.empty()) {
+            row.authoredStableOrder = static_cast<std::uint32_t>(i);
+            continue;
+        }
+        const auto previous = propertyAuthoredOrders.find(row.stableId);
+        if (previous != propertyAuthoredOrders.end()) {
+            row.authoredStableOrder = previous->second;
+            continue;
+        }
+        while (nextPropertyOrder <= UINT32_MAX &&
+               occupiedPropertyOrders.contains(static_cast<std::uint32_t>(nextPropertyOrder)))
+            ++nextPropertyOrder;
+        if (nextPropertyOrder > UINT32_MAX) {
+            result.status = CompileStatusV1::Capacity;
+            result.relatedStableId = row.stableId;
+            return result;
+        }
+        row.authoredStableOrder = static_cast<std::uint32_t>(nextPropertyOrder++);
+        occupiedPropertyOrders.insert(row.authoredStableOrder);
     }
     world->Refresh();
     std::map<std::pair<std::uint32_t, harkenstudio::ObjectId>, std::size_t> propertyIndex;

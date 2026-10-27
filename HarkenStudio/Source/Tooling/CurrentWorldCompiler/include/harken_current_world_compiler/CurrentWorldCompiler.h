@@ -8,7 +8,9 @@
 #include <harken_bus_compiler/BusCompiler.h>
 
 #include <cstdint>
+#include <map>
 #include <memory>
+#include <set>
 #include <vector>
 
 namespace harkencurrentworldcompiler {
@@ -176,7 +178,9 @@ private:
         const std::vector<TransitionProgramAuthoringV1>&,
         const std::vector<ActionProgramAuthoringV1>&,
         const harkenbuscompiler::CompiledBusIdSetV1*,
-        CompileCapacityModeV1);
+        CompileCapacityModeV1,
+        const std::map<harkenstudio::ObjectId, std::uint32_t>&,
+        const std::set<std::uint32_t>&);
 
     struct OwnedPayload {
         harkenstudiobuild::PlayablePropertyPayloadViewV1 view{};
@@ -277,7 +281,9 @@ CompileResultV1 CompileCurrentWorldV1(
     const std::vector<TransitionProgramAuthoringV1>& transitions = {},
     const std::vector<ActionProgramAuthoringV1>& actions = {},
     const harkenbuscompiler::CompiledBusIdSetV1* busIds = nullptr,
-    CompileCapacityModeV1 capacityMode = CompileCapacityModeV1::ExplicitBudget);
+    CompileCapacityModeV1 capacityMode = CompileCapacityModeV1::ExplicitBudget,
+    const std::map<harkenstudio::ObjectId, std::uint32_t>& propertyAuthoredOrders = {},
+    const std::set<std::uint32_t>& reservedPropertyAuthoredOrders = {});
 
 } // namespace harkencurrentworldcompiler
 

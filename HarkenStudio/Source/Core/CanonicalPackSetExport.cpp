@@ -2086,6 +2086,92 @@ bool readPreviousPack(const QDir& output, PackMeta* pack, QByteArray* bytes,
             harkenstudiobuild::kCanonicalDefinitionPartitionBodyVintage);
 }
 
+struct PublicationAuthoredOrders
+{
+    QString language;
+    std::map<harkenstudio::ObjectId, std::uint32_t> properties;
+    std::map<harkenstudio::ObjectId, std::uint32_t> containers;
+};
+
+std::vector<PublicationAuthoredOrders> readPublicationAuthoredOrders(
+    const QDir& output, const QJsonArray& publication,
+    std::set<std::uint32_t>* reservedProperties,
+    std::set<std::uint32_t>* reservedContainers)
+{
+    std::vector<PublicationAuthoredOrders> result;
+    for (const auto& value : publication) {
+        PackMeta pack;
+        pack.previousRow = value.toObject();
+        pack.language = pack.previousRow.value(QStringLiteral("language")).toString();
+        pack.packStableId = pack.previousRow.value(QStringLiteral("packStableId")).toString().toULongLong();
+        pack.packKind = pack.previousRow.value(QStringLiteral("packKind")).toInt();
+        QByteArray bytes;
+        harkenstudiobuild::CurrentWorldBodyImage body;
+        if (!readPreviousPack(output, &pack, &bytes, &body, true)) continue;
+        PublicationAuthoredOrders orders;
+        orders.language = pack.language;
+        const auto& world = *body.ProductionView();
+        for (std::uint32_t i = 0; i < world.playablePropertyCount; ++i) {
+            const auto& property = world.playableProperties[i];
+            reservedProperties->insert(property.authoredStableOrder);
+            orders.properties.emplace(property.stableId, property.authoredStableOrder);
+        }
+        for (std::uint32_t i = 0; i < world.containerCount; ++i) {
+            const auto& container = world.containers[i];
+            reservedContainers->insert(container.authoredStableOrder);
+            orders.containers.emplace(container.containerStableId, container.authoredStableOrder);
+        }
+        result.push_back(std::move(orders));
+    }
+    return result;
+}
+
+bool mergePublicationAuthoredOrders(const std::vector<PublicationAuthoredOrders>& publication,
+                                    const QString& language,
+                                    const std::set<harkenstudio::ObjectId>& neutralDefinitions,
+                                    std::map<harkenstudio::ObjectId, std::uint32_t>* properties,
+                                    std::map<harkenstudio::ObjectId, std::uint32_t>* containers,
+                                    QString* error)
+{
+    std::map<std::uint32_t, harkenstudio::ObjectId> propertyOwners, containerOwners;
+    const auto merge = [&](const auto& source, auto& orders, auto& owners, bool compatible) {
+        for (const auto& [id, order] : source) {
+            if (!compatible && neutralDefinitions.count(id) == 0) continue;
+            const auto [definition, newDefinition] = orders.emplace(id, order);
+            const auto [owner, newOrder] = owners.emplace(order, id);
+            if ((!newDefinition && definition->second != order)
+                || (!newOrder && owner->second != id)) {
+                *error = QStringLiteral("Published definitions have conflicting authored orders for %1")
+                    .arg(objectIdString(id));
+                return false;
+            }
+        }
+        return true;
+    };
+    for (const auto& published : publication) {
+        const bool compatible = published.language.isEmpty() || published.language == language;
+        if (!merge(published.properties, *properties, propertyOwners, compatible)
+            || !merge(published.containers, *containers, containerOwners, compatible)) return false;
+    }
+    const auto validateNeutral = [&](const auto& source, const auto& owners) {
+        for (const auto& [id, order] : source) {
+            const auto owner = owners.find(order);
+            if (owner != owners.end() && owner->second != id
+                && neutralDefinitions.count(owner->second) != 0) {
+                *error = QStringLiteral("Published definitions have conflicting authored orders for %1")
+                    .arg(objectIdString(owner->second));
+                return false;
+            }
+        }
+        return true;
+    };
+    for (const auto& published : publication) {
+        if (!validateNeutral(published.properties, propertyOwners)
+            || !validateNeutral(published.containers, containerOwners)) return false;
+    }
+    return true;
+}
+
 struct CapacityFields
 {
     std::vector<std::uint32_t*> values;
@@ -2173,7 +2259,10 @@ bool harmonizePublicationCapacity(std::vector<PackMeta>* packs,
         std::vector<harkenstudiobuild::PlayableOccurrencePropertyViewV1> occurrences;
         std::vector<harkenstudiobuild::ContainerProgramViewV3> containers;
         std::vector<harkenstudiobuild::ActionProgramViewV1> actions;
+        std::vector<harkenstudiobuild::TrackScheduleProgramViewV1> tracks;
+        std::vector<harkenstudiobuild::PieceScheduleProgramViewV1> pieces;
         std::set<harkenstudio::ObjectId> variableIds, propertyIds, containerIds, actionIds;
+        std::set<harkenstudio::ObjectId> trackIds, pieceIds;
         std::set<std::tuple<std::uint32_t, harkenstudio::ObjectId, std::uint32_t>> occurrenceIds;
         const auto append = [](auto& rows, auto& ids, const auto* source,
                                std::uint32_t count, auto identity) {
@@ -2196,12 +2285,18 @@ bool harmonizePublicationCapacity(std::vector<PackMeta>* packs,
                    [](const auto& row) { return row.containerStableId; });
             append(actions, actionIds, world.actions, world.actionCount,
                    [](const auto& row) { return row.actionStableId; });
+            append(tracks, trackIds, world.trackSchedules, world.trackScheduleCount,
+                   [](const auto& row) { return row.rootDefinition.stableId; });
+            append(pieces, pieceIds, world.pieceSchedules, world.pieceScheduleCount,
+                   [](const auto& row) { return row.rootDefinition.stableId; });
         }
         if (variables.size() > harkenstudiobuild::kHardVariableDefinitionCapacity
             || properties.size() > harkenstudiobuild::kHardPlayablePropertyProgramCapacity
             || occurrences.size() > harkenstudiobuild::kHardPlayableOccurrencePropertyCapacity
             || containers.size() > harkenstudiobuild::kHardContainerProgramCapacity
-            || actions.size() > harkenstudiobuild::kHardActionDefinitionCapacity) {
+            || actions.size() > harkenstudiobuild::kHardActionDefinitionCapacity
+            || tracks.size() > harkenstudiobuild::kHardTrackScheduleProgramCapacity
+            || pieces.size() > harkenstudiobuild::kHardPieceScheduleProgramCapacity) {
             *error = QStringLiteral("Published Pack set exceeds World representation limits");
             return false;
         }
@@ -2216,6 +2311,10 @@ bool harmonizePublicationCapacity(std::vector<PackMeta>* packs,
         combined.containerCount = static_cast<std::uint32_t>(containers.size());
         combined.actions = actions.empty() ? nullptr : actions.data();
         combined.actionCount = static_cast<std::uint32_t>(actions.size());
+        combined.trackSchedules = tracks.empty() ? nullptr : tracks.data();
+        combined.trackScheduleCount = static_cast<std::uint32_t>(tracks.size());
+        combined.pieceSchedules = pieces.empty() ? nullptr : pieces.data();
+        combined.pieceScheduleCount = static_cast<std::uint32_t>(pieces.size());
         if (!harkenstudiobuild::GrowAuthoredWorldCapacityV1(combined, &common)) {
             *error = QStringLiteral("Published Pack set exceeds World content capacity");
             return false;
@@ -3178,6 +3277,19 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         ? project.defaultLanguage : stagingOpts.language.trimmed();
     const QString selectedLanguage = languages.contains(preferredLanguage)
         ? preferredLanguage : languages.front();
+    std::map<harkenstudio::ObjectId, std::uint32_t> newPropertyOrders, newContainerOrders;
+    std::set<std::uint32_t> reservedPropertyOrders, reservedContainerOrders;
+    std::vector<PublicationAuthoredOrders> publicationOrders;
+    std::set<harkenstudio::ObjectId> neutralDefinitionIds = sharedLayerIds;
+    if (request.options.updateSelectedOnly) {
+        for (const auto& variant : request.plan->variants) {
+            if (!variant.variant.language.isEmpty()) continue;
+            for (const auto* members : {&variant.closure.objects, &variant.closure.controlObjects})
+                for (const auto& member : *members) neutralDefinitionIds.insert(member.stableId);
+        }
+        publicationOrders = readPublicationAuthoredOrders(liveDir, previousPublication,
+            &reservedPropertyOrders, &reservedContainerOrders);
+    }
     for (const QString& language : languages) {
         if (exportCanceled(request.options.cancelCheck, &result.error)) return fail(result.error);
         std::set<harkenstudio::ObjectId> packedRootActionIds;
@@ -3205,6 +3317,32 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             &compileError, nullptr, &buildOptions);
         if (!worldRequest)
             return fail(compileError);
+        if (request.options.updateSelectedOnly) {
+            std::map<harkenstudio::ObjectId, std::uint32_t> containerOrders;
+            if (!mergePublicationAuthoredOrders(publicationOrders, language, neutralDefinitionIds,
+                    &worldRequest->propertyAuthoredOrders, &containerOrders,
+                    &compileError))
+                return fail(compileError);
+            worldRequest->propertyAuthoredOrders.insert(newPropertyOrders.begin(), newPropertyOrders.end());
+            worldRequest->reservedPropertyAuthoredOrders = reservedPropertyOrders;
+            containerOrders.insert(newContainerOrders.begin(), newContainerOrders.end());
+            std::uint64_t nextOrder = 0;
+            for (auto& container : worldRequest->containers) {
+                const auto previous = containerOrders.find(container.containerStableId);
+                if (previous != containerOrders.end()) {
+                    container.authoredStableOrder = previous->second;
+                    continue;
+                }
+                while (nextOrder <= UINT32_MAX
+                       && reservedContainerOrders.count(static_cast<std::uint32_t>(nextOrder)) != 0)
+                    ++nextOrder;
+                if (nextOrder > UINT32_MAX)
+                    return fail(QStringLiteral("Published container authored orders are exhausted"));
+                container.authoredStableOrder = static_cast<std::uint32_t>(nextOrder++);
+                reservedContainerOrders.insert(container.authoredStableOrder);
+                newContainerOrders.emplace(container.containerStableId, container.authoredStableOrder);
+            }
+        }
         if (exportCanceled(request.options.cancelCheck, &result.error)) return fail(result.error);
         for (const PackMeta& pack : packs) {
             if (!pack.language.isEmpty() && pack.language != language)
@@ -3231,6 +3369,14 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                             .arg(VNX::objectIdString(compiled.relatedStableId)).arg(language));
         }
         const harkenstudiobuild::ContainerWorldInstallViewV1& world = compiled.world->View();
+        if (request.options.updateSelectedOnly) {
+            for (std::uint32_t i = 0; i < world.playablePropertyCount; ++i) {
+                const auto& property = world.playableProperties[i];
+                if (worldRequest->propertyAuthoredOrders.count(property.stableId) != 0) continue;
+                newPropertyOrders.emplace(property.stableId, property.authoredStableOrder);
+                reservedPropertyOrders.insert(property.authoredStableOrder);
+            }
+        }
         if (!request.options.currentWorldOutputPath.isEmpty()
             && language == selectedLanguage) {
             if (!WriteCurrentWorldArtifactV1(request.options.currentWorldOutputPath, world, &compileError))

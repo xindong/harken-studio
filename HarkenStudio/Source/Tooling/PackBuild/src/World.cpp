@@ -1680,6 +1680,22 @@ bool GrowAuthoredWorldCapacityV1(const ContainerWorldInstallViewV1& world,
     required.maxPlayablePropertyLayerAncestorRefsTotal = std::max(
         required.maxPlayablePropertyLayerAncestorRefsTotal,
         counts.playablePropertyLayerAncestorRefCount);
+    required.maxPlayablePropertyEffectNodesTotal = std::max(
+        required.maxPlayablePropertyEffectNodesTotal, counts.playablePropertyEffectNodeCount);
+    required.maxPlayablePropertyEffectParamsTotal = std::max(
+        required.maxPlayablePropertyEffectParamsTotal, counts.playablePropertyEffectParamCount);
+    required.maxPlayablePropertyEffectEdgesTotal = std::max(
+        required.maxPlayablePropertyEffectEdgesTotal, counts.playablePropertyEffectEdgeCount);
+    required.maxTrackSchedulePrograms = std::max(
+        required.maxTrackSchedulePrograms, world.trackScheduleCount);
+    required.maxPieceSchedulePrograms = std::max(
+        required.maxPieceSchedulePrograms, world.pieceScheduleCount);
+    required.maxScheduleTrackRefsTotal = std::max(
+        required.maxScheduleTrackRefsTotal, counts.scheduleTrackRefCount);
+    required.maxSchedulePlacementsTotal = std::max(
+        required.maxSchedulePlacementsTotal, counts.schedulePlacementCount);
+    required.maxScheduleMarkersTotal = std::max(
+        required.maxScheduleMarkersTotal, counts.scheduleMarkerCount);
     required.maxActionDefinitions = std::max(required.maxActionDefinitions, world.actionCount);
     std::uint64_t steps = 0;
     for (std::uint32_t i = 0; i < world.actionCount; ++i) {
