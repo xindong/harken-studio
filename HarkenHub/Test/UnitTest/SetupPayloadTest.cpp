@@ -2,6 +2,9 @@
 
 #include <gtest/gtest.h>
 #include <QCryptographicHash>
+#include <QFile>
+#include <QProcess>
+#include <QTemporaryDir>
 
 namespace {
 
@@ -41,6 +44,43 @@ TEST(SetupPayloadTest, RestoresExactBytesIncludingRepeatedDataAndPartialTail)
     std::vector<unsigned char> output;
     ASSERT_TRUE(fixture.unpack(output));
     EXPECT_EQ(QByteArray(reinterpret_cast<const char*>(output.data()), output.size()), fixture.file);
+}
+
+TEST(SetupPayloadTest, RestoresBothPackagesProducedByThePythonBuilder)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const PayloadFixture fixture;
+    const QByteArray inputs[] = {fixture.file + "English", fixture.file + "Chinese signed tail"};
+    const QString names[] = {QStringLiteral("HARKENHUBMSI"), QStringLiteral("HARKENHUBMSI_ZHCN")};
+    for (int i = 0; i < 2; ++i) {
+        QFile file(directory.filePath(QString::number(i) + QStringLiteral(".msi")));
+        ASSERT_TRUE(file.open(QIODevice::WriteOnly));
+        ASSERT_EQ(file.write(inputs[i]), inputs[i].size());
+    }
+    QProcess builder;
+    builder.start(QStringLiteral(HARKEN_HUB_TEST_PYTHON), {
+        QStringLiteral("-c"),
+        QStringLiteral("import sys\nfrom pathlib import Path\nsys.path.insert(0, sys.argv[1])\n"
+                       "from build_hub_installer import payload_resources\nroot = Path(sys.argv[2])\n"
+                       "for name, data in payload_resources((root / '0.msi', root / '1.msi')).items():\n"
+                       "    (root / name).write_bytes(data)\n"),
+        QStringLiteral(HARKEN_HUB_INSTALLER_SCRIPTS), directory.path()});
+    ASSERT_TRUE(builder.waitForFinished()) << builder.errorString().toStdString();
+    ASSERT_EQ(builder.exitStatus(), QProcess::NormalExit);
+    ASSERT_EQ(builder.exitCode(), 0) << builder.readAllStandardError().toStdString();
+    QFile shared(directory.filePath(QStringLiteral("HARKENHUBBLOCKS")));
+    ASSERT_TRUE(shared.open(QIODevice::ReadOnly));
+    const QByteArray blocks = shared.readAll();
+    for (int i = 0; i < 2; ++i) {
+        QFile file(directory.filePath(names[i]));
+        ASSERT_TRUE(file.open(QIODevice::ReadOnly));
+        const QByteArray manifest = file.readAll();
+        std::vector<unsigned char> output;
+        ASSERT_TRUE(HarkenSetup::unpackPayload(manifest.constData(), static_cast<DWORD>(manifest.size()),
+            blocks.constData(), static_cast<DWORD>(blocks.size()), output));
+        EXPECT_EQ(QByteArray(reinterpret_cast<const char*>(output.data()), output.size()), inputs[i]);
+    }
 }
 
 TEST(SetupPayloadTest, RejectsTruncatedAndOutOfBoundsMetadata)

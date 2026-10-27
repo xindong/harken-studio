@@ -70,11 +70,15 @@ add_executable(harken_hub_tests
 set_target_properties(harken_hub_tests PROPERTIES AUTORCC ON)
 harken_add_hub_legal_resources(harken_hub_tests)
 if(WIN32)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
     target_sources(harken_hub_tests PRIVATE
         UnitTest/SetupPayloadTest.cpp
         UnitTest/ShellIconsTest.cpp
         UnitTest/UpdateBridgeDeploymentTest.cpp)
     target_link_libraries(harken_hub_tests PRIVATE bcrypt)
+    target_compile_definitions(harken_hub_tests PRIVATE
+        HARKEN_HUB_TEST_PYTHON="${Python3_EXECUTABLE}"
+        HARKEN_HUB_INSTALLER_SCRIPTS="${CMAKE_SOURCE_DIR}/.scripts/release")
 endif()
 target_link_libraries(harken_hub_tests PRIVATE
     harken_hub_test_lib
