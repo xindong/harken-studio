@@ -1120,7 +1120,10 @@ void BlueprintCanvasWidget::onItemPropertyChanged(ProjectItem* ,
     refreshNodeTitles_();
     if (activeSource_ == pathSource_.get()) {
         if (propertyName == QLatin1String("dirty")) return;
-        queuePathRefresh_(propertyName == QLatin1String("volume"));
+        queuePathRefresh_(propertyName == QLatin1String("volume")
+            || propertyName == QLatin1String("pitch")
+            || propertyName == QLatin1String("loopCount")
+            || propertyName == QLatin1String("scheduleOffsetSec"));
         return;
     }
     static const QSet<QString> structuralProps = {

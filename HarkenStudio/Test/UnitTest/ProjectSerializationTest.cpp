@@ -1,6 +1,9 @@
 #include "UnitTest/StudioObjectIdTestSupport.h"
 #include "ProjectManager.h"
 #include "ProjectSerializer.h"
+#include "ProjectItemSaveState.h"
+#include "Components/VAction.h"
+#include "Components/VVariable.h"
 #include "ProjectTypes.h"
 #include "PlayablePropertyAuthoringV1.h"
 #include "Components/VSelection.h"
@@ -20,7 +23,9 @@
 #include <QTemporaryDir>
 #include <QUuid>
 
+#include <algorithm>
 #include <functional>
+#include <limits>
 
 using VNX::ProjectData;
 using VNX::ProjectItem;
@@ -247,4 +252,287 @@ TEST(ProjectSerialization, RejectsOrphanContentPackWithoutChangingDisk)
     EXPECT_EQ(projectFileBytes(projectRoot), before);
 
     pm.closeProject();
+}
+
+namespace {
+
+std::shared_ptr<ProjectItem> addSaveStateRoot(
+    ProjectData& project, const QString& name, ProjectItem::Type type, uint32_t objectId)
+{
+    auto item = std::make_shared<ProjectItem>(name, type);
+    item->objectID = objectId;
+    item->guid = QUuid::createUuid();
+    item->attachDefaultComponents();
+    auto* bucket = project.getBucketForType(type);
+    bucket->push_back({item, project.folderNameForBucket(bucket)});
+    return item;
+}
+
+}
+
+TEST(ProjectSerialization, SavedContentTracksValuesAcrossObjectKindsAndSavePoints)
+{
+    ProjectData project = HarkenTest::projectWithPlatforms();
+    std::vector<std::shared_ptr<ProjectItem>> items;
+    uint32_t objectId = 1;
+    for (const auto type : {ProjectItem::Type::Layer, ProjectItem::Type::Sound,
+                           ProjectItem::Type::Container, ProjectItem::Type::Track,
+                           ProjectItem::Type::Piece, ProjectItem::Type::Bus,
+                           ProjectItem::Type::Action, ProjectItem::Type::Variable,
+                           ProjectItem::Type::Attenuation}) {
+        items.push_back(addSaveStateRoot(project, QStringLiteral("Object%1").arg(objectId),
+                                        type, objectId));
+        ++objectId;
+    }
+    VNX::ProjectItemSaveState saved;
+    ASSERT_TRUE(saved.markSaved(project));
+    EXPECT_TRUE(saved.refresh(project).isEmpty());
+    for (const auto& item : items) {
+        item->expanded = true;
+        item->objectPath = QStringLiteral("Changed/Derived/Path");
+        ++item->nameBindingRevision;
+    }
+    EXPECT_TRUE(saved.refresh(project).isEmpty());
+
+    for (const auto& item : items) {
+        item->notes = QStringLiteral("Authoring change");
+        item->extensions = {{QStringLiteral("external"), QJsonArray{1, 2, 3}}};
+        item->color = 0x123456;
+        item->canvasPos = QPointF(25.0, -10.0);
+    }
+    saved.refresh(project);
+    for (const auto& item : items) EXPECT_TRUE(item->isDirtyObject());
+    EXPECT_TRUE(saved.refresh(project).isEmpty());
+    for (const auto& item : items) {
+        item->notes.clear();
+        item->extensions = {};
+        item->color = 0;
+        item->canvasPos = {};
+    }
+    saved.refresh(project);
+    for (const auto& item : items) EXPECT_FALSE(item->isDirtyObject());
+
+    const auto variable = items[7];
+    auto* declaration = variable->comp<VNX::VVariable>();
+    ASSERT_NE(declaration, nullptr);
+    const float initialValue = declaration->defaultValue;
+    declaration->defaultValue = 2.5f;
+    saved.refresh(project);
+    EXPECT_TRUE(variable->isDirtyObject());
+    ASSERT_TRUE(saved.markSaved(project));
+    ASSERT_TRUE(saved.markSaved(project));
+    saved.refresh(project);
+    EXPECT_FALSE(variable->isDirtyObject());
+    declaration->defaultValue = initialValue;
+    saved.refresh(project);
+    EXPECT_TRUE(variable->isDirtyObject());
+    declaration->defaultValue = 2.5f;
+    saved.refresh(project);
+    EXPECT_FALSE(variable->isDirtyObject());
+    EXPECT_TRUE(saved.refresh(project).isEmpty());
+}
+
+TEST(ProjectSerialization, SavedContentFollowsPersistentIdentityAndHierarchy)
+{
+    ProjectData project = HarkenTest::projectWithPlatforms();
+    const auto left = addSaveStateRoot(project, QStringLiteral("Left"), ProjectItem::Type::Layer, 1);
+    const auto right = addSaveStateRoot(project, QStringLiteral("Right"), ProjectItem::Type::Layer, 2);
+    auto sound = addChild(*left, "Tone", ProjectItem::Type::Sound);
+    sound->objectID = 3;
+    sound->parentRef.kind = VNX::ParentRef::Kind::Item;
+    const auto sibling = addChild(*left, "Tail", ProjectItem::Type::Sound);
+    sibling->objectID = 4;
+    sibling->parentRef.kind = VNX::ParentRef::Kind::Item;
+    const auto action = addSaveStateRoot(project, QStringLiteral("PlayTone"), ProjectItem::Type::Action, 5);
+    VNX::VActionStep step;
+    step.targetObjectID = sound->objectID;
+    step.targetName = sound->name;
+    action->comp<VNX::VAction>()->steps.push_back(step);
+    auto& target = action->comp<VNX::VAction>()->steps.front();
+    VNX::ProjectItemSaveState saved;
+    ASSERT_TRUE(saved.markSaved(project));
+
+    sound->name = QStringLiteral("RenamedTone");
+    target.targetName = sound->name;
+    saved.refresh(project);
+    EXPECT_TRUE(sound->isDirtyObject());
+    EXPECT_FALSE(left->isDirtyObject());
+    EXPECT_FALSE(action->isDirtyObject());
+    sound->name = QStringLiteral("Tone");
+    target.targetName = sound->name;
+    sound->objectID = 103;
+    target.targetObjectID = sound->objectID;
+    saved.refresh(project);
+    EXPECT_FALSE(sound->isDirtyObject());
+    EXPECT_FALSE(action->isDirtyObject());
+
+    VNX::ProjectSerializer serializer;
+    ASSERT_TRUE(serializer.prepareReferenceWrite(project));
+    const QJsonObject content = serializer.projectItemToJson(*sound, false);
+    ASSERT_FALSE(content.isEmpty());
+    auto restored = std::make_shared<ProjectItem>();
+    ASSERT_TRUE(serializer.projectItemFromJson(content, *restored));
+    restored->parent = left.get();
+    restored->markDirty();
+    left->children[0] = restored;
+    sound = restored;
+    saved.refresh(project);
+    EXPECT_FALSE(sound->isDirtyObject());
+    EXPECT_FALSE(left->isDirtyObject());
+    EXPECT_FALSE(action->isDirtyObject());
+
+    std::swap(left->children[0], left->children[1]);
+    saved.refresh(project);
+    EXPECT_TRUE(left->isDirtyObject());
+    EXPECT_FALSE(sound->isDirtyObject());
+    EXPECT_FALSE(sibling->isDirtyObject());
+    std::swap(left->children[0], left->children[1]);
+    saved.refresh(project);
+    EXPECT_FALSE(left->isDirtyObject());
+
+    left->children.erase(left->children.begin());
+    right->children.push_back(sound);
+    sound->parent = right.get();
+    saved.refresh(project);
+    EXPECT_TRUE(left->isDirtyObject());
+    EXPECT_TRUE(right->isDirtyObject());
+    EXPECT_TRUE(sound->isDirtyObject());
+    EXPECT_FALSE(action->isDirtyObject());
+    right->children.clear();
+    left->children.insert(left->children.begin(), sound);
+    sound->parent = left.get();
+    saved.refresh(project);
+    EXPECT_FALSE(left->isDirtyObject());
+    EXPECT_FALSE(right->isDirtyObject());
+    EXPECT_FALSE(sound->isDirtyObject());
+
+    target.targetObjectID = sibling->objectID;
+    target.targetName = sibling->name;
+    saved.refresh(project);
+    EXPECT_TRUE(action->isDirtyObject());
+    target.targetObjectID = sound->objectID;
+    target.targetName = sound->name;
+    saved.refresh(project);
+    EXPECT_FALSE(action->isDirtyObject());
+
+    left->children.pop_back();
+    saved.refresh(project);
+    EXPECT_TRUE(left->isDirtyObject());
+    left->children.push_back(sibling);
+    saved.refresh(project);
+    EXPECT_FALSE(left->isDirtyObject());
+    EXPECT_FALSE(sibling->isDirtyObject());
+}
+
+TEST(ProjectSerialization, FailedContentCapturePreservesTheLastSuccessfulSavePoint)
+{
+    ProjectData project = HarkenTest::projectWithPlatforms();
+    const auto layer = addSaveStateRoot(project, QStringLiteral("Layer"), ProjectItem::Type::Layer, 1);
+    const auto sound = addChild(*layer, "Tone", ProjectItem::Type::Sound);
+    sound->objectID = 2;
+    sound->parentRef.kind = VNX::ParentRef::Kind::Item;
+    VNX::ProjectItemSaveState saved;
+    ASSERT_TRUE(saved.markSaved(project));
+    sound->notes = QStringLiteral("Pending content");
+    saved.refresh(project);
+    EXPECT_TRUE(sound->isDirtyObject());
+
+    const QUuid identity = sound->guid;
+    sound->guid = layer->guid;
+    layer->notes = QStringLiteral("Pending parent content");
+    EXPECT_TRUE(saved.refresh(project).isEmpty());
+    EXPECT_FALSE(layer->isDirtyObject());
+    EXPECT_TRUE(sound->isDirtyObject());
+    EXPECT_FALSE(saved.markSaved(project));
+    sound->guid = identity;
+    layer->notes.clear();
+    sound->notes.clear();
+    saved.refresh(project);
+    EXPECT_FALSE(layer->isDirtyObject());
+    EXPECT_FALSE(sound->isDirtyObject());
+
+    sound->notes = QStringLiteral("Pending content");
+    saved.refresh(project);
+    EXPECT_TRUE(sound->isDirtyObject());
+    const auto groups = sound->fieldGroups;
+    sound->fieldGroups.spatialRating.shared.localHistory = VNX::SpatialRatingFieldGroup{};
+    sound->fieldGroups.spatialRating.shared.localHistory->spatialPanning =
+        std::numeric_limits<float>::quiet_NaN();
+    sound->notes.clear();
+    layer->notes = QStringLiteral("Pending parent content");
+    EXPECT_FALSE(saved.markSaved(project));
+    saved.refresh(project);
+    EXPECT_TRUE(sound->isDirtyObject());
+    EXPECT_TRUE(layer->isDirtyObject());
+    sound->fieldGroups = groups;
+    layer->notes.clear();
+    saved.refresh(project);
+    EXPECT_FALSE(sound->isDirtyObject());
+    EXPECT_FALSE(layer->isDirtyObject());
+    EXPECT_TRUE(saved.refresh(project).isEmpty());
+}
+
+
+TEST(ProjectSerialization, ReusedSerializerObservesAuthoringChangesAndOwnsReturnedDocuments)
+{
+    ProjectItem item(QStringLiteral("Layer"), ProjectItem::Type::Layer);
+    item.guid = QUuid::createUuid();
+    item.attachDefaultComponents();
+    VNX::ProjectSerializer reused;
+    const auto compare = [&](bool valid) {
+        VNX::ProjectSerializer fresh;
+        const auto expected = fresh.projectItemToJson(item, false);
+        auto actual = reused.projectItemToJson(item, false);
+        EXPECT_EQ(actual.isEmpty(), !valid);
+        EXPECT_EQ(actual, expected);
+        EXPECT_EQ(QJsonDocument(actual).toJson(QJsonDocument::Compact),
+                  QJsonDocument(expected).toJson(QJsonDocument::Compact));
+        if (!valid) {
+            EXPECT_EQ(reused.lastError(), fresh.lastError());
+            EXPECT_FALSE(reused.lastError().isEmpty());
+            return;
+        }
+        auto groups = actual.value(QStringLiteral("fieldGroups")).toObject();
+        groups.insert(QStringLiteral("externalMutation"), true);
+        actual.insert(QStringLiteral("fieldGroups"), groups);
+        EXPECT_EQ(reused.projectItemToJson(item, false), expected);
+        EXPECT_EQ(reused.audioBranchToJson(item).value(QStringLiteral("fieldGroups")),
+                  expected.value(QStringLiteral("fieldGroups")));
+    };
+    compare(true);
+    item.fieldGroups = VNX::MakeRootFieldGroups({1, 2});
+    item.fieldGroups.send.shared.localHistory->sends = {{{3, 4}, -6.0f}, {{5, 6}, -12.0f}};
+    compare(true);
+    item.fieldGroups.mainOutput.shared.localHistory->outputBusVolume = -0.0f;
+    compare(true);
+    item.fieldGroups.mainOutput.shared.localHistory->outputBusVolume = 0.0f;
+    compare(true);
+    std::reverse(item.fieldGroups.send.shared.localHistory->sends.begin(),
+                 item.fieldGroups.send.shared.localHistory->sends.end());
+    compare(true);
+    auto overlay = item.fieldGroups.mainOutput.shared;
+    overlay.mode = VNX::FieldGroupMode::UseShared;
+    overlay.localFields = VNX::FieldGroupFieldMask(
+        harkenplayableproperties::PlayablePropertyIdV1::OutputBusVolume);
+    overlay.localHistory->outputBusVolume = -3.0f;
+    item.fieldGroups.mainOutput.platforms[{7, 8}] = overlay;
+    compare(true);
+    item.fieldGroups.mainOutput.platforms[{7, 8}].localFields =
+        VNX::FieldGroupPropertyMask(VNX::FieldGroupId::MainOutput);
+    compare(true);
+    item.fieldGroups.mainOutput.shared.localHistory->mainOutputBusRef = {9, 10};
+    compare(true);
+    item.fieldGroups.mainOutput.platforms[{7, 8}].mode = VNX::FieldGroupMode::Inherit;
+    compare(true);
+    item.fieldGroups.mainOutput.platforms.clear();
+    compare(true);
+    item.fieldGroups.mainOutput.shared.localHistory->outputBusVolume =
+        std::numeric_limits<float>::quiet_NaN();
+    compare(false);
+    item.fieldGroups.mainOutput.shared.localHistory->outputBusVolume = 0.0f;
+    compare(true);
+    item.type = ProjectItem::Type::Action;
+    compare(false);
+    item.type = ProjectItem::Type::Layer;
+    compare(true);
 }

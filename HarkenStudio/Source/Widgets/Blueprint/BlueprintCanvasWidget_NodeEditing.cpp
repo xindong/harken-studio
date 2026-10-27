@@ -141,7 +141,10 @@ void BlueprintCanvasWidget::installNodeEditor_(NodeItem* node, const BlueprintNo
                 if (committed) session->commit();
                 else session->cancel();
             }
-            queuePathRefresh_(field == NodeContentField::Volume);
+            queuePathRefresh_(field == NodeContentField::Volume
+                || field == NodeContentField::Pitch
+                || field == NodeContentField::Loop
+                || field == NodeContentField::OffsetOfStart);
         };
         connect(editor, &NodeContentEditor::editBegan, this, begin);
         connect(editor, &NodeContentEditor::editPreviewed, this, preview);

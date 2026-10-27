@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <type_traits>
 #include <vector>
 
 namespace VNX {
@@ -201,16 +202,15 @@ public:
 
     QJsonObject toJson() const override
     {
-        QJsonObject j;
-        for (const auto& d : Derived::schema())
-        {
-            if (!d.flags.serialize) continue;
-            if (d.serializeWhen && !d.serializeWhen(this)) continue;
-            const QString key = d.jsonKey.isEmpty() ? d.field : d.jsonKey;
-            j[key] = propToJsonValue(d.get(this), d);
-        }
-        static_cast<const Derived*>(this)->toJsonExtra(j);
-        return j;
+        return toJsonImpl(nullptr);
+    }
+
+    QJsonObject toJsonExcluding(const QSet<QString>& excluded) const override
+    {
+        if constexpr (!std::is_same_v<decltype(&Derived::toJson),
+                                      decltype(&ReflectedComponent<Derived>::toJson)>)
+            return IComponent::toJsonExcluding(excluded);
+        return toJsonImpl(&excluded);
     }
 
     bool fromJson(const QJsonObject& j) override
@@ -229,6 +229,23 @@ public:
     virtual void fromJsonExtra(const QJsonObject&) {}
 
 private:
+    QJsonObject toJsonImpl(const QSet<QString>* excluded) const
+    {
+        QJsonObject j;
+        for (const auto& d : Derived::schema())
+        {
+            if (!d.flags.serialize) continue;
+            if (excluded && excluded->contains(d.jsonKey.isEmpty() ? d.field : d.jsonKey)) continue;
+            if (d.serializeWhen && !d.serializeWhen(this)) continue;
+            const QString key = d.jsonKey.isEmpty() ? d.field : d.jsonKey;
+            j[key] = propToJsonValue(d.get(this), d);
+        }
+        static_cast<const Derived*>(this)->toJsonExtra(j);
+        if (excluded)
+            for (const auto& key : *excluded) j.remove(key);
+        return j;
+    }
+
     static bool matches(const PropertyDescriptor& d, const QString& f)
     {
         if (d.field == f) return true;

@@ -6,6 +6,8 @@
 
 namespace VNX {
 
+class ProjectContractReadContext;
+
 struct PreflightReport
 {
     int currentSchema = 0;
@@ -20,7 +22,8 @@ class ProjectPreflight
 {
 public:
     static QString schemaMismatchError(int projectSchema, int studioSchema);
-    static PreflightReport run(const QString& projectPath, int targetSchema);
+    static PreflightReport run(const QString& projectPath, int targetSchema,
+                                ProjectContractReadContext* context = nullptr);
 };
 
 }

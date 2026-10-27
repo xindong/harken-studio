@@ -180,12 +180,29 @@ FieldGroupEffectiveSnapshot buildFieldGroupEffectiveSnapshot(
     const ProjectData& project, FieldGroupScope scope,
     const std::function<const DefinitionFieldGroups*(const ProjectItem&)>& groupsForDefinition)
 {
+    const auto source = HarkenEditor::Bridge::canonicalRuntimeProjectSourceIndex(project);
+    return buildFieldGroupEffectiveSnapshot(project, scope, *source, groupsForDefinition);
+}
+
+FieldGroupEffectiveSnapshot buildFieldGroupEffectiveSnapshot(
+    const ProjectData& project, FieldGroupScope scope,
+    const HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1& source)
+{
+    return buildFieldGroupEffectiveSnapshot(project, scope, source, [](const ProjectItem& item) {
+        return &item.fieldGroups;
+    });
+}
+
+FieldGroupEffectiveSnapshot buildFieldGroupEffectiveSnapshot(
+    const ProjectData& project, FieldGroupScope scope,
+    const HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1& source,
+    const std::function<const DefinitionFieldGroups*(const ProjectItem&)>& groupsForDefinition)
+{
     using namespace harkenprojectschema;
     using namespace HarkenEditor::Bridge;
     FieldGroupEffectiveSnapshot result;
     result.scope = scope;
-    const auto source = canonicalRuntimeProjectSourceIndex(project);
-    const auto view = buildFieldGroupProjectView(project, *source, groupsForDefinition);
+    const auto view = buildFieldGroupProjectView(project, source, groupsForDefinition);
     result.diagnostics = view.diagnostics;
     if (!view.ok()) return result;
     const auto fail = [&](const QString& message, AuthoringGuid definition = {},
@@ -200,7 +217,7 @@ FieldGroupEffectiveSnapshot buildFieldGroupEffectiveSnapshot(
     }
     const auto* master = project.busses.empty() ? nullptr : project.busses.front().rootItem.get();
     if (!master || master->type != ProjectItem::Type::Bus || master->guid.isNull()
-        || !source->byGuid.contains(toFieldGroupGuid(master->guid))) {
+        || !source.byGuid.contains(toFieldGroupGuid(master->guid))) {
         fail(QStringLiteral("Project Master Bus must have a valid persistent GUID"));
         return result;
     }
@@ -245,7 +262,7 @@ FieldGroupEffectiveSnapshot buildFieldGroupEffectiveSnapshot(
         result.definitions.clear();
         return result;
     }
-    result.objects.insert(source->byGuid.begin(), source->byGuid.end());
+    result.objects.insert(source.byGuid.begin(), source.byGuid.end());
     return result;
 }
 

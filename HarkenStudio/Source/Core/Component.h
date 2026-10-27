@@ -2,6 +2,7 @@
 #pragma once
 
 #include <QJsonObject>
+#include <QSet>
 #include <array>
 #include <memory>
 #include <functional>
@@ -39,6 +40,13 @@ public:
     virtual ComponentType getType() const = 0;
 
     virtual QJsonObject toJson() const = 0;
+
+    virtual QJsonObject toJsonExcluding(const QSet<QString>& excluded) const
+    {
+        auto json = toJson();
+        for (const auto& key : excluded) json.remove(key);
+        return json;
+    }
 
     virtual bool fromJson(const QJsonObject& json) = 0;
 

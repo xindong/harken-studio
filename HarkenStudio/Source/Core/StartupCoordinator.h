@@ -60,6 +60,7 @@ private:
     std::shared_ptr<std::atomic_bool> cancellationRequested_ =
         std::make_shared<std::atomic_bool>(false);
     ProjectUpgradeAnalysis analysis_;
+    std::shared_ptr<ProjectContractReadContext> projectReadContext_;
     std::shared_ptr<PreparedProject> prepared_;
     bool projectPrepared_ = false;
     ProjectUpgradeApprovalCallback upgradeApproval_;
