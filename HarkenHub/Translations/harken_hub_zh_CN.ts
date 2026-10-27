@@ -159,6 +159,10 @@
 </context>
 <context>
     <name>HubReleaseNotes</name>
+    <message><source>Running Hub taskbar icons now refresh correctly when switching between light and dark Windows themes.</source><translation>修复运行中的 Hub 任务栏图标在 Windows 浅色、深色主题切换后未正确刷新的问题。</translation></message>
+    <message><source>Quick Integration Package and project version menus show concise version labels. Project version choices are ordered from newest to oldest.</source><translation>精简快捷集成包和工程版本菜单中的版本名称，工程版本选项按从新到旧排列。</translation></message>
+    <message><source>Integration Package status checks, changes, moves, and uninstalls are available on one row.</source><translation>集成包状态检查按钮与更换、移动、卸载按钮恢复为同一行。</translation></message>
+    <message><source>The Integration Package source selector labels the package version before its path and lists newer versions first, keeping the version visible when long paths are shortened.</source><translation>集成包来源下拉列表在路径左侧明确标注集成包版本，并按版本从新到旧排列，路径过长时仍可先看到版本信息。</translation></message>
     <message><source>Hub uses the Harken Hub name throughout installation, updates, and Studio integration, and includes the updated legal terms.</source><translation>Hub 的安装、更新及 Studio 联动统一恢复 Harken Hub 名称，并更新相关法务条款。</translation></message>
     <message><source>Running Hub taskbar and tray icons follow the Windows theme. The dark Hub window keeps its white icon, and the installed-app list shows the correct Hub icon.</source><translation>Hub 运行中的任务栏和托盘图标跟随 Windows 主题切换。深色 Hub 窗口保留白色图标，已安装应用列表显示正确的 Hub 图标。</translation></message>
     <message><source>Engine Integrations uses Integration and Integration Package terminology throughout its controls, checks, and operation reports.</source><translation>引擎集成的控件、检查提示及操作报告统一使用“集成”和“集成包”名称。</translation></message>
@@ -876,6 +880,7 @@ Reason: %2</source><translation>%1
     <message><source>JSON report was written, but the text removal report failed.</source><translation>JSON 报告已写入，但 TXT 卸载报告写入失败。</translation></message>
     <message><source>JSON report was written, but the text report failed.</source><translation>JSON 报告已写入，但 TXT 报告写入失败。</translation></message>
     <message><source>Integration Package %1 | Studio %2</source><translation>集成包 %1 | Studio %2</translation></message>
+    <message><source>Integration Package %1 | %2</source><translation>集成包 %1 | %2</translation></message>
     <message><source>Manage Integration Package and Project Links</source><translation>管理集成包与工程关联</translation></message>
     <message><source>Open Harken Project Folder</source><translation>打开 Harken 工程文件夹</translation></message>
     <message><source>Open Game Project Folder</source><translation>打开游戏工程文件夹</translation></message>
