@@ -32,6 +32,8 @@ class QTreeWidget;
 
 namespace VNH {
 
+class DialogTextView;
+
 enum class EngineKind;
 struct EngineTargetRecord;
 struct InstalledVersion;
@@ -226,15 +228,15 @@ private:
     QPushButton* checkButton_ = nullptr;
     QPushButton* sdkCheckButton_ = nullptr;
     QDialog* sdkSelectionDialog_ = nullptr;
-    QLabel* sdkSelectionContext_ = nullptr;
-    QLabel* sdkSelectionSummary_ = nullptr;
-    QLabel* sdkSafetyHint_ = nullptr;
+    DialogTextView* sdkSelectionContext_ = nullptr;
+    DialogTextView* sdkSelectionSummary_ = nullptr;
+    DialogTextView* sdkSafetyHint_ = nullptr;
     QTimer* engineStatusTimer_ = nullptr;
     QPlainTextEdit* sdkSelectionPaths_ = nullptr;
     IntegrationTaskProgress* sdkProgress_ = nullptr;
     QPushButton* sdkReportButton_ = nullptr;
     QTabWidget* sdkResultsTabs_ = nullptr;
-    QLabel* sdkDiffSummary_ = nullptr;
+    DialogTextView* sdkDiffSummary_ = nullptr;
     QTreeWidget* sdkDiffTree_ = nullptr;
     QTextBrowser* sdkSelectionDetails_ = nullptr;
     QPushButton* integrateButton_ = nullptr;

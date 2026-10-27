@@ -1,4 +1,5 @@
 #include "UI/EngineIntegrationsPage.h"
+#include "UI/DialogLayout.h"
 #include "UI/ProjectsPage.h"
 #include "UI/VersionsPage.h"
 #include "UI/IntegrationTaskDialog.h"
@@ -34,7 +35,7 @@
 #include <QHeaderView>
 #include <QLineEdit>
 #include <QLabel>
-#include <QMessageBox>
+#include "UI/MessageDialog.h"
 #include <QMenu>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -423,7 +424,7 @@ TEST_F(EngineIntegrationsPageTest, UnrealUsesTheSameProjectAndSdkWorkflowInBothL
         ASSERT_TRUE(QFile::remove(installed + "/Binaries/ThirdParty/HarkenCore/Linux/x86_64/libHarkenCore.so"));
         selectSdkFolder(source);
         checkButton()->click();
-        const QString differences = page->findChild<QLabel*>("sdkDiffSummary")->text();
+        const QString differences = page->findChild<VNH::DialogTextView*>("sdkDiffSummary")->text();
         EXPECT_TRUE(differences.contains(QCoreApplication::translate(
             "HarkenHub", "Locally modified files to overwrite or remove: %1").arg(1)));
         EXPECT_TRUE(differences.contains(QCoreApplication::translate(
@@ -627,7 +628,7 @@ TEST_F(EngineIntegrationsPageTest, SortedListKeepsSelectionAndActionTargets)
         if (auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget())) {
             menu->setActiveAction(unlink ? menu->actions().last() : menu->actions().first());
             QTest::keyClick(menu, Qt::Key_Return);
-        } else if (auto* message = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+        } else if (auto* message = qobject_cast<VNH::MessageDialog*>(QApplication::activeModalWidget())) {
             message->button(QMessageBox::Yes)->click();
         }
     });
@@ -759,7 +760,7 @@ TEST_F(EngineIntegrationsPageTest, InvalidOrClearedProjectDiscardsPendingVersion
         auto* sdkField = field("Runtime/Integration Package source path");
         QTimer dismiss;
         QObject::connect(&dismiss, &QTimer::timeout, page.get(), [&]() {
-            auto* warning = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+            auto* warning = qobject_cast<VNH::MessageDialog*>(QApplication::activeModalWidget());
             if (warning)
                 warning->accept();
         });
@@ -912,7 +913,7 @@ TEST_F(EngineIntegrationsPageTest, RequiresClosedUnityBeforeCheckingAndRechecksA
     ASSERT_TRUE(waitForVersion());
     startSdkSelection();
     auto* dialog = page->findChild<QDialog*>(QStringLiteral("sdkSelectionDialog"));
-    auto* engineHint = page->findChild<QLabel*>(QStringLiteral("sdkEngineRunningHint"));
+    auto* engineHint = page->findChild<VNH::DialogTextView*>(QStringLiteral("sdkEngineRunningHint"));
     ASSERT_NE(engineHint, nullptr);
     EXPECT_FALSE(engineHint->isVisible());
     const QString installed = QDir(unityPath).filePath("Packages/com.harken.core");
@@ -962,7 +963,7 @@ TEST_F(EngineIntegrationsPageTest, RequiresClosedUnityBeforeCheckingAndRechecksA
     primary()->click();
     EXPECT_FALSE(QDir(installed).exists());
     EXPECT_TRUE(primary()->isEnabled());
-    EXPECT_TRUE(page->findChild<QLabel*>(QStringLiteral("sdkSelectionSummary"))->text().contains("confirm again"));
+    EXPECT_TRUE(page->findChild<VNH::DialogTextView*>(QStringLiteral("sdkSelectionSummary"))->text().contains("confirm again"));
     ASSERT_TRUE(unityLock.lock(unityPath));
     primary()->click();
     EXPECT_FALSE(primary()->isEnabled());
@@ -1338,8 +1339,8 @@ TEST_F(EngineIntegrationsPageTest, SdkSelectionCancelKeepsSavedStateAndApplyUpda
     customized.close();
     EXPECT_FALSE(QFileInfo::exists(QDir(installed).filePath(missing)));
     EXPECT_TRUE(version->text().contains(QStringLiteral("1.0.0")));
-    EXPECT_TRUE(page->findChild<QLabel*>(QStringLiteral("sdkSelectionContext"))->text().contains("Downgrade"));
-    const auto* difference = page->findChild<QLabel*>(QStringLiteral("sdkDiffSummary"));
+    EXPECT_TRUE(page->findChild<VNH::DialogTextView*>(QStringLiteral("sdkSelectionContext"))->text().contains("Downgrade"));
+    const auto* difference = page->findChild<VNH::DialogTextView*>(QStringLiteral("sdkDiffSummary"));
     EXPECT_TRUE(difference->text().contains(QCoreApplication::translate(
         "HarkenHub", "Locally modified files to overwrite or remove: %1").arg(1)));
     EXPECT_TRUE(difference->text().contains(QCoreApplication::translate(
@@ -1372,7 +1373,7 @@ TEST_F(EngineIntegrationsPageTest, SourceRefreshPreservesSelectionAndCheckedResu
     selectSdkFolder(selectedSource);
     checkButton()->click();
     auto* sources = page->findChild<QComboBox*>(QStringLiteral("sdkSourceSelector"));
-    auto* summary = page->findChild<QLabel*>(QStringLiteral("sdkSelectionSummary"));
+    auto* summary = page->findChild<VNH::DialogTextView*>(QStringLiteral("sdkSelectionSummary"));
     ASSERT_NE(sources, nullptr);
     ASSERT_NE(summary, nullptr);
     ASSERT_GT(steps()->rowCount(), 0);
@@ -1633,7 +1634,7 @@ TEST_F(EngineIntegrationsPageTest, AmbiguousGameFolderPreservesSelectionAndCanRe
         int warnings = 0;
         QTimer dismiss;
         QObject::connect(&dismiss, &QTimer::timeout, page.get(), [&]() {
-            auto* warning = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+            auto* warning = qobject_cast<VNH::MessageDialog*>(QApplication::activeModalWidget());
             if (!warning) return;
             ++warnings;
             warning->accept();
@@ -1988,7 +1989,7 @@ TEST_F(EngineIntegrationsPageTest, MigrationSafetyCheckIsReadOnlyAndInvalidatesC
             auto* input = dialog->findChild<QLineEdit*>(QStringLiteral("sdkMigrationDestination"));
             auto* safetyCheck = dialog->findChild<QPushButton*>(QStringLiteral("sdkMigrationSafetyCheck"));
             auto* next = dialog->findChild<QPushButton*>(QStringLiteral("sdkMigrationContinue"));
-            auto* status = dialog->findChild<QLabel*>(QStringLiteral("sdkMigrationSafetyStatus"));
+            auto* status = dialog->findChild<VNH::DialogTextView*>(QStringLiteral("sdkMigrationSafetyStatus"));
             auto* details = dialog->findChild<QPlainTextEdit*>(QStringLiteral("sdkMigrationSafetyDetails"));
             ASSERT_NE(input, nullptr);
             ASSERT_NE(safetyCheck, nullptr);
@@ -2197,7 +2198,7 @@ TEST_F(EngineIntegrationsPageTest, InstallUpdateUnlinkAndRelinkKeepSdkIdentity)
         auto* dialog = activeActionDialog();
         if (!dialog) return;
         ++confirmations;
-        if (auto* message = qobject_cast<QMessageBox*>(dialog)) {
+        if (auto* message = qobject_cast<VNH::MessageDialog*>(dialog)) {
             message->button(approve ? QMessageBox::Yes : QMessageBox::No)->click();
         } else if (approve) {
             dialog->accept();
@@ -2309,7 +2310,7 @@ TEST_F(EngineIntegrationsPageTest, FailedUnlinkKeepsRelationshipAndSourceChangeI
     QObject::connect(&responder, &QTimer::timeout, page.get(), [&]() {
         auto* dialog = activeActionDialog();
         if (!dialog) return;
-        if (auto* message = qobject_cast<QMessageBox*>(dialog))
+        if (auto* message = qobject_cast<VNH::MessageDialog*>(dialog))
             message->button(message->standardButtons().testFlag(QMessageBox::Yes)
                 ? QMessageBox::Yes : QMessageBox::Ok)->click();
         else dialog->accept();
@@ -2340,7 +2341,7 @@ TEST_F(EngineIntegrationsPageTest, FailedUnlinkKeepsRelationshipAndSourceChangeI
     EXPECT_EQ(steps()->rowCount(), 0);
     EXPECT_EQ(changes->topLevelItemCount(), 0);
     EXPECT_TRUE(log->toPlainText().isEmpty());
-    EXPECT_TRUE(page->findChild<QLabel*>(QStringLiteral("sdkDiffSummary"))->text().isEmpty());
+    EXPECT_TRUE(page->findChild<VNH::DialogTextView*>(QStringLiteral("sdkDiffSummary"))->text().isEmpty());
     EXPECT_FALSE(primary()->isEnabled());
     field("Runtime/Integration Package source path")->setText(sdkPath);
     EXPECT_TRUE(primary()->isEnabled());

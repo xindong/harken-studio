@@ -1,4 +1,6 @@
 #include "Launch/ProjectCreateFlow.h"
+#include "UI/MessageDialog.h"
+#include "UI/ProgressDialog.h"
 #include "Versions/LocalBuildRegistry.h"
 
 #include "Launch/StudioLaunchMonitor.h"
@@ -8,9 +10,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
-#include <QMessageBox>
 #include <QPointer>
-#include <QProgressDialog>
 #include <QTimer>
 #include <QWidget>
 
@@ -38,12 +38,11 @@ public:
           request_(std::move(request)), parent_(parent), completed_(std::move(completed))
     {
         flowActive = true;
-        progress_ = new QProgressDialog(hubText("Studio is creating the project."),
-                                       hubText("Hide"), 0, 0, parent);
+        progress_ = new ProgressDialog(hubText("Studio is creating the project."),
+                                       hubText("Hide"), parent);
         progress_->setWindowTitle(hubText("New Project"));
         progress_->setWindowModality(Qt::NonModal);
-        progress_->setMinimumDuration(0);
-        progress_->setAutoClose(false);
+        progress_->show();
         connect(&monitor_, &StudioLaunchMonitor::ready, this, [this]() {
             const QString path = QDir(request_.location).filePath(
                 request_.name + QStringLiteral("/") + request_.name + QStringLiteral(".hsp"));
@@ -127,7 +126,7 @@ private:
             return;
         const auto parent = parent_;
         finish(ProjectCreateOutcome::Result::Failed);
-        QMessageBox::warning(parent, hubText("New Project"), reason);
+        MessageDialog::warning(parent, hubText("New Project"), reason);
     }
 
     void unknown(const QString& reason)
@@ -138,7 +137,7 @@ private:
         monitor_.close();
         liveness_.start(1000);
         progress_->hide();
-        QMessageBox::information(parent_, hubText("New Project"), reason);
+        MessageDialog::information(parent_, hubText("New Project"), reason);
     }
 
     void finish(ProjectCreateOutcome::Result result, const QString& path = {})
@@ -158,7 +157,7 @@ private:
     ProjectCreateRequest request_;
     QPointer<QWidget> parent_;
     std::function<void(const ProjectCreateOutcome&)> completed_;
-    QPointer<QProgressDialog> progress_;
+    QPointer<ProgressDialog> progress_;
     StudioLaunchMonitor monitor_;
     StudioLauncher launcher_;
     QTimer liveness_;
@@ -178,7 +177,7 @@ ProjectCreateOutcome ProjectCreateFlow::create(
     InstalledVersion selectedVersion = request.version;
     if (selectedVersion.capabilitiesVersion != 1
         && selectedVersion.capabilitiesVersion != kStudioCapabilitiesVersion) {
-        QMessageBox::information(dialogParent, hubText("New Project"),
+        MessageDialog::information(dialogParent, hubText("New Project"),
             hubText("This Studio can open existing projects, but project creation from Hub is unavailable."));
         return {ProjectCreateOutcome::Result::Failed, QString()};
     }
@@ -196,7 +195,7 @@ ProjectCreateOutcome ProjectCreateFlow::create(
             QString error;
             if (current != localBuilds.end() && current->available)
                 LocalBuildRegistry::requestRecheck(current->executablePath, current->executableFingerprint, &error);
-            QMessageBox::warning(
+            MessageDialog::warning(
                 dialogParent, hubText("New Project"),
                 error.isEmpty() ? hubText("This local build changed and is being checked again. "
                                          "Try again shortly.") : error);

@@ -1,4 +1,7 @@
 #include "Launch/ProjectOpenFlow.h"
+#include "UI/DialogLayout.h"
+#include "UI/MessageDialog.h"
+#include "UI/ProgressDialog.h"
 
 #include "Launch/LaunchPreflight.h"
 #include "Launch/ProjectOpenAnalyzer.h"
@@ -17,13 +20,13 @@
 #include <QCoreApplication>
 #include <QDebug>
 #include <QDir>
-#include <QInputDialog>
+#include <QDialogButtonBox>
+#include <QListWidget>
+#include <QVBoxLayout>
 #include <QPointer>
-#include <QProgressDialog>
 #include <QThreadPool>
 #include <QSet>
 #include <QFileInfo>
-#include <QMessageBox>
 #include <QLocale>
 #include <QPushButton>
 #include <QTimer>
@@ -130,7 +133,7 @@ bool confirmUpgrade(QWidget* parent, const ProjectOpenAnalysis& analysis)
                              .arg(analysis.affectedFileCount)
                              .arg(protection)
                              .arg(QLocale().formattedDataSize(totalRequired));
-    QMessageBox box(QMessageBox::Warning, hubText("Project Upgrade Required"),
+    MessageDialog box(QMessageBox::Warning, hubText("Project Upgrade Required"),
                     text, QMessageBox::NoButton, parent);
     QAbstractButton* upgrade = box.addButton(
         hubText("Upgrade and Open"), QMessageBox::AcceptRole);
@@ -155,13 +158,12 @@ public:
             : version_.executablePath;
         executableHash_ = PackageReader::fileSha256Hex(program_);
         requestId_ = QUuid::createUuid().toString(QUuid::WithoutBraces);
-        progress_ = new QProgressDialog(hubText("Checking the project with Studio..."),
-                                      hubText("Cancel"), 0, 0, parent);
+        progress_ = new ProgressDialog(hubText("Checking the project with Studio..."),
+                                      hubText("Cancel"), parent);
         progress_->setWindowTitle(hubText("Open Project"));
         progress_->setWindowModality(Qt::NonModal);
-        progress_->setMinimumDuration(0);
-        progress_->setAutoClose(false);
-        connect(progress_, &QProgressDialog::canceled, this, [this]() {
+        progress_->show();
+        connect(progress_, &ProgressDialog::canceled, this, [this]() {
             if (!started_)
                 finish(ProjectOpenOutcome::Result::Declined);
         });
@@ -329,7 +331,7 @@ private:
         monitor_.close();
         liveness_.start(1000);
         progress_->hide();
-        QMessageBox::information(parent_, hubText("Open Project"), reason);
+        MessageDialog::information(parent_, hubText("Open Project"), reason);
     }
 
     void opened()
@@ -354,7 +356,7 @@ private:
             return;
         const QPointer<QWidget> parent = parent_;
         finish(ProjectOpenOutcome::Result::Failed);
-        QMessageBox::warning(parent, hubText("Open Project"), reason);
+        MessageDialog::warning(parent, hubText("Open Project"), reason);
     }
 
     void finish(ProjectOpenOutcome::Result result)
@@ -377,7 +379,7 @@ private:
     ProjectOpenAnalysis analysis_;
     QPointer<QWidget> parent_;
     std::function<void(const ProjectOpenOutcome&)> completed_;
-    QPointer<QProgressDialog> progress_;
+    QPointer<ProgressDialog> progress_;
     StudioLaunchMonitor monitor_;
     StudioLauncher launcher_;
     QTimer liveness_;
@@ -441,7 +443,7 @@ ProjectOpenOutcome ProjectOpenFlow::open(
     auto selection = ProjectVersionSelection::resolve(*record, probe, versions, selectedBuildId);
     if (!selection.errorCode.isEmpty()) {
         if (versions.empty()) {
-            QMessageBox::information(dialogParent, hubText("Open Project"),
+            MessageDialog::information(dialogParent, hubText("Open Project"),
                                      hubText("Install a Studio version from Versions before opening this project."));
             return {ProjectOpenOutcome::Result::Blocked, selection.errorCode};
         }
@@ -450,19 +452,31 @@ ProjectOpenOutcome ProjectOpenFlow::open(
             choices.append(QStringLiteral("%1 [%2] — %3")
                 .arg(version.semanticVersion, version.buildId,
                      QDir::toNativeSeparators(version.executablePath)));
-        bool accepted = false;
-        const QString choice = QInputDialog::getItem(dialogParent, hubText("Select Version"),
-            selection.reason, choices, 0, false, &accepted);
-        if (!accepted)
+        QDialog dialog(dialogParent);
+        dialog.setWindowTitle(hubText("Select Version"));
+        configureDialog(&dialog, QSize(640, 360));
+        auto* layout = new QVBoxLayout(&dialog);
+        auto* reason = new DialogTextView(&dialog);
+        reason->setText(selection.reason);
+        layout->addWidget(reason);
+        auto* list = new QListWidget(&dialog);
+        list->addItems(choices);
+        list->setCurrentRow(0);
+        layout->addWidget(list, 1);
+        auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+        QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+        QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+        layout->addWidget(buttons);
+        if (dialog.exec() != QDialog::Accepted)
             return {ProjectOpenOutcome::Result::Declined, {}};
-        selection.buildId = versions[static_cast<size_t>(choices.indexOf(choice))].buildId;
+        selection.buildId = versions[static_cast<size_t>(list->currentRow())].buildId;
         store->setPreferredBuild(canonicalPath, selection.buildId);
     }
     const auto decision = LaunchPreflight::evaluate(*record, versions, InstallIndex::snapshot(),
         LaunchIntent::DirectOpenOnly, selection.buildId);
     store->setLastPreflight(canonicalPath, QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
     if (decision.verdict != LaunchVerdict::Ready) {
-        QMessageBox::warning(dialogParent, hubText("Open Project"), decision.reason);
+        MessageDialog::warning(dialogParent, hubText("Open Project"), decision.reason);
         return {ProjectOpenOutcome::Result::Blocked, decision.blockCode};
     }
     auto* session = new ProjectOpenSession(store, *record, decision.version, dialogParent, std::move(onFinished));

@@ -156,6 +156,9 @@ set(HARKEN_HUB_SOURCES
     Source/Transactions/HandoffArea.cpp
     Source/UI/BoundedHeaderView.cpp
     Source/UI/ConsentDialog.cpp
+    Source/UI/DialogLayout.cpp
+    Source/UI/MessageDialog.cpp
+    Source/UI/ProgressDialog.cpp
     Source/UI/EngineIntegrationsPage.cpp
     Source/UI/HubIcons.cpp
     Source/UI/ServerVersionsDialog.cpp

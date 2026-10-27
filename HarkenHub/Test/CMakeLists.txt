@@ -13,6 +13,7 @@ add_executable(harken_hub_tests
     UnitTest/BackoffPolicyTest.cpp
     UnitTest/ConsentStoreTest.cpp
     UnitTest/ConsentDialogTest.cpp
+    UnitTest/DialogLayoutTest.cpp
     UnitTest/DownloaderTest.cpp
     UnitTest/FileLogTest.cpp
     UnitTest/HandoffAreaTest.cpp

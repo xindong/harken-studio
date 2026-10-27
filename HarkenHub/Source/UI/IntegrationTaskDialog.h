@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Integrations/IntegrationProgress.h"
+#include "UI/DialogLayout.h"
 
 #include <QCloseEvent>
 #include <QCoreApplication>
@@ -101,7 +102,7 @@ public:
         setWindowTitle(QCoreApplication::translate("HarkenHub", "Integration Package operation"));
         setWindowModality(Qt::ApplicationModal);
         setWindowFlag(Qt::WindowCloseButtonHint, false);
-        setMinimumWidth(400);
+        configureDialog(this, QSize(440, 180));
         auto* layout = new QVBoxLayout(this);
         progress_ = new IntegrationTaskProgress(this);
         layout->addWidget(progress_);

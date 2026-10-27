@@ -1,4 +1,6 @@
 #include "UI/EngineIntegrationsPage.h"
+#include "UI/DialogLayout.h"
+#include "UI/MessageDialog.h"
 
 #include "UI/HubIcons.h"
 #include "UI/IntegrationTaskDialog.h"
@@ -46,7 +48,6 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
-#include <QMessageBox>
 #include <QMouseEvent>
 #include <QPlainTextEdit>
 #include <QPointer>
@@ -583,10 +584,8 @@ bool confirmIntegrationAction(
 {
     QDialog confirmation(parent);
     confirmation.setWindowTitle(title);
-    confirmation.setWindowFlag(Qt::WindowMaximizeButtonHint, true);
     confirmation.setSizeGripEnabled(true);
-    confirmation.setMinimumSize(640, 420);
-    confirmation.resize(900, 620);
+    configureDialog(&confirmation, QSize(760, 520), QSize(480, 320));
 
     auto* layout = new QVBoxLayout(&confirmation);
     auto* messageLayout = new QHBoxLayout();
@@ -596,9 +595,8 @@ bool confirmIntegrationAction(
                         .pixmap(40, 40));
     icon->setAlignment(Qt::AlignTop | Qt::AlignHCenter);
     messageLayout->addWidget(icon, 0, Qt::AlignTop);
-    auto* messageLabel = new QLabel(message, &confirmation);
-    messageLabel->setWordWrap(true);
-    messageLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    auto* messageLabel = new DialogTextView(&confirmation);
+    messageLabel->setText(message);
     messageLayout->addWidget(messageLabel, 1);
     layout->addLayout(messageLayout);
 
@@ -888,12 +886,17 @@ EngineIntegrationsPage::EngineIntegrationsPage(
 
     sdkSelectionDialog_ = new QDialog(this);
     sdkSelectionDialog_->setObjectName(QStringLiteral("sdkSelectionDialog"));
-    sdkSelectionDialog_->setWindowFlag(Qt::WindowMaximizeButtonHint, true);
     sdkSelectionDialog_->setSizeGripEnabled(true);
-    sdkSelectionDialog_->setMinimumSize(640, 360);
-    sdkSelectionDialog_->resize(820, 600);
+    configureDialog(sdkSelectionDialog_, QSize(820, 600), QSize(480, 320));
     sdkSelectionDialog_->installEventFilter(this);
-    auto* dialogLayout = new QVBoxLayout(sdkSelectionDialog_);
+    auto* dialogRoot = new QVBoxLayout(sdkSelectionDialog_);
+    auto* dialogScroll = new QScrollArea(sdkSelectionDialog_);
+    dialogScroll->setWidgetResizable(true);
+    dialogScroll->setFrameShape(QFrame::NoFrame);
+    auto* dialogContent = new QWidget(dialogScroll);
+    auto* dialogLayout = new QVBoxLayout(dialogContent);
+    dialogScroll->setWidget(dialogContent);
+    dialogRoot->addWidget(dialogScroll, 1);
     dialogLayout->setContentsMargins(20, 20, 20, 20);
     dialogLayout->setSpacing(14);
     sdkSelectionRow_ = new QWidget(sdkSelectionDialog_);
@@ -965,13 +968,12 @@ EngineIntegrationsPage::EngineIntegrationsPage(
     }
     for (auto* button : editorButtons)
         button->setMinimumWidth(buttonWidth);
-    integrationActionRow->addWidget(cancelSdkButton_);
-    integrationActionRow->addWidget(integrateButton_);
-    sdkSelectionContext_ = new QLabel(sdkSelectionDialog_);
+    auto* confirmActionRow = new QHBoxLayout();
+    confirmActionRow->addStretch();
+    confirmActionRow->addWidget(cancelSdkButton_);
+    confirmActionRow->addWidget(integrateButton_);
+    sdkSelectionContext_ = new DialogTextView(sdkSelectionDialog_);
     sdkSelectionContext_->setObjectName(QStringLiteral("sdkSelectionContext"));
-    sdkSelectionContext_->setTextFormat(Qt::PlainText);
-    sdkSelectionContext_->setWordWrap(true);
-    sdkSelectionContext_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     sdkSelectionContext_->hide();
     dialogLayout->addWidget(sdkSelectionContext_);
     dialogLayout->addWidget(sdkSelectionRow_);
@@ -979,10 +981,8 @@ EngineIntegrationsPage::EngineIntegrationsPage(
     sdkProgress_->setObjectName(QStringLiteral("sdkInlineProgress"));
     sdkProgress_->hide();
     dialogLayout->addWidget(sdkProgress_);
-    sdkSelectionSummary_ = new QLabel(sdkSelectionDialog_);
+    sdkSelectionSummary_ = new DialogTextView(sdkSelectionDialog_);
     sdkSelectionSummary_->setObjectName(QStringLiteral("sdkSelectionSummary"));
-    sdkSelectionSummary_->setWordWrap(true);
-    sdkSelectionSummary_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     dialogLayout->addWidget(sdkSelectionSummary_);
     sdkResultsTabs_ = new QTabWidget(sdkSelectionDialog_);
     sdkResultsTabs_->setObjectName(QStringLiteral("sdkCheckResults"));
@@ -990,12 +990,9 @@ EngineIntegrationsPage::EngineIntegrationsPage(
     auto* changesLayout = new QVBoxLayout(changesPage);
     changesLayout->setContentsMargins(12, 12, 12, 8);
     changesLayout->setSpacing(10);
-    sdkDiffSummary_ = new QLabel(changesPage);
+    sdkDiffSummary_ = new DialogTextView(changesPage, Qt::RichText);
     sdkDiffSummary_->setObjectName(QStringLiteral("sdkDiffSummary"));
-    sdkDiffSummary_->setWordWrap(true);
-    sdkDiffSummary_->setTextFormat(Qt::RichText);
-    sdkDiffSummary_->setTextInteractionFlags(Qt::TextBrowserInteraction);
-    connect(sdkDiffSummary_, &QLabel::linkActivated, this, [this]() {
+    connect(sdkDiffSummary_, &QTextBrowser::anchorClicked, this, [this]() {
         sdkResultsTabs_->setCurrentIndex(1);
     });
     changesLayout->addWidget(sdkDiffSummary_);
@@ -1018,9 +1015,8 @@ EngineIntegrationsPage::EngineIntegrationsPage(
     sdkResultsTabs_->addTab(sdkSelectionPaths_, QCoreApplication::translate("HarkenHub", "Project and Integration Package Paths"));
     sdkResultsTabs_->setMinimumHeight(160);
     dialogLayout->addWidget(sdkResultsTabs_, 1);
-    sdkSafetyHint_ = new QLabel(sdkSelectionDialog_);
+    sdkSafetyHint_ = new DialogTextView(sdkSelectionDialog_);
     sdkSafetyHint_->setObjectName(QStringLiteral("sdkEngineRunningHint"));
-    sdkSafetyHint_->setWordWrap(true);
     sdkSafetyHint_->setStyleSheet(QStringLiteral("color: #FF6B6B;"));
     sdkSafetyHint_->hide();
     engineStatusTimer_ = new QTimer(this);
@@ -1035,7 +1031,8 @@ EngineIntegrationsPage::EngineIntegrationsPage(
     connect(sdkReportButton_, &QPushButton::clicked, this, [this]() {
         QDesktopServices::openUrl(QUrl::fromLocalFile(sdkReportPath_));
     });
-    dialogLayout->addLayout(integrationActionRow);
+    dialogRoot->addLayout(integrationActionRow);
+    dialogRoot->addLayout(confirmActionRow);
     editorLayout->addWidget(formPanel);
 
     auto* resultsSeparator = new QFrame(editorPage_);
@@ -1635,7 +1632,7 @@ bool EngineIntegrationsPage::loadExistingIntegration(const QString& integrationI
             return value.integrationId == integrationId;
         });
     if (integration == integrations.end()) {
-        QMessageBox::warning(this, QCoreApplication::translate("HarkenHub", "Manage Integration"),
+        MessageDialog::warning(this, QCoreApplication::translate("HarkenHub", "Manage Integration"),
                              QCoreApplication::translate("HarkenHub", "The integration is no longer available."));
         showList();
         return false;
@@ -1646,7 +1643,7 @@ bool EngineIntegrationsPage::loadExistingIntegration(const QString& integrationI
             return value.targetId == integration->engineTargetId;
         });
     if (target == targets.end()) {
-        QMessageBox::warning(this, QCoreApplication::translate("HarkenHub", "Manage Integration"),
+        MessageDialog::warning(this, QCoreApplication::translate("HarkenHub", "Manage Integration"),
                              QCoreApplication::translate("HarkenHub", "The engine project is no longer available."));
         showConflict(integrationId, QCoreApplication::translate("HarkenHub", "The stored engine project is missing."));
         return false;
@@ -1684,7 +1681,7 @@ void EngineIntegrationsPage::changeSdkFromList(
 {
     if (operationRunning_ || !loadExistingIntegration(integrationId, false)) return;
     if (targetBlocked_ || !sdkInstalled_) {
-        QMessageBox::warning(this, QCoreApplication::translate("HarkenHub", "Change %1").arg(selectedIntegrationPackageName()),
+        MessageDialog::warning(this, QCoreApplication::translate("HarkenHub", "Change %1").arg(selectedIntegrationPackageName()),
             changeSdkButton_->toolTip().isEmpty()
                 ? QCoreApplication::translate("HarkenHub", "The installed Integration Package is no longer available. Open Manage Integration to review its status.")
                 : changeSdkButton_->toolTip());
@@ -1735,14 +1732,14 @@ void EngineIntegrationsPage::unlinkProjects(const QString& integrationId)
     const QString id = integrationId;
     setOperationRunning(true);
     const auto finish = qScopeGuard([this]() { setOperationRunning(false); });
-    const auto answer = QMessageBox::question(
+    const auto answer = MessageDialog::question(
         this, QCoreApplication::translate("HarkenHub", "Unlink Projects"),
         QCoreApplication::translate("HarkenHub", "Unlink the game and Harken projects? This entry will disappear from Engine Integrations. Project files and the installed Integration Package will be kept."),
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
     if (answer != QMessageBox::Yes)
         return;
     if (!integrations_->remove(id)) {
-        QMessageBox::warning(this, QCoreApplication::translate("HarkenHub", "Unlink Projects"),
+        MessageDialog::warning(this, QCoreApplication::translate("HarkenHub", "Unlink Projects"),
             QCoreApplication::translate("HarkenHub", "Could not unlink the projects.\n%1")
                 .arg(localizeIntegrationText(integrations_->lastError())));
         return;
@@ -1901,7 +1898,7 @@ void EngineIntegrationsPage::browseSdkInstallPath()
         ? VNX::UnityInstallation::resolveTarget(target->canonicalRoot, path, &resolved, &error)
         : ProjectIntegrationExecutor::resolveUnrealLocation(*target, path, &resolved, &error);
     if (!valid) {
-        QMessageBox::warning(this, QCoreApplication::translate("HarkenHub", "Integration Package Install Location"), localizeIntegrationText(error));
+        MessageDialog::warning(this, QCoreApplication::translate("HarkenHub", "Integration Package Install Location"), localizeIntegrationText(error));
         return;
     }
     sdkInstallPathEdit_->setText(QDir(target->canonicalRoot).relativeFilePath(resolved));
@@ -1915,7 +1912,7 @@ bool EngineIntegrationsPage::acceptHarkenProject(
     updateStudioVersionFields();
     const ProjectProbeResult probe = ProjectProbe::probe(path);
     if (!probe.ok) {
-        QMessageBox::warning(
+        MessageDialog::warning(
             this, QCoreApplication::translate("HarkenHub", "Manage Integration"),
             QCoreApplication::translate("HarkenHub", "The Harken project could not be used.\n\n%1")
                 .arg(localizeIntegrationText(probe.error)));
@@ -1935,7 +1932,7 @@ bool EngineIntegrationsPage::acceptHarkenProject(
         record.displayName = probe.displayName;
         record.detectedSchema = probe.schemaVersion;
         if (!projects_->addProject(record)) {
-            QMessageBox::warning(
+            MessageDialog::warning(
                 this, QCoreApplication::translate("HarkenHub", "Manage Integration"),
             QCoreApplication::translate("HarkenHub", "The Harken project could not be added to Projects.\n\n%1")
                     .arg(localizeIntegrationText(projects_->lastError())));
@@ -1958,7 +1955,7 @@ bool EngineIntegrationsPage::acceptEngineTarget(
     EngineTargetRecord candidate;
     QString error;
     if (!EngineTargetProbe::resolve(path, &candidate, &error)) {
-        QMessageBox::warning(
+        MessageDialog::warning(
                 this, QCoreApplication::translate("HarkenHub", "Manage Integration"),
             QCoreApplication::translate("HarkenHub", "The engine project could not be used.\n\n%1")
                 .arg(localizeIntegrationText(error)));
@@ -1976,7 +1973,7 @@ bool EngineIntegrationsPage::acceptEngineTarget(
     } else {
         selected.addedAt = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
         if (!targets_->add(selected)) {
-            QMessageBox::warning(
+            MessageDialog::warning(
                 this, QCoreApplication::translate("HarkenHub", "Manage Integration"),
             QCoreApplication::translate("HarkenHub", "The engine project could not be registered.\n\n%1")
                     .arg(localizeIntegrationText(targets_->lastError())));
@@ -2017,13 +2014,13 @@ bool EngineIntegrationsPage::resolveSelection(
     const QString storageError = integrations_->lastError().isEmpty()
         ? targets_->lastError() : integrations_->lastError();
     if (!storageError.isEmpty()) {
-        QMessageBox::warning(this, QCoreApplication::translate("HarkenHub", "Manage Integration"),
+        MessageDialog::warning(this, QCoreApplication::translate("HarkenHub", "Manage Integration"),
             QCoreApplication::translate("HarkenHub", "Integration records could not be read.\n%1").arg(localizeIntegrationText(storageError)));
         return false;
     }
     const QString harkenInput = harkenProjectEdit_->text().trimmed();
     if (harkenInput.isEmpty()) {
-        QMessageBox::warning(
+        MessageDialog::warning(
             this, QCoreApplication::translate("HarkenHub", "Manage Integration"),
             QCoreApplication::translate("HarkenHub", "Select a Harken project before checking integration."));
         return false;
@@ -2045,7 +2042,7 @@ bool EngineIntegrationsPage::resolveSelection(
 
     const QString engineInput = engineProjectEdit_->text().trimmed();
     if (engineInput.isEmpty()) {
-        QMessageBox::warning(
+        MessageDialog::warning(
             this, QCoreApplication::translate("HarkenHub", "Manage Integration"),
             QCoreApplication::translate("HarkenHub", "Select a Unity project before checking integration."));
         return false;
@@ -2060,7 +2057,7 @@ bool EngineIntegrationsPage::resolveSelection(
         if (!registerTarget
             || !acceptEngineTarget(engineInput, redirectOnConflict)) {
             if (!registerTarget) {
-                QMessageBox::warning(
+                MessageDialog::warning(
                     this, QCoreApplication::translate("HarkenHub", "Manage Integration"),
                     QCoreApplication::translate("HarkenHub", "Select a valid Unity project folder."));
             }
@@ -2083,7 +2080,7 @@ bool EngineIntegrationsPage::resolveSelection(
         return false;
     }
     if (requireSdkSource && sdkPathEdit_->text().trimmed().isEmpty()) {
-        QMessageBox::warning(
+        MessageDialog::warning(
             sdkSelectionDialog_, QCoreApplication::translate("HarkenHub", "Manage Integration"),
             QCoreApplication::translate("HarkenHub", "Select a Runtime / Integration Package source before checking integration."));
         return false;
@@ -2582,8 +2579,7 @@ void EngineIntegrationsPage::showSdkResolution()
     dialog.setWindowTitle(observation.dependencyRestricted
         ? QCoreApplication::translate("HarkenHub", "Integration Package Dependencies")
         : QCoreApplication::translate("HarkenHub", "Integration Package Resolution"));
-    dialog.resize(680, 430);
-    dialog.setMinimumSize(520, 320);
+    configureDialog(&dialog, QSize(680, 430), QSize(480, 300));
     auto* layout = new QVBoxLayout(&dialog);
     QStringList sections;
     if (!observation.status.isEmpty()) sections << observation.status;
@@ -3063,8 +3059,7 @@ void EngineIntegrationsPage::runSdkMigration(bool recover)
                      QUuid::createUuid().toString(QUuid::WithoutBraces)));
         QDialog dialog(this);
         dialog.setWindowTitle(QCoreApplication::translate("HarkenHub", "Migrate Integration Package"));
-        dialog.setMinimumWidth(560);
-        dialog.resize(640, 360);
+        configureDialog(&dialog, QSize(640, 400), QSize(480, 300));
         auto* layout = new QVBoxLayout(&dialog);
         layout->addWidget(new QLabel(QCoreApplication::translate("HarkenHub", "New Integration Package installation location"), &dialog));
         auto* row = new QHBoxLayout();
@@ -3074,9 +3069,9 @@ void EngineIntegrationsPage::runSdkMigration(bool recover)
         row->addWidget(path, 1);
         row->addWidget(browse);
         layout->addLayout(row);
-        auto* safetyStatus = new QLabel(QCoreApplication::translate("HarkenHub", "Safety check required."), &dialog);
+        auto* safetyStatus = new DialogTextView(&dialog);
+        safetyStatus->setText(QCoreApplication::translate("HarkenHub", "Safety check required."));
         safetyStatus->setObjectName(QStringLiteral("sdkMigrationSafetyStatus"));
-        safetyStatus->setWordWrap(true);
         layout->addWidget(safetyStatus);
         auto* safetyDetails = new QPlainTextEdit(&dialog);
         safetyDetails->setObjectName(QStringLiteral("sdkMigrationSafetyDetails"));
@@ -3254,7 +3249,7 @@ void EngineIntegrationsPage::runUnityRemoval()
         });
     if (selected == targets.end()
         || selected->engineKind != EngineKind::Unity) {
-        QMessageBox::warning(
+        MessageDialog::warning(
             this, QCoreApplication::translate("HarkenHub", "Uninstall Unity Integration Package"),
             QCoreApplication::translate("HarkenHub", "The selected Unity project is no longer available."));
         return;
@@ -3871,7 +3866,7 @@ void EngineIntegrationsPage::showConflict(
                                targetInputPath(*target)));
         }
     }
-    QMessageBox::information(this, QCoreApplication::translate("HarkenHub", "Integration Already Exists"),
+    MessageDialog::information(this, QCoreApplication::translate("HarkenHub", "Integration Already Exists"),
                              details);
     showList();
     highlightIntegration(integrationId);
@@ -3955,7 +3950,7 @@ bool EngineIntegrationsPage::persistIntegration(
                                                sdkSourcePath)) {
             return true;
         }
-        QMessageBox::warning(
+        MessageDialog::warning(
             this, QCoreApplication::translate("HarkenHub", "Manage Integration"),
             QCoreApplication::translate("HarkenHub", "The Integration Package was integrated, but the Runtime / Integration Package path could not be saved.\n\n%1")
                 .arg(localizeIntegrationText(integrations_->lastError())));
@@ -3971,7 +3966,7 @@ bool EngineIntegrationsPage::persistIntegration(
         QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
     integration.updatedAt = integration.createdAt;
     if (!integrations_->add(integration, false)) {
-        QMessageBox::warning(
+        MessageDialog::warning(
             this, QCoreApplication::translate("HarkenHub", "Manage Integration"),
             QCoreApplication::translate("HarkenHub", "The project relationship could not be saved.\n\n%1")
                 .arg(localizeIntegrationText(integrations_->lastError())));
