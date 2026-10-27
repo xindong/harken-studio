@@ -1,9 +1,12 @@
 #include "UnitTest/StudioObjectIdTestSupport.h"
 #include "CanonicalRuntimeProjectAdapter.h"
+#include "CanonicalRuntimeProjectAdapterPrivate.h"
 #include "FieldGroupProjectAdapter.h"
 #include "Core/ProjectTypes.h"
 
 #include <gtest/gtest.h>
+#include <QDir>
+#include <QTemporaryDir>
 
 using namespace VNX;
 using namespace HarkenEditor::Bridge;
@@ -48,4 +51,55 @@ TEST(CanonicalRuntimeProjectAdapterTest, RejectsDuplicateStableIdentity)
     ASSERT_FALSE(result.ok());
     EXPECT_EQ(result.diagnostics.front().code,
               ProjectInputDiagnosticCode::DuplicateIdentity);
+}
+
+TEST(CanonicalRuntimeProjectAdapterTest, SourcePathsPreserveIndependentDocumentsAcrossProjectLocations)
+{
+    QTemporaryDir directory(QDir::current().filePath(QStringLiteral("harken-source-index-XXXXXX")));
+    ASSERT_TRUE(directory.isValid());
+    auto layer = makeItem(ProjectItem::Type::Layer, 1, harkentest::StudioObjectId(11));
+    auto first = makeItem(ProjectItem::Type::Sound, 2, harkentest::StudioObjectId(12));
+    auto relative = makeItem(ProjectItem::Type::Sound, 3, harkentest::StudioObjectId(13));
+    auto missing = makeItem(ProjectItem::Type::Sound, 4, harkentest::StudioObjectId(14));
+    layer->children = {first, relative, missing};
+    for (const auto& child : layer->children) child->parent = layer.get();
+    auto project = projectWithRoot(layer);
+    const QDir root(directory.path());
+    const QString layerPath = root.filePath(QStringLiteral("Layers/Layer.vp"));
+    const QString soundPath = root.filePath(QStringLiteral("Layers/Sound.vp"));
+    project.setObjectFileLocation(layer.get(), nullptr, layerPath);
+    project.setObjectFileLocation(first.get(), nullptr, soundPath);
+    project.setObjectFileLocation(relative.get(), nullptr,
+                                  QStringLiteral("Layers/Nested/../Relative.vp"));
+    const QString fallback = QStringLiteral("Project/%1.vp")
+        .arg(missing->guid.toString(QUuid::WithoutBraces));
+    const QString filePath = root.filePath(QStringLiteral("Session.hsp"));
+    const QString relativeDirectory = QDir::current().relativeFilePath(directory.path());
+    const QString relativeFile = QDir::current().relativeFilePath(filePath);
+    ASSERT_FALSE(QDir::isAbsolutePath(relativeDirectory));
+    ASSERT_FALSE(QDir::isAbsolutePath(relativeFile));
+    for (const QString& location : {directory.path(), filePath,
+             relativeDirectory, relativeFile, QString{}}) {
+        SCOPED_TRACE(location.toStdString());
+        project.projectPath = location;
+        const auto index = canonicalRuntimeProjectSourceIndex(project);
+        ASSERT_TRUE(index->valid);
+        EXPECT_TRUE(index->structureDiagnostics.empty());
+        EXPECT_EQ(index->definitions.size(), 4u);
+        EXPECT_EQ(index->byObjectId.at(first->objectID), first.get());
+        EXPECT_EQ(index->parentDefinition.at(first.get()), layer.get());
+        EXPECT_EQ(index->documentPaths.at(layer.get()),
+            (location.isEmpty() ? layerPath : QStringLiteral("Layers/Layer.vp")).toStdString());
+        EXPECT_EQ(index->documentPaths.at(first.get()),
+            (location.isEmpty() ? soundPath : QStringLiteral("Layers/Sound.vp")).toStdString());
+        EXPECT_EQ(index->documentPaths.at(relative.get()), "Layers/Relative.vp");
+        EXPECT_EQ(index->documentPaths.at(missing.get()), fallback.toStdString());
+    }
+    project.projectPath = filePath;
+    project.setObjectFileLocation(first.get(), nullptr,
+        root.filePath(QStringLiteral("Relocated/Sound.vp")));
+    const auto relocated = canonicalRuntimeProjectSourceIndex(project);
+    ASSERT_TRUE(relocated->valid);
+    EXPECT_EQ(relocated->documentPaths.at(first.get()), "Relocated/Sound.vp");
+    EXPECT_EQ(relocated->documentPaths.at(layer.get()), "Layers/Layer.vp");
 }

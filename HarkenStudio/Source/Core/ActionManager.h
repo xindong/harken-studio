@@ -7,8 +7,11 @@
 #include <QString>
 #include <QMap>
 #include <QStringList>
+#include <QSet>
+#include <QUuid>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <QThread>
 #include <QCoreApplication>
 #include <QDateTime>
@@ -29,6 +32,7 @@ struct ActionResult {
     QString undoText;
     int mergeId = 0;
     std::function<bool()> canReplay;
+    std::optional<QSet<QUuid>> authoringWriteSet;
 };
 
 struct ActionDef {

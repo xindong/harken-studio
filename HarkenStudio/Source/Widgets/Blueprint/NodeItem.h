@@ -112,10 +112,10 @@ public:
     int outputCount() const { return outputs_.size(); }
     
     QString title() const { return title_; }
-    void setTitle(const QString& title) { title_ = title; update(); }
-    void setTitleDirty(bool dirty) { titleDirty_ = dirty; update(); }
+    void setTitle(const QString& title) { if (title_ != title) { title_ = title; update(); } }
+    void setTitleDirty(bool dirty) { if (titleDirty_ != dirty) { titleDirty_ = dirty; update(); } }
     bool titleDirty() const { return titleDirty_; }
-    void setTitleColor(const QColor& color) { titleColor_ = color; update(); }
+    void setTitleColor(const QColor& color) { if (titleColor_ != color) { titleColor_ = color; update(); } }
     QColor titleColor() const { return titleColor_; }
     QString displayTitle() const { return titleDirty_ ? title_ + QStringLiteral(" *") : title_; }
     QRectF titleRect() const;

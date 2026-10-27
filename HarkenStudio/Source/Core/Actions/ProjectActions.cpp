@@ -641,7 +641,8 @@ ActionResult handlePlayableItemProperty(ProjectManager* projectManager,
     if (!changed)
         return result;
 
-    auto publish = [fieldName = QString::fromLatin1(field->fieldName), originator](
+    auto publish = [fieldName = QString::fromLatin1(field->fieldName),
+                    propertyId = field->id, originator](
                        ProjectItem* target) {
         target->markDirty();
         if (target->type == ProjectItem::Type::Bus) {
@@ -652,7 +653,7 @@ ActionResult handlePlayableItemProperty(ProjectManager* projectManager,
                 pm.pushBusPropertyLive(target, fieldName);
             emit pm.busChanged(target->objectID, fieldName, originator);
         } else {
-            ProjectManager::resyncItemToRuntime(target);
+            ProjectManager::syncPlayablePropertyToRuntime(target, propertyId);
             emit ProjectManager::instance().itemPropertyChanged(
                 target, fieldName, originator);
         }
@@ -685,13 +686,18 @@ ActionResult handlePlayableItemProperty(ProjectManager* projectManager,
                 pm.pushBusPropertyLive(owner, fieldName);
             emit pm.busChanged(owner->objectID, fieldName);
         } else {
-            ProjectManager::resyncItemToRuntime(owner);
+            ProjectManager::syncPlayablePropertyToRuntime(owner, propertyId);
             if (restoredField)
                 emit ProjectManager::instance().itemPropertyChanged(owner, fieldName);
         }
     };
     result.undoFn = [restoreAll, snapshots]() { restoreAll(snapshots, true); };
     result.redoFn = [restoreAll, snapshots]() { restoreAll(snapshots, false); };
+    using Property = harkenplayableproperties::PlayablePropertyIdV1;
+    if (field->id == static_cast<uint8_t>(Property::Volume)
+        || field->id == static_cast<uint8_t>(Property::Pitch)
+        || field->id == static_cast<uint8_t>(Property::LoopCount))
+        result.authoringWriteSet = QSet<QUuid>{item->guid};
     result.undoText = operation == QLatin1String("set_override")
         ? QObject::tr("Set Property Override")
         : QObject::tr("Clear Property Override");

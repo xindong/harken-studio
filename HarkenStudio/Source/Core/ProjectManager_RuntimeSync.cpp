@@ -181,8 +181,18 @@ void ProjectManager::initializeRuntimeSync()
         } else if (affectsCurrentWorld(item->type,
                                       CurrentWorldMutationKind::Property,
                                       propertyName)) {
-            AudioEngine::instance().runtimeSyncCoordinator()
-                .markCurrentWorldMutation();
+            auto& coordinator = AudioEngine::instance().runtimeSyncCoordinator();
+            const auto* field = PlayablePropertyAuthoringV1::fieldByName(propertyName);
+            using Property = harkenplayableproperties::PlayablePropertyIdV1;
+            if (item->type != ProjectItem::Type::Bus
+                && PlayablePropertyAuthoringV1::isDefinitionType(item->type)
+                && field && (field->id == static_cast<uint8_t>(Property::Volume)
+                    || field->id == static_cast<uint8_t>(Property::Pitch)
+                    || field->id == static_cast<uint8_t>(Property::MakeUpGain))) {
+                coordinator.markCurrentWorldPropertyMutation(item->runtimeId(), field->id);
+            } else {
+                coordinator.markCurrentWorldMutation();
+            }
         }
     });
     connect(&audioEngine.runtimeSyncCoordinator(),
@@ -485,6 +495,44 @@ void ProjectManager::resyncItemToRuntime(ProjectItem* item)
     resyncItemsToRuntime({&item, 1});
 }
 
+void ProjectManager::syncPlayablePropertyToRuntime(ProjectItem* item, uint8_t propertyId)
+{
+    using Property = harkenplayableproperties::PlayablePropertyIdV1;
+    if (propertyId != static_cast<uint8_t>(Property::Pitch)
+        && propertyId != static_cast<uint8_t>(Property::Volume)
+        && propertyId != static_cast<uint8_t>(Property::MakeUpGain)) {
+        resyncItemToRuntime(item);
+        return;
+    }
+    auto& manager = instance();
+    const auto* project = manager.currentProject();
+    if (!item || !project) return;
+    const auto registered = [&](const ProjectItem* node, const auto& self) -> bool {
+        if (node->objectID != 0 && findSyncHandler(node->type)
+            && !Bridge::runtimeObjectExists(runtimeStableIdForItem(node)))
+            return false;
+        return std::all_of(node->children.begin(), node->children.end(),
+            [&](const auto& child) { return self(child.get(), self); });
+    };
+    if (!registered(item, registered)) {
+        resyncItemToRuntime(item);
+        return;
+    }
+    const auto snapshot = buildFieldGroupEffectiveSnapshot(*project, toFieldGroupScope(
+        currentWorldPlatformScope(PlatformContextService::instance().context())));
+    if (!snapshot.ok()) {
+        AudioEngine::instance().runtimeSyncCoordinator().markCurrentWorldMutation();
+        return;
+    }
+    const auto update = [&](ProjectItem* node, const auto& self) -> void {
+        if (node->objectID != 0 && findSyncHandler(node->type))
+            syncGeneralAudioProperties(node, runtimeStableIdForItem(node), snapshot);
+        for (const auto& child : node->children)
+            self(child.get(), self);
+    };
+    update(item, update);
+}
+
 void ProjectManager::resyncItemsToRuntime(std::span<ProjectItem* const> items)
 {
     Q_ASSERT(QThread::currentThread() == QCoreApplication::instance()->thread());
@@ -593,6 +641,13 @@ bool ProjectManager::prepareRuntimeSounds(const FieldGroupEffectiveSnapshot& sna
             *item, platform, SoundSourceEditing::previewLanguage(
                 *item, LanguageContextService::instance().language()));
         const auto* asset = source ? AssetRegistry::instance().getAsset(source->sourceId) : nullptr;
+        if (source) {
+            const QFileInfo file(asset ? asset->absolutePath : QString{});
+            preparation.sources.push_back({source->sourceId,
+                asset ? asset->absolutePath : QString{},
+                asset ? asset->contentHash : QString{}, asset != nullptr,
+                file.isFile(), file.size(), file.lastModified().toMSecsSinceEpoch()});
+        }
         QString mediaError;
         const auto binding = soundDescriptor(item, {}, snapshot);
         if (sound && asset && binding && binding->sourceId != 0) {

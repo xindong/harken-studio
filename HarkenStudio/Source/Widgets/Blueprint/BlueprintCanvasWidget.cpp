@@ -595,6 +595,8 @@ void BlueprintCanvasWidget::clearScene()
     // one by one, and removeItem emits selectionChanged synchronously when a selected
     // node is removed — that would re-enter onSceneSelectionChanged mid-teardown.
     nodeMap_.clear();
+    pathContentRefreshNodes_.clear();
+    pathNodeLayoutSizes_.clear();
     waveformNodes_.clear();
     inputVisibility_.clear();
     edges_.clear();
@@ -970,6 +972,7 @@ void BlueprintCanvasWidget::materializeFromSource_()
             linkFocus(signalPathNode(index));
         for (auto* node : gainNodes_) linkFocus(node);
     }
+    pathContentRefreshNodes_.clear();
     sceneBlocker.unblock();
     emit signalChainViewChanged();
 }
@@ -1113,16 +1116,18 @@ void BlueprintCanvasWidget::onItemRenamed(ProjectItem* ,
     scheduleChainRefresh_();
 }
 
-void BlueprintCanvasWidget::onItemPropertyChanged(ProjectItem* ,
+void BlueprintCanvasWidget::onItemPropertyChanged(ProjectItem* item,
                                                   const QString& propertyName)
 {
     refreshNodeTitles_();
     if (activeSource_ == pathSource_.get()) {
         if (propertyName == QLatin1String("dirty")) return;
-        queuePathRefresh_(propertyName == QLatin1String("volume")
+        const bool contentOnly = propertyName == QLatin1String("volume")
             || propertyName == QLatin1String("pitch")
             || propertyName == QLatin1String("loopCount")
-            || propertyName == QLatin1String("scheduleOffsetSec"));
+            || propertyName == QLatin1String("scheduleOffsetSec");
+        if (contentOnly) queuePathContentRefresh_(item, propertyName);
+        else schedulePathRefresh_();
         return;
     }
     static const QSet<QString> structuralProps = {
@@ -2469,6 +2474,7 @@ void BlueprintCanvasWidget::layoutPathNodes_()
         signalPathNode(index)->setPos(layout.nodePositions[index]);
     for (size_t index = 0; index < layout.gainPositions.size(); ++index)
         if (layout.gainPositions[index]) gainNodes_[index]->setPos(*layout.gainPositions[index]);
+    pathNodeLayoutSizes_ = std::move(sizes);
 }
 
 void BlueprintCanvasWidget::applyPathPositions_(const PathPositions& positions)
@@ -3202,6 +3208,7 @@ void BlueprintCanvasWidget::clear()
     pathSceneState_.reset();
     pathRefreshPending_ = false;
     pathContentOnlyRefresh_ = false;
+    pathContentRefreshNodes_.clear();
     projectView_ = true;
     selectedPathKeys_.clear();
     selectedPathEdgeKeys_.clear();
@@ -3278,6 +3285,14 @@ void BlueprintCanvasWidget::schedulePathRefresh_()
     queuePathRefresh_(false);
 }
 
+void BlueprintCanvasWidget::queuePathContentRefresh_(ProjectItem* item, const QString& propertyName)
+{
+    if (!item || activeSource_ != pathSource_.get() || !projectView_) return;
+    for (const size_t index : pathSource_->refreshNodeContents(*item, propertyName))
+        pathContentRefreshNodes_.insert(index);
+    queuePathRefresh_(true);
+}
+
 void BlueprintCanvasWidget::queuePathRefresh_(bool contentOnly)
 {
     if (activeSource_ != pathSource_.get() || !projectView_) return;
@@ -3304,11 +3319,15 @@ void BlueprintCanvasWidget::refreshPathContents_()
     }
     pathRefreshPending_ = false;
     pathContentOnlyRefresh_ = false;
-    pathSource_->refreshNodeContents(*project);
-    const auto nodes = pathSource_->buildNodes();
-    for (size_t index = 0; index < nodes.size(); ++index)
-        signalPathNode(index)->setContentInfo(nodes[index].content);
-    layoutPathNodes_();
+    bool layoutChanged = false;
+    const auto nodes = std::exchange(pathContentRefreshNodes_, {});
+    for (const size_t index : nodes) {
+        auto* node = signalPathNode(index);
+        node->setContentInfo(pathSource_->nodeContentInfo(index));
+        layoutChanged = layoutChanged
+            || node->shape().boundingRect().size() != pathNodeLayoutSizes_[index];
+    }
+    if (layoutChanged) layoutPathNodes_();
     refreshNodeTitles_();
     refreshPlaybackActivity_();
     refreshPathFocus_();
@@ -3320,6 +3339,7 @@ void BlueprintCanvasWidget::refreshProjectPaths_()
     if (activeSource_ != pathSource_.get() || !projectView_) return;
     pathRefreshPending_ = false;
     pathContentOnlyRefresh_ = false;
+    pathContentRefreshNodes_.clear();
     const auto* project = ProjectManager::instance().currentProject();
     if (!project) { clear(); return; }
     pathProjectId_ = project->projectId;

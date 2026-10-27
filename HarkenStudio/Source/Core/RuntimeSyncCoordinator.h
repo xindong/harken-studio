@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <vector>
 
 namespace VNX {
 
@@ -34,6 +35,18 @@ public:
     {
         AllocationState state;
         AuthoringRevision revision;
+    };
+
+    struct PropertyMutation
+    {
+        harkenstudio::ObjectId stableId{};
+        std::uint8_t propertyId = 0;
+    };
+
+    struct MutationSet
+    {
+        bool full = false;
+        std::vector<PropertyMutation> properties;
     };
 
     struct InitialIdentityForTesting
@@ -90,6 +103,11 @@ public:
     void beginSubmissionBatch();
     void endSubmissionBatch();
     AllocationResult markCurrentWorldMutation();
+    AllocationResult markCurrentWorldPropertyMutation(
+        harkenstudio::ObjectId stableId, std::uint8_t propertyId);
+    [[nodiscard]] const MutationSet& submittedMutations() const noexcept;
+    [[nodiscard]] bool isCurrentSubmission(
+        HarkenEditor::Bridge::CurrentWorldSyncToken token) const noexcept;
     void flushPendingMutationNow();
     [[nodiscard]] bool hasOutstandingSubmission() const noexcept;
     [[nodiscard]] RevisionBarrierSnapshot barrier(
@@ -103,6 +121,7 @@ signals:
     void barrierChanged();
 
 private:
+    AllocationResult allocateMutation();
     void flushCurrentWorldMutation();
     void failIdentityExhausted();
 
@@ -120,6 +139,8 @@ private:
     std::uint32_t m_submissionBatchDepth = 0;
     bool m_flushRequested = false;
     bool m_runtimeActive = false;
+    MutationSet m_pendingMutations;
+    MutationSet m_submittedMutations;
 };
 
 }
