@@ -1,6 +1,10 @@
 #include <QtTranslation>
 
 static const char* const kReleaseNotesStrings[] = {
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Running Hub taskbar icons now refresh correctly when switching between light and dark Windows themes."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Quick Integration Package and project version menus show concise version labels. Project version choices are ordered from newest to oldest."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Integration Package status checks, changes, moves, and uninstalls are available on one row."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "The Integration Package source selector shows the package version before its path, keeping the version visible when long paths are shortened."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Hub uses the Harken Hub name throughout installation, updates, and Studio integration, and includes the updated legal terms."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Running Hub taskbar and tray icons follow the Windows theme. The dark Hub window keeps its white icon, and the installed-app list shows the correct Hub icon."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Engine Integrations uses Integration and Integration Package terminology throughout its controls, checks, and operation reports."),
