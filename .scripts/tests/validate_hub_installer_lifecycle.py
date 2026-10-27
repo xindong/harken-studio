@@ -63,7 +63,7 @@ def mark(name, **details):
 def run(name, command, expected=(0, 3010)):
     started = time.monotonic()
     with (args.output / (name + '.stdout.log')).open('wb') as output:
-        result = subprocess.run([str(value) for value in command], stdout=output, stderr=subprocess.STDOUT, timeout=240)
+        result = subprocess.run(command if isinstance(command, str) else [str(value) for value in command], stdout=output, stderr=subprocess.STDOUT, timeout=240)
     assert result.returncode in expected, (name, result.returncode, expected)
     mark(name, exitCode=result.returncode, seconds=round(time.monotonic() - started, 2))
     return result.returncode
@@ -73,8 +73,13 @@ def install(name, package, language=None, properties=(), expected=(0, 3010)):
     command = [package]
     if language:
         command.append('--harken-setup-' + language)
-    command += ['/qn', '/norestart', '/l*v', args.output.resolve() / (name + '.msi.log'), *properties]
-    return run(name, command, expected)
+    command += ['/qn', '/norestart', '/l*v', args.output.resolve() / (name + '.msi.log')]
+    arguments = subprocess.list2cmdline([str(value) for value in command])
+    for property in properties:
+        key, value = property.split('=', 1)
+        assert '"' not in value
+        arguments += f' {key}="{value}"'
+    return run(name, arguments, expected)
 
 
 def install_dir():

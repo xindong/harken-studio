@@ -56,6 +56,13 @@ jobs:
         run: gh release download HarkenHubSetup-0.1.72 --pattern HarkenHubSetup-0.1.72.exe --dir .temp/lifecycle/baseline
       - name: Validate real installer lifecycle
         run: python .scripts/tests/validate_hub_installer_lifecycle.py --package-dir .temp/lifecycle/package --payload build/bin/Release --stub build/setup/Release/HarkenHubSetup.exe --baseline .temp/lifecycle/baseline/HarkenHubSetup-0.1.72.exe --output .temp/lifecycle/results
+      - name: Retain lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: hub-installer-lifecycle-${{ matrix.os }}
+          path: .temp/lifecycle/results
+          retention-days: 14
       - name: Validate update and failure handling
         if: always()
         run: |
@@ -66,8 +73,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: hub-installer-lifecycle-${{ matrix.os }}
-          path: |
-            .temp/lifecycle/results
-            .temp/lifecycle/update-tests.xml
+          name: hub-installer-update-tests-${{ matrix.os }}
+          path: .temp/lifecycle/update-tests.xml
           retention-days: 14
