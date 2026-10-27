@@ -352,9 +352,10 @@ bool AttenuationStore::erase(ProjectData* project,
         if (item->guid != targetGuid)
             continue;
 
-        if (projectManager)
-            emit projectManager->itemDeleted(item);
+        const auto removed = std::move(it->rootItem);
         items.erase(it);
+        if (projectManager)
+            emit projectManager->itemDeleted(removed.get());
         return true;
     }
     return false;

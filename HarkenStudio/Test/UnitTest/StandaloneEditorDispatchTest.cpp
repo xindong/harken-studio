@@ -556,6 +556,56 @@ TEST_F(EditorDockLayoutTest, DeletedActiveObjectDoesNotClearIndependentEditorAnd
     EXPECT_EQ(window_->findChild<ControlPanel*>()->boundItem(), auditioned);
 }
 
+TEST_F(EditorDockLayoutTest, UndoRedoRestoresObjectsWithoutRestoringActiveContexts)
+{
+    auto& manager = VNX::ProjectManager::instance();
+    auto* inspected = manager.createItem(nullptr, QStringLiteral("IndependentInspector"), VNX::ProjectItem::Type::Sound);
+    ASSERT_NE(inspected, nullptr);
+    window_->openItemInNewInspector(inspected, VNX::MainWindow::PreferredOpenArea::CentralTab, false);
+    auto* inspector = window_->inspectorShowingItem(inspected);
+    ASSERT_NE(inspector, nullptr);
+    inspector->setPinned(true);
+    auto* router = window_->findChild<VNX::SelectionRouter*>();
+    ASSERT_NE(router, nullptr);
+    auto& undo = VNX::UndoRedoManager::instance();
+    undo.clear();
+    const auto created = VNX::ActionManager::instance().execute(
+        QStringLiteral("create_attenuation"),
+        QJsonObject{{QStringLiteral("name"), QStringLiteral("ActiveAttenuation")}});
+    ASSERT_TRUE(created.success) << created.errorMessage.toStdString();
+    const QUuid guid(created.data.value(QStringLiteral("guid")).toString());
+    ASSERT_FALSE(guid.isNull());
+    auto* active = manager.findItemByGuid(guid);
+    ASSERT_NE(active, nullptr);
+    router->selectItem(active, false);
+    drainEvents();
+    ASSERT_EQ(router->activeItem(), active);
+    ASSERT_EQ(window_->auditionTarget(), active);
+    ASSERT_EQ(inspector->currentContextItem(), inspected);
+
+    ASSERT_TRUE(undo.undo());
+    EXPECT_EQ(manager.findItemByGuid(guid), nullptr);
+    EXPECT_EQ(router->activeItem(), nullptr);
+    EXPECT_EQ(window_->auditionTarget(), nullptr);
+    EXPECT_EQ(inspector->currentContextItem(), inspected);
+
+    ASSERT_TRUE(undo.redo());
+    ASSERT_NE(manager.findItemByGuid(guid), nullptr);
+    EXPECT_EQ(router->activeItem(), nullptr);
+    EXPECT_EQ(window_->auditionTarget(), nullptr);
+    EXPECT_EQ(inspector->currentContextItem(), inspected);
+    drainEvents();
+    EXPECT_EQ(router->activeItem(), nullptr);
+    EXPECT_EQ(window_->auditionTarget(), nullptr);
+
+    inspector->setPinned(false);
+    drainEvents();
+    EXPECT_EQ(router->activeItem(), nullptr);
+    EXPECT_EQ(window_->auditionTarget(), nullptr);
+    EXPECT_EQ(inspector->currentContextItem(), inspected);
+    EXPECT_EQ(window_->findChild<ControlPanel*>()->boundItem(), nullptr);
+}
+
 TEST_F(EditorDockLayoutTest, LocalTimelineSelectionPreservesNavigationUntilExplicitInspection)
 {
     auto& manager = VNX::ProjectManager::instance();
