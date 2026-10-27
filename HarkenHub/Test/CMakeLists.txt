@@ -71,8 +71,10 @@ set_target_properties(harken_hub_tests PROPERTIES AUTORCC ON)
 harken_add_hub_legal_resources(harken_hub_tests)
 if(WIN32)
     target_sources(harken_hub_tests PRIVATE
+        UnitTest/SetupPayloadTest.cpp
         UnitTest/ShellIconsTest.cpp
         UnitTest/UpdateBridgeDeploymentTest.cpp)
+    target_link_libraries(harken_hub_tests PRIVATE bcrypt)
 endif()
 target_link_libraries(harken_hub_tests PRIVATE
     harken_hub_test_lib

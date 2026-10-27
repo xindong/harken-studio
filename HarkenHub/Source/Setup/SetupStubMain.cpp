@@ -12,11 +12,13 @@
 #include <string_view>
 
 #include "SetupStrings.h"
+#include "SetupPayload.h"
 
 namespace {
 
 constexpr wchar_t kPayloadResource[] = L"HARKENHUBMSI";
 constexpr wchar_t kChinesePayloadResource[] = L"HARKENHUBMSI_ZHCN";
+constexpr wchar_t kSharedPayloadResource[] = L"HARKENHUBBLOCKS";
 constexpr wchar_t kStagingSddl[] = L"D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)";
 constexpr std::wstring_view kChineseHandoff = L"--harken-setup-zh ";
 constexpr std::wstring_view kEnglishHandoff = L"--harken-setup-en ";
@@ -203,6 +205,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR rawCommandLine, int)
     if (!elevation.TokenIsElevated)
         return launchElevated(commandLine, chinese, quiet);
 
+    HRSRC shared = FindResourceW(instance, kSharedPayloadResource, RT_RCDATA);
+    HGLOBAL sharedLoaded = shared ? LoadResource(instance, shared) : nullptr;
+    const void* blocks = sharedLoaded ? LockResource(sharedLoaded) : nullptr;
+    const DWORD blocksSize = shared ? SizeofResource(instance, shared) : 0;
+    std::vector<unsigned char> restored;
+    if (!HarkenSetup::unpackPayload(payload, payloadSize, blocks, blocksSize, restored))
+        return fail(HARKEN_SETUP_UNREADABLE_PAYLOAD, quiet);
+
     wchar_t tempDir[MAX_PATH + 1];
     const DWORD tempLen = GetTempPathW(MAX_PATH + 1, tempDir);
     if (tempLen == 0 || tempLen > MAX_PATH)
@@ -246,9 +256,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR rawCommandLine, int)
                            quiet, stagingGuard, std::wstring(), stagingDir);
 
     DWORD written = 0;
-    const BOOL wrote = WriteFile(file, payload, payloadSize, &written, nullptr);
+    const BOOL wrote = WriteFile(file, restored.data(), static_cast<DWORD>(restored.size()), &written, nullptr);
     CloseHandle(file);
-    if (!wrote || written != payloadSize)
+    if (!wrote || written != restored.size())
         return failStaging(HARKEN_SETUP_PAYLOAD_WRITE_FAILED,
                            quiet, stagingGuard, msiPath, stagingDir);
 

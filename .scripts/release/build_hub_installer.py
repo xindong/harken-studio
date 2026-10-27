@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import hashlib
 import json
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 from ctypes import wintypes
@@ -27,6 +29,7 @@ FOREIGN_BINARIES = (
 )
 PAYLOAD_RESOURCE_NAME = "HARKENHUBMSI"
 CHINESE_PAYLOAD_RESOURCE_NAME = "HARKENHUBMSI_ZHCN"
+SHARED_PAYLOAD_RESOURCE_NAME = "HARKENHUBBLOCKS"
 RT_RCDATA = 10
 MSI_VERSION_PATTERN = re.compile(r"^\d+\.\d+\.\d+")
 
@@ -70,7 +73,25 @@ def collect_payload(input_dir: Path) -> list[Path]:
     return files
 
 
+def payload_resources(packages: tuple[Path, Path]) -> dict[str, bytes]:
+    blocks = {}
+    resources = {}
+    for name, package in zip((PAYLOAD_RESOURCE_NAME, CHINESE_PAYLOAD_RESOURCE_NAME), packages):
+        payload = package.read_bytes()
+        if not payload or len(payload) > 0xFFFFFFFF:
+            raise ValueError(f"invalid installer payload size: {package}")
+        indices = []
+        for offset in range(0, len(payload), 4096):
+            block = payload[offset:offset + 4096].ljust(4096, b"\0")
+            indices.append(blocks.setdefault(block, len(blocks)))
+        resources[name] = struct.pack("<8sI32s", b"HKMSI001", len(payload), hashlib.sha256(payload).digest())
+        resources[name] += struct.pack(f"<{len(indices)}I", *indices)
+    resources[SHARED_PAYLOAD_RESOURCE_NAME] = b"".join(blocks)
+    return resources
+
+
 def embed_payload(stub_exe: Path, msi_path: Path, localized_msi_path: Path, exe_path: Path) -> None:
+    resources = payload_resources((msi_path, localized_msi_path))
     shutil.copyfile(stub_exe, exe_path)
 
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -94,9 +115,7 @@ def embed_payload(stub_exe: Path, msi_path: Path, localized_msi_path: Path, exe_
             f"error: BeginUpdateResource failed for {exe_path} "
             f"(winerror {ctypes.get_last_error()})"
         )
-    for name, package in ((PAYLOAD_RESOURCE_NAME, msi_path),
-                          (CHINESE_PAYLOAD_RESOURCE_NAME, localized_msi_path)):
-        payload = package.read_bytes()
+    for name, payload in resources.items():
         buffer = ctypes.create_string_buffer(payload, len(payload))
         updated = kernel32.UpdateResourceW(
             handle,

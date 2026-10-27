@@ -159,8 +159,9 @@
 </context>
 <context>
     <name>HubReleaseNotes</name>
+    <message><source>Reduced the download size of the bilingual Windows installer.</source><translation>减小了中英文双语 Windows 安装器的下载体积。</translation></message>
     <message><source>The Windows installer displays the license agreement and privacy policy side by side. Its interface and documents use Simplified Chinese for Chinese Windows display languages, and English for other languages.</source><translation>Windows 安装器中的许可协议与隐私政策改为左右分栏显示。Windows 显示语言为中文时，界面与文档统一使用简体中文；其他语言统一使用英文。</translation></message>
-    <message><source>Integration Package selection dialogs and quick change menus identify Unity or UE packages based on the game project's engine.</source><translation>集成包选择窗口和快捷更换菜单根据游戏工程的引擎类型，明确显示 Unity 集成包或 UE 集成包。</translation></message>
+    <message><source>Integration Package selection dialogs and quick change menus now explicitly identify Unity Integration Packages.</source><translation>集成包选择窗口和快捷更换菜单明确显示 Unity 集成包名称。</translation></message>
     <message><source>Running Hub taskbar icons now refresh correctly when switching between light and dark Windows themes.</source><translation>修复运行中的 Hub 任务栏图标在 Windows 浅色、深色主题切换后未正确刷新的问题。</translation></message>
     <message><source>Quick Integration Package and project version menus show concise version labels. Project version choices are ordered from newest to oldest.</source><translation>精简快捷集成包和工程版本菜单中的版本名称，工程版本选项按从新到旧排列。</translation></message>
     <message><source>Integration Package status checks, changes, moves, and uninstalls are available on one row.</source><translation>集成包状态检查按钮与更换、移动、卸载按钮恢复为同一行。</translation></message>
@@ -236,10 +237,6 @@
         <translation>SDK 文件替换失败时显示相关路径和系统错误，并提供写保护、权限、文件占用以及适用情况下版本管理签出的处理指引。相关 Hub 提示和日志信息支持中英文。</translation>
     </message>
     <message>
-        <source>Unreal SDK checks detect missing, unreadable, or empty native libraries and core headers for the current platform before installation and when verifying an installed SDK.</source>
-        <translation>Unreal SDK 在安装前和验证已安装 SDK 时，检查当前平台必需的原生库与核心头文件是否缺失、不可读取或为空。</translation>
-    </message>
-    <message>
         <source>With a Studio build that supports the new checks, project upgrades detect existing files that cannot be written before changing project data. Hub lists the affected files and explains how to restore write access.</source>
         <translation>配合支持新检查的 Studio 构建，工程升级会在修改工程数据前检查已有文件是否可写。Hub 会列出无法写入的文件，并提示如何恢复写入权限。</translation>
     </message>
@@ -279,17 +276,14 @@
         <translation>Windows 中仅显示应用名称，不再附带额外说明。</translation>
     </message>
     <message><source>Engine Integrations uses system file and folder pickers, restoring address-bar path navigation on Windows.</source><translation>&#x5f15;&#x64ce;&#x96c6;&#x6210;&#x6062;&#x590d;&#x4f7f;&#x7528;&#x7cfb;&#x7edf;&#x539f;&#x751f;&#x6587;&#x4ef6;&#x548c;&#x6587;&#x4ef6;&#x5939;&#x9009;&#x62e9;&#x7a97;&#x53e3;&#xff0c;&#x53ef;&#x5728; Windows &#x5730;&#x5740;&#x680f;&#x7c98;&#x8d34;&#x8def;&#x5f84;&#x540e;&#x6309;&#x56de;&#x8f66;&#x76f4;&#x63a5;&#x5b9a;&#x4f4d;&#x3002;</translation></message>
-    <message><source>Unreal SDK installation now rejects incomplete native headers before changing the game project.</source><translation>Unreal SDK &#x5b89;&#x88c5;&#x4f1a;&#x5728;&#x4fee;&#x6539;&#x6e38;&#x620f;&#x5de5;&#x7a0b;&#x524d;&#x62e6;&#x622a;&#x7f3a;&#x5c11;&#x5fc5;&#x9700;&#x539f;&#x751f;&#x5934;&#x6587;&#x4ef6;&#x7684; SDK&#x3002;</translation></message>
     <message><source>Hub and Studio downloads support the new release archive layout on GitHub and COS.</source><translation>Hub 和 Studio 下载已适配 GitHub 与 COS 的新发布归档目录。</translation></message>
     <message><source>Hub and Studio update checks and downloads use the active release sources after the Harken rename.</source><translation>修复更名为 Harken 后 Hub 与 Studio 的更新检查和下载地址。</translation></message>
     <message><source>Command-line update checks can verify Hub or Studio independently.</source><translation>命令行现在可以分别检查 Hub 或 Studio 的更新。</translation></message>
-    <message><source>Unity and Unreal projects share one SDK workflow with separate project association, SDK actions, and results.</source><translation>Unity 和 Unreal 工程共用一套 SDK 操作流程，工程关联、SDK 操作和结果分区显示。</translation></message>
     <message><source>Project association now explains that it only adds or removes the project pair from the integration list.</source><translation>工程关联明确说明其作用：仅将这组工程加入或移出引擎集成列表。</translation></message>
     <message><source>Check the installed SDK without selecting a source. Failures explain their causes, recovery steps, and available actions.</source><translation>无需选择 SDK 来源即可检查已安装的 SDK；失败时说明具体原因、解决步骤和仍可执行的操作。</translation></message>
     <message><source>SDK changes use dedicated dialogs and safety checks that require closing the target game project before writing files.</source><translation>SDK 变更通过独立窗口操作，并在写入前进行安全检查，要求先关闭对应的游戏工程。</translation></message>
     <message><source>Hub manages SDK integration independently, including repair guidance for damaged installations in Chinese and English.</source><translation>Hub 独立管理 SDK 集成，并为安装损坏等问题提供中英文修复指引。</translation></message>
     <message><source>SDK scans run in the background with live activity and a Stop Scan button. Stopped scans cannot approve SDK changes.</source><translation>SDK 扫描在后台执行，显示实时进度并提供“停止扫描”按钮。停止扫描后不会允许执行未经完整检查的 SDK 变更。</translation></message>
-    <message><source>Choose an Unreal SDK folder under Plugins, migrate with a verified backup, and recover interrupted migrations through the shared SDK workflow.</source><translation>Unreal SDK 支持选择 Plugins 下的安装位置、创建校验备份后迁移，以及通过统一的 SDK 操作流程恢复中断的迁移。</translation></message>
     <message>
         <source>Choose a custom SDK installation folder inside your Unity project. Hub remembers the location for each project.</source>
         <translation>支持在 Unity 工程内自定义 SDK 安装目录，Hub 会分别记住各工程的安装位置。</translation>
@@ -317,10 +311,6 @@
     <message>
         <source>Reinstalling a Hub update on Windows no longer replaces its running update helper or leaves later updates blocked by files in use.</source>
         <translation>修复 Windows 下重复安装更新时破坏正在运行的更新程序，导致后续更新出现文件占用的问题。</translation>
-    </message>
-    <message>
-        <source>The Unreal project selection button is temporarily hidden in Engine Integrations.</source>
-        <translation>&#x6682;&#x65f6;&#x9690;&#x85cf;&#x5f15;&#x64ce;&#x96c6;&#x6210;&#x9875;&#x4e2d;&#x7684;&#x201c;&#x9009;&#x62e9; Unreal &#x5de5;&#x7a0b;&#x201d;&#x6309;&#x94ae;&#x3002;</translation>
     </message>
     <message>
         <source>The integration editor opens without waiting for Studio version checks to finish.</source>
@@ -373,10 +363,6 @@
     <message>
         <source>Hub stays open and explains the error if its update helper cannot be started.</source>
         <translation>更新辅助程序启动失败时，Hub 保持运行并说明错误原因。</translation>
-    </message>
-    <message>
-        <source>Unreal plugin updates preserve hidden project-specific files and files inside hidden folders.</source>
-        <translation>更新 Unreal 插件时保留工程自有的隐藏文件及隐藏文件夹中的文件。</translation>
     </message>
     <message>
         <source>Install and keep older Studio versions, and open their existing projects with the selected version.</source>
