@@ -281,6 +281,32 @@ int compareSdkVersions(const QString& left, const QString& right)
     return QVersionNumber::compare(leftVersion, rightVersion);
 }
 
+int compareSourceVersions(const QString& left, const QString& right)
+{
+    const int comparison = QVersionNumber::compare(
+        QVersionNumber::fromString(left), QVersionNumber::fromString(right));
+    if (comparison != 0) return comparison;
+    const QString leftPrerelease = left.section(QLatin1Char('+'), 0, 0).section(QLatin1Char('-'), 1);
+    const QString rightPrerelease = right.section(QLatin1Char('+'), 0, 0).section(QLatin1Char('-'), 1);
+    if (leftPrerelease.isEmpty() || rightPrerelease.isEmpty())
+        return int(leftPrerelease.isEmpty()) - int(rightPrerelease.isEmpty());
+    const auto leftParts = leftPrerelease.split(QLatin1Char('.'));
+    const auto rightParts = rightPrerelease.split(QLatin1Char('.'));
+    static const QRegularExpression numericIdentifier(QStringLiteral("^[0-9]+$"));
+    for (qsizetype index = 0; index < std::min(leftParts.size(), rightParts.size()); ++index) {
+        const QString& leftPart = leftParts[index];
+        const QString& rightPart = rightParts[index];
+        if (leftPart == rightPart) continue;
+        const bool leftNumeric = numericIdentifier.match(leftPart).hasMatch();
+        const bool rightNumeric = numericIdentifier.match(rightPart).hasMatch();
+        if (leftNumeric != rightNumeric) return leftNumeric ? -1 : 1;
+        if (leftNumeric && leftPart.size() != rightPart.size())
+            return leftPart.size() > rightPart.size() ? 1 : -1;
+        return QString::compare(leftPart, rightPart, Qt::CaseSensitive);
+    }
+    return int(leftParts.size() > rightParts.size()) - int(leftParts.size() < rightParts.size());
+}
+
 QString targetInputPath(const EngineTargetRecord& target)
 {
     return target.engineKind == EngineKind::Unreal
@@ -2172,11 +2198,9 @@ void EngineIntegrationsPage::refreshLocalSdkSources()
     sdkSourceCombo_->clear();
     auto sources = localSdkSources(target->engineKind, availableStudioVersions());
     std::stable_sort(sources.begin(), sources.end(), [](const auto& left, const auto& right) {
-        const int comparison = QVersionNumber::compare(
-            QVersionNumber::fromString(left.version), QVersionNumber::fromString(right.version));
+        const int comparison = compareSourceVersions(left.version, right.version);
         if (comparison != 0) return comparison > 0;
-        return QVersionNumber::compare(QVersionNumber::fromString(left.studioVersion),
-                                       QVersionNumber::fromString(right.studioVersion)) > 0;
+        return compareSourceVersions(left.studioVersion, right.studioVersion) > 0;
     });
     for (const auto& source : sources) {
         sdkSourceCombo_->addItem(source.path, source.path);
