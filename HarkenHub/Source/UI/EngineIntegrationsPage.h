@@ -146,6 +146,7 @@ private:
                                      std::optional<IntegrationOperation> operation = std::nullopt);
     void scanStopped();
     void showSdkResolution();
+    QString selectedIntegrationPackageName() const;
     void updatePrimaryAction();
     void refreshEngineRunningHint();
     void updateSdkSelectionContext();
@@ -213,9 +214,11 @@ private:
     QLineEdit* harkenProjectEdit_ = nullptr;
     QLineEdit* engineProjectEdit_ = nullptr;
     QComboBox* sdkSourceCombo_ = nullptr;
+    QLabel* sdkSourceLabel_ = nullptr;
     QLineEdit* sdkPathEdit_ = nullptr;
     QPushButton* sdkSourceBrowseButton_ = nullptr;
     QLineEdit* sdkInstallPathEdit_ = nullptr;
+    QLabel* sdkInstallLabel_ = nullptr;
     QPushButton* sdkInstallBrowseButton_ = nullptr;
     QPushButton* backButton_ = nullptr;
     QPushButton* harkenBrowseButton_ = nullptr;

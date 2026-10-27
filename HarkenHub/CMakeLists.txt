@@ -324,7 +324,8 @@ endif()
 
 if(WIN32)
     add_executable(harken_hub_setup WIN32
-        Source/Setup/SetupStubMain.cpp "HarkenHub.rc")
+        Source/Setup/SetupStubMain.cpp Source/Setup/SetupPayload.h
+        "HarkenHub.rc" Translations/harken_hub_setup.rc)
     set_target_properties(harken_hub_setup PROPERTIES
         OUTPUT_NAME "HarkenHubSetup"
         AUTOMOC OFF
@@ -332,7 +333,8 @@ if(WIN32)
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/setup")
     target_link_options(harken_hub_setup PRIVATE
-        "/MANIFESTUAC:level='requireAdministrator'")
+        "/MANIFESTUAC:level='asInvoker'")
+    target_link_libraries(harken_hub_setup PRIVATE bcrypt)
     harken_attach_version_resource(
         harken_hub_setup
         "Harken Hub Setup"

@@ -7,6 +7,26 @@
   },
   "releases": [
     {
+      "version": "0.1.73",
+      "date": "2026-10-27",
+      "pullRequests": [147, 148],
+      "contributors": ["liuxin2-sys"],
+      "changes": [
+        {
+          "category": "improved",
+          "text": "The Windows installer displays the license agreement and privacy policy side by side. Its interface and documents use Simplified Chinese for Chinese Windows display languages, and English for other languages."
+        },
+        {
+          "category": "improved",
+          "text": "Reduced the download size of the bilingual Windows installer."
+        },
+        {
+          "category": "improved",
+          "text": "Integration Package selection dialogs and quick change menus now explicitly identify Unity Integration Packages."
+        }
+      ]
+    },
+    {
       "version": "0.1.72",
       "date": "2026-10-27",
       "pullRequests": [141, 143, 144],
@@ -283,10 +303,6 @@
         },
         {
           "category": "improved",
-          "text": "Unreal SDK checks detect missing, unreadable, or empty native libraries and core headers for the current platform before installation and when verifying an installed SDK."
-        },
-        {
-          "category": "improved",
           "text": "With a Studio build that supports the new checks, project upgrades detect existing files that cannot be written before changing project data. Hub lists the affected files and explains how to restore write access."
         }
       ]
@@ -396,20 +412,6 @@
         {
           "category": "improved",
           "text": "SDK integration retries temporary file locks on Windows instead of failing immediately."
-        }
-      ]
-    },
-    {
-      "version": "0.1.56",
-      "date": "2026-10-09",
-      "pullRequests": [],
-      "contributors": [
-        "liuxin2-sys"
-      ],
-      "changes": [
-        {
-          "category": "improved",
-          "text": "Unreal SDK installation now rejects incomplete native headers before changing the game project."
         }
       ]
     }
