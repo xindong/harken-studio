@@ -12398,8 +12398,20 @@ bool PlayableMemberStorageHasReaders(
     for (const auto& service : engine.playableServices) {
         if (&service == &row) continue;
         for (auto index = service.memberRelationHead; index != UINT32_MAX;
-             index = engine.memberRelations[index].next)
-            if (engine.memberRelations[index].service == row.identity) return true;
+             index = engine.memberRelations[index].next) {
+            const auto target = engine.memberRelations[index].service;
+            if (target == row.identity) return true;
+            if (!target.Valid() || target.slot >= engine.playableServices.size()) continue;
+            const auto& resource = engine.playableServices[target.slot];
+            auto* branch = engine.ResolvePlayableService(target, resource.ownerInstance, resource.ownerEpoch);
+            // An alias resolves through the service ancestry. Keep that path
+            // alive until its holder detaches the alias, excluding the holder.
+            for (std::size_t depth = 0; branch != nullptr && branch != &service &&
+                    depth < engine.playableServices.size(); ++depth) {
+                if (branch == &row) return true;
+                branch = engine.ResolvePlayableService(branch->parentService);
+            }
+        }
         if (service.HasFeatureArrays())
             for (const auto& member : service.VariablePayload().variableControlRetargetMembers)
                 if (member.reference.service.token == row.identity &&
@@ -17293,11 +17305,14 @@ struct MaterializedScheduleLeaf {
     std::uint32_t frontierPolicyIndex = UINT32_MAX;
 };
 
-struct MaterializedScheduleSet {
-    std::array<MaterializedScheduleLeaf, 64> leaves{};
-    std::uint32_t leafCount = 0;
+struct MaterializedScheduleCompletion {
     std::uint64_t zeroWorkCompletionOffsetFrames = 0;
     bool hasZeroWorkCompletion = false;
+};
+
+struct MaterializedScheduleSet : MaterializedScheduleCompletion {
+    std::array<MaterializedScheduleLeaf, 64> leaves{};
+    std::uint32_t leafCount = 0;
 };
 
 bool CanContinueSameProgramQueueSource(
@@ -17308,7 +17323,7 @@ bool CanContinueSameProgramQueueSource(
            materialized.leaves[0].endOffsetFrames == UINT64_MAX;
 }
 
-void RecordZeroWorkCompletion(MaterializedScheduleSet* out,
+void RecordZeroWorkCompletion(MaterializedScheduleCompletion* out,
                               std::uint64_t completionOffsetFrames) noexcept {
     if (out == nullptr) return;
     if (!out->hasZeroWorkCompletion ||
@@ -17336,7 +17351,7 @@ void LimitInitialScheduleToClipEnd(MaterializedScheduleSet& schedule,
 }
 
 bool ResolveZeroWorkCompletionFrame(
-    const MaterializedScheduleSet& materialized, std::uint64_t baseStartFrame,
+    const MaterializedScheduleCompletion& materialized, std::uint64_t baseStartFrame,
     std::uint64_t* out) noexcept {
     if (out == nullptr) return false;
     *out = 0;
@@ -23918,6 +23933,21 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
         return result;
     }
 
+    // Preparation runs on the control thread. Recursive Track/VC children must
+    // own separate temporary frontiers without stacking full leaf/path arrays.
+    struct MaterializationWorkspace {
+        MaterializedScheduleSet discrete;
+        MaterializedScheduleSet current;
+        std::array<MaterializedScheduleLeaf, harken::kMaxKnownScheduleLeaves> continuous;
+    };
+    auto materialization = engine.forcePreparedScheduleAllocationFailureForTest
+        ? std::unique_ptr<MaterializationWorkspace>{}
+        : std::unique_ptr<MaterializationWorkspace>(new (std::nothrow) MaterializationWorkspace{});
+    if (!materialization) {
+        result.status = harken::PlayableStartStatus::Capacity;
+        return result;
+    }
+
     if (schedule != nullptr && !scratch->variableControlNested) {
         scratch->variableControlParentInstance = schedule->parent->ownerInstance;
         scratch->variableControlParentEpoch = schedule->parent->ownerEpoch;
@@ -23996,8 +24026,8 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
         : initialEndFrame > startFrame ? initialEndFrame - startFrame : 0;
     std::array<std::uint8_t, 65> dynamicScheduleChildren{};
     std::array<std::uint32_t, 65> dynamicScheduleOrdinals{};
-    MaterializedScheduleSet discreteSchedule{};
-    MaterializedScheduleSet logicalCompletion{};
+    auto& discreteSchedule = materialization->discrete;
+    MaterializedScheduleCompletion logicalCompletion{};
     std::array<std::uint64_t, 64> continuousLogicalOffsets{};
     std::array<bool, 64> continuousHasLogicalCompletion{};
     const bool nativeSelectionDomain = schedulePreparation != nullptr &&
@@ -24049,7 +24079,9 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
             (selected->playable.kind == harken::PlayableKindV1::Track ||
              selected->playable.kind == harken::PlayableKindV1::Piece);
         if (dynamicSchedule) {
-            discreteSchedule = {};
+            discreteSchedule.leafCount = 0;
+            discreteSchedule.hasZeroWorkCompletion = false;
+            discreteSchedule.zeroWorkCompletionOffsetFrames = 0;
             dynamicScheduleChildren[0] = 1;
             dynamicScheduleOrdinals[0] = discrete->childStableOrdinal;
         }
@@ -24076,9 +24108,7 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
     // Keep only the flattened continuous frontier. Materializing one full
     // schedule set per authored row creates a multi-megabyte stack frame
     // because each set reserves the complete leaf/path capacity.
-    std::array<MaterializedScheduleLeaf,
-               harken::kMaxKnownScheduleLeaves>
-        continuousLeaves{};
+    auto& continuousLeaves = materialization->continuous;
     std::array<std::uint32_t, 64> continuousLeafOffsets{};
     std::array<std::uint32_t, 64> continuousLeafCounts{};
     std::array<std::uint32_t, harken::kMaxKnownScheduleLeaves>
@@ -24092,7 +24122,11 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
             result.status = harken::PlayableStartStatus::InvalidInput;
             return result;
         }
-        MaterializedScheduleSet materialized{};
+        auto& materialized = materialization->current;
+        materialized.leafCount = 0;
+        materialized.hasZeroWorkCompletion = false;
+        materialized.zeroWorkCompletionOffsetFrames = 0;
+        for (auto& leaf : materialized.leaves) leaf = {};
         ScheduleMaterializeStatus status = ScheduleMaterializeStatus::Invalid;
         if (selected->playable.kind == harken::PlayableKindV1::Sound) {
             status = MaterializeVariableControlSoundChildSchedule(
@@ -24128,7 +24162,9 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
             (selected->playable.kind == harken::PlayableKindV1::Track ||
              selected->playable.kind == harken::PlayableKindV1::Piece);
         if (dynamicSchedule) {
-            materialized = {};
+            materialized.leafCount = 0;
+            materialized.hasZeroWorkCompletion = false;
+            materialized.zeroWorkCompletionOffsetFrames = 0;
             const auto top = static_cast<std::uint32_t>(haveDiscrete) + rowIndex;
             dynamicScheduleChildren[top] = 1;
             dynamicScheduleOrdinals[top] = continuous[rowIndex].childStableOrdinal;
@@ -27921,6 +27957,23 @@ bool PrepareFrontierContainerPath(harken::Engine&, harken::EngineActionPlayScrat
     std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, PreparedFrontierPath&, bool = false) noexcept;
 
 template <typename WorldView>
+bool ResolveStaticQueueChildTerminal(const WorldView& world,
+    harken::PlayableRefV1 current, harken::PlayableRefV1* terminal,
+    std::uint32_t capacity = harken::kSelectionPathNodeCapacity) noexcept {
+    for (std::uint32_t depth = 0; current.kind == harken::PlayableKindV1::Container; ++depth) {
+        const auto* program = FindVariableControlNestedContainer(world, current);
+        if (depth >= capacity || program == nullptr || program->childCount != 1 ||
+            program->children == nullptr ||
+            (program->mode != harken::ContainerModeV1::Random &&
+             program->mode != harken::ContainerModeV1::Sequence) ||
+            ReadPlayableLoopCount(world, current.stableId) != 1) return false;
+        current = program->children[0].playable;
+    }
+    *terminal = current;
+    return true;
+}
+
+template <typename WorldView>
 bool PrepareScheduledQueueChildPath(harken::Engine& engine,
     harken::EngineActionPlayScratch& scratch, harken::EnginePlayableServiceRow& row,
     const WorldView& world, std::uint32_t ordinal,
@@ -27941,14 +27994,13 @@ bool PrepareScheduledQueueChildPath(harken::Engine& engine,
     path.ordinals[prefix - 1u] = ordinal;
     path.selectionCount = prefix;
     const auto child = terminal;
+    harken::PlayableRefV1 staticTerminal{};
+    if (!ResolveStaticQueueChildTerminal(world, child, &staticTerminal,
+            static_cast<std::uint32_t>(path.path.size()) - prefix)) return false;
     auto& tree = scratch.playableTreeExecutor;
     for (std::uint32_t depth = 0; terminal.kind == harken::PlayableKindV1::Container; ++depth) {
         const auto* program = FindVariableControlNestedContainer(world, terminal);
-        if (prefix + depth >= path.path.size() || program == nullptr ||
-            program->childCount != 1 || program->children == nullptr ||
-            (program->mode != harken::ContainerModeV1::Random &&
-             program->mode != harken::ContainerModeV1::Sequence) ||
-            ReadPlayableLoopCount(world, terminal.stableId) != 1) return false;
+        if (program == nullptr) return false;
         path.containers[prefix + depth] = parent;
         path.ordinals[prefix + depth] = program->children[0].stableChildOrdinal;
         path.path[prefix + depth] = MakeContainerSelectionPathNode(
@@ -29691,6 +29743,10 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
         if (timingHintKind != harken::ChildTimingHintKindV2::Unknown) {
             return QueueContinuationPrepareStatus::Failed;
         }
+        // The selected ordinal ends at a subtree, not at a Sound property cut.
+        // Its complete path is validated when the subtree can be prepared.
+        row.queueDeferredNeedsFullPreparation = true;
+        return QueueContinuationPrepareStatus::Deferred;
     } else {
         return QueueContinuationPrepareStatus::Failed;
     }
@@ -30772,12 +30828,22 @@ QueueContinuationPrepareStatus PrepareQueueContinuation(
     const harken::ContainerChildProgramViewV2* target = nullptr;
     if (!ResolveSharedContainerChild(authority, program, next.currentChildOrdinal, &target) || target == nullptr)
         return QueueContinuationPrepareStatus::Failed;
-    if (target->playable.kind == harken::PlayableKindV1::Track || target->playable.kind == harken::PlayableKindV1::Piece) {
+    auto staticTarget = target->playable;
+    bool dynamicContainer = false;
+    if (target->playable.kind == harken::PlayableKindV1::Container) {
+        if (target->timingHint.kind != harken::ChildTimingHintKindV2::Unknown)
+            return QueueContinuationPrepareStatus::Failed;
+        dynamicContainer = !(pack
+            ? ResolveStaticQueueChildTerminal(row.Invocation().packPlaybackView, target->playable, &staticTarget)
+            : ResolveStaticQueueChildTerminal(world, target->playable, &staticTarget));
+    }
+    if (dynamicContainer || staticTarget.kind == harken::PlayableKindV1::Track ||
+        staticTarget.kind == harken::PlayableKindV1::Piece) {
         MaterializedScheduleSet materialized{};
-        const auto shape = pack
-            ? MaterializeSchedule(row.Invocation().packPlaybackView, target->playable, engine.config.mixRate.SampleRate(),
+        const auto shape = dynamicContainer ? ScheduleMaterializeStatus::Dynamic : pack
+            ? MaterializeSchedule(row.Invocation().packPlaybackView, staticTarget, engine.config.mixRate.SampleRate(),
                 engine.config.maxKnownScheduleLeaves, harken::WorldCapacitySummaryV1{}.maxTrackPieceScheduleDepth, &materialized)
-            : MaterializeSchedule(world, target->playable, engine.config.mixRate.SampleRate(), &materialized);
+            : MaterializeSchedule(world, staticTarget, engine.config.mixRate.SampleRate(), &materialized);
         if (shape == ScheduleMaterializeStatus::Dynamic) {
             row.queueDeferredNeedsFullPreparation = true;
             row.queueSignalOnlyNoOverlap = true;
@@ -32225,7 +32291,7 @@ QueueContinuationPrepareStatus StartSignalOnlyNoOverlapSuccessor(
         return QueueContinuationPrepareStatus::Failed;
     }
     const bool scheduleSuccessor = childKind == harken::PlayableKindV1::Track ||
-        childKind == harken::PlayableKindV1::Piece;
+        childKind == harken::PlayableKindV1::Piece || childKind == harken::PlayableKindV1::Container;
     if (!scheduleSuccessor) {
         const auto consumed = engine.logicCommits.ConsumePreparedIssue(std::move(issue));
         (void)consumed;
@@ -32329,39 +32395,6 @@ QueueContinuationPrepareStatus StartSignalOnlyNoOverlapSuccessor(
         ObservePreparedContent(engine, scratch.playableTreeExecutor, successorVoiceInstance, packQueue
             ? MonitorContentFor(row.Invocation().packPlaybackView, child->playable)
             : MonitorContentFor(world, child->playable));
-    }
-    if (childKind == harken::PlayableKindV1::Container) {
-        PreparedFrontierPath path{};
-        path.path = nextPath;
-        path.ordinals = selectedPath;
-        path.containers = nextContainers;
-        path.selectionCount = selectedCount;
-        const bool expanded = packQueue
-            ? PrepareFrontierContainerPath(engine, scratch, row, authority, row.Invocation().packPlaybackView,
-                child->playable, queueOwnerInstance, queueOwnerEpoch,
-                row.Invocation().packPlaybackView.WorldSemanticFingerprint(), 0, ticket, startFrame, 0, path)
-            : PrepareFrontierContainerPath(engine, scratch, row, authority, world,
-                child->playable, queueOwnerInstance, queueOwnerEpoch,
-                world.identity.runtimeSemanticFingerprint, 0, ticket, startFrame, 0, path);
-        if (!expanded || path.terminal.kind != harken::PlayableKindV1::Sound ||
-            !scratch.playableTreeExecutor.PrepareInstance(engine.playableInstances,
-                harken::PlayableKind::Sound, path.terminalParent))
-            return QueueContinuationPrepareStatus::Failed;
-        const auto leafSlot = scratch.playableTreeExecutor.InstanceReservationCount() - 1u;
-        successorVoiceInstance = scratch.playableTreeExecutor.PreparedInstanceHandle(leafSlot);
-        successorView.scheduleEpoch = scratch.playableTreeExecutor.PreparedInstanceEpoch(leafSlot);
-        successorView.parent = path.terminalParent;
-        ObservePreparedContent(engine, scratch.playableTreeExecutor, successorVoiceInstance, packQueue
-            ? MonitorContentFor(row.Invocation().packPlaybackView, path.terminal)
-            : MonitorContentFor(world, path.terminal));
-        childService = engine.ResolvePlayableService(path.resourceService);
-        firstChildService = engine.ResolvePlayableService(path.rootService);
-        if (childService == nullptr || firstChildService == nullptr) return QueueContinuationPrepareStatus::Failed;
-        childService->activeLeafInstance = successorVoiceInstance;
-        nextPath = path.path;
-        selectedPath = path.ordinals;
-        nextContainers = path.containers;
-        selectedCount = path.selectionCount;
     }
     const auto cutStatus = packQueue
         ? engine.playablePropertyCutScratch.Resolve(
@@ -93867,7 +93900,8 @@ QueueContinuationPrepareStatus PrepareQueueScheduleSuccessor(
         scratch.packLease = parent.Invocation().packLease;
         scratch.packPlaybackView = parent.Invocation().packPlaybackView;
     } else if (!engine.RecordOriginalWorldNoPackPreparation(scratch,
-        {child.playable.kind == harken::PlayableKindV1::Track ? harken::ActionTargetKindV1::Track
+        {child.playable.kind == harken::PlayableKindV1::Container ? harken::ActionTargetKindV1::Container
+            : child.playable.kind == harken::PlayableKindV1::Track ? harken::ActionTargetKindV1::Track
             : harken::ActionTargetKindV1::Piece, 0, child.playable.stableId,
             child.playable.expectedProgramSemanticFingerprint}, world)) return Status::Failed;
 
@@ -93962,7 +93996,17 @@ QueueContinuationPrepareStatus PrepareQueueScheduleSuccessor(
         if (duration > UINT64_MAX - startFrame) return Status::Failed;
         context.endFrame = startFrame + duration;
     }
-    if (!PrepareMixedScheduleExecution(context, scratch) || scratch.row == nullptr)
+    std::uint32_t selectionEventCursor = 0x80000000u;
+    if (child.playable.kind == harken::PlayableKindV1::Container) {
+        context.selectionEventBegin = selectionEventCursor;
+        selectionEventCursor += harken::kSelectionPathNodeCapacity;
+        context.initialSelectionEventCursor = &selectionEventCursor;
+    }
+    const bool prepared = child.playable.kind == harken::PlayableKindV1::Container
+        ? PrepareScheduleContainerExecution(context, scratch) &&
+            PrepareScheduleContainerQueueResources(context, scratch)
+        : PrepareMixedScheduleExecution(context, scratch);
+    if (!prepared || scratch.row == nullptr)
         return failure == VN_BACKPRESSURE || failure == VN_NO_VOICE ? Status::Deferred : Status::Failed;
     auto& entry = *scratch.row;
     if (!PrepareInitialQueueEntryGroups(engine, scratch) ||
