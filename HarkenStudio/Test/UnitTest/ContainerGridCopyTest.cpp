@@ -48,7 +48,7 @@ protected:
         auto& manager = ProjectManager::instance();
         if (manager.isProjectOpen()) manager.closeProject();
         ActionManager::instance().clearAllForTesting();
-        registerProjectActions(ActionManager::instance(), &manager, nullptr, {});
+        registerProjectActions(ActionManager::instance(), &manager, nullptr);
 
         ASSERT_TRUE(tempDir_.isValid());
         ProjectConfig config;

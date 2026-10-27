@@ -123,7 +123,7 @@ protected:
         config.location = directory.path();
         ASSERT_TRUE(manager().createProject(config));
         ActionManager::instance().clearAllForTesting();
-        registerProjectActions(ActionManager::instance(), &manager(), nullptr, {});
+        registerProjectActions(ActionManager::instance(), &manager(), nullptr);
         low = createPlatform("Android_Low");
         high = createPlatform("Android_High");
         ASSERT_FALSE(low.isNull());

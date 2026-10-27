@@ -31,6 +31,7 @@ public:
     bool canDropSelectionOn(ProjectItem* target) const;
     bool canDropSelectionAtBucketRoot(const QString& bucketKey) const;
     bool canDropSelectionIntoFolderRow(QTreeWidgetItem* row) const;
+    void selectAll() override;
 
 signals:
     void internalMoveRequested(ProjectItem* item,
@@ -42,6 +43,10 @@ signals:
 
 protected:
     bool event(QEvent* event) override;
+    void keyPressEvent(QKeyEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
     void startDrag(Qt::DropActions actions) override;
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dragMoveEvent(QDragMoveEvent* event) override;
@@ -63,6 +68,9 @@ private:
     QList<PhysicalFolder*> draggedFolders_;
     bool typedDrag_ = false;
     QTreeWidgetItem* highlightedItem_ = nullptr;
+    QList<QTreeWidgetItem*> mousePressSelection_;
+    QTreeWidgetItem* mousePressCurrent_ = nullptr;
+    bool mouseReleaseHandled_ = false;
 };
 
 }

@@ -22,13 +22,13 @@ public:
     {
         BlueprintCanvasWidget* blueprintCanvas = nullptr;
         ProjectExplorer* projectExplorer = nullptr;
-
         ads::CDockWidget* blueprintDock = nullptr;
     };
     void setViews(const Views& v);
+    ProjectItem* activeItem() const;
 
-    void routeSelection(ProjectItem* item, bool reveal);
-    void selectItem(ProjectItem* item, bool reveal);
+    void routeSelection(ProjectItem* item, bool reveal, const QObject* source = nullptr);
+    void selectItem(ProjectItem* item, bool reveal, const QObject* source = nullptr);
     void selectItem(ProjectItem* item, bool reveal,
                     const PlacementContext& placement);
     void revealItemSourceInExplorer(ProjectItem* item);
@@ -38,7 +38,6 @@ public:
 
 public slots:
     void onProjectItemSelected(ProjectItem* item);
-    void onProjectItemsSelectionChanged(const QList<ProjectItem*>& items);
     void onBlueprintNodeSelected(uint32_t anchorId);
     void onBlueprintNodeDoubleClicked(uint32_t anchorId);
     void onBlueprintSelectionCleared();
@@ -49,17 +48,17 @@ public slots:
 signals:
     void statusMessage(const QString& text);
     void selectionChanged(ProjectItem* item);
+    void auditionTargetRequested(ProjectItem* item);
     void curveSelectionChanged(const CurveSelection& selection);
 
 private:
     void activateItem(ProjectItem* item, const PlacementContext* placement = nullptr);
     void routeSelection(ProjectItem* item, bool reveal,
-                        const PlacementContext* placement);
-    void routeSelection(ProjectItem* item, bool reveal,
                         const PlacementContext* placement,
                         const QList<ProjectItem*>& items, const QObject* source);
     void syncSelectionViews(const QList<ProjectItem*>& items,
                             const PlacementContext* placement, const QObject* source);
+    void clearActiveSelection();
     void reconcileCurveSelection(ProjectItem* item);
     void republishCurveSelection();
     QString resolveAudioPathHintToAbsolute(const QString& pathHint) const;
@@ -67,10 +66,10 @@ private:
 
     MainWindow* host_ = nullptr;
     CurveSelection curveSelection_;
+    QUuid activeItemGuid_;
 
     BlueprintCanvasWidget* blueprintCanvas_ = nullptr;
     ProjectExplorer* projectExplorer_ = nullptr;
-
     ads::CDockWidget* blueprintDock_ = nullptr;
 };
 

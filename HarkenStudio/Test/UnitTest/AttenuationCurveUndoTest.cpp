@@ -41,7 +41,7 @@ protected:
         ensureApp();
         VNX::ActionManager::instance().clearAllForTesting();
         VNX::registerProjectActions(VNX::ActionManager::instance(),
-                                    &VNX::ProjectManager::instance(), nullptr, {});
+                                    &VNX::ProjectManager::instance(), nullptr);
         VNX::registerSpatialActions(VNX::ActionManager::instance(), nullptr,
                                     &VNX::ProjectManager::instance());
 

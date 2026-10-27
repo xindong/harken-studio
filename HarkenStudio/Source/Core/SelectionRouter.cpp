@@ -18,7 +18,6 @@
 #include "AssetPipeline/PathUtils.h"
 
 #include "../Widgets/ProjectExplorer/ProjectExplorer.h"
-#include "../Widgets/Hierarchy/Hierarchy.h"
 #include "../Widgets/Inspector/InspectorPanel.h"
 #include "../Widgets/Blueprint/BlueprintCanvasWidget.h"
 #include "../Widgets/GridEditor/GridEditorPanel.h"
@@ -44,16 +43,28 @@ SelectionRouter::SelectionRouter(MainWindow* host)
     : QObject(host)
     , host_(host)
 {
+    auto& manager = ProjectManager::instance();
+    connect(&manager, &ProjectManager::itemDeleted, this, [this] {
+        if (!activeItemGuid_.isNull() && !activeItem()) {
+            activeItemGuid_ = QUuid();
+            reconcileCurveSelection(nullptr);
+        }
+    });
+    connect(&manager, &ProjectManager::projectClosed,
+            this, &SelectionRouter::clearActiveSelection);
 }
 
 void SelectionRouter::setViews(const Views& v)
 {
     blueprintCanvas_        = v.blueprintCanvas;
     projectExplorer_        = v.projectExplorer;
-
-    blueprintDock_    = v.blueprintDock;
+    blueprintDock_          = v.blueprintDock;
 }
 
+ProjectItem* SelectionRouter::activeItem() const
+{
+    return ProjectManager::instance().findItemByGuid(activeItemGuid_);
+}
 
 void SelectionRouter::onProjectItemSelected(ProjectItem* item)
 {
@@ -83,19 +94,15 @@ void SelectionRouter::onBlueprintNodeDoubleClicked(uint32_t anchorId)
     activateItem(item, placement ? &*placement : nullptr);
 }
 
-void SelectionRouter::onProjectItemsSelectionChanged(const QList<ProjectItem*>& items)
-{
-    syncSelectionViews(items, nullptr, sender());
-}
-
 void SelectionRouter::onBlueprintSelectionCleared()
 {
     routeSelection(nullptr, false, nullptr, {}, blueprintCanvas_);
 }
 
-void SelectionRouter::routeSelection(ProjectItem* item, bool reveal)
+void SelectionRouter::routeSelection(ProjectItem* item, bool reveal, const QObject* source)
 {
-    routeSelection(item, reveal, nullptr);
+    routeSelection(item, reveal, nullptr,
+                   item ? QList<ProjectItem*>{item} : QList<ProjectItem*>{}, source);
 }
 
 bool SelectionRouter::revealProjectObject(harkenstudio::ObjectId id)
@@ -137,28 +144,19 @@ bool SelectionRouter::revealProjectObject(harkenstudio::ObjectId id)
 }
 
 void SelectionRouter::routeSelection(ProjectItem* item, bool reveal,
-                                     const PlacementContext* placement)
-{
-    routeSelection(item, reveal, placement,
-                    item ? QList<ProjectItem*>{item} : QList<ProjectItem*>{}, nullptr);
-}
-
-void SelectionRouter::routeSelection(ProjectItem* item, bool reveal,
                                      const PlacementContext* placement,
                                      const QList<ProjectItem*>& items, const QObject* source)
 {
     syncSelectionViews(items, placement, source);
     if (!item) {
-        emit selectionChanged(nullptr);
-        reconcileCurveSelection(nullptr);
-        if (!host_)
-            return;
-        if (auto* ip = host_->activeInspectorPanel())
-            ip->showEmpty();
+        clearActiveSelection();
+        emit auditionTargetRequested(nullptr);
         return;
     }
 
+    activeItemGuid_ = item->guid;
     emit selectionChanged(item);
+    emit auditionTargetRequested(item);
     emit statusMessage(tr("Selected: %1").arg(item->name));
     reconcileCurveSelection(item);
 
@@ -227,15 +225,21 @@ void SelectionRouter::syncSelectionViews(const QList<ProjectItem*>& items,
                                          const PlacementContext* placement, const QObject* source)
 {
     const auto* tree = qobject_cast<const ProjectTreePanel*>(source);
-    const auto folders = tree ? tree->selectedFolders() : QList<PhysicalFolder*>{};
+    if (!projectExplorer_ || (tree && tree != projectExplorer_)) return;
+    if (source != projectExplorer_)
+        projectExplorer_->setSelectedEntries(items, {});
     if (blueprintCanvas_ && source != blueprintCanvas_)
-        blueprintCanvas_->setSelectedProjectItems(items, placement);
-    if (projectExplorer_ && source != projectExplorer_)
-        projectExplorer_->setSelectedEntries(items, folders);
+        blueprintCanvas_->setSelectedProjectItems(
+            source == projectExplorer_ ? items : projectExplorer_->selectedItems(), placement);
+}
+
+void SelectionRouter::clearActiveSelection()
+{
+    activeItemGuid_ = QUuid();
+    emit selectionChanged(nullptr);
+    reconcileCurveSelection(nullptr);
     if (host_) {
-        for (auto* hierarchy : host_->allHierarchyPanels()) {
-            if (hierarchy != source) hierarchy->setSelectedEntries(items, folders);
-        }
+        if (auto* inspector = host_->activeInspectorPanel()) inspector->showEmpty();
     }
 }
 
@@ -302,12 +306,7 @@ void SelectionRouter::republishCurveSelection()
 
 void SelectionRouter::onProjectItemDoubleClicked(ProjectItem* item)
 {
-    if (!item) return;
-    routeSelection(item, false);
-    if (blueprintCanvas_ && blueprintDock_ && !blueprintDock_->isClosed()
-        && blueprintCanvas_->focusItem(item) && host_)
-        host_->revealDock(blueprintDock_);
-    activateItem(item);
+    selectItem(item, true, qobject_cast<ProjectTreePanel*>(sender()));
 }
 
 void SelectionRouter::activateItem(ProjectItem* item, const PlacementContext* placement)
@@ -321,26 +320,30 @@ void SelectionRouter::activateItem(ProjectItem* item, const PlacementContext* pl
     republishCurveSelection();
 }
 
-void SelectionRouter::selectItem(ProjectItem* item, bool reveal)
+void SelectionRouter::selectItem(ProjectItem* item, bool reveal, const QObject* source)
 {
     if (!item) return;
-    if (reveal) onProjectItemDoubleClicked(item);
-    else        onProjectItemSelected(item);
+    routeSelection(item, false, source);
+    if (reveal) {
+        const auto* tree = qobject_cast<const ProjectTreePanel*>(source);
+        if (projectExplorer_ && (!tree || tree == projectExplorer_)
+            && blueprintCanvas_ && blueprintDock_ && !blueprintDock_->isClosed()
+            && blueprintCanvas_->focusItem(item) && host_)
+            host_->revealDock(blueprintDock_);
+        activateItem(item);
+    }
 }
 
 void SelectionRouter::selectItem(ProjectItem* item, bool reveal,
                                  const PlacementContext& placement)
 {
     if (!item) return;
-    routeSelection(item, reveal, &placement);
+    routeSelection(item, reveal, &placement, {item}, nullptr);
 }
 
 void SelectionRouter::onAudioFileSelected(const QString& path)
 {
-    QString resolvedPath;
-    if (projectExplorer_) {
-        resolvedPath = resolveItemAudioAbsolutePath(projectExplorer_->selectedItem());
-    }
+    QString resolvedPath = resolveItemAudioAbsolutePath(activeItem());
     if (resolvedPath.isEmpty()) {
         resolvedPath = resolveAudioPathHintToAbsolute(path);
     }

@@ -53,7 +53,7 @@ protected:
         VNX::LanguageContextService::instance().setStorageForTesting(
             std::make_unique<VNX::MemorySettingsStorage>());
         VNX::ActionManager::instance().clearAllForTesting();
-        VNX::registerProjectActions(VNX::ActionManager::instance(), &manager, nullptr, {});
+        VNX::registerProjectActions(VNX::ActionManager::instance(), &manager, nullptr);
 
         ASSERT_TRUE(tempDir_.isValid());
         VNX::ProjectConfig config;
