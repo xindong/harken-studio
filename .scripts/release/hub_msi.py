@@ -271,7 +271,7 @@ def package_tables(files, input_dir, version, license_rtf, privacy_rtf):
     return tables, cabinet_files
 
 
-def build(files, input_dir, version, legal_inputs, msi_path, evidence_dir, run=subprocess.run):
+def build(files, input_dir, version, legal_inputs, msi_path, localized_path, evidence_dir, run=subprocess.run):
     tables, cabinet_files = package_tables(files, input_dir, version,
                                            *(path.read_text(encoding="ascii") for path in legal_inputs["en"]))
     evidence_dir.mkdir(parents=True, exist_ok=True)
@@ -309,14 +309,12 @@ def build(files, input_dir, version, legal_inputs, msi_path, evidence_dir, run=s
                               7: "x64;1033", 9: "{" + str(uuid.uuid4()).upper() + "}",
                               14: 500, 15: 2, 18: "Harken Windows Installer Builder", 19: 2})
             database.commit()
-        localized_path = work / "zh-CN.msi"
         shutil.copyfile(msi_path, localized_path)
         translations_path = Path(__file__).with_name("hub_msi_zh_CN.json")
         translations = json.loads(translations_path.read_text(encoding="utf-8"))
         shutil.copyfile(translations_path, evidence_dir / translations_path.name)
-        transform = evidence_dir / "zh-CN.mst"
-        with Database(localized_path, 1) as localized, Database(msi_path, 0) as reference:
-            localized.summary({7: "x64;2052"})
+        with Database(localized_path, 1) as localized:
+            localized.summary({7: "x64;2052", 9: "{" + str(uuid.uuid4()).upper() + "}"})
             localized.execute("UPDATE `Property` SET `Value`=? WHERE `Property`='ProductLanguage'", ("2052",))
             for name, title in localized.query("SELECT `Dialog`, `Title` FROM `Dialog`"):
                 localized.execute("UPDATE `Dialog` SET `Title`=? WHERE `Dialog`=?", (translations[title], name))
@@ -333,7 +331,3 @@ def build(files, input_dir, version, legal_inputs, msi_path, evidence_dir, run=s
                 localized.execute("UPDATE `LaunchCondition` SET `Description`=? WHERE `Condition`=?",
                                   (translations[description], condition))
             localized.commit()
-            localized.generate_transform(reference, transform)
-        with Database(msi_path, 1) as database:
-            database.execute("INSERT INTO `_Storages` (`Name`, `Data`) VALUES (?, ?)", ("zh-CN", transform))
-            database.commit()

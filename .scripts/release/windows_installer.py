@@ -25,12 +25,10 @@ def api():
         "MsiRecordGetStringW": [uint, uint, text, pointer],
         "MsiDatabaseCommit": [uint],
         "MsiDatabaseImportW": [uint, text, text],
-        "MsiDatabaseGenerateTransformW": [uint, uint, text, ctypes.c_int, ctypes.c_int],
-        "MsiCreateTransformSummaryInfoW": [uint, uint, text, ctypes.c_int, ctypes.c_int],
-        "MsiDatabaseApplyTransformW": [uint, text, ctypes.c_int],
         "MsiCloseHandle": [uint],
         "MsiGetSummaryInformationW": [uint, text, uint, pointer],
         "MsiSummaryInfoSetPropertyW": [uint, uint, uint, ctypes.c_int, ctypes.c_void_p, text],
+        "MsiSummaryInfoGetPropertyW": [uint, uint, pointer, ctypes.POINTER(ctypes.c_int), ctypes.c_void_p, text, pointer],
         "MsiSummaryInfoPersist": [uint],
         "MsiGetFileVersionW": [text, text, pointer, text, pointer],
         "MsiGetFileHashW": [text, uint, ctypes.c_void_p],
@@ -145,15 +143,25 @@ class Database:
     def commit(self):
         checked(api().MsiDatabaseCommit(self.value))
 
+    def summary_value(self, key):
+        value = ctypes.c_uint()
+        checked(api().MsiGetSummaryInformationW(self.value, None, 0, ctypes.byref(value)))
+        with handle(value.value) as summary:
+            kind, integer, length = ctypes.c_uint(), ctypes.c_int(), ctypes.c_uint()
+            code = api().MsiSummaryInfoGetPropertyW(summary, key, ctypes.byref(kind),
+                ctypes.byref(integer), None, None, ctypes.byref(length))
+            if code not in (0, 234):
+                checked(code)
+            if kind.value in (2, 3):
+                return integer.value
+            length.value += 1
+            buffer = ctypes.create_unicode_buffer(length.value)
+            checked(api().MsiSummaryInfoGetPropertyW(summary, key, ctypes.byref(kind),
+                ctypes.byref(integer), None, buffer, ctypes.byref(length)))
+            return buffer.value
+
     def import_table(self, path: Path):
         checked(api().MsiDatabaseImportW(self.value, str(path.resolve().parent), path.name))
-
-    def generate_transform(self, reference, path: Path):
-        checked(api().MsiDatabaseGenerateTransformW(self.value, reference.value, str(path.resolve()), 0, 0))
-        checked(api().MsiCreateTransformSummaryInfoW(self.value, reference.value, str(path.resolve()), 0, 0x923))
-
-    def apply_transform(self, path: Path):
-        checked(api().MsiDatabaseApplyTransformW(self.value, str(path.resolve()), 0))
 
 
 def file_metadata(path: Path):

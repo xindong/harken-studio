@@ -2,7 +2,6 @@ import ctypes
 import hashlib
 import importlib.util
 import os
-import shutil
 import subprocess
 import tempfile
 import unittest
@@ -107,14 +106,14 @@ class BuildHubInstallerTest(unittest.TestCase):
             "--version", "0.1.68", "--build-id", "run12.abcd1234", *extra,
         ])
 
-    def fake_build(self, files, input_dir, version, legal_inputs, output, evidence):
+    def fake_build(self, files, input_dir, version, legal_inputs, output, localized_output, evidence):
         for language, documents in legal_inputs.items():
             texts = self.module.product_legal.read_documents(REPO_ROOT / self.module.product_legal.TERMS_FILES[language])
             self.assertEqual([document.read_text(encoding="ascii") for document in documents],
                              [self.module.product_legal.render_rtf(text) for text in texts])
         output.write_bytes(b"MSI")
+        localized_output.write_bytes(b"MSIZH")
         (evidence / "msi-tables.json").write_text("{}")
-        (evidence / "zh-CN.mst").write_bytes(b"MST")
 
     def test_signing_precedes_embedding_and_final_hashes(self):
         self.make_input()
@@ -128,17 +127,18 @@ class BuildHubInstallerTest(unittest.TestCase):
             target.write_bytes(target.read_bytes() + b"SIGNED")
             return subprocess.CompletedProcess(command, 0)
 
-        def embed(stub, msi, exe):
+        def embed(stub, msi, localized_msi, exe):
             self.assertEqual(msi.read_bytes(), b"MSISIGNED")
-            exe.write_bytes(stub.read_bytes() + msi.read_bytes())
+            self.assertEqual(localized_msi.read_bytes(), b"MSIZHSIGNED")
+            exe.write_bytes(stub.read_bytes() + msi.read_bytes() + localized_msi.read_bytes())
 
         with mock.patch.dict(os.environ, {"HARKEN_AUTHENTICODE_THUMBPRINT": "TEST", "HARKEN_AUTHENTICODE_TIMESTAMP_URL": "https://timestamp.example"}):
             result = self.module.build_installer(self.args("--stub-exe", str(stub)),
                                                 run=sign, embed=embed, build_msi=self.fake_build)
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(calls), 3)
         self.assertIn("/tr", calls[0])
-        self.assertEqual(Path(result["setupExe"]).read_bytes(), b"STUBMSISIGNEDSIGNED")
-        self.assertEqual(result["setupExeSha256"], hashlib.sha256(b"STUBMSISIGNEDSIGNED").hexdigest())
+        self.assertEqual(Path(result["setupExe"]).read_bytes(), b"STUBMSISIGNEDMSIZHSIGNEDSIGNED")
+        self.assertEqual(result["setupExeSha256"], hashlib.sha256(b"STUBMSISIGNEDMSIZHSIGNEDSIGNED").hexdigest())
         self.assertEqual(result["sha256"], hashlib.sha256(b"MSISIGNED").hexdigest())
         self.assertEqual(self.evidence.finalize.call_args.kwargs["intermediate_artifacts"][0].suffix, ".msi")
 
@@ -196,6 +196,8 @@ class BuildHubInstallerTest(unittest.TestCase):
         package = Path(result["package"])
         with Database(package, 0) as db:
             properties = dict(db.query("SELECT `Property`, `Value` FROM `Property`"))
+            supported_languages = db.summary_value(7).split(";")[1].split(",")
+            self.assertIn(properties["ProductLanguage"], supported_languages)
             self.assertEqual(properties["UpgradeCode"], "{4EA0003D-209E-45E6-8343-67529D7E7E5A}")
             self.assertEqual(properties["ALLUSERS"], "1")
             for name in ("HARKENSELFUPDATE", "HARKENBRIDGE", "INSTALLFOLDER"):
@@ -233,11 +235,11 @@ class BuildHubInstallerTest(unittest.TestCase):
                         current = controls[current]
                     self.assertEqual(current, first)
                     self.assertEqual(visited, linked)
-            localized_package = self.root / "localized.msi"
-            shutil.copyfile(package, localized_package)
-            with Database(localized_package, 1) as localized:
-                localized.apply_transform(Path(result["evidence"]) / "packaging-inputs/zh-CN.mst")
+            localized_package = Path(result["chinesePackage"])
+            with Database(localized_package, 0) as localized:
                 localized_properties = dict(localized.query("SELECT `Property`, `Value` FROM `Property`"))
+                self.assertIn(localized_properties["ProductLanguage"], localized.summary_value(7).split(";")[1].split(","))
+                self.assertNotEqual(localized.summary_value(9), db.summary_value(9))
                 self.assertEqual(localized_properties.pop("ProductLanguage"), "2052")
                 self.assertEqual(properties.pop("ProductLanguage"), "1033")
                 self.assertEqual(localized_properties, properties)
@@ -251,8 +253,6 @@ class BuildHubInstallerTest(unittest.TestCase):
                 self.assertEqual([row[0] for row in terms], [self.module.product_legal.render_rtf(text)
                     for text in self.module.product_legal.read_documents(REPO_ROOT / "USER_TERMS.zh-CN.md")])
                 self.assertEqual(localized.query("SELECT `Text` FROM `Control` WHERE `Dialog_`='LicenseDialog' AND `Control`='Next'"), [["下一步"]])
-                localized.commit()
-            self.assertEqual(db.query("SELECT `Name` FROM `_Storages`"), [["zh-CN"]])
             self.assertTrue(all(not row[0] for row in db.query("SELECT `Language` FROM `Upgrade`")))
         msi = ctypes.WinDLL("msi.dll")
         msi.MsiSetInternalUI.argtypes = [ctypes.c_uint, ctypes.c_void_p]
@@ -269,11 +269,11 @@ class BuildHubInstallerTest(unittest.TestCase):
                 self.assertEqual(msi.MsiDoActionW(session, "AppSearch"), 0)
             finally:
                 msi.MsiCloseHandle(session)
-            for language, transforms in (("1033", ""), ("2052", " TRANSFORMS=:zh-CN")):
+            for language, source in (("1033", package), ("2052", localized_package)):
                 with self.subTest(language=language):
                     extracted = self.root / f"extracted-{language}"
-                    self.assertEqual(msi.MsiInstallProductW(str(package),
-                        f'ACTION=ADMIN TARGETDIR="{extracted}" REBOOT=ReallySuppress{transforms}'), 0)
+                    self.assertEqual(msi.MsiInstallProductW(str(source),
+                        f'ACTION=ADMIN TARGETDIR="{extracted}" REBOOT=ReallySuppress'), 0)
                     installed = extracted / "PFiles64/HarkenHub"
                     expected = {p.relative_to(self.input_dir) for p in self.input_dir.rglob("*") if p.is_file()}
                     actual = {p.relative_to(installed) for p in installed.rglob("*") if p.is_file()}

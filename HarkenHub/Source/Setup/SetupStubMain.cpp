@@ -5,16 +5,21 @@
 #include <windows.h>
 
 #include <sddl.h>
+#include <shellapi.h>
 
 #include <cwctype>
 #include <string>
+#include <string_view>
 
 #include "SetupStrings.h"
 
 namespace {
 
 constexpr wchar_t kPayloadResource[] = L"HARKENHUBMSI";
+constexpr wchar_t kChinesePayloadResource[] = L"HARKENHUBMSI_ZHCN";
 constexpr wchar_t kStagingSddl[] = L"D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)";
+constexpr std::wstring_view kChineseHandoff = L"--harken-setup-zh ";
+constexpr std::wstring_view kEnglishHandoff = L"--harken-setup-en ";
 
 bool isQuietCommandLine(PCWSTR commandLine)
 {
@@ -52,6 +57,38 @@ int fail(UINT message, bool quiet)
         MessageBoxW(nullptr, setupText(message).c_str(),
                     setupText(HARKEN_SETUP_TITLE).c_str(), MB_OK | MB_ICONERROR);
     return ERROR_INSTALL_FAILURE;
+}
+
+int launchElevated(PCWSTR commandLine, bool chinese, bool quiet)
+{
+    std::wstring executable(32768, L'\0');
+    const DWORD length = GetModuleFileNameW(nullptr, executable.data(),
+                                             static_cast<DWORD>(executable.size()));
+    if (length == 0 || length >= executable.size())
+        return fail(HARKEN_SETUP_ELEVATION_FAILED, quiet);
+    executable.resize(length);
+    std::wstring arguments(chinese ? kChineseHandoff : kEnglishHandoff);
+    arguments += commandLine;
+
+    SHELLEXECUTEINFOW launch{};
+    launch.cbSize = sizeof(launch);
+    launch.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI;
+    launch.lpVerb = L"runas";
+    launch.lpFile = executable.c_str();
+    launch.lpParameters = arguments.c_str();
+    launch.nShow = SW_SHOWNORMAL;
+    if (!ShellExecuteExW(&launch)) {
+        if (GetLastError() == ERROR_CANCELLED)
+            return ERROR_INSTALL_USEREXIT;
+        return fail(HARKEN_SETUP_ELEVATION_FAILED, quiet);
+    }
+    if (!launch.hProcess)
+        return fail(HARKEN_SETUP_ELEVATION_FAILED, quiet);
+    WaitForSingleObject(launch.hProcess, INFINITE);
+    DWORD exitCode = ERROR_INSTALL_FAILURE;
+    GetExitCodeProcess(launch.hProcess, &exitCode);
+    CloseHandle(launch.hProcess);
+    return static_cast<int>(exitCode);
 }
 
 int failStaging(UINT message, bool quiet, HANDLE stagingGuard,
@@ -125,14 +162,25 @@ void launchInstalledHub()
 
 }
 
-int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int)
+int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR rawCommandLine, int)
 {
+    std::wstring_view parameters(rawCommandLine ? rawCommandLine : L"");
+    bool chinese = PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_CHINESE;
+    bool handedOff = false;
+    for (const auto prefix : {kChineseHandoff, kEnglishHandoff}) {
+        if (parameters.substr(0, prefix.size()) == prefix) {
+            chinese = prefix == kChineseHandoff;
+            parameters.remove_prefix(prefix.size());
+            handedOff = true;
+            break;
+        }
+    }
+    const PCWSTR commandLine = parameters.data();
     const bool quiet = isQuietCommandLine(commandLine);
-    const bool chinese = PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_CHINESE;
     SetThreadUILanguage(chinese ? MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED)
                                 : MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US));
 
-    HRSRC located = FindResourceW(instance, kPayloadResource, RT_RCDATA);
+    HRSRC located = FindResourceW(instance, chinese ? kChinesePayloadResource : kPayloadResource, RT_RCDATA);
     if (!located)
         return fail(HARKEN_SETUP_MISSING_PAYLOAD,
                     quiet);
@@ -141,6 +189,19 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int)
     const void* payload = loaded ? LockResource(loaded) : nullptr;
     if (!payload || payloadSize == 0)
         return fail(HARKEN_SETUP_UNREADABLE_PAYLOAD, quiet);
+
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
+        return fail(HARKEN_SETUP_ELEVATION_FAILED, quiet);
+    TOKEN_ELEVATION elevation{};
+    DWORD returned = 0;
+    const BOOL queried = GetTokenInformation(token, TokenElevation, &elevation,
+                                            sizeof(elevation), &returned);
+    CloseHandle(token);
+    if (!queried || (!elevation.TokenIsElevated && handedOff))
+        return fail(HARKEN_SETUP_ELEVATION_FAILED, quiet);
+    if (!elevation.TokenIsElevated)
+        return launchElevated(commandLine, chinese, quiet);
 
     wchar_t tempDir[MAX_PATH + 1];
     const DWORD tempLen = GetTempPathW(MAX_PATH + 1, tempDir);
@@ -201,8 +262,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int)
 
     std::wstring arguments =
         L"\"" + msiexecPath + L"\" /i \"" + msiPath + L"\"";
-    if (chinese)
-        arguments += L" TRANSFORMS=:zh-CN";
     if (commandLine && *commandLine) {
         arguments += L" ";
         arguments += commandLine;

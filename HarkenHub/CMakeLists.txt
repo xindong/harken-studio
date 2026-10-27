@@ -332,7 +332,7 @@ if(WIN32)
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/setup")
     target_link_options(harken_hub_setup PRIVATE
-        "/MANIFESTUAC:level='requireAdministrator'")
+        "/MANIFESTUAC:level='asInvoker'")
     harken_attach_version_resource(
         harken_hub_setup
         "Harken Hub Setup"

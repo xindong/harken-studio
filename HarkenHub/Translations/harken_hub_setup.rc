@@ -16,6 +16,7 @@ BEGIN
     HARKEN_SETUP_PAYLOAD_WRITE_FAILED "The installer payload could not be staged."
     HARKEN_SETUP_SYSTEM_UNAVAILABLE "The Windows system directory is unavailable."
     HARKEN_SETUP_LAUNCH_FAILED "Windows Installer could not be started."
+    HARKEN_SETUP_ELEVATION_FAILED "The installer could not obtain administrator privileges."
 END
 
 LANGUAGE LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED
@@ -31,4 +32,5 @@ BEGIN
     HARKEN_SETUP_PAYLOAD_WRITE_FAILED "无法写入安装文件。"
     HARKEN_SETUP_SYSTEM_UNAVAILABLE "Windows 系统目录不可用。"
     HARKEN_SETUP_LAUNCH_FAILED "无法启动 Windows Installer。"
+    HARKEN_SETUP_ELEVATION_FAILED "安装程序无法取得管理员权限。"
 END
