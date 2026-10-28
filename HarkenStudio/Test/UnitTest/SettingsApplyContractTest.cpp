@@ -3,13 +3,19 @@
 #include "Core/MemorySettingsStorage.h"
 #include "Core/ThemeManager.h"
 #include "Dialogs/Settings/PreferencesPanel.h"
+#include "Dialogs/Settings/Pages/AppearancePage.h"
 
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QColorDialog>
+#include <QEvent>
+#include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QPushButton>
 #include <QTemporaryDir>
+#include <QTreeWidget>
 
 #include <gtest/gtest.h>
 
@@ -27,6 +33,61 @@ void ensureApp()
     static QApplication app(argc, argv);
 }
 
+
+QString alternateBuiltinId(const VNX::ThemeManager& manager)
+{
+    for (const auto& theme : manager.availableThemes())
+        if (theme.builtin && theme.id != manager.currentThemeId())
+            return theme.id;
+    return {};
+}
+
+bool selectPreset(QListWidget& presets, const QString& id)
+{
+    for (int i = 0; i < presets.count(); ++i) {
+        auto* item = presets.item(i);
+        if (item->data(Qt::UserRole).toString() == id) {
+            presets.setCurrentItem(item);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool selectColor(QTreeWidget& colors, const QString& key)
+{
+    for (int i = 0; i < colors.topLevelItemCount(); ++i) {
+        auto* item = colors.topLevelItem(i);
+        if (item->data(0, Qt::UserRole).toString() == key) {
+            colors.setCurrentItem(item);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool finishColorEdit(QLineEdit& edit, const QColor& color)
+{
+    edit.setText(color.name(QColor::HexArgb));
+    edit.setModified(true);
+    return QMetaObject::invokeMethod(&edit, "editingFinished", Qt::DirectConnection);
+}
+
+QVariantMap storedValues(const VNX::ISettingsStorage& storage)
+{
+    QVariantMap values;
+    for (const QString& key : storage.allKeys())
+        values.insert(key, storage.value(key));
+    return values;
+}
+
+class WritableSettingsStorage : public VNX::MemorySettingsStorage
+{
+public:
+    bool isWritable() const override { return writable; }
+    bool writable = true;
+};
+
 }
 
 namespace VNX {
@@ -43,7 +104,9 @@ protected:
         originalConfig_.baseUrl = QStringLiteral("https://original.example/v1");
         originalConfig_.model = QStringLiteral("original-model");
         AIAgentConfigStore().save(originalConfig_);
-        theme_ = std::make_unique<ThemeManager>(root_.path(), std::make_unique<MemorySettingsStorage>());
+        auto storage = std::make_unique<MemorySettingsStorage>();
+        themeStorage_ = storage.get();
+        theme_ = std::make_unique<ThemeManager>(root_.path(), std::move(storage));
     }
 
     void TearDown() override
@@ -75,6 +138,7 @@ protected:
 
     QTemporaryDir root_;
     std::unique_ptr<ThemeManager> theme_;
+    MemorySettingsStorage* themeStorage_ = nullptr;
     AIAgentConfig originalConfig_;
     QString secret_ = QStringLiteral("original-key");
     bool failSecretWrite_ = false;
@@ -185,6 +249,176 @@ TEST_F(SettingsApplyContractTest, ConnectionCommitPreservesLatestIndependentSett
     EXPECT_EQ(secret_, QStringLiteral("replacement-key"));
     EXPECT_EQ(permission->currentData().toString(), QStringLiteral("read_only"));
     EXPECT_FALSE(panel.findChild<AIAgentPage*>()->hasPendingChanges());
+}
+
+TEST_F(SettingsApplyContractTest, AppearanceEditsPersistAcrossPresetSwitchesAndReset)
+{
+    PreferencesPanel panel(secretStore(), *theme_);
+    auto* presets = panel.findChild<QListWidget*>(QStringLiteral("appearanceThemePresets"));
+    auto* colors = panel.findChild<QTreeWidget*>(QStringLiteral("appearanceColorTree"));
+    auto* hex = panel.findChild<QLineEdit*>(QStringLiteral("appearanceColorHex"));
+    auto* reset = panel.findChild<QPushButton*>(QStringLiteral("appearanceColorReset"));
+    auto* resetAll = panel.findChild<QPushButton*>(QStringLiteral("appearanceColorsReset"));
+    ASSERT_NE(presets, nullptr);
+    ASSERT_NE(colors, nullptr);
+    ASSERT_NE(hex, nullptr);
+    ASSERT_NE(reset, nullptr);
+    ASSERT_NE(resetAll, nullptr);
+
+    const QString firstId = theme_->currentThemeId();
+    const QString secondId = alternateBuiltinId(*theme_);
+    ASSERT_FALSE(secondId.isEmpty());
+    const QString primary = QStringLiteral("text.primary");
+    const QString secondary = QStringLiteral("text.secondary");
+    const QColor firstColor(18, 52, 86, 128);
+    const QColor secondColor(135, 114, 89, 192);
+    const auto defaults = theme_->snapshot();
+    const auto before = storedValues(*themeStorage_);
+
+    ASSERT_TRUE(selectColor(*colors, primary));
+    ASSERT_TRUE(finishColorEdit(*hex, firstColor));
+    EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, firstColor);
+    EXPECT_EQ(theme_->appearance().colors.value(firstId).value(primary), firstColor);
+    EXPECT_NE(storedValues(*themeStorage_), before);
+    ASSERT_TRUE(selectColor(*colors, secondary));
+    ASSERT_TRUE(finishColorEdit(*hex, secondColor));
+    ASSERT_TRUE(selectPreset(*presets, secondId));
+    EXPECT_EQ(theme_->appearance().themeId, secondId);
+    ASSERT_TRUE(selectColor(*colors, primary));
+    ASSERT_TRUE(finishColorEdit(*hex, secondColor));
+
+    ASSERT_TRUE(selectPreset(*presets, firstId));
+    EXPECT_EQ(QColor(hex->text()), firstColor);
+    ASSERT_TRUE(reset->isEnabled());
+    reset->click();
+    EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, defaults->ui.colors.textPrimary);
+    EXPECT_FALSE(theme_->appearance().colors.value(firstId).contains(primary));
+    EXPECT_EQ(theme_->appearance().colors.value(firstId).value(secondary), secondColor);
+    ASSERT_TRUE(resetAll->isEnabled());
+    resetAll->click();
+    EXPECT_FALSE(theme_->appearance().colors.contains(firstId));
+    EXPECT_EQ(theme_->snapshot()->ui.colors.textSecondary, defaults->ui.colors.textSecondary);
+    EXPECT_EQ(theme_->appearance().colors.value(secondId).value(primary), secondColor);
+
+    ASSERT_TRUE(selectPreset(*presets, secondId));
+    EXPECT_EQ(QColor(hex->text()), secondColor);
+    ThemeManager restored(root_.path(), std::make_unique<MemorySettingsStorage>(*themeStorage_));
+    EXPECT_EQ(restored.appearance(), theme_->appearance());
+    EXPECT_EQ(restored.snapshot()->ui.colors.textPrimary, secondColor);
+}
+
+TEST_F(SettingsApplyContractTest, AppearanceFollowsExternalCommittedThemeAndColors)
+{
+    PreferencesPanel panel(secretStore(), *theme_);
+    auto* presets = panel.findChild<QListWidget*>(QStringLiteral("appearanceThemePresets"));
+    auto* colors = panel.findChild<QTreeWidget*>(QStringLiteral("appearanceColorTree"));
+    auto* hex = panel.findChild<QLineEdit*>(QStringLiteral("appearanceColorHex"));
+    ASSERT_NE(presets, nullptr);
+    ASSERT_NE(colors, nullptr);
+    ASSERT_NE(hex, nullptr);
+    ASSERT_TRUE(selectColor(*colors, QStringLiteral("text.primary")));
+
+    auto appearance = theme_->appearance();
+    appearance.themeId = alternateBuiltinId(*theme_);
+    const QColor externalColor(63, 95, 127, 160);
+    appearance.colors[appearance.themeId].insert(QStringLiteral("text.primary"), externalColor);
+    ASSERT_TRUE(theme_->applyAppearance(appearance).ok());
+
+    ASSERT_NE(presets->currentItem(), nullptr);
+    EXPECT_EQ(presets->currentItem()->data(Qt::UserRole).toString(), appearance.themeId);
+    EXPECT_EQ(QColor(hex->text()), externalColor);
+    EXPECT_FALSE(hex->isModified());
+}
+
+TEST_F(SettingsApplyContractTest, ColorPickerPreviewRequiresAcceptance)
+{
+    const auto committed = theme_->appearance();
+    const auto original = theme_->snapshot();
+    const auto before = storedValues(*themeStorage_);
+    const QColor previewColor(27, 81, 143, 176);
+    {
+        AppearancePage page(*theme_);
+        page.load();
+        auto* colors = page.findChild<QTreeWidget*>(QStringLiteral("appearanceColorTree"));
+        auto* edit = page.findChild<QPushButton*>(QStringLiteral("appearanceColorEdit"));
+        ASSERT_NE(colors, nullptr);
+        ASSERT_NE(edit, nullptr);
+        ASSERT_TRUE(selectColor(*colors, QStringLiteral("text.primary")));
+        edit->click();
+        auto* picker = page.findChild<QColorDialog*>(QStringLiteral("appearanceColorDialog"));
+        ASSERT_NE(picker, nullptr);
+        picker->setCurrentColor(previewColor);
+        EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, previewColor);
+        EXPECT_EQ(theme_->appearance(), committed);
+        EXPECT_EQ(storedValues(*themeStorage_), before);
+
+        picker->reject();
+        EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, original->ui.colors.textPrimary);
+        EXPECT_EQ(theme_->appearance(), committed);
+        EXPECT_EQ(storedValues(*themeStorage_), before);
+        QCoreApplication::sendPostedEvents(picker, QEvent::DeferredDelete);
+
+        edit->click();
+        picker = page.findChild<QColorDialog*>(QStringLiteral("appearanceColorDialog"));
+        ASSERT_NE(picker, nullptr);
+        picker->setCurrentColor(previewColor);
+        picker->accept();
+        EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, previewColor);
+        EXPECT_EQ(theme_->appearance().colors.value(committed.themeId)
+                      .value(QStringLiteral("text.primary")), previewColor);
+        EXPECT_NE(storedValues(*themeStorage_), before);
+    }
+    EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, previewColor);
+    ThemeManager restored(root_.path(), std::make_unique<MemorySettingsStorage>(*themeStorage_));
+    EXPECT_EQ(restored.appearance(), theme_->appearance());
+    EXPECT_EQ(restored.snapshot()->ui.colors.textPrimary, previewColor);
+}
+
+TEST_F(SettingsApplyContractTest, FailedPickerCommitAndPageDestructionRestoreCommittedAppearance)
+{
+    auto storage = std::make_unique<WritableSettingsStorage>();
+    auto* stored = storage.get();
+    ThemeManager manager(root_.path(), std::move(storage));
+    const auto committed = manager.appearance();
+    const auto original = manager.snapshot();
+    const auto before = storedValues(*stored);
+    const QColor previewColor(41, 97, 151, 192);
+    {
+        AppearancePage page(manager);
+        page.load();
+        auto* colors = page.findChild<QTreeWidget*>(QStringLiteral("appearanceColorTree"));
+        auto* edit = page.findChild<QPushButton*>(QStringLiteral("appearanceColorEdit"));
+        auto* hex = page.findChild<QLineEdit*>(QStringLiteral("appearanceColorHex"));
+        auto* error = page.findChild<QLabel*>(QStringLiteral("appearanceColorError"));
+        ASSERT_NE(colors, nullptr);
+        ASSERT_NE(edit, nullptr);
+        ASSERT_NE(hex, nullptr);
+        ASSERT_NE(error, nullptr);
+        ASSERT_TRUE(selectColor(*colors, QStringLiteral("text.primary")));
+        edit->click();
+        auto* picker = page.findChild<QColorDialog*>(QStringLiteral("appearanceColorDialog"));
+        ASSERT_NE(picker, nullptr);
+        picker->setCurrentColor(previewColor);
+        ASSERT_EQ(manager.snapshot()->ui.colors.textPrimary, previewColor);
+        stored->writable = false;
+        picker->accept();
+
+        EXPECT_EQ(manager.appearance(), committed);
+        EXPECT_EQ(manager.snapshot()->ui.colors.textPrimary, original->ui.colors.textPrimary);
+        EXPECT_EQ(QColor(hex->text()), original->ui.colors.textPrimary);
+        EXPECT_EQ(storedValues(*stored), before);
+        EXPECT_FALSE(error->text().isEmpty());
+        QCoreApplication::sendPostedEvents(picker, QEvent::DeferredDelete);
+
+        edit->click();
+        picker = page.findChild<QColorDialog*>(QStringLiteral("appearanceColorDialog"));
+        ASSERT_NE(picker, nullptr);
+        picker->setCurrentColor(previewColor);
+        ASSERT_EQ(manager.snapshot()->ui.colors.textPrimary, previewColor);
+    }
+    EXPECT_EQ(manager.appearance(), committed);
+    EXPECT_EQ(manager.snapshot()->ui.colors.textPrimary, original->ui.colors.textPrimary);
+    EXPECT_EQ(storedValues(*stored), before);
 }
 
 }

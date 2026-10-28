@@ -26,6 +26,26 @@ namespace {
 
 constexpr auto kBuiltinThemeId = "harken.builtin.dark";
 
+struct BuiltinThemeDefinition
+{
+    const char* id;
+    const char* displayName;
+    ThemeSnapshot (*create)();
+};
+
+constexpr BuiltinThemeDefinition kBuiltinThemes[]{
+    {kBuiltinThemeId, "Harken Dark", createBuiltinDarkTheme},
+    {"harken.builtin.amber", "Harken Amber", createBuiltinAmberTheme},
+};
+
+const BuiltinThemeDefinition* findBuiltinTheme(const QString& id)
+{
+    for (const auto& theme : kBuiltinThemes)
+        if (id == QLatin1String(theme.id))
+            return &theme;
+    return nullptr;
+}
+
 ThemePackageDiagnostic diagnostic(ThemePackageErrorCode code,
                                   const QString& file,
                                   const QString& path,
@@ -1335,6 +1355,11 @@ bool applyDomainColor(const QString& key,
         theme.domains.field = value;                                              \
         return true;                                                              \
     }
+    DOMAIN_COLOR("startup.wave.shadow", startup.wavePalette[0])
+    DOMAIN_COLOR("startup.wave.low", startup.wavePalette[1])
+    DOMAIN_COLOR("startup.wave.high", startup.wavePalette[2])
+    DOMAIN_COLOR("startup.wave.highlight", startup.wavePalette[3])
+
     DOMAIN_COLOR("feedback.overlayBackground", feedback.overlayBackground)
     DOMAIN_COLOR("feedback.overlayErrorBackground", feedback.overlayErrorBackground)
 
@@ -1814,7 +1839,10 @@ bool applySemantics(const SemanticDocuments& documents,
                                           QStringLiteral("Invalid color value.")));
             return false;
         }
-        if (!applyTokenColor(it.key(), color, theme))
+        const bool applied = it.key().startsWith(QStringLiteral("startup."))
+            ? applyDomainColor(it.key(), color, theme)
+            : applyTokenColor(it.key(), color, theme);
+        if (!applied)
         {
             diagnostics.append(diagnostic(
                 ThemePackageErrorCode::UnknownSemanticKey, tokenFile, path,
@@ -1975,13 +2003,25 @@ QString builtinThemeId()
     return QString::fromLatin1(kBuiltinThemeId);
 }
 
+bool applyThemeColor(ThemeSnapshot& theme, const QString& key, const QColor& color)
+{
+    return color.isValid()
+        && (applyTokenColor(key, color, theme)
+            || applyCurveColor(key, color, theme)
+            || applyWaveformColor(key, color, theme)
+            || applyMeterColor(key, color, theme)
+            || applyDomainColor(key, color, theme));
+}
+
 ThemePackageDiscoveryResult discoverThemePackages(
     const QString& themesRoot,
     const ThemePackageLoadOptions& options)
 {
     ThemePackageDiscoveryResult result;
-    result.themes.append(ThemePackageDescriptor{
-        builtinThemeId(), QStringLiteral("Harken Dark"), options.harkenVersion, true});
+    for (const auto& theme : kBuiltinThemes)
+        result.themes.append(ThemePackageDescriptor{
+            QString::fromLatin1(theme.id), QString::fromLatin1(theme.displayName),
+            options.harkenVersion, true});
 
     const QFileInfo rootInfo(themesRoot);
     const QString rootCanonical = rootInfo.canonicalFilePath();
@@ -2056,7 +2096,7 @@ ThemePackageDiscoveryResult discoverThemePackages(
                 QStringLiteral("Theme IDs and versions must use stable formats.")));
             continue;
         }
-        if (parsed.value->id == builtinThemeId()
+        if (findBuiltinTheme(parsed.value->id)
             || duplicateIds.contains(parsed.value->id)
             || discovered.contains(parsed.value->id))
         {
@@ -2084,15 +2124,15 @@ ThemePackageLoadResult loadThemePackageCandidate(
     const ThemePackageLoadOptions& options)
 {
     ThemePackageLoadResult result;
-    if (themeId == QString::fromLatin1(kBuiltinThemeId))
+    if (const auto* builtin = findBuiltinTheme(themeId))
     {
         ThemePackageCandidate candidate;
-        candidate.manifest.id = QString::fromLatin1(kBuiltinThemeId);
-        candidate.manifest.displayName = QStringLiteral("Harken Dark");
+        candidate.manifest.id = themeId;
+        candidate.manifest.displayName = QString::fromLatin1(builtin->displayName);
         candidate.manifest.version = options.harkenVersion;
         candidate.snapshot = std::make_shared<const ThemeSnapshot>(
-            createBuiltinDarkTheme());
-        candidate.inheritanceOrder.append(QString::fromLatin1(kBuiltinThemeId));
+            builtin->create());
+        candidate.inheritanceOrder.append(themeId);
         result.candidate = std::move(candidate);
         return result;
     }
@@ -2180,7 +2220,7 @@ ThemePackageLoadResult loadThemePackageCandidate(
                 QStringLiteral("Theme IDs and versions must use stable formats."))});
             continue;
         }
-        if (parsed.value->id == QString::fromLatin1(kBuiltinThemeId)
+        if (findBuiltinTheme(parsed.value->id)
             || duplicateIds.contains(parsed.value->id)
             || packages.contains(parsed.value->id))
         {
@@ -2213,7 +2253,7 @@ ThemePackageLoadResult loadThemePackageCandidate(
     QList<const DiscoveredPackage*> chain;
     QSet<QString> visiting;
     QString currentId = themeId;
-    while (currentId != QString::fromLatin1(kBuiltinThemeId))
+    while (!findBuiltinTheme(currentId))
     {
         if (visiting.contains(currentId))
         {
@@ -2269,7 +2309,7 @@ ThemePackageLoadResult loadThemePackageCandidate(
         totalBytes += package->manifestBytes;
     }
     SemanticDocuments merged;
-    ThemeSnapshot snapshot = createBuiltinDarkTheme();
+    ThemeSnapshot snapshot = findBuiltinTheme(currentId)->create();
     for (const DiscoveredPackage* package : chain)
     {
         if (package->manifest.colorScheme)
@@ -2312,7 +2352,7 @@ ThemePackageLoadResult loadThemePackageCandidate(
     candidate.assets = std::move(merged.assets);
     for (const DiscoveredPackage* package : chain)
         candidate.assetRoots.insert(package->manifest.id, package->root);
-    candidate.inheritanceOrder.append(QString::fromLatin1(kBuiltinThemeId));
+    candidate.inheritanceOrder.append(currentId);
     for (const DiscoveredPackage* package : chain)
         candidate.inheritanceOrder.append(package->manifest.id);
     result.candidate = std::move(candidate);

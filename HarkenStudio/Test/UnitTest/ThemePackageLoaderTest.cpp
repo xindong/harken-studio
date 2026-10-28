@@ -1,3 +1,4 @@
+#include "Core/ThemeColorCatalog.h"
 #include "Core/ThemePackageLoader.h"
 
 #include <QDir>
@@ -5,6 +6,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSet>
 #include <QTemporaryDir>
 
 #include <gtest/gtest.h>
@@ -65,6 +67,102 @@ bool writeColorPackage(const QString& themesRoot,
                      R"json({"assets":{}})json");
 }
 
+}
+
+TEST(ThemePackageLoader, BuiltinPresetsLoadWithoutExternalPackages)
+{
+    QTemporaryDir root;
+    ASSERT_TRUE(root.isValid());
+    const QString missingRoot = QDir(root.path()).filePath(QStringLiteral("missing"));
+    const auto discovered = VNX::discoverThemePackages(missingRoot);
+    ASSERT_TRUE(discovered.diagnostics.isEmpty());
+    ASSERT_FALSE(discovered.themes.isEmpty());
+    QSet<QString> ids;
+    for (const auto& preset : discovered.themes) {
+        SCOPED_TRACE(preset.id.toStdString());
+        EXPECT_TRUE(preset.builtin);
+        EXPECT_FALSE(preset.id.isEmpty());
+        EXPECT_FALSE(preset.displayName.isEmpty());
+        EXPECT_FALSE(ids.contains(preset.id));
+        ids.insert(preset.id);
+        const auto loaded = VNX::loadThemePackageCandidate(missingRoot, preset.id);
+        ASSERT_TRUE(loaded.ok());
+        EXPECT_EQ(loaded.candidate->manifest.id, preset.id);
+        EXPECT_EQ(loaded.candidate->manifest.displayName, preset.displayName);
+        EXPECT_EQ(loaded.candidate->inheritanceOrder, QStringList{preset.id});
+        for (const auto& role : VNX::themeColorRoles()) {
+            SCOPED_TRACE(role.key);
+            EXPECT_TRUE(role.read(*loaded.candidate->snapshot).isValid());
+        }
+    }
+    EXPECT_TRUE(ids.contains(VNX::builtinThemeId()));
+    EXPECT_FALSE(QDir(missingRoot).exists());
+}
+
+TEST(ThemePackageLoader, BuiltinPresetIdsCannotBeReplacedByExternalPackages)
+{
+    QTemporaryDir root;
+    ASSERT_TRUE(root.isValid());
+    const auto builtins = VNX::discoverThemePackages(root.path());
+    ASSERT_FALSE(builtins.themes.isEmpty());
+    for (const auto& preset : builtins.themes) {
+        SCOPED_TRACE(preset.id.toStdString());
+        QTemporaryDir packages;
+        ASSERT_TRUE(packages.isValid());
+        const auto original = VNX::loadThemePackageCandidate(root.path(), preset.id);
+        ASSERT_TRUE(original.ok());
+        ASSERT_TRUE(writeColorPackage(packages.path(), preset.id, VNX::builtinThemeId(), {
+            {QStringLiteral("accent.primary"), QStringLiteral("#80123456")}}));
+
+        const auto discovered = VNX::discoverThemePackages(packages.path());
+        EXPECT_TRUE(std::any_of(discovered.diagnostics.cbegin(), discovered.diagnostics.cend(),
+            [](const VNX::ThemePackageDiagnostic& diagnostic) {
+                return diagnostic.code == VNX::ThemePackageErrorCode::DuplicateThemeId;
+            }));
+        EXPECT_EQ(std::count_if(discovered.themes.cbegin(), discovered.themes.cend(),
+            [&preset](const VNX::ThemePackageDescriptor& theme) {
+                return theme.id == preset.id && theme.builtin;
+            }), 1);
+        const auto loaded = VNX::loadThemePackageCandidate(packages.path(), preset.id);
+        ASSERT_TRUE(loaded.ok());
+        for (const auto& role : VNX::themeColorRoles()) {
+            SCOPED_TRACE(role.key);
+            EXPECT_EQ(role.read(*loaded.candidate->snapshot),
+                      role.read(*original.candidate->snapshot));
+        }
+    }
+}
+
+TEST(ThemePackageLoader, ExternalPackagesCanInheritAlternateBuiltinPresets)
+{
+    QTemporaryDir root;
+    ASSERT_TRUE(root.isValid());
+    const auto builtins = VNX::discoverThemePackages(root.path());
+    bool inheritedAlternate = false;
+    const QColor accent(QStringLiteral("#80123456"));
+    for (const auto& preset : builtins.themes) {
+        if (!preset.builtin || preset.id == VNX::builtinThemeId())
+            continue;
+        SCOPED_TRACE(preset.id.toStdString());
+        inheritedAlternate = true;
+        const QString childId = QStringLiteral("theme.child");
+        ASSERT_TRUE(writeColorPackage(root.path(), childId, preset.id, {
+            {QStringLiteral("accent.primary"), accent.name(QColor::HexArgb)}}));
+        const auto base = VNX::loadThemePackageCandidate(root.path(), preset.id);
+        const auto child = VNX::loadThemePackageCandidate(root.path(), childId);
+        ASSERT_TRUE(base.ok());
+        ASSERT_TRUE(child.ok());
+        EXPECT_EQ(child.candidate->inheritanceOrder, (QStringList{preset.id, childId}));
+        for (const auto& role : VNX::themeColorRoles()) {
+            SCOPED_TRACE(role.key);
+            EXPECT_EQ(role.read(*child.candidate->snapshot),
+                      QLatin1String(role.key) == QLatin1String("accent.primary")
+                          ? accent : role.read(*base.candidate->snapshot));
+        }
+        EXPECT_EQ(child.candidate->snapshot->qtPalette.highlight, accent);
+        EXPECT_EQ(child.candidate->snapshot->domains.curve.colors.handleActiveFill, accent);
+    }
+    EXPECT_TRUE(inheritedAlternate);
 }
 
 TEST(ThemePackageLoader, ResolvesSharedColorsAfterInheritanceWithoutMutatingSnapshots)

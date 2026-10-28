@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Core/ThemeSnapshot.h"
+
 #include <QSize>
 #include <QSurfaceFormat>
 #include <QThread>
@@ -16,7 +18,7 @@ class StartupRenderer final : public QObject
     Q_OBJECT
 
 public:
-    StartupRenderer();
+    explicit StartupRenderer(ThemeSnapshotPtr theme);
     ~StartupRenderer();
 
     QWindow* window() const { return window_; }
@@ -35,6 +37,7 @@ signals:
 private:
     void renderLoop();
 
+    const ThemeSnapshotPtr theme_;
     QWindow* window_ = nullptr;
     QSurfaceFormat format_;
     QThread* thread_ = nullptr;

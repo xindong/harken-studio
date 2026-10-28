@@ -794,6 +794,10 @@ struct DomainColors
     WaveformStyle waveform;
     CurveStyle curve;
 
+    struct Startup {
+        std::array<QColor, 4> wavePalette;
+    } startup;
+
     struct PinDomain {
         QColor audio;
         QColor control;

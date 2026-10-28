@@ -215,11 +215,11 @@
     },
     "settings.appearance": {
       "title": "Appearance",
-      "body": "Set the editor theme and Information language."
+      "body": "Choose a color preset, customize its colors, and set the Information language."
     },
     "settings.appearance.theme": {
-      "title": "Theme",
-      "body": "Choose the editor's appearance; the selected theme takes effect immediately. Install additional themes in %1."
+      "title": "Color Presets",
+      "body": "Compare the palette swatches and choose a preset. Each preset keeps its own custom colors. Preset selections, completed color edits, and Reset are saved immediately. The color picker previews changes; OK saves and Cancel restores the saved color. Install additional themes in %1."
     },
     "settings.appearance.language": {
       "title": "Information Language",
