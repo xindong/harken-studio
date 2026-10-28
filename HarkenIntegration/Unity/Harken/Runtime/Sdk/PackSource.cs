@@ -17,13 +17,17 @@ namespace Harken
         private readonly Func<string, CancellationToken, Task<byte[]>> asyncReader;
         private readonly Func<ulong> revision;
         private readonly PackDirectorySource directory;
+        private readonly Func<string, VnObjectId, byte[], CompanionCapture> snapshot;
+        private readonly Func<CompanionInput, VnResult> snapshotValidation;
         public string Language { get; }
         public bool IsAsync => asyncReader != null;
         internal string Root => directory?.Root ?? string.Empty;
 
         private PackSource(string language, Func<string, byte[]> reader = null,
             Func<string, CancellationToken, Task<byte[]>> asyncReader = null,
-            Func<ulong> revision = null, PackDirectorySource directory = null)
+            Func<ulong> revision = null, PackDirectorySource directory = null,
+            Func<string, VnObjectId, byte[], CompanionCapture> snapshot = null,
+            Func<CompanionInput, VnResult> snapshotValidation = null)
         {
             if (!PackDirectorySource.ValidLanguage(language)) throw new ArgumentException("Invalid Pack language.", nameof(language));
             Language = language ?? string.Empty;
@@ -31,7 +35,13 @@ namespace Harken
             this.asyncReader = asyncReader;
             this.revision = revision;
             this.directory = directory;
+            this.snapshot = snapshot;
+            this.snapshotValidation = snapshotValidation;
         }
+
+        internal static PackSource FromSnapshot(string language,
+            Func<string, VnObjectId, byte[], CompanionCapture> capture, Func<CompanionInput, VnResult> validate)
+            => new PackSource(language, snapshot: capture, snapshotValidation: validate);
 
         public static PackSource FromDirectory(string platformDirectory, string language = null)
             => new PackSource(language, directory: new PackDirectorySource(platformDirectory, language));
@@ -52,6 +62,12 @@ namespace Harken
         {
             input = null;
             if (IsAsync) return VnResult.VN_CAPABILITY_UNAVAILABLE;
+            if (snapshot != null)
+            {
+                CompanionCapture frozen = snapshot(name, project, init);
+                input = frozen.Input;
+                return frozen.Result;
+            }
             if (directory != null) return directory.Capture(name, project, init, out input);
             // The synchronous reader completes without scheduling a continuation.
             var captured = CaptureAsync(name, project, init, CancellationToken.None).GetAwaiter().GetResult();
@@ -61,6 +77,7 @@ namespace Harken
 
         internal VnResult Validate(CompanionInput input)
         {
+            if (snapshotValidation != null) return snapshotValidation(input);
             try
             {
                 return revision == null || revision() == input.SourceRevision
@@ -123,6 +140,7 @@ namespace Harken
             try
             {
                 cancellation.ThrowIfCancellationRequested();
+                if (snapshot != null) return snapshot(name, project, init);
                 if (directory != null)
                 {
                     VnResult result = directory.Capture(name, project, init, out CompanionInput file);
@@ -151,7 +169,7 @@ namespace Harken
                 names.ProjectId = facts.projectId;
                 return new CompanionCapture(VnResult.VN_OK, new CompanionInput
                 {
-                    Bytes = bytes, Names = names, Facts = facts, SourceRevision = version
+                    Bytes = bytes, Json = json, Names = names, Facts = facts, SourceRevision = version
                 });
             }
             catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { throw; }

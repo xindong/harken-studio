@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 SPEC = importlib.util.spec_from_file_location(
     "gen_binding", ROOT / "HarkenEngine/Source/Tooling/Binding/gen_binding.py")
 binding = importlib.util.module_from_spec(SPEC)
@@ -92,10 +92,10 @@ class GenerationPolicyTests(unittest.TestCase):
             with self.subTest(dependency=dependency):
                 table = copy.deepcopy(self.table)
                 if dependency == "field":
-                    table["types"]["VnConfig"]["fields"].append(["monitor", {"struct": "VnMonitorSessionDesc"}])
+                    table["types"]["VnConfig"]["fields"].append(["monitor", {"struct": "VnMonitorRecordingDesc"}])
                 else:
                     table["functions"].append({"name": "Vn_SdkBoundaryProbe", "params": [
-                        {"name": "desc", "wire": "desc", "type": "VnMonitorSessionDesc", "ctype": "const VnMonitorSessionDesc*"}]})
+                        {"name": "desc", "wire": "desc", "type": "VnMonitorRecordingDesc", "ctype": "const VnMonitorRecordingDesc*"}]})
                 with self.assertRaisesRegex(ValueError, "SDK projection crosses excluded native type"):
                     self.validate(self.policy, table)
 

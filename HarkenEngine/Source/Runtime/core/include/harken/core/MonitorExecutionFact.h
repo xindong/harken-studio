@@ -2,6 +2,7 @@
 #define HARKEN_CORE_MONITOR_EXECUTION_FACT_H
 
 #include <harken/ObjectId.h>
+#include "harken/core/MonitorIdentity.h"
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
@@ -12,6 +13,7 @@ namespace harken {
 // body and validity mapping; no inactive union member is interpreted.
 enum class MonitorFactBody : std::uint8_t { Execution = 0, Call = 1 };
 inline constexpr std::uint8_t kMonitorFactCallBody = 0x80;
+inline constexpr std::uint8_t kMonitorFactPlayableBody = 0x40;
 inline constexpr std::uint8_t kMonitorFactIdentityIncomplete = 1;
 inline constexpr std::uint8_t kMonitorFactControlIncomplete = 2;
 
@@ -107,6 +109,13 @@ struct MonitorExecutionBody {
     MonitorFactRelations relations;
     union {
         MonitorFactPosition position;
+        struct {
+            std::uint64_t logicCommit;
+            std::uint64_t executeFrame;
+            std::uint64_t audioBlock;
+            std::uint64_t ownerEpoch;
+            MonitorPlayableProvenance provenance;
+        } playable;
         struct {
             std::uint64_t logicCommit;
             std::uint64_t executeFrame;

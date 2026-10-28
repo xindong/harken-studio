@@ -910,6 +910,7 @@ PlayableInstanceHandle PlayableInstanceTable::Acquire(
         entry.scheduleEpoch = issue.value;
         entry.rootMetadata = {};
         entry.contentIdentity = {};
+        entry.playableProvenance = {};
         entry.monitorPreparedCandidateIdentity = {};
         entry.monitorPreparedCandidateObserved = false;
         entry.monitorStartedObserved = false;
@@ -985,6 +986,7 @@ bool PlayableInstanceTable::PrepareAcquire(
         entry.scheduleEpoch = issue.value;
         entry.rootMetadata = {};
         entry.contentIdentity = {};
+        entry.playableProvenance = {};
         entry.monitorPreparedCandidateIdentity = {};
         entry.monitorPreparedCandidateObserved = false;
         entry.monitorStartedObserved = false;
@@ -1031,6 +1033,14 @@ bool PlayableInstanceTable::SetPreparedRootMetadata(
     entry->contentIdentity = {metadata.projectId, metadata.definitionStableId,
         metadata.worldGeneration, metadata.programSemanticFingerprint, revision};
     if (entry->preparingCommitOwned) entry->preparationInput.metadata = metadata;
+    return true;
+}
+
+bool PlayableInstanceTable::SetPreparedProvenance(const PreparedPlayableInstance& prepared,
+    const MonitorPlayableProvenance& provenance) noexcept {
+    auto* entry = FindPrepared(prepared);
+    if (entry == nullptr || entry->kind != PlayableKind::Sound) return false;
+    entry->playableProvenance = provenance;
     return true;
 }
 
@@ -1217,6 +1227,7 @@ bool PlayableInstanceTable::CancelPreparedImpl(
     entry->scheduleEpoch = 0;
     entry->rootMetadata = {};
     entry->contentIdentity = {};
+    entry->playableProvenance = {};
     entry->monitorPreparedCandidateIdentity = {};
     entry->monitorPreparedCandidateObserved = false;
     entry->playbackRequest = {};
@@ -1309,6 +1320,7 @@ bool PlayableInstanceTable::RollbackCommitted(
 
 void PlayableInstanceTable::FillMonitorFacts(const Entry& entry,
     PlayableInstanceHandle handle, MonitorLifecycleFacts& out) const noexcept {
+    out.playableProvenance = entry.playableProvenance;
     out.playbackRequest = entry.playbackRequest;
     out.emitterOrigin = entry.emitterOrigin;
     out.controlCause = entry.controlCause;
@@ -1868,6 +1880,7 @@ bool PlayableInstanceTable::AdvanceLifecycle(PlayableInstanceHandle handle,
         entry->scheduleEpoch = 0;
         entry->rootMetadata = {};
         entry->contentIdentity = {};
+    entry->playableProvenance = {};
         entry->monitorPreparedCandidateIdentity = {};
         entry->monitorPreparedCandidateObserved = false;
         entry->playbackRequest = {};

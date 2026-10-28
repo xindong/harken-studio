@@ -9,9 +9,10 @@ namespace Harken.Unity.Editor
     {
         private readonly float[][] minima;
         private readonly float[][] maxima;
+        private readonly ulong[] boundaries;
 
         internal HarkenSourceEnvelope(VnObjectId soundId, ulong fingerprint, ulong revision,
-            ulong frames, uint rate, float[][] minima, float[][] maxima)
+            ulong frames, uint rate, float[][] minima, float[][] maxima, ulong[] boundaries = null)
         {
             SoundStableId = soundId;
             PropertyFingerprint = fingerprint;
@@ -20,6 +21,7 @@ namespace Harken.Unity.Editor
             SampleRate = rate;
             this.minima = minima;
             this.maxima = maxima;
+            this.boundaries = boundaries;
         }
 
         public VnObjectId SoundStableId { get; }
@@ -30,6 +32,12 @@ namespace Harken.Unity.Editor
         public int ChannelCount => minima.Length;
         public int BucketCount => minima[0].Length;
         public double SourceDurationSeconds => (double)FrameCount / SampleRate;
+        public ulong GetBucketFrameBoundary(int boundary)
+        {
+            if (boundary < 0 || boundary > BucketCount) throw new ArgumentOutOfRangeException(nameof(boundary));
+            return boundaries != null ? boundaries[boundary] : FrameCount / (ulong)BucketCount * (ulong)boundary +
+                FrameCount % (ulong)BucketCount * (ulong)boundary / (ulong)BucketCount;
+        }
         public float[] GetChannelMinima(int channel) => (float[])minima[channel].Clone();
         public float[] GetChannelMaxima(int channel) => (float[])maxima[channel].Clone();
 
@@ -61,6 +69,7 @@ namespace Harken.Unity.Editor
         { Occurrence = occurrence; Source = source; }
         public string Occurrence { get; }
         public HarkenSourceEnvelope Source { get; }
+        internal VnPackOccurrenceFactV1 NativeOccurrence { get; set; }
     }
 
     public sealed class HarkenCandidateOverview
@@ -142,9 +151,7 @@ namespace Harken.Unity.Editor
             BigInteger index = BigInteger.DivRem(numerator, denominator, out BigInteger remainder);
             return (int)index + (ceiling && !remainder.IsZero ? 1 : 0);
         }
-        private static ulong Boundary(HarkenSourceEnvelope source, int bucket)
-            => source.FrameCount / (ulong)source.BucketCount * (ulong)bucket +
-                source.FrameCount % (ulong)source.BucketCount * (ulong)bucket / (ulong)source.BucketCount;
+        private static ulong Boundary(HarkenSourceEnvelope source, int bucket) => source.GetBucketFrameBoundary(bucket);
         private static void Merge(float[] values, int b, float lo, float hi)
         { values[b * 2] = Math.Min(values[b * 2], lo); values[b * 2 + 1] = Math.Max(values[b * 2 + 1], hi); }
     }
@@ -152,19 +159,20 @@ namespace Harken.Unity.Editor
     public sealed class HarkenActionWaveform
     {
         internal HarkenActionWaveform(GameplayAction action, HarkenSourceEnvelope source,
-            bool oneShotKnown, string sourceReason, string durationReason)
+            bool oneShotKnown, string sourceReason, string durationReason, double? executionDuration = null)
         {
             Action = action;
             Source = source;
             OneShotDurationKnown = oneShotKnown;
             SourceUnavailableReason = sourceReason;
             DurationUnavailableReason = durationReason;
+            OneShotDurationSeconds = executionDuration;
         }
 
         public GameplayAction Action { get; }
         public HarkenSourceEnvelope Source { get; }
         public bool OneShotDurationKnown { get; }
-        public double? OneShotDurationSeconds => OneShotDurationKnown ? Source.SourceDurationSeconds : (double?)null;
+        public double? OneShotDurationSeconds { get; }
         public string SourceUnavailableReason { get; }
         public string DurationUnavailableReason { get; }
     }

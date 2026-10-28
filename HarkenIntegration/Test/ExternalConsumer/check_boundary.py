@@ -11,7 +11,7 @@ import shutil
 import subprocess
 import tempfile
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 FIXTURE = ROOT / "HarkenIntegration/Test/ExternalConsumer"
 
 # Each probe compiles separately, so one inaccessible name cannot mask another.
@@ -71,7 +71,7 @@ def verify(sdk, work, native_dir=None, publication=None):
         code, output = run(common + [f"-p:ConsumerSource={source}", "-o", str(work / "negative" / name)],
                            work / f"negative-{name}.log", expect_success=False)
         errors = re.findall(r"error (CS\d+): ([^\r\n]+)", output)
-        expected_errors = {"CS0246"} if name == "VnMonitorRecordHeader" else {"CS0122", "CS0117"}
+        expected_errors = {"CS0122", "CS0117"}
         if code == 0 or not errors or any(number not in expected_errors or name not in message
                                           for number, message in errors):
             raise RuntimeError(f"{name}: expected only a matching access diagnostic; got\n{output}")

@@ -7,7 +7,7 @@ using UnityEngine;
 
 namespace Harken.Unity.Editor
 {
-    public sealed class HarkenEditorPreview : IDisposable
+    public sealed partial class HarkenEditorPreview : IDisposable
     {
         private static HarkenEditorPreview current;
         private readonly Dictionary<ulong, FiringOwner> firings = new Dictionary<ulong, FiringOwner>();
@@ -33,6 +33,9 @@ namespace Harken.Unity.Editor
             public uint FadeMs;
             public Scope Owner;
             public HarkenSpatialSource Source;
+            public uint PresentationRevision;
+            public readonly Dictionary<ulong, SelectedSound> Sounds = new Dictionary<ulong, SelectedSound>();
+            public bool SelectionInvalid;
         }
 
         public PackBootstrapSession Session => session;
@@ -49,7 +52,7 @@ namespace Harken.Unity.Editor
             return scope;
         }
 
-        public sealed class Scope : IDisposable
+        public sealed partial class Scope : IDisposable
         {
             internal readonly HarkenEditorPreview preview;
             internal PackBootstrapSession capturedSession;
@@ -102,8 +105,7 @@ namespace Harken.Unity.Editor
 
             public VnResult Prepare(HarkenPreparedPacks source, string[] actionNames)
             {
-                // Temporarily block direct API callers as well as the Inspector until current Pack companions are supported.
-                if (!HarkenEditorPublicationSupport.IsAvailable)
+                if (!HarkenEditorPublicationSupport.CompanionAvailable)
                     return Observe(VnResult.VN_CAPABILITY_UNAVAILABLE, "<prepare>", HarkenEditorPublicationSupport.Diagnostic);
                 if (disposed) return Observe(VnResult.VN_NOT_INITIALIZED, "<prepare>");
                 if (preview.shutdownRequested) return Observe(VnResult.VN_NOT_INITIALIZED, "<prepare>");
@@ -213,6 +215,7 @@ namespace Harken.Unity.Editor
                                 Firing = firing,
                                 Name = name,
                                 Owner = this,
+                                PresentationRevision = source.PresentationRevision,
                                 Source = spatialSource
                             });
                     }
@@ -304,7 +307,7 @@ namespace Harken.Unity.Editor
 
         public VnResult Prepare(string directory, string language, ulong[] startupIds, bool nullDevice = false)
         {
-            if (!HarkenEditorPublicationSupport.IsAvailable)
+            if (!HarkenEditorPublicationSupport.CompanionAvailable)
                 return Observe(VnResult.VN_CAPABILITY_UNAVAILABLE, "<prepare>", HarkenEditorPublicationSupport.Diagnostic);
             VnResult allowed = CanPrepare();
             if (allowed != VnResult.VN_OK) return Observe(allowed, "<prepare>");
@@ -320,7 +323,7 @@ namespace Harken.Unity.Editor
 
         public VnResult Prepare(HarkenPackSource source, ulong[] startupIds, bool nullDevice = false)
         {
-            if (!HarkenEditorPublicationSupport.IsAvailable)
+            if (!HarkenEditorPublicationSupport.CompanionAvailable)
                 return Observe(VnResult.VN_CAPABILITY_UNAVAILABLE, "<prepare>", HarkenEditorPublicationSupport.Diagnostic);
             VnResult allowed = CanPrepare();
             if (allowed != VnResult.VN_OK) return Observe(allowed, "<prepare>");
@@ -329,9 +332,19 @@ namespace Harken.Unity.Editor
             return result == VnResult.VN_OK ? Prepare(prepared, startupIds, nullDevice) : Observe(result, "<prepare>", error);
         }
 
+        public VnResult Prepare(HarkenPackSource source, TextAsset initJson, ulong[] startupIds, bool nullDevice = false)
+        {
+            VnResult allowed = CanPrepare();
+            if (allowed != VnResult.VN_OK) return Observe(allowed, "<prepare>");
+            var catalog = new HarkenEditorCatalog();
+            VnResult result = catalog.Refresh(source, null, initJson);
+            return result == VnResult.VN_OK ? Prepare(catalog.PreparedPacks, startupIds, nullDevice)
+                : Observe(result, "<prepare>", catalog.Diagnostic);
+        }
+
         public VnResult Prepare(HarkenPreparedPacks source, ulong[] startupIds, bool nullDevice = false)
         {
-            if (!HarkenEditorPublicationSupport.IsAvailable)
+            if (!HarkenEditorPublicationSupport.CompanionAvailable)
                 return Observe(VnResult.VN_CAPABILITY_UNAVAILABLE, "<prepare>", HarkenEditorPublicationSupport.Diagnostic);
             VnResult allowed = CanPrepare();
             if (allowed != VnResult.VN_OK) return Observe(allowed, "<prepare>");
@@ -364,12 +377,13 @@ namespace Harken.Unity.Editor
                 shutdownRequested = false;
                 EditorApplication.update -= OnEditorUpdate;
                 EditorApplication.update += OnEditorUpdate;
-                if (session.Publication == null)
+                if (string.IsNullOrEmpty(session.ProjectId))
                 {
                     Shutdown();
                     return Observe(VnResult.VN_CAPABILITY_UNAVAILABLE, "<prepare>");
                 }
-                LastRemoteResult = HarkenProjectSettings.StartCommunication(session.Publication.ProjectId);
+                OpenObservation();
+                LastRemoteResult = HarkenProjectSettings.StartCommunication(session.ProjectId);
                 if (LastRemoteResult != VnResult.VN_OK)
                     UnityEngine.Debug.LogWarning("Harken remote Start: " + LastRemoteResult);
             }
@@ -441,6 +455,7 @@ namespace Harken.Unity.Editor
                 if (!tickingSession.IsActive || !ReferenceEquals(session, tickingSession) || !ReferenceEquals(current, this))
                     return Observe(VnResult.VN_NOT_INITIALIZED, "<update>");
                 if (updated != VnResult.VN_OK) return Observe(updated, "<update>");
+                PollObservation();
                 foreach (FiringOwner owner in firings.Values.ToArray())
                 {
                     VnResult result = owner.Firing.Query(out VnActionFiringInfo info);
@@ -751,6 +766,7 @@ namespace Harken.Unity.Editor
         private VnResult RequestStop(FiringOwner owner, uint fadeMs, bool closeWhenIdle)
         {
             if (closeWhenIdle) this.closeWhenIdle = true;
+            owner.Sounds.Clear();
             owner.StopRequested = true;
             owner.FadeMs = fadeMs;
             VnResult result = owner.Firing.Stop(fadeMs);
@@ -781,6 +797,7 @@ namespace Harken.Unity.Editor
                     sessionEmitter = Emitter.None;
                 }
             }
+            CloseObservation();
             VnResult result = IsPrepared ? session.Shutdown() : VnResult.VN_OK;
             if (!IsPrepared)
             {
@@ -791,6 +808,7 @@ namespace Harken.Unity.Editor
 
         private void FinishClose()
         {
+            CloseObservation();
             session = null;
             sessionEmitter = Emitter.None;
             scopedSource = null;

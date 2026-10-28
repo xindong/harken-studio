@@ -2108,7 +2108,8 @@ void FanoutIdentityLocked(ProcessOwner& owner, const std::uint8_t* bytes, std::u
 }
 
 void FanoutOne(ProcessOwner& owner, const std::uint8_t* bytes, std::uint32_t size,
-               MonitorProducerOrigin origin = {}) {
+               MonitorProducerOrigin origin = {}, std::uint32_t minimumExecutionVersion = 0,
+               std::uint32_t maximumExecutionVersion = UINT32_MAX) {
     if (IsIdentityRecord(ReadPackedU32(bytes, 0))) {
         std::lock_guard<std::mutex> lock(owner.mutex);
         FanoutIdentityLocked(owner, bytes, size);
@@ -2132,7 +2133,7 @@ void FanoutOne(ProcessOwner& owner, const std::uint8_t* bytes, std::uint32_t siz
         (recordKind >= VN_MONITOR_RECORD_INVALID &&
          recordKind != VN_MONITOR_RECORD_EVENT_DETAIL && recordKind != VN_MONITOR_RECORD_EXECUTION_FACT && !IsIdentityRecord(recordKind));
     const bool unknownVersion = recordVersion != 1u &&
-        !(recordKind == VN_MONITOR_RECORD_EXECUTION_FACT && recordVersion == 2u);
+        !(recordKind == VN_MONITOR_RECORD_EXECUTION_FACT && (recordVersion == 2u || recordVersion == 3u));
     const bool unknownRecord = unknownKind || unknownVersion;
     const bool requiredUnknown =
         unknownRecord && (recordFlags & VN_MONITOR_RECORD_FLAG_REQUIRED) != 0;
@@ -2168,7 +2169,8 @@ void FanoutOne(ProcessOwner& owner, const std::uint8_t* bytes, std::uint32_t siz
                 continue;
             }
             if (recordKind == VN_MONITOR_RECORD_EXECUTION_FACT) {
-                if (session.executionFactVersion == 0 || ReadPackedU32(bytes, 4) > session.executionFactVersion) continue;
+                if (session.executionFactVersion == 0 || session.executionFactVersion < minimumExecutionVersion ||
+                    session.executionFactVersion > maximumExecutionVersion || ReadPackedU32(bytes, 4) > session.executionFactVersion) continue;
                 const auto producerId = ReadPackedU64(bytes, 32);
                 if (producerId != kExecutionLogicProducer && producerId != kExecutionAudioProducer) continue;
                 const auto producerIndex = producerId == kExecutionLogicProducer ? 0u : 1u;
@@ -2708,7 +2710,12 @@ bool DrainOneFrom(ProcessOwner& owner, MonitorProducerRing& ring,
                 producerIndex == 0 ? kExecutionLogicProducer : kExecutionAudioProducer,
                 producerIndex == 0 ? kExecutionLogicStream : kExecutionAudioStream);
             if (size == 0) return false;
-            FanoutOne(owner, scratch, size);
+            FanoutOne(owner, scratch, size, {}, 0, 2);
+            const auto v3Size = PackExecutionFact(scratch, scratchBytes, fact,
+                producerIndex == 0 ? kExecutionLogicProducer : kExecutionAudioProducer,
+                producerIndex == 0 ? kExecutionLogicStream : kExecutionAudioStream, 3);
+            if (v3Size == 0) return false;
+            FanoutOne(owner, scratch, v3Size, {}, 3);
             return true;
         }, drop);
         if (!execution.HasPending() && owner.pendingRingTickets[producerIndex] != 0) {
@@ -3684,7 +3691,7 @@ VnResult ReadExecutionVersion(const VnMonitorSessionDesc* desc, std::uint32_t& v
         std::memcpy(extension, reinterpret_cast<const std::uint8_t*>(desc) +
             sizeof(VnMonitorSessionDesc), sizeof(extension));
         if (extension[1] != 0) return VN_INVALID_ARG;
-        if (extension[0] > 2) return VN_MONITOR_UNSUPPORTED;
+        if (extension[0] > 3) return VN_MONITOR_UNSUPPORTED;
         version = extension[0];
     }
     return VN_OK;
@@ -5523,7 +5530,7 @@ VnResult StartRecording(VnMonitorSessionHandle handle, uint64_t leaseGeneration,
         descriptor.leaseGeneration = leaseGeneration;
         descriptor.engine = owner.engine->monitorRequests.EngineInstance();
         descriptor.recordingEpoch = owner.nextEpoch++;
-        descriptor.schema = 2;
+        descriptor.schema = session->executionFactVersion >= 3 ? 3 : 2;
         descriptor.streams = session->acceptedStreamKindMask;
         descriptor.permissions = session->acceptedPermissionMask;
         descriptor.requestSymbols = session->requestSymbols;

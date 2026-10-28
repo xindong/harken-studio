@@ -6,6 +6,10 @@
 #include "PackLogicStore.h"
 #include "TraceFormat.h"
 #include "TraceRecorder.h"
+#include "MonitorIdentityCodec.h"
+#include "MonitorCaptureHubTestHooks.h"
+#include <map>
+#include <set>
 #include "harken/dsp/GainRamp.h"
 #include "harken/param/EffectParamLocator.h"
 #include "harken/core/PackCompanionNames.h"
@@ -474,6 +478,119 @@ TEST(CanonicalPackSetActivate, CompanionInspectionDiscoversProjectWithoutWeakeni
     std::vector<VnCanonicalPackSetMemberV2> members{Member(PackId("Init"), true, &init, &names)};
     VnCanonicalPackSetActivationReportV1 report{};
     EXPECT_EQ(VN_INVALID_ARG, Activate(members, report));
+}
+
+TEST(CanonicalPackSetActivate, MonitorV3MatchesActualOccurrenceAndRetainsOlderConsumers) {
+    using namespace companionfixture;
+    using namespace harken::monitor;
+    for (bool random : {false, true}) {
+        SCOPED_TRACE(random);
+        EngineSession session(CanonicalActivationConfig(8, 64, 48000));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        const auto initId = PackId("Init");
+        const auto contentId = PackId("action_" + harken::ObjectIdString(action));
+        Provider init{Build(true, initId)}, content{BuildPreview(random)};
+        VnPackNamesV1 initNames{sizeof(VnPackNamesV1), 0, project, {}, "", "", 0, 0, nullptr, nullptr};
+        VnPackNamesV1 names{sizeof(VnPackNamesV1), 0, project, action, "Play_A", "", 0, 0, nullptr, nullptr};
+        std::vector<VnCanonicalPackSetMemberV2> members{
+            Member(initId, true, &init, &initNames), Member(contentId, false, &content, &names)};
+        VnCanonicalPackSetActivationReportV1 activation{};
+        ASSERT_EQ(VN_OK, Activate(members, activation));
+        VnPackInspectDescV1 inspect{};
+        inspect.structSize = sizeof(inspect);
+        inspect.pack = {sizeof(VnPackByteSpan), 0, content.bytes.data(), content.bytes.size()};
+        inspect.init = {sizeof(VnPackByteSpan), 0, init.bytes.data(), init.bytes.size()};
+        inspect.names = &names;
+        inspect.maxInputBytes = content.bytes.size() + init.bytes.size() + 4096;
+        std::array<VnPackOccurrenceFactV1, 2> occurrences{};
+        inspect.occurrences = occurrences.data(); inspect.occurrenceCapacity = occurrences.size();
+        VnPackMediaFactV1 media{}; inspect.media = &media; inspect.mediaCapacity = 1;
+        VnPackInspectReportV1 report{}; report.structSize = sizeof(report);
+        ASSERT_EQ(VN_OK, Vn_InspectCanonicalPackV1(&inspect, &report));
+        std::array<VnMonitorSessionHandle, 3> monitors{};
+        for (unsigned i = 0; i != monitors.size(); ++i) {
+            VnMonitorSessionDescV2 desc{}; desc.structSize = sizeof(desc);
+            desc.requestedExecutionFactVersion = i + 1;
+            desc.requestedStreamKindMask = VN_MONITOR_STREAM_EVENT;
+            desc.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS;
+            desc.consumerQueueBytes = 65536;
+            ASSERT_EQ(VN_OK, Vn_MonitorOpenEventSession(reinterpret_cast<const VnMonitorSessionDesc*>(&desc), &monitors[i]));
+        }
+        StopDrainForTests();
+        std::set<std::uint32_t> selected;
+        std::array<unsigned, 3> starts{}, retired{};
+        std::map<std::uint64_t, VnMonitorPlayableProvenance> active;
+        const auto poll = [&] {
+            DrainOnceForTests();
+            for (unsigned version = 0; version != monitors.size(); ++version) {
+                std::array<std::uint8_t, 65536> bytes{};
+                VnMonitorPollDesc desc{sizeof(VnMonitorPollDesc), 0, bytes.data(), bytes.size()};
+                VnMonitorPollResult result{}; result.structSize = sizeof(result);
+                ASSERT_EQ(VN_OK, Vn_MonitorPoll(monitors[version], &desc, &result));
+                for (std::size_t at = 0; at < result.bytesWritten;) {
+                    std::uint64_t size = 0;
+                    ExecutionPayloadReader sizeReader{bytes.data() + at + 16};
+                    sizeReader(size);
+                    ASSERT_GE(size, kPackedEnvelopeBytes); ASSERT_LE(size, result.bytesWritten - at);
+                    VnMonitorRecordHeader header{};
+                    ASSERT_TRUE(ReadIdentityHeader(bytes.data() + at, size, header));
+                    if (header.recordKind == VN_MONITOR_RECORD_EXECUTION_FACT) {
+                        EXPECT_LE(header.recordVersion, version + 1);
+                        VnMonitorExecutionFactV3 value{};
+                        ASSERT_TRUE(DecodeExecutionFact(header, bytes.data() + at + kPackedEnvelopeBytes, header.payloadBytes, value));
+                        if (value.fact.factKind == VN_MONITOR_FACT_PLAYABLE_STARTED) {
+                            ++starts[version];
+                            if (version == 2) {
+                                const auto& actual = value.playable;
+                                ASSERT_EQ(VN_MONITOR_PLAYABLE_PROVENANCE_KNOWN, actual.knownFlags);
+                                const VnPackOccurrenceFactV1* match = nullptr;
+                                for (unsigned n = 0; n < report.occurrenceCount; ++n)
+                                    if (occurrences[n].childOrdinal == actual.childOrdinal) match = &occurrences[n];
+                                ASSERT_NE(nullptr, match);
+                                EXPECT_EQ(match->rootPlayableId, actual.rootPlayableId);
+                                EXPECT_EQ(match->rootProgramFingerprint, actual.rootProgramFingerprint);
+                                EXPECT_EQ(match->occurrenceFingerprint, actual.occurrenceFingerprint);
+                                EXPECT_EQ(match->mediaChecksum, actual.mediaChecksum);
+                                EXPECT_EQ(match->soundId, header.stableId);
+                                EXPECT_EQ(match->soundProgramFingerprint, header.programSemanticFingerprint);
+                                selected.insert(actual.childOrdinal);
+                                active[header.instanceHandle] = actual;
+                            }
+                        }
+                        if (value.fact.factKind == VN_MONITOR_FACT_PLAYABLE_RETIRED && value.fact.contentKind == VN_MONITOR_CONTENT_SOUND) {
+                            ++retired[version];
+                            if (version == 2) {
+                                const auto found = active.find(header.instanceHandle);
+                                ASSERT_NE(active.end(), found);
+                                EXPECT_EQ(found->second.childOrdinal, value.playable.childOrdinal);
+                                EXPECT_EQ(found->second.mediaChecksum, value.playable.mediaChecksum);
+                                EXPECT_EQ(found->second.occurrenceFingerprint, value.playable.occurrenceFingerprint);
+                                active.erase(found);
+                            }
+                        }
+                    }
+                    at += size;
+                }
+            }
+        };
+        VnActionResolved resolved{}; ASSERT_EQ(VN_OK, Resolve("Play_A", &resolved));
+        for (unsigned seed = 0; seed != 16; ++seed) {
+            VnActionFiringHandle firing = 0;
+            ASSERT_EQ(VN_OK, Vn_PostActionResolved(&resolved, 0, seed, &firing));
+            for (unsigned block = 0; block != 24; ++block) {
+                session.Engine()->nullBackend.Pump(1);
+                ASSERT_EQ(VN_OK, Vn_Update());
+                poll();
+            }
+            ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+        }
+        for (unsigned i = 0; i != monitors.size(); ++i) {
+            EXPECT_EQ(16u, starts[i]); EXPECT_EQ(16u, retired[i]);
+            EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(monitors[i]));
+        }
+        EXPECT_EQ(random ? 2u : 1u, selected.size());
+        EXPECT_TRUE(active.empty());
+    }
 }
 
 TEST(CanonicalPackSetActivate, CompanionInspectionKeepsMediaAndOccurrenceFactsDistinct) {

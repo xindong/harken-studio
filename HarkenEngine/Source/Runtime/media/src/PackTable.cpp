@@ -538,6 +538,8 @@ VnResult PackTable::Load(const char* utf8Path, PCMRegistry& registry,
     for (const PackTocEntry& e : parsed) {
         PackEntry entry;
         entry.soundId = e.soundId;
+        entry.mediaChecksum = e.blobChecksum;
+        entry.mediaChecksumKnown = true;
         entry.flags = e.flags;
         entry.frameCount = e.frameCount;
         entry.loopStartFrame = e.loopStartFrame;
@@ -741,6 +743,8 @@ VnResult PackTable::PrepareReplace(VnPackHandle handle, const char* utf8Path,
     for (const PackTocEntry& e : prepared.m_parsed) {
         PackEntry entry;
         entry.soundId = e.soundId;
+        entry.mediaChecksum = e.blobChecksum;
+        entry.mediaChecksumKnown = true;
         entry.flags = e.flags;
         entry.frameCount = e.frameCount;
         entry.loopStartFrame = e.loopStartFrame;
@@ -1198,6 +1202,8 @@ VnResult PackTable::PrepareCanonicalSet(
                 const auto& media = (*member.media)[entry];
                 auto& next = change.entries[entry];
                 next.soundId = media.soundId;
+                next.mediaChecksum = media.blobChecksum;
+                next.mediaChecksumKnown = true;
                 next.flags = media.flags;
                 next.frameCount = media.frameCount;
                 next.loopStartFrame = media.loopStartFrame;
@@ -2179,7 +2185,9 @@ bool PackTable::ActiveRevisionIdentity(
 
 VnResult PackTable::LookupExact(
     PackResourceRevisionToken resourceToken, VnSoundId soundId,
-    const PCMRegistry& registry, PCMView* out) const noexcept {
+    const PCMRegistry& registry, PCMView* out, std::uint64_t* mediaChecksum, bool* checksumKnown) const noexcept {
+    if (checksumKnown != nullptr) *checksumKnown = false;
+    if (mediaChecksum != nullptr) *mediaChecksum = 0;
     if (resourceToken == 0 || out == nullptr) {
         return VN_INVALID_ARG;
     }
@@ -2192,12 +2200,21 @@ VnResult PackTable::LookupExact(
         for (const PCMRegistry::RetiredGeneration& entry : row.entries) {
             if (entry.SoundId() == soundId) {
                 *out = entry.View();
+                if (out->Valid())
+                    for (const auto& metadata : row.packEntries)
+                        if (metadata.soundId == soundId) {
+                            if (mediaChecksum != nullptr) *mediaChecksum = metadata.mediaChecksum;
+                            if (checksumKnown != nullptr) *checksumKnown = metadata.mediaChecksumKnown;
+                            break;
+                        }
                 return out->Valid() ? VN_OK : VN_CONTENT_NOT_LOADED;
             }
         }
         for (const PackEntry& entry : row.packEntries) {
             if (entry.soundId == soundId && entry.registration.Valid()) {
                 *out = entry.registration.View();
+                if (mediaChecksum != nullptr) *mediaChecksum = entry.mediaChecksum;
+                if (checksumKnown != nullptr) *checksumKnown = entry.mediaChecksumKnown;
                 return VN_OK;
             }
         }
@@ -2210,6 +2227,8 @@ VnResult PackTable::LookupExact(
         for (const PackEntry& entry : slot.entries) {
             if (entry.soundId == soundId && entry.registration.Valid()) {
                 *out = entry.registration.View();
+                if (mediaChecksum != nullptr) *mediaChecksum = entry.mediaChecksum;
+                if (checksumKnown != nullptr) *checksumKnown = entry.mediaChecksumKnown;
                 return VN_OK;
             }
             if (entry.soundId != soundId ||
@@ -2219,6 +2238,8 @@ VnResult PackTable::LookupExact(
             const PCMView view = registry.Lookup(soundId);
             if (view.Valid()) {
                 *out = view;
+                if (mediaChecksum != nullptr) *mediaChecksum = entry.mediaChecksum;
+                if (checksumKnown != nullptr) *checksumKnown = entry.mediaChecksumKnown;
                 return VN_OK;
             }
         }
@@ -2229,7 +2250,9 @@ VnResult PackTable::LookupExact(
 
 VnResult PackTable::LookupExactClosure(
     PackResourceClosureToken closureToken, VnSoundId soundId,
-    const PCMRegistry& registry, PCMView* out) const noexcept {
+    const PCMRegistry& registry, PCMView* out, std::uint64_t* mediaChecksum, bool* checksumKnown) const noexcept {
+    if (checksumKnown != nullptr) *checksumKnown = false;
+    if (mediaChecksum != nullptr) *mediaChecksum = 0;
     if (out == nullptr || closureToken == 0) {
         return VN_INVALID_ARG;
     }
@@ -2243,7 +2266,7 @@ VnResult PackTable::LookupExactClosure(
     const PackResourceRevisionToken* stored =
         ResourceClosureTokens(rowIndex);
     for (std::size_t i = 0; i < row->resourceCount; ++i) {
-        const VnResult result = LookupExact(stored[i], soundId, registry, out);
+        const VnResult result = LookupExact(stored[i], soundId, registry, out, mediaChecksum, checksumKnown);
         if (result == VN_OK) {
             return VN_OK;
         }

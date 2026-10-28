@@ -29,6 +29,7 @@ struct SetStorageMember {
         row.sampleRate = 48000;
         row.channelCount = 1;
         row.frameCount = 8;
+        row.blobChecksum = harken::Fnv1a64(bytes.get(), 8 * sizeof(float));
         media.push_back(row);
         key.packStableId = packId;
         key.contentRevision = 1;
@@ -98,8 +99,17 @@ TEST(CanonicalPackSetStorage, KeptOwnerSurvivesSharedOwnerRemovalAndOldReaderRep
     EXPECT_NE(tokenA, replacement.ResourceTokenAt(0));
     EXPECT_FLOAT_EQ(0.75f, registry.Lookup(sound).channels[0][0]);
     packs.SweepRetiring(+[](void*, harken::PackResourceRevisionToken) { return false; });
-    ASSERT_EQ(VN_OK, packs.LookupExactClosure(reader, sound, registry, &old));
+    std::uint64_t checksum = 0;
+    bool known = false;
+    ASSERT_EQ(VN_OK, packs.LookupExactClosure(reader, sound, registry, &old, &checksum, &known));
     EXPECT_FLOAT_EQ(0.25f, old.channels[0][0]);
+    EXPECT_TRUE(known);
+    EXPECT_EQ(b.media.front().blobChecksum, checksum);
+    harken::PCMView current{};
+    ASSERT_EQ(VN_OK, packs.LookupExact(replacement.ResourceTokenAt(0), sound, registry, &current, &checksum, &known));
+    EXPECT_TRUE(known);
+    EXPECT_EQ(changed.media.front().blobChecksum, checksum);
+    EXPECT_NE(b.media.front().blobChecksum, checksum);
     ASSERT_EQ(VN_OK, packs.ReleaseResourceClosure(reader));
     packs.SweepRetiring(+[](void*, harken::PackResourceRevisionToken) { return false; });
     EXPECT_EQ(0u, packs.RetiringCount());

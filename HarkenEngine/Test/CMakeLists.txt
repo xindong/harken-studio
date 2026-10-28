@@ -659,6 +659,8 @@ _harken_add_python_check_test(effect_registry_manifest_check
 _harken_add_python_check_test(binding_generated_check
     "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Binding/gen_binding.py"
     --check)
+_harken_add_python_check_test(managed_generation_policy_check
+    "${CMAKE_SOURCE_DIR}/HarkenEngine/Test/UnitTest/test_managed_generation_policy.py")
 _harken_add_python_check_test(remote_wire_generated_check
     "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Remote/wire/gen_wire.py"
     --check)

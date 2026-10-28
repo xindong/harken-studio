@@ -394,6 +394,37 @@ TEST(PlayableInstanceTable, StartedObservationIsOncePerCommittedSoundGeneration)
     RetireFully(table, container);
 }
 
+TEST(PlayableInstanceTable, PreparedProvenanceIsNotPublishedAndClearsOnRollbackReuse) {
+    PlayableInstanceTable table(1);
+    harken::PreparedPlayableInstance prepared;
+    ASSERT_TRUE(table.PrepareAcquire(PlayableKind::Sound, 0, &prepared));
+    harken::MonitorPlayableProvenance provenance{};
+    provenance.knownFlags = 1;
+    provenance.rootPlayableId = harkentest::ObjectId(77);
+    provenance.mediaChecksum = 123;
+    ASSERT_TRUE(table.SetPreparedProvenance(prepared, provenance));
+    harken::MonitorLifecycleFacts facts{};
+    EXPECT_EQ(0u, table.CaptureMonitorIdentityAt(0, &facts));
+    EXPECT_FALSE(table.NeedsStartedObservation(prepared.Handle()));
+    const auto stale = prepared;
+    ASSERT_TRUE(table.CancelPrepared(&prepared));
+    ASSERT_TRUE(table.PrepareAcquire(PlayableKind::Sound, 0, &prepared));
+    EXPECT_FALSE(table.SetPreparedProvenance(stale, provenance));
+    ASSERT_TRUE(table.CommitPrepared(&prepared));
+    ASSERT_TRUE(table.CaptureMonitorFacts(prepared.Handle(), &facts));
+    EXPECT_EQ(0u, facts.playableProvenance.knownFlags);
+    ASSERT_TRUE(table.RollbackCommitted(prepared.Handle()));
+    ASSERT_TRUE(table.SetPreparedProvenance(prepared, provenance));
+    ASSERT_TRUE(table.CommitPrepared(&prepared));
+    ASSERT_TRUE(table.CaptureMonitorFacts(prepared.Handle(), &facts));
+    EXPECT_EQ(123u, facts.playableProvenance.mediaChecksum);
+    RetireFully(table, prepared.Handle());
+    const auto next = table.Acquire(PlayableKind::Sound, 0);
+    ASSERT_TRUE(table.CaptureMonitorFacts(next, &facts));
+    EXPECT_EQ(0u, facts.playableProvenance.knownFlags);
+    RetireFully(table, next);
+}
+
 TEST(PlayableInstanceTable, PendingStartedObservationsFollowActualRollbackAndRecommit) {
     PlayableInstanceTable table(3);
     harken::PreparedPlayableInstance prepared;
