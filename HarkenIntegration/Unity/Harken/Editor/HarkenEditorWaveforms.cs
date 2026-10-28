@@ -102,7 +102,11 @@ namespace Harken.Unity.Editor
             sources = Array.Empty<HarkenSourceWaveform>();
             VnResult valid = CheckReference(name, null, out diagnostic);
             if (valid != VnResult.VN_OK) return valid;
-            if (collectionCache.TryGetValue(name, out sources)) { diagnostic = string.Empty; return VnResult.VN_OK; }
+            if (collectionCache.TryGetValue(name, out sources))
+            {
+                diagnostic = WaveformDiagnostic = string.Empty;
+                return WaveformResult = VnResult.VN_OK;
+            }
             try
             {
                 var entry = snapshot.Actions[name];
@@ -141,7 +145,11 @@ namespace Harken.Unity.Editor
             preview = null;
             VnResult valid = CheckReference(name, null, out diagnostic);
             if (valid != VnResult.VN_OK) return valid;
-            if (previewCache.TryGetValue(name, out preview)) { diagnostic = string.Empty; return VnResult.VN_OK; }
+            if (previewCache.TryGetValue(name, out preview))
+            {
+                diagnostic = WaveformDiagnostic = string.Empty;
+                return WaveformResult = VnResult.VN_OK;
+            }
             try
             {
                 var entry = snapshot.Actions[name];

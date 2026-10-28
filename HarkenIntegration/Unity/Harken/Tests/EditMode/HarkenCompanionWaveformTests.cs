@@ -91,6 +91,19 @@ namespace Harken.Unity.Tests
             Assert.That(catalog.GetActionWaveform("Play_U4_A", out var waveform, out error), Is.EqualTo(VnResult.VN_OK), error);
             Assert.That(waveform.OneShotDurationSeconds, Is.EqualTo(4).Within(0.001));
             Assert.That(waveform.Source.SourceDurationSeconds, Is.Not.EqualTo(4));
+            Assert.That(catalog.GetActionPreview("Play_U4_A", out var cachedPreview, out error), Is.EqualTo(VnResult.VN_OK), error);
+            Assert.That(catalog.GetActionPreview("Play_U4_Caller", out _, out error), Is.EqualTo(VnResult.VN_CAPABILITY_UNAVAILABLE));
+            Assert.That(catalog.WaveformDiagnostic, Is.Not.Empty);
+            Assert.That(catalog.GetActionPreview("Play_U4_A", out var repeatedPreview, out error), Is.EqualTo(VnResult.VN_OK), error);
+            Assert.That(repeatedPreview, Is.SameAs(cachedPreview));
+            Assert.That(catalog.WaveformResult, Is.EqualTo(VnResult.VN_OK));
+            Assert.That(catalog.WaveformDiagnostic, Is.Empty);
+            Assert.That(catalog.GetActionPreview("Play_U4_Caller", out _, out error), Is.EqualTo(VnResult.VN_CAPABILITY_UNAVAILABLE));
+            Assert.That(catalog.WaveformDiagnostic, Is.Not.Empty);
+            Assert.That(catalog.GetSourceWaveforms("Play_U4_Caller", out var repeatedParent, out error), Is.EqualTo(VnResult.VN_OK), error);
+            Assert.That(repeatedParent, Is.SameAs(parent));
+            Assert.That(catalog.WaveformResult, Is.EqualTo(VnResult.VN_OK));
+            Assert.That(catalog.WaveformDiagnostic, Is.Empty);
             string destination = Path.Combine(Application.temporaryCachePath, "HarkenCopy_" + Guid.NewGuid().ToString("N"));
             try
             {
