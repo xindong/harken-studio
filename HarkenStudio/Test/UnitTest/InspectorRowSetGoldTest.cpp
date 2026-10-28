@@ -6,7 +6,7 @@
 #include "Widgets/Inspector/ContainerInspectorSchema.h"
 #include "Widgets/Inspector/InspectorLayout.h"
 #include "Widgets/Inspector/LayerInspectorSchema.h"
-#include "Widgets/Inspector/PieceInspectorSchema.h"
+#include "Widgets/Inspector/SegmentInspectorSchema.h"
 #include "Widgets/Inspector/SoundInspectorSchema.h"
 #include "Widgets/Inspector/TrackInspectorSchema.h"
 #include "Widgets/Inspector/VariableInspectorSchema.h"
@@ -27,7 +27,7 @@ const std::vector<std::pair<ProjectItem::Type, const VNX::PropertySchema*>>& nin
         {ProjectItem::Type::Sound, &VNX::soundInspectorSchema()},
         {ProjectItem::Type::Container, &VNX::containerInspectorSchema()},
         {ProjectItem::Type::Track, &VNX::trackInspectorSchema()},
-        {ProjectItem::Type::Piece, &VNX::pieceInspectorSchema()},
+        {ProjectItem::Type::Segment, &VNX::segmentInspectorSchema()},
         {ProjectItem::Type::Layer, &VNX::layerInspectorSchema()},
         {ProjectItem::Type::Bus, &VNX::busInspectorSchema()},
         {ProjectItem::Type::Action, &VNX::actionInspectorSchema()},

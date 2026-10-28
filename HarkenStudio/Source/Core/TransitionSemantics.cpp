@@ -1,6 +1,6 @@
 #include "TransitionSemantics.h"
 
-#include "Components/VPiece.h"
+#include "Components/VSegment.h"
 #include "Components/VSelection.h"
 #include "Components/VTrack.h"
 #include "ItemTypeCatalog.h"
@@ -332,7 +332,7 @@ private:
 
 struct DownResult
 {
-    const ProjectItem* piece = nullptr;
+    const ProjectItem* segment = nullptr;
     std::vector<QUuid> path;
     bool cycle = false;
 };
@@ -345,7 +345,7 @@ DownResult resolveDown(const ProjectItem* item,
     if (!item) return {};
     if (!visited.enter(item)) return {nullptr, {}, true};
     path.push_back(item->guid);
-    if (item->type == ProjectItem::Type::Piece)
+    if (item->type == ProjectItem::Type::Segment)
         return {item, std::move(path), false};
     if (item->type == ProjectItem::Type::Sound) return {};
     if (item->type == ProjectItem::Type::Track) {
@@ -362,7 +362,7 @@ DownResult resolveDown(const ProjectItem* item,
             const ProjectItem* target = resolve
                 ? resolve(timeline->clips.items[index].targetGuid) : nullptr;
             DownResult result = resolveDown(target, resolve, visited, path);
-            if (result.piece) return result;
+            if (result.segment) return result;
             cycle = cycle || result.cycle;
         }
         return {nullptr, {}, cycle};
@@ -370,7 +370,7 @@ DownResult resolveDown(const ProjectItem* item,
     bool cycle = false;
     for (const auto& child : item->children) {
         DownResult result = resolveDown(child.get(), resolve, visited, path);
-        if (result.piece) return result;
+        if (result.segment) return result;
         cycle = cycle || result.cycle;
     }
     return {nullptr, {}, cycle};
@@ -759,8 +759,8 @@ TransitionWatchResult resolveWatchReference(
     result.placementContextProvided = placement != nullptr;
     VisitSet visited;
     DownResult down = resolveDown(source, resolve, visited, {});
-    if (down.piece) {
-        result.referencePiece = down.piece;
+    if (down.segment) {
+        result.referenceSegment = down.segment;
         result.direction = TransitionWatchDirection::Down;
         result.path = std::move(down.path);
         return result;
@@ -778,8 +778,8 @@ TransitionWatchResult resolveWatchReference(
             for (const ProjectItem* candidate : scope.placementChain) {
                 if (!candidate) continue;
                 result.path.push_back(candidate->guid);
-                if (candidate->type == ProjectItem::Type::Piece) {
-                    result.referencePiece = candidate;
+                if (candidate->type == ProjectItem::Type::Segment) {
+                    result.referenceSegment = candidate;
                     result.direction = TransitionWatchDirection::UpPlacement;
                     return result;
                 }
@@ -799,8 +799,8 @@ TransitionWatchResult resolveWatchReference(
             return result;
         }
         result.path.push_back(candidate->guid);
-        if (candidate->type == ProjectItem::Type::Piece) {
-            result.referencePiece = candidate;
+        if (candidate->type == ProjectItem::Type::Segment) {
+            result.referenceSegment = candidate;
             result.direction = TransitionWatchDirection::UpOrganization;
             return result;
         }
@@ -808,8 +808,8 @@ TransitionWatchResult resolveWatchReference(
     result.path.clear();
     if (result.failureReason.isEmpty())
         result.failureReason = placement
-            ? QStringLiteral("No Piece exists in placement or organization scope")
-            : QStringLiteral("No placement context; organization scope has no Piece");
+            ? QStringLiteral("No Segment exists in placement or organization scope")
+            : QStringLiteral("No placement context; organization scope has no Segment");
     return result;
 }
 
@@ -837,7 +837,7 @@ TransitionWatchView buildTransitionWatchView(
     view.failureReason = result.failureReason;
 
     if (result.found()) {
-        view.referencePiece = result.referencePiece->guid;
+        view.referenceSegment = result.referenceSegment->guid;
         view.caption = watchPathNames(result.path, resolve);
     } else {
         view.caption = QStringLiteral("no reference — immediate + fade");

@@ -62,13 +62,13 @@ struct PlayableInstanceDeadlineTestAccess;
 using PlayableInstanceHandle = std::uint64_t;
 
 // Which content type an instance is an instance of. Sound, Container, Track
-// and Piece are the four directly playable types; the table keeps the kind so
+// and Segment are the four directly playable types; the table keeps the kind so
 // callers can reject a handle of the wrong type without a second lookup.
 enum class PlayableKind : std::uint8_t {
     Sound = 1,
     Container = 2,
     Track = 3,
-    Piece = 4
+    Segment = 4
 };
 
 // Lifecycle stages, in the only order they may be traversed. Free and

@@ -47,7 +47,7 @@ using harken::MeterSignature;
 using harken::MissingBoundaryPolicy;
 using harken::MusicalTick;
 using harken::OccurrenceStatePool;
-using harken::PieceTimeType;
+using harken::SegmentTimeType;
 using harken::PlayableInstanceHandle;
 using harken::PlayableInstanceTable;
 using harken::PlayableKind;
@@ -216,7 +216,7 @@ TEST(TimelinePlanner, FrontierMetadataSurvivesProducerFilingAndCannotShiftOrLeak
 TEST(TimelinePlanner, RollingStartRefusalLeavesNoFutureIntent) {
     PlayableInstanceTable instances(1);
     const PlayableInstanceHandle owner =
-        instances.Acquire(PlayableKind::Piece, 0);
+        instances.Acquire(PlayableKind::Segment, 0);
     ScheduledTransactionPool pool;
     auto poolConfig = PoolConfig(256, 1024);
     poolConfig.maxScheduledTransactions = 1;
@@ -266,7 +266,7 @@ TEST(TimelinePlanner, RollingCursorAndDeferredCapacityAt95_100_101) {
     constexpr std::uint32_t kCapacity = 20;
     PlayableInstanceTable instances(1);
     const PlayableInstanceHandle owner =
-        instances.Acquire(PlayableKind::Piece, 0);
+        instances.Acquire(PlayableKind::Segment, 0);
     const std::uint64_t ownerEpoch =
         instances.Classify(owner).scheduleEpoch;
     ScheduledTransactionPool pool;
@@ -315,7 +315,7 @@ TEST(TimelinePlanner, RollingCursorAndDeferredCapacityAt95_100_101) {
 TEST(TimelinePlanner, ReplaceGenerationMaxKeepsStartedArmOwnedForDeclickStop) {
     PlayableInstanceTable instances(1);
     const PlayableInstanceHandle owner =
-        instances.Acquire(PlayableKind::Piece, 0);
+        instances.Acquire(PlayableKind::Segment, 0);
     const std::uint64_t ownerEpoch =
         instances.Classify(owner).scheduleEpoch;
     ScheduledTransactionPool pool;
@@ -372,7 +372,7 @@ TEST(TimelinePlanner, ReplaceGenerationMaxKeepsStartedArmOwnedForDeclickStop) {
 TEST(TimelinePlanner, LongOccurrencePublishesRollingGroupsWithoutSpanFailure) {
     PlayableInstanceTable instances(1);
     const PlayableInstanceHandle owner =
-        instances.Acquire(PlayableKind::Piece, 0);
+        instances.Acquire(PlayableKind::Segment, 0);
     ScheduledTransactionPool pool;
     auto poolConfig = PoolConfig(256, 16384);
     poolConfig.maxTransactionSpanFrames = 8192;
@@ -532,7 +532,7 @@ TEST(TimelinePlanner, ZeroLeadFrontierKeepsOnePublishedQuantumAfterBootstrap) {
 TEST(TimelinePlanner, ResetRequiresAnEmptyDeferredIntentPool) {
     PlayableInstanceTable instances(1);
     const PlayableInstanceHandle owner =
-        instances.Acquire(PlayableKind::Piece, 0);
+        instances.Acquire(PlayableKind::Segment, 0);
     ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(PoolConfig(100, 400), 0, kEpoch));
     DeferredIntentPool deferred(1, 0);
@@ -558,7 +558,7 @@ TEST(TimelinePlanner, FailedResetPreservesLiveDeferredMappings) {
     PlayableInstanceTable instances(2);
     OccurrenceStatePool occurrences(1);
     const PlayableInstanceHandle owner =
-        instances.Acquire(PlayableKind::Piece, 0);
+        instances.Acquire(PlayableKind::Segment, 0);
     ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(PoolConfig(100, 400), 0, kEpoch));
     DeferredIntentPool deferred(1, 0);
@@ -599,7 +599,7 @@ TEST(TimelinePlanner, FailedResetPreservesLiveDeferredMappings) {
 TEST(TimelinePlanner, NullEventStorageIsARefusedTransaction) {
     PlayableInstanceTable instances(1);
     const PlayableInstanceHandle owner =
-        instances.Acquire(PlayableKind::Piece, 0);
+        instances.Acquire(PlayableKind::Segment, 0);
     ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(PoolConfig(100, 400), 0, kEpoch));
     DeferredIntentPool deferred(1, 0);
@@ -626,7 +626,7 @@ TEST(TimelinePlanner, NullEventStorageIsARefusedTransaction) {
 TEST(TimelinePlanner, AdvancePublishesLeadFromTheNewWindowStart) {
     PlayableInstanceTable instances(1);
     const PlayableInstanceHandle owner =
-        instances.Acquire(PlayableKind::Piece, 0);
+        instances.Acquire(PlayableKind::Segment, 0);
     ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(PoolConfig(100, 400), 0, kEpoch));
     DeferredIntentPool deferred(1, 0);
@@ -665,7 +665,7 @@ TEST(TimelinePlanner, AdvancePublishesLeadFromTheNewWindowStart) {
 TEST(TimelinePlanner, ScheduleIsDeterministicAcrossUpdateCadence) {
     PlayableInstanceTable instances(8);
     OccurrenceStatePool occ(8);
-    const PlayableInstanceHandle owner = instances.Acquire(PlayableKind::Piece, 0);
+    const PlayableInstanceHandle owner = instances.Acquire(PlayableKind::Segment, 0);
     const std::uint64_t ownerEpoch = instances.Classify(owner).scheduleEpoch;
 
     const EventTemplate e1[] = {{0, 1, 0, 0, 0, 0xA0}, {30, 1, 1, 0, 0, 0xA1}};
@@ -763,7 +763,7 @@ TEST(TimelinePlanner, ScheduleIsDeterministicAcrossUpdateCadence) {
 TEST(TimelinePlanner, BeyondHorizonPlayDefersThenMaterializes) {
     PlayableInstanceTable instances(8);
     OccurrenceStatePool occ(8);
-    const PlayableInstanceHandle owner = instances.Acquire(PlayableKind::Piece, 0);
+    const PlayableInstanceHandle owner = instances.Acquire(PlayableKind::Segment, 0);
 
     ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(PoolConfig(100, 400), 0, kEpoch)); // window [0,400)
@@ -827,7 +827,7 @@ TEST(TimelinePlanner, DefersUntilTheEntireTransactionSpanFits) {
     PlayableInstanceTable instances(2);
     OccurrenceStatePool occurrences(1);
     const PlayableInstanceHandle owner =
-        instances.Acquire(PlayableKind::Piece, 0);
+        instances.Acquire(PlayableKind::Segment, 0);
     ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(PoolConfig(100, 400), 0, kEpoch));
     DeferredIntentPool deferred(2, 0);
@@ -887,7 +887,7 @@ TEST(TimelinePlanner, DefersUntilTheEntireTransactionSpanFits) {
 TEST(TimelinePlanner, RefusesADeferredSpanThatCanNeverFit) {
     PlayableInstanceTable instances(2);
     const PlayableInstanceHandle owner =
-        instances.Acquire(PlayableKind::Piece, 0);
+        instances.Acquire(PlayableKind::Segment, 0);
     ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(PoolConfig(100, 400), 0, kEpoch));
     DeferredIntentPool deferred(2, 0);
@@ -919,7 +919,7 @@ TEST(TimelinePlanner, RefusesADeferredSpanThatCanNeverFit) {
 TEST(TimelinePlanner, ReusesSlotsReleasedByStaleDeferredIntents) {
     PlayableInstanceTable instances(2);
     const PlayableInstanceHandle owner =
-        instances.Acquire(PlayableKind::Piece, 0);
+        instances.Acquire(PlayableKind::Segment, 0);
     ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(PoolConfig(100, 400), 0, kEpoch));
     DeferredIntentPool deferred(2, 0);
@@ -966,7 +966,7 @@ TEST(TimelinePlanner, DeferredMaterializationPreservesLatePolicies) {
          }) {
         PlayableInstanceTable instances(2);
         const PlayableInstanceHandle owner =
-            instances.Acquire(PlayableKind::Piece, 0);
+            instances.Acquire(PlayableKind::Segment, 0);
         ScheduledTransactionPool pool;
         ASSERT_TRUE(pool.Reset(PoolConfig(100, 400), 0, kEpoch));
         DeferredIntentPool deferred(2, 0);
@@ -1019,13 +1019,13 @@ TEST(TimelinePlanner, DeferredMaterializationPreservesBoundaryPolicy) {
     PlayableInstanceTable instances(2);
     OccurrenceStatePool occurrences(1);
     const PlayableInstanceHandle owner =
-        instances.Acquire(PlayableKind::Piece, 0);
+        instances.Acquire(PlayableKind::Segment, 0);
     TempoSegment segment{MusicalTick{0}, 20000};
     ClockKernel clock;
     ASSERT_TRUE(clock.Reset(48000, &segment, 1));
     const MarkerPoint marker[] = {{harkentest::ObjectId(1), MarkerKind::Custom, 51}};
     MarkerIndex markerIndex;
-    ASSERT_TRUE(markerIndex.Reset(PieceTimeType::Musical, &clock,
+    ASSERT_TRUE(markerIndex.Reset(SegmentTimeType::Musical, &clock,
                                MeterSignature{4, 4}, marker, 1, 1));
     ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(PoolConfig(100, 400), 0, kEpoch));
@@ -1046,7 +1046,7 @@ TEST(TimelinePlanner, DeferredMaterializationPreservesBoundaryPolicy) {
     program.entryAnchorFrame = 250;
     program.events = events;
     program.eventCount = 2;
-    program.timeType = PieceTimeType::Musical;
+    program.timeType = SegmentTimeType::Musical;
     program.clock = &clock;
     program.markerIndex = &markerIndex;
     program.boundaryType = BoundaryType::Marker;
@@ -1092,12 +1092,12 @@ TEST(TimelinePlanner, DeferredMaterializationPreservesMissingBoundaryPolicy) {
          }) {
         PlayableInstanceTable instances(2);
         const PlayableInstanceHandle owner =
-            instances.Acquire(PlayableKind::Piece, 0);
+            instances.Acquire(PlayableKind::Segment, 0);
         TempoSegment segment{MusicalTick{0}, 20000};
         ClockKernel clock;
         ASSERT_TRUE(clock.Reset(48000, &segment, 1));
         MarkerIndex emptyMarkerIndex;
-        ASSERT_TRUE(emptyMarkerIndex.Reset(PieceTimeType::Musical, &clock,
+        ASSERT_TRUE(emptyMarkerIndex.Reset(SegmentTimeType::Musical, &clock,
                                         MeterSignature{4, 4}, nullptr, 0, 1));
         ScheduledTransactionPool pool;
         ASSERT_TRUE(pool.Reset(PoolConfig(100, 400), 0, kEpoch));
@@ -1118,7 +1118,7 @@ TEST(TimelinePlanner, DeferredMaterializationPreservesMissingBoundaryPolicy) {
         program.entryAnchorFrame = 250;
         program.events = events;
         program.eventCount = 2;
-        program.timeType = PieceTimeType::Musical;
+        program.timeType = SegmentTimeType::Musical;
         program.clock = &clock;
         program.markerIndex = &emptyMarkerIndex;
         program.boundaryType = BoundaryType::Marker;
@@ -1152,7 +1152,7 @@ TEST(TimelinePlanner, DeferredMaterializationPreservesMissingBoundaryPolicy) {
 TEST(TimelinePlanner, DeferredIntentKeepsItsOriginalTransportEpoch) {
     PlayableInstanceTable instances(2);
     const PlayableInstanceHandle owner =
-        instances.Acquire(PlayableKind::Piece, 0);
+        instances.Acquire(PlayableKind::Segment, 0);
     ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(PoolConfig(100, 400), 0, kEpoch));
     DeferredIntentPool deferred(2, 0);
@@ -1188,7 +1188,7 @@ TEST(TimelinePlanner, DeferredBudgetOrdersByLogicCommitSequence) {
     PlayableInstanceTable instances(2);
     OccurrenceStatePool occurrences(1);
     const PlayableInstanceHandle owner =
-        instances.Acquire(PlayableKind::Piece, 0);
+        instances.Acquire(PlayableKind::Segment, 0);
     ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(PoolConfig(100, 400), 0, kEpoch));
     DeferredIntentPool deferred(2, 0);
@@ -1236,7 +1236,7 @@ TEST(TimelinePlanner, TransientMaterializationRefusalRetriesNextQuantum) {
     PlayableInstanceTable instances(2);
     OccurrenceStatePool occurrences(1);
     const PlayableInstanceHandle owner =
-        instances.Acquire(PlayableKind::Piece, 0);
+        instances.Acquire(PlayableKind::Segment, 0);
     ScheduledTransactionPool::Config poolConfig = PoolConfig(100, 400);
     poolConfig.maxScheduledTransactions = 1;
     ScheduledTransactionPool pool;
@@ -1317,9 +1317,9 @@ TEST(TimelinePlanner, TransientMaterializationRefusalRetriesNextQuantum) {
 TEST(TimelinePlanner, RollingClaimsRouteOneAtATime) {
     PlayableInstanceTable instances(2);
     const PlayableInstanceHandle firstOwner =
-        instances.Acquire(PlayableKind::Piece, 0);
+        instances.Acquire(PlayableKind::Segment, 0);
     const PlayableInstanceHandle secondOwner =
-        instances.Acquire(PlayableKind::Piece, 0);
+        instances.Acquire(PlayableKind::Segment, 0);
     const std::uint64_t firstEpoch =
         instances.Classify(firstOwner).scheduleEpoch;
     const std::uint64_t secondEpoch =
@@ -1385,7 +1385,7 @@ TEST(TimelinePlanner, RollingClaimsRouteOneAtATime) {
 TEST(TimelinePlanner, MaterializationBudgetPacesAt95_100_101) {
     PlayableInstanceTable instances(8);
     OccurrenceStatePool occ(8);
-    const PlayableInstanceHandle owner = instances.Acquire(PlayableKind::Piece, 0);
+    const PlayableInstanceHandle owner = instances.Acquire(PlayableKind::Segment, 0);
     const std::uint64_t ownerEpoch = instances.Classify(owner).scheduleEpoch;
 
     ScheduledTransactionPool pool;
@@ -1451,7 +1451,7 @@ TEST(TimelinePlanner, MaterializationBudgetPacesAt95_100_101) {
 // the publish frontier is refused, dropped or rescheduled per the caller's policy.
 TEST(TimelinePlanner, LateTrichotomyWiredToPool) {
     PlayableInstanceTable instances(8);
-    const PlayableInstanceHandle owner = instances.Acquire(PlayableKind::Piece, 0);
+    const PlayableInstanceHandle owner = instances.Acquire(PlayableKind::Segment, 0);
     const std::uint64_t ownerEpoch = instances.Classify(owner).scheduleEpoch;
 
     const EventTemplate ev[] = {{0, 1, 0, 0, 0, 0x55}};
@@ -1493,7 +1493,7 @@ TEST(TimelinePlanner, LateTrichotomyWiredToPool) {
 // onto the next bar; with no next boundary it takes the missing-boundary policy.
 TEST(TimelinePlanner, NextEquivalentBoundaryResolvedThroughMarkerGrid) {
     PlayableInstanceTable instances(8);
-    const PlayableInstanceHandle owner = instances.Acquire(PlayableKind::Piece, 0);
+    const PlayableInstanceHandle owner = instances.Acquire(PlayableKind::Segment, 0);
     const std::uint64_t ownerEpoch = instances.Classify(owner).scheduleEpoch;
 
     // 3000 BPM-ish: micros 20000 gives exactly 1 frame/tick at 48 kHz, so a 4/4
@@ -1502,7 +1502,7 @@ TEST(TimelinePlanner, NextEquivalentBoundaryResolvedThroughMarkerGrid) {
     ClockKernel clock;
     ASSERT_TRUE(clock.Reset(48000, &seg, 1));
     MarkerIndex barGrid;
-    ASSERT_TRUE(barGrid.Reset(PieceTimeType::Musical, &clock, MeterSignature{4, 4},
+    ASSERT_TRUE(barGrid.Reset(SegmentTimeType::Musical, &clock, MeterSignature{4, 4},
                               nullptr, 0, 4)); // bar 3840 ticks -> 3840 frames
 
     const EventTemplate ev[] = {{0, 1, 0, 0, 0, 0x42}};
@@ -1513,7 +1513,7 @@ TEST(TimelinePlanner, NextEquivalentBoundaryResolvedThroughMarkerGrid) {
     p.entryAnchorFrame = 0; // entry at frame 0, below the frontier => late
     p.events = ev;
     p.eventCount = 1;
-    p.timeType = PieceTimeType::Musical;
+    p.timeType = SegmentTimeType::Musical;
     p.clock = &clock;
     p.markerIndex = &barGrid;
     p.boundaryType = BoundaryType::Bar;
@@ -1563,12 +1563,12 @@ TEST(TimelinePlanner, BoundaryRealignmentTrimsOnlyUnavailablePreroll) {
     PlayableInstanceTable instances(2);
     OccurrenceStatePool occurrences(1);
     const PlayableInstanceHandle owner =
-        instances.Acquire(PlayableKind::Piece, 0);
+        instances.Acquire(PlayableKind::Segment, 0);
     TempoSegment segment{MusicalTick{0}, 20000};
     ClockKernel clock;
     ASSERT_TRUE(clock.Reset(48000, &segment, 1));
     MarkerIndex barGrid;
-    ASSERT_TRUE(barGrid.Reset(PieceTimeType::Musical, &clock,
+    ASSERT_TRUE(barGrid.Reset(SegmentTimeType::Musical, &clock,
                               MeterSignature{4, 4}, nullptr, 0, 1));
     ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(PoolConfig(960, 19200), 0, kEpoch));
@@ -1590,7 +1590,7 @@ TEST(TimelinePlanner, BoundaryRealignmentTrimsOnlyUnavailablePreroll) {
     program.entryAnchorFrame = 0;
     program.events = events;
     program.eventCount = 2;
-    program.timeType = PieceTimeType::Musical;
+    program.timeType = SegmentTimeType::Musical;
     program.clock = &clock;
     program.markerIndex = &barGrid;
     program.boundaryType = BoundaryType::Bar;
@@ -1617,7 +1617,7 @@ TEST(TimelinePlanner, BoundaryRealignmentTrimsOnlyUnavailablePreroll) {
 TEST(TimelinePlanner, OutOfOrderPostingStaysInFrameOrder) {
     PlayableInstanceTable instances(8);
     OccurrenceStatePool occ(8);
-    const PlayableInstanceHandle owner = instances.Acquire(PlayableKind::Piece, 0);
+    const PlayableInstanceHandle owner = instances.Acquire(PlayableKind::Segment, 0);
     const std::uint64_t ownerEpoch = instances.Classify(owner).scheduleEpoch;
 
     ScheduledTransactionPool pool;
@@ -1742,7 +1742,7 @@ TEST(TimelinePlanner, AnchoredFrameClampsBelowZeroAndSaturatesAbove) {
 TEST(TimelinePlanner, ExtremeNegativeOffsetFilesAtTheClampedFrame) {
     PlayableInstanceTable instances(1);
     const PlayableInstanceHandle owner =
-        instances.Acquire(PlayableKind::Piece, 0);
+        instances.Acquire(PlayableKind::Segment, 0);
     ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(PoolConfig(100, 400), 0, kEpoch));
     DeferredIntentPool deferred(1, 0);

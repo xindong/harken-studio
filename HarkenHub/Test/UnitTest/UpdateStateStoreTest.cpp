@@ -44,6 +44,7 @@ TEST_F(UpdateStateStoreTest, RoundTripsRecords)
     record.expectedSha256 = QString(64, QLatin1Char('a'));
     record.packageSize = 12345;
     record.downloadedBytes = 6789;
+    record.downloadRestarted = true;
     record.releaseSequence = 7;
     ASSERT_TRUE(UpdateStateStore::save(record, kNow));
 
@@ -54,6 +55,7 @@ TEST_F(UpdateStateStoreTest, RoundTripsRecords)
     EXPECT_EQ(loaded.buildId, QStringLiteral("run3.cccc3333"));
     EXPECT_EQ(loaded.packageSize, 12345);
     EXPECT_EQ(loaded.downloadedBytes, 6789);
+    EXPECT_TRUE(loaded.downloadRestarted);
     EXPECT_EQ(loaded.releaseSequence, 7);
     EXPECT_EQ(loaded.updatedAt, QStringLiteral("2026-07-24T12:00:00.000Z"));
 

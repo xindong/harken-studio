@@ -13,7 +13,7 @@
 #include "Components/VAudio.h"
 #include "Components/VAction.h"
 #include "Components/VMixNode.h"
-#include "Components/VPiece.h"
+#include "Components/VSegment.h"
 #include "Components/VSelection.h"
 #include "Components/VSpatial.h"
 #include "Components/VTrack.h"
@@ -72,7 +72,7 @@ std::optional<ContentKind> contentKind(ProjectItem::Type type)
         case ProjectItem::Type::Sound: return ContentKind::Sound;
         case ProjectItem::Type::Container: return ContentKind::Container;
         case ProjectItem::Type::Track: return ContentKind::Track;
-        case ProjectItem::Type::Piece: return ContentKind::Piece;
+        case ProjectItem::Type::Segment: return ContentKind::Segment;
         default: return std::nullopt;
     }
 }
@@ -226,7 +226,7 @@ std::unordered_set<ProjectItem*> runtimeDefinitions(
             } else if (const auto* timeline = item->comp<VTrack>()) {
                 unavailable = std::any_of(timeline->clips.items.begin(), timeline->clips.items.end(),
                     [&](const auto& clip) { return unavailableTarget(clip.targetGuid); });
-            } else if (item->type == ProjectItem::Type::Piece) {
+            } else if (item->type == ProjectItem::Type::Segment) {
                 for (const auto& [child, parent] : index.parentDefinition)
                     unavailable = unavailable || (parent == item && mediaUnavailable.count(child) != 0);
             }
@@ -263,8 +263,8 @@ std::optional<harkenstudiobuild::ActionTargetKindV1> actionTargetKind(ProjectIte
             return harkenstudiobuild::ActionTargetKindV1::Container;
         case ProjectItem::Type::Track:
             return harkenstudiobuild::ActionTargetKindV1::Track;
-        case ProjectItem::Type::Piece:
-            return harkenstudiobuild::ActionTargetKindV1::Piece;
+        case ProjectItem::Type::Segment:
+            return harkenstudiobuild::ActionTargetKindV1::Segment;
         case ProjectItem::Type::Action:
             return harkenstudiobuild::ActionTargetKindV1::Action;
         case ProjectItem::Type::Variable:
@@ -334,7 +334,7 @@ bool isPlayableActionReference(ProjectItem::Type type)
     return type == ProjectItem::Type::Sound
         || type == ProjectItem::Type::Container
         || type == ProjectItem::Type::Track
-        || type == ProjectItem::Type::Piece;
+        || type == ProjectItem::Type::Segment;
 }
 
 bool buildDefinitionNode(ProjectItem& item, const ProjectIndex& index,
@@ -441,23 +441,23 @@ bool buildDefinitionNode(ProjectItem& item, const ProjectIndex& index,
         }
     }
 
-    if (*kind == ContentKind::Piece) {
-        const auto* timeline = item.comp<VPiece>();
+    if (*kind == ContentKind::Segment) {
+        const auto* timeline = item.comp<VSegment>();
         if (timeline == nullptr) {
-            setError(error, QStringLiteral("Piece timeline is unavailable"));
+            setError(error, QStringLiteral("Segment timeline is unavailable"));
             return false;
         }
-        harkenprojectschema::InputPieceTimeSpec time;
-        time.kind = timeline->pieceTime.domain == TimelineDomain::Musical
-            ? harkenprojectschema::PieceTimeKind::Musical
-            : harkenprojectschema::PieceTimeKind::Absolute;
-        for (const TempoPoint& source : timeline->pieceTime.tempoMap)
+        harkenprojectschema::InputSegmentTimeSpec time;
+        time.kind = timeline->segmentTime.domain == TimelineDomain::Musical
+            ? harkenprojectschema::SegmentTimeKind::Musical
+            : harkenprojectschema::SegmentTimeKind::Absolute;
+        for (const TempoPoint& source : timeline->segmentTime.tempoMap)
             time.tempoMap.push_back({source.tick,
                                      source.microsecondsPerQuarter});
-        for (const MeterPoint& source : timeline->pieceTime.meterMap) {
+        for (const MeterPoint& source : timeline->segmentTime.meterMap) {
             if (source.numerator < 0 || source.numerator > UINT16_MAX
                 || source.denominator < 0 || source.denominator > UINT16_MAX) {
-                setError(error, QStringLiteral("Piece meter is invalid"));
+                setError(error, QStringLiteral("Segment meter is invalid"));
                 return false;
             }
             time.meterMap.push_back(
@@ -493,7 +493,7 @@ std::optional<harkenstudiobuild::PlayableKindV1> transitionPlayableKind(
         case ProjectItem::Type::Container:
             return harkenstudiobuild::PlayableKindV1::Container;
         case ProjectItem::Type::Track: return harkenstudiobuild::PlayableKindV1::Track;
-        case ProjectItem::Type::Piece: return harkenstudiobuild::PlayableKindV1::Piece;
+        case ProjectItem::Type::Segment: return harkenstudiobuild::PlayableKindV1::Segment;
         default: return std::nullopt;
     }
 }
@@ -535,7 +535,7 @@ bool accumulateBoundedTransitionSoundLeaves(
                 }
             }
         }
-    } else if (item.type == ProjectItem::Type::Piece) {
+    } else if (item.type == ProjectItem::Type::Segment) {
         const auto children = index.children.find(
             const_cast<ProjectItem*>(&item));
         if (children == index.children.end()) {
@@ -690,7 +690,7 @@ bool appendBasicTransitionProgram(
             setStatus(status,
                       CurrentWorldBuildStatus::CapabilityUnavailable);
             setError(error, QStringLiteral(
-                "Match transitions require bounded Sound, Track or Piece children"));
+                "Match transitions require bounded Sound, Track or Segment children"));
             return false;
         }
     }
@@ -1690,7 +1690,7 @@ bool affectsCurrentWorld(ProjectItemType itemType,
         || itemType == ProjectItemType::Sound
         || itemType == ProjectItemType::Container
         || itemType == ProjectItemType::Track
-        || itemType == ProjectItemType::Piece
+        || itemType == ProjectItemType::Segment
         || itemType == ProjectItemType::Variable
         || itemType == ProjectItemType::Action
         || itemType == ProjectItemType::Bus;
@@ -1722,8 +1722,8 @@ bool affectsCurrentWorld(ProjectItemType itemType,
                 || name == QStringLiteral("transitions");
         case ProjectItemType::Track:
             return name == QStringLiteral("clips");
-        case ProjectItemType::Piece:
-            return name == QStringLiteral("pieceTime")
+        case ProjectItemType::Segment:
+            return name == QStringLiteral("segmentTime")
                 || name == QStringLiteral("markers");
         case ProjectItemType::Variable:
             return name == QStringLiteral("kind")

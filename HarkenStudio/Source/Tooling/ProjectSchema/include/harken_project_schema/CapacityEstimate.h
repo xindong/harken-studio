@@ -1,4 +1,4 @@
-// The active-capacity upper bound derived from a built PieceIR.
+// The active-capacity upper bound derived from a built SegmentIR.
 //
 // This is a parallel product, not a field of the immutable IR: estimation is a
 // separate analysis that reads the IR and can fail on its own (a musical
@@ -6,9 +6,9 @@
 // IR untouched and lets the estimate be recomputed or skipped independently.
 //
 // The bound counts, per arranging scope, the peak number of occurrences whose
-// intervals overlap. A scope is a Piece (all its Tracks share the Piece's clock
+// intervals overlap. A scope is a Segment (all its Tracks share the Segment's clock
 // and origin) or a directly triggered standalone Track. Occurrences whose end is
-// not a natural length — a Container or Piece target, terminated by its own
+// not a natural length — a Container or Segment target, terminated by its own
 // program or exit marker — have no interval to overlap; they are excluded from the
 // peak and counted separately, and their presence marks the active bound a lower
 // bound rather than silently dropping them or counting them as unbounded.
@@ -20,7 +20,7 @@
 #define HARKEN_PROJECT_SCHEMA_CAPACITY_ESTIMATE_H
 
 #include "harken_project_schema/Model.h"
-#include "harken_project_schema/PieceIR.h"
+#include "harken_project_schema/SegmentIR.h"
 
 #include <cstdint>
 #include <optional>
@@ -30,11 +30,11 @@ namespace harkenprojectschema {
 
 // The capacity of one arranging scope.
 struct ScopeCapacity {
-    bool isPiece = false;  // true: scopeId is a Piece; false: a standalone Track
+    bool isSegment = false;  // true: scopeId is a Segment; false: a standalone Track
     StableId scopeId = kUnmintedStableId;
     // The peak number of natural-length occurrences whose intervals overlap.
     std::uint32_t peakActiveOccurrences = 0;
-    // Occurrences with no natural end (Container or Piece targets), excluded from
+    // Occurrences with no natural end (Container or Segment targets), excluded from
     // the peak above.
     std::uint32_t unknownDurationOccurrences = 0;
 };
@@ -57,7 +57,7 @@ struct CapacityEstimate {
 // occurrence's tick coordinate cannot be expressed in nanoseconds without
 // overflowing a signed 64-bit count — a deterministic refusal at the authored
 // coordinate rather than a silent wrap.
-std::optional<CapacityEstimate> EstimateCapacity(const PieceIR& ir);
+std::optional<CapacityEstimate> EstimateCapacity(const SegmentIR& ir);
 
 }  // namespace harkenprojectschema
 

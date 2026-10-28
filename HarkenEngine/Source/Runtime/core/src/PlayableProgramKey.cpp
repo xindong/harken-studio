@@ -4,7 +4,7 @@ namespace harken {
 
 bool ValidPlayableProgramKey(const PlayableProgramKey& key) noexcept {
     const std::uint32_t kind = static_cast<std::uint32_t>(key.kind);
-    if (kind > static_cast<std::uint32_t>(PlayableKindV1::Piece) ||
+    if (kind > static_cast<std::uint32_t>(PlayableKindV1::Segment) ||
         key.stableId == VnObjectId{} || key.world == kNoWorldGeneration ||
         key.runtimeSemanticFingerprint == 0) {
         return false;

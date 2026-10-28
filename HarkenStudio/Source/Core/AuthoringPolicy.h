@@ -15,8 +15,8 @@ const std::vector<TransitionExitTiming>& allowedTransitionExitTimings();
 bool allowsTransitionExitTiming(TransitionExitTiming timing);
 TransitionRuleDef defaultTransitionRule();
 TransitionTableDef defaultTransitionTable();
-TimelineValidation validatePieceTime(const PieceTimeSpec& time);
-TimelineValidation validatePieceTime(const QJsonObject& time);
+TimelineValidation validateSegmentTime(const SegmentTimeSpec& time);
+TimelineValidation validateSegmentTime(const QJsonObject& time);
 TimelineValidation validateTemplate(const QJsonObject& templateData);
 TimelineValidation validateTimeline(const ProjectItem& item,
                                     const TimelineItemResolver& resolve,

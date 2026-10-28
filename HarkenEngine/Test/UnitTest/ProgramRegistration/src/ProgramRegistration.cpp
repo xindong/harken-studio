@@ -6,7 +6,7 @@
 #include "harken_program_registration/EffectDescriptorWriter.h"
 #include "harken_project_schema/FixedSlotLowerer.h"
 #include "harken_project_schema/Model.h"
-#include "harken_project_schema/PieceIR.h"
+#include "harken_project_schema/SegmentIR.h"
 
 #include <algorithm>
 #include <bit>
@@ -25,7 +25,7 @@ namespace {
 constexpr std::int64_t kMinSampleRateHz = 1;
 constexpr std::int64_t kMaxSampleRateHz = 3'000'000;
 
-// A placeholder tempo for an Absolute piece's clock. TimeToFrame ignores the tempo
+// A placeholder tempo for an Absolute segment's clock. TimeToFrame ignores the tempo
 // map entirely (only the sample rate relates nanoseconds to frames), but Reset
 // still requires one in-domain row; 120 BPM is in domain for every accepted rate.
 constexpr std::int64_t kPlaceholderMicrosPerQuarter = 500'000;
@@ -68,14 +68,14 @@ bool ToTimelineEventKind(harkenprojectschema::TemplateEventKind kind,
     return false;
 }
 
-bool ToRuntimeTimeType(harkenprojectschema::PieceTimeKind kind,
-                       harken::PieceTimeType& mapped) {
+bool ToRuntimeTimeType(harkenprojectschema::SegmentTimeKind kind,
+                       harken::SegmentTimeType& mapped) {
     switch (kind) {
-    case harkenprojectschema::PieceTimeKind::Absolute:
-        mapped = harken::PieceTimeType::Absolute;
+    case harkenprojectschema::SegmentTimeKind::Absolute:
+        mapped = harken::SegmentTimeType::Absolute;
         return true;
-    case harkenprojectschema::PieceTimeKind::Musical:
-        mapped = harken::PieceTimeType::Musical;
+    case harkenprojectschema::SegmentTimeKind::Musical:
+        mapped = harken::SegmentTimeType::Musical;
         return true;
     }
     return false;
@@ -130,21 +130,21 @@ std::int64_t SaturatingAddNonNegative(std::int64_t value,
 }
 
 bool LowerFadeFrames(const harken::ClockKernel& kernel,
-                     harken::PieceTimeType timeType,
+                     harken::SegmentTimeType timeType,
                      std::int64_t occurrenceStart,
                      const harkenprojectschema::FadeSpec& fades,
                      std::uint64_t span, std::uint64_t* outIn,
                      std::uint64_t* outOut) {
     std::uint64_t rawIn = 0;
     std::uint64_t rawOut = 0;
-    const bool inOk = timeType == harken::PieceTimeType::Musical
+    const bool inOk = timeType == harken::SegmentTimeType::Musical
                           ? kernel.TryTickSpanToFrames(
                                 harken::MusicalTick{occurrenceStart},
                                 fades.inLength, &rawIn)
                           : kernel.TryTimeSpanToFrames(
                                 harken::AbsoluteTime{occurrenceStart},
                                 fades.inLength, &rawIn);
-    const bool outOk = timeType == harken::PieceTimeType::Musical
+    const bool outOk = timeType == harken::SegmentTimeType::Musical
                            ? kernel.TryTickSpanToFrames(
                                  harken::MusicalTick{occurrenceStart},
                                  fades.outLength, &rawOut)
@@ -173,7 +173,7 @@ bool BuildScheduleKernel(harken::ScheduleTimeKindV1 domain,
                          std::int64_t microsPerQuarter,
                          std::uint64_t deviceRateHz,
                          harken::ClockKernel& kernel,
-                         harken::PieceTimeType& timeType,
+                         harken::SegmentTimeType& timeType,
                          harken::TempoSegment& tempo) {
     if (deviceRateHz == 0 || deviceRateHz > INT64_MAX) {
         return false;
@@ -181,10 +181,10 @@ bool BuildScheduleKernel(harken::ScheduleTimeKindV1 domain,
     tempo = {};
     if (domain == harken::ScheduleTimeKindV1::AbsoluteNanoseconds) {
         if (microsPerQuarter != 0) return false;
-        timeType = harken::PieceTimeType::Absolute;
+        timeType = harken::SegmentTimeType::Absolute;
         tempo.microsPerQuarter = kAbsolutePlaceholderMicrosPerQuarter;
     } else if (domain == harken::ScheduleTimeKindV1::MusicalTicks) {
-        timeType = harken::PieceTimeType::Musical;
+        timeType = harken::SegmentTimeType::Musical;
         tempo.microsPerQuarter = microsPerQuarter;
     } else {
         return false;
@@ -192,18 +192,18 @@ bool BuildScheduleKernel(harken::ScheduleTimeKindV1 domain,
     return kernel.Reset(static_cast<std::int64_t>(deviceRateHz), &tempo, 1);
 }
 
-const harkenprojectschema::IrPiece* FindPiece(
-    const harkenprojectschema::PieceIR& ir, harkenstudio::ObjectId pieceId) {
-    for (const harkenprojectschema::IrPiece& piece : ir.pieces()) {
-        if (piece.pieceId == pieceId) {
-            return &piece;
+const harkenprojectschema::IrSegment* FindSegment(
+    const harkenprojectschema::SegmentIR& ir, harkenstudio::ObjectId segmentId) {
+    for (const harkenprojectschema::IrSegment& segment : ir.segments()) {
+        if (segment.segmentId == segmentId) {
+            return &segment;
         }
     }
     return nullptr;
 }
 
 const harkenprojectschema::IrTrack* FindTrack(
-    const harkenprojectschema::PieceIR& ir, harkenstudio::ObjectId trackId) {
+    const harkenprojectschema::SegmentIR& ir, harkenstudio::ObjectId trackId) {
     for (const harkenprojectschema::IrTrack& track : ir.tracks()) {
         if (track.trackId == trackId) {
             return &track;
@@ -561,17 +561,17 @@ bool TryMaterializeSchedulePosition(harken::ScheduleTimeKindV1 domain,
                                     std::int64_t* outFrame) noexcept {
     if (outFrame == nullptr) return false;
     harken::ClockKernel kernel;
-    harken::PieceTimeType timeType{};
+    harken::SegmentTimeType timeType{};
     harken::TempoSegment tempo{};
     if (!BuildScheduleKernel(domain, microsPerQuarter, deviceRateHz, kernel,
                              timeType, tempo)) {
         return false;
     }
     const std::int64_t frame =
-        timeType == harken::PieceTimeType::Musical
+        timeType == harken::SegmentTimeType::Musical
             ? kernel.TickToFrame(harken::MusicalTick{authoredPosition}).value
             : kernel.TimeToFrame(harken::AbsoluteTime{authoredPosition}).value;
-    if (timeType == harken::PieceTimeType::Musical &&
+    if (timeType == harken::SegmentTimeType::Musical &&
         kernel.FrameToTick(harken::SampleFrame{frame}).value !=
             authoredPosition) {
         return false;
@@ -588,13 +588,13 @@ bool TryMaterializeScheduleSpan(harken::ScheduleTimeKindV1 domain,
                                 std::uint64_t* outFrames) noexcept {
     if (outFrames == nullptr || authoredLength < 0) return false;
     harken::ClockKernel kernel;
-    harken::PieceTimeType timeType{};
+    harken::SegmentTimeType timeType{};
     harken::TempoSegment tempo{};
     if (!BuildScheduleKernel(domain, microsPerQuarter, deviceRateHz, kernel,
                              timeType, tempo)) {
         return false;
     }
-    return timeType == harken::PieceTimeType::Musical
+    return timeType == harken::SegmentTimeType::Musical
                ? kernel.TryTickSpanToFrames(
                      harken::MusicalTick{authoredStart}, authoredLength,
                      outFrames)
@@ -617,7 +617,7 @@ bool TryLowerScheduleFades(harken::ScheduleTimeKindV1 domain,
         return false;
     }
     harken::ClockKernel kernel;
-    harken::PieceTimeType timeType{};
+    harken::SegmentTimeType timeType{};
     harken::TempoSegment tempo{};
     if (!BuildScheduleKernel(domain, microsPerQuarter, deviceRateHz, kernel,
                              timeType, tempo)) {
@@ -629,37 +629,37 @@ bool TryLowerScheduleFades(harken::ScheduleTimeKindV1 domain,
         audibleSpanFrames, outFadeInFrames, outFadeOutFrames);
 }
 
-RegistrationResult RegisterPieceProgram(
-    const harkenprojectschema::PieceProgram& program,
+RegistrationResult RegisterSegmentProgram(
+    const harkenprojectschema::SegmentProgram& program,
     const RegistrationParams& params, harken::LogicCommitCoordinator& commit) {
     if (params.deviceSampleRateHz < kMinSampleRateHz ||
         params.deviceSampleRateHz > kMaxSampleRateHz) {
         return Refuse(RegistrationRefusal::InvalidDeviceRate);
     }
 
-    const harkenprojectschema::PieceIR& ir = program.ir();
-    const harkenprojectschema::IrPiece* rootPiece =
-        FindPiece(ir, harkentest::ToStudio(params.rootPieceId));
-    if (rootPiece == nullptr) {
-        return Refuse(RegistrationRefusal::RootPieceNotFound);
+    const harkenprojectschema::SegmentIR& ir = program.ir();
+    const harkenprojectschema::IrSegment* rootSegment =
+        FindSegment(ir, harkentest::ToStudio(params.rootSegmentId));
+    if (rootSegment == nullptr) {
+        return Refuse(RegistrationRefusal::RootSegmentNotFound);
     }
 
     auto resolved = std::make_unique<ResolvedProgram>();
 
-    // One conversion context: every occurrence of the root piece's tracks lives in
-    // the root piece's coordinate system, so one clock and one marker index serve them
-    // all. A nested container/piece clip is a start-only placeholder in its parent
+    // One conversion context: every occurrence of the root segment's tracks lives in
+    // the root segment's coordinate system, so one clock and one marker index serve them
+    // all. A nested container/segment clip is a start-only placeholder in its parent
     // track and is resolved against this same clock, not expanded into its own.
     resolved->clocks_.emplace_back();
     ResolvedProgram::ClockContext& ctx = resolved->clocks_.back();
-    harken::PieceTimeType timeType = harken::PieceTimeType::Absolute;
-    if (!ToRuntimeTimeType(rootPiece->timeSpec.kind, timeType)) {
+    harken::SegmentTimeType timeType = harken::SegmentTimeType::Absolute;
+    if (!ToRuntimeTimeType(rootSegment->timeSpec.kind, timeType)) {
         return Refuse(RegistrationRefusal::InvalidProgram);
     }
 
-    if (timeType == harken::PieceTimeType::Musical) {
+    if (timeType == harken::SegmentTimeType::Musical) {
         for (const harkenprojectschema::TempoMapEntry& row :
-             rootPiece->timeSpec.tempoMap) {
+             rootSegment->timeSpec.tempoMap) {
             ctx.segments.push_back(harken::TempoSegment{
                 harken::MusicalTick{row.tick}, row.microsPerQuarter});
         }
@@ -672,21 +672,21 @@ RegistrationResult RegisterPieceProgram(
         return Refuse(RegistrationRefusal::ClockResetFailed);
     }
 
-    // The marker index carries the piece's meter grid and marker table onto every view,
+    // The marker index carries the segment's meter grid and marker table onto every view,
     // so a boundary realignment upstream has the same grid the frames were solved
-    // against. A Musical piece takes its authored meter; an Absolute piece has no
+    // against. A Musical segment takes its authored meter; an Absolute segment has no
     // musical grid, and the meter is unused there.
     harken::MeterSignature meter;
-    if (timeType == harken::PieceTimeType::Musical &&
-        !rootPiece->timeSpec.meterMap.empty()) {
+    if (timeType == harken::SegmentTimeType::Musical &&
+        !rootSegment->timeSpec.meterMap.empty()) {
         meter.numerator =
-            static_cast<std::int32_t>(rootPiece->timeSpec.meterMap[0].numerator);
+            static_cast<std::int32_t>(rootSegment->timeSpec.meterMap[0].numerator);
         meter.denominator = static_cast<std::int32_t>(
-            rootPiece->timeSpec.meterMap[0].denominator);
+            rootSegment->timeSpec.meterMap[0].denominator);
     }
     std::vector<harken::MarkerPoint> markerPoints;
-    markerPoints.reserve(rootPiece->markers.size());
-    for (const harkenprojectschema::IrMarker& marker : rootPiece->markers) {
+    markerPoints.reserve(rootSegment->markers.size());
+    for (const harkenprojectschema::IrMarker& marker : rootSegment->markers) {
         harken::MarkerKind kind = harken::MarkerKind::Custom;
         if (!ToRuntimeMarkerKind(marker.kind, kind)) {
             return Refuse(RegistrationRefusal::InvalidProgram);
@@ -707,7 +707,7 @@ RegistrationResult RegisterPieceProgram(
     // ends in a refusal must not consume one. This pass looks only, and the
     // resolution in the main loop refuses again on the same condition rather
     // than relying on this one having run.
-    for (auto trackId : rootPiece->tracks) {
+    for (auto trackId : rootSegment->tracks) {
         const harkenprojectschema::IrTrack* track = FindTrack(ir, trackId);
         if (track == nullptr) {
             continue;
@@ -735,7 +735,7 @@ RegistrationResult RegisterPieceProgram(
     std::uint32_t transactionOrdinal = 0;
     std::vector<RegistrationNote> notes;
     std::size_t occurrenceCapacity = 0;
-    for (auto trackId : rootPiece->tracks) {
+    for (auto trackId : rootSegment->tracks) {
         const harkenprojectschema::IrTrack* track = FindTrack(ir, trackId);
         if (track != nullptr) {
             occurrenceCapacity += track->occurrences.size();
@@ -747,7 +747,7 @@ RegistrationResult RegisterPieceProgram(
     }
     resolved->timelinePayloads_.reserve(occurrenceCapacity * 4u);
 
-    for (auto trackId : rootPiece->tracks) {
+    for (auto trackId : rootSegment->tracks) {
         const harkenprojectschema::IrTrack* track = FindTrack(ir, trackId);
         if (track == nullptr) {
             continue;
@@ -756,15 +756,15 @@ RegistrationResult RegisterPieceProgram(
             // Built once and used by every note and by the resolved occurrence
             // itself, so a note and the occurrence it is about can never disagree
             // about which authored clip they name.
-            const OccurrenceLineage lineage{/*hasPiece=*/true,
-                                            harkentest::ToRuntime(rootPiece->pieceId),
+            const OccurrenceLineage lineage{/*hasSegment=*/true,
+                                            harkentest::ToRuntime(rootSegment->segmentId),
                                             harkentest::ToRuntime(trackId),
                                             harkentest::ToRuntime(occ.key.clipId),
                                             occ.key.occurrenceOrdinal,
                                             harkentest::ToRuntime(occ.content.target)};
 
             const std::int64_t startOffset =
-                (timeType == harken::PieceTimeType::Musical)
+                (timeType == harken::SegmentTimeType::Musical)
                     ? ctx.kernel.TickToFrame(harken::MusicalTick{occ.time}).value
                     : ctx.kernel.TimeToFrame(harken::AbsoluteTime{occ.time}).value;
 
@@ -818,7 +818,7 @@ RegistrationResult RegisterPieceProgram(
             // is the only party that knows the engine id, so resolving it now
             // turns an unregistered subject into a named refusal with a lineage
             // instead of a refused play with nothing to attribute it to. A clip
-            // targeting a Container or a Piece plays nothing itself -- its
+            // targeting a Container or a Segment plays nothing itself -- its
             // content is expanded when that content is triggered -- so it
             // resolves no sound and is left saying it starts nothing audible.
             if (occ.content.kind == harkenprojectschema::ContentKind::Sound) {

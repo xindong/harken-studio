@@ -8,7 +8,7 @@
 namespace harken {
 
 enum class ProgramKindV1 : std::uint32_t {
-    Sound = 0, Container = 1, Track = 2, Piece = 3, Action = 4,
+    Sound = 0, Container = 1, Track = 2, Segment = 3, Action = 4,
 };
 
 struct ProgramSourceIdentityV1 {
@@ -49,7 +49,7 @@ struct ProgramHandleV1 {
 
 using ContainerProgramHandleV1 = ProgramHandleV1<ContainerProgramViewV3>;
 using TrackProgramHandleV1 = ProgramHandleV1<TrackScheduleProgramViewV1>;
-using PieceProgramHandleV1 = ProgramHandleV1<PieceScheduleProgramViewV1>;
+using SegmentProgramHandleV1 = ProgramHandleV1<SegmentScheduleProgramViewV1>;
 using ActionProgramHandleV1 = ProgramHandleV1<ActionProgramViewV1>;
 
 } // namespace harken

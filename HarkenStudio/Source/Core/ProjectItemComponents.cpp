@@ -12,7 +12,7 @@
 #include "Components/VBus.h"
 #include "Components/VAttenuation.h"
 #include "Components/VTrack.h"
-#include "Components/VPiece.h"
+#include "Components/VSegment.h"
 
 namespace VNX {
 
@@ -56,9 +56,9 @@ void ProjectItem::attachDefaultComponents()
         break;
     }
 
-    case T::Piece:
+    case T::Segment:
     {
-        auto* timeline = components.getOrCreate<VPiece>();
+        auto* timeline = components.getOrCreate<VSegment>();
         if (timeline) timeline->setHostItem(this);
         break;
     }

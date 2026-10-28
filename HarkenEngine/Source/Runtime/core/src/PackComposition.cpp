@@ -57,7 +57,7 @@ bool BuildProgramCapabilitySummariesV1(
         case Kind::Sound: return PlayableKindV1::Sound;
         case Kind::Container: return PlayableKindV1::Container;
         case Kind::Track: return PlayableKindV1::Track;
-        case Kind::Piece: return PlayableKindV1::Piece;
+        case Kind::Segment: return PlayableKindV1::Segment;
         default: return static_cast<PlayableKindV1>(UINT32_MAX);
         }
     };
@@ -99,7 +99,7 @@ bool BuildProgramCapabilitySummariesV1(
     for (std::uint32_t w = 0; w < worldCount; ++w) {
         const auto& world = worlds[w];
         if ((world.trackScheduleCount != 0 && world.trackSchedules == nullptr) ||
-            (world.pieceScheduleCount != 0 && world.pieceSchedules == nullptr) ||
+            (world.segmentScheduleCount != 0 && world.segmentSchedules == nullptr) ||
             (world.containerCount != 0 && world.containers == nullptr)) return false;
         for (std::uint32_t t = 0; t < world.trackScheduleCount; ++t) {
             const auto& track = world.trackSchedules[t];
@@ -108,11 +108,11 @@ bool BuildProgramCapabilitySummariesV1(
                 if (!addEdge(track.rootDefinition.stableId, track.placements[p].content))
                     return false;
         }
-        for (std::uint32_t p = 0; p < world.pieceScheduleCount; ++p) {
-            const auto& piece = world.pieceSchedules[p];
-            if (piece.trackRefCount != 0 && piece.trackRefs == nullptr) return false;
-            for (std::uint32_t t = 0; t < piece.trackRefCount; ++t)
-                if (!addEdge(piece.rootDefinition.stableId, piece.trackRefs[t].trackDefinition))
+        for (std::uint32_t p = 0; p < world.segmentScheduleCount; ++p) {
+            const auto& segment = world.segmentSchedules[p];
+            if (segment.trackRefCount != 0 && segment.trackRefs == nullptr) return false;
+            for (std::uint32_t t = 0; t < segment.trackRefCount; ++t)
+                if (!addEdge(segment.rootDefinition.stableId, segment.trackRefs[t].trackDefinition))
                     return false;
         }
         for (std::uint32_t c = 0; c < world.containerCount; ++c) {
@@ -329,17 +329,17 @@ const TrackScheduleProgramViewV1* FindTrackSchedule(
     return found;
 }
 
-const PieceScheduleProgramViewV1* FindPieceSchedule(
+const SegmentScheduleProgramViewV1* FindSegmentSchedule(
     const ContainerWorldInstallViewV1& view, VnObjectId stableId) noexcept {
-    if (!PointerCountOk(view.pieceScheduleCount, view.pieceSchedules) ||
-        view.pieceScheduleCount == 0) {
+    if (!PointerCountOk(view.segmentScheduleCount, view.segmentSchedules) ||
+        view.segmentScheduleCount == 0) {
         return nullptr;
     }
-    const auto* begin = view.pieceSchedules;
-    const auto* end = begin + view.pieceScheduleCount;
+    const auto* begin = view.segmentSchedules;
+    const auto* end = begin + view.segmentScheduleCount;
     const auto* found = std::lower_bound(
         begin, end, stableId,
-        [](const PieceScheduleProgramViewV1& row, VnObjectId id) {
+        [](const SegmentScheduleProgramViewV1& row, VnObjectId id) {
             return row.rootDefinition.stableId < id;
         });
     if (found == end || found->rootDefinition.stableId != stableId) {
@@ -421,7 +421,7 @@ bool CompanionTablesSorted(const ContainerWorldInstallViewV1& view) noexcept {
     if (!PointerCountOk(view.playablePropertyCount, view.playableProperties) ||
         !PointerCountOk(view.containerCount, view.containers) ||
         !PointerCountOk(view.trackScheduleCount, view.trackSchedules) ||
-        !PointerCountOk(view.pieceScheduleCount, view.pieceSchedules) ||
+        !PointerCountOk(view.segmentScheduleCount, view.segmentSchedules) ||
         !PointerCountOk(view.playableOccurrenceCount, view.playableOccurrences) ||
         !PointerCountOk(view.transitionCount, view.transitions)) {
         return false;
@@ -448,9 +448,9 @@ bool CompanionTablesSorted(const ContainerWorldInstallViewV1& view) noexcept {
             return false;
         }
     }
-    for (std::uint32_t i = 1; i < view.pieceScheduleCount; ++i) {
-        if (view.pieceSchedules[i - 1].rootDefinition.stableId >=
-            view.pieceSchedules[i].rootDefinition.stableId) {
+    for (std::uint32_t i = 1; i < view.segmentScheduleCount; ++i) {
+        if (view.segmentSchedules[i - 1].rootDefinition.stableId >=
+            view.segmentSchedules[i].rootDefinition.stableId) {
             return false;
         }
     }
@@ -516,7 +516,7 @@ const PackComposition::PublishedOwner* ResolvePlayableOwner(
     const std::vector<std::uint8_t>& member,
     const PlayableRefV1& endpoint) noexcept {
     if (static_cast<std::uint32_t>(endpoint.kind) >
-        static_cast<std::uint32_t>(PlayableKindV1::Piece)) {
+        static_cast<std::uint32_t>(PlayableKindV1::Segment)) {
         return nullptr;
     }
     const PackComposition::IdentityIndexEntry* hit =
@@ -552,7 +552,7 @@ BoundedTraversalStatus CountBoundedLeaves(
     std::uint32_t* leafCount,
     std::uint32_t maxKnownScheduleLeaves,
     std::uint32_t maxContainerDepth,
-    std::uint32_t maxTrackPieceScheduleDepth,
+    std::uint32_t maxTrackSegmentScheduleDepth,
     const TraversalPathNode* path, BoundedLeafCounts& leafCounts) {
     if (leafCount == nullptr) {
         return BoundedTraversalStatus::Invalid;
@@ -572,12 +572,12 @@ BoundedTraversalStatus CountBoundedLeaves(
         return BoundedTraversalStatus::Exceeded;
     }
     if ((endpoint.kind == PlayableKindV1::Track ||
-         endpoint.kind == PlayableKindV1::Piece) &&
-        (scheduleDepth == 0 || scheduleDepth > maxTrackPieceScheduleDepth)) {
+         endpoint.kind == PlayableKindV1::Segment) &&
+        (scheduleDepth == 0 || scheduleDepth > maxTrackSegmentScheduleDepth)) {
         return BoundedTraversalStatus::Exceeded;
     }
     // Each node lives in its depth-bounded call frame; cycle checks allocate
-    // nothing even when Container and Track/Piece levels are interleaved.
+    // nothing even when Container and Track/Segment levels are interleaved.
     const TraversalPathNode currentPath{path, endpoint.stableId};
     const PackComposition::PublishedOwner* owner =
         ResolvePlayableOwner(published, member, endpoint);
@@ -621,7 +621,7 @@ BoundedTraversalStatus CountBoundedLeaves(
                     : containerDepth;
             const std::uint32_t childScheduleDepth =
                 (childRef.kind == PlayableKindV1::Track ||
-                 childRef.kind == PlayableKindV1::Piece)
+                 childRef.kind == PlayableKindV1::Segment)
                     ? (scheduleDepth == UINT32_MAX ? UINT32_MAX
                                                    : scheduleDepth + 1u)
                     : scheduleDepth;
@@ -630,7 +630,7 @@ BoundedTraversalStatus CountBoundedLeaves(
                 published, member, childRef, childContainerDepth,
                 childScheduleDepth, &childLeaves,
                 maxKnownScheduleLeaves, maxContainerDepth,
-                maxTrackPieceScheduleDepth, &currentPath, leafCounts);
+                maxTrackSegmentScheduleDepth, &currentPath, leafCounts);
             if (child != BoundedTraversalStatus::Valid) {
                 return child;
             }
@@ -676,7 +676,7 @@ BoundedTraversalStatus CountBoundedLeaves(
                     : containerDepth;
             const std::uint32_t childScheduleDepth =
                 (childRef.kind == PlayableKindV1::Track ||
-                 childRef.kind == PlayableKindV1::Piece)
+                 childRef.kind == PlayableKindV1::Segment)
                     ? (scheduleDepth == UINT32_MAX ? UINT32_MAX
                                                    : scheduleDepth + 1u)
                     : scheduleDepth;
@@ -685,7 +685,7 @@ BoundedTraversalStatus CountBoundedLeaves(
                 published, member, childRef, childContainerDepth,
                 childScheduleDepth, &childLeaves,
                 maxKnownScheduleLeaves, maxContainerDepth,
-                maxTrackPieceScheduleDepth, &currentPath, leafCounts);
+                maxTrackSegmentScheduleDepth, &currentPath, leafCounts);
             if (child != BoundedTraversalStatus::Valid) {
                 return child;
             }
@@ -696,8 +696,8 @@ BoundedTraversalStatus CountBoundedLeaves(
         // Empty subgraphs are bounded zero work, matching runtime ZeroWork.
         return finish();
     }
-    const PieceScheduleProgramViewV1* schedule =
-        FindPieceSchedule(view, endpoint.stableId);
+    const SegmentScheduleProgramViewV1* schedule =
+        FindSegmentSchedule(view, endpoint.stableId);
     if (schedule == nullptr || !SameRef(schedule->rootDefinition, endpoint) ||
         !PointerCountOk(schedule->trackRefCount, schedule->trackRefs)) {
         return BoundedTraversalStatus::Invalid;
@@ -711,7 +711,7 @@ BoundedTraversalStatus CountBoundedLeaves(
                 : containerDepth;
         const std::uint32_t childScheduleDepth =
             (childRef.kind == PlayableKindV1::Track ||
-             childRef.kind == PlayableKindV1::Piece)
+             childRef.kind == PlayableKindV1::Segment)
                 ? (scheduleDepth == UINT32_MAX ? UINT32_MAX
                                                : scheduleDepth + 1u)
                 : scheduleDepth;
@@ -720,7 +720,7 @@ BoundedTraversalStatus CountBoundedLeaves(
             published, member, childRef, childContainerDepth,
             childScheduleDepth, &childLeaves,
             maxKnownScheduleLeaves, maxContainerDepth,
-            maxTrackPieceScheduleDepth, &currentPath, leafCounts);
+            maxTrackSegmentScheduleDepth, &currentPath, leafCounts);
         if (child != BoundedTraversalStatus::Valid) {
             return child;
         }
@@ -742,14 +742,14 @@ BoundedTraversalStatus EndpointHasBoundedVoices(
         endpoint.kind == PlayableKindV1::Container ? 1u : 0u;
     const std::uint32_t scheduleDepth =
         (endpoint.kind == PlayableKindV1::Track ||
-         endpoint.kind == PlayableKindV1::Piece)
+         endpoint.kind == PlayableKindV1::Segment)
             ? 1u
             : 0u;
     return CountBoundedLeaves(
         published, member, endpoint, containerDepth, scheduleDepth, &leafCount,
         rootView.capacity.maxKnownScheduleLeaves,
         rootView.capacity.maxContainerDepth,
-        rootView.capacity.maxTrackPieceScheduleDepth, nullptr, leafCounts);
+        rootView.capacity.maxTrackSegmentScheduleDepth, nullptr, leafCounts);
 }
 
 VnResult ValidateNonAnyEndpoint(
@@ -802,8 +802,8 @@ VnResult ValidateScheduleCompanions(
             view, playableproperties::ContentPropertyKindV1::Track) !=
             view.trackScheduleCount ||
         CountPropertiesOfKind(
-            view, playableproperties::ContentPropertyKindV1::Piece) !=
-            view.pieceScheduleCount) {
+            view, playableproperties::ContentPropertyKindV1::Segment) !=
+            view.segmentScheduleCount) {
         return VN_BAD_PACK;
     }
     for (std::uint32_t i = 0; i < view.trackScheduleCount; ++i) {
@@ -819,13 +819,13 @@ VnResult ValidateScheduleCompanions(
             return VN_BAD_PACK;
         }
     }
-    for (std::uint32_t i = 0; i < view.pieceScheduleCount; ++i) {
-        const PieceScheduleProgramViewV1& schedule = view.pieceSchedules[i];
-        if (schedule.rootDefinition.kind != PlayableKindV1::Piece) {
+    for (std::uint32_t i = 0; i < view.segmentScheduleCount; ++i) {
+        const SegmentScheduleProgramViewV1& schedule = view.segmentSchedules[i];
+        if (schedule.rootDefinition.kind != PlayableKindV1::Segment) {
             return VN_BAD_PACK;
         }
         const PlayablePropertyProgramViewV1* property = FindPlayableProperty(
-            view, playableproperties::ContentPropertyKindV1::Piece,
+            view, playableproperties::ContentPropertyKindV1::Segment,
             schedule.rootDefinition.stableId);
         if (property == nullptr ||
             !ScheduleRootMatchesProperty(schedule.rootDefinition, *property)) {
@@ -845,9 +845,9 @@ VnResult ValidateScheduleCompanions(
                 return VN_BAD_PACK;
             }
         } else if (property.contentPropertyKind ==
-                   playableproperties::ContentPropertyKindV1::Piece) {
-            const PieceScheduleProgramViewV1* schedule =
-                FindPieceSchedule(view, property.stableId);
+                   playableproperties::ContentPropertyKindV1::Segment) {
+            const SegmentScheduleProgramViewV1* schedule =
+                FindSegmentSchedule(view, property.stableId);
             if (schedule == nullptr ||
                 !ScheduleRootMatchesProperty(schedule->rootDefinition,
                                              property)) {
@@ -1289,7 +1289,7 @@ bool ActionKindIsPlayableOrAction(ActionTargetKindV1 kind) noexcept {
     return kind == ActionTargetKindV1::Sound ||
            kind == ActionTargetKindV1::Container ||
            kind == ActionTargetKindV1::Track ||
-           kind == ActionTargetKindV1::Piece ||
+           kind == ActionTargetKindV1::Segment ||
            kind == ActionTargetKindV1::Action;
 }
 
@@ -1337,7 +1337,7 @@ VnResult ValidateActionControlReference(
     const ActionObjectRefV1& ref) noexcept {
     if (ref.reserved != 0 || ref.stableId == VnObjectId{} ||
         ref.expectedProgramSemanticFingerprint == 0 ||
-        static_cast<std::uint32_t>(ref.kind) > static_cast<std::uint32_t>(ActionTargetKindV1::Piece))
+        static_cast<std::uint32_t>(ref.kind) > static_cast<std::uint32_t>(ActionTargetKindV1::Segment))
         return VN_BAD_PACK;
     const auto* hit = BinaryFind(published.index, ref.stableId);
     if (hit == nullptr) return VN_OK;
@@ -1354,7 +1354,7 @@ VnResult ValidateActionControlReference(
 VnResult ValidateScheduleKeyInClosure(
     const PackComposition::PublishedView& published,
     const std::vector<std::uint8_t>& member,
-    const TrackPieceScheduleKeyV1& key) noexcept {
+    const TrackSegmentScheduleKeyV1& key) noexcept {
     const PackComposition::IdentityIndexEntry* hit = nullptr;
     const PackComposition::PublishedOwner* owner = nullptr;
     const VnResult resolved = ResolveInDeclaredClosure(
@@ -1381,13 +1381,13 @@ VnResult ValidateScheduleKeyInClosure(
         }
         return VN_OK;
     }
-    if (key.kind != PlayableKindV1::Piece ||
+    if (key.kind != PlayableKindV1::Segment ||
         property->contentPropertyKind !=
-            playableproperties::ContentPropertyKindV1::Piece) {
+            playableproperties::ContentPropertyKindV1::Segment) {
         return VN_BAD_PACK;
     }
-    const PieceScheduleProgramViewV1* schedule =
-        FindPieceSchedule(owner->view, key.stableId);
+    const SegmentScheduleProgramViewV1* schedule =
+        FindSegmentSchedule(owner->view, key.stableId);
     if (schedule == nullptr || schedule->scheduleSemanticFingerprint !=
                                    key.scheduleSemanticFingerprint) {
         return VN_BAD_PACK;
@@ -1503,8 +1503,8 @@ VnResult ValidateOwnerExternalRefs(
             }
         }
     }
-    for (std::uint32_t i = 0; i < view.pieceScheduleCount; ++i) {
-        const PieceScheduleProgramViewV1& schedule = view.pieceSchedules[i];
+    for (std::uint32_t i = 0; i < view.segmentScheduleCount; ++i) {
+        const SegmentScheduleProgramViewV1& schedule = view.segmentSchedules[i];
         if (!PointerCountOk(schedule.trackRefCount, schedule.trackRefs)) {
             return VN_BAD_PACK;
         }
@@ -1723,7 +1723,7 @@ struct CompositeWorldScratch {
     std::vector<PlayablePropertyProgramViewV1> properties;
     std::vector<PlayableOccurrencePropertyViewV1> occurrences;
     std::vector<TrackScheduleProgramViewV1> tracks;
-    std::vector<PieceScheduleProgramViewV1> pieces;
+    std::vector<SegmentScheduleProgramViewV1> segments;
     std::vector<ContainerProgramViewV3> containers;
     std::vector<TransitionProgramViewV1> transitions;
     std::vector<ActionProgramViewV1> actions;
@@ -1754,8 +1754,8 @@ bool EncodeIdentityDefinition(const PackComposition::PublishedOwner& owner,
     slice.playableOccurrenceCount = static_cast<std::uint32_t>(occurrences.size());
     slice.trackSchedules = FindTrackSchedule(world, entry.stableId);
     slice.trackScheduleCount = slice.trackSchedules != nullptr ? 1 : 0;
-    slice.pieceSchedules = FindPieceSchedule(world, entry.stableId);
-    slice.pieceScheduleCount = slice.pieceSchedules != nullptr ? 1 : 0;
+    slice.segmentSchedules = FindSegmentSchedule(world, entry.stableId);
+    slice.segmentScheduleCount = slice.segmentSchedules != nullptr ? 1 : 0;
     for (std::uint32_t i = 0; i < world.transitionCount; ++i) {
         if (world.transitions[i].ownerContainerStableId == entry.stableId) {
             slice.transitions = &world.transitions[i];
@@ -1916,7 +1916,7 @@ VnResult ValidateCompositeWorld(
     std::uint64_t propertyCount = 0;
     std::uint64_t occurrenceCount = 0;
     std::uint64_t trackCount = 0;
-    std::uint64_t pieceCount = 0;
+    std::uint64_t segmentCount = 0;
     std::uint64_t containerCount = 0;
     std::uint64_t transitionCount = 0;
     std::uint64_t actionCount = 0;
@@ -1945,7 +1945,7 @@ VnResult ValidateCompositeWorld(
                                    UINT32_MAX) ||
             !CheckedCompositeCount(&trackCount, owner.view.trackScheduleCount,
                                    UINT32_MAX) ||
-            !CheckedCompositeCount(&pieceCount, owner.view.pieceScheduleCount,
+            !CheckedCompositeCount(&segmentCount, owner.view.segmentScheduleCount,
                                    UINT32_MAX) ||
             !CheckedCompositeCount(&containerCount, owner.view.containerCount,
                                    UINT32_MAX) ||
@@ -1966,7 +1966,7 @@ VnResult ValidateCompositeWorld(
     scratch.properties.reserve(static_cast<std::size_t>(propertyCount));
     scratch.occurrences.reserve(static_cast<std::size_t>(occurrenceCount));
     scratch.tracks.reserve(static_cast<std::size_t>(trackCount));
-    scratch.pieces.reserve(static_cast<std::size_t>(pieceCount));
+    scratch.segments.reserve(static_cast<std::size_t>(segmentCount));
     scratch.containers.reserve(static_cast<std::size_t>(containerCount));
     scratch.transitions.reserve(static_cast<std::size_t>(transitionCount));
     scratch.actions.reserve(static_cast<std::size_t>(actionCount));
@@ -1987,8 +1987,8 @@ VnResult ValidateCompositeWorld(
                         owner.view.playableOccurrenceCount) ||
             !AppendRows(&scratch.tracks, owner.view.trackSchedules,
                         owner.view.trackScheduleCount) ||
-            !AppendRows(&scratch.pieces, owner.view.pieceSchedules,
-                        owner.view.pieceScheduleCount) ||
+            !AppendRows(&scratch.segments, owner.view.segmentSchedules,
+                        owner.view.segmentScheduleCount) ||
             !AppendRows(&scratch.containers, owner.view.containers,
                         owner.view.containerCount) ||
             !AppendRows(&scratch.transitions, owner.view.transitions,
@@ -2034,9 +2034,9 @@ VnResult ValidateCompositeWorld(
                   return left.rootDefinition.stableId <
                          right.rootDefinition.stableId;
               });
-    std::sort(scratch.pieces.begin(), scratch.pieces.end(),
-              [](const PieceScheduleProgramViewV1& left,
-                 const PieceScheduleProgramViewV1& right) {
+    std::sort(scratch.segments.begin(), scratch.segments.end(),
+              [](const SegmentScheduleProgramViewV1& left,
+                 const SegmentScheduleProgramViewV1& right) {
                   return left.rootDefinition.stableId <
                          right.rootDefinition.stableId;
               });
@@ -2063,7 +2063,7 @@ VnResult ValidateCompositeWorld(
         return std::tuple(row.parentKind, row.parentStableId, row.stableOccurrenceOrdinal);
     });
     DeduplicateRows(scratch.tracks, [](const auto& row) { return row.rootDefinition.stableId; });
-    DeduplicateRows(scratch.pieces, [](const auto& row) { return row.rootDefinition.stableId; });
+    DeduplicateRows(scratch.segments, [](const auto& row) { return row.rootDefinition.stableId; });
     DeduplicateRows(scratch.containers, [](const auto& row) { return row.containerStableId; });
     DeduplicateRows(scratch.transitions, [](const auto& row) { return row.ownerContainerStableId; });
     DeduplicateRows(scratch.actions, [](const auto& row) { return row.actionStableId; });
@@ -2072,7 +2072,7 @@ VnResult ValidateCompositeWorld(
         scratch.properties.size() > capacity.maxPlayablePropertyPrograms ||
         scratch.occurrences.size() > capacity.maxPlayableOccurrencePropertyRows ||
         scratch.tracks.size() > capacity.maxTrackSchedulePrograms ||
-        scratch.pieces.size() > capacity.maxPieceSchedulePrograms ||
+        scratch.segments.size() > capacity.maxSegmentSchedulePrograms ||
         scratch.containers.size() > capacity.maxContainerPrograms ||
         scratch.actions.size() > capacity.maxActionDefinitions) {
         return VN_PACK_RESIDENT_CAPACITY;
@@ -2125,10 +2125,10 @@ VnResult ValidateCompositeWorld(
         scratch.tracks.empty() ? nullptr : scratch.tracks.data();
     scratch.view.trackScheduleCount =
         static_cast<std::uint32_t>(scratch.tracks.size());
-    scratch.view.pieceSchedules =
-        scratch.pieces.empty() ? nullptr : scratch.pieces.data();
-    scratch.view.pieceScheduleCount =
-        static_cast<std::uint32_t>(scratch.pieces.size());
+    scratch.view.segmentSchedules =
+        scratch.segments.empty() ? nullptr : scratch.segments.data();
+    scratch.view.segmentScheduleCount =
+        static_cast<std::uint32_t>(scratch.segments.size());
     scratch.view.containers =
         scratch.containers.empty() ? nullptr : scratch.containers.data();
     scratch.view.containerCount =
@@ -3691,12 +3691,12 @@ bool PackComposition::PlayableWorldAtLease(
         out->occurrenceCount = definition->playableOccurrenceCount;
         out->trackSchedules = definition->trackSchedules;
         out->trackScheduleCount = definition->trackScheduleCount;
-        out->pieceSchedules = definition->pieceSchedules;
-        out->pieceScheduleCount = definition->pieceScheduleCount;
+        out->segmentSchedules = definition->segmentSchedules;
+        out->segmentScheduleCount = definition->segmentScheduleCount;
         out->maxKnownScheduleLeaves =
             definition->capacity.maxKnownScheduleLeaves;
-        out->maxTrackPieceScheduleDepth =
-            definition->capacity.maxTrackPieceScheduleDepth;
+        out->maxTrackSegmentScheduleDepth =
+            definition->capacity.maxTrackSegmentScheduleDepth;
         out->containers = definition->containers;
         out->containerCount = definition->containerCount;
         out->transitions = definition->transitions;
@@ -4207,7 +4207,7 @@ TrackProgramHandleV1 PackPlaybackView::ResolveTrack(
     return {};
 }
 
-PieceProgramHandleV1 PackPlaybackView::ResolvePiece(
+SegmentProgramHandleV1 PackPlaybackView::ResolveSegment(
     VnObjectId stableId,
     std::uint64_t expectedScheduleFingerprint) const noexcept {
     if (closure_ == nullptr || ownerStore_ == nullptr) {
@@ -4218,14 +4218,14 @@ PieceProgramHandleV1 PackPlaybackView::ResolvePiece(
         if (owner == nullptr) {
             return {};
         }
-        const PieceScheduleProgramViewV1* schedule =
-            FindPieceSchedule(owner->snapshot.definitionView, stableId);
+        const SegmentScheduleProgramViewV1* schedule =
+            FindSegmentSchedule(owner->snapshot.definitionView, stableId);
         if (schedule != nullptr &&
             FingerprintMatches(expectedScheduleFingerprint,
                                schedule->scheduleSemanticFingerprint)) {
-            return {ProgramKindV1::Piece, stableId, schedule->scheduleSemanticFingerprint,
+            return {ProgramKindV1::Segment, stableId, schedule->scheduleSemanticFingerprint,
                     SourceOf(owner->snapshot),
-                    InitialClosureCapabilities(PlayableKindV1::Piece, stableId), schedule};
+                    InitialClosureCapabilities(PlayableKindV1::Segment, stableId), schedule};
         }
     }
     return {};

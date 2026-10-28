@@ -70,7 +70,7 @@ std::optional<FieldGroupId> PropertyEditorEngine::fieldGroup(const QString& fiel
     case ProjectItem::Type::Container:
     case ProjectItem::Type::Layer:
     case ProjectItem::Type::Track:
-    case ProjectItem::Type::Piece:
+    case ProjectItem::Type::Segment:
         break;
     default:
         return {};

@@ -21,7 +21,7 @@ using harken::AreReuseCompatible;
 using harken::ClockKernel;
 using harken::CompatibilityKey;
 using harken::MusicalTick;
-using harken::PieceTimeType;
+using harken::SegmentTimeType;
 using harken::ResolveSamePosition;
 using harken::SamePositionKind;
 using harken::SamePositionOutcome;
@@ -83,7 +83,7 @@ TEST(SamePositionResolver, ContinueCurrentOnSameIdentityAndGeneration) {
     target.routeTarget = 999;                     // deliberately different route
 
     const SamePositionOutcome out = ResolveSamePosition(
-        source, target, PieceTimeType::Musical, src, PieceTimeType::Musical, tgt,
+        source, target, SegmentTimeType::Musical, src, SegmentTimeType::Musical, tgt,
         1000);
     EXPECT_EQ(out.kind, SamePositionKind::ContinueCurrent);
 }
@@ -97,8 +97,8 @@ TEST(SamePositionResolver, DifferentGenerationHandsOff) {
     ClockKernel tgt = MakeClock(48000, 500'000, ta);
 
     const SamePositionOutcome out = ResolveSamePosition(
-        MakeKey(1, 1, 400), MakeKey(1, 2, 400), PieceTimeType::Musical, src,
-        PieceTimeType::Musical, tgt, 1000);
+        MakeKey(1, 1, 400), MakeKey(1, 2, 400), SegmentTimeType::Musical, src,
+        SegmentTimeType::Musical, tgt, 1000);
     EXPECT_EQ(out.kind, SamePositionKind::Handoff);
 }
 
@@ -127,7 +127,7 @@ TEST(SamePositionResolver, MusicalToMusicalAcrossTempos) {
     for (const Case& c : cases) {
         const SamePositionOutcome out = ResolveSamePosition(
             MakeKey(1, 1, 0), MakeKey(2, 1, c.targetDurTicks),
-            PieceTimeType::Musical, src, PieceTimeType::Musical, tgt,
+            SegmentTimeType::Musical, src, SegmentTimeType::Musical, tgt,
             c.sourceTick);
         ASSERT_EQ(out.kind, SamePositionKind::Handoff);
         EXPECT_TRUE(out.targetPositionIsTicks);
@@ -163,7 +163,7 @@ TEST(SamePositionResolver, AbsoluteToAbsolute) {
     for (const Case& c : cases) {
         const SamePositionOutcome out = ResolveSamePosition(
             MakeKey(1, 1, 0), MakeKey(2, 1, c.targetDurNs),
-            PieceTimeType::Absolute, src, PieceTimeType::Absolute, tgt,
+            SegmentTimeType::Absolute, src, SegmentTimeType::Absolute, tgt,
             c.sourceNs);
         ASSERT_EQ(out.kind, SamePositionKind::Handoff);
         EXPECT_FALSE(out.targetPositionIsTicks);
@@ -190,8 +190,8 @@ TEST(SamePositionResolver, MusicalSourceToAbsoluteTarget) {
     const std::int64_t sourceNs = 52'083'333;
 
     const SamePositionOutcome out = ResolveSamePosition(
-        MakeKey(1, 1, 0), MakeKey(2, 1, targetDurNs), PieceTimeType::Musical, src,
-        PieceTimeType::Absolute, tgt, sourceTick);
+        MakeKey(1, 1, 0), MakeKey(2, 1, targetDurNs), SegmentTimeType::Musical, src,
+        SegmentTimeType::Absolute, tgt, sourceTick);
     ASSERT_EQ(out.kind, SamePositionKind::Handoff);
     EXPECT_FALSE(out.targetPositionIsTicks);
     EXPECT_EQ(out.targetPosition, FloorModRef(sourceNs, targetDurNs));
@@ -209,7 +209,7 @@ TEST(SamePositionResolver,
     constexpr std::int64_t exactThreeTickDurationNs = 1'562'500;
     const SamePositionOutcome out = ResolveSamePosition(
         MakeKey(1, 1, 0), MakeKey(2, 1, exactThreeTickDurationNs),
-        PieceTimeType::Musical, sourceClock, PieceTimeType::Absolute,
+        SegmentTimeType::Musical, sourceClock, SegmentTimeType::Absolute,
         targetClock, 3);
 
     ASSERT_EQ(out.kind, SamePositionKind::Handoff);
@@ -233,8 +233,8 @@ TEST(SamePositionResolver, AbsoluteSourceToMusicalTarget) {
     const std::int64_t targetDurNs = 500'000'000;
 
     const SamePositionOutcome out = ResolveSamePosition(
-        MakeKey(1, 1, 0), MakeKey(2, 1, targetDurTicks), PieceTimeType::Absolute,
-        src, PieceTimeType::Musical, tgt, sourceNs);
+        MakeKey(1, 1, 0), MakeKey(2, 1, targetDurTicks), SegmentTimeType::Absolute,
+        src, SegmentTimeType::Musical, tgt, sourceNs);
     ASSERT_EQ(out.kind, SamePositionKind::Handoff);
     EXPECT_FALSE(out.targetPositionIsTicks);
     EXPECT_EQ(out.targetPosition, FloorModRef(sourceNs, targetDurNs));
@@ -252,7 +252,7 @@ TEST(SamePositionResolver, RejectsNotSeekable) {
     ClockKernel tgt = MakeClock(48000, 500'000, ta);
     const SamePositionOutcome out = ResolveSamePosition(
         MakeKey(1, 1, 400), MakeKey(2, 1, 400, /*seekable=*/false),
-        PieceTimeType::Musical, src, PieceTimeType::Musical, tgt, 100);
+        SegmentTimeType::Musical, src, SegmentTimeType::Musical, tgt, 100);
     EXPECT_EQ(out.kind, SamePositionKind::Rejected);
     EXPECT_EQ(out.reject, SamePositionReject::NotSeekable);
 }
@@ -265,13 +265,13 @@ TEST(SamePositionResolver, RejectsMissingNominalDuration) {
     ClockKernel src = MakeClock(48000, 500'000, sa);
     ClockKernel tgt = MakeClock(48000, 500'000, ta);
     EXPECT_EQ(ResolveSamePosition(MakeKey(1, 1, 400), MakeKey(2, 1, 0),
-                                  PieceTimeType::Musical, src,
-                                  PieceTimeType::Musical, tgt, 100)
+                                  SegmentTimeType::Musical, src,
+                                  SegmentTimeType::Musical, tgt, 100)
                   .reject,
               SamePositionReject::MissingNominalDuration);
     EXPECT_EQ(ResolveSamePosition(MakeKey(1, 1, 400), MakeKey(2, 1, -5),
-                                  PieceTimeType::Musical, src,
-                                  PieceTimeType::Musical, tgt, 100)
+                                  SegmentTimeType::Musical, src,
+                                  SegmentTimeType::Musical, tgt, 100)
                   .reject,
               SamePositionReject::MissingNominalDuration);
 }
@@ -287,14 +287,14 @@ TEST(SamePositionResolver, RejectsIncompatibleClockMapping) {
     ClockKernel invalid; // never Reset
 
     EXPECT_EQ(ResolveSamePosition(MakeKey(1, 1, 400), MakeKey(2, 1, 400),
-                                  PieceTimeType::Musical, src,
-                                  PieceTimeType::Musical, tgt, 100)
+                                  SegmentTimeType::Musical, src,
+                                  SegmentTimeType::Musical, tgt, 100)
                   .reject,
               SamePositionReject::IncompatibleClockMapping); // 44100 vs 48000
 
     EXPECT_EQ(ResolveSamePosition(MakeKey(1, 1, 400), MakeKey(2, 1, 400),
-                                  PieceTimeType::Musical, src,
-                                  PieceTimeType::Musical, invalid, 100)
+                                  SegmentTimeType::Musical, src,
+                                  SegmentTimeType::Musical, invalid, 100)
                   .reject,
               SamePositionReject::IncompatibleClockMapping); // invalid target clock
 }

@@ -63,7 +63,7 @@
         <file alias="panel-right-off.svg">Resources/icons/panel-right-off.svg</file>
         <file alias="panel-bottom.svg">Resources/icons/panel-bottom.svg</file>
         <file alias="panel-bottom-off.svg">Resources/icons/panel-bottom-off.svg</file>
-        <file alias="piece.svg">Resources/icons/piece.svg</file>
+        <file alias="segment.svg">Resources/icons/segment.svg</file>
         <file alias="pin.svg">Resources/icons/pin.svg</file>
         <file alias="pin-filled.svg">Resources/icons/pin-filled.svg</file>
         <file alias="pause.svg">Resources/icons/pause.svg</file>

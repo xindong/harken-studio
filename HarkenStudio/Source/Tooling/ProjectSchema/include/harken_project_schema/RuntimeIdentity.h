@@ -13,7 +13,7 @@ enum class RuntimeIdentityKindV1 : std::uint32_t {
     Sound = 1,
     Container = 2,
     Track = 3,
-    Piece = 4,
+    Segment = 4,
     Layer = 5,
     Bus = 6,
     Action = 7,

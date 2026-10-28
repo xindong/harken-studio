@@ -15,19 +15,19 @@ namespace fixtures {
 // obviously distinct.
 inline AuthoringGuid G(std::uint64_t n) { return harkentest::StudioObjectId(n); }
 
-// A minimal Absolute time spec (no maps), the well-formed shape for a Piece that
+// A minimal Absolute time spec (no maps), the well-formed shape for a Segment that
 // is not measured musically.
-inline InputPieceTimeSpec AbsoluteTime() {
-    InputPieceTimeSpec spec;
-    spec.kind = PieceTimeKind::Absolute;
+inline InputSegmentTimeSpec AbsoluteTime() {
+    InputSegmentTimeSpec spec;
+    spec.kind = SegmentTimeKind::Absolute;
     return spec;
 }
 
 // A minimal Musical time spec: one tempo row and one meter row at tick 0, the
 // constant-map shape of this initial scope.
-inline InputPieceTimeSpec MusicalTime() {
-    InputPieceTimeSpec spec;
-    spec.kind = PieceTimeKind::Musical;
+inline InputSegmentTimeSpec MusicalTime() {
+    InputSegmentTimeSpec spec;
+    spec.kind = SegmentTimeKind::Musical;
     spec.tempoMap.push_back(TempoMapEntry{});
     spec.meterMap.push_back(MeterMapEntry{});
     return spec;
@@ -99,15 +99,15 @@ inline ProjectInput Valid() {
     InputNode sound = Node(ContentKind::Sound, 4);
     InputNode container = Node(ContentKind::Container, 5);
 
-    InputNode piece = Node(ContentKind::Piece, 6);
-    piece.ownedChildren = {G(7)};
-    piece.timeSpec = MusicalTime();
-    piece.startPoint = EntryStart();
+    InputNode segment = Node(ContentKind::Segment, 6);
+    segment.ownedChildren = {G(7)};
+    segment.timeSpec = MusicalTime();
+    segment.startPoint = EntryStart();
 
-    InputNode pieceTrack = Node(ContentKind::Track, 7);
+    InputNode segmentTrack = Node(ContentKind::Track, 7);
 
     in.nodes = {layer,     standaloneTrack, layerTrack, sound,
-                container, piece,           pieceTrack,
+                container, segment,           segmentTrack,
                 Node(ContentKind::Sound, 8)};
     in.roots = {G(1), G(2)};
     return in;
@@ -138,16 +138,16 @@ inline ProjectInput InvalidTrackTimeField() {
     return in;
 }
 
-// ---- invalid: a Piece owning a non-Track ---------------------------------
-// A Piece owns a Sound. A Piece owns Tracks only.
-inline ProjectInput InvalidPieceOwnsNonTrack() {
+// ---- invalid: a Segment owning a non-Track ---------------------------------
+// A Segment owns a Sound. A Segment owns Tracks only.
+inline ProjectInput InvalidSegmentOwnsNonTrack() {
     ProjectInput in;
-    InputNode piece = Node(ContentKind::Piece, 1);
-    piece.ownedChildren = {G(2)};
-    piece.timeSpec = AbsoluteTime();
-    piece.startPoint = EntryStart();
+    InputNode segment = Node(ContentKind::Segment, 1);
+    segment.ownedChildren = {G(2)};
+    segment.timeSpec = AbsoluteTime();
+    segment.startPoint = EntryStart();
     InputNode sound = Node(ContentKind::Sound, 2);
-    in.nodes = {piece, sound};
+    in.nodes = {segment, sound};
     in.roots = {G(1)};
     return in;
 }
@@ -194,7 +194,7 @@ inline ProjectInput InvalidDanglingContentRef() {
 }
 
 // ---- invalid: a content reference of the wrong kind ----------------------
-// A clip references a Track. Only Sound, Container and Piece are Playable, so a
+// A clip references a Track. Only Sound, Container and Segment are Playable, so a
 // clip pointing at a Track is a typed refusal.
 inline ProjectInput InvalidContentRefType() {
     ProjectInput in;
@@ -207,36 +207,36 @@ inline ProjectInput InvalidContentRefType() {
 }
 
 // ---- invalid: MarkerId 0 in the marker table -----------------------------------
-// A Piece authors a marker with the reserved id 0. The entry point is a sentinel,
+// A Segment authors a marker with the reserved id 0. The entry point is a sentinel,
 // never "the marker with id 0"; a marker at 0 is the entry point smuggled into the
 // table and is refused.
 inline ProjectInput InvalidReservedMarkerId() {
     ProjectInput in;
-    InputNode piece = Node(ContentKind::Piece, 1);
-    piece.timeSpec = AbsoluteTime();
-    piece.startPoint = EntryStart();
+    InputNode segment = Node(ContentKind::Segment, 1);
+    segment.timeSpec = AbsoluteTime();
+    segment.startPoint = EntryStart();
     InputMarker marker;
     marker.guid = G(50);
     marker.markerId = kReservedMarkerId;  // 0
     marker.kind = MarkerKind::Custom;
-    piece.markers = {marker};
-    in.nodes = {piece};
+    segment.markers = {marker};
+    in.nodes = {segment};
     in.roots = {G(1)};
     return in;
 }
 
 // ---- invalid: a Marker start point at the reserved id -----------------------
-// A Piece begins at "marker 0". Same contract as above from the start-point side:
+// A Segment begins at "marker 0". Same contract as above from the start-point side:
 // entry is StartPointKind::Entry, never a marker with id 0.
 inline ProjectInput InvalidStartPointReserved() {
     ProjectInput in;
-    InputNode piece = Node(ContentKind::Piece, 1);
-    piece.timeSpec = AbsoluteTime();
+    InputNode segment = Node(ContentKind::Segment, 1);
+    segment.timeSpec = AbsoluteTime();
     InputStartPoint sp;
     sp.kind = StartPointKind::Marker;
     sp.markerId = kReservedMarkerId;  // 0
-    piece.startPoint = sp;
-    in.nodes = {piece};
+    segment.startPoint = sp;
+    in.nodes = {segment};
     in.roots = {G(1)};
     return in;
 }
@@ -261,19 +261,19 @@ inline ProjectInput NormalizationOrdering() {
         Clip(202, 4, 480, 0, 2),
     };
 
-    InputNode piece = Node(ContentKind::Piece, 6);
-    piece.ownedChildren = {G(7)};
-    piece.timeSpec = MusicalTime();
-    piece.startPoint = MarkerStart(7);
-    piece.markers = {
+    InputNode segment = Node(ContentKind::Segment, 6);
+    segment.ownedChildren = {G(7)};
+    segment.timeSpec = MusicalTime();
+    segment.startPoint = MarkerStart(7);
+    segment.markers = {
         MakeMarker(91, 9, MarkerKind::Custom, 300),
         MakeMarker(92, 7, MarkerKind::Custom, 100),
         MakeMarker(93, 5, MarkerKind::Exit, 50),
     };
 
-    InputNode pieceTrack = Node(ContentKind::Track, 7);
+    InputNode segmentTrack = Node(ContentKind::Track, 7);
 
-    in.nodes = {sound, track, piece, pieceTrack};
+    in.nodes = {sound, track, segment, segmentTrack};
     in.roots = {G(2), G(6)};
     return in;
 }
@@ -283,30 +283,30 @@ inline ProjectInput NormalizationOrdering() {
 // the second half of the frozen rule, enforced by the normalization stage.
 inline ProjectInput InvalidMusicalMapNotSingleton() {
     ProjectInput in;
-    InputNode piece = Node(ContentKind::Piece, 1);
-    InputPieceTimeSpec spec;
-    spec.kind = PieceTimeKind::Musical;
+    InputNode segment = Node(ContentKind::Segment, 1);
+    InputSegmentTimeSpec spec;
+    spec.kind = SegmentTimeKind::Musical;
     spec.tempoMap.push_back(TempoMapEntry{480, 500000});  // off the origin
     spec.meterMap.push_back(MeterMapEntry{});             // a valid singleton
-    piece.timeSpec = spec;
-    piece.startPoint = EntryStart();
-    in.nodes = {piece};
+    segment.timeSpec = spec;
+    segment.startPoint = EntryStart();
+    in.nodes = {segment};
     in.roots = {G(1)};
     return in;
 }
 
 // ---- invalid: more than one exit marker -------------------------------------
-// Exit is unique by kind; a Piece may declare at most one.
+// Exit is unique by kind; a Segment may declare at most one.
 inline ProjectInput InvalidMultipleExitMarkers() {
     ProjectInput in;
-    InputNode piece = Node(ContentKind::Piece, 1);
-    piece.timeSpec = AbsoluteTime();
-    piece.startPoint = EntryStart();
-    piece.markers = {
+    InputNode segment = Node(ContentKind::Segment, 1);
+    segment.timeSpec = AbsoluteTime();
+    segment.startPoint = EntryStart();
+    segment.markers = {
         MakeMarker(51, 1, MarkerKind::Exit),
         MakeMarker(52, 2, MarkerKind::Exit),
     };
-    in.nodes = {piece};
+    in.nodes = {segment};
     in.roots = {G(1)};
     return in;
 }
@@ -335,14 +335,14 @@ inline ProjectInput InvalidDanglingOwnership() {
     return in;
 }
 
-// ---- invalid: a Piece without a time spec --------------------------------
-// A Piece must define its coordinate system. It has a start point, so only the
+// ---- invalid: a Segment without a time spec --------------------------------
+// A Segment must define its coordinate system. It has a start point, so only the
 // missing time spec is at fault.
-inline ProjectInput InvalidPieceMissingTimeSpec() {
+inline ProjectInput InvalidSegmentMissingTimeSpec() {
     ProjectInput in;
-    InputNode piece = Node(ContentKind::Piece, 1);
-    piece.startPoint = EntryStart();  // present, so only the time spec is missing
-    in.nodes = {piece};
+    InputNode segment = Node(ContentKind::Segment, 1);
+    segment.startPoint = EntryStart();  // present, so only the time spec is missing
+    in.nodes = {segment};
     in.roots = {G(1)};
     return in;
 }
@@ -352,7 +352,7 @@ inline ProjectInput InvalidPieceMissingTimeSpec() {
 // A project that exercises both lineage depths at once:
 //
 // So the lineage table holds two Track->Clip rows for T2 and one
-// Piece->Track->Clip row for T3.
+// Segment->Track->Clip row for T3.
 inline ProjectInput IrLineageMix() {
     ProjectInput in;
 
@@ -365,16 +365,16 @@ inline ProjectInput IrLineageMix() {
         Clip(202, 4, 50, 0, 1),
     };
 
-    InputNode piece = Node(ContentKind::Piece, 6);
-    piece.ownedChildren = {G(7)};
-    piece.timeSpec = AbsoluteTime();
-    piece.startPoint = EntryStart();
+    InputNode segment = Node(ContentKind::Segment, 6);
+    segment.ownedChildren = {G(7)};
+    segment.timeSpec = AbsoluteTime();
+    segment.startPoint = EntryStart();
 
-    InputNode pieceTrack = Node(ContentKind::Track, 7);
-    pieceTrack.ownedChildren = {G(8)};
-    pieceTrack.clips = {Clip(701, 8, 0)};
+    InputNode segmentTrack = Node(ContentKind::Track, 7);
+    segmentTrack.ownedChildren = {G(8)};
+    segmentTrack.clips = {Clip(701, 8, 0)};
 
-    in.nodes = {sound, standalone, piece, pieceTrack, Node(ContentKind::Sound, 8)};
+    in.nodes = {sound, standalone, segment, segmentTrack, Node(ContentKind::Sound, 8)};
     in.roots = {G(2), G(6)};
     return in;
 }
@@ -415,24 +415,24 @@ inline ProjectInput ClipSortMultiLevel() {
     return in;
 }
 
-// ---- facts ordering: several Pieces and Tracks ---------------------------
+// ---- facts ordering: several Segments and Tracks ---------------------------
 // Enough top-level objects that "the fact lists are sorted by stable id" is a
 // claim with content, not a single-element triviality.
 //
 //   10 Sound   S
-//   20 Piece   P1  owns Track 30
-//   21 Piece   P2  owns Track 31
+//   20 Segment   P1  owns Track 30
+//   21 Segment   P2  owns Track 31
 //   40 Track   Tc  root; one clip -> S
-inline ProjectInput MultiPieceMultiTrack() {
+inline ProjectInput MultiSegmentMultiTrack() {
     ProjectInput in;
     InputNode sound = Node(ContentKind::Sound, 60);
 
-    InputNode p1 = Node(ContentKind::Piece, 50);
+    InputNode p1 = Node(ContentKind::Segment, 50);
     p1.ownedChildren = {G(20)};
     p1.timeSpec = AbsoluteTime();
     p1.startPoint = EntryStart();
 
-    InputNode p2 = Node(ContentKind::Piece, 40);
+    InputNode p2 = Node(ContentKind::Segment, 40);
     p2.ownedChildren = {G(10)};
     p2.timeSpec = AbsoluteTime();
     p2.startPoint = EntryStart();
@@ -455,14 +455,14 @@ inline ProjectInput MultiPieceMultiTrack() {
 // ways.
 inline ProjectInput InvalidMeterMapNotSingleton() {
     ProjectInput in;
-    InputNode piece = Node(ContentKind::Piece, 1);
-    InputPieceTimeSpec spec;
-    spec.kind = PieceTimeKind::Musical;
+    InputNode segment = Node(ContentKind::Segment, 1);
+    InputSegmentTimeSpec spec;
+    spec.kind = SegmentTimeKind::Musical;
     spec.tempoMap.push_back(TempoMapEntry{});           // valid singleton
     spec.meterMap.push_back(MeterMapEntry{480, 4, 4});  // off the origin
-    piece.timeSpec = spec;
-    piece.startPoint = EntryStart();
-    in.nodes = {piece};
+    segment.timeSpec = spec;
+    segment.startPoint = EntryStart();
+    in.nodes = {segment};
     in.roots = {G(1)};
     return in;
 }
@@ -472,16 +472,16 @@ inline ProjectInput InvalidMeterMapNotSingleton() {
 // ordered by detail (tempo before meter).
 inline ProjectInput InvalidMusicalBothMapsBad() {
     ProjectInput in;
-    InputNode piece = Node(ContentKind::Piece, 1);
-    InputPieceTimeSpec spec;
-    spec.kind = PieceTimeKind::Musical;
+    InputNode segment = Node(ContentKind::Segment, 1);
+    InputSegmentTimeSpec spec;
+    spec.kind = SegmentTimeKind::Musical;
     spec.tempoMap.push_back(TempoMapEntry{0, 500000});
     spec.tempoMap.push_back(TempoMapEntry{480, 400000});
     spec.meterMap.push_back(MeterMapEntry{0, 4, 4});
     spec.meterMap.push_back(MeterMapEntry{960, 3, 4});
-    piece.timeSpec = spec;
-    piece.startPoint = EntryStart();
-    in.nodes = {piece};
+    segment.timeSpec = spec;
+    segment.startPoint = EntryStart();
+    in.nodes = {segment};
     in.roots = {G(1)};
     return in;
 }
@@ -492,50 +492,50 @@ inline ProjectInput InvalidMusicalBothMapsBad() {
 // refused, which this pins.
 inline ProjectInput InvalidMusicalMultiRowFirstAtZero() {
     ProjectInput in;
-    InputNode piece = Node(ContentKind::Piece, 1);
-    InputPieceTimeSpec spec;
-    spec.kind = PieceTimeKind::Musical;
+    InputNode segment = Node(ContentKind::Segment, 1);
+    InputSegmentTimeSpec spec;
+    spec.kind = SegmentTimeKind::Musical;
     spec.tempoMap.push_back(TempoMapEntry{0, 500000});    // first row at the origin
     spec.tempoMap.push_back(TempoMapEntry{480, 400000});  // but a second row exists
     spec.meterMap.push_back(MeterMapEntry{});             // valid singleton
-    piece.timeSpec = spec;
-    piece.startPoint = EntryStart();
-    in.nodes = {piece};
+    segment.timeSpec = spec;
+    segment.startPoint = EntryStart();
+    in.nodes = {segment};
     in.roots = {G(1)};
     return in;
 }
 
-// ---- valid: an empty Piece -----------------------------------------------
-// A Piece with no markers and no Tracks. Nothing forbids it, so it compiles and its
+// ---- valid: an empty Segment -----------------------------------------------
+// A Segment with no markers and no Tracks. Nothing forbids it, so it compiles and its
 // facts carry an empty marker list — a regression guard for the empty case.
-inline ProjectInput EmptyPiece() {
+inline ProjectInput EmptySegment() {
     ProjectInput in;
-    InputNode piece = Node(ContentKind::Piece, 1);
-    piece.timeSpec = AbsoluteTime();
-    piece.startPoint = EntryStart();
-    in.nodes = {piece};
+    InputNode segment = Node(ContentKind::Segment, 1);
+    segment.timeSpec = AbsoluteTime();
+    segment.startPoint = EntryStart();
+    in.nodes = {segment};
     in.roots = {G(1)};
     return in;
 }
 
-// ---- estimation: a Musical Piece with overlapping occurrences -------------
+// ---- estimation: a Musical Segment with overlapping occurrences -------------
 //
 // At 120 BPM one quarter is 500 ms, so with a one-second Sound the two
-// occurrences overlap and the Piece scope's peak is 2.
+// occurrences overlap and the Segment scope's peak is 2.
 inline ProjectInput MusicalOverlap() {
     ProjectInput in;
     InputNode sound = Node(ContentKind::Sound, 4);
-    InputNode piece = Node(ContentKind::Piece, 6);
-    piece.ownedChildren = {G(7)};
-    piece.timeSpec = MusicalTime();
-    piece.startPoint = EntryStart();
+    InputNode segment = Node(ContentKind::Segment, 6);
+    segment.ownedChildren = {G(7)};
+    segment.timeSpec = MusicalTime();
+    segment.startPoint = EntryStart();
     InputNode track = Node(ContentKind::Track, 7);
     track.ownedChildren = {G(4)};
     track.clips = {
         Clip(701, 4, 0, 0, 0),
         Clip(702, 4, 960, 0, 1),
     };
-    in.nodes = {sound, piece, track};
+    in.nodes = {sound, segment, track};
     in.roots = {G(6)};
     return in;
 }
@@ -584,12 +584,12 @@ inline ProjectInput SharedChassisAllKinds() {
     InputNode track = Node(ContentKind::Track, 4);
     ApplyChassisProbe(&track);
 
-    InputNode piece = Node(ContentKind::Piece, 5);
-    ApplyChassisProbe(&piece);
-    piece.timeSpec = AbsoluteTime();
-    piece.startPoint = EntryStart();
+    InputNode segment = Node(ContentKind::Segment, 5);
+    ApplyChassisProbe(&segment);
+    segment.timeSpec = AbsoluteTime();
+    segment.startPoint = EntryStart();
 
-    in.nodes = {layer, sound, container, track, piece};
+    in.nodes = {layer, sound, container, track, segment};
     in.roots = {G(1), G(2), G(3), G(4), G(5)};
     return in;
 }
@@ -659,12 +659,12 @@ inline ProjectInput SharedGraphAllKinds() {
     InputNode track = Node(ContentKind::Track, 4);
     ApplyGraphProbe(&track);
 
-    InputNode piece = Node(ContentKind::Piece, 5);
-    ApplyGraphProbe(&piece);
-    piece.timeSpec = AbsoluteTime();
-    piece.startPoint = EntryStart();
+    InputNode segment = Node(ContentKind::Segment, 5);
+    ApplyGraphProbe(&segment);
+    segment.timeSpec = AbsoluteTime();
+    segment.startPoint = EntryStart();
 
-    in.nodes = {layer, sound, container, track, piece};
+    in.nodes = {layer, sound, container, track, segment};
     in.roots = {G(1), G(2), G(3), G(4), G(5)};
     return in;
 }
@@ -789,16 +789,16 @@ inline ProjectInput InvalidGraphTwoReservedNodeIds() {
 inline ProjectInput MusicalOverflowTick() {
     ProjectInput in;
     InputNode sound = Node(ContentKind::Sound, 4);
-    InputNode piece = Node(ContentKind::Piece, 6);
-    piece.ownedChildren = {G(7)};
-    piece.timeSpec = MusicalTime();
-    piece.startPoint = EntryStart();
+    InputNode segment = Node(ContentKind::Segment, 6);
+    segment.ownedChildren = {G(7)};
+    segment.timeSpec = MusicalTime();
+    segment.startPoint = EntryStart();
     InputNode track = Node(ContentKind::Track, 7);
     track.ownedChildren = {G(4)};
     InputClip huge = Clip(701, 4, 0);
     huge.time = 20000000000LL;  // 2e10 ticks * 5e8 ns/quarter overflows int64
     track.clips = {huge};
-    in.nodes = {sound, piece, track};
+    in.nodes = {sound, segment, track};
     in.roots = {G(6)};
     return in;
 }

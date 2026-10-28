@@ -47,22 +47,22 @@ enum class ContentKind : std::uint32_t {
     Sound = 1,
     Container = 2,
     Track = 3,
-    Piece = 4,
+    Segment = 4,
 };
 
 // The ownership rule of the structural tree, stated once. Every other part of
 // the front-end asks this rather than re-encoding the table, so "who may own
 // whom" cannot drift into two disagreeing copies.
 //
-//   Layer     -> Layer | Sound | Container | Track | Piece
-//   Container -> Sound | Container | Track | Piece         (never a Layer)
-//   Track     -> Sound | Container | Piece                 (never a Track, never a Layer)
-//   Piece     -> Track                                     (only Tracks)
+//   Layer     -> Layer | Sound | Container | Track | Segment
+//   Container -> Sound | Container | Track | Segment         (never a Layer)
+//   Track     -> Sound | Container | Segment                 (never a Track, never a Layer)
+//   Segment     -> Track                                     (only Tracks)
 //   Sound     -> nothing
 //
 // The two absences that carry the most contract weight are Track never owning a
-// Track (Tracks are flat; deeper structure is Track<->Piece content nesting)
-// and Piece owning only Tracks.
+// Track (Tracks are flat; deeper structure is Track<->Segment content nesting)
+// and Segment owning only Tracks.
 inline bool MayOwn(ContentKind owner, ContentKind child) {
     switch (owner) {
         case ContentKind::Layer:
@@ -72,8 +72,8 @@ inline bool MayOwn(ContentKind owner, ContentKind child) {
         case ContentKind::Track:
             return child == ContentKind::Sound ||
                    child == ContentKind::Container ||
-                   child == ContentKind::Piece;
-        case ContentKind::Piece:
+                   child == ContentKind::Segment;
+        case ContentKind::Segment:
             return child == ContentKind::Track;
         case ContentKind::Sound:
             return false;
@@ -82,11 +82,11 @@ inline bool MayOwn(ContentKind owner, ContentKind child) {
 }
 
 // What a Track clip is allowed to point at. A placement references a Playable,
-// and only Sound, Container and Piece are Playable targets — a clip pointing at
+// and only Sound, Container and Segment are Playable targets — a clip pointing at
 // a Track or a Layer is a type error, not a dangling reference.
 inline bool IsPlayableRefKind(ContentKind kind) {
     return kind == ContentKind::Sound || kind == ContentKind::Container ||
-           kind == ContentKind::Piece;
+           kind == ContentKind::Segment;
 }
 
 // A Track clip's reference to the Playable it places. The kind is carried
@@ -114,7 +114,7 @@ inline constexpr std::int64_t kMusicalPpq = 960;
 // values without interpreting them.
 using AbsoluteNanos = std::int64_t;
 
-// One tempo-map row: the tempo in force from a tick until the next row. Pieces
+// One tempo-map row: the tempo in force from a tick until the next row. Segments
 // in this initial scope carry exactly one row at tick 0, but the field is a map
 // from day one so a later vintage adds rows without a schema change.
 struct TempoMapEntry {
@@ -134,22 +134,22 @@ struct MeterMapEntry {
     std::uint16_t denominator = 4;
 };
 
-enum class PieceTimeKind : std::uint32_t {
+enum class SegmentTimeKind : std::uint32_t {
     Absolute = 0,
     Musical = 1,
 };
 
-// A Piece's time coordinate system. Absolute pieces measure in nanoseconds and
-// carry no maps. Musical pieces measure in ticks and carry a tempo map and a
+// A Segment's time coordinate system. Absolute segments measure in nanoseconds and
+// carry no maps. Musical segments measure in ticks and carry a tempo map and a
 // meter map. The two maps are only meaningful for Musical, which the front-end
 // enforces on the way in.
-struct PieceTimeSpec {
-    PieceTimeKind kind = PieceTimeKind::Absolute;
+struct SegmentTimeSpec {
+    SegmentTimeKind kind = SegmentTimeKind::Absolute;
     std::vector<TempoMapEntry> tempoMap;
     std::vector<MeterMapEntry> meterMap;
 };
 
-// A Piece starts either at its built-in entry or at one of its own non-entry
+// A Segment starts either at its built-in entry or at one of its own non-entry
 // markers. Entry is a sentinel; it is not a marker and does not occupy MarkerId 0.
 enum class StartPointKind : std::uint32_t {
     Entry = 0,
@@ -165,21 +165,21 @@ inline constexpr MarkerId kReservedMarkerId = 0;
 
 // The kinds a marker in the marker table may take. The entry point is deliberately
 // absent: the marker table holds only custom and exit markers, and entry lives in the
-// Piece's StartPoint instead.
+// Segment's StartPoint instead.
 enum class MarkerKind : std::uint32_t {
     Custom = 0,
     Exit = 1,
 };
 
-// Where a Piece begins. For Marker, markerId is the non-zero id of a marker that must
-// exist in the Piece's marker table; for Entry, markerId is unused and stays zero.
+// Where a Segment begins. For Marker, markerId is the non-zero id of a marker that must
+// exist in the Segment's marker table; for Entry, markerId is unused and stays zero.
 struct StartPoint {
     StartPointKind kind = StartPointKind::Entry;
     MarkerId markerId = kReservedMarkerId;
 };
 
 // One custom or exit marker. Carries its own authoring identity (it is minted a
-// stable id like any authored object) and a position in the Piece's time
+// stable id like any authored object) and a position in the Segment's time
 // coordinate.
 struct Marker {
     StableId id = kUnmintedStableId;
@@ -454,7 +454,7 @@ struct ContainerDef {
 //
 // It carries the common chassis (identity, editorOrder and the shared mixing,
 // playback, 3D, send and signal-graph fields), an ownership ledger (the
-// Sound/Container/Piece children it structurally owns) and a clip placement
+// Sound/Container/Segment children it structurally owns) and a clip placement
 // ledger. Beyond the shared chassis and those two ledgers it adds nothing
 // Track-specific: no route target
 // or any routing field, no clock, tempo, meter, marker or any time-side field, and
@@ -469,13 +469,13 @@ struct TrackDef {
     std::vector<Clip> clips;
 };
 
-// A Piece: owns Tracks only, and defines the shared time coordinate its Tracks
+// A Segment: owns Tracks only, and defines the shared time coordinate its Tracks
 // live in. It carries its time spec, its start point (entry sentinel or a
 // non-zero marker), its marker table (custom and exit markers only) and its track table.
-struct PieceDef {
+struct SegmentDef {
     Chassis chassis;
-    std::vector<StableId> tracks;  // owned Tracks; the structural children of a Piece
-    PieceTimeSpec timeSpec;
+    std::vector<StableId> tracks;  // owned Tracks; the structural children of a Segment
+    SegmentTimeSpec timeSpec;
     StartPoint startPoint;
     std::vector<Marker> markers;
 };
@@ -489,7 +489,7 @@ struct ContentObject {
     SoundDef sound;
     ContainerDef container;
     TrackDef track;
-    PieceDef piece;
+    SegmentDef segment;
 
     // The identity shared by whichever def is active. Reading it does not
     // require knowing the kind, which is what lets the graph and the serializer
@@ -504,8 +504,8 @@ struct ContentObject {
                 return container.chassis;
             case ContentKind::Track:
                 return track.chassis;
-            case ContentKind::Piece:
-                return piece.chassis;
+            case ContentKind::Segment:
+                return segment.chassis;
         }
         return sound.chassis;
     }

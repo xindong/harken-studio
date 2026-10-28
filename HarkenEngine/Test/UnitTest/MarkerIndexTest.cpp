@@ -26,7 +26,7 @@ using harken::MarkerLookup;
 using harken::MarkerPoint;
 using harken::MeterSignature;
 using harken::MusicalTick;
-using harken::PieceTimeType;
+using harken::SegmentTimeType;
 using harken::SampleFrame;
 using harken::TempoSegment;
 
@@ -60,7 +60,7 @@ TEST(MarkerIndex, BarAndBeatGridForCommonAndOddMeters) {
     };
     for (const Case& c : cases) {
         MarkerIndex index;
-        ASSERT_TRUE(index.Reset(PieceTimeType::Musical, &clock,
+        ASSERT_TRUE(index.Reset(SegmentTimeType::Musical, &clock,
                                 MeterSignature{c.num, c.den}, nullptr, 0, 4));
         EXPECT_EQ(index.BarTicks(), c.bar) << c.num << "/" << c.den;
         EXPECT_EQ(index.BeatTicks(), c.beat) << c.num << "/" << c.den;
@@ -73,7 +73,7 @@ TEST(MarkerIndex, NextBarAndBeatAreStrictlyAfterWithinRepresentableRange) {
     TempoSegment seg;
     ClockKernel clock = MakeMusicalClock(seg);
     MarkerIndex index;
-    ASSERT_TRUE(index.Reset(PieceTimeType::Musical, &clock, MeterSignature{4, 4},
+    ASSERT_TRUE(index.Reset(SegmentTimeType::Musical, &clock, MeterSignature{4, 4},
                             nullptr, 0, 4)); // bar 3840, beat 960
 
     // (from, expected next bar): a position on a bar line advances to the next.
@@ -95,7 +95,7 @@ TEST(MarkerIndex, GridReportsNoCandidateBeyondTheLastRepresentableLine) {
     TempoSegment seg;
     ClockKernel clock = MakeMusicalClock(seg);
     MarkerIndex index;
-    ASSERT_TRUE(index.Reset(PieceTimeType::Musical, &clock, MeterSignature{4, 4},
+    ASSERT_TRUE(index.Reset(SegmentTimeType::Musical, &clock, MeterSignature{4, 4},
                             nullptr, 0, 4));
 
     constexpr std::int64_t beatTicks = 960;
@@ -118,7 +118,7 @@ TEST(MarkerIndex, NextMarkerReportsNoCandidateWhenNoneFollows) {
         {harkentest::ObjectId(9), MarkerKind::Custom, 5000},
     };
     MarkerIndex index;
-    ASSERT_TRUE(index.Reset(PieceTimeType::Musical, &clock, MeterSignature{4, 4},
+    ASSERT_TRUE(index.Reset(SegmentTimeType::Musical, &clock, MeterSignature{4, 4},
                             markers, 2, 4));
 
     auto c0 = index.NextBoundary(500, BoundaryType::Marker);
@@ -133,15 +133,15 @@ TEST(MarkerIndex, NextMarkerReportsNoCandidateWhenNoneFollows) {
     EXPECT_FALSE(c3.hasCandidate);
 }
 
-// An Absolute Piece has no musical grid: bar/beat queries report no candidate and
+// An Absolute Segment has no musical grid: bar/beat queries report no candidate and
 // the grid ticks are zero, while marker queries still work in nanoseconds.
-TEST(MarkerIndex, AbsolutePieceHasNoBarBeatGrid) {
+TEST(MarkerIndex, AbsoluteSegmentHasNoBarBeatGrid) {
     ClockKernel clock;
     TempoSegment seg{MusicalTick{0}, 500'000};
     ASSERT_TRUE(clock.Reset(48000, &seg, 1)); // valid clock; time type drives use
     const MarkerPoint markers[] = {{harkentest::ObjectId(7), MarkerKind::Custom, 1'000'000}}; // 1 ms in ns
     MarkerIndex index;
-    ASSERT_TRUE(index.Reset(PieceTimeType::Absolute, &clock, MeterSignature{4, 4},
+    ASSERT_TRUE(index.Reset(SegmentTimeType::Absolute, &clock, MeterSignature{4, 4},
                             markers, 1, 4));
 
     EXPECT_EQ(index.BarTicks(), 0);
@@ -165,7 +165,7 @@ TEST(MarkerIndex, LookupByIdPositionAndExit) {
         {harkentest::ObjectId(3), MarkerKind::Custom, 960},
     };
     MarkerIndex index;
-    ASSERT_TRUE(index.Reset(PieceTimeType::Musical, &clock, MeterSignature{4, 4},
+    ASSERT_TRUE(index.Reset(SegmentTimeType::Musical, &clock, MeterSignature{4, 4},
                             markers, 3, 8));
 
     const MarkerLookup byId = index.ByMarkerId(harkentest::ObjectId(5));
@@ -196,7 +196,7 @@ TEST(MarkerIndex, NegativeMarkerPositionCarriedThrough) {
     ClockKernel clock = MakeMusicalClock(seg);
     const MarkerPoint markers[] = {{harkentest::ObjectId(4), MarkerKind::Custom, -960}};
     MarkerIndex index;
-    ASSERT_TRUE(index.Reset(PieceTimeType::Musical, &clock, MeterSignature{4, 4},
+    ASSERT_TRUE(index.Reset(SegmentTimeType::Musical, &clock, MeterSignature{4, 4},
                             markers, 1, 4));
     const MarkerLookup c = index.ByMarkerId(harkentest::ObjectId(4));
     ASSERT_TRUE(c.present);
@@ -217,9 +217,9 @@ TEST(MarkerIndex, DeterministicRegardlessOfBuildOrder) {
         {harkentest::ObjectId(3), MarkerKind::Custom, 960}};
     MarkerIndex a;
     MarkerIndex b;
-    ASSERT_TRUE(a.Reset(PieceTimeType::Musical, &clock, MeterSignature{4, 4},
+    ASSERT_TRUE(a.Reset(SegmentTimeType::Musical, &clock, MeterSignature{4, 4},
                         forward, 3, 8));
-    ASSERT_TRUE(b.Reset(PieceTimeType::Musical, &clock, MeterSignature{4, 4},
+    ASSERT_TRUE(b.Reset(SegmentTimeType::Musical, &clock, MeterSignature{4, 4},
                         reversed, 3, 8));
     for (std::int64_t from : {0, 960, 1920, 5000}) {
         const auto ca = a.NextBoundary(from, BoundaryType::Marker);
@@ -238,9 +238,9 @@ TEST(MarkerIndex, RefusesBuildOverCapacity) {
         {harkentest::ObjectId(1), MarkerKind::Custom, 100}, {harkentest::ObjectId(2), MarkerKind::Custom, 200},
         {harkentest::ObjectId(3), MarkerKind::Custom, 300}};
     MarkerIndex index;
-    EXPECT_FALSE(index.Reset(PieceTimeType::Musical, &clock, MeterSignature{4, 4},
+    EXPECT_FALSE(index.Reset(SegmentTimeType::Musical, &clock, MeterSignature{4, 4},
                              markers, 3, 2)); // three markers into capacity two
-    EXPECT_TRUE(index.Reset(PieceTimeType::Musical, &clock, MeterSignature{4, 4},
+    EXPECT_TRUE(index.Reset(SegmentTimeType::Musical, &clock, MeterSignature{4, 4},
                             markers, 3, 3));
 }
 
@@ -250,30 +250,30 @@ TEST(MarkerIndex, ResetValidatesTheContract) {
     ClockKernel clock = MakeMusicalClock(seg);
     MarkerIndex index;
 
-    EXPECT_FALSE(index.Reset(PieceTimeType::Musical, nullptr,
+    EXPECT_FALSE(index.Reset(SegmentTimeType::Musical, nullptr,
                              MeterSignature{4, 4}, nullptr, 0, 4)); // null clock
     ClockKernel invalid;
-    EXPECT_FALSE(index.Reset(PieceTimeType::Musical, &invalid,
+    EXPECT_FALSE(index.Reset(SegmentTimeType::Musical, &invalid,
                              MeterSignature{4, 4}, nullptr, 0, 4)); // invalid clock
 
     const MarkerPoint entryId[] = {{harkentest::ObjectId(0), MarkerKind::Custom, 100}};
-    EXPECT_FALSE(index.Reset(PieceTimeType::Musical, &clock, MeterSignature{4, 4},
+    EXPECT_FALSE(index.Reset(SegmentTimeType::Musical, &clock, MeterSignature{4, 4},
                              entryId, 1, 4)); // reserved entry id
 
     const MarkerPoint dup[] = {{harkentest::ObjectId(7), MarkerKind::Custom, 100}, {harkentest::ObjectId(7), MarkerKind::Custom, 200}};
-    EXPECT_FALSE(index.Reset(PieceTimeType::Musical, &clock, MeterSignature{4, 4},
+    EXPECT_FALSE(index.Reset(SegmentTimeType::Musical, &clock, MeterSignature{4, 4},
                              dup, 2, 4)); // duplicate id
 
     const MarkerPoint twoExits[] = {{harkentest::ObjectId(1), MarkerKind::Exit, 100}, {harkentest::ObjectId(2), MarkerKind::Exit, 200}};
-    EXPECT_FALSE(index.Reset(PieceTimeType::Musical, &clock, MeterSignature{4, 4},
+    EXPECT_FALSE(index.Reset(SegmentTimeType::Musical, &clock, MeterSignature{4, 4},
                              twoExits, 2, 4)); // more than one exit
 
-    EXPECT_FALSE(index.Reset(PieceTimeType::Musical, &clock, MeterSignature{0, 4},
+    EXPECT_FALSE(index.Reset(SegmentTimeType::Musical, &clock, MeterSignature{0, 4},
                              nullptr, 0, 4)); // non-positive numerator
-    EXPECT_FALSE(index.Reset(PieceTimeType::Musical, &clock, MeterSignature{4, 7},
+    EXPECT_FALSE(index.Reset(SegmentTimeType::Musical, &clock, MeterSignature{4, 7},
                              nullptr, 0, 4)); // denominator not dividing PPQ*4
 
-    EXPECT_TRUE(index.Reset(PieceTimeType::Musical, &clock, MeterSignature{4, 4},
+    EXPECT_TRUE(index.Reset(SegmentTimeType::Musical, &clock, MeterSignature{4, 4},
                             nullptr, 0, 4)); // an empty table is valid
     EXPECT_TRUE(index.Valid());
     EXPECT_EQ(index.MarkerCount(), 0u);
@@ -285,12 +285,12 @@ TEST(MarkerIndex, ResetRejectsOutOfDomainEnums) {
     ClockKernel clock = MakeMusicalClock(seg);
     MarkerIndex index;
 
-    EXPECT_FALSE(index.Reset(static_cast<PieceTimeType>(2), &clock,
+    EXPECT_FALSE(index.Reset(static_cast<SegmentTimeType>(2), &clock,
                              MeterSignature{4, 4}, nullptr, 0, 4));
 
     const MarkerPoint invalidKind[] = {
         {harkentest::ObjectId(1), static_cast<MarkerKind>(3), 100},
     };
-    EXPECT_FALSE(index.Reset(PieceTimeType::Musical, &clock,
+    EXPECT_FALSE(index.Reset(SegmentTimeType::Musical, &clock,
                              MeterSignature{4, 4}, invalidKind, 1, 4));
 }

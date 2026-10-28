@@ -83,7 +83,7 @@ struct VariableSnapshotReader {
 // count, so a consumer can attribute the record with no symbol sidecar loaded --
 // which is the case whenever symbols were stripped for shipping.
 struct TelemetryCorrelation {
-    // The arranging instance: the Piece instance for a Track inside a Piece, the
+    // The arranging instance: the Segment instance for a Track inside a Segment, the
     // Track instance for a directly triggered Track. Both lineage depths are
     // expressed by this one field rather than by two record shapes.
     PlayableInstanceHandle arrangingInstance = 0;

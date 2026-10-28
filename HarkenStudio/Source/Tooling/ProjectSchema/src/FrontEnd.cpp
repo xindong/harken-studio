@@ -57,14 +57,14 @@ bool IsValid(ContentKind kind) {
         case ContentKind::Sound:
         case ContentKind::Container:
         case ContentKind::Track:
-        case ContentKind::Piece:
+        case ContentKind::Segment:
             return true;
     }
     return false;
 }
 
-bool IsValid(PieceTimeKind kind) {
-    return kind == PieceTimeKind::Absolute || kind == PieceTimeKind::Musical;
+bool IsValid(SegmentTimeKind kind) {
+    return kind == SegmentTimeKind::Absolute || kind == SegmentTimeKind::Musical;
 }
 
 bool IsValid(StartPointKind kind) {
@@ -278,8 +278,8 @@ void ValidateSignalGraph(const InputNode& node, std::vector<Diagnostic>* out) {
 // ---- Stage 1: parse ------------------------------------------------------
 //
 // Per-node, purely local checks: a field authored where its kind forbids it, a
-// Piece missing what a Piece requires, the reserved marker id used as a real marker,
-// and a Piece's own start point pointing at a marker it does not list. Nothing here
+// Segment missing what a Segment requires, the reserved marker id used as a real marker,
+// and a Segment's own start point pointing at a marker it does not list. Nothing here
 // looks at another node, so the order is exactly the authored node order.
 void ParseNode(const InputNode& node, std::vector<Diagnostic>* out) {
     if (!IsValid(node.kind)) {
@@ -314,22 +314,22 @@ void ParseNode(const InputNode& node, std::vector<Diagnostic>* out) {
         out->push_back(Make(DiagnosticCode::ClipsOnNonTrack, node.guid));
     }
 
-    // Time-side authoring belongs to a Piece and nowhere else. A Track carrying
+    // Time-side authoring belongs to a Segment and nowhere else. A Track carrying
     // a time spec is refused here — the one place the "no clock on a Track"
     // contract is enforced against an input that tried to spell it.
-    if (node.timeSpec.has_value() && node.kind != ContentKind::Piece) {
-        out->push_back(Make(DiagnosticCode::TimeSpecOnNonPiece, node.guid));
+    if (node.timeSpec.has_value() && node.kind != ContentKind::Segment) {
+        out->push_back(Make(DiagnosticCode::TimeSpecOnNonSegment, node.guid));
     }
-    if (node.startPoint.has_value() && node.kind != ContentKind::Piece) {
-        out->push_back(Make(DiagnosticCode::StartPointOnNonPiece, node.guid));
+    if (node.startPoint.has_value() && node.kind != ContentKind::Segment) {
+        out->push_back(Make(DiagnosticCode::StartPointOnNonSegment, node.guid));
     }
-    if (!node.markers.empty() && node.kind != ContentKind::Piece) {
-        out->push_back(Make(DiagnosticCode::MarkersOnNonPiece, node.guid));
+    if (!node.markers.empty() && node.kind != ContentKind::Segment) {
+        out->push_back(Make(DiagnosticCode::MarkersOnNonSegment, node.guid));
     }
 
     if (node.timeSpec.has_value() && !IsValid(node.timeSpec->kind)) {
         Diagnostic d =
-            Make(DiagnosticCode::InvalidPieceTimeKind, node.guid);
+            Make(DiagnosticCode::InvalidSegmentTimeKind, node.guid);
         d.detail = static_cast<std::uint64_t>(node.timeSpec->kind);
         out->push_back(d);
     }
@@ -350,8 +350,8 @@ void ParseNode(const InputNode& node, std::vector<Diagnostic>* out) {
     }
 
     // Markers carry authoring identity and may never use the reserved id, whatever
-    // the node's kind — checked before the Piece-shape checks so a stray marker on
-    // a non-Piece is still caught for the reserved id it used.
+    // the node's kind — checked before the Segment-shape checks so a stray marker on
+    // a non-Segment is still caught for the reserved id it used.
     std::set<MarkerId> markerIds;
     for (const InputMarker& marker : node.markers) {
         if (IsNull(marker.guid)) {
@@ -371,7 +371,7 @@ void ParseNode(const InputNode& node, std::vector<Diagnostic>* out) {
             d.detail = static_cast<std::uint64_t>(marker.kind);
             out->push_back(d);
         }
-        if (node.kind == ContentKind::Piece &&
+        if (node.kind == ContentKind::Segment &&
             marker.markerId != kReservedMarkerId &&
             !markerIds.insert(marker.markerId).second) {
             Diagnostic d = Make(DiagnosticCode::DuplicateMarkerId, node.guid);
@@ -381,20 +381,20 @@ void ParseNode(const InputNode& node, std::vector<Diagnostic>* out) {
         }
     }
 
-    // A Piece must define its coordinate system and where it begins, and its
-    // maps must match its kind. A non-Piece has already been refused for any of
-    // these it carried, so this only runs the positive Piece rules.
-    if (node.kind == ContentKind::Piece) {
+    // A Segment must define its coordinate system and where it begins, and its
+    // maps must match its kind. A non-Segment has already been refused for any of
+    // these it carried, so this only runs the positive Segment rules.
+    if (node.kind == ContentKind::Segment) {
         if (!node.timeSpec.has_value()) {
-            out->push_back(Make(DiagnosticCode::PieceMissingTimeSpec, node.guid));
+            out->push_back(Make(DiagnosticCode::SegmentMissingTimeSpec, node.guid));
         } else {
-            const InputPieceTimeSpec& spec = *node.timeSpec;
-            if (spec.kind == PieceTimeKind::Musical) {
+            const InputSegmentTimeSpec& spec = *node.timeSpec;
+            if (spec.kind == SegmentTimeKind::Musical) {
                 if (spec.tempoMap.empty() || spec.meterMap.empty()) {
                     out->push_back(
                         Make(DiagnosticCode::MusicalMapEmpty, node.guid));
                 }
-            } else if (spec.kind == PieceTimeKind::Absolute) {
+            } else if (spec.kind == SegmentTimeKind::Absolute) {
                 // Absolute time carries no maps; maps present here would be
                 // meaningless and are refused so the discriminant stays honest.
                 if (!spec.tempoMap.empty() || !spec.meterMap.empty()) {
@@ -406,7 +406,7 @@ void ParseNode(const InputNode& node, std::vector<Diagnostic>* out) {
 
         if (!node.startPoint.has_value()) {
             out->push_back(
-                Make(DiagnosticCode::PieceMissingStartPoint, node.guid));
+                Make(DiagnosticCode::SegmentMissingStartPoint, node.guid));
         } else {
             const InputStartPoint& sp = *node.startPoint;
             if (sp.kind == StartPointKind::Marker) {
@@ -506,8 +506,8 @@ RuntimeIdentityKindV1 RuntimeKind(ContentKind kind) {
             return RuntimeIdentityKindV1::Container;
         case ContentKind::Track:
             return RuntimeIdentityKindV1::Track;
-        case ContentKind::Piece:
-            return RuntimeIdentityKindV1::Piece;
+        case ContentKind::Segment:
+            return RuntimeIdentityKindV1::Segment;
         case ContentKind::Layer:
             return RuntimeIdentityKindV1::Layer;
     }
@@ -929,15 +929,15 @@ ContentObject BuildObject(const InputNode& node, const NodeIndex& index,
             }
             break;
         }
-        case ContentKind::Piece: {
-            obj.piece.chassis = chassis;
-            obj.piece.tracks = childIds;
-            const InputPieceTimeSpec& spec = *node.timeSpec;
-            obj.piece.timeSpec.kind = spec.kind;
-            obj.piece.timeSpec.tempoMap = spec.tempoMap;
-            obj.piece.timeSpec.meterMap = spec.meterMap;
-            obj.piece.startPoint.kind = node.startPoint->kind;
-            obj.piece.startPoint.markerId = node.startPoint->markerId;
+        case ContentKind::Segment: {
+            obj.segment.chassis = chassis;
+            obj.segment.tracks = childIds;
+            const InputSegmentTimeSpec& spec = *node.timeSpec;
+            obj.segment.timeSpec.kind = spec.kind;
+            obj.segment.timeSpec.tempoMap = spec.tempoMap;
+            obj.segment.timeSpec.meterMap = spec.meterMap;
+            obj.segment.startPoint.kind = node.startPoint->kind;
+            obj.segment.startPoint.markerId = node.startPoint->markerId;
             for (const InputMarker& marker : node.markers) {
                 Marker out;
                 out.id = marker.guid;
@@ -945,7 +945,7 @@ ContentObject BuildObject(const InputNode& node, const NodeIndex& index,
                 out.markerId = marker.markerId;
                 out.kind = marker.kind;
                 out.position = marker.position;
-                obj.piece.markers.push_back(out);
+                obj.segment.markers.push_back(out);
             }
             break;
         }
@@ -1009,13 +1009,13 @@ void ValidateTimeMarker(const ProjectInput& input, std::vector<Diagnostic>* out)
                 out->push_back(d);
             }
         }
-        if (node.kind != ContentKind::Piece || !node.timeSpec.has_value()) {
-            // Non-Pieces carry no time side, and a Piece missing its time spec
+        if (node.kind != ContentKind::Segment || !node.timeSpec.has_value()) {
+            // Non-Segments carry no time side, and a Segment missing its time spec
             // was already refused; either way there is nothing to normalize.
             continue;
         }
-        const InputPieceTimeSpec& spec = *node.timeSpec;
-        if (spec.kind == PieceTimeKind::Musical) {
+        const InputSegmentTimeSpec& spec = *node.timeSpec;
+        if (spec.kind == SegmentTimeKind::Musical) {
             if (!IsSingletonAtZero(spec.tempoMap)) {
                 Diagnostic d =
                     Make(DiagnosticCode::MusicalMapNotSingletonAtZero, node.guid);
@@ -1030,7 +1030,7 @@ void ValidateTimeMarker(const ProjectInput& input, std::vector<Diagnostic>* out)
             }
         }
 
-        // Exit is unique by kind: a Piece may declare at most one exit marker.
+        // Exit is unique by kind: a Segment may declare at most one exit marker.
         // Custom markers are unbounded.
         std::uint64_t exitMarkers = 0;
         for (const InputMarker& marker : node.markers) {
@@ -1048,21 +1048,21 @@ void ValidateTimeMarker(const ProjectInput& input, std::vector<Diagnostic>* out)
 
 // Derives the normalization facts from the already-built, already-valid model.
 // The model's objects are in ascending stable-id order, so iterating them yields
-// the per-Piece and per-Track facts in that same order without a further sort.
+// the per-Segment and per-Track facts in that same order without a further sort.
 NormalizedFacts BuildNormalizedFacts(const CanonicalProject& project) {
     NormalizedFacts facts;
     for (const ContentObject& obj : project.objects) {
-        if (obj.kind == ContentKind::Piece) {
-            const PieceDef& piece = obj.piece;
-            PieceNormalization pn;
-            pn.piece = piece.chassis.id;
-            pn.startKind = piece.startPoint.kind;
-            if (piece.startPoint.kind == StartPointKind::Marker) {
-                pn.startMarkerId = piece.startPoint.markerId;
+        if (obj.kind == ContentKind::Segment) {
+            const SegmentDef& segment = obj.segment;
+            SegmentNormalization pn;
+            pn.segment = segment.chassis.id;
+            pn.startKind = segment.startPoint.kind;
+            if (segment.startPoint.kind == StartPointKind::Marker) {
+                pn.startMarkerId = segment.startPoint.markerId;
                 // The named marker exists (parse proved it), so its authored
                 // position is the resolved start coordinate.
-                for (const Marker& marker : piece.markers) {
-                    if (marker.markerId == piece.startPoint.markerId) {
+                for (const Marker& marker : segment.markers) {
+                    if (marker.markerId == segment.startPoint.markerId) {
                         pn.startCoordinate = marker.position;
                         break;
                     }
@@ -1074,11 +1074,11 @@ NormalizedFacts BuildNormalizedFacts(const CanonicalProject& project) {
             }
 
             std::vector<const Marker*> byMarkerId;
-            byMarkerId.reserve(piece.markers.size());
-            for (const Marker& marker : piece.markers) {
+            byMarkerId.reserve(segment.markers.size());
+            for (const Marker& marker : segment.markers) {
                 byMarkerId.push_back(&marker);
             }
-            // MarkerIds are unique within a Piece (parse proved it), so this is a
+            // MarkerIds are unique within a Segment (parse proved it), so this is a
             // total order and the sort is fully determined.
             std::stable_sort(byMarkerId.begin(), byMarkerId.end(),
                              [](const Marker* a, const Marker* b) {
@@ -1087,7 +1087,7 @@ NormalizedFacts BuildNormalizedFacts(const CanonicalProject& project) {
             for (const Marker* marker : byMarkerId) {
                 pn.markersByMarkerId.push_back(marker->id);
             }
-            facts.pieces.push_back(std::move(pn));
+            facts.segments.push_back(std::move(pn));
         } else if (obj.kind == ContentKind::Track) {
             const TrackDef& track = obj.track;
             TrackNormalization tn;

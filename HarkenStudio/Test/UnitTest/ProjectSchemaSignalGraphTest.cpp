@@ -14,7 +14,7 @@ using fixtures::G;
 ProjectInput SingleNodeProject(ContentKind kind) {
     ProjectInput input;
     InputNode node = fixtures::Node(kind, 1);
-    if (kind == ContentKind::Piece) {
+    if (kind == ContentKind::Segment) {
         node.timeSpec = fixtures::AbsoluteTime();
         node.startPoint = fixtures::EntryStart();
     }

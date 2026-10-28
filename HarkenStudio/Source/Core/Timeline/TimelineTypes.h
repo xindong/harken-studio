@@ -40,21 +40,21 @@ struct MeterPoint
     bool operator==(const MeterPoint&) const = default;
 };
 
-struct PieceTimeSpec
+struct SegmentTimeSpec
 {
     TimelineDomain domain = TimelineDomain::Absolute;
     std::vector<TempoPoint> tempoMap;
     std::vector<MeterPoint> meterMap;
 
-    static PieceTimeSpec musical(int64_t microsecondsPerQuarter = 500000,
+    static SegmentTimeSpec musical(int64_t microsecondsPerQuarter = 500000,
                                  int32_t numerator = 4,
                                  int32_t denominator = 4);
     bool isDefault() const;
     QJsonObject toJson() const;
-    static std::optional<PieceTimeSpec> fromJson(const QJsonObject& json,
+    static std::optional<SegmentTimeSpec> fromJson(const QJsonObject& json,
                                                   QString* error = nullptr);
 
-    bool operator==(const PieceTimeSpec&) const = default;
+    bool operator==(const SegmentTimeSpec&) const = default;
 };
 
 struct Clip

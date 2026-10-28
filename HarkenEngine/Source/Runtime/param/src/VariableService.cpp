@@ -338,7 +338,7 @@ void VariableServiceV1::OwnedTrackScheduleProgram::Refresh() noexcept {
     view.placements = placements.empty() ? nullptr : placements.data();
 }
 
-void VariableServiceV1::OwnedPieceScheduleProgram::Refresh() noexcept {
+void VariableServiceV1::OwnedSegmentScheduleProgram::Refresh() noexcept {
     view.trackRefCount = static_cast<std::uint32_t>(trackRefs.size());
     view.trackRefs = trackRefs.empty() ? nullptr : trackRefs.data();
     view.markerCount = static_cast<std::uint32_t>(markers.size());
@@ -596,11 +596,11 @@ WorldInstallResult VariableServiceV1::InstallImpl(
         destination.Refresh();
     }
 
-    std::vector<OwnedPieceScheduleProgram> nextPieceSchedules;
-    nextPieceSchedules.resize(install.pieceScheduleCount);
-    for (std::uint32_t i = 0; i < install.pieceScheduleCount; ++i) {
-        auto& destination = nextPieceSchedules[i];
-        const auto& source = install.pieceSchedules[i];
+    std::vector<OwnedSegmentScheduleProgram> nextSegmentSchedules;
+    nextSegmentSchedules.resize(install.segmentScheduleCount);
+    for (std::uint32_t i = 0; i < install.segmentScheduleCount; ++i) {
+        auto& destination = nextSegmentSchedules[i];
+        const auto& source = install.segmentSchedules[i];
         destination.view = source;
         if (source.trackRefCount != 0) {
             destination.trackRefs.assign(
@@ -707,9 +707,9 @@ WorldInstallResult VariableServiceV1::InstallImpl(
     std::vector<decltype(OwnedTrackScheduleProgram{}.view)> nextTrackScheduleViews;
     nextTrackScheduleViews.reserve(nextTrackSchedules.size());
     for (auto& row : nextTrackSchedules) nextTrackScheduleViews.push_back(row.view);
-    std::vector<decltype(OwnedPieceScheduleProgram{}.view)> nextPieceScheduleViews;
-    nextPieceScheduleViews.reserve(nextPieceSchedules.size());
-    for (auto& row : nextPieceSchedules) nextPieceScheduleViews.push_back(row.view);
+    std::vector<decltype(OwnedSegmentScheduleProgram{}.view)> nextSegmentScheduleViews;
+    nextSegmentScheduleViews.reserve(nextSegmentSchedules.size());
+    for (auto& row : nextSegmentSchedules) nextSegmentScheduleViews.push_back(row.view);
     std::vector<decltype(OwnedContainerProgram{}.view)> nextContainerProgramViews;
     nextContainerProgramViews.reserve(nextContainers.size());
     for (auto& row : nextContainers) nextContainerProgramViews.push_back(row.view);
@@ -757,8 +757,8 @@ WorldInstallResult VariableServiceV1::InstallImpl(
     playableOccurrenceViews_.swap(nextPlayableOccurrenceViews);
     trackSchedules_.swap(nextTrackSchedules);
     trackScheduleViews_.swap(nextTrackScheduleViews);
-    pieceSchedules_.swap(nextPieceSchedules);
-    pieceScheduleViews_.swap(nextPieceScheduleViews);
+    segmentSchedules_.swap(nextSegmentSchedules);
+    segmentScheduleViews_.swap(nextSegmentScheduleViews);
     containerPrograms_.swap(nextContainers);
     containerProgramViews_.swap(nextContainerProgramViews);
     transitionPrograms_.swap(nextTransitions);
@@ -906,11 +906,11 @@ WorldInstallStatus VariableServiceV1::PrepareCurrentWorldImageV1(
         destination.Refresh();
     }
 
-    std::vector<OwnedPieceScheduleProgram> nextPieceSchedules;
-    nextPieceSchedules.resize(install.pieceScheduleCount);
-    for (std::uint32_t i = 0; i < install.pieceScheduleCount; ++i) {
-        auto& destination = nextPieceSchedules[i];
-        const auto& source = install.pieceSchedules[i];
+    std::vector<OwnedSegmentScheduleProgram> nextSegmentSchedules;
+    nextSegmentSchedules.resize(install.segmentScheduleCount);
+    for (std::uint32_t i = 0; i < install.segmentScheduleCount; ++i) {
+        auto& destination = nextSegmentSchedules[i];
+        const auto& source = install.segmentSchedules[i];
         destination.view = source;
         if (source.trackRefCount != 0) {
             destination.trackRefs.assign(
@@ -1007,7 +1007,7 @@ WorldInstallStatus VariableServiceV1::PrepareCurrentWorldImageV1(
     out.playableProperties_ = std::move(nextProperties);
     out.playableOccurrences_ = std::move(nextOccurrences);
     out.trackSchedules_ = std::move(nextTrackSchedules);
-    out.pieceSchedules_ = std::move(nextPieceSchedules);
+    out.segmentSchedules_ = std::move(nextSegmentSchedules);
     out.containerPrograms_ = std::move(nextContainers);
     out.transitionPrograms_ = std::move(nextTransitions);
     out.actionPrograms_ = std::move(nextActions);
@@ -1026,10 +1026,10 @@ WorldInstallStatus VariableServiceV1::PrepareCurrentWorldImageV1(
         row.Refresh();
         out.trackScheduleViews_.push_back(row.view);
     }
-    out.pieceScheduleViews_.reserve(out.pieceSchedules_.size());
-    for (auto& row : out.pieceSchedules_) {
+    out.segmentScheduleViews_.reserve(out.segmentSchedules_.size());
+    for (auto& row : out.segmentSchedules_) {
         row.Refresh();
-        out.pieceScheduleViews_.push_back(row.view);
+        out.segmentScheduleViews_.push_back(row.view);
     }
     out.containerProgramViews_.reserve(out.containerPrograms_.size());
     for (auto& row : out.containerPrograms_) {
@@ -1078,8 +1078,8 @@ ContainerWorldInstallViewV1 VariableServiceV1::PreparedWorldInstallViewV1(
     view.playableOccurrenceCount = static_cast<std::uint32_t>(prepared.playableOccurrenceViews_.size());
     view.trackSchedules = prepared.trackScheduleViews_.data();
     view.trackScheduleCount = static_cast<std::uint32_t>(prepared.trackScheduleViews_.size());
-    view.pieceSchedules = prepared.pieceScheduleViews_.data();
-    view.pieceScheduleCount = static_cast<std::uint32_t>(prepared.pieceScheduleViews_.size());
+    view.segmentSchedules = prepared.segmentScheduleViews_.data();
+    view.segmentScheduleCount = static_cast<std::uint32_t>(prepared.segmentScheduleViews_.size());
     view.containers = prepared.containerProgramViews_.data();
     view.containerCount = static_cast<std::uint32_t>(prepared.containerProgramViews_.size());
     view.transitions = prepared.transitionProgramViews_.data();
@@ -1197,8 +1197,8 @@ WorldGeneration VariableServiceV1::CommitPreparedCurrentWorldImageV1(
     playableOccurrenceViews_.swap(prepared.playableOccurrenceViews_);
     trackSchedules_.swap(prepared.trackSchedules_);
     trackScheduleViews_.swap(prepared.trackScheduleViews_);
-    pieceSchedules_.swap(prepared.pieceSchedules_);
-    pieceScheduleViews_.swap(prepared.pieceScheduleViews_);
+    segmentSchedules_.swap(prepared.segmentSchedules_);
+    segmentScheduleViews_.swap(prepared.segmentScheduleViews_);
     containerPrograms_.swap(prepared.containerPrograms_);
     containerProgramViews_.swap(prepared.containerProgramViews_);
     transitionPrograms_.swap(prepared.transitionPrograms_);

@@ -98,8 +98,8 @@ void TimelineHeaderColumn::rebuildRows()
         delete item->widget();
         delete item;
     }
-    table_->setVisible(panel_->viewKind() == TimelineEditorPanel::ViewKind::Piece);
-    if (panel_->viewKind() != TimelineEditorPanel::ViewKind::Piece)
+    table_->setVisible(panel_->viewKind() == TimelineEditorPanel::ViewKind::Segment);
+    if (panel_->viewKind() != TimelineEditorPanel::ViewKind::Segment)
         return;
     for (int lane = 0; lane < panel_->laneCount(); ++lane) {
         auto* row = new QWidget(table_->rowsWidget());
@@ -260,7 +260,7 @@ void TimelineHeaderColumn::renameLane(const QUuid& guid)
 
 QMenu* TimelineHeaderColumn::createLaneMenu(int laneIndex)
 {
-    if (panel_->viewKind() != TimelineEditorPanel::ViewKind::Piece)
+    if (panel_->viewKind() != TimelineEditorPanel::ViewKind::Segment)
         return nullptr;
     ProjectItem* track = ProjectManager::instance().findItemByGuid(
         panel_->laneGuid(laneIndex));

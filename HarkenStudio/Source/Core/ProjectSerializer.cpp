@@ -516,12 +516,16 @@ bool ProjectSerializer::prepareReferenceRead(const QString& projectFilePath)
                                          .value(QStringLiteral("harkenDocument"))
                                          .toObject();
         const QString documentType = envelope.value(QStringLiteral("type")).toString();
-        const QUuid documentId = QUuid::fromString(
-            envelope.value(QStringLiteral("id")).toString());
-        const QJsonObject content = json.object().value(QStringLiteral("content")).toObject();
+        ProjectDocumentData document;
+        QString documentError;
+        if (!ProjectDocument::parse(json.object(), documentType, &document, &documentError)) {
+            lastError_ = QStringLiteral("%1: %2").arg(path, documentError);
+            return false;
+        }
         if (documentType == QLatin1String("project.root")) continue;
 
-        if (!registerReferenceReadTree(content, documentId, path)) return false;
+        if (!registerReferenceReadTree(document.content, QUuid::fromString(document.id), path))
+            return false;
     }
     return true;
 }
@@ -1049,7 +1053,7 @@ bool ProjectSerializer::encodeActionReferences(QJsonArray* actions) const
                     && (target->type == ProjectItem::Type::Sound
                         || target->type == ProjectItem::Type::Container
                         || target->type == ProjectItem::Type::Track
-                        || target->type == ProjectItem::Type::Piece);
+                        || target->type == ProjectItem::Type::Segment);
                 if (!validType) {
                     lastError_ = QStringLiteral("Action contains an invalid timing reference");
                     return false;
@@ -1105,7 +1109,7 @@ bool ProjectSerializer::decodeActionReferences(QJsonArray* actions) const
                     && (target->type == ProjectItem::Type::Sound
                         || target->type == ProjectItem::Type::Container
                         || target->type == ProjectItem::Type::Track
-                        || target->type == ProjectItem::Type::Piece);
+                        || target->type == ProjectItem::Type::Segment);
                 if (!validType) {
                     lastError_ = QStringLiteral("Action contains a timing target of the wrong type");
                     return false;

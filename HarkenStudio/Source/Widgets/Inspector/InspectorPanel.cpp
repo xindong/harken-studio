@@ -201,10 +201,10 @@ void InspectorPanelPrivate::refreshBoundPages(ProjectItem* item, const QString& 
         }
         if (!related && item->type == ProjectItem::Type::Variable)
             related = true;
-        if (!related && current->type == ProjectItem::Type::Piece
+        if (!related && current->type == ProjectItem::Type::Segment
             && (prop == QLatin1String("clips")
                 || prop == QLatin1String("markers")
-                || prop == QLatin1String("pieceTime")))
+                || prop == QLatin1String("segmentTime")))
             related = true;
         if (!related) return;
         if (engine->refreshField(prop))
@@ -221,7 +221,7 @@ void InspectorPanelPrivate::refreshBoundPages(ProjectItem* item, const QString& 
     refreshOrRebind(layerEngine_,     currentLayerItem_);
     refreshOrRebind(containerEngine_, currentContainerItem_);
     refreshOrRebind(trackEngine_,     currentTrackItem_);
-    refreshOrRebind(pieceEngine_,     currentPieceItem_);
+    refreshOrRebind(segmentEngine_,     currentSegmentItem_);
     refreshOrRebind(busEngine_,       currentBusItem_);
     refreshOrRebind(variableEngine_,  currentVariableItem_);
     refreshOrRebind(actionEngine_,    currentActionItem_);
@@ -240,7 +240,7 @@ void InspectorPanelPrivate::rebindHierarchyPages(ProjectItem* createdChild)
     rebind(layerEngine_,     currentLayerItem_);
     rebind(containerEngine_, currentContainerItem_);
     rebind(trackEngine_,     currentTrackItem_);
-    rebind(pieceEngine_,     currentPieceItem_);
+    rebind(segmentEngine_,     currentSegmentItem_);
     rebind(busEngine_,       currentBusItem_);
     rebind(variableEngine_,  currentVariableItem_);
 }
@@ -248,7 +248,7 @@ void InspectorPanelPrivate::rebindHierarchyPages(ProjectItem* createdChild)
 void InspectorPanelPrivate::clearItemBindings()
 {
     const std::array<PropertyEditorEngine*, 9> engines = {
-        soundEngine_, layerEngine_, containerEngine_, trackEngine_, pieceEngine_,
+        soundEngine_, layerEngine_, containerEngine_, trackEngine_, segmentEngine_,
         variableEngine_, busEngine_, actionEngine_, attenuationEngine_};
     for (PropertyEditorEngine* engine : engines)
         if (engine) engine->bindItem(nullptr);
@@ -257,7 +257,7 @@ void InspectorPanelPrivate::clearItemBindings()
     currentLayerItem_ = nullptr;
     currentContainerItem_ = nullptr;
     currentTrackItem_ = nullptr;
-    currentPieceItem_ = nullptr;
+    currentSegmentItem_ = nullptr;
     currentVariableItem_ = nullptr;
     currentBusItem_ = nullptr;
     currentActionItem_ = nullptr;
@@ -415,7 +415,7 @@ void InspectorPanelPrivate::registerPages()
     pages_[PageBus].builder           = [this]{ setupBusPage(); };
     pages_[PageContainer].builder     = [this]{ setupContainerPage(); };
     pages_[PageTrack].builder         = [this]{ setupTrackPage(); };
-    pages_[PagePiece].builder         = [this]{ setupPiecePage(); };
+    pages_[PageSegment].builder         = [this]{ setupSegmentPage(); };
     pages_[PageVariable].builder      = [this]{ setupVariablePage(); };
 
     pages_[PageEmpty].builder();
@@ -448,7 +448,7 @@ int InspectorPanelPrivate::ensurePageBuilt(Page p)
 void InspectorPanelPrivate::dropEnginePageBindings()
 {
     const std::array<PropertyEditorEngine*, 9> engines = {
-        soundEngine_, layerEngine_, containerEngine_, trackEngine_, pieceEngine_,
+        soundEngine_, layerEngine_, containerEngine_, trackEngine_, segmentEngine_,
         variableEngine_, busEngine_, actionEngine_, attenuationEngine_};
     for (PropertyEditorEngine* engine : engines)
         if (engine) engine->releasePage();
@@ -492,7 +492,7 @@ InspectorPanelPrivate::Page pageForItemType(ProjectItem::Type type)
     case ProjectItem::Type::Sound:       return P::PageSound;
     case ProjectItem::Type::Container:   return P::PageContainer;
     case ProjectItem::Type::Track:       return P::PageTrack;
-    case ProjectItem::Type::Piece:       return P::PagePiece;
+    case ProjectItem::Type::Segment:       return P::PageSegment;
     case ProjectItem::Type::Layer:       return P::PageLayer;
     case ProjectItem::Type::Bus:         return P::PageBus;
     case ProjectItem::Type::Action:      return P::PageAction;
@@ -546,7 +546,7 @@ void InspectorPanel::showItemInspectorImpl(ProjectItem* item)
     case P::PageLayer:       d->currentLayerItem_       = item; engine = d->layerEngine_;       break;
     case P::PageContainer:   d->currentContainerItem_   = item; engine = d->containerEngine_;   break;
     case P::PageTrack:       d->currentTrackItem_       = item; engine = d->trackEngine_;       break;
-    case P::PagePiece:       d->currentPieceItem_       = item; engine = d->pieceEngine_;       break;
+    case P::PageSegment:       d->currentSegmentItem_       = item; engine = d->segmentEngine_;       break;
     case P::PageVariable:    d->currentVariableItem_    = item; engine = d->variableEngine_;    break;
     default: break;
     }
@@ -623,7 +623,7 @@ ProjectItem* InspectorPanel::currentContextItem() const
     case P::PageLayer:         return d->currentLayerItem_;
     case P::PageContainer:     return d->currentContainerItem_;
     case P::PageTrack:         return d->currentTrackItem_;
-    case P::PagePiece:         return d->currentPieceItem_;
+    case P::PageSegment:         return d->currentSegmentItem_;
     case P::PageVariable:      return d->currentVariableItem_;
     case P::PageBus:           return d->currentBusItem_;
     case P::PageAction:        return d->currentActionItem_;

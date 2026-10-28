@@ -1,19 +1,19 @@
 // The immutable Project v6 program: the compiler's final assembled value for
 // this library's scope.
 //
-// A PieceProgram bundles a built PieceIR (its folded Tracks, Pieces, occurrence
+// A SegmentProgram bundles a built SegmentIR (its folded Tracks, Segments, occurrence
 // templates and required RuntimeLineageTable) with the active-capacity estimate,
 // the capability prerequisites it needs a runtime to satisfy, and a program
-// semantic fingerprint. It is assembled once by BuildPieceProgram and never
-// mutated, the same type-level immutability PieceIR uses.
+// semantic fingerprint. It is assembled once by BuildSegmentProgram and never
+// mutated, the same type-level immutability SegmentIR uses.
 //
 // -- programSemanticFingerprint -------------------------------------------
 //
 // An FNV-1a 64-bit hash over the program identities and audible content. The
 // honest field coverage keeps a partial hash from being mistaken for a whole:
 //
-//   INCLUDED, per Piece (in AuthoringGuid order):
-//     - the Piece AuthoringGuid
+//   INCLUDED, per Segment (in AuthoringGuid order):
+//     - the Segment AuthoringGuid
 //     - time spec: kind, every tempo row (tick, microsPerQuarter), every meter
 //       row (tick, numerator, denominator)
 //     - start: kind, resolved coordinate, marker id
@@ -74,11 +74,11 @@
 // changing only the minted numbering while preserving relative ClipId order
 // changes runtimeLineageFingerprint but not this one; changing an included
 // identity, ordering key or audible field changes this one.
-#ifndef HARKEN_PROJECT_SCHEMA_PIECE_PROGRAM_H
-#define HARKEN_PROJECT_SCHEMA_PIECE_PROGRAM_H
+#ifndef HARKEN_PROJECT_SCHEMA_SEGMENT_PROGRAM_H
+#define HARKEN_PROJECT_SCHEMA_SEGMENT_PROGRAM_H
 
 #include "harken_project_schema/CapacityEstimate.h"
-#include "harken_project_schema/PieceIR.h"
+#include "harken_project_schema/SegmentIR.h"
 
 #include <cstdint>
 #include <utility>
@@ -92,11 +92,11 @@ namespace harkenprojectschema {
 // rather than present-and-unset: a program cannot require what the compiler
 // cannot yet produce, and inventing bits for them would pre-commit a shape.
 enum class ProgramCapability : std::uint32_t {
-    MusicalTiming = 0,          // a Piece measured in musical time (constant tempo/meter map)
-    AbsoluteTiming = 1,         // a Piece in absolute time, or a directly triggered Track
+    MusicalTiming = 0,          // a Segment measured in musical time (constant tempo/meter map)
+    AbsoluteTiming = 1,         // a Segment in absolute time, or a directly triggered Track
     NaturalLengthPlayback = 2,  // a clip taking a Sound's natural length (use-content)
     ContainerPlacement = 3,     // a clip placing a Container
-    NestedPiecePlacement = 4,   // a clip placing a Piece
+    NestedSegmentPlacement = 4,   // a clip placing a Segment
     VoiceEffectChain = 5,       // an occurrence selected a chain that has effects to run
 };
 
@@ -113,17 +113,17 @@ struct CapabilityPrerequisites {
 };
 
 namespace detail {
-struct PieceProgramBuilder;
+struct SegmentProgramBuilder;
 }
 
-class PieceProgram {
+class SegmentProgram {
 public:
-    PieceProgram(const PieceProgram&) = default;
-    PieceProgram(PieceProgram&&) noexcept = default;
-    PieceProgram& operator=(const PieceProgram&) = default;
-    PieceProgram& operator=(PieceProgram&&) noexcept = default;
+    SegmentProgram(const SegmentProgram&) = default;
+    SegmentProgram(SegmentProgram&&) noexcept = default;
+    SegmentProgram& operator=(const SegmentProgram&) = default;
+    SegmentProgram& operator=(SegmentProgram&&) noexcept = default;
 
-    const PieceIR& ir() const { return ir_; }
+    const SegmentIR& ir() const { return ir_; }
     const CapacityEstimate& capacityEstimate() const { return estimate_; }
     const CapabilityPrerequisites& capabilities() const { return capabilities_; }
     std::uint64_t programSemanticFingerprint() const {
@@ -136,16 +136,16 @@ public:
     }
 
 private:
-    PieceProgram(PieceIR ir, CapacityEstimate estimate,
+    SegmentProgram(SegmentIR ir, CapacityEstimate estimate,
                  CapabilityPrerequisites capabilities,
                  std::uint64_t programSemanticFingerprint)
         : ir_(std::move(ir)), estimate_(std::move(estimate)),
           capabilities_(capabilities),
           programSemanticFingerprint_(programSemanticFingerprint) {}
 
-    friend struct detail::PieceProgramBuilder;
+    friend struct detail::SegmentProgramBuilder;
 
-    PieceIR ir_;
+    SegmentIR ir_;
     CapacityEstimate estimate_;
     CapabilityPrerequisites capabilities_;
     std::uint64_t programSemanticFingerprint_ = 0;
@@ -153,4 +153,4 @@ private:
 
 }  // namespace harkenprojectschema
 
-#endif  // HARKEN_PROJECT_SCHEMA_PIECE_PROGRAM_H
+#endif  // HARKEN_PROJECT_SCHEMA_SEGMENT_PROGRAM_H

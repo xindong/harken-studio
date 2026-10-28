@@ -4,7 +4,7 @@
 #include "ProjectObjectIndex.h"
 #include "Components/VMixNode.h"
 #include "Components/VTrack.h"
-#include "Components/VPiece.h"
+#include "Components/VSegment.h"
 #include "UndoCommands.h"
 
 #include "Support/AITestSupport.h"
@@ -98,10 +98,10 @@ TEST_F(ActionIdentityTest, NestedObjectIndexRejectsAmbiguousOwners)
     auto& manager = ProjectManager::instance();
     auto* sound = manager.createItem(nullptr, QStringLiteral("Tone"), ProjectItem::Type::Sound);
     auto* track = manager.createItem(nullptr, QStringLiteral("Track"), ProjectItem::Type::Track);
-    auto* piece = manager.createItem(nullptr, QStringLiteral("Piece"), ProjectItem::Type::Piece);
+    auto* segment = manager.createItem(nullptr, QStringLiteral("Segment"), ProjectItem::Type::Segment);
     ASSERT_NE(sound, nullptr);
     ASSERT_NE(track, nullptr);
-    ASSERT_NE(piece, nullptr);
+    ASSERT_NE(segment, nullptr);
     EffectEntry effect;
     effect.guid = QUuid::createUuid();
     effect.parameters = {0.0f};
@@ -114,7 +114,7 @@ TEST_F(ActionIdentityTest, NestedObjectIndexRejectsAmbiguousOwners)
     ASSERT_TRUE(track->comp<VTrack>()->clips.mintOccurrenceOrdinal(&clip));
     track->comp<VTrack>()->clips.items.push_back(clip);
     Marker marker{QUuid::createUuid(), MarkerKind::Custom, QStringLiteral("Accent"), 0};
-    piece->comp<VPiece>()->markers.items.push_back(marker);
+    segment->comp<VSegment>()->markers.items.push_back(marker);
     const auto index = ProjectObjectIndex::fromProject(manager.currentProject());
     for (const auto id : {sound->runtimeId(), effect.runtimeId(), binding.runtimeId(),
                            clip.runtimeId(), marker.runtimeId()})
@@ -125,7 +125,7 @@ TEST_F(ActionIdentityTest, NestedObjectIndexRejectsAmbiguousOwners)
     EXPECT_EQ(index.find(marker.runtimeId())->kind, ProjectObjectLocation::Kind::Marker);
     EXPECT_EQ(index.find(effect.runtimeId())->ownerGuid, sound->guid);
     EXPECT_EQ(index.find(clip.runtimeId())->ownerGuid, track->guid);
-    EXPECT_EQ(index.find(marker.runtimeId())->ownerGuid, piece->guid);
+    EXPECT_EQ(index.find(marker.runtimeId())->ownerGuid, segment->guid);
     const auto excluded = ProjectObjectIndex::fromProject(manager.currentProject(), sound);
     EXPECT_EQ(excluded.find(sound->runtimeId()), nullptr);
     EXPECT_EQ(excluded.find(effect.runtimeId()), nullptr);

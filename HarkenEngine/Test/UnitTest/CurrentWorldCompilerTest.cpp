@@ -154,23 +154,23 @@ bool WriteBinary(const std::filesystem::path& path,
 
 struct RuntimeEntryTimelineFixture {
     harken::CurrentWorldBodyImage legacy;
-    harken::PieceScheduleProgramViewV1 piece{};
+    harken::SegmentScheduleProgramViewV1 segment{};
     harken::ContainerWorldInstallViewV1 world{};
 
     void Build() {
         using namespace harkenprojectschema;
         CanonicalProject project{};
-        ContentObject pieceObject{};
-        pieceObject.kind = ContentKind::Piece;
-        pieceObject.piece.chassis = ResolvedChassis(1);
-        pieceObject.piece.tracks = {harkentest::StudioObjectId(2)};
+        ContentObject segmentObject{};
+        segmentObject.kind = ContentKind::Segment;
+        segmentObject.segment.chassis = ResolvedChassis(1);
+        segmentObject.segment.tracks = {harkentest::StudioObjectId(2)};
         Marker exit{};
         exit.id = harkentest::StudioObjectId(6);
         exit.guid = {6, 6};
         exit.markerId = 1;
         exit.kind = MarkerKind::Exit;
         exit.position = 2000000000;
-        pieceObject.piece.markers = {exit};
+        segmentObject.segment.markers = {exit};
         ContentObject track{};
         track.kind = ContentKind::Track;
         track.track.chassis = ResolvedChassis(2);
@@ -180,11 +180,11 @@ struct RuntimeEntryTimelineFixture {
         clip.contentRef = {ContentKind::Sound, harkentest::StudioObjectId(3)};
         clip.duration = 2500000000;
         track.track.clips = {clip};
-        project.objects = {pieceObject, track, Sound(3)};
+        project.objects = {segmentObject, track, Sound(3)};
         project.roots = {harkentest::StudioObjectId(1), harkentest::StudioObjectId(3)};
         const std::vector<harkencurrentworldcompiler::DefinitionMaterializationV1>
             materializations = {
-                {harkenplayableproperties::ContentPropertyKindV1::Piece,
+                {harkenplayableproperties::ContentPropertyKindV1::Segment,
                  harkentest::StudioObjectId(1), 11, {}, 101},
                 {harkenplayableproperties::ContentPropertyKindV1::Track,
                  harkentest::StudioObjectId(2), 22, {}, 202},
@@ -202,18 +202,18 @@ struct RuntimeEntryTimelineFixture {
         ASSERT_EQ(harken::WorldInstallStatus::Ok,
                   harken::ValidateCurrentWorldV1(*legacy.ProductionView()));
         world = *legacy.ProductionView();
-        piece = world.pieceSchedules[0];
-        piece.entryMarker = {harkentest::ObjectId(5), 1000000000};
-        piece.bounds = {0, 2500000000, 1000000000, 2000000000};
+        segment = world.segmentSchedules[0];
+        segment.entryMarker = {harkentest::ObjectId(5), 1000000000};
+        segment.bounds = {0, 2500000000, 1000000000, 2000000000};
         world.sourceBodyVintage = harken::kCurrentWorldBodyVintageV19;
-        world.pieceSchedules = &piece;
+        world.segmentSchedules = &segment;
         world.identity.capabilityMask |= harken::kWorldCapabilityEntryScheduling;
         Refresh();
     }
 
     void Refresh() {
-        piece.scheduleSemanticFingerprint =
-            harken::ComputePieceScheduleFingerprintV2(piece);
+        segment.scheduleSemanticFingerprint =
+            harken::ComputeSegmentScheduleFingerprintV2(segment);
         world.identity.runtimeSemanticFingerprint =
             harken::ComputeCurrentWorldFingerprintV6(world);
     }
@@ -230,15 +230,15 @@ TEST(CurrentWorldCompiler, RuntimeEntry19RoundtripCannotEnableShippingOrInstalla
     ASSERT_TRUE(runtime.Decode(bytes.data(), bytes.size(), 19,
                               harken::CurrentWorldDecodeMode::StrictArtifact));
     const auto& decoded = *runtime.ProductionView();
-    ASSERT_EQ(1u, decoded.pieceScheduleCount);
-    const auto& piece = decoded.pieceSchedules[0];
-    EXPECT_EQ(harkentest::ObjectId(5), piece.entryMarker.stableMarkerId);
-    EXPECT_EQ(1000000000, piece.entryMarker.position);
-    EXPECT_EQ(0, piece.bounds.contentStart);
-    EXPECT_EQ(2500000000, piece.bounds.contentEnd);
-    EXPECT_EQ(1000000000, piece.bounds.nominalStart);
-    EXPECT_EQ(2000000000, piece.bounds.nominalEnd);
-    EXPECT_EQ(harken::ComputePieceScheduleFingerprintV2(piece), piece.scheduleSemanticFingerprint);
+    ASSERT_EQ(1u, decoded.segmentScheduleCount);
+    const auto& segment = decoded.segmentSchedules[0];
+    EXPECT_EQ(harkentest::ObjectId(5), segment.entryMarker.stableMarkerId);
+    EXPECT_EQ(1000000000, segment.entryMarker.position);
+    EXPECT_EQ(0, segment.bounds.contentStart);
+    EXPECT_EQ(2500000000, segment.bounds.contentEnd);
+    EXPECT_EQ(1000000000, segment.bounds.nominalStart);
+    EXPECT_EQ(2000000000, segment.bounds.nominalEnd);
+    EXPECT_EQ(harken::ComputeSegmentScheduleFingerprintV2(segment), segment.scheduleSemanticFingerprint);
     EXPECT_EQ(harken::ComputeCurrentWorldFingerprintV6(decoded),
               fixture.world.identity.runtimeSemanticFingerprint);
     EXPECT_EQ(harken::WorldInstallStatus::CapabilityUnavailable,
@@ -285,7 +285,7 @@ TEST(CurrentWorldCompiler, RuntimeEntry19RejectsTamperedBoundsDespiteRecomputedH
     ASSERT_NO_FATAL_FAILURE(fixture.Build());
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
               harken::detail::ValidateCurrentWorldPartitionLocalV1(fixture.world));
-    --fixture.piece.bounds.contentStart;
+    --fixture.segment.bounds.contentStart;
     fixture.Refresh();
     EXPECT_EQ(harken::WorldInstallStatus::InvalidWorld,
               harken::ValidateCurrentWorldV1(fixture.world));
@@ -328,16 +328,16 @@ TEST(CurrentWorldCompiler, RuntimeV18PreservesIndependentWireAndFingerprintGolde
     marker.markerId = 1;
     marker.markerKind = 1;
     marker.position = 300;
-    PieceScheduleProgramViewV1 piece{};
-    piece.rootDefinition.kind = PlayableKindV1::Piece;
-    piece.rootDefinition.stableId = {0, 1};
-    piece.rootDefinition.expectedProgramSemanticFingerprint = 11;
-    piece.markerCount = 1;
-    piece.markers = &marker;
-    piece.scheduleSemanticFingerprint = ComputePieceScheduleFingerprintV1(piece);
+    SegmentScheduleProgramViewV1 segment{};
+    segment.rootDefinition.kind = PlayableKindV1::Segment;
+    segment.rootDefinition.stableId = {0, 1};
+    segment.rootDefinition.expectedProgramSemanticFingerprint = 11;
+    segment.markerCount = 1;
+    segment.markers = &marker;
+    segment.scheduleSemanticFingerprint = ComputeSegmentScheduleFingerprintV1(segment);
     ActionStepProgramViewV1 step{};
     step.opcode = ActionOpcodeV1::Stop;
-    step.target = {ActionTargetKindV1::Piece, 0, {0, 1}, 11};
+    step.target = {ActionTargetKindV1::Segment, 0, {0, 1}, 11};
     step.delay = step.fade = step.cooldown = {AuthoredTimeDomainV1::AbsoluteNanoseconds, 0, 1};
     ActionProgramViewV1 action{};
     action.actionStableId = {0, 6};
@@ -347,12 +347,12 @@ TEST(CurrentWorldCompiler, RuntimeV18PreservesIndependentWireAndFingerprintGolde
     ContainerWorldInstallViewV1 world{};
     world.identity.projectId = {9, 17};
     world.identity.capabilityMask = kWorldCapabilityPlayableProperties | kWorldCapabilityActionDefinitions;
-    world.pieceSchedules = &piece;
-    world.pieceScheduleCount = 1;
+    world.segmentSchedules = &segment;
+    world.segmentScheduleCount = 1;
     world.actions = &action;
     world.actionCount = 1;
     world.identity.runtimeSemanticFingerprint = ComputeCurrentWorldFingerprintV5(world);
-    EXPECT_EQ(UINT64_C(0xd355194a1488a8c9), piece.scheduleSemanticFingerprint);
+    EXPECT_EQ(UINT64_C(0xd355194a1488a8c9), segment.scheduleSemanticFingerprint);
     EXPECT_EQ(UINT64_C(0x57850d8c034b843d), action.programSemanticFingerprint);
     EXPECT_EQ(UINT64_C(0x46a3c886751a3dee), world.identity.runtimeSemanticFingerprint);
     std::vector<std::uint8_t> bytes;
@@ -2054,11 +2054,11 @@ TEST(CurrentWorldCompiler, FiveDefinitionKindsAndTrackClipCompileTogether) {
     project.objects.push_back(Layer(1, {2, 3}));
     project.objects.push_back(Container(2, 6));
 
-    harkenprojectschema::ContentObject piece{};
-    piece.kind = harkenprojectschema::ContentKind::Piece;
-    piece.piece.chassis = ResolvedChassis(3);
-    piece.piece.tracks = {harkentest::StudioObjectId(4)};
-    project.objects.push_back(piece);
+    harkenprojectschema::ContentObject segment{};
+    segment.kind = harkenprojectschema::ContentKind::Segment;
+    segment.segment.chassis = ResolvedChassis(3);
+    segment.segment.tracks = {harkentest::StudioObjectId(4)};
+    project.objects.push_back(segment);
 
     harkenprojectschema::ContentObject track{};
     track.kind = harkenprojectschema::ContentKind::Track;
@@ -2082,7 +2082,7 @@ TEST(CurrentWorldCompiler, FiveDefinitionKindsAndTrackClipCompileTogether) {
         materializations = {
             {harkenplayableproperties::ContentPropertyKindV1::Container, harkentest::StudioObjectId(2), 22,
              harkentest::StudioObjectId(20), 200},
-            {harkenplayableproperties::ContentPropertyKindV1::Piece, harkentest::StudioObjectId(3), 33, harkentest::StudioObjectId(0),
+            {harkenplayableproperties::ContentPropertyKindV1::Segment, harkentest::StudioObjectId(3), 33, harkentest::StudioObjectId(0),
              300},
             {harkenplayableproperties::ContentPropertyKindV1::Track, harkentest::StudioObjectId(4), 44, harkentest::StudioObjectId(0),
              400},
@@ -2114,7 +2114,7 @@ TEST(CurrentWorldCompiler, FiveDefinitionKindsAndTrackClipCompileTogether) {
     EXPECT_EQ(UINT64_C(1), trackOccurrence->payload.presentMask);
 
     ASSERT_EQ(1u, world.trackScheduleCount);
-    ASSERT_EQ(1u, world.pieceScheduleCount);
+    ASSERT_EQ(1u, world.segmentScheduleCount);
     const auto& trackSchedule = world.trackSchedules[0];
     EXPECT_EQ(harkentest::StudioObjectId(4u), trackSchedule.rootDefinition.stableId);
     ASSERT_EQ(1u, trackSchedule.placementCount);
@@ -2126,14 +2126,14 @@ TEST(CurrentWorldCompiler, FiveDefinitionKindsAndTrackClipCompileTogether) {
     EXPECT_EQ(harkentest::StudioObjectId(5u), trackSchedule.placements[0].clipId);
     EXPECT_EQ(50u, trackSchedule.placements[0].clipGuidHigh);
     EXPECT_EQ(51u, trackSchedule.placements[0].clipGuidLow);
-    const auto& pieceSchedule = world.pieceSchedules[0];
-    EXPECT_EQ(harkentest::StudioObjectId(3u), pieceSchedule.rootDefinition.stableId);
+    const auto& segmentSchedule = world.segmentSchedules[0];
+    EXPECT_EQ(harkentest::StudioObjectId(3u), segmentSchedule.rootDefinition.stableId);
     EXPECT_EQ(harkenstudiobuild::ScheduleTimeKindV1::AbsoluteNanoseconds,
-              pieceSchedule.timeKind);
-    ASSERT_EQ(1u, pieceSchedule.trackRefCount);
-    EXPECT_EQ(harkentest::StudioObjectId(4u), pieceSchedule.trackRefs[0].trackDefinition.stableId);
+              segmentSchedule.timeKind);
+    ASSERT_EQ(1u, segmentSchedule.trackRefCount);
+    EXPECT_EQ(harkentest::StudioObjectId(4u), segmentSchedule.trackRefs[0].trackDefinition.stableId);
     EXPECT_EQ(trackSchedule.scheduleSemanticFingerprint,
-              pieceSchedule.trackRefs[0].trackScheduleSemanticFingerprint);
+              segmentSchedule.trackRefs[0].trackScheduleSemanticFingerprint);
     EXPECT_EQ(harken::WorldInstallStatus::Ok,
               harkentest::ValidateCompilerWorld(world));
 }
@@ -2588,23 +2588,23 @@ TEST(CurrentWorldCompiler, QueuePoliciesAndFiniteSoundTimingHintCompileExactly) 
 
 }
 
-TEST(CurrentWorldCompiler, QueuePieceChildUsesItsCanonicalScheduleReference) {
+TEST(CurrentWorldCompiler, QueueSegmentChildUsesItsCanonicalScheduleReference) {
     harkenprojectschema::CanonicalProject project{};
     harkenprojectschema::ContentObject container{};
     container.kind = harkenprojectschema::ContentKind::Container;
     container.container.chassis = ResolvedChassis(1);
     harkenprojectschema::ContainerChildOccurrence child{};
     child.stableOccurrenceOrdinal = 7;
-    child.childPlayableRef.kind = harkenprojectschema::ContentKind::Piece;
+    child.childPlayableRef.kind = harkenprojectschema::ContentKind::Segment;
     child.childPlayableRef.target = harkentest::StudioObjectId(2);
     container.container.children.push_back(child);
     project.objects.push_back(container);
 
-    harkenprojectschema::ContentObject piece{};
-    piece.kind = harkenprojectschema::ContentKind::Piece;
-    piece.piece.chassis = ResolvedChassis(2);
-    piece.piece.tracks = {harkentest::StudioObjectId(3)};
-    project.objects.push_back(piece);
+    harkenprojectschema::ContentObject segment{};
+    segment.kind = harkenprojectschema::ContentKind::Segment;
+    segment.segment.chassis = ResolvedChassis(2);
+    segment.segment.tracks = {harkentest::StudioObjectId(3)};
+    project.objects.push_back(segment);
 
     harkenprojectschema::ContentObject track{};
     track.kind = harkenprojectschema::ContentKind::Track;
@@ -2616,7 +2616,7 @@ TEST(CurrentWorldCompiler, QueuePieceChildUsesItsCanonicalScheduleReference) {
         materializations = {
             {harkenplayableproperties::ContentPropertyKindV1::Container, harkentest::StudioObjectId(1), 11,
              harkentest::StudioObjectId(0), 101},
-            {harkenplayableproperties::ContentPropertyKindV1::Piece, harkentest::StudioObjectId(2), 22, harkentest::StudioObjectId(0),
+            {harkenplayableproperties::ContentPropertyKindV1::Segment, harkentest::StudioObjectId(2), 22, harkentest::StudioObjectId(0),
              202},
             {harkenplayableproperties::ContentPropertyKindV1::Track, harkentest::StudioObjectId(3), 33, harkentest::StudioObjectId(0),
              303},
@@ -2635,14 +2635,14 @@ TEST(CurrentWorldCompiler, QueuePieceChildUsesItsCanonicalScheduleReference) {
                              << " related " << result.relatedStableId;
     const auto& world = result.world->View();
     ASSERT_EQ(1u, world.containerCount);
-    ASSERT_EQ(1u, world.pieceScheduleCount);
+    ASSERT_EQ(1u, world.segmentScheduleCount);
     const auto& timingHint = world.containers[0].children[0].timingHint;
     EXPECT_EQ(harkenstudiobuild::ChildTimingHintKindV2::ScheduleReference,
               timingHint.kind);
-    EXPECT_EQ(harkenstudiobuild::PlayableKindV1::Piece,
+    EXPECT_EQ(harkenstudiobuild::PlayableKindV1::Segment,
               timingHint.payload.schedule.kind);
     EXPECT_EQ(harkentest::StudioObjectId(2u), timingHint.payload.schedule.stableId);
-    EXPECT_EQ(world.pieceSchedules[0].scheduleSemanticFingerprint,
+    EXPECT_EQ(world.segmentSchedules[0].scheduleSemanticFingerprint,
               timingHint.payload.schedule.scheduleSemanticFingerprint);
     EXPECT_EQ(harken::WorldInstallStatus::Ok,
               harkentest::ValidateCompilerWorld(world));
@@ -2730,19 +2730,19 @@ TEST(CurrentWorldCompiler,
     EXPECT_EQ(nullptr, retired.ProductionView());
 }
 
-TEST(CurrentWorldCompiler, MusicalPieceAndSemanticClipOrderCompileExactly) {
+TEST(CurrentWorldCompiler, MusicalSegmentAndSemanticClipOrderCompileExactly) {
     harkenprojectschema::CanonicalProject project{};
-    harkenprojectschema::ContentObject piece{};
-    piece.kind = harkenprojectschema::ContentKind::Piece;
-    piece.piece.chassis = ResolvedChassis(1);
-    piece.piece.tracks = {harkentest::StudioObjectId(2)};
-    piece.piece.timeSpec.kind = harkenprojectschema::PieceTimeKind::Musical;
-    piece.piece.timeSpec.tempoMap.push_back({0, 600000});
-    piece.piece.timeSpec.meterMap.push_back({0, 3, 4});
-    piece.piece.startPoint = {harkenprojectschema::StartPointKind::Marker, 7};
-    piece.piece.markers.push_back({harkentest::StudioObjectId(6), {60, 61}, 7,
+    harkenprojectschema::ContentObject segment{};
+    segment.kind = harkenprojectschema::ContentKind::Segment;
+    segment.segment.chassis = ResolvedChassis(1);
+    segment.segment.tracks = {harkentest::StudioObjectId(2)};
+    segment.segment.timeSpec.kind = harkenprojectschema::SegmentTimeKind::Musical;
+    segment.segment.timeSpec.tempoMap.push_back({0, 600000});
+    segment.segment.timeSpec.meterMap.push_back({0, 3, 4});
+    segment.segment.startPoint = {harkenprojectschema::StartPointKind::Marker, 7};
+    segment.segment.markers.push_back({harkentest::StudioObjectId(6), {60, 61}, 7,
                                 harkenprojectschema::MarkerKind::Custom, -120});
-    project.objects.push_back(piece);
+    project.objects.push_back(segment);
     harkenprojectschema::ContentObject track{};
     track.kind = harkenprojectschema::ContentKind::Track;
     track.track.chassis = ResolvedChassis(2);
@@ -2764,7 +2764,7 @@ TEST(CurrentWorldCompiler, MusicalPieceAndSemanticClipOrderCompileExactly) {
     project.roots = {harkentest::StudioObjectId(1), harkentest::StudioObjectId(3)};
     const std::vector<harkencurrentworldcompiler::DefinitionMaterializationV1>
         materializations = {
-            {harkenplayableproperties::ContentPropertyKindV1::Piece, harkentest::StudioObjectId(1), 11, harkentest::StudioObjectId(0),
+            {harkenplayableproperties::ContentPropertyKindV1::Segment, harkentest::StudioObjectId(1), 11, harkentest::StudioObjectId(0),
              101},
             {harkenplayableproperties::ContentPropertyKindV1::Track, harkentest::StudioObjectId(2), 22, harkentest::StudioObjectId(0),
              202},
@@ -2779,8 +2779,8 @@ TEST(CurrentWorldCompiler, MusicalPieceAndSemanticClipOrderCompileExactly) {
     ASSERT_EQ(2u, world.trackSchedules[0].placementCount);
     EXPECT_EQ(harkentest::StudioObjectId(5u), world.trackSchedules[0].placements[0].clipId);
     EXPECT_EQ(harkentest::StudioObjectId(4u), world.trackSchedules[0].placements[1].clipId);
-    ASSERT_EQ(1u, world.pieceScheduleCount);
-    const auto& schedule = world.pieceSchedules[0];
+    ASSERT_EQ(1u, world.segmentScheduleCount);
+    const auto& schedule = world.segmentSchedules[0];
     EXPECT_EQ(harkenstudiobuild::ScheduleTimeKindV1::MusicalTicks, schedule.timeKind);
     EXPECT_EQ(600000, schedule.microsPerQuarter);
     EXPECT_EQ(3u, schedule.meterNumerator);
@@ -2838,7 +2838,7 @@ TEST(CurrentWorldCompiler, AuthoredContentGrowsCumulativeBudgetsAndPreservesExpl
             project.roots.push_back(harkentest::StudioObjectId(i));
         }
         const auto trackId = i + 40000;
-        const auto pieceId = i + 50000;
+        const auto segmentId = i + 50000;
         harkenprojectschema::ContentObject track{};
         track.kind = harkenprojectschema::ContentKind::Track;
         track.track.chassis = ResolvedChassis(trackId);
@@ -2850,18 +2850,18 @@ TEST(CurrentWorldCompiler, AuthoredContentGrowsCumulativeBudgetsAndPreservesExpl
         clip.duration = 1000000000;
         track.track.clips.push_back(clip);
         project.objects.push_back(std::move(track));
-        harkenprojectschema::ContentObject piece{};
-        piece.kind = harkenprojectschema::ContentKind::Piece;
-        piece.piece.chassis = ResolvedChassis(pieceId);
-        piece.piece.tracks = {harkentest::StudioObjectId(trackId)};
-        piece.piece.markers.push_back({harkentest::StudioObjectId(i + 70000),
+        harkenprojectschema::ContentObject segment{};
+        segment.kind = harkenprojectschema::ContentKind::Segment;
+        segment.segment.chassis = ResolvedChassis(segmentId);
+        segment.segment.tracks = {harkentest::StudioObjectId(trackId)};
+        segment.segment.markers.push_back({harkentest::StudioObjectId(i + 70000),
             {i + 70000, i + 70000}, 1, harkenprojectschema::MarkerKind::Custom, 0});
-        project.objects.push_back(std::move(piece));
-        project.roots.push_back(harkentest::StudioObjectId(pieceId));
+        project.objects.push_back(std::move(segment));
+        project.roots.push_back(harkentest::StudioObjectId(segmentId));
         materializations.push_back({harkenplayableproperties::ContentPropertyKindV1::Track,
                                     harkentest::StudioObjectId(trackId), trackId, {}, 0});
-        materializations.push_back({harkenplayableproperties::ContentPropertyKindV1::Piece,
-                                    harkentest::StudioObjectId(pieceId), pieceId, {}, 0});
+        materializations.push_back({harkenplayableproperties::ContentPropertyKindV1::Segment,
+                                    harkentest::StudioObjectId(segmentId), segmentId, {}, 0});
     }
     std::sort(project.objects.begin(), project.objects.end(),
               [](const auto& left, const auto& right) {
@@ -2904,12 +2904,12 @@ TEST(CurrentWorldCompiler, AuthoredContentGrowsCumulativeBudgetsAndPreservesExpl
     EXPECT_EQ(65u, world.containerCount);
     EXPECT_EQ(3140u, world.playablePropertyCount);
     EXPECT_EQ(1025u, world.trackScheduleCount);
-    EXPECT_EQ(1025u, world.pieceScheduleCount);
+    EXPECT_EQ(1025u, world.segmentScheduleCount);
     EXPECT_EQ(capacity.maxKnownScheduleLeaves, world.capacity.maxKnownScheduleLeaves);
-    EXPECT_EQ(capacity.maxTrackPieceScheduleDepth, world.capacity.maxTrackPieceScheduleDepth);
-    EXPECT_EQ(capacity.maxScheduleTrackRefsPerPiece, world.capacity.maxScheduleTrackRefsPerPiece);
+    EXPECT_EQ(capacity.maxTrackSegmentScheduleDepth, world.capacity.maxTrackSegmentScheduleDepth);
+    EXPECT_EQ(capacity.maxScheduleTrackRefsPerSegment, world.capacity.maxScheduleTrackRefsPerSegment);
     EXPECT_EQ(capacity.maxSchedulePlacementsPerTrack, world.capacity.maxSchedulePlacementsPerTrack);
-    EXPECT_EQ(capacity.maxScheduleMarkersPerPiece, world.capacity.maxScheduleMarkersPerPiece);
+    EXPECT_EQ(capacity.maxScheduleMarkersPerSegment, world.capacity.maxScheduleMarkersPerSegment);
     EXPECT_EQ(harken::WorldInstallStatus::Ok, harkentest::ValidateCompilerWorld(world));
     std::vector<std::uint8_t> bytes;
     ASSERT_TRUE(harkenstudiobuild::EncodeCurrentWorldShippingBody(world, bytes));
@@ -2924,12 +2924,12 @@ TEST(CurrentWorldCompiler, AuthoredContentGrowsCumulativeBudgetsAndPreservesExpl
     EXPECT_EQ(world.actionCount, restored->actionCount);
     EXPECT_EQ(world.variableCount, restored->variableCount);
     EXPECT_EQ(world.trackScheduleCount, restored->trackScheduleCount);
-    EXPECT_EQ(world.pieceScheduleCount, restored->pieceScheduleCount);
+    EXPECT_EQ(world.segmentScheduleCount, restored->segmentScheduleCount);
     const auto restrictive = world.capacity;
     for (const auto limit : {
-             &harkenstudiobuild::WorldCapacitySummaryV1::maxScheduleTrackRefsPerPiece,
+             &harkenstudiobuild::WorldCapacitySummaryV1::maxScheduleTrackRefsPerSegment,
              &harkenstudiobuild::WorldCapacitySummaryV1::maxSchedulePlacementsPerTrack,
-             &harkenstudiobuild::WorldCapacitySummaryV1::maxScheduleMarkersPerPiece}) {
+             &harkenstudiobuild::WorldCapacitySummaryV1::maxScheduleMarkersPerSegment}) {
         auto executionBudget = restrictive;
         executionBudget.*limit = 0;
         const auto refused = harkencurrentworldcompiler::CompileCurrentWorldV1(

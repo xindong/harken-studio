@@ -65,7 +65,7 @@ public:
             const std::vector<StableId>& placementChain) const;
 
     // The placement chain of a clip carried on the Track named by trackId: the
-    // Track, then the Piece that owns it, if any.
+    // Track, then the Segment that owns it, if any.
     std::vector<StableId> PlacementChainForTrack(StableId trackId) const;
 
     std::uint32_t depthCeiling() const { return depthCeiling_; }

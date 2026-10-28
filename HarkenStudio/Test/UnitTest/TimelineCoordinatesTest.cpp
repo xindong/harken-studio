@@ -8,7 +8,7 @@ using namespace VNX;
 
 TEST(TimelineCoordinates, ConversionRejectsOverflowWithoutWrapping)
 {
-    const PieceTimeSpec musical = PieceTimeSpec::musical();
+    const SegmentTimeSpec musical = SegmentTimeSpec::musical();
     const CoordinateResult high = TimelineCoordinates::ticksToNanoseconds(
         std::numeric_limits<int64_t>::max(), musical);
     const CoordinateResult low = TimelineCoordinates::ticksToNanoseconds(

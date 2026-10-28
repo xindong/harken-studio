@@ -152,7 +152,7 @@ bool ValidStructuralAncestorKind(
     return kind == playableproperties::ContentPropertyKindV1::Layer ||
            kind == playableproperties::ContentPropertyKindV1::Container ||
            kind == playableproperties::ContentPropertyKindV1::Track ||
-           kind == playableproperties::ContentPropertyKindV1::Piece;
+           kind == playableproperties::ContentPropertyKindV1::Segment;
 }
 
 void EncodePlayableRef(const PlayableRefV1& row,
@@ -380,21 +380,21 @@ bool V9CapacityPrefixMatches(const WorldCapacitySummaryV1& prefix,
            prefix.maxKnownScheduleLeaves == complete.maxKnownScheduleLeaves &&
            prefix.maxTrackSchedulePrograms ==
                complete.maxTrackSchedulePrograms &&
-           prefix.maxPieceSchedulePrograms ==
-               complete.maxPieceSchedulePrograms &&
-           prefix.maxScheduleTrackRefsPerPiece ==
-               complete.maxScheduleTrackRefsPerPiece &&
+           prefix.maxSegmentSchedulePrograms ==
+               complete.maxSegmentSchedulePrograms &&
+           prefix.maxScheduleTrackRefsPerSegment ==
+               complete.maxScheduleTrackRefsPerSegment &&
            prefix.maxScheduleTrackRefsTotal ==
                complete.maxScheduleTrackRefsTotal &&
            prefix.maxSchedulePlacementsPerTrack ==
                complete.maxSchedulePlacementsPerTrack &&
            prefix.maxSchedulePlacementsTotal ==
                complete.maxSchedulePlacementsTotal &&
-           prefix.maxScheduleMarkersPerPiece ==
-               complete.maxScheduleMarkersPerPiece &&
+           prefix.maxScheduleMarkersPerSegment ==
+               complete.maxScheduleMarkersPerSegment &&
            prefix.maxScheduleMarkersTotal == complete.maxScheduleMarkersTotal &&
-           prefix.maxTrackPieceScheduleDepth ==
-               complete.maxTrackPieceScheduleDepth &&
+           prefix.maxTrackSegmentScheduleDepth ==
+               complete.maxTrackSegmentScheduleDepth &&
            prefix.maxActionDefinitions == complete.maxActionDefinitions &&
            prefix.maxActionStepsPerDefinition ==
                complete.maxActionStepsPerDefinition &&
@@ -710,8 +710,8 @@ struct CurrentWorldBodyImage::Impl {
         }
     };
 
-    struct OwnedPieceSchedule {
-        PieceScheduleProgramViewV1 view{};
+    struct OwnedSegmentSchedule {
+        SegmentScheduleProgramViewV1 view{};
         std::vector<ScheduleTrackRefV1> trackRefs;
         std::vector<ScheduleMarkerV1> markers;
         void Refresh() noexcept {
@@ -753,8 +753,8 @@ struct CurrentWorldBodyImage::Impl {
     std::vector<PlayableOccurrencePropertyViewV1> occurrenceViews;
     std::vector<OwnedTrackSchedule> trackSchedules;
     std::vector<TrackScheduleProgramViewV1> trackScheduleViews;
-    std::vector<OwnedPieceSchedule> pieceSchedules;
-    std::vector<PieceScheduleProgramViewV1> pieceScheduleViews;
+    std::vector<OwnedSegmentSchedule> segmentSchedules;
+    std::vector<SegmentScheduleProgramViewV1> segmentScheduleViews;
     std::vector<OwnedCurrentContainer> currentContainers;
     std::vector<ContainerProgramViewV3> currentContainerViews;
     std::vector<OwnedContainer> containers;
@@ -787,11 +787,11 @@ struct CurrentWorldBodyImage::Impl {
             row.Refresh();
             trackScheduleViews.push_back(row.view);
         }
-        pieceScheduleViews.clear();
-        pieceScheduleViews.reserve(pieceSchedules.size());
-        for (auto& row : pieceSchedules) {
+        segmentScheduleViews.clear();
+        segmentScheduleViews.reserve(segmentSchedules.size());
+        for (auto& row : segmentSchedules) {
             row.Refresh();
-            pieceScheduleViews.push_back(row.view);
+            segmentScheduleViews.push_back(row.view);
         }
         currentContainerViews.clear();
         currentContainerViews.reserve(currentContainers.size());
@@ -825,10 +825,10 @@ struct CurrentWorldBodyImage::Impl {
             ? nullptr : trackScheduleViews.data();
         view.trackScheduleCount =
             static_cast<std::uint32_t>(trackScheduleViews.size());
-        view.pieceSchedules = pieceScheduleViews.empty()
-            ? nullptr : pieceScheduleViews.data();
-        view.pieceScheduleCount =
-            static_cast<std::uint32_t>(pieceScheduleViews.size());
+        view.segmentSchedules = segmentScheduleViews.empty()
+            ? nullptr : segmentScheduleViews.data();
+        view.segmentScheduleCount =
+            static_cast<std::uint32_t>(segmentScheduleViews.size());
         view.containers = currentContainerViews.empty()
             ? nullptr : currentContainerViews.data();
         view.containerCount =
@@ -861,8 +861,8 @@ struct CurrentWorldBodyImage::Impl {
         historicalView.playableOccurrenceCount = view.playableOccurrenceCount;
         historicalView.trackSchedules = view.trackSchedules;
         historicalView.trackScheduleCount = view.trackScheduleCount;
-        historicalView.pieceSchedules = view.pieceSchedules;
-        historicalView.pieceScheduleCount = view.pieceScheduleCount;
+        historicalView.segmentSchedules = view.segmentSchedules;
+        historicalView.segmentScheduleCount = view.segmentScheduleCount;
         historicalView.containers = containerViews.empty()
             ? nullptr : containerViews.data();
         historicalView.containerCount =
@@ -991,8 +991,8 @@ bool EncodeCurrentWorldBodyImpl(
                           kHardPlayableOccurrencePropertyCapacity) ||
             !CountPointer(world.trackScheduleCount, world.trackSchedules,
                           kHardTrackScheduleProgramCapacity) ||
-            !CountPointer(world.pieceScheduleCount, world.pieceSchedules,
-                          kHardPieceScheduleProgramCapacity) ||
+            !CountPointer(world.segmentScheduleCount, world.segmentSchedules,
+                          kHardSegmentScheduleProgramCapacity) ||
             !CountPointer(world.containerCount, world.containers,
                            kHardContainerProgramCapacity) ||
             !CountPointer(world.transitionCount, world.transitions,
@@ -1053,8 +1053,8 @@ bool EncodeCurrentWorldBodyImpl(
                 return false;
             }
         }
-        for (std::uint32_t i = 0; i < world.pieceScheduleCount; ++i) {
-            const auto& row = world.pieceSchedules[i];
+        for (std::uint32_t i = 0; i < world.segmentScheduleCount; ++i) {
+            const auto& row = world.segmentSchedules[i];
             if (!includeEntryTimeline &&
                 (row.entryMarker.stableMarkerId != VnObjectId{} ||
                  row.entryMarker.position != 0 || row.bounds.contentStart != 0 ||
@@ -1194,8 +1194,8 @@ bool EncodeCurrentWorldBodyImpl(
                 EncodeSchedulePlacement(row.placements[p], out);
             }
         }
-        for (std::uint32_t i = 0; i < world.pieceScheduleCount; ++i) {
-            const auto& row = world.pieceSchedules[i];
+        for (std::uint32_t i = 0; i < world.segmentScheduleCount; ++i) {
+            const auto& row = world.segmentSchedules[i];
             EncodePlayableRef(row.rootDefinition, out);
             AppendU64(out, row.scheduleSemanticFingerprint);
             AppendU32(out, static_cast<std::uint32_t>(row.timeKind));
@@ -1606,7 +1606,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
         std::uint32_t occurrenceCount = 0;
         std::array<std::uint32_t, 7> expectedTotals{};
         std::uint32_t trackScheduleCount = 0;
-        std::uint32_t pieceScheduleCount = 0;
+        std::uint32_t segmentScheduleCount = 0;
         std::uint32_t expectedTrackRefTotal = 0;
         std::uint32_t expectedPlacementTotal = 0;
         std::uint32_t expectedMarkerTotal = 0;
@@ -1641,7 +1641,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                 prefix.playablePropertyEffectParamCount,
                 prefix.playablePropertyEffectEdgeCount};
             trackScheduleCount = prefix.trackScheduleCount;
-            pieceScheduleCount = prefix.pieceScheduleCount;
+            segmentScheduleCount = prefix.segmentScheduleCount;
             expectedTrackRefTotal = prefix.scheduleTrackRefCount;
             expectedPlacementTotal = prefix.schedulePlacementCount;
             expectedMarkerTotal = prefix.scheduleMarkerCount;
@@ -1669,22 +1669,22 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                 prefix.maxKnownScheduleLeaves;
             world.capacity.maxTrackSchedulePrograms =
                 prefix.maxTrackSchedulePrograms;
-            world.capacity.maxPieceSchedulePrograms =
-                prefix.maxPieceSchedulePrograms;
-            world.capacity.maxScheduleTrackRefsPerPiece =
-                prefix.maxScheduleTrackRefsPerPiece;
+            world.capacity.maxSegmentSchedulePrograms =
+                prefix.maxSegmentSchedulePrograms;
+            world.capacity.maxScheduleTrackRefsPerSegment =
+                prefix.maxScheduleTrackRefsPerSegment;
             world.capacity.maxScheduleTrackRefsTotal =
                 prefix.maxScheduleTrackRefsTotal;
             world.capacity.maxSchedulePlacementsPerTrack =
                 prefix.maxSchedulePlacementsPerTrack;
             world.capacity.maxSchedulePlacementsTotal =
                 prefix.maxSchedulePlacementsTotal;
-            world.capacity.maxScheduleMarkersPerPiece =
-                prefix.maxScheduleMarkersPerPiece;
+            world.capacity.maxScheduleMarkersPerSegment =
+                prefix.maxScheduleMarkersPerSegment;
             world.capacity.maxScheduleMarkersTotal =
                 prefix.maxScheduleMarkersTotal;
-            world.capacity.maxTrackPieceScheduleDepth =
-                prefix.maxTrackPieceScheduleDepth;
+            world.capacity.maxTrackSegmentScheduleDepth =
+                prefix.maxTrackSegmentScheduleDepth;
             if (worldTraceVintage >= 6) {
                 actionCount = reader.U32();
                 world.capacity.maxActionDefinitions = reader.U32();
@@ -1745,7 +1745,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
             propertyCount > kHardPlayablePropertyProgramCapacity ||
             occurrenceCount > kHardPlayableOccurrencePropertyCapacity ||
             trackScheduleCount > kHardTrackScheduleProgramCapacity ||
-            pieceScheduleCount > kHardPieceScheduleProgramCapacity ||
+            segmentScheduleCount > kHardSegmentScheduleProgramCapacity ||
             containerCount > kHardContainerProgramCapacity ||
             world.transitionCount > kTraceWorldChildCap ||
             actionCount > kHardActionDefinitionCapacity ||
@@ -1767,18 +1767,18 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
             (worldTraceVintage >= 3 &&
              (world.capacity.maxTrackSchedulePrograms >
                   kHardTrackScheduleProgramCapacity ||
-              world.capacity.maxPieceSchedulePrograms >
-                  kHardPieceScheduleProgramCapacity ||
-              world.capacity.maxScheduleTrackRefsPerPiece > 1024 ||
+              world.capacity.maxSegmentSchedulePrograms >
+                  kHardSegmentScheduleProgramCapacity ||
+              world.capacity.maxScheduleTrackRefsPerSegment > 1024 ||
               world.capacity.maxScheduleTrackRefsTotal >
                   kHardScheduleTrackRefCapacity ||
               world.capacity.maxSchedulePlacementsPerTrack > 65536 ||
               world.capacity.maxSchedulePlacementsTotal >
                   kHardSchedulePlacementCapacity ||
-              world.capacity.maxScheduleMarkersPerPiece > 65536 ||
+              world.capacity.maxScheduleMarkersPerSegment > 65536 ||
               world.capacity.maxScheduleMarkersTotal >
                   kHardScheduleMarkerCapacity ||
-              world.capacity.maxTrackPieceScheduleDepth > 64))) {
+              world.capacity.maxTrackSegmentScheduleDepth > 64))) {
             return CurrentWorldBodyDecodeResult::Invalid;
         }
         decoded->variables.resize(variableCount);
@@ -1933,8 +1933,8 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
         }
         std::uint32_t actualTrackRefTotal = 0;
         std::uint32_t actualMarkerTotal = 0;
-        decoded->pieceSchedules.resize(pieceScheduleCount);
-        for (auto& owned : decoded->pieceSchedules) {
+        decoded->segmentSchedules.resize(segmentScheduleCount);
+        for (auto& owned : decoded->segmentSchedules) {
             auto& row = owned.view;
             row.rootDefinition = DecodePlayableRef(reader);
             row.scheduleSemanticFingerprint = reader.U64();

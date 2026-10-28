@@ -75,7 +75,7 @@ bool isContentHost(ProjectItem::Type type)
         || type == ProjectItem::Type::Sound
         || type == ProjectItem::Type::Container
         || type == ProjectItem::Type::Track
-        || type == ProjectItem::Type::Piece;
+        || type == ProjectItem::Type::Segment;
 }
 
 void collectAncestorBindings(const ProjectItem& leaf,

@@ -7,7 +7,7 @@
 #include "Components/VAudio.h"
 #include "Components/VMixNode.h"
 #include "Components/VBus.h"
-#include "Components/VPiece.h"
+#include "Components/VSegment.h"
 #include "Components/VSpatial.h"
 #include "Components/VSelection.h"
 #include "Components/VTrack.h"
@@ -22,8 +22,8 @@
 #undef slots
 #endif
 
-#include <harken_project_schema/BuildPieceIR.h>
-#include <harken_project_schema/BuildPieceProgram.h>
+#include <harken_project_schema/BuildSegmentIR.h>
+#include <harken_project_schema/BuildSegmentProgram.h>
 #include <harken_project_schema/FrontEnd.h>
 #include <harken_project_schema/ProjectInput.h>
 #include <harken_project_schema/Serialize.h>
@@ -47,8 +47,8 @@ class CompiledProjectSnapshot::Impl
 public:
     harkenprojectschema::FrontEndResult frontEnd;
     harkenprojectschema::ResourceTable resources;
-    std::optional<harkenprojectschema::PieceIR> ir;
-    std::optional<harkenprojectschema::PieceProgram> program;
+    std::optional<harkenprojectschema::SegmentIR> ir;
+    std::optional<harkenprojectschema::SegmentProgram> program;
 };
 
 CompiledProjectSnapshot::CompiledProjectSnapshot()
@@ -72,7 +72,7 @@ const void* compiledProjectSnapshotImpl(const CompiledProjectSnapshot& snapshot)
     return snapshot.impl_.get();
 }
 
-const harkenprojectschema::PieceProgram* compiledPieceProgram(
+const harkenprojectschema::SegmentProgram* compiledSegmentProgram(
     const CompiledProjectSnapshot& snapshot)
 {
     const auto* impl = static_cast<const CompiledProjectSnapshot::Impl*>(
@@ -80,14 +80,14 @@ const harkenprojectschema::PieceProgram* compiledPieceProgram(
     return impl && impl->program ? &*impl->program : nullptr;
 }
 
-std::vector<harkenstudio::ObjectId> compiledPieceIds(const CompiledProjectSnapshot& snapshot)
+std::vector<harkenstudio::ObjectId> compiledSegmentIds(const CompiledProjectSnapshot& snapshot)
 {
     std::vector<harkenstudio::ObjectId> result;
-    const auto* program = compiledPieceProgram(snapshot);
+    const auto* program = compiledSegmentProgram(snapshot);
     if (!program) return result;
-    result.reserve(program->ir().pieces().size());
-    for (const auto& piece : program->ir().pieces())
-        result.push_back(piece.pieceId);
+    result.reserve(program->ir().segments().size());
+    for (const auto& segment : program->ir().segments())
+        result.push_back(segment.segmentId);
     return result;
 }
 
@@ -112,7 +112,7 @@ bool isContentType(ProjectItem::Type type)
 {
     return type == ProjectItem::Type::Layer || type == ProjectItem::Type::Sound
         || type == ProjectItem::Type::Container || type == ProjectItem::Type::Track
-        || type == ProjectItem::Type::Piece;
+        || type == ProjectItem::Type::Segment;
 }
 
 ContentKind contentKind(ProjectItem::Type type)
@@ -122,7 +122,7 @@ ContentKind contentKind(ProjectItem::Type type)
     case ProjectItem::Type::Sound: return ContentKind::Sound;
     case ProjectItem::Type::Container: return ContentKind::Container;
     case ProjectItem::Type::Track: return ContentKind::Track;
-    case ProjectItem::Type::Piece: return ContentKind::Piece;
+    case ProjectItem::Type::Segment: return ContentKind::Segment;
     default: return ContentKind::Sound;
     }
 }
@@ -307,7 +307,7 @@ harkenprojectschema::RuntimeIdentityKindV1 identityKindForItem(
     case ProjectItem::Type::Sound: return Kind::Sound;
     case ProjectItem::Type::Container: return Kind::Container;
     case ProjectItem::Type::Track: return Kind::Track;
-    case ProjectItem::Type::Piece: return Kind::Piece;
+    case ProjectItem::Type::Segment: return Kind::Segment;
     case ProjectItem::Type::Layer: return Kind::Layer;
     case ProjectItem::Type::Bus: return Kind::Bus;
     case ProjectItem::Type::Action: return Kind::Action;
@@ -322,7 +322,7 @@ buildRuntimeIdentityIndex(const ProjectData& project,
                           const std::vector<const ProjectItem*>& buses,
                           const std::optional<
                               harkenprojectschema::RuntimeIdentityClaimV1>&
-                              transientPreviewPiece = std::nullopt)
+                              transientPreviewSegment = std::nullopt)
 {
     using namespace harkenprojectschema;
     std::vector<RuntimeIdentityIndexBuildRowV1> claims;
@@ -366,7 +366,7 @@ buildRuntimeIdentityIndex(const ProjectData& project,
                                     clip.runtimeId()}}});
             }
         }
-        if (const auto* timeline = item->comp<VPiece>()) {
+        if (const auto* timeline = item->comp<VSegment>()) {
             for (const auto& marker : timeline->markers.items) {
                 const auto owner = toAuthoringGuid(item->guid);
                 claims.push_back({0,
@@ -385,8 +385,8 @@ buildRuntimeIdentityIndex(const ProjectData& project,
     // project root. Visit them explicitly so every Runtime-facing claim shares
     // the same project-wide collision domain.
     for (const auto* bus : buses) visit(bus);
-    if (transientPreviewPiece.has_value()) {
-        claims.push_back({UINT64_MAX, *transientPreviewPiece});
+    if (transientPreviewSegment.has_value()) {
+        claims.push_back({UINT64_MAX, *transientPreviewSegment});
     }
     return BuildRuntimeIdentityIndexV1(claims);
 }
@@ -415,7 +415,7 @@ buildCanonicalRuntimeIdentityIndex(ProjectData& project)
     return outcome.ok() ? outcome.index : nullptr;
 }
 
-std::optional<harkenprojectschema::AuthoringGuid> transientPreviewPieceGuid(
+std::optional<harkenprojectschema::AuthoringGuid> transientPreviewSegmentGuid(
     const CanonicalRuntimeProjectSourceIndexV1& index,
     const harkenprojectschema::AuthoringGuid& trackGuid)
 {
@@ -979,7 +979,7 @@ CanonicalRuntimeProjectContextV1 canonicalRuntimeProjectContext(
         return context;
 
     std::optional<harkenprojectschema::RuntimeIdentityClaimV1>
-        transientPreviewPiece;
+        transientPreviewSegment;
     if (previewTrackStableId.has_value()) {
         const auto track = std::find_if(
             sourceIndex->definitions.begin(), sourceIndex->definitions.end(),
@@ -995,7 +995,7 @@ CanonicalRuntimeProjectContextV1 canonicalRuntimeProjectContext(
                 QStringLiteral("previewTrack"));
             return context;
         }
-        const auto wrapperGuid = transientPreviewPieceGuid(
+        const auto wrapperGuid = transientPreviewSegmentGuid(
             *sourceIndex, toAuthoringGuid((*track)->guid));
         if (!wrapperGuid.has_value()) {
             appendDiagnostic(
@@ -1008,12 +1008,12 @@ CanonicalRuntimeProjectContextV1 canonicalRuntimeProjectContext(
         context.previewTrack = *track;
         context.previewRootGuid = *wrapperGuid;
         context.previewRootStableId = *wrapperGuid;
-        transientPreviewPiece = harkenprojectschema::RuntimeIdentityClaimV1{
+        transientPreviewSegment = harkenprojectschema::RuntimeIdentityClaimV1{
             context.previewRootStableId,
-            harkenprojectschema::RuntimeIdentityKindV1::Piece,
+            harkenprojectschema::RuntimeIdentityKindV1::Segment,
             context.previewRootGuid,
             {context.previewRootGuid,
-             harkenprojectschema::RuntimeIdentityKindV1::Piece, 0,
+             harkenprojectschema::RuntimeIdentityKindV1::Segment, 0,
              context.previewRootStableId}};
     }
 
@@ -1039,7 +1039,7 @@ CanonicalRuntimeProjectContextV1 canonicalRuntimeProjectContext(
     std::vector<const ProjectItem*> busPointers(
         sourceIndex->buses.begin(), sourceIndex->buses.end());
     const auto identityOutcome = buildRuntimeIdentityIndex(
-        project, busPointers, transientPreviewPiece);
+        project, busPointers, transientPreviewSegment);
     context.identityIndex = identityOutcome.ok()
         ? identityOutcome.index : nullptr;
     if (!context.identityIndex) {
@@ -1203,20 +1203,20 @@ ProjectInputCompileResult compileStudioProjectInput(
                 }
                 node.clips.push_back(std::move(clip));
             }
-        } else if (item->type == ProjectItem::Type::Piece) {
-            const auto* timeline = item->comp<VPiece>();
+        } else if (item->type == ProjectItem::Type::Segment) {
+            const auto* timeline = item->comp<VSegment>();
             if (!timeline) {
                 appendDiagnostic(result, ProjectInputDiagnosticCode::UnsupportedField,
-                                 QStringLiteral("Piece timeline is missing"), item, {},
-                                 QStringLiteral("pieceTime"));
+                                 QStringLiteral("Segment timeline is missing"), item, {},
+                                 QStringLiteral("segmentTime"));
                 continue;
             }
-            InputPieceTimeSpec time;
-            time.kind = timeline->pieceTime.domain == TimelineDomain::Musical
-                ? PieceTimeKind::Musical : PieceTimeKind::Absolute;
-            for (const auto& source : timeline->pieceTime.tempoMap)
+            InputSegmentTimeSpec time;
+            time.kind = timeline->segmentTime.domain == TimelineDomain::Musical
+                ? SegmentTimeKind::Musical : SegmentTimeKind::Absolute;
+            for (const auto& source : timeline->segmentTime.tempoMap)
                 time.tempoMap.push_back({source.tick, source.microsecondsPerQuarter});
-            for (const auto& source : timeline->pieceTime.meterMap)
+            for (const auto& source : timeline->segmentTime.meterMap)
                 time.meterMap.push_back({source.tick,
                     static_cast<uint16_t>(source.numerator),
                     static_cast<uint16_t>(source.denominator)});
@@ -1258,14 +1258,14 @@ ProjectInputCompileResult compileStudioProjectInput(
             || harkenprojectschema::IsNull(context.previewRootGuid))
             return result;
         InputNode wrapper;
-        wrapper.kind = ContentKind::Piece;
+        wrapper.kind = ContentKind::Segment;
         wrapper.guid = context.previewRootGuid;
         wrapper.presence.bits = kFieldGroupPropertyMask;
         wrapper.mainOutputBusRef = project.busses.front().rootItem->runtimeId();
         wrapper.hasSignalGraph = true;
         const AuthoringGuid trackGuid = toAuthoringGuid(track->guid);
         for (InputNode& node : input.nodes) {
-            if (node.kind != ContentKind::Piece) continue;
+            if (node.kind != ContentKind::Segment) continue;
             node.ownedChildren.erase(
                 std::remove_if(
                     node.ownedChildren.begin(), node.ownedChildren.end(),
@@ -1278,7 +1278,7 @@ ProjectInputCompileResult compileStudioProjectInput(
             std::remove(input.roots.begin(), input.roots.end(), trackGuid),
             input.roots.end());
         wrapper.ownedChildren.push_back(trackGuid);
-        wrapper.timeSpec = InputPieceTimeSpec{};
+        wrapper.timeSpec = InputSegmentTimeSpec{};
         wrapper.startPoint = InputStartPoint{};
         input.nodes.push_back(std::move(wrapper));
         input.roots.push_back(context.previewRootGuid);
@@ -1332,20 +1332,20 @@ ProjectInputCompileResult compileStudioProjectInput(
     }
     if (!result.diagnostics.empty()) return result;
 
-    snapshot->impl_->ir = BuildPieceIR(
+    snapshot->impl_->ir = BuildSegmentIR(
         *compiled.project, *compiled.facts, snapshot->impl_->resources,
         *compiled.resolution, *compiled.sends, *compiled.effectChains);
     if (!snapshot->impl_->ir) {
         result.diagnostics.push_back({ProjectInputDiagnosticCode::IrRejected,
-            QStringLiteral("ProjectSchema rejected the resource-backed Piece IR"),
-            {}, {}, QStringLiteral("pieceIR")});
+            QStringLiteral("ProjectSchema rejected the resource-backed Segment IR"),
+            {}, {}, QStringLiteral("segmentIR")});
         return result;
     }
-    snapshot->impl_->program = BuildPieceProgram(*snapshot->impl_->ir);
+    snapshot->impl_->program = BuildSegmentProgram(*snapshot->impl_->ir);
     if (!snapshot->impl_->program) {
         result.diagnostics.push_back({ProjectInputDiagnosticCode::ProgramRejected,
-            QStringLiteral("ProjectSchema rejected the Piece program"),
-            {}, {}, QStringLiteral("pieceProgram")});
+            QStringLiteral("ProjectSchema rejected the Segment program"),
+            {}, {}, QStringLiteral("segmentProgram")});
         return result;
     }
 

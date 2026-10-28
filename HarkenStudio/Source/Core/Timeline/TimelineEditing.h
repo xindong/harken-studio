@@ -11,10 +11,10 @@ class ProjectManager;
 
 namespace TimelineEditing {
 
-PieceTimeSpec timeSpecForTrackParent(const ProjectItem* parent);
+SegmentTimeSpec timeSpecForTrackParent(const ProjectItem* parent);
 std::optional<ClipLedger> convertClipLedger(const ClipLedger& source,
-                                            const PieceTimeSpec& sourceTime,
-                                            const PieceTimeSpec& destinationTime,
+                                            const SegmentTimeSpec& sourceTime,
+                                            const SegmentTimeSpec& destinationTime,
                                             QString* error = nullptr);
 TimelineValidation validateClipPlacement(ProjectManager* projectManager,
                                          ProjectItem* track,
@@ -52,25 +52,25 @@ ActionResult moveClipAcrossTracks(ProjectManager* projectManager,
                                   const QObject* originator = nullptr);
 
 ActionResult replaceMarkers(ProjectManager* projectManager,
-                         ProjectItem* piece,
+                         ProjectItem* segment,
                          const MarkerLedger& markers,
                          const QObject* originator = nullptr,
                          const QString& undoText = {});
 ActionResult addMarker(ProjectManager* projectManager,
-                    ProjectItem* piece,
+                    ProjectItem* segment,
                     Marker marker,
                     const QObject* originator = nullptr);
 ActionResult updateMarker(ProjectManager* projectManager,
-                       ProjectItem* piece,
+                       ProjectItem* segment,
                        const Marker& marker,
                        const QObject* originator = nullptr);
 ActionResult removeMarker(ProjectManager* projectManager,
-                       ProjectItem* piece,
+                       ProjectItem* segment,
                        const QUuid& markerGuid,
                        const QObject* originator = nullptr);
-ActionResult replacePieceTime(ProjectManager* projectManager,
-                              ProjectItem* piece,
-                              const PieceTimeSpec& pieceTime,
+ActionResult replaceSegmentTime(ProjectManager* projectManager,
+                              ProjectItem* segment,
+                              const SegmentTimeSpec& segmentTime,
                               const QObject* originator = nullptr,
                               const QString& undoText = {});
 ActionResult setSpliceByMarker(ProjectManager* projectManager,

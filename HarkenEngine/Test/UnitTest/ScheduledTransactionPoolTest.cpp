@@ -259,7 +259,7 @@ struct Harness {
     std::uint64_t ownerEpoch = 0;
 
     Harness() {
-        owner = instances.Acquire(PlayableKind::Piece, 0);
+        owner = instances.Acquire(PlayableKind::Segment, 0);
         ownerEpoch = instances.Classify(owner).scheduleEpoch;
     }
 };
@@ -3628,7 +3628,7 @@ TEST(ScheduledTransactionPool, OrdinaryStartExactCancelPreservesUnpublishedFront
     std::array<std::uint64_t, 4> ownerEpochs{};
     for (std::uint32_t index = 0; index < 4; ++index) {
         owners[index] = index == 0 ? h.owner :
-            h.instances.Acquire(PlayableKind::Piece, 0);
+            h.instances.Acquire(PlayableKind::Segment, 0);
         ASSERT_NE(0u, owners[index]);
         ownerEpochs[index] = h.instances.Classify(owners[index]).scheduleEpoch;
         payloads[index].kind = harken::TimelineEventKind::Start;
@@ -3795,7 +3795,7 @@ TEST(ScheduledTransactionPool, OrdinaryStartExactCancelRejectsFrontierOwnerAndAr
     for (const bool serviceAlias : {true, false}) {
         SCOPED_TRACE(serviceAlias);
         Harness h;
-        const auto neighborOwner = h.instances.Acquire(PlayableKind::Piece, 0);
+        const auto neighborOwner = h.instances.Acquire(PlayableKind::Segment, 0);
         ASSERT_NE(0u, neighborOwner);
         const auto neighborEpoch = h.instances.Classify(neighborOwner).scheduleEpoch;
         auto config = MakeConfig();
@@ -4280,7 +4280,7 @@ TEST(ScheduledTransactionPool,
               << " generation=" << newArm.generation
               << " render=" << newArm.renderSlot << ':'
               << newArm.renderGeneration << '\n';
-    const auto neighborOwner = h.instances.Acquire(PlayableKind::Piece, 0);
+    const auto neighborOwner = h.instances.Acquire(PlayableKind::Segment, 0);
     ASSERT_NE(0u, neighborOwner);
     const auto neighborEpoch =
         h.instances.Classify(neighborOwner).scheduleEpoch;
@@ -4428,7 +4428,7 @@ TEST(ScheduledTransactionPool,
     neighbor.transactionId = 12;
     neighbor.program = neighborRef;
     neighbor.events = &neighborEvent;
-    neighbor.ownerInstanceHandle = h.instances.Acquire(PlayableKind::Piece, 0);
+    neighbor.ownerInstanceHandle = h.instances.Acquire(PlayableKind::Segment, 0);
     ASSERT_NE(0u, neighbor.ownerInstanceHandle);
     neighbor.ownerInstanceScheduleEpoch =
         h.instances.Classify(neighbor.ownerInstanceHandle).scheduleEpoch;
@@ -7095,7 +7095,7 @@ TEST(ScheduledTransactionPool,
     ASSERT_TRUE(pool.Reset(MakeConfig(), 0, kEpoch));
 
     const PlayableInstanceHandle arranger =
-        h.instances.Acquire(PlayableKind::Piece, 0);
+        h.instances.Acquire(PlayableKind::Segment, 0);
     ASSERT_NE(arranger, 0u);
     const std::uint64_t arrangerEpoch =
         h.instances.Classify(arranger).scheduleEpoch;

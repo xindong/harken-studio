@@ -17,6 +17,7 @@ struct UpdateStateRecord
     QString expectedSha256;
     qint64 packageSize = -1;
     qint64 downloadedBytes = -1;
+    bool downloadRestarted = false;
     qint64 releaseSequence = -1;
     QString transactionId;
     QString failureCode;

@@ -16,7 +16,7 @@ enum class ContentPropertyKindV1 : std::uint8_t {
     Sound = 1,
     Container = 2,
     Track = 3,
-    Piece = 4,
+    Segment = 4,
 };
 
 enum class PlayablePropertyIdV1 : std::uint8_t {

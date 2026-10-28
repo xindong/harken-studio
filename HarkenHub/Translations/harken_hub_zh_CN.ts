@@ -159,6 +159,11 @@
 </context>
 <context>
     <name>HubReleaseNotes</name>
+    <message><source>Choose whether to launch Harken Hub when the Windows installer closes, with the option checked by default.</source><translation>Windows 安装完成后，可选择是否在关闭安装器时启动 Harken Hub，默认勾选。</translation></message>
+    <message><source>Automatically compare GitHub and OSS download speeds before new Hub updates or Studio downloads, and prefer the faster source.</source><translation>开始新的 Hub 更新或 Studio 下载前，自动比较 GitHub 与 OSS 的下载速度，优先选择较快的下载源。</translation></message>
+    <message><source>Resume interrupted downloads from the original source, including after restarting Hub. If that source remains unavailable, switch sources and restart the download with a visible notice.</source><translation>下载中断或重启 Hub 后，优先从原下载源续传；原源持续不可用时切换下载源，从头下载并显示提示。</translation></message>
+    <message><source>Keep dialogs within the current screen's available area, including when moving between displays.</source><translation>弹窗尺寸限制在当前屏幕可用区域内，切换显示器时自动适配，避免窗口超出屏幕。</translation></message>
+    <message><source>Scroll long messages, paths, file lists and integration forms inside dialogs while keeping action buttons visible. Messages, status details and summaries can be selected and copied.</source><translation>长消息、路径、文件清单和集成管理表单可在弹窗内滚动浏览，操作按钮始终可见；消息、状态详情和摘要支持选择复制。</translation></message>
     <message><source>The first open-source release of Harken Hub is here. Try it out and share your feedback.</source><translation>Harken Hub 首个开源版本现已推出，欢迎体验并分享测试反馈。</translation></message>
     <message><source>Download and install Harken Studio through Hub to explore and test its audio authoring features.</source><translation>在 Hub 中下载和安装 Harken Studio，体验并测试音频创作功能。</translation></message>
     <message><source>Install and manage the Unity Integration Package through Hub to try and test Harken integration in your Unity projects.</source><translation>通过 Hub 安装和管理 Unity 集成包，在 Unity 项目中体验并测试 Harken 集成。</translation></message>
@@ -564,6 +569,7 @@ Continue?</source>
 </context>
 <context>
     <name>HarkenHub</name>
+    <message><source> (restarted after switching download source)</source><translation>（已切换下载源，从头重新下载）</translation></message>
     <message><source>Unity Integration Package</source><translation>Unity 集成包</translation></message>
     <message><source>UE Integration Package</source><translation>UE 集成包</translation></message>
     <message><source>Integration Package</source><translation>集成包</translation></message>

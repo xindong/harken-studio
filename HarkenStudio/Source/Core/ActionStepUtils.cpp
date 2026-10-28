@@ -26,10 +26,10 @@ const std::vector<ActionStepCatalogEntry>& actionStepCatalog()
 
     static const std::vector<ActionStepCatalogEntry> catalog = {
         {ET::Play, QStringLiteral("Play"),
-         {PT::Sound, PT::Container, PT::Track, PT::Piece},
+         {PT::Sound, PT::Container, PT::Track, PT::Segment},
          true, false, false, false},
         {ET::Stop, QStringLiteral("Stop"),
-         {PT::Sound, PT::Container, PT::Track, PT::Piece},
+         {PT::Sound, PT::Container, PT::Track, PT::Segment},
          true, true, false, false},
         {ET::SetVariable, QStringLiteral("Set Variable"),
          {PT::Variable}, false, false, true, false},
@@ -98,7 +98,7 @@ bool defaultActionStepTypeForTarget(ProjectItem::Type targetType,
         case PT::Sound:
         case PT::Container:
         case PT::Track:
-        case PT::Piece:
+        case PT::Segment:
             outType = ET::Play;
             return true;
         default:

@@ -1,6 +1,6 @@
 // Full-chain convergence from authored project to deterministic runtime filing.
 //
-// A project is authored in code, compiled (front-end -> IR -> PieceProgram),
+// A project is authored in code, compiled (front-end -> IR -> SegmentProgram),
 // registered against a device sample rate (the tooling program-registration
 // library), and the resulting ProgramViews are filed through the planner into the
 // horizon pool and consumed quantum by quantum. Two properties are pinned:
@@ -24,8 +24,8 @@
 #include "UnitTest/ProjectSchemaFixtures.h"
 
 #include "harken_program_registration/ProgramRegistration.h"
-#include "harken_project_schema/BuildPieceIR.h"
-#include "harken_project_schema/BuildPieceProgram.h"
+#include "harken_project_schema/BuildSegmentIR.h"
+#include "harken_project_schema/BuildSegmentProgram.h"
 #include "harken_project_schema/FrontEnd.h"
 #include "harken_project_schema/ResourceInput.h"
 
@@ -47,21 +47,21 @@
 
 namespace {
 
-using harkenprojectschema::BuildPieceIR;
-using harkenprojectschema::BuildPieceProgram;
+using harkenprojectschema::BuildSegmentIR;
+using harkenprojectschema::BuildSegmentProgram;
 using harkenprojectschema::CompileFrontEnd;
 using harkenprojectschema::ContentKind;
 using harkenprojectschema::FrontEndResult;
-using harkenprojectschema::PieceIR;
-using harkenprojectschema::PieceProgram;
+using harkenprojectschema::SegmentIR;
+using harkenprojectschema::SegmentProgram;
 using harkenprojectschema::ProjectInput;
 using harkenprojectschema::ResourceInput;
 using harkenprojectschema::ResourceTable;
 
 namespace fx = harkenprojectschema::fixtures;
 
-// Authoring ids pinned so the root piece and its Sound resource are addressable.
-constexpr VnObjectId kPieceId = harkentest::ObjectId(1);
+// Authoring ids pinned so the root segment and its Sound resource are addressable.
+constexpr VnObjectId kSegmentId = harkentest::ObjectId(1);
 constexpr VnObjectId kTrack1Id = harkentest::ObjectId(2);
 constexpr VnObjectId kTrack2Id = harkentest::ObjectId(3);
 constexpr VnObjectId kSoundId = harkentest::ObjectId(4);
@@ -117,20 +117,20 @@ std::uint64_t RefRescale(std::uint64_t frames, std::uint64_t fromRate,
     return (frames * toRate) / fromRate;
 }
 
-// The authored project: a Musical root piece starting at a marker, owning two Tracks.
+// The authored project: a Musical root segment starting at a marker, owning two Tracks.
 // Track 1 places the Sound at a pickup (-240), the downbeat (0) and one quarter in
 // (960); Track 2 places the Container at the downbeat (start-only) and the Sound a
-// bar later (1920). Ids are persisted so the piece and Sound are addressable; the
+// bar later (1920). Ids are persisted so the segment and Sound are addressable; the
 // mint high-water keeps minted clip ids clear of them.
 ProjectInput BuildProject() {
     ProjectInput in;
 
-    harkenprojectschema::InputNode piece = fx::Node(ContentKind::Piece, 1);
-    piece.guid = harkentest::StudioObjectId(kPieceId);
-    piece.ownedChildren = {fx::G(2), fx::G(3)};
-    piece.timeSpec = fx::MusicalTime();
-    piece.startPoint = fx::MarkerStart(kStartMarkerId);
-    piece.markers = {
+    harkenprojectschema::InputNode segment = fx::Node(ContentKind::Segment, 1);
+    segment.guid = harkentest::StudioObjectId(kSegmentId);
+    segment.ownedChildren = {fx::G(2), fx::G(3)};
+    segment.timeSpec = fx::MusicalTime();
+    segment.startPoint = fx::MarkerStart(kStartMarkerId);
+    segment.markers = {
         fx::MakeMarker(50, kStartMarkerId, harkenprojectschema::MarkerKind::Custom,
                     kStartMarkerPosition),
         fx::MakeMarker(51, kExitMarkerId, harkenprojectschema::MarkerKind::Exit, 3840)};
@@ -155,12 +155,12 @@ ProjectInput BuildProject() {
     harkenprojectschema::InputNode secondSound = fx::Node(ContentKind::Sound, 6);
     secondSound.guid = harkentest::StudioObjectId(kSecondSoundId);
 
-    in.nodes = {piece, track1, track2, sound, container, secondSound};
+    in.nodes = {segment, track1, track2, sound, container, secondSound};
     in.roots = {fx::G(1)};
     return in;
 }
 
-// An Absolute-timed root piece owning one Track that places the Sound at
+// An Absolute-timed root segment owning one Track that places the Sound at
 // nanosecond 0 and a quarter second in. Exercises the nanosecond -> frame path
 // (ClockKernel::TimeToFrame), which the Musical fixture does not reach.
 constexpr std::int64_t kAbsClipNanos = 250000000; // 0.25 s
@@ -168,11 +168,11 @@ constexpr std::int64_t kAbsClipNanos = 250000000; // 0.25 s
 ProjectInput BuildAbsoluteProject() {
     ProjectInput in;
 
-    harkenprojectschema::InputNode piece = fx::Node(ContentKind::Piece, 1);
-    piece.guid = harkentest::StudioObjectId(kPieceId);
-    piece.ownedChildren = {fx::G(2)};
-    piece.timeSpec = fx::AbsoluteTime();
-    piece.startPoint = fx::EntryStart();
+    harkenprojectschema::InputNode segment = fx::Node(ContentKind::Segment, 1);
+    segment.guid = harkentest::StudioObjectId(kSegmentId);
+    segment.ownedChildren = {fx::G(2)};
+    segment.timeSpec = fx::AbsoluteTime();
+    segment.startPoint = fx::EntryStart();
 
     harkenprojectschema::InputNode track = fx::Node(ContentKind::Track, 2);
     track.guid = harkentest::StudioObjectId(kTrack1Id);
@@ -183,7 +183,7 @@ ProjectInput BuildAbsoluteProject() {
     harkenprojectschema::InputNode sound = fx::Node(ContentKind::Sound, 4);
     sound.guid = harkentest::StudioObjectId(kSoundId);
 
-    in.nodes = {piece, track, sound};
+    in.nodes = {segment, track, sound};
     in.roots = {fx::G(1)};
     return in;
 }
@@ -207,7 +207,7 @@ ResourceTable Resources(
     return table;
 }
 
-std::optional<PieceProgram> CompileProject(
+std::optional<SegmentProgram> CompileProject(
     const ProjectInput& in, std::uint32_t resourceRate = kResourceRate,
     std::uint64_t resourceFrames = kResourceFrames) {
     const FrontEndResult front = CompileFrontEnd(in);
@@ -216,14 +216,14 @@ std::optional<PieceProgram> CompileProject(
         !front.effectChains.has_value()) {
         return std::nullopt;
     }
-    const std::optional<PieceIR> ir =
-        BuildPieceIR(*front.project, *front.facts,
+    const std::optional<SegmentIR> ir =
+        BuildSegmentIR(*front.project, *front.facts,
                      Resources(*front.project, resourceRate, resourceFrames),
                      *front.resolution, *front.sends, *front.effectChains);
     if (!ir.has_value()) {
         return std::nullopt;
     }
-    return BuildPieceProgram(*ir);
+    return BuildSegmentProgram(*ir);
 }
 
 // One authored occurrence's expected shape, keyed by (trackId, occurrenceOrdinal)
@@ -258,7 +258,7 @@ constexpr std::uint64_t kFnvOffsetBasis = 14695981039346656037ull;
 // The resolved event frames are correct at every device rate, and the coverage
 // shapes are present.
 TEST(FullChainConvergence, ResolvedFramesMatchReferenceAcrossSampleRates) {
-    const std::optional<PieceProgram> program = CompileProject(BuildProject());
+    const std::optional<SegmentProgram> program = CompileProject(BuildProject());
     ASSERT_TRUE(program.has_value());
 
     const auto expected = ExpectedOccurrences();
@@ -266,7 +266,7 @@ TEST(FullChainConvergence, ResolvedFramesMatchReferenceAcrossSampleRates) {
     for (const std::int64_t rate : {44100, 48000, 96000}) {
         harken::PlayableInstanceTable instances(4);
         const harken::PlayableInstanceHandle owner =
-            instances.Acquire(harken::PlayableKind::Piece, 0);
+            instances.Acquire(harken::PlayableKind::Segment, 0);
         const std::uint64_t ownerEpoch = instances.Classify(owner).scheduleEpoch;
         harken::LogicCommitCoordinator commit;
 
@@ -274,12 +274,12 @@ TEST(FullChainConvergence, ResolvedFramesMatchReferenceAcrossSampleRates) {
         params.soundIdMap = {{kSoundId, kEngineSoundId}, {kSecondSoundId, kEngineSoundId}};
         params.deviceSampleRateHz = rate;
         params.entryAnchorFrame = 0; // offsets are entry-relative; anchor is moot here
-        params.rootPieceId = harkentest::ObjectId(kPieceId);
+        params.rootSegmentId = harkentest::ObjectId(kSegmentId);
         params.ownerInstance = owner;
         params.ownerInstanceScheduleEpoch = ownerEpoch;
 
         const harkenprogramreg::RegistrationResult result =
-            harkenprogramreg::RegisterPieceProgram(*program, params, commit);
+            harkenprogramreg::RegisterSegmentProgram(*program, params, commit);
         ASSERT_TRUE(result.ok) << "rate " << rate << " refusal "
                                << static_cast<int>(result.refusal);
         const harkenprogramreg::ResolvedProgram& resolved = *result.program;
@@ -295,8 +295,8 @@ TEST(FullChainConvergence, ResolvedFramesMatchReferenceAcrossSampleRates) {
                 << "unexpected occurrence track " << lin.trackId << " ord "
                 << lin.occurrenceOrdinal;
             const Expected& e = it->second;
-            EXPECT_EQ(lin.pieceId, kPieceId);
-            EXPECT_TRUE(lin.hasPiece);
+            EXPECT_EQ(lin.segmentId, kSegmentId);
+            EXPECT_TRUE(lin.hasSegment);
 
             const harken::ProgramView& view = resolved.View(i);
             const std::int64_t start = RefTickFrame(e.tick, rate);
@@ -327,17 +327,17 @@ TEST(FullChainConvergence, ResolvedFramesMatchReferenceAcrossSampleRates) {
     }
 }
 
-// An Absolute-timed piece resolves nanosecond positions to frames through the
+// An Absolute-timed segment resolves nanosecond positions to frames through the
 // sample rate alone, at every device rate.
-TEST(FullChainConvergence, AbsolutePieceResolvesNanosecondsAcrossSampleRates) {
-    const std::optional<PieceProgram> program =
+TEST(FullChainConvergence, AbsoluteSegmentResolvesNanosecondsAcrossSampleRates) {
+    const std::optional<SegmentProgram> program =
         CompileProject(BuildAbsoluteProject());
     ASSERT_TRUE(program.has_value());
 
     for (const std::int64_t rate : {44100, 48000, 96000}) {
         harken::PlayableInstanceTable instances(4);
         const harken::PlayableInstanceHandle owner =
-            instances.Acquire(harken::PlayableKind::Piece, 0);
+            instances.Acquire(harken::PlayableKind::Segment, 0);
         const std::uint64_t ownerEpoch = instances.Classify(owner).scheduleEpoch;
         harken::LogicCommitCoordinator commit;
 
@@ -345,12 +345,12 @@ TEST(FullChainConvergence, AbsolutePieceResolvesNanosecondsAcrossSampleRates) {
         params.soundIdMap = {{kSoundId, kEngineSoundId}, {kSecondSoundId, kEngineSoundId}};
         params.deviceSampleRateHz = rate;
         params.entryAnchorFrame = 0;
-        params.rootPieceId = harkentest::ObjectId(kPieceId);
+        params.rootSegmentId = harkentest::ObjectId(kSegmentId);
         params.ownerInstance = owner;
         params.ownerInstanceScheduleEpoch = ownerEpoch;
 
         const harkenprogramreg::RegistrationResult result =
-            harkenprogramreg::RegisterPieceProgram(*program, params, commit);
+            harkenprogramreg::RegisterSegmentProgram(*program, params, commit);
         ASSERT_TRUE(result.ok) << "rate " << rate << " refusal "
                                << static_cast<int>(result.refusal);
         const harkenprogramreg::ResolvedProgram& resolved = *result.program;
@@ -373,7 +373,7 @@ TEST(FullChainConvergence, AbsolutePieceResolvesNanosecondsAcrossSampleRates) {
                 << "rate " << rate << " ord " << lin.occurrenceOrdinal;
             EXPECT_EQ(view.events[1].frameOffsetFromEntry, start + stopDelta)
                 << "rate " << rate << " ord " << lin.occurrenceOrdinal;
-            EXPECT_EQ(view.timeType, harken::PieceTimeType::Absolute);
+            EXPECT_EQ(view.timeType, harken::SegmentTimeType::Absolute);
         }
     }
 }
@@ -494,7 +494,7 @@ TEST(FullChainConvergence, NaturalEndClampsAndSaturatesWithoutWrapping) {
     const auto registerProgram = [](std::uint32_t resourceRate,
                                     std::uint64_t resourceFrames,
                                     std::int64_t deviceRate) {
-        std::optional<PieceProgram> program =
+        std::optional<SegmentProgram> program =
             CompileProject(BuildProject(), resourceRate, resourceFrames);
         EXPECT_TRUE(program.has_value());
         if (!program.has_value()) {
@@ -502,16 +502,16 @@ TEST(FullChainConvergence, NaturalEndClampsAndSaturatesWithoutWrapping) {
         }
         harken::PlayableInstanceTable instances(4);
         const harken::PlayableInstanceHandle owner =
-            instances.Acquire(harken::PlayableKind::Piece, 0);
+            instances.Acquire(harken::PlayableKind::Segment, 0);
         harken::LogicCommitCoordinator commit;
         harkenprogramreg::RegistrationParams params;
         params.soundIdMap = {{kSoundId, kEngineSoundId}, {kSecondSoundId, kEngineSoundId}};
         params.deviceSampleRateHz = deviceRate;
-        params.rootPieceId = harkentest::ObjectId(kPieceId);
+        params.rootSegmentId = harkentest::ObjectId(kSegmentId);
         params.ownerInstance = owner;
         params.ownerInstanceScheduleEpoch =
             instances.Classify(owner).scheduleEpoch;
-        return harkenprogramreg::RegisterPieceProgram(*program, params, commit);
+        return harkenprogramreg::RegisterSegmentProgram(*program, params, commit);
     };
 
     harkenprogramreg::RegistrationResult exact =
@@ -524,7 +524,7 @@ TEST(FullChainConvergence, NaturalEndClampsAndSaturatesWithoutWrapping) {
     EXPECT_EQ(exactAtEntry.events[1].frameOffsetFromEntry,
               9'999'996'666'666ll);
 
-    std::optional<PieceProgram> saturatedProgram = CompileProject(BuildProject());
+    std::optional<SegmentProgram> saturatedProgram = CompileProject(BuildProject());
     ASSERT_TRUE(saturatedProgram.has_value());
     auto& tracks = const_cast<std::vector<harkenprojectschema::IrTrack>&>(
         saturatedProgram->ir().tracks());
@@ -534,16 +534,16 @@ TEST(FullChainConvergence, NaturalEndClampsAndSaturatesWithoutWrapping) {
     tracks[0].occurrences[2].resourceSampleRate = 1;
     harken::PlayableInstanceTable instances(4);
     const harken::PlayableInstanceHandle owner =
-        instances.Acquire(harken::PlayableKind::Piece, 0);
+        instances.Acquire(harken::PlayableKind::Segment, 0);
     harken::LogicCommitCoordinator commit;
     harkenprogramreg::RegistrationParams params;
     params.soundIdMap = {{kSoundId, kEngineSoundId}, {kSecondSoundId, kEngineSoundId}};
     params.deviceSampleRateHz = 3'000'000;
-    params.rootPieceId = harkentest::ObjectId(kPieceId);
+    params.rootSegmentId = harkentest::ObjectId(kSegmentId);
     params.ownerInstance = owner;
     params.ownerInstanceScheduleEpoch = instances.Classify(owner).scheduleEpoch;
     harkenprogramreg::RegistrationResult saturated =
-        harkenprogramreg::RegisterPieceProgram(*saturatedProgram, params, commit);
+        harkenprogramreg::RegisterSegmentProgram(*saturatedProgram, params, commit);
     ASSERT_TRUE(saturated.ok);
     ASSERT_GE(saturated.program->OccurrenceCount(), 3u);
     const harken::ProgramView& saturatedAfterEntry = saturated.program->View(2);
@@ -553,25 +553,25 @@ TEST(FullChainConvergence, NaturalEndClampsAndSaturatesWithoutWrapping) {
 }
 
 TEST(FullChainConvergence, EnumMappingsPreserveDeclaredValues) {
-    const std::optional<PieceProgram> program = CompileProject(BuildProject());
+    const std::optional<SegmentProgram> program = CompileProject(BuildProject());
     ASSERT_TRUE(program.has_value());
     harken::PlayableInstanceTable instances(4);
     const harken::PlayableInstanceHandle owner =
-        instances.Acquire(harken::PlayableKind::Piece, 0);
+        instances.Acquire(harken::PlayableKind::Segment, 0);
     harken::LogicCommitCoordinator commit;
     harkenprogramreg::RegistrationParams params;
     params.soundIdMap = {{kSoundId, kEngineSoundId}, {kSecondSoundId, kEngineSoundId}};
     params.deviceSampleRateHz = 48000;
-    params.rootPieceId = harkentest::ObjectId(kPieceId);
+    params.rootSegmentId = harkentest::ObjectId(kSegmentId);
     params.ownerInstance = owner;
     params.ownerInstanceScheduleEpoch = instances.Classify(owner).scheduleEpoch;
 
     const harkenprogramreg::RegistrationResult result =
-        harkenprogramreg::RegisterPieceProgram(*program, params, commit);
+        harkenprogramreg::RegisterSegmentProgram(*program, params, commit);
     ASSERT_TRUE(result.ok);
     ASSERT_GT(result.program->OccurrenceCount(), 0u);
     const harken::ProgramView& view = result.program->View(0);
-    EXPECT_EQ(view.timeType, harken::PieceTimeType::Musical);
+    EXPECT_EQ(view.timeType, harken::SegmentTimeType::Musical);
     ASSERT_NE(view.markerIndex, nullptr);
     const harken::MarkerLookup custom = view.markerIndex->ByMarkerId(harkentest::ToRuntime(fx::G(50)));
     const harken::MarkerLookup exit = view.markerIndex->ByMarkerId(harkentest::ToRuntime(fx::G(51)));
@@ -583,39 +583,39 @@ TEST(FullChainConvergence, EnumMappingsPreserveDeclaredValues) {
 
 TEST(FullChainConvergence, OutOfDomainEnumsRefuseRegistration) {
     const auto registerCorrupt = [](bool corruptTimeKind) {
-        std::optional<PieceProgram> program = CompileProject(BuildProject());
+        std::optional<SegmentProgram> program = CompileProject(BuildProject());
         EXPECT_TRUE(program.has_value());
         if (!program.has_value()) {
             return harkenprogramreg::RegistrationResult{};
         }
         // Deliberately corrupt the immutable compiled boundary to prove the
         // registration layer fails closed if untrusted storage crosses it.
-        auto& pieces = const_cast<std::vector<harkenprojectschema::IrPiece>&>(
-            program->ir().pieces());
-        EXPECT_EQ(pieces.size(), 1u);
-        if (pieces.empty()) {
+        auto& segments = const_cast<std::vector<harkenprojectschema::IrSegment>&>(
+            program->ir().segments());
+        EXPECT_EQ(segments.size(), 1u);
+        if (segments.empty()) {
             return harkenprogramreg::RegistrationResult{};
         }
         if (corruptTimeKind) {
-            pieces[0].timeSpec.kind =
-                static_cast<harkenprojectschema::PieceTimeKind>(2);
+            segments[0].timeSpec.kind =
+                static_cast<harkenprojectschema::SegmentTimeKind>(2);
         } else {
-            pieces[0].markers[0].kind =
+            segments[0].markers[0].kind =
                 static_cast<harkenprojectschema::MarkerKind>(2);
         }
 
         harken::PlayableInstanceTable instances(4);
         const harken::PlayableInstanceHandle owner =
-            instances.Acquire(harken::PlayableKind::Piece, 0);
+            instances.Acquire(harken::PlayableKind::Segment, 0);
         harken::LogicCommitCoordinator commit;
         harkenprogramreg::RegistrationParams params;
         params.soundIdMap = {{kSoundId, kEngineSoundId}, {kSecondSoundId, kEngineSoundId}};
         params.deviceSampleRateHz = 48000;
-        params.rootPieceId = harkentest::ObjectId(kPieceId);
+        params.rootSegmentId = harkentest::ObjectId(kSegmentId);
         params.ownerInstance = owner;
         params.ownerInstanceScheduleEpoch =
             instances.Classify(owner).scheduleEpoch;
-        return harkenprogramreg::RegisterPieceProgram(*program, params, commit);
+        return harkenprogramreg::RegisterSegmentProgram(*program, params, commit);
     };
 
     for (const bool corruptTimeKind : {true, false}) {
@@ -630,14 +630,14 @@ TEST(FullChainConvergence, OutOfDomainEnumsRefuseRegistration) {
 
 // The filed schedule is bit-identical whatever the Update cadence.
 TEST(FullChainConvergence, FiledScheduleIsDeterministicAcrossUpdateCadence) {
-    const std::optional<PieceProgram> program = CompileProject(BuildProject());
+    const std::optional<SegmentProgram> program = CompileProject(BuildProject());
     ASSERT_TRUE(program.has_value());
 
     // One owner instance and one registration shared across the cadence runs: the
     // ProgramViews outlive every planner that files or defers them.
     harken::PlayableInstanceTable instances(4);
     const harken::PlayableInstanceHandle owner =
-        instances.Acquire(harken::PlayableKind::Piece, 0);
+        instances.Acquire(harken::PlayableKind::Segment, 0);
     const std::uint64_t ownerEpoch = instances.Classify(owner).scheduleEpoch;
     harken::OccurrenceStatePool occ(4);
     harken::LogicCommitCoordinator commit;
@@ -652,12 +652,12 @@ TEST(FullChainConvergence, FiledScheduleIsDeterministicAcrossUpdateCadence) {
     // window, so every play is deferred when posted and later materialized -- the
     // path the cadence invariant most needs to cover.
     params.entryAnchorFrame = 48000;
-    params.rootPieceId = harkentest::ObjectId(kPieceId);
+    params.rootSegmentId = harkentest::ObjectId(kSegmentId);
     params.ownerInstance = owner;
     params.ownerInstanceScheduleEpoch = ownerEpoch;
 
     const harkenprogramreg::RegistrationResult reg =
-        harkenprogramreg::RegisterPieceProgram(*program, params, commit);
+        harkenprogramreg::RegisterSegmentProgram(*program, params, commit);
     ASSERT_TRUE(reg.ok);
     const harkenprogramreg::ResolvedProgram& resolved = *reg.program;
     const std::size_t n = resolved.OccurrenceCount();

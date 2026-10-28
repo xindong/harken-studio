@@ -778,7 +778,7 @@ struct PackMeta
     std::vector<harkenstudiobuild::PlayablePropertyProgramViewV1> slicedPlayables;
     std::vector<harkenstudiobuild::PlayableOccurrencePropertyViewV1> slicedOccurrences;
     std::vector<harkenstudiobuild::TrackScheduleProgramViewV1> slicedTracks;
-    std::vector<harkenstudiobuild::PieceScheduleProgramViewV1> slicedPieces;
+    std::vector<harkenstudiobuild::SegmentScheduleProgramViewV1> slicedSegments;
     std::vector<harkenstudiobuild::ContainerProgramViewV3> slicedContainers;
     std::vector<harkenstudiobuild::TransitionProgramViewV1> slicedTransitions;
     std::vector<harkenstudiobuild::ActionProgramViewV1> slicedActions;
@@ -794,7 +794,7 @@ struct IdentityOwner
 bool isPlayableType(ProjectItem::Type type)
 {
     return type == ProjectItem::Type::Sound || type == ProjectItem::Type::Container
-        || type == ProjectItem::Type::Track || type == ProjectItem::Type::Piece
+        || type == ProjectItem::Type::Track || type == ProjectItem::Type::Segment
         || type == ProjectItem::Type::Layer;
 }
 
@@ -1596,13 +1596,13 @@ const harkenstudiobuild::TrackScheduleProgramViewV1* findSlicedTrack(
     return nullptr;
 }
 
-const harkenstudiobuild::PieceScheduleProgramViewV1* findSlicedPiece(
-    const std::vector<harkenstudiobuild::PieceScheduleProgramViewV1>& pieces,
+const harkenstudiobuild::SegmentScheduleProgramViewV1* findSlicedSegment(
+    const std::vector<harkenstudiobuild::SegmentScheduleProgramViewV1>& segments,
     harkenstudio::ObjectId stableId)
 {
-    for (const auto& piece : pieces) {
-        if (piece.rootDefinition.stableId == stableId)
-            return &piece;
+    for (const auto& segment : segments) {
+        if (segment.rootDefinition.stableId == stableId)
+            return &segment;
     }
     return nullptr;
 }
@@ -1676,7 +1676,7 @@ const harkenstudiobuild::TrackScheduleProgramViewV1* findLiveSlicedTrack(
     return nullptr;
 }
 
-const harkenstudiobuild::PieceScheduleProgramViewV1* findLiveSlicedPiece(
+const harkenstudiobuild::SegmentScheduleProgramViewV1* findLiveSlicedSegment(
     std::vector<PackMeta>& packs,
     const QString& language,
     harkenstudio::ObjectId stableId)
@@ -1684,9 +1684,9 @@ const harkenstudiobuild::PieceScheduleProgramViewV1* findLiveSlicedPiece(
     for (PackMeta& pack : packs) {
         if (!pack.language.isEmpty() && pack.language != language)
             continue;
-        for (const auto& piece : pack.slicedPieces) {
-            if (piece.rootDefinition.stableId == stableId)
-                return &piece;
+        for (const auto& segment : pack.slicedSegments) {
+            if (segment.rootDefinition.stableId == stableId)
+                return &segment;
         }
     }
     return nullptr;
@@ -1816,16 +1816,16 @@ bool remapScheduleReferenceHintLive(
         key.scheduleSemanticFingerprint = track->scheduleSemanticFingerprint;
         return true;
     }
-    if (key.kind == harkenstudiobuild::PlayableKindV1::Piece) {
-        const auto* piece = findLiveSlicedPiece(packs, language, key.stableId);
-        if (piece == nullptr) {
+    if (key.kind == harkenstudiobuild::PlayableKindV1::Segment) {
+        const auto* segment = findLiveSlicedSegment(packs, language, key.stableId);
+        if (segment == nullptr) {
             if (error)
                 *error = QStringLiteral(
-                    "Schedule reference piece %1 is missing from the sliced canonical set")
+                    "Schedule reference segment %1 is missing from the sliced canonical set")
                     .arg(VNX::objectIdString(key.stableId));
             return false;
         }
-        key.scheduleSemanticFingerprint = piece->scheduleSemanticFingerprint;
+        key.scheduleSemanticFingerprint = segment->scheduleSemanticFingerprint;
         return true;
     }
     if (error)
@@ -1843,7 +1843,7 @@ bool sliceWorld(
     std::vector<harkenstudiobuild::PlayablePropertyProgramViewV1>* playables,
     std::vector<harkenstudiobuild::PlayableOccurrencePropertyViewV1>* occurrences,
     std::vector<harkenstudiobuild::TrackScheduleProgramViewV1>* tracks,
-    std::vector<harkenstudiobuild::PieceScheduleProgramViewV1>* pieces,
+    std::vector<harkenstudiobuild::SegmentScheduleProgramViewV1>* segments,
     std::vector<harkenstudiobuild::ContainerProgramViewV3>* containers,
     std::vector<harkenstudiobuild::TransitionProgramViewV1>* transitions,
     std::vector<harkenstudiobuild::ActionProgramViewV1>* actions,
@@ -1856,7 +1856,7 @@ bool sliceWorld(
     pack->ownedLayerAncestors.reserve(world.playablePropertyCount);
     pack->ownedStructuralAncestors.reserve(world.playablePropertyCount);
     pack->ownedPlacements.reserve(world.trackScheduleCount);
-    pack->ownedTrackRefs.reserve(world.pieceScheduleCount);
+    pack->ownedTrackRefs.reserve(world.segmentScheduleCount);
     pack->ownedContainerChildren.reserve(world.containerCount);
     pack->ownedActionSteps.reserve(world.actionCount);
     for (std::uint32_t i = 0; i < world.variableCount; ++i) {
@@ -1906,25 +1906,25 @@ bool sliceWorld(
             harkenstudiobuild::ComputeTrackScheduleFingerprintV1(track);
         tracks->push_back(track);
     }
-    for (std::uint32_t i = 0; i < world.pieceScheduleCount; ++i) {
-        if (!ownedBy(owners, world.pieceSchedules[i].rootDefinition.stableId, packStableId))
+    for (std::uint32_t i = 0; i < world.segmentScheduleCount; ++i) {
+        if (!ownedBy(owners, world.segmentSchedules[i].rootDefinition.stableId, packStableId))
             continue;
-        auto piece = world.pieceSchedules[i];
-        rebindPlayableRef(&piece.rootDefinition, *playables);
-        if (piece.trackRefCount != 0 && piece.trackRefs != nullptr) {
+        auto segment = world.segmentSchedules[i];
+        rebindPlayableRef(&segment.rootDefinition, *playables);
+        if (segment.trackRefCount != 0 && segment.trackRefs != nullptr) {
             pack->ownedTrackRefs.emplace_back(
-                piece.trackRefs, piece.trackRefs + piece.trackRefCount);
+                segment.trackRefs, segment.trackRefs + segment.trackRefCount);
             auto& trackRefs = pack->ownedTrackRefs.back();
             for (auto& trackRef : trackRefs) {
                 rebindPlayableRef(&trackRef.trackDefinition, *playables);
                 if (const auto* track = findSlicedTrack(*tracks, trackRef.trackDefinition.stableId))
                     trackRef.trackScheduleSemanticFingerprint = track->scheduleSemanticFingerprint;
             }
-            piece.trackRefs = trackRefs.data();
+            segment.trackRefs = trackRefs.data();
         }
-        piece.scheduleSemanticFingerprint =
-            harkenstudiobuild::ComputePieceScheduleFingerprintV1(piece);
-        pieces->push_back(piece);
+        segment.scheduleSemanticFingerprint =
+            harkenstudiobuild::ComputeSegmentScheduleFingerprintV1(segment);
+        segments->push_back(segment);
     }
     for (std::uint32_t i = 0; i < world.transitionCount; ++i) {
         if (ownedBy(owners, world.transitions[i].ownerContainerStableId,
@@ -1985,8 +1985,8 @@ bool sliceWorld(
     slice.playableOccurrenceCount = static_cast<std::uint32_t>(occurrences->size());
     slice.trackSchedules = tracks->empty() ? nullptr : tracks->data();
     slice.trackScheduleCount = static_cast<std::uint32_t>(tracks->size());
-    slice.pieceSchedules = pieces->empty() ? nullptr : pieces->data();
-    slice.pieceScheduleCount = static_cast<std::uint32_t>(pieces->size());
+    slice.segmentSchedules = segments->empty() ? nullptr : segments->data();
+    slice.segmentScheduleCount = static_cast<std::uint32_t>(segments->size());
     slice.containers = containers->empty() ? nullptr : containers->data();
     slice.containerCount = static_cast<std::uint32_t>(containers->size());
     slice.transitions = transitions->empty() ? nullptr : transitions->data();
@@ -2260,9 +2260,9 @@ bool harmonizePublicationCapacity(std::vector<PackMeta>* packs,
         std::vector<harkenstudiobuild::ContainerProgramViewV3> containers;
         std::vector<harkenstudiobuild::ActionProgramViewV1> actions;
         std::vector<harkenstudiobuild::TrackScheduleProgramViewV1> tracks;
-        std::vector<harkenstudiobuild::PieceScheduleProgramViewV1> pieces;
+        std::vector<harkenstudiobuild::SegmentScheduleProgramViewV1> segments;
         std::set<harkenstudio::ObjectId> variableIds, propertyIds, containerIds, actionIds;
-        std::set<harkenstudio::ObjectId> trackIds, pieceIds;
+        std::set<harkenstudio::ObjectId> trackIds, segmentIds;
         std::set<std::tuple<std::uint32_t, harkenstudio::ObjectId, std::uint32_t>> occurrenceIds;
         const auto append = [](auto& rows, auto& ids, const auto* source,
                                std::uint32_t count, auto identity) {
@@ -2287,7 +2287,7 @@ bool harmonizePublicationCapacity(std::vector<PackMeta>* packs,
                    [](const auto& row) { return row.actionStableId; });
             append(tracks, trackIds, world.trackSchedules, world.trackScheduleCount,
                    [](const auto& row) { return row.rootDefinition.stableId; });
-            append(pieces, pieceIds, world.pieceSchedules, world.pieceScheduleCount,
+            append(segments, segmentIds, world.segmentSchedules, world.segmentScheduleCount,
                    [](const auto& row) { return row.rootDefinition.stableId; });
         }
         if (variables.size() > harkenstudiobuild::kHardVariableDefinitionCapacity
@@ -2296,7 +2296,7 @@ bool harmonizePublicationCapacity(std::vector<PackMeta>* packs,
             || containers.size() > harkenstudiobuild::kHardContainerProgramCapacity
             || actions.size() > harkenstudiobuild::kHardActionDefinitionCapacity
             || tracks.size() > harkenstudiobuild::kHardTrackScheduleProgramCapacity
-            || pieces.size() > harkenstudiobuild::kHardPieceScheduleProgramCapacity) {
+            || segments.size() > harkenstudiobuild::kHardSegmentScheduleProgramCapacity) {
             *error = QStringLiteral("Published Pack set exceeds World representation limits");
             return false;
         }
@@ -2313,8 +2313,8 @@ bool harmonizePublicationCapacity(std::vector<PackMeta>* packs,
         combined.actionCount = static_cast<std::uint32_t>(actions.size());
         combined.trackSchedules = tracks.empty() ? nullptr : tracks.data();
         combined.trackScheduleCount = static_cast<std::uint32_t>(tracks.size());
-        combined.pieceSchedules = pieces.empty() ? nullptr : pieces.data();
-        combined.pieceScheduleCount = static_cast<std::uint32_t>(pieces.size());
+        combined.segmentSchedules = segments.empty() ? nullptr : segments.data();
+        combined.segmentScheduleCount = static_cast<std::uint32_t>(segments.size());
         if (!harkenstudiobuild::GrowAuthoredWorldCapacityV1(combined, &common)) {
             *error = QStringLiteral("Published Pack set exceeds World content capacity");
             return false;
@@ -3418,14 +3418,14 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             pack.slicedPlayables.clear();
             pack.slicedOccurrences.clear();
             pack.slicedTracks.clear();
-            pack.slicedPieces.clear();
+            pack.slicedSegments.clear();
             pack.slicedContainers.clear();
             pack.slicedTransitions.clear();
             pack.slicedActions.clear();
             pack.slicedVariables.clear();
             if (!sliceWorld(world, pack.packStableId,
                             compilationOwners, &pack.slicedVariables, &pack.slicedPlayables, &pack.slicedOccurrences,
-                            &pack.slicedTracks, &pack.slicedPieces, &pack.slicedContainers,
+                            &pack.slicedTracks, &pack.slicedSegments, &pack.slicedContainers,
                             &pack.slicedTransitions, &pack.slicedActions, &pack, &compileError))
                 return fail(compileError);
             pack.ownedPlayableIds.clear();
@@ -3500,27 +3500,27 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         for (PackMeta& pack : packs) {
             if (!packNeedsEncode(pack))
                 continue;
-            for (auto& piece : pack.slicedPieces) {
-                rebindPlayableRefLive(&piece.rootDefinition, packs, language);
-                if (piece.trackRefs != nullptr) {
+            for (auto& segment : pack.slicedSegments) {
+                rebindPlayableRefLive(&segment.rootDefinition, packs, language);
+                if (segment.trackRefs != nullptr) {
                     auto* trackRefs = const_cast<harkenstudiobuild::ScheduleTrackRefV1*>(
-                        piece.trackRefs);
-                    for (std::uint32_t i = 0; i < piece.trackRefCount; ++i) {
+                        segment.trackRefs);
+                    for (std::uint32_t i = 0; i < segment.trackRefCount; ++i) {
                         rebindPlayableRefLive(&trackRefs[i].trackDefinition,
                                              packs, language);
                         const auto* track = findLiveSlicedTrack(
                             packs, language, trackRefs[i].trackDefinition.stableId);
                         if (track == nullptr)
                             return fail(QStringLiteral(
-                                "Piece %1 references missing sliced Track %2")
-                                .arg(VNX::objectIdString(piece.rootDefinition.stableId),
+                                "Segment %1 references missing sliced Track %2")
+                                .arg(VNX::objectIdString(segment.rootDefinition.stableId),
                                      VNX::objectIdString(trackRefs[i].trackDefinition.stableId)));
                         trackRefs[i].trackScheduleSemanticFingerprint =
                             track->scheduleSemanticFingerprint;
                     }
                 }
-                piece.scheduleSemanticFingerprint =
-                    harkenstudiobuild::ComputePieceScheduleFingerprintV1(piece);
+                segment.scheduleSemanticFingerprint =
+                    harkenstudiobuild::ComputeSegmentScheduleFingerprintV1(segment);
             }
             for (auto& container : pack.slicedContainers) {
                 if (container.children != nullptr) {
@@ -3590,8 +3590,8 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             slice.playableOccurrenceCount = static_cast<std::uint32_t>(pack.slicedOccurrences.size());
             slice.trackSchedules = pack.slicedTracks.empty() ? nullptr : pack.slicedTracks.data();
             slice.trackScheduleCount = static_cast<std::uint32_t>(pack.slicedTracks.size());
-            slice.pieceSchedules = pack.slicedPieces.empty() ? nullptr : pack.slicedPieces.data();
-            slice.pieceScheduleCount = static_cast<std::uint32_t>(pack.slicedPieces.size());
+            slice.segmentSchedules = pack.slicedSegments.empty() ? nullptr : pack.slicedSegments.data();
+            slice.segmentScheduleCount = static_cast<std::uint32_t>(pack.slicedSegments.size());
             slice.containers = pack.slicedContainers.empty() ? nullptr : pack.slicedContainers.data();
             slice.containerCount = static_cast<std::uint32_t>(pack.slicedContainers.size());
             slice.transitions = pack.slicedTransitions.empty() ? nullptr : pack.slicedTransitions.data();

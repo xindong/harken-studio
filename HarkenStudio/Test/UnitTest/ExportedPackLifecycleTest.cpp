@@ -10,7 +10,7 @@
 #include "Components/VAttenuation.h"
 #include "Components/VAudio.h"
 #include "Components/VMixNode.h"
-#include "Components/VPiece.h"
+#include "Components/VSegment.h"
 #include "Components/VSelection.h"
 #include "Components/VSound.h"
 #include "Components/VTrack.h"
@@ -127,16 +127,16 @@ constexpr uint32_t kQueueTrackSoundBObjectId = 57;
 constexpr uint32_t kQueueTrackObjectId = 17;
 constexpr uint32_t kQueueTrackContainerObjectId = 18;
 constexpr uint32_t kQueueTrackActionObjectId = 28;
-constexpr uint32_t kDirectPieceSoundObjectId = 19;
-constexpr uint32_t kDirectPieceTrackObjectId = 31;
-constexpr uint32_t kDirectPieceObjectId = 32;
-constexpr uint32_t kDirectPieceActionObjectId = 29;
-constexpr uint32_t kQueuePieceSoundObjectId = 33;
-constexpr uint32_t kQueuePieceSoundBObjectId = 58;
-constexpr uint32_t kQueuePieceTrackObjectId = 34;
-constexpr uint32_t kQueuePieceObjectId = 35;
-constexpr uint32_t kQueuePieceContainerObjectId = 36;
-constexpr uint32_t kQueuePieceActionObjectId = 37;
+constexpr uint32_t kDirectSegmentSoundObjectId = 19;
+constexpr uint32_t kDirectSegmentTrackObjectId = 31;
+constexpr uint32_t kDirectSegmentObjectId = 32;
+constexpr uint32_t kDirectSegmentActionObjectId = 29;
+constexpr uint32_t kQueueSegmentSoundObjectId = 33;
+constexpr uint32_t kQueueSegmentSoundBObjectId = 58;
+constexpr uint32_t kQueueSegmentTrackObjectId = 34;
+constexpr uint32_t kQueueSegmentObjectId = 35;
+constexpr uint32_t kQueueSegmentContainerObjectId = 36;
+constexpr uint32_t kQueueSegmentActionObjectId = 37;
 constexpr uint32_t kSharedLeafContainerObjectId = 38;
 constexpr uint32_t kSharedLeafActionObjectId = 39;
 constexpr uint32_t kTwoPlayActionObjectId = 40;
@@ -175,9 +175,9 @@ constexpr uint32_t kQueueSoundSourceId = 1006;
 constexpr uint32_t kDirectTrackSourceId = 1007;
 constexpr uint32_t kQueueTrackSourceId = 1008;
 constexpr uint32_t kQueueTrackSourceBId = 1018;
-constexpr uint32_t kDirectPieceSourceId = 1009;
-constexpr uint32_t kQueuePieceSourceId = 1010;
-constexpr uint32_t kQueuePieceSourceBId = 1019;
+constexpr uint32_t kDirectSegmentSourceId = 1009;
+constexpr uint32_t kQueueSegmentSourceId = 1010;
+constexpr uint32_t kQueueSegmentSourceBId = 1019;
 constexpr uint32_t kDiscreteSilentSourceId = 1011;
 constexpr uint32_t kDiscreteAudibleSourceId = 1012;
 constexpr uint32_t kContinuousSilentSourceId = 1013;
@@ -427,23 +427,23 @@ void makeTrackWithSound(const std::shared_ptr<VNX::ProjectItem>& parent,
     *outTrack = std::move(track);
 }
 
-void makePieceWithSound(const std::shared_ptr<VNX::ProjectItem>& parent,
-                        const QString& pieceName,
-                        uint32_t pieceObjectId,
+void makeSegmentWithSound(const std::shared_ptr<VNX::ProjectItem>& parent,
+                        const QString& segmentName,
+                        uint32_t segmentObjectId,
                         const QString& trackName,
                         uint32_t trackObjectId,
                         const QString& soundName,
                         uint32_t soundObjectId,
                         uint32_t sourceId,
-                        std::shared_ptr<VNX::ProjectItem>* outPiece)
+                        std::shared_ptr<VNX::ProjectItem>* outSegment)
 {
-    auto piece = makeItem(pieceName, VNX::ProjectItem::Type::Piece, pieceObjectId);
-    ASSERT_NO_FATAL_FAILURE(authorDefaultPlayableProperties(*piece));
-    addChild(parent, piece);
+    auto segment = makeItem(segmentName, VNX::ProjectItem::Type::Segment, segmentObjectId);
+    ASSERT_NO_FATAL_FAILURE(authorDefaultPlayableProperties(*segment));
+    addChild(parent, segment);
     std::shared_ptr<VNX::ProjectItem> track;
-    ASSERT_NO_FATAL_FAILURE(makeTrackWithSound(piece, trackName, trackObjectId, soundName,
+    ASSERT_NO_FATAL_FAILURE(makeTrackWithSound(segment, trackName, trackObjectId, soundName,
                                                soundObjectId, sourceId, &track));
-    *outPiece = std::move(piece);
+    *outSegment = std::move(segment);
 }
 
 VNX::VActionStep playStep(const VNX::ProjectItem& target, float delayMs = 0.0f)
@@ -525,9 +525,9 @@ void buildExportedPack(VNX::ProjectData& project, const QString& projectRoot)
     ASSERT_NO_FATAL_FAILURE(addAudioSource(project, kDirectTrackSourceId));
     ASSERT_NO_FATAL_FAILURE(addAudioSource(project, kQueueTrackSourceId));
     ASSERT_NO_FATAL_FAILURE(addAudioSource(project, kQueueTrackSourceBId));
-    ASSERT_NO_FATAL_FAILURE(addAudioSource(project, kDirectPieceSourceId));
-    ASSERT_NO_FATAL_FAILURE(addAudioSource(project, kQueuePieceSourceId));
-    ASSERT_NO_FATAL_FAILURE(addAudioSource(project, kQueuePieceSourceBId));
+    ASSERT_NO_FATAL_FAILURE(addAudioSource(project, kDirectSegmentSourceId));
+    ASSERT_NO_FATAL_FAILURE(addAudioSource(project, kQueueSegmentSourceId));
+    ASSERT_NO_FATAL_FAILURE(addAudioSource(project, kQueueSegmentSourceBId));
     ASSERT_NO_FATAL_FAILURE(addAudioSource(project, kDiscreteSilentSourceId));
     ASSERT_NO_FATAL_FAILURE(addAudioSource(project, kDiscreteAudibleSourceId));
     ASSERT_NO_FATAL_FAILURE(addAudioSource(project, kContinuousSilentSourceId));
@@ -653,39 +653,39 @@ void buildExportedPack(VNX::ProjectData& project, const QString& projectRoot)
         kQueueTrackSoundBObjectId, kQueueTrackSourceBId));
     ASSERT_NO_FATAL_FAILURE(attachContainerChild(queueTrackContainer, queueTrack));
 
-    std::shared_ptr<VNX::ProjectItem> directPiece;
-    ASSERT_NO_FATAL_FAILURE(makePieceWithSound(
-        layer, QStringLiteral("ExportedPackDirectPiece"), kDirectPieceObjectId,
-        QStringLiteral("ExportedPackDirectPieceTrack"), kDirectPieceTrackObjectId,
-        QStringLiteral("ExportedPackDirectPieceSound"), kDirectPieceSoundObjectId,
-        kDirectPieceSourceId, &directPiece));
+    std::shared_ptr<VNX::ProjectItem> directSegment;
+    ASSERT_NO_FATAL_FAILURE(makeSegmentWithSound(
+        layer, QStringLiteral("ExportedPackDirectSegment"), kDirectSegmentObjectId,
+        QStringLiteral("ExportedPackDirectSegmentTrack"), kDirectSegmentTrackObjectId,
+        QStringLiteral("ExportedPackDirectSegmentSound"), kDirectSegmentSoundObjectId,
+        kDirectSegmentSourceId, &directSegment));
 
-    auto queuePieceContainer = makeItem(QStringLiteral("ExportedPackQueuePieceContainer"),
+    auto queueSegmentContainer = makeItem(QStringLiteral("ExportedPackQueueSegmentContainer"),
                                         VNX::ProjectItem::Type::Container,
-                                        kQueuePieceContainerObjectId);
-    ASSERT_NO_FATAL_FAILURE(prepareContainer(queuePieceContainer,
+                                        kQueueSegmentContainerObjectId);
+    ASSERT_NO_FATAL_FAILURE(prepareContainer(queueSegmentContainer,
                                              VNX::SelectionMode::Sequence, VNX::SelectionPlayType::Queue));
-    addChild(layer, queuePieceContainer);
-    std::shared_ptr<VNX::ProjectItem> queuePiece;
-    ASSERT_NO_FATAL_FAILURE(makePieceWithSound(
-        queuePieceContainer, QStringLiteral("ExportedPackQueuePiece"), kQueuePieceObjectId,
-        QStringLiteral("ExportedPackQueuePieceTrack"), kQueuePieceTrackObjectId,
-        QStringLiteral("ExportedPackQueuePieceSound"), kQueuePieceSoundObjectId,
-        kQueuePieceSourceId, &queuePiece));
+    addChild(layer, queueSegmentContainer);
+    std::shared_ptr<VNX::ProjectItem> queueSegment;
+    ASSERT_NO_FATAL_FAILURE(makeSegmentWithSound(
+        queueSegmentContainer, QStringLiteral("ExportedPackQueueSegment"), kQueueSegmentObjectId,
+        QStringLiteral("ExportedPackQueueSegmentTrack"), kQueueSegmentTrackObjectId,
+        QStringLiteral("ExportedPackQueueSegmentSound"), kQueueSegmentSoundObjectId,
+        kQueueSegmentSourceId, &queueSegment));
     {
-        std::shared_ptr<VNX::ProjectItem> queuePieceTrack;
-        for (const auto& child : queuePiece->children) {
+        std::shared_ptr<VNX::ProjectItem> queueSegmentTrack;
+        for (const auto& child : queueSegment->children) {
             if (child && child->type == VNX::ProjectItem::Type::Track) {
-                queuePieceTrack = child;
+                queueSegmentTrack = child;
                 break;
             }
         }
-        ASSERT_NE(queuePieceTrack, nullptr);
+        ASSERT_NE(queueSegmentTrack, nullptr);
         ASSERT_NO_FATAL_FAILURE(attachSecondTrackLeaf(
-            queuePieceTrack, QStringLiteral("ExportedPackQueuePieceSoundB"),
-            kQueuePieceSoundBObjectId, kQueuePieceSourceBId));
+            queueSegmentTrack, QStringLiteral("ExportedPackQueueSegmentSoundB"),
+            kQueueSegmentSoundBObjectId, kQueueSegmentSourceBId));
     }
-    ASSERT_NO_FATAL_FAILURE(attachContainerChild(queuePieceContainer, queuePiece));
+    ASSERT_NO_FATAL_FAILURE(attachContainerChild(queueSegmentContainer, queueSegment));
 
     auto sharedLeafContainer = makeItem(QStringLiteral("ExportedPackSharedLeafContainer"),
                                         VNX::ProjectItem::Type::Container,
@@ -844,9 +844,9 @@ void buildExportedPack(VNX::ProjectData& project, const QString& projectRoot)
     auto queueTrackAction = makePlayAction(
         actionsRoot, QStringLiteral("ExportedPackQueueTrackChild"),
         kQueueTrackActionObjectId, *queueTrackContainer);
-    auto queuePieceAction = makePlayAction(
-        actionsRoot, QStringLiteral("ExportedPackQueuePieceChild"),
-        kQueuePieceActionObjectId, *queuePieceContainer);
+    auto queueSegmentAction = makePlayAction(
+        actionsRoot, QStringLiteral("ExportedPackQueueSegmentChild"),
+        kQueueSegmentActionObjectId, *queueSegmentContainer);
     auto discreteAction = makePlayAction(
         actionsRoot, QStringLiteral("ExportedPackVariableControlDiscrete"),
         kDiscreteActionObjectId, *discreteContainer);
@@ -859,9 +859,9 @@ void buildExportedPack(VNX::ProjectData& project, const QString& projectRoot)
     auto directTrackAction = makePlayAction(
         actionsRoot, QStringLiteral("ExportedPackDirectTrack"),
         kDirectTrackActionObjectId, *directTrack);
-    auto directPieceAction = makePlayAction(
-        actionsRoot, QStringLiteral("ExportedPackDirectPiece"),
-        kDirectPieceActionObjectId, *directPiece);
+    auto directSegmentAction = makePlayAction(
+        actionsRoot, QStringLiteral("ExportedPackDirectSegment"),
+        kDirectSegmentActionObjectId, *directSegment);
     auto sharedLeafAction = makePlayAction(
         actionsRoot, QStringLiteral("ExportedPackSharedLeafFromContentRoot"),
         kSharedLeafActionObjectId, *sharedLeafContainer);
@@ -1527,15 +1527,15 @@ void prepareExportedPackProject(VNX::ProjectData& project, const QString& projec
     ASSERT_EQ(kQueueTrackSourceBId,
               registerToneAsset(projectRoot, QStringLiteral("queue-track-b.wav"),
                                 kQueueTrackSourceBId, -kToneAmplitude));
-    ASSERT_EQ(kDirectPieceSourceId,
-              registerToneAsset(projectRoot, QStringLiteral("direct-piece.wav"),
-                                kDirectPieceSourceId));
-    ASSERT_EQ(kQueuePieceSourceId,
-              registerToneAsset(projectRoot, QStringLiteral("queue-piece.wav"),
-                                kQueuePieceSourceId));
-    ASSERT_EQ(kQueuePieceSourceBId,
-              registerToneAsset(projectRoot, QStringLiteral("queue-piece-b.wav"),
-                                kQueuePieceSourceBId, -kToneAmplitude));
+    ASSERT_EQ(kDirectSegmentSourceId,
+              registerToneAsset(projectRoot, QStringLiteral("direct-segment.wav"),
+                                kDirectSegmentSourceId));
+    ASSERT_EQ(kQueueSegmentSourceId,
+              registerToneAsset(projectRoot, QStringLiteral("queue-segment.wav"),
+                                kQueueSegmentSourceId));
+    ASSERT_EQ(kQueueSegmentSourceBId,
+              registerToneAsset(projectRoot, QStringLiteral("queue-segment-b.wav"),
+                                kQueueSegmentSourceBId, -kToneAmplitude));
     ASSERT_EQ(kDiscreteSilentSourceId,
               registerToneAsset(projectRoot, QStringLiteral("discrete-silent.wav"),
                                 kDiscreteSilentSourceId, 0.0f));
@@ -3480,10 +3480,10 @@ TEST_F(AuthoredPackLifecycle, QuantizedActionsMatchPreviewAndExecuteFromReloaded
     };
     const auto contentSound = findLayerChild(kContentSoundObjectId);
     const auto directTrack = findLayerChild(kDirectTrackObjectId);
-    const auto directPiece = findLayerChild(kDirectPieceObjectId);
+    const auto directSegment = findLayerChild(kDirectSegmentObjectId);
     ASSERT_NE(nullptr, contentSound);
     ASSERT_NE(nullptr, directTrack);
-    ASSERT_NE(nullptr, directPiece);
+    ASSERT_NE(nullptr, directSegment);
 
     contentSound->comp<VNX::VAudio>()->loopCount = 64;
     const auto contentLocator =
@@ -3495,10 +3495,10 @@ TEST_F(AuthoredPackLifecycle, QuantizedActionsMatchPreviewAndExecuteFromReloaded
             harkenplayableproperties::PlayablePropertyIdV1::LoopCount),
         QJsonValue(64), std::nullopt));
 
-    auto* piece = directPiece->comp<VNX::VPiece>();
-    ASSERT_NE(nullptr, piece);
-    piece->pieceTime = VNX::PieceTimeSpec::musical(500000, 4, 4);
-    piece->markers.items = {
+    auto* segment = directSegment->comp<VNX::VSegment>();
+    ASSERT_NE(nullptr, segment);
+    segment->segmentTime = VNX::SegmentTimeSpec::musical(500000, 4, 4);
+    segment->markers.items = {
         {VNX::authoringUuid(harkentest::StudioObjectId(
              kQuantizedMarkerActionObjectId + kStableIdBias + 900000)),
          VNX::MarkerKind::Custom, QStringLiteral("QuantizeMarker"), 1920},
@@ -3506,7 +3506,7 @@ TEST_F(AuthoredPackLifecycle, QuantizedActionsMatchPreviewAndExecuteFromReloaded
              kQuantizedMarkerActionObjectId + kStableIdBias + 900001)),
          VNX::MarkerKind::Exit, QStringLiteral("Exit"), 2880},
     };
-    ASSERT_TRUE(piece->markers.validate());
+    ASSERT_TRUE(segment->markers.validate());
 
     struct QuantizedCase {
         QString name;
@@ -3537,8 +3537,8 @@ TEST_F(AuthoredPackLifecycle, QuantizedActionsMatchPreviewAndExecuteFromReloaded
         auto action = makeItem(test.name, VNX::ProjectItem::Type::Action, test.objectId);
         VNX::VActionStep step = playStep(*contentSound, 5.0f);
         step.quantize.timing = test.authoredTiming;
-        step.quantize.referenceObjectID = directPiece->objectID;
-        step.quantize.referenceName = directPiece->name;
+        step.quantize.referenceObjectID = directSegment->objectID;
+        step.quantize.referenceName = directSegment->name;
         action->comp<VNX::VAction>()->steps = {step};
         addChild(actionsRoot, action);
     }
@@ -3552,8 +3552,8 @@ TEST_F(AuthoredPackLifecycle, QuantizedActionsMatchPreviewAndExecuteFromReloaded
     quantizedStop.targetObjectID = contentSound->objectID;
     quantizedStop.targetName = contentSound->name;
     quantizedStop.quantize.timing = VNX::QuantizeTiming::ExitMarker;
-    quantizedStop.quantize.referenceObjectID = directPiece->objectID;
-    quantizedStop.quantize.referenceName = directPiece->name;
+    quantizedStop.quantize.referenceObjectID = directSegment->objectID;
+    quantizedStop.quantize.referenceName = directSegment->name;
     quantizedStop.fadeTime = 10.0f;
     stopAction->comp<VNX::VAction>()->steps = {immediatePlay, quantizedStop};
     addChild(actionsRoot, stopAction);
@@ -3569,9 +3569,9 @@ TEST_F(AuthoredPackLifecycle, QuantizedActionsMatchPreviewAndExecuteFromReloaded
         {QStringLiteral("ExportedPackDelayedTrackStop"), 65, directTrack,
          harkenstudiobuild::ActionTargetKindV1::Track,
          harken::ActionTargetKindV1::Track},
-        {QStringLiteral("ExportedPackDelayedPieceStop"), 66, directPiece,
-         harkenstudiobuild::ActionTargetKindV1::Piece,
-         harken::ActionTargetKindV1::Piece},
+        {QStringLiteral("ExportedPackDelayedSegmentStop"), 66, directSegment,
+         harkenstudiobuild::ActionTargetKindV1::Segment,
+         harken::ActionTargetKindV1::Segment},
     };
     for (const auto& test : delayedCompositeCases) {
         auto action = makeItem(
@@ -3595,7 +3595,7 @@ TEST_F(AuthoredPackLifecycle, QuantizedActionsMatchPreviewAndExecuteFromReloaded
     const QString outputDir = QDir(dir_.path()).filePath(QStringLiteral("quantized-export"));
     ASSERT_NO_FATAL_FAILURE(exportProjectPack(project_, outputDir));
     const QJsonObject anchorPack =
-        findNamedPack(readPublication(outputDir), QStringLiteral("ExportedPackDirectPiece"));
+        findNamedPack(readPublication(outputDir), QStringLiteral("ExportedPackDirectSegment"));
     ASSERT_FALSE(anchorPack.isEmpty());
 
     for (const auto& test : delayedCompositeCases) {
@@ -3701,11 +3701,11 @@ TEST_F(AuthoredPackLifecycle, QuantizedActionsMatchPreviewAndExecuteFromReloaded
         ASSERT_EQ(previewAction->steps.size(), 1u);
         EXPECT_EQ(previewAction->steps[0].quantizeTiming, test.previewTiming);
         EXPECT_EQ(previewAction->steps[0].quantizeReference.stableId,
-                  directPiece->runtimeId());
+                  directSegment->runtimeId());
 
         LoadedExportedPack loaded;
         ASSERT_NO_FATAL_FAILURE(loadExportedPackSession(
-            outputDir, QStringLiteral("ExportedPackDirectPiece"), &loaded));
+            outputDir, QStringLiteral("ExportedPackDirectSegment"), &loaded));
         loaded.packBHandle = loaded.contentHandle;
         ASSERT_NE(0u, loaded.packBHandle);
         ASSERT_NO_FATAL_FAILURE(loadExportedPackSession(outputDir, test.name, &loaded));
@@ -3719,7 +3719,7 @@ TEST_F(AuthoredPackLifecycle, QuantizedActionsMatchPreviewAndExecuteFromReloaded
         ASSERT_EQ(packed->stepCount, 1u);
         EXPECT_EQ(packed->steps[0].quantizeTiming, test.runtimeTiming);
         EXPECT_EQ(packed->steps[0].quantizeReference.stableId,
-                  harkentest::ToRuntime(directPiece->runtimeId()));
+                  harkentest::ToRuntime(directSegment->runtimeId()));
         EXPECT_EQ(static_cast<uint32_t>(packed->steps[0].opcode),
                   static_cast<uint32_t>(previewAction->steps[0].opcode));
         EXPECT_EQ(packed->steps[0].target.stableId,
@@ -3731,7 +3731,7 @@ TEST_F(AuthoredPackLifecycle, QuantizedActionsMatchPreviewAndExecuteFromReloaded
         EXPECT_EQ(packed->steps[0].delay.denominator, 1u);
 
         const VnActionFiringHandle anchorFiring = postGoldAction(
-            harkentest::StudioObjectId(kDirectPieceActionObjectId + kStableIdBias));
+            harkentest::StudioObjectId(kDirectSegmentActionObjectId + kStableIdBias));
         const uint64_t anchorInstance = queryProducedInstance(anchorFiring);
         const auto* anchorRow = findStartRow(loaded.session.Engine(), anchorInstance);
         ASSERT_NE(nullptr, anchorRow);
@@ -3786,12 +3786,12 @@ TEST_F(AuthoredPackLifecycle, QuantizedActionsMatchPreviewAndExecuteFromReloaded
     EXPECT_EQ(previewStop->steps[1].quantizeTiming,
               harkenstudiobuild::ActionQuantizeTimingV1::ExitMarker);
     EXPECT_EQ(previewStop->steps[1].quantizeReference.stableId,
-              directPiece->runtimeId());
+              directSegment->runtimeId());
     EXPECT_FLOAT_EQ(previewStop->steps[1].fadeMilliseconds, 10.0f);
 
     LoadedExportedPack loaded;
     ASSERT_NO_FATAL_FAILURE(loadExportedPackSession(
-        outputDir, QStringLiteral("ExportedPackDirectPiece"), &loaded));
+        outputDir, QStringLiteral("ExportedPackDirectSegment"), &loaded));
     loaded.packBHandle = loaded.contentHandle;
     ASSERT_NE(0u, loaded.packBHandle);
     ASSERT_NO_FATAL_FAILURE(loadExportedPackSession(
@@ -3812,7 +3812,7 @@ TEST_F(AuthoredPackLifecycle, QuantizedActionsMatchPreviewAndExecuteFromReloaded
     EXPECT_EQ(packedStop->steps[1].fade.denominator, 1u);
 
     const VnActionFiringHandle anchorFiring = postGoldAction(
-        harkentest::StudioObjectId(kDirectPieceActionObjectId + kStableIdBias));
+        harkentest::StudioObjectId(kDirectSegmentActionObjectId + kStableIdBias));
     const uint64_t anchorInstance = queryProducedInstance(anchorFiring);
     const auto* anchorRow = findStartRow(loaded.session.Engine(), anchorInstance);
     ASSERT_NE(nullptr, anchorRow);
@@ -3930,11 +3930,11 @@ TEST_F(ExportedPackReadOnlyLifecycle, QueueTrackChildRenders)
         QStringLiteral("ExportedPackQueueTrackChild"), kQueueTrackActionObjectId));
 }
 
-TEST_F(ExportedPackReadOnlyLifecycle, QueuePieceChildRenders)
+TEST_F(ExportedPackReadOnlyLifecycle, QueueSegmentChildRenders)
 {
     ASSERT_NO_FATAL_FAILURE(loadAndPostFamily(
         preparedExportedPackDir(),
-        QStringLiteral("ExportedPackQueuePieceChild"), kQueuePieceActionObjectId));
+        QStringLiteral("ExportedPackQueueSegmentChild"), kQueueSegmentActionObjectId));
 }
 
 TEST_F(ExportedPackReadOnlyLifecycle, VariableControlDiscreteRenders)
@@ -4027,11 +4027,11 @@ TEST_F(ExportedPackReadOnlyLifecycle, DirectTrackRenders)
         QStringLiteral("ExportedPackDirectTrack"), kDirectTrackActionObjectId));
 }
 
-TEST_F(ExportedPackReadOnlyLifecycle, DirectPieceRenders)
+TEST_F(ExportedPackReadOnlyLifecycle, DirectSegmentRenders)
 {
     ASSERT_NO_FATAL_FAILURE(loadAndPostFamily(
         preparedExportedPackDir(),
-        QStringLiteral("ExportedPackDirectPiece"), kDirectPieceActionObjectId));
+        QStringLiteral("ExportedPackDirectSegment"), kDirectSegmentActionObjectId));
 }
 
 TEST_F(ExportedPackReadOnlyLifecycle, SharedLeafFromContentRootRenders)

@@ -52,6 +52,7 @@ UpdateStateRecord readRecord(const QJsonObject& root, const QString& product)
     record.packageSize = entry[QStringLiteral("packageSize")].toInteger(-1);
     record.downloadedBytes =
         entry[QStringLiteral("downloadedBytes")].toInteger(-1);
+    record.downloadRestarted = entry[QStringLiteral("downloadRestarted")].toBool();
     record.releaseSequence =
         entry[QStringLiteral("releaseSequence")].toInteger(-1);
     record.transactionId = entry[QStringLiteral("transactionId")].toString();
@@ -71,6 +72,7 @@ QJsonObject entryFor(const UpdateStateRecord& record, const QDateTime& at)
     entry[QStringLiteral("expectedSha256")] = record.expectedSha256;
     entry[QStringLiteral("packageSize")] = record.packageSize;
     entry[QStringLiteral("downloadedBytes")] = record.downloadedBytes;
+    entry[QStringLiteral("downloadRestarted")] = record.downloadRestarted;
     entry[QStringLiteral("releaseSequence")] = record.releaseSequence;
     if (!record.transactionId.isEmpty())
         entry[QStringLiteral("transactionId")] = record.transactionId;

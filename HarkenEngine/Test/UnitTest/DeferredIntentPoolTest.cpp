@@ -43,7 +43,7 @@ TEST(DeferredIntentPool, HoldsIntentsUntilTheWindowReachesThem)
 {
     PlayableInstanceTable instances(2);
     const PlayableInstanceHandle owner =
-        instances.Acquire(PlayableKind::Piece, 0);
+        instances.Acquire(PlayableKind::Segment, 0);
     DeferredIntentPool pool(4, 4);
     ASSERT_EQ(pool.Add(IntentFor(instances, owner, 1000, 1)),
               DeferredIntentRefusal::None);
@@ -136,7 +136,7 @@ TEST(DeferredIntentPool, DropsIntentsWhoseOwnerRetired)
 {
     PlayableInstanceTable instances(2);
     const PlayableInstanceHandle owner =
-        instances.Acquire(PlayableKind::Piece, 0);
+        instances.Acquire(PlayableKind::Segment, 0);
     DeferredIntentPool pool(2, 2);
     ASSERT_EQ(pool.Add(IntentFor(instances, owner, 500, 1)),
               DeferredIntentRefusal::None);

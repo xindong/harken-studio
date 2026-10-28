@@ -148,17 +148,17 @@ TimelineTickSet buildAbsoluteTicks(int64_t origin,
 
 }
 
-int64_t timelineCoordinateUnit(const PieceTimeSpec& spec)
+int64_t timelineCoordinateUnit(const SegmentTimeSpec& spec)
 {
     return TimelineSemantics::coordinateUnitFor(spec);
 }
 
-int64_t timelineSnapGrid(const PieceTimeSpec& spec)
+int64_t timelineSnapGrid(const SegmentTimeSpec& spec)
 {
     return TimelineSemantics::snapGridFor(spec);
 }
 
-TimelineTickSet buildTimelineTicks(const PieceTimeSpec& spec,
+TimelineTickSet buildTimelineTicks(const SegmentTimeSpec& spec,
                                    int64_t viewOrigin,
                                    int viewOffset,
                                    double pixelsPerUnit,
@@ -166,7 +166,7 @@ TimelineTickSet buildTimelineTicks(const PieceTimeSpec& spec,
                                    const ThemeMetrics::Timeline& metrics,
                                    int pixelOrigin)
 {
-    if (!AuthoringPolicy::validatePieceTime(spec))
+    if (!AuthoringPolicy::validateSegmentTime(spec))
         return {};
     const int64_t unit = std::max<int64_t>(1, timelineCoordinateUnit(spec));
     const int64_t snapGrid = std::max<int64_t>(1, timelineSnapGrid(spec));

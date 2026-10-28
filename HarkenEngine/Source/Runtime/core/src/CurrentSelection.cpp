@@ -40,7 +40,7 @@ bool ValidPlayableKind(PlayableKindV1 kind) noexcept {
     return kind == PlayableKindV1::Sound ||
            kind == PlayableKindV1::Container ||
            kind == PlayableKindV1::Track ||
-           kind == PlayableKindV1::Piece;
+           kind == PlayableKindV1::Segment;
 }
 
 bool ValidSeedInput(const SelectionSeedInputV1& input) noexcept {

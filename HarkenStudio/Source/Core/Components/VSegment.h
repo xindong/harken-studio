@@ -5,16 +5,16 @@
 
 namespace VNX {
 
-class VPiece final : public IComponent
+class VSegment final : public IComponent
 {
 public:
-    static constexpr ComponentType kType = ComponentType::Piece;
+    static constexpr ComponentType kType = ComponentType::Segment;
 
     ComponentType getType() const override { return kType; }
     QJsonObject toJson() const override;
     bool fromJson(const QJsonObject& json) override;
 
-    PieceTimeSpec pieceTime;
+    SegmentTimeSpec segmentTime;
     MarkerLedger markers;
 };
 

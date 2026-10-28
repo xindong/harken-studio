@@ -131,7 +131,7 @@ const TransitionRuleDef* matchRule(const TransitionTableDef& table,
 struct SamePositionResult
 {
     TransitionValidation validation;
-    PieceTimeSpec targetTime;
+    SegmentTimeSpec targetTime;
     int64_t targetPosition = 0;
     int64_t targetOffset = 0;
     int64_t targetNominalLength = 0;
@@ -156,14 +156,14 @@ enum class TransitionWatchDirection : uint8_t
 
 struct TransitionWatchResult
 {
-    const ProjectItem* referencePiece = nullptr;
+    const ProjectItem* referenceSegment = nullptr;
     TransitionWatchDirection direction = TransitionWatchDirection::None;
     std::vector<QUuid> path;
     QString failureReason;
     bool placementContextProvided = false;
     bool placementContextValid = true;
 
-    bool found() const { return referencePiece != nullptr; }
+    bool found() const { return referenceSegment != nullptr; }
     explicit operator bool() const { return found(); }
 };
 
@@ -179,13 +179,13 @@ struct TransitionWatchView
     bool hasSource = false;
     TransitionWatchDirection direction = TransitionWatchDirection::None;
     std::vector<QUuid> path;
-    std::optional<QUuid> referencePiece;
+    std::optional<QUuid> referenceSegment;
     bool placementContextProvided = false;
     bool placementContextValid = true;
     QString failureReason;
     QString caption;
 
-    bool found() const { return referencePiece.has_value(); }
+    bool found() const { return referenceSegment.has_value(); }
     bool operator==(const TransitionWatchView&) const = default;
 };
 

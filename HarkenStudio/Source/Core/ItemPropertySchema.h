@@ -14,7 +14,7 @@ inline QJsonObject setItemPropertySchema()
         QStringLiteral("volume"), QStringLiteral("behavior"), QStringLiteral("selections"),
         QStringLiteral("loopCount"), QStringLiteral("sources"),
         QStringLiteral("scheduleOffsetSec"), QStringLiteral("distinguishLanguage"),
-        QStringLiteral("clips"), QStringLiteral("pieceTime"),
+        QStringLiteral("clips"), QStringLiteral("segmentTime"),
         QStringLiteral("dimensions"), QStringLiteral("maxDistance"),
         QStringLiteral("transitions")};
     for (const auto& field : VNX::PlayablePropertyAuthoringV1::fields()) {
@@ -73,7 +73,7 @@ inline QJsonObject setItemPropertySchema()
                 {QStringLiteral("description"), QStringLiteral("Track ClipLedger with rows and occurrenceOrdinalHighWater. Start positions use absolute nanoseconds. Positive duration is the authored playback boundary. Targets must support absolute-time authoring.")},
                 {QStringLiteral("required"), QJsonArray{
                     QStringLiteral("rows"), QStringLiteral("occurrenceOrdinalHighWater")}}}},
-            {QStringLiteral("pieceTime"), QJsonObject{
+            {QStringLiteral("segmentTime"), QJsonObject{
                 {QStringLiteral("type"), QStringLiteral("object")},
                 {QStringLiteral("description"), QStringLiteral("Only domain Absolute is supported. Musical, tempoMap, and meterMap authoring is unavailable. Existing musical arrangements are preserved; this command does not migrate them.")},
                 {QStringLiteral("properties"), QJsonObject{

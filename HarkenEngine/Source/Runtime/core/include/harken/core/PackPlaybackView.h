@@ -102,7 +102,7 @@ public:
     TrackProgramHandleV1 ResolveTrack(
         VnObjectId stableId,
         std::uint64_t expectedScheduleFingerprint) const noexcept;
-    PieceProgramHandleV1 ResolvePiece(
+    SegmentProgramHandleV1 ResolveSegment(
         VnObjectId stableId,
         std::uint64_t expectedScheduleFingerprint) const noexcept;
     ProgramSourceIdentityV1 ResolveProgramSource(

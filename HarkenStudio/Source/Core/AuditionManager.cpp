@@ -30,8 +30,8 @@ std::optional<uint32_t> previewKind(VNX::ProjectItem::Type type)
             return HarkenEditor::Bridge::kPreviewPlayableContainer;
         case VNX::ProjectItem::Type::Track:
             return HarkenEditor::Bridge::kPreviewPlayableTrack;
-        case VNX::ProjectItem::Type::Piece:
-            return HarkenEditor::Bridge::kPreviewPlayablePiece;
+        case VNX::ProjectItem::Type::Segment:
+            return HarkenEditor::Bridge::kPreviewPlayableSegment;
         default:
             return std::nullopt;
     }

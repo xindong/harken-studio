@@ -61,15 +61,15 @@ protected:
         config.location = tempDir_.path();
         ASSERT_TRUE(manager.createProject(config));
 
-        auto* owner = manager.createItem(nullptr, QStringLiteral("TrackPiece"), VNX::ProjectItem::Type::Piece);
+        auto* owner = manager.createItem(nullptr, QStringLiteral("TrackSegment"), VNX::ProjectItem::Type::Segment);
         track_ = manager.createItem(owner, QStringLiteral("Track"),
                                     VNX::ProjectItem::Type::Track);
-        piece_ = manager.createItem(nullptr, QStringLiteral("Piece"),
-                                    VNX::ProjectItem::Type::Piece);
+        segment_ = manager.createItem(nullptr, QStringLiteral("Segment"),
+                                    VNX::ProjectItem::Type::Segment);
         sound_ = manager.createItem(track_, QStringLiteral("Sound"),
                                     VNX::ProjectItem::Type::Sound);
         ASSERT_NE(track_, nullptr);
-        ASSERT_NE(piece_, nullptr);
+        ASSERT_NE(segment_, nullptr);
         ASSERT_NE(sound_, nullptr);
         track_->comp<VNX::VTrack>()->clips = {};
         VNX::UndoRedoManager::instance().clear();
@@ -90,7 +90,7 @@ protected:
 
     QTemporaryDir tempDir_;
     VNX::ProjectItem* track_ = nullptr;
-    VNX::ProjectItem* piece_ = nullptr;
+    VNX::ProjectItem* segment_ = nullptr;
     VNX::ProjectItem* sound_ = nullptr;
 };
 
@@ -112,16 +112,16 @@ protected:
 };
 
 INSTANTIATE_TEST_SUITE_P(TimelineHosts, TimelineTrackHostTest, ::testing::Bool(),
-    [](const ::testing::TestParamInfo<bool>& info) { return info.param ? "Piece" : "Standalone"; });
+    [](const ::testing::TestParamInfo<bool>& info) { return info.param ? "Segment" : "Standalone"; });
 
 TEST_F(TimelineEditorPanelTest, DeletingBoundItemClearsBinding)
 {
     auto& manager = VNX::ProjectManager::instance();
     VNX::TimelineEditorPanel panel;
-    panel.bindItem(piece_);
-    ASSERT_EQ(panel.boundItem(), piece_);
+    panel.bindItem(segment_);
+    ASSERT_EQ(panel.boundItem(), segment_);
 
-    ASSERT_TRUE(manager.deleteItem(piece_));
+    ASSERT_TRUE(manager.deleteItem(segment_));
     EXPECT_EQ(panel.boundItem(), nullptr);
 }
 

@@ -25,7 +25,7 @@ enum class ComponentType : uint8_t
     Attenuation  = 6,
     Spatial      = 7,
     Track        = 8,
-    Piece        = 9,
+    Segment        = 9,
     Sound        = 10,
     _Count       = 11
 };

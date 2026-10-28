@@ -533,17 +533,17 @@ TEST(PlayablePropertyCut, SendCapacityRefusalPreservesThePublishedCut) {
     EXPECT_EQ(harkentest::ObjectId(30u), storage.View().leaf.stableId);
 }
 
-TEST(PlayablePropertyCut, PieceTracksWithTheSameOrdinalResolveDistinctLeafSnapshots) {
+TEST(PlayablePropertyCut, SegmentTracksWithTheSameOrdinalResolveDistinctLeafSnapshots) {
     using Kind = harken::playableproperties::ContentPropertyKindV1;
     const auto firstSound = Ref(harken::PlayableKindV1::Sound, 10, 110);
     const auto secondSound = Ref(harken::PlayableKindV1::Sound, 20, 120);
     const auto firstTrack = Ref(harken::PlayableKindV1::Track, 30, 130);
     const auto secondTrack = Ref(harken::PlayableKindV1::Track, 40, 140);
-    const auto root = Ref(harken::PlayableKindV1::Piece, 50, 150);
+    const auto root = Ref(harken::PlayableKindV1::Segment, 50, 150);
     std::array properties{
         Property(Kind::Sound, firstSound), Property(Kind::Sound, secondSound),
         Property(Kind::Track, firstTrack), Property(Kind::Track, secondTrack),
-        Property(Kind::Piece, root)};
+        Property(Kind::Segment, root)};
     SetU64(properties[0].payload, PropertyId::MainOutputBusRef, 100);
     SetF32(properties[0].payload, PropertyId::OutputBusVolume, -3.0f);
     SetF32(properties[0].payload, PropertyId::SpatialPanning, -0.5f);
@@ -578,10 +578,10 @@ TEST(PlayablePropertyCut, PieceTracksWithTheSameOrdinalResolveDistinctLeafSnapsh
             tracks[index].scheduleSemanticFingerprint;
         trackRefs[index].stableTrackOrdinal = index;
     }
-    harken::PieceScheduleProgramViewV1 piece{};
-    piece.rootDefinition = root;
-    piece.trackRefCount = 2;
-    piece.trackRefs = trackRefs.data();
+    harken::SegmentScheduleProgramViewV1 segment{};
+    segment.rootDefinition = root;
+    segment.trackRefCount = 2;
+    segment.trackRefs = trackRefs.data();
     harken::PlayableWorldViewV1 world{};
     world.generation = 1;
     world.identity.runtimeSemanticFingerprint = 1;
@@ -591,8 +591,8 @@ TEST(PlayablePropertyCut, PieceTracksWithTheSameOrdinalResolveDistinctLeafSnapsh
     world.occurrenceCount = occurrences.size();
     world.trackSchedules = tracks.data();
     world.trackScheduleCount = tracks.size();
-    world.pieceSchedules = &piece;
-    world.pieceScheduleCount = 1;
+    world.segmentSchedules = &segment;
+    world.segmentScheduleCount = 1;
     harken::ResolvedPlayablePropertyCutStorageV1 storage;
     ASSERT_TRUE(storage.Reset({}));
     const std::uint32_t ordinal = 0;

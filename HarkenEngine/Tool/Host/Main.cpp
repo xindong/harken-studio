@@ -123,7 +123,7 @@ void PrintUsage() {
         "[--no-recovery] [--null]\n"
         "       harken_host preview-play [--describe] [--null] [--seconds N] "
         "[--mode random|rotation|sequence|random-queue|sequence-queue|"
-        "variable-discrete|variable-continuous|variable-dual|track|piece]\n"
+        "variable-discrete|variable-continuous|variable-dual|track|segment]\n"
         "       harken_host att03-keep --init <Init.pack> --content <Content.pack> "
         "--bad <missing-or-bad.pack> --action <stableId-low>\n"
         "       harken_host att04-nearfar --root <platform-dir> --action-name <name> "

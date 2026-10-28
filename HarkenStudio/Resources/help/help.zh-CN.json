@@ -11,14 +11,14 @@
     },
     "Container": {
       "title": "Container",
-      "body": "按 Random、Sequence、Match 或 Blend 模式，选择或混合子级 Sound、Container、Track 和 Piece。嵌套 Container 可以组合选择规则。"
+      "body": "按 Random、Sequence、Match 或 Blend 模式，选择或混合子级 Sound、Container、Track 和 Segment。嵌套 Container 可以组合选择规则。"
     },
     "Track": {
       "title": "Track",
-      "body": "在一条时间轴上编排 Sound、Container 或 Piece 片段。各片段在指定时间起播，播放行为由子对象自身设置决定；重叠片段同时播放。"
+      "body": "在一条时间轴上编排 Sound、Container 或 Segment 片段。各片段在指定时间起播，播放行为由子对象自身设置决定；重叠片段同时播放。"
     },
-    "Piece": {
-      "title": "Piece",
+    "Segment": {
+      "title": "Segment",
       "body": "在共同的时间轴上对齐多条 Track，并提供 Entry、Exit 和 Custom 标记点控制播放时机。当前支持绝对时间编辑，已有的音乐时间轴只读。"
     },
     "Layer": {

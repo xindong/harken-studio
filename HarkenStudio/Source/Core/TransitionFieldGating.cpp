@@ -24,20 +24,20 @@ FieldAvail lift(bool present)
     return present ? FieldAvail::Available : FieldAvail::Unavailable;
 }
 
-struct PieceTraits
+struct SegmentTraits
 {
     bool clock = false;
     bool anyMarker = false;
     bool exitMarker = false;
 };
 
-PieceTraits traitsOf(const ProjectItem* piece)
+SegmentTraits traitsOf(const ProjectItem* segment)
 {
-    PieceTraits traits;
-    if (!piece) return traits;
-    traits.clock = TimelineSemantics::hasMusicalClock(*piece);
-    traits.anyMarker = TimelineSemantics::hasAnyMarker(*piece);
-    traits.exitMarker = TimelineSemantics::hasMarkerKind(*piece, MarkerKind::Exit);
+    SegmentTraits traits;
+    if (!segment) return traits;
+    traits.clock = TimelineSemantics::hasMusicalClock(*segment);
+    traits.anyMarker = TimelineSemantics::hasAnyMarker(*segment);
+    traits.exitMarker = TimelineSemantics::hasMarkerKind(*segment, MarkerKind::Exit);
     return traits;
 }
 
@@ -76,7 +76,7 @@ ChildWatchScan scanChildren(const ProjectItem& container,
             continue;
         }
         scan.anyReference = scan.anyReference || watch.found();
-        const PieceTraits traits = traitsOf(watch.referencePiece);
+        const SegmentTraits traits = traitsOf(watch.referenceSegment);
         scan.anyClock = scan.anyClock || traits.clock;
         scan.allClock = scan.allClock && traits.clock;
         scan.anyMarker = scan.anyMarker || traits.anyMarker;
@@ -191,7 +191,7 @@ TransitionWatchAvailability watchAvailabilityFor(
         }
         const TransitionWatchResult watch = resolveWatchReference(
             sourceItem, container, placement, resolve);
-        const PieceTraits traits = traitsOf(watch.referencePiece);
+        const SegmentTraits traits = traitsOf(watch.referenceSegment);
         availability.referencePresent = watch.found();
         availability.clock = lift(traits.clock);
         availability.anyMarker = lift(traits.anyMarker);
@@ -201,7 +201,7 @@ TransitionWatchAvailability watchAvailabilityFor(
 
     const TransitionWatchResult upward = resolveWatchReference(
         nullptr, container, placement, resolve);
-    const PieceTraits upTraits = traitsOf(upward.referencePiece);
+    const SegmentTraits upTraits = traitsOf(upward.referenceSegment);
     const ChildWatchScan scan = scanChildren(container, resolve);
     availability.referencePresent = upward.found() || scan.anyReference;
     availability.clock = combineUpThenChildren(

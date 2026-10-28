@@ -62,7 +62,7 @@
 #include "SoundSourceEditing.h"
 #include "SoundSourceSemantics.h"
 #include "Components/VTrack.h"
-#include "Components/VPiece.h"
+#include "Components/VSegment.h"
 #include "Timeline/TimelineEditing.h"
 #include "ActionStepUtils.h"
 #include "HarkenMath.h"
@@ -3532,14 +3532,14 @@ ProjectItem* ProjectManager::createItem(ProjectItem* parent, const QString& name
     return createItemImpl(parent, name, type, path, bucketFolderHint, undoParent, nullptr, variableKind);
 }
 
-ProjectItem* ProjectManager::createTrackWithClip(ProjectItem* piece, const QString& name, Clip clip)
+ProjectItem* ProjectManager::createTrackWithClip(ProjectItem* segment, const QString& name, Clip clip)
 {
-    if (!m_currentProject || !piece || piece->type != ProjectItem::Type::Piece) {
-        emit errorOccurred(QStringLiteral("Track creation with a clip requires a Piece in an open project."));
+    if (!m_currentProject || !segment || segment->type != ProjectItem::Type::Segment) {
+        emit errorOccurred(QStringLiteral("Track creation with a clip requires a Segment in an open project."));
         return nullptr;
     }
     clip.clipGuid = QUuid::createUuid();
-    return createItemImpl(piece, name, ProjectItem::Type::Track, {}, {}, nullptr, &clip);
+    return createItemImpl(segment, name, ProjectItem::Type::Track, {}, {}, nullptr, &clip);
 }
 
 ProjectItem* ProjectManager::createItemImpl(ProjectItem* parent, const QString& name,
@@ -4487,7 +4487,7 @@ bool ProjectManager::canCreateItem(ProjectItem* parent, ProjectItem::Type type,
     if (findItemByGuid(parent->guid) != parent
         || !validatePlacement(type, parent, nullptr, nullptr)
         || !validateStructuralPlacement(type, parent)) return false;
-    if (parent->type == ProjectItem::Type::Track || parent->type == ProjectItem::Type::Piece) {
+    if (parent->type == ProjectItem::Type::Track || parent->type == ProjectItem::Type::Segment) {
         return static_cast<bool>(AuthoringPolicy::validateTimeline(*parent,
             [this](const QUuid& guid) { return findItemByGuid(guid); },
             [this](uint32_t id) { return findItemByObjectID(id); }));
@@ -5093,7 +5093,7 @@ std::shared_ptr<ProjectItem> ProjectManager::cloneSubtreeDetached(
                 if (target != guidMap.cend()) clip.targetGuid = target.value();
             }
         }
-        if (auto* timeline = node->comp<VPiece>())
+        if (auto* timeline = node->comp<VSegment>())
             for (Marker& marker : timeline->markers.items) {
                 marker.markerGuid = QUuid::createUuid();
             }

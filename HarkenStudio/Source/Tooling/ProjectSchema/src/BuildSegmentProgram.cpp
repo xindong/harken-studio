@@ -1,4 +1,4 @@
-#include "harken_project_schema/BuildPieceProgram.h"
+#include "harken_project_schema/BuildSegmentProgram.h"
 
 #include "harken_project_schema/CapacityEstimate.h"
 #include "harken_project_schema/detail/Fnv1a.h"
@@ -16,11 +16,11 @@ namespace harkenprojectschema {
 
 namespace detail {
 
-struct PieceProgramBuilder {
-    static PieceProgram Build(PieceIR ir, CapacityEstimate estimate,
+struct SegmentProgramBuilder {
+    static SegmentProgram Build(SegmentIR ir, CapacityEstimate estimate,
                               CapabilityPrerequisites capabilities,
                               std::uint64_t fingerprint) {
-        return PieceProgram(std::move(ir), std::move(estimate), capabilities,
+        return SegmentProgram(std::move(ir), std::move(estimate), capabilities,
                             fingerprint);
     }
 };
@@ -34,26 +34,26 @@ void Require(std::uint32_t* mask, ProgramCapability capability) {
 }
 
 // The capabilities a program needs are exactly those its content exercises: the
-// timing kinds its Pieces and standalone Tracks use, and the placement kinds its
+// timing kinds its Segments and standalone Tracks use, and the placement kinds its
 // clips take. Nothing is required that the content does not contain.
-CapabilityPrerequisites DeriveCapabilities(const PieceIR& ir) {
+CapabilityPrerequisites DeriveCapabilities(const SegmentIR& ir) {
     std::uint32_t mask = 0;
 
-    std::set<StableId> tracksInPieces;
-    for (const IrPiece& piece : ir.pieces()) {
-        if (piece.timeSpec.kind == PieceTimeKind::Musical) {
+    std::set<StableId> tracksInSegments;
+    for (const IrSegment& segment : ir.segments()) {
+        if (segment.timeSpec.kind == SegmentTimeKind::Musical) {
             Require(&mask, ProgramCapability::MusicalTiming);
-        } else if (piece.timeSpec.kind == PieceTimeKind::Absolute) {
+        } else if (segment.timeSpec.kind == SegmentTimeKind::Absolute) {
             Require(&mask, ProgramCapability::AbsoluteTiming);
         }
-        for (const StableId trackId : piece.tracks) {
-            tracksInPieces.insert(trackId);
+        for (const StableId trackId : segment.tracks) {
+            tracksInSegments.insert(trackId);
         }
     }
 
     for (const IrTrack& track : ir.tracks()) {
         const bool standalone =
-            tracksInPieces.find(track.trackId) == tracksInPieces.end();
+            tracksInSegments.find(track.trackId) == tracksInSegments.end();
         if (standalone && !track.occurrences.empty()) {
             // A directly triggered Track plays in absolute time.
             Require(&mask, ProgramCapability::AbsoluteTiming);
@@ -66,8 +66,8 @@ CapabilityPrerequisites DeriveCapabilities(const PieceIR& ir) {
                 case ContentKind::Container:
                     Require(&mask, ProgramCapability::ContainerPlacement);
                     break;
-                case ContentKind::Piece:
-                    Require(&mask, ProgramCapability::NestedPiecePlacement);
+                case ContentKind::Segment:
+                    Require(&mask, ProgramCapability::NestedSegmentPlacement);
                     break;
                 case ContentKind::Layer:
                 case ContentKind::Track:
@@ -111,21 +111,21 @@ struct Hasher {
 // identity-bearing collections are GUID-ordered, so a minted-id renumbering
 // that preserves the relative ClipId order does not move this hash while it
 // still moves the lineage fingerprint. Lineage, raw stable ids, editorOrder,
-// seekable and derived durationNs are excluded; PieceProgram.h states the full
+// seekable and derived durationNs are excluded; SegmentProgram.h states the full
 // coverage contract.
-std::uint64_t ComputeProgramSemanticFingerprint(const PieceIR& ir) {
+std::uint64_t ComputeProgramSemanticFingerprint(const SegmentIR& ir) {
     std::map<StableId, AuthoringGuid> trackGuids;
     for (const IrTrack& track : ir.tracks()) {
         trackGuids.emplace(track.trackId, track.guid);
     }
 
-    std::vector<const IrPiece*> orderedPieces;
-    orderedPieces.reserve(ir.pieces().size());
-    for (const IrPiece& piece : ir.pieces()) {
-        orderedPieces.push_back(&piece);
+    std::vector<const IrSegment*> orderedSegments;
+    orderedSegments.reserve(ir.segments().size());
+    for (const IrSegment& segment : ir.segments()) {
+        orderedSegments.push_back(&segment);
     }
-    std::sort(orderedPieces.begin(), orderedPieces.end(),
-              [](const IrPiece* a, const IrPiece* b) {
+    std::sort(orderedSegments.begin(), orderedSegments.end(),
+              [](const IrSegment* a, const IrSegment* b) {
                   return a->guid < b->guid;
               });
 
@@ -140,40 +140,40 @@ std::uint64_t ComputeProgramSemanticFingerprint(const PieceIR& ir) {
               });
 
     Hasher h;
-    h.U64(orderedPieces.size());
-    for (const IrPiece* piecePtr : orderedPieces) {
-        const IrPiece& piece = *piecePtr;
-        h.Guid(piece.guid);
-        h.U64(static_cast<std::uint32_t>(piece.timeSpec.kind));
-        h.U64(piece.timeSpec.tempoMap.size());
-        for (const TempoMapEntry& tempo : piece.timeSpec.tempoMap) {
+    h.U64(orderedSegments.size());
+    for (const IrSegment* segmentPtr : orderedSegments) {
+        const IrSegment& segment = *segmentPtr;
+        h.Guid(segment.guid);
+        h.U64(static_cast<std::uint32_t>(segment.timeSpec.kind));
+        h.U64(segment.timeSpec.tempoMap.size());
+        for (const TempoMapEntry& tempo : segment.timeSpec.tempoMap) {
             h.I64(tempo.tick);
             h.I64(tempo.microsPerQuarter);
         }
-        h.U64(piece.timeSpec.meterMap.size());
-        for (const MeterMapEntry& meter : piece.timeSpec.meterMap) {
+        h.U64(segment.timeSpec.meterMap.size());
+        for (const MeterMapEntry& meter : segment.timeSpec.meterMap) {
             h.I64(meter.tick);
             h.U64(meter.numerator);
             h.U64(meter.denominator);
         }
-        h.U64(static_cast<std::uint32_t>(piece.startKind));
-        h.I64(piece.startCoordinate);
-        h.U64(piece.startMarkerId);
-        h.U64(piece.markers.size());
-        for (const IrMarker& marker : piece.markers) {
+        h.U64(static_cast<std::uint32_t>(segment.startKind));
+        h.I64(segment.startCoordinate);
+        h.U64(segment.startMarkerId);
+        h.U64(segment.markers.size());
+        for (const IrMarker& marker : segment.markers) {
             h.Guid(marker.guid);
             h.U64(marker.markerId);
             h.U64(static_cast<std::uint32_t>(marker.kind));
             h.I64(marker.position);
         }
-        h.U64(piece.tracks.size());
-        std::vector<AuthoringGuid> pieceTrackGuids;
-        pieceTrackGuids.reserve(piece.tracks.size());
-        for (const StableId trackId : piece.tracks) {
-            pieceTrackGuids.push_back(trackGuids.at(trackId));
+        h.U64(segment.tracks.size());
+        std::vector<AuthoringGuid> segmentTrackGuids;
+        segmentTrackGuids.reserve(segment.tracks.size());
+        for (const StableId trackId : segment.tracks) {
+            segmentTrackGuids.push_back(trackGuids.at(trackId));
         }
-        std::sort(pieceTrackGuids.begin(), pieceTrackGuids.end());
-        for (const AuthoringGuid& guid : pieceTrackGuids) {
+        std::sort(segmentTrackGuids.begin(), segmentTrackGuids.end());
+        for (const AuthoringGuid& guid : segmentTrackGuids) {
             h.Guid(guid);
         }
     }
@@ -264,14 +264,14 @@ std::uint64_t ComputeProgramSemanticFingerprint(const PieceIR& ir) {
 
 }  // namespace
 
-std::optional<PieceProgram> BuildPieceProgram(const PieceIR& ir) {
+std::optional<SegmentProgram> BuildSegmentProgram(const SegmentIR& ir) {
     std::optional<CapacityEstimate> estimate = EstimateCapacity(ir);
     if (!estimate.has_value()) {
         return std::nullopt;  // an unestimable IR forms no program
     }
     const CapabilityPrerequisites capabilities = DeriveCapabilities(ir);
     const std::uint64_t fingerprint = ComputeProgramSemanticFingerprint(ir);
-    return detail::PieceProgramBuilder::Build(ir, std::move(*estimate),
+    return detail::SegmentProgramBuilder::Build(ir, std::move(*estimate),
                                               capabilities, fingerprint);
 }
 

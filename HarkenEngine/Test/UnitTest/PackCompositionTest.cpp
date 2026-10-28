@@ -673,7 +673,7 @@ std::vector<std::uint8_t> DelayedPlayPartitionPayload(
     world.actions = &action;
     world.actionCount = 1;
     world.capacity.maxKnownScheduleLeaves = 16;
-    world.capacity.maxTrackPieceScheduleDepth = 8;
+    world.capacity.maxTrackSegmentScheduleDepth = 8;
     world.identity.runtimeSemanticFingerprint =
         ComputeCurrentWorldFingerprintV4(world);
     std::vector<std::uint8_t> body;
@@ -890,7 +890,7 @@ void FinishPlayableWorld(ContainerWorldInstallViewV1* world,
     world->identity.capabilityMask =
         kWorldCapabilityPlayableProperties | extraCapabilityBits;
     world->capacity.maxKnownScheduleLeaves = 16;
-    world->capacity.maxTrackPieceScheduleDepth = 8;
+    world->capacity.maxTrackSegmentScheduleDepth = 8;
     world->identity.runtimeSemanticFingerprint =
         ComputeCurrentWorldFingerprintV4(*world);
 }
@@ -1279,64 +1279,64 @@ std::vector<std::uint8_t> TrackOnlyPartitionPayload(
     return WrapWorldPartition(packStableId, revision, world, 1);
 }
 
-std::vector<std::uint8_t> PieceWithTrackReferencePartitionPayload(
+std::vector<std::uint8_t> SegmentWithTrackReferencePartitionPayload(
     std::uint64_t packStableId, std::uint64_t revision,
-    VnObjectId pieceId, const PlayableRefV1& trackRef,
+    VnObjectId segmentId, const PlayableRefV1& trackRef,
     std::uint64_t trackScheduleFingerprint) {
-    PlayablePropertyProgramViewV1 pieceProperty{};
-    pieceProperty.contentPropertyKind =
-        playableproperties::ContentPropertyKindV1::Piece;
-    pieceProperty.stableId = harkentest::ObjectId(pieceId);
-    pieceProperty.authoredStableOrder = 2;
-    pieceProperty.contentRevision = 1;
-    pieceProperty.routeStableId = VN_BUS_MASTER;
-    pieceProperty.compatibilityFingerprint = 1;
-    pieceProperty.payload = DelayedPlayPayload();
-    pieceProperty.programSemanticFingerprint =
-        ComputePlayablePropertyFingerprintV1(pieceProperty);
+    PlayablePropertyProgramViewV1 segmentProperty{};
+    segmentProperty.contentPropertyKind =
+        playableproperties::ContentPropertyKindV1::Segment;
+    segmentProperty.stableId = harkentest::ObjectId(segmentId);
+    segmentProperty.authoredStableOrder = 2;
+    segmentProperty.contentRevision = 1;
+    segmentProperty.routeStableId = VN_BUS_MASTER;
+    segmentProperty.compatibilityFingerprint = 1;
+    segmentProperty.payload = DelayedPlayPayload();
+    segmentProperty.programSemanticFingerprint =
+        ComputePlayablePropertyFingerprintV1(segmentProperty);
 
     ScheduleTrackRefV1 trackScheduleRef{};
     trackScheduleRef.trackDefinition = trackRef;
     trackScheduleRef.trackScheduleSemanticFingerprint =
         trackScheduleFingerprint;
-    PieceScheduleProgramViewV1 schedule{};
-    schedule.rootDefinition = PlayableRefFromProperty(pieceProperty);
+    SegmentScheduleProgramViewV1 schedule{};
+    schedule.rootDefinition = PlayableRefFromProperty(segmentProperty);
     schedule.trackRefCount = 1;
     schedule.trackRefs = &trackScheduleRef;
     schedule.scheduleSemanticFingerprint =
-        ComputePieceScheduleFingerprintV1(schedule);
+        ComputeSegmentScheduleFingerprintV1(schedule);
 
     ContainerWorldInstallViewV1 world{};
-    world.playableProperties = &pieceProperty;
+    world.playableProperties = &segmentProperty;
     world.playablePropertyCount = 1;
-    world.pieceSchedules = &schedule;
-    world.pieceScheduleCount = 1;
+    world.segmentSchedules = &schedule;
+    world.segmentScheduleCount = 1;
     FinishPlayableWorld(&world);
     return WrapWorldPartition(packStableId, revision, world, 1);
 }
 
-std::vector<std::uint8_t> PieceOnlyPartitionPayload(
+std::vector<std::uint8_t> SegmentOnlyPartitionPayload(
     std::uint64_t packStableId, std::uint64_t revision,
-    VnObjectId pieceId) {
+    VnObjectId segmentId) {
     PlayablePropertyProgramViewV1 property{};
     property.contentPropertyKind =
-        playableproperties::ContentPropertyKindV1::Piece;
-    property.stableId = harkentest::ObjectId(pieceId);
+        playableproperties::ContentPropertyKindV1::Segment;
+    property.stableId = harkentest::ObjectId(segmentId);
     property.contentRevision = 1;
     property.routeStableId = VN_BUS_MASTER;
     property.compatibilityFingerprint = 1;
     property.payload = DelayedPlayPayload();
     property.programSemanticFingerprint =
         ComputePlayablePropertyFingerprintV1(property);
-    PieceScheduleProgramViewV1 schedule{};
+    SegmentScheduleProgramViewV1 schedule{};
     schedule.rootDefinition = PlayableRefFromProperty(property);
     schedule.scheduleSemanticFingerprint =
-        ComputePieceScheduleFingerprintV1(schedule);
+        ComputeSegmentScheduleFingerprintV1(schedule);
     ContainerWorldInstallViewV1 world{};
     world.playableProperties = &property;
     world.playablePropertyCount = 1;
-    world.pieceSchedules = &schedule;
-    world.pieceScheduleCount = 1;
+    world.segmentSchedules = &schedule;
+    world.segmentScheduleCount = 1;
     FinishPlayableWorld(&world);
     return WrapWorldPartition(packStableId, revision, world, 1);
 }
@@ -1383,7 +1383,7 @@ enum class CompositeAggregateRow : std::uint8_t {
     Property,
     Occurrence,
     Track,
-    Piece,
+    Segment,
     Container,
     Action,
 };
@@ -1408,8 +1408,8 @@ std::vector<std::uint8_t> AggregateRowPartitionPayload(
     case CompositeAggregateRow::Track:
         return TrackOnlyPartitionPayload(packStableId, partitionRevision,
                                          stableId);
-    case CompositeAggregateRow::Piece:
-        return PieceOnlyPartitionPayload(packStableId, partitionRevision,
+    case CompositeAggregateRow::Segment:
+        return SegmentOnlyPartitionPayload(packStableId, partitionRevision,
                                          stableId);
     case CompositeAggregateRow::Container:
         return LegalContainerPartitionPayload(packStableId, partitionRevision,
@@ -1430,8 +1430,8 @@ std::uint32_t AggregateRowCount(
         return world.playableOccurrenceCount;
     case CompositeAggregateRow::Track:
         return world.trackScheduleCount;
-    case CompositeAggregateRow::Piece:
-        return world.pieceScheduleCount;
+    case CompositeAggregateRow::Segment:
+        return world.segmentScheduleCount;
     case CompositeAggregateRow::Container:
         return world.containerCount;
     case CompositeAggregateRow::Action:
@@ -5918,8 +5918,8 @@ TEST(PackComposition, CompositeRowAggregateExactThenPlusOneKeepsPublication) {
          &WorldCapacitySummaryV1::maxPlayableOccurrencePropertyRows},
         {"track", CompositeAggregateRow::Track,
          &WorldCapacitySummaryV1::maxTrackSchedulePrograms},
-        {"piece", CompositeAggregateRow::Piece,
-         &WorldCapacitySummaryV1::maxPieceSchedulePrograms},
+        {"segment", CompositeAggregateRow::Segment,
+         &WorldCapacitySummaryV1::maxSegmentSchedulePrograms},
         {"container", CompositeAggregateRow::Container,
          &WorldCapacitySummaryV1::maxContainerPrograms},
         {"action", CompositeAggregateRow::Action,
@@ -7005,24 +7005,24 @@ TEST(PackComposition,
         allOccurrences[i].parentProgramSemanticFingerprint = secondTrackProperty.programSemanticFingerprint;
         allOccurrences[i].occurrenceSemanticFingerprint = ComputePlayableOccurrenceFingerprintV1(allOccurrences[i]);
     }
-    auto pieceProperty = trackProperty;
-    pieceProperty.contentPropertyKind = playableproperties::ContentPropertyKindV1::Piece;
-    pieceProperty.stableId = harkentest::ObjectId(8305);
-    pieceProperty.authoredStableOrder = 5;
-    pieceProperty.programSemanticFingerprint = ComputePlayablePropertyFingerprintV1(pieceProperty);
+    auto segmentProperty = trackProperty;
+    segmentProperty.contentPropertyKind = playableproperties::ContentPropertyKindV1::Segment;
+    segmentProperty.stableId = harkentest::ObjectId(8305);
+    segmentProperty.authoredStableOrder = 5;
+    segmentProperty.programSemanticFingerprint = ComputePlayablePropertyFingerprintV1(segmentProperty);
     std::array<ScheduleTrackRefV1, 2> trackScheduleRefs{};
     for (std::uint32_t i = 0; i < trackScheduleRefs.size(); ++i) {
         trackScheduleRefs[i].trackDefinition = schedules[i].rootDefinition;
         trackScheduleRefs[i].trackScheduleSemanticFingerprint = schedules[i].scheduleSemanticFingerprint;
         trackScheduleRefs[i].stableTrackOrdinal = i;
     }
-    PieceScheduleProgramViewV1 piece{};
-    piece.rootDefinition = PlayableRefFromProperty(pieceProperty);
-    piece.trackRefCount = static_cast<std::uint32_t>(trackScheduleRefs.size());
-    piece.trackRefs = trackScheduleRefs.data();
-    piece.scheduleSemanticFingerprint = ComputePieceScheduleFingerprintV1(piece);
+    SegmentScheduleProgramViewV1 segment{};
+    segment.rootDefinition = PlayableRefFromProperty(segmentProperty);
+    segment.trackRefCount = static_cast<std::uint32_t>(trackScheduleRefs.size());
+    segment.trackRefs = trackScheduleRefs.data();
+    segment.scheduleSemanticFingerprint = ComputeSegmentScheduleFingerprintV1(segment);
     PlayablePropertyProgramViewV1 properties[6] = {
-        soundA, soundB, containerProperty, trackProperty, secondTrackProperty, pieceProperty};
+        soundA, soundB, containerProperty, trackProperty, secondTrackProperty, segmentProperty};
     ContainerWorldInstallViewV1 world{};
     world.playableProperties = properties;
     world.playablePropertyCount = 6;
@@ -7030,15 +7030,15 @@ TEST(PackComposition,
     world.playableOccurrenceCount = static_cast<std::uint32_t>(allOccurrences.size());
     world.trackSchedules = schedules.data();
     world.trackScheduleCount = static_cast<std::uint32_t>(schedules.size());
-    world.pieceSchedules = &piece;
-    world.pieceScheduleCount = 1;
+    world.segmentSchedules = &segment;
+    world.segmentScheduleCount = 1;
     world.containers = &containerProgram;
     world.containerCount = 1;
     FinishPlayableWorld(&world, kWorldCapabilityRandomDraw);
-    for (const bool throughPiece : {false, true}) {
-        SCOPED_TRACE(throughPiece);
-        const std::uint32_t required = throughPiece ? 4 : 2;
-        child.playable = throughPiece ? piece.rootDefinition : trackRef;
+    for (const bool throughSegment : {false, true}) {
+        SCOPED_TRACE(throughSegment);
+        const std::uint32_t required = throughSegment ? 4 : 2;
+        child.playable = throughSegment ? segment.rootDefinition : trackRef;
         allOccurrences[0].childPlayable = child.playable;
         allOccurrences[0].occurrenceSemanticFingerprint = ComputePlayableOccurrenceFingerprintV1(allOccurrences[0]);
         PackComposition composition(1);
@@ -7079,15 +7079,15 @@ TEST(PackComposition,
 }
 
 TEST(PackComposition,
-     MixedContainerPieceTrackTraversalPreservesDepthAndCycleResults) {
+     MixedContainerSegmentTrackTraversalPreservesDepthAndCycleResults) {
     struct Case {
         std::uint32_t containerLimit;
         std::uint32_t scheduleLimit;
         bool cycle;
         VnResult result;
     };
-    // The root child path has 64 Containers, 32 Pieces, 32 Tracks and a Sound.
-    // The root itself reaches the Container chain through a Piece and Track.
+    // The root child path has 64 Containers, 32 Segments, 32 Tracks and a Sound.
+    // The root itself reaches the Container chain through a Segment and Track.
     for (const auto test : {Case{64, 64, false, VN_OK},
                             Case{63, 64, false, VN_PACK_RESIDENT_CAPACITY},
                             Case{64, 63, false, VN_PACK_RESIDENT_CAPACITY},
@@ -7098,8 +7098,8 @@ TEST(PackComposition,
         constexpr std::uint32_t kContainers = 65;
         constexpr std::uint32_t kPairs = 32;
         constexpr std::uint32_t kTrackOffset = 1 + kContainers;
-        constexpr std::uint32_t kPieceOffset = kTrackOffset + kPairs;
-        std::array<PlayablePropertyProgramViewV1, kPieceOffset + kPairs>
+        constexpr std::uint32_t kSegmentOffset = kTrackOffset + kPairs;
+        std::array<PlayablePropertyProgramViewV1, kSegmentOffset + kPairs>
             properties{};
         properties[0] = MakeSoundProperty(harkentest::ObjectId(100));
         for (std::uint32_t i = 0; i < kContainers; ++i) {
@@ -7107,10 +7107,10 @@ TEST(PackComposition,
         }
         for (std::uint32_t i = kTrackOffset; i < properties.size(); ++i) {
             auto& property = properties[i];
-            property.contentPropertyKind = i < kPieceOffset
+            property.contentPropertyKind = i < kSegmentOffset
                 ? playableproperties::ContentPropertyKindV1::Track
-                : playableproperties::ContentPropertyKindV1::Piece;
-            property.stableId = harkentest::ObjectId(i < kPieceOffset ? 2000 + i - kTrackOffset : 3000 + i - kPieceOffset);
+                : playableproperties::ContentPropertyKindV1::Segment;
+            property.stableId = harkentest::ObjectId(i < kSegmentOffset ? 2000 + i - kTrackOffset : 3000 + i - kSegmentOffset);
             property.authoredStableOrder = i;
             property.contentRevision = 1;
             property.routeStableId = VN_BUS_MASTER;
@@ -7125,7 +7125,7 @@ TEST(PackComposition,
         std::array<ScheduleClipPlacementV1, kPairs> placements{};
         std::array<TrackScheduleProgramViewV1, kPairs> tracks{};
         std::array<ScheduleTrackRefV1, kPairs> trackRefs{};
-        std::array<PieceScheduleProgramViewV1, kPairs> pieces{};
+        std::array<SegmentScheduleProgramViewV1, kPairs> segments{};
         std::array<PlayableOccurrencePropertyViewV1, kContainers + kPairs>
             occurrences{};
         const auto occurrence = [&](std::uint32_t index,
@@ -7144,8 +7144,8 @@ TEST(PackComposition,
         };
         for (std::uint32_t i = 0; i < kPairs; ++i) {
             placements[i].content = i == 0 ? ref(2)
-                : i + 1 < kPairs ? ref(kPieceOffset + i + 1)
-                : test.cycle ? ref(kPieceOffset) : ref(0);
+                : i + 1 < kPairs ? ref(kSegmentOffset + i + 1)
+                : test.cycle ? ref(kSegmentOffset) : ref(0);
             placements[i].clipId = harkentest::ObjectId(i + 1);
             placements[i].clipGuidLow = i + 1;
             tracks[i].rootDefinition = ref(kTrackOffset + i);
@@ -7156,19 +7156,19 @@ TEST(PackComposition,
             trackRefs[i].trackDefinition = tracks[i].rootDefinition;
             trackRefs[i].trackScheduleSemanticFingerprint =
                 tracks[i].scheduleSemanticFingerprint;
-            pieces[i].rootDefinition = ref(kPieceOffset + i);
-            pieces[i].trackRefCount = 1;
-            pieces[i].trackRefs = &trackRefs[i];
-            pieces[i].scheduleSemanticFingerprint =
-                ComputePieceScheduleFingerprintV1(pieces[i]);
+            segments[i].rootDefinition = ref(kSegmentOffset + i);
+            segments[i].trackRefCount = 1;
+            segments[i].trackRefs = &trackRefs[i];
+            segments[i].scheduleSemanticFingerprint =
+                ComputeSegmentScheduleFingerprintV1(segments[i]);
             occurrence(kContainers + i, kTrackOffset + i,
                        placements[i].content);
         }
         std::array<ContainerChildProgramViewV2, kContainers> children{};
         std::array<ContainerProgramViewV3, kContainers> containers{};
         for (std::uint32_t i = 0; i < kContainers; ++i) {
-            children[i].playable = i == 0 ? ref(kPieceOffset)
-                : i + 1 < kContainers ? ref(2 + i) : ref(kPieceOffset + 1);
+            children[i].playable = i == 0 ? ref(kSegmentOffset)
+                : i + 1 < kContainers ? ref(2 + i) : ref(kSegmentOffset + 1);
             children[i].frequencyWeight = 1;
             containers[i] = MakeContainerProgram(
                 properties[1 + i].stableId,
@@ -7186,12 +7186,12 @@ TEST(PackComposition,
         world.containerCount = kContainers;
         world.trackSchedules = tracks.data();
         world.trackScheduleCount = kPairs;
-        world.pieceSchedules = pieces.data();
-        world.pieceScheduleCount = kPairs;
+        world.segmentSchedules = segments.data();
+        world.segmentScheduleCount = kPairs;
         FinishPlayableWorld(&world, kWorldCapabilityRandomDraw);
         world.capacity.maxContainerPrograms = kContainers;
         world.capacity.maxContainerDepth = test.containerLimit;
-        world.capacity.maxTrackPieceScheduleDepth = test.scheduleLimit;
+        world.capacity.maxTrackSegmentScheduleDepth = test.scheduleLimit;
         world.identity.runtimeSemanticFingerprint =
             ComputeCurrentWorldFingerprintV4(world);
         std::vector<std::uint8_t> encoded;
@@ -7311,10 +7311,10 @@ TEST(PackComposition,
     }
 }
 
-TEST(PackComposition, PieceTrackReferenceMustStayInDeclaredClosure) {
+TEST(PackComposition, SegmentTrackReferenceMustStayInDeclaredClosure) {
     constexpr std::uint64_t kContentPack = 22;
     constexpr std::uint64_t kProviderPack = 33;
-    constexpr VnObjectId kPieceId = harkentest::ObjectId(8501);
+    constexpr VnObjectId kSegmentId = harkentest::ObjectId(8501);
     constexpr VnObjectId kTrackId = harkentest::ObjectId(8502);
     constexpr VnPackHandle kContentHandle =
         static_cast<VnPackHandle>(1) << 32;
@@ -7341,8 +7341,8 @@ TEST(PackComposition, PieceTrackReferenceMustStayInDeclaredClosure) {
     const std::vector<std::uint8_t> contentBytes =
         BuildCanonicalPartitionPack(
             kContentPack, 1, 7,
-            PieceWithTrackReferencePartitionPayload(
-                kContentPack, 7, kPieceId, trackRef,
+            SegmentWithTrackReferencePartitionPayload(
+                kContentPack, 7, kSegmentId, trackRef,
                 trackSchedule.scheduleSemanticFingerprint));
     const std::vector<std::uint8_t> providerBytes =
         BuildCanonicalPartitionPack(
@@ -7414,13 +7414,13 @@ TEST(PackComposition,
     consumerView.transitions = &transition;
     consumerView.transitionCount = 1;
     consumerView.capacity.maxKnownScheduleLeaves = 16;
-    consumerView.capacity.maxTrackPieceScheduleDepth = 8;
+    consumerView.capacity.maxTrackSegmentScheduleDepth = 8;
 
     ContainerWorldInstallViewV1 providerView{};
     providerView.playableProperties = &providerProperty;
     providerView.playablePropertyCount = 1;
     providerView.capacity.maxKnownScheduleLeaves = 16;
-    providerView.capacity.maxTrackPieceScheduleDepth = 8;
+    providerView.capacity.maxTrackSegmentScheduleDepth = 8;
 
     FinishPlayableWorld(&consumerView, kWorldCapabilityRandomDraw);
     FinishPlayableWorld(&providerView);
@@ -7615,7 +7615,7 @@ std::vector<std::uint8_t> ImmediateContainerPlayPartitionPayload(
     world.actions = &action;
     world.actionCount = 1;
     world.capacity.maxKnownScheduleLeaves = 16;
-    world.capacity.maxTrackPieceScheduleDepth = 8;
+    world.capacity.maxTrackSegmentScheduleDepth = 8;
     world.identity.runtimeSemanticFingerprint =
         ComputeCurrentWorldFingerprintV4(world);
     return WrapWorldPartition(packStableId, partitionRevision, world, 3);
@@ -7723,7 +7723,7 @@ std::vector<std::uint8_t> ImmediateTrackPlayPartitionPayload(
     world.actions = &action;
     world.actionCount = 1;
     world.capacity.maxKnownScheduleLeaves = 16;
-    world.capacity.maxTrackPieceScheduleDepth = 8;
+    world.capacity.maxTrackSegmentScheduleDepth = 8;
     world.identity.runtimeSemanticFingerprint =
         ComputeCurrentWorldFingerprintV4(world);
     return WrapWorldPartition(packStableId, partitionRevision, world, 3);
@@ -7862,7 +7862,7 @@ std::vector<std::uint8_t> ImmediateSequenceQueuePlayPartitionPayload(
     world.actions = &action;
     world.actionCount = 1;
     world.capacity.maxKnownScheduleLeaves = 16;
-    world.capacity.maxTrackPieceScheduleDepth = 8;
+    world.capacity.maxTrackSegmentScheduleDepth = 8;
     world.identity.runtimeSemanticFingerprint =
         ComputeCurrentWorldFingerprintV4(world);
     return WrapWorldPartition(packStableId, partitionRevision, world, 4);
@@ -8013,7 +8013,7 @@ std::vector<std::uint8_t> ImmediateRandomQueuePlayPartitionPayload(
     world.actions = &action;
     world.actionCount = 1;
     world.capacity.maxKnownScheduleLeaves = 16;
-    world.capacity.maxTrackPieceScheduleDepth = 8;
+    world.capacity.maxTrackSegmentScheduleDepth = 8;
     world.identity.runtimeSemanticFingerprint =
         ComputeCurrentWorldFingerprintV4(world);
     return WrapWorldPartition(packStableId, partitionRevision, world, 4);
@@ -8240,7 +8240,7 @@ std::vector<std::uint8_t> ImmediateVariableControlDiscretePlayPartitionPayload(
     world.actions = &action;
     world.actionCount = 1;
     world.capacity.maxKnownScheduleLeaves = 16;
-    world.capacity.maxTrackPieceScheduleDepth = 8;
+    world.capacity.maxTrackSegmentScheduleDepth = 8;
     if (logicalTrackChildren) {
         world.identity.capabilityMask =
             harken::detail::ComputeCurrentWorldLocalCapabilityMaskV1(world);
@@ -8421,7 +8421,7 @@ ImmediateRandomContainerToVariableControlPlayPartitionPayload(
     world.actions = &action;
     world.actionCount = 1;
     world.capacity.maxKnownScheduleLeaves = 16;
-    world.capacity.maxTrackPieceScheduleDepth = 8;
+    world.capacity.maxTrackSegmentScheduleDepth = 8;
     world.identity.runtimeSemanticFingerprint =
         ComputeCurrentWorldFingerprintV4(world);
     return WrapWorldPartition(packStableId, partitionRevision, world, 6);
@@ -8631,7 +8631,7 @@ std::vector<std::uint8_t> ImmediateVariableControlNestedLoopPlayPayload(
     world.actions = &action;
     world.actionCount = 1;
     world.capacity.maxKnownScheduleLeaves = 16;
-    world.capacity.maxTrackPieceScheduleDepth = 8;
+    world.capacity.maxTrackSegmentScheduleDepth = 8;
     world.identity.runtimeSemanticFingerprint =
         ComputeCurrentWorldFingerprintV4(world);
     return WrapWorldPartition(packStableId, partitionRevision, world, 10);
@@ -8781,7 +8781,7 @@ std::vector<std::uint8_t> ImmediateVariableControlContinuousPlayPartitionPayload
     world.actions = &action;
     world.actionCount = 1;
     world.capacity.maxKnownScheduleLeaves = 16;
-    world.capacity.maxTrackPieceScheduleDepth = 8;
+    world.capacity.maxTrackSegmentScheduleDepth = 8;
     world.identity.runtimeSemanticFingerprint =
         ComputeCurrentWorldFingerprintV4(world);
     return WrapWorldPartition(packStableId, partitionRevision, world, 5);
@@ -8819,9 +8819,9 @@ std::vector<std::uint8_t> BuildImmediateVariableControlContinuousPlayPack(
     return builder.Build();
 }
 
-std::vector<std::uint8_t> ImmediatePiecePlayPartitionPayload(
+std::vector<std::uint8_t> ImmediateSegmentPlayPartitionPayload(
     std::uint64_t packStableId, std::uint64_t partitionRevision,
-    VnObjectId actionId, VnObjectId pieceId, VnObjectId trackId,
+    VnObjectId actionId, VnObjectId segmentId, VnObjectId trackId,
     VnObjectId soundId, std::uint64_t contentRevision,
     std::uint32_t loopCount = 1,
     std::int64_t authoredDuration = 0) {
@@ -8843,20 +8843,20 @@ std::vector<std::uint8_t> ImmediatePiecePlayPartitionPayload(
     trackProperty.payload = DelayedPlayPayload();
     trackProperty.programSemanticFingerprint =
         ComputePlayablePropertyFingerprintV1(trackProperty);
-    PlayablePropertyProgramViewV1 pieceProperty{};
-    pieceProperty.contentPropertyKind =
-        playableproperties::ContentPropertyKindV1::Piece;
-    pieceProperty.stableId = harkentest::ObjectId(pieceId);
-    pieceProperty.authoredStableOrder = 2;
-    pieceProperty.contentRevision = 1;
-    pieceProperty.routeStableId = VN_BUS_MASTER;
-    pieceProperty.compatibilityFingerprint = 1;
-    pieceProperty.payload = DelayedPlayPayload();
-    pieceProperty.programSemanticFingerprint =
-        ComputePlayablePropertyFingerprintV1(pieceProperty);
+    PlayablePropertyProgramViewV1 segmentProperty{};
+    segmentProperty.contentPropertyKind =
+        playableproperties::ContentPropertyKindV1::Segment;
+    segmentProperty.stableId = harkentest::ObjectId(segmentId);
+    segmentProperty.authoredStableOrder = 2;
+    segmentProperty.contentRevision = 1;
+    segmentProperty.routeStableId = VN_BUS_MASTER;
+    segmentProperty.compatibilityFingerprint = 1;
+    segmentProperty.payload = DelayedPlayPayload();
+    segmentProperty.programSemanticFingerprint =
+        ComputePlayablePropertyFingerprintV1(segmentProperty);
     const PlayableRefV1 trackRef = PlayableRefFromProperty(trackProperty);
     const PlayableRefV1 soundRef = PlayableRefFromProperty(sound);
-    const PlayableRefV1 pieceRef = PlayableRefFromProperty(pieceProperty);
+    const PlayableRefV1 segmentRef = PlayableRefFromProperty(segmentProperty);
 
     ScheduleClipPlacementV1 placement{};
     placement.stablePlacementOrdinal = 0;
@@ -8876,12 +8876,12 @@ std::vector<std::uint8_t> ImmediatePiecePlayPartitionPayload(
     trackScheduleRef.trackDefinition = trackRef;
     trackScheduleRef.trackScheduleSemanticFingerprint =
         trackSchedule.scheduleSemanticFingerprint;
-    PieceScheduleProgramViewV1 pieceSchedule{};
-    pieceSchedule.rootDefinition = pieceRef;
-    pieceSchedule.trackRefCount = 1;
-    pieceSchedule.trackRefs = &trackScheduleRef;
-    pieceSchedule.scheduleSemanticFingerprint =
-        ComputePieceScheduleFingerprintV1(pieceSchedule);
+    SegmentScheduleProgramViewV1 segmentSchedule{};
+    segmentSchedule.rootDefinition = segmentRef;
+    segmentSchedule.trackRefCount = 1;
+    segmentSchedule.trackRefs = &trackScheduleRef;
+    segmentSchedule.scheduleSemanticFingerprint =
+        ComputeSegmentScheduleFingerprintV1(segmentSchedule);
 
     PlayableOccurrencePropertyViewV1 occurrence{};
     occurrence.parentKind = playableproperties::ContentPropertyKindV1::Track;
@@ -8894,14 +8894,14 @@ std::vector<std::uint8_t> ImmediatePiecePlayPartitionPayload(
     occurrence.occurrenceSemanticFingerprint =
         ComputePlayableOccurrenceFingerprintV1(occurrence);
     PlayablePropertyProgramViewV1 properties[3] = {sound, trackProperty,
-                                                   pieceProperty};
+                                                   segmentProperty};
 
     ActionStepProgramViewV1 step{};
     step.opcode = ActionOpcodeV1::Play;
-    step.target.kind = ActionTargetKindV1::Piece;
-    step.target.stableId = harkentest::ObjectId(pieceId);
+    step.target.kind = ActionTargetKindV1::Segment;
+    step.target.stableId = harkentest::ObjectId(segmentId);
     step.target.expectedProgramSemanticFingerprint =
-        pieceProperty.programSemanticFingerprint;
+        segmentProperty.programSemanticFingerprint;
     SetAbsoluteTime(&step.delay, 0);
     SetAbsoluteTime(&step.fade, 0);
     SetAbsoluteTime(&step.cooldown, 0);
@@ -8924,21 +8924,21 @@ std::vector<std::uint8_t> ImmediatePiecePlayPartitionPayload(
     world.playableOccurrenceCount = 1;
     world.trackSchedules = &trackSchedule;
     world.trackScheduleCount = 1;
-    world.pieceSchedules = &pieceSchedule;
-    world.pieceScheduleCount = 1;
+    world.segmentSchedules = &segmentSchedule;
+    world.segmentScheduleCount = 1;
     world.actions = &action;
     world.actionCount = 1;
     world.capacity.maxKnownScheduleLeaves = 16;
-    world.capacity.maxTrackPieceScheduleDepth = 8;
+    world.capacity.maxTrackSegmentScheduleDepth = 8;
     world.identity.runtimeSemanticFingerprint =
         ComputeCurrentWorldFingerprintV5(world);
     return WrapWorldPartition(packStableId, partitionRevision, world, 4);
 }
 
-std::vector<std::uint8_t> BuildImmediatePiecePlayPack(
+std::vector<std::uint8_t> BuildImmediateSegmentPlayPack(
     std::uint64_t packStableId, std::uint64_t contentRevision,
     std::uint64_t partitionRevision, VnObjectId actionId,
-    VnObjectId pieceId, VnObjectId trackId, VnObjectId soundId,
+    VnObjectId segmentId, VnObjectId trackId, VnObjectId soundId,
     std::vector<float> planar, std::uint32_t loopCount = 1,
     std::uint64_t loopStartFrame = 0,
     std::uint64_t loopEndFrame = 0,
@@ -8953,8 +8953,8 @@ std::vector<std::uint8_t> BuildImmediatePiecePlayPack(
                      RequirementPayload(packStableId, contentRevision,
                                         partitionRevision));
     builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, packStableId,
-                     ImmediatePiecePlayPartitionPayload(
-                         packStableId, partitionRevision, actionId, pieceId,
+                     ImmediateSegmentPlayPartitionPayload(
+                         packStableId, partitionRevision, actionId, segmentId,
                          trackId, soundId, mediaRevision, loopCount,
                          authoredDuration));
     builder.AddMedia(soundId, std::move(planar), 1, 48000,
@@ -8962,17 +8962,17 @@ std::vector<std::uint8_t> BuildImmediatePiecePlayPack(
     return builder.Build();
 }
 
-std::vector<std::uint8_t> MusicalPieceQuantizePartitionPayload(
+std::vector<std::uint8_t> MusicalSegmentQuantizePartitionPayload(
     std::uint64_t packStableId, std::uint64_t partitionRevision,
-    VnObjectId pieceActionId, VnObjectId soundActionId,
-    VnObjectId pieceId, VnObjectId trackId, VnObjectId pieceSoundId,
-    VnObjectId quantizedSoundId, std::uint64_t pieceSoundRevision,
+    VnObjectId segmentActionId, VnObjectId soundActionId,
+    VnObjectId segmentId, VnObjectId trackId, VnObjectId segmentSoundId,
+    VnObjectId quantizedSoundId, std::uint64_t segmentSoundRevision,
     std::uint64_t quantizedSoundRevision, ActionQuantizeTimingV1 timing) {
-    PlayablePropertyProgramViewV1 pieceSound = MakeSoundProperty(pieceSoundId);
-    pieceSound.authoredStableOrder = 0;
-    pieceSound.contentRevision = pieceSoundRevision;
-    pieceSound.programSemanticFingerprint =
-        ComputePlayablePropertyFingerprintV1(pieceSound);
+    PlayablePropertyProgramViewV1 segmentSound = MakeSoundProperty(segmentSoundId);
+    segmentSound.authoredStableOrder = 0;
+    segmentSound.contentRevision = segmentSoundRevision;
+    segmentSound.programSemanticFingerprint =
+        ComputePlayablePropertyFingerprintV1(segmentSound);
     PlayablePropertyProgramViewV1 quantizedSound =
         MakeSoundProperty(quantizedSoundId);
     quantizedSound.authoredStableOrder = 1;
@@ -8990,26 +8990,26 @@ std::vector<std::uint8_t> MusicalPieceQuantizePartitionPayload(
     trackProperty.payload = DelayedPlayPayload();
     trackProperty.programSemanticFingerprint =
         ComputePlayablePropertyFingerprintV1(trackProperty);
-    PlayablePropertyProgramViewV1 pieceProperty{};
-    pieceProperty.contentPropertyKind =
-        playableproperties::ContentPropertyKindV1::Piece;
-    pieceProperty.stableId = harkentest::ObjectId(pieceId);
-    pieceProperty.authoredStableOrder = 3;
-    pieceProperty.contentRevision = 1;
-    pieceProperty.routeStableId = VN_BUS_MASTER;
-    pieceProperty.compatibilityFingerprint = 1;
-    pieceProperty.payload = DelayedPlayPayload();
-    pieceProperty.programSemanticFingerprint =
-        ComputePlayablePropertyFingerprintV1(pieceProperty);
+    PlayablePropertyProgramViewV1 segmentProperty{};
+    segmentProperty.contentPropertyKind =
+        playableproperties::ContentPropertyKindV1::Segment;
+    segmentProperty.stableId = harkentest::ObjectId(segmentId);
+    segmentProperty.authoredStableOrder = 3;
+    segmentProperty.contentRevision = 1;
+    segmentProperty.routeStableId = VN_BUS_MASTER;
+    segmentProperty.compatibilityFingerprint = 1;
+    segmentProperty.payload = DelayedPlayPayload();
+    segmentProperty.programSemanticFingerprint =
+        ComputePlayablePropertyFingerprintV1(segmentProperty);
     const PlayableRefV1 trackRef = PlayableRefFromProperty(trackProperty);
-    const PlayableRefV1 pieceSoundRef = PlayableRefFromProperty(pieceSound);
-    const PlayableRefV1 pieceRef = PlayableRefFromProperty(pieceProperty);
+    const PlayableRefV1 segmentSoundRef = PlayableRefFromProperty(segmentSound);
+    const PlayableRefV1 segmentRef = PlayableRefFromProperty(segmentProperty);
 
     ScheduleClipPlacementV1 placement{};
     placement.stablePlacementOrdinal = 0;
     placement.stableOccurrenceOrdinal = 0;
-    placement.content = pieceSoundRef;
-    placement.clipId = harkentest::ObjectId(pieceSoundId.low * 1000u + 1u);
+    placement.content = segmentSoundRef;
+    placement.clipId = harkentest::ObjectId(segmentSoundId.low * 1000u + 1u);
     placement.clipGuidHigh = 1;
     TrackScheduleProgramViewV1 trackSchedule{};
     trackSchedule.rootDefinition = trackRef;
@@ -9035,18 +9035,18 @@ std::vector<std::uint8_t> MusicalPieceQuantizePartitionPayload(
     markers[2].markerId = 13;
     markers[2].markerKind = 0;
     markers[2].position = 7680;
-    PieceScheduleProgramViewV1 pieceSchedule{};
-    pieceSchedule.rootDefinition = pieceRef;
-    pieceSchedule.timeKind = ScheduleTimeKindV1::MusicalTicks;
-    pieceSchedule.microsPerQuarter = 20000;
-    pieceSchedule.meterNumerator = 4;
-    pieceSchedule.meterDenominator = 4;
-    pieceSchedule.trackRefCount = 1;
-    pieceSchedule.trackRefs = &trackScheduleRef;
-    pieceSchedule.markerCount = 3;
-    pieceSchedule.markers = markers;
-    pieceSchedule.scheduleSemanticFingerprint =
-        ComputePieceScheduleFingerprintV1(pieceSchedule);
+    SegmentScheduleProgramViewV1 segmentSchedule{};
+    segmentSchedule.rootDefinition = segmentRef;
+    segmentSchedule.timeKind = ScheduleTimeKindV1::MusicalTicks;
+    segmentSchedule.microsPerQuarter = 20000;
+    segmentSchedule.meterNumerator = 4;
+    segmentSchedule.meterDenominator = 4;
+    segmentSchedule.trackRefCount = 1;
+    segmentSchedule.trackRefs = &trackScheduleRef;
+    segmentSchedule.markerCount = 3;
+    segmentSchedule.markers = markers;
+    segmentSchedule.scheduleSemanticFingerprint =
+        ComputeSegmentScheduleFingerprintV1(segmentSchedule);
 
     PlayableOccurrencePropertyViewV1 occurrence{};
     occurrence.parentKind = playableproperties::ContentPropertyKindV1::Track;
@@ -9054,19 +9054,19 @@ std::vector<std::uint8_t> MusicalPieceQuantizePartitionPayload(
     occurrence.parentProgramSemanticFingerprint =
         trackProperty.programSemanticFingerprint;
     occurrence.stableOccurrenceOrdinal = 0;
-    occurrence.childPlayable = pieceSoundRef;
+    occurrence.childPlayable = segmentSoundRef;
     occurrence.payload = EmptyOccurrencePayload();
     occurrence.occurrenceSemanticFingerprint =
         ComputePlayableOccurrenceFingerprintV1(occurrence);
     PlayablePropertyProgramViewV1 properties[4] = {
-        pieceSound, quantizedSound, trackProperty, pieceProperty};
+        segmentSound, quantizedSound, trackProperty, segmentProperty};
 
     ActionStepProgramViewV1 steps[2]{};
     steps[0].opcode = ActionOpcodeV1::Play;
-    steps[0].target.kind = ActionTargetKindV1::Piece;
-    steps[0].target.stableId = harkentest::ObjectId(pieceId);
+    steps[0].target.kind = ActionTargetKindV1::Segment;
+    steps[0].target.stableId = harkentest::ObjectId(segmentId);
     steps[0].target.expectedProgramSemanticFingerprint =
-        pieceProperty.programSemanticFingerprint;
+        segmentProperty.programSemanticFingerprint;
     SetAbsoluteTime(&steps[0].delay, 0);
     SetAbsoluteTime(&steps[0].fade, 0);
     SetAbsoluteTime(&steps[0].cooldown, 0);
@@ -9079,12 +9079,12 @@ std::vector<std::uint8_t> MusicalPieceQuantizePartitionPayload(
     SetAbsoluteTime(&steps[1].fade, 0);
     SetAbsoluteTime(&steps[1].cooldown, 0);
     steps[1].quantizeTiming = timing;
-    steps[1].quantizeReference.kind = ActionTargetKindV1::Piece;
-    steps[1].quantizeReference.stableId = harkentest::ObjectId(pieceId);
+    steps[1].quantizeReference.kind = ActionTargetKindV1::Segment;
+    steps[1].quantizeReference.stableId = harkentest::ObjectId(segmentId);
     steps[1].quantizeReference.expectedProgramSemanticFingerprint =
-        pieceProperty.programSemanticFingerprint;
+        segmentProperty.programSemanticFingerprint;
     ActionProgramViewV1 actions[2]{};
-    actions[0].actionStableId = harkentest::ObjectId(pieceActionId);
+    actions[0].actionStableId = harkentest::ObjectId(segmentActionId);
     actions[0].steps = &steps[0];
     actions[0].stepCount = 1;
     actions[0].directFeatureMask = 0;
@@ -9112,31 +9112,31 @@ std::vector<std::uint8_t> MusicalPieceQuantizePartitionPayload(
     world.playableOccurrenceCount = 1;
     world.trackSchedules = &trackSchedule;
     world.trackScheduleCount = 1;
-    world.pieceSchedules = &pieceSchedule;
-    world.pieceScheduleCount = 1;
+    world.segmentSchedules = &segmentSchedule;
+    world.segmentScheduleCount = 1;
     world.actions = actions;
     world.actionCount = 2;
     world.capacity.maxKnownScheduleLeaves = 16;
-    world.capacity.maxTrackPieceScheduleDepth = 8;
+    world.capacity.maxTrackSegmentScheduleDepth = 8;
     world.identity.runtimeSemanticFingerprint =
         ComputeCurrentWorldFingerprintV4(world);
     return WrapWorldPartition(packStableId, partitionRevision, world, 6);
 }
 
-std::vector<std::uint8_t> BuildMusicalPieceQuantizePack(
+std::vector<std::uint8_t> BuildMusicalSegmentQuantizePack(
     std::uint64_t packStableId, std::uint64_t contentRevision,
-    std::uint64_t partitionRevision, VnObjectId pieceActionId,
-    VnObjectId soundActionId, VnObjectId pieceId, VnObjectId trackId,
-    VnObjectId pieceSoundId, VnObjectId quantizedSoundId,
-    ActionQuantizeTimingV1 timing, std::vector<float> piecePlanar,
+    std::uint64_t partitionRevision, VnObjectId segmentActionId,
+    VnObjectId soundActionId, VnObjectId segmentId, VnObjectId trackId,
+    VnObjectId segmentSoundId, VnObjectId quantizedSoundId,
+    ActionQuantizeTimingV1 timing, std::vector<float> segmentPlanar,
     std::vector<float> soundPlanar) {
-    const float* pieceChannels[1] = {piecePlanar.data()};
+    const float* segmentChannels[1] = {segmentPlanar.data()};
     const float* soundChannels[1] = {soundPlanar.data()};
-    std::uint64_t pieceRevision = 0;
+    std::uint64_t segmentRevision = 0;
     std::uint64_t soundRevision = 0;
     EXPECT_TRUE(ComputeMediaPcmContentRevisionV1(
-        48000, 1, static_cast<std::uint64_t>(piecePlanar.size()), pieceChannels,
-        1, &pieceRevision));
+        48000, 1, static_cast<std::uint64_t>(segmentPlanar.size()), segmentChannels,
+        1, &segmentRevision));
     EXPECT_TRUE(ComputeMediaPcmContentRevisionV1(
         48000, 1, static_cast<std::uint64_t>(soundPlanar.size()), soundChannels,
         1, &soundRevision));
@@ -9145,12 +9145,12 @@ std::vector<std::uint8_t> BuildMusicalPieceQuantizePack(
                      RequirementPayload(packStableId, contentRevision,
                                         partitionRevision));
     builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, packStableId,
-                     MusicalPieceQuantizePartitionPayload(
-                         packStableId, partitionRevision, pieceActionId,
-                         soundActionId, pieceId, trackId, pieceSoundId,
-                         quantizedSoundId, pieceRevision, soundRevision,
+                     MusicalSegmentQuantizePartitionPayload(
+                         packStableId, partitionRevision, segmentActionId,
+                         soundActionId, segmentId, trackId, segmentSoundId,
+                         quantizedSoundId, segmentRevision, soundRevision,
                          timing));
-    builder.AddMedia(pieceSoundId, std::move(piecePlanar));
+    builder.AddMedia(segmentSoundId, std::move(segmentPlanar));
     builder.AddMedia(quantizedSoundId, std::move(soundPlanar));
     return builder.Build();
 }
@@ -9178,7 +9178,7 @@ std::uint64_t ImmediateQuantizeBaseFrame(const Engine& engine) {
     return std::max(cutoff, observed + lead);
 }
 
-bool ExpectedFrozenQuantizeFrame(const EnginePlayableServiceRow& pieceRow,
+bool ExpectedFrozenQuantizeFrame(const EnginePlayableServiceRow& segmentRow,
                                  std::uint64_t delayedFrame,
                                  ActionQuantizeTimingV1 timing,
                                  std::uint64_t sampleRate,
@@ -9186,37 +9186,37 @@ bool ExpectedFrozenQuantizeFrame(const EnginePlayableServiceRow& pieceRow,
     if (outFrame == nullptr) {
         return false;
     }
-    const auto piece =
-        pieceRow.Invocation().packPlaybackView.ResolvePiece(pieceRow.root.stableId, 0);
-    if (piece == nullptr) {
+    const auto segment =
+        segmentRow.Invocation().packPlaybackView.ResolveSegment(segmentRow.root.stableId, 0);
+    if (segment == nullptr) {
         return false;
     }
     TempoSegment tempo{};
-    tempo.microsPerQuarter = piece->microsPerQuarter;
+    tempo.microsPerQuarter = segment->microsPerQuarter;
     ClockKernel clock;
     if (!clock.Reset(static_cast<std::int64_t>(sampleRate), &tempo, 1)) {
         return false;
     }
-    MeterSignature meter{static_cast<std::int32_t>(piece->meterNumerator),
-                         static_cast<std::int32_t>(piece->meterDenominator)};
+    MeterSignature meter{static_cast<std::int32_t>(segment->meterNumerator),
+                         static_cast<std::int32_t>(segment->meterDenominator)};
     MarkerPoint markers[16]{};
-    if (piece->markerCount > 16) {
+    if (segment->markerCount > 16) {
         return false;
     }
-    for (std::uint32_t index = 0; index < piece->markerCount; ++index) {
-        const auto& authored = piece->markers[index];
+    for (std::uint32_t index = 0; index < segment->markerCount; ++index) {
+        const auto& authored = segment->markers[index];
         markers[index].id = authored.stableMarkerId;
         markers[index].kind = authored.markerKind == 1 ? MarkerKind::Exit
                                                  : MarkerKind::Custom;
         markers[index].position = authored.position;
     }
     MarkerIndex markerIndex;
-    if (!markerIndex.Reset(PieceTimeType::Musical, &clock, meter, markers,
-                        piece->markerCount,
-                        std::max<std::size_t>(1, piece->markerCount))) {
+    if (!markerIndex.Reset(SegmentTimeType::Musical, &clock, meter, markers,
+                        segment->markerCount,
+                        std::max<std::size_t>(1, segment->markerCount))) {
         return false;
     }
-    const std::uint64_t entry = pieceRow.startFrame;
+    const std::uint64_t entry = segmentRow.startFrame;
     std::int64_t fromPosition = 0;
     if (delayedFrame > entry) {
         const std::uint64_t delta = delayedFrame - entry;
@@ -9245,17 +9245,17 @@ bool ExpectedFrozenQuantizeFrame(const EnginePlayableServiceRow& pieceRow,
     return true;
 }
 
-void RunPackActionQuantizeUsesPieceRowAnchor(
+void RunPackActionQuantizeUsesSegmentRowAnchor(
     ActionQuantizeTimingV1 timing, const char* stem) {
-    constexpr VnObjectId kPieceSoundId = harkentest::ObjectId(4511);
+    constexpr VnObjectId kSegmentSoundId = harkentest::ObjectId(4511);
     constexpr VnObjectId kQuantizedSoundId = harkentest::ObjectId(4513);
     constexpr VnObjectId kTrackId = harkentest::ObjectId(4520);
-    constexpr VnObjectId kPieceId = harkentest::ObjectId(4510);
-    constexpr VnObjectId kPieceActionId = harkentest::ObjectId(2002);
+    constexpr VnObjectId kSegmentId = harkentest::ObjectId(4510);
+    constexpr VnObjectId kSegmentActionId = harkentest::ObjectId(2002);
     constexpr VnObjectId kSoundActionId = harkentest::ObjectId(2003);
-    const std::vector<std::uint8_t> packABytes = BuildMusicalPieceQuantizePack(
-        22, 1, 7, kPieceActionId, kSoundActionId, kPieceId, kTrackId,
-        kPieceSoundId, kQuantizedSoundId, timing,
+    const std::vector<std::uint8_t> packABytes = BuildMusicalSegmentQuantizePack(
+        22, 1, 7, kSegmentActionId, kSoundActionId, kSegmentId, kTrackId,
+        kSegmentSoundId, kQuantizedSoundId, timing,
         harkentest::MakeDC(8192, 0.25f), harkentest::MakeDC(4096, 0.50f));
     const std::vector<std::uint8_t> packBOldBytes =
         BuildContentPack(33, 1, 9, harkentest::ObjectId(3003), harkentest::ObjectId(8));
@@ -9267,7 +9267,7 @@ void RunPackActionQuantizeUsesPieceRowAnchor(
     initOwned.ownerPackStableId = 11;
     FillLocator(&initOwned, "Init.pack");
     PackInitCatalogRow contentA;
-    contentA.stableId = harkentest::ObjectId(kPieceActionId);
+    contentA.stableId = harkentest::ObjectId(kSegmentActionId);
     contentA.identityClass = kInitCatalogIdentityClassAction;
     contentA.ownerPackStableId = 22;
     contentA.expectedContentHash = Fnv1a64(packABytes.data(), packABytes.size());
@@ -9286,7 +9286,7 @@ void RunPackActionQuantizeUsesPieceRowAnchor(
         Fnv1a64(packBOldBytes.data(), packBOldBytes.size());
     FillLocator(&contentB, "ActionB.pack");
     PackInitCatalogRow playable;
-    playable.stableId = harkentest::ObjectId(kPieceId);
+    playable.stableId = harkentest::ObjectId(kSegmentId);
     playable.identityClass = kInitCatalogIdentityClassPlayable;
     playable.ownerPackStableId = 22;
     playable.expectedContentHash = contentA.expectedContentHash;
@@ -9333,38 +9333,38 @@ void RunPackActionQuantizeUsesPieceRowAnchor(
     VnPackLoadDesc desc{};
     desc.structSize = sizeof(desc);
 
-    VnPostActionDesc piecePost{};
-    piecePost.structSize = sizeof(piecePost);
-    piecePost.actionId = harkentest::ObjectId(kPieceActionId);
-    VnActionFiringHandle pieceFiring = 0;
-    ASSERT_EQ(VN_OK, Vn_PostAction(&piecePost, &pieceFiring));
-    VnActionStepResult pieceStep{};
-    pieceStep.structSize = sizeof(pieceStep);
-    ASSERT_EQ(VN_OK, Vn_QueryActionStep(pieceFiring, 0, &pieceStep));
-    EXPECT_EQ(VN_ACTION_STEP_ACTIVE, pieceStep.state);
-    ASSERT_NE(0u, pieceStep.producedPlayableInstance);
+    VnPostActionDesc segmentPost{};
+    segmentPost.structSize = sizeof(segmentPost);
+    segmentPost.actionId = harkentest::ObjectId(kSegmentActionId);
+    VnActionFiringHandle segmentFiring = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&segmentPost, &segmentFiring));
+    VnActionStepResult segmentStep{};
+    segmentStep.structSize = sizeof(segmentStep);
+    ASSERT_EQ(VN_OK, Vn_QueryActionStep(segmentFiring, 0, &segmentStep));
+    EXPECT_EQ(VN_ACTION_STEP_ACTIVE, segmentStep.state);
+    ASSERT_NE(0u, segmentStep.producedPlayableInstance);
     auto startRow = std::find_if(
         session.Engine()->playableServices.begin(),
         session.Engine()->playableServices.end(),
         [&](const EnginePlayableServiceRow& candidate) {
-            return candidate.rootInstance == pieceStep.producedPlayableInstance;
+            return candidate.rootInstance == segmentStep.producedPlayableInstance;
         });
     ASSERT_NE(session.Engine()->playableServices.end(), startRow);
-    EXPECT_EQ(PlayableKindV1::Piece, startRow->root.kind);
+    EXPECT_EQ(PlayableKindV1::Segment, startRow->root.kind);
     EXPECT_NE(0u, startRow->Invocation().packLease.leaseToken);
-    ASSERT_NE(nullptr, startRow->Invocation().packPlaybackView.ResolvePiece(
+    ASSERT_NE(nullptr, startRow->Invocation().packPlaybackView.ResolveSegment(
                            startRow->root.stableId, 0));
     const PackPartitionLease frozenLease = startRow->Invocation().packLease;
     const std::uint64_t frozenGeneration = frozenLease.compositeGeneration;
 
-    harkentest::Capture pieceCapture;
-    bool heardPiece = false;
-    for (std::uint32_t block = 0; block < 16 && !heardPiece; ++block) {
+    harkentest::Capture segmentCapture;
+    bool heardSegment = false;
+    for (std::uint32_t block = 0; block < 16 && !heardSegment; ++block) {
         ASSERT_EQ(VN_OK, Vn_Update());
         session.Engine()->nullBackend.Pump(1);
         ASSERT_EQ(VN_OK, Vn_Update());
-        pieceCapture.left.insert(
-            pieceCapture.left.end(),
+        segmentCapture.left.insert(
+            segmentCapture.left.end(),
             session.Engine()->nullBackend.LastBlock(),
             session.Engine()->nullBackend.LastBlock() +
                 session.Engine()->nullBackend.BlockFrames());
@@ -9373,16 +9373,16 @@ void RunPackActionQuantizeUsesPieceRowAnchor(
             session.Engine()->playableServices.end(),
             [&](const EnginePlayableServiceRow& candidate) {
                 return candidate.rootInstance ==
-                       pieceStep.producedPlayableInstance;
+                       segmentStep.producedPlayableInstance;
             });
         ASSERT_NE(session.Engine()->playableServices.end(), startRow);
         if (session.Engine()->voices.ActiveCount() >= 1u &&
-            harkentest::Peak(pieceCapture.left) > harkentest::kSilenceFloor) {
-            heardPiece = true;
+            harkentest::Peak(segmentCapture.left) > harkentest::kSilenceFloor) {
+            heardSegment = true;
         }
     }
-    EXPECT_TRUE(heardPiece);
-    HARKENTEST_ASSERT_NON_SILENT(pieceCapture.left);
+    EXPECT_TRUE(heardSegment);
+    HARKENTEST_ASSERT_NON_SILENT(segmentCapture.left);
 
     desc.utf8Path = packBNextPath.c_str();
     ASSERT_EQ(VN_OK,
@@ -9392,24 +9392,24 @@ void RunPackActionQuantizeUsesPieceRowAnchor(
         session.Engine()->playableServices.begin(),
         session.Engine()->playableServices.end(),
         [&](const EnginePlayableServiceRow& candidate) {
-            return candidate.rootInstance == pieceStep.producedPlayableInstance;
+            return candidate.rootInstance == segmentStep.producedPlayableInstance;
         });
     ASSERT_NE(session.Engine()->playableServices.end(), startRow);
     EXPECT_NE(0u, startRow->Invocation().packLease.leaseToken);
     EXPECT_EQ(frozenGeneration, startRow->Invocation().packLease.compositeGeneration);
-    ASSERT_NE(nullptr, startRow->Invocation().packPlaybackView.ResolvePiece(
+    ASSERT_NE(nullptr, startRow->Invocation().packPlaybackView.ResolveSegment(
                            startRow->root.stableId, 0));
     const PlayableWorldViewV1 currentWorld =
         session.Engine()->variables.CurrentPlayableWorld();
-    bool currentHasPiece = false;
-    for (std::uint32_t index = 0; index < currentWorld.pieceScheduleCount;
+    bool currentHasSegment = false;
+    for (std::uint32_t index = 0; index < currentWorld.segmentScheduleCount;
          ++index) {
-        if (currentWorld.pieceSchedules[index].rootDefinition.stableId ==
-            kPieceId) {
-            currentHasPiece = true;
+        if (currentWorld.segmentSchedules[index].rootDefinition.stableId ==
+            kSegmentId) {
+            currentHasSegment = true;
         }
     }
-    EXPECT_FALSE(currentHasPiece);
+    EXPECT_FALSE(currentHasSegment);
 
     const std::uint64_t delayedFrame =
         ImmediateQuantizeBaseFrame(*session.Engine());
@@ -9427,11 +9427,11 @@ void RunPackActionQuantizeUsesPieceRowAnchor(
         session.Engine()->playableServices.begin(),
         session.Engine()->playableServices.end(),
         [&](const EnginePlayableServiceRow& candidate) {
-            return candidate.rootInstance == pieceStep.producedPlayableInstance;
+            return candidate.rootInstance == segmentStep.producedPlayableInstance;
         });
     ASSERT_NE(session.Engine()->playableServices.end(), startRow);
     EXPECT_EQ(frozenGeneration, startRow->Invocation().packLease.compositeGeneration);
-    EXPECT_EQ(pieceStep.producedPlayableInstance, startRow->rootInstance);
+    EXPECT_EQ(segmentStep.producedPlayableInstance, startRow->rootInstance);
 
     if (expected >= session.Engine()->timelinePool.WindowEndFrame()) {
         EXPECT_GE(session.Engine()->actionDeferredRecords.LiveCount(), 1u);
@@ -9474,7 +9474,7 @@ void RunPackActionQuantizeUsesPieceRowAnchor(
             session.Engine()->playableServices.end(),
             [&](const EnginePlayableServiceRow& candidate) {
                 return candidate.rootInstance ==
-                       pieceStep.producedPlayableInstance;
+                       segmentStep.producedPlayableInstance;
             });
         ASSERT_NE(session.Engine()->playableServices.end(), startRow);
         EXPECT_EQ(frozenGeneration, startRow->Invocation().packLease.compositeGeneration);
@@ -9485,7 +9485,7 @@ void RunPackActionQuantizeUsesPieceRowAnchor(
     EXPECT_TRUE(heardAfter);
     HARKENTEST_ASSERT_NON_SILENT(afterCapture.left);
     EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(soundFiring));
-    EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(pieceFiring));
+    EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(segmentFiring));
 }
 
 std::vector<std::uint8_t> ImmediateEmptyTrackPlayPartitionPayload(
@@ -9536,7 +9536,7 @@ std::vector<std::uint8_t> ImmediateEmptyTrackPlayPartitionPayload(
     world.actions = &action;
     world.actionCount = 1;
     world.capacity.maxKnownScheduleLeaves = 16;
-    world.capacity.maxTrackPieceScheduleDepth = 8;
+    world.capacity.maxTrackSegmentScheduleDepth = 8;
     world.identity.runtimeSemanticFingerprint =
         ComputeCurrentWorldFingerprintV4(world);
     return WrapWorldPartition(packStableId, partitionRevision, world, 2);
@@ -11524,7 +11524,7 @@ TEST(PackComposition, ProvisionalSharedSchedulesRetainTheirMediaAfterBothProvide
                         harkentest::ObjectId(4510), harkentest::ObjectId(4501), harkentest::MakeDC(2048, 0.25f));
                 }
                 if (kind == 1) {
-                    return BuildImmediatePiecePlayPack(packId, 1, 7, actionId,
+                    return BuildImmediateSegmentPlayPack(packId, 1, 7, actionId,
                         harkentest::ObjectId(4520), harkentest::ObjectId(4510), harkentest::ObjectId(4501), harkentest::MakeDC(2048, 0.25f));
                 }
                 return BuildImmediateSequenceQueuePlayPack(packId, 1, 7, actionId,
@@ -11594,13 +11594,13 @@ TEST(PackComposition,
      PackActionClipKeepsInfiniteMediaLoopInsideAuthoredDuration) {
     constexpr VnObjectId kSoundId = harkentest::ObjectId(4511);
     constexpr VnObjectId kTrackId = harkentest::ObjectId(4520);
-    constexpr VnObjectId kPieceId = harkentest::ObjectId(4510);
+    constexpr VnObjectId kSegmentId = harkentest::ObjectId(4510);
     constexpr VnObjectId kActionId = harkentest::ObjectId(2002);
     std::vector<float> samples(1024, -0.75f);
     std::fill(samples.begin(), samples.begin() + 256, 0.0f);
     std::fill(samples.begin() + 256, samples.begin() + 512, 0.25f);
-    const std::vector<std::uint8_t> packBytes = BuildImmediatePiecePlayPack(
-        22, 1, 7, kActionId, kPieceId, kTrackId, kSoundId,
+    const std::vector<std::uint8_t> packBytes = BuildImmediateSegmentPlayPack(
+        22, 1, 7, kActionId, kSegmentId, kTrackId, kSoundId,
         std::move(samples), 0, 256, 512, INT64_C(20000000));
     const std::vector<std::uint8_t> initBytes = BuildSingleIdentityInit(
         Fnv1a64(packBytes.data(), packBytes.size()), kActionId);
@@ -11653,20 +11653,20 @@ TEST(PackComposition,
     ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
 }
 
-TEST(PackComposition, PackActionSubFramePieceCompletesWithoutVoice) {
+TEST(PackComposition, PackActionSubFrameSegmentCompletesWithoutVoice) {
     constexpr VnObjectId kSoundId = harkentest::ObjectId(4511);
     constexpr VnObjectId kTrackId = harkentest::ObjectId(4520);
-    constexpr VnObjectId kPieceId = harkentest::ObjectId(4510);
+    constexpr VnObjectId kSegmentId = harkentest::ObjectId(4510);
     constexpr VnObjectId kActionId = harkentest::ObjectId(2002);
-    const std::vector<std::uint8_t> packBytes = BuildImmediatePiecePlayPack(
-        22, 1, 7, kActionId, kPieceId, kTrackId, kSoundId,
+    const std::vector<std::uint8_t> packBytes = BuildImmediateSegmentPlayPack(
+        22, 1, 7, kActionId, kSegmentId, kTrackId, kSoundId,
         harkentest::MakeDC(512, 0.25f), 1, 0, 0, 1);
     const std::vector<std::uint8_t> initBytes = BuildSingleIdentityInit(
         Fnv1a64(packBytes.data(), packBytes.size()), kActionId);
     const std::string initPath =
-        WriteTemp("r4-zero-piece-init.pack", initBytes);
+        WriteTemp("r4-zero-segment-init.pack", initBytes);
     const std::string packPath =
-        WriteTemp("r4-zero-piece-content.pack", packBytes);
+        WriteTemp("r4-zero-segment-content.pack", packBytes);
 
     EngineSession session(MakeNullConfig(8, 64, 48000));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -15679,7 +15679,7 @@ void VerifyPackActionDelayedBehindEarlierPlayablePage(
         (targetFrame / blockFrames - 1u) * blockFrames;
     const std::uint64_t claimQuantum = targetFrame / blockFrames - 7u;
     const auto owner =
-        engine->playableInstances.Acquire(PlayableKind::Piece, 0);
+        engine->playableInstances.Acquire(PlayableKind::Segment, 0);
     ASSERT_NE(0u, owner);
     EventTemplate deferredEvent{};
     deferredEvent.logicCommitSequence = 1;
@@ -16754,7 +16754,7 @@ std::vector<std::uint8_t> ImmediateNestedRandomPlayPartitionPayload(
     world.actions = &action;
     world.actionCount = 1;
     world.capacity.maxKnownScheduleLeaves = 16;
-    world.capacity.maxTrackPieceScheduleDepth = 8;
+    world.capacity.maxTrackSegmentScheduleDepth = 8;
     world.identity.runtimeSemanticFingerprint =
         ComputeCurrentWorldFingerprintV4(world);
     return WrapWorldPartition(packStableId, partitionRevision, world, 4);
@@ -16919,7 +16919,7 @@ std::vector<std::uint8_t> ImmediateNestedQueueContainerPlayPartitionPayload(
     world.actions = &action;
     world.actionCount = 1;
     world.capacity.maxKnownScheduleLeaves = 16;
-    world.capacity.maxTrackPieceScheduleDepth = 8;
+    world.capacity.maxTrackSegmentScheduleDepth = 8;
     world.identity.runtimeSemanticFingerprint =
         ComputeCurrentWorldFingerprintV4(world);
     return WrapWorldPartition(packStableId, partitionRevision, world, 5);
@@ -17021,7 +17021,7 @@ std::vector<std::uint8_t> ImmediateSequencePlayPartitionPayload(
     world.actions = &action;
     world.actionCount = 1;
     world.capacity.maxKnownScheduleLeaves = 16;
-    world.capacity.maxTrackPieceScheduleDepth = 8;
+    world.capacity.maxTrackSegmentScheduleDepth = 8;
     world.identity.runtimeSemanticFingerprint =
         ComputeCurrentWorldFingerprintV4(world);
     return WrapWorldPartition(packStableId, partitionRevision, world, 3);
@@ -17052,8 +17052,8 @@ std::vector<std::uint8_t> BuildImmediateSequencePlayPack(
 std::vector<std::uint8_t> ImmediateQueueCompositeChildPlayPartitionPayload(
     std::uint64_t packStableId, std::uint64_t partitionRevision,
     VnObjectId actionId, VnObjectId containerId, VnObjectId trackId,
-    VnObjectId pieceId, VnObjectId firstSoundId, VnObjectId secondSoundId,
-    std::uint64_t firstRevision, std::uint64_t secondRevision, bool pieceChild,
+    VnObjectId segmentId, VnObjectId firstSoundId, VnObjectId secondSoundId,
+    std::uint64_t firstRevision, std::uint64_t secondRevision, bool segmentChild,
     bool mixedZeroWorkTrack = false,
     VnObjectId resetActionId = harkentest::ObjectId(0),
     bool logicalOnlyTrack = false,
@@ -17080,23 +17080,23 @@ std::vector<std::uint8_t> ImmediateQueueCompositeChildPlayPartitionPayload(
     trackProperty.payload = DelayedPlayPayload();
     trackProperty.programSemanticFingerprint =
         ComputePlayablePropertyFingerprintV1(trackProperty);
-    PlayablePropertyProgramViewV1 pieceProperty{};
-    pieceProperty.contentPropertyKind =
-        playableproperties::ContentPropertyKindV1::Piece;
-    pieceProperty.stableId = harkentest::ObjectId(pieceId);
-    pieceProperty.authoredStableOrder = 4;
-    pieceProperty.contentRevision = 1;
-    pieceProperty.routeStableId = VN_BUS_MASTER;
-    pieceProperty.compatibilityFingerprint = 4;
-    pieceProperty.payload = DelayedPlayPayload();
-    pieceProperty.programSemanticFingerprint =
-        ComputePlayablePropertyFingerprintV1(pieceProperty);
+    PlayablePropertyProgramViewV1 segmentProperty{};
+    segmentProperty.contentPropertyKind =
+        playableproperties::ContentPropertyKindV1::Segment;
+    segmentProperty.stableId = harkentest::ObjectId(segmentId);
+    segmentProperty.authoredStableOrder = 4;
+    segmentProperty.contentRevision = 1;
+    segmentProperty.routeStableId = VN_BUS_MASTER;
+    segmentProperty.compatibilityFingerprint = 4;
+    segmentProperty.payload = DelayedPlayPayload();
+    segmentProperty.programSemanticFingerprint =
+        ComputePlayablePropertyFingerprintV1(segmentProperty);
     PlayablePropertyProgramViewV1 containerProperty =
         MakeContainerProperty(containerId, 2);
     const PlayableRefV1 firstRef = PlayableRefFromProperty(firstSound);
     const PlayableRefV1 secondRef = PlayableRefFromProperty(secondSound);
     const PlayableRefV1 trackRef = PlayableRefFromProperty(trackProperty);
-    const PlayableRefV1 pieceRef = PlayableRefFromProperty(pieceProperty);
+    const PlayableRefV1 segmentRef = PlayableRefFromProperty(segmentProperty);
     ScheduleClipPlacementV1 placements[2]{};
     placements[0].stablePlacementOrdinal = 0;
     placements[0].stableOccurrenceOrdinal = 11;
@@ -17134,12 +17134,12 @@ std::vector<std::uint8_t> ImmediateQueueCompositeChildPlayPartitionPayload(
     trackScheduleRef.trackDefinition = trackRef;
     trackScheduleRef.trackScheduleSemanticFingerprint =
         trackSchedule.scheduleSemanticFingerprint;
-    PieceScheduleProgramViewV1 pieceSchedule{};
-    pieceSchedule.rootDefinition = pieceRef;
-    pieceSchedule.trackRefCount = 1;
-    pieceSchedule.trackRefs = &trackScheduleRef;
-    pieceSchedule.scheduleSemanticFingerprint =
-        ComputePieceScheduleFingerprintV1(pieceSchedule);
+    SegmentScheduleProgramViewV1 segmentSchedule{};
+    segmentSchedule.rootDefinition = segmentRef;
+    segmentSchedule.trackRefCount = 1;
+    segmentSchedule.trackRefs = &trackScheduleRef;
+    segmentSchedule.scheduleSemanticFingerprint =
+        ComputeSegmentScheduleFingerprintV1(segmentSchedule);
     AuthoredCompletionLeafV1 completionLeaf{};
     completionLeaf.stableLeafOrdinal = 1;
     completionLeaf.content = firstRef;
@@ -17148,11 +17148,11 @@ std::vector<std::uint8_t> ImmediateQueueCompositeChildPlayPartitionPayload(
     ContainerChildProgramViewV2 children[2]{};
     children[0].stableChildOrdinal = 7;
     children[0].queueStopPolicy = QueueStopPolicyV1::AdvanceQueue;
-    if (pieceChild) {
-        children[0].playable = pieceRef;
+    if (segmentChild) {
+        children[0].playable = segmentRef;
         children[0].timingHint = MakeScheduleReferenceTimingHint(
-            PlayableKindV1::Piece, pieceId,
-            pieceSchedule.scheduleSemanticFingerprint);
+            PlayableKindV1::Segment, segmentId,
+            segmentSchedule.scheduleSemanticFingerprint);
     } else {
         children[0].playable = trackRef;
         children[0].timingHint = MakeScheduleReferenceTimingHint(
@@ -17214,7 +17214,7 @@ std::vector<std::uint8_t> ImmediateQueueCompositeChildPlayPartitionPayload(
     occurrences[3].occurrenceSemanticFingerprint =
         ComputePlayableOccurrenceFingerprintV1(occurrences[3]);
     PlayablePropertyProgramViewV1 properties[5] = {
-        firstSound, secondSound, containerProperty, trackProperty, pieceProperty};
+        firstSound, secondSound, containerProperty, trackProperty, segmentProperty};
     ActionStepProgramViewV1 step{};
     step.opcode = ActionOpcodeV1::Play;
     step.target.kind = ActionTargetKindV1::Container;
@@ -17262,14 +17262,14 @@ std::vector<std::uint8_t> ImmediateQueueCompositeChildPlayPartitionPayload(
     world.playableOccurrenceCount = boundedSameSoundSuccessor ? 3 : 4;
     world.trackSchedules = &trackSchedule;
     world.trackScheduleCount = 1;
-    world.pieceSchedules = &pieceSchedule;
-    world.pieceScheduleCount = 1;
+    world.segmentSchedules = &segmentSchedule;
+    world.segmentScheduleCount = 1;
     world.containers = &program;
     world.containerCount = 1;
     world.actions = actions;
     world.actionCount = resetActionId == harkentest::ObjectId(0) ? 1 : 2;
     world.capacity.maxKnownScheduleLeaves = 16;
-    world.capacity.maxTrackPieceScheduleDepth = 8;
+    world.capacity.maxTrackSegmentScheduleDepth = 8;
     world.identity.runtimeSemanticFingerprint =
         ComputeCurrentWorldFingerprintV4(world);
     return WrapWorldPartition(
@@ -17280,10 +17280,10 @@ std::vector<std::uint8_t> ImmediateQueueCompositeChildPlayPartitionPayload(
 std::vector<std::uint8_t> BuildImmediateQueueCompositeChildPlayPack(
     std::uint64_t packStableId, std::uint64_t contentRevision,
     std::uint64_t partitionRevision, VnObjectId actionId,
-    VnObjectId containerId, VnObjectId trackId, VnObjectId pieceId,
+    VnObjectId containerId, VnObjectId trackId, VnObjectId segmentId,
     VnObjectId firstSoundId, VnObjectId secondSoundId,
     std::vector<float> firstPlanar, std::vector<float> secondPlanar,
-    bool pieceChild, bool mixedZeroWorkTrack = false,
+    bool segmentChild, bool mixedZeroWorkTrack = false,
     VnObjectId resetActionId = harkentest::ObjectId(0),
     bool logicalOnlyTrack = false,
     bool boundedSameSoundSuccessor = false,
@@ -17305,8 +17305,8 @@ std::vector<std::uint8_t> BuildImmediateQueueCompositeChildPlayPack(
     builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, packStableId,
                      ImmediateQueueCompositeChildPlayPartitionPayload(
                          packStableId, partitionRevision, actionId, containerId,
-                         trackId, pieceId, firstSoundId, secondSoundId,
-                          firstRevision, secondRevision, pieceChild,
+                         trackId, segmentId, firstSoundId, secondSoundId,
+                          firstRevision, secondRevision, segmentChild,
                           mixedZeroWorkTrack, resetActionId,
                           logicalOnlyTrack, boundedSameSoundSuccessor, delayNanoseconds));
     builder.AddMedia(firstSoundId, std::move(firstPlanar));
@@ -17370,7 +17370,7 @@ std::vector<std::uint8_t> ImmediateSharedLeafFromContentRootPartitionPayload(
     world.actions = &action;
     world.actionCount = 1;
     world.capacity.maxKnownScheduleLeaves = 16;
-    world.capacity.maxTrackPieceScheduleDepth = 8;
+    world.capacity.maxTrackSegmentScheduleDepth = 8;
     world.identity.runtimeSemanticFingerprint =
         ComputeCurrentWorldFingerprintV4(world);
     return WrapWorldPartition(packStableId, partitionRevision, world, 2);
@@ -17416,7 +17416,7 @@ std::vector<std::uint8_t> ImmediateTwoPlayStepsDifferentPacksPartitionPayload(
     world.actions = &action;
     world.actionCount = 1;
     world.capacity.maxKnownScheduleLeaves = 16;
-    world.capacity.maxTrackPieceScheduleDepth = 8;
+    world.capacity.maxTrackSegmentScheduleDepth = 8;
     world.identity.runtimeSemanticFingerprint =
         ComputeCurrentWorldFingerprintV4(world);
     return WrapWorldPartition(packStableId, partitionRevision, world, 2);
@@ -17479,7 +17479,7 @@ std::vector<std::uint8_t> ImmediateBundlePartialPlayPartitionPayload(
     world.actions = &action;
     world.actionCount = 1;
     world.capacity.maxKnownScheduleLeaves = 16;
-    world.capacity.maxTrackPieceScheduleDepth = 8;
+    world.capacity.maxTrackSegmentScheduleDepth = 8;
     world.identity.runtimeSemanticFingerprint =
         ComputeCurrentWorldFingerprintV4(world);
     return WrapWorldPartition(packStableId, partitionRevision, world, 3);
@@ -17690,12 +17690,12 @@ TEST(PackComposition,
     constexpr VnObjectId kFirstSoundId = harkentest::ObjectId(4511);
     constexpr VnObjectId kSecondSoundId = harkentest::ObjectId(4512);
     constexpr VnObjectId kTrackId = harkentest::ObjectId(4520);
-    constexpr VnObjectId kPieceId = harkentest::ObjectId(4530);
+    constexpr VnObjectId kSegmentId = harkentest::ObjectId(4530);
     constexpr VnObjectId kContainerId = harkentest::ObjectId(4510);
     constexpr VnObjectId kActionId = harkentest::ObjectId(2002);
     const std::vector<std::uint8_t> packBytes =
         BuildImmediateQueueCompositeChildPlayPack(
-            22, 1, 7, kActionId, kContainerId, kTrackId, kPieceId,
+            22, 1, 7, kActionId, kContainerId, kTrackId, kSegmentId,
             kFirstSoundId, kSecondSoundId,
             std::vector<float>(512, 0.25f),
             std::vector<float>(512, -0.25f), false, false,
@@ -17785,13 +17785,13 @@ void RunPackQueueResetPreservesLogicalTrackCompletion(
     constexpr VnObjectId kFirstSoundId = harkentest::ObjectId(4511);
     constexpr VnObjectId kSecondSoundId = harkentest::ObjectId(4512);
     constexpr VnObjectId kTrackId = harkentest::ObjectId(4520);
-    constexpr VnObjectId kPieceId = harkentest::ObjectId(4530);
+    constexpr VnObjectId kSegmentId = harkentest::ObjectId(4530);
     constexpr VnObjectId kContainerId = harkentest::ObjectId(4510);
     constexpr VnObjectId kActionId = harkentest::ObjectId(2002);
     constexpr VnObjectId kResetActionId = harkentest::ObjectId(5003);
     const std::vector<std::uint8_t> packBytes =
         BuildImmediateQueueCompositeChildPlayPack(
-            22, 1, 7, kActionId, kContainerId, kTrackId, kPieceId,
+            22, 1, 7, kActionId, kContainerId, kTrackId, kSegmentId,
             kFirstSoundId, kSecondSoundId,
             std::vector<float>(512, 0.25f),
             std::vector<float>(512, -0.25f), false, true,
@@ -17927,12 +17927,12 @@ TEST(PackComposition, PackActionRejectsStaleMultiLeafArmPublication) {
     constexpr VnObjectId kFirstSoundId = harkentest::ObjectId(4511);
     constexpr VnObjectId kSecondSoundId = harkentest::ObjectId(4512);
     constexpr VnObjectId kTrackId = harkentest::ObjectId(4520);
-    constexpr VnObjectId kPieceId = harkentest::ObjectId(4530);
+    constexpr VnObjectId kSegmentId = harkentest::ObjectId(4530);
     constexpr VnObjectId kContainerId = harkentest::ObjectId(4510);
     constexpr VnObjectId kActionId = harkentest::ObjectId(2002);
     const std::vector<std::uint8_t> packBytes =
         BuildImmediateQueueCompositeChildPlayPack(
-            22, 1, 7, kActionId, kContainerId, kTrackId, kPieceId,
+            22, 1, 7, kActionId, kContainerId, kTrackId, kSegmentId,
             kFirstSoundId, kSecondSoundId, std::vector<float>(64, 0.25f),
             std::vector<float>(64, -0.25f), false, false,
             harkentest::ObjectId(0), false, false, INT64_C(10000000));
@@ -18500,7 +18500,7 @@ enum class ContainerMatrixChild : std::uint8_t {
     Sound,
     Container,
     Track,
-    Piece,
+    Segment,
 };
 
 struct ContainerMatrixWorld {
@@ -18508,7 +18508,7 @@ struct ContainerMatrixWorld {
     static constexpr VnObjectId kRoot = harkentest::ObjectId(72002);
     static constexpr VnObjectId kNested = harkentest::ObjectId(72003);
     static constexpr VnObjectId kTrack = harkentest::ObjectId(72004);
-    static constexpr VnObjectId kPiece = harkentest::ObjectId(72005);
+    static constexpr VnObjectId kSegment = harkentest::ObjectId(72005);
     static constexpr VnObjectId kFirstSound = harkentest::ObjectId(72006);
     static constexpr VnObjectId kSecondSound = harkentest::ObjectId(72007);
     static constexpr VnObjectId kVariable = harkentest::ObjectId(72008);
@@ -18527,7 +18527,7 @@ struct ContainerMatrixWorld {
     std::array<ScheduleClipPlacementV1, 2> placements{};
     TrackScheduleProgramViewV1 track{};
     ScheduleTrackRefV1 trackRef{};
-    PieceScheduleProgramViewV1 piece{};
+    SegmentScheduleProgramViewV1 segment{};
     VariableDefinitionV1 variable{};
     GridAxisV1 axis{};
     DiscreteGridCellV1 cell{};
@@ -18570,7 +18570,7 @@ struct ContainerMatrixWorld {
                 properties[firstSoundPropertyIndex]);
         std::uint32_t secondSoundPropertyIndex = UINT32_MAX;
         if (multiLeaf && (childKind == ContainerMatrixChild::Track ||
-                          childKind == ContainerMatrixChild::Piece)) {
+                          childKind == ContainerMatrixChild::Segment)) {
             secondSoundPropertyIndex = propertyCount++;
             auto& secondSound = properties[secondSoundPropertyIndex];
             secondSound = MakeSoundProperty(kSecondSound);
@@ -18589,7 +18589,7 @@ struct ContainerMatrixWorld {
         rootRef = PlayableRefFromProperty(properties[rootPropertyIndex]);
         std::uint32_t childPropertyIndex = UINT32_MAX;
         std::uint32_t nestedPropertyIndex = UINT32_MAX;
-        std::uint32_t piecePropertyIndex = UINT32_MAX;
+        std::uint32_t segmentPropertyIndex = UINT32_MAX;
         if (nestedContainer) {
             nestedPropertyIndex = propertyCount++;
             properties[nestedPropertyIndex] =
@@ -18603,7 +18603,7 @@ struct ContainerMatrixWorld {
             }
         }
         if (childKind == ContainerMatrixChild::Track ||
-                   childKind == ContainerMatrixChild::Piece) {
+                   childKind == ContainerMatrixChild::Segment) {
             childPropertyIndex = propertyCount++;
             auto& trackProperty = properties[childPropertyIndex];
             trackProperty.contentPropertyKind =
@@ -18616,19 +18616,19 @@ struct ContainerMatrixWorld {
             trackProperty.payload = DelayedPlayPayload();
             trackProperty.programSemanticFingerprint =
                 ComputePlayablePropertyFingerprintV1(trackProperty);
-            if (childKind == ContainerMatrixChild::Piece) {
-                piecePropertyIndex = propertyCount++;
-                auto& pieceProperty = properties[piecePropertyIndex];
-                pieceProperty.contentPropertyKind =
-                    playableproperties::ContentPropertyKindV1::Piece;
-                pieceProperty.stableId = harkentest::ObjectId(kPiece);
-                pieceProperty.authoredStableOrder = piecePropertyIndex;
-                pieceProperty.contentRevision = 1;
-                pieceProperty.routeStableId = VN_BUS_MASTER;
-                pieceProperty.compatibilityFingerprint = 5;
-                pieceProperty.payload = DelayedPlayPayload();
-                pieceProperty.programSemanticFingerprint =
-                    ComputePlayablePropertyFingerprintV1(pieceProperty);
+            if (childKind == ContainerMatrixChild::Segment) {
+                segmentPropertyIndex = propertyCount++;
+                auto& segmentProperty = properties[segmentPropertyIndex];
+                segmentProperty.contentPropertyKind =
+                    playableproperties::ContentPropertyKindV1::Segment;
+                segmentProperty.stableId = harkentest::ObjectId(kSegment);
+                segmentProperty.authoredStableOrder = segmentPropertyIndex;
+                segmentProperty.contentRevision = 1;
+                segmentProperty.routeStableId = VN_BUS_MASTER;
+                segmentProperty.compatibilityFingerprint = 5;
+                segmentProperty.payload = DelayedPlayPayload();
+                segmentProperty.programSemanticFingerprint =
+                    ComputePlayablePropertyFingerprintV1(segmentProperty);
             }
         }
 
@@ -18643,12 +18643,12 @@ struct ContainerMatrixWorld {
                 : PlayableRefV1{};
         const PlayableRefV1 trackPlayable =
             childKind == ContainerMatrixChild::Track ||
-                    childKind == ContainerMatrixChild::Piece
+                    childKind == ContainerMatrixChild::Segment
                 ? PlayableRefFromProperty(properties[childPropertyIndex])
                 : PlayableRefV1{};
-        const PlayableRefV1 piecePlayable =
-            childKind == ContainerMatrixChild::Piece
-                ? PlayableRefFromProperty(properties[piecePropertyIndex])
+        const PlayableRefV1 segmentPlayable =
+            childKind == ContainerMatrixChild::Segment
+                ? PlayableRefFromProperty(properties[segmentPropertyIndex])
                 : PlayableRefV1{};
         placements[0].stablePlacementOrdinal = 0;
         placements[0].stableOccurrenceOrdinal = 11;
@@ -18663,22 +18663,22 @@ struct ContainerMatrixWorld {
             placements[1].clipGuidHigh = 2;
         }
         if (childKind == ContainerMatrixChild::Track ||
-            childKind == ContainerMatrixChild::Piece) {
+            childKind == ContainerMatrixChild::Segment) {
             track.rootDefinition = trackPlayable;
             track.placementCount = second.stableId == VnObjectId{} ? 1 : 2;
             track.placements = placements.data();
             track.scheduleSemanticFingerprint =
                 ComputeTrackScheduleFingerprintV1(track);
         }
-        if (childKind == ContainerMatrixChild::Piece) {
+        if (childKind == ContainerMatrixChild::Segment) {
             trackRef.trackDefinition = trackPlayable;
             trackRef.trackScheduleSemanticFingerprint =
                 track.scheduleSemanticFingerprint;
-            piece.rootDefinition = piecePlayable;
-            piece.trackRefCount = 1;
-            piece.trackRefs = &trackRef;
-            piece.scheduleSemanticFingerprint =
-                ComputePieceScheduleFingerprintV1(piece);
+            segment.rootDefinition = segmentPlayable;
+            segment.trackRefCount = 1;
+            segment.trackRefs = &trackRef;
+            segment.scheduleSemanticFingerprint =
+                ComputeSegmentScheduleFingerprintV1(segment);
         }
 
         children[0].stableChildOrdinal = 7;
@@ -18689,7 +18689,7 @@ struct ContainerMatrixWorld {
             ? first
             : childKind == ContainerMatrixChild::Track
                     ? trackPlayable
-                    : piecePlayable;
+                    : segmentPlayable;
         children[0].playable = nestedContainer ? nested : selectedChild;
         const bool randomQueue = mode == ContainerModeV1::RandomQueue;
         const bool sequenceQueue = mode == ContainerModeV1::SequenceQueue;
@@ -18700,14 +18700,14 @@ struct ContainerMatrixWorld {
             ? QueueStopPolicyV1::AdvanceQueue
             : QueueStopPolicyV1::AbortOwningQueue;
         if (queue && (childKind == ContainerMatrixChild::Track ||
-                      childKind == ContainerMatrixChild::Piece)) {
+                      childKind == ContainerMatrixChild::Segment)) {
             children[0].timingHint = MakeScheduleReferenceTimingHint(
                 childKind == ContainerMatrixChild::Track ? PlayableKindV1::Track
-                                                  : PlayableKindV1::Piece,
-                childKind == ContainerMatrixChild::Track ? kTrack : kPiece,
+                                                  : PlayableKindV1::Segment,
+                childKind == ContainerMatrixChild::Track ? kTrack : kSegment,
                 childKind == ContainerMatrixChild::Track
                     ? track.scheduleSemanticFingerprint
-                    : piece.scheduleSemanticFingerprint);
+                    : segment.scheduleSemanticFingerprint);
         } else if (queue && childKind == ContainerMatrixChild::Sound) {
             completionLeaves[0].stableLeafOrdinal = 1;
             completionLeaves[0].content = first;
@@ -18794,7 +18794,7 @@ struct ContainerMatrixWorld {
                 selectedChild);
         }
         if (childKind == ContainerMatrixChild::Track ||
-            childKind == ContainerMatrixChild::Piece) {
+            childKind == ContainerMatrixChild::Segment) {
             addOccurrence(occurrenceCount++,
                           playableproperties::ContentPropertyKindV1::Track,
                           kTrack,
@@ -18860,18 +18860,18 @@ struct ContainerMatrixWorld {
         world.containerCount =
             nestedContainer ? containers.size() : 1;
         if (childKind == ContainerMatrixChild::Track ||
-            childKind == ContainerMatrixChild::Piece) {
+            childKind == ContainerMatrixChild::Segment) {
             world.trackSchedules = &track;
             world.trackScheduleCount = 1;
         }
-        if (childKind == ContainerMatrixChild::Piece) {
-            world.pieceSchedules = &piece;
-            world.pieceScheduleCount = 1;
+        if (childKind == ContainerMatrixChild::Segment) {
+            world.segmentSchedules = &segment;
+            world.segmentScheduleCount = 1;
         }
         world.actions = &action;
         world.actionCount = 1;
         world.capacity.maxKnownScheduleLeaves = 16;
-        world.capacity.maxTrackPieceScheduleDepth = 8;
+        world.capacity.maxTrackSegmentScheduleDepth = 8;
         world.identity.runtimeSemanticFingerprint =
             ComputeCurrentWorldFingerprintV4(world);
     }
@@ -19205,7 +19205,7 @@ TEST(PackComposition, QueueRoleCounterExecutesActualFrozenPackAndWorldAdapters) 
 TEST(PackComposition, QueueRoleCounterUsesResetAuthorityScheduleDepth) {
     using namespace harken::native_backing;
     ContainerMatrixWorld image(ContainerModeV1::SequenceQueue,
-        ContainerMatrixChild::Piece, 1, 1);
+        ContainerMatrixChild::Segment, 1, 1);
     harken::PackComposition composition(1);
     const auto bytes = BuildCanonicalPartitionPack(22, 1, 7,
         WrapWorldPartition(22, 7, image.world, 0));
@@ -19230,7 +19230,7 @@ TEST(PackComposition, QueueRoleCounterUsesResetAuthorityScheduleDepth) {
     EXPECT_EQ(4u, pack.profile.queue.events);
     EXPECT_EQ(kPathCapacity, packContent.QueueResetScheduleDepth());
     for (const auto depth : {1u, 2u}) {
-        worldView.maxTrackPieceScheduleDepth = depth;
+        worldView.maxTrackSegmentScheduleDepth = depth;
         const auto world = count(WorldContent(worldView));
         ExpectQueueRoleCounter(world, 1, 0, 0, UnprunedSchedule | OmittedDepthBranch);
         EXPECT_EQ(depth == 1u ? 0u : 2u, world.profile.queue.programs);
@@ -20474,7 +20474,7 @@ void ExpectShortVariableControlTargetPromotion(ContainerMatrixEntry entry, bool 
     image.world.playableOccurrenceCount = children.size() + (staggered ? 2u : 0u);
     auto& silentProperty = image.properties[image.propertyCount++];
     silentProperty.contentPropertyKind = playableproperties::ContentPropertyKindV1::Track;
-    silentProperty.stableId = harkentest::ObjectId(ContainerMatrixWorld::kPiece);
+    silentProperty.stableId = harkentest::ObjectId(ContainerMatrixWorld::kSegment);
     silentProperty.authoredStableOrder = 4;
     silentProperty.contentRevision = 1;
     silentProperty.routeStableId = VN_BUS_MASTER;
@@ -22400,7 +22400,7 @@ void ExpectMultiLeafContainerLoopCompletesAndReclaims(
     bool stopBeforeOnset = false, bool authoredStop = false,
     bool authoredStopPressure = false) {
     const bool multiLeaf = childKind == ContainerMatrixChild::Track ||
-        childKind == ContainerMatrixChild::Piece;
+        childKind == ContainerMatrixChild::Segment;
     const std::uint32_t leafCount = multiLeaf ? 2u : 1u;
     (void)Vn_Term();
     constexpr std::uint64_t kPackStableId = 22;
@@ -22560,12 +22560,12 @@ void ExpectMultiLeafContainerLoopCompletesAndReclaims(
         frozen.occurrenceCount = image.world.playableOccurrenceCount;
         frozen.trackSchedules = image.world.trackSchedules;
         frozen.trackScheduleCount = image.world.trackScheduleCount;
-        frozen.pieceSchedules = image.world.pieceSchedules;
-        frozen.pieceScheduleCount = image.world.pieceScheduleCount;
+        frozen.segmentSchedules = image.world.segmentSchedules;
+        frozen.segmentScheduleCount = image.world.segmentScheduleCount;
         frozen.maxKnownScheduleLeaves =
             image.world.capacity.maxKnownScheduleLeaves;
-        frozen.maxTrackPieceScheduleDepth =
-            image.world.capacity.maxTrackPieceScheduleDepth;
+        frozen.maxTrackSegmentScheduleDepth =
+            image.world.capacity.maxTrackSegmentScheduleDepth;
         frozen.containers = image.world.containers;
         frozen.containerCount = image.world.containerCount;
         PlayableStartRequest request{};
@@ -23116,7 +23116,7 @@ void ExpectMultiLeafContainerLoopCompletesAndReclaims(
                 childKind == ContainerMatrixChild::Sound || alternateSound ? PlayableKind::Sound
                 : childKind == ContainerMatrixChild::Track
                     ? PlayableKind::Track
-                    : PlayableKind::Piece;
+                    : PlayableKind::Segment;
             const auto compositeView = engine->playableInstances.Classify(
                 secondPlayback.activeChild);
             ASSERT_TRUE(compositeView.live);
@@ -23283,27 +23283,27 @@ void ExpectMultiLeafContainerLoopCompletesAndReclaims(
 }
 
 TEST(PackComposition,
-     DirectContainerLoopCountTwoCompletesMultiLeafTrackAndPiece) {
+     DirectContainerLoopCountTwoCompletesMultiLeafTrackAndSegment) {
     ExpectMultiLeafContainerLoopCompletesAndReclaims(
         ContainerMatrixEntry::Direct, ContainerMatrixChild::Track, 100);
     ExpectMultiLeafContainerLoopCompletesAndReclaims(
-        ContainerMatrixEntry::Direct, ContainerMatrixChild::Piece, 101);
+        ContainerMatrixEntry::Direct, ContainerMatrixChild::Segment, 101);
 }
 
 TEST(PackComposition,
-     CurrentWorldActionContainerLoopCountTwoCompletesMultiLeafTrackAndPiece) {
+     CurrentWorldActionContainerLoopCountTwoCompletesMultiLeafTrackAndSegment) {
     ExpectMultiLeafContainerLoopCompletesAndReclaims(
         ContainerMatrixEntry::CurrentWorldAction, ContainerMatrixChild::Track, 102);
     ExpectMultiLeafContainerLoopCompletesAndReclaims(
-        ContainerMatrixEntry::CurrentWorldAction, ContainerMatrixChild::Piece, 103);
+        ContainerMatrixEntry::CurrentWorldAction, ContainerMatrixChild::Segment, 103);
 }
 
 TEST(PackComposition,
-     PackActionContainerLoopCountTwoCompletesMultiLeafTrackAndPiece) {
+     PackActionContainerLoopCountTwoCompletesMultiLeafTrackAndSegment) {
     ExpectMultiLeafContainerLoopCompletesAndReclaims(
         ContainerMatrixEntry::PackAction, ContainerMatrixChild::Track, 104);
     ExpectMultiLeafContainerLoopCompletesAndReclaims(
-        ContainerMatrixEntry::PackAction, ContainerMatrixChild::Piece, 105);
+        ContainerMatrixEntry::PackAction, ContainerMatrixChild::Segment, 105);
 }
 
 TEST(PackComposition, NestedOrdinaryLoopsCompleteAcrossEntriesAndScopes) {
@@ -23313,7 +23313,7 @@ TEST(PackComposition, NestedOrdinaryLoopsCompleteAcrossEntriesAndScopes) {
                                 ContainerMatrixEntry::CurrentWorldAction,
                                 ContainerMatrixEntry::PackAction}) {
             for (const auto child : {ContainerMatrixChild::Sound, ContainerMatrixChild::Track,
-                                    ContainerMatrixChild::Piece}) {
+                                    ContainerMatrixChild::Segment}) {
                 for (const auto scope : {MemoryScopeV1::Global, MemoryScopeV1::Emitter}) {
                     SCOPED_TRACE(index);
                     ExpectMultiLeafContainerLoopCompletesAndReclaims(
@@ -23362,7 +23362,7 @@ TEST(PackComposition, CompositeAndSoundLoopSuccessorsCompleteAcrossEntries) {
     std::uint32_t index = 420;
     for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction,
                             ContainerMatrixEntry::PackAction}) {
-        for (const auto child : {ContainerMatrixChild::Track, ContainerMatrixChild::Piece}) {
+        for (const auto child : {ContainerMatrixChild::Track, ContainerMatrixChild::Segment}) {
             SCOPED_TRACE(index);
             ExpectMultiLeafContainerLoopCompletesAndReclaims(
                 entry, child, index++, ContainerModeV1::Sequence,
@@ -23573,7 +23573,7 @@ void RunContainerMatrixEntry(ContainerModeV1 mode, ContainerMatrixChild childKin
     ASSERT_NO_FATAL_FAILURE(start(&produced, &firing));
     ASSERT_NE(0u, produced);
     FrontierTrace actual;
-    const auto expected = childKind == ContainerMatrixChild::Track || childKind == ContainerMatrixChild::Piece ? 2u : 1u;
+    const auto expected = childKind == ContainerMatrixChild::Track || childKind == ContainerMatrixChild::Segment ? 2u : 1u;
     bool stopped = false;
     for (std::uint32_t block = 0; block < 128; ++block) {
         ASSERT_EQ(VN_OK, Vn_Update());
@@ -23659,7 +23659,7 @@ void RunContainerMatrixEntry(ContainerModeV1 mode, ContainerMatrixChild childKin
         out->selected[out->selectedCount++] =
             image.children[2].stableChildOrdinal;
     } else if (childKind == ContainerMatrixChild::Track ||
-               childKind == ContainerMatrixChild::Piece) {
+               childKind == ContainerMatrixChild::Segment) {
         out->selected[out->selectedCount++] =
             image.placements[0].stableOccurrenceOrdinal;
     }
@@ -23802,7 +23802,7 @@ TEST(NestedFrontierRefusal, DirectMissingSuccessorRollsBackAndRetries) {
 class ChildFrontierMatrix : public ::testing::TestWithParam<std::uint32_t> {};
 TEST_P(ChildFrontierMatrix, CompletePlayback) {
     constexpr std::array<ContainerMatrixChild, 4> children{
-        ContainerMatrixChild::Sound, ContainerMatrixChild::Container, ContainerMatrixChild::Track, ContainerMatrixChild::Piece};
+        ContainerMatrixChild::Sound, ContainerMatrixChild::Container, ContainerMatrixChild::Track, ContainerMatrixChild::Segment};
     const auto cell = GetParam();
     const auto mode = kMatrixModes[cell / 4u];
     const auto child = children[cell % 4u];
@@ -23841,7 +23841,7 @@ TEST_P(ChildFrontierMatrix, CompletePlayback) {
 INSTANTIATE_TEST_SUITE_P(AllContainerChildEntries, ChildFrontierMatrix, ::testing::Range(0u, 20u));
 
 TEST(PackComposition,
-     NestedContainerPieceTrackRendersAuthoredOverlapAndRetiresAcrossActions) {
+     NestedContainerSegmentTrackRendersAuthoredOverlapAndRetiresAcrossActions) {
     constexpr std::uint32_t kBlockFrames = 64;
     constexpr std::uint64_t kActionDelayFrames = 480;
     constexpr std::array<std::uint64_t, 2> kStartOffsets{48, 144};
@@ -23861,9 +23861,9 @@ TEST(PackComposition,
         ASSERT_TRUE(ComputeMediaPcmContentRevisionV1(
             48000, 1, secondSamples.size(), secondChannels, 1, &secondRevision));
 
-        // Sequence -> Random -> Piece -> Track -> two overlapping Sounds.
+        // Sequence -> Random -> Segment -> Track -> two overlapping Sounds.
         ContainerMatrixWorld image(ContainerModeV1::Sequence,
-            ContainerMatrixChild::Piece, firstRevision, secondRevision,
+            ContainerMatrixChild::Segment, firstRevision, secondRevision,
             true, 1, 1);
         image.placements[0].authoredStart = INT64_C(1000000);
         image.placements[0].authoredDuration = INT64_C(4000000);
@@ -23873,8 +23873,8 @@ TEST(PackComposition,
             ComputeTrackScheduleFingerprintV1(image.track);
         image.trackRef.trackScheduleSemanticFingerprint =
             image.track.scheduleSemanticFingerprint;
-        image.piece.scheduleSemanticFingerprint =
-            ComputePieceScheduleFingerprintV1(image.piece);
+        image.segment.scheduleSemanticFingerprint =
+            ComputeSegmentScheduleFingerprintV1(image.segment);
         // A fixed authored delay avoids deriving an oracle from leaf arm times.
         SetAbsoluteTime(&image.step.delay, INT64_C(10000000));
         image.action.directFeatureMask = 1u;
@@ -24045,7 +24045,7 @@ TEST(PackComposition,
     }
 }
 
-TEST(PackComposition, QueuePieceOverlappingSameSoundWaitsForLastClipAcrossActions) {
+TEST(PackComposition, QueueSegmentOverlappingSameSoundWaitsForLastClipAcrossActions) {
     constexpr std::uint32_t kBlockFrames = 64;
     constexpr std::uint64_t kActionDelayFrames = 480;
     constexpr std::array<std::uint64_t, 3> kStarts{0, 48, 144};
@@ -24064,9 +24064,9 @@ TEST(PackComposition, QueuePieceOverlappingSameSoundWaitsForLastClipAcrossAction
         ASSERT_TRUE(ComputeMediaPcmContentRevisionV1(
             48000, 1, secondSamples.size(), secondChannels, 1, &secondRevision));
 
-        // Queue -> Piece -> Track -> overlapping occurrences of one Sound.
+        // Queue -> Segment -> Track -> overlapping occurrences of one Sound.
         ContainerMatrixWorld image(ContainerModeV1::SequenceQueue,
-            ContainerMatrixChild::Piece, firstRevision, secondRevision, true);
+            ContainerMatrixChild::Segment, firstRevision, secondRevision, true);
         image.placements[0].authoredStart = 0;
         image.placements[0].authoredDuration = INT64_C(2000000);
         image.placements[1].authoredStart = INT64_C(1000000);
@@ -24083,10 +24083,10 @@ TEST(PackComposition, QueuePieceOverlappingSameSoundWaitsForLastClipAcrossAction
         }
         image.track.scheduleSemanticFingerprint = ComputeTrackScheduleFingerprintV1(image.track);
         image.trackRef.trackScheduleSemanticFingerprint = image.track.scheduleSemanticFingerprint;
-        image.piece.scheduleSemanticFingerprint = ComputePieceScheduleFingerprintV1(image.piece);
+        image.segment.scheduleSemanticFingerprint = ComputeSegmentScheduleFingerprintV1(image.segment);
         image.children[0].timingHint = MakeScheduleReferenceTimingHint(
-            PlayableKindV1::Piece, ContainerMatrixWorld::kPiece,
-            image.piece.scheduleSemanticFingerprint);
+            PlayableKindV1::Segment, ContainerMatrixWorld::kSegment,
+            image.segment.scheduleSemanticFingerprint);
 
         // The next queue child must start after both clipped occurrences finish.
         auto& sentinel = image.children[1];
@@ -24135,11 +24135,11 @@ TEST(PackComposition, QueuePieceOverlappingSameSoundWaitsForLastClipAcrossAction
             builder.AddMedia(ContainerMatrixWorld::kFirstSound, firstSamples);
             builder.AddMedia(ContainerMatrixWorld::kSecondSound, secondSamples);
             const auto bytes = builder.Build();
-            const std::string locator = "queue-piece-overlap-content.pack";
+            const std::string locator = "queue-segment-overlap-content.pack";
             const auto init = BuildSingleIdentityInit(
                 Fnv1a64(bytes.data(), bytes.size()), ContainerMatrixWorld::kAction,
                 locator.c_str(), ContainerMatrixWorld::kRoot);
-            const auto initPath = WriteTemp("queue-piece-overlap-init.pack", init);
+            const auto initPath = WriteTemp("queue-segment-overlap-init.pack", init);
             const auto packPath = WriteTemp(locator, bytes);
             VnCanonicalPackSetMemberV1 members[2]{};
             VnCanonicalPackSetMemberResultV1 rows[2]{};
@@ -24315,7 +24315,7 @@ struct FiniteContainerClipWorld {
                    : testCase == FiniteContainerClipCase::QueueLoop
                        ? ContainerModeV1::SequenceQueue
                        : ContainerModeV1::VariableControl,
-               ContainerMatrixChild::Piece, firstRevision, secondRevision, true) {
+               ContainerMatrixChild::Segment, firstRevision, secondRevision, true) {
         const bool variable = testCase == FiniteContainerClipCase::ActiveRetarget ||
             testCase == FiniteContainerClipCase::SilentRetarget ||
             testCase == FiniteContainerClipCase::DelayedAtStart;
@@ -24387,7 +24387,7 @@ struct FiniteContainerClipWorld {
         base.track.placementCount = static_cast<std::uint32_t>(placements.size());
         base.track.scheduleSemanticFingerprint = ComputeTrackScheduleFingerprintV1(base.track);
         base.trackRef.trackScheduleSemanticFingerprint = base.track.scheduleSemanticFingerprint;
-        base.piece.scheduleSemanticFingerprint = ComputePieceScheduleFingerprintV1(base.piece);
+        base.segment.scheduleSemanticFingerprint = ComputeSegmentScheduleFingerprintV1(base.segment);
         base.occurrenceCount = 0;
         const auto addOccurrence = [&](const PlayableRefV1& parent,
                                        std::uint32_t ordinal,
@@ -24411,10 +24411,10 @@ struct FiniteContainerClipWorld {
             addOccurrence(base.track.rootDefinition, placement.stableOccurrenceOrdinal,
                           placement.content);
         base.world.playableOccurrenceCount = base.occurrenceCount;
-        base.step.target.kind = ActionTargetKindV1::Piece;
-        base.step.target.stableId = base.piece.rootDefinition.stableId;
+        base.step.target.kind = ActionTargetKindV1::Segment;
+        base.step.target.stableId = base.segment.rootDefinition.stableId;
         base.step.target.expectedProgramSemanticFingerprint =
-            base.piece.rootDefinition.expectedProgramSemanticFingerprint;
+            base.segment.rootDefinition.expectedProgramSemanticFingerprint;
         SetAbsoluteTime(&base.step.delay, 10000000);
         base.action.directFeatureMask = base.action.transitiveFeatureMask = 1;
         base.action.programSemanticFingerprint = ComputeActionProgramFingerprintV1(base.action);
@@ -24794,9 +24794,9 @@ void ExpectVariableControlNestedScheduleLifecycle(ContainerMatrixEntry entry,
     image.placements[0].content = nested;
     image.placements[0].authoredDuration = natural ? INT64_C(20000000) : INT64_C(1000000000);
     image.track.scheduleSemanticFingerprint = ComputeTrackScheduleFingerprintV1(image.track);
-    if (kind == ContainerMatrixChild::Piece) {
+    if (kind == ContainerMatrixChild::Segment) {
         image.trackRef.trackScheduleSemanticFingerprint = image.track.scheduleSemanticFingerprint;
-        image.piece.scheduleSemanticFingerprint = ComputePieceScheduleFingerprintV1(image.piece);
+        image.segment.scheduleSemanticFingerprint = ComputeSegmentScheduleFingerprintV1(image.segment);
     }
     for (auto& occurrence : std::span(image.occurrences.data(), image.occurrenceCount)) {
         if (occurrence.parentStableId == ContainerMatrixWorld::kRoot)
@@ -25055,37 +25055,37 @@ void ExpectVariableControlNestedScheduleLifecycle(ContainerMatrixEntry entry,
 
 TEST(PackComposition, VariableControlNestedScheduleBranchProducesPcmAndStopsAcrossEntries) {
     for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
-        for (const auto kind : {ContainerMatrixChild::Track, ContainerMatrixChild::Piece})
+        for (const auto kind : {ContainerMatrixChild::Track, ContainerMatrixChild::Segment})
             ExpectVariableControlNestedScheduleLifecycle(entry, kind, NestedVariableScheduleScenario::Stop);
 }
 
 TEST(PackComposition, VariableControlNestedScheduleNaturallyCompletesAcrossEntries) {
     for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
-        for (const auto kind : {ContainerMatrixChild::Track, ContainerMatrixChild::Piece})
+        for (const auto kind : {ContainerMatrixChild::Track, ContainerMatrixChild::Segment})
             ExpectVariableControlNestedScheduleLifecycle(entry, kind, NestedVariableScheduleScenario::Natural);
 }
 
 TEST(PackComposition, VariableControlNestedScheduleRetargetsBetweenMatchesAcrossEntries) {
     for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
-        for (const auto kind : {ContainerMatrixChild::Track, ContainerMatrixChild::Piece})
+        for (const auto kind : {ContainerMatrixChild::Track, ContainerMatrixChild::Segment})
             ExpectVariableControlNestedScheduleLifecycle(entry, kind, NestedVariableScheduleScenario::Retarget);
 }
 
 TEST(PackComposition, VariableControlNativeRetargetPrivateRefusalKeepsOldPcmAndRetriesAcrossEntries) {
     for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
-        for (const auto kind : {ContainerMatrixChild::Track, ContainerMatrixChild::Piece})
+        for (const auto kind : {ContainerMatrixChild::Track, ContainerMatrixChild::Segment})
             ExpectVariableControlNestedScheduleLifecycle(entry, kind, NestedVariableScheduleScenario::RefusedRetarget);
 }
 
 TEST(PackComposition, VariableControlNativeRetargetImmediateTransitionKeepsAuthoredFadesAcrossEntries) {
     for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
-        for (const auto kind : {ContainerMatrixChild::Track, ContainerMatrixChild::Piece})
+        for (const auto kind : {ContainerMatrixChild::Track, ContainerMatrixChild::Segment})
             ExpectVariableControlNestedScheduleLifecycle(entry, kind, NestedVariableScheduleScenario::ImmediateTransition);
 }
 
 TEST(PackComposition, VariableControlNativeRetargetNaturalEndKeepsAuthoredBoundaryAndFadesAcrossEntries) {
     for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
-        for (const auto kind : {ContainerMatrixChild::Track, ContainerMatrixChild::Piece})
+        for (const auto kind : {ContainerMatrixChild::Track, ContainerMatrixChild::Segment})
             ExpectVariableControlNestedScheduleLifecycle(entry, kind, NestedVariableScheduleScenario::NaturalEndTransition);
 }
 
@@ -25313,8 +25313,8 @@ static void CheckQueueReentersContainerClips(ContainerMatrixEntry entry,
         revision, revision, false, 1, 1);
     const auto sound = image.placements[0].content;
     const auto nested = image.children[0].playable;
-    const auto aggregate = childKind == ContainerMatrixChild::Piece
-        ? image.piece.rootDefinition : image.track.rootDefinition;
+    const auto aggregate = childKind == ContainerMatrixChild::Segment
+        ? image.segment.rootDefinition : image.track.rootDefinition;
     constexpr auto kStaticFadeTrack = harkentest::ObjectId(72009);
     std::array<ScheduleClipPlacementV1, 2> staticFadePlacements{};
     std::array<TrackScheduleProgramViewV1, 2> staticFadeTracks{};
@@ -25377,12 +25377,12 @@ static void CheckQueueReentersContainerClips(ContainerMatrixEntry entry,
     }
     image.track.scheduleSemanticFingerprint = ComputeTrackScheduleFingerprintV1(image.track);
     image.trackRef.trackScheduleSemanticFingerprint = image.track.scheduleSemanticFingerprint;
-    if (childKind == ContainerMatrixChild::Piece)
-        image.piece.scheduleSemanticFingerprint = ComputePieceScheduleFingerprintV1(image.piece);
+    if (childKind == ContainerMatrixChild::Segment)
+        image.segment.scheduleSemanticFingerprint = ComputeSegmentScheduleFingerprintV1(image.segment);
     image.children[0].playable = aggregate;
     image.children[0].timingHint = MakeScheduleReferenceTimingHint(
-        aggregate.kind, aggregate.stableId, childKind == ContainerMatrixChild::Piece
-            ? image.piece.scheduleSemanticFingerprint : image.track.scheduleSemanticFingerprint);
+        aggregate.kind, aggregate.stableId, childKind == ContainerMatrixChild::Segment
+            ? image.segment.scheduleSemanticFingerprint : image.track.scheduleSemanticFingerprint);
     image.children[1] = image.children[0];
     image.children[1].stableChildOrdinal = 8;
     image.children[1].authoredStableOrder = 2;
@@ -26223,28 +26223,28 @@ TEST(PackComposition, QueueSubFrameContainerSuccessorNaturallyCompletes) {
             QueueMixedSuccessorBoundary::ZeroWork);
 }
 
-TEST(PackComposition, QueueReentersTrackAndPieceWithContainerClipsAcrossEntries) {
+TEST(PackComposition, QueueReentersTrackAndSegmentWithContainerClipsAcrossEntries) {
     for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
-        for (const auto kind : {ContainerMatrixChild::Track, ContainerMatrixChild::Piece})
+        for (const auto kind : {ContainerMatrixChild::Track, ContainerMatrixChild::Segment})
             CheckQueueReentersContainerClips(entry, kind);
 }
 
 TEST(PackComposition, QueueContainerClipSuccessorPrivateFailureReclaimsWithoutAdvancing) {
     for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
-        for (const auto kind : {ContainerMatrixChild::Track, ContainerMatrixChild::Piece})
+        for (const auto kind : {ContainerMatrixChild::Track, ContainerMatrixChild::Segment})
             CheckQueueReentersContainerClips(entry, kind, true);
 }
 
-TEST(PackComposition, QueueReentersTrackAndPieceWithTwoDelayedContainerClips) {
+TEST(PackComposition, QueueReentersTrackAndSegmentWithTwoDelayedContainerClips) {
     for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
-        for (const auto kind : {ContainerMatrixChild::Track, ContainerMatrixChild::Piece})
+        for (const auto kind : {ContainerMatrixChild::Track, ContainerMatrixChild::Segment})
             CheckQueueReentersContainerClips(entry, kind, false, true);
 }
 
 
-TEST(PackComposition, QueueAdvancesFromSoundToTrackAndPieceContainerClips) {
+TEST(PackComposition, QueueAdvancesFromSoundToTrackAndSegmentContainerClips) {
     for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
-        for (const auto kind : {ContainerMatrixChild::Track, ContainerMatrixChild::Piece})
+        for (const auto kind : {ContainerMatrixChild::Track, ContainerMatrixChild::Segment})
             CheckQueueReentersContainerClips(entry, kind, false, false, true);
 }
 

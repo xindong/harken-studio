@@ -229,7 +229,7 @@ void TimelineMarkerRuler::mouseDoubleClickEvent(QMouseEvent* event)
 
 void TimelineMarkerRuler::populateCreationMenu(QMenu* menu, int64_t position)
 {
-    const PieceTimeSpec spec = panel_->effectiveTimeSpec(0);
+    const SegmentTimeSpec spec = panel_->effectiveTimeSpec(0);
     const CoordinateResult snapped = TimelineCoordinates::snap(position, spec);
     const int64_t placed = snapped ? snapped.value : position;
     const bool hasEntry = panel_->hasMarkerKind(MarkerKind::Entry);

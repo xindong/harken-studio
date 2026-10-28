@@ -7,6 +7,34 @@
   },
   "releases": [
     {
+      "version": "0.2.1",
+      "date": "2026-10-28",
+      "pullRequests": [152, 157],
+      "contributors": ["liuxin2-sys"],
+      "changes": [
+        {
+          "category": "improved",
+          "text": "Choose whether to launch Harken Hub when the Windows installer closes, with the option checked by default."
+        },
+        {
+          "category": "improved",
+          "text": "Automatically compare GitHub and OSS download speeds before new Hub updates or Studio downloads, and prefer the faster source."
+        },
+        {
+          "category": "improved",
+          "text": "Resume interrupted downloads from the original source, including after restarting Hub. If that source remains unavailable, switch sources and restart the download with a visible notice."
+        },
+        {
+          "category": "improved",
+          "text": "Keep dialogs within the current screen's available area, including when moving between displays."
+        },
+        {
+          "category": "improved",
+          "text": "Scroll long messages, paths, file lists and integration forms inside dialogs while keeping action buttons visible. Messages, status details and summaries can be selected and copied."
+        }
+      ]
+    },
+    {
       "version": "0.2.0",
       "date": "2026-10-27",
       "pullRequests": [149],

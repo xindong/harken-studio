@@ -192,15 +192,15 @@ public:
                 return playableproperties::ContentPropertyKindV1::Container;
             case PlayableKindV1::Track:
                 return playableproperties::ContentPropertyKindV1::Track;
-            case PlayableKindV1::Piece:
-                return playableproperties::ContentPropertyKindV1::Piece;
+            case PlayableKindV1::Segment:
+                return playableproperties::ContentPropertyKindV1::Segment;
             }
             return playableproperties::ContentPropertyKindV1::Layer;
         };
         if (request.root.kind != PlayableKindV1::Sound &&
             request.root.kind != PlayableKindV1::Container &&
             request.root.kind != PlayableKindV1::Track &&
-            request.root.kind != PlayableKindV1::Piece) {
+            request.root.kind != PlayableKindV1::Segment) {
             result.status = PlayableExecutionResolveStatus::UnsupportedPlayable;
             return result;
         }
@@ -280,15 +280,15 @@ public:
             }
         } else {
             if (world_ != nullptr) {
-                for (std::uint32_t i = 0; i < world_->pieceScheduleCount; ++i) {
-                    const auto& row = world_->pieceSchedules[i];
+                for (std::uint32_t i = 0; i < world_->segmentScheduleCount; ++i) {
+                    const auto& row = world_->segmentSchedules[i];
                     if (row.rootDefinition.stableId == request.root.stableId) {
                         canonical = &row.rootDefinition;
                         break;
                     }
                 }
             } else if (const auto row =
-                           pack_->ResolvePiece(request.root.stableId, 0)) {
+                           pack_->ResolveSegment(request.root.stableId, 0)) {
                 canonical = &row->rootDefinition;
             }
         }

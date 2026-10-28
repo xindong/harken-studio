@@ -99,8 +99,8 @@ std::uint32_t PeakOverlap(
 }
 
 struct ScopeAccum {
-    bool isPiece = false;
-    PieceTimeKind timeKind = PieceTimeKind::Absolute;
+    bool isSegment = false;
+    SegmentTimeKind timeKind = SegmentTimeKind::Absolute;
     std::int64_t microsPerQuarter = 0;
     std::vector<std::pair<std::int64_t, std::int64_t>> intervals;
     std::uint32_t unknown = 0;
@@ -108,41 +108,41 @@ struct ScopeAccum {
 
 }  // namespace
 
-std::optional<CapacityEstimate> EstimateCapacity(const PieceIR& ir) {
-    // Which Piece, if any, owns each Track. A Track in a Piece shares that
-    // Piece's clock and origin; any other Track is its own scope in absolute ns.
-    std::map<StableId, const IrPiece*> ownerOf;
-    for (const IrPiece& piece : ir.pieces()) {
-        for (const StableId trackId : piece.tracks) {
-            ownerOf.emplace(trackId, &piece);
+std::optional<CapacityEstimate> EstimateCapacity(const SegmentIR& ir) {
+    // Which Segment, if any, owns each Track. A Track in a Segment shares that
+    // Segment's clock and origin; any other Track is its own scope in absolute ns.
+    std::map<StableId, const IrSegment*> ownerOf;
+    for (const IrSegment& segment : ir.segments()) {
+        for (const StableId trackId : segment.tracks) {
+            ownerOf.emplace(trackId, &segment);
         }
     }
 
     std::map<StableId, ScopeAccum> scopes;
     for (const IrTrack& track : ir.tracks()) {
         const auto ownerIt = ownerOf.find(track.trackId);
-        const bool inPiece = ownerIt != ownerOf.end();
+        const bool inSegment = ownerIt != ownerOf.end();
         const StableId scopeId =
-            inPiece ? ownerIt->second->pieceId : track.trackId;
+            inSegment ? ownerIt->second->segmentId : track.trackId;
         ScopeAccum& scope = scopes[scopeId];
-        scope.isPiece = inPiece;
-        if (inPiece) {
-            const IrPiece& piece = *ownerIt->second;
-            scope.timeKind = piece.timeSpec.kind;
-            if (piece.timeSpec.kind == PieceTimeKind::Musical) {
-                if (piece.timeSpec.tempoMap.size() != 1) {
+        scope.isSegment = inSegment;
+        if (inSegment) {
+            const IrSegment& segment = *ownerIt->second;
+            scope.timeKind = segment.timeSpec.kind;
+            if (segment.timeSpec.kind == SegmentTimeKind::Musical) {
+                if (segment.timeSpec.tempoMap.size() != 1) {
                     return std::nullopt;  // not the constant-map shape
                 }
                 scope.microsPerQuarter =
-                    piece.timeSpec.tempoMap.front().microsPerQuarter;
+                    segment.timeSpec.tempoMap.front().microsPerQuarter;
             }
         } else {
-            scope.timeKind = PieceTimeKind::Absolute;
+            scope.timeKind = SegmentTimeKind::Absolute;
         }
 
         for (const IrOccurrence& occ : track.occurrences) {
             std::int64_t startNs = occ.time;  // absolute ns by default
-            if (scope.timeKind == PieceTimeKind::Musical) {
+            if (scope.timeKind == SegmentTimeKind::Musical) {
                 const std::optional<std::int64_t> converted =
                     TickToNanosFloor(occ.time, scope.microsPerQuarter);
                 if (!converted.has_value()) {
@@ -169,7 +169,7 @@ std::optional<CapacityEstimate> EstimateCapacity(const PieceIR& ir) {
             continue;  // a scope with no occurrences contributes nothing
         }
         ScopeCapacity cap;
-        cap.isPiece = scope.isPiece;
+        cap.isSegment = scope.isSegment;
         cap.scopeId = scopeId;
         cap.peakActiveOccurrences = PeakOverlap(scope.intervals);
         cap.unknownDurationOccurrences = scope.unknown;

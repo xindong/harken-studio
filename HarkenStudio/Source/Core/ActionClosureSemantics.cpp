@@ -38,7 +38,7 @@ bool isContentType(ProjectItem::Type type)
     return type == ProjectItem::Type::Sound
         || type == ProjectItem::Type::Container
         || type == ProjectItem::Type::Track
-        || type == ProjectItem::Type::Piece;
+        || type == ProjectItem::Type::Segment;
 }
 
 struct Index
@@ -450,7 +450,7 @@ struct Builder
         case ProjectItem::Type::Track:
             visitTrack(item, path, control);
             break;
-        case ProjectItem::Type::Piece:
+        case ProjectItem::Type::Segment:
             for (const auto& child : item.children) {
                 if (!child || child->type != ProjectItem::Type::Track)
                     continue;

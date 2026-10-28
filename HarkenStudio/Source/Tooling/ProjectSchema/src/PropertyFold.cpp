@@ -22,7 +22,7 @@ PropertyFoldContext::PropertyFoldContext(const CanonicalProject& project) {
         contribution.kind = obj.kind;
         objects_.emplace(c.id, contribution);
 
-        // Invert the downward ownership edges into child -> owner. A Piece lists
+        // Invert the downward ownership edges into child -> owner. A Segment lists
         // its Tracks separately from the ownedChildren the other kinds use, so
         // both are folded into the one parent map.
         switch (obj.kind) {
@@ -41,8 +41,8 @@ PropertyFoldContext::PropertyFoldContext(const CanonicalProject& project) {
                     parent_.emplace(child, c.id);
                 }
                 break;
-            case ContentKind::Piece:
-                for (const StableId child : obj.piece.tracks) {
+            case ContentKind::Segment:
+                for (const StableId child : obj.segment.tracks) {
                     parent_.emplace(child, c.id);
                 }
                 break;
@@ -63,7 +63,7 @@ FoldChainComponents PropertyFoldContext::ChainComponents(
     FoldChainComponents components;
     components.subject = subject;
 
-    // Placement chain: the Track that carries the clip, then the Piece that owns
+    // Placement chain: the Track that carries the clip, then the Segment that owns
     // that Track. It stops there; deeper nesting is occurrence expansion the IR
     // defers to the runtime arranging instance.
     if (trackId != kUnmintedStableId) {
@@ -71,7 +71,7 @@ FoldChainComponents PropertyFoldContext::ChainComponents(
         const auto ownerIt = parent_.find(trackId);
         if (ownerIt != parent_.end()) {
             const Contribution* owner = Find(ownerIt->second);
-            if (owner != nullptr && owner->kind == ContentKind::Piece) {
+            if (owner != nullptr && owner->kind == ContentKind::Segment) {
                 components.placementChain.push_back(ownerIt->second);
             }
         }
