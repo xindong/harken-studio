@@ -9,7 +9,6 @@
 #include <QWidget>
 #include <cstdint>
 #include <functional>
-#include <optional>
 #include <vector>
 
 class QLabel;
@@ -40,7 +39,6 @@ public:
     void setRequired(bool required);
     void setValidationError(const QString& error);
     void setSupplementalToolTip(const QString& text);
-    void setDisplayNameOverride(std::optional<QString> name);
     bool isReadOnly() const noexcept { return readOnly_; }
     QSize minimumSizeHint() const override;
     void setCompact(bool compact);
@@ -102,7 +100,6 @@ private:
     QString unresolvedReference_;
     QString validationError_;
     QString supplementalToolTip_;
-    std::optional<QString> displayNameOverride_;
     bool mixedValue_ = false;
     uint32_t objectID_ = 0;
     bool readOnly_ = false;

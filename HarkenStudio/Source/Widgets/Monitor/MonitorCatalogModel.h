@@ -3,6 +3,8 @@
 #include "Monitor/EventCaptureController.h"
 
 #include <QAbstractTableModel>
+#include <QHash>
+#include <QIcon>
 #include <QString>
 
 namespace VNX {
@@ -25,6 +27,7 @@ public:
 
 private:
     QPointer<Monitor::EventCaptureController> capture_;
+    mutable QHash<QString, QIcon> objectIcons_;
 };
 
 } // namespace VNX
