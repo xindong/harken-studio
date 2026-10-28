@@ -110,9 +110,14 @@ def verify(language, version='0.2.1', retained=None):
             assert tuple(map(int, target_version.split('.'))) >= tuple(map(int, source_version.split('.'))), str(target)
             preserved.append({'file': relative.as_posix(), 'version': target_version, 'sha256': actual})
     bridge = subprocess.check_output(['pwsh', '-NoProfile', '-Command', "(Get-ScheduledTask -TaskName HarkenSoundHubUpdateBridge).Actions.Execute"], text=True).strip()
-    assert Path(bridge) == destination / 'Updater/HarkenHubUpdateBridge.exe', bridge
     assert Path(bridge).is_file(), bridge
     assert Path(bridge).name == 'HarkenHubUpdateBridge.exe'
+    bridge_root = Path(os.environ['ProgramData']) / 'HarkenSound/HarkenHub/Updater'
+    assert Path(bridge).is_relative_to(bridge_root), bridge
+    for source in (destination / 'Updater').rglob('*'):
+        if source.is_file():
+            deployed = Path(bridge).parent / source.relative_to(destination / 'Updater')
+            assert hashlib.sha256(deployed.read_bytes()).digest() == hashlib.sha256(source.read_bytes()).digest(), str(deployed)
     mark('verify-installed-' + language, product=registered[0], directory=str(destination), bridge=bridge, retainedDependencies=preserved)
     return registered[0]
 
@@ -289,7 +294,8 @@ try:
         assert hashlib.sha256((custom / relative).read_bytes()).hexdigest() == previous['sha256'], relative
     assert install_dir() == custom
     bridge = subprocess.check_output(['pwsh', '-NoProfile', '-Command', "(Get-ScheduledTask -TaskName HarkenSoundHubUpdateBridge).Actions.Execute"], text=True).strip()
-    assert Path(bridge) == custom / 'Updater/HarkenHubUpdateBridge.exe'
+    assert Path(bridge).is_file(), bridge
+    run('bridge-startup-after-rollback', [bridge], expected=(1,))
     mark('rollback-restores-released-files', filesVerified=len(baseline_files), product=baseline_product)
     startup('startup-after-rollback')
     install('upgrade-release-using-bridge-arguments', setup, 'zh', ['HARKENSELFUPDATE=1', 'HARKENBRIDGE=1', f'INSTALLFOLDER={custom}-ignored'])
