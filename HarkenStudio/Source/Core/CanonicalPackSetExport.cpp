@@ -2432,10 +2432,14 @@ bool ProjectPackExporter::ValidatePackBuildWriteAccess(
     const ProjectData& project, const QString& baseDir, const QStringList& platforms,
     const ExportOptions& options, QString* error, QString* summary)
 {
-    if (summary) *summary = tr("Pack export could not verify the existing output files.");
+    if (summary) summary->clear();
+    const auto reject = [&](const QString& message) {
+        if (summary) *summary = message;
+        return false;
+    };
     if (PathUtils::isProtectedPackOutputPath(baseDir, project.projectPath)) {
         if (error) *error = PathUtils::packBuildOutputLocationError();
-        return false;
+        return reject(PathUtils::packBuildOutputLocationError());
     }
     const QDir root(baseDir);
     QStringList paths{root.absolutePath()};
@@ -2444,7 +2448,7 @@ bool ProjectPackExporter::ValidatePackBuildWriteAccess(
         const auto* platform = ProjectPlatformSemantics::find(project.platforms, QUuid(id));
         if (!platform) {
             *error = QStringLiteral("Unknown project platform ID: %1").arg(id);
-            return false;
+            return reject(tr("A selected export platform is no longer in the project. Check the platform selection, then retry."));
         }
         platformNames.append(platform->name);
         auto platformOptions = options;
@@ -2456,16 +2460,19 @@ bool ProjectPackExporter::ValidatePackBuildWriteAccess(
             platformLock->setStaleLockTime(0);
             if (!platformLock->tryLock()) {
                 *error = QStringLiteral("Platform output is being built by another request: %1").arg(output.path());
-                return false;
+                return reject(tr("Another export is using a selected platform's output directory. Wait for it to finish, then retry."));
             }
-            if (!recoverInterruptedPublish(output, error)) return false;
+            if (!recoverInterruptedPublish(output, error))
+                return reject(tr("Pack export could not recover an interrupted publication. Check the previous output and recovery files before retrying."));
         }
         if (!collectPlatformWritePaths(project, output,
-                createBuildPlan(project, platformOptions), platformOptions, &paths, error)) return false;
+                createBuildPlan(project, platformOptions), platformOptions, &paths, error))
+            return reject(tr("Pack export could not inspect the existing packs. Check the output files and publication metadata before retrying."));
     }
     if (options.selfCleaning && !options.updateSelectedOnly) {
         QStringList files;
-        if (!scanCleanupFiles(root, platformNames, &files, nullptr, error, options.cancelCheck)) return false;
+        if (!scanCleanupFiles(root, platformNames, &files, nullptr, error, options.cancelCheck))
+            return reject(tr("Pack export could not inspect the output files for cleanup. Check the output directory and file access before retrying."));
         for (const auto& name : files) {
             if (std::any_of(platformNames.begin(), platformNames.end(), [&](const auto& platform) {
                     return name.startsWith(platform + QLatin1Char('/'));

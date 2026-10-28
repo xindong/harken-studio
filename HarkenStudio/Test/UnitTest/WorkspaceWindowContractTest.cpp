@@ -78,24 +78,37 @@ TEST(EditorWorkspaceWindowContract, DiagnosticDetailsDoNotChangeWorkspaceGeometr
     ASSERT_NE(button, nullptr);
     button->click();
     ASSERT_NE(LogPanel::globalModel(), nullptr);
+    auto* logText = LogPanel::instance()->findChild<LogTextEdit*>();
+    ASSERT_NE(logText, nullptr);
     QApplication::processEvents();
 
     const QStringList messages{
         QStringLiteral("Output unavailable\n") + QStringLiteral("D:/Audio/Generated/file.bytes\n").repeated(1000),
         QStringLiteral("A diagnostic with a long name: ") + QString(20000, QLatin1Char('x')),
         QStringLiteral("Permissions & locks\r\nDetails\r\n").repeated(1000)};
-    for (const auto& message : messages) {
-        LogPanel::logInfo(LogCategory::GUI, QStringLiteral("Ready"));
+    for (qsizetype i = 0; i < messages.size(); ++i) {
+        const QString ready = QStringLiteral("Ready %1").arg(i);
+        LogPanel::logInfo(LogCategory::GUI, ready);
+        ASSERT_TRUE(TestSupport::spinUntil([&] {
+            return logText->toPlainText().contains(ready + QLatin1Char('\n'));
+        }));
+        QApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
         QApplication::processEvents();
         const QRect workspace = window->centralWidget()->geometry();
         const QRect status = window->statusBar()->geometry();
         const QSize minimum = window->minimumSizeHint();
 
+        const QString complete = QStringLiteral("Diagnostic complete %1").arg(i);
+        const QString message = messages.at(i) + QLatin1Char('\n') + complete;
         LogPanel::logError(LogCategory::GUI, message);
+        ASSERT_TRUE(TestSupport::spinUntil([&] {
+            return logText->toPlainText().contains(complete + QLatin1Char('\n'));
+        }));
+        QApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
         QApplication::processEvents();
         EXPECT_EQ(window->centralWidget()->geometry(), workspace);
         EXPECT_EQ(window->statusBar()->geometry(), status);
         EXPECT_EQ(window->minimumSizeHint(), minimum);
-        EXPECT_EQ(LogPanel::globalModel()->entries().back().message, message);
+        EXPECT_EQ(LogPanel::globalModel()->entries(LogEntry::Error, QStringLiteral("GUI")).back().message, message);
     }
 }
