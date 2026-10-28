@@ -88834,16 +88834,16 @@ bool BeginInitialQueueEntryDomain(ContainerPreparationContext& context,
 bool ResolveContainerInitialAdmission(ContainerPreparationContext& context,
     harken::EngineActionPlayScratch& scratch, harken::EnginePlayableServiceRow& resource,
     harken::ParentAudioGroupRef nativeGroup, std::uint16_t nativeMember,
-    harken::ParentAudioGroupRef* outGroup, std::uint16_t* outMember) noexcept {
-    if (outGroup == nullptr || outMember == nullptr ||
+    harken::ParentAudioGroupRef* outGroup, std::uint16_t* outMember, bool* queueRouted) noexcept {
+    if (outGroup == nullptr || outMember == nullptr || queueRouted == nullptr ||
         context.initialAdmissionGroup.Valid() != (context.initialAdmissionMemberCursor != nullptr))
         return false;
     *outGroup = nativeGroup;
     *outMember = nativeMember;
-    bool queueRouted = false;
+    *queueRouted = false;
     if (context.engine == nullptr || !ResolveInitialQueueEntrySourceAdmission(*context.engine,
-            scratch, resource, outGroup, outMember, &queueRouted)) return false;
-    if (queueRouted || !context.initialAdmissionGroup.Valid()) return true;
+            scratch, resource, outGroup, outMember, queueRouted)) return false;
+    if (*queueRouted || !context.initialAdmissionGroup.Valid()) return true;
     // Admission belongs to the original arm factory, never a later rebind.
     // Controllers with their own native group require a separate domain.
     if (context.engine == nullptr || nativeGroup.Valid() || nativeMember != UINT16_MAX ||
@@ -90119,13 +90119,17 @@ bool PrepareContainerSingleLeaf(
     }
     harken::ParentAudioGroupRef admissionGroup{};
     std::uint16_t admissionMember = UINT16_MAX;
+    bool queueAdmission = false;
     if (!ResolveContainerInitialAdmission(context, *scratch,
             resourceService != nullptr ? *resourceService : *row, {}, UINT16_MAX,
-            &admissionGroup, &admissionMember)) {
+            &admissionGroup, &admissionMember, &queueAdmission)) {
         context.result = VN_INVALID_ARG;
         (void)operations.Release(scratch);
         return false;
     }
+    // The native Queue entry owns only the Start operation; SourceTerminal
+    // retains the Sound lifetime after that entry releases its timeline page.
+    if (queueAdmission) row->payload.reserved |= harken::kTimelineEventTransientStartArm;
     const TimelineVoiceInstallResult installed =
         InstallTimelineVoiceStart(
             engine, retainedVoice.Input(), row->runtimeProgram.generation, startFrame,
@@ -90672,9 +90676,10 @@ bool PrepareContainerCompositeQueueChild(
         }
         harken::ParentAudioGroupRef admissionGroup{};
         std::uint16_t admissionMember = UINT16_MAX;
+        bool queueAdmission = false;
         if (!ResolveContainerInitialAdmission(context, *scratch,
                 resourceService != nullptr ? *resourceService : *row, initialParent, initialMember,
-                &admissionGroup, &admissionMember)) {
+                &admissionGroup, &admissionMember, &queueAdmission)) {
             context.result = VN_INVALID_ARG;
             (void)operations.Release(scratch);
             return false;
@@ -90739,7 +90744,7 @@ bool PrepareContainerCompositeQueueChild(
         harken::TimelineEventPayload payload{};
         payload.kind = harken::TimelineEventKind::Start;
         payload.target = source.voice.target;
-        if (initialMember != UINT16_MAX)
+        if (initialMember != UINT16_MAX || queueAdmission)
             payload.reserved |= harken::kTimelineEventTransientStartArm;
         harken::EventTemplate event{};
         event.frameOffsetFromEntry = static_cast<std::int64_t>(
