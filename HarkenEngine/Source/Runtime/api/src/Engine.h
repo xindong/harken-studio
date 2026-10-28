@@ -8013,9 +8013,7 @@ public:
             }
         }
         const bool inheritPackDuty = parentOriginal != nullptr && parentOriginal->packDutyOwner_ != nullptr &&
-            (preparingStorage == nullptr ||
-             (parentOriginal->packDuty_ == OriginalPlayableServicePackDuty::OriginalInvocationOwns &&
-              OriginalPreparingPackOwner(*preparingStorage) == nullptr));
+            (preparingStorage == nullptr || OriginalPreparingPackOwner(*preparingStorage) == nullptr);
         if (inheritPackDuty && !MatchesOriginalPlayableServicePackDuty(*parentOriginal)) return false;
         auto& original = originalPlayableServiceLifetimeHolders[row.identity.slot];
         if (original.engine_ != nullptr || original.baseline_.Valid()) return false;
@@ -8165,15 +8163,16 @@ public:
         if (original.packDuty_ == OriginalPlayableServicePackDuty::OriginalInvocationOwns)
             return owner == &original.invocation_->originalPackLease &&
                 packComposition.SameFullOriginalLease(original.invocation_->packLease, original.packDutyLease_);
-        const auto* storage = original.preparingStorage_;
-        if (storage == nullptr || storage->generation != original.preparingStorageGeneration_ ||
+        // Nested services retain their own scratch; the invocation identifies the actual lease owner.
+        const auto* storage = original.invocation_->preparingStorage;
+        const auto generation = original.invocation_->preparingStorageGeneration;
+        if (storage == nullptr || storage->generation != generation ||
             pack.originalPreparingStorage != storage ||
-            pack.originalPreparingGeneration != original.preparingStorageGeneration_ ||
-            original.invocation_->preparingStorage != storage ||
-            original.invocation_->preparingStorageGeneration != original.preparingStorageGeneration_) return false;
+            pack.originalPreparingGeneration != generation ||
+            !OriginalPreparingStorageBelongsToInvocation(*storage, *original.invocation_)) return false;
         if (original.packDuty_ == OriginalPlayableServicePackDuty::OriginalScratchOwns)
             return owner == &storage->originalPackLease &&
-                storage->originalPackLeaseGeneration == original.preparingStorageGeneration_ &&
+                storage->originalPackLeaseGeneration == generation &&
                 !original.packDutyDeferredRecord_.Valid();
         if (original.packDuty_ != OriginalPlayableServicePackDuty::OriginalDeferredRecordOwns ||
             !MatchesOriginalDeferredPackRecord(original.packDutyDeferredRecord_) ||
