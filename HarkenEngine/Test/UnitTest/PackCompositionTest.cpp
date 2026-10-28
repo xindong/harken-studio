@@ -25223,6 +25223,7 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
         VnActionFiringHandle firing = 0;
         ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
         std::array<unsigned, 2> audible{};
+        std::array<unsigned, 2> onsets{};
         bool secondStarted = false;
         for (unsigned block = 0; block < (deferred ? 1024u : 128u); ++block) {
             ASSERT_EQ(VN_OK, Vn_Update());
@@ -25233,18 +25234,24 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
             const auto* output = engine.nullBackend.LastBlock();
             ASSERT_NE(nullptr, output);
             for (unsigned frame = 0; frame < 64; ++frame) {
+                const auto outputFrame = block * 64u + frame;
                 const auto sample = output[2u * frame];
                 if (std::abs(sample - 0.125f) < 1e-6f) {
                     ASSERT_FALSE(secondStarted);
+                    if (audible[0] == 0) onsets[0] = outputFrame;
+                    ASSERT_EQ(onsets[0] + audible[0], outputFrame);
                     ++audible[0];
                 } else if (std::abs(sample + 0.25f) < 1e-6f) {
                     secondStarted = true;
+                    if (audible[1] == 0) onsets[1] = outputFrame;
+                    ASSERT_EQ(onsets[1] + audible[1], outputFrame);
                     ++audible[1];
                 } else ASSERT_NEAR(0.0f, sample, 1e-6f);
             }
         }
         EXPECT_EQ(first.size(), audible[0]);
         EXPECT_EQ(second.size(), audible[1]);
+        EXPECT_EQ(onsets[0] + first.size(), onsets[1]);
         VnActionFiringInfo info{};
         info.structSize = sizeof(info);
         ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
