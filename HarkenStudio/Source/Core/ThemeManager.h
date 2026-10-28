@@ -12,6 +12,7 @@
 #include <QString>
 
 #include <memory>
+#include <optional>
 
 class QPainter;
 class QRect;
@@ -128,7 +129,8 @@ private:
     void publishCandidate(const ThemePackageCandidate& candidate, bool notify);
     ThemeManagerOperationResult updateAppearance(const ThemeAppearance& appearance,
                                                   bool persist);
-    ThemePackageLoadResult customizedCandidate(const ThemeAppearance& appearance) const;
+    ThemePackageLoadResult customizedCandidate(const ThemeAppearance& appearance,
+                                               bool reusePreviewBase = false);
     bool checkPublicationThread(ThemeManagerOperationResult& result) const;
     void applyApplicationTheme();
     bool persistAppearance(const ThemeAppearance& appearance,
@@ -143,6 +145,7 @@ private:
     QString currentThemeId_;
     ThemeColorCustomizations customizations_;
     ThemePackageCandidate committedCandidate_;
+    std::optional<ThemePackageCandidate> previewBaseCandidate_;
     bool previewActive_ = false;
     QList<ThemePackageDescriptor> themes_;
     QList<ThemePackageDiagnostic> lastDiagnostics_;

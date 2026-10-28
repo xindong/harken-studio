@@ -117,7 +117,7 @@ bool ThemeManager::checkPublicationThread(ThemeManagerOperationResult& result) c
 }
 
 ThemePackageLoadResult ThemeManager::customizedCandidate(
-    const ThemeAppearance& appearance) const
+    const ThemeAppearance& appearance, bool reusePreviewBase)
 {
     ThemePackageLoadResult result;
     for (auto theme = appearance.colors.cbegin(); theme != appearance.colors.cend(); ++theme)
@@ -139,7 +139,15 @@ ThemePackageLoadResult ThemeManager::customizedCandidate(
     if (!result.diagnostics.isEmpty())
         return result;
 
-    result = loadBaseTheme(appearance.themeId);
+    if (reusePreviewBase && previewBaseCandidate_
+        && previewBaseCandidate_->manifest.id == appearance.themeId)
+        result.candidate = previewBaseCandidate_;
+    else
+    {
+        result = loadBaseTheme(appearance.themeId);
+        if (reusePreviewBase && result.ok())
+            previewBaseCandidate_ = result.candidate;
+    }
     if (!result.ok())
         return result;
     const auto overrides = appearance.colors.value(appearance.themeId);
@@ -175,7 +183,7 @@ ThemeManagerOperationResult ThemeManager::updateAppearance(
         lastDiagnostics_.clear();
         return result;
     }
-    auto loaded = customizedCandidate(appearance);
+    auto loaded = customizedCandidate(appearance, !persist);
     if (!loaded.ok())
     {
         result.diagnostics = loaded.diagnostics;
@@ -192,6 +200,7 @@ ThemeManagerOperationResult ThemeManager::updateAppearance(
         currentThemeId_ = appearance.themeId;
         customizations_ = appearance.colors;
         committedCandidate_ = *loaded.candidate;
+        previewBaseCandidate_.reset();
     }
     previewActive_ = !persist;
     publishCandidate(*loaded.candidate, true);
@@ -205,6 +214,7 @@ void ThemeManager::cancelAppearancePreview()
     if (!previewActive_ || QThread::currentThread() != thread())
         return;
     previewActive_ = false;
+    previewBaseCandidate_.reset();
     publishCandidate(committedCandidate_, true);
     lastDiagnostics_.clear();
 }
@@ -242,6 +252,7 @@ ThemeManagerOperationResult ThemeManager::loadAndPublish(
     currentThemeId_ = themeId;
     committedCandidate_ = *loaded.candidate;
     previewActive_ = false;
+    previewBaseCandidate_.reset();
     publishCandidate(*loaded.candidate, true);
     result.published = true;
     lastDiagnostics_.clear();

@@ -12,6 +12,7 @@
 #include <QThread>
 #include <QVector2D>
 #include <QVector3D>
+#include <QVector4D>
 #include <QDebug>
 
 #include <cmath>
@@ -104,7 +105,8 @@ const char* kDitherFragmentShader = R"glsl(
 #version 330 core
 uniform sampler2D uField;
 uniform float uCellDevice;
-uniform vec3 uPalette[4];
+uniform vec4 uPalette[4];
+uniform vec3 uBackground;
 out vec4 fragColor;
 
 float orderedThreshold(ivec2 pixel)
@@ -124,7 +126,7 @@ void main()
     ivec2 pixel = ivec2(gl_FragCoord.xy / uCellDevice);
     float brightness = texelFetch(uField, pixel, 0).r;
     int index = clamp(int(floor(brightness * 3.0 + orderedThreshold(pixel))), 0, 3);
-    fragColor = vec4(uPalette[index], 1.0);
+    fragColor = vec4(mix(uBackground, uPalette[index].rgb, uPalette[index].a), 1.0);
 }
 )glsl";
 
@@ -267,12 +269,15 @@ void StartupRenderer::renderLoop()
         return;
     }
     const auto& paletteColors = theme_->domains.startup.wavePalette;
-    QVector3D palette[4];
+    QVector4D palette[4];
     for (int i = 0; i < 4; ++i)
-        palette[i] = QVector3D(paletteColors[i].redF(), paletteColors[i].greenF(),
-                               paletteColors[i].blueF());
+        palette[i] = QVector4D(paletteColors[i].redF(), paletteColors[i].greenF(),
+                               paletteColors[i].blueF(), paletteColors[i].alphaF());
+    const QColor& background = theme_->ui.colors.bgPrimary;
     ditherProgram.bind();
     ditherProgram.setUniformValueArray("uPalette", palette, 4);
+    ditherProgram.setUniformValue("uBackground",
+        QVector3D(background.redF(), background.greenF(), background.blueF()));
     ditherProgram.release();
 
     QOpenGLVertexArrayObject vao;

@@ -70,11 +70,13 @@ Studio 的颜色按语义职责分配。同一职责跨面板、跨控件使用�
 
 用户覆盖与主题包共用 `applyThemeColor` 的语义赋值路径，包含相应 Qt palette 更新；随后运行 `ThemeColorResolver` 再发布不可变快照。预览取消使用缓存的已提交候选，不依赖重新读取外部主题文件。未知角色、非法颜色、存储不可写或跨线程发布均不提交新设置。
 
+连续预览同一主题时复用首次预览加载的基础候选，每次都从未应用用户覆盖的基础快照生成结果，避免反复扫描外部主题清单及解析继承链，也避免移除覆盖后残留上一次预览的颜色。取消、成功提交、成功切换或重新加载主题后结束该缓存的生命周期；提交和显式重新加载继续读取当前主题包。
+
 实现入口为 `BuiltinTheme.*`、`ThemeColorCatalog.*`、`ThemeManager.*`、`ThemePackageLoader.*` 和 `Dialogs/Settings/Pages/AppearancePage.*`。契约测试覆盖即时保存、选色器预览与取消、持久化、主题隔离、重置默认、缺失主题恢复及目录一致性，也覆盖内置预设无外部目录加载、ID 防覆盖和外部包继承非默认预设。
 
 颜色定制的实际窗口验收复用完整 Studio 与隔离用户设置。历史对话框阶段的截图与响应记录位于本地 `.temp/color-customization-qa/`，不作为同步可停靠面板后即时保存行为的验收依据；不覆盖操作系统原生输入链路与多屏 DPI。
 
-同步主干 `8fa19f3` 后，Windows x64、Qt 6.11.0、`windows-ninja-clang-dev` / `RelWithDebInfo` 下的 `harken_editor` 与 `harken_editor_ci_tests` 构建通过。Studio PR 分组检查共 136 组，350 项通过，1 项符号链接环境测试跳过，无失败或未运行项；记录位于本地 `.temp/studio-color-main-sync-tests/`。QSS 归属检查及其 6 项脚本测试、帮助 JSON 和差异检查通过。
+当前主干基线为 `049e8af`。Windows x64、Qt 6.11.0、`windows-ninja-clang-dev` / `RelWithDebInfo` 下的 `harken_editor` 与 `harken_editor_ci_tests` 构建通过。Studio PR 分组检查共 136 组，352 项通过，1 项符号链接环境测试跳过，无失败或未运行项；记录位于本地 `.temp/studio-color-review-tests/`。新增契约覆盖连续预览的基础候选隔离、移除覆盖以及取消、提交、主题切换和重新加载时的缓存生命周期。QSS 归属检查及其 6 项脚本测试、帮助 JSON 和差异检查通过。
 
 实际可停靠 Preferences 已核对两套十色色板、即时 HEX 保存、无效输入拦截、预设覆盖隔离、三种 Reset、选色器预览/取消/确认，以及切页和真实 dock 关闭重开。关闭时只取消仍打开的选色器预览，已提交配色保留。800×550 与 640×480 浮动窗口的色板及滚动区域可用；800×550 滚动到底部后可完整操作颜色编辑与 Reset。当前截图使用 `immediate-` 前缀，行为记录为 `.temp/color-customization-qa/immediate-qa-report.json`；均为隔离设置下的实际 Qt 控件渲染，不覆盖原生鼠标键盘链路和多屏 DPI。
 
@@ -160,11 +162,13 @@ Studio 的颜色按语义职责分配。同一职责跨面板、跨控件使用�
 | 项目对象标记 | 用户手动指定的轨道、对象颜色属于项目数据，主题切换不改写它们 |
 | 固定数据视觉 | 声谱图固定插值色阶仍作为连续数据映射处理，不替换成 UI 强调色或分类色板 |
 
-启动波浪的四档抖动色阶使用 `startup.wave.shadow/low/high/highlight`，默认依次为 `#06121F`、`#173D5C`、`#5F9EC7`、`#E4F3FF`，精确保留原蓝色色系。两套内置预设的波浪默认值相同，各自可保存覆盖，Reset 恢复这组默认值。Logo 本体保留原灰白扫光（`#B5B5B5`、`#D3D3D5`、`#FFFFFF`），不与波浪或文字主题色联动；底板使用已有 `panel.background`，没有独立配置项。`StartupLoadingWindow` 在创建 Renderer 时传入已恢复用户设置的只读主题快照；渲染线程读取该快照，不访问 ThemeManager。波浪自定义在下次启动时生效。
+启动波浪的四档抖动色阶使用 `startup.wave.shadow/low/high/highlight`，默认依次为 `#06121F`、`#173D5C`、`#5F9EC7`、`#E4F3FF`，精确保留原蓝色色系。两套内置预设的波浪默认值相同，各自可保存覆盖，Reset 恢复这组默认值。波浪的 Alpha 在着色器中与启动窗口现有的 `background.primary` 合成：Alpha 为 0 时显示背景，为 255 时显示原色，中间值按比例混合；原生窗口仍为不透明表面。Logo 本体保留原灰白扫光（`#B5B5B5`、`#D3D3D5`、`#FFFFFF`），不与波浪或文字主题色联动；底板使用已有 `panel.background`，没有独立配置项。`StartupLoadingWindow` 在创建 Renderer 时传入已恢复用户设置的只读主题快照；渲染线程读取该快照，不访问 ThemeManager。波浪自定义在下次启动时生效。
 
 外部主题通过 `manifest.entries.tokens` 对应 JSON 的 `colors` 配置上述四键；已用实际外部包读取验证，不增加主题格式版本或单独的启动视觉文档。
 
 启动动画的验收使用临时 Renderer 副本在交换缓冲前读回实际 OpenGL 首帧，不添加产品调试接口。当前记录位于 `.temp/color-customization-qa/`：`startup-restored-blue.png` 验证原四档蓝色及原 Logo 灰白；`startup-independent-ui.png` 验证修改界面强调色、主次文字色不影响波浪与 Logo；`startup-wave-custom.png` 验证波浪独立覆盖及底板对已有面板背景的复用，Logo 扫光保持原灰白。像素计数见 `startup-restored-verification.json`，设置入口见 `startup-palette-final-window.png`。分类 Reset 已确认只移除波浪覆盖，保留其他分类的修改。早期 `startup-dark.png`、`startup-amber.png`、`startup-custom.png` 记录的是已撤销的通用界面颜色联动，不作为当前波浪及 Logo 配色的验收依据。
+
+Alpha 验证使用隔离设置加载实际启动 Renderer，读回默认四色、四槽统一 Alpha 0/128/255，以及四槽分别为 0/64/128/255 的五组画面。Logo 外像素的默认 RGB 与原四档一致，透明度合成符合前景与 `background.primary` 的混合值（允许 1 级量化误差），最终窗口表面保持不透明。14 项像素检查通过，临时设置已恢复；截图为 `startup-alpha-*.png`，记录为 `startup-alpha-report.json`。
 
 ## 默认视觉变化边界
 
