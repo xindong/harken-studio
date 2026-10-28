@@ -21953,11 +21953,7 @@ void ExpectQueueSequenceBranchesAcrossEntry(ContainerMatrixEntry entry, std::uin
         return;
     }
     const auto expectedCount = laterRefusal ? 1u : laterRetarget ? (laterWrapper ? 6u : 4u) :
-        laterControl ? (laterWrapper ? 5u : 3u) :
-        matrixCase && (outerMode == ContainerModeV1::RandomQueue ||
-                       outerMode == ContainerModeV1::SequenceQueue) &&
-            innerMode == ContainerModeV1::VariableControl
-        ? 2u : 4u * cycles;
+        laterControl ? (laterWrapper ? 5u : 3u) : 4u * cycles;
     const auto expectedStopCount = stopAfterOnsets != 0
         ? stopAfterOnsets
         : (parallelControl && !nestedParallelControl ? 2u : 3u);
@@ -25091,6 +25087,188 @@ TEST(PackComposition, VariableControlNativeRetargetNaturalEndKeepsAuthoredBounda
     for (const auto entry : {ContainerMatrixEntry::Direct, ContainerMatrixEntry::CurrentWorldAction})
         for (const auto kind : {ContainerMatrixChild::Track, ContainerMatrixChild::Segment})
             ExpectVariableControlNestedScheduleLifecycle(entry, kind, NestedVariableScheduleScenario::NaturalEndTransition);
+}
+
+TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
+    for (unsigned scenario = 0; scenario < 3; ++scenario) {
+        const bool deferred = scenario != 0;
+        const bool trackRoot = scenario == 2;
+        SCOPED_TRACE(::testing::Message() << "deferred=" << deferred << " trackRoot=" << trackRoot);
+        const std::vector<float> first(960, 0.125f), second(960, -0.25f);
+        const float* firstChannels[] = {first.data()};
+        const float* secondChannels[] = {second.data()};
+        std::uint64_t firstRevision = 0, secondRevision = 0;
+        ASSERT_TRUE(ComputeMediaPcmContentRevisionV1(48000, 1, first.size(), firstChannels, 1, &firstRevision));
+        ASSERT_TRUE(ComputeMediaPcmContentRevisionV1(48000, 1, second.size(), secondChannels, 1, &secondRevision));
+        ContainerMatrixWorld image(ContainerModeV1::VariableControl, ContainerMatrixChild::Track,
+            firstRevision, secondRevision, true, 1, 1);
+        const auto nested = image.children[0].playable;
+        const auto track = image.children[2].playable;
+        const auto queueIndex = image.propertyCount++;
+        image.properties[queueIndex] = MakeContainerProperty(harkentest::ObjectId(72009), queueIndex);
+        const auto queue = PlayableRefFromProperty(image.properties[queueIndex]);
+        std::array<ContainerChildProgramViewV2, 2> queueChildren{};
+        for (std::uint32_t index = 0; index < queueChildren.size(); ++index) {
+            auto& child = queueChildren[index];
+            child.stableChildOrdinal = index + 1u;
+            child.authoredStableOrder = index;
+            child.playable = image.placements[index].content;
+            child.queueStopPolicy = QueueStopPolicyV1::AdvanceQueue;
+            AuthoredCompletionLeafV1 leaf{};
+            leaf.stableLeafOrdinal = 1;
+            leaf.content = child.playable;
+            leaf.startOffset = {AuthoredTimeDomainV1::SourceFrames, 0, 1};
+            leaf.duration = {AuthoredTimeDomainV1::NaturalMediaEnd, 0, 1};
+            harkentest::CopyLeafTimingToHint(child, leaf);
+        }
+        // Match -> Track -> Match -> Queue uses separate preparation storage at each level.
+        image.children[0].playable = track;
+        image.children[2].playable = queue;
+        image.children[2].frequencyWeight = 0;
+        image.placements[0].content = nested;
+        image.placements[0].authoredDuration = INT64_C(100000000);
+        image.track.placementCount = 1;
+        image.track.scheduleSemanticFingerprint = ComputeTrackScheduleFingerprintV1(image.track);
+        auto innerRow = image.row;
+        innerRow.childStableOrdinal = image.children[2].stableChildOrdinal;
+        std::array<ContainerProgramViewV3, 3> containers{image.containers[0], image.containers[1]};
+        containers[1].mode = ContainerModeV1::VariableControl;
+        containers[1].randomDiscipline = {};
+        containers[1].discreteAxisCount = 1;
+        containers[1].discreteAxes = &image.axis;
+        containers[1].discreteRowCount = 1;
+        containers[1].discreteRows = &innerRow;
+        containers[2] = MakeContainerProgram(queue.stableId, queue.expectedProgramSemanticFingerprint, 3);
+        containers[2].mode = ContainerModeV1::SequenceQueue;
+        containers[2].memoryScope = MemoryScopeV1::Emitter;
+        containers[2].queueCycle = QueueCycleV1::Once;
+        containers[2].queueSplice = QueueSpliceV1::Butt;
+        containers[2].children = queueChildren.data();
+        containers[2].childCount = static_cast<std::uint32_t>(queueChildren.size());
+        image.occurrenceCount = 3;
+        for (auto& occurrence : std::span(image.occurrences.data(), image.occurrenceCount)) {
+            occurrence.childPlayable = occurrence.parentStableId == ContainerMatrixWorld::kRoot ? track
+                : occurrence.parentStableId == ContainerMatrixWorld::kNested ? queue : nested;
+            occurrence.occurrenceSemanticFingerprint = ComputePlayableOccurrenceFingerprintV1(occurrence);
+        }
+        for (const auto& child : queueChildren) {
+            auto& occurrence = image.occurrences[image.occurrenceCount++];
+            occurrence = image.occurrences[0];
+            occurrence.parentKind = playableproperties::ContentPropertyKindV1::Container;
+            occurrence.parentStableId = queue.stableId;
+            occurrence.parentProgramSemanticFingerprint = queue.expectedProgramSemanticFingerprint;
+            occurrence.stableOccurrenceOrdinal = child.stableChildOrdinal;
+            occurrence.childPlayable = child.playable;
+            occurrence.occurrenceSemanticFingerprint = ComputePlayableOccurrenceFingerprintV1(occurrence);
+        }
+        std::sort(image.properties.begin(), image.properties.begin() + image.propertyCount,
+            [](const auto& left, const auto& right) {
+                return std::tuple(left.contentPropertyKind, left.stableId) <
+                    std::tuple(right.contentPropertyKind, right.stableId);
+            });
+        std::sort(image.occurrences.begin(), image.occurrences.begin() + image.occurrenceCount,
+            [](const auto& left, const auto& right) {
+                return std::tuple(left.parentKind, left.parentStableId, left.stableOccurrenceOrdinal) <
+                    std::tuple(right.parentKind, right.parentStableId, right.stableOccurrenceOrdinal);
+            });
+        image.world.playablePropertyCount = image.propertyCount;
+        image.world.playableOccurrenceCount = image.occurrenceCount;
+        image.world.containers = containers.data();
+        image.world.containerCount = static_cast<std::uint32_t>(containers.size());
+        if (trackRoot) {
+            image.step.target.kind = ActionTargetKindV1::Track;
+            image.step.target.stableId = track.stableId;
+            image.step.target.expectedProgramSemanticFingerprint = track.expectedProgramSemanticFingerprint;
+        }
+        if (deferred) {
+            SetAbsoluteTime(&image.step.delay, INT64_C(1000000000));
+            image.action.directFeatureMask = image.action.transitiveFeatureMask = 1u;
+            image.action.programSemanticFingerprint = ComputeActionProgramFingerprintV1(image.action);
+        }
+        image.world.identity.capabilityMask = detail::ComputeCurrentWorldLocalCapabilityMaskV1(image.world);
+        image.world.identity.runtimeSemanticFingerprint = ComputeCurrentWorldFingerprintV4(image.world);
+        ImageBuilder builder(kPackKindCanonicalContent);
+        builder.AddEntry(kPackEntryKindPackRequirementBlock, 22, RequirementPayload(22, 1, 1));
+        builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, 22,
+            WrapWorldPartition(22, 1, image.world, image.world.playablePropertyCount +
+                image.world.actionCount + image.world.variableCount));
+        builder.AddMedia(ContainerMatrixWorld::kFirstSound, first);
+        builder.AddMedia(ContainerMatrixWorld::kSecondSound, second);
+        const auto bytes = builder.Build();
+        const auto init = BuildSingleIdentityInit(Fnv1a64(bytes.data(), bytes.size()),
+            ContainerMatrixWorld::kAction, "nested-variable-track-queue.pack", ContainerMatrixWorld::kRoot);
+        const auto initPath = WriteTemp("nested-variable-track-queue-init.pack", init);
+        const auto path = WriteTemp("nested-variable-track-queue.pack", bytes);
+        EngineSession session(MakeNullConfig(16, 64, 48000));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        VnCanonicalPackSetMemberV1 members[2]{};
+        VnCanonicalPackSetMemberResultV1 rows[2]{};
+        const char* paths[] = {initPath.c_str(), path.c_str()};
+        for (std::size_t index = 0; index < 2; ++index) {
+            members[index].structSize = sizeof(members[index]);
+            members[index].packStableId = index == 0 ? 11 : 22;
+            members[index].packKind = index == 0 ? VN_CANONICAL_PACK_SET_MEMBER_INIT : VN_CANONICAL_PACK_SET_MEMBER_CONTENT;
+            members[index].utf8Path = paths[index];
+            rows[index].structSize = sizeof(rows[index]);
+        }
+        VnCanonicalPackSetActivationReportV1 activated{};
+        ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(members, 2, rows, activated));
+        VnEmitterHandle emitter = 0;
+        ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+        VnPostActionDesc post{};
+        post.structSize = sizeof(post);
+        post.actionId = ContainerMatrixWorld::kAction;
+        post.emitter = emitter;
+        VnActionFiringHandle firing = 0;
+        ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+        std::array<unsigned, 2> audible{};
+        std::array<unsigned, 2> onsets{};
+        bool secondStarted = false;
+        for (unsigned block = 0; block < (deferred ? 1024u : 128u); ++block) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            ASSERT_FALSE(engine.runtimeRecreateRequired);
+            const auto before = engine.mixer.BlocksRendered();
+            engine.nullBackend.Pump(1);
+            ASSERT_EQ(before + 1u, engine.mixer.BlocksRendered());
+            const auto* output = engine.nullBackend.LastBlock();
+            ASSERT_NE(nullptr, output);
+            for (unsigned frame = 0; frame < 64; ++frame) {
+                const auto outputFrame = block * 64u + frame;
+                const auto sample = output[2u * frame];
+                if (std::abs(sample - 0.125f) < 1e-6f) {
+                    ASSERT_FALSE(secondStarted);
+                    if (audible[0] == 0) onsets[0] = outputFrame;
+                    ASSERT_EQ(onsets[0] + audible[0], outputFrame);
+                    ++audible[0];
+                } else if (std::abs(sample + 0.25f) < 1e-6f) {
+                    secondStarted = true;
+                    if (audible[1] == 0) onsets[1] = outputFrame;
+                    ASSERT_EQ(onsets[1] + audible[1], outputFrame);
+                    ++audible[1];
+                } else ASSERT_NEAR(0.0f, sample, 1e-6f);
+            }
+        }
+        EXPECT_EQ(first.size(), audible[0]);
+        EXPECT_EQ(second.size(), audible[1]);
+        EXPECT_EQ(onsets[0] + first.size(), onsets[1]);
+        VnActionFiringInfo info{};
+        info.structSize = sizeof(info);
+        ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
+        EXPECT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state);
+        EXPECT_EQ(VN_ACTION_OUTCOME_SUCCEEDED, info.outcome);
+        EXPECT_EQ(VN_ACTION_TERMINAL_NATURAL, info.terminalReason);
+        EXPECT_EQ(0u, engine.playableInstances.LiveCount());
+        EXPECT_EQ(0u, engine.playablePartitions.OccupiedCount());
+        EXPECT_EQ(0u, engine.sourceTerminals.OccupiedCount());
+        EXPECT_EQ(0u, engine.queueInstances.LiveCount());
+        EXPECT_EQ(0u, engine.variableControlInstances.LiveCount());
+        EXPECT_EQ(0u, engine.voices.ActiveCount());
+        EXPECT_EQ(0u, engine.timelineArms.LiveCount());
+        ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+        EXPECT_EQ(VN_OK, Vn_UnloadPackEx(rows[1].handle, VN_PACK_UNLOAD_REFUSE_IF_USED));
+        EXPECT_EQ(VN_OK, Vn_DestroyEmitter(emitter));
+    }
 }
 
 enum class QueueMixedSuccessorBoundary { None, NestedQueue, NestedControl, OutsideWindow, TargetFade, ZeroWork, TargetFadeShortClips, TargetFadeComposite, TargetFadeCompositeSingle };

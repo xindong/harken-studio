@@ -978,6 +978,7 @@ struct VariableControlMemberCompletion {
     VnVoiceHandle sourceRender = 0;
     TimelineArmToken sourceStartArm{};
     std::uint64_t sourceStartedBlockSequence = 0;
+    std::uint64_t sourceActualStartFrame = UINT64_MAX;
     std::uint64_t sourceArmTombstoneSequence = 0;
 };
 
@@ -7982,8 +7983,6 @@ public:
                 preparingParent->invocation != &invocation ||
                 preparingParent->invocationGeneration != invocation.generation) return false;
             parentOriginal = &originalPlayableServiceLifetimeHolders[preparingParent->identity.slot];
-            if (preparingStorage == nullptr && parentOriginal->packDutyOwner_ != nullptr &&
-                !MatchesOriginalPlayableServicePackDuty(*parentOriginal)) return false;
         }
         if (preparingStorage != nullptr) {
             const bool actualStorage = std::any_of(actionPlayStorage.begin(), actionPlayStorage.end(),
@@ -8014,6 +8013,9 @@ public:
                     (pack.originalInvocation != nullptr && !pack.originalInvocationEnded)) return false;
             }
         }
+        const bool inheritPackDuty = parentOriginal != nullptr && parentOriginal->packDutyOwner_ != nullptr &&
+            (preparingStorage == nullptr || OriginalPreparingPackOwner(*preparingStorage) == nullptr);
+        if (inheritPackDuty && !MatchesOriginalPlayableServicePackDuty(*parentOriginal)) return false;
         auto& original = originalPlayableServiceLifetimeHolders[row.identity.slot];
         if (original.engine_ != nullptr || original.baseline_.Valid()) return false;
         if (!playableServiceWork.Prepare({row.identity.generation, row.identity.slot, 0}))
@@ -8079,7 +8081,8 @@ public:
                 original.packDutyNativeIncarnation_ = issuedPack->native_.incarnation_;
                 original.packDutyDeferredRecord_ = preparingStorage->originalDeferredPackRecord;
             }
-        } else if (parentOriginal != nullptr && parentOriginal->packDutyOwner_ != nullptr) {
+        }
+        if (inheritPackDuty) {
             // The same native invocation owns the parent's actual lease episode.
             original.packDuty_ = parentOriginal->packDuty_;
             original.packDutyOwner_ = parentOriginal->packDutyOwner_;
@@ -8161,15 +8164,16 @@ public:
         if (original.packDuty_ == OriginalPlayableServicePackDuty::OriginalInvocationOwns)
             return owner == &original.invocation_->originalPackLease &&
                 packComposition.SameFullOriginalLease(original.invocation_->packLease, original.packDutyLease_);
-        const auto* storage = original.preparingStorage_;
-        if (storage == nullptr || storage->generation != original.preparingStorageGeneration_ ||
+        // Nested services retain their own scratch; the invocation identifies the actual lease owner.
+        const auto* storage = original.invocation_->preparingStorage;
+        const auto generation = original.invocation_->preparingStorageGeneration;
+        if (storage == nullptr || storage->generation != generation ||
             pack.originalPreparingStorage != storage ||
-            pack.originalPreparingGeneration != original.preparingStorageGeneration_ ||
-            original.invocation_->preparingStorage != storage ||
-            original.invocation_->preparingStorageGeneration != original.preparingStorageGeneration_) return false;
+            pack.originalPreparingGeneration != generation ||
+            !OriginalPreparingStorageBelongsToInvocation(*storage, *original.invocation_)) return false;
         if (original.packDuty_ == OriginalPlayableServicePackDuty::OriginalScratchOwns)
             return owner == &storage->originalPackLease &&
-                storage->originalPackLeaseGeneration == original.preparingStorageGeneration_ &&
+                storage->originalPackLeaseGeneration == generation &&
                 !original.packDutyDeferredRecord_.Valid();
         if (original.packDuty_ != OriginalPlayableServicePackDuty::OriginalDeferredRecordOwns ||
             !MatchesOriginalDeferredPackRecord(original.packDutyDeferredRecord_) ||
