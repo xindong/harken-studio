@@ -124,7 +124,7 @@ void RangeHttpServer::handleRequest(QTcpSocket* socket,
         headerValue(headerLines, QByteArrayLiteral("Authorization")));
     bodyHistory_.append(body);
 
-    const Script script = scripts_.isEmpty() ? Script{} : scripts_.takeFirst();
+    const Script script = scripts_.isEmpty() ? defaultScript_ : scripts_.takeFirst();
 
     const QByteArray effectiveLastModified =
         script.lastModifiedOverride.isEmpty() ? lastModified_
@@ -176,34 +176,44 @@ void RangeHttpServer::handleRequest(QTcpSocket* socket,
         }
 
         qint64 offset = 0;
+        qint64 end = payload_.size() - 1;
+        bool partial = false;
         if (script.mode != Script::Mode::IgnoreRange) {
             const qint64 start = rangeStart(rangeValue);
-            if (start > 0 && start < payload_.size() &&
-                (ifRangeValue.isEmpty() || ifRangeValue == etag_))
+            if (start >= 0 && start < payload_.size() &&
+                (ifRangeValue.isEmpty() || ifRangeValue == etag_)) {
                 offset = start;
+                partial = true;
+                const auto requestedEnd = rangeValue.mid(rangeValue.indexOf('-') + 1);
+                if (!requestedEnd.isEmpty())
+                    end = qMin(end, requestedEnd.toLongLong());
+            }
         }
 
-        const QByteArray body = payload_.mid(offset);
+        const QByteArray body = payload_.mid(offset, end - offset + 1);
         QByteArray headers = QByteArrayLiteral("ETag: ") + etag_ +
                              QByteArrayLiteral("\r\n");
         if (!effectiveLastModified.isEmpty())
             headers += QByteArrayLiteral("Last-Modified: ") +
                        effectiveLastModified + QByteArrayLiteral("\r\n");
         int status = 200;
-        if (offset > 0) {
+        if (partial) {
             status = 206;
-            headers += QByteArrayLiteral("Content-Range: bytes ") +
+            const QByteArray contentRange = script.contentRangeOverride.isEmpty()
+                ? QByteArrayLiteral("bytes ") +
                        QByteArray::number(offset) + QByteArrayLiteral("-") +
-                       QByteArray::number(payload_.size() - 1) +
+                       QByteArray::number(end) +
                        QByteArrayLiteral("/") +
-                       QByteArray::number(payload_.size()) +
-                       QByteArrayLiteral("\r\n");
+                       QByteArray::number(payload_.size())
+                : script.contentRangeOverride;
+            headers += QByteArrayLiteral("Content-Range: ") + contentRange + QByteArrayLiteral("\r\n");
         }
 
         const qint64 writeLimit = script.mode == Script::Mode::AbortAfterPrefix
                                       ? qMin<qint64>(script.prefixBytes, body.size())
                                       : body.size();
-        respond(target, status, headers, body, body.size(), writeLimit);
+        respond(target, status, headers, body, body.size(), writeLimit,
+                script.chunkBytes, script.chunkIntervalMs);
     };
 
     if (script.delayMs > 0) {
@@ -238,7 +248,8 @@ void RangeHttpServer::respondHeadOnly(QTcpSocket* socket, int status,
 
 void RangeHttpServer::respond(QTcpSocket* socket, int status,
                               const QByteArray& headers, const QByteArray& body,
-                              qint64 claimedLength, qint64 writeLimit)
+                              qint64 claimedLength, qint64 writeLimit,
+                              int chunkBytes, int chunkIntervalMs)
 {
     if (!socket || socket->state() == QAbstractSocket::UnconnectedState)
         return;
@@ -249,8 +260,35 @@ void RangeHttpServer::respond(QTcpSocket* socket, int status,
                       headers + QByteArrayLiteral("Content-Length: ") +
                       QByteArray::number(claimedLength) +
                       QByteArrayLiteral("\r\nConnection: close\r\n\r\n");
-    data += body.left(writeLimit);
     socket->write(data);
+    if (chunkBytes > 0 && chunkIntervalMs > 0) {
+        auto* timer = new QTimer(socket);
+        QObject::connect(timer, &QTimer::timeout, socket,
+                         [this, socket, timer, body, writeLimit, claimedLength,
+                          chunkBytes, sent = qint64(0)]() mutable {
+            if (socket->state() != QAbstractSocket::ConnectedState) {
+                timer->stop();
+                return;
+            }
+            const auto chunk = body.mid(sent, qMin<qint64>(chunkBytes, writeLimit - sent));
+            const auto written = socket->write(chunk);
+            if (written > 0) {
+                sent += written;
+                bodyBytesSent_ += written;
+            }
+            if (sent >= writeLimit) {
+                timer->stop();
+                socket->flush();
+                if (writeLimit < claimedLength)
+                    QTimer::singleShot(20, socket, [socket]() { socket->abort(); });
+                else
+                    socket->disconnectFromHost();
+            }
+        });
+        timer->start(chunkIntervalMs);
+        return;
+    }
+    bodyBytesSent_ += socket->write(body.left(writeLimit));
 
     if (writeLimit < claimedLength) {
         socket->flush();

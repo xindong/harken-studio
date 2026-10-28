@@ -17,6 +17,7 @@
   "Applying installation changes": "正在安装",
   "Please wait while setup updates the installation.": "安装程序正在更新安装，请稍候。",
   "Setup completed": "安装已完成",
+  "Launch Harken Hub when setup closes": "完成后启动 Harken Hub",
   "Setup failed": "安装失败",
   "Setup was cancelled": "安装已取消",
   "Close": "关闭",

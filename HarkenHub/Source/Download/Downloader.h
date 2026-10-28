@@ -2,6 +2,7 @@
 
 #include "Download/BackoffPolicy.h"
 #include "Download/DownloadLease.h"
+#include "Download/SourceProbe.h"
 
 #include <QFile>
 #include <QNetworkAccessManager>
@@ -20,6 +21,7 @@ struct DownloadRequest
     QList<QUrl> fallbackUrls;
     QString targetPath;
     qint64 expectedSizeBytes = -1;
+    QString expectedSha256;
     int maxAttempts = 5;
     int transferTimeoutMs = 30000;
     std::shared_ptr<DownloadLease> lease;
@@ -42,6 +44,7 @@ class Downloader : public QObject
 
 public:
     explicit Downloader(QObject* parent = nullptr);
+    ~Downloader() override;
 
     void setBackoffPolicy(const BackoffPolicy& policy);
     bool isActive() const;
@@ -54,10 +57,12 @@ public:
 
 signals:
     void progress(qint64 receivedBytes, qint64 totalBytes);
+    void sourceSelected(const QString& source, bool restarted);
     void finished(const VNH::DownloadResult& result);
 
 private:
     void beginAttempt();
+    void selectSource();
     void startHead();
     void handleHeadFinished();
     void startGet(bool resume);
@@ -73,18 +78,24 @@ private:
     QUrl currentUrl() const;
     void discardPartialFiles();
     bool readMeta(QByteArray* lastModified, qint64* totalSize) const;
+    bool restoreSource();
     void writeMeta(const QByteArray& lastModified, qint64 totalSize) const;
 
     QNetworkAccessManager manager_;
+    SourceProbe probe_;
     BackoffPolicy backoff_;
     DownloadRequest request_;
+    QList<QUrl> sources_;
     QNetworkReply* reply_ = nullptr;
     QFile file_;
     QTimer retryTimer_;
+    QTimer selectionTimer_;
     qint64 resumeOffset_ = 0;
     QByteArray metaLastModified_;
     qint64 metaTotalSize_ = -1;
     int attemptsStarted_ = 0;
+    int sourceAttempts_ = 0;
+    quint64 operationId_ = 0;
     int httpStatus_ = 0;
     int resultHttpStatus_ = 0;
     int sourceIndex_ = 0;

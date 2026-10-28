@@ -30,8 +30,11 @@ public:
         int status = 500;
         qint64 prefixBytes = 0;
         int delayMs = 0;
+        int chunkBytes = 0;
+        int chunkIntervalMs = 0;
         QByteArray redirectLocation;
         QByteArray lastModifiedOverride;
+        QByteArray contentRangeOverride;
         QByteArray responseBody;
     };
 
@@ -45,6 +48,8 @@ public:
                     const QByteArray& lastModified = QByteArrayLiteral(
                         "Fri, 24 Jul 2026 08:00:00 GMT"));
     void enqueue(const Script& script);
+    void setDefaultScript(const Script& script) { defaultScript_ = script; }
+    qint64 bodyBytesSent() const { return bodyBytesSent_; }
 
     int requestCount() const { return requestCount_; }
     QList<QByteArray> methodHistory() const { return methodHistory_; }
@@ -61,7 +66,8 @@ private:
     void handleRequest(QTcpSocket* socket, const QList<QByteArray>& headerLines,
                        const QByteArray& body);
     void respond(QTcpSocket* socket, int status, const QByteArray& headers,
-                 const QByteArray& body, qint64 claimedLength, qint64 writeLimit);
+                 const QByteArray& body, qint64 claimedLength, qint64 writeLimit,
+                 int chunkBytes = 0, int chunkIntervalMs = 0);
     void respondHeadOnly(QTcpSocket* socket, int status,
                          const QByteArray& headers, qint64 claimedLength);
 
@@ -71,6 +77,8 @@ private:
     QByteArray etag_;
     QByteArray lastModified_;
     QList<Script> scripts_;
+    Script defaultScript_;
+    qint64 bodyBytesSent_ = 0;
     QList<QByteArray> methodHistory_;
     QList<QByteArray> rangeHistory_;
     QList<QByteArray> ifRangeHistory_;

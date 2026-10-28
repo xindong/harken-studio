@@ -225,6 +225,19 @@ class BuildHubInstallerTest(unittest.TestCase):
             self.assertEqual(components["HarkenProjectAssociation"][1], "{53FC615E-9B49-4762-B13C-B81820BDD7DB}")
             self.assertEqual(components["HarkenProjectAssociation"][5], "reg9Iw6ZFMWLFHU5l3K2mYjrhyy3bc")
             actions = {row[0]: row for row in db.query("SELECT * FROM `CustomAction`")}
+            launch_events = db.query("SELECT `Dialog_`, `Condition` FROM `ControlEvent` WHERE `Event`='DoAction' AND `Argument`='HarkenLaunchHub'")
+            self.assertEqual([row[0] for row in launch_events], ["SuccessDialog"])
+            launch_condition = launch_events[0][1]
+            launch_visibility = dict(db.query("SELECT `Action`, `Condition` FROM `ControlCondition` WHERE `Dialog_`='SuccessDialog' AND `Control_`='LaunchHub'"))
+            launch_property = db.query("SELECT `Property` FROM `Control` WHERE `Dialog_`='SuccessDialog' AND `Control`='LaunchHub'")[0][0]
+            checked_value = db.query(f"SELECT `Value` FROM `CheckBox` WHERE `Property`='{launch_property}'")[0][0]
+            self.assertEqual(properties[launch_property], checked_value)
+            for sequence in ("InstallExecuteSequence", "InstallUISequence", "AdminExecuteSequence"):
+                self.assertFalse(db.query(f"SELECT `Action` FROM `{sequence}` WHERE `Action`='HarkenLaunchHub'"))
+            launch_type = int(actions["HarkenLaunchHub"][1])
+            self.assertEqual(launch_type & 0x3f, 18)
+            self.assertFalse(launch_type & 0x400)
+            self.assertTrue(db.query(f"SELECT `File` FROM `File` WHERE `File`='{actions['HarkenLaunchHub'][2]}'"))
             self.assertEqual(actions["HarkenRegisterUpdateBridge"][1:4],
                              ["3106", "INSTALLFOLDER", '"[INSTALLFOLDER]HarkenHub.exe" --register-update-bridge'])
             sequences = {row[0]: row for row in db.query("SELECT * FROM `InstallExecuteSequence`")}
@@ -279,6 +292,8 @@ class BuildHubInstallerTest(unittest.TestCase):
         msi.MsiSetInternalUI.restype = ctypes.c_uint
         msi.MsiOpenPackageExW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint, ctypes.POINTER(ctypes.c_uint)]
         msi.MsiDoActionW.argtypes = [ctypes.c_uint, ctypes.c_wchar_p]
+        msi.MsiSetPropertyW.argtypes = [ctypes.c_uint, ctypes.c_wchar_p, ctypes.c_wchar_p]
+        msi.MsiEvaluateConditionW.argtypes = [ctypes.c_uint, ctypes.c_wchar_p]
         msi.MsiCloseHandle.argtypes = [ctypes.c_uint]
         msi.MsiInstallProductW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p]
         previous_ui = msi.MsiSetInternalUI(2, None)
@@ -287,6 +302,27 @@ class BuildHubInstallerTest(unittest.TestCase):
             self.assertEqual(msi.MsiOpenPackageExW(str(package), 1, ctypes.byref(session)), 0)
             try:
                 self.assertEqual(msi.MsiDoActionW(session, "AppSearch"), 0)
+                for scenario, overrides, visible, launches in [
+                    ("new install", {}, True, True),
+                    ("upgrade", {"HARKEN_UPGRADE_DETECTED": "old-product"}, True, True),
+                    ("repair", {"Installed": "1"}, True, True),
+                    ("unchecked", {launch_property: ""}, True, False),
+                    ("uninstall", {"REMOVE": "ALL"}, False, False),
+                    ("silent", {"UILevel": "2"}, False, False),
+                    ("basic", {"UILevel": "3"}, False, False),
+                    ("reduced", {"UILevel": "4"}, False, False),
+                    ("self update", {"HARKENSELFUPDATE": "1"}, False, False),
+                    ("bridge", {"HARKENBRIDGE": "1"}, False, False),
+                ]:
+                    with self.subTest(completion=scenario):
+                        values = {"REMOVE": "", "Installed": "", "HARKEN_UPGRADE_DETECTED": "",
+                                  "HARKENSELFUPDATE": "", "HARKENBRIDGE": "", "UILevel": "5",
+                                  launch_property: checked_value, **overrides}
+                        for name, value in values.items():
+                            self.assertEqual(msi.MsiSetPropertyW(session, name, value), 0)
+                        self.assertEqual(msi.MsiEvaluateConditionW(session, launch_condition), int(launches))
+                        self.assertEqual(msi.MsiEvaluateConditionW(session, launch_visibility["Show"]), int(visible))
+                        self.assertEqual(msi.MsiEvaluateConditionW(session, launch_visibility["Hide"]), int(not visible))
             finally:
                 msi.MsiCloseHandle(session)
             for language, source in (("1033", package), ("2052", localized_package)):

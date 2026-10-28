@@ -790,6 +790,8 @@ void VersionsPage::updateAutoProgress()
             text = QCoreApplication::translate("HarkenHub", "Downloading HarkenStudio %1...")
                        .arg(studio.version);
         }
+        if (studio.downloadRestarted)
+            text += QCoreApplication::translate("HarkenHub", " (restarted after switching download source)");
     } else if (studio.found &&
                (studio.state == QStringLiteral("Downloaded") ||
                 studio.state == QStringLiteral("Verifying"))) {
@@ -810,6 +812,8 @@ void VersionsPage::updateAutoProgress()
             text = QCoreApplication::translate("HarkenHub", "Downloading Harken Hub %1...")
                        .arg(hub.version);
         }
+        if (hub.downloadRestarted)
+            text += QCoreApplication::translate("HarkenHub", " (restarted after switching download source)");
     }
 
     if (text.isEmpty()) {
