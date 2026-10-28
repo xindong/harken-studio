@@ -6,8 +6,6 @@
 add_library(harken_editor_publisher STATIC
     PublisherPanel.cpp
     PublisherPanel.h
-    PackStructureDialog.cpp
-    PackStructureDialog.h
 )
 
 set_target_properties(harken_editor_publisher PROPERTIES

@@ -227,7 +227,7 @@
     },
     "settings.extension.developer": {
       "title": "Developer Mode",
-      "body": "Show File, Version, CRC32, and Preview Pack Structure in Publisher."
+      "body": "Show File and Version columns in Publisher."
     },
     "settings.layout": {
       "title": "Layout",

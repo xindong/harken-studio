@@ -227,7 +227,7 @@
     },
     "settings.extension.developer": {
       "title": "Developer Mode",
-      "body": "在 Publisher 中显示 File、Version、CRC32 列和 Preview Pack Structure 命令。"
+      "body": "\u5728 Publisher \u4e2d\u663e\u793a File\u3001Version \u5217\u3002"
     },
     "settings.layout": {
       "title": "Layout",

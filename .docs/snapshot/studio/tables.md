@@ -2,6 +2,8 @@
 
 最近核对：2026-10-20。本文记录已确认的方案、业务边界及实施状态，供后续表格开发长期借鉴。Inspector 字段细节见 [inspector-tables.md](inspector-tables.md)。
 
+2026-10-28 补充：Pack Structure 预览窗口及其专用包结构读取逻辑已移除，不再列入当前清单；下文实施记录中的数量与验证结果保留当时口径。
+
 ## 职责边界
 
 公共组件提供能力，业务决定如何组合，主题与皮肤负责外观。configTable、displayTable 是两种用途分类及默认模板，不是两套皮肤，也不通过类型强制创建 footer、刷新按钮或决定窗口空间分配。
@@ -78,7 +80,7 @@ configTable 编辑当前字段或表单中的配置条目集合。displayTable �
 
 ## 全量清单
 
-普通功能表格按用途去重共 25 项：配置表 11 项、展示表 14 项。Sends 在六类对象中的使用展开后，共 30 个页面/对象类型展示位置；另列平台标签配置变体。不同对象实例、Binding 字段地址或同一对话框的打开位置不重复计数；Monitor 采用运行记录模型。
+普通功能表格按用途去重共 24 项：配置表 11 项、展示表 13 项。Sends 在六类对象中的使用展开后，共 29 个页面/对象类型展示位置；另列平台标签配置变体。不同对象实例、Binding 字段地址或同一对话框的打开位置不重复计数；Monitor 采用运行记录模型。
 
 | ID | 分类 | 位置 / 用途 | 当前入口 |
 |---|---|---|---|
@@ -99,7 +101,6 @@ configTable 编辑当前字段或表单中的配置条目集合。displayTable �
 | D03 | display | Control / Variables | RehearsalTable |
 | D04 | display | Control / Variable Bindings | VariableBindingTable |
 | D05 | display | Publisher / Pack | PublisherPanel |
-| D06 | display | Pack Structure | PackStructureDialog |
 | D07 | display | Remote Connect / Targets | RemoteConnectDialog |
 | D08 | display | Settings / Shortcuts | ShortcutsPage |
 | D09 | display | Settings / Layout | LayoutPage |
