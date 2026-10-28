@@ -27214,7 +27214,7 @@ bool CommitPreparedVariableControlInitial(
         row.phase = harken::EnginePlayableStartPhase::Started;
         row.controlLifecycle = harken::PlayableControlLifecycle::Active;
     }
-    if (ok && row.variableControlIndependentFrontier) {
+    if (ok && row.variableControlIndependentFrontier && scratch->initialQueueSignalAdmission == nullptr) {
         const auto frontier =
             PrepareInitialVariableControlFrontier(engine, *scratch, sequence);
         if (frontier == InitialFrontierPrepareStatus::TransientAdmission) {
@@ -29743,10 +29743,6 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
         if (timingHintKind != harken::ChildTimingHintKindV2::Unknown) {
             return QueueContinuationPrepareStatus::Failed;
         }
-        // The selected ordinal ends at a subtree, not at a Sound property cut.
-        // Its complete path is validated when the subtree can be prepared.
-        row.queueDeferredNeedsFullPreparation = true;
-        return QueueContinuationPrepareStatus::Deferred;
     } else {
         return QueueContinuationPrepareStatus::Failed;
     }
@@ -30594,6 +30590,10 @@ QueueContinuationPrepareStatus ValidateQueueSuccessorTarget(
         if (timingHintKind != harken::ChildTimingHintKindV2::Unknown) {
             return QueueContinuationPrepareStatus::Failed;
         }
+        // The selected ordinal ends at a subtree, not at a Sound property cut.
+        // Its complete path is validated when the subtree can be prepared.
+        row.queueDeferredNeedsFullPreparation = true;
+        return QueueContinuationPrepareStatus::Deferred;
     } else {
         return QueueContinuationPrepareStatus::Failed;
     }
@@ -88960,13 +88960,19 @@ struct ScheduleContainerPreparationOperations {
     }
     bool PrepareVariables() noexcept {
         if (activeScratch != nullptr && context.initialNativeForestOwner.Valid()) {
-            activeScratch->nativeEntryDomain = true;
-            context.initialAdmissionGroup = {};
-            context.initialAdmissionMemberCursor = nullptr;
-            context.initialForestReadCutOwner = nullptr;
-            context.originalReadFrame = context.startFrame;
-            activeScratch->initialReadCutOwner = {engine.actionPlayStorage.IndexOf(activeScratch->storage),
-                activeScratch->storage.generation};
+            auto* root = ResolveInitialNativeQueueForest(engine, *activeScratch);
+            if (root == nullptr) return false;
+            // A Queue signal owns its root admission. Only descendants (or an
+            // independent entry seed) require a prerequisite from that root.
+            if (activeScratch != root || root->nativeEntryForestRoot) {
+                activeScratch->nativeEntryDomain = true;
+                context.initialAdmissionGroup = {};
+                context.initialAdmissionMemberCursor = nullptr;
+                context.initialForestReadCutOwner = nullptr;
+                context.originalReadFrame = context.startFrame;
+                activeScratch->initialReadCutOwner = {engine.actionPlayStorage.IndexOf(activeScratch->storage),
+                    activeScratch->storage.generation};
+            }
         }
         return HasPreparationAuthority(activeScratch) && context.originalReadFrame.has_value() &&
             (engine.logicCommits.IsOriginalPreparedIssueFor(context.originalSingleIssue) ||
@@ -98802,7 +98808,8 @@ bool CommitInitialPlayableAttempt(
       }
       scratch.prepared = false;
     }
-    if (ok && !scratch.initialQueueEntryAdmissions.empty())
+    // Signal roots prepare their frontier after the parent link is published.
+    if (ok && !scratch.initialQueueEntryAdmissions.empty() && scratch.initialQueueSignalAdmission == nullptr)
         ok = PrepareInitialVariableControlFrontier(engine, scratch, sequence) == InitialFrontierPrepareStatus::Ready;
     return ok;
 }
