@@ -1,61 +1,44 @@
-# Studio 日志原句
+# Studio 日志与反馈
 
-最近核对：2026-08-23。
+## 反馈边界
 
-定位证据：
+| 项目 | 当前状态 |
+|---|---|
+| Log | 保存可查询的运行事件与任务结果；导入、导出、资源、打包及修改提交失败归入对应日志分类 |
+| Toast | 仅用于 Blueprint 用户交互中的临时反馈，如无效连线；同一播报不同时进入 Log；数据源和程序调用只返回结果 |
+| Toast 展示 | 位于工具栏下方画布顶部中央，避开左侧电平表，不随平移缩放移动；显示 3 秒，含 200 ms 淡入与 300 ms 淡出；新提示替换旧提示，隐藏或关闭视图时清除，不抢焦点或拦截鼠标 |
+| 其他临时反馈 | 非 Blueprint 校验使用字段提示或状态栏 |
+| 底部信息栏 | 不重复展示 Remote 状态；日志摘要按等级配色，点击打开或激活 Log 面板；普通状态恢复 Info 配色 |
 
-- `HarkenStudio/Source/MainWindow.cpp`
-- `HarkenStudio/Source/Core/AuditionManager.cpp`
-- `HarkenStudio/Source/Core/ProjectManager_RuntimeSync.cpp`
+## Preview 日志结果映射
 
-`[Audio]` 与 `[RuntimeSync]` 分类有意义。按对象名和时间把相邻行配对。
-
-## Log 与 Toast 的职责边界
-
-2026-10-21：Log 承接需要记录、查询的运行事件和任务结果；Toast 承接无需留存的临时操作反馈。同一次播报不得同时写入 Log 和显示 Toast，Toast 组件不依赖日志接口。
-
-- 当前只有 Blueprint 的用户交互层使用 Toast。无效连线等预校验拒绝显示临时反馈；导入、导出及修改提交失败进入 Log。数据源和程序调用只返回操作结果，不直接弹提示。
-- `Widgets/Common/ToastPresenter` 统一负责展示、主题、定位和生命周期。调用方只传入消息，不区分等级，不自行实现浮层，不配置时长。实例由所属视图持有，无全局主窗口绑定。
-- 提示挂载在画布外框，与滚动 viewport 并列，作为固定覆盖层显示于 Blueprint toolbar 下方的可操作画布顶部中央。平移、缩放不改变提示位置；随视图尺寸更新并避开左侧嵌入电平表。无左侧等级亮条，总计显示 3 秒，包含 200ms 淡入和 300ms 淡出；新提示替换旧提示并重新计时。隐藏或关闭视图后清除，不抢焦点、不拦截鼠标。
-- 非 Blueprint 的临时校验反馈使用已有字段提示或状态栏；需要保留的文件、资源、打包信息写入对应 Log 分类，已有日志的调用点不再追加相同播报。
-- Studio 底部信息栏不再重复显示 Remote 状态。左侧日志摘要使用 Log 的等级配色，悬浮显示手形光标，点击打开或激活已有 Log 面板；普通状态更新恢复 Info 配色。
-- 实测入口：在 Blueprint 将一个普通节点的输出 pin 拖到另一个节点的输出 pin，松手后显示连接方式无效的 Toast，Log 不增加该条提示。
-
-## 试听 / Preview
-
-| 日志 | 实际发生了什么 | 去哪查码 |
+| Preview 状态 | 日志中的 engine result | 日志码名称 |
 |---|---|---|
-| `Preview queued while Runtime synchronizes: NAME` | 点击已接受，修订屏障还不是 Ready，起播推迟 | 还不是 `VnResult` |
-| `Waiting for Runtime synchronization: NAME` | 同上，状态栏 | 还不是 `VnResult` |
-| `Playback failed for 'NAME' after waiting for Runtime synchronization (engine result -301).` | 屏障等待碰到 `kPreviewRevisionTimeoutMs`，Preview 背压重试耗尽，或 Preview 返回 `16` 被改写 | 日志名为 `VN_BACKPRESSURE`；经常**不是**引擎队列满 |
-| `Playback failed for 'NAME' after waiting for Runtime synchronization (engine result -303).` | Runtime 不可用、session/epoch 不一致、屏障 Failed，或 Preview `HOST_ERROR` 被改写 | 日志名为 `VN_NOT_INITIALIZED` |
-| `Playback failed for 'NAME' after waiting for Runtime synchronization (engine result -200).` | Preview 非 OK 且不是背压/宿主错误，经 `previewEngineResult()` 压扁 | 日志名为 `VN_UNKNOWN_ID`；先找回真实 `VnPreviewResult` |
-| `Play triggered: NAME` / `Playing: NAME` | 起播已提交，没有等待 | 成功路径 |
-| `Cannot play 'NAME': the Container is empty.` | Studio 预检，对象没送进 Runtime | 没有引擎码 |
-| `Bus topology is still synchronizing; preview is not ready.` | `PlaybackFailure::TopologySyncPending` | 不是 `VnResult` |
-| `Bus topology failed for 'NAME' (engine result N).` | 拓扑应用被拒绝 | `N` 是真实 `EngineResult` |
-| `Playback was refused for 'NAME' (engine result N).` | 立即拒绝，没有同步等待那句 | `N` 是真实 `EngineResult` 或被压扁的 Preview 结果 |
+| `VN_PREVIEW_BACKPRESSURE` (`16`) | `-301` | `VN_BACKPRESSURE` |
+| `VN_PREVIEW_HOST_ERROR` (`11`) | `-303` | `VN_NOT_INITIALIZED` |
+| 其他非 OK 状态，包括未知身份、能力不支持与非法参数 | `-200` | `VN_UNKNOWN_ID` |
 
-## Runtime 同步 / 内容
+表注：转换会丢失原始 Preview 错误类别；`-301` 也可由同步等待或重试超时产生，不能仅凭日志数字判断引擎队列已满。
 
-| 日志 | 实际发生了什么 | 接着看 |
+## 试听与同步日志
+
+| 日志或状态提示 | 含义 | 结果性质 |
 |---|---|---|
-| `Sound 'NAME' has no runtime preview: authored Sources semantics (multi-source, trim, loop region, or schedule offset) are not representable by the current runtime` | `syncSound` 返回 `0`，该 Sound 不进入 Current World | 随后对这个 Sound 或父 Container 的 Preview 可能超时成 `-301` 或压成 `-200`。这一行是内容原因，后面的引擎数字是症状 |
+| `Preview queued while Runtime synchronizes: NAME` | 点击已接受，修订屏障尚未就绪，起播推迟 | 尚无引擎结果码 |
+| `Waiting for Runtime synchronization: NAME` | 状态栏显示等待修订屏障 | 尚无引擎结果码 |
+| `Playback failed for 'NAME' after waiting for Runtime synchronization (engine result -301).` | 屏障等待超时、Preview 重试耗尽，或 Preview 背压 | 日志结果可能合成或转换 |
+| `Playback failed for 'NAME' after waiting for Runtime synchronization (engine result -303).` | Runtime 不可用、会话或运行代际不一致、屏障失败，或 Preview 宿主错误 | 日志结果可能合成或转换 |
+| `Playback failed for 'NAME' after waiting for Runtime synchronization (engine result -200).` | Preview 失败且不属于背压或宿主错误 | 转换后的结果，原始类别未保留 |
+| `Play triggered: NAME` / `Playing: NAME` | 起播已提交，无需等待 | 成功 |
+| `Cannot play 'NAME': the Container is empty.` | Studio 预检拒绝，未提交 Runtime | 无引擎结果码 |
+| `Bus topology is still synchronizing; preview is not ready.` | 总线拓扑尚未同步完成 | 非引擎结果码 |
+| `Bus topology failed for 'NAME' (engine result N).` | 拓扑应用被拒绝 | `N` 为原始引擎结果 |
+| `Playback was refused for 'NAME' (engine result N).` | 立即拒绝起播 | `N` 为原始引擎结果或转换后的 Preview 结果 |
+| `Sound 'NAME' has no runtime preview: authored Sources semantics (multi-source, trim, loop region, or schedule offset) are not representable by the current runtime` | Sound 未进入 Current World，其自身或父 Container 后续试听可能超时或失败 | 内容原因；后续 `-301` / `-200` 为结果表现 |
 
-## 如何读一串 `-301` Preview 日志
+## 试听等待限制
 
-常见形状：
-
-1. 若干 `[Audio] Preview queued while Runtime synchronizes: …`
-2. `[Audio] Playback failed … (engine result -301).`
-3. 有时同一对象或相关对象还有 `[RuntimeSync] Sound '…' has no runtime preview: …`
-
-读作：Studio 把 Preview 排在 Current World 屏障后面，屏障没有在时限内变成成功起播，并且/或者创作对象从未进入世界。不要先去加 voice 上限或再套一层重试。
-
-顺序：
-
-1. 正在跑的 `HarkenStudio.exe` 是否就是正在读的这棵树。
-2. 具名对象（或子 Sound）是否被 Sources semantics 跳过。
-3. 是否有更新的创作修订顶掉正在等待的那一版。
-4. Runtime 是否被重建（epoch）或工程 session 是否变了——那些失败是 `-303`，不是 `-301`。
-5. 这之后才把 `-301` 当成现场 `VN_BACKPRESSURE` / Preview `16`。
+| 项目 | 当前值 | 耗尽结果 |
+|---|---|---|
+| 修订屏障等待 | 5000 ms | `-301` |
+| Preview 背压重试 | 最多 500 次，间隔 10 ms | `-301` |

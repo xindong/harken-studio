@@ -1,100 +1,67 @@
 # HarkenEngine 现状快照
 
-最近核对：2026-07-30。路径缩写：`Runtime/` = `HarkenEngine/Source/Runtime/`，
-`Tooling/` = `HarkenEngine/Source/Tooling/`，`Tool/` = `HarkenEngine/Tool/`；测试指 `HarkenEngine/Test/`。
-
-## 目录与开发边界
-
-本节与远程通道于 2026-10-17 核对，其余条目保留各自核对日期。
-
-| 目录 | 归属 |
-|---|---|
-| `HarkenEngine/Source/` | 引擎运行时、产品使用的库与共享代码生成。`Tooling/Preview` 是 Studio 使用的预览库；ABI、SDK Binding、Effects、VariableCatalog 等生成区域仍在此处 |
-| `HarkenEngine/Tool/` | 内部开发工具：`Host` 提供最小引擎宿主与运行探针，`Qualification` 提供资格检测工具，`Remote` 提供宿主侧命名管道服务、Python 客户端及生成的协议代码 |
-| `HarkenEngine/Test/` | 单元、端到端、性能等测试与夹具；工具自身测试放在 `UnitTest/`，管道验收入口为 `E2E/remote_acceptance_drive.py` |
-| `HarkenEngine/ThirdParty/` | 随仓维护的第三方依赖 |
-| `HarkenEngine/Examples/` | 面向引擎接入方的使用示例 |
-
-目录按用途划分，不按语言划分。Python 管道客户端归入 `Tool/Remote/`，给出通过或失败结论的下混参考验收归入 `Test/E2E/downmix_null_reference.py`；全仓构建、发布和质量门禁编排仍由 `.scripts/` 承担。
-
-`Tooling/Remote/wire/harken_wire_table.json` 同时供 ABI 与 SDK 生成使用，因此该表和 `gen_wire.py` 保留在 `Source/`。内部管道服务及其生成产物归入 `Tool/Remote/`，不把共享产品合同随开发工具一起迁走。
-
-SDK 生成通过 `sdk_api_surface.json` 的 `managed_projection` 排除 Monitor 专用类型、函数、常量与错误码；Monitor 合同服务于引擎与 Studio，不进入 SDK 声明或托管 ABI 校验。引擎自身的完整 ABI 校验仍覆盖 Monitor。
-
 ## 渲染与混音
 
 | 能力域 | 预期 | 现状 | 状态 |
 |---|---|---|---|
-| 三线程骨架与实时纪律 | 逻辑/音频/流式三线程，音频线程零分配零锁零 IO，命令块边界生效 | `api/src/DeviceBackend`→`render/MixerLoop` 直调，`core/CommandQueue`+`AllocGuard`+`BlockArena` | 一致 |
-| 固定块节奏 | 恒渲染整块，游标跨回调拷帧，≤1 块延迟换 ramp 语义稳定 | `api/src/RenderSlicer` 纯索引算术，跨设备重建存活 | 一致 |
-| 逐 voice 渲染级联 | 解码重采样→插入效果→滤波→增益→折叠汇入，尾音排空、采样精确启停、代际句柄 | `render/Voice`+`VoiceCascade`+`VoicePool`，golden 测试群钉死 | 一致 |
-| 作业并行 | worker 只并行级联，折叠按槽位序串行，结果与线程数无关 | `render/RenderWorkerPool` 三段式，串/并行逐字节相同，默认串行 | 一致 |
-| voice 容量与抢占 | 超容量如实拒绝；抢占列为"未来特性" | 完整容量模型+三种 steal 策略+优先级+受害者通知+declick（`core/VoiceLedger`） | 偏差 |
-| 总线树与 send | master 为根的树+加性 send 边（bus→bus 与 voice→bus），环检测拒绝 | `render/BusTree`+`VoiceCascade` 双级 aux send，feeds-first 排序 | 一致 |
-| 拓扑计划与换入 | 逻辑侧编不可变计划、块边界换入、预检背压零副作用 | `render/TopologyPlan` 如设计；另新增 `Vn_ApplyBusTopology` 整快照+revision 乐观并发+代际槽位复用 | 一致 |
-| 多声道与下混 | 统一混音布局，master→设备与逐总线输出两处矩阵折叠 | `core/ChannelLayout`+8×8 矩阵+`Vn_SetBusDownmixMatrix/OutputLayout` | 一致 |
-| 总线效果链与 fader 点 | 复用 voice 效果链，fader 点切前后两段，块边界原子换位 | `Vn_SetBusEffect/SetBusFaderPoint` 已公开 | 一致 |
-| 计量与侧链 | 每总线块峰值入快照；计量变量+绑定拼出 sidechain | `core/MeterBlockRing`+`param/MeterSystem`，已扩为三 tap 可选点 | 一致 |
-| 增益 ramp 契约 | 幅度域线性、整块切分、首设跳变、途中重设从当前值起步 | `dsp/GainRamp`，voice/bus 共用公式 | 一致 |
-| 循环 | 内存内源级回绕无缝+流式生产者侧循环，一次/N 遍/无限 | `VoiceCascade` wrap 不重置重采样器+`media/StreamManager` 回绕，接缝容差 0 | 一致 |
-| voice 插入效果链 | 固定槽、空槽零开销、干湿旁路仍处理、池化构造-移交-退役 | `render/EffectChain`+`EffectPool`+退役环 | 一致 |
-| 内建效果集合 | 仅反馈延迟+三段 tone 两个原子 | 5 种（+gain/limiter/compressor），生成式注册表 `Tooling/Effects/`，参数可绑定实时驱动 | 偏差 |
+| 三线程骨架与实时纪律 | 逻辑、音频、流式三线程；音频线程零分配、零锁、零 IO | 三线程分工，命令在音频块边界生效 | 一致 |
+| 固定块节奏 | 恒渲染整块，跨设备回调连续拷帧，延迟不超过一块 | 固定块渲染与设备回调解耦，游标跨设备重建保留 | 一致 |
+| 逐 voice 渲染 | 解码重采样、插入效果、滤波、增益、混音依次执行 | 支持尾音排空、采样精确启停与代际句柄 | 一致 |
+| 作业并行 | 并行处理 voice，混音顺序固定，结果与线程数无关 | 串行与并行结果逐字节相同，默认串行 | 一致 |
+| voice 容量与抢占 | 超容量如实拒绝；抢占列为未来特性 | 已支持容量模型、三种抢占策略、优先级、受害者通知和消除切换爆音 | 偏差 |
+| 总线树与 send | master 为根，支持 bus→bus 与 voice→bus 加性 send，拒绝环路 | 支持两类 send，按供给先后顺序混音 | 一致 |
+| 拓扑计划与换入 | 逻辑侧生成不可变计划，块边界换入，背压拒绝无副作用 | 支持整份拓扑提交、修订冲突检查与代际槽位复用 | 一致 |
+| 多声道与下混 | 统一混音布局，支持 master→设备及逐总线输出下混 | 支持 8×8 矩阵、自定义总线下混矩阵和输出布局 | 一致 |
+| 总线效果链与 fader 点 | 复用 voice 效果，fader 点可切分前后段 | 总线效果与 fader 点已公开，块边界原子换位 | 一致 |
+| 计量与侧链 | 每总线块峰值进入快照，计量变量可驱动绑定 | 支持三个可选计量点及侧链控制 | 一致 |
+| 增益 ramp | 幅度域线性，整块切分，首次设置跳变，重设从当前值起步 | voice 与 bus 使用相同规则 | 一致 |
+| 循环 | 内存与流式媒体均支持一次、有限次数及无限循环 | 回绕不重置重采样状态，接缝容差为 0 | 一致 |
+| voice 插入效果链 | 固定槽位，空槽零开销，干湿旁路仍处理 | 支持效果实例池化、移交与退役 | 一致 |
+| 内建效果集合 | 反馈延迟、三段 tone | 共五种：delay、tone、gain、limiter、compressor；参数可由绑定实时驱动 | 偏差 |
 
 ## 供给与媒体生命周期
 
 | 能力域 | 预期 | 现状 | 状态 |
 |---|---|---|---|
-| 流式供给 | 专属流线程唯一碰文件、每 voice 无锁环、预缓冲门、饥饿≠结束 | `media/StreamManager`（2ms 节拍、逐 chunk 校验）+`core/StreamRing` | 一致 |
-| 媒体运行时 | 加载全有全无事务、引用闭包先集齐、常驻/内容两类包、来源归属、内容地址化身份 | `media/PackFormatV2`+`PackLogicImage`（15 类引用闭包）+cookie 归属+内容哈希 | 一致 |
-| 热重载（代际） | 退旧代新触发走新版、每资产至多一个退役代、纯逻辑数据 tick 边界原地换 | PCM/stream/pack 三动词+attenuation/binding 就地换，金样钉死 | 一致 |
-| 整包替换 | 暂存-间隙-固定激活点、事务性、漂移复查成建制丢弃 | `api/src/PackLogicStore` staged revision+diff 幂等+激活顺延 | 一致 |
-| 可闻性停泊 | 滞回、游标镜像权威、虚拟时间按解析音高推进、返回即全新发声、默认关 | `core/VoiceLedger`+`SourceCursorMirror`+ParkRecord；流与有限多遍循环不停泊 | 一致 |
-| 设备后端 | 编译期定候选集、空后端独立模式、范围外平台如实失败 | `api/src/PlatformBackend`（WASAPI/CoreAudio/AAudio→OpenSL/其余空集）+`render/NullBackend` | 一致 |
+| 流式供给 | 专属流线程访问文件，每 voice 无锁供给，预缓冲后起播，饥饿不等于结束 | 2 ms 供给节拍，逐块校验 | 一致 |
+| 媒体运行时 | 原子加载，引用闭包完整，区分常驻包与内容包，保留来源与内容身份 | 覆盖 15 类引用闭包，来源归属与内容哈希参与校验 | 一致 |
+| 热重载 | 新触发使用新版，每资产至多一个退役代，纯逻辑数据在 tick 边界更新 | 支持 PCM、stream、pack 热重载及衰减、绑定原地替换 | 一致 |
+| 整包替换 | 暂存后在固定激活点事务换入，漂移时整批放弃 | 支持修订检查、幂等差异提交与激活顺延 | 一致 |
+| 可闻性停泊 | 滞回切换，虚拟时间按音高推进，返回时重新发声，默认关闭 | 保留权威游标；流式媒体与有限多遍循环不参与停泊 | 一致 |
+| 设备后端 | 编译时限定候选，支持独立空后端，范围外平台如实失败 | WASAPI、CoreAudio、AAudio / OpenSL；设备丢失后无自动恢复 | 一致 |
+| 媒体格式 | — | 运行时仅接收 64 字节对齐的 planar PCM-f32，不执行编解码；PCM 全量常驻、不逐出；打包输入仅支持 WAV | 未记载 |
 
 ## 观测与远控
 
 | 能力域 | 预期 | 现状 | 状态 |
 |---|---|---|---|
-| 一致快照与阶段抽头 | 音频侧无等待发布、读者付代价、块内自洽、抽头只观测不介入 | `core/PinnedSnapshot3`（三槽 pin 变体，契约同）+StageTap，撕裂压测覆盖 | 一致 |
-| trace 录制与回放 | — | `api/src/TraceRecorder`（全 API 调用流）+`harken_host trace-replay`；历史 CurrentWorld 仅支持有限诊断，明确拒绝 pre-#443 V5–V7 内嵌 Binding/Curve，范围与样本见[历史诊断约定](../../../HarkenEngine/Test/UnitTest/fixtures/current-world-pre443/README.md)（本项核对：2026-09-08） | 未记载 |
-| 内部宿主管道 | 宿主侧工具通道、逻辑线程安全点执行、单一描述表生成+门禁防漂移 | `Tool/Remote/` + `harken_host remote-serve`；Windows named pipe 连接 Python 客户端，用于独立驱动引擎、验证 Pack 热替换、快照与可选 trace 回放；不进入游戏运行库 | 一致 |
-| Studio / 游戏远程连接 | 游戏进程内提供通信，Studio 连接运行中的引擎进行观测与控制 | `Runtime/remote/` 提供仅绑定 `127.0.0.1` 的 TCP 通信与 UDP 发现；当前 Studio / Engine / SDK 仅支持同机连接，不支持局域网；SDK 调用 `Vn_RemoteStart` 启动，Studio `RemoteConnection` 使用独立的 `Protocol.h`；本地试听仍通过进程内 C API | 已实现 |
+| 一致快照与阶段抽头 | 音频侧无等待发布，读者承担读取成本，块内自洽；抽头只观测 | 三槽固定快照与阶段抽头 | 一致 |
+| trace 录制与回放 | — | 支持全 API 调用录制与确定性回放；历史 CurrentWorld 仅用于有限诊断，不支持旧 V5–V7 内嵌 Binding / Curve | 未记载 |
+| 内部宿主管道 | 工具通道在逻辑线程安全点执行，合同同源生成 | Windows 命名管道连接 Python 客户端，可独立驱动引擎、验证 Pack 热替换、读取快照和回放 trace；不进入游戏运行库 | 一致 |
+| Studio / 游戏远程连接 | Studio 观测与控制运行中的引擎 | TCP 仅绑定 `127.0.0.1`，以 UDP 发现；Engine、Studio、SDK 仅支持同机连接；本地试听使用进程内 API | 已实现 |
+| Monitor 事件 | 播放、执行和变量结果分别表达 | schema 2 保留 V1 播放事实，新增 Action 终态、Step 触发与 Variable 实际设置结果；沿用原始 Request ID | 已实现 |
+| Monitor 对象与终态 | 事件归属明确，不推导未发生的事件 | 类型为 Action、Step、Playable、Variable、Game Object；Step 仅在实际触发时报告一次；Action 完成等待相关播放与子 Action；Variable 接纳与应用分别判定 | 已实现 |
+| Monitor 覆盖边界 | 记录实际业务事实 | Game Object 注册 / 注销对应 Emitter 创建 / 销毁；Host 名称绑定与采集基线不补造事件；Pack 加载 / 卸载暂不展示；停止操作只展示受影响对象的结果 | 已实现 |
+| Monitor 版本与丢失统计 | 会话按声明版本读取，丢失量口径明确 | V1 会话保留原事件版本；内部录制使用 schema 2 并继承拥有者权限；源端按未编码记录字节统计，下游按实际编码字节统计 | 已实现 |
 
-## 对象与参数（运行时侧）
-
-Monitor 事件合同于 2026-10-21 补充：Studio 请求 execution schema 2，保留 V1 播放事实，V2 承载 Action 终态、Step 触发和 Variable 实际设置结果。Step 只在实际触发执行时报告一次，不具有独立的开始／结束日志；Object 指向操作目标，详情保留所属 Action。Action 完成等待相关播放及子 Action 结束，Variable 接纳与实际应用分别判定，各类结果不能互相推导。沿用原始 Request ID，不增加另一套播放身份。
-
-Monitor 的 Type 为 Action、Step、Playable、Variable、Game Object；Pack 加载／卸载暂不展示，Stop all／Stop emitter 只展示受影响对象的结果。Game Object 注册／注销由 Emitter 创建／销毁事实表达，Host 名称绑定不增加注册行；采集基线仅补身份，不伪造历史事件。无法归属业务对象的全局诊断保留在原诊断日志中。
-
-V1 会话仍按其版本收取事件；内部 typed 录制使用明确声明的 schema 2，继承拥有者的流与权限，完整保存新旧事实。源生产端丢失的 byteCount 统计尚未编码的源记录字节；下游丢失统计实际编码字节，避免混合 V1／V2 时按固定 wire 长度估算。
-
-Action、Variable 与 Emitter 消费边界于 2026-09-21 重新核对；其余行保留原核对日期。
+## 对象与参数
 
 | 能力域 | 预期 | 现状 | 状态 |
 |---|---|---|---|
-| 容器·选择 | 随机/轮询/权重/变量匹配，(容器,发射器) 独立游标与避免重复窗口 | `param/ContainerTable` 两段式选择管线+嵌套深度 8+每对状态 LRU | 一致 |
-| 容器·扇出 | 全部子项同时发声、采样级对齐 | 代码无全播容器，只有单选管线；多分量叠层需上层多次 Play | 缺失 |
-| Action | Play、Stop、PostAction、Set Variable、Reset；先解析后执行 | CurrentWorld Action program 的 SetVariable 步骤独立携带 Global/Emitter；Emitter 来自此次触发，缺失时拒绝；Global 不受触发携带的 Emitter 限制 | 一致 |
-| Variable 写入 | 定义无 scope，统一 GlobalWithEmitterOverride；全局赋值同时清除该 Variable 全部局部覆盖 | `param/VariableService` 在同一应用边界提交全局值与覆盖清除；相同全局值仍有效；保留未来局部写入、Action 顺序及原子批次，失败恢复旧投影 | 一致 |
-| Binding 消费上下文 | 局部值以 (Emitter, Variable) 共享；Layer 按后代播放 Emitter 求值，Bus 只读全局 | `ParamSystem` 的 voice 实例关联 Emitter；Layer 附着下放到后代实例；`BindingTable` 的 Bus 求值不携带 Emitter。路由、Layer、Action 和 Play 不新增局部 bank | 一致 |
-| 曲线 | 分段曲线带形状标签（线性/等功率/指数/对数/S 形/阶梯） | `param/Curve` 已换代为 ≤8 控制点分段三次 Bezier+LUT，无形状枚举、无阶梯段 | 偏差 |
-| Variable 类型 | Step / Smooth，range/default 描述数值；Labels 提供稳定身份与名称到当前整数位置的映射 | `VariableService` 校验数值域，按当前 Pack 映射解析名称或身份后复用 Global/Emitter 写入；Kind 不门控 Label 与消费者 | 一致 |
-| 空间化与衰减 | 衰减=属性模型作用于距离；逻辑侧求值，音频线程不做几何 | `param/Spatializer` 逐 tick 求值（3 种 rolloff+空气吸收+声锥+近场+宽度） | 一致 |
+| 容器选择 | 随机、轮询、权重、变量匹配；容器与 Emitter 组合具有独立游标和避免重复窗口 | 支持两阶段选择、嵌套深度 8 与按组合回收的游标状态 | 一致 |
+| 容器扇出 | 全部子项同时发声、采样级对齐 | 仅支持单选；多分量叠层需上层多次 Play | 缺失 |
+| Action | Play、Stop、PostAction、Set Variable、Reset；先解析后执行 | Set Variable 步骤独立指定 Global / Emitter；局部写入使用本次触发的 Emitter，缺失时拒绝；全局写入不受 Emitter 限制 | 一致 |
+| Variable 写入 | 定义不设 scope；全局赋值清除该 Variable 的全部 Emitter 覆盖 | 全局值与覆盖清除在同一边界生效；相同值仍执行清除；保留后续局部写入、Action 顺序和原子批次，失败恢复原状态 | 一致 |
+| Binding 消费上下文 | 局部值由 Emitter 与 Variable 共同确定；Layer 跟随后代播放，Bus 只读全局 | 同一 Emitter 的不同 Action、Play、Layer 共享局部值；路由不改变范围；无公开局部 Clear，Emitter 销毁结束局部状态 | 一致 |
+| 曲线 | 带线性、等功率、指数、对数、S 形、阶梯标签的分段曲线 | 最多 8 个控制点的分段三次 Bezier 与查找表，无形状枚举或阶梯段 | 偏差 |
+| Variable 类型 | Step / Smooth，range / default 描述数值，Label 将稳定身份和名称映射到当前整数位置 | 校验数值域，Label 解析后复用 Global / Emitter 写入；Kind 不限制 Label 或消费者 | 一致 |
+| 空间化与衰减 | 逻辑侧按距离求值，音频线程不执行几何计算 | 逐 tick 计算三种 rolloff、空气吸收、声锥、近场与宽度 | 一致 |
 
 ## 公开表面
 
 | 能力域 | 预期 | 现状 | 状态 |
 |---|---|---|---|
-| ABI 纪律 | 单头 C 原语、只增不改、尺寸字段自述版本、三类身份、诚实结果码族 | `api/include/harken/Harken.h`（98 函数）全 structSize 版本化+AbiPin/AbiHistory 测试 | 一致 |
-| 窄腰不破 | 上层丰富性编译降级为冻结的音频侧原语 | M4VocabularySceneTest 直接断言新特性不新增音频侧 opcode | 一致 |
-| 无文档归宿的公开原语 | — | Bus Mute/Solo（树作用域）、`Vn_Suspend/Resume`、能力发现族、`core/RtProbe`、快照约 90 个 profiling 字段、`core/Utf8Path` 硬化、packc 增量缓存 | 未记载 |
-
-## 备注
-
-1. 旧概览的"刻意留在引擎之外"清单五条里四条已失效：抢占、总线效果链、公开绑定组装、Action/容器/离散变量原语均已落地，"仅立体声"也已被多声道+逐总线下混取代。
-2. 容器"扇出"是预期与现实差距最大的单项：文档将其与"选择"并列为容器两大规则，引擎侧没有对应原语。
-3. Variable 局部值的正式边界、Layer/Bus 消费表与三行赋值例子见 [Game Modulate](../../philosophy/game-modulate-system.md#emitter-上下文与消费边界)。公开局部 Clear 已退出，Emitter 销毁仍结束其局部状态。
-4. 曲线模型是破坏性换代（pack schema vintage 2、remote 协议 major 2 联动），旧"形状标签"叙事整体作废。
-5. 媒体格式真实边界：运行时零编解码（仅 pcm-f32 planar、64B 对齐）、PcmRegistry 全量常驻不逐出、packc 只吃 wav；设备丢失无自动恢复。
-6. trace 录制+确定性回放是"确定性可被观测"的关键闭环，预期层从未覆盖，宜尽快补课。
-7. 结果码数值、Preview ABI 与 Studio 日志映射见 [engine 结果码](engine/README.md)。
+| ABI 纪律 | 单头 C 原语，只增不改，尺寸字段标识版本，区分身份与结果码 | 结构体尺寸版本化，原生布局与 ABI 历史均有校验 | 一致 |
+| 音频原语边界 | 上层能力编译为既有音频侧原语 | 新特性保持既有音频侧操作集合 | 一致 |
+| SDK 投影边界 | Monitor 服务于引擎与 Studio | SDK 排除 Monitor 专用类型、函数、常量和错误码；引擎完整 ABI 校验仍覆盖 Monitor | 已实现 |
+| 其他公开能力 | — | 总线树作用域的 Mute / Solo、暂停 / 恢复、能力发现、实时探测、约 90 个性能快照字段、UTF-8 路径支持及增量打包缓存 | 未记载 |
