@@ -1463,10 +1463,11 @@ void MainWindow::setupStatusBar()
 void MainWindow::setStatusMessage(const QString& message, LogEntry::Level level)
 {
     statusBar()->clearMessage();
-    QString buttonText = message;
+    const QString summary = message.section(QLatin1Char('\n'), 0, 0).simplified();
+    QString buttonText = summary;
     statusButton_->setText(buttonText.replace(QLatin1Char('&'), QStringLiteral("&&")));
-    statusButton_->setAccessibleName(message);
-    statusButton_->setToolTip(tr("%1\nOpen Log").arg(message));
+    statusButton_->setAccessibleName(summary);
+    statusButton_->setToolTip(tr("Open Log"));
     QtControlSkin::setSemanticProperty(statusButton_, "logLevel", LogEntry::levelToString(level));
 }
 
@@ -4488,10 +4489,12 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
             }, Qt::QueuedConnection);
         };
         QString writeAccessError;
+        QString writeAccessSummary;
         if (!ProjectPackExporter::ValidatePackBuildWriteAccess(
-                snapshot->project, baseDir, genPlatforms, opts, &writeAccessError)) {
+                snapshot->project, baseDir, genPlatforms, opts, &writeAccessError, &writeAccessSummary)) {
             QMetaObject::invokeMethod(store,
-                [window, store, projectLease, runId, cancel, writeAccessError, platformActivity, outputLock] {
+                [window, store, projectLease, runId, cancel, writeAccessError, writeAccessSummary,
+                 platformActivity, outputLock] {
                 if (!store->isCurrentRun(runId)) return;
                 const bool canceled = cancel->load(std::memory_order_relaxed);
                 store->finishProgress(runId, canceled);
@@ -4500,7 +4503,8 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
                     LogPanel::logWarning(LogCategory::Pack, tr("Pack export canceled"));
                 } else {
                     LogPanel::logError(LogCategory::Pack, writeAccessError);
-                    QMessageBox::critical(window, tr("Export Readiness"), writeAccessError);
+                    QMessageBox::warning(window, tr("Export Readiness"),
+                        tr("%1\n\nSee the Log panel for affected paths and details.").arg(writeAccessSummary));
                 }
             }, Qt::QueuedConnection);
             return;
