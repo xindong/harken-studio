@@ -137,6 +137,11 @@ void ItemRowDelegate::paint(QPainter* p, const QStyleOptionViewItem& option,
     bg.features &= ~(QStyleOptionViewItem::HasDecoration | QStyleOptionViewItem::HasDisplay);
     st->drawControl(QStyle::CE_ItemViewItem, &bg, p, opt.widget);
 
+    paintItemContents(p, opt);
+}
+
+void paintItemContents(QPainter* p, const QStyleOptionViewItem& opt)
+{
     const QRect r = opt.rect;
     const QSize ds = opt.decorationSize;
     const QRect iconCell(r.left(), r.top(), ds.width(), r.height());

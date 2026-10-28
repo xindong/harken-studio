@@ -6,6 +6,8 @@
 #include "../../Core/AppSettings.h"
 #include "../../Core/AssetPipeline/PathUtils.h"
 #include "../../Core/Components/VAction.h"
+#include "../../Core/ItemTypeCatalog.h"
+#include "../../Core/ItemTypeIcons.h"
 #include "../../Core/PackBuildPlan.h"
 #include "../../Core/PackArtifactCache.h"
 #include "../../Core/ProjectLanguageSemantics.h"
@@ -26,6 +28,7 @@
 #include "../Common/MultiSelectComboBox.h"
 #include "../Common/SplitButton.h"
 #include "../Common/StatusTip.h"
+#include "../Shared/TreeRowStyle.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -76,6 +79,7 @@ enum PackTreeColumn {
 enum class NodeKind {
     None,
     Section,
+    Folder,
     Action,
     SystemPack
 };
@@ -86,6 +90,8 @@ constexpr int kStableIdRole  = Qt::UserRole + 3;
 constexpr int kObjectIdRole  = Qt::UserRole + 4;
 constexpr int kPackPathRole  = Qt::UserRole + 5;
 constexpr int kLanguageRole = Qt::UserRole + 6;
+constexpr int kFolderRole = Qt::UserRole + 7;
+constexpr int kExpandedRole = Qt::UserRole + 8;
 
 NodeKind nodeKind(const QTreeWidgetItem* item)
 {
@@ -98,6 +104,11 @@ QString treeItemStateKey(const QTreeWidgetItem* item)
     switch (nodeKind(item)) {
         case NodeKind::Section:
             return QStringLiteral("section:") + item->data(0, kGroupNameRole).toString();
+        case NodeKind::Folder:
+            return QStringLiteral("folder:")
+                + QString::number(reinterpret_cast<quintptr>(
+                    item->data(0, kFolderRole).value<std::shared_ptr<PhysicalFolder>>().get()), 16)
+                + QLatin1Char('|') + item->data(0, kLanguageRole).toString();
         case NodeKind::Action:
             return QStringLiteral("s:")
                 + objectIdString(item->data(0, kStableIdRole).value<harkenstudio::ObjectId>())
@@ -113,12 +124,17 @@ class PackTreeDelegate : public TableItemDelegate
 public:
     using TableItemDelegate::TableItemDelegate;
 
-    QRect checkBoxRect(const QStyleOptionViewItem& option, const QModelIndex& index) const
+    QRect chevronRect(const QStyleOptionViewItem& option, const QModelIndex& index) const
     {
-        QStyleOptionViewItem styled = option;
-        initStyleOption(&styled, index);
-        return option.widget->style()->subElementRect(QStyle::SE_ItemViewItemCheckIndicator,
-            &styled, option.widget);
+        const auto branch = branchesRect(option, index);
+        const int step = option.widget->style()->pixelMetric(QStyle::PM_TreeViewIndentation, nullptr, option.widget);
+        return QRect(branch.right() + 1 - step, branch.top(), step, branch.height()).intersected(option.rect);
+    }
+
+    QRect checkBoxRect(const QStyleOptionViewItem& option) const
+    {
+        return TableGroupHeader::checkBoxRect(option.rect, &ThemeManager::instance(), option.widget)
+            .intersected(option.rect);
     }
 
     bool editorEvent(QEvent* event, QAbstractItemModel* model,
@@ -143,6 +159,51 @@ public:
         }
     }
 
+protected:
+    void paintContents(QPainter* painter, const QStyleOptionViewItem& option,
+                       const QModelIndex& index) const override
+    {
+        if (index.column() != kColName || !index.parent().isValid()) {
+            TableItemDelegate::paintContents(painter, option, index);
+            return;
+        }
+        QStyleOptionViewItem styled = option;
+        initStyleOption(&styled, index);
+        const auto* tree = static_cast<const ProportionalTreeWidget*>(option.widget);
+        const auto branch = branchesRect(option, index);
+        const int step = tree->style()->pixelMetric(QStyle::PM_TreeViewIndentation, nullptr, tree);
+        painter->save();
+        painter->setClipRect(option.rect, Qt::IntersectClip);
+        if (index.data(Qt::CheckStateRole).isValid()) {
+            QStyleOptionViewItem indicator = styled;
+            indicator.rect = checkBoxRect(option);
+            indicator.state = isCheckIndicatorHovered(indicator.rect) ? QStyle::State_MouseOver : QStyle::State_None;
+            if (tree->isEnabled() && index.flags().testFlag(Qt::ItemIsEnabled)
+                && index.flags().testFlag(Qt::ItemIsUserCheckable))
+                indicator.state |= QStyle::State_Enabled;
+            indicator.state |= styled.checkState == Qt::Checked ? QStyle::State_On
+                : styled.checkState == Qt::PartiallyChecked ? QStyle::State_NoChange : QStyle::State_Off;
+            tree->style()->drawPrimitive(QStyle::PE_IndicatorItemViewItemCheck, &indicator, painter, tree);
+        }
+        TreeRowStyle::paintBranches(painter, branch, index, index.model(), step, tree->isExpanded(index));
+        styled.rect.setLeft(qMin(option.rect.right() + 1, branch.right() + 1));
+        styled.decorationSize = tree->iconSize();
+        if (index.data(TableTextRole).toInt() == static_cast<int>(TableTextState::Disabled))
+            styled.state &= ~QStyle::State_Enabled;
+        if (!styled.rect.isEmpty()) TreeRowStyle::paintItemContents(painter, styled);
+        painter->restore();
+    }
+
+private:
+    QRect branchesRect(const QStyleOptionViewItem& option, const QModelIndex& index) const
+    {
+        int depth = 0;
+        for (auto parent = index.parent(); parent.isValid(); parent = parent.parent()) ++depth;
+        const int step = option.widget->style()->pixelMetric(QStyle::PM_TreeViewIndentation, nullptr, option.widget);
+        const int left = checkBoxRect(option).right() + 1 + ThemeManager::instance().metrics().table.cellPaddingX;
+        return QRect(left, option.rect.top(), depth * step, option.rect.height());
+    }
+
 };
 
 class PublisherTree : public ProportionalTreeWidget
@@ -153,6 +214,8 @@ public:
 protected:
     void mousePressEvent(QMouseEvent* event) override
     {
+        if (toggleFolder(event))
+            return;
         if (beginCheckDrag(event))
             return;
         ProportionalTreeWidget::mousePressEvent(event);
@@ -160,6 +223,8 @@ protected:
 
     void mouseDoubleClickEvent(QMouseEvent* event) override
     {
+        if (toggleFolder(event))
+            return;
         if (beginCheckDrag(event))
             return;
         ProportionalTreeWidget::mouseDoubleClickEvent(event);
@@ -186,6 +251,22 @@ protected:
     }
 
 private:
+    bool toggleFolder(QMouseEvent* event)
+    {
+        if (event->button() != Qt::LeftButton) return false;
+        auto* item = itemAt(event->pos());
+        if (nodeKind(item) != NodeKind::Folder) return false;
+        const auto index = indexFromItem(item, kColName);
+        QStyleOptionViewItem option;
+        initViewItemOption(&option);
+        option.rect = visualRect(index);
+        const auto* delegate = static_cast<const PackTreeDelegate*>(itemDelegateForIndex(index));
+        if (!delegate->chevronRect(option, index).contains(event->pos())) return false;
+        item->setExpanded(!item->isExpanded());
+        event->accept();
+        return true;
+    }
+
     QTreeWidgetItem* checkableItemAt(const QPoint& pos) const
     {
         QTreeWidgetItem* item = itemAt(pos);
@@ -210,7 +291,7 @@ private:
         initViewItemOption(&option);
         option.rect = visualRect(index);
         const auto* delegate = static_cast<const PackTreeDelegate*>(itemDelegateForIndex(index));
-        if (!delegate->checkBoxRect(option, index).contains(pos))
+        if (!delegate->checkBoxRect(option).contains(pos))
             return false;
         checkDragActive_ = true;
         checkDragState_ = item->checkState(kColName) == Qt::Checked
@@ -295,6 +376,10 @@ PublisherPanel::PublisherPanel(QWidget* parent)
             [this]() { requestPackTableRefresh(); });
     connect(&pm, &ProjectManager::itemRenamed, this,
             [this]() { requestPackTableRefresh(); });
+    connect(&pm, &ProjectManager::folderCreated, this, &PublisherPanel::requestPackTableRefresh);
+    connect(&pm, &ProjectManager::folderDeleted, this, &PublisherPanel::requestPackTableRefresh);
+    connect(&pm, &ProjectManager::folderMoved, this, &PublisherPanel::requestPackTableRefresh);
+    connect(&pm, &ProjectManager::folderRenamed, this, &PublisherPanel::requestPackTableRefresh);
 
     connect(&pm, &ProjectManager::packBuildOutputDirChanged, this,
             [this](const QString&) { requestPackTableRefresh(); });
@@ -313,12 +398,18 @@ PublisherPanel::PublisherPanel(QWidget* parent)
     connect(&pm, &ProjectManager::projectOpened, this, [this](ProjectData* project) {
         openedProject_ = project;
         static_cast<TableWidget*>(packTree_->parentWidget())->clearSelection();
+        packRows_.clear();
+        packTree_->clear();
+        nameFilterActive_ = false;
         populatePlatformControls();
         requestPackTableRefresh();
     });
     connect(&pm, &ProjectManager::projectClosed, this, [this]() {
         openedProject_ = nullptr;
         static_cast<TableWidget*>(packTree_->parentWidget())->clearSelection();
+        packRows_.clear();
+        packTree_->clear();
+        nameFilterActive_ = false;
         searchEdit_->clear();
         populatePlatformControls();
         requestPackTableRefresh();
@@ -329,6 +420,8 @@ PublisherPanel::PublisherPanel(QWidget* parent)
         applyDeveloperColumns();
         requestPackTableRefresh();
     });
+    connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
+            this, &PublisherPanel::requestPackTableRefresh);
 
     populatePlatformControls();
     requestPackTableRefresh();
@@ -375,6 +468,7 @@ void PublisherPanel::setupUI()
     packTree_->setRowProgressEndColumn(kColResult);
     packTree_->setSelectionMode(QAbstractItemView::NoSelection);
     packTree_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    packTree_->setHierarchyIndentation(0);
     packTree_->setItemDelegate(new PackTreeDelegate(packTree_));
     packTree_->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(packTree_, &QTreeWidget::customContextMenuRequested,
@@ -383,13 +477,16 @@ void PublisherPanel::setupUI()
             this, &PublisherPanel::onPackItemChanged);
     connect(packTree_, &ProportionalTreeWidget::groupCheckStateRequested, this,
         [this](QTreeWidgetItem* group, Qt::CheckState state) {
-            QList<QTreeWidgetItem*> items;
-            for (int i = 0; i < group->childCount(); ++i) {
-                auto* item = group->child(i);
-                if (item->flags().testFlag(Qt::ItemIsUserCheckable)) items.append(item);
-            }
-            toggleUnitPlatforms(items, state == Qt::Checked);
+            toggleUnitPlatforms({group}, state == Qt::Checked);
         });
+    const auto rememberExpansion = [this](QTreeWidgetItem* item) {
+        if (!packTreeUpdating_ && !nameFilterActive_) {
+            const QScopedValueRollback guard(packTreeUpdating_, true);
+            item->setData(0, kExpandedRole, item->isExpanded());
+        }
+    };
+    connect(packTree_, &QTreeWidget::itemExpanded, this, rememberExpansion);
+    connect(packTree_, &QTreeWidget::itemCollapsed, this, rememberExpansion);
     contentLayout->addWidget(table, 1);
     contentLayout->addWidget(createToolbar());
 
@@ -618,7 +715,13 @@ void PublisherPanel::applyNameFilter()
 {
     if (!packTree_)
         return;
+    const QScopedValueRollback guard(packTreeUpdating_, true);
     const QString needle = searchEdit_ ? searchEdit_->text().trimmed() : QString();
+    if (!nameFilterActive_ && !needle.isEmpty()) {
+        for (QTreeWidgetItemIterator it(packTree_); *it; ++it)
+            (*it)->setData(0, kExpandedRole, (*it)->isExpanded());
+    }
+    nameFilterActive_ = !needle.isEmpty();
     auto matches = [&needle](const QTreeWidgetItem* item) {
         return needle.isEmpty()
             || item->text(kColName).contains(needle, Qt::CaseInsensitive);
@@ -635,6 +738,8 @@ void PublisherPanel::applyNameFilter()
         }
         const bool visible = selfMatch || anyChildVisible;
         item->setHidden(!visible);
+        if (item->childCount() > 0)
+            item->setExpanded(nameFilterActive_ ? anyChildVisible : item->data(0, kExpandedRole).toBool());
         return visible;
     };
     for (int i = 0; i < packTree_->topLevelItemCount(); ++i)
@@ -711,7 +816,7 @@ void PublisherPanel::populateProjectPackTable()
         if (key.isEmpty())
             continue;
         if (((*it)->childCount() > 0 || (*it)->data(0, TableGroupCollapsibleRole).toBool())
-            && !(*it)->isExpanded())
+            && !(nameFilterActive_ ? (*it)->data(0, kExpandedRole).toBool() : (*it)->isExpanded()))
             collapsedKeys.insert(key);
     }
 
@@ -786,6 +891,29 @@ void PublisherPanel::populateProjectPackTable()
         sections.insert(language, section);
     }
 
+    QHash<QPair<const PhysicalFolder*, QString>, QTreeWidgetItem*> folderRows;
+    const auto folderIcon = ThemeManager::instance().resolveToggleIcon(
+        QString::fromLatin1(ThemeAssetIds::TreeFolderOpen),
+        QString::fromLatin1(ThemeAssetIds::TreeFolderClosed)).icon;
+    const auto addFolders = [&](auto&& self, const std::shared_ptr<PhysicalFolder>& folder,
+                                QTreeWidgetItem* parent, const QString& language) -> void {
+        auto* row = new QTreeWidgetItem(parent);
+        row->setText(kColName, folder->name);
+        row->setIcon(kColName, folderIcon);
+        row->setFlags(Qt::ItemIsEnabled);
+        row->setData(0, kNodeKindRole, static_cast<int>(NodeKind::Folder));
+        row->setData(0, kFolderRole, QVariant::fromValue(folder));
+        row->setData(0, kLanguageRole, language);
+        row->setToolTip(kColName, project->folderRelPath(folder.get()));
+        folderRows.insert(qMakePair(folder.get(), language), row);
+        for (const auto& child : folder->children) self(self, child, row, language);
+    };
+    for (const auto& binding : project->folders) {
+        if (binding.parentFolder != QLatin1String(ItemTypeCatalog::kActionsFolderName)) continue;
+        for (const auto& language : sectionLanguages)
+            addFolders(addFolders, binding.rootFolder, sections.value(language), language);
+    }
+
     auto editCheckState = [&editPlatforms](
             const std::function<bool(const QString&)>& included) {
         int onCount = 0;
@@ -809,13 +937,17 @@ void PublisherPanel::populateProjectPackTable()
     };
 
     const bool matrixEditable = !editPlatforms.isEmpty();
+    const auto actionIcon = iconForItemType(ProjectItem::Type::Action);
     for (const auto& unit : units) {
+        const auto* folder = project->folderForItem(pm.findItemByObjectID(unit.objectID));
         QStringList languages = languagesByAction.value(unit.stableId);
         const bool missingLanguages = languages.isEmpty();
         if (missingLanguages) languages.append(QString());
         for (const auto& language : languages) {
-            auto* item = new QTreeWidgetItem(sections.value(language));
+            auto* parent = folderRows.value(qMakePair(folder, language), sections.value(language));
+            auto* item = new QTreeWidgetItem(parent);
             item->setText(kColName, unit.name);
+            item->setIcon(kColName, actionIcon);
             item->setData(0, kNodeKindRole, static_cast<int>(NodeKind::Action));
             item->setData(0, kStableIdRole, QVariant::fromValue(unit.stableId));
             item->setData(0, kObjectIdRole, unit.objectID);
@@ -848,29 +980,24 @@ void PublisherPanel::populateProjectPackTable()
         }
     }
 
-    for (auto* section : sections) {
-        int checkableCount = 0;
-        int checkedCount = 0;
-        int uncheckedCount = 0;
-        for (int i = 0; i < section->childCount(); ++i) {
-            const auto* item = section->child(i);
-            if (!item->flags().testFlag(Qt::ItemIsUserCheckable)) continue;
-            ++checkableCount;
-            checkedCount += item->checkState(kColName) == Qt::Checked;
-            uncheckedCount += item->checkState(kColName) == Qt::Unchecked;
+    const auto pruneEmptyFolders = [&](auto&& self, QTreeWidgetItem* parent) -> void {
+        for (int i = parent->childCount() - 1; i >= 0; --i) {
+            auto* child = parent->child(i);
+            if (nodeKind(child) != NodeKind::Folder) continue;
+            self(self, child);
+            if (child->childCount() == 0) delete child;
         }
-        packTree_->setGroupCheckState(section,
-            uncheckedCount == checkableCount ? Qt::Unchecked
-                : checkedCount == checkableCount ? Qt::Checked : Qt::PartiallyChecked,
-            checkableCount > 0);
-    }
+    };
+    for (auto* section : sections) pruneEmptyFolders(pruneEmptyFolders, section);
+    updatePackCheckStates();
 
     for (QTreeWidgetItemIterator it(packTree_); *it; ++it) {
         const QString key = treeItemStateKey(*it);
         if (key.isEmpty())
             continue;
-        if (collapsedKeys.contains(key))
-            (*it)->setExpanded(false);
+        const bool expanded = !collapsedKeys.contains(key);
+        (*it)->setData(0, kExpandedRole, expanded);
+        (*it)->setExpanded(expanded);
     }
 
     packTreeUpdating_ = false;
@@ -990,57 +1117,110 @@ void PublisherPanel::onPackItemChanged(QTreeWidgetItem* item, int column)
     if (packTreeUpdating_ || !item || column != kColName)
         return;
 
-    if (nodeKind(item) != NodeKind::Action) return;
+    if (nodeKind(item) != NodeKind::Action && nodeKind(item) != NodeKind::Folder) return;
     const QVariant checkData = item->data(kColName, Qt::CheckStateRole);
     if (checkData.isValid())
         toggleUnitPlatforms({item}, checkData.toInt() == Qt::Checked);
 }
 
+void PublisherPanel::updatePackCheckStates()
+{
+    const QScopedValueRollback guard(packTreeUpdating_, true);
+    const auto update = [&](auto&& self, QTreeWidgetItem* parent) -> void {
+        int count = 0;
+        int checked = 0;
+        int unchecked = 0;
+        bool excluded = parent->childCount() > 0;
+        for (int i = 0; i < parent->childCount(); ++i) {
+            auto* child = parent->child(i);
+            if (nodeKind(child) == NodeKind::Folder) self(self, child);
+            excluded &= child->data(kColName, TableTextRole).toInt() == static_cast<int>(TableTextState::Disabled);
+            if (!child->flags().testFlag(Qt::ItemIsUserCheckable)) continue;
+            ++count;
+            checked += child->checkState(kColName) == Qt::Checked;
+            unchecked += child->checkState(kColName) == Qt::Unchecked;
+        }
+        const auto state = unchecked == count ? Qt::Unchecked
+            : checked == count ? Qt::Checked : Qt::PartiallyChecked;
+        if (nodeKind(parent) == NodeKind::Section) {
+            packTree_->setGroupCheckState(parent, state, count > 0);
+        } else {
+            parent->setFlags(count > 0 ? Qt::ItemIsEnabled | Qt::ItemIsUserCheckable : Qt::ItemIsEnabled);
+            parent->setCheckState(kColName, state);
+            parent->setData(kColName, TableTextRole,
+                static_cast<int>(excluded ? TableTextState::Disabled : TableTextState::Normal));
+        }
+    };
+    for (int i = 0; i < packTree_->topLevelItemCount(); ++i) {
+        auto* item = packTree_->topLevelItem(i);
+        if (nodeKind(item) == NodeKind::Section) update(update, item);
+    }
+}
+
 void PublisherPanel::toggleUnitPlatforms(const QList<QTreeWidgetItem*>& items, bool include)
 {
     const auto project = ProjectManager::instance().currentProjectLease();
-    const auto& editPlatforms = PlatformContextService::instance().context().selected;
+    const auto editPlatforms = PlatformContextService::instance().context().selected;
     if (!project || editPlatforms.isEmpty())
         return;
 
-    const QStringList allPlatforms = effectivePlatforms(project.get());
-    const auto selection = ProjectManager::instance().packExportSelection();
-    QList<QPair<QString, QJsonObject>> commands;
-    for (const auto* item : items) {
-        if (nodeKind(item) != NodeKind::Action) continue;
-        const auto stableId = item->data(0, kStableIdRole).value<harkenstudio::ObjectId>();
-        const QString language = item->data(0, kLanguageRole).toString();
-        QStringList current;
-        for (const auto& platform : allPlatforms)
-            if (selection.includesActionPack(stableId, platform, language)) current.append(platform);
-        const QString actionId = QStringLiteral("set_action_pack_targeting");
-        QJsonObject payload{{QStringLiteral("stableId"), objectIdString(stableId)},
-                            {QStringLiteral("language"), language}};
-
-        const QSet<QString> currentSet(current.cbegin(), current.cend());
-        QSet<QString> next = currentSet;
-        for (const auto& platform : editPlatforms) {
-            const QString id = ProjectPlatformSemantics::idString(platform);
-            if (include) next.insert(id);
-            else next.remove(id);
-        }
-        if (next == currentSet) continue;
-        QJsonArray platforms;
-        for (const QString& platform : allPlatforms)
-            if (next.contains(platform)) platforms.append(platform);
-        const bool all = platforms.size() == allPlatforms.size();
-        payload.insert(QStringLiteral("allPlatforms"), all);
-        payload.insert(QStringLiteral("platform_ids"), all ? QJsonArray() : platforms);
-        commands.append({actionId, payload});
+    QSet<QPair<harkenstudio::ObjectId, QString>> targets;
+    {
+        const QScopedValueRollback guard(packTreeUpdating_, true);
+        const auto collect = [&](auto&& self, QTreeWidgetItem* item) -> void {
+            if (nodeKind(item) == NodeKind::Action) {
+                if (!item->flags().testFlag(Qt::ItemIsUserCheckable)) return;
+                targets.insert(qMakePair(item->data(0, kStableIdRole).value<harkenstudio::ObjectId>(),
+                                         item->data(0, kLanguageRole).toString()));
+                item->setCheckState(kColName, include ? Qt::Checked : Qt::Unchecked);
+                item->setData(kColName, TableTextRole,
+                    static_cast<int>(include ? TableTextState::Normal : TableTextState::Disabled));
+            }
+            for (int i = 0; i < item->childCount(); ++i) self(self, item->child(i));
+        };
+        for (auto* item : items) collect(collect, item);
+        updatePackCheckStates();
     }
-    if (commands.isEmpty()) return;
+    if (targets.isEmpty()) return;
 
-    QTimer::singleShot(0, this, [this, commands, project] {
+    QTimer::singleShot(0, this, [this, targets, project, editPlatforms, include] {
         if (ProjectManager::instance().currentProject() != project.get()) return;
+        const QStringList allPlatforms = effectivePlatforms(project.get());
+        const auto validActions = ProjectPackExporter::CollectActionStableIds(*project);
+        const auto languages = ProjectLanguageSemantics::buildLanguages(*project);
+        const bool available = std::all_of(targets.cbegin(), targets.cend(), [&](const auto& target) {
+            return validActions.contains(target.first)
+                && (target.second.isEmpty() || languages.contains(target.second));
+        }) && std::all_of(editPlatforms.cbegin(), editPlatforms.cend(), [&](const auto& platform) {
+            return allPlatforms.contains(ProjectPlatformSemantics::idString(platform));
+        });
+        if (!available) {
+            showStatusTip(this, tr("The selected packs or platforms are no longer available."));
+            requestPackTableRefresh();
+            return;
+        }
+        const auto selection = ProjectManager::instance().packExportSelection();
         {
             const QScopedValueRollback guard(packTreeUpdating_, true);
-            for (const auto& command : commands) {
-                const auto result = ActionManager::instance().execute(command.first, command.second, ActionSource::GUI);
+            for (const auto& target : targets) {
+                QJsonArray platforms;
+                bool changed = false;
+                for (const auto& platform : allPlatforms) {
+                    const bool before = selection.includesActionPack(target.first, platform, target.second);
+                    const bool edited = std::any_of(editPlatforms.cbegin(), editPlatforms.cend(),
+                        [&](const auto& id) { return ProjectPlatformSemantics::idString(id) == platform; });
+                    const bool after = edited ? include : before;
+                    changed |= before != after;
+                    if (after) platforms.append(platform);
+                }
+                if (!changed) continue;
+                const bool all = platforms.size() == allPlatforms.size();
+                const QJsonObject payload{{QStringLiteral("stableId"), objectIdString(target.first)},
+                    {QStringLiteral("language"), target.second},
+                    {QStringLiteral("allPlatforms"), all},
+                    {QStringLiteral("platform_ids"), all ? QJsonArray() : platforms}};
+                const auto result = ActionManager::instance().execute(
+                    QStringLiteral("set_action_pack_targeting"), payload, ActionSource::GUI);
                 if (!result.success) {
                     showStatusTip(this, result.errorMessage.isEmpty()
                         ? tr("Could not update pack platform targeting") : result.errorMessage);
@@ -1048,7 +1228,7 @@ void PublisherPanel::toggleUnitPlatforms(const QList<QTreeWidgetItem*>& items, b
                 }
             }
         }
-        populateProjectPackTable();
+        requestPackTableRefresh();
     });
 }
 
