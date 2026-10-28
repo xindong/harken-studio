@@ -27,6 +27,5 @@ inline constexpr std::uint64_t kMonitorCursorContributorEmitters = 20;
 QStringList monitorPanelTypeIds();
 QStringList monitorPanelTitles();
 QStringList monitorPanelDockObjectNames();
-QStringList monitorViewSortKeys();
 
 } // namespace VNX
