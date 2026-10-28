@@ -12865,8 +12865,11 @@ void ObservePlayableMemberArm(harken::Engine& engine,
     if (!engine.timelineArms.Observe(arm, &observed)) return;
     member.sourceStartArm = arm;
     member.sourceRender = record.render;
-    if (observed.startedBlockSequence != 0)
+    if (observed.startedBlockSequence != 0) {
         member.sourceStartedBlockSequence = observed.startedBlockSequence;
+        if (observed.actualStartFrame != UINT64_MAX)
+            member.sourceActualStartFrame = observed.actualStartFrame;
+    }
     if (observed.state == harken::ArmState::Tombstoned)
         member.sourceArmTombstoneSequence = observed.tombstoneAudioSequence;
 }
@@ -39287,6 +39290,8 @@ bool ObservePlayableSourceLifecycle(const harken::Engine& engine,
         : retainedStart ? member.sourceStartedBlockSequence : 0;
     if (!armObserved && started == 0 && !member.resourcesRetired) return false;
     observation->startedBlockSequence = started;
+    if (!armObserved && retainedStart)
+        observation->actualStartFrame = member.sourceActualStartFrame;
     observation->logicalCompletionSequence = member.sourceCompletionSequence;
     observation->tombstoneAudioSequence = 0;
     if (member.resourcesRetired) {
@@ -39296,6 +39301,26 @@ bool ObservePlayableSourceLifecycle(const harken::Engine& engine,
         observation->state = harken::ArmState::Started;
     }
     return true;
+}
+
+void ReanchorQueueCurrentCompletionFromStart(
+    harken::EnginePlayableServiceRow& row,
+    const harken::TimelineArmObservation& started) noexcept {
+    if (!row.HasFeatureArrays()) return;
+    auto& completion = row.QueuePayload().queueCurrentCompletion;
+    if (!harken::IsBoundKnownCompletionPredicate(completion)) return;
+    if (started.startedBlockSequence != 0 && started.actualStartFrame != UINT64_MAX &&
+        started.actualStartFrame >= completion.absoluteLogicalStartFrame) {
+        const auto delay = started.actualStartFrame - completion.absoluteLogicalStartFrame;
+        if (completion.absoluteLogicalCompleteFrame <= UINT64_MAX - delay) {
+            completion.absoluteLogicalStartFrame += delay;
+            completion.absoluteLogicalCompleteFrame += delay;
+            row.startFrame = started.actualStartFrame;
+        }
+    }
+    row.QueuePayload().queueCompletionFrame = std::max(
+        completion.absoluteLogicalCompleteFrame,
+        row.hasZeroWorkCompletion ? row.zeroWorkCompletionFrame : UINT64_C(0));
 }
 
 void RefreshPlayableChildObservation(
@@ -39639,6 +39664,7 @@ bool RestoreDeferredQueueSourceObservation(
                 *observation = {};
                 observation->state = harken::ArmState::Tombstoned;
                 observation->startedBlockSequence = source.sourceStartedBlockSequence;
+                observation->actualStartFrame = source.sourceActualStartFrame;
                 observation->logicalCompletionSequence = source.sourceCompletionSequence;
                 observation->tombstoneAudioSequence = knownSource
                     ? retired.tombstoneAudioSequence : source.sourceReleaseSequence;
@@ -55786,20 +55812,8 @@ engine.runtimeRecreateRequired = true;
                 } else if (harken::IsBoundKnownCompletionPredicate(
                                row.QueuePayload().queueCurrentCompletion)) {
                     harken::TimelineArmObservation started{};
-                    auto& completion = row.QueuePayload().queueCurrentCompletion;
-                    if (engine.timelineArms.Observe(row.arm, &started) && started.startedBlockSequence != 0 &&
-                        started.actualStartFrame != UINT64_MAX &&
-                        started.actualStartFrame >= completion.absoluteLogicalStartFrame) {
-                        const auto delay = started.actualStartFrame - completion.absoluteLogicalStartFrame;
-                        if (completion.absoluteLogicalCompleteFrame <= UINT64_MAX - delay) {
-                            completion.absoluteLogicalStartFrame += delay;
-                            completion.absoluteLogicalCompleteFrame += delay;
-                            row.startFrame = started.actualStartFrame;
-                        }
-                    }
-                    row.QueuePayload().queueCompletionFrame =
-                        row.QueuePayload().queueCurrentCompletion.
-                            absoluteLogicalCompleteFrame;
+                    (void)ObservePlayableSourceLifecycle(engine, row, &started);
+                    ReanchorQueueCurrentCompletionFromStart(row, started);
                 } else if (row.hasZeroWorkCompletion) {
                     row.QueuePayload().queueCompletionFrame = row.zeroWorkCompletionFrame;
                 }
@@ -57530,6 +57544,12 @@ engine.runtimeRecreateRequired = true;
                     }
                 }
                 if (arm.startedBlockSequence != 0) {
+                    if (row.queueMode && row.queueDeferredNeedsFullPreparation &&
+                        !row.queueContinuationPrepared) {
+                        // SourceWait can move the actual onset after the initial binding.
+                        // Reanchor before preparing the next conditional Queue entry.
+                        ReanchorQueueCurrentCompletionFromStart(row, arm);
+                    }
                     if (row.queueMode &&
                         row.HasFeatureArrays() && row.QueuePayload().queueCurrentOccurrence.generation != 0 &&
                         engine.timelineOccurrences.StageOf(
@@ -57560,7 +57580,7 @@ engine.runtimeRecreateRequired = true;
                     // Transfer its real arrival now so controls observe the settled prefix.
                     (void)TransferActiveQueueArrival(engine, row);
                 }
-                if (row.queueMode && !row.parentService.Valid() && !row.variableControlInstance.Valid() &&
+                if (row.queueMode && !row.variableControlInstance.Valid() &&
                     row.queueDeferredNeedsFullPreparation &&
                     !row.queueContinuationPrepared && !row.queueNaturalEnd &&
                     row.phase == harken::EnginePlayableStartPhase::Started &&

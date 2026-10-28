@@ -978,6 +978,7 @@ struct VariableControlMemberCompletion {
     VnVoiceHandle sourceRender = 0;
     TimelineArmToken sourceStartArm{};
     std::uint64_t sourceStartedBlockSequence = 0;
+    std::uint64_t sourceActualStartFrame = UINT64_MAX;
     std::uint64_t sourceArmTombstoneSequence = 0;
 };
 
