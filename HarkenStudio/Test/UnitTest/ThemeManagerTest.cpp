@@ -172,6 +172,112 @@ TEST(ThemeManager, PreviewCancellationKeepsCommittedStateWithoutReloadingFiles)
     EXPECT_EQ(storedValues(*stored), settings);
 }
 
+TEST(ThemeManager, ContinuousPreviewRetainsBaseWithoutAccumulatingOverrides)
+{
+    QTemporaryDir root;
+    ASSERT_TRUE(root.isValid());
+    const QString packageId = QStringLiteral("theme.preview");
+    const QString accentKey = QStringLiteral("accent.primary");
+    const QString textKey = QStringLiteral("text.secondary");
+    ASSERT_TRUE(writePackage(root.path(), QStringLiteral("preview"), packageId,
+                             QStringLiteral("#ff112233"),
+                             QStringLiteral("#ff334455")));
+    auto storage = std::make_unique<VNX::MemorySettingsStorage>();
+    auto* stored = storage.get();
+    VNX::ThemeManager manager(root.path(), std::move(storage));
+    ASSERT_TRUE(manager.selectTheme(packageId).ok());
+    const auto committed = manager.appearance();
+    const auto original = manager.snapshot();
+    const auto settings = storedValues(*stored);
+    auto draft = committed;
+    draft.colors[packageId].insert(accentKey, QColor(QStringLiteral("#80abcdef")));
+    draft.colors[packageId].insert(textKey, QColor(QStringLiteral("#ffdefabc")));
+    ASSERT_TRUE(manager.previewAppearance(draft).ok());
+    const auto firstPreview = manager.snapshot();
+
+    ASSERT_TRUE(writePackage(root.path(), QStringLiteral("preview"), packageId,
+                             QStringLiteral("#ff445566"),
+                             QStringLiteral("#ff778899")));
+    ASSERT_TRUE(QFile::remove(QDir(root.path()).filePath(
+        QStringLiteral("preview/manifest.json"))));
+    draft.colors.remove(packageId);
+    ASSERT_TRUE(manager.previewAppearance(draft).ok());
+    EXPECT_EQ(manager.snapshot()->ui.colors.accent, original->ui.colors.accent);
+    EXPECT_EQ(manager.snapshot()->ui.colors.textSecondary, original->ui.colors.textSecondary);
+    EXPECT_EQ(manager.snapshot()->domains.curve.colors.attenuationVolume,
+              original->domains.curve.colors.attenuationVolume);
+    EXPECT_EQ(firstPreview->ui.colors.accent, QColor(QStringLiteral("#80abcdef")));
+    EXPECT_EQ(manager.appearance(), committed);
+    EXPECT_EQ(storedValues(*stored), settings);
+
+    manager.cancelAppearancePreview();
+    EXPECT_FALSE(manager.previewAppearance(draft).ok());
+    ASSERT_TRUE(writePackage(root.path(), QStringLiteral("preview"), packageId,
+                             QStringLiteral("#ff445566"),
+                             QStringLiteral("#ff778899")));
+    ASSERT_TRUE(manager.previewAppearance(draft).ok());
+    EXPECT_EQ(manager.snapshot()->ui.colors.accent, QColor(QStringLiteral("#ff445566")));
+    EXPECT_EQ(manager.snapshot()->domains.curve.colors.attenuationVolume,
+              QColor(QStringLiteral("#ff778899")));
+
+    draft.themeId = VNX::builtinThemeId();
+    ASSERT_TRUE(manager.previewAppearance(draft).ok());
+    ASSERT_TRUE(writePackage(root.path(), QStringLiteral("preview"), packageId,
+                             QStringLiteral("#ff778899"),
+                             QStringLiteral("#ff112233")));
+    draft.themeId = packageId;
+    ASSERT_TRUE(manager.previewAppearance(draft).ok());
+    EXPECT_EQ(manager.snapshot()->ui.colors.accent, QColor(QStringLiteral("#ff778899")));
+    manager.cancelAppearancePreview();
+    EXPECT_EQ(manager.snapshot()->ui.colors.accent, original->ui.colors.accent);
+    EXPECT_EQ(storedValues(*stored), settings);
+}
+
+TEST(ThemeManager, CommitAndReloadStartNewPreviewSessions)
+{
+    QTemporaryDir root;
+    ASSERT_TRUE(root.isValid());
+    const QString packageId = QStringLiteral("theme.preview");
+    ASSERT_TRUE(writePackage(root.path(), QStringLiteral("preview"), packageId,
+                             QStringLiteral("#ff112233"),
+                             QStringLiteral("#ff334455")));
+    VNX::ThemeManager manager(root.path(), memoryStorage());
+    ASSERT_TRUE(manager.selectTheme(packageId).ok());
+    auto draft = manager.appearance();
+    const QColor text(QStringLiteral("#ffabcdef"));
+    draft.colors[packageId].insert(QStringLiteral("text.primary"), text);
+    ASSERT_TRUE(manager.previewAppearance(draft).ok());
+
+    ASSERT_TRUE(writePackage(root.path(), QStringLiteral("preview"), packageId,
+                             QStringLiteral("#ff223344"),
+                             QStringLiteral("#ff334455")));
+    ASSERT_TRUE(manager.applyAppearance(draft).ok());
+    EXPECT_EQ(manager.snapshot()->ui.colors.accent, QColor(QStringLiteral("#ff223344")));
+    EXPECT_EQ(manager.snapshot()->ui.colors.textPrimary, text);
+
+    ASSERT_TRUE(writePackage(root.path(), QStringLiteral("preview"), packageId,
+                             QStringLiteral("#ff334455"),
+                             QStringLiteral("#ff334455")));
+    ASSERT_TRUE(manager.previewAppearance(draft).ok());
+    EXPECT_EQ(manager.snapshot()->ui.colors.accent, QColor(QStringLiteral("#ff334455")));
+
+    ASSERT_TRUE(writePackage(root.path(), QStringLiteral("preview"), packageId,
+                             QStringLiteral("#ff445566"),
+                             QStringLiteral("#ff334455")));
+    ASSERT_TRUE(manager.reloadTheme().ok());
+    EXPECT_EQ(manager.snapshot()->ui.colors.accent, QColor(QStringLiteral("#ff445566")));
+    EXPECT_EQ(manager.appearance(), draft);
+
+    ASSERT_TRUE(writePackage(root.path(), QStringLiteral("preview"), packageId,
+                             QStringLiteral("#ff556677"),
+                             QStringLiteral("#ff334455")));
+    ASSERT_TRUE(manager.previewAppearance(draft).ok());
+    EXPECT_EQ(manager.snapshot()->ui.colors.accent, QColor(QStringLiteral("#ff556677")));
+    manager.cancelAppearancePreview();
+    EXPECT_EQ(manager.snapshot()->ui.colors.accent, QColor(QStringLiteral("#ff445566")));
+    EXPECT_EQ(manager.snapshot()->ui.colors.textPrimary, text);
+}
+
 TEST(ThemeManager, PersistsOverridesPerThemeAndResetsToCurrentPackageDefaults)
 {
     QTemporaryDir root;
