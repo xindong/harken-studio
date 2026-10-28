@@ -673,7 +673,6 @@ struct SelectionInputTrace {
                     parents.insert(parents.end(), input.subjects.begin(), input.subjects.end());
                 }
             }
-            if (isQueue(outer) && inner == harken::ContainerModeV1::VariableControl) parents.resize(1);
             parentOrder = parents;
             for (const auto parent : parents) {
                 ASSERT_GE(parent, harkentest::ObjectId(2304u));
