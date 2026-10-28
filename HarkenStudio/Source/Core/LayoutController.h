@@ -96,6 +96,7 @@ signals:
     void dockStateRestored();
     void manageLayoutsRequested();
     void currentLayoutChanged(const QString& name);
+    void namedLayoutsChanged();
 
 private:
     struct ZoneSpec { ads::CDockWidget* dock; ads::DockWidgetArea area; bool open; };

@@ -14,6 +14,8 @@
 #include <QLabel>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QShowEvent>
+#include <QSignalBlocker>
 #include <QTreeWidget>
 
 #include <utility>
@@ -78,24 +80,22 @@ QString LayoutPage::categoryLabel() const
 
 void LayoutPage::load()
 {
-    static_cast<TableWidget*>(layoutTree_->parentWidget())->clearSelection();
     populateLayoutTree();
 }
 
-bool LayoutPage::apply()
+void LayoutPage::showEvent(QShowEvent* event)
 {
-    return true;
-}
-
-bool LayoutPage::isDirty() const
-{
-    return false;
+    SettingsPage::showEvent(event);
+    populateLayoutTree();
 }
 
 void LayoutPage::populateLayoutTree()
 {
     if (!layoutTree_)
         return;
+    const QString selected = layoutTree_->currentItem()
+        ? layoutTree_->currentItem()->data(0, Qt::UserRole).toString() : QString();
+    const QSignalBlocker blocker(layoutTree_);
     layoutTree_->clear();
 
     QTreeWidgetItem* defaultItem = new QTreeWidgetItem({tr("Default"), tr("Built-in")});
@@ -108,6 +108,8 @@ void LayoutPage::populateLayoutTree()
         QTreeWidgetItem* item = new QTreeWidgetItem({info.name, info.savedAt});
         item->setData(0, Qt::UserRole, info.name);
         layoutTree_->addTopLevelItem(item);
+        if (info.name == selected)
+            layoutTree_->setCurrentItem(item);
     }
 
     updateLayoutButtons();

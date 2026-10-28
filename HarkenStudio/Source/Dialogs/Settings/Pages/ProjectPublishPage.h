@@ -3,10 +3,12 @@
 #include "Dialogs/Settings/SettingsPage.h"
 
 #include <memory>
+#include <QJsonObject>
 
 class QCheckBox;
 class QLineEdit;
 class QPushButton;
+class QLabel;
 
 namespace VNX {
 
@@ -24,17 +26,16 @@ public:
     QString pageId() const override;
     QString categoryLabel() const override;
     void load() override;
-    bool apply() override;
-    bool isDirty() const override;
-    bool hasExternalChanges() const;
-    bool validate();
+    void finishEditing();
+
+protected:
+    void hideEvent(QHideEvent* event) override;
 
 private:
-    void rememberBaseline();
-    bool applyPackBuildOutputDir();
-    bool applyProjectDataExport();
-    bool applyPackMetadataExport();
-    bool applyWaveformSettings();
+    void sync();
+    bool hasCurrentProject() const;
+    void commit(const QString& command, const QJsonObject& args);
+    void commitWaveformPath();
     void onPackBuildOutputDirBrowseClicked();
     void onPackBuildOutputDirEditingFinished();
     void onWaveformOutputDirBrowseClicked();
@@ -46,14 +47,13 @@ private:
     QCheckBox* buildExportPackMetadataCheckBox_ = nullptr;
     QCheckBox* buildExportWaveformsCheckBox_ = nullptr;
     QWidget* waveformOutputRow_ = nullptr;
+    QLabel* waveformDirectoryLabel_ = nullptr;
     QLineEdit* waveformOutputDirEdit_ = nullptr;
     QPushButton* waveformOutputDirBrowseBtn_ = nullptr;
 
     QString baselinePackBuildOutputDir_;
-    bool baselineExportProjectData_ = false;
-    bool baselineExportPackMetadata_ = false;
-    bool baselineExportWaveforms_ = false;
     QString baselineWaveformOutputDir_;
+    bool committing_ = false;
 };
 
 }

@@ -4,6 +4,7 @@
 #include "Core/QtControlSkin.h"
 #include "Core/ContextInfo.h"
 #include "Widgets/Common/PanelScrollArea.h"
+#include "Widgets/Common/ToastPresenter.h"
 
 #include <QLabel>
 
@@ -14,8 +15,11 @@ SettingsPage::SettingsPage(QWidget* parent)
 {
 }
 
-void SettingsPage::revert()
+void SettingsPage::showError(const QString& message)
 {
+    if (!feedback_)
+        feedback_ = new ToastPresenter(this);
+    feedback_->showMessage(message);
 }
 
 QVBoxLayout* SettingsPage::makePageBody()
@@ -25,6 +29,7 @@ QVBoxLayout* SettingsPage::makePageBody()
     outer->setContentsMargins(0, 0, 0, 0);
     outer->setSpacing(0);
     auto* scroll = new PanelScrollArea(this);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     auto* content = new QWidget(scroll);
     scroll->setWidget(content);
     outer->addWidget(scroll);

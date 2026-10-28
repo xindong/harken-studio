@@ -8,20 +8,20 @@
 add_library(harken_editor_dialogs STATIC
     AboutDialog.cpp
     AboutDialog.h
-    RemoteConnectDialog.cpp
-    RemoteConnectDialog.h
+    RemoteConnectPanel.cpp
+    RemoteConnectPanel.h
     NewProjectDialog.cpp
     NewProjectDialog.h
     TemplateChooserWidget.cpp
     TemplateChooserWidget.h
     Settings/SettingsPage.cpp
     Settings/SettingsPage.h
-    Settings/SettingsShellDialog.cpp
-    Settings/SettingsShellDialog.h
-    Settings/PreferencesDialog.cpp
-    Settings/PreferencesDialog.h
-    Settings/ProjectSettingsDialog.cpp
-    Settings/ProjectSettingsDialog.h
+    Settings/SettingsPanel.cpp
+    Settings/SettingsPanel.h
+    Settings/PreferencesPanel.cpp
+    Settings/PreferencesPanel.h
+    Settings/ProjectSettingsPanel.cpp
+    Settings/ProjectSettingsPanel.h
     Settings/Pages/AppearancePage.cpp
     Settings/Pages/AppearancePage.h
     Settings/Pages/ExtensionPage.cpp
@@ -51,7 +51,7 @@ set_target_properties(harken_editor_dialogs PROPERTIES
     AUTOGEN_BUILD_DIR "${CMAKE_BINARY_DIR}/_autogen/harken_editor_dialogs"
 )
 
-# PUBLIC: consumers can include "Dialogs/Settings/PreferencesDialog.h" via this directory's parent (src/)
+# PUBLIC: consumers can include "Dialogs/Settings/PreferencesPanel.h" via this directory's parent (src/)
 target_include_directories(harken_editor_dialogs PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
 target_link_libraries(harken_editor_dialogs

@@ -13,9 +13,9 @@
 #include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
-#include <QMessageBox>
 #include <QPushButton>
 #include <QSignalBlocker>
+#include <QShowEvent>
 #include <QSpinBox>
 #include <QUrl>
 
@@ -58,6 +58,7 @@ AIAgentPage::AIAgentPage(SecretStoreAccess secretStore, QWidget* parent)
     aiContextWindowSpin_->setObjectName(QStringLiteral("aiContextWindowSpin"));
     aiContextWindowSpin_->setRange(4096, 2000000);
     aiContextWindowSpin_->setSingleStep(4096);
+    aiContextWindowSpin_->setKeyboardTracking(false);
     aiContextWindowSpin_->setToolTip(tr("tokens"));
     credForm->addRow(tr("Context Window:"), aiContextWindowSpin_);
 
@@ -76,13 +77,23 @@ AIAgentPage::AIAgentPage(SecretStoreAccess secretStore, QWidget* parent)
     aiConnectionTestLabel_->setObjectName("aiConnectionTestLabel");
     aiConnectionTestLabel_->setTextFormat(Qt::PlainText);
     aiConnectionTestLabel_->setWordWrap(true);
-    connectionTestRow->addWidget(aiConnectionTestLabel_, 1);
+    aiConnectionTestLabel_->hide();
+    connectionTestRow->addStretch();
+
+    aiConnectionSaveButton_ = new QPushButton(tr("Save Connection"));
+    aiConnectionSaveButton_->setObjectName(QStringLiteral("aiConnectionSaveButton"));
+    aiConnectionSaveButton_->setAutoDefault(false);
+    connectionTestRow->addWidget(aiConnectionSaveButton_);
     credForm->addRow(QString(), connectionTestWidget);
 
     connect(aiConnectionTestButton_, &QPushButton::clicked,
             this, &AIAgentPage::onAIConnectionTestClicked);
+    connect(aiConnectionSaveButton_, &QPushButton::clicked, this, [this] {
+        saveConnection();
+    });
 
     static_cast<QVBoxLayout*>(credGroup->layout())->addLayout(credForm);
+    static_cast<QVBoxLayout*>(credGroup->layout())->addWidget(aiConnectionTestLabel_);
 
     layout->addWidget(credGroup);
 
@@ -98,13 +109,13 @@ AIAgentPage::AIAgentPage(SecretStoreAccess secretStore, QWidget* parent)
 
     layout->addWidget(permGroup);
 
-    connect(aiBaseUrlEdit_, &QLineEdit::textChanged, this, &AIAgentPage::notifyDirty);
-    connect(aiModelEdit_, &QLineEdit::textChanged, this, &AIAgentPage::notifyDirty);
+    connect(aiBaseUrlEdit_, &QLineEdit::textChanged, this, &AIAgentPage::connectionEdited);
+    connect(aiModelEdit_, &QLineEdit::textChanged, this, &AIAgentPage::connectionEdited);
     connect(aiContextWindowSpin_, QOverload<int>::of(&QSpinBox::valueChanged),
-            this, &AIAgentPage::notifyDirty);
+            this, &AIAgentPage::connectionEdited);
     connect(aiPermissionModeCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &AIAgentPage::notifyDirty);
-    connect(aiApiKeyEdit_, &QLineEdit::textChanged, this, &AIAgentPage::notifyDirty);
+            this, &AIAgentPage::savePermission);
+    connect(aiApiKeyEdit_, &QLineEdit::textChanged, this, &AIAgentPage::connectionEdited);
 
     layout->addStretch();
 }
@@ -119,9 +130,10 @@ QString AIAgentPage::categoryLabel() const
     return tr("AI Agent");
 }
 
-void AIAgentPage::notifyDirty()
+void AIAgentPage::connectionEdited()
 {
-    emit dirtyChanged();
+    invalidateConnectionTest();
+    refreshConnectionValidation();
 }
 
 void AIAgentPage::rememberBaseline()
@@ -130,10 +142,29 @@ void AIAgentPage::rememberBaseline()
     baselineApiKey_ = aiApiKeyEdit_->text();
     baselineModel_ = aiModelEdit_->text();
     baselineContextWindow_ = aiContextWindowSpin_->value();
-    baselinePermissionMode_ = aiPermissionModeCombo_->currentData().toString();
 }
 
 void AIAgentPage::load()
+{
+    refreshPermission();
+    discardConnectionChanges();
+}
+
+void AIAgentPage::showEvent(QShowEvent* event)
+{
+    SettingsPage::showEvent(event);
+    refreshPermission();
+}
+
+void AIAgentPage::refreshPermission()
+{
+    const AIAgentConfig config = AIAgentConfigStore().effectiveSnapshot();
+    const QSignalBlocker blocker(aiPermissionModeCombo_);
+    aiPermissionModeCombo_->setCurrentIndex(
+        aiPermissionModeCombo_->findData(toId(config.permissionProfile)));
+}
+
+void AIAgentPage::discardConnectionChanges()
 {
     const AIAgentConfig config = AIAgentConfigStore().effectiveSnapshot();
 
@@ -141,7 +172,6 @@ void AIAgentPage::load()
     const QSignalBlocker b2(aiApiKeyEdit_);
     const QSignalBlocker b3(aiModelEdit_);
     const QSignalBlocker b4(aiContextWindowSpin_);
-    const QSignalBlocker b5(aiPermissionModeCombo_);
 
     aiBaseUrlEdit_->setText(config.baseUrl);
     aiApiKeyEdit_->setText(secretStore_.load(QStringLiteral("HarkenStudio.ai"),
@@ -149,28 +179,36 @@ void AIAgentPage::load()
     aiModelEdit_->setText(config.model);
     aiContextWindowSpin_->setValue(config.contextWindowTokens);
 
-    int idx = aiPermissionModeCombo_->findData(toId(config.permissionProfile));
-    aiPermissionModeCombo_->setCurrentIndex(idx);
-
-    if (aiConnectionTestLabel_)
-        aiConnectionTestLabel_->clear();
+    invalidateConnectionTest();
     rememberBaseline();
+    refreshConnectionValidation();
 }
 
-bool AIAgentPage::apply()
+bool AIAgentPage::saveConnection()
 {
     const QString newBaseUrl = aiBaseUrlEdit_->text().trimmed();
     const QString newApiKey = aiApiKeyEdit_->text().trimmed();
     const QString newModel = aiModelEdit_->text().trimmed();
     const int newContextWindowTokens = aiContextWindowSpin_->value();
-    const QString newMode = aiPermissionModeCombo_->currentData().toString();
+    if ((!newBaseUrl.isEmpty() || !newModel.isEmpty())
+        && !isValidAIEndpoint(newBaseUrl, newModel))
+        return false;
 
     AIAgentConfigStore configStore;
     AIAgentConfig config = configStore.load();
+    const QString storedKey = secretStore_.load(QStringLiteral("HarkenStudio.ai"),
+                                               QStringLiteral("api_key"));
+    const auto current = config.effectiveSnapshot();
+    if (current.baseUrl != baselineBaseUrl_ || current.model != baselineModel_
+        || current.contextWindowTokens != baselineContextWindow_
+        || storedKey != baselineApiKey_) {
+        discardConnectionChanges();
+        showError(tr("AI connection settings changed. The saved configuration was reloaded."));
+        return false;
+    }
     config.baseUrl = newBaseUrl;
     config.model = newModel;
     config.contextWindowTokens = newContextWindowTokens;
-    config.permissionProfile = parsePermissionMode(newMode);
 
     const bool keyChanged = newApiKey != baselineApiKey_;
     if (keyChanged && newApiKey.isEmpty())
@@ -178,8 +216,7 @@ bool AIAgentPage::apply()
         if (!secretStore_.erase(QStringLiteral("HarkenStudio.ai"),
                                 QStringLiteral("api_key")))
         {
-            QMessageBox::warning(this, tr("API Key"),
-                                 tr("The saved API key could not be cleared."));
+            showError(tr("The saved API key could not be cleared."));
             return false;
         }
     }
@@ -188,29 +225,72 @@ bool AIAgentPage::apply()
         if (!secretStore_.store(QStringLiteral("HarkenStudio.ai"),
                                 QStringLiteral("api_key"), newApiKey))
         {
-            QMessageBox::warning(this, tr("API Key"),
-                                 tr("The API key could not be saved."));
+            showError(tr("The API key could not be saved."));
             return false;
         }
     }
 
     const bool settingsChanged = configStore.save(config);
 
+    const QSignalBlocker b1(aiBaseUrlEdit_);
+    const QSignalBlocker b2(aiApiKeyEdit_);
+    const QSignalBlocker b3(aiModelEdit_);
+    aiBaseUrlEdit_->setText(newBaseUrl);
     aiApiKeyEdit_->setText(newApiKey);
+    aiModelEdit_->setText(newModel);
     rememberBaseline();
-    emit dirtyChanged();
+    refreshConnectionValidation();
+    refreshPermission();
     if (settingsChanged || keyChanged)
         emit aiAgentConfigApplied();
     return true;
 }
 
-bool AIAgentPage::isDirty() const
+void AIAgentPage::savePermission()
+{
+    AIAgentConfigStore store;
+    auto config = store.load();
+    config.permissionProfile = parsePermissionMode(aiPermissionModeCombo_->currentData().toString());
+    const bool changed = store.save(config);
+    const QSignalBlocker blocker(aiPermissionModeCombo_);
+    aiPermissionModeCombo_->setCurrentIndex(
+        aiPermissionModeCombo_->findData(toId(config.permissionProfile)));
+    if (changed)
+        emit aiAgentConfigApplied();
+}
+
+bool AIAgentPage::hasPendingChanges() const
 {
     return aiBaseUrlEdit_->text() != baselineBaseUrl_
         || aiModelEdit_->text() != baselineModel_
         || aiContextWindowSpin_->value() != baselineContextWindow_
-        || aiPermissionModeCombo_->currentData().toString() != baselinePermissionMode_
         || aiApiKeyEdit_->text() != baselineApiKey_;
+}
+
+void AIAgentPage::refreshConnectionValidation()
+{
+    const QString baseUrl = aiBaseUrlEdit_->text().trimmed();
+    const QString model = aiModelEdit_->text().trimmed();
+    const bool unconfigured = baseUrl.isEmpty() && model.isEmpty();
+    const bool validUrl = unconfigured
+        || isValidAIEndpoint(baseUrl, model.isEmpty() ? QStringLiteral("model") : model);
+    const bool validModel = unconfigured || !model.isEmpty();
+    QtControlSkin::setSemanticProperty(aiBaseUrlEdit_, "inputInvalid", !validUrl);
+    QtControlSkin::setSemanticProperty(aiModelEdit_, "inputInvalid", !validModel);
+    aiBaseUrlEdit_->setToolTip(validUrl ? QString() : tr("Enter a valid HTTPS Base URL."));
+    aiModelEdit_->setToolTip(validModel ? QString() : tr("Enter a model name."));
+    aiConnectionSaveButton_->setEnabled(validUrl && validModel && hasPendingChanges());
+}
+
+void AIAgentPage::invalidateConnectionTest()
+{
+    const QString requestId = aiConnectionTestRequestId_;
+    aiConnectionTestRequestId_.clear();
+    if (aiConnectionTestProvider_ && !requestId.isEmpty())
+        aiConnectionTestProvider_->cancel(requestId);
+    aiConnectionTestButton_->setEnabled(true);
+    aiConnectionTestLabel_->clear();
+    aiConnectionTestLabel_->hide();
 }
 
 void AIAgentPage::onAIConnectionTestClicked()
@@ -254,9 +334,11 @@ void AIAgentPage::onAIConnectionTestClicked()
         });
     }
 
-    aiConnectionTestRequestId_ = QStringLiteral("settings-connection-test");
+    aiConnectionTestRequestId_ = QStringLiteral("settings-connection-test-%1")
+                                   .arg(++nextConnectionTestId_);
     aiConnectionTestButton_->setEnabled(false);
     aiConnectionTestLabel_->setText(tr("Testing..."));
+    aiConnectionTestLabel_->show();
 
     ILLMProvider::Request request;
     request.requestId = aiConnectionTestRequestId_;
@@ -284,6 +366,7 @@ void AIAgentPage::finishAIConnectionTest(const QString& message, bool success)
         aiConnectionTestLabel_, "settingsRole",
         success ? QStringLiteral("statusSuccess") : QStringLiteral("statusError"));
     aiConnectionTestLabel_->setText(message.left(640));
+    aiConnectionTestLabel_->show();
 }
 
 }

@@ -11,6 +11,7 @@ class QListWidget;
 class QFrame;
 class QLineEdit;
 class QToolButton;
+class QLabel;
 
 namespace VNX {
 
@@ -28,38 +29,42 @@ public:
     QString pageId() const override;
     QString categoryLabel() const override;
     void load() override;
-    bool apply() override;
-    bool isDirty() const override;
-    bool hasExternalChanges() const;
-    bool validate();
+    void finishEditing();
+
+protected:
+    void hideEvent(QHideEvent* event) override;
 
 private:
-    void rememberBaseline();
     void refreshPlatforms(int selectedIndex = -1);
+    void syncPlatforms(bool finishEditing = false, int selectedIndex = -1);
+    void syncLanguages(bool finishEditing = false, int selectedIndex = -1);
+    void updatePlatformAvailability();
+    void commitPlatform(const ProjectPlatform& before);
     void addPlatform();
     void selectPlatform(int index);
     void removePlatform();
-    bool applyTargetLanguages();
-    bool applyTargetPlatforms();
+    bool commitLanguages(const QStringList& languages, int selectedIndex = -1);
+    void commitLanguageName();
     void addTargetLanguage();
     void selectTargetLanguage(int index);
     void onRemoveTargetLanguageClicked();
     void setTargetLanguages(const QStringList& value, int selectedIndex = -1);
-    QJsonArray platformDraft() const;
-    QStringList targetLanguages() const;
+    bool hasCurrentProject() const;
 
     QListWidget* platformList_ = nullptr;
     ProjectPlatformEditor* platformEditor_ = nullptr;
     QToolButton* platformRemoveButton_ = nullptr;
-    QVector<ProjectPlatform> draftPlatforms_;
+    QToolButton* platformAddButton_ = nullptr;
+    QLabel* platformBusyLabel_ = nullptr;
+    QVector<ProjectPlatform> platforms_;
     std::weak_ptr<ProjectData> projectLease_;
     QListWidget* targetLanguagesList_ = nullptr;
     QWidget* targetLanguageFields_ = nullptr;
     QLineEdit* targetLanguageEdit_ = nullptr;
     QToolButton* targetLanguageRemoveBtn_ = nullptr;
 
-    QJsonArray baselinePlatforms_;
-    QStringList baselineProjectLanguages_;
+    QString selectedLanguage_;
+    bool committing_ = false;
 };
 
 }
