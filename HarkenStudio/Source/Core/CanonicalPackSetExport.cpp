@@ -584,7 +584,7 @@ bool writeJson(const QString& path, const QJsonObject& object, QString* error)
 }
 
 bool validateWriteAccess(QStringList paths, QString* error,
-                         const std::function<bool()>& cancelCheck = {})
+                         const std::function<bool()>& cancelCheck = {}, QString* summary = nullptr)
 {
     paths.removeDuplicates();
     paths.sort();
@@ -636,10 +636,12 @@ bool validateWriteAccess(QStringList paths, QString* error,
     }
     blocked.removeDuplicates();
     if (blocked.isEmpty()) return true;
-    *error = ProjectPackExporter::tr(
+    const QString message = ProjectPackExporter::tr(
         "Some paths needed for Pack export are read-only, locked, or cannot be replaced.\n"
         "Check file write protection, access permissions, and other programs using these files. If your version control workflow "
-        "requires checkout or unlocking, do that first, then retry.\n\nAffected paths:\n%1")
+        "requires checkout or unlocking, do that first, then retry.");
+    if (summary) *summary = message;
+    *error = message + ProjectPackExporter::tr("\n\nAffected paths:\n%1")
         .arg(blocked.join(QLatin1Char('\n')));
     return false;
 }
@@ -2428,8 +2430,9 @@ bool collectPlatformWritePaths(const ProjectData& project, const QDir& output,
 
 bool ProjectPackExporter::ValidatePackBuildWriteAccess(
     const ProjectData& project, const QString& baseDir, const QStringList& platforms,
-    const ExportOptions& options, QString* error)
+    const ExportOptions& options, QString* error, QString* summary)
 {
+    if (summary) *summary = tr("Pack export could not verify the existing output files.");
     if (PathUtils::isProtectedPackOutputPath(baseDir, project.projectPath)) {
         if (error) *error = PathUtils::packBuildOutputLocationError();
         return false;
@@ -2478,7 +2481,7 @@ bool ProjectPackExporter::ValidatePackBuildWriteAccess(
     }
     if (project.buildExportProjectData) paths.append(root.filePath(QStringLiteral("Project.json")));
     return !exportCanceled(options.cancelCheck, error)
-        && validateWriteAccess(paths, error, options.cancelCheck);
+        && validateWriteAccess(paths, error, options.cancelCheck, summary);
 }
 
 bool ReadPackPublication(const QString& directory, const QString& projectId,

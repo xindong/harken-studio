@@ -220,7 +220,8 @@ public:
                                              const QString& baseDir,
                                              const QStringList& platforms,
                                              const ExportOptions& options,
-                                             QString* errorOut);
+                                             QString* errorOut,
+                                             QString* summaryOut = nullptr);
 
 
     struct DependencyNode
