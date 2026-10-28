@@ -319,6 +319,37 @@ namespace Harken.Unity.Tests
         }
 
         [Test]
+        public void CompanionCatalogRefreshUsesReplacementAssetsInTheSameOwner()
+        {
+            using (var first = new AssetFixture())
+            using (var replacement = new AssetFixture())
+            {
+                var source = first.CreateSource();
+                var next = replacement.CreateSource();
+                PackBootstrapSession session = null;
+                try
+                {
+                    var catalog = new HarkenEditorCatalog();
+                    Assert.That(catalog.Refresh(source, null, first.InitJson), Is.EqualTo(VnResult.VN_OK));
+                    var prepared = catalog.PreparedPacks;
+                    var config = HarkenEngine.DefaultConfig();
+                    config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
+                    Assert.That(prepared.Start(Array.Empty<ulong>(), ref config, out session), Is.EqualTo(VnResult.VN_OK));
+                    Set(source, "initPack", Get<TextAsset>(next, "initPack"));
+                    Set(source, "content", Get<HarkenPackSource.ContentAsset[]>(next, "content"));
+                    Assert.That(catalog.Refresh(source, null, replacement.InitJson), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(catalog.PreparedPacks, Is.SameAs(prepared));
+                    first.DeleteAssets();
+                    Assert.That(session.PrepareActions(new[] { "Play_U4_A" }, session.ProjectId, out var action), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(action.Release(), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(session.Shutdown(), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(prepared.Start(Array.Empty<ulong>(), ref config, out session), Is.EqualTo(VnResult.VN_OK));
+                }
+                finally { session?.Dispose(); Object.DestroyImmediate(source); Object.DestroyImmediate(next); }
+            }
+        }
+
+        [Test]
         public void CompanionTextAssetCaptureKeepsOriginalAssetsAndRejectsInvalidCandidates()
         {
             using (var fixture = new AssetFixture())

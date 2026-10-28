@@ -115,6 +115,18 @@ namespace Harken.Unity.Tests
         }
 
         [Test]
+        public void PresentationRootCanBeThePlatformDirectory()
+        {
+            var reader = HarkenEditorResources.FromReader("", _ => Vkd());
+            string file = "Waveforms/" + Name(Vkd());
+            Assert.That(reader.Resolve("Play_A.json", file), Is.EqualTo(file));
+            var directory = HarkenEditorResources.FromDirectory(Root, Root);
+            Assert.That(directory.Resolve("Play_A.json", file), Is.EqualTo(file));
+            Assert.Throws<IOException>(() => reader.Resolve("Play_A.json", "../escape.vkd"));
+            Assert.Throws<IOException>(() => reader.Resolve("Play_A.json", "/absolute.vkd"));
+        }
+
+        [Test]
         public void TextAssetWaveformsKeepBinaryIdentityAndDisappearOnRefresh()
         {
             var fixture = new Fixture();
