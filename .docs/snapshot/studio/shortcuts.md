@@ -6,6 +6,8 @@ Edit 菜单补充核对：2026-10-22，当前工作区。
 
 对象树与 Timeline 选择联动补充核对：2026-10-27，当前工作区。
 
+偏好面板即时生效补充核对：2026-10-28，当前工作区。快捷键在录入完成后立即更新并保存；冲突替换需确认，清除和单项恢复立即生效，恢复全部需确认。关闭或切换面板不再回滚已完成的修改。
+
 本篇记录当前快捷键的注册、绑定、设置与验证边界，供后续修改时持续核对。以当前源码为准，行为变化时直接更新对应表项。对象树菜单与快捷键的选区规则见[对象右键菜单快照](object-context-menus.md)。
 
 路径缩写：`Source/` = `HarkenStudio/Source/`，`EditorTest/` = `HarkenStudio/Test/UnitTest/`。
@@ -82,7 +84,7 @@ Edit 菜单补充核对：2026-10-22，当前工作区。
 
 | 宿主 | 命令 | Qt 作用域 | 业务入口 | 键位提示 |
 |---|---|---|---|---|
-| MainWindow / File 菜单 | Save Project | `WindowShortcut` | `onSaveProject()` | 菜单 QAction |
+| MainWindow / File 菜单 | Save Project | `ApplicationShortcut` | `onSaveProject()` | 主窗口及浮动面板均可保存；保存前先提交正在编辑的项目设置 |
 | MainWindow / File 菜单 | Preferences | `WindowShortcut` | `onOpenPreferences()` | 菜单 QAction；声明 `QAction::PreferencesRole` |
 | MainWindow / Edit 菜单 | Undo、Redo | `ApplicationShortcut` | `UndoRedoManager` 创建的动作，调用 `undo()` / `redo()` | 菜单 QAction，并跟随可撤销／重做项更新文字与启用状态 |
 | MainWindow / Edit 菜单 | Cut、Copy、Paste、Duplicate、Delete、Select All | 仅菜单入口，不增加快捷键绑定 | 按焦点复用已有控件动作；文本编辑和原生列表全选调用 Qt 控件接口 | 菜单文本中的 `NativeText` 有效键位；管理器绑定被清空后仍可点击菜单 |

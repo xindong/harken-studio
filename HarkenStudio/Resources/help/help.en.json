@@ -197,17 +197,21 @@
     }
   },
   "panels": {
+    "ProjectSettings": {
+      "title": "Project Settings",
+      "body": "Edit project platforms, languages and publishing options. Completed edits take effect immediately, support Undo, and are saved with the project."
+    },
+    "Preferences": {
+      "title": "Preferences",
+      "body": "Edit the editor appearance, shortcuts, layouts and extensions. Changes take effect immediately. AI connection changes require Save Connection and are discarded when this panel closes."
+    },
+    "RemoteConnect": {
+      "title": "Remote Connect",
+      "body": "Discover running applications or connect by address. Closing this panel keeps the active connection."
+    },
     "settings": {
       "title": "Settings",
-      "body": "Apply saves changes and closes this window; Cancel discards them. Layout renames and deletions are saved immediately."
-    },
-    "settings.apply": {
-      "title": "Apply",
-      "body": "Save pending settings changes and close this window."
-    },
-    "settings.cancel": {
-      "title": "Cancel",
-      "body": "Discard unapplied settings changes and close this window; layout renames and deletions are kept."
+      "body": "Settings take effect when an edit is completed. Project changes can be undone and are saved with the project. AI connection changes require Save Connection and are discarded when Preferences closes."
     },
     "settings.appearance": {
       "title": "Appearance",
@@ -215,7 +219,7 @@
     },
     "settings.appearance.theme": {
       "title": "Theme",
-      "body": "Choose the editor's appearance; Apply activates the theme. Install additional themes in %1."
+      "body": "Choose the editor's appearance; the selected theme takes effect immediately. Install additional themes in %1."
     },
     "settings.appearance.language": {
       "title": "Information Language",
@@ -227,15 +231,15 @@
     },
     "settings.extension.developer": {
       "title": "Developer Mode",
-      "body": "Show File, Version, CRC32, and Preview Pack Structure in Publisher."
+      "body": "Show File and Version columns in Publisher."
     },
     "settings.layout": {
       "title": "Layout",
-      "body": "Rename or delete saved layouts; these changes are immediate and Cancel does not undo them. Default cannot be renamed or deleted."
+      "body": "Save, rename or delete layouts. Changes take effect immediately. Default cannot be renamed or deleted."
     },
     "settings.shortcuts": {
       "title": "Shortcuts",
-      "body": "Double-click a shortcut and press new keys to rebind it; right-click to clear or reset it. Apply saves the changes."
+      "body": "Double-click a shortcut and finish recording new keys to rebind it immediately; right-click to clear or restore its default. Resetting all shortcuts requires confirmation."
     },
     "settings.ai_agent": {
       "title": "AI Agent",
@@ -243,7 +247,7 @@
     },
     "settings.ai_agent.credentials": {
       "title": "Credentials",
-      "body": "Set the service URL, model, context size in tokens, and API key. The saved key is masked in the input field. On Apply, editing the key replaces it, and clearing the field removes it from the system credential vault."
+      "body": "Set the service URL, model, context size in tokens, and API key, then choose Save Connection. Unsaved connection changes are discarded when Preferences closes. Saving an empty API key removes it from the system credential vault."
     },
     "settings.ai_agent.connection": {
       "title": "Test Connection",
@@ -259,7 +263,7 @@
     },
     "settings.config.platforms": {
       "title": "Platform Configuration",
-      "body": "Select a platform tab on the left to edit its name, base platform, and build settings on the right. Use + to browse all supported platforms and preview their default settings before adding one. Reset restores the selected base platform's default build settings; Apply saves project changes. At least one platform must remain."
+      "body": "Select a platform on the left to edit its name, base platform, and build settings. Completed edits take effect immediately and can be undone. Use + to preview and add a supported platform. Reset restores the base platform defaults. Platform editing is unavailable while platform work is in progress. At least one platform must remain."
     },
     "settings.config.languages": {
       "title": "Language Configuration",

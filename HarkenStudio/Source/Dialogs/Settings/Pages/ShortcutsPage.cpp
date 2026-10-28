@@ -11,6 +11,7 @@
 #include <QEvent>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QHideEvent>
 #include <QKeySequenceEdit>
 #include <QMenu>
 #include <QMessageBox>
@@ -63,9 +64,9 @@ ShortcutsPage::ShortcutsPage(QWidget* parent)
         if (chosen == rebindAction)
             beginShortcutCapture(item);
         else if (chosen == clearAction)
-            stageShortcut(id, QKeySequence());
+            commitShortcut(id, QKeySequence());
         else if (chosen == resetAction)
-            stageShortcut(id, ShortcutManager::instance().info(id).defaultShortcut);
+            commitShortcut(id, ShortcutManager::instance().info(id).defaultShortcut);
     });
 
     body->addWidget(table, 1);
@@ -79,6 +80,10 @@ ShortcutsPage::ShortcutsPage(QWidget* parent)
     btnRow->addWidget(resetBtn);
     btnRow->addStretch();
     body->addLayout(btnRow);
+
+    auto& manager = ShortcutManager::instance();
+    connect(&manager, &ShortcutManager::shortcutChanged, this, &ShortcutsPage::refreshShortcutRows);
+    connect(&manager, &ShortcutManager::shortcutsReset, this, &ShortcutsPage::refreshShortcutRows);
 }
 
 QString ShortcutsPage::pageId() const
@@ -93,63 +98,7 @@ QString ShortcutsPage::categoryLabel() const
 
 void ShortcutsPage::load()
 {
-    pendingShortcuts_.clear();
     populateShortcutTree();
-}
-
-bool ShortcutsPage::apply()
-{
-    cancelShortcutCapture();
-    revertShortcuts_.clear();
-    appliedShortcuts_.clear();
-    if (pendingShortcuts_.isEmpty())
-        return true;
-
-    ShortcutManager& manager = ShortcutManager::instance();
-    for (auto it = pendingShortcuts_.cbegin(); it != pendingShortcuts_.cend(); ++it)
-    {
-        revertShortcuts_.insert(it.key(), manager.shortcut(it.key()));
-        manager.setShortcut(it.key(), it.value());
-        appliedShortcuts_.insert(it.key(), it.value());
-    }
-    manager.saveShortcuts();
-    pendingShortcuts_.clear();
-
-    for (QTreeWidgetItemIterator it(shortcutTree_); *it; ++it)
-        refreshShortcutRow(*it);
-
-    emit dirtyChanged();
-    return true;
-}
-
-void ShortcutsPage::revert()
-{
-    if (revertShortcuts_.isEmpty())
-        return;
-
-    ShortcutManager& manager = ShortcutManager::instance();
-    pendingShortcuts_ = appliedShortcuts_;
-    for (auto it = revertShortcuts_.cbegin(); it != revertShortcuts_.cend(); ++it)
-        manager.setShortcut(it.key(), it.value());
-    manager.saveShortcuts();
-    revertShortcuts_.clear();
-    appliedShortcuts_.clear();
-
-    for (QTreeWidgetItemIterator it(shortcutTree_); *it; ++it)
-        refreshShortcutRow(*it);
-
-    emit dirtyChanged();
-}
-
-bool ShortcutsPage::isDirty() const
-{
-    ShortcutManager& manager = ShortcutManager::instance();
-    for (auto it = pendingShortcuts_.cbegin(); it != pendingShortcuts_.cend(); ++it)
-    {
-        if (it.value() != manager.shortcut(it.key()))
-            return true;
-    }
-    return false;
 }
 
 void ShortcutsPage::populateShortcutTree()
@@ -211,41 +160,19 @@ void ShortcutsPage::filterShortcutTree(const QString& filter)
 void ShortcutsPage::refreshShortcutRow(QTreeWidgetItem* item)
 {
     const QString id = item->data(0, Qt::UserRole).toString();
-    if (id.isEmpty())
+    if (id.isEmpty() || item == shortcutCaptureItem_)
         return;
 
     const ShortcutInfo info = ShortcutManager::instance().info(id);
-    const QKeySequence effective = effectiveShortcut(id);
-
-    item->setText(1, effective.toString(QKeySequence::NativeText));
-
-    const bool staged = pendingShortcuts_.contains(id)
-                     && pendingShortcuts_.value(id) != info.currentShortcut;
-    const bool custom = (effective != info.defaultShortcut);
-
-    item->setData(1, TableTextRole, static_cast<int>(staged ? TableTextState::Modified
-        : custom ? TableTextState::Custom : TableTextState::Normal));
+    item->setText(1, info.currentShortcut.toString(QKeySequence::NativeText));
+    item->setData(1, TableTextRole, static_cast<int>(info.isCustom
+        ? TableTextState::Custom : TableTextState::Normal));
 }
 
-QKeySequence ShortcutsPage::effectiveShortcut(const QString& id) const
+void ShortcutsPage::refreshShortcutRows()
 {
-    if (pendingShortcuts_.contains(id))
-        return pendingShortcuts_.value(id);
-    return ShortcutManager::instance().shortcut(id);
-}
-
-QString ShortcutsPage::effectiveConflict(const QString& id, const QKeySequence& sequence) const
-{
-    if (sequence.isEmpty())
-        return QString();
-
-    const QList<ShortcutInfo> shortcuts = ShortcutManager::instance().allShortcuts();
-    for (const ShortcutInfo& info : shortcuts)
-    {
-        if (info.id != id && effectiveShortcut(info.id) == sequence)
-            return info.id;
-    }
-    return QString();
+    for (QTreeWidgetItemIterator it(shortcutTree_); *it; ++it)
+        refreshShortcutRow(*it);
 }
 
 void ShortcutsPage::beginShortcutCapture(QTreeWidgetItem* item)
@@ -258,7 +185,7 @@ void ShortcutsPage::beginShortcutCapture(QTreeWidgetItem* item)
 
     shortcutCaptureItem_ = item;
     shortcutCaptureEdit_ = new QKeySequenceEdit();
-    shortcutCaptureEdit_->setKeySequence(effectiveShortcut(id));
+    shortcutCaptureEdit_->setKeySequence(ShortcutManager::instance().shortcut(id));
     connect(shortcutCaptureEdit_, &QKeySequenceEdit::editingFinished,
             this, &ShortcutsPage::commitShortcutCapture);
     shortcutCaptureEdit_->installEventFilter(this);
@@ -276,6 +203,10 @@ void ShortcutsPage::cancelShortcutCapture()
         return;
 
     QTreeWidgetItem* item = shortcutCaptureItem_;
+    shortcutCaptureEdit_->disconnect(this);
+    shortcutCaptureEdit_->removeEventFilter(this);
+    if (QWidget* proxy = shortcutCaptureEdit_->focusProxy())
+        proxy->removeEventFilter(this);
     shortcutCaptureItem_ = nullptr;
     shortcutCaptureEdit_ = nullptr;
     shortcutTree_->removeItemWidget(item, 1);
@@ -288,68 +219,54 @@ void ShortcutsPage::commitShortcutCapture()
         return;
 
     QTreeWidgetItem* item = shortcutCaptureItem_;
-    const QKeySequence sequence = shortcutCaptureEdit_->keySequence();
-    shortcutCaptureItem_ = nullptr;
-    shortcutCaptureEdit_ = nullptr;
-    shortcutTree_->removeItemWidget(item, 1);
-
     const QString id = item->data(0, Qt::UserRole).toString();
+    const QKeySequence sequence = shortcutCaptureEdit_->keySequence();
+    cancelShortcutCapture();
+    commitShortcut(id, sequence);
+}
 
-    const QString conflictId = effectiveConflict(id, sequence);
-    if (!conflictId.isEmpty())
+void ShortcutsPage::commitShortcut(const QString& id, const QKeySequence& sequence)
+{
+    ShortcutManager& manager = ShortcutManager::instance();
+    if (sequence == manager.shortcut(id))
+        return;
+
+    QString conflictId = manager.conflictingShortcut(id, sequence);
+    while (!conflictId.isEmpty())
     {
-        const ShortcutInfo conflictInfo = ShortcutManager::instance().info(conflictId);
+        const ShortcutInfo conflictInfo = manager.info(conflictId);
         const QMessageBox::StandardButton reply = QMessageBox::question(
             this, tr("Shortcut Conflict"),
             tr("\"%1\" is already used by \"%2\".\n\n"
                "Reassign it? \"%2\" will lose its shortcut.")
                 .arg(sequence.toString(QKeySequence::NativeText), conflictInfo.displayName),
-            QMessageBox::Yes | QMessageBox::No);
-
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
         if (reply != QMessageBox::Yes)
-        {
-            refreshShortcutRow(item);
             return;
-        }
-        stageShortcut(conflictId, QKeySequence());
-    }
-
-    stageShortcut(id, sequence);
-}
-
-void ShortcutsPage::stageShortcut(const QString& id, const QKeySequence& sequence)
-{
-    if (sequence == ShortcutManager::instance().shortcut(id))
-        pendingShortcuts_.remove(id);
-    else
-        pendingShortcuts_.insert(id, sequence);
-
-    for (QTreeWidgetItemIterator it(shortcutTree_); *it; ++it)
-    {
-        if ((*it)->data(0, Qt::UserRole).toString() == id)
-        {
-            refreshShortcutRow(*it);
+        if (manager.conflictingShortcut(id, sequence) == conflictId)
             break;
-        }
+        conflictId = manager.conflictingShortcut(id, sequence);
     }
-    emit dirtyChanged();
+
+    if (!conflictId.isEmpty())
+        manager.setShortcut(conflictId, QKeySequence());
+    manager.setShortcut(id, sequence);
+    manager.saveShortcuts();
 }
 
 void ShortcutsPage::resetShortcutsToDefaults()
 {
     cancelShortcutCapture();
-    pendingShortcuts_.clear();
+    const QMessageBox::StandardButton reply = QMessageBox::question(
+        this, tr("Reset Shortcuts"),
+        tr("Reset all shortcuts to their defaults? Custom shortcuts will be replaced."),
+        QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
+    if (reply != QMessageBox::Yes)
+        return;
 
-    const QList<ShortcutInfo> shortcuts = ShortcutManager::instance().allShortcuts();
-    for (const ShortcutInfo& info : shortcuts)
-    {
-        if (info.currentShortcut != info.defaultShortcut)
-            pendingShortcuts_.insert(info.id, info.defaultShortcut);
-    }
-
-    for (QTreeWidgetItemIterator it(shortcutTree_); *it; ++it)
-        refreshShortcutRow(*it);
-    emit dirtyChanged();
+    ShortcutManager& manager = ShortcutManager::instance();
+    manager.resetAllToDefaults();
+    manager.saveShortcuts();
 }
 
 bool ShortcutsPage::eventFilter(QObject* watched, QEvent* event)
@@ -360,6 +277,12 @@ bool ShortcutsPage::eventFilter(QObject* watched, QEvent* event)
         commitShortcutCapture();
     }
     return SettingsPage::eventFilter(watched, event);
+}
+
+void ShortcutsPage::hideEvent(QHideEvent* event)
+{
+    commitShortcutCapture();
+    SettingsPage::hideEvent(event);
 }
 
 }

@@ -25,12 +25,13 @@ public:
     QString pageId() const override;
     QString categoryLabel() const override;
     void load() override;
-    bool apply() override;
-    bool isDirty() const override;
 
 signals:
     void layoutRenamed(const QString& oldName, const QString& newName);
     void layoutDeleted(const QString& name);
+
+protected:
+    void showEvent(QShowEvent* event) override;
 
 private:
     void populateLayoutTree();

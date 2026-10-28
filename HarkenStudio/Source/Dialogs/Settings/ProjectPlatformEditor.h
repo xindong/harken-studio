@@ -3,6 +3,7 @@
 #include "Core/ProjectPlatform.h"
 
 #include <QWidget>
+#include <QStringList>
 
 class QCheckBox;
 class QComboBox;
@@ -20,20 +21,25 @@ class ProjectPlatformEditor : public QWidget
 
 public:
     explicit ProjectPlatformEditor(QWidget* parent = nullptr);
-    void setPlatform(const ProjectPlatform& platform);
+    void setPlatform(const ProjectPlatform& platform, const QStringList& otherNames = {});
     ProjectPlatform platform() const { return platform_; }
     void setReadOnly(bool readOnly);
+    bool hasPendingName() const;
+    void finishNameEditing();
+    void discardNameEditing();
 
 signals:
-    void platformChanged();
+    void platformChanged(const ProjectPlatform& before);
 
 private:
     void refreshPolicies(int selected = -1);
     void updateControls();
     void resetProfile();
     void storePolicy(const SizePolicy& policy, int index);
+    QString nameError() const;
 
     ProjectPlatform platform_;
+    QStringList otherNames_;
     bool readOnly_ = false;
     QLineEdit* name_ = nullptr;
     QComboBox* base_ = nullptr;

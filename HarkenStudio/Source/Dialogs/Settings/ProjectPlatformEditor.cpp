@@ -191,16 +191,20 @@ ProjectPlatformEditor::ProjectPlatformEditor(QWidget* parent)
     auto* remove = policyFooter->removeButton();
     remove->setObjectName("platformPolicyDelete");
     connect(policies_, &QTreeWidget::itemSelectionChanged, this, &ProjectPlatformEditor::updateControls);
-    connect(name_, &QLineEdit::textChanged, this, [this](const QString& name) {
-        platform_.name = name;
-        emit platformChanged();
+    connect(name_, &QLineEdit::editingFinished, this, &ProjectPlatformEditor::finishNameEditing);
+    connect(name_, &QLineEdit::textChanged, this, [this] {
+        const auto error = nameError();
+        name_->setToolTip(error);
+        QtControlSkin::setSemanticProperty(name_, "inputInvalid", !error.isEmpty());
     });
     connect(resample_, &QCheckBox::toggled, this, [this](bool checked) {
+        const auto before = platform_;
         platform_.profile.performResample = checked;
         updateControls();
-        emit platformChanged();
+        emit platformChanged(before);
     });
     connect(base_, &QComboBox::currentTextChanged, this, [this](const QString& text) {
+        const auto before = platform_;
         const auto nextBase = *ProjectPlatformSemantics::parseBasePlatform(text);
         if (nextBase == platform_.basePlatform) return;
         if (QMessageBox::question(this, tr("Change Base Platform"),
@@ -210,27 +214,40 @@ ProjectPlatformEditor::ProjectPlatformEditor(QWidget* parent)
             base_->setCurrentText(ProjectPlatformSemantics::basePlatformName(platform_.basePlatform));
             return;
         }
+        if (platform_.id != before.id || platform_.basePlatform != before.basePlatform || readOnly_) {
+            const QSignalBlocker blocker(base_);
+            base_->setCurrentText(ProjectPlatformSemantics::basePlatformName(platform_.basePlatform));
+            return;
+        }
         platform_.basePlatform = nextBase;
-        resetProfile();
+        platform_.profile = ProjectPlatformProfile::fromBasePlatform(nextBase);
+        emit platformChanged(before);
     });
     connect(add, &QToolButton::clicked, this, [this]() {
+        const auto before = platform_.toJson();
         const int index = policies_->indexOfTopLevelItem(policies_->currentItem());
         SizePolicy policy{0, platform_.profile.sizePolicies.at(index < 0 ? 0 : index).config};
-        if (editPolicy(policy, true, platform_.profile.sizePolicies, -1, this)) storePolicy(policy, -1);
+        if (editPolicy(policy, true, platform_.profile.sizePolicies, -1, this)
+            && !readOnly_ && platform_.toJson() == before)
+            storePolicy(policy, -1);
     });
     connect(policies_, &QTreeWidget::itemDoubleClicked, this, [this]() {
         const int index = policies_->indexOfTopLevelItem(policies_->currentItem());
         if (readOnly_ || index < 0) return;
+        const auto before = platform_.toJson();
         auto policy = platform_.profile.sizePolicies.at(index);
-        if (editPolicy(policy, false, platform_.profile.sizePolicies, index, this)) storePolicy(policy, index);
+        if (editPolicy(policy, false, platform_.profile.sizePolicies, index, this)
+            && !readOnly_ && platform_.toJson() == before)
+            storePolicy(policy, index);
     });
     connect(remove, &QToolButton::clicked, this, [this]() {
         const int index = policies_->indexOfTopLevelItem(policies_->currentItem());
         if (index < 0 || !platform_.profile.sizePolicies.at(index).maxBytes) return;
         content_->removeSelectedRow([this, index] {
+            const auto before = platform_;
             platform_.profile.sizePolicies.erase(platform_.profile.sizePolicies.begin() + index);
             refreshPolicies();
-            emit platformChanged();
+            emit platformChanged(before);
             return true;
         });
     });
@@ -245,13 +262,16 @@ ProjectPlatformEditor::ProjectPlatformEditor(QWidget* parent)
     setPlatform(platform_);
 }
 
-void ProjectPlatformEditor::setPlatform(const ProjectPlatform& platform)
+void ProjectPlatformEditor::setPlatform(const ProjectPlatform& platform, const QStringList& otherNames)
 {
     platform_ = platform;
+    otherNames_ = otherNames;
     const QSignalBlocker nameBlocker(name_);
     const QSignalBlocker baseBlocker(base_);
     const QSignalBlocker resampleBlocker(resample_);
     name_->setText(platform_.name);
+    name_->setToolTip(QString());
+    QtControlSkin::setSemanticProperty(name_, "inputInvalid", false);
     base_->setCurrentText(ProjectPlatformSemantics::basePlatformName(platform_.basePlatform));
     resample_->setChecked(platform_.profile.performResample);
     refreshPolicies();
@@ -261,6 +281,43 @@ void ProjectPlatformEditor::setReadOnly(bool readOnly)
 {
     readOnly_ = readOnly;
     updateControls();
+}
+
+bool ProjectPlatformEditor::hasPendingName() const
+{
+    return name_->isModified();
+}
+
+void ProjectPlatformEditor::finishNameEditing()
+{
+    if (!name_->isModified()) return;
+    const auto before = platform_;
+    if (!nameError().isEmpty() || readOnly_) {
+        discardNameEditing();
+        emit platformChanged(before);
+        return;
+    }
+    platform_.name = name_->text();
+    name_->setModified(false);
+    emit platformChanged(before);
+}
+
+void ProjectPlatformEditor::discardNameEditing()
+{
+    const QSignalBlocker blocker(name_);
+    name_->setText(platform_.name);
+    name_->setToolTip(QString());
+    QtControlSkin::setSemanticProperty(name_, "inputInvalid", false);
+}
+
+QString ProjectPlatformEditor::nameError() const
+{
+    QString error;
+    if (!ProjectPlatformSemantics::validateName(name_->text(), &error)) return error;
+    for (const auto& name : otherNames_)
+        if (name.compare(name_->text(), Qt::CaseInsensitive) == 0)
+            return tr("A platform with this name already exists.");
+    return {};
 }
 
 void ProjectPlatformEditor::refreshPolicies(int selected)
@@ -295,15 +352,17 @@ void ProjectPlatformEditor::updateControls()
 
 void ProjectPlatformEditor::resetProfile()
 {
+    const auto before = platform_;
     platform_.profile = ProjectPlatformProfile::fromBasePlatform(platform_.basePlatform);
     const QSignalBlocker blocker(resample_);
     resample_->setChecked(platform_.profile.performResample);
     refreshPolicies();
-    emit platformChanged();
+    emit platformChanged(before);
 }
 
 void ProjectPlatformEditor::storePolicy(const SizePolicy& policy, int index)
 {
+    const auto before = platform_;
     auto& policies = platform_.profile.sizePolicies;
     if (index < 0) policies.push_back(policy);
     else policies[index] = policy;
@@ -313,7 +372,7 @@ void ProjectPlatformEditor::storePolicy(const SizePolicy& policy, int index)
     const auto found = std::find_if(policies.begin(), policies.end(),
         [&](const auto& row) { return row.maxBytes == policy.maxBytes; });
     refreshPolicies(int(found - policies.begin()));
-    emit platformChanged();
+    emit platformChanged(before);
 }
 
 }

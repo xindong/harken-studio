@@ -23,7 +23,8 @@ ExtensionPage::ExtensionPage(QWidget* parent)
     body->addStretch();
 
     connect(developerModeCheck_, &QCheckBox::toggled,
-            this, &ExtensionPage::dirtyChanged);
+            &AppSettings::instance(), &AppSettings::setDeveloperMode);
+    connect(&AppSettings::instance(), &AppSettings::developerModeChanged, this, &ExtensionPage::load);
 }
 
 QString ExtensionPage::pageId() const
@@ -40,32 +41,6 @@ void ExtensionPage::load()
 {
     const QSignalBlocker blocker(developerModeCheck_);
     developerModeCheck_->setChecked(AppSettings::instance().developerMode());
-    baselineDeveloperMode_ = developerModeCheck_->isChecked();
-}
-
-bool ExtensionPage::apply()
-{
-    revertDeveloperMode_ = AppSettings::instance().developerMode();
-    AppSettings::instance().setDeveloperMode(developerModeCheck_->isChecked());
-    canRevert_ = true;
-    baselineDeveloperMode_ = developerModeCheck_->isChecked();
-    emit dirtyChanged();
-    return true;
-}
-
-void ExtensionPage::revert()
-{
-    if (!canRevert_)
-        return;
-
-    AppSettings::instance().setDeveloperMode(revertDeveloperMode_);
-    canRevert_ = false;
-    emit dirtyChanged();
-}
-
-bool ExtensionPage::isDirty() const
-{
-    return developerModeCheck_->isChecked() != baselineDeveloperMode_;
 }
 
 }

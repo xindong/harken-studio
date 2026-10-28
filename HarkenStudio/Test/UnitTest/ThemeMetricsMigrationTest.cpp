@@ -1,4 +1,6 @@
 #include "Core/MemorySettingsStorage.h"
+#include "Core/HarkenStyle.h"
+#include "Core/QtControlSkin.h"
 #include "Core/ThemeManager.h"
 #include "Widgets/Common/ProportionalTreeWidget.h"
 #include "Widgets/Common/TableWidget.h"
@@ -10,12 +12,15 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFocusEvent>
 #include <QLabel>
 #include <QHBoxLayout>
 #include <QLineEdit>
+#include <QIntValidator>
 #include <QListWidget>
 #include <QTableWidget>
 #include <QScopeGuard>
+#include <QStyleFactory>
 #include <QVBoxLayout>
 #include <QTemporaryDir>
 
@@ -85,6 +90,58 @@ std::unique_ptr<VNX::ThemeManager> makeManager(const QString& root)
         root, std::make_unique<VNX::MemorySettingsStorage>());
 }
 
+}
+
+TEST(ThemeControlValidation, UnconstrainedEditorsPreserveDomainValidation)
+{
+    ensureApp();
+    QTemporaryDir root;
+    auto manager = makeManager(root.path());
+    VNX::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
+    QLineEdit editor;
+    QObject::connect(&editor, &QLineEdit::textChanged, &editor, [&] {
+        VNX::QtControlSkin::setSemanticProperty(&editor, "inputInvalid", editor.text().isEmpty());
+    });
+    editor.setText(QStringLiteral("valid"));
+    editor.setStyle(&style);
+    editor.ensurePolished();
+    editor.clear();
+    EXPECT_TRUE(editor.property("inputInvalid").toBool());
+
+    QFocusEvent focusIn(QEvent::FocusIn);
+    QCoreApplication::sendEvent(&editor, &focusIn);
+    EXPECT_TRUE(editor.property("inputInvalid").toBool());
+    style.unpolish(&editor);
+    style.polish(&editor);
+    EXPECT_TRUE(editor.property("inputInvalid").toBool());
+
+    editor.setText(QStringLiteral("valid again"));
+    EXPECT_FALSE(editor.property("inputInvalid").toBool());
+}
+
+TEST(ThemeControlValidation, ValidatorsAndMasksInstalledAfterPolishKeepAutomaticValidation)
+{
+    ensureApp();
+    QTemporaryDir root;
+    auto manager = makeManager(root.path());
+    VNX::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
+    QLineEdit validated;
+    validated.setStyle(&style);
+    validated.ensurePolished();
+    validated.setValidator(new QIntValidator(10, 99, &validated));
+    validated.setText(QStringLiteral("1"));
+    EXPECT_TRUE(validated.property("inputInvalid").toBool());
+    validated.setText(QStringLiteral("42"));
+    EXPECT_FALSE(validated.property("inputInvalid").toBool());
+
+    QLineEdit masked;
+    masked.setStyle(&style);
+    masked.ensurePolished();
+    masked.setInputMask(QStringLiteral("99;_"));
+    masked.setText(QStringLiteral("1"));
+    EXPECT_TRUE(masked.property("inputInvalid").toBool());
+    masked.setText(QStringLiteral("42"));
+    EXPECT_FALSE(masked.property("inputInvalid").toBool());
 }
 
 TEST(ThemeMetricsMigration, MatrixThemeChangesPreserveEditingState)
