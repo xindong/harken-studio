@@ -1,6 +1,7 @@
 #include "BlueprintVisibilityMenu.h"
 
 #include "Core/FontManager.h"
+#include "Core/QtControlSkin.h"
 
 #include <QCheckBox>
 #include <QHBoxLayout>
@@ -18,7 +19,6 @@
 namespace VNX {
 namespace {
 
-constexpr int RowHeight = 24;
 constexpr int TitleInset = 8;
 constexpr int FieldInset = 24;
 constexpr int CheckInset = 8;
@@ -51,7 +51,6 @@ BlueprintVisibilityMenu::BlueprintVisibilityMenu(QWidget* parent)
 {
     setObjectName(QStringLiteral("BlueprintViewportVisibilityMenu"));
     setTitle(tr("Viewport Visibility"));
-    setFont(FontManager::instance().getFont(FontRole::Caption, 9));
 
     scroll_ = new QScrollArea(this);
     scroll_->setObjectName(QStringLiteral("BlueprintVisibilityScrollArea"));
@@ -108,10 +107,7 @@ BlueprintVisibilityMenu::BlueprintVisibilityMenu(QWidget* parent)
     setFields(kAllNodeContentFields);
     relayout_();
     connect(this, &QMenu::aboutToShow, this, &BlueprintVisibilityMenu::relayout_);
-    connect(&FontManager::instance(), &FontManager::fontChanged, this, [this]() {
-        setFont(FontManager::instance().getFont(FontRole::Caption, 9));
-        relayout_();
-    });
+    connect(&FontManager::instance(), &FontManager::fontChanged, this, &BlueprintVisibilityMenu::relayout_);
 }
 
 void BlueprintVisibilityMenu::setFields(NodeContentFields fields)
@@ -127,12 +123,13 @@ void BlueprintVisibilityMenu::setFields(NodeContentFields fields)
 
 void BlueprintVisibilityMenu::relayout_()
 {
-    int rowHeight = std::max(RowHeight, fontMetrics().height() + 4);
+    int rowHeight = QtControlSkin::popupRowHeight(fontMetrics());
     int contentWidth = 0;
     for (size_t index = 0; index < Rows.size(); ++index) {
         auto* check = checks_[index];
         auto* label = labels_[index];
-        rowHeight = std::max({rowHeight, label->fontMetrics().height() + 4, check->sizeHint().height()});
+        rowHeight = std::max({rowHeight, QtControlSkin::popupRowHeight(label->fontMetrics()),
+                             check->sizeHint().height()});
         const int inset = Rows[index].group ? TitleInset : FieldInset;
         contentWidth = std::max(contentWidth, label->fontMetrics().horizontalAdvance(label->text())
             + inset + check->sizeHint().width() + CheckInset + 8);

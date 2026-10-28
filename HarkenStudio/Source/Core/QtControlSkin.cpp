@@ -5,14 +5,20 @@
 #include "ThemeManager.h"
 #include "ThemeAssetCatalog.h"
 
+#include <QAbstractItemView>
+#include <QApplication>
 #include <QBuffer>
+#include <QComboBox>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QFontMetrics>
 #include <QIconEngine>
+#include <QMenu>
 #include <QPainter>
 #include <QStyle>
+#include <QStyledItemDelegate>
+#include <QStyleOptionMenuItem>
 #include <QStyleOptionToolButton>
 #include <QTemporaryDir>
 #include <QWidget>
@@ -21,11 +27,81 @@
 
 #include <algorithm>
 #include <cmath>
+#include <typeinfo>
 #include <utility>
 
 namespace {
 
 constexpr int LineEditHorizontalMargin = 2;
+constexpr int PopupVerticalPadding = 4;
+constexpr int PopupTextPadding = 8;
+constexpr int PopupIconColumnWidth = 24;
+constexpr int PopupShortcutSpacing = 12;
+
+int popupTextMargin(const QStyleOptionMenuItem& item, const QWidget* widget)
+{
+    QVariant mode;
+    for (auto* owner = widget; owner && !mode.isValid(); owner = owner->parentWidget())
+        mode = owner->property("popupIconColumn");
+    const bool reserved = mode.isValid()
+        ? mode.toInt() == static_cast<int>(VNX::PopupIconColumn::Reserved)
+        : qobject_cast<const QMenu*>(widget) != nullptr;
+    return reserved || item.menuHasCheckableItems
+        ? qMax(PopupIconColumnWidth, item.maxIconWidth) : PopupTextPadding;
+}
+
+class PopupItemDelegate final : public QStyledItemDelegate
+{
+public:
+    explicit PopupItemDelegate(QComboBox* combo) : QStyledItemDelegate(combo), combo_(combo) {}
+
+    void paint(QPainter* painter, const QStyleOptionViewItem& option,
+               const QModelIndex& index) const override
+    {
+        const QVariant alignment = index.data(Qt::TextAlignmentRole);
+        VNX::QtControlSkin::current().paintPopupItem(*painter, menuOption(option, index), combo_,
+            alignment.isValid() ? Qt::Alignment(alignment.toInt()) : Qt::AlignLeft);
+    }
+
+    QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override
+    {
+        const auto menu = menuOption(option, index);
+        const QSize contents = menu.fontMetrics.size(Qt::TextSingleLine | Qt::TextShowMnemonic,
+                                                     menu.text);
+        return VNX::QtControlSkin::current().popupItemSize(menu, contents, combo_);
+    }
+
+private:
+    QStyleOptionMenuItem menuOption(const QStyleOptionViewItem& option,
+                                   const QModelIndex& index) const
+    {
+        QStyleOptionViewItem item = option;
+        initStyleOption(&item, index);
+        QStyleOptionMenuItem menu;
+        menu.rect = item.rect;
+        menu.state = item.state;
+        menu.direction = item.direction;
+        menu.palette = item.palette;
+        menu.font = item.font;
+        menu.fontMetrics = item.fontMetrics;
+        menu.menuItemType = QStyleOptionMenuItem::Normal;
+        menu.icon = item.icon;
+        menu.maxIconWidth = item.icon.isNull() ? 0 : combo_->iconSize().width();
+        const bool checkCurrent = combo_->property("popupCurrentItemChecked").toBool();
+        const bool checkable = item.features.testFlag(QStyleOptionViewItem::HasCheckIndicator);
+        menu.menuHasCheckableItems = checkCurrent
+            || combo_->property("popupHasCheckableItems").toBool();
+        menu.checkType = checkable ? QStyleOptionMenuItem::NonExclusive
+            : checkCurrent ? QStyleOptionMenuItem::Exclusive : QStyleOptionMenuItem::NotCheckable;
+        menu.checked = checkable ? item.checkState == Qt::Checked
+            : checkCurrent && index == combo_->model()->index(
+                combo_->currentIndex(), combo_->modelColumn(), combo_->rootModelIndex());
+        menu.text = item.text.replace(QLatin1Char('&'), QStringLiteral("&&"));
+        return menu;
+    }
+
+    QComboBox* combo_;
+};
 
 class IconButtonEngine final : public QIconEngine
 {
@@ -117,6 +193,120 @@ QtControlSkin QtControlSkin::current()
 QIcon QtControlSkin::iconButtonIcon(const QIcon& icon)
 {
     return icon.isNull() ? icon : QIcon(new IconButtonEngine(icon));
+}
+
+void QtControlSkin::setPopupIconColumn(QWidget* widget, PopupIconColumn mode)
+{
+    setSemanticProperty(widget, "popupIconColumn", static_cast<int>(mode));
+    widget->updateGeometry();
+}
+
+void QtControlSkin::setPopupCurrentItemChecked(QComboBox* combo, bool checked)
+{
+    setSemanticProperty(combo, "popupCurrentItemChecked", checked);
+    combo->view()->doItemsLayout();
+}
+
+void QtControlSkin::applyPopupStyle(QComboBox* combo)
+{
+    const QByteArray name = combo->itemDelegate()->metaObject()->className();
+    if (name == "QComboBoxDelegate" || name == "QComboMenuDelegate"
+        || typeid(*combo->itemDelegate()) == typeid(QStyledItemDelegate))
+        combo->setItemDelegate(new PopupItemDelegate(combo));
+}
+
+int QtControlSkin::popupRowHeight(const QFontMetrics& fontMetrics)
+{
+    return fontMetrics.height() + 2 * PopupVerticalPadding;
+}
+
+QSize QtControlSkin::popupItemSize(const QStyleOptionMenuItem& item,
+                                 const QSize& contentsSize, const QWidget* widget) const
+{
+    const int spacing = item.text.contains(QLatin1Char('\t')) ? PopupShortcutSpacing : 0;
+    const int margin = popupTextMargin(item, widget);
+    const int trailingMargin = item.menuItemType == QStyleOptionMenuItem::SubMenu
+        ? qMax(margin, metrics().navigationChevronExtent + 4) : margin;
+    const int contentWidth = qobject_cast<const QMenu*>(widget)
+        ? qMax(150, contentsSize.width() + spacing) : contentsSize.width() + spacing;
+    return QSize(contentWidth + margin + trailingMargin, popupRowHeight(item.fontMetrics));
+}
+
+void QtControlSkin::paintPopupItem(QPainter& painter, const QStyleOptionMenuItem& item,
+                                  const QWidget* widget, Qt::Alignment alignment) const
+{
+    const QStyle* style = widget ? widget->style() : QApplication::style();
+    painter.save();
+    const bool enabled = item.state & QStyle::State_Enabled;
+    const bool selected = enabled && (item.state & QStyle::State_Selected);
+    if (selected)
+        painter.fillRect(item.rect, item.palette.brush(QPalette::Highlight));
+    const QColor textColor = item.palette.color(
+        enabled ? QPalette::Active : QPalette::Disabled,
+        selected ? QPalette::HighlightedText : QPalette::ButtonText);
+    painter.setFont(item.font);
+    painter.setPen(textColor);
+
+    const int margin = popupTextMargin(item, widget);
+    const int trailingMargin = item.menuItemType == QStyleOptionMenuItem::SubMenu
+        ? qMax(margin, metrics().navigationChevronExtent + 4) : margin;
+    QRect textRect = item.rect.adjusted(margin, 0, -trailingMargin, 0);
+    const QStringView text(item.text);
+    const qsizetype tab = text.indexOf(QLatin1Char('\t'));
+    const int textFlags = Qt::AlignVCenter | Qt::TextSingleLine | Qt::TextHideMnemonic;
+    if (tab >= 0) {
+        const QString shortcut = text.mid(tab + 1).toString();
+        const int shortcutWidth = qMax(item.reservedShortcutWidth,
+                                       painter.fontMetrics().horizontalAdvance(shortcut));
+        QRect shortcutRect = textRect;
+        shortcutRect.setLeft(shortcutRect.right() - shortcutWidth + 1);
+        painter.drawText(QStyle::visualRect(item.direction, item.rect, shortcutRect),
+                         textFlags | QStyle::visualAlignment(item.direction, Qt::AlignRight),
+                         shortcut);
+        textRect.setRight(shortcutRect.left() - PopupShortcutSpacing - 1);
+    }
+    painter.drawText(QStyle::visualRect(item.direction, item.rect, textRect),
+                     textFlags | QStyle::visualAlignment(item.direction, alignment),
+                     text.left(tab >= 0 ? tab : text.size()).toString());
+
+    if (margin >= PopupIconColumnWidth && !item.icon.isNull()) {
+        const int extent = qMin(metrics().objectIconExtent, item.rect.height());
+        const QRect iconRect(item.rect.left(), item.rect.top(), margin, item.rect.height());
+        const auto state = item.checked ? QIcon::On : QIcon::Off;
+        QPixmap glyph = item.icon.pixmap(QSize(extent, extent),
+            painter.device()->devicePixelRatioF(), QIcon::Normal, state);
+        if (!glyph.isNull()) {
+            QPainter tint(&glyph);
+            tint.setCompositionMode(QPainter::CompositionMode_SourceIn);
+            tint.fillRect(glyph.rect(), textColor);
+            tint.end();
+            painter.drawPixmap(QStyle::visualRect(item.direction, item.rect,
+                QStyle::alignedRect(Qt::LeftToRight, Qt::AlignCenter,
+                                    glyph.deviceIndependentSize().toSize(), iconRect)), glyph);
+        }
+    } else if (margin >= PopupIconColumnWidth
+               && item.checkType != QStyleOptionMenuItem::NotCheckable && item.checked) {
+        QStyleOptionMenuItem check = item;
+        check.rect = QStyle::visualRect(item.direction, item.rect,
+            QStyle::alignedRect(Qt::LeftToRight, Qt::AlignCenter, QSize(14, 14),
+                                QRect(item.rect.topLeft(), QSize(margin, item.rect.height()))));
+        check.state |= QStyle::State_On;
+        check.palette.setColor(QPalette::Text, textColor);
+        check.palette.setColor(QPalette::HighlightedText, textColor);
+        style->drawPrimitive(QStyle::PE_IndicatorMenuCheckMark, &check, &painter, widget);
+    }
+
+    if (item.menuItemType == QStyleOptionMenuItem::SubMenu) {
+        const int extent = metrics().navigationChevronExtent;
+        QStyleOptionMenuItem arrow = item;
+        arrow.rect = QStyle::visualRect(item.direction, item.rect,
+            QStyle::alignedRect(Qt::LeftToRight, Qt::AlignRight | Qt::AlignVCenter,
+                                QSize(extent, extent), item.rect));
+        style->drawPrimitive(item.direction == Qt::RightToLeft
+            ? QStyle::PE_IndicatorArrowLeft : QStyle::PE_IndicatorArrowRight,
+            &arrow, &painter, widget);
+    }
+    painter.restore();
 }
 
 int QtControlSkin::fieldHeight() const
@@ -357,6 +547,7 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@spacingXSmall@"), QString::number(metrics().spacingXSmall));
     replace(QStringLiteral("@spacingSmall@"), QString::number(metrics().spacingSmall));
     replace(QStringLiteral("@spacingMedium@"), QString::number(metrics().spacingMedium));
+    replace(QStringLiteral("@popupPaddingY@"), QString::number(PopupVerticalPadding));
     replace(QStringLiteral("@fieldContentHeight@"), QString::number(fieldHeight() - 2));
     replace(QStringLiteral("@singleLineContentHeight@"), QString::number(fieldHeight() - 3));
     const QMargins fieldMargins = fieldTextMargins();

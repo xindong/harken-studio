@@ -21,16 +21,6 @@ namespace VNX {
 
 namespace {
 
-constexpr int MenuHorizontalPadding = 24;
-constexpr int MenuVerticalPadding = 6;
-constexpr int MenuMinimumContentWidth = 150;
-constexpr int MenuShortcutSpacing = 12;
-
-int menuTextMargin(const QStyleOptionMenuItem& item)
-{
-    return qMax(MenuHorizontalPadding, item.maxIconWidth);
-}
-
 class InputValidation : public QObject
 {
 public:
@@ -99,7 +89,9 @@ void HarkenStyle::polish(QWidget* widget)
             || widget->inherits("QLineEditIconButton")))
         widget->setProperty("flatIconButton", true);
     QProxyStyle::polish(widget);
-    const auto* comboBox = qobject_cast<QComboBox*>(widget);
+    auto* comboBox = qobject_cast<QComboBox*>(widget);
+    if (comboBox)
+        QtControlSkin::applyPopupStyle(comboBox);
     const auto* plainText = qobject_cast<QPlainTextEdit*>(widget);
     const auto* richText = qobject_cast<QTextEdit*>(widget);
     if (plainText)
@@ -191,14 +183,8 @@ QSize HarkenStyle::sizeFromContents(ContentsType type, const QStyleOption* optio
 {
     if (type == CT_MenuItem) {
         const auto* item = qstyleoption_cast<const QStyleOptionMenuItem*>(option);
-        if (item && item->menuItemType != QStyleOptionMenuItem::Separator) {
-            const int spacing = item->text.contains(QLatin1Char('\t'))
-                ? MenuShortcutSpacing : 0;
-            return QSize(qMax(MenuMinimumContentWidth, contentsSize.width() + spacing)
-                             + 2 * menuTextMargin(*item),
-                         qMax(contentsSize.height(), pixelMetric(PM_SmallIconSize, item, widget))
-                             + 2 * MenuVerticalPadding);
-        }
+        if (item && item->menuItemType != QStyleOptionMenuItem::Separator)
+            return QtControlSkin(theme().snapshot()).popupItemSize(*item, contentsSize, widget);
     }
     return QProxyStyle::sizeFromContents(type, option, contentsSize, widget);
 }
@@ -325,77 +311,7 @@ void HarkenStyle::drawControl(ControlElement element, const QStyleOption* option
         return;
     }
 
-    painter->save();
-    const bool enabled = item->state & State_Enabled;
-    const bool selected = enabled && (item->state & State_Selected);
-    if (selected)
-        painter->fillRect(item->rect, item->palette.brush(QPalette::Highlight));
-    const QColor textColor = item->palette.color(
-        enabled ? QPalette::Active : QPalette::Disabled,
-        selected ? QPalette::HighlightedText : QPalette::ButtonText);
-    painter->setFont(item->font);
-    painter->setPen(textColor);
-
-    const int margin = menuTextMargin(*item);
-    QRect textRect = item->rect.adjusted(margin, 0, -margin, 0);
-    const QStringView text(item->text);
-    const qsizetype tab = text.indexOf(QLatin1Char('\t'));
-    int textFlags = Qt::AlignVCenter | Qt::TextSingleLine | Qt::TextShowMnemonic;
-    if (!styleHint(SH_UnderlineShortcut, item, widget))
-        textFlags |= Qt::TextHideMnemonic;
-    if (tab >= 0) {
-        const QString shortcut = text.mid(tab + 1).toString();
-        const int shortcutWidth = qMax(item->reservedShortcutWidth,
-                                       painter->fontMetrics().horizontalAdvance(shortcut));
-        QRect shortcutRect = textRect;
-        shortcutRect.setLeft(shortcutRect.right() - shortcutWidth + 1);
-        painter->drawText(visualRect(item->direction, item->rect, shortcutRect),
-                          textFlags | visualAlignment(item->direction, Qt::AlignRight),
-                          shortcut);
-        textRect.setRight(shortcutRect.left() - MenuShortcutSpacing - 1);
-    }
-    painter->drawText(visualRect(item->direction, item->rect, textRect),
-                      textFlags | visualAlignment(item->direction, Qt::AlignLeft),
-                      text.left(tab >= 0 ? tab : text.size()).toString());
-
-    if (!item->icon.isNull()) {
-        const int extent = pixelMetric(PM_SmallIconSize, item, widget);
-        const QRect iconRect(item->rect.left(), item->rect.top(), margin, item->rect.height());
-        const auto state = item->checked ? QIcon::On : QIcon::Off;
-        QPixmap glyph = item->icon.pixmap(QSize(extent, extent),
-            painter->device()->devicePixelRatioF(), QIcon::Normal, state);
-        if (!glyph.isNull()) {
-            QPainter tint(&glyph);
-            tint.setCompositionMode(QPainter::CompositionMode_SourceIn);
-            tint.fillRect(glyph.rect(), textColor);
-            tint.end();
-            painter->drawPixmap(visualRect(item->direction, item->rect,
-                alignedRect(Qt::LeftToRight, Qt::AlignCenter,
-                            glyph.deviceIndependentSize().toSize(), iconRect)), glyph);
-        }
-    } else if (item->checkType != QStyleOptionMenuItem::NotCheckable && item->checked) {
-        QStyleOptionMenuItem check = *item;
-        check.rect = visualRect(item->direction, item->rect,
-            alignedRect(Qt::LeftToRight, Qt::AlignCenter, QSize(14, 14),
-                        QRect(item->rect.topLeft(),
-                              QSize(MenuHorizontalPadding, item->rect.height()))));
-        check.state |= State_On;
-        check.palette.setColor(QPalette::Text, textColor);
-        check.palette.setColor(QPalette::HighlightedText, textColor);
-        drawPrimitive(PE_IndicatorMenuCheckMark, &check, painter, widget);
-    }
-
-    if (item->menuItemType == QStyleOptionMenuItem::SubMenu) {
-        const int extent = theme().metrics().navigationChevronExtent;
-        QStyleOptionMenuItem arrow = *item;
-        arrow.rect = visualRect(item->direction, item->rect,
-            alignedRect(Qt::LeftToRight, Qt::AlignRight | Qt::AlignVCenter,
-                        QSize(extent, extent), item->rect));
-        drawPrimitive(item->direction == Qt::RightToLeft
-                          ? PE_IndicatorArrowLeft : PE_IndicatorArrowRight,
-                      &arrow, painter, widget);
-    }
-    painter->restore();
+    QtControlSkin(theme().snapshot()).paintPopupItem(*painter, *item, widget);
 }
 
 void HarkenStyle::drawComplexControl(ComplexControl control,

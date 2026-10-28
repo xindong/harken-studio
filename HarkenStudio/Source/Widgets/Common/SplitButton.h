@@ -1,10 +1,11 @@
 #pragma once
 
-#include <QHash>
+#include <QList>
 #include <QWidget>
 
 class QAction;
 class QActionEvent;
+class QComboBox;
 class QFrame;
 class QPushButton;
 class QToolButton;
@@ -31,13 +32,12 @@ private:
     void updateDropdownAvailability();
     void updateMetrics();
     void showPopup();
-    void positionPopup();
 
     QPushButton* primaryButton_;
     QToolButton* dropdownButton_;
     QFrame* divider_;
-    QWidget* popup_;
-    QHash<QAction*, QPushButton*> actionButtons_;
+    QComboBox* popupCombo_;
+    QList<QAction*> popupActions_;
 };
 
 }
