@@ -211,6 +211,8 @@ add_library(harken_editor_foundation STATIC
     HarkenStyle.cpp
     HarkenStyle.h
     ThemeSnapshot.h
+    ThemeColorCatalog.cpp
+    ThemeColorCatalog.h
     ThemeColorResolver.cpp
     ThemeColorResolver.h
     ThemePackageDto.h

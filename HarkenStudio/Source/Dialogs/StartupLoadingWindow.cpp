@@ -54,7 +54,7 @@ StartupLoadingWindow::StartupLoadingWindow()
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
-    renderer_ = std::make_unique<StartupRenderer>();
+    renderer_ = std::make_unique<StartupRenderer>(ThemeManager::instance().snapshot());
     renderer_->window()->installEventFilter(this);
     connect(renderer_.get(), &StartupRenderer::initialFramePresented,
             this, [this]() {

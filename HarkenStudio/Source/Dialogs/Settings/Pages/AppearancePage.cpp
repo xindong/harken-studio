@@ -1,36 +1,117 @@
-
 #include "Dialogs/Settings/Pages/AppearancePage.h"
 
 #include "Core/AppSettings.h"
 #include "Core/ContextInfo.h"
-#include "Core/ThemeManager.h"
-#include "Core/ThemePackageParser.h"
+#include "Core/QtControlSkin.h"
+#include "Core/ThemeColorCatalog.h"
+#include "Widgets/Common/ProportionalTreeWidget.h"
+#include "Widgets/Common/SearchField.h"
+#include "Widgets/Common/TableItemDelegate.h"
+#include "Widgets/Common/TableWidget.h"
 
+#include <QColorDialog>
 #include <QComboBox>
+#include <QCoreApplication>
 #include <QDir>
+#include <QHideEvent>
 #include <QLabel>
+#include <QLineEdit>
+#include <QListWidget>
+#include <QPainter>
+#include <QPushButton>
+#include <QRegularExpressionValidator>
+#include <QScopedValueRollback>
 #include <QShowEvent>
 #include <QSignalBlocker>
 
 namespace VNX {
+
+namespace {
+
+QString colorText(const QColor& color)
+{
+    return color.name(color.alpha() == 255 ? QColor::HexRgb : QColor::HexArgb).toUpper();
+}
+
+QIcon colorIcon(const QColor& color, const QPalette& palette)
+{
+    QPixmap swatch(24, 16);
+    swatch.fill(palette.color(QPalette::Base));
+    QPainter painter(&swatch);
+    for (int y = 0; y < swatch.height(); y += 4)
+        for (int x = 0; x < swatch.width(); x += 4)
+            if ((x / 4 + y / 4) % 2 == 0)
+                painter.fillRect(x, y, 4, 4, palette.color(QPalette::AlternateBase));
+    painter.fillRect(swatch.rect(), color);
+    painter.setPen(palette.color(QPalette::Mid));
+    painter.drawRect(swatch.rect().adjusted(0, 0, -1, -1));
+    QIcon icon;
+    for (QIcon::Mode mode : {QIcon::Normal, QIcon::Active, QIcon::Selected, QIcon::Disabled})
+        icon.addPixmap(swatch, mode);
+    return icon;
+}
+
+QString roleText(const char* text)
+{
+    return QCoreApplication::translate("ThemeColorCatalog", text);
+}
+
+QIcon presetIcon(const ThemeSnapshot& theme, const ThemeColorOverrides& overrides)
+{
+    const QStringList keys{QStringLiteral("background.primary"),
+        QStringLiteral("background.secondary"), QStringLiteral("background.selected"),
+        QStringLiteral("accent.primary"), QStringLiteral("text.primary"),
+        QStringLiteral("text.secondary"), QStringLiteral("status.success"),
+        QStringLiteral("status.warning"), QStringLiteral("status.error"),
+        QStringLiteral("status.info")};
+    QPixmap swatch(190, 44);
+    QColor background = overrides.value(keys.first(), theme.ui.colors.bgPrimary);
+    background.setAlpha(255);
+    swatch.fill(background);
+    QPainter painter(&swatch);
+    for (int i = 0; i < keys.size(); ++i) {
+        const auto* role = findThemeColorRole(keys.at(i));
+        const QColor color = overrides.value(keys.at(i), role->read(theme));
+        const int left = i * swatch.width() / keys.size();
+        const int right = (i + 1) * swatch.width() / keys.size();
+        painter.fillRect(left, 0, right - left, swatch.height(), color);
+    }
+    QIcon icon;
+    for (QIcon::Mode mode : {QIcon::Normal, QIcon::Active, QIcon::Selected, QIcon::Disabled})
+        icon.addPixmap(swatch, mode);
+    return icon;
+}
+
+}
 
 AppearancePage::AppearancePage(ThemeManager& themeManager, QWidget* parent)
     : SettingsPage(parent)
     , themeManager_(&themeManager)
 {
     auto* body = makePageBody();
-
-    auto* appearance = makeSection(tr("Appearance"));
+    body->setContentsMargins(24, 16, 24, 16);
+    body->setSpacing(12);
+    auto* appearance = makeSection(tr("Color Presets"));
     auto* appearanceForm = makeForm();
-    auto* themeLabel = new QLabel(tr("Theme:"));
-    themeCombo_ = new QComboBox();
-    themeCombo_->setObjectName(QStringLiteral("appearanceThemeCombo"));
+    themePresets_ = new QListWidget(appearance);
+    themePresets_->setObjectName(QStringLiteral("appearanceThemePresets"));
+    themePresets_->setAccessibleName(tr("Color preset"));
+    themePresets_->setViewMode(QListView::IconMode);
+    themePresets_->setFlow(QListView::LeftToRight);
+    themePresets_->setWrapping(false);
+    themePresets_->setMovement(QListView::Static);
+    themePresets_->setResizeMode(QListView::Adjust);
+    themePresets_->setWordWrap(true);
+    themePresets_->setSelectionMode(QAbstractItemView::SingleSelection);
+    themePresets_->setIconSize(QSize(190, 44));
+    themePresets_->setGridSize(QSize(220, 92));
+    themePresets_->setSpacing(4);
+    themePresets_->setFixedHeight(116);
+    themePresets_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     const auto themeTopic = ContextTopic::forPanel(QStringLiteral("settings.appearance.theme"),
         {QDir::toNativeSeparators(themeManager_->userThemesRoot())});
-    ContextInfo::tag(themeCombo_, themeTopic);
-    ContextInfo::tag(themeLabel, themeTopic);
-    themeLabel->setBuddy(themeCombo_);
-    appearanceForm->addRow(themeLabel, themeCombo_);
+    ContextInfo::tag(themePresets_, themeTopic);
+    static_cast<QVBoxLayout*>(appearance->layout())->addWidget(themePresets_);
 
     auto* languageLabel = new QLabel(tr("Information Language:"));
     languageCombo_ = new QComboBox();
@@ -38,21 +119,146 @@ AppearancePage::AppearancePage(ThemeManager& themeManager, QWidget* parent)
     const auto languageTopic = ContextTopic::forPanel(QStringLiteral("settings.appearance.language"));
     ContextInfo::tag(languageCombo_, languageTopic);
     ContextInfo::tag(languageLabel, languageTopic);
-    populateLanguageCombo();
+    languageCombo_->addItem(tr("English"), QStringLiteral("en"));
+    languageCombo_->addItem(tr("Chinese (Simplified)"), QStringLiteral("zh-CN"));
     languageLabel->setBuddy(languageCombo_);
     appearanceForm->addRow(languageLabel, languageCombo_);
     static_cast<QVBoxLayout*>(appearance->layout())->addLayout(appearanceForm);
-
     body->addWidget(appearance);
 
+    auto* colors = makeSection(tr("Colors"));
+    auto* colorsLayout = static_cast<QVBoxLayout*>(colors->layout());
+    colorsLayout->setSpacing(8);
+    auto* filters = new QHBoxLayout();
+    colorGroup_ = new QComboBox(colors);
+    colorGroup_->setObjectName(QStringLiteral("appearanceColorGroup"));
+    colorGroup_->addItem(tr("All categories"), QString());
+    for (const auto& role : themeColorRoles()) {
+        const QString group = QString::fromLatin1(role.group);
+        if (colorGroup_->findData(group) < 0)
+            colorGroup_->addItem(roleText(role.group), group);
+    }
+    colorSearch_ = new SearchField(colors);
+    colorSearch_->setObjectName(QStringLiteral("appearanceColorSearch"));
+    colorSearch_->setPlaceholderText(tr("Search colors and uses..."));
+    colorGroupReset_ = new QPushButton(tr("Reset Category"), colors);
+    colorGroupReset_->setObjectName(QStringLiteral("appearanceColorGroupReset"));
+    colorGroupReset_->setToolTip(tr("Restore every color in the selected category, including colors hidden by search."));
+    filters->addWidget(colorGroup_);
+    filters->addWidget(colorGroupReset_);
+    filters->addWidget(colorSearch_, 1);
+    colorsLayout->addLayout(filters);
+
+    auto* table = new TableWidget(TableOptions::display(), colors, themeManager_);
+    table->setColumnsMovable(false);
+    table->setFixedHeight(260);
+    colorTree_ = table->createItemView(QStringLiteral("appearanceColorTree"),
+        {tr("Role"), tr("Color"), tr("Preset Default")}, {46, 27, 27});
+    colorTree_->setRootIsDecorated(false);
+    colorTree_->setSelectionMode(QAbstractItemView::SingleSelection);
+    colorTree_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    colorTree_->setAllColumnsShowFocus(true);
+    colorTree_->setIconSize(QSize(24, 16));
+    for (const auto& role : themeColorRoles()) {
+        auto* item = new QTreeWidgetItem(colorTree_);
+        item->setData(0, Qt::UserRole, QString::fromLatin1(role.key));
+        item->setText(0, roleText(role.label));
+        item->setToolTip(0, roleText(role.description));
+        item->setFlags(item->flags() & ~Qt::ItemIsEditable);
+    }
+    colorsLayout->addWidget(table);
+
+    colorSummary_ = new QLabel(colors);
+    colorSummary_->setObjectName(QStringLiteral("appearanceColorSummary"));
+    colorSummary_->setProperty("textRole", QStringLiteral("muted"));
+    colorDescription_ = new QLabel(colors);
+    colorDescription_->setObjectName(QStringLiteral("appearanceColorDescription"));
+    colorDescription_->setProperty("textRole", QStringLiteral("secondary"));
+    colorDescription_->setWordWrap(true);
+    colorDescription_->setMinimumHeight(34);
+    colorsLayout->addWidget(colorDescription_);
+
+    auto* actions = new QHBoxLayout();
+    colorHex_ = new QLineEdit(colors);
+    colorHex_->setObjectName(QStringLiteral("appearanceColorHex"));
+    colorHex_->setAccessibleName(tr("Color value"));
+    colorHex_->setMaxLength(9);
+    colorHex_->setMaximumWidth(125);
+    colorHex_->setPlaceholderText(QStringLiteral("#RRGGBB"));
+    colorHex_->setToolTip(tr("Use #RRGGBB or #AARRGGBB. Alpha comes first."));
+    colorHex_->setValidator(new QRegularExpressionValidator(
+        QRegularExpression(QStringLiteral("#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?")), colorHex_));
+    colorEdit_ = new QPushButton(tr("Edit Color..."), colors);
+    colorEdit_->setObjectName(QStringLiteral("appearanceColorEdit"));
+    colorReset_ = new QPushButton(tr("Reset Selected"), colors);
+    colorReset_->setObjectName(QStringLiteral("appearanceColorReset"));
+    colorsReset_ = new QPushButton(tr("Reset All"), colors);
+    colorsReset_->setObjectName(QStringLiteral("appearanceColorsReset"));
+    colorsReset_->setToolTip(tr("Restore all colors of the selected preset to its defaults."));
+    actions->addWidget(colorHex_);
+    actions->addWidget(colorEdit_);
+    actions->addWidget(colorReset_);
+    actions->addStretch();
+    actions->addWidget(colorsReset_);
+    colorsLayout->addLayout(actions);
+
+    auto* savedLabel = new QLabel(tr("Changes are saved automatically."), colors);
+    savedLabel->setProperty("textRole", QStringLiteral("secondary"));
+    auto* summaryRow = new QHBoxLayout();
+    summaryRow->addWidget(savedLabel);
+    summaryRow->addStretch();
+    summaryRow->addWidget(colorSummary_);
+    colorsLayout->addLayout(summaryRow);
+    colors->setToolTip(tr("Custom colors are saved separately for each preset. Completed edits are saved immediately."));
+    errorLabel_ = new QLabel(colors);
+    errorLabel_->setObjectName(QStringLiteral("appearanceColorError"));
+    errorLabel_->setProperty("textRole", QStringLiteral("error"));
+    errorLabel_->setWordWrap(true);
+    errorLabel_->hide();
+    colorsLayout->addWidget(errorLabel_);
+    body->addWidget(colors);
     body->addStretch();
 
-    connect(themeCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &AppearancePage::applyTheme);
+    connect(themePresets_, &QListWidget::currentItemChanged,
+            this, &AppearancePage::selectTheme);
     connect(languageCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &AppearancePage::applyLanguage);
-    connect(themeManager_, &ThemeManager::themeChanged, this, &AppearancePage::load);
-    connect(&AppSettings::instance(), &AppSettings::languageChanged, this, &AppearancePage::load);
+    connect(colorGroup_, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &AppearancePage::filterColors);
+    connect(colorSearch_, &QLineEdit::textChanged, this, &AppearancePage::filterColors);
+    connect(colorTree_, &QTreeWidget::currentItemChanged, this,
+            [this](QTreeWidgetItem*, QTreeWidgetItem* previous) {
+        if (!finishHexEdit()) {
+            const QSignalBlocker blocker(colorTree_);
+            colorTree_->setCurrentItem(previous);
+            if (!colorHex_->isModified()) refreshSelectedColor();
+            return;
+        }
+        refreshSelectedColor();
+    });
+    connect(colorTree_, &QTreeWidget::itemDoubleClicked, this,
+            [this](QTreeWidgetItem*, int) { editSelectedColor(); });
+    connect(colorEdit_, &QPushButton::clicked, this, &AppearancePage::editSelectedColor);
+    connect(colorReset_, &QPushButton::clicked, this, &AppearancePage::resetSelectedColor);
+    connect(colorGroupReset_, &QPushButton::clicked, this, &AppearancePage::resetColorGroup);
+    connect(colorsReset_, &QPushButton::clicked, this, &AppearancePage::resetColors);
+    connect(colorHex_, &QLineEdit::textEdited, this, [this] {
+        QtControlSkin::setSemanticProperty(colorHex_, "inputInvalid", !colorHex_->hasAcceptableInput());
+    });
+    connect(colorHex_, &QLineEdit::editingFinished, this, &AppearancePage::finishHexEdit);
+    connect(themeManager_, &ThemeManager::themeChanged, this, [this] {
+        if (updatingAppearance_) return;
+        if (colorDialog_) colorDialog_->reject();
+        load();
+    });
+    connect(&AppSettings::instance(), &AppSettings::languageChanged,
+            this, &AppearancePage::refreshLanguage);
+}
+
+AppearancePage::~AppearancePage()
+{
+    if (colorDialog_) disconnect(colorDialog_, nullptr, this, nullptr);
+    cancelPreview();
 }
 
 QString AppearancePage::pageId() const
@@ -65,47 +271,38 @@ QString AppearancePage::categoryLabel() const
     return tr("Appearance");
 }
 
-void AppearancePage::populateLanguageCombo()
-{
-    languageCombo_->addItem(tr("English"), QStringLiteral("en"));
-    languageCombo_->addItem(tr("Chinese (Simplified)"), QStringLiteral("zh-CN"));
-}
-
 void AppearancePage::load()
 {
+    if (updatingAppearance_ || colorDialog_) return;
+    colorHex_->setModified(false);
     themeManager_->refreshThemes();
+    appearance_ = themeManager_->appearance();
     {
-        const QSignalBlocker blocker(themeCombo_);
-        themeCombo_->clear();
-        for (const ThemePackageDescriptor& theme : themeManager_->availableThemes())
-        {
-            const QString label = theme.builtin
-                ? tr("%1 (Built-in)").arg(theme.displayName)
-                : theme.displayName;
-            themeCombo_->addItem(label, theme.id);
-            const int index = themeCombo_->count() - 1;
-            themeCombo_->setItemData(
-                index, tr("ID: %1\nVersion: %2").arg(theme.id, theme.version),
-                Qt::ToolTipRole);
+        const QSignalBlocker blocker(themePresets_);
+        themePresets_->clear();
+        presetThemes_.clear();
+        QListWidgetItem* selected = nullptr;
+        for (const ThemePackageDescriptor& theme : themeManager_->availableThemes()) {
+            auto* item = new QListWidgetItem(themePresets_);
+            item->setData(Qt::UserRole, theme.id);
+            item->setData(Qt::UserRole + 1, theme.displayName);
+            item->setTextAlignment(Qt::AlignHCenter);
+            const auto loaded = themeManager_->loadBaseTheme(theme.id);
+            if (loaded.ok()) presetThemes_.insert(theme.id, loaded.candidate->snapshot);
+            if (theme.id == appearance_.themeId) selected = item;
         }
-
-        int currentIndex = themeCombo_->findData(themeManager_->currentThemeId());
-        if (currentIndex < 0)
-        {
-            themeCombo_->addItem(themeManager_->currentThemeId(),
-                                 themeManager_->currentThemeId());
-            currentIndex = themeCombo_->count() - 1;
+        if (!selected) {
+            selected = new QListWidgetItem(themePresets_);
+            selected->setData(Qt::UserRole, appearance_.themeId);
+            selected->setData(Qt::UserRole + 1, appearance_.themeId);
+            selected->setTextAlignment(Qt::AlignHCenter);
         }
-        themeCombo_->setCurrentIndex(currentIndex);
+        themePresets_->setCurrentItem(selected);
+        themePresets_->scrollToItem(selected);
     }
-
-    {
-        const QSignalBlocker blocker(languageCombo_);
-        int index = languageCombo_->findData(AppSettings::instance().language());
-        if (index < 0)
-            index = 0;
-        languageCombo_->setCurrentIndex(index);
-    }
+    refreshLanguage();
+    loadBaseTheme();
+    themePresets_->scrollToItem(themePresets_->currentItem());
 }
 
 void AppearancePage::showEvent(QShowEvent* event)
@@ -114,41 +311,303 @@ void AppearancePage::showEvent(QShowEvent* event)
     load();
 }
 
-bool AppearancePage::applyTheme()
+void AppearancePage::hideEvent(QHideEvent* event)
 {
-    const QString themeId = themeCombo_->currentData().toString();
-    if (themeId.isEmpty() || themeId == themeManager_->currentThemeId())
-        return true;
-
-    const ThemeManagerOperationResult result = themeManager_->selectTheme(themeId);
-    if (result.ok())
-        return true;
-
-    QStringList details;
-    const qsizetype limit = std::min<qsizetype>(result.diagnostics.size(), 3);
-    for (qsizetype index = 0; index < limit; ++index)
-    {
-        const ThemePackageDiagnostic& diagnostic = result.diagnostics.at(index);
-        QString location = diagnostic.file;
-        if (!diagnostic.path.isEmpty())
-            location += QLatin1Char(':') + diagnostic.path;
-        details.append(QStringLiteral("%1: %2 (%3)")
-                           .arg(themePackageErrorCodeName(diagnostic.code),
-                                diagnostic.message, location));
-    }
-    load();
-    showError(
-        tr("The selected theme could not be applied. The current theme was kept.\n%1")
-            .arg(details.join(QLatin1Char('\n'))));
-    return false;
+    if (colorDialog_) colorDialog_->reject();
+    SettingsPage::hideEvent(event);
 }
 
 void AppearancePage::applyLanguage()
 {
-    const QString code = languageCombo_->currentData().toString();
-    if (code.isEmpty() || code == AppSettings::instance().language())
+    const QString language = languageCombo_->currentData().toString();
+    if (!language.isEmpty()) AppSettings::instance().setLanguage(language);
+}
+
+void AppearancePage::refreshLanguage()
+{
+    const QSignalBlocker blocker(languageCombo_);
+    const int index = languageCombo_->findData(AppSettings::instance().language());
+    languageCombo_->setCurrentIndex(index < 0 ? 0 : index);
+}
+
+void AppearancePage::selectTheme()
+{
+    if (!themePresets_->currentItem()) return;
+    const QString themeId = themePresets_->currentItem()->data(Qt::UserRole).toString();
+    if (!finishHexEdit()) {
+        const QSignalBlocker blocker(themePresets_);
+        for (int i = 0; i < themePresets_->count(); ++i) {
+            auto* item = themePresets_->item(i);
+            if (item->data(Qt::UserRole).toString() == appearance_.themeId)
+                themePresets_->setCurrentItem(item);
+        }
         return;
-    AppSettings::instance().setLanguage(code);
+    }
+    auto next = themeManager_->appearance();
+    next.themeId = themeId;
+    commitAppearance(next);
+}
+
+bool AppearancePage::commitAppearance(const ThemeAppearance& appearance)
+{
+    ThemeManagerOperationResult result;
+    {
+        const QScopedValueRollback guard(updatingAppearance_, true);
+        result = themeManager_->applyAppearance(appearance);
+        if (!result.ok()) themeManager_->cancelAppearancePreview();
+        previewActive_ = false;
+    }
+    load();
+    showError(result.diagnostics);
+    return result.ok();
+}
+
+bool AppearancePage::loadBaseTheme()
+{
+    const ThemePackageLoadResult loaded = themeManager_->loadBaseTheme(appearance_.themeId);
+    baseTheme_ = loaded.ok() ? loaded.candidate->snapshot : ThemeSnapshotPtr{};
+    if (baseTheme_) presetThemes_.insert(appearance_.themeId, baseTheme_);
+    else presetThemes_.remove(appearance_.themeId);
+    showError(loaded.diagnostics);
+    refreshColors();
+    return loaded.ok();
+}
+
+void AppearancePage::refreshPresets()
+{
+    for (int i = 0; i < themePresets_->count(); ++i) {
+        auto* item = themePresets_->item(i);
+        const QString id = item->data(Qt::UserRole).toString();
+        const QString name = item->data(Qt::UserRole + 1).toString();
+        const auto base = presetThemes_.value(id);
+        const auto overrides = appearance_.colors.value(id);
+        item->setText(name + QLatin1Char('\n')
+            + (!base ? tr("Unavailable") : overrides.isEmpty() ? tr("Default colors") : tr("Customized")));
+        item->setIcon(base ? presetIcon(*base, overrides) : QIcon());
+        item->setToolTip(tr("%1\nMain background · Controls · Selection · Accent · Primary text\nSecondary text · Success · Warning · Error · Information\n%2 custom colors")
+            .arg(name).arg(overrides.size()));
+    }
+}
+
+QColor AppearancePage::effectiveColor(const ThemeColorRole& role) const
+{
+    return appearance_.colors.value(appearance_.themeId).value(QString::fromLatin1(role.key), role.read(*baseTheme_));
+}
+
+void AppearancePage::refreshColors()
+{
+    refreshPresets();
+    colorTree_->setEnabled(bool(baseTheme_));
+    colorGroup_->setEnabled(bool(baseTheme_));
+    colorSearch_->setEnabled(bool(baseTheme_));
+    colorsReset_->setEnabled(baseTheme_ && !appearance_.colors.value(appearance_.themeId).isEmpty());
+    for (int i = 0; i < colorTree_->topLevelItemCount(); ++i) {
+        auto* item = colorTree_->topLevelItem(i);
+        const auto* role = findThemeColorRole(item->data(0, Qt::UserRole).toString());
+        if (!baseTheme_) {
+            item->setText(1, QString());
+            item->setText(2, QString());
+            item->setIcon(1, QIcon());
+            item->setIcon(2, QIcon());
+            continue;
+        }
+        const QColor value = effectiveColor(*role);
+        const QColor original = role->read(*baseTheme_);
+        item->setText(1, colorText(value));
+        item->setText(2, colorText(original));
+        item->setIcon(1, colorIcon(value, palette()));
+        item->setIcon(2, colorIcon(original, palette()));
+        item->setToolTip(1, value == original ? tr("Preset default") : tr("Customized for this preset"));
+        item->setData(1, TableTextRole, static_cast<int>(
+            value == original ? TableTextState::Normal : TableTextState::Custom));
+    }
+    filterColors();
+}
+
+void AppearancePage::filterColors()
+{
+    if (!finishHexEdit()) {
+        const QSignalBlocker groupBlocker(colorGroup_);
+        const QSignalBlocker searchBlocker(colorSearch_);
+        colorGroup_->setCurrentIndex(colorGroup_->findData(filterGroup_));
+        colorSearch_->setText(filterQuery_);
+        return;
+    }
+    const QString group = colorGroup_->currentData().toString();
+    const QString query = colorSearch_->text().trimmed();
+    filterGroup_ = group;
+    filterQuery_ = colorSearch_->text();
+    int visible = 0;
+    bool customGroup = false;
+    const auto overrides = appearance_.colors.value(appearance_.themeId);
+    QTreeWidgetItem* first = nullptr;
+    for (int i = 0; i < colorTree_->topLevelItemCount(); ++i) {
+        auto* item = colorTree_->topLevelItem(i);
+        const auto* role = findThemeColorRole(item->data(0, Qt::UserRole).toString());
+        if (!group.isEmpty() && group == QLatin1String(role->group)
+            && overrides.contains(QString::fromLatin1(role->key)))
+            customGroup = true;
+        const QString searchable = roleText(role->label) + QLatin1Char(' ')
+            + roleText(role->group) + QLatin1Char(' ') + roleText(role->description)
+            + QLatin1Char(' ') + QString::fromLatin1(role->key);
+        const bool matches = (group.isEmpty() || group == QLatin1String(role->group))
+            && searchable.contains(query, Qt::CaseInsensitive);
+        item->setHidden(!matches);
+        if (matches) {
+            ++visible;
+            if (!first) first = item;
+        }
+    }
+    if (!colorTree_->currentItem() || colorTree_->currentItem()->isHidden())
+        colorTree_->setCurrentItem(first);
+    const QString presetName = themePresets_->currentItem()
+        ? themePresets_->currentItem()->data(Qt::UserRole + 1).toString() : appearance_.themeId;
+    colorSummary_->setText(tr("%1 · %2 shown · %3 customized")
+        .arg(presetName).arg(visible).arg(appearance_.colors.value(appearance_.themeId).size()));
+    colorGroupReset_->setEnabled(baseTheme_ && customGroup);
+    refreshSelectedColor();
+}
+
+const ThemeColorRole* AppearancePage::selectedRole() const
+{
+    auto* item = colorTree_->currentItem();
+    return item && !item->isHidden() && baseTheme_
+        ? findThemeColorRole(item->data(0, Qt::UserRole).toString()) : nullptr;
+}
+
+void AppearancePage::refreshSelectedColor()
+{
+    const auto* role = selectedRole();
+    hexRoleKey_ = role ? QString::fromLatin1(role->key) : QString();
+    colorEdit_->setEnabled(role != nullptr);
+    colorHex_->setEnabled(role != nullptr);
+    colorReset_->setEnabled(role && appearance_.colors.value(appearance_.themeId).contains(QString::fromLatin1(role->key)));
+    colorDescription_->setText(role ? roleText(role->description)
+        : baseTheme_ ? tr("No matching colors.") : tr("Theme colors are unavailable."));
+    const QSignalBlocker blocker(colorHex_);
+    colorHex_->setText(role ? colorText(effectiveColor(*role)) : QString());
+    colorHex_->setModified(false);
+    QtControlSkin::setSemanticProperty(colorHex_, "inputInvalid", false);
+}
+
+ThemeAppearance AppearancePage::appearanceWithColor(const QString& key, const QColor& color) const
+{
+    auto next = themeManager_->appearance();
+    const auto* role = findThemeColorRole(key);
+    if (color == role->read(*baseTheme_)) {
+        auto overrides = next.colors.find(next.themeId);
+        if (overrides != next.colors.end()) {
+            overrides->remove(key);
+            if (overrides->isEmpty()) next.colors.erase(overrides);
+        }
+    } else {
+        next.colors[next.themeId].insert(key, color);
+    }
+    return next;
+}
+
+bool AppearancePage::setColor(const QString& key, const QColor& color)
+{
+    if (!findThemeColorRole(key) || !baseTheme_ || !color.isValid()) return false;
+    colorHex_->setModified(false);
+    return commitAppearance(appearanceWithColor(key, color));
+}
+
+void AppearancePage::editSelectedColor()
+{
+    if (colorDialog_ || !finishHexEdit()) return;
+    const auto* role = selectedRole();
+    if (!role) return;
+    const QString key = QString::fromLatin1(role->key);
+    auto* dialog = new QColorDialog(effectiveColor(*role), this);
+    colorDialog_ = dialog;
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setObjectName(QStringLiteral("appearanceColorDialog"));
+    dialog->setWindowTitle(tr("Color: %1").arg(roleText(role->label)));
+    dialog->setOptions(QColorDialog::DontUseNativeDialog | QColorDialog::ShowAlphaChannel);
+    connect(dialog, &QColorDialog::currentColorChanged, this,
+            [this, key](const QColor& color) {
+        if (!color.isValid()) return;
+        const auto preview = appearanceWithColor(key, color);
+        const QScopedValueRollback guard(updatingAppearance_, true);
+        const auto result = themeManager_->previewAppearance(preview);
+        if (result.ok()) {
+            previewActive_ = true;
+            appearance_ = preview;
+            refreshColors();
+        }
+        showError(result.diagnostics);
+    });
+    connect(dialog, &QDialog::finished, this, [this, dialog, key](int result) {
+        colorDialog_.clear();
+        if (result == QDialog::Accepted) {
+            setColor(key, dialog->currentColor());
+        } else {
+            cancelPreview();
+            load();
+        }
+    });
+    dialog->open();
+}
+
+bool AppearancePage::finishHexEdit()
+{
+    if (!colorHex_->isModified()) return true;
+    const auto* role = findThemeColorRole(hexRoleKey_);
+    if (!role) return true;
+    if (!colorHex_->hasAcceptableInput()) {
+        QtControlSkin::setSemanticProperty(colorHex_, "inputInvalid", true);
+        errorLabel_->setText(tr("Enter a color as #RRGGBB or #AARRGGBB."));
+        errorLabel_->show();
+        colorHex_->setFocus();
+        return false;
+    }
+    colorHex_->setModified(false);
+    return setColor(QString::fromLatin1(role->key), QColor(colorHex_->text()));
+}
+
+void AppearancePage::resetSelectedColor()
+{
+    if (const auto* role = selectedRole())
+        setColor(QString::fromLatin1(role->key), role->read(*baseTheme_));
+}
+
+void AppearancePage::resetColorGroup()
+{
+    const QString group = colorGroup_->currentData().toString();
+    if (group.isEmpty()) return;
+    auto next = themeManager_->appearance();
+    auto overrides = next.colors.find(next.themeId);
+    if (overrides == next.colors.end()) return;
+    for (const auto& role : themeColorRoles())
+        if (group == QLatin1String(role.group))
+            overrides->remove(QString::fromLatin1(role.key));
+    if (overrides->isEmpty()) next.colors.erase(overrides);
+    colorHex_->setModified(false);
+    commitAppearance(next);
+}
+
+void AppearancePage::resetColors()
+{
+    auto next = themeManager_->appearance();
+    next.colors.remove(next.themeId);
+    colorHex_->setModified(false);
+    commitAppearance(next);
+}
+
+void AppearancePage::cancelPreview()
+{
+    if (!previewActive_) return;
+    const QScopedValueRollback guard(updatingAppearance_, true);
+    themeManager_->cancelAppearancePreview();
+    previewActive_ = false;
+}
+
+void AppearancePage::showError(const QList<ThemePackageDiagnostic>& diagnostics)
+{
+    errorLabel_->setText(diagnostics.isEmpty() ? QString()
+        : tr("The appearance could not be updated: %1").arg(diagnostics.first().message));
+    errorLabel_->setVisible(!diagnostics.isEmpty());
 }
 
 }
