@@ -17,7 +17,7 @@ set_target_properties(harken_editor_publisher PROPERTIES
 
 target_include_directories(harken_editor_publisher PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
-target_link_libraries(harken_editor_publisher PUBLIC harken_editor_foundation harken_editor_common)
+target_link_libraries(harken_editor_publisher PUBLIC harken_editor_foundation harken_editor_common harken_editor_shared)
 
 if(MSVC)
     target_compile_options(harken_editor_publisher PRIVATE /W4 /wd4100 /wd4189 /utf-8)

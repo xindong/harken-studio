@@ -75,6 +75,7 @@ private:
                               const QString& language, const QString& unitKey);
     void populatePlatformControls();
     void applyNameFilter();
+    void updatePackCheckStates();
     void updateExportButton();
     void applyDeveloperColumns();
 
@@ -93,6 +94,7 @@ private:
     ProportionalTreeWidget* packTree_ = nullptr;
     QLabel*       objectSendWarningLabel_ = nullptr;
     bool          packTreeUpdating_ = false;
+    bool          nameFilterActive_ = false;
 
     bool packTableDirty_ = true;
     bool packTableRefreshQueued_ = false;

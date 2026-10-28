@@ -21,6 +21,7 @@ QTreeWidgetItem* makeFolderRow(const QString& text);
 QTreeWidgetItem* makeBucketRow(const QString& folderKey);
 
 void paintRowAccent(QPainter* p, const QRect& rowRect);
+void paintItemContents(QPainter* p, const QStyleOptionViewItem& option);
 
 void paintBucketRow(QPainter* p, const QStyleOptionViewItem& opt,
                     const QModelIndex& idx, bool expanded);
