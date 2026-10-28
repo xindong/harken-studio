@@ -3,6 +3,7 @@
 
 #include "ISettingsStorage.h"
 #include "ThemeAssetResolver.h"
+#include "ThemeColorCatalog.h"
 #include "ThemePackageLoader.h"
 #include "ThemeSnapshot.h"
 
@@ -11,6 +12,7 @@
 #include <QString>
 
 #include <memory>
+#include <optional>
 
 class QPainter;
 class QRect;
@@ -23,6 +25,14 @@ struct ThemeManagerOperationResult
     QList<ThemePackageDiagnostic> diagnostics;
 
     bool ok() const { return diagnostics.isEmpty(); }
+};
+
+struct ThemeAppearance
+{
+    QString themeId;
+    ThemeColorCustomizations colors;
+
+    bool operator==(const ThemeAppearance&) const = default;
 };
 
 class ThemeManager : public QObject
@@ -73,6 +83,11 @@ public:
     ThemePackageDiscoveryResult refreshThemes();
     ThemeManagerOperationResult selectTheme(const QString& themeId);
     ThemeManagerOperationResult reloadTheme();
+    ThemeAppearance appearance() const { return {currentThemeId_, customizations_}; }
+    ThemePackageLoadResult loadBaseTheme(const QString& themeId) const;
+    ThemeManagerOperationResult previewAppearance(const ThemeAppearance& appearance);
+    ThemeManagerOperationResult applyAppearance(const ThemeAppearance& appearance);
+    void cancelAppearancePreview();
     const ThemeColors& colors() const { return snapshot_->ui.colors; }
     const ThemeMetrics& metrics() const { return snapshot_->ui.metrics; }
 
@@ -112,10 +127,15 @@ private:
                                                bool persistSelection,
                                                bool allowCurrentTheme);
     void publishCandidate(const ThemePackageCandidate& candidate, bool notify);
+    ThemeManagerOperationResult updateAppearance(const ThemeAppearance& appearance,
+                                                  bool persist);
+    ThemePackageLoadResult customizedCandidate(const ThemeAppearance& appearance,
+                                               bool reusePreviewBase = false);
+    bool checkPublicationThread(ThemeManagerOperationResult& result) const;
     void applyApplicationTheme();
-    bool persistThemeId(const QString& themeId,
-                        QList<ThemePackageDiagnostic>& diagnostics);
-    QString persistedThemeId() const;
+    bool persistAppearance(const ThemeAppearance& appearance,
+                           QList<ThemePackageDiagnostic>& diagnostics);
+    ThemeAppearance persistedAppearance() const;
 
     QString userThemesRoot_;
     std::unique_ptr<ISettingsStorage> storage_;
@@ -123,6 +143,10 @@ private:
     ThemeAssetResolver assetResolver_;
     ThemeSnapshotPtr snapshot_;
     QString currentThemeId_;
+    ThemeColorCustomizations customizations_;
+    ThemePackageCandidate committedCandidate_;
+    std::optional<ThemePackageCandidate> previewBaseCandidate_;
+    bool previewActive_ = false;
     QList<ThemePackageDescriptor> themes_;
     QList<ThemePackageDiagnostic> lastDiagnostics_;
     quint64 generation_ = 0;

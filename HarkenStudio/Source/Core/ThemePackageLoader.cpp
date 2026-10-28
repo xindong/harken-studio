@@ -1,6 +1,7 @@
 #include "ThemePackageLoader.h"
 
 #include "BuiltinTheme.h"
+#include "ThemeColorResolver.h"
 #include "ComponentRecipeRegistry.h"
 #include "ParameterPresenterRegistry.h"
 
@@ -24,6 +25,26 @@ namespace VNX {
 namespace {
 
 constexpr auto kBuiltinThemeId = "harken.builtin.dark";
+
+struct BuiltinThemeDefinition
+{
+    const char* id;
+    const char* displayName;
+    ThemeSnapshot (*create)();
+};
+
+constexpr BuiltinThemeDefinition kBuiltinThemes[]{
+    {kBuiltinThemeId, "Harken Dark", createBuiltinDarkTheme},
+    {"harken.builtin.amber", "Harken Amber", createBuiltinAmberTheme},
+};
+
+const BuiltinThemeDefinition* findBuiltinTheme(const QString& id)
+{
+    for (const auto& theme : kBuiltinThemes)
+        if (id == QLatin1String(theme.id))
+            return &theme;
+    return nullptr;
+}
 
 ThemePackageDiagnostic diagnostic(ThemePackageErrorCode code,
                                   const QString& file,
@@ -759,35 +780,6 @@ bool applyTokenColor(const QString& key,
                      ThemeSnapshot& theme)
 {
     auto& colors = theme.ui.colors;
-    if (key == QStringLiteral("accent.primary"))
-    {
-        colors.accent = value;
-        theme.qtPalette.link = value;
-        theme.qtPalette.highlight = value;
-        return true;
-    }
-    if (key == QStringLiteral("accent.text"))
-    {
-        colors.accentText = value;
-        theme.qtPalette.highlightedText = value;
-        return true;
-    }
-    if (key == QStringLiteral("text.primary"))
-    {
-        colors.textPrimary = value;
-        theme.qtPalette.windowText = value;
-        theme.qtPalette.toolTipText = value;
-        theme.qtPalette.text = value;
-        theme.qtPalette.buttonText = value;
-        return true;
-    }
-    if (key == QStringLiteral("text.disabled"))
-    {
-        colors.textDisabled = value;
-        theme.qtPalette.disabledText = value;
-        theme.qtPalette.disabledButtonText = value;
-        return true;
-    }
     if (key == QStringLiteral("background.primary"))
     {
         colors.bgPrimary = value;
@@ -826,7 +818,11 @@ bool applyTokenColor(const QString& key,
         colors.field = value;                                                   \
         return true;                                                            \
     }
+    TOKEN_COLOR("accent.primary", accent)
     TOKEN_COLOR("accent.hover", accentHover)
+    TOKEN_COLOR("accent.text", accentText)
+    TOKEN_COLOR("text.primary", textPrimary)
+    TOKEN_COLOR("text.disabled", textDisabled)
     TOKEN_COLOR("palette.categorical0", categoricalPalette[0])
     TOKEN_COLOR("palette.categorical1", categoricalPalette[1])
     TOKEN_COLOR("palette.categorical2", categoricalPalette[2])
@@ -838,7 +834,6 @@ bool applyTokenColor(const QString& key,
     TOKEN_COLOR("background.selected", bgSelected)
     TOKEN_COLOR("border.primary", borderPrimary)
     TOKEN_COLOR("border.secondary", borderSecondary)
-    TOKEN_COLOR("border.accent", borderAccent)
     TOKEN_COLOR("border.view", viewBorder)
     TOKEN_COLOR("status.success", success)
     TOKEN_COLOR("status.warning", warning)
@@ -849,26 +844,17 @@ bool applyTokenColor(const QString& key,
     TOKEN_COLOR("bus.background", busBackground)
     TOKEN_COLOR("bus.backgroundActive", busBackgroundActive)
     TOKEN_COLOR("slider.track", sliderTrack)
-    TOKEN_COLOR("slider.fill", sliderFill)
-    TOKEN_COLOR("knob.arc", knobArc)
-    TOKEN_COLOR("knob.face", knobFace)
     TOKEN_COLOR("knob.indicator", knobIndicator)
     TOKEN_COLOR("panel.background", panelBackground)
-    TOKEN_COLOR("panel.border", panelBorder)
     TOKEN_COLOR("section.separator", sectionSeparator)
     TOKEN_COLOR("header.background", headerBackground)
     TOKEN_COLOR("audition.background", auditionBg)
     TOKEN_COLOR("audition.playActive", auditionPlayActive)
     TOKEN_COLOR("audition.stopActive", auditionStopActive)
     TOKEN_COLOR("shell.menuText", shellMenuText)
-    TOKEN_COLOR("shell.menuHover", shellMenuHover)
     TOKEN_COLOR("shell.menuHoverText", shellMenuHoverText)
-    TOKEN_COLOR("shell.menuPressed", shellMenuPressed)
-    TOKEN_COLOR("shell.menuPressedText", shellMenuPressedText)
     TOKEN_COLOR("shell.buttonText", shellButtonText)
-    TOKEN_COLOR("shell.buttonHover", shellButtonHover)
     TOKEN_COLOR("shell.buttonHoverText", shellButtonHoverText)
-    TOKEN_COLOR("shell.buttonPressed", shellButtonPressed)
     TOKEN_COLOR("shell.closeHover", shellCloseHover)
     TOKEN_COLOR("shell.closePressed", shellClosePressed)
 #undef TOKEN_COLOR
@@ -988,12 +974,6 @@ bool applyCurveColor(const QString& key,
         colors.field = value;                                                   \
         return true;                                                            \
     }
-    CURVE_COLOR("canvasBackground", canvasBackground)
-    CURVE_COLOR("canvasBorder", canvasBorder)
-    CURVE_COLOR("plotBackground", plotBackground)
-    CURVE_COLOR("grid", grid)
-    CURVE_COLOR("plotBorder", plotBorder)
-    CURVE_COLOR("axisText", axisText)
     CURVE_COLOR("line", attenuationVolume)
     CURVE_COLOR("attenuationVolume", attenuationVolume)
     CURVE_COLOR("attenuationPitch", attenuationPitch)
@@ -1002,19 +982,8 @@ bool applyCurveColor(const QString& key,
     CURVE_COLOR("ghost", ghost)
     CURVE_COLOR("lassoBorder", lassoBorder)
     CURVE_COLOR("lassoFill", lassoFill)
-    CURVE_COLOR("handleLine", handleLine)
-    CURVE_COLOR("handleBorder", handleBorder)
-    CURVE_COLOR("handleActiveBorder", handleActiveBorder)
-    CURVE_COLOR("handleFill", handleFill)
-    CURVE_COLOR("handleActiveFill", handleActiveFill)
-    CURVE_COLOR("pointBorder", pointBorder)
-    CURVE_COLOR("pointSelectedBorder", pointSelectedBorder)
-    CURVE_COLOR("pointSelectedFill", pointSelectedFill)
     CURVE_COLOR("crosshair", crosshair)
-    CURVE_COLOR("crosshairContrast", crosshairContrast)
     CURVE_COLOR("playhead", playhead)
-    CURVE_COLOR("readoutBackground", readoutBackground)
-    CURVE_COLOR("readoutText", readoutText)
 #undef CURVE_COLOR
     return false;
 }
@@ -1099,21 +1068,12 @@ bool applyWaveformColor(const QString& key,
     WAVEFORM_COLOR("regionMarker", regionMarker)
     WAVEFORM_COLOR("trimHandle", trimHandle)
     WAVEFORM_COLOR("loopHandle", loopHandle)
-    WAVEFORM_COLOR("previewGradientTop", previewGradientTop)
-    WAVEFORM_COLOR("previewGradientMid", previewGradientMid)
-    WAVEFORM_COLOR("previewPlayhead", previewPlayhead)
-    WAVEFORM_COLOR("previewLoopFill", previewLoopFill)
-    WAVEFORM_COLOR("previewLoopBorder", previewLoopBorder)
-    WAVEFORM_COLOR("previewPeakClip", previewPeakClip)
-    WAVEFORM_COLOR("previewPeakSafe", previewPeakSafe)
     WAVEFORM_COLOR("static.quiet", staticMode.quiet)
     WAVEFORM_COLOR("static.peak", staticMode.peak)
     WAVEFORM_COLOR("splitStereo.divider", splitStereo.divider)
     WAVEFORM_COLOR("splitStereo.label", splitStereo.label)
     WAVEFORM_COLOR("rawPeaks.background", rawPeaks.background)
     WAVEFORM_COLOR("rawPeaks.centerLine", rawPeaks.centerLine)
-    WAVEFORM_COLOR("dbScale.grid", dbScale.grid)
-    WAVEFORM_COLOR("dbScale.label", dbScale.label)
     if (key.startsWith(QStringLiteral("waveform.multiBand.color")))
     {
         bool ok = false;
@@ -1198,12 +1158,7 @@ bool applyMeterColor(const QString& key,
     METER_COLOR("lufsMomentary", lufsMomentary)
     METER_COLOR("lufsShortTerm", lufsShortTerm)
     METER_COLOR("lufsIntegrated", lufsIntegrated)
-    METER_COLOR("interaction.crosshair", interaction.colors.crosshair)
     METER_COLOR("interaction.accentGuide", interaction.colors.accentGuide)
-    METER_COLOR("interaction.readoutBackground", interaction.colors.readoutBackground)
-    METER_COLOR("interaction.readoutText", interaction.colors.readoutText)
-    METER_COLOR("peakMeter.canvasBackground", peakMeter.colors.canvasBackground)
-    METER_COLOR("peakMeter.trackBackground", peakMeter.colors.trackBackground)
     METER_COLOR("peakMeter.gradientError", peakMeter.colors.gradientError)
     METER_COLOR("peakMeter.gradientWarning", peakMeter.colors.gradientWarning)
     METER_COLOR("peakMeter.gradientYellow", peakMeter.colors.gradientYellow)
@@ -1212,34 +1167,15 @@ bool applyMeterColor(const QString& key,
     METER_COLOR("peakMeter.rmsOverlay", peakMeter.colors.rmsOverlay)
     METER_COLOR("peakMeter.holdHalo", peakMeter.colors.holdHalo)
     METER_COLOR("peakMeter.holdLine", peakMeter.colors.holdLine)
-    METER_COLOR("peakMeter.grid", peakMeter.colors.grid)
-    METER_COLOR("peakMeter.tickText", peakMeter.colors.tickText)
     METER_COLOR("peakMeter.clipBackground", peakMeter.colors.clipBackground)
     METER_COLOR("peakMeter.clipText", peakMeter.colors.clipText)
-    METER_COLOR("peakMeter.label", peakMeter.colors.label)
-    METER_COLOR("loudness.canvasBackground", loudnessMeter.colors.canvasBackground)
-    METER_COLOR("loudness.trackBackground", loudnessMeter.colors.trackBackground)
     METER_COLOR("loudness.targetLine", loudnessMeter.colors.targetLine)
-    METER_COLOR("loudness.targetText", loudnessMeter.colors.targetText)
-    METER_COLOR("loudness.labelText", loudnessMeter.colors.labelText)
-    METER_COLOR("loudness.valueText", loudnessMeter.colors.valueText)
-    METER_COLOR("vu.canvasBackground", vuMeter.colors.canvasBackground)
-    METER_COLOR("vu.titleText", vuMeter.colors.titleText)
-    METER_COLOR("vu.trackBackground", vuMeter.colors.trackBackground)
-    METER_COLOR("vu.analogArc", vuMeter.colors.analogArc)
-    METER_COLOR("vu.analogNegativeTick", vuMeter.colors.analogNegativeTick)
     METER_COLOR("vu.analogPositiveTick", vuMeter.colors.analogPositiveTick)
     METER_COLOR("vu.analogOverloadArc", vuMeter.colors.analogOverloadArc)
     METER_COLOR("vu.analogNeedleGlow", vuMeter.colors.analogNeedleGlow)
     METER_COLOR("vu.analogNeedle", vuMeter.colors.analogNeedle)
     METER_COLOR("vu.analogPivot", vuMeter.colors.analogPivot)
-    METER_COLOR("vu.analogValueText", vuMeter.colors.analogValueText)
-    METER_COLOR("vu.analogLabelText", vuMeter.colors.analogLabelText)
     METER_COLOR("vu.barWarning", vuMeter.colors.barWarning)
-    METER_COLOR("vu.barGrid", vuMeter.colors.barGrid)
-    METER_COLOR("vu.barLabelText", vuMeter.colors.barLabelText)
-    METER_COLOR("vu.barValueText", vuMeter.colors.barValueText)
-    METER_COLOR("spectrum.canvasBackground", spectrumMeter.colors.canvasBackground)
     METER_COLOR("spectrum.fillTop", spectrumMeter.colors.fillTop)
     METER_COLOR("spectrum.fillUpperMiddle", spectrumMeter.colors.fillUpperMiddle)
     METER_COLOR("spectrum.fillLowerMiddle", spectrumMeter.colors.fillLowerMiddle)
@@ -1249,14 +1185,7 @@ bool applyMeterColor(const QString& key,
     METER_COLOR("spectrum.lineGlowNarrow", spectrumMeter.colors.lineGlowNarrow)
     METER_COLOR("spectrum.lineHighlight", spectrumMeter.colors.lineHighlight)
     METER_COLOR("spectrum.peakLine", spectrumMeter.colors.peakLine)
-    METER_COLOR("spectrum.horizontalGrid", spectrumMeter.colors.horizontalGrid)
-    METER_COLOR("spectrum.verticalGrid", spectrumMeter.colors.verticalGrid)
-    METER_COLOR("spectrum.axisText", spectrumMeter.colors.axisText)
-    METER_COLOR("spectrogram.canvasBackground", spectrogramMeter.colors.canvasBackground)
     METER_COLOR("spectrogram.emptyHistory", spectrogramMeter.colors.emptyHistory)
-    METER_COLOR("spectrogram.grid", spectrogramMeter.colors.grid)
-    METER_COLOR("spectrogram.axisText", spectrogramMeter.colors.axisText)
-    METER_COLOR("spectrogram.timeText", spectrogramMeter.colors.timeText)
 #undef METER_COLOR
     return false;
 }
@@ -1426,48 +1355,24 @@ bool applyDomainColor(const QString& key,
         theme.domains.field = value;                                              \
         return true;                                                              \
     }
-    DOMAIN_COLOR("feedback.success", feedback.success)
-    DOMAIN_COLOR("feedback.warning", feedback.warning)
-    DOMAIN_COLOR("feedback.error", feedback.error)
-    DOMAIN_COLOR("feedback.info", feedback.info)
-    DOMAIN_COLOR("feedback.neutral", feedback.neutral)
+    DOMAIN_COLOR("startup.wave.shadow", startup.wavePalette[0])
+    DOMAIN_COLOR("startup.wave.low", startup.wavePalette[1])
+    DOMAIN_COLOR("startup.wave.high", startup.wavePalette[2])
+    DOMAIN_COLOR("startup.wave.highlight", startup.wavePalette[3])
+
     DOMAIN_COLOR("feedback.overlayBackground", feedback.overlayBackground)
     DOMAIN_COLOR("feedback.overlayErrorBackground", feedback.overlayErrorBackground)
-    DOMAIN_COLOR("feedback.overlayHighlight", feedback.overlayHighlight)
 
-    DOMAIN_COLOR("nodeGraph.sound", nodeGraph.sound)
-    DOMAIN_COLOR("nodeGraph.audioLayer", nodeGraph.audioLayer)
-    DOMAIN_COLOR("nodeGraph.bus", nodeGraph.bus)
-    DOMAIN_COLOR("nodeGraph.receiveBus", nodeGraph.receiveBus)
-    DOMAIN_COLOR("nodeGraph.attenuation", nodeGraph.attenuation)
-    DOMAIN_COLOR("nodeGraph.action", nodeGraph.action)
-    DOMAIN_COLOR("nodeGraph.fallback", nodeGraph.fallback)
-    DOMAIN_COLOR("nodeGraph.header.sound", nodeGraphHeader.sound)
-    DOMAIN_COLOR("nodeGraph.header.audioLayer", nodeGraphHeader.audioLayer)
-    DOMAIN_COLOR("nodeGraph.header.bus", nodeGraphHeader.bus)
-    DOMAIN_COLOR("nodeGraph.header.receiveBus", nodeGraphHeader.receiveBus)
-    DOMAIN_COLOR("nodeGraph.header.attenuation", nodeGraphHeader.attenuation)
-    DOMAIN_COLOR("nodeGraph.header.action", nodeGraphHeader.action)
-    DOMAIN_COLOR("nodeGraph.header.fallback", nodeGraphHeader.fallback)
-    DOMAIN_COLOR("nodeGraph.role.source", nodeGraphRole.source)
-    DOMAIN_COLOR("nodeGraph.role.parent", nodeGraphRole.parent)
-    DOMAIN_COLOR("nodeGraph.role.bus", nodeGraphRole.bus)
-    DOMAIN_COLOR("nodeGraph.role.receiveBus", nodeGraphRole.receiveBus)
     DOMAIN_COLOR("nodeGraph.pin.audio", pinDomain.audio)
     DOMAIN_COLOR("nodeGraph.pin.control", pinDomain.control)
     DOMAIN_COLOR("nodeGraph.pin.value", pinDomain.value)
     DOMAIN_COLOR("nodeGraph.pin.ring", pinDomain.ring)
     DOMAIN_COLOR("nodeGraph.pin.targetOk", pinDomain.targetOk)
     DOMAIN_COLOR("nodeGraph.pin.targetBad", pinDomain.targetBad)
-    DOMAIN_COLOR("nodeGraph.node.bodyNormal", nodeGraphNode.bodyNormal)
-    DOMAIN_COLOR("nodeGraph.node.bodySelected", nodeGraphNode.bodySelected)
     DOMAIN_COLOR("nodeGraph.node.borderNormal", nodeGraphNode.borderNormal)
     DOMAIN_COLOR("nodeGraph.node.borderHoverMix", nodeGraphNode.borderHoverMix)
     DOMAIN_COLOR("nodeGraph.node.dropTarget", nodeGraphNode.dropTarget)
     DOMAIN_COLOR("nodeGraph.node.shadow", nodeGraphNode.shadow)
-    DOMAIN_COLOR("nodeGraph.node.titleText", nodeGraphNode.titleText)
-    DOMAIN_COLOR("nodeGraph.node.contentLabel", nodeGraphNode.contentLabel)
-    DOMAIN_COLOR("nodeGraph.node.contentValue", nodeGraphNode.contentValue)
     DOMAIN_COLOR("nodeGraph.node.sandboxBadgeBg", nodeGraphNode.sandboxBadgeBg)
     DOMAIN_COLOR("nodeGraph.node.sandboxBadgeText", nodeGraphNode.sandboxBadgeText)
     DOMAIN_COLOR("nodeGraph.node.badgeOverride", nodeGraphNode.badgeOverride)
@@ -1480,7 +1385,6 @@ bool applyDomainColor(const QString& key,
     DOMAIN_COLOR("blueprint.canvasBackground", blueprint.canvasBackground)
     DOMAIN_COLOR("blueprint.gridDot", blueprint.gridDot)
     DOMAIN_COLOR("blueprint.edgeLabelBg", blueprint.edgeLabelBg)
-    DOMAIN_COLOR("blueprint.edgeLabelText", blueprint.edgeLabelText)
     DOMAIN_COLOR("blueprint.placementChain", blueprint.placementChain)
     DOMAIN_COLOR("blueprint.organizationChain", blueprint.organizationChain)
     DOMAIN_COLOR("blueprint.containment", blueprint.containment)
@@ -1935,7 +1839,10 @@ bool applySemantics(const SemanticDocuments& documents,
                                           QStringLiteral("Invalid color value.")));
             return false;
         }
-        if (!applyTokenColor(it.key(), color, theme))
+        const bool applied = it.key().startsWith(QStringLiteral("startup."))
+            ? applyDomainColor(it.key(), color, theme)
+            : applyTokenColor(it.key(), color, theme);
+        if (!applied)
         {
             diagnostics.append(diagnostic(
                 ThemePackageErrorCode::UnknownSemanticKey, tokenFile, path,
@@ -2096,13 +2003,25 @@ QString builtinThemeId()
     return QString::fromLatin1(kBuiltinThemeId);
 }
 
+bool applyThemeColor(ThemeSnapshot& theme, const QString& key, const QColor& color)
+{
+    return color.isValid()
+        && (applyTokenColor(key, color, theme)
+            || applyCurveColor(key, color, theme)
+            || applyWaveformColor(key, color, theme)
+            || applyMeterColor(key, color, theme)
+            || applyDomainColor(key, color, theme));
+}
+
 ThemePackageDiscoveryResult discoverThemePackages(
     const QString& themesRoot,
     const ThemePackageLoadOptions& options)
 {
     ThemePackageDiscoveryResult result;
-    result.themes.append(ThemePackageDescriptor{
-        builtinThemeId(), QStringLiteral("Harken Dark"), options.harkenVersion, true});
+    for (const auto& theme : kBuiltinThemes)
+        result.themes.append(ThemePackageDescriptor{
+            QString::fromLatin1(theme.id), QString::fromLatin1(theme.displayName),
+            options.harkenVersion, true});
 
     const QFileInfo rootInfo(themesRoot);
     const QString rootCanonical = rootInfo.canonicalFilePath();
@@ -2177,7 +2096,7 @@ ThemePackageDiscoveryResult discoverThemePackages(
                 QStringLiteral("Theme IDs and versions must use stable formats.")));
             continue;
         }
-        if (parsed.value->id == builtinThemeId()
+        if (findBuiltinTheme(parsed.value->id)
             || duplicateIds.contains(parsed.value->id)
             || discovered.contains(parsed.value->id))
         {
@@ -2205,15 +2124,15 @@ ThemePackageLoadResult loadThemePackageCandidate(
     const ThemePackageLoadOptions& options)
 {
     ThemePackageLoadResult result;
-    if (themeId == QString::fromLatin1(kBuiltinThemeId))
+    if (const auto* builtin = findBuiltinTheme(themeId))
     {
         ThemePackageCandidate candidate;
-        candidate.manifest.id = QString::fromLatin1(kBuiltinThemeId);
-        candidate.manifest.displayName = QStringLiteral("Harken Dark");
+        candidate.manifest.id = themeId;
+        candidate.manifest.displayName = QString::fromLatin1(builtin->displayName);
         candidate.manifest.version = options.harkenVersion;
         candidate.snapshot = std::make_shared<const ThemeSnapshot>(
-            createBuiltinDarkTheme());
-        candidate.inheritanceOrder.append(QString::fromLatin1(kBuiltinThemeId));
+            builtin->create());
+        candidate.inheritanceOrder.append(themeId);
         result.candidate = std::move(candidate);
         return result;
     }
@@ -2301,7 +2220,7 @@ ThemePackageLoadResult loadThemePackageCandidate(
                 QStringLiteral("Theme IDs and versions must use stable formats."))});
             continue;
         }
-        if (parsed.value->id == QString::fromLatin1(kBuiltinThemeId)
+        if (findBuiltinTheme(parsed.value->id)
             || duplicateIds.contains(parsed.value->id)
             || packages.contains(parsed.value->id))
         {
@@ -2334,7 +2253,7 @@ ThemePackageLoadResult loadThemePackageCandidate(
     QList<const DiscoveredPackage*> chain;
     QSet<QString> visiting;
     QString currentId = themeId;
-    while (currentId != QString::fromLatin1(kBuiltinThemeId))
+    while (!findBuiltinTheme(currentId))
     {
         if (visiting.contains(currentId))
         {
@@ -2390,7 +2309,7 @@ ThemePackageLoadResult loadThemePackageCandidate(
         totalBytes += package->manifestBytes;
     }
     SemanticDocuments merged;
-    ThemeSnapshot snapshot = createBuiltinDarkTheme();
+    ThemeSnapshot snapshot = findBuiltinTheme(currentId)->create();
     for (const DiscoveredPackage* package : chain)
     {
         if (package->manifest.colorScheme)
@@ -2413,6 +2332,8 @@ ThemePackageLoadResult loadThemePackageCandidate(
         merged = std::move(effective);
     }
 
+    resolveThemeColors(snapshot);
+
     ThemePackageCandidate candidate;
     if (packages.value(themeId).manifest.previewAssetId
         && !merged.assets.assets.contains(
@@ -2431,7 +2352,7 @@ ThemePackageLoadResult loadThemePackageCandidate(
     candidate.assets = std::move(merged.assets);
     for (const DiscoveredPackage* package : chain)
         candidate.assetRoots.insert(package->manifest.id, package->root);
-    candidate.inheritanceOrder.append(QString::fromLatin1(kBuiltinThemeId));
+    candidate.inheritanceOrder.append(currentId);
     for (const DiscoveredPackage* package : chain)
         candidate.inheritanceOrder.append(package->manifest.id);
     result.candidate = std::move(candidate);

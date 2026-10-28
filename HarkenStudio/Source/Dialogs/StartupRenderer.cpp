@@ -11,10 +11,13 @@
 #include <QPainter>
 #include <QThread>
 #include <QVector2D>
+#include <QVector3D>
+#include <QVector4D>
 #include <QDebug>
 
 #include <cmath>
 #include <memory>
+#include <utility>
 
 namespace {
 
@@ -102,14 +105,9 @@ const char* kDitherFragmentShader = R"glsl(
 #version 330 core
 uniform sampler2D uField;
 uniform float uCellDevice;
+uniform vec4 uPalette[4];
+uniform vec3 uBackground;
 out vec4 fragColor;
-
-const vec3 palette[4] = vec3[4](
-    vec3(6.0, 18.0, 31.0) / 255.0,
-    vec3(23.0, 61.0, 92.0) / 255.0,
-    vec3(95.0, 158.0, 199.0) / 255.0,
-    vec3(228.0, 243.0, 255.0) / 255.0
-);
 
 float orderedThreshold(ivec2 pixel)
 {
@@ -128,11 +126,12 @@ void main()
     ivec2 pixel = ivec2(gl_FragCoord.xy / uCellDevice);
     float brightness = texelFetch(uField, pixel, 0).r;
     int index = clamp(int(floor(brightness * 3.0 + orderedThreshold(pixel))), 0, 3);
-    fragColor = vec4(palette[index], 1.0);
+    fragColor = vec4(mix(uBackground, uPalette[index].rgb, uPalette[index].a), 1.0);
 }
 )glsl";
 
-void drawLogo(QOpenGLPaintDevice& device, const QImage& logo, qreal time)
+void drawLogo(QOpenGLPaintDevice& device, const QImage& logo, qreal time,
+              const QColor& background)
 {
     QPainter painter(&device);
     painter.setRenderHint(QPainter::SmoothPixmapTransform);
@@ -141,7 +140,7 @@ void drawLogo(QOpenGLPaintDevice& device, const QImage& logo, qreal time)
                           (device.height() / device.devicePixelRatioF() - 88.0) * 0.5,
                           316.0, 88.0);
     painter.setPen(Qt::NoPen);
-    painter.setBrush(QColor(16, 21, 31));
+    painter.setBrush(background);
     painter.drawRect(titleBox);
 
     const QSizeF logoSize = logo.deviceIndependentSize();
@@ -174,7 +173,8 @@ void drawLogo(QOpenGLPaintDevice& device, const QImage& logo, qreal time)
 
 namespace VNX {
 
-StartupRenderer::StartupRenderer()
+StartupRenderer::StartupRenderer(ThemeSnapshotPtr theme)
+    : theme_(std::move(theme))
 {
     format_.setRenderableType(QSurfaceFormat::OpenGL);
     format_.setVersion(3, 3);
@@ -268,6 +268,18 @@ void StartupRenderer::renderLoop()
         emit initializationFailed();
         return;
     }
+    const auto& paletteColors = theme_->domains.startup.wavePalette;
+    QVector4D palette[4];
+    for (int i = 0; i < 4; ++i)
+        palette[i] = QVector4D(paletteColors[i].redF(), paletteColors[i].greenF(),
+                               paletteColors[i].blueF(), paletteColors[i].alphaF());
+    const QColor& background = theme_->ui.colors.bgPrimary;
+    ditherProgram.bind();
+    ditherProgram.setUniformValueArray("uPalette", palette, 4);
+    ditherProgram.setUniformValue("uBackground",
+        QVector3D(background.redF(), background.greenF(), background.blueF()));
+    ditherProgram.release();
+
     QOpenGLVertexArrayObject vao;
     vao.create();
     QOpenGLFramebufferObjectFormat fieldFormat;
@@ -335,7 +347,7 @@ void StartupRenderer::renderLoop()
 
             QOpenGLPaintDevice device(QSize(width, height));
             device.setDevicePixelRatio(dpr);
-            drawLogo(device, logo, time);
+            drawLogo(device, logo, time, theme_->ui.colors.panelBackground);
             context.swapBuffers(window_);
             if (!initialFramePresented_.exchange(true, std::memory_order_acq_rel))
                 emit initialFramePresented();
